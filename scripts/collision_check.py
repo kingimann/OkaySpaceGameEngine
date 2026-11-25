@@ -64,9 +64,12 @@ def is_stacked(root, A, B, base="origin/main"):
             return subprocess.run(["git", "-C", root, *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).returncode == 0
         stacked = any(ok("merge-base", "--is-ancestor", x["sha"], y["sha"]) for x, y in ((A, B), (B, A)))
         if not stacked:
-            mb = subprocess.run(["git", "-C", root, "merge-base", A["sha"], B["sha"]], stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, text=True).stdout.strip()
-            stacked = bool(mb) and not ok("merge-base", "--is-ancestor", mb, base)
+            # `merge-base` prints only one ancestor. After both branches merge main there are two:
+            # main itself, and the shared feature commit. One shared commit that is not on main
+            # still means one branch was built on the other.
+            out = subprocess.run(["git", "-C", root, "merge-base", "--all", A["sha"], B["sha"]],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout
+            stacked = any(mb and not ok("merge-base", "--is-ancestor", mb, base) for mb in out.split())
         _anc[k] = stacked
     return _anc[k]
 
@@ -88,6 +91,15 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
     claims, events = L.parse_claims(claims_comments or [], lanes)
     pr_branches = {p["head"]["ref"]: p for p in (prs or []) if p.get("head")}
     brs = L.branches(root)
+    # An archived branch (its tip is a parent of a commit on a `<lane>/archive` branch, CLAUDE.md rule 10) is parked, not live
+    # work, even if it was pushed recently or still exists on GitHub; the archive branches themselves are never live either.
+    archived = set()
+    for b in brs:
+        if b["name"].endswith("/archive"):
+            archived.add(b["sha"])
+            for line in L.git(root, "log", "--first-parent", "--format=%P", "origin/" + b["name"]).splitlines():
+                archived.update(line.split())
+    merged_heads = set(merged_heads) | archived
     if extra_branches:
         brs += extra_branches
     info, live = {}, {}

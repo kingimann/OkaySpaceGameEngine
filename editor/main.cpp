@@ -146,8 +146,7 @@
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #include "UIInspectorWidgetsMore.hpp"   // search, date, files, accordion, crumbs, pages, skeleton, sheet
-#include "OkayPanels.hpp"                // Crash Log, Audio Mixer and the Inspector's parts drawn by OkayUI (opt-in backend)
-#include "EditorPanelViews.hpp"          // their Dear ImGui bodies (models: shared/EditorPanelModels.hpp)
+#include "OkayPanels.hpp"                // the panels drawn by OkayUI (Crash Log, Audio Mixer, History, Problems, Stats, Profiler, the Inspector's parts)
 #include "OkayUIBackend.hpp"            // UI backend setting: Dear ImGui (default) or OkayUI (preview)
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
@@ -1878,6 +1877,7 @@ bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
      g_showProblems = true;
 bool g_showGame = true;   // Game view (main-camera render)
 bool g_showProfiler = false;   // CPU/GPU profiler window
+bool g_showTimers = false;     // scheduler and tween dumps
 bool g_showAssetManager = false;   // Asset Manager: marketplace downloads -> project
 bool g_showPluginManager = false;  // Plugin Manager (editor plugins)
 bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt reports)
@@ -6234,6 +6234,8 @@ static void DrawRenderingMenuItems(EditorState& ed) {
     if (ImGui::MenuItem("Frame-time overlay", nullptr, &g_showPerfOverlay)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small window with FPS, frame time, a graph of the last frames and where the frame goes\n(3D view, panels, ImGui, present). Its Copy report button puts the numbers on the clipboard.");
     if (ImGui::MenuItem("Profiler window", nullptr, &g_showProfiler)) SaveSettings();
+    if (ImGui::MenuItem("Timers", nullptr, &g_showTimers)) {}
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The scene's waiting tasks and its tweens, as the scheduler and the tween list describe them.");
     if (ImGui::BeginMenu("Viewport resolution")) {
         const int pcts[] = {100, 75, 50, 35};
         for (int p : pcts) {
@@ -8355,11 +8357,12 @@ static void ProjectRegisterThumbGenerators() {
     g_pb->AddThumbGenerator(okay::ExtensionsOfType(okay::AssetType::Model), RenderModelImage);
     g_thumbGensFor = true;
 }
-// Types that can have a picture at all (a script or a data file never does: do not even ask).
+// Types that can have a picture at all (a script never does: do not even ask). Data files and fonts do.
 static bool ProjectHasThumb(const std::string& ext) {
     switch (okay::AssetTypeFromExtension(ext)) {
         case okay::AssetType::Texture: case okay::AssetType::Model: case okay::AssetType::Mesh: case okay::AssetType::Audio:
-        case okay::AssetType::Material: case okay::AssetType::Scene: case okay::AssetType::Prefab: return true;
+        case okay::AssetType::Material: case okay::AssetType::Scene: case okay::AssetType::Prefab:
+        case okay::AssetType::Data: case okay::AssetType::Font: return true;
         default: return false;
     }
 }
@@ -10688,108 +10691,47 @@ void DrawMaterialEditor(EditorState& ed) {
 
 // The scene counts the Stats window shows, in its order (shared by the Dear ImGui window and the OkayUI one so they cannot drift).
 void DrawStats(EditorState& ed) {
-    if (!ImGui::Begin("Stats", &g_showStats)) { ImGui::End(); return; }
-    ImGuiIO& io = ImGui::GetIO();
-    static float hist[120] = {0};
-    static int hi = 0;
-    hist[hi] = io.Framerate; hi = (hi + 1) % 120;
-    // Big FPS readout + frame time, then an auto-scaled plot with a 60 FPS guide.
-    float fmin = 1e9f, fmax = 0.0f, fsum = 0.0f; int fcnt = 0;
-    for (float v : hist) if (v > 0.0f) { fmin = std::min(fmin, v); fmax = std::max(fmax, v); fsum += v; ++fcnt; }
-    float fscale = fmax * 1.2f < 75.0f ? 75.0f : fmax * 1.2f;
-    {
-        ImVec4 fpsCol = io.Framerate >= 55.0f ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)
-                      : io.Framerate >= 30.0f ? ImVec4(0.95f, 0.78f, 0.35f, 1.0f)
-                                              : ImVec4(0.96f, 0.45f, 0.42f, 1.0f);
-        if (g_headingFont) ImGui::PushFont(g_headingFont);
-        ImGui::TextColored(fpsCol, "%.0f", io.Framerate);
-        if (g_headingFont) ImGui::PopFont();
-        ImGui::SameLine();
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("FPS   %.2f ms", io.Framerate > 0 ? 1000.0f / io.Framerate : 0.0f);
-        char mm[48]; std::snprintf(mm, sizeof(mm), "avg %.0f  min %.0f", fcnt ? fsum / fcnt : 0.0f, fcnt ? fmin : 0.0f);
-        SameLineRight(ImGui::CalcTextSize(mm).x);
-        ImGui::TextDisabled("%s", mm);
-    }
-    ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.45f, 0.70f, 1.0f, 1.0f));
-    ImGui::PlotLines("##fps", hist, 120, hi, nullptr, 0.0f, fscale, ImVec2(-1, 48));
-    ImGui::PopStyleColor();
-    {   // 60 FPS guide line over the plot
-        ImVec2 gmn = ImGui::GetItemRectMin(), gmx = ImGui::GetItemRectMax();
-        if (fscale > 60.0f) {
-            float gy = gmx.y - (60.0f / fscale) * (gmx.y - gmn.y);
-            ImGui::GetWindowDrawList()->AddLine(ImVec2(gmn.x, gy), ImVec2(gmx.x, gy),
-                                                IM_COL32(110, 220, 130, 110), 1.0f);
+    // Drawn by OkayUI only (editor/OkayPanels.cpp; docs/ui/own_ui_toolkit.md section 25). The model is filled only while the window
+    // shows, as before (the frame-rate history too).
+    static okaypanels::FpsHistory hist;
+    DrawStatsOkayUI(&g_showStats, [&](okaypanels::StatsModel& m) {
+        const float fps = ImGui::GetIO().Framerate;
+        hist.Push(fps);
+        m.framerate = fps;
+        m.history = &hist;
+        // the scene census; zero counts are dimmed by the panel
+        int stTris = 0, stParts = 0;
+        for (const auto& up : ed.scene().Objects()) {
+            if (!up || !up->active) continue;
+            if (auto* mr = up->GetComponent<MeshRenderer>()) if (mr->enabled) stTris += mr->DisplayMesh().TriangleCount();
+            if (auto* ps = up->GetComponent<ParticleSystem>()) stParts += ps->AliveCount();
         }
-    }
-    ImGui::Spacing();
-    // Scene census as a tidy two-column grid; zero counts are dimmed so the
-    // numbers that matter stand out.
-    int stTris = 0, stParts = 0;
-    for (const auto& up : ed.scene().Objects()) {
-        if (!up || !up->active) continue;
-        if (auto* mr = up->GetComponent<MeshRenderer>()) if (mr->enabled) stTris += mr->DisplayMesh().TriangleCount();
-        if (auto* ps = up->GetComponent<ParticleSystem>()) stParts += ps->AliveCount();
-    }
-    struct StatRow { const char* name; int v; };
-    const StatRow rows[] = {
-        {"Objects",    (int)ed.scene().Objects().size()},
-        {"Triangles",  stTris},
-        {"Meshes",     (int)ed.scene().FindObjectsOfType<MeshRenderer>().size()},
-        {"Sprites",    (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size()},
-        {"Lights",     (int)ed.scene().FindObjectsOfType<Light>().size()},
-        {"Colliders",  (int)(ed.scene().FindObjectsOfType<Collider2D>().size() + ed.scene().FindObjectsOfType<Collider3D>().size())},
-        {"Scripts",    (int)ed.scene().FindObjectsOfType<ScriptComponent>().size()},
-        {"NPCs",       (int)ed.scene().FindObjectsOfType<NPCController>().size()},
-        {"Particles",  stParts},
-        {"Drawn",      okay::LastCullCounters().drawn},    // last frame, after culling and batching
-        {"Culled",     okay::LastCullCounters().culled},
-        {"Occluded",   okay::LastCullCounters().occluded},
-        {"LOD culled", okay::LastCullCounters().lodCulled},
-        {"LOD0",       okay::LastCullCounters().lod0},
-        {"LOD1+",      okay::LastCullCounters().lod1 + okay::LastCullCounters().lod2 + okay::LastCullCounters().lod3},
-        {"Batches",    okay::LastCullCounters().batches},
-        {"Draws saved", okay::LastCullCounters().drawsSaved},
-    };
-    if (ImGui::BeginTable("##statgrid", 4, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("n1", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("v1", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-        ImGui::TableSetupColumn("n2", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("v2", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-        for (int i = 0; i < (int)(sizeof(rows) / sizeof(rows[0])); ++i) {
-            if (i % 2 == 0) ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", rows[i].name);
-            ImGui::TableNextColumn();
-            char num[24];
-            if (rows[i].v >= 1000000)   std::snprintf(num, sizeof(num), "%.1fM", rows[i].v / 1e6);
-            else if (rows[i].v >= 10000) std::snprintf(num, sizeof(num), "%.1fk", rows[i].v / 1e3);
-            else                         std::snprintf(num, sizeof(num), "%d", rows[i].v);
-            if (rows[i].v == 0) ImGui::TextDisabled("%s", num);
-            else                ImGui::TextUnformatted(num);
-        }
-        ImGui::EndTable();
-    }
-    ImGui::Spacing();
-    ImGui::Checkbox("Frustum culling", &okay::FrustumCullingEnabled());
-    ImGui::SameLine();
-    ImGui::Checkbox("Occlusion", &okay::visibility::OcclusionCullingEnabled());
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Skip meshes hidden behind an Occluder. Off, or with no Occluder\n"
-                          "in the scene, nothing extra is hidden.");
-    ImGui::Checkbox("Static batching", &okay::visibility::StaticBatchingEnabled());
-    ImGui::SameLine();
-    ImGui::Checkbox("Dynamic batching", &okay::visibility::DynamicBatchingEnabled());
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Skip meshes the camera (or the sun's shadow map) can't see.\n"
-                          "Turn off only to check whether culling hides something it shouldn't.");
-    ImGui::SameLine();
-    ImGui::TextDisabled("| skinning: %s", okay::SkinnedMesh::GpuSkinning() ? "GPU" : "CPU");
-    ImGui::Spacing();
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped("Sky, lighting, post FX and debug view moved to the Lighting tab.");
-    ImGui::PopStyleColor();
-    ImGui::End();
+        const auto& cc = okay::LastCullCounters();   // last frame, after culling and batching
+        m.counters = {
+            {"Objects",    (int)ed.scene().Objects().size()},
+            {"Triangles",  stTris},
+            {"Meshes",     (int)ed.scene().FindObjectsOfType<MeshRenderer>().size()},
+            {"Sprites",    (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size()},
+            {"Lights",     (int)ed.scene().FindObjectsOfType<Light>().size()},
+            {"Colliders",  (int)(ed.scene().FindObjectsOfType<Collider2D>().size() + ed.scene().FindObjectsOfType<Collider3D>().size())},
+            {"Scripts",    (int)ed.scene().FindObjectsOfType<ScriptComponent>().size()},
+            {"NPCs",       (int)ed.scene().FindObjectsOfType<NPCController>().size()},
+            {"Particles",  stParts},
+            {"Drawn",      cc.drawn},
+            {"Culled",     cc.culled},
+            {"Occluded",   cc.occluded},
+            {"LOD culled", cc.lodCulled},
+            {"LOD0",       cc.lod0},
+            {"LOD1+",      cc.lod1 + cc.lod2 + cc.lod3},
+            {"Batches",    cc.batches},
+            {"Draws saved", cc.drawsSaved},
+        };
+        m.frustumCulling = &okay::FrustumCullingEnabled();
+        m.occlusionCulling = &okay::visibility::OcclusionCullingEnabled();
+        m.staticBatching = &okay::visibility::StaticBatchingEnabled();
+        m.dynamicBatching = &okay::visibility::DynamicBatchingEnabled();
+        m.gpuSkinning = okay::SkinnedMesh::GpuSkinning();
+    });
 }
 
 // Apply a look preset (Atmosphere.hpp) to the scene, aiming the first directional
@@ -12023,6 +11965,8 @@ void DrawScriptEditor(EditorState& ed) {
 
         // Statics that outlive the toolbar (used by the editor body further below).
         static bool  s_minimap = true;
+        static bool  s_wordWrap = false, s_showWs = false;   // View > Word Wrap / Show Whitespace (the code widget's own)
+        static int   s_foldReq = 0;                          // View > Fold All (1) / Unfold All (2), applied to the code widget
         static float s_zoom = 1.25f;
         {   // Density sets the starting code size; picking another step resets the zoom to that step's size
             static int s_zoomDensity = -1;
@@ -12060,6 +12004,10 @@ void DrawScriptEditor(EditorState& ed) {
                 ImGui::MenuItem("Syntax Colors", nullptr, &s_highlight);
                 ImGui::MenuItem("Minimap", nullptr, &s_minimap);
                 ImGui::MenuItem("Auto-close Brackets", nullptr, &g_scriptAutoPair);
+                ImGui::MenuItem("Word Wrap", nullptr, &s_wordWrap);
+                ImGui::MenuItem("Show Whitespace", nullptr, &s_showWs);
+                if (ImGui::MenuItem("Fold All", "Ctrl+Alt+[")) s_foldReq = 1;
+                if (ImGui::MenuItem("Unfold All", "Ctrl+Alt+]")) s_foldReq = 2;
                 ImGui::MenuItem("Problems Panel", nullptr, &s_showProblems);
                 oked::scriptui::DrawDensityMenu();   // Compact / Comfortable / Spacious, shared with the Visual Script window
                 ImGui::Separator();
@@ -12776,6 +12724,10 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); if (s.empty()) SetCodeBuffer(sc, s); else caret.replaceAll = s; std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},
                 {"Toggle Syntax Highlight", [&]{ s_highlight = !s_highlight; }},
                 {"Toggle Minimap", [&]{ s_minimap = !s_minimap; }},
+                {"Toggle Word Wrap", [&]{ s_wordWrap = !s_wordWrap; }},
+                {"Toggle Whitespace", [&]{ s_showWs = !s_showWs; }},
+                {"Fold All", [&]{ s_foldReq = 1; }},
+                {"Unfold All", [&]{ s_foldReq = 2; }},
                 {"Find in Files (Ctrl+Shift+F)", [&]{ g_showFindInFiles = true; g_fifFocus = true; }},
                 {"Toggle Comment Line", [&]{ caret.toggleComment = true; }},
                 {"Open Scripting Docs", [&]{ g_showScriptDocs = true; }},
@@ -13033,33 +12985,14 @@ void DrawScriptEditor(EditorState& ed) {
         // A negative width reserves the minimap column on the right.
         const float mmW = sdm.minimapW;
         bool showMap = s_minimap && av.x > 300.0f;
-        // Bracket / quote pairing (decided before the widget eats this frame's
-        // typing): ( [ { " ' get their closer, typing a closer that's already
-        // next to the caret steps over it, and Enter between { } opens a block.
+        // Bracket / quote pairing (typing over a closer, a pair removed by Backspace, Enter between { }) is the widget's own
+        // (OkayUI::CodeEdit::SetAutoClose; it skips strings and comments and works at every caret).
         static bool s_codeFocus = false;
-        const bool s_autoPair = g_scriptAutoPair;
-        char pairOpen = 0; bool stepOver = false, braceEnter = false;
-        if (s_autoPair && s_codeFocus && !acWasOpen && !te.HasSelection()) {
-            ImGuiIO& kio = ImGui::GetIO();
-            const std::string line = te.GetCurrentLineText();
-            const int col = te.GetCursorPosition().mColumn;
-            const char next = col < (int)line.size() ? line[col] : 0;
-            const char prev = col > 0 && col - 1 < (int)line.size() ? line[col - 1] : 0;
-            if (kio.InputQueueCharacters.Size == 1 && !kio.KeyCtrl) {
-                const ImWchar ch = kio.InputQueueCharacters[0];
-                if ((ch == ')' || ch == ']' || ch == '}' || ch == '"' || ch == '\'') && next == (char)ch) {
-                    kio.InputQueueCharacters.resize(0);   // step over the closer instead of doubling it
-                    stepOver = true;
-                } else if (ch == '(' || ch == '[' || ch == '{' || ch == '"' || ch == '\'') {
-                    bool ok = next == 0 || next == ' ' || next == ')' || next == ']' || next == '}' || next == ';' || next == ',';
-                    if ((ch == '"' || ch == '\'') && (std::isalnum((unsigned char)prev) || prev == '_')) ok = false;   // it's / x"
-                    if (ok) pairOpen = (char)ch;
-                }
-            }
-            if ((ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) &&
-                prev == '{' && next == '}')
-                braceEnter = true;
-        }
+        te.okay().SetAutoClose(g_scriptAutoPair);
+        te.okay().SetWordWrap(s_wordWrap);
+        te.okay().SetShowWhitespace(s_showWs);
+        if (s_foldReq == 1) te.okay().Edit().FoldAll(); else if (s_foldReq == 2) te.okay().Edit().UnfoldAll();
+        s_foldReq = 0;
         // ---- Scripts sidebar on the left: only the project's scripts (plus the
         // ones that live in the scene), with a filter. It folds away to a thin
         // strip with the chevron or Alt+1. (Classes and methods: double Shift.)
@@ -13278,25 +13211,6 @@ void DrawScriptEditor(EditorState& ed) {
             te.InsertTextUndoable(std::string(4 - (col % 4), ' '));
         }
         s_codeFocus = te.OkayHasKeyboard();
-        if (stepOver) {
-            ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
-            te.SetCursorPosition(ScriptEditorWidget::Coordinates(c.mLine, c.mColumn + 1));
-        }
-        if (pairOpen) {
-            const char close = pairOpen == '(' ? ')' : pairOpen == '[' ? ']' : pairOpen == '{' ? '}' : pairOpen;
-            ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
-            te.InsertTextUndoable(std::string(1, close));
-            te.SetCursorPosition(c);
-        }
-        if (braceEnter) {
-            // The widget already broke the line and indented it like the `{` line;
-            // add one level for the body and push the `}` to its own line.
-            ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
-            const std::string ln = te.GetCurrentLineText();
-            std::string ind; for (char ch : ln) { if (ch == ' ' || ch == '\t') ind += ch; else break; }
-            te.InsertTextUndoable("    \n" + ind);
-            te.SetCursorPosition(ScriptEditorWidget::Coordinates(c.mLine, c.mColumn + 4));
-        }
         ImVec2 teMin = ImGui::GetItemRectMin(), teMax = ImGui::GetItemRectMax();
         if (ImGui::IsItemHovered() && ImGui::GetIO().KeyCtrl && ImGui::GetIO().MouseWheel != 0.0f)
             s_zoom = Mathf::Clamp(s_zoom + ImGui::GetIO().MouseWheel * 0.1f, 0.7f, 3.0f);
@@ -13709,9 +13623,10 @@ void DrawScriptEditor(EditorState& ed) {
                 membersP = &csMembers;
             }
             const std::vector<std::string>& members = *membersP;
-            bool memberMode = !receiver.empty() && !members.empty();
+            // (a receiver that ends in a call, GetComponent("Light")., has no plain name: its expression counts)
+            bool memberMode = (!receiver.empty() || !recvExpr.empty()) && !members.empty();
             static std::string s_acKey;
-            std::string acKey = receiver + "|" + prefix;
+            std::string acKey = recvExpr + "|" + prefix;
             if (acKey != s_acKey) { g_acIndex = 0; s_acKey = acKey; g_acDismiss = false; }
             if (acKeyEsc) g_acDismiss = true;
             g_acCount = 0;
@@ -51769,207 +51684,57 @@ void DrawPerfOverlay(EditorState& ed) {
 // CSV copy of the selected frame. Data comes from OKAY_PROFILE scopes in the engine +
 // editor; the window only enables timing while it's open.
 void DrawProfiler(EditorState& ed) {
+    // Drawn by OkayUI only (editor/OkayPanels.cpp; docs/ui/own_ui_toolkit.md section 25): the model is filled only while the window
+    // shows, as before; the scene's draw stats are fed into this frame then too.
     okay::Profiler& P = okay::Prof();
-    if (!ImGui::Begin("Profiler", &g_showProfiler)) { ImGui::End(); return; }
-
-    // Live scene draw stats -> fed into this frame.
-    int objs = 0, tris = 0, parts = 0;
-    for (const auto& up : ed.scene().Objects()) {
-        if (!up || !up->active) continue;
-        if (auto* mr = up->GetComponent<okay::MeshRenderer>()) if (mr->enabled && !mr->wireframe) { ++objs; tris += mr->DisplayMesh().TriangleCount(); }
-        if (auto* ps = up->GetComponent<okay::ParticleSystem>()) parts += ps->AliveCount();
-    }
-    P.Stat3(objs, tris, parts);
-
-    const int n = P.Count();
-    double avg = 0.0, peak = 0.0; P.Range(avg, peak);
-    float top = (float)(peak > 0.0 ? peak * 1.15 : 33.4);
-
-    // ---- Controls row ----
-    ImGui::Checkbox("Pause##prof", &P.paused);
-    ImGui::SameLine();
-    if (!P.paused) P.selected = -1;
-    if (P.paused) {
-        ImGui::SetNextItemWidth(220);
-        if (n > 1) ImGui::SliderInt("Frame##prof", &P.selected, 0, n - 1, "frame %d");
-        if (P.selected < 0) P.selected = n - 1;
-    } else ImGui::TextDisabled("(pause to scrub frames)");
-    ImGui::SameLine(); ImGui::TextDisabled("16.7ms=60FPS  33.3ms=30FPS");
-
-    // ---- Timeline graphs (oldest -> newest) ----
-    static std::vector<float> gTotal, gGpu, gScripts, gPhysics, gRender, gOther;
-    gTotal.resize(n); gGpu.resize(n); gScripts.resize(n); gPhysics.resize(n); gRender.resize(n); gOther.resize(n);
-    for (int i = 0; i < n; ++i) {
-        const okay::Profiler::Frame& f = P.FrameAt(i);
-        gTotal[i] = (float)f.total; gGpu[i] = (float)f.gpu;
-        float sc = (float)okay::Profiler::CategorySelf(f, "Scripts");
-        float ph = (float)okay::Profiler::CategorySelf(f, "Physics");
-        float rd = (float)okay::Profiler::CategorySelf(f, "Render");
-        gScripts[i] = sc; gPhysics[i] = ph; gRender[i] = rd;
-        gOther[i] = (float)f.cpu - sc - ph - rd; if (gOther[i] < 0) gOther[i] = 0;
-    }
-    char ov[96];
-    std::snprintf(ov, sizeof(ov), "%.2f ms   %.0f FPS", P.lastFrameMs, P.lastFrameMs > 0.001 ? 1000.0 / P.lastFrameMs : 0.0);
-    ImGui::PlotLines("##frame", gTotal.empty() ? nullptr : gTotal.data(), n, 0, ov, 0.0f, top, ImVec2(-1, 80));
-    {   // Budget guide lines over the frame graph: green 60 FPS, amber 30 FPS —
-        // "is this frame over budget?" becomes visible instead of arithmetic.
-        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-        ImDrawList* pdl = ImGui::GetWindowDrawList();
-        auto guide = [&](float ms, ImU32 col, const char* lbl) {
-            if (top <= ms) return;
-            float y = mx.y - (ms / top) * (mx.y - mn.y);
-            pdl->AddLine(ImVec2(mn.x, y), ImVec2(mx.x, y), col, 1.0f);
-            pdl->AddText(ImVec2(mn.x + 4.0f, y - ImGui::GetTextLineHeight() - 1.0f), col, lbl);
-        };
-        guide(16.7f, IM_COL32(110, 220, 130, 170), "16.7 (60)");
-        guide(33.3f, IM_COL32(240, 190, 80, 170), "33.3 (30)");
-        // Scrub marker: while paused, show which frame of the history is displayed.
-        if (P.paused && n > 1 && P.selected >= 0) {
-            float fx = mn.x + ((float)P.selected / (float)(n - 1)) * (mx.x - mn.x);
-            pdl->AddLine(ImVec2(fx, mn.y), ImVec2(fx, mx.y), IM_COL32(255, 210, 0, 220), 1.5f);
+    okaypanels::ProfilerIntent in;
+    DrawProfilerOkayUI(&g_showProfiler, [&](okaypanels::ProfilerModel& m) {
+        int objs = 0, tris = 0, parts = 0;
+        for (const auto& up : ed.scene().Objects()) {
+            if (!up || !up->active) continue;
+            if (auto* mr = up->GetComponent<okay::MeshRenderer>()) if (mr->enabled && !mr->wireframe) { ++objs; tris += mr->DisplayMesh().TriangleCount(); }
+            if (auto* ps = up->GetComponent<okay::ParticleSystem>()) parts += ps->AliveCount();
         }
-    }
-    ImGui::PlotLines("##gpu",   gGpu.empty()   ? nullptr : gGpu.data(),   n, 0, "GPU ms", 0.0f, top, ImVec2(-1, 44));
-
-    // ---- Readouts ----
-    const okay::Profiler::Frame& F = P.Displayed();
-    ImGui::Text("Frame %.2f ms (%.0f FPS)", F.total, F.total > 0.001 ? 1000.0 / F.total : 0.0);
-    ImGui::SameLine(); ImGui::TextColored(ImVec4(0.55f,0.8f,1,1), "CPU %.2f", F.cpu);
-    ImGui::SameLine(); ImGui::TextColored(ImVec4(1,0.78f,0.45f,1), "GPU %.2f", F.gpu);
-    ImGui::SameLine(); ImGui::Text("| avg %.2f  peak %.2f", avg, peak);
-    ImGui::Text("Meshes %d    Triangles %d    Particles %d", F.objects, F.triangles, F.particles);
-
-    // ---- CPU category bars (this frame) ----
-    auto bar = [&](const char* label, double ms, ImVec4 col) {
-        float frac = F.cpu > 0.0001 ? (float)(ms / F.cpu) : 0.0f;
-        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, col);
-        char t[48]; std::snprintf(t, sizeof(t), "%s %.2f ms (%.0f%%)", label, ms, frac * 100.0f);
-        ImGui::ProgressBar(frac, ImVec2(-1, 0), t);
-        ImGui::PopStyleColor();
-    };
-    double cSc = okay::Profiler::CategorySelf(F, "Scripts");
-    double cPh = okay::Profiler::CategorySelf(F, "Physics");
-    double cRd = okay::Profiler::CategorySelf(F, "Render");
-    double cOt = F.cpu - cSc - cPh - cRd; if (cOt < 0) cOt = 0;
-    bar("Scripts", cSc, ImVec4(0.45f,0.75f,1.0f,1));
-    bar("Physics", cPh, ImVec4(0.55f,0.9f,0.55f,1));
-    bar("Render",  cRd, ImVec4(1.0f,0.75f,0.4f,1));
-    bar("Other",   cOt, ImVec4(0.7f,0.7f,0.75f,1));
-
-    // Plain-language diagnosis: tell the user what to look at, so the profiler is
-    // actually actionable instead of just numbers.
-    {
-        const char* heaviestCat = "Scripts"; double cm = cSc;
-        if (cPh > cm) { cm = cPh; heaviestCat = "Physics"; }
-        if (cRd > cm) { cm = cRd; heaviestCat = "Render"; }
-        if (cOt > cm) { cm = cOt; heaviestCat = "Other (engine/UI)"; }
-        std::string heaviestSec; double hs = 0.0;
-        for (const auto& b : F.buckets) if (b.self > hs) { hs = b.self; heaviestSec = b.name; }
-        std::string diag;
-        if (F.total < 0.001) diag = "Waiting for frames...";
-        else if (F.gpu > F.cpu * 1.3) diag = "GPU-bound: rendering dominates. Lower resolution/AA, fewer triangles, or simpler shaders.";
-        else if (F.cpu > F.gpu * 1.3) diag = "CPU-bound: " + std::string(heaviestCat) + " is heaviest"
-                                              + (heaviestSec.empty() ? "" : " (top: " + heaviestSec + ").");
-        else diag = "Balanced CPU/GPU.";
-        if (F.total > 0.001) {
-            double fps = 1000.0 / F.total;
-            if (fps >= 58) diag += "  Running smoothly (60+ FPS).";
-            else if (fps >= 28) diag += "  ~30 FPS.";
-            else diag += "  Below 30 FPS — optimise the heaviest section above.";
-        }
-        ImGui::TextColored(ImVec4(0.85f,0.9f,1.0f,1.0f), "Diagnosis:");
-        ImGui::SameLine(); ImGui::TextWrapped("%s", diag.c_str());
-    }
-    ImGui::Separator();
-
-    // ---- CSV copy of the displayed frame ----
-    if (ImGui::SmallButton("Copy CSV##prof")) {
-        std::string csv = "Section,Self ms,Total ms,Calls,Avg ms,Min ms,Max ms\n";
+        P.Stat3(objs, tris, parts);
+        const int n = P.Count();
+        P.Range(m.avg, m.peak);
+        m.paused = &P.paused;
+        m.selected = &P.selected;
+        m.total.resize((std::size_t)n); m.gpu.resize((std::size_t)n);
+        for (int i = 0; i < n; ++i) { const okay::Profiler::Frame& f = P.FrameAt(i); m.total[(std::size_t)i] = (float)f.total; m.gpu[(std::size_t)i] = (float)f.gpu; }
+        okaypanels::ProfilerFixSelection(m);   // before Displayed(): the scrubbed frame is the one shown
+        m.lastFrameMs = P.lastFrameMs;
+        const okay::Profiler::Frame& F = P.Displayed();
+        m.frameMs = F.total; m.cpuMs = F.cpu; m.gpuMs = F.gpu;
+        m.meshes = F.objects; m.triangles = F.triangles; m.particles = F.particles;
+        m.scriptsMs = okay::Profiler::CategorySelf(F, "Scripts");
+        m.physicsMs = okay::Profiler::CategorySelf(F, "Physics");
+        m.renderMs = okay::Profiler::CategorySelf(F, "Render");
         for (const auto& b : F.buckets) {
-            okay::Profiler::Stat st = P.SectionStat(b.name);
-            char line[256];
-            std::snprintf(line, sizeof(line), "%s,%.4f,%.4f,%d,%.4f,%.4f,%.4f\n",
-                          b.name.c_str(), b.self, b.inclusive, b.calls, st.avg, st.mn, st.mx);
-            csv += line;
+            const okay::Profiler::Stat s = P.SectionStat(b.name);
+            okaypanels::ProfilerSection sec;
+            sec.name = b.name; sec.self = b.self; sec.inclusive = b.inclusive; sec.calls = b.calls; sec.depth = b.depth;
+            sec.min = s.mn; sec.avg = s.avg; sec.max = s.mx;
+            m.sections.push_back(sec);
         }
-        ImGui::SetClipboardText(csv.c_str());
-        ConsoleLog("Profiler frame copied as CSV.");
-    }
-    ImGui::SameLine(); ImGui::TextDisabled("section breakdown  (?)");
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Self ms  = time spent in this section, NOT counting nested sections.\n"
-                          "Total ms = time including everything it called (indented = nested).\n"
-                          "%%        = share of this frame's CPU.\n"
-                          "Calls    = how many times it ran this frame.\n"
-                          "Avg/Max  = over the recorded window.\n"
-                          "Red rows are 'hot' (>30%% of CPU) — start optimising there.");
-
-    // ---- Per-section table: self/total/calls/%, indented by call depth, with stats ----
-    if (ImGui::BeginTable("profrows", 7,
-            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp |
-            ImGuiTableFlags_ScrollY, ImVec2(0, 220))) {
-        ImGui::TableSetupColumn("Section", ImGuiTableColumnFlags_WidthStretch, 2.2f);
-        ImGui::TableSetupColumn("Self ms");
-        ImGui::TableSetupColumn("Total ms");
-        ImGui::TableSetupColumn("%");
-        ImGui::TableSetupColumn("Calls");
-        ImGui::TableSetupColumn("Avg");
-        ImGui::TableSetupColumn("Max");
-        ImGui::TableHeadersRow();
-        std::vector<okay::Profiler::Bucket> rows(F.buckets.begin(), F.buckets.end());
-        std::sort(rows.begin(), rows.end(),
-                  [](const okay::Profiler::Bucket& a, const okay::Profiler::Bucket& b){ return a.self > b.self; });
-        for (const auto& b : rows) {
-            okay::Profiler::Stat st = P.SectionStat(b.name);
-            float frac = F.cpu > 0.0001 ? (float)(b.self / F.cpu) : 0.0f;
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            if (b.depth > 0) ImGui::Indent(b.depth * 12.0f);
-            // Hot sections (heavy self time) flagged red.
-            if (b.self > F.cpu * 0.30 && F.cpu > 0.5) ImGui::TextColored(ImVec4(1,0.5f,0.45f,1), "%s", b.name.c_str());
-            else ImGui::TextUnformatted(b.name.c_str());
-            if (b.depth > 0) ImGui::Unindent(b.depth * 12.0f);
-            ImGui::TableNextColumn(); ImGui::Text("%.3f", b.self);
-            ImGui::TableNextColumn(); ImGui::Text("%.3f", b.inclusive);
-            ImGui::TableNextColumn(); ImGui::Text("%.0f%%", frac * 100.0f);
-            ImGui::TableNextColumn(); ImGui::Text("%d", b.calls);
-            ImGui::TableNextColumn(); ImGui::Text("%.3f", st.avg);
-            ImGui::TableNextColumn(); ImGui::Text("%.3f", st.mx);
-        }
-        ImGui::EndTable();
-    }
-    if (F.buckets.empty())
-        ImGui::TextDisabled(ed.isPlaying() ? "Collecting samples..."
-                                           : "Press Play to time Scripts/Physics; the editor render is always timed.");
-    // Textures: every picture the shared texture library holds (Render/TextureAsset.hpp), its size and memory, and the
-    // budget (OKAY_TEXTURE_BUDGET_MB). GPU bytes are what the renderers uploaded (MemoryTracker "Textures (GPU)").
-    if (ImGui::CollapsingHeader("Textures")) {
-        const okay::textures::Stats ts = okay::textures::GetStats();
-        ImGui::TextUnformatted(okay::textures::OverlayLine().c_str());
-        if (ts.overBudget) ImGui::TextColored(ImVec4(1, 0.5f, 0.45f, 1), "Over the texture budget: unused pictures are let go of.");
-        ImGui::TextDisabled("Hot reload %s, %llu reloaded, %llu let go of for the budget", okay::textures::HotReload() ? "on" : "off",
-                            (unsigned long long)ts.reloads, (unsigned long long)ts.trimmed);
-        if (ImGui::BeginTable("proftex", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp |
-                              ImGuiTableFlags_ScrollY, ImVec2(0, 180))) {
-            ImGui::TableSetupColumn("Texture", ImGuiTableColumnFlags_WidthStretch, 3.0f);
-            ImGui::TableSetupColumn("Size");
-            ImGui::TableSetupColumn("Mips");
-            ImGui::TableSetupColumn("MB");
-            ImGui::TableSetupColumn("Kind");
-            ImGui::TableHeadersRow();
+        m.playing = ed.isPlaying();
+        // Textures: every picture the shared texture library holds (Render/TextureAsset.hpp), its size and memory, and the budget
+        // (OKAY_TEXTURE_BUDGET_MB); asked only while the section is open.
+        m.textures = [](okaypanels::ProfilerTextures& t) {
+            const okay::textures::Stats ts = okay::textures::GetStats();
+            t.line = okay::textures::OverlayLine();
+            t.overBudget = ts.overBudget;
+            t.hotReload = okay::textures::HotReload();
+            t.reloads = (unsigned long long)ts.reloads; t.trimmed = (unsigned long long)ts.trimmed;
             for (const okay::textures::Row& r : okay::textures::Report()) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn(); ImGui::TextUnformatted(std::filesystem::path(r.path).filename().string().c_str());
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", r.path.c_str());
-                ImGui::TableNextColumn(); ImGui::Text("%dx%d", r.width, r.height);
-                ImGui::TableNextColumn(); ImGui::Text("%d", r.mipLevels);
-                ImGui::TableNextColumn(); ImGui::Text("%.2f", r.bytes / 1048576.0);
-                ImGui::TableNextColumn(); ImGui::TextUnformatted(r.registered ? "in memory" : r.normalMap ? "normal" : r.sRGB ? "colour" : "data");
+                okaypanels::ProfilerTexture x;
+                x.path = r.path; x.width = r.width; x.height = r.height; x.mipLevels = r.mipLevels; x.megabytes = r.bytes / 1048576.0;
+                x.kind = r.registered ? "in memory" : r.normalMap ? "normal" : r.sRGB ? "colour" : "data";
+                t.rows.push_back(x);
             }
-            ImGui::EndTable();
-        }
-    }
-    ImGui::End();
+        };
+    }, in);
+    if (in.copyCsv) ConsoleLog("Profiler frame copied as CSV.");
 }
 
 // The phone / tablet body behind the emulated screen (drawn before the game).
@@ -54937,6 +54702,21 @@ int main(int argc, char** argv) {
                 ed.scene().renderSettings.weather.intensity = 1.0f;
             }
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
+            if (std::getenv("OKAY_UI_TIMERS")) {
+                g_showTimers = true;
+                if (s_focusFrames == 40) {
+                    okay::Scheduler::Options opt;
+                    opt.tag = "demo";
+                    ed.scene().scheduler().Invoke(1.5f, [] {}, opt);
+                    auto tw = ed.scene().tweens().DelayedCall(0.8f, [] {});
+                    if (tw) tw->id = "fade";
+                }
+                if (s_focusFrames > 30 && s_focusFrames < 90) ImGui::SetWindowFocus("Timers");
+            }
+            if (std::getenv("OKAY_UI_PROFILER")) {
+                g_showProfiler = true;
+                if (s_focusFrames > 30 && s_focusFrames < 90) ImGui::SetWindowFocus("Profiler");
+            }
             if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
             LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY / OKAY_UI_LOCIMPORT
@@ -55440,6 +55220,17 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.MaterialEditor"); DrawMaterialEditor(ed); }
         { OKAY_PROFILE("UI.GameView"); if (g_showGame)      DrawGameView(ed); }
         { OKAY_PROFILE("UI.Profiler"); if (g_showProfiler)  DrawProfiler(ed); }
+        if (g_showTimers) {
+            if (std::getenv("OKAY_UI_TIMERS")) {
+                ImGui::SetNextWindowPos(ImVec2(280, 80), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(720, 420), ImGuiCond_Always);
+            }
+            if (ImGui::Begin("Timers", &g_showTimers)) {
+                const std::string text = okay::editor::TimerDebugText(ed.scene());
+                ImGui::TextUnformatted(text.c_str());
+            }
+            ImGui::End();
+        }
         { OKAY_PROFILE("UI.PerfOverlay"); if (g_showPerfOverlay) DrawPerfOverlay(ed); }
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }
         DrawFpHandsPreviewWindow(ed);

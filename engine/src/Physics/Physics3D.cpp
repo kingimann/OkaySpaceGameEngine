@@ -493,7 +493,7 @@ void Physics3D::Step(Scene& scene, float dt) {
         }
         for (Joint3D* j : CachedComponents<Joint3D>(scene)) {
             if (!j->gameObject || !j->transform || (int)m_debugJoints.size() >= PhysicsDebug::kMaxBodies) continue;
-            GameObject* other = CachedPartner(scene, j);
+            GameObject* other = Joint3DPartner(scene, j);
             m_debugJoints.push_back({j->transform->Position(), other && other->transform ? other->transform->Position() : j->anchor, j->broken});
         }
     }
@@ -1122,6 +1122,19 @@ std::vector<Collider3D*> Overlap(Scene& scene, const QueryShape& q, std::uint32_
     return out;
 }
 
+// The interval of a sweep where `c`'s bounds can meet the query. False when the bounds are unusable or the
+// shape never reaches them. `t0`/`t1` come back clamped to [0, maxDist].
+bool SweepWindow(Collider3D* c, const Vec3& origin, const Vec3& dir, const Vec3& extent, float maxDist, float& t0, float& t1) {
+    Vec3 mn, mx;
+    c->WorldAABB(mn, mx);
+    if (!(std::isfinite(mn.x + mn.y + mn.z + mx.x + mx.y + mx.z))) return false;
+    if (!RaySlabs(origin, dir, mn - extent, mx + extent, t0, t1)) return false;
+    if (t1 < 0.0f || t0 > maxDist) return false;
+    t0 = Mathf::Max(t0, 0.0f);
+    t1 = Mathf::Min(t1, maxDist);
+    return true;
+}
+
 // Sweep query shape q along unit `dir` up to maxDist; the nearest collider it
 // touches. Only the stretch of the path where a collider's (inflated) bounds
 // lie is marched, in steps of half the shape's thinnest size (so a thin wall
@@ -1143,14 +1156,10 @@ RaycastHit3D Sweep(Scene& scene, const QueryShape& q, const Vec3& dir, float max
     for (Collider3D* c : (only ? *only : everything)) {
         if (!Passes(c, ignore, mask, queryTriggers)) continue;
         if (skipTriMeshes && MeshHasTris(c)) continue;
-        Vec3 mn, mx; c->WorldAABB(mn, mx);
-        if (!(std::isfinite(mn.x + mn.y + mn.z + mx.x + mx.y + mx.z))) continue;   // NaN or infinite bounds: not a place to hit
         float t0, t1;
-        if (!RaySlabs(o, dir, mn - ext, mx + ext, t0, t1)) continue;
-        if (t1 < 0.0f || t0 > maxDist) continue;
+        if (!SweepWindow(c, o, dir, ext, maxDist, t0, t1)) continue;
         Vec3 n, p;   // (the bounds test comes first: it is cheap, and most colliders are nowhere near the path)
         if (skipStartOverlaps && ShapeTouch(c, q, n, p)) continue;
-        t0 = Mathf::Max(t0, 0.0f); t1 = Mathf::Min(t1, maxDist);
         cands.push_back({c, t0, t1});
         lo = Mathf::Min(lo, t0); hi = Mathf::Max(hi, t1);
     }
@@ -1194,6 +1203,119 @@ RaycastHit3D Sweep(Scene& scene, const QueryShape& q, const Vec3& dir, float max
     return best;
 }
 
+// How far `q` reaches from its centre along `n` (n should be unit length).
+float ShapeReach(const QueryShape& q, const Vec3& n) {
+    if (q.kind == QueryShape::Box)
+        return std::fabs(Vec3::Dot(q.box.ax, n)) * q.box.h.x
+             + std::fabs(Vec3::Dot(q.box.ay, n)) * q.box.h.y
+             + std::fabs(Vec3::Dot(q.box.az, n)) * q.box.h.z;
+    float reach = q.r;
+    if (q.kind == QueryShape::Capsule) {
+        Vec3 seg = q.b - q.a;
+        float len = seg.Magnitude();
+        if (len > 1e-8f) reach += 0.5f * len * std::fabs(Vec3::Dot(seg * (1.0f / len), n));
+    }
+    return reach;
+}
+
+// Terrain is part of every shape cast, not only a zero-radius ray. The ray hits the
+// surface; the cast hits earlier by the shape's reach along the ground normal.
+void AddTerrainSweep(Scene& scene, const QueryShape& q, const Vec3& dir, float maxDist,
+                     GameObject* ignore, std::uint32_t mask, std::vector<RaycastHit3D>& hits) {
+    if (!(dir.SqrMagnitude() > 0.5f) || !(maxDist > 0.0f)) return;
+    for (Terrain* terr : scene.FindObjectsOfType<Terrain>()) {
+        if (!TerrainPasses(terr, ignore, mask) || !terr->gameObject) continue;
+        float t = 0.0f;
+        Vec3 n{0, 1, 0};
+        float reachGuess = q.kind == QueryShape::Box ? (q.box.h.x + q.box.h.y + q.box.h.z) : q.r + 0.01f;
+        if (!RayTerrain(terr, q.Center(), dir, maxDist + reachGuess + 1.0f, t, n)) continue;
+        float approach = -Vec3::Dot(n, dir);
+        if (!(approach > 0.05f)) continue;
+        float hitT = t - ShapeReach(q, n) / approach;
+        if (hitT < 0.0f) hitT = 0.0f;
+        if (hitT > maxDist) continue;
+        RaycastHit3D h;
+        h.hit = true; h.collider = nullptr; h.gameObject = terr->gameObject;
+        h.distance = hitT; h.point = q.Center() + dir * t; h.normal = n;
+        hits.push_back(h);
+    }
+}
+
+// Every collider the sweep touches, nearest first. Each candidate is marched on its own, with the same
+// step and bisection as Sweep, so a thin wall between two samples is not skipped and a later wall is kept.
+// A zero direction or a zero distance still reports what the shape already overlaps, the same as SphereCast
+// testing the place it stands.
+std::vector<RaycastHit3D> SweepAll(Scene& scene, const QueryShape& q, const Vec3& dir, float maxDist,
+                                   GameObject* ignore, std::uint32_t mask, bool queryTriggers) {
+    std::vector<RaycastHit3D> hits;
+    const bool badDir = !(dir.SqrMagnitude() >= 1e-12f) || !std::isfinite(dir.x) || !std::isfinite(dir.y) || !std::isfinite(dir.z);
+    const bool zeroDist = !(maxDist > 1e-8f);
+    if (badDir || zeroDist) {
+        if (!(maxDist >= 0.0f) || !std::isfinite(maxDist)) return hits;
+        for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
+            if (!Passes(c, ignore, mask, queryTriggers)) continue;
+            Vec3 n, p;
+            if (!ShapeTouch(c, q, n, p)) continue;
+            RaycastHit3D h;
+            h.hit = true; h.collider = c; h.gameObject = c->gameObject;
+            h.distance = 0.0f; h.point = p; h.normal = n;
+            hits.push_back(h);
+        }
+        return hits;
+    }
+    struct Cand { Collider3D* c; float t0, t1; };
+    std::vector<Cand> cands;
+    const Vec3 o = q.Center(), ext = q.Extent();
+    for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
+        if (!Passes(c, ignore, mask, queryTriggers)) continue;
+        float t0, t1;
+        if (!SweepWindow(c, o, dir, ext, maxDist, t0, t1)) continue;
+        cands.push_back({c, t0, t1});
+    }
+    float step = Mathf::Max(q.Thinnest() * 0.5f, 0.02f);
+    if (!std::isfinite(step) || step <= 0.0f) return hits;
+    for (const Cand& cd : cands) {
+        if (!(cd.t1 >= cd.t0) || !std::isfinite(cd.t0 + cd.t1)) continue;
+        Vec3 n, p;
+        auto touchAt = [&](float t) { return ShapeTouch(cd.c, q.Moved(dir * t), n, p); };
+        float hitT = cd.t0;
+        bool found = touchAt(cd.t0);
+        if (!found) {
+            float prev = cd.t0;
+            float span = cd.t1 - cd.t0;
+            float st = (span / step > 20000.0f) ? span / 20000.0f : step;
+            int samples = 0;
+            for (float t = cd.t0 + st; ; t += st) {
+                bool last = t >= cd.t1 || ++samples > 20002;
+                if (last) t = cd.t1;
+                if (touchAt(t)) {
+                    float a = prev, b = t;
+                    for (int it = 0; it < 12 && b > a; ++it) {
+                        float m = (a + b) * 0.5f;
+                        if (touchAt(m)) b = m; else a = m;
+                    }
+                    hitT = b;
+                    touchAt(b);
+                    found = true;
+                    break;
+                }
+                if (last) break;
+                prev = t;
+            }
+        }
+        if (!found) continue;
+        RaycastHit3D h;
+        h.hit = true; h.collider = cd.c; h.gameObject = cd.c->gameObject;
+        h.distance = hitT; h.point = p; h.normal = n;
+        hits.push_back(h);
+    }
+    AddTerrainSweep(scene, q, dir, maxDist, ignore, mask, hits);
+    std::sort(hits.begin(), hits.end(), [](const RaycastHit3D& a, const RaycastHit3D& b) {
+        return a.distance < b.distance;
+    });
+    return hits;
+}
+
 QueryShape SphereShape(const Vec3& c, float r) {
     QueryShape q; q.kind = QueryShape::Sphere; q.c = c; q.r = r; return q;
 }
@@ -1205,6 +1327,89 @@ QueryShape BoxShape(const Vec3& c, const Vec3& h, const Quat& rot) {
 }
 QueryShape CapsuleShape(const Vec3& a, const Vec3& b, float r) {
     QueryShape q; q.kind = QueryShape::Capsule; q.a = a; q.b = b; q.r = r; return q;
+}
+
+// Push one sphere centre out of one solid collider. True when the centre moved.
+bool NudgeSphere(Collider3D* col, Vec3& c, float r) {
+    if (MeshCollider3D* mc = TriMeshOf(col)) {
+        trimesh::Contact k = trimesh::WorldView(ActiveTris(mc), mc->WorldMatrix()).Sphere(c, r);
+        if (k.hit && k.penetration > 1e-5f) { c = c + k.normal * k.penetration; return true; }
+        return false;
+    }
+    if (col->shape() == Collider3D::Shape::Sphere) {
+        Vec3 sc; float sr; AsSphere(col, c, sc, sr);
+        Vec3 d = c - sc; float dl = d.Magnitude();
+        if (dl < r + sr) {
+            Vec3 n = dl > 1e-5f ? d * (1.0f / dl) : Vec3{0, 1, 0};
+            c = sc + n * (r + sr); return true;
+        }
+        return false;
+    }
+    if (IsBoxLike(col->shape())) {
+        auto* box = static_cast<BoxCollider3D*>(col);
+        Vec3 bc = box->WorldCenter(), h = box->HalfExtents();
+        Vec3 ax, ay, az; box->WorldAxes(ax, ay, az);
+        Vec3 rel = c - bc;
+        Vec3 l{Vec3::Dot(rel, ax), Vec3::Dot(rel, ay), Vec3::Dot(rel, az)};
+        Vec3 cl = ClampVec(l, {-h.x, -h.y, -h.z}, {h.x, h.y, h.z});
+        Vec3 dl3 = l - cl; float dl = dl3.Magnitude();
+        Vec3 ln;
+        float push = 0.0f;
+        if (dl > 1e-5f) {
+            if (dl < r) { ln = dl3 * (1.0f / dl); push = r - dl; }
+        } else {
+            float dxl = l.x + h.x, dxh = h.x - l.x;
+            float dyl = l.y + h.y, dyh = h.y - l.y;
+            float dzl = l.z + h.z, dzh = h.z - l.z;
+            float m = dxl; ln = {-1, 0, 0};
+            if (dxh < m) { m = dxh; ln = {1, 0, 0}; }
+            if (dyl < m) { m = dyl; ln = {0, -1, 0}; }
+            if (dyh < m) { m = dyh; ln = {0, 1, 0}; }
+            if (dzl < m) { m = dzl; ln = {0, 0, -1}; }
+            if (dzh < m) { m = dzh; ln = {0, 0, 1}; }
+            push = m + r;
+        }
+        if (push > 0.0f) {
+            Vec3 wn = ax * ln.x + ay * ln.y + az * ln.z;
+            c = c + wn * push; return true;
+        }
+        return false;
+    }
+    if (IsGenericShape(col) || col->shape() == Collider3D::Shape::Capsule) {
+        Vec3 sn, sp;
+        if (!SphereTouch(col, c, r, sn, sp)) return false;
+        SupFn sup = [c, r](const Vec3& d) { float m = d.Magnitude(); return m > 1e-12f ? c + d * (r / m) : c; };
+        float depth;
+        if (IsGenericShape(col)) {
+            Contact k = GenericVs(col, sup, c - Vec3{r, r, r}, c + Vec3{r, r, r});
+            if (!k.hit) return false;
+            depth = k.penetration; sn = k.normal;
+        } else {
+            Vec3 sc; float sr; AsSphere(col, c, sc, sr);
+            Vec3 dv = c - sc; float dl = dv.Magnitude();
+            depth = r + sr - dl; sn = dl > 1e-6f ? dv * (1.0f / dl) : Vec3{0, 1, 0};
+        }
+        if (depth > 1e-5f) { c = c + sn * depth; return true; }
+        return false;
+    }
+    Vec3 mn, mx; col->WorldAABB(mn, mx);
+    Vec3 cp = ClampVec(c, mn, mx);
+    Vec3 d = c - cp; float dl = d.Magnitude();
+    if (dl > 1e-5f) {
+        if (dl < r) { c = cp + d * (1.0f / dl) * r; return true; }
+        return false;
+    }
+    float dxl = c.x - mn.x, dxh = mx.x - c.x;
+    float dyl = c.y - mn.y, dyh = mx.y - c.y;
+    float dzl = c.z - mn.z, dzh = mx.z - c.z;
+    float m = dxl; Vec3 n{-1, 0, 0};
+    if (dxh < m) { m = dxh; n = {1, 0, 0}; }
+    if (dyl < m) { m = dyl; n = {0, -1, 0}; }
+    if (dyh < m) { m = dyh; n = {0, 1, 0}; }
+    if (dzl < m) { m = dzl; n = {0, 0, -1}; }
+    if (dzh < m) { m = dzh; n = {0, 0, 1}; }
+    c = c + n * (m + r);
+    return true;
 }
 } // namespace
 
@@ -1238,6 +1443,14 @@ RaycastHit3D Physics3D::SphereCast(Scene& scene, const Vec3& origin, const Vec3&
                  queryTriggers, /*skipStartOverlaps*/ false);
 }
 
+std::vector<RaycastHit3D> Physics3D::SphereCastAll(Scene& scene, const Vec3& origin, const Vec3& direction,
+                                                   float radius, float maxDistance, GameObject* ignore,
+                                                   std::uint32_t layerMask, bool queryTriggers) {
+    Vec3 dir = direction.Normalized();
+    if (radius <= 0.0f) return RaycastAll(scene, origin, dir, maxDistance, ignore, layerMask, queryTriggers);
+    return SweepAll(scene, SphereShape(origin, radius), dir, maxDistance, ignore, layerMask, queryTriggers);
+}
+
 RaycastHit3D Physics3D::BoxCast(Scene& scene, const Vec3& center, const Vec3& halfExtents,
                                 const Vec3& direction, const Quat& rotation, float maxDistance,
                                 GameObject* ignore, std::uint32_t layerMask, bool queryTriggers) {
@@ -1245,11 +1458,30 @@ RaycastHit3D Physics3D::BoxCast(Scene& scene, const Vec3& center, const Vec3& ha
                  ignore, layerMask, queryTriggers, /*skipStartOverlaps*/ false);
 }
 
+std::vector<RaycastHit3D> Physics3D::BoxCastAll(Scene& scene, const Vec3& center, const Vec3& halfExtents,
+                                               const Vec3& direction, const Quat& rotation, float maxDistance,
+                                               GameObject* ignore, std::uint32_t layerMask, bool queryTriggers) {
+    // A box with no size is a ray, and a ray includes terrain (the same as SphereCastAll with radius 0).
+    if (!(halfExtents.x > 1e-6f) && !(halfExtents.y > 1e-6f) && !(halfExtents.z > 1e-6f))
+        return RaycastAll(scene, center, direction.Normalized(), maxDistance, ignore, layerMask, queryTriggers);
+    return SweepAll(scene, BoxShape(center, halfExtents, rotation), direction.Normalized(), maxDistance,
+                    ignore, layerMask, queryTriggers);
+}
+
 RaycastHit3D Physics3D::CapsuleCast(Scene& scene, const Vec3& a, const Vec3& b, float radius,
                                     const Vec3& direction, float maxDistance, GameObject* ignore,
                                     std::uint32_t layerMask, bool queryTriggers) {
     return Sweep(scene, CapsuleShape(a, b, radius), direction.Normalized(), maxDistance,
                  ignore, layerMask, queryTriggers, /*skipStartOverlaps*/ false);
+}
+
+std::vector<RaycastHit3D> Physics3D::CapsuleCastAll(Scene& scene, const Vec3& a, const Vec3& b, float radius,
+                                                   const Vec3& direction, float maxDistance, GameObject* ignore,
+                                                   std::uint32_t layerMask, bool queryTriggers) {
+    if (!(radius > 0.0f) && (a - b).SqrMagnitude() < 1e-12f)
+        return RaycastAll(scene, a, direction.Normalized(), maxDistance, ignore, layerMask, queryTriggers);
+    return SweepAll(scene, CapsuleShape(a, b, radius), direction.Normalized(), maxDistance,
+                    ignore, layerMask, queryTriggers);
 }
 
 const TriggerContact3D* Physics3D::CurrentTrigger() { return g_currentTrigger; }
@@ -1272,95 +1504,54 @@ Vec3 Physics3D::ResolveSphere(Scene& scene, Vec3 c, float r, GameObject* ignore,
         for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
             if (!Alive(col)) continue;
             if (ignore && col->gameObject == ignore) continue;
-            if (col->isTrigger) continue;                 // triggers never block
-            if (MeshCollider3D* mc = TriMeshOf(col)) {     // exact triangles, or the hull when dynamic
-                trimesh::Contact k = trimesh::WorldView(ActiveTris(mc), mc->WorldMatrix()).Sphere(c, r);
-                if (k.hit && k.penetration > 1e-5f) { c = c + k.normal * k.penetration; moved = true; }
-                continue;
-            }
-            if (col->shape() == Collider3D::Shape::Sphere) {
-                Vec3 sc; float sr; AsSphere(col, c, sc, sr);
-                Vec3 d = c - sc; float dl = d.Magnitude();
-                if (dl < r + sr) {
-                    Vec3 n = dl > 1e-5f ? d * (1.0f / dl) : Vec3{0, 1, 0};
-                    c = sc + n * (r + sr); moved = true;
-                }
-                continue;
-            }
-            if (IsBoxLike(col->shape())) {
-                // Oriented box: work in the box's local frame so a rotated platform
-                // pushes the sphere off its true faces, not its (larger) AABB.
-                auto* box = static_cast<BoxCollider3D*>(col);
-                Vec3 bc = box->WorldCenter(), h = box->HalfExtents();
-                Vec3 ax, ay, az; box->WorldAxes(ax, ay, az);
-                Vec3 rel = c - bc;
-                Vec3 l{Vec3::Dot(rel, ax), Vec3::Dot(rel, ay), Vec3::Dot(rel, az)};
-                Vec3 cl = ClampVec(l, {-h.x, -h.y, -h.z}, {h.x, h.y, h.z});
-                Vec3 dl3 = l - cl; float dl = dl3.Magnitude();
-                Vec3 ln;                                   // push direction, local space
-                float push = 0.0f;
-                if (dl > 1e-5f) {
-                    if (dl < r) { ln = dl3 * (1.0f / dl); push = r - dl; }
-                } else {
-                    // Centre inside: eject along the least-penetrating local axis.
-                    float dxl = l.x + h.x, dxh = h.x - l.x;
-                    float dyl = l.y + h.y, dyh = h.y - l.y;
-                    float dzl = l.z + h.z, dzh = h.z - l.z;
-                    float m = dxl; ln = {-1, 0, 0};
-                    if (dxh < m) { m = dxh; ln = {1, 0, 0}; }
-                    if (dyl < m) { m = dyl; ln = {0, -1, 0}; }
-                    if (dyh < m) { m = dyh; ln = {0, 1, 0}; }
-                    if (dzl < m) { m = dzl; ln = {0, 0, -1}; }
-                    if (dzh < m) { m = dzh; ln = {0, 0, 1}; }
-                    push = m + r;
-                }
-                if (push > 0.0f) {
-                    Vec3 wn = ax * ln.x + ay * ln.y + az * ln.z;   // local -> world normal
-                    c = c + wn * push; moved = true;
-                }
-                continue;
-            }
-            if (IsGenericShape(col) || col->shape() == Collider3D::Shape::Capsule) {
-                // Capsule, Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield: the exact shape, not its bounds.
-                Vec3 sn, sp;
-                if (!SphereTouch(col, c, r, sn, sp)) continue;
-                SupFn sup = [c, r](const Vec3& d) { float m = d.Magnitude(); return m > 1e-12f ? c + d * (r / m) : c; };
-                float depth;
-                if (IsGenericShape(col)) {
-                    Contact k = GenericVs(col, sup, c - Vec3{r, r, r}, c + Vec3{r, r, r});
-                    if (!k.hit) continue;
-                    depth = k.penetration; sn = k.normal;
-                } else {
-                    Vec3 sc; float sr; AsSphere(col, c, sc, sr);
-                    Vec3 dv = c - sc; float dl = dv.Magnitude();
-                    depth = r + sr - dl; sn = dl > 1e-6f ? dv * (1.0f / dl) : Vec3{0, 1, 0};
-                }
-                if (depth > 1e-5f) { c = c + sn * depth; moved = true; }
-                continue;
-            }
-            // Anything else (no exact shape): push out of the box surface.
-            Vec3 mn, mx; col->WorldAABB(mn, mx);
-            Vec3 cp = ClampVec(c, mn, mx);
-            Vec3 d = c - cp; float dl = d.Magnitude();
-            if (dl > 1e-5f) {
-                if (dl < r) { c = cp + d * (1.0f / dl) * r; moved = true; }
-            } else {
-                // Centre is inside the box: eject along the axis of least penetration.
-                float dxl = c.x - mn.x, dxh = mx.x - c.x;
-                float dyl = c.y - mn.y, dyh = mx.y - c.y;
-                float dzl = c.z - mn.z, dzh = mx.z - c.z;
-                float m = dxl; Vec3 n{-1, 0, 0};
-                if (dxh < m) { m = dxh; n = {1, 0, 0}; }
-                if (dyl < m) { m = dyl; n = {0, -1, 0}; }
-                if (dyh < m) { m = dyh; n = {0, 1, 0}; }
-                if (dzl < m) { m = dzl; n = {0, 0, -1}; }
-                if (dzh < m) { m = dzh; n = {0, 0, 1}; }
-                c = c + n * (m + r); moved = true;
-            }
+            if (col->isTrigger) continue;
+            if (NudgeSphere(col, c, r)) moved = true;
         }
         if (!moved) break;
     }
     return c;
+}
+
+Vec3 Physics3D::ResolveCapsule(Scene& scene, Vec3 center, Vec3 axis, float halfSegment, float radius,
+                               GameObject* ignore, int iterations) {
+    float al = axis.Magnitude();
+    if (al > 1e-8f) axis = axis * (1.0f / al);
+    else axis = {0, 1, 0};
+    if (!(halfSegment > 1e-4f) || !(radius > 0.0f))
+        return ResolveSphere(scene, center, std::max(radius, 0.0f), ignore, iterations);
+    for (int it = 0; it < iterations; ++it) {
+        bool moved = false;
+        Vec3 a = center - axis * halfSegment;
+        Vec3 b = center + axis * halfSegment;
+        for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
+            if (!Alive(col) || (ignore && col->gameObject == ignore) || col->isTrigger) continue;
+            // Seven stations along the segment, plus the point nearest this collider.
+            // Three stations (the two ends and the waist) miss a corner that overlaps
+            // the body between them.
+            Vec3 samples[8];
+            int ns = 0;
+            for (int s = 0; s <= 6; ++s) samples[ns++] = a + (b - a) * ((float)s / 6.0f);
+            samples[ns++] = ClosestOnSegment(col->WorldCenter(), a, b);
+            Vec3 best{0, 0, 0};
+            float best2 = 0.0f;
+            for (int si = 0; si < ns; ++si) {
+                const Vec3& sample = samples[si];
+                Vec3 s = sample;
+                if (!NudgeSphere(col, s, radius)) continue;
+                Vec3 d = s - sample;
+                float m = d.SqrMagnitude();
+                if (m > best2) { best2 = m; best = d; }
+            }
+            if (best2 > 1e-12f) {
+                center = center + best;
+                a = center - axis * halfSegment;
+                b = center + axis * halfSegment;
+                moved = true;
+            }
+        }
+        if (!moved) break;
+    }
+    return center;
 }
 
 } // namespace okay

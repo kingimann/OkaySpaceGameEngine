@@ -16,6 +16,17 @@ namespace okay {
 
 class GameObject;
 
+/// While one of these is alive, AddComponent does not also add the components a
+/// RequireComponent rule names. Scene load uses it: a file that lists an animator
+/// before its sprite would otherwise gain a second sprite renderer.
+class SceneFileLoadScope {
+public:
+    SceneFileLoadScope();
+    ~SceneFileLoadScope();
+    SceneFileLoadScope(const SceneFileLoadScope&) = delete;
+    SceneFileLoadScope& operator=(const SceneFileLoadScope&) = delete;
+};
+
 namespace detail {
 /// Moves whenever an `active` flag changes value or a parent link changes, anywhere in the process.
 /// GameObject::ActiveInHierarchy() keeps its answer for as long as this number stays the same.

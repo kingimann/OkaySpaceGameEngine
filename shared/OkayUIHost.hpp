@@ -196,6 +196,8 @@ public:
         case SDLK_LSHIFT: case SDLK_RSHIFT: return KeyId_Shift;
         case SDLK_LALT: case SDLK_RALT: return KeyId_Alt;
         case SDLK_SLASH: return KeyId_Slash;     // the code editor's Ctrl+/ (comment lines)
+        case SDLK_LEFTBRACKET: return KeyId_LeftBracket;     // the code editor's fold keys (Ctrl+Shift+[ and ], Ctrl+Alt+[ and ])
+        case SDLK_RIGHTBRACKET: return KeyId_RightBracket;
         default: return KeyId_None;
         }
     }
@@ -222,6 +224,8 @@ public:
         case K::LShift: case K::RShift: return KeyId_Shift;
         case K::LAlt: case K::RAlt: return KeyId_Alt;
         case K::Slash: return KeyId_Slash;
+        case K::LeftBracket: return KeyId_LeftBracket;
+        case K::RightBracket: return KeyId_RightBracket;
         default: return KeyId_None;
         }
     }

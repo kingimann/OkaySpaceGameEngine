@@ -49,6 +49,16 @@ struct RaycastHit2D {
     explicit operator bool() const { return hit; }
 };
 
+/// Closest point on a solid 2D collider. Distance is 0 when the point is inside. Triggers are skipped.
+struct SurfaceQuery2D {
+    bool        hit = false;
+    Collider2D* collider = nullptr;
+    GameObject* gameObject = nullptr;
+    Vec2  point{0, 0};
+    float distance = 0.0f;
+    explicit operator bool() const { return hit; }
+};
+
 /// A small but real 2D physics engine: semi-implicit Euler integration with
 /// gravity/drag, box & circle collision detection, impulse + positional
 /// resolution, and Enter/Stay/Exit collision and trigger callbacks. Also offers
@@ -116,6 +126,9 @@ public:
     /// The first collider containing the point, or nullptr.
     Collider2D* OverlapPoint(Scene& scene, const Vec2& point,
                              std::uint32_t layerMask = kAllLayers, bool queryTriggers = true);
+    /// The closest point on any solid collider to `point`, within `maxDistance`.
+    SurfaceQuery2D ClosestPoint(Scene& scene, const Vec2& point, float maxDistance = 1e9f,
+                                GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers);
     /// All colliders overlapping a circle.
     std::vector<Collider2D*> OverlapCircle(Scene& scene, const Vec2& center, float radius,
                                            std::uint32_t layerMask = kAllLayers, bool queryTriggers = true);
@@ -136,6 +149,10 @@ public:
     RaycastHit2D CircleCast(Scene& scene, const Vec2& origin, const Vec2& direction,
                             float radius, float maxDistance = 1e9f, GameObject* ignore = nullptr,
                             std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
+    /// Every collider the circle sweep touches, nearest first.
+    std::vector<RaycastHit2D> CircleCastAll(Scene& scene, const Vec2& origin, const Vec2& direction,
+                                            float radius, float maxDistance = 1e9f, GameObject* ignore = nullptr,
+                                            std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
     /// Sweep a box (center, half-extents, `angle` radians about Z) along `direction`
     /// and return the first collider it touches. The hit point is on the struck
     /// surface; the normal points back toward the box. Skips triggers unless asked.
@@ -143,12 +160,20 @@ public:
                          const Vec2& direction, float angle = 0.0f, float maxDistance = 1e9f,
                          GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers,
                          bool queryTriggers = false);
+    std::vector<RaycastHit2D> BoxCastAll(Scene& scene, const Vec2& center, const Vec2& halfExtents,
+                                         const Vec2& direction, float angle = 0.0f, float maxDistance = 1e9f,
+                                         GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers,
+                                         bool queryTriggers = false);
     /// Sweep a capsule (segment a→b thickened by `radius`) along `direction` and
     /// return the first collider it touches — "would this body fit through there?".
     RaycastHit2D CapsuleCast(Scene& scene, const Vec2& a, const Vec2& b, float radius,
                              const Vec2& direction, float maxDistance = 1e9f,
                              GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers,
                              bool queryTriggers = false);
+    std::vector<RaycastHit2D> CapsuleCastAll(Scene& scene, const Vec2& a, const Vec2& b, float radius,
+                                             const Vec2& direction, float maxDistance = 1e9f,
+                                             GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers,
+                                             bool queryTriggers = false);
 
     void Clear() { m_contacts.clear(); }
 

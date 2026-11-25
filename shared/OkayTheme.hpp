@@ -121,6 +121,12 @@ inline ImVec4 Mix(const ImVec4& a, const ImVec4& b, float t) {
     return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
 }
 inline ImVec4 WithAlpha(const ImVec4& c, float a) { return ImVec4(c.x, c.y, c.z, a); }
+/// The accent as text or a selected label: lighter on the dark themes, darker on Light (so it reads on the page).
+inline ImVec4 AccentText(const ImVec4& accent) {
+    return Current().light ? Mix(ImVec4(accent.x, accent.y, accent.z, 1), ImVec4(0, 0, 0, 1), 0.35f)
+                           : Mix(ImVec4(accent.x, accent.y, accent.z, 1), ImVec4(1, 1, 1, 1), 0.45f);
+}
+
 
 // Rounding + borders (spacing/padding stay per-app). Call before ScaleAllSizes.
 inline void ApplySlateMetrics(ImGuiStyle& s) {

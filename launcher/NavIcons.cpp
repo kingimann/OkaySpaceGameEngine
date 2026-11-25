@@ -275,7 +275,7 @@ int ChipRow(const char* id, const std::vector<Chip>& chips, int selected, float 
     const ImVec2 o = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-    const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+    const ImVec4 accLt = okaytheme::AccentText(kAccent);
     int clicked = -1;
     ImGui::PushID(id);
     for (std::size_t i = 0; i < chips.size(); ++i) {

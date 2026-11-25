@@ -402,7 +402,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
     const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
     const ImU32 cRaised = ImGui::GetColorU32(okaytheme::kRaised);
     const ImU32 hair = okaytheme::Ink(16);
-    const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+    const ImVec4 accLt = okaytheme::AccentText(kAccent);
     const ImU32 cGreen = okaytheme::SuccessFillU32(), cGrey = okaytheme::TextDimU32();
     const float fs = ImGui::GetFontSize();
     ImFont* font = ImGui::GetFont();

@@ -2918,7 +2918,7 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
     if (ImGui::BeginPopup("##mediapop")) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-        const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+        const ImVec4 accLt = okaytheme::AccentText(kAccent);
         if (!canSendMedia) tab = 0;
         // Tabs.
         if (canSendMedia) {
@@ -5014,7 +5014,7 @@ void DrawScheduledStrip(const std::string& toUid, long toGroup) {
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float lh = ImGui::GetTextLineHeight();
     ImDrawList* d = ImGui::GetWindowDrawList();
-    const ImU32 col = ImGui::GetColorU32(ImVec4(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f));
+    const ImU32 col = ImGui::GetColorU32(okaytheme::AccentText(kAccent));
     const ImVec2 cc(p.x + 8, p.y + lh * 0.5f);
     d->AddCircle(cc, 6.0f, col, 16, 1.4f);
     d->AddLine(cc, ImVec2(cc.x, cc.y - 3.5f), col, 1.4f); d->AddLine(cc, ImVec2(cc.x + 3.0f, cc.y), col, 1.4f);
@@ -5033,7 +5033,7 @@ void DrawScheduledStrip(const std::string& toUid, long toGroup) {
         long sendNow = 0, drop = 0;
         for (SchedMsg* m : mine) {
             ImGui::PushID((int)m->id);
-            ImGui::TextColored(ImVec4(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f), "%s", SchedWhen(m->at).c_str());
+            ImGui::TextColored(okaytheme::AccentText(kAccent), "%s", SchedWhen(m->at).c_str());
             const ImVec2 rp = ImGui::GetCursorScreenPos();
             DrawRichLine(ImGui::GetWindowDrawList(), rp, ImGui::GetColorU32(ImGuiCol_Text), ChatPreviewSmart(m->body, 120), 300.0f);
             ImGui::Dummy(ImVec2(300, lh));
@@ -6601,7 +6601,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
         const ImU32 cText   = okaytheme::TextU32();
         const ImU32 cDim    = okaytheme::TextDimU32();
         const ImU32 cFaint  = okaytheme::TextDimU32();
-        const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+        const ImVec4 accLt = okaytheme::AccentText(kAccent);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, kChatSideBg);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 10));
         ImGui::BeginChild("##chatlist", ImVec2(listW, 0), ImGuiChildFlags_AlwaysUseWindowPadding,
@@ -11480,7 +11480,7 @@ static int DrawNotificationsPage(okay::account::AccountService& account) {
     int gotoTab = -1;
     std::set<std::string>& ntHidden = g_notifGoneSigs;   // cleared items ("key\nbody"), saved so they stay gone
     const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-    const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+    const ImVec4 accLt = okaytheme::AccentText(kAccent);
     auto sigOf    = [](const Notif& n) { return n.key + "\n" + n.body; };
     auto isHidden = [&](const Notif& n) { return ntHidden.count(sigOf(n)) != 0; };
     auto isUnread = [&](const Notif& n) { return !n.read || g_notifFresh.count(n.key) != 0; };
@@ -11910,7 +11910,7 @@ static void DrawWelcomeScreen(okay::account::AccountService& account, okay::sign
         const bool c = ImGui::InvisibleButton("##link", ImVec2(ts.x, lh));
         ImGui::PopID();
         const bool h = ImGui::IsItemHovered();
-        const ImVec4 lc(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+        const ImVec4 lc = okaytheme::AccentText(kAccent);
         cdl->AddText(p, ImGui::GetColorU32(lc), label);
         if (h) { cdl->AddLine(ImVec2(p.x, p.y + lh), ImVec2(p.x + ts.x, p.y + lh), ImGui::GetColorU32(lc), 1.0f); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
         return c && !busy;
@@ -14649,7 +14649,7 @@ int main(int argc, char** argv) {
                 const ImVec2 bp = ImGui::GetCursorScreenPos();
                 DrawNavIcon(ImGui::GetWindowDrawList(), kIcoBulb, ImVec2(bp.x + 9, bp.y + 10), ImGui::GetColorU32(kAccent));
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 26);
-                ImGui::TextColored(ImVec4(kAccent.x * 0.6f + 0.4f, kAccent.y * 0.6f + 0.4f, kAccent.z * 0.6f + 0.4f, 1.0f), "Tip of the day  \xC2\xB7  %s", kCats[t.cat]);
+                ImGui::TextColored(okaytheme::AccentText(kAccent), "Tip of the day  \xC2\xB7  %s", kCats[t.cat]);
                 ImGui::SetWindowFontScale(1.12f);
                 ImGui::TextUnformatted(t.title);
                 ImGui::SetWindowFontScale(1.0f);
@@ -15216,7 +15216,7 @@ int main(int argc, char** argv) {
             } else {   // ---- Your creations: your library (what you made or added) and the drop zone ----
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
             const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-            const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+            const ImVec4 accLt = okaytheme::AccentText(kAccent);
             auto lowerStr = [](std::string s) {
                 for (char& ch : s) ch = (char)std::tolower((unsigned char)ch);
                 return s;
@@ -16195,7 +16195,7 @@ int main(int argc, char** argv) {
 
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
             const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-            const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+            const ImVec4 accLt = okaytheme::AccentText(kAccent);
             const ImVec4 colBg = okaytheme::Mix(okaytheme::kSunken, okaytheme::kBase, 0.35f);
 
             // One setting: label + one-line dim description on the left, the control
@@ -17298,7 +17298,7 @@ int main(int argc, char** argv) {
                 if (kAchDemo && achShow.ach.empty()) achShow.ach = {"perfect_lap", "untouchable", "first_win"};
             }
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-            const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+            const ImVec4 accLt = okaytheme::AccentText(kAccent);
             const ImU32 gold = okaytheme::WarningFillU32();
             const long nowT = (long)std::time(nullptr);
             int monthN = 0; const okay::Achievement* latest = nullptr;
@@ -17669,7 +17669,7 @@ int main(int argc, char** argv) {
                 }
                 const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
                 const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-                const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+                const ImVec4 accLt = okaytheme::AccentText(kAccent);
                 const ImU32 cGreen = okaytheme::SuccessFillU32();
                 const ImU32 pageBg = ImGui::GetColorU32(ImGuiCol_WindowBg);
 
@@ -19079,7 +19079,7 @@ int main(int argc, char** argv) {
 
                 const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
                 const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-                const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+                const ImVec4 accLt = okaytheme::AccentText(kAccent);
                 const ImVec4 colBg = okaytheme::Mix(okaytheme::kSunken, okaytheme::kBase, 0.35f);
                 const float colH = ImGui::GetContentRegionAvail().y - PageFooterH();   // leave the page footer clear
                 const float availW = ImGui::GetContentRegionAvail().x;
@@ -20092,7 +20092,7 @@ int main(int argc, char** argv) {
             static std::vector<okay::ForumMember> foAdmMembers; static std::vector<okay::ForumBan> foAdmBans;
             Uint32 tnow = okay::platform::TicksMs32();
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-            const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+            const ImVec4 accLt = okaytheme::AccentText(kAccent);
             const bool canAct = fo.Available() || kFoDemo;
             if (kFoDemo) {
                 static bool seeded = false;

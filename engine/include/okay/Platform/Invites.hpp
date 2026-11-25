@@ -116,7 +116,7 @@ inline std::string InviteAnswerText(const std::string& a) {
 
 /// The notification event for invites that are new since `seenId` and still worth showing at `now`
 /// (pending, not expired), oldest first. The notification module decides how to show them.
-inline std::vector<chat::Event> NewInviteEvents(const std::vector<GameInvite>& invites, long seenId, long now) {
+inline std::vector<chat::Event> InviteEventsSince(const std::vector<GameInvite>& invites, long seenId, long now) {
     std::vector<chat::Event> out;
     for (auto it = invites.rbegin(); it != invites.rend(); ++it) {
         const GameInvite& g = *it;
@@ -212,7 +212,7 @@ public:
             j += ",\"expires_at\":" + Friends::JStr(IsoAfter(inv.expires - inv.created));
         return j + "}";
     }
-    static GameInvite FromRow(const std::string& o) {
+    static GameInvite FromRow(const std::string& o) {   // dup-allow: column-to-field mapping of game_invites, not the reports table
         GameInvite g;
         g.id = std::atol(Friends::Field(o, "id").c_str());
         g.senderId = Friends::Field(o, "sender"); g.recipientId = Friends::Field(o, "recipient");

@@ -39,7 +39,7 @@ public:
 
     // Send a message to a friend (their profile/user uuid). Optionally a reply
     // to an earlier message (Messenger/Telegram-style quoting), by its id.
-    // `clientId` (okay::chat::NewClientId, picked once per message and kept across retries) makes a resend
+    // `clientId` (okay::chat::MakeClientId, picked once per message and kept across retries) makes a resend
     // safe: the server stores (sender, client_id) once (docs/sql/chat_invites.sql). Until that SQL has run
     // the column is missing and the message is sent without it (remembered for the session).
     bool Send(const std::string& friendUid, const std::string& body, long replyTo = 0, const std::string& clientId = {}) {
@@ -95,16 +95,7 @@ public:
         if (!acct_.IsLoggedIn() || friendUid.empty()) return out;
         auto r = acct_.Api(PageQuery(friendUid, beforeId, limit), "GET");
         if (!r.ok) return out;
-        for (const auto& obj : SplitObjects(r.body)) {
-            DirectMessage m;
-            m.id   = std::atol(Field(obj, "id").c_str());
-            m.body = Field(obj, "body");
-            m.when = ParseIso(Field(obj, "created_at"));
-            m.mine = Field(obj, "sender") != friendUid;
-            m.edited = Field(obj, "edited") == "true";
-            m.replyTo = std::atol(Field(obj, "reply_to").c_str());
-            out.push_back(m);
-        }
+        for (const auto& obj : SplitObjects(r.body)) out.push_back(DmFromRow(obj, friendUid));
         const int cap = limit < 1 ? 1 : limit > 200 ? 200 : limit;
         if ((int)out.size() > cap) { out.resize(cap); if (hasMore) *hasMore = true; }
         std::reverse(out.begin(), out.end());
@@ -233,17 +224,19 @@ public:
                            "&or=(sender.eq." + friendUid + ",recipient.eq." + friendUid + ")"
                            "&order=created_at.asc", "GET");
         if (!r.ok) return out;
-        for (const auto& obj : SplitObjects(r.body)) {
-            DirectMessage m;
-            m.id   = std::atol(Field(obj, "id").c_str());
-            m.body = Field(obj, "body");
-            m.when = ParseIso(Field(obj, "created_at"));
-            m.mine = Field(obj, "sender") != friendUid;   // the other party is the friend
-            m.edited = Field(obj, "edited") == "true";
-            m.replyTo = std::atol(Field(obj, "reply_to").c_str());
-            out.push_back(m);
-        }
+        for (const auto& obj : SplitObjects(r.body)) out.push_back(DmFromRow(obj, friendUid));
         return out;
+    }
+    /// One messages row as a DirectMessage; the other party is `friendUid`, so any other sender is me.
+    static DirectMessage DmFromRow(const std::string& obj, const std::string& friendUid) {
+        DirectMessage m;
+        m.id   = std::atol(Field(obj, "id").c_str());
+        m.body = Field(obj, "body");
+        m.when = ParseIso(Field(obj, "created_at"));
+        m.mine = Field(obj, "sender") != friendUid;
+        m.edited = Field(obj, "edited") == "true";
+        m.replyTo = std::atol(Field(obj, "reply_to").c_str());
+        return m;
     }
 
     // Edit one of my own sent messages (RLS blocks editing others').

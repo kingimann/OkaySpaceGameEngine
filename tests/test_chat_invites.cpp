@@ -26,13 +26,13 @@ static void TestClientIds() {
     std::set<std::string> seen;
     bool allValid = true;
     for (int i = 0; i < 2000; ++i) {
-        const std::string id = chat::NewClientId();
+        const std::string id = chat::MakeClientId();
         if (!chat::IsClientId(id)) allValid = false;
         seen.insert(id);
     }
     CHECK(allValid);
     CHECK(seen.size() == 2000);   // no repeats
-    const std::string id = chat::NewClientId();
+    const std::string id = chat::MakeClientId();
     CHECK(id.size() == 36 && id[8] == '-' && id[13] == '-' && id[14] == '4' && id[18] == '-' && id[23] == '-');
     CHECK(id[19] == '8' || id[19] == '9' || id[19] == 'a' || id[19] == 'b');   // RFC 4122 variant
     CHECK(!chat::IsClientId(""));
@@ -172,7 +172,7 @@ static void TestLimits() {
     // 4000 characters, not bytes: 4000 two-byte letters fit.
     std::string accents; for (int i = 0; i < 4000; ++i) accents += "\xC3\xA9";
     CHECK(chat::CheckOutgoing(accents, {}, 1000).empty());
-    CHECK(chat::Utf8Length(accents) == 4000);
+    CHECK(okay::utf8::Length(accents) == 4000);
     std::vector<long> recent(30, 990);
     CHECK(chat::CheckOutgoing("x", recent, 1000).find("too fast") != std::string::npos);
     CHECK(chat::CheckOutgoing("x", recent, 1051).empty());            // a minute later
@@ -272,15 +272,15 @@ static void TestInviteEvents() {
     v[0].id = 9; v[0].senderId = "u1"; v[0].senderName = "maya"; v[0].title = "Star Arena"; v[0].expires = now + 600;
     v[1].id = 8; v[1].senderId = "u2"; v[1].senderName = "bo@example.com"; v[1].kind = "party"; v[1].expires = now + 600;
     v[2].id = 7; v[2].senderId = "u3"; v[2].senderName = "cy"; v[2].expires = now - 1;           // expired: no event
-    std::vector<chat::Event> ev = NewInviteEvents(v, 0, now);
+    std::vector<chat::Event> ev = InviteEventsSince(v, 0, now);
     CHECK(ev.size() == 2);
     if (ev.size() == 2) {
         CHECK(ev[0].inviteId == 8 && ev[1].inviteId == 9);                                     // oldest first
         CHECK(ev[0].kind == chat::Event::Kind::Invite && ev[0].fromName == "bo" && ev[0].peerUid == "u2");
         CHECK(ev[1].text.find("Star Arena") != std::string::npos);
     }
-    CHECK(NewInviteEvents(v, 9, now).empty());                                                  // already seen
-    v[0].status = "accepted"; CHECK(NewInviteEvents(v, 8, now).empty());
+    CHECK(InviteEventsSince(v, 9, now).empty());                                                  // already seen
+    v[0].status = "accepted"; CHECK(InviteEventsSince(v, 8, now).empty());
 }
 
 static void TestInviteAnswers() {

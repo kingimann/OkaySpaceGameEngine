@@ -4637,7 +4637,7 @@ struct OutMsg {
     int state = 0;            // 0 queued/sending, 1 sent (waiting for the log), -1 failed
     std::string err;          // why it failed, when the server said (e.g. a privacy rule: "This person does not accept messages from you.")
     long when = 0; Uint32 sentAt = 0;
-    std::string clientId;     // okay::chat::NewClientId, kept across retries so a resend is stored once (docs/sql/chat_invites.sql)
+    std::string clientId;     // okay::chat::MakeClientId, kept across retries so a resend is stored once (docs/sql/chat_invites.sql)
     int attempts = 0;         // failed tries that were worth retrying (no connection, 5xx, the rate limit)
     Uint32 nextTry = 0;       // ...and when the next one may start (TicksMs32)
     std::string inviteKind;   // "game": also record a game_invites row first (expiry, accept / decline), then send the card
@@ -4652,7 +4652,7 @@ static std::vector<long> g_outRecent;   // (guarded) unix times of my recent sen
 static void OutboxQueue(OutMsg o) {
     if (o.body.empty()) return;
     if (!g_outMutex) g_outMutex = okay::thr::CreateMutex();
-    o.localId = g_outNextId++; o.when = (long)std::time(nullptr); o.clientId = okay::chat::NewClientId();
+    o.localId = g_outNextId++; o.when = (long)std::time(nullptr); o.clientId = okay::chat::MakeClientId();
     okay::thr::LockMutex(g_outMutex);
     // The same limits the server enforces: a message over them stays as "Not sent" with the reason.
     g_outRecent.erase(std::remove_if(g_outRecent.begin(), g_outRecent.end(), [&](long t) { return o.when - t >= 60; }), g_outRecent.end());

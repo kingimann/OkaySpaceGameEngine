@@ -21,6 +21,7 @@
 // Written from RFC 4122 (version 4 ids), RFC 3986 (URL parts) and our own SQL rules.
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Privacy.hpp"
+#include "okay/Core/Utf8.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -45,7 +46,7 @@ constexpr long kGiveUpSeconds = 7L * 86400L;
 
 /// A random version-4 id: "xxxxxxxx-xxxx-4xxx-Yxxx-xxxxxxxxxxxx" (Y is 8, 9, a or b). Only for telling
 /// messages apart, not a secret.
-inline std::string NewClientId() {
+inline std::string MakeClientId() {
     static std::mt19937_64 gen([] {
         std::random_device rd;
         std::uint64_t s = (std::uint64_t)rd() << 32 ^ rd();
@@ -125,7 +126,7 @@ inline std::string Unesc(const std::string& s) {
     }
     return o;
 }
-inline std::vector<std::string> SplitTabs(const std::string& line) {
+inline std::vector<std::string> TabFields(const std::string& line) {
     std::vector<std::string> f; std::size_t a = 0;
     while (true) { const std::size_t b = line.find('\t', a); f.push_back(line.substr(a, b == std::string::npos ? std::string::npos : b - a)); if (b == std::string::npos) break; a = b + 1; }
     return f;
@@ -151,7 +152,7 @@ inline std::vector<QueuedMessage> DecodeQueue(const std::string& text) {
     std::size_t p = 11;
     while (p < text.size()) {
         std::size_t nl = text.find('\n', p); if (nl == std::string::npos) nl = text.size();
-        const std::vector<std::string> f = detail::SplitTabs(text.substr(p, nl - p));
+        const std::vector<std::string> f = detail::TabFields(text.substr(p, nl - p));
         p = nl + 1;
         if (f.size() != 8) continue;
         QueuedMessage m;
@@ -273,17 +274,12 @@ inline std::string ConfirmText(const std::string& url) {
 
 // ---- limits ------------------------------------------------------------------------------------
 
-/// Characters (code points) in UTF-8 text, as the server's char_length counts them.
-inline int Utf8Length(const std::string& s) {
-    int n = 0;
-    for (unsigned char c : s) if ((c & 0xC0) != 0x80) ++n;
-    return n;
-}
 /// "" when `body` may be sent now, else a plain sentence. `recentSends` are the unix times of my own
 /// recent sends (any order; older ones are ignored).
 inline std::string CheckOutgoing(const std::string& body, const std::vector<long>& recentSends, long now) {
     if (body.find_first_not_of(" \t\r\n") == std::string::npos) return "Write a message first.";
-    if (Utf8Length(body) > kMaxBodyChars) return privacy::RuleText(privacy::Rule::TooLong);
+    if ((int)okay::utf8::Length(body) > kMaxBodyChars)   // characters, as the server's char_length counts them
+        return privacy::RuleText(privacy::Rule::TooLong);
     int n = 0;
     for (long t : recentSends) if (now - t < 60) ++n;
     if (n >= kMaxPerMinute) return privacy::RuleText(privacy::Rule::RateLimited);

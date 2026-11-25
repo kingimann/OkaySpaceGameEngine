@@ -43,6 +43,7 @@
 #include "okay/Platform/Friends.hpp"
 #include "okay/Platform/Workshop.hpp"
 #include "okay/Platform/Messages.hpp"
+#include "okay/Platform/Invites.hpp"       // game_invites records for chat invites (docs/sql/chat_invites.sql)
 #include "okay/Platform/BlockList.hpp"
 #include "okay/Platform/Forums.hpp"
 #include "okay/Platform/Admin.hpp"
@@ -4673,6 +4674,10 @@ struct OutMsg {
     int state = 0;            // 0 queued/sending, 1 sent (waiting for the log), -1 failed
     std::string err;          // why it failed, when the server said (e.g. a privacy rule: "This person does not accept messages from you.")
     long when = 0; Uint32 sentAt = 0;
+    std::string clientId;     // okay::chat::MakeClientId, kept across retries so a resend is stored once (docs/sql/chat_invites.sql)
+    int attempts = 0;         // failed tries that were worth retrying (no connection, 5xx, the rate limit)
+    Uint32 nextTry = 0;       // ...and when the next one may start (TicksMs32)
+    std::string inviteKind;   // "game": also record a game_invites row first (expiry, accept / decline), then send the card
 };
 static okay::thr::Mutex* g_outMutex = nullptr;
 static std::vector<OutMsg> g_outbox;   // (guarded)
@@ -4680,14 +4685,28 @@ static bool g_outWorkerRunning = false; // (guarded)
 static long g_outNextId = 1;
 static volatile bool g_srvForce = false; // Servers poller: refresh now (set after a channel post lands)
 static void OutboxKick();               // starts the sender thread (defined with the chat workers)
-void OutboxSend(const std::string& toUid, long toGroup, const std::string& body, long replyTo, long toChannel) {
-    if (body.empty()) return;
+static std::vector<long> g_outRecent;   // (guarded) unix times of my recent sends, for okay::chat::CheckOutgoing
+static void OutboxQueue(OutMsg o) {
+    if (o.body.empty()) return;
     if (!g_outMutex) g_outMutex = okay::thr::CreateMutex();
-    OutMsg o; o.localId = g_outNextId++; o.toUid = toUid; o.toGroup = toGroup; o.toChannel = toChannel;
-    o.body = body; o.replyTo = replyTo;
-    o.when = (long)std::time(nullptr);
-    okay::thr::LockMutex(g_outMutex); g_outbox.push_back(o); okay::thr::UnlockMutex(g_outMutex);
-    OutboxKick();
+    o.localId = g_outNextId++; o.when = (long)std::time(nullptr); o.clientId = okay::chat::MakeClientId();
+    okay::thr::LockMutex(g_outMutex);
+    // The same limits the server enforces: a message over them stays as "Not sent" with the reason.
+    g_outRecent.erase(std::remove_if(g_outRecent.begin(), g_outRecent.end(), [&](long t) { return o.when - t >= 60; }), g_outRecent.end());
+    o.err = okay::chat::CheckOutgoing(o.body, g_outRecent, o.when);
+    if (!o.err.empty()) o.state = -1; else g_outRecent.push_back(o.when);
+    g_outbox.push_back(o);
+    okay::thr::UnlockMutex(g_outMutex);
+    if (o.state == 0) OutboxKick();
+}
+void OutboxSend(const std::string& toUid, long toGroup, const std::string& body, long replyTo, long toChannel) {
+    OutMsg o; o.toUid = toUid; o.toGroup = toGroup; o.toChannel = toChannel; o.body = body; o.replyTo = replyTo;
+    OutboxQueue(o);
+}
+// A game invite card to one friend, with a game_invites record (made by the outbox worker; see OutboxSendInvite in LauncherShared.hpp).
+void OutboxSendInvite(const std::string& toUid, const std::string& body) {
+    OutMsg o; o.toUid = toUid; o.body = body; o.inviteKind = "game";
+    OutboxQueue(o);
 }
 // Server channel replies and threads ride in the message text (the table has
 // no reply column): "[re:ID] text" answers message ID inline, "[th:ID] text" is
@@ -5380,7 +5399,7 @@ static std::vector<OutMsg> OutboxForChannel(long channelId, const std::function<
 static void OutboxRetry(long localId) {
     if (!g_outMutex) return;
     okay::thr::LockMutex(g_outMutex);
-    for (auto& x : g_outbox) if (x.localId == localId) x.state = 0;
+    for (auto& x : g_outbox) if (x.localId == localId) { x.state = 0; x.attempts = 0; x.nextTry = 0; }
     okay::thr::UnlockMutex(g_outMutex);
     OutboxKick();
 }
@@ -5429,12 +5448,7 @@ int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, ImVec4 
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, av - statW));
             ImGui::TextColored(okaytheme::Current().danger, "%s", status);
             ImGui::SameLine(0, 8);
-            if (ImGui::SmallButton("Retry")) {
-                okay::thr::LockMutex(g_outMutex);
-                for (auto& x : g_outbox) if (x.localId == o.localId) x.state = 0;
-                okay::thr::UnlockMutex(g_outMutex);
-                OutboxKick();
-            }
+            if (ImGui::SmallButton("Retry")) OutboxRetry(o.localId);
             ImGui::SameLine(0, 4);
             if (ImGui::SmallButton("Discard")) {
                 okay::thr::LockMutex(g_outMutex);
@@ -9870,27 +9884,58 @@ static void GifSearch(const std::string& query) {
     else g_gifBusy = false;
 }
 
-// Outbox sender: one thread drains queued messages in order, then exits.
+// A game invite: record it in game_invites first (friends only, expiry, accept / decline) and put the
+// record's id in the card's link. Without docs/sql/chat_invites.sql only the card is sent, as before.
+// Returns false (with `why`) when the server refused the invite; the card is then not sent either.
+static bool OutboxPrepareInvite(okay::account::AccountService& acct, OutMsg& job, std::string& why) {
+    ChatInviteInfo ci;
+    if (job.inviteKind.empty() || job.toUid.empty() || !ParseChatInvite(job.body, ci) || ci.link.inviteId > 0) return true;
+    okay::GameInvite gi; gi.kind = job.inviteKind; gi.title = ci.title; gi.link = ci.link.Format();
+    gi.gameVersion = ci.link.version; gi.target = ci.link.target;
+    okay::Invites inv(acct);
+    const long id = inv.Send(job.toUid, gi, &why);
+    if (id > 0) { ci.link.inviteId = id; job.body = InviteMessageBody(ci.title, ci.link.Format()); return true; }
+    return inv.SupportState() == okay::Invites::Support::Missing || why.empty() || why.rfind("No connection", 0) == 0;
+}
+// Outbox sender: one thread drains queued messages in order, then exits. A send that is worth
+// retrying (no connection, a server error, the rate limit) waits 2 s, 4 s, ... up to a minute and
+// goes again with the same client id, so a message that did arrive is not stored twice.
 static int OutboxWorker(void*) {
     std::unique_ptr<okay::account::AccountService> acct;
     while (true) {
-        OutMsg job; bool have = false;
+        OutMsg job; bool have = false, waiting = false;
+        const Uint32 nowMs = okay::platform::TicksMs32();
         okay::thr::LockMutex(g_outMutex);
-        for (auto& o : g_outbox) if (o.state == 0) { job = o; have = true; break; }
-        if (!have) { g_outWorkerRunning = false; okay::thr::UnlockMutex(g_outMutex); break; }
+        for (auto& o : g_outbox) {
+            if (o.state != 0) continue;
+            if (o.nextTry != 0 && (std::int32_t)(nowMs - o.nextTry) < 0) { waiting = true; continue; }
+            job = o; have = true; break;
+        }
+        if (!have && !waiting) { g_outWorkerRunning = false; okay::thr::UnlockMutex(g_outMutex); break; }
         okay::thr::UnlockMutex(g_outMutex);
-        bool ok = false; std::string why;
+        if (!have) { okay::platform::DelayMs(250); continue; }
+        bool ok = false, retry = false; std::string why;
         try {
             if (!acct) acct = std::make_unique<okay::account::AccountService>(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
             okay::Messages dm(*acct);
             if (job.toChannel > 0) ok = okay::Servers(*acct).Post(job.toChannel, job.body);
+            else if (!OutboxPrepareInvite(*acct, job, why)) ok = false;
             else {
-                ok = job.toGroup > 0 ? dm.SendGroup(job.toGroup, job.body, job.replyTo) : dm.Send(job.toUid, job.body, job.replyTo);
-                if (!ok && job.toGroup <= 0) why = dm.LastSendError();
+                ok = job.toGroup > 0 ? dm.SendGroup(job.toGroup, job.body, job.replyTo, job.clientId)
+                                     : dm.Send(job.toUid, job.body, job.replyTo, job.clientId);
+                if (!ok) { why = dm.LastSendError(); retry = okay::chat::IsRetryable(dm.LastSendResponse()); }
             }
         } catch (...) {}
         okay::thr::LockMutex(g_outMutex);
-        for (auto& o : g_outbox) if (o.localId == job.localId) { o.state = ok ? 1 : -1; o.err = ok ? std::string() : why; o.sentAt = okay::platform::TicksMs32(); }
+        for (auto& o : g_outbox) if (o.localId == job.localId) {
+            o.body = job.body;   // an invite card now carries its record's id
+            if (!ok && retry && o.attempts < 8) {
+                o.nextTry = okay::platform::TicksMs32() + 1000u * (Uint32)okay::chat::RetryDelaySeconds(o.attempts++);
+                o.err = why;
+                continue;   // still "Sending"
+            }
+            o.state = ok ? 1 : -1; o.err = ok ? std::string() : why; o.sentAt = okay::platform::TicksMs32();
+        }
         okay::thr::UnlockMutex(g_outMutex);
         if (ok) { if (job.toChannel > 0) g_srvForce = true; else g_chatForceLog = true; }   // pull the real message in right away
     }

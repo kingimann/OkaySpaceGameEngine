@@ -378,7 +378,7 @@ static float ChatLayoutTokens(const std::vector<ChatTok>& toks, float avail, boo
                 ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
                 dl->AddLine(ImVec2(mn.x, mx.y - 1), ImVec2(mx.x, mx.y - 1), linkCol, 1.0f);
                 if (ImGui::IsItemHovered()) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", t.text.c_str()); }
-                if (ImGui::IsItemClicked()) OpenExternal(t.text);
+                if (ImGui::IsItemClicked()) OpenChatLink(t.text);   // asks first (okay::chat::ClickLink)
             } else {
                 ImU32 col = mention ? okaytheme::U32(kAccent) : textCol;
                 if (code) {
@@ -632,7 +632,7 @@ static void DrawLinkPreviewCard(const std::string& url, const LinkPreview& lp, f
         d->PopClipRect();
     }
     ImGui::SetCursorScreenPos(p);
-    if (ImGui::InvisibleButton("##lpcard", ImVec2(w, h))) OpenExternal(url);
+    if (ImGui::InvisibleButton("##lpcard", ImVec2(w, h))) OpenChatLink(url);
     if (ImGui::IsItemHovered()) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", url.c_str()); }
     ImGui::PopID();
 }

@@ -1704,6 +1704,30 @@ std::string g_trayOpenScene;                // the tray menu asked to open this 
 static std::string ProjectsLocation() {
     return g_projectsDir.empty() ? (fs::path(g_exeDir) / "Projects").string() : g_projectsDir;
 }
+// For a join (Multiplayer's MpLaunch): the projects and editor versions shared/JoinPlan.hpp chooses from.
+std::vector<okay::joinplan::Candidate> MpJoinProjects() {
+    std::vector<okay::joinplan::Candidate> out;
+    for (const auto& lp : okayproj::ScanProjects(fs::path(ProjectsLocation()), g_hiddenProjects, g_extraProjects)) {
+        okay::joinplan::Candidate c; c.kind = okay::joinplan::Candidate::Kind::Project; c.title = lp.name; c.path = lp.scene;
+        c.engineVersion = okayver::ReadProjectVersion(fs::path(lp.scene).parent_path().parent_path().string());   // <root>/Assets/<scene>
+        out.push_back(c);
+    }
+    return out;
+}
+std::vector<std::string> MpInstalledEditors() {
+    std::vector<std::string> v = okayver::InstalledVersions(LauncherDirPath());
+    const std::string own = okayver::NormalizeVersion(LocalVersion());
+    if (!own.empty() && std::find(v.begin(), v.end(), own) == v.end()) v.push_back(own);   // the editor next to the launcher
+    return v;
+}
+bool MpOpenProjectForJoin(const std::string& editorVersion, const std::string& scene) {
+    if (LaunchEditorVersion(editorVersion, scene)) return true;
+    if (okayver::NormalizeVersion(editorVersion) != okayver::NormalizeVersion(LocalVersion())) return false;
+    const std::string exe = FindExe(EDITOR_EXE_NAMES);
+    if (exe.empty()) return false;
+    LaunchEditor(exe, "", "", scene);
+    return true;
+}
 
 // Make a real project on disk, in the LAUNCHER, so clicking a template actually
 // creates something (the folder + Assets exist the instant you click) instead of
@@ -2063,13 +2087,16 @@ volatile long g_inviteSeenId = 0;   // newest game/party invite already shown (p
 std::map<std::string, long> g_chatSeenDm;   // friend uid -> newest DM id I've viewed
 std::map<long, long> g_chatSeenGroup;       // group id -> newest message id I've viewed
 static std::string g_chatSeenUser;          // whose file is loaded
-static fs::path ChatSeenFile(const std::string& user) {
+static long g_chatUnreadFloor = 0;          // nothing at or below this counts as unread (the old global mark; okay::chat::SeenWithFloor)
+// An account name as part of a file name (letters, digits, _ - . kept; anything else becomes _).
+static std::string SafeUserFileName(const std::string& user) {
     std::string safe;
     for (char c : user) safe += (std::isalnum((unsigned char)c) || c == '_' || c == '-' || c == '.') ? c : '_';
-    return fs::path(g_exeDir) / ("chat_seen_" + safe + ".cfg");
+    return safe;
 }
+static fs::path ChatSeenFile(const std::string& user) { return fs::path(g_exeDir) / ("chat_seen_" + SafeUserFileName(user) + ".cfg"); }
 static long ChatSeenSum() {
-    long h = (long)(g_chatSeenDm.size() * 31 + g_chatSeenGroup.size());
+    long h = (long)(g_chatSeenDm.size() * 31 + g_chatSeenGroup.size()) + g_chatUnreadFloor * 7;
     for (const auto& [k, v] : g_chatSeenDm) h = h * 131 + v + (long)k.size();
     for (const auto& [k, v] : g_chatSeenGroup) h = h * 131 + v + k;
     return h;
@@ -2082,15 +2109,20 @@ void SyncChatSeen(const std::string& user) {
     if (user != g_chatSeenUser) {
         g_chatSeenDm.clear(); g_chatSeenGroup.clear();
         g_chatSeenUser = user;
+        g_chatUnreadFloor = 0;
+        bool haveFloor = false;
         if (!user.empty()) {
             std::ifstream f(ChatSeenFile(user));
             std::string kind, key; long id = 0;
             while (f >> kind >> key >> id) {
                 if (kind == "d") g_chatSeenDm[key] = id;
                 else if (kind == "g") { try { g_chatSeenGroup[std::stol(key)] = id; } catch (...) {} }
+                else if (kind == "f") { g_chatUnreadFloor = id; haveFloor = true; }
             }
         }
         savedSum = ChatSeenSum();
+        // First run with unread numbers: what the old badge already counted as seen stays seen (saved below).
+        if (!user.empty() && !haveFloor) { g_chatUnreadFloor = std::max(0L, (long)g_lastDmId); savedSum = 0; }
         return;
     }
     if (user.empty() || okay::platform::TicksMs32() < nextCheck) return;
@@ -2101,8 +2133,43 @@ void SyncChatSeen(const std::string& user) {
     if (!f) return;
     for (const auto& [k, v] : g_chatSeenDm) if (v > 0 && !k.empty() && k.find_first_of(" \t\n") == std::string::npos) f << "d " << k << ' ' << v << '\n';
     for (const auto& [k, v] : g_chatSeenGroup) if (v > 0) f << "g " << k << ' ' << v << '\n';
+    f << "f - " << g_chatUnreadFloor << '\n';
     savedSum = sum;
 }
+// Unread numbers per conversation and in total (okay::chat::CountUnread over the newest messages the poll threads read,
+// Messages::UnreadRows). The rows come from PollWorker (about every 30 s) and the chat poll (every 6 s while it is open).
+okay::thr::Mutex* g_unreadMutex = nullptr;              // guards the three below
+static std::vector<okay::chat::UnreadRow> g_unreadIn;   // (guarded) the newest rows read
+static std::string g_unreadInMe;                        // (guarded) my account id
+static bool g_unreadInFresh = false;                    // (guarded)
+static void PublishUnreadRows(std::vector<okay::chat::UnreadRow> rows, const std::string& me) {   // poll threads
+    if (!g_unreadMutex || me.empty()) return;
+    okay::thr::LockMutex(g_unreadMutex);
+    g_unreadIn = std::move(rows); g_unreadInMe = me; g_unreadInFresh = true;
+    okay::thr::UnlockMutex(g_unreadMutex);
+}
+static std::vector<okay::chat::UnreadRow> g_unreadRows;   // (UI thread) the rows in use
+static std::string g_unreadMe;
+static bool g_unreadKnown = false;                        // rows have been read for this account
+// The counts now (worked out at most every 100 ms; the UI thread only).
+const okay::chat::UnreadSummary& ChatUnread() {
+    static okay::chat::UnreadSummary sum;
+    static Uint32 at = 0;
+    const Uint32 now = okay::platform::TicksMs32();
+    if (at != 0 && now - at < 100) return sum;
+    at = now;
+    if (g_unreadMutex) {
+        okay::thr::LockMutex(g_unreadMutex);
+        if (g_unreadInFresh) { g_unreadRows.swap(g_unreadIn); g_unreadMe = g_unreadInMe; g_unreadInFresh = false; g_unreadKnown = true; }
+        okay::thr::UnlockMutex(g_unreadMutex);
+    }
+    const auto seen = okay::chat::SeenWithFloor(g_chatSeenDm, g_unreadRows, g_chatUnreadFloor);
+    sum = okay::chat::CountUnread(g_unreadRows, g_unreadMe, seen, g_blockedUsers);
+    return sum;
+}
+// The number on the Chat nav item, the tray's Friends item and the Chats switch.
+int ChatUnreadTotal() { return okayfriends::NavUnread(g_unreadKnown, ChatUnread().total, g_dmUnread); }
+static void ChatUnreadSignedOut() { if (std::getenv("OKAY_CHAT_DEMO")) return; g_unreadRows.clear(); g_unreadMe.clear(); g_unreadKnown = false; }
 int g_onlineStatus = 0;     // 0 Online, 1 Away, 2 Invisible, 3 Do not disturb (persisted; okayfriends::MyStatusLabel)
 // Your own status, for code outside this file (desktop notifications: Invisible and Do not disturb keep them quiet).
 // One of okayfriends::kOnline / kAway / kInvisible / kDoNotDisturb (launcher/FriendsList.hpp).
@@ -2307,9 +2374,8 @@ void RefreshNotifs() {
                       g_friendRequests, g_friendRequests == 1 ? "" : "s");
         UpsertNotif("dyn:friends", "Friend requests", b, 1, 6);
     } else RemoveNotif("dyn:friends");
-    if (g_dmUnread > 0) {
-        std::snprintf(b, sizeof(b), "%d unread direct message%s",
-                      g_dmUnread, g_dmUnread == 1 ? "" : "s");
+    if (const int dmN = ChatUnreadTotal(); dmN > 0) {
+        std::snprintf(b, sizeof(b), "%d unread direct message%s", dmN, dmN == 1 ? "" : "s");
         UpsertNotif("dyn:dms", "New messages", b, 2, 6);
     } else RemoveNotif("dyn:dms");
     if (GetState() == Up_Updated) {
@@ -2346,6 +2412,8 @@ void OpenChatWith(const std::string& uid, const std::string& name, const std::st
     g_chatReqUid = uid; g_chatReqName = name; g_chatReqAvatar = avatar;
     g_chatReqPending = true; g_chatWinOpen = true;
 }
+static long g_chatReqGroup = 0;   // a group chat to open (a group message's notification); DrawChatWindow consumes it
+static void OpenGroupChat(long gid) { g_chatReqGroup = gid; g_chatWinOpen = true; }
 int  PlayCount(const std::string& p)  { auto it = g_stats.find(p); return it == g_stats.end() ? 0 : it->second.count; }
 long LastPlayed(const std::string& p) { auto it = g_stats.find(p); return it == g_stats.end() ? 0 : it->second.last; }
 // A short "2h ago" / "3d ago" from a unix time (empty if never).
@@ -3731,7 +3799,93 @@ void DrawGamepadIcon(ImDrawList* d, ImVec2 c, float s, ImU32 col) {
     d->AddCircleFilled(ImVec2(c.x + w * 0.66f, c.y - k * 1.2f), k * 1.3f, cut, 10);
 }
 float ChatInviteWidth(float maxW) { return std::min(maxW, 270.0f); }
-void RenderChatInvite(const ChatInviteInfo& inv, bool mine, long when, float width) {
+
+// ---- Invite records behind the chat cards (okay::Invites, docs/sql/chat_invites.sql; feature map 17.15.7) ------------
+// A card whose link carries inv=<id> shows that record's state. The chat poll thread (ChatPollWorker -> InviteWork) looks
+// the records up and answers them (Accept / Decline / Withdraw); the UI thread only reads and queues, under g_invMutex.
+struct InviteRecSlot { okay::GameInvite rec; bool loaded = false; Uint32 at = 0; };
+struct InviteAct { long id = 0; int what = 0; okay::JoinLink link; std::string from; std::string answer; };   // what: 1 accept, 2 decline, 3 withdraw
+static okay::thr::Mutex* g_invMutex = nullptr;
+static std::map<long, InviteRecSlot> g_invRecs;     // (guarded) id -> the record (rec.id 0 = not found / not mine)
+static std::set<long> g_invWant;                    // (guarded) ids to look up
+static std::vector<InviteAct> g_invTodo, g_invDone; // (guarded) answers to send / answered
+static std::set<long> g_invBusy;                    // (UI thread) answers on their way
+static void InviteDemoSeed() {   // OKAY_CHAT_DEMO_INVITE: one received and one sent invite with records (no network)
+    static bool done = false;
+    if (done) return;
+    done = true;
+    const long now = (long)std::time(nullptr);
+    okay::GameInvite in; in.id = 101; in.senderId = "demo-uid"; in.recipientId = "me"; in.title = "Star Arena"; in.status = "pending";
+    in.created = now - 240; in.expires = now + 100 * 60;
+    okay::GameInvite out = in; out.id = 102; out.senderId = "me"; out.recipientId = "demo-uid"; out.title = "Kart Rush"; out.expires = now + 45 * 60;
+    g_invRecs[101] = {in, true, okay::platform::TicksMs32()};
+    g_invRecs[102] = {out, true, okay::platform::TicksMs32()};
+}
+// The record for a card (nullptr while it loads or when there is none); asks for it, and again every 20 s.
+static const okay::GameInvite* InviteRecordFor(long id, okay::GameInvite& copy) {
+    if (id <= 0) return nullptr;
+    if (!g_invMutex) g_invMutex = okay::thr::CreateMutex();
+    if (ChatDemo() && std::getenv("OKAY_CHAT_DEMO_INVITE")) InviteDemoSeed();
+    bool have = false;
+    okay::thr::LockMutex(g_invMutex);
+    auto it = g_invRecs.find(id);
+    if (it != g_invRecs.end() && it->second.loaded) { copy = it->second.rec; have = true; }
+    if (!ChatDemo() && (it == g_invRecs.end() || okay::platform::TicksMs32() - it->second.at > 20000)) g_invWant.insert(id);
+    okay::thr::UnlockMutex(g_invMutex);
+    return have && copy.id > 0 ? &copy : nullptr;
+}
+static void InviteAnswer(long id, int what, const okay::JoinLink& link, const std::string& from) {
+    if (id <= 0 || g_invBusy.count(id)) return;
+    if (!g_invMutex) g_invMutex = okay::thr::CreateMutex();
+    g_invBusy.insert(id);
+    InviteAct a; a.id = id; a.what = what; a.link = link; a.from = from;
+    okay::thr::LockMutex(g_invMutex);
+    if (ChatDemo()) { a.answer = what == 1 ? "accepted" : what == 2 ? "declined" : "cancelled"; g_invDone.push_back(a); }   // demo: answered at once
+    else g_invTodo.push_back(a);
+    okay::thr::UnlockMutex(g_invMutex);
+}
+// The chat poll thread's share: answers first, then a few lookups.
+static void InviteWork(okay::account::AccountService& acct) {
+    if (!g_invMutex) return;
+    std::vector<InviteAct> todo; std::vector<long> want;
+    okay::thr::LockMutex(g_invMutex);
+    todo.swap(g_invTodo);
+    for (long id : g_invWant) { want.push_back(id); if (want.size() >= 4) break; }
+    for (long id : want) g_invWant.erase(id);
+    okay::thr::UnlockMutex(g_invMutex);
+    if (todo.empty() && want.empty()) return;
+    okay::Invites inv(acct);
+    for (InviteAct& a : todo) a.answer = a.what == 3 ? inv.Cancel(a.id) : inv.Respond(a.id, a.what == 1);
+    std::vector<std::pair<long, okay::GameInvite>> got;
+    for (long id : want) got.push_back({id, inv.Get(id)});
+    okay::thr::LockMutex(g_invMutex);
+    for (auto& a : todo) g_invDone.push_back(a);
+    for (auto& [id, g] : got) g_invRecs[id] = {g, true, okay::platform::TicksMs32()};
+    okay::thr::UnlockMutex(g_invMutex);
+}
+// UI thread, once a frame: say how each answer went, join on an accepted invite, and show the new state.
+static void InvitePumpAnswers() {
+    if (!g_invMutex) return;
+    std::vector<InviteAct> done;
+    okay::thr::LockMutex(g_invMutex);
+    done.swap(g_invDone);
+    for (const auto& a : done) {
+        if (!okay::InviteAnswerOk(a.answer)) continue;
+        auto it = g_invRecs.find(a.id);
+        if (it != g_invRecs.end()) it->second.rec.status = a.answer;
+        g_invWant.insert(a.id);   // read the server's copy again
+    }
+    okay::thr::UnlockMutex(g_invMutex);
+    for (const auto& a : done) {
+        g_invBusy.erase(a.id);
+        const bool ok = okay::InviteAnswerOk(a.answer);
+        Toast(okay::InviteAnswerText(a.answer), ok ? 1 : 2);
+        if (ok && a.what == 1 && a.link.Valid() && !ChatDemo()) MpJoin(a.link.Format(), a.from);
+    }
+}
+// The card: the game, the session, the invite's state from its record (time left, expired, ended, full, answered) and
+// Accept / Decline (received) or Withdraw (sent). A card with no record keeps the plain Join of older launchers.
+void RenderChatInvite(const ChatInviteInfo& inv, bool mine, long when, float width, const ChatInviteCtx* ctx) {
     ImDrawList* d = ImGui::GetWindowDrawList();
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float tile = 44.0f;
@@ -3748,18 +3902,93 @@ void RenderChatInvite(const ChatInviteInfo& inv, bool mine, long when, float wid
     std::string sub = !inv.link.name.empty() ? inv.link.name : inv.link.Relayed() ? "Private match" : inv.link.addr;
     if (inv.link.needsPassword) sub += inv.link.password.empty() ? "  \xC2\xB7  password" : "  \xC2\xB7  password included";
     ImGui::TextDisabled("%s", FitText(sub, width).c_str());
-    const bool old = when > 0 && (long)std::time(nullptr) - when > 6 * 3600;   // a long-gone session
-    if (!mine) {
+
+    okay::GameInvite copy;
+    const okay::GameInvite* rec = InviteRecordFor(inv.link.inviteId, copy);
+    const std::string peerName = ctx ? ctx->peerName : std::string();
+    const std::string senderName = mine ? std::string() : (!peerName.empty() ? peerName : inv.link.host);
+    const okay::InviteCard card = okay::CardForInvite(inv.title, mine, senderName, peerName, rec, when, (long)std::time(nullptr),
+                                                      ctx && ctx->peerKnown ? okay::PresenceSeen::Known : okay::PresenceSeen::Unknown,
+                                                      ctx ? ctx->peerLink : std::string());
+    const okay::InviteState st = card.view.state;
+    const std::string line = (st == okay::InviteState::Ended || card.view.sub.empty()) ? card.view.text : card.view.sub;
+    const bool live = st == okay::InviteState::Pending;
+    if (!line.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, live ? okaytheme::kTextDim : st == okay::InviteState::Accepted ? okaytheme::Current().success
+                                                 : okaytheme::Current().warning);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width);
+        ImGui::TextUnformatted(line.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+    }
+    const bool busy = g_invBusy.count(inv.link.inviteId) != 0;
+    ImGui::PushID(inv.link.Format().c_str());
+    if (card.accept || card.decline) {
+        ImGui::Dummy(ImVec2(0, 2));
+        const float bw = (width - 8.0f) * 0.5f;
+        ImGui::BeginDisabled(busy);
+        ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::SuccessFill());
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::SuccessFill());
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, okaytheme::SuccessFill());
+        if (ImGui::Button(busy ? "Answering\xE2\x80\xA6" : "Accept", ImVec2(bw, 30))) InviteAnswer(inv.link.inviteId, 1, inv.link, senderName);
+        ImGui::PopStyleColor(3);
+        ImGui::SameLine(0, 8);
+        if (ImGui::Button("Decline", ImVec2(bw, 30))) InviteAnswer(inv.link.inviteId, 2, inv.link, senderName);
+        ImGui::EndDisabled();
+    } else if (card.withdraw) {
+        ImGui::Dummy(ImVec2(0, 2));
+        ImGui::BeginDisabled(busy);
+        if (ImGui::Button(busy ? "Withdrawing\xE2\x80\xA6" : "Withdraw invite", ImVec2(width, 28))) InviteAnswer(inv.link.inviteId, 3, inv.link, std::string());
+        ImGui::EndDisabled();
+    } else if (card.join) {
         ImGui::Dummy(ImVec2(0, 2));
         ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::SuccessFill());
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::SuccessFill());
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, okaytheme::SuccessFill());
-        ImGui::PushID(inv.link.Format().c_str());
-        if (ImGui::Button(old ? "Try to join" : "Join game", ImVec2(width, 30))) MpJoin(inv.link.Format(), inv.link.host);
-        ImGui::PopID();
+        if (ImGui::Button(card.joinLabel.c_str(), ImVec2(width, 30))) MpJoin(inv.link.Format(), senderName);
         ImGui::PopStyleColor(3);
-        if (old) ImGui::TextDisabled("Sent a while ago \xE2\x80\x94 the match may be over.");
     }
+    ImGui::PopID();
+}
+
+// ---- Links in messages (feature map 17.4.11): okay::chat::ClickLink decides ------------------------------------------
+// A web link asks first ("This link opens example.com in your browser. Open it?"), a join link goes through MpJoin and
+// never the shell, anything else (javascript:, file:, data: ...) is refused with the reason. The question is drawn by
+// DrawChatLinkConfirm in the window (ImGui context) where the link was clicked: the launcher or the chat's own window.
+static std::string g_linkAskUrl, g_linkAskText;
+static bool g_linkAskReq = false;
+static ImGuiContext* g_linkAskCtx = nullptr;
+void OpenChatLink(const std::string& url) {
+    const okay::chat::LinkClick c = okay::chat::ClickLink(url);
+    switch (c.action) {
+        case okay::chat::LinkClick::Action::Join: MpJoin(c.url, std::string()); return;
+        case okay::chat::LinkClick::Action::Refuse: Toast(c.text, 2); return;
+        case okay::chat::LinkClick::Action::Confirm:
+            g_linkAskUrl = c.url; g_linkAskText = c.text; g_linkAskReq = true; g_linkAskCtx = ImGui::GetCurrentContext();
+            return;
+    }
+}
+void DrawChatLinkConfirm() {
+    if (g_linkAskCtx != ImGui::GetCurrentContext()) return;
+    if (g_linkAskReq) { g_linkAskReq = false; ImGui::OpenPopup("Open link?##chatlink"); }
+    ImGui::SetNextWindowSize(ImVec2(okl::UiPx(460.0f), 0), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Open link?##chatlink", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) return;
+    const float w = okl::UiPx(430.0f);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w);
+    ImGui::TextUnformatted(g_linkAskText.c_str());
+    ImGui::Dummy(ImVec2(0, 2));
+    ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::kTextDim);
+    ImGui::TextUnformatted(g_linkAskUrl.size() > 300 ? (g_linkAskUrl.substr(0, 300) + "\xE2\x80\xA6").c_str() : g_linkAskUrl.c_str());
+    ImGui::PopStyleColor();
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, 6));
+    const ImVec2 bs(okl::FitButtonW("Open", okl::UiPx(110.0f)), okl::UiPx(30.0f));
+    if (PrimaryButton("Open", bs)) { OpenExternal(g_linkAskUrl); g_linkAskUrl.clear(); ImGui::CloseCurrentPopup(); }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f))) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        g_linkAskUrl.clear(); ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 // A forwarded message: "[Fwd] <original sender>\n<the message>". Older clients
 // just show the tag line; newer ones show a "Forwarded from" label instead.
@@ -4699,6 +4928,57 @@ static void OutboxQueue(OutMsg o) {
     okay::thr::UnlockMutex(g_outMutex);
     if (o.state == 0) OutboxKick();
 }
+// The offline queue, kept across a restart: messages still waiting to go (or that gave up after their retries) are saved
+// in the account's own file in the launcher's config folder (chat_outbox_<account>.txt, okay::chat::EncodeQueue) and
+// sent again with the same client ids when that account is signed in next time (a week at most). Invite cards are not
+// kept (they are only worth sending now). Called once a frame from the main loop; it writes only when something changed.
+static fs::path OutboxFile(const std::string& user) {
+    return fs::path(g_pollCfgDir.empty() ? g_exeDir : g_pollCfgDir) / ("chat_outbox_" + SafeUserFileName(user) + ".txt");
+}
+static void SyncOutboxFile(const std::string& user) {
+    static std::string loadedFor;
+    static std::string savedText;
+    static Uint32 nextCheck = 0;
+    if (!g_outMutex) g_outMutex = okay::thr::CreateMutex();
+    if (user != loadedFor) {
+        loadedFor = user; savedText.clear();
+        if (user.empty()) return;
+        std::ifstream f(OutboxFile(user), std::ios::binary);
+        std::stringstream ss; ss << f.rdbuf();
+        savedText = ss.str();
+        const auto back = okay::chat::ResumeQueue(okay::chat::DecodeQueue(savedText), (long)std::time(nullptr));
+        if (back.empty()) return;
+        okay::thr::LockMutex(g_outMutex);
+        for (const auto& m : back) {
+            bool have = false;
+            for (const auto& o : g_outbox) if (o.clientId == m.clientId) have = true;
+            if (have) continue;
+            OutMsg o; o.localId = g_outNextId++; o.toUid = m.toUid; o.toGroup = m.toGroup; o.toChannel = m.toChannel;
+            o.body = m.body; o.replyTo = m.replyTo; o.when = m.created; o.clientId = m.clientId;
+            g_outbox.push_back(o);
+        }
+        okay::thr::UnlockMutex(g_outMutex);
+        OutboxKick();
+        return;
+    }
+    if (user.empty() || okay::platform::TicksMs32() < nextCheck) return;
+    nextCheck = okay::platform::TicksMs32() + 1000;
+    std::vector<okay::chat::QueuedMessage> q;
+    okay::thr::LockMutex(g_outMutex);
+    for (const auto& o : g_outbox) {
+        if (!o.inviteKind.empty() || !(o.state == 0 || (o.state == -1 && o.attempts >= 8))) continue;   // waiting, or gave up retrying
+        okay::chat::QueuedMessage m; m.clientId = o.clientId; m.toUid = o.toUid; m.toGroup = o.toGroup; m.toChannel = o.toChannel;
+        m.body = o.body; m.replyTo = o.replyTo; m.created = o.when; m.attempts = o.attempts;
+        q.push_back(m);
+    }
+    okay::thr::UnlockMutex(g_outMutex);
+    const std::string text = okay::chat::EncodeQueue(q);
+    if (text == savedText) return;
+    std::error_code ec;
+    if (q.empty()) fs::remove(OutboxFile(user), ec);
+    else { std::ofstream f(OutboxFile(user), std::ios::binary | std::ios::trunc); if (!f) return; f << text; }
+    savedText = text;
+}
 void OutboxSend(const std::string& toUid, long toGroup, const std::string& body, long replyTo, long toChannel) {
     OutMsg o; o.toUid = toUid; o.toGroup = toGroup; o.toChannel = toChannel; o.body = body; o.replyTo = replyTo;
     OutboxQueue(o);
@@ -5484,7 +5764,13 @@ int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, ImVec4 
 static volatile bool g_chatTypingReq = false;  // the composer asks the worker to broadcast "typing"
 static std::string g_chatSelUid;                                        // (guarded) open conversation
 static bool g_chatLogReady = false, g_chatConvReady = false, g_chatFriReady = false;  // (guarded)
-static std::vector<okay::DirectMessage> g_chatLog;                      // (guarded)
+static std::vector<okay::DirectMessage> g_chatLog;                      // (guarded) the newest page of the open conversation
+static bool g_chatLogMore = false;                                      // (guarded) older messages exist (Messages::WithPage)
+// "Load older messages": the UI asks for the page before `g_chatOlderBefore`; the chat poll answers.
+static std::string g_chatOlderReqUid, g_chatOlderFor;                   // (guarded) asked for / answered for
+static long g_chatOlderBefore = 0;                                      // (guarded)
+static std::vector<okay::DirectMessage> g_chatOlderRows;                // (guarded)
+static bool g_chatOlderMore = false, g_chatOlderReady = false;          // (guarded)
 static std::map<long, std::map<std::string,long>> g_chatReacts;        // (guarded)
 static std::map<long, std::set<std::string>> g_chatMyReacts;           // (guarded)
 static long g_chatPeerRead = 0;                                         // (guarded)
@@ -6302,14 +6588,14 @@ static void DrawPersonAvatar(ImDrawList* dl, ImVec2 c, float A, const std::strin
     const ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0.0f, ini.c_str());
     dl->AddText(ImGui::GetFont(), fs, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32_WHITE, ini.c_str());
 }
-// A small count (or dot when n is 1 and `dotForOne`) in the accent colour, right-aligned at `right`; returns its width.
-static float DrawCountBadge(ImDrawList* dl, float right, float cy, int n) {
+// A small count in the accent colour (or `col`), right-aligned at `right`; returns its width.
+static float DrawCountBadge(ImDrawList* dl, float right, float cy, int n, ImU32 col = 0) {
     const std::string t = okayfriends::BadgeText(n);
     if (t.empty()) return 0.0f;
     const float fs = ImGui::GetFontSize() * 0.80f;
     const ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0.0f, t.c_str());
     const float h = ts.y + 4.0f * g_uiScale, w = std::max(h, ts.x + 10.0f * g_uiScale);
-    dl->AddRectFilled(ImVec2(right - w, cy - h * 0.5f), ImVec2(right, cy + h * 0.5f), ImGui::GetColorU32(kAccent), h * 0.5f);
+    dl->AddRectFilled(ImVec2(right - w, cy - h * 0.5f), ImVec2(right, cy + h * 0.5f), col ? col : ImGui::GetColorU32(kAccent), h * 0.5f);
     dl->AddText(ImGui::GetFont(), fs, ImVec2(right - w + (w - ts.x) * 0.5f, cy - ts.y * 0.5f), okaytheme::OnColorU32(), t.c_str());
     return w;
 }
@@ -6352,7 +6638,7 @@ static void DrawChatModeSwitch(ImDrawList* dl, int unreadChats, int friendsOnlin
 struct ChatFriendsColumn {
     okay::account::AccountService& account;
     std::vector<okay::Friend>& friends;          // the chat poller's list (accepted friends and requests)
-    const std::set<std::string>& unreadKeys;     // conversations with unread messages (DMs by user id)
+    const std::map<std::string, int>& unreadN;   // unread messages per conversation (DMs by user id; okayfriends::UnreadFor)
     const okayfriends::ColumnLayout& layout;
     bool demo = false;                           // the dev screenshot hook: no network
     std::string openUid;                         // the open 1:1 conversation ("" = none or a group)
@@ -6386,7 +6672,7 @@ static void DrawChatFriendsColumn(ChatFriendsColumn& c) {
         p.playing = f.playing; p.sessionCode = f.sessionCode; p.customStatus = f.customStatus; p.avatar = f.avatar;
         p.rowId = f.rowId; p.lastSeen = f.lastSeen; p.online = f.online;
         p.blocked = g_blockedUsers.count(f.id) != 0; p.favorite = g_favFriends.count(f.id) != 0;
-        p.unread = c.unreadKeys.count(f.id) ? 1 : 0;   // (the chat knows "something new", not how many)
+        if (auto un = c.unreadN.find(f.id); un != c.unreadN.end()) p.unread = un->second;   // the real number (ChatUnread)
         p.kind = f.status == "accepted" ? Kind::Friend : f.incoming ? Kind::Incoming : Kind::Outgoing;
         people.push_back(p);
     }
@@ -6660,6 +6946,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
     }
     PumpVoiceRecord();
     PumpVoicePlayback();
+    InvitePumpAnswers();   // invite cards answered (accept joins)
     if (!g_chatWinOpen && !kChatDemo) { if (VoiceRecording()) FinishVoiceRecord(false); return; }
     static std::vector<okay::Friend> friends; static Uint32 friendsNext = 0;
     static std::vector<okay::Messages::ConversationPreview> convs; static Uint32 convsNext = 0;
@@ -6766,6 +7053,11 @@ void DrawChatWindow(okay::account::AccountService& account) {
         g_chatReqPending = false;
         ImGui::SetNextWindowFocus();
     }
+    if (g_chatReqGroup > 0) {                   // a group message's notification was clicked
+        openGroup(g_chatReqGroup);
+        g_chatReqGroup = 0;
+        ImGui::SetNextWindowFocus();
+    }
     if (kChatDemo) {
         if (!g_chatInOwnWindow) {
             ImGui::SetNextWindowPos(ImVec2(16, 40), ImGuiCond_Always);
@@ -6828,6 +7120,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 okay::Messages::GroupConvo g; g.id = 7; g.title = "Game Jam Team"; g.members = 5; g.lastSender = "Maya";
                 g.lastBody = "Build is up on itch, 3 hours left!"; g.when = tt - 180; g.lastId = 90; groups.push_back(g);
                 g_pinnedChats.insert("g:7");
+                // Unread numbers: three from Maya, two from Jonas (what Messages::UnreadRows would give).
+                g_unreadRows = {{38, "u-maya", "me"}, {39, "u-maya", "me"}, {40, "u-maya", "me"}, {21, "u-jon", "me"}, {22, "u-jon", "me"},
+                                {6, "me", "demo-uid"}};
+                g_unreadMe = "me"; g_unreadKnown = true;
                 chatTabs.push_back(ChatTab{"demo-uid", "demo-uid", "Alex Rivera", "", 0});
                 chatTabs.push_back(ChatTab{"u-maya", "u-maya", "Maya Chen", "", 0});
                 chatTabs.push_back(ChatTab{"g:7", "", "Game Jam Team", "", 7});
@@ -6875,16 +7171,22 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 myReacts[23].insert("poll:0");
             }
             if (std::getenv("OKAY_CHAT_DEMO_INVITE")) {   // game invites both ways
-                add(24, InviteMessageBody("Star Arena", "okay://join?game=Star%20Arena&addr=192.168.1.20:45000&name=Maya%27s%20lobby&host=maya").c_str(), 4, false);
+                add(24, InviteMessageBody("Star Arena", "okay://join?game=Star%20Arena&addr=192.168.1.20:45000&name=Maya%27s%20lobby&host=maya&inv=101").c_str(), 4, false);
                 add(25, "omw!", 3, true);
-                add(26, InviteMessageBody("Kart Rush", "okay://join?game=Kart%20Rush&relay=relay.okayspace.net:45100&code=K7Q-29X&pass=cup&host=kingimann").c_str(), 2, true);
-                add(27, okay::Parties::InviteBody("0f6a2c1e-5b7d-4e8a-9c3f-2d1b0a9e8f7c", "Alex Rivera").c_str(), 1, false);
-                add(28, JoinRequestBody("Neon Drift").c_str(), 1, false);
+                add(26, InviteMessageBody("Kart Rush", "okay://join?game=Kart%20Rush&relay=relay.okayspace.net:45100&code=K7Q-29X&pass=cup&host=kingimann&inv=102").c_str(), 2, true);
+                if (std::strcmp(std::getenv("OKAY_CHAT_DEMO_INVITE"), "cards") != 0) {   // "cards": only the two game invites (their records' state)
+                    add(27, okay::Parties::InviteBody("0f6a2c1e-5b7d-4e8a-9c3f-2d1b0a9e8f7c", "Alex Rivera").c_str(), 1, false);
+                    add(28, JoinRequestBody("Neon Drift").c_str(), 1, false);
+                }
                 for (auto& f : friends) if (f.id == "demo-uid") {   // Alex is in a joinable match (chat header bar)
                     f.playing = "Playing Neon Drift \xC2\xB7 Hosting Night Race (3/6)";
                     okay::JoinLink l; l.game = "Neon Drift"; l.addr = "192.168.1.44:45000"; l.name = "Night Race"; l.host = "alexr";
                     f.sessionCode = l.Format();
                 }
+            }
+            if (const char* dl = std::getenv("OKAY_CHAT_DEMO_LINK")) {   // a link in a message, and its "Open link?" question
+                add(29, "the patch notes are here https://example.com/okayspace/notes", 6, false);
+                OpenChatLink(*dl ? dl : "https://example.com/okayspace/notes");
             }
             if (std::getenv("OKAY_CHAT_DEMO_MD")) {   // formatting showcase
                 add(21, "Formatting works now: **bold**, *italic*, ~~strike~~, `inline code` and a ||secret spoiler||", 15, false);
@@ -7172,7 +7474,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + std::max(th, B) + 10));
             }
         }
-        if (!folded) DrawChatModeSwitch(dl, g_dmUnread, g_chatFriendsOnline);
+        if (!folded) DrawChatModeSwitch(dl, ChatUnreadTotal(), g_chatFriendsOnline);
         if (!folded && !friendsPanel) {   // My status: click to set / change it.
             const ImVec2 sp = ImGui::GetCursorScreenPos();
             const float sw = ImGui::GetContentRegionAvail().x, sh = ImGui::GetTextLineHeight() + 12.0f;
@@ -7255,6 +7557,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             long gid = 0, when = 0, lastId = 0, lastSeen = 0;
             int members = 0;
             bool mine = false, online = false, unread = false, starter = false;
+            int unreadN = 0;   // the number on its badge (okayfriends::UnreadFor)
         };
         std::vector<Row> rows;
         std::set<std::string> have;
@@ -7273,7 +7576,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             } else if (auto kn = knownNames.find(c.uid); kn != knownNames.end()) r.name = kn->second;
             else r.name = (c.uid == selUid) ? selName : ChatPreview(c.uid, 10);
             bool open = g_chatSelGroup == 0 && c.uid == selUid;
-            r.unread = r.lastId > 0 && !r.mine && r.lastId > seenId[r.uid] && !open && !g_blockedUsers.count(r.uid);
+            r.unread = r.lastId > 0 && !r.mine && r.lastId > std::max(seenId[r.uid], g_chatUnreadFloor) && !open && !g_blockedUsers.count(r.uid);
             rows.push_back(r); have.insert(c.uid);
         }
         for (const auto& gc : groups) {
@@ -7301,8 +7604,14 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (pa != pb) return pa;
             return a.when > b.when;
         });
-        std::set<std::string> unreadKeys;   // for the tab strip's unread dots
-        for (const auto& r : rows) if (r.unread) unreadKeys.insert(r.key);
+        std::map<std::string, int> unreadN;   // the numbers on the rows, the tab strip and the Friends list
+        {
+            const okay::chat::UnreadSummary& us = ChatUnread();
+            for (auto& r : rows) {
+                r.unreadN = r.gid ? (r.unread ? 1 : 0) : okayfriends::UnreadFor(us.perPeer, r.uid, r.unread);
+                if (r.unreadN > 0) unreadN[r.key] = r.unreadN;
+            }
+        }
         std::string filt = convFilter;
         for (auto& ch : filt) ch = (char)std::tolower((unsigned char)ch);
         auto passes = [&](const Row& r) {
@@ -7317,7 +7626,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
         };
 
         if (friendsPanel) {   // the Friends list (its own function; the chats' list below is not drawn)
-            ChatFriendsColumn fc{account, friends, unreadKeys, colL, kChatDemo};
+            ChatFriendsColumn fc{account, friends, unreadN, colL, kChatDemo};
             fc.openUid = g_chatSelGroup == 0 ? selUid : std::string();
             fc.typingUid = (g_chatSelGroup == 0 && peerTyping) ? selUid : std::string();
             fc.openConv = [&](const std::string& uid, const std::string& nm, const std::string& av, bool on) {
@@ -7405,11 +7714,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
             }
 
             if (folded) {   // avatar only: unread badge on the top-right of the avatar
-                if (r.unread) {
-                    ImVec2 ud(ac.x + A * 0.36f, ac.y - A * 0.36f);
-                    rdl->AddCircleFilled(ud, 7.0f, ImGui::GetColorU32(sel ? kChatSideSel : kChatSideBg), 16);
-                    rdl->AddCircleFilled(ud, 5.0f, muted ? okaytheme::TextDimU32() : ImGui::GetColorU32(kAccent), 16);
-                }
+                if (r.unreadN > 0)   // the number, on the avatar's top-right
+                    DrawCountBadge(rdl, ac.x + A * 0.5f + 4.0f, ac.y - A * 0.36f, r.unreadN, muted ? okaytheme::TextDimU32() : 0);
                 if (sel) rdl->AddRectFilled(ImVec2(rp.x, rp.y + 14), ImVec2(rp.x + 3, rp.y + rowH - 14), ImGui::GetColorU32(kAccent), 1.5f);
                 ImGui::PopID();
                 return;
@@ -7425,13 +7731,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
             std::string nm = FitText(r.name, right - tx - rtw - 8.0f);
             rdl->AddText(ImVec2(tx, y1), cText, nm.c_str());
             if (r.unread) rdl->AddText(ImVec2(tx + 0.6f, y1), cText, nm.c_str());   // faux-bold when unread
-            // Markers on the preview line (right to left): unread dot, muted, pinned.
+            // Markers on the preview line (right to left): the unread number, muted, pinned.
             float mx = right;
-            if (r.unread) {
-                ImU32 uc = muted ? okaytheme::TextDimU32() : ImGui::GetColorU32(kAccent);
-                rdl->AddCircleFilled(ImVec2(mx - 5.0f, y2 + 8.0f), 5.0f, uc, 16);
-                mx -= 16.0f;
-            }
+            if (r.unreadN > 0)
+                mx -= DrawCountBadge(rdl, mx, y2 + 8.0f, r.unreadN, muted ? okaytheme::TextDimU32() : 0) + 6.0f;
             if (muted) {   // bell with a slash
                 ImVec2 bc(mx - 5.0f, y2 + 8.0f);
                 rdl->PathArcTo(ImVec2(bc.x, bc.y - 0.5f), 3.4f, 3.14159f, 6.28318f, 8);
@@ -7672,7 +7975,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
             for (std::size_t i = 0; i < chatTabs.size(); ++i) {
                 const ChatTab& t = chatTabs[i];
                 const bool active = (int)i == curIdx;
-                const bool un = !active && unreadKeys.count(t.key) != 0;
+                const auto unIt = unreadN.find(t.key);
+                const int unN = active || unIt == unreadN.end() ? 0 : unIt->second;
+                const bool un = unN > 0;
                 // Live name: nickname > friend's name > name learned when opened > stored.
                 std::string nm = t.name;
                 if (!t.gid) {
@@ -7683,7 +7988,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 } else for (const auto& gc : groups) if (gc.id == t.gid && !gc.title.empty()) nm = gc.title;
                 if (nm.empty()) nm = t.gid ? "Group" : "Chat";
                 // avatar (36) + name + unread dot (12) + close (18) + margins (24)
-                const float tw = std::clamp(ImGui::CalcTextSize(nm.c_str()).x + 80.0f + (un ? 12.0f : 0.0f), 118.0f, 220.0f);
+                const std::string unTxt = okayfriends::BadgeText(unN);
+                const float unW = un ? ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize() * 0.80f, FLT_MAX, 0.0f, unTxt.c_str()).x + 16.0f : 0.0f;
+                const float tw = std::clamp(ImGui::CalcTextSize(nm.c_str()).x + 80.0f + unW, 118.0f, 240.0f);
                 ImVec2 p(x, start.y);
                 ImGui::PushID(t.key.c_str());
                 ImGui::SetCursorScreenPos(p);
@@ -7717,10 +8024,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 }
                 // Name, unread dot, close button.
                 const float closeW = 18.0f;
-                float nameMax = tw - (A + 16.0f) - closeW - 12.0f - (un ? 12.0f : 0.0f);
+                float nameMax = tw - (A + 16.0f) - closeW - 12.0f - unW;
                 td->AddText(ImVec2(p.x + A + 16.0f, p.y + (tabH - th) * 0.5f), (active || hov) ? cText : cDim,
                             FitText(nm, nameMax).c_str());
-                if (un) td->AddCircleFilled(ImVec2(p.x + tw - closeW - 14.0f, p.y + tabH * 0.5f), 4.0f, ImGui::GetColorU32(kAccent), 12);
+                if (un) DrawCountBadge(td, p.x + tw - closeW - 8.0f, p.y + tabH * 0.5f, unN);   // the unread number
                 ImVec2 xp(p.x + tw - closeW - 6.0f, p.y + (tabH - closeW) * 0.5f);
                 ImGui::SetCursorScreenPos(xp);
                 if (ImGui::InvisibleButton("##x", ImVec2(closeW, closeW))) closeIdx = (int)i;
@@ -7973,7 +8280,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 for (std::size_t k = 0; k < links.size(); ++k) {
                     ImGui::PushID((int)(1000 + k));
                     ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().info);
-                    if (ImGui::Selectable(ChatPreview(links[k], 52).c_str())) { OpenExternal(links[k]); ImGui::CloseCurrentPopup(); }
+                    if (ImGui::Selectable(ChatPreview(links[k], 52).c_str())) { OpenChatLink(links[k]); ImGui::CloseCurrentPopup(); }
                     ImGui::PopStyleColor();
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", links[k].c_str());
                     ImGui::PopID();
@@ -8019,12 +8326,33 @@ void DrawChatWindow(okay::account::AccountService& account) {
             // chat poller — the window never blocks on the network. We just tell the
             // worker which conversation is open and read what it has published.
             (void)logNext; (void)typingPollNext;
+            // History: the poll keeps the newest page; "Load older messages" pages further back (Messages::WithPage), kept
+            // per conversation and merged in by id (okay::chat::MergeById), so a refresh never drops what was loaded.
+            static std::map<std::string, std::vector<okay::DirectMessage>> olderLog;
+            static std::map<std::string, bool> olderMore;   // after an older page: whether there is more still
+            static bool logHasMore = false, olderBusy = false;
+            static int keepScroll = 0;                      // 1: older rows came in; 2: put the reader back next frame
+            static float keepY = 0, keepMax = 0, lastLogY = 0, lastLogMax = 0;
             if (g_chatMutex && !kChatDemo) {
                 okay::thr::LockMutex(g_chatMutex);
                 g_chatSelUid = selUid;
+                bool merge = false;
                 if (g_chatLogReady) {
                     log = g_chatLog; reacts = g_chatReacts; myReacts = g_chatMyReacts;
-                    g_chatLogReady = false;
+                    logHasMore = g_chatLogMore;
+                    g_chatLogReady = false; merge = true;
+                }
+                if (g_chatOlderReady) {
+                    g_chatOlderReady = false; olderBusy = false;
+                    if (g_chatOlderFor == selUid) {
+                        okay::chat::MergeById(olderLog[selUid], g_chatOlderRows);
+                        olderMore[selUid] = g_chatOlderMore;
+                        merge = true; keepScroll = 1; keepY = lastLogY; keepMax = lastLogMax;
+                    }
+                }
+                if (merge && !olderLog[selUid].empty()) {
+                    okay::chat::MergeById(log, olderLog[selUid]);
+                    if (keepScroll == 1) lastShown = (int)log.size();   // not a new message: no jump to the bottom
                 }
                 if (g_chatPeerStateUid == selUid) {
                     peerRead = g_chatPeerRead; peerHere = g_chatPeerHere; peerLastSeen = g_chatPeerLastSeen;
@@ -8085,6 +8413,26 @@ void DrawChatWindow(okay::account::AccountService& account) {
             float avW = ImGui::GetContentRegionAvail().x;
             float baseX = ImGui::GetCursorPosX();
             std::string msFilt = msgSearch; for (auto& ch : msFilt) ch = (char)std::tolower((unsigned char)ch);
+            if (keepScroll == 2) { ImGui::SetScrollY(okay::chat::KeepScrollAfterPrepend(keepY, keepMax, ImGui::GetScrollMaxY())); keepScroll = 0; }
+            if (keepScroll == 1) keepScroll = 2;   // the new rows are laid out this frame; the range is known next frame
+            {   // "Load older messages" at the top of the conversation
+                const auto om = olderMore.find(selUid);
+                const bool more = om != olderMore.end() ? om->second : logHasMore;
+                if (more && !log.empty() && msFilt.empty() && !kChatDemo) {
+                    ImGui::Dummy(ImVec2(0, 4));
+                    const char* lbl = olderBusy ? "Loadingâ¦" : "Load older messages";
+                    const float bw = okl::FitButtonW(lbl, okl::UiPx(170.0f));
+                    ImGui::SetCursorPosX(baseX + (avW - bw) * 0.5f);
+                    ImGui::BeginDisabled(olderBusy);
+                    if (ImGui::Button(lbl, ImVec2(bw, okl::UiPx(26.0f))) && g_chatMutex) {
+                        olderBusy = true;
+                        okay::thr::LockMutex(g_chatMutex);
+                        g_chatOlderReqUid = selUid; g_chatOlderBefore = okay::chat::OldestId(log);
+                        okay::thr::UnlockMutex(g_chatMutex);
+                    }
+                    ImGui::EndDisabled();
+                }
+            }
             long prevDay = 0; bool prevMine = false; long prevWhen = 0; bool first = true;
             ImDrawList* dl = ImGui::GetWindowDrawList();
             const float avatarW = 28.0f, avatarGap = 6.0f, padX = 14.0f, padY = 8.0f;
@@ -8097,6 +8445,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
             }
             std::map<std::string, long> callEnds;   // call code -> seconds (0 = missed/declined)
             for (const auto& m : log) { CallBody cb = ParseCallBody(m.body); if (cb.kind == 2) callEnds[cb.code] = cb.secs; }
+            ChatInviteCtx invCtx;   // invite cards: who they are with, and that person's current join link
+            invCtx.peerUid = selUid; invCtx.peerName = okay::account::PublicName(selName, selUid);
+            for (const auto& f : friends)
+                if (f.id == selUid) { invCtx.peerKnown = f.status == "accepted"; invCtx.peerLink = f.online ? f.sessionCode : std::string(); break; }
             for (const auto& m : log) {
                 if (selBlocked && !m.mine) continue;
                 if (m.body.rfind("[CallEnd] ", 0) == 0) continue;   // folded into the call's card
@@ -8284,7 +8636,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         RenderChatCallCard(callB, ce != callEnds.end() ? ce->second : 0, ce != callEnds.end(), m.mine, m.when,
                                            selUid, selName, selAvatar);
                     }
-                    else if (isInvite) RenderChatInvite(invInfo, m.mine, m.when, ImGui::GetContentRegionAvail().x);
+                    else if (isInvite) RenderChatInvite(invInfo, m.mine, m.when, ImGui::GetContentRegionAvail().x, &invCtx);
                     else if (isJoinReq) RenderJoinRequest(jrGame, m.mine, selUid, selName, ImGui::GetContentRegionAvail().x);
                     else if (isParty) RenderPartyInvite(ptyId, ptyFrom, m.mine, ImGui::GetContentRegionAvail().x);
                     else if (isPoll) {
@@ -8523,6 +8875,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             // Auto-scroll to the newest message on open / new message (unless the
             // user has scrolled up to read history). Jump-to-latest overrides it.
             scrolledUp = ImGui::GetScrollMaxY() > 1.0f && (ImGui::GetScrollMaxY() - ImGui::GetScrollY()) > 80.0f;
+            lastLogY = ImGui::GetScrollY(); lastLogMax = ImGui::GetScrollMaxY();   // where the reader is (Load older keeps it)
             // Bubbles are auto-height children whose final height settles a frame
             // later, so a one-shot scroll lands short of the newest message. Keep
             // pinned to the bottom for a few frames after opening a chat, a new
@@ -8940,7 +9293,7 @@ static okaytray::MenuState TrayMenuState(bool chatPoppedOut, bool editorFound, b
     st.activeDownloads = ActiveDownloads();
     st.friendsInOwnWindow = g_chatSeparate;   // the Friends item opens it where it was last used
     st.friendsOnline = g_chatFriendsOnline;
-    st.unreadChats = g_dmUnread;
+    st.unreadChats = ChatUnreadTotal();
     return st;
 }
 static bool TrayShiftHeld() {
@@ -9028,6 +9381,61 @@ std::vector<PendingInvite> g_pollInvites;   // (guarded) fresh ones not yet show
 // New incoming direct messages since the last poll, for desktop notifications (okl::notify::Post).
 struct PolledDm { okay::Messages::IncomingMessage msg; std::string fromName; };
 static std::vector<PolledDm> g_pollNewDms;  // (guarded) not yet posted
+// New invite records, invites answered and group chat messages, for okl::notify::FromChatEvent.
+struct PolledChatEvent { okay::chat::Event ev; std::string groupTitle; };
+static std::vector<PolledChatEvent> g_pollChatEvents;   // (guarded) not yet posted
+// The poll thread's part: what is new since its last look. The first look of an account only sets the marks.
+static std::vector<PolledChatEvent> PollChatEvents(okay::account::AccountService& poller, okay::Messages& msgs, bool counts) {
+    std::vector<PolledChatEvent> out;
+    static std::string evFor;
+    static long invSeen = -1;
+    static std::map<long, std::string> sentKnown;
+    static std::map<long, long> groupSeen;
+    static Uint32 invOffUntil = 0;
+    const std::string who = poller.CurrentSession().username;
+    if (who != evFor) { evFor = who; invSeen = -1; sentKnown.clear(); groupSeen.clear(); invOffUntil = 0; }
+    std::map<std::string, std::string> names; bool namesRead = false;
+    auto nameOf = [&](const std::string& uid) {
+        if (!namesRead) {
+            namesRead = true;
+            for (const auto& f : okay::Friends(poller).List()) names[f.id] = okay::account::PublicName(f.display.empty() ? f.username : f.display, f.id);
+        }
+        auto it = names.find(uid);
+        return it != names.end() ? it->second : std::string();
+    };
+    const Uint32 nowMs = okay::platform::TicksMs32();
+    if (invOffUntil == 0 || (std::int32_t)(nowMs - invOffUntil) >= 0) {
+        invOffUntil = 0;
+        okay::Invites invs(poller);
+        auto recs = invs.Incoming(std::max(0L, invSeen), 20);
+        if (invs.SupportState() == okay::Invites::Support::Missing) invOffUntil = nowMs + 600000u;   // chat_invites.sql not run: look again in 10 min
+        else {
+            long newest = std::max(0L, invSeen);
+            for (const auto& r : recs) newest = std::max(newest, r.id);
+            if (invSeen >= 0 && !recs.empty()) {
+                for (auto& r : recs) r.senderName = nameOf(r.senderId);
+                for (const auto& e : okay::InviteEventsSince(recs, invSeen, (long)std::time(nullptr))) out.push_back({e, std::string()});
+            }
+            invSeen = newest;
+            if (counts) {
+                const auto sent = invs.Sent(20);
+                std::map<std::string, std::string> rn;
+                for (const auto& g : sent) if (sentKnown.count(g.id) && sentKnown[g.id] == "pending" && g.status != "pending") rn[g.recipientId] = nameOf(g.recipientId);
+                for (const auto& e : okay::AnsweredInviteEvents(sent, sentKnown, rn)) out.push_back({e, std::string()});
+                for (const auto& g : sent) sentKnown[g.id] = g.status;
+            }
+        }
+    }
+    if (counts) {
+        const auto gs = msgs.MyGroups();
+        for (const auto& e : okay::GroupMessageEvents(gs, groupSeen, okay::account::PublicName(who))) {
+            std::string title;
+            for (const auto& g : gs) if (g.id == e.groupId) title = g.title;
+            out.push_back({e, title});
+        }
+    }
+    return out;
+}
 // (g_inviteSeenId — the newest invite already shown — is with the prefs; the main thread writes it.)
 // (g_pollCfgDir / g_pollUrl / g_pollKey are defined with the chat poll state.)
 static int PollWorker(void*) {
@@ -9051,12 +9459,14 @@ static int PollWorker(void*) {
                     }
                 }
                 const bool counts = cycle % 3 == 0;
+                std::vector<PolledChatEvent> chatEv = PollChatEvents(poller, msgs, counts);
                 int fr = 0, unread = 0; long newest = since;
                 std::vector<PolledDm> newDms;
                 if (counts) {
                     fr = okay::Friends(poller).PendingRequests();
                     std::vector<okay::Messages::IncomingMessage> incoming;
                     unread = msgs.UnreadSince(since, newest, &incoming);
+                    PublishUnreadRows(msgs.UnreadRows(), msgs.MyUserId());   // the real numbers per conversation (ChatUnread)
                     // Only messages that arrived since the last poll (the first poll of an account only sets the mark:
                     // what was already unread is in the badge and the Notifications tab, not a burst of pop-ups).
                     static long notifiedUpTo = -1;
@@ -9076,6 +9486,7 @@ static int PollWorker(void*) {
                 if (g_pollMutex) okay::thr::LockMutex(g_pollMutex);
                 if (counts) { g_pollFriendReqs = fr; g_pollUnread = unread; g_pollNewestDm = newest; g_pollReady = true; }
                 for (auto& d : newDms) g_pollNewDms.push_back(std::move(d));
+                for (auto& e : chatEv) g_pollChatEvents.push_back(std::move(e));
                 for (auto& f : fresh) {
                     bool dup = false; for (const auto& q : g_pollInvites) if (q.id == f.id) dup = true;
                     if (!dup) g_pollInvites.push_back(std::move(f));
@@ -10015,11 +10426,13 @@ static int ChatPollWorker(void*) {
         // Only an open, focused conversation counts as read / "in the chat".
         const bool viewing = okay::platform::TicksMs32() - g_chatViewMs < 1500;
         if (gid != lastGid) { lastGid = gid; nextGLog = 0; nextGMem = 0; }   // group switched → poll now
+        try { InviteWork(a); } catch (...) {}   // invite cards: look up records, send Accept / Decline / Withdraw
         if (g_chatForceLog) { g_chatForceLog = false; nextLog = 0; nextConv = 0; nextGLog = 0; nextGroups = 0; nextPins = 0; nextGMem = 0; nextFri = 0; }  // a user action wants a fresh view
         try {
             if (now >= nextConv) {
                 auto c = dm.Conversations();
                 if (g_chatMutex) { okay::thr::LockMutex(g_chatMutex); g_chatConvs = std::move(c); g_chatConvReady = true; okay::thr::UnlockMutex(g_chatMutex); }
+                PublishUnreadRows(dm.UnreadRows(), dm.MyUserId());   // unread numbers stay current while the chat is open
                 nextConv = now + 6000;
             }
             if (now >= nextGroups) {
@@ -10070,8 +10483,22 @@ static int ChatPollWorker(void*) {
             }
             if (!uid.empty()) {
                 if (g_chatTypingReq) { g_chatTypingReq = false; dm.SetTyping(uid); }
+                {   // an older page asked for ("Load older messages")
+                    std::string ou; long before = 0;
+                    if (g_chatMutex) { okay::thr::LockMutex(g_chatMutex); ou = g_chatOlderReqUid; before = g_chatOlderBefore; g_chatOlderReqUid.clear(); okay::thr::UnlockMutex(g_chatMutex); }
+                    if (!ou.empty() && before > 0) {
+                        bool more = false;
+                        auto page = dm.WithPage(ou, before, 50, &more);
+                        if (g_chatMutex) {
+                            okay::thr::LockMutex(g_chatMutex);
+                            g_chatOlderRows = std::move(page); g_chatOlderMore = more; g_chatOlderFor = ou; g_chatOlderReady = true;
+                            okay::thr::UnlockMutex(g_chatMutex);
+                        }
+                    }
+                }
                 if (now >= nextLog) {
-                    auto l = dm.With(uid);
+                    bool more = false;
+                    auto l = dm.WithPage(uid, 0, 100, &more);   // the newest 100; older pages on request
                     auto rc = dm.Reactions(); auto mr = dm.MyReactions();
                     long markId = l.empty() ? 0 : l.back().id;
                     if (markId && viewing && g_readReceipts) { dm.MarkRead(uid, markId); nextHere = now + 3000; }
@@ -10079,7 +10506,7 @@ static int ChatPollWorker(void*) {
                     if (g_chatMutex) {
                         okay::thr::LockMutex(g_chatMutex);
                         g_chatLog = std::move(l); g_chatReacts = std::move(rc); g_chatMyReacts = std::move(mr);
-                        g_chatLogReady = true;
+                        g_chatLogMore = more; g_chatLogReady = true;
                         okay::thr::UnlockMutex(g_chatMutex);
                     }
                     nextLog = now + 4000;
@@ -10475,10 +10902,11 @@ static void NotifyInvites() {
     for (const PendingInvite& f : fresh) {
         if (f.id <= notifiedUpTo || f.id <= g_inviteSeenId) continue;
         notifiedUpTo = std::max(notifiedUpTo, f.id);
-        if (NotifyAppFocused()) continue;   // in front: the launcher's own invite pop-up is enough
         const bool party = f.body.rfind("[Party] ", 0) == 0;
         ChatInviteInfo ci;
         if (!party && !ParseChatInvite(f.body, ci)) continue;
+        const std::string once = okl::notify::InviteOnceKey(party ? 0 : ci.link.inviteId);   // its record's pop-up and this one: only one
+        if (NotifyAppFocused()) { g_notifyCentre.MarkSeenOnce(once); continue; }   // in front: the launcher's own invite pop-up is enough
         okl::notify::Event ev;
         ev.kind = okl::notify::Kind::Invite;
         ev.fromUid = f.from; ev.fromName = f.fromName;
@@ -10486,9 +10914,17 @@ static void NotifyInvites() {
         ev.title = party ? f.fromName + " invited you to their party" : f.fromName + " invited you to play " + ci.title;
         ev.body = party ? "Open the Multiplayer page to join." : "Open the chat with " + f.fromName + " to join.";
         ev.target.place = okl::notify::Place::Invite; ev.target.id = party ? std::string() : f.from; ev.target.name = f.fromName;
-        ev.tabKey = "invite:" + std::to_string(f.id);
+        ev.tabKey = okl::notify::InviteTabKey(f.id, party ? 0 : ci.link.inviteId);
+        ev.onceKey = once;
         okl::notify::Post(ev);
     }
+}
+// A chat or invite event the poll found (a new invite record, an invite answered, a group chat message), through the
+// one mapping okl::notify::FromChatEvent. A new invite while the launcher is in front: its own "X invited you" card shows
+// it, so it is only marked as seen.
+static void NotifyChatEvent(const okay::chat::Event& e, const std::string& groupTitle) {
+    if (e.kind == okay::chat::Event::Kind::Invite && NotifyAppFocused()) { g_notifyCentre.MarkSeenOnce(okl::notify::InviteOnceKey(e.inviteId)); return; }
+    okl::notify::Post(okl::notify::FromChatEvent(e, e.text.empty() ? std::string() : ChatPreviewSmart(e.text, 200), groupTitle));
 }
 // Marketplace downloads (the Downloads page) that finished or failed since the last look.
 static void NotifyDownloads() {
@@ -10517,6 +10953,7 @@ static void NotifyOpenTarget(const okl::notify::Target& t, int& tab) {
     ClosePublicProfile();
     switch (t.place) {
         case P::Chat:    if (!t.id.empty()) OpenChatWith(t.id, t.name, ""); else tab = 6; break;
+        case P::GroupChat: if (std::atol(t.id.c_str()) > 0) OpenGroupChat(std::atol(t.id.c_str())); else tab = 6; break;
         case P::Invite:  if (!t.id.empty()) OpenChatWith(t.id, t.name, ""); else tab = 14; break;   // the invite's Join is in the chat
         case P::Update:  StartUpdateCheck(true); break;                                              // the update dialog, as the tray's Check for Updates
         case P::Versions: okayversionsui::RequestPage(t.id); break;                                   // (the loop switches to the page)
@@ -10613,6 +11050,7 @@ static void ChatHostFrame(okay::account::AccountService& account) {
     if (g_imguiOwnFeed) g_imguiChatFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
     DrawChatWindow(account);
+    DrawChatLinkConfirm();   // a link clicked in this window asks here
     DrawIncomingCall();
     okay::filedialog::DrawBuiltin();   // a file picked from the chat (attach, emoji) opens here, in the chat's own window
     DrawToastOverlay();
@@ -13134,6 +13572,7 @@ int main(int argc, char** argv) {
     static okay::thr::Thread* callPollThread = nullptr;
     if (!callPollThread && !serverUrl.empty()) callPollThread = okay::thr::CreateThread(CallPollWorker, "okay-callpoll", nullptr);
     g_pollMutex = okay::thr::CreateMutex();
+    g_unreadMutex = okay::thr::CreateMutex();
     g_pollThread = okay::thr::CreateThread(PollWorker, "okay-poll", nullptr);
     // Background chat poller (messages/typing/conversations) so the Chat window
     // never blocks the UI on the network.
@@ -13381,10 +13820,12 @@ int main(int argc, char** argv) {
             if (account.IsLoggedIn()) {
                 bool apply = false; int fr = 0, unread = 0; long newest = 0;
                 std::vector<PolledDm> newDms;
+                std::vector<PolledChatEvent> chatEv;
                 if (g_pollMutex) {
                     okay::thr::LockMutex(g_pollMutex);
                     if (g_pollReady) { apply = true; fr = g_pollFriendReqs; unread = g_pollUnread; newest = g_pollNewestDm; g_pollReady = false; }
                     newDms.swap(g_pollNewDms);
+                    chatEv.swap(g_pollChatEvents);
                     okay::thr::UnlockMutex(g_pollMutex);
                 }
                 if (apply) {
@@ -13395,6 +13836,7 @@ int main(int argc, char** argv) {
                 }
                 bool popSound = false;   // a desktop pop-up plays Windows' own sound: no chime on top of it
                 for (const PolledDm& d : newDms) popSound |= NotifyDirectMessage(d.msg.from, d.fromName, d.msg.body);   // pop-up, toast or tab
+                for (const PolledChatEvent& e : chatEv) NotifyChatEvent(e.ev, e.groupTitle);   // invites, answers, group messages
                 if (apply) {
                     if (unread > g_dmUnread && !g_chatWinOpen && !popSound) PlayChatChime();
                     g_dmUnread = unread;
@@ -13405,9 +13847,11 @@ int main(int argc, char** argv) {
                     g_lastDmId = std::max(g_lastDmId, g_newestDmId); g_dmUnread = 0; SavePrefs();
                 }
                 SyncChatSeen(account.CurrentSession().username);
+                SyncOutboxFile(account.CurrentSession().username);   // the offline queue survives a restart
             } else {
                 if (lastReqSeen >= 0 || g_friendRequests || g_dmUnread) g_notifyCentre.Clear();   // signed out: no one's pop-ups left waiting
                 g_friendRequests = 0; lastReqSeen = -1; g_dmUnread = 0;
+                ChatUnreadSignedOut();
             }
         }
         // Toast once when an update check finishes.
@@ -14160,7 +14604,7 @@ int main(int argc, char** argv) {
         if (navRow("##navcli", "Command line", kIcoTerminal, tab == 17 && !g_pfOpen, 0, 0)) { tab = 17; ClosePublicProfile(); }
         navSection("SOCIAL");
         tabRow(6, g_friendRequests, navRed);              // pending friend requests
-        if (navSignedIn && navRow("##navchat", "Chat", kIcoChat, g_chatWinOpen, g_dmUnread, navRed)) {
+        if (navSignedIn && navRow("##navchat", "Chat", kIcoChat, g_chatWinOpen, ChatUnreadTotal(), navRed)) {
             // Its own window and already open behind something: bring it forward (Steam's Friends button).
             if (g_chatSeparate && g_chatWinOpen && g_chatHost.shown && !ChatHostFocused()) ChatHostRaise();
             else g_chatWinOpen = !g_chatWinOpen;
@@ -14358,6 +14802,7 @@ int main(int argc, char** argv) {
         ImGui::PopStyleColor(); // nav ChildBg
         DrawStatusDialog(g_statusDialogReq);
         DrawMpDialogs();   // invite friends / password / choose game / connect to server
+        DrawChatLinkConfirm();   // "Open link?" for a link clicked in the launcher's own window
         {   // A single hairline between the rail and the page.
             ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
             ImGui::GetWindowDrawList()->AddLine(ImVec2(b.x - 0.5f, a.y), ImVec2(b.x - 0.5f, b.y),

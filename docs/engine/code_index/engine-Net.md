@@ -2,7 +2,7 @@
 
 # Code index: engine-Net
 
-Back to the [code index](../code_index.md). 33 headers, 166 names.
+Back to the [code index](../code_index.md). 34 headers, 167 names.
 
 ## `engine/include/okay/Net/AntiCheat.hpp`
 
@@ -255,6 +255,10 @@ Back to the [code index](../code_index.md). 33 headers, 166 names.
 - `ServerPlayer` struct, line 55: One player on a server (server browser's player list).
 - `QueryPlayers` function, line 58: Ask a server who's playing (a two-step challenge, like Steam's A2S_PLAYER).
 - `LocalNetworkAddress` function, line 66: This machine's address on the local network ("" if unknown) — what a LAN
+
+## `engine/include/okay/Net/SessionPresence.hpp`
+
+- `SessionTags` struct, line 19: What the join link says about the game itself, so a friend's launcher starts the right program and can say when the
 
 ## `engine/include/okay/Net/SessionTicket.hpp`
 

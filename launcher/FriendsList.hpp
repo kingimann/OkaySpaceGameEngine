@@ -9,6 +9,7 @@
 #include "okay/Core/StringUtil.hpp"   // okay::str::LowerAscii
 #include <algorithm>
 #include <cctype>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -164,6 +165,17 @@ inline std::string Initials(const std::string& name) {
 // ---- Unread badges ----------------------------------------------------------------------------------------------
 /// The text in a badge: "" for none, the number, "99+" above 99.
 inline std::string BadgeText(int n) { return n <= 0 ? std::string() : n > 99 ? std::string("99+") : std::to_string(n); }
+/// A conversation's unread number. `somethingNew` is the conversation list's own rule (their newest message is newer
+/// than what you saw, and the chat is not open); then the real count (okay::chat::CountUnread's perPeer), or 1 when the
+/// message is older than the counted window. Not new: 0, whatever the count says.
+inline int UnreadFor(const std::map<std::string, int>& perPeer, const std::string& key, bool somethingNew) {
+    if (!somethingNew) return 0;
+    const auto it = perPeer.find(key);
+    return it != perPeer.end() && it->second > 0 ? it->second : 1;
+}
+/// The number on the Chat nav item and the tray's Friends item: the counted total when the rows have been read
+/// (`known`), else the older "new since you last looked" count.
+inline int NavUnread(bool known, int countedTotal, int fallback) { return known ? countedTotal : fallback; }
 /// The total on the Friends switch: unread messages from friends (blocked people do not count).
 inline int TotalUnread(const std::vector<Person>& all) {
     int n = 0;

@@ -15,6 +15,7 @@
 // the pump and the click routing) is in launcher/main.cpp. Written from the owner's request and Microsoft's
 // NOTIFYICONDATAW documentation (szInfoTitle holds 64 UTF-16 units, szInfo 256); no outside code.
 #include "okay/Core/Utf8.hpp"   // okay::utf8::Next
+#include "okay/Platform/ChatDelivery.hpp"   // okay::chat::Event: what the chat and invite code report
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -327,6 +328,61 @@ private:
     bool m_showing = false, m_any = false;
     uint64_t m_shownAt = 0, m_endedAt = 0;
 };
+
+// ---- Chat and invite events ----------------------------------------------------------------------------------------
+/// The Notifications tab row of a game invite: one row per invite record when the card has one (the record poll, the
+/// chat message's pop-up and the in-app "X invited you" card all use it), else one per chat message.
+inline std::string InviteTabKey(long messageId, long inviteId) {
+    return inviteId > 0 ? "invite:r" + std::to_string(inviteId) : "invite:" + std::to_string(messageId);
+}
+/// The once-only key of an invite record: the record poll and the chat message's pop-up never both show it.
+inline std::string InviteOnceKey(long inviteId) { return inviteId > 0 ? "invite:" + std::to_string(inviteId) : std::string(); }
+/// An okay::chat::Event as a notification. `preview` is the message as the chat list shows it (a photo says "Photo");
+/// `groupTitle` names the group of a GroupMessage ("" = "a group").
+inline Event FromChatEvent(const okay::chat::Event& e, const std::string& preview = std::string(), const std::string& groupTitle = std::string()) {
+    using K = okay::chat::Event::Kind;
+    Event ev;
+    const std::string who = e.fromName.empty() ? std::string("Someone") : e.fromName;
+    switch (e.kind) {
+        case K::Message:
+            ev.kind = Kind::Message; ev.title = who; ev.body = preview.empty() ? e.text : preview;
+            ev.fromUid = e.fromUid; ev.fromName = e.fromName;
+            ev.target = {Place::Chat, e.peerUid.empty() ? e.fromUid : e.peerUid, e.fromName};
+            ev.tabKey = "msg:" + ev.target.id;
+            break;
+        case K::GroupMessage: {
+            const std::string g = groupTitle.empty() ? std::string("a group") : groupTitle;
+            ev.kind = Kind::Message; ev.title = who + " in " + g; ev.body = preview.empty() ? e.text : preview;
+            ev.fromUid = e.fromUid; ev.fromName = g;   // a burst reads "3 new messages from <group>"
+            ev.target = {Place::GroupChat, std::to_string(e.groupId), g};
+            ev.burstKey = "group:" + std::to_string(e.groupId);
+            ev.tabKey = "group:" + std::to_string(e.groupId);
+            break;
+        }
+        case K::Invite:
+            ev.kind = Kind::Invite; ev.title = e.text.empty() ? who + " invited you" : e.text;
+            ev.body = "Open the chat with " + who + " to accept or decline.";
+            ev.fromUid = e.fromUid; ev.fromName = e.fromName;
+            ev.target = {Place::Invite, e.peerUid.empty() ? e.fromUid : e.peerUid, e.fromName};
+            ev.onceKey = InviteOnceKey(e.inviteId);
+            ev.tabKey = InviteTabKey(e.messageId, e.inviteId);
+            break;
+        case K::InviteAnswered:
+            ev.kind = Kind::Invite; ev.title = e.text.empty() ? who + " answered your invite" : e.text;
+            ev.fromUid = e.fromUid; ev.fromName = e.fromName;
+            ev.target = {Place::Chat, e.peerUid.empty() ? e.fromUid : e.peerUid, e.fromName};
+            ev.burstKey = "invans:" + std::to_string(e.inviteId);
+            ev.onceKey = "invite-answer:" + std::to_string(e.inviteId);
+            ev.tabKey = "invans:" + std::to_string(e.inviteId);
+            break;
+        case K::JoinRequest:
+            ev.kind = Kind::Invite; ev.title = who + " asked to join your game"; ev.body = e.text;
+            ev.fromUid = e.fromUid; ev.fromName = e.fromName;
+            ev.target = {Place::Chat, e.peerUid.empty() ? e.fromUid : e.peerUid, e.fromName};
+            break;
+    }
+    return ev;
+}
 
 // ---- The launcher's entry points (launcher/main.cpp) ----------------------------------------------------------------
 /// THE way to raise a notification from anywhere in the launcher (chat, invites, friends, updates, downloads): reads

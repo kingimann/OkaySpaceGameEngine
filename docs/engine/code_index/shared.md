@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 69 headers, 1007 names.
+Back to the [code index](../code_index.md). 69 headers, 1008 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -645,7 +645,8 @@ Back to the [code index](../code_index.md). 69 headers, 1007 names.
 - `Candidate` struct, line 19
 - `Action` enum, line 27
 - `Plan` struct, line 37
-- `PlanJoin` function, line 52
+- `GetVersionLabel` function, line 47: The button under a NeedEditor or VersionMismatch answer, which opens the Versions page ("" = no button).
+- `PlanJoin` function, line 60
 
 ## `shared/LauncherDemo.hpp`
 

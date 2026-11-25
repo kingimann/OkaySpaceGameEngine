@@ -125,6 +125,16 @@ inline ImVec4 WithAlpha(const ImVec4& c, float a) { return ImVec4(c.x, c.y, c.z,
 inline ImVec4 ReadableOn(const ImVec4& c) {
     return Current().light ? Mix(ImVec4(c.x, c.y, c.z, 1), ImVec4(0, 0, 0, 1), 0.45f) : Mix(ImVec4(c.x, c.y, c.z, 1), ImVec4(1, 1, 1, 1), 0.5f);
 }
+/// The softer text on a filled colour (the time, "edited" and the receipt ticks on my chat bubble): the theme's onColor, made as
+/// soft (see-through) as it can be while the blend of it over `fill` still has `minContrast` (WCAG) against `fill`; never softer
+/// than `softest`. A fill too light for that keeps the full onColor, as readable as the bubble's body text. Owner bug
+/// 2026-11-25: the time on my blue bubble used the info blue and could not be read on Light.
+inline ImVec4 OnFillSoft(const ImVec4& fill, float minContrast = 4.5f, float softest = 0.72f) {
+    const ImVec4 on = Current().onColor, f(fill.x, fill.y, fill.z, 1.0f);
+    for (float a = softest; a < 1.0f; a += 0.02f)
+        if (Contrast(Mix(f, ImVec4(on.x, on.y, on.z, 1.0f), a), f) >= minContrast) return WithAlpha(on, a);
+    return WithAlpha(on, 1.0f);
+}
 /// The accent as text or a selected label: lighter on the dark themes, darker on Light (so it reads on the page).
 inline ImVec4 AccentText(const ImVec4& accent) {
     return Current().light ? Mix(ImVec4(accent.x, accent.y, accent.z, 1), ImVec4(0, 0, 0, 1), 0.35f)

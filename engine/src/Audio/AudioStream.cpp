@@ -4,6 +4,7 @@
 #include "okay/Audio/AudioByteSource.hpp"
 #include "okay/Audio/FlacDecoder.hpp"
 #include "okay/Audio/Mp3Decoder.hpp"
+#include "okay/Audio/WavDecoder.hpp"
 #include "okay/Core/ImportSidecar.hpp"
 #include "AudioInternal.hpp"
 
@@ -87,47 +88,24 @@ std::shared_ptr<AudioByteSource> AudioByteSource::FromFile(const std::string& pa
 namespace audio_detail {
 namespace {
 
+/// WAV through our own decoder's streaming reader (okay::wav::WavStream): every encoding DecodeWav reads,
+/// with the same samples. A file with more than two channels is averaged to mono by MakeDecoder.
 class WavPcmDecoder : public PcmDecoder {
 public:
     bool Open(std::shared_ptr<AudioByteSource> src, std::string* error) {
-        src_ = std::move(src);
-        if (const char* err = ParseWav(*src_, w_)) { if (error) *error = err; return false; }
-        if (w_.channels > 16 || w_.rate == 0 || w_.rate > 768000) {
-            if (error) *error = "unsupported WAV format";
-            return false;
-        }
-        sampleRate = static_cast<int>(w_.rate);
-        channels = KeptChannels(w_.channels, false);
-        totalFrames = static_cast<std::int64_t>(w_.Frames());
-        raw_.resize(kChunk * w_.BlockBytes());
+        if (!wav_.Open(std::move(src), error)) return false;
+        sampleRate = wav_.SampleRate();
+        channels = wav_.Channels();
+        totalFrames = static_cast<std::int64_t>(wav_.TotalFrames());
         return true;
     }
-    std::size_t Read(float* dst, std::size_t maxFrames) override {
-        std::size_t done = 0;
-        const std::uint64_t total = w_.Frames();
-        while (done < maxFrames && pos_ < total) {
-            const std::size_t n = static_cast<std::size_t>(std::min<std::uint64_t>(
-                std::min<std::size_t>(maxFrames - done, kChunk), total - pos_));
-            const std::size_t got = src_->Read(w_.dataOffset + pos_ * w_.BlockBytes(), raw_.data(), n * w_.BlockBytes());
-            const std::size_t frames = got / w_.BlockBytes();
-            if (frames == 0) { pos_ = total; break; }   // the file shrank under us: end
-            ConvertWavFrames(w_, raw_.data(), frames, dst + done * static_cast<std::size_t>(channels), channels);
-            done += frames;
-            pos_ += frames;
-        }
-        return done;
-    }
+    std::size_t Read(float* dst, std::size_t maxFrames) override { return wav_.Read(dst, maxFrames); }
     bool Seek(std::int64_t frame) override {
-        pos_ = static_cast<std::uint64_t>(std::max<std::int64_t>(0, std::min<std::int64_t>(frame, totalFrames)));
-        return true;
+        return wav_.Seek(static_cast<std::uint64_t>(std::max<std::int64_t>(0, frame)));
     }
-    std::size_t MemoryBytes() const override { return sizeof(*this) + raw_.capacity(); }
+    std::size_t MemoryBytes() const override { return sizeof(*this) + wav_.MemoryBytes(); }
 private:
-    static constexpr std::size_t kChunk = 1024;
-    std::shared_ptr<AudioByteSource> src_;
-    WavInfo w_;
-    std::vector<unsigned char> raw_;
-    std::uint64_t pos_ = 0;
+    wav::WavStream wav_;
 };
 
 class FlacPcmDecoder : public PcmDecoder {

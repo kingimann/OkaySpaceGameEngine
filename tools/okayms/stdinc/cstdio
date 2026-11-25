@@ -4,9 +4,9 @@
 // fprintf, ...) and Microsoft's _wfopen are declared here with the C names a Windows C runtime DLL exports (msvcrt.dll
 // has every one of them); okay-ms's own runtime does not define them yet, so a program that calls one links only
 // against a library that does. FILE is opaque. stdin, stdout and stderr are the C runtime's streams 0, 1 and 2, reached
-// through __acrt_iob_func (the documented UCRT entry point that gives the address of stream i). remove and rename are
-// not declared: okay-ms keeps one table of names for std::, so they would hide the algorithm std::remove that the
-// engine uses (a file is removed with _wremove or std::filesystem::remove).
+// through __acrt_iob_func (the documented UCRT entry point that gives the address of stream i). remove(path) and rename
+// share their names with the algorithms std::remove(first, last, v); okay-cl tells them apart by the number of
+// arguments (a template that cannot take that many is passed over).
 #pragma once
 namespace std {
 typedef unsigned long long size_t;
@@ -42,6 +42,8 @@ int sprintf(char *buf, const char *fmt, ...);
 int sscanf(const char *s, const char *fmt, ...);
 int fscanf(FILE *stream, const char *fmt, ...);
 void perror(const char *s);
+int remove(const char *path);
+int rename(const char *from, const char *to);
 int setvbuf(FILE *stream, char *buf, int mode, size_t size);
 FILE *tmpfile(void);
 }

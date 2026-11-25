@@ -738,7 +738,8 @@ void Tick(const Host& h) {
         switch (r.outcome) {
             case Outcome::Installed:
                 st.notes.erase(v);
-                Toast(h, "Installed " + V(v) + ".", 1);
+                if (h.downloadDone) h.downloadDone(v, true, "Installed " + V(v) + ".");
+                else Toast(h, "Installed " + V(v) + ".", 1);
                 break;
             case Outcome::Cancelled:
                 st.notes.erase(v);
@@ -747,7 +748,8 @@ void Tick(const Host& h) {
             case Outcome::AlreadyInstalled: st.notes.erase(v); break;
             default:
                 st.notes[v] = {r.message, 2};
-                Toast(h, r.message, 2);
+                if (h.downloadDone) h.downloadDone(v, false, r.message);
+                else Toast(h, r.message, 2);
                 break;
         }
     }

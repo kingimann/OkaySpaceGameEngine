@@ -1,5 +1,6 @@
 #include "okayms/archive.hpp"
 
+#include <algorithm>
 #include <cstring>
 
 namespace okayms {
@@ -62,19 +63,11 @@ Result<std::vector<uint8_t>> write_archive(const Archive& archive) {
         }
     }
 
-    std::vector<uint8_t> out;
-    const char sig[] = "!<arch>\n";
-    out.insert(out.end(), sig, sig + 8);
-    if (!longnames.empty()) {
-        std::vector<uint8_t> payload(longnames.begin(), longnames.end());
-        append_member(out, name_field_for("//"), payload);
-    }
+    // Each member's bytes first: the linker members need the file offset of every member header.
+    std::vector<std::vector<uint8_t>> payloads(archive.members.size());
     for (size_t i = 0; i < archive.members.size(); ++i) {
         const ArchiveMember& member = archive.members[i];
-        std::string field;
-        if (is_long[i]) field = name_field_for("/" + std::to_string(long_at[i]));
-        else field = name_field_for(member.name + "/");
-        std::vector<uint8_t> payload;
+        std::vector<uint8_t>& payload = payloads[i];
         if (member.is_import) {
             if (member.import.symbol.empty() || member.import.dll.empty()) {
                 return Result<std::vector<uint8_t>>::fail("import member is missing a symbol or a dll");
@@ -98,9 +91,88 @@ Result<std::vector<uint8_t>> write_archive(const Archive& archive) {
             if (!coff.ok()) return Result<std::vector<uint8_t>>::fail(coff.error);
             payload = coff.value;
         }
-        append_member(out, field, payload);
+    }
+    auto padded = [](size_t n) { return n + (n & 1u); };
+
+    // The linker members ("PE Format", "Archive (Library) File Format"): the first lists the symbols in member order
+    // with big-endian counts and offsets; the second lists the members' offsets once and the symbols sorted by name,
+    // each with the 1-based number of its member, little-endian.
+    std::vector<uint8_t> first;
+    std::vector<uint8_t> second;
+    if (archive.symbol_index) {
+        std::vector<std::pair<std::string, uint32_t>> syms;  // (name, member index)
+        for (size_t i = 0; i < archive.members.size(); ++i)
+            for (const std::string& name : member_symbols(archive.members[i])) syms.push_back({name, static_cast<uint32_t>(i)});
+        size_t names_size = 0;
+        for (const auto& sym : syms) names_size += sym.first.size() + 1;
+        const size_t first_size = 4 + 4 * syms.size() + names_size;
+        const size_t second_size = 4 + 4 * archive.members.size() + 4 + 2 * syms.size() + names_size;
+        size_t offset = 8 + 60 + padded(first_size) + 60 + padded(second_size);
+        if (!longnames.empty()) offset += 60 + padded(longnames.size());
+        std::vector<uint32_t> member_offset(archive.members.size());
+        for (size_t i = 0; i < archive.members.size(); ++i) {
+            member_offset[i] = static_cast<uint32_t>(offset);
+            offset += 60 + padded(payloads[i].size());
+        }
+        if (offset > 0xFFFFFFFFu) return Result<std::vector<uint8_t>>::fail("archive is larger than 4 GiB");
+        auto append_be32 = [](std::vector<uint8_t>& out, uint32_t v) {
+            for (int b = 3; b >= 0; --b) out.push_back(static_cast<uint8_t>(v >> (8 * b)));
+        };
+        append_be32(first, static_cast<uint32_t>(syms.size()));
+        for (const auto& sym : syms) append_be32(first, member_offset[sym.second]);
+        for (const auto& sym : syms) {
+            first.insert(first.end(), sym.first.begin(), sym.first.end());
+            first.push_back(0);
+        }
+        std::vector<std::pair<std::string, uint32_t>> sorted = syms;
+        std::stable_sort(sorted.begin(), sorted.end(),
+                         [](const std::pair<std::string, uint32_t>& a, const std::pair<std::string, uint32_t>& b) {
+                             return a.first < b.first;
+                         });
+        append_u32(second, static_cast<uint32_t>(archive.members.size()));
+        for (uint32_t off : member_offset) append_u32(second, off);
+        append_u32(second, static_cast<uint32_t>(sorted.size()));
+        for (const auto& sym : sorted) {
+            if (sym.second + 1 > 0xFFFFu) return Result<std::vector<uint8_t>>::fail("archive has more than 65535 members");
+            append_u16(second, static_cast<uint16_t>(sym.second + 1));
+        }
+        for (const auto& sym : sorted) {
+            second.insert(second.end(), sym.first.begin(), sym.first.end());
+            second.push_back(0);
+        }
+    }
+
+    std::vector<uint8_t> out;
+    const char sig[] = "!<arch>\n";
+    out.insert(out.end(), sig, sig + 8);
+    if (archive.symbol_index) {
+        append_member(out, name_field_for("/"), first);
+        append_member(out, name_field_for("/"), second);
+    }
+    if (!longnames.empty()) {
+        std::vector<uint8_t> payload(longnames.begin(), longnames.end());
+        append_member(out, name_field_for("//"), payload);
+    }
+    for (size_t i = 0; i < archive.members.size(); ++i) {
+        std::string field;
+        if (is_long[i]) field = name_field_for("/" + std::to_string(long_at[i]));
+        else field = name_field_for(archive.members[i].name + "/");
+        append_member(out, field, payloads[i]);
     }
     return Result<std::vector<uint8_t>>::success(std::move(out));
+}
+
+std::vector<std::string> member_symbols(const ArchiveMember& member) {
+    std::vector<std::string> names;
+    if (member.is_import) {
+        names.push_back("__imp_" + member.import.symbol);
+        if (member.import.import_type == kImportCode) names.push_back(member.import.symbol);
+        return names;
+    }
+    for (const Symbol& symbol : member.object.symbols)
+        if (symbol.storage == kClassExternal && (symbol.section > 0 || symbol.section == kSectionAbsolute))
+            names.push_back(symbol.name);
+    return names;
 }
 
 Result<Archive> read_archive(const uint8_t* data, size_t size) {

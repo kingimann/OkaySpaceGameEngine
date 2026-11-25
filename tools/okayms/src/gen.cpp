@@ -284,12 +284,30 @@ static Node elide_items(const std::vector<StructDef>* structs, const Type& type,
     } else if (type.base == 3 && structs != nullptr && type.struct_id >= 0 &&
                type.struct_id < static_cast<int>(structs->size())) {
         for (const Field& field : (*structs)[static_cast<size_t>(type.struct_id)].fields) {
-            if (field.name == "__vptr") continue;
+            if (field.name.compare(0, 6, "__vptr") == 0) continue;
             if (*pos >= items.size()) break;
             take(field.type);
         }
     }
     return list;
+}
+
+// A class whose objects are copied by copying their bytes: no destructor, no copy constructor and no virtual functions,
+// and the same for its members of class type ([class.prop] 1, trivially copyable, as okay-ms can tell it).
+bool Gen::bytes_copyable(int sid) const {
+    const StructDef& def = (*structs)[static_cast<size_t>(sid)];
+    if (def.poly) return false;
+    for (const Method& m : def.methods) {
+        if (m.name == "<dtor>") return false;
+        if (m.name == "<ctor>" && m.params.size() == 1 && m.params[0].base == 3 && m.params[0].struct_id == sid &&
+            (m.params[0].pointers == 1 || m.params[0].is_ref))
+            return false;
+    }
+    for (const Field& f : def.fields)
+        if (f.type.base == 3 && f.type.pointers == 0 && f.type.struct_id >= 0 && f.type.struct_id != sid &&
+            !bytes_copyable(f.type.struct_id))
+            return false;
+    return true;
 }
 
 bool Gen::store_init(const Type& type, int offset, const Node& node) {
@@ -307,7 +325,7 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
                    type.struct_id < static_cast<int>(structs->size())) {
             size_t k = 0;
             for (const Field& field : (*structs)[static_cast<size_t>(type.struct_id)].fields) {
-                if (field.name == "__vptr") continue;
+                if (field.name.compare(0, 6, "__vptr") == 0) continue;
                 if (k >= node.kids.size()) break;
                 const bool agg = field.type.array_len >= 0;
                 const Node& kid = node.kids[k++];
@@ -345,7 +363,7 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
             const StructDef& def = (*structs)[static_cast<size_t>(type.struct_id)];
             for (size_t i = 0; i < def.fields.size(); ++i) {
                 const Field& field = def.fields[i];
-                if (field.name == "__vptr") continue;
+                if (field.name.compare(0, 6, "__vptr") == 0) continue;
                 const bool nested = field.type.array_len >= 0 || (field.type.base == 3 && field.type.pointers == 0);
                 const Node& item = i < node.kids.size() ? node.kids[i] : nested ? empty : zero;
                 if (def.ref_members.count(field.name) > 0 && item.kind != Node::IntLit && item.kind != Node::Block) {
@@ -363,6 +381,34 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
             return true;
         }
         error = "initializer does not match the type";
+        return false;
+    }
+    if (node.kind != Node::IntLit && type.base == 3 && type.pointers == 0 && !type.is_array() && structs != nullptr &&
+        type.struct_id >= 0 && type.struct_id < static_cast<int>(structs->size()) && bytes_copyable(type.struct_id)) {
+        // An element or member of a class type made from an object of that class (std::array<Vec3, 4> c = {p, p, p, p};):
+        // copy-initialization, which for a class with no copy constructor and no destructor copies the bytes
+        // ([class.copy.ctor] 14). A call returning a big object writes it in place.
+        if (node.kind == Node::Call && !fits_register(type)) {
+            sret_dest_set = true;
+            sret_dest_off = offset;
+            return gen_expr(node);
+        }
+        if (!gen_addr(node)) return false;
+        if (last_type.base == 3 && last_type.pointers == 0 && last_type.struct_id == type.struct_id) {
+            b(0x48);  // mov rsi, rax
+            b(0x89);
+            b(0xC6);
+            b(0x48);  // lea rdi, [rbp+offset]
+            b(0x8D);
+            b(0xBD);
+            disp(offset);
+            b(0xB9);  // mov ecx, size
+            u32(static_cast<uint32_t>(size_of(type)));
+            b(0xF3);  // rep movsb
+            b(0xA4);
+            return true;
+        }
+        error = "initializer must be a constant";
         return false;
     }
     if (node.kind != Node::IntLit) {

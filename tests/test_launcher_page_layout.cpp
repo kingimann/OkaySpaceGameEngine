@@ -355,6 +355,27 @@ void CheckMarketFold(float winW) {
     CHECK(L::MarketTileMinW(1, 176.0f) > L::MarketTileMinW(12, 176.0f));
 }
 
+// The top of a chat conversation: the header and the friend's "Playing ... / Join game" bar (launcher/main.cpp,
+// DrawChatGameBar). Owner bug 2026-11-25: at UI scale 1.5 the bar's second line ran over the first messages.
+void CheckChatTop(float winW) {
+    const std::vector<std::string> labels = {"Join game", "Ask to join", "Joined", "Asked"};
+    float bw = 116.0f;   // the old fixed width is the least
+    for (const auto& l : labels) bw = std::max(bw, L::ButtonW(TextW(l), Px(12.0f), 0.0f));
+    for (float convW : {320.0f, winW * 0.45f, winW - 300.0f}) {
+        const L::ChatHeaderLayout t = L::LayoutChatTop(convW, LineH(), LineH() * 1.12f, bw, true);
+        CHECK(t.headerH >= LineH() * 1.12f);                                    // the name fits the header
+        CHECK(t.barRect.y >= t.headerH);                                        // the bar starts under the header
+        for (const L::Rect& r : {t.icon, t.title, t.detail, t.button}) CHECK(L::Inside(r, t.barRect));   // nothing leaves the bar
+        CHECK(NoOverlaps({t.icon, t.title, t.button}) && NoOverlaps({t.icon, t.detail, t.button}));
+        CHECK(!L::Overlaps(t.title, t.detail));
+        CHECK(t.listTop >= t.barRect.B());                                      // the messages start below the bar
+        CHECK(t.button.h >= LineH() + 4.0f);                                    // the button label fits its height
+        for (const auto& l : labels) CHECK(t.button.w >= TextW(l) + Px(8.0f));  // and its width
+        const L::ChatHeaderLayout none = L::LayoutChatTop(convW, LineH(), LineH() * 1.12f, bw, false);
+        CHECK(!none.bar && none.listTop >= none.headerH && none.listTop < t.listTop);
+    }
+}
+
 void RunAll() {
     const float sizes[3][2] = {{960, 600}, {1280, 800}, {1920, 1080}};
     for (const auto& s : sizes) {
@@ -375,6 +396,7 @@ void RunAll() {
         CheckShowcase(s[0]);
         CheckIconRail(s[0], s[1]);
         CheckMarketFold(s[0]);
+        CheckChatTop(s[0]);
     }
 }
 
@@ -437,6 +459,16 @@ int main() {
         CHECK(std::string(L::NotifEmptyTitle(false, 0, 0)) == "You're all caught up");
         CHECK(std::string(L::NotifEmptyTitle(false, 5, 1)) == "You're all caught up");   // nothing unread
         CHECK(std::string(L::NotifEmptyTitle(false, 5, 3)) == "Nothing here");           // a filter with no match
+        // The chat's game bar at every UI scale (0.8 .. 1.6, the Settings range): the old fixed bar (40 px high, second line
+        // at +21) left the second line below the bar at 1.5; the layout grows with the text.
+        for (float sc : {0.8f, 1.0f, 1.25f, 1.5f, 1.6f}) {
+            const float lh = 17.0f * sc;
+            const L::ChatHeaderLayout t = L::LayoutChatTop(600, lh, lh * 1.12f, 140, true);
+            CHECK(t.detail.B() <= t.barRect.B() && t.title.y >= t.barRect.y && t.listTop >= t.barRect.B());
+            CHECK(L::Inside(t.button, t.barRect) && t.button.x >= t.title.R());
+            if (sc >= 1.5f) CHECK(21.0f + lh > 40.0f);   // what the old fixed bar did: its second line passed its bottom
+        }
+        CHECK_NEAR(L::LayoutChatTop(600, 17, 19, 116, true).headerH, 34.0f, 1e-4);   // scale 1 keeps the old header height
         const L::Rect fl = L::FlyoutRect(700, 500, 232, 480, 640, 320, 300, 12);
         CHECK(L::Inside(fl, L::Rect{0, 0, 700, 500})); CHECK_NEAR(fl.y + fl.h, 488.0f, 1e-4);
     }

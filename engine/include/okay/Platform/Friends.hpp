@@ -367,6 +367,8 @@ private:
         return out;
     }
 
+public:
+    /// "2023-11-14T22:13:20..." (UTC, as PostgREST returns timestamptz) -> unix seconds; 0 when unreadable.
     static long ParseIso(const std::string& ls) {
         if (ls.size() < 19) return 0;
         std::tm tm{};
@@ -380,6 +382,7 @@ private:
 #endif
     }
 
+private:
     // ---- tiny string/JSON helpers ----
     static std::string Trim(const std::string& s) {
         std::size_t a = 0, b = s.size();

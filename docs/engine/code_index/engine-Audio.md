@@ -2,7 +2,7 @@
 
 # Code index: engine-Audio
 
-Back to the [code index](../code_index.md). 11 headers, 32 names.
+Back to the [code index](../code_index.md). 11 headers, 33 names.
 
 ## `engine/include/okay/Audio/AudioByteSource.hpp`
 
@@ -58,10 +58,11 @@ Back to the [code index](../code_index.md). 11 headers, 32 names.
 
 ## `engine/include/okay/Audio/WavDecoder.hpp`
 
-- `Limits` struct, line 26: Budgets for hostile input. The defaults refuse anything that would need more than about 512 MiB.
-- `Encoding` enum, line 34
-- `WavAudio` struct, line 36
-- `ToS16` function, line 55: Interleaved signed 16-bit samples (the launcher's playback format): rounds to the
+- `Limits` struct, line 30: Budgets for hostile input. The defaults refuse anything that would need more than about 512 MiB.
+- `Encoding` enum, line 38
+- `WavAudio` struct, line 40
+- `ToS16` function, line 59: Interleaved signed 16-bit samples (the launcher's playback format): rounds to the
+- `WavStream` class, line 71: Reads a WAV file a piece at a time from a byte source (a file read on demand, or memory), for long
 
 ## `engine/include/okay/Audio/WavPlayback.hpp`
 

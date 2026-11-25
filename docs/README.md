@@ -111,6 +111,7 @@ How the code is built, how the work is shared, and the replacement work.
 - [Our own physics core](physics/physics_core.md): `okay::phys`, what each file was written from.
 - [Script API registry](scripting/script_api_registry.md): one table of engine functions for every script language.
 - [Script bindings](scripting/script_bindings.md): every component class, method and property reachable from scripts (generated), and the gap audit.
+- [okay.js](scripting/okayjs.md): our own browser library (WebGL, scene graph, input, game loop) with the engine's script API.
 - [engine/code_index.md](engine/code_index.md): every source file with one line (generated).
 
 **Our own replacements for outside code**

@@ -232,6 +232,7 @@ void RenderChatPoll(const ChatPollInfo& p, bool group, long id, const std::map<s
 void DrawStar(ImDrawList* dl, ImVec2 c, float r, ImU32 col);
 bool VoiceRecording();                         // a voice message is being recorded
 void OutboxSend(const std::string& toUid, long toGroup, const std::string& body, long replyTo = 0, long toChannel = 0);   // send through the outbox
+void OutboxSendInvite(const std::string& toUid, const std::string& body);   // a game invite card to a friend, with its game_invites record
 void SavePrefs();                              // write the launcher's preferences file
 ChatFwd ParseChatFwd(const std::string& b);    // a forwarded message: who from, and the body
 extern std::map<long, long> g_pinsDm, g_pinsGroup;   // message id -> pinned at (unix)
@@ -263,6 +264,7 @@ std::string InviteMessageBody(const std::string& title, const std::string& link)
 bool IsBuiltGame(const fs::path& scene);
 std::string LastOnline(long when);
 void PlayChatChime();
+int MyOnlineStatus();   // your status: okayfriends::kOnline / kAway / kInvisible / kDoNotDisturb (launcher/FriendsList.hpp)
 std::string PresenceText();
 void RecordPlayed(const std::string& p);
 bool SpawnTracked(const std::string& exe, const std::string& args, const std::string& key, const std::string& title);

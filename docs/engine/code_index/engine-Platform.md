@@ -2,7 +2,7 @@
 
 # Code index: engine-Platform
 
-Back to the [code index](../code_index.md). 29 headers, 235 names.
+Back to the [code index](../code_index.md). 30 headers, 265 names.
 
 ## `engine/include/okay/Platform/Account/Account.hpp`
 
@@ -12,28 +12,28 @@ Back to the [code index](../code_index.md). 29 headers, 235 names.
 
 - `ExportSection` struct, line 22: One PostgREST read. Every query filters on the signed-in user's id and goes
 - `ExportSections` function, line 24
-- `SectionState` enum, line 63
-- `SectionOutcome` struct, line 65
-- `ClassifySection` function, line 73: Classify one response. A table the project never created is NotSetUp (not an
-- `ExportResult` struct, line 89
-- `IsoUtc` function, line 97
-- `CountRows` function, line 109: Count top-level objects in a JSON array text (rows).
-- `DeleteRequest` struct, line 176
-- `BuildDeleteRequest` function, line 180: The request sent to the Edge Function. Identity is the bearer token that
-- `DeleteOutcome` struct, line 185
-- `MapDeleteResponse` function, line 195: Turn the function's response into a user message. Never claims success unless
+- `SectionState` enum, line 64
+- `SectionOutcome` struct, line 66
+- `ClassifySection` function, line 74: Classify one response. A table the project never created is NotSetUp (not an
+- `ExportResult` struct, line 90
+- `IsoUtc` function, line 98
+- `CountRows` function, line 110: Count top-level objects in a JSON array text (rows).
+- `DeleteRequest` struct, line 177
+- `BuildDeleteRequest` function, line 181: The request sent to the Edge Function. Identity is the bearer token that
+- `DeleteOutcome` struct, line 186
+- `MapDeleteResponse` function, line 196: Turn the function's response into a user message. Never claims success unless
 
 ## `engine/include/okay/Platform/Account/AccountService.hpp`
 
-- `PublicName` function, line 63: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
-- `Session` struct, line 365: The currently signed-in player. 'loggedIn' is false when nobody is signed
-- `Result` struct, line 374: Result of a register/login attempt. On failure 'error' carries a short,
-- `ApiResponse` struct, line 384: Result of an authenticated request to the account server (see Api). 'ok' is
-- `ScoreEntry` struct, line 393: One row of a server leaderboard: the player's name, their score, and their
-- `Provider` enum, line 405: Which backend signs players in.
-- `SessionCheck` enum, line 408: How a check of the saved session with the server went (AccountService::CheckSession).
-- `AccountService` class, line 414: A client-side account service. Construct it with a config directory (where a
-- `DefaultConfigDir` function, line 1260: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
+- `PublicName` function, line 64: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
+- `Session` struct, line 465: The currently signed-in player. 'loggedIn' is false when nobody is signed
+- `Result` struct, line 474: Result of a register/login attempt. On failure 'error' carries a short,
+- `ApiResponse` struct, line 484: Result of an authenticated request to the account server (see Api). 'ok' is
+- `ScoreEntry` struct, line 495: One row of a server leaderboard: the player's name, their score, and their
+- `Provider` enum, line 507: Which backend signs players in.
+- `SessionCheck` enum, line 510: How a check of the saved session with the server went (AccountService::CheckSession).
+- `AccountService` class, line 516: A client-side account service. Construct it with a config directory (where a
+- `DefaultConfigDir` function, line 1456: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
 
 ## `engine/include/okay/Platform/Achievements.hpp`
 
@@ -60,12 +60,28 @@ Back to the [code index](../code_index.md). 29 headers, 235 names.
 - `EncodeBmp32Bgra` function, line 42: Surface variant: rows of 0xAARRGGBB words (B,G,R,A in memory) with a pitch, as an SDL ARGB8888 surface holds them.
 - `WriteBmp32Bgra` function, line 65: Encodes and writes to 'path'. Returns false if the arguments are bad or the file cannot be written.
 
-## `engine/include/okay/Platform/CurlFallback.hpp`
+## `engine/include/okay/Platform/ChatDelivery.hpp`
 
-- `Disabled` function, line 48: OKAY_NO_CURL=1: never start curl (the native client's answer is final).
-- `RunSpec` struct, line 53
-- `RunResult` struct, line 60
-- `RunCurlProcess` function, line 106: Start 'curl' with 'args' (without the program name), hidden, and wait for it. Standard input and error are the null
+- `MakeClientId` function, line 50: A random version-4 id: "xxxxxxxx-xxxx-4xxx-Yxxx-xxxxxxxxxxxx" (Y is 8, 9, a or b). Only for telling
+- `IsClientId` function, line 71: True for 8-4-4-4-12 hex digits (any case): the only thing that may go into a URL or JSON as a client id.
+- `IsRetryable` function, line 84: Worth sending again later? A refusal by a server rule is final, except the rate limit.
+- `RetryDelaySeconds` function, line 93: Seconds to wait before attempt number 'attempts' + 1: 2, 4, 8, ... at most 60.
+- `QueuedMessage` struct, line 101
+- `EncodeQueue` function, line 139: The queue as text: a "okaychatq1" header line, then one tab-separated line per message.
+- `DecodeQueue` function, line 150: Reads EncodeQueue's text; damaged lines and lines with a bad client id are skipped.
+- `ShouldGiveUp` function, line 170: A queued message older than a week is dropped rather than posted late.
+- `MergeById` function, line 177: Merge 'incoming' (an older page, a re-poll, a resent copy) into 'log': one row per 'id', the incoming
+- `OldestId` function, line 186: The cursor for "load older messages": the smallest id held, 0 when empty.
+- `UnreadRow` struct, line 194
+- `UnreadSummary` struct, line 195
+- `BadgeText` function, line 215: The badge on an avatar or a tab: "" for none, the number, "99+" above 99.
+- `LinkKind` enum, line 219
+- `LinkHost` function, line 222: The host of an http(s) URL, lowercased, without user info or port ("" when there is none).
+- `ClassifyLink` function, line 237: Web: an http(s) link made only of plain URL characters, with a host; Join: an okay://join link (opened
+- `LooksDeceptive` function, line 254: True when the link may not go where it seems to: a punycode ("xn--") host that can imitate another name,
+- `ConfirmText` function, line 263: What the confirm box says before an outside link opens.
+- `CheckOutgoing` function, line 276: "" when 'body' may be sent now, else a plain sentence. 'recentSends' are the unix times of my own
+- `Event` struct, line 290: Something the person may want to hear about. The chat and invite code only produce these; the one
 
 ## `engine/include/okay/Platform/Forums.hpp`
 
@@ -92,45 +108,62 @@ Back to the [code index](../code_index.md). 29 headers, 235 names.
 - `CurrentPid` function, line 71
 - `FileFor` function, line 80
 - `WriteAtomic` function, line 82
-- `OneLine` function, line 91
-- `WritePresence` function, line 94: ---- game side -------------------------------------------------------------
-- `ClearPresence` function, line 106
-- `RequestInvite` function, line 113: Ask the launcher to open its invite-friends window for this game.
-- `TakeJoin` function, line 115: A join the launcher asked this game to make (consumes it). False if none.
-- `PlayedWithFile` function, line 126: ---- "Recently played with" (game writes, launcher reads) -------------------
-- `NoTabs` function, line 127
-- `ReadPlayedWith` function, line 129: Everyone in the list, newest first (at most 'max').
-- `RecordPlayedWith` function, line 147: Add / refresh people (same Key() = one entry, newest wins); keeps the newest 100.
-- `ReadPresence` function, line 171: ---- launcher side ---------------------------------------------------------
-- `TakeInviteRequests` function, line 192: Every game asking for the invite window (consumes the requests).
-- `PostJoin` function, line 205: Tell a running game to join 'link'.
+- `OneLine` function, line 83
+- `WritePresence` function, line 86: ---- game side -------------------------------------------------------------
+- `ClearPresence` function, line 98
+- `RequestInvite` function, line 105: Ask the launcher to open its invite-friends window for this game.
+- `TakeJoin` function, line 107: A join the launcher asked this game to make (consumes it). False if none.
+- `PlayedWithFile` function, line 118: ---- "Recently played with" (game writes, launcher reads) -------------------
+- `NoTabs` function, line 119
+- `ReadPlayedWith` function, line 121: Everyone in the list, newest first (at most 'max').
+- `RecordPlayedWith` function, line 139: Add / refresh people (same Key() = one entry, newest wins); keeps the newest 100.
+- `ReadPresence` function, line 163: ---- launcher side ---------------------------------------------------------
+- `TakeInviteRequests` function, line 184: Every game asking for the invite window (consumes the requests).
+- `PostJoin` function, line 197: Tell a running game to join 'link'.
+
+## `engine/include/okay/Platform/Invites.hpp`
+
+- `GameInvite` struct, line 27
+- `InviteState` enum, line 40
+- `PresenceSeen` enum, line 42: Whether the sender's presence was read. Known + an empty link means they are not in a joinable game now.
+- `InviteView` struct, line 44
+- `Left` function, line 52
+- `What` function, line 58
+- `ViewInvite` function, line 68: What the card for 'inv' says at 'now'. For a game invite, 'senderLink' is the sender's current presence
+- `ViewLegacyInvite` function, line 95: A chat invite with no record (an older launcher, or before chat_invites.sql ran): only its age is known.
+- `InviteAnswerOk` function, line 103: respond_invite / cancel_invite answered this: the change was made.
+- `InviteAnswerText` function, line 105: The server's answer (or an okay_rule reason) in a plain sentence.
+- `InviteEventsSince` function, line 119: The notification event for invites that are new since 'seenId' and still worth showing at 'now'
+- `JoinCheck` struct, line 136
+- `CheckJoinFriend` function, line 143: Whether "Join game" on 'f' works now. 'blocked' = either of you blocked the other.
+- `Joinable` function, line 163: For the friend list's Join button: shown enabled only when CheckJoinFriend would pass (not blocked).
+- `Invites` class, line 168: game_invites over Supabase's REST API, through the signed-in AccountService (same pattern as Friends).
 
 ## `engine/include/okay/Platform/Messages.hpp`
 
-- `DirectMessage` struct, line 22
-- `Messages` class, line 33
+- `DirectMessage` struct, line 23
+- `Messages` class, line 34
 
 ## `engine/include/okay/Platform/NativeFetch.hpp`
 
-- `OwnOutcome` enum, line 47
-- `OwnDownloadSpec` struct, line 57
-- `OwnDownloadResult` struct, line 73
-- `OwnDownload` function, line 96: GET 'url' into the file 'path' (replacing it), like 'curl -L -f [--max-filesize N] [--retry N] -o path url' with a
-- `OwnHeadDump` function, line 156: OwnHeadDump and OwnFetchPrefix run on whichever native client RequestEx has (the own client, or WinHTTP).
-- `FetchToFile` function, line 476: GET 'url' into the file 'path' (replacing it only when the whole file arrived), like 'curl -L -f [--max-filesize N]
-- `HeadDump` function, line 503: A HEAD request that follows redirects, like 'curl -sIL': true when an answer arrived (any status, as curl -I does
+- `OwnOutcome` enum, line 40
+- `OwnDownloadSpec` struct, line 50
+- `OwnDownloadResult` struct, line 64
+- `OwnDownload` function, line 86: GET 'url' into the file 'path' (replacing it), like 'curl -L -f [--max-filesize N] [--retry N] -o path url' with a
+- `FetchToFile` function, line 330: GET 'url' into the file 'path' (replacing it only when the whole file arrived), like 'curl -L -f [--max-filesize N]
+- `HeadDump` function, line 354: A HEAD request that follows redirects, like 'curl -sIL': true when a final answer arrived (any status, as curl -I
 
 ## `engine/include/okay/Platform/NativeHttp.hpp`
 
-- `Result` struct, line 50
-- `CleanHeaderLine` function, line 65: A header line with every CR, LF and NUL taken out (the curl fallback's CurlCfgQuote does the same), so a value that came
-- `CleanHeaderLines` function, line 72: CleanHeaderLine on each line; a line that is empty afterwards is dropped.
-- `HeaderCarriesSecret` function, line 81: True when the header line's NAME looks like it carries a credential (Authorization, X-Authorization, apikey, a token,
-- `AnyHeaderCarriesSecret` function, line 88
-- `NativeAvailable` function, line 127: True where the native client exists: Windows (WinHTTP), or POSIX built with
-- `ShouldFallBackToCurl` function, line 147: The no-re-send decision, kept here so it can be tested. After a failed native call, may the caller try the same
-- `RequestOptions` struct, line 155: Extra controls for downloads (the own client on Linux, WinHTTP on Windows; elsewhere RequestEx returns
-- `ExResult` struct, line 189: Result of RequestEx: Result plus what a resumable download needs.
+- `Result` struct, line 46
+- `CleanHeaderLine` function, line 61: A header line with every CR, LF and NUL taken out, so a value that came
+- `CleanHeaderLines` function, line 68: CleanHeaderLine on each line; a line that is empty afterwards is dropped.
+- `HeaderCarriesSecret` function, line 77: True when the header line's NAME looks like it carries a credential (Authorization, X-Authorization, apikey, a token,
+- `AnyHeaderCarriesSecret` function, line 84
+- `NativeAvailable` function, line 123: True where the native client exists: Windows (WinHTTP), or POSIX built with OKAY_OWN_HTTP (our own client, always on;
+- `NoClientReason` function, line 134: Why a call failed on a build with no native client (the error text of Request, RequestEx and the seam).
+- `RequestOptions` struct, line 144: Extra controls for downloads (the own client on Linux, WinHTTP on Windows; elsewhere RequestEx returns
+- `ExResult` struct, line 178: Result of RequestEx: Result plus what a resumable download needs.
 
 ## `engine/include/okay/Platform/OwnHttp.hpp`
 
@@ -265,24 +298,24 @@ Back to the [code index](../code_index.md). 29 headers, 235 names.
 - `Support` enum, line 36
 - `SetupNote` function, line 38
 - `Rule` enum, line 43: ---- Rules the database enforces ------------------------------------------
-- `ParseRule` function, line 46: Finds "okay_rule:<reason>" anywhere in 'text' (a response body or an error).
-- `RuleText` function, line 61
-- `IsRuleText` function, line 75: True when 'text' is exactly one of the RuleText sentences (the Friends API hands
-- `FailureText` function, line 83: The sentence to show when a call failed: the rule's text if a server rule said
-- `Settings` struct, line 92: ---- Settings -----------------------------------------------------------------
-- `ReachWord` function, line 100
-- `ReachFromWord` function, line 101
-- `SettingsJson` function, line 107
-- `SettingsFromBody` function, line 113: First object of a PostgREST array. false when 'body' has no row.
-- `PendingOp` struct, line 131: ---- Block list changes kept while offline -----------------------------------
-- `QueueOp` function, line 136: Record "block uid" / "unblock uid". A newer change for the same person
-- `ApplyPending` function, line 141: The list to show: the server's list with unsent changes applied on top.
-- `EncodeOp` function, line 146: launcher.cfg encoding: "+uid/name" / "-uid/name" (name may be empty).
-- `DecodeOp` function, line 147
-- `LocalListAction` enum, line 160: How the one-time migration of the old PC-only list works. 'marker' is the
-- `ClassifyLocalList` function, line 161
-- `ProfilesViewState` function, line 168: ---- Reading profiles ---------------------------------------------------------
-- `ProfilesGet` function, line 172: GET /rest/v1/profiles?<query> but through profiles_visible when it exists (so
+- `ParseRule` function, line 48: Finds "okay_rule:<reason>" anywhere in 'text' (a response body or an error).
+- `RuleText` function, line 66
+- `IsRuleText` function, line 83: True when 'text' is exactly one of the RuleText sentences (the Friends API hands
+- `FailureText` function, line 91: The sentence to show when a call failed: the rule's text if a server rule said
+- `Settings` struct, line 100: ---- Settings -----------------------------------------------------------------
+- `ReachWord` function, line 108
+- `ReachFromWord` function, line 109
+- `SettingsJson` function, line 115
+- `SettingsFromBody` function, line 121: First object of a PostgREST array. false when 'body' has no row.
+- `PendingOp` struct, line 139: ---- Block list changes kept while offline -----------------------------------
+- `QueueOp` function, line 144: Record "block uid" / "unblock uid". A newer change for the same person
+- `ApplyPending` function, line 149: The list to show: the server's list with unsent changes applied on top.
+- `EncodeOp` function, line 154: launcher.cfg encoding: "+uid/name" / "-uid/name" (name may be empty).
+- `DecodeOp` function, line 155
+- `LocalListAction` enum, line 168: How the one-time migration of the old PC-only list works. 'marker' is the
+- `ClassifyLocalList` function, line 169
+- `ProfilesViewState` function, line 176: ---- Reading profiles ---------------------------------------------------------
+- `ProfilesGet` function, line 180: GET /rest/v1/profiles?<query> but through profiles_visible when it exists (so
 
 ## `engine/include/okay/Platform/Profiles.hpp`
 

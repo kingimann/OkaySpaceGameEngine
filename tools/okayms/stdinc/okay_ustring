@@ -92,6 +92,14 @@ public:
         return *this;
     }
     basic_ustring__& append(const basic_ustring__& o) { return append(o.data(), o.size()); }
+    basic_ustring__& append(const C* s) { return append(s, length_of(s)); }
+    // append(n, c) ([string.append] 9): n copies of c.
+    basic_ustring__& append(size_t n, C c) {
+        units_.pop_back();
+        for (size_t i = 0; i < n; ++i) units_.push_back(c);
+        units_.push_back((C)0);
+        return *this;
+    }
     basic_ustring__& operator+=(C c) {
         push_back(c);
         return *this;
@@ -117,6 +125,24 @@ public:
             if (i == 0) return npos;
         }
     }
+    // The first place at or after pos whose unit is one of set's, or not one of them ([string.find.first.of],
+    // [string.find.first.not.of]).
+    size_t find_first_of(const C* set, size_t pos = 0) const {
+        for (size_t i = pos; i < size(); ++i)
+            for (size_t k = 0; set[k] != 0; ++k)
+                if (units_[i] == set[k]) return i;
+        return npos;
+    }
+    size_t find_first_of(const basic_ustring__& set, size_t pos = 0) const { return find_first_of(set.data(), pos); }
+    size_t find_first_not_of(const C* set, size_t pos = 0) const {
+        for (size_t i = pos; i < size(); ++i) {
+            bool in = false;
+            for (size_t k = 0; set[k] != 0; ++k)
+                if (units_[i] == set[k]) in = true;
+            if (!in) return i;
+        }
+        return npos;
+    }
     int compare(const basic_ustring__& o) const {
         const size_t n = size() < o.size() ? size() : o.size();
         for (size_t i = 0; i < n; ++i)
@@ -135,4 +161,12 @@ public:
 typedef basic_ustring__<char16_t> u16string;
 typedef basic_ustring__<char32_t> u32string;
 typedef basic_ustring__<wchar_t> wstring;
+// to_wstring ([string.conversions] 15): the text to_string gives, one wchar_t per character. A function template, so it
+// is made only in a file that calls it (Round 29).
+template <typename T> wstring to_wstring(T v) {
+    const string narrow = std::to_string(v);
+    wstring r;
+    for (size_t i = 0; i < narrow.size(); ++i) r.push_back((wchar_t)narrow[i]);
+    return r;
+}
 }  // namespace std

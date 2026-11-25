@@ -286,3 +286,9 @@ inline float tanh(float x) {
     return (float)((e2 - 1.0) / (e2 + 1.0));
 }
 }
+// INFINITY, NAN, HUGE_VAL and HUGE_VALF (ISO/IEC 9899 7.12 3-5): built from the bit patterns above. Own difference: they
+// are values computed at run time, not constant expressions (a static initializer cannot use them).
+#define INFINITY ((float)std::okay_math::inf_d())
+#define NAN ((float)std::okay_math::nan_d())
+#define HUGE_VAL (std::okay_math::inf_d())
+#define HUGE_VALF INFINITY

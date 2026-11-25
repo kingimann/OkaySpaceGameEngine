@@ -145,15 +145,9 @@ std::set<std::string> undefined_externals(const std::vector<ObjectFile>& objects
 }
 
 bool member_provides(const ArchiveMember& member, const std::string& name) {
-    if (member.is_import) {
-        return name == member.import.symbol || name == "__imp_" + member.import.symbol;
-    }
-    for (const Symbol& symbol : member.object.symbols) {
-        if (symbol.storage == kClassExternal && (symbol.section > 0 || symbol.section == kSectionAbsolute) &&
-            symbol.name == name) {
-            return true;
-        }
-    }
+    // A data import defines only __imp_name (there is no call thunk for a variable, "PE Format", Import Type).
+    for (const std::string& symbol : member_symbols(member))
+        if (symbol == name) return true;
     return false;
 }
 
@@ -182,6 +176,10 @@ Result<std::vector<uint8_t>> link_with_libraries(std::vector<ObjectFile> objects
                 if (member.is_import) {
                     if (member.import.machine != kMachineAmd64) {
                         return Result<std::vector<uint8_t>>::fail("archive member machine is not AMD64");
+                    }
+                    if (member.import.name_type == kImportByOrdinal) {
+                        return Result<std::vector<uint8_t>>::fail("import by ordinal is not supported yet (" +
+                                                                  member.import.symbol + " in " + member.import.dll + ")");
                     }
                     ImportedSymbol imported;
                     imported.dll = member.import.dll;

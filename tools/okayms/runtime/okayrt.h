@@ -2,6 +2,7 @@
 
 void *memcpy(void *dst, void *src, unsigned int n);
 void *memset(void *dst, int value, unsigned int n);
+void *memchr(void *s, int c, unsigned long long n);
 void *malloc(unsigned int n);
 void free(void *p);
 unsigned int strlen(char *s);

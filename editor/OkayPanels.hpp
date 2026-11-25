@@ -1,7 +1,7 @@
 #pragma once
 // Editor windows hosted by OkayUI (docs/ui/own_ui_toolkit.md sections 6, 9, 10, 11, 24, 25, 26 and 27; the Crash Log, the Audio Mixer, History, Problems, Stats,
 // the Profiler, Project Settings' Player, Physics, Rendering, Tags and Layers and Loading screen sections, the Project panel's import settings and
-// Lighting's Post-processing section, Keyboard Shortcuts, Net, Find in Files, Data Asset and the Plugin Manager are drawn by OkayUI only, the others with the "OkayUI screens" backend or not wired yet). Each keeps its Dear
+// Lighting's Post-processing section, Keyboard Shortcuts, Net, Find in Files, Data Asset, the Plugin Manager, Map Humanoid Bones, the Save Manager, Material, Frame time and Input are drawn by OkayUI only, the others with the "OkayUI screens" backend or not wired yet). Each keeps its Dear
 // ImGui window (the dock tab, title and close box) and hands the free area, or its part of it, to the OkayUI screen in okayui/screens/OkayUIPanels
 // and OkayUIEditorPanels. Only compiled into the editor when OkayUI is (OKAY_HAVE_OKAYUI); without it the functions draw nothing.
 #include "EditorPanelModels.hpp"
@@ -72,6 +72,20 @@ bool DrawFindInFilesOkayUI(bool* open, const okaypanels::FindInFilesModel& model
                            okaypanels::FindInFilesIntent& intent);
 bool DrawDataAssetOkayUI(bool* open, okaypanels::DataAssetModel& model, okaypanels::DataAssetIntent& intent);
 bool DrawPluginManagerOkayUI(bool* open, const okaypanels::PluginManagerModel& model, okaypanels::PluginManagerIntent& intent);
+
+/// More tool windows, OkayUI only (docs/ui/own_ui_toolkit.md section 29). Map Humanoid Bones edits the picks in place and asks for the
+/// action (the host applies the map); Material edits its model in place (an image dragged from the Project panel drops onto the
+/// texture field) and asks for the file dialog, Save and Apply. The Save Manager, the Frame time window and the Input panel fill
+/// their model through `fill` only while the window shows (the save scan, the profiler's numbers and the input lines cost time).
+/// The Frame time window sizes itself around its body and opens at the top right.
+bool DrawBoneMapOkayUI(bool* open, okaypanels::BoneMapModel& model, okaypanels::BoneMapIntent& intent);
+bool DrawSaveManagerOkayUI(bool* open, okaypanels::SaveManagerModel& model, const std::function<void(okaypanels::SaveManagerModel&)>& fill,
+                           okaypanels::SaveManagerState& state, okaypanels::SaveManagerIntent& intent);
+bool DrawMaterialOkayUI(bool* open, okaypanels::MaterialModel& model, okaypanels::MaterialIntent& intent);
+bool DrawPerfOverlayOkayUI(bool* open, okaypanels::PerfOverlayModel& model, const std::function<void(okaypanels::PerfOverlayModel&)>& fill,
+                           okaypanels::PerfOverlayIntent& intent);
+bool DrawInputPanelOkayUI(bool* open, okaypanels::InputPanelModel& model, const std::function<void(okaypanels::InputPanelModel&)>& fill,
+                          okaypanels::InputPanelState& state, okaypanels::InputPanelIntent& intent);
 
 /// The Hierarchy panel with OkayUI (docs/own_ui_toolkit.md section 12). The window keeps the keyboard focus flag (`model.focused` is
 /// set here from the ImGui window). A file dragged in from a Dear ImGui panel arrives through model.externalDrag*, which the caller

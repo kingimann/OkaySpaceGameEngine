@@ -1774,14 +1774,12 @@ static void LogModelReport(EditorState& ed, GameObject* root) {
 
 // Draw a shaded material ball (albedo sphere with a highlight) into a rect —
 // the Project browser's stand-in for a rendered material preview.
+// (Placed by okaypanels::MaterialBallIn, which the Material window's preview uses too.)
 static void DrawMaterialBall(ImDrawList* dl, const ImVec2& mn, const ImVec2& mx, const ImVec4& col) {
-    ImVec2 c((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f);
-    float r = (mx.x - mn.x) * 0.32f;
-    if ((mx.y - mn.y) * 0.32f < r) r = (mx.y - mn.y) * 0.32f;
-    dl->AddCircleFilled(c, r, ImGui::GetColorU32(col), 32);
-    dl->AddCircleFilled(ImVec2(c.x - r * 0.35f, c.y - r * 0.38f), r * 0.28f,
-                        IM_COL32(255, 255, 255, 70), 24);
-    dl->AddCircle(c, r, IM_COL32(0, 0, 0, 90), 32, 1.5f);
+    const okaypanels::MaterialBall b = okaypanels::MaterialBallIn(mn.x, mn.y, mx.x, mx.y);
+    dl->AddCircleFilled(ImVec2(b.cx, b.cy), b.r, ImGui::GetColorU32(col), 32);
+    dl->AddCircleFilled(ImVec2(b.spotX, b.spotY), b.spotR, IM_COL32(255, 255, 255, 70), 24);
+    dl->AddCircle(ImVec2(b.cx, b.cy), b.r, IM_COL32(0, 0, 0, 90), 32, 1.5f);
 }
 
 // ---- Built-in 2D sprite shapes --------------------------------------------
@@ -8236,60 +8234,39 @@ static void OpenBoneMap(GameObject* root, HumanoidRetarget* hr) {
     g_boneMapRoot = root; g_boneMapRetarget = hr; g_showBoneMap = true;
     for (int b = 0; b < humanoid::BoneCount; ++b) g_boneMap[b] = hr ? hr->boneMap[b] : std::string();
 }
+// OkayUI draws the window (no Dear ImGui version; docs/ui/own_ui_toolkit.md section 29): the picks are edited in place, the action
+// button comes back as the intent and is carried out here while the picks make a humanoid.
+static_assert(okaypanels::kBoneSlotCount == humanoid::BoneCount, "the window lists the engine humanoid's bones");
 static void DrawBoneMap(EditorState& ed) {
     if (!g_showBoneMap) return;
-    ImGui::SetNextWindowSize(ImVec2(460, 560), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Map Humanoid Bones", &g_showBoneMap)) { ImGui::End(); return; }
     GameObject* root = g_boneMapRoot;
     bool alive = false;
     for (const auto& up : ed.scene().Objects()) if (up.get() == root) { alive = true; break; }
-    if (!root || !alive || !root->transform) {
-        ImGui::TextDisabled("Select an imported model and choose Map Humanoid Bones.");
-        ImGui::End(); return;
+    okaypanels::BoneMapModel model;
+    if (root && alive && root->transform) {
+        model.hasModel = true;
+        model.modelName = root->name;
+        for (const auto& up : ed.scene().Objects())
+            if (up && up.get() != root && up->IsSelfOrDescendantOf(root) && up->transform) model.bones.push_back(up->name);
+        const humanoid::BoneMap autoMap = humanoid::MapHumanoidBones(root);
+        for (int b = 0; b < humanoid::BoneCount; ++b) model.autoName[b] = autoMap.bone[b] ? autoMap.bone[b]->name : std::string("none");
+        model.picks = g_boneMap;
+        const humanoid::BoneMap m = humanoid::MapHumanoidBones(root, g_boneMap);
+        model.humanoid = m.humanoid; model.found = m.found; model.why = m.why;
+        model.forRetarget = g_boneMapRetarget != nullptr;
     }
-    ImGui::Text("Model: %s", root->name.c_str());
-    ImGui::TextDisabled("Pick each body bone. Auto keeps the bone found by its name.");
-    std::vector<std::string> names;
-    for (const auto& up : ed.scene().Objects())
-        if (up && up.get() != root && up->IsSelfOrDescendantOf(root) && up->transform) names.push_back(up->name);
-    const humanoid::BoneMap autoMap = humanoid::MapHumanoidBones(root);
-    static const char* kSlot[humanoid::BoneCount] = {"Hips", "Spine / chest", "Head",
-        "Left upper arm", "Left forearm", "Left hand", "Right upper arm", "Right forearm", "Right hand",
-        "Left thigh", "Left shin", "Left foot", "Right thigh", "Right shin", "Right foot"};
-    if (ImGui::BeginTable("##bonemap", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-        for (int b = 0; b < humanoid::BoneCount; ++b) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn(); ImGui::TextUnformatted(kSlot[b]);
-            ImGui::TableNextColumn();
-            std::string& pick = g_boneMap[b];
-            const std::string autoName = autoMap.bone[b] ? autoMap.bone[b]->name : std::string("none");
-            const std::string shown = pick.empty() ? "Auto (" + autoName + ")" : pick == "-" ? std::string("None") : pick;
-            ImGui::SetNextItemWidth(-1);
-            if (ImGui::BeginCombo(("##bm" + std::to_string(b)).c_str(), shown.c_str())) {
-                if (ImGui::Selectable(("Auto (" + autoName + ")").c_str(), pick.empty())) pick.clear();
-                if (ImGui::Selectable("None", pick == "-")) pick = "-";
-                for (const std::string& n : names)
-                    if (ImGui::Selectable((n + "##bmn" + std::to_string(b)).c_str(), pick == n)) pick = n;
-                ImGui::EndCombo();
-            }
-        }
-        ImGui::EndTable();
-    }
-    const humanoid::BoneMap m = humanoid::MapHumanoidBones(root, g_boneMap);
-    if (m.humanoid) ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1), "Humanoid: %d/15 bones mapped", m.found);
-    else ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.35f, 1), "Not a humanoid yet: %s", m.why.c_str());
-    if (ImGui::Button("Clear (all Auto)")) for (auto& n : g_boneMap) n.clear();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!m.humanoid);
+    okaypanels::BoneMapIntent intent;
+    oked::DrawBoneMapOkayUI(&g_showBoneMap, model, intent);
+    if (!intent.apply || !model.hasModel) return;
+    const humanoid::BoneMap m = humanoid::MapHumanoidBones(root, g_boneMap);   // the picks as they are now
+    if (!m.humanoid) return;
     if (g_boneMapRetarget) {
-        if (ImGui::Button("Apply to Humanoid Retarget")) {
-            ed.PushUndo();
-            for (int b = 0; b < humanoid::BoneCount; ++b) g_boneMapRetarget->boneMap[b] = g_boneMap[b];
-            g_boneMapRetarget->Rewire();
-            ed.dirty = true;
-            ConsoleLog("Humanoid Retarget: bone map saved (" + std::to_string(m.found) + "/15) - press Play");
-        }
-    } else if (ImGui::Button("Use Built-in Animations")) {
+        ed.PushUndo();
+        for (int b = 0; b < humanoid::BoneCount; ++b) g_boneMapRetarget->boneMap[b] = g_boneMap[b];
+        g_boneMapRetarget->Rewire();
+        ed.dirty = true;
+        ConsoleLog("Humanoid Retarget: bone map saved (" + std::to_string(m.found) + "/15) - press Play");
+    } else {
         ed.PushUndo();
         std::string log;
         const int found = okay::EnableBuiltinAnimations(ed.scene(), root, &log, g_boneMap);
@@ -8297,8 +8274,6 @@ static void DrawBoneMap(EditorState& ed) {
         if (found >= 8) { ed.Select(root); g_showBoneMap = false; }
         ed.dirty = true;
     }
-    ImGui::EndDisabled();
-    ImGui::End();
 }
 
 // Project type filters (g_projFilter ids): 1 scripts, 2 images, 3 scenes,
@@ -10475,135 +10450,47 @@ void DrawDataAssetEditor() {
 
 // Save Manager: browse the .okaysave files in a project and view/edit their
 // keys (the runtime side of the Easy-Save-style save system). Lets you inspect
-// what a playtest wrote, tweak values, add/remove keys, or wipe a save.
+// what a playtest wrote, tweak values, add/remove keys, or wipe a save. OkayUI draws the window (no Dear ImGui version; docs/ui/
+// own_ui_toolkit.md section 29); the files are looked for only while it shows, and what the person asked for is done here.
 void DrawSaveManager(EditorState& ed) {
     namespace fs = std::filesystem;
-    if (!ImGui::Begin("Save Manager", &g_showSaveManager)) { ImGui::End(); return; }
-
+    if (!g_showSaveManager) return;
     static std::string sel;            // selected .okaysave path
     static okay::SaveFile file;        // working copy of the selected file
     static std::string loaded;         // path currently loaded into `file`
-
-    // Gather candidate save files: the default, plus any *.okaysave in the project.
-    std::vector<std::string> files;
-    files.push_back(okay::Save::DefaultFile());
-    fs::path root = ed.projectDir().empty() ? fs::path(".") : fs::path(ed.projectDir());
-    std::error_code ec;
-    if (fs::exists(root, ec))
-        for (auto& e : fs::recursive_directory_iterator(root, ec))
-            if (e.is_regular_file() && e.path().extension() == ".okaysave")
-                files.push_back(e.path().string());
-
-    ImGui::TextDisabled("Runtime save files (Easy-Save-style key/value data)");
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::BeginCombo("##savefile", sel.empty() ? "(choose a save file)" : sel.c_str())) {
-        for (auto& f : files)
-            if (ImGui::Selectable(f.c_str(), f == sel)) { sel = f; loaded.clear(); }
-        ImGui::EndCombo();
-    }
     static bool s_dirty = false;       // edits not yet saved to disk
-    if (sel.empty()) { ImGui::TextDisabled("No file selected."); ImGui::End(); return; }
-    if (loaded != sel) { file = okay::SaveFile{}; file.Load(sel); loaded = sel; s_dirty = false; }
-
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Reload")) { file = okay::SaveFile{}; file.Load(sel); s_dirty = false; }
-    static char kfilter[64] = "";
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##savefilter", "filter keys...", kfilter, sizeof(kfilter));
-    ImGui::Separator();
-
-    // Editable key table. Values are stored as type:payload; show the type and an
-    // editable payload, re-encoding on change.
-    if (ImGui::BeginTable("savekeys", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthStretch, 0.4f);
-        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.6f);
-        ImGui::TableHeadersRow();
-
-        std::string deleteKey;
-        // Snapshot keys (sorted) so editing during iteration is safe.
-        std::vector<std::pair<std::string, std::string>> rows(file.Raw().begin(), file.Raw().end());
-        std::sort(rows.begin(), rows.end(), [](auto& a, auto& b){ return a.first < b.first; });
-        for (auto& kv : rows) {
-            if (kfilter[0]) {   // case-insensitive key filter
-                std::string lk = kv.first, lf = kfilter;
-                for (auto& c : lk) c = (char)std::tolower((unsigned char)c);
-                for (auto& c : lf) c = (char)std::tolower((unsigned char)c);
-                if (lk.find(lf) == std::string::npos) continue;
-            }
-            ImGui::PushID(kv.first.c_str());
-            char type = kv.second.empty() ? 's' : kv.second[0];
-            std::string payload = kv.second.size() > 2 ? kv.second.substr(2) : "";
-            const char* tname = type == 'f' ? "float" : type == 'i' ? "int"
-                              : type == 'b' ? "bool" : type == 'v' ? "Vector3" : "string";
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn(); ImGui::TextUnformatted(kv.first.c_str());
-            ImGui::TableNextColumn(); ImGui::TextDisabled("%s", tname);
-            ImGui::TableNextColumn();
-            char vbuf[256]; std::strncpy(vbuf, payload.c_str(), sizeof(vbuf) - 1); vbuf[sizeof(vbuf)-1] = '\0';
-            ImGui::SetNextItemWidth(-44);
-            if (ImGui::InputText("##v", vbuf, sizeof(vbuf))) {
-                file.SetRaw(kv.first, std::string(1, type) + ":" + vbuf);
-                s_dirty = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("X")) deleteKey = kv.first;
-            ImGui::PopID();
-        }
-        ImGui::EndTable();
-        if (!deleteKey.empty()) { file.Delete(deleteKey); s_dirty = true; }
-    }
-
-    // Add a new key (typed).
-    ImGui::Spacing();
-    static char newKey[64] = "";
-    static int newType = 0;     // 0 float,1 int,2 bool,3 string,4 vec3
-    static char newVal[128] = "0";
-    ImGui::SetNextItemWidth(140); ImGui::InputTextWithHint("##nk", "new key", newKey, sizeof(newKey));
-    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
-    ImGui::Combo("##nt", &newType, "float\0int\0bool\0string\0Vector3\0");
-    ImGui::SameLine(); ImGui::SetNextItemWidth(140); ImGui::InputText("##nv", newVal, sizeof(newVal));
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Add") && newKey[0]) {
-        const char tc[] = {'f', 'i', 'b', 's', 'v'};
-        file.SetRaw(newKey, std::string(1, tc[newType]) + ":" + newVal);
-        newKey[0] = '\0';
-        s_dirty = true;
-    }
-
-    ImGui::Separator();
-    if (ImGui::Button("Save to disk")) {
+    static okaypanels::SaveManagerState state;
+    okaypanels::SaveManagerModel model;
+    okaypanels::SaveManagerIntent in;
+    oked::DrawSaveManagerOkayUI(&g_showSaveManager, model, [&](okaypanels::SaveManagerModel& m) {
+        // the candidate save files: the default, plus any *.okaysave in the project
+        m.files.push_back(okay::Save::DefaultFile());
+        fs::path root = ed.projectDir().empty() ? fs::path(".") : fs::path(ed.projectDir());
+        std::error_code ec;
+        if (fs::exists(root, ec))
+            for (auto& e : fs::recursive_directory_iterator(root, ec))
+                if (e.is_regular_file() && e.path().extension() == ".okaysave") m.files.push_back(e.path().string());
+        if (!sel.empty() && loaded != sel) { file = okay::SaveFile{}; file.Load(sel); loaded = sel; s_dirty = false; }
+        m.selected = sel;
+        if (!sel.empty()) m.rows = okaypanels::SaveKeyRows(file.Raw());
+        m.dirty = s_dirty;
+    }, state, in);
+    if (in.choose >= 0 && (std::size_t)in.choose < model.files.size()) { sel = model.files[(std::size_t)in.choose]; loaded.clear(); return; }
+    if (sel.empty() || loaded != sel) return;
+    auto rowKey = [&](int i) { return i >= 0 && (std::size_t)i < model.rows.size() ? model.rows[(std::size_t)i].key : std::string(); };
+    if (in.reload) { file = okay::SaveFile{}; file.Load(sel); s_dirty = false; }
+    if (in.edit >= 0 && !rowKey(in.edit).empty()) { file.SetRaw(rowKey(in.edit), in.editRaw); s_dirty = true; }
+    if (in.remove >= 0 && !rowKey(in.remove).empty()) { file.Delete(rowKey(in.remove)); s_dirty = true; }
+    if (in.add && !in.addKey.empty()) { file.SetRaw(in.addKey, in.addRaw); s_dirty = true; }
+    if (in.clearAll) { file.Clear(); s_dirty = true; }
+    if (in.save) {
         if (file.Save(sel)) { ConsoleLog("Saved " + sel); s_dirty = false; }
         else ConsoleLog("Save failed: " + sel);
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Clear all keys")) ImGui::OpenPopup("Clear save keys?");
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal("Clear save keys?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Remove all %d keys from this save?", (int)file.Count());
-        ImGui::TextDisabled("Nothing is written to disk until you press Save to disk.");
-        ImGui::Dummy(ImVec2(0, 4));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
-        bool doClr = ImGui::Button("Clear", ImVec2(110, 0));
-        ImGui::PopStyleColor(2);
-        if (doClr) { file.Clear(); s_dirty = true; ImGui::CloseCurrentPopup(); }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("%d keys", (int)file.Count());
-    if (s_dirty) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f), "unsaved edits");
-    }
-    ImGui::End();
 }
 
-// Edit a .okaymat asset: tweak the surface
-// look and Save, or stamp it onto the selected mesh with Apply to Selection.
+// Edit a .okaymat asset: tweak the surface look and Save, or stamp it onto the selected mesh with Apply to Selection. OkayUI draws
+// the window (no Dear ImGui version; docs/ui/own_ui_toolkit.md section 29): the values come back edited, the buttons as the intent.
 void DrawMaterialEditor(EditorState& ed) {
     if (!g_matAssetOpen) return;
     static std::string loaded;
@@ -10611,70 +10498,39 @@ void DrawMaterialEditor(EditorState& ed) {
     if (loaded != g_matAssetPath) {
         mat = Material{}; Material::LoadFromFile(g_matAssetPath, mat); loaded = g_matAssetPath;
     }
-    if (!ImGui::Begin("Material", &g_matAssetOpen)) { ImGui::End(); return; }
-    ImGui::TextDisabled("%s", g_matAssetPath.c_str());
-    ImGui::Separator();
-    // Live preview ball: albedo shaded sphere, brightened by emissive, with a
-    // stronger highlight as specular rises — updates as you drag the values.
-    {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImVec2 pv = ImGui::GetCursorScreenPos();
-        float pw = ImGui::GetContentRegionAvail().x, ph = 74.0f;
-        dl->AddRectFilled(pv, ImVec2(pv.x + pw, pv.y + ph), IM_COL32(28, 29, 34, 255), 5.0f);
-        ImVec4 shown(mat.color.r + mat.emissive.r * 0.6f,
-                     mat.color.g + mat.emissive.g * 0.6f,
-                     mat.color.b + mat.emissive.b * 0.6f, 1.0f);
-        if (shown.x > 1) shown.x = 1; if (shown.y > 1) shown.y = 1; if (shown.z > 1) shown.z = 1;
-        DrawMaterialBall(dl, pv, ImVec2(pv.x + pw, pv.y + ph), shown);
-        if (mat.specular > 0.0f) {
-            ImVec2 c(pv.x + pw * 0.5f, pv.y + ph * 0.5f);
-            float r = ph * 0.32f;
-            dl->AddCircleFilled(ImVec2(c.x - r * 0.30f, c.y - r * 0.34f), r * 0.12f,
-                                IM_COL32(255, 255, 255, (int)(120 + 130 * mat.specular)), 16);
-        }
-        ImGui::Dummy(ImVec2(0, ph + 6.0f));
+    okaypanels::MaterialModel model;
+    model.path = g_matAssetPath;
+    const float col[4] = {mat.color.r, mat.color.g, mat.color.b, mat.color.a};
+    std::copy(col, col + 4, model.color);
+    model.emissive[0] = mat.emissive.r; model.emissive[1] = mat.emissive.g; model.emissive[2] = mat.emissive.b;
+    model.specular = mat.specular; model.shininess = mat.shininess;
+    model.unlit = mat.unlit; model.doubleSided = mat.doubleSided;
+    model.texture = mat.texture;
+    model.tiling[0] = mat.tiling.x; model.tiling[1] = mat.tiling.y;
+    model.canApply = ed.selected() && ed.selected()->GetComponent<MeshRenderer>();
+    okaypanels::MaterialIntent in;
+    oked::DrawMaterialOkayUI(&g_matAssetOpen, model, in);
+    if (in.changed) {
+        mat.color = {model.color[0], model.color[1], model.color[2], model.color[3]};
+        mat.emissive = {model.emissive[0], model.emissive[1], model.emissive[2], 1.0f};
+        mat.specular = model.specular; mat.shininess = model.shininess;
+        mat.unlit = model.unlit; mat.doubleSided = model.doubleSided;
+        mat.texture = model.texture;
+        mat.tiling = {model.tiling[0], model.tiling[1]};
     }
-    float col[4] = {mat.color.r, mat.color.g, mat.color.b, mat.color.a};
-    if (ImGui::ColorEdit4("Albedo", col)) mat.color = {col[0], col[1], col[2], col[3]};
-    float em[3] = {mat.emissive.r, mat.emissive.g, mat.emissive.b};
-    if (ImGui::ColorEdit3("Emissive", em)) mat.emissive = {em[0], em[1], em[2], 1.0f};
-    ImGui::SliderFloat("Specular", &mat.specular, 0.0f, 1.0f);
-    if (mat.specular > 0.0f) ImGui::SliderFloat("Shininess", &mat.shininess, 1.0f, 128.0f);
-    ImGui::Checkbox("Unlit", &mat.unlit);
-    ImGui::SameLine();
-    ImGui::Checkbox("Double-sided", &mat.doubleSided);
-    char tex[256]; std::strncpy(tex, mat.texture.c_str(), sizeof(tex) - 1); tex[sizeof(tex) - 1] = '\0';
-    ImGui::SetNextItemWidth(210);
-    if (ImGui::InputText("##mattex", tex, sizeof(tex))) mat.texture = tex;
-    if (ImGui::BeginDragDropTarget()) {   // drop an image from the Project panel
-        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) mat.texture = (const char*)p->Data;
-        ImGui::EndDragDropTarget();
-    }
-    ImGui::SameLine(0, 4);
-    if (oked::TipButton("Browse...", "...##mattexbrowse")) {
+    if (in.browse) {
         Material* matp = &mat;
         okay::filedialog::OpenOne("Choose a texture image", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.bmp"}),
                                   [matp](const std::string& p) { matp->texture = p; });
     }
-    ImGui::SameLine(0, 4);
-    ImGui::TextUnformatted("Texture");
-    float til[2] = {mat.tiling.x, mat.tiling.y};
-    if (ImGui::DragFloat2("Tiling", til, 0.05f, 0.01f, 64.0f)) mat.tiling = {til[0], til[1]};
-    ImGui::Separator();
-    if (ImGui::Button("Save")) {
+    if (in.save) {
         if (mat.SaveToFile(g_matAssetPath)) ConsoleLog("Saved " + g_matAssetPath);
         else ConsoleLog("Save failed: " + g_matAssetPath);
     }
-    ImGui::SameLine();
-    bool canApply = ed.selected() && ed.selected()->GetComponent<MeshRenderer>();
-    ImGui::BeginDisabled(!canApply);
-    if (ImGui::Button("Apply to Selection")) {
+    if (in.apply && model.canApply) {
         mat.ApplyTo(*ed.selected()->GetComponent<MeshRenderer>());
         ed.dirty = true; ConsoleLog("Applied material to " + ed.selected()->name);
     }
-    ImGui::EndDisabled();
-    if (!canApply) { ImGui::SameLine(); ImGui::TextDisabled("(select a mesh to apply)"); }
-    ImGui::End();
 }
 
 // The scene counts the Stats window shows, in its order (shared by the Dear ImGui window and the OkayUI one so they cannot drift).
@@ -51442,68 +51298,52 @@ void DrawUIThemer(EditorState& ed) {
 // The frame-time overlay (View > Rendering > Frame-time overlay): FPS and frame time over the last frames, a graph, and where
 // the newest frames went (okay::editor::perf::Break over the profiler's own scopes; same data as the Profiler window, in a
 // small panel you can leave open). "Copy report" puts a plain-text version on the clipboard to send back.
+// OkayUI draws the window (no Dear ImGui version; docs/ui/own_ui_toolkit.md section 29); the numbers are worked out only while it shows.
 void DrawPerfOverlay(EditorState& ed) {
     namespace perf = okay::editor::perf;
     okay::Profiler& P = okay::Prof();
-    ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->WorkPos.x + ImGui::GetMainViewport()->WorkSize.x - 12.0f,
-                                   ImGui::GetMainViewport()->WorkPos.y + 36.0f), ImGuiCond_FirstUseEver, ImVec2(1.0f, 0.0f));
-    ImGui::SetNextWindowBgAlpha(0.88f);
-    const bool open = ImGui::Begin("Frame time###PerfOverlay", &g_showPerfOverlay,
-                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
-    if (!g_showPerfOverlay) SaveSettings();   // closed with its X
-    if (!open) { ImGui::End(); return; }
-    const int n = P.Count();
-    const int kStatFrames = 120, kBreakFrames = 30;
-    static std::vector<double> ms; static std::vector<float> plot;
-    ms.clear(); plot.clear();
-    for (int i = std::max(0, n - kStatFrames); i < n; ++i) { ms.push_back(P.FrameAt(i).total); plot.push_back((float)P.FrameAt(i).total); }
-    const perf::HistoryStats st = perf::Stats(ms);
-    // Average of the newest frames, section by section (one frame jumps around too much to read).
+    const bool wasOpen = g_showPerfOverlay;
+    perf::HistoryStats st{};
     perf::Breakdown avg;
     int bn = 0;
-    for (int i = std::max(0, n - kBreakFrames); i < n; ++i) {
-        const perf::Breakdown b = perf::Break(P.FrameAt(i));
-        for (int k = 0; k < (int)perf::Section::Count; ++k) avg.ms[k] += b.ms[k];
-        avg.total += b.total; ++bn;
-    }
-    if (bn > 0) { for (int k = 0; k < (int)perf::Section::Count; ++k) avg.ms[k] /= bn; avg.total /= bn; }
-    const double sleepMs = avg.ms[(int)perf::Section::Sleep];
-    const double workMs = avg.total - sleepMs;   // what the frame costs without the on-purpose sleep
-    ImVec4 col = st.fps >= 100.0 ? ImVec4(0.45f, 0.85f, 0.55f, 1) : st.fps >= 60.0 ? ImVec4(0.95f, 0.80f, 0.35f, 1) : ImVec4(0.95f, 0.45f, 0.40f, 1);
-    ImGui::TextColored(col, "%.0f FPS", st.fps);
-    ImGui::SameLine(); ImGui::TextDisabled("%.2f ms avg   95%%: %.2f   worst: %.2f   1%% low: %.0f FPS", st.avgMs, st.p95Ms, st.worstMs, st.lowFps);
-    if (sleepMs > 0.05 && workMs > 0.0) ImGui::TextDisabled("Without the limiter's sleep: %.2f ms = %.0f FPS possible", workMs, 1000.0 / workMs);
-    if (!P.enabled || n < 2) ImGui::TextDisabled("Collecting frames ...");
-    if (!plot.empty()) {
-        const float top = (float)std::max(16.7, st.worstMs * 1.1);
-        char ov[48]; std::snprintf(ov, sizeof(ov), "last %d frames, top %.0f ms", (int)plot.size(), (double)top);
-        ImGui::PlotLines("##perfms", plot.data(), (int)plot.size(), 0, ov, 0.0f, top, ImVec2(360, 56));
-    }
-    ImGui::Separator();
-    ImGui::TextDisabled("Where the frame goes (average of the last %d frames)", bn);
-    int order[(int)perf::Section::Count];
-    for (int k = 0; k < (int)perf::Section::Count; ++k) order[k] = k;
-    std::sort(order, order + (int)perf::Section::Count, [&](int a, int b) { return avg.ms[a] > avg.ms[b]; });
-    for (int oi = 0; oi < (int)perf::Section::Count; ++oi) {
-        const int k = order[oi];
-        if (avg.ms[k] < 0.005 && k != (int)perf::Section::Viewport3D) continue;
-        const float share = avg.total > 0.0 ? (float)(avg.ms[k] / avg.total) : 0.0f;
-        char lb[40]; std::snprintf(lb, sizeof(lb), "%.2f ms  %.0f%%", avg.ms[k], (double)share * 100.0);
-        ImGui::ProgressBar(share, ImVec2(150, 0), lb);
-        ImGui::SameLine(); ImGui::TextUnformatted(perf::SectionName((perf::Section)k));
-    }
-    ImGui::Separator();
-    ImGui::TextDisabled("Renderer: %s", okay::FrameOverlay::RendererName().c_str());
-    ImGui::TextDisabled("Scene view %dx%d, scale %.2f%s", g_lastSceneW, g_lastSceneH, (double)perf::EffectiveScale(g_renderScale, g_perfMode), g_perfMode ? ", performance mode" : "");
-    if (ImGui::Button("Copy report")) {
+    okaypanels::PerfOverlayModel model;
+    okaypanels::PerfOverlayIntent in;
+    oked::DrawPerfOverlayOkayUI(&g_showPerfOverlay, model, [&](okaypanels::PerfOverlayModel& m) {
+        const int n = P.Count();
+        const int kStatFrames = 120, kBreakFrames = 30;
+        static std::vector<double> ms;
+        ms.clear();
+        for (int i = std::max(0, n - kStatFrames); i < n; ++i) { ms.push_back(P.FrameAt(i).total); m.plot.push_back((float)P.FrameAt(i).total); }
+        st = perf::Stats(ms);
+        // Average of the newest frames, section by section (one frame jumps around too much to read).
+        for (int i = std::max(0, n - kBreakFrames); i < n; ++i) {
+            const perf::Breakdown b = perf::Break(P.FrameAt(i));
+            for (int k = 0; k < (int)perf::Section::Count; ++k) avg.ms[k] += b.ms[k];
+            avg.total += b.total; ++bn;
+        }
+        if (bn > 0) { for (int k = 0; k < (int)perf::Section::Count; ++k) avg.ms[k] /= bn; avg.total /= bn; }
+        m.fps = st.fps; m.avgMs = st.avgMs; m.p95Ms = st.p95Ms; m.worstMs = st.worstMs; m.lowFps = st.lowFps;
+        m.sleepMs = avg.ms[(int)perf::Section::Sleep];
+        m.workMs = avg.total - m.sleepMs;   // what the frame costs without the on-purpose sleep
+        m.collecting = !P.enabled || n < 2;
+        m.breakFrames = bn;
+        std::vector<std::string> names;
+        std::vector<double> secMs;
+        for (int k = 0; k < (int)perf::Section::Count; ++k) { names.push_back(perf::SectionName((perf::Section)k)); secMs.push_back(avg.ms[k]); }
+        m.sections = okaypanels::PerfSections(names, secMs, avg.total, (int)perf::Section::Viewport3D);
+        m.renderer = okay::FrameOverlay::RendererName();
+        m.sceneW = g_lastSceneW; m.sceneH = g_lastSceneH;
+        m.scale = perf::EffectiveScale(g_renderScale, g_perfMode);
+        m.perfMode = g_perfMode;
+    }, in);
+    if (wasOpen && !g_showPerfOverlay) SaveSettings();   // closed with its X
+    if (in.copyReport) {
         const std::string rep = perf::Report(st, bn > 0 ? avg : perf::Break(P.Displayed()), okay::FrameOverlay::RendererName().c_str(), ed.isPlaying(),
                                               g_lastSceneW, g_lastSceneH, perf::EffectiveScale(g_renderScale, g_perfMode), g_perfMode, g_fpsCapEditor, g_idleThrottle);
         ImGui::SetClipboardText(rep.c_str());
         ConsoleLog("Frame-time report copied to the clipboard.");
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Open Profiler")) g_showProfiler = true;
-    ImGui::End();
+    if (in.openProfiler) g_showProfiler = true;
 }
 
 // Advanced CPU/GPU profiler. A frame/CPU/GPU timeline you can pause and
@@ -55076,7 +54916,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.Console"); if (g_showConsole)   DrawConsole(); }
         { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
         { OKAY_PROFILE("UI.AudioMixer"); if (g_showAudioMixer) DrawAudioMixer(); }
-        okay::editor::DrawInputDebugger(&g_showInputDebug, ed.isPlaying());
+        okay::editor::DrawInputDebugger(&g_showInputDebug, ed.isPlaying(), [](const std::string& t) { ImGui::SetClipboardText(t.c_str()); });
         okay::editor::DrawInputActionsWindow(&g_showInputActions, ed.projectDir());
         { OKAY_PROFILE("UI.AssetManager"); if (g_showAssetManager) DrawAssetManager(ed); }
         { OKAY_PROFILE("UI.Plugins"); TickPlugins(ed); DrawPluginManager(ed); }

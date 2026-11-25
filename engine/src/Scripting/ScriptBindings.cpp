@@ -374,6 +374,70 @@ long long ArgIntIn(const V& v, int idx, long long lo, long long hi) {
     return n;
 }
 long long ArgCount(const V& v, int idx, long long max) { return ArgIntIn(v, idx, -1, max); }
+
+// ---- The generator's DENY_* rules, applied to a name (scripts/gen_script_bindings.py words() and denied()) ----------
+std::vector<std::string> NameWords(const std::string& name) {
+    // Same split as the generator's regex [A-Z]+(?![a-z]) | [A-Z]?[a-z]+ | \d+ ; anything else separates words.
+    auto up = [](char c) { return c >= 'A' && c <= 'Z'; };
+    auto lo = [](char c) { return c >= 'a' && c <= 'z'; };
+    auto dg = [](char c) { return c >= '0' && c <= '9'; };
+    std::vector<std::string> out;
+    std::size_t i = 0;
+    const std::size_t n = name.size();
+    auto lower = [](std::string w) { for (char& c : w) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a'); return w; };
+    while (i < n) {
+        const char c = name[i];
+        if (up(c)) {
+            std::size_t j = i;
+            while (j < n && up(name[j])) ++j;
+            if (j < n && lo(name[j])) {
+                if (j - 1 > i) { out.push_back(lower(name.substr(i, j - 1 - i))); i = j - 1; }   // "HTTPServer": HTTP, then S...
+                std::size_t k = i + 1;
+                while (k < n && lo(name[k])) ++k;
+                out.push_back(lower(name.substr(i, k - i)));
+                i = k;
+            } else {
+                out.push_back(lower(name.substr(i, j - i)));
+                i = j;
+            }
+        } else if (lo(c)) {
+            std::size_t k = i;
+            while (k < n && lo(name[k])) ++k;
+            out.push_back(name.substr(i, k - i));
+            i = k;
+        } else if (dg(c)) {
+            std::size_t k = i;
+            while (k < n && dg(name[k])) ++k;
+            out.push_back(name.substr(i, k - i));
+            i = k;
+        } else {
+            ++i;
+        }
+    }
+    return out;
+}
+
+namespace {
+bool AnyWordIn(const std::string& name, const std::vector<std::string>& words) {
+    for (const std::string& w : NameWords(name))
+        if (std::find(words.begin(), words.end(), w) != words.end()) return true;
+    return false;
+}
+} // namespace
+
+bool IsDeniedClass(const std::string& cls) {
+    const auto& c = GeneratedDenyRules().classes;
+    return std::find(c.begin(), c.end(), cls) != c.end();
+}
+
+bool IsDeniedMethod(const std::string& cls, const std::string& method, const std::vector<DenyParam>& params) {
+    const DenyRules& r = GeneratedDenyRules();
+    if (IsDeniedClass(cls)) return true;
+    if (std::find(r.methods.begin(), r.methods.end(), cls + "." + method) != r.methods.end()) return true;
+    for (const DenyParam& p : params)
+        if (p.isText && AnyWordIn(p.name, r.paramWords)) return true;
+    return AnyWordIn(method, r.nameWords);
+}
 Vec2 ArgVec2(const V& v) { const Vec3 p = v.AsVec3(); return Vec2{p.x, p.y}; }
 Vec4 ArgVec4(const V& v) {
     if (v.IsColor()) { auto c = v.AsColor(); return Vec4{c.r, c.g, c.b, c.a}; }

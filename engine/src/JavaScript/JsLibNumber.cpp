@@ -23,7 +23,7 @@ double ThisNum(Runtime& rt, const Value& v, const char* m) {
 
 // x = digits[0].digits[1..] * 10^exp (x > 0, finite): every significant digit, exactly.
 void ExactDigits(double x, std::string& digits, int& exp) {
-    static thread_local char buf[1200];
+    char buf[1200];
     std::snprintf(buf, sizeof buf, "%.1100e", x);
     const char* e = std::strchr(buf, 'e');
     digits.clear();

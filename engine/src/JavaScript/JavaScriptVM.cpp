@@ -51,6 +51,8 @@ struct JavaScriptVM::Impl {
     std::unordered_map<std::string, js::HostObj*> compCache;    ///< "id:class:index" -> its one host object
     std::set<std::string> builtinGlobals;
     Impl() { rt.userData = this; }
+    // The runtime is destroyed after the caches below it; it must not call back into them while it frees.
+    ~Impl() { rt.onHostFree = nullptr; }
 };
 
 namespace {
@@ -76,6 +78,19 @@ int FindType(const std::string& name) {
 }
 
 js::String* S(js::Runtime& rt, const std::string& s) { return rt.NewStringUtf8(s); }
+
+// An engine float as the shortest double that reads back as the same float, so an Inspector 0.1 is 0.1 in
+// the script and not 0.10000000149011612.
+double Nice(float f) {
+    if (!std::isfinite(f) || f == std::trunc(f)) return (double)f;
+    char buf[32];
+    for (int p = 1; p <= 9; ++p) {
+        std::snprintf(buf, sizeof buf, "%.*g", p, (double)f);
+        double d = std::strtod(buf, nullptr);
+        if ((float)d == f) return d;
+    }
+    return (double)f;
+}
 std::string U8(const js::String* s) { return js::Utf16To8(s->s); }
 
 int CurrentLine(js::Runtime& rt) {
@@ -227,7 +242,7 @@ Value ToJs(js::Runtime& rt, const sc::Value& v, int depth = 0) {
     if (std::holds_alternative<std::monostate>(v)) return Value();
     if (auto* b = std::get_if<bool>(&v)) return Value::Bool(*b);
     if (auto* i = std::get_if<std::int32_t>(&v)) return Value::Num(*i);
-    if (auto* f = std::get_if<float>(&v)) return Value::Num((double)*f);
+    if (auto* f = std::get_if<float>(&v)) return Value::Num(Nice(*f));
     if (auto* s = std::get_if<std::string>(&v)) return Value::Str(S(rt, *s));
     if (auto* p = std::get_if<Vec3>(&v)) return MakeVec(rt, *p);
     if (auto* o = std::get_if<sc::ObjRef>(&v)) return MakeObj(rt, o->go, o->type);
@@ -276,7 +291,7 @@ vs::VsValue ToVs(js::Runtime& rt, const Value& v) {
 
 Value FromVs(js::Runtime& rt, const vs::VsValue& v) {
     if (v.IsBool()) return Value::Bool(v.AsBool());
-    if (v.IsNumber()) return Value::Num((double)v.AsFloat());
+    if (v.IsNumber()) return Value::Num(Nice(v.AsFloat()));
     if (v.IsString()) return Value::Str(S(rt, v.AsString()));
     if (v.IsVec3()) return MakeVec(rt, v.AsVec3());
     if (v.IsComponentHandle()) return MakeComp(rt, v);
@@ -830,6 +845,15 @@ void JavaScriptVM::Bind(ScriptHost* host) {
     js::Runtime& rt = m_impl->rt;
     m_impl->ctx.self = host->gameObject;
     m_impl->ctx.component = host->component;
+    try {
+        BindObjects(rt, host);
+    } catch (const js::JsTerminate&) {
+        // the heap is full; the next callback reports it
+    }
+}
+
+void JavaScriptVM::BindObjects(js::Runtime& rt, ScriptHost* host) {
+    m_impl->ctx.component = host->component;
     Value go = host->gameObject ? MakeObj(rt, host->gameObject->InstanceId(), Api().gameObject) : Value::Null();
     Value tr = host->gameObject ? MakeObj(rt, host->gameObject->InstanceId(), Api().transform) : Value::Null();
     rt.SetGlobal("gameObject", go);
@@ -841,6 +865,7 @@ void JavaScriptVM::Bind(ScriptHost* host) {
             rt.DefineData(o, rt.Intern("transform"), tr, js::kHidden);
         } catch (const js::JsThrow&) {
             rt.exception = Value();   // a frozen script object keeps its own
+        } catch (const js::JsTerminate&) {
         }
     }
 }
@@ -878,9 +903,12 @@ bool JavaScriptVM::Run(const std::string& engineName, const std::vector<vs::VsVa
         m_impl->ctx.deltaTime = m_host->deltaTime;
     }
     std::vector<Value> jsArgs;
-    for (const auto& a : args) {
-        Value v = FromVs(rt, a);
-        jsArgs.push_back(v);
+    try {
+        for (const auto& a : args) jsArgs.push_back(FromVs(rt, a));
+    } catch (const js::JsTerminate& t) {   // the heap is full: report it like any other stop
+        if (error) *error = used + "(): " + t.why;
+        else glue::ReportHandlerError(m_impl->ctx.self, used + "(): " + t.why);
+        return true;
     }
     if (m_impl->running == 0) rt.SetBudget(m_budget);
     ++m_impl->running;
@@ -962,8 +990,14 @@ vs::VsValue JavaScriptVM::GetGlobal(const std::string& name) const {
 void JavaScriptVM::SetGlobal(const std::string& name, const vs::VsValue& v) {
     if (!m_impl->loaded) return;
     js::Runtime& rt = m_impl->rt;
-    js::String* key = rt.Intern(js::Utf8To16(name));
-    Value nv = FromVs(rt, v);
+    js::String* key;
+    Value nv;
+    try {
+        key = rt.Intern(js::Utf8To16(name));
+        nv = FromVs(rt, v);
+    } catch (const js::JsTerminate&) {
+        return;   // the heap is full; the next callback reports it
+    }
     if (m_impl->style != 0) {
         js::Object* o = rt.GetRef(m_impl->scriptRef).O();
         js::Prop* p = o->FindRaw(key);

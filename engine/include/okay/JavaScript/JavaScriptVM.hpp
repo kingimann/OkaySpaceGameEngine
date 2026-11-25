@@ -7,6 +7,8 @@
 
 namespace okay {
 
+namespace js { class Runtime; }
+
 /// JavaScript game scripts (language id "javascript", `.js` files) on our own
 /// engine okay::js (engine/src/JavaScript). A script exports its behaviour:
 ///
@@ -93,6 +95,7 @@ private:
     std::size_t m_memoryLimit = 256u << 20;
     bool m_quiet = false;
     bool Run(const std::string& handler, const std::vector<vs::VsValue>& args, vs::VsValue* ret, std::string* error);
+    void BindObjects(js::Runtime& rt, ScriptHost* host);
 };
 
 } // namespace okay

@@ -9,9 +9,10 @@
 //   test_model_corpus                       manifest check (what ctest runs)
 //   test_model_corpus --one <reader> <file> print one TSV result line (used by the comparison scripts)
 //   test_model_corpus --list <reader> <dir> print the result line of every file below <dir> for that reader
-// readers: fbx-own, fbx-ufbx, dae, 3ds, bvh, obj, stl, ply, gltf (gltf covers .gltf and .glb), off, smd, md5, md5anim, ms3d, ase, 3mf, amf, x3d, dxf, lwo, blend, md2, md3, irrmesh, b3d, x,
+// readers: fbx-own (our FBX reader, the only one; fbx-ufbx was removed with ufbx on 2026-11-23), dae, 3ds, bvh, obj, stl, ply, gltf (gltf covers .gltf and .glb), off, smd, md5, md5anim, ms3d, ase, 3mf, amf, x3d, dxf, lwo, blend, md2, md3, irrmesh, b3d, x,
 // ac (.ac .acc .ac3d), ogre (.mesh.xml), xgl (.xgl .zgl), irr (.irr), nff (.nff .enff), ter (.ter), q3d (.q3o .q3s), lws (.lws),
-// ogrebin (.mesh), zae (.zae), xml (.xml other than .mesh.xml), lxo (.lxo, Modo; read by the LWO reader)
+// ogrebin (.mesh), zae (.zae), xml (.xml other than .mesh.xml), lxo (.lxo, Modo; read by the LWO reader),
+// gltf1 (our own glTF 1.0 reader, switched on for the run: .gltf and .glb of version 1), ogex (.ogex), mdl (.mdl: Quake 1 and Half-Life 1), q3bsp (.pk3 and .bsp)
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/FbxReader.hpp"
@@ -74,6 +75,10 @@ static const char* ExtOf(const std::string& reader) {
     if (reader == "zae") return ".zae";
     if (reader == "xml") return ".xml";
     if (reader == "lxo") return ".lxo";
+    if (reader == "ogex") return ".ogex";
+    if (reader == "mdl") return ".mdl";
+    if (reader == "q3bsp") return ".pk3";
+    if (reader == "gltf1") return ".gltf1";   // the switch; the files are .gltf / .glb of version 1 (ExtMatches)
     return reader == "dae" ? ".dae" : reader == "3ds" ? ".3ds" : reader == "bvh" ? ".bvh" : reader == "obj" ? ".obj" :
            reader == "stl" ? ".stl" : reader == "ply" ? ".ply" : reader == "gltf" ? ".gltf" :
            reader == "3mf" ? ".3mf" : reader == "amf" ? ".amf" : reader == "x3d" ? ".x3d" : reader == "dxf" ? ".dxf" : reader == "lwo" ? ".lwo" : reader == "blend" ? ".blend" : ".fbx";
@@ -82,6 +87,8 @@ static bool ExtMatches(const std::string& reader, std::string ext, std::string n
     for (char& c : ext) c = (char)std::tolower((unsigned char)c);
     for (char& c : name) c = (char)std::tolower((unsigned char)c);
     if (reader == "ogre") return name.size() >= 9 && name.compare(name.size() - 9, 9, ".mesh.xml") == 0;
+    if (reader == "gltf1") return ext == ".gltf" || ext == ".glb";
+    if (reader == "q3bsp") return ext == ".pk3" || ext == ".bsp";
     if (reader == "xml" && name.size() >= 9 && name.compare(name.size() - 9, 9, ".mesh.xml") == 0) return false;   // those are the OGRE reader's
     return ext == ExtOf(reader) || (reader == "gltf" && ext == ".glb") || (reader == "ac" && (ext == ".acc" || ext == ".ac3d")) ||
            (reader == "xgl" && ext == ".zgl") || (reader == "nff" && ext == ".enff") || (reader == "q3d" && ext == ".q3s");
@@ -91,7 +98,7 @@ static bool IsBatchBReader(const std::string& r) { return r == "3mf" || r == "am
 // the readers added in batch C (MD2, MD3, IRRMESH, B3D, DirectX .x)
 static bool IsBatchCReader(const std::string& r) { return r == "md2" || r == "md3" || r == "irrmesh" || r == "b3d" || r == "x"; }
 // the readers added in batch D (AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF)
-static bool IsBatchDReader(const std::string& r) { return r == "ac" || r == "ogre" || r == "xgl" || r == "irr" || r == "nff" || r == "ter" || r == "q3d" || r == "lws" || r == "ogrebin" || r == "zae" || r == "xml" || r == "lxo"; }   // ter (Terragen), q3d (Quick3D) and lws (LightWave scenes): measured the same way
+static bool IsBatchDReader(const std::string& r) { return r == "ac" || r == "ogre" || r == "xgl" || r == "irr" || r == "nff" || r == "ter" || r == "q3d" || r == "lws" || r == "ogrebin" || r == "zae" || r == "xml" || r == "lxo" || r == "gltf1" || r == "ogex" || r == "mdl" || r == "q3bsp"; }   // ter (Terragen), q3d (Quick3D) and lws (LightWave scenes): measured the same way
 static bool IsRawReader(const std::string& r) { return IsBatchCReader(r) || IsBatchDReader(r) || r == "dae" || r == "3ds" || r == "bvh" || r == "obj" || r == "stl" || r == "ply" || r == "off" || r == "smd" || r == "md5" || r == "md5anim" || r == "ms3d" || r == "ase" || IsBatchBReader(r) || r == "blend"; }
 // readers added after the first corpus pass also record textures, nodes, UV and normal presence
 static bool IsMeasuredReader(const std::string& r) { return IsBatchCReader(r) || IsBatchDReader(r) || r == "obj" || r == "stl" || r == "ply" || r == "off" || r == "smd" || r == "md5" || r == "md5anim" || r == "ms3d" || r == "ase" || IsBatchBReader(r) || r == "blend"; }
@@ -102,10 +109,7 @@ static CorpusStats MeasureFile(const std::string& reader, const std::string& pat
     const auto t0 = std::chrono::steady_clock::now();
     if (reader == "fbx-own") {
         fbx::Scene fs_; std::string e;
-        if (!fbx::LoadFile(path, fs_, &e)) { s.err = e; return s; }   // the importer would fall back to ufbx here: report it
-        fbx::SetOwnReaderEnabled(true);
-    } else if (reader == "fbx-ufbx") {
-        fbx::SetOwnReaderEnabled(false);
+        if (!fbx::LoadFile(path, fs_, &e)) { s.err = e; return s; }   // report the reader's own message
     } else if (IsRawReader(reader)) {
         SetImportBackend(ExtOf(reader), ImportBackend::Own);
         if (reader == "irr" || reader == "xml") { SetImportBackend(".irrmesh", ImportBackend::Own); SetImportBackend(".x", ImportBackend::Own); }   // the meshes a scene names are read through the seam: ours
@@ -239,62 +243,13 @@ int main(int argc, char** argv) {
     }
     if (argc >= 3 && std::string(argv[1]) == "--fbxdump") {   // what our FBX reader found, before the importer builds anything
         fbx::Scene sc; std::string e;
-        if (!fbx::LoadFile(argv[2], sc, &e)) { std::cout << "FAIL " << e << "\n"; return 0; }
+        if (!fbx::LoadFile(argv[2], sc, &e) || !fbx::BuildClips(sc, &e)) { std::cout << "FAIL " << e << "\n"; return 0; }
         std::cout << "creator '" << sc.creator << "' nodes " << sc.nodes.size() << " meshes " << sc.meshes.size() << " materials " << sc.materials.size()
                   << " textures " << sc.textures.size() << " clips " << sc.clips.size() << " unit " << sc.settings.unitScaleFactor << " up " << sc.settings.upAxis << "\n";
         for (const auto& c : sc.clips) {
             std::size_t keys = 0; for (const auto& n : c.nodes) keys += n.translation.size() + n.rotation.size() + n.scale.size();
             std::cout << "  clip '" << c.name << "' duration " << c.duration << " node tracks " << c.nodes.size() << " blend tracks " << c.blends.size() << " keys " << keys << "\n";
         }
-        return 0;
-    }
-    if (argc >= 3 && std::string(argv[1]) == "--fbxdiff") {   // vertices one FBX reader has and the other lacks, per mesh object
-        const std::string path = argv[2];
-        fbx::SetOwnReaderEnabled(false);
-        Scene su; GameObject* ru = ImportModelScene(su, path, nullptr);
-        fbx::SetOwnReaderEnabled(true);
-        Scene so; GameObject* ro = ImportModelScene(so, path, nullptr);
-        auto key = [](const Mesh& m, std::size_t i) {
-            char buf[200];
-            std::snprintf(buf, sizeof buf, "%.4f,%.4f,%.4f|%.3f,%.3f,%.3f|%.3f,%.3f", m.vertices[i].x, m.vertices[i].y, m.vertices[i].z,
-                          m.normals.size() > i ? m.normals[i].x : 0.f, m.normals.size() > i ? m.normals[i].y : 0.f, m.normals.size() > i ? m.normals[i].z : 0.f,
-                          m.uvs.size() > i ? m.uvs[i].x : 0.f, m.uvs.size() > i ? m.uvs[i].y : 0.f);
-            return std::string(buf);
-        };
-        for (const auto& up : su.Objects()) {
-            if (!ru || !up->IsSelfOrDescendantOf(ru)) continue;
-            auto* a = up->GetComponent<MeshRenderer>(); if (!a) continue;
-            for (const auto& op : so.Objects()) {
-                if (op->name != up->name || !ro || !op->IsSelfOrDescendantOf(ro)) continue;
-                auto* b = op->GetComponent<MeshRenderer>(); if (!b) continue;
-                std::printf("%s: ufbx %zu verts %d tris, own %zu verts %d tris\n", up->name.c_str(), a->mesh.vertices.size(), a->mesh.TriangleCount(), b->mesh.vertices.size(), b->mesh.TriangleCount());
-                std::set<std::string> ka, kb;
-                for (std::size_t i = 0; i < a->mesh.vertices.size(); ++i) ka.insert(key(a->mesh, i));
-                for (std::size_t i = 0; i < b->mesh.vertices.size(); ++i) kb.insert(key(b->mesh, i));
-                int shown = 0;
-                for (const auto& k : ka) if (!kb.count(k) && shown++ < 6) std::printf("  only ufbx: %s\n", k.c_str());
-                shown = 0;
-                for (const auto& k : kb) if (!ka.count(k) && shown++ < 6) std::printf("  only own : %s\n", k.c_str());
-            }
-        }
-        return 0;
-    }
-    if (argc >= 3 && std::string(argv[1]) == "--fbxclips") {   // clip contents of the two FBX readers side by side
-        const std::string path = argv[2];
-        Scene sc[2]; GameObject* rt[2];
-        for (int i = 0; i < 2; ++i) { fbx::SetOwnReaderEnabled(i == 1); rt[i] = ImportModelScene(sc[i], path, nullptr); }
-        ModelAnimator* ma[2] = {rt[0] ? rt[0]->GetComponent<ModelAnimator>() : nullptr, rt[1] ? rt[1]->GetComponent<ModelAnimator>() : nullptr};
-        for (int i = 0; i < 2; ++i) { std::printf("%s: %zu clips\n", i ? "own" : "ufbx", ma[i] ? ma[i]->clips.size() : 0); if (ma[i]) for (auto& c : ma[i]->clips) { float len = 0; for (auto& n : c.nodes) len = std::max(len, n.clip.Length()); std::printf("   '%s' %zu node clips, length %.4f\n", c.name.c_str(), c.nodes.size(), len); } }
-        if (ma[0] && ma[1]) for (std::size_t ci = 0; ci < std::min(ma[0]->clips.size(), ma[1]->clips.size()); ++ci)
-            for (auto& nu : ma[0]->clips[ci].nodes) {
-                const ModelAnimator::NodeClip* no = nullptr; for (auto& x : ma[1]->clips[ci].nodes) if (x.node == nu.node) no = &x;
-                if (!no) { std::printf("  clip %zu node %s: missing in own\n", ci, nu.node.c_str()); continue; }
-                for (const char* tr : {"position.x", "position.y", "position.z", "rotation.qx", "rotation.qy", "rotation.qz", "rotation.qw", "scale.x"}) {
-                    std::printf("  clip %zu %-12s %-11s", ci, nu.node.c_str(), tr);
-                    for (float t : {0.0f, 0.25f, 0.5f, 1.0f, 1.5f}) { bool f1 = false, f2 = false; const float a = nu.clip.Evaluate(tr, t, f1), b = no->clip.Evaluate(tr, t, f2); std::printf(" | t=%.2f %s%.3f %s%.3f", t, f1 ? "" : "-", a, f2 ? "" : "-", b); }
-                    std::printf("\n");
-                }
-            }
         return 0;
     }
     if (argc >= 4 && std::string(argv[1]) == "--keys") {   // every animation channel: counts and first / last key (reader result, no importer)

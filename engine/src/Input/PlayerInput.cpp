@@ -20,6 +20,7 @@ int PlayerInputManager::Join(JoinDevice device, int pad) {
     if (idx < 0) { if ((int)m_players.size() >= kMaxPlayers) return -1; m_players.emplace_back(); idx = (int)m_players.size() - 1; }
     auto slot = std::make_unique<Slot>();
     slot->set = m_asset;
+    if (onJoin) onJoin(slot->set);
     slot->device = device; slot->pad = device == JoinDevice::Pad ? pad : -1;
     ActionSet& s = slot->set;
     // The scheme that fits the device; a pad player reads their own controller whatever the bindings say.
@@ -29,6 +30,7 @@ int PlayerInputManager::Join(JoinDevice device, int pad) {
     }
     s.SetPad(slot->pad);
     s.SetAutoSwitch(device == JoinDevice::Any);
+    slot->serial = ++m_joins;
     m_players[(size_t)idx] = std::move(slot);
     LoadOverrides(idx);
     return idx;

@@ -1,8 +1,7 @@
 // Our own model readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary) and the
 // import seam (okay/Render/ModelData.hpp): fixtures, malformed input, a
 // deterministic fuzz sweep (run it under -DOKAY_SANITIZE=address,undefined), the
-// backend switch, and, when the build has Assimp, the same files read by both
-// backends and compared (counts, triangles, normals, UVs, materials, skeleton, clips).
+// backend switch, and fixed counts for the files that were once compared with Assimp (removed 2026-11-24).
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/ModelData.hpp"
@@ -52,7 +51,7 @@ static bool Sane(const ImportedModel& m) {
 
 // A triangle as three rounded corners (position, normal, uv), rotated so the smallest
 // corner is first: comparing two sorted lists of these compares the meshes regardless of
-// vertex order. `flipV`: the OBJ reader keeps v as written, Assimp flips it.
+// vertex order. `flipV`: compare v as 1 - v.
 using Corner = std::array<long, 8>;
 using Tri = std::array<Corner, 3>;
 static long Q(float v) { return std::lround(v * 1000.0f); }
@@ -239,14 +238,10 @@ int main() {
         CHECK(!dok && dr == nullptr);
         int meshes = 0; for (const auto& go : dup.Objects()) if (go->GetComponent<MeshRenderer>()) ++meshes;
         CHECK(meshes == 0);
-        // Assimp loads this file. The seam must still refuse it, including when
-        // Assimp is the backend the default choice would have used.
+        // The seam refuses it before any reader runs, whichever backend is asked for.
         SetImportBackend(".ply", ImportBackend::Default);
-        Scene dupAssimp; dupAssimp.physicsEnabled = false;
-        bool aok = true; GameObject* ar = ImportModelScene(dupAssimp, "mr_dup_vertex.ply", &aok);
-        CHECK(!aok && ar == nullptr);
         ImportedModel via; std::string ae;
-        CHECK(!ImportModelData("mr_dup_vertex.ply", via, ImportBackend::Assimp, false, &ae));
+        CHECK(!ImportModelData("mr_dup_vertex.ply", via, ImportBackend::Default, false, &ae));
         CHECK(ae.find("more than one vertex element") != std::string::npos);
         CHECK(via.parts.empty());
         std::remove("mr_dup_vertex.ply");
@@ -317,13 +312,12 @@ int main() {
 
     // ---------------- The seam: backend switch ----------------
     {
-        CHECK(HasOwnReader(".obj") && HasOwnReader(".STL") && HasOwnReader(".ply") && HasOwnReader(".dae") && HasOwnReader(".3ds") && HasOwnReader(".bvh") && HasOwnReader(".blend") && HasOwnReader(".iqm") && !HasOwnReader(".sib"));   // .sib (Silo, slot 32) has no reader
-        CHECK(!SetImportBackend(".sib", ImportBackend::Own));
+        CHECK(HasOwnReader(".obj") && HasOwnReader(".STL") && HasOwnReader(".ply") && HasOwnReader(".dae") && HasOwnReader(".3ds") && HasOwnReader(".bvh") && HasOwnReader(".blend") && HasOwnReader(".iqm") && HasOwnReader(".sib") && !HasOwnReader(".fakefmt"));   // .sib (Silo, slot 32) has a reader since 2026-11-23
+        CHECK(!SetImportBackend(".fakefmt", ImportBackend::Own));
         SetImportBackend("*", ImportBackend::Default);
-        CHECK(EffectiveImportBackend(".obj") == ImportBackend::Own);          // OBJ never went through Assimp
-        if (AssimpAvailable()) CHECK(EffectiveImportBackend(".stl") == ImportBackend::Assimp || EffectiveImportBackend(".stl") == ImportBackend::Own);
-        else { CHECK(EffectiveImportBackend(".stl") == ImportBackend::Own); CHECK(EffectiveImportBackend(".dae") == ImportBackend::Default || EffectiveImportBackend(".dae") == ImportBackend::Own); }
-        {   // STL / PLY ways back (2026-11-17): OKAY_OWN_STL / OKAY_OWN_PLY = 0, or OKAY_THIRD_PARTY=1, hand them to Assimp when it is built in
+        CHECK(EffectiveImportBackend(".obj") == ImportBackend::Own);
+        CHECK(EffectiveImportBackend(".stl") == ImportBackend::Own); CHECK(EffectiveImportBackend(".dae") == ImportBackend::Default || EffectiveImportBackend(".dae") == ImportBackend::Own);
+        {   // STL / PLY have no switch and no other reader (Assimp was removed on 2026-11-24): the old ways back change nothing
             auto setEnv = [](const char* n, const char* v) {
 #if defined(_WIN32)
                 _putenv_s(n, v ? v : "");
@@ -331,7 +325,7 @@ int main() {
                 if (v) setenv(n, v, 1); else unsetenv(n);
 #endif
             };
-            const ImportBackend back = AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own;
+            const ImportBackend back = ImportBackend::Own;
             setEnv("OKAY_OWN_STL", "0"); CHECK(EffectiveImportBackend(".stl") == back); setEnv("OKAY_OWN_STL", nullptr);
             setEnv("OKAY_OWN_PLY", "0"); CHECK(EffectiveImportBackend(".ply") == back); setEnv("OKAY_OWN_PLY", nullptr);
             setEnv("OKAY_OWN_STL", "1"); CHECK(EffectiveImportBackend(".stl") == ImportBackend::Own); setEnv("OKAY_OWN_STL", nullptr);
@@ -345,8 +339,6 @@ int main() {
         }
         SetImportBackend(".stl", ImportBackend::Own);
         CHECK(EffectiveImportBackend(".stl") == ImportBackend::Own);
-        SetImportBackend(".stl", ImportBackend::Assimp);
-        CHECK(EffectiveImportBackend(".stl") == (AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own));
         SetImportBackend("*", ImportBackend::Default);
 
         const std::string exts = " " + ImportableExtensions() + " ";
@@ -358,7 +350,6 @@ int main() {
         CHECK(ImportModelData(kDir + "cube_ascii.stl", m, ImportBackend::Own));
         CHECK(!ImportModelData(kDir + "cube.mtl", m, ImportBackend::Own, false, &err) && !err.empty());   // not a model
         CHECK(!ImportModelData(kDir + "x.dae", m, ImportBackend::Own, false, &err));                       // no own reader
-        if (!AssimpAvailable()) CHECK(!ImportModelData(kDir + "cube_ascii.stl", m, ImportBackend::Assimp, false, &err));
 
         // ImportModel (one merged mesh) now reads STL / PLY in every build.
         for (const char* f : {"cube_ascii.stl", "cube_binary.stl", "cube_ascii.ply", "cube_le.ply", "cube_be.ply"}) {
@@ -382,7 +373,7 @@ int main() {
         CHECK(renderers == 2 && sawRed && sawBlue);
         Scene sc2; sc2.physicsEnabled = false;
         GameObject* r2 = ImportModelScene(sc2, kDir + "cube_binary.stl", &ok);
-        // (with Assimp as the STL/PLY default the mesh hangs on a child node, so look at every object)
+        // (the mesh may hang on a child node, so look at every object)
         auto firstMesh = [](Scene& s) -> MeshRenderer* { for (const auto& go : s.Objects()) if (auto* mr = go->GetComponent<MeshRenderer>()) return mr; return nullptr; };
         CHECK(ok && r2 && firstMesh(sc2) && firstMesh(sc2)->mesh.TriangleCount() == 12);
         Scene sc3; sc3.physicsEnabled = false;
@@ -585,107 +576,29 @@ int main() {
         std::setlocale(LC_NUMERIC, savedLocale.c_str());
     }
 
-    // ---------------- Same files through both backends (needs Assimp) ----------------
-#ifdef OKAY_HAVE_ASSIMP
+    // ---------------- Fixed counts (were: the same files through Assimp) ----------------
+    // Until 2026-11-24 these files were also read by Assimp 5.4.3 (CI job assimp-models) and our counts had to equal its counts.
+    // Assimp is removed, so the counts are kept here as fixed numbers (recorded 2026-11-24 from our readers; the CI comparison with
+    // Assimp, which required equal counts, was green on main before the removal; not re-run against Assimp here).
     {
-        std::printf("  Assimp available: comparing backends\n");
-        struct Case { const char* file; bool normals; bool uv; bool flipV; };
+        struct Case { const char* file; int parts, vertices, triangles; };
         const Case cases[] = {
-            {"cube_ascii.stl", true, false, false}, {"cube_binary.stl", true, false, false},
-            {"cube_ascii.ply", true, true, false},  {"cube_le.ply", true, true, false}, {"cube_be.ply", true, true, false},
-            {"tetra_plain.ply", false, false, false},
-            {"plain.obj", false, false, false},
-            {"cube.obj", true, true, true},
+            {"cube_ascii.stl", 1, 24, 12}, {"cube_binary.stl", 1, 24, 12},
+            {"cube_ascii.ply", 1, 8, 12}, {"cube_le.ply", 1, 8, 12}, {"cube_be.ply", 1, 8, 12},
+            {"tetra_plain.ply", 1, 4, 4},
+            {"plain.obj", 1, 4, 2},
+            {"cube.obj", 2, 24, 12},
         };
         for (const Case& c : cases) {
-            ImportedModel own, ai; std::string e1, e2;
-            const bool a = ImportModelData(kDir + c.file, own, ImportBackend::Own, false, &e1);
-            const bool b = ImportModelData(kDir + c.file, ai, ImportBackend::Assimp, false, &e2);
-            if (!a || !b) std::printf("  %s: own=%d (%s) assimp=%d (%s)\n", c.file, a, e1.c_str(), b, e2.c_str());
-            CHECK(a && b);
-            if (!(a && b)) continue;
-            const ModelCounts co = CountModel(own), ca = CountModel(ai);
-            if (co.parts != ca.parts || co.vertices != ca.vertices || co.triangles != ca.triangles)
-                std::printf("  %s: parts %d/%d vertices %d/%d triangles %d/%d (own/assimp)\n", c.file, co.parts, ca.parts, co.vertices, ca.vertices, co.triangles, ca.triangles);
-            CHECK(co.parts == ca.parts);
-            CHECK(co.triangles == ca.triangles);
-            CHECK(co.vertices == ca.vertices);
-            CHECK(co.skinnedParts == 0 && ca.skinnedParts == 0 && co.clips == 0 && ca.clips == 0);
-            // The meshes are the same triangles (positions, plus normals / UVs where the file has them).
-            const bool same = Triangles(own, c.normals, c.uv, c.flipV) == Triangles(ai, c.normals, c.uv, false);
-            if (!same) std::printf("  %s: triangle data differs\n", c.file);
-            CHECK(same);
-            // Files without normals: Assimp always generates smooth ones; so do our PLY reader (STL files
-            // carry facet normals). Our OBJ reader leaves them out (flat shading), like Mesh::LoadOBJ.
-            if (!c.normals) {
-                const bool ownGenerates = std::string(c.file).find(".ply") != std::string::npos;
-                for (const ImportedPart& p : ai.parts) { CHECK(p.mesh.HasNormals()); for (const Vec3& n : p.mesh.normals) CHECK_NEAR(n.Magnitude(), 1.0, 1e-3); }
-                for (const ImportedPart& p : own.parts) {
-                    CHECK(p.mesh.HasNormals() == ownGenerates);
-                    for (const Vec3& n : p.mesh.normals) CHECK_NEAR(n.Magnitude(), 1.0, 1e-3);
-                }
-            }
-        }
-        {   // Materials of the OBJ: Assimp reads the same .mtl.
-            ImportedModel own, ai;
-            CHECK(ImportModelData(kDir + "cube.obj", own, ImportBackend::Own));
-            CHECK(ImportModelData(kDir + "cube.obj", ai, ImportBackend::Assimp));
-            CHECK(own.parts.size() == 2 && ai.parts.size() == 2);
-            if (own.parts.size() == 2 && ai.parts.size() == 2) {
-                // Assimp may order its meshes differently: match by diffuse texture.
-                for (const ImportedPart& po : own.parts) {
-                    const ImportedMaterial& mo = own.materials[(std::size_t)po.material];
-                    bool found = false;
-                    for (const ImportedPart& pa : ai.parts) {
-                        const ImportedMaterial& ma = ai.materials[(std::size_t)pa.material];
-                        if (ma.texture == mo.texture) {
-                            found = true;
-                            CHECK(ma.hasDiffuse == mo.hasDiffuse);
-                            CHECK_NEAR(ma.diffuse.r, mo.diffuse.r, 1e-4); CHECK_NEAR(ma.diffuse.b, mo.diffuse.b, 1e-4);
-                            CHECK(ma.normalMap == mo.normalMap);
-                            CHECK(ma.specularMap == mo.specularMap);
-                        }
-                    }
-                    CHECK(found);
-                }
-            }
-        }
-        // The merged one-mesh path agrees whichever backend runs it.
-        for (const char* f : {"cube_binary.stl", "cube_le.ply"}) {
-            SetImportBackend("*", ImportBackend::Own);
-            bool o1 = false; Mesh m1 = ImportModel(kDir + f, &o1);
-            SetImportBackend("*", ImportBackend::Assimp);
-            bool o2 = false; Mesh m2 = ImportModel(kDir + f, &o2);
-            SetImportBackend("*", ImportBackend::Default);
-            CHECK(o1 && o2);
-            CHECK(m1.TriangleCount() == m2.TriangleCount() && m1.vertices.size() == m2.vertices.size());
-        }
-        // Skeleton and animation: Assimp's reading of the rig fixtures matches the glTF reader's.
-        const std::string rigs = std::string(OKAY_SOURCE_DIR) + "/tests/assets/rigs/";
-        for (const char* f : {"fox.glb", "cc_t.glb", "daz_t.glb", "mixamo_t_cm_clips.glb", "mixamo_a_blender_short.glb"}) {
-            ImportedModel ai; std::string e;
-            if (!ImportModelData(rigs + f, ai, ImportBackend::Assimp, false, &e)) { std::printf("  %s: assimp failed: %s\n", f, e.c_str()); CHECK(false); continue; }
-            Scene native; native.physicsEnabled = false; bool nok = false;
-            GameObject* nr = ImportModelScene(native, rigs + f, &nok);
-            CHECK(nok && nr);
-            if (!nr) continue;
-            ModelReport rep = AnalyzeModel(native, nr);
-            const ModelCounts ca = CountModel(ai);
-            std::printf("  %-28s native: meshes %d skinned %d bones %d clips %d | assimp: parts %d skinned %d bones %d clips %d\n",
-                        f, rep.meshes, rep.skinnedMeshes, rep.bones, rep.clips, ca.parts, ca.skinnedParts, ca.bones, ca.clips);
-            CHECK(ca.clips == rep.clips);
-            CHECK(ca.bones == rep.bones);
-            CHECK(ca.skinnedParts == rep.skinnedMeshes);
-            // And the shared scene builder gives Assimp's result the same shape.
-            Scene viaSeam; viaSeam.physicsEnabled = false;
-            GameObject* sr = BuildSceneFromModel(viaSeam, ai, rigs + f);
-            CHECK(sr != nullptr);
-            if (sr) { ModelReport r2 = AnalyzeModel(viaSeam, sr); CHECK(r2.clips == rep.clips && r2.bones == rep.bones); }
+            ImportedModel read; std::string why;
+            if (!ImportModelData(kDir + c.file, read, ImportBackend::Own, false, &why)) { std::printf("  %s refused: %s\n", c.file, why.c_str()); CHECK(false); continue; }
+            const ModelCounts co = CountModel(read);
+            if (co.parts != c.parts || co.vertices != c.vertices || co.triangles != c.triangles)
+                std::printf("  %s: parts %d vertices %d triangles %d (expected %d %d %d)\n", c.file, co.parts, co.vertices, co.triangles, c.parts, c.vertices, c.triangles);
+            CHECK(co.parts == c.parts && co.vertices == c.vertices && co.triangles == c.triangles);
+            CHECK(co.skinnedParts == 0 && co.clips == 0);
         }
     }
-#else
-    std::printf("  Assimp not built: backend comparison skipped\n");
-#endif
 
     TEST_MAIN_RESULT();
 }

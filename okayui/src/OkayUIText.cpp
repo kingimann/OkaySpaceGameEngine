@@ -33,18 +33,26 @@ Box& BoxFor(unsigned id, long long now) {
     b = Box();
     b.id = id; b.frame = now;
     b.ed.reset(new CodeEdit());
-    b.ed->SetShowLineNumbers(false);
-    b.ed->SetShowBreakpointGutter(false);
-    b.ed->SetAutoIndent(false);
-    b.ed->SetInsertSpaces(false);
-    b.ed->SetHighlighter(CodeHighlighter());
+    MakeTextBox(*b.ed);
     return b;
 }
 
 Color32 Style(Col c) { return ColorConvertFloat4ToU32(GetStyleColorVec4(c)); }
 
-// A CodeEdit palette from the theme: the field colour behind the text colour, no gutter, no current-line wash.
-CodePalette ThemePalette() {
+} // namespace
+
+void MakeTextBox(CodeEdit& ed) {
+    ed.SetShowLineNumbers(false);
+    ed.SetShowBreakpointGutter(false);
+    ed.SetAutoIndent(false);
+    ed.SetInsertSpaces(false);
+    ed.SetAutoClose(false);     // a text box types what is typed: no bracket pairs, no dedent
+    ed.SetAutoDedent(false);
+    ed.SetHighlighter(CodeHighlighter());
+}
+
+// A CodeEdit palette from the theme: the field colour behind the text colour, no gutter, no current-line wash (OkayUICodeEdit.hpp).
+CodePalette TextBoxPalette() {
     CodePalette p = DefaultCodePalette();
     const Color32 txt = Style(Col_Text), bg = Style(Col_FrameBg), clear = RGBA(0, 0, 0, 0);
     for (int i = 0; i < CodeColor_COUNT; ++i) p.text[i] = txt;
@@ -60,7 +68,6 @@ CodePalette ThemePalette() {
     return p;
 }
 
-} // namespace
 
 bool InputTextMultiline(const char* label, char* buf, int cap, Vec2 size, unsigned flags) {
     if (!buf || cap < 1) return false;
@@ -79,7 +86,7 @@ bool InputTextMultiline(const char* label, char* buf, int cap, Vec2 size, unsign
     box.frame = now;
     CodeEdit& ed = *box.ed;
     ed.SetReadOnly((flags & InputText_ReadOnly) != 0);
-    ed.SetPalette(ThemePalette());
+    ed.SetPalette(TextBoxPalette());
     if (box.last != buf) {   // changed behind our back (or the first sight of it)
         ed.SetText(buf);
         box.last = buf;

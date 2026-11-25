@@ -1,0 +1,18 @@
+# Batch S3 of the engine modularization plan (docs/engine/modularization_plan.md, section 3.1):
+# engine/src/Components/Character.cpp, the first-person owner arm block (SetOwnerArmActive to FinishTwoHands: the owner
+# arm and forearm objects, hand/sleeve painting, the pose and the two-hand placement, FirstPersonHands::Update; about 820
+# lines) moves to engine/src/Components/CharacterFirstPerson.cpp.
+#   python3 scripts/check_pure_move.py --base origin/main --head HEAD --source engine/src/Components/Character.cpp \
+#       --dest engine/src/Components/CharacterFirstPerson.cpp --dest engine/src/Components/CharacterFirstPersonInternal.hpp \
+#       --rules docs/engine/moves/S3_character_first_person.rules
+# Character.cpp still calls one helper from the block (OwnerCamera, in OwnerHideTarget). It leaves the anonymous namespace
+# and is declared in CharacterFirstPersonInternal.hpp under okay::character_fp (a namespace of its own).
+# (the namespace line is inside the moved block and the using lines are inside Character.cpp: drop/add rules)
+drop: ^namespace \{$
+add: ^using namespace HumanoidMotion;
+add: ^using character_fp::OwnerCamera;$
+add: ^Camera\* OwnerCamera\(GameObject\* player\);$
+add: ^class (Camera|GameObject);$
+# difflib slides the closing brace of HandsOnAHold (which stays) against the last brace of FinishTwoHands (which moves): same text, ambiguous diff
+drop: ^\}$
+add: ^\}$

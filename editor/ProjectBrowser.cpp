@@ -45,8 +45,8 @@ std::string FileNameOf(const std::string& path) {
 
 std::string ParentOf(const std::string& path) {
     const std::string s = StripSlash(Slash(path));
-    const auto sl = s.find_last_of('/');
-    return sl == std::string::npos ? std::string() : (sl == 0 ? std::string("/") : s.substr(0, sl));
+    if (!s.empty() && paths::RootLength(s) == s.size()) return s;   // the parent of a root is itself ("/", "D:/"), as before
+    return paths::Parent(s);                                        // "D:/a" -> "D:/", "/a" -> "/"
 }
 
 // ".png" (as written) of a file name; "" when none.
@@ -294,7 +294,14 @@ namespace {
 std::string MapPath(const std::string& abs, const PathMap& map) {
     for (const auto& kv : map) {
         const std::string from = StripSlash(kv.first);
-        if (UnderOrEqual(from, abs)) return StripSlash(kv.second) + abs.substr(from.size());
+        if (UnderOrEqual(from, abs)) {
+            // a root keeps its slash ("/", "D:/"), so the rest may start without one: join with exactly one '/'
+            const std::string to = StripSlash(kv.second);
+            std::string rest = abs.substr(from.size());
+            if (!rest.empty() && rest[0] != '/') rest.insert(rest.begin(), '/');
+            if (!to.empty() && to.back() == '/' && !rest.empty()) rest.erase(0, 1);
+            return to + rest;
+        }
     }
     return {};
 }
@@ -303,6 +310,7 @@ std::vector<okay::FoundRef> ExtractFor(const std::string& referrerName, const st
     const std::string e = Lower(ExtOf(referrerName));
     if (e == ".okayscene" || e == ".okayprefab") return okay::ExtractSceneRefs(text);
     if (e == ".okaymat") return okay::ExtractMaterialRefs(text);
+    if (e == ".obj" || e == ".mtl" || e == ".dae" || e == ".fbx") return okay::ExtractModelRefs(text);   // nothing from a binary .fbx
     return okay::ExtractTextRefs(text);
 }
 
@@ -463,7 +471,9 @@ Browser::Browser(std::string assetsRoot) : m_root(Norm(assetsRoot)) {
         for (okay::FoundRef& r : okay::ExtractTextRefs(text)) out.push_back(std::move(r));
     });
 }
-Browser::~Browser() = default;
+Browser::~Browser() {
+    if (okay::SceneAssetIndex() == &m_db) okay::SetSceneAssetIndex(nullptr);
+}
 
 std::string Browser::ProjectDir() const { return ParentOf(m_root); }
 
@@ -522,16 +532,31 @@ bool Browser::DoScan() {
     if (!rep.removed.empty() || !rep.moved.empty()) m_prunePending = true;
     m_indexed = true;
     m_scanChanged = changed;
+    okay::SetSceneAssetIndex(&m_db);   // scene saves can write a sprite's asset id
     return true;
 }
 
 bool Browser::Sync() { return DoScan(); }
 
 bool Browser::Poll(std::uint64_t nowMs) {
-    if (!m_indexed || nowMs < m_nextPoll) return false;
+    if (!m_indexed) return false;
+    if (!m_watchTried) {
+        m_watchTried = true;   // one try: a failed watch is not reopened on every poll
+        std::string err;
+        m_watchStarted = m_db.StartWatch(&err);
+        m_watchHeard = true;   // nothing is known yet about changes from before the watch: scan once
+    }
+    // The operating-system watch says whether anything changed. With it running and quiet, the
+    // full folder scan is only a safety net every 10 seconds; a change heard waits for the usual
+    // gap, so a burst of events is still one scan.
+    if (m_watchStarted && !m_db.PollWatch().empty()) m_watchHeard = true;
+    if (nowMs < m_nextPoll) return false;
+    if (m_watchStarted && !m_watchHeard && nowMs < m_lastScanMs + 10000) return false;
     std::error_code ec;
     if (!fs::is_directory(P(m_root), ec)) { m_nextPoll = nowMs + 2000; return false; }
     if (!DoScan()) { m_nextPoll = nowMs + 2000; return false; }
+    m_watchHeard = false;
+    m_lastScanMs = nowMs;
     m_nextPoll = nowMs + std::max<std::uint64_t>(2000, static_cast<std::uint64_t>(30.0 * m_scanMs));
     return m_scanChanged;
 }
@@ -878,8 +903,24 @@ bool Browser::Reimport(const std::string& path) {
     const std::string p = Norm(path);
     if (const okay::AssetRecord* rec = m_db.Find(m_db.ToProjectPath(p))) m_db.RefreshFile(rec->path);
     ForgetThumb(p);
+    m_changedFiles.push_back(p);
     ++m_revision;
     return true;
+}
+
+std::vector<std::string> Browser::TakeChangedFiles() {
+    std::vector<std::string> all;
+    for (const okay::ReimportEvent& ev : m_db.TakeReimports())   // a file that only appeared has nothing loaded to replace
+        if (ev.reason != okay::ReimportEvent::Reason::Added) all.push_back(AbsOf(ev.path));
+    all.insert(all.end(), m_changedFiles.begin(), m_changedFiles.end());
+    m_changedFiles.clear();
+    std::vector<std::string> out;
+    std::set<std::string> seen;
+    for (std::string& f : all) {
+        f = Norm(f);
+        if (seen.insert(f).second) out.push_back(std::move(f));
+    }
+    return out;
 }
 
 int Browser::ReimportFolder(const std::string& path) {
@@ -895,6 +936,7 @@ int Browser::ReimportFolder(const std::string& path) {
     for (const std::string& f : files) {
         if (const okay::AssetRecord* rec = m_db.Find(m_db.ToProjectPath(f))) m_db.RefreshFile(rec->path);
         ForgetThumb(f);
+        m_changedFiles.push_back(f);
         ++n;
     }
     if (n > 0) ++m_revision;

@@ -12,11 +12,13 @@
 
 namespace okay {
 
-/// Damage the nearest HealthStat on `target` or one of its parents. Returns true
-/// when something took the hit.
-inline bool DamageGameObject(GameObject* target, float amount) {
+/// Damage the nearest health holder (Health Stat, Survival Stats, RPG Stats or NPC Controller) on
+/// `target` or one of its parents, through the one damage path. Returns true when a holder was found.
+inline bool DamageGameObject(GameObject* target, float amount, GameObject* source = nullptr,
+                             DamageType type = DamageType::Physical) {
     for (GameObject* g = target; g;) {
-        if (auto* hp = g->GetComponent<HealthStat>()) { hp->Damage(amount); return true; }
+        float h = 0.0f, m = 0.0f;
+        if (HealthOf(g, h, m)) { DealDamage(g, DamageEvent::Make(amount, type, source)); return true; }
         Transform* p = g->transform ? g->transform->Parent() : nullptr;
         g = p ? p->gameObject : nullptr;
     }
@@ -95,7 +97,7 @@ private:
     void OnHit(Scene& sc, const RaycastHit3D& hit, const Vec3& dir) {
         ++m_hits;
         m_lastHit = hit.gameObject;
-        const bool damaged = DamageGameObject(hit.gameObject, damage);
+        const bool damaged = DamageGameObject(hit.gameObject, damage, owner);
         if (hit.gameObject)
             if (auto* rb = hit.gameObject->GetComponent<Rigidbody3D>())
                 if (impactForce > 0.0f) rb->AddImpulse(dir * impactForce);

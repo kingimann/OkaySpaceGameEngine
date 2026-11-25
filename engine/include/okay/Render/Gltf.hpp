@@ -17,6 +17,7 @@
 // merged LoadGLTF() path stays a single static Mesh.) Packed metallic-roughness
 // and emissive textures are imported too (green = roughness, blue = metallic).
 // ---------------------------------------------------------------------------
+#include "okay/Core/Base64.hpp"
 #include "okay/Render/Mesh.hpp"
 #include <algorithm>
 #include <cmath>
@@ -125,21 +126,10 @@ struct JParser {
     }
 };
 
+// Base64 of a data URI: okay/Core/Base64.hpp's lenient decoder (skips '=', line breaks and anything outside the alphabet;
+// appends to `out`), the rule this reader always used.
 inline bool Base64Decode(const std::string& in, std::vector<std::uint8_t>& out) {
-    auto val = [](char c) -> int {
-        if (c >= 'A' && c <= 'Z') return c - 'A';
-        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-        if (c >= '0' && c <= '9') return c - '0' + 52;
-        if (c == '+') return 62; if (c == '/') return 63;
-        return -1;
-    };
-    int bits = 0; unsigned acc = 0;
-    for (char c : in) {
-        if (c == '=' || c == '\n' || c == '\r' || c == ' ') continue;
-        int v = val(c); if (v < 0) continue;
-        acc = ((acc << 6) | (unsigned)v) & 0xFFFFFFu; bits += 6;
-        if (bits >= 8) { bits -= 8; out.push_back((std::uint8_t)((acc >> bits) & 0xFF)); }
-    }
+    base64::DecodeLenient(in, out);
     return true;
 }
 

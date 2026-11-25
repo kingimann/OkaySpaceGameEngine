@@ -1,0 +1,3 @@
+// <new> for okay-cc (ISO/IEC 14882 [support.dynamic]). Our own header. Placement new
+// (new (p) T(args)) is built into the compiler, so there is nothing to declare here yet.
+#pragma once

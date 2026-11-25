@@ -1,7 +1,11 @@
 // Typed actions, composites, processors and control schemes (see ActionSet.hpp). Written from the general idea of
 // action maps: our own value rules, text forms and thresholds, checked by tests/test_action_set.cpp.
 #include "okay/Input/ActionSet.hpp"
+#include "okay/Input/Input.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
+#include "okay/Core/StringUtil.hpp"
+#include <cctype>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -39,7 +43,7 @@ float InputValue::Length() const { return std::sqrt(x * x + y * y + z * z); }
 
 // ---- processors -----------------------------------------------------------------------------------------------------
 
-InputValue Processor::Apply(const InputValue& in, float dt) {
+InputValue Processor::Apply(const InputValue& in, float dt, int slot) {
     InputValue v = in;
     switch (kind) {
         case Kind::Deadzone: {   // below `a` reads 0, the rest is stretched so `b` (default 1) reads 1; on the length
@@ -48,6 +52,18 @@ InputValue Processor::Apply(const InputValue& in, float dt) {
             if (len <= lo) return {};
             const float k = std::min(1.0f, (len - lo) / (hi - lo)) / len;
             return {v.x * k, v.y * k, v.z * k};
+        }
+        case Kind::Axial: {   // Input::ProcessStick's axial ramp, one component at a time (no second dead-zone path)
+            Input::StickSettings stick;
+            stick.shape = Input::StickSettings::Shape::Axial;
+            stick.deadZone = a;
+            stick.outerZone = b > a ? b : 1.0f;
+            stick.curve = 1.0f;
+            auto one = [&](float x) {
+                if (!std::isfinite(x)) return 0.0f;
+                return Input::ProcessStick(Vec2{x, 0.0f}, stick).x;
+            };
+            return {one(v.x), one(v.y), one(v.z)};
         }
         case Kind::Invert:
             if (mask & 1) v.x = -v.x;
@@ -67,11 +83,14 @@ InputValue Processor::Apply(const InputValue& in, float dt) {
             for (int i = 0; i < 3; ++i) { const int src = (mask >> (3 * i)) & 7; SetComp(o, i, Comp(v, src > 2 ? i : src)); }
             return o;
         }
-        case Kind::Smooth: {   // exponential approach: `a` seconds to cover most of the way
-            if (!primed || a <= 0 || dt <= 0) { state[0] = v.x; state[1] = v.y; state[2] = v.z; primed = true; return v; }
+        case Kind::Smooth: {   // exponential approach: `a` seconds to cover most of the way. Each slot remembers its own output.
+            float* st = state;
+            bool* pr = &primed;
+            if (slot >= 1 && slot <= 4) { st = slotState[slot - 1]; pr = &slotPrimed[slot - 1]; }
+            if (!*pr || a <= 0 || dt <= 0) { st[0] = v.x; st[1] = v.y; st[2] = v.z; *pr = true; return v; }
             const float k = 1.0f - std::exp(-dt / a);
-            state[0] += (v.x - state[0]) * k; state[1] += (v.y - state[1]) * k; state[2] += (v.z - state[2]) * k;
-            return {state[0], state[1], state[2]};
+            st[0] += (v.x - st[0]) * k; st[1] += (v.y - st[1]) * k; st[2] += (v.z - st[2]) * k;
+            return {st[0], st[1], st[2]};
         }
         case Kind::Curve: {   // out = in ^ a keeping the sign; a vector keeps its direction and its length is curved
             const float p = a > 0 ? a : 1.0f;
@@ -91,6 +110,7 @@ InputValue Processor::Apply(const InputValue& in, float dt) {
 std::string Processor::ToString() const {
     switch (kind) {
         case Kind::Deadzone: return b > a ? "deadzone(" + Num(a) + "," + Num(b) + ")" : "deadzone(" + Num(a) + ")";
+        case Kind::Axial: return b > a ? "axial(" + Num(a) + "," + Num(b) + ")" : "axial(" + Num(a) + ")";
         case Kind::Invert: { std::string s; if (mask & 1) s += 'x'; if (mask & 2) s += 'y'; if (mask & 4) s += 'z'; return "invert(" + s + ")"; }
         case Kind::Scale: return mask >= 3 ? "scale(" + Num(a) + "," + Num(b) + "," + Num(c) + ")" : mask == 2 ? "scale(" + Num(a) + "," + Num(b) + ")" : "scale(" + Num(a) + ")";
         case Kind::Normalize: return "normalize";
@@ -113,6 +133,7 @@ bool Processor::Parse(const std::string& text, Processor& out) {
     const std::vector<float> n = Nums(args);
     Processor p;
     if (name == "deadzone") { if (n.empty() || n[0] < 0) return false; p.kind = Kind::Deadzone; p.a = n[0]; p.b = n.size() > 1 ? n[1] : 0; }
+    else if (name == "axial") { if (n.empty() || n[0] < 0) return false; p.kind = Kind::Axial; p.a = n[0]; p.b = n.size() > 1 ? n[1] : 0; }
     else if (name == "invert") {
         p.kind = Kind::Invert; p.mask = 0;
         if (args.empty()) p.mask = 7;
@@ -247,7 +268,7 @@ bool ActionSet::SetMapPriority(const std::string& n, int p) { for (ActionMap& m 
 bool ActionSet::MapEnabled(const std::string& n) const { for (const ActionMap& m : m_maps) if (m.name == n) return m.enabled; return n.empty(); }
 
 bool ActionSet::RemoveAction(const std::string& name) {
-    for (auto it = m_actions.begin(); it != m_actions.end(); ++it) if (it->name == name) { m_actions.erase(it); return true; }
+    for (auto it = m_actions.begin(); it != m_actions.end(); ++it) if (it->name == name) { m_actions.erase(it); ++m_revision; return true; }
     return false;
 }
 bool ActionSet::RenameAction(const std::string& from, const std::string& to) {
@@ -255,6 +276,7 @@ bool ActionSet::RenameAction(const std::string& from, const std::string& to) {
     ActionDef* a = Find(from);
     if (!a) return false;
     a->name = to;
+    ++m_revision;
     for (ActionDef& o : m_actions) for (Interaction& i : o.interactions) if (i.kind == Interaction::Kind::Chorded && i.arg == from) i.arg = to;
     return true;
 }
@@ -298,6 +320,7 @@ bool ActionSet::RenameScheme(const std::string& from, const std::string& to) {
 
 ActionDef& ActionSet::Add(const std::string& name, ValueType type, const std::string& map) {
     if (!map.empty()) { bool have = false; for (const ActionMap& m : m_maps) if (m.name == map) have = true; if (!have) AddMap(map); }
+    ++m_revision;
     if (ActionDef* a = Find(name)) { a->type = type; if (!map.empty()) a->map = map; return *a; }
     m_actions.emplace_back(); m_actions.back().name = name; m_actions.back().type = type; m_actions.back().map = map;
     return m_actions.back();
@@ -306,23 +329,108 @@ ActionDef* ActionSet::Find(const std::string& name) { for (ActionDef& a : m_acti
 const ActionDef* ActionSet::Find(const std::string& name) const { for (const ActionDef& a : m_actions) if (a.name == name) return &a; return nullptr; }
 
 bool ActionSet::BindingActive(const BindingSpec& b) const {
-    return b.group.empty() || m_schemes.empty() || b.group == m_scheme;
+    return m_allSchemes || b.group.empty() || m_schemes.empty() || b.group == m_scheme;
 }
 
-InputValue ActionSet::Eval(const BindingSpec& b) const {
-    if (!b.built) {
-        b.leaves.clear();
-        for (const std::string& p : b.parts) b.leaves.push_back(InputBinding::Parse(p));
-        b.built = true;
+namespace {
+// Each physical input gets an id so a map (an input context) can claim it from the maps below.
+int KeyId(char k) { return 1000 + (unsigned char)k; }
+int MouseId(int b) { return 2000 + b; }
+int PadId(int button, int player) { return 3000 + player * 100 + button; }
+int StickId(bool right, int player) { return (right ? 4100 : 4000) + player; }
+constexpr int kMouseDeltaId = 5000;
+int WheelId(int dir) { return dir >= 0 ? 5001 : 5002; }
+
+// Calls f(id) for every physical input a binding listens to (no allocation).
+template <class F>
+void ForClaims(const InputBinding& b, F f) {
+    using K = InputBinding::Kind;
+    switch (b.kind) {
+        case K::Key:        f(KeyId((char)b.code)); break;
+        case K::Mouse:      f(MouseId(b.code)); break;
+        case K::PadButton:  f(PadId(b.code, b.player)); break;
+        case K::Keys4:      for (char k : b.keys) f(KeyId(k)); break;
+        case K::Chord:      for (char k : b.keys) if (k) f(KeyId(k)); break;
+        case K::Wheel:      f(WheelId(b.code)); break;
+        case K::StickLeft:  f(StickId(false, b.player)); break;
+        case K::StickRight: f(StickId(true, b.player)); break;
+        case K::DPad:       for (int p : {Input::PadUp, Input::PadDown, Input::PadLeft, Input::PadRight}) f(PadId(p, b.player)); break;
+        case K::MouseDelta: f(kMouseDeltaId); break;
+        case K::None:       break;
     }
+}
+// Is `id` swallowed: by a map above (`a`) or, for a key, by a held chord (`b`, may be null)?
+bool Claimed(int id, const std::vector<int>& a, const std::vector<int>* b) {
+    return std::find(a.begin(), a.end(), id) != a.end() || (b && std::find(b->begin(), b->end(), id) != b->end());
+}
+// A binding read with some of its inputs swallowed: the free keys of a four-key direction or the d-pad still count.
+Vec2 MaskedVector(const InputBinding& b, const std::vector<int>& a, const std::vector<int>* c) {
+    using K = InputBinding::Kind;
+    auto key = [&](char k) { return !Claimed(KeyId(k), a, c) && Input::GetKeyGame(k) ? 1.0f : 0.0f; };
+    auto pad = [&](int btn) { return !Claimed(PadId(btn, b.player), a, c) && Input::GetGamepadButton(btn, b.player) ? 1.0f : 0.0f; };
+    switch (b.kind) {
+        case K::Keys4: return {key(b.keys[3]) - key(b.keys[2]), key(b.keys[0]) - key(b.keys[1])};
+        case K::DPad:  return {pad(Input::PadRight) - pad(Input::PadLeft), pad(Input::PadUp) - pad(Input::PadDown)};
+        default: {
+            bool hit = false;
+            ForClaims(b, [&](int id) { if (Claimed(id, a, c)) hit = true; });
+            return hit ? Vec2{0.0f, 0.0f} : b.Vector();
+        }
+    }
+}
+float MaskedValue(const InputBinding& b, const std::vector<int>& a, const std::vector<int>* c) {
+    if (b.IsDirection()) { const Vec2 v = MaskedVector(b, a, c); return std::min(1.0f, std::sqrt(v.x * v.x + v.y * v.y)); }
+    bool hit = false;
+    ForClaims(b, [&](int id) { if (Claimed(id, a, c)) hit = true; });
+    return hit ? 0.0f : b.Value();
+}
+void Build(const BindingSpec& b) {
+    if (b.built) return;
+    b.leaves.clear();
+    for (const std::string& p : b.parts) b.leaves.push_back(InputBinding::Parse(p));
+    b.built = true;
+}
+// The player's response as processors (the same maths as authored ones), after the action's own processors.
+void ApplyResponse(const InputActions::Response& r, InputValue& v, bool button, float dt) {
+    if (r.deadzone == 0.0f && r.curve == 1.0f && r.sensitivity == 1.0f && !r.invertX && !r.invertY) return;
+    Processor p;
+    if (r.deadzone > 0.0f) { p.kind = Processor::Kind::Deadzone; p.a = r.deadzone; p.b = 1.0f; v = p.Apply(v, dt); }
+    if (r.curve != 1.0f && r.curve > 0.0f) { p.kind = Processor::Kind::Curve; p.a = r.curve; v = p.Apply(v, dt); }
+    if (r.sensitivity != 1.0f) { p.kind = Processor::Kind::Scale; p.a = r.sensitivity; p.mask = 1; v = p.Apply(v, dt); }
+    if (r.invertX || r.invertY) { p.kind = Processor::Kind::Invert; p.mask = (r.invertX ? 1 : 0) | (r.invertY ? 2 : 0); v = p.Apply(v, dt); }
+    if (button && v.x > 1.0f) v.x = 1.0f;
+}
+void ClampLength(InputValue& v) { const float len = v.Length(); if (len > 1.0f) { v.x /= len; v.y /= len; v.z /= len; } }
+} // namespace
+
+float ShapeResponse(float in, const InputActions::Response& r) {
+    InputValue v{in < 0.0f ? 0.0f : (in > 1.0f ? 1.0f : in), 0, 0};
+    ApplyResponse(r, v, false, 0.0f);
+    return v.x;
+}
+
+bool IsBaseMapName(const std::string& m) { return m.empty() || str::EqualsNoCaseAscii(m, "gameplay"); }
+
+float ActionDef::Magnitude() const { return type == ValueType::Button || type == ValueType::Axis1D ? std::fabs(value.x) : value.Length(); }
+float ActionDef::PrevMagnitude() const { return type == ValueType::Button || type == ValueType::Axis1D ? std::fabs(prevValue.x) : prevValue.Length(); }
+
+InputValue ActionSet::Eval(const BindingSpec& b, int pad) const {
+    Build(b);
     auto leaf = [&](std::size_t i) -> InputValue {
         if (i >= b.leaves.size()) return {};
         InputBinding lb = b.leaves[i];
         if (lb.kind == InputBinding::Kind::None) return {};
-        if (!m_blocked.empty() && m_blocked.count(lb.ToString())) return {};   // a map above swallowed this input
-        if (m_pad >= 0 && lb.IsGamepad()) lb.player = m_pad;     // a paired player reads their own controller
-        if (lb.IsDirection()) { const Vec2 v = lb.Vector(); return {v.x, v.y, 0}; }
-        return {lb.Value(), 0, 0};
+        if (pad >= 0) {   // one controller's own reading: its pad (a binding for the first pad follows it), the keyboard and mouse on pad 0
+            if (lb.IsGamepad()) { if (lb.player != 0 && lb.player != pad) return {}; lb.player = pad; }
+            else if (pad != 0) return {};
+        } else if (m_pad >= 0 && lb.IsGamepad()) lb.player = m_pad;   // a paired player reads their own controller
+        const std::vector<int>* chords = lb.kind != InputBinding::Kind::Chord && !m_chordClaims.empty() ? &m_chordClaims : nullptr;
+        if (m_claims.empty() && !chords) {
+            if (lb.IsDirection()) { const Vec2 v = lb.Vector(); return {v.x, v.y, 0}; }
+            return {lb.Value(), 0, 0};
+        }
+        if (lb.IsDirection()) { const Vec2 v = MaskedVector(lb, m_claims, chords); return {v.x, v.y, 0}; }
+        return {MaskedValue(lb, m_claims, chords), 0, 0};
     };
     auto s = [&](std::size_t i) { return leaf(i).x; };
     InputValue v;
@@ -331,12 +439,12 @@ InputValue ActionSet::Eval(const BindingSpec& b) const {
         case BindingSpec::Kind::Axis1D: v.x = s(1) - s(0); break;
         case BindingSpec::Kind::Vector2: {
             v.y = s(0) - s(1); v.x = s(3) - s(2);
-            const float len = v.Length(); if (len > 1.0f) { v.x /= len; v.y /= len; }
+            ClampLength(v);
             break;
         }
         case BindingSpec::Kind::Vector3: {
             v.y = s(0) - s(1); v.x = s(3) - s(2); v.z = s(4) - s(5);
-            const float len = v.Length(); if (len > 1.0f) { v.x /= len; v.y /= len; v.z /= len; }
+            ClampLength(v);
             break;
         }
         case BindingSpec::Kind::Chord: {
@@ -347,6 +455,46 @@ InputValue ActionSet::Eval(const BindingSpec& b) const {
         }
     }
     return v;
+}
+
+void ActionSet::EvalAction(ActionDef& a, bool enabled, float dt) {
+    a.live = enabled;
+    const bool button = a.type == ValueType::Button;
+    auto read = [&](int pad) {
+        InputValue best, total; float bestLen = -1.0f; int bestIdx = -1;
+        for (std::size_t i = 0; i < a.bindings.size() && enabled; ++i) {
+            BindingSpec& b = a.bindings[i];
+            if (!BindingActive(b)) continue;
+            InputValue v = Eval(b, pad);
+            for (Processor& p : b.processors) v = p.Apply(v, dt, pad < 0 ? 0 : pad + 1);
+            const float len = v.Length();
+            if (len > bestLen) { bestLen = len; best = v; bestIdx = (int)i; }
+            total.x += v.x; total.y += v.y; total.z += v.z;
+        }
+        InputValue v = bestLen < 0 ? InputValue{} : best;
+        if (a.sum && !button && bestLen >= 0) { v = total; ClampLength(v); }   // keys and a stick at once add up
+        if (pad < 0) a.activeBinding = bestLen > 0 ? bestIdx : -1;
+        return v;
+    };
+    InputValue v = read(-1);
+    for (Processor& p : a.processors) v = p.Apply(v, dt);
+    switch (a.type) {   // the type decides which components exist
+        case ValueType::Button: v = {v.Length(), 0, 0}; break;
+        case ValueType::Axis1D: v = {v.x, 0, 0}; break;
+        case ValueType::Vector2: v.z = 0; break;
+        default: break;
+    }
+    ApplyResponse(a.response, v, button, dt);
+    a.value = v;
+    if (!a.perPlayer) return;
+    for (int p = 0; p < Input::kMaxGamepads; ++p) {
+        ActionDef::PadState& ps = a.pads[p];
+        InputValue pv = read(p);
+        if (button) pv = {pv.Length(), 0, 0}; else if (a.type == ValueType::Vector2) pv.z = 0;
+        ApplyResponse(a.response, pv, button, dt);
+        ps.vector = {pv.x, pv.y};
+        ps.value = button || a.type == ValueType::Axis1D ? std::fabs(pv.x) : pv.Length();
+    }
 }
 
 void ActionSet::Update(float dt) {
@@ -362,62 +510,157 @@ void ActionSet::Update(float dt) {
         }
     }
     m_time += dt;
+    m_lastDt = dt > 0.0f ? dt : 0.0f;
     m_events.clear();
     for (ActionDef& a : m_actions) {
         a.started = a.performed = a.canceled = false;
         if (a.phase == Phase::Performed || a.phase == Phase::Canceled) a.phase = Phase::Waiting;
         a.prevValue = a.value;
+        for (ActionDef::PadState& ps : a.pads) ps.previous = ps.value;
     }
-    // Evaluate map by map, highest priority first; a consuming map blocks its inputs for the maps below it.
-    std::vector<const ActionMap*> order;
-    for (const ActionMap& m : m_maps) order.push_back(&m);
-    std::stable_sort(order.begin(), order.end(), [](const ActionMap* x, const ActionMap* y) { return x->priority > y->priority; });
-    m_blocked.clear();
-    auto evalAction = [&](ActionDef& a, bool enabled) {
-        InputValue best; float bestLen = -1.0f; int bestIdx = -1;
-        for (std::size_t i = 0; i < a.bindings.size() && enabled; ++i) {
-            BindingSpec& b = a.bindings[i];
+    // A chord that is held wins over the single keys inside it (Ctrl+Z does not also Crouch).
+    m_chordClaims.clear();
+    for (const ActionDef& a : m_actions)
+        for (const BindingSpec& b : a.bindings) {
             if (!BindingActive(b)) continue;
-            InputValue v = Eval(b);
-            for (Processor& p : b.processors) v = p.Apply(v, dt);
-            const float len = v.Length();
-            if (len > bestLen) { bestLen = len; best = v; bestIdx = (int)i; }
+            Build(b);
+            for (const InputBinding& l : b.leaves)
+                if (l.kind == InputBinding::Kind::Chord && l.Value() > 0.0f) ForClaims(l, [&](int id) { m_chordClaims.push_back(id); });
         }
-        InputValue v = bestLen < 0 ? InputValue{} : best;
-        for (Processor& p : a.processors) v = p.Apply(v, dt);
-        switch (a.type) {   // the type decides which components exist
-            case ValueType::Button: v = {v.Length(), 0, 0}; break;
-            case ValueType::Axis1D: v = {v.x, 0, 0}; break;
-            case ValueType::Vector2: v.z = 0; break;
-            default: break;
-        }
-        const bool was = a.down;
-        const float mag = a.type == ValueType::Button || a.type == ValueType::Axis1D ? std::fabs(v.x) : v.Length();
-        a.value = v;
-        a.activeBinding = bestLen > 0 ? bestIdx : -1;
-        a.down = mag >= a.pressPoint;
-        a.pressed = a.down && !was;
-        a.released = !a.down && was;
-    };
-    auto runMap = [&](const std::string& name, bool enabled, bool consume) {
-        std::set<std::string> mine;
-        for (ActionDef& a : m_actions) {
-            if (a.map != name) continue;
-            evalAction(a, enabled);
-            if (enabled && consume) for (const BindingSpec& b : a.bindings) if (BindingActive(b) && b.built) for (const InputBinding& l : b.leaves) mine.insert(l.ToString());
-        }
-        for (const std::string& k : mine) m_blocked.insert(k);
+    // Evaluate map by map, highest priority first; a consuming map claims its inputs from the maps below it and a blocking
+    // map leaves them nothing. (Insertion sort: stable, and no allocation.)
+    m_order.clear();
+    for (const ActionMap& m : m_maps) {
+        m_order.push_back(&m);
+        for (std::size_t i = m_order.size() - 1; i > 0 && m_order[i - 1]->priority < m_order[i]->priority; --i) std::swap(m_order[i - 1], m_order[i]);
+    }
+    m_claims.clear();
+    bool blocked = false;
+    auto runMap = [&](const std::string& name, bool enabled, bool consume, bool block) {
+        const bool on = enabled && !blocked;
+        for (ActionDef& a : m_actions) if (a.map == name) EvalAction(a, on, dt);
+        if (on && consume)
+            for (const ActionDef& a : m_actions) {
+                if (a.map != name) continue;
+                for (const BindingSpec& b : a.bindings) {
+                    if (!BindingActive(b)) continue;
+                    for (InputBinding l : b.leaves) {
+                        if (m_pad >= 0 && l.IsGamepad()) l.player = m_pad;
+                        ForClaims(l, [&](int id) { m_claims.push_back(id); });
+                    }
+                }
+            }
+        if (on && block) blocked = true;
     };
     bool defaultDone = false;
-    for (const ActionMap* m : order) {
-        if (!defaultDone && m->priority < 0) { runMap("", true, false); defaultDone = true; }   // the unnamed map sits at priority 0
-        runMap(m->name, m->enabled, m->consume);
+    for (const ActionMap* m : m_order) {
+        if (!defaultDone && m->priority < 0) { runMap("", true, false, false); defaultDone = true; }   // the unnamed map sits at priority 0
+        runMap(m->name, m->enabled, m->consume, m->block);
     }
-    if (!defaultDone) runMap("", true, false);
-    m_blocked.clear();
+    if (!defaultDone) runMap("", true, false, false);
+    m_claims.clear();
+    // On-screen controls, added after the devices so a key and a virtual stick share one action. A map that is off or
+    // blocked does not get them.
+    for (ActionDef& a : m_actions) {
+        if (!a.contributed) continue;
+        if (a.live) {
+            if (a.type == ValueType::Vector2 || a.type == ValueType::Vector3) {
+                a.value.x += a.contribVector.x; a.value.y += a.contribVector.y;
+                ClampLength(a.value);
+            } else {
+                float extra = a.contribValue;
+                const float len = std::sqrt(a.contribVector.x * a.contribVector.x + a.contribVector.y * a.contribVector.y);
+                if (len > extra) extra = len > 1.0f ? 1.0f : len;
+                if (extra > a.value.x) a.value.x = extra;
+            }
+        }
+        a.contributed = false; a.contribValue = 0; a.contribVector = {0.0f, 0.0f};
+    }
+    // Hold-to-toggle (accessibility): a button action the player asked to toggle stays on after the input comes up, until
+    // the next press.
+    const bool anyToggle = Accessibility::AnyToggle();
+    for (ActionDef& a : m_actions) {
+        if (a.type != ValueType::Button || !anyToggle || !Accessibility::ToggleFor(a.name)) { a.latchActive = a.latchHeld = false; continue; }
+        const bool down = a.value.x >= a.pressPoint;
+        if (down && !a.latchHeld) a.latchActive = !a.latchActive;   // each press flips it
+        a.latchHeld = down;
+        a.value.x = a.latchActive ? 1.0f : 0.0f;
+    }
+    // Held / pressed / released, and the press timing for buffering, double tap and hold to confirm.
+    for (ActionDef& a : m_actions) {
+        const bool was = a.down;
+        a.down = a.Magnitude() >= a.pressPoint;
+        a.pressed = a.down && !was;
+        a.released = !a.down && was;
+        if (a.pressed) { a.prevPressedAt = a.pressedAt; a.pressedAt = m_time; a.pressConsumed = false; a.heldSince = m_time; }
+        if (!a.down) a.heldSince = -1.0;
+    }
     // Interactions run after every value is known, so a chorded action can look at another one.
     for (ActionDef& a : m_actions) RunInteractions(a, (a.down && !a.pressed) || a.released, dt);
 }
+
+ActionDef* ActionSet::FindNoCase(const std::string& name) { return const_cast<ActionDef*>(static_cast<const ActionSet*>(this)->FindNoCase(name)); }
+const ActionDef* ActionSet::FindNoCase(const std::string& name) const {
+    if (m_indexRev != m_revision || m_indexSize != m_actions.size()) {
+        m_index.clear();
+        for (std::size_t i = 0; i < m_actions.size(); ++i) m_index.emplace_back(str::LowerAscii(m_actions[i].name), i);
+        std::sort(m_index.begin(), m_index.end());
+        m_indexRev = m_revision; m_indexSize = m_actions.size();
+    }
+    const std::string n = str::LowerAscii(name);
+    auto it = std::lower_bound(m_index.begin(), m_index.end(), n, [](const std::pair<std::string, std::size_t>& e, const std::string& k) { return e.first < k; });
+    if (it == m_index.end() || it->first != n || it->second >= m_actions.size()) return nullptr;
+    return &m_actions[it->second];
+}
+
+void ActionSet::PushMap(const std::string& map, bool consume, bool block) {
+    ActionMap* m = nullptr;
+    for (ActionMap& e : m_maps) if (str::EqualsNoCaseAscii(e.name, map)) m = &e;
+    bool added = false;
+    if (!m) { m = &AddMap(map, 0, false, false); added = true; }
+    Pushed saved{m->name, m->priority, m->consume, m->block, m->enabled, added};
+    for (auto it = m_pushed.begin(); it != m_pushed.end(); ++it)
+        if (it->name == m->name) { saved = *it; m_pushed.erase(it); break; }   // re-pushed: keep what it was before the first push
+    m_pushed.push_back(saved);
+    int top = 0;
+    for (const ActionMap& e : m_maps) if (&e != m && e.priority > top) top = e.priority;
+    m->priority = top + 1; m->consume = consume; m->block = block; m->enabled = true;
+}
+void ActionSet::PopMap(const std::string& map) {
+    for (auto it = m_pushed.begin(); it != m_pushed.end(); ++it) {
+        if (!str::EqualsNoCaseAscii(it->name, map)) continue;
+        for (ActionMap& e : m_maps)
+            if (e.name == it->name) { e.priority = it->priority; e.consume = it->consume; e.block = it->block; e.enabled = it->enabled; }
+        m_pushed.erase(it);
+        return;
+    }
+}
+bool ActionSet::Consumed(const InputBinding& leaf) const {
+    bool hit = false;
+    for (const ActionMap& m : m_maps) {
+        if (!m.enabled || m.priority <= 0 || IsBaseMapName(m.name)) continue;
+        if (m.block) return true;
+        if (!m.consume) continue;
+        for (const ActionDef& a : m_actions) {
+            if (a.map != m.name) continue;
+            for (const BindingSpec& b : a.bindings) {
+                if (!BindingActive(b)) continue;
+                Build(b);
+                for (const InputBinding& l : b.leaves)
+                    ForClaims(l, [&](int id) { ForClaims(leaf, [&](int want) { if (id == want) hit = true; }); });
+            }
+        }
+    }
+    return hit;
+}
+
+void ActionSet::Contribute(const std::string& action, float value) {
+    if (ActionDef* a = FindNoCase(action)) { if (!a->contributed || value > a->contribValue) a->contribValue = value; a->contributed = true; }
+}
+void ActionSet::ContributeVector(const std::string& action, const Vec2& v) {
+    if (ActionDef* a = FindNoCase(action)) { a->contribVector.x += v.x; a->contribVector.y += v.y; a->contributed = true; }
+}
+void ActionSet::ClearContributions() { for (ActionDef& a : m_actions) { a.contributed = false; a.contribValue = 0; a.contribVector = {0.0f, 0.0f}; } }
 
 void ActionSet::Emit(ActionDef& a, int idx, Phase ph, bool down, float held) {
     PhaseEvent e; e.action = a.name; e.phase = ph; e.interaction = idx; e.value = a.value; e.held = held; e.down = down;
@@ -518,6 +761,37 @@ bool ActionSet::Pressed(const std::string& n) const { const ActionDef* a = Find(
 bool ActionSet::Held(const std::string& n) const { const ActionDef* a = Find(n); return a && a->down; }
 bool ActionSet::Released(const std::string& n) const { const ActionDef* a = Find(n); return a && a->released; }
 
+bool ActionSet::Buffered(const std::string& name, float window) const {
+    const ActionDef* a = FindNoCase(name);
+    if (!a || a->pressConsumed || !(window >= 0.0f) || a->pressedAt < -1.0e8) return false;
+    return m_time - a->pressedAt <= (double)window;
+}
+bool ActionSet::ConsumeAny(const std::string& name) {
+    ActionDef* a = FindNoCase(name);
+    if (!a || a->pressConsumed || a->pressedAt < -1.0e8) return false;
+    a->pressConsumed = true;
+    return true;
+}
+bool ActionSet::Consume(const std::string& name, float window) {
+    if (!Buffered(name, window)) return false;
+    return ConsumeAny(name);
+}
+bool ActionSet::DoubleTap(const std::string& name, float window) const {
+    const ActionDef* a = FindNoCase(name);
+    if (!a || !a->pressed || !(window >= 0.0f) || a->prevPressedAt < -1.0e8) return false;
+    return a->pressedAt - a->prevPressedAt <= (double)window;
+}
+float ActionSet::HeldFor(const std::string& name) const {
+    const ActionDef* a = FindNoCase(name);
+    return a && a->heldSince >= 0.0 ? (float)(m_time - a->heldSince) : 0.0f;
+}
+bool ActionSet::HoldReached(const std::string& name, float seconds) const {
+    const ActionDef* a = FindNoCase(name);
+    if (!a || a->heldSince < 0.0 || !(seconds > 0.0f)) return false;
+    const double held = m_time - a->heldSince;
+    return held >= (double)seconds && held - (double)m_lastDt < (double)seconds;
+}
+
 // ---- runtime rebinding -------------------------------------------------------------------------------------------
 
 bool ActionSet::Rebind(const std::string& action, int binding, int part, const std::string& path) {
@@ -529,6 +803,7 @@ bool ActionSet::Rebind(const std::string& action, int binding, int part, const s
     if (b.original.empty()) b.original = b.parts;
     b.parts[(std::size_t)part] = path;
     b.built = false;
+    ++m_revision;
     return true;
 }
 
@@ -553,9 +828,63 @@ std::vector<std::string> ActionSet::Conflicts(const std::string& action, int bin
     return out;
 }
 
+const char* BindingKindName(BindingSpec::Kind k) {
+    switch (k) { case BindingSpec::Kind::Vector2: return "vector2"; case BindingSpec::Kind::Vector3: return "vector3"; case BindingSpec::Kind::Axis1D: return "axis"; case BindingSpec::Kind::Chord: return "chord"; default: return "single"; }
+}
+bool ParseBindingKind(const std::string& s, BindingSpec::Kind& k) {
+    if (s == "single") k = BindingSpec::Kind::Single; else if (s == "vector2") k = BindingSpec::Kind::Vector2; else if (s == "vector3") k = BindingSpec::Kind::Vector3;
+    else if (s == "axis") k = BindingSpec::Kind::Axis1D; else if (s == "chord") k = BindingSpec::Kind::Chord; else return false;
+    return true;
+}
+
+std::vector<BindingSpec> ActionSet::AuthoredBindings(const ActionDef& a) const {
+    std::vector<BindingSpec> out = a.reshaped ? a.authored : a.bindings;
+    if (!a.reshaped)
+        for (BindingSpec& b : out) if (!b.original.empty()) { b.parts = b.original; b.original.clear(); b.built = false; }
+    return out;
+}
+
+bool ActionSet::SetBindings(const std::string& action, const std::vector<BindingSpec>& list) {
+    ActionDef* a = Find(action);
+    if (!a) return false;
+    const std::vector<BindingSpec> auth = AuthoredBindings(*a);
+    bool same = list.size() == auth.size();
+    for (std::size_t i = 0; same && i < list.size(); ++i)
+        same = list[i].kind == auth[i].kind && list[i].parts.size() == auth[i].parts.size();
+    if (same) {   // the authored shape: plain per-binding overrides
+        a->authored.clear(); a->reshaped = false;
+        a->bindings = auth;
+        for (std::size_t i = 0; i < list.size(); ++i)
+            for (std::size_t k = 0; k < list[i].parts.size(); ++k)
+                if (InputBinding::Parse(list[i].parts[k]).ToString() != InputBinding::Parse(auth[i].parts[k]).ToString())
+                    Rebind(a->name, (int)i, (int)k, list[i].parts[k]);
+    } else {
+        a->authored = auth; a->reshaped = true;
+        a->bindings = list;
+        for (std::size_t i = 0; i < a->bindings.size(); ++i) {
+            BindingSpec& b = a->bindings[i];
+            b.original.clear(); b.built = false;
+            if (b.processors.empty() && i < auth.size() && auth[i].kind == b.kind) b.processors = auth[i].processors;   // keep the authored shaping in place
+        }
+    }
+    ++m_revision;
+    return true;
+}
+
 std::string ActionSet::ExportOverrides() const {
     std::string s;
-    for (const ActionDef& a : m_actions)
+    for (const ActionDef& a : m_actions) {
+        if (a.reshaped) {   // the list's shape changed: one line for all of it ("ovlist Jump single key:j;single pad:a group=Gamepad")
+            s += "ovlist " + a.name + " ";
+            for (std::size_t bi = 0; bi < a.bindings.size(); ++bi) {
+                const BindingSpec& b = a.bindings[bi];
+                const std::vector<std::string>& parts = b.original.empty() ? b.parts : b.original;
+                s += (bi ? ";" : "") + std::string(BindingKindName(b.kind));
+                for (const std::string& p : parts) s += " " + p;
+                if (!b.group.empty()) s += " group=" + b.group;
+            }
+            s += "\n";
+        }
         for (std::size_t bi = 0; bi < a.bindings.size(); ++bi) {
             const BindingSpec& b = a.bindings[bi];
             if (b.original.empty() || b.original == b.parts) continue;
@@ -563,6 +892,12 @@ std::string ActionSet::ExportOverrides() const {
             for (std::size_t i = 0; i < b.parts.size(); ++i) s += (i ? "," : "") + b.parts[i];
             s += "\n";
         }
+    }
+    for (const std::string& k : m_keep) {   // lines for actions this set cannot take, unless it now has its own line for one
+        const std::size_t s1 = k.find(' '), s2 = s1 == std::string::npos ? s1 : k.find(' ', s1 + 1);
+        const std::string who = s2 == std::string::npos ? std::string() : k.substr(s1 + 1, s2 - s1 - 1);
+        if (who.empty() || s.find(" " + who + " ") == std::string::npos) s += k + "\n";
+    }
     return s;
 }
 
@@ -573,6 +908,40 @@ int ActionSet::ImportOverrides(const std::string& text) {
         std::size_t e = text.find('\n', i); if (e == std::string::npos) e = text.size();
         const std::string line = text.substr(i, e - i);
         i = e + 1;
+        if (line.rfind("ovlist ", 0) == 0) {   // a whole list: "ovlist <action> <kind> <part>... [group=G];..."
+            const std::size_t s1 = line.find(' ', 7);
+            ActionDef* a = s1 == std::string::npos ? nullptr : Find(line.substr(7, s1 - 7));
+            if (!a) { if (s1 != std::string::npos && std::find(m_keep.begin(), m_keep.end(), line) == m_keep.end()) m_keep.push_back(line); continue; }
+            std::vector<BindingSpec> list;
+            bool ok = true;
+            std::size_t j = s1 + 1;
+            while (ok && j <= line.size()) {
+                std::size_t semi = line.find(';', j); if (semi == std::string::npos) semi = line.size();
+                const std::string spec = line.substr(j, semi - j);
+                j = semi + 1;
+                BindingSpec b;
+                std::size_t k = 0;
+                bool first = true;
+                while (k < spec.size()) {
+                    std::size_t sp = spec.find(' ', k); if (sp == std::string::npos) sp = spec.size();
+                    const std::string tok = spec.substr(k, sp - k);
+                    k = sp + 1;
+                    if (tok.empty()) continue;
+                    if (first) { ok = ParseBindingKind(tok, b.kind); first = false; }
+                    else if (tok.rfind("group=", 0) == 0) b.group = tok.substr(6);
+                    else if (InputBinding::Parse(tok).kind == InputBinding::Kind::None) ok = false;
+                    else b.parts.push_back(tok);
+                }
+                if (first && spec.empty() && line.size() == s1 + 1) break;   // "ovlist Dig " = no bindings at all
+                if (first || b.parts.empty()) ok = false;
+                list.push_back(std::move(b));
+            }
+            if (ok && SetBindings(a->name, list)) ++applied;
+            continue;
+        }
+        // Only "ov" and "ovlist" lines live here. Anything else is skipped and not kept, which is how the "ovresp" lines an
+        // earlier version wrote leave a player's file at the next save: an action's response has one store, the pref
+        // "inputresp.<action>" (InputActions::SetResponse), so a second copy here could only be an older value.
         if (line.rfind("ov ", 0) != 0) continue;
         const std::size_t s1 = line.find(' ', 3), s2 = s1 == std::string::npos ? s1 : line.find(' ', s1 + 1);
         if (s2 == std::string::npos) continue;
@@ -582,7 +951,10 @@ int ActionSet::ImportOverrides(const std::string& text) {
         std::size_t j = s2 + 1;
         while (j <= line.size()) { std::size_t c = line.find(',', j); if (c == std::string::npos) c = line.size(); parts.push_back(line.substr(j, c - j)); j = c + 1; }
         ActionDef* a = Find(name);
-        if (!a || bi < 0 || bi >= (int)a->bindings.size() || parts.size() != a->bindings[(std::size_t)bi].parts.size()) continue;
+        if (!a || bi < 0 || bi >= (int)a->bindings.size() || parts.size() != a->bindings[(std::size_t)bi].parts.size()) {
+            if (std::find(m_keep.begin(), m_keep.end(), line) == m_keep.end()) m_keep.push_back(line);   // kept for the asset it was made for
+            continue;
+        }
         bool ok = true;
         for (const std::string& p : parts) if (InputBinding::Parse(p).kind == InputBinding::Kind::None) ok = false;
         if (!ok) continue;
@@ -593,13 +965,19 @@ int ActionSet::ImportOverrides(const std::string& text) {
 }
 
 void ActionSet::ResetOverrides() {
-    for (ActionDef& a : m_actions) for (BindingSpec& b : a.bindings) if (!b.original.empty()) { b.parts = b.original; b.original.clear(); b.built = false; }
+    m_keep.clear();
+    for (ActionDef& a : m_actions) {
+        if (a.reshaped) { a.bindings = a.authored; a.authored.clear(); a.reshaped = false; }
+        for (BindingSpec& b : a.bindings) if (!b.original.empty()) { b.parts = b.original; b.original.clear(); b.built = false; }
+    }
+    ++m_revision;
 }
 bool ActionSet::ResetOverride(const std::string& action, int binding) {
     ActionDef* a = Find(action);
     if (!a || binding < 0 || binding >= (int)a->bindings.size() || a->bindings[(std::size_t)binding].original.empty()) return false;
     BindingSpec& b = a->bindings[(std::size_t)binding];
     b.parts = b.original; b.original.clear(); b.built = false;
+    ++m_revision;
     return true;
 }
 void ActionSet::SaveOverrides(const std::string& key) const {

@@ -9,6 +9,10 @@
 //   2. the saved setting (the row in Settings > Appearance in the launcher, View > Rendering & Performance in the editor),
 //   3. the build's default: Dear ImGui, unless the build was configured with -DOKAY_UI_DEFAULT_BACKEND=okayui.
 // OKAY_UI_BACKEND alone (without OKAY_DEV) is honoured too: setting it is itself a deliberate developer act, and the tests use it.
+// How a normal release run gets OkayUI: the Settings > Experimental item "OkayUI screens" (shared/OwnSwitches.hpp, ON by default since
+// 2026-11-23) sets OKAY_UI_BACKEND=okayui at the top of main(), so rule 1 picks OkayUI with no OKAY_DEV. Unticking the item leaves the variable
+// unset, so the answer falls back to the build default; that is why the build default stays Dear ImGui (an okayui build default could not
+// be switched off from the screen).
 // A build without OkayUI compiled in (no SDL2, or the web player) always answers Dear ImGui.
 #include <cctype>
 #include <string>
@@ -83,6 +87,13 @@ inline int Source(const char* envValue, const std::string& settingValue, bool de
     if (envValue && Parse(envValue, scratch)) return 2;
     if (devMode && Parse(settingValue, scratch)) return 1;
     return 0;
+}
+
+/// The Inspector drawn by OkayUI (a preview; docs/ui/own_ui_toolkit.md sections 14-22; on by default through the Settings > Experimental items since 2026-11-23). It needs the OkayUI backend
+/// (`b`) and one more deliberate act on top: the developer flag OKAY_DEV, or OKAY_UI_INSPECTOR (what the Settings > Experimental item
+/// "OkayUI Inspector" sets). The OkayUI backend alone (the "OkayUI screens" item) leaves the Inspector to Dear ImGui.
+inline bool InspectorOn(Backend b, const char* okayDevEnv, const char* inspectorEnv) {
+    return b == Backend::OkayUI && (DevMode(okayDevEnv) || DevMode(inspectorEnv));
 }
 
 } // namespace okayuibackend

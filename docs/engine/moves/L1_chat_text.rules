@@ -1,0 +1,64 @@
+# Launcher split, move L1 (docs/engine/modularization_plan.md, Part A batch 4 and Part C section 5): emoji, chat text
+# formatting and link previews (launcher/main.cpp 2654-3516 at the base) -> launcher/ChatText.hpp / .cpp. Also starts
+# launcher/LauncherShared.hpp (the launcher's editor/MainShared.hpp) and names main.cpp's anonymous namespace `okl`, so
+# the split-out files can reach main.cpp's names (`using namespace okl;` after it keeps main() and the Versions host
+# reading the names unqualified, as the anonymous namespace did).
+# Check it with (on the move commit):
+#   python3 scripts/check_pure_move.py --base HEAD~1 --head HEAD --source launcher/main.cpp \
+#       --dest launcher/ChatText.hpp --dest launcher/ChatText.cpp --dest launcher/LauncherShared.hpp \
+#       --rules docs/engine/moves/L1_chat_text.rules
+#
+# The anonymous namespace gets a name; the using-directive that the anonymous namespace implied is written out.
+drop: ^namespace \{$
+add: ^using namespace okl;(\s*//.*)?$
+#
+# Names main.cpp uses from the moved code: `static` dropped (external linkage), declared in ChatText.hpp; RenderChatBody's
+# default argument moves to its declaration. Main.cpp's forward declarations of DrawEmojiToken, ChatMediaPicker and
+# ChatImageTexture (defined later in main.cpp) become declarations in LauncherShared.hpp, and their definitions drop
+# `static` (ChatImageTexture's default arguments move to the declaration).
+change: static int EmojiId(const std::string& t) { ==> int EmojiId(const std::string& t) {
+drop: ^\s*static void DrawEmojiToken\(ImDrawList\* dl, ImVec2 c, float s, const std::string\& tok\);$
+change: static std::string Utf8Encode(unsigned cp) { ==> std::string Utf8Encode(unsigned cp) {
+change: static std::string NormalizeEmoji(const std::string& in) { ==> std::string NormalizeEmoji(const std::string& in) {
+change: static int ReactionEmojiId(const std::string& key) { ==> int ReactionEmojiId(const std::string& key) {
+change: static bool IsEmojiOnly(const std::string& bodyIn, int& count) { ==> bool IsEmojiOnly(const std::string& bodyIn, int& count) {
+change: static void DrawEmoji(ImDrawList* dl, ImVec2 c, float s, int id) { ==> void DrawEmoji(ImDrawList* dl, ImVec2 c, float s, int id) {
+change: static std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap, ==> std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
+drop: ^\s*const std::vector<std::string>\* recentGifs, bool canSendMedia\);(\s*//.*)?$
+change: static void MergeEmojiFallback(float size) { ==> void MergeEmojiFallback(float size) {
+drop: ^\s*static SDL_Texture\* ChatImageTexture\(const std::string\& url, int\* w, int\* h\);$
+change: void RenderChatBody(const std::string& bodyIn, float maxW = 0.0f) { ==> void RenderChatBody(const std::string& bodyIn, float maxW) {
+change: static void DrawTemplateStage(ImDrawList* d, const std::string& title, ImVec2 a, ImVec2 b) { ==> void DrawTemplateStage(ImDrawList* d, const std::string& title, ImVec2 a, ImVec2 b) {
+change: static unsigned char* LoadRgbaFile(const std::string& path, int* w, int* h) { ==> unsigned char* LoadRgbaFile(const std::string& path, int* w, int* h) {
+drop: ^\s*static SDL_Texture\* ChatImageTexture\(const std::string\& url, int\* w = nullptr, int\* h = nullptr\) \{$
+add: ^\s*SDL_Texture\* ChatImageTexture\(const std::string\& url, int\* w, int\* h\) \{$
+drop: ^\s*static void DrawEmojiToken\(ImDrawList\* dl, ImVec2 c, float s, const std::string\& tok\) \{$
+add: ^\s*void DrawEmojiToken\(ImDrawList\* dl, ImVec2 c, float s, const std::string\& tok\) \{$
+drop: ^\s*static std::string ChatMediaPicker\(const char\* id, char\* buf, std::size_t cap,$
+add: ^\s*std::string ChatMediaPicker\(const char\* id, char\* buf, std::size_t cap,$
+add: ^\s*int EmojiId\(const std::string\& t\);(\s*//.*)?$
+add: ^\s*std::string Utf8Encode\(unsigned cp\);$
+add: ^\s*std::string NormalizeEmoji\(const std::string\& in\);(\s*//.*)?$
+add: ^\s*int ReactionEmojiId\(const std::string\& key\);$
+add: ^\s*bool IsEmojiOnly\(const std::string\& bodyIn, int\& count\);(\s*//.*)?$
+add: ^\s*void DrawEmoji\(ImDrawList\* dl, ImVec2 c, float s, int id\);(\s*//.*)?$
+add: ^\s*void DrawHeart\(ImDrawList\* dl, ImVec2 c, float r, ImU32 col\);$
+add: ^\s*void EmojiPicker\(const char\* id, char\* buf, std::size_t cap\);(\s*//.*)?$
+add: ^\s*extern ImFont\* g_fontMono;(\s*//.*)?$
+add: ^\s*void MergeEmojiFallback\(float size\);(\s*//.*)?$
+add: ^\s*void RenderChatBody\(const std::string\& bodyIn, float maxW = 0\.0f\);(\s*//.*)?$
+add: ^\s*float MeasureChatBodyWidth\(const std::string\& bodyIn, float maxW\);$
+add: ^\s*void IconTile\(const std::string\& name, float size\);(\s*//.*)?$
+add: ^\s*void DrawTemplateStage\(ImDrawList\* d, const std::string\& title, ImVec2 a, ImVec2 b\);$
+add: ^\s*unsigned char\* LoadRgbaFile\(const std::string\& path, int\* w, int\* h\);(\s*//.*)?$
+add: ^\s*namespace fs = std::filesystem;(\s*//.*)?$
+add: ^\s*extern ImVec4 kAccent;(\s*//.*)?$
+add: ^\s*ImVec4 NameColor\(const std::string\& s\);(\s*//.*)?$
+add: ^\s*void Toast\(const std::string\& m, int kind\);(\s*//.*)?$
+add: ^\s*extern bool g_linkPreviews;(\s*//.*)?$
+add: ^\s*bool ShellSafeUrl\(const std::string\& url\);(\s*//.*)?$
+add: ^\s*void OpenExternal\(const std::string\& target\);(\s*//.*)?$
+add: ^\s*int RunCmd\(const std::string\& cmd, bool wait\);(\s*//.*)?$
+add: ^\s*void DrawEmojiToken\(ImDrawList\* dl, ImVec2 c, float s, const std::string\& tok\);(\s*//.*)?$
+add: ^\s*SDL_Texture\* ChatImageTexture\(const std::string\& url, int\* w = nullptr, int\* h = nullptr\);(\s*//.*)?$
+add: ^\s*const std::vector<std::string>\* recentGifs, bool canSendMedia\);(\s*//.*)?$

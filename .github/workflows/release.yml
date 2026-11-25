@@ -46,13 +46,14 @@ jobs:
     runs-on: ubuntu-latest
     # A normal release takes ~11 min; never let a stuck download hold one for hours.
     # (Includes the last step, which waits for the Linux server build that runs beside this job.)
-    timeout-minutes: 60
+    timeout-minutes: 90   # build jobs are capped by memory (build-windows-dist.sh), so a cold build takes longer
     outputs:
       ver: ${{ steps.pkg.outputs.ver }}
     env:
       SDL2_VERSION: 2.30.9
       # Compiler cache kept between release builds (actions/cache below): only
       # changed files recompile, so a typical release builds in a few minutes.
+      # No CCACHE_SLOPPINESS here: a file that uses __TIME__ (editor/BuildStamp.cpp) is always recompiled, so the stamp is exact.
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPRESS: "1"
@@ -125,59 +126,45 @@ jobs:
             echo "**Warning:** no trusted anti-cheat keys (repository variable \`OKAY_AC_TRUSTED_KEYS\` is empty). The launcher's integrity checks on the official game are telemetry only in this release." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # The runner's Ubuntu mirror is sometimes slow enough that downloading the
-      # MinGW compiler outlasts the step timeout. Downloaded packages go in the
-      # Actions cache, saved even when the install times out, so each run starts
-      # from what earlier runs fetched instead of from the mirror.
-      - name: Note the runner image
-        run: echo "RUNNER_IMAGE=$ImageVersion" >> "$GITHUB_ENV"
+      # The toolchain (.deb files) lives in the Actions cache, keyed on the Ubuntu release, not on the runner image version (a
+      # new image used to start with nothing and download 161 MB from a mirror that sometimes crawls; one release sat 45 min).
+      # scripts/ci-install-mingw.sh installs from the cache with no network when it can, else downloads only what is missing
+      # (several files at once, retried, a second mirror), and fails unless the compiler is the win32 thread model (CLAUDE.md
+      # rule 21a; the posix model is not installed and nothing in the release uses it). zip, nsis and osslsigncode are the
+      # release's packaging tools. The release has its own key prefix; it falls back to the PR check's cache (same compiler).
+      - name: Note the Ubuntu release
+        run: echo "UBUNTU_CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")" >> "$GITHUB_ENV"
 
       - name: Restore downloaded apt packages
         uses: actions/cache/restore@v5
         with:
           path: ~/apt-cache
-          key: apt-mingw-${{ env.RUNNER_IMAGE }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: apt-mingw-${{ env.RUNNER_IMAGE }}-
+          key: apt-mingw-win32-release-${{ env.UBUNTU_CODENAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            apt-mingw-win32-release-${{ env.UBUNTU_CODENAME }}-
+            apt-mingw-win32-${{ env.UBUNTU_CODENAME }}-
+            apt-mingw-
 
-      # Ubuntu mirrors occasionally hang or crawl (one release sat here 45 min):
-      # bounded attempts with apt's own timeouts, retried a few times. Only the
-      # 64-bit MinGW compiler is installed (the full mingw-w64 package also pulls
-      # the 32-bit one, doubling a ~290 MB download), without recommends.
       - name: Install toolchain
-        timeout-minutes: 25
+        id: install
+        timeout-minutes: 20
         run: |
-          mkdir -p ~/apt-cache/partial
-          ls ~/apt-cache/*.deb 2>/dev/null | wc -l > ~/apt-debs-before
-          APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives=$HOME/apt-cache"
-          for i in 1 2 3; do
-            if timeout 120 sudo apt-get $APT update && \
-               timeout 240 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev zip nsis ccache osslsigncode; then
-              exit 0
-            fi
-            echo "apt attempt $i failed or timed out; retrying"
-            sleep 10
-          done
-          exit 1
+          bash scripts/ci-apt-cache.sh before
+          bash scripts/ci-install-mingw.sh zip nsis osslsigncode
 
       - name: Check for newly downloaded apt packages
         id: apt-new
         if: always()
-        run: |
-          [ -d ~/apt-cache ] || exit 0
-          # A timed-out install can leave apt-get still downloading.
-          sudo pkill -x apt-get || true
-          sudo chown -R "$USER" ~/apt-cache
-          rm -rf ~/apt-cache/partial ~/apt-cache/lock
-          if [ "$(ls ~/apt-cache/*.deb 2>/dev/null | wc -l)" -gt "$(cat ~/apt-debs-before 2>/dev/null || echo 0)" ]; then
-            echo "save=1" >> "$GITHUB_OUTPUT"
-          fi
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+        run: bash scripts/ci-apt-cache.sh after "$INSTALL_OUTCOME"
 
       - name: Save downloaded apt packages
         if: always() && steps.apt-new.outputs.save == '1'
         uses: actions/cache/save@v5
         with:
           path: ~/apt-cache
-          key: apt-mingw-${{ env.RUNNER_IMAGE }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: apt-mingw-win32-release-${{ env.UBUNTU_CODENAME }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Fetch SDL2 (MinGW dev)
         run: |

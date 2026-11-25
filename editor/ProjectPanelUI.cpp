@@ -1,5 +1,6 @@
 #include "ProjectPanelUI.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // InvalidateAllTextureCaches
+#include "okay/Render/TextureAsset.hpp"       // TextureSettings (texture-only import keys), textures::Find for the loaded size
 #include "okay/Texture/Export.hpp"             // okay::tex: Make mipmaps / compress (docs/rendering/own_texture_library.md)
 
 #include <imgui.h>
@@ -493,9 +494,10 @@ bool Combo(const char* label, int& value, std::initializer_list<const char*> ite
 }
 } // namespace
 
-// Texture Filter / Wrap / Mipmaps work in the software and OpenGL renderers only. The Direct3D renderers (the
-// default on Windows) do not read them yet, so the controls stay hidden until they do. Turn this on then.
-constexpr bool kShowTextureSamplerSettings = false;
+// Texture Kind / Filter / Wrap / Mipmaps / compression. Every renderer reads them through the shared texture library
+// (Render/TextureAsset.hpp): software, OpenGL and Direct3D 11 fully; Direct3D 12 builds the same mip chain but samples
+// every picture with one sampler (anisotropic, repeat), so Filter and Wrap do not change it there yet.
+constexpr bool kShowTextureSamplerSettings = true;
 
 bool HasImportSettings(okaypb::Browser& browser, const std::string& assetPath) {
     (void)browser;
@@ -527,15 +529,62 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
             if (Combo("Largest side", si, {"No limit", "32", "64", "128", "256", "512", "1024", "2048", "4096", "8192", "16384"})) e.texture.maxSize = sizes[si];
             Hint("Bigger pictures are made smaller when loaded.");
             if (kShowTextureSamplerSettings) {
+            // The texture-only keys (anisotropy, normal map, mip filter, compression format) live in the same texture
+            // block of the .okaymeta, kept by ImportSettings as extra keys.
+            ok::TextureSettings tx;
+            tx.anisotropy = 8;
+            {
+                std::vector<std::pair<std::string, std::string>> ex(e.extra.begin(), e.extra.end());
+                ok::ApplyTextureExtraKeys(tx, ex);
+            }
+            const ok::TextureSettings txWas = tx;
+            int kind = tx.normalMap ? 1 : e.texture.sRGB ? 0 : 2;
+            if (Combo("Kind", kind, {"Colour (sRGB)", "Normal map", "Data (linear: masks, roughness)"})) {
+                tx.normalMap = kind == 1;
+                e.texture.sRGB = kind == 0;
+            }
+            Hint("Colour pictures are filtered in linear light. Normal maps stay unit length in every mip.");
+            // Filter: Point / Bilinear / Trilinear / Anisotropic (trilinear plus an anisotropy level).
             int fi = static_cast<int>(e.texture.filter);
-            if (Combo("Filter", fi, {"Point (pixels)", "Bilinear (smooth)", "Trilinear (smooth + mips)"})) e.texture.filter = static_cast<ok::TextureImportSettings::Filter>(fi);
-            Hint("Point keeps hard pixel edges.");
+            if (e.texture.filter == ok::TextureImportSettings::Filter::Trilinear && tx.anisotropy > 1) fi = 3;
+            if (Combo("Filter", fi, {"Point (pixels)", "Bilinear (smooth)", "Trilinear (smooth + mips)", "Anisotropic (sharp at angles)"})) {
+                e.texture.filter = static_cast<ok::TextureImportSettings::Filter>(fi == 3 ? 2 : fi);
+                if (fi == 3 && tx.anisotropy < 2) tx.anisotropy = 8;
+                if (fi == 2) tx.anisotropy = 1;
+            }
+            if (fi == 3) {
+                static const int levels[] = {2, 4, 8, 16};
+                int li = 2;
+                for (int i = 0; i < 4; ++i) if (levels[i] == tx.anisotropy) li = i;
+                if (Combo("Anisotropy", li, {"2x", "4x", "8x", "16x"})) tx.anisotropy = levels[li];
+            }
+            Hint("Point keeps hard pixel edges. Anisotropic keeps floors sharp far away.");
             int wi = static_cast<int>(e.texture.wrap);
             if (Combo("Wrap", wi, {"Repeat", "Clamp", "Mirror"})) e.texture.wrap = static_cast<ok::TextureImportSettings::Wrap>(wi);
             Hint("What is drawn past the picture's edge.");
             ImGui::Checkbox("Mipmaps", &e.texture.mipmaps);
-            Hint("Smaller copies for far away. Off: always full size.");
-            Hint("Applies in the editor view and OpenGL / software games.");
+            if (e.texture.mipmaps) {
+                int mf = tx.mipFilter;
+                if (Combo("Mip filter", mf, {"Box (sharp)", "Kaiser (smoother, less shimmer)"})) tx.mipFilter = mf;
+            }
+            Hint("Smaller copies for far away, made by our own filter. Off: always full size.");
+            ImGui::Checkbox("Compress on the GPU", &e.texture.compress);
+            if (e.texture.compress) {
+                int cf = tx.compression;
+                if (Combo("Format", cf, {"Auto (BC1 / BC3 / BC5)", "BC1 (colour, no alpha)", "BC3 (colour + alpha)", "BC4 (one channel)", "BC5 (two channels, normal maps)"}))
+                    tx.compression = cf;
+                Hint("Less video memory, slightly softer. Kept in .okaycache next to the picture. OpenGL and Direct3D 11 keep "
+                     "it compressed; software and Direct3D 12 decode it. BC7 is not written yet.");
+            }
+            if (tx != txWas || e.extra.count("anisotropy") || tx.anisotropy != 8 || tx.normalMap || tx.mipFilter || tx.compression)
+                for (const auto& kv : ok::TextureExtraKeys(tx)) e.extra[kv.first] = kv.second;
+            // What is loaded now: the shared texture asset every renderer draws from.
+            if (ok::TextureHandle h = ok::textures::Find(assetPath)) {
+                char line[160];
+                std::snprintf(line, sizeof(line), "Loaded: %d x %d, %d mip level%s, %.2f MB, %ld handle%s", h->Width(), h->Height(),
+                              h->MipLevels(), h->MipLevels() == 1 ? "" : "s", h->Bytes() / 1048576.0, h.UseCount() - 1, h.UseCount() == 2 ? "" : "s");
+                Hint(line);
+            }
             }
             // Texture tools (our own library, okay::tex): write a .dds with mipmaps, uncompressed or block compressed,
             // next to the picture. It does not change the picture or the import settings above.
@@ -608,7 +657,10 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
         std::string err;
         if (browser.SetImportSettings(assetPath, e, &err)) {
             g_imp.original = e; applied = true;
-            if (e.kind == ok::AssetType::Texture) ok::InvalidateAllTextureCaches();   // the scene view reads the picture again
+            if (e.kind == ok::AssetType::Texture) {   // every view reads the picture again with its new settings
+                ok::InvalidateTextureCache(assetPath);   // the asset under this exact path, decoded again in place
+                ok::InvalidateAllTextureCaches();        // and any other name the scene uses for the same file
+            }
         }
         else { failMsg = err.empty() ? "The settings could not be saved." : err; ImGui::OpenPopup("##impfail"); }
     }

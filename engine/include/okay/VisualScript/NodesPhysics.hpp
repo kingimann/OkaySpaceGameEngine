@@ -7,6 +7,7 @@
 // setting is an optional layer list ("0,3" / "Default,Enemy"; blank = all).
 // ---------------------------------------------------------------------------
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/VsFacing.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Physics2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
@@ -28,7 +29,7 @@ struct VsPhysicsNode : VsNode {
     explicit VsPhysicsNode(const std::string& layers) : mask(Layers::MaskFromList(layers)) {}
     static Scene* SceneOf(VsContext& ctx) { return ctx.gameObject ? ctx.gameObject->scene() : nullptr; }
     static Vec3 SelfPos(VsContext& ctx) { return ctx.transform ? ctx.transform->Position() : Vec3::Zero; }
-    static Vec3 SelfFwd(VsContext& ctx) { return ctx.transform ? ctx.transform->Forward() : Vec3{0, 0, 1}; }
+    static Vec3 SelfFwd(VsContext& ctx) { return VsFacing(ctx.transform); }   // -Z, the way Look At turns it
     static VsValue HitPin(int pin, const RaycastHit3D& h) {
         switch (pin) {
             case 0:  return h.hit;

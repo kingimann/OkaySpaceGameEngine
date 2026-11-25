@@ -43,6 +43,7 @@ public:
         m_keys.insert(it, {time, value});
     }
     void Clear() { m_keys.clear(); }
+    void Reserve(std::size_t n) { m_keys.reserve(n); }
     bool Empty() const { return m_keys.empty(); }
     const std::vector<Keyframe>& Keys() const { return m_keys; }
     std::size_t Count() const { return m_keys.size(); }
@@ -50,6 +51,30 @@ public:
     void RemoveKey(std::size_t i) { if (i < m_keys.size()) m_keys.erase(m_keys.begin() + i); }
 
     float Duration() const { return m_keys.empty() ? 0.0f : m_keys.back().time; }
+
+    /// Wrap `t` like Evaluate and find its segment: keys i and i+1, with u in
+    /// [0,1] the fraction between them. False with fewer than two keys.
+    /// Rotation tracks use this to slerp all four quaternion curves together.
+    bool Locate(float t, std::size_t& i, float& u) const {
+        if (m_keys.size() < 2) return false;
+        float start = m_keys.front().time, end = m_keys.back().time;
+        float span = end - start;
+        if (span > Mathf::Epsilon) {
+            switch (wrap) {
+                case Wrap::Clamp:    t = Mathf::Clamp(t, start, end); break;
+                case Wrap::Loop:     t = start + Mathf::Repeat(t - start, span); break;
+                case Wrap::PingPong: t = start + Mathf::PingPong(t - start, span); break;
+            }
+        }
+        auto it = std::lower_bound(m_keys.begin() + 1, m_keys.end(), t,
+                                   [](const Keyframe& k, float tv) { return k.time < tv; });
+        if (it == m_keys.end()) { i = m_keys.size() - 2; u = 1.0f; return true; }
+        i = (std::size_t)(it - m_keys.begin()) - 1;
+        float seg = it->time - m_keys[i].time;
+        u = seg > Mathf::Epsilon ? (t - m_keys[i].time) / seg : 0.0f;
+        u = Mathf::Clamp01(u);
+        return true;
+    }
 
     float Evaluate(float t) const {
         if (m_keys.empty()) return 0.0f;
@@ -120,12 +145,18 @@ public:
         while (a + 1 < m_keys.size()) {
             // Extend the segment a -> b as far as every key in between stays on the line.
             std::size_t b = a + 1;
+            // While every key from a to c holds exactly a's value, the line is that value and every check below passes
+            // (0 * u is 0, or NaN for a non-finite u, and a NaN difference never exceeds the tolerance), so the loop is
+            // skipped: same result, but a long constant track (baked imports have many) no longer costs n^2 checks.
+            bool flat = m_keys[a + 1].value == m_keys[a].value;
             while (b + 1 < m_keys.size()) {
                 std::size_t c = b + 1;
                 const Keyframe& ka = m_keys[a];
                 const Keyframe& kc = m_keys[c];
                 float span = kc.time - ka.time;
                 bool fits = span > 0.0f;
+                flat = flat && kc.value == ka.value;
+                if (flat && fits) { b = c; continue; }
                 for (std::size_t i = a + 1; i < c && fits; ++i) {
                     float u = (m_keys[i].time - ka.time) / span;
                     float v = ka.value + (kc.value - ka.value) * u;

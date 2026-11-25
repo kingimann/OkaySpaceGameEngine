@@ -12,6 +12,11 @@ using Model = SceneText::Model;
 using ModelObject = SceneText::ModelObject;
 using Record = SceneText::Record;
 
+/// True for a record name the scene loader's built-in chain reads inside an object (the
+/// list SceneText keeps). A generic record (ComponentSerializerRegistry::RegisterFromProperties)
+/// may not take one of these names.
+bool IsBuiltinObjectRecord(const std::string& key);
+
 /// "g:<guid>" for an object with an id, else "p:<path>".
 std::string ObjectKey(const ModelObject& o);
 

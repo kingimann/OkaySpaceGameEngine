@@ -3,14 +3,32 @@
 #include "okay/Core/AssetManager.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Core/SaveData.hpp"
+#include "okay/Core/StringId.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
+#include <cstring>
+#include <map>
 #include <random>
 #include <set>
 #include <sstream>
+#if defined(_WIN32)
+#else
+#include <poll.h>
+#include <sys/inotify.h>
+#include <unistd.h>
+#endif
+#ifdef _WIN32
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#endif
 
 namespace okay {
 
@@ -24,6 +42,20 @@ using adb::U8;
 namespace {
 
 constexpr std::size_t kMaxMetaBytes = 1u << 20;
+
+// The same project path always yields the same GUID, so an asset indexed with no .okaymeta
+// (ScanOptions::indexUnmetaed) keeps its id across sessions until a meta file is written.
+// Both halves are StringId hashes (Core/StringId.hpp) of the path with different prefixes.
+Guid GuidFromPathKey(const std::string& key) {
+    Guid g;
+    if (key.empty()) { g.lo = 1; return g; }
+    const std::string hiKey = std::string("okay-asset-hi\n") + key;
+    const std::string loKey = std::string("okay-asset-lo\n") + key;
+    g.hi = StringId::HashOf(hiKey);
+    g.lo = StringId::HashOf(loKey);
+    if (g.IsNull()) g.lo = 1;
+    return g;
+}
 
 std::uint64_t Splitmix(std::uint64_t x) {
     x += 0x9E3779B97F4A7C15ull;
@@ -43,6 +75,48 @@ std::int64_t EpochSeconds(fs::file_time_type t) {
     using namespace std::chrono;
     const auto d = duration_cast<seconds>(t - fs::file_time_type::clock::now());
     return static_cast<std::int64_t>(duration_cast<seconds>(system_clock::now().time_since_epoch()).count()) + d.count();
+}
+
+// What the scan needs to know about one file: folder or file, size, and its modification time (raw ticks to notice a
+// change between scans, epoch seconds for the record).
+struct FileFacts { bool dir = false, file = false, timeOk = false; std::int64_t size = 0, stamp = 0, mtime = 0; };
+
+#ifdef _WIN32
+// One GetFileAttributesExW call gives all of it. Through std::filesystem the MinGW library asked Windows four times per file
+// (is_directory, is_regular_file, file_size and last_write_time each stat the file: its directory entries carry no type),
+// so re-checking an unchanged 5,000-asset project took over half a second on the Windows test runner. A link or other
+// reparse point is answered through std::filesystem (it follows the link); false = ask std::filesystem.
+bool WinFacts(const fs::path& p, FileFacts& f) {
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &d)) return false;
+    if (d.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) return false;
+    f.dir = (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    f.file = !f.dir && !(d.dwFileAttributes & FILE_ATTRIBUTE_DEVICE);
+    f.size = f.file ? static_cast<std::int64_t>((static_cast<std::uint64_t>(d.nFileSizeHigh) << 32) | d.nFileSizeLow) : 0;
+    const std::uint64_t ticks = (static_cast<std::uint64_t>(d.ftLastWriteTime.dwHighDateTime) << 32) | d.ftLastWriteTime.dwLowDateTime;
+    f.stamp = static_cast<std::int64_t>(ticks);                                             // 100 ns since 1601
+    f.mtime = static_cast<std::int64_t>((ticks - 116444736000000000ull) / 10000000ull);    // seconds since 1970 (UTC)
+    f.timeOk = true;
+    return true;
+}
+#endif
+
+// The facts for a directory entry the scan walked to.
+FileFacts FactsOf(const fs::directory_entry& e) {
+    FileFacts f;
+#ifdef _WIN32
+    if (WinFacts(e.path(), f)) return f;
+#endif
+    std::error_code e2;
+    f.dir = e.is_directory(e2);
+    if (f.dir) return f;
+    f.file = e.is_regular_file(e2);
+    if (!f.file) return f;
+    const auto sz = e.file_size(e2);
+    f.size = e2 ? 0 : static_cast<std::int64_t>(sz);
+    const auto ft = e.last_write_time(e2);
+    if (!e2) { f.stamp = static_cast<std::int64_t>(ft.time_since_epoch().count()); f.mtime = EpochSeconds(ft); f.timeOk = true; }
+    return f;
 }
 
 std::string Trim(const std::string& s) {
@@ -163,6 +237,41 @@ std::string Guid::ToString() const {
     return b;
 }
 
+namespace {
+std::atomic<const AssetDatabase*> g_sceneIndex{nullptr};
+}
+
+void SetSceneAssetIndex(const AssetDatabase* db) { g_sceneIndex.store(db, std::memory_order_release); }
+const AssetDatabase* SceneAssetIndex() { return g_sceneIndex.load(std::memory_order_acquire); }
+
+std::string SceneAssetGuid(const std::string& path) {
+    const AssetDatabase* db = g_sceneIndex.load(std::memory_order_acquire);
+    if (!db || path.empty()) return {};
+    const Guid g = db->PathToGuid(path);
+    return g ? g.ToString() : std::string();
+}
+
+std::string ResolveSceneAssetPath(const std::string& storedPath, const std::string& guidText) {
+    const AssetDatabase* db = g_sceneIndex.load(std::memory_order_acquire);
+    if (!db || guidText.empty()) return storedPath;
+    Guid g;
+    if (!Guid::Parse(guidText, g)) return storedPath;
+    const std::string now = db->GuidToPath(g);
+    if (now.empty()) return storedPath;
+    // The stored path still names this asset, or a file that is still there: keep it exactly as
+    // written. The editor stores absolute paths, and the index's Assets-relative form does not
+    // open from the editor, so rewriting a path that works would break it on the next save.
+    if (!storedPath.empty()) {
+        if (db->PathToGuid(storedPath) == g) return storedPath;
+        std::error_code ec;
+        if (fs::exists(PathFromU8(storedPath), ec)) return storedPath;
+    }
+    // The file moved: the GUID finds it. An absolute stored path stays absolute.
+    const std::string n = AssetManager::Normalize(storedPath, false);
+    const bool absolute = !n.empty() && (n[0] == '/' || (n.size() >= 2 && n[1] == ':'));
+    return absolute ? db->AbsolutePath(g) : now;
+}
+
 bool Guid::Parse(const std::string& text, Guid& out) {
     std::string s = Trim(text);
     if (s.size() >= 2 && s.front() == '{' && s.back() == '}') s = s.substr(1, s.size() - 2);
@@ -233,7 +342,7 @@ std::string ScanReport::ToString() const {
 // --- Construction / paths ------------------------------------------------------------------
 
 AssetDatabase::AssetDatabase() { RegisterDefaultExtractors(); }
-AssetDatabase::~AssetDatabase() = default;
+AssetDatabase::~AssetDatabase() { StopWatch(); }
 
 void AssetDatabase::Clear() {
     m_root.clear();
@@ -477,19 +586,17 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
         for (; !ec && it != end; it.increment(ec)) {
             const fs::directory_entry& e = *it;
             const std::string name = U8(e.path().filename());
-            std::error_code e2;
-            if (e.is_directory(e2)) {
+            const FileFacts facts = FactsOf(e);
+            if (facts.dir) {
                 if (name.empty() || name[0] == '.' || skipDirs.count(name)) it.disable_recursion_pending();
                 else folders.push_back(U8(e.path().lexically_relative(rootPath)));
                 continue;
             }
-            if (name.empty() || name[0] == '.' || !e.is_regular_file(e2)) continue;
+            if (name.empty() || name[0] == '.' || !facts.file) continue;
             FileEntry fe;
             fe.rel = U8(e.path().lexically_relative(rootPath));
-            const auto sz = e.file_size(e2);
-            fe.size = e2 ? 0 : static_cast<std::int64_t>(sz);
-            const auto ft = e.last_write_time(e2);
-            if (!e2) { fe.stamp = static_cast<std::int64_t>(ft.time_since_epoch().count()); fe.mtime = EpochSeconds(ft); }
+            fe.size = facts.size;
+            if (facts.timeOk) { fe.stamp = facts.stamp; fe.mtime = facts.mtime; }
             const std::string ext = AssetExtension(name);
             if (ext == "okaymeta") metaFiles.push_back(std::move(fe));
             else if (!skipExts.count(ext)) files.push_back(std::move(fe));
@@ -765,6 +872,10 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
             if (pi == m_pathIndex.end() || present.count(pi->second)) continue;
             auto sl = m_slots.find(pi->second);
             if (sl == m_slots.end()) continue;
+            // The path is known, so this is the same asset, even when its content changed (an edit made
+            // outside the editor, or a meta deleted and the file edited). It keeps its GUID, and step 6
+            // raises SourceChanged for the new content. A file swapped in at the same path between two
+            // scans cannot be told from an edit, so it keeps the id as well.
             c.guid = pi->second;
             c.needsWrite = opt.createMetas || sl->second.rec.metaVersion > 0;   // an in-memory asset stays in memory
             c.labels = sl->second.rec.labels;
@@ -830,7 +941,26 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
             if (!opt.indexUnmetaed) { c.skip = true; ++rep.unmetaed; continue; }
             writeIt = c.dupLoser;   // a copied meta needs its own GUID on disk, or it would change at every scan
         }
-        c.guid = NewGuid();
+        if (!writeIt) {
+            // In memory only: the id is a function of the path, so a later session finds the same one
+            // without a meta. A clash with some other asset's id falls back to a fresh random one.
+            const std::string key = KeyOf(c.fe.rel);
+            const Guid g = GuidFromPathKey(key);
+            auto taken = [&](const Guid& x) {
+                if (x.IsNull() || present.count(x)) return true;
+                auto sit = m_slots.find(x);
+                if (sit != m_slots.end() && KeyOf(sit->second.rec.path) != key) return true;
+                auto vit = m_vanished.find(x);
+                if (vit != m_vanished.end() && KeyOf(vit->second.rec.path) != key) return true;
+                auto oit = m_orphans.find(x);
+                if (oit != m_orphans.end() && KeyOf(oit->second) != key) return true;
+                return false;
+            };
+            c.guid = taken(g) ? NewGuid() : g;
+        } else {
+            c.guid = NewGuid();
+        }
+        if (!c.guid.IsNull()) present.insert(c.guid);
         c.created = true;
         c.needsWrite = writeIt;
         if (c.dupLoser) {
@@ -1021,8 +1151,8 @@ Guid AssetDatabase::RefreshFile(const std::string& path) {
     if (!fs::is_regular_file(PathFromU8(abs), ec)) return Guid();
     std::int64_t size = 0;
     const std::uint64_t h = HashFile(abs, &size, m_options.fullHashLimit);
-    const auto ft = fs::last_write_time(PathFromU8(abs), ec);
-    if (!ec) { s->stamp = static_cast<std::int64_t>(ft.time_since_epoch().count()); s->rec.modified = EpochSeconds(ft); }
+    const FileFacts facts = FactsOf(fs::directory_entry(PathFromU8(abs), ec));   // the same clock as the scan's
+    if (facts.timeOk) { s->stamp = facts.stamp; s->rec.modified = facts.mtime; }
     s->rec.size = size;
     if (h != 0 && h != s->rec.hash) {
         s->rec.hash = h;
@@ -1195,6 +1325,192 @@ void AssetDatabase::AttachHotReload(AssetManager& manager,
         hook(key, type);
         if (chain) chain(key, type);
     });
+}
+
+namespace {
+
+struct DirWatch {
+#if defined(_WIN32)
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    OVERLAPPED ov{};
+    std::vector<char> buf;
+    bool pending = false;
+#else
+    int fd = -1;
+    std::map<int, std::string> dirOf;
+#endif
+    std::string root;
+};
+
+// Heap, never freed: a database that outlives this map (a static browser destroyed during std::exit)
+// must still be able to stop its watch. A normal static map can be destroyed first.
+std::map<const AssetDatabase*, DirWatch>& Watches() {
+    static auto* m = new std::map<const AssetDatabase*, DirWatch>();
+    return *m;
+}
+
+std::string Slash(std::string s) {
+    for (char& c : s) if (c == '\\') c = '/';
+    return s;
+}
+
+#if defined(_WIN32)
+bool Arm(DirWatch& w) {
+    if (w.handle == INVALID_HANDLE_VALUE) return false;
+    std::memset(&w.ov, 0, sizeof(w.ov));
+    w.ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!w.ov.hEvent) return false;
+    w.buf.assign(64 * 1024, 0);
+    const BOOL ok = ReadDirectoryChangesW(w.handle, w.buf.data(), (DWORD)w.buf.size(), TRUE,
+        FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE |
+        FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_CREATION,
+        nullptr, &w.ov, nullptr);
+    w.pending = ok == TRUE;
+    return w.pending;
+}
+#endif
+
+} // namespace
+
+bool AssetDatabase::StartWatch(std::string* error) {
+    StopWatch();
+    if (m_root.empty()) { if (error) *error = "scan a folder before watching it"; return false; }
+    DirWatch w;
+    w.root = m_root;
+#if defined(_WIN32)
+    const fs::path root = PathFromU8(m_root);
+    w.handle = CreateFileW(root.c_str(), FILE_LIST_DIRECTORY,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr);
+    if (w.handle == INVALID_HANDLE_VALUE) { if (error) *error = "cannot watch the folder"; return false; }
+#else
+    w.fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    if (w.fd < 0) { if (error) *error = "cannot watch the folder"; return false; }
+    auto add = [&](const fs::path& p, const std::string& rel) {
+        const int wd = inotify_add_watch(w.fd, p.c_str(),
+            IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE | IN_ATTRIB);
+        if (wd >= 0) w.dirOf[wd] = rel;
+    };
+    std::error_code ec;
+    const fs::path root = PathFromU8(m_root);
+    add(root, "");
+    for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_directory()) continue;
+        std::string rel = Slash(U8(it->path().lexically_relative(root)));
+        if (rel.empty() || rel[0] == '.') { it.disable_recursion_pending(); continue; }
+        add(it->path(), rel);
+    }
+#endif
+    Watches().emplace(this, std::move(w));
+#if defined(_WIN32)
+    // Arm only once the OVERLAPPED lives in the map. Arming the stack copy left the kernel
+    // writing into memory that the move had already finished with.
+    DirWatch& live = Watches().find(this)->second;
+    if (!Arm(live)) {
+        StopWatch();
+        if (error) *error = "cannot watch the folder";
+        return false;
+    }
+#endif
+    return true;
+}
+
+std::vector<std::string> AssetDatabase::PollWatch() {
+    std::vector<std::string> out;
+    auto it = Watches().find(this);
+    if (it == Watches().end()) return out;
+    DirWatch& w = it->second;
+    std::set<std::string> seen;
+    auto add = [&](std::string path) {
+        path = Slash(std::move(path));
+        if (path.empty() || path[0] == '.') return;
+        if (seen.insert(path).second) out.push_back(path);
+    };
+#if defined(_WIN32)
+    if (!w.pending || !w.ov.hEvent) return out;
+    if (WaitForSingleObject(w.ov.hEvent, 0) != WAIT_OBJECT_0) return out;
+    DWORD got = 0;
+    const BOOL read = GetOverlappedResult(w.handle, &w.ov, &got, FALSE);
+    if (!read || got == 0) {
+        const DWORD err = read ? ERROR_SUCCESS : GetLastError();
+        CloseHandle(w.ov.hEvent);
+        w.ov.hEvent = nullptr;
+        Arm(w);
+        // got == 0 on success means the buffer overflowed: the kernel dropped the events.
+        if (err == ERROR_NOTIFY_ENUM_DIR || err == ERROR_SUCCESS || got == 0) {
+            Log::Warning("folder watch overflow on ", w.root, "; scanning the whole folder");
+            out.push_back(w.root);
+        }
+        return out;
+    }
+    std::size_t off = 0;
+    while (off + sizeof(FILE_NOTIFY_INFORMATION) <= got) {
+        auto* ev = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(w.buf.data() + off);
+        const int chars = (int)(ev->FileNameLength / sizeof(wchar_t));
+        std::wstring name(ev->FileName, ev->FileName + chars);
+        std::string utf8;
+        if (!name.empty()) {
+            const int n = WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), nullptr, 0, nullptr, nullptr);
+            if (n > 0) { utf8.resize((std::size_t)n); WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), utf8.data(), n, nullptr, nullptr); }
+        }
+        add(utf8);
+        if (ev->NextEntryOffset == 0) break;
+        off += ev->NextEntryOffset;
+    }
+    CloseHandle(w.ov.hEvent);
+    w.ov.hEvent = nullptr;
+    Arm(w);
+#else
+    pollfd pfd{};
+    pfd.fd = w.fd;
+    pfd.events = POLLIN;
+    while (poll(&pfd, 1, 0) > 0) {
+        alignas(inotify_event) char buf[4096];
+        const ssize_t n = ::read(w.fd, buf, sizeof(buf));
+        if (n <= 0) break;
+        for (ssize_t i = 0; i < n; ) {
+            const auto* ev = reinterpret_cast<const inotify_event*>(buf + i);
+            if (ev->mask & IN_Q_OVERFLOW) {
+                // The kernel dropped events: say so and ask for the whole folder.
+                Log::Warning("folder watch overflow on ", w.root, "; scanning the whole folder");
+                add(w.root);
+            }
+            const std::string name = ev->len ? Slash(ev->name) : std::string();
+            const auto dir = w.dirOf.find(ev->wd);
+            const std::string folder = dir == w.dirOf.end() ? std::string() : dir->second;
+            if (!name.empty()) add(folder.empty() ? name : folder + "/" + name);
+            if ((ev->mask & IN_ISDIR) && (ev->mask & IN_CREATE) && !name.empty()) {
+                const std::string rel = folder.empty() ? name : folder + "/" + name;
+                const int wd = inotify_add_watch(w.fd, (w.root + "/" + rel).c_str(),
+                    IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE | IN_ATTRIB);
+                if (wd >= 0) w.dirOf[wd] = rel;
+            }
+            i += sizeof(inotify_event) + ev->len;
+        }
+    }
+#endif
+    return out;
+}
+
+void AssetDatabase::StopWatch() {
+    auto it = Watches().find(this);
+    if (it == Watches().end()) return;
+#if defined(_WIN32)
+    DirWatch& w = it->second;
+    if (w.pending && w.handle != INVALID_HANDLE_VALUE) {
+        // Cancel the read and wait until the kernel is finished with the OVERLAPPED and the
+        // buffer before either is freed. bWait=TRUE returns once the cancelled read completes.
+        CancelIoEx(w.handle, &w.ov);
+        DWORD got = 0;
+        (void)GetOverlappedResult(w.handle, &w.ov, &got, TRUE);
+        w.pending = false;
+    }
+    if (w.ov.hEvent) CloseHandle(w.ov.hEvent);
+    if (it->second.handle != INVALID_HANDLE_VALUE) CloseHandle(it->second.handle);
+#else
+    if (it->second.fd >= 0) ::close(it->second.fd);
+#endif
+    Watches().erase(it);
 }
 
 } // namespace okay

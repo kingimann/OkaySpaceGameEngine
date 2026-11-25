@@ -24,6 +24,7 @@ class Component;
 struct ComponentTypeInfo {
     std::string name;
     std::string recordName;
+    std::string description;              ///< one plain sentence for the top of the component in the Inspector; empty = none
     std::string category;                 ///< "Rendering", "Physics 2D", ... for an Add Component menu
     std::type_index type{typeid(void)};   ///< the exact dynamic type
     /// The pseudo component "GameObject": its properties are the object's own (name,
@@ -169,6 +170,12 @@ public:
 /// from several threads: the work runs once. Lookups call it themselves the first
 /// time, so calling it at startup is optional but makes the cost predictable.
 void RegisterBuiltinProperties();
+
+/// A module hands over the function that registers its inspector fields. The function is
+/// remembered and called again every time the property table is rebuilt. It is skipped
+/// when `module` is not empty and that module is off. Registering the same function twice
+/// keeps one copy.
+void AddPropertyContributor(const char* module, void (*fn)());
 
 namespace detail {
 /// Defined in BuiltinProperties.cpp: the table of built-in registrations.

@@ -50,11 +50,19 @@ target_link_libraries(okay_imgui PUBLIC ${OKAY_SDL_LIB})
 target_compile_options(okay_imgui PRIVATE -w) # silence third-party warnings
 
 add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
+    BuildStamp.cpp                                                     # __DATE__ " " __TIME__ for the crash handler, out of main.cpp so ccache can reuse main.cpp
     UIGalleryWindow.cpp                                                # the UI Gallery window (search every UI part, preview it, add it)
     AnimatorWindow.cpp                                                 # the Animator window (state-machine graph)
     TimelineWindow.cpp                                                 # the Timeline window (cutscene sequences)
     NavigationWindow.cpp                                               # the Navigation window (navmesh bake + overlays)
     BuildSettingsWindow.cpp                                            # the Build Settings window: page list + search, Game and Advanced pages, summary, checks, history
+    BuildGame.cpp                                                      # Build Game: export the game, Web / Android / Xbox data, the dedicated server (builder::)
+    Updater.cpp                                                        # the self-updater and runtime fetcher (updater::): check, download with checksums, install
+    ScriptAssist.cpp                                                   # Scripting Reference window; the Script Editor's completion, signatures, docs, C# members, palette
+    ScriptAssistBindings.cpp                                           # Script assist from the engine's binding table: component members, argument hints, docs
+    FindInFiles.cpp                                                    # Find in Files: search every project script, open a hit in the Script Editor
+    AssetManagerWindow.cpp                                             # the Asset Manager window: Marketplace downloads listed by type, imported into the project
+    PluginsWindow.cpp                                                  # editor plugins (OkayScript): editor_* builtins, Plugins menu, Plugin Manager
     DialogueWindow.cpp                                                 # the Dialogue window (dialogue graphs + quests)
     BehaviorTreeWindow.cpp                                             # the Behavior Tree window (NPC AI trees)
     LevelTools.cpp                                                     # foliage brush, terrain layers, decals, cables, measuring tool, orthographic views
@@ -91,16 +99,12 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     LaunchFile.cpp                                                     # open a file with the system's program, in a text editor, or show it in the file manager (no shell; never a program or script)
     ${CMAKE_SOURCE_DIR}/launcher/VersionsManager.cpp                  # the version list reader + download plan (checksums required), shared with the launcher updater
     ProjectUpgrade.cpp ProjectUpgradeUI.cpp                            # the project version question, backup + upgrade, File > Project Upgrade...
-    vendor/TextEditor.cpp                                              # ImGuiColorTextEdit code widget
     VsGraphShot.cpp                                                    # --vs-shot: screenshots of example graphs
     ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp                         # monitor list and display-mode changes (SDL, shared with the player)
     ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                          # open / save / folder dialogs: system dialogs or the built-in browser (model)
     ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp)                       # the built-in browser's ImGui window
 target_compile_definitions(okay-editor PRIVATE ${OKAY_VERSION_DEFINE})
-target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher
-    ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
-# The vendored widget isn't -Wall/-Wextra clean; silence its warnings only.
-set_source_files_properties(vendor/TextEditor.cpp PROPERTIES COMPILE_OPTIONS "-w")
+target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher)
 target_link_libraries(okay-editor PRIVATE okay::engine okay_imgui ${OKAY_SDL_LIB})
 if(WIN32)
     # Embed the OkaySpace app icon so OkayEngine.exe shows a real taskbar /
@@ -131,6 +135,9 @@ if(TARGET okay_ui)
     target_link_libraries(okay-editor PRIVATE okay_ui okay_ui_screens)
     if(TARGET okay_ui_soft)   # the software painter: the editor's window on the own platform backend (OKAY_PLATFORM_BACKEND=own)
         target_link_libraries(okay-editor PRIVATE okay_ui_soft)
+    endif()
+    if(TARGET okay_ui_render)   # OkayUI's own OpenGL renderer for the hosted screens (OKAY_UI_OWN_RENDER=1, off by default; shared/OkayUIFrame.hpp)
+        target_link_libraries(okay-editor PRIVATE okay_ui_render)
     endif()
     target_compile_definitions(okay-editor PRIVATE OKAY_HAVE_OKAYUI=1)
 endif()
@@ -176,9 +183,8 @@ if(OKAY_EDITOR_ON_OKAYUI AND TARGET okay_ui AND TARGET okay_ui_screens)
     target_compile_definitions(okay-editor-okayui PRIVATE ${OKAY_VERSION_DEFINE} OKAY_ON_OKAYUI=1 OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
     target_compile_features(okay-editor-okayui PRIVATE cxx_std_17)
     target_include_directories(okay-editor-okayui BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe ${CMAKE_SOURCE_DIR}/okayui/probe/backends)
-    target_include_directories(okay-editor-okayui PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_CURRENT_SOURCE_DIR}/vendor
+    target_include_directories(okay-editor-okayui PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher
         ${CMAKE_SOURCE_DIR}/okayui/include ${CMAKE_SOURCE_DIR}/okayui/screens ${CMAKE_SOURCE_DIR}/okayui/soft)
-    set_source_files_properties(vendor/TextEditor.cpp PROPERTIES COMPILE_OPTIONS "-w")
     target_link_libraries(okay-editor-okayui PRIVATE okay::engine okay_ui okay_ui_screens okay_ui_soft ${OKAY_SDL_LIB})
     if(OKAY_ENABLE_TEST_HOOKS)
         target_compile_definitions(okay-editor-okayui PRIVATE OKAY_ENABLE_TEST_HOOKS=1)

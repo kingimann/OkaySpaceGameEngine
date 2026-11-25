@@ -23,7 +23,8 @@ struct Br {
     Br(const std::string& s) : d((const unsigned char*)s.data()), n(s.size()) {}
     Br(const unsigned char* p, std::size_t len) : d(p), n(len) {}
 
-    std::size_t Left() const { return n - pos; }
+    // 0 when the cursor is past the end (a reader that set `pos` by hand past `n`), never a wrapped-around huge count.
+    std::size_t Left() const { return pos < n ? n - pos : 0; }
     bool Has(std::uint64_t k) { if (k > (std::uint64_t)Left()) { bad = true; return false; } return true; }
     // True when `count` records of `rec` bytes each lie in the rest of the buffer (no overflow for any 64-bit count).
     bool Fits(std::uint64_t count, std::uint64_t rec) {

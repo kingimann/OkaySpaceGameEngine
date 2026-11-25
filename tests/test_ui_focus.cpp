@@ -11,6 +11,7 @@
 
 #include <cmath>
 #include <string>
+#include <vector>
 
 using namespace okay;
 
@@ -67,6 +68,50 @@ int main() {
         NavigateUI(s);
         CHECK(top->IsFocused());
         CHECK(UIFocus::RingVisible());                  // the pad shows it again
+        ReleaseInput();
+        UIFocus::Reset();
+    }
+
+    {   // A controller reaches a text field: the d-pad highlights it (not editing yet), A starts editing, the d-pad belongs to the
+        // field while it edits, and once editing ends (Enter, Esc, or the console's on-screen keyboard closed) the d-pad moves on.
+        // Before 2026-11-22 an Input Field was not focusable by NavigateUI at all: a player with only a pad could never type a name.
+        Scene s("field");
+        s.physicsEnabled = false;
+        UIButton* top = Button(s, "Top", {20, 20});
+        auto* field = s.CreateGameObject("Name")->AddComponent<UIInputField>();
+        field->position = {20, 80};
+        field->size = {200, 36};
+        CHECK(IsNavFocusable(field->gameObject));
+        NavigateUI(s);
+        CHECK(top->IsFocused() && !field->IsNavFocused());
+        Input::FeedGamepad({0, 0}, 0); Input::FeedGamepad({0, 0}, 1u << 9);   // D-pad down
+        NavigateUI(s);
+        CHECK(field->IsNavFocused() && !top->IsFocused());
+        CHECK(!field->focused);                                                   // highlighted, not editing
+        CHECK(field->CurrentColor().r == field->focusColor.r && field->CurrentColor().g == field->focusColor.g && field->CurrentColor().b == field->focusColor.b);   // drawn as focused
+        Input::FeedGamepad({0, 0}, 0); Input::FeedGamepad({0, 0}, 1u << 0);   // A
+        GameObject* hit = NavigateUI(s);
+        CHECK(hit == field->gameObject && field->focused);                       // A starts editing
+        CHECK(UITextFieldHasKeyboard(s));
+        Input::FeedGamepad({0, 0}, 0); Input::FeedGamepad({0, 0}, 1u << 8);   // D-pad up while editing: stays
+        NavigateUI(s);
+        CHECK(field->focused && field->IsNavFocused() && !top->IsFocused());
+        field->focused = false;                                                   // editing ended (Enter / Esc / keyboard closed)
+        Input::FeedGamepad({0, 0}, 0); Input::FeedGamepad({0, 0}, 1u << 8);
+        NavigateUI(s);
+        CHECK(top->IsFocused() && !field->IsNavFocused());
+        CHECK(SetUIFocus(field->gameObject) && field->IsNavFocused() && !top->IsFocused() && !field->focused);
+        field->enabled = false;
+        CHECK(!IsNavFocusable(field->gameObject));
+        NavigateUI(s);
+        CHECK(!field->IsNavFocused());                                            // a disabled field drops its ring
+        field->enabled = true; field->focusable = false;
+        CHECK(!IsNavFocusable(field->gameObject));
+        // The first focus prefers a button over a field that comes first in reading order.
+        field->focusable = true; field->position = {20, 0}; top->SetFocused(false); field->SetNavFocused(false);
+        Input::FeedGamepad({0, 0}, 0);
+        NavigateUI(s);
+        CHECK(top->IsFocused() && !field->IsNavFocused());
         ReleaseInput();
         UIFocus::Reset();
     }
@@ -131,6 +176,37 @@ int main() {
         CHECK_NEAR(back->focusPadding, th->focusPadding, 0.01f);
         CHECK_NEAR(back->focusColor.r, th->focusColor.r, 0.02f);
         CHECK(back->focusPulse == th->focusPulse);
+    }
+
+    {   // An Input Field's focusable flag is saved in scenes (it was not before 2026-11-22). Old scene text without the flag loads as focusable.
+        Scene s("fsave");
+        s.physicsEnabled = false;
+        auto* off = s.CreateGameObject("Off")->AddComponent<UIInputField>(); off->focusable = false; off->multiline = true;
+        s.CreateGameObject("On")->AddComponent<UIInputField>();
+        const std::string text = SceneSerializer::Serialize(s);
+        Scene loaded("FL");
+        CHECK(SceneSerializer::Deserialize(loaded, text));
+        CHECK(!loaded.Find("Off")->GetComponent<UIInputField>()->focusable);
+        CHECK(loaded.Find("Off")->GetComponent<UIInputField>()->multiline);
+        CHECK(loaded.Find("On")->GetComponent<UIInputField>()->focusable);
+        // The field is written only when off: the default field's line is the pre-change text, the off one has exactly one more
+        // trailing number (a 0). Count the numbers on each line (no text has spaces here), so a value that happens to end in
+        // "1 0" cannot be mistaken for the flag. Old scenes (no field) are exactly the default line.
+        auto countTokens = [](const std::string& l) { std::size_t n = 0; bool in = false; for (char c : l) { if (c == ' ') in = false; else if (!in) { in = true; ++n; } } return n; };
+        std::vector<std::string> lines; { std::size_t pos = 0; while (pos < text.size()) { std::size_t e = text.find('\n', pos); if (e == std::string::npos) e = text.size(); lines.push_back(text.substr(pos, e - pos)); pos = e + 1; } }
+        int inputLines = 0; std::size_t minTok = 0, maxTok = 0;
+        for (const auto& l : lines) if (l.find("  uiinput ") == 0) { ++inputLines; const std::size_t t = countTokens(l); if (minTok == 0 || t < minTok) minTok = t; if (t > maxTok) maxTok = t; }
+        CHECK(inputLines == 2);
+        CHECK(maxTok == minTok + 1);   // exactly one extra number on the off field, none on the default field
+        std::string old;   // the same scene text as an older build wrote it: the flag removed from the off field
+        for (std::string l : lines) {
+            if (l.find("  uiinput ") == 0 && countTokens(l) == maxTok) { CHECK(l.compare(l.size() - 2, 2, " 0") == 0); l.erase(l.find_last_of(' ')); }
+            old += l + "\n";
+        }
+        Scene oldLoaded("OL");
+        CHECK(SceneSerializer::Deserialize(oldLoaded, old));
+        CHECK(oldLoaded.Find("Off")->GetComponent<UIInputField>()->multiline);
+        CHECK(oldLoaded.Find("Off")->GetComponent<UIInputField>()->focusable);   // default for a scene saved before the flag existed
     }
 
     {   // Text script and visual script set focus, show the ring, and scroll the widget into view.

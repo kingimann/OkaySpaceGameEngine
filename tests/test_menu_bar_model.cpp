@@ -28,7 +28,7 @@ std::vector<State> States() {
     std::vector<State> v;
     State a; v.push_back(a);                                   // a fresh editor
     State b; b.selectedCount = 1; b.objectCount = 5; b.canUndo = true; b.undoName = "Move"; b.clipboardHasObject = true;
-    b.scenePath = "Assets/Scenes/Level1.okayscene"; b.recentCount = 3; b.assimp = true; v.push_back(b);
+    b.scenePath = "Assets/Scenes/Level1.okayscene"; b.recentCount = 3; v.push_back(b);
     State c = b; c.selectedCount = 4; c.canRedo = true; c.redoName = "Delete"; c.isolating = true; v.push_back(c);
     State d = b; d.playing = true; d.canUndo = false; v.push_back(d);
     State e = b; e.inPrefabMode = true; v.push_back(e);
@@ -177,9 +177,7 @@ int main() {
         CHECK(FindId(FileMenu(State{}), "file.save")->tip.find("hasn't been saved yet") != std::string::npos);
         State saved; saved.scenePath = "Assets/Scenes/A.okayscene";
         CHECK(FindId(FileMenu(saved), "file.save")->tip == "Save this scene: Assets/Scenes/A.okayscene");
-        CHECK(FindId(FileMenu(State{}), "file.import")->tip.find("DAE") == std::string::npos);
-        State asm_; asm_.assimp = true;
-        CHECK(FindId(FileMenu(asm_), "file.import")->tip.find("DAE") != std::string::npos);
+        CHECK(FindId(FileMenu(State{}), "file.import")->tip.find("DAE") != std::string::npos);   // every build reads them (own readers)
     }
 
     {   // Edit: undo / redo, clipboard, select, preferences. Labels name the step; plural forms; reasons.
@@ -361,9 +359,15 @@ int main() {
         const auto menu = oked::uimenu::UIMenu(screens);
         int groups = 0;
         for (const Entry& e : menu) groups += e.kind == Kind::Submenu;
-        CHECK(groups == 8);                                   // Basics, Input, Layout, Game, Menus & Screens, Data & Lists, Windows & Pop-ups, Ready-made Pieces
-        CHECK(menu.back().id == "ui.browse" && menu.back().label == "Browse All UI...");
-        CHECK(menu.front().label == "Basics" && menu.front().children.front().label == "Text");   // the common things come first
+        CHECK(groups == 3);                                   // Game HUD, Menus & Screens, More
+        CHECK(menu.size() <= 12);                             // owner 2026-11-21: a short flat list, at most 12 entries at the top
+        CHECK(menu.size() == 12);
+        { std::vector<std::string> top; for (const Entry& e : menu) top.push_back(e.label);   // the order is stable
+          const std::vector<std::string> want = {"Text", "Image", "Button", "Panel", "Text Field", "Slider", "Toggle", "Dropdown", "Scroll Area", "Game HUD", "Menus & Screens", "More"};
+          CHECK(top == want); }
+        for (const Entry& e : menu) CHECK(e.kind == Kind::Submenu || e.kind == Kind::Item);   // no separators or helper rows at the top
+        CHECK(menu.back().id == "ui.g.more" && menu.back().children.back().id == "ui.browse");   // the Gallery is the last thing in More
+        CHECK(menu.front().label == "Text");   // the common things come first, flat
         CHECK(LabelsUniquePerLevel(menu));
         std::set<std::string> ids; std::set<std::string> labels; int items = 0;
         Walk(menu, [&](const Entry& e, int) {
@@ -375,16 +379,18 @@ int main() {
             if (e.kind == Kind::Item) { ++items; CHECK(labels.insert(e.label).second); }   // no label twice anywhere in the menu
         });
         CHECK(items >= 100);
-        // The old menu's items all have a home.
-        for (const auto& l : oked::uimenu::LegacyItems()) CHECK(ids.count(l.id) == 1);
+        // The old menu's items all have a home: in the menu, or on the removed list (the editor still runs those ids, the Gallery adds them).
+        std::set<std::string> removed; for (const char* r : oked::uimenu::RemovedFromMenu()) { removed.insert(r); CHECK(ids.count(r) == 0); }
+        for (const auto& l : oked::uimenu::LegacyItems()) CHECK(ids.count(l.id) + removed.count(l.id) == 1);
         // No jargon in the words a beginner reads first.
         for (const Entry& g : menu) {
             for (const char* bad : {"Canvas", "Raw Image", "Masked", "Flex", "Layout Group", "Safe Area"}) CHECK(g.label.find(bad) == std::string::npos);
+            CHECK(g.id.rfind("ui.", 0) == 0);
         }
         // Every id is run by the editor (a dead click is a bug): ui.scr.* ids are run by one prefix rule, the rest by an exact id.
         const std::string src = EditorSources();
         if (src.empty()) std::cout << "  (editor sources not found: UI menu wiring check skipped)\n";
-        else for (const std::string& id : ids) {
+        else for (const std::string& id : [&] { std::set<std::string> a = ids; a.insert(removed.begin(), removed.end()); return a; }()) {
             if (id.rfind("ui.g.", 0) == 0 || id.rfind("ui.scr.", 0) == 0) continue;
             const bool wired = src.find("id == \"" + id + "\"") != std::string::npos || (id.rfind("ui.o.", 0) == 0 && src.find("id.rfind(\"ui.o.\"") != std::string::npos)
                             || (id.rfind("ui.w3d.", 0) == 0 && src.find("id.rfind(\"ui.w3d.\"") != std::string::npos);

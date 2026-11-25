@@ -1,16 +1,16 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// ModelData — the seam between the engine and any third-party model importer.
+// ModelData — the seam between the engine and its model readers.
 //
 //   * ImportedModel is OUR result type (nodes, mesh parts, materials, skeleton
-//     weights, animation clips). No Assimp (or other library) type appears here.
-//   * ImportModelData() is the single entry point that picks a backend for a
-//     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
+//     weights, animation clips). No library type appears here.
+//   * ImportModelData() is the single entry point that picks the reader for a
+//     format. Every reader is our own (Assimp was removed on 2026-11-24).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
 //   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF,
-//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML and binary, ZAE, XGL / ZGL, Irrlicht scene, NFF, Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS / MOT) are
-//     always compiled in. Which backend a format uses is a per-format switch
-//     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
+//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML and binary, ZAE, XGL / ZGL, Irrlicht scene, NFF, Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, OpenGEX, Quake 1 / Half-Life 1 MDL, Quake III BSP, glTF 1.0, PMX, LWS / MOT) are
+//     always compiled in. Each format after PLY has a switch (OKAY_OWN_<FMT>, CMake and environment, ON by
+//     default; SetImportBackend in code); a format switched off is not read.
 //
 // See docs/content/model_import.md.
 // ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ struct ImportedModel {
     std::vector<ImportedPart>     parts;
     std::vector<ImportedMaterial> materials;
     std::vector<ImportedClip>     clips;
-    std::string backend;            ///< "own" or "assimp" — who produced this
+    std::string backend;            ///< "own" — who produced this (every reader is ours)
     /// Parts of the file the reader did not read (or read only partly), one line each.
     /// Our own readers fill this instead of dropping content silently; ImportModelData
     /// also logs each line as a warning. Empty = everything in the file was read.
@@ -126,9 +126,8 @@ bool ReadStlBuffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// smooth normals are generated.
 bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
 /// True when `path` is a PLY whose header declares `element vertex` more than once.
-/// Our reader rejects that file. Assimp still loads it, and the two blocks' normals
-/// and UVs no longer line up with positions, so the import seam refuses it before
-/// either backend runs. A missing file, or a PLY with one vertex element, is false.
+/// Our reader rejects that file (the two blocks' normals and UVs would not line up
+/// with positions), and the import seam refuses it before any reader runs. A missing file, or a PLY with one vertex element, is false.
 bool PlyFileDeclaresDuplicateVertex(const std::string& path);
 
 /// COLLADA (.dae) 1.4 / 1.5. Reads geometry (triangles, polylist, polygons; fan-triangulated,
@@ -165,7 +164,10 @@ bool ReadOffBuffer(const std::string& text, ImportedModel& out, std::string* err
 /// SMD (Valve Studiomdl Data, text): the bone list as nodes under a root that turns Z-up into Y-up, triangles as one
 /// skinned part per material (up to four bone weights per vertex, vertices welded, v flipped), the bind pose from the
 /// first frame and, when the file has several frames, one clip ("animation", 30 frames per second assumed). Euler
-/// angles follow Valve's convention. Vertex animation (flex) sections are not read (reported in `out.notes`).
+/// angles follow Valve's convention. Vertex animation (flex) sections of a file with triangles are not read (reported in
+/// `out.notes`). A file with no triangles but a vertexanimation section (a .vta) gives its first frame as the base mesh: the
+/// vertices of that frame, in index order, are the corners of the reference triangles, three per triangle, rigid on the root;
+/// later frames (the flex shapes) are counted in `out.notes`, not read.
 /// `baseDir` ends with a slash or is empty (it prefixes the material names, which are the texture files).
 bool ReadSmdBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 /// MD5 (id Tech 4 / Doom 3): `meshText` is an md5mesh, `animText` an md5anim (either may be empty, not both). The joints
@@ -213,7 +215,7 @@ bool ReadMd3Buffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// Irrlicht mesh (.irrmesh, XML; UTF-8 or UTF-16 with a byte order mark): one part per `<buffer>` (vertices of type
 /// standard, 2tcoords or tangents; triangle indices), with the buffer's material: diffuse and emissive colour,
 /// shininess, the first texture, and the second texture as the normal map for normalmap / parallaxmap types. Texture
-/// coordinates, coordinates and winding as written (Irrlicht is left-handed; Assimp keeps them too); no root rotation.
+/// coordinates, coordinates and winding as written (Irrlicht is left-handed); no root rotation.
 /// Second texture coordinates, tangents, vertex colours, lightmaps and material flags are not read (reported in
 /// `out.notes`). `baseDir` ends with a slash or is empty (it prefixes relative texture paths). The Irrlicht scene
 /// format (.irr) is not read.
@@ -257,12 +259,19 @@ bool ReadOgreXmlBuffer(const std::string& text, const std::string& baseDir, Impo
 /// keyframe's translate, rotate and scale are relative to the bone's bind pose (position = bind + translate, rotation = bind *
 /// rotate, scale = bind * scale). No parts. Duplicate bone ids or names, an unknown parent and parent loops are refused.
 bool ReadOgreSkeletonXml(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+/// OGRE binary skeleton (.skeleton, little endian, serializer v1.10 and v1.80): the same nodes, bind pose and clips as
+/// ReadOgreSkeletonXml gives for the XML form of the same skeleton (bones by handle, parents, animations of tracks of keyframes,
+/// each relative to the bind pose; a bone's or keyframe's scale where the chunk holds one). Blend mode, additive base poses and
+/// linked skeletons are reported in `out.notes`, not applied. Big-endian files are refused.
+bool ReadOgreSkeletonBinary(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
 /// OGRE binary mesh (.mesh, little endian, serializer v1.8 and later): the same parts, materials and notes as the XML reader
 /// gives for the XML form of the same mesh (position, normal and the first texture coordinate set of 32-bit float vertex
 /// elements; triangle lists, strips and fans). Levels of detail, edge lists, poses and animations are skipped (reported in
 /// `out.notes`); big-endian files are refused. With `skeletonXml` (the text of the .skeleton.xml the mesh links to;
 /// ReadOgreBinaryFile loads `<link name>.xml` next to the mesh) the 0x4100 / 0x7000 bone assignments skin the parts exactly as
-/// ReadOgreXmlBuffer does. The binary .skeleton is not read: without the XML skeleton the mesh stays rigid, with a note.
+/// ReadOgreXmlBuffer does. `skeletonXml` may also hold a binary .skeleton (told apart by its first bytes). The file readers find
+/// the binary `<link name>` next to the mesh (on by default; OKAY_OWN_OGRE_SKELBIN=0 switches that off) when there is no
+/// `<link name>.xml`; without a skeleton the mesh stays rigid, with a note.
 bool ReadOgreBinaryBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr,
                           const std::vector<std::string>* materialScripts = nullptr, const std::string* skeletonXml = nullptr);
 /// XGL (.xgl, XML) and ZGL (.zgl, the same text as one zlib stream; told apart by the zlib header): one part per (mesh,
@@ -353,6 +362,12 @@ bool ReadOffFile(const std::string& path, ImportedModel& out, std::string* err =
 bool ReadSmdFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 /// `path` is an .md5mesh (the .md5anim with the same name next to it is read too when it exists) or an .md5anim alone.
 bool ReadMd5File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// Doom 3 camera path (.md5camera, MD5Version 10 text): a root node (Z up to Y up) with one "camera" node, and one clip
+/// "camera" with a position and rotation key per frame at the file's frameRate. At each cut the frame before it is held up to
+/// just before the cut, so the camera jumps. The field of view is noted in `out.notes` (there is no camera lens in the model
+/// data). No mesh. Written from the public description of the format (Md5CameraReader.cpp).
+bool ReadMd5CameraBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+bool ReadMd5CameraFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadMs3dFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadAseFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadBlendFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
@@ -372,6 +387,12 @@ bool ReadNffFile(const std::string& path, ImportedModel& out, std::string* err =
 bool ReadIqmFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadCobFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadNdoFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// Silo models (`.sib`, Nevercenter), worked out from the one sample file (no public description exists): shapes (positions,
+/// n-gon faces, texture coordinates per corner, a material per face run), materials (diffuse colour, texture file inside the
+/// model's folder) and instances (copies of a shape in their own frame). Lights, groups, mirrors and texture previews are not
+/// read (reported in `out.notes`). See docs/content/model_readers.md (section SIB) for what is an assumption.
+bool ReadSibFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadSibBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 bool ReadTerragenFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadMdcFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadHmpFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -382,20 +403,53 @@ bool ReadQ3dBuffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// Raw triangle text files (.raw): nine numbers per triangle, non-numeric lines name groups.
 bool ReadRawFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadRawBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
-/// True when Assimp 5.4.3's RAW importer would build a broken node list for this file (two or more groups with triangles, which
-/// crashed the import), or the file is one the check does not model (UTF-16, very long lines). The import seam then reads the
-/// file with our RAW reader instead of handing it to Assimp. Errs on the side of true.
-bool RawFileUnsafeForAssimp(const std::string& path);
 bool ReadPmxFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 /// `path` is a .lws scene or a .mot motion file.
 bool ReadLwsFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);
 
+/// glTF 1.0 (`.gltf` with asset.version 1.x, or the binary KHR_binary_glTF form): the default scene's node tree (matrix or
+/// translation / rotation / scale per node, under one root node "glTF"), one part per triangle primitive (triangles, strips
+/// and fans; POSITION, NORMAL, TEXCOORD_0, indices), one material per glTF material (diffuse colour or texture, emission,
+/// shininess, from `values` or KHR_materials_common). Buffers may be the binary body, base64 data URIs or files inside the
+/// model's folder. Skins, animations, cameras, techniques and embedded images are reported in `out.notes`, not read.
+/// `baseDir` ends with a slash or is empty (it prefixes buffer and image file names). glTF 2.0 is read by Gltf.hpp.
+bool ReadGltf1Buffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+bool ReadGltf1File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// True for the first bytes of a binary glTF 1.0 file ("glTF" then version 1). A JSON .gltf is told by its asset.version.
+bool IsGltf1(const std::string& bytesOrPrefix);
+/// True when the file at `path` is glTF 1.0: a binary version-1 header, or JSON whose asset.version starts with "1" (or,
+/// with no version, whose meshes / nodes / accessors are objects keyed by id). Reads and parses the file.
+bool GltfFileIsVersion1(const std::string& path);
+
+/// OpenGEX (.ogex, Open Game Engine Exchange, written in OpenDDL text; UTF-8 or UTF-16 with a byte order mark): the node tree
+/// (Node, BoneNode, GeometryNode, CameraNode, LightNode; Transform, Translation, Rotation and Scale in file order, a Transform
+/// marked `object` baked into that node's geometry), GeometryObjects as one part per IndexArray (triangle, quad and triangle strip
+/// meshes, position, normal and the first texture coordinate set as written, winding from the `front` property), materials (diffuse,
+/// emission, opacity, specular power, diffuse / normal / specular textures that lie inside `baseDir`), skins (the four strongest
+/// weights per vertex, the skin transform folded into the inverse bind matrices) and Animation tracks as one clip per clip index
+/// (sampled at the union of a node's key times). Metric distance scales and Metric up turns the root node. Cameras, lights,
+/// vertex colours, tangents, morph targets, level-of-detail meshes and curve tangents are not read (reported in `out.notes`).
+/// The text parser is bounded (structures, nesting depth, values, string bytes). `baseDir` ends with a slash or is empty.
+bool ReadOgexBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+bool ReadOgexFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// MDL (.mdl), two of the formats that use the extension: the Quake 1 model ("IDPO", version 6: the first frame of the vertex
+/// animation as one static part, texture coordinates with the seam rule, smooth normals, winding reversed, Z-up turned into Y-up
+/// on the root) and the Half-Life 1 studio model ("IDST", version 10: the bone tree as nodes, the first sub-model of every body
+/// part as skinned parts rigidly bound to their bones, triangle strips and fans, the texture table as materials, and each
+/// sequence stored in the file as one clip from the run-length coded bone values). The pictures embedded in either format are
+/// not extracted (the materials carry the names only). The 3D GameStudio formats (MDL3, MDL4, MDL5, MDL7), Half-Life 2 models
+/// and the Half-Life sequence group files are refused with a message that names them. `baseDir` ends with a slash or is empty.
+bool ReadMdlBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+bool ReadMdlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// Quake III Arena maps (`.bsp` version 46, or a `.pk3` zip holding maps/<name>.bsp): the render geometry of every model, one part per
+/// (model, texture); polygon and mesh faces by their mesh vertices, patches tessellated; lightmaps, entities, brushes are not read.
+bool ReadQ3bspFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadQ3bspBuffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
 // ---- Backend selection (the seam) ------------------------------------------
 
 enum class ImportBackend {
     Default,   ///< the format's default (see docs/content/model_import.md)
-    Own,       ///< our reader; the formats listed at the top of this file have one (HasOwnReader tells)
-    Assimp     ///< Assimp; only when AssimpAvailable()
+    Own        ///< our reader; the formats listed at the top of this file have one (HasOwnReader tells)
 };
 
 /// True when `ext` (".stl", any case) has one of our own readers.
@@ -409,7 +463,7 @@ bool HasOwnReader(const std::string& ext);
 /// reader (nothing to switch). Not meant to be flipped while another thread imports.
 bool SetImportBackend(const std::string& ext, ImportBackend which);
 /// The backend a read of `ext` will actually use right now, after defaults and
-/// fallbacks: Own, Assimp, or Default when no backend reads that format.
+/// switches: Own, or Default when no reader reads that format (none, or switched off).
 ImportBackend EffectiveImportBackend(const std::string& ext);
 
 /// Runs one reader step and turns a thrown std::bad_alloc, std::length_error or any other std::exception into a refusal
@@ -417,7 +471,7 @@ ImportBackend EffectiveImportBackend(const std::string& ext);
 /// own reader in it; it is public so a test can check it with a reader that throws.
 bool RunReaderGuarded(const std::function<bool()>& read, std::string& err);
 
-/// The single entry point for every Assimp / own-reader read. Reads `path` with
+/// The single entry point for every model reader read. Reads `path` with
 /// the chosen backend (`which` = Default: per-format switch). `flatten` is
 /// the legacy "one static mesh" mode: node transforms are baked into the
 /// vertices and no skins or clips are returned. Returns false with `err` set when

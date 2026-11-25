@@ -7,6 +7,8 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 ## 5. Animation & IK
 
 ### 5.1 Animator and state machines
+- **System:** Animation - Plays and blends animation clips with a state machine, shares humanoid animations between models, and gives scripts control.
+  Home: `engine/include/okay/Animation/`, `engine/include/okay/Components/Animator.hpp`. Entry: `engine/include/okay/Components/Animator.hpp`. Also called: Animator, AnimStateMachine, ModelAnimator, animation clips, retargeting.
 - **What:** The Animator is a state machine: states name a clip or a blend tree, transitions fire on parameters, clip end or exit time, layers play on part of the skeleton. The same machine plays through an imported model's Model Animator or the blocky Character's own clips.
 - **Parts:**
   - 5.1.1 States, transitions, conditions - `Components/AnimStateMachine` - OnClipEnd, Float >/<, Bool, Trigger, Always, Int ==/!=; extra conditions all must pass; exit time, Any State, interruption modes, priority, mute, Start at, Keep phase
@@ -30,10 +32,11 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "add an attack layer on the upper body"; "why does the hit state not interrupt Walk"
 
 ### 5.2 Clips and curves
+- **System:** Animation
 - **What:** The ways animation data is authored and stored: text `.okayanim` clips of per-bone Euler keys for the blocky Character, track-per-property clips for any object and for imported nodes, one-click presets, named events, the Animation tab with dope sheet, curves and onion skin, and recording a live pose to a clip.
 - **Parts:**
   - 5.2.1 Character clips (`.okayanim`) - `Components/AnimClip` - clip/key/bone text format, root track, loop, once, override, easing words, LoadClips, PlayClip, clipIdle/clipWalk bindings
-  - 5.2.2 Track clips and curves - `Animation/AnimationClip`, `Animation/AnimationCurve` - one curve per property, smooth or linear, keyframe reduction, Reverse, cubic tangents
+  - 5.2.2 Track clips and curves - `Animation/AnimationClip`, `Animation/AnimationCurve` - one curve per property, smooth or linear, keyframe reduction, Reverse, cubic tangents; linear quaternion rotation keys play back as shortest-path slerp (glTF LINEAR) and reduce by angle (`anim_quat_slerp`); smooth rotation keys still use per-component cubic + renormalise (uneven angular speed on big turns, sign flips between keys not fixed)
   - 5.2.3 Object Animator component - `Components/Animator` - plays an AnimationClip on a Transform (position, rotation, scale tracks), events
   - 5.2.4 One-click presets - `Animation/ClipPresets` - Bob, Hover, Spin, Spin 2D, Pulse, Shake, Sway, Bounce, Pop In, Slide In
   - 5.2.5 Animation events - `Components/AnimClip`, `Components/ModelAnimator` - named markers; reach OnAnimationEvent, `anim_event()`, visual-script On Anim Event
@@ -53,6 +56,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "add a ping-pong loop mode to clips"; "record a pose while the game is running"
 
 ### 5.3 Model clip player and locomotion
+- **System:** Animation
 - **What:** Stride matching, idle fallback, strafe and backpedal: the Model Animator on an imported model holds all its clips, crossfades between them and switches idle, walk, run, jump, fall, land and stance clips from how the body really moves; slots with no clip fall back to the built-in animation.
 - **Parts:**
   - 5.3.1 Model Animator - `Components/ModelAnimator`, `Components/ModelAnimatorPose` - clip library per node, blend time, binds each node to its Transform once, samples straight into transforms
@@ -67,13 +71,14 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Docs:** `docs/gameplay/animation.md` (Imported model animations, Mixed animation, Air states, Crouch and prone, Which components do I edit)
 - **Tests:** `mixamo_locomotion`, `strafe_blend`, `clip_graph`, `anim_playback`, `imported_glitches`, `rig_sweep`, `footik_drift`
 - **Status:** Works - mixamo_locomotion (580 lines), strafe_blend and clip_graph cover slots, stride matching and strafe blends; strafe clips landed in #537
-- **Open:** in flight in #554 (Grok): the slot editor under Model Animator > Locomotion (Fill empty slots from names, Use, Preview) and its docs; "two components named Animator": confirmed in main.cpp, the Animator state machine and the keyframe Animator inspectors both use the header "Animator"
+- **Open:** in flight in #554 (Grok): the slot editor under Model Animator > Locomotion (Fill empty slots from names, Use, Preview) and its docs; "two components named Animator": fixed 2026-11-22 (#422 finding 8): the keyframe clip player (class `Animator`, scene token `animator`, both unchanged) is shown as "Clip Player" in the Inspector, Add Component and the timeline panel; the state machine keeps "Animator"; each visual-script component id is checked where its nodes look at run time and its fix-it adds what makes the node work: the "Animator" API nodes get a state graph (on the object or under it), the Anim* nodes find one on the object, a child or a parent, and Play Clip asks for a Character or a Model Animator and its button adds a Character, which plays its built-in animations at once (`editor/AnimComponentNames.hpp`, `anim_component_names` test; the button was wrong before this: it added the clip player, then for a while the state graph, neither of which Play Clip uses)
 - **Related:** 5.1, 5.4, 4.2, 3.7
 - **Words:** Model Animator, ModelAnimator, locomotion, idle fallback, idle walk run, stride match, strafe, backpedal, Mixamo clips, crossfade, blend time, slots, Fix animations
 - **Seen as:** walking animation feels off, feet slide or the wrong speed; walk-only file has no idle; the model stays upright while the collider crouches; jump plays when stepping off a curb; imported character is in a T-pose
 - **Ask me like:** "fill the empty slots from clip names again"; "the run clip plays too slowly at 8 m/s"
 
 ### 5.4 Humanoid retarget and library
+- **System:** Animation
 - **What:** The engine's own humanoid animation (a 15-bone skeleton with procedural gait, stances, gestures and emotions) and the machinery that lets it drive any imported humanoid: a shared bone-name mapper, the Humanoid Retarget component, baked default clips and the default Animator graph.
 - **Parts:**
   - 5.4.1 Humanoid bone mapper - `Animation/HumanoidBones` - MapHumanoidBones for Mixamo, UE mannequin, Rigify, VRoid, plain names; checks the skeleton's shape so a dog or robot arm is rejected; helper bones (ik_, twist, fingers) never match
@@ -96,6 +101,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "map a Blender rig's fingers too"; "make the built-in walk less bouncy"; "the character walking is basically running"
 
 ### 5.5 Root motion and skinning
+- **System:** Animation
 - **What:** Letting the animation's root bone move the character, and deforming a rigged mesh with its bones.
 - **Parts:**
   - 5.5.1 RootMotion component - `Components/RootMotion` - reads the root bone's travel, moves the object, re-centres the bone, explicit physics or animation mode
@@ -115,6 +121,8 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "apply root motion only on the ground plane"; "switch the arms to dual quaternion skinning"
 
 ### 5.6 Foot, limb and chain IK
+- **System:** Inverse Kinematics - Bends bones so feet stand on the ground, hands reach and hold things, and heads look at targets.
+  Home: `engine/include/okay/Components/FootIK.hpp`, `engine/include/okay/Math/IKMath.hpp`. Entry: `engine/include/okay/Components/LimbIK.hpp`. Also called: IK, FootIK, LimbIK, ChainIK, LookAtIK, FullBodyIK, TwoBoneIK. Fix: The IK maths moves from Math/ to Animation/ (architecture.md).
 - **What:** Solvers that bend bones so a foot, hand or chain tip reaches a goal, run after all animation each frame: feet planted on slopes and steps, one arm or leg reaching a target, and long chains (tails, tentacles, spider legs).
 - **Parts:**
   - 5.6.1 Foot IK - `Components/FootIK` - raycast per foot, two-bone leg solve, Adjust Pelvis, Plant Down, Align To Slope, Toe & Heel rays, foot lock, smoothing; wires itself on the blocky Character
@@ -137,6 +145,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "plant the feet on stairs without popping"; "give the spider legs a joint limit"
 
 ### 5.7 Look-at, aim and full-body IK
+- **System:** Inverse Kinematics
 - **What:** Head tracking, single-bone aiming, whole-humanoid reach with four effectors, goal objects, camera-driven aim offsets with recoil, and the script calls and per-state weights that control them.
 - **Parts:**
   - 5.7.1 Look-At IK - `Components/LookAtIK` - spine, neck, head chain with shares, Clamp, eye bones, smoothing, Max Distance, Auto-Detect Chain, forward axis read from the rest pose
@@ -159,6 +168,8 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "make the guard look at the player only within 10 m"; "add recoil to the pistol"
 
 ### 5.8 Ragdolls and hit reactions
+- **System:** Ragdolls - Makes a character go limp when it dies or flinch when it is hit.
+  Home: `engine/include/okay/Components/Ragdoll.hpp`. Entry: `engine/include/okay/Components/Ragdoll.hpp`. Also called: Ragdoll, ActiveRagdoll, hit reactions.
 - **What:** A humanoid goes limp on death or flinches on a hit that does not kill it. The ragdoll is a particle simulation over the 15 humanoid bones, not rigid bodies and joints.
 - **Parts:**
   - 5.8.1 Verlet ragdoll - `Components/Ragdoll` - particles per bone plus tips, distance constraints, torso brace, elbow and knee minimum reach, ray collisions against 3D colliders and terrain, 60 Hz after animation and IK (order 900)
@@ -178,6 +189,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "add a heavy ragdoll preset"; "keep the head from clipping the ground"
 
 ### 5.9 Object holding
+- **System:** Inverse Kinematics
 - **What:** A character picks an object up and holds it: hands go to the object's grips through Full Body IK, the elbows bend down and out, a heavy load leans the torso and slows the character, and the object follows the chest, a socket or the first-person hands.
 - **Parts:**
   - 5.9.1 Holding component - `Components/ProceduralObjectHolding` - Primary Hand, Holding Style, transition, drop with the character's velocity, hands never stretch (order 90)
@@ -200,6 +212,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "hold a bow with a custom grip"; "merge multiplayer holding"
 
 ### 5.10 Sprite animation
+- **System:** Sprites and Tilemaps
 - **What:** Frame-by-frame animation for 2D sprites: a list of frames or one row of an atlas, named clips, play and loop, with controllers that choose idle, run or jump from movement.
 - **Parts:**
   - 5.10.1 Sprite Animator - `Components/SpriteAnimator` - frames, atlas cells through the SpriteRenderer's uv region, named SpriteClips (idle, run, jump), Play(name), non-looping stops on the last frame
@@ -217,6 +230,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "add animation events to sprite frames"; "flip the sprite clip with the facing"
 
 ### 5.11 Animation script control
+- **System:** Animation
 - **What:** The script-facing side of animation (OkayScript, visual scripts, typed scripts): which animation component a script drives, play and hold a clip, set Animator parameters, change IK weights and targets, swap the character model, capture poses. One implementation serves text scripts, typed scripts and the generated visual-script nodes.
 - **Parts:**
   - 5.11.1 Clip commands - `Components/AnimControl` - finds the animator on the object, then children breadth-first, then parents; play_clip holds until stop_clip; play_clip_once; clip_speed; clip_normalized
@@ -235,6 +249,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "play a wave then return to locomotion from a script"; "set the aim weight from a visual script"
 
 ### 5.12 Built-in action clips
+- **System:** Animation
 - **What:** Death, hits, roll, dive, vault, sit, swim and emotes: a set of baked humanoid action clips plus the states and Any-State transitions that add them to the default Animator. Gameplay displacement stays on the controllers; the clips are visual. A saved graph records which revision of the set it has.
 - **Parts:**
   - 5.12.1 Action framework - `Animation/HumanoidActions` - revision counter (death 1, dive 2, sit 3, hits 4, roll 5, vault 6, swim 7, emotes 8), a deleted state is not put back, Add built-in actions
@@ -257,6 +272,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "add a wave emote"; "replicate the dive to other players"
 
 ### 5.13 Player animation setup
+- **System:** Animation
 - **What:** In flight, not on main: a controller-panel status read-out ("what animation and IK does this player have") and one repeatable step that adds Foot IK, Look-At and the default Animator only where missing, then re-runs the animation fix without touching weights, chains or custom graphs.
 - **Parts:**
   - 5.13.1 Inspect and wire - Animation/PlayerSetup (on branch `grok/anim-integrate` only) - InspectPlayerAnimation and WirePlayerAnimation

@@ -1,5 +1,288 @@
 OkaySpace Game Engine — Changelog
 
+v2.903.9
+  Easy multiplayer and much faster OkayScript
+  - Multiplayer is much easier: add a Network Manager, tick "Networked"
+    on objects, and press Play in two copies of the game to test with
+    two players. Host or join with one node, one script line
+    (net.host_or_join()) or one C++ call. Send named events, see the
+    player list, and get told when players join or leave.
+  - If the host leaves a game on a home network, another player takes
+    over and the game goes on. There is also an optional rollback mode
+    for fighting-style games, an in-game network stats overlay, and big
+    messages now arrive quickly on a bad connection.
+  - Multiplayer security: a player can no longer fake events, split a
+    game in two, or make others store huge amounts of data.
+  - OkayScript scripts run several times faster, and can now reach every
+    engine component and its settings (GetComponent("Light").intensity).
+    Game scripts cannot read or write files or open network connections.
+  - Multiplayer fixes: an object a player owns no longer stutters and
+    jumps on other players' screens, Windows no longer drops the
+    connection on a harmless network error, and the two-player sample
+    scene's camera now shows the game.
+  - OkayScript can do much more: closures, modules (import), unpacking
+    (var [a, b] = list), map literals, generators, classes with
+    inheritance, finally, and text formatting. Scripts get maths, sorting,
+    sets, JSON, time and text-encoding helpers. The okayscript command line
+    can also read and write files; game scripts still cannot.
+  - Model files: the outside Assimp library is gone. Every model format is
+    read by our own code. The one format no longer read is Nendo (.ndo),
+    from a program not sold for about twenty years.
+  - The okay command line works on Windows when a project is inside your
+    user folder (okay vc init, undo and resolve).
+  - Controls: an axial dead zone and per-controller smoothing.
+
+v2.903.8
+  The okay command line, OkayScript on its own, and our own FBX and WAV
+  - New: okay.exe (in the Tools folder), the engine's own command line.
+    Make, open, play and build projects, check scenes and Visual Script
+    graphs, run scripts, find and import assets, and save your work with
+    version control (okay vc save, undo, history). Scenes and prefabs
+    merge and compare as scenes, not as raw text.
+  - OkayScript is now a language of its own. The engine uses the same
+    one, and scripts with many function calls run several times faster.
+    Three small script bugs are fixed (%= on a list item, a switch at the
+    top of a file, and a var line followed by a name).
+  - Model and sound files: older FBX files (versions 6.x and 7.0) now
+    open, and FBX and WAV files are read only by our own code. A damaged
+    FBX file can no longer make the import hang.
+  - Downloads: a download that resumed after a cut and then failed its
+    check now starts again from the beginning instead of failing, and a
+    rare problem with cancelled downloads on Windows is fixed.
+
+v2.903.7
+  Downloads, our own editor windows and more model readers
+  - Downloads and updates: the launcher, editor and player now use one
+    download path, and on Windows they use the built-in Windows web
+    client instead of starting curl for every request. Downloads can
+    resume, be cancelled and stop on a time limit. curl is only used if
+    that fails.
+  - Editor: the Crash Log, Audio Mixer and History windows and the script
+    editor now run on our own UI and text editor only.
+  - Input and windows: more of the old SDL2 library is replaced by our
+    own Windows code.
+  - Model files: 3D GameStudio .mdl (versions 3, 4, 5 and 7) and .hmp
+    terrain files, and Silo .sib files, open with our own readers.
+  - Fixed: a broken or deliberately damaged .mdl file could crash the
+    editor while importing, and a damaged .sib file could use gigabytes
+    of memory. Both are now refused with a clear message.
+
+v2.903.6
+  Bug fixes and more of our own model readers
+  - Fixed all of 2.903.5's known problems:
+    - Jumping: a double jump can no longer jump a third time.
+    - Standing still on a slope no longer slowly slides you downhill.
+    - The project's module list is saved again.
+    - A streamed sound now matches the same sound loaded whole.
+    - The picture import filter setting is read again.
+    - The Visual Script checks cover the On Damaged and On Button
+      Clicked nodes.
+  - Windows: a failed game zip no longer leaves a broken file behind,
+    and changing a texture's import settings takes effect at once
+    (both not yet tried on a Windows PC).
+  - Model files: .vrm, .prj, .ask, .scn, .x3db and .vta files open with
+    our own readers, Doom 3 camera paths (.md5camera) are read, and
+    OGRE characters with a separate skeleton file get their bones.
+  - Behind the scenes: more large editor files split by job (no change
+    in behaviour), and broken links in the internal docs fixed.
+
+v2.903.5
+  One input system, Windows file copy fix, cleanup
+  - Input: one table of actions and one place where key changes are
+    saved, so rebinding a key works the same everywhere. Controller
+    look feels a little different: no second stick dead zone and no
+    look curve.
+  - Windows: copying a file over one that already exists should work
+    now (built for Windows, not yet tried on a Windows PC).
+  - Physics: the 5,000-body example's camera looks at the bodies again.
+  - Behind the scenes: duplicate code removed (mesh hashes, node names,
+    Base64, PNG writer and more), big files split into smaller files by
+    job (no change in behaviour), and a script to build on Windows.
+  - Known problems in this build (being fixed for the next release):
+    jumping and player movement may feel off, a streamed sound may not
+    match the same sound loaded whole, one project setting is not
+    saved, one picture import setting is wrong, and three Visual Script
+    node checks fail.
+
+v2.903.4
+  Release notes, one physics engine, Windows fixes
+  - Launcher, What's New: each release now shows its real notes (before,
+    2.903.2 and 2.903.3 showed only "Release 2.903.x"), and test builds
+    are no longer listed under Earlier releases.
+  - Physics: one physics engine. Our own physics core is the engine's 3D
+    physics; the Classic, Improved and separate Engine choices are gone.
+    Joints, triggers and breakable joints were fixed on the way.
+  - Windows: scenes and prefabs in folders with letters like "ü" open
+    and save; prefabs are saved the same way on every PC; restoring a
+    project after a failed upgrade puts every file back; the Project
+    panel re-checks assets faster.
+  - Visual Script: 34 new friendly nodes for the camera, movement,
+    damage, vehicles, UI and input.
+  - Xbox: keyboard layouts follow the console's language, a splash
+    screen, and the start of microphone support (logic only).
+  - Model files: one shared bad-file test for six model readers, and a
+    fix for IQM models with a very low frame rate.
+  - Behind the scenes: the editor's and the script compilers' biggest
+    files are split into smaller files by job (no change in behaviour),
+    and generated docs are rebuilt automatically.
+
+v2.903.3
+  Our own parts on by default, textures, and fixes
+  - Our own parts are now on by default (Settings > Experimental starts
+    with every box ticked): the OkayUI screens and Inspector, the OkayUI
+    renderer and our own WAV reader. Untick a box to go back; the buttons
+    "All on" and "All off" switch them all. Encryption is unchanged.
+  - Editor: the Inspector no longer draws over the Hierarchy tab when our
+    UI is on, and the lower Inspector sections of an object with many
+    components (for example the Player) answer clicks and typing again
+    (before, only the first 8 sections took the mouse, so the editor
+    looked frozen). A frame slower than a quarter of a second writes a
+    line to okay_editor_perf.log in the Tools folder.
+  - Textures: each texture is one shared asset with its own settings
+    (filter, wrap, mipmaps, compression), correct mipmaps in every
+    renderer, live reload when the file changes, and a texture memory
+    count and budget.
+  - Navigation: Grid Pathfinding is now part of Navigation (one path
+    finder for 2D grids and 3D nav grids). Old scenes load unchanged.
+  - Scripts: OkayScript and typed OkayScript (C#) share one table for
+    the first 20 engine commands, so both behave the same.
+  - Visual Script: right-answer tests for 66 more nodes.
+  - Removed an unused second object store (the ECS World).
+
+v2.903.2
+  Console and ledge grab
+  - In-game console: press the ` key (the key left of 1) in a development
+    build, or start the game with --console or OKAY_CONSOLE=1. Type
+    commands with history and Tab to complete them. Settings you can change
+    while playing: game.speed, r.vsync, debug.show_fps, debug.profile, and
+    prof.save to save a profile. A shipped game keeps the console off.
+  - The editor's Console panel has the same command line.
+  - Ledge grab: the character's hands now go onto the ledge.
+  - Saves: one save system instead of two. Whole-game saves and slot saves
+    share the same files and code, so a save made one way loads the other
+    way, and several save bugs (lost data, a stuck "restoring" state) are
+    fixed.
+  - Controls: rebinding a key in the game's settings now changes it
+    everywhere (actions and action sets share one set of bindings).
+  - Script editor: popups draw over it, line numbers in a frame, the
+    current line outlined, copy and paste with the system clipboard, and
+    typing in other languages (IME).
+  - Xbox: a pending save is written before the console suspends the game,
+    a splash screen, French, German, Swedish/Finnish and Russian keyboards.
+  - Model files: our own readers for glTF 1.0, OpenGEX, Quake/Half-Life
+    MDL and Quake III maps, and our own PNM image reader (off by default
+    in this version; the next version turns them on).
+  - Also in 2.903.1 (missing from its notes):
+    - Xbox: saves and settings are kept, the game saves properly before it
+      is suspended, rumble stops on suspend, pad battery level, the d-pad
+      reaches text fields, on-screen keyboard, and a message box with the
+      reason when the game fails to start.
+    - Try it (off by default): OKAY_PLATFORM_BACKEND=own runs the launcher
+      on our own window and drawing code instead of SDL.
+
+v2.903.1
+  Fixes, custom shaders and a working release
+  - 2.902.0 and 2.903.0 could not become the "latest" download because one
+    part of the release (the Linux game server) failed to build. Fixed, so
+    the updater offers this version.
+  - Custom shaders: write your own surface look in a small .okayshader
+    file and pick Shader > Custom on a material. Works in the software and
+    OpenGL renderers; Direct3D 11 is written but not yet tested on Windows.
+  - Controller: the B button no longer quits the game, unplugging a pad no
+    longer crashes, menus work with a pad only, and rumble stops properly.
+  - Cameras: the camera no longer sinks into basements, other players'
+    copies no longer move your camera, and dolly and fly-camera fixes.
+    Click-to-move can pick colliders and gives up when stuck; dolly carts
+    can move in metres per second, ping-pong and face along the path.
+  - Import: no crash on folders whose names look like model files, the
+    Scene view reloads pictures you change outside the editor, and a failed
+    import says why. Project upgrade writes a report of what changed.
+  - Health, survival stats, stats and NPCs now take damage the same way.
+  - Re-applying a prefab keeps objects you added to it. Localization can
+    import and export JSON with a preview. Spawner has a "Use Pool" box.
+  - Launcher: the Create page lists only your projects, not the backup
+    copies a project upgrade makes.
+
+v2.903.0
+  Interact key and dialogue cameras
+  - One Interact key (E, or X on a controller) for seats, item pickups,
+    "hold to use" prompts, buttons, dialogue and visual-script interact
+    events. Changing the Interact binding changes it for all of them.
+  - First-person lean right is now X instead of E, so E is free for
+    Interact. Old scenes keep the lean key they saved.
+  - Someone who dies while sitting now gets up from the seat.
+  - Dialogue lines can switch to camera shots, and the camera returns when
+    the talk ends.
+  - Fixed: a fast object made of several collider shapes could fall
+    through thin floors, and the same 3D scene could play out slightly
+    differently from one run to the next.
+  - .dds texture files and compressed imported textures now load on the
+    GPU (OpenGL and Direct3D 11), and BC3-compressed colours are correct.
+  - Changing a key in the Controls screen now changes it for the built-in
+    player, shooter, platformer and vehicle controllers and the pause menu
+    too. With the default keys nothing changes.
+  - Fixed: with depth of field on, the sky could turn black when the
+    camera clears to a colour or the sky is off.
+  - Depth of field and ambient occlusion strength now also work in the
+    software renderer.
+  - Particles can land on terrain: Particle System > Collision > "Collide
+    with Terrain".
+  - Fixed: particles with a huge or endless emission rate froze the game;
+    the edge of a raised terrain sloped down to zero; scattered plants
+    ignored "Align to Surface"; a damaged water setting crashed loading;
+    star settings were lost or not reset by the sky looks.
+  - Faster character animation: with several CPU cores, skinning many
+    characters is about 3 times faster. Results are exactly the same.
+  - Try it (off by default): Settings > Experimental > "OkayUI own
+    renderer" draws our own UI screens with our own renderer on OpenGL and
+    Direct3D 11.
+
+v2.902.0
+  Fixes and faster model import
+  - FBX models import faster and use less memory, and every UV set is read.
+  - OGRE models (.mesh.xml) now find their skeleton file and animate.
+  - Fixed: objects switched off under a parent stay off when the parent is
+    switched back on.
+  - Fixed: lights under a switched-off parent now go dark.
+  - Fixed: resizing a terrain no longer stops sculpting from working.
+  - Fixed: animation clips played backwards once now end properly, and
+    particles can be replayed.
+  - Fixed: the editor could crash when closing.
+  - The new collider shapes are sturdier.
+
+v2.901.0
+  Cameras and smoother animation
+  - Camera zones: areas where the camera smoothly changes its view angle,
+    offset and smoothing as the player walks in.
+  - Six one-click camera presets: platformer, top-down, third person, first
+    person, racing and cinematic.
+  - The follow camera starts right on its target, and can no longer break on
+    bad numbers.
+  - Animations turn at an even speed between keyframes (no more uneven or
+    "rubbery" turns, and no wrong-way spins).
+
+v2.900.0
+  Movement, animation and menus
+  - The character controller now stops the same way at any frame rate, and
+    has Simple and Advanced tuning settings.
+  - Fixed: the knee snapped at every step in the walk and run animation.
+  - Inventory items can wear out and be repaired.
+  - GameObject > UI menu is tidier: 12 common items on top, the rest under
+    "More".
+  - New collider shapes: cylinder, cone, convex hull, compound, plane and
+    heightfield in 3D; rotating capsules, polygons and composite in 2D.
+  - Vehicles: street-style controls you can remap, better seat fit, settings
+    in plain words with reset buttons.
+  - Inventory: tools wear out when used; item names fit their slot.
+
+v2.899.0
+  Editor and model fixes
+  - Code editor: new line commands (toggle comment, duplicate line, move
+    lines up and down).
+  - OGRE binary model files (.mesh) now animate with their skeleton.
+  - Behind the scenes: more tests for Ctrl+S saving, Xbox export fixes
+    (still experimental and off by default), and our own picture writer.
+
 v2.898.0
   No more GitHub in the apps
   - The launcher and editor now get updates, the version list, "What's New"

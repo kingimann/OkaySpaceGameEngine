@@ -1,5 +1,6 @@
 // okay::fbx layer 1: inflate + binary / ASCII FBX element tree. See FbxReader.hpp.
 // Written from the public description of the format; no third-party code.
+#include "DecimalToDouble.hpp"
 #include "NumParse.hpp"
 #include "okay/Core/Inflate.hpp"
 #include "okay/Render/FbxReader.hpp"
@@ -11,13 +12,47 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iterator>
+#include <type_traits>
 
 namespace okay {
 namespace fbx {
 
 const Elem* Elem::Find(const char* n) const {
-    for (const Elem& c : children) if (c.name == n) return &c;
+    const std::string_view key(n);
+    for (const Elem& c : children) if (c.name == key) return &c;
     return nullptr;
+}
+
+namespace {
+constexpr std::uint32_t kNone = 0xFFFFFFFFu;
+
+// Appends element `child` to the children of `parent` (parent == kNone: the root), keeping file order.
+struct Linker {
+    std::vector<Elem>& elems; Elem& root;
+    void Link(std::uint32_t parent, std::uint32_t& lastChild, std::uint32_t child) {
+        const std::uint64_t c1 = (std::uint64_t)child + 1;
+        if (lastChild == kNone) { Elem& p = parent == kNone ? root : elems[parent]; p.links_ = (p.links_ & 0xFFFFFFFFull) | (c1 << 32); }
+        else { Elem& l = elems[lastChild]; l.links_ = (l.links_ & ~0xFFFFFFFFull) | c1; }
+        lastChild = child;
+    }
+};
+
+} // namespace
+
+// Turns the indices recorded while parsing into the pointers of the public tree. Run once, after the last element:
+// before that the flat arrays may still move. (Also used by the 6.x rewrite, FbxLegacy.hpp.)
+void LinkTree(Document& d) {
+    Elem* const E = d.elems.data();
+    auto at = [&](std::uint64_t i1) -> const Elem* { return i1 == 0 ? nullptr : E + (i1 - 1); };   // index + 1
+    for (Elem& e : d.elems) {
+        const std::uint64_t l = e.links_;
+        e.props.p = e.props.n ? d.props.data() + e.props.begin_ : nullptr;
+        e.children.first = at(l >> 32);
+        e.next = at(l & 0xFFFFFFFFull);
+    }
+    d.root.children.first = at(d.root.links_ >> 32);
+    d.root.next = nullptr;
 }
 
 // ============================================================================
@@ -27,8 +62,17 @@ const Elem* Elem::Find(const char* n) const {
 // behaviour they always had: the Adler-32 and bytes after the stream are not checked (Options::Lenient).
 bool Inflate(const std::uint8_t* data, std::size_t n, std::vector<std::uint8_t>& out, std::size_t maxOut) {
     std::string why;
-    return okay::inflate::Zlib(data, n, out, okay::inflate::Options::Lenient(maxOut), why);
+    // The caller knows the exact decoded size (the array header says it) and passes it as the cap: allocate it once
+    // instead of growing the buffer by doubling (fewer copies, and no zero-filled slack).
+    return okay::inflate::Zlib(data, n, out, okay::inflate::Options::Lenient(maxOut, maxOut), why);
 }
+namespace {
+/// Inflate into a ByteBuffer (no zero fill of the output first): the same decoder, options and result.
+bool InflateArray(const std::uint8_t* data, std::size_t n, ByteBuffer& out, std::size_t maxOut) {
+    std::string why;
+    return okay::inflate::ZlibInto(data, n, out, okay::inflate::Options::Lenient(maxOut, maxOut), why);
+}
+} // namespace
 
 // ============================================================================
 // Binary FBX
@@ -63,7 +107,7 @@ struct Reader {
                 std::uint32_t len; if (!need(4)) return Fail("short property");
                 std::memcpy(&len, p + pos, 4); pos += 4;
                 if (len > lim->maxStringBytes || !need(len)) return Fail("string runs past its record");
-                out.s.assign((const char*)p + pos, len); pos += len;
+                out.sv = std::string_view((const char*)p + pos, len); pos += len;   // a view, not a copy
                 return true;
             }
             case 'f': case 'd': case 'l': case 'i': case 'b': case 'c': {
@@ -77,29 +121,20 @@ struct Reader {
                 if (raw > lim->maxArrayBytes || arrayBytes + raw > lim->maxArrayBytes) return Fail("arrays exceed the size limit");
                 if (!need(clen)) return Fail("array data runs past its record");
                 const std::uint8_t* src = p + pos;
-                std::vector<std::uint8_t> tmp;
                 if (enc == 0) {
                     if (clen != raw) return Fail("array length mismatch");
                 } else if (enc == 1) {
-                    if (!Inflate(src, clen, tmp, raw) || tmp.size() != raw) return Fail("bad compressed array");
-                    src = tmp.data();
+                    ByteBuffer tmp;
+                    if (!InflateArray(src, clen, tmp, raw) || tmp.size() != raw) return Fail("bad compressed array");
+                    src = tmp.data();   // the vector's buffer does not move when the vector itself is moved below
+                    doc->inflated.push_back(std::move(tmp));
+                    out.own = (std::uint32_t)doc->inflated.size();   // (1 + its index)
                 } else {
                     return Fail("unknown array encoding");
                 }
                 arrayBytes += raw;
-                out.arr.resize(cnt);
-                for (std::uint32_t k = 0; k < cnt; ++k) {
-                    double v;
-                    switch (t) {
-                        case 'd': { double x; std::memcpy(&x, src + (std::size_t)k * 8, 8); v = x; break; }
-                        case 'f': { float x; std::memcpy(&x, src + (std::size_t)k * 4, 4); v = x; break; }
-                        case 'l': { std::int64_t x; std::memcpy(&x, src + (std::size_t)k * 8, 8); v = (double)x; break; }
-                        case 'i': { std::int32_t x; std::memcpy(&x, src + (std::size_t)k * 4, 4); v = x; break; }
-                        case 'c': v = src[k]; break;   // byte array (written by newer SDKs, e.g. thumbnails)
-                        default:  v = src[k] != 0; break;
-                    }
-                    out.arr[k] = v;
-                }
+                // Kept as the file stores it (no conversion): a view into the file, or into the inflated buffer.
+                out.SetArray(t, cnt, src);
                 out.type = 'a';
                 pos += clen;
                 return true;
@@ -108,8 +143,9 @@ struct Reader {
         }
     }
 
-    // Reads one record at `pos`. Returns 1 = element read, 0 = null terminator, -1 = error.
-    int ReadElem(std::size_t& pos, std::size_t parentEnd, Elem& e, std::size_t depth) {
+    // Reads one record at `pos` into a new element of doc->elems (its index in `idx`).
+    // Returns 1 = element read, 0 = null terminator, -1 = error.
+    int ReadElem(std::size_t& pos, std::size_t parentEnd, std::size_t depth, std::uint32_t& idx) {
         if (depth > lim->maxDepth) { Fail("element nesting too deep"); return -1; }
         const bool wide = version >= 7500;
         const std::size_t hdr = wide ? 25 : 13;
@@ -122,29 +158,55 @@ struct Reader {
         if (endOff > parentEnd || endOff < pos + hdr + nameLen) { Fail("record end offset out of range"); return -1; }
         if (++doc->elementCount > lim->maxElements) { Fail("too many elements"); return -1; }
         std::size_t q = pos + hdr;
-        e.name.assign((const char*)p + q, nameLen); q += nameLen;
+        idx = (std::uint32_t)doc->elems.size();
+        doc->elems.emplace_back();
+        doc->elems[idx].name = std::string_view((const char*)p + q, nameLen); q += nameLen;
         if (propLen > endOff - q) { Fail("property list longer than the record"); return -1; }
         if (nProps > propLen) { Fail("more properties than bytes"); return -1; }   // each property takes at least 1 byte
         const std::size_t propEnd = q + (std::size_t)propLen;
-        e.props.reserve((std::size_t)nProps);
+        const std::size_t firstProp = doc->props.size();
         for (std::uint64_t k = 0; k < nProps; ++k) {
-            Prop pr;
-            if (!ReadProp(q, propEnd, pr)) return -1;
-            e.props.push_back(std::move(pr));
+            doc->props.emplace_back();
+            if (!ReadProp(q, propEnd, doc->props.back())) return -1;
         }
         if (q != propEnd) { Fail("property list size mismatch"); return -1; }
+        doc->elems[idx].props.begin_ = (std::uint32_t)firstProp;
+        doc->elems[idx].props.n = (std::uint32_t)nProps;
         q = propEnd;
+        std::uint32_t last = kNone;
+        Linker link{doc->elems, doc->root};
         while (q < endOff) {
-            Elem c;
-            const int r = ReadElem(q, (std::size_t)endOff, c, depth + 1);
+            std::uint32_t c = kNone;
+            const int r = ReadElem(q, (std::size_t)endOff, depth + 1, c);
             if (r < 0) return -1;
             if (r == 0) break;
-            e.children.push_back(std::move(c));
+            link.Link(idx, last, c);
         }
         pos = (std::size_t)endOff;
         return 1;
     }
 };
+
+// Counts the records (and the properties they declare) by walking the record headers only, so the flat arrays can be
+// allocated once at their final size: growing them by doubling copied everything and touched about twice the memory
+// (fresh memory costs time). Damaged or hostile headers just stop the count early: the real parse below reports them.
+void CountRecords(const std::uint8_t* p, std::size_t n, std::uint32_t version, std::size_t pos, std::size_t end, std::size_t depth,
+                  const Limits& lim, std::size_t& elems, std::size_t& props) {
+    const bool wide = version >= 7500;
+    const std::size_t hdr = wide ? 25 : 13;
+    while (pos < end && end - pos >= hdr && depth <= lim.maxDepth && elems <= lim.maxElements) {
+        std::uint64_t endOff = 0, nProps = 0, propLen = 0;
+        if (wide) { std::memcpy(&endOff, p + pos, 8); std::memcpy(&nProps, p + pos + 8, 8); std::memcpy(&propLen, p + pos + 16, 8); }
+        else { std::uint32_t a, b, c; std::memcpy(&a, p + pos, 4); std::memcpy(&b, p + pos + 4, 4); std::memcpy(&c, p + pos + 8, 4); endOff = a; nProps = b; propLen = c; }
+        const std::uint8_t nameLen = p[pos + hdr - 1];
+        if (endOff == 0 && nProps == 0 && propLen == 0 && nameLen == 0) return;   // null record: end of this level
+        if (endOff > end || endOff < pos + hdr + nameLen || propLen > endOff - (pos + hdr + nameLen) || nProps > propLen) return;
+        ++elems; props += (std::size_t)nProps;
+        const std::size_t children = pos + hdr + nameLen + (std::size_t)propLen;
+        if (children < endOff) CountRecords(p, n, version, children, (std::size_t)endOff, depth + 1, lim, elems, props);
+        pos = (std::size_t)endOff;
+    }
+}
 
 } // namespace
 
@@ -157,16 +219,28 @@ bool ParseBinary(const std::uint8_t* data, std::size_t size, Document& out, std:
     std::memcpy(&r.version, data + 23, 4);
     out.version = r.version;
     out.binary = true;
-    if (r.version < 7100 || r.version > 9999) return fail("unsupported FBX version " + std::to_string(r.version));
+    // FBX 6.0 (2006) on: 6.x and 7.0 use the same record layout as 7.1 to 7.4 (32-bit offsets); 7.5 widened them.
+    if (r.version < 6000 || r.version > 9999) return fail(UnsupportedVersionMessage(r.version));
     std::size_t pos = 27;
+    {
+        std::size_t ne = 0, np = 0;
+        CountRecords(data, size, r.version, 27, size, 1, lim, ne, np);
+        out.elems.reserve(std::min(ne, lim.maxElements + 1));
+        out.props.reserve(std::min(np, size / 2));   // a property takes at least 2 bytes
+    }
+    std::uint32_t last = kNone;
+    Linker link{out.elems, out.root};
+    bool ok = true;
     while (pos < size) {
         // The file ends with a null record then a footer; stop at the null record.
-        Elem e;
-        const int rc = r.ReadElem(pos, size, e, 1);
-        if (rc < 0) return fail(r.err);
+        std::uint32_t idx = kNone;
+        const int rc = r.ReadElem(pos, size, 1, idx);
+        if (rc < 0) { ok = false; break; }
         if (rc == 0) break;
-        out.root.children.push_back(std::move(e));
+        link.Link(kNone, last, idx);
     }
+    LinkTree(out);
+    if (!ok) return fail(r.err);
     return true;
 }
 
@@ -174,6 +248,44 @@ bool ParseBinary(const std::uint8_t* data, std::size_t size, Document& out, std:
 // ASCII FBX
 // ============================================================================
 namespace {
+
+// Plain decimal numbers ("12", "-0.5", "1.25e-3", "0.30000000000000004"), converted exactly: the double strtod gives,
+// bit for bit, without strtod (DecimalToDouble.hpp: Clinger's fast path for short numbers, a 128-bit product with a
+// checked error bound for the rest, any number of digits). Returns false for anything else (more than a plain decimal:
+// "inf", hex, a malformed token) and for the rare inputs that method cannot decide; the caller then uses strtod as
+// before. No locale is involved: the point is '.'.
+bool FastDecimal(const char* p, std::size_t n, double& out) {
+    detail::DecimalParts d;
+    if (detail::ScanDecimal(p, p + n, d) != p + n) return false;
+    return detail::DecimalToDouble(d, out);
+}
+
+inline bool IdentChar(unsigned char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '|' || c == '-' || c == '.' || c == '+';
+}
+struct IdentTable {
+    bool t[256];
+    IdentTable() : t{} { for (int c = 0; c < 256; ++c) t[c] = IdentChar((unsigned char)c); }
+};
+const IdentTable kIdent;
+// Between the values of an ASCII array: 1 for a space, comma, tab or line end, 2 for ';' (a comment to the line end).
+struct ArraySepTable {
+    unsigned char t[256];
+    ArraySepTable() : t{} { t[(unsigned char)' '] = t[(unsigned char)','] = t[(unsigned char)'\n'] = t[(unsigned char)'\r'] = t[(unsigned char)'\t'] = 1; t[(unsigned char)';'] = 2; }
+};
+const ArraySepTable kArraySep;
+
+// The same conversion as FastDecimal, but it finds the end of the token itself (the first character that cannot
+// be part of a token), so an array value is read in one pass instead of a scan for its end and then a parse.
+// Returns the end of the token, or nullptr when FastDecimal would not take it (the caller then uses the general
+// path, which gives the same result as before for everything).
+const char* FastDecimalScan(const char* p, const char* end, double& out) {
+    detail::DecimalParts d;
+    const char* e = detail::ScanDecimal(p, end, d);
+    if (!e || (e < end && kIdent.t[(unsigned char)*e])) return nullptr;   // the token goes on: not a plain decimal
+    if (!detail::DecimalToDouble(d, out)) return nullptr;
+    return e;
+}
 
 struct Text {
     const char* s; std::size_t n, pos = 0; const Limits* lim; Document* doc; std::string err;
@@ -190,29 +302,53 @@ struct Text {
             else return;
         }
     }
-    static bool IsIdent(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '|' || c == '-' || c == '.' || c == '+'; }
+    static bool IsIdent(char c) { return kIdent.t[(unsigned char)c]; }
 
     bool ReadNumberOrIdent(Prop& out) {
         const std::size_t b = pos;
         while (pos < n && IsIdent(s[pos])) ++pos;
         if (pos == b) return Fail("unexpected character in ASCII FBX");
-        std::string tok(s + b, pos - b);
+        const char* t = s + b; const std::size_t len = pos - b;
+        // Fast paths, with the same result as the general rule below: a plain integer of up to 18 digits (what strtoll
+        // returns), and a plain decimal with a point or an exponent, which FastDecimal converts exactly (what strtod
+        // returns).
+        {
+            std::size_t i = 0; bool neg = false;
+            if (t[0] == '+' || t[0] == '-') { neg = t[0] == '-'; i = 1; }
+            if (i < len && len - i <= 18) {
+                std::int64_t v = 0; std::size_t k = i;
+                while (k < len && t[k] >= '0' && t[k] <= '9') { v = v * 10 + (t[k] - '0'); ++k; }
+                if (k == len) { out.type = 'L'; out.i = neg ? -v : v; return true; }
+            }
+            bool pointOrExp = false;
+            for (std::size_t k = 0; k < len; ++k) if (t[k] == '.' || t[k] == 'e' || t[k] == 'E') { pointOrExp = true; break; }
+            double d;
+            if (pointOrExp && FastDecimal(t, len, d)) { out.type = 'D'; out.d = d; return true; }
+        }
+        // A token that starts with a letter or '_' is an identifier whatever strtod would make of it ("inf", "nan"):
+        // the rule below requires a digit, a sign or a point first.
+        if (!(std::isdigit((unsigned char)t[0]) || t[0] == '-' || t[0] == '+' || t[0] == '.')) {
+            out.type = 'S'; out.sv = std::string_view(t, len);
+            return true;
+        }
+        std::string tok(t, len);
         char* end = nullptr;
         const double d = detail::StrToD(tok.c_str(), &end);
         if (end && *end == '\0' && !tok.empty() && (std::isdigit((unsigned char)tok[0]) || tok[0] == '-' || tok[0] == '+' || tok[0] == '.')) {
             if (tok.find_first_of(".eE") == std::string::npos) {
                 out.type = 'L'; out.i = std::strtoll(tok.c_str(), nullptr, 10);
             } else { out.type = 'D'; out.d = d; }
-        } else { out.type = 'S'; out.s = tok; }   // bare identifier (T, W, Y ...)
+        } else { out.type = 'S'; out.sv = std::string_view(t, len); }   // bare identifier (T, W, Y ...)
         return true;
     }
     bool ReadString(Prop& out) {
         ++pos;   // opening quote
         const std::size_t b = pos;
-        while (pos < n && s[pos] != '"') ++pos;
+        const void* q = pos < n ? std::memchr(s + pos, '"', n - pos) : nullptr;
+        pos = q ? (std::size_t)((const char*)q - s) : n;
         if (pos >= n) return Fail("unterminated string");
         if (pos - b > lim->maxStringBytes) return Fail("string too long");
-        out.type = 'S'; out.s.assign(s + b, pos - b);
+        out.type = 'S'; out.sv = std::string_view(s + b, pos - b);
         ++pos;
         return true;
     }
@@ -229,58 +365,138 @@ struct Text {
         ++pos;
         if (cnt * 8 > lim->maxArrayBytes || arrayBytes + cnt * 8 > lim->maxArrayBytes) return Fail("arrays exceed the size limit");
         out.type = 'a';
-        out.arr.reserve(cnt < (1u << 20) ? cnt : (1u << 20));
+        // Written through an index into a vector sized from the declared count (capped: a file can lie), grown by
+        // doubling if the file has more values than it declared, trimmed at the end.
+        NumberBuffer vals(cnt < (1u << 20) ? cnt : (1u << 20));   // (not zero-filled: every value is written before it is read)
+        std::size_t nv = 0;
+        const std::size_t cap = std::min<std::size_t>(lim->maxArrayBytes / 8, 0xFFFFFFFEu);
         for (;;) {
-            SkipSpace(true);
+            // spaces, line ends and commas between values (comments too, as SkipSpace does)
+            while (pos < n) {
+                const unsigned char t = kArraySep.t[(unsigned char)s[pos]];
+                if (t == 1) ++pos;
+                else if (t == 2) { while (pos < n && s[pos] != '\n') ++pos; }
+                else break;
+            }
             if (Cur() == '}') { ++pos; break; }
             if (Eof()) return Fail("unterminated array block");
-            if (Cur() == ',') { ++pos; continue; }
+            double d;
+            if (const char* e = FastDecimalScan(s + pos, s + n, d)) {   // the usual case: one pass over the number
+                pos = (std::size_t)(e - s);
+                if (nv == vals.size()) vals.resize(vals.size() < 16 ? 16 : vals.size() * 2);
+                vals[nv++] = d;
+                if (nv > cap) return Fail("arrays exceed the size limit");
+                continue;
+            }
             const std::size_t b = pos;
             while (pos < n && (IsIdent(s[pos]))) ++pos;
             if (pos == b) return Fail("bad value in array block");
-            const std::string tok(s + b, pos - b);
-            char* end = nullptr;
-            const double d = detail::StrToD(tok.c_str(), &end);
-            if (!end || *end) return Fail("bad number in array block");
-            out.arr.push_back(d);
-            if (out.arr.size() > lim->maxArrayBytes / 8) return Fail("arrays exceed the size limit");
+            if (!FastDecimal(s + b, pos - b, d)) {
+                const std::string tok(s + b, pos - b);
+                char* end = nullptr;
+                d = detail::StrToD(tok.c_str(), &end);
+                if (!end || *end) return Fail("bad number in array block");
+            }
+            if (nv == vals.size()) vals.resize(vals.size() < 16 ? 16 : vals.size() * 2);
+            vals[nv++] = d;
+            if (nv > cap) return Fail("arrays exceed the size limit");
         }
-        arrayBytes += out.arr.size() * 8;
+        vals.resize(nv);
+        arrayBytes += nv * 8;   // the limit counts 8 bytes a value, whatever the storage below
+        // Smaller storage when it changes no value: an array whose values are all 32-bit integers (index arrays) is
+        // kept as int32, one whose values are all exact floats as float32. Array::operator[] gives (double)value,
+        // which is the same double bit for bit (checked per value; -0 stays a double), and the readers' type-specific
+        // paths (int32 indices, double vectors) give the same numbers as their general paths.
+        // Checked in blocks of 256 values without a branch per value (both answers for every value of a block; the
+        // loop stops after the block where both became false). A value outside the int32 range (or NaN) is replaced by
+        // 0.5 before the conversion and one beyond the largest float by 0.1: neither converts back to itself, so the
+        // answer is "no" for them, as it must be, and no conversion is out of range.
+        bool allInt = true, allFloat = true;
+        for (std::size_t k0 = 0; k0 < nv && (allInt || allFloat); k0 += 256) {
+            const std::size_t k1 = std::min(nv, k0 + 256);
+            bool okI = true, okF = true;
+            for (std::size_t k = k0; k < k1; ++k) {
+                const double v = vals[k];
+                std::uint64_t bv; std::memcpy(&bv, &v, 8);
+                const double ci = (v >= -2147483648.0 && v <= 2147483647.0) ? v : 0.5;
+                const double bi = (double)(std::int32_t)ci;
+                std::uint64_t ui; std::memcpy(&ui, &bi, 8);
+                okI &= ui == bv;
+                const double cf = (std::fabs(v) > 3.4028234663852886e38 && !std::isinf(v)) ? 0.1 : v;   // beyond the largest float
+                const double bf = (double)(float)cf;
+                std::uint64_t uf; std::memcpy(&uf, &bf, 8);
+                okF &= uf == bv;
+            }
+            allInt = allInt && okI; allFloat = allFloat && okF;
+        }
+        char type = 'd';
+        if (nv && (allInt || allFloat)) {
+            NumberBuffer packed((nv * 4 + 7) / 8);   // 4 bytes a value, in a buffer of doubles (the storage type)
+            if (nv & 1) packed.back() = 0;            // (the 4 bytes after an odd count: never read, set anyway)
+            std::uint8_t* q = (std::uint8_t*)packed.data();
+            if (allInt) { type = 'i'; for (std::size_t k = 0; k < nv; ++k) { const std::int32_t x = (std::int32_t)vals[k]; std::memcpy(q + k * 4, &x, 4); } }
+            else { type = 'f'; for (std::size_t k = 0; k < nv; ++k) { const float x = (float)vals[k]; std::memcpy(q + k * 4, &x, 4); } }
+            vals.swap(packed);
+        }
+        out.SetArray(type, (std::uint32_t)nv, (const std::uint8_t*)vals.data());
+        doc->numbers.push_back(std::move(vals));   // the buffer stays where it is
+        out.own = (std::uint32_t)doc->numbers.size();   // (1 + its index)
         return true;
     }
 
-    bool ReadElem(Elem& e, std::size_t depth) {
+    bool ReadElem(std::uint32_t& idx, std::size_t depth) {
         if (depth > lim->maxDepth) return Fail("element nesting too deep");
         if (++doc->elementCount > lim->maxElements) return Fail("too many elements");
         const std::size_t b = pos;
         while (pos < n && IsIdent(s[pos])) ++pos;
         if (pos == b || Cur() != ':') return Fail("expected 'Name:' in ASCII FBX");
-        e.name.assign(s + b, pos - b);
+        idx = (std::uint32_t)doc->elems.size();
+        doc->elems.emplace_back();
+        doc->elems[idx].name = std::string_view(s + b, pos - b);
         ++pos;
+        const std::size_t firstProp = doc->props.size();
+        std::size_t count = 0;
         for (;;) {
             SkipSpace(false);
             const char c = Cur();
-            if (Eof() || c == '\n') break;
+            if (Eof() || c == '\n') {
+                // FBX 6.x writes long value lists over several lines: a line that starts with ',' goes on with the list,
+                // and so does a line of values after an element that has none yet ("Key:" then the keys on the next
+                // line). Nothing else starts a line with a digit or a comma (an element starts with its name).
+                if (Eof()) break;
+                const std::size_t save = pos;
+                SkipSpace(true);
+                const char d = Cur();
+                const bool digitNext = pos + 1 < n && s[pos + 1] >= '0' && s[pos + 1] <= '9';
+                if (d == ',') { ++pos; SkipSpace(true); continue; }
+                if (count == 0 && ((d >= '0' && d <= '9') || ((d == '-' || d == '+' || d == '.') && digitNext))) continue;
+                pos = save;
+                break;
+            }
             if (c == '{') break;
             if (c == '}') break;
             if (c == ',') { ++pos; SkipSpace(true); continue; }   // a comma continues onto the next line
-            Prop pr;
+            doc->props.emplace_back();
+            Prop& pr = doc->props.back();
             if (c == '"') { if (!ReadString(pr)) return false; }
             else if (c == '*') { if (!ReadArrayBlock(pr)) return false; }
             else if (!ReadNumberOrIdent(pr)) return false;
-            e.props.push_back(std::move(pr));
-            if (e.props.size() > lim->maxArrayBytes / 8) return Fail("too many properties");
+            if (++count > lim->maxArrayBytes / 8) return Fail("too many properties");
         }
+        doc->elems[idx].props.begin_ = (std::uint32_t)firstProp;
+        doc->elems[idx].props.n = (std::uint32_t)count;
         SkipSpace(true);
         if (Cur() == '{') {
             ++pos;
+            std::uint32_t last = kNone;
+            Linker link{doc->elems, doc->root};
             for (;;) {
                 SkipSpace(true);
                 if (Eof()) return Fail("unterminated '{' block");
                 if (Cur() == '}') { ++pos; break; }
-                Elem c;
+                std::uint32_t c = kNone;
                 if (!ReadElem(c, depth + 1)) return false;
-                e.children.push_back(std::move(c));
+                link.Link(idx, last, c);
             }
         }
         return true;
@@ -306,14 +522,31 @@ bool ParseAscii(const std::uint8_t* data, std::size_t size, Document& out, std::
         if (std::sscanf(hdr, "%d.%d", &a, &b) == 2 && a >= 0 && a <= 99999 && b >= 0 && b <= 9999)
             out.version = (std::uint32_t)(a * 1000 + b * 100);
     }
+    std::uint32_t last = kNone;
+    Linker link{out.elems, out.root};
+    bool ok = true;
     for (;;) {
         t.SkipSpace(true);
         if (t.Eof()) break;
-        Elem e;
-        if (!t.ReadElem(e, 1)) return fail(t.err);
-        out.root.children.push_back(std::move(e));
+        std::uint32_t idx = kNone;
+        if (!t.ReadElem(idx, 1)) { ok = false; break; }
+        link.Link(kNone, last, idx);
     }
+    // The two flat arrays grew by doubling (the text gives no counts up front): give back the slack before the scene
+    // is built, which is when memory peaks. They hold indices until Fixup, so moving them is safe here.
+    out.elems.shrink_to_fit(); out.props.shrink_to_fit();
+    LinkTree(out);
+    if (!ok) return fail(t.err);
     return true;
+}
+
+std::string UnsupportedVersionMessage(std::uint32_t v) {
+    const std::string ver = std::to_string(v / 1000) + "." + std::to_string((v % 1000) / 100);
+    if (v < 6000)
+        return "this is an FBX " + ver + " file (FBX 2005 or older), which this reader does not read (it reads FBX 6.0 and newer): "
+               "open it in the program that made it, or in a converter, and export it again as FBX 2011 (FBX 7.1) or newer";
+    return "this is an FBX " + ver + " file, newer than this reader knows (it reads FBX 6.0 to 7.x): export it again as FBX 2011 to "
+           "FBX 2020 (FBX 7.1 to 7.7)";
 }
 
 bool Parse(const std::uint8_t* data, std::size_t size, Document& out, std::string* err, const Limits& lim) {

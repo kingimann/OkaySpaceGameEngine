@@ -8,6 +8,7 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Vec3.hpp"
 #include <string>
+#include <unordered_set>
 
 namespace okay {
 
@@ -35,6 +36,14 @@ public:
     void Release();
     void Update(float dt) override;
     void OnDestroy() override { Release(); }
+    /// The seated body is being destroyed (not killed): forget it without touching it (it is about to be freed).
+    void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
+        if (!m_who || !dying.count(m_who)) return;
+        m_who = nullptr;
+        occupied = false;
+        m_hadGravity = false;
+        m_blend = 1.0f;
+    }
 
 private:
     GameObject* m_who = nullptr;

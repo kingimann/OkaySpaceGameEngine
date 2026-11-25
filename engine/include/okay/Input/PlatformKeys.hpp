@@ -49,6 +49,35 @@ inline void TapCharsForKey(platform::Key k, CharKey charKey, std::vector<char>& 
     }
 }
 
+/// Add the characters Input::FeedKeys takes for the main keys held right now: letters and digits by the layout
+/// (`charKey(c)`, normally KeyForLetter on the backend), Space, Shift, Ctrl, Command (Gui), Backspace, Enter, the
+/// arrows as themselves and as W A S D, and Escape when `escape` is true (the caller decides: the player feeds the
+/// held key, the editor its own release rule). `held(key)` says whether a physical key is down. The one copy used
+/// by the player and the editor's Play (and their tests, with faked keys). Extended keys: AppendExtendedKeys.
+template <class Held, class CharKey>
+inline void AppendHeldMainKeys(Held held, CharKey charKey, bool escape, std::vector<char>& down) {
+    using platform::Key;
+    for (char c = 'a'; c <= 'z'; ++c) if (held(charKey(c))) down.push_back(c);
+    for (char c = '0'; c <= '9'; ++c) if (held(charKey(c))) down.push_back(c);
+    if (held(Key::Space)) down.push_back(' ');
+    if (held(Key::LShift) || held(Key::RShift)) down.push_back(Input::KeyShift);   // sprint
+    if (held(Key::LCtrl) || held(Key::RCtrl)) down.push_back(Input::KeyCtrl);      // crouch
+    if (held(Key::LGui) || held(Key::RGui)) down.push_back(Input::KeyCmd);         // Command, for copy / paste
+    if (held(Key::Backspace)) down.push_back((char)8);                             // text editing
+    if (held(Key::Return) || held(Key::KpEnter)) down.push_back('\r');
+    if (escape) down.push_back((char)27);
+    // Arrows count as themselves and as W A S D, so axis_x / axis_y and key("w") agree.
+    if (held(Key::Up))    { down.push_back('w'); down.push_back(Input::KeyUp); }
+    if (held(Key::Left))  { down.push_back('a'); down.push_back(Input::KeyLeft); }
+    if (held(Key::Down))  { down.push_back('s'); down.push_back(Input::KeyDown); }
+    if (held(Key::Right)) { down.push_back('d'); down.push_back(Input::KeyRight); }
+}
+/// The same on a backend: held keys from Backend::IsKeyDown, letters by KeyForLetter, Escape when it is held.
+inline void AppendHeldMainKeys(platform::Backend& pb, std::vector<char>& down) {
+    AppendHeldMainKeys([&pb](platform::Key k) { return pb.IsKeyDown(k); }, [&pb](char c) { return KeyForLetter(pb, c); },
+                       pb.IsKeyDown(platform::Key::Escape), down);
+}
+
 /// Add every held extended key to `down` (the vector given to Input::FeedKeys).
 /// The generic Shift / Ctrl / Alt codes are derived by Input::FeedKeys from the
 /// left / right ones.

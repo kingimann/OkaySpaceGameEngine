@@ -34,7 +34,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1549 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1630 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
@@ -221,6 +221,11 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `action_y` | `Fn.action_y` |
 | `actions_load` | `Fn.actions_load` |
 | `activate` | `Fn.activate` |
+| `active_ragdoll` | `Fn.active_ragdoll` |
+| `active_ragdoll_explode` | `Fn.active_ragdoll_explode` |
+| `active_ragdoll_push` | `Fn.active_ragdoll_push` |
+| `active_ragdoll_shoot` | `Fn.active_ragdoll_shoot` |
+| `active_ragdoll_state` | `Fn.active_ragdoll_state` |
 | `add_explosion_force` | `Fn.add_explosion_force` |
 | `add_force` | `Fn.add_force` |
 | `add_force3` | `Fn.add_force3` |
@@ -228,6 +233,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `add_impulse3` | `Fn.add_impulse3` |
 | `add_quest_progress` | `Fn.add_quest_progress` |
 | `add_score` | `Fn.add_score` |
+| `add_torque` | `Fn.add_torque` |
 | `add_xp` | `Fn.add_xp` |
 | `after` | `Fn.after` |
 | `aim` | `Fn.aim` |
@@ -262,6 +268,8 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `avg` | `Fn.avg` |
 | `axis_x` | `Fn.axis_x` |
 | `axis_y` | `Fn.axis_y` |
+| `base64_decode` | `Fn.base64_decode` |
+| `base64_encode` | `Fn.base64_encode` |
 | `begin_display_confirm` | `Fn.begin_display_confirm` |
 | `bit_and` | `Fn.bit_and` |
 | `bit_clear` | `Fn.bit_clear` |
@@ -324,6 +332,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `capsule_cast3` | `Fn.capsule_cast3` |
 | `capture_pose` | `Fn.capture_pose` |
 | `cast_ray` | `Fn.cast_ray` |
+| `cbrt` | `Fn.cbrt` |
 | `ceil` | `Fn.ceil` |
 | `chance` | `Fn.chance` |
 | `char_at` | `Fn.char_at` |
@@ -331,6 +340,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `check_action` | `Fn.check_action` |
 | `child_count` | `Fn.child_count` |
 | `choose` | `Fn.choose` |
+| `chr` | `Fn.chr` |
 | `clamp` | `Fn.clamp` |
 | `clamp01` | `Fn.clamp01` |
 | `clear` | `Fn.clear` |
@@ -341,6 +351,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `clip_normalized` | `Fn.clip_normalized` |
 | `clip_speed` | `Fn.clip_speed` |
 | `clip_time` | `Fn.clip_time` |
+| `clock` | `Fn.clock` |
 | `close_tab` | `Fn.close_tab` |
 | `cloud_delete` | `Fn.cloud_delete` |
 | `cloud_has` | `Fn.cloud_has` |
@@ -368,6 +379,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `data_save` | `Fn.data_save` |
 | `data_set` | `Fn.data_set` |
 | `data_str` | `Fn.data_str` |
+| `date_text` | `Fn.date_text` |
 | `deactivate` | `Fn.deactivate` |
 | `debug` | `Fn.debug` |
 | `debug_log` | `Fn.debug_log` |
@@ -410,6 +422,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `emit` | `Fn.emit` |
 | `emit_particles` | `Fn.emit_particles` |
 | `ends_with` | `Fn.ends_with` |
+| `enumerate` | `Fn.enumerate` |
 | `equip` | `Fn.equip` |
 | `equipped` | `Fn.equipped` |
 | `every` | `Fn.every` |
@@ -425,6 +438,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `fire_output` | `Fn.fire_output` |
 | `first` | `Fn.first` |
 | `flash` | `Fn.flash` |
+| `flatten` | `Fn.flatten` |
 | `flee` | `Fn.flee` |
 | `flip_x` | `Fn.flip_x` |
 | `flip_y` | `Fn.flip_y` |
@@ -519,6 +533,8 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `has_var` | `Fn.has_var` |
 | `heal` | `Fn.heal` |
 | `hex` | `Fn.hex` |
+| `hex_decode` | `Fn.hex_decode` |
+| `hex_encode` | `Fn.hex_encode` |
 | `hide` | `Fn.hide` |
 | `hide_object` | `Fn.hide_object` |
 | `hit_react` | `Fn.hit_react` |
@@ -583,6 +599,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `instantiate` | `Fn.instantiate` |
 | `instantiate3` | `Fn.instantiate3` |
 | `int.Parse` | `Fn.int.Parse` |
+| `int64` | `Fn.int64` |
 | `interact` | `Fn.interact` |
 | `inv_add` | `Fn.inv_add` |
 | `inv_capacity` | `Fn.inv_capacity` |
@@ -606,6 +623,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `is_finite` | `Fn.is_finite` |
 | `is_hanging` | `Fn.is_hanging` |
 | `is_in_action` | `Fn.is_in_action` |
+| `is_int` | `Fn.is_int` |
 | `is_key_down` | `Fn.is_key_down` |
 | `is_key_held` | `Fn.is_key_held` |
 | `is_map` | `Fn.is_map` |
@@ -663,12 +681,15 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `load_value` | `Fn.load_value` |
 | `loc` | `Fn.loc` |
 | `log` | `Fn.log` |
+| `log10` | `Fn.log10` |
+| `log2` | `Fn.log2` |
 | `log_error` | `Fn.log_error` |
 | `log_info` | `Fn.log_info` |
 | `log_message` | `Fn.log_message` |
 | `log_warn` | `Fn.log_warn` |
 | `logic_press` | `Fn.logic_press` |
 | `logic_state` | `Fn.logic_state` |
+| `long` | `Fn.long` |
 | `look_at` | `Fn.look_at` |
 | `look_at3` | `Fn.look_at3` |
 | `loot_roll` | `Fn.loot_roll` |
@@ -752,6 +773,48 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `nav_stop` | `Fn.nav_stop` |
 | `nearest_tag` | `Fn.nearest_tag` |
 | `nearest_with_tag` | `Fn.nearest_with_tag` |
+| `net.bytes_in` | `Fn.net.bytes_in` |
+| `net.bytes_out` | `Fn.net.bytes_out` |
+| `net.connected` | `Fn.net.connected` |
+| `net.error` | `Fn.net.error` |
+| `net.get` | `Fn.net.get` |
+| `net.give` | `Fn.net.give` |
+| `net.host` | `Fn.net.host` |
+| `net.host_or_join` | `Fn.net.host_or_join` |
+| `net.id` | `Fn.net.id` |
+| `net.is_host` | `Fn.net.is_host` |
+| `net.is_mine` | `Fn.net.is_mine` |
+| `net.is_predicted` | `Fn.net.is_predicted` |
+| `net.join` | `Fn.net.join` |
+| `net.join_lan` | `Fn.net.join_lan` |
+| `net.leave` | `Fn.net.leave` |
+| `net.loss` | `Fn.net.loss` |
+| `net.migrating` | `Fn.net.migrating` |
+| `net.migration` | `Fn.net.migration` |
+| `net.migrations` | `Fn.net.migrations` |
+| `net.off` | `Fn.net.off` |
+| `net.on` | `Fn.net.on` |
+| `net.owner` | `Fn.net.owner` |
+| `net.ping` | `Fn.net.ping` |
+| `net.player_count` | `Fn.net.player_count` |
+| `net.player_name` | `Fn.net.player_name` |
+| `net.players` | `Fn.net.players` |
+| `net.request` | `Fn.net.request` |
+| `net.rollback_confirmed` | `Fn.net.rollback_confirmed` |
+| `net.rollback_frame` | `Fn.net.rollback_frame` |
+| `net.rollback_players` | `Fn.net.rollback_players` |
+| `net.rollback_resimulating` | `Fn.net.rollback_resimulating` |
+| `net.rollback_running` | `Fn.net.rollback_running` |
+| `net.rollback_start` | `Fn.net.rollback_start` |
+| `net.rollback_stop` | `Fn.net.rollback_stop` |
+| `net.send` | `Fn.net.send` |
+| `net.send_to` | `Fn.net.send_to` |
+| `net.set` | `Fn.net.set` |
+| `net.show_stats` | `Fn.net.show_stats` |
+| `net.simulate` | `Fn.net.simulate` |
+| `net.spawn` | `Fn.net.spawn` |
+| `net.stats_text` | `Fn.net.stats_text` |
+| `net.time` | `Fn.net.time` |
 | `net_all_ready` | `Fn.net_all_ready` |
 | `net_anticheat` | `Fn.net_anticheat` |
 | `net_anticheat_load` | `Fn.net_anticheat_load` |
@@ -855,6 +918,8 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `net_violations` | `Fn.net_violations` |
 | `net_was_kicked` | `Fn.net_was_kicked` |
 | `noise` | `Fn.noise` |
+| `now` | `Fn.now` |
+| `now_ms` | `Fn.now_ms` |
 | `npc_busy` | `Fn.npc_busy` |
 | `npc_goto` | `Fn.npc_goto` |
 | `npc_state` | `Fn.npc_state` |
@@ -872,6 +937,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `on_key_move3` | `Fn.on_key_move3` |
 | `once` | `Fn.once` |
 | `orbit` | `Fn.orbit` |
+| `ord` | `Fn.ord` |
 | `overlap` | `Fn.overlap` |
 | `overlap3` | `Fn.overlap3` |
 | `overlap_box` | `Fn.overlap_box` |
@@ -977,6 +1043,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `ramp_time_scale` | `Fn.ramp_time_scale` |
 | `ramp_timescale` | `Fn.ramp_timescale` |
 | `rand` | `Fn.rand` |
+| `rand_seed` | `Fn.rand_seed` |
 | `randi` | `Fn.randi` |
 | `random` | `Fn.random` |
 | `random_chance` | `Fn.random_chance` |
@@ -1095,6 +1162,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `set` | `Fn.set` |
 | `set_active` | `Fn.set_active` |
 | `set_active_of` | `Fn.set_active_of` |
+| `set_add` | `Fn.set_add` |
 | `set_ambient` | `Fn.set_ambient` |
 | `set_anim` | `Fn.set_anim` |
 | `set_background` | `Fn.set_background` |
@@ -1112,6 +1180,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `set_character_model` | `Fn.set_character_model` |
 | `set_clipboard_text` | `Fn.set_clipboard_text` |
 | `set_color` | `Fn.set_color` |
+| `set_diff` | `Fn.set_diff` |
 | `set_display_mode` | `Fn.set_display_mode` |
 | `set_display_resolution` | `Fn.set_display_resolution` |
 | `set_dropdown_icon` | `Fn.set_dropdown_icon` |
@@ -1125,11 +1194,13 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `set_gravity` | `Fn.set_gravity` |
 | `set_gravity3` | `Fn.set_gravity3` |
 | `set_group_volume` | `Fn.set_group_volume` |
+| `set_has` | `Fn.set_has` |
 | `set_image` | `Fn.set_image` |
 | `set_input_limit` | `Fn.set_input_limit` |
 | `set_input_multiline` | `Fn.set_input_multiline` |
 | `set_input_type` | `Fn.set_input_type` |
 | `set_interactable` | `Fn.set_interactable` |
+| `set_intersect` | `Fn.set_intersect` |
 | `set_language` | `Fn.set_language` |
 | `set_light` | `Fn.set_light` |
 | `set_light_angle` | `Fn.set_light_angle` |
@@ -1149,6 +1220,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `set_name` | `Fn.set_name` |
 | `set_object_position` | `Fn.set_object_position` |
 | `set_object_var` | `Fn.set_object_var` |
+| `set_of` | `Fn.set_of` |
 | `set_parent` | `Fn.set_parent` |
 | `set_per_player` | `Fn.set_per_player` |
 | `set_physics_smooth` | `Fn.set_physics_smooth` |
@@ -1167,6 +1239,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `set_radial_start` | `Fn.set_radial_start` |
 | `set_radial_thickness` | `Fn.set_radial_thickness` |
 | `set_refresh_rate` | `Fn.set_refresh_rate` |
+| `set_remove` | `Fn.set_remove` |
 | `set_response` | `Fn.set_response` |
 | `set_root_motion` | `Fn.set_root_motion` |
 | `set_rot3` | `Fn.set_rot3` |
@@ -1212,6 +1285,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `set_tooltip_rich` | `Fn.set_tooltip_rich` |
 | `set_ui_image` | `Fn.set_ui_image` |
 | `set_ui_theme` | `Fn.set_ui_theme` |
+| `set_union` | `Fn.set_union` |
 | `set_unlit` | `Fn.set_unlit` |
 | `set_velocity` | `Fn.set_velocity` |
 | `set_velocity3` | `Fn.set_velocity3` |
@@ -1245,6 +1319,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `smooth_follow` | `Fn.smooth_follow` |
 | `smoothstep` | `Fn.smoothstep` |
 | `snap` | `Fn.snap` |
+| `sort` | `Fn.sort` |
 | `sort_num` | `Fn.sort_num` |
 | `sort_str` | `Fn.sort_str` |
 | `spawn` | `Fn.spawn` |
@@ -1366,6 +1441,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `trim` | `Fn.trim` |
 | `trim_end` | `Fn.trim_end` |
 | `trim_start` | `Fn.trim_start` |
+| `trunc` | `Fn.trunc` |
 | `turn` | `Fn.turn` |
 | `tween_active` | `Fn.tween_active` |
 | `tween_backwards` | `Fn.tween_backwards` |
@@ -1541,6 +1617,10 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `unequip` | `Fn.unequip` |
 | `unscaled_dt` | `Fn.unscaled_dt` |
 | `upper` | `Fn.upper` |
+| `url_decode` | `Fn.url_decode` |
+| `url_encode` | `Fn.url_encode` |
+| `utf8_chars` | `Fn.utf8_chars` |
+| `utf8_len` | `Fn.utf8_len` |
 | `vault` | `Fn.vault` |
 | `vec2` | `Fn.vec2` |
 | `vec3` | `Fn.vec3` |
@@ -1586,6 +1666,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `wrap` | `Fn.wrap` |
 | `wrap_in_box` | `Fn.wrap_in_box` |
 | `write_save` | `Fn.write_save` |
+| `zip` | `Fn.zip` |
 | `zoom_camera` | `Fn.zoom_camera` |
 
 ## Gaps

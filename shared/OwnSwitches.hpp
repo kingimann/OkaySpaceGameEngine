@@ -4,9 +4,13 @@
 // the tests share it; it does not include any engine header.
 //
 // How it works, in plain words:
-//  * Every item is OFF by default. The choices are saved in one small text file, own_switches.cfg, in the person's own
-//    settings folder (Windows: %LOCALAPPDATA%\OkaySpace; elsewhere $XDG_CONFIG_HOME/okayspace or ~/.config/okayspace), so the
-//    launcher and the editor, which sit in different folders, read the same file. Format: one line `on=wav,http` (ids of the items that are on).
+//  * Every item is ON by default (owner, 2026-11-23: "i want our stuff to be on by default, all of them"); the person can turn
+//    any of them off. The choices are saved in one small text file, own_switches.cfg, in the person's own settings folder
+//    (Windows: %LOCALAPPDATA%\OkaySpace; elsewhere $XDG_CONFIG_HOME/okayspace or ~/.config/okayspace), so the launcher and the
+//    editor, which sit in different folders, read the same file. Format: a line `off=http` (ids the person turned off; an item
+//    is on unless it is listed there, so an item added to the table later starts on) and, for older programs, a line
+//    `on=okayui,http` (the ids that are on). No file, or a file without an `off=` line (written by the old off-by-default
+//    version, where an id missing from `on=` only meant "never chosen"), means: nothing turned off, everything on.
 //  * At the very top of main(), before anything reads its variable, Startup() sets the environment variable of each
 //    chosen item inside the running program. Programs the launcher starts inherit it.
 //  * A variable the person set themselves (set / $env: / export) always wins: the item then shows "set by an environment
@@ -29,7 +33,7 @@ namespace okay::ownswitches {
 enum Needs : unsigned { kNone = 0, kNotWindows = 1, kNeedsOkayUi = 2 };
 
 struct Item {
-    const char* id;        // short stable name stored in the file ("wav")
+    const char* id;        // short stable name stored in the file ("http")
     const char* label;     // the words on the screen
     const char* desc;      // one plain line
     const char* env;       // the environment variable that switches it on
@@ -37,13 +41,15 @@ struct Item {
     unsigned needs;        // Needs bits
 };
 
-/// The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed).
+/// The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
+/// unless the person turned it off (see the top).
 inline const std::vector<Item>& Items() {
     static const std::vector<Item> t = {
         {"okayui",   "OkayUI screens",        "Draw the screens that have an OkayUI version (What's New, the editor Console) with our own toolkit instead of Dear ImGui.", "OKAY_UI_BACKEND",      "okayui", kNeedsOkayUi},
-        {"wav",      "Our own WAV reader",    "Read .wav sound files with our own decoder instead of the built-in one.",                                                      "OKAY_OWN_WAV",         "1",      kNone},
-        {"http",     "Our own web client",    "Download and check for updates with our own HTTP client instead of curl (Linux builds only; Windows already uses WinHTTP).",   "OKAY_OWN_HTTP",        "1",      kNotWindows},
-        {"platform", "Our own window layer",  "Open windows and read the keyboard and mouse with our own okay::platform backend instead of SDL (Linux only).",               "OKAY_PLATFORM_BACKEND", "own",   kNotWindows},
+        {"inspector", "OkayUI Inspector",     "Draw the Inspector's component bodies with our own toolkit (a preview). Needs \"OkayUI screens\" on too; any body that has no OkayUI version, or a newer Dear ImGui one, stays Dear ImGui.", "OKAY_UI_INSPECTOR", "1", kNeedsOkayUi},
+        {"ownrender", "OkayUI own renderer",  "Draw the OkayUI screens with OkayUI's own renderer instead of SDL's geometry calls: Direct3D 11 where the window uses SDL's Direct3D 11 renderer (the Windows default), OpenGL where it uses SDL's OpenGL renderer. Any other frame draws as before.", "OKAY_UI_OWN_RENDER", "1", kNeedsOkayUi},
+        {"http",     "Our own web client",    "Download and check for updates with our own HTTP client instead of curl (Linux builds only; Windows uses its built-in WinHTTP for every download and web call).",   "OKAY_OWN_HTTP",        "1",      kNotWindows},
+        {"platform", "Our own window layer",  "Open windows, read the keyboard and mouse and draw with our own okay::platform backend and OpenGL painter instead of SDL (Linux only; OKAY_OWN_PAINTER=software uses the CPU painter).",               "OKAY_PLATFORM_BACKEND", "own",   kNotWindows},
     };
     return t;
 }
@@ -115,26 +121,35 @@ inline const Item* Find(const std::string& id, const std::vector<Item>& items) {
     return nullptr;
 }
 
-/// Read the file text: the `on=` line. Unknown ids, repeats and damaged lines are dropped, so a hand-edited file cannot turn
-/// on anything that is not in the table. Result is in table order.
+/// The ids of `items` for which `pick(id)` is true, in table order.
+template <class Pick> inline std::vector<std::string> Select(const std::vector<Item>& items, Pick pick) {
+    std::vector<std::string> out;
+    for (const Item& it : items) if (pick(std::string(it.id))) out.push_back(it.id);
+    return out;
+}
+
+/// Read the file text and return the ids that are ON, in table order. Only the `off=` line decides: every item not listed
+/// there is on. Without an `off=` line (no file, an empty or damaged file, or an old `on=`-only file) everything is on.
+/// Unknown ids and repeats are dropped, so a hand-edited file cannot name anything that is not in the table.
 inline std::vector<std::string> Parse(const std::string& text, const std::vector<Item>& items = Items()) {
-    std::vector<std::string> raw;
+    std::vector<std::string> off;
     std::istringstream in(text);
     std::string line;
     while (std::getline(in, line)) {
-        if (line.compare(0, 3, "on=") == 0) raw = SplitIds(line.substr(3));
+        if (line.compare(0, 4, "off=") == 0) off = SplitIds(line.substr(4));
     }
-    std::vector<std::string> out;
-    for (const Item& it : items) if (Has(raw, it.id)) out.push_back(it.id);
-    return out;
+    return Select(items, [&](const std::string& id) { return !Has(off, id); });
 }
+/// Write the choice: `off=` (what Parse reads) and `on=` (what the older off-by-default programs read, so they agree).
 inline std::string Serialize(const std::vector<std::string>& on, const std::vector<Item>& items = Items()) {
-    std::vector<std::string> ordered;
-    for (const Item& it : items) if (Has(on, it.id)) ordered.push_back(it.id);
-    return "# Experimental: our own code (set from Settings in the launcher or View > Rendering & Performance in the editor)\non=" + JoinIds(ordered) + "\n";
+    const auto isOn = [&](const std::string& id) { return Has(on, id); };
+    return "# Experimental: our own code (set from Settings in the launcher or View > Rendering & Performance in the editor). On unless listed in off=\n"
+           "off=" + JoinIds(Select(items, [&](const std::string& id) { return !isOn(id); })) + "\non=" + JoinIds(Select(items, isOn)) + "\n";
 }
 
-/// "Back to normal": everything off.
+/// The default: everything on.
+inline void AllOn(std::vector<std::string>& on, const std::vector<Item>& items = Items()) { on = Select(items, [](const std::string&) { return true; }); }
+/// "Back to the third-party parts": everything off.
 inline void AllOff(std::vector<std::string>& on) { on.clear(); }
 inline void Set(std::vector<std::string>& on, const std::string& id, bool value) {
     std::vector<std::string> n;
@@ -171,7 +186,7 @@ inline bool SetByUser(const Item& it, const std::vector<std::string>& appliedByU
     return std::getenv(it.env) != nullptr && !Has(appliedByUs, it.id);
 }
 
-/// Set the variables of the chosen, available items (not over a variable the person set), remove the ones a parent program set that
+/// Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
 /// are no longer chosen, and record what we set in OKAY_OWN_SWITCHES_APPLIED. Returns the ids now on. Call before anything reads them.
 inline std::vector<std::string> Apply(const std::vector<std::string>& on, const std::vector<Item>& items = Items(), const Context& ctx = Context::Here()) {
     const std::vector<std::string> before = AppliedNow();
@@ -225,7 +240,7 @@ inline std::string DefaultPath() {
 
 inline std::vector<std::string> LoadFile(const std::string& path, const std::vector<Item>& items = Items()) {
     std::ifstream f(path, std::ios::binary);
-    if (!f) return {};
+    if (!f) return Parse(std::string(), items);   // no file: never chosen, everything on
     std::stringstream ss;
     ss << f.rdbuf();
     return Parse(ss.str(), items);

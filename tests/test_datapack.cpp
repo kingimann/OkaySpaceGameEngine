@@ -1,3 +1,4 @@
+#include <filesystem>
 #include "test_framework.hpp"
 #include "okay/Core/DataPack.hpp"
 #include <Okay.hpp>
@@ -51,7 +52,7 @@ int main() {
         Scene s("ENC"); s.physicsEnabled = false;
         s.CreateGameObject("Hero")->AddComponent<MeshRenderer>();
         std::string text = SceneSerializer::Serialize(s);
-        std::string path = "/tmp/okay_enc_test.okayscene";
+        std::string path = (std::filesystem::temp_directory_path() / "okay_enc_test.okayscene").string();
         { std::ofstream f(path, std::ios::binary); f << DataPack::Pack(text); }
 
         // The file on disk is obfuscated (no readable object name).

@@ -3,7 +3,7 @@
 //
 // Our own replacements (model readers first: owner approval 2026-11-17, "start switching them so i can test them out") are the
 // default. A person who hits a problem sets OKAY_THIRD_PARTY=1 and every part that has a third-party fallback compiled in uses
-// it again (Assimp and ufbx for models). Each part still has its own per-part switch as well (OKAY_OWN_<FMT>=0).
+// it again. The model readers have none left (ufbx was deleted on 2026-11-23, Assimp on 2026-11-24), so they ignore it.
 //
 // Semantics, kept exactly so every branch that uses this helper agrees:
 //   * true only when the variable is set and its value is exactly "1";

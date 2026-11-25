@@ -1,8 +1,8 @@
 #pragma once
 // PlayFab (Azure PlayFab) integration via its Client REST API — no SDK needed.
-// Reuses the account layer's curl transport pattern: the system `curl` does the
-// HTTPS, secrets travel through temp files (never argv), and responses are
-// parsed with the same tiny JSON helpers. Blocking calls — do the login once
+// HTTPS goes through the engine's HTTP seam (okay::http::Send: WinHTTP on Windows,
+// our own client on Linux when on, curl only as the last fallback), and responses
+// are parsed with the account layer's tiny JSON helpers. Blocking calls — do the login once
 // on game start (an On Start Actions list), not every frame.
 //
 //   PlayFab::Get().Configure("AB12CD");                       // your Title ID
@@ -12,7 +12,7 @@
 //   PlayFab::Get().GetLeaderboard("highscore", 10, top);
 //
 // Visual scripting mirrors this with the playfab_* instructions.
-#include "okay/Platform/Account/AccountService.hpp"   // detail::JsonField / RunCommand / RandomHex
+#include "okay/Platform/Account/AccountService.hpp"   // detail::JsonField; the HTTP seam (NativeFetch.hpp)
 
 #include <fstream>
 #include <sstream>
@@ -219,67 +219,22 @@ private:
                " (HTTP " + std::to_string(r.status) + ")";
     }
 
-    // One POST to https://<title>.playfabapi.com<path> via the system curl.
-    // Mirrors account::AccountService::HttpRequest (files for secrets, -w for
-    // the status code, no -f so error bodies survive).
+    // One POST to https://<title>.playfabapi.com<path> through the HTTP seam (okay::http::Send, NativeFetch.hpp):
+    // WinHTTP on Windows, our own client on Linux when on, curl only as its last fallback (the ticket travels in a file
+    // only this user can read, never argv). Any status is an answer (no -f, so error bodies survive). A POST that may
+    // already have reached the server is never sent again through curl (it could register twice or count a statistic twice).
     Resp Post(const std::string& path, const std::string& jsonBody, bool authed = true) const {
-        namespace fs = std::filesystem;
-        std::error_code ec;
-        fs::path dir   = fs::temp_directory_path(ec);
-        std::string id = account::detail::RandomHex(8);
-        fs::path resp  = dir / ("okay_pf_" + id + ".out");
-        fs::path code  = dir / ("okay_pf_" + id + ".code");
-        fs::path bodyF = dir / ("okay_pf_" + id + ".json");
-        fs::path cfgF  = dir / ("okay_pf_" + id + ".cfg");
-
         std::string url = "https://" + titleId_ + ".playfabapi.com" + path;
 #ifdef OKAY_PLAYFAB_TESTING
         if (!testBase_.empty()) url = testBase_ + path;   // tests only: a loopback server instead of the real API
 #endif
-#if defined(OKAY_OWN_HTTP_ACTIVE)
-        // Our own HTTP client first (opt-in: -DOKAY_OWN_HTTP=ON and OKAY_OWN_HTTP=1; Windows keeps curl). Any status is an
-        // answer, as with the curl path below (no -f). Not reaching the server (libssl missing, certificate refused,
-        // proxy trouble) falls through to curl, but only when the request cannot have been sent.
-        if (okay::http::NativeAvailable()) {
-            std::vector<std::string> hdrs = {"Content-Type: application/json"};
-            if (authed && !ticket_.empty()) hdrs.push_back("X-Authorization: " + ticket_);
-            okay::http::Result nr = okay::http::Request("POST", url, hdrs, jsonBody);
-            if (nr.reached) {
-                Resp own;
-                own.body = std::move(nr.body); own.status = nr.status;
-                own.ok = own.status >= 200 && own.status < 300;
-                return own;
-            }
-            // The POST may have reached the server (timeout, reset or garbage after the send). Sending it again through
-            // curl could register twice or count a statistic twice, so report a failure instead. A clean not-reached
-            // (DNS, refused, TLS refused, bad URL) still falls through to curl.
-            if (!okay::http::ShouldFallBackToCurl("POST", nr)) return Resp{};
-        }
-#endif
-        std::string cmd = "curl -s -X POST -o \"" + resp.string() + "\" -w \"%{http_code}\"";
-        std::string cfg = "header = \"Content-Type: application/json\"\n";
-        if (authed && !ticket_.empty())
-            cfg += "header = \"X-Authorization: " + ticket_ + "\"\n";
-        std::ofstream(bodyF, std::ios::trunc) << jsonBody;
-        std::ofstream(cfgF, std::ios::trunc) << cfg;
-        cmd += " --data-binary @\"" + bodyF.string() + "\" -K \"" + cfgF.string() + "\"";
-        cmd += " \"" + url + "\" > \"" + code.string() + "\"";
-#if !defined(_WIN32)
-        cmd += " 2>/dev/null";
-#endif
-        int rc = account::detail::RunCommand(cmd);
-
-        auto slurp = [](const fs::path& p) {
-            std::ifstream r(p, std::ios::binary);
-            std::stringstream ss; ss << r.rdbuf(); return ss.str();
-        };
+        std::vector<std::string> hdrs = {"Content-Type: application/json"};
+        if (authed && !ticket_.empty()) hdrs.push_back("X-Authorization: " + ticket_);
+        okay::http::Result nr = okay::http::Send("POST", url, hdrs, jsonBody);
         Resp out;
-        out.body = slurp(resp);
-        std::string codeS = slurp(code);
-        fs::remove(resp, ec); fs::remove(code, ec);
-        fs::remove(bodyF, ec); fs::remove(cfgF, ec);
-        try { out.status = std::stol(codeS); } catch (...) { out.status = 0; }
-        out.ok = (rc == 0 && out.status >= 200 && out.status < 300);
+        if (!nr.reached) return out;
+        out.body = std::move(nr.body); out.status = nr.status;
+        out.ok = out.status >= 200 && out.status < 300;
         return out;
     }
 

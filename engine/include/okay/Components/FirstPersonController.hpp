@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Input/InputActions.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/Component.hpp"
@@ -92,6 +93,7 @@ public:
     float eyeStepSmoothing = 14.0f;
     char  sprintKey = Input::KeyShift;  // hold (or tap, if toggleRun) to run; 0 = disabled
     bool  toggleRun = false;            // tap sprint to keep running instead of holding
+    bool  sprintByScript = false;       // runtime only: a script (Visual Script Set Sprinting) holds sprint on; not saved
     bool  canJump = true;
     bool  driveAnimation = true;        // set a sibling Character's anim from movement
     bool  footIK = false;               // plant the Character's feet on the ground (foot IK)
@@ -134,7 +136,7 @@ public:
 
     // ---- Lean (peek around corners) ----
     char  leanLeftKey  = 'q';           // 0 = disabled
-    char  leanRightKey = 'e';           // 0 = disabled
+    char  leanRightKey = 'x';           // 0 = disabled. Was E; E is the shared Interact key now (scenes that saved E keep it)
     float leanAngle  = 14.0f;           // camera roll while leaning (degrees)
     float leanOffset = 0.35f;           // sideways camera shift while leaning (units)
     float leanSpeed  = 10.0f;           // how fast the lean eases in/out
@@ -323,7 +325,7 @@ public:
         // local -Z, so yaw decreases with rightward mouse movement.
         Vec2 mp = Input::MousePosition();
         bool uiBlocked = Input::UICaptured();        // a modal UI (open inventory/chest) pauses look
-        bool zoom = !uiBlocked && Input::GetMouseButton(1);
+        bool zoom = !uiBlocked && InputActions::ControlMouse("Aim", 1);
         if (Accessibility::ToggleFor("Aim")) zoom = m_aimLatch.Update(zoom, true);
         else m_aimLatch.Reset();
         in.yaw = yaw; in.pitch = pitch;
@@ -369,24 +371,28 @@ public:
         in.yaw = yaw;
         in.pitch = pitch;
 
-        in.move = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
-        auto key = [&](char k, std::uint32_t bit) {
+        in.move = uiBlocked ? Vec2{0, 0} : InputActions::ControlMove();   // freeze while a bag is open
+        // Jump, sprint and crouch read their named actions, so a player's rebinding reaches them; with the
+        // default bindings they are exactly Space, sprintKey and crouchKey (InputActions::ControlKey).
+        auto key = [&](const char* action, char k, std::uint32_t bit, char stock = 0) {
             if (!k) return;
+            const bool held = action ? InputActions::ControlKey(action, k, stock) : Input::GetKey(k);
+            const bool down = action ? InputActions::ControlKeyDown(action, k, stock) : Input::GetKeyDown(k);
             // A key that is neither down nor just pressed sets no bit, whoever owns it: do not search the scene
             // (every use prompt, pickup and bag) for who that is, twice a frame.
-            if (!OldPlayerPath() && !Input::GetKey(k) && !Input::GetKeyDown(k)) return;
+            if (!OldPlayerPath() && !held && !down) return;
             if ((bit == PlayerInput::LeanLeft || bit == PlayerInput::LeanRight) &&
-                LeanKeyTaken(gameObject ? gameObject->scene() : nullptr, k)) return;   // a use or bag press, not a lean
-            if (Input::GetKey(k))     in.held |= bit;
-            if (Input::GetKeyDown(k)) in.pressed |= bit;
+                LeanKeyTaken(gameObject ? gameObject->scene() : nullptr, k, gameObject)) return;   // a use or bag press, not a lean
+            if (held) in.held |= bit;
+            if (down) in.pressed |= bit;
         };
-        key(' ', PlayerInput::Jump);
-        key(sprintKey, PlayerInput::Sprint);
-        key(crouchKey, PlayerInput::Crouch);
-        key(proneKey, PlayerInput::Prone);
+        key("Jump", ' ', PlayerInput::Jump);
+        key("Sprint", sprintKey, PlayerInput::Sprint);
+        key("Crouch", crouchKey, PlayerInput::Crouch);
+        key("Prone", proneKey, PlayerInput::Prone, 'z');
         m_dodgeEdge = dodge.canDodge && dodge.key && Input::GetKeyDown(dodge.key);
-        key(leanLeftKey, PlayerInput::LeanLeft);
-        key(leanRightKey, PlayerInput::LeanRight);
+        key("LeanLeft", leanLeftKey, PlayerInput::LeanLeft, 'q');
+        key("LeanRight", leanRightKey, PlayerInput::LeanRight, 'x');   // stock keys: the actions start unbound (first person ships X, E is Interact)
         if (stanceGamepadButton >= 0 && Input::GetGamepadButton(stanceGamepadButton)) in.held |= PlayerInput::StanceButton;
         return in;
     }
@@ -950,7 +956,7 @@ private:
         // old test compared the other object's pivot height with ours, which fails for a floor whose pivot is not
         // below the player: such a floor refilled no jump.)
         if (!OldPlayerPath()) {
-            if (m_sense.Note(c.normal)) m_groundContact = 0.10f;
+            if (m_sense.Note(c.normal, c.relativeVelocity)) m_groundContact = 0.10f;
             else if (c.normal.y > -0.5f && c.normal.y < 0.5f && !IsPushableBody(c.gameObject)) m_wall.Note(c.normal);
             return;
         }
@@ -994,6 +1000,7 @@ private:
     // Sprint held this frame, honouring the toggle option (tap to latch).
     // Accessibility "hold to toggle" uses the same latch as toggleRun.
     bool IsRunHeld(const PlayerInput& in) {
+        if (sprintByScript) return true;   // a script's Set Sprinting holds it
         if (!sprintKey) return false;
         if (toggleRun || Accessibility::ToggleFor("Sprint")) {
             if (in.Pressed(PlayerInput::Sprint)) m_runToggled = !m_runToggled;

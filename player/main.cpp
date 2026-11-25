@@ -17,6 +17,7 @@
 #include "SdlDisplays.hpp"             // monitor list and display modes (SDL directly; not the platform seam)
 #include "okay/Input/PlatformKeys.hpp"   // F1-F12, nav keys, left / right modifiers (physical keys, via okay::platform)
 #include "okay/Core/BuildPipeline.hpp"   // FindDataDir (<Name>_Data layout) and build.json
+#include "okay/Core/AssetDatabase.hpp"   // scene files name assets by id; the index resolves them
 #include "okay/Core/BuildConfigExtra.hpp"   // game speed, start volumes, language, logging, environment variables from Build Settings > Game
 #include "okay/Core/Paths.hpp"
 #include <filesystem>
@@ -27,7 +28,11 @@
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Core/SystemCost.hpp"       // F3 second page: ms per system
 #include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
+#include "okay/Render/TextureAsset.hpp"   // textures::Pump once a frame
 #include "okay/Core/GameLoop.hpp"        // the per-frame driver (clamp, smoothing, Time, update, quit)
+#include "okay/Core/ConsoleHost.hpp"     // the ` console: typed line, --cvar, standard cvars (game.speed, r.vsync, debug.*)
+#include "okay/Core/Cvar.hpp"
+#include "okay/Core/LoopConsole.hpp"     // time.stats, time.scale ... on the run's GameLoop
 #include "okay/Net/DedicatedServer.hpp"
 #if !defined(_WIN32)
 #include <termios.h>
@@ -63,6 +68,7 @@
 #endif
 #include "DevLog.hpp"             // development-build log file (used with or without OkayUI)
 #include "okay/Core/BuildInfo.hpp"
+#include "okay/Modules/ModuleRegistry.hpp"
 #include "GameContent.hpp"         // optional downloaded game content (off unless a content URL is configured; docs/release/content_delivery.md)
 #include "GameContentValidators.hpp"  // graph / script checks for downloaded scripts
 
@@ -1137,6 +1143,7 @@ static std::string ResolveGameBaseDir(const char* argv0) {
 
 int main(int argc, char** argv) {
     okay::ownstack::Startup("none");   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
+    okay::Log::Info("[okay] modules: ", okay::ModuleRegistry::Get().Summary());   // engine modules in this player (docs/engine/modular_engine.md)
     // The window, events, input and GL context go through okay::platform (SDL2 is the default
     // backend; see docs/platform/platform_layer.md). The 2D drawing below still needs an SDL window.
     okay::platform::Backend* pb = okay::platform::Default();
@@ -1192,6 +1199,7 @@ int main(int argc, char** argv) {
     for (const char* f : {"server", "auth", "no-encryption", "report-kicks", "fixed-tick", "authoritative",
                           "advertise", "logout", "help", "build-info"})
         pcl.Flag(f);
+    okay::consolehost::DeclareOptions(pcl);   // --cvar NAME=VALUE (repeatable), --console
     pcl.AllowUnknown();
     pcl.Parse(argc, argv);   // a flag missing its value is reported by the code that reads it
     // `--login NAME` / `--logout`: sign this machine in to OkaySpace without the
@@ -1575,6 +1583,18 @@ int main(int argc, char** argv) {
     okay::devlog::Start(devPanels, okay::devlog::LogPathFor(argv[0], baseDir), saveDir + "game.log",
                         cfg.title, cfg.version.empty() ? std::string() : cfg.version + " (build " + std::to_string(cfg.buildNumber) + ")", scenePath);
     okay::devlog::HitchWatch hitchWatch;
+    {   // The editor writes a sprite's asset id. The player resolves it from the same folder.
+        static okay::AssetDatabase* index = new okay::AssetDatabase();
+        okay::ScanOptions opt;
+        opt.createMetas = false;
+        opt.indexUnmetaed = true;
+        opt.detectMoves = false;
+        opt.verifyHashes = false;
+        opt.buildDependencies = false;
+        opt.logWarnings = false;
+        index->Scan(baseDir, opt);
+        okay::SetSceneAssetIndex(index);
+    }
     if (!SceneSerializer::LoadFromFile(scene, scenePath, &err)) {
         pb->Log("Could not load " + scenePath + ": " + err);
         okay::Log::Error("[scene] could not load '", scenePath, "': ", err);
@@ -1643,7 +1663,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<okay::platform::Window> windowOwner = pb->MakeWindow(wd);
     okay::platform::Window* window = windowOwner.get();
     if (!window) {   // the main loop reads the window every frame: stop here with a message, not a crash
-        pb->Log(std::string("could not create the game window: ") + SDL_GetError());
+        pb->Log("could not create the game window: " + pb->LastError());
         pb->Shutdown();
         return 1;
     }
@@ -1859,6 +1879,16 @@ int main(int argc, char** argv) {
     // kept a scale a script had left, so a scene loaded after one that froze the game started frozen).
     loop.BeginSession();
     if (cfg.extra.timeScale != 1.0f) okay::Time::SetTimeScale(cfg.extra.timeScale);   // Build Settings > Game > Game speed
+    // The console (okay/Core/ConsoleHost.hpp): the standard cvars start at this run's settings, then `--cvar NAME=VALUE`.
+    // The ` key opens it in development builds, with --console or OKAY_CONSOLE=1; shipped games keep it closed.
+    okay::consolehost::RegisterStandard();
+    okay::Cvar& showFpsVar = okay::Cvars::Bool("debug.show_fps", false);
+    if (cfg.showFps) showFpsVar.SetBool(true);
+    okay::LoopConsole loopCmds(loop);
+    const bool consoleAllowed = okay::consolehost::PlayerConsoleAllowed(devPanels, pcl.GetBool("console"), std::getenv("OKAY_CONSOLE"));
+    for (const std::string& w : okay::consolehost::ApplyCvarArgs(pcl, consoleAllowed)) std::fprintf(stderr, "warning: %s\n", w.c_str());   // shipped games: ignored
+    bool consoleOpen = false;
+    okay::ConsoleInput consoleLine;
     scene.Start();
 
     // Open every connected game controller (up to Input::kMaxGamepads, one per player).
@@ -1979,6 +2009,17 @@ int main(int argc, char** argv) {
             // The wheel as the OS user set it up (natural scrolling flips it), as SDL reported it.
             const float osWheelY = e.wheelFlipped ? -e.wheelY : e.wheelY;
             if (e.type == ET::Quit) running = false;
+            if (consoleAllowed && keyDown && !e.repeat && e.key == PK::Grave) { consoleOpen = !consoleOpen; continue; }
+            if (consoleOpen) {   // the console owns the keyboard while open
+                if (e.type == ET::TextInput) consoleLine.Type(e.text);
+                else if (keyDown && (e.key == PK::Return || e.key == PK::KpEnter)) consoleLine.Submit();
+                else if (keyDown && e.key == PK::Backspace) consoleLine.Backspace();
+                else if (keyDown && e.key == PK::Up) consoleLine.HistoryPrev();
+                else if (keyDown && e.key == PK::Down) consoleLine.HistoryNext();
+                else if (keyDown && e.key == PK::Tab) consoleLine.Complete();
+                else if (keyDown && e.key == PK::Escape) consoleOpen = false;
+                if (e.type == ET::KeyDown || e.type == ET::KeyUp || e.type == ET::TextInput) continue;
+            }
 #ifdef OKAY_HAVE_OKAYUI
             if (keyDown && e.key == PK::F1 && devPanels) g_testUI = !g_testUI;
             if (keyDown && e.key == PK::F3) {   // off -> frame page -> systems page -> off
@@ -2061,28 +2102,13 @@ int main(int argc, char** argv) {
         okay::Matchmaker::Shared().Pump(scene.FindObjectOfType<okay::NetworkManager>());   // a found match: join / host it
 #endif
         // Feed keyboard into the engine Input.
-        auto keyHeld = [pb](PK k) { return pb->IsKeyDown(k); };
+        // Letters by the layout's letter (AZERTY WASD works; layouts without Latin letters fall back to the US place),
+        // digits, Space, modifiers, editing keys, Escape, and the arrows as themselves and as WASD.
         std::vector<char> down;
-        for (char c = 'a'; c <= 'z'; ++c)
-            if (keyHeld(okay::KeyForLetter(*pb, c))) down.push_back(c);   // by the layout's letter: AZERTY WASD works; layouts without Latin letters fall back to the US place
-        for (char c = '0'; c <= '9'; ++c)
-            if (keyHeld(okay::KeyForLetter(*pb, c))) down.push_back(c);
-        if (keyHeld(PK::Space)) down.push_back(' ');
-        if (keyHeld(PK::LShift) || keyHeld(PK::RShift)) down.push_back(Input::KeyShift); // sprint
-        if (keyHeld(PK::LCtrl)  || keyHeld(PK::RCtrl))  down.push_back(Input::KeyCtrl);  // crouch
-        if (keyHeld(PK::LGui)   || keyHeld(PK::RGui))   down.push_back(Input::KeyCmd);   // Command, for copy / paste
-        // Editing keys for text fields (held-state; edge-detected by the field).
-        if (keyHeld(PK::Backspace)) down.push_back((char)8);
-        if (keyHeld(PK::Return) || keyHeld(PK::KpEnter)) down.push_back('\r');
-        if (keyHeld(PK::Escape)) down.push_back((char)27);
-        // Arrows count as themselves and as WASD, so axis_x/axis_y and key("w") agree.
-        if (keyHeld(PK::Up))    { down.push_back('w'); down.push_back(Input::KeyUp); }
-        if (keyHeld(PK::Left))  { down.push_back('a'); down.push_back(Input::KeyLeft); }
-        if (keyHeld(PK::Down))  { down.push_back('s'); down.push_back(Input::KeyDown); }
-        if (keyHeld(PK::Right)) { down.push_back('d'); down.push_back(Input::KeyRight); }
-
+        okay::AppendHeldMainKeys(*pb, down);
         okay::AppendExtendedKeys(*pb, down);
         pads.Feed(down);   // every controller (sticks, triggers, buttons, rumble); the first also types WASD / Space
+        if (consoleOpen) down.clear();   // typing in the console does not move the player
         Input::FeedKeys(down);
 
         // An open inventory is modal: free the cursor (even in FPS/locked mode) so you
@@ -2178,7 +2204,7 @@ int main(int argc, char** argv) {
             int ow = 0, oh = 0;
             renderer->OutputSize(&ow, &oh);
             if (ow > 0 && oh > 0) UICanvas::Set((float)ow, (float)oh);
-            if (SDL_GetNumTouchDevices() > 0) Input::SetTouchScreen(true);
+            if (pb->TouchDeviceCount() > 0) Input::SetTouchScreen(true);   // sdl2: SDL's touch devices; own: none yet
             TouchControls::Sample(scene);
             Gestures::Tick((double)okay::platform::TicksMs() / 1000.0);
         }
@@ -2320,10 +2346,11 @@ int main(int argc, char** argv) {
             }
         }
 #ifdef OKAY_HAVE_OKAYUI
-        okay::Prof().enabled = g_statsUI && g_statsPage == 1;   // only measured while the systems page is open
+        okay::Prof().enabled = okay::consolehost::ProfilerWanted(g_statsUI && g_statsPage == 1);   // the systems page is open, or debug.profile
 #else
-        okay::Prof().enabled = false;   // the F3 page is an OkayUI panel: builds without OkayUI (web) never measure
+        okay::Prof().enabled = okay::consolehost::ProfilerWanted(false);   // no F3 page without OkayUI (web): only debug.profile measures
 #endif
+        okay::consolehost::SyncFromEngine();   // the Settings screen's vsync and a script's time scale show in the console
         okay::Prof().BeginFrame();
         if (!loop.BeginFrame(tick ? (double)measuredDt : 0.0)) running = false;   // false: a PauseMenu / script asked to quit
         if (acGuard.Tick()) {   // only ever true in enforce mode
@@ -2354,6 +2381,7 @@ int main(int argc, char** argv) {
             }
         }
 
+        okay::textures::Pump();   // shared texture library: hot reload (OKAY_TEXTURE_HOT_RELOAD=1), memory budget, F3 numbers
         okay::Prof().Begin("Render.Submit");
         int w, h; renderer->OutputSize(&w, &h);
         Camera* cam = scene.mainCamera;
@@ -2805,7 +2833,7 @@ int main(int argc, char** argv) {
         uiBatch.Flush();   // leaves no clip, scale 1
 
         // Optional FPS overlay (top-left) when enabled in build settings.
-        if (cfg.showFps) {
+        if (showFpsVar.AsBool()) {   // Build Settings show_fps, or the debug.show_fps cvar
             // The loop's own REAL frame times over the last 30 frames (okay/Core/FrameOverlay.hpp), the numbers
             // the F3 panel shows. This used to read `dt`, the frame time cut to 0.1 s, so it never showed
             // under 10 FPS and a stall barely moved it.
@@ -2878,6 +2906,16 @@ int main(int argc, char** argv) {
             OkayUI::EndChild();
             OkayUI::End();
         }
+        // The network stats overlay (NetworkManager::showStatsOverlay, net.show_stats, Show Network Stats): top right.
+        if (okay::NetworkManager* netOverlay = okay::NetworkManager::OverlayManager()) {
+            const std::vector<std::string> netLines = netOverlay->StatsLines();
+            if (!netLines.empty()) {
+                int ow = 0, oh = 0; renderer->OutputSize(&ow, &oh);
+                OkayUI::Begin("Network", (float)ow - 344.0f, 24.0f, 320.0f, 44.0f + 18.0f * (float)netLines.size());
+                for (const std::string& nl : netLines) OkayUI::Text(nl.c_str());
+                OkayUI::End();
+            }
+        }
         if (uiFrame) {
             int uw = 0, uh = 0; renderer->OutputSize(&uw, &uh);
             OkayUI::EndFrameData(uw, uh);
@@ -2934,7 +2972,25 @@ int main(int argc, char** argv) {
         // Post: screen-space vignette (on top of the scene + UI, under nothing),
         // unless the GPU post chain already drew it into the frame.
         if (!okay::PostVignetteHandled()) DrawVignette(renderer, scene.renderSettings.vignette);
-        renderer->Present();
+        if (consoleOpen) {   // the ` console: the newest output lines and the typed line, over the top of the frame
+            int cw = 0, chh = 0; renderer->OutputSize(&cw, &chh);
+            const float px = 2.0f, lineH = Font8x8::Height * px + 4.0f;
+            const int rows = std::max(2, (int)(chh * 0.4f / lineH));
+            const std::size_t maxChars = (std::size_t)std::max(8.0f, (cw - 16) / (8.0f * px));
+            SDL_Rect bg{0, 0, cw, (int)(rows * lineH + 12)};
+            renderer->SetDrawColor(8, 10, 14, 255);   // opaque: nothing underneath shows through the console text
+            renderer->FillRect((const ui2d::Rect*)&bg);
+            std::vector<std::string> lines = okay::consolehost::TailLines((std::size_t)rows - 1);
+            lines.push_back("] " + consoleLine.text + "_");
+            float y = bg.h - lines.size() * lineH - 4.0f;
+            for (const std::string& l : lines) {
+                const std::string shown = l.size() > maxChars ? l.substr(l.size() - maxChars) : l;
+                const bool err = l.compare(0, 6, "error:") == 0;
+                DrawText(renderer, shown, 8, y, px, err ? SDL_Color{255, 120, 110, 255} : SDL_Color{220, 230, 220, 255});
+                y += lineH;
+            }
+        }
+        { OKAY_PROFILE("Render.Present"); renderer->Present(); }
         okay::Prof().EndFrame((okay::platform::PerfCounter() - fStart) * 1000.0 / (double)okay::platform::PerfFrequency());
 
         // Optional frame-rate cap: sleep the remainder of the frame budget.

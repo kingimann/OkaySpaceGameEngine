@@ -61,6 +61,14 @@ if(OKAY_BUILD_TESTS)
     add_executable(test_xbox_uwp_padhub tests/test_xbox_uwp_padhub.cpp)
     target_include_directories(test_xbox_uwp_padhub PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME xbox_uwp_padhub COMMAND test_xbox_uwp_padhub)
+    # Touch tracking (tap / drag thresholds), text composition and their wiring into the backend over a fake host (XboxTouch.hpp).
+    add_executable(test_xbox_uwp_touch tests/test_xbox_uwp_touch.cpp UwpPlatform.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/Paths.cpp)
+    target_include_directories(test_xbox_uwp_touch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/engine/include)
+    add_test(NAME xbox_uwp_touch COMMAND test_xbox_uwp_touch)
+    # Round 3 pure pieces: pending saves before suspend, splash model, keyboard layouts, clipboard seam. Header-only, no engine link.
+    add_executable(test_xbox_uwp_pieces tests/test_xbox_uwp_pieces.cpp)
+    target_include_directories(test_xbox_uwp_pieces PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/engine/include)
+    add_test(NAME xbox_uwp_pieces COMMAND test_xbox_uwp_pieces)
     # The non-blocking SDK check (XboxAsyncProbe.hpp): state machine, "UI call returns in under 5 ms while a 300 ms probe runs", vswhere JSON, cache file.
     add_executable(test_xbox_uwp_async tests/test_xbox_uwp_async.cpp)
     target_include_directories(test_xbox_uwp_async PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -84,7 +92,7 @@ if(OKAY_BUILD_TESTS)
     # ModelImport.cpp and FbxScene.cpp are compiled again into this test (its objects win over the same ones in the engine library). Linux, no Windows needed.
     include(${CMAKE_CURRENT_SOURCE_DIR}/engine/uwp_own_readers.cmake)
     okay_uwp_own_readers("${CMAKE_SOURCE_DIR}/CMakeLists.txt" _xbox_mi_defs _xbox_own_on)
-    add_executable(test_xbox_uwp_models tests/test_xbox_uwp_models.cpp ${CMAKE_SOURCE_DIR}/engine/src/Render/ModelImport.cpp ${CMAKE_SOURCE_DIR}/engine/src/Render/FbxScene.cpp)
+    add_executable(test_xbox_uwp_models tests/test_xbox_uwp_models.cpp ${CMAKE_SOURCE_DIR}/engine/src/Render/ModelImport.cpp ${CMAKE_SOURCE_DIR}/engine/src/Render/FbxScene.cpp ${CMAKE_SOURCE_DIR}/engine/src/Render/FbxSceneClips.cpp)
     target_link_libraries(test_xbox_uwp_models PRIVATE okay::engine)
     target_include_directories(test_xbox_uwp_models PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/engine/src)
     target_compile_definitions(test_xbox_uwp_models PRIVATE OKAY_XBOX_UWP=1 OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}" OKAY_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")

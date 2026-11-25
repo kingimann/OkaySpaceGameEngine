@@ -386,6 +386,37 @@ for jn, sn, block in run_blocks(REL):
         check(p.returncode == 0, "release.yml %s: bash -n: %s" % (sn, p.stderr.strip()))
         check("${{" not in block, "release.yml fast step %s: no ${{ }} in the shell text" % sn)
 
+# changelog-notes: the launcher's NOTES.txt for a normal release comes from that version's dist/CHANGELOG.txt block
+# (2.903.2 shipped "Release 2.903.2 (#1143)" as its only note: the release runner's one-commit git log).
+cl = """OkaySpace Game Engine - Changelog
+
+v2.0.1
+  Title line
+  - First thing changed, which is a long sentence
+    that goes on the next line.
+  - Second thing.
+    - A nested detail.
+
+v2.0.0
+  Older
+  - Old thing.
+"""
+ents = fr.changelog_entry(cl, "2.0.1")
+check([e["bullets"][0] for e in ents] == ["First thing changed, which is a long sentence that goes on the next line.", "Second thing.", "A nested detail."],
+      "changelog_entry joins continued lines and stops at the next version: %r" % ents)
+check(fr.notes_lines(ents)[0] == "- First thing changed, which is a long sentence that goes on the next line.", "notes_lines on a changelog block")
+check(fr.changelog_entry(cl, "9.9.9") == [], "changelog_entry: no block for an unknown version")
+check(fr.changelog_entry(cl, "2.0.0")[0]["bullets"] == ["Old thing."], "changelog_entry: the last block ends at the end of the file")
+with tempfile.TemporaryDirectory() as d:
+    cp = os.path.join(d, "CHANGELOG.txt")
+    open(cp, "w").write(cl)
+    r = subprocess.run([sys.executable, "-I", os.path.join(ROOT, "scripts", "fast_release.py"), "changelog-notes", "--version", "2.0.1", "--changelog", cp], capture_output=True, text=True)
+    check(r.returncode == 0 and r.stdout.splitlines()[1] == "- Second thing.", "changelog-notes command prints the notes: %r" % r.stdout)
+    r = subprocess.run([sys.executable, "-I", os.path.join(ROOT, "scripts", "fast_release.py"), "changelog-notes", "--version", "9.9.9", "--changelog", cp], capture_output=True, text=True)
+    check(r.returncode == 1 and r.stdout == "", "changelog-notes exits 1 for a missing version (publish-supabase.sh then falls back)")
+ptext = open(os.path.join(ROOT, "scripts", "publish-supabase.sh")).read()
+check("changelog-notes" in ptext, "publish-supabase.sh takes NOTES.txt from the changelog block")
+
 # every real entry is valid
 _, problems = fr.load_entries(os.path.join(ROOT, "dist", "changelog.d"))
 check(not problems, "entries in dist/changelog.d: %r" % problems)

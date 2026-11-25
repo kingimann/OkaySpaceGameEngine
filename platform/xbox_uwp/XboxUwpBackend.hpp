@@ -6,12 +6,17 @@
 // documentation of CoreWindow events (SizeChanged, VisibilityChanged, Activated, KeyDown/KeyUp, PointerMoved/Pressed/Released,
 // PointerWheelChanged, CharacterReceived, Closed). No <thread>, no <mutex>.
 #include "XboxAudio.hpp"
+#include "XboxCapture.hpp"
+#include "XboxClipboard.hpp"
 #include "XboxInput.hpp"
+#include "XboxKeyLayout.hpp"
 #include "XboxLifecycle.hpp"
 #include "XboxPadHub.hpp"
 #include "XboxPaths.hpp"
+#include "XboxTouch.hpp"
 #include "okay/Platform/Platform.hpp"
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <deque>
 #include <filesystem>
@@ -33,6 +38,9 @@ struct UwpHost {
     virtual void SetTitle(const std::string&) {}        // ApplicationView.Title
     virtual std::vector<std::string> Locales() { return {"en-US"}; }
     virtual void ShowMessage(const std::string&, const std::string&) {}
+    virtual CaptureHost* Capture() { return nullptr; }  // null: no microphone support on this host
+    virtual std::string InputLanguage() { return "en-US"; }   // the keyboard's language tag (Windows.Globalization.Language / InputLanguage); picks the key layout
+    virtual int TouchDevices() { return 0; }            // PointerDevice.GetPointerDevices(): touch digitizers present (an Xbox usually has none)
 };
 
 class UwpBackend;
@@ -83,6 +91,35 @@ public:
         if (down) mouse_ |= platform::MouseMask(button); else mouse_ &= ~platform::MouseMask(button);
         platform::Event e = Base(down ? platform::EventType::MouseButtonDown : platform::EventType::MouseButtonUp); e.button = button; e.x = x; e.y = y; e.clicks = 1; q_.push_back(e);
     }
+    /// Touch / pen pointer from PointerPressed / Moved / Released / Canceled. `dipX`, `dipY` are in DIPs (device-independent pixels,
+    /// 96 per inch), the unit of CoreWindow's PointerPoint.Position; they are turned into physical pixels with the window's DPI
+    /// (Life().Dpi(), from Resized), the same pixels as the window size. Raw points become FingerDown / FingerMotion / FingerUp
+    /// (x, y in pixels; fx, fy are pixel / window pixels, 0..1 inside the window, outside it while a pointer is captured).
+    /// Mouse rule: the finger that goes down while no other finger is down "owns" the mouse: it moves it and presses the left button,
+    /// and its up or cancel releases it. No other finger touches the mouse, not even one that becomes the tracker's primary after the
+    /// owner lifts; the next finger that goes down after every finger has lifted owns it again. So every MouseButtonDown has exactly
+    /// one MouseButtonUp, and the mouse never moves under a finger with no button held. Recognised taps and drags are available
+    /// through TakeGestures. UNVERIFIED with a real touch screen.
+    void PushTouch(long long id, PointerPhase ph, float dipX, float dipY) {
+        const float dpi = life_.Dpi();
+        Route(touch_.Feed(id, ph, DipPosToPixels(dipX, dpi), DipPosToPixels(dipY, dpi), TicksMs()));
+    }
+    /// The window lost focus or the app suspends: every finger ends as a cancel (the mouse button is released too).
+    void CancelTouches() { Route(touch_.CancelAll()); }
+    std::vector<TouchEvent> TakeGestures() { std::vector<TouchEvent> v; v.swap(gestures_); return v; }
+    TouchTracker& Touch() { return touch_; }
+    /// Text composition (IME / on-screen keyboard): TextEditing while composing (text = composed string, x = caret in code points),
+    /// TextEditing "" when it ends, TextInput on commit. Only while text input is on. UNVERIFIED with a real IME.
+    void PushComposition(const std::string& utf8, int caret) {
+        if (!textInput_ || !comp_.Update(utf8, caret)) return;
+        platform::Event e = Base(platform::EventType::TextEditing); e.text = comp_.Active() ? comp_.Text() : std::string(); e.x = comp_.Caret(); q_.push_back(e);
+    }
+    void PushCompositionCommit(const std::string& finalText = std::string()) {
+        const bool was = comp_.Active(); const std::string t = comp_.Commit(finalText);
+        if (!textInput_) return;
+        if (was) q_.push_back(Base(platform::EventType::TextEditing));
+        PushText(t);
+    }
     void PushWheel(float notchesY) { platform::Event e = Base(platform::EventType::MouseWheel); e.wheelY = notchesY; q_.push_back(e); }
     void PushPadAdded(int index) { platform::Event e = Base(platform::EventType::GamepadAdded); e.deviceId = index; q_.push_back(e); }
     void PushPadRemoved(int instanceId) { platform::Event e = Base(platform::EventType::GamepadRemoved); e.deviceId = instanceId; q_.push_back(e); }
@@ -106,7 +143,14 @@ public:
 
     // ---- Backend ----
     platform::BackendKind Kind() const override { return platform::BackendKind::Own; }
-    bool Init(const platform::InitFlags&) override { inited_ = true; err_.clear(); return true; }
+    bool Init(const platform::InitFlags&) override { inited_ = true; err_.clear(); RefreshKeyLayout(); return true; }
+    /// The key layout KeyForChar / KeyLabel follow (XboxKeyLayout.hpp). Init and RefreshKeyLayout take it from the host's language tag
+    /// (US when the host says nothing we know); SetKeyLayout overrides it. UNVERIFIED on a console: the real language tag is the shell's.
+    void SetKeyLayout(KeyLayout l) { layout_ = l; }
+    KeyLayout GetKeyLayout() const { return layout_; }
+    void RefreshKeyLayout() { layout_ = LayoutFromLanguageTag(host_->InputLanguage()); }
+    /// The label for a key on a rebinding screen in the current layout ("" when unknown; "Space" for the space bar).
+    std::string KeyLabel(platform::Key k) const { return KeyName(layout_, (int)k); }
     void Shutdown() override { inited_ = false; }
     std::string LastError() const override { return err_; }
     std::uint64_t TicksMs() override { return (std::uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_).count(); }
@@ -123,7 +167,10 @@ public:
     void* GLProcAddress(const char*) override { return nullptr; }
     void ReleaseCurrent() override {}
     void StartTextInput() override { textInput_ = true; }
-    void StopTextInput() override { textInput_ = false; }
+    void StopTextInput() override { if (comp_.Cancel() && textInput_) q_.push_back(Base(platform::EventType::TextEditing)); textInput_ = false; }
+    void SetTextInputRect(int x, int y, int w, int h) override { imeRect_[0] = x; imeRect_[1] = y; imeRect_[2] = w; imeRect_[3] = h; }   // where the app wants the on-screen keyboard / candidates
+    const int* TextInputRect() const { return imeRect_; }
+    int TouchDeviceCount() override { return host_->TouchDevices(); }
     bool IsKeyDown(platform::Key k) override { return keys_.count((int)k) != 0; }
     std::uint32_t MouseState(int* x, int* y) override { if (x) *x = mx_; if (y) *y = my_; return mouse_; }
     bool SetRelativeMouse(bool on) override { rel_ = on; return true; }
@@ -132,13 +179,15 @@ public:
     bool IsCursorShown() override { return cursor_; }
     std::uint32_t RelativeMouseState(int* dx, int* dy) override { if (dx) *dx = relDx_; if (dy) *dy = relDy_; relDx_ = relDy_ = 0; return mouse_; }
     bool SupportsRelativeMouseState() override { return true; }
-    platform::Key KeyForChar(char c) override {   // a US layout (CoreWindow gives virtual keys, not the layout): documented limit
-        if (c >= 'a' && c <= 'z') return (platform::Key)((int)platform::Key::A + (c - 'a'));
-        if (c >= 'A' && c <= 'Z') return (platform::Key)((int)platform::Key::A + (c - 'A'));
-        if (c >= '1' && c <= '9') return (platform::Key)((int)platform::Key::N1 + (c - '1'));
-        if (c == '0') return platform::Key::N0;
-        if (c == ' ') return platform::Key::Space;
-        return platform::Key::Unknown;
+    /// The physical key that types `c` on the current layout (XboxKeyLayout.hpp). Only letters, digits and space are asked (the engine's
+    /// rule; anything else is Unknown, as on the US default before), so a game's WASD follows an AZERTY layout. A letter the layout does
+    /// not have (Latin letters on a Russian layout) is Unknown too.
+    platform::Key KeyForChar(char c) override {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ';
+        if (!ok) return platform::Key::Unknown;
+        const char lc = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+        const int hid = xbox::KeyForChar(layout_, (char32_t)(unsigned char)lc);
+        return hid == 0 ? platform::Key::Unknown : (platform::Key)hid;
     }
     bool ShowErrorBox(const std::string& title, const std::string& text, platform::Window*) override { Log(title + ": " + text); host_->ShowMessage(title, text); return true; }
     std::string BasePath() override { std::string p = TrimEndSlash(Slash(roots_.install)); return p.empty() ? p : p + "/"; }
@@ -153,11 +202,12 @@ public:
     /// Also receives every line (the app sets it to a FileLog, XboxLog.hpp, so the owner can read the log from the Device Portal).
     std::function<void(const std::string&)> logSink;
     const std::deque<std::string>& LogLines() const { return log_; }
-    bool SetClipboardText(const std::string& t) override { clip_ = t; return true; }   // in-app only (no Windows clipboard yet)
-    std::string GetClipboardText() override { return clip_; }
+    bool SetClipboardText(const std::string& t) override { return clip_.SetText(t); }   // in-app unless the shell installed a system clipboard (SetClipboardHost, XboxClipboard.hpp)
+    std::string GetClipboardText() override { return clip_.GetText(); }
+    void SetClipboardHost(ClipboardHost* h) { clip_.SetHost(h); }   // the C++/WinRT glue (never built); null = in-app only
 
-    std::unique_ptr<platform::AudioDevice> OpenAudio(const platform::AudioSpec& want, bool capture, const char*, platform::AudioSpec* got) override {
-        if (capture) { err_ = "Microphone capture is not supported in the Xbox UWP build yet."; return nullptr; }
+    std::unique_ptr<platform::AudioDevice> OpenAudio(const platform::AudioSpec& want, bool capture, const char* deviceName, platform::AudioSpec* got) override {
+        if (capture) return OpenCapture(want, deviceName, got);
         AudioHost* ah = host_->Audio();
         AudioOutputFormat fmt;
         if (!ah || !ah->Format(fmt)) { err_ = "No audio output is available."; return nullptr; }
@@ -166,8 +216,17 @@ public:
         if (got) *got = d->Spec();
         return std::unique_ptr<platform::AudioDevice>(d.release());
     }
-    int AudioDeviceCount(bool capture) override { return capture ? 0 : (host_->Audio() ? 1 : 0); }
-    std::string AudioDeviceName(int index, bool capture) override { return (!capture && index == 0 && host_->Audio()) ? "Default audio output" : ""; }
+    int AudioDeviceCount(bool capture) override { if (capture) { CaptureHost* c = host_->Capture(); return c ? c->DeviceCount() : 0; } return host_->Audio() ? 1 : 0; }
+    std::string AudioDeviceName(int index, bool capture) override {
+        if (capture) { CaptureHost* c = host_->Capture(); return (c && index >= 0 && index < c->DeviceCount()) ? c->DeviceName(index) : std::string(); }
+        return (index == 0 && host_->Audio()) ? "Default audio output" : "";
+    }
+    /// What the microphone permission is now (manifest capability + the system's consent); Denied when the host has no capture at all.
+    MicPermissionResult MicPermissionNow() {
+        CaptureHost* c = host_->Capture();
+        if (!c) return {MicPermission::Denied, "No microphone is available on this host."};
+        return EvaluateMicPermission(c->CapabilityDeclared(), c->Consent());
+    }
 
     int GamepadDeviceCount() override { return hub_ ? hub_->SlotCount() : host_->PadCount(); }
     bool IsGamepad(int i) override { return hub_ ? hub_->Present(i) : (i >= 0 && i < host_->PadCount()); }
@@ -186,6 +245,22 @@ public:
     }
 
     UwpHost* Host() { return host_; }
+    /// Microphone: refused with the reason (LastError) when the permission is Denied, there is no device, the name matches none or the
+    /// device's format is not 16-bit PCM / 32-bit float. Permission Unknown still opens: starting the device is what asks the user.
+    std::unique_ptr<platform::AudioDevice> OpenCapture(const platform::AudioSpec& want, const char* deviceName, platform::AudioSpec* got) {
+        CaptureHost* c = host_->Capture();
+        const MicPermissionResult perm = MicPermissionNow();
+        if (perm.state == MicPermission::Denied) { err_ = "Microphone capture is not available: " + perm.reason; return nullptr; }
+        int index = 0; const int n = c->DeviceCount();
+        if (n < 1) { err_ = "No microphone was found."; return nullptr; }
+        if (deviceName && *deviceName) { index = -1; for (int i = 0; i < n; ++i) if (c->DeviceName(i) == deviceName) { index = i; break; } if (index < 0) { err_ = std::string("No microphone named \"") + deviceName + "\"."; return nullptr; } }
+        CaptureFormat fmt;
+        if (!c->Format(index, fmt) || !SupportedCaptureFormat(fmt)) { err_ = "The microphone's format is not supported (16-bit PCM or 32-bit float, 1 to 8 channels)."; return nullptr; }
+        std::unique_ptr<UwpCaptureDevice> d(new UwpCaptureDevice(want, fmt, c, index));
+        std::string e; if (!d->Begin(e)) { err_ = e.empty() ? "The microphone could not be started." : e; return nullptr; }
+        if (got) *got = d->Spec();
+        return std::unique_ptr<platform::AudioDevice>(d.release());
+    }
     const PathRoots& Roots() const { return roots_; }
 
 private:
@@ -201,13 +276,46 @@ private:
         void SendVibration(const Vibration& v) override { if (target) target->SendVibration(v); }
         const char* Name() const override { return target ? target->Name() : "Xbox controller"; }
         bool HasTriggerMotors() const override { return target ? target->HasTriggerMotors() : true; }
+        bool ReadBattery(BatteryInfo& b) override { return target && target->ReadBattery(b); }
     };
+    void Route(const std::vector<TouchEvent>& evs) {
+        const SizePx sz = life_.Size(); const float w = sz.w > 0 ? (float)sz.w : 1.0f, h = sz.h > 0 ? (float)sz.h : 1.0f;
+        for (const TouchEvent& g : evs) {
+            const bool down = g.kind == TouchEvent::RawDown, move = g.kind == TouchEvent::RawMove;
+            if (!down && !move && g.kind != TouchEvent::RawUp && g.kind != TouchEvent::RawCancel) { gestures_.push_back(g); if (gestures_.size() > 256) gestures_.erase(gestures_.begin()); continue; }
+            platform::Event e = Base(down ? platform::EventType::FingerDown : move ? platform::EventType::FingerMotion : platform::EventType::FingerUp);
+            e.fingerId = g.id; e.fx = (float)g.x / w; e.fy = (float)g.y / h; e.x = g.x; e.y = g.y; q_.push_back(e);
+            // The mouse rule (see PushTouch): only the finger that pressed the mouse moves and releases it.
+            if (down) {
+                if (mouseFinger_ >= 0 || !g.primary) continue;
+                mouseFinger_ = g.id; PushPointerMove(g.x, g.y); PushPointerButton(platform::MouseLeft, true, g.x, g.y);
+            } else if (g.id != mouseFinger_) {
+                continue;
+            } else if (move) {
+                PushPointerMove(g.x, g.y);
+            } else {
+                mouseFinger_ = -1; PushPointerButton(platform::MouseLeft, false, g.x, g.y);
+            }
+        }
+    }
+    /// A pointer position in DIPs to pixels, rounded to the nearest pixel. Unlike DipsToPixels (sizes) it keeps 0 and negative values.
+    static int DipPosToPixels(float dips, float dpi) {
+        if (!(dpi > 0.0f)) dpi = 96.0f;
+        if (!(dips == dips)) return 0;   // NaN
+        double px = std::floor(double(dips) * double(dpi) / 96.0 + 0.5);
+        if (px > 1e6) px = 1e6;
+        if (px < -1e6) px = -1e6;
+        return int(px);
+    }
     std::uint64_t Now() { return clockOverride ? clockOverride() : TicksMs(); }
     platform::Event Base(platform::EventType t) { platform::Event e; e.type = t; e.timestampMs = (std::uint32_t)TicksMs(); e.windowId = 1; return e; }
 public:
     /// Turn lifecycle changes into engine events (and run onSuspend / onResume) and poll the pads. PollEvent does this when its queue is
     /// empty; the Windows glue also calls it from the Suspending handler, so the state is saved before the system's deadline.
     void ServiceLifecycle() { Translate(); }
+    /// Back requests (B on a console pad) since the last call. The engine bridge hands them to the game as an Escape tap
+    /// (XboxGameRuntime::BackPressed); they never quit the app.
+    int TakeBackPresses() { const int n = backPresses_; backPresses_ = 0; return n; }
 private:
     void Translate() {
         const std::uint64_t now = TicksMs();
@@ -221,20 +329,30 @@ private:
         for (BackendPad* p : pads_) p->Poll(now);
         const LifecyclePending p = life_.Take();
         if (p.saveState) {
+            // A suspended app gets no PointerReleased or composition end: cancel every finger (releases the mouse button) and clear
+            // the composition now, so nothing is stuck after resume.
+            CancelTouches();
+            if (comp_.Cancel() && textInput_) q_.push_back(Base(platform::EventType::TextEditing));
+            // Motors off before the save: Windows.Gaming.Input holds a vibration until it is changed, and nothing polls while suspended.
+            for (BackendPad* bp : pads_) bp->StopRumble();
             q_.push_back(Base(platform::EventType::WindowFocusLost));
             if (onSuspend) onSuspend();
             life_.SaveDone();
         }
         if (p.resized) { platform::Event e = Base(platform::EventType::WindowResized); e.width = life_.Size().w; e.height = life_.Size().h; q_.push_back(e); }
         if (p.resumed) { q_.push_back(Base(platform::EventType::WindowFocusGained)); if (onResume) onResume(); }
+        if (p.back && !quitSent_) ++backPresses_;
         if (p.exitRequested && !quitSent_) { quitSent_ = true; q_.push_back(Base(platform::EventType::Quit)); }
     }
     friend class UwpWindow;
     UwpHost* host_; PathRoots roots_; std::chrono::steady_clock::time_point t0_;
     Lifecycle life_; std::deque<platform::Event> q_; std::set<int> keys_; std::vector<BackendPad*> pads_; int nextPadId_ = 1; std::unique_ptr<PadHub> hub_; std::vector<SlotProxy> proxies_;
-    std::deque<std::string> log_; std::string clip_, err_;
+    std::deque<std::string> log_; UwpClipboard clip_; std::string err_;
     int mx_ = 0, my_ = 0, relDx_ = 0, relDy_ = 0; std::uint32_t mouse_ = 0;
+    TouchTracker touch_; std::vector<TouchEvent> gestures_; long long mouseFinger_ = -1; TextComposition comp_; int imeRect_[4] = {0, 0, 0, 0};
+    KeyLayout layout_ = KeyLayout::US;
     bool inited_ = false, textInput_ = false, rel_ = false, cursor_ = true, quitSent_ = false;
+    int backPresses_ = 0;
 };
 
 inline void* UwpWindow::NativeHandle() const { return b_->host_->CoreWindowHandle(); }

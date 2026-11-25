@@ -37,12 +37,14 @@ struct Inst {
     enum class Op {
         Mov, Add, Sub, Mul, Div, Mod, And, Or, Xor, Shl, Shr, Neg, Not,
         Ceq, Cne, Clt, Cle, Cgt, Cge, Jmp, Br, Call, Ret,
-        Local, Lea, LeaSym, LeaFrame, Load, Store, GLoad, GStore, Cvt
+        Local, Lea, LeaSym, LeaFrame, Load, Store, GLoad, GStore, Cvt,
+        Sqrt  // fp: dst = the square root of a, rounded as IEEE 754 requires (SQRTSD / SQRTSS)
     } op = Op::Mov;
     int dst = -1;
     int extra = 8;  // byte width for a load, store, or narrowing move
     bool uns = false;  // zero-extend, or unsigned compare
     bool fp = false;   // floating-point op; extra is 4 (float) or 8 (double)
+    bool arith = false;  // Shr of a signed value: an arithmetic shift (SAR)
     Operand a;
     Operand b;
     std::string label;
@@ -66,6 +68,7 @@ struct Function {
     int vaNamed = -1;  // named general registers before "...", or -1 when the function is not variadic
     int vaXmm = 0;     // named xmm registers before "..."
     bool localSym = false;
+    bool weakSym = false;  // an inline function: every file may define it, the linker keeps one
     std::vector<int> xmmSlot;   // vreg that receives xmm0, xmm1, ...
     std::vector<int> xmmWidth;  // 4 or 8 for each of those
     std::vector<Block> blocks;
@@ -75,6 +78,8 @@ struct Global {
     std::string name;
     int size = 0;
     bool rodata = false;
+    bool localSym = false;  // internal linkage: a static global or a constexpr static member
+    bool weakSym = false;   // a vtable of a class defined in a header: one copy kept by the linker
     std::vector<unsigned char> bytes;
     std::string reloc;  // if set, the 8-byte value is the address of this symbol
     std::vector<std::pair<int, std::string>> relocs;  // (byte offset, symbol) 8-byte addresses inside bytes
@@ -112,6 +117,7 @@ void setAllocateRegisters(bool on);
 // Lower a C subset program: integers, pointers, arrays, globals, strings, and structs.
 Module lowerSource(const std::string& source, Diagnostics& diags, const std::string& file = "t.c",
                    const std::vector<std::string>& includes = {});
-std::string irText(const std::string& source, Diagnostics& diags, const std::string& file = "t.c");
+std::string irText(const std::string& source, Diagnostics& diags, const std::string& file = "t.c",
+                   const std::vector<std::string>& includes = {});
 
 }  // namespace okaycc

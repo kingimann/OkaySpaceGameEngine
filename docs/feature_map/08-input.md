@@ -1,13 +1,17 @@
 # 8. Input
 
-Polled keyboard, mouse, gamepad and touch state, named input actions with rebinding, cursor lock, rumble and gameplay input
-blocking. Code is `engine/include/okay/Input/*` (5 headers) and `engine/src/Input/*` (about 700 lines); `player/main.cpp` and
+One input system (owner, 2026-11-23: "combine it so you have one"): polled keyboard, mouse, gamepad and touch state, ONE
+table of named actions with ONE rebinding store (the `.okayinput` asset plus the actions code defines; `InputActions`, the
+typed `ActionSet` calls, local players and both Controls screens all read and change it), cursor lock, rumble and gameplay
+input blocking. Code is `engine/include/okay/Input/*` (5 headers) and `engine/src/Input/*` (about 700 lines); `player/main.cpp` and
 `editor/main.cpp` feed SDL events in. Doc: `docs/engine/input.md`. Merged: #571 (F-keys, left/right modifiers, input contexts,
 dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Controls screen; in 2.850.0). Nothing is open here; the editor's Play mode still feeds only the old key set and one controller.
 
 ## 8. Input
 
 ### 8.1 Keyboard and mouse
+- **System:** Input - The engine's one input system: reads the keyboard, mouse, gamepads and touch, turns them into named actions the player can rebind (one action table, one rebinding store, for one or several local players), and plays controller rumble.
+  Home: `engine/include/okay/Input/`, `engine/src/Input/`. Entry: `engine/include/okay/Input/Input.hpp`. Also called: keyboard, mouse, gamepad, GameInput, PlatformGamepad, rumble.
 - **What:** Polled key and mouse-button state (held, pressed this frame, released this frame), mouse position, delta and wheel, typed text, and a WASD and arrows axis, all fed by the host each frame.
 - **Parts:**
   - 8.1.1 Keys - `Input/Input` - `GetKey`, `GetKeyDown`, `GetKeyUp`, `AnyKey`, `FirstKeyDown`, `KeyFromName`, `KeyName`; one `char` per key, synthetic codes for Shift, Ctrl and arrows
@@ -28,6 +32,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "let me bind F5 to quick-save"; "the camera jumps when the game starts"
 
 ### 8.2 Gamepad (SDL)
+- **System:** Input
 - **What:** Game controllers (read through `okay::platform`: SDL2, or our own evdev backend) are read into Input: both sticks (radial dead zone 0.18), both triggers, 14 buttons plus trigger-as-button, and the left stick, d-pad and A also press W, A, S, D and Space so keyboard games play on a pad.
 - **Parts:**
   - 8.2.1 Pad state - `Input/Input` - `GamepadAxis`, `GamepadRightAxis`, `GamepadTrigger`, `GetGamepadButton`(Down/Up), `GamepadConnected`, button names and `FirstGamepadButtonDown`
@@ -47,28 +52,33 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "add a dead zone setting for the right stick"; "support two controllers for couch co-op"
 
 ### 8.3 Input actions and rebinding UI
+- **System:** Input Actions - Named actions such as Jump and Fire that work with any key or button, can be rebound by the player, and support several local players (one action table, one rebinding store).
+  Home: `engine/include/okay/Input/`, `engine/src/Input/`. Entry: `engine/include/okay/Input/ActionSet.hpp`. Also called: ActionSet, InputAsset, PlayerInput, InputActions, rebinding.
 - **What:** Named actions ("Jump", "Move", "Fire") that read keys, mouse and controller together, with text bindings, a direction type for sticks and WASD, and player rebinding saved in Prefs.
 - **Parts:**
   - 8.3.1 Bindings - `Input/InputActions` - `InputBinding` text forms `key:`, `mouse:`, `pad:`, `keys:w,s,a,d`, `stick:`, `dpad`, `mouse:delta` with display labels
   - 8.3.2 Action table - `Input/InputActions` - `Define`, `Get`, `Down`, `Up`, `Value`, `Vector`, sampled once a frame by `Tick`; built-ins Move, Look, Jump, Sprint, Crouch, Fire, Aim, Interact, Reload, Inventory, Pause
   - 8.3.3 Rebinding and saving - `Input/InputActions` - `Rebind`, `Current`, `Reset`, `Load`, `Save` under `input.<action>` Prefs keys; only changed bindings are saved
+  - 8.3.9 One input system (#422 duplicate audit item 2; owner 2026-11-23) - `Input/InputRuntime`, `Input/ActionSet`, `Input/InputActions` - there is ONE action table, `InputRuntime::Actions()` (an `ActionSet`): the `.okayinput` asset in use plus the actions code defines (the built-in defaults only add what the asset lacks; a game's own `Define` replaces the asset's bindings for that name). `InputActions` is its name-based front: it keeps no actions, bindings or rebinding of its own (the old separate table, its second "legacy" evaluation and the #1139 sync code are deleted). Input contexts are the table's action maps (`PushMap` / `PopMap`, a map can consume or block). One evaluation (`ActionSet::Update`): sum or strongest binding, chords keeping their keys, the player's response, per-controller reads, on-screen contributions, hold-to-toggle, press timing; no allocation per frame. Player 0's typed set has the table's bindings (copied on every change); players 1+ keep their own rebinding. One rebinding store: `inputov.player0` (a reshaped list is one `ovlist` line; lines for another asset's actions are kept) and, for every action the name-based front can show, also the old `input.<action>` form, so earlier saves and builds still load it. Old names all forward here: `InputActions::*`, script `action*` / `rebind` / `ia_*`, engine API `Input.GetButton*` / `Input.Player*`, the "UI Keybind Field" (`ia:` or plain), both Controls screens; tests `input_one_store` (blocks 13-15: one table, the same key through every old name, a rebind seen by all and kept after a restart, the pause Block reaching the typed player)
   - 8.3.4 Keybind field - `Components/UIKeybindField` - a UI widget that shows an action's binding and listens for a new key or pad button
   - 8.3.5 Input contexts (#571) - `Input/InputActions` - `DefineIn`, `PushContext`, `PopContext` with Consume, Block and Passthrough modes so a menu takes keys from gameplay
   - 8.3.6 Remap model for a Controls screen (#574) - `Input/RemapModel` - rows with keyboard and gamepad columns, conflict detection (including four-key directions and the D-pad), `RemapBind` with cancel, swap, unbind or allow, reserved actions, on top of `InputActions`
   - 8.3.7 Typed actions, maps and local players - `Input/ActionSet`, `Input/InputAsset`, `Input/PlayerInput`, `Input/InputRuntime`, `Input/InputBuffer` - value types (button, 1D, 2D, 3D), composites (vector from four inputs, axis from two, chords), processors (deadzone, invert, scale, normalize, swizzle, smooth, curve, clamp), control schemes with auto switch, interactions with started / performed / canceled phases (press, release, hold, tap, multi-tap, repeat, chorded), action maps with priority and consume, the `.okayinput` text asset with a shipped default and a migration of the old table, local players with device pairing, runtime rebinding with conflicts and per-player overrides, input buffer and coyote time, and `ia_*` script calls; tests `action_set`, `action_phases`, `input_asset`, `input_script_api`, `action_editor`; editor: Input Actions window (author, check, live) and a section in the Input panel (`Input/ActionEditor`, `editor/InputActionsWindow.hpp`; ImGui part not run in a real window); Player Input component (`LocalPlayerInput`, Add Component, Inspector), `Input.Player*` engine-API nodes, and a Controls screen on typed actions (`UIGallery::AddControlsScreen`, `UIKeybindField` on `ia:<action>@<player>`); tests `local_player_input`, `controls_screen`
+  - 8.3.8 Built-in controllers on actions - `Input/InputActions` - `Rebound`, `ControlKey`, `ControlKeyDown`, `ControlMouse`, `ControlMouseDown`, `ControlMove`: a controller key field reads its key until the player rebinds the matching action, then follows the action; used by the first / third person, character 2D / 3D, top-down, shooter and 2.5D controllers (2.5D layer keys follow "Move" up / down: `ControlDirKeyDown`; grab follows "Interact"), `StanceControl`, ranged and melee weapons, item pickup, vehicle seat, Free Roam (rise = Jump, Ctrl = Crouch, Sprint, Move), the Top Down Shooter dash ("Dash") and lean / prone ("LeanLeft", "LeanRight", "Prone"); Vehicle Controller driving keys use "Throttle", "Brake", "SteerLeft", "SteerRight", "Handbrake", "Boost", "GearUp", "GearDown", "Horn", "Headlights" in the "Vehicle" context (`ControlAxis`; an action in a context that is not pushed is read straight from its bindings: `DirectHeld`, `DirectDown`); the Pause Menu reads a rebound "Pause" past its own Block context (`MenuKeyDown`); the Controls screen reports a shared key only inside one context; test `controller_actions`
 - **Code:** `Input/InputActions`, `engine/src/Input/InputActions.cpp`, `Components/UIKeybindField`, `Input/RemapModel`
 - **API:** `InputActions::Define`, `InputActions::Down`, `InputActions::Vector`, `InputActions::Rebind`, `InputBinding::Parse`, script `Input.GetButtonDown("Jump")`, `Input.GetActionVector("Move")`, `Input.RebindAction`, `action_down`, `rebind`; "UI Keybind Field" component
 - **Editor:** Add Component > UI > UI Keybind Field (Input Action, Gamepad and Direction Key fields)
 - **Docs:** `docs/engine/input.md`
-- **Tests:** `input_actions`, `ui_input_guard`, `input_keys_gamepad`, `focus_remap`
-- **Status:** Works - InputActions.hpp and the defaults and rebind code in InputActions.cpp read; covered by `input_actions`; contexts (#571, `input_keys_gamepad`) and the remap model (#574, `focus_remap`) are on main
-- **Open:** the pause menu pushes the Pause context in Block mode while it is open (other menus still use only `Input::SetUICaptured`, 8.5); no Controls screen template yet (`RemapModel` is the data side, 32.4); action names are case-insensitive strings, with no editor to author actions; chords (`chord:ctrl+z`) and wheel bindings exist since the input upgrade (8.7)
+- **Tests:** `input_actions`, `ui_input_guard`, `input_keys_gamepad`, `focus_remap`, `controller_actions`, `input_one_store`
+- **Status:** Works - one action table and one rebinding store since the merge (8.3.9); 30 input, UI and controller suites green on Linux (`input_one_store` 638 checks); contexts (#571, `input_keys_gamepad`) and the remap model (#574, `focus_remap`) are on main
+- **Open:** still on raw keys: builders and some UI widgets; no editor for the code-defined actions (they show in the Input panel and the Input Actions window's live view only); a typed binding the name-based front cannot show (a pad button inside the Move keys, a 1D axis, a 3D vector) is read but listed as "None" on the older `RemapModel` Controls screen; pushing the "UI" context now also turns on the asset's UI map (Navigate, Submit, Cancel take W A S D, Space, Enter and Escape from gameplay), use another context name for a menu that should only take its own keys; the merge changed the shipped asset's Move and Look stick bindings (the second dead zone and Look's curve(2) are gone, `Input` already applies the stick dead zone) and set `sum=1` on Move and Look so keys and a stick add up as the built-in controllers always read them; not run on Windows or with a real controller
 - **Related:** 8.2, 8.5, 12.3, 12.8, 32.4
 - **Words:** input action, InputActions, rebinding, keybind, key binding, controls menu, remap, Jump, Fire, Interact, input map, input contexts, action map, binding text
 - **Seen as:** a rebound key still triggers the old action; pressing the pause key also jumps; a rebinding is forgotten after restart; the same key works for two actions
 - **Ask me like:** "let players rebind Interact on keyboard and gamepad"; "a menu that stops the jump key from working"
 
 ### 8.4 Cursor and touch
+- **System:** Input
 - **What:** Gameplay asks for the mouse cursor to be hidden and locked (shooters) and the host applies it; finger touches are fed from SDL finger events and finger drag-scrolling is provided for scroll and list views.
 - **Parts:**
   - 8.4.1 Cursor lock and visibility - `Input/Cursor` - `Cursor::Capture`, `SetLock`, `SetVisible`; the player turns it into SDL relative mouse mode and releases it on Esc, focus loss or an open menu
@@ -87,6 +97,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "add pinch to zoom"; "put an on-screen joystick on mobile"
 
 ### 8.5 Gameplay input blocking
+- **System:** Input
 - **What:** One place that answers "should the world ignore this click or key right now?": pause menu, open bag, chest, crafting, a focused text field, modal, dialogue, a pointer on UI or a cutscene.
 - **Parts:**
   - 8.5.1 Block masks - `Input/GameInput` - `GameInputMask` with `World` (clicks, swings, digging) and `Keys` (hotbar, bag toggle) presets; `GameInputBlocked`, `GameInputBlockReason`
@@ -105,6 +116,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "stop the player from shooting while my shop menu is open"; "why does the bag toggle when I pick something up?"
 
 ### 8.6 Rumble and haptics
+- **System:** Input
 - **What:** Games request controller rumble with a heavy and a light motor strength and a duration; the host plays the latest request on the connected pad.
 - **Parts:**
   - 8.6.1 Rumble request - `Input/Input` - `Input::Rumble(low, high, seconds)` and `TakeRumble`
@@ -122,6 +134,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "shake the controller when the player takes damage"; "add a vibration on/off setting"
 
 ### 8.7 Input upgrade: timing, curves, per-player actions, recording, the Input panel
+- **System:** Input
 - **What:** Fixes found by the input audit (fast taps, typing moving the player, layouts without Latin letters, rebinding Move) and new features built on 8.1-8.3: chord and wheel bindings, per-action dead zone / curve / sensitivity / invert, input buffering and double tap and hold-to-confirm, per-player actions, rebind conflicts and swap, profiles and one-handed presets, controller picture names by family, the last-used device, input recording and replay, and an editor Input panel.
 - **Parts:**
   - 8.7.1 Fast taps and typing - `Input/Input` - `FeedKeyTap`, `FeedMouseTap` (a press shorter than a poll still counts); `SetTextFocused`, `GetKeyGame`, `GetKeyDownGame` (a text field keeps its keys from the game); `Touch::began`
@@ -133,7 +146,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
   - 8.7.7 Recording - `Input/InputRecorder` - `StartRecording`, `StartPlayback`, `Text`; plain versioned text with a seed and a note
   - 8.7.8 Debugger - `Input/InputDebug`, `editor/InputDebugger.hpp` - the live state and the last events; Window > Input in the editor
   - 8.7.9 Rumble patterns - `Input/Haptics` - `InputHaptics::Play("heartbeat", player)`, `SetStrength`; steps become `Input::Rumble` requests
-  - 8.7.10 Speed - `Input/InputActions` - hash lookup, no per-frame allocation, fixed key arrays; `OKAY_OLD_INPUT=1` for the old evaluation
+  - 8.7.10 Speed - `Input/ActionSet` - sorted name index, no per-frame allocation (input ids instead of strings for what a map swallows, an insertion sort of the maps); `OKAY_OLD_INPUT=1` and `SetLegacy` are kept as names only, there is one evaluation (8.3.9)
 - **Code:** `Input/Input`, `Input/InputActions`, `Input/InputRecorder`, `Input/InputDebug`, `Input/Haptics`, `Input/PlatformKeys`, `engine/src/Input/*.cpp`, `editor/InputDebugger.hpp`, `player/main.cpp`, `editor/main.cpp`, `examples/input/input_playground.okayscene`
 - **API:** `Input::FeedKeyTap`, `Input::SetTextFocused`, `InputActions::SetResponse`, `InputActions::Buffered`, `InputActions::Consume`, `InputActions::SetPerPlayer`, `InputRecorder::StartRecording`, `InputDebug::Enable`, `InputHaptics::Play`, script `action_buffered`, `action_consume`, `action_double_tap`, `action_hold`, `set_response`, `action_label`, `input_device`, `input_record`
 - **Editor:** Window > Input (live keys, mouse, controllers, actions, last events, record and replay, response curves); `examples/input/input_playground.okayscene`

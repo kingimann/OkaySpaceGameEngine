@@ -29,7 +29,11 @@ inline bool VsParseFinite(const std::string& s, float& out) {
 /// A reference to a GameObject flowing on a wire (Self, Other, a spawned object,
 /// a raycast hit...). Holds the object's instance id, never a pointer, so it is
 /// safe after the object is destroyed (it then resolves to nothing).
-struct VsObject { std::uint64_t id = 0; };
+///
+/// With `comp` set it is a handle to one component of that object instead (the script binding layer,
+/// okay/Scripting/ScriptBindings.hpp): `comp` is the bound class's key and `index` which component of that class
+/// on the object. Still no pointer: it is null once the object or that component is gone.
+struct VsObject { std::uint64_t id = 0; std::uint32_t comp = 0; std::uint32_t index = 0; };
 /// An RGBA colour, each channel 0..1 (not clamped on store; Make Color and the
 /// literal parser clamp). Prints as #rrggbbaa.
 struct VsColor { float r = 0, g = 0, b = 0, a = 1; };
@@ -37,6 +41,9 @@ struct VsColor { float r = 0, g = 0, b = 0, a = 1; };
 std::string VsObjectName(std::uint64_t id);
 /// True while the referenced object exists. NodeGraph.cpp.
 bool VsObjectAlive(std::uint64_t id);
+/// True while the component a handle names exists; its text ("Light(Lamp)"). ScriptBindings.cpp.
+bool VsComponentAlive(const VsObject& o);
+std::string VsComponentName(const VsObject& o);
 
 /// A dynamically-typed value flowing between graph nodes (the data carried on
 /// the wires of a visual script). Can also hold a shared, mutable array or map
@@ -74,6 +81,19 @@ public:
     /// An object reference value (0 = no object).
     static VsValue Object(std::uint64_t instanceId) { return VsValue(VsObject{instanceId}); }
     bool IsObject() const { return std::holds_alternative<VsObject>(m_data); }
+    /// A component handle (an object reference that names one of its components; see VsObject).
+    static VsValue ComponentHandle(std::uint64_t instanceId, std::uint32_t classKey, std::uint32_t index) {
+        return VsValue(VsObject{instanceId, classKey, index});
+    }
+    bool IsComponentHandle() const {
+        auto* o = std::get_if<VsObject>(&m_data);
+        return o && o->comp != 0;
+    }
+    /// The whole reference (object id, and the component for a handle); a zero one when this isn't an object.
+    VsObject AsObjectRef() const {
+        if (auto* o = std::get_if<VsObject>(&m_data)) return *o;
+        return VsObject{};
+    }
     /// The referenced object's instance id (0 when this isn't an object).
     std::uint64_t AsObjectId() const {
         if (auto* o = std::get_if<VsObject>(&m_data)) return o->id;
@@ -129,7 +149,8 @@ public:
         if (auto* c = std::get_if<VsColor>(&m_data)) return c->a > 0.0f;
         if (auto* a = std::get_if<ArrayRef>(&m_data)) return *a && !(*a)->empty();
         if (auto* m = std::get_if<MapRef>(&m_data)) return *m && !(*m)->empty();
-        if (auto* o = std::get_if<VsObject>(&m_data)) return o->id != 0 && VsObjectAlive(o->id);
+        if (auto* o = std::get_if<VsObject>(&m_data))
+            return o->id != 0 && VsObjectAlive(o->id) && (o->comp == 0 || VsComponentAlive(*o));
         return false;
     }
     Vec3 AsVec3() const {
@@ -142,6 +163,13 @@ public:
     bool IsVec3() const { return std::holds_alternative<Vec3>(m_data); }
     bool IsBool() const { return std::holds_alternative<bool>(m_data); }
     bool IsNumber() const { return std::holds_alternative<float>(m_data); }
+    /// The number itself when this is a number, else nullptr (OkayScript's fast path for number maths).
+    const float* NumberPtr() const { return std::get_if<float>(&m_data); }
+    /// Make this the number f / the bool b (in place when it already is one: OkayScript's hot path).
+    void SetNumber(float f) { if (auto* p = std::get_if<float>(&m_data)) *p = f; else m_data = f; }
+    void SetBool(bool b) { if (auto* p = std::get_if<bool>(&m_data)) *p = b; else m_data = b; }
+    /// The text itself when this is text, else nullptr (OkayScript appends in place).
+    std::string* StringPtr() { return std::get_if<std::string>(&m_data); }
     std::string AsString() const {
         if (auto* s = std::get_if<std::string>(&m_data)) return *s;
         if (auto* b = std::get_if<bool>(&m_data)) return *b ? "true" : "false";
@@ -170,7 +198,8 @@ public:
             }
             return s + "}";
         }
-        if (auto* o = std::get_if<VsObject>(&m_data)) return o->id ? VsObjectName(o->id) : std::string();
+        if (auto* o = std::get_if<VsObject>(&m_data))
+            return !o->id ? std::string() : o->comp ? VsComponentName(*o) : VsObjectName(o->id);
         return {};
     }
 

@@ -1,0 +1,36 @@
+# Launcher split, move L3 (docs/engine/modularization_plan.md, Part C section 6): game cover art and avatar textures
+# (launcher/main.cpp 2657-2783 at the base) -> launcher/CoverArtAvatars.hpp / .cpp. The two "Shared look" helpers
+# that follow in the same Part C section (ToggleSwitch, PrimaryButton) stay in main.cpp with the other look helpers.
+# Check it with (on the move commit):
+#   python3 scripts/check_pure_move.py --base HEAD~1 --head HEAD --source launcher/main.cpp \
+#       --dest launcher/CoverArtAvatars.hpp --dest launcher/CoverArtAvatars.cpp --dest launcher/LauncherShared.hpp \
+#       --rules docs/engine/moves/L3_cover_art_avatars.rules
+# The per-render-slot cache macros (#define g_coverCache, g_avatarCache) and struct AvatarDl moved unchanged into
+# CoverArtAvatars.hpp: main.cpp's chat media code still uses them.
+#
+# What the moved code uses from main.cpp: TextureFromRgba (global scope) loses `static`; it and the rest are declared in
+# LauncherShared.hpp.
+drop: ^\s*static SDL_Texture\* TextureFromRgba\(SDL_Renderer\* renderer, const unsigned char\* rgba, int w, int h\) \{$
+add: ^\s*SDL_Texture\* TextureFromRgba\(SDL_Renderer\* renderer, const unsigned char\* rgba, int w, int h\) \{$
+#
+# Names main.cpp uses from the moved code (the avatar download state is shared with the chat images): `static`
+# dropped, declared in CoverArtAvatars.hpp.
+change: static okay::thr::Mutex*          g_avatarMutex = nullptr;   // guards the two sets below ==> okay::thr::Mutex*          g_avatarMutex = nullptr;   // guards the two sets below
+change: static std::set<std::string> g_avatarPending;         // URLs currently downloading ==> std::set<std::string> g_avatarPending;         // URLs currently downloading
+change: static std::set<std::string> g_avatarFailed;          // URLs that failed (don't retry) ==> std::set<std::string> g_avatarFailed;          // URLs that failed (don't retry)
+change: static int AvatarDlWorker(void* p) { ==> int AvatarDlWorker(void* p) {
+add: ^\s*extern std::map<std::string, SDL_Texture\*> g_coverCaches\[2\];$
+add: ^\s*extern std::map<std::string, SDL_Texture\*> g_avatarCaches\[2\];$
+add: ^\s*extern std::string\* g_myAvatarSlot;(\s*//.*)?$
+add: ^\s*extern okay::thr::Mutex\* g_avatarMutex;(\s*//.*)?$
+add: ^\s*extern std::set<std::string> g_avatarPending;(\s*//.*)?$
+add: ^\s*extern std::set<std::string> g_avatarFailed;(\s*//.*)?$
+add: ^\s*int AvatarDlWorker\(void\* p\);(\s*//.*)?$
+add: ^\s*SDL_Texture\* GameCover\(const std::string\& gamePath\);(\s*//.*)?$
+add: ^\s*void DrawGameIcon\(const std::string\& gamePath, const std::string\& name, float size\);(\s*//.*)?$
+add: ^\s*SDL_Texture\* AvatarTexture\(const std::string\& url\);(\s*//.*)?$
+add: ^\s*void DrawAvatar\(const std::string\& url, const std::string\& name, float size\);(\s*//.*)?$
+add: ^\s*SDL_Texture\* TextureFromRgba\(SDL_Renderer\* renderer, const unsigned char\* rgba, int w, int h\);$
+add: ^\s*extern SDL_Renderer\* g_renderer;(\s*//.*)?$
+add: ^\s*extern int g_rslot;(\s*//.*)?$
+add: ^\s*bool Download\(const std::string\& url, const fs::path\& out\);(\s*//.*)?$

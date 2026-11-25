@@ -100,7 +100,7 @@ int main() {
         const float exitZ = w.car->transform->Position().z;
         Vec3 pp = w.p->transform->Position();
         CHECK_NEAR(pp.x, -1.8f, 1e-3f);               // exit point is 1.8 m to the left
-        CHECK_NEAR(pp.y, 0.0f, 1e-3f);
+        CHECK_NEAR(pp.y, 0.0f, 4e-3f);               // (this test has no floor: the step after getting out falls g*dt^2 = 2.7 mm)
         CHECK_NEAR(pp.z, exitZ, 0.4f);
         // Empty car brakes at 36 m/s^2: stopped within 0.6 s even with W held.
         w.Run({'w'}, 60);
@@ -161,8 +161,8 @@ int main() {
         CHECK_NEAR(b.x, 1.8f, 1e-3f); CHECK_NEAR(b.z, 0.5f, 1e-3f);
         Vec3 b2 = run(3);                             // three blocked: the last mirror (+1.8, -0.5)
         CHECK_NEAR(b2.x, 1.8f, 1e-3f); CHECK_NEAR(b2.z, -0.5f, 1e-3f);
-        Vec3 c = run(4);                              // all four blocked: the roof, sit + 2.5 up
-        CHECK_NEAR(c.x, 0.0f, 1e-3f); CHECK_NEAR(c.y, 3.1f, 1e-3f); CHECK_NEAR(c.z, 0.0f, 1e-3f);
+        Vec3 c = run(4);                              // all four blocked: the search goes further out (the roof is only the last resort)
+        CHECK_NEAR(c.x, -2.6f, 1e-3f); CHECK_NEAR(c.y, 0.0f, 1e-3f); CHECK_NEAR(c.z, 1.3f, 1e-3f);   // the four old spots blocked: the next free spot beside the door (-1.8,.5),(-1.8,1.3),(-1.8,-.3),(-2.2,*) are all within 0.4 of a blocker; (-2.6,1.3) is 0.42 from the corner
     }
 
     // --- Driver destroyed while seated: seat freed, no stale pointer ------

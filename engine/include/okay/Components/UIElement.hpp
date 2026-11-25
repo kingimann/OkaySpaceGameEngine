@@ -386,6 +386,7 @@ inline bool UIShowsFocusRing(GameObject* go) {
     if (auto* d = go->GetComponent<UIDropdown>()) return on(d);
     if (auto* tb = go->GetComponent<UITabs>())    return on(tb);
     if (auto* kb = go->GetComponent<UIKeybindField>()) return on(kb);
+    if (auto* in = go->GetComponent<UIInputField>()) return in->enabled && in->IsNavFocused() && !in->focused;   // editing: its own border
     if (auto* sb = go->GetComponent<UISearchBar>()) return on(sb);
     if (auto* dt = go->GetComponent<UIDateTimePicker>()) return on(dt);
     if (auto* fp = go->GetComponent<UIFilePicker>()) return on(fp);

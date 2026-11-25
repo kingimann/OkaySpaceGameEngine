@@ -1,0 +1,121 @@
+// <cmath> for okay-cc (ISO/IEC 14882 [cmath.syn], ISO C 7.12). Our own header. Each function has a
+// double and a float form. sqrt is the SQRTSD / SQRTSS instruction (exactly rounded, IEEE 754).
+// sin, cos, tan, atan, atan2, asin, acos, exp, log, log2, log10 and pow are lib/m.c: the correctly rounded result except in rare
+// halfway cases; glibc's results are not always correctly rounded, so a last-bit difference from
+// a g++ build is possible (see the compiler plan for the measured rates).
+#pragma once
+extern "C" {
+double __okay_sin(double x);
+double __okay_cos(double x);
+double __okay_exp(double x);
+double __okay_log(double x);
+double __okay_log10(double x);
+double __okay_pow(double x, double y);
+float __okay_sinf(float x);
+float __okay_cosf(float x);
+float __okay_expf(float x);
+float __okay_logf(float x);
+float __okay_log10f(float x);
+float __okay_powf(float x, float y);
+double __okay_tan(double x);
+double __okay_atan(double x);
+double __okay_atan2(double y, double x);
+double __okay_asin(double x);
+double __okay_acos(double x);
+double __okay_log2(double x);
+float __okay_tanf(float x);
+float __okay_atanf(float x);
+float __okay_atan2f(float y, float x);
+float __okay_asinf(float x);
+float __okay_acosf(float x);
+float __okay_log2f(float x);
+}
+namespace std {
+inline double sqrt(double x) { return __builtin_sqrt(x); }
+inline float sqrt(float x) { return __builtin_sqrtf(x); }
+inline double sin(double x) { return __okay_sin(x); }
+inline float sin(float x) { return __okay_sinf(x); }
+inline double cos(double x) { return __okay_cos(x); }
+inline float cos(float x) { return __okay_cosf(x); }
+inline double exp(double x) { return __okay_exp(x); }
+inline float exp(float x) { return __okay_expf(x); }
+inline double log(double x) { return __okay_log(x); }
+inline float log(float x) { return __okay_logf(x); }
+inline double log10(double x) { return __okay_log10(x); }
+inline float log10(float x) { return __okay_log10f(x); }
+inline double pow(double x, double y) { return __okay_pow(x, y); }
+inline float pow(float x, float y) { return __okay_powf(x, y); }
+inline double tan(double x) { return __okay_tan(x); }
+inline float tan(float x) { return __okay_tanf(x); }
+inline double atan(double x) { return __okay_atan(x); }
+inline float atan(float x) { return __okay_atanf(x); }
+inline double atan2(double y, double x) { return __okay_atan2(y, x); }
+inline float atan2(float y, float x) { return __okay_atan2f(y, x); }
+inline double asin(double x) { return __okay_asin(x); }
+inline float asin(float x) { return __okay_asinf(x); }
+inline double acos(double x) { return __okay_acos(x); }
+inline float acos(float x) { return __okay_acosf(x); }
+inline double log2(double x) { return __okay_log2(x); }
+inline float log2(float x) { return __okay_log2f(x); }
+inline double fabs(double x) { return x < 0 ? -x : (x == 0 ? 0.0 : x); }
+inline float fabs(float x) { return x < 0 ? -x : (x == 0 ? 0.0f : x); }
+inline double abs(double x) { return x < 0 ? -x : (x == 0 ? 0.0 : x); }
+inline float abs(float x) { return x < 0 ? -x : (x == 0 ? 0.0f : x); }
+// trunc, round, lround, llround (C 7.12.9.8, 7.12.9.6, 7.12.9.7): toward zero, and to nearest
+// with halfway cases away from zero. Above 2^52 every double is an integer. x - trunc(x) is exact.
+inline double trunc(double x) {
+    if (!(x - x == 0) || x == 0) return x;
+    if (x >= 4503599627370496.0 || x <= -4503599627370496.0) return x;
+    double t = (double)(long)x;
+    return t == 0 ? (x < 0 ? -0.0 : 0.0) : t;
+}
+inline float trunc(float x) { return (float)trunc((double)x); }
+inline double round(double x) {
+    if (!(x - x == 0) || x == 0) return x;
+    if (x >= 4503599627370496.0 || x <= -4503599627370496.0) return x;
+    double t = trunc(x);
+    double d = x - t;
+    if (d >= 0.5) return t + 1.0;
+    if (d <= -0.5) return t - 1.0;
+    return t;
+}
+inline float round(float x) { return (float)round((double)x); }
+inline long lround(double x) { return (long)round(x); }
+inline long lround(float x) { return (long)round((double)x); }
+inline long long llround(double x) { return (long long)round(x); }
+inline long long llround(float x) { return (long long)round((double)x); }
+inline double floor(double x) {
+    if (!(x - x == 0) || x == 0) return x;  // infinity, NaN, and +-0 (the sign of zero is kept)
+    if (x >= 4503599627370496.0 || x <= -4503599627370496.0) return x;
+    double t = (double)(long)x;
+    t = t > x ? t - 1.0 : t;
+    return t == 0 && x < 0 ? -0.0 : t;
+}
+inline float floor(float x) { return (float)floor((double)x); }
+inline double ceil(double x) {
+    if (!(x - x == 0) || x == 0) return x;
+    if (x >= 4503599627370496.0 || x <= -4503599627370496.0) return x;
+    double t = (double)(long)x;
+    t = t < x ? t + 1.0 : t;
+    return t == 0 && x < 0 ? -0.0 : t;
+}
+inline float ceil(float x) { return (float)ceil((double)x); }
+// A NaN argument is treated as missing data: the other one is returned (ISO C 7.12.12.2, F.10.9.2).
+inline double fmin(double a, double b) {
+    if (!(a == a)) return b;
+    if (!(b == b)) return a;
+    return b < a ? b : a;
+}
+inline double fmax(double a, double b) {
+    if (!(a == a)) return b;
+    if (!(b == b)) return a;
+    return a < b ? b : a;
+}
+inline bool isfinite(double x) { return x - x == 0; }
+inline bool isfinite(float x) { return x - x == 0; }
+inline bool isinf(double x) { return x == x && !(x - x == 0); }
+inline bool isnan(double x) { return !(x == x); }
+inline bool signbit(double x) { return (*(unsigned long *)&x >> 63) != 0; }
+inline bool signbit(float x) { return (*(unsigned int *)&x >> 31) != 0; }
+inline bool isnan(float x) { return !(x == x); }
+}  // namespace std

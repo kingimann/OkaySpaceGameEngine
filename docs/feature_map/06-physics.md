@@ -8,6 +8,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 ## 6. Physics
 
 ### 6.1 2D bodies and colliders
+- **System:** Physics
 - **What:** Side-view and top-down games: Rigidbody2D bodies and 2D colliders are stepped by Physics2D (gravity, contacts with friction and bounce, triggers, sleeping).
 - **Parts:**
   - 6.1.1 2D solver - `Physics/Physics2D` - Step: integrate, resolve contacts, fire collision and trigger callbacks, sleep resting bodies
@@ -27,11 +28,13 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Ask me like:** "make a one-way platform you can jump up through"; "why does my 2D ball not bounce off the wall?"
 
 ### 6.2 3D bodies and colliders, collider fit
+- **System:** Physics - Moves solid 2D and 3D objects under gravity, makes them collide, bounce and join, and answers "what is here?" (cloth, soft bodies and crowds are planned).
+  Home: `engine/include/okay/Physics/`, `engine/src/Physics/`. Entry: `engine/include/okay/Physics/Physics3D.hpp`. Also called: Classic physics, Improved physics, PhysicsQuality, own core, Physics Engine, Physics2D, Physics3D, physicsquality.
 - **What:** Rigidbody3D bodies and 3D colliders (oriented boxes, spheres, capsules, cylinders, exact triangle meshes) stepped by Physics3D, including heightmap terrain ground-following and voxel terrain collision.
 - **Parts:**
-  - 6.2.1 3D solver - `Physics/Physics3D` - Step: integrate, oriented-box (SAT) contacts, friction, bounce, sleeping, terrain ground-follow, tunnelled-floor catch, triggers
+  - 6.2.1 3D solver - `Physics/Physics3D` - Step: integrate, oriented-box (SAT) contacts, friction, bounce, sleeping, terrain ground-follow, tunnelled-floor catch (finds the real lowest point of a compound, plane, heightfield or hull-less mesh body; it used to read them as boxes, so a compound body moved differently from run to run), triggers; the same scene gives bit-identical results wherever the heap puts it (`physics3d_determinism`)
   - 6.2.2 Rigidbody3D - `Physics/Rigidbody3D` - body type, mass, drag, gravity scale, friction, terminal fall speed, axis freeze, spin, sleeping, continuous collision, ground signals (`groundedOnTerrain`, `groundNormal`)
-  - 6.2.3 3D collider shapes - `Physics/Collider3D` - box, sphere, capsule, cylinder and mesh colliders; the mesh collider is exact per-triangle static geometry (see 6.2.5)
+  - 6.2.3 3D collider shapes - `Physics/Collider3D` - box, sphere, capsule, exact cylinder (flat ends), cone, convex hull (wrap around points or a mesh, capped at 4096 points; the dynamic mesh collider's hull is thinned the same way), compound (up to 1024 simple parts, no nesting), plane (endless ground) and heightfield (grid of heights, up to 2049 x 2049 samples so a resolution-2048 Terrain fits, or copied from a Terrain) colliders, plus 2D solid polygon, capsule and composite; bad numbers (NaN, huge, zero size) are ignored or clamped (`Physics/ColliderShapes3D`, `ShapeKernel3D`, `ColliderShapes2D`, `ConvexContact2D`); the mesh collider is exact per-triangle static geometry (see 6.2.5)
   - 6.2.5 Mesh collider - `Physics/MeshCollider3D`, `Physics/TriMesh`, `Physics/ConvexContact` - `MeshCollider3D` collides against the MeshRenderer's triangles through a BVH, placed by the world matrix (rotation and non-uniform scale); rays, sphere / capsule / box overlaps and casts, `ResolveSphere`, trigger overlaps and Rigidbody3D contact (sphere, capsule, box bodies; restitution, friction, spin); rebuilt when the mesh changes; a dynamic Rigidbody3D on the same object collides as the convex hull of the mesh (GJK/EPA), and bodies landing on a solid mesh raise OnCollisionEnter3D / Stay / Exit
   - 6.2.6 Improved solver - `Physics/Physics3DImproved.inl`, `Physics/ContactSolver`, `Physics/BoxManifold`, `Physics/PhysicsQuality` - the scene's Physics quality (Classic = the old single-pass step, Improved = iterated contacts with warm starting, box face contacts, group sleeping, swept fast bodies, rolling resistance, real inertia, compound bodies); saved as `physicsquality`; 3D only (the 2D step has no Improved solver yet)
   - 6.2.7 Physics materials - `Physics/PhysicsMaterial`, `Physics/Collider3D`, `Physics/Collider2D` - per-collider friction and bounciness (-1 = use the Rigidbody's) with a combine rule (Default, Average, Minimum, Multiply, Maximum); saved as `physmat3d` / `physmat2d`
@@ -40,10 +43,10 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
   - 6.2.10 Physics toys - `Components/PhysicsToys`, `Components/PhysicsToyPresets`, `Physics/PhysicsToys.cpp` - Conveyor Belt, Force Field (attract, repel, well, whirlpool), Gravity Zone, Turntable, Moving Platform, Explosion, Breakable and code presets (pendulum, rope, wrecking ball, dominoes, door, surface patches); GameObject > 3D Object > Physics Toys; see `docs/physics/physics.md`
   - 6.2.4 Fit to object - `Physics/ColliderFit` - `FitColliders` sizes colliders to the SpriteRenderer or MeshRenderer bounds; `autoFit` refits each frame
 - **Code:** `Physics/Physics3D`, `Physics/Physics3DImproved.inl`, `Physics/ContactSolver`, `Physics/BoxManifold`, `Physics/PhysicsMaterial`, `Physics/PhysicsQuality`, `Physics/DebrisPool`, `Components/DebrisEmitter`, `Physics/Rigidbody3D`, `Physics/Collider3D`, `Physics/MeshCollider3D`, `Physics/TriMesh`, `Physics/ConvexContact`, `Physics/ColliderFit`, `editor/main.cpp` (Add Component and Inspector sections)
-- **API:** `Rigidbody3D`, `BoxCollider3D`, `SphereCollider3D`, `CapsuleCollider3D`, `CylinderCollider3D`, `MeshCollider3D`, `FitColliders`, `scene.physics3D()`, `OnCollisionEnter3D`, `OnTriggerEnter3D`, `Collision3D`
+- **API:** `Rigidbody3D`, `BoxCollider3D`, `SphereCollider3D`, `CapsuleCollider3D`, `CylinderCollider3D`, `ConeCollider3D`, `ConvexHullCollider3D`, `CompoundCollider3D`, `PlaneCollider3D`, `HeightfieldCollider3D`, `MeshCollider3D`, `FitColliders`, `scene.physics3D()`, `OnCollisionEnter3D`, `OnTriggerEnter3D`, `Collision3D`
 - **Editor:** Add Component > Physics 3D rows (and DebrisEmitter), Project Settings > Physics > Physics quality (Classic / Improved, solver iterations, catch fast bodies), a Physics Material section on every collider, Rolling Resistance and Use Child Colliders on the Rigidbody 3D, collider inspectors with a Fit to Object button, Mesh Collider inspector (triangle and BVH counts, convex-hull line when the body is dynamic, Rebuild), Scene view collider gizmos (the mesh collider draws its triangle edges, or the hull while the body is dynamic)
 - **Docs:** `docs/physics/physics.md`, `docs/physics/physics.md`, `docs/physics/physics.md`, `docs/physics/physics.md`, `docs/physics/physics.md`, `docs/try_it.md` (7u, pu1, pm1, pt1)
-- **Tests:** `physics3d`, `meshcollider3d`, `angular3d`, `collider_fit`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`, `physics_deep_manifold`, `physics_deep_solver`, `physics_deep_bugs`, `physics_deep_improved`, `physics_deep_save`, `physics_deep_more`, `physics_upgrade`, `physics_materials`, `physics_toys`, `physics_examples`
+- **Tests:** `physics3d`, `meshcollider3d`, `angular3d`, `collider_fit`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`, `physics_deep_manifold`, `physics_deep_solver`, `physics_deep_bugs`, `physics_deep_improved`, `physics_deep_save`, `physics_deep_more`, `physics_upgrade`, `physics_materials`, `physics_toys`, `physics_examples`, `physics3d_determinism`
 - **Status:** Works - Physics3D::Step, Rigidbody3D and the collider headers read; sleeping, terrain follow and spin covered by the tests above
 - **Open:** the header says bodies must be top-level (un-parented) Transforms; the navmesh bake still treats a MeshCollider3D as its bounds box; Improved is 3D only and off for old scenes; a dense sleeping pile still costs the contact test each step
 - **Related:** 6.1, 6.3, 6.4, 6.5, 6.8, 2.6, 4.1
@@ -52,12 +55,13 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Ask me like:** "the collider does not match my model"; "make this crate stop sliding on the ramp"
 
 ### 6.3 Joints
+- **System:** Physics
 - **What:** Positional constraints between a body and a world point or another body: rigid rod, spring, weld, hinge and (3D) slider, with optional breaking.
 - **Parts:**
   - 6.3.1 Distance, spring and pin - `Components/Joint2D`, `Components/Joint3D` - rod, damped spring and weld solved by impulse plus position correction after contacts
   - 6.3.2 Hinge - `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit` - pins a point and lets the body spin; motor in both; angle limits in both (degrees from the start pose; the 3D stop uses `ClampHingeRotation`)
   - 6.3.4 Slider - `Components/Joint3D` - Mode Slider (prismatic): moves along an axis only, cannot turn, optional limits in metres and a motor in m/s (3D only)
-  - 6.3.5 Joint passes and partner cache - `Physics/Physics3D`, `Scene/NearestLookup` - Improved quality repeats the constraint joints with the contact solver; a joint remembers its named partner until the scene's objects change
+  - 6.3.5 Joint passes and partner cache - `Physics/Physics3D`, `Scene/NearestLookup` - Improved quality repeats the constraint joints with the contact solver; a joint remembers its named partner until the scene's objects change. Joint3D::ConnectTo links a partner by object (saved by guid; a prefab or pasted copy keeps linking its own copy through a `jointat` record; typing another name in connectedBody replaces the link)
   - 6.3.3 Breakable joints - `Components/Joint2D`, `Components/Joint3D` - `breakable` and `breakForce` snap the joint when stretched, `broken` stops it
 - **Code:** `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit`, `Physics/Physics2D`, `Physics/Physics3D` (the joint pass in Step), `editor/main.cpp` (Joint inspectors)
 - **API:** `Joint2D`, `Joint3D`, `Joint2D::Mode`, `connectedBody`, `anchor`, `spring`, `damper`, `breakable`, `useMotor`, `motorSpeed`, `useLimits`, `minAngle`, `maxAngle`
@@ -65,13 +69,14 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Docs:** `docs/physics/physics.md`
 - **Tests:** `physics_joints`, `2d_expand`, `hinge2d`, `hinge3d`, `physics_deep_more`
 - **Status:** Works - joint solver pass in Physics3D::Step and the two headers read; distance, spring, pin and hinge covered by the tests above
-- **Open:** Joint2D's header still says "no angular/hinge yet" and its Add Component row still says "(distance/spring/pin)" although a Hinge mode exists; joints connect by body name, not by object reference
+- **Open:** the Active Ragdoll (5.8) has its own articulated solver behind `dyn::RagdollPhysics` because these joints have no ball joint with a rotation drive; Joint2D's header still says "no angular/hinge yet" and its Add Component row still says "(distance/spring/pin)" although a Hinge mode exists; joints connect by body name, not by object reference
 - **Related:** 6.1, 6.2, 5.8
 - **Words:** joint, hinge, spring, rope, rod, pin, weld, fixed joint, revolute, motor, connectedBody, breakForce, ragdoll joint
 - **Seen as:** a rope or pendulum stretches or explodes; a door does not swing about its hinge; a spring never settles; a joint snaps unexpectedly
 - **Ask me like:** "add a swinging door on a hinge"; "hang a lamp from the ceiling on a spring"
 
 ### 6.4 Fixed step with render interpolation, pose history
+- **System:** Physics
 - **What:** Physics runs in fixed slices (1/50 s by default) whatever the frame rate, and bodies are drawn part way between their last two poses so motion stays smooth.
 - **Parts:**
   - 6.4.1 Fixed physics step - `Scene/Scene` - `fixedTimeStep`, `UseFixedStepPhysics`, `maxPhysicsCatchUp` (the step loop is `Scene::StepPhysics`, owned by area 1.3)
@@ -89,6 +94,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Ask me like:** "make physics frame-rate independent"; "my rigidbody jitters in the camera follow"
 
 ### 6.5 Queries and debug draw
+- **System:** Physics
 - **What:** Rays, line and shape casts and overlap tests against 2D and 3D colliders and terrain, plus an overlay that draws colliders, contacts and the rays scripts cast.
 - **Parts:**
   - 6.5.1 3D rays and casts - `Physics/Physics3D` - Raycast, RaycastAll, Linecast, SphereCast, BoxCast, CapsuleCast; layer mask, trigger switch, ignore object, `IgnoreHierarchy`
@@ -108,6 +114,8 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Ask me like:** "show me what my raycast is hitting"; "sphere-cast for a ledge check that ignores the player"
 
 ### 6.6 Destructibles and projectiles
+- **System:** Destruction and Projectiles - Breaks blocks and objects into pieces, and flies bullets, rockets and arrows.
+  Home: `engine/include/okay/Components/Destructible.hpp`, `engine/include/okay/Components/Projectile3D.hpp`. Entry: `engine/include/okay/Components/Destructible.hpp`. Also called: Destructible, Projectile3D, bullets, fracture.
 - **What:** Voxel blocks shatter into physics debris and unsupported blocks collapse; bullets, rockets and arrows fly with a swept ray and damage health.
 - **Parts:**
   - 6.6.1 Block fracture - `Components/Destructible` - `BreakBlock` and `BreakAt` replace a cube with debris cubes that despawn after `debrisLifetime`
@@ -127,6 +135,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Ask me like:** "make walls shatter when shot"; "add a grenade that bounces and explodes"
 
 ### 6.7 Collision layers and trigger filters
+- **System:** Physics
 - **What:** A 32 by 32 layer matrix says which collider layers touch; triggers can also react only to a tag or to chosen layers.
 - **Parts:**
   - 6.7.1 Layer matrix - `Physics/Physics2D`, `Physics/Physics3D` - `SetLayerCollision`, `LayersCollide`, `CollisionMask`, `ResetLayerCollisions`; since #586 also `ApplyLayerCollisionPreset(Everything | Nothing | SameLayerOnly)`, `SetLayerCollisionGroups(maskA, maskB, enabled)`, `SetLayerCollisionByName`, `DisabledLayerPairs` (docs `layers_tags_cameras.md`); scene file `layermatrix` record
@@ -144,6 +153,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Ask me like:** "make bullets ignore the player layer"; "pickups should only trigger for the Player tag"
 
 ### 6.8 Forces, explosions and body push-out
+- **System:** Physics
 - **What:** The four force modes, explosion shoves, and a lightweight push-out that keeps a transform-moved player (no Rigidbody) from clipping into walls and floors.
 - **Parts:**
   - 6.8.1 Force modes - `Physics/ForceMode` - Force, Acceleration, Impulse, VelocityChange used by `AddForce(force, mode)` on both bodies

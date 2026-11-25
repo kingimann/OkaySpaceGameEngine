@@ -5,6 +5,7 @@
 // node tree, .mot reaches the LWS reader, and a scene reads the object files it names through the seam (an .obj here, always ours) but
 // never another scene, never itself, and never a file outside its own folder. The other slots are checked by test_own_dispatch*.cpp.
 #include "test_framework.hpp"
+#include "own_seam_checks.hpp"
 #include "model_fixture_util.hpp"
 #include "pmxlws_fixtures.hpp"
 #include "okay/Render/ModelData.hpp"
@@ -67,9 +68,7 @@ int main() {
             CHECK(a.parts.size() == b.parts.size() && a.nodes.size() == b.nodes.size() && a.materials.size() == b.materials.size() && a.clips.size() == b.clips.size());
         }
         // flatten: one root node, no skins and no clips
-        ImportedModel f;
-        CHECK(ImportModelData(path, f, ImportBackend::Own, true, &err) && f.nodes.size() == 1 && f.clips.empty() && fx::TriCount(f) == c.tris);
-        for (const ImportedPart& p : f.parts) CHECK(p.bones.empty() && p.node == 0);
+        seam::CheckFlattened(path, c.tris);
         CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") != std::string::npos);
         // the format-specific variable decides when nothing was chosen at run time
         SetImportBackend(c.ext, ImportBackend::Default);
@@ -80,7 +79,7 @@ int main() {
         TestSetEnv(c.env, "0");
         CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
         TestUnsetEnv(c.env);
-        // off by default (when the build has no Assimp the format cannot be read at all, and the message names the switch)
+        // off by default (the format cannot be read at all, and the message names the switch)
         bool builtOn = false;   // -DOKAY_OWN_<FMT>=ON makes our reader the default, so the off-by-default checks do not apply
 #ifdef OKAY_EXPECT_OWN_PMX
         if (std::string(c.ext) == ".pmx") builtOn = true;
@@ -88,7 +87,7 @@ int main() {
 #ifdef OKAY_EXPECT_OWN_LWS
         if (std::string(c.ext) == ".lws" || std::string(c.ext) == ".mot") builtOn = true;
 #endif
-        if (!AssimpAvailable() && !builtOn) {
+        if (!builtOn) {
             CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
             CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") == std::string::npos);
             ImportedModel d; std::string e2;

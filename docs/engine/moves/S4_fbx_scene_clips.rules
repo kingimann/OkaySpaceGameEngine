@@ -1,0 +1,34 @@
+# Batch S4 (FbxScene split) of the engine modularization plan (docs/engine/modularization_plan.md, section 3.1):
+# engine/src/Render/FbxScene.cpp: the builder's types and helpers (matrices, properties, layers, curves, Builder: about 1,300 lines)
+# move to the private header FbxSceneInternal.hpp, and the animation reader (Builder::Animation), the Animator that bakes the clip
+# keys and BuildClips (about 620 lines) move to FbxSceneClips.cpp.
+#   python3 scripts/check_pure_move.py --base origin/main --head HEAD --source engine/src/Render/FbxScene.cpp \
+#       --dest engine/src/Render/FbxSceneClips.cpp --dest engine/src/Render/FbxSceneInternal.hpp \
+#       --rules docs/engine/moves/S4_fbx_scene_clips.rules
+# The types were in an unnamed namespace of one .cpp; they now live in okay::fbx::scene_build (the builder's own topic namespace),
+# which FbxScene.cpp and FbxSceneClips.cpp open with `using namespace scene_build;` (what the unnamed namespace did before). The plain
+# functions get `inline` (a header defines them in two files); those are the change rules below.
+add: ^using namespace scene_build;$
+change: Mat Mul(const Mat& a, const Mat& b) { ==> inline Mat Mul(const Mat& a, const Mat& b) {
+change: Mat Translate(double x, double y, double z) { Mat r; r.m[3] = x; r.m[7] = y; r.m[11] = z; return r; } ==> inline Mat Translate(double x, double y, double z) { Mat r; r.m[3] = x; r.m[7] = y; r.m[11] = z; return r; }
+change: Mat ScaleM(double x, double y, double z) { Mat r; r.m[0] = x; r.m[5] = y; r.m[10] = z; return r; } ==> inline Mat ScaleM(double x, double y, double z) { Mat r; r.m[0] = x; r.m[5] = y; r.m[10] = z; return r; }
+change: Mat RotAxis(int axis, double deg) { ==> inline Mat RotAxis(int axis, double deg) {
+change: Mat RotateLeft(int axis, double deg, const Mat& r, bool known = false) {   // known: r is affine and finite ==> inline Mat RotateLeft(int axis, double deg, const Mat& r, bool known = false) {   // known: r is affine and finite
+change: Mat Euler(const double d[3], int order) { ==> inline Mat Euler(const double d[3], int order) {
+change: bool Invert(const Mat& a, Mat& out) { ==> inline bool Invert(const Mat& a, Mat& out) {
+change: Mat InvertOrIdentity(const Mat& a) { Mat r; if (!Invert(a, r)) r = Mat(); return r; } ==> inline Mat InvertOrIdentity(const Mat& a) { Mat r; if (!Invert(a, r)) r = Mat(); return r; }
+change: void Decompose(const Mat& a, double t[3], double q[4], double s[3]) { ==> inline void Decompose(const Mat& a, double t[3], double q[4], double s[3]) {
+change: Mat FromFbx16(const Array& a) { ==> inline Mat FromFbx16(const Array& a) {
+change: void LoadProps(const Elem& e, Props& out) { out.p70 = e.Find("Properties70"); } ==> inline void LoadProps(const Elem& e, Props& out) { out.p70 = e.Find("Properties70"); }
+change: std::string_view CleanName(std::string_view raw) { ==> inline std::string_view CleanName(std::string_view raw) {
+change: void Base64Decode(std::string_view in, std::vector<std::uint8_t>& out) { ==> inline void Base64Decode(std::string_view in, std::vector<std::uint8_t>& out) {
+change: const Prop* ArrayPropOf(const Elem& e, const char* name) { ==> inline const Prop* ArrayPropOf(const Elem& e, const char* name) {
+change: const Array* ArrayOf(const Elem& e, const char* name) { const Prop* p = ArrayPropOf(e, name); return p ? &p->arr : nullptr; } ==> inline const Array* ArrayOf(const Elem& e, const char* name) { const Prop* p = ArrayPropOf(e, name); return p ? &p->arr : nullptr; }
+change: Layer LayerOfElem(const Elem* best, const char* valName, const char* idxName, int dim) { ==> inline Layer LayerOfElem(const Elem* best, const char* valName, const char* idxName, int dim) {
+change: std::vector<const Elem*> LayerElems(const Elem& geo, const char* layerName) { ==> inline std::vector<const Elem*> LayerElems(const Elem& geo, const char* layerName) {
+change: Layer LoadLayer(const Elem& geo, const char* layerName, const char* valName, const char* idxName, int dim) { ==> inline Layer LoadLayer(const Elem& geo, const char* layerName, const char* valName, const char* idxName, int dim) {
+change: std::string LayerName(const Elem* e) { ==> inline std::string LayerName(const Elem* e) {
+change: void Triangulate(const std::vector<std::array<double, 3>>& pts, std::vector<int>& tris, bool flip) { ==> inline void Triangulate(const std::vector<std::array<double, 3>>& pts, std::vector<int>& tris, bool flip) {
+change: bool PolygonIndicesInRange(const Array& pvi) { ==> inline bool PolygonIndicesInRange(const Array& pvi) {
+change: std::uint64_t PolygonCorners(const Array& pvi, std::size_t ncp) { ==> inline std::uint64_t PolygonCorners(const Array& pvi, std::size_t ncp) {
+change: void CubicMinMax(double y0, double y1, double y2, double y3, double& lo, double& hi) { ==> inline void CubicMinMax(double y0, double y1, double y2, double y3, double& lo, double& hi) {

@@ -585,7 +585,7 @@ static void TestNestedDeltasAndPaths() {
     Scene m("m");
     GameObject* mc = SceneSerializer::InstantiateFromFile(m, f.P("moved/car.okayprefab"), &err, &warn);
     CHECK(mc && Child(Child(mc, "Wheel R"), "Hub") != nullptr);
-    CHECK(mc && Child(mc, "Wheel R")->prefabSource == f.P("moved/wheel.okayprefab"));
+    CHECK(mc && fs::path(Child(mc, "Wheel R")->prefabSource).lexically_normal() == fs::path(f.P("moved/wheel.okayprefab")).lexically_normal());   // the same file; Windows may mix the two slashes
 }
 
 

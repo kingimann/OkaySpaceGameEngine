@@ -52,6 +52,12 @@ inline const char* PageTip(int p) {
     return p >= 0 && p < kPageCount ? t[p] : "";
 }
 /// platform: 0 Desktop, 1 Web, 2 Android, 3 Server, 4 Xbox. The order is the order of the left list.
+constexpr int kPlatformCount = 5;
+/// The platform's name as Build Settings and the build history show it (an index out of range is clamped).
+inline const char* PlatformName(int platform) {
+    static const char* n[kPlatformCount] = {"Desktop", "Web", "Android", "Server", "Xbox"};
+    return n[platform < 0 ? 0 : platform >= kPlatformCount ? kPlatformCount - 1 : platform];
+}
 inline std::vector<int> PagesFor(int platform) {
     switch (platform) {
         case 3: return {kScenes, kServer, kOutput};
@@ -584,25 +590,32 @@ inline std::string CommandToRun(const std::string& cmd, bool allowed, bool dryRu
 // ---- version control file ----------------------------------------------------------------------------------
 /// The paths a project keeps out of version control (relative to the project folder): editor scratch files and, when the
 /// output folder is inside the project, the build output.
+/// Lines for files at a fixed place start with "/" so they only match at the project's top, never a folder of the
+/// same name deeper in Assets (git matches an unanchored "build/" at any depth, and without case on Windows).
 inline std::vector<std::string> IgnoreLines(const std::string& outputDirRelativeToProject) {
-    std::vector<std::string> v = {".okay/build_live.cfg", ".okay/build_history.txt", "*.autosave", "*.log", "Thumbs.db", ".DS_Store"};
+    std::vector<std::string> v = {"/.okay/build_live.cfg", "/.okay/build_history.txt", "*.autosave", "Thumbs.db", ".DS_Store"};
     std::string o = outputDirRelativeToProject;
     for (char& c : o) if (c == '\\') c = '/';
     while (!o.empty() && o.back() == '/') o.pop_back();
-    if (!o.empty() && o.rfind("..", 0) != 0 && o.find(':') == std::string::npos && o[0] != '/') v.push_back(o + "/");
+    while (o.rfind("./", 0) == 0) o.erase(0, 2);
+    if (!o.empty() && o != "." && o.rfind("..", 0) != 0 && o.find(':') == std::string::npos && o[0] != '/') v.push_back("/" + o + "/");
     return v;
 }
 /// `existing` plus the wanted lines that it does not have yet (nothing is removed or reordered). `added` = how many were added.
-inline std::string MergeIgnore(const std::string& existing, const std::vector<std::string>& wanted, int* added = nullptr) {
+/// `heading` is the comment line written above the added lines (the okay CLI uses this for .gitignore and .gitattributes too).
+inline std::string MergeIgnore(const std::string& existing, const std::vector<std::string>& wanted, int* added = nullptr,
+                               const std::string& heading = "# added by OkaySpace Build Settings") {
     std::vector<std::string> have;
     std::istringstream in(existing);
     for (std::string l; std::getline(in, l);) { while (!l.empty() && l.back() == '\r') l.pop_back(); have.push_back(l); }
     std::string out = existing;
+    // A file with Windows line ends (git's autocrlf on checkout, or a Windows editor) gets its new lines with them too.
+    const std::string eol = existing.find("\r\n") != std::string::npos ? "\r\n" : "\n";
     int n = 0;
     for (const std::string& w : wanted) {
         if (std::find(have.begin(), have.end(), w) != have.end()) continue;
-        if (n == 0) { if (!out.empty() && out.back() != '\n') out += "\n"; out += "# added by OkaySpace Build Settings\n"; }
-        out += w + "\n"; ++n;
+        if (n == 0) { if (!out.empty() && out.back() != '\n') out += eol; out += heading + eol; }
+        out += w + eol; ++n;
     }
     if (added) *added = n;
     return out;

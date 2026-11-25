@@ -3,15 +3,17 @@
 How OkaySpace is built, shipped to players and kept up to date: the cross-compiled Windows distribution and its installer,
 web and mobile export, game export from the editor, the dedicated-server export, the five CI jobs, the release workflow, the
 Supabase and GitHub update feed, and the Steam upload kit. Files: `scripts/`, `.github/workflows/` (read-only here), `steam/`,
-`cmake/`, and the export code in `editor/main.cpp` (namespace `builder`). The CMake and tool plumbing itself is mapped in 41.
+`cmake/`, and the export code in `editor/BuildGame.cpp` (namespace `builder`, moved out of `editor/main.cpp`, 15.10). The CMake and tool plumbing itself is mapped in 41.
 Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#588, draft, branch `release-2852`, touches only `CMakeLists.txt`, `ROADMAP.md` and `dist/CHANGELOG.txt`) is being cut and will hold #585, #586 and #587. The automated-testing runner of #572 (`okay-playtest`) is merged and runs as ctests.
 
 ## 18. Build, export & release
 
 ### 18.1 Windows build and installer
+- **System:** Windows Build and Installer - Builds the Windows programs (launcher, editor, player, relay) and the installer and zip.
+  Home: `scripts/build-windows-dist.sh`, `scripts/okayspace-installer.nsi`. Entry: `scripts/build-windows-dist.sh`. Also called: installer, NSIS, Windows zip, build-windows-dist.
 - **What:** Cross-compiles the whole Windows distribution (launcher, editor, player, relay and `SDL2.dll`) from Linux with MinGW-w64 and wraps it in a one-click installer that installs or updates in place.
 - **Parts:**
-  - 18.1.1 Distribution build script - `scripts/build-windows-dist.sh` - configures with the MinGW toolchain, builds launcher, editor, player (Assimp on), copies the layout into `build-win-dist/`; env `SDL2_MINGW_PREFIX` (required), `OKAY_SODIUM_MINGW_PREFIX`, `OKAY_AC_TRUSTED_KEYS`, `OKAY_STEAM_APP_ID` (default 1172560), `STEAMWORKS_SDK_PATH`, `OKAY_IMGUI_SRC`, `JOBS`
+  - 18.1.1 Distribution build script - `scripts/build-windows-dist.sh` - configures with the MinGW toolchain, builds launcher, editor, player (our own model readers only; Assimp was deleted 2026-11-24), copies the layout into `build-win-dist/`; env `SDL2_MINGW_PREFIX` (required), `OKAY_SODIUM_MINGW_PREFIX`, `OKAY_AC_TRUSTED_KEYS`, `OKAY_STEAM_APP_ID` (default 1172560), `STEAMWORKS_SDK_PATH`, `OKAY_IMGUI_SRC`, `JOBS`
   - 18.1.2 Distribution layout - `scripts/build-windows-dist.sh` - `OkaySpace.exe` and `SDL2.dll` at the top; `Tools/` holds `OkayEngine.exe`, `OkaySpacePlayer.exe`, `okayspace-relay.exe`, a second `SDL2.dll`, `VERSION.txt`, `accounts.md`; starter `Assets/Textures` and `Assets/Fonts`; `README.txt`; `VERSION.txt` is read from `CMakeLists.txt`
   - 18.1.3 Split debug info - `scripts/build-windows-dist.sh` - the editor's DWARF moves to `build-win-symbols/OkayEngine.debug` so the exe fits Supabase's 50 MB limit; a debuglink stays in the exe
   - 18.1.4 NSIS installer - `scripts/okayspace-installer.nsi` - per-user (`$LOCALAPPDATA\OkaySpace`, no admin), finds a prior install (registry, Apps entry, the folder it runs from) and updates it in place, waits for running exes to close, makes Start Menu and desktop shortcuts, an uninstaller and an Apps & features entry; user data is never touched
@@ -30,13 +32,15 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "build the Windows folder locally", "why does the installer skip the folder question?"
 
 ### 18.2 Web and mobile export
+- **System:** Web, Mobile and Console Export - Runs games in a web browser, on phones, and (experimental, off by default) on an Xbox in Developer Mode.
+  Home: `platform/`. Entry: `scripts/build-web.sh`. Also called: WebGL, Emscripten, Android, iOS, Xbox, UWP.
 - **What:** Putting a game in a browser (WebAssembly through Emscripten) or on a phone. Web has a real build script and a CI job; Android and iOS are a data export plus instructions.
 - **Parts:**
-  - 18.2.1 Web build script - `scripts/build-web.sh` - `emcmake` builds the player without libsodium and Assimp (none for WebAssembly), outputs `build-web/web/okay-player.html`, `.js`, `.wasm`; an optional scene argument is preloaded as `game.okayscene`; serve over HTTP
+  - 18.2.1 Web build script - `scripts/build-web.sh` - `emcmake` builds the player without libsodium (none for WebAssembly), outputs `build-web/web/okay-player.html`, `.js`, `.wasm`; an optional scene argument is preloaded as `game.okayscene`; serve over HTTP
   - 18.2.2 Emscripten player target - `player/CMakeLists.txt` - the `EMSCRIPTEN` branch uses `-sUSE_SDL=2`, memory growth and an `.html` output (see 42.6)
-  - 18.2.3 Editor export for Web and Android - `editor/main.cpp` (`builder::ExportForPlatform`, near L3890) - writes `game/` (Web) or `assets/` (Android) with the scene, config and referenced assets, plus `build-web.sh` or an Android README
+  - 18.2.3 Editor export for Web and Android - `editor/BuildGame.cpp` (`builder::ExportForPlatform`) - writes `game/` (Web) or `assets/` (Android) with the scene, config and referenced assets, plus `build-web.sh` or an Android README
   - 18.2.4 Mobile guides - `docs/platform/web_mobile.md` - Android from SDL2's project template, iOS from the Xcode template, touch arrives as mouse events
-- **Code:** `scripts/build-web.sh`, `editor/main.cpp`, `player/CMakeLists.txt`
+- **Code:** `scripts/build-web.sh`, `editor/BuildGame.cpp`, `player/CMakeLists.txt`
 - **API:** `scripts/build-web.sh [scene]`, Build Settings platform Web or Android
 - **Editor:** File > Build Settings > Platform: Web (WebGL / WASM), Android (project)
 - **Docs:** `docs/platform/web_mobile.md`
@@ -49,9 +53,11 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "build the web version and serve it", "how do I get this on Android?"
 
 ### 18.3 CI jobs
+- **System:** CI - The automatic checks GitHub runs on every change (build, tests, linters).
+  Home: `.github/workflows/`. Entry: `.github/workflows/ci.yml`. Also called: GitHub Actions, workflows, checks.
 - **What:** The five GitHub Actions jobs in `.github/workflows/ci.yml` that every pull request must pass (and every push to main runs). A new push to a PR cancels that PR's older run.
 - **Parts:**
-  - 18.3.1 Build & test (Ubuntu) - `.github/workflows/ci.yml` - installs cmake, g++, ninja, libsdl2-dev; Release build and the whole `ctest`; also builds the player, builds the editor and launcher and runs `OkayEngine --selftest` headless, then exports a game and runs `tests/export/verify.sh`
+  - 18.3.1 Build & test (Ubuntu) - `.github/workflows/ci.yml`, `cmake/OkayTestShard.cmake`, `tests/scripts/check_test_shards.py` - three shards side by side (`-DOKAY_TEST_SHARD=K/3`, each builds and runs a third of the tests) and a gate job of that name that needs all three; installs cmake, g++, ninja, libsdl2-dev; Release build and the whole `ctest`; also builds the player, builds the editor and launcher and runs `OkayEngine --selftest` headless, then exports a game and runs `tests/export/verify.sh`
   - 18.3.2 Scripting and robustness tests (ASan + UBSan) - `.github/workflows/ci.yml` - Debug `-g1` with `address,undefined,float-cast-overflow`, libsodium off, 45 min limit; builds and runs 38 chosen test binaries directly, not through ctest (19.2.5)
   - 18.3.3 Cross-compile Windows build (MinGW) - `.github/workflows/ci.yml` - apt packages cached, SDL2 2.30.9 and libsodium 1.0.20 fetched, ccache; runs `scripts/build-windows-dist.sh`, builds six test exes, uploads artifact `windows-ci-build` (3 days)
   - 18.3.4 Windows export check - `.github/workflows/ci.yml` - on `windows-latest`: runs `test_vs_acceptance`, `test_vs_debug`, `test_game_fiber`, `test_polymesh`, `test_mesh_asset`, `test_poly_ops`, then `tests/export/verify.ps1` with the cross-built editor
@@ -70,6 +76,8 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "which CI job failed and why?", "add this test to the sanitizer job"
 
 ### 18.4 Release workflow
+- **System:** Release Pipeline - Turns a version number into a published release, and publishes test builds.
+  Home: `.github/workflows/release.yml`. Entry: `.github/workflows/release.yml`. Also called: release.yml, releases, publish, CHANGELOG.
 - **What:** `.github/workflows/release.yml` turns a version into a GitHub Release (and, when a secret exists, an update on Supabase) plus the Linux game server. A release PR bumps the version first.
 - **Parts:**
   - 18.4.1 Trigger and version - `.github/workflows/release.yml` - runs on a `v*` tag or "Run workflow"; the version is read from `build-win-dist/VERSION.txt`, which comes from `CMakeLists.txt`; a release PR ("Release 2.849.0", #573; "Release 2.851.0", #583; "Release 2.852.0", #588 in draft) bumps `project(VERSION)`, adds a `ROADMAP.md` row and a `dist/CHANGELOG.txt` entry
@@ -92,11 +100,12 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "cut release 2.852.0", "what does a release PR change?"
 
 ### 18.5 Update feed
+- **System:** Launcher Updater
 - **What:** What the launcher's and editor's self-updaters read: a public Supabase Storage bucket `releases` (checked first) and GitHub Releases (fallback). They use whichever has the newer version.
 - **Parts:**
   - 18.5.1 Supabase publish script - `scripts/publish-supabase.sh` - uploads `v<ver>/OkaySpace.exe`, `OkayEngine.exe`, `OkaySpacePlayer.exe`, `CHANGELOG.txt`, then `NOTES.txt`, then `VERSION.txt` last; checks each file is a Windows program under 50 MB; keeps the newest 3 versions (`KEEP`); keys from the environment only; `DRY_RUN=1`
   - 18.5.2 GitHub fallback - `.github/workflows/release.yml` - the individual files as release assets at `releases/latest/download/<name>`
-  - 18.5.3 Client side - `launcher/main.cpp` (L810-1031), `editor/main.cpp` (updater near L1593) - launcher picks the newer of Supabase and GitHub; the editor's update dialog reads `CHANGELOG.txt`
+  - 18.5.3 Client side - `launcher/main.cpp` (L810-1031), `editor/Updater.cpp` (`namespace updater`) - launcher picks the newer of Supabase and GitHub; the editor's update dialog reads `CHANGELOG.txt`
   - 18.5.4 Notes - `scripts/publish-supabase.sh` - `NOTES.txt` is the launcher's "what's new" card (default: the last 6 non-merge commit subjects; `NOTES_FILE` to choose)
 - **Code:** `scripts/publish-supabase.sh`, `.github/workflows/release.yml`, `launcher/main.cpp`, `editor/main.cpp`, `docs/sql/official_game_admin.sql`
 - **API:** `SUPABASE_ACCESS_TOKEN` or `SUPABASE_SERVICE_KEY` (environment only), `DIST_DIR`, `NOTES_FILE`, `KEEP`, `DRY_RUN`, `SUPABASE_URL`, `OKAY_UPDATE_SERVER`
@@ -111,37 +120,40 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "publish 2.852.0 to Supabase with a dry run", "why does the editor changelog differ from the launcher's?"
 
 ### 18.6 Desktop game export (Build Game) and the export check
+- **System:** Game Export - Turns a project into a game folder you can ship (`<Game>.exe`), checks it, and lets shipped games download signed content updates.
+  Home: `editor/BuildGame.cpp`, `engine/include/okay/Core/BuildPipeline.hpp`. Entry: `editor/BuildGame.hpp`. Also called: Build Game, BuildPipeline, export game, content updates.
 - **What:** Turning the open project into a shippable game folder (`<Game>.exe`, `SDL2.dll`, a `<Game>_Data/` folder with the scenes, config, `build.json`, only the assets the scenes use and the project's StreamingAssets; or the older compact `Data/` layout; or one zip), with a report of what went in and what was left out, a dry run, and the CI checks that export a small game and run it.
 - **Parts:**
-  - 18.6.1 Build - `editor/main.cpp` (`builder::Build`) - refuses dangerous folders (a drive root, home, the project), cleans only files it writes, scenes in build order, `game.okayconfig`, player copied as `<Game>.exe`, SDL2, the dependency walk's assets, StreamingAssets, icon, splash, localization, `build.json`, the report, the archive; `Data/manifest.json` only with anti-cheat
-  - 18.6.2 Player lookup and download - `editor/main.cpp` (`builder::FindPlayer`) - looks beside the editor and in a few sibling folders, downloads the runtime from the latest release if missing
+  - 18.6.1 Build - `editor/BuildGame.cpp` (`builder::Build`; types and declarations in `editor/BuildGame.hpp`) - refuses dangerous folders (a drive root, home, the project), cleans only files it writes, scenes in build order, `game.okayconfig`, player copied as `<Game>.exe`, SDL2, the dependency walk's assets, StreamingAssets, icon, splash, localization, `build.json`, the report, the archive; `Data/manifest.json` only with anti-cheat
+  - 18.6.2 Player lookup and download - `editor/BuildGame.cpp` (`builder::FindPlayer`, `builder::EnsurePlayer`) - looks beside the editor and in a few sibling folders, downloads the runtime from the latest release if missing
   - 18.6.3 Command line - `editor/main.cpp` (`RunBuildGameCli`) - `OkayEngine --build-game SCENE OUT_DIR [--name GAME] [--layout folder|compact|zip] [--dry-run] [--report FILE] [--no-strip] [--no-compress] [--zip] [--version V] [--build-number N] [--archive-name PATTERN] [--dev]`, starting from the project's saved Build Settings
   - 18.6.4 Optional data obfuscation - `Core/DataPack` - scenes and config packed so they can't be read in a text editor (39.10)
   - 18.6.5 Export check - `tests/export/verify.sh`, `tests/export/verify.ps1` - exports `vs_export.okayscene` with the editor's real Build, runs it headless and requires the output to equal `expected.txt`; assets `tests/export/*.okayvs`, `Tower.okaymesh`
-  - 18.6.6 Build pipeline logic - `engine/include/okay/Core/BuildPipeline.hpp`, `engine/src/Core/BuildPipeline.cpp` - layout planner, the player's `FindDataDir`, the dependency walk (asset stripping), `build.json`, the report, the zip writer and reader
+  - 18.6.6 Build pipeline logic - `engine/include/okay/Core/BuildPipeline.hpp`, `engine/src/Core/BuildPipeline.cpp` - layout planner, the player's `FindDataDir`, the dependency walk (asset stripping), `build.json`, the report, the zip writer and reader (one writer, `WriteZipEntries`, for files in memory or on disk in a fixed order; `WriteZip` packs a folder through it with the same bytes as before, test `build_pipeline`; #422 finding 11: the Xbox package writer in `platform/xbox_uwp` keeps its own for now, that lane is not ours)
   - 18.6.7 Layout check - `tests/export/verify_layout.sh` - exports a project with an unused asset and StreamingAssets, checks the Folder, flat (old), Compact, no-strip, Zip and dry-run outputs, and runs the player from the Folder, flat and Compact layouts
   - 18.6.8 Build report - `editor/main.cpp` (Build Result window), `.okay/build_report.txt` - by kind, by type, files with why, left out with reason, warnings, time, archive size
   - 18.6.9 Player build info - `player/main.cpp` - `--build-info`, the development overlay and log line, `Paths::StreamingAssetsDir`
   - 18.6.10 Build Settings window upgrade - `editor/BuildSettingsModel.hpp` (logic, no ImGui), `editor/BuildSettingsWindow.cpp` (drawing), `engine/include/okay/Core/BuildConfigExtra.hpp` (the extra `game.okayconfig` keys the player reads) - search box over every setting, changed-from-default dots, Reset page to defaults, Game page (game speed, physics steps, start volumes, starting language, log level and file, description, environment variables), Advanced page (pre and post build commands behind an Allow switch, `.gitignore`, build history), a "What will happen" summary, checks with Fix buttons, Debug and Release starts, duplicate profile, `.okaybuild` files; see `docs/editor/build_settings_upgrade.md`
-- **Code:** `editor/main.cpp`, `editor/ProjectState.hpp`, `editor/BuildSettingsModel.hpp`, `editor/BuildSettingsWindow.cpp`, `engine/include/okay/Core/BuildConfigExtra.hpp`, `tests/test_build_settings.cpp`, `engine/src/Core/BuildPipeline.cpp`, `player/main.cpp`, `Core/DataPack`, `tests/export/verify.sh`, `tests/export/verify.ps1`, `tests/export/verify_layout.sh`
+- **Code:** `editor/BuildGame.cpp`, `editor/BuildGame.hpp`, `editor/main.cpp`, `editor/ProjectState.hpp`, `editor/BuildSettingsModel.hpp`, `editor/BuildSettingsWindow.cpp`, `engine/include/okay/Core/BuildConfigExtra.hpp`, `tests/test_build_settings.cpp`, `engine/src/Core/BuildPipeline.cpp`, `player/main.cpp`, `Core/DataPack`, `tests/export/verify.sh`, `tests/export/verify.ps1`, `tests/export/verify_layout.sh`
 - **API:** `builder::Build`, `okay::buildpipe::*`, `Paths::StreamingAssetsDir`, `OkayEngine --build-game`, `<Game> --build-info`, `OKAY_AC_SIGNING_KEY_FILE`
 - **Editor:** File > Build Settings (Ctrl+B): scenes in build, window, platform, Output page (layout, build number, stripping, compression, archive name), Dry Run, anti-cheat, build profiles
 - **Docs:** `docs/release/build_pipeline.md`, `docs/gameplay/making_a_game.md`, `docs/editor/editor.md`, `docs/release/packaging.md`
 - **Tests:** `build_pipeline` (ctest; layout, data-folder lookup, dependency walk, manifest, report, zip, settings text); the layout check and the export check run in CI (18.3)
 - **Status:** Works - the layout check exports and runs real builds; no pack file, no `Plugins/`, no separate symbol files (docs/release/build_pipeline.md, known gaps)
-- **Open:** the build code lives inside the huge `editor/main.cpp` (split, see 15.10); the export check covers visual scripts and one mesh, not UI, audio or networking; anti-cheat forces the compact layout; Web, Android and server exports ignore the new Output settings
+- **Open:** the build code now lives in `editor/BuildGame.cpp` (move 1 of the split, 15.10, `docs/engine/modularization_plan.md`); the Build Result window and the build dialogs are still in `editor/main.cpp`; the export check covers visual scripts and one mesh, not UI, audio or networking; anti-cheat forces the compact layout; Web, Android and server exports ignore the new Output settings
 - **Related:** 15.7, 18.3, 39.4, 42.6
 - **Words:** Build Game, export, Build Settings, Data folder, _Data, Folder layout, Compact layout, Zip archive, build.json, build number, StreamingAssets, asset stripping, dependency walk, dry run, build report, game.okayconfig, player runtime, scenes in build, --build-game, --build-info, verify.sh, manifest
 - **Seen as:** the exported game is missing a texture or sound; the build refuses the folder; game starts but a scene doesn't load; the exe has the wrong name; a file you did not expect is (or is not) in the build
 - **Ask me like:** "build the game from the command line", "why isn't my audio file in the build?", "what is in the build and how big is it?"
 
 ### 18.7 Dedicated server export and Linux server build
+- **System:** Dedicated Server
 - **What:** The editor's "Server" platform writes a ready-to-run server folder for Linux or Windows; the release workflow builds and attaches the Linux runtime it needs.
 - **Parts:**
-  - 18.7.1 Server export - `editor/main.cpp` (`builder::BuildServer`, near L4007) - game data, runtime, `server.cfg`, start scripts, `deploy.sh` and `deploy.bat` (copy over SSH and install), `install-server.sh` (systemd, firewall), `Dockerfile`, `docker-compose.yml`, README
+  - 18.7.1 Server export - `editor/BuildGame.cpp` (`builder::BuildServer`) - game data, runtime, `server.cfg`, start scripts, `deploy.sh` and `deploy.bat` (copy over SSH and install), `install-server.sh` (systemd, firewall), `Dockerfile`, `docker-compose.yml`, README
   - 18.7.2 Linux runtime asset - `.github/workflows/release.yml` (`linux-server`) - `okay-server-linux-x64`, built on Ubuntu 22.04 for glibc 2.35 or newer; the export downloads it
   - 18.7.3 Server settings page - `editor/main.cpp` (Build Settings, Server page, near L16170) - name, port, players, password, listing and the anti-cheat basics
-- **Code:** `editor/main.cpp`, `.github/workflows/release.yml`
+- **Code:** `editor/BuildGame.cpp`, `editor/main.cpp`, `.github/workflows/release.yml`
 - **API:** `server.cfg`, `deploy.sh user@host [ssh-port]`, `okay-server-linux-x64`
 - **Editor:** File > Build Settings > Platform: Server
 - **Docs:** `docs/online/dedicated-server.md`
@@ -154,6 +166,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "export a Linux server for my game", "deploy it to my VPS"
 
 ### 18.8 Steam release (SteamPipe)
+- **System:** Steam Integration
 - **What:** Publishing the whole OkaySpace application (launcher, editor, player, relay) to Steam so installed copies update themselves. Manual: upload a build, then set it live on the Steamworks dashboard.
 - **Parts:**
   - 18.8.1 Build scripts - `steam/app_build_1172560.vdf`, `steam/depot_build_1172561.vdf` - app 1172560, depot 1172561, content root `../build-win-dist/`, `setlive` empty (upload only), `*.pdb` and `*.log` excluded
@@ -172,6 +185,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "upload a new build to Steam and leave it on the beta branch"
 
 ### 18.9 Test builds (the dev channel)
+- **System:** Release Pipeline
 - **What:** A build of any branch that the coordinator publishes to the `dev/` folder of the Supabase release bucket, so the owner can try unmerged work in the launcher in about 15 to 30 minutes, without a pull request, a GitHub Release or a normal release. Off by default in the launcher; never touches "latest" or LTS.
 - **Parts:**
   - 18.9.1 Test build workflow - `.github/workflows/dev-build.yml` - `workflow_dispatch` only (inputs `ref`, `note`), from `main` only; a build job (a copy of release.yml's build steps, no secrets, numbered `<newest release>.<run number>`) and a publish job (the reviewed scripts, one at a time); no release, tag, installer, Linux server or Windows signing
@@ -192,6 +206,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "start a test build of walk-vs-run for the owner", "how do I turn test builds off?"
 
 ### 18.10 Xbox One export (experimental, Developer Mode, UWP)
+- **System:** Web, Mobile and Console Export
 - **What:** An EXPERIMENTAL, OFF-by-default export that lays down a Universal Windows Platform package for an Xbox One in Developer Mode, using only the public Windows SDK. Foundation written, unverified on Windows: nothing was built, signed or run on Windows or a console. It is not a native console game (no GDK) and the app shell does not run the game yet (a test triangle and a gamepad reader).
 - **Parts:**
   - 18.10.1 SDK check - `platform/xbox_uwp/XboxSdkCheck.hpp`, `XboxSdkProbe.hpp`, `scripts/xbox-check-sdk.ps1` - finds Visual Studio 2022 (vswhere), the UWP C++ toolset, a Windows SDK 17763 or newer with UWP headers and libraries, SignTool (MakeAppx optional); pure decision logic tested with fake folders; the editor disables Export with the reason
@@ -200,11 +215,13 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
   - 18.10.4 Build and sign script - `scripts/build-xbox-uwp.ps1` - builds the app and packer, packs, test certificate, SignTool; never run
   - 18.10.5 UWP app shell - `platform/xbox_uwp/app/` - CoreApplication, suspend and resume, D3D11 swap chain triangle, Windows.Gaming.Input; never compiled
   - 18.10.6 Editor entry - `editor/main.cpp` (`OKAY_XBOX_UWP`) - File > Build Settings > Xbox (exp.): SDK list, limits text, identity preview, Export through the existing `ExportForPlatform`
+  - 18.10.7 Controller-only play - `XboxLifecycle.hpp`, `XboxUwpBackend.hpp`, `XboxTitleSafe.hpp`, `XboxGameRuntime.hpp` - B is a back press (closes a pause menu, never quits), d-pad menu navigation (`NavigateUI`), title-safe insets on a full-screen TV fill `UISafeInsets`; pure parts tested in `xbox_uwp_runtime`, the WinRT lines uncompiled
+  - 18.10.8 Suspend, settings, pads, typing - `XboxSuspend.hpp`, `XboxTextEntry.hpp`, `XboxInput.hpp`, `XboxGameRuntime.hpp` - saves and Prefs under LocalFolder, settings then game state flushed inside the real suspend deadline (timed, skipped steps logged), rumble off at suspend, pad battery level (`PowerLevel`), text input on, the on-screen keyboard follows the edited UI Input Field (`CoreTextEditContext`, shell uncompiled), engine log lines in the log file; tested in `xbox_uwp_runtime` (Suspend / PadPower / TextEntry tests)
 - **Code:** `platform/xbox_uwp/`, `scripts/xbox-check-sdk.ps1`, `scripts/build-xbox-uwp.ps1`, `editor/main.cpp`, `CMakeLists.txt` (`OKAY_BUILD_XBOX_UWP`, OFF)
 - **API:** `okay::xbox::EvaluateSdk`, `okay::xbox::GenerateManifest`, `okay::xbox::WritePackage`, `okay::xbox::appx::Pack`, `okay::xbox::appx::Verify`, `okay-appx pack|verify`
 - **Editor:** File > Build Settings > Xbox (exp.)
 - **Docs:** `docs/platform/xbox_uwp.md`, `docs/platform/xbox_uwp.md`, `docs/try_it.md` (xbox-uwp)
-- **Tests:** `xbox_uwp`
+- **Tests:** `xbox_uwp`, `xbox_uwp_runtime`, `ui_focus` (pad reaches an Input Field)
 - **Status:** Basic - pure parts tested on Linux (and the package cross-checked with `unzip` and Python); everything needing Windows, UWP, signing or hardware is unverified
 - **Open:** never built or run on Windows; the packer's Windows rules (entry order, stored files and block Size, name encoding, LfhSize) unchecked; no signing code of ours by design (rule 18; SignTool signs); the app shell does not load the engine (no offline shaders in the engine, no swap-chain present path, no UWP audio, saves or window backend); okay-ms cannot compile it yet
 - **Related:** 18.6, 37, 38
@@ -213,6 +230,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "make an Xbox One Developer Mode package", "why is Xbox export greyed out?"
 
 ### 18.11 Downloadable game content (content delivery)
+- **System:** Game Export
 - **What:** An exported game can download signed updates of its own data and scripts (models, textures, animations, scenes, audio, dialogue, Visual Script and OkayScript files) from a folder or a server, resume partial downloads, keep the previous version for rollback and look each file up in the downloaded content first, then in the installed files. Never code or programs. Off unless a content URL is configured.
 - **Parts:**
   - 18.11.1 Manifest and signature - `shared/ContentManifest.hpp` - strict text list `{path, size, sha256, kind, group, min-app}` with path, case, size and count limits; ed25519 signature with its own domain, checked through `shared/UpdateSignature.hpp` key and signature parsing; no key means refused

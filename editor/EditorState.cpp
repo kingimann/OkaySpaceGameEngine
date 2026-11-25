@@ -1247,6 +1247,8 @@ std::vector<std::string> EditorState::PerfLines() const {
     if (!m_playing) return std::vector<std::string>();
     std::vector<std::string> lines = FrameOverlay::Lines(m_loop);
     for (const std::string& l : PlayerDebug::Lines(m_scene)) lines.push_back(l);   // the local player's ground, slope and speed
+    if (NetworkManager* nm = NetworkManager::OverlayManager())                       // the network stats overlay, when it is on
+        for (const std::string& l : nm->StatsLines()) lines.push_back(l);
     return lines;
 }
 

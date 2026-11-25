@@ -27,6 +27,9 @@ def B(name, fb=None): return (name, "B", fb)
 def T(name, fb=None): return (name, "T", fb)
 def O(name="Target"): return (name, "O", None)
 def R(name): return (name, "R", None)
+def V(name, fb=None): return (name, "V", fb)   # a vector (x, y, z)
+def L(name): return (name, "L", None)           # a list (outputs only)
+def A(name): return (name, "A", None)           # any value
 
 def add(typ, title, topic, sub, level, help_, ins, outs, cpp, *, reg="CAT_DATA",
         exec_=False, exec_outs=None, defaults=None, expect=None, etype="f",
@@ -68,9 +71,9 @@ def movement():
         check="CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.Magnitude(), 0.0f, 0.001f);")
     add("GlMoveForward", "Move Forward", *M, "Basic", "Moves this object along the way it faces, Speed units each second.",
         [N("Speed", "1.0f"), O()], [],
-        "if (o && o->transform) o->transform->SetPosition(o->transform->Position() + o->transform->Forward() * (n0 * ctx.deltaTime));",
+        "if (o && o->transform) o->transform->SetPosition(o->transform->Position() + VsFacing(o->transform) * (n0 * ctx.deltaTime));",
         reg="CAT_XFORM", exec_=True, defaults=["4", None], update=True, dt=0.5,
-        check="{ Vec3 d = me->transform->Position(); Vec3 f = me->transform->Forward(); CHECK_NEAR(d.x, f.x * 2.0f, 0.02f); CHECK_NEAR(d.z, f.z * 2.0f, 0.02f); }",
+        check="{ Vec3 d = me->transform->Position(); Vec3 f = vs::VsFacing(me->transform); CHECK_NEAR(d.x, f.x * 2.0f, 0.02f); CHECK_NEAR(d.z, f.z * 2.0f, 0.02f); }",
         demo="movement")
     add("GlMoveSideways", "Move Sideways", *M, "Basic", "Moves this object to its right (negative Speed goes left), Speed units each second.",
         [N("Speed", "1.0f"), O()], [],
@@ -84,9 +87,9 @@ def movement():
         check="CHECK_NEAR(std::fabs(me->transform->EulerAngles().y), 45.0f, 0.5f);", demo="movement")
     add("GlFaceDirection", "Face Direction", "Movement", "Turn", "Intermediate", "Turns this object flat to look along Right and Forward.",
         [N("Right"), N("Forward"), O()], [],
-        "if (o && o->transform && (n0 != 0.0f || n1 != 0.0f)) o->transform->LookAtYaw(o->transform->Position() + Vec3(n0, 0.0f, n1));",
+        "if (o && o->transform && (n0 != 0.0f || n1 != 0.0f)) VsFaceAlongFlat(*o->transform, Vec3(n0, 0.0f, n1));",
         reg="CAT_XFORM", exec_=True, defaults=["1", "0", None],
-        check="CHECK_NEAR(me->transform->Forward().x, 1.0f, 0.02f);")
+        check="CHECK_NEAR(vs::VsFacing(me->transform).x, 1.0f, 0.02f);")
     add("GlKeepInsideBox", "Keep Inside Box", *M, "Intermediate", "Pushes this object back inside a box on the ground plane.",
         [N("Left Edge", "-1.0f"), N("Right Edge", "1.0f"), N("Back Edge", "-1.0f"), N("Front Edge", "1.0f"), O()], [],
         "if (o && o->transform) { Vec3 p = o->transform->Position(); p.x = std::min(std::max(p.x, std::min(n0, n1)), std::max(n0, n1));"
@@ -147,7 +150,7 @@ def health():
         check="CHECK_NEAR(me->GetComponent<HealthStat>()->health, 100.0f, 0.01f);")
     add("GlKill", "Kill", *H, "Basic", "Takes all the health away, whatever the armor.",
         [O()], [],
-        "if (HealthStat* h = GpHealth(this, o, g, ctx)) if (!h->IsDead()) h->Damage(h->health + h->armor + h->maxHealth + 1000.0f);",
+        "if (HealthStat* h = GpHealth(this, o, g, ctx)) h->Kill(ctx.gameObject);",
         reg="CAT_ACTION", exec_=True, setup=hp + " me->GetComponent<HealthStat>()->playDeathAnim = false;",
         check="CHECK(me->GetComponent<HealthStat>()->IsDead());")
     add("GlSetInvincible", "Set Invincible", *H, "Intermediate", "While on, no damage gets through.",
@@ -159,7 +162,7 @@ def health():
         reg="CAT_LOGIC", setup=hp + " me->GetComponent<HealthStat>()->godMode = true;", expect=True, etype="b")
     add("GlDamageOverTime", "Damage Over Time", *H, "Intermediate", "Hurts a little each frame: Per Second times the frame time. Put it under On Every Frame.",
         [N("Per Second", "5.0f"), O()], [],
-        "if (HealthStat* h = GpHealth(this, o, g, ctx)) h->Damage(std::max(0.0f, n0) * ctx.deltaTime);",
+        "if (HealthStat* h = GpHealth(this, o, g, ctx)) h->Damage(DamageEvent::Make(std::max(0.0f, n0) * ctx.deltaTime, DamageType::Generic, ctx.gameObject));",
         reg="CAT_ACTION", exec_=True, defaults=["10", None], update=True, dt=0.5, setup=hp,
         check="CHECK_NEAR(me->GetComponent<HealthStat>()->health, 95.0f, 0.05f);", demo="health")
     add("GlHealOverTime", "Heal Over Time", *H, "Intermediate", "Heals a little each frame: Per Second times the frame time. Put it under On Every Frame.",
@@ -253,6 +256,8 @@ import gameplay_nodes_batch5
 gameplay_nodes_batch5.define(add, N, B, T, O, R)
 import gameplay_nodes_batch6
 gameplay_nodes_batch6.define(add, N, B, T, O, R)
+import gameplay_nodes_batch7
+gameplay_nodes_batch7.define(add, N, B, T, O, R, V, L, A)
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -283,7 +288,7 @@ def kind_of(n):
 
 def decl_inputs(n):
     lines = []
-    fi = bi = ti = oi = 0
+    fi = bi = ti = oi = vi = ai = 0
     for i, spec in enumerate(n["ins"]):
         name, kind, fb = spec
         if kind == "N":
@@ -298,6 +303,10 @@ def decl_inputs(n):
         elif kind == "R":
             tail = "" if oi == 0 else str(oi + 1)
             lines.append(f"GameObject* o{tail} = GpPin(this, {i}, g, ctx, true, \"{name.lower()}\"); (void)o{tail};"); oi += 1
+        elif kind == "V":
+            lines.append(f"Vec3 v{vi} = In({i}, g, ctx, VsValue{{{fb or 'Vec3{0.0f, 0.0f, 0.0f}'}}}).AsVec3(); (void)v{vi};"); vi += 1
+        elif kind == "A":
+            lines.append(f"VsValue a{ai} = In({i}, g, ctx); (void)a{ai};"); ai += 1
     return "\n".join(lines)
 
 def fix_object_names(n):
@@ -308,7 +317,7 @@ def fix_object_names(n):
 def letters(spec_list):
     out = ""
     for _, kind, _ in spec_list:
-        out += {"N": "N", "B": "B", "T": "T", "O": "O", "R": "O"}[kind]
+        out += {"N": "N", "B": "B", "T": "T", "O": "O", "R": "O", "V": "V", "L": "L", "A": "A"}[kind]
     return out
 
 def checks():
@@ -356,10 +365,17 @@ def main():
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/DialogueRunner.hpp"
+#include "okay/Components/Light.hpp"
+#include "okay/Components/PauseMenu.hpp"
+#include "okay/Components/UIModal.hpp"
+#include "okay/Components/UISlider.hpp"
+#include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/SaveGame.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Input/Input.hpp"
-#include <algorithm>
+#include "okay/Input/InputActions.hpp"
+#include "okay/VisualScript/NodesFriendlyHelpers.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -417,7 +433,7 @@ inline float GlAngleTo(GameObject* looker, GameObject* target) {{
     const float len = d.Magnitude();
     if (len < 1e-5f) return 0.0f;
     d = d * (1.0f / len);
-    const Vec3 f = looker->transform->Forward();
+    const Vec3 f = VsFacing(looker->transform);   // its -Z, the way Look At turns it
     float c = f.x * d.x + f.y * d.y + f.z * d.z;
     c = std::min(std::max(c, -1.0f), 1.0f);
     return std::acos(c) * 57.2957795f;
@@ -750,14 +766,28 @@ def write_tests():
 #include "okay/Components/DialogueGraph.hpp"
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/Light.hpp"
+#include "okay/Components/LineRenderer.hpp"
+#include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/UIModal.hpp"
+#include "okay/Components/UISlider.hpp"
+#include "okay/Components/VehicleController.hpp"
+#include "okay/Components/VehicleSeat.hpp"
+#include "okay/Physics/Collider3D.hpp"
+#include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/SaveGame.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Core/Log.hpp"
+#include "test_sandbox.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
+#include "okay/VisualScript/VsFacing.hpp"
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -848,6 +878,25 @@ static std::string Snapshot(Scene& s) {
                 for (int i = 0; i < 4; ++i) out += std::to_string(q->Progress(id, i)) + (q->ObjectiveDone(id, i) ? "d" : "-");
             }
         }
+        if (auto* l = g->GetComponent<Light>()) {
+            std::snprintf(b, sizeof b, "L%.3f,%.3f,%.3f,%.3f", l->color.r, l->color.g, l->color.b, l->intensity);
+            out += b;
+        }
+        for (auto* c : g->GetComponents<Collider3D>()) {
+            out += c->enabled ? "c1" : "c0";
+            if (auto* bx = dynamic_cast<BoxCollider3D*>(c)) { std::snprintf(b, sizeof b, "%.3f,%.3f,%.3f", bx->size.x, bx->size.y, bx->size.z); out += b; }
+        }
+        for (auto* c : g->GetComponents<FirstPersonController>()) {
+            std::snprintf(b, sizeof b, "F%.3f,%.3f,%d,%d", c->walkSpeed, c->runSpeed, (int)c->sprintByScript, (int)c->stance());
+            out += b;
+        }
+        for (auto* c : g->GetComponents<ThirdPersonController>()) {
+            std::snprintf(b, sizeof b, "P%.3f,%.3f,%d,%d", c->walkSpeed, c->runSpeed, (int)c->sprintByScript, (int)c->stance());
+            out += b;
+        }
+        if (auto* ln = g->GetComponent<LineRenderer>()) out += "N" + std::to_string(ln->positions.size());
+        if (auto* m = g->GetComponent<UIModal>()) out += m->IsOpen() ? "M1" : "M0";
+        for (auto* seat : g->GetComponents<VehicleSeat>()) out += seat->Occupant() ? "Z1" : "Z0";
         for (auto* vc : g->GetComponents<VisualScriptComponent>()) {
             std::vector<std::string> names;
             for (const auto& kv : vc->Variables()) names.push_back(kv.first + "=" + Str(kv.second));
@@ -858,7 +907,15 @@ static std::string Snapshot(Scene& s) {
     for (const char* key : {"vs.position.spot", "vs.position.gone", "vs.health.hero"})
         out += std::string(key) + (Prefs::Has(key) ? "1" : "0");
     std::snprintf(b, sizeof b, "|time %.3f %d", Time::BaseTimeScale(), (int)Time::HitStopActive());
-    return out + b;
+    out += b;
+    for (int i = 0; i < (int)AudioGroup::Count; ++i) {
+        std::snprintf(b, sizeof b, "|bus%d %.3f %d", i, AudioMixer::groupVolume[i], (int)AudioMixer::groupMuted[i]);
+        out += b;
+    }
+    float lo = 0, hi = 0, secs = 0;
+    if (Input::TakeRumble(lo, hi, secs)) { std::snprintf(b, sizeof b, "|rumble %.3f %.3f %.3f", lo, hi, secs); out += b; }
+    out += "|save " + std::string(SaveGame::Exists("vstest") ? "1" : "0");
+    return out + "|" + InputActions::ExportBindings();
 }
 static void OnErr(const vs::VsRuntimeError& e) { g_errs.push_back(e.nodeType + ": " + e.message); }
 '''
@@ -873,6 +930,8 @@ static void OnErr(const vs::VsRuntimeError& e) { g_errs.push_back(e.nodeType + "
             lines.append("exec 1 0 2")
         else:
             lines += ["node 3 SetVar out", "exec 1 0 3", "data 3 0 2 0"]
+        if n["graph"] and n["graph"] != "giver":
+            lines += n["graph"].split("\n")
         text = ("\\n".join(lines) + "\\n").replace('"', '\\"')
         if n["check"] is not None:
             check = n["check"]
@@ -1070,6 +1129,7 @@ static void CheckPlaygrounds() {{
 '''
     test = prelude + playground + f'''int main() {{
     RUN_SUITE("vs_gameplay_library");
+    okaytest::Sandbox sandbox("vs_gameplay_library");   // Save Game and Rebind Action write save files and prefs here
     Log::sink = [](Log::Level, const std::string&) {{}};   // node errors are collected by the hook
     vs::SetRuntimeErrorHook(&OnErr);
     const char* types[] = {{ {types} }};

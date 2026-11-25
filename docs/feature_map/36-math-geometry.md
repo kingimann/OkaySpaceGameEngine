@@ -8,6 +8,8 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 ## 36. Math & geometry
 
 ### 36.1 Vectors and colours
+- **System:** Math - Vectors, rotations, matrices, bounds, easing, noise and random numbers every system uses.
+  Home: `engine/include/okay/Math/`. Entry: `engine/include/okay/Math/Vec3.hpp`. Also called: Vec3, Quat, Mat4, vectors, Noise, Random.
 - **What:** The 2D, 3D and 4D float vectors every system uses, and the RGBA colour type.
 - **Parts:**
   - 36.1.1 Vec2 - `Math/Vec2` - 2D vector with Dot, Cross, Angle, SignedAngle, Perpendicular, Rotate, Reflect, ClampMagnitude, MoveTowards, SmoothDamp
@@ -29,6 +31,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Ask me like:** "Project this velocity onto the slope"; "Why does SmoothDamp give NaN when the game is paused?"
 
 ### 36.2 Quaternions and matrices
+- **System:** Math
 - **What:** Rotation as quaternions and 4x4 column-major matrices for transforms, view and projection.
 - **Parts:**
   - 36.2.1 Quaternion - `Math/Quat` - `Euler`, `AngleAxis`, `FromToRotation`, `LookRotation`, `Slerp`, `Lerp`, `RotateTowards`, `Angle`, `ToEuler`, `FromRotationMatrix`, `Inverse`, `Conjugate`
@@ -48,27 +51,29 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Ask me like:** "Rotate this vector 30 degrees about the slope normal"; "Get position, rotation and scale back out of a Mat4"
 
 ### 36.3 Scalars, interpolation and easing
+- **System:** Math
 - **What:** Scalar helpers and the curves used for animation and game feel.
 - **Parts:**
   - 36.3.1 Scalar helpers - `Math/Mathf` - Clamp, Lerp, InverseLerp, SmoothStep, Repeat, PingPong, MoveTowards, DeltaAngle, LerpAngle, SmoothDamp, SmoothDampAngle, Approximately
   - 36.3.2 Easing functions - `Math/Easing` - `Ease` enum and `Easing::*` (Quad, Cubic, Sine, Expo, Back, Elastic, Bounce in/out/in-out), used by tweens, animation clips and UI animation
   - 36.3.3 Umbrella header - `Math/Math` - includes every Math header except the IK ones
-  - 36.3.4 Curves - `Math/Curves` - (#571) `Curves::QuadBezier`, `CubicBezier`, `Hermite` and their tangents over float, Vec2 and Vec3
+  - 36.3.4 Curves - `Math/Curves` - (#571) `Curves::QuadBezier`, `CubicBezier`, `Hermite` and their tangents over float, Vec2 and Vec3; `CatmullRomUniform` (2026-11); the one set of curve formulas: the Spline component, `Modeling/Curve`, `DollyPath` and the DOTween path call it (#422 finding 6; test `curve_formulas` shows the Bezier and the rail's Catmull-Rom give the same bits as their old copies, so regenerated SplineMesh and CurveSweep meshes in saved scenes do not change; the DOTween path's points can differ in the last float bit, under 1e-6 of the point spread)
   - 36.3.5 Ease curves as data - `Math/Easing` - (#587) `Easing::ToName/FromName`, `CubicBezier(x1, y1, x2, y2, t)`, `Steps(n, t)`, `EaseCurve` that parses and writes `cubic-bezier(...)`, `steps(n)`, `ease-in-out` and preset names (see 1.2.10)
   - 36.3.6 Springs - `Math/Spring` - (#587) closed-form damped springs: `Spring::Step`, `StepCritical`, `StepVec2/3`, `StepCriticalVec2/3`, `StepAngle`, `StepQuat`, `StepQuatCritical` and a `Spring` state object; one big step equals many small ones, so a hitch cannot blow it up; the older `Mathf::SmoothDamp` still works (see 1.2.12)
 - **Code:** `Math/Mathf`, `Math/Easing`, `Math/Math`, `Math/Curves`, `Math/Spring`
 - **API:** `Mathf::Lerp`, `Mathf::SmoothDamp`, `Mathf::Clamp01`, `Ease`, `Easing::QuadOut`, `Easing::BounceOut`
 - **Editor:** ease picker and curve preview in the Animator, Timeline and Tween Animation inspectors (editor/main.cpp)
 - **Docs:** `docs/engine/timers_and_tweens.md`
-- **Tests:** `easing`, `spring`, `math`, `math_extra`, `core_features`, `core_audit`
+- **Tests:** `easing`, `spring`, `math`, `math_extra`, `core_features`, `core_audit`, `curve_formulas`
 - **Status:** Works - every easing endpoint was checked in the core audit (#565); `Spring.hpp` and `Easing.hpp` read on main (#587, tests `spring`, `easing`); new easings are appended to the enum so saved numbers keep their meaning
-- **Open:** `Mathf::Infinity` is now a real IEEE infinity (#571; `Mathf::MaxFloat` is the old value; script-side `Mathf.Infinity` stays `1e30`); `Mathf::SmoothStep` accepts its edges in either order (#571)
+- **Open:** one profile sweep for SplineMesh and Modeling's CurveSweep (#422 finding 6) is not done: their frames differ (SplineMesh: the spline's rotation-minimising frame with per-point roll and scale; CurveSweep: its own parallel transport started from world up), so a shared sweep would move the vertices of meshes saved scenes regenerate; `Mathf::Infinity` is now a real IEEE infinity (#571; `Mathf::MaxFloat` is the old value; script-side `Mathf.Infinity` stays `1e30`); `Mathf::SmoothStep` accepts its edges in either order (#571)
 - **Related:** 1.2, 5.2, 12.4, 36.1
 - **Words:** Mathf, Lerp, Clamp, SmoothStep, SmoothDamp, Repeat, PingPong, easing, Ease, ease in, ease out, bounce, elastic, back, cubic-bezier, EaseCurve, steps, Spring, critical damping, spring follow
 - **Seen as:** an animation overshoots or snaps; a camera follow lags or oscillates; an angle jumps at 360
 - **Ask me like:** "Use a springy ease for the menu pop-in"; "Damp the camera toward the target without overshoot"
 
 ### 36.4 Bounds, rectangles and shapes
+- **System:** Math
 - **What:** Axis-aligned boxes and 2D rectangles, and the shape and intersection types that grow around them.
 - **Parts:**
   - 36.4.1 Bounds - `Math/Bounds` - centre and extents box: `Contains`, `Intersects`, `Encapsulate`, `SetMinMax`
@@ -87,6 +92,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Ask me like:** "Raycast against this box and return the hit distance"; "Grow the bounds to include every child mesh"
 
 ### 36.5 IK math
+- **System:** Inverse Kinematics
 - **What:** The solvers and helpers behind foot, limb, chain and look-at IK, kept free of scene dependencies so the animation components share them.
 - **Parts:**
   - 36.5.1 Two-bone solver - `Math/TwoBoneIK` - analytic law-of-cosines solve with pole hint, bend limits and soft reach
@@ -108,6 +114,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Ask me like:** "Limit the elbow to 150 degrees without changing the solver"
 
 ### 36.6 Geometry helpers elsewhere
+- **System:** Math
 - **What:** Geometry code that lives outside `Math/` because a system needed it first: the view frustum, ray and triangle tests, camera rays, closest-point and ray tests in physics, mesh queries.
 - **Parts:**
   - 36.6.1 Frustum and bounding spheres - `Render/Culling` - `Frustum` from a view-projection matrix, `MeshLocalSphere`, `ObjectWorldSphere`, `CulledByFrustum` (see 2.8)
@@ -129,6 +136,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Ask me like:** "One shared Ray and Plane type for physics, picking and culling"
 
 ### 36.7 Noise, curves, colour spaces and random streams
+- **System:** Math
 - **What:** Shared procedural helpers (noise, curves, colour spaces, seeded random streams) that merged in #571, and the several private copies they should replace.
 - **Parts:**
   - 36.7.1 Existing private noise - `Render/ProcTexture` (`Hash01`, `ValueNoise`, `Fbm`, `Worley`), `Components/Terrain` (`ValueNoise`, `Generate`), `Render/Mesh` (`ValueNoise`, `PropRand`), `Components/ParticleSystem` (`Noise3`), `Components/VirtualCamera` (`Noise`)

@@ -5,9 +5,7 @@
 #include "okay/Physics/PhysicsMaterialAsset.hpp"
 #include "okay/Physics/PhysicsQuality.hpp"
 #include <cstdint>
-#include <map>
 #include <memory>
-#include <set>
 #include <utility>
 #include <vector>
 
@@ -18,6 +16,8 @@ class Collider3D;
 class Terrain;
 class Rigidbody3D;
 class GameObject;
+class Joint3D;
+namespace phys { class World; }
 
 /// Data passed to OnCollision3D callbacks describing a contact with another
 /// object.
@@ -58,10 +58,21 @@ struct RaycastHit3D {
     explicit operator bool() const { return hit; }
 };
 
-/// A small but real 3D physics engine: semi-implicit Euler integration with
-/// gravity/drag, box / sphere / capsule collision detection, impulse +
-/// positional resolution, Enter/Stay/Exit collision and trigger callbacks, and
-/// scene queries (raycast / overlap / shape casts). Boxes are oriented (SAT).
+/// The closest point on a solid collider to a world point. `distance` is 0 when the point is inside the solid.
+/// Triggers are skipped. `hit` is false when nothing is within `maxDistance`.
+struct NearestSolid3D {
+    bool        hit = false;
+    Collider3D* collider = nullptr;
+    GameObject* gameObject = nullptr;
+    Vec3  point{0, 0, 0};
+    float distance = 0.0f;
+    explicit operator bool() const { return hit; }
+};
+
+/// The scene's 3D physics. Step() hands every Rigidbody3D, collider and Joint3D to our own physics engine core
+/// (okay::phys::World: tree broad phase, exact contact manifolds, a sequential-impulse solver, islands that sleep,
+/// speculative contacts so fast bodies do not tunnel, joints with limits, motors and drives; docs/physics/physics_core.md)
+/// and raises Enter/Stay/Exit collision and trigger callbacks. Scene queries (raycast / overlap / shape casts) are here.
 ///
 /// Every query takes an optional `layerMask` (bit n = collider layer n, default
 /// all layers) and `queryTriggers` (do trigger colliders count as hits?). Rays
@@ -75,29 +86,27 @@ class Physics3D {
 public:
     static constexpr std::uint32_t kAllLayers = 0xFFFFFFFFu;
 
-    Physics3D();          // (out of line: the solver memory is an incomplete type here)
+    Physics3D();          // (out of line: the engine world is an incomplete type here)
     ~Physics3D();
     Physics3D(const Physics3D&) = delete;
     Physics3D& operator=(const Physics3D&) = delete;
 
     Vec3 gravity{0.0f, -9.81f, 0.0f};
 
-    /// Classic (the original single-pass step, what old scenes use) or Improved (iterated contacts, stacks that stand, bodies
-    /// that sleep together, swept fast bodies, rolling resistance; see PhysicsQuality.hpp and docs/physics/physics.md).
-    /// Saved in the scene file as `physicsquality`; a scene without the record is Classic.
+    /// Kept only so scene files round-trip: there is one physics path (our own engine core) and this value changes
+    /// nothing. Old files saved Classic (0), Improved (1) or Engine (2) as `physicsquality`; the value read is written
+    /// back as it was. See PhysicsQuality.hpp.
     PhysicsQuality quality = PhysicsQuality::Classic;
-    /// Improved: how many times the contact solver repeats per step (more = stiffer stacks, slower). 4 to 30.
+    /// How many times the solver repeats per step (more = stiffer stacks and joints, slower). 4 to 30.
     int solverIterations = 10;
-    /// Improved: sweep every fast body (one that moves farther in a step than its own half-size) against the static
-    /// colliders so it cannot tunnel, not only those with Continuous Collision ticked.
+    /// Kept for old files (fast bodies are always caught now: the solver stops them before they pass anything).
     bool autoContinuous = true;
     /// What the last Step did.
     const PhysicsStepStats& Stats() const { return m_stats; }
-    struct Solver;                      // (the Improved step's memory; defined in Physics3DImproved.inl)
 
     /// Advance the simulation for `scene` by `dt` seconds.
-    /// Longest slice the Improved step solves in one go (seconds). A longer step (30 steps a second, a slow frame) is cut into
-    /// equal slices no longer than this, so a tower of crates is as steady at 30 steps a second as at 60. Classic is not cut.
+    /// Longest slice solved in one go (seconds). A longer step (30 steps a second, a slow frame) is cut into equal slices
+    /// no longer than this, so a tower of crates is as steady at 30 steps a second as at 60.
     static constexpr float kMaxSolveSlice = 1.0f / 45.0f;
     void Step(Scene& scene, float dt);
 
@@ -168,18 +177,33 @@ public:
     RaycastHit3D SphereCast(Scene& scene, const Vec3& origin, const Vec3& direction,
                             float radius, float maxDistance = 1e9f, GameObject* ignore = nullptr,
                             std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
+    /// Every collider the sphere sweep touches, nearest first (a shot that should report the wall and
+    /// what is behind it). Same rules as SphereCast, including triggers only when `queryTriggers` is set.
+    std::vector<RaycastHit3D> SphereCastAll(Scene& scene, const Vec3& origin, const Vec3& direction,
+                                            float radius, float maxDistance = 1e9f, GameObject* ignore = nullptr,
+                                            std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
     /// Sweep a box (center, half-extents, rotation) along `direction` and return
     /// the first collider it touches.
     RaycastHit3D BoxCast(Scene& scene, const Vec3& center, const Vec3& halfExtents,
                          const Vec3& direction, const Quat& rotation = Quat::Identity,
                          float maxDistance = 1e9f, GameObject* ignore = nullptr,
                          std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
+    /// Every collider the box sweep touches, nearest first.
+    std::vector<RaycastHit3D> BoxCastAll(Scene& scene, const Vec3& center, const Vec3& halfExtents,
+                                         const Vec3& direction, const Quat& rotation = Quat::Identity,
+                                         float maxDistance = 1e9f, GameObject* ignore = nullptr,
+                                         std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
     /// Sweep a capsule (segment a→b, radius) along `direction` and return the
     /// first collider it touches — "would my
     /// character fit through there?".
     RaycastHit3D CapsuleCast(Scene& scene, const Vec3& a, const Vec3& b, float radius,
                              const Vec3& direction, float maxDistance = 1e9f, GameObject* ignore = nullptr,
                              std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
+    /// Every collider the capsule sweep touches, nearest first.
+    std::vector<RaycastHit3D> CapsuleCastAll(Scene& scene, const Vec3& a, const Vec3& b, float radius,
+                                             const Vec3& direction, float maxDistance = 1e9f,
+                                             GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers,
+                                             bool queryTriggers = false);
 
     /// Push a sphere out of any SOLID colliders it overlaps (depenetration) and
     /// return the corrected centre — a lightweight "collide and slide" used to keep
@@ -187,8 +211,30 @@ public:
     /// `ignore` skips a GameObject (the mover itself); triggers never block.
     Vec3 ResolveSphere(Scene& scene, Vec3 center, float radius,
                        GameObject* ignore = nullptr, int iterations = 4);
+    /// Push a capsule (segment centre, unit `axis`, distance from the centre to a cap centre, radius) out of
+    /// solid colliders and return the corrected centre. A zero-length capsule is a sphere. Used so a
+    /// transform-moved character keeps its head and feet out of ceilings and floors, which one sphere
+    /// around the waist does not.
+    Vec3 ResolveCapsule(Scene& scene, Vec3 center, Vec3 axis, float halfSegment, float radius,
+                        GameObject* ignore = nullptr, int iterations = 4);
+    /// The closest point on any solid collider to `point`, within `maxDistance`.
+    NearestSolid3D ClosestPoint(Scene& scene, const Vec3& point, float maxDistance = 1e9f,
+                                GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers);
 
-    void Clear();   // forget every remembered contact (the scene is being cleared; Physics3DImproved.inl)
+    void Clear();   // forget the engine world (the scene is being cleared; Physics3DEngine.inl)
+
+    // ---- the physics engine core underneath (okay::phys::World; docs/physics/physics_core.md) ----
+    /// The engine world that runs the scene (made on the first step; nullptr before that). For advanced use, such as an
+    /// active ragdoll that sets joint drive targets directly.
+    phys::World* EngineWorld();
+    /// The engine body of a Rigidbody3D (0xFFFFFFFF when it has none yet).
+    std::uint32_t EngineBody(const Rigidbody3D* rb) const;
+    /// The engine joint of a Joint3D (0xFFFFFFFF when it has none).
+    std::uint32_t EngineJoint(const Joint3D* j) const;
+
+    /// How still a body must be, and for how long, before it sleeps. Linear and angular speeds are
+    /// metres and radians per second. The next step uses these. Defaults match the engine (0.05, 0.05, 0.5).
+    void SetSleep(float linearSpeed, float angularSpeed, float seconds);
 
     /// The trigger overlap being reported, valid only inside an OnTrigger*3D
     /// callback (nullptr elsewhere) — lets scripts ask "where did it enter?".
@@ -209,26 +255,18 @@ public:
     const std::vector<PhysicsDebugJoint3D>& DebugJoints() const { return m_debugJoints; }
 
 private:
-    using Pair = std::pair<Collider3D*, Collider3D*>;
-    std::set<Pair> m_contacts;          // contacts from the previous step
-    std::set<Pair> m_meshContacts;      // solid contacts against a static triangle mesh (body, mesh)
-    struct RestStamp { Vec3 a, b; std::uint64_t step; };    // where the two objects were when the pair was last found resting, and in which step
-    std::map<Pair, RestStamp> m_restContacts;   // Classic: pairs a sleeping body rests against without overlapping (no callbacks); a lost one wakes it
-    std::uint64_t m_restStep = 0;
     PhysicsStepStats m_stats;
-    std::unique_ptr<Solver> m_solver;   // the Improved contact solver's memory between steps (Physics3DImproved.inl)
+    bool m_sleepSet = false;
+    float m_sleepLinear = 0.05f, m_sleepAngular = 0.05f, m_sleepTime = 0.5f;
+    struct EngineBridge;                // the engine world and the scene <-> world maps (Physics3DEngine.inl)
+    std::unique_ptr<EngineBridge> m_engine;
+    void StepEngine(Scene& scene, float dt);
     std::uint32_t  m_layerMask[32];     // layer collision matrix (bit b of a)
     std::vector<PhysicsDebugRay3D>     m_debugRays;      // this frame (debug view only)
     std::vector<PhysicsDebugContact3D> m_debugContacts;
     std::vector<PhysicsDebugBody3D>    m_debugBodies;
     std::vector<PhysicsDebugJoint3D>   m_debugJoints;
-    /// Continuous collision for one fast body: sweep it along this step's motion
-    /// and stop it at the first solid it would otherwise pass through.
-    void StepSlice(Scene& scene, float dt);   // one slice of Step (the whole old Step body)
-    void SweepBody(Scene& scene, Rigidbody3D* rb, float dt);
-    /// The same for a given motion (the Improved step moves a body by its solved speed). `onlyStatics` tests the
-    /// colliders that are not dynamic bodies, found through a list kept for the step (automatic continuous collision).
-    void SweepBodyBy(Scene& scene, Rigidbody3D* rb, const Vec3& motion, bool onlyStatics);
+    void StepTerrain(Scene& scene);   // grounded-on-terrain signals and voxel terrain collision (after the engine step)
     /// The colliders and terrains ray queries test, gathered once and reused
     /// until the scene's objects or components change (not per ray).
     struct QueryCache {

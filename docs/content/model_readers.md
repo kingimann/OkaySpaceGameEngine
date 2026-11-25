@@ -5,6 +5,11 @@
 > **Status:** combined on 2026-11-20 from 38 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
 >
 > **Last checked:** 2026-11-20, paths and links against main.
+>
+> **2026-11-24: Assimp is deleted** (branch `claude/no-assimp-1`). These readers are now the only model readers, every one ON by
+> default except the Nendo seam. Where a section below says "Assimp stays the fallback", "off by default" or "before it can become
+> the default", that is history: there is no fallback, and a file our reader refuses fails the import with our reader's reason.
+> The one extension no longer read is Nendo `.ndo` (section "Our own NDO reader", decision "Dropped").
 
 ## Contents
 
@@ -20,7 +25,8 @@
 - [Our own CSM reader (`.csm`)](#our-own-csm-reader-csm) (was `docs/own_csm_reader.md`)
 - [Our own DXF reader (`.dxf`)](#our-own-dxf-reader-dxf) (was `docs/own_dxf_reader.md`)
 - [Our own FBX reader (`okay::fbx`)](#our-own-fbx-reader-okayfbx) (was `docs/own_fbx_reader.md`)
-- [Our own HMP reader (`.hmp`, version HMP7)](#our-own-hmp-reader-hmp-version-hmp7) (was `docs/own_hmp_reader.md`)
+- [Our own glTF 1.0 reader (`.gltf`, `.glb` of version 1)](#our-own-gltf-10-reader-gltf-glb-of-version-1) (new 2026-11-22; was `docs/own_gltf1_reader.md` on an unmerged branch)
+- [Our own HMP reader (`.hmp`, versions HMP4, HMP5 and HMP7)](#our-own-hmp-reader-hmp-versions-hmp4-hmp5-and-hmp7) (was `docs/own_hmp_reader.md`)
 - [Our own IQM reader (`.iqm`)](#our-own-iqm-reader-iqm) (was `docs/own_iqm_reader.md`)
 - [Our own Irrlicht scene reader (`.irr`)](#our-own-irrlicht-scene-reader-irr) (was `docs/own_irr_reader.md`)
 - [Our own Irrlicht mesh reader (`.irrmesh`)](#our-own-irrlicht-mesh-reader-irrmesh) (was `docs/own_irrmesh_reader.md`)
@@ -30,15 +36,18 @@
 - [Our own MD3 reader (`.md3`)](#our-own-md3-reader-md3) (was `docs/own_md3_reader.md`)
 - [Our own MD5 reader (`.md5mesh`, `.md5anim`)](#our-own-md5-reader-md5mesh-md5anim) (was `docs/own_md5_reader.md`)
 - [Our own MDC reader (`.mdc`)](#our-own-mdc-reader-mdc) (was `docs/own_mdc_reader.md`)
+- [Our own MDL reader (`.mdl`: Quake 1, Half-Life 1, 3D GameStudio)](#our-own-mdl-reader-mdl-quake-1-half-life-1-3d-gamestudio) (new on main 2026-11-22; was `docs/own_mdl_reader.md` on an unmerged branch)
 - [Our own MS3D reader (`.ms3d`)](#our-own-ms3d-reader-ms3d) (was `docs/own_ms3d_reader.md`)
 - [Our own NDO reader (`.ndo`): a seam only, no geometry](#our-own-ndo-reader-ndo-a-seam-only-no-geometry) (was `docs/own_ndo_reader.md`)
 - [Our own NFF reader (`.nff` `.enff`)](#our-own-nff-reader-nff-enff) (was `docs/own_nff_reader.md`)
 - [Our own OFF reader (`.off`)](#our-own-off-reader-off) (was `docs/own_off_reader.md`)
 - [Our own OGRE mesh readers (`.mesh.xml` and binary `.mesh`)](#our-own-ogre-mesh-readers-meshxml-and-binary-mesh) (was `docs/own_ogre_reader.md`)
+- [Our own OpenGEX reader (`.ogex`)](#our-own-opengex-reader-ogex) (new on main 2026-11-22; was `docs/own_ogex_reader.md` on an unmerged branch)
 - [Our own PMX reader (`.pmx`)](#our-own-pmx-reader-pmx) (was `docs/own_pmx_reader.md`)
+- [Our own Quake III map reader (`.bsp`, `.pk3`)](#our-own-quake-iii-map-reader-bsp-pk3) (new on main 2026-11-22; was `docs/own_q3bsp_reader.md` on an unmerged branch)
 - [Our own Q3D reader (`.q3o` `.q3s`)](#our-own-q3d-reader-q3o-q3s) (was `docs/own_q3d_reader.md`)
 - [Our own RAW reader (`.raw`)](#our-own-raw-reader-raw) (was `docs/own_raw_reader.md`)
-- [Our own SIB reader (`.sib`): NOT WRITTEN](#our-own-sib-reader-sib-not-written) (was `docs/own_sib_reader.md`)
+- [Our own SIB reader (`.sib`, Nevercenter Silo)](#our-own-sib-reader-sib-nevercenter-silo) (was `docs/own_sib_reader.md`)
 - [Our own SMD reader (`.smd`)](#our-own-smd-reader-smd) (was `docs/own_smd_reader.md`)
 - [Our own Terragen reader (`.ter`)](#our-own-terragen-reader-ter) (was `docs/own_terragen_reader.md`)
 - [Our own X3D reader (`.x3d`)](#our-own-x3d-reader-x3d) (was `docs/own_x3d_reader.md`)
@@ -782,7 +791,7 @@ Not verified on real files: `MESH` (no real file has one; synthetic only), polyg
 
 *Was `docs/own_fbx_reader.md` until 2026-11-20.*
 
-Status: **side by side, off by default.** ufbx (`engine/third_party/ufbx`) is still the default FBX reader and is still compiled in. Nothing has been removed. This follows stage 2 of `docs/status/own_code_roadmap.md`: our own backend behind the existing seam, selectable, and promoted only after it has earned it.
+Status: **the only FBX reader since 2026-11-23.** ufbx (`engine/third_party/ufbx`), its import path and the `OKAY_OWN_FBX` switch are deleted. A file this reader refuses fails the import with the reader's reason; no other reader is asked. (It was the default from 2026-11-18, #982, with ufbx as the fallback.)
 
 ### What it is
 
@@ -790,25 +799,24 @@ Written from the public description of the FBX format, with no code from ufbx, t
 
 | File | What |
 |---|---|
-| `engine/include/okay/Render/FbxReader.hpp` | Public API: `okay::fbx::Parse`, `Build`, `LoadFile`, `Inflate`, the `Scene` result structs, the on/off switch |
-| `engine/src/Render/FbxReader.cpp` | Our own zlib/deflate decoder, binary FBX 7.x reader (32-bit and 64-bit record offsets), ASCII FBX reader |
+| `engine/include/okay/Render/FbxReader.hpp` | Public API: `okay::fbx::Parse`, `Build`, `LoadFile`, `Inflate`, the `Scene` result structs |
+| `engine/src/Render/FbxReader.cpp` | Binary FBX reader, 6.0 to 7.x (32-bit and 64-bit record offsets), ASCII FBX reader, the version message; zlib arrays through the engine inflate |
 | `engine/src/Render/FbxScene.cpp` | Element tree to scene: nodes, transforms, meshes, skins, blend shapes, materials, textures, baked animation |
-| `engine/src/Render/ModelImport.cpp` | The adapter (`ImportFbxSceneGraphOwn`, `ImportFbxMergedOwn`): builds the same GameObjects, `MeshRenderer`, `SkinnedMesh`, `BlendShapes` and `ModelAnimator` clips the ufbx path builds |
-| `scripts/gen_fbx_fixtures.py` | Writes the fixtures in `tests/assets/fbx/` (binary 7.4, binary 7.5, ASCII) |
+| `engine/src/Render/FbxLegacy.hpp` | FBX 6.0 / 6.1 element tree rewritten in the 7.x layout before the scene is built (section "FBX 6.x and 7.0") |
+| `engine/src/Render/ModelImport.cpp` | The adapter (`ImportFbxSceneGraphOwn`, `ImportFbxMergedOwn`): builds the GameObjects, `MeshRenderer`, `SkinnedMesh`, `BlendShapes` and `ModelAnimator` clips |
+| `scripts/gen_fbx_fixtures.py` | Writes the fixtures in `tests/assets/fbx/` (binary 7.4, binary 7.5, ASCII) and `tests/assets/fbx/legacy/` (6.0, 6.1, 7.0, and two 5.0 files that must be refused) |
 
 The reader files use the standard library and one header-only file of our own, `engine/include/okay/Core/Inflate.hpp` (the engine's shared inflate; no `<mutex>`/`<thread>`, no engine library), so the hostile-input test still builds them on their own under sanitizers (it only needs `engine/include` on the include path).
 
 ### Turning it on
 
-- CMake: `-DOKAY_OWN_FBX=ON` makes it the default reader for that build (default `OFF`).
-- Run time: environment variable `OKAY_OWN_FBX=1` (or `0`) overrides the build default; `okay::fbx::SetOwnReaderEnabled(true)` does the same from code and is what the tests use.
-- When our reader is selected and cannot read a file, the importer falls back to ufbx for that file.
+Always on: there is no CMake option or environment variable for it any more. A leftover `OKAY_OWN_FBX=0` or `OKAY_THIRD_PARTY=1` changes nothing for FBX.
 
 ### What it handles
 
-- Binary FBX 7.1 to 7.7 (32-bit offsets below 7500, 64-bit from 7500) and ASCII FBX 7.x. All array property types (`f d l i b` and the byte array `c`), raw and zlib-compressed. The zlib arrays are inflated by the engine's ONE inflate (`engine/include/okay/Core/Inflate.hpp`: stored, fixed and dynamic Huffman blocks); `okay::fbx::Inflate` is a thin wrapper that keeps the forgiving behaviour this reader always had (the Adler-32 and bytes after the stream are not checked). The FBX reader no longer has a decoder of its own.
+- Binary FBX 6.0 to 7.7 (32-bit offsets below 7500, 64-bit from 7500) and ASCII FBX 6.x and 7.x (6.x through the rewrite in section "FBX 6.x and 7.0"). FBX 5.x and older are refused with a message that names the version and says to export again as FBX 2011 or newer. All array property types (`f d l i b` and the byte array `c`), raw and zlib-compressed. The zlib arrays are inflated by the engine's ONE inflate (`engine/include/okay/Core/Inflate.hpp`: stored, fixed and dynamic Huffman blocks); `okay::fbx::Inflate` is a thin wrapper that keeps the forgiving behaviour this reader always had (the Adler-32 and bytes after the stream are not checked). The FBX reader no longer has a decoder of its own.
 - Embedded textures (`Video` / `Content`, raw bytes in binary, base64 in ASCII) and texture file names.
-- Geometry (`Mesh`): positions, polygon vertex indices with the negative end marker, normals, UVs, vertex colors, per-polygon material ids. Mapping modes `ByPolygonVertex`, `ByVertice`, `ByPolygon`, `AllSame` and `ByEdge`; reference modes `Direct` and `IndexToDirect`. Missing normals are generated flat, one per polygon (ufbx does the same without smoothing data; smoothing groups are not used). Polygons with fewer than 3 corners or out-of-range indices are skipped.
+- Geometry (`Mesh`): positions, polygon vertex indices with the negative end marker, normals, every UV set with its name (section "UV sets" below), vertex colors, per-polygon material ids. Mapping modes `ByPolygonVertex`, `ByVertice`, `ByPolygon`, `AllSame` and `ByEdge`; reference modes `Direct` and `IndexToDirect`. Missing normals are generated flat, one per polygon (ufbx does the same without smoothing data; smoothing groups are not used). Polygons with fewer than 3 corners or out-of-range indices are skipped.
 - Triangulation: triangles directly, quads and n-gons by ear clipping on the polygon's dominant plane (concave polygons keep their winding), fan fallback for degenerate input and for polygons over 256 corners.
 - Meshes split per material slot, in ascending slot order.
 - Materials: diffuse color, emissive color and factor, shininess mapped to roughness (`1 - sqrt(shininess) * 0.1`, the mapping ufbx uses), diffuse and normal-map texture connections. PBR property sets written by 3ds Max (Physical Material, PBR metal/rough, PBR spec/gloss, the glTF material, OpenPBR), recognised by the class id in the material the way ufbx does (a material that says lambert or phong keeps the classic reading): base colour, roughness (glossiness inverted when `useGlossiness` is about 1), metalness, emission colour and factor, and the colour, normal and ambient-occlusion texture slots, which 3ds Max connects as `<name>_map`. A texture whose own Video has no picture takes it from another Video with the same file name.
@@ -816,7 +824,7 @@ The reader files use the standard library and one header-only file of our own, `
 - Axis and unit settings from `GlobalSettings` (up, front, coord axes and signs, unit scale) are converted to right-handed Y-up, meters, the same way ufbx's "modify geometry" mode does it: the unit scale multiplies every translation, vertex, inverse bind and blend offset, and only the root nodes get the axis rotation, so every node below keeps the local axes the file was authored in (important for retargeting). Checked against ufbx on the fixtures (Z-up/cm and Y-up/m).
 - Skins: first skin deformer, clusters, per-control-point weights sorted strongest first, the cluster's `Transform` (mesh node relative to the bone, as Blender writes it and as ufbx reads it) times the geometric transform as the inverse bind (`geometryToBone`), bone node per cluster. `TransformLink` is not used.
 - Blend shapes: blend deformers, channels, `DeformPercent`, the channel's last target shape with position and normal offsets.
-- Animation: stacks, layers, curve nodes, curves (`KeyTime`, `KeyValueFloat`, `KeyAttrFlags`, `KeyAttrDataFloat`, `KeyAttrRefCount`). Constant, linear and cubic interpolation (Hermite from the slopes the file stores, or neighbour-derived for auto keys when it stores none). Translation, rotation and scaling of nodes plus blend `DeformPercent` are baked at 30 Hz (capped at 20000 samples), start trimmed to 0, one clip per stack.
+- Animation: stacks, layers, curve nodes, curves (`KeyTime`, `KeyValueFloat`, `KeyAttrFlags`, `KeyAttrDataFloat`, `KeyAttrRefCount`). Constant, linear and cubic interpolation (Hermite from the slopes the file stores, or neighbour-derived for auto keys when it stores none). Translation, rotation and scaling of nodes plus blend `DeformPercent` become clip keys at the file's own key times plus the keys a tolerance needs (section "Animation keys"; `OKAY_FBX_BAKE30=1` brings back the old 30 Hz bake), start trimmed to 0, one clip per stack.
 - Limits against hostile files (`okay::fbx::Limits`). Going past one fails the load with an error string (never a crash); parent cycles among models are broken instead of failing. The ufbx path in `ModelImport` enforces the same node and animation numbers (see `docs/content/model_import.md`).
 
   | Limit | Default | What it bounds |
@@ -828,6 +836,7 @@ The reader files use the standard library and one header-only file of our own, `
   | `maxCorners` | 8 Mi | triangle corners built, whole scene |
   | `maxNodes` | 1 Mi | scene nodes (models) |
   | `maxNodeDepth` | 2048 | scene hierarchy depth (the walk is iterative, so depth is never call depth) |
+  | `maxUVSets` | 8 | UV sets read per mesh; the ones after are skipped |
   | `maxBakedSamples` | 20000 | baked samples per clip |
   | `maxAnimStacks` | 128 | `AnimationStack` objects |
   | `maxAnimLayers` | 1024 | `AnimationLayer` objects |
@@ -840,17 +849,178 @@ The reader files use the standard library and one header-only file of our own, `
 Say plainly what a user might trip over:
 
 - **Real files: one outside corpus only.** 43 files from the test directories of an Assimp 5.4.3 checkout were read (`docs/content/model_corpus.md`): 42 read and agree with ufbx on counts, names, bounding boxes, surface area, skin weights, inverse binds and clip samples (within the tolerances listed there); one damaged file is rejected by every reader. Five bugs came out of it and are fixed (byte-array properties, takes sharing a timeline, stored slopes of auto keys, bridged polygons, integer conversions of hostile doubles). That is a handful of exporters and several tiny test cases: a file from another exporter can still break us. Keep ufbx as the default.
-- FBX 6.x and older (no `Objects` section / different layout) and binary versions below 7100. `Properties60` is not read.
+- FBX 5.x and older: refused with a clear message (`UnsupportedVersionMessage`). FBX 6.x: what is not read is listed in section "FBX 6.x and 7.0".
 - `InheritType` other than the default (`RrSs`, `Rrs` scale inheritance) is treated as the default. ufbx can compensate for these.
 - Only `Mesh` geometry. NURBS, patches, lines, cameras, lights, skeleton node attributes, `Pose`/`BindPose` objects, templates in `Definitions` and visibility are ignored (clusters carry the bind matrices we use).
-- Mesh data: only the first UV set; vertex colors are read but the engine does not use them; tangent, binormal and smoothing-group layers are ignored; `ByEdge` mapping is approximate (a corner takes the edge that starts at it).
-- Materials: no `Bump`, specular, opacity, transmission, coat, sheen or subsurface values, no Maya / Arnold / OSL standard-surface or ShaderFX / Stingray graph materials (they sit in separate `Shader` objects the reader does not follow), no textures for emission, metalness, roughness or opacity (the importer takes the colour and normal-map files), UV set names are not read (first UV set only, as in the ufbx path). Material values agree with ufbx on the 42 real files and the 12 fixtures except where the picture file of a textured colour or glossiness slot is missing (`docs/content/model_corpus.md`).
+- Mesh data: every UV set is read, but the engine's `Mesh` has one UV channel, so the import uses set 0 only (the other sets and the names stay in `okay::fbx` data); vertex colors are read but the engine does not use them; tangent, binormal and smoothing-group layers are ignored; `ByEdge` mapping is approximate (a corner takes the edge that starts at it).
+- Materials: no `Bump`, specular, opacity, transmission, coat, sheen or subsurface values, no Maya / Arnold / OSL standard-surface or ShaderFX / Stingray graph materials (they sit in separate `Shader` objects the reader does not follow), no textures for emission, metalness, roughness or opacity (the importer takes the colour and normal-map files); a texture's own UV set choice (`UVSet` on the texture) is not followed, set 0 is used. Material values agree with ufbx on the 42 real files and the 12 fixtures except where the picture file of a textured colour or glossiness slot is missing (`docs/content/model_corpus.md`).
 - Skinning: only the first skin deformer; dual-quaternion skinning type and additive cluster link modes are ignored; for a geometry shared by several nodes the first node's geometric transform is used for the inverse binds.
 - Blend shapes: in-between shapes (`FullWeights` with several targets) are not interpolated, only the last target is used.
-- Animation: constant (step) curves are baked at 30 Hz, so a jump becomes a one-frame ramp (ufbx emits a key pair at the jump); we emit every channel of an animated node at every sample (ufbx emits only animated channels with fewer keys); custom tangent weights and velocities are ignored; TCB tangents are treated like auto; auto-clamp is approximated; layer blending is simplified (first layer overrides, later layers add or lerp by weight, rotations are blended as Euler angles); only translation, rotation, scaling and `DeformPercent` are animated (not pivots, pre/post rotation or other properties); a take plays the span its `LocalStart` / `LocalStop` give (several takes can share one set of curves), else the range of its keys; ufbx keeps keys beyond the span in its clip, ours cuts there; a take whose curves animate only custom properties gives no clip (ufbx gives a constant one); no key reduction (ufbx reduces keys; the engine's `OptimizeClips` runs afterwards on both paths).
+- Animation: we emit every channel of an animated node at every key (ufbx emits only animated channels); custom tangent weights and velocities are ignored; TCB tangents are treated like auto; auto-clamp is approximated; layer blending is simplified (first layer overrides, later layers add or lerp by weight, rotations are blended as Euler angles); only translation, rotation, scaling and `DeformPercent` are animated (not pivots, pre/post rotation or other properties); a take plays the span its `LocalStart` / `LocalStop` give (several takes can share one set of curves), else the range of its keys; ufbx keeps keys beyond the span in its clip, ours cuts there; a take whose curves animate only custom properties gives no clip (ufbx gives a constant one); no key reduction (ufbx reduces keys; the engine's `OptimizeClips` runs afterwards on both paths).
 - Left-handed source axis systems: the root node gets the (mirroring) axis matrix and nothing else is done about winding; untested against ufbx. `Transform` is assumed to be bone-relative as above; an exporter that writes the mesh's world matrix there instead would skin wrongly (ufbx makes the same assumption, but this has only been checked on our own fixtures).
 - No repair of damaged files. ufbx recovers from many malformed files; ours rejects them. Big-endian files, zlib checksums (Adler-32 is not verified), encrypted FBX and streaming are not supported.
-- Not benchmarked. Nothing has been measured against ufbx for speed or memory.
+- Speed and memory: measured on Linux only (section "Speed and memory"), not on Windows.
+
+### UV sets
+
+Since 2026-11-21 the reader reads every `LayerElementUV` of a mesh, not only the first.
+
+- Order: by the element's index (its first property), file order for equal indices. Set 0 is the one with the lowest index, as before, and stays in `Corner::uv` bit for bit.
+- Names: `Mesh::uvSetNames` holds every set's `Name` in that order (`[0]` is set 0; empty strings are kept, two corpus files have unnamed sets). Empty when the mesh has no UVs.
+- Values: `Part::extraUVs[k]` is set `k + 1`, two floats per part vertex (u, v as stored, v bottom-up). A set that does not cover a corner gives (0, 0), as for set 0. Two corners share a vertex only when every set agrees too.
+- A set whose mapping or values cannot be read is skipped; at most `Limits::maxUVSets` (8) sets per mesh.
+- The engine's `Mesh` has one UV channel (`uvs`), so the importer (`BuildOwnPart`) still uses set 0 only and the imported scene is unchanged. The other readers are untouched: `ImportedModel` has no extra channels.
+- Checked: fixtures `uv2_bin.fbx` and `uv2_ascii.fbx` (two quads sharing an edge, sets "UVMap" and "Lightmap", set 1 written before set 0; 8 vertices, not 6); and on every fixture and corpus file `fbx_reader` compares the set names and every distinct (control point, all sets) corner with ufbx's `uv_sets`. Four corpus files have two sets (`cube_with_2UVs.fbx` ASCII and binary, unnamed; `box_orphant_embedded_texture.fbx` and `box_embedded_texture_fragmented.fbx`, "UVChannel_1" and "UVChannel_3"); all agree with ufbx.
+
+### Speed and memory
+
+Measured 2026-11-21 on Linux, GCC 13, Release (`-O3`, no `-march`), on a shared 4-core cloud machine with a load of 8 to 13 from other work, so single numbers move by 10 to 40 % between runs (ufbx's as much as ours). Times are medians; where a single file mattered, `callgrind` instruction counts (steady, unlike wall time) were compared too. **Not measured on Windows.** Files: the 42 readable FBX files of the corpus (`docs/content/model_corpus.md`; the 43rd is the damaged file both reject) and the 14 fixtures.
+
+**How it was measured.** `tests/bench_fbx_reader.cpp` (built, not run by ctest): for every file, the median of at least 9 runs (more for small files, until 50 ms have passed) and the peak heap of each call. The heap is counted by replacing `malloc` / `free` in the bench, so ufbx's C allocations and our `new` count the same way. Columns:
+
+- **load**: the reader alone on bytes already in memory, into its own structures (`okay::fbx::LoadMemory` against `ufbx_load_memory` with the engine's ufbx options).
+- **import**: `ImportModelScene` through the seam with our reader on and off. This reads the file, runs the reader, triangulates, builds the GameObjects, meshes, skins and clips: the work an editor import does, the same work on both sides.
+
+Run it: `OKAY_MODEL_CORPUS=<assimp v5.4.3 checkout>/test bench_fbx_reader --runs 9 --quiet` (with no file argument it reads the corpus and `tests/assets/fbx`). `--digest`, `--parts-digest` and `--import-digest` print one hash per file of everything our reader (or the import) produced, to show that a speed change changed nothing; `--uv-sets` lists meshes with more than one UV set; `--only WHAT --time` times one call per file for a profiler.
+
+**Through the seam, now** (the average of two full runs; peaks from the second run):
+
+| File | KB | load own ms | load ufbx ms | load own/ufbx | load peak own / ufbx MB | import own ms | import ufbx ms | import own/ufbx | import peak own / ufbx MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2013_ASCII/COLLADA.fbx | 711 | 1.698 | 2.021 | 0.84x | 0.92 / 1.57 | 3.119 | 3.704 | 0.84x | 1.62 / 4.12 |
+| 2013_ASCII/Cinema4D.fbx | 81 | 0.197 | 0.204 | 0.97x | 0.17 / 0.39 | 0.384 | 0.425 | 0.90x | 0.26 / 0.64 |
+| 2013_ASCII/ConcavePolygon.fbx | 12 | 0.023 | 0.066 | 0.35x | 0.06 / 0.18 | 0.080 | 0.097 | 0.83x | 0.08 / 0.20 |
+| 2013_ASCII/Granate.fbx | 68 | 0.124 | 0.197 | 0.63x | 0.16 / 0.29 | 0.232 | 0.335 | 0.69x | 0.23 / 0.31 |
+| 2013_ASCII/cube_with_2UVs.fbx | 14 | 0.032 | 0.072 | 0.43x | 0.10 / 0.18 | 0.045 | 0.086 | 0.52x | 0.12 / 0.20 |
+| 2013_ASCII/duck.fbx | 288 | 0.575 | 0.657 | 0.88x | 0.37 / 0.73 | 1.331 | 1.442 | 0.92x | 0.73 / 3.20 |
+| 2013_ASCII/jeep1.fbx | 336 | 0.430 | 0.639 | 0.67x | 0.30 / 0.69 | 0.888 | 1.119 | 0.79x | 0.63 / 1.25 |
+| 2013_ASCII/kwxport_test_vcolors.fbx | 18 | 0.034 | 0.090 | 0.37x | 0.10 / 0.21 | 0.074 | 0.151 | 0.49x | 0.13 / 0.23 |
+| 2013_ASCII/mar_rifle.fbx | 123 | 0.167 | 0.294 | 0.57x | 0.16 / 0.35 | 0.343 | 0.434 | 0.79x | 0.29 / 0.60 |
+| 2013_ASCII/mp5_sil.fbx | 87 | 0.136 | 0.218 | 0.62x | 0.14 / 0.29 | 0.231 | 0.349 | 0.66x | 0.24 / 0.32 |
+| 2013_ASCII/pyramob.fbx | 3798 | 7.543 | 7.817 | 0.96x | 2.63 / 3.84 | 16.700 | 17.450 | 0.96x | 6.35 / 24.13 |
+| 2013_BINARY/COLLADA.fbx | 189 | 0.973 | 1.035 | 0.94x | 0.78 / 1.08 | 2.484 | 2.716 | 0.91x | 1.42 / 4.12 |
+| 2013_BINARY/Cinema4D.fbx | 37 | 0.158 | 0.221 | 0.71x | 0.13 / 0.38 | 0.396 | 0.467 | 0.85x | 0.23 / 0.64 |
+| 2013_BINARY/ConcavePolygon.fbx | 16 | 0.016 | 0.047 | 0.34x | 0.04 / 0.18 | 0.079 | 0.081 | 0.97x | 0.07 / 0.20 |
+| 2013_BINARY/Granate.fbx | 41 | 0.122 | 0.191 | 0.64x | 0.12 / 0.28 | 0.252 | 0.316 | 0.80x | 0.17 / 0.30 |
+| 2013_BINARY/anims_with_full_rotations_between_keys.fbx | 359 | 0.477 | 0.573 | 0.83x | 1.08 / 1.66 | 2.370 | 2.141 | 1.11x | 1.44 / 1.68 |
+| 2013_BINARY/cube_with_2UVs.fbx | 19 | 0.014 | 0.038 | 0.36x | 0.05 / 0.18 | 0.030 | 0.056 | 0.53x | 0.08 / 0.20 |
+| 2013_BINARY/duck.fbx | 938 | 0.995 | 1.002 | 0.99x | 1.06 / 2.42 | 2.127 | 2.096 | 1.02x | 1.99 / 4.96 |
+| 2013_BINARY/jeep1.fbx | 152 | 0.520 | 0.565 | 0.92x | 0.32 / 0.68 | 1.069 | 1.198 | 0.89x | 0.48 / 1.25 |
+| 2013_BINARY/kwxport_test_vcolors.fbx | 603 | 0.037 | 0.074 | 0.51x | 0.63 / 0.87 | 0.179 | 0.239 | 0.75x | 1.23 / 1.06 |
+| 2013_BINARY/mar_rifle.fbx | 241 | 0.168 | 0.226 | 0.74x | 0.31 / 0.70 | 0.397 | 0.382 | 1.04x | 0.56 / 0.91 |
+| 2013_BINARY/mp5_sil.fbx | 232 | 0.107 | 0.166 | 0.64x | 0.29 / 0.70 | 0.245 | 0.317 | 0.77x | 0.53 / 0.90 |
+| 2013_BINARY/multiple_animations_test.fbx | 33 | 0.026 | 0.054 | 0.49x | 0.09 / 0.19 | 0.115 | 0.239 | 0.48x | 0.14 / 0.21 |
+| 2013_BINARY/pyramob.fbx | 826 | 4.817 | 4.665 | 1.03x | 2.10 / 3.21 | 11.200 | 14.900 | 0.75x | 3.66 / 24.13 |
+| FBX/animation_with_skeleton.fbx | 190 | 1.133 | 1.180 | 0.96x | 0.72 / 1.15 | 1.794 | 1.740 | 1.03x | 0.94 / 2.37 |
+| FBX/box.fbx | 16 | 0.010 | 0.030 | 0.35x | 0.04 / 0.17 | 0.021 | 0.045 | 0.47x | 0.07 / 0.19 |
+| FBX/boxWithCompressedCTypeArray.FBX | 13 | 0.010 | 0.030 | 0.33x | 0.04 / 0.14 | 0.021 | 0.042 | 0.51x | 0.06 / 0.16 |
+| FBX/boxWithUncompressedCTypeArray.FBX | 25 | 0.009 | 0.028 | 0.35x | 0.03 / 0.14 | 0.020 | 0.040 | 0.50x | 0.06 / 0.16 |
+| FBX/box_orphant_embedded_texture.fbx | 35 | 0.056 | 0.126 | 0.44x | 0.11 / 0.25 | 0.083 | 0.179 | 0.46x | 0.16 / 0.27 |
+| FBX/close_to_identity_transforms.fbx | 86 | 0.204 | 0.235 | 0.87x | 0.20 / 0.40 | 0.282 | 0.343 | 0.82x | 0.30 / 0.45 |
+| FBX/cubes_nonames.fbx | 85 | 0.166 | 0.249 | 0.67x | 0.20 / 0.40 | 0.303 | 0.369 | 0.82x | 0.30 / 0.45 |
+| FBX/cubes_with_mirroring_and_pivot.fbx | 86 | 0.203 | 0.265 | 0.77x | 0.20 / 0.40 | 0.362 | 0.411 | 0.88x | 0.30 / 0.45 |
+| FBX/cubes_with_names.fbx | 86 | 0.184 | 0.240 | 0.77x | 0.20 / 0.40 | 0.294 | 0.351 | 0.84x | 0.30 / 0.45 |
+| FBX/cubes_with_outofrange_float.fbx | 86 | 0.186 | 0.242 | 0.77x | 0.20 / 0.40 | 0.292 | 0.352 | 0.83x | 0.30 / 0.45 |
+| embedded_ascii/box.FBX | 588 | 0.261 | 0.581 | 0.45x | 0.47 / 1.65 | 0.550 | 0.627 | 0.88x | 1.06 / 2.16 |
+| embedded_ascii/box_embedded_texture_fragmented.fbx | 1283 | 0.377 | 0.954 | 0.39x | 0.57 / 2.91 | 0.603 | 1.169 | 0.52x | 1.84 / 3.19 |
+| FBX/global_settings.fbx | 56 | 0.196 | 0.252 | 0.78x | 0.19 / 0.42 | 0.433 | 0.524 | 0.83x | 0.27 / 1.01 |
+| FBX/huesitos.fbx | 108 | 0.194 | 0.361 | 0.54x | 0.33 / 0.48 | 0.663 | 0.723 | 0.92x | 0.45 / 0.50 |
+| FBX/maxPbrMaterial_metalRough.fbx | 19 | 0.058 | 0.126 | 0.46x | 0.10 / 0.19 | 0.079 | 0.157 | 0.50x | 0.13 / 0.21 |
+| FBX/maxPbrMaterial_specGloss.fbx | 19 | 0.046 | 0.107 | 0.43x | 0.10 / 0.19 | 0.079 | 0.165 | 0.48x | 0.13 / 0.21 |
+| FBX/phong_cube.fbx | 16 | 0.013 | 0.042 | 0.33x | 0.04 / 0.17 | 0.026 | 0.058 | 0.45x | 0.07 / 0.19 |
+| FBX/spider.fbx | 120 | 0.873 | 1.054 | 0.83x | 0.41 / 0.74 | 1.778 | 1.962 | 0.91x | 0.53 / 0.76 |
+| FBX/transparentTest.fbx | 380 | not read by both | | | | | | | |
+| fbx/bridge_bin.fbx | 2 | 0.004 | 0.011 | 0.36x | 0.01 / 0.10 | 0.021 | 0.022 | 0.95x | 0.02 / 0.12 |
+| fbx/cube_yup_m_bin75.fbx | 4 | 0.008 | 0.022 | 0.36x | 0.01 / 0.13 | 0.028 | 0.048 | 0.57x | 0.03 / 0.15 |
+| fbx/cube_zup_cm_ascii.fbx | 2 | 0.010 | 0.026 | 0.41x | 0.02 / 0.13 | 0.033 | 0.046 | 0.71x | 0.03 / 0.15 |
+| fbx/cube_zup_cm_bin.fbx | 3 | 0.009 | 0.021 | 0.42x | 0.01 / 0.13 | 0.030 | 0.046 | 0.65x | 0.03 / 0.15 |
+| fbx/ngon_bin.fbx | 3 | 0.005 | 0.014 | 0.34x | 0.01 / 0.13 | 0.017 | 0.031 | 0.55x | 0.02 / 0.15 |
+| fbx/orphan_video_bin.fbx | 3 | 0.007 | 0.018 | 0.42x | 0.01 / 0.13 | 0.024 | 0.038 | 0.62x | 0.02 / 0.15 |
+| fbx/pbr_bin.fbx | 13 | 0.033 | 0.054 | 0.61x | 0.05 / 0.23 | 0.159 | 0.213 | 0.74x | 0.08 / 0.25 |
+| fbx/pivot_bin.fbx | 2 | 0.007 | 0.024 | 0.31x | 0.01 / 0.10 | 0.018 | 0.029 | 0.64x | 0.02 / 0.12 |
+| fbx/plain_bin.fbx | 2 | 0.005 | 0.037 | 0.15x | 0.01 / 0.11 | 0.015 | 0.026 | 0.59x | 0.02 / 0.13 |
+| fbx/rig_ascii.fbx | 6 | 0.033 | 0.057 | 0.57x | 0.04 / 0.21 | 0.128 | 0.116 | 1.10x | 0.05 / 0.23 |
+| fbx/rig_bin75.fbx | 11 | 0.021 | 0.041 | 0.52x | 0.04 / 0.21 | 0.104 | 0.101 | 1.04x | 0.06 / 0.23 |
+| fbx/takes_bin.fbx | 5 | 0.011 | 0.024 | 0.46x | 0.02 / 0.14 | 0.035 | 0.049 | 0.71x | 0.04 / 0.16 |
+| fbx/uv2_ascii.fbx | 1 | 0.008 | 0.018 | 0.44x | 0.01 / 0.10 | 0.019 | 0.028 | 0.68x | 0.02 / 0.12 |
+| fbx/uv2_bin.fbx | 2 | 0.006 | 0.016 | 0.38x | 0.01 / 0.10 | 0.016 | 0.025 | 0.64x | 0.02 / 0.12 |
+
+Totals over the 56 files: **load 0.86x ufbx's time** (23.7 against 27.6 ms; 0.85x and 0.86x in the two runs) and **import 0.87x** (52.7 against 60.8 ms; 0.84x and 0.89x). **Peak heap is lower than ufbx's on every file** for the load, and for the import on every file but one: `2013_BINARY/kwxport_test_vcolors.fbx`, 1.23 against 1.06 MB. The largest import peak is 6.35 MB against ufbx's 24.13 MB (`2013_ASCII/pyramob.fbx`).
+
+Files where our import was slower in wall time: `anims_with_full_rotations_between_keys.fbx` (1.11x), `rig_ascii.fbx` (1.10x, a 6 KB fixture), `mar_rifle.fbx` binary, `rig_bin75.fbx` and `animation_with_skeleton.fbx` (1.03x to 1.04x). Counted in instructions (callgrind, start-up of the program subtracted), ours does less work than ufbx on both real files: `anims_with_full_rotations_between_keys.fbx` 20.5 M against 21.5 M, `animation_with_skeleton.fbx` 13.6 M against 14.0 M (14.5 M before this change, below). The rest is within the machine's noise.
+
+**Before and after the speed work** (the reader alone with file read included: our `LoadFile` and the import steps it does, triangulation and clip keys, against `ufbx_load_file`; both readers built from their tree's sources with the engine's flags, `main` at `4b4b8d4f` against this branch, three alternating runs, the median of each). ufbx's column here does less than ours: it does not triangulate or make clip keys (in the engine those happen in the import, which the table above compares). Files of 100 KB or more:
+
+| File | KB | main ms | branch ms | ufbx ms | main / ufbx | branch / ufbx | main MB | branch MB | ufbx MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2013_ASCII/COLLADA.fbx | 711 | 12.109 | 3.074 | 1.954 | 6.20x | 1.57x | 4.89 | 1.62 | 1.59 |
+| 2013_ASCII/duck.fbx | 288 | 3.793 | 1.268 | 0.616 | 6.16x | 2.06x | 2.49 | 0.73 | 0.75 |
+| 2013_ASCII/jeep1.fbx | 336 | 3.960 | 0.788 | 0.734 | 5.39x | 1.07x | 1.60 | 0.63 | 0.71 |
+| 2013_ASCII/mar_rifle.fbx | 123 | 1.555 | 0.363 | 0.325 | 4.78x | 1.11x | 0.62 | 0.29 | 0.37 |
+| 2013_ASCII/pyramob.fbx | 3798 | 64.546 | 18.839 | 10.040 | 6.43x | 1.88x | 18.46 | 6.35 | 3.86 |
+| 2013_BINARY/COLLADA.fbx | 189 | 3.071 | 1.991 | 1.091 | 2.82x | 1.83x | 4.08 | 1.42 | 1.10 |
+| 2013_BINARY/anims_with_full_rotations_between_keys.fbx | 359 | 16.487 | 1.305 | 0.647 | 25.47x | 2.02x | 6.27 | 1.44 | 1.68 |
+| 2013_BINARY/duck.fbx | 938 | 4.097 | 2.284 | 1.142 | 3.59x | 2.00x | 4.43 | 1.99 | 3.18 |
+| 2013_BINARY/jeep1.fbx | 152 | 1.526 | 0.842 | 0.589 | 2.59x | 1.43x | 1.41 | 0.49 | 0.74 |
+| 2013_BINARY/kwxport_test_vcolors.fbx | 603 | 1.217 | 0.095 | 0.127 | 9.59x | 0.75x | 2.33 | 1.23 | 1.06 |
+| 2013_BINARY/mar_rifle.fbx | 241 | 0.957 | 0.270 | 0.244 | 3.93x | 1.11x | 1.08 | 0.56 | 0.90 |
+| 2013_BINARY/mp5_sil.fbx | 232 | 0.838 | 0.198 | 0.198 | 4.23x | 1.00x | 1.04 | 0.53 | 0.90 |
+| 2013_BINARY/pyramob.fbx | 826 | 29.108 | 13.695 | 4.877 | 5.97x | 2.81x | 15.17 | 3.54 | 3.23 |
+| FBX/animation_with_skeleton.fbx | 190 | 3.001 | 1.454 | 1.026 | 2.92x | 1.42x | 2.20 | 0.92 | 1.17 |
+| embedded_ascii/box.FBX | 588 | 2.260 | 0.349 | 0.533 | 4.24x | 0.65x | 2.65 | 1.06 | 2.16 |
+| embedded_ascii/box_embedded_texture_fragmented.fbx | 1283 | 4.049 | 0.569 | 1.070 | 3.78x | 0.53x | 4.92 | 1.84 | 3.19 |
+| FBX/huesitos.fbx | 108 | 1.296 | 0.460 | 0.358 | 3.62x | 1.28x | 1.05 | 0.45 | 0.50 |
+| FBX/spider.fbx | 120 | 1.966 | 1.017 | 1.085 | 1.81x | 0.94x | 1.22 | 0.53 | 0.76 |
+| FBX/transparentTest.fbx | 380 | not read by both | | | | | | | |
+
+All 56 files: main 170.7 ms, branch 52.9 ms, ufbx 30.7 ms; main/ufbx 5.55x, branch/ufbx 1.72x; largest peak main 18.46 MB, branch 6.35 MB, ufbx 3.86 MB. The 25x on `anims_with_full_rotations_between_keys.fbx` was the 30 Hz bake (23,040 keys where the file has 1,216).
+
+**What made it faster.** The speed rounds of 2026-11-16 (36 commits, merged into this branch on 2026-11-21 from `claude2/own-fbx-faster-4`; each kept both digests unchanged except where noted):
+
+1. The element tree points into the file instead of copying names, strings and raw arrays; typed arrays; a property is 24 bytes.
+2. The triangulation and the clip keys moved from the reader into the import steps `fbx::BuildParts` and `fbx::BuildClips` (as ufbx leaves them to the import); mesh arrays are handed to the scene instead of copied; triangles are indexed per material, equal corners shared through an open-addressing table, built in batches.
+3. Ear clipping without an allocation per polygon; flat id tables and connection lists; one pass for node transforms.
+4. Inflate (the engine's one decoder): table entries carry the length and distance base and extra bits, refills without tests, short overlapping copies 8 or 16 bytes at a time.
+5. ASCII numbers: digit runs counted with count-trailing-zeros, an exact decimal-to-double conversion (section "Exact ASCII numbers"), arrays not zero-filled.
+6. Animation: curve keys allocated once, pooled curves, read directly; **keys at the file's own key times instead of a 30 Hz bake** (the owner's decision of 2026-11-16, section "Animation keys"; this one changes the clips, within the tolerances listed there).
+7. The file is read without zero-filling the buffer first; Base64 textures decoded faster; Euler rotations evaluated in place.
+8. (2026-11-21) Skin weights: each control point's influence list is allocated once at its final size instead of growing one push at a time (about a tenth of a skinned file's import; `animation_with_skeleton.fbx` 14.5 M to 13.6 M instructions). Digests unchanged.
+
+Where ours is still behind: the reader-plus-import-steps column above is 1.4x to 2.8x ufbx's `ufbx_load_file` on the binary files with zlib arrays and on the big ASCII file, because it also triangulates and keys the clips; in the import, where both sides do that work, ours is faster in total. The binary `pyramob.fbx` load alone is level with ufbx (fastest runs 5.3 against 5.2 ms; almost all of it is inflating the zlib arrays; callgrind 33 M against 45 M instructions).
+
+### Animation keys
+
+**The owner's decision, 2026-11-16 (in chat):** our FBX import keeps the file's own animation key times and adds keys only where they are needed for accuracy, instead of resampling every animation at 30 Hz. The owner accepted that imported animations change slightly, within a set tolerance. This is the default of our reader (`BuildOptions::fileKeys`); the ufbx path is unchanged. **`OKAY_FBX_BAKE30=1`** brings back the 30 Hz bake for comparison.
+
+What the clip gets (`engine/src/Render/FbxScene.cpp`, `BakeNodeFileKeys`; written for this engine from cubic interpolation and quaternion algebra, no outside code): a key at every key time of the node's curves inside the take, and at the take's start and end; a step (constant) key or two keys at the same time make a jump (a key 0.2 ms before it with the old value, and one at it; before, a jump became a one-frame ramp); between two neighbouring keys the poses at 1/3 and 2/3 are compared with what the engine plays there, and a segment outside the tolerances is cut into equal parts. Tolerances (`fbx::KeyTolerance`): translation 1e-5 m + 1e-4 of the node's largest translation, rotation 0.05 degrees, scale 1e-4 of max(1, largest scale), blend weight 0.01 (of 100), at most 45 degrees of any Euler angle between keys, and no added key closer than 1/60 s to a neighbour (between file keys 1/30 s apart or closer nothing is added; there playback is linear between the file's keys, as the 30 Hz bake was).
+
+Accuracy (`fbx_file_keys`, 2026-11-21, fixtures and real files: 15 animated files, 119 animated nodes, 217,033 samples at 240 Hz against the curves): 1,878 keys where the 30 Hz bake had 27,294; worst error 0.56 of the tolerance; worst rotation error 0.028 degrees (the 30 Hz clip's: 1.18 degrees, on the 25 Hz file `huesitos.fbx`).
+
+### FBX 6.x and 7.0
+
+Since 2026-11-23 (branch `claude/third-party-2`, the change that deleted ufbx, which used to read these files).
+
+- **7.0 (FBX 2010):** the 7.x object layout; only the binary version gate (7100 before) kept it out. Read like 7.4.
+- **6.0 / 6.1 (FBX 2006 to 2009):** a different object layout. `FbxLegacy.hpp` rewrites the element tree in the 7.x layout, then the one builder reads it. Chosen by the version (6000 to 6999), else by the shape (`Connect` records, or objects named instead of numbered).
+  - Objects are named (`"Model::Cube"`); each gets a number, connections are matched by name (`"Model::Scene"` is the root); binary names `Name\0\1Class` are matched too.
+  - `Properties60` (`Property: name, type, flags, values`) becomes `Properties70` (an empty label added).
+  - The mesh inside a `Model` (`Vertices`, `PolygonVertexIndex`, every `LayerElement*`, `Layer`) becomes a `Geometry` of its own; a `Skin` deformer connected to the model is moved to that geometry.
+  - ASCII value lists (`Vertices: 1,2,3,...`, wrapped over lines with a trailing or leading comma, and `Key:` with its values on the next line) become arrays. This needed a small change in the ASCII parser (FbxReader.cpp): a line that starts with a comma, or a line of values after an element with no value yet, continues the element.
+  - Textures connect to the model in 6.x: each material of the model gets the texture its polygons use (`LayerElementTexture` / `TextureId`, `AllSame` or `ByPolygon`), as its diffuse texture; without that layer texture k goes on material k. `Video` `Filename` is read as `FileName`.
+  - Blend shapes: `Shape: "name"` inside the mesh becomes a BlendShape deformer, one channel per shape, weight from the model property with the shape's name.
+  - `GlobalSettings` inside `Objects` is used as the top-level one.
+  - Animation: each `Take` becomes a stack (its `LocalTime` gives the span) with one layer; each model's `Transform` / `T` `R` `S` / `X` `Y` `Z` channels become curve nodes and curves; a channel named as one of the model's shapes animates its weight. Keys: time, value, `C` (constant), `L` (linear) or `U` (cubic); the extra values after the letter are skipped by finding where the next key starts.
+- **Not read in 6.x (UNFINISHED row "FBX 6.x"):** the tangent numbers of cubic keys (the curve takes its slopes from the neighbouring keys, so it passes every key but may bend differently between keys); texture assignment when a model has textures but no material; per-polygon textures beyond one texture per material; takes' channels on anything but models (materials, lights, cameras); constraints, characters and other 6.x objects; FBX 5.x and older.
+- **How sure:** checked only on files our own script writes (`tests/assets/fbx/legacy/`, from `cube_scene6` / `rig_scene6`): each imports like its 7.4 / 7.5 twin. No real 6.x file was available: the details that only real files can confirm are unverified, in particular how binary 6.x files spell names (`Model::Cube` is assumed, `Name\0\1Class` accepted too), whether their key letters are strings (assumed; a `C`-typed byte would be read as 0 / 1), and the key tangent letters after `U`.
+- **Sources** (rule 19a: prose and data only, no code from any FBX reader or writer, Blender's included, was read):
+  - "FBX binary file format specification", Blender developers blog, 2013 (`code.blender.org/2013/08/fbx-binary-file-format-specification/`), and its comments: the binary record layout (end offset, property count, property list length, name, nested list closed by a 13-byte null record; 64-bit fields and a 25-byte null record from 7.5), the property type letters and the array encodings. It says the 32-bit layout was tested on files from 2011 "and should work with earlier ones"; it says nothing of 6.x objects.
+  - Autodesk FBX SDK documentation (concepts: `Properties60` / `Properties70`, takes and animation stacks, KTime of 46186158000 a second), from general knowledge; not re-read for this change.
+  - General public knowledge of the 6.x ASCII layout (objects named `Class::Name`, `Connect:` records, `Takes` / `Channel` / `Key` lists); a web search on 2026-11-23 found no prose description of the 6.x key list, only exporter source code, which was not opened.
+  - Byte study: of our own generated fixtures only.
+
+### Exact ASCII numbers
+
+ASCII FBX numbers are converted to the correctly rounded double (what `strtod` gives) by `engine/src/Render/DecimalToDouble.hpp`, written for this engine from Clinger's fast path (PLDI 1990) and the method described in Lemire, "Number Parsing at a Gigabyte per Second" (2021), with its own error analysis; the 5^q table (`Pow5Table.inc`) is generated by `scripts/gen_pow5_table.py` from exact integers. When the method cannot decide, it falls back to `strtod`. `decimal_to_double` checks it against `strtod` bit for bit and re-derives every table entry with its own big-integer arithmetic; `fbx_exact` checks the reader's fast paths against the plain code they replaced.
 
 ### Tests
 
@@ -861,13 +1031,109 @@ Say plainly what a user might trip over:
 - `fbx_reader` also reads every real file of the outside corpus when `OKAY_MODEL_CORPUS` is set (`docs/content/model_corpus.md`), with slightly looser tolerances for vertex count (0.5 %), surface area (0.2 %) and clip samples (0.015) than for our fixtures, and `model_corpus` records the counts of each real file in `tests/data/model_corpus_manifest.tsv`.
 - Fixtures `pbr_bin.fbx` and `orphan_video_bin.fbx` came from the pre-flip verification. Fixtures `takes_bin.fbx` (three takes with their own spans, a `c` thumbnail) and `bridge_bin.fbx` (a polygon with a bridged hole) were added for the bugs the real files showed.
 - The hostile test was re-run with `-fsanitize=address,undefined,float-cast-overflow` (standalone build, 30,000 mutations per fixture): clean after the integer-conversion fix; the engine-linked tests were then run too (see above).
-- Regenerate fixtures with `python3 scripts/gen_fbx_fixtures.py`. They are 2 to 12 KB each.
+- `fbx_reader` also checks the UV sets (`uv2_bin.fbx`, `uv2_ascii.fbx` by hand, every file against ufbx; section "UV sets").
+- `fbx_file_keys` (standalone): the clip keys against the curves at 240 Hz, the tolerances, jumps and the 30 Hz clip; `fbx_exact` (standalone): the fast paths bit for bit against the plain code; `decimal_to_double` (standalone): the ASCII number conversion against `strtod`.
+- Sanitizers, 2026-11-21 (after the UV-set and skin changes): `fbx_hostile` (20,000 mutations per fixture), `fbx_file_keys` and a driver that loads, triangulates and keys every corpus file and fixture, all built standalone with `-fsanitize=address,undefined,float-cast-overflow`: clean. The engine-linked `fbx_reader` was not rebuilt under sanitizers this time.
+- `fbx_reader` "fbx legacy" suites: every file in `tests/assets/fbx/legacy/` against its 7.4 / 7.5 twin (nodes and world matrices, corners, materials and textures, skin clusters, weights and inverse binds, blend shape, clips at nine times, key times only for the cubic curve), the scene and single-mesh import paths, FBX 5.0 refused with its message, and a file with no objects failing instead of importing as nothing. `fbx_hostile` truncates and fuzzes the legacy files too (not the 5.0 ones).
+- Regenerate fixtures with `python3 scripts/gen_fbx_fixtures.py`. They are 1 to 12 KB each.
 
-## Our own HMP reader (`.hmp`, version HMP7)
+## Our own glTF 1.0 reader (`.gltf`, `.glb` of version 1)
+
+*Written on branch `claude/own-readers-6` (2026-11-15), brought onto main on 2026-11-22 (branch `claude2/own-readers-last`).*
+
+Status: **side by side, off by default** (`OKAY_OWN_GLTF1`, slot 41 of the table in `ModelImport.cpp`, under the pseudo-extension
+`.gltf1` because 1.0 and 2.0 share `.gltf` / `.glb`). Without it a glTF 1.0 file is refused, with a message that names the
+switch. `.gltf` / `.glb` never go to Assimp, so before this reader the engine could not read glTF 1.0 at all. glTF 2.0 files are
+read by the glTF 2.0 reader (`okay/Render/Gltf.hpp`) whether this switch is on or off.
+
+### What it is
+
+glTF 1.0 is the first version of Khronos's transmission format (2015), replaced by 2.0 in 2017. It differs enough to be a separate
+reader: every top-level collection is an object keyed by string ids (not an array), a node lists several meshes, accessors carry
+their own `byteStride`, materials are a technique plus a dictionary of values, and the binary form (`KHR_binary_glTF`) is a
+20-byte header, one JSON block and one body.
+
+**Where it was written from.** The Khronos glTF 1.0 specification only: `specification/1.0/README.md` of the KhronosGroup/glTF
+repository and its JSON schemas, and the `KHR_binary_glTF` and `KHR_materials_common` extension descriptions. No importer source
+was read (rule 19a). The JSON parser and the base64 decoder are the engine's own, the ones the glTF 2.0 reader uses. Assimp was
+used only as a black box, through the engine's own seam, to compare results on the corpus files.
+
+| File | What |
+|---|---|
+| `engine/src/Render/Gltf1Reader.cpp` | `okay::ReadGltf1Buffer` / `ReadGltf1File`, `IsGltf1`, `GltfFileIsVersion1` (declared in `ModelData.hpp`) |
+| `engine/src/Render/ModelImport.cpp` | The seam: `ImportModelData`, `ImportModel` and the scene importer send version-1 files here when the switch is on (`Gltf1Wanted`, inside `RunReaderGuarded`); `ImportModelData(..., ImportBackend::Own)` always does |
+| `tests/test_gltf1_reader.cpp`, `tests/gltf1_test_build.hpp` | Hand-computed checks on files built in memory, files on disk, refusals and the seam (`gltf1_reader`) |
+| `tests/test_gltf1_hostile.cpp` | Hostile input, memory and time budget, mutation fuzz, real files when `OKAY_MODEL_CORPUS` is set; builds without the engine library (`gltf1_hostile`) |
+| `tests/test_own_gltf1_default.cpp` | Fails if `-DOKAY_OWN_GLTF1=ON` stops making this reader the default (`own_gltf1_default`) |
+| `tests/test_own_gltf1_samples.cpp`, `examples/own_readers/box_v1.gltf`, `box_v1.glb`, `scripts/gen_gltf1_samples.py` | The sample files (an orange box, JSON and binary, written by our script) import through the seam with the reader on (`own_gltf1_samples`) |
+
+Switch it on with `SetImportBackend(".gltf1", ImportBackend::Own)`, `OKAY_OWN_GLTF1=1` (or `0` to force it off), or
+`-DOKAY_OWN_GLTF1=ON`. Only when it is on does the importer parse a `.gltf` / `.glb` a second time to see its version.
+
+### What it reads
+
+- **Container.** JSON (a UTF-8 byte order mark is dropped), or the binary form: magic `glTF`, version 1, total length, content
+  length (more than 0), content format 0 (JSON); the body is the buffer `binary_glTF`. A binary file shorter than its header's
+  length is read with a note, every accessor still checked against the bytes that exist (one real sample is 33 bytes short).
+- **Buffers.** The binary body, base64 `data:` URIs, or files inside the model's own folder (`SceneRefPath.hpp`; `%20` and other
+  escapes are decoded first, so an escaped `..` is still refused). A buffer shorter than its `byteLength` is refused.
+- **Accessors.** `SCALAR` to `MAT4`; byte, unsigned byte, short, unsigned short, float, and unsigned int for indices.
+  `byteStride` 0 is tightly packed, else at least one element and at most 255; the last element must end inside the bufferView
+  (`byteLength` 0 runs to the end of the buffer); every float must be finite.
+- **Scene.** The node tree under one root `glTF`, walked with an explicit stack: the file's `scene`, else the first scene by id,
+  else every node that is nobody's child. A node reached twice (a loop or two parents) is refused. A node's transform is its
+  `matrix` (column-major; shear dropped with a note) or `translation`, `rotation` (x, y, z, w; normalised) and `scale`. Y up and
+  metres, as the engine, so nothing is converted.
+- **Meshes.** Each triangle primitive of a node's `meshes` is one part: triangles (4), strips (5, alternate triangles reordered so
+  all face the same way) and fans (6); `POSITION`, `NORMAL` (made from the faces when missing or zero), `TEXCOORD_0` (kept as
+  written, like the 2.0 reader), indices (each inside the primitive's vertices). Points and lines are skipped with a note.
+- **Materials.** One per glTF material, from `values` and `extensions.KHR_materials_common.values`: `diffuse` as a colour or as a
+  texture id that leads to an image file inside the model's folder, `emission`, `shininess`.
+
+Reported, not read (a line in `out.notes`): skins (skinned meshes come in their bind pose), animations, cameras, techniques and
+shaders, embedded images, image paths outside the folder, points and lines, unknown modes, NORMAL / TEXCOORD_0 that are not one
+VEC3 / VEC2 per vertex, degenerate triangles, bytes after a binary file's length.
+
+Refused: not JSON; nesting deeper than 128; `asset.version` 2.x or array collections; a bad binary header; a missing accessor,
+bufferView, buffer, mesh, node or default scene; a bad count, offset, stride, type or component type; reads past a bufferView or
+buffer; a non-finite value; an index past the vertices; a node loop; a bad matrix, translation, rotation or scale; a buffer file
+outside the folder or missing; a scene with no triangles.
+
+### Limits
+
+File 512 MiB; all buffers 512 MiB; 20,000,000 elements in one accessor; 64,000,000 accessor values decoded in the whole file
+(checked before allocating; a mesh listed by several nodes counts each time); 20,000,000 vertices; 20,000,000 triangle slots,
+degenerate ones included; 100,000 nodes; 100,000 primitives; JSON nesting 128. Measured by `gltf1_hostile` with a counting
+allocator: a 1,000,000-triangle file reads in 0.4 s at a 58 MB peak; one mesh listed 4 times with 20,000,000 degenerate indices
+each is refused at 95 MB; an 80,000,000-value accessor is refused before allocating (76 MB, the copied body).
+
+Known limits: the shared JSON parser turns `\u` escapes into `?`; only the value names `diffuse`, `emission` and `shininess` are
+used; with the switch on a file is held twice while it is read (the version check, then the reader); the JSON parser has no cap
+on the number of values in one array (shared with the 2.0 reader).
+
+### Tests and real files
+
+- `gltf1_reader`: the quad scene with every value worked out by hand (matrix and TRS transforms, positions, normals, UVs,
+  indices, material), the binary form and a binary file cut short, a file with no scenes, `KHR_materials_common`, textures inside
+  and outside the folder, strips, fans, points and lines, 24 refusals with their messages, a NaN position, files on disk (a
+  subfolder with a UTF-8 name, a missing buffer, `%20` names), a glTF 2.0 file not taken, and the seam (off by default, env,
+  `SetImportBackend`, `ImportModelScene`, `ImportModel`, flatten).
+- `gltf1_hostile` under ASan, UBSan and float-cast-overflow (2026-11-22, `OKAY_READER_FUZZ_ITERS=100000`, seeded also with the
+  real `BoxTextured` JSON and binary files): 147,615 checks, 0 failures. Before this reader (the refusing stub of the test
+  commit): 4 failures. Its corpus paths were wrong on the old branch (`glTF/...` instead of `models/glTF/...`), so the real
+  files were silently skipped there; fixed.
+- **Real files**: the 7 glTF 1.0 files under `models/glTF` of the Assimp 5.4.3 test folder all read (the `gltf1` rows of
+  `tests/data/model_corpus_manifest.tsv`). Comparison with Assimp and speed: `docs/content/own_readers_speed.md`, row `gltf1`.
+
+Not verified: files from other exporters, skinned or animated 1.0 files (not read), a run on real Windows.
+
+## Our own HMP reader (`.hmp`, versions HMP4, HMP5 and HMP7)
 
 *Was `docs/own_hmp_reader.md` until 2026-11-20.*
 
-Status: **side by side, off by default** (`OKAY_OWN_HMP`, same rules as `docs/content/model_readers.md`). Assimp (when built) is still the only other reader of HMP files. Nothing was flipped. **Only the HMP7 flavour is read. The layout was worked out from two real files, no written specification was available: read the "How sure" part.**
+Status: **side by side** (`OKAY_OWN_HMP`, same rules as `docs/content/model_readers.md`). Assimp (when built) is still the only other reader of HMP files. **2026-11-23: HMP4 and HMP5 are read too** (branch `claude/third-party-3b`), and the layout is now backed by a public description: Conitec's "Gamestudio file formats" page (<http://www.conitec.net/beta/prog_mdlhmp.htm>, section "The HMP5 terrain format"), which gives the 84-byte header, the skins of the MDL5 format and the frame of a 36-byte header and 4-byte height points. Every field the table below marked "certain" from the two HMP7 files matches that page (for example `xmax = scale.x * 65536 + offset.x`: `0.00244 * 65536 - 80 = 80`). The page says HMP7 is the newer format of A6 / A7 and documents only HMP5; HMP7 reads with the same layout (both real files are HMP7).
+
+**HMP4** (A5 before 5.230, no file available): read like HMP5, but the skins have no size of their own: the header's skin width and height (offsets 52 and 56, the MDL4 skin layout of the 2001 Programmer's Manual) apply. That is our reading of the manual, **unverified** on a real file. A note says so on every HMP4 file. **Skin types** (shared with the MDL reader, `engine/src/Render/GameStudioSkin.hpp`): 0 (8-bit palette, 1 byte a pixel), 2 (565), 3 (4444), 4 (888), 5 (8888), plus 8 when three mipmaps of a half, a quarter and an eighth of the size follow; any other type is refused (its size is unknown, so the grid cannot be found). A type 7 skin (a file name, seen in Assimp's hostile test file `invalid_external_texture_name.hmp`) is refused.
 
 ### What it is
 
@@ -911,7 +1177,7 @@ Mesh: one vertex per grid point, two triangles per cell, counter clockwise seen 
 
 ### Not handled
 
-Other versions (**HMP4, HMP5 and others are refused** with a message naming the version: their layouts are not known to me); skin types other than 4 (refused, because the pixel size is not known and the grid cannot be found past the skin); the embedded skin picture itself (skipped and noted: a material here names a texture file, it cannot carry pixels); the stored normals; more than one frame (the first is read, a note says so); terrain holes and water (if the format has any).
+Versions other than HMP4, HMP5 and HMP7 (refused with a message naming the version); skin types other than the ones above (refused, because the pixel size is not known and the grid cannot be found past the skin); the embedded skin picture itself (skipped and noted: a material here names a texture file, it cannot carry pixels); the stored normals; more than one frame (the first is read, a note says so); terrain holes and water (if the format has any).
 
 ### Limits
 
@@ -919,7 +1185,7 @@ File 128 MiB. At most **1,048,576 grid points** (a 1024 x 1024 grid, about 2.1 m
 
 ### Tests and what was checked
 
-- `hmp_reader` (528 checks): a synthetic 3 x 3 plane with hand-computed vertices (heights `z = 10 + c + 3r`), UVs, the plane's normal `(-1/3, -2/3, 2/3)` at every point, the triangle indices of the first and last cell, the area (`24 * sqrt(2.25)`), counter-clockwise winding, the root rotation; a 4 x 2 grid with free heights; a skin (skipped, noted); extra frames; more than 30 refusal cases (other versions, counts of `0xFFFFFFFF`, over the budget, not a multiple of the row length, a row length of NaN, infinity, 2.5 or 1, one row, bad skin counts and types, a skin of 2^62 pixels, a skin larger than the file, NaN and infinity in every float field, a zero or negative cell size); every truncation; every header byte set to 0x00, 0xFF and 0x80.
+- `hmp_reader` (551 checks since 2026-11-23): an HMP5 and an HMP4 2 x 2 grid (`tests/gs_fixtures.hpp`), the nine HMP5 skin types, HMP3 and HMP6 refused, an HMP4 file with skins but no header skin size refused; and, from before, a synthetic 3 x 3 plane with hand-computed vertices (heights `z = 10 + c + 3r`), UVs, the plane's normal `(-1/3, -2/3, 2/3)` at every point, the triangle indices of the first and last cell, the area (`24 * sqrt(2.25)`), counter-clockwise winding, the root rotation; a 4 x 2 grid with free heights; a skin (skipped, noted); extra frames; more than 30 refusal cases (other versions, counts of `0xFFFFFFFF`, over the budget, not a multiple of the row length, a row length of NaN, infinity, 2.5 or 1, one row, bad skin counts and types, a skin of 2^62 pixels, a skin larger than the file, NaN and infinity in every float field, a zero or negative cell size); every truncation; every header byte set to 0x00, 0xFF and 0x80.
 - `batche_hostile`: mutations of two fixtures, the worst allowed file and a grid one column over the budget, the two real files.
 - `own_dispatch_e`: `.hmp` reaches this reader; HMP, MDC and CSM files under each other's extension are refused by the reader of that extension.
 - **Mutation checks:** reading the z scale from the wrong field (21 failures), reversing the triangle winding (25), removing the row-length check (2).
@@ -930,7 +1196,7 @@ File 128 MiB. At most **1,048,576 grid points** (a 1024 x 1024 grid, about 2.1 m
 
 ### Provenance (what this file was written from)
 
-`HmpReader.cpp` was written from the byte-by-byte analysis of the two sample files above and from the layout they share with the Quake / GameStudio MDL header (counts, origin and scale as the model's coordinate transform). I found no written specification of the HMP7 header; where a field is called something in the table it is my reading of the data. No importer source (Assimp or any other project) was read, copied, ported or followed, and Assimp was not run on these files either.
+`HmpReader.cpp` was written from the byte-by-byte analysis of the two sample files above and from the layout they share with the Quake / GameStudio MDL header (counts, origin and scale as the model's coordinate transform). Since 2026-11-23 it also follows Conitec's published HMP5 description (the Gamestudio manual page above) for HMP5 and, with the MDL4 skin layout of Conitec's 2001 Programmer's Manual (<http://conitec.net/gstech.pdf>), HMP4; the page was read as prose and tables, no SDK or code was used. No importer source (Assimp or any other project) was read, copied, ported or followed, and Assimp was not run on these files either.
 
 Unverified: files from other GameStudio versions and other skins, the orientation and normals questions above, files larger than the sample, a run on real Windows.
 
@@ -1460,6 +1726,170 @@ The only real file is `spider.mdc` from the `test/models/MDC` folder of an Assim
 
 Unverified: a compressed first frame (no real example), the compressed offset scale, tag rotation, other MDC versions, files from games other than Return to Castle Wolfenstein, a run on real Windows.
 
+## Our own MDL reader (`.mdl`: Quake 1, Half-Life 1, 3D GameStudio)
+
+*Written on branch `claude/readers-e4` (2026-11-15), brought onto main on 2026-11-22 (branch `claude2/own-readers-last`).*
+
+Status: **side by side, off by default** (`OKAY_OWN_MDL`, slot 38 of the table in `ModelImport.cpp`). Assimp (when built) is the
+fallback for a file ours refuses, so the 3D GameStudio MDL files it reads still import with the default choice.
+
+### What it is
+
+`.mdl` is used by several unrelated binary formats. This reader does:
+
+- **Quake 1** (magic `IDPO`, version 6): one vertex-animated mesh.
+- **Half-Life 1** (magic `IDST`, version 10): the "studio" model, with bones, body parts, textures and sequences.
+- **3D GameStudio MDL3, MDL4 and MDL5** (since 2026-11-23, branch `claude/third-party-3b`): from Conitec's published layout.
+- **3D GameStudio MDL7** (since 2026-11-23): **not publicly documented**; worked out byte by byte from three real files.
+
+Refused with their own messages: Half-Life sequence group files (`IDSQ`, animation only), Half-Life 2 / Source models (`IDST`
+version 44 to 49) and other `MDLn` magics.
+
+### 3D GameStudio MDL3 / MDL4 / MDL5 (2026-11-23)
+
+Sources (prose and C-style struct tables of the file layout, no code): Conitec's "3D Gamestudio Programmer's Manual" for A5 5.10,
+May 2001 (<http://conitec.net/gstech.pdf>, chapter "The MDL model format": the MDL3 / MDL4 header, skins, skin vertices,
+triangles, frames) and the "Gamestudio file formats" page of the Gamestudio manual (<http://www.conitec.net/beta/prog_mdlhmp.htm>,
+"The MDL5 model format": the MDL5 skins with their own size and mipmaps, the 565 / 4444 / 888 / 8888 skin types).
+
+Layout: an 84-byte header (magic, an unused word, scale and offset vectors, an unused word and vector, skin count, skin width and
+height (MDL3 / MDL4 only), vertex, triangle, frame and skin-vertex counts, flags, a last word); the skins (MDL3 / MDL4: a type
+and `width * height * bpp` bytes; MDL5: a type, a width, a height, the pixels and, for type + 8, three mipmaps); the skin vertices
+(two shorts, pixel positions); the triangles (three vertex and three skin-vertex shorts, read **unsigned**, so a model may have up to 65,535 vertices); the frames (a type word, a bounding box,
+a 16-byte name, the packed positions: 4 bytes for type 0, 8 bytes, unsigned shorts, for type 2; `position = raw * scale + offset`).
+
+Read: **the first frame** as one static part (named by the frame); texture coordinates `u = (s + 0.5) / width`,
+`v = (t + 0.5) / height` against the header's skin size (MDL3 / MDL4) or the first skin's size (MDL5); no skin: no texture
+coordinates (noted). Our own choices, checked on the real files: **the files wind clockwise** (all three real files have a
+negative signed volume in file order, like Quake), so the corner order is reversed; GameStudio is Z-up (the root turns it). The
+pixel-centre `+ 0.5` is our choice (the manual says only "pixel position"). Not read (noted): frames after the first, the skin
+pictures (embedded pixels; a material names a texture file), the stored normal indices (smooth normals are generated), MDL4 bones
+(the manual calls them "future expansion").
+
+Real files (Assimp's test tree, data folders only): `minigun.MDL` (MDL3) and `minigun_mdl5.mdl` (MDL5) give the same mesh
+(424 vertices after welding, 576 triangles, area 5408.109, box -36.751, -13.293, -5.748 to 35.896, 2.046, 7.401, 8 frames
+noted); `PhosphoricAcid_MDl5.mdl` (MDL5, no skin): 960 triangles, area 5019.320. Every one of the three adds up to the byte
+with the layout above (checked by our own script before the reader was written). No MDL4 file was available: MDL4 is read as
+MDL3 with word frames allowed, **unverified**.
+
+### 3D GameStudio MDL7 (2026-11-23)
+
+Conitec's page says "The MDL7 format is not publicly documented, but an easy-to-use SDK is freely available". **The SDK was not
+used** (it is code); an archive named in a 2005 forum post (`server.conitec.net/down/mdl7.zip`) could not be fetched (the
+download was blocked) and was not looked for further. The layout below is **our own reading of three real files**:
+`Sphere_DiffPinkBlueSpec_Alpha90.mdl` (3,720 bytes), `PhosphoricAcid_MDl7.mdl` (28,944 bytes) and `broadleavedtreeD.mdl`
+(24,924 bytes), dumped and parsed with our own scripts. Every file adds up to the byte.
+
+| Part | Layout (as read) | Evidence |
+|---|---|---|
+| Header, 48 bytes | `"MDL7"`, a word (0), a word that is 0 in all three (read as nothing; a file where it is not 0 is **refused**), the group count (1, 8, 2), the data size (= the file size in all three), two words that are 0 in all three (noted when not 0), then ten 16-bit record sizes: 36, 28, 16, 68, 8, 16, 26, 26, 68, 24 | six of the sizes match records found below and are checked: [1] skin 28, [3] material 68, [4] skin point 8, [5] triangle 16, [6] vertex 26, [9] frame 24. The other four ([0] 36, [2] 16, [7] 26, [8] 68) match nothing in the files and are **not used** |
+| After the vertices | frame records (the frame count of the group header; each starts with a 16-byte name, `bindpose` in the tree) | **not read**: in the files they are 24 bytes with two words of 0 after the name; the group's byte size says where the next group starts, so the reader never needs their layout. A note counts them |
+| Group header, 44 bytes | type (1), the group's byte size **including** this header, a 16-byte name, the counts of skins, skin points, triangles, vertices, frames | the byte sizes chain the groups exactly in all files (8 groups in PhosphoricAcid) |
+| Skin, 28 bytes | type, width, height, a 16-byte name | type `0x10` (w = h = 0) is followed by a **material**; type `7` is followed by `width` bytes of a NUL-terminated **texture file name** (`barkD_texture.bmp` is 18 bytes, width 18) |
+| Material, 68 bytes | four colours of four floats, then a power | the 1st colour is the diffuse colour: PhosphoricAcid's phosphorus (1, 0.549, 0.078: orange), hydrogen white, oxygen red, and the sphere named "DiffPink" has (0.925, 0, 1); the 3rd is the specular colour (the sphere "BlueSpec" has (0, 0, 1)); the 4th value of the 2nd colour is 0.9 in the file named "Alpha90" and 1 elsewhere: **read as the opacity** (a guess from one file); power 10 in all: the shininess; the 4th colour (0 in all) is read as emissive (a guess) |
+| Skin point, 8 bytes | `u`, `v` floats | the tree's values are in 0 to 1 |
+| Triangle, 16 bytes | three vertex shorts, then three skin-point shorts (-1 = none) and a 32-bit skin index | the skin index points into **one skin list for all groups** (PhosphoricAcid's groups 1 to 7 have no skins of their own and use 0, 1, 2: the atoms come out in the right colours) |
+| Vertex, 26 bytes | position (three floats) first; the other 14 bytes (a 16-bit value, -1 or 0, then three floats that are unit vectors) are not used | positions need no scale or offset; the three floats were checked as normals only to settle the winding (below) |
+| Frame record | see "After the vertices" | |
+
+Winding: the stored normals of all 1,758 triangles agree with the file's corner order turned the other way **and point into the
+closed spheres**, while the signed volume in file order is negative: the corner order is reversed, so the faces point out (smooth
+normals are generated, the stored ones are not read). Texture coordinates are used as stored (the engine's `v` runs down, like
+DirectX's, which GameStudio uses; **not checked against the pictures**). Z-up, as for the other GameStudio formats.
+
+The strongest check: `PhosphoricAcid_MDl5.mdl` and `PhosphoricAcid_MDl7.mdl` are the same model in the two formats, and the two
+readers give the same 960 triangles, the same box (-5, -22, -12.5 to 24.748, 7, 15.862) and the same area (5019.32). Results:
+sphere 120 triangles, the tree 678 triangles in 2 groups with the two texture files resolved inside the model's folder.
+
+Not read (noted): frame records, embedded skin pictures (types 2 to 5, `+ 8` mipmaps, and type 6 as a DDS picture of `width`
+bytes: these type codes are the published MDL5 and WMB texture codes of the Gamestudio manual, **not seen in any MDL7 file**, so
+applying them to MDL7 is a guess guarded by the group size), groups of a type other than 1, the stored normals. A non-zero word
+at offset 8 is refused.
+
+**Where the names came from (rule 19a, said plainly).** The first version of this reader (2026-11-23) called the header
+fields "bone count", "entity lump", "editor (MED) lump" and the unused record sizes "bone", "colour", "frame vertex" and
+"bone transform", and read a frame as "a frame-vertex count and a bone-transform count". **None of that is in the three
+files** (they have no bones, no lumps and empty frames): those names came from my memory of how the MDL7 header is usually
+described, which is most likely memory of the SDK header or of another importer, not from an allowed source. On review
+(2026-11-24) they were taken out: the reader now uses only what the files show, refuses a file whose offset-8 word is not 0,
+and skips frame records by the group size instead of parsing them. The material's "four colours and a power" shape and the
+guess that the 2nd and 4th colours are ambient and emissive come from the public Direct3D material layout (diffuse, ambient,
+specular, emissive, power), recalled, which GameStudio uses; diffuse, specular and the opacity value are backed by the files
+(colours and file names, above).
+
+| File | What |
+|---|---|
+| `engine/src/Render/MdlReader.cpp` | `okay::ReadMdlBuffer` / `okay::ReadMdlFile` (declared in `ModelData.hpp`) |
+| `engine/src/Render/BinReader.hpp`, `ReaderCommon.hpp`, `AffineInverse.hpp` | Shared pieces: the bounds-checked cursor, the mesh builder, the affine inverse |
+| `engine/src/Render/ModelImport.cpp` | The seam: slot 38 (extension `.mdl`) |
+| `tests/test_mdl_reader.cpp`, `tests/e4_fixtures.hpp`, `tests/gs_fixtures.hpp` | Hand-computed checks on synthetic files (`mdl_reader`), the GameStudio files since 2026-11-23 |
+| `engine/src/Render/GameStudioSkin.hpp` | The size of a GameStudio skin picture, shared with the HMP reader |
+| `tests/test_e4_hostile.cpp` | Budgets, hostile input, mutation fuzz and real files, for OpenGEX and MDL (`e4_hostile`) |
+| `tests/test_own_dispatch_e4.cpp`, `tests/test_own_e4_default.cpp` | The seam routes `.mdl` (both formats); `-DOKAY_OWN_MDL=ON` really makes it the default |
+| `tests/test_own_e4_samples.cpp`, `examples/own_readers/quake_pyramid.mdl`, `halflife_tri.mdl` | The sample files (the test fixtures written out: a Quake pyramid and a Half-Life triangle with two bones and a clip) import through the seam with the reader on (`own_e4_samples`) |
+
+### What it reads
+
+**Quake 1.** The header (scale, origin, counts, skin size), the skin list (sizes only), texture coordinates and triangles. **The
+first frame** as one static part: position = byte * scale + origin. Texture coordinates by the seam rule: an `onseam` vertex of a
+triangle that does not face front takes `s + skinwidth / 2`; `u = (s + 0.5) / skinwidth`, `v = (t + 0.5) / skinheight`. Quake
+winds clockwise, so the corner order is reversed. Vertices are welded, smooth normals generated, the root turns Z-up into Y-up.
+Further frames and the skin pictures (8-bit palette indices) are not read (noted).
+
+**Half-Life 1.** The bone table becomes the node tree under a root that turns Z-up into Y-up (a parent loop is cut, repeated names
+get a suffix); Euler angles are rotations about X, then Y, then Z (`q = qz * qy * qx`). For every body part the **first model** is
+read; every mesh is one part from its triangle commands (positive count: strip, negative: fan), vertices welded, moved from bone
+space to the bind pose and rigidly skinned to their bone. Strips and fans are reversed; each mesh's winding is checked against the
+stored normals and flipped back (with a note) when most triangles face against them. The texture table gives one material per
+texture (name only; the pictures are embedded palette images and are not extracted). Each sequence stored in the file (group 0)
+is one clip: the first blend, per bone a position and rotation key per frame from the run-length coded values.
+
+Not handled (a line in `out.notes`): Quake frames after the first, skin pictures, stored normals; Half-Life alternative
+sub-models, skin families after the first, embedded pictures, `<name>T.mdl` texture files, external sequence groups, blends after
+the first, controllers, hit boxes, attachments, events.
+
+### Limits
+
+File 256 MiB. Quake: 200,000 vertices, 400,000 triangles, 4,096 skins, 100,000 frames. Half-Life: 1,024 bones, body parts and
+models per part, 4,096 meshes per model and per file, 200,000 vertices per model, 4,096 textures and sequences, 65,536 frames per
+sequence, 2,000,000 output vertices and triangles, 4,000,000 animation keys, a file-wide work budget of 16,000,000 units and
+1,000,000 bone entries over all parts. Every offset and count is checked in 64-bit arithmetic before use.
+
+### Real files and checks
+
+43 `.mdl` files under `models/MDL` and `models-nonbsd/MDL` of the Assimp 5.4.3 test folder (`docs/content/model_corpus.md`; rows
+`mdl` of `tests/data/model_corpus_manifest.tsv`): the 3 Quake 1 models and 14 Half-Life 1 models read; the 19 Half-Life
+sequence-group files (`IDSQ`) and `manT.mdl` (textures only, no bones) are refused by ours and by Assimp; the 6 GameStudio files
+(MDL3, MDL5, MDL7) were refused by ours until 2026-11-23 and are read by ours since then (numbers above; **not compared with
+Assimp**, which was not run). Against Assimp
+(`bench_model_readers`, 2026-11-22, the 17 files both read): 0.26x the read time, 0.37x the largest peak, 0.29x the import time
+(`docs/content/own_readers_speed.md`, row `mdl`). What differs (`--compare`):
+- Quake 1: Assimp keeps zero-area triangles, ours drops them with a note (`gijoe` 404 / 408, `steg` 304 / 305, `tekmechbot`
+  1,702 / 1,748); vertex counts and boxes are the same.
+- Half-Life 1: same triangles, vertices, materials, clips and boxes on 10 of the 14 (on `unnamed_bones` the skin lists 9 bones to Assimp's 8; not looked into); Assimp makes many more nodes (it adds
+  nodes for body parts, meshes and sequences), ours only the bone tree. Assimp reads every sub-model of a body part and the
+  companion files: `duplicate_submodels` 3 / 6 parts, `man.mdl` 72 / 190 triangles, 0 / 5 materials and 3 / 6 clips (Assimp
+  also opens `manT.mdl` for the textures and `man01.mdl` for more sequences; ours reads the one file and says so in its notes),
+  and the two `*_sequence_groups.mdl` 0 / 9 clips (their sequences live in the `01` to `09` files). `e4_hostile` under ASan, UBSan and
+float-cast-overflow (2026-11-22): 20,000 mutations per synthetic seed and 5,000 per real file (`man.mdl`, `multiple_roots.mdl`,
+`chrome_sphere.mdl`, `steg.mdl`), 0 failures.
+
+### Provenance (what this file was written from)
+
+`MdlReader.cpp` was written from scratch for this project. The record layouts of the Quake 1 model and of the Half-Life 1 studio
+model, the seam rule and the Euler order were **recalled from memory** of the publicly documented layouts (the id Software and
+Valve SDK descriptions and the format notes built on them); no document, header or source was open while writing it, and no code
+of Assimp or any other importer was read, copied or ported. Recollection cannot be audited; it is checked against the real files
+above and against Assimp's output on them (`own_readers_speed.md`). Unverified: Half-Life models with several skin families,
+Quake models from other tools, a Windows run.
+
+The 3D GameStudio part (2026-11-23) was written from Conitec's two published descriptions named above (MDL3 / MDL4 / MDL5) and,
+for MDL7, from our own byte-by-byte analysis of the three real files (the table above). No GameStudio SDK, header or importer
+source of any project (Assimp's `code/` folder included) was read; the Assimp checkout used for the files was a sparse checkout
+of the `test/models*/MDL`, `HMP`, `SIB` and `NDO` data folders only (but see "Where the names came from" in the MDL7 part: some
+field names of the first version were memory, and were taken out). Unverified: MDL4 files, MDL7 files with bones (refused), frame
+records or embedded pictures, the MDL7 opacity and emissive guesses, the texture `v` direction, a Windows run.
+
 ## Our own MS3D reader (`.ms3d`)
 
 *Was `docs/own_ms3d_reader.md` until 2026-11-20.*
@@ -1524,7 +1954,24 @@ A real file with joints, weights and animation; more than four real files; Windo
 
 *Was `docs/own_ndo_reader.md` until 2026-11-20.*
 
-Status: **header recognised, body NOT read.** Off by default (`OKAY_OWN_NDO`, slot 36). Do not switch it on: it refuses every file.
+Status: **header recognised, body NOT read; `.ndo` is dropped since Assimp was deleted (2026-11-24).** Off by default (`OKAY_OWN_NDO`, slot 36). Do not switch it on: it refuses every file.
+
+### Decision 2026-11-24: dropped (`claude/no-assimp-1`)
+
+Assimp was the only thing that read `.ndo`. With it deleted, `.ndo` is **not supported**: a `.ndo` file is not listed as importable
+and its import fails (with `OKAY_OWN_NDO=1` the seam says "Nendo file ... recognised but not read"; without it the message names
+the switch). Why it is dropped and not written, with the evidence:
+
+- **No description we may follow.** Searched twice (2026-11-22, 2026-11-23): the only descriptions of the body are other projects'
+  importer code (rule 19a). Nothing else was found.
+- **No usable sample.** The corpus (Assimp v5.4.3 `test/`) has 0 ordinary `.ndo` files: its two are crash-regression inputs of 287
+  and 173 bytes, broken on purpose. Every other format in this page was written from a description or from real sample files.
+- **How rare it is.** Nendo (Nichimen Graphics, later Izware) is a modeller from the late 1990s that has not been sold or updated
+  for about twenty years; few tools still export it (Wings 3D is one), and no user, test or project asked for it.
+- **Not dropped "because it is hard"** (rule 17): there is nothing to write from. **To reopen:** real `.ndo` files of known content.
+  Wings 3D (free, `apt` package `wings3d` 2.3 is available on the build machine, not installed) can export Nendo; a few known shapes
+  exported from it on the owner's PC, with the same shapes as `.obj`, would let us work the layout out byte by byte as MDL7 and SIB
+  were. Using Wings 3D as a black box is fine; reading its exporter's code is not (rule 19a).
 
 ### What exists
 
@@ -1540,6 +1987,24 @@ Status: **header recognised, body NOT read.** Off by default (`OKAY_OWN_NDO`, sl
 ### What is needed to finish it
 
 A format description we may follow (Izware's own, or a clean-room note by someone who did not copy code) or real files with a way to say what they contain (a Nendo install, to export the same model as OBJ and compare). Until then the format stays on Assimp. Honest status: **0% of the body.** Counting this row as done anywhere would be wrong.
+
+### 2026-11-23: tried again, stopped (owner decision "write our own readers")
+
+What was looked at, all allowed sources:
+
+- **Web search** for a Nendo / Izware format description: only file-extension sites ("the proprietary format of Nendo, by
+  Izware"), Paul Bourke's format list (names NDO, no layout) and a Blender import script (code: **not opened**). No description.
+- **Sample files**: Assimp's `test/models/NDO` data folder (sparse checkout of data only) holds two files,
+  `dangling_vertex_index.ndo` (287 bytes) and `malformed_edge_index.ndo` (173 bytes). Their names say what they are: **broken on
+  purpose** (crash-regression inputs). Both start `nendo 1.2`, then mostly zeros, a few small big-endian counts and two floats of
+  1.0. Two deliberately malformed files of a few hundred bytes cannot show the layout of a real model: which numbers are counts,
+  what an edge or a face record is, where texture data goes. Working a reader out of them would be guessing.
+
+So the body is **still not read** and the seam still refuses every file. **What is missing**: real `.ndo` files of known
+content. The cleanest way to get them: Wings 3D (a free modeller) can export Nendo files; exporting a few known shapes from it
+(a cube, a cube with one material and UVs, a cylinder) on the owner's PC, together with the same shapes as `.obj`, would give
+files we can analyse byte by byte against a known answer, the way MDL7 and SIB were done. A Nendo install with its sample
+models would do too. Without either, `.ndo` is not read (Assimp, which read it, was deleted on 2026-11-24).
 
 ### Provenance
 
@@ -1703,7 +2168,7 @@ The binary mesh without an XML skeleton (it is imported rigid, at its bind pose,
 
 - **The editor does not recognise `.mesh.xml` by itself.** Its project panel and drag-and-drop look at the last extension (`.xml`), so only the Import Model dialog (whose file filter lists `*.mesh.xml`) and `ImportModelData` / `ImportModel` take the file. Teaching the editor's `IsModelExt` the two-part extension is not done.
 - **Binary `.mesh`: done** (2026-11-16, above). Not read in it: vertex elements that are not 32-bit floats (16-bit texture coordinates, packed normals), big-endian files.
-- **Binary `.skeleton`**: not started: its chunk layout is not recorded in this document, so it is not citable here. A binary `.mesh` is skinned only with the XML skeleton (`name.skeleton.xml`, as the OGRE XML converter writes it); with only a binary `.skeleton` it stays rigid with a note.
+- **Binary `.skeleton`: written** (2026-11-21, below). The file readers look for it next to a mesh only with `OKAY_OWN_OGRE_SKELBIN=1` (off by default); without the switch a mesh with only a binary `.skeleton` stays rigid with a note, as before.
 
 ### Limits
 
@@ -1716,7 +2181,7 @@ File 256 MiB; 8,000,000 vertices per geometry; 20,000,000 faces; 100,000 submesh
 
 #### Real files
 
-Assimp's tree has `fish`, `ninja`, `razor` (`.mesh.xml` and binary `.mesh`, `OgreSDK`) and `TheThing/Mesh.mesh.xml`. **All 4 `.mesh.xml` files read and equal Assimp on triangles, mesh count, surface area and bounding box** (fish 815 triangles area 34.8947; ninja 1,008, 2 meshes, 25,219.6177; razor 468, 29,764.2994; TheThing 2,656, 1.3468), and each gets the texture its `.material` names (`fish.jpg`, `Wrinkles.jpg`, ...). Not compared: skeletons and animation (Assimp reads them, ours does not).
+Assimp's tree has `fish`, `ninja`, `razor` (`.mesh.xml` and binary `.mesh`, `OgreSDK`) and `TheThing/Mesh.mesh.xml`. **All 4 `.mesh.xml` files read and equal Assimp on triangles, mesh count, surface area and bounding box** (fish 815 triangles area 34.8947; ninja 1,008, 2 meshes, 25,219.6177; razor 468, 29,764.2994; TheThing 2,656, 1.3468), and each gets the texture its `.material` names (`fish.jpg`, `Wrinkles.jpg`, ...). Skeletons (2026-11-21): `fish` and `ninja` link a skeleton; both forms of each mesh are skinned by it and agree (fish 5 bones, 1 skinned part, 1 clip of 2 s; ninja 28 bones, 2 skinned parts, 20 clips, the longest 4.083 s), recorded in `tests/data/model_corpus_manifest.tsv`. Assimp gives the same clip counts; its bone lists keep only the bones that weight a mesh (see the binary skeleton section).
 
 **Speed of the XML reader (2026-11-16, branch `claude2/own-readers-gap-2`).** The XML form is now parsed by `xml::ParseFlat`
 (`XmlLite.hpp`): the same accept / refuse rules and messages as `xml::Parse`, but element and attribute names and values are
@@ -1756,15 +2221,146 @@ longer used by OGRE (it stays in `XmlLite.hpp`, default on). That parser keeps l
 
 Written from the public description of the OGRE skeleton XML (the bone, bone hierarchy and animation elements of the OGRE manual); no code from OGRE or any importer. `ReadOgreSkeletonXml` (`ModelData.hpp`) reads a skeleton alone: the root node `OGRE` and the bones as nodes under it, parent first (children listed before their parents are reordered; a parent loop, a duplicate bone id or name, or an unknown parent is refused), the local bind pose from `<position>`, `<rotation angle>` with an `<axis>` (radians) and `<scale>` (`x y z` or `factor`), and each `<animation>` as a clip with one channel per `<track>`. A keyframe is relative to the bind pose, as OGRE applies it (reset to the bind pose, then translate, rotate, scale): position = bind + translate, rotation = bind * rotate, scale = bind * scale. Tracks for a bone the skeleton does not have are skipped with a note.
 
-`ReadOgreXmlBuffer` takes an optional skeleton text (`ReadOgreXmlFile` loads `<skeletonlink name>.xml` next to the mesh, kept inside that folder). With a skeleton every part is skinned: each `<vertexboneassignment>` (the submesh's own list, or the mesh-level list for shared vertices) maps a bone id to a bone, the four strongest weights per vertex are kept and renormalised (the same bone twice adds up), and the inverse bind of a bone is the inverse of its world bind matrix. A vertex with no usable weight follows the root node through an extra bone `OGRE`. Bad assignments (a vertex or bone that does not exist, a weight that is not positive), dropped fifth weights and flat-scale bones are counted in `out.notes`. A skeleton that cannot be read leaves the mesh rigid and says why. Without a skeleton the output is exactly as before.
+`ReadOgreXmlBuffer` takes an optional skeleton text (`ReadOgreXmlFile` loads `<skeletonlink name>.xml` next to the mesh, kept inside that folder, or the link itself when it already names the `.xml` file: `OgreXMLConverter` writes `fish.skeleton.xml` into a `.mesh.xml`, and until 2026-11-21 such a mesh was imported rigid because `fish.skeleton.xml.xml` was looked for). With a skeleton every part is skinned: each `<vertexboneassignment>` (the submesh's own list, or the mesh-level list for shared vertices) maps a bone id to a bone, the four strongest weights per vertex are kept and renormalised (the same bone twice adds up), and the inverse bind of a bone is the inverse of its world bind matrix. A vertex with no usable weight follows the root node through an extra bone `OGRE`. Bad assignments (a vertex or bone that does not exist, a weight that is not positive), dropped fifth weights and flat-scale bones are counted in `out.notes`. A skeleton that cannot be read leaves the mesh rigid and says why. Without a skeleton the output is exactly as before.
 
-Tested by `ogre_skeleton_reader` (`tests/test_ogre_skeleton_reader.cpp`, 1,462 checks): a five-bone fixture whose world bind positions are worked out by hand (Hand at (2,2,0)), inverse binds checked by sending that point back to the bone's origin, a three-key clip (translate, a further 90 degree turn, doubled scale), the four-strongest rule (0.4, 0.3, 0.2, 0.06 over 0.96), the root-bone fallback, bad assignments, refusals, a loop, and every truncation of the file. **Not verified:** a real OGRE skeleton (fish has 4 bones and a clip, ninja 21 bones and 20 clips in Assimp's folder, not in this repository, so the comparison with Assimp's output has not been run); the keyframe composition rule is from the documented behaviour, not checked against a real exporter's file; no Windows run. Binary `.skeleton` (and so skinned binary meshes) is not done.
+Tested by `ogre_skeleton_reader` (`tests/test_ogre_skeleton_reader.cpp`, 1,462 checks): a five-bone fixture whose world bind positions are worked out by hand (Hand at (2,2,0)), inverse binds checked by sending that point back to the bone's origin, a three-key clip (translate, a further 90 degree turn, doubled scale), the four-strongest rule (0.4, 0.3, 0.2, 0.06 over 0.96), the root-bone fallback, bad assignments, refusals, a loop, and every truncation of the file. **Real files (2026-11-21):** the `.mesh.xml` of `fish` and `ninja` in Assimp's folder are skinned by their `.skeleton.xml` (5 bones and 1 clip; 28 bones and 20 clips; `model_corpus`). Before that day they were imported rigid: their link already names the `.xml` file and the reader looked for `fish.skeleton.xml.xml`. **Not verified:** the skin against Assimp's joint by joint; the keyframe composition rule is from the documented behaviour, not checked against a real exporter's file; no Windows run. Binary `.skeleton` (and so skinned binary meshes) is not done.
 
 #### Binary `.mesh` skinned with the XML skeleton (2026-11-20)
 
 `ReadOgreBinaryBuffer` takes an optional skeleton text (`ReadOgreBinaryFile` loads `<link name>.xml` next to the mesh, kept inside that folder; the link is the `0x6000` chunk). The `0x4100` (submesh) and `0x7000` (mesh, for submeshes on shared vertices) records, each vertex u32, bone u16, weight f32 (the 10 bytes after the chunk header that the reader already stepped over), go through the same skinning as the XML form: the bone id maps to a bone of the skeleton, the four strongest weights per vertex are kept and renormalised, a vertex with no usable weight follows the root through the bone `OGRE`, bad records are counted in the notes. Written from the public chunk description recorded above; the skeleton and skin code is the XML reader's own (shared, not copied from anywhere). A record cut off by the end of the file refuses the file; weights that are NaN, zero or negative count as bad.
 
-Tested by `ogre_skinbin` (`tests/test_ogre_skinbin_reader.cpp`, 389 checks, off by default like the rest): hand-built binary meshes with the same skeleton, vertices and assignments as the XML skeleton test (same hand-computed weights 0.4, 0.3, 0.2, 0.06 over 0.96, inverse binds, root fallback, two bad records), assignments on the submesh and on the mesh for shared vertices giving the same skin, no skeleton (rigid, old note), an unreadable skeleton, a mesh with no link, every truncation, and the file reader with and without the `.skeleton.xml` next to the mesh. **Not verified:** a real binary `.mesh` with assignments (the three real binary meshes in Assimp's folder are not in this repository, so the skin was not compared with the XML twins or with Assimp), the 16-byte record layout beyond what the stepped-over size implies, bone ids above what the skeleton lists, no Windows run. Binary `.skeleton` is still not read.
+Tested by `ogre_skinbin` (`tests/test_ogre_skinbin_reader.cpp`, 389 checks, off by default like the rest): hand-built binary meshes with the same skeleton, vertices and assignments as the XML skeleton test (same hand-computed weights 0.4, 0.3, 0.2, 0.06 over 0.96, inverse binds, root fallback, two bad records), assignments on the submesh and on the mesh for shared vertices giving the same skin, no skeleton (rigid, old note), an unreadable skeleton, a mesh with no link, every truncation, and the file reader with and without the `.skeleton.xml` next to the mesh. **Real files:** the binary `fish.mesh` and `ninja.mesh` in Assimp's folder are skinned against their `.skeleton.xml` with the same bone, skinned-part and clip counts as their XML twins (`model_corpus`; the manifest rows were updated on 2026-11-21, they still said rigid since this change and `model_corpus` failed 8 checks until then). **Not verified:** the 16-byte record layout beyond what the stepped-over size implies, bone ids above what the skeleton lists, no Windows run. Binary `.skeleton`: read since 2026-11-21 (next section).
+
+#### Binary `.skeleton` (2026-11-21)
+
+Written from the public description of the OGRE binary skeleton file (the chunk list of the skeleton serializer's file-format
+notes); no code from OGRE or any importer. The layout, recorded here so it can be cited:
+
+- The file starts with the 16-bit id `0x1000` and a version line ending in a line feed: `[Serializer_v1.10]`, or
+  `[Serializer_v1.80]`, which adds the blend mode chunk. Then chunks: a 16-bit id and a 32-bit length that counts the
+  6-byte chunk header. Strings end at a line feed. Little endian (a big-endian file is refused).
+- `0x1010` blend mode: u16 (0 average, 1 cumulative).
+- `0x2000` bone: name, u16 handle, position (3 floats), orientation (x, y, z, w), then a scale (3 floats) only when the
+  chunk's length leaves room for it.
+- `0x3000` bone parent: u16 child handle, u16 parent handle.
+- `0x4000` animation: name, f32 length, then an optional `0x4010` base info (name, f32 time: the base pose of an additive
+  clip), then the `0x4100` tracks: u16 bone handle, each followed by its `0x4110` keyframes: f32 time, rotation (x, y, z, w),
+  translation (3 floats), and a scale when the chunk's length leaves room for it.
+- `0x5000` animation link: name, f32 scale (another skeleton whose clips this one may share).
+
+The handles are the bone ids the mesh's bone assignments use, and keyframes are relative to the bind pose, exactly as in the
+XML form, so both forms go through the same code after reading (`FinishSkeleton`: parent-first order, world bind poses,
+absolute keys). `ReadOgreSkeletonBinary` (`ModelData.hpp`) reads one alone. `ReadOgreBinaryBuffer` and `ReadOgreXmlBuffer`
+take a binary skeleton in their skeleton argument (told apart from XML by its first two bytes). The file readers try
+`<link>.xml` next to the mesh first, as before, and then, **only with `OKAY_OWN_OGRE_SKELBIN=1`** (also `true`, `on`, `yes`),
+the binary `<link>` itself, kept inside the mesh's folder. Refused: no bones, two bones with one handle or one name, a parent
+handle that does not exist, a bone with two parents, a parent loop (a bone that is its own parent included), numbers that are
+not finite, a negative key time, a chunk cut off by the end of the file. Reported in the notes, not applied: the cumulative
+blend mode, an additive clip's base pose, linked skeletons, tracks for a handle the skeleton does not have, versions other
+than 1.10 and 1.80.
+
+Tested by `ogre_skelbin_reader` (`tests/test_ogre_skelbin_reader.cpp`, 2,480 checks; 2,492 with the real files): the
+five-bone skeleton of the XML skeleton test written byte by byte in binary form (one bone and two keys with a written scale,
+the rest without) gives **the same nodes, bind pose and clip as its XML form**, with the hand-worked key values checked again
+(position (2,3,0), a 180 degree turn, scale (2,1,1)); version 1.10 without the blend mode chunk, a base info and a link; the
+refusals above; every truncation; every byte set to 0x00, 0xFF, 0x7F and 0x80 (no crash, nothing left behind on a refusal);
+both mesh readers skinned with the binary skeleton give the same skin as with the XML one; the file readers with the switch
+unset, `0` and `1`, and the `.skeleton.xml` winning when both files are there. Also run under
+`-fsanitize=address,undefined,float-cast-overflow`, clean.
+
+**Real files:** with `OKAY_MODEL_CORPUS` set (Assimp 5.4.3's test folder, `docs/content/model_corpus.md`), the real
+`fish.skeleton` (5 bones, 1 clip) and `ninja.skeleton` (28 bones, 20 clips) read and **equal their `.skeleton.xml` twins**
+node by node and key by key (within 0.002, the rounding of the XML text), and the real binary `fish.mesh` and `ninja.mesh`
+skinned with the binary skeleton give the same joints, weights and inverse binds as with the XML one. Both real files are
+version 1.10 with no bone or key scale written, so the scale branches and the 1.80 blend mode chunk are checked on
+hand-built fixtures only. Speed against Assimp: see the next paragraph.
+
+**Speed and agreement with Assimp (2026-11-21, one Linux machine, Release `-O2`, median of 200 runs, file reads included):**
+a folder with only the binary `fish` and `ninja` `.mesh` and `.skeleton` files (so ours cannot take the XML), ours with
+`OKAY_OWN_OGRE_SKELBIN=1` against Assimp 5.4.3 built from source with only its OGRE importer (`ReadFile`, no post-processing).
+fish: ours 0.51 ms, Assimp 2.95 ms (**0.17x**); ninja: ours 1.40 ms, Assimp 3.37 ms (**0.42x**, 0.34x in a 50-run pass). The
+skeleton alone (bytes in memory): fish 0.004 ms, ninja 0.59 ms. Both give the same clip count and the same number of rotation
+keys (fish 1 clip, 9 keys; ninja 20 clips, 1,796 keys). The bone lists differ by design: Assimp keeps only the bones that weight
+a mesh (fish 4, ninja 20 on its most-boned mesh), ours keeps every skeleton bone on each skinned part (fish 5, ninja 28). The
+bench program was local and is not in the repository; memory was not measured.
+
+**Not verified:** a real file of version 1.80, a real file with scales, additive clips or links, a real file from an exporter
+other than the OGRE SDK tools; no Windows run. The switch is not in the launcher's Experimental list (`shared/OwnSwitches.hpp`
+is the coordinator's) and is not in the import seam's backend table: it is read by the OGRE reader itself.
+
+## Our own OpenGEX reader (`.ogex`)
+
+*Written on branch `claude/readers-e4` (2026-11-15), brought onto main on 2026-11-22 (branch `claude2/own-readers-last`).*
+
+Status: **side by side, off by default** (`OKAY_OWN_OPENGEX`, slot 37 of the table in `ModelImport.cpp`). Assimp (when built) is
+the fallback for a file ours refuses, and the reader when the switch is off.
+
+### What it is
+
+OpenGEX (Open Game Engine Exchange, Eric Lengyel) is a scene format written in OpenDDL, a small text data language. A file holds a
+node tree, geometry objects (meshes), materials, skins and animation tracks.
+
+| File | What |
+|---|---|
+| `engine/src/Render/OpenDdl.hpp` | The OpenDDL parser: bounded (structures, nesting depth, values, string bytes), iterative, header only |
+| `engine/src/Render/OgexReader.cpp` | `okay::ReadOgexBuffer` / `okay::ReadOgexFile` (declared in `ModelData.hpp`) |
+| `engine/src/Render/AffineInverse.hpp` | The inverse of an affine matrix (bind poses), shared with the MDL reader |
+| `engine/src/Render/ModelImport.cpp` | The seam: slot 37 (extension `.ogex`) |
+| `tests/test_ogex_reader.cpp`, `tests/e4_fixtures.hpp` | Hand-computed checks on synthetic files (`ogex_reader`) |
+| `tests/test_e4_hostile.cpp` | Budgets, hostile input, mutation fuzz and the real files when `OKAY_MODEL_CORPUS` is set, for OpenGEX and MDL (`e4_hostile`) |
+| `tests/test_own_dispatch_e4.cpp`, `tests/test_own_e4_default.cpp` | The seam routes `.ogex`; `-DOKAY_OWN_OPENGEX=ON` really makes it the default |
+| `tests/test_own_e4_samples.cpp`, `examples/own_readers/cube_spin.ogex` | The sample file (a red cube with a 2 second turn, typed by us) imports through the seam with the reader on (`own_e4_samples`) |
+
+### What it reads
+
+**OpenDDL.** Structures `Name $global %local (property = value, ...) { ... }` and the primitive data structures (`bool`, `int8` to
+`int64`, `unsigned_int8` to `unsigned_int64` and their short names, `half`, `float`, `double`, `string`, `ref`, `type`, with an
+optional `[n]` and sub-arrays); `//` and `/* */` comments; decimal, `0x`, `0o`, `0b`, character and `_`-separated literals; a hex,
+octal or binary float literal as the IEEE bit pattern; string escapes and adjacent strings joined; references. A sub-array must
+hold exactly `n` values.
+
+**OpenGEX.** `Metric` (`distance` scales the root node, `angle` and `time` scale angles and key times, `up` "z" turns the root by
+-90 degrees about X). `Node`, `BoneNode`, `GeometryNode`, `CameraNode`, `LightNode` as nodes (camera and light nodes stay empty)
+with `Name`, `Transform` (4x4, column-major), `Translation`, `Rotation` (`x`, `y`, `z`, `axis`, `quaternion`) and `Scale`. Several
+transform structures on one node compose in file order, first listed outermost. A transform marked `object` is baked into that
+node's own geometry. `GeometryObject` with its first full-detail `Mesh`: `triangles`, `quads` or `triangle_strip` (with
+`restart`); `position`, `normal` and the first `texcoord`; one part per `IndexArray` with its `material` index through the node's
+`MaterialRef`s; `front = "cw"` reverses the winding; smooth normals when the file has none. `Material`: `Color` `diffuse`,
+`emission`, `opacity`, `Param` `specular_power` and `opacity`, `Texture` `diffuse`, `normal`, `specular` (files inside the model's
+folder only). `Skin`: the bind-shape `Transform`, `Skeleton` with `BoneRefArray` and one bind `Transform` per bone,
+`BoneCountArray`, `BoneIndexArray`, `BoneWeightArray` (the four strongest weights, normalised). `Animation` / `Track` / `Time` /
+`Value` / `Key`: one clip per `clip` index, each animated node sampled at the union of its tracks' key times (linear between keys;
+bezier and TCB tangents are not used). Texture coordinates are kept as written.
+
+Not handled (a line in `out.notes`): `CameraObject`, `LightObject`, `Extension`, vertex colours, tangents, further texture
+coordinate sets, morph targets, level-of-detail meshes after the first, points and lines, curve tangents, texture transforms.
+
+Refused: OpenDDL syntax errors; budgets passed (structures, depth, values, string bytes, vertices, triangles, keys); a file with
+no nodes and no meshes; bad references; non-finite numbers; **a node or animated transform whose decomposition overflows** (added
+2026-11-22: the mutation fuzz seeded with the real `Example.ogex` changed one matrix element to 0x60000000, about 3.7e19; the
+matrix is finite but its squared column length is not, so the node's scale came out as infinity; `e4_hostile`, "huge node
+matrix", fails on the old code and passes now).
+
+### Real files and checks
+
+Six `.ogex` files under `models/OpenGEX` of the Assimp 5.4.3 test folder (`docs/content/model_corpus.md`): four read (rows `ogex`
+of `tests/data/model_corpus_manifest.tsv`), `empty_camera.ogex` and `light_issue1262.ogex` hold only a camera or a light and no
+node, and are refused ("the file has no nodes and no meshes"; Assimp refuses both too). Against Assimp (`bench_model_readers`,
+2026-11-22): `animation_example.ogex` is read only by ours (Assimp refuses it); on the 3 files both read ours takes 0.46x the
+time and 0.36x the largest peak (`docs/content/own_readers_speed.md`, row `ogex`). Same triangles and vertices on all 3; the
+boxes differ because ours turns `Metric up "z"` into Y-up (Assimp keeps Z up), and `collada.ogex` gives 2 materials to Assimp's 1. `e4_hostile` under ASan, UBSan and
+float-cast-overflow, 20,000 mutations per synthetic seed and 5,000 per real file (`Example.ogex`, `animation_example.ogex`,
+`collada.ogex`), 2026-11-22: 0 failures after the fix above.
+
+### Provenance (what this file was written from)
+
+`OpenDdl.hpp` and `OgexReader.cpp` were written from scratch for this project. The OpenDDL grammar and the OpenGEX structures,
+properties and conventions were **recalled from the public specifications** (openddl.org, opengex.org); no code, comment, table or
+test of Assimp or any other importer was read, copied or ported. On 2026-11-22 the specification site could not be reached from
+the build machine (blocked by its network rules), so the recollection is still **not checked against the text**; it is checked
+against the six real files and against Assimp's output on them instead. Unverified: the transform composition order and the
+texture-coordinate origin on files from other exporters, the per-bone bind matrices of a skin with several bones from another
+exporter, a Windows run.
 
 ## Our own PMX reader (`.pmx`)
 
@@ -1817,6 +2413,72 @@ Real `.pmx` files (none here); PMX 2.1 soft bodies and the 2.1 joint types (not 
 ### Provenance (what this file was written from)
 
 `PmxReader.cpp` was written from scratch for this project from the **public PMX 2.0 / 2.1 file format description** (the header with its eight globals, the text type, the vertex, face, texture, material, bone and morph records and the index-size rules), as I know that description; **no network access was used and no file, document or source was opened while writing it**. **No importer source code, snippet or table of Assimp or of any other project was read, copied or ported**, and no sample file was read. The test files were written by hand from the structure above. Assimp was not run.
+
+## Our own Quake III map reader (`.bsp`, `.pk3`)
+
+*Written on branch `claude/own-readers-6` (2026-11-16), brought onto main on 2026-11-22 (branch `claude2/own-readers-last`).*
+
+Status: **side by side, off by default** (`OKAY_OWN_Q3BSP`, slot 42 of the table in `ModelImport.cpp`). Assimp (when built) is
+the fallback for a file ours refuses, and the reader when the switch is off.
+
+### What it is
+
+A Quake III Arena map is a BSP file (magic `IBSP`, version 46) of 17 lumps, normally shipped inside a `.pk3` (a zip) as
+`maps/<name>.bsp`. It holds render geometry (polygon faces, mesh faces, Bezier patches, billboards), textures by name, lightmaps,
+entity text, the BSP tree, visibility and collision brushes.
+
+| File | What |
+|---|---|
+| `engine/src/Render/Q3BspReader.cpp` | `okay::ReadQ3bspFile` / `okay::ReadQ3bspBuffer` (declared in `ModelData.hpp`) |
+| `engine/src/Render/ZipLite.hpp` | The zip reader (shared with 3MF, ZAE; stored and deflated entries, zip-bomb caps) |
+| `tests/test_q3bsp_reader.cpp`, `tests/q3bsp_fixtures.hpp` | Hand-computed checks on synthetic maps (`q3bsp_reader`) |
+| `tests/test_q3bsp_hostile.cpp` | Budgets, every aligned word at an extreme, mutation sweeps of the `.bsp` and the `.pk3`, and the real map when `OKAY_MODEL_CORPUS` is set (`q3bsp_hostile`) |
+| `tests/test_own_q3bsp_dispatch.cpp` | The seam routes `.bsp` and `.pk3`; `-DOKAY_OWN_Q3BSP=ON` really makes it the default (`own_q3bsp_dispatch`) |
+| `tests/test_own_q3bsp_samples.cpp`, `scripts/gen_q3bsp_samples.py`, `examples/own_readers/tiny_arena.bsp` / `.pk3` | The sample maps (written by our script: a room 512 units wide with a bump in the floor and a platform on node `model_1`) import through the seam (`own_q3bsp_samples`) |
+
+### What it reads
+
+- The 144-byte header (version 46 only; others are refused with their number) and the lump directory (every lump inside the
+  file, every record lump a whole number of records).
+- Textures (name, surface flags), vertexes (position, texture coordinate, normal), mesh vertexes, faces and models.
+- **One part per (model, texture).** Model 0 (the world) hangs on the root `Q3BSP`; every other model is a child node `model_N`.
+  A `.pk3` names the root `Q3BSP maps/<name>.bsp`; the first map by name is read (a note says when there are more).
+- Polygon (1) and mesh (3) faces: the triangles of their mesh-vertex list, two corners swapped (Quake III stores triangles
+  clockwise). Stored normals are used; a zero normal is replaced from the triangles around it. Zero-area triangles are dropped.
+- Patch (2) faces: the control grid (odd sizes, at least 3) cut into 3 x 3 biquadratic Bezier patches, each tessellated into
+  6 x 6 quads with analytic normals; the front side follows the stored normals.
+- Materials: one per texture used; in a `.pk3` the name gets the extension of the matching image entry. Pictures are not
+  extracted. Faces whose texture has the nodraw, hint or skip flag are left out. Billboards are not read.
+- Quake units are kept; the root turns Z-up into Y-up.
+
+Not read (noted on every import): lightmaps, vertex colours, entities, brushes and planes, the BSP tree, visibility, fog, shader
+scripts.
+
+### Budgets
+
+File 512 MB; 4,000,000 triangles and vertices built (a patch counts 72 and 49); 8,000,000 face visits over all models; 100,000
+parts; a patch grid at most 1025 points a side. Every count is checked against the bytes present before allocating.
+
+### Real files and checks
+
+The one real map in the Assimp 5.4.3 test folder, `models-nonbsd/PK3/SGDTT3.pk3` (`docs/content/model_corpus.md`): 17 textures,
+2,084 vertexes, 336 faces (312 polygons, 24 meshes, no patch), 28 models, 1,400 triangles, all stored clockwise against their
+stored normals, which is what the corner swap assumes. Ours reads the 1,400 triangles (row `q3bsp` of
+`tests/data/model_corpus_manifest.tsv`). Against Assimp (`bench_model_readers`, 2026-11-22): the same 1,400 triangles and 2,084
+vertices; 15 parts and 15 materials to Assimp's 18 and 18, 28 nodes (one per model) to its 19; the box is turned because ours
+makes Z-up into Y-up and Assimp does not. 0.84x Assimp's read time and 0.86x its peak (`docs/content/own_readers_speed.md`,
+row `q3bsp`).
+`q3bsp_hostile` under ASan, UBSan and float-cast-overflow (2026-11-22, `OKAY_READER_FUZZ_ITERS=40000`): synthetic sweeps
+(40,756 read, 47,112 refused), the `.pk3` sweep, and 10,000 mutations of the real 852,016-byte `.bsp` plus 256 of its prefixes;
+100,237 checks, 0 failures. Without sanitizers and with the default sweep (5,000 real-map mutations): 54,237 checks, 0 failures.
+
+### Provenance (rule 19a)
+
+Written from recalled knowledge of the public description of the format (the "Unofficial Quake 3 Map Specs": header, lump
+numbers, record sizes and field order, the four face types, patches as 3 x 3 biquadratic Bezier surfaces) and from general
+knowledge of Bezier surfaces; the real map's lumps were then read with our own script to check the numbers. No importer source of
+any other project was read, copied or ported. Unverified: maps with patches from a real game (the corpus map has none, so the
+tessellation is checked against the mathematics only), version 47 and other engines' BSP files (refused), a Windows run.
 
 ## Our own Q3D reader (`.q3o` `.q3s`)
 
@@ -1950,13 +2612,86 @@ File 256 MiB; 500,000 triangles, 100,000 groups, 4,000,000 output vertices per f
 
 Written from the public description "POV-Ray RAW triangle format" (Paul Bourke): nine numbers per triangle, the twelve-number colour variant, the texture-name variant, non-numeric identifiers separating groups. The `#` comment is my own choice (the description gives no comment syntax). No importer source and no code from any other project was read.
 
-## Our own SIB reader (`.sib`): NOT WRITTEN
+## Our own SIB reader (`.sib`, Nevercenter Silo)
 
-*Was `docs/own_sib_reader.md` until 2026-11-20.*
+*Was `docs/own_sib_reader.md` until 2026-11-20. Written on branch `claude/own-readers-6` (2026-11-16); brought onto main's line
+on 2026-11-23 (branch `claude/third-party-3b`) after the owner's decision "write our own readers", with instances added.*
 
-Status: **no reader**. Slot 32 of the table in `ModelImport.cpp` is reserved for it (an empty row; `.sib` is routed nowhere, and `test_own_dispatch_e2` checks that), `OKAY_OWN_SIB` does not exist.
+Status: **side by side, on by default** (rules 19d and 19e; `OKAY_OWN_SIB`, slot 32 of the table in `ModelImport.cpp`; Assimp, when built, stays
+the fallback). **Written from one sample file**: there is no public description of the Silo format (a web search found only
+that `.sib` is the binary twin of the ASCII `.sia`). Everything marked "guess" below may be wrong for files from other Silo
+versions or with other features.
 
-Why: SIB is the binary file of the Silo modeller (Nevercenter). The search for a public description of its structure found only that it exists (the binary twin of the ASCII `.sia`); no field list, no chunk list, no sample file (the only one, `heffalump.sib`, is in Assimp's test tree, not here). The rule for this work is to write from a format description or from our own analysis of sample files only, never from another importer's source. With neither a description nor a sample, a reader would be invented, so none was written. To go on: a published description, or the sample file to analyse (then `ModelData`, budgets and tests as for `docs/content/model_readers.md`).
+The sample: `heffalump.sib` by Richard Mitton (the readme next to it: "I waive all rights to this and release it into the
+public domain"), from the `test/models/SIB` data folder of Assimp's repository (a sparse checkout of data folders only, no
+`code/`). It is **not in this repository**; `sib_import` reads it when `OKAY_MODEL_CORPUS` names that `test` folder.
+
+| File | What |
+|---|---|
+| `engine/src/Render/SibReader.cpp` | `okay::ReadSibFile` / `okay::ReadSibBuffer` (declared in `ModelData.hpp`) |
+| `engine/src/Render/ModelImport.cpp` | The seam: slot 32 (extension `.sib`), `OKAY_OWN_SIB` (CMake option ON, env `OKAY_OWN_SIB=1/0`; a file ours refuses goes to Assimp when it is built) |
+| `tests/test_sib_reader.cpp`, `tests/sib_fixtures.hpp` | Hand-computed checks on synthetic files, instances, every truncation, 30,000 mutations, every aligned word at five extreme values, budgets (`sib_reader`, reader source only) |
+| `tests/test_sib_import.cpp` | The seam routes `.sib`, the switches, flatten; with `OKAY_MODEL_CORPUS` the real file (`sib_import`) |
+
+### The structure we found (all from `heffalump.sib`)
+
+A file is a list of **chunks**: four ASCII letters, a 32-bit little-endian byte size, that many bytes. It starts with `HEAD`
+(size 4, the value 1: read as the version; any other value is refused). Top-level chunks in the sample: `MATR` x4, `SHAP` x5,
+`INST` x4, `LGHT` x3, `TEXP` x5, `GRPS` x1.
+
+| Chunk | Layout (as read) | Basis |
+|---|---|---|
+| `MATR` | 16 floats (four colours of four), a 32-bit flags word, the name, the texture file name; a string is a 32-bit byte count, then UTF-16LE | sizes add up exactly in all four materials. **Guess:** the first colour is the diffuse colour (the only one used) |
+| `SHAP` | sub-chunks, below | consistent in all five shapes |
+| `SHAP/SNAM` | the name, UTF-16LE, no length word | |
+| `SHAP/AXIS` | 12 floats: an origin, then the x, y and z axis vectors of the shape's frame | the cube "Original" becomes an exact cube of +-0.2959 in this frame (axis vectors as rows) |
+| `SHAP/VRTS` | `n` vertices of three floats, **world** positions | the cube's vertices centre on its `AXIS` origin, so the frame is not applied again |
+| `SHAP/FACS` | per face: a count `k`, then `k` vertex numbers (3 to 5 corners in the sample) | the counts add up in all shapes; the closed shapes have a **positive signed volume** (16.157, 0.207, 1.04): counter clockwise from outside, kept as it is |
+| `SHAP/FTVS` | per face: an index word, a corner count equal to the face's, then the `(u, v)` pairs | consistent. **Guess:** `v` points up, so it is flipped (`v' = 1 - v`) |
+| `SHAP/FAMA` | pairs `(first face, material)`; a material applies from that face to the next pair; -1 = none | the cube has `(0,1) (2,2) (3,1) (4,2) (5,1)` |
+| `SHAP/IMRP` | two ints; the second is 1 on the shape named "Mirrored" | **guess:** a mirror plane is on. The mirrored half is **not generated** (noted) |
+| `INST` | an instance: `SNAM`, `INSI` (a shape number among the `SHAP` chunks), `DINF`, `PINF`, `AXIS` (the instance's frame), `SMTX` (16 floats, a 4 x 4 scale matrix) | **since 2026-11-23 the instances are placed**: a vertex is taken into its shape's frame, scaled by the 3 x 3 part of `SMTX` and put into the instance's frame. Evidence: the four copies of the cube then stand on the ground (lowest y -0.012, 0.018, 0.028) and "Inst1" rests on "Inst2" (its lowest y 0.756, Inst2's top 0.763), which is how the scene looks as stacked boxes. `SMTX` holds only scales in the sample; a move in it is not applied (noted). **Guess** for any file but the sample |
+| `DINF PINF MIRP VMIR EDGS ECRS TXSM FAHS FMIR`, `LGHT`, `GRPS`, `TEXP` | seen, not used | edges and mirror data are not needed for triangles; `TEXP` repeats each shape with a `TEXF` chunk (not understood) |
+
+The model is one root node `SIB`, one child node per shape and one per instance, one part per (shape or instance, material).
+Faces of more than 3 corners are triangulated (ear clipping up to 32 corners within a per-file work budget, a fan beyond that,
+noted). There are no stored normals: smooth normals are generated (an instance's are turned with its frame, and a mirroring
+scale turns the winding back). Y-up (the sample stands on y = 0), no axis turn. A texture file name must lie inside the model's
+folder (no absolute path, no `..`, no link out).
+
+### Budgets
+
+Work is linear in the file: the material runs of a shape are walked once with one pointer (faces come in order) and a table
+gives each material's part (since 2026-11-24, after a review timed 100,000 faces with 100,000 runs at 11.5 s;
+`sib_reader` now reads 200,000 faces, 200,000 runs and 50,000 materials in about 0.3 s and fails above 5 s). Names use the shared
+UTF-16LE converter of `TextReaderUtil.hpp` and every read goes through the shared `BinReader` cursor.
+
+File 256 MiB; 2,000,000 chunks; 100,000 shapes and materials; 4,000,000 vertices per shape and per file and 4,000,000
+triangles per file, **instances included**; 16,000,000 face corners. Every count is checked against the bytes that are there
+before anything is allocated.
+
+### What was checked (2026-11-23)
+
+- `sib_reader`: 33,298 checks, 0 failures: a cube split over two materials, a concave L (area 3, no triangle leaves the L), `v`
+  flipped, winding kept, texture rules, bad indices, short faces, a mirror note, an instance with a quarter turn and a scale of 2
+  (box x 9.5 to 10.5, y -0.5 to 0.5, z -1 to 1, faces and stored normals pointing out) and with a mirroring scale of -2 (still
+  pointing out), bad instances (shape number past the end, NaN frame, flat scale) skipped and noted, a scale with a move noted,
+  2,000 instances of a 2,500-triangle grid refused by the budget, every truncation, 30,000 mutations, every aligned word at five
+  extreme values, a 40,000-corner face (fanned), 5 million triangles (refused).
+- The real file (`sib_import` with `OKAY_MODEL_CORPUS`, and our own driver): 10 nodes (root, 5 shapes, 4 instances), 4 materials
+  (`HeffalumpSkin`, `UpMtl`, `Mapping`, `Ground`; the two textures resolve to the pictures next to the file), 14 parts, **724
+  triangles** (676 of the shapes, worked out from the bytes by a separate script, plus 4 x 12), box x and z -4.91 to 4.91, y
+  -0.023 to 3.165. **Not compared with Assimp** (not run).
+
+### Provenance (rule 19a)
+
+Written from our own inspection of `heffalump.sib` only (hex dumps and our own parsing scripts), not from any description or
+importer. No importer source of any project was read; the Assimp checkout used to get the file had only data folders.
+
+### Not done
+
+Mirror generation, lights, groups, `TEXP`, the other colours of a material, subdivision data, the move part of `SMTX`, files
+from other Silo versions, any file but the one sample, a comparison with Assimp, a run on real Windows.
 
 ## Our own SMD reader (`.smd`)
 

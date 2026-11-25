@@ -18,6 +18,8 @@ exec 106 0 107
 exec 107 0 108
 exec 108 0 109
 exec 109 0 110
+exec 110 0 114
+exec 114 0 115
 node 100 GlSetVolume
 pos 100 40 520
 default 100 0 0.4
@@ -55,3 +57,11 @@ node 112 GlIsSoundLooping
 pos 112 40 900
 node 113 GlIsSoundPositional
 pos 113 300 900
+node 114 GlSetBusVolume
+pos 114 560 900
+default 114 0 "Music"
+default 114 1 0.4
+node 115 GlMuteBus
+pos 115 820 900
+default 115 0 "SFX"
+default 115 1 true

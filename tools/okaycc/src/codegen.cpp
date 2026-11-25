@@ -240,6 +240,12 @@ void emitInst(std::string& s, const Function& f, const Inst& in, const std::vect
         }
         return;
     }
+    if (in.fp && in.op == Inst::Op::Sqrt) {
+        loadXmm(s, in.a, 1, in.extra);
+        s += in.extra <= 4 ? "  sqrtss %xmm1, %xmm0\n" : "  sqrtsd %xmm1, %xmm0\n";
+        storeXmm(s, 0, in.dst, in.extra);
+        return;
+    }
     if (in.fp && (in.op == Inst::Op::Add || in.op == Inst::Op::Sub || in.op == Inst::Op::Mul || in.op == Inst::Op::Div)) {
         loadXmm(s, in.a, 0, in.extra);
         loadXmm(s, in.b, 1, in.extra);
@@ -320,15 +326,15 @@ void emitInst(std::string& s, const Function& f, const Inst& in, const std::vect
     case Inst::Op::Shr:
         load(s, in.a, "%rax");
         load(s, in.b, "%rcx");
-        s += "  shrq %cl, %rax\n";
+        s += in.arith ? "  sarq %cl, %rax\n" : "  shrq %cl, %rax\n";
         store(s, "%rax", in.dst);
         break;
     case Inst::Op::Div:
     case Inst::Op::Mod:
         load(s, in.a, "%rax");
-        s += "  cqto\n";
+        s += in.uns ? "  xorl %edx, %edx\n" : "  cqto\n";
         load(s, in.b, "%rcx");
-        s += "  idivq %rcx\n";
+        s += in.uns ? "  divq %rcx\n" : "  idivq %rcx\n";
         store(s, in.op == Inst::Op::Div ? "%rax" : "%rdx", in.dst);
         break;
     case Inst::Op::Neg:
@@ -466,6 +472,7 @@ void emitInst(std::string& s, const Function& f, const Inst& in, const std::vect
     case Inst::Op::GLoad:
     case Inst::Op::GStore:
     case Inst::Op::Cvt:
+    case Inst::Op::Sqrt:
         break;
     }
 }
@@ -550,7 +557,7 @@ std::string emitFunction(const Function& f) {
         saveDisp.push_back(-(saveBase + 8 * (static_cast<int>(i) + 1)));
     std::string s;
     if (!f.localSym) {
-        s += ".globl ";
+        s += f.weakSym ? ".weak " : ".globl ";
         s += f.name;
         s += "\n";
     }
@@ -694,7 +701,8 @@ std::string emitData(const Module& m) {
     };
     for (const Global& g : m.globals) {
         std::string item;
-        if (g.name.empty() || g.name[0] != '.') item += ".globl " + g.name + "\n";
+        if (!g.localSym && (g.name.empty() || g.name[0] != '.'))
+            item += (g.weakSym ? ".weak " : ".globl ") + g.name + "\n";
         item += g.name;
         item += ":\n";
         item += bytesOf(g);
@@ -715,8 +723,9 @@ std::string emitAssembly(const Module& m) {
     return s;
 }
 
-std::string compileToAssembly(const std::string& source, Diagnostics& diags, const std::string& file) {
-    Module m = lowerSource(source, diags, file);
+std::string compileToAssembly(const std::string& source, Diagnostics& diags, const std::string& file,
+                              const std::vector<std::string>& includes) {
+    Module m = lowerSource(source, diags, file, includes);
     if (!diags.ok()) return {};
     return emitAssembly(m);
 }

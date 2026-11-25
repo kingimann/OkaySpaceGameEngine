@@ -25,7 +25,7 @@ struct ScreenGroup { std::string name, tip; std::vector<ScreenItem> items; };
 
 /// The groups, in the order they are shown. The last entry is the Gallery. `screens` are the registry's sections: the host passes them in
 /// (so this file needs no engine), and every screen in the registry gets exactly one item `ui.scr.<id>`.
-inline std::vector<Entry> UIMenu(const std::vector<ScreenGroup>& screens) {
+inline std::vector<Entry> UIMenuFull(const std::vector<ScreenGroup>& screens) {
     std::vector<Entry> m;
     m.push_back(Sub("ui.g.basics", "Basics", {
         I("ui.text", "Text", "Words on the screen: a title, a score, a hint."),
@@ -160,9 +160,69 @@ inline std::vector<Entry> UIMenu(const std::vector<ScreenGroup>& screens) {
         I("ui.btn.ghost", "Text Button", "A button with no box, like Cancel or Back."),
         I("ui.saveprefab", "Save Selected as Reusable UI", "Saves the selected UI (a Canvas or a panel with its children) as a prefab in Assets/UI to drop into any scene."),
     }, "Small styled parts that match each other."));
-    m.push_back(Sep());
     m.push_back(I("ui.browse", "Browse All UI...", "Opens the UI Gallery: search every part, look, theme, icon and screen, preview it and add it with one click."));
     return m;
+}
+
+/// Ids that are no longer listed in the menu (a near-copy of another entry, or made for you). The editor still runs them: the UI Gallery
+/// adds them and old projects' tools keep working; no component or scene format changed.
+inline const std::vector<const char*>& RemovedFromMenu() {
+    static const std::vector<const char*> v = {
+        "ui.switch",          // a Toggle drawn as a switch: the Gallery still has it
+        "ui.nameplateworld",  // the same plate as 3D Text above a character: use Name and Health Plate or 3D Text
+        "ui.worldlabel",      // the same thing as 3D Text
+        "ui.eventsystem",     // made for you the first time a widget is added
+        "ui.hotreload",       // a developer tool, not a thing to put on a screen
+    };
+    return v;
+}
+
+namespace detail {
+/// Takes the entry with this id out of the tree (anywhere in it) and returns it in `out`.
+inline bool Take(std::vector<Entry>& es, const std::string& id, Entry& out) {
+    for (std::size_t i = 0; i < es.size(); ++i) {
+        if (es[i].id == id) { out = std::move(es[i]); es.erase(es.begin() + (std::ptrdiff_t)i); return true; }
+        if (Take(es[i].children, id, out)) return true;
+    }
+    return false;
+}
+}
+
+/// GameObject > UI: a short flat list of the things nearly everyone needs, then three folders:
+///   Text, Image, Button, Panel, Text Field, Slider, Toggle, Dropdown, Scroll Area | Game HUD > | Menus & Screens > | More >
+/// Twelve entries at the top and nothing else. Every item adds a working object under a Canvas that is made for you.
+inline std::vector<Entry> UIMenu(const std::vector<ScreenGroup>& screens) {
+    std::vector<Entry> all = UIMenuFull(screens);
+    for (const char* r : RemovedFromMenu()) { Entry dead; detail::Take(all, r, dead); }
+    std::vector<Entry> top;
+    for (const char* id : {"ui.text", "ui.image", "ui.button", "ui.panel", "ui.inputfield", "ui.slider", "ui.toggle", "ui.dropdown", "ui.scrollview"}) {
+        Entry e; if (detail::Take(all, id, e)) top.push_back(std::move(e));
+    }
+    // Game HUD: bars, slots, map, crosshair and the other things seen while playing (3D and touch pieces go to More).
+    Entry world3d, touch, bar, hud;
+    detail::Take(all, "ui.g.world3d", world3d);
+    detail::Take(all, "ui.g.touch", touch);
+    detail::Take(all, "ui.progressbar", bar);
+    detail::Take(all, "ui.g.game", hud);
+    hud.label = "Game HUD";
+    hud.tip = "Health bar, inventory, minimap, crosshair, ammo and the other things shown while playing.";
+    hud.children.insert(hud.children.begin(), std::move(bar));
+    top.push_back(std::move(hud));
+    Entry scr; if (detail::Take(all, "ui.g.screens", scr)) top.push_back(std::move(scr));
+    Entry browse; detail::Take(all, "ui.browse", browse);
+    // More: everything else, in the old groups.
+    std::vector<Entry> more;
+    for (Entry& g : all) {
+        if (g.kind != menubar::Kind::Submenu) continue;
+        if (g.id == "ui.g.basics") g.label = "Other Basics";
+        more.push_back(std::move(g));
+    }
+    more.push_back(std::move(world3d));
+    more.push_back(std::move(touch));
+    more.push_back(Sep());
+    more.push_back(std::move(browse));
+    top.push_back(Sub("ui.g.more", "More", std::move(more), "Every other UI piece: more inputs, layouts, tables, pop-ups, 3D and touch controls, and the gallery."));
+    return top;
 }
 
 /// The old GameObject > UI menu (before 2026-11-17) -> the id that now holds it. Labels that were listed twice appear once.

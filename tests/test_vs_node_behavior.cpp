@@ -1,6 +1,7 @@
 // Every gameplay node added in NodesGameplay.hpp is run in a real scene.
 // The gate at the bottom fails if a node is registered there and this file
 // never called Cover() for it.
+#include <filesystem>
 #include "test_framework.hpp"
 #include "test_sandbox.hpp"
 #include <Okay.hpp>
@@ -12,6 +13,7 @@
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
@@ -68,7 +70,7 @@ static HealthStat* Hp(GameObject* go, float maxHp = 100) {
 static std::string Prefab() {
     static std::string path;
     if (!path.empty()) return path;
-    path = "/tmp/vs_behav_bullet.okayprefab";
+    path = (std::filesystem::temp_directory_path() / "vs_behav_bullet.okayprefab").string();
     Scene s; s.physicsEnabled = false;
     GameObject* b = s.CreateGameObject("Bullet");
     b->transform->SetPosition({0, 0, 0});
@@ -459,6 +461,38 @@ int main() {
         Cover("IsDead");
         Cover("OnHealthChanged");
     }
+    // On Damaged (#1166): a hit on this object runs it with the health really lost, the damage type and the source.
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "Fighter",
+            "node 1 OnUpdate\nentry OnUpdate 1\nnode 9 Once\nnode 2 Damage\ndefault 2 0 30\ndefault 2 2 \"fire\"\nexec 1 0 9\nexec 9 0 2\n"
+            "node 5 OnDamaged\nentry OnDamaged 5\nnode 6 SetVar amt\ndata 6 0 5 0\nnode 7 SetVar kind\ndata 7 0 5 1\n"
+            "node 8 AddVar hits\ndefault 8 0 1\nexec 5 0 6\nexec 6 0 7\nexec 7 0 8\n");
+        auto* hp = Hp(v->gameObject);
+        hp->playHitAnim = false;
+        s.Start(); Tick(s, 1, 0.05f);
+        CHECK_NEAR(hp->health, 70.0f, 0.2f);
+        CHECK_NEAR(v->GetVariable("amt").AsFloat(), 30.0f, 0.01f);
+        CHECK(v->GetVariable("kind").AsString() == "Fire");
+        CHECK_NEAR(v->GetVariable("hits").AsFloat(), 1.0f, 0.01f);
+        Cover("OnDamaged");
+    }
+    // On Button Clicked (#1166): runs for the button named on the node, and not for another one.
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "Menu",
+            "node 1 OnButtonClicked Play\nentry OnButtonClicked:Play 1\nnode 2 AddVar play\ndefault 2 0 1\nexec 1 0 2\n"
+            "node 3 OnButtonClicked Quit\nentry OnButtonClicked:Quit 3\nnode 4 AddVar quit\ndefault 4 0 1\nexec 3 0 4\n");
+        auto* play = s.CreateGameObject("Play")->AddComponent<UIButton>();
+        s.CreateGameObject("Quit")->AddComponent<UIButton>();
+        s.Start();
+        s.Update(0.1f);
+        play->Press();
+        v->Update(0.1f);   // this frame's graph sees the press once (a scene Update could run the buttons first and clear it)
+        CHECK_NEAR(v->GetVariable("play").AsFloat(), 1.0f, 0.01f);
+        CHECK_NEAR(v->GetVariable("quit").AsFloat(), 0.0f, 0.01f);
+        Cover("OnButtonClicked");
+    }
     {
         Scene s; s.physicsEnabled = false;
         auto* v = Attach(s, "Fighter",
@@ -514,7 +548,7 @@ int main() {
         Scene s;
         GameObject* dummy = s.CreateGameObject("Dummy");
         dummy->tag = "Enemy";
-        dummy->transform->SetPosition({0, 0, 3});
+        dummy->transform->SetPosition({0, 0, -3});   // in front: an unrotated object faces -Z
         dummy->AddComponent<BoxCollider3D>()->size = {2, 2, 2};
         auto* hp = Hp(dummy);
         auto* v = Attach(s, "Gun",
@@ -604,7 +638,7 @@ int main() {
     {
         Scene s; s.physicsEnabled = false;
         GameObject* foe = s.CreateGameObject("Foe");
-        foe->transform->SetPosition({0, 0, 3});
+        foe->transform->SetPosition({0, 0, -3});   // in front: an unrotated object faces -Z
         auto* v = Attach(s, "Eye",
             "node 1 OnStart\nentry OnStart 1\nnode 2 FindObject Foe\nnode 3 CanSee\n"
             "default 3 1 10\ndefault 3 2 80\nnode 4 SetVar seen\nexec 1 0 4\ndata 4 0 3 0\ndata 3 0 2 0\n");
@@ -615,7 +649,7 @@ int main() {
     {
         Scene s; s.physicsEnabled = false;
         GameObject* foe = s.CreateGameObject("Foe");
-        foe->transform->SetPosition({0, 0, -4});
+        foe->transform->SetPosition({0, 0, 4});    // behind
         auto* v = Attach(s, "Eye",
             "node 1 OnStart\nentry OnStart 1\nnode 2 FindObject Foe\nnode 3 CanSee\n"
             "default 3 1 10\ndefault 3 2 40\nnode 4 SetVar seen\nexec 1 0 4\ndata 4 0 3 0\ndata 3 0 2 0\n");

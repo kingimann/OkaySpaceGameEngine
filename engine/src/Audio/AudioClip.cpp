@@ -96,11 +96,12 @@ void ConvertWavFrames(const WavInfo& w, const unsigned char* raw, std::size_t fr
 
 void DownmixToMono(const float* in, std::size_t frames, int channels, float* out) {
     if (channels <= 1) { std::copy(in, in + frames, out); return; }
-    const float k = 1.0f / static_cast<float>(channels);
+    // Sum in channel order, then divide (not multiply by 1/channels): exactly what ConvertWavFrames does, so a clip
+    // loaded whole through the own WAV decoder and the same file streamed (AudioStream) give the same samples.
     for (std::size_t i = 0; i < frames; ++i) {
         float s = 0.0f;
         for (int c = 0; c < channels; ++c) s += in[i * static_cast<std::size_t>(channels) + static_cast<std::size_t>(c)];
-        out[i] = s * k;
+        out[i] = s / static_cast<float>(channels);
     }
 }
 
@@ -136,29 +137,17 @@ bool AudioClip::LoadWAV(const std::string& path, std::string* error, bool downmi
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::vector<unsigned char> buf((std::istreambuf_iterator<char>(f)),
                                    std::istreambuf_iterator<char>());
-    if (wav::OwnWavEnabled()) {   // opt-in own decoder (OKAY_OWN_WAV); the code below stays the default
-        wav::WavAudio a;
-        std::string e;
-        if (!wav::DecodeWav(buf.data(), buf.size(), a, &e)) { if (error) *error = e; return false; }
-        sampleRate = a.sampleRate;
-        channels = audio_detail::KeptChannels(a.channels, downmix);
-        if (channels == a.channels) samples = std::move(a.samples);
-        else {
-            samples.resize(a.FrameCount());
-            audio_detail::DownmixToMono(a.samples.data(), a.FrameCount(), a.channels, samples.data());
-        }
-        return true;
+    // Our own decoder (okay::wav) is the only WAV reader: PCM 8 to 32 bit, float, A-law, mu-law, MS and IMA ADPCM.
+    wav::WavAudio a;
+    std::string e;
+    if (!wav::DecodeWav(buf.data(), buf.size(), a, &e)) { if (error) *error = e; return false; }
+    sampleRate = a.sampleRate;
+    channels = audio_detail::KeptChannels(a.channels, downmix);
+    if (channels == a.channels) samples = std::move(a.samples);
+    else {
+        samples.resize(a.FrameCount());
+        audio_detail::DownmixToMono(a.samples.data(), a.FrameCount(), a.channels, samples.data());
     }
-    auto src = AudioByteSource::FromPointer(buf.data(), buf.size());
-    audio_detail::WavInfo w;
-    if (const char* err = audio_detail::ParseWav(*src, w)) { if (error) *error = err; return false; }
-
-    const int outCh = audio_detail::KeptChannels(w.channels, downmix);
-    const std::uint64_t frames = w.Frames();
-    samples.resize(static_cast<std::size_t>(frames) * static_cast<std::size_t>(outCh));
-    sampleRate = static_cast<int>(w.rate);
-    channels = outCh;
-    audio_detail::ConvertWavFrames(w, buf.data() + w.dataOffset, static_cast<std::size_t>(frames), samples.data(), outCh);
     return true;
 }
 

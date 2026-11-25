@@ -212,9 +212,9 @@ def define(add, N, B, T, O, R):
         reg="CAT_XFORM", exec_=True, defaults=["3", None], check="CHECK_NEAR(me->transform->localScale.z, 3.0f, 0.001f);")
     add("GlFaceAwayFrom", "Face Away From Object", "Movement", "Turn", "Basic", "Turns this object flat to look away from another object.",
         [R("Object"), O()], [],
-        "if (o && o2 && o->transform && o2->transform) o2->transform->LookAtYaw(o2->transform->Position() + (o2->transform->Position() - o->transform->Position()));",
+        "if (o && o2 && o->transform && o2->transform) VsFaceTowardFlat(*o2->transform, o2->transform->Position() + (o2->transform->Position() - o->transform->Position()));",
         reg="CAT_XFORM", exec_=True, defaults=["Goal", None], setup=goal + " goal->transform->SetPosition(Vec3(6, 0, 0));",
-        check="CHECK(me->transform->Forward().x < -0.95f);")
+        check="CHECK(vs::VsFacing(me->transform).x < -0.95f);")
     add("GlGetFacingAngle", "Get Facing Angle", "Movement", "Turn", "Basic", "The way this object faces, in degrees around its up axis.",
         [O()], [N("Degrees")], "out = VsValue((o && o->transform) ? o->transform->EulerAngles().y : 0.0f);",
         setup="me->transform->SetEulerAngles(Vec3(0, 40, 0));", expect=40.0)

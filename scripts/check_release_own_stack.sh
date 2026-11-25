@@ -145,7 +145,7 @@ self_test() {
     expect 0 "empty value is off"                      env -u OKAY_XBOX_OWN_CRYPTO -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST OKAY_OWN_CRYPTO= bash "$me"
     expect 1 "-DOKAY_OWN_CRYPTO=ON argument"           env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -DCMAKE_BUILD_TYPE=Release -DOKAY_OWN_CRYPTO=ON
     expect 1 "-DOKAY_OWN_STACK:BOOL=ON argument"       env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -DOKAY_OWN_STACK:BOOL=ON
-    expect 0 "-DOKAY_OWN_CRYPTO=OFF argument"          env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -DOKAY_OWN_CRYPTO=OFF -DOKAY_USE_ASSIMP=ON
+    expect 0 "-DOKAY_OWN_CRYPTO=OFF argument"          env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -DOKAY_OWN_CRYPTO=OFF -DOKAY_BUILD_EDITOR=ON
     # --- the -D forms, including a space after -D
     expect 1 "-D OKAY_OWN_CRYPTO=ON (space after -D)"  env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -D OKAY_OWN_CRYPTO=ON
     expect 1 "-D OKAY_OWN_STACK:BOOL=ON (space)"       env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO -u OKAY_XBOX_OWN_CRYPTO bash "$me" -- -D OKAY_OWN_STACK:BOOL=ON
@@ -193,10 +193,10 @@ self_test() {
     expect 0 "a longer name that only starts with OKAY_OWN_CRYPTO is not the switch" $cl --cache "$d/okname"
 
     # --- a built program: --binary
-    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=ufbx crypto=libsodium ui=none"\n' > "$d/p_ok"
-    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=ufbx crypto=own(no libsodium) ui=none"\n' > "$d/p_nosod"
-    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=ufbx crypto=own(test) ui=none"\n' > "$d/p_own"
-    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=ufbx crypto=libsodium-not ui=none"\n' > "$d/p_fake"
+    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=own(fbx) crypto=libsodium ui=none"\n' > "$d/p_ok"
+    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=own(fbx) crypto=own(no libsodium) ui=none"\n' > "$d/p_nosod"
+    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=own(fbx) crypto=own(test) ui=none"\n' > "$d/p_own"
+    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=own(fbx) crypto=libsodium-not ui=none"\n' > "$d/p_fake"
     printf '#!/bin/sh\necho hello\n' > "$d/p_none"
     printf '#!/bin/sh\n[ "$OKAY_PRINT_STACK_AND_EXIT" = 1 ] || exit 3\necho "[okay] stack: crypto=libsodium"\nexit 5\n' > "$d/p_badrc"
     chmod +x "$d"/p_*

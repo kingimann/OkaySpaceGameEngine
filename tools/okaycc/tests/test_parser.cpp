@@ -256,7 +256,7 @@ int main() {
              ")\n");
 
     checkBounded("cpp bail",
-                 "namespace N {\nusing namespace std;\n}\n",
+                 "namespace N {\n123;\n}\n",  // (using namespace is supported since round 19)
                  "expected a declaration");
     {
         std::string deep = "int f(){return ";
@@ -268,7 +268,7 @@ int main() {
     }
 
     checkErr("missing semi", "int x\n", "';'");
-    checkErr("not in subset", "inline x;\n", "not in this subset");
+    checkErr("not in subset", "_Atomic x;\n", "not in this subset");  // inline is accepted since round 16
     checkErr("bad paren", "int f( {\n}\n", "')'");
 
     okaycc_test::gPass += gOk;

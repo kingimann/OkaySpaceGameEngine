@@ -10,6 +10,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 ## 39. Security & anti-cheat
 
 ### 39.1 Server authority checks and gameplay validation
+- **System:** Server Anti-Cheat
 - **What:** What the server refuses from a client: moving, despawning or writing something it doesn't own, spawning prefabs off a list, flooding SyncVars or RPCs, speed hacks, forged hit claims, and writing server-only variables. Opt-in per scene; a new Anti-Cheat Config starts safe.
 - **Parts:**
   - 39.1.1 Rules and kicks - `Net/AntiCheat` - `AntiCheatSettings`, the `.okayac` text format, refusal counts, kick after N in a minute, a rejoin cooldown that doubles up to an hour, budgets that survive a reconnect for 5 minutes
@@ -33,6 +34,8 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "which messages does the anti-cheat refuse?", "allow clients to spawn only crates"
 
 ### 39.2 Transport security: encryption, replay protection, sealed join, host keys
+- **System:** Network Security - Encrypts game traffic, blocks replayed packets and gives players signed passes to join servers.
+  Home: `engine/include/okay/Net/SecureChannel.hpp`, `engine/include/okay/Net/SessionTicket.hpp`. Entry: `engine/include/okay/Net/SecureChannel.hpp`. Also called: SecureChannel, encryption, session tickets, sealed join.
 - **What:** Making the network trustworthy even on an open connection: every packet sealed and numbered, replays refused, the join (name, password, token) sealed behind a key exchange, and a server that can prove its identity to pinned clients.
 - **Parts:**
   - 39.2.1 Authenticated encryption - `Net/SecureChannel` - X25519 plus XChaCha20-Poly1305 (libsodium); a host with `encryption` on in a build without libsodium refuses to start
@@ -55,6 +58,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "make the server require encryption", "pin my server's key in the client"
 
 ### 39.3 Session tickets and the ticket service
+- **System:** Network Security
 - **What:** A short-lived signed "this account may join this server" pass. A Supabase Edge function signs it after checking the login and anti-cheat bans; the game server checks it with only a public key, so it needs no Supabase key and a banned player gets no ticket.
 - **Parts:**
   - 39.3.1 Ticket format and verify - `Net/SessionTicket` - `okt1.<payload>.<signature>` (ed25519), `sub`, `aud`, `iat`, `exp` (at most 1 h, 60 s skew), optional `cnf` key binding; `SessionTicket::Sign` is for tests and tools only
@@ -76,6 +80,8 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "set up the ticket service", "why can't I join a ticket server?"
 
 ### 39.4 Client integrity: signed manifest and launch check
+- **System:** Game File Safety - Checks that a game's files were not changed, keeps signing keys out of the code, and stops scripts touching files outside the game.
+  Home: `shared/AntiCheatIntegrity.hpp`. Entry: `shared/AntiCheatIntegrity.hpp`. Also called: client integrity, signed manifest, PathSafety.
 - **What:** Builds carry `Data/manifest.json` listing every shipped file's size and SHA-256, signed with ed25519 when the owner has a key. The launcher and the player check the install against it before a game starts. Off by default; Report logs, Enforce refuses.
 - **Parts:**
   - 39.4.1 Manifest writer - `shared/AntiCheatIntegrity.hpp` - `WriteBuildManifest` (called by the editor's Build Game), `SignIntegrity`, `LoadSigningKey` from `OKAY_AC_SIGNING_KEY_FILE` or `OKAY_AC_SIGNING_KEY`
@@ -98,6 +104,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "sign my build and enforce the check in the launcher", "why does the launcher refuse my modded game?"
 
 ### 39.5 Runtime checks and the clock heartbeat
+- **System:** Server Anti-Cheat
 - **What:** Checks that run while a game plays on Windows: a debugger, an unknown loaded module, and a game clock that runs fast or slow (speed hacks). The decision logic is plain code tested everywhere; the probes are Windows-only.
 - **Parts:**
   - 39.5.1 Debugger check - `shared/AntiCheatChecks.hpp` - `IsDebuggerPresent` and `CheckRemoteDebuggerPresent` every 5 s
@@ -118,6 +125,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "why was RTSS flagged?", "turn on the server clock check"
 
 ### 39.6 Reports, bans, appeals and the hardware hash
+- **System:** Server Anti-Cheat
 - **What:** The human side of anti-cheat: players report cheaters, games report what their checks found, admins ban an account or a machine, players see and appeal their bans. Everything is enforced by Supabase row-level security and logged to `admin_log`.
 - **Parts:**
   - 39.6.1 Backend calls - `shared/AntiCheatBackend.hpp` - every call is built as a `Request` and its answer parsed by a plain function, so both are unit tested without a server
@@ -139,6 +147,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "ban this machine for a week", "what does an appeal look like for an admin?"
 
 ### 39.7 Trusted keys and signing keys at build time
+- **System:** Game File Safety
 - **What:** How public keys get into binaries and how private ones stay out. The launcher is built with the owner's trusted public keys; the editor signs with a private key from the environment; the CMake check refuses a malformed key list.
 - **Parts:**
   - 39.7.1 Key list check - `cmake/OkayAntiCheatKeys.cmake` - `okay_ac_check_trusted_keys()` needs exactly 64 hex digits per key, comma separated, no empty entries; a bad list stops the configure instead of building a program that trusts nothing
@@ -159,6 +168,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "add a second trusted key for rotation", "why does my configure fail on the key list?"
 
 ### 39.8 Relay hardening
+- **System:** Relay
 - **What:** The relay is reachable from the internet, so it trusts nothing: it forwards only host to client within one session, hands out unguessable slots, makes a spoofed hello useless, and caps everything.
 - **Parts:**
   - 39.8.1 Session isolation - `Net/RelayServer` - data flows only between a session's host and its other peers, never peer to peer or across sessions (#254)
@@ -181,6 +191,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "turn legacy hellos off on the relay", "what limits does the relay enforce?"
 
 ### 39.9 Script and file path safety
+- **System:** Game File Safety
 - **What:** Scripts and visual scripts come with downloaded game content, so every file name they pass to save, prefs, data, build or scene calls must stay inside the game's folders: no absolute paths, no `..`; saves land in the game's save folder. Prefabs that the network can spawn must be safe and registered.
 - **Parts:**
   - 39.9.1 Safe relative path - `Core/SaveData` - `Save::IsSafeRelative(name)`
@@ -201,6 +212,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "can a script read my home folder?", "add the path check to the new node"
 
 ### 39.10 Data packs and obfuscation
+- **System:** Data Assets
 - **What:** An optional light obfuscation of shipped scenes and config so players can't casually read or edit them in a text editor. Explicitly not DRM: the key is in the binary.
 - **Parts:**
   - 39.10.1 Pack format - `Core/DataPack` - `OKP1` magic, nonce, FNV-1a 64-bit checksum, splitmix64 keystream XOR; the key is baked into the engine (`DefaultKey`)
@@ -218,6 +230,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "is the data pack encrypted?", "turn on data obfuscation for the build"
 
 ### 39.11 Account, backend and updater hardening
+- **System:** Accounts
 - **What:** The smaller defences around sign-in, Supabase and downloads, and the places where they are weak.
 - **Parts:**
   - 39.11.1 Row-level security first - `docs/online/accounts.md`, `docs/sql/social.sql` - the Supabase key in builds is public, so every table is protected by RLS and SECURITY DEFINER functions; reactions are gated by `can_see_reaction_target`
@@ -240,6 +253,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "list the weak spots in the account code", "sign the updater with the anti-cheat key"
 
 ### 39.12 Detection engine: behavioural detectors, risk score, evidence export
+- **System:** Server Anti-Cheat
 - **What:** An opt-in server-side layer that watches what clients claim over time (positions, aim, shots, counters, packets), keeps a decaying risk score per player and escalates through log, flag, rate-limit, shadow-restrict, kick and ban request. It uses only what the server saw and its own physics, so it cannot be patched out of a client; it cannot see anything the server never receives. Off unless `detect.enabled`.
 - **Parts:**
   - 39.12.1 Movement detectors - `Net/CheatDetect` - speed over 0.5 / 2 / 6 s windows plus a lag-tolerant travel budget, teleport, fly and hover (gravity violation), wall climb, no-clip (server linecast against static colliders), ghost movement (moving with no input), jump rate
@@ -267,6 +281,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "turn on behavioural anti-cheat for my shooter", "why was this player flagged?", "export the evidence for a report", "what is the false-positive rate?"
 
 ### 39.13 Cheat simulator and hardening audit
+- **System:** Server Anti-Cheat
 - **What:** A self-test the owner can run: a server on the same machine with the anti-cheat on, and a rogue client made of raw packets that cheats on purpose (speed, teleport, NaN and huge numbers, a server-only variable, a message flood, a fake weapon, a perfectly timed button, a ban that survives a restart), next to a normal client that must be left alone. It prints what was caught, the ban list and the audit log it wrote. The audit of the 2026-10-26 hardening list and the server-side topics is `docs/online/anticheat.md`.
 - **Parts:**
   - 39.13.1 The simulator - `Net/CheatSim` - `RunCheatSim`, eight steps, a fresh server each, the rogue is raw UDP, the normal client is a real `NetworkManager`; plain (not encrypted) packets

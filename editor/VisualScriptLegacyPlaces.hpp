@@ -116,7 +116,8 @@ inline VsPlace VsLegacyPlaceForNewNode(const char* type) {
         VsIs(type, "Proximity"))
         return VsAt("Physics", "Collisions");
     if (VsIs(type, "CanSee")) return VsAt("Physics", "Queries");
-    if (VsIs(type, "OnInteract") || VsIs(type, "OnDeath") || VsIs(type, "OnHealthChanged"))
+    if (VsIs(type, "OnInteract") || VsIs(type, "OnDeath") || VsIs(type, "OnHealthChanged") || VsIs(type, "OnDamaged") ||
+        VsIs(type, "OnButtonClicked"))
         return VsAt("Events");
     if (VsIs(type, "OnAction") || VsIs(type, "OnActionUp") || VsIs(type, "OnActionHeld"))
         return VsAt("Input", "Controls");
@@ -207,7 +208,8 @@ inline VsPlace VsLegacyPlaceForNode(const char* type) {
     if (VsPre(type, "OnVar") || VsPre(type, "OnSceneVar") || VsPre(type, "OnGlobalVar")) return VsAt("Variables");
     if (VsIs(type, "OnTimer")) return VsAt("Time");
     if (VsPre(type, "OnItem") || VsIs(type, "OnEquip") || VsIs(type, "OnCraft") || VsIs(type, "OnInventoryFull")) return VsAt("Objects", "Items");
-    if (VsIs(type, "OnCheatDetected") || VsPre(type, "OnValidate") || VsIs(type, "OnNetRpc")) return VsAt("Online");
+    if (VsIs(type, "OnCheatDetected") || VsPre(type, "OnValidate") || VsIs(type, "OnNetRpc") ||
+        VsIs(type, "OnNetworkEvent") || VsPre(type, "OnPlayer") || VsIs(type, "OnOwnershipChanged") || VsIs(type, "OnHostMigrated")) return VsAt("Online");
     if (VsIs(type, "OnLanguageChanged")) return VsAt("Text", "Language");
     if (VsIs(type, "OnObjectPlaced") || VsIs(type, "OnObjectRemoved") || VsIs(type, "OnLogicSignal")) return VsAt("Scene");
     if (VsIs(type, "OnStart") || VsIs(type, "OnUpdate") || VsIs(type, "OnLateUpdate") || VsIs(type, "OnEnable") ||

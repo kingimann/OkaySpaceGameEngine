@@ -2825,7 +2825,7 @@ Points a vector the opposite way.
 
 `ForwardVector`
 
-The direction this object is facing.
+The direction this object is facing: its -Z axis, the way Look At turns it (cameras and characters face -Z too).
 
 **Requires:** No extra component is required. It reads this object's Transform (or Target).
 
@@ -3246,7 +3246,7 @@ Probe ahead and mantle a low or high ledge. Runs even when Can Mantle is off.
 
 `LedgeGrab`
 
-In the air, catch a high ledge and hang. Hands-on-ledge IK is not wired.
+In the air, catch a high ledge and hang. Hands go onto the ledge (two arm LimbIKs) through the Ledge Hands IK component: Add Component > Animation, or Wire missing animation and IK on the controller.
 
 **Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
 
@@ -6585,6 +6585,552 @@ Runs when a global variable changes, with its new Value and the Old one.
 | Old | out | Any | The value before it changed. It is an Any. Wire it into an input that expects an Any. | — |
 
 **Example:** Wire On Global Var Changed's Value output into another node's input. It has no flow of its own.
+
+### On Damaged
+
+`OnDamaged`
+
+Runs once for each hit this object takes. Amount is the health lost, Type the kind of damage (Fire, Fall...), Source who dealt it.
+
+**Requires:** No component is required. It runs in Play mode when its event happens on this object.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | out | Flow | After On Damaged finishes, the flow continues from here to the next step. | — |
+| Amount | out | Number | What On Damaged produces on Amount. It is a Number. Wire it into an input that expects a Number. | — |
+| Type | out | Text | What On Damaged produces on Type. It is a Text. Wire it into an input that expects a Text. | — |
+| Source | out | Object | What On Damaged produces on Source. It is an Object. Wire it into an input that expects an Object. | — |
+
+**Example:** Start a chain with On Damaged, then wire Amount into a Print or a health bar, and Type into a Branch that checks for Fire.
+
+### On Button Clicked
+
+`OnButtonClicked`
+
+Runs when the UI button on the object with this name is clicked, wherever that button is in the scene.
+
+**Requires:** No component is required. It runs in Play mode when its event happens on this object.
+
+**Setting:** button object name. The value typed into the node.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | out | Flow | After On Button Clicked finishes, the flow continues from here to the next step. | — |
+
+**Example:** Type Play into On Button Clicked and start a chain with it that loads the first level when the Play button is clicked.
+
+### Apply Damage
+
+`Damage`
+
+Deals Amount damage (default 10) of a Type (Generic, Fire, Poison, Fall...) through the Health component. Requires a Health component on Target, or on this object.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Apply Damage runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Apply Damage finishes, the flow continues from here to the next step. | — |
+| Amount | in | Number | How much to add. Negative numbers subtract. It is a Number. Unwired, this is 0. | 0 |
+| Target | in | Object | The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object. | this object |
+| Type | in | Text | The kind of damage: Generic, Physical, Fire, Cold, Electric, Poison, Explosion, Fall and so on. It is a Text. Unwired, this is Generic. | Generic |
+
+**Example:** Put Apply Damage after an event such as On Start or On Update, and wire a value into Amount.
+
+### Get Camera Forward
+
+`GlGetCameraForward`
+
+The way the camera looks, flat along the ground and one unit long. Multiply it by the up and down input to walk where the camera faces.
+
+**Requires:** No extra component is required. It reads this object's Transform (or Target).
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| Direction | out | Vector3 | What Get Camera Forward produces on Direction. It is a Vector3. Wire it into an input that expects a Vector3. | — |
+
+**Example:** Wire Get Camera Forward's Direction output into another node's input. It has no flow of its own.
+
+### Get Camera Right
+
+`GlGetCameraRight`
+
+The camera's right, flat along the ground and one unit long. Multiply it by the left and right input to strafe the way the camera sees it.
+
+**Requires:** No extra component is required. It reads this object's Transform (or Target).
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| Direction | out | Vector3 | What Get Camera Right produces on Direction. It is a Vector3. Wire it into an input that expects a Vector3. | — |
+
+**Example:** Wire Get Camera Right's Direction output into another node's input. It has no flow of its own.
+
+### Set Move Speed
+
+`GlSetMoveSpeed`
+
+Sets how fast a player walks, in units a second. Running stays as many times faster as it was.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Set Move Speed runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Set Move Speed finishes, the flow continues from here to the next step. | — |
+| Speed | in | Number | How fast to move, in units per second. It is a Number. Unwired, this is 0. | 0 |
+| Target | in | Object | The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object. | this object |
+
+**Example:** Put Set Move Speed after an event such as On Start or On Update, and wire a value into Speed.
+
+### Get Move Speed
+
+`GlGetMoveSpeed`
+
+How fast a player walks, in units a second (its controller's walk speed).
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| Target | in | Object | The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object. | this object |
+| Speed | out | Number | How hard the two objects hit. It is a Number. Wire it into an input that expects a Number. | — |
+
+**Example:** Wire Get Move Speed's Speed output into another node's input. It has no flow of its own.
+
+### Set Sprinting
+
+`GlSetSprinting`
+
+Makes the player run (on) or walk (off) as if the sprint key were held. Off gives the sprint key back.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Set Sprinting runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Set Sprinting finishes, the flow continues from here to the next step. | — |
+| Sprint | in | Bool | The Sprint input of Set Sprinting. It is a Bool. Unwired, this is false. | false |
+| Target | in | Object | The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object. | this object |
+
+**Example:** Put Set Sprinting after an event such as On Start or On Update, and wire a value into Sprint.
+
+### Set Crouching
+
+`GlSetCrouching`
+
+Makes the player crouch (on) or stand up (off). Standing waits until there is room above.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Set Crouching runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Set Crouching finishes, the flow continues from here to the next step. | — |
+| Crouch | in | Bool | The Crouch input of Set Crouching. It is a Bool. Unwired, this is false. | false |
+| Target | in | Object | The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object. | this object |
+
+**Example:** Put Set Crouching after an event such as On Start or On Update, and wire a value into Crouch.
+
+### Enter Vehicle
+
+`GlEnterVehicle`
+
+Puts the driver (this object when empty) in the vehicle's free driver seat, else a free passenger seat.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Enter Vehicle runs when a wire reaches this pin. | — |
+| Entered | out | Flow | After Enter Vehicle finishes, the flow continues from here to Entered. | — |
+| Seats Full | out | Flow | After Enter Vehicle finishes, the flow continues from here to Seats Full. | — |
+| Vehicle | in | Object | The Vehicle input of Enter Vehicle. It is an Object. Unwired, this is no object. | no object |
+| Driver | in | Object | The Driver input of Enter Vehicle. It is an Object. Unwired, this is no object. | no object |
+
+**Example:** Put Enter Vehicle after an event such as On Start or On Update, and wire a value into Vehicle.
+
+### Exit Vehicle
+
+`GlExitVehicle`
+
+Gets the driver (this object when empty) out of the vehicle seat it sits in, beside the door.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Exit Vehicle runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Exit Vehicle finishes, the flow continues from here to the next step. | — |
+| Driver | in | Object | The Driver input of Exit Vehicle. It is an Object. Unwired, this is no object. | no object |
+
+**Example:** Put Exit Vehicle after an event such as On Start or On Update, and wire a value into Driver.
+
+### Is Driving
+
+`GlIsDriving`
+
+True while this object (or Target) sits in a vehicle's driver seat.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| Target | in | Object | The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object. | this object |
+| Result | out | Bool | What Is Driving produces on Result. It is a Bool. Wire it into an input that expects a Bool. | — |
+
+**Example:** Wire Is Driving's Result output into another node's input. It has no flow of its own.
+
+### Get Slider Value
+
+`GlGetSliderValue`
+
+The number a UI slider is set to now.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| Target | in | Object | The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object. | this object |
+| Value | out | Number | The value that was read. It is a Number. Wire it into an input that expects a Number. | — |
+
+**Example:** Wire Get Slider Value's Value output into another node's input. It has no flow of its own.
+
+### Open Menu
+
+`GlOpenMenu`
+
+Shows a menu: opens a UI Modal, pauses with a Pause Menu, or switches the object on.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Open Menu runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Open Menu finishes, the flow continues from here to the next step. | — |
+| Menu | in | Object | The Menu input of Open Menu. It is an Object. Unwired, this is no object. | no object |
+
+**Example:** Put Open Menu after an event such as On Start or On Update, and wire a value into Menu.
+
+### Close Menu
+
+`GlCloseMenu`
+
+Hides a menu: closes a UI Modal, resumes from a Pause Menu, or switches the object off.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Close Menu runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Close Menu finishes, the flow continues from here to the next step. | — |
+| Menu | in | Object | The Menu input of Close Menu. It is an Object. Unwired, this is no object. | no object |
+
+**Example:** Put Close Menu after an event such as On Start or On Update, and wire a value into Menu.
+
+### Rebind Action
+
+`GlRebindAction`
+
+Changes the key or button of a named action (Jump, Fire...), like key:j or pad:rt. Saved for the player.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Rebind Action runs when a wire reaches this pin. | — |
+| Done | out | Flow | The flow continues out of Done. Wire this to the step that should run for that case. | — |
+| Not Understood | out | Flow | After Rebind Action finishes, the flow continues from here to Not Understood. | — |
+| Action | in | Text | The Action input of Rebind Action. It is a Text. Unwired, this is empty text. | empty text |
+| Binding | in | Text | The Binding input of Rebind Action. It is a Text. Unwired, this is empty text. | empty text |
+
+**Example:** Put Rebind Action after an event such as On Start or On Update, and wire a value into Action.
+
+### Rumble Controller
+
+`GlRumble`
+
+Shakes the gamepad. Strength runs from 0 to 1, for Seconds.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Rumble Controller runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Rumble Controller finishes, the flow continues from here to the next step. | — |
+| Strength | in | Number | How hard, from 0 to 1. It is a Number. Unwired, this is 0. | 0 |
+| Seconds | in | Number | The Seconds input of Rumble Controller. It is a Number. Unwired, this is 0. | 0 |
+
+**Example:** Put Rumble Controller after an event such as On Start or On Update, and wire a value into Strength.
+
+### Set Bus Volume
+
+`GlSetBusVolume`
+
+Sets the volume of one sound bus (Music, SFX, UI or Voice) from 0 to 1, like a settings menu does.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Set Bus Volume runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Set Bus Volume finishes, the flow continues from here to the next step. | — |
+| Bus | in | Text | The Bus input of Set Bus Volume. It is a Text. Unwired, this is empty text. | empty text |
+| Volume | in | Number | The Volume input of Set Bus Volume. It is a Number. Unwired, this is 0. | 0 |
+
+**Example:** Put Set Bus Volume after an event such as On Start or On Update, and wire a value into Bus.
+
+### Mute Bus
+
+`GlMuteBus`
+
+Silences one sound bus (Music, SFX, UI or Voice), or turns it back on when Mute is off.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Mute Bus runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Mute Bus finishes, the flow continues from here to the next step. | — |
+| Bus | in | Text | The Bus input of Mute Bus. It is a Text. Unwired, this is empty text. | empty text |
+| Mute | in | Bool | The Mute input of Mute Bus. It is a Bool. Unwired, this is false. | false |
+
+**Example:** Put Mute Bus after an event such as On Start or On Update, and wire a value into Bus.
+
+### Set Collider Size
+
+`GlSetColliderSize`
+
+Resizes this object's colliders: a box to Width, Height and Depth, a sphere or circle to Width across, a capsule to Width and Height.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Set Collider Size runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Set Collider Size finishes, the flow continues from here to the next step. | — |
+| Width | in | Number | The Width input of Set Collider Size. It is a Number. Unwired, this is 0. | 0 |
+| Height | in | Number | The Height input of Set Collider Size. It is a Number. Unwired, this is 0. | 0 |
+| Depth | in | Number | The Depth input of Set Collider Size. It is a Number. Unwired, this is 0. | 0 |
+| Target | in | Object | The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object. | this object |
+
+**Example:** Put Set Collider Size after an event such as On Start or On Update, and wire a value into Width.
+
+### Enable Collider
+
+`GlEnableCollider`
+
+Switches this object's colliders on, so it bumps into things and triggers again.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Enable Collider runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Enable Collider finishes, the flow continues from here to the next step. | — |
+| Target | in | Object | The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object. | this object |
+
+**Example:** Put Enable Collider after an event such as On Start or On Update, and wire a value into Target.
+
+### Disable Collider
+
+`GlDisableCollider`
+
+Switches this object's colliders off, so things pass through it and its triggers stop.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Disable Collider runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Disable Collider finishes, the flow continues from here to the next step. | — |
+| Target | in | Object | The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object. | this object |
+
+**Example:** Put Disable Collider after an event such as On Start or On Update, and wire a value into Target.
+
+### Is Grounded
+
+`GlIsGrounded`
+
+True while this object stands on something: its player controller says so, or the ground is just under its collider.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| Target | in | Object | The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object. | this object |
+| Result | out | Bool | What Is Grounded produces on Result. It is a Bool. Wire it into an input that expects a Bool. | — |
+
+**Example:** Wire Is Grounded's Result output into another node's input. It has no flow of its own.
+
+### Save Game
+
+`GlSaveGame`
+
+Saves the whole game (every object, the player, items and variables) into a named slot.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Save Game runs when a wire reaches this pin. | — |
+| Saved | out | Flow | After Save Game finishes, the flow continues from here to Saved. | — |
+| Failed | out | Flow | After Save Game finishes, the flow continues from here to Failed. | — |
+| Slot | in | Text | The equipment slot name, such as head or main hand. It is a Text. Unwired, this is empty text. | empty text |
+
+**Example:** Put Save Game after an event such as On Start or On Update, and wire a value into Slot.
+
+### Load Game
+
+`GlLoadGame`
+
+Loads the game saved in a slot, at the end of this frame. Nothing Saved runs when the slot is empty.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Load Game runs when a wire reaches this pin. | — |
+| Loading | out | Flow | After Load Game finishes, the flow continues from here to Loading. | — |
+| Nothing Saved | out | Flow | After Load Game finishes, the flow continues from here to Nothing Saved. | — |
+| Slot | in | Text | The equipment slot name, such as head or main hand. It is a Text. Unwired, this is empty text. | empty text |
+
+**Example:** Put Load Game after an event such as On Start or On Update, and wire a value into Slot.
+
+### Has Save
+
+`GlHasSave`
+
+True when a slot has a saved game in it.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| Slot | in | Text | The equipment slot name, such as head or main hand. It is a Text. Unwired, this is empty text. | empty text |
+| Result | out | Bool | What Has Save produces on Result. It is a Bool. Wire it into an input that expects a Bool. | — |
+
+**Example:** Wire Has Save's Result output into another node's input. It has no flow of its own.
+
+### Set Light Color
+
+`GlSetLightColor`
+
+Colors a light. Red, Green and Blue run from 0 to 1.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Set Light Color runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Set Light Color finishes, the flow continues from here to the next step. | — |
+| Red | in | Number | The Red input of Set Light Color. It is a Number. Unwired, this is 0. | 0 |
+| Green | in | Number | The Green input of Set Light Color. It is a Number. Unwired, this is 0. | 0 |
+| Blue | in | Number | The Blue input of Set Light Color. It is a Number. Unwired, this is 0. | 0 |
+| Target | in | Object | The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object. | this object |
+
+**Example:** Put Set Light Color after an event such as On Start or On Update, and wire a value into Red.
+
+### Set Light Intensity
+
+`GlSetLightIntensity`
+
+How bright a light is. 1 is normal, 0 is off, 2 twice as bright.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Set Light Intensity runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Set Light Intensity finishes, the flow continues from here to the next step. | — |
+| Intensity | in | Number | How strong the weather is, from 0 to 1. It is a Number. Unwired, this is 0. | 0 |
+| Target | in | Object | The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object. | this object |
+
+**Example:** Put Set Light Intensity after an event such as On Start or On Update, and wire a value into Intensity.
+
+### Countdown Timer
+
+`GlCountdownTimer`
+
+Put it after On Update. Counts down Seconds; Counting runs each frame until then, On Finished runs once at zero. Restart starts again.
+
+**Requires:** No component is required. It changes the order of the flow. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Countdown Timer runs when a wire reaches this pin. | — |
+| Counting | out | Flow | After Countdown Timer finishes, the flow continues from here to Counting. | — |
+| On Finished | out | Flow | After Countdown Timer finishes, the flow continues from here to On Finished. | — |
+| Seconds | in | Number | The Seconds input of Countdown Timer. It is a Number. Unwired, this is 0. | 0 |
+| Restart | in | Bool | The Restart input of Countdown Timer. It is a Bool. Unwired, this is false. | false |
+
+**Example:** Put Countdown Timer after an event such as On Start or On Update, and wire a value into Seconds.
+
+### Split Text
+
+`GlSplitText`
+
+Cuts a text into a list of pieces at every Separator, like a,b,c at a comma. An empty Separator gives one letter each.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| Text | in | Text | The text to read or change. It is a Text. Unwired, this is empty text. | empty text |
+| Separator | in | Text | The Separator input of Split Text. It is a Text. Unwired, this is empty text. | empty text |
+| Pieces | out | List | What Split Text produces on Pieces. It is a List. Wire it into an input that expects a List. | — |
+
+**Example:** Wire Split Text's Pieces output into another node's input. It has no flow of its own.
+
+### Draw Debug Sphere
+
+`GlDrawDebugSphere`
+
+Draws a wire sphere (three circles) at Center while playing, with this object's debug line. Handy to see a range.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Draw Debug Sphere runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Draw Debug Sphere finishes, the flow continues from here to the next step. | — |
+| Center | in | Vector3 | The middle of the volume. Unwired, it is this object's position. It is a Vector3. Unwired, this is (0, 0, 0). | (0, 0, 0) |
+| Radius | in | Number | The thickness of the ball, in world units. It is a Number. Unwired, this is 0. | 0 |
+
+**Example:** Put Draw Debug Sphere after an event such as On Start or On Update, and wire a value into Center.
+
+### Draw Debug Box
+
+`GlDrawDebugBox`
+
+Draws a wire box at Center with this Size while playing, with this object's debug line. Handy to see an area.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Draw Debug Box runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Draw Debug Box finishes, the flow continues from here to the next step. | — |
+| Center | in | Vector3 | The middle of the volume. Unwired, it is this object's position. It is a Vector3. Unwired, this is (0, 0, 0). | (0, 0, 0) |
+| Size | in | Vector3 | The Size input of Draw Debug Box. It is a Vector3. Unwired, this is (0, 0, 0). | (0, 0, 0) |
+
+**Example:** Put Draw Debug Box after an event such as On Start or On Update, and wire a value into Center.
+
+### Watch Value
+
+`GlWatchValue`
+
+Shows Name: Value on the screen while playing, one line per name, updated each time it runs. Put it after On Update.
+
+**Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Watch Value runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Watch Value finishes, the flow continues from here to the next step. | — |
+| Name | in | Text | The Name input of Watch Value. It is a Text. Unwired, this is empty text. | empty text |
+| Value | in | Any | The value being stored, sent or tested. It is an Any. Unwired, this is nothing. | nothing |
+
+**Example:** Put Watch Value after an event such as On Start or On Update, and wire a value into Name.
 
 ## Engine API / GameObject
 

@@ -1,6 +1,6 @@
 #pragma once
 // The content hash the GPU renderers use to notice that a mesh changed (their per-mesh vertex-buffer cache:
-// GLRenderer.cpp and D3D11Renderer.cpp). Written for this engine: a multiply-and-fold hash over 32-byte blocks.
+// GLRenderer.cpp and D3D11Renderer.cpp, through MeshSample and MeshFull below). Written for this engine: a multiply-and-fold hash over 32-byte blocks.
 //
 // It replaces a byte-at-a-time FNV-1a loop. That loop does one dependent multiply per BYTE, so hashing a mesh cost
 // about 1.3 ns per byte: 1.7 ms for the 1.5 MB of a modest voxel terrain, which the renderer paid every time the mesh
@@ -45,6 +45,39 @@ inline std::uint64_t Bytes(const void* data, std::size_t nbytes, std::uint64_t s
     for (; i < nbytes; ++i) { h ^= p[i]; h *= kPrime; }
     // the length goes in too, so a buffer and the same buffer with zero bytes added do not collide
     return Fold(h, (std::uint64_t)nbytes);
+}
+
+/// The cheap per-frame change sniff the renderers run on every mesh in view: the array sizes, up to 2048 sampled
+/// vertices and indices, and up to 2048 sampled vertex colours (so a stroke of vertex paint shows at once). It catches
+/// whole-mesh edits (skinning, inflate, import over) at once; a lone-vertex edit is caught by MeshFull below, which the
+/// renderers run now and then. A template over the mesh type so this header stays free of Mesh.hpp (any type with
+/// vertices, triangles, normals, uvs, triColors, vertexColors and triSlot vectors works; okay::Mesh is the one used).
+/// GLRenderer.cpp and D3D11Renderer.cpp each had their own identical copy of this until 2026-11.
+template <class MeshT>
+inline std::uint64_t MeshSample(const MeshT& m) {
+    std::size_t sizes[7] = { m.vertices.size(), m.triangles.size(), m.normals.size(),
+                             m.uvs.size(), m.triColors.size(), m.vertexColors.size(), m.triSlot.size() };
+    std::uint64_t h = Bytes(sizes, sizeof(sizes));
+    { const std::size_t cn = m.vertexColors.size(), cstep = cn / 2048 + 1;
+      for (std::size_t i = 0; i < cn; i += cstep) h = Bytes(&m.vertexColors[i], sizeof(m.vertexColors[i]), h); }
+    const std::size_t vn = m.vertices.size(), step = vn / 2048 + 1;
+    // A small mesh is sampled at every vertex: hash its array in one go (a chunk of a voxel terrain is such a mesh,
+    // and a scene can show hundreds of them every frame).
+    if (step == 1) { if (vn) h = Bytes(m.vertices.data(), vn * sizeof(m.vertices[0]), h); }
+    else for (std::size_t i = 0; i < vn; i += step) h = Bytes(&m.vertices[i], sizeof(m.vertices[i]), h);
+    const std::size_t tn = m.triangles.size(), tstep = tn / 2048 + 1;
+    if (tstep == 1) { if (tn) h = Bytes(m.triangles.data(), tn * sizeof(m.triangles[0]), h); }
+    else for (std::size_t i = 0; i < tn; i += tstep) h = Bytes(&m.triangles[i], sizeof(m.triangles[i]), h);
+    return h;
+}
+
+/// The exact content hash over every array the renderers' expanded vertex buffer is built from.
+template <class MeshT>
+inline std::uint64_t MeshFull(const MeshT& m) {
+    std::uint64_t h = kSeed;
+    auto add = [&h](const auto& v) { if (!v.empty()) h = Bytes(v.data(), v.size() * sizeof(v[0]), h); };
+    add(m.vertices); add(m.normals); add(m.uvs); add(m.triangles); add(m.triColors); add(m.vertexColors); add(m.triSlot);
+    return h;
 }
 
 } // namespace meshhash

@@ -24,6 +24,21 @@ if(OKAY_OWN_CRYPTO)
 endif()
 add_library(okay::crypto ALIAS okay_crypto)
 
+# ---- okay::physcore: our own rigid-body physics core (docs/physics/physics_core.md) ----
+# Its own static library so its tests and benchmarks build and link in seconds without the whole engine.
+# Written only from papers and textbooks (each file says which). okay_engine links it PUBLIC.
+add_library(okay_physcore STATIC
+    src/Physics/Core/DynamicTree.cpp
+    src/Physics/Core/Shape.cpp
+    src/Physics/Core/Collide.cpp
+    src/Physics/Core/World.cpp
+    src/Physics/Core/Solver.cpp
+    src/Physics/Core/Joint.cpp
+)
+target_include_directories(okay_physcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(okay_physcore PUBLIC cxx_std_17)
+add_library(okay::physcore ALIAS okay_physcore)
+
 # OkaySpace engine library
 add_library(okay_engine
     src/Core/Application.cpp
@@ -51,6 +66,7 @@ add_library(okay_engine
     src/Core/Backup.cpp
     src/Core/AssetManager.cpp
     src/Core/ImportSettings.cpp
+    src/Core/ImportSidecar.cpp
     src/Core/AssetDatabase.cpp
     src/Core/AssetDatabaseDeps.cpp
     src/Core/AssetDatabaseSearch.cpp
@@ -75,17 +91,31 @@ add_library(okay_engine
     src/Input/TouchControls.cpp
     src/Core/DisplaySettings.cpp
     src/Core/DisplayModes.cpp
+    src/Render/TextureCacheFiles.cpp
+    src/Render/ModelImportProblem.cpp
     src/Render/ConsoleRenderer.cpp
+    src/Render/SoftwareRendererShadows.cpp
+    src/Render/SoftwareRendererPost.cpp
+    src/Render/SoftwareRendererMeshes.cpp
     src/Render/GLRenderer.cpp
+    src/Render/GLRendererShaders.cpp
+    src/Render/GLRendererPasses.cpp
+    src/Render/GLRendererResources.cpp
+    src/Render/OkayShader.cpp
     src/Render/D3D11Renderer.cpp
     src/Render/D3D12Renderer.cpp
     src/Scene/Component.cpp
     src/Scene/GameObject.cpp
     src/Scene/Transform.cpp
     src/Scene/Scene.cpp
+    src/Scene/SceneTemplatesBuilders.cpp
     src/Scene/SceneManager.cpp
     src/Scene/ObjectPool.cpp
     src/Scene/SceneSerializer.cpp
+    src/Scene/SceneSerializerHelpers.cpp
+    src/Scene/SceneSerializerRegistry.cpp
+    src/Scene/SceneSerializerWrite.cpp
+    src/Scene/SceneSerializerParse.cpp
     src/Scene/ComponentSerializer.cpp
     src/Scene/SceneLocalization.cpp
     src/Components/Camera.cpp
@@ -100,8 +130,20 @@ add_library(okay_engine
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
     src/Components/Ragdoll.cpp
+    src/Components/ActiveRagdoll.cpp
+    src/Components/RagdollShared.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
+    # NetworkManager's other parts (batch N1, docs/engine/modularization_plan.md): sync and messages,
+    # server authority (lag compensation, anti-cheat checks, movement), the server tick and the client tick.
+    src/Net/NetworkManagerSync.cpp
+    src/Net/NetworkManagerEvents.cpp
+    src/Net/Net.cpp
+    src/Net/NetworkManagerMigration.cpp
+    src/Net/Rollback.cpp
+    src/Net/NetworkManagerAuthority.cpp
+    src/Net/NetworkManagerServer.cpp
+    src/Net/NetworkManagerClient.cpp
     src/Net/NetBuildSync.cpp
     src/Net/NetQuestSync.cpp
     src/Net/NetDelta.cpp
@@ -117,6 +159,7 @@ add_library(okay_engine
     src/Net/NetTransport.cpp
     src/Net/PhotonTransport.cpp
     src/VisualScript/NodeGraph.cpp
+    src/VisualScript/VsNodeRegistry.cpp
     src/VisualScript/VsTypes.cpp
     src/VisualScript/VsApi.cpp
     src/VisualScript/VsBuiltins.cpp
@@ -127,19 +170,54 @@ add_library(okay_engine
     src/Components/VisualScriptComponent.cpp
     src/Components/UIAnimation.cpp
     src/Scripting/OkayScriptVM.cpp
+    src/Scripting/OkayScriptVM_Ui.cpp
+    src/Scripting/OkayScriptVM_Coroutine.cpp
+    src/Scripting/OkayScriptVM_Scene.cpp
+    src/Scripting/OkayScriptVM_Alias.cpp
+    src/Scripting/OkayScriptVM_Tween.cpp
+    src/Scripting/OkayScriptVM_Physics.cpp
+    src/Scripting/OkayScriptVM_Math.cpp
+    src/Scripting/OkayScriptVM_Network.cpp
+    src/Scripting/OkayScriptVM_Inventory.cpp
+    src/Scripting/OkayScriptVM_Animation.cpp
+    src/Scripting/OkayScriptVM_Navigation.cpp
+    src/Scripting/OkayScriptVM_World.cpp
+    src/Scripting/OkayScriptVM_Camera.cpp
+    src/Scripting/OkayScriptVM_Gameplay.cpp
+    src/Scripting/OkayScriptVM_Input.cpp
     src/Scripting/ScriptVM.cpp
+    src/Scripting/ScriptApiRegistry.cpp
+    src/Scripting/ScriptApiCore.cpp
+    src/Scripting/ScriptBindings.cpp
+    src/Scripting/ScriptBindingsGenerated.cpp
     src/Script/Lexer.cpp
     src/Script/Parser.cpp
     src/Script/Checker.cpp
+    src/Script/CheckerOperators.cpp
+    src/Script/CheckerCalls.cpp
+    src/Script/CheckerStatements.cpp
+    src/Script/CheckerTypes.cpp
+    src/Script/CheckerExpressions.cpp
     src/Script/Interpreter.cpp
     src/Script/EngineApi.cpp
+    src/Script/EngineApi_Math.cpp
+    src/Script/EngineApi_Animation.cpp
+    src/Script/EngineApi_Curves.cpp
+    src/Script/EngineApi_Story.cpp
+    src/Script/EngineApi_World.cpp
+    src/Script/EngineApi_Runtime.cpp
+    src/Script/EngineApi_Input.cpp
+    src/Script/EngineApi_Ui.cpp
+    src/Script/EngineApi_Core.cpp
     src/Script/NextScriptVM.cpp
     src/Components/ScriptComponent.cpp
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp
+    src/Components/ActionListOps.cpp
     src/Inventory/InventoryOps.cpp
     src/Combat/WeaponBook.cpp
     src/Components/MeleeAttacker.cpp
+    src/Components/Damage.cpp
     src/Components/RangedWeapon.cpp
     src/Inventory/ItemDatabase.cpp
     src/Inventory/LootTable.cpp
@@ -172,13 +250,17 @@ add_library(okay_engine
     src/Components/Draggable.cpp
     src/Components/Terrain.cpp
     src/Components/Foliage.cpp
+    src/Components/ParticleSystem.cpp
     src/Components/Cable.cpp
     src/Components/Decal.cpp
     src/Components/VoxelTerrain.cpp
     src/Components/VoxelEdit.cpp
     src/Components/VoxelFluid.cpp
     src/Components/Character.cpp
+    src/Components/CharacterMotion.cpp
+    src/Components/CharacterFirstPerson.cpp
     src/Components/ModelAnimatorPose.cpp
+    src/Components/ModelAnimatorUpdate.cpp
     src/Components/PlayerView.cpp
     src/Components/PlayerController.cpp
     src/Components/CharacterAnimBackend.cpp
@@ -186,6 +268,10 @@ add_library(okay_engine
     src/Animation/HumanoidLibrary.cpp
     src/Animation/PlayerSetup.cpp
     src/Animation/HumanoidActions.cpp
+    src/Animation/HumanoidActionsStates.cpp
+    src/Animation/HumanoidActionsRuntime.cpp
+    src/Animation/RagdollPhysics.cpp
+    src/Animation/DynamicCharacter.cpp
     src/Components/AnimClip.cpp
     src/Components/Sequence.cpp
     src/Components/SequencePlayer.cpp
@@ -219,7 +305,7 @@ add_library(okay_engine
     src/Audio/FlacDecoder.cpp
     src/Audio/WavDecoder.cpp
     src/Audio/WavPlayback.cpp
-    src/AI/Pathfinding.cpp
+    src/AI/NavigationGrid.cpp
     src/AI/GridPath2D.cpp
     src/AI/NavMesh.cpp
     src/AI/NavMeshBake.cpp
@@ -249,6 +335,7 @@ add_library(okay_engine
     src/Debug/ProjectDiagnostics.cpp
     src/Debug/DebugStatsOverlay.cpp
     src/UI/UIRenderer.cpp
+    src/UI/UIScenePass.cpp
     src/UI/UIWidgetsMoreDraw.cpp
     src/UI/UIBatcher.cpp
     src/UI/UIImageScale.cpp
@@ -267,6 +354,11 @@ add_library(okay_engine
     src/UI/UIFocus.cpp
     src/Input/RemapModel.cpp
     src/Render/ModelImport.cpp
+    src/Render/MeshModifiers.cpp
+    src/Render/MeshObj.cpp
+    src/Render/MeshUV.cpp
+    src/Render/MeshShapes.cpp
+    src/Render/ModelImportCharacter.cpp
     src/Render/ModelReaders.cpp
     src/Render/ColladaReader.cpp
     src/Render/Max3dsReader.cpp
@@ -274,9 +366,11 @@ add_library(okay_engine
     src/Render/OffReader.cpp
     src/Render/SmdReader.cpp
     src/Render/Md5Reader.cpp
+    src/Render/Md5CameraReader.cpp
     src/Render/Ms3dReader.cpp
     src/Render/AseReader.cpp
     src/Render/BlendReader.cpp
+    src/Render/BlendReaderBuild.cpp
     src/Render/BlendModifiers.cpp
     src/Render/ThreeMfReader.cpp
     src/Render/AmfReader.cpp
@@ -297,6 +391,7 @@ add_library(okay_engine
     src/Render/IqmReader.cpp
     src/Render/CobReader.cpp
     src/Render/NdoReader.cpp
+    src/Render/SibReader.cpp
     src/Render/TerragenReader.cpp
     src/Render/MdcReader.cpp
     src/Render/HmpReader.cpp
@@ -305,6 +400,10 @@ add_library(okay_engine
     src/Render/RawReader.cpp
     src/Render/PmxReader.cpp
     src/Render/LwsReader.cpp
+    src/Render/Gltf1Reader.cpp
+    src/Render/OgexReader.cpp
+    src/Render/MdlReader.cpp
+    src/Render/Q3BspReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/Measure.cpp
     src/Modeling/SelectOps.cpp
@@ -344,6 +443,8 @@ add_library(okay_engine
     src/Texture/Dds.cpp
     src/Texture/Stream.cpp
     src/Texture/Export.cpp
+    src/Render/GpuTexture.cpp
+    src/Render/TextureAsset.cpp
     src/Optimize/SceneOptimizationReport.cpp
     src/Testing/TestRegistry.cpp
     src/Testing/PlayTest.cpp
@@ -353,15 +454,9 @@ add_library(okay_engine
     src/Testing/GoldenImage.cpp
     src/Render/FbxReader.cpp
     src/Render/FbxScene.cpp
-    third_party/ufbx/ufbx.c
+    src/Render/FbxSceneClips.cpp
 )
-
-# Our own FBX reader (okay::fbx) sits next to ufbx. OKAY_OWN_FBX=ON makes it the default reader
-# for this build; it can still be switched at run time with the OKAY_OWN_FBX environment variable
-# ("1"/"0") or okay::fbx::SetOwnReaderEnabled(). Default OFF: ufbx stays the default.
-if(OKAY_OWN_FBX)
-    set_source_files_properties(src/Render/FbxScene.cpp PROPERTIES COMPILE_DEFINITIONS OKAY_OWN_FBX_DEFAULT=1)
-endif()
+# FBX is read only by our own reader (okay::fbx, the three Fbx*.cpp files above); the vendored ufbx was deleted on 2026-11-23.
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
 # The UI library's data files (assets/ui/*.okaydata: screens, styles, themes, icons, components) are embedded into the engine, so every
@@ -384,23 +479,11 @@ target_include_directories(okay_engine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-# Vendored third-party libraries (stb_truetype, stb_vorbis, ufbx, dr_libs). Image decoding is
-# our own (Core/ImageDecode*.cpp). Kept PRIVATE so they don't leak to consumers.
-target_include_directories(okay_engine PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx
-)
-# ufbx (FBX importer, MIT/public domain) is a single C file: no warnings, optimised
-# even in debug builds (parsing big FBX files unoptimised is painfully slow).
-if(MSVC)
-    set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "/w;/O2")
-else()
-    set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "-w;-O2")
-endif()
-# Silence warnings from the third-party single-header libraries. `-Wno-narrowing`
-# is required in addition to `-w`: vendored tables (stb) may initialise `char`
-# arrays with 0xFF, which Clang (Emscripten/WASM) treats as a hard narrowing ERROR
-# that `-w` does not downgrade, even though GCC/MinGW accept it.
+# (No vendored single-header libraries are left: image decoding, fonts and audio are our own, and the
+# engine/third_party/stb folder is gone, so there is no include path for it.)
+# Image.cpp keeps the warning settings it had while it compiled the vendored stb tables (`-Wno-narrowing`:
+# Clang for Emscripten/WASM treats a `char` table initialised with 0xFF as a narrowing ERROR that `-w` does
+# not downgrade). Not checked yet whether our own code there still needs them.
 set_source_files_properties(src/Graphics/Image.cpp
     PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
 # The built-in UI font (the launcher's Roboto) lives in shared/RobotoFontOwn.h, in our own OKF1 container (shared/OkfDecode.hpp).
@@ -413,7 +496,8 @@ set_source_files_properties(src/Core/BuildInfo.cpp PROPERTIES COMPILE_DEFINITION
 # files anti-cheat kicks with #270's request builder (shared/AntiCheatBackend.hpp);
 # the relay makes its hello cookies with HmacSha256 (shared/AntiCheatChecks.hpp).
 set_source_files_properties(src/Net/NetworkManager.cpp src/Net/ClockCheck.cpp src/Net/DedicatedServer.cpp
-                            src/Net/RelayServer.cpp PROPERTIES
+                            src/Net/RelayServer.cpp src/Net/NetworkManagerSync.cpp src/Net/NetworkManagerAuthority.cpp
+                            src/Net/NetworkManagerServer.cpp src/Net/NetworkManagerClient.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 
 target_compile_features(okay_engine PUBLIC cxx_std_17)
@@ -487,7 +571,8 @@ endif()
 # decides whether the network layer uses them instead of libsodium. UNREVIEWED by an
 # outside cryptographer: it must not become the default, and libsodium must not be
 # removed, before that review (docs/status/own_code_roadmap.md, docs/platform/crypto.md).
-target_link_libraries(okay_engine PUBLIC okay_crypto)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
+target_link_libraries(okay_engine PUBLIC okay_crypto okay_physcore)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
+target_link_libraries(okay_engine PRIVATE okayscript_lang)   # the OkayScript lexer (okayscript/, engine-independent)
 set(OKAY_SODIUM_IN_BUILD OFF CACHE INTERNAL "libsodium was found and linked into okay_engine")   # reset on every configure; set ON below
 if(OKAY_REQUIRE_SODIUM)
     if(OKAY_OWN_CRYPTO OR OKAY_OWN_STACK_CRYPTO_TEST)
@@ -582,64 +667,6 @@ if(DEFINED OKAY_STEAM_APP_ID)
     message(STATUS "OkaySpace: default Steam App ID = ${OKAY_STEAM_APP_ID}")
 endif()
 
-# ---- Optional model import via Assimp (FBX / DAE / STL / PLY / 3DS / ...) ----
-# The built-in loaders already cover OBJ + glTF with no dependency; Assimp adds the
-# long tail of formats. FetchContent DOWNLOADS Assimp at configure time, so this is
-# OFF by default to keep the default build self-contained (no network needed). Turn it
-# on with -DOKAY_USE_ASSIMP=ON; ModelImport.cpp then routes those formats through it.
-if(OKAY_USE_ASSIMP)
-    include(FetchContent)
-    # Build only what we need — keep it lean and quiet. Static, so shipped builds
-    # don't need an extra assimp DLL beside the exes; assimp builds its own zlib.
-    set(BUILD_SHARED_LIBS                        OFF CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_ZLIB                        ON  CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_TESTS                       OFF CACHE BOOL "" FORCE)
-    set(ASSIMP_INSTALL                           OFF CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_ASSIMP_TOOLS                OFF CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT    OFF CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT    OFF CACHE BOOL "" FORCE)
-    set(ASSIMP_NO_EXPORT                         ON  CACHE BOOL "" FORCE)
-    set(ASSIMP_WARNINGS_AS_ERRORS                OFF CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_FBX_IMPORTER       ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_OBJ_IMPORTER       ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_GLTF_IMPORTER      ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_COLLADA_IMPORTER   ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_STL_IMPORTER       ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_PLY_IMPORTER       ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_3DS_IMPORTER       ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_BLEND_IMPORTER     ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_X_IMPORTER         ON CACHE BOOL "" FORCE)   # DirectX .x
-    set(ASSIMP_BUILD_MD5_IMPORTER       ON CACHE BOOL "" FORCE)   # Doom 3
-    set(ASSIMP_BUILD_SMD_IMPORTER       ON CACHE BOOL "" FORCE)   # Source engine
-    set(ASSIMP_BUILD_MS3D_IMPORTER      ON CACHE BOOL "" FORCE)   # MilkShape 3D
-    set(ASSIMP_BUILD_LWO_IMPORTER       ON CACHE BOOL "" FORCE)   # LightWave
-    set(ASSIMP_BUILD_DXF_IMPORTER       ON CACHE BOOL "" FORCE)   # AutoCAD DXF
-    set(ASSIMP_BUILD_OFF_IMPORTER       ON CACHE BOOL "" FORCE)   # Object File Format
-    set(ASSIMP_BUILD_AC_IMPORTER        ON CACHE BOOL "" FORCE)   # AC3D
-    set(ASSIMP_BUILD_B3D_IMPORTER       ON CACHE BOOL "" FORCE)   # Blitz3D
-    # ...and the rest of the long tail, so "any model file" just imports.
-    foreach(_fmt 3MF AMF ASE X3D OGRE OPENGEX Q3D Q3BSP IRR IRRMESH MD2 MD3 MDL HMP MDC NFF RAW COB CSM
-                 LWS BVH TERRAGEN SIB MMD IQM NDO XGL HMP)
-        set(ASSIMP_BUILD_${_fmt}_IMPORTER ON CACHE BOOL "" FORCE)
-    endforeach()
-    FetchContent_Declare(assimp
-        GIT_REPOSITORY https://github.com/assimp/assimp.git
-        GIT_TAG        v5.4.3
-        GIT_SHALLOW    TRUE)
-    FetchContent_MakeAvailable(assimp)
-    # MinGW-w64 13 (the Ubuntu 26.04 runner) defaults __MSVCRT_VERSION__ to 0x600. Assimp's
-    # DefaultIOStream.cpp then takes its old-CRT branch and calls _fstat32, which the 64-bit msvcrt
-    # import library does not export (link error "undefined reference to __imp__fstat32"). Older
-    # MinGW headers defaulted to 0x700, which picks _fstat64. Say 0x700 for Assimp only.
-    if(MINGW AND TARGET assimp)
-        target_compile_definitions(assimp PRIVATE __MSVCRT_VERSION__=0x700)
-    endif()
-    target_link_libraries(okay_engine PUBLIC assimp)
-    target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_ASSIMP)
-    target_sources(okay_engine PRIVATE src/Render/ModelImportAssimp.cpp)   # the only file that includes Assimp
-    message(STATUS "OkaySpace: Assimp model import ENABLED (DAE/STL/PLY/3DS/Blend/X/3MF/AMF/X3D/MD2/MD3/MD5/MDL/SMD/MS3D/LWO/DXF/OFF/AC/B3D/BVH/PMX/...)")
-endif()
-
 # The platform seam (windows / events / GL context / timers / clipboard / audio device /
 # gamepad): see cmake/OkayPlatform.cmake. Everything that used SDL for those goes through it.
 include(${CMAKE_SOURCE_DIR}/cmake/OkayPlatform.cmake)
@@ -647,7 +674,7 @@ okay_add_platform_library()
 target_link_libraries(okay_engine PUBLIC okay_platform)
 # okay::platform::Painter (the 2D drawing surface of a window): the shared part and the sdl2 implementation.
 # The software implementation lives in okayui/soft (okay_ui_soft). Own code, not ready, off by default.
-target_sources(okay_engine PRIVATE src/Platform/Painter.cpp src/Platform/SdlPainter.cpp)
+target_sources(okay_engine PRIVATE src/Platform/Painter.cpp src/Platform/SdlPainter.cpp src/Platform/GLPainter.cpp)
 if(OKAY_PLATFORM_SDL_INCLUDES)
     target_include_directories(okay_engine PRIVATE ${OKAY_PLATFORM_SDL_INCLUDES})
 endif()
@@ -655,24 +682,16 @@ if(OKAY_PLATFORM_SDL_OPTIONS)
     set_source_files_properties(src/Platform/SdlPainter.cpp PROPERTIES COMPILE_OPTIONS "${OKAY_PLATFORM_SDL_OPTIONS}")
 endif()
 
-# The model reader defaults below (OKAY_PREFER_OWN_READERS_DEFAULT, OKAY_OWN_<FMT>_DEFAULT) are read by ModelImport.cpp only, so they
-# are put on that one file: switching a reader's default rebuilds one file, not the whole engine.
-# Our own STL / PLY readers are always built. With Assimp also on, this picks which one
-# a format uses by default (docs/content/model_import.md); SetImportBackend() changes it at run time.
-if(OKAY_PREFER_OWN_READERS)
-    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_PREFER_OWN_READERS_DEFAULT)
-    message(STATUS "OkaySpace: model import prefers the built-in STL/PLY readers over Assimp")
-endif()
-
-# Our own Collada (.dae) reader sits next to Assimp's. Default OFF: Assimp stays the .dae reader when the build
-# has it, and a build without Assimp reads no .dae at all until the reader is switched on, with
-# -DOKAY_OWN_COLLADA=ON, the OKAY_OWN_COLLADA=1 environment variable, or SetImportBackend(".dae", Own).
+# The model reader defaults below (OKAY_OWN_<FMT>_DEFAULT) are read by ModelImport.cpp only, so they are put on that one
+# file: switching a reader's default rebuilds one file, not the whole engine. Every model reader is our own (Assimp was
+# removed on 2026-11-24); OBJ, STL, PLY, glTF and FBX have no switch. The rest are ON by default; a format switched off
+# (-DOKAY_OWN_<FMT>=OFF, OKAY_OWN_<FMT>=0 at run time) is not read at all.
 if(OKAY_OWN_COLLADA)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_COLLADA_DEFAULT)
     message(STATUS "OkaySpace: model import reads .dae with the built-in Collada reader first")
 endif()
-# Our own 3DS (.3ds) and BVH (.bvh) readers: same opt-in rules as Collada (default OFF; run-time env
-# OKAY_OWN_3DS=0/1 / OKAY_OWN_BVH=0/1 and SetImportBackend override the build default).
+# Our own 3DS (.3ds) and BVH (.bvh) readers (run-time env OKAY_OWN_3DS=0/1 / OKAY_OWN_BVH=0/1 and SetImportBackend
+# override the build default).
 if(OKAY_OWN_3DS)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_3DS_DEFAULT)
     message(STATUS "OkaySpace: model import reads .3ds with the built-in 3DS reader first")
@@ -681,43 +700,37 @@ if(OKAY_OWN_BVH)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_BVH_DEFAULT)
     message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
 endif()
-# Our own WAV decoder (PCM, float, A-law, mu-law, MS and IMA ADPCM): AudioClip::LoadWAV uses it when this is ON
-# or when the environment says OKAY_OWN_WAV=1 (OKAY_OWN_WAV=0 turns it off again).
-if(OKAY_OWN_WAV)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_WAV_DEFAULT)
-    message(STATUS "OkaySpace: AudioClip::LoadWAV uses the built-in WAV decoder")
-endif()
-# Our own OFF (.off) reader (same opt-in rules; env OKAY_OWN_OFF=0/1 and SetImportBackend override the build default).
+# Our own OFF (.off) reader (env OKAY_OWN_OFF=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_OFF)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_OFF_DEFAULT)
     message(STATUS "OkaySpace: model import reads .off with the built-in OFF reader")
 endif()
-# Our own SMD reader (same opt-in rules; env OKAY_OWN_SMD=0/1 and SetImportBackend override the build default).
+# Our own SMD reader (env OKAY_OWN_SMD=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_SMD)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_SMD_DEFAULT)
     message(STATUS "OkaySpace: model import reads .smd with the built-in SMD reader")
 endif()
-# Our own MD5 reader (same opt-in rules; env OKAY_OWN_MD5=0/1 and SetImportBackend override the build default).
+# Our own MD5 reader (env OKAY_OWN_MD5=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_MD5)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_MD5_DEFAULT)
     message(STATUS "OkaySpace: model import reads .md5mesh / .md5anim with the built-in MD5 reader")
 endif()
-# Our own MS3D reader (same opt-in rules; env OKAY_OWN_MS3D=0/1 and SetImportBackend override the build default).
+# Our own MS3D reader (env OKAY_OWN_MS3D=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_MS3D)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_MS3D_DEFAULT)
     message(STATUS "OkaySpace: model import reads .ms3d with the built-in MS3D reader")
 endif()
-# Our own ASE reader (same opt-in rules; env OKAY_OWN_ASE=0/1 and SetImportBackend override the build default).
+# Our own ASE reader (env OKAY_OWN_ASE=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_ASE)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_ASE_DEFAULT)
     message(STATUS "OkaySpace: model import reads .ase with the built-in ASE reader")
 endif()
-# Our own Blender (.blend) reader (docs/content/model_readers.md): same opt-in rules, default OFF.
+# Our own Blender (.blend) reader (docs/content/model_readers.md).
 if(OKAY_OWN_BLEND)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_BLEND_DEFAULT)
     message(STATUS "OkaySpace: model import reads .blend with the built-in Blender reader first")
 endif()
-# Our own 3MF / AMF / X3D / DXF / LWO readers (batch B), same opt-in rules as 3DS: default OFF.
+# Our own 3MF / AMF / X3D / DXF / LWO readers (batch B).
 foreach(_fmt 3MF AMF X3D DXF LWO)
     if(OKAY_OWN_${_fmt})
         set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_${_fmt}_DEFAULT)
@@ -725,7 +738,7 @@ foreach(_fmt 3MF AMF X3D DXF LWO)
     endif()
 endforeach()
 
-# Our own MD2 / MD3 / IRRMESH / B3D / X readers (batch C), AC3D / OGRE / XGL / IRR / NFF (batch D), Terragen and MDC / HMP / CSM / Q3D / RAW (batch E) IQM / COB / NDO (batch E3) and PMX / LWS (batch E5), same opt-in rules as 3DS: default OFF.
+# Our own MD2 / MD3 / IRRMESH / B3D / X readers (batch C), AC3D / OGRE / XGL / IRR / NFF (batch D), Terragen and MDC / HMP / CSM / Q3D / RAW (batch E) IQM / COB / NDO (batch E3) and PMX / LWS (batch E5).
 # Guard: every model reader option the root CMakeLists.txt declares ("Read .xyz ... with our own ...") must be in a
 # foreach(_fmt ...) list of this file (or have a literal OKAY_OWN_<FMT>_DEFAULT definition), or its default is silently never
 # defined (a merge once dropped Terragen from this loop that way). Add a new reader's name to the literal list below.
@@ -745,7 +758,7 @@ foreach(_line IN LISTS _okay_own_opts)
         message(FATAL_ERROR "OKAY_OWN_${_name} is an option in CMakeLists.txt but is in no foreach(_fmt ...) list of engine/CMakeLists.txt and has no OKAY_OWN_${_name}_DEFAULT definition: its default would never be applied")
     endif()
 endforeach()
-foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB NDO PMX LWS OGREBIN ZAE XML LXO)
+foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB NDO PMX LWS OGREBIN ZAE XML LXO GLTF1 OPENGEX MDL Q3BSP SIB)
     if(OKAY_OWN_${_fmt})
         set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")
@@ -766,7 +779,7 @@ target_sources(okay_engine PRIVATE
 )
 # ---- Prefab system wave 2 (docs/engine/prefabs.md): nested prefabs, variants, unpack,
 # per-record / per-field apply and revert, prefab queries and the asset validator.
-target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp)
+target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp src/Scene/PrefabResolve.cpp)
 # Project tag list and layer names in the project settings file (docs/gameplay/cameras.md).
 target_sources(okay_engine PRIVATE src/Scene/ProjectLists.cpp)
 # ---- Property reflection (docs/engine/properties.md) ----
@@ -805,4 +818,21 @@ target_sources(okay_engine PRIVATE
     src/Core/FrameOverlay.cpp
     src/Core/TimeSnapshot.cpp
     src/Core/LoopConsole.cpp
+    src/Core/ConsoleHost.cpp
 )
+
+# The module list the engine knows at run time (okay/Modules/ModuleRegistry.hpp): the manifests embedded as text by
+# cmake/OkayModules.cmake, plus the manifest parser and the registry. Every module is on in this stage.
+okay_modules_generate("${CMAKE_CURRENT_BINARY_DIR}/modules_enabled.cpp")
+get_property(_okay_mod_register GLOBAL PROPERTY OKAY_MODULE_REGISTER_SOURCES)
+target_sources(okay_engine PRIVATE
+    src/Modules/ModuleManifest.cpp
+    src/Modules/ModuleRegistry.cpp
+    src/Modules/ModuleMenus.cpp
+    src/Render/RenderContributions.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/modules_enabled.cpp"
+    ${_okay_mod_register})
+
+# Which module each engine file belongs to (engine/modules/*/module.okaymodule sources=). Keep this last: it reads the
+# whole source list. Writes okay_modules.tsv in the build folder; the build itself is unchanged.
+okay_modules_group(okay_engine)

@@ -8,6 +8,8 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 ## 9. AI & navigation
 
 ### 9.1 Nav mesh bake and queries
+- **System:** Navigation - Works out where characters can walk and walks them to a goal around walls and each other.
+  Home: `engine/include/okay/AI/`, `engine/src/AI/`. Entry: `engine/include/okay/AI/Navigation.hpp`. Also called: NavMesh, NavMeshAgent, pathfinding, NavGrid3D, crowds.
 - **What:** Bakes the scene's static colliders and terrain into a mesh of walkable polygons (on a background thread), saves it to a `.okaynav` file, and answers path, nearest-point, raycast, random-point and height queries through one facade that falls back to a probe grid when no mesh was baked.
 - **Parts:**
   - 9.1.1 Bake - `AI/NavMeshBake` - copies colliders (a Mesh Collider as its world triangles) and heightmap terrains, rasterizes them into a heightfield, applies slope, step, head room and agent radius, merges cells into rectangles; runs on a worker thread with progress
@@ -28,6 +30,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Ask me like:** "bake a navmesh for my level"; "my guard will not walk through the narrow door"
 
 ### 9.2 Nav agents and obstacles
+- **System:** Navigation
 - **What:** A Nav Mesh Agent walks its object to a destination along the mesh path, steers around other agents and moving obstacles, replans when stuck and reports arrival; a Nav Mesh Obstacle is a box or capsule agents dodge, and with Carve on it cuts a hole in the mesh so paths go around it.
 - **Parts:**
   - 9.2.1 Agent movement - `Components/NavMeshAgent`, `engine/src/AI/NavMeshAgent.cpp` - `SetDestination`, `Stop`, `Resume`, `Warp`, speed, acceleration, turn rate, stopping distance, auto braking, drives a Rigidbody3D by velocity or the Transform
@@ -48,6 +51,8 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Ask me like:** "make the guard walk to the player and stop 2 m away"; "enemies keep stacking on each other"
 
 ### 9.3 Grid pathfinding (older)
+- **System:** Grid Pathfinding - Finds a path over a square grid or tilemap, for 2D and tower-defence games - duplicate of Navigation (kept: grid and tilemap games; no merge planned)
+  Home: `engine/include/okay/AI/Pathfinding.hpp`, `engine/src/AI/GridPath2D.cpp`, `engine/include/okay/Components/GridPathAgent2D.hpp`. Entry: `engine/include/okay/AI/Pathfinding.hpp`. Also called: GridPath2D, GridPathAgent2D, A* grid, tile pathfinding.
 - **What:** A* over a rectangular grid of walkable flags or directly over a Tilemap, for 2D games and tower-defense routing. Optional per-cell costs, diagonal steps and line-of-sight smoothing; a Grid Obstacle blocks cells and replans only the agents it covers. All three stay off unless the agent or the call asks, so an old path is unchanged.
 - **Parts:**
   - 9.3.1 Grid A* - `AI/Pathfinding` - `AStar` over a width by height walkable array, returns cells start to goal; diagonal moves never squeeze between two walls; an optional cost per cell (0 or less blocks); `smooth` string-pulls the line of sight
@@ -66,6 +71,8 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Ask me like:** "make 2D enemies path around tilemap walls"; "tower defense units follow a path to the base"
 
 ### 9.4 Behavior trees
+- **System:** Behavior Trees - NPC brains drawn as a tree of choices and tasks.
+  Home: `engine/include/okay/AI/BehaviorTree.hpp`, `engine/src/AI/BehaviorTreeRunner.cpp`. Entry: `engine/include/okay/AI/BehaviorTree.hpp`. Also called: BehaviorTree, BT, .okaybt, BehaviorTreeRunner.
 - **What:** NPC brains you author as a tree (`.okaybt`) of composites, decorators, tasks and services with a typed blackboard; a Behavior Tree Runner plays it on an NPC and moves the body, and a node editor window edits it with a live view.
 - **Parts:**
   - 9.4.1 Tree asset and node catalogue - `AI/BehaviorTree`, `engine/src/AI/BehaviorTree.cpp` - node types, parameter definitions, `BtValue` and `Blackboard`, text file load and save, validation issues
@@ -87,6 +94,8 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Ask me like:** "make a guard that patrols and chases the player"; "add a node that plays a sound then waits"
 
 ### 9.5 NPCs and perception
+- **System:** NPCs - Ready-made NPCs (animals, enemies, guards, companions) that see, hear and react.
+  Home: `engine/include/okay/Components/NPCController.hpp`, `engine/include/okay/AI/Perception.hpp`. Entry: `engine/include/okay/Components/NPCController.hpp`. Also called: NPCController, AI characters, Perception, enemies, companions.
 - **What:** The NPC Controller is a ready-made brain for wildlife, enemies, guards and companions: base behaviours (idle, wander, patrol, guard, follow, flee, chase) with sight cone, line of sight, hearing, detection time, search and leash, plus combat numbers and health.
 - **Parts:**
   - 9.5.1 Base behaviours - `Components/NPCController` - Idle, Wander, Patrol, Guard, Follow, Flee, Chase with waypoints, speeds, acceleration and turning
@@ -108,6 +117,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **Ask me like:** "make a wolf that wanders and attacks when it sees me"; "stealth guard who needs two seconds to notice the player"
 
 ### 9.6 Nav areas and off-mesh links
+- **System:** Navigation
 - **What:** Each baked polygon has one of 32 areas (walkable, not walkable, water, road, custom) set per object with a Nav Mesh Modifier; the path search charges distance times the area's cost and each Nav Mesh Agent has an area mask. Nav Mesh Links (jump, drop, ladder) are extra edges the search can use and the agent crosses over time, with start and end callbacks.
 - **Parts:**
   - 9.6.1 Area types - `Components/NavMeshModifier`, `AI/NavMeshBake`, `AI/NavMesh` - area per collider (own or ancestor's), tops win, not-walkable cuts a hole, cells merge per area, area saved in the `.okaynav` poly record

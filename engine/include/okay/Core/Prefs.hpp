@@ -1,6 +1,6 @@
 #pragma once
 #include "okay/Math/Vec3.hpp"
-#include "okay/Render/Color.hpp"
+#include "okay/Math/Color.hpp"
 #include <functional>
 #include <string>
 #include <unordered_map>

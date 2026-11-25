@@ -4,7 +4,7 @@
 #   cmake --build <dir> --config Release
 # Written from Microsoft's CMake "cross compiling for UWP" notes and the Windows SDK's C++/WinRT, DXGI and Direct3D 11 headers.
 cmake_minimum_required(VERSION 3.20)
-project(OkaySpaceXbox LANGUAGES CXX)   # C is enabled only in engine mode (the engine's ufbx.c), below
+project(OkaySpaceXbox LANGUAGES CXX)   # C is enabled only in engine mode, below (the engine has no C file since ufbx was deleted; kept until a Windows build confirms it can go)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
     message(FATAL_ERROR "This is the Xbox UWP app. Configure it with -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0 "
@@ -44,7 +44,7 @@ set_source_files_properties(shaders/tri_vs.hlsl PROPERTIES VS_SHADER_TYPE Vertex
 set_source_files_properties(shaders/tri_ps.hlsl PROPERTIES VS_SHADER_TYPE Pixel  VS_SHADER_MODEL 4.0 VS_SHADER_ENTRYPOINT main VS_SHADER_ENABLE_DEBUG OFF)
 target_compile_options(OkaySpaceXbox PRIVATE /EHsc /permissive- /W4)
 target_compile_definitions(OkaySpaceXbox PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS _SILENCE_CXX20_U8PATH_DEPRECATION_WARNING)   # belt and braces for the STL1011 error
-target_include_directories(OkaySpaceXbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)   # XboxLog.hpp only (pure C++, no engine)
+target_include_directories(OkaySpaceXbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)   # XboxLog.hpp, XboxTextEntry.hpp only (pure C++, no engine)
 target_link_libraries(OkaySpaceXbox PRIVATE WindowsApp d3d11 dxgi)   # WindowsApp.lib is the UWP umbrella import library
 
 # Engine mode (default OFF: the shell then only draws the test triangle). ON runs an exported game from package\Data through

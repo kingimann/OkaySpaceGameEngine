@@ -1,4 +1,5 @@
 #include "okay/Components/VoxelTerrain.hpp"
+#include "okay/Core/Base64.hpp"
 #include "okay/Components/LODGroup.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Occluder.hpp"
@@ -1413,17 +1414,6 @@ void VoxelTerrain::Apply() {
 }
 
 // ===================== Compact density (de)serialization ====================
-namespace {
-const char* kB64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-int B64Val(char c) {
-    if (c >= 'A' && c <= 'Z') return c - 'A';
-    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-    if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '+') return 62; if (c == '/') return 63;
-    return -1;
-}
-} // namespace
-
 std::string VoxelTerrain::EncodeDensity() const {
     // Quantize each density to a signed byte over [-clamp, clamp] (only values
     // near the iso surface drive the mesh, so clamping the far field is lossless
@@ -1435,30 +1425,13 @@ std::string VoxelTerrain::EncodeDensity() const {
         int q = (int)std::lround(v * 127.0f);
         bytes.push_back((unsigned char)(q & 0xFF));
     }
-    std::string out; out.reserve((bytes.size() + 2) / 3 * 4);
-    for (std::size_t i = 0; i < bytes.size(); i += 3) {
-        unsigned b0 = bytes[i];
-        unsigned b1 = (i + 1 < bytes.size()) ? bytes[i + 1] : 0;
-        unsigned b2 = (i + 2 < bytes.size()) ? bytes[i + 2] : 0;
-        unsigned n = (b0 << 16) | (b1 << 8) | b2;
-        out.push_back(kB64[(n >> 18) & 63]);
-        out.push_back(kB64[(n >> 12) & 63]);
-        out.push_back((i + 1 < bytes.size()) ? kB64[(n >> 6) & 63] : '=');
-        out.push_back((i + 2 < bytes.size()) ? kB64[n & 63] : '=');
-    }
-    return out;
+    return base64::Encode(bytes.data(), bytes.size());   // standard alphabet, '=' padded (okay/Core/Base64.hpp)
 }
 
 bool VoxelTerrain::DecodeDensity(const std::string& b64) {
     const float clamp = Clamp() + 1e-3f;
-    std::vector<unsigned char> bytes; bytes.reserve(b64.size() / 4 * 3);
-    unsigned acc = 0; int bits = 0;
-    for (char c : b64) {
-        if (c == '=' || c == '\n' || c == '\r' || c == ' ') continue;
-        int v = B64Val(c); if (v < 0) continue;
-        acc = ((acc << 6) | (unsigned)v) & 0xFFFFFFu; bits += 6;
-        if (bits >= 8) { bits -= 8; bytes.push_back((unsigned char)((acc >> bits) & 0xFF)); }
-    }
+    std::vector<unsigned char> bytes;
+    base64::DecodeLenient(b64, bytes);   // skips '=', line breaks and anything outside the alphabet, as before
     if (bytes.size() != density.size()) return false;
     for (std::size_t i = 0; i < bytes.size(); ++i) {
         signed char q = (signed char)bytes[i];

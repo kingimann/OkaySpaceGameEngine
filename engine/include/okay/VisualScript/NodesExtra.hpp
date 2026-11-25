@@ -9,6 +9,7 @@
 #include "okay/Core/ScriptPaths.hpp"
 #include "okay/VisualScript/VsRefs.hpp"
 #include "okay/VisualScript/VsWhole.hpp"
+#include "okay/VisualScript/VsFacing.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Core/SaveData.hpp"
@@ -654,14 +655,14 @@ struct CameraFollowNode : VsNode {   // in0 = object name, in1 = smoothing (unwi
 struct ParticlePlayNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
-        if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr) ps->playing = true;
+        if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr) ps->Play();   // a finished one-shot plays again
         return 0;
     }
 };
 struct ParticleStopNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
-        if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr) ps->playing = false;
+        if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr) ps->Stop();
         return 0;
     }
 };
@@ -894,7 +895,7 @@ struct Vec3MoreNode : VsNode {
             }
             case Op::Negate: return In(0, g, ctx).AsVec3() * -1.0f;
             case Op::Up:      return ctx.transform ? ctx.transform->Up()      : Vec3::Up;
-            case Op::Forward: return ctx.transform ? ctx.transform->Forward() : Vec3::Forward;
+            case Op::Forward: return VsFacing(ctx.transform);   // -Z, the way Look At turns it
             case Op::Right:   return ctx.transform ? ctx.transform->Right()   : Vec3::Right;
         }
         return Vec3::Zero;

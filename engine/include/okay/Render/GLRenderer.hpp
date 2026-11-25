@@ -23,6 +23,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Core/ImportSidecar.hpp"   // TextureSampling
+#include "okay/Render/GpuTexture.hpp"     // gputex::Caps: block-compressed (.dds) uploads
 #include "okay/Math/Mat4.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
@@ -70,6 +71,27 @@ public:
 
     /// Free all GL objects (call with the context current).
     void Destroy();
+
+    /// How one texture name went to the GPU (for tools, tests and the log).
+    struct TextureUploadInfo {
+        bool fromDds = false;      ///< a .dds file, or the compressed import copy of a picture set to `compress`
+        bool compressed = false;   ///< kept block-compressed on the GPU (glCompressedTexImage2D)
+        unsigned glFormat = 0;     ///< the GL internal format
+        int levels = 0;            ///< mip levels uploaded from the file (0: the ordinary RGBA8 path)
+        std::string note;          ///< why a compressed file was decoded on the CPU, when it was
+        int uploadedLevels = 0;    ///< mip levels on the GPU (our own gamma-correct chain for an ordinary picture)
+        std::size_t gpuBytes = 0;  ///< bytes of all uploaded levels (counted in MemoryTracker "Textures (GPU)")
+        std::uint64_t serial = 0;  ///< the TextureAsset serial uploaded; a new serial uploads again
+        int anisotropy = 1;        ///< anisotropic filtering level asked for (1 = off)
+    };
+    /// The GL texture for a material texture name, uploaded on first use like a draw does (0 when it cannot be
+    /// loaded). A GL context must be current.
+    unsigned int TextureId(const std::string& name) { return TextureFor(name); }
+    /// How that texture was uploaded; null until TextureId or a draw used it.
+    const TextureUploadInfo* UploadInfo(const std::string& name) const;
+    /// The current context's compressed texture support, from GL_VERSION and the extension list. Needs LoadGL.
+    /// The environment variable OKAY_GL_NO_COMPRESSED=1 makes the renderer ignore it (every .dds decoded on the CPU).
+    static gputex::Caps QueryTextureCaps();
 
 private:
     bool EnsureProgram();
@@ -147,6 +169,8 @@ private:
         m_uuVignette = -1, m_uuVignetteSmooth = -1, m_uuAspect = -1;
     int m_ufSrc = -1, m_ufTexel = -1;                                   // FXAA
     int m_udfSrc = -1, m_udfBlur = -1, m_udfDepth = -1, m_udfFocus = -1, m_udfRange = -1, m_udfFar = -1;   // DoF
+    unsigned int m_dofCopyProg = 0, m_dofBlurProg = 0;                 // DoF: premultiplied copy + blur (alpha kept)
+    int m_udcSrc = -1, m_udbSrc = -1, m_udbDir = -1;
     int m_udnSrc = -1, m_udnTexel = -1, m_udnThresh = -1, m_udnRadius = -1, m_udnSoft = -1;                                 // downsample
     unsigned int m_outFbo = 0, m_outTex = 0;                            // RGBA8 result of the chain
     unsigned int m_pingFbo[2] = {0, 0}, m_pingTex[2] = {0, 0};          // full-res RGBA8 pair (DoF / FXAA)
@@ -196,12 +220,18 @@ private:
     std::vector<unsigned int> m_indices;    // scratch index buffer
     std::vector<std::uint32_t> m_pixels;    // read-back result
 
-    // GPU texture cache (texture name/path -> GL texture object), shared shape with
-    // the software renderer's cache so the same material textures appear.
+    // GPU texture cache: texture name -> GL texture object, made from the shared TextureAsset (TextureAsset.hpp) and
+    // uploaded again only when that asset's serial changes. Names the texture library lets go of are freed here too.
     std::unordered_map<std::string, unsigned int> m_texCache;
     std::unordered_map<unsigned int, TextureSampling> m_texInfo;   // GL texture -> its import Filter / Wrap / Mipmaps
-    unsigned m_texGen = 0;   // TextureCacheGeneration() the cache above was built for
+    unsigned m_texGen = 0;      // TextureCacheGeneration() the cache above was checked against
+    unsigned m_texLibGen = 0;   // textures::Generation() likewise
+    void FreeTexture(const std::string& name);
     unsigned int TextureFor(const std::string& name);   // upload-on-first-use
+    unsigned int UploadDdsTexture(const std::string& name, TextureSampling& ts, TextureUploadInfo& info);   // .dds / compressed copy; 0 = not one
+    std::unordered_map<std::string, TextureUploadInfo> m_uploadInfo;   // texture name -> how it was uploaded
+    gputex::Caps m_texCaps;
+    bool m_texCapsKnown = false;
 
     // Per-mesh vertex-buffer cache: static geometry (imported OBJ/glTF models,
     // primitives) is expanded + uploaded ONCE and redrawn from GPU memory, instead
@@ -234,6 +264,31 @@ private:
     void BindSkin(const SkinnedMesh* skin, const Mesh& mesh, MeshVB* mv, int uSkin, int uBones);
     std::vector<std::array<int, 3>> m_slotRanges;         // filled by BuildExpandedVerts when it grouped the triangles by material slot
     void BuildExpandedVerts(const Mesh& mesh, bool groupBySlot = false);   // fill m_verts (14 floats/vertex)
+
+    // ---- Custom (.okayshader) surfaces: one program per shader file -----------------------------
+    // The program is the main mesh shader with the generated okaySurface() spliced in (OKAY_SURFACE).
+    // While a custom object draws, its per-object uniform locations are swapped into the m_u* members
+    // (so the draw code above sets them unchanged), and the frame's uniforms are copied over from
+    // m_prog once per frame.
+    struct CustomGL {
+        unsigned int prog = 0;
+        std::uint64_t generation = 0;
+        bool failed = false, unlit = false, writesAlpha = false;
+        std::vector<int> locs;                     // per-object uniforms (kObjUniforms order)
+        int uTime = -1;
+        std::vector<int> uProps;                   // one per property
+        std::vector<std::string> texNames;         // unused (kept for the slot count)
+        int texCount = 0;
+        struct Copy { int from = -1, to = -1; unsigned type = 0; };
+        std::vector<Copy> frameCopies;             // m_prog -> prog, everything not per-object
+        unsigned syncedFrame = ~0u;
+    };
+    std::unordered_map<std::string, CustomGL> m_custom;   // key: shader path
+    unsigned int m_whiteTex = 0;                          // 1x1 white: an unbound custom texture
+    CustomGL* EnsureCustomProgram(const std::string& path);
+    void BeginCustom(CustomGL& cp, const MeshRenderer& mr);
+    void EndCustom(CustomGL& cp);
+    void SwapObjectLocations(CustomGL& cp);
 };
 
 } // namespace okay

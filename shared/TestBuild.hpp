@@ -124,9 +124,10 @@ inline std::string ShortSha(std::string_view sha) {
     const std::string c = CleanSha(sha);
     return c.empty() ? std::string() : c.substr(0, 7);
 }
-/// The branch as people say it: the agents' "claude/" and "claude2/" folders are dropped ("claude/walk-vs-run" -> "walk-vs-run").
+/// The branch as people say it: the lane folders "claude/", "claude2/", "claude3/" and "grok/" are dropped ("claude/walk-vs-run" -> "walk-vs-run").
+/// Same list as docs/lanes.json and scripts/dev_index.py (scripts/tests/test_collab.py checks that every lane prefix is here).
 inline std::string DisplayBranch(std::string_view branch) {
-    for (const std::string_view prefix : {std::string_view("claude2/"), std::string_view("claude/")})
+    for (const std::string_view prefix : {std::string_view("claude2/"), std::string_view("claude3/"), std::string_view("grok/"), std::string_view("claude/")})
         if (branch.size() > prefix.size() && branch.compare(0, prefix.size(), prefix) == 0) return std::string(branch.substr(prefix.size()));
     return std::string(branch);
 }

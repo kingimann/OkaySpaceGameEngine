@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Input/Input.hpp"
@@ -40,7 +41,8 @@ public:
         // Seed the angles from the object's current rotation so it doesn't snap.
         if (transform) {
             Vec3 f = transform->localRotation * Vec3{0, 0, -1};
-            yaw   = Mathf::Atan2(f.x, -f.z) * Mathf::Rad2Deg;
+            // A turn of +yaw about Y faces (-sin yaw, 0, -cos yaw), so yaw = atan2(-f.x, -f.z).
+            yaw   = Mathf::Atan2(-f.x, -f.z) * Mathf::Rad2Deg;
             pitch = Mathf::Atan2(f.y, std::sqrt(f.x * f.x + f.z * f.z)) * Mathf::Rad2Deg;
         }
         if (lockCursor) Cursor::Capture(true);
@@ -73,21 +75,22 @@ public:
         Quat rot = transform->localRotation;
         Vec3 fwd = rot * Vec3{0, 0, -1};
         Vec3 right = rot * Vec3::Right;
-        Vec2 axis = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
+        Vec2 axis = uiBlocked ? Vec2{0, 0} : InputActions::ControlMove();   // freeze while a bag is open; "Move" once rebound
         Vec2 pad  = uiBlocked ? Vec2{0, 0} : Input::GamepadAxis();
         if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) axis = pad;
 
         float upDown = 0.0f;
-        if (!uiBlocked && upKey   && Input::GetKey(upKey))   upDown += 1.0f;
-        if (!uiBlocked && downKey && Input::GetKey(downKey)) upDown -= 1.0f;
-        if (!uiBlocked && Input::GetKey(Input::KeyCtrl))     upDown -= 1.0f;   // Ctrl always descends
+        // Rise is "Jump", Ctrl is "Crouch" (both follow a rebind); downKey ('c') has no action and stays that key.
+        if (!uiBlocked && InputActions::ControlKey("Jump", upKey))             upDown += 1.0f;
+        if (!uiBlocked && downKey && Input::GetKey(downKey))                   upDown -= 1.0f;
+        if (!uiBlocked && InputActions::ControlKey("Crouch", Input::KeyCtrl)) upDown -= 1.0f;   // Ctrl always descends
 
         Vec3 dir = fwd * axis.y + right * axis.x + Vec3{0, 1, 0} * upDown;
         float len = dir.Magnitude();
         if (len > 1e-4f) dir = dir * (1.0f / len);
 
         float speed = moveSpeed;
-        if (sprintKey && Input::GetKey(sprintKey)) speed *= boostMultiplier;
+        if (InputActions::ControlKey("Sprint", sprintKey)) speed *= boostMultiplier;
 
         // Ease toward the target velocity for a smooth, weighty glide.
         Vec3 target = dir * speed;

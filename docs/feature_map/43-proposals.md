@@ -7,6 +7,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 43. 2D tools
 
 ### 43.1 Tilemaps and tilesets
+- **System:** Sprites and Tilemaps
 - **What:** Paint 2D levels with tiles taken from a picture (a tileset), with auto-tiling edges, layers and a brush, instead of coloured squares.
 - **Parts:**
   - 43.1.1 Tilemap data - `Components/Tilemap` - grid of integer tile ids with cell and world conversion; saved in scene files as a `tilemap` record
@@ -28,6 +29,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "let me paint tilemaps with a tileset image"; "add auto-tiling for ground edges"
 
 ### 43.2 Sprite atlas and slicing
+- **System:** Sprites and Tilemaps
 - **What:** Cut a sprite sheet into frames you can name and reuse, pack many sprites into one atlas, and edit pivots.
 - **Parts:**
   - 43.2.1 Sprite sub-region - `Components/SpriteRenderer` - `uvMin` and `uvMax` pick part of a texture; sorting layer and order, flip, pixel filter
@@ -49,6 +51,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a sprite slicing window that finds frames automatically"
 
 ### 43.3 Sprite animation tools
+- **System:** Sprites and Tilemaps
 - **What:** Make and edit flip-book animations for sprites with a timeline, events and previews, and state changes between clips.
 - **Parts:**
   - 43.3.1 Flip-book animator - `Components/SpriteAnimator` - frame list or atlas cells at a frame rate, loop flag, named clips switched with `Play(name)`
@@ -69,6 +72,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a sprite animation editor with frame events"
 
 ### 43.4 2D lighting
+- **System:** Lighting and Shadows
 - **What:** Lights, shadows and normal maps that affect sprites, for moody or dynamic 2D scenes.
 - **Parts:**
   - 43.4.1 Light components - `Components/Light` - point, spot and directional lights exist for 3D meshes
@@ -90,6 +94,8 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 44. Level design and blockout tools
 
 ### 44.1 Blockout and grid placement
+- **System:** Level Design Tools - Grey-box shapes on a grid, a prefab brush and measuring tools for laying out levels.
+  Home: `editor/LevelTools.cpp`, `engine/include/okay/Components/BlockBuilder.hpp`. Entry: `editor/LevelTools.hpp`. Also called: grey-box, blockout, prefab brush, BlockBuilder.
 - **What:** Build rough level layouts fast from simple shapes on a grid with consistent units, then replace them with real art.
 - **Parts:**
   - 44.1.1 Primitives - `Render/Mesh`, `editor/main.cpp` - GameObject menu cubes, planes, spheres, cylinders and more with `Mesh::FromName`
@@ -111,6 +117,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a blockout palette with snapping walls and floors"
 
 ### 44.2 Prefab brush and placement
+- **System:** Level Design Tools
 - **What:** Paint or stamp many prefab instances into a level (props, trees, lamps) with random rotation, scale and spacing.
 - **Parts:**
   - 44.2.1 Drop from Project - `editor/main.cpp` - drag a prefab into the scene to place one copy
@@ -132,6 +139,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a prefab brush that paints props on surfaces"
 
 ### 44.3 Measuring and level metrics
+- **System:** Level Design Tools
 - **What:** Rulers, size labels and reference figures so a designer can judge distances, jump heights and room sizes.
 - **Parts:**
   - 44.3.1 Stats panel - `editor/main.cpp` - object and triangle counts only
@@ -152,6 +160,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a measure tool to the Scene view"
 
 ### 44.4 Volumes and zones
+- **System:** Volumes and Zones
 - **What:** The first step of this proposal is built (11.12): one region shape with checkpoint, kill, force, atmosphere and ambience kinds. What remains is the zone kinds that have nothing under them yet.
 - **Parts:**
   - 44.4.1 Trigger colliders - `Physics/Collider3D`, `Physics/Collider2D` - `isTrigger` colliders send enter and exit events
@@ -175,6 +184,8 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 45. Open-world streaming and world partition
 
 ### 45.1 Cell authoring and baking
+- **System:** World Streaming - Splits a big world into cells that load and unload as the player moves (mostly planned).
+  Home: `engine/include/okay/Components/WorldStreamer.hpp`, `engine/include/okay/Optimize/StreamingGrid.hpp`, `engine/include/okay/Texture/Stream.hpp`, `engine/include/okay/Audio/AudioStream.hpp`. Entry: `engine/include/okay/Components/WorldStreamer.hpp`. Also called: WorldStreamer, World Partition, level streaming, chunk streaming, StreamingGrid. Fix: One okay/World folder (architecture.md): WorldStreamer, StreamingGrid, Texture/Stream, Audio/AudioStream.
 - **What:** Split one big scene into streaming cells and manage them, so open worlds can be edited as one map.
 - **Parts:**
   - 45.1.1 Streamer component - `Components/WorldStreamer` - loads cells named `<prefix>_<x>_<z>.okayprefab` within a radius of the camera; hysteresis between load and unload radius
@@ -195,6 +206,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a Split Scene Into Cells command"
 
 ### 45.2 Large world coordinates
+- **System:** World Streaming
 - **What:** Keep things precise and smooth very far from the origin (physics and rendering jitter at large distances).
 - **Parts:**
   - 45.2.1 Single precision positions - `Math/Vec3`, `Scene/Transform` - float vectors throughout
@@ -214,6 +226,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a floating origin option for huge worlds"
 
 ### 45.3 Streaming-aware systems
+- **System:** World Streaming
 - **What:** Make navigation, physics, AI and saves behave correctly while parts of the world come and go.
 - **Parts:**
   - 45.3.1 Navmesh - `AI/NavMeshSurface` - bake and queries on loaded geometry; no per-cell navmesh
@@ -234,6 +247,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "make saves remember the state of cells that are unloaded"
 
 ### 45.4 Distant scenery
+- **System:** Culling and LOD
 - **What:** Cheap stand-ins for faraway objects (impostors, merged far meshes, terrain horizon) so the view distance can be large.
 - **Parts:**
   - 45.4.1 Fog and sky - `Render/Atmosphere` - fog hides the far plane (area 2.4)
@@ -255,6 +269,8 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 46. Replay system
 
 ### 46.1 Input recording and playback
+- **System:** Replays - Records a play session and plays it back, including killcams (planned).
+  Home: `engine/include/okay/Core/FrameRecord.hpp`. Entry: `engine/include/okay/Core/FrameRecord.hpp`. Also called: replay, killcam, FrameRecord, recording.
 - **What:** Record a play session as the inputs players gave, and play it back to watch it again, test it or share it.
 - **Parts:**
   - 46.1.1 Per-tick input structure - `Net/PlayerInput` - `PlayerInput` and `IPlayerSim`: a controller that reads input in one place and moves only through `Simulate(input, dt)`
@@ -277,11 +293,12 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "record inputs and replay a level deterministically"
 
 ### 46.2 State replay and killcam
+- **System:** Replays
 - **What:** Replay from recorded object states (snapshots) instead of inputs, to show the last seconds of a match from any camera.
 - **Parts:**
-  - 46.2.1 Network snapshots and deltas - `Net/NetDelta`, `ECS/NetWorldSync` - the engine already produces compact state snapshots for networking
+  - 46.2.1 Network snapshots and deltas - `Net/NetDelta` - the engine already produces compact state snapshots for networking
   - 46.2.2 Rewind raycast - `Net/NetworkManager` - the host keeps about a second of object poses and `RewindRaycast` shoots against where things were at an earlier net tick (lag compensation)
-- **Code:** `Net/NetDelta`, `ECS/NetWorldSync`, `Net/NetworkManager`
+- **Code:** `Net/NetDelta`, `Net/NetworkManager`
 - **API:** `NetDelta`, `NetworkManager::RewindRaycast`
 - **Editor:** none
 - **Docs:** `docs/online/dedicated-server.md`
@@ -296,6 +313,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "keep the last 10 seconds of snapshots for a killcam"
 
 ### 46.3 Replay files and viewer
+- **System:** Replays
 - **What:** A saved replay file and a player with pause, speed and camera controls.
 - **Parts:**
   - 46.3.1 File format and viewer - `-` - not built
@@ -316,6 +334,8 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 47. Mod support
 
 ### 47.1 Mod loader and content overrides
+- **System:** Mods - Lets players add or replace game content from a Mods folder (planned).
+  Home: `engine/include/okay/Core/DataPack.hpp`. Entry: `engine/include/okay/Core/DataPack.hpp`. Also called: mod support, Mods folder, modding.
 - **What:** Let players add or replace game content (items, scenes, art, scripts) from a Mods folder without editing the game.
 - **Parts:**
   - 47.1.1 Data-driven content - `Inventory/ItemDatabase`, `Core/DataAsset` - items, recipes and loot tables are text files the game loads; `.okaydata` assets
@@ -337,6 +357,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "load extra content from a Mods folder with a manifest"
 
 ### 47.2 Mod scripting sandbox
+- **System:** Mods
 - **What:** Run scripts from mods safely: limit file access, network and engine calls.
 - **Parts:**
   - 47.2.1 Script languages - `Scripting/OkayScriptVM` - scripts have builtins for files and networking
@@ -356,6 +377,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a permission list to the script hosts"
 
 ### 47.3 Mod packaging and sharing
+- **System:** Mods
 - **What:** Package, publish and install mods through the launcher's Marketplace or Workshop.
 - **Parts:**
   - 47.3.1 Workshop and Marketplace - `Platform/Workshop`, `launcher/main.cpp` - published items with a download URL; kinds include games and templates
@@ -377,6 +399,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 48. Crash reporting and telemetry
 
 ### 48.1 Crash reports
+- **System:** Crash Reports and Telemetry
 - **What:** When the editor or a shipped game crashes, keep a useful report and make it easy to send, so bugs can be found without guessing.
 - **Parts:**
   - 48.1.1 Editor crash handlers - `shared/CrashHandler.hpp`, `shared/CrashContext.hpp`, `editor/main.cpp` - a Windows exception filter, `std::terminate` and abort hooks and a Linux/macOS signal handler write `okay_crash.txt` (version, build, last step, exception, module, OS, CPU, RAM, GPU, scene name, the last steps, the last 200 Console lines, backtrace) and append `okay_crashlog.txt`
@@ -399,6 +422,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a crash handler and report file to the player"; "add a Send report button with the last log lines"
 
 ### 48.2 Opt-in analytics events
+- **System:** Crash Reports and Telemetry
 - **What:** Count how people use a game or the editor (levels reached, features used) to find problems, only with the player's consent.
 - **Parts:**
   - 48.2.1 Local play time - `launcher/main.cpp` - the launcher credits play time per game on the machine (not sent)
@@ -419,6 +443,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add an opt-in analytics event API with a local log first"
 
 ### 48.3 Consent and privacy
+- **System:** Crash Reports and Telemetry
 - **What:** Ask before anything is collected or sent, explain what, and let the player change their mind.
 - **Parts:**
   - 48.3.1 Prefs and settings screens - `Core/Prefs`, `Components/SettingsScreen` - a place to store a consent flag and show a toggle
@@ -439,6 +464,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a consent dialog and a Prefs flag that gates uploads"
 
 ### 48.4 Collection backend and dashboards
+- **System:** Crash Reports and Telemetry
 - **What:** Where reports and events go and how the team reads them.
 - **Parts:**
   - 48.4.1 SQL for the existing backend - `docs/sql/*` - accounts, social and match tables for Supabase
@@ -461,6 +487,8 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 49. Cloud services
 
 ### 49.1 Cloud saves
+- **System:** Cloud Services - Cloud saves, online leaderboards and settings changed from a server.
+  Home: `engine/include/okay/Platform/PlayFab/`, `engine/include/okay/Platform/Steam/`. Entry: `engine/include/okay/Platform/PlayFab/PlayFab.hpp`. Also called: cloud saves, PlayFab, leaderboards, remote config.
 - **What:** Keep a player's saves in the cloud so progress follows them between machines.
 - **Parts:**
   - 49.1.1 Steam Cloud calls - `Platform/Steam/SteamService` - `CloudWrite`, `CloudRead`, `CloudHasFile`, `CloudDelete`, `CloudFiles` (default implementations do nothing); script `steam_cloud_write`, `steam_cloud_read`
@@ -482,6 +510,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "sync save slots to Steam Cloud"
 
 ### 49.2 Leaderboards
+- **System:** Cloud Services
 - **What:** Per-game score tables, with friends and global views.
 - **Parts:**
   - 49.2.1 Steam leaderboards - `Platform/Steam/SteamService` - `LeaderboardEntry`, script `steam_leaderboard`, `steam_leaderboard_top`
@@ -502,6 +531,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add one Leaderboards API over Steam and PlayFab"
 
 ### 49.3 Achievements sync
+- **System:** Profiles and Achievements
 - **What:** Unlock achievements in a game and have them show in the launcher, on Steam and across machines.
 - **Parts:**
   - 49.3.1 Local achievements - `Platform/Achievements` - cross-game list stored per user on the machine, read by games and the launcher, works offline
@@ -522,6 +552,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "make one unlock call that updates local and Steam achievements"
 
 ### 49.4 Remote configuration
+- **System:** Cloud Services
 - **What:** Change game settings (prices, event dates, feature switches) from a server without shipping a new build.
 - **Parts:**
   - 49.4.1 Cvars (merged #571) - `Core/Cvar` - named settings that can be loaded from a file or the command line; no remote source
@@ -543,6 +574,8 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 50. Capture and media
 
 ### 50.1 Screenshots
+- **System:** Screenshots and Video - Screenshots, photo mode and video recording and playback.
+  Home: `engine/include/okay/Core/ImageWrite.hpp`. Entry: `engine/include/okay/Core/ImageWrite.hpp`. Also called: screenshot, photo mode, video recording.
 - **What:** Save a picture of the game or editor view with one key, at a chosen size.
 - **Parts:**
   - 50.1.1 Image saving - `Graphics/Image` - `Image::SavePNG`
@@ -564,6 +597,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add an F12 screenshot key to the player"
 
 ### 50.2 Photo mode
+- **System:** Screenshots and Video
 - **What:** Pause the game and move a free camera with filters to take nice pictures.
 - **Parts:**
   - 50.2.1 Free camera - `Components/FreeRoamController` - a fly camera driven by mouse and keys
@@ -585,6 +619,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a Photo Mode component"
 
 ### 50.3 Video recording
+- **System:** Screenshots and Video
 - **What:** Record gameplay or a cutscene to a video file or image sequence.
 - **Parts:**
   - 50.3.1 Frame capture - `-` - see 50.1; no recorder, encoder or image-sequence writer was found
@@ -604,6 +639,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add an image-sequence recorder for trailers"
 
 ### 50.4 Video playback
+- **System:** Screenshots and Video
 - **What:** Play video files in the game (intro logos, cutscenes, menu backgrounds).
 - **Parts:**
   - 50.4.1 Audio decoding - `Audio/AudioClip`, `Audio/AudioMixer` - WAV, OGG and MP3 audio; no video decoder
@@ -624,6 +660,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 51. Onboarding, tutorials and samples
 
 ### 51.1 Sample gallery
+- **System:** Examples
 - **What:** Ready-made example projects people can open, play, take apart and learn from.
 - **Parts:**
   - 51.1.1 Create page templates - `launcher/main.cpp` - 17 templates in groups including "Game kits" and "Examples and systems" (Main Menu and more)
@@ -645,10 +682,11 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a What to look at note to each template"
 
 ### 51.2 Guided tutorials in the editor
+- **System:** Docs
 - **What:** Step-by-step lessons inside the editor that highlight the thing to click and check that it was done.
 - **Parts:**
   - 51.2.1 Written guide - `docs/gameplay/making_a_game.md` - first game from an empty editor to a shipped one
-  - 51.2.2 Language tutorial - `editor/main.cpp` - the Scripting Reference window has a "Learn the basics" section teaching OkayScript from scratch
+  - 51.2.2 Language tutorial - `editor/ScriptAssist.cpp` - the Scripting Reference window has a "Learn the basics" section teaching OkayScript from scratch
   - 51.2.3 Interactive lessons - `-` - not built (no step highlighting or task checking found)
 - **Code:** `editor/main.cpp`
 - **API:** Help > Scripting Reference
@@ -665,6 +703,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a guided first lesson that checks my steps"
 
 ### 51.3 Welcome screen and tips
+- **System:** Docs
 - **What:** A first-run screen with what to do next, recent projects and tips, and hints shown at the right moment.
 - **Parts:**
   - 51.3.1 Splash and Console welcome - `editor/main.cpp` - a splash screen and a "Welcome to OkaySpace" log line; per-project splash is customizable (25.2)
@@ -685,6 +724,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a Getting Started panel to empty projects"
 
 ### 51.4 Contextual help
+- **System:** Docs
 - **What:** Open the right documentation page from any component or window.
 - **Parts:**
   - 51.4.1 Help menu - `editor/main.cpp` - Scripting Reference, Keyboard Shortcuts, About; node help in the visual script editor
@@ -707,6 +747,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 52. Simulation extras (cloth, soft bodies, fluids, destruction, crowds)
 
 ### 52.1 Cloth and hair
+- **System:** Physics
 - **What:** Fabric, flags, capes and hair that move with physics.
 - **Parts:**
   - 52.1.1 Verlet particle chain - `Components/Ragdoll` - the ragdoll uses Verlet particles with distance constraints; the solver could be a base
@@ -727,6 +768,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a simple flag and rope component on the ragdoll's solver"
 
 ### 52.2 Soft bodies
+- **System:** Physics
 - **What:** Jelly-like or squishy objects that deform and recover.
 - **Parts:**
   - 52.2.1 Rigid bodies only - `Physics/Physics3D`, `Physics/Rigidbody3D` - no deformable body found
@@ -745,6 +787,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a spring-mass soft body component"
 
 ### 52.3 Fluids
+- **System:** Terrain and Water
 - **What:** Water that flows and splashes, beyond a flat animated surface.
 - **Parts:**
   - 52.3.1 Water surface - `Components/Water` - animated wave mesh with reflection, buoyancy and drag on rigid bodies (`fluidDensity`)
@@ -765,6 +808,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "make objects create ripples in the Water surface"
 
 ### 52.4 Destruction
+- **System:** Destruction and Projectiles
 - **What:** Break objects into pieces and collapse structures.
 - **Parts:**
   - 52.4.1 Block destruction - `Components/Destructible` - fracture of cube blocks into debris, structural collapse of unsupported blocks, destruction gun
@@ -784,6 +828,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "let any mesh with pre-split pieces break on impact"
 
 ### 52.5 Crowds
+- **System:** Physics
 - **What:** Hundreds of moving characters that avoid each other cheaply.
 - **Parts:**
   - 52.5.1 Agent avoidance - `Components/NavMeshAgent`, `Components/NavMeshObstacle` - reciprocal velocity sampling among nearby agents and obstacles; per-agent priority
@@ -805,6 +850,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 53. Day-night and weather hooks
 
 ### 53.1 Time-of-day events and gameplay
+- **System:** Sky, Weather and Time of Day
 - **What:** Let games react to the time of day (open and close shops, NPC schedules, spawn night enemies, light street lamps).
 - **Parts:**
   - 53.1.1 Day-night clock - `Components/DayNightCycle` - 24-hour clock, sun rotation, light and sky colours; `Hour()`, `IsNight()`, `Elevation()`, `SetTime`, `AddHours`; publishes `hour` as a saved value
@@ -825,6 +871,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add hour-changed and sunset events to the day-night cycle"
 
 ### 53.2 Weather gameplay effects
+- **System:** Sky, Weather and Time of Day
 - **What:** Rain, snow and storms that change the game, not only the picture (wet surfaces, cold, slippery ground, noise, visibility).
 - **Parts:**
   - 53.2.1 Weather presets - `Environment/Weather` - rain, snow and storm rigs from particles that follow the camera, with fade between presets, lightning flashes and optional thunder; `weather_set` in scripts
@@ -845,6 +892,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "make rain lower temperature and add wetness in survival"
 
 ### 53.3 Time and weather authoring
+- **System:** Sky, Weather and Time of Day
 - **What:** Scrub time of day and weather in the editor and plan transitions.
 - **Parts:**
   - 53.3.1 Live preview in the editor - `editor/main.cpp` - weather ticks in edit mode for a live preview; `OKAY_UI_WEATHER` dev hook
@@ -866,6 +914,8 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 54. Debug draw, gizmos, dev console and cheats
 
 ### 54.1 Debug draw API
+- **System:** Debug Draw and Dev Console - Lines and shapes drawn to show what the game is thinking, component gizmos, and an in-game console for commands.
+  Home: `engine/include/okay/Debug/`, `engine/include/okay/Core/DebugOverlay.hpp`. Entry: `engine/include/okay/Debug/Debug.hpp`. Also called: debug draw, gizmos, dev console, cheats, DebugOverlay. Fix: Move Core/DebugOverlay.hpp into Debug/ with a forwarding header.
 - **What:** Draw lines, boxes, spheres and text in the world from code or scripts for a moment, to see what the game is thinking.
 - **Parts:**
   - 54.1.1 Physics debug records - `Physics/PhysicsDebug` - the physics step records contacts and query rays for the editor overlay when `Collect()` is on
@@ -886,6 +936,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a debug draw API and draw_line script builtin"
 
 ### 54.2 Gizmos for components
+- **System:** Debug Draw and Dev Console
 - **What:** Components draw their own helper shapes in the Scene view (ranges, directions, areas), selected or always.
 - **Parts:**
   - 54.2.1 Hard-coded gizmos - `editor/main.cpp` - the editor draws helpers for specific components in its own code (selection outline, camera and light shapes under the View option "Gizmos", IK target helpers, spline handles)
@@ -906,6 +957,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "let components draw their own gizmos in the Scene view"
 
 ### 54.3 In-game dev console
+- **System:** Debug Draw and Dev Console
 - **What:** A console inside the running game to type commands, change settings and print values.
 - **Parts:**
   - 54.3.1 Console and cvar model (merged #571) - `Core/Console`, `Core/Cvar` - command registry (`help`, `list`, `set`, `get`, `toggle`, `reset`, `history`, `echo`), cvars with ranges and change callbacks, saved persistent values, command-line `--cvar`
@@ -926,6 +978,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add an in-game console toggled with the tilde key"
 
 ### 54.4 Cheats and debug commands
+- **System:** Debug Draw and Dev Console
 - **What:** Commands such as god mode, give item, teleport, set time, available in development builds.
 - **Parts:**
   - 54.4.1 Cvar convention - `Core/Cvar` - the docs use `cheat.god` as an example name; no cheat is implemented
@@ -948,6 +1001,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 55. Script debugging and profiling
 
 ### 55.1 Breakpoints and stepping for text scripts
+- **System:** OkayScript
 - **What:** Pause an OkayScript or C#-style script on a line, step, and see variables, like the visual script debugger already does for graphs.
 - **Parts:**
   - 55.1.1 Visual-script debugger - `Components/ActionList`, `VisualScript/VsDebug`, `editor/GameFiber.hpp` - breakpoints on nodes freeze the game mid-frame; continue and step; red badges
@@ -968,6 +1022,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add breakpoints and stepping to OkayScript in the script editor"
 
 ### 55.2 Watch and call stack
+- **System:** OkayScript
 - **What:** See variable values and the chain of calls that led here.
 - **Parts:**
   - 55.2.1 Live variables - `editor/main.cpp` - the Variables window and the Inspector show visual-script variables and script fields live in Play
@@ -987,6 +1042,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "show local variables and the call stack when a script is paused"
 
 ### 55.3 Script profiler
+- **System:** OkayScript
 - **What:** Show which scripts and functions take the time.
 - **Parts:**
   - 55.3.1 Aggregate script time - `Scene/Scene` - the profiler times `Scripts.Update` and `Scripts.LateUpdate` as one block each
@@ -1008,6 +1064,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 56. Platform targets and store packaging
 
 ### 56.1 Desktop packaging
+- **System:** Windows Build and Installer
 - **What:** Produce installable builds for Windows, Linux and macOS with the right layout, icons and installers.
 - **Parts:**
   - 56.1.1 Windows - `scripts/build-windows-dist.sh`, `scripts/okayspace-installer.nsi`, `scripts/build-windows-exe.sh` - cross-compiled with MinGW from Linux, NSIS installer, release workflow `windows-exe`
@@ -1029,6 +1086,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add a Linux AppImage export to Build Game"
 
 ### 56.2 Mobile packaging
+- **System:** Web, Mobile and Console Export
 - **What:** Build, sign and ship Android and iOS apps with touch controls and store assets.
 - **Parts:**
   - 56.2.1 Android export - `editor/main.cpp`, `docs/platform/web_mobile.md` - Build Settings writes game data into an assets folder plus a guide; the APK is built by the author in Android Studio
@@ -1049,6 +1107,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "build an Android APK in CI from the sample project"
 
 ### 56.3 Web export
+- **System:** Web, Mobile and Console Export
 - **What:** Run games in a browser.
 - **Parts:**
   - 56.3.1 Emscripten build - `scripts/build-web.sh`, `player/CMakeLists.txt` - the player runs under `emscripten_set_main_loop`; CI job `web-build`
@@ -1068,6 +1127,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "make Build Game produce an itch.io-ready zip for web"
 
 ### 56.4 Console platforms
+- **System:** Web, Mobile and Console Export
 - **What:** Ship on game consoles.
 - **Parts:**
   - 56.4.1 No console support - `-` - no console SDK code, renderer backends or input mappings were found
@@ -1088,6 +1148,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 57. Documentation website
 
 ### 57.1 Static documentation site
+- **System:** Docs
 - **What:** A searchable website built from the Markdown docs, with navigation by topic, versions and links.
 - **Parts:**
   - 57.1.1 Markdown docs - `docs/README.md` - 59 Markdown pages in `docs/` grouped by task, with an index
@@ -1108,6 +1169,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "publish the docs folder as a searchable site"
 
 ### 57.2 Generated API reference
+- **System:** Docs
 - **What:** Reference pages for C++ and script APIs that are always in step with the code.
 - **Parts:**
   - 57.2.1 Engine API from the binding table - `Script/EngineApi`, `docs/engine_api.md` - one entry per script property and method
@@ -1128,9 +1190,10 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "generate the builtins reference from the code"
 
 ### 57.3 Docs inside the editor
+- **System:** Docs
 - **What:** Search and read documentation without leaving the editor.
 - **Parts:**
-  - 57.3.1 Scripting Reference window - `editor/main.cpp` - reference and tutorial for scripts
+  - 57.3.1 Scripting Reference window - `editor/ScriptAssist.cpp` - reference and tutorial for scripts
   - 57.3.2 Docs window for the rest - `-` - not built
 - **Code:** `editor/main.cpp`
 - **API:** Help > Scripting Reference
@@ -1149,6 +1212,8 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 58. Performance budgets and CI perf tests
 
 ### 58.1 Performance budgets
+- **System:** Performance Checks - Frame-time and size budgets, benchmark scenes and build-size reports.
+  Home: `engine/include/okay/Optimize/SceneOptimizationReport.hpp`. Entry: `engine/include/okay/Optimize/SceneOptimizationReport.hpp`. Also called: perf budgets, benchmarks, build size report.
 - **What:** Written limits (frame time, draw calls, memory, triangles) per scene or system, checked automatically.
 - **Parts:**
   - 58.1.1 Optimization report thresholds (#574) - `Optimize/SceneOptimizationReport` - `OptSettings` with a draw call budget, texture memory budget and similar limits
@@ -1169,6 +1234,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "define per-scene performance budgets and check them"
 
 ### 58.2 Benchmark scenes
+- **System:** Performance Checks
 - **What:** A fixed set of scenes that stress the engine (many objects, many lights, UI, agents) and print numbers.
 - **Parts:**
   - 58.2.1 UI render benchmark - `tests/test_ui_render_bench.cpp` - 500 widgets in a 10k-object scene must use under 1 ms CPU, under 20 draw calls and no allocations after warm-up (timing only in optimized builds)
@@ -1191,6 +1257,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "add benchmark scenes for objects, lights and agents"
 
 ### 58.3 Performance regression guard in CI
+- **System:** CI
 - **What:** CI compares benchmark results with a baseline and fails or warns when something gets slower.
 - **Parts:**
   - 58.3.1 CI jobs - `.github/workflows/ci.yml` - five jobs run tests, sanitizers, Windows cross-build, export check and web build; none records timings
@@ -1210,6 +1277,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Ask me like:** "record benchmark numbers in CI and show them in the summary"
 
 ### 58.4 Build size and load-time report
+- **System:** Performance Checks
 - **What:** Tell the author how big a build is, what is largest, and how long scenes take to load.
 - **Parts:**
   - 58.4.1 Build size report - `editor/main.cpp` - Build Game counts total bytes, splits by category (exe, libraries, data, assets) and lists files by size; reports missing referenced files

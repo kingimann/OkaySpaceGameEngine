@@ -1,5 +1,10 @@
 #include "parser.hpp"
 
+#include <algorithm>
+
+// The syntax tree and what parser.cpp shares with check.cpp and lower.cpp (docs/engine/modularization_plan.md, batch T1).
+#include "ast.hpp"
+
 #include "files.hpp"
 #include "ir.hpp"
 #include "preproc.hpp"
@@ -19,507 +24,9 @@
 #include <vector>
 
 namespace okaycc {
-namespace {
-
-struct Expr;
-struct Type;
-struct Stmt;
-struct Decl;
-
-struct Param {
-    std::string name;
-    std::unique_ptr<Type> type;
-    int bits = -1;
-    std::string mangled;
-    int vslot = -1;     // virtual function table slot, or -1
-    bool pure = false;  // declared "= 0"
-    Param();
-    Param(Param&&) noexcept;
-    Param& operator=(Param&&) noexcept;
-    ~Param();
-};
-
-struct Expr {
-    enum class Kind {
-        Int, Char, String, Name, Unary, Pre, Post, Bin, Assign, Cond, Call, Index, Member, Cast, Comma, Brace,
-        Float
-    } kind = Kind::Int;
-    std::string text;
-    std::uint64_t ival = 0;
-    bool litUnsigned = false;
-    int litRank = 0;
-    int line = 1;
-    int col = 1;
-    std::string file;
-    std::vector<std::unique_ptr<Expr>> kids;
-    std::unique_ptr<Type> ty;
-    std::unique_ptr<Type> checked;
-    Expr();
-    ~Expr();
-};
-
-struct Type {
-    enum class Kind {
-        Void, Char, Short, Int, Long, Pointer, Array, Function, Struct, Union, Float, Double, Bool, Reference
-    } kind = Kind::Int;
-    std::string tag;
-    bool unsign = false;
-    std::unique_ptr<Type> inner;
-    std::unique_ptr<Expr> bound;
-    bool unsized = false;
-    bool variadic = false;
-    std::vector<Param> params;
-    // Class facts (Itanium C++ ABI layout of a single-inheritance class).
-    std::string base;                // tag of the one base class, or empty
-    bool nonpod = false;             // not "POD for the purpose of layout"
-    bool hasVptr = false;            // has a vtable pointer at offset 0
-    bool needCtor = false;           // construction must run code
-    bool needDtor = false;           // destruction must run code
-    std::vector<std::string> vslots; // symbol that fills each vtable slot ("" = null)
-    Type();
-    ~Type();
-};
-
-struct Decl {
-    std::string name;
-    std::unique_ptr<Type> type;
-    std::unique_ptr<Expr> init;
-    std::unique_ptr<Stmt> body;
-    bool function = false;
-    bool isExtern = false;
-    bool isStatic = false;
-    std::string asmName;
-    std::string methodTag;
-    std::vector<std::string> vt;  // vtable image: symbol per 8-byte slot ("" = zero)
-    int line = 1;
-    int col = 1;
-    std::string file;
-    Decl();
-    ~Decl();
-};
-
-struct Stmt {
-    enum class Kind { Block, Expr, Empty, Return, If, While, For, Break, Continue, Decl, Switch, Case, Goto, Label } kind =
-        Kind::Empty;
-    int line = 1;
-    int col = 1;
-    std::string file;
-    std::vector<std::unique_ptr<Stmt>> stmts;
-    std::unique_ptr<Expr> expr;
-    std::unique_ptr<Expr> expr2;
-    std::unique_ptr<Expr> expr3;
-    std::unique_ptr<Stmt> thenS;
-    std::unique_ptr<Stmt> elseS;
-    std::unique_ptr<Stmt> body;
-    std::unique_ptr<Stmt> init;
-    std::unique_ptr<Decl> decl;
-    Stmt();
-    ~Stmt();
-};
-
-struct Tu {
-    std::vector<std::unique_ptr<Decl>> decls;
-};
-
-Param::Param() = default;
-Param::Param(Param&&) noexcept = default;
-Param& Param::operator=(Param&&) noexcept = default;
-Param::~Param() = default;
-Expr::Expr() = default;
-Expr::~Expr() = default;
-Type::Type() = default;
-Type::~Type() = default;
-Decl::Decl() = default;
-Decl::~Decl() = default;
-Stmt::Stmt() = default;
-Stmt::~Stmt() = default;
-
-std::unique_ptr<Type> cloneType(const Type& t);
-std::unique_ptr<Expr> cloneExpr(const Expr& e);
-
-std::unique_ptr<Expr> cloneExpr(const Expr& e) {
-    auto n = std::make_unique<Expr>();
-    n->kind = e.kind;
-    n->text = e.text;
-    n->ival = e.ival;
-    n->litUnsigned = e.litUnsigned;
-    n->litRank = e.litRank;
-    n->line = e.line;
-    n->col = e.col;
-    n->file = e.file;
-    for (const auto& k : e.kids)
-        if (k) n->kids.push_back(cloneExpr(*k));
-    if (e.ty) n->ty = cloneType(*e.ty);
-    if (e.checked) n->checked = cloneType(*e.checked);
-    return n;
-}
-
-std::unique_ptr<Type> cloneType(const Type& t) {
-    auto n = std::make_unique<Type>();
-    n->kind = t.kind;
-    n->tag = t.tag;
-    n->unsign = t.unsign;
-    n->unsized = t.unsized;
-    n->variadic = t.variadic;
-    n->base = t.base;
-    n->nonpod = t.nonpod;
-    n->hasVptr = t.hasVptr;
-    n->needCtor = t.needCtor;
-    n->needDtor = t.needDtor;
-    n->vslots = t.vslots;
-    if (t.inner) n->inner = cloneType(*t.inner);
-    if (t.bound) n->bound = cloneExpr(*t.bound);
-    for (const Param& p : t.params) {
-        Param c;
-        c.name = p.name;
-        c.bits = p.bits;
-        c.mangled = p.mangled;
-        c.vslot = p.vslot;
-        c.pure = p.pure;
-        if (p.type) c.type = cloneType(*p.type);
-        n->params.push_back(std::move(c));
-    }
-    return n;
-}
-
-std::string exprStr(const Expr& e);
-std::string typeStr(const Type& t);
-
-std::string esc(const std::string& in) {
-    std::string o;
-    for (unsigned char c : in) {
-        if (c == '\\') o += "\\\\";
-        else if (c == '"') o += "\\\"";
-        else if (c == '\n') o += "\\n";
-        else if (c == '\t') o += "\\t";
-        else if (c == '\r') o += "\\r";
-        else if (c < 32 || c > 126) {
-            char b[8];
-            std::snprintf(b, sizeof b, "\\x%02x", c);
-            o += b;
-        } else {
-            o.push_back(static_cast<char>(c));
-        }
-    }
-    return o;
-}
-
-std::string typeStr(const Type& t) {
-    switch (t.kind) {
-    case Type::Kind::Void: return "void";
-    case Type::Kind::Char: return "char";
-    case Type::Kind::Short: return "short";
-    case Type::Kind::Int: return "int";
-    case Type::Kind::Long: return "long";
-    case Type::Kind::Float: return "float";
-    case Type::Kind::Double: return "double";
-    case Type::Kind::Bool: return "bool";
-    case Type::Kind::Reference: return "(ref " + typeStr(*t.inner) + ")";
-    case Type::Kind::Pointer: return "(ptr " + typeStr(*t.inner) + ")";
-    case Type::Kind::Array: {
-        std::string b = (t.unsized || !t.bound) ? "*" : exprStr(*t.bound);
-        return "(arr " + typeStr(*t.inner) + " " + b + ")";
-    }
-    case Type::Kind::Struct:
-        return t.tag.empty() ? "(struct)" : "(struct " + t.tag + ")";
-    case Type::Kind::Union:
-        return t.tag.empty() ? "(union)" : "(union " + t.tag + ")";
-    case Type::Kind::Function: {
-        std::string s = "(fn " + typeStr(*t.inner);
-        for (const Param& p : t.params) {
-            s += " (p ";
-            s += p.name.empty() ? "_" : p.name;
-            s += " ";
-            s += p.type ? typeStr(*p.type) : "?";
-            s += ")";
-        }
-        s += ")";
-        return s;
-    }
-    }
-    return "?";
-}
-
-std::string mangleNested(const std::string& qualified);
-std::string mangleTag(const std::string& qualified) { return mangleNested(qualified); }
-
-std::string mangleType(const Type& t) {
-    switch (t.kind) {
-    case Type::Kind::Void: return "v";
-    case Type::Kind::Bool: return "b";
-    case Type::Kind::Char: return t.unsign ? "h" : "c";
-    case Type::Kind::Short: return t.unsign ? "t" : "s";
-    case Type::Kind::Int: return t.unsign ? "j" : "i";
-    case Type::Kind::Long: return t.unsign ? "m" : "l";
-    case Type::Kind::Float: return "f";
-    case Type::Kind::Double: return "d";
-    case Type::Kind::Pointer: return t.inner ? "P" + mangleType(*t.inner) : "Pv";
-    case Type::Kind::Reference: return t.inner ? "R" + mangleType(*t.inner) : "Rv";
-    case Type::Kind::Struct:
-    case Type::Kind::Union:
-        if (t.tag.empty()) return "i";
-        if (t.tag.find("::") == std::string::npos) return mangleTag(t.tag);
-        return "N" + mangleTag(t.tag) + "E";
-    default: return "i";
-    }
-}
-
-// One source-level name part. A class template instance is spelled "Box<i,Pc>" where each
-// argument is already mangled; it becomes <name> I <args> E (Itanium C++ ABI 5.1.5).
-// Itanium C++ ABI 5.1.5 operator names (<operator-name>).
-std::string operatorCode(const std::string& op) {
-    static const char* const kTable[][2] = {
-        {"+", "pl"}, {"-", "mi"}, {"*", "ml"}, {"/", "dv"}, {"%", "rm"}, {"&", "an"}, {"|", "or"}, {"^", "eo"},
-        {"=", "aS"}, {"+=", "pL"}, {"-=", "mI"}, {"*=", "mL"}, {"/=", "dV"}, {"%=", "rM"}, {"&=", "aN"},
-        {"|=", "oR"}, {"^=", "eO"}, {"<<", "ls"}, {">>", "rs"}, {"<<=", "lS"}, {">>=", "rS"}, {"==", "eq"},
-        {"!=", "ne"}, {"<", "lt"}, {">", "gt"}, {"<=", "le"}, {">=", "ge"}, {"!", "nt"}, {"&&", "aa"},
-        {"||", "oo"}, {"++", "pp"}, {"--", "mm"}, {",", "cm"}, {"->", "pt"}, {"()", "cl"}, {"[]", "ix"},
-        {"~", "co"},
-    };
-    for (const auto& row : kTable)
-        if (op == row[0]) return row[1];
-    return "nw";
-}
-
-std::string manglePart(const std::string& part) {
-    if (part.compare(0, 9, "operator ") == 0) return "cv" + part.substr(9);  // conversion function
-    if (part.compare(0, 8, "operator") == 0 && part.size() > 8) return operatorCode(part.substr(8));
-    std::size_t lt = part.find('<');
-    if (lt == std::string::npos || part.back() != '>') return std::to_string(part.size()) + part;
-    std::string name = part.substr(0, lt);
-    std::string args = part.substr(lt + 1, part.size() - lt - 2);
-    std::string joined;
-    for (char c : args)
-        if (c != ',') joined += c;
-    return std::to_string(name.size()) + name + "I" + joined + "E";
-}
-
-std::string mangleNested(const std::string& qualified) {
-    std::string out;
-    std::size_t i = 0;
-    while (i < qualified.size()) {
-        std::size_t j = qualified.find("::", i);
-        std::string part = qualified.substr(i, j == std::string::npos ? std::string::npos : j - i);
-        out += manglePart(part);
-        if (j == std::string::npos) break;
-        i = j + 2;
-    }
-    return out;
-}
-
-std::string mangleFunc(const std::string& qualified, const Type& fn) {
-    std::string params;
-    if (fn.params.empty()) params = "v";
-    else {
-        for (const Param& p : fn.params)
-            params += p.type ? mangleType(*p.type) : "i";
-    }
-    return "_ZN" + mangleNested(qualified) + "E" + params;
-}
-
-// Itanium C++ ABI 5.1.4: a constructor is <nested-name> C1 and a destructor D1 (complete
-// object) or D0 (deleting). "ctor" is the two letters to put after the class name.
-std::string mangleSpecial(const std::string& cls, const char* kind, const Type& fn) {
-    std::string params;
-    if (fn.params.empty()) params = "v";
-    else {
-        for (const Param& p : fn.params) params += p.type ? mangleType(*p.type) : "i";
-    }
-    return "_ZN" + mangleNested(cls) + kind + "E" + params;
-}
-
-std::string mangleData(const std::string& qualified) { return "_ZN" + mangleNested(qualified) + "E"; }
-
-std::string exprStr(const Expr& e) {
-    auto kid = [&](std::size_t i) { return i < e.kids.size() && e.kids[i] ? exprStr(*e.kids[i]) : "(int 0)"; };
-    switch (e.kind) {
-    case Expr::Kind::Int: return "(int " + std::to_string(e.ival) + ")";
-    case Expr::Kind::Float: return "(float " + std::to_string(e.ival) + ")";
-    case Expr::Kind::Char: return "(char " + std::to_string(e.ival) + ")";
-    case Expr::Kind::String: return "(string \"" + esc(e.text) + "\")";
-    case Expr::Kind::Name: return "(name " + e.text + ")";
-    case Expr::Kind::Unary:
-        if (e.text == "sizeof" && e.ty && e.kids.empty()) return "(sizeof " + typeStr(*e.ty) + ")";
-        return "(unary " + e.text + " " + kid(0) + ")";
-    case Expr::Kind::Pre: return "(pre " + e.text + " " + kid(0) + ")";
-    case Expr::Kind::Post: return "(post " + e.text + " " + kid(0) + ")";
-    case Expr::Kind::Bin: return "(bin " + e.text + " " + kid(0) + " " + kid(1) + ")";
-    case Expr::Kind::Assign: return "(assign " + e.text + " " + kid(0) + " " + kid(1) + ")";
-    case Expr::Kind::Cond: return "(cond " + kid(0) + " " + kid(1) + " " + kid(2) + ")";
-    case Expr::Kind::Index: return "(index " + kid(0) + " " + kid(1) + ")";
-    case Expr::Kind::Member: return "(member " + e.text + " " + kid(0) + " " + kid(1) + ")";
-    case Expr::Kind::Cast: return "(cast " + (e.ty ? typeStr(*e.ty) : "?") + " " + kid(0) + ")";
-    case Expr::Kind::Call: {
-        std::string s = "(call";
-        for (const auto& k : e.kids)
-            if (k) s += " " + exprStr(*k);
-        s += ")";
-        return s;
-    }
-    case Expr::Kind::Comma: {
-        std::string s = "(comma";
-        for (const auto& k : e.kids)
-            if (k) s += " " + exprStr(*k);
-        s += ")";
-        return s;
-    }
-    case Expr::Kind::Brace: {
-        std::string s = "(brace";
-        for (const auto& k : e.kids)
-            if (k) s += " " + exprStr(*k);
-        s += ")";
-        return s;
-    }
-    }
-    return "(int 0)";
-}
-
-struct Pr {
-    std::string s;
-    void line(int ind, const std::string& text) {
-        s.append(static_cast<std::size_t>(ind) * 2, ' ');
-        s += text;
-        s += "\n";
-    }
-};
-
-void printStmt(Pr& p, int ind, const Stmt& st);
-void printDecl(Pr& p, int ind, const Decl& d);
-
-void printParams(Pr& p, int ind, const std::vector<Param>& params) {
-    if (params.empty()) {
-        p.line(ind, "(params)");
-        return;
-    }
-    p.line(ind, "(params");
-    for (const Param& param : params) {
-        p.line(ind + 1, "(p " + (param.name.empty() ? "_" : param.name) + " " +
-                            (param.type ? typeStr(*param.type) : "?") + ")");
-    }
-    p.line(ind, ")");
-}
-
-void printDecl(Pr& p, int ind, const Decl& d) {
-    if (d.function) {
-        const Type* ret = d.type && d.type->inner ? d.type->inner.get() : nullptr;
-        p.line(ind, std::string(d.body ? "(fn " : "(fdecl ") + d.name);
-        p.line(ind + 1, "(type " + (ret ? typeStr(*ret) : "?") + ")");
-        if (d.type) printParams(p, ind + 1, d.type->params);
-        else printParams(p, ind + 1, {});
-        if (d.body) {
-            p.line(ind + 1, "(body");
-            printStmt(p, ind + 2, *d.body);
-            p.line(ind + 1, ")");
-        }
-        p.line(ind, ")");
-        return;
-    }
-    p.line(ind, "(var " + d.name);
-    p.line(ind + 1, "(type " + (d.type ? typeStr(*d.type) : "?") + ")");
-    if (d.init) {
-        p.line(ind + 1, "(init");
-        p.line(ind + 2, exprStr(*d.init));
-        p.line(ind + 1, ")");
-    }
-    p.line(ind, ")");
-}
-
-void printStmt(Pr& p, int ind, const Stmt& st) {
-    switch (st.kind) {
-    case Stmt::Kind::Block:
-        p.line(ind, "(block");
-        for (const auto& s : st.stmts)
-            if (s) printStmt(p, ind + 1, *s);
-        p.line(ind, ")");
-        break;
-    case Stmt::Kind::Empty:
-        p.line(ind, "(empty)");
-        break;
-    case Stmt::Kind::Expr:
-        p.line(ind, "(expr");
-        if (st.expr) p.line(ind + 1, exprStr(*st.expr));
-        p.line(ind, ")");
-        break;
-    case Stmt::Kind::Return:
-        p.line(ind, "(return");
-        if (st.expr) p.line(ind + 1, exprStr(*st.expr));
-        p.line(ind, ")");
-        break;
-    case Stmt::Kind::If:
-        p.line(ind, "(if");
-        if (st.expr) p.line(ind + 1, exprStr(*st.expr));
-        if (st.thenS) printStmt(p, ind + 1, *st.thenS);
-        if (st.elseS) {
-            p.line(ind + 1, "(else");
-            printStmt(p, ind + 2, *st.elseS);
-            p.line(ind + 1, ")");
-        }
-        p.line(ind, ")");
-        break;
-    case Stmt::Kind::While:
-        p.line(ind, "(while");
-        if (st.expr) p.line(ind + 1, exprStr(*st.expr));
-        if (st.body) printStmt(p, ind + 1, *st.body);
-        p.line(ind, ")");
-        break;
-    case Stmt::Kind::For:
-        p.line(ind, "(for");
-        if (!st.init) p.line(ind + 1, "(init none)");
-        else {
-            p.line(ind + 1, "(init");
-            printStmt(p, ind + 2, *st.init);
-            p.line(ind + 1, ")");
-        }
-        if (!st.expr) p.line(ind + 1, "(cond none)");
-        else p.line(ind + 1, "(cond " + exprStr(*st.expr) + ")");
-        if (!st.expr2) p.line(ind + 1, "(step none)");
-        else p.line(ind + 1, "(step " + exprStr(*st.expr2) + ")");
-        if (st.body) printStmt(p, ind + 1, *st.body);
-        p.line(ind, ")");
-        break;
-    case Stmt::Kind::Break:
-        p.line(ind, "(break)");
-        break;
-    case Stmt::Kind::Continue:
-        p.line(ind, "(continue)");
-        break;
-    case Stmt::Kind::Decl:
-        if (st.decl) printDecl(p, ind, *st.decl);
-        break;
-    case Stmt::Kind::Switch:
-        p.line(ind, "(switch");
-        if (st.expr) p.line(ind + 1, exprStr(*st.expr));
-        for (const auto& c : st.stmts)
-            if (c) printStmt(p, ind + 1, *c);
-        p.line(ind, ")");
-        break;
-    case Stmt::Kind::Case:
-        if (st.expr) p.line(ind, "(case " + exprStr(*st.expr));
-        else p.line(ind, "(default");
-        if (st.body) printStmt(p, ind + 1, *st.body);
-        p.line(ind, ")");
-        break;
-    case Stmt::Kind::Goto:
-        p.line(ind, "(goto " + (st.expr ? st.expr->text : "?") + ")");
-        break;
-    case Stmt::Kind::Label:
-        p.line(ind, "(label " + (st.expr ? st.expr->text : "?") + ")");
-        break;
-    }
-}
-
-std::string printTu(const Tu& tu) {
-    if (tu.decls.empty()) return "(tu)\n";
-    Pr p;
-    p.line(0, "(tu");
-    for (const auto& d : tu.decls)
-        if (d) printDecl(p, 1, *d);
-    p.line(0, ")");
-    return p.s;
-}
-
+namespace compiler {
 struct Mod {
-    enum class Kind { Ptr, Arr, Func, Ref } kind = Kind::Ptr;
+    enum class Kind { Ptr, Arr, Func, Ref, RRef } kind = Kind::Ptr;
     std::unique_ptr<Expr> bound;
     bool unsized = false;
     bool variadic = false;
@@ -534,166 +41,6 @@ struct Parsed {
     std::vector<Mod> mods;
 };
 
-std::map<std::string, std::unique_ptr<Type>>& canonStructs();
-bool sameType(const Type& a, const Type& b);
-
-// ---- Templates ----
-// A function or class template is kept as a range of tokens. An instance is made by parsing those
-// tokens again with each template parameter bound (a type parameter becomes a typedef, a value
-// parameter becomes a constant). This is the model of ISO/IEC 14882 [temp.inst]. Function
-// templates called without explicit arguments are instantiated after the checker deduces the
-// arguments from the call, then the whole file is parsed again with the new requests.
-struct TArg {
-    std::unique_ptr<Type> type;
-    std::int64_t value = 0;
-    bool isValue = false;
-};
-
-std::vector<TArg> cloneArgs(const std::vector<TArg>& in) {
-    std::vector<TArg> out;
-    for (const TArg& a : in) {
-        TArg c;
-        if (a.type) c.type = cloneType(*a.type);
-        c.value = a.value;
-        c.isValue = a.isValue;
-        out.push_back(std::move(c));
-    }
-    return out;
-}
-
-struct TemplateSig {
-    std::vector<std::string> names;
-    std::vector<bool> isType;
-    std::unique_ptr<Type> fn;  // prototype, a type parameter T appears as a struct with tag "\x02T"
-};
-
-std::map<std::string, TemplateSig>& funcTemplateSigs() {
-    static std::map<std::string, TemplateSig> m;
-    return m;
-}
-
-struct InstReq {
-    std::string tmpl;
-    std::vector<TArg> args;
-    std::string name;
-};
-
-std::vector<InstReq>& instRequests() {
-    static std::vector<InstReq> v;
-    return v;
-}
-
-bool& ehActive() {
-    static bool on = false;
-    return on;
-}
-
-bool& forceExceptions() {
-    static bool force = false;
-    return force;
-}
-
-bool& instDirty() {
-    static bool d = false;
-    return d;
-}
-
-// Where the Itanium-style mangled type that starts at s[j] ends: a builtin letter, P/R and a type,
-// <length><name> (a class, possibly an instance "Box<...>" counted whole), or Li<n>E. Returns j when
-// there is no type there.
-std::size_t mangledEnd(const std::string& s, std::size_t j) {
-    if (j >= s.size()) return j;
-    char c = s[j];
-    if (c == 'P' || c == 'R') {
-        std::size_t k = mangledEnd(s, j + 1);
-        return k == j + 1 ? j : k;
-    }
-    if (c == 'L') {
-        std::size_t k = s.find('E', j);
-        return k == std::string::npos ? j : k + 1;
-    }
-    if (c >= '0' && c <= '9') {
-        std::size_t k = j;
-        std::size_t n = 0;
-        while (k < s.size() && s[k] >= '0' && s[k] <= '9') n = n * 10 + static_cast<std::size_t>(s[k++] - '0');
-        return k + n <= s.size() ? k + n : j;
-    }
-    if (std::string("vbchstijlmfd").find(c) != std::string::npos) return j + 1;
-    return j;
-}
-
-// The type a mangled string names (builtin letters, pointers and class names).
-std::unique_ptr<Type> typeFromMangle(const std::string& m) {
-    auto make = [](Type::Kind k) {
-        auto t = std::make_unique<Type>();
-        t->kind = k;
-        return t;
-    };
-    if (m.empty()) return nullptr;
-    char c = m[0];
-    if (c == 'P' || c == 'R') {
-        auto inner = typeFromMangle(m.substr(1));
-        if (!inner) return nullptr;
-        auto t = make(c == 'P' ? Type::Kind::Pointer : Type::Kind::Reference);
-        t->inner = std::move(inner);
-        return t;
-    }
-    if (c >= '0' && c <= '9') {
-        std::size_t k = 0;
-        std::size_t n = 0;
-        while (k < m.size() && m[k] >= '0' && m[k] <= '9') n = n * 10 + static_cast<std::size_t>(m[k++] - '0');
-        auto t = make(Type::Kind::Struct);
-        t->tag = m.substr(k, n);
-        return t;
-    }
-    switch (c) {
-    case 'v': return make(Type::Kind::Void);
-    case 'b': return make(Type::Kind::Bool);
-    case 'c': return make(Type::Kind::Char);
-    case 'h': { auto t = make(Type::Kind::Char); t->unsign = true; return t; }
-    case 's': return make(Type::Kind::Short);
-    case 't': { auto t = make(Type::Kind::Short); t->unsign = true; return t; }
-    case 'i': return make(Type::Kind::Int);
-    case 'j': { auto t = make(Type::Kind::Int); t->unsign = true; return t; }
-    case 'l': return make(Type::Kind::Long);
-    case 'm': { auto t = make(Type::Kind::Long); t->unsign = true; return t; }
-    case 'f': return make(Type::Kind::Float);
-    case 'd': return make(Type::Kind::Double);
-    default: return nullptr;
-    }
-}
-
-std::string argMangle(const TArg& a) {
-    if (a.isValue) return "Li" + std::to_string(a.value) + "E";
-    return a.type ? mangleType(*a.type) : "i";
-}
-
-std::unique_ptr<Type> substType(const Type& pat, const TemplateSig& sig, const std::vector<TArg>& args) {
-    if (pat.kind == Type::Kind::Struct && !pat.tag.empty() && pat.tag[0] == '\x02') {
-        for (std::size_t i = 0; i < sig.names.size() && i < args.size(); ++i)
-            if (sig.names[i] == pat.tag.substr(1) && args[i].type) return cloneType(*args[i].type);
-        return cloneType(pat);
-    }
-    auto n = cloneType(pat);
-    if (pat.inner) n->inner = substType(*pat.inner, sig, args);
-    for (std::size_t i = 0; i < pat.params.size(); ++i)
-        if (pat.params[i].type) n->params[i].type = substType(*pat.params[i].type, sig, args);
-    return n;
-}
-
-// Name of a function template instance: _Z <name> I <arguments> E <parameter types>.
-std::string instFuncName(const std::string& tmpl, const TemplateSig& sig, const std::vector<TArg>& args) {
-    std::string out = "_Z" + mangleNested(tmpl) + "I";
-    for (const TArg& a : args) out += argMangle(a);
-    out += "E";
-    if (!sig.fn || sig.fn->params.empty()) return out + "v";
-    for (const Param& p : sig.fn->params) {
-        auto t = p.type ? substType(*p.type, sig, args) : nullptr;
-        out += t ? mangleType(*t) : "i";
-    }
-    return out;
-}
-
 class Parser {
 public:
     Parser(std::vector<Token> toks, Diagnostics& diags) : toks_(std::move(toks)), diags_(diags) {}
@@ -706,7 +53,8 @@ public:
             if (t.kind == Tok::Keyword && (t.text == "try" || t.text == "throw")) eh_ = true;
         while (!atEnd()) {
             std::size_t before = i_;
-            if (isKw("namespace")) parseNamespace(tu);
+            if (isKw("using")) parseUsing();
+            else if (isKw("namespace")) parseNamespace(tu);
             else if (isKw("template")) parseTemplate();
             else if (parseLinkage(tu)) {
             } else if (isUnsupported()) {
@@ -726,6 +74,10 @@ public:
         flushExtras(tu);
         emitGlobalObjects(tu);
         if (eh_) emitEhBuiltins(tu);
+        tu.lambdas = std::move(lambdas_);
+        tu.usingNs = usingNs_;
+        tu.usingDecl = usingDecl_;
+        lambdas_.clear();
         ehActive() = eh_;
         return tu;
     }
@@ -841,6 +193,9 @@ private:
     bool enumDef_ = false;
     std::vector<std::map<std::string, std::unique_ptr<Type>>> tscopes_;
     std::vector<std::string> ns_;
+    int anonNs_ = 0;
+    int bodyDepth_ = 0;  // inside a function body
+    bool cLink_ = false;  // inside extern "C"  // depth of unnamed namespaces around the current declaration
     std::set<std::string> implicitTags_;
     std::vector<std::unique_ptr<Decl>> extras_;
 
@@ -889,11 +244,24 @@ private:
             isKwTok(t, "extern") || isKwTok(t, "float") || isKwTok(t, "double") ||
             isKwTok(t, "const") || isKwTok(t, "volatile") || isKwTok(t, "static") ||
             isKwTok(t, "unsigned") || isKwTok(t, "signed") || isKwTok(t, "bool") ||
-            isKwTok(t, "typedef"))
+            isKwTok(t, "typedef") || isKwTok(t, "constexpr") || isKwTok(t, "inline") || isKwTok(t, "auto"))
             return true;
         if (t.kind == Tok::Ident && ctmpl_.count(t.text)) return true;
+        if (t.kind == Tok::Ident && &t >= toks_.data() && &t < toks_.data() + toks_.size()) {
+            std::size_t ti = tmplAfterNs(static_cast<std::size_t>(&t - toks_.data()), true);
+            if (ti && ti + 1 < toks_.size() && isP(toks_[ti + 1], "<")) return true;
+        }
+        if (t.kind == Tok::Ident && &t >= toks_.data() && &t < toks_.data() + toks_.size()) {
+            std::size_t qend = 0;
+            if (qualTypeAt(static_cast<std::size_t>(&t - toks_.data()), qend)) return true;
+        }
         if (t.kind != Tok::Ident || findTypedef(t.text) == nullptr) return false;
-        if (!implicitTags_.count(t.text)) return true;
+        if (!implicitTags_.count(t.text)) {
+            // E::e with E an enum (or another typedef that is not a class) is an expression.
+            const Token* tb = toks_.data();
+            if (&t >= tb && &t + 1 < tb + toks_.size() && isP(*(&t + 1), "::")) return false;
+            return true;
+        }
         // A struct tag used as a plain type name (C++). Where C would see a variable of the same
         // name, only treat it as a type when what follows can continue a declaration or a type.
         const Token* base = toks_.data();
@@ -902,8 +270,66 @@ private:
         if (idx + 1 >= toks_.size()) return true;
         const Token& n = toks_[idx + 1];
         if (n.kind == Tok::Ident) return true;
-        return n.kind == Tok::Punct && (n.text == "*" || n.text == "&" || n.text == ")" || n.text == "::" || n.text == ">");
+        if (n.kind == Tok::Punct && n.text == "::") {
+            // C::C( and C::~C( start a definition; C::member is an expression.
+            if (idx + 2 >= toks_.size()) return true;
+            const Token& n2 = toks_[idx + 2];
+            return isP(n2, "~") || (n2.kind == Tok::Ident && n2.text == t.text);
+        }
+        return n.kind == Tok::Punct && (n.text == "*" || n.text == "&" || n.text == "&&" || n.text == ")" || n.text == ">");
     }
+    // A qualified type name at token idx: N::C or N::M::C naming a class, or N::T naming a typedef
+    // declared while namespace N was open (typedef names are kept unqualified). end is set to the
+    // token after the name.
+    const Type* qualTypeAt(std::size_t idx, std::size_t& end) const {
+        if (idx + 2 >= toks_.size() || toks_[idx].kind != Tok::Ident || !isP(toks_[idx + 1], "::")) return nullptr;
+        std::string name = toks_[idx].text;
+        std::size_t j = idx + 1;
+        while (j + 1 < toks_.size() && isP(toks_[j], "::") && toks_[j + 1].kind == Tok::Ident) {
+            name += "::";
+            name += toks_[j + 1].text;
+            j += 2;
+        }
+        end = j;
+        for (std::size_t keep = ns_.size() + 1; keep-- > 0;) {
+            std::string q;
+            for (std::size_t k = 0; k < keep; ++k) q += ns_[k] + "::";
+            q += name;
+            auto it = structs_.find(q);
+            if (it != structs_.end() && it->second) return it->second.get();
+            std::size_t cut = q.rfind("::");
+            if (cut != std::string::npos && knownNs_.count(q.substr(0, cut))) {
+                if (const Type* td = findTypedef(q.substr(cut + 2))) return td;
+            }
+        }
+        return nullptr;
+    }
+    std::set<std::string> knownNs_{"std"};
+    // N::M::name where N::M is a namespace and name is a class template (classes) or a function
+    // template: the index of the token 'name', or 0. Templates are kept by their bare name.
+    std::size_t tmplAfterNs(std::size_t idx, bool classes) const {
+        if (idx + 2 >= toks_.size() || toks_[idx].kind != Tok::Ident || !isP(toks_[idx + 1], "::")) return 0;
+        std::string prefix = toks_[idx].text;
+        std::size_t j = idx;
+        while (j + 2 < toks_.size() && isP(toks_[j + 1], "::") && toks_[j + 2].kind == Tok::Ident) {
+            const std::string& nm = toks_[j + 2].text;
+            bool last = !(j + 3 < toks_.size() && isP(toks_[j + 3], "::"));
+            if (last || (classes ? ctmpl_.count(nm) : ftmpl_.count(nm))) {
+                if (!(classes ? ctmpl_.count(nm) : ftmpl_.count(nm))) return 0;
+                bool known = knownNs_.count(prefix) > 0;
+                for (std::size_t keep = ns_.size(); keep > 0 && !known; --keep) {
+                    std::string q;
+                    for (std::size_t k = 0; k < keep; ++k) q += ns_[k] + "::";
+                    known = knownNs_.count(q + prefix) > 0;
+                }
+                return known ? j + 2 : 0;
+            }
+            prefix += "::" + nm;
+            j += 2;
+        }
+        return 0;
+    }
+
     bool isUnsupported() const {
         if (atEnd() || cur().kind != Tok::Keyword) return false;
         return !isTypeKw(cur()) && !isKw("if") && !isKw("else") && !isKw("while") && !isKw("for") && !isKw("do") && !isKw("try") && !isKw("throw") &&
@@ -990,7 +416,175 @@ private:
         return t;
     }
 
+    // using X = T;  using namespace N;  using N::name;  ([dcl.typedef], [namespace.udir],
+    // [namespace.udecl]). An alias is a typedef. A using-directive is kept for the rest of the file
+    // (not only to the end of the block: a simplification) and searched after the scopes that
+    // contain a name; the checker searches it too. A using-declaration of a type is a typedef; of
+    // anything else, the checker maps the short name to the qualified one.
+    std::vector<std::string> usingNs_;
+    std::map<std::string, std::string> usingDecl_;
+    void parseUsing() {
+        advance();  // using
+        if (eatKw("namespace")) {
+            std::string name;
+            while (!atEnd() && cur().kind == Tok::Ident) {
+                name += cur().text;
+                advance();
+                if (!eatP("::")) break;
+                name += "::";
+            }
+            expectP(";", ";");
+            std::string full = name;
+            for (std::size_t keep = ns_.size() + 1; keep-- > 0;) {
+                std::string q;
+                for (std::size_t k = 0; k < keep; ++k) q += ns_[k] + "::";
+                if (knownNs_.count(q + name)) {
+                    full = q + name;
+                    break;
+                }
+            }
+            if (!knownNs_.count(full)) err("unknown namespace '" + name + "'");
+            else if (std::find(usingNs_.begin(), usingNs_.end(), full) == usingNs_.end()) usingNs_.push_back(full);
+            return;
+        }
+        if (!atEnd() && cur().kind == Tok::Ident && nextIs("=")) {
+            std::string name = cur().text;
+            advance();
+            advance();
+            auto t = parseTypeName();
+            expectP(";", ";");
+            addTypedef(name, std::move(t));
+            return;
+        }
+        eatKw("typename");
+        std::size_t qend = 0;
+        if (!atEnd() && cur().kind == Tok::Ident && nextIs("::")) {
+            if (const Type* qt = qualTypeAt(i_, qend)) {
+                std::string last = toks_[qend - 1].text;
+                auto t = cloneType(*qt);
+                i_ = qend;
+                expectP(";", ";");
+                addTypedef(last, std::move(t));
+                return;
+            }
+        }
+        std::string chain;
+        std::string last;
+        while (!atEnd() && cur().kind == Tok::Ident) {
+            last = cur().text;
+            chain += last;
+            advance();
+            if (!eatP("::")) break;
+            chain += "::";
+        }
+        expectP(";", ";");
+        if (!last.empty() && chain != last) {
+            usingDecl_[last] = chain;
+            if (!ns_.empty()) usingDecl_[qualify(last)] = chain;  // util::twice -> geo::twice
+        }
+    }
+
+    // [captures](params) mutable -> ret { body }. See LambdaInfo in ast.hpp.
+    std::vector<LambdaInfo> lambdas_;
+    std::unique_ptr<Expr> parseLambda() {
+        Token at = cur();
+        Pos pos = here();
+        advance();  // [
+        LambdaInfo li;
+        while (!atEnd() && !isP("]")) {
+            std::size_t before = i_;
+            if (eatP("&")) {
+                if (!atEnd() && cur().kind == Tok::Ident) {
+                    li.caps.emplace_back(cur().text, true);
+                    advance();
+                } else {
+                    li.mode = 1;
+                }
+            } else if (eatP("=")) {
+                li.mode = 2;
+            } else if (isKw("this")) {
+                li.caps.emplace_back("this", false);  // [this]: the pointer, by copy
+                advance();
+            } else if (!atEnd() && cur().kind == Tok::Ident) {
+                li.caps.emplace_back(cur().text, false);
+                advance();
+            }
+            if (!eatP(",") && !isP("]")) {
+                err("expected ']'");
+                break;
+            }
+            if (i_ == before) advance();
+        }
+        expectP("]", "]");
+        std::vector<Param> params;
+        if (eatP("(")) parseParams(params);
+        while (isKw("mutable") || isKw("noexcept") || isKw("constexpr")) advance();
+        std::unique_ptr<Type> ret = eatP("->") ? parseTypeName() : autoType();
+        std::string sfx;
+        for (char ch : (toks_.empty() ? std::string("t") : toks_[0].file))
+            sfx += std::isalnum(static_cast<unsigned char>(ch)) ? ch : '_';
+        // Reserve this lambda's slot before its body is read: a lambda inside the body takes the
+        // next one (the index names the closure class and the function).
+        std::size_t idx = lambdas_.size();
+        lambdas_.emplace_back();
+        li.tag = "__closure_" + sfx + "_" + std::to_string(idx);
+        auto fn = std::make_unique<Decl>();
+        fn->name = "__lambda_" + sfx + "_" + std::to_string(idx);
+        fn->function = true;
+        fn->isStatic = true;
+        fn->line = pos.line;
+        fn->col = pos.col;
+        fn->file = pos.file;
+        auto ft = ty(Type::Kind::Function);
+        ft->inner = std::move(ret);
+        Param self;
+        self.name = "__self";
+        auto cls = ty(Type::Kind::Struct);
+        cls->tag = li.tag;
+        self.type = ty(Type::Kind::Pointer);
+        self.type->inner = std::move(cls);
+        ft->params.push_back(std::move(self));
+        for (auto& q : params) ft->params.push_back(std::move(q));
+        fn->type = std::move(ft);
+        if (!isP("{")) {
+            err("expected a lambda body");
+            lambdas_[idx] = std::move(li);
+            return zeroAt();
+        }
+        fn->body = parseBody(fn->type->inner.get());
+        li.fn = std::move(fn);
+        lambdas_[idx] = std::move(li);
+        auto e = ex(Expr::Kind::Name, at);
+        e->text = "\x01" "lambda:" + std::to_string(idx);
+        return e;
+    }
+
+    // auto ([dcl.spec.auto]): a placeholder the checker replaces with the type of the initializer.
+    std::unique_ptr<Type> autoType() {
+        auto t = ty(Type::Kind::Struct);
+        t->tag = "\x03" "auto";
+        return t;
+    }
+
+    // The base type with a leading const recorded on it (const B, const char): overload ranking
+    // and template deduction need it ([over.ics.rank], [temp.deduct.call]).
     std::unique_ptr<Type> parseBase() {
+        std::size_t start = i_;
+        auto t = parseBase0();
+        if (t) {
+            int depth = 0;
+            for (std::size_t k = start; k < i_ && k < toks_.size(); ++k) {
+                if (isP(toks_[k], "<")) ++depth;
+                else if (isP(toks_[k], ">")) --depth;
+                else if (isP(toks_[k], ">>")) depth -= 2;
+                else if (depth == 0 && (isKwTok(toks_[k], "const") || isKwTok(toks_[k], "constexpr"))) t->cnst = true;
+            }
+        }
+        return t;
+    }
+
+    std::unique_ptr<Type> parseBase0() {
+        if (eatKw("auto")) return autoType();
         if (isKw("struct") || isKw("union") || isKw("class")) return parseStructType();
         if (isKw("enum")) return parseEnum();
         if (eatKw("bool")) {
@@ -1036,9 +630,19 @@ private:
                 any = true;
                 continue;
             }
-            if (eatKw("const") || eatKw("volatile")) {
+            if (eatKw("const") || eatKw("volatile") || eatKw("constexpr") || eatKw("inline")) {
                 qualOnly = true;
                 continue;
+            }
+            if (!any && isKw("auto")) {
+                advance();
+                return autoType();
+            }
+            if (!any && isKw("bool")) {
+                advance();
+                auto t = ty(Type::Kind::Bool);
+                t->unsign = true;
+                return t;
             }
             if (eatKw("void")) {
                 sawVoid = true;
@@ -1066,9 +670,20 @@ private:
             t->unsign = uns;
             return t;
         }
+        if (!atEnd() && cur().kind == Tok::Ident && nextIs("::")) {
+            std::size_t ti = tmplAfterNs(i_, true);
+            if (ti && ti + 1 < toks_.size() && isP(toks_[ti + 1], "<")) i_ = ti;  // std::vector<int>
+        }
         if (!atEnd() && cur().kind == Tok::Ident && ctmpl_.count(cur().text) &&
             (!findTypedef(cur().text) || nextIs("<")))
             return instantiateClass(cur().text);
+        if (!atEnd() && cur().kind == Tok::Ident && nextIs("::")) {
+            std::size_t qend = 0;
+            if (const Type* qt = qualTypeAt(i_, qend)) {
+                i_ = qend;
+                return cloneType(*qt);
+            }
+        }
         if (!atEnd() && cur().kind == Tok::Ident) {
             const Type* td = findTypedef(cur().text);
             if (td) {
@@ -1085,9 +700,19 @@ private:
         return ty(Type::Kind::Int);
     }
 
+    // enum E { ... }, and the C++ forms enum class E : base { ... } (ISO/IEC 14882 [dcl.enum]). An
+    // enumeration is an int here. Its name is a type name. The enumerators of an unscoped enum are
+    // names of the enclosing scope and also E::e; those of a scoped enum (enum class) are only E::e.
     std::unique_ptr<Type> parseEnum() {
         advance();
-        if (!atEnd() && cur().kind == Tok::Ident) advance();
+        bool scoped = eatKw("class") || eatKw("struct");
+        std::string ename;
+        if (!atEnd() && cur().kind == Tok::Ident) {
+            ename = cur().text;
+            advance();
+        }
+        if (eatP(":")) parseBase();  // the underlying type: read, the enum stays an int
+        if (!ename.empty()) addTypedef(ename, ty(Type::Kind::Int));
         if (!eatP("{")) return ty(Type::Kind::Int);
         std::int64_t next = 0;
         while (!atEnd() && !isP("}")) {
@@ -1105,7 +730,14 @@ private:
                     next = -static_cast<std::int64_t>(e->kids[0]->ival);
                 else err("enumerator is not a constant");
             }
-            enums_[name] = next;
+            if (!scoped) {
+                enums_[name] = next;
+                enums_[qualify(name)] = next;
+            }
+            if (!ename.empty()) {
+                enums_[ename + "::" + name] = next;
+                enums_[qualify(ename) + "::" + name] = next;
+            }
             ++next;
             if (!eatP(",")) break;
         }
@@ -1315,8 +947,97 @@ private:
         for (auto& a : args) all.push_back(std::move(a));
         return eCall(eName("\x01" "ctor:" + tag, p), std::move(all), p);
     }
+    // T{args} (ISO/IEC 14882 [expr.type.conv], [dcl.init.list]): a temporary. A class with a
+    // constructor of its own takes the arguments as T(args). An aggregate runs its implicit
+    // constructor (default member initializers) if it has one, then gets each argument in field
+    // order; without one, the fields that get no argument are zero.
+    std::set<std::string> userCtors_;
+    std::vector<Type*> classStack_;  // classes whose body is being parsed, innermost last
+    std::unique_ptr<Expr> braceTemp(const Type& td, std::vector<std::unique_ptr<Expr>> args, const Pos& pos) {
+        std::string tag = td.tag;
+        Type* T = classOf(tag);
+        if (T && T->params.empty())
+            for (auto it = classStack_.rbegin(); it != classStack_.rend(); ++it)
+                if (*it && (*it)->tag == tag) T = *it;  // a member function of the class being defined
+        std::string tmp = "__tmp" + std::to_string(newN_++);
+        auto mk = [&](Expr::Kind k) {
+            auto x = std::make_unique<Expr>();
+            x->kind = k;
+            x->line = pos.line;
+            x->col = pos.col;
+            x->file = pos.file;
+            return x;
+        };
+        auto comma = mk(Expr::Kind::Comma);
+        comma->ival = 7;
+        comma->text = tmp;
+        comma->ty = cloneType(td);
+        bool listCtor = false;
+        if (T)
+            for (const Param& q : T->params)
+                if (q.name == "<ctor>" && q.type && q.type->params.size() == 1 && q.type->params[0].type) {
+                    const Type* pt = q.type->params[0].type.get();
+                    if (pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
+                    if (pt->kind == Type::Kind::Struct && (pt->tag.compare(0, 22, "std::initializer_list<") == 0 || pt->tag.compare(0, 17, "initializer_list<") == 0))
+                        listCtor = true;
+                }
+        if (T && userCtors_.count(tag) && listCtor) {
+            // An initializer-list constructor takes the whole list (the checker builds it).
+            auto br = mk(Expr::Kind::Brace);
+            br->ival = 5;
+            br->kids = std::move(args);
+            std::vector<std::unique_ptr<Expr>> one;
+            one.push_back(std::move(br));
+            comma->kids.push_back(ctorCall(tag, eAddr(eName(tmp, pos), pos), std::move(one), pos));
+        } else if (T && userCtors_.count(tag)) {
+            comma->kids.push_back(ctorCall(tag, eAddr(eName(tmp, pos), pos), std::move(args), pos));
+        } else {
+            std::unique_ptr<Expr> seq;
+            auto addE = [&](std::unique_ptr<Expr> x) {
+                if (!seq) {
+                    seq = std::move(x);
+                    return;
+                }
+                auto c = mk(Expr::Kind::Comma);
+                c->kids.push_back(std::move(seq));
+                c->kids.push_back(std::move(x));
+                seq = std::move(c);
+            };
+            if (T && T->needCtor) addE(ctorCall(tag, eAddr(eName(tmp, pos), pos), {}, pos));
+            std::size_t i = 0;
+            if (T)
+                for (const Param& f : T->params) {
+                    if (!isDataField(f)) continue;
+                    std::unique_ptr<Expr> v;
+                    if (i < args.size()) v = std::move(args[i]);
+                    else if (!T->needCtor && f.type && f.type->kind != Type::Kind::Struct &&
+                             f.type->kind != Type::Kind::Union && f.type->kind != Type::Kind::Array)
+                        v = mk(Expr::Kind::Int);
+                    ++i;
+                    if (v) addE(eAssign(eArrow(eAddr(eName(tmp, pos), pos), f.name, pos), std::move(v), pos));
+                }
+            if (i < args.size()) err("too many initializers");
+            if (!seq) seq = mk(Expr::Kind::Int);
+            comma->kids.push_back(std::move(seq));
+        }
+        comma->kids.push_back(eName(tmp, pos));
+        return comma;
+    }
+
+    // A class whose body is being parsed: its own inline member functions see it complete
+    // ([class.mem]/6), so what it needs (constructors, a destructor) is decided by the checker.
+    bool inProgress(const std::string& tag) const {
+        for (const Type* c : classStack_)
+            if (c && c->tag == tag) return true;
+        return false;
+    }
     std::unique_ptr<Expr> dtorCall(const std::string& tag, std::unique_ptr<Expr> self, const Pos& p) {
         const Param* d = special(classOf(tag), "<dtor>");
+        if (!d && inProgress(tag)) {
+            std::vector<std::unique_ptr<Expr>> args;
+            args.push_back(std::move(self));
+            return eCall(eName("\x01" "dtorif:" + tag, p), std::move(args), p);
+        }
         if (!d) return nullptr;
         std::vector<std::unique_ptr<Expr>> args;
         args.push_back(std::move(self));
@@ -1432,6 +1153,7 @@ private:
             Param c;
             c.name = q.name;
             if (q.type) c.type = cloneType(*q.type);
+            if (q.defArg) c.defArg = cloneExpr(*q.defArg);
             ft->params.push_back(std::move(c));
         }
         decl->type = std::move(ft);
@@ -1471,9 +1193,13 @@ private:
             Type* ft = f.second && f.second->kind == Type::Kind::Struct && !f.second->tag.empty()
                            ? classOf(f.second->tag)
                            : nullptr;
+            const Expr* dm = mi ? nullptr : memberDefault(tag, f.first);
             if (ft && ft->needCtor) {
                 std::vector<std::unique_ptr<Expr>> args;
                 if (mi) args = std::move(mi->args);
+                else if (dm && dm->kind == Expr::Kind::Brace)
+                    for (const auto& k : dm->kids) args.push_back(cloneExpr(*k));
+                else if (dm) args.push_back(cloneExpr(*dm));
                 if (args.size() == 1) {
                     // One argument: an object of the class is copied, anything else goes to a constructor.
                     std::vector<std::unique_ptr<Expr>> a;
@@ -1492,9 +1218,31 @@ private:
                     ehPushObject(body->stmts, eAddr(eArrow(eName("this", p), f.first, p), p), f.second->tag, 0, p);
                     ++ehHeld;
                 }
+            } else if (!mi && !dm && f.second && f.second->kind == Type::Kind::Array && arrayElemClass(f.second) &&
+                       classOf(arrayElemClass(f.second)->tag) && classOf(arrayElemClass(f.second)->tag)->needCtor) {
+                // Ring lines[8]: each element by its default constructor ([class.base.init]/9).
+                std::string et = arrayElemClass(f.second)->tag;
+                body->stmts.push_back(fieldLoop(f.first, f.second->bound->ival, false, p, [&](std::unique_ptr<Expr> at) {
+                    return ctorCall(et, std::move(at), {}, p);
+                }));
             } else if (mi && mi->args.size() == 1) {
                 body->stmts.push_back(
                     sExpr(eAssign(eArrow(eName("this", p), f.first, p), std::move(mi->args[0]), p), p));
+            } else if (dm && f.second && f.second->kind == Type::Kind::Array && dm->kind == Expr::Kind::Brace) {
+                // int a[4] = {1, 2}; float m[3][3] = {{1, 0, 0}, ...}: each named element, the rest zero.
+                arrayInit(body->stmts, *eArrow(eName("this", p), f.first, p), f.second, dm, p);
+            } else if (dm) {
+                std::unique_ptr<Expr> v;
+                if (dm->kind == Expr::Kind::Brace) {
+                    if (!dm->kids.empty() && dm->kids[0]) v = cloneExpr(*dm->kids[0]);
+                    else {
+                        v = std::make_unique<Expr>();
+                        v->kind = Expr::Kind::Int;  // int x{}; is zero
+                    }
+                } else {
+                    v = cloneExpr(*dm);
+                }
+                body->stmts.push_back(sExpr(eAssign(eArrow(eName("this", p), f.first, p), std::move(v), p), p));
             }
         }
         for (MemInit& m : d.inits) {
@@ -1553,6 +1301,13 @@ private:
         auto fields = ownFields(*T);
         for (int i = static_cast<int>(fields.size()) - 1; i >= 0; --i) {
             const Type* ft = fields[static_cast<std::size_t>(i)].second;
+            if (ft && ft->kind == Type::Kind::Array && arrayElemClass(ft) && classOf(arrayElemClass(ft)->tag) &&
+                classOf(arrayElemClass(ft)->tag)->needDtor) {
+                std::string et = arrayElemClass(ft)->tag;
+                body->stmts.push_back(fieldLoop(fields[static_cast<std::size_t>(i)].first, ft->bound->ival, true, p,
+                                                [&](std::unique_ptr<Expr> at) { return dtorCall(et, std::move(at), p); }));
+                continue;
+            }
             if (ft && ft->kind == Type::Kind::Struct && !ft->tag.empty()) {
                 Type* c = classOf(ft->tag);
                 if (c && c->needDtor) {
@@ -1571,14 +1326,198 @@ private:
         return decl;
     }
 
+    // Assignments that fill an array from a braced list, element by element (nested lists for the
+    // inner arrays); what the list does not name is zero.
+    void arrayInit(std::vector<std::unique_ptr<Stmt>>& out, const Expr& base, const Type* t, const Expr* list,
+                   const Pos& p) {
+        std::uint64_t n = t->bound && t->bound->kind == Expr::Kind::Int ? t->bound->ival : 0;
+        for (std::uint64_t k = 0; k < n; ++k) {
+            auto idx = std::make_unique<Expr>();
+            idx->kind = Expr::Kind::Int;
+            idx->ival = k;
+            auto el = std::make_unique<Expr>();
+            el->kind = Expr::Kind::Index;
+            el->line = p.line;
+            el->col = p.col;
+            el->file = p.file;
+            el->kids.push_back(cloneExpr(base));
+            el->kids.push_back(std::move(idx));
+            const Expr* item = list && k < list->kids.size() ? list->kids[k].get() : nullptr;
+            if (t->inner && t->inner->kind == Type::Kind::Array) {
+                arrayInit(out, *el, t->inner.get(), item && item->kind == Expr::Kind::Brace ? item : nullptr, p);
+                continue;
+            }
+            std::unique_ptr<Expr> v;
+            if (item && item->kind != Expr::Kind::Brace) v = cloneExpr(*item);
+            else if (item && !item->kids.empty() && item->kids[0]) v = cloneExpr(*item->kids[0]);
+            else {
+                v = std::make_unique<Expr>();
+                v->kind = Expr::Kind::Int;
+            }
+            out.push_back(sExpr(eAssign(std::move(el), std::move(v), p), p));
+        }
+    }
+
+    // A default member initializer: int x = 1; int a[2] = {1, 2}; int y{3}; ([class.mem]). It is
+    // used by every constructor whose initializer list does not name the member, and it makes
+    // the implicit default constructor do work.
+    std::map<std::string, std::map<std::string, std::unique_ptr<Expr>>> dmi_;
+    bool memberInit(const std::string& tag, const std::string& name) {
+        if (!isP("=") && !isP("{")) return false;
+        eatP("=");
+        auto init = parseInitializer();
+        if (tag.empty() || name.empty() || !init) return false;
+        dmi_[tag][name] = std::move(init);
+        return true;
+    }
+    const Expr* memberDefault(const std::string& tag, const std::string& name) const {
+        auto it = dmi_.find(tag);
+        if (it == dmi_.end()) return nullptr;
+        auto jt = it->second.find(name);
+        return jt == it->second.end() ? nullptr : jt->second.get();
+    }
+
+    // The implicit copy assignment operator ([class.copy.assign]): a class with no operator= of its
+    // own, whose base or a member has one, assigns the base and each member in turn (an array
+    // member element by element) and returns *this. Without such a part, assignment stays a copy
+    // of the bytes, which is the same thing.
+    static bool hasAssign(const Type* cls) {
+        if (!cls) return false;
+        for (const Param& q : cls->params)
+            if (q.name == "operator=" && !q.mangled.empty()) return true;
+        return false;
+    }
+    void implicitAssign(ClassCtx& c, Type& T, Type* B, const Pos& p) {
+        if (hasAssign(&T)) return;
+        bool parts = B && hasAssign(B);
+        for (auto& f : ownFields(T)) {
+            const Type* ft = f.second;
+            while (ft && ft->kind == Type::Kind::Array && ft->inner) ft = ft->inner.get();
+            if (ft && ft->kind == Type::Kind::Struct && !ft->tag.empty() && hasAssign(classOf(ft->tag))) parts = true;
+        }
+        if (!parts) return;
+        auto refT = [&]() {
+            auto r = ty(Type::Kind::Reference);
+            r->inner = ty(Type::Kind::Struct);
+            r->inner->tag = c.tag;
+            return r;
+        };
+        auto fn = ty(Type::Kind::Function);
+        fn->inner = refT();
+        Param op;
+        op.name = "__o";
+        op.type = refT();
+        fn->params.push_back(std::move(op));
+        Param m;
+        m.name = "operator=";
+        m.mangled = mangleFunc(c.tag + "::operator=", *fn);
+        m.type = cloneType(*fn);
+        T.params.push_back(std::move(m));
+        auto decl = newMethodDecl(c.tag, T.params.back().mangled, *fn, fn->params, p);
+        auto body = sBlock(p);
+        auto other = [&](const std::string& field) {
+            auto dot = std::make_unique<Expr>();
+            dot->kind = Expr::Kind::Member;
+            dot->text = ".";
+            dot->line = p.line;
+            dot->col = p.col;
+            dot->file = p.file;
+            dot->kids.push_back(eName("__o", p));
+            dot->kids.push_back(eName(field, p));
+            return dot;
+        };
+        if (B) {
+            // *(B *)this = *(B *)&__o: the base part, with the base's own operator= when it has one.
+            auto castTo = [&](std::unique_ptr<Expr> x) {
+                auto cst = std::make_unique<Expr>();
+                cst->kind = Expr::Kind::Cast;
+                cst->line = p.line;
+                cst->col = p.col;
+                cst->file = p.file;
+                cst->ty = ty(Type::Kind::Pointer);
+                cst->ty->inner = ty(Type::Kind::Struct);
+                cst->ty->inner->tag = T.base;
+                cst->kids.push_back(std::move(x));
+                auto d = std::make_unique<Expr>();
+                d->kind = Expr::Kind::Unary;
+                d->text = "*";
+                d->line = p.line;
+                d->col = p.col;
+                d->file = p.file;
+                d->kids.push_back(std::move(cst));
+                return d;
+            };
+            body->stmts.push_back(sExpr(eAssign(castTo(eName("this", p)), castTo(eAddr(eName("__o", p), p)), p), p));
+        }
+        for (auto& f : ownFields(T)) {
+            if (f.second && f.second->kind == Type::Kind::Array) {
+                std::uint64_t n = f.second->bound && f.second->bound->kind == Expr::Kind::Int ? f.second->bound->ival : 0;
+                for (std::uint64_t k = 0; k < n; ++k) {
+                    auto idx = [&](std::unique_ptr<Expr> base) {
+                        auto i = std::make_unique<Expr>();
+                        i->kind = Expr::Kind::Int;
+                        i->ival = k;
+                        auto el = std::make_unique<Expr>();
+                        el->kind = Expr::Kind::Index;
+                        el->line = p.line;
+                        el->col = p.col;
+                        el->file = p.file;
+                        el->kids.push_back(std::move(base));
+                        el->kids.push_back(std::move(i));
+                        return el;
+                    };
+                    body->stmts.push_back(
+                        sExpr(eAssign(idx(eArrow(eName("this", p), f.first, p)), idx(other(f.first)), p), p));
+                }
+                continue;
+            }
+            body->stmts.push_back(sExpr(eAssign(eArrow(eName("this", p), f.first, p), other(f.first), p), p));
+        }
+        auto ret = std::make_unique<Stmt>();
+        ret->kind = Stmt::Kind::Return;
+        ret->line = p.line;
+        ret->col = p.col;
+        ret->file = p.file;
+        auto self = std::make_unique<Expr>();
+        self->kind = Expr::Kind::Unary;
+        self->text = "*";
+        self->line = p.line;
+        self->col = p.col;
+        self->file = p.file;
+        self->kids.push_back(eName("this", p));
+        ret->expr = std::move(self);
+        body->stmts.push_back(std::move(ret));
+        decl->body = std::move(body);
+        extras_.push_back(std::move(decl));
+    }
+
+    // The class of a field: the field's own type, or the element type of a one-level array of a
+    // class with a known length (Ring lines[8]).
+    const Type* arrayElemClass(const Type* t) {
+        if (!t) return nullptr;
+        if (t->kind == Type::Kind::Struct && !t->tag.empty()) return t;
+        if (t->kind == Type::Kind::Array && t->inner && t->inner->kind == Type::Kind::Struct && !t->inner->tag.empty() &&
+            t->bound && t->bound->kind == Expr::Kind::Int)
+            return t->inner.get();
+        return nullptr;
+    }
+    // for (i = 0; i < n; ++i) call(&this->field[i])  (from n - 1 down when reverse)
+    template <class F>
+    std::unique_ptr<Stmt> fieldLoop(const std::string& field, std::uint64_t n, bool reverse, const Pos& p, F call) {
+        return indexLoop([&] { return eArrow(eName("this", p), field, p); }, n, reverse, p,
+                         [&](std::unique_ptr<Expr> at) { return call(eAddr(std::move(at), p)); });
+    }
+
     void finishClass(ClassCtx& c) {
         Type& T = *c.t;
         Type* B = T.base.empty() ? nullptr : classOf(T.base);
         bool needCtor = !c.ctors.empty() || T.hasVptr || (B && B->needCtor);
+        if (dmi_.count(c.tag) && !dmi_[c.tag].empty()) needCtor = true;
         bool needDtor = c.dtorDeclared || (B && B->needDtor);
         for (auto& f : ownFields(T)) {
-            if (f.second && f.second->kind == Type::Kind::Struct && !f.second->tag.empty()) {
-                Type* m = classOf(f.second->tag);
+            const Type* el = arrayElemClass(f.second);
+            if (el) {
+                Type* m = classOf(el->tag);
                 if (m && m->needCtor) needCtor = true;
                 if (m && m->needDtor) needDtor = true;
                 if (m && (m->nonpod || m->needCtor || m->needDtor)) T.nonpod = true;
@@ -1676,6 +1615,7 @@ private:
                 c.ctors.push_back(std::move(d));
             }
         }
+        implicitAssign(c, T, B, p);
         bool baseVirt = B && special(B, "<dtor>") && special(B, "<dtor>")->vslot >= 0;
         if (!c.dtorDeclared && needDtor) {
             registerDtor(c, baseVirt, at);
@@ -1894,7 +1834,19 @@ private:
                 tag += cur().text;
                 advance();
             }
-            if (tag.find("::") == std::string::npos) tag = qualify(tag);
+            if (specSkipTo_ && i_ == specSkipFrom_) i_ = specSkipTo_;  // L<float> of a specialization
+            if (tag.find("::") == std::string::npos) {
+                // A class defined in a class is a member of it ([class.nest]): Outer::Inner, so its
+                // member functions find the outer class's names.
+                // Only a definition (struct Inner { or struct Inner :) or a name already declared
+                // there is nested; struct Outer *next inside Outer is the outer class itself.
+                Type* outer = classStack_.empty() ? nullptr : classStack_.back();
+                bool nest = outer && !outer->tag.empty() && instOverrideName_.empty() && outer->tag != tag &&
+                            shortName(outer->tag) != tag &&
+                            ((!atEnd() && (isP("{") || isP(":") || isKw("final"))) ||
+                             structs_.count(outer->tag + "::" + tag));
+                tag = nest ? outer->tag + "::" + tag : qualify(tag);
+            }
         }
         std::string tplShort;
         if (!instOverrideName_.empty() && (tag == instOverrideName_ || shortName(tag) == instOverrideName_)) {
@@ -1902,6 +1854,7 @@ private:
             tag = instOverrideTag_;
             instOverrideName_.clear();
         }
+        if (!tag.empty() && isKw("final")) advance();  // class C final : B (read, not enforced)
         std::string baseTag;
         if (!tag.empty() && !isUnion && isP(":")) {
             advance();
@@ -1950,9 +1903,27 @@ private:
             structs_[tag] = std::move(inc);
             completing = true;
         }
+        // Everything made from the class body (member functions defined in it, implicit
+        // constructors and destructors, the vtable) is inline ([class.mfct], [dcl.inline]): a
+        // header with the class may be included by many files, so these are weak symbols.
+        std::size_t inlineMark = extras_.size();
+        struct MarkInline {
+            std::vector<std::unique_ptr<Decl>>& v;
+            std::size_t from;
+            ~MarkInline() {
+                for (std::size_t k = from; k < v.size(); ++k)
+                    if (v[k]) v[k]->isInline = true;
+            }
+        } markInline{extras_, inlineMark};
+        struct ClassScope {
+            std::vector<Type*>& v;
+            ~ClassScope() { v.pop_back(); }
+        } classScope{classStack_};
+        classStack_.push_back(nullptr);
         ClassCtx cx;
         cx.tag = tag;
         cx.t = t.get();
+        classStack_.back() = t.get();
         cx.dtorPos.line = at.line;
         cx.dtorPos.col = at.column;
         cx.dtorPos.file = at.file;
@@ -1993,11 +1964,32 @@ private:
             implicitTags_.insert(shortTag);
         }
         while (!atEnd() && !isP("}")) {
+            if (isKw("using")) {
+                parseUsing();
+                continue;
+            }
+            if (isKw("template")) {
+                std::string savedTag = memberTag_;
+                Type* savedCls = memberCls_;
+                memberTag_ = tag;
+                memberCls_ = t.get();
+                parseTemplate();
+                memberTag_ = savedTag;
+                memberCls_ = savedCls;
+                cx.cxx = true;
+                continue;
+            }
             if ((isKw("public") || isKw("private") || isKw("protected")) && nextIs(":")) {
                 pub = isKw("public");
                 advance();
                 advance();
                 continue;
+            }
+            bool isStaticMember = false;
+            for (;;) {
+                if (eatKw("static")) isStaticMember = true;
+                else if (eatKw("inline") || eatKw("constexpr") || eatKw("explicit")) {
+                } else break;
             }
             bool isVirtual = false;
             if (classy && isKw("virtual")) {
@@ -2065,10 +2057,12 @@ private:
                     expectP(";", ";");
                 }
                 cx.ctors.push_back(std::move(cd));
+                userCtors_.insert(tag);
                 continue;
             }
             Parsed d;
             std::unique_ptr<Type> fieldType;
+            std::unique_ptr<Type> fieldBase;  // for "int a, b;": the type before the first declarator
             if (!atEnd() && cur().kind == Tok::Ident && cur().text == "operator" && i_ + 1 < toks_.size() &&
                 isTypeKw(toks_[i_ + 1])) {
                 // A conversion function: operator int() const { ... } (ISO/IEC 14882 [class.conv.fct]).
@@ -2088,14 +2082,35 @@ private:
                     break;
                 }
                 auto base = parseBase();
+                if (enumDef_ && isP(";")) {
+                    // enum E { ... }; as a member: only its names
+                    enumDef_ = false;
+                    advance();
+                    continue;
+                }
+                if (base && (base->kind == Type::Kind::Struct || base->kind == Type::Kind::Union) && isP(";")) {
+                    // A nested class: struct Inner { ... }; (its name is kept at namespace scope)
+                    advance();
+                    continue;
+                }
+                enumDef_ = false;
+                if (base) fieldBase = cloneType(*base);
                 d = parseDeclarator(true);
                 fieldType = apply(std::move(base), d.mods);
+            }
+            if (isStaticMember && !tag.empty() && !isUnion) {
+                staticMember(tag, d, std::move(fieldType));
+                continue;
             }
             if (fieldType && fieldType->kind == Type::Kind::Function && !tag.empty() && !isUnion) {
                 cx.cxx = true;
                 if (cx.cxx && !classy) classy = true;
                 bool pure = false;
-                while (isKw("const") || isKw("override") || isKw("final") || isKw("noexcept")) advance();
+                bool cmethod = false;
+                while (isKw("const") || isKw("override") || isKw("final") || isKw("noexcept")) {
+                    if (isKw("const")) cmethod = true;
+                    advance();
+                }
                 if (isP("=")) {
                     advance();
                     if (!atEnd() && cur().kind == Tok::Int && cur().uval == 0) pure = true;
@@ -2103,14 +2118,15 @@ private:
                 }
                 Param field;
                 field.name = d.name;
-                field.mangled = mangleFunc(tag + "::" + d.name, *fieldType);
+                field.mangled = constMangle(mangleFunc(tag + "::" + d.name, *fieldType), cmethod);
+                field.cmethod = cmethod;
                 field.type = cloneType(*fieldType);
                 int slot = -1;
                 bool virt = isVirtual;
                 for (std::size_t j = 0; j < t->params.size(); ++j) {
                     const Param& ex = t->params[j];
                     if (ex.name != d.name || ex.mangled.empty() || isSpecialName(ex.name) || !ex.type) continue;
-                    if (!sameParamTypes(*ex.type, *fieldType)) continue;
+                    if (!sameParamTypes(*ex.type, *fieldType) || ex.cmethod != cmethod) continue;
                     if (ex.vslot >= 0) {
                         slot = ex.vslot;
                         virt = true;
@@ -2132,6 +2148,13 @@ private:
                     extras_.push_back(std::move(decl));
                 } else {
                     expectP(";", ";");
+                    if (!pure) {
+                        // Declared only: a prototype, so that calls can be checked; the definition
+                        // may be later in this file or in another file.
+                        auto decl = newMethodDecl(tag, t->params.back().mangled, *fieldType, fieldType->params,
+                                                  Pos{d.line, d.col, d.file});
+                        extras_.push_back(std::move(decl));
+                    }
                 }
                 continue;
             }
@@ -2144,7 +2167,29 @@ private:
                 else field.bits = static_cast<int>(w->ival);
             }
             if (!pub) t->nonpod = true;
+            if (memberInit(tag, d.name)) cx.cxx = true;
+            {
+                // A member of a class that constructs, destroys or assigns: this class must too.
+                const Type* ft = field.type.get();
+                while (ft && ft->kind == Type::Kind::Array && ft->inner) ft = ft->inner.get();
+                Type* mc = ft && ft->kind == Type::Kind::Struct && !ft->tag.empty() ? classOf(ft->tag) : nullptr;
+                if (mc && (mc->needCtor || mc->needDtor || hasAssign(mc))) cx.cxx = true;
+            }
             t->params.push_back(std::move(field));
+            while (fieldBase && eatP(",")) {
+                // More declarators of the same type: int a, *b, c[4];
+                Parsed d2 = parseDeclarator(true);
+                Param more;
+                more.name = d2.name;
+                more.type = apply(cloneType(*fieldBase), d2.mods);
+                if (eatP(":")) {
+                    auto w = parseAssign();
+                    if (!w || w->kind != Expr::Kind::Int) err("bitfield width is not a constant");
+                    else more.bits = static_cast<int>(w->ival);
+                }
+                if (memberInit(tag, d2.name)) cx.cxx = true;
+                t->params.push_back(std::move(more));
+            }
             expectP(";", ";");
         }
         expectP("}", "}");
@@ -2176,7 +2221,9 @@ private:
         brkBases_.clear();
         curRet_ = ret;
         dbase_ = dscopes_.size() - outerScopes;
+        ++bodyDepth_;
         auto b = parseCompound();
+        --bodyDepth_;
         curRet_ = savedRet;
         dbase_ = savedBase;
         loopBases_ = std::move(savedLoops);
@@ -2196,6 +2243,10 @@ private:
             }
             if (eatP("&")) {
                 prefix.push_back(Mod::Kind::Ref);
+                continue;
+            }
+            if (eatP("&&")) {
+                prefix.push_back(Mod::Kind::RRef);  // T&&: an rvalue (or forwarding) reference
                 continue;
             }
             break;
@@ -2246,7 +2297,10 @@ private:
             if (eatP("[")) {
                 Mod m;
                 m.kind = Mod::Kind::Arr;
-                if (!isP("]")) m.bound = parseAssign();
+                if (!isP("]")) {
+                    m.bound = parseAssign();
+                    if (m.bound) boundConsts(*m.bound);  // T a[kLines] with kLines a class constant
+                }
                 else m.unsized = true;
                 expectP("]", "]");
                 d.mods.push_back(std::move(m));
@@ -2304,6 +2358,14 @@ private:
             Param p;
             p.name = d.name;
             p.type = adjustParam(apply(std::move(base), d.mods));
+            if (eatP("=")) {
+                // A default argument. {} or {a, b} for a class parameter is a temporary T{...}.
+                p.defArg = parseInitializer();
+                const Type* pt = p.type.get();
+                if (pt && pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
+                if (p.defArg && p.defArg->kind == Expr::Kind::Brace && pt && pt->kind == Type::Kind::Struct)
+                    p.defArg = braceTemp(*pt, std::move(p.defArg->kids), here());
+            }
             params.push_back(std::move(p));
             if (eatP(")")) break;
             if (!eatP(",")) {
@@ -2327,8 +2389,14 @@ private:
             if (m.kind == Mod::Kind::Ptr) {
                 t->kind = Type::Kind::Pointer;
                 t->inner = std::move(base);
-            } else if (m.kind == Mod::Kind::Ref) {
+            } else if (m.kind == Mod::Kind::Ref || m.kind == Mod::Kind::RRef) {
+                if (base && base->kind == Type::Kind::Reference) {
+                    // Reference collapsing ([dcl.ref] p6): T& && is T&, T&& && is T&&.
+                    if (m.kind == Mod::Kind::Ref) base->rref = false;
+                    continue;  // base stays the (collapsed) reference
+                }
                 t->kind = Type::Kind::Reference;
+                t->rref = m.kind == Mod::Kind::RRef;
                 t->inner = std::move(base);
             } else if (m.kind == Mod::Kind::Arr) {
                 t->kind = Type::Kind::Array;
@@ -2355,17 +2423,44 @@ private:
         decl->type = std::move(type);
         decl->init = std::move(init);
         decl->function = decl->type && decl->type->kind == Type::Kind::Function;
-        decl->name = qualify(decl->name);
+        if (bodyDepth_ == 0) decl->name = qualify(decl->name);  // a local is never a namespace member
         if (!instFnName_.empty() && decl->function) {
             decl->name = instFnName_;
             instFnName_.clear();
             return decl;
         }
-        if (decl->name.find("::") != std::string::npos && decl->type) {
+        if (decl->name.find("::") != std::string::npos && decl->type && cLink_) {
+            // extern "C" inside a namespace: the name is qualified for lookup, the symbol is plain
+            // ([dcl.link]: two declarations of a C function in different namespaces are one function).
+            decl->asmName = shortName(decl->name);
+        } else if (decl->name.find("::") != std::string::npos && decl->type) {
             if (decl->function) decl->asmName = mangleFunc(decl->name, *decl->type);
             else decl->asmName = mangleData(decl->name);
         }
         return decl;
+    }
+
+    // A const member function: Itanium 5.1.5 puts K (the cv-qualifier of 'this') after N.
+    static std::string constMangle(const std::string& m, bool isConst) {
+        if (!isConst || m.compare(0, 3, "_ZN") != 0) return m;
+        return "_ZNK" + m.substr(3);
+    }
+
+    // The class tag a qualified prefix (C, N::C, a typedef of a class) names, or "".
+    std::string classPrefix(const std::string& prefix) {
+        if (prefix.empty()) return {};
+        if (classOf(qualify(prefix))) return qualify(prefix);
+        // A::B (a nested class) named inside namespaces: tried in each enclosing namespace,
+        // innermost first ([basic.lookup.qual]).
+        for (std::size_t n = ns_.size(); n > 0; --n) {
+            std::string q;
+            for (std::size_t k = 0; k < n; ++k) q += ns_[k] + "::";
+            if (classOf(q + prefix)) return q + prefix;
+        }
+        if (classOf(prefix)) return prefix;
+        if (const Type* td2 = findTypedef(prefix))
+            if (!td2->tag.empty() && classOf(td2->tag)) return td2->tag;
+        return {};
     }
 
     std::string qualify(const std::string& name) const {
@@ -2380,12 +2475,117 @@ private:
         return q;
     }
 
+    // A static member (ISO/IEC 14882 [class.static]). A static member function is an ordinary
+    // function named Class::f (no 'this'); its symbol is the Itanium nested name. A static data
+    // member is a global named Class::x: declared here (extern) unless it has an initializer in
+    // the class (constexpr or const), which defines it in this file with internal linkage. C++17
+    // makes such a member an inline variable with one address in the program; here each file has
+    // its own copy (see the plan).
+    std::map<std::string, std::set<std::string>> staticFns_;
+    std::vector<std::unique_ptr<Decl>> staticData_;
+    std::map<std::string, long> classConsts_;  // Class::N for static integer constants
+    std::string bodyClass_;                    // the class of the out-of-class member function being parsed
+    // N inside a class or one of its member functions: Class::N, then the enclosing classes.
+    bool classConst(const std::string& name, long& out) {
+        std::vector<std::string> tags;
+        for (auto it = classStack_.rbegin(); it != classStack_.rend(); ++it)
+            if (*it && !(*it)->tag.empty()) tags.push_back((*it)->tag);
+        for (std::string t = bodyClass_; !t.empty();) {
+            tags.push_back(t);
+            std::size_t cut = t.rfind("::");
+            if (cut == std::string::npos) break;
+            t = t.substr(0, cut);
+        }
+        for (const std::string& t : tags) {
+            auto it = classConsts_.find(t + "::" + name);
+            if (it != classConsts_.end()) {
+                out = it->second;
+                return true;
+            }
+        }
+        return false;
+    }
+    void boundConsts(Expr& e) {
+        long cv = 0;
+        if (e.kind == Expr::Kind::Name && e.text.find("::") == std::string::npos && classConst(e.text, cv)) {
+            e.kind = Expr::Kind::Int;
+            e.text.clear();
+            e.ival = static_cast<std::uint64_t>(cv);
+            return;
+        }
+        if (e.kind == Expr::Kind::Name) {
+            auto it = classConsts_.find(e.text);  // R::kLines written out
+            if (it == classConsts_.end()) it = classConsts_.find(qualify(e.text));
+            if (it != classConsts_.end()) {
+                e.kind = Expr::Kind::Int;
+                e.text.clear();
+                e.ival = static_cast<std::uint64_t>(it->second);
+            }
+            return;
+        }
+        for (auto& k : e.kids)
+            if (k) boundConsts(*k);
+    }
+    void staticMember(const std::string& tag, Parsed& d, std::unique_ptr<Type> type) {
+        if (!type || d.name.empty()) {
+            syncSemi();
+            return;
+        }
+        std::string q = tag + "::" + d.name;
+        auto decl = std::make_unique<Decl>();
+        decl->name = q;
+        decl->line = d.line;
+        decl->col = d.col;
+        decl->file = d.file;
+        if (type->kind == Type::Kind::Function) {
+            while (isKw("const") || isKw("noexcept") || isKw("override") || isKw("final")) advance();
+            decl->function = true;
+            decl->staticMember = true;
+            decl->methodTag = tag;
+            decl->asmName = mangleFunc(q, *type);
+            const Type* ret = type->inner.get();
+            decl->type = std::move(type);
+            staticFns_[tag].insert(d.name);
+            if (isP("{")) {
+                decl->body = parseBody(ret);
+            } else {
+                if (eatP("=")) advance();  // = delete / = default
+                expectP(";", ";");
+            }
+            extras_.push_back(std::move(decl));
+            return;
+        }
+        decl->type = std::move(type);
+        decl->asmName = mangleData(q);
+        if (eatP("=")) decl->init = parseInitializer();
+        else if (isP("{")) decl->init = parseInitializer();
+        if (decl->init) decl->isStatic = true;
+        else decl->isExtern = true;
+        if (decl->init && decl->type && (decl->type->kind == Type::Kind::Int || decl->type->kind == Type::Kind::Long ||
+                                         decl->type->kind == Type::Kind::Short || decl->type->kind == Type::Kind::Char)) {
+            // static constexpr int N = 8;: an integer constant the class's own code (array
+            // lengths, case labels) can use as a constant expression ([expr.const]).
+            const Expr* v = decl->init.get();
+            if (v->kind == Expr::Kind::Brace && v->kids.size() == 1 && v->kids[0]) v = v->kids[0].get();
+            if (v->kind == Expr::Kind::Int) classConsts_[q] = static_cast<long>(v->ival);
+            else if (v->kind == Expr::Kind::Unary && v->text == "-" && !v->kids.empty() && v->kids[0] &&
+                     v->kids[0]->kind == Expr::Kind::Int)
+                classConsts_[q] = -static_cast<long>(v->kids[0]->ival);
+        }
+        expectP(";", ";");
+        // Before the function being parsed: a class template instance made inside a function body
+        // has its static members declared ahead of that function.
+        beforeDecls_.push_back(std::move(decl));
+    }
+
     void flushExtras(Tu& tu) {
         if (!preStmts_.empty()) {
             err("'new' with a constructor or an initial value is only supported inside a function");
             preStmts_.clear();
         }
         flushBefore(tu);
+        for (auto& d : staticData_) tu.decls.push_back(std::move(d));
+        staticData_.clear();
         for (auto& d : extras_) tu.decls.push_back(std::move(d));
         extras_.clear();
     }
@@ -2410,6 +2610,13 @@ private:
     };
     std::map<std::string, TDecl> ftmpl_;
     std::map<std::string, TDecl> ctmpl_;
+    struct Spec {
+        std::size_t start = 0;     // the 'struct' of template <> struct L<float> {
+        std::size_t skipFrom = 0;  // its '<'
+        std::size_t skipTo = 0;    // just after its '>'
+    };
+    std::map<std::string, Spec> specs_;  // explicit specializations by instance tag
+    std::size_t specSkipFrom_ = 0, specSkipTo_ = 0;
     std::vector<InstReq> work_;
     std::set<std::string> instDone_;
     std::set<std::string> instInProgress_;
@@ -2501,9 +2708,14 @@ private:
                 if (!partial) err("too few template arguments");
                 break;
             }
+            // A default may name the earlier parameters (class C = vector<T>, [temp.param] p10):
+            // they are bound while it is read.
             std::size_t saved = i_;
+            auto es = bindParams(td, out);
             i_ = td.params[idx].defStart;
-            out.push_back(parseOneArg(td.params[idx]));
+            TArg a = parseOneArg(td.params[idx]);
+            unbindParams(es);
+            out.push_back(std::move(a));
             i_ = saved;
         }
     }
@@ -2585,6 +2797,30 @@ private:
         expectP(">", ">");
         td.start = i_;
         td.end = skipDecl(i_);
+        if (td.params.empty() && (isKw("class") || isKw("struct")) && i_ + 2 < toks_.size() &&
+            toks_[i_ + 1].kind == Tok::Ident && isP(toks_[i_ + 2], "<") && ctmpl_.count(toks_[i_ + 1].text)) {
+            // template <> struct L<float> { ... }: an explicit specialization ([temp.expl.spec]). Its
+            // arguments are read as the primary template's; the instance with exactly these
+            // arguments is made from this body instead.
+            std::string name = toks_[i_ + 1].text;
+            TDecl primary = ctmpl_[name];
+            Spec sp;
+            sp.start = td.start;
+            i_ = td.start + 2;
+            sp.skipFrom = i_;
+            std::vector<TArg> args;
+            parseTemplateArgs(primary, args);
+            sp.skipTo = i_;
+            std::string tag = name + "<";
+            for (std::size_t k = 0; k < args.size(); ++k) {
+                if (k) tag += ",";
+                tag += argMangle(args[k]);
+            }
+            tag += ">";
+            specs_[tag] = sp;
+            i_ = td.end;
+            return;
+        }
         if (isKw("class") || isKw("struct")) {
             if (i_ + 1 < toks_.size() && toks_[i_ + 1].kind == Tok::Ident) ctmpl_[toks_[i_ + 1].text] = td;
             else err("expected a class template name");
@@ -2640,8 +2876,31 @@ private:
         }
         tscopes_.pop_back();
         i_ = td.end;
-        funcTemplateSigs()[name] = std::move(sig);
-        ftmpl_[name] = td;
+        // More than one function template may have this name ([temp.over]): the others are kept as
+        // name#1, name#2, ...; the checker deduces against each.
+        if (memberCls_) {
+            // A member function template ([temp.mem]): kept with its class; the class gets a
+            // member whose symbol is "\x01mtmpl:key", which the checker deduces and instantiates.
+            std::string mkey = memberTag_ + "::" + name;
+            for (int k = 1; memberTmpl_.count(mkey); ++k) mkey = memberTag_ + "::" + name + "#" + std::to_string(k);
+            MemberTmpl mt;
+            mt.td = td;
+            mt.tag = memberTag_;
+            if (!tscopes_.empty())
+                for (auto& kv : tscopes_.back()) mt.scope.emplace_back(kv.first, cloneType(*kv.second));
+            Param m;
+            m.name = name;
+            m.mangled = "\x01" "mtmpl:" + mkey;
+            m.type = cloneType(*sig.fn);
+            memberCls_->params.push_back(std::move(m));
+            funcTemplateSigs()[mkey] = std::move(sig);
+            memberTmpl_[mkey] = std::move(mt);
+            return;
+        }
+        std::string key = name;
+        for (int k = 1; ftmpl_.count(key); ++k) key = name + "#" + std::to_string(k);
+        funcTemplateSigs()[key] = std::move(sig);
+        ftmpl_[key] = td;
     }
 
     std::unique_ptr<Type> instantiateClass(const std::string& name) {
@@ -2662,6 +2921,27 @@ private:
             self->tag = tag;
             return self;
         }
+        if (!structs_.count(tag) && specs_.count(tag)) {
+            const Spec sp = specs_[tag];
+            instInProgress_.insert(tag);
+            std::size_t saved = i_;
+            auto savedPre = std::move(preStmts_);
+            preStmts_.clear();
+            bool savedHalf = halfGt_;
+            halfGt_ = false;
+            instOverrideName_ = name;
+            instOverrideTag_ = tag;
+            specSkipFrom_ = sp.skipFrom;
+            specSkipTo_ = sp.skipTo;
+            i_ = sp.start;
+            parseBase();
+            instOverrideName_.clear();
+            specSkipFrom_ = specSkipTo_ = 0;
+            i_ = saved;
+            preStmts_ = std::move(savedPre);
+            halfGt_ = savedHalf;
+            instInProgress_.erase(tag);
+        }
         if (!structs_.count(tag) && args.size() == td.params.size()) {
             instInProgress_.insert(tag);
             std::size_t saved = i_;
@@ -2673,7 +2953,12 @@ private:
             instOverrideName_ = name;
             instOverrideTag_ = tag;
             i_ = td.start;
+            std::size_t mark = extras_.size();
             parseBase();
+            // The member functions of an instance are made only if they are used ([temp.inst] p4):
+            // the checker checks one only once something refers to it, and drops the rest.
+            for (std::size_t k = mark; k < extras_.size(); ++k)
+                if (extras_[k] && extras_[k]->function && extras_[k]->body) extras_[k]->fromInstance = true;
             instOverrideName_.clear();
             unbindParams(es);
             i_ = saved;
@@ -2686,7 +2971,48 @@ private:
         return cloneType(*it->second);
     }
 
+    struct MemberTmpl {
+        TDecl td;
+        std::string tag;
+        std::vector<std::pair<std::string, std::unique_ptr<Type>>> scope;  // the class's own bindings
+    };
+    std::map<std::string, MemberTmpl> memberTmpl_;
+    std::string memberTag_;
+    Type* memberCls_ = nullptr;
+
+    // An instance of a member function template: its tokens read again inside the class's scope
+    // (the class template's parameters bound as they were), with its own parameters bound.
+    void replayMember(Tu& tu, const InstReq& r, MemberTmpl& mt) {
+        std::size_t saved = i_;
+        tscopes_.emplace_back();
+        for (auto& kv : mt.scope) tscopes_.back()[kv.first] = cloneType(*kv.second);
+        auto es = bindParams(mt.td, r.args);
+        i_ = mt.td.start;
+        Pos pos = here();
+        auto base = parseBase();
+        Parsed d = parseDeclarator(true);
+        auto type = apply(std::move(base), d.mods);
+        while (isKw("const") || isKw("noexcept")) advance();
+        if (type && type->kind == Type::Kind::Function && isP("{")) {
+            auto decl = newMethodDecl(mt.tag, r.name, *type, type->params, pos);
+            decl->isInline = true;
+            decl->body = parseBody(type->inner.get());
+            flushExtras(tu);
+            tu.decls.push_back(std::move(decl));
+        } else {
+            err("a member function template must be defined in its class");
+        }
+        unbindParams(es);
+        tscopes_.pop_back();
+        i_ = saved;
+    }
+
     void replayFunction(Tu& tu, const InstReq& r) {
+        auto mit = memberTmpl_.find(r.tmpl);
+        if (mit != memberTmpl_.end()) {
+            replayMember(tu, r, mit->second);
+            return;
+        }
         auto it = ftmpl_.find(r.tmpl);
         if (it == ftmpl_.end()) {
             err("unknown function template '" + r.tmpl + "'");
@@ -2697,7 +3023,11 @@ private:
         auto es = bindParams(td, r.args);
         instFnName_ = r.name;
         i_ = td.start;
+        std::size_t mark = tu.decls.size();
         parseExternal(tu);
+        // A template instance may be made in every file that uses it ([temp.inst]): weak.
+        for (std::size_t k = mark; k < tu.decls.size(); ++k)
+            if (tu.decls[k] && tu.decls[k]->function && tu.decls[k]->name == r.name) tu.decls[k]->isInline = true;
         instFnName_.clear();
         unbindParams(es);
         i_ = saved;
@@ -2724,6 +3054,13 @@ private:
     bool parseLinkage(Tu& tu) {
         if (!isKw("extern") || i_ + 1 >= toks_.size() || toks_[i_ + 1].kind != Tok::StringLit) return false;
         advance();
+        bool savedC = cLink_;
+        cLink_ = cur().text == "\"C\"" || cur().text == "C";
+        struct Restore {
+            bool& flag;
+            bool saved;
+            ~Restore() { flag = saved; }
+        } restore{cLink_, savedC};
         advance();
         if (eatP("{")) {
             while (!atEnd() && !isP("}")) {
@@ -2749,18 +3086,42 @@ private:
         return true;
     }
 
+    // namespace N { }, namespace A::B { } (C++17 [namespace.def]) and the unnamed namespace
+    // namespace { }. Names in an unnamed namespace are looked up as names of the enclosing
+    // namespace and get internal linkage (they are emitted as static).
     void parseNamespace(Tu& tu) {
         advance();
-        if (atEnd() || cur().kind != Tok::Ident) {
-            err("expected a namespace name");
-            return;
+        std::size_t pushed = 0;
+        bool unnamed = false;
+        if (isP("{")) {
+            unnamed = true;
+            ++anonNs_;
+        } else {
+            if (atEnd() || cur().kind != Tok::Ident) {
+                err("expected a namespace name");
+                return;
+            }
+            ns_.push_back(cur().text);
+            ++pushed;
+            advance();
+            while (eatP("::")) {
+                if (atEnd() || cur().kind != Tok::Ident) {
+                    err("expected a namespace name");
+                    break;
+                }
+                ns_.push_back(cur().text);
+                ++pushed;
+                advance();
+            }
+            std::string full;
+            for (const std::string& part : ns_) full += (full.empty() ? "" : "::") + part;
+            knownNs_.insert(full);
         }
-        ns_.push_back(cur().text);
-        advance();
         expectP("{", "{");
         while (!atEnd() && !isP("}")) {
             std::size_t before = i_;
-            if (isKw("namespace")) parseNamespace(tu);
+            if (isKw("using")) parseUsing();
+            else if (isKw("namespace")) parseNamespace(tu);
             else if (isKw("template")) parseTemplate();
             else if (parseLinkage(tu)) {
             } else if (isUnsupported()) {
@@ -2776,7 +3137,8 @@ private:
             if (i_ == before) advance();
         }
         if (isP("}")) advance();
-        if (!ns_.empty()) ns_.pop_back();
+        for (std::size_t k = 0; k < pushed && !ns_.empty(); ++k) ns_.pop_back();
+        if (unnamed && anonNs_ > 0) --anonNs_;
     }
 
     void parseInitList(CtorDef& cd) {
@@ -2878,9 +3240,15 @@ private:
             flushExtras(tu);
             return;
         }
-        bool ext = eatKw("extern");
-        bool st = eatKw("static");
-        bool td = eatKw("typedef");
+        bool ext = false, st = anonNs_ > 0, td = false, inl = false, inlVar = false, cexpr = false;
+        for (;;) {
+            if (eatKw("extern")) ext = true;
+            else if (eatKw("static")) st = true;
+            else if (eatKw("typedef")) td = true;
+            else if (eatKw("inline")) inl = inlVar = true;
+            else if (eatKw("constexpr")) inl = cexpr = true;
+            else break;
+        }
         auto base = parseBase();
         if (base && (base->kind == Type::Kind::Struct || base->kind == Type::Kind::Union) && isP(";")) {
             advance();
@@ -2902,9 +3270,18 @@ private:
         auto keep = [&](Parsed& d, std::unique_ptr<Type> type, std::unique_ptr<Expr> init) {
             if (td) addTypedef(d.name, std::move(type));
             else {
+                std::size_t dc = d.name.rfind("::");
+                if (dc != std::string::npos) {
+                    // The definition of a static data member: T C::x = v;
+                    std::string cls = classPrefix(d.name.substr(0, dc));
+                    if (!cls.empty()) d.name = cls + "::" + d.name.substr(dc + 2);
+                }
                 auto decl = makeDecl(d, std::move(type), std::move(init));
                 if (ext && !decl->init) decl->isExtern = true;
-                decl->isStatic = st;
+                // A constexpr variable at namespace scope has internal linkage ([basic.link] p3); an
+                // inline variable has one copy in the program, kept by the linker ([dcl.inline]).
+                decl->isStatic = st || (cexpr && !inlVar && !decl->function);
+                decl->isInline = inlVar && !decl->isStatic;
                 tu.decls.push_back(std::move(decl));
             }
         };
@@ -2945,18 +3322,35 @@ private:
         }
         Parsed d = parseDeclarator(true);
         auto type = apply(cloneType(*base), d.mods);
+        bool defConst = false;
         if (type && type->kind == Type::Kind::Function)
-            while (isKw("const") || isKw("noexcept")) advance();
+            while (isKw("const") || isKw("noexcept")) {
+                if (isKw("const")) defConst = true;
+                advance();
+            }
         if (!td && type && type->kind == Type::Kind::Function && isP("{")) {
             std::size_t cc = d.name.rfind("::");
             std::string prefix = cc == std::string::npos ? "" : d.name.substr(0, cc);
-            std::string clsTag;
-            if (!prefix.empty()) {
-                if (classOf(qualify(prefix))) clsTag = qualify(prefix);
-                else if (classOf(prefix)) clsTag = prefix;
-                else if (const Type* td2 = findTypedef(prefix)) {
-                    if (!td2->tag.empty() && classOf(td2->tag)) clsTag = td2->tag;
-                }
+            std::string clsTag = classPrefix(prefix);
+            if (!clsTag.empty() && staticFns_[clsTag].count(d.name.substr(cc + 2))) {
+                // A static member function defined outside its class.
+                std::string q = clsTag + "::" + d.name.substr(cc + 2);
+                auto decl = std::make_unique<Decl>();
+                decl->name = q;
+                decl->line = d.line;
+                decl->col = d.col;
+                decl->file = d.file;
+                decl->function = true;
+                decl->staticMember = true;
+                decl->methodTag = clsTag;
+                decl->asmName = mangleFunc(q, *type);
+                decl->isInline = inl;
+                const Type* ret = type->inner.get();
+                decl->type = std::move(type);
+                decl->body = parseBody(ret);
+                extras_.push_back(std::move(decl));
+                flushExtras(tu);
+                return;
             }
             if (!clsTag.empty()) {
                 // A member function defined outside its class.
@@ -2964,13 +3358,17 @@ private:
                 std::string mangled;
                 for (const Param& p : classOf(clsTag)->params)
                     if (p.name == fname && !p.mangled.empty() && !isSpecialName(p.name) && p.type &&
-                        sameParamTypes(*p.type, *type))
+                        sameParamTypes(*p.type, *type) && p.cmethod == defConst)
                         mangled = p.mangled;
                 if (mangled.empty()) {
                     err("'" + fname + "' is not declared in class '" + clsTag + "' with these parameters");
                 } else {
                     auto decl = newMethodDecl(clsTag, mangled, *type, type->params, Pos{d.line, d.col, d.file});
+                    decl->isInline = inl;
+                    std::string savedBody = bodyClass_;
+                    bodyClass_ = clsTag;
                     decl->body = parseBody(type->inner.get());
+                    bodyClass_ = savedBody;
                     extras_.push_back(std::move(decl));
                 }
                 flushExtras(tu);
@@ -2978,6 +3376,7 @@ private:
             }
             auto decl = makeDecl(d, std::move(type), nullptr);
             decl->isStatic = st;
+            decl->isInline = inl;
             if (false) {
                 // The globals declared so far are constructed first thing in main and destroyed
                 // when it returns, latest first.
@@ -3003,6 +3402,7 @@ private:
         }
         std::unique_ptr<Expr> init;
         if (eatP("=")) init = parseInitializer();
+        else if (isP("{") && type && type->kind != Type::Kind::Function) init = parseInitializer();  // T x{...};
         keep(d, std::move(type), std::move(init));
         while (eatP(",")) {
             Parsed d2 = parseDeclarator(true);
@@ -3119,7 +3519,7 @@ private:
         bool hasInit = decl->init != nullptr;
         std::unique_ptr<Expr> copyFrom;
         if (cls && hasInit && !haveCtorArgs && decl->init->kind != Expr::Kind::Brace &&
-            (hasCopyCtor(cls) || cls->needCtor || cls->needDtor)) {
+            (hasCopyCtor(cls) || cls->needCtor || cls->needDtor || inProgress(tag))) {
             // "T x = y;" runs the copy constructor when y is an object (decided by the checker).
             copyFrom = std::move(decl->init);
             hasInit = false;
@@ -3142,16 +3542,17 @@ private:
             a.push_back(eAddr(eName(name, p), p));
             a.push_back(std::move(copyFrom));
             out.push_back(sExpr(eCall(eName("\x01" "cinit:" + tag, p), std::move(a), p), p));
-            if (cls->needDtor && !dscopes_.empty()) {
+            if ((cls->needDtor || (inProgress(tag) && !eh_)) && !dscopes_.empty()) {
                 if (eh_) ehPushObject(out, eAddr(eName(name, p), p), tag, 0, p);
                 dscopes_.back().push_back(DVar{name, tag, 0, "", 0});
             }
             return;
         }
-        if (cls->needCtor && (haveCtorArgs || !hasInit)) {
+        const bool open = inProgress(tag);
+        if ((cls->needCtor || open) && (haveCtorArgs || !hasInit)) {
             out.push_back(sExpr(ctorCall(tag, eAddr(eName(name, p), p), std::move(ctorArgs), p), p));
         }
-        if (cls->needDtor && !dscopes_.empty()) {
+        if ((cls->needDtor || (open && !eh_)) && !dscopes_.empty()) {
             if (eh_) ehPushObject(out, eAddr(eName(name, p), p), tag, 0, p);
             dscopes_.back().push_back(DVar{name, tag, 0, "", 0});
         }
@@ -3174,7 +3575,7 @@ private:
         }
         enumDef_ = false;
         bool classBase = !td && base && base->kind == Type::Kind::Struct && !base->tag.empty() && classOf(base->tag) &&
-                         (classOf(base->tag)->needCtor || classOf(base->tag)->needDtor);
+                         (classOf(base->tag)->needCtor || classOf(base->tag)->needDtor || inProgress(base->tag));
         for (;;) {
             // "T x(args);" for a class: constructor arguments, not a function declarator.
             if (classBase && !atEnd() && cur().kind == Tok::Ident && nextIs("(") && i_ + 2 < toks_.size() &&
@@ -3201,7 +3602,28 @@ private:
                     return;
                 }
                 std::unique_ptr<Expr> init;
-                if (eatP("=")) init = parseInitializer();
+                if (eatP("=")) {
+                    Pos bp = here();
+                    init = parseInitializer();
+                    // T x = {a, b}; for a class with constructors: copy-list-initialization runs a
+                    // constructor as T x{a, b} does ([dcl.init.list]/3).
+                    if (init && init->kind == Expr::Kind::Brace && type && type->kind == Type::Kind::Struct &&
+                        !type->tag.empty() && userCtors_.count(type->tag))
+                        init = braceTemp(*type, std::move(init->kids), bp);
+                } else if (isP("{") && type && type->kind != Type::Kind::Function) {
+                    // T x{a, b}; ([dcl.init.list]): a class from a T{a, b} temporary built in place,
+                    // a scalar from its one value, an array from the list.
+                    Pos bp = here();
+                    auto list = parseInitializer();
+                    if (type->kind == Type::Kind::Struct && !type->tag.empty())
+                        init = braceTemp(*type, std::move(list->kids), bp);
+                    else if (type->kind != Type::Kind::Array && list->kids.size() == 1)
+                        init = std::move(list->kids[0]);
+                    else if (type->kind != Type::Kind::Array && list->kids.empty())
+                        init = zeroAt();
+                    else
+                        init = std::move(list);
+                }
                 if (td) {
                     addTypedef(d.name, std::move(type));
                 } else {
@@ -3233,10 +3655,10 @@ private:
             auto e = std::make_unique<Expr>();
             e->kind = Expr::Kind::Brace;
             if (!eatP("}")) {
-                e->kids.push_back(parseAssign());
+                e->kids.push_back(parseInitializer());
                 while (eatP(",")) {
                     if (isP("}")) break;
-                    e->kids.push_back(parseAssign());
+                    e->kids.push_back(parseInitializer());
                 }
                 expectP("}", "}");
             }
@@ -3266,6 +3688,8 @@ private:
             if (isUnsupported()) {
                 err("'" + cur().text + "' is not in this subset");
                 syncSemi();
+            } else if (isKw("using")) {
+                parseUsing();
             } else if (!atEnd() && isTypeKw(cur())) {
                 parseDeclInto(s->stmts, false);
             } else {
@@ -3312,6 +3736,11 @@ private:
     // call from the element expression. Used for constructors and destructors of an array.
     template <class F>
     std::unique_ptr<Stmt> elementLoop(const std::string& name, std::uint64_t n, bool reverse, const Pos& p, F call) {
+        return indexLoop([&] { return eName(name, p); }, n, reverse, p, call);
+    }
+    // for (i = 0; i < n; ++i) call(base()[i]), from n - 1 down when reverse.
+    template <class B, class F>
+    std::unique_ptr<Stmt> indexLoop(B base, std::uint64_t n, bool reverse, const Pos& p, F call) {
         auto blk = sBlock(p);
         std::string iv = "__i" + std::to_string(newN_++);
         auto decl = std::make_unique<Decl>();
@@ -3335,7 +3764,7 @@ private:
         idx->line = p.line;
         idx->col = p.col;
         idx->file = p.file;
-        idx->kids.push_back(eName(name, p));
+        idx->kids.push_back(base());
         idx->kids.push_back(eName(iv, p));
         loop->body = sExpr(call(std::move(idx)), p);
         blk->stmts.push_back(std::move(loop));
@@ -3343,11 +3772,16 @@ private:
     }
 
     // Destructor calls for the objects declared in scopes from 'base' up, innermost first.
-    std::vector<std::unique_ptr<Stmt>> pendingDtors(std::size_t base, const Pos& p) {
+    std::vector<std::unique_ptr<Stmt>> pendingDtors(std::size_t base, const Pos& p, const std::string& keep = "") {
         std::vector<std::unique_ptr<Stmt>> out;
+        bool kept = keep.empty();
         for (std::size_t sc = dscopes_.size(); sc-- > base;) {
             auto& vars = dscopes_[sc];
             for (std::size_t i = vars.size(); i-- > 0;) {
+                if (!kept && vars[i].kind == 0 && vars[i].count == 0 && vars[i].name == keep) {
+                    kept = true;  // the returned object itself (see parseReturn)
+                    continue;
+                }
                 if (vars[i].kind == 1) {
                     out.push_back(sExpr(ehCall("__okay_eh_pop", {}, p), p));
                     continue;
@@ -3626,7 +4060,7 @@ private:
                 auto base = parseBase();
                 Parsed d = parseDeclarator(false);
                 auto type = apply(std::move(base), d.mods);
-                h.name = mangleType(type->kind == Type::Kind::Reference && type->inner ? *type->inner : *type);
+                h.name = mangleTypeNoCv(type->kind == Type::Kind::Reference && type->inner ? *type->inner : *type);
                 if (!d.name.empty()) {
                     // The caught object: a copy for a type, the object itself for a reference.
                     auto decl = std::make_unique<Decl>();
@@ -3750,7 +4184,110 @@ private:
         return blk;
     }
 
+    // for (decl : range) body ([stmt.ranged]) becomes
+    //   { auto &__rg = range; auto __rb = begin(__rg); auto __re = end(__rg);
+    //     for (; __rb != __re; ++__rb) { decl = *__rb; body } }
+    // where begin and end are the array bounds or the class's begin() and end() (the checker
+    // chooses). A range that is not an lvalue is held by value.
+    bool isRangeFor() const {
+        int depth = 0;
+        int conds = 0;  // '?' seen at depth 0 whose ':' has not come yet
+        for (std::size_t j = i_; j < toks_.size() && toks_[j].kind != Tok::End; ++j) {
+            const Token& t = toks_[j];
+            if (t.kind != Tok::Punct) continue;
+            if (t.text == "(" || t.text == "[" || t.text == "{") ++depth;
+            else if (t.text == ")" || t.text == "]" || t.text == "}") {
+                if (depth == 0) return false;
+                --depth;
+            } else if (depth == 0 && t.text == ";") return false;
+            else if (depth == 0 && t.text == "?") ++conds;
+            else if (depth == 0 && t.text == ":") {
+                if (conds > 0) --conds;  // the ':' of a ?: (int i = c ? 1 : 0)
+                else return true;
+            }
+        }
+        return false;
+    }
+    std::unique_ptr<Stmt> parseRangeFor() {
+        Pos pos = here();
+        int n = newN_++;
+        std::string rg = "__rg" + std::to_string(n), rb = "__rb" + std::to_string(n), re = "__re" + std::to_string(n);
+        auto base = parseBase();
+        Parsed d = parseDeclarator(true);
+        auto elemType = apply(std::move(base), d.mods);
+        expectP(":", ":");
+        auto range = parseExpr();
+        expectP(")", ")");
+        auto mkDecl = [&](const std::string& name, std::unique_ptr<Type> type, std::unique_ptr<Expr> init) {
+            auto dd = std::make_unique<Decl>();
+            dd->name = name;
+            dd->type = std::move(type);
+            dd->init = std::move(init);
+            dd->line = pos.line;
+            dd->col = pos.col;
+            dd->file = pos.file;
+            return dd;
+        };
+        auto mkE = [&](Expr::Kind k, const char* text) {
+            auto x = std::make_unique<Expr>();
+            x->kind = k;
+            x->text = text;
+            x->line = pos.line;
+            x->col = pos.col;
+            x->file = pos.file;
+            return x;
+        };
+        auto outer = sBlock(pos);
+        auto refAuto = ty(Type::Kind::Reference);
+        refAuto->inner = autoType();
+        outer->stmts.push_back(declStmt(mkDecl(rg, std::move(refAuto), std::move(range))));
+        for (int k = 0; k < 2; ++k) {
+            std::vector<std::unique_ptr<Expr>> a;
+            a.push_back(eName(rg, pos));
+            auto call = eCall(eName(k == 0 ? "\x01" "begin" : "\x01" "end", pos), std::move(a), pos);
+            outer->stmts.push_back(declStmt(mkDecl(k == 0 ? rb : re, autoType(), std::move(call))));
+        }
+        auto loop = std::make_unique<Stmt>();
+        loop->kind = Stmt::Kind::For;
+        loop->line = pos.line;
+        loop->col = pos.col;
+        loop->file = pos.file;
+        auto cmp = mkE(Expr::Kind::Bin, "!=");
+        cmp->kids.push_back(eName(rb, pos));
+        cmp->kids.push_back(eName(re, pos));
+        loop->expr = std::move(cmp);
+        auto inc = mkE(Expr::Kind::Pre, "++");
+        inc->kids.push_back(eName(rb, pos));
+        loop->expr2 = std::move(inc);
+        loopBases_.push_back(dscopes_.size());
+        brkBases_.push_back(dscopes_.size());
+        dscopes_.emplace_back();
+        tscopes_.emplace_back();
+        auto body = sBlock(pos);
+        auto deref = mkE(Expr::Kind::Unary, "*");
+        deref->kids.push_back(eName(rb, pos));
+        addLocal(body->stmts, mkDecl(d.name, std::move(elemType), std::move(deref)), {}, false);
+        body->stmts.push_back(parseStmt());
+        {
+            auto ds = pendingDtors(dscopes_.size() - 1, pos);
+            for (auto& st : ds) body->stmts.push_back(std::move(st));
+        }
+        dscopes_.pop_back();
+        tscopes_.pop_back();
+        loopBases_.pop_back();
+        brkBases_.pop_back();
+        loop->body = std::move(body);
+        outer->stmts.push_back(std::move(loop));
+        return outer;
+    }
+
     std::unique_ptr<Stmt> parseFor() {
+        if (i_ + 1 < toks_.size() && isP(toks_[i_ + 1], "(")) {
+            std::size_t save = i_;
+            i_ += 2;
+            if (isRangeFor()) return parseRangeFor();
+            i_ = save;
+        }
         auto s = std::make_unique<Stmt>();
         s->kind = Stmt::Kind::For;
         s->line = cur().line;
@@ -3837,13 +4374,37 @@ private:
         s->line = cur().line;
         s->col = cur().column;
         advance();
-        if (!isP(";")) s->expr = parseExpr();
+        if (isP("{") && curRet_ && curRet_->kind == Type::Kind::Struct && !curRet_->tag.empty()) {
+            // return {a, b}; initializes the returned object from the list ([stmt.return] p2).
+            Pos bp = here();
+            auto list = parseInitializer();
+            s->expr = braceTemp(*curRet_, std::move(list->kids), bp);
+        } else if (!isP(";")) {
+            s->expr = parseExpr();
+        }
         expectP(";", ";");
         Pos p;
         p.line = s->line;
         p.col = s->col;
         p.file = s->file;
-        auto ds = pendingDtors(dbase_, p);
+        // return x; for a local object x of the returned class: x itself becomes the returned
+        // object (the copy elision of [class.copy.elision]/1.1, which g++ always does): its bytes
+        // move to the result and its destructor does not run on this path.
+        std::string nrvo;
+        if (!eh_ && s->expr && s->expr->kind == Expr::Kind::Name && curRet_ && curRet_->kind == Type::Kind::Struct &&
+            !curRet_->tag.empty()) {
+            bool found = false;
+            for (std::size_t sc = dscopes_.size(); sc-- > dbase_ && !found;) {
+                const auto& vars = dscopes_[sc];
+                for (std::size_t i = vars.size(); i-- > 0 && !found;)
+                    if (vars[i].kind == 0 && vars[i].name == s->expr->text) {
+                        found = true;
+                        if (vars[i].count == 0 && vars[i].guard.empty() && vars[i].tag == curRet_->tag)
+                            nrvo = vars[i].name;
+                    }
+            }
+        }
+        auto ds = pendingDtors(dbase_, p, nrvo);
         if (ds.empty() || !curRet_) return s;
         auto blk = sBlock(p);
         if (!s->expr) {
@@ -3860,9 +4421,21 @@ private:
             decl->col = p.col;
             decl->file = p.file;
             decl->type = cloneType(*curRet_);
-            decl->init = std::move(s->expr);
             std::string nm = decl->name;
-            blk->stmts.push_back(declStmt(std::move(decl)));
+            Type* cls = curRet_->kind == Type::Kind::Struct && !curRet_->tag.empty() ? classOf(curRet_->tag) : nullptr;
+            if (nrvo.empty() && cls && (hasCopyCtor(cls) || cls->needCtor || cls->needDtor || inProgress(curRet_->tag))) {
+                // The returned object is copied with its copy constructor before the locals are
+                // destroyed ([stmt.return], [class.copy.ctor]); a bytewise copy would share what
+                // a local's destructor is about to free.
+                blk->stmts.push_back(declStmt(std::move(decl)));
+                std::vector<std::unique_ptr<Expr>> a;
+                a.push_back(eAddr(eName(nm, p), p));
+                a.push_back(std::move(s->expr));
+                blk->stmts.push_back(sExpr(eCall(eName("\x01" "cinit:" + curRet_->tag, p), std::move(a), p), p));
+            } else {
+                decl->init = std::move(s->expr);
+                blk->stmts.push_back(declStmt(std::move(decl)));
+            }
             for (auto& d : ds) blk->stmts.push_back(std::move(d));
             s->expr = eName(nm, p);
             blk->stmts.push_back(std::move(s));
@@ -3967,7 +4540,16 @@ private:
         if (!isP("(")) return false;
         for (std::size_t k = i_ + 1; k < toks_.size(); ++k) {
             if (toks_[k].kind == Tok::Newline) continue;
-            return isTypeKw(toks_[k]);
+            if (!isTypeKw(toks_[k])) return false;
+            // A qualified type (N::T): look at what follows the whole name.
+            std::size_t qend = 0;
+            if (k + 1 < toks_.size() && isP(toks_[k + 1], "::") && qualTypeAt(k, qend) && qend > k) k = qend - 1;
+            // (T(x) ...) and (T{...} ...) are a functional cast or a temporary inside parentheses,
+            // not a cast; (T(*)(int)) is still a cast to a pointer to function.
+            if (k + 2 < toks_.size() && isP(toks_[k + 1], "{")) return false;
+            if (k + 2 < toks_.size() && isP(toks_[k + 1], "(") && !isP(toks_[k + 2], "*") && !isP(toks_[k + 2], "&"))
+                return false;
+            return true;
         }
         return false;
     }
@@ -4021,6 +4603,71 @@ private:
             }
             e->kids.push_back(parseUnary());
             return e;
+        }
+        if (isKw("new") && i_ + 1 < toks_.size() && isP(toks_[i_ + 1], "(")) {
+            // Placement new: new (p) T(args), new (p) T{...}, new (p) T ([expr.new] p14): the object
+            // is built at p, and the value is p as a T *. p is used twice, so it must have no
+            // side effects.
+            Token at = cur();
+            Pos pp = here();
+            advance();
+            advance();
+            auto place = parseExpr();
+            expectP(")", ")");
+            auto tyName = parseBase();
+            while (eatP("*")) {
+                auto ptr = ty(Type::Kind::Pointer);
+                ptr->inner = std::move(tyName);
+                tyName = std::move(ptr);
+            }
+            std::vector<std::unique_ptr<Expr>> args;
+            bool braced = false;
+            if (eatP("(")) {
+                if (!eatP(")")) {
+                    args.push_back(parseAssign());
+                    while (eatP(",")) args.push_back(parseAssign());
+                    expectP(")", ")");
+                }
+            } else if (isP("{")) {
+                braced = true;
+                auto list = parseInitializer();
+                args = std::move(list->kids);
+            }
+            if (hasSideEffects(*place)) err("placement new needs an address without side effects");
+            auto ptrT = ty(Type::Kind::Pointer);
+            ptrT->inner = cloneType(*tyName);
+            auto at1 = eCastTo(cloneType(*ptrT), cloneExpr(*place), pp);
+            auto at2 = eCastTo(cloneType(*ptrT), std::move(place), pp);
+            auto deref = std::make_unique<Expr>();
+            deref->kind = Expr::Kind::Unary;
+            deref->text = "*";
+            deref->line = pp.line;
+            deref->col = pp.col;
+            deref->file = pp.file;
+            deref->kids.push_back(std::move(at1));
+            std::unique_ptr<Expr> build;
+            Type* cls = tyName->kind == Type::Kind::Struct && !tyName->tag.empty() ? classOf(tyName->tag) : nullptr;
+            if (cls && braced) {
+                auto tmp = braceTemp(*tyName, std::move(args), pp);
+                std::vector<std::unique_ptr<Expr>> a;
+                a.push_back(eAddr(std::move(deref), pp));
+                a.push_back(std::move(tmp));
+                build = eCall(eName("\x01" "cinit:" + tyName->tag, pp), std::move(a), pp);
+            } else if (cls && args.size() == 1) {
+                std::vector<std::unique_ptr<Expr>> a;
+                a.push_back(eAddr(std::move(deref), pp));
+                a.push_back(std::move(args[0]));
+                build = eCall(eName("\x01" "cinit:" + tyName->tag, pp), std::move(a), pp);
+            } else if (cls) {
+                build = ctorCall(tyName->tag, eAddr(std::move(deref), pp), std::move(args), pp);
+            } else {
+                std::unique_ptr<Expr> v = args.empty() ? zeroAt() : std::move(args[0]);
+                build = eAssign(std::move(deref), std::move(v), pp);
+            }
+            auto comma = ex(Expr::Kind::Comma, at);
+            comma->kids.push_back(std::move(build));
+            comma->kids.push_back(std::move(at2));
+            return comma;
         }
         if (isKw("new")) {
             Token at = cur();
@@ -4177,8 +4824,10 @@ private:
                 n->col = e->col;
                 n->kids.push_back(std::move(e));
                 if (!eatP(")")) {
-                    n->kids.push_back(parseAssign());
-                    while (eatP(",")) n->kids.push_back(parseAssign());
+                    // An argument may be a braced list; the checker makes it an object of the
+                    // parameter's class.
+                    n->kids.push_back(isP("{") ? parseInitializer() : parseAssign());
+                    while (eatP(",")) n->kids.push_back(isP("{") ? parseInitializer() : parseAssign());
                     expectP(")", ")");
                 }
                 e = std::move(n);
@@ -4196,6 +4845,22 @@ private:
             if (isP(".") || isP("->")) {
                 Token op = cur();
                 advance();
+                if (isP("~") && i_ + 3 < toks_.size() && toks_[i_ + 1].kind == Tok::Ident && isP(toks_[i_ + 2], "(") &&
+                    isP(toks_[i_ + 3], ")")) {
+                    // p->~T() and x.~T(): the destructor, or nothing for a type without one (a
+                    // scalar T in a template: a pseudo-destructor, [expr.prim.id.dtor]).
+                    std::string nm = toks_[i_ + 1].text;
+                    Pos pp = here();
+                    i_ += 4;
+                    const Type* td = findTypedef(nm);
+                    std::unique_ptr<Expr> self = op.text == "->" ? std::move(e) : eAddr(std::move(e), pp);
+                    std::unique_ptr<Expr> call;
+                    if (td && td->kind == Type::Kind::Struct && !td->tag.empty() && classOf(td->tag))
+                        call = dtorCall(td->tag, std::move(self), pp);
+                    if (!call) call = zeroAt();
+                    e = std::move(call);
+                    continue;
+                }
                 if (atEnd() || cur().kind != Tok::Ident) {
                     err("expected a field name");
                     continue;
@@ -4223,10 +4888,104 @@ private:
             advance();
             return e;
         }
+        if (isP("[")) return parseLambda();
+        if (cur().kind == Tok::Ident && nextIs("::")) {
+            // std::find(...), std::vector<int>(...): the template's bare name.
+            std::size_t ti = tmplAfterNs(i_, false);
+            if (!ti) {
+                ti = tmplAfterNs(i_, true);
+                if (ti && !(ti + 1 < toks_.size() && isP(toks_[ti + 1], "<"))) ti = 0;
+            }
+            if (ti) i_ = ti;
+        }
         if (isKw("nullptr")) {
             auto e = ex(Expr::Kind::Int, cur());
             e->ival = 0;
             advance();
+            return e;
+        }
+        if (nextIs("(") && (isKw("int") || isKw("double") || isKw("float") || isKw("char") || isKw("bool") ||
+                            isKw("long") || isKw("short") || isKw("unsigned") || isKw("signed") ||
+                            (cur().kind == Tok::Ident && findTypedef(cur().text) &&
+                             findTypedef(cur().text)->kind != Type::Kind::Struct &&
+                             findTypedef(cur().text)->kind != Type::Kind::Union))) {
+            // A functional cast T(e) of a scalar type ([expr.type.conv]); T() is zero.
+            Token at = cur();
+            auto tyName = parseBase();
+            expectP("(", "(");
+            std::unique_ptr<Expr> inner;
+            if (isP(")")) {
+                inner = leafInt(at);
+                inner->ival = 0;
+            }
+            else inner = parseExpr();
+            expectP(")", ")");
+            auto e = ex(Expr::Kind::Cast, at);
+            e->ty = std::move(tyName);
+            e->kids.push_back(std::move(inner));
+            return e;
+        }
+        if (cur().kind == Tok::Ident && nextIs("::")) {
+            std::size_t qend = 0;
+            std::size_t start = i_;
+            const Type* qt = qualTypeAt(i_, qend);
+            if (qt && qend < toks_.size() && (isP(toks_[qend], "(") || isP(toks_[qend], "{"))) {
+                // N::T(e) or N::T{...}
+                Token at = cur();
+                Pos pos = here();
+                i_ = qend;
+                auto tyName = cloneType(*qt);
+                if (tyName->kind == Type::Kind::Struct && isP("{")) {
+                    auto list = parseInitializer();
+                    return braceTemp(*tyName, std::move(list->kids), pos);
+                }
+                if (tyName->kind != Type::Kind::Struct && tyName->kind != Type::Kind::Union && eatP("(")) {
+                    std::unique_ptr<Expr> inner;
+                    if (isP(")")) {
+                inner = leafInt(at);
+                inner->ival = 0;
+            }
+                    else inner = parseExpr();
+                    expectP(")", ")");
+                    auto e = ex(Expr::Kind::Cast, at);
+                    e->ty = std::move(tyName);
+                    e->kids.push_back(std::move(inner));
+                    return e;
+                }
+                if (tyName->kind == Type::Kind::Struct && !tyName->tag.empty() && eatP("(")) {
+                    // N::T(args): a temporary of the class, as for T(args) below.
+                    std::vector<std::unique_ptr<Expr>> args;
+                    if (!eatP(")")) {
+                        args.push_back(parseAssign());
+                        while (eatP(",")) args.push_back(parseAssign());
+                        expectP(")", ")");
+                    }
+                    std::string tmp = "__tmp" + std::to_string(newN_++);
+                    auto comma = ex(Expr::Kind::Comma, at);
+                    comma->ival = 7;
+                    comma->text = tmp;
+                    comma->ty = cloneType(*tyName);
+                    comma->kids.push_back(ctorCall(tyName->tag, eAddr(eName(tmp, pos), pos), std::move(args), pos));
+                    comma->kids.push_back(eName(tmp, pos));
+                    return comma;
+                }
+                i_ = start;
+            }
+        }
+        if ((isKw("static_cast") || isKw("reinterpret_cast") || isKw("const_cast")) && nextIs("<")) {
+            // static_cast<T>(e), reinterpret_cast<T>(e), const_cast<T>(e) (ISO/IEC 14882 [expr.static.cast],
+            // [expr.reinterpret.cast], [expr.const.cast]). The subset checks them like a C cast (T)e.
+            Token at = cur();
+            advance();
+            advance();
+            auto tyName = parseTypeName();
+            expectP(">", ">");
+            expectP("(", "(");
+            auto inner = parseExpr();
+            expectP(")", ")");
+            auto e = ex(Expr::Kind::Cast, at);
+            e->ty = std::move(tyName);
+            e->kids.push_back(std::move(inner));
             return e;
         }
         if (cur().kind == Tok::Ident && ftmpl_.count(cur().text)) {
@@ -4280,14 +5039,57 @@ private:
                 advance();
                 return e;
             }
+
+            if (nextIs("::")) {
+                // A qualified enumerator: E::e, N::E::e, N::e.
+                std::string chain = cur().text;
+                std::size_t j = i_ + 1;
+                while (j + 1 < toks_.size() && isP(toks_[j], "::") && toks_[j + 1].kind == Tok::Ident) {
+                    chain += "::" + toks_[j + 1].text;
+                    j += 2;
+                }
+                std::vector<std::string> prefixes;
+                for (std::size_t keep = ns_.size() + 1; keep-- > 0;) {
+                    std::string q;
+                    for (std::size_t k = 0; k < keep; ++k) q += ns_[k] + "::";
+                    prefixes.push_back(q);
+                }
+                for (const std::string& u : usingNs_) prefixes.push_back(u + "::");
+                for (const std::string& q : prefixes) {
+                    auto hit = enums_.find(q + chain);
+                    if (hit == enums_.end()) continue;
+                    auto e = ex(Expr::Kind::Int, cur());
+                    e->ival = static_cast<std::uint64_t>(hit->second);
+                    i_ = j;
+                    return e;
+                }
+            }
             std::unique_ptr<Type> instTd;
             if (ctmpl_.count(cur().text) && nextIs("<")) {
                 // Name<args>(...) with a class template: the instance, then a temporary of it.
                 std::size_t saved = i_;
                 instTd = instantiateClass(cur().text);
+                if (instTd->kind == Type::Kind::Struct && isP("::") && i_ + 1 < toks_.size() &&
+                    toks_[i_ + 1].kind == Tok::Ident) {
+                    // Box<int>::member: a static member of the instance.
+                    advance();
+                    auto e = leafName(cur());
+                    e->text = instTd->tag + "::" + cur().text;
+                    advance();
+                    return e;
+                }
                 if (!isP("(") || instTd->kind != Type::Kind::Struct) {
                     i_ = saved;
                     instTd.reset();
+                }
+            }
+            if (!instTd && nextIs("{")) {
+                const Type* td = findTypedef(cur().text);
+                if (td && td->kind == Type::Kind::Struct && !td->tag.empty()) {
+                    Pos pos = here();
+                    advance();
+                    auto list = parseInitializer();
+                    return braceTemp(*td, std::move(list->kids), pos);
                 }
             }
             if (instTd || nextIs("(")) {
@@ -4391,4690 +5193,6 @@ private:
 
 };
 
-bool isIntish(const Type& t) {
-    return t.kind == Type::Kind::Char || t.kind == Type::Kind::Short || t.kind == Type::Kind::Int ||
-           t.kind == Type::Kind::Long || t.kind == Type::Kind::Bool;
-}
-bool isFp(const Type& t) { return t.kind == Type::Kind::Float || t.kind == Type::Kind::Double; }
-int fpWidthOf(const Type* t) {
-    if (!t) return 0;
-    if (t->kind == Type::Kind::Float) return 4;
-    if (t->kind == Type::Kind::Double) return 8;
-    return 0;
-}
-
-std::map<std::string, std::unique_ptr<Type>>& canonStructs() {
-    static std::map<std::string, std::unique_ptr<Type>> m;
-    return m;
-}
-
-const Type* canonOf(const Type* st) {
-    if (!st || st->tag.empty()) return st;
-    auto it = canonStructs().find(st->tag);
-    if (it == canonStructs().end() || !it->second || it->second->params.empty()) return st;
-    return it->second.get();
-}
-bool isPtr(const Type& t) { return t.kind == Type::Kind::Pointer; }
-bool isVoidPtr(const Type& t) {
-    return isPtr(t) && t.inner && t.inner->kind == Type::Kind::Void;
-}
-bool sameType(const Type& a, const Type& b) {
-    if (a.kind != b.kind || a.unsign != b.unsign) return false;
-    if (a.kind == Type::Kind::Pointer || a.kind == Type::Kind::Array || a.kind == Type::Kind::Reference) {
-        return a.inner && b.inner && sameType(*a.inner, *b.inner);
-    }
-    if (a.kind == Type::Kind::Function) {
-        if (a.variadic != b.variadic) return false;
-        if (!a.inner || !b.inner || !sameType(*a.inner, *b.inner) || a.params.size() != b.params.size())
-            return false;
-        for (std::size_t i = 0; i < a.params.size(); ++i) {
-            if (!a.params[i].type || !b.params[i].type || !sameType(*a.params[i].type, *b.params[i].type))
-                return false;
-        }
-    }
-    if (a.kind == Type::Kind::Struct) {
-        if (!a.tag.empty() || !b.tag.empty()) return a.tag == b.tag;
-        if (a.params.size() != b.params.size()) return false;
-        for (std::size_t i = 0; i < a.params.size(); ++i) {
-            if (a.params[i].name != b.params[i].name) return false;
-            if (!a.params[i].type || !b.params[i].type || !sameType(*a.params[i].type, *b.params[i].type))
-                return false;
-        }
-    }
-    return true;
-}
-
-bool isSpecialName(const std::string& n) { return n == "<ctor>" || n == "<dtor>" || n == "<dtor0>"; }
-
-const Param* findSpecial(const Type* t, const char* name) {
-    if (!t) return nullptr;
-    for (const Param& p : t->params)
-        if (p.name == name) return &p;
-    return nullptr;
-}
-
-// True when 'd' is the same class as 'b' or is derived from it (single inheritance).
-bool derivedFrom(const Type& d, const Type& b) {
-    if (d.kind != Type::Kind::Struct || b.kind != Type::Kind::Struct || d.tag.empty() || b.tag.empty()) return false;
-    std::string cur = d.tag;
-    for (int guard = 0; guard < 64 && !cur.empty(); ++guard) {
-        if (cur == b.tag) return true;
-        auto it = canonStructs().find(cur);
-        if (it == canonStructs().end() || !it->second) return false;
-        cur = it->second->base;
-    }
-    return false;
-}
-
-bool hasSideEffects(const Expr& e) {
-    if (e.kind == Expr::Kind::Call || e.kind == Expr::Kind::Assign || e.kind == Expr::Kind::Pre ||
-        e.kind == Expr::Kind::Post)
-        return true;
-    for (const auto& k : e.kids)
-        if (k && hasSideEffects(*k)) return true;
-    return false;
-}
-
-struct ET {
-    std::unique_ptr<Type> type;
-    bool lvalue = false;
-    bool mod = false;
-    bool nullc = false;
-    bool bad = false;
-    int line = 1;
-    int col = 1;
-};
-
-struct Pos2 {
-    int line = 1;
-    int col = 1;
-    std::string file;
-};
-
-class Checker {
-public:
-    explicit Checker(Diagnostics& diags) : diags_(diags) {}
-
-    void check(Tu& tu) {
-        scopes_.emplace_back();
-        // Declare every function first, so a call may come before the definition (class members).
-        for (auto& d : tu.decls) {
-            if (d && d->function && d->type) add(d->name, cloneType(*d->type), true, d->line, d->col);
-            else if (d && !d->vt.empty() && d->type) add(d->name, cloneType(*d->type), false, d->line, d->col);
-        }
-        for (auto& d : tu.decls) {
-            if (!d) continue;
-            if (d->function) checkFunction(*d);
-            else checkVar(*d);
-        }
-        scopes_.pop_back();
-    }
-
-private:
-    struct Sym {
-        std::unique_ptr<Type> type;
-        bool func = false;
-    };
-
-    Diagnostics& diags_;
-    std::string file_;
-    std::vector<std::map<std::string, Sym>> scopes_;
-    int loops_ = 0;
-    int switches_ = 0;
-    const Type* ret_ = nullptr;
-    const Type* method_ = nullptr;
-    std::string inNs_;
-
-    int quiet_ = 0;  // above 0: a probing check that must not report
-    void err(int line, int col, const std::string& msg) {
-        if (quiet_ > 0) return;
-        diags_.error(file_.empty() ? "t.c" : file_, line, col, msg);
-    }
-
-    std::unique_ptr<Type> prim(Type::Kind k) {
-        auto t = std::make_unique<Type>();
-        t->kind = k;
-        return t;
-    }
-    std::unique_ptr<Type> ptrTo(std::unique_ptr<Type> inner) {
-        auto t = prim(Type::Kind::Pointer);
-        t->inner = std::move(inner);
-        return t;
-    }
-
-    ET bad(int line, int col) {
-        ET e;
-        e.type = prim(Type::Kind::Int);
-        e.bad = true;
-        e.line = line;
-        e.col = col;
-        return e;
-    }
-
-    void add(const std::string& name, std::unique_ptr<Type> type, bool func, int line, int col) {
-        if (name.empty()) return;
-        auto& sc = scopes_.back();
-        auto it = sc.find(name);
-        if (it != sc.end()) {
-            if (func && it->second.func && it->second.type && type && sameType(*it->second.type, *type)) return;
-            err(line, col, "redefined '" + name + "'");
-            return;
-        }
-        Sym s;
-        s.type = std::move(type);
-        s.func = func;
-        sc.emplace(name, std::move(s));
-    }
-
-    ET lookup(const std::string& name, int line, int col, bool quiet = false) {
-        for (int i = static_cast<int>(scopes_.size()) - 1; i >= 0; --i) {
-            auto it = scopes_[static_cast<std::size_t>(i)].find(name);
-            if (it == scopes_[static_cast<std::size_t>(i)].end() || !it->second.type) continue;
-            ET e;
-            e.type = cloneType(*it->second.type);
-            e.line = line;
-            e.col = col;
-            if (e.type->kind == Type::Kind::Reference && e.type->inner) {
-                e.type = cloneType(*e.type->inner);
-                e.lvalue = true;
-                e.mod = true;
-                return e;
-            }
-            if (e.type->kind == Type::Kind::Function) {
-                e.lvalue = false;
-                e.mod = false;
-            } else if (e.type->kind == Type::Kind::Array) {
-                e.lvalue = true;
-                e.mod = false;
-            } else if (e.type->kind == Type::Kind::Struct) {
-                e.lvalue = true;
-                e.mod = true;
-            } else {
-                e.lvalue = true;
-                e.mod = true;
-            }
-            return e;
-        }
-        if (!quiet) err(line, col, "undeclared identifier '" + name + "'");
-        return bad(line, col);
-    }
-
-    ET decay(ET e) {
-        if (!e.type) return e;
-        if (e.type->kind == Type::Kind::Array && e.type->inner) {
-            e.type = ptrTo(std::move(e.type->inner));
-            e.lvalue = false;
-            e.mod = false;
-        } else if (e.type->kind == Type::Kind::Function) {
-            e.type = ptrTo(std::move(e.type));
-            e.lvalue = false;
-            e.mod = false;
-        }
-        return e;
-    }
-
-    bool scalar(const Type& t) const { return isIntish(t) || isPtr(t) || isFp(t); }
-
-    bool canAssign(const Type& dst, const ET& src) {
-        if (src.bad || !src.type) return true;
-        if ((isIntish(dst) || isFp(dst)) && src.type && (isIntish(*src.type) || isFp(*src.type))) return true;
-        if (dst.kind == Type::Kind::Struct && src.type->kind == Type::Kind::Struct && sameType(dst, *src.type))
-            return true;
-        if (isPtr(dst) && src.nullc) return true;
-        if (isPtr(dst) && isPtr(*src.type)) {
-            if (isVoidPtr(dst) || isVoidPtr(*src.type)) return true;
-            if (dst.inner && src.type->inner && derivedFrom(*src.type->inner, *dst.inner)) return true;
-            return dst.inner && src.type->inner && sameType(*dst.inner, *src.type->inner);
-        }
-        return false;
-    }
-
-    bool isConst(const Expr& e) {
-        switch (e.kind) {
-        case Expr::Kind::Int:
-        case Expr::Kind::Char:
-        case Expr::Kind::String:
-        case Expr::Kind::Float:
-            return true;
-        case Expr::Kind::Unary:
-            return !e.kids.empty() && e.kids[0] && isConst(*e.kids[0]);
-        case Expr::Kind::Bin:
-            return e.kids.size() == 2 && e.kids[0] && e.kids[1] && isConst(*e.kids[0]) && isConst(*e.kids[1]);
-        case Expr::Kind::Cast:
-            return !e.kids.empty() && e.kids[0] && isConst(*e.kids[0]);
-        case Expr::Kind::Member:
-            return false;
-        default:
-            return false;
-        }
-    }
-
-    ET checkExprBody(Expr& e) {
-        ET r;
-        r.line = e.line;
-        r.col = e.col;
-        auto need = [&](std::size_t n) {
-            return e.kids.size() > n && e.kids[n] != nullptr;
-        };
-        switch (e.kind) {
-        case Expr::Kind::Int:
-            if (e.litRank > 0) r.type = prim(Type::Kind::Long);
-            else if (!e.litUnsigned && e.ival > 0x7fffffffull) r.type = prim(Type::Kind::Long);
-            else r.type = prim(Type::Kind::Int);
-            if (e.litUnsigned || (e.litRank == 0 && e.ival > 0xffffffffull)) r.type->unsign = true;
-            if (e.litUnsigned && e.ival > 0xffffffffull) r.type->kind = Type::Kind::Long;
-            r.nullc = e.ival == 0;
-            return r;
-        case Expr::Kind::Float:
-            r.type = prim(e.litRank == 1 ? Type::Kind::Float : Type::Kind::Double);
-            return r;
-        case Expr::Kind::Char:
-            r.type = prim(Type::Kind::Int);
-            r.nullc = e.ival == 0;
-            return r;
-        case Expr::Kind::String: {
-            r.type = prim(Type::Kind::Array);
-            r.type->inner = prim(Type::Kind::Char);
-            auto bound = std::make_unique<Expr>();
-            bound->kind = Expr::Kind::Int;
-            bound->ival = static_cast<std::uint64_t>(e.text.size()) + 1;
-            r.type->bound = std::move(bound);
-            r.lvalue = true;
-            return r;
-        }
-        case Expr::Kind::Name: {
-            if (method_) {
-                const Type* st = canonOf(method_);
-                if (st) {
-                    for (const Param& f : st->params) {
-                        if (f.name != e.text || !f.mangled.empty()) continue;
-                        if (!f.type || f.type->kind == Type::Kind::Function) continue;
-                        auto obj = std::make_unique<Expr>();
-                        obj->kind = Expr::Kind::Name;
-                        obj->text = "this";
-                        obj->line = e.line;
-                        obj->col = e.col;
-                        auto field = std::make_unique<Expr>();
-                        field->kind = Expr::Kind::Name;
-                        field->text = e.text;
-                        field->line = e.line;
-                        field->col = e.col;
-                        e.kind = Expr::Kind::Member;
-                        e.text = "->";
-                        e.kids.clear();
-                        e.kids.push_back(std::move(obj));
-                        e.kids.push_back(std::move(field));
-                        return checkExprBody(e);
-                    }
-                }
-            }
-            ET hit = lookup(e.text, e.line, e.col, true);
-            if (!hit.bad) return hit;
-            if (e.text.find("::") == std::string::npos) {
-                std::string scope = inNs_;
-                while (!scope.empty()) {
-                    std::string q = scope + "::" + e.text;
-                    ET ns = lookup(q, e.line, e.col, true);
-                    if (!ns.bad) {
-                        e.text = q;
-                        return ns;
-                    }
-                    std::size_t cut = scope.rfind("::");
-                    if (cut == std::string::npos) break;
-                    scope = scope.substr(0, cut);
-                }
-            }
-            if (e.text == "malloc" || e.text == "free") {
-                ET b;
-                b.line = e.line;
-                b.col = e.col;
-                b.type = prim(Type::Kind::Function);
-                if (e.text == "malloc") {
-                    b.type->inner = ptrTo(prim(Type::Kind::Void));
-                    Param a;
-                    a.type = prim(Type::Kind::Long);
-                    b.type->params.push_back(std::move(a));
-                } else {
-                    b.type->inner = prim(Type::Kind::Void);
-                    Param a;
-                    a.type = ptrTo(prim(Type::Kind::Char));
-                    b.type->params.push_back(std::move(a));
-                }
-                return b;
-            }
-            return lookup(e.text, e.line, e.col);
-        }
-        case Expr::Kind::Unary: {
-            if (!need(0)) return bad(e.line, e.col);
-            if (e.text == "!" || e.text == "-" || e.text == "+" || e.text == "~") convertIfNeeded(*e.kids[0]);
-            if (e.text == "sizeof") {
-                if (e.ty) {
-                    if (e.ty->kind == Type::Kind::Void || e.ty->kind == Type::Kind::Function) {
-                        err(e.line, e.col, "sizeof this type is not allowed");
-                        return bad(e.line, e.col);
-                    }
-                } else {
-                    if (!need(0)) return bad(e.line, e.col);
-                    ET inner = checkExpr(*e.kids[0]);
-                    if (inner.bad || !inner.type || inner.type->kind == Type::Kind::Void ||
-                        inner.type->kind == Type::Kind::Function) {
-                        err(e.line, e.col, "sizeof this expression is not allowed");
-                        return bad(e.line, e.col);
-                    }
-                }
-                r.type = prim(Type::Kind::Int);
-                return r;
-            }
-            if (e.text == "&") {
-                ET inner = checkExpr(*e.kids[0]);
-                if (inner.bad) return bad(e.line, e.col);
-                if (!inner.lvalue && !(inner.type && inner.type->kind == Type::Kind::Function)) {
-                    err(e.line, e.col, "operand of '&' is not an lvalue");
-                    return bad(e.line, e.col);
-                }
-                r.type = ptrTo(std::move(inner.type));
-                return r;
-            }
-            if (e.text == "*") {
-                ET inner = decay(checkExpr(*e.kids[0]));
-                if (inner.bad) return bad(e.line, e.col);
-                if (!inner.type || !isPtr(*inner.type) || !inner.type->inner) {
-                    err(e.line, e.col, "operand is not a pointer");
-                    return bad(e.line, e.col);
-                }
-                if (inner.type->inner->kind == Type::Kind::Void) {
-                    err(e.line, e.col, "operand is not a pointer");
-                    return bad(e.line, e.col);
-                }
-                r.type = cloneType(*inner.type->inner);
-                r.lvalue = true;
-                r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type) || r.type->kind == Type::Kind::Struct;
-                return r;
-            }
-            ET inner = decay(checkExpr(*e.kids[0]));
-            if (inner.bad) return bad(e.line, e.col);
-            if (e.text == "!" && inner.type && scalar(*inner.type)) {
-                r.type = prim(Type::Kind::Int);
-                return r;
-            }
-            if ((e.text == "-" || e.text == "+") && inner.type && isFp(*inner.type)) {
-                r.type = cloneType(*inner.type);
-                return r;
-            }
-            if (!inner.type || !isIntish(*inner.type)) {
-                err(e.line, e.col, "operand is not an integer");
-                return bad(e.line, e.col);
-            }
-            r.type = prim(Type::Kind::Int);
-            return r;
-        }
-        case Expr::Kind::Pre:
-        case Expr::Kind::Post: {
-            if (!need(0)) return bad(e.line, e.col);
-            ET inner = checkExpr(*e.kids[0]);
-            if (inner.bad) return bad(e.line, e.col);
-            if (!inner.mod || !inner.type || !(isIntish(*inner.type) || isPtr(*inner.type))) {
-                err(e.line, e.col, "operand of '" + e.text + "' is not a modifiable integer or pointer");
-                return bad(e.line, e.col);
-            }
-            r.type = cloneType(*inner.type);
-            return r;
-        }
-        case Expr::Kind::Bin:
-            return checkBin(e);
-        case Expr::Kind::Assign:
-            return checkAssign(e);
-        case Expr::Kind::Cond: {
-            if (!need(0) || !need(1) || !need(2)) return bad(e.line, e.col);
-            ET c = decay(checkExpr(*e.kids[0]));
-            ET a = decay(checkExpr(*e.kids[1]));
-            ET b = decay(checkExpr(*e.kids[2]));
-            if (c.bad || a.bad || b.bad) return bad(e.line, e.col);
-            if (!c.type || !scalar(*c.type)) {
-                err(e.line, e.col, "condition is not a scalar");
-                return bad(e.line, e.col);
-            }
-            if (a.lvalue && b.lvalue && a.type && b.type && a.type->kind == Type::Kind::Struct &&
-                sameType(*a.type, *b.type)) {
-                // c ? x : y with two objects of one class is an lvalue (ISO/IEC 14882 [expr.cond]):
-                // *(c ? &x : &y).
-                auto cond = mkE(Expr::Kind::Cond, e);
-                cond->kids.push_back(std::move(e.kids[0]));
-                cond->kids.push_back(eUnary("&", std::move(e.kids[1]), e));
-                cond->kids.push_back(eUnary("&", std::move(e.kids[2]), e));
-                e.kind = Expr::Kind::Unary;
-                e.text = "*";
-                e.kids.clear();
-                e.kids.push_back(std::move(cond));
-                return checkExprBody(e);
-            }
-            if (a.type && b.type && isIntish(*a.type) && isIntish(*b.type)) {
-                r.type = prim(Type::Kind::Int);
-                return r;
-            }
-            if (a.nullc && b.type && isPtr(*b.type)) {
-                r.type = cloneType(*b.type);
-                return r;
-            }
-            if (b.nullc && a.type && isPtr(*a.type)) {
-                r.type = cloneType(*a.type);
-                return r;
-            }
-            if (a.type && b.type && isPtr(*a.type) && isPtr(*b.type) && canAssign(*a.type, b)) {
-                r.type = cloneType(*a.type);
-                return r;
-            }
-            err(e.line, e.col, "branches of '?:' do not have a common type");
-            return bad(e.line, e.col);
-        }
-        case Expr::Kind::Call:
-            return checkCall(e);
-        case Expr::Kind::Index: {
-            if (!need(0) || !need(1)) return bad(e.line, e.col);
-            ET base = decay(checkExpr(*e.kids[0]));
-            ET idx = decay(checkExpr(*e.kids[1]));
-            if (base.bad || idx.bad) return bad(e.line, e.col);
-            ET* ptr = nullptr;
-            ET* off = nullptr;
-            if (base.type && isPtr(*base.type) && idx.type && isIntish(*idx.type)) {
-                ptr = &base;
-                off = &idx;
-            } else if (idx.type && isPtr(*idx.type) && base.type && isIntish(*base.type)) {
-                ptr = &idx;
-                off = &base;
-            }
-            (void)off;
-            if (!ptr || !ptr->type->inner) {
-                err(e.line, e.col, "operand is not a pointer");
-                return bad(e.line, e.col);
-            }
-            r.type = cloneType(*ptr->type->inner);
-            r.lvalue = true;
-            r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type) || r.type->kind == Type::Kind::Struct;
-            return r;
-        }
-        case Expr::Kind::Member: {
-            if (!need(0) || !need(1)) return bad(e.line, e.col);
-            ET obj = e.text == "->" ? decay(checkExpr(*e.kids[0])) : checkExpr(*e.kids[0]);
-            if (obj.bad || !obj.type) return bad(e.line, e.col);
-            const Type* st = obj.type.get();
-            if (e.text == "->") {
-                if (!isPtr(*obj.type) || !obj.type->inner ||
-                    (obj.type->inner->kind != Type::Kind::Struct && obj.type->inner->kind != Type::Kind::Union)) {
-                    err(e.line, e.col, "operand of '->' is not a pointer to a struct");
-                    return bad(e.line, e.col);
-                }
-                st = obj.type->inner.get();
-            } else if (st->kind != Type::Kind::Struct && st->kind != Type::Kind::Union) {
-                err(e.line, e.col, "operand of '.' is not a struct");
-                return bad(e.line, e.col);
-            }
-            st = canonOf(st);
-            const std::string& fname = e.kids[1]->text;
-            for (const Param& f : st->params) {
-                if (f.name != fname || !f.type) continue;
-                r.type = cloneType(*f.type);
-                r.lvalue = true;
-                r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type) || r.type->kind == Type::Kind::Struct;
-                return r;
-            }
-            err(e.line, e.col, "struct has no field '" + fname + "'");
-            return bad(e.line, e.col);
-        }
-        case Expr::Kind::Cast: {
-            if (!need(0) || !e.ty) return bad(e.line, e.col);
-            ET inner = decay(checkExpr(*e.kids[0]));
-            if (inner.bad) return bad(e.line, e.col);
-            r.type = cloneType(*e.ty);
-            r.nullc = inner.nullc && isIntish(*r.type);
-            return r;
-        }
-        case Expr::Kind::Comma: {
-            if (e.kids.empty()) return bad(e.line, e.col);
-            if (e.ival == 7 && e.ty) {
-                // A T(args) temporary: destroyed after the statement unless it initializes an object.
-                TempInfo ti;
-                ti.name = e.text;
-                ti.type = cloneType(*e.ty);
-                add(ti.name, cloneType(*e.ty), false, e.line, e.col);
-                if (needsDtor(*e.ty)) {
-                    ti.tag = e.ty->tag;
-                    ti.flag = "__cf" + std::to_string(tempN_++);
-                    add(ti.flag, std::make_unique<Type>(), false, e.line, e.col);
-                    scopes_.back()[ti.flag].type->kind = Type::Kind::Int;
-                    lastTempFlag_ = ti.flag;
-                    lastTempName_ = ti.name;
-                    lastTempTag_ = ti.tag;
-                    lastTempRec_.clear();
-                    if (ehActive()) {
-                        ti.rec = "__cr" + std::to_string(tempN_++);
-                        lastTempRec_ = ti.rec;
-                        auto arr = std::make_unique<Type>();
-                        arr->kind = Type::Kind::Array;
-                        arr->inner = prim(Type::Kind::Long);
-                        arr->bound = std::make_unique<Expr>();
-                        arr->bound->kind = Expr::Kind::Int;
-                        arr->bound->ival = 14;
-                        add(ti.rec, std::move(arr), false, e.line, e.col);
-                    }
-                    auto first = std::move(e.kids[0]);
-                    e.kids[0] = withFlag(std::move(first), e);
-                }
-                e.ival = 9;
-                temps_.push_back(std::move(ti));
-            }
-            ET last = bad(e.line, e.col);
-            for (auto& k : e.kids)
-                if (k) last = decay(checkExpr(*k));
-            last.lvalue = false;
-            last.mod = false;
-            return last;
-        }
-        case Expr::Kind::Brace:
-            err(e.line, e.col, "brace initializer is not an expression");
-            return bad(e.line, e.col);
-        }
-        return bad(e.line, e.col);
-    }
-
-    // ---- temporaries made while checking (hidden locals, destroyed after the statement) ----
-    struct TempInfo {
-        std::string name;
-        std::string tag;                 // class to destroy ("" = nothing to destroy)
-        std::string flag;                // hidden int, set when the object was built (declared with it)
-        std::string rec;                 // with exceptions: the unwinding record (14 longs) of the object
-        std::unique_ptr<Type> type;      // set when the declaration still has to be inserted
-        Pos2 pos;
-    };
-    std::vector<TempInfo> temps_;
-    int tempN_ = 0;
-    std::string lastTempFlag_;  // the destruction flag of the temporary newTemp just made, or ""
-    std::string lastTempRec_;   // its unwinding record, or ""
-    std::string lastTempName_;
-    std::string lastTempTag_;
-    // "first, flag = 1 (, record the object)": the flag records that the object was built.
-    std::unique_ptr<Expr> withFlag(std::unique_ptr<Expr> first, const Expr& at) {
-        if (lastTempFlag_.empty()) return first;
-        auto one = mkE(Expr::Kind::Int, at);
-        one->ival = 1;
-        auto set = mkE(Expr::Kind::Assign, at);
-        set->text = "=";
-        set->ival = 3;
-        set->kids.push_back(mkName(lastTempFlag_, at));
-        set->kids.push_back(std::move(one));
-        auto c = mkE(Expr::Kind::Comma, at);
-        c->kids.push_back(std::move(first));
-        c->kids.push_back(std::move(set));
-        if (!lastTempRec_.empty()) {
-            // Record it for unwinding: rec[1] = 0, rec[2] = &object, rec[3] = destructor, push(rec).
-            auto idx = [&](std::uint64_t k) {
-                auto ix = mkE(Expr::Kind::Index, at);
-                ix->kids.push_back(mkName(lastTempRec_, at));
-                auto n = mkE(Expr::Kind::Int, at);
-                n->ival = k;
-                ix->kids.push_back(std::move(n));
-                return ix;
-            };
-            auto toLong = [&](std::unique_ptr<Expr> x) {
-                auto cst = mkE(Expr::Kind::Cast, at);
-                cst->ty = prim(Type::Kind::Long);
-                cst->kids.push_back(std::move(x));
-                return cst;
-            };
-            auto zero = mkE(Expr::Kind::Int, at);
-            c->kids.push_back(eAssignNode(idx(1), std::move(zero), at));
-            c->kids.push_back(eAssignNode(idx(2), toLong(eUnary("&", mkName(lastTempName_, at), at)), at));
-            auto it = canonStructs().find(lastTempTag_);
-            const Param* dp = it == canonStructs().end() ? nullptr : findSpecial(it->second.get(), "<dtor>");
-            if (dp) c->kids.push_back(eAssignNode(idx(3), toLong(mkName(dp->mangled, at)), at));
-            auto push = mkE(Expr::Kind::Call, at);
-            push->kids.push_back(mkName("__okay_eh_push", at));
-            push->kids.push_back(mkName(lastTempRec_, at));
-            c->kids.push_back(std::move(push));
-        }
-        return c;
-    }
-    // The temporary (a Comma made by the parser for T(args)) initializes an object or is returned:
-    // nothing destroys it separately, and its unwinding record is dropped.
-    void consumed(Expr& comma) {
-        comma.ival = 8;
-        bool hadRecord = false;
-        for (TempInfo& t : temps_)
-            if (t.name == comma.text) hadRecord = !t.rec.empty() && !t.tag.empty();
-        eraseTemp(comma.text);
-        if (hadRecord && comma.kids.size() >= 2) {
-            auto pop = mkE(Expr::Kind::Call, comma);
-            pop->kids.push_back(mkName("__okay_eh_pop", comma));
-            comma.kids.insert(comma.kids.end() - 1, std::move(pop));
-        }
-    }
-    std::map<const Expr*, ET> etCache_;
-
-    static ET copyET(const ET& a) {
-        ET r;
-        if (a.type) r.type = cloneType(*a.type);
-        r.lvalue = a.lvalue;
-        r.mod = a.mod;
-        r.nullc = a.nullc;
-        r.bad = a.bad;
-        r.line = a.line;
-        r.col = a.col;
-        return r;
-    }
-    static bool needsDtor(const Type& t) {
-        if (t.kind != Type::Kind::Struct || t.tag.empty()) return false;
-        auto it = canonStructs().find(t.tag);
-        return it != canonStructs().end() && it->second && it->second->needDtor;
-    }
-    static bool hasUserCopy(const Type& t) {
-        if (t.kind != Type::Kind::Struct || t.tag.empty()) return false;
-        auto it = canonStructs().find(t.tag);
-        if (it == canonStructs().end() || !it->second) return false;
-        for (const Param& p : it->second->params) {
-            if (p.name != "<ctor>" || !p.type || p.type->params.size() != 1) continue;
-            const Type* a = p.type->params[0].type.get();
-            if (a && a->kind == Type::Kind::Reference && a->inner && a->inner->kind == Type::Kind::Struct &&
-                a->inner->tag == t.tag)
-                return true;
-        }
-        return false;
-    }
-    // A hidden local of type t, declared before the statement being checked.
-    std::string newTemp(const Type& t, const Expr& at, bool destroy) {
-        TempInfo ti;
-        ti.name = "__ct" + std::to_string(tempN_++);
-        ti.type = cloneType(t);
-        ti.pos.line = at.line;
-        ti.pos.col = at.col;
-        ti.pos.file = at.file;
-        lastTempFlag_.clear();
-        lastTempRec_.clear();
-        if (destroy && needsDtor(t)) {
-            ti.tag = t.tag;
-            ti.flag = "__cf" + std::to_string(tempN_++);
-            lastTempFlag_ = ti.flag;
-            lastTempName_ = ti.name;
-            lastTempTag_ = t.tag;
-            if (ehActive()) {
-                ti.rec = "__cr" + std::to_string(tempN_++);
-                lastTempRec_ = ti.rec;
-            }
-            add(ti.flag, std::make_unique<Type>(), false, at.line, at.col);
-            scopes_.back()[ti.flag].type->kind = Type::Kind::Int;
-        }
-        if (!ti.rec.empty()) {
-            auto arr = std::make_unique<Type>();
-            arr->kind = Type::Kind::Array;
-            arr->inner = prim(Type::Kind::Long);
-            arr->bound = std::make_unique<Expr>();
-            arr->bound->kind = Expr::Kind::Int;
-            arr->bound->ival = 14;
-            add(ti.rec, std::move(arr), false, at.line, at.col);
-        }
-        add(ti.name, cloneType(t), false, at.line, at.col);
-        std::string name = ti.name;
-        temps_.push_back(std::move(ti));
-        return name;
-    }
-    // The named temporary turned out to initialize an object: nothing destroys it separately.
-    void eraseTemp(const std::string& name) {
-        for (std::size_t i = 0; i < temps_.size(); ++i)
-            if (temps_[i].name == name) {
-                temps_[i].tag.clear();  // still declared (the flag is set), but not destroyed
-                return;
-            }
-    }
-    std::unique_ptr<Expr> eUnary(const char* op, std::unique_ptr<Expr> k, const Expr& at) {
-        auto u = mkE(Expr::Kind::Unary, at);
-        u->text = op;
-        u->kids.push_back(std::move(k));
-        return u;
-    }
-    std::unique_ptr<Expr> eAssignNode(std::unique_ptr<Expr> l, std::unique_ptr<Expr> r, const Expr& at) {
-        auto a = mkE(Expr::Kind::Assign, at);
-        a->text = "=";
-        a->ival = 3;  // a plain copy: operator= is not used
-        a->kids.push_back(std::move(l));
-        a->kids.push_back(std::move(r));
-        return a;
-    }
-    std::unique_ptr<Expr> eCommaNode(std::unique_ptr<Expr> a, std::unique_ptr<Expr> b, const Expr& at) {
-        auto c = mkE(Expr::Kind::Comma, at);
-        c->kids.push_back(std::move(a));
-        c->kids.push_back(std::move(b));
-        return c;
-    }
-
-    // An operand that is cheap and safe to check twice: a name, a member, an index or a dereference
-    // built from those. (Checking a call twice is avoided; a chain would check itself too often.)
-    static bool simpleOperand(const Expr& e) {
-        switch (e.kind) {
-        case Expr::Kind::Name: return true;
-        case Expr::Kind::Member: return !e.kids.empty() && e.kids[0] && simpleOperand(*e.kids[0]);
-        case Expr::Kind::Unary: return e.text == "*" && !e.kids.empty() && e.kids[0] && simpleOperand(*e.kids[0]);
-        case Expr::Kind::Index:
-            return e.kids.size() == 2 && e.kids[0] && e.kids[1] && simpleOperand(*e.kids[0]) &&
-                   (e.kids[1]->kind == Expr::Kind::Int || e.kids[1]->kind == Expr::Kind::Name);
-        default: return false;
-        }
-    }
-
-    // C++ operator overloading for member operators: "a + b" on an object whose class declares
-    // operator+ becomes the call a.operator+(b). Written from ISO/IEC 14882 [over.match.oper]
-    // (member candidates only; no non-member operators, no conversion sequences).
-    // Returns false when the expression is left alone. Only a simple left operand is looked at.
-    bool rewriteOperator(Expr& e) {
-        std::string op;
-        std::size_t lhsAt = 0;
-        bool post = false;
-        switch (e.kind) {
-        case Expr::Kind::Bin:
-        case Expr::Kind::Assign:
-            if (e.kids.size() != 2 || (e.kind == Expr::Kind::Assign && e.ival == 3)) return false;
-            op = "operator" + e.text;
-            break;
-        case Expr::Kind::Index:
-            if (e.kids.size() != 2) return false;
-            op = "operator[]";
-            break;
-        case Expr::Kind::Pre:
-            if (e.kids.size() != 1) return false;
-            op = "operator" + e.text;
-            break;
-        case Expr::Kind::Post:
-            if (e.kids.size() != 1) return false;
-            op = "operator" + e.text;
-            post = true;
-            break;
-        case Expr::Kind::Unary:
-            if (e.kids.size() != 1 || (e.text != "-" && e.text != "+" && e.text != "!" && e.text != "~")) return false;
-            op = "operator" + e.text;
-            break;
-        case Expr::Kind::Call:
-            if (e.kids.empty() || !e.kids[0] || e.kids[0]->kind != Expr::Kind::Name) return false;
-            op = "operator()";
-            break;
-        default: return false;
-        }
-        if (!e.kids[lhsAt]) return false;
-        Expr& lhs = *e.kids[lhsAt];
-        const bool simple = simpleOperand(lhs);
-        // A left operand that is a call or another operator expression (a + b + c): check it once,
-        // keep the result for the check that follows, and use it only for a class with the operator.
-        if (!simple && e.kind != Expr::Kind::Bin && e.kind != Expr::Kind::Index) return false;
-        if (!simple && lhs.kind != Expr::Kind::Call && lhs.kind != Expr::Kind::Bin && lhs.kind != Expr::Kind::Comma &&
-            lhs.kind != Expr::Kind::Unary)
-            return false;
-        if (e.kind == Expr::Kind::Call && lhs.text.compare(0, 1, "\x01") == 0) return false;
-        ++quiet_;
-        ET probe = checkExpr(lhs);
-        --quiet_;
-        const bool usable = !probe.bad && probe.type && probe.type->kind == Type::Kind::Struct;
-        const Type* st = usable ? canonOf(probe.type.get()) : nullptr;
-        bool found = false;
-        if (st)
-            for (const Param& f : st->params)
-                if (f.name == op && !f.mangled.empty()) found = true;
-        if (!simple) {
-            if (probe.bad) return false;
-            if (!found || probe.lvalue) {
-                etCache_[&lhs] = copyET(probe);
-                return false;
-            }
-            // An object that is not an lvalue (the result of a call): put it in a hidden local and
-            // call the operator on that.
-            std::string tmp = newTemp(*probe.type, e, true);
-            auto assign = withFlag(eAssignNode(mkName(tmp, e), std::move(e.kids[lhsAt]), e), e);
-            auto member = mkE(Expr::Kind::Member, e);
-            member->text = ".";
-            member->kids.push_back(mkName(tmp, e));
-            member->kids.push_back(mkName(op, e));
-            auto call = mkE(Expr::Kind::Call, e);
-            call->kids.push_back(std::move(member));
-            for (std::size_t i = 1; i < e.kids.size(); ++i) call->kids.push_back(std::move(e.kids[i]));
-            std::unique_ptr<Expr> last = std::move(call);
-            std::unique_ptr<Expr> assignResult;
-            const Type* opRet = nullptr;
-            for (const Param& f : st->params)
-                if (f.name == op && !f.mangled.empty() && f.type) opRet = f.type->inner.get();
-            if (opRet && opRet->kind == Type::Kind::Struct) {
-                // An object result is kept in a hidden local too, so the whole expression is an
-                // address-bearing name like any other object.
-                std::string res = newTemp(*opRet, e, false);
-                assignResult = eAssignNode(mkName(res, e), std::move(last), e);
-                last = mkName(res, e);
-            }
-            auto both = eCommaNode(std::move(assign), std::move(last), e);
-            if (assignResult) both->kids.insert(both->kids.begin() + 1, std::move(assignResult));
-            e.kind = Expr::Kind::Comma;
-            e.text.clear();
-            e.ival = 0;
-            e.kids = std::move(both->kids);
-            return true;
-        }
-        if (probe.bad || !usable || !st) return false;
-        if (!found || !probe.lvalue) return false;
-        auto member = mkE(Expr::Kind::Member, e);
-        member->text = ".";
-        member->kids.push_back(std::move(e.kids[lhsAt]));
-        member->kids.push_back(mkName(op, e));
-        std::vector<std::unique_ptr<Expr>> kids;
-        kids.push_back(std::move(member));
-        for (std::size_t i = 1; i < e.kids.size(); ++i) kids.push_back(std::move(e.kids[i]));
-        if (post) {
-            auto zero = mkE(Expr::Kind::Int, e);
-            kids.push_back(std::move(zero));
-        }
-        e.kids = std::move(kids);
-        e.kind = Expr::Kind::Call;
-        e.text.clear();
-        return true;
-    }
-
-    // An object of a class with a conversion function used where a number or pointer is needed:
-    // e becomes e.operator T() (the first conversion function the class has). Only an lvalue
-    // object is converted (a call result is not), and the result is not converted again.
-    void convertIfNeeded(Expr& e) {
-        if (!simpleOperand(e)) return;
-        ++quiet_;
-        ET probe = checkExpr(e);
-        --quiet_;
-        if (probe.bad || !probe.type || probe.type->kind != Type::Kind::Struct || !probe.lvalue) return;
-        const Type* st = canonOf(probe.type.get());
-        if (!st) return;
-        const Param* conv = nullptr;
-        for (const Param& f : st->params)
-            if (f.name.compare(0, 9, "operator ") == 0 && !f.mangled.empty()) {
-                conv = &f;
-                break;
-            }
-        if (!conv) return;
-        auto self = std::make_unique<Expr>();
-        self->kind = e.kind;
-        self->text = e.text;
-        self->ival = e.ival;
-        self->litUnsigned = e.litUnsigned;
-        self->litRank = e.litRank;
-        self->line = e.line;
-        self->col = e.col;
-        self->file = e.file;
-        self->kids = std::move(e.kids);
-        self->ty = std::move(e.ty);
-        auto member = mkE(Expr::Kind::Member, e);
-        member->text = ".";
-        member->kids.push_back(std::move(self));
-        member->kids.push_back(mkName(conv->name, e));
-        e.kind = Expr::Kind::Call;
-        e.text.clear();
-        e.ival = 0;
-        e.kids.clear();
-        e.kids.push_back(std::move(member));
-        e.checked.reset();
-    }
-
-    ET checkExpr(Expr& e) {
-        if (!e.file.empty()) file_ = e.file;
-        {
-            auto cached = etCache_.find(&e);
-            if (cached != etCache_.end()) {
-                ET r = std::move(cached->second);
-                etCache_.erase(cached);
-                return r;
-            }
-        }
-        if ((e.kind == Expr::Kind::Assign || e.kind == Expr::Kind::Pre || e.kind == Expr::Kind::Post) &&
-            !e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Cond && e.kids[0]->kids.size() == 3) {
-            // (c ? a : b) = v, ++(c ? a : b): with two lvalues of one type the conditional is an
-            // lvalue (ISO/IEC 14882 [expr.cond]); it becomes *(c ? &a : &b).
-            Expr& cond = *e.kids[0];
-            auto lv = mkE(Expr::Kind::Cond, cond);
-            lv->kids.push_back(std::move(cond.kids[0]));
-            lv->kids.push_back(eUnary("&", std::move(cond.kids[1]), cond));
-            lv->kids.push_back(eUnary("&", std::move(cond.kids[2]), cond));
-            auto d = eUnary("*", std::move(lv), cond);
-            e.kids[0] = std::move(d);
-        }
-        rewriteOperator(e);
-        ET r = checkExprBody(e);
-        if (r.type) e.checked = cloneType(*r.type);
-        return r;
-    }
-
-    ET checkBin(Expr& e) {
-        if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return bad(e.line, e.col);
-        convertIfNeeded(*e.kids[0]);
-        convertIfNeeded(*e.kids[1]);
-        ET a = decay(checkExpr(*e.kids[0]));
-        ET b = decay(checkExpr(*e.kids[1]));
-        if (a.bad || b.bad || !a.type || !b.type) return bad(e.line, e.col);
-        const std::string& op = e.text;
-        auto result = [&](std::unique_ptr<Type> t) {
-            ET r;
-            r.type = std::move(t);
-            r.line = e.line;
-            r.col = e.col;
-            return r;
-        };
-        int aw = fpWidthOf(a.type.get());
-        int bw = fpWidthOf(b.type.get());
-        if ((aw || bw) && (op == "+" || op == "-" || op == "*" || op == "/" || op == "<" || op == ">" || op == "<=" ||
-                           op == ">=" || op == "==" || op == "!=")) {
-            bool aok = aw || isIntish(*a.type);
-            bool bok = bw || isIntish(*b.type);
-            if (aok && bok) {
-                if (op == "+" || op == "-" || op == "*" || op == "/") {
-                    int w = (aw == 8 || bw == 8) ? 8 : 4;
-                    return result(prim(w == 8 ? Type::Kind::Double : Type::Kind::Float));
-                }
-                return result(prim(Type::Kind::Int));
-            }
-        }
-        if (op == "+" ) {
-            if (isIntish(*a.type) && isIntish(*b.type)) return result(prim(Type::Kind::Int));
-            if (isPtr(*a.type) && isIntish(*b.type)) return result(cloneType(*a.type));
-            if (isIntish(*a.type) && isPtr(*b.type)) return result(cloneType(*b.type));
-        } else if (op == "-") {
-            if (isIntish(*a.type) && isIntish(*b.type)) return result(prim(Type::Kind::Int));
-            if (isPtr(*a.type) && isIntish(*b.type)) return result(cloneType(*a.type));
-            if (isPtr(*a.type) && isPtr(*b.type) && a.type->inner && b.type->inner &&
-                sameType(*a.type->inner, *b.type->inner))
-                return result(prim(Type::Kind::Int));
-        } else if (op == "*" || op == "/" || op == "%" || op == "&" || op == "|" || op == "^" || op == "<<" ||
-                   op == ">>") {
-            if (isIntish(*a.type) && isIntish(*b.type)) return result(prim(Type::Kind::Int));
-        } else if (op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!=") {
-            bool arith = isIntish(*a.type) && isIntish(*b.type);
-            bool ptrs = isPtr(*a.type) && isPtr(*b.type) && a.type->inner && b.type->inner &&
-                        sameType(*a.type->inner, *b.type->inner);
-            bool null = (isPtr(*a.type) && b.nullc) || (isPtr(*b.type) && a.nullc);
-            if (arith || ptrs || null) return result(prim(Type::Kind::Int));
-        } else if (op == "&&" || op == "||") {
-            if (scalar(*a.type) && scalar(*b.type)) return result(prim(Type::Kind::Int));
-        }
-        err(e.line, e.col, "invalid operands to '" + op + "'");
-        return bad(e.line, e.col);
-    }
-
-    ET checkAssign(Expr& e) {
-        if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return bad(e.line, e.col);
-        ET lhs = checkExpr(*e.kids[0]);
-        if (!lhs.bad && lhs.type && lhs.type->kind != Type::Kind::Struct) convertIfNeeded(*e.kids[1]);
-        ET rhs = decay(checkExpr(*e.kids[1]));
-        if (lhs.bad || rhs.bad || !lhs.type) return bad(e.line, e.col);
-        if (!lhs.mod) {
-            err(e.line, e.col, "cannot assign to this expression");
-            return bad(e.line, e.col);
-        }
-        if (e.text == "=") {
-            if (!canAssign(*lhs.type, rhs)) {
-                err(e.line, e.col, "cannot assign this value");
-                return bad(e.line, e.col);
-            }
-        } else if (!isIntish(*lhs.type) || !rhs.type || !isIntish(*rhs.type)) {
-            err(e.line, e.col, "cannot assign this value");
-            return bad(e.line, e.col);
-        }
-        ET r;
-        r.type = cloneType(*lhs.type);
-        r.line = e.line;
-        r.col = e.col;
-        return r;
-    }
-
-    std::unique_ptr<Expr> mkE(Expr::Kind k, const Expr& at) {
-        auto n = std::make_unique<Expr>();
-        n->kind = k;
-        n->line = at.line;
-        n->col = at.col;
-        n->file = at.file;
-        return n;
-    }
-    std::unique_ptr<Expr> mkName(const std::string& text, const Expr& at) {
-        auto n = mkE(Expr::Kind::Name, at);
-        n->text = text;
-        return n;
-    }
-
-    // Score how well an argument fits a parameter: 0 exact, 1 by conversion, -1 not at all.
-    int fitScore(const Type& param, const ET& arg) {
-        if (arg.bad || !arg.type) return 0;
-        if (param.kind == Type::Kind::Reference && param.inner) {
-            if (!arg.lvalue) return -1;
-            if (sameType(*param.inner, *arg.type)) return 0;
-            return derivedFrom(*arg.type, *param.inner) ? 1 : -1;
-        }
-        if (sameType(param, *arg.type)) return 0;
-        return canAssign(param, arg) ? 1 : -1;
-    }
-
-    // Choose among overloads by argument count, then by how well the argument types fit.
-    // 'firstArg' is the index in call.kids of the first user argument.
-    const Param* pickOverload(const std::vector<const Param*>& cands, Expr& call, std::size_t firstArg) {
-        std::size_t nargs = call.kids.size() - firstArg;
-        std::vector<const Param*> same;
-        for (const Param* c : cands) {
-            if (!c->type) continue;
-            if (c->type->params.size() == nargs || (c->type->variadic && nargs >= c->type->params.size()))
-                same.push_back(c);
-        }
-        if (same.empty()) return cands.empty() ? nullptr : cands[0];
-        if (same.size() == 1) return same[0];
-        std::vector<ET> ets;
-        for (std::size_t i = 0; i < nargs; ++i) ets.push_back(decay(checkExpr(*call.kids[firstArg + i])));
-        const Param* best = nullptr;
-        int bestScore = 1 << 30;
-        for (const Param* c : same) {
-            int total = 0;
-            bool ok = true;
-            for (std::size_t i = 0; i < nargs && i < c->type->params.size(); ++i) {
-                if (!c->type->params[i].type) continue;
-                int sc = fitScore(*c->type->params[i].type, ets[i]);
-                if (sc < 0) {
-                    ok = false;
-                    break;
-                }
-                total += sc;
-            }
-            if (ok && total < bestScore) {
-                bestScore = total;
-                best = c;
-            }
-        }
-        return best ? best : same[0];
-    }
-
-    // ((R(*)(T*, ...))(*(void***)self)[slot]): the Itanium C++ ABI virtual call sequence.
-    std::unique_ptr<Expr> vcallee(const Expr& at, std::unique_ptr<Expr> self, int slot, const std::string& tag,
-                                  const Type& userFn) {
-        auto cast1 = mkE(Expr::Kind::Cast, at);
-        cast1->ty = ptrTo(ptrTo(ptrTo(prim(Type::Kind::Void))));
-        cast1->kids.push_back(std::move(self));
-        auto deref = mkE(Expr::Kind::Unary, at);
-        deref->text = "*";
-        deref->kids.push_back(std::move(cast1));
-        auto idx = mkE(Expr::Kind::Index, at);
-        idx->kids.push_back(std::move(deref));
-        auto n = mkE(Expr::Kind::Int, at);
-        n->ival = static_cast<std::uint64_t>(slot);
-        idx->kids.push_back(std::move(n));
-        auto fn = prim(Type::Kind::Function);
-        fn->inner = userFn.inner ? cloneType(*userFn.inner) : prim(Type::Kind::Void);
-        Param me;
-        me.name = "this";
-        auto st = prim(Type::Kind::Struct);
-        st->tag = tag;
-        me.type = ptrTo(std::move(st));
-        fn->params.push_back(std::move(me));
-        for (const Param& q : userFn.params) {
-            Param c;
-            c.name = q.name;
-            if (q.type) c.type = cloneType(*q.type);
-            fn->params.push_back(std::move(c));
-        }
-        auto cast2 = mkE(Expr::Kind::Cast, at);
-        cast2->ty = ptrTo(std::move(fn));
-        cast2->kids.push_back(std::move(idx));
-        return cast2;
-    }
-
-    // Match a prototype type (with "\x02T" placeholders) against an argument type and bind T.
-    bool deduceType(const Type& pat, const Type& arg, const TemplateSig& sig,
-                    std::vector<std::unique_ptr<Type>>& bound) {
-        if (pat.kind == Type::Kind::Struct && !pat.tag.empty() && pat.tag[0] == '\x02') {
-            for (std::size_t i = 0; i < sig.names.size(); ++i) {
-                if (sig.names[i] != pat.tag.substr(1)) continue;
-                std::unique_ptr<Type> a = cloneType(arg);
-                if (a->kind == Type::Kind::Array && a->inner) a = ptrTo(std::move(a->inner));
-                if (!bound[i]) {
-                    bound[i] = std::move(a);
-                    return true;
-                }
-                return sameType(*bound[i], *a);
-            }
-            return true;
-        }
-        if (pat.kind == Type::Kind::Struct && pat.tag.find('\x02') != std::string::npos &&
-            arg.kind == Type::Kind::Struct) {
-            // A class template instance written with the parameters (Node<T>): its tag holds the
-            // marker; match it against the argument's tag piece by piece.
-            const std::string& P = pat.tag;
-            const std::string& Q = arg.tag;
-            std::size_t i = 0;
-            std::size_t j = 0;
-            while (i < P.size() && j < Q.size()) {
-                std::size_t k = i;
-                std::size_t n = 0;
-                while (k < P.size() && P[k] >= '0' && P[k] <= '9') n = n * 10 + static_cast<std::size_t>(P[k++] - '0');
-                if (k > i && k < P.size() && P[k] == '\x02' && n >= 1) {
-                    std::string name = P.substr(k + 1, n - 1);
-                    std::size_t end = mangledEnd(Q, j);
-                    if (end == j) return true;
-                    auto found = typeFromMangle(Q.substr(j, end - j));
-                    for (std::size_t b = 0; b < sig.names.size() && found; ++b)
-                        if (sig.names[b] == name) {
-                            if (!bound[b]) bound[b] = std::move(found);
-                            else if (!sameType(*bound[b], *found)) return false;
-                        }
-                    i = k + n;
-                    j = end;
-                    continue;
-                }
-                if (P[i] != Q[j]) return true;
-                ++i;
-                ++j;
-            }
-            return true;
-        }
-        if (pat.kind == Type::Kind::Pointer && pat.inner) {
-            if ((arg.kind == Type::Kind::Pointer || arg.kind == Type::Kind::Array) && arg.inner)
-                return deduceType(*pat.inner, *arg.inner, sig, bound);
-            return true;
-        }
-        if (pat.kind == Type::Kind::Reference && pat.inner) return deduceType(*pat.inner, arg, sig, bound);
-        if (pat.kind == Type::Kind::Array && pat.inner) {
-            if ((arg.kind == Type::Kind::Pointer || arg.kind == Type::Kind::Array) && arg.inner)
-                return deduceType(*pat.inner, *arg.inner, sig, bound);
-            return true;
-        }
-        return true;
-    }
-
-    ET checkCall(Expr& e) {
-        if (e.kids.empty() || !e.kids[0]) return bad(e.line, e.col);
-        Expr& c0 = *e.kids[0];
-        static const std::string kCtor = "\x01" "ctor:";
-        static const std::string kTmpl = "\x01" "tmpl:";
-        if (c0.kind == Expr::Kind::Name && c0.text.compare(0, kTmpl.size(), kTmpl) == 0) {
-            std::string name = c0.text.substr(kTmpl.size());
-            auto sit = funcTemplateSigs().find(name);
-            if (sit == funcTemplateSigs().end() || !sit->second.fn) {
-                err(e.line, e.col, "unknown function template '" + name + "'");
-                return bad(e.line, e.col);
-            }
-            const TemplateSig& sig = sit->second;
-            if (sig.fn->params.size() != e.kids.size() - 1) {
-                err(e.line, e.col, "wrong number of arguments");
-                return bad(e.line, e.col);
-            }
-            std::vector<std::unique_ptr<Type>> bound(sig.names.size());
-            for (std::size_t i = 0; i < c0.kids.size() && i < bound.size(); ++i)
-                if (c0.kids[i] && c0.kids[i]->ty) bound[i] = cloneType(*c0.kids[i]->ty);
-            for (std::size_t i = 0; i < sig.fn->params.size(); ++i) {
-                ET a = checkExpr(*e.kids[i + 1]);
-                if (a.bad || !a.type) return bad(e.line, e.col);
-                if (sig.fn->params[i].type && !deduceType(*sig.fn->params[i].type, *a.type, sig, bound)) {
-                    err(e.line, e.col, "conflicting types for a template argument");
-                    return bad(e.line, e.col);
-                }
-            }
-            std::vector<TArg> args;
-            for (std::size_t i = 0; i < sig.names.size(); ++i) {
-                if (!bound[i]) {
-                    err(e.line, e.col, "cannot deduce template argument '" + sig.names[i] + "'");
-                    return bad(e.line, e.col);
-                }
-                TArg a;
-                a.type = std::move(bound[i]);
-                args.push_back(std::move(a));
-            }
-            std::string inst = instFuncName(name, sig, args);
-            bool known = false;
-            for (const InstReq& r : instRequests())
-                if (r.name == inst) known = true;
-            if (!known) {
-                InstReq r;
-                r.tmpl = name;
-                r.name = inst;
-                r.args = std::move(args);
-                instRequests().push_back(std::move(r));
-                instDirty() = true;
-            }
-            c0.text = inst;
-        } else if (c0.kind == Expr::Kind::Name && c0.text.compare(0, kCtor.size(), kCtor) == 0) {
-            std::string tag = c0.text.substr(kCtor.size());
-            auto it = canonStructs().find(tag);
-            std::vector<const Param*> cands;
-            if (it != canonStructs().end() && it->second)
-                for (const Param& p : it->second->params)
-                    if (p.name == "<ctor>") cands.push_back(&p);
-            if (cands.empty()) {
-                err(e.line, e.col, "'" + tag + "' has no constructor");
-                return bad(e.line, e.col);
-            }
-            const Param* pick = pickOverload(cands, e, 2);
-            c0.text = pick->mangled;
-        } else if (c0.kind == Expr::Kind::Name && c0.text == "\x01" "throw") {
-            if (e.kids.size() == 1) {
-                c0.text = "__okay_eh_rethrow";  // throw;
-                return checkCall(e);
-            }
-            // throw e: the object is copied into memory the runtime owns, then thrown with the names
-            // of its type (a class: the class, then its bases) and its destructor.
-            ET src = decay(checkExpr(*e.kids[1]));
-            if (src.bad || !src.type) return bad(e.line, e.col);
-            std::unique_ptr<Type> T = cloneType(*src.type);
-            std::string types;
-            std::string dtorName;
-            if (T->kind == Type::Kind::Struct && !T->tag.empty()) {
-                std::string walk = T->tag;
-                while (!walk.empty()) {
-                    auto cit = canonStructs().find(walk);
-                    if (cit == canonStructs().end() || !cit->second) break;
-                    Type tmp;
-                    tmp.kind = Type::Kind::Struct;
-                    tmp.tag = walk;
-                    types += mangleType(tmp) + "\n";
-                    walk = cit->second->base;
-                }
-                auto cit = canonStructs().find(T->tag);
-                const Param* d1 = cit != canonStructs().end() ? findSpecial(cit->second.get(), "<dtor>") : nullptr;
-                if (d1) dtorName = d1->mangled;
-            } else {
-                types = mangleType(*T);
-            }
-            std::string th = newTemp(*ptrTo(cloneType(*T)), e, false);
-            auto sizeOf = mkE(Expr::Kind::Unary, e);
-            sizeOf->text = "sizeof";
-            sizeOf->ty = cloneType(*T);
-            std::vector<std::unique_ptr<Expr>> aa;
-            aa.push_back(std::move(sizeOf));
-            auto allocCall = mkE(Expr::Kind::Call, e);
-            allocCall->kids.push_back(mkName("__okay_alloc", e));
-            for (auto& k : aa) allocCall->kids.push_back(std::move(k));
-            auto cast = mkE(Expr::Kind::Cast, e);
-            cast->ty = ptrTo(cloneType(*T));
-            cast->kids.push_back(std::move(allocCall));
-            auto allocAssign = eAssignNode(mkName(th, e), std::move(cast), e);
-            std::unique_ptr<Expr> copy;
-            if (T->kind == Type::Kind::Struct) {
-                auto idx0 = mkE(Expr::Kind::Index, e);
-                idx0->kids.push_back(mkName(th, e));
-                idx0->kids.push_back(mkE(Expr::Kind::Int, e));
-                auto self = eUnary("&", std::move(idx0), e);
-                auto cc = mkE(Expr::Kind::Call, e);
-                cc->kids.push_back(mkName("\x01" "cinit:" + T->tag, e));
-                cc->kids.push_back(std::move(self));
-                cc->kids.push_back(std::move(e.kids[1]));
-                copy = std::move(cc);
-            } else {
-                auto idx0 = mkE(Expr::Kind::Index, e);
-                idx0->kids.push_back(mkName(th, e));
-                idx0->kids.push_back(mkE(Expr::Kind::Int, e));
-                copy = eAssignNode(std::move(idx0), std::move(e.kids[1]), e);
-            }
-            auto throwCall = mkE(Expr::Kind::Call, e);
-            throwCall->kids.push_back(mkName("__okay_throw", e));
-            auto objLong = mkE(Expr::Kind::Cast, e);
-            objLong->ty = prim(Type::Kind::Long);
-            objLong->kids.push_back(mkName(th, e));
-            throwCall->kids.push_back(std::move(objLong));
-            auto typesStr = mkE(Expr::Kind::String, e);
-            typesStr->text = types;
-            throwCall->kids.push_back(std::move(typesStr));
-            if (dtorName.empty()) {
-                auto zero = mkE(Expr::Kind::Int, e);
-                throwCall->kids.push_back(std::move(zero));
-            } else {
-                auto dl = mkE(Expr::Kind::Cast, e);
-                dl->ty = prim(Type::Kind::Long);
-                dl->kids.push_back(mkName(dtorName, e));
-                throwCall->kids.push_back(std::move(dl));
-            }
-            e.kind = Expr::Kind::Comma;
-            e.text.clear();
-            e.ival = 0;
-            e.kids.clear();
-            e.kids.push_back(std::move(allocAssign));
-            e.kids.push_back(std::move(copy));
-            e.kids.push_back(std::move(throwCall));
-            return checkExprBody(e);
-        } else if (c0.kind == Expr::Kind::Name && c0.text.compare(0, 7, "\x01" "cinit:") == 0 && e.kids.size() == 3) {
-            // T x = y: the copy constructor when y is an lvalue of class T, else a plain copy of
-            // the bytes (y is a temporary: the object is built in place).
-            std::string tag = c0.text.substr(7);
-            ET src = checkExpr(*e.kids[2]);
-            if (src.bad) return bad(e.line, e.col);
-            if (e.kids[2]->kind == Expr::Kind::Comma && e.kids[2]->ival == 9) {
-                consumed(*e.kids[2]);  // built in place
-            }
-            const bool sameClass = src.type && src.type->kind == Type::Kind::Struct && src.type->tag == tag;
-            // Another type (an int for a constructor taking an int) is an ordinary constructor call;
-            // an object of the class is copied (copy constructor, else bytes).
-            bool useCtor = !sameClass || (src.lvalue && hasUserCopy(*src.type));
-            if (useCtor) {
-                e.kids[0]->text = "\x01" "ctor:" + tag;
-                return checkCall(e);
-            }
-            auto self = std::move(e.kids[1]);
-            auto rhs = std::move(e.kids[2]);
-            // self is "&name": assign to the name itself.
-            std::unique_ptr<Expr> target = std::move(self->kids[0]);
-            e.kind = Expr::Kind::Assign;
-            e.text = "=";
-            e.ival = 3;  // an initialization: operator= must not be used
-            e.kids.clear();
-            e.kids.push_back(std::move(target));
-            e.kids.push_back(std::move(rhs));
-            return checkExpr(e);
-        } else if (c0.kind == Expr::Kind::Name && c0.text == "\x01" "delete[]" && e.kids.size() == 2 && e.kids[1]) {
-            // delete[] p: a class with a destructor goes through __vdel_ (count in front of the
-            // block); anything else is just freed.
-            ET a = decay(checkExpr(*e.kids[1]));
-            if (a.bad || !a.type) return bad(e.line, e.col);
-            const Type* cls = isPtr(*a.type) && a.type->inner ? canonOf(a.type->inner.get()) : nullptr;
-            const Param* d1 = cls && cls->kind == Type::Kind::Struct ? findSpecial(cls, "<dtor>") : nullptr;
-            if (d1) c0.text = "__vdel_" + mangleNested(cls->tag);
-            else c0.text = "\x01" "delete";
-            return checkCall(e);
-        } else if (c0.kind == Expr::Kind::Name && c0.text == "\x01" "delete" && e.kids.size() == 2 && e.kids[1]) {
-            ET a = decay(checkExpr(*e.kids[1]));
-            if (a.bad || !a.type) return bad(e.line, e.col);
-            const Type* cls = isPtr(*a.type) && a.type->inner ? canonOf(a.type->inner.get()) : nullptr;
-            const Param* d1 = cls && cls->kind == Type::Kind::Struct ? findSpecial(cls, "<dtor>") : nullptr;
-            auto freeCall = [&](const Expr& at, std::unique_ptr<Expr> arg) {
-                auto cast = mkE(Expr::Kind::Cast, at);
-                cast->ty = ptrTo(prim(Type::Kind::Char));
-                cast->kids.push_back(std::move(arg));
-                auto call = mkE(Expr::Kind::Call, at);
-                call->kids.push_back(mkName("free", at));
-                call->kids.push_back(std::move(cast));
-                return call;
-            };
-            if (!d1) {
-                c0.text = "free";
-                auto cast = mkE(Expr::Kind::Cast, e);
-                cast->ty = ptrTo(prim(Type::Kind::Char));
-                cast->kids.push_back(std::move(e.kids[1]));
-                e.kids[1] = std::move(cast);
-            } else {
-                if (hasSideEffects(*e.kids[1])) {
-                    err(e.line, e.col, "delete of an expression with side effects is not supported");
-                    return bad(e.line, e.col);
-                }
-                auto self = [&]() { return cloneExpr(*e.kids[1]); };
-                auto work = mkE(Expr::Kind::Comma, e);
-                if (d1->vslot >= 0) {
-                    const Param* d0 = findSpecial(cls, "<dtor0>");
-                    auto call = mkE(Expr::Kind::Call, e);
-                    call->kids.push_back(vcallee(e, self(), d0->vslot, a.type->inner->tag, *d0->type));
-                    call->kids.push_back(self());
-                    work->kids.push_back(std::move(call));
-                } else {
-                    auto call = mkE(Expr::Kind::Call, e);
-                    call->kids.push_back(mkName(d1->mangled, e));
-                    call->kids.push_back(self());
-                    work->kids.push_back(std::move(call));
-                    work->kids.push_back(freeCall(e, self()));
-                }
-                auto zero = mkE(Expr::Kind::Int, e);
-                work->kids.push_back(std::move(zero));
-                auto cond = mkE(Expr::Kind::Cond, e);
-                cond->kids.push_back(self());
-                cond->kids.push_back(std::move(work));
-                cond->kids.push_back(mkE(Expr::Kind::Int, e));
-                e.kind = Expr::Kind::Cond;
-                e.text.clear();
-                e.kids = std::move(cond->kids);
-                return checkExprBody(e);
-            }
-        } else if (c0.kind == Expr::Kind::Name && method_ && c0.text.find("::") == std::string::npos) {
-            const Type* st = canonOf(method_);
-            bool isMethod = false;
-            if (st)
-                for (const Param& f : st->params)
-                    if (f.name == c0.text && !f.mangled.empty() && !isSpecialName(f.name)) isMethod = true;
-            if (isMethod) {
-                std::string fname = c0.text;
-                c0.kind = Expr::Kind::Member;
-                c0.text = "->";
-                c0.kids.clear();
-                c0.kids.push_back(mkName("this", c0));
-                c0.kids.push_back(mkName(fname, c0));
-            }
-        } else if (c0.kind == Expr::Kind::Name && method_ && c0.text.find("::") != std::string::npos) {
-            std::size_t cc = c0.text.rfind("::");
-            std::string prefix = c0.text.substr(0, cc);
-            std::string fname = c0.text.substr(cc + 2);
-            auto it = canonStructs().find(prefix);
-            if (it == canonStructs().end() && !inNs_.empty()) it = canonStructs().find(inNs_ + "::" + prefix);
-            if (it != canonStructs().end() && it->second) {
-                std::vector<const Param*> cands;
-                for (const Param& f : it->second->params)
-                    if (f.name == fname && !f.mangled.empty() && !isSpecialName(f.name)) cands.push_back(&f);
-                if (!cands.empty()) {
-                    const Param* pick = pickOverload(cands, e, 1);
-                    c0.text = pick->mangled;
-                    e.kids.insert(e.kids.begin() + 1, mkName("this", e));
-                }
-            }
-        }
-        if (e.kids[0]->kind == Expr::Kind::Member && e.kids[0]->kids.size() >= 2 && e.kids[0]->kids[0] &&
-            e.kids[0]->kids[1]) {
-            Expr& mem = *e.kids[0];
-            ET obj = mem.text == "->" ? decay(checkExpr(*mem.kids[0])) : checkExpr(*mem.kids[0]);
-            const Type* st = obj.type.get();
-            if (mem.text == "->" && st && isPtr(*st) && st->inner) st = st->inner.get();
-            st = canonOf(st);
-            if (st) {
-                std::vector<const Param*> cands;
-                for (const Param& f : st->params)
-                    if (f.name == mem.kids[1]->text && !f.mangled.empty() && !isSpecialName(f.name))
-                        cands.push_back(&f);
-                if (!cands.empty()) {
-                    const Param* fp = pickOverload(cands, e, 1);
-                    const Param& f = *fp;
-                    std::unique_ptr<Expr> selfArg;
-                    if (mem.text == "->") {
-                        selfArg = std::move(mem.kids[0]);
-                    } else if (!obj.lvalue && obj.type && obj.type->kind == Type::Kind::Struct && !obj.bad) {
-                        // A member call on an object that is a result (f().g()): the object goes into
-                        // a hidden local and the call is made on that.
-                        std::string tmp = newTemp(*obj.type, e, true);
-                        auto assign = withFlag(eAssignNode(mkName(tmp, e), std::move(mem.kids[0]), e), e);
-                        selfArg = eCommaNode(std::move(assign), eUnary("&", mkName(tmp, e), e), e);
-                    } else {
-                        selfArg = std::make_unique<Expr>();
-                        selfArg->kind = Expr::Kind::Unary;
-                        selfArg->text = "&";
-                        selfArg->line = mem.line;
-                        selfArg->col = mem.col;
-                        selfArg->kids.push_back(std::move(mem.kids[0]));
-                    }
-                    std::unique_ptr<Expr> callee;
-                    if (f.vslot >= 0) {
-                        if (hasSideEffects(*selfArg)) {
-                            err(e.line, e.col, "a virtual call on an expression with side effects is not supported");
-                            return bad(e.line, e.col);
-                        }
-                        callee = vcallee(e, cloneExpr(*selfArg), f.vslot, st->tag, *f.type);
-                    } else {
-                        callee = std::make_unique<Expr>();
-                        callee->kind = Expr::Kind::Name;
-                        callee->text = f.mangled;
-                        callee->line = e.line;
-                        callee->col = e.col;
-                    }
-                    std::vector<std::unique_ptr<Expr>> kids;
-                    kids.push_back(std::move(callee));
-                    kids.push_back(std::move(selfArg));
-                    for (std::size_t i = 1; i < e.kids.size(); ++i) kids.push_back(std::move(e.kids[i]));
-                    e.kids = std::move(kids);
-                }
-            }
-        }
-        ET callee = decay(checkExpr(*e.kids[0]));
-        if (callee.bad || !callee.type) return bad(e.line, e.col);
-        if (!isPtr(*callee.type) || !callee.type->inner || callee.type->inner->kind != Type::Kind::Function) {
-            err(e.line, e.col, "called expression is not a function");
-            return bad(e.line, e.col);
-        }
-        const Type& fn = *callee.type->inner;
-        std::size_t nargs = e.kids.size() - 1;
-        if (fn.variadic) {
-            if (nargs < fn.params.size()) {
-                err(e.line, e.col, "too few arguments");
-                return bad(e.line, e.col);
-            }
-        } else if (nargs != fn.params.size()) {
-            err(e.line, e.col, "wrong number of arguments");
-            return bad(e.line, e.col);
-        }
-        for (std::size_t i = 0; i < fn.params.size(); ++i) {
-            if (fn.params[i].type && fn.params[i].type->kind == Type::Kind::Reference && fn.params[i].type->inner) {
-                // A reference parameter receives the address of an lvalue of the referred type.
-                if (e.kids[i + 1] && e.kids[i + 1]->ival == 1 &&
-                    (e.kids[i + 1]->kind == Expr::Kind::Unary || e.kids[i + 1]->kind == Expr::Kind::Comma)) {
-                    // Already wrapped by an earlier check of this call.
-                    if (checkExpr(*e.kids[i + 1]).bad) return bad(e.line, e.col);
-                    continue;
-                }
-                ET src = checkExpr(*e.kids[i + 1]);
-                if (src.bad) return bad(e.line, e.col);
-                const Type& want = *fn.params[i].type->inner;
-                if (!src.lvalue) {
-                    // A reference to const may bind to a temporary: copy the value into a hidden
-                    // local and pass its address.
-                    if (!src.type || !sameType(want, *src.type)) {
-                        err(e.line, e.col, "a reference argument must be an lvalue");
-                        return bad(e.line, e.col);
-                    }
-                    std::unique_ptr<Expr> first;
-                    std::unique_ptr<Expr> addr;
-                    if (e.kids[i + 1]->kind == Expr::Kind::Comma && e.kids[i + 1]->ival == 9) {
-                        // A T(args) temporary already has a name and a destructor call: bind to it.
-                        std::string existing = e.kids[i + 1]->text;
-                        first = std::move(e.kids[i + 1]);
-                        addr = eUnary("&", mkName(existing, e), e);
-                    } else {
-                        std::string tmp = newTemp(*src.type, e, true);
-                        first = withFlag(eAssignNode(mkName(tmp, e), std::move(e.kids[i + 1]), e), e);
-                        addr = eUnary("&", mkName(tmp, e), e);
-                    }
-                    auto both = eCommaNode(std::move(first), std::move(addr), e);
-                    both->ival = 1;
-                    e.kids[i + 1] = std::move(both);
-                    if (checkExpr(*e.kids[i + 1]).bad) return bad(e.line, e.col);
-                    continue;
-                }
-                if (src.type && !sameType(want, *src.type) && !derivedFrom(*src.type, want)) {
-                    err(e.line, e.col, "cannot bind this reference argument");
-                    return bad(e.line, e.col);
-                }
-                auto wrapped = std::make_unique<Expr>();
-                wrapped->kind = Expr::Kind::Unary;
-                wrapped->text = "&";
-                wrapped->ival = 1;
-                wrapped->line = e.kids[i + 1]->line;
-                wrapped->col = e.kids[i + 1]->col;
-                wrapped->file = e.kids[i + 1]->file;
-                wrapped->kids.push_back(std::move(e.kids[i + 1]));
-                e.kids[i + 1] = std::move(wrapped);
-                ET ptr = checkExpr(*e.kids[i + 1]);
-                if (ptr.bad) return bad(e.line, e.col);
-                continue;
-            }
-            if (fn.params[i].type && fn.params[i].type->kind != Type::Kind::Struct) convertIfNeeded(*e.kids[i + 1]);
-            ET arg = decay(checkExpr(*e.kids[i + 1]));
-            if (arg.bad) return bad(e.line, e.col);
-            if (fn.params[i].type && fn.params[i].type->kind == Type::Kind::Struct && arg.type &&
-                sameType(*fn.params[i].type, *arg.type)) {
-                Expr& argExpr = *e.kids[i + 1];
-                if (argExpr.kind == Expr::Kind::Comma && argExpr.ival == 9) {
-                    // A T(args) temporary passed by value initializes the parameter directly.
-                    consumed(argExpr);
-                } else if (arg.lvalue && (hasUserCopy(*arg.type) || needsDtor(*arg.type))) {
-                    // The caller copies the object into a hidden local (by the copy constructor, or
-                    // bytewise) and destroys that copy after the statement.
-                    std::string tmp = newTemp(*arg.type, e, true);
-                    std::unique_ptr<Expr> made;
-                    if (hasUserCopy(*arg.type)) {
-                        auto ctorName = mkName("\x01" "ctor:" + arg.type->tag, e);
-                        std::vector<std::unique_ptr<Expr>> kids;
-                        kids.push_back(std::move(ctorName));
-                        kids.push_back(eUnary("&", mkName(tmp, e), e));
-                        kids.push_back(std::move(e.kids[i + 1]));
-                        auto call = mkE(Expr::Kind::Call, e);
-                        call->kids = std::move(kids);
-                        made = std::move(call);
-                    } else {
-                        made = eAssignNode(mkName(tmp, e), std::move(e.kids[i + 1]), e);
-                    }
-                    made = withFlag(std::move(made), e);
-                    e.kids[i + 1] = eCommaNode(std::move(made), mkName(tmp, e), e);
-                    arg = decay(checkExpr(*e.kids[i + 1]));
-                    if (arg.bad) return bad(e.line, e.col);
-                }
-            }
-            if (fn.params[i].type && !canAssign(*fn.params[i].type, arg)) {
-                err(e.line, e.col, "cannot assign argument");
-                return bad(e.line, e.col);
-            }
-        }
-        for (std::size_t i = fn.params.size(); i < nargs; ++i) {
-            ET arg = decay(checkExpr(*e.kids[i + 1]));
-            if (arg.bad) return bad(e.line, e.col);
-            if (arg.type && (arg.type->kind == Type::Kind::Char || arg.type->kind == Type::Kind::Short))
-                e.kids[i + 1]->checked = prim(Type::Kind::Int);
-        }
-        ET r;
-        r.line = e.line;
-        r.col = e.col;
-        r.type = fn.inner ? cloneType(*fn.inner) : prim(Type::Kind::Int);
-        if (r.type && r.type->kind == Type::Kind::Reference && r.type->inner && e.ival == 2) {
-            auto ptrTy = std::make_unique<Type>();
-            ptrTy->kind = Type::Kind::Pointer;
-            ptrTy->inner = cloneType(*r.type->inner);
-            r.type = std::move(ptrTy);
-        } else if (r.type && r.type->kind == Type::Kind::Reference && r.type->inner) {
-            // A call that returns a reference is the pointer it returns, dereferenced: the call
-            // moves into a child and this node becomes "*call".
-            auto ptrTy = std::make_unique<Type>();
-            ptrTy->kind = Type::Kind::Pointer;
-            ptrTy->inner = cloneType(*r.type->inner);
-            auto inner = std::make_unique<Expr>();
-            inner->kind = e.kind;
-            inner->text = e.text;
-            inner->ival = 2;
-            inner->line = e.line;
-            inner->col = e.col;
-            inner->file = e.file;
-            inner->kids = std::move(e.kids);
-            inner->checked = std::move(ptrTy);
-            e.kids.clear();
-            e.kind = Expr::Kind::Unary;
-            e.text = "*";
-            e.kids.push_back(std::move(inner));
-            r.type = cloneType(*r.type->inner);
-            r.lvalue = true;
-            r.mod = true;
-        }
-        return r;
-    }
-
-    void checkVar(Decl& d) {
-        if (!d.type) return;
-        if (!d.vt.empty()) return;  // a vtable: already declared
-        if (d.type->kind == Type::Kind::Reference) {
-            if (!d.init || !d.type->inner) {
-                err(d.line, d.col, "a reference must be initialized");
-            } else {
-                ET src = checkExpr(*d.init);
-                if (!src.bad && !src.lvalue) err(d.line, d.col, "a reference must bind to an lvalue");
-                if (!src.bad && src.type && !sameType(*d.type->inner, *src.type) && !derivedFrom(*src.type, *d.type->inner))
-                    err(d.line, d.col, "cannot bind this reference");
-            }
-            add(d.name, cloneType(*d.type), false, d.line, d.col);
-            return;
-        }
-        if (d.type->kind == Type::Kind::Void ||
-            (d.type->kind == Type::Kind::Array && d.type->inner && d.type->inner->kind == Type::Kind::Void)) {
-            err(d.line, d.col, "variable has type void");
-        }
-        if (d.init && d.init->kind == Expr::Kind::Brace) {
-            for (auto& k : d.init->kids)
-                if (k) checkExpr(*k);
-        } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array) {
-            checkExpr(*d.init);
-        } else if (d.init) {
-            if (d.type->kind != Type::Kind::Struct) convertIfNeeded(*d.init);
-            ET src = decay(checkExpr(*d.init));
-            if (d.init->kind == Expr::Kind::Comma && d.init->ival == 9) {
-                consumed(*d.init);  // T x = T(args): built in place, the temporary is not destroyed
-            }
-            if (!src.bad && !canAssign(*d.type, src)) err(d.line, d.col, "cannot assign this value");
-            else if (!src.bad && scopes_.size() == 1 && !isConst(*d.init))
-                err(d.line, d.col, "initializer is not a constant");
-        }
-        add(d.name, cloneType(*d.type), false, d.line, d.col);
-    }
-
-    void checkFunction(Decl& d) {
-        if (!d.type) return;
-        add(d.name, cloneType(*d.type), true, d.line, d.col);
-        if (!d.body) return;
-        scopes_.emplace_back();
-        const Type* saved = ret_;
-        const Type* savedMethod = method_;
-        std::string savedNs = inNs_;
-        ret_ = d.type->inner.get();
-        method_ = nullptr;
-        inNs_.clear();
-        {
-            std::size_t cut = d.name.rfind("::");
-            if (cut != std::string::npos) inNs_ = d.name.substr(0, cut);
-        }
-        if (!d.methodTag.empty()) {
-            auto it = canonStructs().find(d.methodTag);
-            if (it != canonStructs().end()) method_ = it->second.get();
-        }
-        for (const Param& p : d.type->params) {
-            if (p.name.empty() || !p.type) continue;
-            add(p.name, cloneType(*p.type), false, d.line, d.col);
-        }
-        if (d.body->kind == Stmt::Kind::Block) {
-            checkStmts(*d.body);
-        } else {
-            checkStmt(*d.body);
-        }
-        ret_ = saved;
-        method_ = savedMethod;
-        inNs_ = savedNs;
-        scopes_.pop_back();
-    }
-
-    void checkCond(Expr& e) {
-        convertIfNeeded(e);
-        ET c = decay(checkExpr(e));
-        if (!c.bad && c.type && !scalar(*c.type)) err(e.line, e.col, "condition is not a scalar");
-    }
-
-    // A single statement that is the body of if, while or for becomes a block, so that hidden
-    // temporaries made inside it are destroyed inside it.
-    static void blockify(std::unique_ptr<Stmt>& body) {
-        if (!body || body->kind == Stmt::Kind::Block) return;
-        auto blk = std::make_unique<Stmt>();
-        blk->kind = Stmt::Kind::Block;
-        blk->line = body->line;
-        blk->col = body->col;
-        blk->file = body->file;
-        blk->stmts.push_back(std::move(body));
-        body = std::move(blk);
-    }
-
-    // Declarations of the hidden locals and their flags (the flag starts at 0).
-    void declareTemps(std::vector<std::unique_ptr<Stmt>>& out, std::vector<TempInfo>& temps) {
-        for (TempInfo& t : temps) {
-            if (t.type) {
-                auto d = std::make_unique<Decl>();
-                d->name = t.name;
-                d->line = t.pos.line;
-                d->col = t.pos.col;
-                d->file = t.pos.file;
-                d->type = std::move(t.type);
-                auto ds = std::make_unique<Stmt>();
-                ds->kind = Stmt::Kind::Decl;
-                ds->line = d->line;
-                ds->col = d->col;
-                ds->decl = std::move(d);
-                out.push_back(std::move(ds));
-            }
-            if (!t.rec.empty()) {
-                auto d = std::make_unique<Decl>();
-                d->name = t.rec;
-                d->line = t.pos.line;
-                d->col = t.pos.col;
-                d->file = t.pos.file;
-                auto arr = std::make_unique<Type>();
-                arr->kind = Type::Kind::Array;
-                arr->inner = prim(Type::Kind::Long);
-                arr->bound = std::make_unique<Expr>();
-                arr->bound->kind = Expr::Kind::Int;
-                arr->bound->ival = 14;
-                d->type = std::move(arr);
-                auto ds = std::make_unique<Stmt>();
-                ds->kind = Stmt::Kind::Decl;
-                ds->line = d->line;
-                ds->col = d->col;
-                ds->decl = std::move(d);
-                out.push_back(std::move(ds));
-            }
-            if (!t.flag.empty()) {
-                auto d = std::make_unique<Decl>();
-                d->name = t.flag;
-                d->line = t.pos.line;
-                d->col = t.pos.col;
-                d->file = t.pos.file;
-                d->type = std::make_unique<Type>();
-                d->init = std::make_unique<Expr>();
-                d->init->kind = Expr::Kind::Int;
-                d->init->ival = 0;
-                auto ds = std::make_unique<Stmt>();
-                ds->kind = Stmt::Kind::Decl;
-                ds->line = d->line;
-                ds->col = d->col;
-                ds->decl = std::move(d);
-                out.push_back(std::move(ds));
-            }
-        }
-    }
-    // "if (flag) dtor(&tmp);" for each temporary that has a destructor, latest first.
-    std::vector<std::unique_ptr<Stmt>> dtorStmts(std::vector<TempInfo>& temps, int line, int col,
-                                                 const std::string& file) {
-        std::vector<std::unique_ptr<Stmt>> dtors;
-        for (std::size_t i = temps.size(); i-- > 0;) {
-            if (temps[i].tag.empty()) continue;
-            auto it = canonStructs().find(temps[i].tag);
-            const Param* dp = it == canonStructs().end() ? nullptr : findSpecial(it->second.get(), "<dtor>");
-            if (!dp) continue;
-            Expr at;
-            at.line = line;
-            at.col = col;
-            at.file = file;
-            auto call = mkE(Expr::Kind::Call, at);
-            call->kids.push_back(mkName(dp->mangled, at));
-            call->kids.push_back(eUnary("&", mkName(temps[i].name, at), at));
-            auto es = std::make_unique<Stmt>();
-            es->kind = Stmt::Kind::Expr;
-            es->line = line;
-            es->col = col;
-            es->file = file;
-            es->expr = std::move(call);
-            std::unique_ptr<Stmt> last = std::move(es);
-            if (!temps[i].rec.empty()) {
-                auto blk2 = std::make_unique<Stmt>();
-                blk2->kind = Stmt::Kind::Block;
-                blk2->line = line;
-                blk2->col = col;
-                blk2->file = file;
-                blk2->stmts.push_back(std::move(last));
-                auto popCall = mkE(Expr::Kind::Call, at);
-                popCall->kids.push_back(mkName("__okay_eh_pop", at));
-                auto ps = std::make_unique<Stmt>();
-                ps->kind = Stmt::Kind::Expr;
-                ps->line = line;
-                ps->col = col;
-                ps->file = file;
-                ps->expr = std::move(popCall);
-                blk2->stmts.push_back(std::move(ps));
-                last = std::move(blk2);
-            }
-            if (!temps[i].flag.empty()) {
-                auto g = std::make_unique<Stmt>();
-                g->kind = Stmt::Kind::If;
-                g->line = line;
-                g->col = col;
-                g->file = file;
-                g->expr = mkName(temps[i].flag, at);
-                g->thenS = std::move(last);
-                last = std::move(g);
-            }
-            checkStmt(*last);
-            dtors.push_back(std::move(last));
-        }
-        return dtors;
-    }
-
-    // Puts the hidden locals' declarations before 'st' and the destructor calls after it (before
-    // a return, with the returned value kept in another hidden local).
-    void flushTemps(std::vector<std::unique_ptr<Stmt>>& out, std::unique_ptr<Stmt> st, std::vector<TempInfo>& temps) {
-        declareTemps(out, temps);
-        std::vector<std::unique_ptr<Stmt>> dtors = dtorStmts(temps, st->line, st->col, st->file);
-        if (dtors.empty()) {
-            out.push_back(std::move(st));
-            return;
-        }
-        if (st->kind == Stmt::Kind::Return && st->expr && ret_ && ret_->kind != Type::Kind::Void &&
-            ret_->kind != Type::Kind::Reference) {
-            // return e; the value is computed, then the temporaries die, then the function returns.
-            std::string rv = "__crv" + std::to_string(tempN_++);
-            auto d = std::make_unique<Decl>();
-            d->name = rv;
-            d->line = st->line;
-            d->col = st->col;
-            d->file = st->file;
-            d->type = cloneType(*ret_);
-            d->init = std::move(st->expr);
-            add(rv, cloneType(*ret_), false, st->line, st->col);
-            auto ds = std::make_unique<Stmt>();
-            ds->kind = Stmt::Kind::Decl;
-            ds->line = st->line;
-            ds->col = st->col;
-            ds->decl = std::move(d);
-            out.push_back(std::move(ds));
-            for (auto& dt : dtors) out.push_back(std::move(dt));
-            Expr at;
-            at.line = st->line;
-            at.col = st->col;
-            at.file = st->file;
-            st->expr = mkName(rv, at);
-            st->expr->checked = cloneType(*ret_);
-            out.push_back(std::move(st));
-            return;
-        }
-        out.push_back(std::move(st));
-        for (auto& dt : dtors) out.push_back(std::move(dt));
-    }
-
-    // The statements of a block, in the scope the caller opened.
-    void checkStmts(Stmt& block) {
-        std::vector<std::unique_ptr<Stmt>> out;
-        for (auto& st : block.stmts) {
-            if (!st) continue;
-            std::vector<TempInfo> outer = std::move(temps_);
-            temps_.clear();
-            checkStmt(*st);
-            std::vector<TempInfo> mine = std::move(temps_);
-            temps_ = std::move(outer);
-            if (mine.empty()) {
-                out.push_back(std::move(st));
-                continue;
-            }
-            flushTemps(out, std::move(st), mine);
-        }
-        block.stmts = std::move(out);
-    }
-
-    void checkStmt(Stmt& s) {
-        if (!s.file.empty()) file_ = s.file;
-        switch (s.kind) {
-        case Stmt::Kind::Block: {
-            scopes_.emplace_back();
-            checkStmts(s);
-            scopes_.pop_back();
-            break;
-        }
-        case Stmt::Kind::Empty:
-            break;
-        case Stmt::Kind::Expr:
-            if (s.expr) checkExpr(*s.expr);
-            break;
-        case Stmt::Kind::Return:
-            if (!ret_) {
-                err(s.line, s.col, "return outside a function");
-                break;
-            }
-            if (ret_->kind == Type::Kind::Void) {
-                if (s.expr) err(s.line, s.col, "return type does not match");
-            } else if (!s.expr) {
-                err(s.line, s.col, "return type does not match");
-            } else if (ret_->kind == Type::Kind::Reference && ret_->inner) {
-                ET v = checkExpr(*s.expr);
-                if (!v.bad && (!v.lvalue || !v.type ||
-                               (!sameType(*ret_->inner, *v.type) && !derivedFrom(*v.type, *ret_->inner))))
-                    err(s.line, s.col, "return type does not match");
-            } else {
-                if (ret_->kind != Type::Kind::Struct) convertIfNeeded(*s.expr);
-                ET v = decay(checkExpr(*s.expr));
-                if (s.expr->kind == Expr::Kind::Comma && s.expr->ival == 9) {
-                    consumed(*s.expr);  // returned: it is the result object
-                }
-                if (!v.bad && !canAssign(*ret_, v)) err(s.line, s.col, "return type does not match");
-            }
-            break;
-        case Stmt::Kind::If: {
-            blockify(s.thenS);
-            blockify(s.elseS);
-            std::vector<TempInfo> outer = std::move(temps_);
-            temps_.clear();
-            if (s.expr) checkCond(*s.expr);
-            std::vector<TempInfo> condTemps = std::move(temps_);
-            temps_ = std::move(outer);
-            if (s.thenS) checkStmt(*s.thenS);
-            if (s.elseS) checkStmt(*s.elseS);
-            if (!condTemps.empty() && s.expr) {
-                // The condition's temporaries die before either branch runs:
-                // { decls; int c = cond; dtors; if (c) then else }.
-                Expr at;
-                at.line = s.line;
-                at.col = s.col;
-                at.file = s.file;
-                auto inner = std::make_unique<Stmt>();
-                inner->kind = Stmt::Kind::If;
-                inner->line = s.line;
-                inner->col = s.col;
-                inner->file = s.file;
-                std::string cv = "__cc" + std::to_string(tempN_++);
-                inner->expr = mkName(cv, at);
-                inner->expr->checked = prim(Type::Kind::Long);
-                inner->thenS = std::move(s.thenS);
-                inner->elseS = std::move(s.elseS);
-                std::vector<std::unique_ptr<Stmt>> parts;
-                declareTemps(parts, condTemps);
-                auto d = std::make_unique<Decl>();
-                d->name = cv;
-                d->line = s.line;
-                d->col = s.col;
-                d->file = s.file;
-                d->type = prim(Type::Kind::Long);  // wide enough for a pointer condition
-                d->init = std::move(s.expr);
-                auto ds = std::make_unique<Stmt>();
-                ds->kind = Stmt::Kind::Decl;
-                ds->line = s.line;
-                ds->col = s.col;
-                ds->decl = std::move(d);
-                parts.push_back(std::move(ds));
-                for (auto& dt : dtorStmts(condTemps, s.line, s.col, s.file)) parts.push_back(std::move(dt));
-                parts.push_back(std::move(inner));
-                s.kind = Stmt::Kind::Block;
-                s.stmts = std::move(parts);
-                s.expr.reset();
-            }
-            break;
-        }
-        case Stmt::Kind::While: {
-            blockify(s.body);
-            std::vector<TempInfo> outer = std::move(temps_);
-            temps_.clear();
-            if (s.expr) checkCond(*s.expr);
-            std::vector<TempInfo> condTemps = std::move(temps_);
-            temps_ = std::move(outer);
-            ++loops_;
-            if (s.body) checkStmt(*s.body);
-            --loops_;
-            if (!condTemps.empty() && s.expr && s.body) {
-                // Temporaries of the condition live for one test: while (1) { decls; if (!cond) {
-                // dtors; break; } dtors; body }.
-                auto blk = std::make_unique<Stmt>();
-                blk->kind = Stmt::Kind::Block;
-                blk->line = s.line;
-                blk->col = s.col;
-                blk->file = s.file;
-                declareTemps(blk->stmts, condTemps);
-                Expr at;
-                at.line = s.line;
-                at.col = s.col;
-                at.file = s.file;
-                auto notc = eUnary("!", std::move(s.expr), at);
-                notc->checked = prim(Type::Kind::Int);
-                auto stop = std::make_unique<Stmt>();
-                stop->kind = Stmt::Kind::If;
-                stop->line = s.line;
-                stop->col = s.col;
-                stop->file = s.file;
-                stop->expr = std::move(notc);
-                auto exitBlk = std::make_unique<Stmt>();
-                exitBlk->kind = Stmt::Kind::Block;
-                exitBlk->line = s.line;
-                exitBlk->file = s.file;
-                for (auto& d : dtorStmts(condTemps, s.line, s.col, s.file)) exitBlk->stmts.push_back(std::move(d));
-                auto brk = std::make_unique<Stmt>();
-                brk->kind = Stmt::Kind::Break;
-                brk->line = s.line;
-                brk->file = s.file;
-                exitBlk->stmts.push_back(std::move(brk));
-                stop->thenS = std::move(exitBlk);
-                blk->stmts.push_back(std::move(stop));
-                for (auto& d : dtorStmts(condTemps, s.line, s.col, s.file)) blk->stmts.push_back(std::move(d));
-                blk->stmts.push_back(std::move(s.body));
-                s.body = std::move(blk);
-                s.expr = mkE(Expr::Kind::Int, at);
-                s.expr->ival = 1;
-                s.expr->checked = prim(Type::Kind::Int);
-            }
-            break;
-        }
-        case Stmt::Kind::For: {
-            blockify(s.body);
-            scopes_.emplace_back();
-            if (s.init) checkStmt(*s.init);
-            std::vector<TempInfo> outer = std::move(temps_);
-            temps_.clear();
-            if (s.expr) checkCond(*s.expr);
-            std::vector<TempInfo> condTemps = std::move(temps_);
-            temps_ = std::move(outer);
-            if (s.expr2) checkExpr(*s.expr2);
-            ++loops_;
-            if (s.body) checkStmt(*s.body);
-            --loops_;
-            if (!condTemps.empty() && s.expr && s.body) {
-                // The condition's temporaries live for one test:
-                // for (init; ; step) { decls; c = cond; dtors; if (!c) break; body }.
-                Expr at;
-                at.line = s.line;
-                at.col = s.col;
-                at.file = s.file;
-                auto blk = std::make_unique<Stmt>();
-                blk->kind = Stmt::Kind::Block;
-                blk->line = s.line;
-                blk->col = s.col;
-                blk->file = s.file;
-                declareTemps(blk->stmts, condTemps);
-                std::string cv = "__cc" + std::to_string(tempN_++);
-                auto d = std::make_unique<Decl>();
-                d->name = cv;
-                d->line = s.line;
-                d->col = s.col;
-                d->file = s.file;
-                d->type = prim(Type::Kind::Long);
-                d->init = std::move(s.expr);
-                auto ds = std::make_unique<Stmt>();
-                ds->kind = Stmt::Kind::Decl;
-                ds->line = s.line;
-                ds->col = s.col;
-                ds->decl = std::move(d);
-                blk->stmts.push_back(std::move(ds));
-                for (auto& dt : dtorStmts(condTemps, s.line, s.col, s.file)) blk->stmts.push_back(std::move(dt));
-                auto notc = eUnary("!", mkName(cv, at), at);
-                notc->checked = prim(Type::Kind::Int);
-                notc->kids[0]->checked = prim(Type::Kind::Long);
-                auto stop = std::make_unique<Stmt>();
-                stop->kind = Stmt::Kind::If;
-                stop->line = s.line;
-                stop->col = s.col;
-                stop->file = s.file;
-                stop->expr = std::move(notc);
-                auto brk = std::make_unique<Stmt>();
-                brk->kind = Stmt::Kind::Break;
-                brk->line = s.line;
-                brk->file = s.file;
-                stop->thenS = std::move(brk);
-                blk->stmts.push_back(std::move(stop));
-                blk->stmts.push_back(std::move(s.body));
-                s.body = std::move(blk);
-            }
-            scopes_.pop_back();
-            break;
-        }
-        case Stmt::Kind::Break:
-            if (loops_ == 0 && switches_ == 0) err(s.line, s.col, "break is not inside a loop or switch");
-            break;
-        case Stmt::Kind::Switch: {
-            if (!s.expr) break;
-            ET c = decay(checkExpr(*s.expr));
-            if (!c.bad && (!c.type || !isIntish(*c.type))) err(s.line, s.col, "switch value is not an integer");
-            ++switches_;
-            bool sawDef = false;
-            for (auto& cs : s.stmts) {
-                if (!cs || cs->kind != Stmt::Kind::Case) continue;
-                if (!cs->expr) {
-                    if (sawDef) err(cs->line, cs->col, "more than one default");
-                    sawDef = true;
-                } else {
-                    ET v = checkExpr(*cs->expr);
-                    if (!v.bad && (!v.type || !isIntish(*v.type))) err(cs->line, cs->col, "case value is not an integer");
-                }
-                if (cs->body) checkStmt(*cs->body);
-            }
-            --switches_;
-            break;
-        }
-        case Stmt::Kind::Continue:
-            if (loops_ == 0) err(s.line, s.col, "continue is not inside a loop");
-            break;
-        case Stmt::Kind::Decl:
-            if (s.decl) checkVar(*s.decl);
-            break;
-        case Stmt::Kind::Case:
-        case Stmt::Kind::Goto:
-        case Stmt::Kind::Label:
-            break;
-        }
-    }
-};
-
-class Lowerer {
-public:
-    explicit Lowerer(Diagnostics& diags) : diags_(diags) {}
-
-    Module run(Tu& tu) {
-        for (const auto& kv : canonStructs())
-            if (kv.second) layoutOf(kv.second.get());
-        for (auto& d : tu.decls)
-            if (d && d->function) noteFunc(*d);
-        for (auto& d : tu.decls)
-            if (d && !d->function) addGlobal(*d);
-        for (auto& d : tu.decls)
-            if (d && d->function && d->body) lowerFunc(*d);
-        return std::move(mod_);
-    }
-
-private:
-    struct FieldOff {
-        std::string name;
-        int offset = 0;
-        int width = 8;
-        int step = 0;
-        int inner = 0;
-        int bitOff = 0;
-        int bitWidth = 0;
-        bool bitUns = false;
-        bool agg = false;
-        std::string tag;
-        std::vector<FieldOff> fields;
-    };
-    struct Val {
-        Operand op;
-        Operand hi;
-        int step = 0;
-        int inner = 0;
-        bool pair = false;
-        int fpw = 0;
-        std::vector<FieldOff> fields;
-        Val() = default;
-        Val(Operand o, int s, int i) : op(std::move(o)), step(s), inner(i) {}
-    };
-    struct Addr {
-        Operand op;
-        int width = 8;
-        int step = 0;
-        int inner = 0;
-        int bitOff = 0;
-        int bitWidth = 0;
-        bool bitUns = false;
-        bool ok = false;
-        bool agg = false;
-        std::vector<FieldOff> fields;
-    };
-    struct Sym {
-        int reg = -1;
-        bool global = false;
-        bool array = false;
-        bool agg = false;
-        bool mem = false;
-        bool zext = false;
-        bool func = false;
-        bool ref = false;
-        bool boolean = false;
-        int fpw = 0;
-        std::string gname;
-        int width = 8;
-        int step = 0;
-        int inner = 0;
-        int objSize = 8;
-        std::vector<FieldOff> fields;
-    };
-    struct Loop {
-        std::string cont;
-        std::string brk;
-        bool sw = false;
-    };
-
-    Diagnostics& diags_;
-    std::string file_;
-    Module mod_;
-    Function fn_;
-    int cur_ = -1;
-    int nextReg_ = 0;
-    int whileN_ = 0;
-    int ifN_ = 0;
-    int forN_ = 0;
-    int switchN_ = 0;
-    int tmpN_ = 0;
-    int strN_ = 0;
-    int retWidth_ = 8;
-    bool retBool_ = false;
-    bool retFp_ = false;
-    int vaSave_ = -1;
-    bool retUns_ = false;
-    bool retStruct_ = false;
-    bool retRef_ = false;
-    int hiddenReg_ = -1;
-    std::set<std::string> addr_;
-    std::vector<std::map<std::string, Sym>> scopes_;
-    std::map<std::string, Sym> globals_;
-    std::vector<Loop> loops_;
-
-    void err(int line, int col, const std::string& msg) {
-        diags_.error(file_.empty() ? "t.c" : file_, line, col, msg);
-    }
-    void startBlock(const std::string& name) {
-        fn_.blocks.push_back(Block{});
-        fn_.blocks.back().name = name;
-        cur_ = static_cast<int>(fn_.blocks.size()) - 1;
-    }
-    void emit(Inst in) { fn_.blocks[static_cast<std::size_t>(cur_)].code.push_back(std::move(in)); }
-    int fresh() { return nextReg_++; }
-    std::string lab(const std::string& prefix) { return prefix + std::to_string(tmpN_++); }
-
-    static int alignUp(int off, int al) {
-        if (al <= 1) return off;
-        int m = off % al;
-        return m ? off + (al - m) : off;
-    }
-
-    static int alignOf(const Type* t) {
-        if (!t) return 1;
-        switch (t->kind) {
-        case Type::Kind::Char: return 1;
-        case Type::Kind::Short: return 2;
-        case Type::Kind::Int:
-        case Type::Kind::Float: return 4;
-        case Type::Kind::Double:
-        case Type::Kind::Long:
-        case Type::Kind::Pointer:
-        case Type::Kind::Reference: return 8;
-        case Type::Kind::Bool: return 1;
-        case Type::Kind::Array: return alignOf(t->inner.get());
-        case Type::Kind::Struct:
-        case Type::Kind::Union: {
-            int a = 1;
-            t = canonOf(t);  // a use made before the class was complete has no fields of its own
-            for (const Param& p : t->params) {
-                int fa = alignOf(p.type.get());
-                if (fa > a) a = fa;
-            }
-            return a;
-        }
-        default: return 1;
-        }
-    }
-
-    static int sizeOf(const Type* t) {
-        if (!t) return 4;
-        switch (t->kind) {
-        case Type::Kind::Char:
-        case Type::Kind::Bool: return 1;
-        case Type::Kind::Short: return 2;
-        case Type::Kind::Int:
-        case Type::Kind::Float: return 4;
-        case Type::Kind::Double:
-        case Type::Kind::Long:
-        case Type::Kind::Pointer:
-        case Type::Kind::Reference: return 8;
-        case Type::Kind::Array: {
-            int n = 0;
-            if (t->bound && t->bound->kind == Expr::Kind::Int) n = static_cast<int>(t->bound->ival);
-            return n * sizeOf(t->inner.get());
-        }
-        case Type::Kind::Struct: {
-            auto fields = layoutOf(t);
-            int end = 0;
-            for (const FieldOff& f : fields) {
-                int span = f.bitWidth > 0 ? 4 : f.width;
-                int e = f.offset + span;
-                if (e > end) end = e;
-            }
-            if (end == 0) return t->tag.empty() ? 0 : 1;
-            return alignUp(end, alignOf(t));
-        }
-        case Type::Kind::Union: {
-            int sz = 0;
-            for (const Param& p : t->params) {
-                int n = sizeOf(p.type.get());
-                if (n > sz) sz = n;
-            }
-            if (sz == 0) return 0;
-            return alignUp(sz, alignOf(t));
-        }
-        default: return 4;
-        }
-    }
-    static int valueStep(const Type* t) {
-        if (!t) return 0;
-        if (t->kind == Type::Kind::Pointer || t->kind == Type::Kind::Array) return sizeOf(t->inner.get());
-        return 0;
-    }
-    static int innerOf(const Type* t) {
-        if (!t) return 0;
-        if (t->kind == Type::Kind::Pointer || t->kind == Type::Kind::Array) return valueStep(t->inner.get());
-        return 0;
-    }
-
-    static std::vector<FieldOff> layoutOf(const Type* t) {
-        std::vector<FieldOff> out;
-        if (!t || (t->kind != Type::Kind::Struct && t->kind != Type::Kind::Union)) return out;
-        // A use made before the class was complete has no fields of its own; take the finished
-        // type, unless this tag is being laid out right now (a pointer to itself).
-        static std::set<std::string> inProgress;
-        struct Mark {
-            std::string tag;
-            bool set = false;
-            ~Mark() {
-                if (set) inProgress.erase(tag);
-            }
-        } mark;
-        if (t->params.empty() && !t->tag.empty() && !inProgress.count(t->tag)) t = canonOf(t);
-        if (!t->tag.empty() && inProgress.insert(t->tag).second) {
-            mark.tag = t->tag;
-            mark.set = true;
-        }
-        if (t->kind == Type::Kind::Union) {
-            for (const Param& p : t->params) {
-                FieldOff f;
-                f.name = p.name;
-                f.offset = 0;
-                f.width = sizeOf(p.type.get());
-                f.step = valueStep(p.type.get());
-                f.inner = innerOf(p.type.get());
-                f.agg = p.type && (p.type->kind == Type::Kind::Struct || p.type->kind == Type::Kind::Union ||
-                                   p.type->kind == Type::Kind::Array);
-                if (p.type && (p.type->kind == Type::Kind::Struct || p.type->kind == Type::Kind::Union))
-                    f.fields = layoutOf(p.type.get());
-                out.push_back(std::move(f));
-            }
-            return out;
-        }
-        int off = 0;
-        int bitCursor = -1;
-        for (const Param& p : t->params) {
-            if (!p.mangled.empty() || (p.type && p.type->kind == Type::Kind::Function)) continue;
-            if (p.name == "__basepad") {
-                // Itanium C++ ABI 2.4: a base that is POD for layout keeps its tail padding.
-                if (bitCursor >= 0) {
-                    off += 4;
-                    bitCursor = -1;
-                }
-                off = alignUp(off, alignOf(p.type.get()));
-                continue;
-            }
-            FieldOff f;
-            f.name = p.name;
-            if (p.bits >= 0) {
-                int bits = p.bits;
-                if (bits > 32) bits = 32;
-                if (bitCursor < 0 || bitCursor + bits > 32) {
-                    if (bitCursor >= 0) off += 4;
-                    off = alignUp(off, 4);
-                    bitCursor = 0;
-                }
-                f.offset = off;
-                f.width = 4;
-                f.bitOff = bitCursor;
-                f.bitWidth = bits;
-                f.bitUns = p.type && p.type->unsign;
-                bitCursor += bits;
-                out.push_back(std::move(f));
-                continue;
-            }
-            if (bitCursor >= 0) {
-                off += 4;
-                bitCursor = -1;
-            }
-            off = alignUp(off, alignOf(p.type.get()));
-            f.offset = off;
-            f.width = sizeOf(p.type.get());
-            f.step = valueStep(p.type.get());
-            f.inner = innerOf(p.type.get());
-            bool nested = p.type && p.type->kind == Type::Kind::Struct;
-            bool arr = p.type && p.type->kind == Type::Kind::Array;
-            bool pstruct = p.type && p.type->kind == Type::Kind::Pointer && p.type->inner &&
-                           p.type->inner->kind == Type::Kind::Struct;
-            f.agg = nested || arr;
-            if (nested) {
-                f.fields = layoutOf(p.type.get());
-                f.tag = p.type->tag;
-            } else if (pstruct) {
-                f.tag = p.type->inner->tag;
-                if (p.type->inner->tag.empty() || p.type->inner->tag != t->tag)
-                    f.fields = layoutOf(p.type->inner.get());
-            }
-            out.push_back(std::move(f));
-            off += f.width;
-        }
-        if (bitCursor >= 0) off += 4;
-        if (!t->tag.empty() && (!out.empty() || !structLayouts().count(t->tag))) structLayouts()[t->tag] = out;
-        return out;
-    }
-
-    static std::map<std::string, std::vector<FieldOff>>& structLayouts() {
-        static std::map<std::string, std::vector<FieldOff>> layouts;
-        return layouts;
-    }
-
-    static std::vector<FieldOff> fieldsFor(const FieldOff& f) {
-        if (!f.fields.empty() || f.tag.empty()) return f.fields;
-        auto it = structLayouts().find(f.tag);
-        if (it == structLayouts().end()) return f.fields;
-        return it->second;
-    }
-
-    static void describe(Sym& s, const Type* t) {
-        if (!t) return;
-        if (t->kind == Type::Kind::Array) {
-            s.array = true;
-            s.width = sizeOf(t->inner.get());
-        } else {
-            s.width = sizeOf(t);
-        }
-        s.step = valueStep(t);
-        s.inner = innerOf(t);
-        s.objSize = sizeOf(t);
-        s.zext = t->unsign || t->kind == Type::Kind::Bool;
-        s.boolean = t->kind == Type::Kind::Bool;
-        s.fpw = fpWidthOf(t);
-        if (t->kind == Type::Kind::Reference && t->inner) {
-            describe(s, t->inner.get());
-            s.ref = true;
-            return;
-        }
-        if (t->kind == Type::Kind::Array && t->inner) s.zext = t->inner->unsign;
-        if (t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union) {
-            s.agg = true;
-            s.fields = layoutOf(t);
-            if (s.fields.empty() && !t->tag.empty()) {
-                auto it = structLayouts().find(t->tag);
-                if (it != structLayouts().end()) s.fields = it->second;
-            }
-        } else if (t->kind == Type::Kind::Pointer && t->inner &&
-                   (t->inner->kind == Type::Kind::Struct || t->inner->kind == Type::Kind::Union)) {
-            s.fields = layoutOf(t->inner.get());
-            if (s.fields.empty() && !t->inner->tag.empty()) {
-                auto it = structLayouts().find(t->inner->tag);
-                if (it != structLayouts().end()) s.fields = it->second;
-            }
-        }
-    }
-
-    Sym* find(const std::string& name) {
-        for (int i = static_cast<int>(scopes_.size()) - 1; i >= 0; --i) {
-            auto it = scopes_[static_cast<std::size_t>(i)].find(name);
-            if (it != scopes_[static_cast<std::size_t>(i)].end()) return &it->second;
-        }
-        auto g = globals_.find(name);
-        if (g != globals_.end()) return &g->second;
-        return nullptr;
-    }
-
-    void emitMov(int dst, Operand src, int width = 8, bool uns = false) {
-        Inst in;
-        in.op = Inst::Op::Mov;
-        in.dst = dst;
-        in.a = src;
-        in.extra = width <= 0 ? 8 : width;
-        in.uns = uns;
-        emit(in);
-    }
-    Operand narrow(Operand src, int width, bool uns = false) {
-        if (width >= 8 || width <= 0) return src;
-        if (src.kind == Operand::Kind::Imm) {
-            std::uint64_t mask = width >= 4 ? 0xffffffffull : width == 2 ? 0xffffull : 0xffull;
-            std::uint64_t bits = static_cast<std::uint64_t>(src.imm) & mask;
-            if (!uns && (bits & (1ull << (width * 8 - 1)))) bits |= ~mask;
-            return Operand::number(static_cast<std::int64_t>(bits));
-        }
-        int t = fresh();
-        emitMov(t, src, width, uns);
-        return Operand::vreg(t);
-    }
-    void storeMem(int slot, Operand val, int width) {
-        int addr = fresh();
-        Inst lea;
-        lea.op = Inst::Op::Lea;
-        lea.dst = addr;
-        lea.a = Operand::vreg(slot);
-        emit(lea);
-        Inst st;
-        st.op = Inst::Op::Store;
-        st.a = Operand::vreg(addr);
-        st.b = val;
-        st.extra = width;
-        emit(st);
-    }
-    Val loadMem(int slot, int width, bool uns) {
-        int addr = fresh();
-        Inst lea;
-        lea.op = Inst::Op::Lea;
-        lea.dst = addr;
-        lea.a = Operand::vreg(slot);
-        emit(lea);
-        int dst = fresh();
-        Inst ld;
-        ld.op = Inst::Op::Load;
-        ld.dst = dst;
-        ld.a = Operand::vreg(addr);
-        ld.extra = width;
-        ld.uns = uns;
-        emit(ld);
-        return Val{Operand::vreg(dst), 0, 0};
-    }
-    void emitJmp(const std::string& label) {
-        Inst in;
-        in.op = Inst::Op::Jmp;
-        in.label = label;
-        emit(in);
-    }
-    void emitBr(int cond, const std::string& t, const std::string& f) {
-        Inst in;
-        in.op = Inst::Op::Br;
-        in.a = Operand::vreg(cond);
-        in.label = t;
-        in.label2 = f;
-        emit(in);
-    }
-    Operand asBool(Operand src, int fpw = 0) {
-        if (fpw) {
-            std::uint64_t mask = fpw <= 4 ? 0x7fffffffull : 0x7fffffffffffffffll;
-            if (src.kind == Operand::Kind::Imm) {
-                std::uint64_t bits = static_cast<std::uint64_t>(src.imm) & mask;
-                return Operand::number(bits != 0 ? 1 : 0);
-            }
-            int mag = fresh();
-            Inst in;
-            in.op = Inst::Op::And;
-            in.dst = mag;
-            in.a = src;
-            in.b = Operand::number(static_cast<std::int64_t>(mask));
-            emit(in);
-            src = Operand::vreg(mag);
-        }
-        if (src.kind == Operand::Kind::Imm) return Operand::number(src.imm != 0 ? 1 : 0);
-        int dst = fresh();
-        emitBin(Inst::Op::Cne, dst, src, Operand::number(0));
-        return Operand::vreg(dst);
-    }
-
-    void emitBin(Inst::Op op, int dst, Operand a, Operand b, bool uns = false) {
-        Inst in;
-        in.op = op;
-        in.dst = dst;
-        in.a = a;
-        in.b = b;
-        in.uns = uns;
-        emit(in);
-    }
-    int asReg(Operand o) {
-        if (o.kind == Operand::Kind::Reg) return o.reg;
-        int t = fresh();
-        emitMov(t, o);
-        return t;
-    }
-    int material(Val v) { return asReg(v.op); }
-
-    bool fold(const std::string& op, std::int64_t x, std::int64_t y, std::int64_t& out) {
-        if (op == "+") {
-            out = static_cast<std::int64_t>(static_cast<std::uint64_t>(x) + static_cast<std::uint64_t>(y));
-            return true;
-        }
-        if (op == "-") {
-            out = static_cast<std::int64_t>(static_cast<std::uint64_t>(x) - static_cast<std::uint64_t>(y));
-            return true;
-        }
-        if (op == "*") {
-            out = static_cast<std::int64_t>(static_cast<std::uint64_t>(x) * static_cast<std::uint64_t>(y));
-            return true;
-        }
-        if (op == "/" || op == "%") {
-            if (y == 0) return false;
-            if (x == std::numeric_limits<std::int64_t>::min() && y == -1) return false;
-            out = op == "/" ? x / y : x % y;
-            return true;
-        }
-        if (op == "&") { out = x & y; return true; }
-        if (op == "|") { out = x | y; return true; }
-        if (op == "^") { out = x ^ y; return true; }
-        if (op == "<<" || op == ">>") {
-            if (y < 0 || y >= 63) return false;
-            auto ux = static_cast<std::uint64_t>(x);
-            unsigned s = static_cast<unsigned>(y);
-            out = static_cast<std::int64_t>(op == "<<" ? (ux << s) : (ux >> s));
-            return true;
-        }
-        if (op == "==") { out = x == y; return true; }
-        if (op == "!=") { out = x != y; return true; }
-        if (op == "<") { out = x < y; return true; }
-        if (op == "<=") { out = x <= y; return true; }
-        if (op == ">") { out = x > y; return true; }
-        if (op == ">=") { out = x >= y; return true; }
-        return false;
-    }
-
-    Inst::Op binOp(const std::string& op) {
-        if (op == "+") return Inst::Op::Add;
-        if (op == "-") return Inst::Op::Sub;
-        if (op == "*") return Inst::Op::Mul;
-        if (op == "/") return Inst::Op::Div;
-        if (op == "%") return Inst::Op::Mod;
-        if (op == "&") return Inst::Op::And;
-        if (op == "|") return Inst::Op::Or;
-        if (op == "^") return Inst::Op::Xor;
-        if (op == "<<") return Inst::Op::Shl;
-        if (op == ">>") return Inst::Op::Shr;
-        if (op == "==") return Inst::Op::Ceq;
-        if (op == "!=") return Inst::Op::Cne;
-        if (op == "<") return Inst::Op::Clt;
-        if (op == "<=") return Inst::Op::Cle;
-        if (op == ">") return Inst::Op::Cgt;
-        if (op == ">=") return Inst::Op::Cge;
-        return Inst::Op::Add;
-    }
-
-    std::string addString(const std::string& bytes) {
-        Global g;
-        g.name = ".Lstr" + std::to_string(strN_++);
-        g.rodata = true;
-        g.size = static_cast<int>(bytes.size()) + 1;
-        g.bytes.assign(bytes.begin(), bytes.end());
-        g.bytes.push_back(0);
-        mod_.globals.push_back(std::move(g));
-        return mod_.globals.back().name;
-    }
-
-    void putInt(std::vector<unsigned char>& b, std::int64_t v, int n) {
-        auto u = static_cast<std::uint64_t>(v);
-        if (n < 1) n = 1;
-        if (n > 8) n = 8;
-        for (int i = 0; i < n; ++i) b.push_back(static_cast<unsigned char>((u >> (8 * i)) & 0xffu));
-    }
-
-    void noteFunc(Decl& d) {
-        if (d.name.empty()) return;
-        Sym s;
-        s.func = true;
-        s.global = true;
-        s.gname = d.asmName.empty() ? d.name : d.asmName;
-        s.width = 8;
-        globals_[d.name] = s;
-    }
-
-    void putAt(std::vector<unsigned char>& b, int off, std::int64_t v, int n) {
-        if (n < 1) return;
-        if (static_cast<int>(b.size()) < off + n) b.resize(static_cast<std::size_t>(off + n));
-        auto u = static_cast<std::uint64_t>(v);
-        for (int i = 0; i < n; ++i) b[static_cast<std::size_t>(off + i)] = static_cast<unsigned char>((u >> (8 * i)) & 0xffu);
-    }
-    void fillInit(const Type* t, const Expr* init, std::vector<unsigned char>& b, int off) {
-        if (!t || !init) return;
-        if (t->kind == Type::Kind::Array && init->kind == Expr::Kind::Brace && t->inner) {
-            int es = sizeOf(t->inner.get());
-            for (std::size_t i = 0; i < init->kids.size(); ++i)
-                if (init->kids[i]) fillInit(t->inner.get(), init->kids[i].get(), b, off + static_cast<int>(i) * es);
-            return;
-        }
-        if ((t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union) && init->kind == Expr::Kind::Brace) {
-            auto fields = layoutOf(t);
-            for (std::size_t i = 0; i < init->kids.size() && i < fields.size() && i < t->params.size(); ++i)
-                if (init->kids[i] && t->params[i].type)
-                    fillInit(t->params[i].type.get(), init->kids[i].get(), b, off + fields[i].offset);
-            return;
-        }
-        if (t->kind == Type::Kind::Array && t->inner && t->inner->kind == Type::Kind::Char &&
-            init->kind == Expr::Kind::String) {
-            for (std::size_t i = 0; i < init->text.size(); ++i)
-                putAt(b, off + static_cast<int>(i), static_cast<unsigned char>(init->text[i]), 1);
-            putAt(b, off + static_cast<int>(init->text.size()), 0, 1);
-            return;
-        }
-        std::int64_t val = 0;
-        if (init->kind == Expr::Kind::Int || init->kind == Expr::Kind::Char) val = static_cast<std::int64_t>(init->ival);
-        else if (init->kind == Expr::Kind::Unary && init->text == "-" && !init->kids.empty() && init->kids[0] &&
-                 init->kids[0]->kind == Expr::Kind::Int)
-            val = -static_cast<std::int64_t>(init->kids[0]->ival);
-        else {
-            err(init->line, init->col, "global initializer is not supported");
-            return;
-        }
-        putAt(b, off, val, sizeOf(t));
-    }
-    void inferBound(Decl& d) {
-        if (!d.type || d.type->kind != Type::Kind::Array || !d.type->unsized || !d.init || !d.type->inner) return;
-        int n = 0;
-        if (d.init->kind == Expr::Kind::Brace) n = static_cast<int>(d.init->kids.size());
-        else if (d.init->kind == Expr::Kind::String && d.type->inner->kind == Type::Kind::Char)
-            n = static_cast<int>(d.init->text.size()) + 1;
-        if (n <= 0) return;
-        auto b = std::make_unique<Expr>();
-        b->kind = Expr::Kind::Int;
-        b->ival = static_cast<std::uint64_t>(n);
-        d.type->bound = std::move(b);
-        d.type->unsized = false;
-    }
-
-    void addGlobal(Decl& d) {
-        if (!d.type) return;
-        if (d.isExtern) {
-            Sym s;
-            s.global = true;
-            s.gname = d.asmName.empty() ? d.name : d.asmName;
-            describe(s, d.type.get());
-            globals_[d.name] = s;
-            return;
-        }
-        inferBound(d);
-        Sym s;
-        s.global = true;
-        s.gname = d.asmName.empty() ? d.name : d.asmName;
-        describe(s, d.type.get());
-        Global g;
-        g.name = s.gname;
-        bool brace = d.init && d.init->kind == Expr::Kind::Brace;
-        bool strArr = d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array;
-        if ((s.array || s.agg) && (brace || strArr)) {
-            g.size = sizeOf(d.type.get());
-            if (g.size < 0) g.size = 0;
-            g.bytes.assign(static_cast<std::size_t>(g.size), 0);
-            fillInit(d.type.get(), d.init.get(), g.bytes, 0);
-            if (static_cast<int>(g.bytes.size()) < g.size) g.bytes.resize(static_cast<std::size_t>(g.size));
-        } else if (s.array || s.agg) {
-            g.size = sizeOf(d.type.get());
-            if (g.size <= 0) err(d.line, d.col, "array length is not a constant");
-            if (d.init) err(d.line, d.col, "global initializer is not supported");
-        } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Pointer) {
-            g.size = 8;
-            g.reloc = addString(d.init->text);
-        } else if (d.init && (d.init->kind == Expr::Kind::Int || d.init->kind == Expr::Kind::Char)) {
-            g.size = s.width > 0 && s.width <= 8 ? s.width : 8;
-            std::int64_t n = static_cast<std::int64_t>(d.init->ival);
-            if (d.type->kind == Type::Kind::Bool) n = n != 0;
-            putInt(g.bytes, n, g.size);
-        } else if (d.init && d.init->kind == Expr::Kind::Unary && d.init->text == "-" && !d.init->kids.empty() &&
-                   d.init->kids[0] && d.init->kids[0]->kind == Expr::Kind::Int) {
-            g.size = s.width > 0 && s.width <= 8 ? s.width : 8;
-            putInt(g.bytes, -static_cast<std::int64_t>(d.init->kids[0]->ival), g.size);
-        } else if (!d.init) {
-            g.size = s.array ? sizeOf(d.type.get()) : (s.width < 8 ? s.width : 8);
-        } else {
-            err(d.line, d.col, "global initializer is not supported");
-            g.size = 8;
-        }
-        if (!d.vt.empty()) {
-            g.size = static_cast<int>(d.vt.size()) * 8;
-            g.bytes.assign(static_cast<std::size_t>(g.size), 0);
-            for (std::size_t k = 0; k < d.vt.size(); ++k)
-                if (!d.vt[k].empty()) g.relocs.emplace_back(static_cast<int>(k) * 8, d.vt[k]);
-            g.rodata = true;
-        }
-        mod_.globals.push_back(std::move(g));
-        globals_[d.name] = s;
-    }
-
-    Val readName(const std::string& name, int line, int col) {
-        Sym* s = find(name);
-        if (!s) {
-            err(line, col, "not lowered: " + name);
-            return {};
-        }
-        if (s->func) {
-            int dst = fresh();
-            Inst in;
-            in.op = Inst::Op::LeaSym;
-            in.dst = dst;
-            in.func = s->gname;
-            emit(in);
-            return Val{Operand::vreg(dst), 0, 0};
-        }
-        if (s->ref) {
-            int dst = fresh();
-            Inst ld;
-            ld.op = Inst::Op::Load;
-            ld.dst = dst;
-            ld.a = Operand::vreg(s->reg);
-            ld.extra = s->width > 0 ? s->width : 8;
-            ld.uns = s->zext;
-            emit(ld);
-            Val v;
-            v.op = Operand::vreg(dst);
-            v.step = s->step;
-            v.inner = s->inner;
-            v.fields = s->fields;
-            v.fpw = s->fpw;
-            return v;
-        }
-        if (s->mem) {
-            Val v = loadMem(s->reg, s->width, s->zext);
-            v.fpw = s->fpw;
-            v.step = s->step;  // a pointer kept in memory still points to something of a size
-            v.inner = s->inner;
-            v.fields = s->fields;
-            return v;
-        }
-        if (s->array || s->agg) {
-            if (s->global) {
-                int dst = fresh();
-                Inst in;
-                in.op = Inst::Op::LeaSym;
-                in.dst = dst;
-                in.func = s->gname;
-                emit(in);
-                Val v;
-                v.op = Operand::vreg(dst);
-                v.step = s->step;
-                v.inner = s->inner;
-                v.fields = s->fields;
-                return v;
-            }
-            Val v;
-            v.op = Operand::vreg(s->reg);
-            v.step = s->step;
-            v.inner = s->inner;
-            v.fields = s->fields;
-            return v;
-        }
-        if (s->global) {
-            int dst = fresh();
-            Inst in;
-            in.op = Inst::Op::GLoad;
-            in.dst = dst;
-            in.func = s->gname;
-            in.extra = s->width;
-            in.uns = s->zext;
-            emit(in);
-            Val v;
-            v.op = Operand::vreg(dst);
-            v.step = s->step;
-            v.inner = s->inner;
-            v.fields = s->fields;
-            v.fpw = s->fpw;
-            return v;
-        }
-        Val v;
-        v.op = Operand::vreg(s->reg);
-        v.step = s->step;
-        v.inner = s->inner;
-        v.fields = s->fields;
-        v.fpw = s->fpw;
-        return v;
-    }
-
-    Val scale(Val idx, int step) {
-        if (step == 1) return idx;
-        if (idx.op.kind == Operand::Kind::Imm) return Val{Operand::number(idx.op.imm * step), 0, 0};
-        int dst = fresh();
-        emitBin(Inst::Op::Mul, dst, idx.op, Operand::number(step));
-        return Val{Operand::vreg(dst), 0, 0};
-    }
-
-    Addr lowerAddr(Expr& e) {
-        Addr a;
-        if (e.kind == Expr::Kind::Comma && !e.kids.empty() && e.kids.back()) {
-            // (x, y): x is evaluated for its effects, the address is y's.
-            for (std::size_t i = 0; i + 1 < e.kids.size(); ++i)
-                if (e.kids[i]) lowerExpr(*e.kids[i]);
-            return lowerAddr(*e.kids.back());
-        }
-        if (e.kind == Expr::Kind::Name) {
-            Sym* s = find(e.text);
-            if (!s) {
-                err(e.line, e.col, "not lowered: " + e.text);
-                return a;
-            }
-            if (s->ref) {
-                a.op = Operand::vreg(s->reg);
-                a.width = s->width > 0 ? s->width : 8;
-                a.step = s->step;
-                a.inner = s->inner;
-                a.agg = s->agg;
-                a.fields = s->fields;
-                a.ok = true;
-                return a;
-            }
-            if (s->mem) {
-                int dst = fresh();
-                Inst in;
-                in.op = Inst::Op::Lea;
-                in.dst = dst;
-                in.a = Operand::vreg(s->reg);
-                emit(in);
-                a.op = Operand::vreg(dst);
-                a.width = s->width;
-                a.ok = true;
-                return a;
-            }
-            if (s->agg) {
-                Val base = readName(e.text, e.line, e.col);
-                a.op = base.op;
-                a.width = s->width;
-                a.agg = true;
-                a.fields = s->fields;
-                a.ok = true;
-                return a;
-            }
-            if (s->array) {
-                Val base = readName(e.text, e.line, e.col);
-                a.op = base.op;
-                a.width = s->width;
-                a.ok = true;
-                return a;
-            }
-            if (s->global) {
-                int dst = fresh();
-                Inst in;
-                in.op = Inst::Op::LeaSym;
-                in.dst = dst;
-                in.func = s->gname;
-                emit(in);
-                a.op = Operand::vreg(dst);
-                a.width = s->width;
-                a.ok = true;
-                return a;
-            }
-            int dst = fresh();
-            Inst in;
-            in.op = Inst::Op::Lea;
-            in.dst = dst;
-            in.a = Operand::vreg(s->reg);
-            emit(in);
-            a.op = Operand::vreg(dst);
-            a.width = s->width;
-            a.ok = true;
-            return a;
-        }
-        if (e.kind == Expr::Kind::Index && e.kids.size() >= 2 && e.kids[0] && e.kids[1]) {
-            Val base = lowerExpr(*e.kids[0]);
-            Val idx = lowerExpr(*e.kids[1]);
-            if (base.step == 0) {
-                err(e.line, e.col, "not lowered");
-                return a;
-            }
-            Val off = scale(idx, base.step);
-            int dst = fresh();
-            emitBin(Inst::Op::Add, dst, base.op, off.op);
-            a.op = Operand::vreg(dst);
-            a.width = base.step;
-            if (e.checked && (e.checked->kind == Type::Kind::Struct || e.checked->kind == Type::Kind::Union)) {
-                a.fields = layoutOf(e.checked.get());
-                a.agg = true;
-            }
-            a.ok = true;
-            return a;
-        }
-        if (e.kind == Expr::Kind::Unary && e.text == "*" && !e.kids.empty() && e.kids[0]) {
-            Val p = lowerExpr(*e.kids[0]);
-            a.op = p.op;
-            a.width = p.step == 0 ? 8 : p.step;
-            a.fields = p.fields;
-            a.agg = !p.fields.empty();
-            a.ok = true;
-            return a;
-        }
-        if (e.kind == Expr::Kind::Member && e.kids.size() >= 2 && e.kids[0] && e.kids[1]) {
-            Operand baseOp;
-            std::vector<FieldOff> fields;
-            if (e.text == "->") {
-                Val p = lowerExpr(*e.kids[0]);
-                baseOp = p.op;
-                fields = p.fields;
-            } else {
-                Addr b = lowerAddr(*e.kids[0]);
-                if (!b.ok) return a;
-                baseOp = b.op;
-                fields = std::move(b.fields);
-            }
-            const std::string& fname = e.kids[1]->text;
-            const FieldOff* field = nullptr;
-            for (const FieldOff& f : fields) {
-                if (f.name == fname) field = &f;
-            }
-            if (!field) {
-                err(e.line, e.col, "not lowered: " + fname);
-                return a;
-            }
-            int dst = fresh();
-            emitBin(Inst::Op::Add, dst, baseOp, Operand::number(field->offset));
-            a.op = Operand::vreg(dst);
-            a.width = field->width;
-            a.step = field->step;
-            a.inner = field->inner;
-            a.bitOff = field->bitOff;
-            a.bitWidth = field->bitWidth;
-            a.bitUns = field->bitUns;
-            a.agg = field->agg;
-            a.fields = fieldsFor(*field);
-            a.ok = true;
-            return a;
-        }
-        err(e.line, e.col, "not lowered");
-        return a;
-    }
-
-    Val loadAddr(Addr a, int inner, bool uns = false) {
-        if (a.bitWidth > 0) {
-            int word = fresh();
-            Inst ld;
-            ld.op = Inst::Op::Load;
-            ld.dst = word;
-            ld.a = a.op;
-            ld.extra = a.width > 0 ? a.width : 4;
-            ld.uns = true;
-            emit(ld);
-            int sh = fresh();
-            emitBin(Inst::Op::Shr, sh, Operand::vreg(word), Operand::number(a.bitOff));
-            unsigned mask = a.bitWidth >= 32 ? 0xffffffffu : ((1u << a.bitWidth) - 1u);
-            int masked = fresh();
-            emitBin(Inst::Op::And, masked, Operand::vreg(sh), Operand::number(static_cast<std::int64_t>(mask)));
-            if (a.bitUns || a.bitWidth >= 32) return Val{Operand::vreg(masked), inner, 0};
-            int sign = 1 << (a.bitWidth - 1);
-            int flipped = fresh();
-            emitBin(Inst::Op::Xor, flipped, Operand::vreg(masked), Operand::number(sign));
-            int ext = fresh();
-            emitBin(Inst::Op::Sub, ext, Operand::vreg(flipped), Operand::number(sign));
-            return Val{Operand::vreg(ext), inner, 0};
-        }
-        int dst = fresh();
-        Inst in;
-        in.op = Inst::Op::Load;
-        in.dst = dst;
-        in.a = a.op;
-        in.extra = a.width;
-        in.uns = uns;
-        emit(in);
-        return Val{Operand::vreg(dst), inner, 0};
-    }
-    static int bitWidth(int sz) {
-        if (sz >= 8) return 8;
-        if (sz >= 4) return 4;
-        if (sz >= 2) return 2;
-        return 1;
-    }
-    Operand loadBits(Operand addr, int sz) {
-        int dst = fresh();
-        Inst ld;
-        ld.op = Inst::Op::Load;
-        ld.dst = dst;
-        ld.a = addr;
-        ld.extra = bitWidth(sz);
-        ld.uns = true;
-        emit(ld);
-        return Operand::vreg(dst);
-    }
-    void storeBits(Operand addr, Operand bits, int sz) {
-        Inst st;
-        st.op = Inst::Op::Store;
-        st.a = addr;
-        st.b = bits;
-        st.extra = bitWidth(sz);
-        emit(st);
-    }
-    Operand addAddr(Operand base, int off) {
-        if (off == 0) return base;
-        int dst = fresh();
-        emitBin(Inst::Op::Add, dst, base, Operand::number(off));
-        return Operand::vreg(dst);
-    }
-    void copyMem(Operand dst, Operand src, int sz) {
-        int off = 0;
-        while (off < sz) {
-            int n = sz - off;
-            if (n > 8) n = 8;
-            Operand bits = loadBits(addAddr(src, off), n);
-            storeBits(addAddr(dst, off), bits, n);
-            off += n;
-        }
-    }
-    Operand addrOf(const Sym& s) {
-        if (!s.global) return Operand::vreg(s.reg);
-        int dst = fresh();
-        Inst lea;
-        lea.op = Inst::Op::LeaSym;
-        lea.dst = dst;
-        lea.func = s.gname;
-        emit(lea);
-        return Operand::vreg(dst);
-    }
-    Operand frameAddr(int disp) {
-        int dst = fresh();
-        Inst in;
-        in.op = Inst::Op::LeaFrame;
-        in.dst = dst;
-        in.a = Operand::number(disp);
-        emit(in);
-        return Operand::vreg(dst);
-    }
-    static int structPieces(const Type* t, int& sz, bool& memClass) {
-        sz = t ? sizeOf(t) : 8;
-        bool rec = t && (t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union);
-        memClass = rec && sz > 16;
-        if (memClass) return 0;
-        if (rec && sz > 8) return 2;
-        return 1;
-    }
-
-    Val lowerLogic(Expr& e, bool isAnd) {
-        int dst = fresh();
-        std::string rhsL = lab(isAnd ? "and_rhs" : "or_rhs");
-        std::string skL = lab(isAnd ? "and_false" : "or_true");
-        std::string endL = lab(isAnd ? "and_end" : "or_end");
-        int left = material(lowerExpr(*e.kids[0]));
-        if (isAnd) emitBr(left, rhsL, skL);
-        else emitBr(left, skL, rhsL);
-        startBlock(rhsL);
-        emitMov(dst, lowerExpr(*e.kids[1]).op);
-        emitJmp(endL);
-        startBlock(skL);
-        emitMov(dst, Operand::number(isAnd ? 0 : 1));
-        emitJmp(endL);
-        startBlock(endL);
-        return Val{Operand::vreg(dst), 0, 0};
-    }
-
-    Val lowerExpr(Expr& e) {
-        if (!e.file.empty()) file_ = e.file;
-        switch (e.kind) {
-        case Expr::Kind::Int:
-        case Expr::Kind::Char:
-            return Val{Operand::number(static_cast<std::int64_t>(e.ival)), 0, 0};
-        case Expr::Kind::Float: {
-            Val v;
-            v.op = Operand::number(static_cast<std::int64_t>(e.ival));
-            v.fpw = e.litRank == 1 ? 4 : 8;
-            return v;
-        }
-        case Expr::Kind::String: {
-            std::string name = addString(e.text);
-            int dst = fresh();
-            Inst in;
-            in.op = Inst::Op::LeaSym;
-            in.dst = dst;
-            in.func = name;
-            emit(in);
-            return Val{Operand::vreg(dst), 1, 0};
-        }
-        case Expr::Kind::Name:
-            return readName(e.text, e.line, e.col);
-        case Expr::Kind::Cast: {
-            if (e.kids.empty() || !e.kids[0]) return {};
-            Val v = lowerExpr(*e.kids[0]);
-            if (!e.ty) return v;
-            if (e.ty->kind == Type::Kind::Bool) return Val{asBool(v.op, v.fpw), 0, 0};
-            if (e.ty->kind == Type::Kind::Pointer) {
-                v.step = valueStep(e.ty.get());
-                v.inner = innerOf(e.ty.get());
-                v.fields.clear();
-                if (e.ty->inner && e.ty->inner->kind == Type::Kind::Struct) v.fields = layoutOf(e.ty->inner.get());
-                return v;
-            }
-            if (e.ty->kind == Type::Kind::Array) return v;
-            int srcW = v.fpw ? v.fpw : fpWidthOf(e.kids[0]->checked.get());
-            int dstFp = fpWidthOf(e.ty.get());
-            if (srcW || dstFp) {
-                if (dstFp) return cvtFp(v, srcW, dstFp);
-                int iw = sizeOf(e.ty.get());
-                if (iw < 4) {
-                    Val n = cvtFp(v, srcW, -4);
-                    return Val{narrow(n.op, iw, e.ty->unsign), 0, 0};
-                }
-                if (iw > 8) iw = 8;
-                return cvtFp(v, srcW, -iw);
-            }
-            int w = sizeOf(e.ty.get());
-            if (w >= 8 && !e.ty->unsign) return v;
-            return Val{narrow(v.op, w, e.ty->unsign), 0, 0};
-        }
-        case Expr::Kind::Comma: {
-            Val last{};
-            for (auto& k : e.kids)
-                if (k) last = lowerExpr(*k);
-            return last;
-        }
-        case Expr::Kind::Unary:
-            return lowerUnary(e);
-        case Expr::Kind::Pre:
-            return lowerInc(e, true);
-        case Expr::Kind::Post:
-            return lowerInc(e, false);
-        case Expr::Kind::Bin:
-            if (e.text == "&&" || e.text == "||") {
-                if (e.kids.size() == 2 && e.kids[0] && e.kids[1] &&
-                    (e.kids[0]->kind == Expr::Kind::Int || e.kids[0]->kind == Expr::Kind::Char) &&
-                    (e.kids[1]->kind == Expr::Kind::Int || e.kids[1]->kind == Expr::Kind::Char)) {
-                    std::int64_t folded = 0;
-                    fold(e.text, static_cast<std::int64_t>(e.kids[0]->ival),
-                         static_cast<std::int64_t>(e.kids[1]->ival), folded);
-                    return Val{Operand::number(folded), 0, 0};
-                }
-                return lowerLogic(e, e.text == "&&");
-            }
-            return lowerBin(e);
-        case Expr::Kind::Assign:
-            return lowerAssign(e);
-        case Expr::Kind::Cond:
-            return lowerCond(e);
-        case Expr::Kind::Call:
-            return lowerCall(e);
-        case Expr::Kind::Index: {
-            Addr a = lowerAddr(e);
-            if (!a.ok) return {};
-            if (e.checked && (e.checked->kind == Type::Kind::Array || e.checked->kind == Type::Kind::Struct)) {
-                Val v;
-                v.op = a.op;
-                v.step = valueStep(e.checked.get());
-                v.inner = innerOf(e.checked.get());
-                if (e.checked->kind == Type::Kind::Struct) v.fields = layoutOf(e.checked.get());
-                return v;
-            }
-            int inner = 0;
-            if (!e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Name) {
-                if (Sym* s = find(e.kids[0]->text)) inner = s->inner;
-            }
-            Val loaded = loadAddr(a, inner, e.checked && e.checked->unsign);
-            if (e.checked) loaded.fpw = fpWidthOf(e.checked.get());
-            return loaded;
-        }
-        case Expr::Kind::Member: {
-            Addr a = lowerAddr(e);
-            if (!a.ok) return {};
-            if (a.agg) {
-                Val v;
-                v.op = a.op;
-                v.step = a.step;
-                v.inner = a.inner;
-                v.fields = a.fields;
-                return v;
-            }
-            Val v = loadAddr(a, a.inner, e.checked && e.checked->unsign);
-            v.step = a.step;
-            v.inner = a.inner;
-            v.fields = a.fields;
-            return v;
-        }
-        case Expr::Kind::Brace:
-            err(e.line, e.col, "not lowered");
-            return {};
-        }
-        err(e.line, e.col, "not lowered");
-        return {};
-    }
-
-    std::vector<FieldOff> fieldsOf(Expr& e) {
-        if (e.kind == Expr::Kind::Name) {
-            Sym* s = find(e.text);
-            if (s) return s->fields;
-        } else if (e.kind == Expr::Kind::Member && e.kids.size() >= 2 && e.kids[0] && e.kids[1]) {
-            std::vector<FieldOff> fields = fieldsOf(*e.kids[0]);
-            for (const FieldOff& f : fields)
-                if (f.name == e.kids[1]->text) return f.fields;
-        }
-        return {};
-    }
-
-    int sizeofValue(Expr& e) {
-        switch (e.kind) {
-        case Expr::Kind::Int:
-        case Expr::Kind::Char:
-            return 8;
-        case Expr::Kind::String:
-            return static_cast<int>(e.text.size()) + 1;
-        case Expr::Kind::Name: {
-            Sym* s = find(e.text);
-            if (!s) {
-                err(e.line, e.col, "not lowered: " + e.text);
-                return 8;
-            }
-            return s->objSize;
-        }
-        case Expr::Kind::Unary:
-            if (e.text == "*" && !e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Name) {
-                Sym* s = find(e.kids[0]->text);
-                if (s && s->step != 0) return s->step;
-            }
-            break;
-        case Expr::Kind::Index:
-            if (!e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Name) {
-                Sym* s = find(e.kids[0]->text);
-                if (s && s->array) return s->width;
-                if (s && s->step != 0) return s->step;
-            }
-            break;
-        case Expr::Kind::Member:
-            if (e.kids.size() >= 2 && e.kids[0] && e.kids[1]) {
-                std::vector<FieldOff> fields = fieldsOf(*e.kids[0]);
-                for (const FieldOff& f : fields)
-                    if (f.name == e.kids[1]->text) return f.width;
-            }
-            break;
-        default:
-            break;
-        }
-        err(e.line, e.col, "sizeof this expression is not allowed");
-        return 8;
-    }
-
-    int sizeofOf(Expr& e) {
-        if (e.ty) return sizeOf(e.ty.get());
-        if (!e.kids.empty() && e.kids[0] && e.kids[0]->checked) return sizeOf(e.kids[0]->checked.get());
-        if (e.kids.empty() || !e.kids[0]) {
-            err(e.line, e.col, "sizeof this expression is not allowed");
-            return 8;
-        }
-        return sizeofValue(*e.kids[0]);
-    }
-
-    Val lowerUnary(Expr& e) {
-        if (e.text == "sizeof") return Val{Operand::number(sizeofOf(e)), 0, 0};
-        if (e.kids.empty() || !e.kids[0]) return {};
-        if (e.text == "&") {
-            if (e.kids[0]->kind == Expr::Kind::Name) {
-                Sym* s = find(e.kids[0]->text);
-                if (!s) {
-                    err(e.line, e.col, "not lowered: " + e.kids[0]->text);
-                    return {};
-                }
-                if (s->ref) {
-                    Val v;
-                    v.op = Operand::vreg(s->reg);
-                    v.step = s->width;
-                    return v;
-                }
-                if (s->agg) {
-                    Val base = readName(e.kids[0]->text, e.line, e.col);
-                    base.step = s->width > 0 ? s->width : 8;
-                    return base;
-                }
-                if (s->array || s->global) {
-                    Val base = readName(e.kids[0]->text, e.line, e.col);
-                    if (s->array) return base;
-                    int dst = fresh();
-                    Inst in;
-                    in.op = Inst::Op::LeaSym;
-                    in.dst = dst;
-                    in.func = s->gname;
-                    emit(in);
-                    Val v;
-                    v.op = Operand::vreg(dst);
-                    v.step = s->width;
-                    v.inner = s->step;
-                    return v;
-                }
-                int dst = fresh();
-                Inst in;
-                in.op = Inst::Op::Lea;
-                in.dst = dst;
-                in.a = Operand::vreg(s->reg);
-                emit(in);
-                Val v;
-                v.op = Operand::vreg(dst);
-                v.step = s->width;
-                v.inner = s->step;
-                return v;
-            }
-            Addr a = lowerAddr(*e.kids[0]);
-            Val v;
-            v.op = a.op;
-            v.step = a.width;
-            return v;
-        }
-        if (e.text == "*") {
-            Val p = lowerExpr(*e.kids[0]);
-            Addr a;
-            a.op = p.op;
-            a.width = p.step == 0 ? 8 : p.step;
-            a.ok = true;
-            return loadAddr(a, p.inner, e.checked && e.checked->unsign);
-        }
-        if (e.text == "+") return lowerExpr(*e.kids[0]);
-        Val a = lowerExpr(*e.kids[0]);
-        if (e.text == "-") {
-            if (a.fpw) {
-                std::uint64_t sign = a.fpw <= 4 ? 0x80000000ull : 0x8000000000000000ull;
-                if (a.op.kind == Operand::Kind::Imm) {
-                    Val o = a;
-                    o.op = Operand::number(static_cast<std::int64_t>(static_cast<std::uint64_t>(a.op.imm) ^ sign));
-                    return o;
-                }
-                int dst = fresh();
-                Inst in;
-                in.op = Inst::Op::Xor;
-                in.fp = true;
-                in.extra = a.fpw;
-                in.dst = dst;
-                in.a = a.op;
-                in.b = Operand::number(static_cast<std::int64_t>(sign));
-                emit(in);
-                Val o;
-                o.op = Operand::vreg(dst);
-                o.fpw = a.fpw;
-                return o;
-            }
-            if (a.op.kind == Operand::Kind::Imm && a.op.imm != std::numeric_limits<std::int64_t>::min())
-                return Val{Operand::number(-a.op.imm), 0, 0};
-            int dst = fresh();
-            Inst in;
-            in.op = Inst::Op::Neg;
-            in.dst = dst;
-            in.a = a.op;
-            emit(in);
-            return Val{Operand::vreg(dst), 0, 0};
-        }
-        if (e.text == "!") {
-            if (a.op.kind == Operand::Kind::Imm) return Val{Operand::number(a.op.imm == 0 ? 1 : 0), 0, 0};
-            int dst = fresh();
-            emitBin(Inst::Op::Ceq, dst, a.op, Operand::number(0));
-            return Val{Operand::vreg(dst), 0, 0};
-        }
-        if (e.text == "~") {
-            if (a.op.kind == Operand::Kind::Imm) return Val{Operand::number(~a.op.imm), 0, 0};
-            int dst = fresh();
-            Inst in;
-            in.op = Inst::Op::Not;
-            in.dst = dst;
-            in.a = a.op;
-            emit(in);
-            return Val{Operand::vreg(dst), 0, 0};
-        }
-        err(e.line, e.col, "not lowered");
-        return {};
-    }
-
-    Val lowerInc(Expr& e, bool pre) {
-        if (e.kids.empty() || !e.kids[0]) {
-            err(e.line, e.col, "not lowered");
-            return {};
-        }
-        Sym* simple = e.kids[0]->kind == Expr::Kind::Name ? find(e.kids[0]->text) : nullptr;
-        if (!simple || simple->global || simple->array) {
-            // Any other object (a field, an element, *p, a global): x++ is (x += 1) - 1 and ++x is
-            // x += 1, with the object evaluated once.
-            auto one = std::make_unique<Expr>();
-            one->kind = Expr::Kind::Int;
-            one->ival = 1;
-            one->line = e.line;
-            one->col = e.col;
-            auto lhsType = e.kids[0]->checked ? cloneType(*e.kids[0]->checked) : nullptr;
-            one->checked = std::make_unique<Type>();
-            auto asg = std::make_unique<Expr>();
-            asg->kind = Expr::Kind::Assign;
-            asg->text = e.text == "--" ? "-=" : "+=";
-            asg->line = e.line;
-            asg->col = e.col;
-            asg->file = e.file;
-            asg->kids.push_back(std::move(e.kids[0]));
-            asg->kids.push_back(std::move(one));
-            if (lhsType) asg->checked = cloneType(*lhsType);
-            if (pre) return lowerExpr(*asg);
-            auto back = std::make_unique<Expr>();
-            back->kind = Expr::Kind::Bin;
-            back->text = e.text == "--" ? "+" : "-";
-            back->line = e.line;
-            back->col = e.col;
-            back->file = e.file;
-            auto one2 = std::make_unique<Expr>();
-            one2->kind = Expr::Kind::Int;
-            one2->ival = 1;
-            one2->checked = std::make_unique<Type>();
-            if (lhsType) back->checked = cloneType(*lhsType);
-            back->kids.push_back(std::move(asg));
-            back->kids.push_back(std::move(one2));
-            return lowerExpr(*back);
-        }
-        Sym* s = simple;
-        // A pointer moves by the size of what it points to.
-        Operand one = Operand::number((e.text == "--" ? -1 : 1) * (s->step > 1 ? s->step : 1));
-        if (s->mem) {
-            Val cur = loadMem(s->reg, s->width, s->zext);
-            int dst = fresh();
-            emitBin(Inst::Op::Add, dst, cur.op, one);
-            Operand nxt = narrow(Operand::vreg(dst), s->width, s->zext);
-            storeMem(s->reg, nxt, s->width);
-            return pre ? Val{nxt, 0, 0} : cur;
-        }
-        if (pre) {
-            emitBin(Inst::Op::Add, s->reg, Operand::vreg(s->reg), one);
-            if (s->width > 0 && s->width < 8) emitMov(s->reg, Operand::vreg(s->reg), s->width, s->zext);
-            return Val{Operand::vreg(s->reg), s->step, s->inner};
-        }
-        int old = fresh();
-        emitMov(old, Operand::vreg(s->reg));
-        emitBin(Inst::Op::Add, s->reg, Operand::vreg(s->reg), one);
-        if (s->width > 0 && s->width < 8) emitMov(s->reg, Operand::vreg(s->reg), s->width, s->zext);
-        return Val{Operand::vreg(old), s->step, s->inner};
-    }
-
-    Val cvtFp(Val v, int src, int dstCode) {
-        if (dstCode > 0 && src == dstCode) return v;
-        if (src == 0 && v.op.kind == Operand::Kind::Imm && dstCode > 0) {
-            double d = static_cast<double>(v.op.imm);
-            Val o;
-            o.fpw = dstCode;
-            if (dstCode == 4) {
-                float f = static_cast<float>(d);
-                std::uint32_t bits = 0;
-                std::memcpy(&bits, &f, 4);
-                o.op = Operand::number(bits);
-            } else {
-                std::uint64_t bits = 0;
-                std::memcpy(&bits, &d, 8);
-                o.op = Operand::number(static_cast<std::int64_t>(bits));
-            }
-            return o;
-        }
-        int t = fresh();
-        Inst in;
-        in.op = Inst::Op::Cvt;
-        in.fp = true;
-        in.dst = t;
-        in.a = v.op;
-        in.extra = src;
-        in.b = Operand::number(dstCode);
-        emit(in);
-        Val o;
-        o.op = Operand::vreg(t);
-        o.fpw = dstCode > 0 ? dstCode : 0;
-        return o;
-    }
-
-    Val lowerBin(Expr& e) {
-        if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return {};
-        Val a = lowerExpr(*e.kids[0]);
-        Val b = lowerExpr(*e.kids[1]);
-        int aw = a.fpw ? a.fpw : fpWidthOf(e.kids[0]->checked.get());
-        int bw = b.fpw ? b.fpw : fpWidthOf(e.kids[1]->checked.get());
-        if (aw || bw) {
-            if (e.text == "%" || e.text == "&" || e.text == "|" || e.text == "^" || e.text == "<<" || e.text == ">>") {
-                err(e.line, e.col, "not lowered");
-                return {};
-            }
-            int dw = (aw == 8 || bw == 8) ? 8 : 4;
-            if (!aw) a = cvtFp(a, 0, dw);
-            else if (aw != dw) a = cvtFp(a, aw, dw);
-            if (!bw) b = cvtFp(b, 0, dw);
-            else if (bw != dw) b = cvtFp(b, bw, dw);
-            bool cmp = e.text == "<" || e.text == ">" || e.text == "<=" || e.text == ">=" || e.text == "==" ||
-                       e.text == "!=";
-            int dst = fresh();
-            Inst in;
-            in.fp = true;
-            in.extra = dw;
-            in.dst = dst;
-            in.a = a.op;
-            in.b = b.op;
-            if (cmp) in.op = binOp(e.text);
-            else if (e.text == "+") in.op = Inst::Op::Add;
-            else if (e.text == "-") in.op = Inst::Op::Sub;
-            else if (e.text == "*") in.op = Inst::Op::Mul;
-            else in.op = Inst::Op::Div;
-            emit(in);
-            Val r;
-            r.op = Operand::vreg(dst);
-            if (!cmp) r.fpw = dw;
-            return r;
-        }
-        std::int64_t folded = 0;
-        if (a.step == 0 && b.step == 0 && a.op.kind == Operand::Kind::Imm && b.op.kind == Operand::Kind::Imm &&
-            fold(e.text, a.op.imm, b.op.imm, folded))
-            return Val{Operand::number(folded), 0, 0};
-        if ((e.text == "+" || e.text == "-") && a.step != 0 && b.step == 0) {
-            Val off = scale(b, a.step);
-            int dst = fresh();
-            emitBin(e.text == "+" ? Inst::Op::Add : Inst::Op::Sub, dst, a.op, off.op);
-            return Val{Operand::vreg(dst), a.step, a.inner};
-        }
-        if (e.text == "+" && b.step != 0 && a.step == 0) {
-            Val off = scale(a, b.step);
-            int dst = fresh();
-            emitBin(Inst::Op::Add, dst, b.op, off.op);
-            return Val{Operand::vreg(dst), b.step, b.inner};
-        }
-        if (e.text == "-" && a.step != 0 && a.step == b.step) {
-            int diff = fresh();
-            emitBin(Inst::Op::Sub, diff, a.op, b.op);
-            int q = fresh();
-            emitBin(Inst::Op::Div, q, Operand::vreg(diff), Operand::number(a.step));
-            return Val{Operand::vreg(q), 0, 0};
-        }
-        bool uns = false;
-        if (e.text == "<" || e.text == ">" || e.text == "<=" || e.text == ">=") {
-            const Type* ta = e.kids[0]->checked.get();
-            const Type* tb = e.kids[1]->checked.get();
-            auto isLong = [](const Type* t) { return t && t->kind == Type::Kind::Long; };
-            bool aUns = ta && ta->unsign;
-            bool bUns = tb && tb->unsign;
-            if ((isLong(ta) && aUns) || (isLong(tb) && bUns)) uns = true;
-            else if ((isLong(ta) && !aUns && bUns) || (isLong(tb) && !bUns && aUns)) uns = false;
-            else if (aUns || bUns) {
-                uns = true;
-                a.op = narrow(a.op, 4, true);
-                b.op = narrow(b.op, 4, true);
-            }
-        }
-        int dst = fresh();
-        emitBin(binOp(e.text), dst, a.op, b.op, uns);
-        return Val{Operand::vreg(dst), 0, 0};
-    }
-
-    Val storeCall(Sym& dst, Expr& call) {
-        int sz = dst.objSize > 0 ? dst.objSize : dst.width;
-        Operand addr = addrOf(dst);
-        if (sz > 16) {
-            lowerCall(call, &addr);
-            return {};
-        }
-        Val v = lowerCall(call);
-        if (v.pair) {
-            storeBits(addr, v.op, 8);
-            storeBits(addAddr(addr, 8), v.hi, sz - 8);
-        } else {
-            storeBits(addr, v.op, sz);
-        }
-        return v;
-    }
-
-    void storeNamed(Sym& s, Operand val) {
-        if (s.boolean) val = asBool(val);
-        if (s.ref) {
-            storeBits(Operand::vreg(s.reg), val, s.width > 0 ? s.width : 8);
-            return;
-        }
-        if (s.global) {
-            Inst in;
-            in.op = Inst::Op::GStore;
-            in.func = s.gname;
-            in.a = val;
-            in.extra = s.width > 0 ? s.width : 8;
-            emit(in);
-        } else if (s.mem) {
-            storeMem(s.reg, val, s.width);
-        } else {
-            emitMov(s.reg, val, s.width, s.zext);
-        }
-    }
-
-    // Store a struct value into memory. 'rhs' is the address of the source object, or for a call
-    // the returned value (one register, a register pair, or the address of the hidden result).
-    void storeAggregate(Operand dst, int sz, const Val& rhs, bool fromCall) {
-        if (rhs.pair) {
-            storeBits(dst, rhs.op, 8);
-            storeBits(addAddr(dst, 8), rhs.hi, sz - 8);
-        } else if (sz > 8) {
-            copyMem(dst, rhs.op, sz);
-        } else {
-            Operand bits = fromCall ? rhs.op : loadBits(rhs.op, sz);
-            storeBits(dst, bits, sz);
-        }
-    }
-
-    Val lowerAssign(Expr& e) {
-        if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) {
-            err(e.line, e.col, "not lowered");
-            return {};
-        }
-        if (e.text != "=") {
-            std::string op = e.text.substr(0, e.text.size() - 1);
-            Expr& lhs = *e.kids[0];
-            Val rhs = lowerExpr(*e.kids[1]);
-            Val lhsVal;
-            Addr addr;
-            bool byAddr = lhs.kind != Expr::Kind::Name;
-            if (!byAddr) lhsVal = readName(lhs.text, lhs.line, lhs.col);
-            else {
-                addr = lowerAddr(lhs);
-                if (!addr.ok) return {};
-                lhsVal = loadAddr(addr, 0, lhs.checked && lhs.checked->unsign);
-            }
-            int dst = fresh();
-            emitBin(binOp(op), dst, lhsVal.op, rhs.op);
-            Operand result = Operand::vreg(dst);
-            if (!byAddr) {
-                Sym* s = find(lhs.text);
-                if (!s) {
-                    err(e.line, e.col, "not lowered");
-                    return {};
-                }
-                if (s->width > 0 && s->width < 8) result = narrow(result, s->width, s->zext);
-                storeNamed(*s, result);
-                if (s->global) return Val{result, s->step, s->inner};
-                return Val{Operand::vreg(s->reg), s->step, s->inner};
-            }
-            storeBits(addr.op, result, addr.width > 0 ? addr.width : 8);
-            return Val{result, 0, 0};
-        }
-        Expr& lhs = *e.kids[0];
-        if (lhs.kind == Expr::Kind::Name && e.kids[1]->kind == Expr::Kind::Call) {
-            Sym* s = find(lhs.text);
-            if (s && s->agg) return storeCall(*s, *e.kids[1]);
-        }
-        if (lhs.kind == Expr::Kind::Name && e.kids[1]->kind != Expr::Kind::Call) {
-            // A local object assigned from *p, a[i] or s.f: copy the bytes from that object's address.
-            Sym* s = find(lhs.text);
-            const Expr& r = *e.kids[1];
-            const bool viaAddress = (r.kind == Expr::Kind::Unary && r.text == "*") || r.kind == Expr::Kind::Index ||
-                                    r.kind == Expr::Kind::Member;
-            if (s && s->agg && !s->ref && viaAddress) {
-                Addr src = lowerAddr(*e.kids[1]);
-                if (!src.ok) return {};
-                int sz = s->objSize > 0 ? s->objSize : s->width;
-                Operand dst = addrOf(*s);
-                copyMem(dst, src.op, sz);
-                return Val{dst, 0, 0};
-            }
-        }
-        if (lhs.kind != Expr::Kind::Name && lhs.checked && lhs.checked->kind == Type::Kind::Struct &&
-            e.kids[1]->kind != Expr::Kind::Call) {
-            // struct = struct through a pointer, a field or an index: copy the bytes.
-            Addr src = lowerAddr(*e.kids[1]);
-            Addr dst = lowerAddr(lhs);
-            if (!src.ok || !dst.ok) return {};
-            copyMem(dst.op, src.op, sizeOf(lhs.checked.get()));
-            return Val{dst.op, 0, 0};
-        }
-        Val rhs = lowerExpr(*e.kids[1]);
-        if (lhs.kind == Expr::Kind::Name) {
-            Sym* s = find(lhs.text);
-            if (!s) {
-                err(e.line, e.col, "not lowered: " + lhs.text);
-                return {};
-            }
-            if (s->boolean) rhs.op = asBool(rhs.op, rhs.fpw);
-            if (s->fpw) {
-                if (rhs.fpw != s->fpw) rhs = cvtFp(rhs, rhs.fpw, s->fpw);
-                if (s->global) {
-                    Inst in;
-                    in.op = Inst::Op::GStore;
-                    in.func = s->gname;
-                    in.a = rhs.op;
-                    in.extra = s->fpw;
-                    emit(in);
-                } else {
-                    emitMov(s->reg, rhs.op, 8);
-                }
-                Val out;
-                out.op = s->global ? rhs.op : Operand::vreg(s->reg);
-                out.fpw = s->fpw;
-                return out;
-            }
-            if (s->array) {
-                err(e.line, e.col, "not lowered");
-                return {};
-            }
-            if (s->ref) {
-                Operand val = narrow(rhs.op, s->width, s->zext);
-                storeBits(Operand::vreg(s->reg), val, s->width > 0 ? s->width : 8);
-                return Val{val, 0, 0};
-            }
-            if (s->agg) {
-                int sz = s->objSize > 0 ? s->objSize : s->width;
-                Operand addr = addrOf(*s);
-                if (rhs.pair) {
-                    storeBits(addr, rhs.op, 8);
-                    storeBits(addAddr(addr, 8), rhs.hi, sz - 8);
-                } else if (sz > 8) {
-                    copyMem(addr, rhs.op, sz);
-                } else {
-                    Operand bits = rhs.op;
-                    if (!e.kids[1] || e.kids[1]->kind != Expr::Kind::Call) bits = loadBits(rhs.op, sz);
-                    storeBits(addr, bits, sz);
-                }
-                return rhs;
-            }
-            if (s->global || s->mem) {
-                Operand val = narrow(rhs.op, s->width, s->zext);
-                if (s->global) {
-                    Inst in;
-                    in.op = Inst::Op::GStore;
-                    in.func = s->gname;
-                    in.a = val;
-                    in.extra = s->width;
-                    emit(in);
-                } else {
-                    storeMem(s->reg, val, s->width);
-                }
-                return Val{val, 0, 0};
-            }
-            emitMov(s->reg, rhs.op, s->width, s->zext);
-            return Val{Operand::vreg(s->reg), s->step, s->inner};
-        }
-        Addr a = lowerAddr(lhs);
-        if (!a.ok) return {};
-        if (lhs.checked && lhs.checked->kind == Type::Kind::Struct) {
-            storeAggregate(a.op, sizeOf(lhs.checked.get()), rhs, e.kids[1]->kind == Expr::Kind::Call);
-            return rhs;
-        }
-        if (a.bitWidth > 0) {
-            unsigned mask = a.bitWidth >= 32 ? 0xffffffffu : ((1u << a.bitWidth) - 1u);
-            unsigned fieldMask = mask << a.bitOff;
-            int word = fresh();
-            Inst ld;
-            ld.op = Inst::Op::Load;
-            ld.dst = word;
-            ld.a = a.op;
-            ld.extra = a.width > 0 ? a.width : 4;
-            ld.uns = true;
-            emit(ld);
-            int val = fresh();
-            emitBin(Inst::Op::And, val, rhs.op, Operand::number(static_cast<std::int64_t>(mask)));
-            int shifted = fresh();
-            emitBin(Inst::Op::Shl, shifted, Operand::vreg(val), Operand::number(a.bitOff));
-            int cleared = fresh();
-            emitBin(Inst::Op::And, cleared, Operand::vreg(word),
-                    Operand::number(static_cast<std::int64_t>(~static_cast<std::uint64_t>(fieldMask))));
-            int merged = fresh();
-            emitBin(Inst::Op::Or, merged, Operand::vreg(cleared), Operand::vreg(shifted));
-            storeBits(a.op, Operand::vreg(merged), a.width > 0 ? a.width : 4);
-            return Val{Operand::vreg(val), 0, 0};
-        }
-        if (lhs.checked && lhs.checked->kind == Type::Kind::Bool) rhs.op = asBool(rhs.op, rhs.fpw);
-        if (lhs.checked && isFp(*lhs.checked)) {
-            int w = fpWidthOf(lhs.checked.get());
-            if (rhs.fpw != w) rhs = cvtFp(rhs, rhs.fpw, w);
-            storeBits(a.op, rhs.op, 8);
-            Val out;
-            out.op = rhs.op;
-            out.fpw = w;
-            return out;
-        }
-        bool destUns = lhs.checked && lhs.checked->unsign;
-        Operand val = narrow(rhs.op, a.width, destUns);
-        Inst in;
-        in.op = Inst::Op::Store;
-        in.a = a.op;
-        in.b = val;
-        in.extra = a.width;
-        emit(in);
-        return Val{val, 0, 0};
-    }
-
-    Val lowerCond(Expr& e) {
-        if (e.kids.size() < 3 || !e.kids[0] || !e.kids[1] || !e.kids[2]) return {};
-        int dst = fresh();
-        std::string tL = lab("cond_then");
-        std::string fL = lab("cond_else");
-        std::string eL = lab("cond_end");
-        emitBr(material(lowerExpr(*e.kids[0])), tL, fL);
-        startBlock(tL);
-        Val first = lowerExpr(*e.kids[1]);
-        emitMov(dst, first.op);
-        emitJmp(eL);
-        startBlock(fL);
-        emitMov(dst, lowerExpr(*e.kids[2]).op);
-        emitJmp(eL);
-        startBlock(eL);
-        Val result{Operand::vreg(dst), 0, 0};
-        // Two pointers to objects of one class: the result points to that class too.
-        result.step = first.step;
-        result.inner = first.inner;
-        result.fields = first.fields;
-        return result;
-    }
-
-    Val lowerVa(Expr& e, const std::string& fname) {
-        if (e.kids.size() < 2 || !e.kids[1]) return {};
-        Operand ap = lowerExpr(*e.kids[1]).op;
-        if (fname == "__va_start") {
-            int named = fn_.vaNamed < 0 ? 0 : fn_.vaNamed;
-            storeBits(ap, Operand::number(named * 8), 4);
-            storeBits(addAddr(ap, 4), Operand::number(48 + 16 * fn_.vaXmm), 4);
-            storeBits(addAddr(ap, 8), frameAddr(16), 8);
-            storeBits(addAddr(ap, 16), Operand::vreg(vaSave_), 8);
-            return {};
-        }
-        int step = 8;
-        bool fpArg = false;
-        if (fname == "__va_argp" && e.kids.size() >= 3 && e.kids[2] && e.kids[2]->checked &&
-            e.kids[2]->checked->kind == Type::Kind::Pointer && e.kids[2]->checked->inner &&
-            isFp(*e.kids[2]->checked->inner))
-            fpArg = true;
-        if (!fpArg && e.kids.size() >= 3 && e.kids[2]) {
-            Operand sz = lowerExpr(*e.kids[2]).op;
-            if (sz.kind == Operand::Kind::Imm && sz.imm > 8) step = (static_cast<int>(sz.imm) + 7) & ~7;
-        }
-        int offAt = fpArg ? 4 : 0;
-        int limit = fpArg ? 176 : 48;
-        int bump = fpArg ? 16 : step;
-        int stackBump = fpArg ? 8 : step;
-        std::string id = std::to_string(tmpN_++);
-        std::string regL = "va" + id + "_reg";
-        std::string stkL = "va" + id + "_stk";
-        std::string endL = "va" + id + "_end";
-        Operand gp = loadBits(addAddr(ap, offAt), 4);
-        int cmp = fresh();
-        emitBin(Inst::Op::Cge, cmp, gp, Operand::number(limit), true);
-        emitBr(cmp, stkL, regL);
-        int result = fresh();
-        startBlock(regL);
-        Operand save = loadBits(addAddr(ap, 16), 8);
-        int ptr = fresh();
-        emitBin(Inst::Op::Add, ptr, save, gp);
-        int gp2 = fresh();
-        emitBin(Inst::Op::Add, gp2, gp, Operand::number(bump));
-        storeBits(addAddr(ap, offAt), Operand::vreg(gp2), 4);
-        emitMov(result, Operand::vreg(ptr));
-        emitJmp(endL);
-        startBlock(stkL);
-        Operand ov = loadBits(addAddr(ap, 8), 8);
-        emitMov(result, ov);
-        int ov2 = fresh();
-        emitBin(Inst::Op::Add, ov2, ov, Operand::number(stackBump));
-        storeBits(addAddr(ap, 8), Operand::vreg(ov2), 8);
-        emitJmp(endL);
-        startBlock(endL);
-        Val out;
-        out.op = Operand::vreg(result);
-        out.step = 1;
-        return out;
-    }
-
-    Val lowerCall(Expr& e, const Operand* retSlotIn = nullptr) {
-        if (e.kids.empty() || !e.kids[0]) {
-            err(e.line, e.col, "not lowered");
-            return {};
-        }
-        bool direct = false;
-        std::string fname;
-        Operand target;
-        if (e.kids[0]->kind == Expr::Kind::Name) {
-            Sym* s = find(e.kids[0]->text);
-            if (!s || s->func) {
-                direct = true;
-                fname = s && !s->gname.empty() ? s->gname : e.kids[0]->text;
-            }
-        }
-        if (direct && (fname == "__va_start" || fname == "__va_arg" || fname == "__va_argp")) return lowerVa(e, fname);
-        if (!direct) target = lowerExpr(*e.kids[0]).op;
-        int reg = 0;
-        bool retRec = e.checked &&
-                      (e.checked->kind == Type::Kind::Struct || e.checked->kind == Type::Kind::Union);
-        bool retMem = retRec && sizeOf(e.checked.get()) > 16;
-        bool retPair = retRec && sizeOf(e.checked.get()) > 8 && sizeOf(e.checked.get()) <= 16;
-        int retSz = retRec ? sizeOf(e.checked.get()) : 0;
-        std::vector<Operand> regs;
-        std::vector<Operand> stack;
-        Operand retSlot;
-        if (retMem) {
-            if (retSlotIn) {
-                retSlot = *retSlotIn;
-            } else {
-                int slot = fresh();
-                Inst loc;
-                loc.op = Inst::Op::Local;
-                loc.dst = slot;
-                loc.a = Operand::number(retSz < 1 ? 1 : retSz);
-                emit(loc);
-                retSlot = Operand::vreg(slot);
-            }
-            regs.push_back(retSlot);
-            reg = 1;
-        }
-        const Type* fnty = nullptr;
-        if (e.kids[0]->checked) {
-            const Type* t = e.kids[0]->checked.get();
-            if (t->kind == Type::Kind::Pointer && t->inner && t->inner->kind == Type::Kind::Function) t = t->inner.get();
-            if (t->kind == Type::Kind::Function) fnty = t;
-        }
-        int xmn = 0;
-        std::vector<Operand> xmm;
-        std::vector<int> xmmW;
-        for (std::size_t i = 1; i < e.kids.size(); ++i) {
-            if (!e.kids[i]) continue;
-            Val v = lowerExpr(*e.kids[i]);
-            const Type* t = e.kids[i]->checked.get();
-            int argi = static_cast<int>(i - 1);
-            const Type* declared = nullptr;
-            bool varExtra = fnty && fnty->variadic && argi >= static_cast<int>(fnty->params.size());
-            if (fnty && argi < static_cast<int>(fnty->params.size())) declared = fnty->params[static_cast<std::size_t>(argi)].type.get();
-            int want = declared ? fpWidthOf(declared) : 0;
-            if (varExtra && (v.fpw || fpWidthOf(t))) want = 8;
-            if (!declared && (v.fpw || fpWidthOf(t))) want = v.fpw ? v.fpw : fpWidthOf(t);
-            if (want) {
-                int src = v.fpw ? v.fpw : fpWidthOf(t);
-                if (src != want) v = cvtFp(v, src, want);
-                if (xmn < 8) {
-                    xmm.push_back(v.op);
-                    xmmW.push_back(want);
-                    ++xmn;
-                } else {
-                    stack.push_back(v.op);
-                }
-                continue;
-            }
-            int sz = 0;
-            bool memClass = false;
-            int nreg = structPieces(t, sz, memClass);
-            bool isStruct = t && (t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union);
-            if (!isStruct) {
-                bool decay = t && (t->kind == Type::Kind::Array || t->kind == Type::Kind::Function);
-                int w = !t || decay ? 8 : sizeOf(t);
-                bool uns = t && !decay && t->unsign;
-                Operand val = declared && declared->kind == Type::Kind::Bool ? asBool(v.op, v.fpw)
-                              : (w > 0 && w < 8) ? narrow(v.op, w, uns) : v.op;
-                if (reg >= 6) stack.push_back(val);
-                else {
-                    regs.push_back(val);
-                    ++reg;
-                }
-                continue;
-            }
-            if (memClass || reg + nreg > 6) {
-                int off = 0;
-                int whole = (sz + 7) & ~7;
-                while (off < whole) {
-                    int n = sz - off;
-                    if (n <= 0) stack.push_back(Operand::number(0));
-                    else {
-                        if (n > 8) n = 8;
-                        stack.push_back(loadBits(addAddr(v.op, off), n));
-                    }
-                    off += 8;
-                }
-            } else {
-                regs.push_back(loadBits(v.op, sz >= 8 ? 8 : sz));
-                if (nreg == 2) regs.push_back(loadBits(addAddr(v.op, 8), sz - 8));
-                reg += nreg;
-            }
-        }
-        while (stack.size() % 2) stack.push_back(Operand::number(0));
-        int dst = fresh();
-        int hi = -1;
-        if (retPair) hi = fresh();
-        Inst in;
-        in.op = Inst::Op::Call;
-        in.dst = dst;
-        if (direct) in.func = std::move(fname);
-        else in.a = target;
-        in.args = std::move(regs);
-        in.stack = std::move(stack);
-        in.xmm = std::move(xmm);
-        in.xmmW = std::move(xmmW);
-        if (hi >= 0) in.b = Operand::vreg(hi);
-        if (e.kids[0]->checked) {
-            const Type* t = e.kids[0]->checked.get();
-            if (t->kind == Type::Kind::Pointer && t->inner && t->inner->kind == Type::Kind::Function) t = t->inner.get();
-            if (t->kind == Type::Kind::Function && t->variadic) in.va = true;
-        }
-        if (e.checked && isFp(*e.checked)) {
-            in.fp = true;
-            in.extra = fpWidthOf(e.checked.get());
-        }
-        emit(in);
-        if (retMem) {
-            Val out;
-            out.op = retSlot;
-            out.fields = layoutOf(e.checked.get());
-            return out;
-        }
-        Val out{Operand::vreg(dst), 0, 0};
-        if (e.checked && isFp(*e.checked)) out.fpw = fpWidthOf(e.checked.get());
-        if (retPair) {
-            out.pair = true;
-            out.hi = Operand::vreg(hi);
-        }
-        if (e.checked && e.checked->kind == Type::Kind::Pointer) {
-            out.step = valueStep(e.checked.get());
-            out.inner = innerOf(e.checked.get());
-            if (e.checked->inner && e.checked->inner->kind == Type::Kind::Struct)
-                out.fields = layoutOf(e.checked->inner.get());
-        }
-        return out;
-    }
-
-    void lowerStmt(Stmt& s) {
-        if (!s.file.empty()) file_ = s.file;
-        switch (s.kind) {
-        case Stmt::Kind::Block:
-            scopes_.emplace_back();
-            for (auto& st : s.stmts)
-                if (st) lowerStmt(*st);
-            scopes_.pop_back();
-            break;
-        case Stmt::Kind::Empty:
-            break;
-        case Stmt::Kind::Expr:
-            if (s.expr) lowerExpr(*s.expr);
-            break;
-        case Stmt::Kind::Return: {
-            Inst in;
-            in.op = Inst::Op::Ret;
-            if (s.expr && retRef_) {
-                Addr a = lowerAddr(*s.expr);
-                in.a = a.op;
-                in.extra = 8;
-                in.uns = true;
-                emit(in);
-                break;
-            }
-            if (s.expr && retStruct_ && retWidth_ > 16 && hiddenReg_ >= 0) {
-                Operand hid = Operand::vreg(hiddenReg_);
-                if (s.expr->kind == Expr::Kind::Call) lowerCall(*s.expr, &hid);
-                else if (s.expr->kind == Expr::Kind::Name) {
-                    if (Sym* sy = find(s.expr->text))
-                        if (sy->agg) copyMem(hid, readName(s.expr->text, s.line, s.col).op, retWidth_);
-                } else {
-                    Val v = lowerExpr(*s.expr);
-                    copyMem(hid, v.op, retWidth_);
-                }
-                in.a = hid;
-                emit(in);
-                break;
-            }
-            if (s.expr && retStruct_ && retWidth_ > 8) {
-                Operand lo;
-                Operand hi;
-                if (s.expr->kind == Expr::Kind::Call) {
-                    Val v = lowerCall(*s.expr);
-                    lo = v.op;
-                    hi = v.hi;
-                } else if (s.expr->kind == Expr::Kind::Name && find(s.expr->text) && find(s.expr->text)->agg) {
-                    Val addr = readName(s.expr->text, s.line, s.col);
-                    lo = loadBits(addr.op, 8);
-                    hi = loadBits(addAddr(addr.op, 8), retWidth_ - 8);
-                } else {
-                    Val v = lowerExpr(*s.expr);
-                    lo = loadBits(v.op, 8);
-                    hi = loadBits(addAddr(v.op, 8), retWidth_ - 8);
-                }
-                in.a = lo;
-                in.b = hi;
-                in.uns = true;
-                emit(in);
-                break;
-            }
-            if (s.expr && retStruct_ && s.expr->kind == Expr::Kind::Name) {
-                if (Sym* sy = find(s.expr->text)) {
-                    if (sy->agg) {
-                        Val addr = readName(s.expr->text, s.line, s.col);
-                        in.a = loadBits(addr.op, retWidth_);
-                        in.extra = bitWidth(retWidth_);
-                        in.uns = true;
-                        emit(in);
-                        break;
-                    }
-                }
-            }
-            if (s.expr && retStruct_ && s.expr->kind != Expr::Kind::Call && s.expr->kind != Expr::Kind::Name) {
-                // Any other object expression (a temporary, *p, a[i], s.f): its address is lowered.
-                Val v = lowerExpr(*s.expr);
-                in.a = loadBits(v.op, retWidth_);
-                in.extra = bitWidth(retWidth_);
-                in.uns = true;
-                emit(in);
-                break;
-            }
-            if (s.expr) {
-                Val v = lowerExpr(*s.expr);
-                if (retBool_) v.op = asBool(v.op, v.fpw);
-                if (retFp_ && v.fpw != retWidth_) v = cvtFp(v, v.fpw, retWidth_);
-                in.a = v.op;
-                in.extra = retWidth_;
-                in.uns = retUns_ || retStruct_;
-                in.fp = retFp_;
-            }
-            emit(in);
-            break;
-        }
-        case Stmt::Kind::If:
-            lowerIf(s);
-            break;
-        case Stmt::Kind::While:
-            lowerWhile(s);
-            break;
-        case Stmt::Kind::For:
-            lowerFor(s);
-            break;
-        case Stmt::Kind::Break:
-            if (loops_.empty()) err(s.line, s.col, "break is not inside a loop or switch");
-            else emitJmp(loops_.back().brk);
-            break;
-        case Stmt::Kind::Continue: {
-            int at = -1;
-            for (int i = static_cast<int>(loops_.size()) - 1; i >= 0; --i) {
-                if (!loops_[static_cast<std::size_t>(i)].sw) {
-                    at = i;
-                    break;
-                }
-            }
-            if (at < 0) err(s.line, s.col, "continue is not inside a loop");
-            else emitJmp(loops_[static_cast<std::size_t>(at)].cont);
-            break;
-        }
-        case Stmt::Kind::Switch:
-            lowerSwitch(s);
-            break;
-        case Stmt::Kind::Case:
-            break;
-        case Stmt::Kind::Decl:
-            if (s.decl) lowerLocal(*s.decl);
-            break;
-        case Stmt::Kind::Goto:
-            if (s.expr) emitJmp("lab_" + s.expr->text);
-            break;
-        case Stmt::Kind::Label:
-            if (s.expr) startBlock("lab_" + s.expr->text);
-            break;
-        }
-    }
-
-    void lowerLocal(Decl& d) {
-        if (!d.type) return;
-        if (d.isStatic) {
-            std::string gname = ".Ls" + std::to_string(strN_++) + "_" + d.name;
-            Global g;
-            g.name = gname;
-            int sz = sizeOf(d.type.get());
-            if (sz < 1) sz = 1;
-            g.size = sz;
-            g.bytes.assign(static_cast<std::size_t>(sz), 0);
-            if (d.init && (d.init->kind == Expr::Kind::Int || d.init->kind == Expr::Kind::Char)) {
-                std::int64_t n = static_cast<std::int64_t>(d.init->ival);
-                if (d.type->kind == Type::Kind::Bool) n = n != 0;
-                putAt(g.bytes, 0, n, sz > 8 ? 8 : sz);
-            }
-            mod_.globals.push_back(std::move(g));
-            Sym s;
-            s.global = true;
-            s.gname = gname;
-            describe(s, d.type.get());
-            if (!d.name.empty()) scopes_.back()[d.name] = s;
-            return;
-        }
-        Sym s;
-        describe(s, d.type.get());
-        if (d.type->kind == Type::Kind::Array || d.type->kind == Type::Kind::Struct ||
-            d.type->kind == Type::Kind::Union) {
-            int bytes = sizeOf(d.type.get());
-            if (bytes <= 0) {
-                err(d.line, d.col, "array length is not a constant");
-                bytes = 8;
-            }
-            int addr = fresh();
-            Inst in;
-            in.op = Inst::Op::Local;
-            in.dst = addr;
-            in.a = Operand::number(bytes);
-            emit(in);
-            s.reg = addr;
-            if (!d.name.empty()) scopes_.back()[d.name] = s;
-            if (d.init && d.init->kind == Expr::Kind::Brace) {
-                if (d.type->kind == Type::Kind::Array && d.type->inner) {
-                    int es = sizeOf(d.type->inner.get());
-                    for (std::size_t i = 0; i < d.init->kids.size(); ++i) {
-                        if (!d.init->kids[i]) continue;
-                        Val v = lowerExpr(*d.init->kids[i]);
-                        int w = es > 8 ? 8 : es;
-                        Operand bits = w < 8 ? narrow(v.op, w, d.type->inner->unsign) : v.op;
-                        storeBits(addAddr(Operand::vreg(addr), static_cast<int>(i) * es), bits, w);
-                    }
-                } else if (d.type->kind == Type::Kind::Struct || d.type->kind == Type::Kind::Union) {
-                    auto fields = layoutOf(d.type.get());
-                    for (std::size_t i = 0; i < d.init->kids.size() && i < fields.size(); ++i) {
-                        if (!d.init->kids[i]) continue;
-                        Val v = lowerExpr(*d.init->kids[i]);
-                        int w = fields[i].width > 8 ? 8 : fields[i].width;
-                        storeBits(addAddr(Operand::vreg(addr), fields[i].offset), v.op, w);
-                    }
-                }
-            } else if (d.init && d.type->kind == Type::Kind::Struct) {
-                // A struct initialized from another struct or from a call: copy the bytes.
-                Sym* me = find(d.name);
-                if (d.init->kind == Expr::Kind::Call && me) {
-                    storeCall(*me, *d.init);
-                } else {
-                    Addr src = lowerAddr(*d.init);
-                    if (src.ok) copyMem(Operand::vreg(addr), src.op, bytes);
-                }
-            }
-            return;
-        }
-        if (s.ref && d.init) {
-            int slot = fresh();
-            s.reg = slot;
-            if (!d.name.empty()) scopes_.back()[d.name] = s;
-            Addr a = lowerAddr(*d.init);
-            emitMov(slot, a.op);
-            return;
-        }
-        int slot = fresh();
-        s.reg = slot;
-        if (!d.name.empty() && addr_.count(d.name)) s.mem = true;
-        if (!d.name.empty()) scopes_.back()[d.name] = s;
-        if (d.init) {
-            Val v = lowerExpr(*d.init);
-            if (s.fpw) {
-                if (v.fpw != s.fpw) v = cvtFp(v, v.fpw, s.fpw);
-                emitMov(slot, v.op, 8);
-            } else {
-                Operand val = s.boolean ? asBool(v.op, v.fpw) : narrow(v.op, s.width, s.zext);
-                if (s.mem) storeMem(slot, val, s.width);
-                else emitMov(slot, val, s.width, s.zext);
-            }
-        }
-    }
-
-    void lowerIf(Stmt& s) {
-        int id = ifN_++;
-        std::string thenL = "if" + std::to_string(id) + "_then";
-        std::string elseL = "if" + std::to_string(id) + "_else";
-        std::string endL = "if" + std::to_string(id) + "_end";
-        int cond = s.expr ? material(lowerExpr(*s.expr)) : material(Val{Operand::number(0), 0, 0});
-        emitBr(cond, thenL, s.elseS ? elseL : endL);
-        startBlock(thenL);
-        if (s.thenS) lowerStmt(*s.thenS);
-        emitJmp(endL);
-        if (s.elseS) {
-            startBlock(elseL);
-            lowerStmt(*s.elseS);
-            emitJmp(endL);
-        }
-        startBlock(endL);
-    }
-
-    void lowerWhile(Stmt& s) {
-        int id = whileN_++;
-        std::string cL = "while" + std::to_string(id) + "_cond";
-        std::string bL = "while" + std::to_string(id) + "_body";
-        std::string eL = "while" + std::to_string(id) + "_end";
-        emitJmp(cL);
-        startBlock(cL);
-        int cond = s.expr ? material(lowerExpr(*s.expr)) : material(Val{Operand::number(0), 0, 0});
-        emitBr(cond, bL, eL);
-        startBlock(bL);
-        loops_.push_back(Loop{cL, eL});
-        if (s.body) lowerStmt(*s.body);
-        loops_.pop_back();
-        emitJmp(cL);
-        startBlock(eL);
-    }
-
-    void lowerFor(Stmt& s) {
-        int id = forN_++;
-        std::string cL = "for" + std::to_string(id) + "_cond";
-        std::string bL = "for" + std::to_string(id) + "_body";
-        std::string sL = "for" + std::to_string(id) + "_step";
-        std::string eL = "for" + std::to_string(id) + "_end";
-        scopes_.emplace_back();
-        if (s.init) {
-            if (s.init->kind == Stmt::Kind::Block) {
-                for (auto& st : s.init->stmts)
-                    if (st) lowerStmt(*st);
-            } else {
-                lowerStmt(*s.init);
-            }
-        }
-        emitJmp(cL);
-        startBlock(cL);
-        if (s.expr) emitBr(material(lowerExpr(*s.expr)), bL, eL);
-        else emitJmp(bL);
-        startBlock(bL);
-        loops_.push_back(Loop{s.expr2 ? sL : cL, eL});
-        if (s.body) lowerStmt(*s.body);
-        loops_.pop_back();
-        emitJmp(s.expr2 ? sL : cL);
-        if (s.expr2) {
-            startBlock(sL);
-            lowerExpr(*s.expr2);
-            emitJmp(cL);
-        }
-        startBlock(eL);
-        scopes_.pop_back();
-    }
-
-    void scanExpr(const Expr* e) {
-        if (!e) return;
-        if (e->kind == Expr::Kind::Call && !e->kids.empty() && e->kids[0] && e->kids[0]->kind == Expr::Kind::Name &&
-            e->kids[0]->text == "__okay_setjmp")
-            hasTry_ = true;
-        if (e->kind == Expr::Kind::Unary && e->text == "&" && !e->kids.empty() && e->kids[0] &&
-            e->kids[0]->kind == Expr::Kind::Name)
-            addr_.insert(e->kids[0]->text);
-        for (const auto& k : e->kids) scanExpr(k.get());
-    }
-    bool hasTry_ = false;
-    std::set<std::string> declNames_;
-    void scanStmt(const Stmt& s) {
-        if (s.decl) declNames_.insert(s.decl->name);
-        scanExpr(s.expr.get());
-        scanExpr(s.expr2.get());
-        scanExpr(s.expr3.get());
-        if (s.decl) {
-            scanExpr(s.decl->init.get());
-            if (s.decl->type && s.decl->type->kind == Type::Kind::Reference && s.decl->init &&
-                s.decl->init->kind == Expr::Kind::Name)
-                addr_.insert(s.decl->init->text);
-        }
-        for (const auto& st : s.stmts)
-            if (st) scanStmt(*st);
-        if (s.thenS) scanStmt(*s.thenS);
-        if (s.elseS) scanStmt(*s.elseS);
-        if (s.body) scanStmt(*s.body);
-        if (s.init) scanStmt(*s.init);
-    }
-
-    void lowerSwitch(Stmt& s) {
-        int id = switchN_++;
-        std::string endL = "sw" + std::to_string(id) + "_end";
-        std::string defL = "sw" + std::to_string(id) + "_def";
-        int cond = s.expr ? material(lowerExpr(*s.expr)) : material(Val{Operand::number(0), 0, 0});
-        struct Arm {
-            std::string label;
-            bool def = false;
-            std::int64_t value = 0;
-            Stmt* body = nullptr;
-        };
-        std::vector<Arm> arms;
-        bool sawDef = false;
-        int n = 0;
-        for (auto& cs : s.stmts) {
-            if (!cs) continue;
-            Arm arm;
-            arm.label = "sw" + std::to_string(id) + "_" + std::to_string(n++);
-            arm.body = cs->body.get();
-            if (!cs->expr) {
-                if (sawDef) err(cs->line, cs->col, "more than one default");
-                sawDef = true;
-                arm.def = true;
-                arm.label = defL;
-            } else {
-                Val v = lowerExpr(*cs->expr);
-                if (v.op.kind != Operand::Kind::Imm) {
-                    err(cs->line, cs->col, "case value is not a constant");
-                    v.op = Operand::number(0);
-                }
-                arm.value = v.op.imm;
-            }
-            arms.push_back(arm);
-        }
-        for (std::size_t i = 0; i < arms.size(); ++i) {
-            if (arms[i].def) continue;
-            int cmp = fresh();
-            emitBin(Inst::Op::Ceq, cmp, Operand::vreg(cond), Operand::number(arms[i].value));
-            std::string next = "sw" + std::to_string(id) + "_t" + std::to_string(i);
-            emitBr(cmp, arms[i].label, next);
-            startBlock(next);
-        }
-        emitJmp(sawDef ? defL : endL);
-        loops_.push_back(Loop{"", endL, true});
-        for (std::size_t i = 0; i < arms.size(); ++i) {
-            startBlock(arms[i].label);
-            if (arms[i].body) lowerStmt(*arms[i].body);
-            if (i + 1 < arms.size()) emitJmp(arms[i + 1].label);
-            else emitJmp(endL);
-        }
-        loops_.pop_back();
-        startBlock(endL);
-    }
-
-    void lowerFunc(Decl& d) {
-        fn_ = Function();
-        fn_.name = d.asmName.empty() ? d.name : d.asmName;
-        fn_.localSym = d.isStatic;
-        fn_.params = d.type ? static_cast<int>(d.type->params.size()) : 0;
-        nextReg_ = 0;
-        scopes_.clear();
-        scopes_.emplace_back();
-        loops_.clear();
-        addr_.clear();
-        retWidth_ = 8;
-        retFp_ = false;
-        retUns_ = false;
-        retBool_ = false;
-        retStruct_ = false;
-        retRef_ = d.type && d.type->inner && d.type->inner->kind == Type::Kind::Reference;
-        hiddenReg_ = -1;
-        hasTry_ = false;
-        declNames_.clear();
-        if (d.body) scanStmt(*d.body);
-        if (hasTry_) {
-            // A longjmp restores only the registers saved when the try block was entered, so every
-            // named local of this function lives in memory.
-            for (const std::string& n : declNames_) addr_.insert(n);
-            if (d.type)
-                for (const Param& prm : d.type->params) addr_.insert(prm.name);
-        }
-        if (d.type && d.type->inner) {
-            const Type* r = d.type->inner.get();
-            if (r->kind == Type::Kind::Char || r->kind == Type::Kind::Short || r->kind == Type::Kind::Int ||
-                r->kind == Type::Kind::Long || r->kind == Type::Kind::Bool)
-                retWidth_ = sizeOf(r);
-            if (r->kind == Type::Kind::Bool) retBool_ = true;
-            if (r->kind == Type::Kind::Float || r->kind == Type::Kind::Double) {
-                retFp_ = true;
-                retWidth_ = sizeOf(r);
-            }
-            if (r->kind == Type::Kind::Struct || r->kind == Type::Kind::Union) {
-                retStruct_ = true;
-                retWidth_ = sizeOf(r);
-            }
-            retUns_ = r->unsign;
-        }
-        struct PPlan {
-            bool memory = false;
-            int nreg = 1;
-            int regAt = 0;
-            int stackOff = 0;
-            int size = 8;
-            bool isStruct = false;
-            bool isFp = false;
-            int xmmAt = -1;
-        };
-        std::vector<PPlan> plans;
-        int reg = 0;
-        int xm = 0;
-        int stack = 0;
-        if (retStruct_ && retWidth_ > 16) {
-            hiddenReg_ = 0;
-            reg = 1;
-        }
-        if (d.type) {
-            for (const Param& p : d.type->params) {
-                PPlan plan;
-                bool memClass = false;
-                if (p.type && (p.type->kind == Type::Kind::Float || p.type->kind == Type::Kind::Double)) {
-                    plan.isFp = true;
-                    plan.size = sizeOf(p.type.get());
-                    if (xm >= 8) {
-                        plan.memory = true;
-                        stack = alignUp(stack, 8);
-                        plan.stackOff = stack;
-                        stack += 8;
-                    } else {
-                        plan.xmmAt = xm++;
-                    }
-                    plans.push_back(plan);
-                    continue;
-                }
-                plan.nreg = structPieces(p.type.get(), plan.size, memClass);
-                plan.isStruct = p.type && (p.type->kind == Type::Kind::Struct || p.type->kind == Type::Kind::Union);
-                if (memClass || reg + plan.nreg > 6) {
-                    plan.memory = true;
-                    plan.nreg = 0;
-                    stack = alignUp(stack, 8);
-                    plan.stackOff = stack;
-                    stack += (plan.size + 7) & ~7;
-                } else {
-                    plan.regAt = reg;
-                    reg += plan.nreg;
-                }
-                plans.push_back(plan);
-            }
-        }
-        fn_.params = reg;
-        fn_.vaNamed = d.type && d.type->variadic ? reg : -1;
-        fn_.vaXmm = d.type && d.type->variadic ? xm : 0;
-        nextReg_ = reg;
-        startBlock("entry");
-        if (fn_.vaNamed >= 0) {
-            int save = fresh();
-            Inst loc;
-            loc.op = Inst::Op::Local;
-            loc.dst = save;
-            loc.a = Operand::number(176);
-            emit(loc);
-            vaSave_ = save;
-        }
-        if (d.type) {
-            for (std::size_t i = 0; i < d.type->params.size(); ++i) {
-                const Param& p = d.type->params[i];
-                const PPlan& plan = plans[i];
-                Sym s;
-                if (p.type) describe(s, p.type.get());
-                if (plan.isStruct) {
-                    int addr = fresh();
-                    if (plan.memory) {
-                        Inst lea;
-                        lea.op = Inst::Op::LeaFrame;
-                        lea.dst = addr;
-                        lea.a = Operand::number(16 + plan.stackOff);
-                        emit(lea);
-                    } else {
-                        Inst loc;
-                        loc.op = Inst::Op::Local;
-                        loc.dst = addr;
-                        loc.a = Operand::number(plan.size < 1 ? 1 : plan.size);
-                        emit(loc);
-                        storeBits(Operand::vreg(addr), Operand::vreg(plan.regAt),
-                                  plan.size >= 8 ? 8 : plan.size);
-                        if (plan.nreg == 2)
-                            storeBits(addAddr(Operand::vreg(addr), 8), Operand::vreg(plan.regAt + 1),
-                                      plan.size - 8);
-                    }
-                    s.reg = addr;
-                    s.agg = true;
-                } else if (plan.isFp && !plan.memory) {
-                    s.reg = fresh();
-                    s.fpw = plan.size;
-                    s.width = plan.size;
-                    if (static_cast<int>(fn_.xmmSlot.size()) <= plan.xmmAt) {
-                        fn_.xmmSlot.resize(static_cast<std::size_t>(plan.xmmAt + 1), -1);
-                        fn_.xmmWidth.resize(static_cast<std::size_t>(plan.xmmAt + 1), 8);
-                    }
-                    fn_.xmmSlot[static_cast<std::size_t>(plan.xmmAt)] = s.reg;
-                    fn_.xmmWidth[static_cast<std::size_t>(plan.xmmAt)] = plan.size;
-                } else if (plan.memory) {
-                    int w = p.type ? sizeOf(p.type.get()) : 8;
-                    bool uns = p.type && p.type->unsign;
-                    Operand src = loadBits(frameAddr(16 + plan.stackOff), w);
-                    int slot = fresh();
-                    emitMov(slot, src, w, uns);
-                    s.reg = slot;
-                    if (!p.name.empty() && addr_.count(p.name)) s.mem = true;
-                } else {
-                    s.reg = plan.regAt;
-                    if (!p.name.empty() && addr_.count(p.name)) s.mem = true;
-                }
-                if (s.boolean && s.reg >= 0) {
-                    Operand n = asBool(Operand::vreg(s.reg));
-                    emitMov(s.reg, n, 1, true);
-                }
-                if (!p.name.empty()) scopes_.back()[p.name] = s;
-            }
-        }
-        if (d.body && d.body->kind == Stmt::Kind::Block) {
-            for (auto& st : d.body->stmts)
-                if (st) lowerStmt(*st);
-        } else if (d.body) {
-            lowerStmt(*d.body);
-        }
-        mod_.funcs.push_back(std::move(fn_));
-    }
-};
-
-void typecheckTu(Tu& tu, Diagnostics& diags);
 
 // Parse and check. A function template called without explicit arguments is only known after the
 // checker has deduced them, so the file is parsed again with the new instance requests until none
@@ -9099,42 +5217,9 @@ Tu frontEnd(const std::vector<Token>& toks, Diagnostics& diags) {
     return result;
 }
 
-Module lowerProgram(const std::string& source, Diagnostics& diags, const std::string& fileName,
-                     const std::vector<std::string>& includes) {
-    MemoryFiles files;
-    files.add(fileName, source);
-    std::vector<Token> raw = preprocessTokens(files, fileName, includes, diags);
-    if (!diags.ok()) return {};
-    std::string file = "t.c";
-    int line = 1;
-    int col = 1;
-    if (!raw.empty()) {
-        line = raw.back().line;
-        col = raw.back().column;
-        if (!raw.back().file.empty()) file = raw.back().file;
-    }
-    std::vector<Token> toks;
-    for (Token& t : raw) {
-        if (t.kind != Tok::Newline) toks.push_back(std::move(t));
-    }
-    Token end;
-    end.kind = Tok::End;
-    end.file = std::move(file);
-    end.line = line;
-    end.column = col;
-    toks.push_back(std::move(end));
-    Tu tu = frontEnd(toks, diags);
-    if (!diags.ok()) return {};
-    Lowerer lowerer(diags);
-    return lowerer.run(tu);
-}
+}  // namespace compiler
 
-void typecheckTu(Tu& tu, Diagnostics& diags) {
-    Checker checker(diags);
-    checker.check(tu);
-}
-
-}  // namespace
+using namespace compiler;
 
 std::string astFromRaw(std::vector<Token> raw, Diagnostics& diags) {
     std::string file = "t.c";
@@ -9172,10 +5257,11 @@ std::string astOfFile(FileStore& files, const std::string& path, const std::vect
     return astFromRaw(preprocessTokens(files, path, includePaths, diags), diags);
 }
 
-void checkSource(const std::string& source, Diagnostics& diags, const std::string& fileName) {
+void checkSource(const std::string& source, Diagnostics& diags, const std::string& fileName,
+                 const std::vector<std::string>& includes) {
     MemoryFiles files;
     files.add(fileName, source);
-    std::vector<Token> raw = preprocessTokens(files, fileName, {}, diags);
+    std::vector<Token> raw = preprocessTokens(files, fileName, includes, diags);
     if (!diags.ok()) return;
     std::string file = "t.c";
     int line = 1;
@@ -9198,14 +5284,5 @@ void checkSource(const std::string& source, Diagnostics& diags, const std::strin
     Tu tu = frontEnd(toks, diags);
     (void)tu;
 }
-
-Module lowerSource(const std::string& source, Diagnostics& diags, const std::string& file,
-                   const std::vector<std::string>& includes) {
-    Module m = lowerProgram(source, diags, file, includes);
-    if (diags.ok()) optimizeModule(m);
-    return m;
-}
-
-void setForceExceptions(bool on) { forceExceptions() = on; }
 
 }  // namespace okaycc

@@ -8,6 +8,8 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 ## 12. In-game UI
 
 ### 12.1 Canvas, anchors, flex layout, safe area
+- **System:** Game UI - Menus, buttons, health bars and other on-screen interface inside your game, built in the editor or written as markup.
+  Home: `engine/include/okay/UI/`, `engine/include/okay/Components/Canvas.hpp`. Entry: `engine/include/okay/Components/Canvas.hpp`. Also called: in-game UI, scene UI, Canvas, UIElement, HTML UI, UIRenderer.
 - **What:** Where every widget sits on screen: a Canvas scales a design size (1280x720) to the window, widgets are placed by anchor presets or a general UI Frame, and containers (layout group, flex, mask, safe area) arrange children.
 - **Parts:**
   - 12.1.1 Canvas and scaling - `Components/Canvas` - Constant Pixel Size or Scale With Screen Size, Screen Match (Match Width/Height blend, Expand, Shrink), sort order, master opacity, world-space switch
@@ -34,6 +36,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Ask me like:** "work on 12.1.3, convert old anchored widgets to UI Frames"; "the pause menu is cropped on a portrait phone"
 
 ### 12.2 Widgets: button, image, raw image, text, panel, progress, rating
+- **System:** Game UI
 - **What:** The basic building blocks of a screen: buttons, panels, text, pictures, progress bars, rating stars and the crosshair, each with shapes, borders, shadows and state colours.
 - **Parts:**
   - 12.2.1 Button - `Components/UIButton` - hover/pressed/disabled colours, shape, shadow, calls the sibling script's on_click() or a native method
@@ -58,7 +61,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.2.20 Rich text links and icons - `UI/RichText`, `Components/UIDataGlue` (UIRichLinks) - `[url=target]words[/url]` underlined and clickable (on_link, Prefs ui_link) and `[icon=item or image]` inline pictures
 - **Code:** `Components/UIButton`, `Components/NativeUIActions`, `Components/TextRenderer`, `Components/UIPanel`, `UI/UIShape`, `Components/UIImage`, `Components/UIRawImage`, `Components/UIProgressBar`, `Components/UIRadialProgress`, `Components/UIRating`, `Components/Crosshair`, `Components/UIGameHud`, `UI/UIGameHudDraw`
 - **API:** `UIButton`, `UIPanel`, `TextRenderer`, `UIImage`, `UIRawImage`, `UIProgressBar`, `UIRadialProgress`, `UIRating`, `Crosshair`, `UIRadialMenu` (Open, Close, Choose, Chosen), `UIKillFeed` (Push, Clear), `UIAmmoCounter` (SetAmmo, Text), `UIInteractionPrompt`, `UICompass` (Heading), `UIItemTooltipCard` (Show, Hide), `UIAbilityIcon` (Use, Reset, IsReady, SecondsLeft); script: `ui_set_text`, `ui_get_text`, `ui_clicked`, `ui_set_progress`, `ui_set_fill`, `ui_set_interactable`
-- **Editor:** GameObject > UI (and the UI view's + Add menu); Inspector headers UI Button, UI Panel, UI Image, UI Raw Image, Text, UI Progress Bar, UI Radial Progress, UI Rating, Crosshair; GameObject > UI > Game HUD (Radial Menu, Kill Feed, Ammo Counter, Interaction Prompt, Objective Tracker, Compass, Item Tooltip Card, Ability Icon); Inspector headers of those
+- **Editor:** GameObject > UI (and the UI view's + Add menu); Inspector headers UI Button, UI Panel, UI Image, UI Raw Image, Text, UI Progress Bar, UI Radial Progress, UI Rating, Crosshair; GameObject > UI > Game HUD (Health Bar, Radial Menu, Kill Feed, Ammo Counter, Interaction Prompt, Objective Tracker, Compass, Item Tooltip Card, Ability Icon); Inspector headers of those
 - **Docs:** `docs/ui/in_game_ui.md` (Images, Building blocks), `docs/engine_api.md`
 - **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `uishape`, `text`, `minimap`, `ui_renderer_golden`, `world_text_rich` (rich text on world text, `[size=N]`, line heights), `ui_library2`, `ui_library2_example`, `ui_library2_shots`
 - **Status:** Works - implemented per the headers; tests cover hit testing, serialization of every style field, nine-slice, fill, shapes, text options
@@ -69,11 +72,12 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Ask me like:** "work on 12.2.8, segmented progress bars"; "the health bar should follow the hp variable"
 
 ### 12.3 Input widgets: slider, toggle, input field, dropdown, stepper, keybind
+- **System:** Game UI
 - **What:** Controls the player changes: sliders, checkboxes and switches, text boxes, dropdown lists, numeric steppers, "press a key to bind" fields and a swatch colour picker.
 - **Parts:**
   - 12.3.1 Slider - `Components/UISlider` - drag to a value in a range, whole-number mode, step, format, on_change()
   - 12.3.2 Toggle - `Components/UIToggle` - checkbox or sliding switch with label, on_toggle()
-  - 12.3.3 Input field - `Components/UIInputField` - OS text input, caret, placeholder, number or password mode, character whitelist, multiline, on_submit()
+  - 12.3.3 Input field - `Components/UIInputField` - OS text input, caret, placeholder, number or password mode, character whitelist, multiline, on_submit(); reachable by keyboard / pad menu navigation (`NavigateUI`: d-pad highlights, A / Enter starts editing; `focusable`, saved in scenes; on an Xbox the on-screen keyboard comes up, see 18.10.8)
   - 12.3.4 Dropdown - `Components/UIDropdown` - header plus open option list, swallows the click under the list
   - 12.3.5 Stepper - `Components/UIStepper` - [-] value [+] with step and range
   - 12.3.6 Keybind field - `Components/UIKeybindField` - listen for a key, Escape cancels, Backspace resets, saves to Prefs
@@ -93,6 +97,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Ask me like:** "work on 12.3.3, add a multiline text area"; "add radio buttons"
 
 ### 12.4 Lists, tabs, modals, context menu, tooltips, scroll views
+- **System:** Game UI
 - **What:** Bigger interface pieces: scrolling regions, long virtual lists, tab bars, dialogs that block input, right-click menus, tooltips, toasts, slot grids and drag and drop.
 - **Parts:**
   - 12.4.1 List View - `Components/UIListView` - virtualized rows from a template (10,000 rows cost like 10), items or script binding, rows never saved
@@ -116,7 +121,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.4.19 Look library - `Scene/UIStyleLib`, `assets/ui/ui_themes.okaydata` - 54 looks (12 built-in, 42 in data) put on one screen or widget with `ui_set_look`, no global theme, `.okaylook` presets, old `.okaytheme` files usable as a look, look sound names
   - 12.4.20 Vector icons - `UI/UIIcons`, `UI/UIIconDraw`, `assets/ui/ui_icons.okaydata` - 371 icons drawn by our own code from shapes, crisp at any size, used as `icon:name` on an Image, a Button or in rich text
   - 12.4.21 Screens as data and the Starter Pack - `Scene/UIScreens`, `assets/ui/ui_screens.okaydata` - 56 ready-made screens in 9 sections (34 from data with working buttons, 22 older ones), layout variants, a Starter Pack main menu to game over flow
-  - 12.4.22 UI Gallery and the simpler GameObject > UI menu - `Scene/UIGalleryIndex`, `editor/UIGalleryWindow`, `editor/UIMenuModel` - one searchable list of every component, style, theme, icon and screen with preview and one-click add; eight plain groups in the menu
+  - 12.4.22 UI Gallery and the simpler GameObject > UI menu - `Scene/UIGalleryIndex`, `editor/UIGalleryWindow`, `editor/UIMenuModel` - one searchable list of every component, style, theme, icon and screen with preview and one-click add; a flat list of nine essentials (Text, Image, Button, Panel, Text Field, Slider, Toggle, Dropdown, Scroll Area) then Game HUD, Menus & Screens and More (twelve entries in all; five near-copies are Gallery-only)
 - **Code:** `Components/UIListView`, `Components/UITabs`, `Components/UIModal`, `Components/UIContextMenu`, `Components/UITooltip`, `UI/TooltipPlace`, `Components/UIScrollView`, `Components/UIToast`, `Components/UISlotGrid`, `Components/UIDraggable`, `Components/Draggable`, `engine/src/UI/InventoryInput.cpp`, `editor/UIInspectorOverlay.*`
 - **API:** `UIListView`, `UITabs` (Select, Layout), `UIModal::Open/Close`, `UIContextMenu`, `UITooltip`, `PlaceTooltip`, `UIScrollView`, `UIToast`; script `ui_set_tab`, `ui_tab_value`, `ui_set_tab_badge`, `ui_drop_source`, `ui_drop_target`
 - **Editor:** Inspector headers (UI Tabs with Generate Pages, UI Scroll View, UI List View, UI Modal, UI Context Menu, UI Tooltip, UI Draggable, UI Drop Target, UI Slot Grid); Create > UI > Controls and Layout
@@ -130,6 +135,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Ask me like:** "work on 12.4.1, bind a leaderboard list to an array"; "tooltips get cut off at the screen edge"
 
 ### 12.5 HTML UI
+- **System:** Game UI
 - **What:** A whole menu or HUD written as text and turned into real widget objects: either a line-based markup (called OkayUI markup here) or a small HTML plus CSS subset, with reusable styles and custom widgets.
 - **Parts:**
   - 12.5.1 Line markup - `Components/UIDocument` - one widget per indented line, `style` classes, `define` custom widgets with parameters, data binding with `{key}`
@@ -148,6 +154,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Ask me like:** "work on 12.5.2, add flex layout to the HTML mode"
 
 ### 12.6 World-space UI
+- **System:** Game UI
 - **What:** UI that lives in the 3D world: floating labels and health bars over objects, a full Canvas drawn on a plane in the world, and single widgets placed as 3D objects.
 - **Parts:**
   - 12.6.1 World label - `Components/WorldUI` - text with optional panel and bar anchored to a world point, scales with distance (nameplates, damage numbers, markers)
@@ -166,6 +173,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Ask me like:** "work on 12.6.1, floating damage numbers"; "the in-world shop panel is not clickable"
 
 ### 12.7 Themes and the launcher-matching UI kit
+- **System:** Game UI
 - **What:** The Slate look shared with the launcher, one-click style presets for each widget, copy and paste of a widget's look, ready-made kit pieces and prebuilt screens (main menu, pause, settings, HUD, lobby, shop, loading), and a skin component.
 - **Parts:**
   - 12.7.1 Slate palette and kit - `Scene/UITemplates` - Card, Heading, List Row, Badge, Avatar, Divider, button kinds, Switch, Spinner, Notification
@@ -187,11 +195,12 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Ask me like:** "work on 12.7.4, stylesheet assets with hover states"; "add a Settings screen to this scene"
 
 ### 12.8 Loading, pause and settings screens
+- **System:** Game UI
 - **What:** Drop-in screens: a loading overlay with seven layouts, a pause menu (Resume, Restart, Main Menu, Quit, volume sliders) and a settings screen bound to audio, window and render quality.
 - **Parts:**
   - 12.8.1 Loading screen - `Components/LoadingScreen` - show-on-start or scene transition, progress, fade, rotating tips, bar and spinner styles, logo, slow zoom
   - 12.8.2 Loading layouts - `Components/LoadingScreenLayout` - one draw-command list (rect, gradient, image, text, arc) drawn identically by the player and the editor preview
-  - 12.8.3 Pause menu - `Components/PauseMenu` - Escape toggle, freezes time, free cursor, builds editable UI objects in the scene, keyboard and gamepad
+  - 12.8.3 Pause menu - `Components/PauseMenu` - Escape or Start on any pad toggles, B on a pad closes it (2026-11-22, controller-only play), freezes time, free cursor, builds editable UI objects in the scene, keyboard and gamepad
   - 12.8.4 Settings screen - `Components/SettingsScreen` - Music, Effects, Monitor, Display mode, Resolution, Refresh rate, VSync, Quality; Apply then "Keep these settings?" for 10 seconds; Text size, Colour filter, High contrast, Reduce motion, Reduce flashing, Subtitles, Sound captions, Hold to toggle, Aim assist, High-vis focus and Focus thickness bound to `Accessibility` (applied live, saved to Prefs on Done); Done returns to the pause menu
 - **Code:** `Components/LoadingScreen`, `Components/LoadingScreenLayout`, `Components/PauseMenu`, `Components/SettingsScreen`, `editor/main.cpp` (Loading Screen and Pause Menu inspectors ~31719, ~29517)
 - **API:** `LoadingScreen::Begin("Scene")`, `PauseMenu`, `SettingsScreen::AnyOpen`, `GameInputBlocked`
@@ -206,6 +215,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Ask me like:** "work on 12.8.1, add a video background to the loading screen"; "Escape does not open the pause menu"
 
 ### 12.9 Mobile scaling
+- **System:** Game UI
 - **What:** Making UI fit phones and tablets: screen-shape matching, safe area, touch scrolling and the Game view's device emulator.
 - **Parts:**
   - 12.9.1 Screen match modes - `Components/Canvas` - Expand keeps a landscape layout whole on a portrait phone
@@ -225,6 +235,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Ask me like:** "work on 12.9.4, add more phone presets"; "add a virtual joystick for mobile"
 
 ### 12.10 UI editing in the editor
+- **System:** Game UI
 - **What:** How designers build UI inside the editor: a UI-only Scene view mode and a dockable UI tab, click-drag handles, alignment tools, UI inspectors and a preview that draws through the same renderer as the game.
 - **Parts:**
   - 12.10.1 UI view and tab - `editor/main.cpp` (`DrawViewport`, ~41508-42171) - "UI" toolbar button, View > UI Editing Mode and UI Editor (separate tab), frame against the Game view resolution
@@ -248,6 +259,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Ask me like:** "work on 12.10.2, anchor handles in the UI view"; "the editor UI preview does not match Play"
 
 ### 12.11 UI renderer, painters and batching
+- **System:** Game UI
 - **What:** The single sorted UI pass that draws every screen-space widget, the small painter interface it draws through, and a batcher that turns draw calls into a few GPU geometry calls.
 - **Parts:**
   - 12.11.1 Scene UI pass - `UI/UIRenderer` - `RenderSceneUI(scene, painter, w, h, options)` sorts by canvas, draw order and hierarchy; options for edit-time resting state and world labels
@@ -271,6 +283,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Ask me like:** "work on 12.11.4, UI draw call count"; "the editor preview and the player draw the pause menu differently"
 
 ### 12.12 UI input, focus and navigation
+- **System:** Game UI
 - **What:** How the pointer, keyboard, gamepad and fingers reach widgets: top-most hit testing, hover and selection, 2-D focus movement, modal input blocking and the "game input blocked" guard.
 - **Parts:**
   - 12.12.1 Event System - `Components/EventSystem` - UIRaycast, Hovered, Pressed, Selected, IsPointerOverUI
@@ -293,6 +306,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Ask me like:** "work on 12.12.2, explicit neighbour links for navigation"; "my character shoots when I click a button"
 
 ### 12.13 Data binding, UI animation and script control
+- **System:** Game UI
 - **What:** Making UI react without code or from scripts: bars and labels that follow variables, intro/idle/outro animations, and script calls that read and change widgets by name.
 - **Parts:**
   - 12.13.1 Bar bind - `Components/UIBarBind` - progress bar or radial fill follows a visual-script variable or a Prefs value

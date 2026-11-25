@@ -60,11 +60,7 @@ static bool ReadMd2Impl(const std::string& bytes, const std::string& baseDir, Im
     const std::string frameName = b.Str(16);
     detail::rc::Soup soup;
     soup.pos.resize((std::size_t)numXyz);
-    for (Vec3& p : soup.pos) {
-        const float x = (float)b.U8(), y = (float)b.U8(), z = (float)b.U8();
-        b.U8();   // index into Quake's table of 162 normals: not used, smooth normals are made instead
-        p = Vec3{x * scale[0] + trans[0], y * scale[1] + trans[1], z * scale[2] + trans[2]};
-    }
+    detail::rc::ReadQuakeFrameVerts(b, scale, trans, soup.pos);
     if (b.bad) return Fail(err, "the file ends inside the first frame");
 
     // ---- texture coordinates ----

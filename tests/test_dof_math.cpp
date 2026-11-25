@@ -67,21 +67,26 @@ int main() {
     CHECK(Has(hlsl, "max(uP7.y, " + std::string(OKAY_DOF_STR(OKAY_DOF_MIN_RANGE)) + ")"));
     CHECK(Has(hlsl, "abs(d - uP7.x)"));
     CHECK(Has(hlsl, "0.0, 1.0)"));
+    CHECK(Has(hlsl, "lerp(float4(s.rgb * s.a, s.a), uNormalTex.Sample(uSampClamp, i.uv), coc)"));
+    CHECK(Has(hlsl, "PSDofCopy(")); CHECK(Has(hlsl, "PSDofBlur("));
 
-    std::string here = __FILE__;
+    std::string here = OKAY_TESTS_DIR "/test_dof_math.cpp";
     std::string root = here.substr(0, here.find_last_of("/\\") + 1) + "../engine/src/Render/";
-    const std::string gl = Slurp(root + "GLRenderer.cpp");
+    const std::string gl = Slurp(root + "GLRenderer.cpp") + Slurp(root + "GLRendererShaders.cpp") + Slurp(root + "GLRendererPasses.cpp") + Slurp(root + "GLRendererResources.cpp") + Slurp(root + "GLRendererInternal.hpp");   // GLRenderer.cpp is split into four files (pure move)
     const std::string dx = Slurp(root + "D3D11Renderer.cpp") + Slurp(root + "../../include/okay/Render/D3D11Hlsl.hpp");   // HLSL text lives in D3D11Hlsl.hpp (moved out, same bytes)
     CHECK(!gl.empty() && !dx.empty());
     if (!gl.empty()) {
         CHECK(Has(gl, "dn >= 0.995 ? uFar * 4.0 : dn * uFar"));
         CHECK(Has(gl, "abs(d - uFocus) - uRange * 0.5) / max(uRange, 1e-3), 0.0, 1.0"));
-        CHECK(Has(gl, "mix(texture2D(uSrc, vUV), texture2D(uBlur, vUV), coc)"));
+        CHECK(Has(gl, "mix(vec4(s.rgb * s.a, s.a), texture2D(uBlur, vUV), coc)"));   // premultiplied: the sky stays transparent
+        CHECK(Has(gl, "quadPass(m_dofCopyProg"));
+        CHECK(Has(gl, "quadPass(m_dofBlurProg"));
         CHECK(Has(gl, "g.Uniform1f(m_udfFar, kSsaoFar)"));
     }
     if (!dx.empty()) {
         CHECK(Has(dx, "OKAY_DOF_HLSL"));
         CHECK(Has(dx, "psDof"));
+        CHECK(Has(dx, "pass(p->psDofCopy")); CHECK(Has(dx, "pass(p->psDofBlur"));
         CHECK(Has(dx, "pc.p7[2] = ssao::kFar"));
         CHECK(Has(dx, "pc.p7[0] = ps.dofFocus; pc.p7[1] = ps.dofRange"));
         CHECK(Has(dx, "rsTop.post.dof"));     // runs only when the scene's switch is on

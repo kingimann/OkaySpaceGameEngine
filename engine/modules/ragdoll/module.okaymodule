@@ -1,0 +1,18 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=ragdoll
+title=Ragdoll
+area=Physics
+description=Verlet ragdoll over the humanoid bones.
+default=on
+core=0
+requires=animation,physics3d
+provides=
+components=Ragdoll
+serializers=ragdoll
+vs_group=
+editor=
+sources=include/okay/Components/Ragdoll.hpp src/Components/Ragdoll.cpp
+# planned= files another branch is adding (claude2/active-ragdoll: ActiveRagdoll, ragdoll physics, dynamic character). Not copied
+# here; they move into sources= (and ActiveRagdoll into components=) when that branch merges. Read by nobody yet.
+planned=include/okay/Animation/DynamicCharacter.hpp include/okay/Animation/RagdollPhysics.hpp include/okay/Components/ActiveRagdoll.hpp include/okay/Components/RagdollShared.hpp src/Animation/DynamicCharacter.cpp src/Animation/RagdollPhysics.cpp src/Components/ActiveRagdoll.cpp src/Components/RagdollShared.cpp
+tests=ragdoll

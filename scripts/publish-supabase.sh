@@ -34,7 +34,7 @@
 # Options (environment):
 #   CHANNEL      latest (default) or lts
 #   DIST_DIR     build output to publish (default build-win-dist)
-#   NOTES_FILE   bullet lines for NOTES.txt (default: the last 6 commit subjects)
+#   NOTES_FILE   bullet lines for NOTES.txt (default: this version's block in dist/CHANGELOG.txt, else the last 6 commit subjects)
 #   KEEP         how many non-LTS versions to keep in the bucket (default 3)
 #   SUPABASE_URL project URL (default: the one baked into CMakeLists.txt)
 #   ARCHIVE_REPO GitHub repo holding every release, written into versions.json
@@ -158,7 +158,10 @@ upload() {
 for n in "${NAMES[@]}"; do upload "${SRC[$n]}" "v$VER/$n" application/octet-stream 3600; done
 
 NOTES="$(mktemp)"; trap 'rm -f "$RESP" "$NOTES"' EXIT
+# The launcher's "what's new" card: the prepared notes, else this version's block in dist/CHANGELOG.txt (before 2026-11-23 it
+# was the last 6 commit subjects, which on the release runner's one-commit checkout was just "Release <ver> (#<pr>)").
 if [ -n "${NOTES_FILE:-}" ]; then cp "$NOTES_FILE" "$NOTES"
+elif python3 -I "$(dirname "$0")/fast_release.py" changelog-notes --version "$VER" > "$NOTES" 2>/dev/null; then :
 else git log -6 --no-merges --pretty='- %s' > "$NOTES" 2>/dev/null || echo "- OkaySpace v$VER" > "$NOTES"; fi
 CHANGELOG="$NOTES"   # the editor's update dialog shows this
 [ -f "$DIST_DIR/CHANGELOG.txt" ] && CHANGELOG="$DIST_DIR/CHANGELOG.txt"   # (dist/CHANGELOG.txt is years stale: not used)

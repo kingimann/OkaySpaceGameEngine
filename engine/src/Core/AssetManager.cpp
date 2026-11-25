@@ -1,4 +1,5 @@
 #include "okay/Core/AssetManager.hpp"
+#include "okay/Core/FileStamp.hpp"
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Core/DataAsset.hpp"
 #include "okay/Graphics/Image.hpp"
@@ -10,8 +11,33 @@
 #include <cstdio>
 #include <filesystem>
 #include <sstream>
+#include "CoreThreads.hpp"   // our own Mutex/CondVar (no <mutex> under MinGW win32 threads)
 
 namespace okay {
+
+struct AssetManager::Sync {
+    corethreads::Mutex mutex;
+    corethreads::CondVar entryCv;   // an entry left Loading
+};
+
+namespace {
+// A movable-state lock over corethreads::Mutex: lock()/unlock() like the standard one,
+// plus a predicate wait on a CondVar (re-checks pred after every wake, so no lost wakeups).
+class Lock {
+public:
+    explicit Lock(corethreads::Mutex& m) : m_m(m) { m_m.Lock(); m_held = true; }
+    ~Lock() { if (m_held) m_m.Unlock(); }
+    void lock() { m_m.Lock(); m_held = true; }
+    void unlock() { m_held = false; m_m.Unlock(); }
+    template <class Pred> void wait(corethreads::CondVar& cv, Pred pred) { while (!pred()) cv.Wait(m_m); }
+    Lock(const Lock&) = delete;
+    Lock& operator=(const Lock&) = delete;
+private:
+    corethreads::Mutex& m_m;
+    bool m_held = false;
+};
+} // namespace
+
 using assets_detail::Entry;
 using assets_detail::State;
 
@@ -23,14 +49,13 @@ std::int64_t NowNs() {
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-// Modification time and size of a file; false if it can't be read.
+// Modification time and size of a file (size -1 when only the time can be read); false without a time
+// (okay/Core/FileStamp.hpp).
 bool StatFile(const std::string& path, std::int64_t& stamp, std::int64_t& size) {
-    std::error_code ec;
-    auto t = std::filesystem::last_write_time(std::filesystem::u8path(path), ec);
-    if (ec) return false;
-    auto sz = std::filesystem::file_size(std::filesystem::u8path(path), ec);
-    stamp = static_cast<std::int64_t>(t.time_since_epoch().count());
-    size = ec ? -1 : static_cast<std::int64_t>(sz);
+    const auto s = StampOf(path);
+    if (!s.timeOk) return false;
+    stamp = s.time;
+    size = s.sizeOk ? static_cast<std::int64_t>(s.size) : -1;
     return true;
 }
 
@@ -99,15 +124,21 @@ std::string AssetManager::Normalize(const std::string& path) {
 
 // --- Lifetime ------------------------------------------------------------------------
 
-AssetManager::AssetManager() = default;
+AssetManager::AssetManager() : m_sync(new Sync) {}
 
 AssetManager::~AssetManager() {
+    std::vector<Drain> drains;
     {
-        std::lock_guard<std::mutex> lk(m_mutex);
-        m_stop = true;
+        corethreads::LockGuard lk(m_sync->mutex);
+        m_stop = true;   // a running drain stops after its current file and drops the result
+        drains.swap(m_drains);
     }
-    m_jobCv.notify_all();
-    if (m_worker.joinable()) m_worker.join();
+    // No job may touch this object after it is gone: a drain that has not started is
+    // cancelled, one that is running is waited for (it finishes the file it is decoding).
+    for (Drain& d : drains) {
+        if (!d.sys || d.job.IsDone() || d.sys->Cancel(d.job)) continue;
+        try { d.sys->Wait(d.job); } catch (...) {}
+    }
 }
 
 AssetManager& AssetManager::Instance() {
@@ -116,12 +147,12 @@ AssetManager& AssetManager::Instance() {
 }
 
 void AssetManager::AddLoader(std::type_index t, LoaderRec r) {
-    std::lock_guard<std::mutex> lk(m_mutex);
+    corethreads::LockGuard lk(m_sync->mutex);
     m_loaders[t] = std::move(r);
 }
 
 bool AssetManager::LoaderFor(std::type_index t, LoaderRec& out) const {
-    std::lock_guard<std::mutex> lk(m_mutex);
+    corethreads::LockGuard lk(m_sync->mutex);
     auto it = m_loaders.find(t);
     if (it == m_loaders.end()) return false;
     out = it->second;
@@ -173,15 +204,43 @@ void AssetManager::RegisterDefaultLoaders() {
 
 // --- Loading -------------------------------------------------------------------------
 
-void AssetManager::StartWorkerLocked() {
-    if (!m_worker.joinable()) m_worker = std::thread([this] { WorkerMain(); });
+bool AssetManager::NeedDrainLocked() {
+    if (m_stop || m_draining || m_jobs.empty()) return false;
+    m_draining = true;
+    return true;
 }
 
-void AssetManager::WorkerMain() {
-    std::unique_lock<std::mutex> lk(m_mutex);
+void AssetManager::KickDrain() {
+    JobSystem& sys = EngineJobs();
+    {
+        corethreads::LockGuard lk(m_sync->mutex);
+        if (!NeedDrainLocked()) return;
+        // Forget drains that are over, so the list stays short.
+        m_drains.erase(std::remove_if(m_drains.begin(), m_drains.end(), [](const Drain& d) { return d.job.IsDone(); }),
+                       m_drains.end());
+    }
+    // Submitted without the lock: an inline JobSystem(0) runs the drain right here.
+    JobOptions opt;
+    opt.priority = JobPriority::Low;   // frame work (physics, skinning) goes first
+    opt.name = "AssetManager decode";
+    JobHandle h;
+    try {
+        h = sys.Submit([this] { DrainQueue(); }, opt);
+    } catch (...) {
+        corethreads::LockGuard lk(m_sync->mutex);
+        m_draining = false;   // could not queue it; the next LoadAsync or Pump tries again
+        return;
+    }
+    corethreads::LockGuard lk(m_sync->mutex);
+    m_drains.push_back(Drain{&sys, h});
+}
+
+// One drain job decodes everything queued, one file at a time in queue order (as the old
+// dedicated worker thread did), then ends; the next LoadAsync or hot reload starts another.
+void AssetManager::DrainQueue() {
+    Lock lk(m_sync->mutex);
     for (;;) {
-        m_jobCv.wait(lk, [this] { return m_stop || !m_jobs.empty(); });
-        if (m_stop) return;
+        if (m_stop || m_jobs.empty()) { m_draining = false; return; }
         Job job = std::move(m_jobs.front());
         m_jobs.pop_front();
         Done d;
@@ -198,7 +257,7 @@ void AssetManager::WorkerMain() {
                 StatFile(e.path, d.stamp, d.size);   // before decoding: a later write is seen next scan
                 d.data = RunLoader(fn, e.path, d.error);
                 lk.lock();
-                if (m_stop) return;
+                if (m_stop) { m_draining = false; return; }
             }
         } else if (e.state.load() == S(State::Pending)) {
             // Claim it, so a sync Get waits for this decode instead of repeating it.
@@ -214,7 +273,7 @@ void AssetManager::WorkerMain() {
                 std::string err;
                 std::shared_ptr<void> data = RunLoader(rec.load, e.path, err);
                 lk.lock();
-                if (m_stop) return;
+                if (m_stop) { m_draining = false; return; }
                 if (data) {
                     e.data = data;
                     e.bytes = rec.size(data.get());
@@ -226,7 +285,7 @@ void AssetManager::WorkerMain() {
                     FinishFailedLocked(job.entry);
                 }
             }
-            m_entryCv.notify_all();
+            m_sync->entryCv.NotifyAll();
         }   // else a sync Get already claimed or finished it
         m_done.push_back(std::move(d));
     }
@@ -246,7 +305,7 @@ AssetManager::EntryPtr AssetManager::AcquireSync(std::type_index t, const std::s
     }
     const std::string key = Normalize(path), open = Normalize(path, false);
     EntryPtr e;
-    std::unique_lock<std::mutex> lk(m_mutex);
+    Lock lk(m_sync->mutex);
     for (;;) {
         auto& slot = m_cache[Key(t, key)];
         e = slot.lock();
@@ -260,7 +319,7 @@ AssetManager::EntryPtr AssetManager::AcquireSync(std::type_index t, const std::s
         if (s == S(State::Ready)) return e;
         if (s == S(State::Failed)) { slot.reset(); continue; }
         if (s == S(State::Pending)) { e->state = S(State::Loading); break; }   // claim it from the queue
-        m_entryCv.wait(lk, [&] { return e->state.load() != S(State::Loading); });
+        lk.wait(m_sync->entryCv, [&] { return e->state.load() != S(State::Loading); });
         if (e->state.load() == S(State::Ready)) return e;
         if (e->state.load() == S(State::Failed)) { if (error) *error = e->error; return nullptr; }
     }
@@ -283,7 +342,7 @@ AssetManager::EntryPtr AssetManager::AcquireSync(std::type_index t, const std::s
         FinishFailedLocked(e);
     }
     lk.unlock();
-    m_entryCv.notify_all();
+    m_sync->entryCv.NotifyAll();
     if (!data) { if (error) *error = err; return nullptr; }
     return e;
 }
@@ -296,15 +355,17 @@ AssetManager::EntryPtr AssetManager::AcquireAsync(std::type_index t, const std::
         auto e = std::make_shared<Entry>(t, Normalize(path), Normalize(path, false));
         e->error = "no loader registered for this asset type";
         e->state = S(State::Failed);
-        std::lock_guard<std::mutex> lk(m_mutex);
+        corethreads::LockGuard lk(m_sync->mutex);
         if (cb) e->waiters.push_back(std::move(cb));
         Done d; d.entry = e;
         m_done.push_back(std::move(d));
         return e;
     }
     const std::string key = Normalize(path), open = Normalize(path, false);
-    std::lock_guard<std::mutex> lk(m_mutex);
     EntryPtr e;
+    bool kick = false;
+    {
+    corethreads::LockGuard lk(m_sync->mutex);
     for (;;) {
         auto& slot = m_cache[Key(t, key)];
         e = slot.lock();
@@ -315,23 +376,26 @@ AssetManager::EntryPtr AssetManager::AcquireAsync(std::type_index t, const std::
             if (cb) e->waiters.push_back(std::move(cb));
             m_jobs.push_back(Job{e, false});
             ++m_batchSubmitted;
-            StartWorkerLocked();
-            m_jobCv.notify_one();
-            return e;
+            kick = true;
+            break;
         }
         break;
     }
-    if (cb) e->waiters.push_back(std::move(cb));
-    int s = e->state.load();
-    if (s == S(State::Ready) || s == S(State::Loading)) {
-        // Ready: nothing to decode. Loading (sync in progress): Pump defers until it ends.
-        if (cb || !e->waiters.empty()) { Done d; d.entry = e; m_done.push_back(std::move(d)); }
+    if (!kick) {
+        if (cb) e->waiters.push_back(std::move(cb));
+        int s = e->state.load();
+        if (s == S(State::Ready) || s == S(State::Loading)) {
+            // Ready: nothing to decode. Loading (sync in progress): Pump defers until it ends.
+            if (cb || !e->waiters.empty()) { Done d; d.entry = e; m_done.push_back(std::move(d)); }
+        }
     }
+    }
+    if (kick) KickDrain();   // after the lock: an inline job system decodes right here
     return e;
 }
 
 AssetManager::EntryPtr AssetManager::FindEntry(std::type_index t, const std::string& path) {
-    std::lock_guard<std::mutex> lk(m_mutex);
+    corethreads::LockGuard lk(m_sync->mutex);
     auto it = m_cache.find(Key(t, Normalize(path)));
     if (it == m_cache.end()) return nullptr;
     EntryPtr e = it->second.lock();
@@ -348,7 +412,7 @@ int AssetManager::Pump() {
     std::vector<std::pair<std::string, std::string>> reloaded;
     std::function<void(const std::string&, const std::string&)> onReload;
     {
-        std::unique_lock<std::mutex> lk(m_mutex);
+        Lock lk(m_sync->mutex);
         onReload = m_onReload;
         // Hot reload scan.
         if (m_hot) {
@@ -365,8 +429,6 @@ int AssetManager::Pump() {
                     if (st == e->stamp && sz == e->fileSize) continue;
                     e->reloading = true;
                     m_jobs.push_back(Job{e, true});
-                    StartWorkerLocked();
-                    m_jobCv.notify_one();
                 }
             }
         }
@@ -407,7 +469,8 @@ int AssetManager::Pump() {
         for (Done& d : deferred) m_done.push_back(std::move(d));
         if (m_jobs.empty() && m_done.empty() && m_batchFinished >= m_batchSubmitted) m_batchSubmitted = m_batchFinished = 0;
     }
-    m_entryCv.notify_all();
+    m_sync->entryCv.NotifyAll();
+    KickDrain();   // decode the changed files found by the hot reload scan (no-op when nothing is queued)
     for (Fire& f : fires)
         for (auto& cb : f.cbs) cb(f.e, f.err);
     if (onReload)
@@ -416,38 +479,38 @@ int AssetManager::Pump() {
 }
 
 int AssetManager::PendingCount() const {
-    std::lock_guard<std::mutex> lk(m_mutex);
+    corethreads::LockGuard lk(m_sync->mutex);
     return m_batchSubmitted - m_batchFinished;
 }
 
 float AssetManager::Progress() const {
-    std::lock_guard<std::mutex> lk(m_mutex);
+    corethreads::LockGuard lk(m_sync->mutex);
     if (m_batchSubmitted <= 0) return 1.0f;
     return static_cast<float>(m_batchFinished) / static_cast<float>(m_batchSubmitted);
 }
 
 void AssetManager::SetHotReload(bool enabled, double intervalSeconds) {
-    std::lock_guard<std::mutex> lk(m_mutex);
+    corethreads::LockGuard lk(m_sync->mutex);
     m_hot = enabled;
     m_hotInterval = intervalSeconds < 0 ? 0 : intervalSeconds;
     m_lastScanNs = 0;
 }
 
 void AssetManager::SetReloadCallback(std::function<void(const std::string&, const std::string&)> cb) {
-    std::lock_guard<std::mutex> lk(m_mutex);
+    corethreads::LockGuard lk(m_sync->mutex);
     m_onReload = std::move(cb);
 }
 
 // --- Housekeeping --------------------------------------------------------------------
 
 void AssetManager::Purge() {
-    std::lock_guard<std::mutex> lk(m_mutex);
+    corethreads::LockGuard lk(m_sync->mutex);
     for (auto it = m_cache.begin(); it != m_cache.end();)
         it = it->second.expired() ? m_cache.erase(it) : std::next(it);
 }
 
 std::size_t AssetManager::CachedCount() const {
-    std::lock_guard<std::mutex> lk(m_mutex);
+    corethreads::LockGuard lk(m_sync->mutex);
     std::size_t n = 0;
     for (const auto& kv : m_cache) if (!kv.second.expired()) ++n;
     return n;
@@ -455,7 +518,7 @@ std::size_t AssetManager::CachedCount() const {
 
 AssetReport AssetManager::Report() const {
     AssetReport r;
-    std::lock_guard<std::mutex> lk(m_mutex);
+    corethreads::LockGuard lk(m_sync->mutex);
     std::map<std::string, AssetReport::TypeTotal> totals;
     for (const auto& kv : m_cache) {
         EntryPtr e = kv.second.lock();

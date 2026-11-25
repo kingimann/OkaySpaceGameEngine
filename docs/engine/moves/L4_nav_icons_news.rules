@@ -1,0 +1,26 @@
+# Launcher split, move L4 (docs/engine/modularization_plan.md, Part C section 8): the sidebar's line icons, the round
+# chat-ribbon buttons and the small helpers after them (ModifiedAgo, HoverRing, DrawStars) -> launcher/NavIcons.hpp/.cpp;
+# the What's New history (news.cfg) -> launcher/NewsHistory.hpp/.cpp (launcher/main.cpp 3387-3649 at the base).
+# Check it with (on the move commit):
+#   python3 scripts/check_pure_move.py --base HEAD~1 --head HEAD --source launcher/main.cpp \
+#       --dest launcher/NavIcons.hpp --dest launcher/NavIcons.cpp --dest launcher/NewsHistory.hpp \
+#       --dest launcher/NewsHistory.cpp --dest launcher/LauncherShared.hpp --rules docs/engine/moves/L4_nav_icons_news.rules
+# The two icon-id enums and struct NewsRelease moved unchanged into the headers (main.cpp uses them).
+#
+# Names main.cpp uses from the moved code: `static` dropped, declared in NavIcons.hpp / NewsHistory.hpp.
+change: static void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col) { ==> void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col) {
+change: static bool RoundIconButton(const char* id, int icon, float d, ImU32 bg, ImU32 bgHover, ImU32 fg, const char* tip) { ==> bool RoundIconButton(const char* id, int icon, float d, ImU32 bg, ImU32 bgHover, ImU32 fg, const char* tip) {
+change: static void LoadNewsHistory() { ==> void LoadNewsHistory() {
+change: static void SyncNewsHistory() { ==> void SyncNewsHistory() {
+add: ^\s*void DrawNavIcon\(ImDrawList\* d, int id, ImVec2 c, ImU32 col\);(\s*//.*)?$
+add: ^\s*bool RoundIconButton\(const char\* id, int icon, float d, ImU32 bg, ImU32 bgHover, ImU32 fg, const char\* tip\);(\s*//.*)?$
+add: ^\s*std::string ModifiedAgo\(const fs::path\& p\);(\s*//.*)?$
+add: ^\s*void HoverRing\(\);(\s*//.*)?$
+add: ^\s*float DrawStars\(ImDrawList\* dl, ImVec2 pos, float sz, float avg, ImU32 on, ImU32 off\);(\s*//.*)?$
+add: ^\s*extern std::vector<NewsRelease> g_newsHistory;(\s*//.*)?$
+add: ^\s*extern std::string g_newsSeen;(\s*//.*)?$
+add: ^\s*void LoadNewsHistory\(\);$
+add: ^\s*void SyncNewsHistory\(\);(\s*//.*)?$
+# What the moved code uses from main.cpp, declared in LauncherShared.hpp.
+add: ^\s*void GetNews\(std::string\& ver, std::string\& lines\);(\s*//.*)?$
+add: ^\s*int CompareVersions\(const std::string\& a, const std::string\& b\);(\s*//.*)?$

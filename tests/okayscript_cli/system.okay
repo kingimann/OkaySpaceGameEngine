@@ -1,0 +1,16 @@
+// The CLI's system library: files and folders, the environment, sleep (never installed in the engine).
+var base = env("TMPDIR", "/tmp") + "/okayscript_system_case_" + now_ms()
+print(make_dir(base + "/a/b"), is_dir(base + "/a"), file_exists(base + "/x.txt"))
+file_write(base + "/x.txt", "one\n")
+file_append(base + "/x.txt", "two\n")
+print(file_read(base + "/x.txt").split("\n"), file_size(base + "/x.txt"), file_exists(base + "/x.txt"))
+file_write(base + "/a/c.json", to_json({"k": [1, 2]}))
+print(list_dir(base), list_dir(base + "/a"), from_json(file_read(base + "/a/c.json")).k)
+print(file_delete(base + "/x.txt"), file_delete(base + "/x.txt"), file_exists(base + "/x.txt"))
+print(delete_dir(base), is_dir(base))
+try { file_read(base + "/gone.txt") } catch (e) { print(e.replace(base, "<base>")) }
+print(env("OKAYSCRIPT_SURELY_UNSET_VAR", "default"), env("OKAYSCRIPT_SURELY_UNSET_VAR") == "")
+var t0 = clock()
+sleep(0.02)
+print(clock() - t0 >= 0.015, typeof(now()), args.Count)
+exit(7)

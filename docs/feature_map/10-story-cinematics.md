@@ -8,6 +8,8 @@ five components in `Components/` with their `.cpp` files in `engine/src/Componen
 ## 10. Story & cinematics
 
 ### 10.1 Cutscene sequences and Sequence Player
+- **System:** Cutscenes - Timelines of camera shots, movement, animation, sound and events that play as a cutscene.
+  Home: `engine/include/okay/Components/Sequence.hpp`, `engine/include/okay/Components/SequencePlayer.hpp`. Entry: `engine/include/okay/Components/Sequence.hpp`. Also called: Timeline, Sequence, SequencePlayer, cinematics.
 - **What:** A `.okayseq` timeline of tracks (camera shots, object transforms, animation and audio cues, events, fades and subtitles, letterbox bars, camera shake, a coloured screen fade, nested sequences) played by a Sequence Player component, authored in the Timeline window with live preview in the Scene and Game views.
 - **Parts:**
   - 10.1.1 Sequence data and file - `Components/Sequence` - tracks, keys, shots, cues and events; evaluators `CameraAt`, `ChannelAt`, `OverlayAt`; text save and load
@@ -29,6 +31,8 @@ five components in `Components/` with their `.cpp` files in `engine/src/Componen
 - **Ask me like:** "make an intro cutscene with two camera shots and a fade"; "let the player skip the cutscene with Escape"
 
 ### 10.2 Dialogue graphs and Dialogue Runner
+- **System:** Dialogue - Branching conversations with choices, the dialogue box on screen, and subtitles.
+  Home: `engine/include/okay/Components/DialogueGraph.hpp`, `engine/include/okay/Components/DialogueRunner.hpp`. Entry: `engine/include/okay/Components/DialogueGraph.hpp`. Also called: DialogueGraph, DialogueRunner, conversations, subtitles.
 - **What:** Branching conversations authored as node graphs (`.okaydialog`) and run by a Dialogue Runner on an NPC: lines with portraits and sound, choices with conditions, story variable and quest hooks, items and script events.
 - **Parts:**
   - 10.2.1 Graph and session - `Components/DialogueGraph` - node kinds Line, Choice, Condition, Set, Event, Give Item, Take Item, Start Quest, Complete Objective, Jump, End; `DialogueSession` walks it through a `DialogueHost`
@@ -48,6 +52,8 @@ five components in `Components/` with their `.cpp` files in `engine/src/Componen
 - **Ask me like:** "make a shopkeeper who gives a quest if I have a key"; "add a choice that only shows when gold is 10 or more"
 
 ### 10.3 Quests and story variables
+- **System:** Quests - Quests with goals and progress, and story variables that remember what the player did.
+  Home: `engine/include/okay/Components/QuestLog.hpp`, `engine/include/okay/Components/StoryState.hpp`. Entry: `engine/include/okay/Components/QuestLog.hpp`. Also called: QuestLog, StoryState, story variables, objectives.
 - **What:** A Quest Log tracks each quest's state and progress (talk, collect, kill, reach and custom objectives, prerequisites, rewards, repeatable quests), and one Story State per scene holds the global variables and flags that dialogues, quests and scripts share.
 - **Parts:**
   - 10.3.1 Quest definitions and file - `Components/QuestLog` - `QuestDef`, objectives, rewards, prerequisites, `.okayquest` parse, write, validate and localization keys
@@ -68,6 +74,7 @@ five components in `Components/` with their `.cpp` files in `engine/src/Componen
 - **Ask me like:** "add a quest to bring 3 ore to the smith"; "unlock the gate when the quest is completed"
 
 ### 10.4 Story UI: dialogue box, quest tracker and journal
+- **System:** Dialogue
 - **What:** The built-in screens: the dialogue box with typewriter text, portrait and numbered choices, the quest tracker overlay, the notification toasts and the quest journal window. Each can be turned off to draw your own.
 - **Parts:**
   - 10.4.1 Dialogue box - `Components/DialogueRunner` - drawn through the host's OkayUI bridge; speaker as title, portrait or avatar, continue hint; off with `drawUI`

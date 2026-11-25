@@ -1,0 +1,15 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=animation
+title=Animation
+area=Animation
+description=Animator, state machines, characters, humanoid library, skinning.
+default=on
+core=0
+requires=core
+provides=IAnimation
+components=AimOffset,AnimStateMachine,Animator,BlendShapes,Character,HumanoidRetarget,ModelAnimator,PoseCapture,RootMotion,SkinnedMesh
+serializers=aimoffset,animator,blendshapes,character,rootmotion
+vs_group=animation
+editor=Animator window
+sources=include/okay/Animation/* src/Animation/* include/okay/Components/Animator.hpp include/okay/Components/AnimClip.hpp include/okay/Components/AnimControl.hpp include/okay/Components/AnimStateMachine.hpp include/okay/Components/AnimBackend.hpp include/okay/Components/Character.hpp include/okay/Components/CharacterAnimBackend.hpp include/okay/Components/ModelAnimator.hpp include/okay/Components/SkinnedMesh.hpp include/okay/Components/BlendShapes.hpp include/okay/Components/RootMotion.hpp include/okay/Components/HumanoidRetarget.hpp include/okay/Components/PoseCapture.hpp include/okay/Components/NaturalGait.hpp include/okay/Components/AimOffset.hpp include/okay/Components/Sockets.hpp src/Components/AnimClip.cpp src/Components/AnimControl.cpp src/Components/Character.cpp src/Components/CharacterAnimBackend.cpp src/Components/ModelAnimatorPose.cpp
+tests=anim_* animation animator* animclip char_anim* char_blend char_state_anim clip_graph blend_shapes humanoid_* guided_animation mixamo_locomotion skinning modelanim_save gait_continuity walk_* strafe_blend script_anim locomotion rig_sweep

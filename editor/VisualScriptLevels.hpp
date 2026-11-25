@@ -104,7 +104,7 @@ inline const VsSharedLevel kSharedLevels[] = {
     {"MapValues", VsLevel::Intermediate}, {"ForEachMap", VsLevel::Intermediate}, {"ShuffleList", VsLevel::Intermediate},
     {"ListMin", VsLevel::Intermediate}, {"ListMax", VsLevel::Intermediate}, {"RandomPick", VsLevel::Intermediate},
     {"RandomPoint", VsLevel::Intermediate}, {"OnCollisionTag", VsLevel::Intermediate},
-    {"OnHealthChanged", VsLevel::Intermediate}, {"OnTagEnter", VsLevel::Intermediate},
+    {"OnHealthChanged", VsLevel::Intermediate}, {"OnDamaged", VsLevel::Basic}, {"OnButtonClicked", VsLevel::Basic}, {"OnTagEnter", VsLevel::Intermediate},
     {"OnTagExit", VsLevel::Intermediate}, {"OnTagStay", VsLevel::Intermediate},
     {"CanSee", VsLevel::Intermediate}, {"Proximity", VsLevel::Intermediate}, {"IsValid", VsLevel::Intermediate},
     {"SwitchCamera", VsLevel::Intermediate}, {"SetCameraTarget", VsLevel::Intermediate}, {"Zoom", VsLevel::Intermediate},

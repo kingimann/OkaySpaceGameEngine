@@ -1,3 +1,4 @@
+#include <filesystem>
 #include "test_framework.hpp"
 #include "../editor/ProjectState.hpp"
 #include <Okay.hpp>
@@ -158,7 +159,7 @@ int main() {
         GameObject* p = src.CreateGameObject("Turret");
         p->transform->localPosition = {1, 2, 3};
         p->AddComponent<Camera>();
-        const std::string path = "/tmp/okay_turret_link.okayprefab";
+        const std::string path = (std::filesystem::temp_directory_path() / "okay_turret_link.okayprefab").string();
         CHECK(SceneSerializer::SaveObjectToFile(*p, path));
         // The prefab FILE itself must not carry a stale instance link.
         {

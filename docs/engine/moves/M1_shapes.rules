@@ -1,0 +1,121 @@
+# shapes: move of the bodies of okay::Mesh members out of Mesh.hpp (docs/engine/modularization_plan.md M1).
+# Each moved definition line is qualified (Mesh::), loses `static` and its default arguments (they stay on the declaration).
+change: static Mesh Quad(float size = 1.0f) { ==> Mesh Mesh::Quad(float size) {
+add: ^\s*static\ Mesh\ Quad\(float\ size\ =\ 1\.0f\);$
+change: static Mesh Cube(float size = 1.0f) { ==> Mesh Mesh::Cube(float size) {
+add: ^\s*static\ Mesh\ Cube\(float\ size\ =\ 1\.0f\);$
+change: static Mesh Wedge(float size = 1.0f) { ==> Mesh Mesh::Wedge(float size) {
+add: ^\s*static\ Mesh\ Wedge\(float\ size\ =\ 1\.0f\);$
+change: static Mesh Pyramid(float size = 1.0f) { ==> Mesh Mesh::Pyramid(float size) {
+add: ^\s*static\ Mesh\ Pyramid\(float\ size\ =\ 1\.0f\);$
+change: static Mesh Grid(float width = 10.0f, float depth = 10.0f, int cols = 10, int rows = 10) { ==> Mesh Mesh::Grid(float width, float depth, int cols, int rows) {
+add: ^\s*static\ Mesh\ Grid\(float\ width\ =\ 10\.0f,\ float\ depth\ =\ 10\.0f,\ int\ cols\ =\ 10,\ int\ rows\ =\ 10\);$
+change: static Mesh Plane(float size = 10.0f) { ==> Mesh Mesh::Plane(float size) {
+add: ^\s*static\ Mesh\ Plane\(float\ size\ =\ 10\.0f\);$
+change: static Mesh Sphere(float radius = 0.5f, int rings = 8, int sectors = 12) { ==> Mesh Mesh::Sphere(float radius, int rings, int sectors) {
+add: ^\s*static\ Mesh\ Sphere\(float\ radius\ =\ 0\.5f,\ int\ rings\ =\ 8,\ int\ sectors\ =\ 12\);$
+change: static Mesh RoundedBox(float size = 1.0f, float roundness = 0.3f, int rings = 14, int sectors = 20) { ==> Mesh Mesh::RoundedBox(float size, float roundness, int rings, int sectors) {
+add: ^\s*static\ Mesh\ RoundedBox\(float\ size\ =\ 1\.0f,\ float\ roundness\ =\ 0\.3f,\ int\ rings\ =\ 14,\ int\ sectors\ =\ 20\);$
+change: static Mesh Cylinder(float radius = 0.5f, float height = 1.0f, int sectors = 12) { ==> Mesh Mesh::Cylinder(float radius, float height, int sectors) {
+add: ^\s*static\ Mesh\ Cylinder\(float\ radius\ =\ 0\.5f,\ float\ height\ =\ 1\.0f,\ int\ sectors\ =\ 12\);$
+change: static Mesh Cone(float radius = 0.5f, float height = 1.0f, int sectors = 16) { ==> Mesh Mesh::Cone(float radius, float height, int sectors) {
+add: ^\s*static\ Mesh\ Cone\(float\ radius\ =\ 0\.5f,\ float\ height\ =\ 1\.0f,\ int\ sectors\ =\ 16\);$
+change: static Mesh Torus(float radius = 0.5f, float tube = 0.2f, int rings = 16, int sides = 10) { ==> Mesh Mesh::Torus(float radius, float tube, int rings, int sides) {
+add: ^\s*static\ Mesh\ Torus\(float\ radius\ =\ 0\.5f,\ float\ tube\ =\ 0\.2f,\ int\ rings\ =\ 16,\ int\ sides\ =\ 10\);$
+drop: ^\s*int\ rings\ =\ 160,\ int\ sides\ =\ 12\)\ \{$
+add: ^\s*Mesh\ Mesh::TorusKnot\(int\ p,\ int\ q,\ float\ scale,\ float\ tube,\ int\ rings,\ int\ sides\)\ \{$
+add: ^\s*int\ rings\ =\ 160,\ int\ sides\ =\ 12\);$
+change: static Mesh Tube(float outer = 0.5f, float inner = 0.3f, float height = 1.0f, int sectors = 24) { ==> Mesh Mesh::Tube(float outer, float inner, float height, int sectors) {
+add: ^\s*static\ Mesh\ Tube\(float\ outer\ =\ 0\.5f,\ float\ inner\ =\ 0\.3f,\ float\ height\ =\ 1\.0f,\ int\ sectors\ =\ 24\);$
+change: static void AppendBox(Mesh& m, const Vec3& mn, const Vec3& mx) { ==> void Mesh::AppendBox(Mesh& m, const Vec3& mn, const Vec3& mx) {
+add: ^\s*static\ void\ AppendBox\(Mesh\&\ m,\ const\ Vec3\&\ mn,\ const\ Vec3\&\ mx\);$
+change: static Mesh Hemisphere(float radius = 0.5f, int rings = 6, int sectors = 16) { ==> Mesh Mesh::Hemisphere(float radius, int rings, int sectors) {
+add: ^\s*static\ Mesh\ Hemisphere\(float\ radius\ =\ 0\.5f,\ int\ rings\ =\ 6,\ int\ sectors\ =\ 16\);$
+change: static Mesh Stairs(int steps = 5, float width = 1.0f, float totalHeight = 1.0f, float totalDepth = 1.0f) { ==> Mesh Mesh::Stairs(int steps, float width, float totalHeight, float totalDepth) {
+add: ^\s*static\ Mesh\ Stairs\(int\ steps\ =\ 5,\ float\ width\ =\ 1\.0f,\ float\ totalHeight\ =\ 1\.0f,\ float\ totalDepth\ =\ 1\.0f\);$
+change: static Mesh Gear(int teeth = 10, float radius = 0.5f, float toothDepth = 0.12f, float thickness = 0.25f) { ==> Mesh Mesh::Gear(int teeth, float radius, float toothDepth, float thickness) {
+add: ^\s*static\ Mesh\ Gear\(int\ teeth\ =\ 10,\ float\ radius\ =\ 0\.5f,\ float\ toothDepth\ =\ 0\.12f,\ float\ thickness\ =\ 0\.25f\);$
+change: static Mesh Prism(int sides = 6, float radius = 0.5f, float height = 1.0f) { ==> Mesh Mesh::Prism(int sides, float radius, float height) {
+add: ^\s*static\ Mesh\ Prism\(int\ sides\ =\ 6,\ float\ radius\ =\ 0\.5f,\ float\ height\ =\ 1\.0f\);$
+change: static Mesh Disc(float radius = 0.5f, int sectors = 24) { ==> Mesh Mesh::Disc(float radius, int sectors) {
+add: ^\s*static\ Mesh\ Disc\(float\ radius\ =\ 0\.5f,\ int\ sectors\ =\ 24\);$
+change: static Mesh Octahedron(float radius = 0.5f) { ==> Mesh Mesh::Octahedron(float radius) {
+add: ^\s*static\ Mesh\ Octahedron\(float\ radius\ =\ 0\.5f\);$
+change: static Mesh Tetrahedron(float radius = 0.5f) { ==> Mesh Mesh::Tetrahedron(float radius) {
+add: ^\s*static\ Mesh\ Tetrahedron\(float\ radius\ =\ 0\.5f\);$
+change: static Mesh Bipyramid(int sides = 6, float radius = 0.5f, float height = 1.0f) { ==> Mesh Mesh::Bipyramid(int sides, float radius, float height) {
+add: ^\s*static\ Mesh\ Bipyramid\(int\ sides\ =\ 6,\ float\ radius\ =\ 0\.5f,\ float\ height\ =\ 1\.0f\);$
+change: static Mesh Icosphere(float radius = 0.5f, int subdivisions = 2) { ==> Mesh Mesh::Icosphere(float radius, int subdivisions) {
+add: ^\s*static\ Mesh\ Icosphere\(float\ radius\ =\ 0\.5f,\ int\ subdivisions\ =\ 2\);$
+change: static float PropRand(int variant, int key, float lo, float hi) { ==> float Mesh::PropRand(int variant, int key, float lo, float hi) {
+add: ^\s*static\ float\ PropRand\(int\ variant,\ int\ key,\ float\ lo,\ float\ hi\);$
+change: static Mesh Tree(int variant = 0) { ==> Mesh Mesh::Tree(int variant) {
+add: ^\s*static\ Mesh\ Tree\(int\ variant\ =\ 0\);$
+change: static Mesh Pine(int variant = 0) { ==> Mesh Mesh::Pine(int variant) {
+add: ^\s*static\ Mesh\ Pine\(int\ variant\ =\ 0\);$
+change: static Mesh Rock(int variant = 0) { ==> Mesh Mesh::Rock(int variant) {
+add: ^\s*static\ Mesh\ Rock\(int\ variant\ =\ 0\);$
+change: static Mesh Bush(int variant = 0) { ==> Mesh Mesh::Bush(int variant) {
+add: ^\s*static\ Mesh\ Bush\(int\ variant\ =\ 0\);$
+change: static Mesh PalmTree(int variant = 0) { ==> Mesh Mesh::PalmTree(int variant) {
+add: ^\s*static\ Mesh\ PalmTree\(int\ variant\ =\ 0\);$
+change: static Mesh DeadTree(int variant = 0) { ==> Mesh Mesh::DeadTree(int variant) {
+add: ^\s*static\ Mesh\ DeadTree\(int\ variant\ =\ 0\);$
+change: static Mesh Mushroom(int variant = 0) { ==> Mesh Mesh::Mushroom(int variant) {
+add: ^\s*static\ Mesh\ Mushroom\(int\ variant\ =\ 0\);$
+change: static Mesh Cactus(int variant = 0) { ==> Mesh Mesh::Cactus(int variant) {
+add: ^\s*static\ Mesh\ Cactus\(int\ variant\ =\ 0\);$
+change: static Mesh Barrel() { ==> Mesh Mesh::Barrel() {
+add: ^\s*static\ Mesh\ Barrel\(\);$
+change: static Mesh Crate() { ==> Mesh Mesh::Crate() {
+add: ^\s*static\ Mesh\ Crate\(\);$
+change: static Mesh Fence() { ==> Mesh Mesh::Fence() {
+add: ^\s*static\ Mesh\ Fence\(\);$
+change: static Mesh Well() { ==> Mesh Mesh::Well() {
+add: ^\s*static\ Mesh\ Well\(\);$
+change: static Mesh StreetLamp() { ==> Mesh Mesh::StreetLamp() {
+add: ^\s*static\ Mesh\ StreetLamp\(\);$
+change: static Mesh Crystal(int variant = 0) { ==> Mesh Mesh::Crystal(int variant) {
+add: ^\s*static\ Mesh\ Crystal\(int\ variant\ =\ 0\);$
+change: static Mesh House() { ==> Mesh Mesh::House() {
+add: ^\s*static\ Mesh\ House\(\);$
+change: static Mesh Tower() { ==> Mesh Mesh::Tower() {
+add: ^\s*static\ Mesh\ Tower\(\);$
+change: static Mesh Windmill() { ==> Mesh Mesh::Windmill() {
+add: ^\s*static\ Mesh\ Windmill\(\);$
+change: static Mesh Bridge() { ==> Mesh Mesh::Bridge() {
+add: ^\s*static\ Mesh\ Bridge\(\);$
+change: static Mesh RockArch() { ==> Mesh Mesh::RockArch() {
+add: ^\s*static\ Mesh\ RockArch\(\);$
+change: static Mesh Campfire() { ==> Mesh Mesh::Campfire() {
+add: ^\s*static\ Mesh\ Campfire\(\);$
+change: static Mesh Lantern() { ==> Mesh Mesh::Lantern() {
+add: ^\s*static\ Mesh\ Lantern\(\);$
+change: static Mesh Chest() { ==> Mesh Mesh::Chest() {
+add: ^\s*static\ Mesh\ Chest\(\);$
+change: static Mesh Signpost() { ==> Mesh Mesh::Signpost() {
+add: ^\s*static\ Mesh\ Signpost\(\);$
+change: static Mesh Cart() { ==> Mesh Mesh::Cart() {
+add: ^\s*static\ Mesh\ Cart\(\);$
+change: static Mesh Tent() { ==> Mesh Mesh::Tent() {
+add: ^\s*static\ Mesh\ Tent\(\);$
+change: static Mesh Bench() { ==> Mesh Mesh::Bench() {
+add: ^\s*static\ Mesh\ Bench\(\);$
+change: static bool NameHasVariants(const std::string& n) { ==> bool Mesh::NameHasVariants(const std::string& n) {
+add: ^\s*static\ bool\ NameHasVariants\(const\ std::string\&\ n\);$
+change: static Mesh FromNameSeeded(const std::string& n, int variant) { ==> Mesh Mesh::FromNameSeeded(const std::string& n, int variant) {
+add: ^\s*static\ Mesh\ FromNameSeeded\(const\ std::string\&\ n,\ int\ variant\);$
+change: static Mesh FromName(const std::string& n) { ==> Mesh Mesh::FromName(const std::string& n) {
+add: ^\s*static\ Mesh\ FromName\(const\ std::string\&\ n\);$
+change: static Mesh Extrude(const std::vector<Vec2>& outline, float depth = 1.0f) { ==> Mesh Mesh::Extrude(const std::vector<Vec2>& outline, float depth) {
+add: ^\s*static\ Mesh\ Extrude\(const\ std::vector<Vec2>\&\ outline,\ float\ depth\ =\ 1\.0f\);$
+change: static Mesh Lathe(const std::vector<Vec2>& profile, int segments = 16) { ==> Mesh Mesh::Lathe(const std::vector<Vec2>& profile, int segments) {
+add: ^\s*static\ Mesh\ Lathe\(const\ std::vector<Vec2>\&\ profile,\ int\ segments\ =\ 16\);$
+change: static Mesh Capsule(float radius = 0.5f, float height = 1.0f, int sectors = 12, int rings = 6) { ==> Mesh Mesh::Capsule(float radius, float height, int sectors, int rings) {
+add: ^\s*static\ Mesh\ Capsule\(float\ radius\ =\ 0\.5f,\ float\ height\ =\ 1\.0f,\ int\ sectors\ =\ 12,\ int\ rings\ =\ 6\);$
+drop: ^\s*int\ segments\ =\ 32\)\ \{$
+add: ^\s*Mesh\ Mesh::Screw\(const\ std::vector<Vec2>\&\ profile,\ float\ turns,\ float\ pitch,\ int\ segments\)\ \{$
+add: ^\s*int\ segments\ =\ 32\);$
+drop: ^\s*int\ segments\ =\ 12,\ bool\ caps\ =\ true,\ float\ radiusEnd\ =\ \-1\.0f\)\ \{$
+add: ^\s*Mesh\ Mesh::SweepPath\(const\ std::vector<Vec3>\&\ path,\ float\ radius,\ int\ segments,\ bool\ caps,\ float\ radiusEnd\)\ \{$
+add: ^\s*int\ segments\ =\ 12,\ bool\ caps\ =\ true,\ float\ radiusEnd\ =\ \-1\.0f\);$

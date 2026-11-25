@@ -31,7 +31,7 @@ using namespace okay;
 #define OKAY_SAVE_COMPONENTS(X) \
     X(ActionList) X(AimIK) X(AimOffset) X(AnimStateMachine) X(Animator) X(AntiCheatConfig) X(AudioSource) \
     X(AutoSave) X(BehaviorTreeRunner) X(BleedingStat) X(BlendShapes) X(BlockBuilder) X(BoatController) X(Buoyancy) X(BoxCollider2D) \
-    X(BoxCollider3D) X(BuildMode) X(BuildPiece) X(Buildable) X(BuilderMode) X(Cable) X(Camera) X(CameraFollow) X(CameraRoom) X(Canvas) \
+    X(BoxCollider3D) X(BuildMode) X(BuildPiece) X(Buildable) X(BuilderMode) X(Cable) X(Camera) X(CameraFollow) X(CameraRoom) X(CameraZone) X(Canvas) \
     X(CapsuleCollider2D) X(CapsuleCollider3D) X(CarryWeightStat) X(ChainIK) X(Character) X(CharacterController2D) \
     X(CharacterController3D) X(CheckpointTrigger) X(ChestInventory) X(CinemachineBrain) X(CircleCollider2D) \
     X(ClickToMoveController) X(Collectible) X(Consumables) X(Crafting) X(CraftingMenu) X(CraftingStation) \
@@ -41,14 +41,14 @@ using namespace okay;
     X(FollowTarget2D) X(Foliage) X(FootIK) X(FreeRoamController) X(FullBodyIK) X(GridCostLayer) X(GridInventory) X(GridInventoryUI) \
     X(GridObstacle2D) X(GridPathAgent2D) \
     X(HealthStat) X(HoldPrompt) X(LocalPlayerInput) X(HoldableObject) X(HumanoidRetarget) X(HungerStat) X(IKTarget) X(Inventory) \
-    X(InventoryUI) X(ItemPickup) X(Joint2D) X(Joint3D) X(JumpPad) X(Lifetime) X(Light) X(LimbIK) X(LineRenderer) \
+    X(InventoryUI) X(ItemPickup) X(Joint2D) X(Joint3D) X(JumpPad) X(LedgeHandsIK) X(Lifetime) X(Light) X(LimbIK) X(LineRenderer) \
     X(LoadingScreen) X(LogicSource) X(LogicTarget) X(LookAtIK) X(LootSource) X(MeleeAttacker) X(MeshCollider3D) \
     X(MeshModifiers) X(MeshRenderer) X(Minimap) X(MinimapBlip) X(ModelAnimator) X(Mover) X(MusicPlayer) \
     X(NPCController) X(NavMeshAgent) X(NavMeshLink) X(NavMeshModifier) X(NavMeshObstacle) X(NavMeshSurface) X(NetInventory) X(NetValidator) \
     X(NetworkAvatarMotion) X(NetworkManager) X(NetworkObject) X(NetworkPlayerSpawner) X(NetworkSync) \
     X(NetworkTransform) X(OxygenStat) X(ParticleSystem) X(PauseMenu) X(Platformer25DController) \
     X(PlayerController) X(PlayerView) X(PoisonStat) X(PolygonCollider2D) X(PoseCapture) \
-    X(ProceduralObjectHolding) X(Projectile3D) X(QuestLog) X(QuestTrigger) X(RadiationStat) X(Ragdoll) X(RangedWeapon) \
+    X(ProceduralObjectHolding) X(Projectile3D) X(QuestLog) X(QuestTrigger) X(RadiationStat) X(Ragdoll) X(ActiveRagdoll) X(RangedWeapon) \
     X(Rigidbody2D) X(Rigidbody3D) X(RootMotion) X(SanityStat) X(SaveConfig) X(Saveable) X(ScriptComponent) X(Seat) \
     X(SequencePlayer) X(SettingsScreen) X(SkinnedMesh) X(SleepStat) X(Spawner) X(DebrisEmitter) X(SphereCollider3D) X(Spinner) \
     X(Spline) X(SplineFollower) X(SplineInstancer) X(SplineMesh) X(SpriteAnimator) X(SpriteRenderer) \
@@ -132,17 +132,16 @@ int main() {
 
     // Types that are never authored in a scene file, so a scene without them is complete:
     //   StatComponent          the base class of the stat components (Health, Hunger, ...), which are saved
-    //   TimedDestroy           the timer Destructible adds to its own debris
     //   UIToastItem            one toast row the UIToast component builds while it plays
     //   WeatherRig             the particle rig the scene's weather settings make (those settings are saved)
-    //   NetworkAvatarMotion    the motion driver NetworkPlayerSpawner puts on each avatar it spawns
     //   testing::EventProbe    a test helper (okay/Testing/PlayTest.hpp)
     //   SettingsScreen         rebuilt on its own: SettingsScreen::Ensure binds the "Settings" panel when Play starts
     //   SteamManager           added by game code at startup (docs/release/steam_release.md), not a scene object
-    //   CheckpointTrigger      the Save Framework's: added by game code, saved by the framework (docs/engine/save_games.md)
     //   (Saveable and SaveConfig are saved in the scene file: the no-code save route, docs/engine/save_games.md)
-    const std::set<std::string> kRuntimeOnly = {"StatComponent", "TimedDestroy", "UIToastItem", "WeatherRig", "NetworkAvatarMotion",
-                                                "testing::EventProbe", "SettingsScreen", "SteamManager", "CheckpointTrigger"};
+    //   (TimedDestroy, NetworkAvatarMotion and CheckpointTrigger are saved through the generic property record now,
+    //    ComponentSerializerRegistry::RegisterFromProperties, docs/engine/scene_serializer.md)
+    const std::set<std::string> kRuntimeOnly = {"StatComponent", "UIToastItem", "WeatherRig",
+                                                "testing::EventProbe", "SettingsScreen", "SteamManager"};
     for (const auto& n : dropped) CHECK(kRuntimeOnly.count(n) != 0);
     for (const auto& n : kRuntimeOnly) CHECK(std::find(dropped.begin(), dropped.end(), n) != dropped.end());   // keep this list honest: remove a type once it is saved
     CHECK(notSwitchable.empty());

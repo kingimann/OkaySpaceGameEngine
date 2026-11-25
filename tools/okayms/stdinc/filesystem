@@ -1,0 +1,417 @@
+// okay-ms own standard header: std::filesystem, written from ISO/IEC 14882 [filesystems] for the Windows path rules
+// (both '\' and '/' separate, a drive letter "C:" starts a root name). Own minimal version:
+// - path keeps narrow UTF-8 text (no wide strings: native(), wstring() and u8string() all give the text); the
+//   decomposition (filename, stem, extension, parent_path, root parts), operator/, append, concat, compare,
+//   lexically_normal and lexically_relative are written here from [fs.path.decompose], [fs.path.gen] and
+//   [fs.path.append].
+// - The operations that ask the operating system (exists, file_size, create_directories, remove, rename, the
+//   directory iterators, ...) are declared only. okay-ms's runtime does not define them yet, so a program that calls
+//   one links only against a library that does. Each has the std::error_code overload; there are no exceptions, so
+//   the overload without it reports nothing.
+// - No file_time_type clock, no space_info values, no permissions beyond the enumeration.
+#pragma once
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <system_error>
+#include <vector>
+namespace std {
+namespace filesystem {
+
+class path {
+    string text_;
+
+    static bool sep(char c) { return c == '/' || c == '\\'; }
+    // The length of the root name ("C:" or "//server"), 0 when there is none.
+    size_t root_name_len() const {
+        if (text_.size() >= 2 && text_[1] == ':' &&
+            ((text_[0] >= 'a' && text_[0] <= 'z') || (text_[0] >= 'A' && text_[0] <= 'Z')))
+            return 2;
+        if (text_.size() > 2 && sep(text_[0]) && sep(text_[1]) && !sep(text_[2])) {
+            size_t i = 2;
+            while (i < text_.size() && !sep(text_[i])) ++i;
+            return i;
+        }
+        return 0;
+    }
+    // Where the file name starts: after the last separator, or after the root name.
+    size_t filename_pos() const {
+        size_t i = text_.size();
+        const size_t root = root_name_len();
+        while (i > root && !sep(text_[i - 1])) --i;
+        return i;
+    }
+
+public:
+    typedef char value_type;
+    typedef string string_type;
+    static const char preferred_separator = '\\';
+
+    path() {}
+    path(const string& s) : text_(s) {}
+    path(const char* s) : text_(s) {}
+    path(const path& o) : text_(o.text_) {}
+    path& operator=(const path& o) {
+        text_ = o.text_;
+        return *this;
+    }
+    path& operator=(const string& s) {
+        text_ = s;
+        return *this;
+    }
+    path& operator=(const char* s) {
+        text_ = s;
+        return *this;
+    }
+
+    const string& native() const { return text_; }
+    const char* c_str() const { return text_.c_str(); }
+    string string() const { return text_; }
+    std::string u8string() const { return text_; }
+    std::string wstring() const { return text_; }
+    // The generic format uses '/' ([fs.path.generic]).
+    std::string generic_string() const {
+        std::string out = text_;
+        for (size_t i = 0; i < out.size(); ++i)
+            if (out[i] == '\\') out[i] = '/';
+        return out;
+    }
+    std::string generic_u8string() const { return generic_string(); }
+    bool empty() const { return text_.empty(); }
+    void clear() { text_.clear(); }
+
+    // [fs.path.append]: an absolute right side (or one with another root name) replaces the left one; otherwise a
+    // separator is added between them when the left one has a file name.
+    path& operator/=(const path& p) {
+        if (p.is_absolute() || (p.root_name_len() > 0 && p.root_name().text_ != root_name().text_)) {
+            text_ = p.text_;
+            return *this;
+        }
+        if (p.has_root_directory()) {
+            text_ = root_name().text_ + p.text_.substr(p.root_name_len());
+            return *this;
+        }
+        if (!text_.empty() && !sep(text_[text_.size() - 1]) && !(text_.size() == root_name_len() && root_name_len() == 2))
+            text_ += '\\';
+        text_ += p.text_.substr(p.root_name_len());
+        return *this;
+    }
+    path& append(const path& p) { return *this /= p; }
+    path& operator+=(const path& p) {
+        text_ += p.text_;
+        return *this;
+    }
+    path& operator+=(const char* s) {
+        text_ += s;
+        return *this;
+    }
+    path& operator+=(const std::string& s) {
+        text_ += s;
+        return *this;
+    }
+    path& operator+=(char c) {
+        text_ += c;
+        return *this;
+    }
+    path& concat(const path& p) { return *this += p; }
+
+    path root_name() const { return path(text_.substr(0, root_name_len())); }
+    bool has_root_directory() const {
+        const size_t r = root_name_len();
+        return r < text_.size() && sep(text_[r]);
+    }
+    path root_directory() const { return has_root_directory() ? path("\\") : path(); }
+    path root_path() const { return path(text_.substr(0, root_name_len() + (has_root_directory() ? 1 : 0))); }
+    bool has_root_name() const { return root_name_len() > 0; }
+    bool has_root_path() const { return has_root_name() || has_root_directory(); }
+    // On Windows a path is absolute when it has both a root name and a root directory ([fs.path.query]).
+    bool is_absolute() const { return root_name_len() > 0 && has_root_directory(); }
+    bool is_relative() const { return !is_absolute(); }
+    path relative_path() const {
+        size_t i = root_name_len();
+        while (i < text_.size() && sep(text_[i])) ++i;
+        return path(text_.substr(i));
+    }
+    path filename() const { return path(text_.substr(filename_pos())); }
+    bool has_filename() const { return filename_pos() < text_.size(); }
+    // The parent is everything before the file name, without the separators in between (but keeping the root).
+    path parent_path() const {
+        if (!has_relative_path()) return *this;
+        size_t end = filename_pos();
+        const size_t keep = root_name_len() + (has_root_directory() ? 1 : 0);
+        while (end > keep && sep(text_[end - 1])) --end;
+        return path(text_.substr(0, end));
+    }
+    bool has_relative_path() const { return !relative_path().empty(); }
+    bool has_parent_path() const { return !parent_path().empty(); }
+    // "." and ".." have no extension; a leading dot starts no extension (".profile") ([fs.path.decompose]).
+    path stem() const {
+        const std::string name = text_.substr(filename_pos());
+        if (name == "." || name == "..") return path(name);
+        const size_t dot = name.rfind('.');
+        if (dot == std::string::npos || dot == 0) return path(name);
+        return path(name.substr(0, dot));
+    }
+    path extension() const {
+        const std::string name = text_.substr(filename_pos());
+        if (name == "." || name == "..") return path();
+        const size_t dot = name.rfind('.');
+        if (dot == std::string::npos || dot == 0) return path();
+        return path(name.substr(dot));
+    }
+    bool has_stem() const { return !stem().empty(); }
+    bool has_extension() const { return !extension().empty(); }
+    path& replace_extension(const path& ext) {
+        const std::string old = extension().text_;
+        text_ = text_.substr(0, text_.size() - old.size());
+        if (!ext.empty() && ext.text_[0] != '.') text_ += '.';
+        text_ += ext.text_;
+        return *this;
+    }
+    path& replace_extension() { return replace_extension(path()); }
+    path& replace_filename(const path& name) {
+        text_ = text_.substr(0, filename_pos());
+        return *this /= name;
+    }
+    path& remove_filename() {
+        text_ = text_.substr(0, filename_pos());
+        return *this;
+    }
+    path& make_preferred() {
+        for (size_t i = 0; i < text_.size(); ++i)
+            if (text_[i] == '/') text_[i] = '\\';
+        return *this;
+    }
+
+    // The elements: root name, root directory, then each file name; separators are not elements ([fs.path.itr]).
+    std::vector<path> parts() const {
+        std::vector<path> out;
+        size_t i = root_name_len();
+        if (i > 0) out.push_back(path(text_.substr(0, i)));
+        if (has_root_directory()) out.push_back(path("\\"));
+        while (i < text_.size()) {
+            while (i < text_.size() && sep(text_[i])) ++i;
+            const size_t from = i;
+            while (i < text_.size() && !sep(text_[i])) ++i;
+            if (i > from) out.push_back(path(text_.substr(from, i - from)));
+            else if (from == text_.size() && from > 0 && sep(text_[from - 1]) && !out.empty() &&
+                     text_.size() > root_name_len() + 1)
+                out.push_back(path());  // a trailing separator gives an empty last element
+        }
+        return out;
+    }
+
+    // [fs.path.gen]: drop "." elements, fold "name/..", keep leading ".." of a relative path.
+    path lexically_normal() const {
+        if (text_.empty()) return path();
+        const std::vector<path> in = parts();
+        std::vector<std::string> names;
+        std::string root;
+        size_t k = 0;
+        if (root_name_len() > 0) root += in[k++].text_;
+        if (has_root_directory()) {
+            root += '\\';
+            ++k;
+        }
+        bool trailing = false;
+        for (; k < in.size(); ++k) {
+            const std::string& e = in[k].text_;
+            trailing = e.empty();
+            if (e.empty() || e == ".") {
+                trailing = true;
+                continue;
+            }
+            if (e == ".." && !names.empty() && names.back() != "..") {
+                names.pop_back();
+                trailing = true;
+                continue;
+            }
+            if (e == ".." && names.empty() && has_root_directory()) continue;
+            names.push_back(e);
+            trailing = false;
+        }
+        std::string out = root;
+        for (size_t i = 0; i < names.size(); ++i) {
+            if (i > 0) out += '\\';
+            out += names[i];
+        }
+        if (trailing && !names.empty() && names.back() != "..") out += '\\';
+        if (out.empty()) out = ".";
+        return path(out);
+    }
+    // The path that leads from base to this one ([fs.path.gen]); empty when their roots differ.
+    path lexically_relative(const path& base) const {
+        if (root_name().text_ != base.root_name().text_ || is_absolute() != base.is_absolute() ||
+            (!has_root_directory() && base.has_root_directory()))
+            return path();
+        const std::vector<path> a = lexically_normal().parts();
+        const std::vector<path> b = base.lexically_normal().parts();
+        size_t i = 0;
+        while (i < a.size() && i < b.size() && a[i].text_ == b[i].text_) ++i;
+        if (i == a.size() && i == b.size()) return path(".");
+        int up = 0;
+        for (size_t j = i; j < b.size(); ++j) {
+            if (b[j].text_ == "..") --up;
+            else if (!b[j].text_.empty() && b[j].text_ != ".") ++up;
+        }
+        if (up < 0) return path();
+        path out;
+        for (int u = 0; u < up; ++u) out /= path("..");
+        for (size_t j = i; j < a.size(); ++j) out /= a[j];
+        if (out.empty()) return path(".");
+        return out;
+    }
+    path lexically_proximate(const path& base) const {
+        const path r = lexically_relative(base);
+        return r.empty() ? *this : r;
+    }
+
+    int compare(const path& o) const { return text_.compare(o.text_.c_str()); }
+    bool operator==(const path& o) const { return text_ == o.text_; }
+    bool operator!=(const path& o) const { return !(text_ == o.text_); }
+    bool operator<(const path& o) const { return text_ < o.text_; }
+    operator std::string() const { return text_; }
+};
+
+inline path operator/(const path& a, const path& b) {
+    path out = a;
+    out /= b;
+    return out;
+}
+inline path u8path(const std::string& s) { return path(s); }
+inline path u8path(const char* s) { return path(s); }
+
+enum class file_type { none, not_found, regular, directory, symlink, block, character, fifo, socket, unknown };
+enum class perms : unsigned { none = 0, owner_read = 0400, owner_write = 0200, owner_exec = 0100, owner_all = 0700,
+                              group_all = 070, others_all = 07, all = 0777, unknown = 0xFFFF };
+enum class perm_options { replace = 1, add = 2, remove = 4, nofollow = 8 };
+enum class copy_options { none = 0, skip_existing = 1, overwrite_existing = 2, update_existing = 4, recursive = 8 };
+enum class directory_options { none = 0, follow_directory_symlink = 1, skip_permission_denied = 2 };
+
+class file_status {
+    file_type type_;
+
+public:
+    file_status() : type_(file_type::none) {}
+    explicit file_status(file_type t) : type_(t) {}
+    file_type type() const { return type_; }
+};
+
+struct space_info {
+    std::uintmax_t capacity;
+    std::uintmax_t free;
+    std::uintmax_t available;
+};
+
+// A count of 100-nanosecond intervals, as Windows keeps file times (own simplification: no clock type).
+typedef long long file_time_type;
+
+// The operations ([fs.op.funcs]): declarations only (see the top of this header).
+bool exists(const path& p);
+bool exists(const path& p, error_code& ec);
+bool is_directory(const path& p);
+bool is_directory(const path& p, error_code& ec);
+bool is_regular_file(const path& p);
+bool is_regular_file(const path& p, error_code& ec);
+bool is_symlink(const path& p);
+bool is_symlink(const path& p, error_code& ec);
+bool is_empty(const path& p);
+bool is_empty(const path& p, error_code& ec);
+file_status status(const path& p);
+file_status status(const path& p, error_code& ec);
+std::uintmax_t file_size(const path& p);
+std::uintmax_t file_size(const path& p, error_code& ec);
+bool create_directory(const path& p);
+bool create_directory(const path& p, error_code& ec);
+bool create_directories(const path& p);
+bool create_directories(const path& p, error_code& ec);
+void create_hard_link(const path& to, const path& link, error_code& ec);
+bool remove(const path& p);
+bool remove(const path& p, error_code& ec);
+std::uintmax_t remove_all(const path& p);
+std::uintmax_t remove_all(const path& p, error_code& ec);
+void rename(const path& from, const path& to);
+void rename(const path& from, const path& to, error_code& ec);
+bool copy_file(const path& from, const path& to);
+bool copy_file(const path& from, const path& to, error_code& ec);
+bool copy_file(const path& from, const path& to, copy_options options, error_code& ec);
+void copy(const path& from, const path& to, copy_options options, error_code& ec);
+path absolute(const path& p);
+path absolute(const path& p, error_code& ec);
+path weakly_canonical(const path& p);
+path weakly_canonical(const path& p, error_code& ec);
+path canonical(const path& p, error_code& ec);
+path relative(const path& p, const path& base);
+path relative(const path& p, const path& base, error_code& ec);
+path current_path();
+path current_path(error_code& ec);
+void current_path(const path& p, error_code& ec);
+path temp_directory_path();
+path temp_directory_path(error_code& ec);
+file_time_type last_write_time(const path& p);
+file_time_type last_write_time(const path& p, error_code& ec);
+void permissions(const path& p, perms prms, perm_options opts, error_code& ec);
+space_info space(const path& p, error_code& ec);
+bool equivalent(const path& a, const path& b, error_code& ec);
+
+class directory_entry {
+    filesystem::path path_;
+
+public:
+    directory_entry() {}
+    explicit directory_entry(const filesystem::path& p) : path_(p) {}
+    const filesystem::path& path() const { return path_; }
+    operator const filesystem::path&() const { return path_; }
+    // These ask the operating system: declared only, like the free functions (an inline body here would make every
+    // file that includes the header need them at link time).
+    bool exists() const;
+    bool is_directory() const;
+    bool is_regular_file() const;
+    bool is_directory(error_code& ec) const;
+    bool is_regular_file(error_code& ec) const;
+    std::uintmax_t file_size() const;
+    std::uintmax_t file_size(error_code& ec) const;
+    file_time_type last_write_time() const;
+};
+
+// A directory listing. Declarations only: the constructors that read a directory are not defined here.
+class directory_iterator {
+    void* state_;
+
+public:
+    directory_iterator() : state_(nullptr) {}
+    explicit directory_iterator(const path& p);
+    directory_iterator(const path& p, error_code& ec);
+    directory_iterator(const path& p, directory_options options, error_code& ec);
+    const directory_entry& operator*() const;
+    const directory_entry* operator->() const;
+    directory_iterator& operator++();
+    directory_iterator& increment(error_code& ec);
+    bool operator==(const directory_iterator& o) const { return state_ == o.state_; }
+    bool operator!=(const directory_iterator& o) const { return state_ != o.state_; }
+};
+inline directory_iterator begin(directory_iterator it) { return it; }
+inline directory_iterator end(const directory_iterator&) { return directory_iterator(); }
+
+class recursive_directory_iterator {
+    void* state_;
+
+public:
+    recursive_directory_iterator() : state_(nullptr) {}
+    explicit recursive_directory_iterator(const path& p);
+    recursive_directory_iterator(const path& p, error_code& ec);
+    recursive_directory_iterator(const path& p, directory_options options, error_code& ec);
+    const directory_entry& operator*() const;
+    const directory_entry* operator->() const;
+    recursive_directory_iterator& operator++();
+    recursive_directory_iterator& increment(error_code& ec);
+    int depth() const;
+    void disable_recursion_pending();
+    bool operator==(const recursive_directory_iterator& o) const { return state_ == o.state_; }
+    bool operator!=(const recursive_directory_iterator& o) const { return state_ != o.state_; }
+};
+inline recursive_directory_iterator begin(recursive_directory_iterator it) { return it; }
+inline recursive_directory_iterator end(const recursive_directory_iterator&) { return recursive_directory_iterator(); }
+
+}  // namespace filesystem
+}  // namespace std

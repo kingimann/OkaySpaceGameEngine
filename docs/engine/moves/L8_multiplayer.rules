@@ -1,0 +1,97 @@
+# Launcher split L8 (docs/engine/modularization_plan.md Part C): Multiplayer (presence, friends list, party, invites, dialogs, page) out of launcher/main.cpp -> launcher/Multiplayer.hpp/.cpp.
+# `static` dropped on what the moved code shares (declared in LauncherShared.hpp / Multiplayer.hpp); every other added line is a declaration of that.
+drop: ^static\ SDL_Window\*\ g_launcherWindow\ =\ nullptr;\ \ \ //\ brought\ forward\ when\ a\ game\ asks\ for\ the\ invite\ window$
+add: ^SDL_Window\*\ g_launcherWindow\ =\ nullptr;\ \ \ //\ brought\ forward\ when\ a\ game\ asks\ for\ the\ invite\ window$
+drop: ^static\ void\ PumpMultiplayer\(\)\ \{$
+add: ^void\ PumpMultiplayer\(\)\ \{$
+drop: ^static\ void\ PumpParty\(\)\ \{$
+add: ^void\ PumpParty\(\)\ \{$
+drop: ^static\ void\ DrawMpDialogs\(\)\ \{$
+add: ^void\ DrawMpDialogs\(\)\ \{$
+drop: ^static\ void\ DrawMultiplayerPage\(bool\ signedIn\)\ \{$
+add: ^void\ DrawMultiplayerPage\(bool\ signedIn\)\ \{$
+drop: ^static\ std::vector<PlayProc>\ g_playProcs;$
+add: ^std::vector<PlayProc>\ g_playProcs;$
+drop: ^static\ bool\ SpawnTracked\(const\ std::string\&\ exe,\ const\ std::string\&\ args,\ const\ std::string\&\ key,\ const\ std::string\&\ title\)\ \{$
+add: ^bool\ SpawnTracked\(const\ std::string\&\ exe,\ const\ std::string\&\ args,\ const\ std::string\&\ key,\ const\ std::string\&\ title\)\ \{$
+drop: ^static\ std::string\ GameTitleFromPath\(const\ std::string\&\ path\)\ \{$
+add: ^std::string\ GameTitleFromPath\(const\ std::string\&\ path\)\ \{$
+drop: ^static\ bool\ AntiCheatAllowsSceneLaunch\(const\ std::string\&\ scene\)\ \{$
+add: ^bool\ AntiCheatAllowsSceneLaunch\(const\ std::string\&\ scene\)\ \{$
+drop: ^static\ std::string\ InviteMessageBody\(const\ std::string\&\ title,\ const\ std::string\&\ link\)\ \{$
+add: ^std::string\ InviteMessageBody\(const\ std::string\&\ title,\ const\ std::string\&\ link\)\ \{$
+drop: ^static\ void\ DrawGamepadIcon\(ImDrawList\*\ d,\ ImVec2\ c,\ float\ s,\ ImU32\ col\)\ \{$
+add: ^void\ DrawGamepadIcon\(ImDrawList\*\ d,\ ImVec2\ c,\ float\ s,\ ImU32\ col\)\ \{$
+drop: ^static\ void\ PlayChatChime\(\)\ \{$
+add: ^void\ PlayChatChime\(\)\ \{$
+drop: ^static\ okay::thr::Mutex\*\ \ g_pollMutex\ =\ nullptr;$
+add: ^okay::thr::Mutex\*\ \ g_pollMutex\ =\ nullptr;$
+drop: ^static\ std::vector<PendingInvite>\ g_pollInvites;\ \ \ //\ \(guarded\)\ fresh\ ones\ not\ yet\ shown$
+add: ^std::vector<PendingInvite>\ g_pollInvites;\ \ \ //\ \(guarded\)\ fresh\ ones\ not\ yet\ shown$
+drop: ^static\ okay::thr::Mutex\*\ g_presMutex\ =\ nullptr;$
+add: ^okay::thr::Mutex\*\ g_presMutex\ =\ nullptr;$
+drop: ^static\ std::string\ g_presText,\ g_presJoin;\ \ \ //\ \(guarded\)\ ""\ =\ no\ game\ running$
+add: ^std::string\ g_presText,\ g_presJoin;\ \ \ //\ \(guarded\)\ ""\ =\ no\ game\ running$
+drop: ^static\ std::string\ PresenceText\(\)\ \{$
+add: ^std::string\ PresenceText\(\)\ \{$
+drop: ^static\ okay::thr::Mutex\*\ g_frMutex\ =\ nullptr;$
+add: ^okay::thr::Mutex\*\ g_frMutex\ =\ nullptr;$
+drop: ^static\ volatile\ bool\ g_frFetching\ =\ false;$
+add: ^volatile\ bool\ g_frFetching\ =\ false;$
+drop: ^static\ std::vector<okay::Friend>\ g_frList;\ \ \ \ \ \ \ \ \ \ \ //\ \(guarded\)$
+add: ^std::vector<okay::Friend>\ g_frList;\ \ \ \ \ \ \ \ \ \ \ //\ \(guarded\)$
+drop: ^static\ int\ FriendsListWorker\(void\*\)\ \{$
+add: ^int\ FriendsListWorker\(void\*\)\ \{$
+add: ^extern\ SDL_Window\*\ g_launcherWindow;$
+add: ^void\ PumpMultiplayer\(\);$
+add: ^void\ PumpParty\(\);$
+add: ^void\ DrawMpDialogs\(\);$
+add: ^void\ DrawMultiplayerPage\(bool\ signedIn\);$
+add: ^\#if\ !defined\(_WIN32\)$
+add: ^\#endif$
+add: ^std::string\ AgoText\(long\ when\);$
+add: ^bool\ AntiCheatAllowsSceneLaunch\(const\ std::string\&\ scene\);$
+add: ^void\ DrawGamepadIcon\(ImDrawList\*\ d,\ ImVec2\ c,\ float\ s,\ ImU32\ col\);$
+add: ^std::string\ FindExe\(std::initializer_list<const\ char\*>\ names\);$
+add: ^std::vector<fs::path>\ FindScenes\(\);$
+add: ^int\ FriendsListWorker\(void\*\);$
+add: ^std::string\ GameTitleFromPath\(const\ std::string\&\ path\);$
+add: ^std::string\ InviteMessageBody\(const\ std::string\&\ title,\ const\ std::string\&\ link\);$
+add: ^bool\ IsBuiltGame\(const\ fs::path\&\ scene\);$
+add: ^std::string\ LastOnline\(long\ when\);$
+add: ^void\ PlayChatChime\(\);$
+add: ^std::string\ PresenceText\(\);$
+add: ^void\ RecordPlayed\(const\ std::string\&\ p\);$
+add: ^bool\ SpawnTracked\(const\ std::string\&\ exe,\ const\ std::string\&\ args,\ const\ std::string\&\ key,\ const\ std::string\&\ title\);$
+add: ^extern\ volatile\ bool\ g_frFetching;$
+add: ^extern\ std::vector<okay::Friend>\ g_frList;$
+add: ^extern\ okay::thr::Mutex\*\ g_frMutex;$
+add: ^extern\ volatile\ long\ g_inviteSeenId;$
+add: ^extern\ int\ g_onlineStatus;$
+add: ^extern\ bool\ g_partyFollow;$
+add: ^extern\ std::vector<PlayProc>\ g_playProcs;$
+add: ^extern\ std::vector<PendingInvite>\ g_pollInvites;$
+add: ^extern\ okay::thr::Mutex\*\ \ g_pollMutex;$
+add: ^extern\ okay::thr::Mutex\*\ g_presMutex;$
+add: ^extern\ okay::account::AccountService\*\ g_presenceAccount;$
+add: ^extern\ bool\ g_sharePresence;$
+add: ^extern\ int\ g_themeIndex;$
+add: ^bool\ UpsertNotif\(const\ std::string\&\ key,\ const\ std::string\&\ title,$
+add: const std::string& body, int kind, int gotoTab\);
+add: ^extern\ std::string\ g_presText,\ g_presJoin;\ \ \ \ \ //\ \(guarded\ by\ g_presMutex\)\ ""\ =\ no\ game\ running$
+add: ^std::vector<PlayProc>\ g_playProcs;$
+add: ^bool\ SpawnTracked\(const\ std::string\&\ exe,\ const\ std::string\&\ args,\ const\ std::string\&\ key,\ const\ std::string\&\ title\)\ \{$
+add: ^std::string\ GameTitleFromPath\(const\ std::string\&\ path\)\ \{$
+add: ^bool\ AntiCheatAllowsSceneLaunch\(const\ std::string\&\ scene\)\ \{$
+add: ^std::string\ InviteMessageBody\(const\ std::string\&\ title,\ const\ std::string\&\ link\)\ \{$
+add: ^void\ DrawGamepadIcon\(ImDrawList\*\ d,\ ImVec2\ c,\ float\ s,\ ImU32\ col\)\ \{$
+add: ^void\ PlayChatChime\(\)\ \{$
+add: ^okay::thr::Mutex\*\ \ g_pollMutex\ =\ nullptr;$
+add: ^std::vector<PendingInvite>\ g_pollInvites;\ \ \ //\ \(guarded\)\ fresh\ ones\ not\ yet\ shown$
+add: ^okay::thr::Mutex\*\ g_presMutex\ =\ nullptr;$
+add: ^std::string\ g_presText,\ g_presJoin;\ \ \ //\ \(guarded\)\ ""\ =\ no\ game\ running$
+add: ^std::string\ PresenceText\(\)\ \{$
+add: ^okay::thr::Mutex\*\ g_frMutex\ =\ nullptr;$
+add: ^volatile\ bool\ g_frFetching\ =\ false;$
+add: ^std::vector<okay::Friend>\ g_frList;\ \ \ \ \ \ \ \ \ \ \ //\ \(guarded\)$
+add: ^int\ FriendsListWorker\(void\*\)\ \{$

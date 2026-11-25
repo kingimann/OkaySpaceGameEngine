@@ -82,19 +82,68 @@ def load_lanes(root):
         return json.load(f)
 
 
+_default_lanes = None
+
+
+def default_lanes():
+    """docs/lanes.json of the checkout these scripts live in (used when a caller passes no lanes table)."""
+    global _default_lanes
+    if _default_lanes is None:
+        _default_lanes = load_lanes(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return _default_lanes
+
+
+def lane_defs(lanes=None):
+    """{lane: {"prefix": "claude3/", "name": "Claude 3", "description": ...}} from lanes.json's "lanes" map."""
+    return (lanes or default_lanes()).get("lanes", {})
+
+
+def lane_names(lanes=None):
+    return list(lane_defs(lanes))
+
+
+def lane_prefixes(lanes=None):
+    """{lane: branch prefix}, e.g. {"coordinator": "claude/", "claude2": "claude2/", "claude3": "claude3/"}."""
+    return {k: v["prefix"] for k, v in lane_defs(lanes).items()}
+
+
+def lane_display(lane, lanes=None):
+    d = lane_defs(lanes).get(lane)
+    return d.get("name", lane) if d else (lane or "?")
+
+
+def lane_key(text, lanes=None):
+    """'claude3', 'Claude 3', 'claude3/' or 'Coordinator' -> the lane name; None when it names no lane."""
+    t = re.sub(r"[\s`*_]+", " ", (text or "")).strip().lower()
+    if not t:
+        return None
+    for k, v in lane_defs(lanes).items():
+        if t in (k.lower(), v.get("name", "").lower(), v["prefix"].lower(), v["prefix"].rstrip("/").lower()):
+            return k
+    return None
+
+
+def rule_globs(rule):
+    """A rule's globs: the ones that match files today plus the 'planned' ones (files that do not exist yet)."""
+    return list(rule.get("globs", [])) + list(rule.get("planned", []))
+
+
 def owner_of(path, lanes):
-    """First matching rule's owner: claude2, coordinator, shared or open."""
+    """First matching rule's owner: a lane name from lanes.json, shared or open."""
     for r in lanes["rules"]:
-        if any(glob_match(path, g) for g in r["globs"]):
+        if any(glob_match(path, g) for g in rule_globs(r)):
             return r["owner"]
     return "open"
 
 
-def lane_of_branch(name):
+def lane_of_branch(name, lanes=None):
+    """The lane whose branch prefix starts the name (the longest prefix wins); None for main, john/*, forks and the rest."""
     n = name[len("origin/"):] if name.startswith("origin/") else name
-    if n.startswith("claude2/"): return "claude2"
-    if n.startswith("claude/"): return "coordinator"
-    return None
+    best = None
+    for k, p in lane_prefixes(lanes).items():
+        if n.startswith(p) and (best is None or len(p) > len(best[1])):
+            best = (k, p)
+    return best[0] if best else None
 
 
 def generated_entry(path, lanes):
@@ -106,9 +155,10 @@ def generated_entry(path, lanes):
 
 # ---------------------------------------------------------------- claims
 
-CLAIM_RE = re.compile(r"^[\s>*#_-]*(Claim|Release|Agree)(?:\s+and\s+result)?\s*:\s*[*_`\s]*([A-Za-z0-9_./-]+)", re.I | re.M)
+# "Claim: claude3/x", "**CLAIM: claude3/x**", "Claim (Claude 3): claude3/x", "Agree (Claude 2): claude3/x". The name in brackets is optional.
+CLAIM_RE = re.compile(r"^[\s>*#_-]*(Claim|Release|Agree)(?:\s+and\s+result)?(?:\s*\(([^)\n]{1,40})\))?\s*:\s*[*_`\s]*([A-Za-z0-9_./-]+)", re.I | re.M)
 FIELD_KEYS = ["Existing", "Gap", "Files", "Test-first", "Try-it"]
-FIELD_RE = re.compile(r"(?:^|\s/\s|\n)[\s>*_-]*(Existing|Gap|Files|Test-first|Try-it|Kind)\s*(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*", re.I)
+FIELD_RE = re.compile(r"(?:^|\s/\s|\n)[\s>*_-]*(Existing|Gap|Files|Test-first|Try-it|Kind|Lane)\s*(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*", re.I)
 
 
 def norm_branch(b):
@@ -132,32 +182,59 @@ def split_globs(s):
     return [p.strip("*_.") if not p.endswith("*") else p.strip("_") for p in parts if re.search(r"[A-Za-z0-9_*]/|\.[a-z]{1,4}$|\*", p)]
 
 
-def parse_claims(comments):
+def _named_lane(m, fields, lanes):
+    """The lane a Claim/Agree comment names: 'Claim (Claude 3): ...' or a 'Lane: claude3' line. None when it names none."""
+    for t in (m.group(2), fields.get("lane", "")):
+        k = lane_key((t or "").split("\n")[0].strip(" .;"), lanes)
+        if k:
+            return k
+    return None
+
+
+def parse_claims(comments, lanes=None):
     """comments: list of {body, created_at, html_url, user?}. Returns (claims dict branch->claim, events list).
-    A later Release removes a claim; Agree marks the claim as agreed by the other lane. Oldest first."""
+    A later Release removes a claim; Agree marks the claim as agreed. Oldest first.
+    A claim's lane is its 'Lane:' line or bracketed name when given ('Claim (Claude 3): claude3/x'), else its branch prefix.
+    An Agree that names a lane ('Agree (Claude 2): b' or a 'Lane: claude2' line) counts only for that lane; one that names
+    none counts for every lane (as before there were three lanes)."""
     claims, events = {}, []
     for c in sorted(comments, key=lambda x: x.get("created_at", "")):
         body = c.get("body") or ""
         for m in CLAIM_RE.finditer(body):
-            kind, br = m.group(1).lower(), norm_branch(m.group(2))
+            kind, br = m.group(1).lower(), norm_branch(m.group(3))
             if "/" not in br and kind != "agree":
                 continue
             events.append((kind, br, c.get("created_at"), c.get("html_url")))
+            tail = body[m.end():]
+            nxt = CLAIM_RE.search(tail)
+            tail = tail[:nxt.start()] if nxt else tail
+            f = split_fields(tail)
             if kind == "claim":
-                tail = body[m.end():]
-                nxt = CLAIM_RE.search(tail)
-                tail = tail[:nxt.start()] if nxt else tail
-                f = split_fields(tail)
+                named = _named_lane(m, f, lanes)
+                stated = (m.group(2) or f.get("lane", "")).split("\n")[0].strip(" .;")
                 claims[br] = {"branch": br, "created_at": c.get("created_at"), "url": c.get("html_url"),
                               "existing": f.get("existing", ""), "gap": f.get("gap", ""),
                               "files": split_globs(f.get("files", "")), "test_first": f.get("test-first", ""),
-                              "try_it": f.get("try-it", ""), "agreed": False, "has_fields": bool(f),
-                              "kind": f.get("kind", "").strip(" *_`.").lower()}
+                              "try_it": f.get("try-it", ""), "agreed": False, "agreed_by": [],
+                              "has_fields": bool(set(f) - {"lane", "kind"}),
+                              "kind": f.get("kind", "").strip(" *_`.").lower(),
+                              "lane": named or lane_of_branch(br, lanes), "lane_stated": stated if stated and not named else ""}
+                if named and lane_of_branch(br, lanes) and named != lane_of_branch(br, lanes):
+                    claims[br]["lane_mismatch"] = named
             elif kind == "release":
                 claims.pop(br, None)
             elif kind == "agree" and br in claims:
-                claims[br]["agreed"] = True
+                by = _named_lane(m, f, lanes)
+                if by is None:
+                    claims[br]["agreed"] = True
+                elif by not in claims[br]["agreed_by"]:
+                    claims[br]["agreed_by"].append(by)
     return claims, events
+
+
+def agreed_by(claim, lane):
+    """Did `lane` agree to this claim? A plain 'Agree:' (no lane named) or claim['agreed'] = True counts for every lane."""
+    return bool(claim.get("agreed")) or lane in claim.get("agreed_by", [])
 
 
 def parse_ts(s):
@@ -181,30 +258,37 @@ def claim_status(claim, last_push, now=None):
 
 
 def check_claim_rules(claim, lanes, other_claims, files=None):
-    """Problems that make a claim refused (docs/process/collaboration.md, claim protocol)."""
+    """Problems that make a claim refused (docs/process/collaboration.md, claim protocol).
+    A file owned by lane X, named by a claim of lane Y (Y != X), needs an Agree from X, unless the claim is 'Kind: bug'
+    with a Test-first line. Two open claims naming the same file (shared files included) need an Agree too."""
     probs = []
-    lane = lane_of_branch(claim["branch"])
+    lane = claim.get("lane") or lane_of_branch(claim["branch"], lanes)
+    names = set(lane_names(lanes))
+    if claim.get("lane_mismatch"):
+        probs.append(f"Lane: {claim['lane_mismatch']} does not match the branch prefix of {claim['branch']} "
+                     f"({lane_of_branch(claim['branch'], lanes)}); use a {lane_prefixes(lanes).get(claim['lane_mismatch'], '?')} branch")
+    elif claim.get("lane_stated"):
+        probs.append(f"Lane: {claim['lane_stated']} names no lane in docs/lanes.json ({', '.join(sorted(names))})")
     if not claim.get("has_fields"):
         probs.append("claim has no Existing/Gap/Files/Test-first/Try-it lines")
     else:
         for k, label in (("existing", "Existing"), ("gap", "Gap"), ("files", "Files"), ("test_first", "Test-first"), ("try_it", "Try-it")):
             if not claim.get(k):
                 probs.append(f"missing {label}")
+    bug_fix = claim.get("kind", "").startswith("bug") and bool(claim.get("test_first"))   # owner 2026-11-15: bug fixes may touch any file
     for g in claim.get("files", []):
-        # a glob is cross-lane when any sample of the rules owner for its literal prefix is the other lane
+        # the owner of a glob is the rules' owner for its literal prefix
         sample = re.split(r"[*?\[]", g)[0]
         o = owner_of(sample if sample == g else sample + "x", lanes)
-        bug_fix = claim.get("kind", "").startswith("bug") and bool(claim.get("test_first"))   # owner 2026-11-15: bug fixes may touch any file
-        if lane and o in ("claude2", "coordinator") and o != lane and not claim.get("agreed") and not bug_fix:
-            probs.append(f"{g} is in the {o} lane (needs 'Agree: {claim['branch']}' from that lane)")
-        elif o == "shared" and not claim.get("agreed"):
-            pass  # shared files are only a handshake when two claims overlap; see overlaps below
+        if lane and o in names and o != lane and not agreed_by(claim, o) and not bug_fix:
+            probs.append(f"{g} is in the {o} lane (needs 'Agree: {claim['branch']}' from {lane_display(o, lanes)})")
     for oc in other_claims:
         if oc["branch"] == claim["branch"]:
             continue
+        olane = oc.get("lane") or lane_of_branch(oc["branch"], lanes)
         for a in claim.get("files", []):
             hit = next((b for b in oc.get("files", []) if globs_overlap(a, b, files)), None)
-            if hit and not claim.get("agreed"):
+            if hit and not (agreed_by(claim, olane) if olane else claim.get("agreed")):
                 probs.append(f"{a} overlaps {oc['branch']} ({hit}); release or agree first")
                 break
     return probs
@@ -212,7 +296,14 @@ def check_claim_rules(claim, lanes, other_claims, files=None):
 
 # ---------------------------------------------------------------- git views
 
-def branches(root, prefixes=("claude/", "claude2/")):
+def branches(root, prefixes=None):
+    """The remote branches of every lane (prefixes from docs/lanes.json under root unless given)."""
+    if prefixes is None:
+        try:
+            prefixes = tuple(lane_prefixes(load_lanes(root)).values())
+        except OSError:
+            prefixes = tuple(lane_prefixes().values())
+    prefixes = tuple(prefixes)
     out = git(root, "for-each-ref", "--format=%(refname:short)\t%(objectname)\t%(committerdate:iso-strict)", "refs/remotes/origin")
     res = []
     for line in out.splitlines():

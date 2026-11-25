@@ -32,7 +32,7 @@ Areas: 1, 20, 21, 36, 44, 45. Rows ids start `V-SC-`. `V-SC-S<area>` rows are sm
     3. Right-click it again and choose **Create Variant**, then **Validate Prefab**.
   - **You should see (expected, not yet seen on Windows):** a second copy appears in the scene; a variant file is created; Validate reports no problems or lists them.
   - **Known partial:** map area 21 is marked planned in parts: expect gaps (nested prefab overrides, for example).
-  - **More:** [prefabs.md](../../engine/prefabs.md#prefabs-and-overrides)
+  - **More:** [prefabs.md](../engine/prefabs.md#prefabs-and-overrides)
 
 - [ ] **V-SC-004** Merge another scene into this one
   - **Map:** 1, 20. **Where:** editor, File menu and Project panel
@@ -58,7 +58,7 @@ Areas: 1, 20, 21, 36, 44, 45. Rows ids start `V-SC-`. `V-SC-S<area>` rows are sm
     3. Press Play and walk into the volume.
   - **You should see (expected, not yet seen on Windows):** a Kill volume sends the body back to its last checkpoint; a Checkpoint volume sets the respawn point. Volumes are drawn as coloured translucent shapes in the Scene view (toggle with **View > Scene Overlays > Volumes**).
   - **Known partial:** see docs/engine/volumes.md for kinds that need other components (Ambience needs an Audio Source with a clip and Loop).
-  - **More:** [volumes.md](../../engine/volumes.md)
+  - **More:** [volumes.md](../engine/volumes.md)
 
 - [ ] **V-SC-007** Place nature, props and structures
   - **Map:** 44, 2. **Where:** editor, GameObject menu
@@ -96,7 +96,7 @@ Areas: 1, 20, 21, 36, 44, 45. Rows ids start `V-SC-`. `V-SC-S<area>` rows are sm
     - 1.6 Prefabs and templates [Partial]. Where: GameObject menu, Hierarchy prefab Apply/Revert/Reload (editor/main.cpp); override UI in the Inspector header...
     - 1.7 Saves and prefs [Works]. Where: AutoSave component in the Inspector (editor/main.cpp); no save-slot UI components yet (12.8)
     - 1.8 Localization [Works]. Where: Localization window (1.16, 'editor/LocalizationWindow.*')
-    - 1.9 Events and ECS [Works].
+    - 1.9 Events [Works].
     - 1.10 Logging and profiling [Works]. Where: Console panel ('editor/ConsolePanel.*'); Profiler and Stats windows (editor/main.cpp, 23)
     - 1.11 Asset manager [Partial].
     - 1.12 Asset database [Partial]. Where: Project panel ('editor/ProjectBrowser.*': listing, search, filters, counts, folder tree, info strip, Find...

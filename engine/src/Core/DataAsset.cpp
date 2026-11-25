@@ -1,4 +1,5 @@
 #include "okay/Core/DataAsset.hpp"
+#include "okay/Core/FileStamp.hpp"
 #include "okay/Core/SaveData.hpp"
 #include <fstream>
 #include <sstream>
@@ -13,6 +14,20 @@ namespace okay {
 namespace {
 std::string g_baseDir;
 std::unordered_map<std::string, DataAsset> g_cache;
+
+// The path Load() would open: the given path, or that path under the base directory.
+// Checked with a stat (FileStamp.hpp), not by opening the file: a missing path costs no open, and a
+// folder of that name is not taken for the file.
+std::string ReadablePath(const std::string& path) {
+    if (StampOf(path).sizeOk) return path;
+    if (!g_baseDir.empty()) {
+        std::string full = g_baseDir;
+        if (full.back() != '/' && full.back() != '\\') full += '/';
+        full += path;
+        if (StampOf(full).sizeOk) return full;
+    }
+    return path;
+}
 
 std::string Trim(const std::string& s) {
     std::size_t a = s.find_first_not_of(" \t\r\n");
@@ -98,18 +113,22 @@ std::string EncodeField(const std::string& v, bool key) {
 bool DataAsset::Save(const std::string& path) const {
     std::string out = std::string(kHeader) + "\n";
     for (const auto& f : m_fields) out += EncodeField(f.first, true) + " = " + EncodeField(f.second, false) + "\n";
-    return savefmt::AtomicWrite(path, out);
+    if (!savefmt::AtomicWrite(path, out)) return false;
+    // The cache entry for this same path now matches the file it wrote, so Cached() keeps the
+    // fields in memory (later unsaved Set()s too) instead of reading the file back. A copy saved
+    // under another name leaves its own entry alone.
+    auto it = g_cache.find(path);
+    if (it != g_cache.end() && &it->second == this) {
+        DataAsset& self = const_cast<DataAsset&>(*this);
+        self.m_loaded = true;
+        self.RememberStamp(ReadablePath(path));
+    }
+    return true;
 }
 
 bool DataAsset::Load(const std::string& path) {
-    std::ifstream in(path);
-    if (!in) {
-        if (g_baseDir.empty()) return false;
-        std::string full = g_baseDir;       // retry relative to the game's base dir
-        if (full.back() != '/' && full.back() != '\\') full += '/';
-        in.open(full + path);
-        if (!in) return false;
-    }
+    std::ifstream in(ReadablePath(path));   // the path itself, or that path under the game's base dir
+    if (!in) return false;
     // Only a file that opened replaces the fields.
     std::vector<Field> fields;
     bool escaped = false, first = true;
@@ -135,18 +154,40 @@ bool DataAsset::Load(const std::string& path) {
 void DataAsset::SetBaseDir(const std::string& dir) { g_baseDir = dir; }
 const std::string& DataAsset::BaseDir() { return g_baseDir; }
 
+void DataAsset::RememberStamp(const std::string& openedPath) {
+    const FileStat st = StampOf(openedPath);
+    m_stampOk = st.sizeOk && st.timeOk;
+    m_stampSize = st.sizeOk ? static_cast<std::uint64_t>(st.size) : 0;
+    m_stampTime = st.timeOk ? st.time : 0;
+}
+
 DataAsset& DataAsset::Cached(const std::string& path) {
     DataAsset& a = g_cache[path];
-    // An entry whose file wasn't there is only a place for scripts to Set() into: while
-    // it is still untouched, every call tries the file again, so creating it later works.
-    if (!a.m_loaded && a.m_fields.empty() && a.Load(path)) a.m_loaded = true;
+    if (a.m_loaded) return a;
+    const FileStat st = StampOf(ReadablePath(path));
+    if (!st.sizeOk || !st.timeOk) return a;
+    if (a.Load(path)) {
+        a.m_loaded = true;
+        a.RememberStamp(ReadablePath(path));
+    }
     return a;
+}
+
+bool DataAsset::ReloadIfChanged(const std::string& path) {
+    auto it = g_cache.find(path);
+    if (it == g_cache.end() || !it->second.m_loaded) return false;
+    const FileStat st = StampOf(ReadablePath(path));
+    if (!st.sizeOk || !st.timeOk) return false;
+    const DataAsset& cur = it->second;
+    if (cur.m_stampOk && st.size == cur.m_stampSize && st.time == cur.m_stampTime) return false;
+    return Reload(path);
 }
 
 bool DataAsset::Reload(const std::string& path) {
     DataAsset a;
     if (!a.Load(path)) return false;     // keep what was cached
     a.m_loaded = true;
+    a.RememberStamp(ReadablePath(path));
     g_cache[path] = std::move(a);        // assigned in place: earlier references stay valid
     return true;
 }
@@ -158,9 +199,14 @@ void DataAsset::Invalidate(const std::string& path) {
     if (it == g_cache.end()) return;
     it->second.m_fields.clear();
     it->second.m_loaded = false;
+    it->second.m_stampOk = false;
 }
 void DataAsset::InvalidateAll() {
-    for (auto& kv : g_cache) { kv.second.m_fields.clear(); kv.second.m_loaded = false; }
+    for (auto& kv : g_cache) {
+        kv.second.m_fields.clear();
+        kv.second.m_loaded = false;
+        kv.second.m_stampOk = false;
+    }
 }
 
 } // namespace okay

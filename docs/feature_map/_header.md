@@ -8,6 +8,12 @@ docs and editor windows involved, what already works, what is missing, and what 
 This map holds {{STATS}}, and every source file in the repo is meant to appear in it
 (`python3 scripts/check_feature_map.py --list` shows any that do not).
 
+**Systems:** [docs/SYSTEMS.md](SYSTEMS.md) lists every named system (Physics, Save Games, OkayScript...)
+with one line on what it does, its status, its main code and its sub-areas here, plus the duplicates found.
+
+**Architecture:** [docs/engine/architecture.md](engine/architecture.md) shows how the code is layered: the nine
+subsystems, which folder holds each, and what may include what (plan and audit: 19.4).
+
 **How it is organised**
 - This file is the overview: the areas and one summary table per area. It is generated; do not edit it
   by hand. Two lookup pages are generated next to it: [By what you see](feature_map/_index_symptoms.md)
@@ -15,8 +21,9 @@ This map holds {{STATS}}, and every source file in the repo is meant to appear i
 - `docs/feature_map/NN-*.md` are the detail pages, one per area. Each sub-area has a block with what it
   is, its numbered parts, code, API, editor window, docs, tests, status, what is open, related
   sub-areas, the words people use for it, what you see when it is wrong, and an example request.
-- To change the map: edit a page, then run `python3 scripts/gen_feature_map.py`. The format is in
-  `docs/feature_map/README.md`.
+- To change the map: edit a page and check it with `python3 scripts/gen_feature_map.py --validate`. This
+  overview is rebuilt on main after the merge (`.github/workflows/regen-docs.yml`); PRs do not commit it.
+  The format is in `docs/feature_map/README.md`.
 
 **Status words:** Works (implemented and exercised by tests or shipping features), Partial (works with
 known gaps), Basic (minimal version), In flight (a PR or branch exists, not on main), Planned (not built).

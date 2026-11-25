@@ -21,22 +21,9 @@
 using namespace okay;
 
 // ---- allocation fault injection --------------------------------------------------------
-// Every global allocation goes through here. A test arms a countdown on its own thread: the
-// n-th allocation from then on throws std::bad_alloc. Other threads are never affected.
-namespace {
-thread_local long t_failCountdown = -1;
-void* AllocOrThrow(std::size_t n) {
-    if (t_failCountdown > 0 && --t_failCountdown == 0) { t_failCountdown = -1; throw std::bad_alloc(); }
-    if (void* p = std::malloc(n ? n : 1)) return p;
-    throw std::bad_alloc();
-}
-} // namespace
-void* operator new(std::size_t n) { return AllocOrThrow(n); }
-void* operator new[](std::size_t n) { return AllocOrThrow(n); }
-void operator delete(void* p) noexcept { std::free(p); }
-void operator delete[](void* p) noexcept { std::free(p); }
-void operator delete(void* p, std::size_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+// Every global allocation goes through tests/AllocHook.hpp. A test arms a countdown on its own thread
+// (allochook::failCountdown): the n-th allocation from then on throws std::bad_alloc. Other threads are never affected.
+#include "AllocHook.hpp"
 
 namespace {
 
@@ -537,6 +524,32 @@ void TestPriority() {
     CHECK(order == "hHnNl");
 }
 
+void TestPriorityAcrossQueues() {
+    RUN_SUITE("jobs: high on the shared queue before low on the worker's own queue");
+    JobSystem js(1);
+    Gate gate;
+    std::mutex mu;
+    std::string order;
+    JobHandle blocker = js.Submit([&] {
+        gate.Pass();
+        JobOptions lo;
+        lo.priority = JobPriority::Low;
+        for (int i = 0; i < 3; ++i)
+            js.Submit([&] { std::lock_guard<std::mutex> g(mu); order += 'l'; }, lo);
+    });
+    CHECK(gate.WaitForWaiters(1));
+    JobOptions hi;
+    hi.priority = JobPriority::High;
+    JobHandle high = js.Submit([&] { std::lock_guard<std::mutex> g(mu); order += 'H'; }, hi);
+    gate.Open();
+    for (int i = 0; i < 10000 && order.size() < 4; ++i) SleepMs(1);
+    CHECK(Finish(js, blocker));
+    CHECK(Finish(js, high));
+    std::lock_guard<std::mutex> g(mu);
+    CHECK(order.size() == 4);
+    CHECK(order.find('H') < order.find('l'));
+}
+
 // ---- shutdown ---------------------------------------------------------------------
 
 void TestShutdown() {
@@ -844,7 +857,7 @@ void TestAllocationFailure(int workers) {
         std::atomic<int> ran{0};
         std::vector<JobHandle> hs;
         bool threw = false;
-        t_failCountdown = n;
+        allochook::failCountdown = n;
         try {
             JobHandle a = js.Submit([&] { ++ran; }); hs.push_back(a);
             JobHandle b = js.Submit([&] { ++ran; }, {a}); hs.push_back(b);
@@ -859,7 +872,7 @@ void TestAllocationFailure(int workers) {
             threw = true;
         } catch (...) {
         }
-        t_failCountdown = -1;
+        allochook::failCountdown = -1;
         if (threw) ++thrown; else ++survived;
         // main-thread jobs are run by the pump; everything must settle
         for (int i = 0; i < 2000 && !js.WaitIdleFor(0.01); ++i) js.PumpMainThread();
@@ -928,6 +941,7 @@ int main(int argc, char** argv) {
         }
         TestCancel();
         TestPriority();
+        TestPriorityAcrossQueues();
         TestShutdown();
         TestMainThread();
         TestStats();

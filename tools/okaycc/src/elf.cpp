@@ -55,6 +55,7 @@ struct Image {
         int size = 0;
         bool func = false;
         bool global = true;
+        bool weak = false;  // STB_WEAK (ELF gABI): a duplicate definition in another object is allowed
     };
     std::vector<Pub> pubs;
 };
@@ -483,6 +484,13 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
         }
         return;
     }
+    if (in.fp && in.op == Inst::Op::Sqrt) {
+        // SQRTSD xmm0, xmm1 (F2 0F 51 /r) or SQRTSS (F3 0F 51 /r), Intel SDM vol. 2.
+        loadXmm(im, in.a, 1, in.extra);
+        fpBin(im, in.extra, 0x51);
+        storeXmm(im, 0, in.dst, in.extra);
+        return;
+    }
     if (in.fp && (in.op == Inst::Op::Add || in.op == Inst::Op::Sub || in.op == Inst::Op::Mul || in.op == Inst::Op::Div)) {
         loadXmm(im, in.a, 0, in.extra);
         loadXmm(im, in.b, 1, in.extra);
@@ -551,16 +559,21 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
     case Inst::Op::Shr:
         loadRax(im, in.a);
         loadRcx(im, in.b);
-        shiftCl(im, Rax, in.op == Inst::Op::Shl ? 4 : 5);
+        shiftCl(im, Rax, in.op == Inst::Op::Shl ? 4 : (in.arith ? 7 : 5));  // SHL /4, SHR /5, SAR /7
         movSlotRax(im, in.dst);
         break;
     case Inst::Op::Div:
     case Inst::Op::Mod:
         loadRax(im, in.a);
-        u8(im, 0x48);
-        u8(im, 0x99);
+        if (in.uns) {
+            u8(im, 0x31);  // xor edx, edx: the high half of an unsigned dividend
+            u8(im, modrm(3, 2, 2));
+        } else {
+            u8(im, 0x48);  // cqo
+            u8(im, 0x99);
+        }
         loadRcx(im, in.b);
-        unaryF7(im, Rcx, 7);
+        unaryF7(im, Rcx, in.uns ? 6 : 7);  // DIV /6, IDIV /7
         if (in.op == Inst::Op::Div) movSlotRax(im, in.dst);
         else {
             movReg(im, Rax, Rdx);
@@ -881,6 +894,7 @@ void emitFunction(Image& im, const Function& f) {
     p.size = static_cast<int>(im.bytes.size() - start);
     p.func = true;
     p.global = !f.localSym;
+    p.weak = f.weakSym;
     im.pubs.push_back(p);
 }
 
@@ -942,7 +956,8 @@ void emitData(Image& im, const Module& m) {
         p.sec = ro ? 2 : 3;
         p.size = static_cast<int>(im.bytes.size() - item);
         p.func = false;
-        p.global = g.name.empty() || g.name[0] != '.';
+        p.global = !g.localSym && (g.name.empty() || g.name[0] != '.');
+        p.weak = g.weakSym;
         im.pubs.push_back(p);
     }
 }
@@ -1060,7 +1075,7 @@ std::vector<unsigned char> writeObject(Image& im) {
     for (const Image::Pub& p : im.pubs) {
         if (!p.global) continue;
         idx[p.name] = static_cast<std::uint32_t>(syms.size() / 24);
-        addSym(strs.add(p.name), 1, p.func ? 2 : 1, static_cast<std::uint16_t>(p.sec), p.off, static_cast<std::uint64_t>(p.size));
+        addSym(strs.add(p.name), p.weak ? 2 : 1, p.func ? 2 : 1, static_cast<std::uint16_t>(p.sec), p.off, static_cast<std::uint64_t>(p.size));
     }
     auto ensure = [&](const std::string& name) {
         if (idx.count(name)) return idx[name];

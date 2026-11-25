@@ -103,9 +103,12 @@ int main() {
 
     // ---- OpenGL: the same pieces (text checks of GLRenderer.cpp; the GLSL is not compiled here, UNVERIFIED on a GPU) ----
     {
-        std::string here = __FILE__;
-        std::ifstream f(here.substr(0, here.find_last_of("/\\") + 1) + "../engine/src/Render/GLRenderer.cpp", std::ios::binary);
-        std::ostringstream o; o << f.rdbuf();
+        std::string here = OKAY_TESTS_DIR "/test_d3d11_layout.cpp";
+        std::ostringstream o;
+        for (const char* part : {"GLRenderer.cpp", "GLRendererShaders.cpp", "GLRendererPasses.cpp", "GLRendererResources.cpp", "GLRendererInternal.hpp"}) {   // GLRenderer.cpp is split into four files
+            std::ifstream f(here.substr(0, here.find_last_of("/\\") + 1) + "../engine/src/Render/" + part, std::ios::binary);
+            o << f.rdbuf();
+        }
         const std::string gl = o.str();
         CHECK(!gl.empty());
         for (const char* u : {"uLRect", "uLRight", "uLUp", "uCookieTex", "uCookieRows", "uSunSoft", "uFadeDist"}) {

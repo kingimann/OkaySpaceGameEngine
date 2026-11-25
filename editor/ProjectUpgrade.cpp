@@ -12,6 +12,7 @@
 #include <sstream>
 
 #include "ProjectState.hpp"
+#include "okay/Core/FileCopy.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneMigration.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
@@ -91,6 +92,20 @@ std::string NowUtc() {
 
 const char* kManifestRel = ".okay/upgrade_backup.txt";
 const char* kManifestMagic = "okayspace-upgrade-backup 1";
+const char* kReportRel = ".okay/upgrade_report.txt";
+
+int CountUnknownWarnings(const std::vector<std::string>& warnings) {
+    int n = 0;
+    for (const std::string& w : warnings)
+        if (w.rfind("skipped unknown field '", 0) == 0 || w.rfind("skipped unknown record '", 0) == 0) ++n;
+    return n;
+}
+int CountKeptUnknown(const okay::Scene& s) {
+    int n = static_cast<int>(s.unknownRecords.size());
+    for (const auto& o : s.Objects()) if (o) n += static_cast<int>(o->unknownRecords.size());
+    return n;
+}
+std::string Count(int n, const char* one, const char* many) { return std::to_string(n) + " " + (n == 1 ? one : many); }
 
 bool SkipVcsDir(const std::string& name) { return name == ".git" || name == ".svn" || name == ".hg"; }
 
@@ -187,6 +202,72 @@ const char* PhaseName(Phase p) {
     return "";
 }
 
+FileCheck CheckSceneFile(const std::string& text) {
+    FileCheck fc;
+    fc.text = text;
+    const okay::SceneMigration::Result r = okay::SceneMigration::MigrateThroughEngine(text);
+    fc.fromVersion = r.fromVersion;
+    fc.toVersion = r.toVersion;
+    fc.log = r.log;
+    if (!r.ok) { fc.error = r.error; return fc; }
+    fc.changed = r.changed;
+    if (r.changed) fc.text = r.text;
+    std::string err;
+    okay::Scene after("upgrade check");
+    std::vector<std::string> warnsAfter;
+    if (!okay::SceneSerializer::Deserialize(after, fc.text, &err, &warnsAfter)) { fc.error = err; fc.loadFailed = true; return fc; }
+    fc.objectsAfter = static_cast<int>(after.Objects().size());
+    fc.unknownKept = CountKeptUnknown(after);
+    // The old text through the same loader (which applies its own upgrades for old versions too), to compare with.
+    okay::Scene before("upgrade check (before)");
+    std::vector<std::string> warnsBefore;
+    if (okay::SceneSerializer::Deserialize(before, text, &err, &warnsBefore)) {
+        fc.objectsBefore = static_cast<int>(before.Objects().size());
+        fc.unknownBefore = CountUnknownWarnings(warnsBefore);
+    } else {   // only the new text loads (a step repaired it): nothing to compare with
+        fc.objectsBefore = fc.objectsAfter;
+        fc.unknownBefore = fc.unknownKept;
+    }
+    if (fc.changed) {   // a file that is not rewritten loses nothing
+        if (fc.objectsAfter < fc.objectsBefore)
+            fc.losses.push_back(Count(fc.objectsBefore - fc.objectsAfter, "object is", "objects are") + " not in the upgraded file (" +
+                                std::to_string(fc.objectsBefore) + " before, " + std::to_string(fc.objectsAfter) + " after)");
+        if (fc.unknownKept < fc.unknownBefore)
+            fc.losses.push_back(Count(fc.unknownBefore - fc.unknownKept, "record", "records") + " this version doesn't know could not be kept (" +
+                                std::to_string(fc.unknownBefore) + " before, " + std::to_string(fc.unknownKept) + " kept)");
+    }
+    fc.ok = true;
+    return fc;
+}
+
+std::string UpgradeReportText(const Options& opt, const Result& res, const std::string& when) {
+    const std::string from = okayver::NormalizeVersion(opt.fromVersion);
+    std::string t = "OkaySpace project upgrade report\n";
+    t += "================================\n\n";
+    t += "Project:   " + opt.projectDir + "\n";
+    t += "From:      " + (from.empty() ? std::string("an unknown version (made before projects recorded it)") : "v" + from) + "\n";
+    t += "To:        v" + okayver::NormalizeVersion(opt.toVersion) + "\n";
+    if (!when.empty()) t += "Made:      " + when + "\n";
+    if (!res.backupDir.empty()) t += "Backup:    " + res.backupDir + " (a complete copy of the project before the upgrade)\n";
+    t += "\nChecked " + Count(res.scenes, "scene", "scenes") + " and " + Count(res.prefabs, "prefab", "prefabs") + "; " +
+         (res.rewritten == 0 ? std::string("no scene or prefab needed rewriting") : Count(res.rewritten, "file", "files") + " rewritten") + ".\n";
+    t += "\nLost in the upgrade\n-------------------\n";
+    if (res.losses.empty()) t += "Nothing. Every object and every record of every file is in the upgraded files.\n";
+    for (const std::string& l : res.losses) t += "- " + l + "\n";
+    t += "\nFiles the upgrade writes\n------------------------\n";
+    if (res.changed.empty()) t += "None.\n";
+    for (const std::string& c : res.changed) t += "- " + c + "\n";
+    t += "\nWhat each step did\n------------------\n";
+    if (res.log.empty()) t += "Nothing needed doing.\n";
+    for (const std::string& l : res.log) t += "- " + l + "\n";
+    if (!res.warnings.empty()) {
+        t += "\nWarnings\n--------\n";
+        for (const std::string& w : res.warnings) t += "- " + w + "\n";
+    }
+    t += "\nTo undo the upgrade: File > Project Upgrade..., then Restore... next to this backup.\n";
+    return t;
+}
+
 std::string BackupFolderName(const std::string& projectName, const std::string& fromVersion, const std::string& toVersion) {
     const std::string from = okayver::NormalizeVersion(fromVersion), to = okayver::NormalizeVersion(toVersion);
     if (!from.empty()) return projectName + " (backup v" + from + ")";
@@ -281,7 +362,6 @@ struct UpgradeJob::Impl {
     std::unique_ptr<fs::recursive_directory_iterator> scan;
     std::vector<std::size_t> candidates;
     std::vector<Change> changes;
-    std::unique_ptr<okay::Scene> scratch;
 
     std::size_t idx = 0;                       // position inside the current phase
     std::uint64_t totalBytes = 0, copiedBytes = 0, totalFiles = 0, copiedFiles = 0, madeEntries = 0;
@@ -297,6 +377,7 @@ struct UpgradeJob::Impl {
 
     std::vector<std::size_t> applied;          // indexes into `changes`, in the order written
     bool renamed = false;
+    bool reportWritten = false;                // the upgrade report is in the backup
 
     explicit Impl(Options o) : opt(std::move(o)) {
         root = fs::path(opt.projectDir).lexically_normal();
@@ -459,21 +540,21 @@ struct UpgradeJob::Impl {
             std::string text;
             const fs::path abs = Abs(e.rel);
             if (!okayproj::ReadText(abs.string(), text)) return Fail("Couldn't read \"" + e.rel + "\".");
-            const okay::SceneMigration::Result r = okay::SceneMigration::MigrateThroughEngine(text);
-            if (!r.ok) return Fail("\"" + e.rel + "\" can't be upgraded: " + r.error + ".");
-            const std::string& finalText = r.changed ? r.text : text;
-            if (!scratch) scratch = std::make_unique<okay::Scene>("upgrade check");
-            std::string err;
-            std::vector<std::string> warns;
-            if (!okay::SceneSerializer::Deserialize(*scratch, finalText, &err, &warns))
-                return Fail("\"" + e.rel + "\" can't be loaded" + (r.changed ? " after upgrading it" : "") + ": " + err + ".");
-            if (!warns.empty()) res.log.push_back(e.rel + ": " + std::to_string(warns.size()) + (warns.size() == 1 ? " record" : " records") + " this version doesn't know (kept as they are).");
+            FileCheck fc = CheckSceneFile(text);
+            if (!fc.ok && fc.loadFailed) return Fail("\"" + e.rel + "\" can't be loaded" + (fc.changed ? " after upgrading it" : "") + ": " + fc.error + ".");
+            if (!fc.ok) return Fail("\"" + e.rel + "\" can't be upgraded: " + fc.error + ".");
+            const int kept = std::min(fc.unknownKept, fc.unknownBefore);
+            if (kept > 0) res.log.push_back(e.rel + ": " + std::to_string(kept) + (kept == 1 ? " record" : " records") + " this version doesn't know (kept as they are).");
             (e.isPrefab ? res.prefabs : res.scenes)++;
-            for (const std::string& l : r.log) res.log.push_back(e.rel + ": " + l);
-            if (r.changed) {
+            for (const std::string& l : fc.log) res.log.push_back(e.rel + ": " + l);
+            for (const std::string& l : fc.losses) {
+                res.losses.push_back(e.rel + ": " + l);
+                res.warnings.push_back(e.rel + ": " + l + " (the old file is in the backup)");
+            }
+            if (fc.changed) {
                 if (ReadOnly(abs)) return Fail("\"" + e.rel + "\" is read-only, so it can't be upgraded. Make it writable and try again. Nothing was changed.");
                 Change c;
-                c.rel = e.rel; c.size = e.size; c.mtime = e.mtime; c.hash = HashText(text); c.text = r.text;
+                c.rel = e.rel; c.size = e.size; c.mtime = e.mtime; c.hash = HashText(text); c.text = std::move(fc.text);
                 changes.push_back(std::move(c));
             }
             return;
@@ -634,12 +715,21 @@ struct UpgradeJob::Impl {
         std::string err;
         fs::create_directories(partial / ".okay", ec);
         if (!okayproj::WriteTextAtomic((partial / kManifestRel).string(), ManifestText(), &err)) return Fail("Couldn't finish the backup: " + err + " Nothing in the project was changed.");
+        if (opt.migrate) {   // the report of what the upgrade changes and loses, beside the manifest: part of a finished backup
+            Result plan = res;
+            for (const Change& c : changes) { plan.changed.push_back(c.rel); if (!c.isProject) ++plan.rewritten; }
+            plan.backupDir = finalDir.string();
+            if (Hook("backup-report", partial.string())) return Fail("Couldn't finish the backup: the disk refused. Nothing in the project was changed.");
+            if (!okayproj::WriteTextAtomic((partial / kReportRel).string(), UpgradeReportText(opt, plan, NowUtc()), &err)) return Fail("Couldn't finish the backup: " + err + " Nothing in the project was changed.");
+            reportWritten = true;
+        }
         if (Hook("backup-rename", partial.string())) return Fail("Couldn't finish the backup: the disk refused. Nothing in the project was changed.");
         finalDir = FreeBackupPath(parent, BackupFolderName(name, opt.fromVersion, opt.toVersion));   // the name may have been taken meanwhile
         fs::rename(partial, finalDir, ec);
         if (ec) return Fail("Couldn't finish the backup folder \"" + finalDir.string() + "\": " + ec.message() + ". Nothing in the project was changed.");
         renamed = true;
         res.backupDir = finalDir.string();
+        if (reportWritten) res.reportPath = (finalDir / kReportRel).string();
         res.files = copiedFiles;
         res.bytes = copiedBytes;
         idx = 0;
@@ -772,7 +862,7 @@ RestoreResult RestoreBackup(const BackupInfo& backup, const std::string& project
         if (hook(rel)) return false;
         std::error_code e2;
         fs::create_directories((side / fs::path(rel)).parent_path(), e2);
-        fs::copy_file(target, side / fs::path(rel), fs::copy_options::overwrite_existing, e2);
+        okay::CopyFileOver(target, side / fs::path(rel), e2);
         if (e2) return false;
         hadBefore.insert(rel);
         return true;
@@ -786,7 +876,7 @@ RestoreResult RestoreBackup(const BackupInfo& backup, const std::string& project
         for (std::size_t i = done.size(); i-- > 0;) {
             const fs::path target = root / fs::path(done[i]);
             std::error_code e2;
-            if (hadBefore.count(done[i])) fs::copy_file(side / fs::path(done[i]), target, fs::copy_options::overwrite_existing, e2);
+            if (hadBefore.count(done[i])) okay::CopyFileOver(side / fs::path(done[i]), target, e2);   // plain copy_file fails over a file on Windows (MinGW)
             else fs::remove(target, e2);
         }
     };

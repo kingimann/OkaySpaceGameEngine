@@ -162,7 +162,7 @@ def ci_jobs_decision(jobs):
 
 
 # The smaller "release gate": the CI jobs that build and test what ships (the Windows programs, the player/editor, the scripting
-# sanitizers, the update-signing tests). The other jobs (Assimp comparison, own HTTP, own stack, no-libsodium crypto, WebGL, SQL) are
+# sanitizers, the update-signing tests). The other jobs (model corpus, own HTTP, own stack, no-libsodium crypto, WebGL, SQL) are
 # informational for a release: they do not build anything that is released. Display names of ci.yml jobs; a test keeps this list honest.
 RELEASE_GATE_JOBS = (
     "Build & test (Ubuntu)",
@@ -344,6 +344,29 @@ def notes_lines(entries, limit=8):
     return out
 
 
+def changelog_entry(changelog_text, version):
+    """The bullets of one version's block in dist/CHANGELOG.txt, as [{"bullets": [...]}] for notes_lines().
+    A block starts at a line "v<version>" and ends at the next line that starts with "v<digit>". A bullet is a line
+    starting with "- " after its indent; deeper indented lines without "- " continue the bullet above."""
+    lines = changelog_text.splitlines()
+    head = "v" + version
+    start = next((i for i, l in enumerate(lines) if l.strip() == head), None)
+    if start is None:
+        return []
+    bullets = []
+    for l in lines[start + 1:]:
+        if re.match(r"v\d", l):
+            break
+        t = l.strip()
+        if not t:
+            continue
+        if t.startswith("- "):
+            bullets.append(t[2:].strip())
+        elif bullets and l.startswith("    "):
+            bullets[-1] += " " + t
+    return [{"bullets": [b]} for b in bullets]
+
+
 def build_notes(entries_dir, released_names, base_text, version, allow_empty=False):
     """-> dict of file name -> text, everything the release needs from the entries. Raises Refused."""
     entries, problems = load_entries(entries_dir)
@@ -497,6 +520,10 @@ def main(argv):
     a.add_argument("--version", required=True)
     a.add_argument("--out-dir", required=True)
     a.add_argument("--allow-empty", action="store_true")
+    a = sub.add_parser("changelog-notes", help="NOTES.txt lines for one version, from its block in dist/CHANGELOG.txt")
+    a.add_argument("--version", required=True)
+    a.add_argument("--changelog", default=os.path.join(ROOT, "dist", "CHANGELOG.txt"))
+    a.add_argument("--limit", type=int, default=8)
     a = sub.add_parser("check-entries")
     a.add_argument("--entries-dir", default=os.path.join(ROOT, "dist", "changelog.d"))
     a = sub.add_parser("stamp")
@@ -522,6 +549,12 @@ def main(argv):
     args = p.parse_args(argv)
 
     try:
+        if args.cmd == "changelog-notes":
+            lines = notes_lines(changelog_entry(_read(args.changelog), args.version), args.limit)
+            if not lines:
+                return 1   # no block for this version: the caller falls back
+            print("\n".join(lines))
+            return 0
         if args.cmd == "next-version":
             index = _read_json(args.index) if args.index else None
             ex = existing_versions(_lines(args.tags) if args.tags else [], _release_names(args.releases) if args.releases else [], index)

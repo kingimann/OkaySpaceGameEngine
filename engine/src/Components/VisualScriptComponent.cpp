@@ -4,10 +4,12 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/Gestures.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Components/Damage.hpp"
 #include "okay/VisualScript/NodesLoops.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 
@@ -18,6 +20,26 @@
 namespace okay {
 
 namespace {
+// On Damaged: one listener for the whole engine (Damage.hpp keeps a plain list, so it is found again by
+// its type). It hands each hit to the Visual Scripts on the object that was hit; they run the event on
+// their next frame. Nothing is kept that points at an object: the source travels as an instance id.
+struct VsDamagedRelay {
+    void operator()(const DamageEvent& e) const {
+        if (!e.target || e.target->IsDestroyed()) return;
+        for (auto* vc : e.target->GetComponents<VisualScriptComponent>()) {
+            VisualScriptComponent::PendingHit h;
+            h.amount = e.dealt;
+            h.type = DamageTypeName(e.type);
+            h.source = (e.source && !e.source->IsDestroyed()) ? e.source->InstanceId() : 0;
+            vc->QueueDamaged(h);
+        }
+    }
+};
+void EnsureDamagedRelay() {
+    for (const auto& f : Listeners().damaged)
+        if (f.target<VsDamagedRelay>()) return;
+    AddDamagedListener(VsDamagedRelay{});
+}
 ConsoleSource GraphLogSource(GameObject* go, const std::string& path) {
     ConsoleSource s;
     if (!go) return s;
@@ -103,8 +125,10 @@ void VisualScriptComponent::ScanPolledEvents() {
     m_timerEntries.clear();
     m_actionEntries.clear();
     m_gestureEntries.clear();
+    m_buttonEntries.clear();
     m_watches.clear();
     if (!m_graph) return;
+    if (!m_graph->Entries("OnDamaged").empty()) EnsureDamagedRelay();
     for (const auto& kv : m_graph->AllEntries()) {
         const std::string& n = kv.first;
         if (n.rfind("OnKey:", 0) == 0)
@@ -121,6 +145,8 @@ void VisualScriptComponent::ScanPolledEvents() {
             m_actionEntries.push_back({n, n.substr(11), 1});
         else if (n.rfind("OnActionHeld:", 0) == 0)
             m_actionEntries.push_back({n, n.substr(13), 2});
+        else if (n.rfind("OnButtonClicked:", 0) == 0)
+            m_buttonEntries.push_back({n, n.substr(16)});
         else if (n == "OnTap" || n == "OnDoubleTap" || n == "OnLongPress" || n == "OnPinch" || n == "OnRotate" ||
                  n == "OnSwipe" || n.rfind("OnSwipe:", 0) == 0)
             m_gestureEntries.push_back(n);
@@ -234,6 +260,21 @@ void VisualScriptComponent::Update(float dt) {
     if (!m_graph->Entries("OnClick").empty())
         if (auto* b = gameObject ? gameObject->GetComponent<UIButton>() : nullptr)
             if (b->WasClicked()) Fire("OnClick", gameObject);
+    // On Button Clicked: a UI button anywhere in the scene, by its object's name (spaces typed as '_').
+    if (!m_buttonEntries.empty() && gameObject && gameObject->scene()) {
+        for (const ButtonEntry& be : m_buttonEntries) {
+            GameObject* clicked = nullptr;
+            for (const auto& up : gameObject->scene()->Objects()) {
+                if (!up || !up->active) continue;
+                std::string nm = up->name;
+                for (char& c : nm) if (c == ' ' || c == '\t') c = '_';
+                if (nm != be.name) continue;
+                if (auto* b = up->GetComponent<UIButton>(); b && b->WasClicked()) { clicked = up.get(); break; }
+            }
+            if (clicked) Fire(be.entry.c_str(), clicked);
+            if (!m_graph) return;
+        }
+    }
     // On Key Pressed / Released.
     for (const KeyEntry& k : m_keyEntries)
         if (k.up ? Input::GetKeyUp(k.key) : Input::GetKeyDownGame(k.key)) Fire(k.entry.c_str(), nullptr);
@@ -266,21 +307,21 @@ void VisualScriptComponent::Update(float dt) {
 
 namespace {
 bool ActionDown(const std::string& name) {
-    if (name == "interact" || name == "use") return Input::GetKeyDownGame('e');
+    if (name == "interact" || name == "use") return InteractPressed();
     if (name == "jump") return Input::GetKeyDownGame(' ');
     if (name == "fire" || name == "attack") return Input::GetMouseButtonDown(0);
     if (name == "crouch") return Input::GetKeyDownGame('c');
     return Input::GetKeyDownGame(Input::KeyFromName(name));
 }
 bool ActionUp(const std::string& name) {
-    if (name == "interact" || name == "use") return Input::GetKeyUp('e');
+    if (name == "interact" || name == "use") return InteractReleased();
     if (name == "jump") return Input::GetKeyUp(' ');
     if (name == "fire" || name == "attack") return Input::GetMouseButtonUp(0);
     if (name == "crouch") return Input::GetKeyUp('c');
     return Input::GetKeyUp(Input::KeyFromName(name));
 }
 bool ActionHeld(const std::string& name) {
-    if (name == "interact" || name == "use") return Input::GetKeyGame('e');
+    if (name == "interact" || name == "use") return InteractHeld();
     if (name == "jump") return Input::GetKeyGame(' ');
     if (name == "fire" || name == "attack") return Input::GetMouseButton(0);
     if (name == "crouch") return Input::GetKeyGame('c');
@@ -297,7 +338,24 @@ void VisualScriptComponent::FireTagged(const char* prefix, GameObject* other) {
 
 void VisualScriptComponent::PollGameplay(float) {
     if (!m_graph || !gameObject) return;
-    if (!m_graph->Entries("OnInteract").empty() && Input::GetKeyDownGame('e') && transform && gameObject->scene()) {
+    // On Damaged: the hits queued since the last frame, in order. Amount is the health really lost,
+    // Type the damage kind's name, Source who dealt it (nothing for a trap or hunger).
+    if (!m_pendingHits.empty()) {
+        std::vector<PendingHit> hits;
+        hits.swap(m_pendingHits);
+        if (!m_graph->Entries("OnDamaged").empty())
+            for (const PendingHit& h : hits) {
+                m_ctx.variables["damage_amount"] = vs::VsValue(h.amount);
+                m_ctx.variables["damage_type"] = vs::VsValue(h.type);
+                m_ctx.variables["damage_source"] = h.source ? vs::VsValue::Object(h.source) : vs::VsValue();
+                m_ctx.variables["event_value"] = vs::VsValue(h.amount);
+                Fire("OnDamaged", nullptr);
+                if (!m_graph) return;
+            }
+    } else if (!m_graph->Entries("OnDamaged").empty()) {
+        EnsureDamagedRelay();   // listeners cleared since the graph loaded (a test, a scene reset): listen again
+    }
+    if (!m_graph->Entries("OnInteract").empty() && InteractPressed() && transform && gameObject->scene()) {
         GameObject* best = nullptr;
         float bestD = 2.0f;
         for (const auto& up : gameObject->scene()->Objects()) {

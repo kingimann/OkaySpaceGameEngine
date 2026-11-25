@@ -223,7 +223,7 @@ struct KnockbackNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (!GpHasBody(this, g, ctx)) return 0;
-        Vec3 dir = -ctx.transform->Forward();
+        Vec3 dir = VsFacing(ctx.transform) * -1.0f;   // backward: away from where it faces
         if (HasInput(0)) {
             if (GameObject* from = GpPin(this, 0, g, ctx, true, "a source")) {
                 if (!from->transform) return 0;
@@ -417,7 +417,7 @@ struct PickUpNode : VsNode {
         GameObject* item = GpPin(this, 0, g, ctx, true, "the object to pick up");
         if (!item || !item->transform) return 0;
         item->transform->SetParent(ctx.transform, true);
-        item->transform->localPosition = Vec3{0, 1, 0.6f};
+        item->transform->localPosition = Vec3{0, 1, -0.6f};   // held in front (-Z)
         if (auto* r3 = item->GetComponent<Rigidbody3D>()) r3->bodyType = Rigidbody3D::BodyType::Kinematic;
         if (auto* r2 = item->GetComponent<Rigidbody2D>()) r2->bodyType = Rigidbody2D::BodyType::Kinematic;
         return 0;
@@ -431,7 +431,7 @@ struct DropNode : VsNode {
         GameObject* item = GpPin(this, 0, g, ctx, true, "the object to drop");
         if (!item || !item->transform) return 0;
         item->transform->SetParent(nullptr, true);
-        item->transform->SetPosition(ctx.transform->Position() + ctx.transform->Forward() * 1.2f);
+        item->transform->SetPosition(ctx.transform->Position() + VsFacing(ctx.transform) * 1.2f);
         if (auto* r3 = item->GetComponent<Rigidbody3D>()) r3->bodyType = Rigidbody3D::BodyType::Dynamic;
         if (auto* r2 = item->GetComponent<Rigidbody2D>()) r2->bodyType = Rigidbody2D::BodyType::Dynamic;
         return 0;
@@ -496,9 +496,29 @@ struct DamageNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         GameObject* o = GpPin(this, 1, g, ctx, false, "a target");
+        // Type (pin 2): the damage kind by name (Fire, Poison, Fall...); empty is Generic.
+        DamageType type = DamageType::Generic;
+        const std::string tn = HasInput(2) ? In(2, g, ctx).AsString() : std::string();
+        if (!tn.empty() && !DamageTypeFromName(tn, type)) {
+            g.Error(this, ctx, "there is no damage type called '" + tn + "' (use Generic, Physical, Fire, Cold, Electric, Poison, Explosion, Fall...)");
+            return 0;
+        }
         if (HealthStat* h = GpHealth(this, o, g, ctx))
-            h->Damage(std::max(0.0f, In(0, g, ctx, VsValue{10.0f}).AsFloat()));
+            h->Damage(DamageEvent::Make(std::max(0.0f, In(0, g, ctx, VsValue{10.0f}).AsFloat()), type, ctx.gameObject));
         return 0;
+    }
+};
+
+/// On Damaged: runs once for each hit this object took (any health holder, through the one damage path).
+/// Amount is the health really lost, Type the damage kind's name, Source who dealt it (none for a trap).
+struct DamagedEventNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext&) override { return 0; }
+    VsValue Eval(int pin, NodeGraph&, VsContext& ctx) override {
+        static const char* keys[] = {"damage_amount", "damage_type", "damage_source"};
+        if (pin < 0 || pin > 2) return {};
+        auto it = ctx.variables.find(keys[pin]);
+        return it != ctx.variables.end() ? it->second : VsValue{};
     }
 };
 
@@ -543,8 +563,9 @@ struct SpawnProjectileNode : VsNode {
         GameObject* b = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), GpAssetPath(g, path));
         if (!b) { g.Error(this, ctx, "couldn't spawn '" + path + "'"); return 0; }
         const float speed = In(0, g, ctx, VsValue{12.0f}).AsFloat();
-        if (b->transform) b->transform->SetPosition(ctx.transform->Position() + ctx.transform->Forward() * 0.8f);
-        const Vec3 vel = ctx.transform->Forward() * speed;
+        const Vec3 fwd = VsFacing(ctx.transform);
+        if (b->transform) b->transform->SetPosition(ctx.transform->Position() + fwd * 0.8f);
+        const Vec3 vel = fwd * speed;
         if (auto* r3 = b->GetComponent<Rigidbody3D>()) r3->velocity = vel;
         id = b->InstanceId();
         return 0;
@@ -562,10 +583,10 @@ struct ShootNode : VsNode {
         const float dist = std::max(0.1f, In(0, g, ctx, VsValue{30.0f}).AsFloat());
         const float dmg = std::max(0.0f, In(1, g, ctx, VsValue{10.0f}).AsFloat());
         Scene* s = ctx.gameObject->scene();
-        RaycastHit3D h = s->physics3D().Raycast(*s, ctx.transform->Position(), ctx.transform->Forward(), dist, ctx.gameObject);
+        RaycastHit3D h = s->physics3D().Raycast(*s, ctx.transform->Position(), VsFacing(ctx.transform), dist, ctx.gameObject);
         if (!h.hit || !h.gameObject) return 0;
         hit = true; id = h.gameObject->InstanceId();
-        if (auto* hp = h.gameObject->GetComponent<HealthStat>()) hp->Damage(dmg, ctx.transform->Position());
+        if (auto* hp = h.gameObject->GetComponent<HealthStat>()) hp->Damage(DamageEvent::From(dmg, ctx.transform->Position(), DamageType::Physical, ctx.gameObject));
         return 0;
     }
 };
@@ -680,7 +701,7 @@ struct CanSeeNode : VsNode {
         if (dist > maxD || dist < 1e-4f) return false;
         d = d * (1.0f / dist);
         const float need = std::cos(cone * 0.5f * 0.0174533f);
-        if (Vec3::Dot(ctx.transform->Forward().Normalized(), d) < need) return false;
+        if (Vec3::Dot(VsFacing(ctx.transform).Normalized(), d) < need) return false;
         if (ctx.gameObject && ctx.gameObject->scene() && ctx.gameObject->scene()->physicsEnabled) {
             Scene* s = ctx.gameObject->scene();
             RaycastHit3D h = s->physics3D().Raycast(*s, ctx.transform->Position(), d, dist, ctx.gameObject);
@@ -1067,8 +1088,9 @@ inline std::unique_ptr<VsNode> MakeGameplayNode(const std::string& type, const s
     auto argOr = [&](const char* d) { return a.empty() ? std::string(d) : a; };
     if (type == "OnInteract" || type == "OnTagEnter" || type == "OnTagStay" || type == "OnTagExit" ||
         type == "OnCollisionTag" || type == "OnDeath" || type == "OnHealthChanged" ||
-        type == "OnAction" || type == "OnActionUp" || type == "OnActionHeld")
+        type == "OnAction" || type == "OnActionUp" || type == "OnActionHeld" || type == "OnButtonClicked")
         return std::make_unique<EventNode>();
+    if (type == "OnDamaged") return std::make_unique<DamagedEventNode>();
     if (type == "RotateTowards") return std::make_unique<RotateTowardsNode>();
     if (type == "OrbitAround") return std::make_unique<OrbitAroundNode>();
     if (type == "FollowPath") return std::make_unique<FollowPathNode>(a);

@@ -119,13 +119,13 @@ int main() {
         const std::string root = OKAY_SOURCE_DIR;
         // The UI pass lives in the engine renderer; the player and the editor
         // preview both call it.
-        for (const char* rel : {"/player/main.cpp", "/editor/main.cpp", "/engine/src/UI/UIRenderer.cpp"}) {
+        for (const char* rel : {"/player/main.cpp", "/editor/main.cpp", "/engine/src/UI/UIRenderer.cpp", "/engine/src/UI/UIScenePass.cpp"}) {
             std::string src = ReadFile(root + rel);
             CHECK(!src.empty());
             CHECK(src.find("enum UIK") == std::string::npos);
             CHECK(src.find("K_DropBg =") == std::string::npos);
         }
-        CHECK(ReadFile(root + "/engine/src/UI/UIRenderer.cpp").find("UIQueueDrawItems(") != std::string::npos);
+        CHECK(ReadFile(root + "/engine/src/UI/UIScenePass.cpp").find("UIQueueDrawItems(") != std::string::npos);
         CHECK(ReadFile(root + "/editor/main.cpp").find("ui2d::RenderSceneUI(") != std::string::npos);
         CHECK(ReadFile(root + "/player/main.cpp").find("ui2d::RenderSceneUI(") != std::string::npos);
     }

@@ -7,7 +7,10 @@
 // shininess, self illumination), the keyframe section (node hierarchy, pivots,
 // position / rotation / scale tracks) and the master scale. Everything it did not
 // read is listed in ImportedModel::notes. See docs/content/model_readers.md.
+// A 3D Studio project file (.prj) is read too: the same chunk tree, with the project chunk 0xC23D in place of the main chunk
+// 0x4D4D at the top (the chunk list of the public 3D Studio file format description); its editor chunk 0x3D3D is read as in a .3ds.
 #include "FileOpen.hpp"
+#include "okay/Core/Utf8.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
 #include <array>
@@ -45,7 +48,7 @@ constexpr float       kMaxCoord       = 1e15f;   // larger coordinates, keys or 
 inline bool InRange(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z) && std::fabs(v.x) <= kMaxCoord && std::fabs(v.y) <= kMaxCoord && std::fabs(v.z) <= kMaxCoord; }
 
 enum : std::uint16_t {
-    C_MAIN = 0x4D4D, C_VERSION = 0x0002, C_EDIT = 0x3D3D, C_MASTER_SCALE = 0x0100,
+    C_MAIN = 0x4D4D, C_PROJECT = 0xC23D, C_VERSION = 0x0002, C_EDIT = 0x3D3D, C_MASTER_SCALE = 0x0100,
     C_MATERIAL = 0xAFFF, C_MAT_NAME = 0xA000, C_MAT_AMBIENT = 0xA010, C_MAT_DIFFUSE = 0xA020, C_MAT_SPECULAR = 0xA030,
     C_MAT_SHININESS = 0xA040, C_MAT_SHIN_STR = 0xA041, C_MAT_TRANSP = 0xA050, C_MAT_SELFILLUM = 0xA084,
     C_MAT_TEX1 = 0xA200, C_MAT_SPECMAP = 0xA204, C_MAT_OPACMAP = 0xA210, C_MAT_REFLMAP = 0xA220, C_MAT_BUMPMAP = 0xA230,
@@ -147,7 +150,7 @@ struct Reader {
 
     bool Chunk(std::uint16_t id, std::size_t b, std::size_t e, int depth, std::uint16_t parent) {
         switch (id) {
-        case C_MAIN: case C_EDIT: case C_KFDATA: case C_TRIMESH:
+        case C_MAIN: case C_PROJECT: case C_EDIT: case C_KFDATA: case C_TRIMESH:
             return Walk(b, e, depth + 1, id);
         case C_MASTER_SCALE:
             if (Has(b, 4) && e - b >= 4) { const float f = F32(b); if (std::isfinite(f) && f > 0.0f && f < 1e6f) masterScale = f; }
@@ -405,6 +408,9 @@ struct Reader {
         if (t.empty()) return t;
         if (t.size() > 1 && (t[0] == '/' || t[1] == ':')) return t;
         const std::string direct = baseDir + t;
+        // A name that is not UTF-8 names no real file, and on Windows std::filesystem::path throws on such text (a
+        // hostile file crashed the import there), so the disk is not asked.
+        if (!utf8::IsValid(t) || !utf8::IsValid(baseDir)) return direct;
         namespace fs = std::filesystem;
         std::error_code ec;
         if (fs::exists(fs::path(direct), ec)) return direct;
@@ -597,7 +603,8 @@ struct Reader {
         d = (const unsigned char*)bytes.data();
         n = bytes.size();
         if (n > kMaxFileBytes) return Fail("file too large");
-        if (n < 6 || U16(0) != C_MAIN) return Fail("3DS: not a 3D Studio file (no main chunk)");
+        // a .3ds starts with the main chunk 0x4D4D; a 3D Studio project file (.prj) with 0xC23D around the same editor chunk
+        if (n < 6 || (U16(0) != C_MAIN && U16(0) != C_PROJECT)) return Fail("3DS: not a 3D Studio file (no main chunk)");
         if (U32(2) < 6) return Fail("3DS: bad main chunk length");
         if (!Walk(0, n, 0, 0)) return false;
 

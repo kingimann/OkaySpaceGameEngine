@@ -1,0 +1,19 @@
+# Batch S2 (substitute pick) of the engine modularization plan (docs/engine/modularization_plan.md, Part A section 3):
+# the OkayScriptVM `RegisterBuiltins` split is "refactor, then pure move" (the topics share local lambdas and the whole VM
+# lives in an anonymous namespace of one .cpp), so it is not a pure move yet. This is the smaller pure move taken instead:
+# engine/src/Render/ModelImport.cpp: the tail from "Import report" to the end (AnalyzeModel, locomotion mapping, animations
+# from a file, character model attach and fix: about 1,160 lines) moves to engine/src/Render/ModelImportCharacter.cpp.
+#   python3 scripts/check_pure_move.py --base origin/main --head HEAD --source engine/src/Render/ModelImport.cpp \
+#       --dest engine/src/Render/ModelImportCharacter.cpp --dest engine/src/Render/ModelImportInternal.hpp \
+#       --rules docs/engine/moves/S2_model_import_character.rules
+# The moved tail used two file-static helpers of ModelImport.cpp (Lower, BaseName). They leave `static` and are declared in
+# ModelImportInternal.hpp under okay::model_import (a namespace of their own: many other files have their own okay::Lower).
+# (both edits are inside ModelImport.cpp itself, so they are drop/add rules, not change rules)
+drop: ^static std::string (Lower\(std::string s\)|BaseName\(const std::string& path\)) \{$
+add: ^std::string model_import::(Lower\(std::string s\)|BaseName\(const std::string& path\)) \{$
+drop: ^static std::string Lower\(std::string s\);$
+add: ^using model_import::(Lower|BaseName);$
+add: ^namespace model_import \{$
+add: ^std::string Lower\(std::string s\);$
+add: ^std::string BaseName\(const std::string& path\);$
+add: ^\} // namespace model_import$

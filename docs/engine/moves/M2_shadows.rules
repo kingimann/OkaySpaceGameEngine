@@ -1,0 +1,22 @@
+# shadows: move of free function bodies out of SoftwareRenderer.hpp (docs/engine/modularization_plan.md M2).
+# Each moved definition loses `inline` and its default arguments (they stay on the declaration).
+change: inline void RenderLocalShadowMaps(const Scene& scene, const Mat4& camVp, const Vec3& eye) { ==> void RenderLocalShadowMaps(const Scene& scene, const Mat4& camVp, const Vec3& eye) {
+add: ^\s*void\ RenderLocalShadowMaps\(const\ Scene\&\ scene,\ const\ Mat4\&\ camVp,\ const\ Vec3\&\ eye\);$
+change: inline void RasterLocalDepth(std::vector<float>& depth, int S, const Vec4 in[3], float nearZ) { ==> void RasterLocalDepth(std::vector<float>& depth, int S, const Vec4 in[3], float nearZ) {
+add: ^\s*void\ RasterLocalDepth\(std::vector<float>\&\ depth,\ int\ S,\ const\ Vec4\ in\[3\],\ float\ nearZ\);$
+drop: ^\s*inline\ bool\ ComputeDirectionalShadowVP\(const\ Scene\&\ scene,\ const\ Mat4\&\ camVp,\ const\ Vec3\&\ eye,$
+drop: ^\s*Mat4\&\ outVP,\ float\&\ outTexelWorld\)\ \{$
+add: ^\s*bool\ ComputeDirectionalShadowVP\(const\ Scene\&\ scene,\ const\ Mat4\&\ camVp,\ const\ Vec3\&\ eye,$
+add: ^\s*Mat4\&\ outVP,\ float\&\ outTexelWorld\)\ \{$
+add: ^\s*bool\ ComputeDirectionalShadowVP\(const\ Scene\&\ scene,\ const\ Mat4\&\ camVp,\ const\ Vec3\&\ eye,$
+add: ^\s*Mat4\&\ outVP,\ float\&\ outTexelWorld\);$
+change: inline void RenderShadowMap(const Scene& scene, const Mat4& vp, const Vec3& eye) { ==> void RenderShadowMap(const Scene& scene, const Mat4& vp, const Vec3& eye) {
+add: ^\s*void\ RenderShadowMap\(const\ Scene\&\ scene,\ const\ Mat4\&\ vp,\ const\ Vec3\&\ eye\);$
+drop: ^\s*inline\ void\ BuildCascade\(const\ Scene\&\ scene,\ ShadowCascade\&\ cas,\ const\ Vec3\&\ center,$
+drop: ^\s*float\ radius,\ const\ Vec3\&\ L,\ float\ depthPad,\ int\ S,\ bool\ cull\)\ \{$
+add: ^\s*void\ BuildCascade\(const\ Scene\&\ scene,\ ShadowCascade\&\ cas,\ const\ Vec3\&\ center,$
+add: ^\s*float\ radius,\ const\ Vec3\&\ L,\ float\ depthPad,\ int\ S,\ bool\ cull\)\ \{$
+add: ^\s*void\ BuildCascade\(const\ Scene\&\ scene,\ ShadowCascade\&\ cas,\ const\ Vec3\&\ center,$
+add: ^\s*float\ radius,\ const\ Vec3\&\ L,\ float\ depthPad,\ int\ S,\ bool\ cull\);$
+change: inline void RenderCascadeDepth(const Scene& scene, ShadowCascade& cas, bool cull) { ==> void RenderCascadeDepth(const Scene& scene, ShadowCascade& cas, bool cull) {
+add: ^\s*void\ RenderCascadeDepth\(const\ Scene\&\ scene,\ ShadowCascade\&\ cas,\ bool\ cull\);$

@@ -37,18 +37,16 @@ int main() {
     for (const Row& r : rows) CHECK(LoadsAsMesh(r.file, r.what));
 
     // No other reader exists in this build.
-    CHECK(!AssimpAvailable());
     const std::string exts = ImportableExtensions();
     for (const char* e : {".obj", ".gltf", ".glb", ".fbx", ".dae", ".stl", ".ply", ".3ds", ".off", ".smd", ".md5mesh", ".ms3d", ".ase", ".blend"})
         CHECK(exts.find(e) != std::string::npos);
 
-    // The FBX reader is the own one even when the environment tries to switch it off (OKAY_OWN_FBX=0 used to mean "use ufbx").
+    // The FBX reader is the own one even with a leftover OKAY_OWN_FBX=0 (it used to mean "use ufbx"; ufbx and the switch are deleted).
 #if defined(_WIN32)
     _putenv_s("OKAY_OWN_FBX", "0");
 #else
     setenv("OKAY_OWN_FBX", "0", 1);
 #endif
-    CHECK(fbx::OwnReaderEnabled());
     CHECK(LoadsAsMesh("tests/assets/fbx/cube_zup_cm_bin.fbx", "FBX with OKAY_OWN_FBX=0"));
 
     // A file our reader refuses fails with ok=false (never a crash, never a silent fallback): garbage under several extensions.

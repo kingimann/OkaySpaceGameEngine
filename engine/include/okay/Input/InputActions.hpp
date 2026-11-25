@@ -6,6 +6,8 @@
 
 namespace okay {
 
+class ActionSet;
+
 /// One input a game action listens to, written as text so it saves and shows
 /// easily:
 ///   key:space   key:w   key:shift      a keyboard key (Input::KeyFromName names)
@@ -45,7 +47,15 @@ struct InputBinding {
 /// keys, so players can rebind them and play on a keyboard or a controller.
 /// Each action has a list of bindings; it is down while any of them is. The
 /// defaults cover a typical action game; games add their own with Define.
-/// A player's rebinding is kept in Prefs ("input.<action>") and loaded at start.
+///
+/// One input system: this is the name-based front of the engine's one action table, InputRuntime::Actions() (an ActionSet:
+/// the .okayinput asset in use plus the actions defined here). There is no second copy of any action, binding or rebinding:
+/// Get / Down / Vector read that table, Rebind / the Controls screen / profiles change it, and the typed calls (ia_*,
+/// Input.Player*, the "ia:" Keybind field) change the same bindings for the first local player. Contexts are its action maps.
+/// The player's rebinding is one store, saved as "inputov.player0" and, for every action this front can show, also in the
+/// old per-action form "input.<action>" so earlier saves and builds keep reading it.
+/// An action the asset also has (Jump, Move ... in the shipped asset) keeps the asset's definition; the built-in defaults
+/// below only add what the asset lacks. A game's own Define replaces the asset's bindings for that name.
 class InputActions {
 public:
     struct Action {
@@ -66,14 +76,11 @@ public:
         bool invertX = false, invertY = false;   ///< flip a direction's axes (invert look)
         bool perPlayer = false;            ///< also evaluated for each controller (see Get(name, player))
 
-        // ---- Bookkeeping filled by Tick (do not set)
-        std::string key, ctxKey;           ///< lower-case name and context, for quick lookups
-        double pressedAt = -1.0e9, prevPressedAt = -1.0e9, heldSince = -1.0;
-        bool pressConsumed = false, pressedNow = false;
         struct PlayerState { float value = 0, previous = 0; Vec2 vector; };
         PlayerState players[Input::kMaxGamepads];
-        bool latchActive = false, latchHeld = false;   ///< hold-to-toggle state
     };
+    // Action is a read-only view of one table action (refreshed by Tick and whenever the table changes); change an action
+    // with the calls below (Rebind, SetBindings, SetContext ...), not through the view.
 
     /// How an action's raw reading is shaped. Saved with the player's settings ("inputresp.<action>").
     struct Response { float deadzone = 0.0f, curve = 1.0f, sensitivity = 1.0f; bool invertX = false, invertY = false; };
@@ -125,8 +132,7 @@ public:
     static void Tick();
     /// Tick with a known frame time (tests, replays, hosts that already measure it).
     static void Tick(float dt);
-    /// Use the original, slower evaluation (OKAY_OLD_INPUT=1 turns it on at start): same
-    /// results, kept to prove that and to measure the speed-up.
+    /// Kept for old callers and OKAY_OLD_INPUT=1: there is one evaluation now (ActionSet::Update), so this only records the flag.
     static void SetLegacy(bool on);
     static bool Legacy();
 
@@ -183,6 +189,8 @@ public:
     /// keyboard / mouse binding (added when there is none). For a Keys4 binding,
     /// `part` 0..3 (up, down, left, right) changes just that key. Saved to Prefs.
     static bool Rebind(const std::string& name, const std::string& binding, int part = -1);
+    /// Replace an action's whole binding list (a Controls screen's Unbind). Not saved: call Save. False for an unknown action.
+    static bool SetBindings(const std::string& name, const std::vector<InputBinding>& list);
     // Conflict checks and swapping live in RemapModel (RemapConflicts, RemapBind with RemapResolve::Swap), which a
     // Controls screen already uses; they understand the chord and wheel bindings too.
     /// All bindings as one text block ("okayinput 1" then one line per action) and back, for
@@ -198,14 +206,55 @@ public:
     /// "right" keeps everything on the right half (I J K L and the numpad side).
     static bool ApplyPreset(const std::string& preset);
 
+    // ---- Built-in controllers (first / third person, character, top-down, weapons, pickups).
+    // Each keeps its own key field (sprintKey, crouchKey, fireButton ...). While the player has
+    // not rebound the matching action, these read exactly that key, as before. Once the action
+    // is rebound (Controls screen, Rebind, a profile or preset), a field still set to the
+    // action's default key follows the action instead, so the new binding reaches the
+    // controller and the old key stops working. A field a designer set to some other key stays
+    // that key. Reading the action needs Tick to have run this frame (the player and editor do).
+    /// The player's bindings for the action differ from its defaults.
+    static bool Rebound(const std::string& name);
+    /// `key` held / pressed this frame, or the action's, as described above. 0 = never.
+    /// `stockKey` is the controller's own shipped key for an action that starts with no default binding of its own
+    /// (Prone, LeanLeft, LeanRight, Dash: their keys are shared with Interact and Jump or often taken by a game's own actions). Once that action is bound, a field still
+    /// on `stockKey` follows it too.
+    /// An action in a context that is not pushed (the "Vehicle" driving actions) is read straight from its bindings.
+    static bool ControlKey(const std::string& action, char key, char stockKey = 0);
+    static bool ControlKeyDown(const std::string& action, char key, char stockKey = 0);
+    /// One key of a four-key direction (part 0 up, 1 down, 2 left, 3 right), pressed this frame: `key` until the
+    /// action is rebound; then, if `key` is that part of one of its default four-key bindings, the same part of its
+    /// current four-key bindings (the 2.5D platformer's layer keys follow "Move" up and down).
+    static bool ControlDirKeyDown(const std::string& action, int part, char key);
+    /// ControlKeyDown for the key that opens and closes a menu: read straight from the devices, so it still works
+    /// while that menu's own Block context swallows every action (the Pause Menu and "Pause").
+    static bool MenuKeyDown(const std::string& action, char key);
+    /// Input::AxisWASD until one of the four button actions is rebound; then y = up - down, x = right - left from
+    /// those actions (the Vehicle Controller's Throttle, Brake, SteerLeft, SteerRight).
+    static Vec2 ControlAxis(const std::string& up, const std::string& down, const std::string& left, const std::string& right);
+    /// The action's bindings read straight from the devices this frame, ignoring contexts and Tick.
+    static bool DirectHeld(const std::string& name);
+    static bool DirectDown(const std::string& name);
+    /// The same for a mouse button (0 left, 1 right, 2 middle). Negative = never.
+    static bool ControlMouse(const std::string& action, int button);
+    static bool ControlMouseDown(const std::string& action, int button);
+    /// Input::AxisWASD until "Move" is rebound, then the "Move" action's vector.
+    static Vec2 ControlMove();
+
     /// The binding a rebind for that device would change, or nullptr.
     static const InputBinding* Current(const std::string& name, bool gamepad);
     /// Put one action (or every action, with "") back to its defaults.
     static void Reset(const std::string& name = "");
 
-    /// Read / write the player's rebinding from / to Prefs.
+    /// Read / write the player's rebinding from / to Prefs: the one store ("inputov.player0", plus "input.<action>" for
+    /// what this front can show; an old save with only "input.<action>" still loads).
     static void Load();
     static void Save();
+    /// Give `set` the actions defined here that it lacks (a game's own Define replaces the asset's bindings), the player's
+    /// response settings and the pushed contexts. InputRuntime calls it for its table and for every player that joins.
+    static void PrepareSet(ActionSet& set);
+    /// PrepareSet plus the player's saved rebinding: InputRuntime builds its table with it.
+    static void PrepareTable(ActionSet& set);
     /// Back to the built-in default set (tests, new game).
     static void Restore();
 

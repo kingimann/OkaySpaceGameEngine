@@ -38,12 +38,15 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 std::atomic<std::uint64_t> g_nextSystemId{1};
+std::atomic<JobSystem*> g_createdGlobal{nullptr};
 
 // What the calling thread is running, for the self-wait and stall checks.
 struct ThreadCtx {
     const void* sys = nullptr;
     int depth = 0;               // job bodies of `sys` on this thread's stack
     const JobState* job = nullptr;
+    int lane = -1;               // pool thread index, or -1 when this thread is not a worker
+    const void* laneSys = nullptr;   // the job system that `lane` belongs to
 };
 thread_local ThreadCtx t_ctx;
 
@@ -91,6 +94,9 @@ struct JobSystem::Impl {
     // ---- guarded by mu ----
     Mode mode = Mode::Running;
     std::deque<StatePtr> ready[3];
+    std::vector<std::deque<StatePtr>> laneQ[3];   // per worker, per priority: the owner pops the newest, others steal the oldest
+    struct Boot { Impl* impl = nullptr; int index = 0; };
+    std::vector<Boot> boots;
     std::deque<StatePtr> mainQ;
     std::unordered_map<JobState*, StatePtr> blocked;   // waiting for dependencies
     std::vector<corethreads::Thread> threads;
@@ -111,6 +117,7 @@ struct JobSystem::Impl {
     std::atomic<std::uint64_t> submitted{0}, completed{0}, failed{0}, cancelled{0};
     std::atomic<std::uint64_t> ranWorkers{0}, ranHelping{0}, ranInline{0}, ranMain{0};
     std::atomic<std::uint64_t> busyNs{0};
+    std::atomic<std::uint64_t> stolen{0};
 
     Impl() { mainTag.store(corethreads::CurrentThreadTag()); }
 
@@ -124,7 +131,10 @@ struct JobSystem::Impl {
         mu.Unlock();
     }   // `dead` is destroyed here, outside the lock
 
-    static void WorkerMain(void* p) { static_cast<Impl*>(p)->WorkerLoop(); }
+    static void WorkerEntry(void* p) {
+        Boot* b = static_cast<Boot*>(p);
+        b->impl->WorkerLoop(b->index);
+    }
 
     // Start up to n workers. Call with the lock held (or before anything else can see the system).
     void StartWorkers(int n) {
@@ -132,10 +142,20 @@ struct JobSystem::Impl {
         if (n > 256) n = 256;
         stopWorkers = false;
         mode = Mode::Running;
-        try { threads.reserve((std::size_t)n); } catch (...) { n = 0; }
+        boots.clear();
+        try {
+            threads.reserve((std::size_t)n);
+            boots.reserve((std::size_t)n);
+        } catch (...) { n = 0; }
+        for (int p = 0; p < 3; ++p) laneQ[p].assign((std::size_t)n, {});
+        for (int i = 0; i < n; ++i) boots.push_back(Boot{this, i});
+        // Every Boot exists before a thread starts: a later push must not move the ones already handed out.
         for (int i = 0; i < n; ++i) {
             threads.emplace_back();
-            if (!threads.back().Start(&Impl::WorkerMain, this)) { threads.pop_back(); break; }
+            if (!threads.back().Start(&Impl::WorkerEntry, &boots[(std::size_t)i])) {
+                threads.pop_back();
+                break;
+            }
         }
         liveWorkers = (int)threads.size();
     }
@@ -151,7 +171,19 @@ struct JobSystem::Impl {
             if (waiters > 0) doneCv.NotifyAll();
             return;
         }
+        const int lane = (t_ctx.laneSys == this) ? t_ctx.lane : -1;
         int p = s->priority < 0 ? 0 : (s->priority > 2 ? 2 : s->priority);
+        // A job spawned by a worker waits on that worker's own queue (newest first). Another
+        // worker takes the oldest of those when its own queue is empty.
+        if (lane >= 0 && lane < (int)laneQ[p].size()) {
+            laneQ[p][(std::size_t)lane].push_back(s);
+            s->queued = true;
+            ++queueDepth;
+            if (queueDepth > peakDepth) peakDepth = queueDepth;
+            if (idleWorkers > 0) workCv.NotifyOne();
+            else if (waiters > 0) doneCv.NotifyAll();
+            return;
+        }
         ready[p].push_back(s);
         s->queued = true;
         ++queueDepth;
@@ -174,21 +206,39 @@ struct JobSystem::Impl {
         return nullptr;
     }
 
+    StatePtr TakeLocked(std::deque<StatePtr>& q, bool newest, bool countSteal) {
+        while (!q.empty()) {
+            StatePtr s = newest ? std::move(q.back()) : std::move(q.front());
+            if (newest) q.pop_back(); else q.pop_front();
+            if (!s->queued) continue;
+            s->queued = false;
+            --queueDepth;
+            s->status.store((int)JobStatus::Running, std::memory_order_release);
+            ++running;
+            if (countSteal) stolen.fetch_add(1, std::memory_order_relaxed);
+            return s;
+        }
+        return nullptr;
+    }
+
     StatePtr PopReadyLocked(bool includeMain) {
         if (includeMain) {
             if (StatePtr m = PopMainLocked()) return m;
         }
+        const int self = (t_ctx.laneSys == this) ? t_ctx.lane : -1;
+        const bool haveSelf = self >= 0 && self < (int)laneQ[0].size();
+        // One priority at a time, highest first, across this worker's queue and the shared
+        // queue. Draining the whole local queue first let three Low jobs run before a High
+        // one that was waiting on the shared queue. Any thread may then take the oldest job of
+        // a worker's queue, including a thread that is not a worker (the main thread in Wait),
+        // so a job a busy worker queued is not stuck behind that worker's long job.
         for (int p = 0; p < 3; ++p) {
-            auto& q = ready[p];
-            while (!q.empty()) {
-                StatePtr s = std::move(q.front());
-                q.pop_front();
-                if (!s->queued) continue;
-                s->queued = false;
-                --queueDepth;
-                s->status.store((int)JobStatus::Running, std::memory_order_release);
-                ++running;
-                return s;
+            if (haveSelf)
+                if (StatePtr s = TakeLocked(laneQ[p][(std::size_t)self], true, false)) return s;
+            if (StatePtr s = TakeLocked(ready[p], false, false)) return s;
+            for (std::size_t w = 0; w < laneQ[p].size(); ++w) {
+                if ((int)w == self) continue;
+                if (StatePtr s = TakeLocked(laneQ[p][w], false, true)) return s;
             }
         }
         return nullptr;
@@ -316,7 +366,9 @@ struct JobSystem::Impl {
         }
     }
 
-    void WorkerLoop() {
+    void WorkerLoop(int index) {
+        t_ctx.lane = index;
+        t_ctx.laneSys = this;
         mu.Lock();
         for (;;) {
             if (StatePtr j = PopReadyLocked(false)) {
@@ -332,6 +384,8 @@ struct JobSystem::Impl {
             --idleWorkers;
         }
         UnlockFlush();
+        t_ctx.lane = -1;
+        t_ctx.laneSys = nullptr;
     }
 
     // Wake threads sleeping in HelpUntil (something they wait for changed without a job finishing).
@@ -343,8 +397,9 @@ struct JobSystem::Impl {
 
     // Run queued jobs on this thread until pred() (evaluated with the lock held) is true.
     // False on timeout (timeoutSec >= 0) or when nothing could ever run (see `stalled`).
+    // With `help` false it only sleeps until pred() is true (see ParallelForImpl).
     template <class Pred>
-    bool HelpUntil(Pred pred, double timeoutSec, bool forceMain, bool* stalled) {
+    bool HelpUntil(Pred pred, double timeoutSec, bool forceMain, bool* stalled, bool help = true) {
         const bool useMain = forceMain || IsMain();
         const bool timed = timeoutSec >= 0.0;
         const auto deadline = Clock::now() + std::chrono::duration_cast<Clock::duration>(
@@ -354,16 +409,18 @@ struct JobSystem::Impl {
         ++waiters;
         for (;;) {
             if (pred()) { ok = true; break; }
-            if (StatePtr j = PopReadyLocked(useMain)) {
-                UnlockFlush();
-                Outcome o = Execute(j);
-                mu.Lock();
-                FinishLocked(j, o, Kind::Helper);
-                continue;
-            }
-            if (liveWorkers == 0 && useMain && running <= SelfDepth()) {
-                if (stalled) *stalled = true;
-                break;
+            if (help) {
+                if (StatePtr j = PopReadyLocked(useMain)) {
+                    UnlockFlush();
+                    Outcome o = Execute(j);
+                    mu.Lock();
+                    FinishLocked(j, o, Kind::Helper);
+                    continue;
+                }
+                if (liveWorkers == 0 && useMain && running <= SelfDepth()) {
+                    if (stalled) *stalled = true;
+                    break;
+                }
             }
             if (timed) {
                 const double left = std::chrono::duration<double>(deadline - Clock::now()).count();
@@ -404,6 +461,17 @@ struct JobSystem::Impl {
                 ResolveLocked(keep);
             }
             q.clear();
+        }
+        for (int p = 0; p < 3; ++p) {
+            for (auto& q : laneQ[p]) {
+                for (StatePtr& s : q) {
+                    if (!s->queued) continue;
+                    StatePtr keep = s;
+                    MarkCancelledLocked(keep);
+                    ResolveLocked(keep);
+                }
+                q.clear();
+            }
         }
         for (StatePtr& s : mainQ) {
             if (!s->queued) continue;
@@ -482,7 +550,33 @@ JobSystem& JobSystem::Global() {
         Holder() : js(kAuto) { js.SetDrainOnDestroy(false); }
     };
     static Holder h;
+    g_createdGlobal.store(&h.js, std::memory_order_release);
     return h.js;
+}
+
+namespace {
+std::atomic<JobSystem*> g_engineJobs{nullptr};
+} // namespace
+
+JobSystem* RunningEngineJobs() { return g_engineJobs.load(std::memory_order_acquire); }
+
+JobSystem& EngineJobs() {
+    JobSystem* js = RunningEngineJobs();
+    return js ? *js : JobSystem::Global();
+}
+
+void SetEngineJobs(JobSystem* js) { g_engineJobs.store(js, std::memory_order_release); }
+
+JobFrameNote NoteRunningJobs() {
+    JobSystem* js = g_engineJobs.load(std::memory_order_acquire);
+    if (!js) js = g_createdGlobal.load(std::memory_order_acquire);
+    if (!js) return {};
+    const JobStats s = js->Stats();
+    JobFrameNote n;
+    n.live = true;
+    n.busyMs = s.busyMs;
+    n.completed = s.completed;
+    return n;
 }
 
 int JobSystem::WorkerCount() const {
@@ -785,8 +879,11 @@ void JobSystem::ParallelForImpl(std::size_t begin, std::size_t end, std::size_t 
         catch (...) { break; }   // could not queue a helper: the caller just does more itself
     }
     runChunks();   // the calling thread works too
+    // Every chunk is claimed now; the ones still running finish on the threads that claimed
+    // them. So wait without picking up other queued jobs: a long one (an asset decode, a
+    // navmesh bake) would otherwise hold up the caller, e.g. a physics step, for its whole length.
     I.HelpUntil([&st, chunks] { return st->completed.load(std::memory_order_acquire) >= chunks; },
-                -1.0, false, nullptr);
+                -1.0, false, nullptr, /*help=*/false);
     for (const JobHandle& h : handles) Cancel(h);   // helpers that never got a turn
     if (st->failed.load(std::memory_order_acquire)) {
         // Take the exception out of the shared state first: a helper may still hold `st` and
@@ -820,6 +917,7 @@ JobStats JobSystem::Stats() const {
     s.ranInline = I.ranInline.load(std::memory_order_relaxed);
     s.ranOnMainThread = I.ranMain.load(std::memory_order_relaxed);
     s.busyMs = (double)I.busyNs.load(std::memory_order_relaxed) / 1.0e6;
+    s.stolen = I.stolen.load(std::memory_order_relaxed);
     return s;
 }
 

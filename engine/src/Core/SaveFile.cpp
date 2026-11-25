@@ -22,6 +22,7 @@
 // The private threading shim (never <mutex> here: see CoreThreads.hpp). Last of the includes,
 // because on Windows it pulls in <windows.h>.
 #include "CoreThreads.hpp"
+#include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
 namespace okay {
 namespace savefmt {
@@ -185,7 +186,7 @@ void KeepBackupTrusted(const std::string& path) {
     std::error_code ec;
     if (!fs::is_regular_file(path, ec)) return;
     const std::string tmp = path + ".bak.tmp";
-    fs::copy_file(path, tmp, fs::copy_options::overwrite_existing, ec);
+    okay::CopyFileOver(path, tmp, ec);   // a .bak.tmp left by a crash must not block the backup
     if (ec) { fs::remove(tmp, ec); return; }
     fs::rename(tmp, path + ".bak", ec);
     if (ec) fs::remove(tmp, ec);

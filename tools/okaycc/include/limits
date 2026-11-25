@@ -1,0 +1,49 @@
+// <limits> for okay-cc (ISO/IEC 14882 [numeric.limits]). Our own header. One template for the integer
+// types, worked out from sizeof(T) and the sign of T(-1) (two's complement), and explicit
+// specializations for float and double (IEEE 754 binary32 and binary64: the constants are the
+// format's limits, [numeric.limits.members], C 5.2.4.2.2).
+#pragma once
+namespace std {
+template <typename T>
+struct numeric_limits {
+    static constexpr bool is_specialized = true;
+    static constexpr bool is_signed = T(-1) < T(0);
+    static constexpr bool is_integer = true;
+    static constexpr int digits = (int)sizeof(T) * 8 - (T(-1) < T(0) ? 1 : 0);
+    static T min() { return T(-1) < T(0) ? T(T(1) << (sizeof(T) * 8 - 1)) : T(0); }
+    static T max() { return T(~(T(-1) < T(0) ? T(T(1) << (sizeof(T) * 8 - 1)) : T(0))); }
+    static T lowest() { return T(-1) < T(0) ? T(T(1) << (sizeof(T) * 8 - 1)) : T(0); }
+};
+template <>
+struct numeric_limits<float> {
+    static constexpr bool is_specialized = true;
+    static constexpr bool is_signed = true;
+    static constexpr bool is_integer = false;
+    static constexpr bool has_infinity = true;
+    static constexpr int digits = 24;
+    static constexpr int digits10 = 6;
+    static constexpr int max_digits10 = 9;
+    static float min() { return 1.17549435082228750797e-38f; }  // 2^-126
+    static float max() { return 3.40282346638528859812e+38f; }  // (2 - 2^-23) * 2^127
+    static float lowest() { return -3.40282346638528859812e+38f; }
+    static float epsilon() { return 1.1920928955078125e-07f; }  // 2^-23
+    static float denorm_min() { return 1.40129846432481707092e-45f; }  // 2^-149
+    static float infinity() { return 1.0f / 0.0f; }
+};
+template <>
+struct numeric_limits<double> {
+    static constexpr bool is_specialized = true;
+    static constexpr bool is_signed = true;
+    static constexpr bool is_integer = false;
+    static constexpr bool has_infinity = true;
+    static constexpr int digits = 53;
+    static constexpr int digits10 = 15;
+    static constexpr int max_digits10 = 17;
+    static double min() { return 2.2250738585072013830902e-308; }  // 2^-1022
+    static double max() { return 1.7976931348623157081452e+308; }  // (2 - 2^-52) * 2^1023
+    static double lowest() { return -1.7976931348623157081452e+308; }
+    static double epsilon() { return 2.220446049250313080847e-16; }  // 2^-52
+    static double denorm_min() { return 4.9406564584124654417657e-324; }  // 2^-1074
+    static double infinity() { return 1.0 / 0.0; }
+};
+}  // namespace std

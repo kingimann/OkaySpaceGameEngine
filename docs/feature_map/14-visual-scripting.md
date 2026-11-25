@@ -7,6 +7,8 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 ## 14. Visual scripting
 
 ### 14.1 Graph editor
+- **System:** Visual Scripting - Makes game logic by connecting boxes (nodes) with wires instead of typing code.
+  Home: `engine/include/okay/VisualScript/`, `editor/`. Entry: `engine/include/okay/VisualScript/NodeGraph.hpp`. Also called: visual scripts, OkayVS, .okayvs, node graph, Flow Graph, blueprints.
 - **What:** The Visual Script window (View > Editors & Tools > Visual Script): a zoomable canvas where nodes are placed from a palette, wired, commented and run live, with the runtime graph and the OkayVS file format behind it.
 - **Parts:**
   - 14.1.1 Canvas - `editor/VisualScriptEditor.hpp` - zoom, pan, grid, box select, comment frames, minimap, Fit, drag wires
@@ -20,7 +22,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
   - 14.1.8 Inspector hook - `editor/main.cpp` (Visual Script header ~28850) - graph file path, Open in node editor, Reload; inspector values can be dropped onto a graph
   - 14.1.12 Node search popup - `editor/VisualScriptPalette.hpp` (`DrawNodePalette`, `VsPaletteStore`), `editor/VisualScriptSearchNav.hpp` - big three-column popup (880 x 780 at Comfortable, 760 x 640 Compact, 1040 x 860 Spacious, at most 85% of the screen, at least 640 x 480; drag the bottom-right grip to resize, the size is kept in `okay_vsnodes.txt`): a 40 px search box with a magnifier and Clear, big segmented level buttons, a banner while a wire is dragged ("Showing nodes that fit this plug" and a Show all switch); topics with counts on the left (Starter, Recent, Favourites, All, then the topics), node rows in the middle (36 px tile, name, level tag, up to two wrapped lines of what it does, a 32 px star), a Preview on the right (name, plain description, example, how it plugs in, needs and gives, an Add this node button); Up/Down/PageUp/PageDown/Home/End, Left/Right between topics, Enter adds, Esc closes, Tab switches search and list, typing anywhere goes to search (letters typed while it opens are kept); hover and keys share one highlight and the chosen row scrolls into view; an empty result gives a message and the nearest few names; Recent keeps the last 8 (no repeats); the pure maths is covered by `vs_search_nav`
   - 14.1.11 Add Node topics - `editor/VisualScriptCategories.hpp`, `editor/VisualScriptPlaceRules.hpp`, `editor/VisualScriptLegacyPlaces.hpp`, `editor/VisualScriptPlace.hpp` - 70 topics in 14 sections (99 subcategories) instead of 19 big ones; every node (hand-written, library, gameplay library, text-script function, engine-API node, Actions step) sits in exactly one topic by a table of rules; no topic has more than 30 nodes directly in it; every "On ..." node is in an event topic; a node that moved is still found by its old topic name; favourites are kept by node name
-  - 14.1.13 Nodes explain themselves - `editor/VisualScriptGuide.hpp`, `editor/VisualScriptGuideDraw.hpp`, `kVsPlainRenames` in `editor/VisualScriptPlain.hpp` - one plain sentence under every node title; pin hover tips with an example value; an always-visible "What is this?" card for the selected node (what it does, what to plug in, a tiny example chain, common mistakes, what to do next; Hide folds it and the choice is kept as `helpcard` in `okay_vs_usage.txt`); "Needs input" badge and a "needed" box on an empty input the node cannot work without; Next steps chips that add and wire a type-compatible node in one click; a Try this node button that adds a small ready-made graph; a "What do you want to do?" group in the Add Node list (12 headings); 8 plainer titles with the old names kept as search words; see `docs/scripting/visual_script_clarity.md`, covered by `vs_guide`, not run in a real window
+  - 14.1.13 Nodes explain themselves - `editor/VisualScriptGuide.hpp`, `editor/VisualScriptGuideDraw.hpp`, rows of `kVsNames` in `editor/VisualScriptNames.hpp` (the one title table) - one plain sentence under every node title; pin hover tips with an example value; an always-visible "What is this?" card for the selected node (what it does, what to plug in, a tiny example chain, common mistakes, what to do next; Hide folds it and the choice is kept as `helpcard` in `okay_vs_usage.txt`); "Needs input" badge and a "needed" box on an empty input the node cannot work without; Next steps chips that add and wire a type-compatible node in one click; a Try this node button that adds a small ready-made graph; a "What do you want to do?" group in the Add Node list (12 headings); 8 plainer titles with the old names kept as search words; see `docs/scripting/visual_script_clarity.md`, covered by `vs_guide`, not run in a real window
   - 14.1.9 Outline, snap and align - `editor/VisualScriptEditor.hpp`, `editor/VsCanvasTools.hpp` - (#577) a left outline lists the graph's events, variables (grouped by scope) and parameters; a moved node snaps to a 20 px grid on release (the "Snap to grid" menu item); align Left, Right, Top or Bottom for the selected nodes; a hint line on the canvas when a graph has nodes but no event ("Nothing runs yet"); the helpers (`VsSnap`, `VsAlignNodes`, `VsCollectVariables`, `VsCollectParameters`) are pure data, covered by the editor selftest, and nothing new is written into the `.okayvs` file
 - **Code:** `editor/VisualScriptEditor.hpp`, `editor/VisualScriptPalette.hpp`, `editor/VisualScriptSearchNav.hpp`, `editor/VisualScriptCategories.hpp`, `editor/VisualScriptPlaceRules.hpp`, `editor/VisualScriptNodeDocs.hpp`, `editor/VsCanvasTools.hpp`, `editor/VisualScriptNodeHelp.hpp`, `VisualScript/NodeGraph`, `Components/VisualScriptComponent`
 - **API:** `vs::NodeGraph::Add/ConnectExec/ConnectData/Parse`, `VisualScriptComponent::SetGraph/LoadFromText/LoadFromFile`; file directives `node`, `exec`, `data`, `entry`
@@ -35,6 +37,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Ask me like:** "work on 14.1.1, node snapping on the canvas"; "my graph saved and now a wire is missing"
 
 ### 14.2 Typed pins, variables and scopes, object references
+- **System:** Visual Scripting
 - **What:** Pin types (number, text, bool, vector, object...) with allowed wire conversions, a graph checker that runs before Play and before a build, values that carry object references by id, and variables at graph, object, scene and global scope.
 - **Parts:**
   - 14.2.1 Pin type table - `VisualScript/VsTypes` - `PinType`, `NodeSignature` per node type, `PinCompatible`, conversion hints; the editor colours pins and refuses wires from it
@@ -56,6 +59,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Ask me like:** "work on 14.2.2, warn about unused variables"; "why was my wire refused"
 
 ### 14.3 Functions, loops, control flow
+- **System:** Visual Scripting
 - **What:** Structure for graphs: reusable functions with typed arguments and return values, While and For Each loops with Break and Continue, lists, Branch, Sequence, Once, Repeat, Wait and timers.
 - **Parts:**
   - 14.3.1 Functions - `VisualScript/NodesFunctions` - Function start (signature in its text field), Return, Call Function, local variables for one call
@@ -76,6 +80,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Ask me like:** "work on 14.3.1, recursion limit for function nodes"; "my For Each runs forever"
 
 ### 14.4 Node library (physics, story, build, math)
+- **System:** Visual Scripting
 - **What:** The ready-made nodes: math and logic, vectors, text, input, transform, objects, physics casts, dialogue and quests, build mode, inventory, save and load, networking, Steam, audio, camera and particles.
 - **Parts:**
   - 14.4.1 Core nodes - `VisualScript/Nodes` - events, constants, math, compare, logic, input, transform, spawn, Wait, networking and Steam nodes
@@ -99,6 +104,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Ask me like:** "work on 14.4.4, add a capsule cast node"; "add a node for UI progress"
 
 ### 14.5 Debugger (breakpoints, step, call stack, watch)
+- **System:** Visual Scripting
 - **What:** Stop a running graph at a node: breakpoints saved by graph file and node id, Step Into / Over / Out, the frozen game with the call stack, arguments and locals shown, and a live view of which nodes ran and their last values.
 - **Parts:**
   - 14.5.1 Debugger core - `VisualScript/VsDebug` - breakpoints, `RequestStep`, `onStop` callback, survives graph reload
@@ -119,6 +125,8 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Ask me like:** "work on 14.5.3, conditional breakpoints"; "the game froze at a breakpoint and will not resume"
 
 ### 14.6 Action framework
+- **System:** Action Lists - No-code rules: "when this happens, if this is true, do these steps".
+  Home: `engine/include/okay/Components/ActionList.hpp`, `engine/include/okay/VisualScript/ActionGraph.hpp`. Entry: `engine/include/okay/Components/ActionList.hpp`. Also called: ActionList, no-code triggers, ActionGraph, NoCode.
 - **What:** No-code rules: an Actions list (trigger, optional conditions, steps run top to bottom with Wait) authored from dropdowns, ready-made no-code gameplay components, and the conversion of an Actions list into a graph so one editor covers both.
 - **Parts:**
   - 14.6.1 Actions component - `Components/ActionList` - triggers (start, update, key, collision, click, trigger, mouse), conditions, instructions, extra handlers
@@ -141,6 +149,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Ask me like:** "work on 14.6.1, add a Timer trigger"; "remove the retired Flow Graph code"
 
 ### 14.7 Engine API nodes
+- **System:** Visual Scripting
 - **What:** Nodes generated from the typed-language binding table, so everything added to the table once shows up as a node too: `Transform.position` (get), `Transform.position=` (set step), method calls as steps or value nodes, with an optional Target object pin.
 - **Parts:**
   - 14.7.1 Generated entries - `VisualScript/VsApi` - `VsApiEntries`, `VsApiFind`, `MakeApiNode`: node type, title, doc, how it reads in code, pins
@@ -159,6 +168,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Ask me like:** "work on 14.7.1, group API nodes by component in the palette"
 
 ### 14.8 Converting between graphs and scripts
+- **System:** Visual Scripting
 - **What:** Moving between the two ways of scripting: the graph editor shows a live OkayScript version of the graph, an Actions list can be turned into OkayScript, and simple OkayScript can be turned back into Actions.
 - **Parts:**
   - 14.8.1 Graph to OkayScript - `editor/VisualScriptEditor.hpp` (`CompileToOkayScript`) - live preview beside the canvas, Copy to clipboard

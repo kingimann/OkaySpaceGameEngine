@@ -139,12 +139,20 @@ int main() {
         CHECK(InputActions::Get("Interact"));
         Keys({});
 
-        // Move's WASD does not use space, but a UI that binds W swallows just that key
-        InputActions::DefineIn("UI", "Up", {"key:w"});
+        // Move's WASD does not use space, but a menu that binds W swallows just that key. (Not "UI" here: since there is one
+        // input system, "UI" is also the asset's UI map, whose Navigate takes all of W A S D.)
+        InputActions::PopContext("UI");
+        InputActions::DefineIn("Menu", "Up", {"key:w"});
+        InputActions::PushContext("Menu");
         Keys({'w', 'd'});
         CHECK(InputActions::Get("Up"));
         CHECK(InputActions::Vector("Move").x > 0.99f);
         CHECK(std::fabs(InputActions::Vector("Move").y) < 0.01f);   // W swallowed, D not
+        Keys({});
+        InputActions::PopContext("Menu");
+        InputActions::PushContext("UI");
+        Keys({'w', 'd'});
+        CHECK(InputActions::Get("Navigate") && std::fabs(InputActions::Vector("Move").x) < 0.01f);   // the asset's UI map came along
         Keys({});
 
         // controller buttons are swallowed the same way

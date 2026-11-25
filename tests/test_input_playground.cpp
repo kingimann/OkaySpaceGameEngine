@@ -128,6 +128,7 @@ int main() {
     Step(scene, {'6'}); Step(scene, {});
     CHECK(Has(TextOf(scene, "E Rebind"), "Jump = E") && Has(TextOf(scene, "E Rebind"), "Interact = Space"));
     CHECK(Has(TextOf(scene, "E Rebind"), "E was also bound to: Interact"));
+    CHECK(Has(TextOf(scene, "E Rebind"), "typed Jump: E"));   // one input system: the typed reader follows the same rebind
     Step(scene, {'7'}); Step(scene, {});
     CHECK(Has(TextOf(scene, "E Rebind"), "Jump = Space") && Has(TextOf(scene, "E Rebind"), "Interact = E"));
     Step(scene, {'8'}); Step(scene, {});

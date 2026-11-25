@@ -410,7 +410,7 @@ const std::vector<BtNodeDef>& Defs() {
           {"lastSeenKey", "Last Seen Key", K::Key, "lastSeen", "Vector key: where the target was last noticed.", "vector"},
           {"sinceKey", "Since Seen Key", K::Key, "sinceSeen", "Number key: seconds since the target was last noticed.", "number"}}},
         {BtNodeType::HealthWatcher, "HealthWatcher", "Health Watcher", BtNodeKind::Service,
-         "While its node runs: copies this NPC's health (NPC Controller, Health Stat or Survival Stats) into the blackboard.",
+         "While its node runs: copies this NPC's health into the blackboard (the holder hits go to: Health Stat, Survival Stats, RPG Stats or NPC Controller).",
          {{"interval", "Interval", K::Number, "0.2", "Seconds between checks (0 = every tick).", nullptr},
           {"healthKey", "Health Key", K::Key, "health", "Number key: the health points.", "number"},
           {"pctKey", "Fraction Key", K::Key, "healthPct", "Number key: health over maximum (0..1).", "number"},

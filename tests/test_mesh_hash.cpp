@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include "okay/Render/MeshHash.hpp"
+#include "okay/Render/Mesh.hpp"
 #include <algorithm>
 #include <chrono>
 #include <functional>
@@ -44,6 +45,49 @@ double Seconds(const std::function<void()>& f, int reps) {
         best = std::min(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() / reps);
     }
     return best;
+}
+
+
+// The two per-mesh helpers exactly as GLRenderer.cpp and D3D11Renderer.cpp each carried them before they moved into
+// MeshHash.hpp (meshhash::MeshSample / meshhash::MeshFull). Kept here so the shared versions are proved to give the
+// very same values: the renderers' caches must not see a change that is not there, or miss one that is.
+std::uint64_t RefSample(const Mesh& m) {
+    std::size_t sizes[7] = { m.vertices.size(), m.triangles.size(), m.normals.size(),
+                             m.uvs.size(), m.triColors.size(), m.vertexColors.size(), m.triSlot.size() };
+    std::uint64_t h = meshhash::Bytes(sizes, sizeof(sizes));
+    { const std::size_t cn = m.vertexColors.size(), cstep = cn / 2048 + 1;
+      for (std::size_t i = 0; i < cn; i += cstep) h = meshhash::Bytes(&m.vertexColors[i], sizeof(Color), h); }
+    const std::size_t vn = m.vertices.size(), step = vn / 2048 + 1;
+    if (step == 1) { if (vn) h = meshhash::Bytes(m.vertices.data(), vn * sizeof(Vec3), h); }
+    else for (std::size_t i = 0; i < vn; i += step) h = meshhash::Bytes(&m.vertices[i], sizeof(Vec3), h);
+    const std::size_t tn = m.triangles.size(), tstep = tn / 2048 + 1;
+    if (tstep == 1) { if (tn) h = meshhash::Bytes(m.triangles.data(), tn * sizeof(int), h); }
+    else for (std::size_t i = 0; i < tn; i += tstep) h = meshhash::Bytes(&m.triangles[i], sizeof(int), h);
+    return h;
+}
+std::uint64_t RefFull(const Mesh& m) {
+    std::uint64_t h = 1469598103934665603ull;
+    if (!m.vertices.empty())  h = meshhash::Bytes(m.vertices.data(),  m.vertices.size()  * sizeof(Vec3),  h);
+    if (!m.normals.empty())   h = meshhash::Bytes(m.normals.data(),   m.normals.size()   * sizeof(Vec3),  h);
+    if (!m.uvs.empty())       h = meshhash::Bytes(m.uvs.data(),       m.uvs.size()       * sizeof(Vec2),  h);
+    if (!m.triangles.empty()) h = meshhash::Bytes(m.triangles.data(), m.triangles.size() * sizeof(int),   h);
+    if (!m.triColors.empty()) h = meshhash::Bytes(m.triColors.data(), m.triColors.size() * sizeof(Color), h);
+    if (!m.vertexColors.empty()) h = meshhash::Bytes(m.vertexColors.data(), m.vertexColors.size() * sizeof(Color), h);
+    if (!m.triSlot.empty()) h = meshhash::Bytes(m.triSlot.data(), m.triSlot.size() * sizeof(int), h);
+    return h;
+}
+
+Mesh MakeMesh(std::size_t nv, std::uint32_t seed, bool extras) {
+    Lcg rng(seed);
+    Mesh m;
+    for (std::size_t i = 0; i < nv; ++i) m.vertices.push_back(Vec3((float)(rng.Next() % 1000) * 0.01f, (float)(rng.Next() % 1000) * 0.01f, (float)i));
+    for (std::size_t i = 0; i + 2 < nv; i += 3) { m.triangles.push_back((int)i); m.triangles.push_back((int)i + 1); m.triangles.push_back((int)i + 2); }
+    if (extras) {
+        for (std::size_t i = 0; i < nv; ++i) { m.normals.push_back(Vec3(0, 1, 0)); m.uvs.push_back(Vec2((float)i, 0.5f)); }
+        for (std::size_t i = 0; i < nv; ++i) m.vertexColors.push_back(Color((float)(i % 7) / 7.0f, 0.2f, 0.3f, 1.0f));
+        for (std::size_t i = 0; i < m.triangles.size() / 3; ++i) { m.triColors.push_back(Color(1, 0, 0, 1)); m.triSlot.push_back((int)(i % 3)); }
+    }
+    return m;
 }
 
 } // namespace
@@ -113,6 +157,29 @@ int main() {
             }
         CHECK(!clash);
         CHECK(seen.size() == 40000);
+    }
+
+    // --- the per-mesh helpers both renderers share (meshhash::MeshSample / MeshFull) give the values they always gave --
+    {
+        int same = 0, total = 0;
+        const std::size_t counts[] = {0, 3, 30, 2047, 2048, 2049, 9000, 70000};
+        for (std::size_t n : counts)
+            for (int extras = 0; extras < 2; ++extras) {
+                const Mesh m = MakeMesh(n, 7u + (std::uint32_t)n, extras != 0);
+                total += 2;
+                same += meshhash::MeshSample(m) == RefSample(m);
+                same += meshhash::MeshFull(m) == RefFull(m);
+            }
+        std::cout << "  per-mesh helpers equal to the renderers' old copies: " << same << " / " << total << "\n";
+        CHECK(same == total);
+        // and they still notice what the renderers need them to notice
+        Mesh m = MakeMesh(9000, 3u, true);
+        const std::uint64_t s0 = meshhash::MeshSample(m), f0 = meshhash::MeshFull(m);
+        m.vertexColors[5].r += 0.5f;                       // paint on a sampled vertex (every 5th of 9000): the cheap sample sees it
+        CHECK(meshhash::MeshSample(m) != s0);
+        m.vertexColors[5].r -= 0.5f;
+        m.vertices[1].x += 1.0f;                           // a lone vertex the sample skips: only the full hash sees it
+        CHECK(meshhash::MeshFull(m) != f0);
     }
 
     // --- much faster than the loop it replaced ----------------------------------------------------------------------------

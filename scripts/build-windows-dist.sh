@@ -94,26 +94,23 @@ cmake -S . -B "$BUILD_DIR" \
       -DCMAKE_BUILD_TYPE=Release \
       -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF \
       -DOKAY_BUILD_LAUNCHER=ON -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_EDITOR=ON \
-      -DOKAY_USE_ASSIMP=ON \
       -DOKAY_BUILD_XBOX_UWP=ON \
       -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
       -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
       "${EXTRA[@]}"
-# Our own model readers are the default since 2026-11-17; Assimp (and ufbx, always built) must stay in the release as their
-# fallback and as what OKAY_THIRD_PARTY=1 switches back to. Refuse a tree whose cache lost Assimp.
-if ! grep -q '^OKAY_USE_ASSIMP:BOOL=ON$' "$BUILD_DIR/CMakeCache.txt"; then
-    echo "refused: $BUILD_DIR is configured without Assimp (OKAY_USE_ASSIMP is not ON): the model-reader fallback and OKAY_THIRD_PARTY=1 need it" >&2
-    exit 1
+# Every model reader is our own (Assimp was removed on 2026-11-24, ufbx on 2026-11-23). A tree configured before that may still
+# carry OKAY_USE_ASSIMP in its cache; the option no longer exists, so it does nothing, but say so rather than leave it unexplained.
+if grep -q '^OKAY_USE_ASSIMP:' "$BUILD_DIR/CMakeCache.txt"; then
+    echo "note: $BUILD_DIR/CMakeCache.txt still names OKAY_USE_ASSIMP from an old configure; the option was removed and is ignored" >&2
 fi
-echo "Model readers: own by default, Assimp + ufbx compiled in as the fallback (OKAY_THIRD_PARTY=1 switches back)."
+echo "Model readers: our own for every format (no Assimp, no ufbx)."
 # The configured tree too (a stale cache keeps old -D values). This also checks the BUILT result: the cache must say libsodium
 # is in the build (OKAY_SODIUM_IN_BUILD=ON) and the compiler flags must carry OKAY_HAVE_SODIUM and not OKAY_OWN_CRYPTO. The
 # programs are Windows .exe files and cannot run on this Linux host, so the program's own startup line (--binary) is not
 # asked here; the Linux server build in release.yml is checked that way.
 scripts/check_release_own_stack.sh --cache "$BUILD_DIR"
-# One job per core: a bare -j lets make start every editor file at once, and the
-# big ones (editor and player main.cpp) together run a CI runner out of memory.
-JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+# Jobs: one per core, capped by memory (scripts/ci_jobs.sh; MinGW -O2 needs about 6 GB for the biggest files).
+JOBS="$(bash scripts/ci_jobs.sh 6)"
 cmake --build "$BUILD_DIR" -j "$JOBS"
 
 # ---- Distribution layout ------------------------------------------------------
@@ -147,8 +144,13 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
 [ -f "$BUILD_DIR/bin/OkaySpaceOkayUI.exe" ] && cp "$BUILD_DIR/bin/OkaySpaceOkayUI.exe" "$OUT_DIR/"
 [ -f "$BUILD_DIR/bin/OkayEngineOkayUI.exe" ] && cp "$BUILD_DIR/bin/OkayEngineOkayUI.exe" "$OUT_DIR/Tools/"
 [ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
+# Bytes of the player per engine module (made after the player links; the editor's Build report shows them).
+[ -f "$BUILD_DIR/bin/module_sizes.txt" ] && cp "$BUILD_DIR/bin/module_sizes.txt" "$OUT_DIR/Tools/"
 # okay-content: builds, signs, checks and fetches downloadable game content (docs/release/content_delivery.md); a small command-line tool.
 [ -f "$BUILD_DIR/bin/okay-content.exe" ] && cp "$BUILD_DIR/bin/okay-content.exe" "$OUT_DIR/Tools/"
+# okay: the engine's command line (tools/okay-cli): new, open, play, build, test, and version control with git (okay vc).
+# It sits beside the editor and the player so it finds them.
+[ -f "$BUILD_DIR/bin/okay.exe" ] && cp "$BUILD_DIR/bin/okay.exe" "$OUT_DIR/Tools/"
 # okay-texture.exe: our texture tool (mips, atlas, compress to DDS); examples\texture shows how to use it.
 [ -f "$BUILD_DIR/bin/okay-texture.exe" ] && cp "$BUILD_DIR/bin/okay-texture.exe" "$OUT_DIR/Tools/"
 # OkayUI's standalone Direct3D 11 demo (no SDL): a raw DX11 app rendering OkayUI.
@@ -187,6 +189,7 @@ fi
 # and physicsdemo (C++ sources), editor-plugins, and the loose graphs in visual_script itself (not scenes).
 # One folder per line, sorted, so two branches that add a folder do not fight over one long line.
 EXAMPLE_DIRS="
+active_ragdoll
 behavior_trees
 boat
 camera
@@ -203,11 +206,13 @@ own_readers
 own_wav
 perf
 physics
+physics_engine
 physics_toys
 physics_materials
 physics2d
 player
 security_paths
+shaders
 spatial_audio
 texture
 touch_controls
@@ -244,8 +249,8 @@ cp -r engine/include "$XBOX_SRC/engine/"
 mkdir -p "$XBOX_SRC/engine/src/Graphics" "$XBOX_SRC/engine/src/Core"   # okay-xbox-export (-MinimalTest) compiles the engine's image code for the placeholder PNGs
 # Engine mode (-EngineMode) compiles the whole engine for UWP: it needs the engine sources, its CMake list (read at configure time) and shared/.
 cp -r engine/src "$XBOX_SRC/engine/" && cp engine/CMakeLists.txt "$XBOX_SRC/engine/" && cp -r shared "$XBOX_SRC/"
-# The UWP engine reads the root CMakeLists.txt at configure time for the ON defaults of the own model readers (engine/uwp_own_readers.cmake). No engine/third_party:
-# ufbx is not compiled for UWP (our own FBX reader is the only one), so it is not shipped here.
+# The UWP engine reads the root CMakeLists.txt at configure time for the ON defaults of the own model readers (engine/uwp_own_readers.cmake). There is no
+# engine/third_party any more (ufbx was deleted; our own FBX reader is the only one).
 cp CMakeLists.txt "$XBOX_SRC/"
 cp engine/src/Graphics/Image.cpp "$XBOX_SRC/engine/src/Graphics/"
 cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/src/Core/ImageWrite.cpp engine/src/Core/ImageDecodeInternal.hpp "$XBOX_SRC/engine/src/Core/"
@@ -255,7 +260,10 @@ cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/sr
 [ -s "$OUT_DIR/examples/vehicle/vehicle_test.okayscene" ] || { echo "error: examples/vehicle/vehicle_test.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/boat/boat_lake.okayscene" ] || { echo "error: examples/boat/boat_lake.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/water/lake.okayscene" ] || { echo "error: examples/water/lake.okayscene did not make it into the distribution" >&2; exit 1; }
+[ -s "$OUT_DIR/examples/shaders/shader_demo.okayscene" ] || { echo "error: examples/shaders/shader_demo.okayscene did not make it into the distribution" >&2; exit 1; }
+[ -s "$OUT_DIR/examples/active_ragdoll/active_ragdoll.okayscene" ] || { echo "error: examples/active_ragdoll/active_ragdoll.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/ui_text/ui_text.okayscene" ] || { echo "error: examples/ui_text/ui_text.okayscene did not make it into the distribution" >&2; exit 1; }
+[ -s "$OUT_DIR/examples/physics_engine/physics_engine.okayscene" ] || { echo "error: examples/physics_engine/physics_engine.okayscene did not make it into the distribution" >&2; exit 1; }
 
 # When built against the real Steamworks SDK, ship its redistributable DLL next to
 # every exe that initializes Steam (the launcher at top, the tools in Tools/).
@@ -275,6 +283,7 @@ Keep SDL2.dll next to it.
 Everything else lives in  Tools/:
   OkayEngine.exe        the editor (make games)
   OkaySpacePlayer.exe   the standalone runtime that plays an exported game
+  okay.exe              the command line: okay new, okay open, okay play, okay vc save ...
   okayspace-relay.exe   optional multiplayer relay for NAT traversal
                         (run on a reachable host; see docs/online/relay.md)
 
@@ -292,6 +301,15 @@ examples/ example scenes to try: in the editor use File > Open and pick
                         and 2x; Lighting > UI Font > UI Quality switches the old look back on).
                         examples\wind\wind.okayscene (trees, grass, a flag and leaves in the
                         wind, a box the gusts push, and a wind sound).
+                        examples\active_ragdoll\active_ragdoll.okayscene (a character that
+                        keeps its balance: J L push, O off the ledge, F shoot, E blast,
+                        T trip, G get up; it gets up by itself).
+                        examples\shaders\shader_demo.okayscene (custom .okayshader
+                        surfaces: lava, dissolve, rim glow; edit a .okayshader
+                        file and the object updates).
+                        examples\physics_engine\physics_engine.okayscene (our own physics
+                        engine: a tower, a pyramid, cone-twist limb chains, a powered
+                        arm and fast shots at a thin wall; physics_engine_5k has 5,000).
                         More in docs/try_it.md.
 
 Each .exe needs SDL2.dll in its own folder — that's why one sits beside the

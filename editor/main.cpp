@@ -11,6 +11,8 @@
 #include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
+#include "okay/Render/TextureCacheFiles.hpp"   // InvalidateTextureCacheForFile: a changed picture is shown changed
+#include "okay/Render/ModelImportProblem.hpp"   // DescribeModelImportProblem: why a model did not import
 #include "OwnSwitches.hpp"   // the table of own replacements that can be switched on (View > Rendering & Performance)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/online/crash_reports.md)
@@ -19,10 +21,16 @@
 #include "SaveShortcutModel.hpp"  // what Ctrl+S / Ctrl+Shift+S / Ctrl+Alt+S do
 #include "HierarchyContextModel.hpp"
 #include "SceneAddMenu.hpp"
+#include "ControllerInspectorUi.hpp"   // the one Inspector of the character controllers
 #include "VehicleEditorUi.hpp"      // GameObject > Vehicles and the Vehicle Controller Inspector tabs
 #include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "BuildSettingsWindow.hpp"     // the Build Settings window: pages, search, summary, checks, history (own files)
+#include "BuildGame.hpp"               // Build Game: the game, Web / Android / Xbox data and dedicated server exports (builder::)
+#include "Updater.hpp"                 // the self-updater and runtime fetcher (updater::)
+#include "FindInFiles.hpp"             // Find in Files: the project-wide script search window
+#include "AssetManagerWindow.hpp"      // the Asset Manager window: Marketplace downloads into the project
+#include "PluginsWindow.hpp"           // editor plugins: the Plugins menu, the Plugin Manager, the per-frame tick
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Input/PlatformKeys.hpp"      // F-keys, Tab, navigation block, left / right modifiers
 #include "FpHandsWindow.hpp"
@@ -36,6 +44,7 @@
 #include "okay/Net/DetectInspector.hpp"   // Anti-Cheat Config > Detection engine (fields, observe mode, text)
 #include "okay/Core/Game.hpp"
 #include "okay/Core/AssetManager.hpp"   // CachedCount() for the crash report
+#include "okay/Render/TextureAsset.hpp"  // textures::Pump once a frame, hot reload, the texture rows of the Profiler
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
 #include "ContentEditors.hpp"          // Items, Loot & Recipes (items.okayitems, .okayloot, .okayrecipes)
 #include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
@@ -61,6 +70,7 @@
 #include "okay/Components/UIOwnerData.hpp"   // Inspector: which character a UI Text Bind / UI Bar Bind belongs to
 #include "okay/Render/LightingPresets.hpp"
 #include "okay/Render/LightProbeBake.hpp"
+#include "okay/Render/GpuTexture.hpp"   // ShipCompressedCopy: a build ships the BC copy of `compress` pictures
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MaterialLibrary.hpp"   // ready colours and slot palettes
@@ -90,6 +100,7 @@
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
 #include "okay/Render/RendererFeatures.hpp"  // which lighting / post / fog / sky switches each renderer draws
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
+#include "okay/Render/OkayShader.hpp"   // Custom shader fields (our own .okayshader language)
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
@@ -112,7 +123,7 @@
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
-#include "okay/Platform/NativeFetch.hpp"      // own HTTP client in front of curl for the update download (only with OKAY_OWN_HTTP)
+#include "okay/Platform/NativeFetch.hpp"      // the HTTP seam (WinHTTP / our own client first, curl only as its last fallback)
 #include "DialogService.hpp"                  // the error / save-question / open-script calls behind one interface (window mode has its own)
 #include "EditorFrameTick.hpp"                // the game-step part of the frame (oked::StepSimulation), shared with window mode
 #ifdef OKAY_HAVE_OKAYUI
@@ -120,6 +131,7 @@
 #include "OkayUIHostMode.hpp"           // window mode (OKAY_UI_HOST=okayui): OkayUI owns the window, no Dear ImGui
 #include "OkayUIFrame.hpp"              // OkayUI end-of-frame on an SDL renderer or an own-backend painter
 #include "OkayUIHost.hpp"               // the opt-in OkayUI backend: SDL input for OkayUI, the hosted region (docs/ui/own_ui_toolkit.md, section 5)
+#include "OkayUIHostImGui.hpp"           // MouseInOtherViewport: a hosted panel in another OS window gets ImGui's mouse
 #endif
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
@@ -134,7 +146,7 @@
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #include "UIInspectorWidgetsMore.hpp"   // search, date, files, accordion, crumbs, pages, skeleton, sheet
-#include "OkayPanels.hpp"                // Crash Log and Audio Mixer drawn by OkayUI (opt-in backend)
+#include "OkayPanels.hpp"                // the panels drawn by OkayUI (Crash Log, Audio Mixer, History, Problems, Stats, Profiler, the Inspector's parts)
 #include "OkayUIBackend.hpp"            // UI backend setting: Dear ImGui (default) or OkayUI (preview)
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
@@ -152,6 +164,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdarg>
 #include <map>
 #include <memory>
 #include <future>
@@ -164,6 +177,7 @@
 #include <functional>
 #include <iostream>
 #include <sstream>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -774,15 +788,15 @@ int main(int argc, char** argv) {
 #include "backends/imgui_impl_sdlrenderer2.h"
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
-#include "TextEditor.h"        // ImGuiColorTextEdit — the code-editor widget (editor/vendor)
-#include "ScriptEditorWidget.hpp" // the script editor's code widget: ImGuiColorTextEdit, or OkayUI::CodeEdit when the OkayUI backend is on
+#include "ScriptAssist.hpp"     // Scripting Reference, completion, signatures, docs, C# members, palette (ScriptAssist.cpp)
+#include "ScriptEditorWidget.hpp" // the script editor's code widget: our own OkayUI::CodeEdit
 #include "GameFiber.hpp"           // the game tick on its own stack (visual-script debugger)
 #include "okay/VisualScript/VsDebug.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 #include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
-#include "EditorPlayInput.hpp"     // Play keyboard: SDL state -> the keys scripts read
+#include "AnimComponentNames.hpp"  // "Animator" (the state graph) vs "Clip Player" (the simple keyframe Animator class)
 
-// Holding D in EditorState::Play, through CollectEditorPlayKeys, walks a Move
+// Holding D in EditorState::Play, through AppendHeldMainKeys (the Play key mapping), walks a Move
 // with WASD cube into a Door. E then changes the Press E colour.
 static void RunStaleGraphTest(int& failures) {
     using namespace okay;
@@ -895,7 +909,6 @@ static void RunEditorPlayKeyTest(int& failures) {
     auto check = [&](bool cond, const char* what) {
         if (!cond) { ++failures; std::cerr << "  FAIL: " << what << "\n"; }
     };
-    if (SDL_WasInit(SDL_INIT_EVENTS) == 0) SDL_Init(SDL_INIT_EVENTS);
     EditorState ped;
     auto place = [&](const char* name, const char* which, Vec3 at) {
         GameObject* go = ped.scene().CreateGameObject(name);
@@ -913,23 +926,27 @@ static void RunEditorPlayKeyTest(int& failures) {
     GameObject* sw = place("Switch", "Press E", {4, 0, 2});
     if (auto* mesh = sw->GetComponent<MeshRenderer>()) mesh->color = {0.9f, 0.2f, 0.2f, 1};
     ped.Play();
-    Uint8 ks[SDL_NUM_SCANCODES] = {};
-    ks[SDL_SCANCODE_D] = 1;
+    // Held keys are faked; letters at their US places, as the Play feed reads them with no layout loaded.
+    using PKey = okay::platform::Key;
+    bool ks[okay::platform::kKeyCount] = {};
+    auto held = [&](PKey k) { return (int)k >= 0 && (int)k < okay::platform::kKeyCount && ks[(int)k]; };
+    auto usPlace = [](char c) { return okay::KeyForLetter(PKey::Unknown, c); };
+    ks[(int)PKey::D] = true;
     for (int i = 0; i < 70; ++i) {
         std::vector<char> down;
-        CollectEditorPlayKeys(down, ks, SDL_NUM_SCANCODES);
+        AppendHeldMainKeys(held, usPlace, false, down);
         Input::FeedKeys(down);
         ped.Tick(1.0f / 60.0f);
     }
     check(player && player->transform->localPosition.x > -0.2f, "editor play: D moved the WASD cube");
     check(door && door->transform->localPosition.y > 1.2f, "editor play: walking into the door opened it");
-    ks[SDL_SCANCODE_D] = 0;
+    ks[(int)PKey::D] = false;
     Input::FeedKeys({});
     ped.Tick(1.0f / 60.0f);
-    ks[SDL_SCANCODE_E] = 1;
+    ks[(int)PKey::E] = true;
     {
         std::vector<char> down;
-        CollectEditorPlayKeys(down, ks, SDL_NUM_SCANCODES);
+        AppendHeldMainKeys(held, usPlace, false, down);
         Input::FeedKeys(down);
         ped.Tick(1.0f / 60.0f);
     }
@@ -943,6 +960,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "InputDebugger.hpp"       // View > Panels > Input: live keys, axes, actions, events, curves
 #include "InputActionsWindow.hpp" // View > Editors & Tools > Input Actions: author a .okayinput asset, live view
 #include "TemplateTable.hpp"        // template title -> scene builder (New Project)
+#include "ModulesPanelUI.hpp"      // Project Settings > Modules: which engine modules the project uses
 #include "AutoPerf.hpp"           // Auto for anti-aliasing and VSync (best value for this PC; tested)
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
@@ -985,6 +1003,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "ProjectNewAssets.hpp"   // the text of a new dialogue, quest file, behavior tree and cutscene (Project > Create)
 #include "ProjectDelete.hpp"      // okayproj::Normalized / IsSameOrInside: the launcher's "is this path inside that folder" test
 #include "LaunchFile.hpp"         // open a file with the system's program, in a text editor, or show it in the file manager (no shell)
+#include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
 #ifndef OKAY_ENGINE_VERSION
 #  define OKAY_ENGINE_VERSION "dev"
@@ -1012,7 +1031,7 @@ namespace oked {
 // this runs the same command through cmd /C under CREATE_NO_WINDOW instead. It
 // blocks and returns the child's exit code, matching std::system's semantics.
 // On other platforms it is just the system shell.
-inline int SysNoWindow(const std::string& cmd) {
+int SysNoWindow(const std::string& cmd) {
 #if defined(_WIN32)
     std::string full = "cmd /C " + cmd;
     std::vector<char> buf(full.begin(), full.end()); buf.push_back('\0');
@@ -1839,279 +1858,6 @@ static GameObject* CreateShapeSprite(EditorState& ed, int shape) {
     return go;
 }
 
-// ---- Self-updater + runtime fetcher -----------------------------------
-// The editor can pull newer published builds from the releases bucket and, when exporting a
-// game, fetch the player runtime if it isn't sitting beside the editor — so a
-// fresh editor "generates everything it needs" without a manual file shuffle.
-namespace updater {
-namespace fs = std::filesystem;
-
-// Published builds live only in the public Supabase "releases" bucket. The editor
-// never needs GitHub at run time (owner decision 2026-11-20). RawUrl() below
-// builds the per-file URL.
-
-bool pendingQuit = false; // set true after a successful self-update relaunch
-
-// Absolute path of the running executable.
-std::string SelfPath() {
-#if defined(_WIN32)
-    // The whole path, however deep the folder: a MAX_PATH buffer cut it. Still the ANSI
-    // form, because the callers turn it into a path with fs::path(std::string).
-    std::string buf(512, '\0');
-    for (;;) {
-        const DWORD n = GetModuleFileNameA(nullptr, buf.data(), (DWORD)buf.size());
-        if (n == 0) return {};
-        if (n < buf.size()) { buf.resize(n); return buf; }
-        if (buf.size() >= 32768) return {};   // the longest path Windows has
-        buf.assign(buf.size() * 2, '\0');
-    }
-#else
-    char buf[4096];
-    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-    if (n > 0) { buf[n] = '\0'; return buf; }
-    return {};
-#endif
-}
-
-// Append a unique cache-busting query parameter. The download server is
-// fronted by a CDN that caches files for minutes, so a plain request can hand
-// back a stale VERSION.txt or an old .exe right after a release — the cause of
-// "it didn't update". Varying the URL per request forces a fresh fetch.
-std::string BustCache(const std::string& url) {
-    static unsigned counter = 0;
-    auto now = std::chrono::steady_clock::now().time_since_epoch().count();
-    std::string sep = url.find('?') == std::string::npos ? "?" : "&";
-    return url + sep + "okaycb=" + std::to_string(now) + "_" + std::to_string(counter++);
-}
-
-// Download a URL to a file using whatever HTTP client is on the system. Tries
-// curl first (ships on Win10+/macOS/Linux), then a platform fallback. -f makes
-// curl fail (non-zero) on a 404 so we don't cache an error page as a binary.
-// No-cache headers + a unique query string defeat the CDN cache.
-bool Download(const std::string& url, const fs::path& outPath) {
-    std::error_code ec; fs::remove(outPath, ec);
-    std::string u = BustCache(url);
-    const std::string out = okay::restart::Utf8(outPath);
-#if defined(OKAY_OWN_HTTP_ACTIVE)
-    if (okay::http::NativeAvailable()) {   // own client first (opt-in); an unclear answer falls through to curl below
-        okay::http::OwnDownloadSpec sp;
-        sp.userAgent = "OkaySpace-Updater"; sp.headers = {"Cache-Control: no-cache", "Pragma: no-cache"}; sp.retries = 2;   // a drop resumes with Range
-        const okay::http::OwnDownloadResult r = okay::http::OwnDownload(u, out, sp);
-        if (r.outcome == okay::http::OwnOutcome::Ok) return true;
-        if (r.outcome != okay::http::OwnOutcome::NotHandled) return false;   // a clear refusal (404, full disk): curl -f would fail the same way
-    }
-#endif
-    // Arguments, not a shell line: a path with spaces, parentheses or '&' can't
-    // be split or expanded the way the old quoted curl command was.
-    const std::vector<std::string> curl = {
-        "curl", "-L", "-s", "-f", "-H", "Cache-Control: no-cache", "-H", "Pragma: no-cache",
-        "-A", "OkaySpace-Updater", "-o", out, u};
-    if (okay::restart::RunAndWait(curl) == 0 && fs::exists(outPath)) return true;
-#if defined(_WIN32)
-    auto psQuote = [](const std::string& s) {
-        std::string o; o.reserve(s.size());
-        for (char c : s) { if (c == '\'') o += "''"; else o += c; }
-        return o;
-    };
-    const std::string script =
-        "try { Invoke-WebRequest -Headers @{'Cache-Control'='no-cache'} "
-        "-UseBasicParsing -Uri '" + psQuote(u) + "' -OutFile '" + psQuote(out) +
-        "' } catch { exit 1 }";
-    const std::vector<std::string> pw = {"powershell", "-NoProfile", "-Command", script};
-    return okay::restart::RunAndWait(pw) == 0 && fs::exists(outPath);
-#else
-    const std::vector<std::string> wget = {"wget", "-q", "--no-cache", "-O", out, u};
-    return okay::restart::RunAndWait(wget) == 0 && fs::exists(outPath);
-#endif
-}
-
-// The releases bucket: the only place updates come from. OKAY_UPDATE_SERVER overrides the
-// Supabase URL (testing); shipped builds get it from OKAY_DEFAULT_ACCOUNT_URL.
-std::string SupabaseReleasesBase() {
-    const char* e = std::getenv("OKAY_UPDATE_SERVER");
-#ifdef OKAY_DEFAULT_ACCOUNT_URL
-    const char* builtIn = OKAY_DEFAULT_ACCOUNT_URL;
-#else
-    const char* builtIn = "";
-#endif
-    return okayversions::ReleasesBucketBase(e ? e : "", builtIn);
-}
-
-// The newest release in the bucket (its VERSION.txt), with the folder its files are in.
-okayversions::LatestRelease LatestRelease() {
-    static unsigned n = 0;
-    return okayversions::ResolveLatestRelease(SupabaseReleasesBase(), [](const std::string& url, std::string& out) {
-        std::error_code ec;
-        const fs::path tmp = fs::temp_directory_path(ec) / ("okayspace_ver_" + std::to_string(okay::restart::CurrentPid()) + "_" + std::to_string(n++) + ".txt");
-        const bool got = Download(url, tmp);
-        if (got) { std::ifstream f(tmp, std::ios::binary); std::stringstream ss; ss << f.rdbuf(); out = ss.str(); }
-        fs::remove(tmp, ec);
-        return got;
-    });
-}
-
-// URL of a published file. ref "sb:<ver>" = that version's folder in the bucket; anything else = the
-// newest release's folder there ("" when the bucket can't be reached or none is built in).
-std::string RawUrl(const std::string& ref, const std::string& name) {
-    if (ref.rfind("sb:", 0) == 0) { const std::string b = SupabaseReleasesBase(); return b.empty() ? std::string() : b + "v" + ref.substr(3) + "/" + name; }
-    const okayversions::LatestRelease r = LatestRelease();
-    return r.base.empty() ? std::string() : r.base + name;
-}
-
-// Compare dotted versions ("1.4.0"); returns -1 / 0 / 1 for a<b / a==b / a>b (shared/ProjectVersion.hpp, which the launcher uses too).
-int CompareVersions(const std::string& a, const std::string& b) { return okayver::CompareVersions(a, b); }
-
-// Result of an update check: the running version, the published version, the
-// release notes (if any) and whether an upgrade is actually available.
-struct UpdateInfo {
-    bool checked = false;
-    bool available = false;
-    std::string current, latest, notes, error;
-    std::string ref = "main";   // commit the check resolved to (install uses the same)
-};
-
-// Ask the releases bucket for the published version + release notes. No files are swapped;
-// this only reports what's available (the install step is explicit).
-UpdateInfo CheckLatest() {
-    UpdateInfo info;
-    info.current = OKAY_ENGINE_VERSION;
-    info.checked = true;
-    std::error_code ec;
-    fs::path tmp = fs::temp_directory_path(ec);
-    const okayversions::LatestRelease r = LatestRelease();
-    info.latest = r.version;
-    info.ref = "sb:" + r.version;
-    if (info.latest.empty()) {
-        info.error = r.error;
-        return info;
-    }
-
-    // Optional human-readable release notes.
-    fs::path cf = tmp / "okayspace_changelog.txt";
-    if (Download(RawUrl(info.ref, "CHANGELOG.txt"), cf.string())) {
-        std::ifstream f(cf);
-        std::stringstream ss; ss << f.rdbuf();
-        info.notes = ss.str();
-        fs::remove(cf, ec);
-    }
-    info.available = !info.latest.empty() && CompareVersions(info.current, info.latest) < 0;
-    return info;
-}
-
-// Launch a (new) executable detached from this process.
-void Relaunch(const std::string& path) {
-#if defined(_WIN32)
-    int rc = SysNoWindow(("start \"\" \"" + path + "\"").c_str());
-#else
-    int rc = SysNoWindow(("\"" + path + "\" >/dev/null 2>&1 &").c_str());
-#endif
-    (void)rc;
-}
-
-// Download one published file (`asset`: "OkayEngine.exe" or "OkaySpacePlayer.exe") of `version` to `dest`.new and check it against the
-// release server's checksum list (versions.json). Without that list, an entry for the version, or a SHA-256 for the file nothing is
-// downloaded or installed: the reason comes back in `reason`. `dest` itself is never touched here.
-bool FetchVerified(const std::string& version, const std::string& asset, const fs::path& dest, std::string& reason) {
-    okayversions::Sources src;
-    src.bucketBase = SupabaseReleasesBase();
-    {   // an old signed list replayed is refused (shared/UpdateGuard.hpp); the floor sits beside this program
-        const fs::path self = okay::restart::CurrentExecutable();
-        if (!self.empty()) src.floorFile = self.parent_path() / okayupdate::kFloorName;
-    }
-    std::error_code ec;
-    static unsigned n = 0;
-    const okayversions::Index index = okayversions::LoadIndex(src, [&](const std::string& url, std::string& out) {
-        const fs::path tmp = fs::temp_directory_path(ec) / ("okayspace_idx_" + std::to_string(okay::restart::CurrentPid()) + "_" + std::to_string(n++) + ".txt");
-        const bool got = Download(url, tmp);
-        if (got) { std::ifstream f(tmp, std::ios::binary); std::stringstream ss; ss << f.rdbuf(); out = ss.str(); }
-        fs::remove(tmp, ec);
-        return got;
-    });
-    std::string v = okayver::NormalizeVersion(version);
-    if (v.empty() || !index.Find(v)) v = index.ok ? index.latest : std::string();
-    const okayversions::Entry* entry = index.ok && !v.empty() ? index.Find(v) : nullptr;
-    if (const std::string why = okayupdater::IndexProblem(index, entry, v.empty() ? version : v); !why.empty()) { reason = why; return false; }
-    const okayversions::InstallPlan plan = okayversions::PlanInstall(index, v, src.bucketBase, {}, false);
-    if (!plan.ok) { reason = plan.error; return false; }
-    for (const okayversions::PlanFile& pf : plan.files) {
-        if (pf.indexName != asset) continue;
-        okayversions::FileInfo check; check.size = pf.size; check.sha256 = pf.sha256;
-        const okayupdater::Outcome o = okayupdater::StageFromUrls(asset, pf.urls, dest, &check,
-            [&](const std::string& u, const fs::path& to, std::string& err) {
-                const bool got = Download(u, to);
-                if (!got) err = "the server could not be reached or the file was not found";
-                return got;
-            });
-        if (!o.ok) reason = o.reason;
-        return o.ok;
-    }
-    reason = asset + " is not in the version list for v" + v + ", so it can't be checked and was not downloaded.";
-    return false;
-}
-
-// Download the published editor and swap it in for the running .exe, then
-// relaunch. Returns a human-readable status. Only call when an update is known
-// to be available (so this never loops on an already-current build).
-std::string InstallUpdate(const std::string& latest, const std::string& ref = "main") {
-    std::error_code ec;
-    fs::path self = okay::restart::CurrentExecutable();
-    if (self.empty()) {
-        const std::string narrow = SelfPath();
-        if (!narrow.empty()) self = fs::path(narrow);
-    }
-    if (self.empty()) return "Couldn't locate the running executable.";
-    fs::path newFile = self; newFile += ".new";
-    // Only a file whose size and SHA-256 are in the release server's checksum list is installed. No list, no entry, no checksum, a failed
-    // download or a mismatch all stop here with the reason, and the running program is untouched.
-    {
-        std::string reason;
-        if (!FetchVerified(latest, "OkayEngine.exe", self, reason)) {
-            okay::restart::AppendLog(self.parent_path() / "okay_update.log", "editor update refused: " + reason);
-            return "Update to v" + latest + " was not installed. " + reason;
-        }
-    }
-    const auto downloadedBytes = fs::file_size(newFile, ec);
-    if (ec || downloadedBytes < 100000) {
-        fs::remove(newFile, ec);
-        return "Downloaded file looked invalid; update aborted.";
-    }
-    // Reject a cached HTML/error page: a real Windows .exe begins with "MZ".
-    {
-        std::ifstream chk(newFile, std::ios::binary);
-        char magic[2] = {0, 0}; chk.read(magic, 2);
-        if (magic[0] != 'M' || magic[1] != 'Z') {
-            fs::remove(newFile, ec);
-            return "Downloaded file wasn't a valid program (CDN cache?). Try again.";
-        }
-    }
-    // Hand the swap and relaunch to a detached helper. It waits until THIS
-    // process has exited (so the single-instance lock and the file lock are
-    // gone), installs the staged build, and starts it once with the same
-    // arguments and working directory. If the helper cannot be started, stay
-    // open — quitting here used to leave nothing running.
-    okay::restart::Request req;
-    req.executable = self;
-    req.arguments = okay::restart::CurrentArguments();
-    req.workingDirectory = fs::current_path(ec);
-    req.waitForPid = okay::restart::CurrentPid();
-    req.logFile = self.parent_path() / "okay_update.log";
-    req.replaceTarget = self;
-    req.replaceSource = newFile;
-    req.replaceBackup = self;
-    req.replaceBackup += ".old";
-    req.minBytes = 100000;
-    req.keepBackup = true;
-    req.expectVersion = latest;          // the helper asks the new file for its version before starting it; a bad one is rolled back
-    req.rollbackTarget = self;
-    std::string err;
-    if (!okay::restart::StartHelper(req, err))
-        return "Couldn't start the updater (" + err + "). This version is unchanged. See okay_update.log next to the app.";
-    pendingQuit = true;
-    return "Updating to v" + latest + "... reopening.";
-}
-
-} // namespace updater
-
 std::string g_updateStatus;
 bool g_openUpdatePopup = false;
 updater::UpdateInfo g_update;     // last update check result
@@ -2131,10 +1877,9 @@ bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
      g_showProblems = true;
 bool g_showGame = true;   // Game view (main-camera render)
 bool g_showProfiler = false;   // CPU/GPU profiler window
+bool g_showTimers = false;     // scheduler and tween dumps
 bool g_showAssetManager = false;   // Asset Manager: marketplace downloads -> project
 bool g_showPluginManager = false;  // Plugin Manager (editor plugins)
-static void DrawPluginsMenu(EditorState& ed);
-static void NewPluginFromTemplate(EditorState& ed);
 bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt reports)
 bool g_showInputActions = false; // Input Actions window (author a .okayinput asset, live view)
 bool g_showInputDebug = false; // Input panel (live keys, axes, actions, events, response curves)
@@ -2264,11 +2009,57 @@ std::string g_uiBackendSetting;
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
 void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
+bool UseOkayUICodeEdit() {   // the script editor's code is always our own OkayUI::CodeEdit (the vendored ImGuiColorTextEdit is deleted)
+#ifdef OKAY_HAVE_OKAYUI
+    return true;
+#else
+    return false;
+#endif
+}
+// Hosted OkayUI screens take the mouse, keys and text: with the "OkayUI screens" backend (as before), and otherwise only for OkayUI's
+// own hosted pieces: a panel drawn by OkayUI only that is hovered or focused, a hosted area under the mouse, or a focused OkayUI code
+// field (okayuihost::HostedInputWanted, taken once at the start of OkayUI's frame). With the backend off a game's ui_* widgets in the
+// Game view get what they got before.
+bool g_okayHostedInput = false;
+bool OkayUIInputOn() { return UseOkayUIBackend() || g_okayHostedInput; }
+bool UseOkayUIInspector() {   // okayuibackend::InspectorOn; the variables are read once (Settings > Experimental sets them before main() reads anything)
+    static const bool dev = okayuibackend::DevMode(std::getenv("OKAY_DEV")), item = okayuibackend::DevMode(std::getenv("OKAY_UI_INSPECTOR"));
+    return okayuibackend::InspectorOn(g_uiBackend, dev ? "1" : nullptr, item ? "1" : nullptr);
+}
+
+// The slow-frame log: a frame over OKAY_SLOW_FRAME_MS (default 250 ms; 0 turns it off) writes one line to okay_editor_perf.log beside the
+// editor (okay_update.log's folder), naming the part of the frame that took the time and what was switched on (editor/EditorPerf.hpp
+// SlowFrameLog). The first few lines go to the Console too. For freezes someone reports from a release: send that file.
+int OkayUIRegionOverflow();
+static void WriteSlowFrame(okay::editor::perf::SlowFrameLog& log, double frameMs, bool playing) {
+    std::string ctx = playing ? "play" : "edit";
+    ctx += UseOkayUIBackend() ? ", OkayUI screens" : ", Dear ImGui";
+    if (UseOkayUIInspector()) ctx += ", OkayUI Inspector";
+#ifdef OKAY_HAVE_OKAYUI
+    if (OkayUI::render::OwnRenderSwitchOn()) {
+        const OkayUI::render::HostPath hp = okay::pb::OkayUILastFrame().path;
+        ctx += hp == OkayUI::render::HostPath::OwnD3D11 ? ", own renderer (Direct3D 11)" : hp == OkayUI::render::HostPath::OwnGL ? ", own renderer (OpenGL)"
+                                                                                       : ", own renderer off for this frame (SDL path)";
+    }
+    if (const int lost = OkayUIRegionOverflow()) ctx += ", " + std::to_string(lost) + " OkayUI areas without the mouse";
+#endif
+    const okay::Profiler& pr = okay::Prof();
+    const okay::Profiler::Frame& f = pr.paused || pr.Count() == 0 ? okay::Profiler::Frame() : pr.FrameAt(pr.Count() - 1);
+    const std::string line = log.Line(f, frameMs, (long long)ImGui::GetFrameCount(), ctx);
+    if (line.empty()) return;
+    std::filesystem::path self = okay::restart::CurrentExecutable();
+    if (self.empty()) { const std::string narrow = updater::SelfPath(); if (!narrow.empty()) self = std::filesystem::path(narrow); }
+    okay::restart::AppendLog(self.empty() ? std::filesystem::path("okay_editor_perf.log") : self.parent_path() / "okay_editor_perf.log", line);
+    // The Console gets the first five after start-up (the first frames load fonts and the scene and are always slow; the file has them).
+    static int s_shown = 0;
+    if (ImGui::GetFrameCount() > 30 && s_shown < 5) { ++s_shown; ConsoleLog("[perf] " + line + (s_shown == 5 ? " (more in okay_editor_perf.log)" : ""), 1); }
+}
 
 #ifdef OKAY_HAVE_OKAYUI
 okayuihost::InputCollector g_okayInput;   // typed text, key edges and wheel from the SDL events, for hosted OkayUI panels
 okayuihost::Region g_okayRegion;          // where the hosted panel was last frame: who owns the mouse there
 okayuihost::Region& OkayUIRegion() { return g_okayRegion; }
+int OkayUIRegionOverflow() { return g_okayRegion.Overflowed(); }
 #endif
 bool g_multiWindow = true;        // always on: panels can be dragged out to other OS windows/monitors (no toggle)
 bool g_darkMode = true;         // Edit > Dark Mode / Light Mode (the only theme choice); saved as "darkmode"
@@ -2422,9 +2213,9 @@ static void DrawShapeWire(okay::Collider3D* col, LineFn line) {
     case Shape::Heightfield: {
         auto* hf = static_cast<HeightfieldCollider3D*>(col);
         shape3d::Frame f = shape3d::FrameOf(*col);
-        const int C = std::max(hf->columns, 2), R = std::max(hf->rows, 2);
+        const int C = hf->Cols(), R = hf->Rows();
         const int si = std::max(1, C / 64), sj = std::max(1, R / 64);
-        auto P = [&](int i, int j) { return shape3d::ToWorldPoint(f, {(i - (C - 1) * 0.5f) * hf->cellX, hf->HeightAt(i, j), (j - (R - 1) * 0.5f) * hf->cellZ}); };
+        auto P = [&](int i, int j) { return shape3d::ToWorldPoint(f, {(i - (C - 1) * 0.5f) * hf->CX(), hf->HeightAt(i, j), (j - (R - 1) * 0.5f) * hf->CZ()}); };
         for (int j = 0; j < R; j += sj) for (int i = 0; i + 1 < C; ++i) line(P(i, j), P(i + 1, j));
         for (int i = 0; i < C; i += si) for (int j = 0; j + 1 < R; ++j) line(P(i, j), P(i, j + 1));
         break;
@@ -2596,7 +2387,7 @@ static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
 // A titled section rule with an accent tick to its left — a cleaner, more scannable
 // section break than a bare SeparatorText, keyed to the theme accent.
 static ImFont* g_headingFont = nullptr;   // larger Roboto face for section titles
-static ImFont* g_codeFont    = nullptr;   // monospace face for the Script Editor
+ImFont* g_codeFont    = nullptr;   // monospace face for the Script Editor
 // The code font is baked at a large size and drawn downscaled, so it stays crisp at
 // any zoom (downscaling a high-res glyph beats upscaling a small one). The atlas size
 // must cover the *largest* on-screen size we ever show — kCodeFontDispPx * maxZoom
@@ -2604,7 +2395,7 @@ static ImFont* g_codeFont    = nullptr;   // monospace face for the Script Edito
 // entire zoom range (0.7x .. 3.0x) is a downscale, never an upscale.
 static constexpr float kCodeFontBakePx = 48.0f;   // atlas size the glyphs are rasterised at
 static constexpr float kCodeFontDispPx = 16.0f;   // on-screen size at 1.0x zoom
-static void SectionHeader(const char* label) {
+void SectionHeader(const char* label) {
     ImGui::Spacing();
     if (g_headingFont) ImGui::PushFont(g_headingFont);   // larger heading face
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -3356,12 +3147,15 @@ float g_insetAmt    = 0.2f;
 int   g_meEditAxis  = -1;             // axis being dragged: 0=X 1=Y 2=Z, -1 = none
 bool  g_meEditGrab  = false;          // an edit-mode move handle is held
 Vec3  g_meEditRaw{0, 0, 0};           // accumulated drag in LOCAL space (pre-apply)
+okay::modeling::EditTransformSession g_meHandle;   // the move-handle drag: the same session G uses (soft select, symmetry X / Y / Z)
+Vec3  g_meHandleOff{0, 0, 0};         // ...and how far the handle has been dragged (world space)
 bool  g_meshSculpt  = false;          // sculpt brush active (instead of select/move)
 int   g_sculptMode  = 0;              // 0 Grab, 1 Inflate, 2 Smooth
 float g_sculptRadius = 0.5f, g_sculptStrength = 0.08f;
 bool  g_meshSymX    = false;          // X symmetry: mirror every edit across local X=0
 bool  g_meshSymY    = false;          // ... across local Y=0 (G / R / S)
 bool  g_meshSymZ    = false;          // ... across local Z=0 (G / R / S)
+int   g_mePivot     = 0;              // what R / S turn around: okay::modeling::EditPivot (0 Median, 1 Individual Origins, 2 Active Vertex); '.' cycles it
 bool  g_paintVertex = false;          // the paint brush paints smooth per-vertex colours instead of whole faces
 float g_paintHardness = 0.3f;         // vertex paint: 0 = soft falloff all the way, near 1 = solid centre
 bool  g_meshXray    = false;          // box / circle / lasso select picks through the mesh
@@ -3386,6 +3180,8 @@ int   g_loopCuts = 1;                          // loop cut: number of cuts (mous
 okay::modeling::EdgeList g_slideLoop;          // edge slide: the loop being slid...
 std::vector<Vec3> g_slideFrom;                 // ...from these positions
 okay::modeling::PolyMesh g_slidePoly;          // its topology
+std::vector<int> g_slideTriFace;               // ...the polygon each triangle of the mesh belongs to
+std::vector<Vec2> g_slideUVFrom, g_slideCornerUVFrom;   // ...and the UVs before the slide (per vertex, per corner)
 bool  g_slideAfterCut = false;                 // the slide finishing a loop cut (one undo step for both)
 ImVec2 g_ptoolMouse0;                          // the mouse when the tool started
 Mesh  g_bevelStart;                            // bevel: the mesh before it, re-beveled live
@@ -3683,11 +3479,15 @@ static void EndPolyTool(bool keep) {
         mr->mesh = g_bevelStart;
         g_meshSelVerts = g_bevelSelVerts; g_meshSelFaces = g_bevelSelFaces; g_meshSelEdges = g_bevelSelEdges;
     }
-    if (g_ptool == PolyTool::Slide && mr && !keep && g_slideFrom.size() == mr->mesh.vertices.size()) mr->mesh.vertices = g_slideFrom;
+    if (g_ptool == PolyTool::Slide && mr && !keep && g_slideFrom.size() == mr->mesh.vertices.size()) {
+        mr->mesh.vertices = g_slideFrom;
+        mr->mesh.uvs = g_slideUVFrom;
+        mr->mesh.cornerUVs = g_slideCornerUVFrom;
+    }
     g_ptool = PolyTool::None;
     g_ptoolTyped.Clear();
     g_knifePts.clear(); g_knifePos.clear();
-    g_slideLoop.clear(); g_slideFrom.clear();
+    g_slideLoop.clear(); g_slideFrom.clear(); g_slideTriFace.clear(); g_slideUVFrom.clear(); g_slideCornerUVFrom.clear();
     g_slideAfterCut = false;
 }
 
@@ -3728,7 +3528,6 @@ static std::vector<int> SelectedTriangles(const Mesh& m) {
 static bool g_isolating = false;                    // local view is on (the hidden faces are the ones outside it)
 static int  g_pendingMove = 0;                      // 1: start a Move (G) next frame; 2: ... locked to the selection's normal axis
 static Vec3 g_cursorOrigin{0, 0, 0}, g_cursorDir{0, 0, -1};   // the mouse ray in the 3D view, last seen while the pointer was over it
-static void SetActiveRecursive(GameObject* go, bool on);   // defined with the Hierarchy
 static std::vector<GameObject*> g_hiddenObjects;    // objects hidden with H in object mode (Alt+H brings them back)
 static void WorldRange(const GameObject* go, int axis, float& lo, float& hi, bool& ok) {
     ok = false;
@@ -3741,6 +3540,61 @@ static void WorldRange(const GameObject* go, int axis, float& lo, float& hi, boo
         if (!ok) { lo = hi = c; ok = true; } else { lo = std::min(lo, c); hi = std::max(hi, c); }
     }
 }
+// ---- Selection tools on the polygons (okay/Modeling/PolyOps.hpp, tested in poly_ops) ----
+// The polygons the selected triangles belong to, in the order first picked.
+static std::vector<int> SelectedPolys(Mesh& m) {
+    EditPoly(m);
+    std::vector<int> out;
+    if ((int)m.polyFace.size() != m.TriangleCount()) return out;
+    std::set<int> seen;
+    for (int t : g_meshSelFaces) if (t >= 0 && t < m.TriangleCount() && seen.insert(m.polyFace[t]).second) out.push_back(m.polyFace[t]);
+    return out;
+}
+static std::vector<int> TrisOfPolys(const Mesh& m, const std::vector<int>& polys) {
+    std::vector<int> out;
+    if ((int)m.polyFace.size() != m.TriangleCount()) return out;
+    std::map<int, int> rank;
+    for (int i = 0; i < (int)polys.size(); ++i) rank.emplace(polys[i], i);
+    std::vector<std::pair<int, int>> tagged;
+    for (int t = 0; t < m.TriangleCount(); ++t) { auto it = rank.find(m.polyFace[t]); if (it != rank.end()) tagged.push_back({it->second, t}); }
+    std::stable_sort(tagged.begin(), tagged.end(), [](const std::pair<int, int>& a, const std::pair<int, int>& b) { return a.first < b.first; });
+    for (const auto& x : tagged) out.push_back(x.second);
+    return out;
+}
+// Checker Deselect: keep every other vertex or face of the selection, walking out from the first one picked.
+static bool CheckerDeselectNow(Mesh& m) {
+    if (g_meshSelMode == 0 && !g_meshSelVerts.empty()) { g_meshSelVerts = okay::modeling::CheckerVerts(EditPoly(m), g_meshSelVerts); return true; }
+    if (g_meshSelMode == 1 && !g_meshSelFaces.empty()) {
+        const std::vector<int> polys = SelectedPolys(m);
+        if (polys.empty()) return false;
+        g_meshSelFaces = TrisOfPolys(m, okay::modeling::CheckerFaces(EditPoly(m), polys));
+        return true;
+    }
+    return false;
+}
+// Select Boundary Loop: the outline of the selected faces becomes an edge selection (Edge mode).
+static int SelectBoundaryLoopNow(Mesh& m) {
+    const std::vector<int> polys = SelectedPolys(m);
+    if (polys.empty()) return 0;
+    const okay::modeling::EdgeList ol = okay::modeling::RegionOutline(EditPoly(m), polys);
+    if (ol.empty()) return 0;
+    g_meshSelEdges = ol; g_meshSelVerts.clear(); g_meshSelFaces.clear();
+    g_meshSelMode = 2;
+    return (int)ol.size();
+}
+// Select the open (border) and / or non-manifold edges of the whole mesh (Edge mode).
+static int SelectProblemEdgesNow(Mesh& m, bool borders, bool nonManifold) {
+    const okay::modeling::EdgeList es = okay::modeling::ProblemEdges(EditPoly(m), borders, nonManifold);
+    g_meshSelEdges = es; g_meshSelVerts.clear(); g_meshSelFaces.clear();
+    g_meshSelMode = 2;
+    return (int)es.size();
+}
+// Flip Normals: the selected faces in Face mode, else the whole mesh.
+static void FlipNormalsNow(Mesh& m) {
+    if (g_meshSelMode == 1 && !g_meshSelFaces.empty()) m.FlipFaces(g_meshSelFaces);
+    else m.FlipNormals();
+}
+
 static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
     namespace pmo = okay::modeling;
     std::vector<ModelCmd> v;
@@ -3764,6 +3618,26 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         else for (int i = 0; i < mr->mesh.TriangleCount(); ++i) g_meshSelFaces.push_back(i);
     });
     add("Select None", "", "Select", "Clear the selection.", true, "", clearSel);
+    add("Select Shortest Path", "Ctrl+click", "Select", "Ctrl+click a vertex, edge or face in the 3D view: the shortest path from the last one you picked is added.", true, "", [] {
+        ConsoleLog("Select Shortest Path: Ctrl+click a vertex, edge or face in the 3D view; the path from the last one picked is added");
+    });
+    add("Checker Deselect", "", "Select", "Keep every other vertex or face of the selection (a checkerboard on a grid of faces).",
+        (g_meshSelMode == 0 && anyVerts) || (g_meshSelMode == 1 && anyFaces), "Select vertices (key 1) or faces (key 3) first.", [mr] { CheckerDeselectNow(mr->mesh); });
+    add("Select Boundary Loop", "", "Select", "Select the outline of the selected faces as edges (Edge mode).", anyFaces, needFaces, [mr] {
+        const int n = SelectBoundaryLoopNow(mr->mesh);
+        ConsoleLog("Select Boundary Loop: " + std::to_string(n) + " edges");
+    });
+    add("Select Open Edges", "", "Select", "Select every edge with a face on one side only: the rims of holes (Edge mode).", true, "", [mr] {
+        const int n = SelectProblemEdgesNow(mr->mesh, true, false);
+        ConsoleLog(n ? "Selected " + std::to_string(n) + " open edges" : std::string("No open edges: the mesh is closed"));
+    });
+    add("Select Non-Manifold Edges", "", "Select", "Select edges shared by three or more faces (they break bevel, bridge, booleans and export).", true, "", [mr] {
+        const int n = SelectProblemEdgesNow(mr->mesh, false, true);
+        ConsoleLog(n ? "Selected " + std::to_string(n) + " non-manifold edges" : std::string("No non-manifold edges"));
+    });
+    add("Pivot: Median Point", ".", "Select", "R and S turn around the centre of the whole selection.", true, "", [] { g_mePivot = 0; });
+    add("Pivot: Individual Origins", ".", "Select", "R and S turn each separate part of the selection around its own centre (grow several faces in place).", true, "", [] { g_mePivot = 1; });
+    add("Pivot: Active Vertex", ".", "Select", "R and S turn around the last vertex you picked.", true, "", [] { g_mePivot = 2; });
     add("Grow Selection", "", "Select", "Add everything touching the selection (faces or vertices).", g_meshSelMode == 1 ? anyFaces : (g_meshSelMode == 0 && anyVerts), "Select some faces (key 3) or vertices (key 1) first.", [mr] {
         if (g_meshSelMode == 1) g_meshSelFaces = pmo::GrowFaces(mr->mesh, g_meshSelFaces);
         else g_meshSelVerts = mr->mesh.GrownVertexSelection(g_meshSelVerts);
@@ -3838,7 +3712,7 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
     add("Poke Faces", "", "Edit", "Fan each selected face from a centre point.", anyFaces, needFaces, edit([](Mesh& m) { m.PokeFaces(g_meshSelFaces, 0.15f); g_meshSelFaces.clear(); }));
     add("Delete Faces", "", "Edit", "Remove the selected faces (leaves a hole).", anyFaces, needFaces, edit([](Mesh& m) { m.DeleteFaces(g_meshSelFaces); g_meshSelFaces.clear(); }));
     add("Duplicate Faces", "", "Edit", "Copy the selected faces in place; the copies stay selected.", anyFaces, needFaces, edit([](Mesh& m) { g_meshSelFaces = m.DuplicateFaces(g_meshSelFaces); g_meshSelVerts.clear(); g_meshSelEdges.clear(); }));
-    add("Flip Normals", "", "Edit", "Turn every face the other way round.", true, "", edit([](Mesh& m) { m.FlipNormals(); }));
+    add("Flip Normals", "", "Edit", "Turn the selected faces the other way round (Face mode), or every face when none are selected.", true, "", edit([](Mesh& m) { FlipNormalsNow(m); }));
     add("Recalculate Normals Outside", "", "Edit", "Make every face point outward (fixes dark or inside-out faces).", true, "", edit([](Mesh& m) { m.OrientFacesOutward(); }));
     add("Merge by Distance", "", "Edit", "Join vertices that sit on top of each other.", true, "", edit([clearSel](Mesh& m) { m.WeldVertices(); g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear(); }));
     add("Repair Mesh", "", "Edit", "Merge doubles, drop collapsed triangles, cap holes, point faces outward.", true, "", [&ed, mr] {
@@ -4371,1145 +4245,6 @@ inline std::string StarterScriptNamed(const std::string& lang, const std::string
 }
 
 } // namespace extide
-
-// ---- Build Game: export the current scene as a standalone runnable game ----
-// A shipped game is just <Game>.exe (a copy of the player runtime) + a
-// game.okayscene sitting beside it. Double-clicking the exe runs the scene.
-namespace builder {
-namespace fs = std::filesystem;
-
-#if defined(_WIN32)
-const char* kPlayerExe = "OkaySpacePlayer.exe";
-#else
-const char* kPlayerExe = "okay-player";
-#endif
-
-// Locate the player runtime. Searches next to the editor, then a few sibling
-// locations (a launcher layout, a build tree), so it works whether the editor
-// was launched from the dist folder or via the launcher.
-std::string FindPlayer() {
-    fs::path self = updater::SelfPath();
-    if (self.empty()) return {};
-    fs::path dir = self.parent_path();
-#if defined(_WIN32)
-    const char* names[] = {"OkaySpacePlayer.exe", "okay-player.exe"};
-#else
-    const char* names[] = {"okay-player", "OkaySpacePlayer"};
-#endif
-    std::vector<fs::path> roots = {dir, dir / "bin", dir.parent_path(),
-                                   dir / "runtime"};
-    for (const fs::path& root : roots)
-        for (const char* n : names) {
-            std::error_code ec;
-            if (fs::exists(root / n, ec)) return (root / n).string();
-        }
-    return {};
-}
-
-// Ensure the player runtime is available, downloading it next to the editor
-// from the releases bucket if it isn't found locally. Returns its path, or "" on failure.
-// This is what lets a freshly-downloaded editor build a runnable game with no
-// manual setup ("when building, generate everything it needs").
-std::string EnsurePlayer(std::string* note) {
-    std::string p = FindPlayer();
-    if (!p.empty()) return p;
-    fs::path self = updater::SelfPath();
-    if (self.empty()) return {};
-    fs::path dest = self.parent_path() / kPlayerExe;
-    if (note) *note = "Fetching the player runtime (checked against the published checksum)...";
-    std::string reason;
-    if (!updater::FetchVerified(OKAY_ENGINE_VERSION, "OkaySpacePlayer.exe", dest, reason)) {
-        if (note) *note = "Couldn't get the player runtime: " + reason;
-        return {};
-    }
-    std::error_code ec;
-    {   // FetchVerified staged and checked <dest>.new; only now does it become the player
-        fs::path staged = dest; staged += ".new";
-        fs::remove(dest, ec);
-        fs::rename(staged, dest, ec);
-    }
-    if (ec || !fs::exists(dest, ec) || fs::file_size(dest, ec) < 100000) {
-        fs::remove(dest, ec);
-        if (note) *note = "Couldn't install the player runtime next to the editor.";
-        return {};
-    }
-#if !defined(_WIN32)
-    fs::permissions(dest, fs::perms::owner_exec | fs::perms::group_exec |
-                    fs::perms::others_exec, fs::perm_options::add, ec);
-#endif
-    if (note) *note = "Downloaded the player runtime to " + dest.string() + ".";
-    return dest.string();
-}
-
-// Options forwarded from the Build Settings dialog into the build.
-struct Options {
-    std::string company = "OkaySpace";
-    std::string version = "1.0.0";
-    int  width = 1280, height = 720;
-    bool fullscreen = false, borderless = false, resizable = true, vsync = true;
-    bool smoothDt = true;
-    bool hideCursor = false;
-    int  fpsCap = 0;
-    bool quitOnEscape = true;
-    float masterVolume = 1.0f;
-    bool showFps = false;
-    bool includeAllProjectScenes = false, developmentBuild = false;
-    bool lockCursor = false, perPixelLighting = false, shadows = true,
-         bloom = false, ssao = false, fxaa = true;
-    int cursorLockMode = 0;
-    float shadowDistance = 80.0f, shadowSoftness = 2.5f;
-    int  shadowCascades = 3, shadowResolution = 2048;
-    int  antialias = 1;
-    bool gpuRenderer = true;
-    bool preferD3D12 = false;
-    bool cleanOutput = true;   // wipe stale build files first (no leftovers from old builds)
-    bool dataFolder  = true;   // tuck scenes/config/assets into a "Data/" subfolder (clean root)
-    bool encryptData = false;  // obfuscate scenes + config so players can't read/edit them
-    int  antiCheat = 0;        // 0 off, 1 report, 2 enforce: the player checks Data/manifest.json + runtime checks
-    bool fullscreenToggle = true;           // Alt+Enter / F11 in the shipped game
-    int  layout = 0;                        // buildpipe::Layout: 0 Folder, 1 Compact, 2 Zip
-    bool stripAssets = true;                // ship only what the built scenes use
-    bool compress = true;                   // zip: deflate
-    bool zipAlso = false;                   // also write <archive>.zip next to the output folder
-    bool dryRun = false;                    // build in a scratch folder, keep only the report
-    int  buildNumber = 1;
-    std::string archiveName = "{name}-{version}-{platform}";
-    std::vector<std::string> sceneList;     // Scenes In Build, in order (empty = the open scene)
-    okay::buildpipe::ExtraConfig extra;     // Build Settings > Game: speed, start volumes, language, logging, environment (game.okayconfig)
-    std::string excludeList;                // Build Settings > Output > Files left out of the build ("Assets/a.png;Assets/Old/")
-    bool allowCommands = false;             // Build Settings > Advanced: run the two commands below (off = never)
-    std::string preCommand, postCommand;    // run before the build (a failure stops it) / after a good build
-    // ---- Player presentation ----
-    std::string iconPath;      // window icon PNG (copied into the build)
-    std::string bundleId = "com.okayspace.game";
-    bool runInBackground = true;
-    bool muteOnFocusLoss = false;
-    bool startMaximized  = false;
-    int  minWidth = 0, minHeight = 0;
-    bool saveToUserDir = true;   // saves -> per-user app folder (persistentDataPath)
-    std::string splashImage;     // startup logo PNG
-    float splashTime = 2.0f;
-    float splashBg[3] = {0.05f, 0.05f, 0.06f};
-    // ---- Boot splash (branded loading frame; the project's custom loading
-    // screen carried into the shipped game so it matches the editor/launcher) ----
-    std::string bootLogo;        // optional PNG (copied into the build)
-    float bootBgTop[3] = {0.094f, 0.094f, 0.106f};
-    float bootBgBot[3] = {0.051f, 0.051f, 0.059f};
-    bool  bootAccentOverride = false;
-    float bootAccent[3] = {0.235f, 0.475f, 0.800f};
-    bool  bootBar = true;
-};
-
-// Obfuscate a just-written text file in place (scene/config) so it can't be read
-// or edited in a text editor; the player decodes it transparently at load.
-inline void PackFileInPlace(const fs::path& p) {
-    std::error_code ec;
-    if (!fs::exists(p, ec)) return;
-    std::ifstream in(p.string(), std::ios::binary);
-    std::stringstream ss; ss << in.rdbuf(); in.close();
-    std::string raw = ss.str();
-    if (okay::DataPack::IsPacked(raw)) return;        // already packed
-    std::ofstream out(p.string(), std::ios::binary | std::ios::trunc);
-    out << okay::DataPack::Pack(raw);
-}
-
-// Sanitize an asset's relative path so the build can't write outside its Data
-// folder: drop any leading drive/root and reject "." / ".." components (path
-// traversal). Returns a clean relative path; empty if nothing usable remains.
-inline fs::path SafeRelative(const fs::path& rel) {
-    fs::path out;
-    for (const auto& part : rel) {
-        std::string s = part.string();
-        if (s.empty() || s == "." || s == ".." || s == "/" || s == "\\") continue;
-        if (part.has_root_name() || part.has_root_directory()) continue;   // drive letters, leading slash
-        out /= part;
-    }
-    return out;
-}
-
-// A per-file size breakdown of the finished build, for the result popup.
-enum BuildCat { CAT_EXE = 0, CAT_LIB = 1, CAT_DATA = 2, CAT_ASSET = 3 };
-struct ReportEntry { std::string name; std::uintmax_t bytes = 0; int cat = CAT_ASSET; };
-struct BuildReport {
-    std::vector<ReportEntry> files;
-    std::uintmax_t total = 0;
-    std::uintmax_t catBytes[4] = {0, 0, 0, 0};
-    int missing = 0;
-    bool valid = false;
-    bool ok = false;                       // the build (or dry run) finished
-    okay::buildpipe::Report r;             // the full report: by kind and type, what was left out, warnings, time
-};
-
-inline std::string HumanBytes(std::uintmax_t b) {
-    char s[32]; double v = (double)b; const char* u = "B";
-    if (v >= 1024.0 * 1024 * 1024) { v /= 1024.0 * 1024 * 1024; u = "GB"; }
-    else if (v >= 1024.0 * 1024)   { v /= 1024.0 * 1024;        u = "MB"; }
-    else if (v >= 1024.0)          { v /= 1024.0;               u = "KB"; }
-    std::snprintf(s, sizeof(s), "%.1f %s", v, u); return std::string(s);
-}
-
-// Build the game into outDir (docs/release/build_pipeline.md). Returns a human-readable status string; if `report`
-// is non-null it is filled with the full build report (files by size and type, what was left out and why,
-// warnings, time). With opt.dryRun nothing is written to outDir: the build runs in a scratch folder that is
-// deleted again, so the report is exact without leaving files behind.
-std::string Build(EditorState& ed, const std::string& outDir,
-                  const std::string& gameName, const Options& opt = {}, BuildReport* report = nullptr) {
-    namespace bp = okay::buildpipe;
-    const auto t0 = std::chrono::steady_clock::now();
-    BuildReport localRep;
-    BuildReport& R = report ? *report : localRep;
-    R = BuildReport{};
-    // A build ships the scene you edited. While Play runs, the scene in memory is the running game (moved,
-    // spawned, scripted), so stop Play first: Stop restores the edited scene.
-    if (ed.isPlaying()) { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }
-    std::error_code ec;
-    fs::path dir = fs::weakly_canonical(fs::path(outDir), ec);
-    if (dir.empty()) dir = fs::path(outDir);
-
-    // Safety: refuse to scatter a build across a dangerous folder (a filesystem
-    // root, the user's home, or the project folder itself), where Clean could
-    // delete the wrong things and the output would mix with source files.
-    {
-        fs::path home;
-        if (const char* h = std::getenv("HOME")) home = h;
-        else if (const char* up = std::getenv("USERPROFILE")) home = up;
-        fs::path proj = ed.projectDir().empty() ? fs::path() : fs::weakly_canonical(fs::path(ed.projectDir()), ec);
-        if (dir == dir.root_path()) return "Refusing to build into a filesystem root. Pick a dedicated build folder.";
-        if (!home.empty() && fs::weakly_canonical(home, ec) == dir)
-            return "Refusing to build into your home folder. Pick a dedicated build folder.";
-        if (!proj.empty() && (dir == proj || dir == proj / "Assets"))
-            return "Refusing to build into the project/Assets folder. Pick a separate build folder so game files stay clean.";
-    }
-
-    // Build Settings > Advanced: the command to run BEFORE the build. Only when "Allow build commands" is on, never in a
-    // dry run. A command that fails (a non-zero exit code) stops the build before anything is written.
-    oked::bsm::CommandVars cmdVars;
-    cmdVars.output = dir.string(); cmdVars.name = gameName; cmdVars.version = opt.version; cmdVars.build = std::to_string(opt.buildNumber); cmdVars.project = ed.projectDir();
-    {
-        const std::string pre = oked::bsm::CommandToRun(opt.preCommand, opt.allowCommands, opt.dryRun, cmdVars);
-        if (!pre.empty()) {
-            const int rc = oked::bsm::RunCommandLine(pre, ed.projectDir());
-            if (rc != 0) return "The command before the build failed (exit code " + std::to_string(rc) + "): " + pre + ". Nothing was built.";
-        }
-    }
-
-    // The layout: <Name>.exe + <Name>_Data/ (Folder), exe + Data/ (Compact), or the Folder layout in one zip.
-#if defined(_WIN32)
-    const bool windowsHost = true;
-#else
-    const bool windowsHost = false;
-#endif
-    const std::string utcNow = bp::UtcNowIso();
-    bp::LayoutInput li;
-    li.gameName = gameName;
-    li.layout = (bp::Layout)std::max(0, std::min(2, opt.layout));
-    li.compactDataFolder = opt.dataFolder;
-    li.windows = windowsHost;
-    li.antiCheat = opt.antiCheat != 0;
-    li.archivePattern = opt.archiveName;
-    li.tokens = {bp::FileSafeName(gameName, "Game"), opt.version, windowsHost ? "windows" : "linux", utcNow.substr(0, 10), opt.buildNumber};
-    const bp::LayoutPlan plan = bp::PlanLayout(li);
-    const bool zipOnly = plan.makeZip && !plan.keepFolder;
-    const bool wantZip = plan.makeZip || opt.zipAlso;
-
-    // Where the files go: the output folder; a scratch folder for a dry run; a staging folder inside the
-    // output folder when only the zip is kept.
-    fs::path root = dir, scratch;
-    if (opt.dryRun) {
-        scratch = fs::temp_directory_path(ec) / ("okay-dryrun-" + bp::HashHex(bp::HashText(dir.string() + utcNow + std::to_string(t0.time_since_epoch().count()))));
-        root = scratch;
-    } else if (zipOnly) {
-        root = dir / (".stage-" + plan.safeName);
-    }
-    struct Cleanup { fs::path p; ~Cleanup() { if (!p.empty()) { std::error_code e; fs::remove_all(p, e); } } } cleanup{scratch};
-    fs::create_directories(opt.dryRun ? root : dir, ec);
-    if (ec) return "Couldn't create folder: " + ec.message();
-    if (zipOnly && !opt.dryRun) { fs::remove_all(root, ec); fs::create_directories(root, ec); }
-
-    // Clean stale build artifacts so old builds never leave junk behind. We only
-    // remove files THIS builder writes (the managed data folders + the runtime/
-    // config at the root), never the user's unrelated files.
-    if (opt.cleanOutput && !opt.dryRun) {
-        std::error_code ce;
-        fs::remove_all(dir / "Data", ce);
-        fs::remove_all(dir / (plan.safeName + "_Data"), ce);
-        for (const char* f : {"game.okayscene", "game.okayconfig", "game.okayprefs"})
-            fs::remove(dir / f, ce);
-        // Drop any *.okayscene left at the root by an older flat-layout build.
-        for (auto& e : fs::directory_iterator(dir, ce))
-            if (e.is_regular_file() && e.path().extension() == ".okayscene")
-                fs::remove(e.path(), ce);
-        if (plan.makeZip) fs::remove(dir / plan.zipName, ce);
-    }
-
-    const fs::path data = plan.dataDir.empty() ? root : root / plan.dataDir;
-    fs::create_directories(data, ec);
-    if (ec) return "Couldn't create folder: " + ec.message();
-
-    std::map<std::string, std::string> why;                 // path in the build (relative to root) -> why it is there
-    auto relRoot = [&](const fs::path& p) { std::error_code e; return fs::relative(p, root, e).generic_string(); };
-    std::vector<std::pair<std::string, std::uintmax_t>> virtualFiles;   // dry run: files that are counted but not copied
-
-    // 1) Scenes In Build, in order: the first is the startup scene (written as game.okayscene); the open
-    // scene is written from memory so unsaved edits ship. With no list, the open scene alone is the game
-    // (plus, optionally, every project scene). Every scene is also read for the assets it uses.
-    struct SceneEntry { fs::path src; std::string fn; bool isOpen = false; std::unique_ptr<Scene> loaded; };
-    std::vector<SceneEntry> built;
-    std::vector<std::string> sceneFiles;                    // filenames placed in the data folder
-    auto uniqueName = [&](const fs::path& src, bool first) {
-        std::string fn = first ? std::string("game.okayscene") : src.filename().string();
-        for (int n = 2; std::find(sceneFiles.begin(), sceneFiles.end(), fn) != sceneFiles.end(); ++n)
-            fn = src.stem().string() + "_" + std::to_string(n) + ".okayscene";   // two scenes, same name
-        return fn;
-    };
-    std::error_code pe;
-    if (!opt.sceneList.empty()) {
-        for (std::size_t i = 0; i < opt.sceneList.size(); ++i) {
-            SceneEntry se;
-            se.src = fs::path(opt.sceneList[i]);
-            se.fn = uniqueName(se.src, i == 0);
-            se.isOpen = !ed.path().empty() && fs::exists(se.src, pe) && fs::equivalent(se.src, fs::path(ed.path()), pe);
-            sceneFiles.push_back(se.fn);
-            built.push_back(std::move(se));
-        }
-    } else {
-        SceneEntry se;
-        se.src = fs::path(ed.path());
-        se.fn = "game.okayscene"; se.isOpen = true;
-        sceneFiles.push_back(se.fn);
-        built.push_back(std::move(se));
-        if (opt.includeAllProjectScenes && !ed.projectDir().empty()) {
-            fs::path assets = fs::path(ed.projectDir()) / "Assets";
-            if (fs::exists(assets, ec))
-                for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
-                    if (!e.is_regular_file() || e.path().extension() != ".okayscene") continue;
-                    if (e.path().filename() == "game.okayscene") continue;
-                    SceneEntry xe;
-                    xe.src = e.path(); xe.fn = e.path().filename().string();
-                    sceneFiles.push_back(xe.fn);
-                    built.push_back(std::move(xe));
-                }
-        }
-    }
-    int sceneCount = 0;
-    std::vector<bp::AssetRef> roots;
-    std::vector<std::string> sceneSources;   // the scene files, and files embedded in them (accounted for, not shipped on their own)
-    for (SceneEntry& se : built) {
-        const std::string label = se.src.empty() ? std::string("the open scene") : "scene " + se.src.stem().string();
-        if (se.isOpen) {
-            if (!SceneSerializer::SaveToFile(ed.scene(), (data / se.fn).string())) return "Failed to write " + se.fn + ".";
-            for (const std::string& a : SceneSerializer::CollectAssetPaths(ed.scene())) roots.push_back({a, se.src.string()});
-            // Its visual-script graphs are embedded in the scene file just written: they need not ship.
-            for (const std::string& g : bp::ScriptRefsInSceneText(SceneSerializer::Serialize(ed.scene()))) {
-                bp::WalkSettings gs; gs.projectDir = ed.projectDir();
-                const std::string gsrc = bp::ResolveAssetFile(g, se.src.parent_path().string(), gs);
-                if (!gsrc.empty()) sceneSources.push_back(gsrc);
-            }
-        } else {
-            fs::copy_file(se.src, data / se.fn, fs::copy_options::overwrite_existing, pe);
-            if (pe) return "Couldn't copy the scene " + se.src.string() + " (" + pe.message() + ").";
-            { std::ifstream sf(se.src, std::ios::binary); std::ostringstream sb; sb << sf.rdbuf();   // a scene copied as a file still reads its graphs from their files
-              for (const std::string& g : bp::ScriptRefsInSceneText(okay::DataPack::Unpack(sb.str()))) roots.push_back({g, se.src.string()}); }
-            se.loaded = std::make_unique<Scene>("build");
-            std::string lerr;
-            if (SceneSerializer::LoadFromFile(*se.loaded, se.src.string(), &lerr))
-                for (const std::string& a : SceneSerializer::CollectAssetPaths(*se.loaded)) roots.push_back({a, se.src.string()});
-            else R.r.Warn("Couldn't read " + se.src.string() + " to list its assets (" + lerr + "): its assets are not shipped.");
-        }
-        if (!se.src.empty()) sceneSources.push_back(se.src.string());
-        why[relRoot(data / se.fn)] = label + (sceneCount == 0 ? " (starts the game)" : "");
-        ++sceneCount;
-    }
-
-    // 2) The dependency walk: the assets those scenes use, and what those assets use in turn.
-    bp::WalkSettings ws;
-    ws.projectDir = ed.projectDir();
-    for (const SceneEntry& se : built) if (!se.src.empty()) ws.searchDirs.push_back(se.src.parent_path().string());
-    bp::WalkResult walk = bp::WalkAssets(roots, ws);
-    std::vector<std::string> shippedSources;
-    std::uintmax_t unusedShipped = 0; int unusedShippedCount = 0;
-    if (!opt.stripAssets && !ed.projectDir().empty()) {
-        std::set<std::string> have;
-        for (const bp::ShippedAsset& a : walk.assets) { std::error_code e; have.insert(fs::weakly_canonical(fs::path(a.src), e).generic_string()); }
-        std::set<std::string> sceneKeys;
-        for (const std::string& s : sceneSources) { std::error_code e; sceneKeys.insert(fs::weakly_canonical(fs::path(s), e).generic_string()); }
-        for (const bp::ProjectAsset& pa : bp::ListProjectAssets(ed.projectDir())) {
-            std::error_code e;
-            const std::string key = fs::weakly_canonical(fs::path(pa.src), e).generic_string();
-            if (pa.editorOnly || pa.scene || have.count(key) || sceneKeys.count(key)) continue;
-            bp::ShippedAsset a;
-            a.ref = "Assets/" + pa.rel; a.dest = a.ref; a.src = pa.src; a.bytes = pa.bytes; a.reason = "asset stripping is off: every project asset ships";
-            walk.assets.push_back(a);
-            unusedShipped += pa.bytes; ++unusedShippedCount;
-        }
-    }
-    if (!opt.excludeList.empty()) {   // Build Settings > Output: files the owner left out. A file a scene uses is warned about, not silently dropped.
-        std::vector<bp::ShippedAsset> keep;
-        for (const bp::ShippedAsset& a : walk.assets) {
-            if (!oked::bsm::IsExcluded(a.dest, opt.excludeList) && !oked::bsm::IsExcluded(a.ref, opt.excludeList)) { keep.push_back(a); continue; }
-            if (a.reason.rfind("asset stripping is off", 0) != 0) R.r.Warn("'" + a.dest + "' is left out of the build but a scene uses it: the game will not find it.");
-        }
-        walk.assets.swap(keep);
-    }
-    int copied = 0;
-    std::uintmax_t assetBytes = 0;
-    for (const bp::ShippedAsset& a : walk.assets) {
-        const fs::path dst = data / fs::u8path(a.dest);
-        std::error_code aec;
-        if (dst.has_parent_path()) fs::create_directories(dst.parent_path(), aec);
-        fs::copy_file(fs::path(a.src), dst, fs::copy_options::overwrite_existing, aec);
-        if (aec) { R.r.Warn("Couldn't copy " + a.src + " (" + aec.message() + ")."); continue; }
-        ++copied; assetBytes += a.bytes;
-        shippedSources.push_back(a.src);
-        why[relRoot(dst)] = a.reason;
-        fs::path ms = fs::path(a.src); ms += ".okaymeta";   // its import settings (texture filter / wrap / mipmaps / largest side, model normals ...) travel with it
-        std::error_code me;
-        if (fs::is_regular_file(ms, me)) {
-            fs::path md = dst; md += ".okaymeta";
-            fs::copy_file(ms, md, fs::copy_options::overwrite_existing, me);
-            if (!me) why[relRoot(md)] = "import settings of " + a.dest;
-        }
-    }
-    for (const bp::MissingAsset& m : walk.missing) {
-        ++R.r.missingAssets;
-        R.r.Warn("Missing asset '" + m.ref + "' (used by " + (m.referrer.empty() ? std::string("a scene") : fs::path(m.referrer).filename().string()) + "): not found, so it is not shipped.");
-    }
-    for (const std::string& a : walk.absolute)
-        R.r.Warn("'" + a + "' is an absolute path: it is copied by file name, but the game still looks for the original path. Use a project-relative path.");
-    for (const std::string& n : plan.notes) R.r.Warn(n);
-    if (unusedShippedCount)
-        R.r.Warn("Asset stripping is off: " + std::to_string(unusedShippedCount) + " project file(s) the scenes do not use (" + bp::HumanBytes(unusedShipped) + ") are shipped.");
-
-    // 1b) Write game.okayconfig (window + scene list) read by the player.
-    std::string settingsText;
-    {
-        std::ostringstream cf;
-        cf << "title=" << gameName << "\n";
-        cf << "company=" << opt.company << "\n";
-        cf << "version=" << opt.version << "\n";
-        cf << "build_number=" << opt.buildNumber << "\n";
-        cf << "width=" << opt.width << "\n";
-        cf << "height=" << opt.height << "\n";
-        cf << "fullscreen=" << (opt.fullscreen ? 1 : 0) << "\n";
-        cf << "borderless=" << (opt.borderless ? 1 : 0) << "\n";
-        cf << "resizable=" << (opt.resizable ? 1 : 0) << "\n";
-        cf << "vsync=" << (opt.vsync ? 1 : 0) << "\n";
-        cf << "smooth_dt=" << (opt.smoothDt ? 1 : 0) << "\n";
-        cf << "cursor=" << (opt.hideCursor ? 0 : 1) << "\n";
-        cf << "fps_cap=" << opt.fpsCap << "\n";
-        cf << "quit_on_escape=" << (opt.quitOnEscape ? 1 : 0) << "\n";
-        cf << "volume=" << opt.masterVolume << "\n";
-        cf << "show_fps=" << (opt.showFps ? 1 : 0) << "\n";
-        cf << "development=" << (opt.developmentBuild ? 1 : 0) << "\n";
-        cf << "physics_hz=" << g_project.physicsHz << "\n";
-        cf << "physics_smooth=" << (g_project.smoothPhysics ? 1 : 0) << "\n";
-        cf << "lock_cursor=" << (opt.lockCursor ? 1 : 0) << "\n";
-        cf << "cursor_lock=" << (opt.cursorLockMode == 2 ? "confined" : opt.cursorLockMode == 1 ? "locked" : "none") << "\n";
-        cf << "perpixel=" << (opt.perPixelLighting ? 1 : 0) << "\n";
-        cf << "shadows=" << (opt.shadows ? 1 : 0) << "\n";
-        cf << "shadow_distance=" << opt.shadowDistance << "\n";
-        cf << "shadow_softness=" << opt.shadowSoftness << "\n";
-        cf << "shadow_cascades=" << opt.shadowCascades << "\n";
-        cf << "shadow_resolution=" << opt.shadowResolution << "\n";
-        cf << "bloom=" << (opt.bloom ? 1 : 0) << "\n";
-        cf << "ssao=" << (opt.ssao ? 1 : 0) << "\n";
-        cf << "fxaa=" << (opt.fxaa ? 1 : 0) << "\n";
-        cf << "antialias=" << opt.antialias << "\n";
-        cf << "gpu=" << (opt.gpuRenderer ? 1 : 0) << "\n";
-        cf << "d3d12=" << (opt.preferD3D12 ? 1 : 0) << "\n";
-        // Player presentation.
-        if (!opt.iconPath.empty()) cf << "icon=" << fs::path(opt.iconPath).filename().string() << "\n";
-        cf << "bundle_id=" << opt.bundleId << "\n";
-        cf << "run_background=" << (opt.runInBackground ? 1 : 0) << "\n";
-        cf << "mute_unfocused=" << (opt.muteOnFocusLoss ? 1 : 0) << "\n";
-        cf << "start_maximized=" << (opt.startMaximized ? 1 : 0) << "\n";
-        cf << "min_width=" << opt.minWidth << "\n";
-        cf << "min_height=" << opt.minHeight << "\n";
-        cf << "save_userdir=" << (opt.saveToUserDir ? 1 : 0) << "\n";
-        cf << "fullscreen_toggle=" << (opt.fullscreenToggle ? 1 : 0) << "\n";
-        if (!opt.splashImage.empty()) {
-            cf << "splash=" << fs::path(opt.splashImage).filename().string() << "\n";
-            cf << "splash_time=" << opt.splashTime << "\n";
-            cf << "splash_bg=" << (int)(opt.splashBg[0] * 255) << "," << (int)(opt.splashBg[1] * 255)
-               << "," << (int)(opt.splashBg[2] * 255) << "\n";
-        }
-        // Boot splash (branded loading frame shown immediately on launch, before
-        // the scene/renderer are up) — the project's custom loading screen.
-        if (!opt.bootLogo.empty())
-            cf << "boot_logo=" << fs::path(opt.bootLogo).filename().string() << "\n";
-        cf << "boot_bg_top=" << opt.bootBgTop[0] << " " << opt.bootBgTop[1] << " " << opt.bootBgTop[2] << "\n";
-        cf << "boot_bg_bot=" << opt.bootBgBot[0] << " " << opt.bootBgBot[1] << " " << opt.bootBgBot[2] << "\n";
-        if (opt.bootAccentOverride)
-            cf << "boot_accent=" << opt.bootAccent[0] << " " << opt.bootAccent[1] << " " << opt.bootAccent[2] << "\n";
-        cf << "boot_bar=" << (opt.bootBar ? 1 : 0) << "\n";
-        cf << "startup=game.okayscene\n";
-        cf << okay::buildpipe::WriteExtraConfig(opt.extra);   // nothing at the defaults, so old projects build the same config
-        for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
-        if (opt.antiCheat) cf << "anticheat=" << okayac::ModeName((okayac::Mode)opt.antiCheat) << "\n";
-        settingsText = cf.str();
-        std::ofstream out((data / "game.okayconfig").string());
-        out << settingsText;
-        why[relRoot(data / "game.okayconfig")] = "window, graphics and scene list settings";
-    }
-
-    // Optional: obfuscate the shipped scenes + config so they can't be read or
-    // edited in a text editor (the player decodes them transparently). Deters
-    // casual tampering; not strong DRM (the key ships in the binary).
-    if (opt.encryptData) {
-        PackFileInPlace(data / "game.okayconfig");
-        for (const std::string& s : sceneFiles) PackFileInPlace(data / s);
-    }
-
-    // 3) Copy the player runtime, renamed to <Game>.exe. If it isn't beside the
-    // editor, fetch it from the releases bucket so the build is self-contained.
-    std::string fetchNote;
-    std::string player = EnsurePlayer(&fetchNote);
-    const std::string exeName = plan.exeName;
-    if (player.empty()) {
-        return "Wrote the scenes to " + dir.string() +
-               ", but couldn't find or download the player runtime. Check your "
-               "internet connection, or place OkaySpacePlayer next to the editor.";
-    }
-    // Copy that overwrites even a locked/existing target: remove first, then copy.
-    // copy_file(overwrite_existing) can still report "file exists" on some setups
-    // (and copying a file onto itself is an error), so guard both.
-    auto copyOver = [](const fs::path& src, const fs::path& dst, std::error_code& e) -> bool {
-        e.clear();
-        std::error_code e0;
-        if (fs::exists(dst, e0) && fs::equivalent(src, dst, e0)) return true;  // same file → nothing to do
-        std::error_code e1; fs::remove(dst, e1);                              // best-effort unlock/replace
-        fs::copy_file(src, dst, fs::copy_options::overwrite_existing, e);
-        return !e;
-    };
-    auto putRuntime = [&](const fs::path& src, const std::string& name, const std::string& reason, std::error_code& e) -> bool {
-        if (opt.dryRun) {
-            std::error_code se; virtualFiles.emplace_back(name, fs::file_size(src, se)); why[name] = reason; e.clear(); return true;
-        }
-        why[name] = reason;
-        return copyOver(src, root / name, e);
-    };
-    if (!putRuntime(player, exeName, "the player runtime", ec))
-        return "Wrote the scenes but couldn't copy the player: " + ec.message();
-#if !defined(_WIN32)
-    if (!opt.dryRun) fs::permissions(root / exeName, fs::perms::owner_exec | fs::perms::group_exec |
-                    fs::perms::others_exec, fs::perm_options::add, ec);
-#endif
-
-    // Bundle the runtime libraries the game needs beside it — most importantly
-    // SDL2.dll on Windows, without which the game won't launch. Look next to the
-    // player, then next to the editor (and common subfolders). Nothing else is copied: no editor files,
-    // no tools, no symbols.
-    {
-        fs::path pdir = fs::path(player).parent_path();
-        fs::path edir = updater::SelfPath().empty() ? fs::path() : fs::path(updater::SelfPath()).parent_path();
-        std::vector<fs::path> roots2 = {pdir, edir, edir / "bin", edir.parent_path(), pdir.parent_path()};
-#if defined(_WIN32)
-        const char* libs[] = {"SDL2.dll", "libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll"};
-#else
-        const char* libs[] = {"libSDL2-2.0.so.0"};
-#endif
-        for (const char* lib : libs) {
-            for (const fs::path& r2 : roots2) {
-                if (r2.empty()) continue;
-                std::error_code fe;
-                fs::path src = r2 / lib;
-                if (fs::exists(src, fe)) { std::error_code ce; putRuntime(src, lib, "runtime library the player needs", ce); break; }
-            }
-        }
-    }
-
-    // Window icon, startup splash and boot logo: beside the config in the data folder.
-    auto putPresentation = [&](const std::string& path, const char* what) {
-        if (path.empty()) return;
-        std::error_code ie; fs::path isrc(path);
-        if (fs::exists(isrc, ie) && fs::is_regular_file(isrc, ie)) {
-            fs::copy_file(isrc, data / isrc.filename(), fs::copy_options::overwrite_existing, ie);
-            if (!ie) { why[relRoot(data / isrc.filename())] = what; shippedSources.push_back(path); }
-        } else R.r.Warn(std::string("The ") + what + " file " + path + " was not found.");
-    };
-    putPresentation(opt.iconPath, "window icon");
-    putPresentation(opt.splashImage, "startup splash");
-    putPresentation(opt.bootLogo, "boot logo");
-    CopyLocalizationFiles(ed, data.u8string());   // strings.okayloc and its languages' fonts
-
-    // StreamingAssets/: the project's StreamingAssets folder, copied as it is (no stripping, no renaming), for
-    // files the game opens by name at run time (Paths::StreamingAssetsDir).
-    int streaming = 0;
-    for (const auto& sf : bp::ListStreamingAssets(ed.projectDir())) {
-        const fs::path dst = data / "StreamingAssets" / fs::u8path(sf.first);
-        std::error_code se;
-        fs::create_directories(dst.parent_path(), se);
-        fs::copy_file(fs::path(sf.second), dst, fs::copy_options::overwrite_existing, se);
-        if (se) { R.r.Warn("Couldn't copy StreamingAssets/" + sf.first + " (" + se.message() + ")."); continue; }
-        why[relRoot(dst)] = "StreamingAssets (copied as it is)"; ++streaming;
-    }
-
-    // Data/manifest.json: every shipped file's SHA-256, signed when a key is set up
-    // (shared/AntiCheatIntegrity.hpp). Only written (and only needed) when anti-cheat is on.
-    okayac::BuildManifestResult integrity;
-    if (opt.antiCheat) {
-        integrity = okayac::WriteBuildManifest(root, gameName, opt.version, okayac::LoadSigningKey(), (okayac::Mode)opt.antiCheat);   // the mode is signed too
-        if (!integrity.message.empty()) R.r.Warn(integrity.message);
-        why["Data/manifest.json"] = "anti-cheat file hashes";
-    }
-
-    // <data>/build.json: what this build is. The player reads it (--build-info, the log, the development overlay).
-    {
-        std::uintmax_t soFar = 0;
-        { std::error_code te;
-          for (auto& e : fs::recursive_directory_iterator(root, te)) if (e.is_regular_file(te)) { std::error_code se; soFar += fs::file_size(e.path(), se); }
-          for (const auto& v : virtualFiles) soFar += v.second; }
-        bp::BuildManifest bm;
-        bm.game = gameName; bm.company = opt.company; bm.bundleId = opt.bundleId; bm.version = opt.version; bm.buildNumber = opt.buildNumber;
-        bm.engineVersion = okay::BuildInfo::Version(); bm.dateUtc = utcNow; bm.platform = windowsHost ? "windows" : "linux";
-        bm.layout = bp::LayoutName(plan.effective); bm.development = opt.developmentBuild; bm.stripped = opt.stripAssets;
-        bm.compressed = wantZip && opt.compress;
-        bm.scenes = sceneFiles;
-        bm.assetCount = copied;
-        bm.totalBytes = soFar;
-        bm.settingsHash = bp::HashHex(bp::HashText(settingsText + "|" + bp::LayoutName(plan.effective) + (opt.stripAssets ? "|strip" : "|all") + (opt.encryptData ? "|enc" : "")));
-        std::ofstream bf((data / "build.json").string(), std::ios::binary);
-        bf << bp::ManifestToJson(bm);
-        why[relRoot(data / "build.json")] = "build info";
-    }
-
-    // The report: every file in the build, then what was left out and why.
-    bp::Report& rp = R.r;
-    rp.dryRun = opt.dryRun;
-    rp.layout = bp::LayoutName(plan.effective);
-    rp.outputDir = dir.string();
-    {
-        std::error_code te;
-        for (auto& e : fs::recursive_directory_iterator(root, te)) {
-            if (!e.is_regular_file(te)) continue;
-            std::error_code se;
-            const std::string rel = relRoot(e.path());
-            auto w = why.find(rel);
-            rp.AddFile(rel, fs::file_size(e.path(), se), w == why.end() ? std::string() : w->second);
-        }
-        for (const auto& v : virtualFiles) rp.AddFile(v.first, v.second, why[v.first]);
-    }
-    if (opt.stripAssets && !ed.projectDir().empty()) {
-        std::set<std::pair<std::string, std::uintmax_t>> present;
-        for (const bp::ReportFile& f : rp.files) present.insert({fs::path(f.path).filename().string(), f.bytes});
-        for (const bp::ExcludedFile& x : bp::FindUnshipped(ed.projectDir(), shippedSources, sceneSources)) {
-            const std::string fn = fs::path(x.path).filename().string();
-            if (present.count({fn, x.bytes}) || fn == "strings.okayloc") continue;   // shipped another way (icon, fonts, string table)
-            rp.AddExcluded(x.path, x.bytes, x.reason);
-            if (x.bytes >= (1u << 20) && x.reason.rfind("not used", 0) == 0)
-                rp.Warn(x.path + " (" + bp::HumanBytes(x.bytes) + ") is not used by any scene in the build, so it was left out. Reference it from a scene, or turn off asset stripping, if the game needs it.");
-        }
-    }
-    rp.Finish();
-    rp.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-
-    // 4) The archive: a zip of the finished build (Zip layout keeps only the zip; "also zip" keeps both).
-    std::string zipNote;
-    if (wantZip && !opt.dryRun) {
-        fs::path zipPath = plan.makeZip ? dir / plan.zipName
-                                         : dir.parent_path() / (bp::ExpandPattern(opt.archiveName, li.tokens) + ".zip");
-        bp::ZipStats zs; std::string zerr;
-        const auto z0 = std::chrono::steady_clock::now();
-        if (!bp::WriteZip(zipPath.string(), root.string(), opt.compress, &zs, &zerr)) {
-            rp.Warn("Couldn't create the archive: " + zerr);
-        } else {
-            std::error_code se;
-            rp.archivePath = zipPath.string();
-            rp.archiveBytes = fs::file_size(zipPath, se);
-            rp.archiveCompressed = opt.compress;
-            zipNote = "  Archive " + zipPath.filename().string() + " " + bp::HumanBytes(rp.archiveBytes) + (opt.compress ? " (compressed from " : " (stored, ") + bp::HumanBytes(zs.stored) + (opt.compress ? ")" : ")");
-        }
-        rp.seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - z0).count();
-    }
-    if (zipOnly && !opt.dryRun) { std::error_code se; fs::remove_all(root, se); }
-
-    // The same report as a file beside the project's other editor state (never inside the game).
-    if (!ed.projectDir().empty()) {
-        std::error_code we;
-        fs::create_directories(fs::path(ed.projectDir()) / ".okay", we);
-        std::ofstream rf((fs::path(ed.projectDir()) / ".okay" / "build_report.txt").string(), std::ios::binary);
-        rf << rp.ToText();
-    }
-
-    // The older size table (and the server export) read these.
-    R.total = rp.total; R.missing = rp.missingAssets; R.valid = true; R.ok = true;
-    for (const bp::ReportFile& f : rp.files) {
-        int cat = f.kind == bp::FileKind::Executable ? CAT_EXE : f.kind == bp::FileKind::Library ? CAT_LIB
-                : (f.kind == bp::FileKind::Scene || f.kind == bp::FileKind::Config) ? CAT_DATA : CAT_ASSET;
-        R.files.push_back({f.path, f.bytes, cat});
-        R.catBytes[cat] += f.bytes;
-    }
-
-    auto human = [](std::uintmax_t b) { return bp::HumanBytes(b); };
-    std::string msg;
-    if (opt.dryRun) {
-        msg = "Dry run for '" + gameName + "' (" + std::string(bp::LayoutName(plan.effective)) + " layout): " + std::to_string(rp.files.size()) + " files, " + human(rp.total) +
-              ", " + std::to_string(rp.excluded.size()) + " left out. Nothing was written to " + dir.string() + ".";
-    } else {
-        const std::string where = plan.makeZip && !plan.keepFolder ? (dir / plan.zipName).string() : dir.string();
-        msg = "Built '" + gameName + "' to " + where;
-        if (!(plan.makeZip && !plan.keepFolder)) msg += " — run " + exeName + " to play";
-        msg += ".  [" + human(rp.total) + " total";
-        if (!plan.dataDir.empty() && !(plan.makeZip && !plan.keepFolder)) msg += ", game data in " + plan.dataDir + "/";
-        msg += "]";
-        if (!fetchNote.empty() && fetchNote.rfind("Downloaded", 0) == 0) msg += "  (runtime fetched from the download server)";
-        if (sceneCount > 1) msg += "  (" + std::to_string(sceneCount) + " scenes)";
-        if (copied) msg += "  (" + std::to_string(copied) + " asset(s), " + human(assetBytes) + ")";
-        if (streaming) msg += "  (" + std::to_string(streaming) + " StreamingAssets file(s))";
-        msg += zipNote;
-    }
-    if (!rp.excluded.empty()) msg += "  " + std::to_string(rp.excluded.size()) + " unused project file(s) left out (" + human(rp.excludedBytes) + ").";
-    if (R.missing) msg += "  WARNING: " + std::to_string(R.missing) + " referenced asset(s) not found and not copied.";
-    if (!integrity.message.empty()) msg += "  (" + integrity.message + ")";
-    {   // Build Settings > Advanced: the command to run AFTER a good build (it cannot undo the build, so a failure is only reported)
-        const std::string post = oked::bsm::CommandToRun(opt.postCommand, opt.allowCommands, opt.dryRun, cmdVars);
-        if (!post.empty()) {
-            const int rc = oked::bsm::RunCommandLine(post, ed.projectDir());
-            msg += rc == 0 ? "  (ran your command after the build)" : "  WARNING: your command after the build failed (exit code " + std::to_string(rc) + ").";
-        }
-    }
-    return msg;
-}
-
-// The Build Settings as the builder's options (the Build Settings window and `--build-game` both use this).
-Options OptionsFromSettings(const BuildSettings& g, const ProjectSettings& pr) {
-    Options o;
-    o.company = g.company; o.version = g.version;
-    o.width = g.width; o.height = g.height;
-    o.fullscreen = g.fullscreen; o.borderless = g.borderless;
-    o.resizable = g.resizable; o.vsync = g.vsync; o.smoothDt = g.smoothDt;
-    o.hideCursor = g.hideCursor; o.fpsCap = g.fpsCap;
-    o.quitOnEscape = g.quitOnEscape; o.masterVolume = g.masterVolume; o.showFps = g.showFps;
-    o.includeAllProjectScenes = g.includeAllProjectScenes;
-    o.developmentBuild = g.developmentBuild;
-    o.lockCursor = g.lockCursor; o.cursorLockMode = g.cursorLockMode; o.perPixelLighting = g.perPixelLighting;
-    o.shadows = g.shadows; o.bloom = g.bloom; o.ssao = g.ssao;
-    o.shadowDistance = g.shadowDistance; o.shadowSoftness = g.shadowSoftness;
-    o.shadowCascades = g.shadowCascades; o.shadowResolution = g.shadowResolution;
-    o.fxaa = g.fxaa; o.antialias = g.antialias;
-    o.gpuRenderer = g.gpuRenderer;
-    o.preferD3D12 = g.preferD3D12;
-    o.cleanOutput = g.cleanOutput; o.dataFolder = g.dataFolder;
-    o.encryptData = g.encryptData;
-    o.antiCheat = g.antiCheat;
-    o.iconPath = g.icon; o.bundleId = g.bundleId;
-    o.runInBackground = g.runInBackground; o.muteOnFocusLoss = g.muteOnFocusLoss;
-    o.startMaximized = g.startMaximized;
-    o.minWidth = g.minWidth; o.minHeight = g.minHeight;
-    o.saveToUserDir = g.saveToUserDir;
-    o.fullscreenToggle = g.fullscreenToggle;
-    for (const BuildScene& sc : g.scenes) if (sc.on) o.sceneList.push_back(sc.path);
-    o.splashImage = g.splash; o.splashTime = g.splashTime;
-    o.splashBg[0] = g.splashBg[0]; o.splashBg[1] = g.splashBg[1]; o.splashBg[2] = g.splashBg[2];
-    // Carry the project's custom loading screen into the shipped game.
-    o.bootLogo = pr.splashLogo;
-    for (int i = 0; i < 3; ++i) { o.bootBgTop[i] = pr.splashBgTop[i]; o.bootBgBot[i] = pr.splashBgBot[i]; o.bootAccent[i] = pr.splashAccent[i]; }
-    o.bootAccentOverride = pr.splashAccentOverride; o.bootBar = pr.splashShowBar;
-    o.layout = g.layout; o.stripAssets = g.stripAssets; o.compress = g.compress; o.zipAlso = g.zipAfter && g.layout != 2;
-    o.buildNumber = g.buildNumber; o.archiveName = g.archiveName;
-    o.extra = oked::bsm::ExtraFrom(g); o.excludeList = g.excludeList;
-    o.allowCommands = g.allowBuildCommands; o.preCommand = g.preBuildCommand; o.postCommand = g.postBuildCommand;
-    return o;
-}
-
-// Export the platform-independent game DATA (scene + config + assets) plus a
-// ready-to-build project for a non-desktop target. The editor can't run Emscripten
-// (web) or the Android NDK itself, so it lays down everything those toolchains need
-// and a build script / README with the exact commands. `target`: 1 = Web (WASM +
-// WebGL via Emscripten), 2 = Android (SDL2 + NDK).
-std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
-                              const std::string& gameName, const Options& opt, int target) {
-    if (ed.isPlaying()) { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }   // export the edited scene, not the running copy
-    std::error_code ec;
-    fs::path dir = fs::path(outDir);
-    if (dir.empty()) return "Pick an output folder.";
-    fs::create_directories(dir, ec);
-    if (ec) return "Couldn't create folder: " + ec.message();
-
-    // Web preloads a 'game/' folder; Android expects app/src/main/assets — either
-    // way it's just our scene + config + assets.
-    fs::path data = dir / (target == 2 ? "assets" : target == 4 ? fs::path("package") / "Data" : fs::path("game"));
-    fs::create_directories(data, ec);
-    if (!SceneSerializer::SaveToFile(ed.scene(), (data / "game.okayscene").string()))
-        return "Failed to write game.okayscene.";
-    { std::ofstream cf((data / "game.okayconfig").string());
-      cf << "title=" << gameName << "\ncompany=" << opt.company << "\nversion=" << opt.version
-         << "\nwidth=" << opt.width << "\nheight=" << opt.height << "\nstartup=game.okayscene\n"; }
-
-    int copied = 0, missing = 0;
-    std::set<std::string> seen;
-    for (const std::string& asset : SceneSerializer::CollectAssetPaths(ed.scene())) {
-        if (asset.empty() || !seen.insert(asset).second) continue;
-        fs::path src(asset); std::error_code aec;
-        if (!fs::exists(src, aec) || !fs::is_regular_file(src, aec)) { ++missing; continue; }
-        fs::path rel = src.is_absolute() ? fs::path(src.filename()) : SafeRelative(src);
-        if (rel.empty()) rel = src.filename();
-        fs::path dst = data / rel;
-        if (dst.has_parent_path()) fs::create_directories(dst.parent_path(), aec);
-        fs::copy_file(src, dst, fs::copy_options::overwrite_existing, aec);
-        if (!aec) ++copied;
-        { std::error_code me; fs::path ms = src; ms += ".okaymeta";
-          if (!aec && fs::is_regular_file(ms, me)) { fs::path md = dst; md += ".okaymeta"; fs::copy_file(ms, md, fs::copy_options::overwrite_existing, me); } }
-    }
-    CopyLocalizationFiles(ed, data.u8string());   // strings.okayloc and its languages' fonts
-
-#if defined(OKAY_XBOX_UWP)
-    if (target == 4) {   // ---- Xbox One Developer Mode (UWP), EXPERIMENTAL and UNVERIFIED: manifest, assets, notes beside package/Data ----
-        okay::xbox::ExportInputs xi;
-        xi.gameName = gameName; xi.company = opt.company; xi.version = opt.version; xi.bundleId = opt.bundleId; xi.iconPath = opt.iconPath;
-        const okay::xbox::ExportResult xr = okay::xbox::WritePackage(dir.string(), xi);
-        g_xboxExportOk = xr.ok; g_xboxExportWarnings = xr.warnings;
-        std::string msg = xr.message;
-        for (const std::string& w : xr.warnings) msg += " Warning: " + w;
-        return msg;
-    }
-#endif
-    if (target == 1) {   // ---- Web (Emscripten / WebGL) ----
-        std::ofstream sh((dir / "build-web.sh").string());
-        sh << "#!/usr/bin/env bash\n"
-              "# Build this game for the web (WebAssembly + WebGL) with Emscripten.\n"
-              "# Prereqs: install emsdk (https://emscripten.org), 'source emsdk_env.sh',\n"
-              "# and set OKAY_SRC to your OkaySpace engine source checkout.\n"
-              "set -euo pipefail\n"
-              "cd \"$(dirname \"$0\")\"\n"
-              ": \"${OKAY_SRC:?Set OKAY_SRC to the OkaySpace engine source folder}\"\n"
-              "command -v emcmake >/dev/null || { echo 'Emscripten not found: source emsdk_env.sh'; exit 1; }\n"
-              "emcmake cmake -S \"$OKAY_SRC\" -B build-web -DCMAKE_BUILD_TYPE=Release \\\n"
-              "  -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \\\n"
-              "  -DCMAKE_EXE_LINKER_FLAGS=\"--preload-file game@/\"\n"
-              "cmake --build build-web -j\n"
-              "echo 'Built build-web/web/okay-player.html — serve it: python3 -m http.server -d build-web/web'\n";
-        std::ofstream rd((dir / "README.txt").string());
-        rd << "OkaySpace - Web (WebGL / WebAssembly) export of '" << gameName << "'\n"
-              "======================================================\n\n"
-              "game/         your scene + assets (game.okayscene, game.okayconfig, ...)\n"
-              "build-web.sh  builds a browser build with Emscripten.\n\n"
-              "Steps:\n"
-              "  1. Install the Emscripten SDK, then: source /path/to/emsdk/emsdk_env.sh\n"
-              "  2. export OKAY_SRC=/path/to/OkaySpace   (the engine source checkout)\n"
-              "  3. ./build-web.sh\n"
-              "  4. Serve build-web/web/ over HTTP and open okay-player.html\n\n"
-              "The engine ships this path as scripts/build-web.sh; this export bundles\n"
-              "your game's data and a matching build command.\n";
-        return "Exported Web (WebGL) project to " + dir.string() + " (" + std::to_string(copied) +
-               " asset(s)). Run build-web.sh with Emscripten to produce the .wasm build.";
-    }
-
-    // target == 2: ---- Android (SDL2 + NDK) ----
-    std::ofstream rd((dir / "README.txt").string());
-    rd << "OkaySpace - Android export of '" << gameName << "'\n"
-          "==============================================\n\n"
-          "assets/   your scene + assets, ready to drop into an Android app's\n"
-          "          app/src/main/assets/ folder.\n\n"
-          "Building an APK needs Android Studio + the NDK and SDL2's Android project\n"
-          "(the OkaySpace player is C++ on SDL2, which has an official Android port):\n"
-          "  1. Start from SDL2's androidproject template (SDL/build-scripts).\n"
-          "  2. Add the OkaySpace engine + player sources as the app's native code;\n"
-          "     they build against SDL2's Android port.\n"
-          "  3. Copy this 'assets/' folder into app/src/main/assets/.\n"
-          "  4. Build/run from Android Studio (Gradle + NDK).\n\n"
-          "Config: identifier " << opt.bundleId << ", version " << opt.version << ".\n";
-    return "Exported Android data + guide to " + dir.string() + " (" + std::to_string(copied) +
-           " asset(s)). See README.txt - an APK needs Android Studio + the NDK.";
-}
-// ---- Dedicated server export ---------------------------------------------------
-// A ready-to-run server folder: the game's data + the player runtime for the
-// target OS (it runs headless with --server), a server.cfg with the chosen
-// settings, start scripts, and for Linux everything to put it online — an
-// install script (service + firewall), deploy.sh/.bat (copy over SSH and
-// install in one command), a Dockerfile/compose file and a README.
-struct ServerOptions {
-    int  target = 0;              // 0 = Linux, 1 = Windows
-    std::string name, password, publicAddr, region;
-    int  port = 45000, maxPlayers = 16, tick = 30, rateLimit = 0, kickAfter = 0;
-    bool auth = false, advertise = false;
-    float maxSpeed = 0.0f;
-};
-
-// "Star Arena!" -> "star-arena" (file names, service names, Docker images).
-inline std::string ServerSlug(const std::string& s) {
-    std::string o;
-    for (unsigned char c : s) {
-        if (std::isalnum(c)) o += (char)std::tolower(c);
-        else if (!o.empty() && o.back() != '-') o += '-';
-    }
-    while (!o.empty() && o.back() == '-') o.pop_back();
-    return o.empty() ? std::string("game") : o;
-}
-// Scripts must keep Unix line endings even when written on Windows.
-inline bool WriteFileExact(const fs::path& p, const std::string& body) {
-    std::ofstream f(p.string(), std::ios::binary | std::ios::trunc);
-    f << body;
-    return (bool)f;
-}
-inline std::string CfgQuote(const std::string& v) {
-    std::string o = "\"";
-    for (char c : v) if (c != '"' && c != '\n' && c != '\r') o += c;
-    return o + "\"";
-}
-
-std::string BuildServer(EditorState& ed, const std::string& outDir, const std::string& gameName,
-                        Options opt, const ServerOptions& so, BuildReport* report = nullptr) {
-    // A server draws nothing: skip the presentation extras.
-    opt.gpuRenderer = false; opt.iconPath.clear(); opt.splashImage.clear(); opt.bootLogo.clear();
-    opt.layout = 1; opt.zipAlso = false; opt.dryRun = false;   // the start scripts and Dockerfile expect the exe with a Data/ folder
-    BuildReport local;
-    BuildReport* rep = report ? report : &local;
-    const std::string built = Build(ed, outDir, gameName, opt, rep);
-    if (!rep->valid) return built;   // Build() said what went wrong
-
-    std::error_code ec;
-    fs::path dir = fs::weakly_canonical(fs::path(outDir), ec);
-    if (dir.empty()) dir = fs::path(outDir);
-    const bool linuxTarget = so.target == 0;
-#if defined(_WIN32)
-    const bool hostLinux = false;
-    const fs::path hostExe = dir / (okay::buildpipe::FileSafeName(gameName, "Game") + ".exe");
-#else
-    const bool hostLinux = true;
-    const fs::path hostExe = dir / okay::buildpipe::FileSafeName(gameName, "Game");
-#endif
-    const std::string slug = ServerSlug(gameName);
-    const std::string binName = linuxTarget ? slug + "-server" : gameName + "-Server.exe";
-    const fs::path bin = dir / binName;
-    const std::string serverName = so.name.empty() ? gameName + " Server" : so.name;
-
-    // 1) The runtime for the target OS.
-    std::string fetched;
-    if (linuxTarget == hostLinux) {
-        fs::remove(bin, ec);
-        fs::rename(hostExe, bin, ec);
-        if (ec) return "Built the game data, but couldn't rename the runtime to " + binName + " (" + ec.message() + ").";
-    } else {
-        fs::remove(hostExe, ec);
-        for (const char* lib : {"SDL2.dll", "libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libSDL2-2.0.so.0"})
-            fs::remove(dir / lib, ec);
-        auto fetch = [&](const char* asset, const fs::path& dest, std::size_t minBytes) {
-            const std::string url = updater::RawUrl("latest", asset);   // the newest release in the releases bucket (never GitHub)
-            if (url.empty() || !updater::Download(url, dest.string())) return false;
-            std::error_code fe;
-            if (!fs::exists(dest, fe) || fs::file_size(dest, fe) < minBytes) { fs::remove(dest, fe); return false; }
-            return true;
-        };
-        if (linuxTarget) {
-            if (!fetch("okay-server-linux-x64", bin, 100000))
-                return "Built the game data to " + dir.string() + ", but couldn't download the Linux server runtime "
-                       "(okay-server-linux-x64 from the latest release). Check your connection, or export a Windows server.";
-            fetched = "the Linux server runtime";
-        } else {
-            if (!fetch("OkaySpacePlayer.exe", bin, 100000) || !fetch("SDL2.dll", dir / "SDL2.dll", 10000))
-                return "Built the game data to " + dir.string() + ", but couldn't download the Windows runtime.";
-            fetched = "the Windows runtime";
-        }
-    }
-#if !defined(_WIN32)
-    fs::permissions(bin, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec);
-#endif
-
-    // 2) server.cfg: what the server reads at start (flags/env still override).
-    {
-        std::string c;
-        c += "# " + gameName + " dedicated server settings.\n";
-        c += "# Edit and restart the server to apply. Command-line flags override these.\n\n";
-        c += "name = " + CfgQuote(serverName) + "\n";
-        c += "port = " + std::to_string(so.port) + "\n";
-        c += "max_players = " + std::to_string(so.maxPlayers) + "\n";
-        c += "tick = " + std::to_string(so.tick) + "\n";
-        c += "password = " + CfgQuote(so.password) + "\n";
-        c += "# Only players signed in to OkaySpace may join.\n";
-        c += std::string("auth = ") + (so.auth ? "1" : "0") + "\n";
-        c += "encryption = 1\n";
-        c += "status = 60\n\n";
-        c += "# List this server in the launcher and in-game server browsers.\n";
-        c += "# Needs the machine signed in once:  ./" + binName + " --login YOUR_NAME\n";
-        c += std::string("advertise = ") + (so.advertise ? "1" : "0") + "\n";
-        c += "public_addr = " + CfgQuote(so.publicAddr) + "\n";
-        c += "region = " + CfgQuote(so.region) + "\n\n";
-        c += "# Anti-cheat basics (0 = off).\n";
-        char sp[32]; std::snprintf(sp, sizeof(sp), "%g", so.maxSpeed);
-        c += std::string("max_speed = ") + sp + "\n";
-        c += "rate_limit = " + std::to_string(so.rateLimit) + "\n";
-        c += "kick_after = " + std::to_string(so.kickAfter) + "\n";
-        if (!WriteFileExact(dir / "server.cfg", c)) return "Couldn't write server.cfg in " + dir.string() + ".";
-    }
-
-    // 3) Start scripts.
-    const std::string portS = std::to_string(so.port);
-    WriteFileExact(dir / "start-server.bat",
-        "@echo off\r\nrem Start the " + gameName + " server (settings in server.cfg).\r\n"
-        "cd /d \"%~dp0\"\r\n" + (linuxTarget ? "echo This server is built for Linux: copy the folder to a Linux machine, or use deploy.bat.\r\npause\r\n"
-                                             : "\"" + binName + "\" --server %*\r\npause\r\n"));
-    if (linuxTarget) {
-        WriteFileExact(dir / "start-server.sh",
-            "#!/bin/sh\n# Start the " + gameName + " server in this terminal (settings in server.cfg).\n"
-            "cd \"$(dirname \"$0\")\" && exec ./" + binName + " --server \"$@\"\n");
-
-        // install-server.sh: run ON the server (deploy.* does it for you).
-        WriteFileExact(dir / "install-server.sh",
-            "#!/usr/bin/env bash\n"
-            "# Install this folder as a service that starts on boot and restarts if it stops.\n"
-            "#   sudo bash install-server.sh        (from inside the folder, on the server)\n"
-            "set -euo pipefail\n"
-            "APP=" + slug + "-server\n"
-            "DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
-            "PORT=$(sed -n 's/^port *= *\\([0-9]*\\).*/\\1/p' \"$DIR/server.cfg\" | head -n1)\n"
-            "PORT=${PORT:-" + portS + "}\n"
-            "SUDO=; [ \"$(id -u)\" -ne 0 ] && SUDO=sudo\n"
-            "if command -v apt-get >/dev/null; then\n"
-            "  $SUDO apt-get update -qq && $SUDO apt-get install -y -qq libsdl2-2.0-0 libsodium23 >/dev/null || true\n"
-            "elif command -v dnf >/dev/null; then\n"
-            "  $SUDO dnf install -y -q SDL2 libsodium >/dev/null || true\n"
-            "fi\n"
-            "id okayspace >/dev/null 2>&1 || $SUDO useradd --system --home-dir \"$DIR\" --shell /usr/sbin/nologin okayspace\n"
-            "chmod +x \"$DIR/" + binName + "\" \"$DIR\"/*.sh\n"
-            "$SUDO chown -R okayspace \"$DIR\"\n"
-            "$SUDO tee /etc/systemd/system/$APP.service >/dev/null <<EOF\n"
-            "[Unit]\nDescription=" + gameName + " dedicated server\nAfter=network-online.target\nWants=network-online.target\n\n"
-            "[Service]\nUser=okayspace\nWorkingDirectory=$DIR\nEnvironment=HOME=$DIR\n"
-            "ExecStart=$DIR/" + binName + " --server\nRestart=always\nRestartSec=3\n\n"
-            "[Install]\nWantedBy=multi-user.target\nEOF\n"
-            "$SUDO systemctl daemon-reload\n"
-            "$SUDO systemctl enable $APP >/dev/null\n"
-            "$SUDO systemctl restart $APP\n"
-            "if command -v ufw >/dev/null && $SUDO ufw status | grep -q active; then $SUDO ufw allow \"$PORT\"/udp >/dev/null; fi\n"
-            "if command -v firewall-cmd >/dev/null && $SUDO firewall-cmd --state >/dev/null 2>&1; then\n"
-            "  $SUDO firewall-cmd --permanent --add-port=\"$PORT\"/udp >/dev/null && $SUDO firewall-cmd --reload >/dev/null; fi\n"
-            "sleep 1\n"
-            "$SUDO systemctl --no-pager --lines=8 status $APP || true\n"
-            "echo\n"
-            "echo \"Running as the service '$APP' on UDP port $PORT.\"\n"
-            "echo \"  logs:    journalctl -u $APP -f\"\n"
-            "echo \"  restart: sudo systemctl restart $APP   (after editing server.cfg)\"\n"
-            "echo \"  list it: sudo -u okayspace env HOME=$DIR $DIR/" + binName + " --login YOUR_NAME   (then set advertise = 1)\"\n");
-
-        // deploy.sh / deploy.bat: run on YOUR machine — copy over SSH, then install.
-        const std::string dest = "/opt/" + slug + "-server";
-        WriteFileExact(dir / "deploy.sh",
-            "#!/usr/bin/env bash\n"
-            "# Put this server online on a Linux machine you can SSH into (a VPS):\n"
-            "#   ./deploy.sh user@your-server [ssh-port]\n"
-            "# Copies this folder to " + dest + " and installs it as a service.\n"
-            "set -euo pipefail\n"
-            "HOST=\"${1:?usage: ./deploy.sh user@host [ssh-port]}\"\nSSHPORT=\"${2:-22}\"\n"
-            "cd \"$(dirname \"$0\")\"\n"
-            "echo \"Copying to $HOST:" + dest + " ...\"\n"
-            "ssh -t -p \"$SSHPORT\" \"$HOST\" 'sudo mkdir -p " + dest + " && sudo chown \"$(id -un)\" " + dest + "'\n"
-            "tar czf - --exclude=deploy.sh --exclude=deploy.bat . | ssh -p \"$SSHPORT\" \"$HOST\" 'tar xzf - -C " + dest + "'\n"
-            "ssh -t -p \"$SSHPORT\" \"$HOST\" 'sudo bash " + dest + "/install-server.sh'\n");
-        WriteFileExact(dir / "deploy.bat",
-            "@echo off\r\n"
-            "rem Put this server online on a Linux machine you can SSH into (a VPS):\r\n"
-            "rem   deploy.bat user@your-server [ssh-port]\r\n"
-            "rem Uses the ssh and tar built into Windows 10/11.\r\n"
-            "setlocal\r\n"
-            "if \"%~1\"==\"\" (echo Usage: deploy.bat user@host [ssh-port] & exit /b 1)\r\n"
-            "set HOST=%~1\r\nset SSHPORT=%~2\r\nif \"%SSHPORT%\"==\"\" set SSHPORT=22\r\n"
-            "cd /d \"%~dp0\"\r\n"
-            "echo Copying to %HOST%:" + dest + " ...\r\n"
-            "ssh -t -p %SSHPORT% %HOST% \"sudo mkdir -p " + dest + " && sudo chown $(id -un) " + dest + "\" || exit /b 1\r\n"
-            "tar czf - --exclude=deploy.sh --exclude=deploy.bat . | ssh -p %SSHPORT% %HOST% \"tar xzf - -C " + dest + "\" || exit /b 1\r\n"
-            "ssh -t -p %SSHPORT% %HOST% \"sudo bash " + dest + "/install-server.sh\"\r\n"
-            "pause\r\n");
-
-        // Docker: for hosts that run containers (and Fly.io / Railway / etc.).
-        WriteFileExact(dir / "Dockerfile",
-            "# " + gameName + " dedicated server.\n"
-            "#   docker build -t " + slug + "-server .\n"
-            "#   docker run -d -p " + portS + ":" + portS + "/udp --restart unless-stopped " + slug + "-server\n"
-            "FROM ubuntu:22.04\n"
-            "RUN apt-get update && apt-get install -y --no-install-recommends libsdl2-2.0-0 libsodium23 ca-certificates \\\n"
-            "    && rm -rf /var/lib/apt/lists/* && useradd --system --create-home okayspace\n"
-            "WORKDIR /srv/game\n"
-            "COPY . .\n"
-            "RUN chmod +x " + binName + " && chown -R okayspace /srv/game\n"
-            "USER okayspace\n"
-            "EXPOSE " + portS + "/udp\n"
-            "CMD [\"./" + binName + "\", \"--server\"]\n");
-        WriteFileExact(dir / "docker-compose.yml",
-            "# docker compose up -d   (settings in server.cfg, or OKAY_SERVER_* variables below)\n"
-            "services:\n"
-            "  server:\n"
-            "    build: .\n"
-            "    restart: unless-stopped\n"
-            "    ports:\n"
-            "      - \"" + portS + ":" + portS + "/udp\"\n"
-            "    # environment:\n"
-            "    #   OKAY_SERVER_NAME: \"" + serverName + "\"\n"
-            "    #   OKAY_SERVER_MAX_PLAYERS: \"" + std::to_string(so.maxPlayers) + "\"\n");
-        WriteFileExact(dir / ".dockerignore", "deploy.sh\ndeploy.bat\n*.zip\n");
-    }
-
-    // 4) README.
-    {
-        std::string r;
-        r += gameName + " - dedicated server\n";
-        r += std::string(gameName.size() + 19, '=') + "\n\n";
-        r += "This folder is a complete game server: no window, no graphics. Players connect to it\n";
-        r += "over UDP port " + portS + ". Settings live in server.cfg (restart after editing).\n\n";
-        if (linuxTarget) {
-            r += "PUT IT ONLINE (a Linux VPS: Hetzner, DigitalOcean, OVH, ...)\n";
-            r += "  From this PC, in this folder:\n";
-            r += "    Windows:  deploy.bat user@your-server\n";
-            r += "    Mac/Linux: ./deploy.sh user@your-server\n";
-            r += "  It copies the folder to /opt/" + slug + "-server, installs what it needs, opens the\n";
-            r += "  firewall port and runs it as a service that restarts on its own and starts on boot.\n\n";
-            r += "  By hand instead: copy the folder to the server and run  sudo bash install-server.sh\n";
-            r += "  Just to try it:  ./start-server.sh\n\n";
-            r += "DOCKER\n  docker compose up -d   (or see the Dockerfile)\n\n";
-            r += "MANAGE IT (on the server)\n";
-            r += "  logs:     journalctl -u " + slug + "-server -f\n";
-            r += "  restart:  sudo systemctl restart " + slug + "-server\n";
-            r += "  stop:     sudo systemctl stop " + slug + "-server\n\n";
-        } else {
-            r += "RUN IT\n  Double-click start-server.bat (or run: " + binName + " --server).\n";
-            r += "  Allow " + binName + " through Windows Firewall (UDP " + portS + ") when asked.\n\n";
-        }
-        r += "LIST IT IN THE SERVER BROWSERS\n";
-        r += "  1. Sign this machine in to OkaySpace once:\n";
-        r += linuxTarget ? "       sudo -u okayspace env HOME=/opt/" + slug + "-server /opt/" + slug + "-server/" + binName + " --login YOUR_NAME\n"
-                         : "       " + binName + " --login YOUR_NAME\n";
-        r += "  2. In server.cfg set  advertise = 1  and  public_addr = your server's IP or hostname.\n";
-        r += "  3. Restart the server. It shows up in the launcher's Multiplayer page and the game's\n";
-        r += "     \"Find a server\" window within a minute.\n\n";
-        r += "PLAYERS CAN ALSO JOIN BY ADDRESS\n";
-        r += "  Connect to server... (launcher) or Address (in game):  your-server:" + portS + "\n\n";
-        WriteFileExact(dir / "README.txt", r);
-    }
-
-#if !defined(_WIN32)
-    for (const char* sh : {"start-server.sh", "install-server.sh", "deploy.sh"})
-        fs::permissions(dir / sh, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec);
-#endif
-
-    // 5) Re-tally the folder for the result popup.
-    *rep = BuildReport{};
-    for (auto& e : fs::recursive_directory_iterator(dir, ec)) {
-        if (!e.is_regular_file(ec)) continue;
-        std::error_code se; const std::uintmax_t sz = fs::file_size(e.path(), se);
-        std::string ext = e.path().extension().string();
-        for (char& ch : ext) ch = (char)std::tolower((unsigned char)ch);
-        const std::string fn = e.path().filename().string();
-        int cat = CAT_ASSET;
-        if (fn == binName) cat = CAT_EXE;
-        else if (ext == ".dll" || ext == ".so" || fn.rfind("libSDL2", 0) == 0) cat = CAT_LIB;
-        else if (ext == ".okayscene" || ext == ".okayconfig" || fn == "server.cfg") cat = CAT_DATA;
-        rep->files.push_back({fs::relative(e.path(), dir, se).generic_string(), sz, cat});
-        rep->catBytes[cat] += sz; rep->total += sz;
-    }
-    std::sort(rep->files.begin(), rep->files.end(), [](const ReportEntry& a, const ReportEntry& b) { return a.bytes > b.bytes; });
-    rep->valid = true;
-
-    std::string msg = "Built the " + std::string(linuxTarget ? "Linux" : "Windows") + " dedicated server for '" + gameName +
-                      "' to " + dir.string() + "  [" + HumanBytes(rep->total) + "]. ";
-    msg += linuxTarget ? "Put it online with deploy.bat user@your-server (or ./deploy.sh), or docker compose up. "
-                       : "Run start-server.bat. ";
-    msg += "Settings are in server.cfg; README.txt has the steps.";
-    if (!fetched.empty()) msg += "  (" + fetched + " was downloaded from the latest release)";
-    if (so.advertise && so.publicAddr.empty()) msg += "  NOTE: set public_addr in server.cfg so the listing points players at the right address.";
-    return msg;
-}
-
-} // namespace builder
 
 builder::BuildReport g_buildReport;   // per-file size breakdown of the last build
 
@@ -6631,13 +5366,13 @@ void HideOtherMenus(EditorState& ed, GameObject* fresh) {
 
 // One-click looks + copy / paste style, at the top of each UI component's inspector.
 std::string g_uiStyleClip;   // a serialized widget whose look Paste style applies
-void UIStyleBar(EditorState& ed, Component* c) {
+// The style presets of a widget (the names its style bar shows and what a click applies); null for a widget without a bar.
+static const std::vector<const char*>* UIStylePresets(Component* c, std::function<void(int)>& apply) {
     using namespace okay::UIStyles;
     const std::vector<const char*>* names = nullptr;
-    std::function<void(int)> apply;
     if (auto* b = dynamic_cast<UIButton*>(c))               { names = &ButtonPresets();   apply = [b](int i) { ApplyButton(b, i); }; }
     else if (auto* p = dynamic_cast<UIPanel*>(c))           { names = &PanelPresets();    apply = [p](int i) { ApplyPanel(p, i); }; }
-    else if (auto* t = dynamic_cast<TextRenderer*>(c))      { if (!t->screenSpace) return; names = &TextPresets(); apply = [t](int i) { ApplyText(t, i); }; }
+    else if (auto* t = dynamic_cast<TextRenderer*>(c))      { if (!t->screenSpace) return nullptr; names = &TextPresets(); apply = [t](int i) { ApplyText(t, i); }; }
     else if (auto* pb = dynamic_cast<UIProgressBar*>(c))    { names = &ProgressPresets(); apply = [pb](int i) { ApplyProgress(pb, i); }; }
     else if (auto* sl = dynamic_cast<UISlider*>(c))         { names = &SliderPresets();   apply = [sl](int i) { ApplySlider(sl, i); }; }
     else if (auto* tg = dynamic_cast<UIToggle*>(c))         { names = &TogglePresets();   apply = [tg](int i) { ApplyToggle(tg, i); }; }
@@ -6645,7 +5380,29 @@ void UIStyleBar(EditorState& ed, Component* c) {
     else if (auto* dd = dynamic_cast<UIDropdown*>(c))       { names = &DropdownPresets(); apply = [dd](int i) { ApplyDropdown(dd, i); }; }
     else if (auto* tb = dynamic_cast<UITabs*>(c))           { names = &TabsPresets();     apply = [tb](int i) { ApplyTabs(tb, i); }; }
     else if (auto* rp = dynamic_cast<UIRadialProgress*>(c)) { names = &RadialPresets();   apply = [rp](int i) { ApplyRadial(rp, i); }; }
-    if (!names || !c->gameObject) return;
+    return c->gameObject ? names : nullptr;
+}
+static void UIStyleCopy(Component* c) {
+    g_uiStyleClip = SceneSerializer::SerializeObject(*c->gameObject);
+    ConsoleLog("Copied the look of " + c->gameObject->name);
+}
+static void UIStylePaste(EditorState& ed, Component* c) {
+    okay::Scene tmp("styleclip");
+    if (GameObject* src = SceneSerializer::InstantiateFromText(tmp, g_uiStyleClip)) {
+        ed.PushUndo();
+        int n = 0;
+        std::vector<GameObject*> targets = ed.MultiSelection();
+        if (std::find(targets.begin(), targets.end(), c->gameObject) == targets.end()) targets.push_back(c->gameObject);
+        for (GameObject* g : targets) n += okay::UIStyles::CopyStyle(src, g);
+        ed.dirty = true;
+        ConsoleLog(n ? "Pasted the look onto " + std::to_string(targets.size()) + " widget(s)" : std::string("Nothing to paste: the copied widget is a different kind"));
+    }
+}
+
+void UIStyleBar(EditorState& ed, Component* c) {
+    std::function<void(int)> apply;
+    const std::vector<const char*>* names = UIStylePresets(c, apply);
+    if (!names) return;
     ImGui::PushID("##stylebar");
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("Look");
@@ -6659,25 +5416,11 @@ void UIStyleBar(EditorState& ed, Component* c) {
         if (ImGui::SmallButton(n)) { ed.PushUndo(); apply(i); ed.dirty = true; }
         ImGui::PopID();
     }
-    if (ImGui::SmallButton("Copy style")) {
-        g_uiStyleClip = SceneSerializer::SerializeObject(*c->gameObject);
-        ConsoleLog("Copied the look of " + c->gameObject->name);
-    }
+    if (ImGui::SmallButton("Copy style")) UIStyleCopy(c);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy this widget's look (colours, corners, borders, shadows, font)");
     ImGui::SameLine();
     ImGui::BeginDisabled(g_uiStyleClip.empty());
-    if (ImGui::SmallButton("Paste style")) {
-        okay::Scene tmp("styleclip");
-        if (GameObject* src = SceneSerializer::InstantiateFromText(tmp, g_uiStyleClip)) {
-            ed.PushUndo();
-            int n = 0;
-            std::vector<GameObject*> targets = ed.MultiSelection();
-            if (std::find(targets.begin(), targets.end(), c->gameObject) == targets.end()) targets.push_back(c->gameObject);
-            for (GameObject* g : targets) n += okay::UIStyles::CopyStyle(src, g);
-            ed.dirty = true;
-            ConsoleLog(n ? "Pasted the look onto " + std::to_string(targets.size()) + " widget(s)" : std::string("Nothing to paste: the copied widget is a different kind"));
-        }
-    }
+    if (ImGui::SmallButton("Paste style")) UIStylePaste(ed, c);
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("Give this widget (and the rest of the selection) the copied look. Position, size and text stay.");
@@ -6685,7 +5428,7 @@ void UIStyleBar(EditorState& ed, Component* c) {
     ImGui::Spacing();
 }
 
-// GameObject > UI (and the UI view's "+ Add" button). The menu itself is DATA: editor/UIMenuModel.hpp lists the eight groups, every item with
+// GameObject > UI (and the UI view's "+ Add" button). The menu itself is DATA: editor/UIMenuModel.hpp lists nine essentials and the folders Game HUD, Menus & Screens and More, every item with
 // a one-sentence tip, and a last entry "Browse All UI..." that opens the UI Gallery. The ready-made screens come from the screen registry
 // (okay/Scene/UIScreens.hpp), one submenu per section. This function draws that list and RunUIMenuItem runs the ids.
 // A widget goes inside the selected panel, else under the scene's Canvas, which is made (with an Event System) the first time it is needed,
@@ -7206,7 +5949,6 @@ static oked::menubar::State MenuBarState(EditorState& ed) {
     s.redoName = meshR ? std::string("Mesh Edit") : ed.RedoName();
     s.clipboardHasObject = !g_clipboard.empty();
     s.recentCount = (int)g_recent.size();
-    s.assimp = okay::AssimpAvailable();
     s.isolating = g_isolate != nullptr;
     s.darkMode = g_darkMode;
     return s;
@@ -7380,14 +6122,15 @@ static void DrawCameraBookmarkMenuItems(EditorState& ed) {
     }
 }
 
-// What this PC offers, for the Auto choices (AutoPerf.hpp). Read from SDL and the renderer that was created.
+// What this PC offers, for the Auto choices (AutoPerf.hpp). Read from SDL (cores, RAM), the platform layer (refresh rate)
+// and the renderer that was created.
 static oked::autoperf::Hardware ReadHardware() {
     oked::autoperf::Hardware h;
     if (g_sdlRenderer) h.gpuRenderer = okay::pb::IsAccelerated(g_sdlRenderer);
     h.cpuCores = SDL_GetCPUCount();
     h.ramMB = SDL_GetSystemRAM();
-    SDL_DisplayMode dm;
-    if (SDL_GetDesktopDisplayMode(0, &dm) == 0) h.displayHz = dm.refresh_rate;
+    okay::platform::DisplayInfo di;   // the first (primary) display's refresh rate, through the platform layer
+    if (okay::platform::Backend* pb = okay::platform::Default(); pb && pb->DisplayAt(0, di)) h.displayHz = di.refreshHz;
     return h;
 }
 // Turn the saved modes into the values in use (g_ssaa, g_vsync). Called at start-up and when the user changes a mode.
@@ -7465,8 +6208,10 @@ static void DrawRenderingMenuItems(EditorState& ed) {
         namespace osw = okay::ownswitches;
         osw::State& st = osw::Global();
         const osw::Context ctx = osw::Context::Here();
-        ImGui::TextDisabled("Off by default. A change works after you restart the editor.");
-        if (ImGui::MenuItem("Back to normal (all off)", nullptr, false, !st.chosen.empty())) { osw::AllOff(st.chosen); osw::SaveChosen(); }
+        ImGui::TextDisabled("On by default; untick one to go back to the third-party part. A change works after you restart the editor.");
+        std::vector<std::string> allOn; osw::AllOn(allOn);
+        if (ImGui::MenuItem("All on (default)", nullptr, false, st.chosen != allOn)) { st.chosen = allOn; osw::SaveChosen(); }
+        if (ImGui::MenuItem("All off (third-party parts)", nullptr, false, !st.chosen.empty())) { osw::AllOff(st.chosen); osw::SaveChosen(); }
         ImGui::Separator();
         for (const osw::Item& it : osw::Items()) {
             if (!osw::Available(it, ctx)) continue;
@@ -7489,6 +6234,8 @@ static void DrawRenderingMenuItems(EditorState& ed) {
     if (ImGui::MenuItem("Frame-time overlay", nullptr, &g_showPerfOverlay)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small window with FPS, frame time, a graph of the last frames and where the frame goes\n(3D view, panels, ImGui, present). Its Copy report button puts the numbers on the clipboard.");
     if (ImGui::MenuItem("Profiler window", nullptr, &g_showProfiler)) SaveSettings();
+    if (ImGui::MenuItem("Timers", nullptr, &g_showTimers)) {}
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The scene's waiting tasks and its tweens, as the scheduler and the tween list describe them.");
     if (ImGui::BeginMenu("Viewport resolution")) {
         const int pcts[] = {100, 75, 50, 35};
         for (int p : pcts) {
@@ -7803,6 +6550,12 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A camera that circles its target. Hold the right mouse button and drag to turn it.");
         if (ImGui::MenuItem("Camera Rig: Look At")) { AddCameraRigObject(ed, 2); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A camera that stands still and turns to watch its target (a security camera, a boss arena).");
+        if (ImGui::MenuItem("Camera Zone")) {
+            GameObject* g = ed.CreateEmpty("Camera Zone");
+            g->AddComponent<CameraZone>();
+            ed.Select(g); ConsoleLog("Created Camera Zone: set the field of view or offset it should give inside"); created = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A box that changes the camera's field of view, distance or snappiness while the player is inside, easing across the edge.");
         if (ImGui::MenuItem("Camera Room (2D)")) {
             GameObject* g = ed.CreateEmpty("Camera Room");
             g->AddComponent<CameraRoom>();
@@ -8439,7 +7192,7 @@ void DrawDockSpace(EditorState& ed) {
 }
 
 // The folder the editor exe lives in — where the crash handler writes its reports.
-static std::string OkayExeDir() {
+std::string OkayExeDir() {
 #if defined(_WIN32)
     const std::string p = updater::SelfPath();   // the whole path, any length
     auto s = p.find_last_of("\\/");
@@ -8455,55 +7208,7 @@ static std::string OkayExeDir() {
 // Audio Mixer: the same levels a game's settings menu drives (master, each group,
 // mutes), live output meters during Play, and music ducking under voice.
 void DrawAudioMixer() {
-    if (UseOkayUIBackend() && DrawAudioMixerOkayUI(&g_showAudioMixer)) return;   // the opt-in OkayUI port (editor/OkayPanels.cpp)
-    if (!ImGui::Begin("Audio Mixer", &g_showAudioMixer)) { ImGui::End(); return; }
-    auto meter = [](const char* id, float v) {
-        const float db = v > 1e-5f ? 20.0f * std::log10(v) : -60.0f;
-        const float t = std::clamp((db + 60.0f) / 60.0f, 0.0f, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, v >= 1.0f ? ImVec4(0.85f, 0.3f, 0.3f, 1) : ImVec4(0.35f, 0.7f, 0.45f, 1));
-        ImGui::ProgressBar(t, ImVec2(-1, 6), "");
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s: %.1f dB", id, db);
-    };
-    ImGui::TextDisabled("Output");
-    meter("Left", AudioMixer::peak[0]);
-    meter("Right", AudioMixer::peak[1]);
-    ImGui::Spacing();
-    if (ImGui::BeginTable("##mix", 3, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Group", ImGuiTableColumnFlags_WidthFixed, 70);
-        ImGui::TableSetupColumn("Volume", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Mute", ImGuiTableColumnFlags_WidthFixed, 40);
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn(); ImGui::TextUnformatted("Master");
-        ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##master", &AudioMixer::masterVolume, 0.0f, 1.0f, "%.2f");
-        ImGui::TableNextColumn(); ImGui::Checkbox("##mastermute", &AudioMixer::muted);
-        for (int i = 0; i < (int)AudioGroup::Count; ++i) {
-            ImGui::PushID(i);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn(); ImGui::TextUnformatted(AudioMixer::GroupName((AudioGroup)i));
-            ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##v", &AudioMixer::groupVolume[i], 0.0f, 1.0f, "%.2f");
-            ImGui::TableNextColumn(); ImGui::Checkbox("##m", &AudioMixer::groupMuted[i]);
-            ImGui::PopID();
-        }
-        ImGui::EndTable();
-    }
-    ImGui::Spacing();
-    ImGui::Checkbox("Duck music under voice", &AudioMixer::duckMusicUnderVoice);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "While a Voice-group source plays, the Music group dips to the duck level.");
-    if (AudioMixer::duckMusicUnderVoice) {
-        ImGui::SliderFloat("Duck level", &AudioMixer::duckLevel, 0.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Attack (s)", &AudioMixer::duckAttack, 0.0f, 2.0f, "%.2f");
-        ImGui::SliderFloat("Release (s)", &AudioMixer::duckRelease, 0.0f, 4.0f, "%.2f");
-        ImGui::TextDisabled("Music now at %.0f%%", AudioMixer::duckGain * 100.0f);
-    }
-    ImGui::Spacing();
-    if (ImGui::Button("Reset")) {
-        AudioMixer::masterVolume = 1.0f; AudioMixer::muted = false;
-        for (int i = 0; i < (int)AudioGroup::Count; ++i) { AudioMixer::groupVolume[i] = 1.0f; AudioMixer::groupMuted[i] = false; }
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Editor only; players set their own in the pause menu.");
-    ImGui::End();
+    DrawAudioMixerOkayUI(&g_showAudioMixer);   // drawn by OkayUI only (editor/OkayPanels.cpp; docs/ui/own_ui_toolkit.md section 24)
 }
 
 // Crash Log viewer: shows the crash reports the exception handler writes next to the
@@ -8530,56 +7235,13 @@ void DrawCrashLog() {
         ++revision;
     };
     if (!loaded) load();
-    if (UseOkayUIBackend()) {   // the opt-in OkayUI port (editor/OkayPanels.cpp): same reports, same four actions
-        CrashLogActions act;
-        act.refresh = load;
-        act.openFolder = [dir] { extide::RevealInFiles(dir.string()); };
-        act.clear = [&] { std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); ++revision; };
-        if (DrawCrashLogOkayUI(&g_showCrashLog, text, histPath.string(), revision, act)) return;
-    }
-    if (!ImGui::Begin("Crash Log", &g_showCrashLog)) { ImGui::End(); return; }
-
-    if (ImGui::Button("Refresh")) load();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(text.empty());
-    if (ImGui::Button("Copy All")) ImGui::SetClipboardText(text.c_str());
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered() && !text.empty()) ImGui::SetTooltip("%s", "Copy every report to the clipboard, then paste it to support.");
-    ImGui::SameLine();
-    if (ImGui::Button("Open Folder")) extide::RevealInFiles(dir.string());
-    ImGui::SameLine();
-    if (ImGui::Button("Clear")) ImGui::OpenPopup("Clear crash reports?");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Delete the saved crash reports.");
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal("Clear crash reports?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("Delete all saved crash reports from disk?");
-        ImGui::TextDisabled("This can't be undone.");
-        ImGui::Dummy(ImVec2(0, 4));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
-        bool doClear = ImGui::Button("Delete", ImVec2(110, 0));
-        ImGui::PopStyleColor(2);
-        if (doClear) {
-            std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); ++revision;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
-    ImGui::SameLine(); ImGui::TextDisabled("%s", histPath.string().c_str());
-    ImGui::Separator();
-
-    if (text.empty()) {
-        ImGui::TextColored(ImVec4(0.5f, 0.85f, 0.5f, 1.0f), "No crash reports \xE2\x80\x94 nice.");
-        ImGui::TextDisabled("%s", "If the editor ever crashes, a report is written next to the exe and\nappears here. Use Copy All to send it to support.");
-    } else {
-        ImGui::TextDisabled("Newest report is at the bottom. \xE2\x80\xA2 %d bytes", (int)text.size());
-        // Read-only multiline: selectable + scrollable; Copy All grabs everything.
-        ImGui::InputTextMultiline("##crashbody", (char*)text.data(), text.size() + 1,
-                                  ImVec2(-1, -1), ImGuiInputTextFlags_ReadOnly);
-    }
-    ImGui::End();
+    // Drawn by OkayUI only (editor/OkayPanels.cpp; docs/ui/own_ui_toolkit.md section 24): Refresh, Copy All, Open Folder, Clear with
+    // its confirmation, and the reports newest last.
+    CrashLogActions act;
+    act.refresh = load;
+    act.openFolder = [dir] { extide::RevealInFiles(dir.string()); };
+    act.clear = [&] { std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); ++revision; };
+    DrawCrashLogOkayUI(&g_showCrashLog, text, histPath.string(), revision, act);
 }
 
 // Console log + panel: ConsolePanel.cpp / .hpp.
@@ -8588,152 +7250,22 @@ void DrawCrashLog() {
 // click any step to jump straight there (applies that many undos/redos).
 void DrawHistory(EditorState& ed) {
     if (!g_showHistory) return;
-    if (!ImGui::Begin("History", &g_showHistory)) { ImGui::End(); return; }
-    ed.CommitUndo();
-    const std::vector<std::string> histUndo = ed.UndoNames(200), histRedo = ed.RedoNames(200);
-    ImGui::BeginDisabled(!ed.CanUndo());
-    if (ImGui::Button("Undo##hist")) ed.Undo();
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Z");
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!ed.CanRedo());
-    if (ImGui::Button("Redo##hist")) ed.Redo();
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Y");
-    ImGui::SameLine();
-    ImGui::TextDisabled("%d behind  \xE2\x80\xA2  %d ahead", ed.UndoDepth(), ed.RedoDepth());
-    ImGui::Separator();
-    ImGui::BeginChild("##histlist");
-    if (!ed.CanUndo() && !ed.CanRedo()) {
-        ImGui::Dummy(ImVec2(0, 6));
-        ImGui::TextDisabled("No edits yet — changes will appear here.");
-        ImGui::EndChild(); ImGui::End(); return;
-    }
-    // Timeline rail down the left: a node per state, the current one filled
-    // with the accent color, future (redo) states hollow and dimmed.
-    ImDrawList* hdl = ImGui::GetWindowDrawList();
-    const float railX = ImGui::GetCursorScreenPos().x + 9.0f;
-    const float railTopY = ImGui::GetCursorScreenPos().y;
-    {
-        int rows = ed.RedoDepth() + 1 + ed.UndoDepth();
-        float rowH = ImGui::GetTextLineHeightWithSpacing();
-        hdl->AddLine(ImVec2(railX, railTopY + 4.0f),
-                     ImVec2(railX, railTopY + rows * rowH - 4.0f),
-                     ImGui::GetColorU32(ImGuiCol_Border), 1.0f);
-    }
-    auto histRow = [&](const char* lbl, bool current, bool ahead) {
-        char pad[220]; std::snprintf(pad, sizeof(pad), "     %s", lbl);
-        bool hit = ImGui::Selectable(pad, current);
-        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-        float cy = (mn.y + mx.y) * 0.5f;
-        if (current) {
-            hdl->AddCircleFilled(ImVec2(railX, cy), 4.0f,
-                                 ImGui::GetColorU32(ImGuiCol_CheckMark), 12);
-        } else {
-            ImU32 col = ahead ? ImGui::GetColorU32(ImGuiCol_TextDisabled)
-                              : ImGui::GetColorU32(ImGuiCol_Text, 0.55f);
-            hdl->AddCircle(ImVec2(railX, cy), 3.0f, col, 12, 1.5f);
-        }
-        return hit;
-    };
-    // Future (redo) states first, newest-forward at the top; then the current
-    // state; then the past, most recent first. Click any row to jump there.
-    bool jumped = false;
-    for (int i = ed.RedoDepth(); i >= 1 && !jumped; --i) {
-        char lbl[160]; std::snprintf(lbl, sizeof(lbl), "After: %s##hr%d", (size_t)i <= histRedo.size() ? histRedo[(size_t)i - 1].c_str() : "Edit", i);
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        bool hit = histRow(lbl, false, true);
-        ImGui::PopStyleColor();
-        if (hit) {
-            for (int k = 0; k < i && ed.CanRedo(); ++k) ed.Redo();
-            jumped = true;
-        }
-    }
-    if (!jumped) {
-        histRow("Current state", true, false);
-        for (int i = 1; i <= ed.UndoDepth() && !jumped; ++i) {
-            char lbl[160]; std::snprintf(lbl, sizeof(lbl), "Before: %s##hu%d", (size_t)i <= histUndo.size() ? histUndo[(size_t)i - 1].c_str() : "Edit", i);
-            if (histRow(lbl, false, false)) {
-                for (int k = 0; k < i && ed.CanUndo(); ++k) ed.Undo();
-                jumped = true;
-            }
-        }
-    }
-    ImGui::EndChild();
-    ImGui::End();
+    // Drawn by OkayUI only (editor/OkayPanels.cpp; docs/ui/own_ui_toolkit.md section 24). The model is built only while the window
+    // shows, after the pending undo step is committed, as before; Undo, Redo and a click on a row come back as counts.
+    okaypanels::HistoryIntent in;
+    DrawHistoryOkayUI(&g_showHistory, [&](okaypanels::HistoryModel& m) {
+        ed.CommitUndo();
+        m.undoNames = ed.UndoNames(200); m.redoNames = ed.RedoNames(200);
+        m.undoDepth = ed.UndoDepth(); m.redoDepth = ed.RedoDepth();
+    }, in);
+    for (int k = 0; k < in.undo && ed.CanUndo(); ++k) ed.Undo();
+    for (int k = 0; k < in.redo && ed.CanRedo(); ++k) ed.Redo();
 }
 
 // Lowercase a copy of a string (for case-insensitive compares).
-static std::string Lower(std::string s) {
+std::string Lower(std::string s) {
     for (auto& c : s) c = (char)std::tolower((unsigned char)c);
     return s;
-}
-
-// ---- Find in Files (Ctrl+Shift+F in the Script Editor) ---------------------
-// Searches every project script (.okay/.lua/.cs/.okayvs under Assets) for a
-// term; clicking a result opens the file in the Script Editor at that line.
-static bool g_showFindInFiles = false;
-static bool g_fifFocus = false;
-static void DrawFindInFiles(EditorState& ed) {
-    if (!g_showFindInFiles) return;
-    static char query[128] = {0};
-    struct Hit { std::string path; int line; std::string preview; };
-    static std::vector<Hit> hits;
-    static bool ran = false;
-    ImGui::SetNextWindowSize(ImVec2(600, 420), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Find in Files", &g_showFindInFiles)) { ImGui::End(); return; }
-    if (g_fifFocus) { ImGui::SetKeyboardFocusHere(); g_fifFocus = false; }
-    ImGui::SetNextItemWidth(-90);
-    bool go = ImGui::InputTextWithHint("##fifq", "Search every project script...",
-                                       query, sizeof(query), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine();
-    if (ImGui::Button("Search", ImVec2(80, 0))) go = true;
-    if (go && query[0]) {
-        hits.clear(); ran = true;
-        namespace fs = std::filesystem;
-        std::error_code ec;
-        fs::path root = ed.projectDir().empty() ? fs::path(".") : fs::path(ed.projectDir()) / "Assets";
-        std::string needle = Lower(query);
-        for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
-             it != fs::recursive_directory_iterator() && hits.size() < 200; it.increment(ec)) {
-            if (!it->is_regular_file(ec)) continue;
-            std::string ext = Lower(it->path().extension().string());
-            if (ext != ".okay" && ext != ".lua" && ext != ".cs" && ext != ".okayvs") continue;
-            std::ifstream f(it->path(), std::ios::binary);
-            if (!f) continue;
-            std::string line; int ln = 0;
-            while (std::getline(f, line) && hits.size() < 200) {
-                ++ln;
-                if (Lower(line).find(needle) == std::string::npos) continue;
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-                std::size_t a = line.find_first_not_of(" \t");
-                hits.push_back({it->path().string(), ln,
-                                a == std::string::npos ? line : line.substr(a)});
-            }
-        }
-    }
-    ImGui::Separator();
-    if (!ran)
-        ImGui::TextDisabled("Type a term and press Enter. Searches .okay / .lua / .cs scripts under Assets.");
-    else if (hits.empty())
-        ImGui::TextDisabled("No matches for \"%s\".", query);
-    else
-        ImGui::TextDisabled("%d match%s%s", (int)hits.size(), hits.size() == 1 ? "" : "es",
-                            hits.size() >= 200 ? " (capped at 200)" : "");
-    ImGui::BeginChild("##fifres");
-    int idx = 0;
-    for (const Hit& h : hits) {
-        ImGui::PushID(idx++);
-        std::string fn = std::filesystem::path(h.path).filename().string();
-        char lbl[96]; std::snprintf(lbl, sizeof(lbl), "%s:%d", fn.c_str(), h.line);
-        if (ImGui::Selectable(lbl)) OpenScriptFileInEditorAt(h.path, h.line);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", h.path.c_str());
-        ImGui::SameLine(180.0f);
-        ImGui::TextDisabled("%.120s", h.preview.c_str());
-        ImGui::PopID();
-    }
-    ImGui::EndChild();
-    ImGui::End();
 }
 
 // Compact "modified ago" stamp for a file: "now", "5m", "3h", "12d" ("" if the
@@ -8988,8 +7520,8 @@ static void PickFolderInto(const char* title, const std::string& start, char* bu
 // The answer of the Animation window's Export / Import clips pickers, picked up by the window on the next frame (it holds locals a callback can't keep).
 static std::string g_animExportPick, g_animImportPick;
 
-// Every model format this build can import (built-in + Assimp's own list).
-static bool IsModelExt(const std::string& extLower) {
+// Every model format this build can import (our own readers; okay::ImportableExtensions).
+bool IsModelExt(const std::string& extLower) {
     static const std::string list = " " + okay::ImportableExtensions() + " ";
     return list.find(" " + extLower + " ") != std::string::npos;
 }
@@ -9082,6 +7614,11 @@ static void QueueCharacterModel(GameObject* go, const std::string& path) {
     sPendingCharacterModels.push_back({go, path});
 }
 
+// The Console line for a model that did not import: what was tried and why it failed, in plain words.
+static std::string ModelImportFailLine(const std::string& what, const std::string& path) {
+    return what + " failed: " + std::filesystem::u8path(path).filename().u8string() + ": " + okay::DescribeModelImportProblem(path) + " (" + path + ")";
+}
+
 // Editor wrapper over okay::AttachCharacterModel: undo, selection, console log.
 static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, const std::string& path) {
     if (!target) return;
@@ -9089,8 +7626,7 @@ static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, cons
     std::string log;
     GameObject* root = okay::AttachCharacterModel(ed.scene(), target, path, &log);
     if (!root) {
-        ConsoleLog("Character model import failed: " + path +
-                   (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.stl/.ply/.gltf/.glb; other formats need Assimp)"), 2);
+        ConsoleLog(ModelImportFailLine("Character model import", path), 2);
         return;
     }
     ed.Select(target); ed.dirty = true;
@@ -9465,7 +8001,7 @@ static std::string ImportAssetFile(const std::string& srcPath, std::filesystem::
     for (int n = 2; fs::exists(dst, ec); ++n) dst = destDir / (stem + " " + std::to_string(n) + ext);
     {   // copy beside it first, then rename: a failed copy never leaves half a file under the real name
         fs::path part = dst; part += ".tmp";
-        fs::copy_file(src, part, fs::copy_options::overwrite_existing, ec);
+        okay::CopyFileOver(src, part, ec);   // a .tmp left by a crashed import is replaced
         if (!ec) fs::rename(part, dst, ec);
         if (ec) { std::error_code rm; fs::remove(part, rm); ConsoleLog("Import failed: " + ec.message(), 2); return {}; }
     }
@@ -9685,765 +8221,6 @@ static bool ObjectUsesAsset(GameObject* go, const std::string& fname) {
     return false;
 }
 
-// ---- Asset Manager -------------------------------------------------------------
-// Everything the user downloaded from the Marketplace in the launcher lands in
-// <launcher>/downloads (the editor ships beside the launcher), each file with a
-// "<file>.okayasset" sidecar the launcher writes (title / author / kind). This
-// window lists them by type and imports them into the open project's Assets
-// (archives are extracted into their own folder), then pings the result in the
-// Project panel.
-struct DlAsset {
-    std::string path, file, title, author, kind, ext;
-    int cat = 0;                 // 1 model, 2 texture, 3 audio, 4 script, 5 package, 6 scene, 7 font, 0 other
-    long long size = 0;
-    long long when = 0;          // unix seconds (sidecar time, else file time)
-};
-static const char* kAssetCats[] = {"Other", "Models", "Textures", "Audio", "Scripts", "Packages", "Scenes", "Fonts"};
-static int AssetCategoryOf(const std::string& extLower) {
-    if (IsModelExt(extLower)) return 1;
-    for (const char* e : {".png", ".jpg", ".jpeg", ".tga", ".bmp", ".gif", ".hdr", ".psd"}) if (extLower == e) return 2;
-    for (const char* e : {".wav", ".ogg", ".mp3", ".flac"}) if (extLower == e) return 3;
-    for (const char* e : {".okay", ".lua", ".cs", ".okayvs"}) if (extLower == e) return 4;
-    for (const char* e : {".zip", ".okaypkg", ".7z", ".tar", ".gz"}) if (extLower == e) return 5;
-    if (extLower == ".okayscene" || extLower == ".okayprefab") return 6;
-    if (extLower == ".ttf" || extLower == ".otf") return 7;
-    return 0;
-}
-static std::string AssetDownloadsDir() {
-    if (const char* e = std::getenv("OKAY_DOWNLOADS_DIR"); e && *e) return e;
-    return (std::filesystem::path(OkayExeDir()) / "downloads").string();
-}
-static std::vector<DlAsset> ScanDownloadedAssets() {
-    namespace fs = std::filesystem;
-    std::vector<DlAsset> out;
-    std::error_code ec;
-    fs::path dir = AssetDownloadsDir();
-    if (!fs::is_directory(dir, ec)) return out;
-    for (const auto& de : fs::directory_iterator(dir, ec)) {
-        if (!de.is_regular_file(ec)) continue;
-        std::string ext = de.path().extension().string();
-        for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-        if (ext == ".part" || ext == ".okayasset") continue;
-        DlAsset a;
-        a.path = de.path().string(); a.file = de.path().filename().string(); a.ext = ext;
-        a.size = (long long)de.file_size(ec);
-        a.title = de.path().stem().string();
-        {
-            auto ft = fs::last_write_time(de.path(), ec);
-            if (!ec) a.when = (long long)std::chrono::duration_cast<std::chrono::seconds>(
-                ft.time_since_epoch() - fs::file_time_type::clock::now().time_since_epoch() +
-                std::chrono::system_clock::now().time_since_epoch()).count();
-        }
-        std::ifstream meta(a.path + ".okayasset");
-        std::string line;
-        while (std::getline(meta, line)) {
-            auto eq = line.find('=');
-            if (eq == std::string::npos) continue;
-            std::string k = line.substr(0, eq), v = line.substr(eq + 1);
-            if (k == "title" && !v.empty()) a.title = v;
-            else if (k == "author") a.author = v;
-            else if (k == "kind") a.kind = v;
-            else if (k == "time") a.when = std::atoll(v.c_str());
-        }
-        a.cat = AssetCategoryOf(ext);
-        out.push_back(std::move(a));
-    }
-    std::sort(out.begin(), out.end(), [](const DlAsset& x, const DlAsset& y) { return x.when > y.when; });
-    return out;
-}
-// Where an asset is (or would be) imported inside the project.
-static std::filesystem::path AssetImportTarget(EditorState& ed, const DlAsset& a) {
-    namespace fs = std::filesystem;
-    fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
-    fs::path base = assets / "Downloaded" / kAssetCats[a.cat];
-    if (a.cat == 5) {   // archives extract into a folder named after the item
-        std::string nm;
-        for (char c : a.title) nm += (std::isalnum((unsigned char)c) || c == '-' || c == '_' || c == ' ') ? c : '_';
-        if (nm.empty()) nm = fs::path(a.file).stem().string();
-        return base / nm;
-    }
-    return base / a.file;
-}
-static bool ImportDownloadedAsset(EditorState& ed, const DlAsset& a, std::string& err) {
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    fs::path dst = AssetImportTarget(ed, a);
-    if (a.cat == 5) {
-        fs::create_directories(dst, ec);
-        if (ec) { err = "Couldn't create " + dst.string(); return false; }
-        std::string z = a.path, d = dst.string();
-#if defined(_WIN32)
-        bool ok = SysNoWindow("tar -xf \"" + z + "\" -C \"" + d + "\"") == 0 ||
-                  SysNoWindow("powershell -NoProfile -Command \"Expand-Archive -Force -LiteralPath '" + z +
-                              "' -DestinationPath '" + d + "'\"") == 0;
-#else
-        bool ok = SysNoWindow("unzip -o \"" + z + "\" -d \"" + d + "\" >/dev/null 2>&1") == 0 ||
-                  SysNoWindow("tar -xf \"" + z + "\" -C \"" + d + "\" 2>/dev/null") == 0;
-#endif
-        if (!ok) { err = "Couldn't extract the archive."; return false; }
-    } else {
-        fs::create_directories(dst.parent_path(), ec);
-        fs::copy_file(a.path, dst, fs::copy_options::overwrite_existing, ec);
-        if (ec) { err = ec.message(); return false; }
-    }
-    g_pingAsset = dst.string();
-    g_showProject = true;
-    return true;
-}
-static void DrawAssetManager(EditorState& ed) {
-    namespace fs = std::filesystem;
-    if (ImGuiWindow* con = ImGui::FindWindowByName("###Console"))
-        if (con->DockId) ImGui::SetNextWindowDockID(con->DockId, ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Asset Manager", &g_showAssetManager)) { ImGui::End(); return; }
-    static std::vector<DlAsset> s_items;
-    static Uint32 s_nextScan = 0;
-    static char s_search[96] = "";
-    static int s_cat = -1;          // -1 = all
-    static bool s_grid = false;
-    if (okay::platform::TicksMs32() >= s_nextScan) { s_items = ScanDownloadedAssets(); s_nextScan = okay::platform::TicksMs32() + 3000; }
-    const ImGuiStyle& st = ImGui::GetStyle();
-    const float fh = ImGui::GetFrameHeight();
-
-    // Toolbar: [search............] [view] [refresh] [open folder]
-    SearchField("##amsearch", s_search, sizeof(s_search), "Search downloads", -(fh * 3.0f + st.ItemSpacing.x * 3.0f));
-    ImGui::SameLine();
-    if (IconButton("##amgrid", s_grid ? TbIcon::List : TbIcon::Grid, s_grid ? "List view" : "Grid view")) s_grid = !s_grid;
-    ImGui::SameLine();
-    if (IconButton("##amrefresh", TbIcon::Rotate, "Rescan the downloads folder")) s_nextScan = 0;
-    ImGui::SameLine();
-    if (IconButton("##amfolder", TbIcon::Folder, "Open the downloads folder")) {
-        std::error_code ec; fs::create_directories(AssetDownloadsDir(), ec);
-        extide::RevealInFiles(AssetDownloadsDir());
-    }
-    // Category chips with counts.
-    int counts[8] = {0};
-    for (const auto& a : s_items) counts[a.cat]++;
-    auto chip = [&](const char* label, int cat, int n) {
-        char b[48]; std::snprintf(b, sizeof(b), "%s  %d##amc%d", label, n, cat);
-        if (AccentToggleButton(b, s_cat == cat)) s_cat = cat;
-        ImGui::SameLine(0, 4);
-    };
-    chip("All", -1, (int)s_items.size());
-    for (int c : {1, 2, 3, 4, 5, 6, 7, 0}) if (counts[c]) chip(kAssetCats[c], c, counts[c]);
-    ImGui::NewLine();
-    ImGui::Separator();
-
-    if (s_items.empty()) {
-        ImGui::Spacing();
-        ImGui::TextUnformatted("No downloaded assets yet.");
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextWrapped("Get models, textures, sounds and scripts from the Marketplace in the OkaySpace launcher "
-                           "and they show up here, ready to import into this project.");
-        ImGui::TextWrapped("Folder: %s", AssetDownloadsDir().c_str());
-        ImGui::PopStyleColor();
-        ImGui::End();
-        return;
-    }
-    std::string needle = s_search;
-    for (auto& c : needle) c = (char)std::tolower((unsigned char)c);
-    std::vector<const DlAsset*> vis;
-    for (const auto& a : s_items) {
-        if (s_cat >= 0 && a.cat != s_cat) continue;
-        if (!needle.empty()) {
-            std::string hay = a.title + " " + a.author + " " + a.kind + " " + a.file;
-            for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
-            if (hay.find(needle) == std::string::npos) continue;
-        }
-        vis.push_back(&a);
-    }
-    auto fmtSize = [](long long b) {
-        char s[32];
-        if (b >= (1LL << 30)) std::snprintf(s, sizeof(s), "%.1f GB", b / 1073741824.0);
-        else if (b >= (1LL << 20)) std::snprintf(s, sizeof(s), "%.1f MB", b / 1048576.0);
-        else if (b >= 1024) std::snprintf(s, sizeof(s), "%.0f KB", b / 1024.0);
-        else std::snprintf(s, sizeof(s), "%lld B", b);
-        return std::string(s);
-    };
-    auto fmtAgo = [](long long when) {
-        long long d = (long long)std::time(nullptr) - when;
-        char s[32];
-        if (when <= 0) return std::string("-");
-        if (d < 3600) std::snprintf(s, sizeof(s), "%lldm ago", d / 60 < 1 ? 1 : d / 60);
-        else if (d < 86400) std::snprintf(s, sizeof(s), "%lldh ago", d / 3600);
-        else std::snprintf(s, sizeof(s), "%lldd ago", d / 86400);
-        return std::string(s);
-    };
-    static const ImU32 kCatCol[] = {IM_COL32(150, 155, 165, 255), IM_COL32(110, 170, 255, 255), IM_COL32(235, 160, 90, 255),
-                                    IM_COL32(120, 210, 140, 255), IM_COL32(230, 205, 90, 255), IM_COL32(175, 135, 240, 255),
-                                    IM_COL32(90, 200, 210, 255), IM_COL32(220, 130, 180, 255)};
-    // Type tile: a thumbnail for images, else a coloured badge with the extension.
-    auto tile = [&](const DlAsset& a, float sz) {
-        ImVec2 p = ImGui::GetCursorScreenPos();
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        SDL_Texture* th = a.cat == 2 && a.size < 32ll * 1024 * 1024 ? GetThumb(a.path) : nullptr;
-        if (th) ImGui::Image((ImTextureID)th, ImVec2(sz, sz));
-        else {
-            ImGui::Dummy(ImVec2(sz, sz));
-            ImU32 c = kCatCol[a.cat];
-            dl->AddRectFilled(p, ImVec2(p.x + sz, p.y + sz), (c & 0x00FFFFFF) | 0x38000000, 4.0f);
-            dl->AddRect(p, ImVec2(p.x + sz, p.y + sz), (c & 0x00FFFFFF) | 0x90000000, 4.0f);
-            std::string e = a.ext.size() > 1 ? a.ext.substr(1) : "?";
-            for (auto& ch : e) ch = (char)std::toupper((unsigned char)ch);
-            ImVec2 ts = ImGui::CalcTextSize(e.c_str());
-            dl->AddText(ImVec2(p.x + (sz - ts.x) * 0.5f, p.y + (sz - ts.y) * 0.5f), c, e.c_str());
-        }
-    };
-    static std::string s_err;
-    auto actions = [&](const DlAsset& a, bool compact) {
-        std::error_code ec;
-        bool inProject = fs::exists(AssetImportTarget(ed, a), ec);
-        ImGui::BeginDisabled(ed.projectDir().empty());
-        const char* lbl = inProject ? "Re-import" : "Import";
-        if (compact ? ImGui::SmallButton(lbl) : ImGui::Button(lbl)) {
-            std::string err;
-            if (ImportDownloadedAsset(ed, a, err)) ConsoleLog("Imported " + a.title + " into Assets/Downloaded/" + kAssetCats[a.cat]);
-            else { s_err = a.title + ": " + err; ConsoleLog("Import failed - " + s_err, 2); }
-        }
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip(ed.projectDir().empty() ? "Open a project first" :
-                              a.cat == 5 ? "Extract into Assets/Downloaded/Packages" : "Copy into Assets/Downloaded");
-        if (inProject) {
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.0f), "in project");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to show it in the Project panel");
-            if (ImGui::IsItemClicked()) { g_pingAsset = AssetImportTarget(ed, a).string(); g_showProject = true; }
-        }
-    };
-    auto rowMenu = [&](const DlAsset& a) {
-        if (ImGui::BeginPopupContextItem("##amctx")) {
-            if (ImGui::MenuItem("Show in folder")) extide::RevealInFiles(fs::path(a.path).parent_path().string());
-            if (ImGui::MenuItem("Delete download (permanent, no Undo)")) {
-                std::error_code ec; fs::remove(a.path, ec); fs::remove(a.path + ".okayasset", ec);
-                s_nextScan = 0;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Deletes the downloaded file from disk for good. It does not go to the trash and Ctrl+Z cannot bring it back; you can download it again.");
-            ImGui::EndPopup();
-        }
-    };
-    ImGui::BeginChild("##amlist", ImVec2(0, 0));
-    if (!s_grid) {
-        if (ImGui::BeginTable("##amtable", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) {
-            ImGui::TableSetupColumn("Asset",  ImGuiTableColumnFlags_WidthStretch, 3.0f);
-            ImGui::TableSetupColumn("Type",   ImGuiTableColumnFlags_WidthStretch, 1.0f);
-            ImGui::TableSetupColumn("Size",   ImGuiTableColumnFlags_WidthStretch, 0.8f);
-            ImGui::TableSetupColumn("Added",  ImGuiTableColumnFlags_WidthStretch, 0.8f);
-            ImGui::TableSetupColumn("",       ImGuiTableColumnFlags_WidthStretch, 1.6f);
-            ImGui::TableHeadersRow();
-            for (const DlAsset* ap : vis) {
-                const DlAsset& a = *ap;
-                ImGui::PushID(a.path.c_str());
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                float tsz = fh * 1.5f;
-                tile(a, tsz);
-                rowMenu(a);
-                ImGui::SameLine();
-                ImGui::BeginGroup();
-                ImGui::TextUnformatted(a.title.c_str());
-                if (!a.author.empty()) ImGui::TextDisabled("by %s", a.author.c_str());
-                else                   ImGui::TextDisabled("%s", a.file.c_str());
-                ImGui::EndGroup();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kCatCol[a.cat]), "%s", a.kind.empty() ? kAssetCats[a.cat] : a.kind.c_str());
-                ImGui::TableNextColumn(); ImGui::TextDisabled("%s", fmtSize(a.size).c_str());
-                ImGui::TableNextColumn(); ImGui::TextDisabled("%s", fmtAgo(a.when).c_str());
-                ImGui::TableNextColumn(); actions(a, false);
-                ImGui::PopID();
-            }
-            ImGui::EndTable();
-        }
-    } else {
-        float cell = fh * 5.0f;
-        int cols = std::max(1, (int)((ImGui::GetContentRegionAvail().x + st.ItemSpacing.x) / (cell + st.ItemSpacing.x)));
-        int i = 0;
-        for (const DlAsset* ap : vis) {
-            const DlAsset& a = *ap;
-            ImGui::PushID(a.path.c_str());
-            if (i % cols) ImGui::SameLine();
-            ImGui::BeginGroup();
-            tile(a, cell);
-            rowMenu(a);
-            std::string t = a.title;
-            while (t.size() > 3 && ImGui::CalcTextSize(t.c_str()).x > cell) t = t.substr(0, t.size() - 4) + "...";
-            ImGui::TextUnformatted(t.c_str());
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s  -  %s", a.title.c_str(), kAssetCats[a.cat], fmtSize(a.size).c_str());
-            actions(a, true);
-            ImGui::EndGroup();
-            ImGui::PopID();
-            ++i;
-        }
-    }
-    if (vis.empty()) ImGui::TextDisabled("Nothing matches.");
-    ImGui::EndChild();
-    ImGui::End();
-}
-
-// ---- Editor plugins ------------------------------------------------------------
-// User-made editor extensions written in OkayScript. A plugin is a .okay file in
-// <project>/EditorPlugins/ (that project only) or <editor>/plugins/ (every
-// project). Header comments describe it:
-//     // @name Align Tools
-//     // @description Line up the selection.
-//     // @window            (give it a dockable panel that calls on_gui())
-// Hooks (all optional): start() once after loading, on_gui() every frame while
-// its window is open (draw with ui_text / ui_button / ui_slider / ui_checkbox /
-// ui_sameline / ui_separator / ui_progress plus editor_input / editor_heading /
-// editor_hint), on_menu() when
-// its Plugins-menu entry is clicked (plugins without a window), on_selection()
-// when the selection changes and on_tick() every editor frame.
-// The editor_* builtins below give plugins the scene, selection, undo and console.
-// Files are watched: saving a plugin reloads it.
-struct EditorPlugin {
-    std::string path, name, description, error;
-    bool user = false;          // from <editor>/plugins (all projects) vs the project
-    bool window = false;        // declares @window (or defines on_gui)
-    bool hasMenu = false;       // defines on_menu() — a one-shot command
-    bool open = false;          // its window is showing
-    bool enabled = true;
-    std::filesystem::file_time_type mtime{};
-    std::unique_ptr<okay::OkayScriptVM> vm;
-    okay::ScriptHost host;
-};
-static std::vector<std::unique_ptr<EditorPlugin>> g_plugins;
-static std::set<std::string> g_pluginsDisabled;     // paths turned off in the manager (persisted)
-static std::string g_pluginsProject = "\x01";       // project the list was scanned for
-static EditorState* g_pluginEd = nullptr;           // the editor a running plugin acts on
-
-// ImGui-backed ui_* bridge, swapped in only while a plugin's on_gui() runs.
-struct PluginUIBridge : okay::ScriptUIBridge {
-    int n = 0;   // per-call widget ids so identical labels don't collide
-    std::string id(const char* label) { return std::string(label) + "##pw" + std::to_string(n++); }
-    void Text(const char* s) override { ImGui::TextWrapped("%s", s); }
-    bool Button(const char* label) override { return ImGui::Button(id(label).c_str()); }
-    bool Checkbox(const char* label, bool v) override { ImGui::Checkbox(id(label).c_str(), &v); return v; }
-    float Slider(const char* label, float v, float lo, float hi) override {
-        ImGui::SetNextItemWidth(-ImGui::CalcTextSize(label).x - 12.0f);
-        ImGui::SliderFloat(id(label).c_str(), &v, lo, hi); return v;
-    }
-    void ProgressBar(float t) override { ImGui::ProgressBar(t, ImVec2(-1, 0)); }
-    void SameLine() override { ImGui::SameLine(); }
-    void Separator() override { ImGui::Separator(); }
-};
-static PluginUIBridge g_pluginUI;
-
-static GameObject* PluginFind(const std::string& name) {
-    if (!g_pluginEd) return nullptr;
-    if (name.empty()) return g_pluginEd->selected();
-    for (const auto& up : g_pluginEd->scene().Objects()) if (up->name == name) return up.get();
-    return nullptr;
-}
-// The editor_* API a plugin can call. `nm` = the object's name ("" = selection).
-static void RegisterPluginBuiltins(okay::OkayScriptVM& vm) {
-    using V = okay::vs::VsValue;
-    auto str = [](std::vector<V>& a, std::size_t i) { return i < a.size() ? a[i].AsString() : std::string(); };
-    auto num = [](std::vector<V>& a, std::size_t i, float d = 0.0f) { return i < a.size() ? a[i].AsFloat() : d; };
-    auto ed = [] { return g_pluginEd; };
-    vm.AddBuiltin("editor_log",   [str](std::vector<V>& a) { ConsoleLog("[plugin] " + str(a, 0)); return V{}; });
-    vm.AddBuiltin("editor_warn",  [str](std::vector<V>& a) { ConsoleLog("[plugin] " + str(a, 0), 1); return V{}; });
-    vm.AddBuiltin("editor_error", [str](std::vector<V>& a) { ConsoleLog("[plugin] " + str(a, 0), 2); return V{}; });
-    vm.AddBuiltin("editor_selected", [](std::vector<V>&) { GameObject* g = PluginFind(""); return V{g ? g->name : std::string()}; });
-    vm.AddBuiltin("editor_selection_count", [ed](std::vector<V>&) { return V{ed() ? (float)ed()->MultiSelection().size() : 0.0f}; });
-    vm.AddBuiltin("editor_selection_name", [ed, num](std::vector<V>& a) {
-        int i = (int)num(a, 0); if (!ed()) return V{std::string()};
-        const auto& m = ed()->MultiSelection();
-        return V{i >= 0 && i < (int)m.size() && m[i] ? m[i]->name : std::string()};
-    });
-    vm.AddBuiltin("editor_select", [ed, str](std::vector<V>& a) {
-        GameObject* g = PluginFind(str(a, 0)); if (g && ed()) ed()->Select(g); return V{g ? 1.0f : 0.0f};
-    });
-    vm.AddBuiltin("editor_object_count", [ed](std::vector<V>&) { return V{ed() ? (float)ed()->scene().Objects().size() : 0.0f}; });
-    vm.AddBuiltin("editor_object_name", [ed, num](std::vector<V>& a) {
-        int i = (int)num(a, 0); if (!ed()) return V{std::string()};
-        const auto& o = ed()->scene().Objects();
-        return V{i >= 0 && i < (int)o.size() ? o[i]->name : std::string()};
-    });
-    vm.AddBuiltin("editor_exists", [str](std::vector<V>& a) { return V{PluginFind(str(a, 0)) ? 1.0f : 0.0f}; });
-    vm.AddBuiltin("editor_create", [ed, str](std::vector<V>& a) {
-        if (!ed()) return V{std::string()};
-        std::string kind = str(a, 0), name = str(a, 1);
-        for (auto& c : kind) c = (char)std::tolower((unsigned char)c);
-        ed()->PushUndo();
-        GameObject* prevSel = ed()->selected();   // creating shouldn't steal the user's selection
-        std::vector<GameObject*> prevMulti = ed()->MultiSelection();
-        GameObject* g = nullptr;
-        if (kind == "camera") g = ed()->CreateCamera();
-        else if (kind == "sprite") g = ed()->CreateSprite();
-        else if (kind == "cube" || kind == "sphere" || kind == "plane" || kind == "cylinder" || kind == "capsule" || kind == "cone" || kind == "pyramid") {
-            std::string m = kind; m[0] = (char)std::toupper((unsigned char)m[0]); g = ed()->CreateMesh(m);
-        } else if (kind == "light") { g = ed()->CreateEmpty("Light"); g->AddComponent<Light>(); }
-        else g = ed()->CreateEmpty();
-        if (g && !name.empty()) g->name = name;
-        ed()->Select(nullptr);
-        for (GameObject* m : prevMulti) if (m != prevSel) ed()->ToggleSelect(m);
-        if (prevSel) ed()->ToggleSelect(prevSel);
-        ed()->dirty = true;
-        return V{g ? g->name : std::string()};
-    });
-    vm.AddBuiltin("editor_delete", [ed, str](std::vector<V>& a) {
-        GameObject* g = PluginFind(str(a, 0)); if (!g || !ed()) return V{0.0f};
-        ed()->PushUndo(); ed()->Deselect(g); ed()->scene().Destroy(g); ed()->scene().FlushDestroyed(); ed()->dirty = true;
-        return V{1.0f};
-    });
-    vm.AddBuiltin("editor_rename", [ed, str](std::vector<V>& a) {
-        GameObject* g = PluginFind(str(a, 0)); if (!g) return V{0.0f};
-        g->name = str(a, 1); if (ed()) ed()->dirty = true; return V{1.0f};
-    });
-    vm.AddBuiltin("editor_set_active", [ed, str, num](std::vector<V>& a) {
-        GameObject* g = PluginFind(str(a, 0)); if (!g) return V{0.0f};
-        g->active = num(a, 1, 1.0f) != 0.0f; if (ed()) ed()->dirty = true; return V{1.0f};
-    });
-    vm.AddBuiltin("editor_set_parent", [ed, str](std::vector<V>& a) {
-        GameObject* g = PluginFind(str(a, 0)); GameObject* p = str(a, 1).empty() ? nullptr : PluginFind(str(a, 1));
-        if (!g || !g->transform) return V{0.0f};
-        g->transform->SetParent(p ? p->transform : nullptr, true); if (ed()) ed()->dirty = true; return V{1.0f};
-    });
-    // Transform get/set: (name, axis "x"/"y"/"z") and (name, x, y, z).
-    auto axis = [](const Vec3& v, const std::string& ax) { return ax == "y" ? v.y : ax == "z" ? v.z : v.x; };
-    vm.AddBuiltin("editor_get_pos", [str, axis](std::vector<V>& a) { GameObject* g = PluginFind(str(a, 0)); return V{g ? axis(g->transform->localPosition, str(a, 1)) : 0.0f}; });
-    vm.AddBuiltin("editor_get_rot", [str, axis](std::vector<V>& a) { GameObject* g = PluginFind(str(a, 0)); return V{g ? axis(g->transform->localRotation.ToEuler(), str(a, 1)) : 0.0f}; });
-    vm.AddBuiltin("editor_get_scale", [str, axis](std::vector<V>& a) { GameObject* g = PluginFind(str(a, 0)); return V{g ? axis(g->transform->localScale, str(a, 1)) : 0.0f}; });
-    vm.AddBuiltin("editor_set_pos", [ed, str, num](std::vector<V>& a) {
-        GameObject* g = PluginFind(str(a, 0)); if (!g) return V{0.0f};
-        g->transform->localPosition = {num(a, 1), num(a, 2), num(a, 3)}; if (ed()) ed()->dirty = true; return V{1.0f};
-    });
-    vm.AddBuiltin("editor_set_rot", [ed, str, num](std::vector<V>& a) {
-        GameObject* g = PluginFind(str(a, 0)); if (!g) return V{0.0f};
-        g->transform->localRotation = Quat::Euler(num(a, 1), num(a, 2), num(a, 3)); if (ed()) ed()->dirty = true; return V{1.0f};
-    });
-    vm.AddBuiltin("editor_set_scale", [ed, str, num](std::vector<V>& a) {
-        GameObject* g = PluginFind(str(a, 0)); if (!g) return V{0.0f};
-        g->transform->localScale = {num(a, 1, 1.0f), num(a, 2, 1.0f), num(a, 3, 1.0f)}; if (ed()) ed()->dirty = true; return V{1.0f};
-    });
-    vm.AddBuiltin("editor_undo_point", [ed](std::vector<V>&) { if (ed()) ed()->PushUndo(); return V{}; });
-    vm.AddBuiltin("editor_frame", [ed, str](std::vector<V>& a) {
-        GameObject* g = PluginFind(str(a, 0)); if (!g || !ed()) return V{0.0f};
-        Vec3 p = g->transform->Position(); ed()->camTarget = p; ed()->cameraPos = {p.x, p.y}; return V{1.0f};
-    });
-    vm.AddBuiltin("editor_scene_name", [ed](std::vector<V>&) { return V{ed() ? ed()->scene().Name() : std::string()}; });
-    vm.AddBuiltin("editor_project_dir", [ed](std::vector<V>&) { return V{ed() ? ed()->projectDir() : std::string()}; });
-    vm.AddBuiltin("editor_is_playing", [ed](std::vector<V>&) { return V{ed() && ed()->isPlaying() ? 1.0f : 0.0f}; });
-    // Extra widgets for on_gui(): a text field and a colour picker (returns "r,g,b").
-    vm.AddBuiltin("editor_input", [str](std::vector<V>& a) {
-        static std::unordered_map<std::string, std::string> bufs;
-        std::string label = str(a, 0), val = str(a, 1);
-        char b[256]; std::snprintf(b, sizeof(b), "%s", val.c_str());
-        ImGui::SetNextItemWidth(-ImGui::CalcTextSize(label.c_str()).x - 12.0f);
-        ImGui::InputText(g_pluginUI.id(label.c_str()).c_str(), b, sizeof(b));
-        return V{std::string(b)};
-    });
-    vm.AddBuiltin("editor_heading", [str](std::vector<V>& a) { SectionHeader(str(a, 0).c_str()); return V{}; });
-    vm.AddBuiltin("editor_hint", [str](std::vector<V>& a) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextWrapped("%s", str(a, 0).c_str()); ImGui::PopStyleColor(); return V{};
-    });
-}
-static std::string PluginUserDir() { return (std::filesystem::path(OkayExeDir()) / "plugins").string(); }
-static std::string PluginProjectDir(EditorState& ed) {
-    return ed.projectDir().empty() ? std::string() : (std::filesystem::path(ed.projectDir()) / "EditorPlugins").string();
-}
-static void LoadPlugin(EditorPlugin& p) {
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    p.mtime = fs::last_write_time(p.path, ec);
-    p.error.clear(); p.vm.reset(); p.window = false; p.hasMenu = false;
-    p.name = fs::path(p.path).stem().string(); p.description.clear();
-    std::string src = extide::ReadFile(p.path);
-    // Header metadata from leading // comments.
-    std::istringstream ss(src); std::string line;
-    while (std::getline(ss, line)) {
-        std::size_t b = line.find_first_not_of(" \t");
-        if (b == std::string::npos) continue;
-        if (line.compare(b, 2, "//") != 0) break;
-        std::string t = line.substr(b + 2);
-        auto tag = [&](const char* k, std::string& out) {
-            std::size_t at = t.find(k); if (at == std::string::npos) return false;
-            out = t.substr(at + std::strlen(k));
-            while (!out.empty() && (out[0] == ' ' || out[0] == ':')) out.erase(0, 1);
-            while (!out.empty() && (out.back() == ' ' || out.back() == '\r')) out.pop_back();
-            return true;
-        };
-        std::string v;
-        if (tag("@name", v) && !v.empty()) p.name = v;
-        else if (tag("@description", v)) p.description = v;
-        else if (t.find("@window") != std::string::npos) p.window = true;
-    }
-    if (src.find("on_gui") != std::string::npos) p.window = true;
-    if (!p.enabled) return;
-    p.vm = std::make_unique<okay::OkayScriptVM>();
-    RegisterPluginBuiltins(*p.vm);
-    p.vm->Bind(&p.host);
-    std::string err;
-    if (!p.vm->Load(src, &err)) { p.error = err.empty() ? "failed to load" : err; p.vm.reset(); ConsoleLog("Plugin '" + p.name + "': " + p.error, 2); return; }
-    p.hasMenu = p.vm->HasEvent("on_menu");
-    p.vm->CallStart();
-}
-// Rescan both plugin folders: add new files, drop deleted ones, reload edited ones.
-static void ScanPlugins(EditorState& ed, bool force = false) {
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    std::vector<std::pair<std::string, bool>> files;
-    for (int pass = 0; pass < 2; ++pass) {
-        std::string dir = pass == 0 ? PluginUserDir() : PluginProjectDir(ed);
-        if (dir.empty() || !fs::is_directory(dir, ec)) continue;
-        for (const auto& de : fs::directory_iterator(dir, ec))
-            if (de.is_regular_file(ec) && de.path().extension() == ".okay") files.push_back({de.path().string(), pass == 0});
-    }
-    std::sort(files.begin(), files.end());
-    g_pluginsProject = ed.projectDir();
-    // Drop plugins whose file is gone.
-    g_plugins.erase(std::remove_if(g_plugins.begin(), g_plugins.end(), [&](const std::unique_ptr<EditorPlugin>& p) {
-        return std::none_of(files.begin(), files.end(), [&](const auto& f) { return f.first == p->path; });
-    }), g_plugins.end());
-    g_pluginEd = &ed;
-    for (const auto& f : files) {
-        EditorPlugin* p = nullptr;
-        for (auto& up : g_plugins) if (up->path == f.first) p = up.get();
-        if (!p) {
-            g_plugins.push_back(std::make_unique<EditorPlugin>());
-            p = g_plugins.back().get(); p->path = f.first; p->user = f.second;
-            p->enabled = !g_pluginsDisabled.count(f.first);
-            LoadPlugin(*p);
-            if (p->vm) ConsoleLog("Loaded editor plugin: " + p->name);
-            continue;
-        }
-        auto mt = fs::last_write_time(p->path, ec);
-        if (force || (!ec && mt != p->mtime)) {
-            bool wasOpen = p->open;
-            LoadPlugin(*p);
-            p->open = wasOpen && p->window;
-            if (p->vm) ConsoleLog("Reloaded editor plugin: " + p->name);
-        }
-    }
-}
-static void SavePluginPrefs() {
-    std::ofstream f(std::filesystem::path(OkayExeDir()) / "plugins_disabled.txt");
-    for (const auto& s : g_pluginsDisabled) f << s << "\n";
-}
-static void LoadPluginPrefs() {
-    std::ifstream f(std::filesystem::path(OkayExeDir()) / "plugins_disabled.txt");
-    std::string l; while (std::getline(f, l)) if (!l.empty()) g_pluginsDisabled.insert(l);
-}
-// Create a starter plugin in the project (or user folder) and open it in the Script Editor.
-static void NewPluginFromTemplate(EditorState& ed) {
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    std::string dir = PluginProjectDir(ed);
-    if (dir.empty()) dir = PluginUserDir();
-    fs::create_directories(dir, ec);
-    fs::path p;
-    for (int i = 1; ; ++i) { p = fs::path(dir) / (i == 1 ? "MyPlugin.okay" : "MyPlugin" + std::to_string(i) + ".okay"); if (!fs::exists(p, ec)) break; }
-    extide::WriteFile(p.string(),
-        "// @name My Plugin\n"
-        "// @description Scatter copies of the selected object.\n"
-        "// @window\n"
-        "\n"
-        "count = 5\n"
-        "spread = 4\n"
-        "\n"
-        "on_gui() {\n"
-        "    sel = editor_selected()\n"
-        "    if (sel == \"\") { editor_hint(\"Select an object in the Hierarchy.\") return }\n"
-        "    ui_text(\"Selected: \" + sel)\n"
-        "    count = ui_slider(\"Copies\", count, 1, 50)\n"
-        "    spread = ui_slider(\"Spread\", spread, 0.5, 20)\n"
-        "    if (ui_button(\"Scatter\")) scatter(sel)\n"
-        "}\n"
-        "\n"
-        "scatter(name) {\n"
-        "    editor_undo_point()\n"
-        "    for (i = 0; i < count; i = i + 1) {\n"
-        "        n = editor_create(\"cube\", name + \" \" + (i + 1))\n"
-        "        editor_set_pos(n, editor_get_pos(name, \"x\") + random_range(-spread, spread),\n"
-        "                          editor_get_pos(name, \"y\"),\n"
-        "                          editor_get_pos(name, \"z\") + random_range(-spread, spread))\n"
-        "    }\n"
-        "    editor_log(\"Scattered \" + count + \" copies\")\n"
-        "}\n");
-    ScanPlugins(ed);
-    for (auto& up : g_plugins) if (up->path == p.string()) up->open = true;
-    OpenScriptFileInEditorAt(p.string(), 1);
-    ConsoleLog("Created plugin " + p.string());
-}
-// Per frame: watch for changes, fire on_tick / on_selection, draw plugin windows.
-static void EnsurePluginPrefs() {
-    static bool prefs = false;
-    if (!prefs) { LoadPluginPrefs(); prefs = true; }
-}
-static void SetPluginEnabled(EditorPlugin& p, bool on) {
-    p.enabled = on;
-    if (on) g_pluginsDisabled.erase(p.path);
-    else { g_pluginsDisabled.insert(p.path); p.open = false; }
-    SavePluginPrefs();
-    LoadPlugin(p);
-}
-static void TickPlugins(EditorState& ed) {
-    EnsurePluginPrefs();
-    static Uint32 nextScan = 0;
-    if (g_pluginsProject != ed.projectDir() || okay::platform::TicksMs32() >= nextScan) { ScanPlugins(ed); nextScan = okay::platform::TicksMs32() + 1000; }
-    g_pluginEd = &ed;
-    static GameObject* lastSel = nullptr;
-    const bool selChanged = ed.selected() != lastSel;
-    lastSel = ed.selected();
-    okay::ScriptUIBridge* prevUI = okay::GetScriptUI();
-    for (auto& up : g_plugins) {
-        EditorPlugin& p = *up;
-        if (!p.vm) continue;
-        if (selChanged) p.vm->CallEvent("on_selection");
-        p.vm->CallEvent("on_tick");
-        if (!p.window || !p.open) continue;
-        {   // first appearance: float near the middle of the main window, cascaded per plugin
-            const ImGuiViewport* vp = ImGui::GetMainViewport();
-            float off = 28.0f * (float)(&up - &g_plugins[0]);
-            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.55f + off, vp->WorkPos.y + vp->WorkSize.y * 0.18f + off), ImGuiCond_FirstUseEver);
-        }
-        ImGui::SetNextWindowSize(ImVec2(320, 260), ImGuiCond_FirstUseEver);
-        std::string title = p.name + "###plugin:" + p.path;
-        if (ImGui::Begin(title.c_str(), &p.open)) {
-            g_pluginUI.n = 0;
-            okay::SetScriptUI(&g_pluginUI);
-            ImGui::PushID(p.path.c_str());
-            p.vm->CallEvent("on_gui");
-            ImGui::PopID();
-            okay::SetScriptUI(prevUI);
-        }
-        ImGui::End();
-    }
-}
-static void PluginMenuTip(const EditorPlugin& p) {
-    if (!ImGui::IsItemHovered()) return;
-    if (!p.error.empty() && !p.description.empty()) ImGui::SetTooltip("%s\n%s", p.description.c_str(), p.error.c_str());
-    else if (!p.error.empty()) ImGui::SetTooltip("%s", p.error.c_str());
-    else if (!p.description.empty()) ImGui::SetTooltip("%s", p.description.c_str());
-}
-static bool PluginMenuMatch(const EditorPlugin& p, const char* filter) {
-    if (!filter || !filter[0]) return true;
-    auto fold = [](std::string s) {
-        for (char& c : s) c = (char)std::tolower((unsigned char)c);
-        return s;
-    };
-    const std::string f = fold(filter);
-    auto has = [&](const std::string& s) { return fold(s).find(f) != std::string::npos; };
-    return has(p.name) || has(p.description) || has(std::filesystem::path(p.path).stem().string());
-}
-static void RevealPluginDir(const std::string& dir) {
-    if (dir.empty()) return;
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    extide::RevealInFiles(dir);
-}
-static void DrawPluginsMenu(EditorState& ed) {
-    if (!ImGui::BeginMenu("Plugins")) return;
-    // The menu bar runs before the per-frame scan, so the first open of a
-    // session (and the first open after switching projects) would otherwise
-    // list nothing until the next frame.
-    EnsurePluginPrefs();
-    if (g_pluginsProject != ed.projectDir()) ScanPlugins(ed);
-
-    static char filter[64] = "";
-    if (ImGui::IsWindowAppearing()) filter[0] = '\0';
-    const bool many = g_plugins.size() > 8;
-    if (many) {
-        ImGui::SetNextItemWidth(-1.0f);
-        ImGui::InputTextWithHint("##pluginfilter", "Filter", filter, sizeof(filter));
-        ImGui::Separator();
-    }
-
-    int projectN = 0, userN = 0, enabledN = 0, liveN = 0, disabledN = 0;
-    for (const auto& up : g_plugins) {
-        if (!up->enabled) { ++disabledN; continue; }
-        ++liveN;
-        if (!PluginMenuMatch(*up, filter)) continue;
-        ++enabledN;
-        if (up->user) ++userN; else ++projectN;
-    }
-    const bool grouped = projectN > 0 && userN > 0;
-    bool drewGroup = false;
-
-    auto drawOne = [&](EditorPlugin& p, const std::string& label) {
-        if (!p.vm) {
-            // Click opens the script; the tooltip is the load error.
-            if (ImGui::MenuItem((label + "  (error)").c_str())) OpenScriptFileInEditorAt(p.path, 1);
-            PluginMenuTip(p);
-            return;
-        }
-        if (p.window && p.hasMenu) {
-            if (ImGui::BeginMenu(label.c_str())) {
-                if (ImGui::MenuItem("Panel", nullptr, p.open)) p.open = !p.open;
-                if (ImGui::MenuItem("Run")) { g_pluginEd = &ed; p.vm->CallEvent("on_menu"); }
-                if (ImGui::MenuItem("Edit Script")) OpenScriptFileInEditorAt(p.path, 1);
-                ImGui::EndMenu();
-            }
-            PluginMenuTip(p);
-            return;
-        }
-        if (p.window) {
-            if (ImGui::MenuItem(label.c_str(), nullptr, p.open)) p.open = !p.open;
-        } else if (ImGui::MenuItem(label.c_str())) {
-            g_pluginEd = &ed;
-            p.vm->CallEvent("on_menu");
-        }
-        PluginMenuTip(p);
-    };
-    auto drawGroup = [&](const char* heading, bool userGroup) {
-        std::vector<EditorPlugin*> items;
-        for (auto& up : g_plugins) {
-            if (!up->enabled || up->user != userGroup || !PluginMenuMatch(*up, filter)) continue;
-            items.push_back(up.get());
-        }
-        if (items.empty()) return;
-        if (grouped) {
-            if (drewGroup) ImGui::Separator();
-            ImGui::TextDisabled("%s", heading);
-        }
-        drewGroup = true;
-        std::sort(items.begin(), items.end(), [](const EditorPlugin* a, const EditorPlugin* b) {
-            auto fold = [](std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; };
-            return fold(a->name) < fold(b->name);
-        });
-        for (EditorPlugin* p : items) {
-            int same = 0;
-            for (EditorPlugin* q : items) if (q->name == p->name) ++same;
-            std::string label = p->name;
-            if (same > 1) label += " (" + std::filesystem::path(p->path).stem().string() + ")";
-            drawOne(*p, label);
-        }
-    };
-    drawGroup("This project", false);
-    drawGroup("All projects", true);
-
-    if (liveN == 0 && disabledN == 0) ImGui::TextDisabled("No plugins yet");
-    else if (liveN == 0) ImGui::TextDisabled("Every plugin is turned off");
-    else if (enabledN == 0) ImGui::TextDisabled("Nothing matches.");
-
-    if (disabledN > 0 && enabledN > 0) ImGui::Separator();
-    if (disabledN > 0 && ImGui::BeginMenu("Turned off")) {
-        std::vector<EditorPlugin*> off;
-        for (auto& up : g_plugins) if (!up->enabled) off.push_back(up.get());
-        std::sort(off.begin(), off.end(), [](const EditorPlugin* a, const EditorPlugin* b) {
-            auto fold = [](std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; };
-            return fold(a->name) < fold(b->name);
-        });
-        for (EditorPlugin* p : off) {
-            std::string label = p->name + (p->user ? "  (all projects)" : "");
-            if (ImGui::MenuItem(label.c_str())) SetPluginEnabled(*p, true);
-            PluginMenuTip(*p);
-        }
-        ImGui::EndMenu();
-    }
-
-    ImGui::Separator();
-    if (ImGui::MenuItem("New Plugin...")) NewPluginFromTemplate(ed);
-    if (ImGui::MenuItem("Plugin Manager...")) g_showPluginManager = true;
-    if (ImGui::MenuItem("Reload All")) ScanPlugins(ed, true);
-    if (ImGui::BeginMenu("Open Folder")) {
-        const std::string proj = PluginProjectDir(ed);
-        if (ImGui::MenuItem("Project Plugins", nullptr, false, !proj.empty())) RevealPluginDir(proj);
-        if (ImGui::MenuItem("Editor Plugins")) RevealPluginDir(PluginUserDir());
-        ImGui::EndMenu();
-    }
-    ImGui::EndMenu();
-}
 // ---------------------------------------------------------------------------
 // Map Humanoid Bones — pick the 15 humanoid bones by hand, for rigs whose bone
 // names say nothing ("Bone.001", "joint12"). The shared mapper's shape checks
@@ -10522,54 +8299,6 @@ static void DrawBoneMap(EditorState& ed) {
     ImGui::End();
 }
 
-static void DrawPluginManager(EditorState& ed) {
-    if (!g_showPluginManager) return;
-    ImGui::SetNextWindowSize(ImVec2(560, 360), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Plugin Manager", &g_showPluginManager)) { ImGui::End(); return; }
-    if (ImGui::Button("+ New Plugin")) NewPluginFromTemplate(ed);
-    ImGui::SameLine();
-    if (ImGui::Button("Reload All")) ScanPlugins(ed, true);
-    ImGui::SameLine();
-    if (ImGui::Button("Open Folder")) {
-        std::string d = PluginProjectDir(ed); if (d.empty()) d = PluginUserDir();
-        std::error_code ec; std::filesystem::create_directories(d, ec);
-        extide::RevealInFiles(d);
-    }
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped("Plugins are OkayScript files in EditorPlugins/ (this project) or the editor's plugins/ folder "
-                       "(all projects). Saving a plugin reloads it. See docs/editor/editor-plugins.md.");
-    ImGui::PopStyleColor();
-    ImGui::Separator();
-    if (g_plugins.empty()) ImGui::TextDisabled("No plugins found. Click + New Plugin to start one.");
-    if (ImGui::BeginTable("##plugins", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("On", ImGuiTableColumnFlags_WidthFixed, 34.0f);
-        ImGui::TableSetupColumn("Plugin", ImGuiTableColumnFlags_WidthStretch, 3.0f);
-        ImGui::TableSetupColumn("Scope", ImGuiTableColumnFlags_WidthStretch, 0.9f);
-        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch, 1.4f);
-        ImGui::TableHeadersRow();
-        for (auto& up : g_plugins) {
-            EditorPlugin& p = *up;
-            ImGui::PushID(p.path.c_str());
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            bool en = p.enabled;
-            if (ImGui::Checkbox("##en", &en)) SetPluginEnabled(p, en);
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(p.name.c_str());
-            if (!p.error.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.42f, 1.0f), "%s", p.error.c_str());
-            else if (!p.description.empty()) ImGui::TextDisabled("%s", p.description.c_str());
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", p.user ? "All projects" : "This project");
-            ImGui::TableNextColumn();
-            if (ImGui::SmallButton("Edit")) OpenScriptFileInEditorAt(p.path, 1);
-            if (p.window && p.vm) { ImGui::SameLine(); if (ImGui::SmallButton(p.open ? "Close" : "Open")) p.open = !p.open; }
-            ImGui::PopID();
-        }
-        ImGui::EndTable();
-    }
-    ImGui::End();
-}
-
 // Project type filters (g_projFilter ids): 1 scripts, 2 images, 3 scenes,
 // 4 materials, 5 prefabs, 6 data, 7 audio, 8 models.
 static bool ProjectFilterMatches(int f, const std::string& ext) { return okaypb::FilterMatches(static_cast<okaypb::Filter>(f), ext); }
@@ -10628,11 +8357,12 @@ static void ProjectRegisterThumbGenerators() {
     g_pb->AddThumbGenerator(okay::ExtensionsOfType(okay::AssetType::Model), RenderModelImage);
     g_thumbGensFor = true;
 }
-// Types that can have a picture at all (a script or a data file never does: do not even ask).
+// Types that can have a picture at all (a script never does: do not even ask). Data files and fonts do.
 static bool ProjectHasThumb(const std::string& ext) {
     switch (okay::AssetTypeFromExtension(ext)) {
         case okay::AssetType::Texture: case okay::AssetType::Model: case okay::AssetType::Mesh: case okay::AssetType::Audio:
-        case okay::AssetType::Material: case okay::AssetType::Scene: case okay::AssetType::Prefab: return true;
+        case okay::AssetType::Material: case okay::AssetType::Scene: case okay::AssetType::Prefab:
+        case okay::AssetType::Data: case okay::AssetType::Font: return true;
         default: return false;
     }
 }
@@ -10885,6 +8615,12 @@ void DrawProject(EditorState& ed) {
     g_projectSelected = selected;
     if (!pb.Indexed() && !ed.projectDir().empty() && fs::is_directory(root, ec)) pb.Sync();   // first look at the project: index the assets once
     pb.Poll(okay::platform::TicksMs32());   // keep the database fresh without a thread: an incremental scan when due (waits at least 2 s and 30x as long as the last scan took)
+    // A picture changed in another program, given new import settings, or reimported by hand: the Scene view shows the new
+    // one now (before, only the panel's thumbnail was made again and the renderer kept the old pixels until a restart).
+    for (const std::string& f : pb.TakeChangedFiles()) {
+        if (okay::AssetTypeFromPath(f) != okay::AssetType::Texture) continue;
+        if (okay::InvalidateTextureCacheForFile(f) > 0) ConsoleLog("Reloaded the picture " + fs::u8path(f).filename().u8string() + " in the Scene view");
+    }
     // Let OS file-drops land in the folder we're browsing (falls back to Assets root).
     g_assetImportDir = fs::is_directory(dir, ec) ? dir.string() : root.string();
 
@@ -11818,7 +9554,7 @@ void DrawProject(EditorState& ed) {
                 ed.Select(r); ed.dirty = true;
                 ConsoleLog("Imported " + full);
                 LogModelReport(ed, r);
-            } else ConsoleLog("Model import failed: " + full, 2);
+            } else ConsoleLog(ModelImportFailLine("Model import", full), 2);
         }
     };
 
@@ -12953,109 +10689,49 @@ void DrawMaterialEditor(EditorState& ed) {
     ImGui::End();
 }
 
+// The scene counts the Stats window shows, in its order (shared by the Dear ImGui window and the OkayUI one so they cannot drift).
 void DrawStats(EditorState& ed) {
-    if (!ImGui::Begin("Stats", &g_showStats)) { ImGui::End(); return; }
-    ImGuiIO& io = ImGui::GetIO();
-    static float hist[120] = {0};
-    static int hi = 0;
-    hist[hi] = io.Framerate; hi = (hi + 1) % 120;
-    // Big FPS readout + frame time, then an auto-scaled plot with a 60 FPS guide.
-    float fmin = 1e9f, fmax = 0.0f, fsum = 0.0f; int fcnt = 0;
-    for (float v : hist) if (v > 0.0f) { fmin = std::min(fmin, v); fmax = std::max(fmax, v); fsum += v; ++fcnt; }
-    float fscale = fmax * 1.2f < 75.0f ? 75.0f : fmax * 1.2f;
-    {
-        ImVec4 fpsCol = io.Framerate >= 55.0f ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)
-                      : io.Framerate >= 30.0f ? ImVec4(0.95f, 0.78f, 0.35f, 1.0f)
-                                              : ImVec4(0.96f, 0.45f, 0.42f, 1.0f);
-        if (g_headingFont) ImGui::PushFont(g_headingFont);
-        ImGui::TextColored(fpsCol, "%.0f", io.Framerate);
-        if (g_headingFont) ImGui::PopFont();
-        ImGui::SameLine();
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("FPS   %.2f ms", io.Framerate > 0 ? 1000.0f / io.Framerate : 0.0f);
-        char mm[48]; std::snprintf(mm, sizeof(mm), "avg %.0f  min %.0f", fcnt ? fsum / fcnt : 0.0f, fcnt ? fmin : 0.0f);
-        SameLineRight(ImGui::CalcTextSize(mm).x);
-        ImGui::TextDisabled("%s", mm);
-    }
-    ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.45f, 0.70f, 1.0f, 1.0f));
-    ImGui::PlotLines("##fps", hist, 120, hi, nullptr, 0.0f, fscale, ImVec2(-1, 48));
-    ImGui::PopStyleColor();
-    {   // 60 FPS guide line over the plot
-        ImVec2 gmn = ImGui::GetItemRectMin(), gmx = ImGui::GetItemRectMax();
-        if (fscale > 60.0f) {
-            float gy = gmx.y - (60.0f / fscale) * (gmx.y - gmn.y);
-            ImGui::GetWindowDrawList()->AddLine(ImVec2(gmn.x, gy), ImVec2(gmx.x, gy),
-                                                IM_COL32(110, 220, 130, 110), 1.0f);
+    // Drawn by OkayUI only (editor/OkayPanels.cpp; docs/ui/own_ui_toolkit.md section 25). The model is filled only while the window
+    // shows, as before (the frame-rate history too).
+    static okaypanels::FpsHistory hist;
+    DrawStatsOkayUI(&g_showStats, [&](okaypanels::StatsModel& m) {
+        const float fps = ImGui::GetIO().Framerate;
+        hist.Push(fps);
+        m.framerate = fps;
+        m.history = &hist;
+        // the scene census; zero counts are dimmed by the panel
+        int stTris = 0, stParts = 0;
+        for (const auto& up : ed.scene().Objects()) {
+            if (!up || !up->active) continue;
+            if (auto* mr = up->GetComponent<MeshRenderer>()) if (mr->enabled) stTris += mr->DisplayMesh().TriangleCount();
+            if (auto* ps = up->GetComponent<ParticleSystem>()) stParts += ps->AliveCount();
         }
-    }
-    ImGui::Spacing();
-    // Scene census as a tidy two-column grid; zero counts are dimmed so the
-    // numbers that matter stand out.
-    int stTris = 0, stParts = 0;
-    for (const auto& up : ed.scene().Objects()) {
-        if (!up || !up->active) continue;
-        if (auto* mr = up->GetComponent<MeshRenderer>()) if (mr->enabled) stTris += mr->DisplayMesh().TriangleCount();
-        if (auto* ps = up->GetComponent<ParticleSystem>()) stParts += ps->AliveCount();
-    }
-    struct StatRow { const char* name; int v; };
-    const StatRow rows[] = {
-        {"Objects",    (int)ed.scene().Objects().size()},
-        {"Triangles",  stTris},
-        {"Meshes",     (int)ed.scene().FindObjectsOfType<MeshRenderer>().size()},
-        {"Sprites",    (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size()},
-        {"Lights",     (int)ed.scene().FindObjectsOfType<Light>().size()},
-        {"Colliders",  (int)(ed.scene().FindObjectsOfType<Collider2D>().size() + ed.scene().FindObjectsOfType<Collider3D>().size())},
-        {"Scripts",    (int)ed.scene().FindObjectsOfType<ScriptComponent>().size()},
-        {"NPCs",       (int)ed.scene().FindObjectsOfType<NPCController>().size()},
-        {"Particles",  stParts},
-        {"Drawn",      okay::LastCullCounters().drawn},    // last frame, after culling and batching
-        {"Culled",     okay::LastCullCounters().culled},
-        {"Occluded",   okay::LastCullCounters().occluded},
-        {"LOD culled", okay::LastCullCounters().lodCulled},
-        {"LOD0",       okay::LastCullCounters().lod0},
-        {"LOD1+",      okay::LastCullCounters().lod1 + okay::LastCullCounters().lod2 + okay::LastCullCounters().lod3},
-        {"Batches",    okay::LastCullCounters().batches},
-        {"Draws saved", okay::LastCullCounters().drawsSaved},
-    };
-    if (ImGui::BeginTable("##statgrid", 4, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("n1", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("v1", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-        ImGui::TableSetupColumn("n2", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("v2", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-        for (int i = 0; i < (int)(sizeof(rows) / sizeof(rows[0])); ++i) {
-            if (i % 2 == 0) ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", rows[i].name);
-            ImGui::TableNextColumn();
-            char num[24];
-            if (rows[i].v >= 1000000)   std::snprintf(num, sizeof(num), "%.1fM", rows[i].v / 1e6);
-            else if (rows[i].v >= 10000) std::snprintf(num, sizeof(num), "%.1fk", rows[i].v / 1e3);
-            else                         std::snprintf(num, sizeof(num), "%d", rows[i].v);
-            if (rows[i].v == 0) ImGui::TextDisabled("%s", num);
-            else                ImGui::TextUnformatted(num);
-        }
-        ImGui::EndTable();
-    }
-    ImGui::Spacing();
-    ImGui::Checkbox("Frustum culling", &okay::FrustumCullingEnabled());
-    ImGui::SameLine();
-    ImGui::Checkbox("Occlusion", &okay::visibility::OcclusionCullingEnabled());
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Skip meshes hidden behind an Occluder. Off, or with no Occluder\n"
-                          "in the scene, nothing extra is hidden.");
-    ImGui::Checkbox("Static batching", &okay::visibility::StaticBatchingEnabled());
-    ImGui::SameLine();
-    ImGui::Checkbox("Dynamic batching", &okay::visibility::DynamicBatchingEnabled());
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Skip meshes the camera (or the sun's shadow map) can't see.\n"
-                          "Turn off only to check whether culling hides something it shouldn't.");
-    ImGui::SameLine();
-    ImGui::TextDisabled("| skinning: %s", okay::SkinnedMesh::GpuSkinning() ? "GPU" : "CPU");
-    ImGui::Spacing();
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped("Sky, lighting, post FX and debug view moved to the Lighting tab.");
-    ImGui::PopStyleColor();
-    ImGui::End();
+        const auto& cc = okay::LastCullCounters();   // last frame, after culling and batching
+        m.counters = {
+            {"Objects",    (int)ed.scene().Objects().size()},
+            {"Triangles",  stTris},
+            {"Meshes",     (int)ed.scene().FindObjectsOfType<MeshRenderer>().size()},
+            {"Sprites",    (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size()},
+            {"Lights",     (int)ed.scene().FindObjectsOfType<Light>().size()},
+            {"Colliders",  (int)(ed.scene().FindObjectsOfType<Collider2D>().size() + ed.scene().FindObjectsOfType<Collider3D>().size())},
+            {"Scripts",    (int)ed.scene().FindObjectsOfType<ScriptComponent>().size()},
+            {"NPCs",       (int)ed.scene().FindObjectsOfType<NPCController>().size()},
+            {"Particles",  stParts},
+            {"Drawn",      cc.drawn},
+            {"Culled",     cc.culled},
+            {"Occluded",   cc.occluded},
+            {"LOD culled", cc.lodCulled},
+            {"LOD0",       cc.lod0},
+            {"LOD1+",      cc.lod1 + cc.lod2 + cc.lod3},
+            {"Batches",    cc.batches},
+            {"Draws saved", cc.drawsSaved},
+        };
+        m.frustumCulling = &okay::FrustumCullingEnabled();
+        m.occlusionCulling = &okay::visibility::OcclusionCullingEnabled();
+        m.staticBatching = &okay::visibility::StaticBatchingEnabled();
+        m.dynamicBatching = &okay::visibility::DynamicBatchingEnabled();
+        m.gpuSkinning = okay::SkinnedMesh::GpuSkinning();
+    });
 }
 
 // Apply a look preset (Atmosphere.hpp) to the scene, aiming the first directional
@@ -13662,7 +11338,6 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
     }
 }
 
-// In-editor OkayScript reference, so scripting is documented without leaving
 // Keyboard shortcut cheatsheet (Help > Keyboard Shortcuts): every binding in
 // one searchable place, grouped by the panel it applies to.
 void DrawShortcutsWindow() {
@@ -13768,1995 +11443,14 @@ void DrawShortcutsWindow() {
     ImGui::End();
 }
 
-// the app. Opened from Help > Scripting Reference or the Script Editor's Docs.
-void DrawScriptDocs() {
-    if (!g_showScriptDocs) return;
-    ImGui::SetNextWindowSize(ImVec2(680, 720), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Scripting Reference", &g_showScriptDocs)) { ImGui::End(); return; }
-
-    auto header = [](const char* s) {
-        ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "%s", s);
-        ImGui::Separator();
-    };
-    // Each API entry reads as a card: the signature in a code color, then its
-    // description wrapped on the line below (instead of cramped into a fixed column),
-    // with breathing room between entries — far easier to scan than one dense line.
-    auto api = [](const char* sig, const char* desc) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.80f, 0.90f, 0.74f, 1.0f));
-        ImGui::Bullet(); ImGui::SameLine(); ImGui::TextUnformatted(sig);
-        ImGui::PopStyleColor();
-        // Click a signature to copy it, ready to paste into a script.
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            ImGui::SetTooltip("Click to copy");
-        }
-        if (ImGui::IsItemClicked()) {
-            ImGui::SetClipboardText(sig);
-            ConsoleLog(std::string("Copied: ") + sig);
-        }
-        if (desc && desc[0]) {
-            ImGui::Indent(24.0f);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.66f, 0.69f, 0.75f, 1.0f));
-            ImGui::TextWrapped("%s", desc);
-            ImGui::PopStyleColor();
-            ImGui::Unindent(24.0f);
-        }
-        ImGui::Spacing();
-    };
-    auto code = [](const char* c) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.74f, 0.88f, 0.70f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.25f));
-        ImVec2 sz(-1.0f, ImGui::GetTextLineHeightWithSpacing() *
-                  (float)(std::count(c, c + std::strlen(c), '\n') + 1) + 8);
-        ImGui::BeginChild(ImGui::GetID(c), sz, true);
-        ImGui::TextUnformatted(c);
-        ImGui::EndChild();
-        ImGui::PopStyleColor(2);
-    };
-
-    // ---- Tutorial: teach the language from scratch ----
-    if (ImGui::CollapsingHeader("Learn the basics", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::TextWrapped("OkayScript is a small, friendly language for game logic. "
-            "You write two functions: start() runs once, update(dt) runs every frame "
-            "(dt = seconds since the last frame). Everything below is just those two "
-            "plus values, math, and the built-in commands.");
-
-        SectionHeader("1. Variables");
-        ImGui::TextWrapped("Make a value with 'var'. Values are numbers, text (in "
-            "quotes), or true/false. End each statement with a semicolon ;");
-        code("var speed = 5;\nvar name = \"Hero\";\nvar alive = true;");
-
-        SectionHeader("2. Math & comparisons");
-        ImGui::TextWrapped("%s", "Use + - * / % for math, and == != < > <= >= to compare. "
-            "Combine conditions with && (and), || (or), ! (not).");
-        code("var hp = 100 - 25;        // 75\nvar low = hp < 50;       // false");
-
-        SectionHeader("3. Making decisions: if / else");
-        code("if (key(\"space\")) {\n    move(0, 5 * dt);   // jump while held\n} else {\n    move(0, -1 * dt);  // gently fall\n}");
-
-        SectionHeader("4. Repeating: while / for");
-        code("for (var i = 0; i < 3; i = i + 1) {\n    spawn(\"Coin\", i, 0);\n}");
-
-        SectionHeader("5. The two lifecycle functions");
-        ImGui::TextWrapped("start() sets things up once; update(dt) drives behaviour "
-            "every frame. The movement one-liners (walk, spin, follow, platformer, ...) "
-            "are already dt-scaled, so you never write '* dt'.");
-        code("start() {\n    set_pos(0, 0);\n    set(\"score\", 0);\n}\n\n"
-             "update(dt) {\n    on_key_move(5);   // WASD / arrows, 5 units/sec\n}");
-
-        SectionHeader("6. Your own functions");
-        ImGui::TextWrapped("Group steps into a function and call it by name (or with "
-            "call(\"name\") for state machines). No 'function' keyword needed, and a "
-            "single-line if/for/while needs no braces.");
-        code("hurt() {\n    set(\"score\", get(\"score\") - 1);\n}\n\n"
-             "update(dt) {\n    if (key_down(\"x\")) hurt();\n}");
-
-        ImGui::TextWrapped("That's the whole language. The rest is the built-in "
-            "commands below (move, key, spawn, set/get, …). Hit Compile & Run in the "
-            "Script Editor to try it live.");
-        ImGui::Spacing();
-    }
-
-    // ---- Visual scripting: the no-code path (Actions / Flow Graph) ----
-    if (ImGui::CollapsingHeader("Visual scripting (no code)")) {
-        ImGui::TextWrapped("Prefer no code? Add a Visual Script (Add Component > Scripts > "
-            "Visual Script) and build it in the graph: an event node, then Check and Do "
-            "steps picked from menus (+ Add > Do something / Check something). Older Actions "
-            "lists still run and open as a graph from the Inspector. Each chain reads:");
-        ImGui::Spacing();
-        ImGui::BulletText("Trigger");
-        ImGui::Indent();
-        ImGui::TextWrapped("WHEN it runs: On Start, On Update (every frame), On Key, On "
-            "Click, On Collision, On Trigger Enter/Exit, or the On Mouse events: the event "
-            "node at the start of the chain.");
-        ImGui::Unindent();
-        ImGui::BulletText("Conditions (optional gate)");
-        ImGui::Indent();
-        ImGui::TextWrapped("The instructions run only if EVERY condition passes (AND). "
-            "e.g. Variable In Range, Fewer Tagged Than, Is Moving, Raycast Hits, Chance.");
-        ImGui::Unindent();
-        ImGui::BulletText("Instructions");
-        ImGui::Indent();
-        ImGui::TextWrapped("WHAT happens, run in order (a Wait pauses between steps): Move, "
-            "Set Variable, Spawn, Play Sound, Win/Lose, Follow, Spawn Wave, and dozens more. "
-            "Add them from the searchable + Instruction palette.");
-        ImGui::Unindent();
-        ImGui::Spacing();
-        header("Tips");
-        api("Name each script", "Type a name at the top of the Actions component so several on "
-            "one object are tellable apart. It's saved in the project.");
-        api("Variables are shared", "Set Variable / Add To Variable use the same named values "
-            "your UI reads — a HUD Text Bind of \"Score: {score}\" follows Set Variable \"score\". "
-            "The variable fields auto-suggest names you've already used.");
-        api("Win / Lose / Quit", "Instructions that set the won/lost variable (and pause) or quit "
-            "the game — wire them to a Trigger Zone or an On Collision.");
-        api("Drop-in mechanics", "For the most common jobs there are add-and-go components under "
-            "Add Component > No-Code Mechanics: Collectible, Damage On Touch, Teleporter, Trigger Zone.");
-        api("Mouse events need bounds", "On Mouse* triggers fire when the cursor is over the "
-            "object: a 3D object needs a Collider; a 2D object needs a Sprite or Box Collider 2D.");
-        ImGui::Spacing();
-    }
-
-    ImGui::TextWrapped("OkaySpace scripts are written in OkayScript. Attach a Script component, "
-        "then edit it in the Script Editor. A script's fields and functions ARE the component: "
-        "no class or base type is needed. The engine calls these by name:");
-    ImGui::Indent();
-    ImGui::TextDisabled("Awake() / OnEnable() / Start()   once, in that order, when the scene starts");
-    ImGui::TextDisabled("Update()                         every frame (Time.deltaTime = seconds since the last)");
-    ImGui::TextDisabled("FixedUpdate()                    50 times a second, however fast the game draws");
-    ImGui::TextDisabled("OnDisable() / OnDestroy()        when the object is destroyed");
-    ImGui::Unindent();
-
-    // Live filter so a long, complete reference stays searchable.
-    static char s_docFilter[64] = "";
-    ImGui::SetNextItemWidth(-70.0f);
-    ImGui::InputTextWithHint("##docfilter", "Filter functions (e.g. 'net', 'tween', 'ui_')...",
-                             s_docFilter, sizeof(s_docFilter));
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Clear##docfilter")) s_docFilter[0] = '\0';
-    const bool filtering = s_docFilter[0] != '\0';
-
-    // A section is a CollapsingHeader; when a filter is active every section is
-    // force-open so matches anywhere are visible. `api`/`code` entries below check
-    // the filter too, so only matching rows show. `secOpen` reports whether to draw
-    // a section's body at all (skip it entirely if its title doesn't match and it has
-    // no visible rows — but we always render bodies when filtering and let rows filter).
-    auto lc = [](std::string s) { for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
-    std::string needle = lc(s_docFilter);
-    auto match = [&](const char* a, const char* b) {
-        if (!filtering) return true;
-        return lc(a).find(needle) != std::string::npos ||
-               (b && lc(b).find(needle) != std::string::npos);
-    };
-    // Filtered api row.
-    auto fapi = [&](const char* sig, const char* desc) { if (match(sig, desc)) api(sig, desc); };
-    auto sec = [&](const char* title) {
-        int flags = filtering ? ImGuiTreeNodeFlags_DefaultOpen : 0;
-        return ImGui::CollapsingHeader(title, flags);
-    };
-
-    if (sec("Language & syntax")) {
-        ImGui::TextWrapped("%s",
-            "Blocks use braces { }, statements end with ;  (NOT Lua-style 'end').\n"
-            "var x = 5;   if/else   while   for   return   break   continue\n"
-            "Operators: + - * / %   == != < > <= >=   && || !\n"
-            "Arrays: var a = [1,2,3]; a[0] = 10;   Maps: var m = map(); m[\"k\"] = 1;\n"
-            "foreach (var item in a) { print(item); }");
-        ImGui::TextWrapped("Types are real: int drops decimals, float / bool / string only hold their own "
-            "kind, and function parameter and return types convert too. const and readonly can't "
-            "change; static is shared by every object running the script; public fields show in "
-            "the Inspector. Pasted C# with `using`, a class wrapper or a base type still runs; the "
-            "editor marks those lines because they do nothing. See docs/scripting/scripting.md.");
-    }
-
-    if (sec("Movement & Transform (2D)")) {
-        fapi("move(dx, dy)", "translate by (dx, dy)");
-        fapi("set_pos(x, y)", "set local position");
-        fapi("set_x(v) / set_y(v)", "set one position axis");
-        fapi("pos_x() / pos_y()", "current local position");
-        fapi("rotate(deg)", "rotate around Z by degrees");
-        fapi("move_toward(x, y, step)", "step toward a point");
-        fapi("look_at(\"name\")", "rotate to face another object");
-    }
-
-    if (sec("Transform & Movement (3D)")) {
-        fapi("move3(dx, dy, dz)", "translate in 3D");
-        fapi("set_pos3(x, y, z)", "set 3D position");
-        fapi("set_z(v) / pos_z()", "Z position");
-        fapi("rotate3(x, y, z)", "rotate by Euler degrees");
-        fapi("set_rot3(x, y, z)", "set Euler rotation");
-        fapi("set_scale(s) / set_scale3(x,y,z)", "uniform / per-axis scale");
-        fapi("scale_x() / scale_y() / scale_z()", "current scale");
-        fapi("move_forward(d) / move_right(d)", "move along this object's facing");
-        fapi("forward_x/y/z() / right_x/y/z()", "facing direction vectors");
-        fapi("look_at3(\"name\")", "face an object in 3D");
-    }
-
-    if (sec("Rigidbody (2D & 3D)")) {
-        fapi("set_velocity(x,y) / set_velocity3(x,y,z)", "set velocity");
-        fapi("set_vx/set_vy/set_vz(v)", "set one velocity axis");
-        fapi("velocity_x() / velocity_y() / velocity_z()", "read velocity");
-        fapi("add_force(x,y) / add_force3(x,y,z)", "accumulate a force");
-        fapi("add_impulse(...) / add_impulse3(...)", "instant velocity change");
-        fapi("jump(v)", "set upward velocity (2D or 3D body)");
-        fapi("set_gravity(x,y) / set_gravity3(x,y,z)", "change world gravity");
-        fapi("physics_steps() / set_physics_steps(n)", "read or set physics steps per second");
-        fapi("physics_smooth() / set_physics_smooth(on)", "draw bodies between physics steps");
-    }
-
-    if (sec("Input")) {
-        fapi("key(\"w\") / key_down(\"w\") / key_up(\"w\")", "keyboard held / pressed / released");
-        fapi("axis_x() / axis_y()", "WASD / arrow-key axis, -1..1");
-        fapi("mouse_x() / mouse_y()", "cursor position in pixels");
-        fapi("mouse(btn) / mouse_down(btn) / mouse_up(btn)", "mouse buttons (0=L,1=R,2=M)");
-        fapi("gamepad(btn) / gamepad_x() / gamepad_y()", "controller input");
-    }
-
-    if (sec("This object")) {
-        fapi("name() / set_name(s)", "object name");
-        fapi("tag() / set_tag(s) / has_tag(s)", "object tag");
-        fapi("set_active(b) / self_active()", "enable / query this object");
-        fapi("destroy()", "destroy this object");
-        fapi("set_parent(\"name\") / detach()", "re-parent / unparent");
-        fapi("set_text(s) / set_color(r,g,b,a) / set_texture(p)", "sibling renderers");
-        fapi("set_mesh(\"Sphere\")", "swap a sibling MeshRenderer's primitive");
-        fapi("emit(n) / play_anim() / play_sound()", "sibling FX, animation, audio");
-    }
-
-    if (sec("Other objects & scene")) {
-        fapi("exists(\"n\") / is_active(\"n\")", "query an object by name");
-        fapi("activate(\"n\") / deactivate(\"n\")", "show / hide an object");
-        fapi("obj_x(\"n\") / obj_y(\"n\") / obj_z(\"n\")", "another object's position");
-        fapi("dist_to(\"n\")", "distance to a named object");
-        fapi("npc_goto(\"n\", x, y, z)", "send an NPC Controller to a point (npc_arrived on arrival)");
-        fapi("npc_stop(\"n\") / npc_busy(\"n\") / npc_state(\"n\")", "cancel / query the NPC");
-        fapi("nav_move_to(x, y, z) / nav_stop()", "walk this object's Nav Mesh Agent over the navmesh / stop it");
-        fapi("nav_arrived() / nav_remaining()", "reached the point? / path length left");
-        fapi("grid_move_to(x, y) / grid_move_cell(x, y)", "walk this object's Grid Path Agent to a world point or a tile cell");
-        fapi("grid_stop() / grid_arrived()", "stop the grid walk / 1 once the cell was reached");
-        fapi("grid_set_tile_cost(id, cost) / grid_set_cell_cost(x, y, cost)", "price a tile or one cell (mud, road). 0 blocks it");
-        fapi("grid_block(x, y) / grid_clear()", "block a cell with this object's Grid Obstacle, or stop blocking");
-        fapi("bt_set(\"key\", value) / bt_get(\"key\")", "write / read this object's Behavior Tree blackboard (bt_set(\"Name\", key, value) for another object)");
-        fapi("bt_run(\"Assets/Guard.okaybt\") / bt_stop()", "load and start a behavior tree on this object / stop it; on_bt_event(name) hears Send Event tasks");
-        fapi("spline_point(\"n\", t) / spline_length(\"n\")", "a point t (0-1) along a Spline / its length");
-        fapi("follower_set_speed(speed) / line_set_points(points) / trail_clear()", "this object's Spline Follower, Line, Trail");
-        fapi("spawner_start(\"n\") / spawner_stop(\"n\")", "run / pause a Spawner's waves");
-        fapi("spawner_alive(\"n\")", "live objects a Spawner created (enemies left)");
-        fapi("build_enter() / build_exit() / build_toggle()", "in-game build mode on / off (Build Mode component)");
-        fapi("build_active() / build_link_mode(on)", "in build mode? / wiring (link) mode");
-        fapi("build_palette_clear() / build_palette_add(name, prefab, icon)", "what players can place");
-        fapi("build_palette_select(i) / build_selected()", "the selected hotbar slot (0-based)");
-        fapi("build_save(\"name\") / build_load(\"name\")", "save / load what players built (save folder)");
-        fapi("build_exists(\"name\") / build_clear() / build_count()", "a saved creation? / remove all / how many placed");
-        fapi("build_undo() / build_redo()", "undo / redo the player's build actions");
-        fapi("logic_press(\"n\") / logic_state(\"n\")", "press a logic button / read a source or target");
-        fapi("on_object_placed(name) / on_object_removed(name)", "events: a player placed / deleted something");
-        fapi("on_logic_signal(name)", "event: a wired target turned on / off (signal_on)");
-        fapi("vel_toward(\"n\", speed)", "aim this body's velocity at a target");
-        fapi("destroy_obj(\"n\")", "destroy a named object");
-        fapi("count_tag(\"t\") / nearest_tag(\"t\")", "tag queries");
-        fapi("set_cam(x,y) / move_cam(dx,dy) / set_cam_zoom(z)", "camera control");
-        fapi("set_bg(r,g,b) / set_light(x,y,z) / set_ambient(v)", "background & lighting");
-        fapi("load_scene(\"file\")", "switch to another scene");
-        fapi("screen_w() / screen_h()", "viewport size in pixels");
-    }
-
-    if (sec("UI — drive scene widgets by name")) {
-        fapi("ui_set_text(\"n\",\"s\") / ui_get_text(\"n\")", "text/button label/input text");
-        fapi("get_clipboard_text() / set_clipboard_text(\"s\")", "read or set the text a player can copy and paste");
-        fapi("ui_set_focus(\"n\")", "move keyboard/gamepad focus to a widget and show its ring");
-        fapi("ui_clicked(\"n\")", "true the frame a named button was clicked");
-        fapi("ui_set_interactable(\"n\", on)", "enable / grey-out a button");
-        fapi("ui_slider_value(\"n\") / ui_set_slider(\"n\", v)", "read / set a slider (0..1)");
-        fapi("ui_toggle_value(\"n\") / ui_set_toggle(\"n\", on)", "read / set a toggle");
-        fapi("ui_dropdown_value(\"n\") / ui_dropdown_text(\"n\")", "selected index / option text");
-        fapi("ui_set_dropdown(\"n\", i)", "select a dropdown option (fires on_change)");
-        fapi("ui_tab_value(\"n\") / ui_tab_text(\"n\") / ui_set_tab(\"n\", i)", "selected tab index / label; select a tab (fires on_change)");
-        fapi("ui_set_tab_badge(\"n\", i, count) / ui_set_tab_enabled(\"n\", i, on)", "badge a tab (0 none, -1 dot) / enable or disable it");
-        fapi("ui_set_progress(\"n\", v)", "set a progress bar's fill (0..1)");
-        fapi("ui_set_search(\"n\", text) / ui_search_query(\"n\") / ui_search_count(\"n\")", "filter a search bar; read the text; how many rows match (on_change, on_submit)");
-        fapi("ui_set_date(\"n\", y, m, d) / ui_set_time(\"n\", h, min) / ui_date_text(\"n\")", "set a date (invalid days are pulled back) or a time; read it");
-        fapi("ui_file_set_root(\"n\", folder) / ui_file_open(\"n\", name) / ui_file_selected(\"n\")", "sandboxed file picker: the only folder, open a row, the chosen file");
-        fapi("ui_accordion_toggle(\"n\", i) / ui_accordion_open(\"n\", i)", "open or close a section; is it open");
-        fapi("ui_breadcrumb_select(\"n\", i) / ui_breadcrumb_path(\"n\")", "keep that crumb and drop the ones after it; read the path");
-        fapi("ui_set_page(\"n\", page) / ui_page(\"n\") / ui_page_count(\"n\")", "show a page (pulled back into range); read the page and the page count");
-        fapi("ui_set_loading(\"n\", on)", "show or hide a skeleton placeholder");
-        fapi("ui_sheet_open(\"n\") / ui_sheet_close(\"n\") / ui_sheet_open_state(\"n\")", "open or close a bottom sheet; is it open");
-        fapi("ui_get_rotation(\"n\") / ui_set_rotation(\"n\", degrees)", "read / turn a UI frame, clockwise degrees around its pivot");
-        fapi("ui_get_scale(\"n\") / ui_set_scale(\"n\", x, y)", "read / set a UI frame's width and height scale (one number sets both)");
-        fapi("set_swatch(\"n\", i) / swatch_value(\"n\")", "pick a color swatch / read the index"); // grok/ui-color
-        fapi("kick_spread(\"n\", px) / set_spread / set_spread_recover", "crosshair gap; recover eases it back"); // grok/ui-hud
-        fapi("set_radial(\"n\", v) / set_radial_thickness / set_radial_start", "radial fill, ring width, start angle"); // grok/ui-hud
-        fapi("set_radial_spin / set_radial_clockwise / set_radial_percent", "loader spin, direction, percent text"); // grok/ui-hud
-        fapi("set_slot(\"n\", i) / slot_value(\"n\")", "select a slot grid cell / read it"); // grok/ui-hud
-        // grok/ui-controls
-        fapi("set_dropdown_search(\"n\", on) / set_dropdown_max(\"n\", rows) / set_dropdown_icon(\"n\", i, \"glyph\")", "dropdown search, visible rows, option glyph");
-        fapi("set_scroll_inertia(\"n\", rate) / set_scroll_elastic(\"n\", on) / set_scroll_bar(\"n\", style)", "scroll glide, elastic edges, bar style 0/1/2");
-        fapi("set_tabs_closable(\"n\", on) / close_tab(\"n\", i)", "closable tabs; on_tab_close fires when one is removed");
-        fapi("set_tooltip_rich(\"n\", on) / set_tooltip_offset(\"n\", x, y) / set_tooltip_delay(\"n\", s)", "tooltip rich text, cursor offset, hover delay");
-        fapi("set_input_multiline(\"n\", on) / set_input_limit(\"n\", n) / set_input_type(\"n\", t)", "multiline, character limit, 0 standard 1 integer 2 decimal 3 password");
-        // grok/ui-toast
-        fapi("toast_push(\"Title\", \"Body\", kind)", "show a toast (0 info, 1 success, 2 warning, 3 error)");
-        fapi("set_toast_duration(seconds) / set_toast_corner(n) / set_toast_max(n)", "toast lifetime, corner and stack size");
-        fapi("toast_count()", "how many toasts are on screen");
-        fapi("modal_open() / modal_close()", "show or hide the first modal (close fires on_modal_close)");
-        fapi("set_modal_style(on) / set_modal_title(\"s\") / set_modal_message(\"s\")", "style the dialog card and its text");
-        fapi("set_modal_confirm(\"s\") / set_modal_cancel(\"s\")", "confirm and cancel button labels");
-        // grok/ui-options
-        fapi("ui_set_slider_step(\"n\", step) / ui_set_slider_format(\"n\", \"{v}\")", "snap spacing / value label");
-        fapi("ui_set_bar_segments(\"n\", n) / ui_set_bar_trail(\"n\", seconds) / ui_set_bar_format(\"n\", \"{n}%\")", "chunks, damage trail, label");
-        fapi("ui_set_button_ease(\"n\", ease, seconds)", "0 linear, 1 smooth, 2 ease-out, 3 ease-in");
-        fapi("ui_set_fill(\"n\", v)", "set a filled UI Image's amount (cooldowns/health)");
-    }
-
-    if (sec("OkayUI — immediate-mode HUD from script")) {
-        ImGui::TextWrapped("Call these every frame — the toolkit draws the HUD over the "
-            "game (player AND editor Play mode). No Canvas objects: the script IS the UI. "
-            "Each widget returns its live value, so you read+write state in one line.");
-        fapi("ui_begin(\"Title\", x, y, w, h) ... ui_end()", "open/close a draggable window (coords optional)");
-        fapi("ui_text(\"s\")", "a line of text");
-        fapi("ui_button(\"Label\")", "returns 1 the frame it's clicked, else 0");
-        fapi("ui_checkbox(\"Label\", on)", "returns the new on/off (pass current value back in)");
-        fapi("ui_slider(\"Label\", v, lo, hi)", "returns the new value (pass current value back in)");
-        fapi("ui_progress(t)", "a progress/health bar, t in 0..1");
-        fapi("ui_sameline() / ui_separator()", "lay next widget beside / draw a divider");
-        fapi("ui_heading(\"Lobby\") / ui_caption(\"NOW PLAYING\"[, r, g, b])", "a page title (accent underline) / small coloured label");
-        fapi("ui_text_dim(\"s\") / ui_text_wrapped(\"s\")", "secondary text / text that wraps to the window");
-        fapi("ui_primary_button(\"Play\")", "an accent call-to-action button (1 when clicked)");
-        fapi("ui_card_begin(\"id\") ... ui_card_end()", "a raised rounded card around widgets");
-        fapi("ui_list_item(title[, subtitle[, right[, selected]]])", "a row with an avatar, title and dim subtitle (1 when clicked)");
-        fapi("ui_badge(\"3/4\"[, r, g, b]) / ui_avatar(\"Maya\")", "a pill tag / a coloured initial circle");
-        fapi("ui_key_value(\"Ping\", \"23 ms\") / ui_spinner()", "label left, value right / a busy spinner");
-        fapi("ui_tabs(\"Players|Match\", tab) / ui_input(\"Name\", text)", "pill tabs (returns the index) / a text field (returns the text)");
-        fapi("ui_toast(\"Saved\"[, 0 info|1 ok|2 error[, secs]])", "a pop-up message in the corner");
-        fapi("ui_style(\"launcher\" | \"classic\")", "the OkaySpace launcher look (default) or the old pixel look");
-        if (!filtering)
-            code("ui_begin(\"HUD\", 24, 24, 240, 150)\n"
-                 "ui_text(\"Health\")\n"
-                 "ui_progress(hp / 100)\n"
-                 "if (ui_button(\"Heal\")) { hp = 100 }\n"
-                 "ui_sameline()\n"
-                 "if (ui_button(\"Hurt\")) { hp = hp - 10 }\n"
-                 "ui_separator()\n"
-                 "paused = ui_checkbox(\"Paused\", paused)\n"
-                 "speed  = ui_slider(\"Speed\", speed, 0, 10)\n"
-                 "ui_end()");
-    }
-
-    if (sec("Tweening (DOTween-style) & saves")) {
-        ImGui::TextDisabled("Every tween accepts an optional easing and an optional on-complete \"fn\" as trailing args.");
-        fapi("tween_move(x,y,dur[,ease][,\"done\"]) / tween_move3(...)", "animate position");
-        fapi("tween_scale(s,dur[,ease][,\"done\"])", "animate uniform scale");
-        fapi("tween_rotate(deg,dur ...) / tween_rotate_to(deg,dur ...)", "spin relative / to absolute Z angle");
-        fapi("tween_scale_xy(sx,sy,dur ...)", "non-uniform scale");
-        fapi("tween_ui_move(x,y,dur ...) / tween_ui_size(w,h,dur ...)", "move / resize a UI widget");
-        fapi("tween_color(r,g,b,dur ...) / tween_fade(alpha,dur ...)", "animate color / opacity");
-        fapi("tween_move_by(dx,dy,dur ...)", "move by a relative offset");
-        fapi("tween_jump(x,y,height,dur[,\"done\"])", "arc-jump to a target (coins, hops)");
-        fapi("tween_path(dur, x1,y1, x2,y2, ...)", "move through waypoints");
-        fapi("tween_loop_move(x,y,dur[,ease]) / tween_loop_scale(s,dur ...)", "ping-pong forever");
-        fapi("tween_loop_rotate(dur[,dir])", "spin continuously (loaders, coins)");
-        fapi("tween_number(from,to,dur[,\"prefix\"])", "count a sibling text number (score ticks)");
-        fapi("tween_punch_scale(amt,dur[,vib]) / tween_punch_pos(dx,dy,dur[,vib])", "punch & settle (juice)");
-        fapi("tween_shake(i, dur) / tween_shake_rotate / tween_shake_scale", "shake, fading out");
-        fapi("tween_punch_rotate(deg,dur) / tween_path_smooth(dur, x1,y1, ...)", "wobble / curved path");
-        fapi("tween_text(\"Hi!\",dur) / tween_var(\"name\",to,dur) / tween_call(s,\"fn\")", "typewriter / a variable / delayed call");
-        ImGui::TextDisabled("Every tween returns an id. Set it up (each returns the id, so they nest):");
-        fapi("tween_loops(id, n[, \"yoyo\"|\"incremental\"]) / tween_delay(id, s)", "repeat (-1 forever) / wait first");
-        fapi("tween_ease(id, e) / tween_speed(id, x) / tween_unscaled(id)", "ease / speed / ignore time scale");
-        fapi("tween_clock(id, channel)", "follow a Clock channel (\"ui\", \"cinematic\", your own); \"\" = scene time");
-        fapi("tween_tag(id, \"menu\")", "a group label for the _tag calls below (many tweens can share one)");
-        fapi("tween_speed_based(id)", "the duration is a speed (units a second): lasts distance / speed");
-        fapi("tween_decay(id, rate)", "how a punch or shake dies away: 0 = straight fade, 6 = snappy");
-        fapi("tween_prop(path, to, dur[, ease][, \"done\"])", "tween any property by path (\"Light.intensity\")");
-        fapi("tween_from(id) / tween_relative(id) / tween_set_id(id, \"name\")", "from the end value / offset / name it");
-        fapi("tween_on_complete(id, \"fn\") / tween_on_step / tween_on_start", "callbacks");
-        fapi("tween_pause / play / restart / rewind / complete / kill(id)", "control one tween");
-        fapi("tween_kill_all() / tween_play_id(\"name\") / is_tweening()", "this object / by name");
-        fapi("tween_kill_tag(\"tag\"[, complete])", "kill every tween with that tag, scene-wide");
-        fapi("tween_pause_tag / tween_play_tag / tween_complete_tag(\"tag\")", "pause / play / finish every tween with that tag");
-        fapi("tween_rewind_id(\"name\")", "put the tweens with that Id back at the start");
-        fapi("seq_new() / seq_append(s, id) / seq_join(s, id)", "sequence: after / together");
-        fapi("seq_interval(s, t) / seq_callback(s, \"fn\") / seq_insert(s, t, id)", "pauses, calls, timing");
-        fapi("seq_prepend(s, id) / seq_join_callback(s, \"fn\")", "play before everything / call when the last tween starts");
-        fapi("save_game([slot], [label]) / load_game([slot])", "save / load the whole game");
-        fapi("game_save(slot[, label]) / game_load(slot) / game_continue()", "save slots for Saveable objects (docs/engine/save_games.md); load happens next frame");
-        fapi("game_delete_slot(slot) / game_slot_exists(slot) / game_can_continue()", "manage and ask about save slots");
-        fapi("game_slot_text(slot) / game_slot_age(slot) / game_slot_label(slot) / game_autosave()", "when a slot was saved (UTC text, seconds ago), its label, autosave ring");
-        fapi("save_exists([slot]) / delete_save([slot])", "manage save slots");
-        ImGui::TextDisabled("Eases: linear, in_/out_/in_out_ + quad cubic quart quint sine expo circ back elastic bounce,\nor a curve as text: \"cubic-bezier(0.4,0,0.2,1)\", \"steps(4)\".");
-    }
-
-    if (sec("Persistence, PlayerPrefs & Data Assets")) {
-        fapi("set(\"k\", v) / get(\"k\")", "shared variables across scripts");
-        fapi("prefs_set / prefs_get / prefs_save / prefs_load", "PlayerPrefs-style key/value");
-        fapi("save(\"k\", v[, file]) / load(\"k\", def[, file])", "Easy-Save: typed values, many files");
-        fapi("save_has / save_delete / save_clear", "manage keys in a save file");
-        fapi("save_exists([file]) / save_delete_file([file])", "check / remove a save file");
-        fapi("data_num / data_str / data_has(path, key)", "read Scriptable Object (.okaydata) fields");
-        fapi("data_set(path, key, v) / data_save(path)", "write a Data Asset");
-        fapi("ui_drop_source() / ui_drop_target()", "the dragged item / target (UI drag & drop)");
-        fapi("drop_source() / drop_target()", "world drag & drop pair");
-    }
-
-    if (sec("Scene Manager (build list)")) {
-        fapi("load_scene_index(i)", "load scene i from the build list");
-        fapi("load_scene_name(\"n\")", "load by scene name (file stem) or path");
-        fapi("load_next_scene()", "load the next scene (wraps to the first)");
-        fapi("load_scene_additive(\"n\"[, x, y, z])", "MERGE a scene into the running one at an offset (seamless worlds)");
-        fapi("reload_scene()", "reload the active scene");
-        fapi("scene_count() / scene_index() / scene_name()", "query the build list");
-    }
-
-    if (sec("Multiplayer (networking)")) {
-        fapi("net_host(port)", "start a server on this machine");
-        fapi("net_join(\"ip\", port)", "connect to a host");
-        fapi("net_host_relay(\"ip\", port, \"code\") / net_join_relay(...)", "host/join via a relay (NAT traversal)");
-        fapi("net_relay_ready()", "1 once the relay has paired this peer");
-        fapi("net_launch_join()", "1 if the launcher started the game to join a friend / invite / server");
-        fapi("net_join_link(\"okay://join?...\")", "join from a join link");
-        fapi("net_invite_friends()", "open the launcher's Invite friends window (also Shift+Tab)");
-        fapi("net_browser_open()", "show the built-in \"Find a server\" window");
-        fapi("net_browser_refresh([\"all\"|\"internet\"|\"lan\"]) / net_browser_busy()", "search for servers in the background");
-        fapi("net_browser_count() / net_browser_name(i) / _players(i) / _max(i) / _ping(i) / _map(i) / _locked(i)", "the results, for your own list");
-        fapi("net_browser_join(i[, \"password\"])", "join result i");
-        fapi("net_set_score(id, n) / net_score(id)", "server-owned scores, seen by everyone");
-        fapi("net_peer_name(id) / net_roster_count() / net_roster_id(i)", "who's in the room (any peer)");
-        fapi("net_teleport(id, x, y[, z])", "server: move a player (respawn) past the speed check");
-        fapi("net_queue_join(\"mode\", players[, min[, \"region\"]]) / net_queue_cancel()", "matchmaking: find a match (joins it when found)");
-        fapi("net_queue_state() / net_queue_time() / net_queue_count() / net_queue_error()", "searching / waiting / found / failed, seconds, players in the queue");
-        fapi("net_match_start() / net_match_end([winner ids])", "server: zero scores / end the match and save results (stats, leaderboards)");
-        fapi("net_stats_top(\"wins\"|\"score\"|\"best\"|\"matches\"|\"time\", n) / net_stats_mine(stat)", "this game's leaderboard from match results");
-        fapi("net_max_speed(units) / net_rate_limit(perSec)", "server: snap back too-fast moves / drop message spam");
-        fapi("net_anticheat([on]) / net_anticheat_load(path) / net_violations(id)", "server: anti-cheat on/off / load an .okayac file / a player's refusals this minute");
-        fapi("on_cheat_detected(kind, peer, detail) / on_validate_rpc(name, data, sender)", "server events (Anti-Cheat Config): return false from on_validate_rpc to refuse the RPC");
-        fapi("net_hit(\"target\", \"weapon\", ox, oy, oz, dx, dy, dz)", "claim a hit on a synced object: the server checks it (position, range, walls, fire rate) and applies the damage");
-        fapi("on_validate_hit(shooter, target, weapon, damage)", "server event (Anti-Cheat Config): return false to refuse a hit, or a positive number for its damage");
-        fapi("net_budget(id, \"rpc\"[, add])", "server: a player's Net Validator budget for an RPC (ammo); add tops it up (reload, pickup)");
-        fapi("net_pin_host(\"key\")", "client: join only the host with this identity key (encryption on; \"\" = no pin)");
-        fapi("net_set_pawn(\"object\") / net_authoritative([on])", "client: the player object your inputs drive / host: server-authoritative movement");
-        fapi("net_tick_rate([hz]) / net_tick()", "host: a fixed network tick (0 = off, as before) / the current tick");
-        fapi("net_disconnect()", "leave / stop the session");
-        fapi("net_connected() / net_is_server() / net_is_client()", "status");
-        fapi("net_id() / net_peers() / net_ping()", "peer id / peer count / RTT (ms)");
-        fapi("net_name(\"name\") / net_room(\"name\")", "display name / isolated lobby room");
-        fapi("net_ready(1/0) / net_ready_count() / net_all_ready()", "lobby ready state");
-        fapi("net_start_match() / net_match_started()", "(host) begin / has the match begun?");
-        fapi("net_send(\"ch\",\"data\") / net_send_to(id,\"ch\",\"data\")", "broadcast / message one peer");
-        fapi("net_send_reliable(\"ch\",\"data\")", "resent until acked + de-duped");
-        fapi("net_kick(id[,\"reason\"]) / net_was_kicked()", "host kicks / client check");
-        fapi("net_poll() / net_msg_channel() / net_msg_data() / net_msg_from()", "pop & read a message (in a while)");
-        fapi("net_set(\"key\",\"value\") / net_get(\"key\")", "server-authoritative synced variable");
-        fapi("net_spawn(\"prefab\", x, y[, z])", "replicated spawn on every peer");
-    }
-
-    if (sec("Character animation (Character on this object)")) {
-        fapi("load_clips(\"text\")", "load keyframe clips from OkayVS-anim text; returns count");
-        fapi("play_clip(\"name\") / stop_clip()", "play a loaded clip / return to built-in");
-        fapi("play_action(\"Death\" [, blend]) / is_in_action() / action_time()", "go to a built-in action state (0 if it is missing)");
-        fapi("die([\"forward\"|\"back\"|\"left\"|\"right\"]) / die(x, y, z) / revive() / is_dead()", "death anim; x,y,z is where the hit came from");
-        fapi("dive() / can_dive()", "dolphin dive while sprinting on the ground; 1 if a dive can start");
-        fapi("sit([\"Seat\"|\"ground\"|\"knees\"|\"chair\"]) / stand_up() / is_sitting()", "sit on a Seat or a flat floor; move or jump stands up");
-        fapi("interact() / seat_prompt()", "nearest Seat (E in range does this too), or its prompt");
-        fapi("hit_react(\"forward\"|\"back\"|\"left\"|\"right\" [, heavy]) / hit_react(x, y, z [, heavy])", "flinch from where the hit came from; heavy is a full-body stumble");
-        fapi("roll([\"forward\"|\"back\"|\"left\"|\"right\"]) / dodge([...])", "roll is the clip; dodge also bursts a first- or third-person body");
-        fapi("vault() / mantle() / ledge_grab() / climb_up() / let_go() / is_hanging() / shimmy(v)", "vault, mantle, or hang; flags on the controller default off");
-        fapi("play_clip_once(\"name\")", "play a clip once (attack/jump), then return to the previous one");
-        fapi("playing_clip() / is_playing_clip()", "active clip name / is one playing");
-        fapi("set_anim(n) / get_anim()", "built-in animation index (1 idle, 2 walk, 3 run, ...)");
-    }
-
-    if (sec("Steam (achievements, stats, leaderboards, cloud)")) {
-        fapi("steam_name()", "the player's Steam name");
-        fapi("steam_unlock(\"ID\") / steam_is_unlocked(\"ID\") / steam_clear(\"ID\")", "achievements");
-        fapi("steam_set_stat(\"n\",v) / steam_get_stat(\"n\") / steam_inc_stat(\"n\",by)", "stats");
-        fapi("steam_store()", "flush stats/achievements to Steam");
-        fapi("steam_progress(\"ID\", cur, max)", "show achievement progress (auto-unlocks at max)");
-        fapi("steam_leaderboard(\"board\", score) / steam_leaderboard_top(\"board\", n)", "submit / top-N scores");
-        fapi("steam_cloud_write(\"file\",\"data\") / steam_cloud_read(\"file\")", "Steam Cloud");
-        fapi("steam_presence(\"key\",\"value\") / steam_friends() / steam_overlay(\"page\")", "rich presence / friends / overlay");
-        fapi("steam_owns(appId) / steam_owns_dlc(appId)", "ownership / DLC checks");
-        fapi("steam_achievement_count() / steam_language()", "achievement count / client language");
-    }
-
-    if (sec("PlayFab (cloud login, leaderboards, saves)")) {
-        ImGui::TextDisabled("Blocking web requests over PlayFab's REST API — call from start(), not every frame.");
-        fapi("pf_login(\"titleId\", \"customId\")", "sign in (creates the account on first use); 1 on success");
-        fapi("pf_register(\"titleId\", \"user\", \"pass\") / pf_login_password(...)", "username + password accounts");
-        fapi("pf_logged_in() / pf_id() / pf_error()", "session state / PlayFab id / last error text");
-        fapi("pf_name(\"display name\")", "the name shown on leaderboards");
-        fapi("pf_set_stat(\"stat\", value)", "publish a statistic (drives leaderboards)");
-        fapi("pf_leaderboard_top(\"stat\", n)", "top-N entries as \"rank,name,score\" strings");
-        fapi("pf_save(\"key\",\"value\") / pf_load(\"key\") / pf_delete(\"key\")", "per-player cloud save data");
-    }
-
-    if (sec("Debugging")) {
-        ImGui::TextDisabled("All of these print into the editor's Console.");
-        fapi("print(...) / debug_log(...) / log_info(...)", "log a line (args joined by spaces)");
-        fapi("log_warn(...) / log_error(...) / trace(...)", "log at a level");
-        fapi("watch(\"name\", value)", "log name = value for quick inspection");
-        fapi("assert(cond[, \"msg\"])", "log an error when cond is false; returns the result");
-        fapi("format(\"hp={} of {}\", a, b)", "fill each {} with the next argument");
-        fapi("concat(...) / str_repeat(\"ab\", 3)", "join args / repeat a string");
-    }
-
-    if (sec("Math & numeric helpers")) {
-        fapi("approach(cur, target, step)", "step toward a target without overshooting");
-        fapi("remap(v, inLo, inHi, outLo, outHi)", "rescale a value between two ranges");
-        fapi("frac(x) / mod(a, b) / snap(v, step)", "fraction / positive modulo / round to a step");
-        fapi("is_nan(x) / is_finite(x) / avg(...) / min3 / max3", "numeric helpers");
-        fapi("lerp_angle(a, b, t)", "interpolate degrees the short way round");
-        fapi("rand(lo, hi) / randi(lo, hi) / chance(p)", "randomness");
-        fapi("dist(x1,y1,x2,y2) / dist3(...) / angle_to(...)", "geometry");
-        fapi("sin cos tan asin acos atan atan2", "trigonometry");
-        fapi("sqrt pow exp log abs sign floor ceil round", "math");
-        fapi("min max clamp clamp01 lerp smoothstep wrap ping_pong", "ranges & easing");
-        fapi("time() / dt() / fps()", "timing (fps() is the real rate over the last half second)");
-        fapi("session_time() / session_unscaled_time() / session_frame_count()", "game seconds / real seconds / frames since this Play began");
-        fapi("unscaled_dt() / is_paused() / hitch_count()", "real frame time / is the game paused / frames over 0.1 s");
-        fapi("push_pause(reason) / pop_pause(reason) / is_paused_by(reason)", "pause with a reason of your own: two scripts never resume each other");
-        fapi("hit_stop(s[, scale]) / slow_motion(scale, s) / ramp_timescale(target, s)", "freeze frame / bullet time / eased time scale (real seconds)");
-    }
-
-    if (sec("Collections — arrays & maps")) {
-        ImGui::TextDisabled("Arrays and maps are shared by reference and can be nested.");
-        fapi("array(...) / count(a) / push(a,v) / pop(a)", "make a list, length, append, remove-last");
-        fapi("first(a) / last(a)", "first / last item (null if empty)");
-        fapi("insert_at(a,i,v) / remove_at(a,i)", "insert at / remove at an index");
-        fapi("slice(a, start, end)", "sub-array; negative indices count from the end");
-        fapi("range(n) / range(lo, hi[, step])", "build a numeric array");
-        fapi("contains(a,v) / index_of(a,v)", "membership / first index (or -1)");
-        fapi("sum(a) / min_of(a) / max_of(a)", "reduce a numeric array");
-        fapi("reverse(a) / sort_num(a) / sort_str(a) / shuffle(a) / choose(a)", "reorder / random pick");
-        fapi("clear(a_or_m)", "empty an array or map in place");
-        fapi("map() / map_set(m,\"k\",v) / map_get(m,\"k\") / map_has(m,\"k\")", "dictionary basics");
-        fapi("map_remove(m,\"k\") / map_keys(m) / map_values(m) / map_count(m)", "delete / list / size");
-        fapi("map_clear(m) / map_merge(dst, src)", "empty / merge (src wins)");
-        if (!filtering)
-            code("var a = array(10, 20, 30);\n"
-                 "a[1] += 5;   a[0]++;         // element compound assignment\n"
-                 "var m = map();  m[\"hp\"] = 100;  m[\"hp\"] -= 30;\n"
-                 "foreach (var key in m) { print(key + \" = \" + map_get(m, key)); }");
-    }
-
-    if (sec("Functional helpers (named callbacks)")) {
-        ImGui::TextDisabled("Pass the NAME of a function to apply it across an array.");
-        fapi("map_fn(a, \"fn\")", "new array of fn(item) for each item");
-        fapi("filter_fn(a, \"fn\")", "keep items where fn(item) is true");
-        fapi("reduce_fn(a, \"fn\", init)", "fold left: acc = fn(acc, item)");
-        fapi("for_each(a, \"fn\")", "call fn(item) for every item");
-        fapi("find_fn / any_fn / all_fn / count_fn (a, \"fn\")", "search / test / count");
-        fapi("call(\"fn\"[, args...])", "invoke a function (user or builtin) by name");
-    }
-
-    if (sec("JSON & type introspection")) {
-        fapi("to_json(value) / from_json(\"...\")", "serialize / parse (also json_stringify / json_parse)");
-        fapi("typeof(v)", "\"number\",\"string\",\"bool\",\"array\",\"map\",\"vec3\" or \"null\"");
-        fapi("is_num is_str is_bool is_array is_map", "type tests");
-    }
-
-    if (sec("Error handling")) {
-        ImGui::TextWrapped("Wrap risky code in try/catch and raise your own errors with throw. "
-            "The catch clause is optional. Control flow (return/break/continue) passes through a try.");
-        if (!filtering)
-            code("try {\n"
-                 "    var data = from_json(load_prefs(\"save\", \"{}\"));\n"
-                 "    if (map_count(data) == 0) { throw \"no save data\"; }\n"
-                 "} catch (e) {\n"
-                 "    print(\"Load failed: \" + e);\n"
-                 "}");
-    }
-
-    if (sec("Easing curves")) {
-        ImGui::TextWrapped("Each maps a normalized t (0..1) to an eased 0..1 — feed the result to lerp:");
-        fapi("ease_in / ease_out / ease_in_out", "quad ease");
-        fapi("ease_in_cubic / ease_out_cubic / ease_in_out_cubic", "cubic ease");
-        fapi("ease_back / ease_elastic / ease_bounce", "overshoot / spring / bounce");
-        fapi("ease_curve(t, \"OutBack\")", "any ease by name or curve text: \"cubic-bezier(0.4,0,0.2,1)\", \"steps(4)\"");
-        fapi("fract(x)", "the fractional part of x");
-    }
-
-    if (sec("String helpers")) {
-        fapi("upper lower trim trim_start trim_end", "case & whitespace");
-        fapi("capitalize title_case str_reverse", "capitalization / reverse");
-        fapi("substr char_at replace split join", "extract / edit / split / join");
-        fapi("repeat pad_left pad_right format", "repeat / pad / format");
-        fapi("to_str / str / to_num / num", "convert between text and numbers");
-        fapi("loc(\"key\"[, args...])", "the key's text in the player's language ({0}, {name}, plurals)");
-        fapi("set_language(\"fr\") / get_language() / languages()", "switch / read the language (on_language_changed(code) runs)");
-    }
-
-    if (sec("Timers & spawning")) {
-        fapi("after(seconds, \"fn\")", "call fn once after a delay");
-        fapi("every(seconds, \"fn\")", "call fn repeatedly on an interval");
-        fapi("cancel_timers()", "clear all scheduled callbacks");
-        fapi("spawn(\"prefab\", x, y) / spawn3(\"prefab\", x, y, z)", "instantiate prefabs");
-        fapi("emit(n) / particles_on(b)", "particle FX");
-        fapi("set_tile / get_tile / tile_resize", "tilemap editing");
-    }
-
-    if (sec("Physics queries & events")) {
-        fapi("raycast_hit(ox,oy,dx,dy[, maxDist])", "2D ray hits a collider? (boolean)");
-        fapi("raycast(ox,oy,dx,dy[, maxDist])", "2D ray; returns the name hit (\"\" = miss)");
-        fapi("ray_hit()/ray_object()/ray_x()/ray_y()/ray_nx()/ray_ny()/ray_dist()", "details of the last raycast()");
-        fapi("raycast_hit3(o.., d..[, maxDist]) / raycast3(...)", "3D ray test / named hit + ray3_* details");
-        fapi("...[, maxDist, layers, ignore_triggers]", "every ray / cast / overlap takes these: layers \"0,3\" or \"Default,Enemy\"");
-        fapi("raycast_all3(o.., d..) / raycast_all(ox,oy,dx,dy)", "names of EVERYTHING hit, nearest first (+ ray_all_*)");
-        fapi("sphere_cast3(o.., d.., r) / box_cast3(c.., half.., d..)", "thick casts (won't slip through gaps)");
-        fapi("capsule_cast3(a.., b.., r, d..)", "would a capsule fit along this path?");
-        fapi("box_cast(cx, cy, hx, hy, dx, dy)", "sweep a flat box; name of the first thing hit (ray_* details)");
-        fapi("capsule_cast(ax, ay, bx, by, r, dx, dy)", "sweep a flat capsule along a direction");
-        fapi("overlap_box(cx, cy, hx, hy) / overlap_capsule(ax, ay, bx, by, r)", "names inside a flat box or capsule");
-        fapi("add_explosion_force(cx, cy, force, radius [, up])", "shove this 2D body; fades to nothing at radius");
-        fapi("overlap_sphere3 / overlap_box3 / overlap_capsule3", "names of the objects inside a shape");
-        fapi("layer_mask(\"Default\", \"Enemy\")", "a layers number for the queries above");
-        fapi("overlap(x, y)", "a 2D collider contains this point?");
-        ImGui::TextWrapped("Define on_collision() / on_trigger() — they fire when this "
-            "object's collider hits or overlaps another. on_trigger_stay() runs every frame "
-            "something stays inside. Inside these, contact_point / contact_normal (vectors), "
-            "contact_x/_y/_z, impact_speed and other_tag describe the touch.");
-    }
-
-    if (sec("Friendly aliases")) {
-        ImGui::TextWrapped("Intuitive alternate names for common builtins: delta_time (dt), "
-            "get_key/get_key_down/get_key_up (key...), random/random_int (rand/randi), "
-            "pick (choose), distance (dist), instantiate (spawn), destroy_self (destroy), "
-            "translate (move), set_position (set_pos), play_audio (play_sound), "
-            "to_string/str (to_str), to_number/num (to_num), get_x/get_y/get_z (pos_*), "
-            "screen_width/screen_height.");
-    }
-
-    ImGui::Spacing();
-    ImGui::TextDisabled("Complete reference — mirrors docs/scripting/scripting.md. Hover a name in the Script Editor for its doc.");
-    if (ImGui::Button("Close")) g_showScriptDocs = false;
-    ImGui::End();
-}
-
-// --- VS Code-style script editor helpers ---------------------------------
-
-// Pending editor commands, filled by the toolbar/popups and applied against the
-// code widget each frame; the widget reports the live caret back into it.
-struct ScriptCaret {
-    int  line = 1, col = 1, pos = 0;   // out: caret position (1-based line/col)
-    int  selLen = 0;                   // out: selected character count
-    int  gotoLine = 0;                 // in: jump to this 1-based line (0 = none)
-    int  gotoCol = 0;                  // in: 1-based column for gotoLine (0 = start of line)
-    int  gotoPos = -1;                 // in: move caret to this byte offset (find-next)
-    int  gotoSelLen = 0;               // in: select this many chars from gotoPos
-    bool toggleComment = false;        // in: toggle "// " on the selected lines
-    std::string insert;                // in: insert this text at the caret (snippets)
-    int  insertReplaceLen = 0;         // in: (unused since the widget migration)
-    std::string replaceAll;            // in: replace the WHOLE buffer (format/rename)
-};
-// Autocomplete popup state: item count shown this frame (0 = no popup), the
-// keyboard-highlighted item, and Esc's hide-until-the-word-changes latch.
-static int g_acCount = 0;
-static int g_acIndex = 0;
-static bool g_acDismiss = false;
-
-
-// Words the editor offers for autocomplete: keywords, types, and common builtins
-// (a curated subset of the OkayScript API — see docs/scripting/scripting.md).
-static const std::vector<std::string>& ScriptCompletions() {
-    static const std::vector<std::string> w = {
-        // keywords
-        "if","else","for","while","do","return","break","continue","switch","case",
-        "var","function","new","public","true","false","foreach","in",
-        "try","catch","throw",
-        // types + modifiers that do something
-        "void","int","float","bool","string","static","const","readonly",
-        "enum","yield","null","this","default","??","?.","??=",
-        "IEnumerator","WaitForSeconds","StartCoroutine","StopCoroutine","StopAllCoroutines",
-        "GetComponent","Instantiate","Destroy","Invoke","InvokeRepeating","CancelInvoke","CompareTag",
-        "List","Dictionary","KeyValuePair","Rigidbody2D","Rigidbody","SpriteRenderer","Animator",
-        "AudioSource","Collider2D","Collision2D","Collider","Collision","KeyCode","GameObject","Transform",
-        "Start","Update","Awake","LateUpdate","FixedUpdate","OnEnable","OnDisable","OnDestroy",
-        "OnTriggerEnter2D","OnTriggerEnter","OnCollisionEnter2D",
-        "OnCollisionEnter","OnMouseDown","SerializeField","Header","Range","Tooltip",
-        // API
-        "Vector3","Vector2","Color","Mathf","Input","Time","Debug","Random","Physics2D",
-        "SceneManager","Quaternion","transform","gameObject",
-        // transform / movement
-        "move","set_pos","set_x","set_y","pos_x","pos_y","rotate","move_toward","look_at",
-        "move3","set_pos3","set_z","pos_z","rotate3","set_scale","set_scale3","move_forward",
-        // physics
-        "set_velocity","set_velocity3","add_force","add_impulse","jump","set_gravity",
-        // input
-        "key","key_down","key_up","axis_x","axis_y","mouse_x","mouse_y","mouse","mouse_down",
-        // object / scene
-        "name","set_name","tag","set_tag","has_tag","set_active","self_active","destroy",
-        "set_parent","exists","is_active","obj_x","obj_y","dist_to","destroy_obj","count_tag",
-        "child_count","get_child","parent_of","hurt","heal","add_xp","get_hp","get_max_hp","is_dead",
-        "set_light_intensity","set_light_range","set_light_angle","set_light_color",
-        "npc_goto","npc_stop","npc_busy","npc_state",
-        "nav_move_to","nav_stop","nav_arrived","nav_remaining","nav_path_exists","nav_path_length","nav_point_walkable","nav_nearest_point",
-        "grid_move_to","grid_move_cell","grid_stop","grid_arrived","grid_set_tile_cost","grid_set_cell_cost","grid_block","grid_clear",
-        "bt_set","bt_get","bt_run","bt_stop",
-        "spline_point","spline_length","follower_set_speed","line_set_points","trail_clear",
-        "spawner_start","spawner_stop","spawner_alive",
-        "build_enter","build_exit","build_toggle","build_active","build_link_mode","build_palette_clear",
-        "build_palette_add","build_palette_select","build_selected","build_save","build_load","build_exists",
-        "build_clear","build_undo","build_redo","build_count","logic_press","logic_state",
-        "nearest_tag","set_cam","move_cam","set_cam_zoom","set_bg","set_light","set_ambient",
-        "load_scene","load_scene_index","load_next_scene","screen_w","screen_h",
-        // components / fx
-        "set_text","set_color","set_texture","set_mesh","emit","play_anim","play_sound",
-        "set_progress","set_fill",
-        // save / prefs / data
-        "save","load","save_has","save_delete","save_exists","save_clear","prefs_set",
-        "prefs_get","prefs_get_str","prefs_save","prefs_load","data_num","data_str","data_set",
-        // math / util
-        "abs","sin","cos","tan","sqrt","pow","floor","ceil","round","min","max","sign",
-        "clamp","clamp01","lerp","distance","random","random_range","print","log","format",
-        // tweens
-        "tween_move","tween_move3","tween_scale","tween_rotate","tween_color","tween_fade",
-        "tween_loop_move","tween_punch_scale","tween_shake",
-        "tween_move_by","tween_move_world","tween_rotate_to","tween_rotate3","tween_scale_xy",
-        "tween_ui_move","tween_ui_size","tween_jump","tween_path","tween_path_smooth",
-        "tween_loop_scale","tween_loop_rotate","tween_number","tween_text","tween_var","tween_call",
-        "tween_punch_pos","tween_punch_rotate","tween_shake_rotate","tween_shake_scale","flash",
-        "tween_loops","tween_delay","tween_ease","tween_speed","tween_unscaled","tween_clock","tween_prop","tween_from",
-        "tween_relative","tween_set_id","tween_keep","tween_on_complete","tween_on_step",
-        "tween_on_start","tween_on_update","tween_kill","tween_pause","tween_play","tween_toggle",
-        "tween_restart","tween_rewind","tween_complete","tween_backwards","tween_goto",
-        "tween_playing","tween_active","tween_progress","tween_kill_all","tween_pause_all",
-        "tween_play_all","is_tweening","tween_kill_id","tween_pause_id","tween_play_id",
-        "tween_restart_id","seq_new","seq_append","seq_join","seq_insert","seq_interval",
-        "seq_prepend_interval","seq_callback","seq_insert_callback",
-        "tween_tag","tween_speed_based","tween_decay","tween_kill_tag","tween_pause_tag","tween_play_tag",
-        "tween_complete_tag","tween_rewind_id","seq_prepend","seq_join_callback",
-        // networking
-        "net_host","net_join","net_send","net_poll","net_is_server",
-        // ui
-        "ui_set_text","ui_get_text","ui_set_focus","ui_clicked","ui_slider_value","ui_set_slider",
-        "ui_toggle_value","ui_set_progress","ui_get_rotation","ui_set_rotation","ui_get_scale","ui_set_scale",
-        "set_swatch","swatch_value", // grok/ui-color
-        "kick_spread","set_spread","set_spread_recover","set_radial","set_slot","slot_value", // grok/ui-hud
-
-        // grok/ui-toast
-        "toast_push","set_toast_duration","set_toast_corner","set_toast_max","toast_count",
-        "modal_open","modal_close","set_modal_style","set_modal_title","set_modal_message",
-        "set_modal_confirm","set_modal_cancel",
-        // raycast
-        "raycast","raycast3","overlap_circle","raycast_all3","sphere_cast3","box_cast3","overlap_box3",
-    };
-    // Merge in EVERY builtin the OkayScript VM actually registers (hundreds), so
-    // autocomplete covers the whole language, not just this hand-picked subset.
-    // Built once, lazily, from a throwaway VM.
-    static std::vector<std::string> merged = [] {
-        std::vector<std::string> m = w;
-        std::unordered_set<std::string> seen(m.begin(), m.end());
-        if (auto vm = CreateScriptVM("okayscript"))
-            for (auto& n : vm->BuiltinNames())
-                if (seen.insert(n).second) m.push_back(n);
-        return m;
-    }();
-    return merged;
-}
-
-// Append identifiers found in the current document to a completion pool (deduped),
-// so the editor also suggests the script's own variables and function names — the
-// "current document symbols" source real IDEs include alongside the API list.
-static void AddBufferIdentifiers(const char* src, std::vector<std::string>& pool) {
-    if (!src) return;
-    std::unordered_set<std::string> have(pool.begin(), pool.end());
-    std::string id;
-    auto flush = [&]() {
-        if (id.size() >= 3 && !std::isdigit((unsigned char)id[0]) && !have.count(id)) {
-            have.insert(id); pool.push_back(id);
-        }
-        id.clear();
-    };
-    for (const char* p = src; *p; ++p) {
-        char ch = *p;
-        if (std::isalnum((unsigned char)ch) || ch == '_') id += ch;
-        else flush();
-    }
-    flush();
-}
-
-// Signature (parameter list) for a builtin, shown as a hint while typing a call —
-// e.g. inside `move_toward(` the editor floats "move_toward(x, y, step)". Empty for
-// unknown names. A curated subset of the most-used OkayScript API (see docs).
-static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() {
-    static const std::unordered_map<std::string, std::string> sig = {
-        // transform / movement
-        {"move","move(dx, dy)"}, {"set_pos","set_pos(x, y)"}, {"set_x","set_x(v)"}, {"set_y","set_y(v)"},
-        {"rotate","rotate(deg)"}, {"move_toward","move_toward(x, y, step)"}, {"look_at","look_at(\"name\")"},
-        // high-level one-liners (dt-scaled internally)
-        {"walk","walk(dx, dy, speed)"}, {"spin","spin(degPerSec)"}, {"on_key_move","on_key_move(speed)"},
-        {"bob","bob(amount, speed)"}, {"pulse","pulse(amount, speed)"}, {"wander","wander(speed)"},
-        {"explode","explode([count])"}, {"flash","flash(r, g, b [, dur])"}, {"shake","shake(intensity, dur)"}, {"face","face(\"name\")"},
-        {"move_to","move_to(x, y, speed)"}, {"score","score()"}, {"add_score","add_score(n)"}, {"set_score","set_score(n)"},
-        {"timer","timer(\"name\", seconds)"}, {"set_visible","set_visible(on)"}, {"show","show()"}, {"hide","hide()"}, {"blink","blink(rate)"},
-        {"keep_in_box","keep_in_box(minX, minY, maxX, maxY)"}, {"wrap_in_box","wrap_in_box(minX, minY, maxX, maxY)"}, {"bounce_in_box","bounce_in_box(minX, minY, maxX, maxY)"},
-        {"follow","follow(\"name\", speed[, stopDist])"}, {"patrol","patrol(x1, y1, x2, y2, speed)"}, {"orbit","orbit(\"name\", radius, degPerSec)"},
-        {"move3","move3(dx, dy, dz)"}, {"set_pos3","set_pos3(x, y, z)"}, {"set_z","set_z(v)"},
-        {"rotate3","rotate3(x, y, z)"}, {"set_scale","set_scale(s)"}, {"set_scale3","set_scale3(x, y, z)"},
-        {"move_forward","move_forward(d)"}, {"move_right","move_right(d)"}, {"look_at3","look_at3(\"name\")"},
-        // physics
-        {"set_velocity","set_velocity(x, y)"}, {"set_velocity3","set_velocity3(x, y, z)"},
-        {"add_force","add_force(x, y)"}, {"add_force3","add_force3(x, y, z)"},
-        {"add_impulse","add_impulse(x, y)"}, {"jump","jump(v)"}, {"set_gravity","set_gravity(x, y)"},
-        // input
-        {"key","key(\"x\")"}, {"key_down","key_down(\"x\")"}, {"key_up","key_up(\"x\")"},
-        {"gamepad","gamepad(btn)"},
-        // object / scene
-        {"find","find(\"name\")"}, {"spawn","spawn(\"prefab\", x, y)"}, {"spawn3","spawn3(\"prefab\", x, y, z)"},
-        {"destroy","destroy(\"name\")"}, {"destroy_obj","destroy_obj(\"name\")"}, {"dist_to","dist_to(\"name\")"},
-        {"count_tag","count_tag(\"tag\")"}, {"nearest_tag","nearest_tag(\"tag\")"}, {"load_scene","load_scene(\"file\")"},
-        {"npc_goto","npc_goto(\"name\", x, y, z)"}, {"npc_stop","npc_stop(\"name\")"},
-        {"npc_busy","npc_busy(\"name\")"}, {"npc_state","npc_state(\"name\")"},
-        {"nav_move_to","nav_move_to(x, y, z)"}, {"nav_path_exists","nav_path_exists(x, y, z)"}, {"nav_path_length","nav_path_length(x, y, z)"}, {"nav_point_walkable","nav_point_walkable(x, y, z, maxDist)"}, {"nav_nearest_point","nav_nearest_point(x, y, z, maxDist)"}, {"nav_stop","nav_stop()"}, {"nav_arrived","nav_arrived()"}, {"nav_remaining","nav_remaining()"},
-        {"grid_move_to","grid_move_to(x, y)"}, {"grid_move_cell","grid_move_cell(x, y)"}, {"grid_stop","grid_stop()"}, {"grid_arrived","grid_arrived()"},
-        {"grid_set_tile_cost","grid_set_tile_cost(id, cost)"}, {"grid_set_cell_cost","grid_set_cell_cost(x, y, cost)"}, {"grid_block","grid_block(x, y)"}, {"grid_clear","grid_clear()"},
-        {"bt_set","bt_set(\"key\", value)"}, {"bt_get","bt_get(\"key\")"}, {"bt_run","bt_run(\"file.okaybt\")"}, {"bt_stop","bt_stop()"},
-        {"spline_point","spline_point(\"name\", t)"}, {"spline_length","spline_length(\"name\")"},
-        {"follower_set_speed","follower_set_speed(speed)"}, {"line_set_points","line_set_points(points)"}, {"trail_clear","trail_clear()"},
-        {"spawner_start","spawner_start(\"name\")"}, {"spawner_stop","spawner_stop(\"name\")"},
-        {"spawner_alive","spawner_alive(\"name\")"},
-        {"build_enter","build_enter()"}, {"build_exit","build_exit()"}, {"build_toggle","build_toggle()"},
-        {"build_active","build_active()"}, {"build_link_mode","build_link_mode(on)"},
-        {"build_palette_clear","build_palette_clear()"}, {"build_palette_add","build_palette_add(\"name\", \"prefab\", \"icon\")"},
-        {"build_palette_select","build_palette_select(slot)"}, {"build_selected","build_selected()"},
-        {"build_save","build_save(\"name\")"}, {"build_load","build_load(\"name\")"}, {"build_exists","build_exists(\"name\")"},
-        {"build_clear","build_clear()"}, {"build_undo","build_undo()"}, {"build_redo","build_redo()"},
-        {"build_count","build_count()"}, {"logic_press","logic_press(\"name\")"}, {"logic_state","logic_state(\"name\")"},
-        {"set_cam","set_cam(x, y)"}, {"move_cam","move_cam(dx, dy)"}, {"set_cam_zoom","set_cam_zoom(z)"},
-        {"camera_shake","camera_shake(strength)"}, {"camera_zoom_to","camera_zoom_to(zoom, seconds)"},
-        {"camera_dutch","camera_dutch(degrees)"}, {"camera_fov","camera_fov(degrees)"}, {"camera_follow","camera_follow(\"name\", smoothing)"},
-        {"Camera.Shake","Camera.Shake(\"impact\", strength)"}, {"Camera.BlendTo","Camera.BlendTo(\"shot\", seconds)"},
-        {"Camera.SetTarget","Camera.SetTarget(\"name\")"}, {"Camera.AddToGroup","Camera.AddToGroup(\"name\")"},
-        {"Camera.RemoveFromGroup","Camera.RemoveFromGroup(\"name\")"}, {"Camera.FovKick","Camera.FovKick(degrees, seconds)"},
-        {"Camera.SetFovOffset","Camera.SetFovOffset(degrees, seconds)"}, {"Camera.HitPulse","Camera.HitPulse(strength)"},
-        {"Camera.SetHandheld","Camera.SetHandheld(amount)"},
-        {"set_bg","set_bg(r, g, b)"}, {"set_light","set_light(x, y, z)"}, {"set_ambient","set_ambient(v)"},
-        // variables / prefs
-        {"set_var","set_var(\"name\", value)"}, {"get_var","get_var(\"name\")"}, {"add_var","add_var(\"name\", amount)"},
-        {"save_prefs","save_prefs(\"key\", value)"}, {"load_prefs","load_prefs(\"key\", default)"},
-        // math
-        {"abs","abs(x)"}, {"sqrt","sqrt(x)"}, {"pow","pow(base, exp)"}, {"min","min(a, b)"}, {"max","max(a, b)"},
-        {"clamp","clamp(v, lo, hi)"}, {"lerp","lerp(a, b, t)"}, {"distance","distance(x1, y1, x2, y2)"},
-        {"random","random()"}, {"random_range","random_range(lo, hi)"}, {"sin","sin(x)"}, {"cos","cos(x)"},
-        {"floor","floor(x)"}, {"ceil","ceil(x)"}, {"round","round(x)"}, {"print","print(value)"},
-        // tweens
-        {"tween_move","tween_move(x, y, dur)"}, {"tween_move3","tween_move3(x, y, z, dur)"},
-        {"tween_scale","tween_scale(s, dur)"}, {"tween_rotate","tween_rotate(deg, dur)"},
-        {"tween_fade","tween_fade(a, dur)"},
-        {"tween_tag","tween_tag(id, \"menu\")"}, {"tween_speed_based","tween_speed_based(id)"}, {"tween_decay","tween_decay(id, rate)"},
-        {"tween_kill_tag","tween_kill_tag(\"tag\"[, complete])"}, {"tween_pause_tag","tween_pause_tag(\"tag\")"},
-        {"tween_play_tag","tween_play_tag(\"tag\")"}, {"tween_complete_tag","tween_complete_tag(\"tag\")"},
-        {"tween_rewind_id","tween_rewind_id(\"name\")"},
-        {"seq_prepend","seq_prepend(seq, id)"}, {"seq_join_callback","seq_join_callback(seq, \"fn\")"},
-        // ui (immediate-mode + named)
-        {"ui_begin","ui_begin(\"Title\", x, y, w, h)"}, {"ui_text","ui_text(\"s\")"}, {"ui_button","ui_button(\"Label\")"},
-        {"ui_checkbox","ui_checkbox(\"Label\", on)"}, {"ui_slider","ui_slider(\"Label\", v, lo, hi)"},
-        {"ui_progress","ui_progress(t)"}, {"ui_set_text","ui_set_text(\"n\", \"s\")"}, {"ui_get_text","ui_get_text(\"n\")"},
-        {"ui_set_focus","ui_set_focus(\"n\")"},
-        {"ui_clicked","ui_clicked(\"n\")"}, {"ui_set_slider","ui_set_slider(\"n\", v)"}, {"ui_set_progress","ui_set_progress(\"n\", v)"},
-        {"ui_get_rotation","ui_get_rotation(\"n\")"}, {"ui_set_rotation","ui_set_rotation(\"n\", degrees)"},
-        {"ui_get_scale","ui_get_scale(\"n\")"}, {"ui_set_scale","ui_set_scale(\"n\", x, y)"},
-        {"set_swatch","set_swatch(\"n\", i)"}, {"swatch_value","swatch_value(\"n\")"}, // grok/ui-color
-        {"kick_spread","kick_spread(\"n\", px)"}, {"set_spread","set_spread(\"n\", px)"}, {"set_radial","set_radial(\"n\", v)"}, {"set_slot","set_slot(\"n\", i)"}, // grok/ui-hud
-        // grok/ui-controls
-        {"set_dropdown_search","set_dropdown_search(\"n\", on)"}, {"set_dropdown_max","set_dropdown_max(\"n\", rows)"},
-        {"set_scroll_inertia","set_scroll_inertia(\"n\", rate)"}, {"set_tabs_closable","set_tabs_closable(\"n\", on)"},
-        {"set_tooltip_delay","set_tooltip_delay(\"n\", seconds)"}, {"set_input_multiline","set_input_multiline(\"n\", on)"},
-        // grok/ui-toast
-        {"toast_push","toast_push(\"Title\", \"Body\", kind)"},
-        {"set_toast_duration","set_toast_duration(seconds)"}, {"set_toast_corner","set_toast_corner(n)"},
-        {"set_toast_max","set_toast_max(n)"}, {"toast_count","toast_count()"},
-        {"modal_open","modal_open()"}, {"modal_close","modal_close()"},
-        {"set_modal_style","set_modal_style(on)"}, {"set_modal_title","set_modal_title(\"s\")"},
-        {"set_modal_message","set_modal_message(\"s\")"}, {"set_modal_confirm","set_modal_confirm(\"s\")"},
-        {"set_modal_cancel","set_modal_cancel(\"s\")"},
-        // networking / raycast
-        {"net_send","net_send(\"msg\")"}, {"raycast","raycast(x, y, dx, dy)"}, {"raycast3","raycast3(x, y, z, dx, dy, dz)"},
-        {"overlap_circle","overlap_circle(x, y, r)"},
-        {"raycast_all3","raycast_all3(x, y, z, dx, dy, dz, dist)"}, {"sphere_cast3","sphere_cast3(x, y, z, dx, dy, dz, r, dist)"},
-        {"box_cast3","box_cast3(x, y, z, hx, hy, hz, dx, dy, dz, dist)"}, {"overlap_box3","overlap_box3(x, y, z, hx, hy, hz)"},
-        {"box_cast","box_cast(x, y, hx, hy, dx, dy, dist)"}, {"capsule_cast","capsule_cast(ax, ay, bx, by, r, dx, dy, dist)"},
-        {"overlap_box","overlap_box(x, y, hx, hy)"}, {"overlap_capsule","overlap_capsule(ax, ay, bx, by, r)"},
-        {"add_explosion_force","add_explosion_force(x, y, force, radius, up)"},
-        {"overlap_sphere3","overlap_sphere3(x, y, z, r)"},
-        // timers
-        {"after","after(seconds, \"func\")"}, {"every","every(seconds, \"func\")"}, {"cancel_timers","cancel_timers()"},
-        // high-level one-liners (call every frame from update)
-        {"follow","follow(\"name\", speed[, stopDist])"}, {"follow3","follow3(\"name\", speed[, stopDist])"},
-        {"flee","flee(\"name\", speed)"}, {"patrol","patrol(x1, y1, x2, y2, speed)"},
-        {"orbit","orbit(\"name\", radius, degPerSec)"}, {"on_key_move","on_key_move(speed)"},
-        {"platformer","platformer(speed[, jump])"}, {"on_key","on_key(\"key\", \"fn\")"},
-        {"smooth_follow","smooth_follow(\"name\", speed)"}, {"spring_to","spring_to(x, y[, speed])"},
-        {"aim","aim(x, y)"}, {"grid_snap","grid_snap(size)"},
-        {"stop","stop()"}, {"is_moving","is_moving()"}, {"face_velocity","face_velocity()"},
-        {"cooldown","cooldown(\"name\", seconds)"}, {"once","once(\"name\")"},
-        {"on_key_move3","on_key_move3(speed)"}, {"shoot_at","shoot_at(\"target\", \"prefab\", speed)"},
-        {"spawn_wave","spawn_wave(\"prefab\", count[, radius])"}, {"chase","chase(\"name\", speed[, stopDist])"},
-        // velocity axes
-        {"set_vx","set_vx(v)"}, {"set_vy","set_vy(v)"}, {"set_vz","set_vz(v)"}, {"set_z","set_z(v)"},
-        {"set_rot3","set_rot3(x, y, z)"},
-        // object / scene
-        {"obj_x","obj_x(\"name\")"}, {"obj_y","obj_y(\"name\")"}, {"obj_z","obj_z(\"name\")"},
-        {"tag","tag()"}, {"set_tag","set_tag(\"tag\")"}, {"has_tag","has_tag(\"tag\")"},
-        {"is_active","is_active()"}, {"set_active","set_active(on)"}, {"set_name","set_name(\"name\")"},
-        {"has_parent","has_parent()"}, {"set_parent","set_parent(\"name\")"},
-        {"child_count","child_count(\"name\")"}, {"get_child","get_child(\"name\", index)"}, {"parent_of","parent_of(\"name\")"},
-        {"hurt","hurt(\"name\", amount)"}, {"heal","heal(\"name\", amount)"}, {"add_xp","add_xp(\"name\", amount)"},
-        {"get_hp","get_hp(\"name\")"}, {"get_max_hp","get_max_hp(\"name\")"}, {"is_dead","is_dead([\"name\"])"},
-        {"set_light_intensity","set_light_intensity(\"name\", v)"}, {"set_light_range","set_light_range(\"name\", v)"},
-        {"set_light_angle","set_light_angle(\"name\", degrees)"}, {"set_light_color","set_light_color(\"name\", r, g, b)"},
-        {"cam_x","cam_x()"}, {"cam_y","cam_y()"}, {"cam_zoom","cam_zoom()"},
-        // render / look
-        {"set_color","set_color(r, g, b)"}, {"set_texture","set_texture(\"path\")"}, {"set_mesh","set_mesh(\"name\")"},
-        {"set_unlit","set_unlit(on)"}, {"set_emissive","set_emissive(r, g, b)"}, {"set_text","set_text(\"s\")"},
-        // animation (Character clips + layers)
-        {"play_anim","play_anim(\"clip\")"}, {"stop_anim","stop_anim()"}, {"set_anim","set_anim(\"clip\")"},
-        {"play_clip","play_clip(\"clip\")"}, {"play_clip_once","play_clip_once(\"clip\")"},
-        {"play_action","play_action(\"Death\" [, blend])"}, {"is_in_action","is_in_action()"},
-        {"action_time","action_time()"}, {"die","die([\"back\"])"}, {"revive","revive()"}, {"is_dead","is_dead()"},
-        {"dive","dive()"}, {"can_dive","can_dive()"},
-        {"sit","sit([\"Chair\"])"}, {"stand_up","stand_up()"}, {"is_sitting","is_sitting()"},
-        {"interact","interact()"}, {"seat_prompt","seat_prompt()"},
-        {"hit_react","hit_react(\"back\" [, 1])"},
-        {"roll","roll(\"forward\")"}, {"dodge","dodge(\"left\")"},
-        {"vault","vault()"}, {"mantle","mantle()"}, {"ledge_grab","ledge_grab()"},
-        {"climb_up","climb_up()"}, {"let_go","let_go()"}, {"is_hanging","is_hanging()"}, {"shimmy","shimmy(-1..1)"},
-        {"stop_clip","stop_clip()"}, {"is_playing_clip","is_playing_clip()"},
-        {"play_layer","play_layer(\"clip\", \"part\")"}, {"stop_layer","stop_layer()"}, {"anim_event","anim_event(\"name\")"},
-        {"play_sound","play_sound(\"name\")"}, {"set_volume","set_volume(v)"},
-        // particles
-        {"emit","emit(n)"}, {"particles_on","particles_on(on)"}, {"particles_alive","particles_alive()"},
-        // tilemap
-        {"set_tile","set_tile(x, y, id)"}, {"get_tile","get_tile(x, y)"}, {"tile_w","tile_w()"}, {"tile_h","tile_h()"},
-        // arrays / lists
-        {"array","array(v1, v2, ...)"}, {"count","count(arr)"}, {"push","push(arr, value)"}, {"pop","pop(arr)"},
-        {"contains","contains(arr, value)"}, {"len","len(x, y)"},
-        {"first","first(arr)"}, {"last","last(arr)"}, {"clear","clear(arr_or_map)"},
-        {"insert_at","insert_at(arr, index, value)"}, {"slice","slice(arr, start, end)"},
-        {"range","range(n)  |  range(lo, hi[, step])"}, {"sort_str","sort_str(arr)"},
-        {"remove_at","remove_at(arr, index)"}, {"index_of","index_of(arr, value)"},
-        {"sum","sum(arr)"}, {"min_of","min_of(arr)"}, {"max_of","max_of(arr)"},
-        {"reverse","reverse(arr)"}, {"sort_num","sort_num(arr)"}, {"shuffle","shuffle(arr)"}, {"choose","choose(arr)"},
-        // maps / dictionaries
-        {"map","map()"}, {"map_set","map_set(m, \"key\", value)"}, {"map_get","map_get(m, \"key\")"},
-        {"map_has","map_has(m, \"key\")"}, {"map_remove","map_remove(m, \"key\")"}, {"map_keys","map_keys(m)"},
-        {"map_values","map_values(m)"}, {"map_count","map_count(m)"}, {"map_clear","map_clear(m)"},
-        {"map_merge","map_merge(dst, src)"},
-        // vectors
-        {"vec3","vec3(x, y, z)"}, {"vec2","vec2(x, y)"}, {"vec_add","vec_add(a, b)"}, {"vec_sub","vec_sub(a, b)"},
-        {"vec_scale","vec_scale(v, s)"}, {"vec_length","vec_length(v)"}, {"vec_dot","vec_dot(a, b)"},
-        {"vec_cross","vec_cross(a, b)"}, {"vec_normalize","vec_normalize(v)"}, {"vec_distance","vec_distance(a, b)"},
-        {"vec_lerp","vec_lerp(a, b, t)"}, {"vec_reflect","vec_reflect(dir, normal)"},
-        {"vec_clamp_len","vec_clamp_len(v, maxLen)"}, {"vec_x","vec_x(v)"}, {"vec_y","vec_y(v)"}, {"vec_z","vec_z(v)"},
-        // easing curves (t in 0..1)
-        {"ease_in","ease_in(t)"}, {"ease_out","ease_out(t)"}, {"ease_in_out","ease_in_out(t)"},
-        {"ease_in_cubic","ease_in_cubic(t)"}, {"ease_out_cubic","ease_out_cubic(t)"},
-        {"ease_in_out_cubic","ease_in_out_cubic(t)"}, {"ease_back","ease_back(t)"},
-        {"ease_elastic","ease_elastic(t)"}, {"ease_bounce","ease_bounce(t)"}, {"ease_curve","ease_curve(t, \"OutBack\")"},
-        // time (the C#-style Time.* methods are keyed by their member name: the hint shows after `Time.HitStop(`)
-        {"session_time","session_time()"}, {"session_unscaled_time","session_unscaled_time()"}, {"session_frame_count","session_frame_count()"},
-        {"unscaled_dt","unscaled_dt()"}, {"is_paused","is_paused()"}, {"hitch_count","hitch_count()"},
-        {"push_pause","push_pause(\"reason\")"}, {"pop_pause","pop_pause(\"reason\")"}, {"is_paused_by","is_paused_by(\"reason\")"},
-        {"hit_stop","hit_stop(seconds [, scale])"}, {"slow_motion","slow_motion(scale, seconds)"}, {"ramp_timescale","ramp_timescale(target, seconds)"},
-        {"HitStop","Time.HitStop(seconds, scale)"}, {"SlowMotion","Time.SlowMotion(scale, seconds)"}, {"RampTimeScale","Time.RampTimeScale(target, seconds)"},
-        {"PushPause","Time.PushPause(reason)"}, {"PopPause","Time.PopPause(reason)"}, {"IsPausedBy","Time.IsPausedBy(reason)"},
-        // higher-order array ops (named-function callbacks)
-        {"call","call(\"fn\"[, args...])"}, {"map_fn","map_fn(arr, \"fn\")"}, {"filter_fn","filter_fn(arr, \"fn\")"},
-        {"reduce_fn","reduce_fn(arr, \"fn\", init)"}, {"for_each","for_each(arr, \"fn\")"}, {"find_fn","find_fn(arr, \"fn\")"},
-        {"any_fn","any_fn(arr, \"fn\")"}, {"all_fn","all_fn(arr, \"fn\")"}, {"count_fn","count_fn(arr, \"fn\")"},
-        // bitwise / integer
-        {"bit_and","bit_and(a, b)"}, {"bit_or","bit_or(a, b)"}, {"bit_xor","bit_xor(a, b)"}, {"bit_not","bit_not(a)"},
-        {"shl","shl(a, n)"}, {"shr","shr(a, n)"}, {"bit_set","bit_set(v, bit)"}, {"bit_clear","bit_clear(v, bit)"},
-        {"bit_toggle","bit_toggle(v, bit)"}, {"bit_test","bit_test(v, bit)"}, {"hex","hex(n) -> \"0x..\""},
-        {"parse_int","parse_int(s[, base])"},
-        // JSON
-        {"to_json","to_json(value) -> string"}, {"from_json","from_json(\"...\") -> value"},
-        {"json_stringify","json_stringify(value)"}, {"json_parse","json_parse(\"...\")"},
-        // type introspection
-        {"typeof","typeof(v) -> \"number|string|bool|array|map|vec3|null\""},
-        {"is_array","is_array(v)"}, {"is_map","is_map(v)"}, {"is_str","is_str(v)"},
-        {"is_num","is_num(v)"}, {"is_bool","is_bool(v)"}, {"fract","fract(x)"},
-        // strings
-        {"str_len","str_len(s)"}, {"str_find","str_find(s, sub)"}, {"str_contains","str_contains(s, sub)"},
-        {"str_repeat","str_repeat(s, n)"}, {"starts_with","starts_with(s, prefix)"}, {"ends_with","ends_with(s, suffix)"},
-        {"upper","upper(s)"}, {"lower","lower(s)"}, {"substr","substr(s, start[, n])"}, {"char_at","char_at(s, i)"},
-        {"replace","replace(s, find, repl)"}, {"trim","trim(s)"}, {"trim_start","trim_start(s)"}, {"trim_end","trim_end(s)"},
-        {"capitalize","capitalize(s)"}, {"title_case","title_case(s)"}, {"str_reverse","str_reverse(s)"},
-        {"repeat","repeat(s, n)"}, {"split","split(s, sep)"}, {"join","join(arr, sep)"},
-        {"pad_left","pad_left(s, width[, fill])"}, {"pad_right","pad_right(s, width[, fill])"},
-        {"to_num","to_num(s)"}, {"to_str","to_str(v)"}, {"format","format(\"{} {}\", a, b)"},
-        // ui widgets
-        {"set_slider","set_slider(v)"}, {"set_toggle","set_toggle(on)"}, {"set_progress","set_progress(t)"},
-        // grok/ui-options
-        {"set_slider_step","set_slider_step(step)"}, {"set_slider_format","set_slider_format(\"{v}\")"},
-        {"set_bar_segments","set_bar_segments(n)"}, {"set_bar_trail","set_bar_trail(seconds)"},
-        {"set_bar_format","set_bar_format(\"{n}%\")"}, {"set_button_ease","set_button_ease(ease, seconds)"},
-        {"ui_set_slider_step","ui_set_slider_step(\"n\", step)"}, {"ui_set_button_ease","ui_set_button_ease(\"n\", ease, seconds)"},
-        {"set_tab","set_tab(i)"}, {"set_tab_badge","set_tab_badge(i, count)"}, {"set_tab_enabled","set_tab_enabled(i, on)"},
-        {"ui_set_tab","ui_set_tab(\"n\", i)"}, {"ui_set_tab_badge","ui_set_tab_badge(\"n\", i, count)"},
-        {"ui_set_tab_enabled","ui_set_tab_enabled(\"n\", i, on)"}, {"ui_tab_value","ui_tab_value(\"n\")"},
-        // math checks
-        {"is_nan","is_nan(x)"}, {"is_finite","is_finite(x)"}, {"acos","acos(x)"}, {"asin","asin(x)"},
-        {"atan","atan(x)"}, {"atan2","atan2(y, x)"}, {"sign","sign(x)"},
-        {"approach","approach(current, target, step)"}, {"approximately","approximately(a, b)"}, {"angle_to","angle_to(\"name\")"},
-        // PlayFab (cloud services; blocking web calls — use from start())
-        {"pf_login","pf_login(\"titleId\", \"customId\")"},
-        {"pf_login_password","pf_login_password(\"titleId\", \"user\", \"pass\")"},
-        {"pf_register","pf_register(\"titleId\", \"user\", \"pass\")"},
-        {"pf_name","pf_name(\"display name\")"}, {"pf_set_stat","pf_set_stat(\"stat\", value)"},
-        {"pf_leaderboard_top","pf_leaderboard_top(\"stat\"[, n])"},
-        {"pf_save","pf_save(\"key\", \"value\")"}, {"pf_load","pf_load(\"key\")"},
-        {"pf_delete","pf_delete(\"key\")"},
-    };
-    return sig;
-}
-
-// Signature (parameter list) for a builtin, shown as a hint while typing a call —
-// e.g. inside `move_toward(` the editor floats "move_toward(x, y, step)". Empty for
-// unknown names. A curated subset of the most-used OkayScript API (see docs).
-static const std::string* ScriptSignature(const std::string& name) {
-    const auto& sig = ScriptSignatureMap();
-    auto it = sig.find(name);
-    return it == sig.end() ? nullptr : &it->second;
-}
-
-// Completion "kind" — drives the little colored tag the popup shows before each item,
-// so the list reads at a glance the way a real IDE's does (keyword / type / function /
-// local). The tag letter + color are returned together.
-enum class AcKind { Keyword, Type, Function, Variable };
-static AcKind ClassifyCompletion(const std::string& name) {
-    static const std::unordered_set<std::string> kw = {
-        "if","else","for","while","do","return","break","continue","switch","case",
-        "var","function","class","new","public","private","true","false","foreach","in",
-        "try","catch","throw","and","or","not","null","this","const","let","then","end",
-        "void","int","float","double","bool","string","char","static","readonly","override",
-        "enum","yield","default"
-    };
-    static const std::unordered_set<std::string> types = {
-        "Vector3","Vector2","Color","Mathf","Input","Time","Debug","Random","Physics2D",
-        "SceneManager","Quaternion","transform","gameObject",
-        "IEnumerator","WaitForSeconds","List","Dictionary","KeyValuePair","Rigidbody2D",
-        "Rigidbody","SpriteRenderer","Animator","AudioSource","Collider2D","Collision2D","Collider",
-        "Collision","KeyCode","GameObject","Transform","SerializeField","Header","Range","Tooltip"
-    };
-    if (kw.count(name))    return AcKind::Keyword;
-    if (types.count(name)) return AcKind::Type;
-    if (ScriptSignature(name)) return AcKind::Function;
-    return AcKind::Variable;
-}
-static void AcKindTag(AcKind k, char& letter, ImU32& col) {
-    switch (k) {
-        case AcKind::Keyword:  letter = 'k'; col = IM_COL32(204, 120, 50, 255);  break; // orange
-        case AcKind::Type:     letter = 'T'; col = IM_COL32(102, 197, 204, 255); break; // teal
-        case AcKind::Function: letter = 'f'; col = IM_COL32(220, 200, 120, 255); break; // yellow
-        default:               letter = 'v'; col = IM_COL32(140, 175, 220, 255); break; // blue
-    }
-}
-
-// Fuzzy subsequence match: are all of `pat`'s chars found in `cand`, in order, case-
-// insensitively? Returns a score (higher = better: contiguous runs, a match at a word
-// start, and an early first-match all score higher) or -1 for no match. This is what
-// lets "mvfwd" find "move_forward" the way Rider/IntelliJ do.
-static int FuzzyScore(const std::string& pat, const std::string& cand) {
-    if (pat.empty()) return 0;
-    int score = 0, ci = 0, run = 0, firstAt = -1;
-    for (std::size_t pi = 0; pi < pat.size(); ) {
-        char pc = (char)std::tolower((unsigned char)pat[pi]);
-        bool found = false;
-        for (; ci < (int)cand.size(); ++ci) {
-            if ((char)std::tolower((unsigned char)cand[ci]) == pc) {
-                if (firstAt < 0) firstAt = ci;
-                bool wordStart = (ci == 0) || cand[ci-1] == '_' ||
-                                 (std::islower((unsigned char)cand[ci-1]) && std::isupper((unsigned char)cand[ci]));
-                score += 1 + run * 2 + (wordStart ? 4 : 0);
-                ++run; ++ci; ++pi; found = true; break;
-            } else run = 0;
-        }
-        if (!found) return -1;
-    }
-    if (firstAt == 0) score += 6;               // matched from the very start
-    score -= firstAt > 0 ? firstAt : 0;         // prefer earlier first-hit
-    return score;
-}
-
-// A one-line human description for a builtin, shown under its signature in the
-// hover tooltip and autocomplete. Only the less-obvious / newer builtins are
-// documented; anything missing simply shows no description.
-static const std::string* ScriptDoc(const std::string& name) {
-    static const std::unordered_map<std::string, std::string> doc = {
-        // high-level one-liners (call each frame from update)
-        {"walk","Move in a direction (dx,dy) at `speed` — dt-scaled, so no `* dt` needed."},
-        {"spin","Rotate `degPerSec` degrees each second — dt-scaled (smooth spinning)."},
-        {"bob","Hover up and down around the start height by `amount` at `speed` (juice)."},
-        {"pulse","Gently grow and shrink around normal size by `amount` at `speed` (juice)."},
-        {"wander","Roam in a random direction, picking a new one about once a second."},
-        {"explode","Burst `count` particles AND destroy this object — the classic death effect, one call."},
-        {"flash","Snap to color (r,g,b), then fade back to the current color over `dur` (hit feedback)."},
-        {"shake","Shake this object with `intensity`, decaying over `dur` seconds."},
-        {"face","Turn to look at a named object (2D)."},
-        {"move_to","Walk toward a world point (x,y) at `speed`, stopping on arrival — dt-scaled."},
-        {"score","Read the shared score value."},
-        {"add_score","Add `n` to the shared score (short for set/get) — returns the new total."},
-        {"set_score","Set the shared score to `n`."},
-        {"timer","Returns true about once every `seconds` — no manual accumulator. if (timer(\"spawn\", 2)) {...}"},
-        {"set_visible","Show/hide this object's graphics without deactivating it (its script keeps running)."},
-        {"show","Show this object's graphics."},
-        {"hide","Hide this object's graphics (but keep the script running)."},
-        {"blink","Flash this object's graphics on/off at `rate` (invincibility / pickups)."},
-        {"keep_in_box","Clamp this object inside a rectangle (stay on screen)."},
-        {"wrap_in_box","Teleport to the opposite edge when leaving a rectangle (asteroids-style)."},
-        {"bounce_in_box","Reverse the Rigidbody2D velocity at each wall of a rectangle (ball/pong)."},
-        {"on_key_move","WASD/arrow keys move this object at `speed` (uses a Rigidbody2D if present)."},
-        {"follow","Chase a named object on the XY plane at `speed`, stopping `stopDist` away."},
-        {"follow3","Chase a named object in full 3D at `speed`, stopping `stopDist` away."},
-        {"chase","Chase a named object (alias of follow)."},
-        {"flee","Run directly away from a named object at `speed`."},
-        {"patrol","Walk back and forth between (x1,y1) and (x2,y2) at `speed`."},
-        {"orbit","Circle a named target at `radius`, turning `degPerSec` each second."},
-        {"platformer","A whole 2D side-scroller controller: A/D or Left/Right move at `speed`, W/Up jumps by `jump` (uses a Rigidbody2D). dt-scaled."},
-        {"on_key","Call this script's function `fn` the frame `key` is pressed — event-style input, no if/edge bookkeeping."},
-        {"smooth_follow","Chase a named object with easing (exponential smoothing) so it glides in at `speed` — dt-scaled."},
-        {"spring_to","Ease toward a world point (x,y) at `speed`, slowing as it arrives (cameras, cursors, snapping) — dt-scaled."},
-        {"aim","Rotate (Z) to face a world point (x,y) — turrets, arrows, look-where-you-move."},
-        {"grid_snap","Snap this object's position to the nearest multiple of `size` on X and Y (tile / building games)."},
-        {"stop","Zero this object's Rigidbody velocity (halt in place)."},
-        {"is_moving","True while this object's Rigidbody2D is moving (drive walk/idle anim)."},
-        {"face_velocity","Rotate (Z) to point the way the Rigidbody2D is moving."},
-        {"cooldown","True (and restarts the timer) only once every `seconds` — shooting, dashes, abilities: if (cooldown(\"shoot\", 0.3)) {...}"},
-        {"once","True exactly the first time it's reached (per name) — one-time events with no manual flag."},
-        {"on_key_move","WASD/arrow keys move this object on the XY plane (uses a Rigidbody2D if present)."},
-        {"on_key_move3","WASD/arrow keys move this object on the XZ ground plane (uses a Rigidbody3D if present)."},
-        {"shoot_at","Spawn a prefab projectile at self, flying toward a named target at `speed`."},
-        {"spawn_wave","Spawn `count` copies of a prefab in a ring of `radius` around self."},
-        // arrays
-        {"array","Make an array from the given values."},
-        {"count","Number of items in an array."},
-        {"push","Append a value to the end of an array."},
-        {"pop","Remove and return the last item of an array."},
-        {"first","First item of an array (or null if empty)."},
-        {"last","Last item of an array (or null if empty)."},
-        {"clear","Empty an array or map in place."},
-        {"insert_at","Insert a value at an index, shifting the rest right."},
-        {"remove_at","Remove the item at an index."},
-        {"slice","A sub-array from start up to (not including) end. Negative indices count from the end."},
-        {"range","Build a numeric array: range(n), range(lo,hi) or range(lo,hi,step)."},
-        {"contains","True if the array holds the given value."},
-        {"index_of","Index of the first matching value, or -1."},
-        {"sum","Add up all numbers in an array."},
-        {"min_of","Smallest number in an array."},
-        {"max_of","Largest number in an array."},
-        {"reverse","Reverse an array in place."},
-        {"sort_num","Sort an array ascending by number."},
-        {"sort_str","Sort an array ascending by text."},
-        {"shuffle","Randomly reorder an array in place."},
-        {"choose","Return a random item from an array."},
-        // maps
-        {"map","Make an empty dictionary (string keys -> values)."},
-        {"map_set","Set a key to a value in a map."},
-        {"map_get","Read the value at a key (or null)."},
-        {"map_has","True if the map contains the key."},
-        {"map_remove","Delete a key from a map."},
-        {"map_keys","An array of the map's keys."},
-        {"map_values","An array of the map's values."},
-        {"map_count","Number of entries in a map."},
-        {"map_clear","Remove all entries from a map."},
-        {"map_merge","Copy src's entries into dst (src wins on conflict)."},
-        // higher-order
-        {"call","Call a function by name, passing any extra arguments."},
-        {"map_fn","New array of fn(element) for each element."},
-        {"filter_fn","Keep only elements where fn(element) is true."},
-        {"reduce_fn","Fold an array left: acc = fn(acc, element)."},
-        {"for_each","Call fn(element) for every element."},
-        {"find_fn","First element where fn(element) is true (or null)."},
-        {"any_fn","True if fn(element) is true for any element."},
-        {"all_fn","True if fn(element) is true for every element."},
-        {"count_fn","How many elements satisfy fn(element)."},
-        // json
-        {"to_json","Serialize any value (arrays/maps too) to a JSON string."},
-        {"from_json","Parse a JSON string into values/arrays/maps."},
-        {"json_stringify","Alias of to_json."},
-        {"json_parse","Alias of from_json."},
-        // type introspection
-        {"typeof","Name the value's type: number, string, bool, array, map, vec3 or null."},
-        {"is_array","True if the value is an array."},
-        {"is_map","True if the value is a map."},
-        {"is_str","True if the value is a string."},
-        {"is_num","True if the value is a number."},
-        {"is_bool","True if the value is a boolean."},
-        // strings
-        {"upper","Uppercase a string."},
-        {"lower","Lowercase a string."},
-        {"trim","Strip leading and trailing whitespace."},
-        {"trim_start","Strip leading whitespace."},
-        {"trim_end","Strip trailing whitespace."},
-        {"capitalize","Uppercase the first letter."},
-        {"title_case","Uppercase the first letter of each word."},
-        {"str_reverse","Reverse the characters of a string."},
-        {"substr","A substring from start for n characters."},
-        {"replace","Replace every occurrence of a substring."},
-        {"split","Split a string into an array on a separator."},
-        {"join","Join an array into a string with a separator."},
-        {"repeat","Repeat a string n times."},
-        {"format","Fill each {} in the template with the next argument."},
-        // math / easing
-        {"fract","Fractional part of x (x - floor(x))."},
-        {"clamp","Constrain v to the range [lo, hi]."},
-        {"lerp","Linearly interpolate from a to b by t (0..1)."},
-        {"smoothstep","Ease-in-out interpolate from a to b by t."},
-        {"ease_in","Quadratic ease-in for t in 0..1."},
-        {"ease_out","Quadratic ease-out for t in 0..1."},
-        {"ease_in_out","Quadratic ease-in-out for t in 0..1."},
-        {"ease_in_cubic","Cubic ease-in for t in 0..1."},
-        {"ease_out_cubic","Cubic ease-out for t in 0..1."},
-        {"ease_in_out_cubic","Cubic ease-in-out for t in 0..1."},
-        {"ease_back","Ease with a slight backward overshoot."},
-        {"ease_elastic","Springy elastic ease-out."},
-        {"ease_bounce","Bouncing ease-out."},
-        {"ease_curve","The eased value of t (0..1) for any ease the tween calls take: a name (\"OutBack\") or curve text (\"cubic-bezier(0.4,0,0.2,1)\", \"steps(4)\"). Text it does not know leaves t as it is."},
-        {"session_time","Game seconds since this Play began (time() keeps counting across Plays)."},
-        {"session_unscaled_time","Real seconds since this Play began: a pause, slow motion and hit stops do not change it."},
-        {"session_frame_count","Frames since this Play began."},
-        {"unscaled_dt","Real seconds of the last frame: not slowed by the time scale, a hit stop or a pause (animate a menu with it)."},
-        {"is_paused","True while the game is paused (a menu, a cutscene, the pause button)."},
-        {"hitch_count","Frames that took over a tenth of a second since this Play began."},
-        {"push_pause","Pause the game for a reason of your own (\"dialogue\", \"shop\"): it stays paused until every reason is let go."},
-        {"pop_pause","Let go of one hold of that reason. False when nothing held it."},
-        {"is_paused_by","True while that reason is holding the pause."},
-        {"hit_stop","A freeze frame (scale 0, the default) or a brief slow-down for an impact: real seconds, ends by itself."},
-        {"slow_motion","Bullet time: slow_motion(0.2, 2) runs at a fifth speed for two real seconds, then back to normal."},
-        {"ramp_timescale","Ease the time scale to `target` over `seconds` real seconds, in a straight line."},
-        {"HitStop","A freeze frame or a brief slow-down for an impact: for `seconds` real seconds the game runs at `scale` (0 = frozen), then goes back by itself."},
-        {"SlowMotion","Bullet time: run at `scale` (0.2 = a fifth) for `seconds` real seconds, then back to normal. Composes with Time.timeScale."},
-        {"RampTimeScale","Ease Time.timeScale to `target` over `seconds` real seconds, in a straight line."},
-        {"PushPause","Hold the game paused for a reason of your own (\"dialogue\", \"shop\"); it stays paused until every reason is let go."},
-        {"PopPause","Let go of one hold of that reason. False when nothing held it."},
-        {"IsPausedBy","True while that reason is holding the pause."},
-        // grok/ui-color
-        {"set_swatch","Select a swatch on a named color picker. Fires on_change when it changes."},
-        {"swatch_value","The selected swatch index on a named color picker, or -1."},
-        // grok/ui-hud
-        {"kick_spread","Push a named crosshair's ticks apart. They ease back while its recover rate is above 0."},
-        {"set_spread","Set a named crosshair's extra gap, in pixels."},
-        {"set_spread_recover","Pixels per second a named crosshair's extra gap eases back to 0. 0 keeps it."},
-        {"set_radial","Set a named radial progress fill, from 0 to 1."},
-        {"set_radial_thickness","Ring width in pixels. 0 draws a pie."},
-        {"set_radial_start","Where a named radial starts, in degrees. 0 is 12 o'clock."},
-        {"set_radial_spin","Spin a named radial as a loader."},
-        {"set_radial_clockwise","Fill a named radial clockwise."},
-        {"set_radial_percent","Show a named radial's fill as a percent."},
-        {"set_slot","Select a slot on a named slot grid. -1 clears it."},
-        {"slot_value","The selected slot on a named grid, or -1."},
-        // grok/ui-controls
-        {"set_dropdown_search","Turn a named dropdown's search row on or off."},
-        {"set_dropdown_max","Cap how many options an open dropdown shows. 0 shows all."},
-        {"set_dropdown_icon","Set the short glyph in front of one dropdown option."},
-        {"set_scroll_inertia","Wheel glide for a named scroll view. 0 scrolls immediately."},
-        {"set_scroll_elastic","Let a named scroll view pass its ends, then spring back."},
-        {"set_scroll_bar","Scrollbar style: 0 usual, 1 thin, 2 hidden until scrolling."},
-        {"set_tabs_closable","Draw an X on each tab of a named tab bar."},
-        {"close_tab","Remove one tab. Fires on_tab_close."},
-        {"set_tooltip_rich","Draw <b> and #rrggbb in a named tooltip."},
-        {"set_tooltip_offset","Move a tooltip relative to the cursor. 14, 14 is the usual spot."},
-        {"set_tooltip_delay","Seconds a named tooltip waits before it shows."},
-        {"set_input_multiline","Enter inserts a newline in a named text field."},
-        {"set_input_limit","Character limit of a named text field."},
-        {"set_input_type","0 standard, 1 integer, 2 decimal, 3 password."},
-        // grok/ui-toast
-        {"toast_push","Show a toast on the scene's UI Toast. kind: 0 info, 1 success, 2 warning, 3 error."},
-        {"set_toast_duration","How long a new toast stays up, in seconds."},
-        {"set_toast_corner","0 top-right, 1 top-left, 2 bottom-right, 3 bottom-left, 4 top-center."},
-        {"set_toast_max","How many toasts stay on screen."},
-        {"toast_count","How many toasts are on screen right now."},
-        {"modal_open","Show the first modal dialog."},
-        {"modal_close","Hide the first modal dialog. Fires on_modal_close."},
-        {"set_modal_style","Turn the dialog's card styling on or off."},
-        {"set_modal_title","Set the dialog title. Empty leaves the label already there."},
-        {"set_modal_message","Set the dialog message. Empty leaves the label already there."},
-        {"set_modal_confirm","Set the confirm button's label."},
-        {"set_modal_cancel","Set the cancel button's label."},
-        {"on_modal_close","Fires when a modal dialog closes."},
-    };
-    auto it = doc.find(name);
-    return it == doc.end() ? nullptr : &it->second;
-}
-
-// Members offered after "<receiver>." in the editor (API surface, so
-// e.g. typing `transform.` lists position/rotation/Translate/…). Returns an empty
-// list for unknown receivers.
-static const std::vector<std::string>& ScriptMembers(const std::string& receiver) {
-    static const std::unordered_map<std::string, std::vector<std::string>> M = {
-        {"transform", {"position","rotation","localPosition","localScale","eulerAngles",
-                       "right","up","forward","Translate","Rotate","LookAt"}},
-        {"gameObject", {"name","tag","activeSelf","SetActive","GetComponent"}},
-        {"Input", {"GetAxis","GetButton","GetButtonDown","GetButtonUp","GetKey","GetKeyDown",
-                   "GetKeyUp","GetMouseButton","GetMouseButtonDown","GetMouseButtonUp","mousePosition"}},
-        {"Time", {"deltaTime","time","timeScale","fixedDeltaTime","unscaledDeltaTime","unscaledTime","sessionTime",
-                  "sessionUnscaledTime","sessionFrameCount","fps","hitchCount","paused",
-                  "HitStop","SlowMotion","RampTimeScale","PushPause","PopPause","IsPausedBy"}},
-        {"Mathf", {"Abs","Acos","Asin","Atan","Ceil","Clamp","Clamp01","Cos","Deg2Rad","DeltaAngle",
-                   "Epsilon","Exp","Floor","Infinity","InverseLerp","Lerp","LerpAngle","Log","Max",
-                   "Min","MoveTowards","PI","PerlinNoise","PingPong","Pow","Rad2Deg","Repeat","Round",
-                   "Sign","Sin","SmoothStep","Sqrt","Tan"}},
-        {"Physics2D", {"Raycast","OverlapCircle"}},
-        {"Debug", {"Log","LogWarning","LogError"}},
-        {"Random", {"Range","value"}},
-        {"Quaternion", {"Euler","identity","AngleAxis"}},
-        {"Vector3", {"zero","one","up","down","left","right","forward","back","Angle","Distance",
-                     "Dot","Cross","Lerp","LerpUnclamped","Normalize"}},
-        {"Vector2", {"zero","one","up","down","left","right","Lerp","Distance"}},
-        {"Color", {"red","green","blue","white","black","gray","grey","yellow","cyan","magenta","Lerp"}},
-        {"SceneManager", {"LoadScene","GetActiveScene"}},
-        {"Screen", {"width","height"}},
-        {"Application", {"Quit"}},
-    };
-    static const std::vector<std::string> empty;
-    auto it = M.find(receiver);
-    return it == M.end() ? empty : it->second;
-}
-
-// ---- C#-aware member completion ---------------------------------------------
-// After `expr.` the popup lists what `expr` actually has: we work out its type
-// from the script itself (declarations `Type name`, `var x = new T(..)`,
-// `GetComponent<T>()`, method parameters, enums) or from well-known engine
-// properties (`transform.position` is a Vector3). Methods carry a trailing '('
-// so the popup can show "()" and put the caret inside on accept.
-static const std::vector<std::string>* CsTypeMembers(const std::string& type) {
-    static const std::unordered_map<std::string, std::vector<std::string>> T = {
-        {"string", {"Length", "ToUpper(", "ToLower(", "Contains(", "StartsWith(", "EndsWith(", "IndexOf(",
-                    "LastIndexOf(", "Substring(", "Replace(", "Split(", "Trim(", "TrimStart(", "TrimEnd(",
-                    "PadLeft(", "PadRight(", "Insert(", "Remove(", "Equals(", "ToString("}},
-        {"List", {"Count", "Add(", "AddRange(", "Insert(", "Remove(", "RemoveAt(", "RemoveAll(", "Contains(",
-                  "IndexOf(", "Clear(", "Sort(", "Reverse(", "Find(", "FindIndex(", "FindAll(", "ForEach(",
-                  "Where(", "Select(", "Any(", "All(", "First(", "Last(", "Sum(", "Max(", "Min(", "Average(",
-                  "OrderBy(", "OrderByDescending(", "ToArray(", "ToList("}},
-        {"Array", {"Length", "Contains(", "IndexOf(", "Where(", "Select(", "Any(", "All(", "First(", "Last(",
-                   "Sum(", "Max(", "Min(", "OrderBy(", "ToList("}},
-        {"Dictionary", {"Count", "Keys", "Values", "Add(", "TryAdd(", "ContainsKey(", "ContainsValue(", "Remove(",
-                        "Clear(", "GetValueOrDefault("}},
-        {"Vector3", {"x", "y", "z", "magnitude", "sqrMagnitude", "normalized"}},
-        {"Transform", {"position", "localPosition", "localScale", "rotation", "eulerAngles", "localEulerAngles",
-                       "forward", "up", "right", "Translate(", "Rotate(", "LookAt("}},
-        {"GameObject", {"name", "tag", "activeSelf", "transform", "SetActive(", "CompareTag(", "GetComponent<"}},
-        {"Other", {"name", "tag", "gameObject", "transform", "CompareTag(", "GetComponent<"}},
-        {"Rigidbody2D", {"velocity", "gravityScale", "AddForce(", "MovePosition("}},
-        {"Rigidbody", {"velocity", "AddForce(", "MovePosition("}},
-        {"SpriteRenderer", {"color", "enabled", "flipX"}},
-        {"Renderer", {"color", "enabled", "material"}},
-        {"Animator", {"SetTrigger(", "SetBool(", "SetFloat(", "SetInteger(", "Play(", "CrossFade("}},
-        {"AudioSource", {"volume", "Play(", "Stop("}},
-        {"Text", {"text", "color"}},
-        {"Lambda", {"Invoke("}},
-    };
-    auto it = T.find(type);
-    return it == T.end() ? nullptr : &it->second;
-}
-// Normalise a declared C# type name to a CsTypeMembers key ("" = unknown).
-static std::string CsTypeKey(std::string ty) {
-    if (ty.empty()) return "";
-    if (ty.size() > 2 && ty.compare(ty.size() - 2, 2, "[]") == 0) return "Array";
-    if (auto lt = ty.find('<'); lt != std::string::npos) ty = ty.substr(0, lt);
-    static const std::unordered_map<std::string, std::string> alias = {
-        {"string", "string"}, {"String", "string"}, {"char", "string"},
-        {"List", "List"}, {"HashSet", "List"}, {"Queue", "List"}, {"Stack", "List"}, {"IEnumerable", "List"},
-        {"Dictionary", "Dictionary"}, {"SortedDictionary", "Dictionary"},
-        {"Vector3", "Vector3"}, {"Vector2", "Vector3"}, {"Color", "Vector3"},
-        {"Transform", "Transform"}, {"GameObject", "GameObject"},
-        {"Collider", "Other"}, {"Collider2D", "Other"}, {"Collision", "Other"}, {"Collision2D", "Other"},
-        {"Rigidbody2D", "Rigidbody2D"}, {"Rigidbody", "Rigidbody"}, {"SpriteRenderer", "SpriteRenderer"},
-        {"Renderer", "Renderer"}, {"MeshRenderer", "Renderer"}, {"SkinnedMeshRenderer", "Renderer"},
-        {"Animator", "Animator"}, {"AudioSource", "AudioSource"},
-        {"Text", "Text"}, {"TMP_Text", "Text"}, {"TextMeshPro", "Text"}, {"TextMeshProUGUI", "Text"},
-        {"Action", "Lambda"}, {"Func", "Lambda"},
-    };
-    auto it = alias.find(ty);
-    return it == alias.end() ? "" : it->second;
-}
-// The declared type of `var` in `src` ("" if unknown): `Type var`, `Type<..> var`,
-// `Type[] var`, `var var = new Type(..)` / `GetComponent<Type>()` / "text" / { .. }.
-static std::string CsDeclaredType(const std::string& src, const std::string& var) {
-    auto isW = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
-    const std::size_t n = src.size();
-    for (std::size_t i = 0; i < n; ++i) {
-        if (src.compare(i, var.size(), var) != 0) continue;
-        if (i > 0 && isW(src[i - 1])) continue;
-        const std::size_t e = i + var.size();
-        if (e < n && isW(src[e])) continue;
-        // What follows must look like a declaration: '=', ';', ',', ')' or ' in '.
-        std::size_t a = e; while (a < n && (src[a] == ' ' || src[a] == '\t')) ++a;
-        if (a >= n) continue;
-        const bool declEnd = src[a] == '=' || src[a] == ';' || src[a] == ',' || src[a] == ')' ||
-                             src.compare(a, 3, "in ") == 0 || src[a] == '{';
-        if (!declEnd || (src[a] == '=' && a + 1 < n && src[a + 1] == '=')) continue;
-        // The type just before the name (skip spaces, then a generic / array suffix).
-        std::size_t b = i; while (b > 0 && (src[b - 1] == ' ' || src[b - 1] == '\t')) --b;
-        if (b == i) continue;   // no space between type and name
-        std::size_t te = b;
-        if (b > 0 && (src[b - 1] == '>' || src[b - 1] == ']')) {
-            int depth = 0; std::size_t k = b;
-            while (k > 0) {
-                char c = src[k - 1];
-                if (c == '>' || c == ']') ++depth;
-                else if (c == '<' || c == '[') { if (--depth == 0) { --k; break; } }
-                --k;
-            }
-            b = k;
-        }
-        std::size_t ts = b; while (ts > 0 && isW(src[ts - 1])) --ts;
-        if (ts == b) continue;
-        std::string ty = src.substr(ts, te - ts);
-        ty.erase(std::remove(ty.begin(), ty.end(), ' '), ty.end());
-        static const std::unordered_set<std::string> notTypes = {
-            "return", "new", "else", "case", "in", "out", "ref", "public", "private", "static", "const"};
-        if (notTypes.count(ty)) continue;
-        if (ty == "var") {   // infer from the initializer
-            if (src[a] != '=') continue;
-            std::size_t v = a + 1; while (v < n && src[v] == ' ') ++v;
-            if (v < n && (src[v] == '"' || (src[v] == '$' && v + 1 < n && src[v + 1] == '"'))) return "string";
-            if (v < n && src[v] == '{') return "Array";
-            if (src.compare(v, 4, "new ") == 0) {
-                std::size_t w = v + 4; std::size_t w2 = w; while (w2 < n && (isW(src[w2]) || src[w2] == '.')) ++w2;
-                std::string nt = src.substr(w, w2 - w);
-                if (w2 < n && src[w2] == '[') return "Array";
-                return CsTypeKey(nt);
-            }
-            if (src.compare(v, 13, "GetComponent<") == 0) {
-                std::size_t w = v + 13, w2 = src.find('>', w);
-                if (w2 != std::string::npos) return CsTypeKey(src.substr(w, w2 - w));
-            }
-            if (src.compare(v, 15, "GameObject.Find") == 0) return "GameObject";
-            continue;
-        }
-        if (std::string k = CsTypeKey(ty); !k.empty()) return k;
-        return ty;   // maybe an enum / class declared in this file
-    }
-    return "";
-}
-// Enum members declared in `src` for enum `name` (empty if not an enum).
-static std::vector<std::string> CsEnumMembers(const std::string& src, const std::string& name) {
-    std::vector<std::string> out;
-    auto p = src.find("enum " + name);
-    if (p == std::string::npos) return out;
-    auto lb = src.find('{', p), rb = src.find('}', p);
-    if (lb == std::string::npos || rb == std::string::npos || rb < lb) return out;
-    std::string body = src.substr(lb + 1, rb - lb - 1), cur;
-    auto flush = [&]() {
-        auto a = cur.find_first_not_of(" \t\r\n"); if (a == std::string::npos) { cur.clear(); return; }
-        std::string t = cur.substr(a); auto e = t.find_first_of(" =\t\r\n"); if (e != std::string::npos) t = t.substr(0, e);
-        if (!t.empty()) out.push_back(t);
-        cur.clear();
-    };
-    for (char c : body) { if (c == ',') flush(); else cur += c; }
-    flush();
-    return out;
-}
-// The fields and methods this script declares (for `this.`).
-static std::vector<std::string> CsOwnMembers(const std::string& src) {
-    std::vector<std::string> out;
-    std::unordered_set<std::string> have;
-    std::istringstream in(src); std::string line; int depth = 0;
-    while (std::getline(in, line)) {
-        const int d0 = depth;
-        for (char c : line) { if (c == '{') ++depth; else if (c == '}') --depth; }
-        if (d0 > 1) continue;   // only class-level declarations
-        auto cm = line.find("//"); if (cm != std::string::npos) line = line.substr(0, cm);
-        {
-            auto f = line.find_first_not_of(" \t");
-            if (f == std::string::npos) continue;
-            static const char* skip[] = {"using ", "namespace ", "[", "}"};
-            bool sk = false; for (const char* k : skip) sk = sk || line.compare(f, std::strlen(k), k) == 0;
-            if (sk || line.find(" enum ") != std::string::npos || line.compare(f, 5, "enum ") == 0 ||
-                line.find(" class ") != std::string::npos || line.compare(f, 6, "class ") == 0) continue;
-        }
-        auto paren = line.find('('), eq = line.find('='), semi = line.find(';');
-        std::size_t endName = std::min({paren, eq, semi});
-        if (endName == std::string::npos || endName == 0) continue;
-        std::size_t e = endName; while (e > 0 && line[e - 1] == ' ') --e;
-        std::size_t b = e; while (b > 0 && (std::isalnum((unsigned char)line[b - 1]) || line[b - 1] == '_')) --b;
-        if (b == e || b == 0) continue;   // needs a type before the name
-        std::string nm = line.substr(b, e - b);
-        static const std::unordered_set<std::string> kw = {"if", "for", "while", "switch", "foreach", "return", "using", "new"};
-        if (kw.count(nm) || have.count(nm)) continue;
-        have.insert(nm);
-        out.push_back(paren == endName ? nm + "(" : nm);
-    }
-    return out;
-}
-// Everything to offer after `receiver.` (receiver = the expression before the dot).
-static std::vector<std::string> CsMembersFor(const std::string& src, const std::string& receiver) {
-    if (receiver.empty()) return {};
-    if (receiver == "this") return CsOwnMembers(src);
-    std::string last = receiver;
-    if (auto d = receiver.rfind('.'); d != std::string::npos) last = receiver.substr(d + 1);
-    std::string key;
-    if (receiver.rfind("GetComponent<", 0) == 0 || last.rfind("GetComponent<", 0) == 0) {
-        auto lt = receiver.find('<'), gt = receiver.find('>');
-        if (lt != std::string::npos && gt != std::string::npos) key = CsTypeKey(receiver.substr(lt + 1, gt - lt - 1));
-    } else if (receiver == "transform" || last == "transform") key = "Transform";
-    else if (receiver == "gameObject" || last == "gameObject") key = "GameObject";
-    else if (receiver.find('.') != std::string::npos) {
-        static const std::unordered_set<std::string> vec = {"position", "localPosition", "localScale", "eulerAngles",
-            "localEulerAngles", "forward", "up", "right", "velocity", "normalized", "mousePosition"};
-        static const std::unordered_set<std::string> str = {"name", "tag", "text"};
-        if (vec.count(last)) key = "Vector3";
-        else if (str.count(last)) key = "string";
-    } else if (receiver.back() == ']') {
-        key = "";
-    } else {
-        std::string ty = CsDeclaredType(src, receiver);
-        if (!ty.empty()) {
-            if (CsTypeMembers(ty)) key = ty;
-            else { auto em = CsEnumMembers(src, ty); if (!em.empty()) return {}; }
-        }
-        if (key.empty()) {   // an enum type used directly: State.
-            auto em = CsEnumMembers(src, receiver);
-            if (!em.empty()) return em;
-        }
-    }
-    if (const auto* m = CsTypeMembers(key)) return *m;
-    return {};
-}
-
-// ---- Autocomplete details: description + code example -----------------------
-// Shown beside the suggestion list (like Rider / VS Code's details pane). Curated
-// entries cover the APIs people reach for most; any other builtin gets an example
-// generated from its signature. Keys are "Receiver.Member" or a bare name.
-struct ScriptHelp { const char* doc; const char* example; };
-static const ScriptHelp* ScriptHelpFor(const std::string& key) {
-    static const std::unordered_map<std::string, ScriptHelp> H = {
-        // ---- Physics queries (OkayScript builtins)
-        {"raycast3", {"Cast a 3D ray; returns the name of the first thing hit (\"\" = nothing). "
-            "Optional: max distance, layers (\"0,3\" or \"Default,Enemy\"), ignore triggers. Details via ray3_*.",
-            "if (raycast3(x, y, z, 0, -1, 0, 2, \"Default\", true) != \"\")\n{\n    grounded = true;\n}"}},
-        {"raycast_all3", {"Every object a 3D ray passes through, nearest first (a list of names). "
-            "ray_all_count() / ray_all_dist(i) / ray_all_point(i) give details.",
-            "var hits = raycast_all3(x, y, z, 1, 0, 0, 50);\nfor (var i = 0; i < ray_all_count(); i++)\n{\n    print(ray_all_object(i) + \" at \" + ray_all_dist(i));\n}"}},
-        {"sphere_cast3", {"Sweep a ball along a direction and return the first thing it touches. "
-            "A thick ray that can't slip through gaps; skips triggers.",
-            "string hit = sphere_cast3(x, y, z, 0, 0, 1, 0.5, 10);\nif (hit != \"\") print(\"blocked by \" + hit);"}},
-        {"box_cast3", {"Sweep a box (centre, half size) along a direction; the first thing it touches.",
-            "string hit = box_cast3(x, y, z, 0.5, 1, 0.5, 0, 0, 1, 5);"}},
-        {"box_cast", {"Sweep a flat box and return the name of the first thing it touches. Details are ray_hit, ray_dist, ray_x, ray_y, ray_nx, ray_ny.",
-            "string hit = box_cast(0, 0, 0.5, 0.5, 1, 0, 10);\nif (hit != \"\") print(hit + \" at \" + ray_dist());"}},
-        {"capsule_cast", {"Sweep a flat capsule (a line with round ends) and return the first thing it touches.",
-            "string hit = capsule_cast(0, -0.5, 0, 0.5, 0.3, 1, 0, 10);"}},
-        {"overlap_box", {"Names of the objects inside a flat box. The last number is a turn in degrees.",
-            "var near = overlap_box(x, y, 1, 0.5, \"\", false, 30);"}},
-        {"overlap_capsule", {"Names of the objects inside a flat capsule.",
-            "var near = overlap_capsule(x, y - 1, x, y + 1, 0.4);"}},
-        {"add_explosion_force", {"Shove this 2D body away from a point. The push fades to nothing at the radius. The last number pops it upward.",
-            "add_explosion_force(0, 0, 20, 8, 0.4);"}},
-        {"overlap_box3", {"Names of the objects inside a box (centre, half size). Optional layers / ignore triggers.",
-            "var inside = overlap_box3(x, y, z, 2, 2, 2);\nprint(count(inside) + \" things nearby\");"}},
-        {"overlap_sphere3", {"Names of the objects inside a ball. Great for explosions.",
-            "var near = overlap_sphere3(x, y, z, 5);\nprint(count(near) + \" caught in the blast\");"}},
-        {"contact_point", {"Inside a collision / trigger handler: where the touch happened (a vector). "
-            "Also contact_normal, contact_x/_y/_z, impact_speed and other_tag.",
-            "void OnCollisionEnter(string other)\n{\n    if (impact_speed > 8) spawn3(\"Sparks\", contact_x, contact_y, contact_z);\n}"}},
-        // ---- C# / API
-        {"Input.GetAxis", {"-1..1 from the keyboard (A/D, arrows) or a stick. \"Horizontal\" or \"Vertical\".",
-            "float h = Input.GetAxis(\"Horizontal\");\nfloat v = Input.GetAxis(\"Vertical\");\ntransform.position += new Vector3(h, 0, v) * speed * Time.deltaTime;"}},
-        {"Input.GetKeyDown", {"True only on the frame the key goes down.",
-            "if (Input.GetKeyDown(KeyCode.Space))\n{\n    Jump();\n}"}},
-        {"Input.GetKey", {"True every frame while the key is held.",
-            "if (Input.GetKey(KeyCode.LeftShift))\n    speed = runSpeed;"}},
-        {"Input.GetKeyUp", {"True only on the frame the key is released.",
-            "if (Input.GetKeyUp(KeyCode.E))\n    Debug.Log(\"Released E\");"}},
-        {"Input.GetMouseButtonDown", {"True on the frame a mouse button is pressed (0 left, 1 right, 2 middle).",
-            "if (Input.GetMouseButtonDown(0))\n    Shoot();"}},
-        {"Input.GetMouseButton", {"True while a mouse button is held (0 left, 1 right, 2 middle).",
-            "if (Input.GetMouseButton(1))\n    Aim();"}},
-        {"Input.GetButtonDown", {"True on the frame a named button (\"Jump\", \"Fire1\") is pressed.",
-            "if (Input.GetButtonDown(\"Jump\"))\n    rb.AddForce(Vector3.up * jumpForce);"}},
-        {"Input.mousePosition", {"The mouse position in screen pixels.",
-            "Vector3 m = Input.mousePosition;\nDebug.Log($\"Mouse at {m.x}, {m.y}\");"}},
-        {"Time.deltaTime", {"Seconds since the last frame. Multiply speeds by it so movement is frame-rate independent.",
-            "transform.Rotate(0, 90 * Time.deltaTime, 0);"}},
-        {"Time.time", {"Seconds since the game started.",
-            "float y = Mathf.Sin(Time.time * 2f) * 0.5f;"}},
-        {"Time.timeScale", {"Game speed: 1 = normal, 0.5 = slow motion, 0 = paused.",
-            "Time.timeScale = paused ? 0f : 1f;"}},
-        {"Time.fixedDeltaTime", {"Seconds between FixedUpdate calls (0.02 = 50 a second).",
-            "rb.AddForce(Vector3.up * lift * Time.fixedDeltaTime);"}},
-        {"Time.unscaledDeltaTime", {"Real seconds since the last frame: not slowed by timeScale, a hit stop or a pause. Animate a pause menu with it.",
-            "panel.alpha += 4f * Time.unscaledDeltaTime;"}},
-        {"Time.unscaledTime", {"Real seconds since the game started: a pause, slow motion and hit stops do not change it.",
-            "float blink = Mathf.PingPong(Time.unscaledTime, 1f);"}},
-        {"Time.sessionTime", {"Game seconds since this Play began. Time.time keeps counting across Plays; this starts from 0 each time.",
-            "if (Time.sessionTime > 30f)\n    SpawnBoss();"}},
-        {"Time.sessionUnscaledTime", {"Real seconds since this Play began: a pause, slow motion and hit stops do not change it.",
-            "Debug.Log($\"Playing for {Time.sessionUnscaledTime}s\");"}},
-        {"Time.sessionFrameCount", {"Frames since this Play began.",
-            "if (Time.sessionFrameCount == 1)\n    Debug.Log(\"first frame\");"}},
-        {"Time.fps", {"Frames per second over the last half second of real frame times (0 before the first frame). A stall shows.",
-            "if (Time.fps < 30f)\n    LowerQuality();"}},
-        {"Time.hitchCount", {"How many frames took over a tenth of a second since this Play began.",
-            "Debug.Log($\"Hitches so far: {Time.hitchCount}\");"}},
-        {"Time.paused", {"True while the game is paused (a menu, a cutscene or the pause button holds it).",
-            "if (Time.paused)\n    return;"}},
-        {"Time.HitStop", {"A freeze frame or a brief slow-down for an impact: for some real seconds the game runs at this scale (0 = frozen), then goes back by itself.",
-            "Time.HitStop(0.08f, 0f);   // a heavy hit"}},
-        {"Time.SlowMotion", {"Bullet time: run at this speed (0.2 = a fifth) for some real seconds, then back to normal. Composes with Time.timeScale.",
-            "Time.SlowMotion(0.2f, 2f);"}},
-        {"Time.RampTimeScale", {"Ease Time.timeScale to a new value over some real seconds, in a straight line.",
-            "Time.RampTimeScale(1f, 0.5f);   // ease back to normal"}},
-        {"Time.PushPause", {"Hold the game paused for a reason of your own (\"dialogue\", \"shop\"). It stays paused until every reason is let go, so two scripts that pause never resume each other.",
-            "Time.PushPause(\"shop\");"}},
-        {"Time.PopPause", {"Let go of one hold of that reason. False when nothing held it.",
-            "Time.PopPause(\"shop\");"}},
-        {"Time.IsPausedBy", {"True while that reason is holding the pause.",
-            "if (Time.IsPausedBy(\"shop\"))\n    ShowShopUI();"}},
-        {"Debug.Log", {"Print a message to the Console.",
-            "Debug.Log(\"Hello\");\nDebug.Log($\"Score: {score}\");"}},
-        {"Debug.LogWarning", {"Print a yellow warning to the Console.",
-            "if (health < 10)\n    Debug.LogWarning(\"Low health!\");"}},
-        {"Debug.LogError", {"Print a red error to the Console.",
-            "if (target == null)\n    Debug.LogError(\"No target set\");"}},
-        {"Mathf.Lerp", {"Blend from a to b by t (0..1).",
-            "speed = Mathf.Lerp(speed, maxSpeed, 5f * Time.deltaTime);"}},
-        {"Mathf.Clamp", {"Keep a value between min and max.",
-            "health = Mathf.Clamp(health - damage, 0, maxHealth);"}},
-        {"Mathf.Clamp01", {"Keep a value between 0 and 1.",
-            "float t = Mathf.Clamp01(elapsed / duration);"}},
-        {"Mathf.Abs", {"The value without its sign.",
-            "if (Mathf.Abs(h) > 0.1f)\n    walking = true;"}},
-        {"Mathf.Sin", {"Sine of an angle in radians: a smooth -1..1 wave.",
-            "float bob = Mathf.Sin(Time.time * 3f) * 0.25f;"}},
-        {"Mathf.MoveTowards", {"Step from current toward target by at most maxDelta (never overshoots).",
-            "x = Mathf.MoveTowards(x, targetX, 4f * Time.deltaTime);"}},
-        {"Mathf.SmoothStep", {"Like Lerp but eases in and out.",
-            "float a = Mathf.SmoothStep(0f, 1f, t);"}},
-        {"Mathf.PingPong", {"Goes 0 -> length -> 0 over and over.",
-            "float x = Mathf.PingPong(Time.time, 3f);"}},
-        {"Mathf.Max", {"The larger of the values.",
-            "int best = Mathf.Max(best, score);"}},
-        {"Mathf.Min", {"The smaller of the values.",
-            "ammo = Mathf.Min(ammo + 10, maxAmmo);"}},
-        {"Random.Range", {"Random number in [min, max). Ints exclude max; floats can include it.",
-            "int roll = Random.Range(1, 7);          // 1..6\nfloat x = Random.Range(-5f, 5f);"}},
-        {"Random.value", {"Random float from 0 to 1.",
-            "if (Random.value < 0.25f)\n    DropLoot();"}},
-        {"Vector3.Distance", {"Distance between two points.",
-            "if (Vector3.Distance(transform.position, player.position) < 3f)\n    Attack();"}},
-        {"Vector3.Lerp", {"Blend between two points by t (0..1).",
-            "transform.position = Vector3.Lerp(transform.position, target, 5f * Time.deltaTime);"}},
-        {"Vector3.up", {"Shorthand for (0, 1, 0).",
-            "transform.position += Vector3.up * 2f * Time.deltaTime;"}},
-        {"Vector3.zero", {"Shorthand for (0, 0, 0).",
-            "rb.velocity = Vector3.zero;"}},
-        {"Quaternion.Euler", {"A rotation from angles in degrees (x, y, z).",
-            "transform.rotation = Quaternion.Euler(0, 90, 0);"}},
-        {"SceneManager.LoadScene", {"Load another scene by name.",
-            "SceneManager.LoadScene(\"Level2\");"}},
-        {"Translate", {"Move by an offset (local space by default).",
-            "transform.Translate(Vector3.forward * speed * Time.deltaTime);"}},
-        {"Rotate", {"Turn by angles in degrees.",
-            "transform.Rotate(0, 90 * Time.deltaTime, 0);"}},
-        {"LookAt", {"Turn to face a target.",
-            "transform.LookAt(player);"}},
-        {"position", {"World position.",
-            "transform.position = new Vector3(0, 1, 0);"}},
-        {"localScale", {"Scale relative to the parent.",
-            "transform.localScale = Vector3.one * 2f;"}},
-        {"eulerAngles", {"Rotation as angles in degrees.",
-            "Vector3 r = transform.eulerAngles;\ntransform.eulerAngles = new Vector3(0, r.y + 45, 0);"}},
-        {"SetActive", {"Turn the object on or off.",
-            "door.SetActive(false);"}},
-        {"CompareTag", {"True when the object has that tag (faster than tag == ...).",
-            "void OnCollisionEnter(Collision other)\n{\n    if (other.gameObject.CompareTag(\"Enemy\"))\n        TakeDamage(10);\n}"}},
-        {"GetComponent", {"Find a component on this object.",
-            "Rigidbody rb = GetComponent<Rigidbody>();\nrb.AddForce(Vector3.up * 5f);"}},
-        {"AddForce", {"Push a Rigidbody.",
-            "rb.AddForce(Vector3.up * jumpForce);"}},
-        {"MovePosition", {"Move a Rigidbody, respecting collisions.",
-            "rb.MovePosition(rb.position + dir * speed * Time.deltaTime);"}},
-        {"velocity", {"Current speed and direction of a Rigidbody.",
-            "rb.velocity = new Vector2(h * speed, rb.velocity.y);"}},
-        {"SetTrigger", {"Fire an Animator trigger parameter.",
-            "animator.SetTrigger(\"Jump\");"}},
-        {"SetBool", {"Set an Animator bool parameter.",
-            "animator.SetBool(\"Running\", Mathf.Abs(h) > 0.1f);"}},
-        {"SetFloat", {"Set an Animator float parameter.",
-            "animator.SetFloat(\"Speed\", rb.velocity.magnitude);"}},
-        {"Play", {"Start playing (a sound, or an animation state).",
-            "audioSource.Play();"}},
-        {"Add", {"Add an item to the end of a list.",
-            "List<string> names = new List<string>();\nnames.Add(\"Ada\");"}},
-        {"Remove", {"Remove the first matching item.",
-            "enemies.Remove(enemy);"}},
-        {"RemoveAt", {"Remove the item at an index.",
-            "items.RemoveAt(0);"}},
-        {"Contains", {"True when the collection (or string) has the item.",
-            "if (inventory.Contains(\"Key\"))\n    OpenDoor();"}},
-        {"ContainsKey", {"True when the dictionary has the key.",
-            "if (!scores.ContainsKey(name))\n    scores[name] = 0;"}},
-        {"Count", {"How many items are in the collection.",
-            "for (int i = 0; i < items.Count; i++)\n    Debug.Log(items[i]);"}},
-        {"Length", {"How many characters (string) or items (array).",
-            "if (playerName.Length > 12)\n    playerName = playerName.Substring(0, 12);"}},
-        {"Clear", {"Remove everything.",
-            "bullets.Clear();"}},
-        {"Split", {"Cut a string into parts.",
-            "string[] parts = \"a,b,c\".Split(',');"}},
-        {"ToUpper", {"An upper-case copy of the string.",
-            "string shout = message.ToUpper();"}},
-        {"StartCoroutine", {"Run an IEnumerator over several frames.",
-            "StartCoroutine(Blink());\n\nIEnumerator Blink()\n{\n    yield return new WaitForSeconds(0.5f);\n}"}},
-        {"Instantiate", {"Spawn a copy of a prefab or object.",
-            "GameObject b = Instantiate(bulletPrefab, transform.position, transform.rotation);"}},
-        {"Destroy", {"Remove an object (optionally after a delay).",
-            "Destroy(gameObject, 2f);   // gone in 2 seconds"}},
-        {"WaitForSeconds", {"Pause a coroutine.",
-            "yield return new WaitForSeconds(1f);"}},
-        {"Vector3", {"A 3D point or direction (x, y, z).",
-            "Vector3 dir = new Vector3(1, 0, 0);\ntransform.position += dir * speed * Time.deltaTime;"}},
-        {"Vector2", {"A 2D point or direction (x, y).",
-            "Vector2 move = new Vector2(h, v).normalized;"}},
-        {"List", {"A resizable list.",
-            "List<int> scores = new List<int>();\nscores.Add(10);\nforeach (int s in scores)\n    Debug.Log(s);"}},
-        {"Dictionary", {"Key -> value lookup.",
-            "Dictionary<string, int> stock = new Dictionary<string, int>();\nstock[\"apples\"] = 3;"}},
-        {"Color", {"An RGBA colour (0..1 each).",
-            "GetComponent<SpriteRenderer>().color = Color.red;"}},
-        // ---- keywords
-        {"if", {"Run code only when a condition is true.",
-            "if (health <= 0)\n{\n    Die();\n}\nelse if (health < 20)\n{\n    Debug.Log(\"Low!\");\n}"}},
-        {"for", {"Loop a set number of times.",
-            "for (int i = 0; i < 5; i++)\n{\n    Debug.Log(i);\n}"}},
-        {"foreach", {"Loop over every item in a collection.",
-            "foreach (var enemy in enemies)\n{\n    enemy.TakeDamage(1);\n}"}},
-        {"while", {"Loop while a condition stays true.",
-            "while (ammo > 0)\n{\n    Fire();\n    ammo--;\n}"}},
-        {"switch", {"Pick a branch by value.",
-            "switch (state)\n{\n    case 0: Idle(); break;\n    case 1: Run(); break;\n    default: break;\n}"}},
-        {"class", {"Not needed: a script's fields and functions are already the component, so a class wrapper does nothing.",
-            "public int value = 1;\n\nvoid Start()\n{\n    Debug.Log(value);\n}"}},
-        {"const", {"A value that never changes. Assigning to it again is an error.",
-            "const float GRAVITY = 9.8;"}},
-        {"static", {"One value shared by every object running this script.",
-            "static int alive = 0;\n\nvoid Start() { alive++; }"}},
-        {"enum", {"A named set of values.",
-            "enum State { Idle, Walk, Jump }\nState state = State.Idle;"}},
-        {"return", {"Leave the function (with a value, if it returns one).",
-            "int Double(int x)\n{\n    return x * 2;\n}"}},
-        {"new", {"Create an object.",
-            "Vector3 p = new Vector3(0, 1, 0);"}},
-        // ---- OkayScript one-liners
-        {"spin", {nullptr, "void Update()\n{\n    spin(90);   // 90 degrees per second\n}"}},
-        {"walk", {nullptr, "walk(1, 0, 3);   // right at 3 units/second"}},
-        {"on_key_move", {nullptr, "void Update()\n{\n    on_key_move(5);\n}"}},
-        {"platformer", {nullptr, "void Update()\n{\n    platformer(6, 8);   // speed, jump\n}"}},
-        {"follow", {nullptr, "follow(\"Player\", 3, 1.5);"}},
-        {"timer", {nullptr, "if (timer(\"spawn\", 2))\n    spawn(\"Enemy\", 0, 5);"}},
-        {"cooldown", {nullptr, "if (key_down(\"space\") && cooldown(\"shoot\", 0.3))\n    shoot();"}},
-        {"once", {nullptr, "if (once(\"intro\"))\n    print(\"Welcome!\");"}},
-        {"print", {"Print to the Console.", "print(\"Score: \" + score);"}},
-        {"camera_shake", {nullptr, "camera_shake(0.6);   // a hit"}},
-        {"camera_zoom_to", {nullptr, "camera_zoom_to(2, 0.5);   // 2x over half a second"}},
-    };
-    auto it = H.find(key);
-    return it == H.end() ? nullptr : &it->second;
-}
-
-// An example call built from a signature such as "walk(dx, dy, speed [, x])":
-// optional parts dropped, each parameter given a plausible value by its name.
-static std::string ScriptExampleFromSignature(const std::string& sig) {
-    const auto lp = sig.find('('), rp = sig.rfind(')');
-    if (lp == std::string::npos || rp == std::string::npos || rp < lp || sig.find('|') != std::string::npos) return "";
-    std::string inner = sig.substr(lp + 1, rp - lp - 1);
-    if (auto ob = inner.find('['); ob != std::string::npos) inner = inner.substr(0, ob);
-    std::vector<std::string> args;
-    std::string cur;
-    auto flush = [&] {
-        std::string a = cur; cur.clear();
-        while (!a.empty() && (a.back() == ' ' || a.back() == ',')) a.pop_back();
-        std::size_t s = a.find_first_not_of(' '); if (s == std::string::npos) return;
-        a = a.substr(s);
-        if (a == "...") return;
-        std::string v;
-        auto has = [&](const char* w) { return a.find(w) != std::string::npos; };
-        if (a[0] == '"') v = a;                                            // "name" stays a string
-        else if (has("speed")) v = "5";
-        else if (has("deg") || has("angle")) v = "90";
-        else if (has("dur") || has("time") || has("sec")) v = "0.5";
-        else if (has("count") || a == "n") v = "3";
-        else if (has("radius") || has("dist")) v = "2";
-        else if (has("amount") || has("intensity") || has("strength")) v = "0.5";
-        else if (has("key")) v = "\"space\"";
-        else if (has("name") || has("target") || has("tag") || has("prefab")) v = "\"Player\"";
-        else if (has("fn")) v = "\"OnHit\"";
-        else if (a == "r") v = "1"; else if (a == "g" || a == "b") v = "0";
-        else if (has("text") || has("msg") || has("str")) v = "\"Hello\"";
-        else if (a == "dx" || a == "x" || a == "x1") v = "1";
-        else if (a == "dy" || a == "y" || a == "y1" || a == "z" || a == "dz") v = "0";
-        else v = "1";
-        args.push_back(v);
-    };
-    for (char c : inner) { if (c == ',') flush(); else cur += c; }
-    flush();
-    std::string out = sig.substr(0, lp) + "(";
-    for (std::size_t i = 0; i < args.size(); ++i) out += (i ? ", " : "") + args[i];
-    return out + ");";
-}
-
-// Colour a code snippet with the editor's palette (keywords, types, strings,
-// numbers, calls, comments) using the code font.
-static void DrawCodeSnippet(const std::string& code) {
-    static const std::unordered_set<std::string> kw = {
-        "if","else","for","foreach","in","while","do","return","break","continue","switch","case","default",
-        "new","public","private","static","void","int","float","bool","string","var",
-        "enum","true","false","null","this","yield","const","readonly"};
-    static const std::unordered_set<std::string> types = {
-        "Vector3","Vector2","Quaternion","Color","Mathf","Time","Input","KeyCode","Debug","Random",
-        "List","Dictionary","GameObject","Transform","Rigidbody","Rigidbody2D","SpriteRenderer",
-        "Animator","AudioSource","Collision","Collision2D","IEnumerator","WaitForSeconds",
-        "SceneManager","State","Coin"};
-    const ImU32 cDef = IM_COL32(169, 183, 198, 255), cKw = IM_COL32(204, 120, 50, 255),
-                cTy = IM_COL32(78, 201, 176, 255), cStr = IM_COL32(106, 135, 89, 255),
-                cNum = IM_COL32(104, 151, 187, 255), cFn = IM_COL32(255, 198, 109, 255),
-                cCm = IM_COL32(128, 138, 128, 255), cMem = IM_COL32(176, 154, 196, 255);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    if (g_codeFont) ImGui::PushFont(g_codeFont, ImGui::GetFontSize());
-    const float lh = ImGui::GetTextLineHeight();
-    std::size_t ls = 0;
-    while (ls <= code.size()) {
-        std::size_t le = code.find('\n', ls); if (le == std::string::npos) le = code.size();
-        const std::string line = code.substr(ls, le - ls);
-        ImVec2 pos = ImGui::GetCursorScreenPos();
-        float x = pos.x;
-        auto put = [&](std::size_t a, std::size_t b, ImU32 col) {
-            if (b <= a) return;
-            const char* s = line.c_str() + a; const char* e = line.c_str() + b;
-            dl->AddText(ImVec2(x, pos.y), col, s, e);
-            x += ImGui::CalcTextSize(s, e).x;
-        };
-        std::size_t i = 0;
-        while (i < line.size()) {
-            const char c = line[i];
-            if (c == '/' && i + 1 < line.size() && line[i + 1] == '/') { put(i, line.size(), cCm); break; }
-            if (c == '"' || ((c == '$' || c == '@') && i + 1 < line.size() && line[i + 1] == '"')) {
-                std::size_t j = i + (c == '"' ? 1 : 2);
-                while (j < line.size() && line[j] != '"') { if (line[j] == '\\') ++j; ++j; }
-                put(i, std::min(j + 1, line.size()), cStr); i = j + 1; continue;
-            }
-            if (c == '\'') { std::size_t j = line.find('\'', i + 1); j = j == std::string::npos ? line.size() : j + 1; put(i, j, cStr); i = j; continue; }
-            if (std::isdigit((unsigned char)c)) {
-                std::size_t j = i; while (j < line.size() && (std::isalnum((unsigned char)line[j]) || line[j] == '.')) ++j;
-                put(i, j, cNum); i = j; continue;
-            }
-            if (std::isalpha((unsigned char)c) || c == '_') {
-                std::size_t j = i; while (j < line.size() && (std::isalnum((unsigned char)line[j]) || line[j] == '_')) ++j;
-                const std::string w = line.substr(i, j - i);
-                std::size_t k = j; while (k < line.size() && line[k] == ' ') ++k;
-                ImU32 col = cDef;
-                if (kw.count(w)) col = cKw;
-                else if (types.count(w)) col = cTy;
-                else if (k < line.size() && (line[k] == '(' || line[k] == '<') && !(i > 0 && line[i - 1] == '.' && line[k] == '<')) col = cFn;
-                else if (i > 0 && line[i - 1] == '.') col = cMem;
-                put(i, j, col); i = j; continue;
-            }
-            put(i, i + 1, cDef); ++i;
-        }
-        ImGui::Dummy(ImVec2(x - pos.x, lh));
-        if (le == code.size()) break;
-        ls = le + 1;
-    }
-    if (g_codeFont) ImGui::PopFont();
-}
-
-// ---- ImGuiColorTextEdit integration ----------------------------------------
-// A Darcula-flavoured palette matching the old hand-drawn highlighter (ABGR, so
-// 0xAABBGGRR). Known identifiers (our builtins) render yellow like function calls.
-static const TextEditor::Palette& OkayScriptPalette() {
-    static const TextEditor::Palette p = { {
-        0xffc6b7a9,  // Default            (169,183,198) soft gray
-        0xff3278cc,  // Keyword            (204,120,50)  orange
-        0xffbb9768,  // Number             (104,151,187) blue
-        0xff59876a,  // String             (106,135,89)  green
-        0xff59876a,  // CharLiteral        green
-        0xffc8c8c8,  // Punctuation        light gray
-        0xff808080,  // Preprocessor
-        0xffc6b7a9,  // Identifier         default text
-        0xffaa7698,  // KnownIdentifier    (152,118,170) purple — builtin properties (transform, deltaTime)
-        0xffaa7698,  // PreprocIdentifier  purple
-        0xff808a80,  // Comment            (128,138,128) gray
-        0xff808a80,  // MultiLineComment   gray
-        0xff241f1c,  // Background         (28,31,36) calm blue-grey
-        0xffe8e6e2,  // Cursor
-        0x8c915c3a,  // Selection          Rider blue, translucent
-        0x80302820,  // ErrorMarker        soft red wash
-        0x40eca25c,  // Breakpoint         bookmark blue (92,162,236)
-        0xffc4bbb0,  // LineNumber         readable
-        0x3a403028,  // CurrentLineFill
-        0x22403028,  // CurrentLineFillInactive
-        0x55ffffff,  // CurrentLineEdge
-        0xffb0c94e,  // TypeName           (78,201,176)  teal — Vector3, List, your classes
-        0xff6dc6ff,  // Function           (255,198,109) yellow — calls + method declarations
-        0xffc49ab0,  // Member             (176,154,196) light purple — .position, .x
-    } };
-    return p;
-}
-
-// OkayScript language definition: our keywords + every VM builtin as a "known
-// identifier" (yellow, with its signature/doc as the hover tooltip). Regex tokens
-// (double-quoted strings only, numbers, identifiers, punctuation); "//" line
-// comments. Built once.
-static const TextEditor::LanguageDefinition& OkayScriptLangDef() {
-    static bool inited = false;
-    static TextEditor::LanguageDefinition d;
-    if (!inited) {
-        static const char* kw[] = {
-            "if","else","for","while","do","return","break","continue","switch","case","default",
-            "var","let","const","function","func","def","class","struct","enum","interface","new",
-            "public","private","protected","internal","static","readonly","override","virtual","abstract",
-            "sealed","ref","out","is","as","typeof","base","get","set","yield","using","namespace",
-            "void","int","float","double","bool","string","char","long","byte","uint","object",
-            "true","false","null","this","foreach","in","and","or","not","try","catch","finally","throw",
-            "short","ushort","ulong","sbyte","decimal","async","await","params","delegate","event",
-            "operator","nameof","when","where","partial",
-        };
-        for (auto* k : kw) d.mKeywords.insert(k);
-        // Type names OkayScript understands: teal (TypeName), with a
-        // hover tooltip. Classes / enums declared in the script are added per
-        // editor (SetUserTypes).
-        static const char* kTypes[] = {
-            "GameObject","Transform","Vector3","Vector2","Quaternion","Color",
-            "Mathf","Time","Input","KeyCode","Debug","Random","Space","Screen","List","Dictionary",
-            "KeyValuePair","HashSet","Queue","Stack","IEnumerator","Coroutine","WaitForSeconds",
-            "WaitForEndOfFrame","Rigidbody","Rigidbody2D","SpriteRenderer","MeshRenderer","Renderer",
-            "Animator","AudioSource","Collider","Collider2D","Collision","Collision2D","ForceMode2D",
-            "SerializeField","Header","Range","Tooltip","Action","Func","String","Text",
-            "SortedDictionary","IEnumerable",
-        };
-        for (auto* t : kTypes) {
-            TextEditor::Identifier id; id.mDeclaration = std::string(t) + " (built-in type)";
-            d.mIdentifiers.insert(std::make_pair(std::string(t), id));
-            d.mTypeNames.insert(t);
-        }
-        d.mSemantic = true;
-        // Every completion name (curated API + all VM builtins) becomes a known
-        // identifier; attach the signature + doc so hovering shows it (widget tooltip).
-        for (const auto& name : ScriptCompletions()) {
-            TextEditor::Identifier id;
-            std::string decl;
-            if (const std::string* sg = ScriptSignature(name)) decl = *sg;
-            if (const std::string* dc = ScriptDoc(name)) decl += (decl.empty() ? "" : "\n") + *dc;
-            if (decl.empty()) decl = "OkayScript builtin";
-            id.mDeclaration = decl;
-            d.mIdentifiers.insert(std::make_pair(name, id));
-        }
-        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
-            "[$@]?\\\"(\\\\.|[^\\\"])*\\\"", TextEditor::PaletteIndex::String));
-        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
-            "#.*", TextEditor::PaletteIndex::Comment));   // '#' line comments (after strings, so "#fff" stays a string)
-        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
-            "'(\\\\.|[^'\\\\])'", TextEditor::PaletteIndex::CharLiteral));
-        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
-            "[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?[fF]?", TextEditor::PaletteIndex::Number));
-        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
-            "[a-zA-Z_][a-zA-Z0-9_]*", TextEditor::PaletteIndex::Identifier));
-        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
-            "[\\[\\]\\{\\}\\!\\%\\^\\&\\*\\(\\)\\-\\+\\=\\~\\|\\<\\>\\?\\/\\;\\,\\.]", TextEditor::PaletteIndex::Punctuation));
-        d.mCommentStart = "/*";       // C#-style block comments
-        d.mCommentEnd = "*/";
-        d.mSingleLineComment = "//";
-        d.mCaseSensitive = true;
-        d.mAutoIndentation = true;
-        d.mName = "OkayScript";
-        inited = true;
-    }
-    return d;
-}
-
 // One script code widget (ScriptEditorWidget) per open script, lazily created and configured.
 static std::unordered_map<okay::ScriptComponent*, std::unique_ptr<ScriptEditorWidget>> g_codeEditors;
 static ScriptEditorWidget& CodeEditorFor(okay::ScriptComponent* sc) {
     auto it = g_codeEditors.find(sc);
     if (it == g_codeEditors.end()) {
         auto te = std::make_unique<ScriptEditorWidget>();
-        te->SetLanguageDefinition(OkayScriptLangDef());
+        te->SetLanguage(OkayScriptLanguageWords());
         te->SetPalette(OkayScriptPalette());
-        te->SetShowWhitespaces(false);
         te->SetTabSize(4);
         te->SetLineSpacing(1.55f);
         te->SetLeftMargin(22);
@@ -16271,6 +11965,8 @@ void DrawScriptEditor(EditorState& ed) {
 
         // Statics that outlive the toolbar (used by the editor body further below).
         static bool  s_minimap = true;
+        static bool  s_wordWrap = false, s_showWs = false;   // View > Word Wrap / Show Whitespace (the code widget's own)
+        static int   s_foldReq = 0;                          // View > Fold All (1) / Unfold All (2), applied to the code widget
         static float s_zoom = 1.25f;
         {   // Density sets the starting code size; picking another step resets the zoom to that step's size
             static int s_zoomDensity = -1;
@@ -16308,6 +12004,10 @@ void DrawScriptEditor(EditorState& ed) {
                 ImGui::MenuItem("Syntax Colors", nullptr, &s_highlight);
                 ImGui::MenuItem("Minimap", nullptr, &s_minimap);
                 ImGui::MenuItem("Auto-close Brackets", nullptr, &g_scriptAutoPair);
+                ImGui::MenuItem("Word Wrap", nullptr, &s_wordWrap);
+                ImGui::MenuItem("Show Whitespace", nullptr, &s_showWs);
+                if (ImGui::MenuItem("Fold All", "Ctrl+Alt+[")) s_foldReq = 1;
+                if (ImGui::MenuItem("Unfold All", "Ctrl+Alt+]")) s_foldReq = 2;
                 ImGui::MenuItem("Problems Panel", nullptr, &s_showProblems);
                 oked::scriptui::DrawDensityMenu();   // Compact / Comfortable / Spacious, shared with the Visual Script window
                 ImGui::Separator();
@@ -16469,7 +12169,7 @@ void DrawScriptEditor(EditorState& ed) {
         //   Ctrl+G       go to line              Ctrl+Alt+L  reformat the file
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl) {
             ImGuiIO& kio = ImGui::GetIO();
-            if (ImGui::IsKeyPressed(ImGuiKey_Slash, false)) caret.toggleComment = true;
+            // (Ctrl+/ is the code widget's own: OkayUI::CodeEdit's line commands)
             if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_E, false))
                 ImGui::OpenPopup("##tabswitcher");
             if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false))
@@ -17024,6 +12724,10 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); if (s.empty()) SetCodeBuffer(sc, s); else caret.replaceAll = s; std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},
                 {"Toggle Syntax Highlight", [&]{ s_highlight = !s_highlight; }},
                 {"Toggle Minimap", [&]{ s_minimap = !s_minimap; }},
+                {"Toggle Word Wrap", [&]{ s_wordWrap = !s_wordWrap; }},
+                {"Toggle Whitespace", [&]{ s_showWs = !s_showWs; }},
+                {"Fold All", [&]{ s_foldReq = 1; }},
+                {"Unfold All", [&]{ s_foldReq = 2; }},
                 {"Find in Files (Ctrl+Shift+F)", [&]{ g_showFindInFiles = true; g_fifFocus = true; }},
                 {"Toggle Comment Line", [&]{ caret.toggleComment = true; }},
                 {"Open Scripting Docs", [&]{ g_showScriptDocs = true; }},
@@ -17077,8 +12781,8 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::Separator();
         }
 
-        // --- Editor surface: ImGuiColorTextEdit code widget -------------------
-        // The code widget (editor/vendor) owns editing, selection, undo/redo, syntax
+        // --- Editor surface: the code widget (OkayUI::CodeEdit) -----------------
+        // The code widget (ScriptEditorWidget) owns editing, selection, undo/redo, syntax
         // colouring, line numbers and the current-line highlight. We keep it in sync
         // with the shared CodeBuffer and feed it our diagnostics + bookmarks.
         int lines = 1; for (const char* p = buf.data(); *p; ++p) if (*p == '\n') ++lines;
@@ -17281,33 +12985,14 @@ void DrawScriptEditor(EditorState& ed) {
         // A negative width reserves the minimap column on the right.
         const float mmW = sdm.minimapW;
         bool showMap = s_minimap && av.x > 300.0f;
-        // Bracket / quote pairing (decided before the widget eats this frame's
-        // typing): ( [ { " ' get their closer, typing a closer that's already
-        // next to the caret steps over it, and Enter between { } opens a block.
+        // Bracket / quote pairing (typing over a closer, a pair removed by Backspace, Enter between { }) is the widget's own
+        // (OkayUI::CodeEdit::SetAutoClose; it skips strings and comments and works at every caret).
         static bool s_codeFocus = false;
-        const bool s_autoPair = g_scriptAutoPair;
-        char pairOpen = 0; bool stepOver = false, braceEnter = false;
-        if (s_autoPair && s_codeFocus && !acWasOpen && !te.HasSelection()) {
-            ImGuiIO& kio = ImGui::GetIO();
-            const std::string line = te.GetCurrentLineText();
-            const int col = te.GetCursorPosition().mColumn;
-            const char next = col < (int)line.size() ? line[col] : 0;
-            const char prev = col > 0 && col - 1 < (int)line.size() ? line[col - 1] : 0;
-            if (kio.InputQueueCharacters.Size == 1 && !kio.KeyCtrl) {
-                const ImWchar ch = kio.InputQueueCharacters[0];
-                if ((ch == ')' || ch == ']' || ch == '}' || ch == '"' || ch == '\'') && next == (char)ch) {
-                    kio.InputQueueCharacters.resize(0);   // step over the closer instead of doubling it
-                    stepOver = true;
-                } else if (ch == '(' || ch == '[' || ch == '{' || ch == '"' || ch == '\'') {
-                    bool ok = next == 0 || next == ' ' || next == ')' || next == ']' || next == '}' || next == ';' || next == ',';
-                    if ((ch == '"' || ch == '\'') && (std::isalnum((unsigned char)prev) || prev == '_')) ok = false;   // it's / x"
-                    if (ok) pairOpen = (char)ch;
-                }
-            }
-            if ((ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) &&
-                prev == '{' && next == '}')
-                braceEnter = true;
-        }
+        te.okay().SetAutoClose(g_scriptAutoPair);
+        te.okay().SetWordWrap(s_wordWrap);
+        te.okay().SetShowWhitespace(s_showWs);
+        if (s_foldReq == 1) te.okay().Edit().FoldAll(); else if (s_foldReq == 2) te.okay().Edit().UnfoldAll();
+        s_foldReq = 0;
         // ---- Scripts sidebar on the left: only the project's scripts (plus the
         // ones that live in the scene), with a filter. It folds away to a thin
         // strip with the chevron or Alt+1. (Classes and methods: double Shift.)
@@ -17525,27 +13210,7 @@ void DrawScriptEditor(EditorState& ed) {
             const int col = te.GetCursorPosition().mColumn;
             te.InsertTextUndoable(std::string(4 - (col % 4), ' '));
         }
-        s_codeFocus = te.UsingOkayUI() ? te.OkayHasKeyboard()
-                                       : (GImGui->NavWindow && std::strstr(GImGui->NavWindow->Name, "##code") != nullptr);
-        if (stepOver) {
-            ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
-            te.SetCursorPosition(ScriptEditorWidget::Coordinates(c.mLine, c.mColumn + 1));
-        }
-        if (pairOpen) {
-            const char close = pairOpen == '(' ? ')' : pairOpen == '[' ? ']' : pairOpen == '{' ? '}' : pairOpen;
-            ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
-            te.InsertTextUndoable(std::string(1, close));
-            te.SetCursorPosition(c);
-        }
-        if (braceEnter) {
-            // The widget already broke the line and indented it like the `{` line;
-            // add one level for the body and push the `}` to its own line.
-            ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
-            const std::string ln = te.GetCurrentLineText();
-            std::string ind; for (char ch : ln) { if (ch == ' ' || ch == '\t') ind += ch; else break; }
-            te.InsertTextUndoable("    \n" + ind);
-            te.SetCursorPosition(ScriptEditorWidget::Coordinates(c.mLine, c.mColumn + 4));
-        }
+        s_codeFocus = te.OkayHasKeyboard();
         ImVec2 teMin = ImGui::GetItemRectMin(), teMax = ImGui::GetItemRectMax();
         if (ImGui::IsItemHovered() && ImGui::GetIO().KeyCtrl && ImGui::GetIO().MouseWheel != 0.0f)
             s_zoom = Mathf::Clamp(s_zoom + ImGui::GetIO().MouseWheel * 0.1f, 0.7f, 3.0f);
@@ -17958,9 +13623,10 @@ void DrawScriptEditor(EditorState& ed) {
                 membersP = &csMembers;
             }
             const std::vector<std::string>& members = *membersP;
-            bool memberMode = !receiver.empty() && !members.empty();
+            // (a receiver that ends in a call, GetComponent("Light")., has no plain name: its expression counts)
+            bool memberMode = (!receiver.empty() || !recvExpr.empty()) && !members.empty();
             static std::string s_acKey;
-            std::string acKey = receiver + "|" + prefix;
+            std::string acKey = recvExpr + "|" + prefix;
             if (acKey != s_acKey) { g_acIndex = 0; s_acKey = acKey; g_acDismiss = false; }
             if (acKeyEsc) g_acDismiss = true;
             g_acCount = 0;
@@ -18313,10 +13979,14 @@ void DrawScriptEditor(EditorState& ed) {
                 for (int i = l0; i <= l1 && i < (int)ls.size(); ++i) out.push_back(ls[i]);
                 return out;
             };
+            // The code widget does Ctrl+/, Ctrl+D, Ctrl+Shift+K and Alt+Up/Down itself (OkayUI::CodeEdit line commands, one undo
+            // step each), so the key paths below never run; the toolbar's "toggle comment" still comes here.
+            const bool widgetLineKeys = true;
             // Ctrl+/ — toggle "// " on the selected lines (also the toolbar button).
             bool wantComment = caret.toggleComment;
             caret.toggleComment = false;
-            if ((chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
+            if (widgetLineKeys && wantComment) { te.okay().Edit().ToggleLineComment(); syncFromWidget(); wantComment = false; }
+            if ((!widgetLineKeys && chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
                  ImGui::IsKeyPressed(ImGuiKey_Slash, false)) || wantComment) {
                 std::vector<std::string> ls = linesText(selL0, selL1);
                 bool allCommented = true;
@@ -18337,7 +14007,7 @@ void DrawScriptEditor(EditorState& ed) {
                 if (!ls.empty()) replaceLines(selL0, selL1, repl, caret.line - 1, 0);
             }
             // Ctrl+D — duplicate the selected line(s) below themselves.
-            if (chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
+            if (!widgetLineKeys && chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
                 ImGui::IsKeyPressed(ImGuiKey_D, false)) {
                 std::vector<std::string> ls = linesText(selL0, selL1);
                 if (!ls.empty()) {
@@ -18346,7 +14016,7 @@ void DrawScriptEditor(EditorState& ed) {
                 }
             }
             // Ctrl+Shift+K — delete the selected line(s).
-            if (chordOK && cio.KeyCtrl && cio.KeyShift && !cio.KeyAlt &&
+            if (!widgetLineKeys && chordOK && cio.KeyCtrl && cio.KeyShift && !cio.KeyAlt &&
                 ImGui::IsKeyPressed(ImGuiKey_K, false)) {
                 int total = te.GetTotalLines();
                 te.SetSelection(ScriptEditorWidget::Coordinates(selL0, 0),
@@ -18369,8 +14039,8 @@ void DrawScriptEditor(EditorState& ed) {
                 }
             }
             // Alt+Up / Alt+Down — move the selected line(s) up/down one row.
-            bool mvUp = chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
-            bool mvDn = chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+            bool mvUp = !widgetLineKeys && chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
+            bool mvDn = !widgetLineKeys && chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
             if (mvUp || mvDn) {
                 int total = te.GetTotalLines();
                 if ((mvUp && selL0 > 0) || (mvDn && selL1 + 1 < total)) {
@@ -18680,7 +14350,10 @@ void HandleShortcuts(EditorState& ed) {
         else RequestPlay(ed);
     }
     SaveShortcuts(ed, io);   // before the text-field return: saving is not a text-editing key
-    if (io.WantTextInput || OwnShortcutsWindowFocused()) return;
+    // A hosted OkayUI field being typed in has the keyboard too (the host asks Dear ImGui to capture the keyboard, which does not set
+    // WantTextInput): typing "S Health" into an OkayUI search field hid the selected object on the "h" (the H shortcut), found
+    // in stage 9 under Xvfb at about 15 frames a second.
+    if (io.WantTextInput || OkayUIHasKeyboard() || OwnShortcutsWindowFocused()) return;
     bool ctrl = io.KeyCtrl;
     // The Project panel owns Delete, Ctrl+C/X/V/D and its own Ctrl+Z while it has focus: they act on files, never on the scene's selected object.
     const bool projectKeys = GImGui->NavWindow && GImGui->NavWindow->RootWindow && std::strcmp(GImGui->NavWindow->RootWindow->Name, "Project") == 0;
@@ -18754,13 +14427,13 @@ void HandleShortcuts(EditorState& ed) {
         if (ImGui::GetIO().KeyAlt) {
             int n = 0;
             for (GameObject* g : g_hiddenObjects)
-                for (const auto& up : ed.scene().Objects()) if (up.get() == g) { if (!n) ed.PushUndo(); SetActiveRecursive(g, true); ++n; break; }
+                for (const auto& up : ed.scene().Objects()) if (up.get() == g) { if (!n) ed.PushUndo(); oked::SetObjectActive(g, true); ++n; break; }
             g_hiddenObjects.clear();
             ConsoleLog(n ? "Revealed " + std::to_string(n) + " hidden object(s)" : "No objects were hidden with H"); ed.dirty = true;
         } else if (ed.selected()) {
             ed.PushUndo();
             std::vector<GameObject*> targets = ed.MultiSelection().empty() ? std::vector<GameObject*>{ed.selected()} : ed.MultiSelection();
-            for (GameObject* g : targets) { SetActiveRecursive(g, false); g_hiddenObjects.push_back(g); }
+            for (GameObject* g : targets) { oked::SetObjectActive(g, false); g_hiddenObjects.push_back(g); }
             ConsoleLog("Hid " + std::to_string(targets.size()) + " object(s) (Alt+H brings them back)"); ed.dirty = true;
         }
     }
@@ -18949,7 +14622,7 @@ void DrawFileDialogs(EditorState& ed) {
                         ed.camTarget = (lo + hi) * 0.5f;
                         ed.camDist = std::fmax(1.0f, ext * 1.8f);
                     }
-                } else ConsoleLog("Import failed: couldn't read " + src, 2);
+                } else ConsoleLog(ModelImportFailLine("Import", src), 2);
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
@@ -19881,6 +15554,21 @@ void DrawFileDialogs(EditorState& ed) {
                     }
                     ImGui::EndTabItem();
                 }
+                if (!RP.modules.empty() && ImGui::BeginTabItem("Modules")) {   // the engine modules in the player (docs/engine/modular_engine.md)
+                    ImGui::TextDisabled("Every module ships in this version; leaving modules out comes later.");
+                    if (ImGui::BeginTable("bymodule", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, ImVec2(460, 200))) {
+                        ImGui::TableSetupColumn("Module", ImGuiTableColumnFlags_WidthStretch, 3.0f); ImGui::TableSetupColumn("In project"); ImGui::TableSetupColumn("Size");
+                        ImGui::TableHeadersRow();
+                        for (const auto& m : RP.modules) {
+                            ImGui::TableNextRow();
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(m.title.c_str());
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(m.projectOn ? "on" : "off (still shipped)");
+                            ImGui::TableNextColumn(); ImGui::TextUnformatted(RP.moduleSizesKnown ? bp::HumanBytes(m.bytes).c_str() : "-");
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndTabItem();
+                }
                 if (ImGui::BeginTabItem("Files")) {
                     if (ImGui::BeginTable("breakdown", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, ImVec2(460, 200))) {
                         ImGui::TableSetupColumn("File", ImGuiTableColumnFlags_WidthStretch, 3.0f);
@@ -20151,8 +15839,13 @@ struct NewProjectForm {
     std::string lastKey;
     okayproj::Plan plan;
     Uint32 planAt = 0;
+    std::string modules;          // engine modules the new project uses ("" = every module; editor/ModulesPanelUI.hpp)
+    bool modulesTouched = false;  // the person changed them: a template change no longer does
+    int modulesTpl = -1;          // the template they were last matched to
+    std::string modulesNote;
 };
 static NewProjectForm g_npForm;
+static std::string g_newProjectModules;   // the form's modules, for the project files written on the next frame
 
 static const okayproj::Plan& NewProjectPlan(NewProjectForm& f, bool force = false) {
     const std::string key = std::string(f.name) + "\n" + f.loc;
@@ -20245,7 +15938,7 @@ static bool DrawNewProjectForm(NewProjectForm& f) {
     ImGui::TextDisabled("TEMPLATE");
     // The list takes what is left of the window (the dialog never taller than the editor window, or it would
     // spill into an OS window of its own), at most 178 px and at least 72; the Create row below needs ~64.
-    const float listH = std::min(178.0f, std::max(72.0f, ImGui::GetMainViewport()->Size.y - 24.0f - ImGui::GetCursorPosY() - 64.0f));
+    const float listH = std::min(178.0f, std::max(72.0f, ImGui::GetMainViewport()->Size.y - 24.0f - ImGui::GetCursorPosY() - 64.0f - 26.0f));   // 26: the Modules line
     ImGui::BeginChild("##nptpl", ImVec2(0, listH), ImGuiChildFlags_Borders);
     {
         const auto& all = okayproj::Templates();
@@ -20266,6 +15959,7 @@ static bool DrawNewProjectForm(NewProjectForm& f) {
         }
     }
     ImGui::EndChild();
+    okaymod::DrawNewProjectModules(f.modules, f.modulesTouched, f.modulesTpl, f.tpl, okayproj::Templates()[(std::size_t)f.tpl].title, f.modulesNote);
 
     ImGui::Dummy(ImVec2(0, 6));
     const bool can = plan.ok();
@@ -20301,6 +15995,7 @@ static void DrawNewProjectDialog(EditorState& ed) {
     if (create) {
         const std::string root = g_npForm.plan.root.string();
         const std::string tpl = okayproj::Templates()[(std::size_t)g_npForm.tpl].title;
+        g_newProjectModules = g_npForm.modules;
         ImGui::CloseCurrentPopup();
         RunAfterSavePrompt(ed, "creating the new project", [root, tpl] { g_newProjectRoot = root; g_newProjectTemplate = tpl; });
     }
@@ -20373,6 +16068,7 @@ void DrawProjectGate(EditorState& ed) {
     if (DrawNewProjectForm(g_npForm)) {
         g_newProjectRoot = g_npForm.plan.root.string();
         g_newProjectTemplate = okayproj::Templates()[(std::size_t)g_npForm.tpl].title;
+        g_newProjectModules = g_npForm.modules;
     }
     ImGui::SameLine();
     if (ImGui::Button("Quit", ImVec2(100, 32))) g_quitRequested = true;
@@ -20428,10 +16124,13 @@ void DrawNewProjectPopup(EditorState& ed) {
     const std::string folder = plan.folder;
     const std::string version = g_newProjectVersion;
     const int gpu = g_newProjectGpu;
+    const std::string modules = g_newProjectModules;   // "" (every module) when the launcher made the project
     g_newProjectVersion.clear();
     g_newProjectGpu = -1;
-    auto writeFiles = [&folder, version, gpu](const std::string& rt, std::string& err) {
+    g_newProjectModules.clear();
+    auto writeFiles = [&folder, version, gpu, modules](const std::string& rt, std::string& err) {
         ProjectSettings settings;
+        settings.modules = modules;
         if (!version.empty() && okayproj::CheckProjectVersion(version).empty())
             std::snprintf(settings.version, sizeof(settings.version), "%s", version.c_str());
         if (!okayproj::WriteTextAtomic(ProjectSettingsFile(rt), StampedNewProjectText(WriteProjectSettings(settings, "")), &err)) return false;   // stamped with this version from the first moment
@@ -20471,8 +16170,7 @@ void DrawRecoveryPopup(EditorState& ed) {
         if (ImGui::Button("Recover", ImVec2(130, 0))) {
             std::error_code rc;
             std::string scene = ed.path();
-            std::filesystem::copy_file(g_recoverPath, scene,
-                std::filesystem::copy_options::overwrite_existing, rc);
+            okay::CopyFileOver(g_recoverPath, scene, rc);   // the scene file always exists here
             std::string err;
             if (!rc && ed.Load(scene, &err)) { ed.dirty = true; ConsoleLog("Recovered autosave"); }
             else ConsoleLog("Recover failed: " + (rc ? rc.message() : err));
@@ -20526,9 +16224,8 @@ void DrawAboutPopup() {
                            "script them, and export a standalone game with File > Build Game.");
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
-        ImGui::TextDisabled("SDL %d.%d.%d  ·  Dear ImGui %s  ·  Assimp %s",
-                            SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL, IMGUI_VERSION,
-                            okay::AssimpAvailable() ? "on" : "off");
+        ImGui::TextDisabled("SDL %d.%d.%d  ·  Dear ImGui %s",
+                            SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL, IMGUI_VERSION);
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f); ImGui::TextDisabled("%s", okay::ownstack::Describe(okayuibackend::Name(g_uiBackend)).c_str()); ImGui::PopTextWrapPos();   // which parts are ours (docs/status/own_stack_rollout.md)
         {   // the update signature check: ON, or OFF with the reason (docs/online/security.md "Updater signing")
             static const okayupdate::SigStatus sigStatus = okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys());
@@ -20709,37 +16406,15 @@ void DrawProjectSettings(EditorState& ed) {
                 ImGui::SetTooltip("Draw each body part way between its last two physics steps,\n"
                                   "so motion stays smooth when the frame rate and the step rate differ.");
             ImGui::Separator();
-            ImGui::TextDisabled("Physics quality of the open scene (saved with the scene)");
+            ImGui::TextDisabled("Physics solver of the open scene (saved with the scene)");
             {
                 auto& p3 = ed.scene().physics3D();
-                int q = (int)p3.quality;
-                // Short names in the box (the long ones were cut off at "fas"); what each does is the line below.
-                const char* qn[] = {"Classic", "Improved"};
-                ImGui::SetNextItemWidth(ImGui::CalcTextSize("Improved").x + ImGui::GetStyle().FramePadding.x * 4.0f + ImGui::GetFrameHeight());
-                if (ImGui::Combo("Quality##psq", &q, qn, 2)) {
-                    p3.quality = q == 1 ? okay::PhysicsQuality::Improved : okay::PhysicsQuality::Classic;
-                    ed.scene().physics().quality = p3.quality;
-                    ed.dirty = true;
+                int it = p3.solverIterations;
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) {
+                    p3.solverIterations = it; ed.scene().physics().solverIterations = it; ed.dirty = true;
                 }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Classic plays old scenes exactly as they always played.\n"
-                                      "Improved solves contacts several times a step and remembers them, so crates stack and stay put,\n"
-                                      "resting bodies sleep together, fast bodies cannot pass through thin walls and balls roll to a stop.\n"
-                                      "New scenes start Improved. The setting is part of the scene file.");
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-                ImGui::TextWrapped("%s", p3.quality == okay::PhysicsQuality::Improved ? "Stacks stand, bodies sleep, fast bodies stop."
-                                                                                     : "The original step, for old scenes.");
-                ImGui::PopStyleColor();
-                if (p3.quality == okay::PhysicsQuality::Improved) {
-                    int it = p3.solverIterations;
-                    ImGui::SetNextItemWidth(160);
-                    if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) {
-                        p3.solverIterations = it; ed.scene().physics().solverIterations = it; ed.dirty = true;
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many times the contact solver repeats each step. 10 is enough for towers up to about 6 crates;\nraise it for taller stacks (costs time).");
-                    if (ImGui::Checkbox("Catch fast bodies automatically##psq", &p3.autoContinuous)) ed.dirty = true;
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A body that moves farther in one step than its own size is checked along its path against walls and floors,\nso a bullet cannot pass through a thin wall without ticking Continuous Collision.");
-                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many times the solver repeats each step: more holds tall stacks and long joint chains stiffer\n(costs time). 10 suits most scenes.");
             }
             if (ImGui::Button("Apply to current scene##phys")) {
                 ed.scene().physics().gravity = {g_project.gravity2D[0], g_project.gravity2D[1]};
@@ -20759,6 +16434,10 @@ void DrawProjectSettings(EditorState& ed) {
             }
         }
         if (ImGui::CollapsingHeader("Tags and Layers")) DrawTagsAndLayersSettings(ed);
+        if (ImGui::CollapsingHeader("Modules")) {   // engine modules this project uses (editor/ModulesPanelUI.hpp)
+            static std::string modulesNote;
+            if (okaymod::DrawModulesSettings(g_project.modules, ed.scene(), modulesNote)) SaveProjectSettings();
+        }
         if (ImGui::CollapsingHeader("Loading screen")) {
             ImGui::TextDisabled("Customize the editor's startup splash for this project.\nChanges apply the next time the editor opens the project.");
             const auto pngFilt = okay::filedialog::Filters("PNG image", {"*.png"});
@@ -21036,23 +16715,13 @@ static void HierLock(GameObject* go, bool rowHovered, ImVec2 rowMin, ImVec2 rowM
     dl->AddRectFilled(ImVec2(cx - 3.5f, cy - 0.5f), ImVec2(cx + 3.5f, cy + 5.0f), col, 1.0f);  // body
 }
 
-// Lock/unlock an object and its whole subtree (mirrors SetActiveRecursive).
+// Lock/unlock an object and its whole subtree.
 static void SetLockedRecursive(GameObject* go, bool on) {
     if (!go) return;
     go->editorLocked = on;
     if (go->transform)
         for (Transform* c : go->transform->Children())
             if (c) SetLockedRecursive(c->gameObject, on);
-}
-
-// Set a GameObject and its whole subtree active/inactive, so toggling a parent in
-// the Hierarchy takes its children with it.
-static void SetActiveRecursive(GameObject* go, bool on) {
-    if (!go) return;
-    go->active = on;
-    if (go->transform)
-        for (Transform* c : go->transform->Children())
-            if (c) SetActiveRecursive(c->gameObject, on);
 }
 
 // The objects a Hierarchy action should affect: the whole multi-selection when the
@@ -21108,8 +16777,7 @@ static GameObject* HierInstantiateAsset(EditorState& ed, const std::string& path
         if (ok && placed) ApplyModelImportScale(placed, path);
         if (!ok || !placed) {
             placed = nullptr;
-            ConsoleLog("Model import failed: " + path +
-                       (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.stl/.ply/.gltf/.glb; other formats need Assimp)"), 2);
+            ConsoleLog(ModelImportFailLine("Model import", path), 2);
         }
     } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
         placed = ed.CreateSprite(std::filesystem::path(path).stem().string());   // takes its own undo step
@@ -21339,7 +17007,7 @@ static void HierRowAction(EditorState& ed, GameObject* node, const std::string& 
     else if (id == "h.active") {
         ed.PushUndo();
         const bool on = !node->active;
-        for (GameObject* g : HierTargets(ed, node)) SetActiveRecursive(g, on);   // the whole subtree (and the whole selection) goes with it
+        for (GameObject* g : HierTargets(ed, node)) oked::SetObjectActive(g, on);   // the whole selection; children follow their parent
         ed.dirty = true;
     }
     else if (id == "h.lock") {
@@ -21600,9 +17268,9 @@ void DrawHierarchy(EditorState& ed) {
             if (node == g_hierOpenNode && childCount > 0)
                 ImGui::SetNextItemOpen(g_hierOpenVal == 1);
             if (g_hierDropOpen.Is(node) && childCount > 0) { ImGui::SetNextItemOpen(true); g_hierDropOpenSeen = true; }
-            // Dim inactive objects; grey the whole row (and its subtree label).
+            // Dim objects that are off, themselves or through a parent; "(off)" marks the object's own flag.
             // Isolation dims everything outside the isolated subtree the same way.
-            bool dim = !node->active || (g_isolate && !node->IsSelfOrDescendantOf(g_isolate));
+            bool dim = !node->ActiveInHierarchy() || (g_isolate && !node->IsSelfOrDescendantOf(g_isolate));
             const bool prefabRoot = !dim && !node->prefabSource.empty();   // prefab instances read blue
             if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
             else if (prefabRoot) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.76f, 1.0f, 1.0f));
@@ -21663,7 +17331,7 @@ void DrawHierarchy(EditorState& ed) {
             bool inLock = mx >= rowMax.x - kHierEyeW * 2.0f && mx < rowMax.x - kHierEyeW;
             if (ImGui::IsItemHovered() && inEye)
                 ImGui::SetTooltip(node->active ? "Hide (deactivate) this object and its children"
-                                               : "Show (activate) this object and its children");
+                                               : "Show (activate) this object (its children keep their own setting)");
             if (ImGui::IsItemHovered() && inLock)
                 ImGui::SetTooltip(node->editorLocked
                     ? "Unlock: allow selecting this object in the Scene view again"
@@ -21671,7 +17339,7 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::IsItemClicked()) {
                 if (inEye) {   // the eye hotspot toggles active instead of selecting
                     ed.PushUndo();
-                    SetActiveRecursive(node, !node->active);
+                    oked::SetObjectActive(node, !node->active);
                     ed.dirty = true;
                 } else if (inLock) {   // the padlock hotspot toggles scene-view lock
                     ed.PushUndo();
@@ -25720,8 +21388,8 @@ static void DrawAnimationEditor(EditorState& ed) {
     StopModelScenePreview(ed);
     Animator* an = go->GetComponent<Animator>();
     if (!an) {
-        ImGui::TextDisabled("'%s' has no Animator.", go->name.c_str());
-        if (ImGui::Button("Add Animator")) { go->AddComponent<Animator>(); ed.dirty = true; }
+        ImGui::TextDisabled("'%s' has no Clip Player.", go->name.c_str());
+        if (ImGui::Button("Add Clip Player")) { go->AddComponent<Animator>(); ed.dirty = true; }
         ImGui::TextDisabled("Tip: to animate a Character, select it (or any of its parts) - its pose and clip tools open here.");
         ImGui::End(); return;
     }
@@ -27826,6 +23494,61 @@ static bool IKJointLimitUI(const char* label, IKJointLimit& l) {
     return ch;
 }
 
+static bool AcceptAssetPathField(std::string& field);
+
+// The Mesh Renderer's Custom shader fields: the .okayshader file, whether it compiled (the first
+// error with its line and column when not), and one control per declared property and texture.
+// The values live in MeshRenderer::shaderParams as text, so a property the file no longer has is
+// kept (and ignored) instead of lost. The renderers reload the file by themselves when it changes.
+static bool DrawCustomShaderFields(MeshRenderer& mr) {
+    bool ch = false;
+    char path[260];
+    std::strncpy(path, mr.customShader.c_str(), sizeof(path) - 1);
+    path[sizeof(path) - 1] = '\0';
+    if (ImGui::InputText("Shader File##mesh", path, sizeof(path))) { mr.customShader = path; ch = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("An .okayshader file: a surface block that sets albedo, emission, alpha,\nnormal, metallic, specular and shininess. Edits reload by themselves.\nExamples: examples/shaders/lava.okayshader, dissolve.okayshader, rim_glow.okayshader");
+    if (AcceptAssetPathField(mr.customShader)) ch = true;
+    if (mr.customShader.empty()) { ImGui::TextDisabled("Pick an .okayshader file (drawn magenta until then)."); return ch; }
+    const oshader::ShaderFile sf = oshader::LoadShaderFile(mr.customShader);
+    const oshader::Compiled* c = sf.compiled.get();
+    if (!c || !c->ok) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.7f, 1.0f));
+        ImGui::TextWrapped("%s", c ? c->FirstError(mr.customShader).c_str() : "cannot read the shader file");
+        ImGui::PopStyleColor();
+        ImGui::TextDisabled("Drawn magenta until the file compiles; save it and it reloads.");
+        return ch;
+    }
+    ImGui::TextDisabled("%s%s", c->name.empty() ? "Compiled" : c->name.c_str(), c->unlit ? "  (unlit)" : "");
+    const std::vector<float> vals = oshader::ResolveProperties(*c, mr.shaderParams);
+    for (std::size_t i = 0; i < c->props.size(); ++i) {
+        const oshader::Property& p = c->props[i];
+        float v[4] = {vals[i * 4], vals[i * 4 + 1], vals[i * 4 + 2], vals[i * 4 + 3]};
+        const std::string label = p.name + "##okp";
+        const int w = oshader::Width(p.type);
+        bool edited = false;
+        if (p.isColor) edited = ImGui::ColorEdit3(label.c_str(), v, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
+        else if (w == 1 && p.hasRange) edited = ImGui::SliderFloat(label.c_str(), v, p.minV, p.maxV);
+        else if (w == 1) edited = ImGui::DragFloat(label.c_str(), v, 0.01f);
+        else if (w == 2) edited = ImGui::DragFloat2(label.c_str(), v, 0.01f);
+        else if (w == 3) edited = ImGui::DragFloat3(label.c_str(), v, 0.01f);
+        else edited = ImGui::DragFloat4(label.c_str(), v, 0.01f);
+        if (edited) { mr.shaderParams = oshader::SetParam(mr.shaderParams, p.name, v, w); ch = true; }
+    }
+    for (std::size_t t = 0; t < c->textures.size(); ++t) {
+        const std::string key = "tex:" + c->textures[t].name;
+        std::string pic = oshader::GetTextParam(mr.shaderParams, key);
+        char buf[260];
+        std::strncpy(buf, pic.c_str(), sizeof(buf) - 1);
+        buf[sizeof(buf) - 1] = '\0';
+        const std::string label = c->textures[t].name + "##okt";
+        if (ImGui::InputText(label.c_str(), buf, sizeof(buf))) { pic = buf; mr.shaderParams = oshader::SetTextParam(mr.shaderParams, key, pic); ch = true; }
+        if (ImGui::IsItemHovered() && !c->textures[t].defaultPath.empty()) ImGui::SetTooltip("Empty: %s", c->textures[t].defaultPath.c_str());
+        if (AcceptAssetPathField(pic)) { mr.shaderParams = oshader::SetTextParam(mr.shaderParams, key, pic); ch = true; }
+    }
+    if (!mr.shaderParams.empty() && ImGui::SmallButton("Reset Properties##okp")) { mr.shaderParams.clear(); ch = true; }
+    return ch;
+}
+
 // If an asset is dropped on the previous widget, set `field` to its path.
 static bool AcceptAssetPathField(std::string& field) {
     bool changed = oked::AssetPathPicker(field);   // "..." handle + right-click: choose from project, clear
@@ -27874,6 +23597,26 @@ static bool SameLineOrWrap(float nextW) {
 static float ButtonW(const char* label) {
     return ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
 }
+// A field `w` wide with its label after it (the inner spacing and the label's visible text), for SameLineOrWrap.
+static float FieldW(float w, const char* label) {
+    const float tw = ImGui::CalcTextSize(label, nullptr, true).x;
+    return w + (tw > 0.0f ? ImGui::GetStyle().ItemInnerSpacing.x + tw : 0.0f);
+}
+// A combo's closed text for a box `boxW` wide: cut before the arrow with "..." (stage 6: long names ran under the arrow).
+static std::string FitPreview(const char* text, float boxW) {
+    return okaypanels::InspFitText(text, boxW - ImGui::GetFrameHeight() - ImGui::GetStyle().FramePadding.x,
+                                   [](const char* t) { return ImGui::CalcTextSize(t).x; });
+}
+// A grey note wrapped at the Inspector's edge (stage 6: notes of the Item Pickup, Hold Prompt and others ran past it).
+static void WrappedNote(const char* fmt, ...) {
+    char buf[512];
+    va_list ap; va_start(ap, fmt); std::vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", buf);
+    ImGui::PopTextWrapPos();
+}
+// A check box with its label, for SameLineOrWrap.
+static float CheckW(const char* label) { return FieldW(ImGui::GetFrameHeight(), label); }
 
 // One header bar per component: fold arrow, enable box and a type
 // glyph inside the bar, the name, and a "..." menu on the right (move up / down,
@@ -28192,11 +23935,70 @@ static bool ParticleCurveEditor(EditorState& ed, const char* id, okay::ParticleC
 // takes CompHeader elsewhere, so this is not a parameter).
 static const char* sCompHeaderTip = nullptr;
 static float g_inspSectionGap = 0.0f;   // space above a component header inside the Inspector (density; 0 elsewhere)
+// CompHeader's bar drawn by OkayUI (the preview switch; docs/own_ui_toolkit.md section 14): the same model of the same bar, the menu as
+// data. False: not drawn this frame (a popup or a window covers it), and CompHeader draws the Dear ImGui bar. Called inside PushID(comp).
+static bool CompHeaderOkayUI(const char* label, okay::Component* comp, okay::Component** toRemove, bool removable, const char* managed,
+                             bool& open) {
+    char okey[32]; std::snprintf(okey, sizeof(okey), "%p", (void*)comp);
+    auto it = sCompOpen.find(okey);
+    bool want = it == sCompOpen.end() ? managed == nullptr : it->second;   // managed ones start folded
+    if (sCompForceOpen != -1) want = sCompForceOpen == 1;   // Expand/Collapse All
+    okaypanels::CompHeaderModel m;
+    m.label = label; m.enabled = comp->enabled; m.open = want;
+    m.color = ImGui::ColorConvertFloat4ToU32(CategoryColor(label)); m.glyph = CategoryGlyph(label);
+    m.prefabChanged = oked::PrefabChangedFor(comp);
+    m.diag = ComponentDiagLevel(comp->gameObject, label, &m.diagTip);
+    if (sCompHeaderTip) { m.tip = sCompHeaderTip; sCompHeaderTip = nullptr; }
+    if (managed) m.managed = managed;
+    if (want) m.mixedNote = oked::MixedNoteText(comp);
+    m.sectionGap = g_inspSectionGap;
+    m.buildMenu = [comp, removable](std::vector<okaypanels::PanelMenuEntry>& out) {
+        okaypanels::CompMenuHead(out);
+        oked::ComponentValueMenuEntries(comp, out);
+        oked::PrefabComponentMenuEntries(comp, out);
+        okaypanels::CompMenuTail(out, removable);
+    };
+    char wid[48]; std::snprintf(wid, sizeof(wid), "CompHdr%p##okayui", (void*)comp);
+    okaypanels::CompHeaderIntent in;
+    bool barPressed = false;
+    if (!oked::DrawCompHeaderOkayUI(wid, m, in, &barPressed)) return false;
+    {   // a drag from the bar onto the visual script, as from the Dear ImGui bar
+        static okay::Component* s_dragFrom = nullptr;
+        if (barPressed) s_dragFrom = comp;
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) s_dragFrom = nullptr;
+        if (s_dragFrom == comp && ImGui::BeginDragDropSource()) {
+            const std::string payload = std::string("component\n") + label;
+            ImGui::SetDragDropPayload("VS_INSPECTOR", payload.c_str(), payload.size() + 1);
+            ImGui::TextUnformatted(label);
+            ImGui::TextDisabled("Drop on the visual script");
+            ImGui::EndDragDropSource();
+        }
+    }
+    if (in.toggleEnabled) comp->enabled = !comp->enabled;
+    open = in.toggleOpen ? !want : want;
+    sCompOpen[okey] = open;
+    const std::string& id = in.menuId;
+    if (id == okaypanels::kCompMenuUp) { sMoveComp = comp; sMoveDelta = -1; }
+    else if (id == okaypanels::kCompMenuDown) { sMoveComp = comp; sMoveDelta = +1; }
+    else if (id == okaypanels::kCompMenuExpand) sCompForceRequest = 1;
+    else if (id == okaypanels::kCompMenuCollapse) sCompForceRequest = 0;
+    else if (id == okaypanels::kCompMenuCopy) oked::RequestComponentValues(comp, 1);
+    else if (id == okaypanels::kCompMenuPaste) oked::RequestComponentValues(comp, 2);
+    else if (id == okaypanels::kCompMenuReset) oked::RequestComponentValues(comp, 3);
+    else if (id == okaypanels::kCompMenuPrefabRevert || id == okaypanels::kCompMenuPrefabApply) oked::RunPrefabComponentMenu(comp, id);
+    else if (id == okaypanels::kCompMenuRemove && removable) *toRemove = comp;
+    return true;
+}
+
 static bool CompHeader(const char* label, okay::Component* comp, okay::Component** toRemove,
                        bool removable = true) {
     const char* managed = sManagedFor == comp ? sManagedNote : nullptr;   // set by the Inspector loop for components the Character Model manages
     oked::SetTipComponent(comp);   // FieldTip() after each hand-written field looks its tooltip up for this component
     ImGui::PushID(comp);
+    if (UseOkayUIInspector()) {
+        bool open = false;
+        if (CompHeaderOkayUI(label, comp, toRemove, removable, managed, open)) { ImGui::PopID(); return open; }
+    }
     bool en = comp->enabled;
     const float fh = ImGui::GetFrameHeight();
     const float startX = ImGui::GetCursorPosX();
@@ -28210,13 +24012,8 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
         std::string nm = label;
         const float badgeW = ComponentHasDiag(comp->gameObject, label) ? 22.0f : 0.0f;
         const float room = barW - arrowW - lead - fh - 10.0f - badgeW;
-        if (room > 20.0f && ImGui::CalcTextSize(nm.c_str()).x > room) {
-            while (nm.size() > 1 && ImGui::CalcTextSize((nm + "\xE2\x80\xA6").c_str()).x > room) {
-                nm.pop_back();
-                while (!nm.empty() && (static_cast<unsigned char>(nm.back()) & 0xC0) == 0x80) nm.pop_back();
-            }
-            nm += "\xE2\x80\xA6";
-        }
+        // cut to fit with an ellipsis, whole characters only (shared with the OkayUI bar: shared/InspectorPanelModel.hpp)
+        nm = okaypanels::CompHeaderTitle(nm, room, [](const char* t) { return ImGui::CalcTextSize(t).x; });
         title += nm;
     }
     title += "###hdr";
@@ -28336,6 +24133,9 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
 // A Player Controller's first-person, third-person and toggle sections: parts
 // of the one panel. They draw only while that panel is open, and have no
 // Remove of their own. A bare controller (no Player Controller) keeps its header.
+// The old every-field panels of the First / Third Person parts. Off: the Player Controller (or a bare controller) shows
+// the one plain Inspector from ControllerInspectorUi.hpp instead. The old code below stays until it is deleted.
+static constexpr bool kOldControllerPanels = false;
 static bool sPlayerControllerOpen = false;
 static okay::PlayerController* sPendingViewModeCtrl = nullptr;
 static int sPendingViewMode = 0;
@@ -28343,7 +24143,7 @@ static bool PlayerPartHeader(GameObject* go, const char* label, okay::Component*
                              bool* owned) {
     *owned = okay::PlayerController::Of(go) != nullptr;
     if (!*owned) return CompHeader(label, part, toRemove);
-    if (!sPlayerControllerOpen) return false;
+    if (!sPlayerControllerOpen || !kOldControllerPanels) return false;   // the parts sit behind the one Player Controller entry
     ImGui::PushID(part);
     ImGui::SetNextItemOpen(true, ImGuiCond_Once);
     const bool open = ImGui::CollapsingHeader(label);
@@ -29912,6 +25712,27 @@ void DrawModeling(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select everything that ISN'T selected (works in all three modes).");
             if (g_meshSelMode == 2)
                 ImGui::TextDisabled("Alt+Click an edge to select its whole loop.");
+            ImGui::TextDisabled("Ctrl+Click adds the shortest path from the last one picked.");
+            if (ToolButton("Checker##me", (g_meshSelMode == 0 && !g_meshSelVerts.empty()) || (g_meshSelMode == 1 && !g_meshSelFaces.empty()),
+                           "Select vertices (key 1) or faces (key 3) first.", true))
+                CheckerDeselectNow(mr->mesh);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Checker Deselect: keep every other vertex or face of the selection.");
+            ImGui::SameLine();
+            if (ToolButton("Boundary Loop##me", !g_meshSelFaces.empty(), kNeedFaces, true))
+                ConsoleLog("Select Boundary Loop: " + std::to_string(SelectBoundaryLoopNow(mr->mesh)) + " edges");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select the outline of the selected faces as edges (Edge mode).");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Open Edges##me")) {
+                const int n = SelectProblemEdgesNow(mr->mesh, true, false);
+                ConsoleLog(n ? "Selected " + std::to_string(n) + " open edges" : std::string("No open edges: the mesh is closed"));
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select every edge with a face on one side only (the rims of holes).");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Non-Manifold##me")) {
+                const int n = SelectProblemEdgesNow(mr->mesh, false, true);
+                ConsoleLog(n ? "Selected " + std::to_string(n) + " non-manifold edges" : std::string("No non-manifold edges"));
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select edges shared by three or more faces (they break bevel, bridge, booleans and export).");
 
             ImGui::Checkbox("Symmetry X##me", &g_meshSymX);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror every move and sculpt stroke across the local X = 0 plane (edit half, get both).");
@@ -29932,6 +25753,13 @@ void DrawModeling(EditorState& ed) {
             if (g_meshSoftSel) {
                 ImGui::SameLine(); ImGui::SetNextItemWidth(90);
                 ImGui::DragFloat("##softr", &g_meshSoftRadius, 0.01f, 0.02f, 20.0f, "r %.2f");
+            }
+            {
+                static const char* kPivots[] = {"Median Point", "Individual Origins", "Active Vertex"};
+                ImGui::SetNextItemWidth(150);
+                g_mePivot = std::clamp(g_mePivot, 0, 2);
+                ImGui::Combo("Pivot (.)##mepivot", &g_mePivot, kPivots, 3);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("What R (rotate) and S (scale) turn around: the centre of the selection, each separate part's own centre\n(several faces grow or spin in place), or the last vertex you picked. Press . in the 3D view to cycle.");
             }
 
             SectionHeader("Faces");
@@ -29979,7 +25807,8 @@ void DrawModeling(EditorState& ed) {
                 EditUndoPoint(ed, mr); mr->mesh.DeleteFaces(g_meshSelFaces); g_meshSelFaces.clear(); ed.dirty = true;
             }
             ImGui::SameLine();
-            if (ImGui::Button("Flip Normals##me")) { EditUndoPoint(ed, mr); mr->mesh.FlipNormals(); ed.dirty = true; }
+            if (ImGui::Button("Flip Normals##me")) { EditUndoPoint(ed, mr); FlipNormalsNow(mr->mesh); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the selected faces the other way round (Face mode), or every face when none are selected.");
             ImGui::SameLine();
             if (ImGui::Button("Recalc Outside##me")) {
                 EditUndoPoint(ed, mr); int n = mr->mesh.OrientFacesOutward();
@@ -30289,15 +26118,26 @@ void DrawModeling(EditorState& ed) {
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Split the face the two selected vertices share with a new edge between them.");
                 ImGui::SameLine();
-                if (ToolButton("Bridge Edge Loops##me", haveEdges, "Select two open edge loops (the rims of two holes or tube ends).")) {
-                    const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+                if (ToolButton("Bridge Edge Loops##me", haveEdges, "Select two open edge loops (the rims of two holes or tube ends), or two groups of faces (Face mode).")) {
                     std::string err;
                     int n = 0;
-                    if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n = pmo::BridgeEdgeLoops(p, edges, &err); return n > 0; }))
-                        ConsoleLog("Bridged with " + std::to_string(n) + " face(s)");
-                    else ConsoleLog("Bridge: " + err, 1);
+                    if (g_meshSelMode == 1 && !g_meshSelFaces.empty()) {
+                        // Face mode: the selected triangles name polygons; delete the two groups and bridge the holes.
+                        std::vector<int> triFace;
+                        pmo::PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}, &triFace);   // the same polygons ApplyPoly builds
+                        std::vector<int> faces;
+                        for (int t : g_meshSelFaces) if (t >= 0 && t < (int)triFace.size()) faces.push_back(triFace[(std::size_t)t]);
+                        if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n = pmo::BridgeFaces(p, faces, &err); return n > 0; }))
+                            ConsoleLog("Bridged the two face groups with " + std::to_string(n) + " face(s)");
+                        else ConsoleLog("Bridge: " + err, 1);
+                    } else {
+                        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+                        if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n = pmo::BridgeEdgeLoops(p, edges, &err); return n > 0; }))
+                            ConsoleLog("Bridged with " + std::to_string(n) + " face(s)");
+                        else ConsoleLog("Bridge: " + err, 1);
+                    }
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Join two open edge loops (the same number of edges each) with a band of faces.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Join two open edge loops (the same number of edges each) with a band of faces.\nIn Face mode: select two groups of faces (for example two facing faces); they are removed and the holes are joined.");
 
                 // ---- Spin and Extrude Along Path -----------------------------------------------------
                 {
@@ -30861,6 +26701,5587 @@ void DrawModeling(EditorState& ed) {
 #undef SmallButton
 #undef Checkbox
 
+// The type icon of a row, in the order HierKindIcon decides it.
+static int HierIconKind(GameObject* go) {
+    using namespace okaypanels;
+    if (go->GetComponent<Camera>()) return HierIconCamera;
+    if (go->GetComponent<Light>()) return HierIconLight;
+    if (go->GetComponent<Canvas>()) return HierIconCanvas;
+    if (go->GetComponent<UIButton>()) return HierIconButton;
+    if (go->GetComponent<UIToggle>()) return HierIconToggle;
+    if (go->GetComponent<UISlider>() || go->GetComponent<UIProgressBar>()) return HierIconBar;
+    if (go->GetComponent<UIDropdown>()) return HierIconDropdown;
+    if (go->GetComponent<UIInputField>()) return HierIconField;
+    if (go->GetComponent<UIImage>() || go->GetComponent<UIRawImage>()) return HierIconImage;
+    if (go->GetComponent<UIPanel>() || go->GetComponent<UIScrollView>() || go->GetComponent<UITabs>()) return HierIconPanel;
+    if (go->GetComponent<UIRadialProgress>()) return HierIconRadial;
+    if (go->GetComponent<EventSystem>()) return HierIconEventSystem;
+    if (go->GetComponent<MeshRenderer>()) return HierIconMesh;
+    if (go->GetComponent<TextRenderer>()) return HierIconText;
+    if (go->GetComponent<ParticleSystem>()) return HierIconParticles;
+    if (go->GetComponent<Tilemap>()) return HierIconTilemap;
+    if (go->GetComponent<SpriteRenderer>()) return HierIconSprite;
+    if (go->GetComponent<AudioSource>()) return HierIconAudio;
+    if (go->transform && go->transform->ChildCount() > 0 && go->Components().size() <= 1) return HierIconFolder;
+    return HierIconDot;
+}
+
+// ---- The Inspector's OkayUI parts (OKAY_UI_BACKEND=okayui with OKAY_DEV=1; docs/own_ui_toolkit.md section 14) ----------------------
+// The object header card, the Transform, the Mesh Renderer's shading fields and the Add Component button (each component's header bar
+// is in CompHeader). Each fills the shared model (shared/InspectorPanelModel.hpp) from the object, draws through editor/OkayPanels.cpp
+// (an OkayUI section inside this Dear ImGui window) and carries out the intent as the Dear ImGui code does. False: the section was not
+// drawn this frame (a popup or a window covers it) and the caller draws the Dear ImGui part.
+
+static okaypanels::InspectorHeaderState g_inspHeaderState;
+static bool s_tcopyValid = false;           // the Transform's Copy / Paste Transform Values (both versions)
+static Vec3 s_tcopyPos, s_tcopyScl;
+static Quat s_tcopyRot;
+static bool s_uniformScale = false;         // linked scale axes: drag one, all follow (both versions)
+
+static void InspectorSaveAsPrefab(EditorState& ed, GameObject* go) {
+    std::string p = go->name + ".okayprefab";
+    if (!ed.projectDir().empty()) {   // into the project's Assets folder, where the Project panel shows it
+        std::error_code pe;
+        std::filesystem::create_directories(std::filesystem::path(ed.projectDir()) / "Assets", pe);
+        p = (std::filesystem::path(ed.projectDir()) / "Assets" / p).string();
+    }
+    if (oked::SaveAsPrefabFile(*go, p)) {
+        ConsoleLog("Saved prefab " + p);
+        go->prefabSource = p;   // link the live object so it becomes an instance
+        ed.dirty = true;
+    } else ConsoleLog("Prefab save failed");
+}
+
+// After the header card (the last item: the Dear ImGui card's child, or the OkayUI card's placeholder). The OkayUI card's placeholder is
+// the active item while the card is used (a drag selecting the name's text): its hint shows only while a file is really dragged.
+static void InspectorHeaderDrop(EditorState& ed, GameObject* go, bool okayui = false) {
+    // Drop a Project asset onto the object header to attach it: a .okay script
+    // adds a Script component bound to that file; a .okaymat applies its look; an
+    // image sets the texture.
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            std::string path((const char*)p->Data), ext;
+            if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
+            for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+            if (ext == ".okay" || ext == ".okayvs") {
+                AttachScriptAsset(ed, go, path);
+            } else if (ext == ".okaymat") {
+                if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    Material m; if (Material::LoadFromFile(path, m)) {
+                        ed.PushUndo(); m.ApplyTo(*mr); ed.dirty = true; ConsoleLog("Applied material");
+                    }
+                }
+            } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
+                ed.PushUndo();
+                if (auto* mr = go->GetComponent<MeshRenderer>())        mr->texture = path;
+                else if (auto* sr = go->GetComponent<SpriteRenderer>()) sr->texture = path;
+                ed.dirty = true; ConsoleLog("Set texture");
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && (!okayui || ImGui::GetDragDropPayload()))
+        ImGui::SetTooltip("Drop a script/material/image here to attach it");
+}
+
+static bool DrawInspectorHeaderWithOkayUI(EditorState& ed, GameObject* go) {
+    static char nameBuf[128];
+    std::snprintf(nameBuf, sizeof(nameBuf), "%s", go->name.c_str());
+    okaypanels::InspectorHeaderModel m;
+    m.active = go->active; m.name = nameBuf; m.nameSize = sizeof(nameBuf);
+    m.isStatic = go->isStatic; m.locked = go->editorLocked;
+    m.icon = HierIconKind(go);
+    m.tag = go->tag; m.layer = go->layer; m.layerName = okay::Layers::Name(go->layer);
+    m.tags = [](std::vector<std::string>& builtin, std::vector<std::string>& custom) {
+        builtin.assign(okay::Tags::Builtin().begin(), okay::Tags::Builtin().end());
+        custom = okay::Tags::Custom();
+    };
+    m.layerNameOf = [](int i) { return okay::Layers::Name(i); };
+    m.layerRenameInfo = [](int i, std::string& text, std::string& hint) {
+        text = okay::Layers::IsNamed(i) ? okay::Layers::Name(i) : std::string();
+        hint = okay::Layers::DefaultName(i)[0] ? std::string(okay::Layers::DefaultName(i)) : "Layer " + std::to_string(i);
+    };
+    okaypanels::InspectorHeaderIntent in;
+    okaypanels::InspectorHeaderState& st = g_inspHeaderState;
+    if (!oked::DrawInspectorHeaderOkayUI(m, st, in)) return false;
+    InspectorHeaderDrop(ed, go, true);   // a file dropped on the card (the placeholder is the last item)
+    if (in.toggleActive) {
+        const bool act = !go->active;
+        const auto& sel = ed.MultiSelection();
+        if (sel.size() > 1) for (GameObject* g : sel) oked::SetObjectActive(g, act);   // whole multi-selection
+        else oked::SetObjectActive(go, act);
+        ed.dirty = true;
+    }
+    if (in.nameChanged) { go->name = nameBuf; ed.dirty = true; }
+    if (in.toggleStatic) { go->isStatic = !go->isStatic; ed.dirty = true; }
+    if (in.toggleLock) { ed.PushUndo(); SetLockedRecursive(go, !go->editorLocked); ed.dirty = true; }
+    if (in.setTag) {
+        if (in.tag.empty()) { go->SetTag(""); ed.dirty = true; }
+        else if (go->SetTag(in.tag)) ed.dirty = true;
+    }
+    if (in.addTag) {
+        const std::string nt = in.newTag;
+        const bool listed = okay::Tags::Contains(nt);
+        if (nt == "Untagged") { go->SetTag(""); ed.dirty = true; st.newTag[0] = '\0'; st.tagError.clear(); st.closeTagList = true; }
+        else if (!okay::Tags::Add(nt)) st.tagError = okay::Tags::IsValidName(nt) ? "the tag list is full" : okay::Tags::WhyInvalid(nt);
+        else {
+            if (!listed) SaveProjectSettings();
+            if (go->SetTag(nt)) ed.dirty = true;
+            st.newTag[0] = '\0'; st.tagError.clear(); st.closeTagList = true;
+        }
+    }
+    if (in.setLayer >= 0) { go->layer = in.setLayer; ed.dirty = true; }
+    if (in.savePrefab) InspectorSaveAsPrefab(ed, go);
+    if (in.renameTag) {   // TagRenameMenu's rules
+        const std::string& from = in.tagFrom; const std::string& to = in.tagTo;
+        if (to == from) st.closeRename = true;
+        else if (okay::Tags::Contains(to)) st.renameError = "that tag is already in the list";
+        else if (!okay::Tags::IsValidName(to)) st.renameError = okay::Tags::WhyInvalid(to);
+        else {
+            ed.PushUndo();   // the objects that carry the tag change too
+            if (okay::Tags::Rename(from, to)) {
+                const int n = ed.scene().ReplaceTag(from, to);
+                SaveProjectSettings();
+                ed.dirty = true;
+                ConsoleLog("Renamed tag " + from + " to " + to + " (" + std::to_string(n) + " object" + (n == 1 ? "" : "s") + " in this scene)");
+                st.closeRename = true; st.renameError.clear();
+            } else st.renameError = "that tag cannot be renamed";
+        }
+    }
+    if (in.removeTag) { okay::Tags::Remove(in.removeTagName); SaveProjectSettings(); }
+    if ((in.renameLayer || in.resetLayer) && okay::Layers::IsValid(in.layerIndex)) {   // LayerRenameMenu's rules
+        std::string err;
+        if (TryRenameLayer(in.layerIndex, in.resetLayer ? std::string(okay::Layers::DefaultName(in.layerIndex)) : in.layerTo, err)) {
+            st.closeRename = true; st.renameError.clear();
+        } else st.renameError = err;
+    }
+    return true;
+}
+
+static bool DrawTransformWithOkayUI(EditorState& ed, GameObject* go) {
+    Transform* t = go->transform;
+    if (!t) return false;
+    Vec3& e = g_euler[go];
+    {   // the shown euler follows the real rotation when it changed elsewhere (gizmo, script, undo), as in the Dear ImGui version
+        Quat cur = t->localRotation, mine = Quat::Euler(e);
+        float dot = cur.x*mine.x + cur.y*mine.y + cur.z*mine.z + cur.w*mine.w;
+        if (std::fabs(dot) < 0.999999f) e = cur.ToEuler();
+    }
+    const bool isCam = go->GetComponent<Camera>() != nullptr;
+    const bool multi = ed.MultiSelection().size() > 1;
+    okaypanels::TransformModel m;
+    m.pos[0] = t->localPosition.x; m.pos[1] = t->localPosition.y; m.pos[2] = t->localPosition.z;
+    m.rot[0] = e.x; m.rot[1] = e.y; m.rot[2] = e.z;
+    m.scale[0] = t->localScale.x; m.scale[1] = t->localScale.y; m.scale[2] = t->localScale.z;
+    ImGuiStorage* store = ImGui::GetStateStorage();
+    const ImGuiID openId = ImGui::GetID("Transform");   // the Dear ImGui header's own open flag: switching versions keeps it
+    m.open = store->GetInt(openId, 1) != 0;
+    m.isCamera = isCam; m.uniform = s_uniformScale; m.selectedCount = multi ? (int)ed.MultiSelection().size() : 1; m.pasteValid = s_tcopyValid;
+    const okaypanels::InspFieldHooks hooks = oked::FieldHooksFor(t);   // stage 2: the rows' tooltips and prefab marks (FieldTip)
+    m.hooks = &hooks;
+    if (oked::PrefabChangedFor(t)) {
+        m.posOverridden = oked::PrefabFieldOverridden(t, "Position");
+        m.rotOverridden = oked::PrefabFieldOverridden(t, "Rotation");
+        m.scaleOverridden = oked::PrefabFieldOverridden(t, "Scale");
+    }
+    okaypanels::TransformIntent in;
+    int pressedOn = 0;   // 1 the header, 2 Position's label, 3 Rotation's, 4 Scale's
+    if (!oked::DrawTransformOkayUI(m, in, &pressedOn)) return false;
+    {   // a drag from the header (the component) or a row's label (the field) onto the visual script, as in the Dear ImGui version
+        static int s_from = 0;
+        if (pressedOn) s_from = pressedOn;
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) s_from = 0;
+        if (s_from == 4 && isCam) s_from = 0;
+        static const char* const kPayload[5] = {"", "component\nTransform", "field\nposition", "field\nrotation", "field\nscale"};
+        static const char* const kTitle[5] = {"", "Transform", "Position", "Rotation", "Scale"};
+        if (s_from > 0 && ImGui::BeginDragDropSource()) {
+            ImGui::SetDragDropPayload("VS_INSPECTOR", kPayload[s_from], std::strlen(kPayload[s_from]) + 1);
+            ImGui::TextUnformatted(kTitle[s_from]);
+            ImGui::TextDisabled("Drop on the visual script");
+            ImGui::EndDragDropSource();
+        }
+    }
+    auto others = [&](auto&& apply) {
+        if (!multi) return;
+        for (GameObject* g : ed.MultiSelection())
+            if (g && g != go && g->transform) apply(g);
+    };
+    if (in.toggleOpen) store->SetInt(openId, m.open ? 0 : 1);
+    if (in.copy) { s_tcopyPos = t->localPosition; s_tcopyRot = t->localRotation; s_tcopyScl = t->localScale; s_tcopyValid = true; }
+    if (in.paste && s_tcopyValid) {
+        ed.PushUndo();
+        t->localPosition = s_tcopyPos; t->localRotation = s_tcopyRot; t->localScale = s_tcopyScl;
+        ed.dirty = true;
+    }
+    if (in.posChanged) {
+        t->localPosition = {m.pos[0], m.pos[1], m.pos[2]}; ed.dirty = true;
+        others([&](GameObject* g) { g->transform->localPosition = t->localPosition; });
+    }
+    if (in.rotChanged) {
+        e = {m.rot[0], m.rot[1], m.rot[2]};
+        t->localRotation = Quat::Euler(e); ed.dirty = true;
+        others([&](GameObject* g) { g->transform->localRotation = t->localRotation; g_euler[g] = e; });
+    }
+    if (in.scaleChanged && !isCam) {
+        t->localScale = {m.scale[0], m.scale[1], m.scale[2]}; ed.dirty = true;
+        others([&](GameObject* g) { if (!g->GetComponent<Camera>()) g->transform->localScale = t->localScale; });
+    }
+    if (in.activated) ed.PushUndo();
+    if (in.resetPos) { ed.PushUndo(); t->localPosition = {0, 0, 0}; ed.dirty = true; }
+    if (in.resetRot) { ed.PushUndo(); g_euler[go] = {0, 0, 0}; t->localRotation = Quat::Euler({0, 0, 0}); ed.dirty = true; }
+    if (in.resetScale && !isCam) { ed.PushUndo(); t->localScale = {1, 1, 1}; ed.dirty = true; }
+    if (in.toggleUniform) s_uniformScale = !s_uniformScale;
+    if (!in.prefabChosen.empty()) oked::RunPrefabFieldMenu(t, in.prefabField, in.prefabChosen);
+    return true;
+}
+
+// ---- The Inspector's OkayUI parts, stage 2 (docs/own_ui_toolkit.md section 15) --------------------------------------------------------
+// Component bodies as field rows (shared/InspectorFieldsModel.hpp): each builder below lists the rows its Dear ImGui body draws, in the
+// same order, with the same labels, ranges, formats and tooltips, pointing at the component's values; the OkayUI section edits them in
+// place and the builder then does what the Dear ImGui code does after each widget. False: the section was not drawn this frame (a popup
+// or a window covers it) and the caller draws the Dear ImGui body. The Dear ImGui bodies stay the default and the fallback.
+
+static std::uint32_t RowCol(float r, float g, float b) {
+    return okaypanels::HierCol((unsigned)std::lround(std::clamp(r, 0.0f, 1.0f) * 255.0f), (unsigned)std::lround(std::clamp(g, 0.0f, 1.0f) * 255.0f),
+                               (unsigned)std::lround(std::clamp(b, 0.0f, 1.0f) * 255.0f));
+}
+
+// Draws the rows as an OkayUI section of the Inspector (under the component's id), with the component's tooltips, prefab marks and
+// pickers; runs a chosen prefab menu row. `proc`: the Mesh Renderer's procedural textures for a grid picker.
+static bool DrawRowsOkayUI(okay::Component* comp, const char* id, okaypanels::InspFieldList& L, bool proc = false) {
+    L.hooks = oked::FieldHooksFor(comp);
+    // a layer mask's right-click rename (the Camera's Culling Mask; stage 3): LayerRenameMenu's name, hint and TryRenameLayer
+    L.hooks.layerName = [](int i, std::string& text, std::string& hint, std::string& def) {
+        text = okay::Layers::IsNamed(i) ? okay::Layers::Name(i) : std::string();
+        def = okay::Layers::DefaultName(i);
+        hint = !def.empty() ? def : "Layer " + std::to_string(i);
+    };
+    L.hooks.renameLayer = [](int i, const std::string& name, std::string& err) { return TryRenameLayer(i, name, err); };
+    if (proc) {
+        auto files = L.hooks.choices;
+        L.hooks.choices = [files](const okaypanels::InspRow& row, std::vector<std::string>& values, std::vector<std::string>& names, std::vector<void*>& thumbs) {
+            if (std::strcmp(row.pickKind, "proc") != 0) { if (files) files(row, values, names, thumbs); return; }
+            for (const std::string& pn : okay::ProcTextureNames()) {
+                values.push_back("proc:" + pn); names.push_back(pn); thumbs.push_back(GetThumb("proc:" + pn));
+            }
+        };
+    }
+    oked::MarkPrefabOverrides(comp, L);
+    ImGui::PushID(comp);
+    const bool drawn = oked::DrawFieldListOkayUI(id, L);
+    ImGui::PopID();
+    if (drawn && !L.prefabChosen.empty()) oked::RunPrefabFieldMenu(comp, L.prefabField, L.prefabChosen);
+    return drawn;
+}
+
+static bool DrawRigidbody3DWithOkayUI(EditorState& ed, GameObject* go, Rigidbody3D* rb, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kTypes[] = {"Dynamic", "Kinematic", "Static"};
+    InspFieldList L;
+    L.rows.reserve(32);
+    int bt = (int)rb->bodyType;
+    const int kType = L.Combo("Body Type##rb3", &bt, kTypes, 3); L.TipLookup();
+    L.Drag("Gravity Scale##rb3", &rb->gravityScale, 1, 0.05f);
+    L.Drag("Mass##rb3", &rb->mass, 1, 0.05f, 0.01f, 1000.0f);
+    L.Drag("Drag##rb3", &rb->drag, 1, 0.01f, 0.0f, 100.0f);
+    L.Drag("Bounciness##rb3", &rb->bounciness, 1, 0.01f, 0.0f, 1.0f);
+    L.Drag("Friction##rb3", &rb->friction, 1, 0.01f, 0.0f, 2.0f);
+    L.Tip("Coulomb friction (0 = ice). Combined between contacting bodies so things slow, stack and hold on slopes.");
+    L.Drag("Max Fall Speed##rb3", &rb->maxFallSpeed, 1, 0.1f, 0.0f, 200.0f);
+    L.Tip("Terminal fall speed (0 = unlimited). Caps downward velocity for stable long falls.");
+    L.Note("Freeze position");
+    L.SameLine(); L.Check("X##fz", &rb->freezeX);
+    L.SameLine(); L.Check("Y##fz", &rb->freezeY);
+    L.SameLine(); L.Check("Z##fz", &rb->freezeZ);
+    L.Check("Freeze Rotation##rb3", &rb->freezeRotation); L.Tip("On = classic no-spin body. Off = torque and off-center hits rotate it (tipping, tumbling).");
+    if (!rb->freezeRotation) L.Drag("Angular Drag##rb3", &rb->angularDrag, 1, 0.01f, 0.0f, 10.0f);
+    L.Check("Allow Sleep##rb3", &rb->allowSleep); L.Tip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
+    L.Check("Continuous Collision##rb3", &rb->continuousCollision);
+    L.Tip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
+    L.Drag("Rolling Resistance##rb3", &rb->rollingResistance, 1, 0.005f, 0.0f, 1.0f, "%.3f");
+    L.Tip("How quickly a rolling ball or wheel slows down (Improved physics quality).\n0 rolls on; 0.03 stops a ball rolling at 5 m/s in about 15 seconds.");
+    L.Check("Use Child Colliders##rb3", &rb->compoundChildren);
+    L.Tip("Improved physics quality: colliders on child objects (that have no Rigidbody of their own) are part of this body.\nUse it for a table made of a top and four legs, or an L-shaped crate. Mass and balance are worked out for the whole shape.");
+    char note[128];
+    if (go->transform && go->transform->Parent()) {
+        L.Label("This body follows its parent. Moving or turning the parent carries it, and gravity still pulls straight down. Unparent it and it keeps the speed the parent was giving it.");
+        L.Last().wrap = true;
+    } else {
+        std::snprintf(note, sizeof note, "Parent this object and the body is carried with it. Physics steps: %.0f per second.", g_project.physicsHz);
+        L.Note(note, true, true);
+    }
+    const int kRemove = L.SmallButton("Remove##rb3");
+    if (!DrawRowsOkayUI(rb, "##okayui_rb3", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kType].changed) rb->bodyType = (Rigidbody3D::BodyType)bt;
+    if (L[kRemove].clicked) toRemove = rb;
+    return true;
+}
+
+// The 3D colliders' shared rows: Trigger and Layer, the Physics Material fold-out (PhysicsMaterialFields) and the trigger filter
+// (TriggerFilterFields). `id` is the collider's suffix ("bc3"); the strings the rows point at live in `st`.
+struct ColliderRowsState {
+    std::deque<std::string> text;
+    bool ownF = false, ownB = false;
+    int fm = 0, bm = 0;
+    std::string layersText;
+    int kOwnF = -1, kOwnB = -1, kFm = -1, kBm = -1, kLayers = -1;
+};
+template <class Col>
+static void AddColliderRows(okaypanels::InspFieldList& L, Col* c, const char* id, ColliderRowsState& st, bool triggerAndLayer = true) {
+    static const char* const kModes[] = {"Default", "Average", "Minimum", "Multiply", "Maximum"};
+    auto label = [&](const char* base, const char* pre) { st.text.push_back(std::string(base) + pre + id); return st.text.back().c_str(); };
+    if (triggerAndLayer) {
+        L.Check(label("Trigger", "##"), &c->isTrigger);
+        L.SameLine(); L.DragInt(label("Layer", "##"), &c->layer, 0.1f, 0, 31); L.Last().width = 80.0f;
+    }
+    L.Tree(label("Physics Material", "##pm"));
+    st.ownF = c->friction >= 0.0f; st.ownB = c->bounciness >= 0.0f;
+    st.fm = (int)c->frictionCombine; st.bm = (int)c->bounceCombine;
+    st.kOwnF = L.Check(label("Own Friction", "##pm"), &st.ownF);
+    L.Tip("Off: use the Rigidbody's friction, as before. On: this collider has its own (0 is ice, 1 is rubber).");
+    if (st.ownF) {
+        L.Drag(label("Friction", "##pm"), &c->friction, 1, 0.01f, 0.0f, 10.0f);
+        st.kFm = L.Combo(label("Friction Mix", "##pm"), &st.fm, kModes, 5);
+        L.Tip("How this friction mixes with the one it touches. Default is the geometric mean.");
+    }
+    st.kOwnB = L.Check(label("Own Bounciness", "##pm"), &st.ownB);
+    L.Tip("Off: use the Rigidbody's bounciness. On: this collider has its own (0 dead, 1 never loses height).");
+    if (st.ownB) {
+        L.Drag(label("Bounciness", "##pm"), &c->bounciness, 1, 0.01f, 0.0f, 1.0f);
+        st.kBm = L.Combo(label("Bounce Mix", "##pm"), &st.bm, kModes, 5);
+        L.Tip("How this bounciness mixes with the one it touches. Default is the larger of the two.");
+    }
+    L.TreeEnd();
+    if (c->isTrigger) {
+        L.Text(label("Only Tag", "##tf"), &c->triggerTag, "any tag (e.g. Player)");
+        L.Tip("The trigger only reacts to objects with this tag; everything else\npasses through with no Enter / Stay / Exit events. Blank = any object.");
+        st.layersText = LayerMaskToList(c->triggerLayers);
+        st.kLayers = L.Text(label("Only Layers", "##tf"), &st.layersText, "all layers");
+        L.Tip("Only colliders on these layers set the trigger off: numbers or names\nseparated by commas (0,3 or Default,Enemy). Blank = all layers.");
+    }
+}
+template <class Col>
+static void ApplyColliderRows(okaypanels::InspFieldList& L, Col* c, const ColliderRowsState& st) {
+    if (st.kOwnF >= 0 && L[st.kOwnF].changed) c->friction = st.ownF ? 0.5f : -1.0f;
+    if (st.kFm >= 0 && L[st.kFm].changed) c->frictionCombine = (okay::CombineMode)st.fm;
+    if (st.kOwnB >= 0 && L[st.kOwnB].changed) c->bounciness = st.ownB ? 0.3f : -1.0f;
+    if (st.kBm >= 0 && L[st.kBm].changed) c->bounceCombine = (okay::CombineMode)st.bm;
+    if (st.kLayers >= 0 && L[st.kLayers].changed) c->triggerLayers = okay::Layers::MaskFromList(st.layersText);
+}
+
+static bool DrawBoxCollider3DWithOkayUI(EditorState& ed, GameObject* go, BoxCollider3D* bc, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(32);
+    float sz[3] = {bc->size.x, bc->size.y, bc->size.z}, off[3] = {bc->offset.x, bc->offset.y, bc->offset.z};
+    const int kSize = L.Drag("Size##bc3", sz, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true; L.TipLookup();
+    const int kOff = L.Drag("Offset##bc3", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true; L.TipLookup();
+    ColliderRowsState st;
+    AddColliderRows(L, bc, "bc3", st);
+    int kFit = -1;
+    if (go->GetComponent<MeshRenderer>()) kFit = L.SmallButton("Fit to mesh##bc3");
+    L.SameLine();
+    const int kAuto = L.Check("Auto Fit##bc3", &bc->autoFit); L.TipLookup();
+    const int kEdit = L.Button("Edit Collider##bc3", g_colliderEdit);
+    L.Tip("Show draggable face handles in the Scene view so you can\npull each side of the box to match the model. Turn off when done.");
+    if (g_colliderEdit) L.Note("Drag the colored dots on each face in the Scene view.");
+    const int kRemove = L.SmallButton("Remove##bc3");
+    if (!DrawRowsOkayUI(bc, "##okayui_bc3", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kSize].changed) bc->size = {sz[0], sz[1], sz[2]};
+    if (L[kOff].changed) bc->offset = {off[0], off[1], off[2]};
+    ApplyColliderRows(L, bc, st);
+    if (kFit >= 0 && L[kFit].clicked) { FitBox(go, bc); ed.dirty = true; }
+    if (L[kAuto].changed && bc->autoFit) FitColliders(go);
+    if (bc->autoFit) FitColliders(go, true);
+    if (L[kEdit].clicked) {
+        g_colliderEdit = !g_colliderEdit;
+        if (!g_colliderEdit) g_colliderDragAxis = -1;   // leaving edit mode ends any drag
+    }
+    if (L[kRemove].clicked) toRemove = bc;
+    return true;
+}
+
+static bool DrawSphereCollider3DWithOkayUI(EditorState& ed, GameObject* go, SphereCollider3D* sc, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(24);
+    L.Drag("Radius##sc3", &sc->radius, 1, 0.05f, 0.0f, 1000.0f); L.TipLookup();
+    float off[3] = {sc->offset.x, sc->offset.y, sc->offset.z};
+    const int kOff = L.Drag("Offset##sc3", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true; L.TipLookup();
+    ColliderRowsState st;
+    AddColliderRows(L, sc, "sc3", st);
+    int kFit = -1;
+    if (go->GetComponent<MeshRenderer>()) kFit = L.SmallButton("Fit to mesh##sc3");
+    L.SameLine();
+    const int kAuto = L.Check("Auto Fit##sc3", &sc->autoFit); L.TipLookup();
+    const int kRemove = L.SmallButton("Remove##sc3");
+    if (!DrawRowsOkayUI(sc, "##okayui_sc3", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kOff].changed) sc->offset = {off[0], off[1], off[2]};
+    ApplyColliderRows(L, sc, st);
+    if (kFit >= 0 && L[kFit].clicked) { FitSphere(go, sc); ed.dirty = true; }
+    if (L[kAuto].changed && sc->autoFit) FitColliders(go);
+    if (sc->autoFit) FitColliders(go, true);
+    if (L[kRemove].clicked) toRemove = sc;
+    return true;
+}
+
+static bool DrawCapsuleCollider3DWithOkayUI(EditorState& ed, GameObject* go, CapsuleCollider3D* cap, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kAxes[] = {"X", "Y", "Z"};
+    InspFieldList L;
+    L.rows.reserve(26);
+    L.Drag("Radius##cap3", &cap->radius, 1, 0.05f, 0.0f, 1000.0f); L.TipLookup();
+    L.Drag("Height##cap3", &cap->height, 1, 0.05f, 0.0f, 1000.0f); L.TipLookup();
+    L.Combo("Axis##cap3", &cap->axis, kAxes, 3); L.TipLookup();
+    float off[3] = {cap->offset.x, cap->offset.y, cap->offset.z};
+    const int kOff = L.Drag("Offset##cap3", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true; L.TipLookup();
+    ColliderRowsState st;
+    AddColliderRows(L, cap, "cap3", st);
+    int kFit = -1;
+    if (go->GetComponent<MeshRenderer>()) kFit = L.SmallButton("Fit to mesh##cap3");
+    L.SameLine();
+    const int kAuto = L.Check("Auto Fit##cap3", &cap->autoFit); L.TipLookup();
+    const int kRemove = L.SmallButton("Remove##cap3");
+    if (!DrawRowsOkayUI(cap, "##okayui_cap3", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kOff].changed) cap->offset = {off[0], off[1], off[2]};
+    ApplyColliderRows(L, cap, st);
+    if (kFit >= 0 && L[kFit].clicked) { FitCapsule(go, cap); ed.dirty = true; }
+    if (L[kAuto].changed && cap->autoFit) FitColliders(go);
+    if (cap->autoFit) FitColliders(go, true);
+    if (L[kRemove].clicked) toRemove = cap;
+    return true;
+}
+
+static bool DrawMeshCollider3DWithOkayUI(EditorState& ed, GameObject* go, MeshCollider3D* mcol, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(28);
+    char buf[200];
+    const std::string status = mcol->StatusMessage();
+    if (mcol->UsesConvexHull()) {
+        std::snprintf(buf, sizeof buf, "Dynamic body: convex hull, %d vertices / %d triangles. Concave gaps are filled in.", mcol->HullVertexCount(), mcol->HullTriangleCount());
+        L.Note(buf, true, true);
+    } else if (mcol->HasTriangles()) {
+        const TriMesh& tm = mcol->Tris();
+        std::snprintf(buf, sizeof buf, "Exact triangles: %d (BVH %d nodes%s)", tm.TriangleCount(), tm.NodeCount(),
+                      tm.DroppedTriangles() > 0 ? (", " + std::to_string(tm.DroppedTriangles()) + " degenerate skipped").c_str() : "");
+        L.Note(buf, true, true);
+    }
+    if (!status.empty()) { L.ColorText(RowCol(1.0f, 0.75f, 0.3f), status.c_str(), true); L.Last().wrap = true; }
+    if (!mcol->UsesConvexHull()) L.Note("Static or kinematic: exact triangles. A dynamic Rigidbody uses the convex hull.", false, true);
+    ColliderRowsState st;
+    AddColliderRows(L, mcol, "mc3", st);
+    float sz[3] = {mcol->size.x, mcol->size.y, mcol->size.z}, off[3] = {mcol->offset.x, mcol->offset.y, mcol->offset.z};
+    int kSize = -1, kOff = -1, kFit = -1;
+    if (!mcol->HasTriangles()) {
+        kSize = L.Drag("Fallback Size##mc3", sz, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+        kOff = L.Drag("Fallback Offset##mc3", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+        if (go->GetComponent<MeshRenderer>()) kFit = L.SmallButton("Fit to mesh##mc3");
+    }
+    const int kRebuild = L.SmallButton("Rebuild##mc3");
+    L.Tip("Rebuild the triangle BVH now (it also rebuilds automatically when the mesh changes).");
+    L.SameLine(); const int kRemove = L.SmallButton("Remove##mc3");
+    if (!DrawRowsOkayUI(mcol, "##okayui_mc3", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    ApplyColliderRows(L, mcol, st);
+    if (kSize >= 0 && L[kSize].changed) mcol->size = {sz[0], sz[1], sz[2]};
+    if (kOff >= 0 && L[kOff].changed) mcol->offset = {off[0], off[1], off[2]};
+    if (kFit >= 0 && L[kFit].clicked) { FitColliders(go); ed.dirty = true; }
+    if (L[kRebuild].clicked) { mcol->Invalidate(); ed.dirty = true; }
+    if (L[kRemove].clicked) toRemove = mcol;
+    return true;
+}
+
+static bool DrawScriptWithOkayUI(EditorState& ed, ScriptComponent* sc) {
+    using namespace okaypanels;
+    InspFieldList L;
+    const int kOpen = L.SmallButton("Open in Script Editor");
+    const char* liveBuf = PeekCodeBuffer(sc);
+    const std::vector<ScriptField> fields = ParseScriptFields(liveBuf ? std::string(liveBuf) : sc->Source());
+    struct Var {   // one variable's rows and the values they edit
+        std::string cur, text;
+        bool overridden = false, b = false, isVec = false, isNum = false, isObj = false;
+        float v[3] = {0, 0, 0};
+        int kValue = -1, kRevert = -1;
+    };
+    std::deque<Var> vars;
+    std::deque<std::string> text;
+    L.rows.reserve(fields.size() * 3 + 4);
+    if (fields.empty()) {
+        L.Note("No public variables. Declare top-level vars,");
+        L.Note("e.g.  public float speed = 5;");
+    } else {
+        L.Section("Variables");
+        const float nameCol = std::max(80.0f, ImGui::GetContentRegionAvail().x * 0.42f);   // the name column, as the Dear ImGui body
+        for (const ScriptField& f : fields) {
+            vars.emplace_back();
+            Var& v = vars.back();
+            v.overridden = sc->fields.count(f.name) != 0;
+            v.cur = v.overridden ? sc->fields[f.name] : f.def;
+            if (!f.header.empty()) { L.Spacing(); text.push_back(f.header); L.Section(text.back().c_str()); }
+            text.push_back(f.name);
+            L.Label(text.back().c_str(), v.overridden ? kInspOverriddenVar : 0u, true);
+            text.push_back(f.tooltip.empty() ? (f.type.empty() ? f.name : f.type) : f.tooltip);
+            L.Tip(text.back().c_str());
+            L.SameLine(-1.0f, nameCol - ImGui::GetCursorPosX());   // SameLine(nameCol) counts from the window's left; the rows from the region's
+            const std::string& cur = v.cur;
+            v.isVec = f.type.find("Vector3") != std::string::npos || f.type.find("Vector2") != std::string::npos ||
+                      f.type.find("Vec3") != std::string::npos || cur.find("Vector3") != std::string::npos || cur.find("Vector2") != std::string::npos;
+            if (cur == "true" || cur == "false") {
+                v.b = cur == "true";
+                v.kValue = L.Check("##v", &v.b);
+            } else if (v.isVec) {
+                if (auto lp = cur.find('('); lp != std::string::npos) {
+                    std::string inside = cur.substr(lp + 1);
+                    if (auto rp = inside.find(')'); rp != std::string::npos) inside = inside.substr(0, rp);
+                    for (char& ch : inside) if (ch == ',') ch = ' ';
+                    std::istringstream is(inside); is >> v.v[0] >> v.v[1] >> v.v[2];
+                }
+                v.kValue = L.Drag("##v", v.v, 3, 0.05f); L.Last().width = -28.0f;
+            } else if (f.type.find("GameObject") != std::string::npos || f.type.find("Transform") != std::string::npos) {
+                v.isObj = true;
+                std::string sv = cur;
+                if (sv.size() >= 2 && (sv.front() == '"' || sv.front() == '\'') && sv.back() == sv.front()) sv = sv.substr(1, sv.size() - 2);
+                text.push_back((sv.empty() ? std::string("None (") + (f.type.empty() ? "Object" : f.type) + ")" : sv) + "##objslot");
+                v.kValue = L.Button(text.back().c_str(), false, -28.0f);
+                L.Tip("Drag a GameObject from the Hierarchy here to assign");
+                L.Last().dropKind = "objectname";
+            } else {
+                char* endp = nullptr;
+                std::string num = cur;
+                if (!num.empty() && (num.back() == 'f' || num.back() == 'F' || num.back() == 'd' || num.back() == 'D')) num.pop_back();
+                const double dv = std::strtod(num.c_str(), &endp);
+                v.isNum = endp && *endp == '\0' && !num.empty();
+                if (v.isNum) {
+                    v.v[0] = (float)dv;
+                    v.kValue = f.hasRange ? L.Slider("##v", v.v, f.rmin, f.rmax) : L.Drag("##v", v.v, 1, 0.05f);
+                } else {
+                    v.text = cur;
+                    if (v.text.size() >= 2 && (v.text.front() == '"' || v.text.front() == '\'') && v.text.back() == v.text.front()) v.text = v.text.substr(1, v.text.size() - 2);
+                    v.kValue = L.Text("##v", &v.text);
+                }
+                L.Last().width = -28.0f;
+            }
+            if (v.overridden) {
+                L.SameLine();
+                v.kRevert = L.SmallButton("o");
+                text.push_back("Revert to the script default (" + f.def + ")");
+                L.Tip(text.back().c_str());
+            }
+        }
+    }
+    if (!DrawRowsOkayUI(sc, "##okayui_script", L)) return false;
+    if (L[kOpen].clicked) {
+        g_showScriptEditor = true;
+        if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), sc) == g_scriptTabs.end()) g_scriptTabs.push_back(sc);
+        g_activeScriptTab = sc; g_focusScriptTab = sc;
+    }
+    std::size_t vi = 0;
+    for (const ScriptField& f : fields) {
+        Var& v = vars[vi++];
+        if (v.kRevert >= 0 && L[v.kRevert].clicked) { sc->fields.erase(f.name); sc->ApplyFieldOverrides(); ed.dirty = true; continue; }
+        if (v.kValue < 0) continue;
+        InspRow& r = L[v.kValue];
+        if (!r.changed) continue;
+        std::string cur = v.cur;
+        if (cur == "true" || cur == "false") cur = v.b ? "true" : "false";
+        else if (v.isVec) { char nb[96]; std::snprintf(nb, sizeof nb, "new Vector3(%g, %g, %g)", v.v[0], v.v[1], v.v[2]); cur = nb; }
+        else if (v.isObj) cur = std::string("\"") + *r.S() + "\"";
+        else if (v.isNum) { char nb[32]; std::snprintf(nb, sizeof nb, "%g", v.v[0]); cur = nb; }
+        else cur = std::string("\"") + v.text + "\"";
+        sc->fields[f.name] = cur; sc->ApplyFieldOverrides(); ed.dirty = true;
+    }
+    return true;
+}
+
+// The Mesh Renderer below Primitive: the mesh file, the texture with its browse button, procedural picker, thumbnail and its UV rows,
+// the maps (normal, specular, occlusion, metal / rough, emissive), the mesh tools, the material preset and Add Physics.
+static char g_matPresetPath[256] = "Assets/Material.okaymat";   // the material preset's path (both versions)
+
+// ---- The Inspector's OkayUI parts, stage 3 (docs/own_ui_toolkit.md section 16) --------------------------------------------------------
+// More component bodies as field rows, written the way the stage 2 builders above are: the rows of the Dear ImGui body in its order,
+// with its labels, ranges, formats and tooltips; after the frame the builder does what the Dear ImGui code does after each widget.
+// False: not drawn this frame (the caller draws the Dear ImGui body).
+
+// A path field as AcceptAssetPathField draws it (the picker arrow, the menu, a drop from the Project panel): `w` its width (0 the
+// value column).
+static int PathFieldRow(okaypanels::InspFieldList& L, const char* label, std::string* v, float w = 0.0f) {
+    const int k = L.Text(label, v);
+    L.Last().pick = okaypanels::InspPickList; L.Last().dropKind = ""; L.Last().width = w;
+    return k;
+}
+// TexFieldThumb as a row (only when a thumbnail exists): its index, or -1.
+static int ThumbRow(okaypanels::InspFieldList& L, const std::string& path) {
+    if (path.empty()) return -1;
+    SDL_Texture* t = GetThumb(path);
+    if (!t) return -1;
+    const int k = L.Image("##thumb", t, 40.0f, 40.0f);
+    L.Last().sv = path;
+    return k;
+}
+static void ShowThumbInProject(okaypanels::InspFieldList& L, int k) {
+    if (k >= 0 && L[k].clicked) { g_pingAsset = L[k].sv; g_showProject = true; ImGui::SetWindowFocus("Project"); }
+}
+
+static bool DrawSpriteRendererWithOkayUI(EditorState& ed, SpriteRenderer* sr, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kFilters[] = {"Smooth", "Pixel"};
+    InspFieldList L;
+    L.rows.reserve(20);
+    float col[4] = {sr->color.r, sr->color.g, sr->color.b, sr->color.a};
+    const int kCol = L.Color("Color##sprite", col, 4);
+    float size[2] = {sr->size.x, sr->size.y};
+    const int kSize = L.Drag("Size", size, 2, 0.05f, 0.0f, 1000.0f);
+    const int kTex = PathFieldRow(L, "##spritetex", &sr->texture, 210.0f); L.TipLookup();
+    L.SameLine(4.0f); const int kBrowse = L.Button("...##spritetexbrowse");
+    L.SameLine(4.0f); L.Label("Texture");
+    const int kThumb = ThumbRow(L, sr->texture);
+    L.DragInt("Sorting Layer##sprite", &sr->sortingLayer, 0.05f, -100, 100); L.TipLookup();
+    L.DragInt("Sort Order##sprite", &sr->sortOrder, 0.1f, -1000, 1000); L.TipLookup();
+    L.Check("Flip X##sprite", &sr->flipX); L.TipLookup();
+    L.SameLine(); L.Check("Flip Y##sprite", &sr->flipY); L.TipLookup();
+    int fi = (int)sr->texFilter;
+    const int kFilt = L.Combo("Filter##sprite", &fi, kFilters, 2);
+    L.Tip("Smooth = bilinear (photos/hi-res). Pixel = nearest-neighbour (crisp pixel-art, no blur).");
+    L.Note("image file (PNG/JPG); higher Sorting Layer always on top, then Sort Order", false, true);
+    const int kRemove = L.SmallButton("Remove##sprite");
+    if (!DrawRowsOkayUI(sr, "##okayui_sprite", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kCol].changed) sr->color = {col[0], col[1], col[2], col[3]};
+    if (L[kSize].changed) sr->size = {size[0], size[1]};
+    (void)kTex;
+    if (L[kBrowse].clicked) {
+        EditorState* edp = &ed; auto* srp = sr;
+        okay::filedialog::OpenOne("Choose a sprite image", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.bmp"}),
+                                  [edp, srp](const std::string& p) { srp->texture = p; edp->dirty = true; });
+    }
+    ShowThumbInProject(L, kThumb);
+    if (L[kFilt].changed) sr->texFilter = (SpriteRenderer::TexFilter)fi;
+    if (L[kRemove].clicked) toRemove = sr;
+    return true;
+}
+
+static bool DrawRigidbody2DWithOkayUI(EditorState& ed, Rigidbody2D* rb, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kTypes[] = {"Dynamic", "Kinematic", "Static"};
+    InspFieldList L;
+    L.rows.reserve(16);
+    int bt = (int)rb->bodyType;
+    const int kType = L.Combo("Body Type", &bt, kTypes, 3); L.TipLookup();
+    L.Drag("Gravity Scale", &rb->gravityScale, 1, 0.05f);
+    L.Drag("Mass", &rb->mass, 1, 0.05f, 0.01f, 1000.0f);
+    L.Drag("Drag", &rb->drag, 1, 0.01f, 0.0f, 100.0f);
+    L.Drag("Bounciness", &rb->bounciness, 1, 0.01f, 0.0f, 1.0f);
+    L.Drag("Friction", &rb->friction, 1, 0.01f, 0.0f, 2.0f);
+    L.Tip("Coulomb friction at contacts (0 = ice). Combined with the other body as sqrt(a*b).");
+    L.Check("Freeze Rotation (Z)", &rb->freezeRotation);
+    L.Tip("On = classic no-spin body. Off = torque and off-center hits rotate it (tipping, tumbling, wheels).");
+    if (!rb->freezeRotation) L.Drag("Angular Drag", &rb->angularDrag, 1, 0.01f, 0.0f, 10.0f);
+    L.Check("Allow Sleep", &rb->allowSleep);
+    L.Tip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
+    L.Check("Continuous Collision", &rb->continuousCollision);
+    L.Tip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
+    L.Drag("Rolling Resistance##rb", &rb->rollingResistance, 1, 0.005f, 0.0f, 1.0f, "%.3f");
+    L.Tip("How quickly a rolling ball or wheel slows down (Improved physics quality).\n0 rolls on; 0.03 stops a ball rolling at 5 m/s in about 15 seconds.");
+    const int kRemove = L.SmallButton("Remove##rb");
+    if (!DrawRowsOkayUI(rb, "##okayui_rb2", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kType].changed) rb->bodyType = (Rigidbody2D::BodyType)bt;
+    if (L[kRemove].clicked) toRemove = rb;
+    return true;
+}
+
+// The 2D colliders: their own rows, then the shared ones (AddColliderRows: Trigger and Layer, the Physics Material fold-out, the trigger
+// filter), then Fit to Object and Auto Fit (a Box, Circle or Capsule) or the point list (an Edge or Polygon).
+template <class Col>
+static void AddFitRows2D(okaypanels::InspFieldList& L, GameObject* go, Col* c, const char* id, std::deque<std::string>& text, int& kFit, int& kAuto) {
+    kFit = -1;
+    text.push_back(std::string("Fit to Object##") + id);
+    if (go->GetComponent<SpriteRenderer>()) kFit = L.SmallButton(text.back().c_str());
+    L.SameLine();
+    text.push_back(std::string("Auto Fit##") + id);
+    kAuto = L.Check(text.back().c_str(), &c->autoFit); L.TipLookup();
+}
+template <class Col>
+static void ApplyFitRows2D(EditorState& ed, okaypanels::InspFieldList& L, GameObject* go, Col* c, int kFit, int kAuto) {
+    if (kFit >= 0 && L[kFit].clicked) { FitColliders(go); ed.dirty = true; }
+    if (L[kAuto].changed && c->autoFit) FitColliders(go);
+    if (c->autoFit) FitColliders(go, true);   // keep matched while editing
+}
+
+static bool DrawBoxCollider2DWithOkayUI(EditorState& ed, GameObject* go, BoxCollider2D* bc, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(24);
+    std::deque<std::string> text;
+    float sz[2] = {bc->size.x, bc->size.y}, off[2] = {bc->offset.x, bc->offset.y};
+    const int kSize = L.Drag("Size##bc", sz, 2, 0.05f, 0.0f, 1000.0f); L.TipLookup();
+    const int kOff = L.Drag("Offset##bc", off, 2, 0.05f); L.TipLookup();
+    ColliderRowsState st;
+    AddColliderRows(L, bc, "bc", st);
+    int kFit = -1, kAuto = -1;
+    AddFitRows2D(L, go, bc, "bc", text, kFit, kAuto);
+    const int kRemove = L.SmallButton("Remove##bc");
+    if (!DrawRowsOkayUI(bc, "##okayui_bc2", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kSize].changed) bc->size = {sz[0], sz[1]};
+    if (L[kOff].changed) bc->offset = {off[0], off[1]};
+    ApplyColliderRows(L, bc, st);
+    ApplyFitRows2D(ed, L, go, bc, kFit, kAuto);
+    if (L[kRemove].clicked) toRemove = bc;
+    return true;
+}
+
+static bool DrawCircleCollider2DWithOkayUI(EditorState& ed, GameObject* go, CircleCollider2D* cc, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(24);
+    std::deque<std::string> text;
+    L.Drag("Radius##cc", &cc->radius, 1, 0.05f, 0.0f, 1000.0f); L.TipLookup();
+    float off[2] = {cc->offset.x, cc->offset.y};
+    const int kOff = L.Drag("Offset##cc", off, 2, 0.05f); L.TipLookup();
+    ColliderRowsState st;
+    AddColliderRows(L, cc, "cc", st);
+    int kFit = -1, kAuto = -1;
+    AddFitRows2D(L, go, cc, "cc", text, kFit, kAuto);
+    const int kRemove = L.SmallButton("Remove##cc");
+    if (!DrawRowsOkayUI(cc, "##okayui_cc2", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kOff].changed) cc->offset = {off[0], off[1]};
+    ApplyColliderRows(L, cc, st);
+    ApplyFitRows2D(ed, L, go, cc, kFit, kAuto);
+    if (L[kRemove].clicked) toRemove = cc;
+    return true;
+}
+
+static bool DrawCapsuleCollider2DWithOkayUI(EditorState& ed, GameObject* go, CapsuleCollider2D* cap, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kDirs[] = {"Vertical", "Horizontal"};
+    InspFieldList L;
+    L.rows.reserve(24);
+    std::deque<std::string> text;
+    float sz[2] = {cap->size.x, cap->size.y}, off[2] = {cap->offset.x, cap->offset.y};
+    const int kSize = L.Drag("Size##cap2", sz, 2, 0.05f, 0.0f, 1000.0f); L.TipLookup();
+    int dir = (int)cap->direction;
+    const int kDir = L.Combo("Direction##cap2", &dir, kDirs, 2); L.TipLookup();
+    const int kOff = L.Drag("Offset##cap2", off, 2, 0.05f); L.TipLookup();
+    ColliderRowsState st;
+    AddColliderRows(L, cap, "cap2", st);
+    int kFit = -1, kAuto = -1;
+    AddFitRows2D(L, go, cap, "cap2", text, kFit, kAuto);
+    const int kRemove = L.SmallButton("Remove##cap2");
+    if (!DrawRowsOkayUI(cap, "##okayui_cap2", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kSize].changed) cap->size = {sz[0], sz[1]};
+    if (L[kDir].changed) cap->direction = (CapsuleCollider2D::Direction)dir;
+    if (L[kOff].changed) cap->offset = {off[0], off[1]};
+    ApplyColliderRows(L, cap, st);
+    ApplyFitRows2D(ed, L, go, cap, kFit, kAuto);
+    if (L[kRemove].clicked) toRemove = cap;
+    return true;
+}
+
+// The Edge and Polygon Collider 2D: the note, Offset, the shared rows, (the Edge's One-Way and its normal), a rule, the point list (each
+// point's two cells and "x"), "+ Point" / "+ Vertex", Remove.
+template <class Col>
+static bool DrawPointCollider2DWithOkayUI(EditorState& ed, Col* c, bool edge, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    const char* id = edge ? "ec2" : "pc2";
+    InspFieldList L;
+    L.rows.reserve(24 + c->points.size() * 2);
+    std::deque<std::string> text;
+    auto lbl = [&](const char* base) { text.push_back(std::string(base) + "##" + id); return text.back().c_str(); };
+    L.Note(edge ? "Open polyline: ground, slopes, walls. Local-space points." : "Closed loop (convex works best). Local-space vertices.");
+    float off[2] = {c->offset.x, c->offset.y};
+    const int kOff = L.Drag(lbl("Offset"), off, 2, 0.05f); L.TipLookup();
+    ColliderRowsState st;
+    AddColliderRows(L, c, id, st);
+    int kOneWay = -1, kNormal = -1;
+    float nrm[2] = {0, 0};
+    if constexpr (std::is_same_v<Col, EdgeCollider2D>) {
+        kOneWay = L.Check(lbl("One-Way"), &c->oneWay);
+        L.Tip("Only blocks bodies from the normal side \xE2\x80\x94 jump up through it, land on top.");
+        if (c->oneWay) {
+            nrm[0] = c->oneWayNormal.x; nrm[1] = c->oneWayNormal.y;
+            kNormal = L.Drag(lbl("Block Normal"), nrm, 2, 0.05f); L.TipLookup();
+        }
+    }
+    L.Separator();
+    char head[48];
+    std::snprintf(head, sizeof head, edge ? "Points (%d)" : "Vertices (%d)", (int)c->points.size());
+    L.Label(head, 0, false, true);
+    std::vector<std::array<float, 2>> pts(c->points.size());
+    std::vector<int> kPt(c->points.size()), kX(c->points.size());
+    for (std::size_t i = 0; i < c->points.size(); ++i) {
+        pts[i] = {c->points[i].x, c->points[i].y};
+        kPt[i] = L.Drag(edge ? "##pt" : "##v", pts[i].data(), 2, 0.05f); L.TipLookup();
+        L.SameLine(); kX[i] = L.SmallButton("x"); L.Tip("Remove");
+    }
+    const int kAdd = L.SmallButton(edge ? "+ Point##ec2" : "+ Vertex##pc2");
+    const int kRemove = L.SmallButton(edge ? "Remove##ec2" : "Remove##pc2");
+    if (!DrawRowsOkayUI(c, edge ? "##okayui_ec2" : "##okayui_pc2", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kOff].changed) c->offset = {off[0], off[1]};
+    ApplyColliderRows(L, c, st);
+    (void)kOneWay;
+    if constexpr (std::is_same_v<Col, EdgeCollider2D>) { if (kNormal >= 0 && L[kNormal].changed) c->oneWayNormal = {nrm[0], nrm[1]}; }
+    for (std::size_t i = 0; i < pts.size() && i < c->points.size(); ++i) if (L[kPt[i]].changed) c->points[i] = {pts[i][0], pts[i][1]};
+    const std::size_t keep = edge ? 2u : 3u;   // an edge keeps two points, a polygon three
+    for (std::size_t i = 0; i < kX.size(); ++i)
+        if (L[kX[i]].clicked && c->points.size() > keep && i < c->points.size()) { c->points.erase(c->points.begin() + (std::ptrdiff_t)i); ed.dirty = true; break; }
+    if (L[kAdd].clicked) {
+        const Vec2 last = c->points.empty() ? Vec2{0, 0} : c->points.back();
+        c->points.push_back(edge ? Vec2{last.x + 1.0f, last.y} : Vec2{last.x, last.y + 0.5f}); ed.dirty = true;
+    }
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+static bool DrawAudioSourceWithOkayUI(EditorState& ed, AudioSource* a, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kGroups[] = {"SFX", "Music", "UI", "Voice"};
+    static const char* const kRolls[] = {"Linear", "Inverse", "Logarithmic"};
+    InspFieldList L;
+    L.rows.reserve(40);
+    L.Drag("Volume", &a->volume, 1, 0.01f, 0.0f, 1.0f); L.TipLookup();
+    L.Drag("Pitch##audio", &a->pitch, 1, 0.01f, 0.1f, 3.0f); L.Tip("Speed and pitch together: 2 is an octave up and twice as fast");
+    L.Slider("Pan##audio", &a->pan, -1.0f, 1.0f, "%.2f"); L.Tip("-1 left, 0 centre, 1 right (adds to the 3D pan)");
+    int g = (int)a->group;
+    const int kGroup = L.Combo("Group##audio", &g, kGroups, 4); L.Tip("Mixer group: its volume and mute apply on top of the master");
+    L.Slider("Low Pass##audio", &a->lowPass, 200.0f, AudioSource::kLowPassOff, "%.0f Hz", true);
+    L.Tip("Lower muffles the sound (behind a wall, underwater). All the way right is off.");
+    L.Check("Loop", &a->loop);
+    L.SameLine(); L.Check("Play On Awake", &a->playOnAwake);
+    L.SameLine(); L.Check("Stream##audio", &a->stream);
+    L.Tip("Play the file in small pieces as it plays instead of loading it whole.\n"
+          "Use it for long music and ambience: it takes a fixed small amount of memory\n"
+          "however long the file is. Takes effect when the file loads (Play, or Load here).\n"
+          "A file set to \"Read it while it plays\" in its import settings does that\n"
+          "even when this box is off.");
+    const int kBeep = L.Button("Beep");
+    L.SameLine(); const int kNoise = L.Button("Noise");
+    L.SameLine(); const int kPlay = L.Button("Play");
+    L.SameLine(); const int kStop = L.Button("Stop##audio");
+    PathFieldRow(L, "##audiowav", &a->clipPath, 210.0f); L.TipLookup();
+    L.SameLine(4.0f); const int kBrowse = L.Button("...##audiobrowse"); L.Tip("Browse...");
+    L.SameLine(4.0f); L.Label("Audio File");
+    int kLoad = -1;
+    if (!a->clipPath.empty()) { L.SameLine(); kLoad = L.SmallButton("Load##audiowavload"); L.Tip("Load this file now to hear it with the Play button here"); }
+    char note[192];
+    std::snprintf(note, sizeof note, "WAV, OGG, MP3 or FLAC; loads on Play and in the built game; %.2fs %s%s", a->Duration(),
+                  a->IsStreaming() ? "stream" : "clip", a->Clip().channels == 2 ? ", stereo" : (a->IsStreaming() && a->Stream()->Channels() == 2 ? ", stereo" : ""));
+    L.Note(note, true, true);
+    L.Check("3D (spatial)", &a->spatial); L.TipLookup();
+    int r = (int)a->rolloff, kRoll = -1;
+    if (a->spatial) {
+        L.Drag("Min Distance##audio", &a->minDistance, 1, 0.1f, 0.0f, 1000.0f); L.TipLookup();
+        L.Drag("Max Distance##audio", &a->maxDistance, 1, 0.1f, 0.0f, 5000.0f); L.TipLookup();
+        kRoll = L.Combo("Rolloff##audio", &r, kRolls, 3);
+        L.Tip("Linear: straight fade. Inverse: like real sound, loud up close.\nLogarithmic: loud up close with a long quiet tail.");
+        L.Separator();
+        L.Check("Pitch follows speed", &a->doppler);
+        L.Tip("Raises the pitch when this sound or the listener is moving closer,\nand lowers it when they move apart. Off leaves the pitch as set above.");
+        if (a->doppler) { L.Slider("Speed amount", &a->dopplerScale, 0.0f, 5.0f, "%.2f"); L.Tip("1 matches real speed. 0 is no shift. Higher exaggerates it."); }
+        L.Check("Quieter behind walls", &a->occlude);
+        L.Tip("A solid wall between this and the listener lowers the volume and muffles it.\nTriggers are ignored. Off leaves the sound as if nothing is in the way.");
+        if (a->occlude) {
+            L.Slider("Loudness behind a wall", &a->occlusionVolume, 0.0f, 1.0f, "%.2f"); L.Tip("How loud it stays when blocked. 1 is no quieter, 0 is silent.");
+            L.Slider("Muffle behind a wall", &a->occlusionLowPass, 80.0f, 8000.0f, "%.0f Hz", true); L.Tip("Cutoff while blocked, in Hz. Lower is duller.");
+        }
+        L.Check("Muffle with distance", &a->distanceLowPass);
+        L.Tip("The sound stays bright up close and gets duller toward Max Distance.\nOff keeps the tone the same at every distance.");
+        if (a->distanceLowPass) {
+            L.Slider("Muffle at the far edge", &a->distanceLowPassHz, 80.0f, 8000.0f, "%.0f Hz", true);
+            L.Tip("Cutoff at Max Distance. The fade follows a curve, so the middle\nstays brighter than a straight line.");
+        }
+    }
+    const int kRemove = L.SmallButton("Remove##audio");
+    if (!DrawRowsOkayUI(a, "##okayui_audio", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kGroup].changed) a->group = (AudioGroup)g;
+    if (kRoll >= 0 && L[kRoll].changed) a->rolloff = (AudioRolloff)r;
+    if (L[kBeep].clicked) a->clip = AudioClip::Sine(440.0f, 0.3f);
+    if (L[kNoise].clicked) a->clip = AudioClip::Noise(0.3f);
+    if (L[kPlay].clicked) a->Play();
+    if (L[kStop].clicked) a->Stop();
+    if (L[kBrowse].clicked) {
+        EditorState* edp = &ed; auto* ap = a;
+        okay::filedialog::OpenOne("Choose an audio file", "", okay::filedialog::Filters("Audio (WAV, OGG, MP3, FLAC)", {"*.wav", "*.ogg", "*.mp3", "*.flac"}), [edp, ap](const std::string& p) {
+            ap->clipPath = p; edp->dirty = true;
+            std::string werr;
+            const okay::AudioAttach how = okay::AttachAudioFile(*ap, p, &werr);
+            if (how == okay::AudioAttach::Failed) ConsoleLog("Audio load failed: " + werr, 2);
+            else ConsoleLog(std::string(how == okay::AudioAttach::Stream ? "Streaming " : "Loaded ") + p);
+        });
+    }
+    if (kLoad >= 0 && L[kLoad].clicked) {
+        std::string werr;
+        const okay::AudioAttach how = okay::AttachAudioFile(*a, a->clipPath, &werr);
+        if (how == okay::AudioAttach::Failed) ConsoleLog("Audio load failed: " + werr, 2);
+        else ConsoleLog(std::string(how == okay::AudioAttach::Stream ? "Streaming " : "Loaded ") + a->clipPath);
+    }
+    if (L[kRemove].clicked) toRemove = a;
+    return true;
+}
+
+// The Particle System without its gradient and curve editors: with a colour gradient, a size curve or a speed curve on, the Dear ImGui
+// body is drawn (those editors are not field rows yet).
+// The Particle System's ParticleGradientEditor and ParticleCurveEditor as rows (stage 4): the bar or the plot, then the selected stop's
+// colour and time (the selected key's time and value, Smooth) and the count, as the Dear ImGui editors draw them. The rows edit a copy;
+// the selection is kept per gradient / curve, as Dear ImGui keeps it in its state storage.
+// keyed by the object's guid and the editor's id (an undo rebuilds the component at a new address; Dear ImGui keeps its by id too)
+static int& OverLifeSelection(const std::string& key) { static std::map<std::string, int> sel; return sel[key]; }
+struct GradientRows { std::string key; float data[okay::ParticleGradient::kMaxStops * 5]; int count = 0, sel = 0, selAtBuild = -1, k = -1, kColor = -1, kTime = -1; float col[4] = {}; float time = 0.0f; char note[32]; };
+static void AddGradientRows(okaypanels::InspFieldList& L, const okay::ParticleGradient& g, const char* id, GradientRows& gr, const std::string& owner) {
+    gr.key = owner + id;
+    gr.count = std::min(g.count, okay::ParticleGradient::kMaxStops);
+    for (int i = 0; i < gr.count; ++i) {
+        const auto& st = g.stops[i];
+        float* d = gr.data + i * 5; d[0] = st.time; d[1] = st.color.r; d[2] = st.color.g; d[3] = st.color.b; d[4] = st.color.a;
+    }
+    gr.sel = std::min(OverLifeSelection(gr.key), gr.count - 1);
+    gr.k = L.Gradient(id, gr.data, &gr.count, okay::ParticleGradient::kMaxStops, &gr.sel);
+    if (gr.sel >= 0 && gr.sel < gr.count) {
+        gr.selAtBuild = gr.sel;
+        const float* d = gr.data + gr.sel * 5;
+        gr.col[0] = d[1]; gr.col[1] = d[2]; gr.col[2] = d[3]; gr.col[3] = d[4]; gr.time = d[0];
+        gr.kColor = L.Color("Stop Color", gr.col, 4);
+        gr.kTime = L.Slider("Stop Time", &gr.time, 0.0f, 1.0f);
+    }
+    std::snprintf(gr.note, sizeof gr.note, "%d / %d stops", g.count, okay::ParticleGradient::kMaxStops);
+    L.Note(gr.note, true);
+}
+static void RunGradientRows(EditorState& ed, okaypanels::InspFieldList& L, okay::ParticleGradient& g, GradientRows& gr) {
+    OverLifeSelection(gr.key) = gr.sel;
+    if (L[gr.k].activated) ed.PushUndo();
+    if (L[gr.k].changed) {
+        g.count = gr.count;
+        for (int i = 0; i < gr.count; ++i) { const float* d = gr.data + i * 5; g.stops[i].time = d[0]; g.stops[i].color = {d[1], d[2], d[3], d[4]}; }
+        ed.dirty = true;
+        return;
+    }
+    if (gr.selAtBuild < 0) return;
+    if ((gr.kColor >= 0 && L[gr.kColor].activated) || (gr.kTime >= 0 && L[gr.kTime].activated)) ed.PushUndo();
+    if (gr.kColor >= 0 && L[gr.kColor].changed) { g.stops[gr.selAtBuild].color = {gr.col[0], gr.col[1], gr.col[2], gr.col[3]}; ed.dirty = true; }
+    if (gr.kTime >= 0 && L[gr.kTime].changed) { g.stops[gr.selAtBuild].time = gr.time; ed.dirty = true; }
+}
+struct CurveRows { std::string key; float data[okay::ParticleCurve::kMaxKeys * 2]; int count = 0, sel = 0, selAtBuild = -1, k = -1, kKey = -1, kSmooth = -1; bool smooth = false; float kv[2] = {}; char note[32]; };
+static void AddCurveRows(okaypanels::InspFieldList& L, const okay::ParticleCurve& c, const char* id, CurveRows& cr, const std::string& owner) {
+    cr.key = owner + id;
+    cr.count = std::min(c.count, okay::ParticleCurve::kMaxKeys);
+    for (int i = 0; i < cr.count; ++i) { cr.data[i * 2] = c.keys[i].time; cr.data[i * 2 + 1] = c.keys[i].value; }
+    cr.smooth = c.smooth;
+    cr.sel = std::min(OverLifeSelection(cr.key), cr.count - 1);
+    cr.k = L.Curve(id, cr.data, &cr.count, okay::ParticleCurve::kMaxKeys, &cr.smooth, &cr.sel);
+    if (cr.sel >= 0 && cr.sel < cr.count) {
+        cr.selAtBuild = cr.sel;
+        cr.kv[0] = cr.data[cr.sel * 2]; cr.kv[1] = cr.data[cr.sel * 2 + 1];
+        cr.kKey = L.Drag("Key (time, x)", cr.kv, 2, 0.01f, 0.0f, 100.0f);
+    }
+    cr.kSmooth = L.Check("Smooth", &cr.smooth);
+    std::snprintf(cr.note, sizeof cr.note, "%d / %d keys", c.count, okay::ParticleCurve::kMaxKeys);
+    L.SameLine(); L.Note(cr.note, true);
+}
+static void RunCurveRows(EditorState& ed, okaypanels::InspFieldList& L, okay::ParticleCurve& c, CurveRows& cr) {
+    OverLifeSelection(cr.key) = cr.sel;
+    if (L[cr.k].activated) ed.PushUndo();
+    if (L[cr.k].changed) {
+        c.count = cr.count;
+        for (int i = 0; i < cr.count; ++i) { c.keys[i].time = cr.data[i * 2]; c.keys[i].value = cr.data[i * 2 + 1]; }
+        ed.dirty = true;
+        return;
+    }
+    if (cr.kKey >= 0 && L[cr.kKey].activated) ed.PushUndo();
+    if (cr.kKey >= 0 && L[cr.kKey].changed && cr.selAtBuild >= 0) {
+        c.keys[cr.selAtBuild].time = Mathf::Clamp01(cr.kv[0]); c.keys[cr.selAtBuild].value = std::max(0.0f, cr.kv[1]); ed.dirty = true;
+    }
+    if (L[cr.kSmooth].changed) { c.smooth = cr.smooth; ed.dirty = true; }
+}
+
+static bool DrawCharacterController2DWithOkayUI(EditorState& ed, CharacterController2D* cc, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kModes[] = {"Top-Down", "Platformer"};
+    static const char* const kJFeel[3] = {"Classic", "Precise", "Bouncy"};
+    InspFieldList L;
+    L.rows.reserve(40);
+    int m = (int)cc->mode;
+    const int kMode = L.Combo("Mode##cc2", &m, kModes, 2); L.TipLookup();
+    L.Section("Movement");
+    L.Drag("Speed##cc2", &cc->speed, 1, 0.1f, 0.0f, 200.0f); L.TipLookup();
+    L.Drag("Run Speed##cc2", &cc->runSpeed, 1, 0.1f, 0.0f, 200.0f); L.TipLookup();
+    std::string sk(1, cc->sprintKey ? cc->sprintKey : ' ');
+    const int kSprint = L.Text("Sprint Key##cc2", &sk); L.Tip("Hold to run (blank = disabled)");
+    L.Drag("Acceleration##cc2", &cc->acceleration, 1, 0.5f, 0.0f, 500.0f); L.Tip("0 = instant; higher = snappier ramp-up");
+    L.Drag("Deceleration##cc2", &cc->deceleration, 1, 0.5f, 0.0f, 500.0f); L.TipLookup();
+    L.Check("Use Gamepad##cc2", &cc->useGamepad); L.TipLookup();
+    L.SameLine(); L.Check("Flip Sprite##cc2", &cc->flipSprite); L.TipLookup();
+    if (cc->mode == CharacterController2D::Mode::TopDown) { L.Check("Normalize Diagonal##cc2", &cc->normalizeDiagonal); L.TipLookup(); }
+    int kFeel[3] = {-1, -1, -1};
+    if (cc->mode == CharacterController2D::Mode::Platformer) {
+        L.Section("Jump");
+        L.Note("Feel:");
+        for (int ji = 0; ji < 3; ++ji) { L.SameLine(ji ? 4.0f : -1.0f); kFeel[ji] = L.SmallButton(kJFeel[ji]); }
+        L.Drag("Jump Force##cc2", &cc->jumpForce, 1, 0.1f, 0.0f, 200.0f); L.TipLookup();
+        L.DragInt("Max Jumps##cc2", &cc->maxJumps, 0.05f, 1, 5); L.Tip("2 = double jump (ground counts as one)");
+        L.Check("Variable Jump##cc2", &cc->variableJump); L.TipLookup();
+        if (cc->variableJump) { L.Drag("Jump Cut##cc2", &cc->jumpCutMultiplier, 1, 0.01f, 0.0f, 1.0f); L.TipLookup(); }
+        L.Drag("Coyote Time##cc2", &cc->coyoteTime, 1, 0.005f, 0.0f, 0.5f, "%.3f s"); L.TipLookup();
+        L.Drag("Jump Buffer##cc2", &cc->jumpBuffer, 1, 0.005f, 0.0f, 0.5f, "%.3f s"); L.TipLookup();
+        L.Drag("Air Control##cc2", &cc->airControl, 1, 0.02f, 0.0f, 1.0f); L.TipLookup();
+        L.Drag("Max Fall Speed##cc2", &cc->maxFallSpeed, 1, 0.5f, 0.0f, 200.0f); L.TipLookup();
+        L.Drag("Extra Fall Gravity##cc2", &cc->extraFallGravity, 1, 0.5f, 0.0f, 200.0f); L.TipLookup();
+        L.Check("Wall Slide + Jump##cc2", &cc->wallJump); L.Tip("Slide slowly down walls and jump off them (needs side colliders).");
+        if (cc->wallJump) {
+            L.Drag("Wall Slide Speed##cc2", &cc->wallSlideSpeed, 1, 0.1f, 0.0f, 50.0f); L.TipLookup();
+            L.Drag("Wall Jump Up##cc2", &cc->wallJumpForce, 1, 0.1f, 0.0f, 100.0f); L.TipLookup();
+            L.Drag("Wall Jump Push##cc2", &cc->wallJumpPush, 1, 0.1f, 0.0f, 100.0f); L.TipLookup();
+        }
+    }
+    L.Note("WASD / arrows / stick. Uses a Rigidbody2D if present.");
+    const int kRemove = L.SmallButton("Remove##cc2");
+    if (!DrawRowsOkayUI(cc, "##okayui_cc2ctl", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kMode].changed) cc->mode = (CharacterController2D::Mode)m;
+    if (L[kSprint].changed) cc->sprintKey = (sk.empty() || sk[0] == ' ') ? 0 : sk[0];
+    for (int ji = 0; ji < 3; ++ji) {
+        if (kFeel[ji] < 0 || !L[kFeel[ji]].clicked) continue;
+        ed.PushUndo();
+        CharacterController2D& C = *cc;
+        switch (ji) {   // the jump-feel presets, as the Dear ImGui body sets them
+            case 0: C.jumpForce = 11.0f; C.maxJumps = 1; C.variableJump = true; C.jumpCutMultiplier = 0.45f; C.coyoteTime = 0.10f; C.jumpBuffer = 0.10f;
+                    C.airControl = 0.85f; C.maxFallSpeed = 18.0f; C.extraFallGravity = 12.0f; break;
+            case 1: C.jumpForce = 9.5f; C.maxJumps = 1; C.variableJump = true; C.jumpCutMultiplier = 0.30f; C.coyoteTime = 0.06f; C.jumpBuffer = 0.08f;
+                    C.airControl = 1.0f; C.maxFallSpeed = 22.0f; C.extraFallGravity = 18.0f; break;
+            default: C.jumpForce = 10.0f; C.maxJumps = 2; C.variableJump = true; C.jumpCutMultiplier = 0.55f; C.coyoteTime = 0.14f; C.jumpBuffer = 0.14f;
+                     C.airControl = 0.9f; C.maxFallSpeed = 14.0f; C.extraFallGravity = 6.0f; break;
+        }
+        ed.dirty = true;
+    }
+    if (L[kRemove].clicked) toRemove = cc;
+    return true;
+}
+
+// StanceControlFields as rows: the "Crouch / prone" fold-out with its two key lists (KeyBindCombo: 96 wide), the toggles, speeds and
+// heights, and the note. `keys` holds the lists' indexes; ApplyStanceRows writes the keys back.
+struct StanceRowsState { int crouch = 0, prone = 0, kCrouch = -1, kProne = -1; std::deque<std::string> text; };
+static const struct { const char* name; char code; } kStanceKeys[] = {
+    {"(none)", 0}, {"Shift", Input::KeyShift}, {"Ctrl", Input::KeyCtrl}, {"C", 'c'}, {"Z", 'z'}, {"X", 'x'}, {"V", 'v'}, {"F", 'f'}, {"B", 'b'}};
+static const char* const* StanceKeyNames() {
+    static const char* names[sizeof kStanceKeys / sizeof kStanceKeys[0]];
+    for (std::size_t i = 0; i < sizeof kStanceKeys / sizeof kStanceKeys[0]; ++i) names[i] = kStanceKeys[i].name;
+    return names;
+}
+static void AddStanceRows(okaypanels::InspFieldList& L, StanceControl& sc, const char* id, StanceRowsState& st) {
+    const int n = (int)(sizeof kStanceKeys / sizeof kStanceKeys[0]);
+    auto lbl = [&](const char* name, const char* pre) { st.text.push_back(std::string(name) + pre + id); return st.text.back().c_str(); };
+    auto idx = [&](char key) { for (int i = 0; i < n; ++i) if (kStanceKeys[i].code == key) return i; return 0; };
+    L.Tree(lbl("Crouch / prone", "##"));
+    st.crouch = idx(sc.crouchKey); st.prone = idx(sc.proneKey);
+    st.kCrouch = L.Combo(lbl("Crouch Key", "##st"), &st.crouch, StanceKeyNames(), n); L.Last().width = 96.0f;
+    st.kProne = L.Combo(lbl("Prone Key", "##st"), &st.prone, StanceKeyNames(), n); L.Last().width = 96.0f;
+    L.Check(lbl("Toggle (vs hold)", "##st"), &sc.toggle);
+    L.Check(lbl("Allow Prone", "##st"), &sc.allowProne);
+    L.Check(lbl("Resize Body", "##st"), &sc.resizeBody);
+    L.Tip("Crouching / prone shrink the collider (fit under low things);\nstanding up waits for headroom.");
+    L.Drag(lbl("Crouch Speed", "##st"), &sc.crouchSpeed, 1, 0.05f, 0.0f, 20.0f);
+    L.Drag(lbl("Prone Speed", "##st"), &sc.proneSpeed, 1, 0.05f, 0.0f, 20.0f);
+    L.Slider(lbl("Crouch Height", "##st"), &sc.crouchHeight, 0.2f, 1.0f, "%.2f");
+    L.Slider(lbl("Prone Height", "##st"), &sc.proneHeight, 0.1f, 1.0f, "%.2f");
+    L.Note("Scripts: SetStance(0 stand / 1 crouch / 2 prone).", false, true);
+    L.Note("How long changes take: the Animator's Stance changes.", false, true);
+    L.TreeEnd();
+}
+static void ApplyStanceRows(okaypanels::InspFieldList& L, StanceControl& sc, const StanceRowsState& st) {
+    if (st.kCrouch >= 0 && L[st.kCrouch].changed) sc.crouchKey = kStanceKeys[st.crouch].code;
+    if (st.kProne >= 0 && L[st.kProne].changed) sc.proneKey = kStanceKeys[st.prone].code;
+}
+
+static bool DrawCharacterController3DWithOkayUI(EditorState& ed, CharacterController3D* cc, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(20);
+    StanceRowsState st;
+    AddStanceRows(L, cc->stanceControl, "cc3", st);
+    L.Drag("Speed##cc3", &cc->speed, 1, 0.1f, 0.0f, 200.0f); L.TipLookup();
+    L.Check("Can Jump##cc3", &cc->canJump); L.TipLookup();
+    if (cc->canJump) { L.Drag("Jump Force##cc3", &cc->jumpForce, 1, 0.1f, 0.0f, 200.0f); L.TipLookup(); }
+    L.Note("WASD / arrows on XZ. Uses a Rigidbody3D if present.");
+    const int kRemove = L.SmallButton("Remove##cc3");
+    if (!DrawRowsOkayUI(cc, "##okayui_cc3ctl", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    ApplyStanceRows(L, cc->stanceControl, st);
+    if (L[kRemove].clicked) toRemove = cc;
+    return true;
+}
+
+static bool DrawSpriteAnimatorWithOkayUI(EditorState& ed, SpriteAnimator* an, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(24 + an->frames.size() * 2 + an->clips.size() * 7);
+    L.Drag("FPS##anim", &an->fps, 1, 0.25f, 0.0f, 120.0f); L.TipLookup();
+    L.Check("Loop##anim", &an->loop); L.TipLookup();
+    L.SameLine(); L.Check("Playing##anim", &an->playing); L.TipLookup();
+    L.Spacing();
+    L.Note("Atlas mode (sprite sheet on the SpriteRenderer texture):");
+    L.DragInt("Columns##anim", &an->atlasColumns, 0.1f, 0, 64); L.TipLookup();
+    L.DragInt("Rows##anim", &an->atlasRows, 0.1f, 1, 64); L.TipLookup();
+    L.DragInt("Count 0=all##anim", &an->atlasCount, 0.1f, 0, 4096); L.TipLookup();
+    if (an->atlasColumns > 0) L.Note("Using atlas cells; frame list ignored.");
+    L.Spacing();
+    L.Note("Frames (image paths, used when Columns = 0):");
+    std::vector<int> kFrameX(an->frames.size());
+    for (std::size_t i = 0; i < an->frames.size(); ++i) {
+        L.Text("##frame", &an->frames[i]); L.TipLookup();
+        L.SameLine(); kFrameX[i] = L.SmallButton("X");
+    }
+    const int kAddFrame = L.SmallButton("Add Frame");
+    L.Spacing();
+    L.Note("Clips (idle / run / jump / fall are picked by 2D controllers):");
+    struct ClipRows { std::string frames; int kX = -1, kFrames = -1; };
+    std::vector<ClipRows> cr(an->clips.size());
+    for (std::size_t i = 0; i < an->clips.size(); ++i) {
+        SpriteClip& cl = an->clips[i];
+        L.Text("Name##clip", &cl.name); L.TipLookup();
+        L.SameLine(); cr[i].kX = L.SmallButton("X");
+        L.DragInt("Row##clip", &cl.row, 0.1f, 0, 63); L.TipLookup();
+        L.Drag("FPS##clip", &cl.fps, 1, 0.25f, 0.0f, 120.0f); L.TipLookup();
+        L.Check("Loop##clip", &cl.loop); L.TipLookup();
+        for (const auto& f : cl.frames) cr[i].frames += (cr[i].frames.empty() ? "" : ", ") + f;   // "a.png, b.png" (empty = the atlas row)
+        cr[i].kFrames = L.Text("Frames##clip", &cr[i].frames);
+    }
+    const int kAddClip = L.SmallButton("Add Clip");
+    L.SameLine(); const int kRemove = L.SmallButton("Remove##anim");
+    if (!DrawRowsOkayUI(an, "##okayui_spriteanim", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    for (std::size_t i = 0; i < cr.size() && i < an->clips.size(); ++i) {
+        if (!L[cr[i].kFrames].changed) continue;
+        SpriteClip& cl = an->clips[i];
+        cl.frames.clear();
+        std::stringstream ss(cr[i].frames); std::string tok;
+        while (std::getline(ss, tok, ',')) {
+            tok.erase(0, tok.find_first_not_of(' '));
+            tok.erase(tok.find_last_not_of(' ') + 1);
+            if (!tok.empty()) cl.frames.push_back(tok);
+        }
+    }
+    for (std::size_t i = 0; i < kFrameX.size(); ++i)
+        if (L[kFrameX[i]].clicked && i < an->frames.size()) { an->frames.erase(an->frames.begin() + (std::ptrdiff_t)i); ed.dirty = true; break; }
+    if (L[kAddFrame].clicked) { an->frames.push_back("frame.png"); ed.dirty = true; }
+    for (std::size_t i = 0; i < cr.size(); ++i)
+        if (L[cr[i].kX].clicked && i < an->clips.size()) { an->clips.erase(an->clips.begin() + (std::ptrdiff_t)i); ed.dirty = true; break; }
+    if (L[kAddClip].clicked) {
+        SpriteClip cl; cl.name = "clip" + std::to_string(an->clips.size()); cl.fps = an->fps;
+        an->clips.push_back(cl); ed.dirty = true;
+    }
+    if (L[kRemove].clicked) toRemove = an;
+    return true;
+}
+
+// The room the Animator's Time slider leaves on its line: its label, then Pause and |< (small buttons), with the spacing.
+static float AnimTimeRoom() {
+    const ImGuiStyle& st = ImGui::GetStyle();
+    return ImGui::CalcTextSize("Time").x + st.ItemInnerSpacing.x + 2.0f * st.ItemSpacing.x + ImGui::CalcTextSize("Pause").x +
+           ImGui::CalcTextSize("|<").x + 4.0f * st.FramePadding.x + 2.0f;
+}
+static bool DrawAnimatorWithOkayUI(EditorState& ed, GameObject* go, Animator* anm, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(24);
+    std::string clipName = anm->clip.name;
+    const int kClip = L.Text("Clip##anm", &clipName); L.TipLookup();
+    const int kLoop = L.Check("Loop##anm", &anm->clip.loop); L.TipLookup();
+    L.SameLine(); L.Check("Playing##anm", &anm->playing); L.TipLookup();
+    L.Drag("Speed##anm", &anm->speed, 1, 0.02f, -4.0f, 4.0f); L.TipLookup();
+    const float len = anm->clip.Length();
+    float t = anm->Time();
+    const int kTime = L.Slider("Time##anm", &t, 0.0f, len > 0 ? len : 1.0f, "%.2fs"); L.Last().width = -AnimTimeRoom();
+    L.SameLine(); const int kPlay = L.SmallButton(anm->playing ? "Pause" : "Play");
+    L.SameLine(); const int kRestart = L.SmallButton("|<");
+    L.Section("Keyframes");
+    L.Note("Scrub to a time, pose the object, then Record.");
+    const int kRecord = L.Button("Record Key (transform @ time)");
+    std::vector<std::string> tracks;
+    for (auto& tr : anm->clip.Tracks()) tracks.push_back(tr.first);
+    std::sort(tracks.begin(), tracks.end());
+    std::vector<int> kClear(tracks.size());
+    for (std::size_t i = 0; i < tracks.size(); ++i) {
+        AnimationCurve* c = anm->clip.Track(tracks[i]);
+        char b[160]; std::snprintf(b, sizeof b, "%s  (%d keys)", tracks[i].c_str(), c ? (int)c->Count() : 0);
+        L.Bullet(b, true);
+        L.SameLine(); kClear[i] = L.SmallButton("Clear");
+    }
+    if (tracks.empty()) L.Note("(no tracks yet \xE2\x80\x94 Record a key)");
+    L.Spacing();
+    const int kRemove = L.SmallButton("Remove##anm-comp");
+    if (!DrawRowsOkayUI(anm, "##okayui_animator", L)) return false;
+    if (L[kClip].changed) { anm->clip.name = clipName; ed.dirty = true; }
+    if (L[kLoop].changed) { anm->clip.Recompute(); ed.dirty = true; }
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kTime].changed) anm->SetTime(t);
+    if (L[kPlay].clicked) anm->playing = !anm->playing;
+    if (L[kRestart].clicked) anm->Restart();
+    if (L[kRecord].clicked) {
+        const float kt = anm->Time();
+        const Vec3 p = go->transform->localPosition, s = go->transform->localScale;
+        const Quat q = go->transform->localRotation;   // the Z angle for the rotation.z track
+        const float zdeg = 2.0f * std::atan2(q.z, q.w) * Mathf::Rad2Deg;
+        anm->clip.AddKey("position.x", kt, p.x); anm->clip.AddKey("position.y", kt, p.y); anm->clip.AddKey("position.z", kt, p.z);
+        anm->clip.AddKey("scale.x", kt, s.x); anm->clip.AddKey("scale.y", kt, s.y); anm->clip.AddKey("scale.z", kt, s.z);
+        anm->clip.AddKey("rotation.z", kt, zdeg);
+        ed.dirty = true; ConsoleLog("Recorded keyframe at " + std::to_string(kt) + "s");
+    }
+    for (std::size_t i = 0; i < tracks.size(); ++i) if (L[kClear[i]].clicked) { anm->clip.RemoveTrack(tracks[i]); ed.dirty = true; break; }
+    if (L[kRemove].clicked) toRemove = anm;
+    return true;
+}
+
+// ---- The Inspector's OkayUI parts, stage 4 (docs/own_ui_toolkit.md section 17) --------------------------------------------------------
+// Text and the UI components (Canvas, Image, Button, Slider, Toggle, Input Field, Layout Group), the Terrain, the Particle System's
+// gradient and curves, and (in NavigationWindow.cpp) the Nav Mesh Agent, written as the stage 2 and 3 builders are. The editor's helpers
+// those bodies use become rows: the style bar (UIStyleBar), the Localized switch (LocalizedTextField, while it is off: a localized field
+// keeps Dear ImGui's body, whose key picker is not a row), AnchorCombo (InspRowAnchor), AssetSlot (InspRowSlot), ShapeCombo (a combo),
+// UIRectFields and CornerMaskEditor (drag rows and check boxes).
+
+// UIStyleBar as rows: "Look" and the presets (each on the line when it fits, else on the next), Copy style, Paste style.
+struct StyleBarRows { int first = -1, count = 0, copy = -1, paste = -1; std::function<void(int)> apply; };
+static void AddStyleBarRows(okaypanels::InspFieldList& L, Component* c, StyleBarRows& sb) {
+    const std::vector<const char*>* names = UIStylePresets(c, sb.apply);
+    if (!names) return;
+    L.Note("Look"); L.Last().alignFrame = true;
+    sb.first = (int)L.rows.size(); sb.count = (int)names->size();
+    for (const char* n : *names) { L.SameLineOrWrap(); L.SmallButton(n); }
+    sb.copy = L.SmallButton("Copy style"); L.Tip("Copy this widget's look (colours, corners, borders, shadows, font)");
+    L.SameLine();
+    sb.paste = L.SmallButton("Paste style"); L.Last().disabled = g_uiStyleClip.empty();
+    L.Tip("Give this widget (and the rest of the selection) the copied look. Position, size and text stay.");
+    L.Spacing();
+}
+static void RunStyleBarRows(EditorState& ed, Component* c, okaypanels::InspFieldList& L, const StyleBarRows& sb) {
+    if (sb.first < 0) return;
+    for (int i = 0; i < sb.count; ++i) if (L[sb.first + i].clicked) { ed.PushUndo(); sb.apply(i); ed.dirty = true; }
+    if (L[sb.copy].clicked) UIStyleCopy(c);
+    if (L[sb.paste].clicked) UIStylePaste(ed, c);
+}
+static const char* const kLocalizedTip = "Show a string-table key's text in the player's language instead of this literal text.\n"
+                                         "Turning it on uses the key whose text this is, or adds one (View > Editors & Tools > Localization).";
+// AnchorCombo's pick: keep the widget where it is on screen (Shift: move it onto the anchor), as the Dear ImGui popup does.
+static void ApplyAnchorPick(EditorState& ed, okay::UIAnchor& anchor, int a, bool shift) {
+    GameObject* owner = nullptr;
+    if (GameObject* sel = ed.selected()) { okay::UIRect r = okay::GetUIRect(sel); if (r.valid && r.anchorPtr == &anchor) owner = sel; }
+    ed.PushUndo();
+    if (!owner || !ReanchorKeepRect(owner, (okay::UIAnchor)a, shift)) anchor = (okay::UIAnchor)a;
+    ed.dirty = true;
+}
+struct AnchorRow { int k = -1; int value = 0; };
+static void AddAnchorRow(okaypanels::InspFieldList& L, const char* label, okay::UIAnchor anchor, AnchorRow& ar) {
+    ar.value = (int)anchor; if (ar.value < 0 || ar.value > 11) ar.value = 0;
+    ar.k = L.Anchor(label, &ar.value);
+}
+static void RunAnchorRow(EditorState& ed, okaypanels::InspFieldList& L, okay::UIAnchor& anchor, const AnchorRow& ar) {
+    if (ar.k >= 0 && L[ar.k].changed) ApplyAnchorPick(ed, anchor, ar.value, L[ar.k].axes != 0);
+}
+// ShapeCombo as a row: every UIShape by name; picking a rounded shape with no radius seeds one (`radius` when given).
+struct ShapeRow { int k = -1; int value = 0; };
+static void AddShapeRow(okaypanels::InspFieldList& L, const char* label, UIShape shape, ShapeRow& sr) {
+    static std::vector<const char*> names;
+    if ((int)names.size() != kUIShapeCount) { names.clear(); for (int i = 0; i < kUIShapeCount; ++i) names.push_back(UIShapeName(i)); }
+    sr.value = (int)shape;
+    sr.k = L.Combo(label, &sr.value, names.data(), (int)names.size());
+}
+static void RunShapeRow(okaypanels::InspFieldList& L, UIShape& shape, const ShapeRow& sr, float* radius = nullptr, float defRadius = 12.0f) {
+    if (sr.k < 0 || !L[sr.k].changed) return;
+    shape = (UIShape)sr.value;
+    if (radius && *radius <= 0.0f && UIShapeUsesRadius(shape)) *radius = defRadius;
+}
+// UIRectFields as rows (the four margins of a stretched widget, else Pos and Size); the labels live in `lbl`.
+struct RectRowLabels { char px[80], py[80], sx[80], sy[80]; };
+static void AddUIRectRows(okaypanels::InspFieldList& L, const char* sfx, okay::UIAnchor anchor, okay::Vec2& position, okay::Vec2& size, RectRowLabels& lbl) {
+    if (okay::AnchorIsStretch(anchor)) {
+        const char *px, *py, *sx, *sy; AnchorFieldLabels(anchor, px, py, sx, sy);
+        std::snprintf(lbl.px, sizeof lbl.px, "%s##%s_px", px, sfx); L.Drag(lbl.px, &position.x, 1, 1.0f);
+        std::snprintf(lbl.py, sizeof lbl.py, "%s##%s_py", py, sfx); L.Drag(lbl.py, &position.y, 1, 1.0f);
+        std::snprintf(lbl.sx, sizeof lbl.sx, "%s##%s_sx", sx, sfx); L.Drag(lbl.sx, &size.x, 1, 1.0f);
+        std::snprintf(lbl.sy, sizeof lbl.sy, "%s##%s_sy", sy, sfx); L.Drag(lbl.sy, &size.y, 1, 1.0f);
+        L.Note("Margins from the canvas edges (px)");
+    } else {
+        std::snprintf(lbl.px, sizeof lbl.px, "Pos (px)##%s", sfx); L.Drag(lbl.px, &position.x, 2, 1.0f);
+        std::snprintf(lbl.sx, sizeof lbl.sx, "Size (px)##%s", sfx); L.Drag(lbl.sx, &size.x, 2, 1.0f, 0.0f, 8000.0f);
+    }
+}
+// The font slot: "Font" on a frame-tall line, then AssetSlot.
+static int AddFontSlotRows(okaypanels::InspFieldList& L, const char* id, std::string* path) {
+    L.Label("Font", 0, true);
+    L.SameLine();
+    return L.Slot(id, path, "Font", "font");
+}
+
+static bool DrawTextWithOkayUI(EditorState& ed, GameObject* go, TextRenderer* tr, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    if (!tr->loc.key.empty()) return false;   // localized: the key picker is Dear ImGui's
+    static const char* const kAligns[] = {"Left", "Center", "Right"};
+    static const char* const kVAligns[] = {"Top", "Middle", "Bottom"};
+    static const struct { const char* n; float r, g, b; } kTxtCols[] = {
+        {"White", 1, 1, 1}, {"Black", 0, 0, 0}, {"Gold", 1.0f, 0.84f, 0.30f},
+        {"Red", 0.95f, 0.30f, 0.28f}, {"Green", 0.35f, 0.85f, 0.42f}, {"Blue", 0.35f, 0.62f, 0.98f}};
+    InspFieldList L;
+    L.rows.reserve(72);
+    StyleBarRows sb;
+    if (tr->screenSpace) AddStyleBarRows(L, tr, sb);
+    bool locOn = false;
+    const int kLoc = L.Check("Localized##txtloc", &locOn); L.Tip(kLocalizedTip);
+    L.Text("##txtbody", &tr->text); L.Last().wrap = true; L.Last().width = -1.0f; L.Last().texH = 3.0f;
+    L.Color("Color##txt", &tr->color.r, 4); L.TipLookup();
+    int kSw[6];
+    for (int i = 0; i < 6; ++i) {
+        if (i) L.SameLine(4.0f);
+        kSw[i] = L.Swatch("##txtc", kTxtCols[i].r, kTxtCols[i].g, kTxtCols[i].b, 1.0f, 20.0f, 16.0f); L.Tip(kTxtCols[i].n);
+    }
+    L.Drag("Font Size##txt", &tr->pixelSize, 1, tr->screenSpace ? 0.1f : 0.005f, 0.001f, 100.0f);
+    L.Tip(tr->screenSpace ? "Window pixels per font pixel (screen UI: try 2-6)" : "World units per font pixel");
+    L.Check("Best Fit (auto-size to box)##txt", &tr->autoSize);
+    L.Tip("Auto-scale the text to fill its box \xE2\x80\x94 grows when there's room,\nshrinks to fit a long string. Overrides Font Size. (Not used with Wrap.)");
+    float mm[2] = {tr->autoSizeMin, tr->autoSizeMax};
+    int kFit = -1, kFitText = -1, kVa = -1;
+    if (tr->autoSize) kFit = L.Drag("Fit Min/Max##txt", mm, 2, 0.05f, 0.001f, 100.0f);
+    L.Check("Screen Space (UI)##txt", &tr->screenSpace); L.TipLookup();
+    AnchorRow anc;
+    int va = tr->alignBottom ? 2 : (tr->vcenter ? 1 : 0);
+    if (tr->screenSpace) {
+        L.Drag("Box Size##txt", &tr->size.x, 2, 1.0f, 1.0f, 4000.0f); L.TipLookup();
+        kFitText = L.SmallButton("Fit to Text##txt");
+        L.Drag("Offset##txt", &tr->screenPos.x, 2, 1.0f); L.TipLookup();
+        AddAnchorRow(L, "Anchor##txt", tr->anchor, anc);
+        L.Combo("Align##txt", &tr->align, kAligns, 3); L.TipLookup();
+        kVa = L.Combo("V-Align##txt", &va, kVAligns, 3);
+        L.Check("Background##txt", &tr->background); L.TipLookup();
+        if (tr->background) { L.Color("BG Color##txt", &tr->backgroundColor.r, 4); L.TipLookup(); }
+    }
+    L.Check("Shadow##txt", &tr->shadow); L.TipLookup();
+    if (tr->shadow) {
+        L.Color("Shadow Color##txt", &tr->shadowColor.r, 4); L.TipLookup();
+        L.Drag("Shadow Offset##txt", &tr->shadowOffset.x, 2, 0.1f); L.TipLookup();
+    }
+    L.Check("Outline##txt", &tr->outline); L.TipLookup();
+    if (tr->outline) { L.Color("Outline Color##txt", &tr->outlineColor.r, 4); L.TipLookup(); }
+    L.Check("Bold##txt", &tr->bold); L.TipLookup();
+    L.SameLine(); L.Check("Italic##txt", &tr->italic); L.TipLookup();
+    L.SameLine(); L.Check("UPPERCASE##txt", &tr->uppercase); L.TipLookup();
+    L.Check("Gradient##txt", &tr->gradient); L.TipLookup();
+    if (tr->gradient) { L.Color("Bottom Color##txt", &tr->colorBottom.r, 4); L.TipLookup(); }
+    L.DragInt("Visible Chars##txt", &tr->visibleChars, 0.5f, -1, 100000); L.Tip("-1 = show all. Lower to reveal only the first N characters.");
+    L.Drag("Type Speed##txt", &tr->typeSpeed, 1, 0.5f, 0.0f, 200.0f, "%.0f cps"); L.Tip("Characters per second to auto-reveal at runtime (0 = off). For dialogue.");
+    if (tr->screenSpace) { L.SameLine(); L.Check("Wrap##txt", &tr->wrap); }
+    L.Check("Rich Text##txt", &tr->richText);
+    L.Tip("Colour and style tags inside the text (screen and world text):\n[color=#ffcc33]gold[/color]  [color=red]red[/color]  [b]bold[/b]  [i]italic[/i]  [size=150]big[/size]\nThe tags take no room. Use [[ for a literal [.\n[size=N] is a percent (25 to 400); a line is as tall as the biggest size on it.");
+    if (!tr->screenSpace) L.Note("World text: drawn at this object's place in flat (2D) scenes.");
+    L.Drag("Letter Spacing##txt", &tr->letterSpacing, 1, 0.1f, -4.0f, 32.0f); L.TipLookup();
+    L.Drag("Line Spacing##txt", &tr->lineSpacing, 1, 0.1f, -4.0f, 32.0f); L.TipLookup();
+    AddFontSlotRows(L, "txtfont", &tr->fontPath);
+    if (tr->fontPath.empty()) L.Note("Built-in 8x8 bitmap font.");
+    else if (okay::GetFont(tr->fontPath)) L.ColorText(RowCol(0.5f, 0.85f, 0.5f), "TTF font loaded.");
+    else L.ColorText(RowCol(0.9f, 0.5f, 0.4f), "Font not found / failed to load.");
+    const int kRemove = L.SmallButton("Remove##txt");
+    if (!DrawRowsOkayUI(tr, "##okayui_text", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunStyleBarRows(ed, tr, L, sb);
+    if (L[kLoc].changed && locOn) LocalizedTextSwitch(ed, tr->loc, tr->text, go, true);
+    for (int i = 0; i < 6; ++i) if (L[kSw[i]].clicked) { tr->color = {kTxtCols[i].r, kTxtCols[i].g, kTxtCols[i].b, tr->color.a}; ed.dirty = true; }
+    if (kFit >= 0 && L[kFit].changed) { tr->autoSizeMin = mm[0]; tr->autoSizeMax = mm[1]; }
+    if (kFitText >= 0 && L[kFitText].clicked) {
+        tr->size = {(float)tr->PixelWidth() * tr->pixelSize + 8.0f, (float)tr->PixelHeight() * tr->pixelSize + 8.0f};
+        ed.dirty = true;
+    }
+    RunAnchorRow(ed, L, tr->anchor, anc);
+    if (kVa >= 0 && L[kVa].changed) { tr->alignBottom = (va == 2); tr->vcenter = (va == 1); }
+    if (L[kRemove].clicked) toRemove = tr;
+    return true;
+}
+
+static bool DrawCanvasWithOkayUI(EditorState& ed, Canvas* cv, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kModes[] = {"Constant Pixel Size", "Scale With Screen Size"};
+    static const char* const kMatches[] = {"Match Width or Height", "Expand (always fits)", "Shrink (always fills)"};
+    static const struct { const char* n; float w, h; } kRes[] = {{"1080p", 1920, 1080}, {"720p", 1280, 720}, {"1440p", 2560, 1440}, {"9:16", 1080, 1920}, {"phone", 720, 1280}};
+    InspFieldList L;
+    L.rows.reserve(48);
+    L.Check("Visible##cv", &cv->visible); L.Tip("Hide/show every widget under this canvas at once.");
+    L.SameLine(); L.Slider("Opacity##cv", &cv->opacity, 0.0f, 1.0f); L.Last().width = 150.0f;
+    L.Tip("Master fade for this canvas's UI (drive at runtime for fade in/out).");
+    L.Separator();
+    int m = (int)cv->scaleMode, sm = (int)cv->screenMatch;
+    const int kMode = L.Combo("UI Scale Mode##cv", &m, kModes, 2); L.TipLookup();
+    int kRes5[5] = {-1, -1, -1, -1, -1}, kMatch = -1, kMw = -1, kMm = -1, kMh = -1;
+    if (cv->scaleMode == Canvas::ScaleMode::ScaleWithScreenSize) {
+        L.Drag("Reference Res##cv", &cv->referenceResolution.x, 2, 1.0f, 1.0f, 8000.0f); L.TipLookup();
+        L.Note("Presets:");
+        for (int i = 0; i < 3; ++i) { L.SameLine(); kRes5[i] = L.SmallButton(kRes[i].n); }
+        L.Note("Portrait:");
+        for (int i = 3; i < 5; ++i) { L.SameLine(); kRes5[i] = L.SmallButton(kRes[i].n); }
+        kMatch = L.Combo("Screen Match##cv", &sm, kMatches, 3);
+        L.Tip("How the reference layout fits a screen of another shape.\nExpand: the whole layout always fits - a landscape menu stays\n  whole on a portrait phone (best for phones and tablets).\nShrink: the layout always covers the screen (edges may crop).\nMatch: blend width / height with the slider.");
+        if (cv->screenMatch == Canvas::ScreenMatch::MatchWidthOrHeight) {
+            L.Slider("Match W/H##cv", &cv->matchWidthOrHeight, 0.0f, 1.0f, cv->matchWidthOrHeight < 0.25f ? "Width" : cv->matchWidthOrHeight > 0.75f ? "Height" : "%.2f");
+            kMw = L.SmallButton("Width##cvm"); L.SameLine(); kMm = L.SmallButton("Match##cvm"); L.SameLine(); kMh = L.SmallButton("Height##cvm");
+        }
+    }
+    L.Drag("Scale Factor##cv", &cv->scaleFactor, 1, 0.01f, 0.05f, 10.0f, "%.2fx"); L.Tip("Extra UI zoom on top of the scale mode.");
+    L.DragInt("Sort Order##cv", &cv->sortOrder, 1.0f); L.Tip("Higher canvases draw on top of lower ones.");
+    L.Section("World Space (3D)");
+    L.Check("World Space##cv", &cv->worldSpace);
+    L.Tip("Render this canvas (and ALL its widgets) on a plane in the 3D world at this\nobject's position, instead of on the screen. Shows in the Game view / Play.");
+    if (cv->worldSpace) {
+        L.Drag("Design Res##cvw", &cv->designResolution.x, 2, 1.0f, 16.0f, 8000.0f); L.Tip("The canvas's own pixel space \xE2\x80\x94 author widgets against this size.");
+        L.Drag("Pixels / Unit##cvw", &cv->worldPixelsPerUnit, 1, 1.0f, 1.0f, 4000.0f, "%.0f"); L.Tip("Design pixels per world unit (larger = the panel is smaller in-world).");
+        L.Check("Billboard (face camera)##cvw", &cv->billboard); L.Tip("Keep the canvas turned toward the camera. Off = it uses this object's orientation.");
+        L.Note("Move/rotate this object to place the panel. Needs a main Camera.");
+    }
+    L.Section("Phones");
+    GameObject* cgo = cv->gameObject;
+    GameObject* safe = nullptr;
+    for (Transform* ch : cgo->transform->Children())
+        if (ch && ch->gameObject && ch->gameObject->GetComponent<UISafeArea>()) { safe = ch->gameObject; break; }
+    int kSafe = -1;
+    char line[200];
+    if (!safe) {
+        kSafe = L.Button("Add Safe Area##cv");
+        L.Tip("Put this canvas's widgets in a Safe Area container so they keep clear of a\nphone's notch, rounded corners and home bar. Fills the screen on a desktop.");
+    } else {
+        std::snprintf(line, sizeof line, "Safe Area: \"%s\" keeps its widgets clear of notches.", safe->name.c_str());
+        L.Note(line, true);
+    }
+    if (g_gameDevice <= 0) L.Note("Pick a phone in the Game view to preview it.");
+    char live[96];
+    std::snprintf(live, sizeof live, "Current scale: %.2fx  (canvas %.0f x %.0f)", cv->ScaleFactor(UICanvas::Width(), UICanvas::Height()), UICanvas::Width(), UICanvas::Height());
+    L.Note(live, true);
+    const int kRemove = L.SmallButton("Remove##cv");
+    if (!DrawRowsOkayUI(cv, "##okayui_canvas", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kMode].changed) cv->scaleMode = (Canvas::ScaleMode)m;
+    for (int i = 0; i < 5; ++i) if (kRes5[i] >= 0 && L[kRes5[i]].clicked) { cv->referenceResolution = {kRes[i].w, kRes[i].h}; ed.dirty = true; }
+    if (kMatch >= 0 && L[kMatch].changed) cv->screenMatch = (Canvas::ScreenMatch)sm;
+    if (kMw >= 0 && L[kMw].clicked) { cv->matchWidthOrHeight = 0.0f; ed.dirty = true; }
+    if (kMm >= 0 && L[kMm].clicked) { cv->matchWidthOrHeight = 0.5f; ed.dirty = true; }
+    if (kMh >= 0 && L[kMh].clicked) { cv->matchWidthOrHeight = 1.0f; ed.dirty = true; }
+    if (kSafe >= 0 && L[kSafe].clicked) {
+        ed.PushUndo();
+        GameObject* sa = ed.scene().CreateGameObject("Safe Area");
+        sa->AddComponent<UISafeArea>();
+        sa->transform->SetParent(cgo->transform, false);
+        std::vector<Transform*> kids(cgo->transform->Children().begin(), cgo->transform->Children().end());
+        for (Transform* k : kids)
+            if (k && k->gameObject && k->gameObject != sa && GetUIRect(k->gameObject).valid) k->SetParent(sa->transform, false);
+        ed.Select(sa); ed.dirty = true;
+    }
+    if (L[kRemove].clicked) toRemove = cv;
+    return true;
+}
+
+static bool DrawUIImageWithOkayUI(EditorState& ed, UIImage* im, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(48);
+    AnchorRow anc;
+    AddAnchorRow(L, "Anchor##uim", im->anchor, anc);
+    RectRowLabels rl;
+    AddUIRectRows(L, "uim", im->anchor, im->position, im->size, rl);
+    L.Label("Image", 0, true);
+    L.SameLine(-1.0f, 64.0f);   // ImGui::SameLine(80): 80 from the window edge, the 16-pixel window padding in
+    L.Slot("uimtex", &im->texture, "Image", "image");
+    const int kThumb = ThumbRow(L, im->texture);
+    int kNative = -1, tw = 0, th = 0;
+    char tip[96], dims[48];
+    if (!im->texture.empty()) {
+        if (SDL_Texture* t = GetThumb(im->texture)) {
+            SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
+            kNative = L.SmallButton("Set Native Size##uim");
+            std::snprintf(tip, sizeof tip, "Make the widget the picture's own size (%d x %d)", tw, th); L.Tip(tip);
+            std::snprintf(dims, sizeof dims, "%d x %d px", tw, th);
+            L.SameLine(); L.Note(dims, true);
+        } else L.ColorText(RowCol(1.0f, 0.6f, 0.45f), "Can't load this file.");
+    }
+    L.Color("Tint##uim", &im->color.r, 4); L.TipLookup();
+    if (im->texture.empty()) L.Note("No image: it draws as a coloured shape.");
+    L.Section("Texture");
+    L.Check("Flip X##uim", &im->flipX); L.SameLine(); L.TipLookup();
+    L.Check("Flip Y##uim", &im->flipY); L.Tip("Mirror the texture without a second asset.");
+    L.Check("Preserve Aspect##uim", &im->preserveAspect);
+    L.Tip("Fit the texture inside the box without stretching (letterboxed, centered). Ignored for nine-slice / fills.");
+    L.Check("Nine-slice##uim", &im->nineSlice); L.TipLookup();
+    if (im->nineSlice) {
+        L.Drag("Border (px)##uim", &im->border, 1, 0.5f, 0.0f, 512.0f); L.TipLookup();
+        L.Note("corners stay fixed; edges/center stretch to size");
+    }
+    L.Section("Shape & Frame");
+    ShapeRow shp;
+    AddShapeRow(L, "Shape##uim", im->shape, shp);
+    L.Tip("The image silhouette: circle for avatars, pill/tab for cards, arrows for nav, etc. Applies to the colored fill when no texture is set.");
+    int kAll = -1;
+    if (UIShapeUsesRadius(im->shape)) {
+        L.Drag("Corner Radius##uim", &im->cornerRadius, 1, 0.2f, 0.0f, 64.0f); L.TipLookup();
+        if (im->cornerRadius > 0.0f) {   // CornerMaskEditor
+            static bool b[4];
+            static const int kBits[4] = {okay::UICornerTL, okay::UICornerTR, okay::UICornerBL, okay::UICornerBR};
+            for (int i = 0; i < 4; ++i) b[i] = (im->cornerMask & kBits[i]) != 0;
+            L.Note("Rounded corners");
+            const int c0 = L.Check("TL##uim_c1", &b[0]); L.SameLine(); L.Check("TR##uim_c2", &b[1]);
+            L.Check("BL##uim_c8", &b[2]); L.SameLine(); L.Check("BR##uim_c4", &b[3]);
+            L.SameLine(); kAll = L.SmallButton("All##uim_call");
+            L[c0].tag = 1;   // the first of the four (they follow in order, one row each)
+        }
+    }
+    L.Drag("Frame Width##uim", &im->borderWidth, 1, 0.1f, 0.0f, 24.0f); L.Tip("A matte/keyline frame drawn around the image rect.");
+    if (im->borderWidth > 0.0f) { L.Color("Frame Color##uim", &im->borderColor.r, 4); L.TipLookup(); }
+    L.Check("Drop Shadow##uim", &im->shadow); L.TipLookup();
+    if (im->shadow) {
+        L.Color("Shadow Color##uim", &im->shadowColor.r, 4); L.TipLookup();
+        L.Drag("Shadow Offset##uim", &im->shadowOffset.x, 2, 0.5f); L.TipLookup();
+        L.Drag("Shadow Blur##uim", &im->shadowSoftness, 1, 0.2f, 0.0f, 48.0f); L.TipLookup();
+    }
+    const int kRemove = L.SmallButton("Remove##uim");
+    if (!DrawRowsOkayUI(im, "##okayui_uiimage", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunAnchorRow(ed, L, im->anchor, anc);
+    ShowThumbInProject(L, kThumb);
+    if (kNative >= 0 && L[kNative].clicked) { ed.PushUndo(); im->size = {(float)tw, (float)th}; ed.dirty = true; }
+    RunShapeRow(L, im->shape, shp, &im->cornerRadius);
+    for (std::size_t k = 0; k < L.rows.size(); ++k)
+        if (L.rows[k].tag == 1) {   // the corner boxes back into the mask
+            static const int kBits[4] = {okay::UICornerTL, okay::UICornerTR, okay::UICornerBL, okay::UICornerBR};
+            for (int i = 0; i < 4; ++i)
+                if (L.rows[k + (std::size_t)i].changed) { if (*L.rows[k + (std::size_t)i].b) im->cornerMask |= kBits[i]; else im->cornerMask &= ~kBits[i]; }
+        }
+    if (kAll >= 0 && L[kAll].clicked) { im->cornerMask = okay::UICornerAll; ed.dirty = true; }
+    if (L[kRemove].clicked) toRemove = im;
+    return true;
+}
+
+static bool DrawUIButtonWithOkayUI(EditorState& ed, GameObject* go, UIButton* btn, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    if (!btn->loc.key.empty() && !UIButtonTextChild(go)) return false;   // a localized label: the key picker is Dear ImGui's
+    static const char* const kEases[] = {"Linear", "Smooth", "Ease Out", "Ease In"};
+    InspFieldList L;
+    L.rows.reserve(80);
+    StyleBarRows sb;
+    AddStyleBarRows(L, btn, sb);
+    GameObject* txtChild = UIButtonTextChild(go);
+    TextRenderer* childTr = txtChild ? txtChild->GetComponent<TextRenderer>() : nullptr;
+    int kEditText = -1, kLoc = -1, kSplit = -1;
+    bool locOn = false;
+    char line[200];
+    if (childTr) {
+        std::snprintf(line, sizeof line, "Text is the child object \"%s\".", txtChild->name.c_str());
+        L.Note(line, true);
+        kEditText = L.SmallButton("Edit Text##uib"); L.Tip("Select the child Text object to edit/style/position the label.");
+    } else {
+        kLoc = L.Check("Localized##uibloc", &locOn); L.Tip(kLocalizedTip);
+        L.Text("Label##uib", &btn->label);
+        L.SameLine();
+        kSplit = L.SmallButton("Text as Child##uib");
+        L.Tip("Split the label into its own child Text object so it can be styled and positioned independently.");
+    }
+    L.Drag("Pos (px)##uib", &btn->position.x, 2, 1.0f); L.TipLookup();
+    L.Drag("Size (px)##uib", &btn->size.x, 2, 1.0f, 1.0f, 4000.0f); L.TipLookup();
+    L.Color("Color##uib", &btn->color.r, 4); L.TipLookup();
+    L.Color("Hover##uib", &btn->hoverColor.r, 4); L.TipLookup();
+    L.Color("Pressed##uib", &btn->pressedColor.r, 4); L.TipLookup();
+    L.Color("Disabled##uib", &btn->disabledColor.r, 4); L.TipLookup();
+    L.Check("Interactable##uib", &btn->interactable); L.TipLookup();
+    L.SameLine(); L.Check("Focusable##uib", &btn->focusable); L.TipLookup();
+    L.Note("calls the script's on_click(); disabled buttons are greyed out", false, true);
+    L.Section("On Click (assign a function)");
+    const int kTarget = L.Text("Target Object##uibclk", &btn->clickTarget); L.TipLookup();
+    L.Last().dropKind = "objectname";
+    L.Last().tip = "Drag an object here from the Hierarchy (or type its name). Blank = this button's own object.";
+    GameObject* tobj = btn->clickTarget.empty() ? go : (go->scene() ? go->scene()->Find(btn->clickTarget) : nullptr);
+    const std::vector<std::string> fns = ScriptPublicFunctions(tobj), nativeFns = NativeUIActionNames(tobj);
+    const bool fnIsNative = std::find(nativeFns.begin(), nativeFns.end(), btn->clickFunction) != nativeFns.end();
+    std::vector<const char*> items{"(none)"}, heads{nullptr};
+    for (std::size_t i = 0; i < nativeFns.size(); ++i) { items.push_back(nativeFns[i].c_str()); heads.push_back(i == 0 ? "Native (gameplay)" : nullptr); }
+    for (std::size_t i = 0; i < fns.size(); ++i) { items.push_back(fns[i].c_str()); heads.push_back(i == 0 ? "Script" : nullptr); }
+    int fnIdx = btn->clickFunction.empty() ? 0 : -1;
+    for (std::size_t i = 1; i < items.size(); ++i) if (btn->clickFunction == items[i]) { fnIdx = (int)i; break; }
+    const std::string fnPreview = btn->clickFunction.empty() ? "(none)" : btn->clickFunction;
+    const int kFn = L.Combo("Function##uibclk", &fnIdx, items.data(), (int)items.size());
+    L.Last().heads = heads.data(); L.Last().preview = fnPreview.c_str();
+    if (fnIsNative) L.Drag("Amount##uibclkarg", &btn->clickArg, 1, 0.5f, -100000.0f, 100000.0f);
+    if (!tobj) L.Note("Target object not found \xE2\x80\x94 drag one from the Hierarchy.");
+    else if (fns.empty() && nativeFns.empty()) {
+        std::snprintf(line, sizeof line, "'%s' has no Script or native gameplay component to call.", tobj->name.c_str());
+        L.Note(line, true, true);
+    }
+    AnchorRow anc;
+    AddAnchorRow(L, "Anchor##uib", btn->anchor, anc);
+    L.Section("Style");
+    ShapeRow shp;
+    AddShapeRow(L, "Shape##uib", btn->shape, shp);
+    if (UIShapeUsesRadius(btn->shape)) { L.Drag("Corner Radius##uib", &btn->cornerRadius, 1, 0.2f, 0.0f, 64.0f); L.TipLookup(); }
+    if (!childTr) {
+        L.Drag("Font Scale##uib", &btn->fontScale, 1, 0.05f, 0.5f, 16.0f); L.TipLookup();
+        AddFontSlotRows(L, "uibfont", &btn->fontPath);
+        if (!btn->fontPath.empty() && !okay::GetFont(btn->fontPath)) L.ColorText(RowCol(0.9f, 0.5f, 0.4f), "Font not found / failed to load.");
+    }
+    L.Check("Drop Shadow##uib", &btn->shadow); L.TipLookup();
+    if (btn->shadow) {
+        L.Color("Shadow Color##uib", &btn->shadowColor.r, 4); L.TipLookup();
+        L.Drag("Shadow Offset##uib", &btn->shadowOffset.x, 2, 0.5f); L.TipLookup();
+        L.Drag("Shadow Blur##uib", &btn->shadowSoftness, 1, 0.2f, 0.0f, 48.0f); L.TipLookup();
+    }
+    L.Drag("Border Width##uib", &btn->borderWidth, 1, 0.1f, 0.0f, 16.0f); L.TipLookup();
+    if (btn->borderWidth > 0.0f) { L.Color("Border Color##uib", &btn->borderColor.r, 4); L.TipLookup(); }
+    L.Drag("Hover Grow##uib", &btn->hoverScale, 1, 0.01f, 1.0f, 2.0f); L.Tip("Scale when hovered/focused (1 = none)");
+    if (!childTr) { L.Color("Hover Text##uib", &btn->hoverTextColor.r, 4); L.TipLookup(); }
+    L.Drag("Transition Speed##uib", &btn->transitionSpeed, 1, 0.2f, 0.0f, 30.0f); L.Tip("Smooth color fade on hover/press (0 = instant)");
+    int ez = btn->transitionEase; if (ez < 0 || ez > 3) ez = 0;
+    const int kEase = L.Combo("Ease##uib", &ez, kEases, 4); L.TipLookup();
+    L.Drag("Transition Time##uib", &btn->transitionDuration, 1, 0.01f, 0.0f, 3.0f); L.Tip("Seconds to reach the state color and scale. 0 uses Transition Speed.");
+    L.Check("Own Focus Color##uib", &btn->separateFocus); L.TipLookup();
+    if (btn->separateFocus) { L.Color("Focus Color##uib", &btn->focusColor.r, 4); L.TipLookup(); }
+    L.Drag("Press Offset##uib", &btn->pressOffset, 1, 0.1f, 0.0f, 16.0f); L.TipLookup();
+    L.Text("Icon##uib", &btn->icon); L.TipLookup();
+    L.Drag("Icon Size##uib", &btn->iconSize, 1, 0.5f, 0.0f, 256.0f); L.Tip("PNG/JPG drawn beside the label; 0 = none");
+    L.Check("Icon on Right##uib", &btn->iconRight); L.TipLookup();
+    L.Section("Behavior");
+    L.Check("Toggle Button##uib", &btn->toggleMode); L.Tip("Stays pressed; each click flips its on/off state");
+    if (btn->toggleMode) { L.SameLine(); L.Check("On##uib", &btn->isOn); }
+    L.Check("Hold to Repeat##uib", &btn->holdRepeat); L.Tip("Fires on_click() repeatedly while held (steppers)");
+    if (btn->holdRepeat) {
+        L.Drag("Repeat Delay##uib", &btn->repeatDelay, 1, 0.01f, 0.0f, 2.0f); L.TipLookup();
+        L.Drag("Repeat Rate##uib", &btn->repeatInterval, 1, 0.01f, 0.01f, 1.0f); L.TipLookup();
+    }
+    const int kRemove = L.SmallButton("Remove##uib");
+    if (!DrawRowsOkayUI(btn, "##okayui_uibutton", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunStyleBarRows(ed, btn, L, sb);
+    if (kEditText >= 0 && L[kEditText].clicked) ed.Select(txtChild);
+    if (kLoc >= 0 && L[kLoc].changed && locOn) LocalizedTextSwitch(ed, btn->loc, btn->label, go, true);
+    if (kSplit >= 0 && L[kSplit].clicked) { ed.PushUndo(); ed.Select(MakeButtonTextChild(ed, go)); ed.dirty = true; }
+    if (L[kTarget].changed && L[kTarget].dropState && btn->clickTarget == go->name) btn->clickTarget.clear();   // a drop of the button itself: blank
+    if (L[kFn].changed) { if (fnIdx <= 0) btn->clickFunction.clear(); else btn->clickFunction = items[(std::size_t)fnIdx]; }
+    RunAnchorRow(ed, L, btn->anchor, anc);
+    RunShapeRow(L, btn->shape, shp);
+    if (L[kEase].changed) btn->transitionEase = ez;
+    if (L[kRemove].clicked) toRemove = btn;
+    return true;
+}
+
+static bool DrawUISliderWithOkayUI(EditorState& ed, UISlider* sl, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kHandles[] = {"From Round Knob", "Circle", "Rounded", "Square", "Pill", "Diamond"};
+    InspFieldList L;
+    L.rows.reserve(48);
+    StyleBarRows sb;
+    AddStyleBarRows(L, sl, sb);
+    L.Drag("Pos (px)##usl", &sl->position.x, 2, 1.0f); L.TipLookup();
+    L.Drag("Size (px)##usl", &sl->size.x, 2, 1.0f, 1.0f, 8000.0f); L.TipLookup();
+    L.Drag("Min##usl", &sl->minValue, 1, 0.1f); L.TipLookup();
+    L.Drag("Max##usl", &sl->maxValue, 1, 0.1f); L.TipLookup();
+    L.Slider("Value##usl", &sl->value, sl->minValue, sl->maxValue); L.TipLookup();
+    L.Color("Track##usl", &sl->background.r, 4); L.TipLookup();
+    L.Color("Fill##usl", &sl->fill.r, 4); L.TipLookup();
+    L.Color("Knob##usl", &sl->knob.r, 4); L.TipLookup();
+    L.Note("drag in the built game; calls script on_change()");
+    AnchorRow anc;
+    AddAnchorRow(L, "Anchor##usl", sl->anchor, anc);
+    ShapeRow shp;
+    AddShapeRow(L, "Track Shape##usl", sl->trackShape, shp);
+    if (sl->trackShape == UIShape::Rounded) { L.Drag("Corner Radius##usl", &sl->cornerRadius, 1, 0.2f, 0.0f, 64.0f); L.TipLookup(); }
+    L.Check("Round Knob##usl", &sl->roundKnob); L.TipLookup();
+    L.Drag("Knob Size##usl", &sl->knobSize, 1, 0.02f, 0.1f, 3.0f); L.TipLookup();
+    L.Check("Show Value##usl", &sl->showValue); L.TipLookup();
+    L.SameLine(); const int kWhole = L.Check("Whole Numbers##usl", &sl->wholeNumbers);
+    if (sl->showValue) { L.Color("Text Color##usl", &sl->textColor.r, 4); L.TipLookup(); }
+    L.Check("Interactable##usl", &sl->interactable); L.TipLookup();
+    L.SameLine(); L.Check("Vertical##usl", &sl->vertical); L.TipLookup();
+    L.Drag("Step##usl", &sl->step, 1, 0.01f, 0.0f, 1000.0f); L.Tip("Snap spacing from Min. 0 = continuous.");
+    L.Text("Value Format##usl", &sl->valueFormat); L.Tip("{v} is the number, for example \"{v}%\". Empty prints two decimals.");
+    L.Check("Fill Gradient##usl", &sl->fillGradient); L.TipLookup();
+    if (sl->fillGradient) { L.Color("Fill End##usl", &sl->fillEnd.r, 4); L.TipLookup(); }
+    int hi = 0;
+    if (sl->knobShape == (int)UIShape::Circle) hi = 1;
+    else if (sl->knobShape == (int)UIShape::Rounded) hi = 2;
+    else if (sl->knobShape == (int)UIShape::Rectangle) hi = 3;
+    else if (sl->knobShape == (int)UIShape::Pill) hi = 4;
+    else if (sl->knobShape == (int)UIShape::Diamond) hi = 5;
+    const int kHandle = L.Combo("Handle##usl", &hi, kHandles, 6);
+    const int kRemove = L.SmallButton("Remove##usl");
+    if (!DrawRowsOkayUI(sl, "##okayui_uislider", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunStyleBarRows(ed, sl, L, sb);
+    RunAnchorRow(ed, L, sl->anchor, anc);
+    RunShapeRow(L, sl->trackShape, shp);
+    if (L[kWhole].changed && sl->wholeNumbers) sl->value = Mathf::Round(sl->value);
+    if (L[kHandle].changed) {
+        if (hi == 0) sl->knobShape = -1;
+        else if (hi == 1) { sl->knobShape = (int)UIShape::Circle; sl->roundKnob = true; }
+        else if (hi == 2) { sl->knobShape = (int)UIShape::Rounded; sl->roundKnob = false; }
+        else if (hi == 3) sl->knobShape = (int)UIShape::Rectangle;
+        else if (hi == 4) sl->knobShape = (int)UIShape::Pill;
+        else sl->knobShape = (int)UIShape::Diamond;
+    }
+    if (L[kRemove].clicked) toRemove = sl;
+    return true;
+}
+
+static bool DrawUIToggleWithOkayUI(EditorState& ed, GameObject* go, UIToggle* tg, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    if (!tg->loc.key.empty()) return false;
+    static const char* const kStyles[] = {"Checkbox", "Switch", "Radio"};
+    InspFieldList L;
+    L.rows.reserve(40);
+    StyleBarRows sb;
+    AddStyleBarRows(L, tg, sb);
+    bool locOn = false;
+    const int kLoc = L.Check("Localized##utgloc", &locOn); L.Tip(kLocalizedTip);
+    L.Text("Label##utg", &tg->label);
+    L.Check("On##utg", &tg->on); L.TipLookup();
+    L.Drag("Pos (px)##utg", &tg->position.x, 2, 1.0f); L.TipLookup();
+    L.Drag("Size (px)##utg", &tg->size.x, 2, 1.0f, 1.0f, 4000.0f); L.TipLookup();
+    L.Color("Box##utg", &tg->boxColor.r, 4); L.TipLookup();
+    L.Color("Check##utg", &tg->checkColor.r, 4); L.TipLookup();
+    L.Color("Label Color##utg", &tg->textColor.r, 4); L.TipLookup();
+    L.Note("click in the built game; calls script on_toggle()");
+    AnchorRow anc;
+    AddAnchorRow(L, "Anchor##utg", tg->anchor, anc);
+    L.Drag("Corner Radius##utg", &tg->cornerRadius, 1, 0.2f, 0.0f, 64.0f); L.TipLookup();
+    int st = (int)tg->style;
+    const int kStyle = L.Combo("Style##utg", &st, kStyles, 3); L.TipLookup();
+    if (tg->style == UIToggle::Style::Radio) {
+        L.Text("Group##utg", &tg->radioGroup);
+        L.Tip("Radio buttons with the same group name are one choice, wherever they are. Empty: the radio buttons under the same parent.");
+    }
+    if (tg->style == UIToggle::Style::Switch) { L.Color("Knob##utg", &tg->knobColor.r, 4); L.TipLookup(); }
+    L.Drag("Anim Speed##utg", &tg->animSpeed, 1, 0.2f, 0.0f, 40.0f); L.Tip("Knob glide / check fade speed (0 = snap).");
+    L.Check("Interactable##utg", &tg->interactable); L.TipLookup();
+    const int kRemove = L.SmallButton("Remove##utg");
+    if (!DrawRowsOkayUI(tg, "##okayui_uitoggle", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunStyleBarRows(ed, tg, L, sb);
+    if (L[kLoc].changed && locOn) LocalizedTextSwitch(ed, tg->loc, tg->label, go, true);
+    RunAnchorRow(ed, L, tg->anchor, anc);
+    if (L[kStyle].changed) tg->style = (UIToggle::Style)st;
+    if (L[kRemove].clicked) toRemove = tg;
+    return true;
+}
+
+static bool DrawUIInputFieldWithOkayUI(EditorState& ed, GameObject* go, UIInputField* in, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    if (!in->loc.key.empty()) return false;
+    static const char* const kTypes[] = {"Standard", "Integer", "Decimal", "Password"};
+    InspFieldList L;
+    L.rows.reserve(40);
+    StyleBarRows sb;
+    AddStyleBarRows(L, in, sb);
+    L.Text("Text##uif", &in->text); L.TipLookup();
+    bool locOn = false;
+    const int kLoc = L.Check("Localized##uifloc", &locOn); L.Tip(kLocalizedTip);
+    L.Text("Placeholder##uif", &in->placeholder);
+    L.Drag("Pos (px)##uif", &in->position.x, 2, 1.0f); L.TipLookup();
+    L.Drag("Size (px)##uif", &in->size.x, 2, 1.0f, 8.0f, 4000.0f); L.TipLookup();
+    L.Color("Color##uif", &in->color.r, 4); L.TipLookup();
+    L.DragInt("Max Length##uif", &in->maxLength, 1.0f, 1, 1024); L.TipLookup();
+    int ct = (int)in->contentType;
+    const int kType = L.Combo("Content Type##uif", &ct, kTypes, 4); L.TipLookup();
+    AnchorRow anc;
+    AddAnchorRow(L, "Anchor##uif", in->anchor, anc);
+    ShapeRow shp;
+    AddShapeRow(L, "Shape##uif", in->shape, shp);
+    if (UIShapeUsesRadius(in->shape)) { L.Drag("Corner Radius##uif", &in->cornerRadius, 1, 0.2f, 0.0f, 64.0f); L.TipLookup(); }
+    L.Drag("Focus Ring##uif", &in->borderWidth, 1, 0.1f, 0.0f, 12.0f); L.TipLookup();
+    if (in->borderWidth > 0.0f) { L.Color("Ring Color##uif", &in->borderColor.r, 4); L.TipLookup(); }
+    L.Note("Click to focus + type at runtime; Enter calls on_submit().");
+    L.Check("Multiline##uif", &in->multiline); L.Tip("Enter inserts a newline instead of submitting.");
+    const int kRemove = L.SmallButton("Remove##uif");
+    if (!DrawRowsOkayUI(in, "##okayui_uiinput", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunStyleBarRows(ed, in, L, sb);
+    if (L[kLoc].changed && locOn) LocalizedTextSwitch(ed, in->loc, in->placeholder, go, true);
+    if (L[kType].changed) in->contentType = (UIInputField::ContentType)ct;
+    RunAnchorRow(ed, L, in->anchor, anc);
+    RunShapeRow(L, in->shape, shp);
+    if (L[kRemove].clicked) toRemove = in;
+    return true;
+}
+
+static bool DrawUILayoutGroupWithOkayUI(EditorState& ed, UILayoutGroup* lg, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kDirs[] = {"Vertical", "Horizontal", "Grid", "Flex Row", "Flex Column"};
+    static const char* const kJustify[] = {"Start", "Center", "End", "Space Between", "Space Around", "Space Evenly"};
+    static const char* const kAlign[] = {"Start", "Center", "End", "Stretch"};
+    InspFieldList L;
+    L.rows.reserve(24);
+    int d = (int)lg->direction, j = (int)lg->justify, a = (int)lg->align;
+    const int kDir = L.Combo("Direction##lg", &d, kDirs, 5); L.TipLookup();
+    int kJ = -1, kA = -1;
+    if (lg->IsFlex()) {   // DrawLayoutGroupFlexFields
+        L.Drag("Box Size##lgf", &lg->boxSize.x, 2, 1.0f, 1.0f, 8000.0f);
+        kJ = L.Combo("Justify##lgf", &j, kJustify, 6); L.Tip("Where spare room along a line goes.");
+        kA = L.Combo("Align##lgf", &a, kAlign, 4); L.Tip("How children sit across a line. Stretch resizes children that have a UI Flex Item.");
+        L.Check("Wrap##lgf", &lg->wrap); L.Tip("Start a new line when the box is full.");
+        L.Note("Children with a UI Flex Item grow and shrink to fill the box.");
+    }
+    const bool isGrid = lg->direction == UILayoutGroup::Direction::Grid;
+    int kCols = -1;
+    if (isGrid) { kCols = L.DragInt("Columns##lg", &lg->columns, 0.1f, 1, 32); L.TipLookup(); }
+    const int kOrig = L.Drag("Origin##lg", &lg->origin.x, 2, 1.0f); L.TipLookup();
+    const int kSp = L.Drag(isGrid ? "Column Gap##lg" : "Spacing##lg", &lg->spacing, 1, 0.5f, 0.0f, 400.0f);
+    int kRow = -1;
+    if (isGrid) kRow = L.Drag("Row Gap##lg", &lg->spacingY, 1, 0.5f, 0.0f, 400.0f);
+    const int kPad = L.Drag("Padding##lg", &lg->padding, 1, 0.5f, 0.0f, 400.0f); L.TipLookup();
+    AnchorRow anc;
+    AddAnchorRow(L, "Anchor##lg", lg->anchor, anc);
+    const int kArrange = L.SmallButton("Arrange Now##lg");
+    char content[48]; std::snprintf(content, sizeof content, "content: %.0f px", lg->ContentSize());
+    L.SameLine(); L.Note(content, true);
+    const int kRemove = L.SmallButton("Remove##lg");
+    if (!DrawRowsOkayUI(lg, "##okayui_layout", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    bool arrange = false;
+    if (L[kDir].changed) { lg->direction = (UILayoutGroup::Direction)d; arrange = true; }
+    if (kJ >= 0 && L[kJ].changed) lg->justify = (UILayoutGroup::Justify)j;
+    if (kA >= 0 && L[kA].changed) lg->align = (UILayoutGroup::Align)a;
+    if (kCols >= 0 && L[kCols].changed) { if (lg->columns < 1) lg->columns = 1; arrange = true; }
+    if (L[kOrig].changed || L[kSp].changed || (kRow >= 0 && L[kRow].changed) || L[kPad].changed) arrange = true;
+    RunAnchorRow(ed, L, lg->anchor, anc);
+    if (L[kArrange].clicked) { arrange = true; ed.dirty = true; }
+    if (arrange) lg->Arrange();
+    if (L[kRemove].clicked) toRemove = lg;
+    return true;
+}
+
+// The Terrain: its own rows, the sculpt brush, generation, erosion, heightmaps and the auto-colour layers, then the texture layers and
+// the scatter section (LevelTools.cpp AddTerrainToolRows).
+static int g_terrainTerraceSteps = 5;                       // the Terrain's Terrace bands (both versions)
+static float g_terrainNormRange[2] = {0.0f, 12.0f};         // its Normalize range (both versions)
+static bool DrawTerrainWithOkayUI(EditorState& ed, Terrain* tr, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kBrushes[] = {"Raise / Lower", "Smooth", "Flatten", "Set Height", "Noise", "Erode"};
+    static const char* const kGens[] = {"Mountains", "Hills", "Plains", "Plateau", "Islands", "Ridged Mountains", "Canyons"};
+    InspFieldList L;
+    L.rows.reserve(120);
+    const int kCol = L.Color("Color##terr", &tr->color.r, 4); L.TipLookup();
+    int res = tr->resolution;
+    const int kRes = L.DragInt("Resolution##terr", &res, 1.0f, 4, 2048); L.Tip("Vertices per side. Large maps: raise Size and Resolution together.");
+    const int kSize = L.Drag("Size##terr", &tr->size, 1, 1.0f, 2.0f, 1000000.0f); L.Tip("World width/depth. Make it as large as you like (pair with Resolution for detail).");
+    L.Section("Texturing");
+    const int kTex = PathFieldRow(L, "Ground Texture##terr", &tr->texture); L.Tip("Tiled ground texture (grass/rock/dirt PNG). Empty = flat auto-colours only.");
+    int kTexClear = -1, kTiling = -1, kTri = -1, kNrmClear = -1, kBump = -1;
+    if (!tr->texture.empty()) {
+        L.SameLine(); kTexClear = L.SmallButton("Clear##terrtex");
+        kTiling = L.Drag("Tiling##terr", &tr->textureTiling, 1, 0.1f, 0.1f, 200.0f); L.TipLookup();
+        kTri = L.Check("Triplanar (no cliff smear)##terr", &tr->triplanarTex); L.TipLookup();
+    }
+    const int kNrm = PathFieldRow(L, "Normal Map##terr", &tr->normalMap); L.TipLookup();
+    if (!tr->normalMap.empty()) {
+        L.SameLine(); kNrmClear = L.SmallButton("Clear##terrnrm");
+        kBump = L.Slider("Bump##terr", &tr->normalStrength, 0.0f, 2.0f); L.TipLookup();
+    }
+    const int kAuto1 = L.Check("Auto-color layers##terr", &tr->autoColor);
+    L.Tip("Tint by elevation/slope (water/sand/grass/rock/snow). Tints the texture when one is set.");
+    L.Section("Sculpt brush (drag in the 3D view)");
+    L.Check("Sculpt##terr", &g_terrainSculpt);
+    L.SameLine(); L.Note("(Shift = lower/invert)");
+    L.Combo("Mode##terrbr", &g_terrainBrush, kBrushes, 6); L.Last().width = 160.0f;
+    L.Slider("Radius##terr", &g_terrainRadius, 0.5f, 30.0f);
+    L.Slider("Strength##terr", &g_terrainStrength, 0.1f, 20.0f);
+    L.Slider("Hardness##terr", &g_terrainHardness, 0.0f, 1.0f); L.Tip("Brush edge: 0 = soft, feathered falloff; 1 = hard, flat-topped.");
+    if (g_terrainBrush == 3) L.Drag("Target Height##terr", &g_terrainFlattenH, 1, 0.1f, -100.0f, 100.0f);
+    L.Section("Generate (procedural noise)");
+    L.Combo("Type##terrgen", &g_terrainGenType, kGens, 7); L.Last().width = 160.0f;
+    L.Slider("Amplitude##terrgen", &g_terrainGenAmp, 1.0f, 60.0f);
+    L.Slider("Frequency##terrgen", &g_terrainGenFreq, 0.5f, 12.0f);
+    L.SliderInt("Detail##terrgen", &g_terrainGenOct, 1, 8);
+    const int kGen = L.Button("Generate##terrgen");
+    L.SameLine(); const int kFlat = L.Button("Flatten##terr");
+    L.SameLine(); const int kSmooth = L.Button("Smooth All##terr");
+    L.Section("Erosion (geological realism)");
+    L.Note("Carve valleys & ridgelines into generated terrain.");
+    L.SliderInt("Rain drops##tero", &g_terrainErodeDroplets, 1000, 200000);
+    L.Slider("Erode strength##tero", &g_terrainErodeStrength, 0.05f, 1.0f);
+    const int kHyd = L.Button("Hydraulic Erode##tero");
+    L.SliderInt("Thermal passes##tero", &g_terrainThermalIters, 1, 100);
+    L.Slider("Talus angle##tero", &g_terrainThermalTalus, 0.2f, 6.0f); L.Tip("Slopes steeper than this (height step per cell) slump into scree.");
+    const int kTherm = L.Button("Thermal Erode##tero");
+    L.SliderInt("Terrace bands##tero", &g_terrainTerraceSteps, 2, 20);
+    L.SameLineOrWrap(); const int kTerr = L.Button("Terrace##tero"); L.Tip("Flatten the terrain into stepped elevation bands (mesas / rice paddies).");
+    L.Range("Range##ternorm", g_terrainNormRange, 0.1f, -100.0f, 100.0f, "Low %.1f", "High %.1f");
+    L.SameLineOrWrap(); const int kNorm = L.Button("Normalize##ternorm");
+    L.Tip("Linearly remap every height so the lowest point becomes Low and the highest becomes High.");
+    L.SameLineOrWrap(); const int kInv = L.Button("Invert##terinv"); L.Tip("Flip the terrain about its mid elevation: peaks become valleys and vice-versa.");
+    L.Section("Heightmap (PNG import / export)");
+    const int kImp = L.Button("Import PNG...##terhm");
+    L.SameLine(); const int kExp = L.Button("Export PNG...##terhm");
+    float hm[2] = {g_terrainHmLow, g_terrainHmHigh};
+    const int kHm = L.Range("Import Low/High##terhm", hm, 0.2f, -100.0f, 200.0f, "%.1f"); L.Tip("Black in the PNG maps to Low, white maps to High.");
+    L.Section("Layers (auto-color by height & slope)");
+    const int kAuto2 = L.Check("Auto Color##terr", &tr->autoColor); L.TipLookup();
+    float lc[5][4];
+    Color* layerCols[5] = {&tr->waterColor, &tr->sandColor, &tr->grassColor, &tr->rockColor, &tr->snowColor};
+    static const char* const kLayerNames[5] = {"Water##terr", "Sand##terr", "Grass##terr", "Rock##terr", "Snow##terr"};
+    int kLc[5] = {-1, -1, -1, -1, -1}, kWl = -1, kSl = -1, kRs = -1;
+    if (tr->autoColor) {
+        for (int i = 0; i < 5; ++i) {
+            lc[i][0] = layerCols[i]->r; lc[i][1] = layerCols[i]->g; lc[i][2] = layerCols[i]->b; lc[i][3] = 1.0f;
+            if (i == 1 || i == 2 || i == 4) L.SameLine();
+            kLc[i] = L.Color(kLayerNames[i], lc[i], 3); L.Last().noInputs = true;
+        }
+        kWl = L.Slider("Water Level##terr", &tr->waterLevel, -20.0f, 40.0f); L.TipLookup();
+        kSl = L.Slider("Snow Level##terr", &tr->snowLevel, 0.0f, 80.0f); L.TipLookup();
+        kRs = L.Slider("Rock Slope##terr", &tr->rockSlope, 0.1f, 1.0f); L.TipLookup();
+    }
+    oked::TerrainToolRows tools;
+    oked::AddTerrainToolRows(ed, *tr, L, tools);
+    const int kRemove = L.SmallButton("Remove##terr");
+    if (!DrawRowsOkayUI(tr, "##okayui_terrain", L)) return false;
+    bool apply = false;
+    for (int k : {kCol, kSize, kTex, kTiling, kTri, kNrm, kBump, kAuto1, kWl, kSl, kRs, kAuto2})
+        if (k >= 0 && L[k].changed) apply = true;
+    if (L[kRes].changed && res != tr->resolution) { if (res < 4) res = 4; tr->Resize(res); apply = true; }
+    if (kTexClear >= 0 && L[kTexClear].clicked) { tr->texture.clear(); apply = true; }
+    if (kNrmClear >= 0 && L[kNrmClear].clicked) { tr->normalMap.clear(); apply = true; }
+    for (int i = 0; i < 5; ++i) if (kLc[i] >= 0 && L[kLc[i]].changed) { *layerCols[i] = {lc[i][0], lc[i][1], lc[i][2], 1.0f}; apply = true; }
+    if (L[kGen].clicked) { tr->Generate(g_terrainGenType, g_terrainGenAmp, g_terrainGenFreq, g_terrainGenOct, (unsigned)(ImGui::GetTime() * 1000.0)); apply = true; }
+    if (L[kFlat].clicked) { tr->Flatten(0.0f); apply = true; }
+    if (L[kSmooth].clicked) { tr->Smooth(); apply = true; }
+    if (L[kHyd].clicked) {
+        tr->Erode(g_terrainErodeDroplets, g_terrainErodeStrength, (unsigned)(ImGui::GetTime() * 1000.0)); apply = true;
+        ConsoleLog("Hydraulic erosion: " + std::to_string(g_terrainErodeDroplets) + " drops");
+    }
+    if (L[kTherm].clicked) {
+        tr->ThermalErode(g_terrainThermalIters, g_terrainThermalTalus, 0.5f); apply = true;
+        ConsoleLog("Thermal erosion: " + std::to_string(g_terrainThermalIters) + " passes");
+    }
+    if (L[kTerr].clicked) { tr->Terrace(g_terrainTerraceSteps); apply = true; ConsoleLog("Terraced into " + std::to_string(g_terrainTerraceSteps) + " bands"); }
+    if (L[kNorm].clicked) {
+        tr->Normalize(g_terrainNormRange[0], g_terrainNormRange[1]); apply = true;
+        ConsoleLog("Normalized heights to [" + std::to_string(g_terrainNormRange[0]) + ", " + std::to_string(g_terrainNormRange[1]) + "]");
+    }
+    if (L[kInv].clicked) { tr->Invert(); apply = true; ConsoleLog("Inverted terrain (peaks <-> valleys)"); }
+    if (L[kImp].clicked) {
+        EditorState* edp = &ed; auto* trp = tr;
+        okay::filedialog::OpenOne("Import heightmap", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.bmp"}), [edp, trp](const std::string& p) {
+            if (trp->ImportHeightmap(p, g_terrainHmLow, g_terrainHmHigh)) { trp->Apply(); edp->dirty = true; ConsoleLog("Imported heightmap"); }
+            else ConsoleLog("Failed to import heightmap");
+        });
+    }
+    if (L[kExp].clicked) {
+        auto* trp = tr;
+        okay::filedialog::SaveOne("Export heightmap", "heightmap.png", {}, [trp](const std::string& p) {
+            std::string path = p;
+            if (path.size() < 4 || path.substr(path.size() - 4) != ".png") path += ".png";
+            if (trp->ExportHeightmap(path)) ConsoleLog("Exported heightmap to " + path);
+            else ConsoleLog("Failed to export heightmap");
+        });
+    }
+    if (L[kHm].changed) { g_terrainHmLow = hm[0]; g_terrainHmHigh = hm[1]; }
+    if (apply) { tr->Apply(); ed.dirty = true; }
+    oked::RunTerrainToolRows(ed, *tr, L, tools);
+    if (L[kRemove].clicked) toRemove = tr;
+    return true;
+}
+
+// A Visual Script's declared variable edited in the Inspector: while playing, the live value; else the graph's starting value (in its text,
+// saved to its file, and in the open node editor). Shared by the Dear ImGui body and the OkayUI rows (stage 4).
+static void ApplyVsVarEdit(EditorState& ed, GameObject* go, VisualScriptComponent* vsc, const okay::vs::VarDecl& d, okay::vs::VsValue value,
+                           bool live, const std::vector<okay::vs::StructDef>& structs) {
+    if (live) {
+        std::string err;
+        if (okay::vs::VsCoerce(d.type, value, structs, &err)) vsc->SetVariable(d.name, value);
+        else ConsoleLog("Variable " + d.name + ": " + err, 2);
+        return;
+    }
+    if (ed.isPlaying()) return;
+    std::string src;
+    const std::string legacyType = okay::vs::VarTypeText(d.type);
+    if (!okay::editor::vsed::VsSetDeclDefaultInText(vsc->Source(), d.name, d.scope, okay::vs::VsToLiteral(value), legacyType, src)) return;
+    std::string err;
+    if (!vsc->LoadFromText(src, &err)) { ConsoleLog("Variable " + d.name + ": " + err, 2); return; }
+    if (!vsc->Path().empty()) { std::ofstream(vsc->Path()) << vsc->Source(); }
+    ed.dirty = true;
+    // Keep the open graph in step, or the next Save / Play would put the old value back.
+    auto& eg = okay::editor::vsed::State().g;
+    const bool sameFile = !vsc->Path().empty() && okay::editor::vsed::VsSamePath(vsc->Path(), eg.path);
+    const bool bound = std::find(okay::editor::vsed::State().boundGuids.begin(), okay::editor::vsed::State().boundGuids.end(), go->Guid()) !=
+                       okay::editor::vsed::State().boundGuids.end();
+    if (sameFile || bound) {
+        for (auto& ev : eg.vars)
+            if (ev.name == d.name && ev.scope == okay::vs::VarScopeName(d.scope)) { ev.value = okay::vs::VsToLiteral(value); ev.typed = true; ev.type = legacyType; }
+        eg.declsChanged();
+    }
+}
+// "Open in node editor": an embedded graph gets a file first, so it can be edited.
+static void OpenVisualScriptInEditor(EditorState& ed, GameObject* go, VisualScriptComponent* vsc) {
+    std::string path = vsc->Path();
+    if (path.empty()) {
+        std::filesystem::path dir = ed.projectDir().empty() ? std::filesystem::path("Assets") : std::filesystem::path(ed.projectDir()) / "Assets";
+        std::error_code mk; std::filesystem::create_directories(dir, mk);
+        path = (dir / (go->name + "Graph.okayvs")).string();
+        std::ofstream(path) << vsc->Source();
+        vsc->SetPath(path); ed.dirty = true;
+    }
+    okay::editor::vsed::OpenFile(path);
+    okay::editor::vsed::BindObject(go);
+    g_showVisualScript = true;
+}
+
+// The Visual Script (the component the most example scenes use): the graph's name, its error or node count, Open and Reload, and each
+// declared variable as its type's field (a number, a check box, three cells, a colour, a text). A graph with a list, map or struct
+// variable keeps Dear ImGui's body (those editors are not rows).
+static bool DrawVisualScriptWithOkayUI(EditorState& ed, GameObject* go, VisualScriptComponent* vsc) {
+    using namespace okaypanels;
+    using okay::vs::PinType;
+    const std::vector<okay::vs::VarDecl> decls = vsc->Graph() ? vsc->Graph()->Decls() : std::vector<okay::vs::VarDecl>{};
+    for (const auto& d : decls) {
+        if (d.type.IsStruct()) return false;
+        const PinType b = d.type.base;
+        if (b != PinType::Number && b != PinType::Bool && b != PinType::Vec3 && b != PinType::Color && b != PinType::Text && b != PinType::Object) return false;
+    }
+    const std::vector<okay::vs::StructDef> structs = vsc->Graph() ? vsc->Graph()->Structs() : std::vector<okay::vs::StructDef>{};
+    const std::string nm = vsc->Path().empty() ? std::string("(embedded graph)") : std::filesystem::path(vsc->Path()).filename().string();
+    InspFieldList L;
+    L.rows.reserve(8 + decls.size() * 2);
+    L.Label(nm.c_str(), 0, false, true);
+    if (!vsc->Path().empty()) L.Last().tip = vsc->Path().c_str();
+    std::string line;
+    if (!vsc->LastError().empty()) { line = "Error: " + vsc->LastError(); L.ColorText(RowCol(0.95f, 0.45f, 0.40f), line.c_str(), true); }
+    else if (vsc->Graph()) { line = std::to_string(vsc->Graph()->NodeCount()) + " nodes"; L.Note(line.c_str(), true); }
+    const int kOpen = L.SmallButton("Open in node editor##vsc");
+    L.SameLine(); const int kReload = L.SmallButton("Reload##vsc");
+    struct VarRow { int k = -1; float f[4] = {}; bool b = false; std::string s, label, type; bool live = false; };
+    std::vector<VarRow> vr(decls.size());
+    if (!decls.empty()) {
+        L.Note(ed.isPlaying() ? "Declared variables (live; edits apply now)." : "Starting values. Change them, then press Play.");
+        for (std::size_t i = 0; i < decls.size(); ++i) {
+            const auto& d = decls[i];
+            VarRow& r = vr[i];
+            okay::vs::VsValue value = d.value;
+            r.live = ed.isPlaying() && d.scope == okay::vs::VarScope::Object;
+            if (r.live) { auto it = vsc->Variables().find(d.name); if (it != vsc->Variables().end()) value = it->second; }
+            r.label = "##" + d.name;
+            if (d.scope != okay::vs::VarScope::Object) r.label += std::string("  [") + okay::vs::VarScopeName(d.scope) + "]";
+            r.type = okay::vs::VarTypeText(d.type);
+        }
+        for (std::size_t i = 0; i < decls.size(); ++i) {   // the labels and texts are in place now (no more reallocation)
+            const auto& d = decls[i];
+            VarRow& r = vr[i];
+            okay::vs::VsValue value = d.value;
+            if (r.live) { auto it = vsc->Variables().find(d.name); if (it != vsc->Variables().end()) value = it->second; }
+            L.Note(r.type.c_str());
+            L.SameLine();
+            switch (d.type.base) {
+            case PinType::Number: r.f[0] = value.AsFloat(); r.k = L.Drag(r.label.c_str(), r.f, 1, 0.05f); L.Last().width = -1.0f; break;
+            case PinType::Bool: r.b = value.AsBool(); r.k = L.Check(r.label.c_str(), &r.b); break;
+            case PinType::Vec3: { const Vec3 p = value.AsVec3(); r.f[0] = p.x; r.f[1] = p.y; r.f[2] = p.z; r.k = L.Drag(r.label.c_str(), r.f, 3, 0.05f); L.Last().width = -1.0f; break; }
+            case PinType::Color: { const auto c = value.AsColor(); r.f[0] = c.r; r.f[1] = c.g; r.f[2] = c.b; r.f[3] = c.a; r.k = L.Color(r.label.c_str(), r.f, 4); L.Last().width = -1.0f; break; }
+            default:
+                r.s = value.IsObject() ? std::string() : value.AsString();
+                r.k = L.Text(r.label.c_str(), &r.s, d.type.base == PinType::Object ? "object name or @guid:..." : "");
+                L.Last().width = -1.0f;
+                break;
+            }
+        }
+    }
+    std::vector<std::string> liveLines;
+    if (ed.isPlaying() && !vsc->Variables().empty()) {
+        std::vector<std::pair<std::string, okay::vs::VsValue>> lv(vsc->Variables().begin(), vsc->Variables().end());
+        std::sort(lv.begin(), lv.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        for (const auto& kv : lv) liveLines.push_back(kv.first + " = " + okay::vs::VsDescribe(kv.second));
+        L.Tree("Variables##vsc");
+        for (const std::string& t : liveLines) L.Label(t.c_str());
+        L.TreeEnd();
+    }
+    if (!DrawRowsOkayUI(vsc, "##okayui_vscript", L)) return false;
+    if (L[kOpen].clicked) OpenVisualScriptInEditor(ed, go, vsc);
+    if (L[kReload].clicked) {
+        std::string err;
+        if (vsc->Reload(&err)) ConsoleLog("Reloaded " + nm); else ConsoleLog("Reload failed: " + err, 2);
+    }
+    for (std::size_t i = 0; i < decls.size(); ++i) {
+        VarRow& r = vr[i];
+        if (r.k < 0 || !L[r.k].changed) continue;
+        const auto& d = decls[i];
+        okay::vs::VsValue value;
+        switch (d.type.base) {
+        case PinType::Number: value = okay::vs::VsValue(r.f[0]); break;
+        case PinType::Bool: value = okay::vs::VsValue(r.b); break;
+        case PinType::Vec3: value = okay::vs::VsValue(Vec3{r.f[0], r.f[1], r.f[2]}); break;
+        case PinType::Color: value = okay::vs::VsValue::Color(r.f[0], r.f[1], r.f[2], r.f[3]); break;
+        default: value = (d.type.base == PinType::Object && r.s.empty()) ? okay::vs::VsValue::Object(0) : okay::vs::VsValue(r.s); break;
+        }
+        ApplyVsVarEdit(ed, go, vsc, d, value, r.live, structs);
+        break;   // the graph was reloaded: the other rows' declarations are stale
+    }
+    return true;
+}
+
+// ---- The Inspector's OkayUI parts, stage 5 (docs/own_ui_toolkit.md section 18) --------------------------------------------------------
+// The next most used bodies in the example scenes: the Player Controller and its parts (First-person settings, Third-person settings,
+// View toggle), the Character, Holdable Object, Procedural Object Holding and the Animator state machine. Written as the earlier stages:
+// the Dear ImGui body's rows in its order with its labels, ranges, formats and tooltips; the helpers they share (CharacterModelTools,
+// KeyBindCombo, NaturalSpeedsButton, WalkSpeedHintLine, the preview buttons and transport of AnimatorPreview.hpp) become rows too.
+
+// Labels built at run time stay alive while the rows are drawn.
+struct RowText {
+    std::deque<std::string> text;
+    const char* operator()(std::string s) { text.push_back(std::move(s)); return text.back().c_str(); }
+};
+
+// KeyBindCombo as a row (96 wide); Run writes the chosen keys back.
+struct KeyRows {
+    struct K { int row = -1, idx = 0; char* key = nullptr; };
+    std::deque<K> keys;
+    void Add(okaypanels::InspFieldList& L, const char* label, char& key) {
+        const int n = (int)(sizeof kStanceKeys / sizeof kStanceKeys[0]);
+        K k; k.key = &key;
+        for (int i = 0; i < n; ++i) if (kStanceKeys[i].code == key) { k.idx = i; break; }
+        keys.push_back(k);
+        keys.back().row = L.Combo(label, &keys.back().idx, StanceKeyNames(), n); L.Last().width = 96.0f;
+    }
+    bool Run(okaypanels::InspFieldList& L) {
+        bool any = false;
+        for (K& k : keys) if (k.row >= 0 && L[k.row].changed) { *k.key = kStanceKeys[k.idx].code; any = true; }
+        return any;
+    }
+};
+// The gamepad button list of the controllers ("None", A, B ...): a combo of `button + 1`, 130 wide.
+static const char* const kPadButtons[] = {"None", "A", "B", "X", "Y", "Back", "Start", "L", "R", "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right"};
+struct PadRow { int row = -1, idx = 0; };
+static void AddPadRow(okaypanels::InspFieldList& L, const char* label, int button, PadRow& p) {
+    p.idx = button + 1; if (p.idx < 0 || p.idx > 12) p.idx = 0;
+    p.row = L.Combo(label, &p.idx, kPadButtons, 13); L.Last().width = 130.0f;
+}
+// WalkSpeedHintLine and NaturalSpeedsButton as rows.
+static void AddWalkHintRows(okaypanels::InspFieldList& L, float walkSpeed, RowText& T) {
+    const std::string hint = okay::NaturalGait::WalkSpeedHint(walkSpeed);
+    if (!hint.empty()) { L.ColorText(RowCol(0.95f, 0.75f, 0.35f), T(hint)); L.Last().wrap = true; }
+}
+static int AddNaturalSpeedsRows(okaypanels::InspFieldList& L, const char* id, RowText& T) {
+    const int k = L.SmallButton(T(std::string("Use natural walk and run speeds##") + id));
+    L.Tip(okay::NaturalGait::ButtonTooltip());
+    if (okay::NaturalGait::Old()) {
+        L.ColorText(RowCol(0.95f, 0.75f, 0.35f), "The OLD walk and run is on (OKAY_OLD_GAIT is set), so new players start at 4.5 and 8. Close the editor and start it without that variable for the natural walk and run.");
+        L.Last().wrap = true;
+    }
+    return k;
+}
+
+// CharacterModelTools as rows: Set Character Model, the setup checklist, Wire animation and IK, Open Animator, the facing buttons.
+struct ModelToolRows { int set = -1, wire = -1, open = -1, fix = -1, turn180 = -1, turn90 = -1, fit = -1; GameObject* model = nullptr; };
+static void AddCharacterModelToolRows(okaypanels::InspFieldList& L, EditorState& ed, GameObject* go, const char* id, ModelToolRows& m, RowText& T) {
+    m.set = L.Button(T(std::string("Set Character Model...##") + id));
+    L.Tip("Import a 3D model and use it as this player's body: auto-sized,\nfeet grounded, turned to face forward, collider fitted and its\nidle/walk/run clips wired. Or drop a model asset onto this object.");
+    m.model = okay::FindCharacterModelRoot(ed.scene(), go);
+    const bool showSetup = std::strcmp(id, "char") != 0 || !okay::PlayerController::Of(go);
+    const okay::PlayerAnimStatus setup = showSetup ? okay::InspectPlayerAnimation(ed.scene(), go) : okay::PlayerAnimStatus{};
+    if (showSetup && !setup.hasModel) {
+        L.ColorText(RowCol(0.95f, 0.75f, 0.35f), "No character model.");
+        L.Label("Set Character Model, or right-click a model file and choose Make Playable Character. A new player starts in third person. V switches to the eyes. Player Controller, View, changes that.");
+        L.Last().wrap = true;
+    } else if (showSetup) {
+        L.Label("Rig:");
+        L.SameLine();
+        L.ColorText(setup.bones >= 8 ? RowCol(0.45f, 0.85f, 0.55f) : RowCol(0.95f, 0.75f, 0.35f), T(std::to_string(setup.bones) + "/15 humanoid bones"));
+        if (setup.bones < 8) {
+            L.Label("Built-in walk, foot planting and look-at need 8 bones. Right-click the model and choose Map Humanoid Bones or Rig Model (Humanoid).");
+            L.Last().wrap = true;
+        }
+        char line[160];
+        std::snprintf(line, sizeof line, "Foot IK: %s    Look-at: %s    Animator: %s", setup.footIk ? "on" : "not added", setup.lookAt ? "on" : "not added",
+                      setup.animator ? "on" : "not added");
+        L.Label(T(line));
+    }
+    if (showSetup) {
+        m.wire = L.Button(T(std::string("Wire animation and IK##") + id));
+        L.Tip("Adds Foot IK, Look-At and the default Animator only when they are missing,\nand matches empty animation slots. A graph, a clip choice, or an IK weight\nyou already set is left as it is. Safe to press again.");
+        L.SameLine();
+        m.open = L.Button(T(std::string("Open Animator##") + id));
+        L.Tip("Opens the Animator window. Edit the state graph there. Clip slots stay in the Character Model panel.");
+    }
+    if (!m.model) return;
+    m.fix = L.SmallButton(T(std::string("Fix Facing##") + id));
+    L.Tip("Read the model's facing from its skeleton and turn it to face\nthe direction the controller walks (forward).");
+    L.SameLine(); m.turn180 = L.SmallButton(T(std::string("Turn 180##") + id));
+    L.SameLine(); m.turn90 = L.SmallButton(T(std::string("90##") + id));
+    L.SameLine(); m.fit = L.SmallButton(T(std::string("Fit Collider##") + id));
+    L.Tip("Size the player's collider around the model (adds a capsule +\nRigidbody 3D when missing).");
+}
+static void RunCharacterModelToolRows(okaypanels::InspFieldList& L, EditorState& ed, GameObject* go, const ModelToolRows& m) {
+    if (m.set >= 0 && L[m.set].clicked)
+        OpenModelFileDialog("Set character model", false, [go](const std::vector<std::string>& v) { if (!v.empty()) QueueCharacterModel(go, v[0]); });
+    if (m.wire >= 0 && L[m.wire].clicked) { ed.PushUndo(); ConsoleLog(okay::WirePlayerAnimation(ed.scene(), go)); ed.dirty = true; }
+    if (m.open >= 0 && L[m.open].clicked) g_showAnimatorGraph = true;
+    GameObject* model = m.model;
+    if (m.fix >= 0 && L[m.fix].clicked) {
+        ed.PushUndo();
+        const int d = okay::FaceCharacterModel(ed.scene(), go, model, 0.0f);
+        if (d < 0) ConsoleLog("Couldn't read which way '" + model->name + "' faces (no left/right bones) - use Turn 180 / 90.", 1);
+        else ConsoleLog(d == 0 ? "'" + model->name + "' already faces forward" : "Turned '" + model->name + "' " + std::to_string(d) + " deg to face forward");
+        ed.dirty = true;
+    }
+    if (m.turn180 >= 0 && L[m.turn180].clicked) { ed.PushUndo(); okay::FaceCharacterModel(ed.scene(), go, model, 180.0f); ed.dirty = true; }
+    if (m.turn90 >= 0 && L[m.turn90].clicked) { ed.PushUndo(); okay::FaceCharacterModel(ed.scene(), go, model, 90.0f); ed.dirty = true; }
+    if (m.fit >= 0 && L[m.fit].clicked) sPendingFitCollider = go;
+}
+
+// AnimatorPreview's DrawTransport as rows (while a preview runs): Play / Pause, the time, the time slider, Speed, Loop, the motion list.
+struct TransportRows { int play = -1, time = -1, loop = -1, motion = -1, motionIdx = 0; std::vector<const char*> motions; };
+static void AddTransportRows(okaypanels::InspFieldList& L, TransportRows& tr, RowText& T) {
+    namespace ap = okay::editor::apreview;
+    ap::Preview& p = ap::Cur();
+    if (p.kind == ap::Kind::None) return;
+    tr.play = L.SmallButton(p.playing ? "Pause##ap" : "Play##ap");
+    char t[48]; std::snprintf(t, sizeof t, "%.2f / %.2fs", p.t, p.length);
+    L.SameLine(); L.Label(T(t));
+    const float tmax = p.length > 0.05f ? p.length : 1.0f;
+    tr.time = L.Slider("##apt", &p.t, 0.0f, tmax, "time %.2fs"); L.Last().width = -1.0f;
+    L.Slider("Speed##aps", &p.speed, 0.0f, 3.0f, "%.2f"); L.Last().width = 120.0f;
+    L.SameLine(); tr.loop = L.Check("Loop##apl", &p.loop);
+    if (!p.motions.empty()) {
+        for (std::size_t i = 0; i < p.motions.size(); ++i) { tr.motions.push_back(p.motions[i].c_str()); if (p.motions[i] == p.clip) tr.motionIdx = (int)i; }
+        tr.motion = L.Combo("Motion##apm", &tr.motionIdx, tr.motions.data(), (int)tr.motions.size());
+        L.Last().width = -1.0f; L.Last().preview = p.clip.empty() ? "(motion)" : nullptr;
+        L.Tip("One motion of this blend tree. Mixing several at once\nbelongs to the running Animator, not the preview.");
+    }
+}
+static void RunTransportRows(okaypanels::InspFieldList& L, TransportRows& tr) {
+    namespace ap = okay::editor::apreview;
+    ap::Preview& p = ap::Cur();
+    if (tr.play >= 0 && L[tr.play].clicked) {
+        if (!p.playing && !p.loop && p.length > 0.0f && p.t >= p.length - 1e-4f) p.t = 0.0f;
+        p.playing = !p.playing;
+    }
+    if (tr.time >= 0 && L[tr.time].changed) p.playing = false;
+    if (tr.loop >= 0 && L[tr.loop].changed && p.kind != ap::Kind::Model && p.target)
+        if (Character* ch = p.target->GetComponent<Character>()) ap::AdoptClip(ch, p.clip, p);
+    if (tr.motion >= 0 && L[tr.motion].changed) ap::UseMotion(tr.motions[(std::size_t)tr.motionIdx]);
+}
+
+static bool DrawObjectHoldingWithOkayUI(EditorState& ed, ProceduralObjectHolding* ph, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kHands[] = {"Left", "Right", "Both"};
+    static const char* const kStyles[] = {"Automatic", "Custom"};
+    static const char* const kMouse[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
+    InspFieldList L;
+    L.rows.reserve(32);
+    RowText T;
+    L.Note("Hold objects with the hands: IK onto each object's grips.");
+    int hand = (int)ph->primaryHand, st = (int)ph->holdingStyle, ca = (int)ph->carryAnimations;
+    const int kHand = L.Combo("Primary Hand##poh", &hand, kHands, 3);
+    L.Tip("The hand a one-handed object goes in.\nBoth: the support hand helps on pistols and swords, and small items are carried in both hands.");
+    const int kStyle = L.Combo("Holding Style##poh", &st, kStyles, 2);
+    L.Tip("Automatic: each object's own style (a carry from its size and weight unless it says Custom).\nCustom: always the object's grip points.");
+    L.Check("Arm IK##poh", &ph->armIK); L.TipLookup();
+    L.Drag("Transition (s)##poh", &ph->transitionTime, 1, 0.01f, 0.0f, 2.0f); L.TipLookup();
+    L.Check("Body Adjustment##poh", &ph->bodyAdjustment); L.Tip("Heavy or big loads: lean back, walk slower, kept off the body.");
+    const int kCarry = L.Combo("Carry Animations##poh", &ca, kStyles, 2);
+    L.Tip("Automatic: the built-in lean against heavy loads.\nCustom: your Animator's own carry states, driven by its parameters\n'holding' (bool), 'carryStyle' (int) and 'carryWeight' (kg).");
+    L.Section("Throw");
+    std::string tk(ph->throwKey ? 1 : 0, ph->throwKey);
+    const int kKey = L.Text("Throw Key##poh", &tk);
+    L.Tip("Hold to charge, release to throw along the camera aim.\nWith empty hands, pressing it picks up the nearest object. Blank = no key.\nDrop is separate (scripts: hold_drop).");
+    int tbi = (ph->throwMouseButton < 0 || ph->throwMouseButton > 2) ? 3 : ph->throwMouseButton;
+    const int kMouseRow = L.Combo("Throw Mouse##poh", &tbi, kMouse, 4); L.TipLookup();
+    L.DragInt("Throw Pad Button##poh", &ph->throwGamepadButton, 0.1f, -1, 11); L.Tip("0=A 1=B 2=X 3=Y 4=Back 5=Start 6=L 7=R. -1 = none.");
+    L.Drag("Charge Time##poh", &ph->throwChargeTime, 1, 0.01f, 0.05f, 3.0f); L.TipLookup();
+    L.Drag("Min Speed##poh", &ph->throwMinSpeed, 1, 0.1f, 0.0f, 40.0f); L.TipLookup();
+    L.Drag("Max Speed##poh", &ph->throwMaxSpeed, 1, 0.1f, 0.0f, 60.0f); L.TipLookup();
+    L.Drag("Pickup Range##poh", &ph->pickupRange, 1, 0.05f, 0.0f, 8.0f); L.TipLookup();
+    char line[160];
+    if (ed.isPlaying()) { std::snprintf(line, sizeof line, "Charge %.0f%%", ph->ThrowCharge() * 100.0f); L.Label(T(line)); }
+    if (GameObject* held = ph->Held()) {
+        std::snprintf(line, sizeof line, "Holding: %s (%s)", held->name.c_str(),
+                      ph->CarryStyle() == HoldableObject::Style::Automatic ? "small item" : HoldableObject::StyleName(ph->CarryStyle()));
+        L.Label(T(line));
+        std::snprintf(line, sizeof line, "Heaviness %.2f, speed x%.2f", ph->Heaviness(), ph->SpeedMultiplier());
+        L.Label(T(line));
+    } else if (ed.isPlaying()) L.Note("Holding nothing");
+    const int kRemove = L.SmallButton("Remove##poh");
+    if (!DrawRowsOkayUI(ph, "##okayui_objholding", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kHand].changed) ph->primaryHand = (ProceduralObjectHolding::Hand)hand;
+    if (L[kStyle].changed) ph->holdingStyle = (ProceduralObjectHolding::StyleMode)st;
+    if (L[kCarry].changed) ph->carryAnimations = (ProceduralObjectHolding::CarryAnim)ca;
+    if (L[kKey].changed) ph->throwKey = tk.empty() ? 0 : tk[0];
+    if (L[kMouseRow].changed) ph->throwMouseButton = (tbi == 3) ? -1 : tbi;
+    if (L[kRemove].clicked) toRemove = ph;
+    return true;
+}
+
+static bool DrawHoldableWithOkayUI(EditorState& ed, HoldableObject* ho, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kStyles[] = {"Automatic", "Custom", "Pistol", "Rifle", "Box", "Flashlight", "Sword", "Cup", "Heavy",
+                                          "One hand right", "One hand left", "Two handed", "Carry in front", "Over the shoulder"};
+    InspFieldList L;
+    L.rows.reserve(40);
+    RowText T;
+    L.Note("A character's Procedural Object Holding can pick this up.");
+    int st = (int)ho->style;
+    const int kStyle = L.Combo("Style##hold", &st, kStyles, 14);
+    const int kBlock = L.SmallButton("Preset: block##hold");
+    L.SameLine(); const int kCrate = L.SmallButton("Preset: crate##hold");
+    L.Tip("Automatic: from the tag / name (\"pistol\", \"crate\"...), else its shape and weight.\nCustom: the hands go to the grip points below.\nGuns and lights point along -Z, a sword's blade along +Y, a cup's handle along +X\n(Hold Rotation corrects a model built another way).");
+    if (ho->style == HoldableObject::Style::Automatic) {
+        const HoldableObject::Style rs = ho->ResolvedStyle();
+        L.Note(T(std::string("  -> ") + (rs == HoldableObject::Style::Automatic ? "small item (one hand under it)" : HoldableObject::StyleName(rs))), true);
+    }
+    L.Check("Support Hand##hold", &ho->supportHand); L.Tip("Pistol: the other hand wraps the first. Sword: held in two hands.");
+    L.Check("Two Handed##hold", &ho->twoHanded); L.Tip("First person draws both hands on this item. Rifle, Box and Heavy do that already, and so do two enabled grips.");
+    L.Drag("Weight (kg)##hold", &ho->weight, 1, 0.1f, 0.0f, 500.0f); L.Tip("0 = the Rigidbody's mass.");
+    L.Text("Socket##hold", &ho->socket); L.Tip("Hold it at this object inside the character (a holster, a back slot) instead of in front of the chest.");
+    L.Drag("Hold Offset##hold", &ho->holdOffset.x, 3, 0.01f); L.Tip("Custom: where the object's origin sits from the chest (right, up, forward), metres.");
+    L.Drag("Hold Rotation##hold", &ho->holdRotation.x, 3, 1.0f); L.TipLookup();
+    L.Drag("In-hand scale##hold", &ho->inHandScale, 1, 0.01f, 0.1f, 3.0f); L.TipLookup();
+    L.Drag("FP offset##hold", &ho->fpOffset.x, 3, 0.005f); L.TipLookup();
+    L.Drag("FP rotation##hold", &ho->fpRotation.x, 3, 1.0f); L.TipLookup();
+    L.Drag("FP scale##hold", &ho->fpScale, 1, 0.01f, 0.1f, 3.0f); L.TipLookup();
+    L.Drag("TP offset##hold", &ho->tpOffset.x, 3, 0.005f); L.Tip("Side, up, forward, added on top of the hold. Use this when a third-person grip sits too high.");
+    L.Drag("TP rotation##hold", &ho->tpRotation.x, 3, 1.0f);
+    L.Tip("Custom: the object's turn relative to the body (degrees).\nOther styles: turns a model built another way (e.g. 0, 180, 0 for a gun facing backwards).");
+    HoldableObject::Grip* grips[2] = {&ho->leftGrip, &ho->rightGrip};
+    for (int g = 0; g < 2; ++g) {
+        HoldableObject::Grip& gr = *grips[g];
+        L.Check(g == 0 ? "Left Grip" : "Right Grip", &gr.enabled);
+        if (gr.enabled) {
+            L.Drag("Position##grip", &gr.position.x, 3, 0.005f); L.TipLookup();
+            L.Drag("Rotation##grip", &gr.rotation.x, 3, 1.0f); L.TipLookup();
+        }
+    }
+    L.Note("Grip rotation 0 = palm down, the hand points along -Z.");
+    if (GameObject* holder = ho->Holder()) L.Label(T("Held by: " + holder->name));
+    const int kRemove = L.SmallButton("Remove##hold");
+    if (!DrawRowsOkayUI(ho, "##okayui_holdable", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kStyle].changed) ho->style = (HoldableObject::Style)st;
+    if (L[kBlock].clicked) { ho->ApplyPreset(HoldableObject::Preset::OneHandRight); ed.dirty = true; }
+    if (L[kCrate].clicked) { ho->ApplyPreset(HoldableObject::Preset::CarryFront); ed.dirty = true; }
+    if (L[kRemove].clicked) toRemove = ho;
+    return true;
+}
+
+static bool DrawCharacterWithOkayUI(EditorState& ed, GameObject* go, Character* ch) {
+    using namespace okaypanels;
+    static const char* const kShirts[] = {"Tank (bare arms)", "Short sleeve", "Long sleeve"};
+    static const char* const kLegs[] = {"Trousers", "Shorts"};
+    static const char* const kHairs[] = {"Short", "Long", "Mohawk", "Bun", "Spiky", "Afro", "Ponytail", "Buzz"};
+    static const char* const kBeards[] = {"None", "Full", "Goatee", "Mustache"};
+    static const char* const kHats[] = {"Cap", "Helmet", "Top Hat", "Wizard", "Beanie", "Cowboy", "Crown", "Bandana"};
+    static const char* const kGlasses[] = {"None", "Glasses", "Sunglasses"};
+    static const char* const kAnims[] = {"None", "Idle", "Walk", "Run", "Wave", "Jump", "Crouch", "Prone", "Point", "Clap", "Thumbs Up", "Salute",
+                                         "Wave Both", "Cheer (happy)", "Sad", "Angry", "Think", "Crouch Walk", "Fall", "Hang"};
+    InspFieldList L;
+    L.rows.reserve(120);
+    RowText T;
+    std::vector<int> applyRows;   // a change on these rebuilds the body (Character::Apply)
+    auto ap = [&](int k) { applyRows.push_back(k); return k; };
+    ModelToolRows mt;
+    AddCharacterModelToolRows(L, ed, go, "char", mt, T);
+    if (!ch->enabled) L.Note("(default body hidden - a custom model is the character)");
+    int kUnrig = -1;
+    if (ch->HasCustomBind()) {
+        L.Note(T("(rigged model: " + std::to_string((int)ch->CustomBindMesh().vertices.size()) + " verts bound to the skeleton)"));
+        L.SameLine(); kUnrig = L.SmallButton("Unrig##char");
+    }
+    ap(L.Slider("Height##char", &ch->height, 0.6f, 1.8f));
+    L.Section("Rig");
+    if (ch->driveExternal) L.Note("Driving an imported rig (Humanoid Retarget): this character\nrenders nothing itself - its animations play on the model.");
+    const bool rigLocked = !ch->enabled || ch->HasCustomBind() || ch->driveExternal;
+    static bool s_off = false;
+    s_off = false;
+    int kParts = -1;
+    if (rigLocked) {
+        L.Check("Separate Into Parts (editable rig)##char", &s_off); L.Last().disabled = true;
+        L.Note(ch->HasCustomBind() ? "(unavailable: a rigged model drives this character - Unrig first)"
+               : ch->driveExternal ? "(unavailable: the animations retarget onto an imported model)"
+                                   : "(unavailable: a custom model replaced this body - re-enable the Character first)");
+    } else kParts = L.Check("Separate Into Parts (editable rig)##char", &ch->separateParts);
+    L.Tip("Build the character as a hierarchy of part objects (Hips, Torso, Head, arms, legs)\nright here in the editor \xE2\x80\x94 select, recolour, attach things to, and animate them part-by-part.\nThe rig is rebuilt from the Character on load (not spawned at Play).");
+    if (ch->separateParts) { L.Check("Play built-in animation on parts##char", &ch->animateParts); L.Tip("Off = the parts hold still so you can pose / keyframe them yourself."); }
+    L.Section("Movement animations");
+    L.Note("Play YOUR authored clips as the character moves (no scripting).", false, true);
+    const std::vector<std::string> clips = ch->ClipNames();
+    std::vector<const char*> opts{"(built-in)"};
+    for (const auto& n : clips) opts.push_back(n.c_str());
+    struct Bind { int row = -1, cur = 0; std::string* field = nullptr; };
+    Bind binds[3];
+    if (clips.empty()) L.Note("No clips yet \xE2\x80\x94 make one in View > Animation, then Apply to Character.", false, true);
+    else {
+        const char* lbl[3] = {"Idle##charstate", "Walk##charstate", "Run##charstate"};
+        std::string* fld[3] = {&ch->clipIdle, &ch->clipWalk, &ch->clipRun};
+        for (int b = 0; b < 3; ++b) {
+            binds[b].field = fld[b];
+            for (std::size_t i = 0; i < clips.size(); ++i) if (clips[i] == *fld[b]) { binds[b].cur = (int)i + 1; break; }
+            binds[b].row = L.Combo(lbl[b], &binds[b].cur, opts.data(), (int)opts.size()); L.Last().width = 150.0f;
+        }
+    }
+    L.Slider("Blend (s)##charblend", &ch->blendTime, 0.0f, 0.6f, "%.2f"); L.Last().width = 150.0f;
+    L.Tip("Crossfade time when switching animations (idle/walk/run or any clip).\n0 = snap instantly.");
+    L.Section("Clothing");
+    ap(L.Combo("Shirt##char", &ch->shirtStyle, kShirts, 3)); L.Last().width = 150.0f;
+    ap(L.Combo("Legs##char", &ch->legStyle, kLegs, 2)); L.Last().width = 150.0f;
+    ap(L.Check("Belt##char", &ch->hasBelt));
+    L.SameLine(); ap(L.Check("Jacket##char", &ch->hasJacket));
+    L.SameLine(); ap(L.Check("Gloves##char", &ch->hasGloves));
+    L.Section("Hair");
+    ap(L.Check("Hair##char", &ch->hasHair));
+    if (ch->hasHair) { L.SameLine(); ap(L.Combo("##hairstyle", &ch->hairStyle, kHairs, 8)); L.Last().width = 120.0f; }
+    ap(L.Combo("Beard##char", &ch->beardStyle, kBeards, 4)); L.Last().width = 150.0f;
+    L.Section("Accessories");
+    ap(L.Check("Hat##char", &ch->hasHat));
+    if (ch->hasHat) { L.SameLine(); ap(L.Combo("##hatstyle", &ch->hatStyle, kHats, 8)); L.Last().width = 120.0f; }
+    ap(L.Combo("Eyewear##char", &ch->glassesStyle, kGlasses, 3)); L.Last().width = 150.0f;
+    ap(L.Check("Mask##char", &ch->hasMask));
+    L.SameLine(); ap(L.Check("Scarf##char", &ch->hasScarf));
+    ap(L.Check("Shoulder Pads##char", &ch->hasShoulderPads));
+    ap(L.Check("Backpack##char", &ch->hasBackpack));
+    L.SameLine(); ap(L.Check("Cape##char", &ch->hasCape));
+    L.Section("Colors");
+    struct ColorRow { const char* label; Color* c; };
+    const ColorRow colors[] = {{"Skin##char", &ch->skin}, {"Shirt##char", &ch->shirt}, {"Pants##char", &ch->pants}, {"Shoes##char", &ch->shoes},
+                               {"Hair##char", &ch->hair}, {"Eyes##char", &ch->eyes}, {"Hat##char", &ch->hat}, {"Jacket##char", &ch->jacket},
+                               {"Gloves##char", &ch->gloves}, {"Belt##char", &ch->belt}, {"Backpack##char", &ch->pack}};
+    for (const ColorRow& c : colors) ap(L.Color(c.label, &c.c->r, 3));
+    L.Section("Animation (plays in Play mode)");
+    L.Combo("Animation##char", &ch->anim, kAnims, 20); L.Last().width = 150.0f;
+    L.Tip("Idle/walk/run/jump are driven by the controllers; the gestures and emotions (Point...Think) are poses you can trigger from scripts (set a Character's anim) or preview here.");
+    if (ch->anim != 0) L.Slider("Anim Speed##char", &ch->animSpeed, 0.1f, 3.0f);
+    std::vector<std::pair<int, std::string>> previews;   // (row, clip): this character's own clips, each with Preview / Stop
+    TransportRows transport;
+    if (!clips.empty()) {
+        L.Tree(T("Clips (" + std::to_string(clips.size()) + ")##charprev"));
+        namespace apv = okay::editor::apreview;
+        for (const std::string& n : clips) {
+            L.Label(n.c_str());
+            L.SameLine();
+            const bool on = apv::IsClip(ch, n);
+            previews.emplace_back(L.SmallButton(on ? "Stop##apcl" : "Preview##apcl"), n);
+            if (on) AddTransportRows(L, transport, T);
+        }
+        L.TreeEnd();
+    }
+    L.Section("Head look");
+    L.Check("Look at Camera##char", &ch->lookAtCamera);
+    L.Tip("Turn the head to face the main camera each frame (no controller/script needed). A First/Third-Person controller overrides this with its own aim.");
+    L.Text("Look at Object##char", &ch->lookAtTarget);
+    L.Tip("Optional: name of an object to look at instead of the camera (e.g. the player). Leave blank to use the camera.");
+    L.Slider("Head Turn Speed##char", &ch->headTurnSpeed, 0.0f, 20.0f); L.TipLookup();
+    L.Section("Feel");
+    L.Slider("Jump Crouch (s)##char", &ch->jumpCrouchTime, 0.0f, 0.4f, "%.2f"); L.Tip("How long the knees dip as a jump starts. The jump is not delayed.");
+    L.Slider("Jump Crouch Bend##char", &ch->jumpCrouchBend, 0.0f, 60.0f, "%.0f deg"); L.TipLookup();
+    L.Slider("Turn Step Angle##char", &ch->turnStepAngle, 0.0f, 120.0f, "%.0f deg"); L.Tip("Standing still, the body can twist this far before a foot steps.");
+    L.Slider("Turn Step Time##char", &ch->turnStepTime, 0.05f, 0.6f, "%.2f"); L.TipLookup();
+    L.Slider("Turn Step Lift##char", &ch->turnStepLift, 0.0f, 70.0f, "%.0f deg"); L.TipLookup();
+    L.Slider("Turn Still Speed##char", &ch->turnStillSpeed, 0.0f, 2.0f, "%.2f"); L.TipLookup();
+    L.Slider("Motion Lean##char", &ch->motionLean, 0.0f, 2.0f, "%.2f"); L.Tip("Lean into speeding up and turning. 0 turns it off.");
+    L.Slider("Motion Lean Max##char", &ch->motionLeanMax, 0.0f, 15.0f, "%.0f deg"); L.TipLookup();
+    if (!DrawRowsOkayUI(ch, "##okayui_character", L)) return false;
+    RunCharacterModelToolRows(L, ed, go, mt);
+    bool apply = false;
+    for (int k : applyRows) if (L[k].changed) apply = true;
+    for (std::size_t k = 0; k < L.rows.size(); ++k)
+        if (L.rows[k].changed && std::find(applyRows.begin(), applyRows.end(), (int)k) == applyRows.end()) ed.dirty = true;   // the rest: dirty only
+    if (kUnrig >= 0 && L[kUnrig].clicked) { ed.PushUndo(); ch->ClearCustomBind(); ch->Apply(); ed.dirty = true; ConsoleLog("Removed the rigged model; blocky body restored"); }
+    if (kParts >= 0 && L[kParts].changed) { if (ch->separateParts) ch->BuildParts(); else ch->RemoveParts(); ed.dirty = true; }
+    for (Bind& b : binds) if (b.row >= 0 && L[b.row].changed) { *b.field = b.cur == 0 ? std::string() : clips[(std::size_t)b.cur - 1]; ed.dirty = true; }
+    for (const auto& pv : previews)
+        if (L[pv.first].clicked) {
+            namespace apv = okay::editor::apreview;
+            if (apv::IsClip(ch, pv.second)) apv::Stop(ed.scene()); else apv::StartCharacterClip(ed.scene(), ch, pv.second, ed.isPlaying());
+        }
+    RunTransportRows(L, transport);
+    if (apply) { ch->Apply(); ed.dirty = true; }
+    return true;
+}
+
+static bool DrawPlayerControllerWithOkayUI(EditorState& ed, GameObject* go, PlayerController* pc) {
+    using namespace okaypanels;
+    static const char* const kModes[] = {"First Person only", "Third Person only", "Both"};
+    InspFieldList L;
+    L.rows.reserve(24);
+    RowText T;
+    int mode = (int)pc->viewMode();
+    const int kMode = L.Combo("View##pc", &mode, kModes, 3);
+    L.Tip("Which views the player has.\nBoth: a key switches between them and the camera blends.\nOne view only: no toggle, and the other view's settings are dropped.");
+    const int kNatural = AddNaturalSpeedsRows(L, "pc", T);
+    ModelToolRows mt;
+    AddCharacterModelToolRows(L, ed, go, "pc", mt, T);
+    if (pc->viewMode() != PlayerController::ViewMode::Both)
+        L.Note(pc->viewMode() == PlayerController::ViewMode::First ? "First person only. Pick Both to let the player switch."
+                                                                   : "Third person only. Pick Both to let the player switch.");
+    if (!DrawRowsOkayUI(pc, "##okayui_playerctrl", L)) return false;
+    if (L[kMode].changed && mode != (int)pc->viewMode()) { sPendingViewModeCtrl = pc; sPendingViewMode = mode; }
+    if (L[kNatural].clicked) {
+        ed.PushUndo("Natural walk and run speeds");
+        if (auto* f = pc->first()) okay::NaturalGait::UseNaturalSpeeds(f->walkSpeed, f->runSpeed, f->crouchSpeed, f->proneSpeed, okay::NaturalGait::kRunSpeed);
+        if (auto* t = pc->third()) okay::NaturalGait::UseNaturalSpeeds(t->walkSpeed, t->runSpeed, t->crouchSpeed, t->proneSpeed, okay::NaturalGait::kRunSpeed);
+        ed.dirty = true;
+    }
+    RunCharacterModelToolRows(L, ed, go, mt);
+    return true;
+}
+
+// The parts both controllers share after their own rows: Lean, Slide, Dodge, Traversal, Animation & IK.
+template <class C>
+static void AddDodgeRows(okaypanels::InspFieldList& L, C* c, const char* id, std::string& dodgeKey, int& kDodgeKey, RowText& T, bool firstPerson) {
+    L.Section("Dodge");
+    L.Check(T(std::string("Can Dodge##") + id), &c->dodge.canDodge);
+    if (firstPerson) L.Tip("Off by default. dodge() from a script still works.\nThe key does nothing until this is on.");
+    else L.TipLookup();
+    if (c->dodge.canDodge) {
+        dodgeKey.assign(c->dodge.key ? 1 : 0, c->dodge.key);
+        kDodgeKey = L.Text(T(std::string("Dodge Key##") + id), &dodgeKey); L.TipLookup();
+        L.Drag(T(std::string("Dodge Speed##") + id), &c->dodge.impulse, 1, 0.1f, 0.0f, 30.0f); L.TipLookup();
+        L.Drag(T(std::string("Dodge Time##") + id), &c->dodge.duration, 1, 0.01f, 0.05f, 2.0f, "%.2f s"); L.TipLookup();
+        L.Drag(T(std::string("Cooldown##") + id), &c->dodge.cooldown, 1, 0.01f, 0.0f, 5.0f, "%.2f s"); L.TipLookup();
+        L.Drag(T(std::string("Stamina##") + id), &c->dodge.stamina, 1, 0.5f, 0.0f, 100.0f); L.TipLookup();
+        L.Check(T(std::string("I-Frames##") + id), &c->dodge.iFrames);
+        if (firstPerson) L.Tip("Off by default. While on, Health ignores damage during the burst.");
+        else L.TipLookup();
+    }
+}
+template <class C>
+static void AddTraversalRows(okaypanels::InspFieldList& L, C* c, const char* id, RowText& T) {
+    L.Section("Traversal");
+    L.Check(T(std::string("Can Vault##") + id), &c->canVault); L.Tip("Walk into a thin obstacle and vault it. Off by default.\nvault() still probes when this is off.");
+    L.Check(T(std::string("Can Mantle##") + id), &c->canMantle); L.Tip("Walk into a low or high ledge and climb it. Off by default.");
+    L.Check(T(std::string("Can Ledge Grab##") + id), &c->canLedgeGrab); L.Tip("In the air, catch a high ledge and hang. Off by default.\nHands-on-ledge IK is not wired.");
+    L.Section("Animation & IK");
+    L.Check(T(std::string("Drive State Machine##") + id), &c->driveStateMachine);
+    L.Tip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
+    L.Check(T(std::string("Full Body IK looks with camera##") + id), &c->ikLook); L.TipLookup();
+}
+
+// The Animator state machine: Open Animator Graph, the default-graph buttons on a Character, the entry state, the stance and gait
+// fold-outs, then each state (name, clip, speed, loop, x; Preview / Edit clip with the transport) and its transitions fold-out (target,
+// condition, parameter, value, blend, x; + Transition), + Add State and the script note.
+static bool DrawAnimStateMachineWithOkayUI(EditorState& ed, GameObject* go, AnimStateMachine* sm) {
+    using namespace okaypanels;
+    namespace apv = okay::editor::apreview;
+    static const char* const kCondNames[] = {"On Clip End", "Float >", "Float <", "Bool true", "Bool false", "Trigger"};
+    InspFieldList L;
+    L.rows.reserve(64 + sm->states.size() * 16);
+    RowText T;
+    const int kGraph = L.Button("Open Animator Graph##asm");
+    L.Tip("Visual node editor: drag states around, draw transitions,\nwatch the active state light up in Play mode.");
+    auto* ma = go->GetComponent<ModelAnimator>();
+    auto* body = ma ? nullptr : go->GetComponent<Character>();
+    if (!ma && !body) L.ColorText(RowCol(0.95f, 0.7f, 0.4f), "Needs a Model Animator (import a model here) or a Character on this object.");
+    int kReset = -1, kActions = -1;
+    if (body && sm->layer == 0) {
+        L.SameLineOrWrap(); kReset = L.Button("Reset to default##asm");
+        L.Tip("Replace this graph with the default humanoid one (Idle, Walk, Run, Crouch,\nProne, Jump, Fall, Land, gestures). Clips bound on the Character stay bound.");
+        L.SameLineOrWrap(); kActions = L.Button("Add built-in actions##asm");
+        L.Tip("Add any built-in action states this graph is missing (Death, and later\nones). States you already edited are left as they are.");
+    }
+    auto shownClip = [](const AnimStateMachine::State& st) -> std::string {   // as the Dear ImGui body: a blend tree's middle motion
+        if (!st.blendTree || st.motions.empty()) return st.clip;
+        std::vector<float> along;
+        for (const auto& m : st.motions) along.push_back(st.blendDims == 2 ? m.posY : m.threshold);
+        std::nth_element(along.begin(), along.begin() + along.size() / 2, along.end());
+        const float mid = along[along.size() / 2];
+        const AnimStateMachine::Motion* best = nullptr; float bd = 1e30f;
+        for (const auto& m : st.motions) {
+            const float dx = st.blendDims == 2 ? m.threshold : 0.0f, dy = (st.blendDims == 2 ? m.posY : m.threshold) - mid;
+            if (dx * dx + dy * dy < bd) { bd = dx * dx + dy * dy; best = &m; }
+        }
+        return best->clip;
+    };
+    std::vector<std::string> bodyClips;
+    if (body) {
+        const std::vector<std::string> own = body->ClipNames();
+        const std::vector<std::string>& lib = HumanoidLibrary::Names();
+        std::set_union(own.begin(), own.end(), lib.begin(), lib.end(), std::back_inserter(bodyClips));
+    }
+    const std::vector<std::string> clipList = ma ? ma->ClipNames() : bodyClips;
+    std::vector<const char*> clipItems;
+    for (const auto& c : clipList) clipItems.push_back(c.c_str());
+    if (ed.isPlaying()) L.ColorText(RowCol(0.235f, 0.475f, 0.8f), T(std::string("Current state: ") + (sm->Current().empty() ? "(entering)" : sm->Current())));
+    std::vector<const char*> entryItems{"(first state)"}, stateItems;
+    for (const auto& st : sm->states) { entryItems.push_back(st.name.c_str()); stateItems.push_back(st.name.c_str()); }
+    int entry = 0;
+    for (std::size_t i = 0; i < sm->states.size(); ++i) if (sm->entry == sm->states[i].name) entry = (int)i + 1;
+    const int kEntry = L.Combo("Entry##asm", &entry, entryItems.data(), (int)entryItems.size()); L.Last().width = 200.0f;
+    L.Last().preview = sm->entry.empty() ? "(first state)" : sm->entry.c_str();
+    int kStance[3] = {-1, -1, -1}, kGait[4] = {-1, -1, -1, -1};
+    if (sm->layer == 0) {
+        StanceTimes& t = sm->stanceTimes;
+        L.Tree("Stance changes##asm");
+        kStance[0] = L.Drag("Stand <-> crouch##asm", &t.standCrouch, 1, 0.01f, 0.05f, 3.0f, "%.2fs");
+        kStance[1] = L.Drag("Crouch <-> prone##asm", &t.crouchProne, 1, 0.01f, 0.05f, 3.0f, "%.2fs");
+        kStance[2] = L.Drag("Prone -> stand##asm", &t.proneStand, 1, 0.01f, 0.05f, 4.0f, "%.2fs");
+        L.Tip("How long the body takes to crouch, go prone and get up. The collider,\nthe camera, the speed limit and the default graph's blends follow it;\nthe Animator gets `stance` (0..2).");
+        L.TreeEnd();
+        GaitCrossfades& g = sm->crossfades;
+        L.Tree("Gait crossfades##asm");
+        kGait[0] = L.Drag("Idle <-> walk##xf", &g.idleWalk, 1, 0.01f, 0.0f, 2.0f, "%.2fs");
+        kGait[1] = L.Drag("Walk <-> run##xf", &g.walkRun, 1, 0.01f, 0.0f, 2.0f, "%.2fs");
+        kGait[2] = L.Drag("Ground -> air##xf", &g.groundAir, 1, 0.01f, 0.0f, 2.0f, "%.2fs");
+        kGait[3] = L.Drag("Air -> ground##xf", &g.airGround, 1, 0.01f, 0.0f, 2.0f, "%.2fs");
+        L.Tip("How long idle, walk and run crossfade, and how long a jump or landing\ntakes. Either direction can interrupt the blend. Stance changes stay\non the times above. 0 = instant.");
+        L.TreeEnd();
+    }
+    struct TrRow { int to = -1, toIdx = 0, cond = -1, condIdx = 0, del = -1; std::string param; int paramRow = -1; };
+    struct StRow { int name = -1, clip = -1, clipIdx = 0, del = -1, preview = -1, edit = -1, addTr = -1; std::string shown; std::deque<TrRow> tr; };
+    std::deque<StRow> sr(sm->states.size());
+    TransportRows transport;
+    for (std::size_t si = 0; si < sm->states.size(); ++si) {
+        AnimStateMachine::State& st = sm->states[si];
+        StRow& s = sr[si];
+        L.Separator();
+        s.name = L.Text("State##asm", &st.name); L.Last().width = 140.0f; L.TipLookup();
+        L.SameLineOrWrap();
+        if (st.blendTree) { L.Note(T("blend tree, " + std::to_string((int)st.motions.size()) + " clips")); L.Tip("Open Animator Graph to edit its motions."); }
+        else if (ma || body) {
+            s.clipIdx = -1;
+            for (std::size_t i = 0; i < clipList.size(); ++i) if (clipList[i] == st.clip) s.clipIdx = (int)i;
+            s.clip = L.Combo("##asmclip", &s.clipIdx, clipItems.data(), (int)clipItems.size()); L.Last().width = 150.0f;
+            L.Last().preview = st.clip.empty() ? "(clip)" : st.clip.c_str();
+        }
+        L.SameLineOrWrap(); L.Drag("##asmspd", &st.speed, 1, 0.02f, 0.05f, 5.0f, "x%.2f"); L.Last().width = 70.0f; L.TipLookup();
+        L.SameLineOrWrap(); L.Check("loop##asm", &st.loop); L.TipLookup();
+        L.SameLineOrWrap(); s.del = L.SmallButton("x##asmst"); L.Tip("Remove");
+        s.shown = body ? shownClip(st) : std::string();
+        if (body && BodyClip(body, s.shown)) {
+            const bool on = apv::IsState(body->gameObject, st.name);
+            s.preview = L.SmallButton(on ? "Stop##apst" : "Preview##apst");
+            L.SameLine(); s.edit = L.SmallButton("Edit clip##asm");
+            L.Tip(T("Edit " + s.shown + " in the Animation tab. Apply there saves it on this\nCharacter, where it replaces the default clip of that name."));
+            if (on) AddTransportRows(L, transport, T);
+        } else if (ma && ma->FindClip(apv::MiddleMotion(st)) >= 0) {
+            const bool on = apv::IsState(ma->gameObject, st.name);
+            s.preview = L.SmallButton(on ? "Stop##apmst" : "Preview##apmst");
+            if (on) AddTransportRows(L, transport, T);
+        }
+        L.Tree(T(std::to_string((int)st.transitions.size()) + " transition(s)###asmtr" + std::to_string(si)));
+        for (auto& tr : st.transitions) {
+            s.tr.emplace_back();
+            TrRow& r = s.tr.back();
+            L.Note("  ->"); L.SameLine();
+            r.toIdx = -1;
+            for (std::size_t i = 0; i < sm->states.size(); ++i) if (sm->states[i].name == tr.to) r.toIdx = (int)i;
+            r.to = L.Combo("##trto", &r.toIdx, stateItems.data(), (int)stateItems.size()); L.Last().width = 120.0f;
+            L.Last().preview = tr.to.empty() ? "(state)" : tr.to.c_str();
+            L.SameLineOrWrap();
+            r.condIdx = (int)tr.cond;
+            r.cond = L.Combo("##trcond", &r.condIdx, kCondNames, 6); L.Last().width = 110.0f; L.TipLookup();
+            if (tr.cond != AnimStateMachine::Cond::OnClipEnd) {
+                L.SameLineOrWrap(); r.paramRow = L.Text("##trparam", &tr.param, "param"); L.Last().width = 90.0f; L.TipLookup();
+            }
+            if (tr.cond == AnimStateMachine::Cond::FloatGreater || tr.cond == AnimStateMachine::Cond::FloatLess) {
+                L.SameLineOrWrap(); L.Drag("##trval", &tr.value, 1, 0.05f); L.Last().width = 60.0f; L.TipLookup();
+            }
+            L.SameLineOrWrap(); L.Drag("##trblend", &tr.blend, 1, 0.01f, 0.0f, 2.0f, "%.2fs"); L.Last().width = 60.0f; L.TipLookup();
+            L.SameLineOrWrap(); r.del = L.SmallButton("x##tr"); L.Tip("Remove");
+        }
+        s.addTr = L.SmallButton("+ Transition##asm");
+        L.TreeEnd();
+    }
+    L.Separator();
+    const int kAdd = L.SmallButton("+ Add State##asm");
+    L.Note("Set parameters from a script: anim_set_float(\"speed\", v),\nanim_set_bool(\"armed\", 1), anim_trigger(\"attack\"); anim_state() reads back.", false, true);
+    if (!DrawRowsOkayUI(sm, "##okayui_animsm", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kGraph].clicked) g_showAnimatorGraph = true;
+    if (kReset >= 0 && L[kReset].clicked) { ed.PushUndo(); HumanoidLibrary::DefaultGraph(*sm, body); ed.dirty = true; return true; }
+    if (kActions >= 0 && L[kActions].clicked) { ed.PushUndo(); HumanoidActions::MergeMissing(*sm, body, true); ed.dirty = true; return true; }
+    if (L[kEntry].changed) sm->entry = entry == 0 ? std::string() : sm->states[(std::size_t)entry - 1].name;
+    for (int k : kStance) if (k >= 0 && L[k].changed) { HumanoidLibrary::ApplyStanceTimes(*sm); break; }
+    for (int k : kGait) if (k >= 0 && L[k].changed) { HumanoidLibrary::ApplyCrossfades(*sm); break; }
+    RunTransportRows(L, transport);
+    int delState = -1;
+    for (std::size_t si = 0; si < sm->states.size() && si < sr.size(); ++si) {
+        AnimStateMachine::State& st = sm->states[si];
+        StRow& s = sr[si];
+        if (s.clip >= 0 && L[s.clip].changed && s.clipIdx >= 0) st.clip = clipList[(std::size_t)s.clipIdx];
+        if (L[s.del].clicked) delState = (int)si;
+        if (s.preview >= 0 && L[s.preview].clicked) {
+            if (body) { if (apv::IsState(body->gameObject, st.name)) apv::Stop(ed.scene()); else apv::StartCharacterState(ed.scene(), body, st, ed.isPlaying()); }
+            else if (ma) { if (apv::IsState(ma->gameObject, st.name)) apv::Stop(ed.scene()); else apv::StartModelState(ed.scene(), ma, st, ed.isPlaying()); }
+        }
+        if (s.edit >= 0 && L[s.edit].clicked) {
+            const std::string key = AnimDraftKey(go);
+            AnimDraft& d = g_animDrafts[key];
+            PushAnimDraftUndo(ed, key, d);
+            d.clip = *BodyClip(body, s.shown);
+            d.t = 0.0f; d.playing = false; d.playOnStart = false;
+            d.pose = d.clip.keys.empty() ? std::vector<Vec3>() : d.clip.keys.front().pose;
+            d.pose.resize(Character::BoneCount(), Vec3{0, 0, 0});
+            d.root = d.clip.keys.empty() ? Vec3{0, 0, 0} : d.clip.keys.front().root;
+            d.sel.clear(); d.viewLen = 0.0f;
+            g_showAnimation = true;
+            g_focusQueue.push_back("Animation###AnimationDock");
+        }
+        int delTr = -1;
+        for (std::size_t ti = 0; ti < s.tr.size() && ti < st.transitions.size(); ++ti) {
+            TrRow& r = s.tr[ti];
+            AnimStateMachine::Transition& tr = st.transitions[ti];
+            if (L[r.to].changed && r.toIdx >= 0) tr.to = sm->states[(std::size_t)r.toIdx].name;
+            if (L[r.cond].changed) tr.cond = (okay::AnimStateMachine::Cond)r.condIdx;
+            if (L[r.del].clicked) delTr = (int)ti;
+        }
+        if (delTr >= 0) { ed.PushUndo(); st.transitions.erase(st.transitions.begin() + delTr); ed.dirty = true; }
+        if (s.addTr >= 0 && L[s.addTr].clicked) { ed.PushUndo(); st.transitions.push_back({}); ed.dirty = true; }
+    }
+    if (delState >= 0) { ed.PushUndo(); sm->states.erase(sm->states.begin() + delState); ed.dirty = true; }
+    if (L[kAdd].clicked) {
+        ed.PushUndo();
+        AnimStateMachine::State st;
+        st.name = "State " + std::to_string((int)sm->states.size() + 1);
+        if (ma && ma->ClipCount() > 0) st.clip = ma->clips[0].name;
+        sm->states.push_back(std::move(st));
+        ed.dirty = true;
+    }
+    return true;
+}
+
+// ---- The Inspector's OkayUI parts, stage 6 (docs/own_ui_toolkit.md section 19) --------------------------------------------------------
+// Item Pickup and Hold Prompt (their notes were cut in both toolkits), then the next most used bodies of the example scenes: Water, Flashlight,
+// Pause Menu, Hand (legacy), Voxel Digger and Voxel Terrain.
+
+// ItemPicker as a row: the item database's names in a list 160 wide (its search field is Dear ImGui's only), an id the database does not
+// know shown in orange with the tooltip.
+struct ItemRow { int row = -1, idx = -1; std::vector<std::string> ids, names; std::vector<const char*> items, keys; std::string preview; };
+static void AddItemPickerRow(okaypanels::InspFieldList& L, const char* label, const std::string& id, ItemRow& ir, float width = 160.0f) {
+    okay::ItemDatabase& db = okay::ItemDatabase::Get();
+    for (const auto& d : db.Items()) { if (d.loose) continue; ir.ids.push_back(d.id); ir.names.push_back(d.DisplayName()); }
+    for (std::size_t i = 0; i < ir.names.size(); ++i) {
+        ir.items.push_back(ir.names[i].c_str()); ir.keys.push_back(ir.ids[i].c_str());
+        if (ir.ids[i] == id) ir.idx = (int)i;
+    }
+    const okay::ItemDefinition* cur = db.Find(id);
+    const bool unknown = !id.empty() && (!cur || cur->loose);
+    ir.preview = cur && !cur->loose ? cur->DisplayName() : id;
+    ir.row = L.Combo(label, &ir.idx, ir.items.data(), (int)ir.items.size()); L.Last().width = width; L.Last().preview = ir.preview.c_str();
+    // the search field of the editor's ItemPicker (stage 7): it finds by id or name, and a typed id that is no item can be used as it is
+    L.Last().search = true; L.Last().searchHint = "Search or type an id"; L.Last().searchKeys = ir.keys.data();
+    if (unknown) L.Last().color = RowCol(1.0f, 0.6f, 0.3f);
+    if (unknown) L.Tip("This id isn't in the Item Database (it still works as a plain name).");
+}
+static bool RunItemPickerRow(okaypanels::InspFieldList& L, std::string& id, const ItemRow& ir) {
+    if (ir.row < 0 || !L[ir.row].changed) return false;
+    if (ir.idx == -1 && !L[ir.row].sv.empty()) { id = L[ir.row].sv; return true; }   // 'Use "<typed>"'
+    if (ir.idx < 0 || (std::size_t)ir.idx >= ir.ids.size()) return false;
+    id = ir.ids[(std::size_t)ir.idx];
+    return true;
+}
+// A one-letter key field ("Interact Key", "Toggle Key"): the row's text, the key back.
+static void KeyFromText(char& key, const std::string& t) { key = t.empty() ? 0 : t[0]; }
+
+static bool DrawItemPickupWithOkayUI(EditorState& ed, ItemPickup* pk) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(20);
+    L.Note("An item in the world. Walk into it (trigger), come close, or press the key.", false, true);
+    ItemRow ir;
+    AddItemPickerRow(L, "Item##pk", pk->item, ir);
+    L.DragInt("Count##pk", &pk->count, 0.2f, 1, 99999); L.TipLookup();
+    L.Text("Collector Tag##pk", &pk->collectorTag); L.TipLookup();
+    L.Check("Pick Up On Touch##pk", &pk->pickupOnTouch); L.TipLookup();
+    L.Drag("Auto Radius##pk", &pk->autoRadius, 1, 0.05f, 0.0f, 50.0f); L.TipLookup();
+    std::string key(pk->interactKey ? 1 : 0, pk->interactKey);
+    const int kKey = L.Text("Interact Key##pk", &key); L.TipLookup();
+    if (pk->interactKey) {
+        L.Drag("Interact Range##pk", &pk->interactRange, 1, 0.05f, 0.1f, 50.0f);
+        L.Check("Hold In Hands##pk", &pk->holdInHands);
+        if (pk->holdInHands) L.Note("The key picks it up with Procedural Object Holding (if the player has it).", false, true);
+    }
+    L.Drag("Magnet Radius##pk", &pk->magnetRadius, 1, 0.05f, 0.0f, 50.0f); L.TipLookup();
+    if (pk->magnetRadius > 0.0f) L.Drag("Magnet Speed##pk", &pk->magnetSpeed, 1, 0.1f, 0.1f, 100.0f);
+    if (!DrawRowsOkayUI(pk, "##okayui_itempickup", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunItemPickerRow(L, pk->item, ir);
+    if (L[kKey].changed) KeyFromText(pk->interactKey, key);
+    return true;
+}
+
+static bool DrawHoldPromptWithOkayUI(EditorState& ed, HoldPrompt* hp, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(12);
+    L.Note("E picks a hold-in-hands item up. E again, or G, puts it down.", false, true);
+    std::string dk(hp->dropKey ? 1 : 0, hp->dropKey), ak(hp->altDropKey ? 1 : 0, hp->altDropKey);
+    const int kDrop = L.Text("Drop Key##hp", &dk); L.TipLookup();
+    const int kAlt = L.Text("Alt Drop Key##hp", &ak); L.TipLookup();
+    L.Text("Prompt Object##hp", &hp->promptObject); L.Tip("A screen-space Text named this shows \"E to pick up\" and \"E or G to drop\".");
+    bool loc = hp->localized;
+    const int kLoc = L.Check("Localized##hp", &loc); L.Tip(kHoldLocalizedTip);
+    const int kRemove = L.SmallButton("Remove##hp");
+    if (!DrawRowsOkayUI(hp, "##okayui_holdprompt", L)) return false;
+    if (L[kDrop].changed) { KeyFromText(hp->dropKey, dk); ed.dirty = true; }
+    if (L[kAlt].changed) { KeyFromText(hp->altDropKey, ak); ed.dirty = true; }
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kLoc].changed) LocalizedSwitchApply(ed, hp, loc);
+    if (L[kRemove].clicked) toRemove = hp;
+    return true;
+}
+
+static bool DrawFlashlightWithOkayUI(EditorState& ed, Flashlight* fl, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(12);
+    L.Note("A spot light that follows your view \xE2\x80\x94 see inside caves. Toggle in Play.", false, true);
+    std::string key(fl->toggleKey ? 1 : 0, fl->toggleKey);
+    const int kKey = L.Text("Toggle Key##fl", &key); L.Tip("Key to switch the beam on/off (blank = none).");
+    const int kOn = L.Check("On##fl", &fl->on); L.TipLookup();
+    L.Drag("Range##fl", &fl->range, 1, 0.5f, 1.0f, 200.0f); L.TipLookup();
+    L.Slider("Cone Angle##fl", &fl->angle, 10.0f, 120.0f, "%.0f deg"); L.TipLookup();
+    L.Drag("Intensity##fl", &fl->intensity, 1, 0.05f, 0.0f, 8.0f); L.TipLookup();
+    float c[3] = {fl->color.r, fl->color.g, fl->color.b};
+    const int kCol = L.Color("Color##fl", c, 3); L.TipLookup();
+    L.Note("Mount on the player or its camera; the beam aims where you look.", false, true);
+    const int kRemove = L.SmallButton("Remove##fl");
+    if (!DrawRowsOkayUI(fl, "##okayui_flashlight", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kKey].changed) KeyFromText(fl->toggleKey, key);
+    if (L[kOn].changed) fl->SetOn(fl->on);
+    if (L[kCol].changed) fl->color = {c[0], c[1], c[2], 1.0f};
+    if (L[kRemove].clicked) toRemove = fl;
+    return true;
+}
+
+static bool DrawPauseMenuWithOkayUI(EditorState& ed, PauseMenu* pm, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kKeys[] = {"Escape", "P", "Tab"};
+    static const char kCodes[] = {27, 'p', 9};
+    InspFieldList L;
+    L.rows.reserve(16);
+    int kCreate = -1;
+    if (!pm->HasUI()) { L.Note("No menu UI in the scene yet."); kCreate = L.Button("Create Editable Menu UI##pm"); }
+    else L.Note("Editable UI is under 'PauseMenu UI' \xE2\x80\x94 select its parts to restyle.", false, true);
+    L.Note("Press the toggle key in Play to pause; Resume / Quit buttons appear.", false, true);
+    bool loc = pm->localized;
+    const int kLoc = L.Check("Localized##pm", &loc); L.Tip(kPauseLocalizedTip);
+    if (!pm->localized) L.Text("Title##pm", &pm->title);
+    int ki = 0; for (int i = 0; i < 3; ++i) if (pm->toggleKey == kCodes[i]) ki = i;
+    const int kKey = L.Combo("Toggle Key##pm", &ki, kKeys, 3); L.TipLookup();
+    L.Check("Resume button##pm", &pm->showResume); L.TipLookup();
+    L.Check("Quit button##pm", &pm->showQuit); L.TipLookup();
+    L.Text("Main Menu Scene##pm", &pm->mainMenuScene); L.Tip("Optional .okayscene to load from a 'Main Menu' button (blank = no button).");
+    L.Color("Backdrop##pm", &pm->dimColor.r, 4); L.TipLookup();
+    L.Color("Panel##pm", &pm->panelColor.r, 4); L.TipLookup();
+    const int kRemove = L.SmallButton("Remove##pm");
+    if (!DrawRowsOkayUI(pm, "##okayui_pausemenu", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (kCreate >= 0 && L[kCreate].clicked) { pm->EnsureBuilt(); ed.dirty = true; }
+    if (L[kLoc].changed) LocalizedSwitchApply(ed, pm, loc);
+    if (L[kKey].changed) pm->toggleKey = kCodes[ki];
+    if (L[kRemove].clicked) toRemove = pm;
+    return true;
+}
+
+static bool DrawFirstPersonHandWithOkayUI(EditorState& ed, FirstPersonHand* fh, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kSides[] = {"Right arm", "Left arm"};
+    InspFieldList L;
+    L.rows.reserve(16);
+    L.Note("Shows your character's OWN arm in first person. Your body is hidden from your camera only (others see all of it) and never duplicated. Click to punch.", false, true);
+    L.SliderInt("Attack Button##fh", &fh->attackButton, 0, 2); L.Tip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
+    L.Check("Swing while held##fh", &fh->holdToSwing); L.Tip("Keep swinging while the button is held (Minecraft mining).");
+    int si = fh->showLeftArm ? 1 : 0;
+    const int kSide = L.Combo("Arm side##fh", &si, kSides, 2); L.TipLookup();
+    L.Check("Follow camera look##fh", &fh->followPitch); L.Tip("The arm tilts up/down with your view (Minecraft-style).");
+    L.Check("Bobbing##fh", &fh->bobbing); L.Tip("A small up-and-down bob on the viewmodel arm. It does not roll, and it does not move the shared body.");
+    L.Check("Steady arm (ignore lean/crouch/prone)##fh", &fh->steadyArm); L.TipLookup();
+    L.Check("Show While Running##fh", &fh->showWhileRunning);
+    L.Tip("Fully decouple the arm from the body so it stays put in view no matter what the body does (lean, crouch, prone).");   // Dear ImGui's later tip
+    L.Section("Manual adjust");
+    L.Drag("Raise##fh", &fh->armRaise, 1, 0.5f, -180.0f, 180.0f, "%.0f deg"); L.Tip("Upper-arm angle: how high the hand sits in view.");
+    L.Drag("Elbow##fh", &fh->armElbow, 1, 0.5f, -180.0f, 180.0f, "%.0f deg"); L.Tip("Forearm bend: hand closeness / height.");
+    const int kReset = L.SmallButton("Reset arm pose##fh");
+    const int kRemove = L.SmallButton("Remove##fh");
+    if (!DrawRowsOkayUI(fh, "##okayui_fphand", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kSide].changed) fh->showLeftArm = (si == 1);
+    if (L[kReset].clicked) { fh->armRaise = -96.0f; fh->armElbow = 16.0f; ed.dirty = true; }
+    if (L[kRemove].clicked) toRemove = fh;
+    return true;
+}
+
+static bool DrawVoxelDiggerWithOkayUI(EditorState& ed, VoxelDigger* vd, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kModes[] = {"Dig (remove)", "Add (build)", "Smooth", "Box (rectangular)"};
+    static const char* const kBtns[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
+    static const char* const kPresets[] = {"Pick a preset...", "Realistic", "Arcade", "Creative"};
+    static const char* const kCollect[] = {"Vanish (old behaviour)", "Store (into the count)", "Debris (falls, lands back)", "Both (debris, pick up to store)"};
+    static const char* const kShapes[] = {"Sphere", "Cube", "Cylinder", "Plane (flat disc)"};
+    InspFieldList L;
+    L.rows.reserve(60);
+    RowText T;
+    L.Note("Aim with the camera and hold to carve caves/tunnels (or add material).", false, true);
+    int md = (int)vd->mode;
+    const int kMode = L.Combo("Primary##vdg", &md, kModes, 4); L.TipLookup();
+    int bi = (vd->button < 0 || vd->button > 2) ? 3 : vd->button, abi = (vd->addButton < 0 || vd->addButton > 2) ? 3 : vd->addButton;
+    const int kBtn = L.Combo("Primary Button##vdg", &bi, kBtns, 4); L.TipLookup();
+    const int kAbtn = L.Combo("Opposite Button##vdg", &abi, kBtns, 4); L.Tip("Does the opposite of Primary, so one digger both digs AND raises. Default right mouse.");
+    L.Drag("Brush Radius##vdg", &vd->radius, 1, 0.1f, 0.25f, 30.0f); L.TipLookup();
+    L.Drag("Strength / sec##vdg", &vd->strength, 1, 0.1f, 0.1f, 100.0f); L.TipLookup();
+    L.Drag("Reach##vdg", &vd->range, 1, 0.5f, 1.0f, 500.0f); L.TipLookup();
+    L.Check("Show brush marker##vdg", &vd->showBrush); L.TipLookup();
+    L.Section("Real life");
+    int pi = 0;
+    const int kPreset = L.Combo("Preset##vdg", &pi, kPresets, 4);
+    L.Tip("Realistic: dug ground becomes debris and a store, hard rock needs a strong tool, building uses what you collected, loose ground slumps and cut-off pieces fall.\nArcade: ground vanishes, building is free (the old behaviour).\nCreative: unlimited store.");
+    int ci = (int)vd->collect;
+    const int kCollectRow = L.Combo("Dug Ground##vdg", &ci, kCollect, 4); L.Tip("What happens to the ground the brush takes away. Nothing is lost except in Vanish.");
+    L.Check("Building needs material##vdg", &vd->needsMaterial);
+    L.SameLineOrWrap(); L.Check("Creative (unlimited)##vdg", &vd->creative);
+    VoxelTerrain* tv = vd->FindVoxel();
+    std::vector<const char*> matNames;
+    int am = 0, kMat = -1;
+    if (tv && tv->UseMaterials()) {
+        for (const auto& m : tv->materials) matNames.push_back(m.name.c_str());
+        am = std::max(0, std::min(vd->addMaterial, (int)tv->materials.size() - 1));
+        kMat = L.Combo("Build Material##vdg", &am, matNames.data(), (int)matNames.size());
+    }
+    L.Drag("Tool Power##vdg", &vd->power, 1, 0.1f, 0.0f, 1.0e9f, "%.1f"); L.Last().logarithmic = true;
+    L.Tip("Materials harder than this cannot be dug. 1e9 = everything.");
+    L.Drag("Hardness Scale##vdg", &vd->hardnessScale, 1, 0.05f, 0.1f, 20.0f); L.Tip("Multiplies every material's hardness: higher = slower digging.");
+    int shp = (int)vd->shape;
+    const int kShape = L.Combo("Brush Shape##vdg", &shp, kShapes, 4);
+    L.Drag("Depth Limit##vdg", &vd->depthLimit, 1, 0.1f, -1.0f, 200.0f, "%.1f"); L.Tip("Metres a stroke may go below where it started. -1 = no limit.");
+    L.Drag("Bedrock Height##vdg", &vd->protectBelow, 1, 0.1f, -1.0f, 500.0f, "%.1f"); L.Tip("Nothing below this height (in the terrain's own space) can be dug. -1 = off.");
+    L.Check("Snap to grid##vdg", &vd->snapToGrid);
+    L.SameLineOrWrap(); L.Check("Slump loose ground##vdg", &vd->slump);
+    std::string pour(vd->pourKey ? 1 : 0, vd->pourKey);
+    const int kPour = L.Text("Pour Key##vdg", &pour); L.Tip("A key (e.g. f) that pours fluid at the aim point. The terrain needs Water / lava flow on.");
+    L.SliderInt("Cave-in Span##vdg", &vd->caveInSpan, 0, 24);
+    L.Tip("0 = off. Otherwise roof that is more than this many voxels from a support comes down when you let go of the mouse: a tunnel wider than about twice this brings its ceiling down as debris.");
+    if (vd->slump) {
+        L.SliderInt("Slump Passes##vdg", &vd->slumpPasses, 1, 32);
+        L.Tip("Passes per frame. 1 = a gentle local slide; more = an avalanche that runs farther down the slope (each pass moves at most 40 voxels).");
+    }
+    L.SameLineOrWrap(); L.Check("Collapse##vdg", &vd->collapse); L.Tip("Pieces a dig cuts loose fall as debris and land back in the ground.");
+    L.SliderInt("Debris Limit##vdg", &vd->debrisMax, 0, 300);
+    L.Drag("Debris Life (s)##vdg", &vd->debrisLife, 1, 0.5f, 1.0f, 120.0f);
+    L.Check("Give inventory items##vdg", &vd->giveItems);
+    L.Check("Tools from inventory##vdg", &vd->toolsFromInventory);
+    L.Tip("Dig power comes from the items the scene's Inventory holds (see Tools). Without one you dig with bare hands: soft ground only.");
+    if (vd->toolsFromInventory) {
+        L.Text("Tools##vdg", &vd->tools); L.Tip("item:power list, e.g. shovel:2,pickaxe:5. A tool digs materials whose hardness is up to its power.");
+        L.Drag("Bare Hands Power##vdg", &vd->bareHandsPower, 1, 0.05f, 0.0f, 20.0f);
+    }
+    L.Check("Build from items##vdg", &vd->buildFromItems);
+    L.Tip("Building spends the Build Material's drop items from the Inventory (per m3 as set in the Materials table).");
+    L.Text("Count Text Object##vdg", &vd->hudTarget); L.Tip("Name of a Text object that shows what has been collected, e.g. \"Dirt 3.20 m3\".");
+    if (tv && tv->UseMaterials()) {
+        char line[96];
+        for (std::size_t k = 0; k < vd->store.size() && k < tv->materials.size(); ++k)
+            if (vd->store[k] > 0.005) { std::snprintf(line, sizeof line, "Store: %s %.2f m3", tv->materials[k].name.c_str(), vd->store[k]); L.Note(T(line)); }
+    }
+    L.Note("In Play: hold the mouse to dig, right mouse builds, Ctrl+Z takes back the last stroke.", false, true);
+    const int kRemove = L.SmallButton("Remove##vdg");
+    if (!DrawRowsOkayUI(vd, "##okayui_voxeldigger", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kMode].changed) vd->mode = (VoxelDigger::Mode)md;
+    if (L[kBtn].changed) vd->button = (bi == 3) ? -1 : bi;
+    if (L[kAbtn].changed) vd->addButton = (abi == 3) ? -1 : abi;
+    if (L[kPreset].changed && pi > 0) vd->ApplyPreset((VoxelDigger::Preset)pi);
+    if (L[kCollectRow].changed) vd->collect = (VoxelDigger::Collect)ci;
+    if (kMat >= 0 && L[kMat].changed) vd->addMaterial = am;
+    if (L[kShape].changed) vd->shape = (VoxelTerrain::EditOptions::Shape)shp;
+    if (L[kPour].changed) KeyFromText(vd->pourKey, pour);
+    if (L[kRemove].clicked) toRemove = vd;
+    return true;
+}
+
+static bool DrawVoxelTerrainWithOkayUI(EditorState& ed, VoxelTerrain* v, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(100);
+    RowText T;
+    std::vector<int> applyRows;
+    auto ap = [&](int k) { applyRows.push_back(k); return k; };
+    L.Note("Smooth marching-cubes voxels: real caves, tunnels & overhangs.", false, true);
+    ap(L.Color("Color##vox", &v->color.r, 4)); L.TipLookup();
+    ap(L.Check("Auto-color (height/slope)##vox", &v->autoColor)); L.TipLookup();
+    float dims[3] = {(float)v->nx, (float)v->ny, (float)v->nz};
+    const int kDims = L.Drag("Grid (X,Y,Z)##vox", dims, 3, 1.0f, 4.0f, 512.0f, "%.0f");
+    L.Tip("Sample resolution. Resizing clears the field \xE2\x80\x94 regenerate after.");
+    ap(L.Drag("Voxel Size##vox", &v->voxelSize, 1, 0.05f, 0.1f, 10.0f)); L.TipLookup();
+    ap(PathFieldRow(L, "Texture##vox", &v->texture));
+    L.Tip("Triplanar ground texture (no seams on cave walls / overhangs). Empty = auto-colours only.");
+    int kTexClear = -1;
+    if (!v->texture.empty()) {
+        L.SameLine(); kTexClear = L.SmallButton("Clear##voxtex");
+        ap(L.Drag("Tex Scale##vox", &v->textureTiling, 1, 0.005f, 0.005f, 2.0f, "%.3f")); L.TipLookup();
+    }
+    L.Section("Generate");
+    L.Drag("Surface##vox", &g_voxSurface, 1, 0.01f, 0.1f, 0.95f); L.Tip("Fraction of the height the ground surface sits at.");
+    L.Drag("Relief##vox", &g_voxAmp, 1, 0.2f, 0.0f, 40.0f);
+    L.Slider("Caves##vox", &g_voxCaves, 0.0f, 1.0f);
+    L.InputInt("Seed##vox", &g_voxSeed);
+    L.Tip("The same seed makes the same ground (and the same material layers). Random picks a new one.");
+    L.SameLineOrWrap(); const int kRandom = L.SmallButton("Random##voxseed");
+    const int kGen = L.Button("Generate##voxgen");
+    L.SameLineOrWrap(); const int kSlab = L.Button("Solid Slab##voxgen");
+    L.SameLineOrWrap(); const int kClearGen = L.Button("Clear##voxgen");
+    L.Note("Add a Voxel Digger to carve it live in Play.", false, true);
+    L.Section("Materials");
+    L.Drag("Topsoil (m)##voxlay", &g_voxRules.topsoil, 1, 0.05f, 0.0f, 10.0f);
+    L.Drag("Dirt Depth (m)##voxlay", &g_voxRules.dirtDepth, 1, 0.1f, 0.0f, 40.0f);
+    L.Slider("Rock Slope##voxlay", &g_voxRules.stoneSlope, 0.1f, 1.0f); L.Tip("Steepness above which the surface is bare stone.");
+    L.Slider("Ore Pockets##voxlay", &g_voxRules.oreAmount, 0.0f, 0.5f);
+    L.SliderInt("Ore Veins##voxlay", &g_voxRules.oreVeins, 0, 80);
+    L.Tip("Long winding veins of ore through the stone. Press Layered ground / Regenerate layers to apply.");
+    int kLayered = -1, kDirt = -1, kRegen = -1, kMatOff = -1;
+    std::vector<int> matRows;   // per material: name, colour, hardness (the rows that rebuild the materials)
+    std::vector<std::array<float, 4>> matCol(v->materials.size());
+    if (!v->UseMaterials()) {
+        L.Note("Off: every voxel is the same ground. Turn materials on for dirt, sand, stone and ore with their own colour, hardness and drops.", false, true);
+        kLayered = L.Button("Layered ground##voxmat");
+        L.Tip("Turns materials on and fills them by depth, slope and height: grass on top, dirt under it, sand on flat low ground, stone below, ore pockets.");
+        L.SameLineOrWrap(); kDirt = L.Button("All Dirt##voxmat");
+    } else {
+        for (std::size_t mi = 0; mi < v->materials.size(); ++mi) {
+            VoxelTerrain::VoxelMaterial& m = v->materials[mi];
+            matRows.push_back(L.Text("##mname", &m.name)); L.Last().width = 90.0f;
+            matCol[mi] = {m.color.r, m.color.g, m.color.b, m.color.a};
+            L.SameLineOrWrap(); matRows.push_back(L.Color("##mcol", matCol[mi].data(), 4)); L.Last().noInputs = true;
+            L.SameLineOrWrap(); matRows.push_back(L.Drag("hard##mh", &m.hardness, 1, 0.05f, 0.1f, 50.0f, "%.1f")); L.Last().width = 60.0f;
+            L.Tip("Hardness: how slowly it digs. A tool with less power than this cannot dig it at all.");
+            L.SameLineOrWrap(); L.Drag("kg/m3##md", &m.density, 1, 10.0f, 1.0f, 30000.0f, "%.0f"); L.Last().width = 70.0f;
+            L.SameLineOrWrap(); L.Check("loose##ml", &m.loose);
+            L.Tip("Loose ground (sand, dirt, snow) slumps down to its angle of repose when you dig next to it.");
+            L.Text("drop item##mdr", &m.drop); L.Last().width = 90.0f;
+            L.Tip("Inventory item name handed out when this material is collected (Voxel Digger: Give Items). Empty = none.");
+            L.SameLineOrWrap(); L.Drag("per m3##mpm", &m.dropPerM3, 1, 0.5f, 0.0f, 1000.0f, "%.1f"); L.Last().width = 60.0f;
+        }
+        kRegen = L.SmallButton("Regenerate layers##voxmat");
+        L.SameLineOrWrap(); kMatOff = L.SmallButton("Materials off##voxmat");
+        char line[160];
+        std::snprintf(line, sizeof line, "Ground volume: %.0f m3. Dug ground keeps its material; built ground uses the digger's Build Material.", v->SolidVolume());
+        L.Note(T(line), false, true);
+    }
+    L.Check("Catch bodies that fall out of the world##vox", &v->catchFalling);
+    L.Tip("A body that leaves the side of the grid and falls below it is put back on the ground (off = it falls for ever).");
+    if (v->catchFalling) L.Drag("Catch Depth##vox", &v->catchMargin, 1, 0.1f, 0.0f, 100.0f);
+    L.Check("Footprints and tracks##voxft", &v->footprints);
+    L.Tip("The Player (tag below) leaves shallow dents in soft ground (dirt, grass, sand, snow) as it walks.");
+    if (v->footprints) {
+        L.Text("Who (tag)##voxft", &v->footprintTag);
+        L.Check("Also rigid bodies##voxft", &v->footprintBodies);
+        L.Drag("Step (m)##voxft", &v->footprintStep, 1, 0.05f, 0.1f, 5.0f);
+        L.Drag("Print Size##voxft", &v->footprintRadius, 1, 0.02f, 0.05f, 3.0f);
+        L.Drag("Print Depth##voxft", &v->footprintDepth, 1, 0.01f, 0.02f, 1.0f);
+    }
+    L.Check("Water / lava flow in holes##voxfl", &v->fluidOn);
+    L.Tip("Pour water or lava with the digger's Pour Key: it falls into dug holes and fills them from the bottom. Bounded per frame; not saved with the ground.");
+    int kLava = -1, kWaterP = -1, kClearFluid = -1;
+    if (v->fluidOn) {
+        L.DragInt("Fluid Cells / step##voxfl", &v->fluidBudget, 1.0f, 1, 5000);
+        L.DragInt("Fluid Max Cells##voxfl", &v->fluidMaxCells, 100.0f, 0, 200000);
+        L.Drag("Flow Speed (steps/s)##voxfl", &v->fluidRate, 1, 0.5f, 0.1f, 60.0f);
+        L.Color("Fluid Color##voxfl", &v->fluidColor.r, 4);
+        L.Check("Glow (lava)##voxfl", &v->fluidGlow);
+        kLava = L.SmallButton("Lava preset##voxfl");
+        L.SameLineOrWrap(); kWaterP = L.SmallButton("Water preset##voxfl");
+        L.SameLineOrWrap(); kClearFluid = L.SmallButton("Clear fluid##voxfl");
+        char line[96]; std::snprintf(line, sizeof line, "Fluid now: %d cells (%.1f m3).", v->FluidCells(), v->FluidVolume());
+        L.Note(T(line));
+    }
+    {
+        const auto& st = v->lastStats;
+        char line[160];
+        if (v->UsesChunkObjects())
+            std::snprintf(line, sizeof line, "Drawn as %d chunk objects. Last build: %d of %d chunks, %.2f ms.", v->ChunkObjectCount(), st.chunksRemeshed, st.chunksTotal, st.totalMs);
+        else std::snprintf(line, sizeof line, "Drawn as one mesh. Last build: %d of %d chunks, %.2f ms.", st.chunksRemeshed, st.chunksTotal, st.totalMs);
+        L.Note(T(line), false, true);
+        if (VoxelTerrain::OldRemeshActive()) L.Note("OKAY_VOXEL_OLD_REMESH is set: the previous (slower) edit path is in use.", false, true);
+    }
+    const int kRemove = L.SmallButton("Remove##vox");
+    if (!DrawRowsOkayUI(v, "##okayui_voxelterrain", L)) return false;
+    bool apply = false;
+    for (int k : applyRows) if (L[k].changed) apply = true;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kDims].changed) {
+        int d[3] = {(int)std::lround(dims[0]), (int)std::lround(dims[1]), (int)std::lround(dims[2])};
+        for (int& x : d) if (x < 4) x = 4;
+        if (d[0] != v->nx || d[1] != v->ny || d[2] != v->nz) v->Resize(d[0], d[1], d[2]);
+    }
+    if (kTexClear >= 0 && L[kTexClear].clicked) { v->texture.clear(); apply = true; }
+    if (L[kRandom].clicked) g_voxSeed = (int)(ImGui::GetTime() * 1000.0) & 0x7fffffff;
+    if (L[kGen].clicked) {
+        v->Generate(g_voxSurface, g_voxAmp, g_voxCaves, (unsigned)g_voxSeed);
+        if (v->UseMaterials()) v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules);
+        apply = true;
+    }
+    if (L[kSlab].clicked) { v->FillSlab(0.5f); apply = true; }
+    if (L[kClearGen].clicked) { v->Resize(v->nx, v->ny, v->nz); apply = true; }
+    if (kLayered >= 0 && L[kLayered].clicked) { v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules); apply = true; }
+    if (kDirt >= 0 && L[kDirt].clicked) { v->EnableMaterials(0); apply = true; }
+    bool matChanged = false;
+    for (std::size_t mi = 0; mi < v->materials.size() && mi < matCol.size(); ++mi) {
+        const std::size_t base = mi * 3;
+        if (base + 2 < matRows.size()) {
+            if (L[matRows[base + 1]].changed) v->materials[mi].color = {matCol[mi][0], matCol[mi][1], matCol[mi][2], matCol[mi][3]};
+            if (L[matRows[base]].changed || L[matRows[base + 1]].changed || L[matRows[base + 2]].changed) matChanged = true;
+        }
+    }
+    if (matChanged) { v->MaterialsChanged(); apply = true; }
+    if (kRegen >= 0 && L[kRegen].clicked) { v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules); apply = true; }
+    if (kMatOff >= 0 && L[kMatOff].clicked) { v->DisableMaterials(); apply = true; }
+    if (kLava >= 0 && L[kLava].clicked) { v->fluidColor = Color::FromBytes(255, 110, 30, 255); v->fluidGlow = true; v->fluidRate = 5.0f; ed.dirty = true; }
+    if (kWaterP >= 0 && L[kWaterP].clicked) { v->fluidColor = Color::FromBytes(50, 120, 220, 170); v->fluidGlow = false; v->fluidRate = 20.0f; ed.dirty = true; }
+    if (kClearFluid >= 0 && L[kClearFluid].clicked) v->ClearFluid();
+    if (apply) { v->Apply(); ed.dirty = true; }
+    if (L[kRemove].clicked) toRemove = v;
+    return true;
+}
+
+// ---- The Inspector's OkayUI parts, stage 7 (docs/own_ui_toolkit.md section 20) --------------------------------------------------------
+// Stats, Inventory, Camera Follow, World UI (3D label), Vehicle Seat, Vehicle Controller (Car) and Joint 3D, written from their Dear ImGui
+// bodies below as the earlier builders are. New rows: a progress bar (Stats' HP) and a drag handle (the Inventory's "::").
+
+static bool DrawStatsWithOkayUI(EditorState& ed, Stats* st, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(24);
+    L.Section("Vitals");
+    L.Drag("Health##st", &st->health, 1, 1.0f, 0.0f, 100000.0f); L.TipLookup();
+    L.SameLineOrWrap(); L.Drag("Max##sthp", &st->maxHealth, 1, 1.0f, 1.0f, 100000.0f); L.Last().width = 90.0f; L.TipLookup();
+    L.Drag("Mana##st", &st->mana, 1, 1.0f, 0.0f, 100000.0f); L.TipLookup();
+    L.SameLineOrWrap(); L.Drag("Max##stmp", &st->maxMana, 1, 1.0f, 0.0f, 100000.0f); L.Last().width = 90.0f; L.TipLookup();
+    L.Progress("HP", st->HealthFraction());
+    L.Section("Progression");
+    L.DragInt("Level##st", &st->level, 0.1f, 1, 999); L.TipLookup();
+    L.DragInt("XP##st", &st->xp, 1.0f, 0, 1000000); L.TipLookup();
+    L.SameLineOrWrap(); L.DragInt("To Next##st", &st->xpToNext, 1.0f, 1, 1000000); L.Last().width = 90.0f; L.TipLookup();
+    L.Section("Attributes");
+    L.DragInt("Strength##st", &st->strength, 0.1f, 0, 999); L.TipLookup();
+    L.DragInt("Defense##st", &st->defense, 0.1f, 0, 999); L.TipLookup();
+    L.DragInt("Intelligence##st", &st->intelligence, 0.1f, 0, 999); L.TipLookup();
+    L.DragInt("Agility##st", &st->agility, 0.1f, 0, 999); L.TipLookup();
+    L.Note("scripts: take_damage / heal / add_xp; fires on_death, on_level_up", false, true);
+    const int kRemove = L.SmallButton("Remove##st");
+    if (!DrawRowsOkayUI(st, "##okayui_stats", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = st;
+    return true;
+}
+
+static bool DrawInventoryWithOkayUI(EditorState& ed, Inventory* inv, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(40 + 6 * inv->slots.size());
+    if (ed.isPlaying()) L.Note("Live bag \xE2\x80\x94 Stop puts these slots back.", false, true);
+    L.DragInt("Capacity##inv", &inv->capacity, 0.2f, 1, 999);
+    L.DragInt("Max Stack##inv", &inv->maxStack, 0.2f, 0, 9999);
+    L.Tip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this, like Minecraft's 64.");
+    L.Drag("Weight Limit##inv", &inv->weightLimit, 1, 0.5f, 0.0f, 100000.0f);
+    L.Tip("Carry limit from the item definitions' weights (0 = none). Scripts get on_encumbered(true/false).");
+    if (inv->weightLimit > 0.0f) {
+        L.Check("Slow When Over##inv", &inv->slowWhenOverWeight);
+        if (inv->slowWhenOverWeight) L.Slider("Over-weight Speed##inv", &inv->overWeightSpeed, 0.1f, 1.0f);
+        char wt[96]; std::snprintf(wt, sizeof wt, "Weight: %.1f / %.1f%s", inv->TotalWeight(), inv->weightLimit, inv->OverWeight() ? "  (over)" : "");
+        L.Label(wt, 0, false, true);
+    }
+    L.Check("Keep On Scene Load##inv", &inv->keepOnSceneLoad);
+    L.Tip("Carry these items into the next scene (load_scene): the object with the same name there gets them.");
+    char used[64]; std::snprintf(used, sizeof used, "Slots: %d / %d", inv->SlotsUsed(), inv->capacity);
+    L.Label(used, 0, false, true);
+    struct SlotRows { int handle, count, erase; ItemRow item; };
+    std::vector<SlotRows> sr(inv->slots.size());
+    for (std::size_t i = 0; i < inv->slots.size(); ++i) {
+        SlotRows& s = sr[i];
+        s.handle = L.SmallButton("::"); L.Last().dragType = "INV_SLOT"; L.Last().tag = (int)i; L.Last().hint = inv->slots[i].item.c_str();
+        L.SameLine(); AddItemPickerRow(L, "##invit", inv->slots[i].item, s.item, 130.0f);
+        L.SameLine(); s.count = L.DragInt("##invn", &inv->slots[i].count, 0.2f, 0, 9999); L.Last().width = 70.0f;
+        L.SameLine(); s.erase = L.SmallButton("X");
+    }
+    const int kAdd = L.SmallButton("Add Item##inv");
+    const int kRemove = L.SmallButton("Remove##inv");
+    if (!DrawRowsOkayUI(inv, "##okayui_inventory", L)) return false;
+    if (L.AnyActivated()) ed.PushUndo();
+    if (L.AnyChanged()) ed.dirty = true;
+    int eraseS = -1, moveFrom = -1, moveTo = -1;
+    for (std::size_t i = 0; i < sr.size(); ++i) {
+        okay::Inventory::Slot& sl = inv->slots[i];
+        if (RunItemPickerRow(L, sl.item, sr[i].item)) {
+            ed.PushUndo();
+            const long long cap = inv->StackCap(sl.item);
+            if (sl.count > cap) sl.count = (int)cap;
+            ed.dirty = true;
+        }
+        if (L[sr[i].count].changed) {
+            const long long cap = inv->StackCap(sl.item);
+            if (sl.count > cap) sl.count = (int)cap;
+            if (sl.count < 0) sl.count = 0;
+        }
+        if (L[sr[i].erase].clicked) eraseS = (int)i;
+        if (L[sr[i].handle].dropped >= 0 && L[sr[i].handle].dropped != (int)i) { moveFrom = L[sr[i].handle].dropped; moveTo = (int)i; }
+    }
+    if (moveFrom >= 0 && moveFrom < (int)inv->slots.size()) {   // the dragged slot goes where it was dropped, the rest move up or down
+        ed.PushUndo();
+        okay::Inventory::Slot moved = inv->slots[(std::size_t)moveFrom];
+        inv->slots.erase(inv->slots.begin() + moveFrom);
+        const int to = moveFrom < moveTo ? moveTo - 1 : moveTo;
+        inv->slots.insert(inv->slots.begin() + to, moved);
+        ed.dirty = true;
+    } else if (eraseS >= 0) { ed.PushUndo(); inv->slots.erase(inv->slots.begin() + eraseS); ed.dirty = true; }
+    if (L[kAdd].clicked && !inv->IsFull()) { ed.PushUndo(); inv->slots.push_back({"Item", 1}); ed.dirty = true; }
+    if (L[kRemove].clicked) toRemove = inv;
+    return true;
+}
+
+static bool DrawCameraFollowWithOkayUI(EditorState& ed, CameraFollow* cf, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(8);
+    L.Text("Target##cf", &cf->targetName); L.TipLookup();
+    float off[3] = {cf->offset.x, cf->offset.y, cf->offset.z};
+    const int kOff = L.Drag("Offset##cf", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+    L.Drag("Smoothing##cf", &cf->smoothing, 1, 0.1f, 0.0f, 50.0f); L.TipLookup();
+    L.Note("follows the named GameObject (0 = instant snap)", false, true);
+    const int kRemove = L.SmallButton("Remove##cf");
+    if (!DrawRowsOkayUI(cf, "##okayui_camerafollow", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kOff].changed) cf->offset = {off[0], off[1], off[2]};
+    if (L[kRemove].clicked) toRemove = cf;
+    return true;
+}
+
+static bool DrawWorldUIWithOkayUI(EditorState& ed, GameObject* go, WorldUI* wu, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    if (!wu->loc.key.empty()) return false;   // localized: the key picker is Dear ImGui's (as the Text body, section 17)
+    InspFieldList L;
+    L.rows.reserve(20);
+    bool locOn = false;
+    const int kLoc = L.Check("Localized##wuloc", &locOn); L.Tip(kLocalizedTip);
+    L.Text("Text##wu", &wu->text);
+    float c[4] = {wu->color.r, wu->color.g, wu->color.b, wu->color.a};
+    const int kCol = L.Color("Text Color##wu", c, 4); L.TipLookup();
+    float bg[4] = {wu->background.r, wu->background.g, wu->background.b, wu->background.a};
+    const int kBg = L.Color("Background##wu", bg, 4); L.Tip("Panel behind the text. Set alpha to 0 for no panel.");
+    float off[3] = {wu->worldOffset.x, wu->worldOffset.y, wu->worldOffset.z};
+    const int kOff = L.Drag("World Offset##wu", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+    L.Tip("Offset from the object in world units (default: 2 above it).");
+    L.Drag("Size##wu", &wu->pixelSize, 1, 0.05f, 0.2f, 16.0f); L.TipLookup();
+    L.Check("Scale With Distance##wu", &wu->scaleWithDistance); L.TipLookup();
+    L.Drag("Max Distance##wu", &wu->maxDistance, 1, 0.5f, 0.0f, 1000.0f); L.Tip("0 = always visible; otherwise hide when farther than this.");
+    L.Drag("Bar (0..1, <0 = none)##wu", &wu->bar, 1, 0.01f, -1.0f, 1.0f);
+    L.Tip("A health/progress bar under the text. Drive it from a script (set the WorldUI's bar).");
+    float bc[4] = {wu->barColor.r, wu->barColor.g, wu->barColor.b, wu->barColor.a};
+    int kBar = -1;
+    if (wu->bar >= 0.0f) { kBar = L.Color("Bar Color##wu", bc, 4); L.TipLookup(); }
+    L.Note("Floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.", false, true);
+    const int kRemove = L.SmallButton("Remove##wu");
+    if (!DrawRowsOkayUI(wu, "##okayui_worldui", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kCol].changed) wu->color = {c[0], c[1], c[2], c[3]};
+    if (L[kBg].changed) wu->background = {bg[0], bg[1], bg[2], bg[3]};
+    if (L[kOff].changed) wu->worldOffset = {off[0], off[1], off[2]};
+    if (kBar >= 0 && L[kBar].changed) wu->barColor = {bc[0], bc[1], bc[2], bc[3]};
+    if (L[kLoc].changed && locOn) LocalizedTextSwitch(ed, wu->loc, wu->text, go, true);
+    if (L[kRemove].clicked) toRemove = wu;
+    return true;
+}
+
+static bool DrawVehicleSeatWithOkayUI(EditorState& ed, VehicleSeat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(12);
+    L.Check("Driver Seat##vseat", &c->driver); L.Tip("On: sitting here drives the vehicle with the keyboard. Off: a passenger seat.");
+    L.Drag("Sit Point##vseat", &c->sitPoint.x, 3, 0.01f); L.TipLookup();
+    L.Drag("Exit Point##vseat", &c->exitPoint.x, 3, 0.01f);
+    L.Tip("Where the player steps out (local). If something solid is there, the mirrored sides are tried, then the roof.");
+    L.Drag("Use Radius##vseat", &c->useRadius, 1, 0.05f, 0.1f, 20.0f); L.TipLookup();
+    L.Text("Prompt##vseat", &c->prompt); L.TipLookup();
+    std::string key(c->enterKey ? 1 : 0, c->enterKey);
+    const int kKey = L.Text("Enter / Exit Key##vseat", &key);
+    if (!c->Vehicle()) L.Note("Needs a Vehicle Controller on this object or a parent.", false, true);
+    if (c->occupied) L.Note("Occupied");
+    const int kRemove = L.SmallButton("Remove##vseat");
+    if (!DrawRowsOkayUI(c, "##okayui_vehicleseat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kKey].changed && !key.empty()) c->enterKey = key[0];   // an emptied field keeps the key, as Dear ImGui's does
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+static bool DrawVehicleWithOkayUI(EditorState& ed, VehicleController* v, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(32);
+    L.Drag("Max Speed##veh", &v->maxSpeed, 1, 0.5f, 0.0f, 300.0f); L.TipLookup();
+    L.Drag("Reverse Speed##veh", &v->reverseSpeed, 1, 0.5f, 0.0f, 100.0f); L.TipLookup();
+    L.Drag("Acceleration##veh", &v->acceleration, 1, 0.5f, 0.5f, 200.0f); L.TipLookup();
+    L.Drag("Brake Force##veh", &v->brakeForce, 1, 0.5f, 0.5f, 300.0f); L.TipLookup();
+    L.Drag("Drag (coast)##veh", &v->drag, 1, 0.1f, 0.0f, 100.0f); L.TipLookup();
+    L.Drag("Turn Speed##veh", &v->turnSpeed, 1, 1.0f, 0.0f, 400.0f, "%.0f deg/s"); L.TipLookup();
+    L.Drag("Grip##veh", &v->grip, 1, 0.1f, 0.0f, 30.0f); L.Tip("How fast sideways slide is killed. Higher = sticky cornering, lower = slidey.");
+    L.Drag("Handbrake Grip##veh", &v->handbrakeGrip, 1, 0.05f, 0.0f, 30.0f); L.Tip("Grip while the handbrake (Space) is held. Low = drift.");
+    L.Drag("Ground Check##veh", &v->groundCheckDistance, 1, 0.05f, 0.0f, 10.0f); L.TipLookup();
+    L.Check("Follow Camera##veh", &v->followCamera); L.TipLookup();
+    if (v->followCamera) {
+        L.Drag("Cam Distance##veh", &v->camDistance, 1, 0.1f, 0.0f, 50.0f); L.TipLookup();
+        L.Drag("Cam Height##veh", &v->camHeight, 1, 0.1f, 0.0f, 50.0f); L.TipLookup();
+        L.Drag("Cam Smoothing##veh", &v->camLerp, 1, 0.1f, 0.0f, 30.0f); L.TipLookup();
+    }
+    L.Separator();
+    L.Check("Raycast Suspension##veh", &v->suspension);
+    L.Tip("Per-wheel down-rays drive a vertical spring (ride height,\nbump absorption) and tilt the chassis when cornering/braking.");
+    if (v->suspension) {
+        L.Drag("Ride Height##veh", &v->rideHeight, 1, 0.05f, 0.05f, 5.0f); L.TipLookup();
+        L.Drag("Spring Strength##veh", &v->springStrength, 1, 1.0f, 1.0f, 400.0f); L.TipLookup();
+        L.Drag("Spring Damping##veh", &v->springDamping, 1, 0.2f, 0.0f, 60.0f); L.TipLookup();
+        L.Drag("Suspension Travel##veh", &v->suspensionTravel, 1, 0.05f, 0.0f, 5.0f); L.TipLookup();
+        L.Drag("Wheel Base##veh", &v->wheelBase, 1, 0.1f, 0.2f, 12.0f); L.TipLookup();
+        L.Drag("Track Width##veh", &v->trackWidth, 1, 0.1f, 0.2f, 8.0f); L.TipLookup();
+        L.Drag("Body Lean##veh", &v->bodyLean, 1, 0.05f, 0.0f, 4.0f); L.Tip("Chassis lean from accel/cornering. 0 = no dynamic lean.");
+        L.Drag("Max Tilt##veh", &v->maxTilt, 1, 0.5f, 0.0f, 45.0f, "%.0f deg"); L.TipLookup();
+        L.Drag("Tilt Smoothing##veh", &v->tiltSmooth, 1, 0.2f, 0.0f, 30.0f); L.TipLookup();
+    }
+    L.Separator();
+    L.Note("Drive: W/S or arrows = gas/reverse, A/D = steer, Space = handbrake. Needs a Rigidbody3D + collider.", false, true);
+    const int kRemove = L.SmallButton("Remove##veh");
+    if (!DrawRowsOkayUI(v, "##okayui_vehicle", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = v;
+    return true;
+}
+
+static bool DrawJoint3DWithOkayUI(EditorState& ed, Joint3D* jt, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kModes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)", "Slider (prismatic)",
+                                         "Ball", "Cone Twist (ragdoll)"};
+    InspFieldList L;
+    L.rows.reserve(40);
+    L.Note("Constrains this body to an anchor or another body.", false, true);
+    L.Combo("Mode##jt", &jt->mode, kModes, 7);
+    L.Text("Connected Body##jt", &jt->connectedBody);
+    L.Tip("Name of another object with a Rigidbody3D. Leave blank to anchor to a fixed world point below.");
+    float a[3] = {jt->anchor.x, jt->anchor.y, jt->anchor.z}, ax[3] = {jt->axis.x, jt->axis.y, jt->axis.z};
+    float dt3[3] = {jt->driveTarget.x, jt->driveTarget.y, jt->driveTarget.z};
+    int kAnchor = -1, kAxis = -1, kDrive = -1;
+    const bool ball = jt->mode == (int)Joint3D::Mode::Ball, cone = jt->mode == (int)Joint3D::Mode::ConeTwist;
+    if (jt->connectedBody.empty() || ball || cone) {
+        kAnchor = L.Drag("Anchor##jt", a, 3, 0.1f);
+        if (ball || cone) L.Tip("The world point the joint turns about (taken when Play starts).");
+        else L.TipLookup();
+    }
+    const bool hinge = jt->mode == (int)Joint3D::Mode::Hinge, slider = jt->mode == (int)Joint3D::Mode::Slider;
+    if (ball || cone) {
+        L.Note("Turns about the anchor; a powered joint for ragdolls with Use Drive. Needs Freeze Rotation OFF.", false, true);
+        if (cone) {
+            kAxis = L.Drag("Twist Axis##jtc", ax, 3, 0.05f); L.Tip("The bone's long axis (world space, taken when Play starts).");
+            L.Drag("Swing Limit 1 (deg)##jtc", &jt->swingLimit1, 1, 1.0f, 0.0f, 180.0f); L.TipLookup();
+            L.Drag("Swing Limit 2 (deg)##jtc", &jt->swingLimit2, 1, 1.0f, 0.0f, 180.0f); L.TipLookup();
+            L.Check("Limit Twist##jtc", &jt->useLimits);
+            if (jt->useLimits) {
+                L.Drag("Min Twist (deg)##jtc", &jt->minAngle, 1, 1.0f, -180.0f, 180.0f);
+                L.Drag("Max Twist (deg)##jtc", &jt->maxAngle, 1, 1.0f, -180.0f, 180.0f);
+            }
+        }
+        L.Check("Use Drive##jtc", &jt->useDrive); L.TipLookup();
+        if (jt->useDrive) {
+            kDrive = L.Drag("Drive Target (deg)##jtc", dt3, 3, 1.0f);
+            L.Tip("The turn to hold, from the start pose, in degrees (x = twist). Scripts change it every frame for an active ragdoll.");
+            L.Drag("Drive Frequency (Hz)##jtc", &jt->driveFrequency, 1, 0.1f, 0.0f, 60.0f); L.TipLookup();
+            L.Drag("Drive Damping Ratio##jtc", &jt->driveDampingRatio, 1, 0.05f, 0.0f, 10.0f); L.TipLookup();
+            if (jt->driveFrequency <= 0.0f) {
+                L.Drag("Drive Stiffness##jtc", &jt->driveStiffness, 1, 1.0f, 0.0f, 1e6f); L.TipLookup();
+                L.Drag("Drive Damping##jtc", &jt->driveDamping, 1, 0.1f, 0.0f, 1e5f); L.TipLookup();
+            }
+            L.Drag("Drive Max Torque##jtc", &jt->driveMaxTorque, 1, 1.0f, 0.0f, 1e6f); L.TipLookup();
+        }
+    }
+    if (jt->mode != (int)Joint3D::Mode::Pin && !hinge && !slider && !ball && !cone) {
+        L.Check("Auto distance##jt", &jt->autoConfigure);
+        if (!jt->autoConfigure) L.Drag("Distance##jt", &jt->distance, 1, 0.05f, 0.0f, 1000.0f);
+    }
+    if (jt->mode == (int)Joint3D::Mode::Spring) {
+        L.Drag("Spring##jt", &jt->spring, 1, 0.5f, 0.0f, 5000.0f);
+        L.Drag("Damper##jt", &jt->damper, 1, 0.1f, 0.0f, 500.0f);
+    }
+    if (hinge) {
+        L.Note("Pins a point, spins about the axis. Needs Freeze Rotation OFF.", false, true);
+        kAxis = L.Drag("Axis##jt", ax, 3, 0.05f); L.TipLookup();
+        L.Check("Use Motor##jt", &jt->useMotor); L.TipLookup();
+        if (jt->useMotor) {
+            L.Drag("Motor Speed (deg/s)##jt", &jt->motorSpeed, 1, 1.0f);
+            L.Drag("Max Motor Torque##jt", &jt->maxMotorTorque, 1, 1.0f, 0.0f, 100000.0f);
+        }
+        L.Check("Use Limits##jt", &jt->useLimits); L.TipLookup();
+        if (jt->useLimits) {
+            L.Drag("Min Angle##jt", &jt->minAngle, 1, 1.0f, -360.0f, 360.0f); L.TipLookup();
+            L.Drag("Max Angle##jt", &jt->maxAngle, 1, 1.0f, -360.0f, 360.0f); L.TipLookup();
+        }
+    }
+    if (slider) {
+        L.Note("Slides along the axis only and cannot turn (a drawer, a lift, a piston).", false, true);
+        kAxis = L.Drag("Axis##jtsl", ax, 3, 0.05f); L.Tip("The direction it slides in (world space, taken when Play starts).");
+        L.Check("Use Limits##jtsl", &jt->useLimits);
+        if (jt->useLimits) {
+            L.Drag("Min Travel (m)##jtsl", &jt->minAngle, 1, 0.05f, -1000.0f, 1000.0f);
+            L.Drag("Max Travel (m)##jtsl", &jt->maxAngle, 1, 0.05f, -1000.0f, 1000.0f); L.Tip("How far it may slide from where it starts, in metres.");
+        }
+        L.Check("Use Motor##jtsl", &jt->useMotor);
+        if (jt->useMotor) {
+            L.Drag("Motor Speed (m/s)##jtsl", &jt->motorSpeed, 1, 0.05f);
+            L.Drag("Max Motor Force##jtsl", &jt->maxMotorTorque, 1, 1.0f, 0.0f, 100000.0f);
+        }
+    }
+    L.Check("Breakable##jt", &jt->breakable);
+    if (jt->breakable) L.Drag("Break at (stretch)##jt", &jt->breakForce, 1, 0.1f, 0.0f, 1000.0f);
+    const int kRemove = L.SmallButton("Remove##jt");
+    if (!DrawRowsOkayUI(jt, "##okayui_joint3d", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (kAnchor >= 0 && L[kAnchor].changed) jt->anchor = {a[0], a[1], a[2]};
+    if (kAxis >= 0 && L[kAxis].changed) jt->axis = {ax[0], ax[1], ax[2]};
+    if (kDrive >= 0 && L[kDrive].changed) jt->driveTarget = {dt3[0], dt3[1], dt3[2]};
+    if (L[kRemove].clicked) toRemove = jt;
+    return true;
+}
+
+static bool DrawWorldSpaceUIWithOkayUI(EditorState& ed, WorldSpaceUI* w3, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(8);
+    L.Drag("Pixels / Unit##w3", &w3->pixelsPerUnit, 1, 1.0f, 1.0f, 4000.0f, "%.0f"); L.Tip("Design pixels per world unit (smaller = bigger in-world).");
+    L.Check("Billboard (face camera)##w3", &w3->billboard); L.TipLookup();
+    L.Check("Constant size (don't resize with distance)##w3", &w3->constantSize);
+    L.Tip("Keep a fixed on-screen size no matter how near/far the camera is.\nThe widget still moves in 3D, it just never shrinks or grows.");
+    if (w3->constantSize) {
+        L.Drag("Size Scale##w3", &w3->constantScale, 1, 0.01f, 0.05f, 20.0f, "%.2f"); L.Tip("Multiplier on the fixed size (1.0 = authored design pixels).");
+    }
+    L.Note("This UI widget renders in the 3D world at this object's position. Move it with the transform gizmo.", false, true);
+    const int kRemove = L.SmallButton("Remove##w3");
+    if (!DrawRowsOkayUI(w3, "##okayui_worldspaceui", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = w3;
+    return true;
+}
+
+// ---- The Inspector's OkayUI parts, stage 9 (docs/own_ui_toolkit.md section 22) --------------------------------------------------------
+// The simple field-list bodies: each builder below lists the rows its Dear ImGui body in DrawInspector draws, in the same order, with the
+// same labels, ranges, formats, tooltips and conditions (a row that Dear ImGui draws only when a value is set is built only then), and
+// does after the frame what the Dear ImGui code does after that widget (an enum written back from its list, a button's action, Remove).
+// They were first drafted from the Dear ImGui bodies by a small converter of our own (it knows one Dear ImGui call per row kind and
+// refuses a body with anything else) and then read and corrected by hand; the pictures of both versions were compared in the real
+// editor (section 22.5).
+
+// Network Sync, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawNetworkSyncWithOkayUI(EditorState& ed, NetworkSync* ns, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(12);
+    int ai = (int)ns->authority;
+    int k1 = -1;
+    L.Note("Replicates this object's position + rotation to every peer. Needs a Network Manager in the scene.", false, true);
+    L.Text("Net Id##ns", &ns->netId);
+    L.Tip("Must match the same object on every peer (blank = use the object's name).");
+    static const char* const auth[] = {"Host (server drives it)", "Mine (this peer drives it)", "Manual (use Owned)"};
+    k1 = L.Combo("Authority##ns", &ai, auth, 3);
+    L.TipLookup();
+    if (ns->authority == NetworkSync::Authority::Manual) {
+        L.Check("Owned (this peer broadcasts)##ns", &ns->owned);
+        L.TipLookup();
+    }
+    L.Check("Sync animation##ns", &ns->syncAnimation);
+    L.Tip("If this object (or a child) has a Character, replicate its animation + punches too.");
+    L.Check("Players can claim it##ns", &ns->clientClaimable);
+    L.Tip("With an Anti-Cheat Config, an object nobody owns is the host's: no player may move it or change its variables. Tick this for objects any player may grab (a ball): the first one to move it owns it.");
+    if (ns->authority == NetworkSync::Authority::Manual && !ns->clientClaimable) {
+        L.Note("Anti-cheat on: players can't move this or write its variables until \"Players can claim it\" is on.", false, true);
+    }
+    const int kRemove = L.SmallButton("Remove##ns");
+    if (!DrawRowsOkayUI(ns, "##okayui_networksync", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (k1 >= 0 && L[k1].changed) { ns->authority = (NetworkSync::Authority)ai; }
+    if (L[kRemove].clicked) toRemove = ns;
+    return true;
+}
+
+// Network Player Spawner, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawNetworkPlayerSpawnerWithOkayUI(EditorState& ed, NetworkPlayerSpawner* ps, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(11);
+    L.Note("Spawns a player copy for you (driveable) and for each peer\n" "(stripped to a moving/animating avatar). Needs a Network Manager.", false, true);
+    L.Text("Template object##nps", &ps->playerTemplate);
+    L.Tip("Name of an INACTIVE object in the scene to clone for each player.");
+    L.Text("Prefab file##nps", &ps->prefabFile);
+    L.Tip("Optional .okayprefab to spawn instead of the template (takes priority).");
+    L.Drag("Spawn point##nps", &ps->spawnPoint.x, 3, 0.1f);
+    L.TipLookup();
+    L.Drag("Spawn spread##nps", &ps->spawnSpread, 1, 0.1f, 0.0f, 50.0f);
+    L.Tip("Stagger remote players so they don't spawn on top of each other.");
+    L.Check("Spawn local player##nps", &ps->spawnLocalPlayer);
+    L.TipLookup();
+    const int kRemove = L.SmallButton("Remove##nps");
+    if (!DrawRowsOkayUI(ps, "##okayui_networkplayerspawner", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = ps;
+    return true;
+}
+
+// Net Validator, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawNetValidatorWithOkayUI(EditorState& ed, NetValidator* nv, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(13);
+    L.Note("A rule a client's RPC must pass on the server (needs an Anti-Cheat Config).", false, true);
+    L.Text("RPC name##nv", &nv->rpc);
+    L.Tip("The RPC this rule covers; * = every RPC.");
+    L.DragInt("Max bytes##nv", &nv->maxBytes, 1.0f, 0, 65536);
+    L.Tip("Longest payload a client may send (0 = any).");
+    L.Drag("Calls/s##nv", &nv->maxPerSecond, 1, 0.1f, 0.0f, 1000.0f, "%.1f");
+    L.Tip("Most calls per second per client (0 = any).");
+    L.Drag("Cooldown##nv", &nv->cooldown, 1, 0.01f, 0.0f, 60.0f, "%.2f s");
+    L.Tip("Seconds a client must wait between calls: a fire rate (0 = none).");
+    L.Drag("Budget##nv", &nv->budget, 1, 0.1f, 0.0f, 100000.0f, "%.0f");
+    L.Tip("Calls a client can bank, each call spends one: ammo (0 = no budget). Top it up with Server Budget / net_budget.");
+    L.Drag("Refill/s##nv", &nv->refillPerSecond, 1, 0.05f, 0.0f, 10000.0f, "%.2f");
+    L.Tip("Budget regained per second (0 = only a top-up refills it).");
+    L.Check("Clients may send##nv", &nv->clientsMaySend);
+    L.Tip("Off = only the host may call this RPC.");
+    const int kRemove = L.SmallButton("Remove##nv");
+    if (!DrawRowsOkayUI(nv, "##okayui_netvalidator", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = nv;
+    return true;
+}
+
+// Save Settings, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawSaveConfigWithOkayUI(EditorState& ed, SaveConfig* ss, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(9);
+    L.Note("When this scene saves by itself. One per scene.", false, true);
+    L.Drag("Autosave every (s)##ss", &ss->autosaveInterval, 1, 1.0f, 0.0f, 7200.0f, "%.0f");
+    L.Tip("Seconds of play between autosaves (0 = off).");
+    L.Check("Autosave when the scene starts##ss", &ss->autosaveOnSceneStart);
+    L.Tip("One autosave on entering this scene (not while a load is putting a save back).");
+    L.DragInt("Autosave slots##ss", &ss->autosaveSlots, 0.2f, 1, 20);
+    L.Tip("autosave_1 ... autosave_N; the oldest is replaced first. Continue loads the newest save of any kind.");
+    const int kRemove = L.SmallButton("Remove##ss");
+    if (!DrawRowsOkayUI(ss, "##okayui_saveconfig", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = ss;
+    return true;
+}
+
+// World Streamer, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawWorldStreamerWithOkayUI(EditorState& ed, WorldStreamer* ws, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(16);
+    L.Note("Streams cell prefabs in/out around the target (World Partition).", false, true);
+    L.Drag("Cell Size##ws", &ws->cellSize, 1, 1.0f, 1.0f, 5000.0f);
+    L.Tip("World units per chunk edge (XZ).");
+    L.DragInt("Load Radius##ws", &ws->loadRadius, 0.1f, 0, 32);
+    L.TipLookup();
+    L.DragInt("Unload Radius##ws", &ws->unloadRadius, 0.1f, 0, 64);
+    L.TipLookup();
+    if (ws->unloadRadius < ws->loadRadius) {
+        L.ColorText(RowCol(0.95f, 0.7f, 0.3f), "Unload < Load: set Unload >= Load for hysteresis.");
+    }
+    L.Text("Folder##ws", &ws->folder);
+    L.TipLookup();
+    L.Text("Prefix##ws", &ws->prefix);
+    L.TipLookup();
+    L.Text("Extension##ws", &ws->ext);
+    L.TipLookup();
+    L.Text("Follow Object##ws", &ws->target);
+    L.Tip("Name of the object to follow. Blank = the main camera.");
+    L.Check("Only re-check on cell change##ws", &ws->onlyOnCellChange);
+    { char t_[256]; std::snprintf(t_, sizeof t_, "Cells: %s%s_<x>_<z>%s  |  resident: %d", ws->folder.c_str(), ws->prefix.c_str(), ws->ext.c_str(), (int)ws->LoadedCount());
+      L.Note(t_, true, true); }
+    const int kRemove = L.SmallButton("Remove##ws");
+    if (!DrawRowsOkayUI(ws, "##okayui_worldstreamer", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = ws;
+    return true;
+}
+
+// Destructible (Chaos), written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawDestructibleWithOkayUI(EditorState& ed, Destructible* de, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(23);
+    int bi = (de->breakButton < 0 || de->breakButton > 2) ? 0 : de->breakButton + 1;
+    int k1 = -1;
+    L.Note("Voxel blocks shatter into physics debris; unsupported blocks collapse.", false, true);
+    L.Text("Block Tag##de", &de->blockTag);
+    L.Tip("Only objects with this tag fracture (matches BlockBuilder's Block Tag).");
+    L.Drag("Voxel Size##de", &de->voxelSize, 1, 0.05f, 0.1f, 50.0f);
+    L.TipLookup();
+    L.Section("Fracture");
+    L.SliderInt("Shards / axis##de", &de->fractureChunks, 1, 4);
+    L.Tip("Debris cubes per axis: 2 = 8 shards, 3 = 27, 4 = 64.");
+    L.Drag("Explosion Force##de", &de->explosionForce, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Upward Pop##de", &de->upwardBias, 1, 0.01f, 0.0f, 3.0f);
+    L.TipLookup();
+    L.Drag("Debris Lifetime##de", &de->debrisLifetime, 1, 0.1f, 0.1f, 60.0f);
+    L.TipLookup();
+    L.Drag("Debris Gravity##de", &de->debrisGravityScale, 1, 0.05f, 0.0f, 5.0f);
+    L.TipLookup();
+    L.Drag("Debris Drag##de", &de->debrisDrag, 1, 0.01f, 0.0f, 5.0f);
+    L.TipLookup();
+    L.DragInt("Max Debris##de", &de->maxDebris, 1.0f, 8, 4096);
+    L.TipLookup();
+    L.Section("Structural Collapse");
+    L.Check("Collapse unsupported##de", &de->collapseEnabled);
+    L.Tip("After a break, blocks with no path to the ground fall.");
+    L.Drag("Ground Anchor Y##de", &de->anchorY, 1, 0.05f, -100.0f, 100.0f);
+    L.Tip("Blocks at/below this world Y are anchored (the ground).");
+    L.Section("Destruction Gun (optional)");
+    static const char* const btns[] = {"None", "Left Mouse", "Right Mouse", "Middle Mouse"};
+    k1 = L.Combo("Fire Button##de", &bi, btns, 4);
+    L.TipLookup();
+    if (de->breakButton >= 0) {
+        L.Drag("Blast Radius##de", &de->breakRadius, 1, 0.05f, 0.1f, 20.0f);
+        L.TipLookup();
+        L.Drag("Reach##de", &de->reach, 1, 0.5f, 1.0f, 200.0f);
+        L.TipLookup();
+    }
+    const int kRemove = L.SmallButton("Remove##de");
+    if (!DrawRowsOkayUI(de, "##okayui_destructible", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (k1 >= 0 && L[k1].changed) { de->breakButton = (bi == 0) ? -1 : bi - 1; }
+    if (L[kRemove].clicked) toRemove = de;
+    return true;
+}
+
+// Occluder, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawOccluderWithOkayUI(EditorState& ed, Occluder* occ, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(7);
+    L.Check("Use mesh", &occ->useMesh);
+    L.Tip("On: the real triangles hide what's behind them.\n" "Off: the bounding box does (only for a solid wall).");
+    L.Note("Objects behind this one can be skipped when Occlusion is on (Stats).", false, true);
+    const int kRemove = L.SmallButton("Remove##occ");
+    if (!DrawRowsOkayUI(occ, "##okayui_occluder", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = occ;
+    return true;
+}
+
+// Joint 2D, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawJoint2DWithOkayUI(EditorState& ed, Joint2D* jt, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(22);
+    L.Note("Constrains this 2D body to an anchor or another body.", false, true);
+    static const char* const modes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)"};
+    L.Combo("Mode##jt2", &jt->mode, modes, 4);
+    L.Text("Connected Body##jt2", &jt->connectedBody);
+    L.Tip("Name of another object with a Rigidbody2D. Leave blank to anchor to a fixed world point below.");
+    if (jt->connectedBody.empty()) {
+        L.Drag("Anchor##jt2", &jt->anchor.x, 2, 0.1f);
+        L.TipLookup();
+    }
+    if (jt->mode != (int)Joint2D::Mode::Pin && jt->mode != (int)Joint2D::Mode::Hinge) {
+        L.Check("Auto distance##jt2", &jt->autoConfigure);
+        if (!jt->autoConfigure) {
+            L.Drag("Distance##jt2", &jt->distance, 1, 0.05f, 0.0f, 1000.0f);
+        }
+    }
+    if (jt->mode == (int)Joint2D::Mode::Spring) {
+        L.Drag("Spring##jt2", &jt->spring, 1, 0.5f, 0.0f, 5000.0f);
+        L.Drag("Damper##jt2", &jt->damper, 1, 0.1f, 0.0f, 500.0f);
+    }
+    if (jt->mode == (int)Joint2D::Mode::Hinge) {
+        L.Note("Pins a point, free to spin. Needs Freeze Rotation OFF on the body.", false, true);
+        L.Check("Use Motor##jt2", &jt->useMotor);
+        L.TipLookup();
+        if (jt->useMotor) {
+            L.Drag("Motor Speed (deg/s)##jt2", &jt->motorSpeed, 1, 1.0f);
+            L.Drag("Max Motor Torque##jt2", &jt->maxMotorTorque, 1, 1.0f, 0.0f, 100000.0f);
+        }
+        L.Check("Use Limits##jt2", &jt->useLimits);
+        L.TipLookup();
+        if (jt->useLimits) {
+            L.Drag("Min Angle##jt2", &jt->minAngle, 1, 1.0f, -360.0f, 360.0f);
+            L.Drag("Max Angle##jt2", &jt->maxAngle, 1, 1.0f, -360.0f, 360.0f);
+        }
+    }
+    L.Check("Breakable##jt2", &jt->breakable);
+    if (jt->breakable) {
+        L.Drag("Break at (stretch)##jt2", &jt->breakForce, 1, 0.1f, 0.0f, 1000.0f);
+    }
+    const int kRemove = L.SmallButton("Remove##jt2");
+    if (!DrawRowsOkayUI(jt, "##okayui_joint2d", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = jt;
+    return true;
+}
+
+// IK Target, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawIKTargetWithOkayUI(EditorState& ed, IKTarget* ikt, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(10);
+    int k1 = -1;
+    int limb = ikt->limb;
+    int k2 = -1;
+    L.Note("This object is where a hand, foot, or the head reaches.", false, true);
+    k1 = L.Text("Character##ikt", &ikt->characterName);
+    L.TipLookup();
+    static const char* const limbs[] = {"Left Hand", "Right Hand", "Left Foot", "Right Foot", "Head"};
+    if (limb < 0 || limb > 4) {
+        limb = 0;
+    }
+    k2 = L.Combo("Limb##ikt", &limb, limbs, 5);
+    L.TipLookup();
+    L.Drag("Weight##ikt", &ikt->weight, 1, 0.01f, 0.0f, 1.0f);
+    L.Drag("Blend time##ikt", &ikt->blendTime, 1, 0.01f, 0.0f, 2.0f);
+    L.Tip("Seconds to ease the limb onto this object.");
+    const int kRemove = L.SmallButton("Remove##ikt");
+    if (!DrawRowsOkayUI(ikt, "##okayui_iktarget", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (k1 >= 0 && L[k1].changed) { ikt->character = nullptr; }
+    if (k2 >= 0 && L[k2].changed) { ikt->limb = limb; }
+    if (L[kRemove].clicked) toRemove = ikt;
+    return true;
+}
+
+// Aim Offset, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawAimOffsetWithOkayUI(EditorState& ed, AimOffset* ao, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(18);
+    int k1 = -1;
+    int k2 = -1;
+    L.Note("Pitch and yaw on the spine, chest, and arms. Sits on top of item grips.", false, true);
+    L.Check("Aim with the camera##ao", &ao->useCamera);
+    k1 = L.Text("Target object##ao", &ao->targetName);
+    L.Tip("When set, the body aims at this object instead of the camera.");
+    if (!ao->targetName.empty() && !ed.scene().Find(ao->targetName)) {
+        { char t_[256]; std::snprintf(t_, sizeof t_, "Target object '%s' doesn't match any object.", ao->targetName.c_str());
+          L.ColorText(RowCol(0.95f, 0.6f, 0.35f), t_, true); }
+    }
+    L.Drag("Weight##ao", &ao->weight, 1, 0.01f, 0.0f, 1.0f);
+    L.Drag("Pitch clamp##ao", &ao->pitchClamp, 1, 1.0f, 0.0f, 89.0f);
+    L.Drag("Yaw clamp##ao", &ao->yawClamp, 1, 1.0f, 0.0f, 180.0f);
+    L.Drag("Spine weight##ao", &ao->spineWeight, 1, 0.01f, 0.0f, 1.0f);
+    L.Drag("Chest weight##ao", &ao->chestWeight, 1, 0.01f, 0.0f, 1.0f);
+    L.Drag("Arm weight##ao", &ao->armWeight, 1, 0.01f, 0.0f, 1.0f);
+    L.Drag("Recoil kick##ao", &ao->kick, 1, 0.1f, 0.0f, 45.0f);
+    L.Drag("Recoil recovery##ao", &ao->recovery, 1, 0.1f, 0.0f, 40.0f);
+    k2 = L.SmallButton("Recoil##ao");
+    const int kRemove = L.SmallButton("Remove##ao");
+    if (!DrawRowsOkayUI(ao, "##okayui_aimoffset", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (k1 >= 0 && L[k1].changed) { ao->target = nullptr; }
+    if (k2 >= 0 && L[k2].clicked) { ao->Recoil(1.0f); }
+    if (L[kRemove].clicked) toRemove = ao;
+    return true;
+}
+
+// Vehicle Controller 2D, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawVehicleController2DWithOkayUI(EditorState& ed, VehicleController2D* v2, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(15);
+    L.Check("Side View (platformer)##veh2", &v2->sideView);
+    L.Tip("Off = top-down (steer + drift). On = side-scroller car (A/D drive, gravity on).");
+    L.Drag("Max Speed##veh2", &v2->maxSpeed, 1, 0.5f, 0.0f, 200.0f);
+    L.TipLookup();
+    if (!v2->sideView) {
+        L.Drag("Reverse Speed##veh2", &v2->reverseSpeed, 1, 0.5f, 0.0f, 100.0f);
+    }
+    L.Drag("Acceleration##veh2", &v2->acceleration, 1, 0.5f, 0.5f, 200.0f);
+    L.TipLookup();
+    L.Drag("Brake Force##veh2", &v2->brakeForce, 1, 0.5f, 0.5f, 300.0f);
+    L.TipLookup();
+    L.Drag("Drag (coast)##veh2", &v2->drag, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    if (!v2->sideView) {
+        L.Drag("Turn Speed##veh2", &v2->turnSpeed, 1, 1.0f, 0.0f, 600.0f, "%.0f deg/s");
+        L.TipLookup();
+        L.Drag("Grip##veh2", &v2->grip, 1, 0.1f, 0.0f, 30.0f);
+        L.TipLookup();
+        L.Drag("Handbrake Grip##veh2", &v2->handbrakeGrip, 1, 0.05f, 0.0f, 30.0f);
+        L.TipLookup();
+    }
+    L.Note(v2->sideView ? "A/D drive, Space brake. Needs Rigidbody2D + collider." : "W/S gas, A/D steer, Space handbrake (drift).", false, true);
+    const int kRemove = L.SmallButton("Remove##veh2");
+    if (!DrawRowsOkayUI(v2, "##okayui_vehiclecontroller2d", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = v2;
+    return true;
+}
+
+// Block Builder (voxel), written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawBlockBuilderWithOkayUI(EditorState& ed, BlockBuilder* bb, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(18);
+    L.Note("Look + click to place a cube on a grid; right-click removes it.", false, true);
+    L.Note("Attach to the Player (or its camera) — it ignores your own body.", false, true);
+    L.Drag("Block Size##bb", &bb->blockSize, 1, 0.05f, 0.05f, 50.0f);
+    L.TipLookup();
+    L.Drag("Reach##bb", &bb->reach, 1, 0.25f, 0.5f, 200.0f);
+    L.TipLookup();
+    L.Color("Block Color##bb", &bb->blockColor.r, 4);
+    L.TipLookup();
+    L.Label("Texture", 0, false, false);
+    L.SameLine(-1.0f, 120.0f - ImGui::GetStyle().WindowPadding.x);   // SameLine(120): from the window's left
+    L.Slot("bbtex", &bb->blockTexture, "Texture", "image");
+    L.Text("Block Tag##bb", &bb->blockTag);
+    L.TipLookup();
+    static const char* const btns[] = {"Left", "Right", "Middle"};
+    L.Combo("Place Button##bb", &bb->placeButton, btns, 3);
+    L.TipLookup();
+    L.Combo("Remove Button##bb", &bb->removeButton, btns, 3);
+    L.TipLookup();
+    L.Check("Placement preview##bb", &bb->showPreview);
+    L.Tip("Show a ghost outline of the cell the next block lands in (green = free, red = blocked).");
+    L.SameLine();
+    L.Check("Crosshair##bb", &bb->showCrosshair);
+    L.Tip("Add an aim reticle at screen center on Play (if the scene has none).");
+    L.Check("Place in mid-air##bb", &bb->placeInAir);
+    L.Tip("Off (Minecraft-style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
+    const int kRemove = L.SmallButton("Remove##bb");
+    if (!DrawRowsOkayUI(bb, "##okayui_blockbuilder", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = bb;
+    return true;
+}
+
+// Builder Mode (in-game), written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawBuilderModeWithOkayUI(EditorState& ed, BuilderMode* bm, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(30);
+    int br = (int)bm->brush;
+    int k1 = -1;
+    float sr[2] = {bm->minScale, bm->maxScale};
+    int k2 = -1;
+    L.Note("Walk + aim: click places the brush, right-click removes it.", false, true);
+    L.Note("R rotate, +/- scale, G grab a piece, P save the model as a prefab.", false, true);
+    L.Note("Attach to the Player (or its camera) — it ignores your own body.", false, true);
+    static const char* const brushes[] = {"Cube", "Sphere", "Cylinder", "Cone", "Wedge", "Pyramid", "Plane", "Capsule", "Torus", "Prefab"};
+    k1 = L.Combo("Brush##bm", &br, brushes, BuilderMode::kBrushCount);
+    L.TipLookup();
+    L.Check("Snap to grid##bm", &bm->snapToGrid);
+    L.TipLookup();
+    L.SameLine();
+    L.Drag("Grid##bm", &bm->gridSize, 1, 0.05f, 0.0f, 50.0f);
+    L.TipLookup();
+    L.Drag("Reach##bm", &bm->reach, 1, 0.25f, 0.5f, 200.0f);
+    L.TipLookup();
+    L.Drag("Rotate Step (deg)##bm", &bm->rotateStepDeg, 1, 1.0f, 1.0f, 180.0f);
+    L.TipLookup();
+    L.Drag("Scale Step##bm", &bm->scaleStep, 1, 0.01f, 0.01f, 5.0f);
+    L.TipLookup();
+    k2 = L.Drag("Scale Min/Max##bm", sr, 2, 0.05f, 0.01f, 100.0f);
+    L.TipLookup();
+    L.Color("Part Color##bm", &bm->partColor.r, 4);
+    L.TipLookup();
+    L.Label("Texture", 0, false, false);
+    L.SameLine(-1.0f, 120.0f - ImGui::GetStyle().WindowPadding.x);   // SameLine(120): from the window's left
+    L.Slot("bmtex", &bm->partTexture, "Texture", "image");
+    L.Text("Build Tag##bm", &bm->buildTag);
+    L.TipLookup();
+    L.Tree("Model / Prefab##bm");
+    L.Last().on = true;
+    L.Check("Parent parts under one model root##bm", &bm->parentToModel);
+    L.Tip("On: pieces hang under one root so Save (P) writes them as a single prefab.\nOff: pieces drop straight into the world (map building).");
+    L.Text("Model Name##bm", &bm->modelName);
+    L.TipLookup();
+    L.Label("Prefab", 0, false, false);
+    L.SameLine(-1.0f, 120.0f - ImGui::GetStyle().WindowPadding.x);   // SameLine(120): from the window's left
+    L.Slot("bmprefab", &bm->prefabPath, "Prefab", "prefab");
+    L.Tip("The Prefab brush stamps this file; Save (P) writes the model here if set.");
+    L.Text("Map file##bm", &bm->mapPath, "built_map.okayscene");
+    L.Tip("Save Map (O key, also in Play) writes the WHOLE scene here so a map you build in-game persists.");
+    L.TreeEnd();
+    L.Note("Play controls: click place / right-click remove / R rotate / +- scale / G grab / P save model / O save map", false, true);
+    L.Check("Brush hotkeys (1-9)##bm", &bm->brushHotkeys);
+    L.TipLookup();
+    L.Check("Placement preview##bm", &bm->showPreview);
+    L.TipLookup();
+    L.SameLine();
+    L.Check("Crosshair##bm", &bm->showCrosshair);
+    L.TipLookup();
+    const int kRemove = L.SmallButton("Remove##bm");
+    if (!DrawRowsOkayUI(bm, "##okayui_buildermode", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (k1 >= 0 && L[k1].changed) { bm->brush = (BuilderMode::Brush)br; }
+    if (k2 >= 0 && L[k2].changed) { bm->minScale = sr[0]; bm->maxScale = sr[1]; }
+    if (L[kRemove].clicked) toRemove = bm;
+    return true;
+}
+
+// Build Piece, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawBuildPieceWithOkayUI(EditorState& ed, BuildPiece* bp, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(11);
+    int t = bp->tier < 0 ? 0 : (bp->tier > 2 ? 2 : bp->tier);
+    int k1 = -1;
+    static const char* const tiers[] = {"Wood", "Stone", "Metal"};
+    k1 = L.Combo("Tier##bp", &t, tiers, 3);
+    L.TipLookup();
+    L.Drag("Health##bp", &bp->health, 1, 1.0f, 0.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Max Health##bp", &bp->maxHealth, 1, 1.0f, 1.0f, 100000.0f);
+    L.TipLookup();
+    { const float pf_ = bp->maxHealth > 0 ? bp->health / bp->maxHealth : 0.0f; char pt_[16]; std::snprintf(pt_, sizeof pt_, "%.0f%%", pf_ * 100.0f);
+      L.Progress(pt_, pf_, true); }
+    L.Text("Material##bp", &bp->material);
+    L.TipLookup();
+    L.DragInt("Cost##bp", &bp->cost, 0.2f, 0, 9999);
+    L.TipLookup();
+    const int kRemove = L.SmallButton("Remove##bp");
+    if (!DrawRowsOkayUI(bp, "##okayui_buildpiece", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (k1 >= 0 && L[k1].changed) { bp->tier = t; }
+    if (L[kRemove].clicked) toRemove = bp;
+    return true;
+}
+
+// Buildable, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawBuildableWithOkayUI(EditorState& ed, Buildable* bl, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(11);
+    int k1 = -1;
+    L.Note("Players may edit this in build mode. Put one on every palette prefab", false, true);
+    L.Note("and on level props players are allowed to rearrange.", false, true);
+    L.Check("Players can edit##bl", &bl->editable);
+    L.TipLookup();
+    { char t_[256]; std::snprintf(t_, sizeof t_, "Build id: %d", bl->buildId);
+      L.Label(t_, 0, false, true); }
+    L.SameLine();
+    k1 = L.SmallButton("New id##bl");
+    L.Tip("Logic links and saved creations find objects by this id.");
+    if (bl->placed) {
+        L.Note("Placed by a player (saved with creations)", false, true);
+    }
+    const int kRemove = L.SmallButton("Remove##bl");
+    if (!DrawRowsOkayUI(bl, "##okayui_buildable", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (k1 >= 0 && L[k1].clicked) { bl->buildId = Buildable::MaxId(ed.scene()) + 1; }
+    if (L[kRemove].clicked) toRemove = bl;
+    return true;
+}
+
+// Net Inventory, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawNetInventoryWithOkayUI(EditorState& ed, NetInventory* ni, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(12);
+    L.Note("Host owns this bag or chest. Clients send requests; they don't write the contents.", false, true);
+    L.Drag("Range##ni", &ni->range, 1, 0.1f, 0.0f, 100.0f);
+    L.Tip("How close someone must be to take from a chest (0 = any distance).");
+    L.DragInt("Requests / sec##ni", &ni->maxPerSecond, 0.2f, 0, 200);
+    L.TipLookup();
+    L.DragInt("Cheat threshold##ni", &ni->cheatThreshold, 0.1f, 1, 100);
+    L.Tip("Invalid requests before On Cheat Detected, with detail \"inventory\".");
+    L.DragInt("Max request bytes##ni", &ni->maxRequestBytes, 1.0f, 32, 4096);
+    L.TipLookup();
+    L.Check("Hide until opened##ni", &ni->hideUntilOpen);
+    L.TipLookup();
+    L.Text("Host save folder##ni", &ni->saveDir);
+    L.Tip("Optional folder for the host's copy of a signed-in player's bag. Empty = memory only, until the host quits.");
+    const int kRemove = L.SmallButton("Remove##ni");
+    if (!DrawRowsOkayUI(ni, "##okayui_netinventory", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = ni;
+    return true;
+}
+
+// Stat: Health, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawHealthStatWithOkayUI(EditorState& ed, HealthStat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(35);
+    { const float fr_ = c->maxHealth > 0.0f ? Mathf::Clamp01(c->health / c->maxHealth) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->health, c->maxHealth); L.Progress(ov_, fr_, true); }
+    L.Drag("Current##cursth", &c->health, 1, 0.5f, 0.0f, 1e9f, "%.1f");
+    L.Drag("Max Health##sth", &c->maxHealth, 1, 1.0f, 1.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Armor##sth", &c->armor, 1, 0.1f, 0.0f, 1000.0f);
+    L.TipLookup();
+    L.Drag("Regen / s##sth", &c->regenPerSecond, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Regen Delay##sth", &c->regenDelay, 1, 0.1f, 0.0f, 60.0f, "%.1f s");
+    L.TipLookup();
+    L.Drag("Low Threshold##sth", &c->lowThreshold, 1, 1.0f, 0.0f, 100000.0f);
+    L.TipLookup();
+    L.Tree("Mitigation##sth");
+    L.Slider("Resistance##sth", &c->resistance, 0.0f, 1.0f);
+    L.Tip("Fraction of post-armor damage ignored.");
+    L.Drag("Min Damage##sth", &c->minDamage, 1, 0.1f, 0.0f, 1000.0f);
+    L.TipLookup();
+    L.Drag("I-Frames##sth", &c->invincibleTime, 1, 0.05f, 0.0f, 10.0f, "%.2f s");
+    L.TipLookup();
+    L.Check("God Mode##sth", &c->godMode);
+    L.TipLookup();
+    L.TreeEnd();
+    L.Tree("Overheal##sth");
+    L.Drag("Overheal Max##sth", &c->overhealMax, 1, 1.0f, 0.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Overheal Decay / s##sth", &c->overhealDecay, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.TreeEnd();
+    L.Tree("Death / Respawn##sth");
+    L.Check("Play Death Anim##sth", &c->playDeathAnim);
+    L.TipLookup();
+    L.Check("Play Hit Anim##sth", &c->playHitAnim);
+    L.Tip("Off by default. When on, Damage that knows where the hit came from\n" "plays a light upper-body flinch. Heavy stumbles are hit_react(dir, true).");
+    L.Tip("On death, play Death in the direction of the last hit and keep the\n" "body active until it settles, then shrink the capsule to crouch height.");
+    L.Check("Destroy on Death##sth", &c->destroyOnDeath);
+    L.TipLookup();
+    L.Check("Respawn##sth", &c->respawn);
+    L.TipLookup();
+    if (c->respawn) {
+        L.Drag("Respawn Delay##sth", &c->respawnDelay, 1, 0.1f, 0.0f, 60.0f, "%.1f s");
+        L.TipLookup();
+        L.DragInt("Lives (0=inf)##sth", &c->lives, 0.1f, 0, 999);
+        L.TipLookup();
+    }
+    L.TreeEnd();
+    L.Tree("Output##sth");
+    L.Check("Saved value##sth", &c->publishPrefs);
+    L.Check("Fill *Bar##sth", &c->publishBar);
+    L.Check("Broadcast msg##sth", &c->sendMessages);
+    L.TreeEnd();
+    L.Note("Methods: Damage, Heal, AddArmor, Revive, SetGodMode.", false, true);
+    const int kRemove = L.SmallButton("Remove##sth");
+    if (!DrawRowsOkayUI(c, "##okayui_healthstat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Seat, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawSeatWithOkayUI(EditorState& ed, Seat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(13);
+    int kind = c->type;
+    int k1 = -1;
+    L.Drag("Height##seat", &c->seatHeight, 1, 0.01f, 0.0f, 2.0f, "%.2f m");
+    L.Tip("The chair clips are baked for 0.45 m. This moves the body onto the seat.");
+    L.Drag("Sit Point##seat", &c->sitPoint.x, 3, 0.01f);
+    L.TipLookup();
+    L.Drag("Facing##seat", &c->facing, 1, 1.0f, -180.0f, 180.0f, "%.0f deg");
+    L.TipLookup();
+    static const char* const kinds[] = {"Chair", "Ground", "Bench"};
+    if (kind < 0 || kind > 2) {
+        kind = 0;
+    }
+    k1 = L.Combo("Type##seat", &kind, kinds, 3);
+    L.Tip("Bench uses the chair clips. Ground uses the cross-legged sit.");
+    L.Drag("Exit Point##seat", &c->exitPoint.x, 3, 0.01f);
+    L.TipLookup();
+    L.Drag("Use Radius##seat", &c->useRadius, 1, 0.05f, 0.1f, 10.0f);
+    L.TipLookup();
+    L.Text("Prompt##seat", &c->prompt);
+    L.TipLookup();
+    if (c->occupied) {
+        L.Note("Occupied", false, true);
+    }
+    const int kRemove = L.SmallButton("Remove##seat");
+    if (!DrawRowsOkayUI(c, "##okayui_seat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (k1 >= 0 && L[k1].changed) { c->type = kind; }
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Stat: Hunger, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawHungerStatWithOkayUI(EditorState& ed, HungerStat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(20);
+    { const float fr_ = c->maxHunger > 0.0f ? Mathf::Clamp01(c->hunger / c->maxHunger) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->hunger, c->maxHunger); L.Progress(ov_, fr_, true); }
+    L.Drag("Current##cursthu", &c->hunger, 1, 0.5f, 0.0f, 1e9f, "%.1f");
+    L.Drag("Max##sthu", &c->maxHunger, 1, 1.0f, 1.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Drain / s##sthu", &c->drainPerSecond, 1, 0.05f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Sprint x##sthu", &c->sprintMultiplier, 1, 0.1f, 0.0f, 10.0f);
+    L.TipLookup();
+    L.Drag("Low Threshold##sthu", &c->lowThreshold, 1, 1.0f, 0.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Starve Damage / s##sthu", &c->starveDamage, 1, 0.1f, 0.0f, 100.0f);
+    L.Tip("HP/s drained from a sibling Stat: Health while empty (0 = off).");
+    L.Drag("Overeat Max##sthu", &c->overeatMax, 1, 1.0f, 0.0f, 100000.0f);
+    L.Tip("Eat can stack this far past full (a saturation buffer that bleeds off).");
+    L.Check("Slow When Starving##sthu", &c->slowWhenStarving);
+    L.TipLookup();
+    if (c->slowWhenStarving) {
+        L.Slider("Min Speed##sthu", &c->minSpeedFactor, 0.0f, 1.0f);
+        L.TipLookup();
+    }
+    L.Tree("Output##sthu");
+    L.Check("Saved value##sthu", &c->publishPrefs);
+    L.Check("Fill *Bar##sthu", &c->publishBar);
+    L.Check("Broadcast msg##sthu", &c->sendMessages);
+    L.TreeEnd();
+    L.Note("Methods: Eat, SetSprinting, SetDrainScale, SpeedFactor().", false, true);
+    const int kRemove = L.SmallButton("Remove##sthu");
+    if (!DrawRowsOkayUI(c, "##okayui_hungerstat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Stat: Thirst, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawThirstStatWithOkayUI(EditorState& ed, ThirstStat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(20);
+    { const float fr_ = c->maxThirst > 0.0f ? Mathf::Clamp01(c->thirst / c->maxThirst) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->thirst, c->maxThirst); L.Progress(ov_, fr_, true); }
+    L.Drag("Current##curstt", &c->thirst, 1, 0.5f, 0.0f, 1e9f, "%.1f");
+    L.Drag("Max##stt", &c->maxThirst, 1, 1.0f, 1.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Drain / s##stt", &c->drainPerSecond, 1, 0.05f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Sprint x##stt", &c->sprintMultiplier, 1, 0.1f, 0.0f, 10.0f);
+    L.TipLookup();
+    L.Drag("Low Threshold##stt", &c->lowThreshold, 1, 1.0f, 0.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Dehydrate Dmg / s##stt", &c->dehydrateDamage, 1, 0.1f, 0.0f, 100.0f);
+    L.Tip("HP/s to a sibling Stat: Health while empty (0 = off).");
+    L.Drag("Overdrink Max##stt", &c->overdrinkMax, 1, 1.0f, 0.0f, 100000.0f);
+    L.TipLookup();
+    L.Check("Slow When Dehydrated##stt", &c->slowWhenDehydrated);
+    L.TipLookup();
+    if (c->slowWhenDehydrated) {
+        L.Slider("Min Speed##stt", &c->minSpeedFactor, 0.0f, 1.0f);
+    }
+    L.Tree("Output##stt");
+    L.Check("Saved value##stt", &c->publishPrefs);
+    L.Check("Fill *Bar##stt", &c->publishBar);
+    L.Check("Broadcast msg##stt", &c->sendMessages);
+    L.TreeEnd();
+    L.Note("Methods: Drink, SetSprinting, SetDrainScale, SpeedFactor().", false, true);
+    const int kRemove = L.SmallButton("Remove##stt");
+    if (!DrawRowsOkayUI(c, "##okayui_thirststat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Stat: Stamina, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawStaminaStatWithOkayUI(EditorState& ed, StaminaStat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(22);
+    { const float fr_ = c->maxStamina > 0.0f ? Mathf::Clamp01(c->stamina / c->maxStamina) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->stamina, c->maxStamina); L.Progress(ov_, fr_, true); }
+    L.Drag("Current##cursts", &c->stamina, 1, 0.5f, 0.0f, 1e9f, "%.1f");
+    L.Drag("Max##sts", &c->maxStamina, 1, 1.0f, 1.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Regen / s##sts", &c->regenPerSecond, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Regen Delay##sts", &c->regenDelay, 1, 0.1f, 0.0f, 60.0f, "%.1f s");
+    L.TipLookup();
+    L.Drag("Sprint Cost / s##sts", &c->sprintCost, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Jump Cost##sts", &c->jumpCost, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Recover Until##sts", &c->exhaustedUntil, 1, 1.0f, 0.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Regen Scale##sts", &c->regenScale, 1, 0.05f, 0.0f, 10.0f);
+    L.TipLookup();
+    L.Drag("Low Threshold##sts", &c->lowThreshold, 1, 1.0f, 0.0f, 100000.0f);
+    L.TipLookup();
+    L.Check("Slow When Exhausted##sts", &c->slowWhenExhausted);
+    L.TipLookup();
+    if (c->slowWhenExhausted) {
+        L.Slider("Min Speed##sts", &c->minSpeedFactor, 0.0f, 1.0f);
+    }
+    L.Tree("Output##sts");
+    L.Check("Saved value##sts", &c->publishPrefs);
+    L.Check("Fill *Bar##sts", &c->publishBar);
+    L.Check("Broadcast msg##sts", &c->sendMessages);
+    L.TreeEnd();
+    L.Note("Methods: TryJump, SetSprinting, CanSprint, SetDrainScale, SpeedFactor().", false, true);
+    const int kRemove = L.SmallButton("Remove##sts");
+    if (!DrawRowsOkayUI(c, "##okayui_staminastat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Stat: Oxygen, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawOxygenStatWithOkayUI(EditorState& ed, OxygenStat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(17);
+    { const float fr_ = c->maxOxygen > 0.0f ? Mathf::Clamp01(c->oxygen / c->maxOxygen) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->oxygen, c->maxOxygen); L.Progress(ov_, fr_, true); }
+    L.Drag("Current##cursto", &c->oxygen, 1, 0.5f, 0.0f, 1e9f, "%.1f");
+    L.Drag("Max##sto", &c->maxOxygen, 1, 1.0f, 1.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Drain / s##sto", &c->drainPerSecond, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Refill / s##sto", &c->refillPerSecond, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Low Threshold##sto", &c->lowThreshold, 1, 1.0f, 0.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Drown Dmg / s##sto", &c->drownDamage, 1, 0.1f, 0.0f, 100.0f);
+    L.Tip("HP/s to a sibling Stat: Health while out of air (0 = off).");
+    L.Tree("Output##sto");
+    L.Check("Saved value##sto", &c->publishPrefs);
+    L.Check("Fill *Bar##sto", &c->publishBar);
+    L.Check("Broadcast msg##sto", &c->sendMessages);
+    L.TreeEnd();
+    L.Note("Methods: Breathe, SetSubmerged, SetDrainScale. Empty -> 'drowning'.", false, true);
+    const int kRemove = L.SmallButton("Remove##sto");
+    if (!DrawRowsOkayUI(c, "##okayui_oxygenstat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Stat: Temperature, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawTemperatureStatWithOkayUI(EditorState& ed, TemperatureStat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(17);
+    { const float fr_ = c->maxWarmth > 0.0f ? Mathf::Clamp01(c->warmth / c->maxWarmth) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->warmth, c->maxWarmth); L.Progress(ov_, fr_, true); }
+    L.Drag("Current##curstmp", &c->warmth, 1, 0.5f, 0.0f, 1e9f, "%.1f");
+    L.Drag("Max Warmth##stmp", &c->maxWarmth, 1, 1.0f, 1.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Cold Drain / s##stmp", &c->coldDrain, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Warm Regen / s##stmp", &c->warmRegen, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Low Threshold##stmp", &c->lowThreshold, 1, 1.0f, 0.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Freeze Dmg / s##stmp", &c->freezeDamage, 1, 0.1f, 0.0f, 100.0f);
+    L.Tip("HP/s to a sibling Stat: Health while frozen (0 = off).");
+    L.Tree("Output##stmp");
+    L.Check("Saved value##stmp", &c->publishPrefs);
+    L.Check("Fill *Bar##stmp", &c->publishBar);
+    L.Check("Broadcast msg##stmp", &c->sendMessages);
+    L.TreeEnd();
+    L.Note("Methods: Warm, SetCold, SetNearFire, SetDrainScale. Empty -> 'freezing'.", false, true);
+    const int kRemove = L.SmallButton("Remove##stmp");
+    if (!DrawRowsOkayUI(c, "##okayui_temperaturestat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Stat: Sleep / Energy, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawSleepStatWithOkayUI(EditorState& ed, SleepStat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(19);
+    { const float fr_ = c->maxEnergy > 0.0f ? Mathf::Clamp01(c->energy / c->maxEnergy) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->energy, c->maxEnergy); L.Progress(ov_, fr_, true); }
+    L.Drag("Current##curstsl", &c->energy, 1, 0.5f, 0.0f, 1e9f, "%.1f");
+    L.Drag("Max Energy##stsl", &c->maxEnergy, 1, 1.0f, 1.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Drain / s##stsl", &c->drainPerSecond, 1, 0.05f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Rest / s##stsl", &c->restPerSecond, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Tired Threshold##stsl", &c->tiredThreshold, 1, 1.0f, 0.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Exhaust Dmg / s##stsl", &c->exhaustDamage, 1, 0.1f, 0.0f, 100.0f);
+    L.Tip("HP/s to a sibling Stat: Health at 0 energy (0 = off).");
+    L.Check("Slow When Tired##stsl", &c->slowWhenTired);
+    L.TipLookup();
+    if (c->slowWhenTired) {
+        L.Slider("Min Speed##stsl", &c->minSpeedFactor, 0.0f, 1.0f);
+    }
+    L.Tree("Output##stsl");
+    L.Check("Saved value##stsl", &c->publishPrefs);
+    L.Check("Fill *Bar##stsl", &c->publishBar);
+    L.Check("Broadcast msg##stsl", &c->sendMessages);
+    L.TreeEnd();
+    L.Note("Methods: Rest, SetResting, SetDrainScale, SpeedFactor().", false, true);
+    const int kRemove = L.SmallButton("Remove##stsl");
+    if (!DrawRowsOkayUI(c, "##okayui_sleepstat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Stat: Sanity, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawSanityStatWithOkayUI(EditorState& ed, SanityStat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(17);
+    { const float fr_ = c->maxSanity > 0.0f ? Mathf::Clamp01(c->sanity / c->maxSanity) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->sanity, c->maxSanity); L.Progress(ov_, fr_, true); }
+    L.Drag("Current##curstsn", &c->sanity, 1, 0.5f, 0.0f, 1e9f, "%.1f");
+    L.Drag("Max##stsn", &c->maxSanity, 1, 1.0f, 1.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Drain in Danger / s##stsn", &c->drainInDark, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Regen Safe / s##stsn", &c->regenInLight, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Low Threshold##stsn", &c->lowThreshold, 1, 1.0f, 0.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Insane Dmg / s##stsn", &c->insaneDamage, 1, 0.1f, 0.0f, 100.0f);
+    L.Tip("HP/s to a sibling Stat: Health while insane (0 = off).");
+    L.Tree("Output##stsn");
+    L.Check("Saved value##stsn", &c->publishPrefs);
+    L.Check("Fill *Bar##stsn", &c->publishBar);
+    L.Check("Broadcast msg##stsn", &c->sendMessages);
+    L.TreeEnd();
+    L.Note("Methods: Restore, SetInDanger, SetDrainScale. Empty -> 'insane'.", false, true);
+    const int kRemove = L.SmallButton("Remove##stsn");
+    if (!DrawRowsOkayUI(c, "##okayui_sanitystat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Stat: Radiation, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawRadiationStatWithOkayUI(EditorState& ed, RadiationStat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(18);
+    L.Note("Builds in zones; past threshold it poisons Health.", false, true);
+    { const float fr_ = c->maxRadiation > 0.0f ? Mathf::Clamp01(c->radiation / c->maxRadiation) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->radiation, c->maxRadiation); L.Progress(ov_, fr_, true); }
+    L.Drag("Current##curstrd", &c->radiation, 1, 0.5f, 0.0f, 1e9f, "%.1f");
+    L.Drag("Max##strd", &c->maxRadiation, 1, 1.0f, 1.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Gain / s (in zone)##strd", &c->gainPerSecond, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Decay / s##strd", &c->decayPerSecond, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Sick Threshold##strd", &c->sickThreshold, 1, 1.0f, 0.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Damage / s##strd", &c->damagePerSecond, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Tree("Output##strd");
+    L.Check("Saved value##strd", &c->publishPrefs);
+    L.Check("Fill *Bar##strd", &c->publishBar);
+    L.Check("Broadcast msg##strd", &c->sendMessages);
+    L.TreeEnd();
+    L.Note("Methods: AddRadiation, TakeAntiRad, SetInRadiation.", false, true);
+    const int kRemove = L.SmallButton("Remove##strd");
+    if (!DrawRowsOkayUI(c, "##okayui_radiationstat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Stat: Bleeding, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawBleedingStatWithOkayUI(EditorState& ed, BleedingStat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(16);
+    L.Note("Wounds drain Health until bandaged.", false, true);
+    { const float fr_ = c->maxBleed > 0.0f ? Mathf::Clamp01(c->bleed / c->maxBleed) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->bleed, c->maxBleed); L.Progress(ov_, fr_, true); }
+    L.Drag("Current##curstbl", &c->bleed, 1, 0.5f, 0.0f, 1e9f, "%.1f");
+    L.Drag("Max Bleed##stbl", &c->maxBleed, 1, 1.0f, 1.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Damage / s (full)##stbl", &c->damagePerSecond, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Clot / s##stbl", &c->clotPerSecond, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Tree("Output##stbl");
+    L.Check("Saved value##stbl", &c->publishPrefs);
+    L.Check("Fill *Bar##stbl", &c->publishBar);
+    L.Check("Broadcast msg##stbl", &c->sendMessages);
+    L.TreeEnd();
+    L.Note("Methods: Wound, Bandage, Heal.", false, true);
+    const int kRemove = L.SmallButton("Remove##stbl");
+    if (!DrawRowsOkayUI(c, "##okayui_bleedingstat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Stat: Poison, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawPoisonStatWithOkayUI(EditorState& ed, PoisonStat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(16);
+    L.Note("Toxin damages Health, then fades; antidote clears.", false, true);
+    { const float fr_ = c->maxPoison > 0.0f ? Mathf::Clamp01(c->poison / c->maxPoison) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->poison, c->maxPoison); L.Progress(ov_, fr_, true); }
+    L.Drag("Current##curstpo", &c->poison, 1, 0.5f, 0.0f, 1e9f, "%.1f");
+    L.Drag("Max Poison##stpo", &c->maxPoison, 1, 1.0f, 1.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Damage / s (full)##stpo", &c->damagePerSecond, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Decay / s##stpo", &c->decayPerSecond, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Tree("Output##stpo");
+    L.Check("Saved value##stpo", &c->publishPrefs);
+    L.Check("Fill *Bar##stpo", &c->publishBar);
+    L.Check("Broadcast msg##stpo", &c->sendMessages);
+    L.TreeEnd();
+    L.Note("Methods: Poison, Cure, CureAll.", false, true);
+    const int kRemove = L.SmallButton("Remove##stpo");
+    if (!DrawRowsOkayUI(c, "##okayui_poisonstat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Stat: Wetness, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawWetnessStatWithOkayUI(EditorState& ed, WetnessStat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(18);
+    L.Note("Soaks in water/rain; chills warmth while wet.", false, true);
+    { const float fr_ = c->maxWetness > 0.0f ? Mathf::Clamp01(c->wetness / c->maxWetness) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->wetness, c->maxWetness); L.Progress(ov_, fr_, true); }
+    L.Drag("Current##curstwe", &c->wetness, 1, 0.5f, 0.0f, 1e9f, "%.1f");
+    L.Drag("Max Wetness##stwe", &c->maxWetness, 1, 1.0f, 1.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Soak / s##stwe", &c->soakPerSecond, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Dry / s##stwe", &c->dryPerSecond, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Chill Warmth / s##stwe", &c->chillPerSecond, 1, 0.1f, 0.0f, 100.0f);
+    L.Tip("Warmth drained from a sibling Temperature/Survival while soaked. 0 = off.");
+    L.Drag("Soaked Threshold##stwe", &c->soakedThreshold, 1, 1.0f, 0.0f, 100000.0f);
+    L.TipLookup();
+    L.Tree("Output##stwe");
+    L.Check("Saved value##stwe", &c->publishPrefs);
+    L.Check("Fill *Bar##stwe", &c->publishBar);
+    L.Check("Broadcast msg##stwe", &c->sendMessages);
+    L.TreeEnd();
+    L.Note("Methods: AddWetness, DryOff, SetInWater.", false, true);
+    const int kRemove = L.SmallButton("Remove##stwe");
+    if (!DrawRowsOkayUI(c, "##okayui_wetnessstat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Stat: Carry Weight, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawCarryWeightStatWithOkayUI(EditorState& ed, CarryWeightStat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(16);
+    L.Note("Over the limit: drains stamina, slows movement.", false, true);
+    { const float fr_ = c->maxLoad > 0.0f ? Mathf::Clamp01(c->load / c->maxLoad) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->load, c->maxLoad); L.Progress(ov_, fr_, true); }
+    L.Drag("Current##curstcw", &c->load, 1, 0.5f, 0.0f, 1e9f, "%.1f");
+    L.Drag("Max Load##stcw", &c->maxLoad, 1, 1.0f, 0.0f, 1000000.0f);
+    L.TipLookup();
+    L.Drag("Over Stamina Drain / s##stcw", &c->overStaminaDrain, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Min Speed Factor##stcw", &c->minSpeedFactor, 1, 0.05f, 0.0f, 1.0f);
+    L.Tip("Movement multiplier when heavily overloaded. Read SpeedFactor() from a controller.");
+    L.Tree("Output##stcw");
+    L.Check("Saved value##stcw", &c->publishPrefs);
+    L.Check("Fill *Bar##stcw", &c->publishBar);
+    L.Check("Broadcast msg##stcw", &c->sendMessages);
+    L.TreeEnd();
+    L.Note("Methods: AddLoad, RemoveLoad, SetLoad. Over -> 'encumbered'.", false, true);
+    const int kRemove = L.SmallButton("Remove##stcw");
+    if (!DrawRowsOkayUI(c, "##okayui_carryweightstat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Status Effects, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawStatusEffectStatWithOkayUI(EditorState& ed, StatusEffectStat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(10);
+    L.Note("Timed buffs/debuffs (code/trigger-driven).", false, true);
+    L.Note("Apply(name, duration, hpPerSecond): -hp = damage, +hp = heal.", false, true);
+    L.Check("Broadcast messages##stse", &c->sendMessages);
+    L.Tip("<name> on apply, <name>_expired on end -> ActionList OnMessage.");
+    { char t_[256]; std::snprintf(t_, sizeof t_, "Active now: %d", c->ActiveCount());
+      L.Label(t_, 0, false, true); }
+    L.Note("Methods: Apply, Remove, Clear, Has, Remaining.", false, true);
+    const int kRemove = L.SmallButton("Remove##stse");
+    if (!DrawRowsOkayUI(c, "##okayui_statuseffectstat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Survival Save / Load, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawSurvivalSaveWithOkayUI(EditorState& ed, SurvivalSave* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(12);
+    int k1 = -1;
+    int k2 = -1;
+    L.Note("Persists current stat values across sessions.", false, true);
+    L.Text("Save Key##svsv", &c->saveKey);
+    L.Tip("Writes <key>.okayprefs beside the game.");
+    L.Check("Load on Start##svsv", &c->loadOnStart);
+    L.TipLookup();
+    L.Check("Save Continuously##svsv", &c->saveContinuously);
+    L.Tip("Mirror current values to Prefs every frame (still call Save() to write the file).");
+    if (ed.isPlaying()) {
+        k1 = L.SmallButton("Save Now##svsv");
+        L.SameLine();
+        k2 = L.SmallButton("Load Now##svsv");
+    }
+    L.Note("Methods: Save, Load (On Click-callable).", false, true);
+    const int kRemove = L.SmallButton("Remove##svsv");
+    if (!DrawRowsOkayUI(c, "##okayui_survivalsave", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (k1 >= 0 && L[k1].clicked) { c->Save(); }
+    if (k2 >= 0 && L[k2].clicked) { c->Load(); }
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Day / Night Cycle, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawDayNightCycleWithOkayUI(EditorState& ed, DayNightCycle* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(20);
+    int h = (int)c->time;
+    int m = (int)((c->time - h) * 60.0f);
+    { char t_[256]; std::snprintf(t_, sizeof t_, "Time: %02d:%02d  (%s)", h, m, c->IsNight() ? "night" : "day");
+      L.Label(t_, 0, false, true); }
+    L.Slider("Time of Day##dnc", &c->time, 0.0f, 24.0f, "%.2f h");
+    L.TipLookup();
+    L.Drag("Day Length##dnc", &c->dayLengthSeconds, 1, 1.0f, 1.0f, 100000.0f, "%.0f s");
+    L.Tip("Real seconds for a full 24h day.");
+    L.Check("Paused##dnc", &c->paused);
+    L.TipLookup();
+    L.Check("Drive Sun Light##dnc", &c->controlSun);
+    L.TipLookup();
+    if (c->controlSun) {
+        L.Check("Rotate Sun##dnc", &c->rotateSun);
+        L.TipLookup();
+        L.Drag("Day Intensity##dnc", &c->dayIntensity, 1, 0.05f, 0.0f, 10.0f);
+        L.TipLookup();
+        L.Drag("Night Intensity##dnc", &c->nightIntensity, 1, 0.05f, 0.0f, 10.0f);
+        L.TipLookup();
+        L.Drag("Day Ambient##dnc", &c->dayAmbient, 1, 0.01f, 0.0f, 1.0f);
+        L.TipLookup();
+        L.Drag("Night Ambient##dnc", &c->nightAmbient, 1, 0.01f, 0.0f, 1.0f);
+        L.TipLookup();
+    }
+    L.Check("Drive Sky Color##dnc", &c->controlSky);
+    L.TipLookup();
+    if (c->controlSky) {
+        L.Color("Day Sky##dnc", &c->skyDay.r, 3);
+        L.TipLookup();
+        L.Color("Horizon##dnc", &c->skyHorizon.r, 3);
+        L.TipLookup();
+        L.Color("Night Sky##dnc", &c->skyNight.r, 3);
+        L.TipLookup();
+    }
+    L.Note("Drives the Sun light + main camera sky. Bind UI text with {hour}.", false, true);
+    const int kRemove = L.SmallButton("Remove##dnc");
+    if (!DrawRowsOkayUI(c, "##okayui_daynightcycle", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+// Top Down Controller, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawTopDownControllerWithOkayUI(EditorState& ed, TopDownController* td, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(34);
+    StanceRowsState st;
+    AddStanceRows(L, td->stanceControl, "td", st);
+    L.Section("Movement");
+    L.Drag("Walk Speed##td", &td->walkSpeed, 1, 0.1f, 0.0f, 50.0f);
+    L.TipLookup();
+    L.Drag("Run Speed##td", &td->runSpeed, 1, 0.1f, 0.0f, 50.0f);
+    L.TipLookup();
+    L.Drag("Acceleration##td", &td->acceleration, 1, 1.0f, 1.0f, 300.0f);
+    L.TipLookup();
+    L.Drag("Deceleration##td", &td->deceleration, 1, 1.0f, 1.0f, 300.0f);
+    L.TipLookup();
+    L.Check("Rotate To Face##td", &td->rotateToFace);
+    L.TipLookup();
+    if (td->rotateToFace) {
+        L.Drag("Turn Speed##td", &td->turnSpeed, 1, 0.1f, 0.0f, 40.0f);
+        L.TipLookup();
+    }
+    L.Check("Camera-Relative Move##td", &td->cameraRelative);
+    L.Tip("WASD relative to the camera yaw instead of world axes");
+    L.Check("Drive Animation##td", &td->driveAnimation);
+    L.TipLookup();
+    L.Check("Foot IK##td", &td->footIK);
+    L.TipLookup();
+    L.Section("Camera");
+    L.Drag("Distance##td", &td->cameraDistance, 1, 0.1f, 1.0f, 60.0f);
+    L.TipLookup();
+    L.Drag("Pitch##td", &td->cameraPitch, 1, 0.5f, 10.0f, 89.0f, "%.0f deg");
+    L.TipLookup();
+    L.Drag("Yaw##td", &td->cameraYaw, 1, 0.5f, -180.0f, 180.0f, "%.0f deg");
+    L.TipLookup();
+    L.Drag("Look Height##td", &td->lookHeight, 1, 0.05f, 0.0f, 5.0f);
+    L.TipLookup();
+    L.Drag("Damping##td", &td->cameraDamping, 1, 0.1f, 0.0f, 30.0f);
+    L.TipLookup();
+    L.Note("Twin-stick / ARPG: WASD + a fixed high follow camera.", false, true);
+    const int kRemove = L.SmallButton("Remove##td");
+    if (!DrawRowsOkayUI(td, "##okayui_topdowncontroller", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    ApplyStanceRows(L, td->stanceControl, st);
+    if (L[kRemove].clicked) toRemove = td;
+    return true;
+}
+
+// Ragdoll, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawRagdollWithOkayUI(EditorState& ed, Ragdoll* rd, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(19);
+    L.Note("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).", false, true);
+    if (rd->gameObject && rd->gameObject->GetComponent<ActiveRagdoll>())
+        L.Note("This object also has an Active Ragdoll: it takes over at Play and switches this Ragdoll off.", false, true);
+    L.Section("Triggers");
+    L.Check("Ragdoll On Death##rd", &rd->ragdollOnDeath);
+    L.TipLookup();
+    L.Drag("Death Push##rd", &rd->deathImpulse, 1, 0.05f, 0.0f, 20.0f, "%.2f m/s");
+    L.TipLookup();
+    L.Check("Hit Reactions##rd", &rd->hitReactions);
+    L.TipLookup();
+    L.Drag("Hit Push##rd", &rd->hitImpulse, 1, 0.05f, 0.0f, 20.0f, "%.2f m/s");
+    L.TipLookup();
+    L.Drag("Recover Time##rd", &rd->hitRecover, 1, 0.01f, 0.05f, 3.0f, "%.2fs");
+    L.TipLookup();
+    L.Section("Simulation");
+    L.Drag("Gravity##rd", &rd->gravity, 1, 0.05f, 0.0f, 50.0f);
+    L.TipLookup();
+    L.Slider("Damping##rd", &rd->damping, 0.0f, 0.5f);
+    L.TipLookup();
+    L.Slider("Friction##rd", &rd->friction, 0.0f, 1.0f);
+    L.TipLookup();
+    L.Drag("Skin Radius##rd", &rd->radius, 1, 0.005f, 0.0f, 0.5f);
+    L.TipLookup();
+    L.SliderInt("Iterations##rd", &rd->iterations, 1, 30);
+    L.TipLookup();
+    L.Drag("Max Speed##rd", &rd->maxSpeed, 1, 0.5f, 1.0f, 200.0f, "%.1f m/s");
+    L.TipLookup();
+    const int kRemove = L.SmallButton("Remove##rd");
+    if (!DrawRowsOkayUI(rd, "##okayui_ragdoll", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = rd;
+    return true;
+}
+
+// Top Down Shooter Controller, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawTopDownShooterControllerWithOkayUI(EditorState& ed, TopDownShooterController* sh, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(60);
+    KeyRows keys;
+    int fb = sh->fireButton < 0 || sh->fireButton > 2 ? 3 : sh->fireButton;
+    int k1 = -1;
+    int pb = sh->dashGamepadButton < 0 || sh->dashGamepadButton > 3 ? 4 : sh->dashGamepadButton;
+    int k2 = -1;
+    L.Note("Twin-stick: WASD moves, the mouse aims, LMB fires, Space dashes, R reloads.", false, true);
+    L.Section("Movement");
+    L.Drag("Walk Speed##tds", &sh->walkSpeed, 1, 0.1f, 0.0f, 50.0f);
+    L.TipLookup();
+    keys.Add(L, "Sprint Key##tds", sh->sprintKey);
+    if (sh->sprintKey) {
+        L.Drag("Run Speed##tds", &sh->runSpeed, 1, 0.1f, 0.0f, 50.0f);
+    }
+    L.Drag("Acceleration##tds", &sh->acceleration, 1, 1.0f, 1.0f, 300.0f);
+    L.TipLookup();
+    L.Drag("Deceleration##tds", &sh->deceleration, 1, 1.0f, 1.0f, 300.0f);
+    L.TipLookup();
+    L.Slider("Backpedal Speed##tds", &sh->backpedalMultiplier, 0.2f, 1.0f, "x%.2f");
+    L.Tip("Speed while walking away from where you aim.");
+    L.Check("Camera-Relative Move##tds", &sh->cameraRelative);
+    L.TipLookup();
+    L.Check("Drive Animation##tds", &sh->driveAnimation);
+    L.TipLookup();
+    L.Section("Aim");
+    static const char* const aims[] = {"Mouse cursor", "Move direction", "Auto (mouse or gamepad)"};
+    L.Combo("Aim With##tds", &sh->aimMode, aims, 3);
+    L.TipLookup();
+    L.Drag("Turn Speed##tds", &sh->turnSpeed, 1, 0.2f, 0.0f, 80.0f);
+    L.Tip("0 = face the aim instantly.");
+    L.Section("Weapon");
+    static const char* const modes[] = {"Bullets (built in)", "Projectile prefab", "Hitscan (instant ray)"};
+    L.Combo("Shoots##tds", &sh->fireMode, modes, 3);
+    L.TipLookup();
+    if (sh->fireMode == (int)TopDownShooterController::FireMode::Prefab) {
+        L.Slot("tdsproj", &sh->projectile, "Prefab", "prefab");
+        L.Tip("Drop a prefab. A Projectile 3D on it gets the speed; else its Rigidbody 3D.");
+    }
+    static const char* const btns[] = {"Left mouse", "Right mouse", "Middle mouse", "None"};
+    k1 = L.Combo("Fire Button##tds", &fb, btns, 4);
+    L.TipLookup();
+    keys.Add(L, "Fire Key##tds", sh->fireKey);
+    L.Check("Hold To Fire##tds", &sh->autoFire);
+    L.TipLookup();
+    L.Drag("Fire Rate##tds", &sh->fireRate, 1, 0.1f, 0.1f, 60.0f, "%.1f / s");
+    L.TipLookup();
+    L.Drag("Damage##tds", &sh->damage, 1, 0.5f, 0.0f, 1000.0f);
+    L.TipLookup();
+    L.DragInt("Pellets##tds", &sh->pellets, 0.1f, 1, 24);
+    L.Tip("Bullets per shot. Above 1 = shotgun, fanned across the spread.");
+    L.Drag("Spread##tds", &sh->spread, 1, 0.2f, 0.0f, 90.0f, "%.1f deg");
+    L.TipLookup();
+    if (sh->fireMode == (int)TopDownShooterController::FireMode::Hitscan) {
+        L.Drag("Range##tds", &sh->range, 1, 0.5f, 1.0f, 500.0f);
+        L.TipLookup();
+    } else {
+        L.Drag("Bullet Speed##tds", &sh->projectileSpeed, 1, 0.5f, 1.0f, 300.0f);
+        L.TipLookup();
+        L.Drag("Bullet Lifetime##tds", &sh->projectileLifetime, 1, 0.05f, 0.05f, 20.0f, "%.2fs");
+        L.TipLookup();
+    }
+    if (sh->fireMode == (int)TopDownShooterController::FireMode::Bullets) {
+        L.Drag("Bullet Size##tds", &sh->bulletSize, 1, 0.01f, 0.02f, 2.0f);
+        L.TipLookup();
+        L.Color("Bullet Colour##tds", &sh->bulletColor.r, 4);
+        L.Last().noInputs = true;
+        L.TipLookup();
+    }
+    L.Drag("Impact Force##tds", &sh->impactForce, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Drag("Muzzle Height##tds", &sh->muzzleHeight, 1, 0.02f, 0.0f, 5.0f);
+    L.TipLookup();
+    L.Section("Ammo");
+    L.DragInt("Magazine##tds", &sh->magazineSize, 0.2f, 0, 999);
+    L.Tip("0 = unlimited, never reloads.");
+    if (sh->magazineSize > 0) {
+        keys.Add(L, "Reload Key##tds", sh->reloadKey);
+        L.Drag("Reload Time##tds", &sh->reloadTime, 1, 0.05f, 0.0f, 10.0f, "%.2fs");
+        L.TipLookup();
+        L.Check("Auto Reload When Empty##tds", &sh->autoReload);
+        L.TipLookup();
+        if (ed.isPlaying()) {
+            { char t_[256]; std::snprintf(t_, sizeof t_, "Ammo: %d / %d%s", sh->ammo, sh->magazineSize, sh->IsReloading() ? "  (reloading)" : "");
+              L.Label(t_, 0, false, true); }
+        }
+    }
+    L.Section("Dash");
+    keys.Add(L, "Dash Key##tds", sh->dashKey);
+    static const char* const pads[] = {"A", "B", "X", "Y", "None"};
+    k2 = L.Combo("Dash Pad Button##tds", &pb, pads, 5);
+    L.TipLookup();
+    if (sh->dashKey || sh->dashGamepadButton >= 0) {
+        L.Drag("Dash Speed##tds", &sh->dashSpeed, 1, 0.2f, 0.0f, 80.0f);
+        L.Tip("Peak speed at the start of the dash; it eases down to your move speed.");
+        L.Drag("Dash Time##tds", &sh->dashTime, 1, 0.01f, 0.02f, 2.0f, "%.2fs");
+        L.TipLookup();
+        L.Drag("Dash Cooldown##tds", &sh->dashCooldown, 1, 0.05f, 0.0f, 10.0f, "%.2fs");
+        L.TipLookup();
+        L.Check("Invulnerable While Dashing##tds", &sh->dashInvulnerable);
+        L.TipLookup();
+    }
+    L.Section("Camera");
+    L.Drag("Distance##tds", &sh->cameraDistance, 1, 0.1f, 1.0f, 80.0f);
+    L.TipLookup();
+    L.Drag("Pitch##tds", &sh->cameraPitch, 1, 0.5f, 10.0f, 89.0f, "%.0f deg");
+    L.TipLookup();
+    L.Drag("Yaw##tds", &sh->cameraYaw, 1, 0.5f, -180.0f, 180.0f, "%.0f deg");
+    L.TipLookup();
+    L.Drag("Damping##tds", &sh->cameraDamping, 1, 0.1f, 0.0f, 30.0f);
+    L.TipLookup();
+    L.Slider("Look Toward Aim##tds", &sh->aimLookAhead, 0.0f, 0.8f, "%.2f");
+    L.Tip("How far the camera leans toward the cursor.");
+    L.Drag("Max Lean##tds", &sh->maxLookAhead, 1, 0.1f, 0.0f, 20.0f);
+    L.TipLookup();
+    L.Check("Wheel Zoom##tds", &sh->wheelZoom);
+    L.TipLookup();
+    if (sh->wheelZoom) {
+        L.Drag("Min Distance##tds", &sh->minDistance, 1, 0.1f, 1.0f, sh->maxDistance);
+        L.TipLookup();
+        L.Drag("Max Distance##tds", &sh->maxDistance, 1, 0.1f, sh->minDistance, 120.0f);
+        L.TipLookup();
+    }
+    L.Drag("Fire Shake##tds", &sh->fireShake, 1, 0.005f, 0.0f, 0.5f, "%.3f");
+    L.TipLookup();
+    L.Note("Script events: on_fire, on_reload, on_reloaded, on_empty, on_dash.", false, true);
+    const int kRemove = L.SmallButton("Remove##tds");
+    if (!DrawRowsOkayUI(sh, "##okayui_topdownshootercontroller", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (keys.Run(L)) ed.dirty = true;
+    if (k1 >= 0 && L[k1].changed) { sh->fireButton = fb == 3 ? -1 : fb; }
+    if (k2 >= 0 && L[k2].changed) { sh->dashGamepadButton = pb == 4 ? -1 : pb; }
+    if (L[kRemove].clicked) toRemove = sh;
+    return true;
+}
+
+// Projectile 3D, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawProjectile3DWithOkayUI(EditorState& ed, Projectile3D* pj, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(14);
+    L.Drag("Velocity##pj", &pj->velocity.x, 3, 0.1f);
+    L.TipLookup();
+    L.Drag("Damage##pj", &pj->damage, 1, 0.5f, 0.0f, 1000.0f);
+    L.TipLookup();
+    L.Drag("Lifetime##pj", &pj->lifetime, 1, 0.05f, 0.05f, 60.0f, "%.2fs");
+    L.TipLookup();
+    L.Drag("Gravity##pj", &pj->gravityScale, 1, 0.02f, -5.0f, 5.0f);
+    L.Tip("0 = straight line, 1 = falls like a grenade.");
+    L.Drag("Impact Force##pj", &pj->impactForce, 1, 0.1f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.DragInt("Pierce##pj", &pj->pierce, 0.05f, 0, 20);
+    L.Tip("Extra targets it goes through. Walls always stop it.");
+    L.Check("Bounce Off Walls##pj", &pj->bounce);
+    L.TipLookup();
+    if (pj->bounce) {
+        L.DragInt("Bounces##pj", &pj->maxBounces, 0.05f, 1, 20);
+    }
+    L.Note("Damages the Health it hits; calls on_hit on its script.", false, true);
+    const int kRemove = L.SmallButton("Remove##pj");
+    if (!DrawRowsOkayUI(pj, "##okayui_projectile3d", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = pj;
+    return true;
+}
+
+// Free Roam (Fly) Controller, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawFreeRoamControllerWithOkayUI(EditorState& ed, FreeRoamController* fr, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(18);
+    KeyRows keys;
+    L.Drag("Move Speed##fr", &fr->moveSpeed, 1, 0.1f, 0.0f, 200.0f);
+    L.TipLookup();
+    L.Drag("Boost x##fr", &fr->boostMultiplier, 1, 0.1f, 1.0f, 20.0f);
+    L.Tip("Speed multiplier while holding Sprint (Shift)");
+    L.Drag("Smoothing##fr", &fr->acceleration, 1, 0.5f, 0.0f, 60.0f);
+    L.Tip("Velocity ease-in (0 = instant)");
+    keys.Add(L, "Up Key##fr", fr->upKey);
+    L.SameLine();
+    keys.Add(L, "Down Key##fr", fr->downKey);
+    L.Section("Look");
+    L.Drag("Sensitivity##fr", &fr->mouseSensitivity, 1, 0.01f, 0.0f, 2.0f);
+    L.TipLookup();
+    L.Check("Invert Y##fr", &fr->invertY);
+    L.TipLookup();
+    L.Check("Lock Cursor##fr", &fr->lockCursor);
+    L.Tip("Capture the cursor and always look (FPS spectator)");
+    if (!fr->lockCursor) {
+        L.Check("Hold Right-Mouse to Look##fr", &fr->lookRequiresRightMouse);
+        L.TipLookup();
+    }
+    L.Drag("Min Pitch##fr", &fr->minPitch, 1, 0.5f, -89.0f, 0.0f);
+    L.TipLookup();
+    L.Drag("Max Pitch##fr", &fr->maxPitch, 1, 0.5f, 0.0f, 89.0f);
+    L.TipLookup();
+    L.Note("Put on a Camera. WASD fly, Space/C up/down, Shift boost.", false, true);
+    const int kRemove = L.SmallButton("Remove##fr");
+    if (!DrawRowsOkayUI(fr, "##okayui_freeroamcontroller", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (keys.Run(L)) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = fr;
+    return true;
+}
+
+// Follow Target 2D, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawFollowTarget2DWithOkayUI(EditorState& ed, FollowTarget2D* ft, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(9);
+    L.Text("Target##ft", &ft->target);
+    L.TipLookup();
+    L.Drag("Speed##ft", &ft->speed, 1, 0.05f, 0.0f, 200.0f);
+    L.TipLookup();
+    L.Drag("Stop Distance##ft", &ft->stopDistance, 1, 0.05f, 0.0f, 1000.0f);
+    L.TipLookup();
+    L.Note("Chases the named object (enemy AI / homing).", false, true);
+    const int kRemove = L.SmallButton("Remove##ft");
+    if (!DrawRowsOkayUI(ft, "##okayui_followtarget2d", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = ft;
+    return true;
+}
+
+// Grid Path Agent, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawGridPathAgent2DWithOkayUI(EditorState& ed, GridPathAgent2D* gp, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(13);
+    L.Text("Which tilemap##gp", &gp->mapName);
+    L.Tip("Name of the tilemap to walk. Leave empty to use the first tilemap in the scene.");
+    L.Drag("Walk speed##gp", &gp->speed, 1, 0.05f, 0.0f, 10000.0f);
+    L.Tip("How fast it walks, in world units per second.");
+    L.Drag("Stop this close##gp", &gp->stopDistance, 1, 0.01f, 0.0f, 1000.0f);
+    L.Tip("How close to the last cell counts as arrived.");
+    L.Check("Allow diagonal steps##gp", &gp->allowDiagonal);
+    L.Tip("Also step diagonally. A diagonal step never squeezes between two walls.");
+    L.Check("Smooth the path##gp", &gp->smoothPath);
+    L.Tip("Straighten the route wherever the line of sight is clear, so it is not a staircase of cells.");
+    L.Check("Pay for mud and roads##gp", &gp->useCosts);
+    L.Tip("Use the Grid Movement Costs on the tilemap. Off: only empty tiles are open, and every step costs the same.");
+    L.Drag("Plan again every (seconds)##gp", &gp->repathInterval, 1, 0.05f, 0.0f, 60.0f);
+    L.Tip("How often to plan again. A new obstacle on the route plans again at once.");
+    L.Note("Walks empty tiles. Walls are any other tile until costs are on.", false, true);
+    const int kRemove = L.SmallButton("Remove##gp");
+    if (!DrawRowsOkayUI(gp, "##okayui_gridpathagent2d", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = gp;
+    return true;
+}
+
+// Grid Movement Costs, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawGridCostLayerWithOkayUI(EditorState& ed, GridCostLayer* gc, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(10);
+    L.DragInt("Road tile number##gc", &gc->roadTile, 0.1f, 0, 4095);
+    L.Tip("Which tile number is a road. Empty tiles are number 0 and cost 1.");
+    L.Drag("Road cost (lower is cheaper)##gc", &gc->roadCost, 1, 0.05f, 0.0f, 1000.0f);
+    L.Tip("How hard one step onto a road is. 1 is normal. 0 blocks the tile.");
+    L.DragInt("Mud tile number##gc", &gc->mudTile, 0.1f, 0, 4095);
+    L.Tip("Which tile number is mud.");
+    L.Drag("Mud cost (higher is slower)##gc", &gc->mudCost, 1, 0.05f, 0.0f, 1000.0f);
+    L.Tip("How hard one step onto mud is. Higher makes the path go around it. 0 blocks the tile.");
+    L.Note("The agent pays these only when Pay for mud and roads is on.", false, true);
+    const int kRemove = L.SmallButton("Remove##gc");
+    if (!DrawRowsOkayUI(gc, "##okayui_gridcostlayer", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = gc;
+    return true;
+}
+
+// Grid Obstacle, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawGridObstacle2DWithOkayUI(EditorState& ed, GridObstacle2D* go2, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(10);
+    L.Text("Which tilemap##gob", &go2->mapName);
+    L.Tip("Name of the tilemap. Leave empty for the first tilemap in the scene.");
+    L.DragInt("How many cells across##gob", &go2->cellsWide, 0.1f, 1, 256);
+    L.Tip("Width of the blocked rectangle, in cells, starting at this object's cell.");
+    L.DragInt("How many cells down##gob", &go2->cellsTall, 0.1f, 1, 256);
+    L.Tip("Height of the blocked rectangle, in cells.");
+    L.Check("Block the path##gob", &go2->blocks);
+    L.Tip("On: these cells are walls. An agent already walking through them plans a new route. Other agents keep theirs.");
+    L.Note("Move this object to slide the blocked cells.", false, true);
+    const int kRemove = L.SmallButton("Remove##gob");
+    if (!DrawRowsOkayUI(go2, "##okayui_gridobstacle2d", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = go2;
+    return true;
+}
+
+// Mover, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawMoverWithOkayUI(EditorState& ed, Mover* mv, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(7);
+    L.Drag("Velocity##mv", &mv->velocity.x, 3, 0.05f);
+    L.TipLookup();
+    L.Note("units / second", false, true);
+    const int kRemove = L.SmallButton("Remove##mv");
+    if (!DrawRowsOkayUI(mv, "##okayui_mover", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = mv;
+    return true;
+}
+
+// Spinner, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawSpinnerWithOkayUI(EditorState& ed, Spinner* sp, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(7);
+    L.Drag("Angular Vel##sp", &sp->angularVelocity.x, 3, 0.5f);
+    L.TipLookup();
+    L.Note("degrees / second (X, Y, Z)", false, true);
+    const int kRemove = L.SmallButton("Remove##sp");
+    if (!DrawRowsOkayUI(sp, "##okayui_spinner", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = sp;
+    return true;
+}
+
+// Lifetime, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawLifetimeWithOkayUI(EditorState& ed, Lifetime* lt, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(7);
+    L.Drag("Seconds##lt", &lt->seconds, 1, 0.05f, 0.0f, 10000.0f);
+    L.TipLookup();
+    L.Note("destroys this object after N seconds of play", false, true);
+    const int kRemove = L.SmallButton("Remove##lt");
+    if (!DrawRowsOkayUI(lt, "##okayui_lifetime", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = lt;
+    return true;
+}
+
+// Collectible, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawCollectibleWithOkayUI(EditorState& ed, Collectible* co, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(12);
+    L.Text("Score Var##co", &co->scoreVar);
+    L.Tip("Variable to add to on pickup. The prebuilt HUD shows it via  Score: {score}.");
+    L.Drag("Points##co", &co->points, 1, 0.1f, -100000.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Heal##co", &co->heal, 1, 0.5f, 0.0f, 100000.0f);
+    L.Tip("Also heal the collector this much (needs a Health component).");
+    L.Check("Respawn##co", &co->respawn);
+    L.TipLookup();
+    if (co->respawn) {
+        L.SameLine();
+        L.Drag("Delay##cord", &co->respawnDelay, 1, 0.05f, 0.0f, 10000.0f);
+        L.Last().width = 90.0f;
+    }
+    L.Text("Collector Tag##co", &co->collectorTag);
+    L.Tip("Who can collect it: a tag or name text. Empty = anyone.");
+    if (co->gameObject && !co->gameObject->GetComponent<Collider2D>() && !co->gameObject->GetComponent<Collider3D>())
+        L.ColorText(RowCol(1.0f, 0.7f, 0.3f), "Add a Collider (trigger) so this can react to touch.");
+    const int kRemove = L.SmallButton("Remove##co");
+    if (!DrawRowsOkayUI(co, "##okayui_collectible", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = co;
+    return true;
+}
+
+// Damage On Touch, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawDamageOnTouchWithOkayUI(EditorState& ed, DamageOnTouch* dt, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(12);
+    L.Drag("Damage##dot", &dt->damage, 1, 0.5f, 0.0f, 100000.0f);
+    L.TipLookup();
+    L.Drag("Interval##dot", &dt->interval, 1, 0.02f, 0.0f, 60.0f);
+    L.Tip("Seconds between repeat hits while overlapping (0 = every frame).");
+    L.Check("Hit Once##dot", &dt->once);
+    L.TipLookup();
+    L.Drag("Knockback##dot", &dt->knockback, 1, 0.2f, 0.0f, 1000.0f);
+    L.Tip("Push a Rigidbody toucher away from this object.");
+    L.Check("Destroy Self##dot", &dt->destroySelf);
+    L.Tip("Vanish after landing a hit — turns this into a projectile.");
+    L.Text("Target Tag##dot", &dt->targetTag);
+    L.Tip("Who takes damage: a tag or name text. Empty = anyone.");
+    if (dt->gameObject && !dt->gameObject->GetComponent<Collider2D>() && !dt->gameObject->GetComponent<Collider3D>())
+        L.ColorText(RowCol(1.0f, 0.7f, 0.3f), "Add a Collider (trigger) so this can react to touch.");
+    const int kRemove = L.SmallButton("Remove##dot");
+    if (!DrawRowsOkayUI(dt, "##okayui_damageontouch", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = dt;
+    return true;
+}
+
+// Jump Pad, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawJumpPadWithOkayUI(EditorState& ed, JumpPad* jp, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(11);
+    L.Note("Launches bodies that touch it (needs a collider on this object).", false, true);
+    L.Drag("Force##jp", &jp->force, 1, 0.2f, 0.0f, 100.0f);
+    L.TipLookup();
+    L.Check("Launch Along Object Up##jp", &jp->useObjectUp);
+    L.Tip("Tilt this object to aim the launch; off = always straight up.");
+    L.Drag("Forward Boost##jp", &jp->forwardBoost, 1, 0.1f, 0.0f, 50.0f);
+    L.Tip("Extra speed along the body's current travel direction (booster rings).");
+    L.Drag("Cooldown##jp", &jp->cooldown, 1, 0.05f, 0.0f, 5.0f, "%.2f s");
+    L.TipLookup();
+    L.Text("Who##jp", &jp->triggerTag);
+    L.Tip("Tag or name of who launches; empty = anyone.");
+    const int kRemove = L.SmallButton("Remove##jp");
+    if (!DrawRowsOkayUI(jp, "##okayui_jumppad", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = jp;
+    return true;
+}
+
+// Teleporter, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawTeleporterWithOkayUI(EditorState& ed, Teleporter* tp, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(10);
+    L.Text("Target Object##tp", &tp->targetName);
+    L.Tip("Teleport to this object's position. Leave empty to use the fixed destination below.");
+    L.Drag("Destination##tp", &tp->destination.x, 3, 0.1f);
+    L.TipLookup();
+    L.Drag("Cooldown##tp", &tp->cooldown, 1, 0.02f, 0.0f, 60.0f);
+    L.Tip("Ignore a just-teleported body this long (stops linked pads ping-ponging).");
+    L.Text("Trigger Tag##tp", &tp->triggerTag);
+    L.Tip("Who teleports: a tag or name text. Empty = anyone.");
+    if (tp->gameObject && !tp->gameObject->GetComponent<Collider2D>() && !tp->gameObject->GetComponent<Collider3D>())
+        L.ColorText(RowCol(1.0f, 0.7f, 0.3f), "Add a Collider (trigger) so this can react to touch.");
+    const int kRemove = L.SmallButton("Remove##tp");
+    if (!DrawRowsOkayUI(tp, "##okayui_teleporter", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = tp;
+    return true;
+}
+
+// Dolly Cart, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawDollyCartWithOkayUI(EditorState& ed, DollyCart* dc, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(12);
+    L.Text("Path##dc", &dc->path);
+    L.TipLookup();
+    L.Slider("Position##dc", &dc->position, 0.0f, 1.0f);
+    L.TipLookup();
+    L.Drag("Speed##dc", &dc->speed, 1, 0.01f);
+    L.TipLookup();
+    L.Check("Auto Move##dc", &dc->autoMove);
+    L.TipLookup();
+    L.Check("Speed In Metres##dc", &dc->speedInMetres);
+    L.Tip("Speed is metres per second along the rail (else path fractions per second)");
+    L.Check("Ping Pong##dc", &dc->pingPong);
+    L.Tip("On an open path, turn round at each end instead of stopping");
+    L.Check("Face Along Path##dc", &dc->orientToPath);
+    L.Tip("Turn the object to face the way it travels along the rail");
+    const int kRemove = L.SmallButton("Remove##dc");
+    if (!DrawRowsOkayUI(dc, "##okayui_dollycart", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = dc;
+    return true;
+}
+
+// UI Draggable, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawUIDraggableWithOkayUI(EditorState& ed, UIDraggable* dg, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(15);
+    int ax = (int)dg->axis;
+    int k1 = -1;
+    L.Check("Return to Start##udg", &dg->returnToStart);
+    L.TipLookup();
+    L.Check("Any widget is a target##udg", &dg->anyTarget);
+    L.TipLookup();
+    L.Check("Snap into slot##udg", &dg->snapToSlot);
+    L.Tip("Centers the item in the drop target — instant inventory");
+    static const char* const axes[] = {"Both", "Horizontal", "Vertical"};
+    k1 = L.Combo("Lock Axis##udg", &ax, axes, 3);
+    L.TipLookup();
+    L.Drag("Drag Threshold##udg", &dg->dragThreshold, 1, 0.5f, 0.0f, 100.0f);
+    L.Tip("Pixels before a drag starts (0 = instant)");
+    L.Check("Bring to Front while dragging##udg", &dg->bringToFront);
+    L.TipLookup();
+    L.Check("Drag the parent (window title bar)##udg", &dg->dragParent);
+    L.TipLookup();
+    L.Check("Keep on screen##udg", &dg->keepOnScreen);
+    L.TipLookup();
+    L.Note("Drop onto a UI Drop Target fires on_drop() here +", false, true);
+    L.Note("on_receive() on the target.", false, true);
+    const int kRemove = L.SmallButton("Remove##udg");
+    if (!DrawRowsOkayUI(dg, "##okayui_uidraggable", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (k1 >= 0 && L[k1].changed) { dg->axis = (UIDraggable::Axis)ax; }
+    if (L[kRemove].clicked) toRemove = dg;
+    return true;
+}
+
+// UI Drop Target, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawUIDropTargetWithOkayUI(EditorState& ed, UIDropTarget* dt, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(23);
+    L.Text("Accept Tag##udt", &dt->acceptTag);
+    L.Tip("Only accept draggables whose object Tag matches (empty = any)");
+    L.Section("Slot background");
+    L.Check("Draw background##udt", &dt->drawBackground);
+    L.TipLookup();
+    if (dt->drawBackground) {
+        L.Color("Background##udt", &dt->background.r, 4);
+        L.TipLookup();
+        L.Drag("Corner Radius##udt", &dt->cornerRadius, 1, 0.2f, 0.0f, 32.0f);
+        L.TipLookup();
+        L.Drag("Border Width##udt", &dt->borderWidth, 1, 0.1f, 0.0f, 12.0f);
+        L.TipLookup();
+        if (dt->borderWidth > 0.0f) {
+            L.Color("Border Color##udt", &dt->borderColor.r, 4);
+            L.TipLookup();
+        }
+    }
+    L.Section("Hover feedback");
+    L.Check("Highlight on hover##udt", &dt->showHighlight);
+    L.TipLookup();
+    if (dt->showHighlight) {
+        L.Color("Accept tint##udt", &dt->highlight.r, 4);
+        L.TipLookup();
+        L.Color("Reject tint##udt", &dt->rejectHighlight.r, 4);
+        L.Tip("Shown when a wrong-tag item hovers over the slot.");
+    }
+    L.Section("Drop");
+    L.Check("Snap dropped item to center##udt", &dt->snapToCenter);
+    L.TipLookup();
+    L.Note("Script events (on a ScriptComponent here):", false, true);
+    L.Bullet("on_receive  — an item is dropped on this slot");
+    L.Bullet("on_remove   — an item is dragged out of this slot");
+    L.Bullet("on_drag_enter / on_drag_exit — item hovers/leaves");
+    L.Note("Items expose prefs: ui_drop_source, ui_drag_item, ui_remove_item.", false, true);
+    const int kRemove = L.SmallButton("Remove##udt");
+    if (!DrawRowsOkayUI(dt, "##okayui_uidroptarget", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = dt;
+    return true;
+}
+
+// Draggable (item), written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawDraggableWithOkayUI(EditorState& ed, Draggable* dg, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(16);
+    int ax = (int)dg->axis;
+    int k1 = -1;
+    float grid[2] = {dg->gridX, dg->gridY};
+    int k2 = -1;
+    L.Check("Return to Start##dg", &dg->returnToStart);
+    L.TipLookup();
+    L.Check("Any sprite is a target##dg", &dg->anyTarget);
+    L.TipLookup();
+    L.Check("Snap onto zone##dg", &dg->snapToZone);
+    L.Tip("Centers the item on the drop zone — instant world-space slots");
+    static const char* const axes[] = {"Both", "Horizontal", "Vertical"};
+    k1 = L.Combo("Lock Axis##dg", &ax, axes, 3);
+    L.TipLookup();
+    L.Drag("Drag Threshold##dg", &dg->dragThreshold, 1, 0.01f, 0.0f, 10.0f);
+    L.Tip("World units before a drag starts (0 = instant)");
+    L.Check("Bring to Front while dragging##dg", &dg->bringToFront);
+    L.TipLookup();
+    k2 = L.Drag("Grid Snap##dg", grid, 2, 0.05f, 0.0f, 100.0f);
+    L.Tip("Snap drag to a world grid (0 = off) — board/tile games");
+    L.Drag("Drag Scale##dg", &dg->dragScale, 1, 0.01f, 0.1f, 4.0f);
+    L.Tip("Scale the item while dragging for a lifted look (1 = off)");
+    L.Note("Drag the sprite at runtime; dropping on a Drop Zone", false, true);
+    L.Note("fires on_drop() here + on_receive() on the zone.", false, true);
+    L.Note("Zones also get on_hover_enter/exit() during a drag.", false, true);
+    const int kRemove = L.SmallButton("Remove##dg");
+    if (!DrawRowsOkayUI(dg, "##okayui_draggable", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (k1 >= 0 && L[k1].changed) { dg->axis = (Draggable::Axis)ax; }
+    if (k2 >= 0 && L[k2].changed) { dg->gridX = grid[0]; dg->gridY = grid[1]; }
+    if (L[kRemove].clicked) toRemove = dg;
+    return true;
+}
+
+// Drop Zone (item), written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawDropZoneWithOkayUI(EditorState& ed, DropZone* dz, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(7);
+    L.Text("Accept Tag##dz", &dz->acceptTag);
+    L.Tip("Only accept draggables whose object Tag matches (empty = any)");
+    L.Note("Sprites dropped here call this object's on_receive().", false, true);
+    const int kRemove = L.SmallButton("Remove##dz");
+    if (!DrawRowsOkayUI(dz, "##okayui_dropzone", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = dz;
+    return true;
+}
+
+// UI Progress Bar, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawUIProgressBarWithOkayUI(EditorState& ed, UIProgressBar* pb, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(39);
+    StyleBarRows sb;
+    AnchorRow ar;
+    ShapeRow sr1;
+    int fd = (int)pb->fillDir;
+    int k2 = -1;
+    AddStyleBarRows(L, pb, sb);
+    L.Drag("Pos (px)##upb", &pb->position.x, 2, 1.0f);
+    L.TipLookup();
+    L.Drag("Size (px)##upb", &pb->size.x, 2, 1.0f, 1.0f, 8000.0f);
+    L.TipLookup();
+    L.Slider("Value##upb", &pb->value, 0.0f, 1.0f);
+    L.TipLookup();
+    L.Color("Fill##upb", &pb->fill.r, 4);
+    L.TipLookup();
+    L.Color("Background##upb", &pb->background.r, 4);
+    L.TipLookup();
+    L.Note("script: set_progress(0..1)", false, true);
+    AddAnchorRow(L, "Anchor##upb", pb->anchor, ar);
+    AddShapeRow(L, "Shape##upb", pb->shape, sr1);
+    if (UIShapeUsesRadius(pb->shape)) {
+        L.Drag("Corner Radius##upb", &pb->cornerRadius, 1, 0.2f, 0.0f, 64.0f);
+        L.TipLookup();
+    }
+    L.Check("Gradient Fill##upb", &pb->gradientFill);
+    L.TipLookup();
+    if (pb->gradientFill) {
+        L.Color("Fill End##upb", &pb->fillEnd.r, 4);
+        L.TipLookup();
+    }
+    L.Check("Show Percent##upb", &pb->showPercent);
+    L.TipLookup();
+    if (pb->showPercent) {
+        L.Color("Text Color##upb", &pb->textColor.r, 4);
+        L.TipLookup();
+    }
+    static const char* const fds[] = {"Left -> Right", "Right -> Left", "Bottom -> Top", "Top -> Bottom"};
+    k2 = L.Combo("Fill Dir##upb", &fd, fds, 4);
+    L.TipLookup();
+    L.DragInt("Segments##upb", &pb->segments, 0.1f, 0, 40);
+    L.Tip("0 or 1 = one solid bar. 2 or more = separate chunks.");
+    if (pb->segments >= 2) {
+        L.Drag("Segment Gap##upb", &pb->segmentGap, 1, 0.1f, 0.0f, 32.0f);
+        L.TipLookup();
+    }
+    L.Drag("Damage Trail##upb", &pb->trailDelay, 1, 0.01f, 0.0f, 3.0f);
+    L.Tip("Seconds for the trail to catch a drop. 0 = off.");
+    if (pb->trailDelay > 0.0f) {
+        L.Color("Trail Color##upb", &pb->trailColor.r, 4);
+        L.TipLookup();
+    }
+    L.Check("Color By Value##upb", &pb->colorByValue);
+    L.TipLookup();
+    if (pb->colorByValue) {
+        L.Color("Low Color##upb", &pb->lowColor.r, 4);
+        L.TipLookup();
+        L.Color("High Color##upb", &pb->highColor.r, 4);
+        L.TipLookup();
+    }
+    L.Text("Text Format##upb", &pb->textFormat);
+    L.Tip("{n} = percent, {v} = 0..1. Empty keeps the percent readout.");
+    const int kRemove = L.SmallButton("Remove##upb");
+    if (!DrawRowsOkayUI(pb, "##okayui_uiprogressbar", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunStyleBarRows(ed, pb, L, sb);
+    RunAnchorRow(ed, L, pb->anchor, ar);
+    RunShapeRow(L, pb->shape, sr1);
+    if (k2 >= 0 && L[k2].changed) { pb->fillDir = (UIProgressBar::FillDir)fd; }
+    if (L[kRemove].clicked) toRemove = pb;
+    return true;
+}
+
+// UI Radial Progress, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawUIRadialProgressWithOkayUI(EditorState& ed, UIRadialProgress* rp, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(30);
+    StyleBarRows sb;
+    AnchorRow ar;
+    AddStyleBarRows(L, rp, sb);
+    L.Drag("Pos (px)##urp", &rp->position.x, 2, 1.0f);
+    L.TipLookup();
+    L.Drag("Size (px)##urp", &rp->size.x, 2, 1.0f, 8.0f, 4000.0f);
+    L.TipLookup();
+    L.Slider("Value##urp", &rp->value, 0.0f, 1.0f);
+    L.TipLookup();
+    L.Drag("Thickness##urp", &rp->thickness, 1, 0.5f, 0.0f, 200.0f);
+    L.Tip("Ring width in px (0 = filled pie)");
+    L.Drag("Start Angle##urp", &rp->startAngle, 1, 1.0f, -360.0f, 360.0f, "%.0f deg");
+    L.TipLookup();
+    L.Check("Clockwise##urp", &rp->clockwise);
+    L.TipLookup();
+    L.Check("Spin (loader)##urp", &rp->spin);
+    L.TipLookup();
+    if (rp->spin) {
+        L.Drag("Spin Speed##urp", &rp->spinSpeed, 1, 2.0f, -1080.0f, 1080.0f, "%.0f deg/s");
+        L.TipLookup();
+    }
+    L.Color("Track##urp", &rp->background.r, 4);
+    L.TipLookup();
+    L.Color("Fill##urp", &rp->fill.r, 4);
+    L.TipLookup();
+    AddAnchorRow(L, "Anchor##urp", rp->anchor, ar);
+    L.Check("Show Percent##urp", &rp->showPercent);
+    L.TipLookup();
+    L.Note("script: set_radial(\"name\", 0..1), thickness / spin / start", false, true);
+    const int kRemove = L.SmallButton("Remove##urp");
+    if (!DrawRowsOkayUI(rp, "##okayui_uiradialprogress", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunStyleBarRows(ed, rp, L, sb);
+    RunAnchorRow(ed, L, rp->anchor, ar);
+    if (L[kRemove].clicked) toRemove = rp;
+    return true;
+}
+
+// UI Text Bind, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawUITextBindWithOkayUI(EditorState& ed, UITextBind* tb, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(12);
+    L.Text("Format##utbind", &tb->format);
+    L.TipLookup();
+    L.Tip("The text shown, filled in every frame. {name} is a visual-script variable or a saved value;\n" "{name|default} shows the default when it is empty; {{ and }} are literal braces.\n" "{owner.name} {owner.level} {owner.health} {owner.maxHealth} {owner.healthPct} read the character\n" "this text is a child of (the nearest parent with a Health Stat, Stats, Survival Stats, NPC\n" "Controller or Character). A nameplate on a character shows that character.");
+    L.Note("Shows live values each frame on the sibling Text/Button.", false, true);
+    L.Note("Use {name} for a visual-script variable or a saved value,", false, true);
+    L.Note("e.g.  Health: {hp}   or   Score: {score}", false, true);
+    L.Note("Under a character: {owner.name}  Lv {owner.level}  {owner.health}/{owner.maxHealth}", false, true);
+    if (const GameObject* ow = uiowner::Find(tb->gameObject)) {
+        { char t_[256]; std::snprintf(t_, sizeof t_, "Owner: %s", ow->name.c_str());
+          L.Note(t_, true, true); }
+    } else {
+        L.Note("Owner: none (an owner key then reads the variable of the same name, the player's)", false, true);
+    }
+    const int kRemove = L.SmallButton("Remove##utbind");
+    if (!DrawRowsOkayUI(tb, "##okayui_uitextbind", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = tb;
+    return true;
+}
+
+// UI Bar Bind, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawUIBarBindWithOkayUI(EditorState& ed, UIBarBind* bb, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(13);
+    L.Text("Variable##ubbind", &bb->var);
+    L.TipLookup();
+    L.Tip("The visual-script variable or saved value the bar follows (0 is Min, 1 is Max).\n" "owner.healthFrac (or owner.health, owner.maxHealth, owner.healthPct, owner.level) reads the\n" "character this bar is a child of: the nearest parent with a Health Stat, Stats, Survival Stats,\n" "NPC Controller or Character. With no such parent it follows the variable without \"owner.\"\n" "(healthFrac is the player's health).");
+    L.Drag("Min (empty)##ubbind", &bb->min, 1, 0.5f);
+    L.TipLookup();
+    L.Drag("Max (full)##ubbind", &bb->max, 1, 0.5f);
+    L.TipLookup();
+    L.Note("Fills the sibling Progress Bar / Radial from the named", false, true);
+    L.Note("visual-script variable (or saved value) each frame.", false, true);
+    L.Note("Under a character: owner.healthFrac is that character's health (0 to 1).", false, true);
+    if (const GameObject* ow = uiowner::Find(bb->gameObject)) {
+        { char t_[256]; std::snprintf(t_, sizeof t_, "Owner: %s", ow->name.c_str());
+          L.Note(t_, true, true); }
+    } else {
+        L.Note("Owner: none (an owner key then reads the variable of the same name, the player's)", false, true);
+    }
+    const int kRemove = L.SmallButton("Remove##ubbind");
+    if (!DrawRowsOkayUI(bb, "##okayui_uibarbind", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = bb;
+    return true;
+}
+
+// Crosshair, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawCrosshairWithOkayUI(EditorState& ed, Crosshair* cr, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(29);
+    AnchorRow ar;
+    L.Drag("Offset (px)##uch", &cr->position.x, 2, 1.0f);
+    L.TipLookup();
+    L.Drag("Size (px)##uch", &cr->size.x, 2, 1.0f, 4.0f, 4000.0f);
+    L.TipLookup();
+    L.Color("Color##uch", &cr->color.r, 4);
+    L.TipLookup();
+    L.Drag("Thickness##uch", &cr->thickness, 1, 0.5f, 1.0f, 32.0f);
+    L.TipLookup();
+    L.Drag("Gap##uch", &cr->gap, 1, 0.5f, 0.0f, 256.0f);
+    L.TipLookup();
+    L.Drag("Length##uch", &cr->length, 1, 0.5f, 0.0f, 256.0f);
+    L.TipLookup();
+    L.Drag("Spread##uch", &cr->spread, 1, 0.5f, 0.0f, 256.0f);
+    L.Tip("Extra gap added to every tick (aim spread).");
+    L.Drag("Spread Recover##uch", &cr->spreadRecover, 1, 1.0f, 0.0f, 400.0f, "%.0f px/s");
+    L.Tip("How fast the extra gap eases back to 0. 0 keeps the authored spread.");
+    L.Drag("Spread Max##uch", &cr->spreadMax, 1, 1.0f, 0.0f, 256.0f);
+    L.TipLookup();
+    L.Check("Show Lines##uch", &cr->showLines);
+    L.TipLookup();
+    if (cr->showLines) {
+        L.Check("Up##uchl", &cr->lineUp);
+        L.SameLine();
+        L.TipLookup();
+        L.Check("Down##uchl", &cr->lineDown);
+        L.SameLine();
+        L.TipLookup();
+        L.Check("Left##uchl", &cr->lineLeft);
+        L.SameLine();
+        L.TipLookup();
+        L.Check("Right##uchl", &cr->lineRight);
+        L.Tip("Toggle individual ticks (e.g. turn Up off for a T-style reticle).");
+    }
+    L.Check("Dot##uch", &cr->dot);
+    L.TipLookup();
+    if (cr->dot) {
+        L.Drag("Dot Size##uch", &cr->dotSize, 1, 0.5f, 1.0f, 64.0f);
+        L.TipLookup();
+        L.Color("Dot Color##uch", &cr->dotColor.r, 4);
+        L.TipLookup();
+    }
+    L.Check("Circle##uch", &cr->circle);
+    L.TipLookup();
+    if (cr->circle) {
+        L.Drag("Circle Radius##uch", &cr->circleRadius, 1, 0.5f, 1.0f, 512.0f);
+        L.TipLookup();
+        L.Drag("Circle Thickness##uch", &cr->circleThickness, 1, 0.25f, 1.0f, 16.0f);
+        L.TipLookup();
+        L.Color("Circle Color##uch", &cr->circleColor.r, 4);
+        L.TipLookup();
+    }
+    L.Check("Outline##uch", &cr->outline);
+    L.TipLookup();
+    if (cr->outline) {
+        L.Color("Outline Color##uch", &cr->outlineColor.r, 4);
+        L.TipLookup();
+    }
+    AddAnchorRow(L, "Anchor##uch", cr->anchor, ar);
+    const int kRemove = L.SmallButton("Remove##uch");
+    if (!DrawRowsOkayUI(cr, "##okayui_crosshair", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunAnchorRow(ed, L, cr->anchor, ar);
+    if (L[kRemove].clicked) toRemove = cr;
+    return true;
+}
+
+// UI Stepper, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawUIStepperWithOkayUI(EditorState& ed, UIStepper* st, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(21);
+    AnchorRow ar;
+    ShapeRow sr1;
+    L.Drag("Pos (px)##ust", &st->position.x, 2, 1.0f);
+    L.TipLookup();
+    L.Drag("Size (px)##ust", &st->size.x, 2, 1.0f, 1.0f, 8000.0f);
+    L.TipLookup();
+    L.Drag("Min##ust", &st->minValue, 1, 0.1f);
+    L.TipLookup();
+    L.Drag("Max##ust", &st->maxValue, 1, 0.1f);
+    L.TipLookup();
+    L.Drag("Step##ust", &st->step, 1, 0.1f, 0.0f, 1000.0f);
+    L.TipLookup();
+    L.Slider("Value##ust", &st->value, st->minValue, st->maxValue);
+    L.TipLookup();
+    L.Check("Whole Numbers##ust", &st->wholeNumbers);
+    L.TipLookup();
+    L.SameLine();
+    L.Check("Wrap##ust", &st->wrap);
+    L.TipLookup();
+    L.Color("Background##ust", &st->background.r, 4);
+    L.TipLookup();
+    L.Color("Buttons##ust", &st->button.r, 4);
+    L.TipLookup();
+    L.Color("Text##ust", &st->textColor.r, 4);
+    L.TipLookup();
+    AddAnchorRow(L, "Anchor##ust", st->anchor, ar);
+    AddShapeRow(L, "Shape##ust", st->shape, sr1);
+    if (UIShapeUsesRadius(st->shape)) {
+        L.Drag("Corner Radius##ust", &st->cornerRadius, 1, 0.2f, 0.0f, 64.0f);
+        L.TipLookup();
+    }
+    L.Check("Interactable##ust", &st->interactable);
+    L.TipLookup();
+    L.Note("[-] value [+] ; calls script on_change()", false, true);
+    const int kRemove = L.SmallButton("Remove##ust");
+    if (!DrawRowsOkayUI(st, "##okayui_uistepper", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunAnchorRow(ed, L, st->anchor, ar);
+    RunShapeRow(L, st->shape, sr1);
+    if (L[kRemove].clicked) toRemove = st;
+    return true;
+}
+
+// UI Rating, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
+static bool DrawUIRatingWithOkayUI(EditorState& ed, UIRating* rt, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(15);
+    AnchorRow ar;
+    L.Drag("Pos (px)##urt", &rt->position.x, 2, 1.0f);
+    L.TipLookup();
+    L.Drag("Size (px)##urt", &rt->size.x, 2, 1.0f, 1.0f, 8000.0f);
+    L.TipLookup();
+    L.SliderInt("Stars##urt", &rt->count, 1, 10);
+    L.TipLookup();
+    L.Slider("Value##urt", &rt->value, 0.0f, (float)rt->count);
+    L.TipLookup();
+    L.Check("Allow Half##urt", &rt->allowHalf);
+    L.TipLookup();
+    L.SameLine();
+    L.Check("Read Only##urt", &rt->readOnly);
+    L.TipLookup();
+    L.Color("Filled##urt", &rt->on.r, 4);
+    L.TipLookup();
+    L.Color("Empty##urt", &rt->off.r, 4);
+    L.TipLookup();
+    AddAnchorRow(L, "Anchor##urt", rt->anchor, ar);
+    L.Note("click a star to rate; calls script on_change()", false, true);
+    const int kRemove = L.SmallButton("Remove##urt");
+    if (!DrawRowsOkayUI(rt, "##okayui_uirating", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunAnchorRow(ed, L, rt->anchor, ar);
+    if (L[kRemove].clicked) toRemove = rt;
+    return true;
+}
+
+// What draws the Nav Mesh Agent's rows (NavigationWindow.cpp): this file's DrawRowsOkayUI, behind the preview switch.
+static bool NavRowsOkayUI(okay::Component* comp, const char* id, okaypanels::InspFieldList& L) { return UseOkayUIInspector() && DrawRowsOkayUI(comp, id, L); }
+static const bool s_navRowsRegistered = (oked::SetNavRowsDrawer(&NavRowsOkayUI), true);
+
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
     // Row spacing, field height and the value / label split come from the density setting (Appearance > Density)
@@ -30946,22 +32367,25 @@ void DrawInspector(EditorState& ed) {
     // Header: an active toggle + a type chip + the object name on
     // a tinted bar, then a Tag field + Save-as-Prefab, then a divider. The child
     // auto-sizes to its contents so there's no empty gap at the top.
+    if (UseOkayUIInspector() && DrawInspectorHeaderWithOkayUI(ed, go)) {
+        ImGui::Spacing();
+    } else {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.17f, 0.20f, 1.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
     ImGui::BeginChild("##objheader", ImVec2(0, 0),
                       ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
 
     // Row 1: active toggle · type chip · editable name (fills the rest).
-    // Toggling an object takes its whole subtree with it,
-    // so disabling a parent disables its children and re-enabling brings them back.
+    // Toggling an object switches only its own flag. Its children follow it (ActiveInHierarchy) and keep
+    // their own setting, so a child that was off stays off when the parent comes back on (#888 finding 154).
     bool act = go->active;
     if (ImGui::Checkbox("##active", &act)) {
         const auto& sel = ed.MultiSelection();
-        if (sel.size() > 1) for (GameObject* g : sel) SetActiveRecursive(g, act);  // whole multi-selection
-        else SetActiveRecursive(go, act);
+        if (sel.size() > 1) for (GameObject* g : sel) oked::SetObjectActive(g, act);  // whole multi-selection
+        else oked::SetObjectActive(go, act);
         ed.dirty = true;
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Active in scene (also toggles children + the whole selection)");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Active in scene (applies to the whole selection; children follow it and keep their own setting)");
     ImGui::SameLine();
     {   // Drawn type icon — the same glyph set the Hierarchy rows use, so the
         // header reads consistently (replaces the old "[Cam]" text chip).
@@ -31120,6 +32544,22 @@ void DrawInspector(EditorState& ed) {
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
     ImGui::Spacing();
+    }   // the Dear ImGui card
+
+    // ---- Networked: one tick puts this object on the network (a Network Sync: its transform follows
+    // the peer that owns it, smoothed). Shown once the scene has a Network Manager, or the object syncs.
+    if (go->GetComponent<NetworkSync>() || ed.scene().FindObjectOfType<NetworkManager>()) {
+        bool networked = go->GetComponent<NetworkSync>() != nullptr;
+        if (ImGui::Checkbox("Networked##objnet", &networked)) {
+            ed.PushUndo();
+            if (networked) go->AddComponent<NetworkSync>();
+            else go->RemoveComponent<NetworkSync>();
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Every player sees this object move: its position and rotation follow the player who owns it "
+                              "(the host, unless its Network Sync says otherwise), smoothed between updates.");
+    }
 
     // ---- Prefab instance header, per-property marks and the changes list ------------------
     // "Prefab: <name>" with Open / Select Asset / Revert All / Apply All / Create Variant / Update All / Unpack, then what differs
@@ -31322,6 +32762,7 @@ void DrawInspector(EditorState& ed) {
     }
 
     CharacterModelPanel(ed, go);
+    if (!(UseOkayUIInspector() && DrawTransformWithOkayUI(ed, go))) {   // OkayUI's Transform with the preview switch, else Dear ImGui's
     bool tfOpen = ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
     if (ImGui::BeginDragDropSource()) {
         const char* payload = "component\nTransform";
@@ -31444,6 +32885,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SetTooltip("Link the scale axes: dragging X/Y/Z scales all three by the same ratio.");
         }
     }
+    }   // the Dear ImGui Transform
 
     // Draw the remaining components in their stored order so the user-controlled
     // arrangement is honored. Transform is drawn above (fixed at index 0) and skipped.
@@ -31462,7 +32904,7 @@ void DrawInspector(EditorState& ed) {
         // With several objects selected, what a drawer changes on this component goes to the others too.
         const oked::ComponentEdit multiEdit = oked::BeginComponentEdit(ed.MultiSelection(), go, *curComp);
     if (auto* sr = dynamic_cast<SpriteRenderer*>(curComp)) {
-        if (CompHeader("Sprite Renderer", sr, &toRemove)) {
+        if (CompHeader("Sprite Renderer", sr, &toRemove) && !(UseOkayUIInspector() && DrawSpriteRendererWithOkayUI(ed, sr, toRemove))) {   // OkayUI's with the preview switch (section 16)
             float col[4] = {sr->color.r, sr->color.g, sr->color.b, sr->color.a};
             if (ImGui::ColorEdit4("Color##sprite", col)) {
                 sr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;
@@ -31710,6 +33152,8 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("Friction##ps");
                 if (ImGui::SliderFloat("Life Loss##ps", &ps->collisionLifeLoss, 0.0f, 1.0f)) ed.dirty = true;
                 oked::FieldTip("Life Loss##ps");
+                if (ImGui::Checkbox("Collide with Terrain##ps", &ps->collideTerrain)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also land on every Terrain in the scene: particles stop or bounce on hills and slide down slopes.");
             }
 
             // ---- Bursts & duration ----
@@ -31753,8 +33197,8 @@ void DrawInspector(EditorState& ed) {
             // Unlit flag into the selector; the renderer treats Unlit-shader == unlit.
             int sh = (int)mr->shader;
             if (mr->unlit && mr->shader == MeshRenderer::Shader::Standard) sh = 1;  // legacy unlit flag
-            const char* shaders[] = {"Standard", "Unlit", "Toon", "Gradient", "Fresnel", "Iridescent", "Hologram", "Posterize", "Velvet"};
-            if (ImGui::Combo("Shader##mesh", &sh, shaders, 9)) {
+            const char* shaders[] = {"Standard", "Unlit", "Toon", "Gradient", "Fresnel", "Iridescent", "Hologram", "Posterize", "Velvet", "Custom"};
+            if (ImGui::Combo("Shader##mesh", &sh, shaders, 10)) {
                 mr->shader = (MeshRenderer::Shader)sh;
                 mr->unlit = (mr->shader == MeshRenderer::Shader::Unlit);  // keep legacy flag in sync
                 ed.dirty = true;
@@ -31775,6 +33219,8 @@ void DrawInspector(EditorState& ed) {
             // Fresnel (rim-glow shell): the rim controls below tune the edge glow.
             if (mr->shader == MeshRenderer::Shader::Fresnel)
                 ImGui::TextDisabled("Edge glow uses the Rim settings below.");
+            // Custom: an .okayshader file (our own shader language) and its properties.
+            if (mr->shader == MeshRenderer::Shader::Custom && DrawCustomShaderFields(*mr)) ed.dirty = true;
             // Rim (Fresnel) backlight — a per-material glow, great with Toon.
             if (ImGui::SliderFloat("Rim##mesh", &mr->rimStrength, 0.0f, 2.0f)) ed.dirty = true;
             oked::FieldTip("Rim##mesh");
@@ -32016,7 +33462,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* tr = dynamic_cast<Terrain*>(curComp)) {
-        if (CompHeader("Terrain", tr, &toRemove)) {
+        if (CompHeader("Terrain", tr, &toRemove) && !(UseOkayUIInspector() && DrawTerrainWithOkayUI(ed, tr, toRemove))) {   // OkayUI's with the preview switch (section 17)
             float c[4] = {tr->color.r, tr->color.g, tr->color.b, tr->color.a};
             if (ImGui::ColorEdit4("Color##terr", c)) { tr->color = {c[0],c[1],c[2],c[3]}; tr->Apply(); ed.dirty = true; }
             oked::FieldTip("Color##terr");
@@ -32223,7 +33669,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* v = dynamic_cast<VoxelTerrain*>(curComp)) {
-        if (CompHeader("Voxel Terrain", v, &toRemove)) {
+        if (CompHeader("Voxel Terrain", v, &toRemove) && !(UseOkayUIInspector() && DrawVoxelTerrainWithOkayUI(ed, v, toRemove))) {   // OkayUI's with the preview switch (section 19)
             ImGui::TextDisabled("Smooth marching-cubes voxels: real caves, tunnels & overhangs.");
             float c[4] = {v->color.r, v->color.g, v->color.b, v->color.a};
             if (ImGui::ColorEdit4("Color##vox", c)) { v->color = {c[0],c[1],c[2],c[3]}; v->Apply(); ed.dirty = true; }
@@ -32356,7 +33802,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* vd = dynamic_cast<VoxelDigger*>(curComp)) {
-        if (CompHeader("Voxel Digger", vd, &toRemove)) {
+        if (CompHeader("Voxel Digger", vd, &toRemove) && !(UseOkayUIInspector() && DrawVoxelDiggerWithOkayUI(ed, vd, toRemove))) {   // OkayUI's with the preview switch (section 19)
             ImGui::TextDisabled("Aim with the camera and hold to carve caves/tunnels (or add material).");
             const char* modes[] = {"Dig (remove)", "Add (build)", "Smooth", "Box (rectangular)"};
             int md = (int)vd->mode;
@@ -32544,7 +33990,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* fl = dynamic_cast<Flashlight*>(curComp)) {
-        if (CompHeader("Flashlight", fl, &toRemove)) {
+        if (CompHeader("Flashlight", fl, &toRemove) && !(UseOkayUIInspector() && DrawFlashlightWithOkayUI(ed, fl, toRemove))) {   // OkayUI's with the preview switch (section 19)
             ImGui::TextDisabled("A spot light that follows your view — see inside caves. Toggle in Play.");
             char kb[2] = {fl->toggleKey, 0};
             if (ImGui::InputText("Toggle Key##fl", kb, sizeof(kb))) { fl->toggleKey = kb[0]; ed.dirty = true; }
@@ -32565,7 +34011,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* vsc = dynamic_cast<VisualScriptComponent*>(curComp)) {
-        if (CompHeader("Visual Script", vsc, &toRemove)) {
+        if (CompHeader("Visual Script", vsc, &toRemove) && !(UseOkayUIInspector() && DrawVisualScriptWithOkayUI(ed, go, vsc))) {   // OkayUI's with the preview switch (section 17)
             const std::string nm = vsc->Path().empty() ? std::string("(embedded graph)")
                                                        : std::filesystem::path(vsc->Path()).filename().string();
             ImGui::TextUnformatted(nm.c_str());
@@ -32935,8 +34381,20 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##ma")) toRemove = ma;
         }
     }
+    // A player has two animator machines on purpose: the walk / jump graph (layer 0) and a small upper-body layer that
+    // plays a flinch when the player is hit. The second one gets a one-line explanation instead of a full panel.
+    if (auto* hl = dynamic_cast<AnimStateMachine*>(curComp); hl && hl->layer > 0 && hl->maskBone == "Torso" && go->GetComponent<Character>()) {
+        if (CompHeader("Hit reaction (upper body)", hl, &toRemove)) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.7f, 0.75f, 1.0f));
+            ImGui::TextWrapped("Plays a short flinch on the upper body when the player is hit. It is not a second walk animation: the Animator above does the walking, running and jumping.");
+            ImGui::PopStyleColor();
+        }
+    } else
     if (auto* sm = dynamic_cast<AnimStateMachine*>(curComp)) {
-        if (CompHeader("Animator", sm, &toRemove)) {
+        if (CompHeader(okay::editor::vsed::kAnimGraphTitle, sm, &toRemove) && !(UseOkayUIInspector() && DrawAnimStateMachineWithOkayUI(ed, go, sm))) {   // OkayUI's with the preview switch (section 18)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.7f, 0.75f, 1.0f));
+            ImGui::TextWrapped("Picks the walk, run, jump and crouch animation from how the player moves.");
+            ImGui::PopStyleColor();
             if (ImGui::Button("Open Animator Graph##asm")) g_showAnimatorGraph = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Visual node editor: drag states around, draw transitions,\nwatch the active state light up in Play mode.");
             auto* ma = go->GetComponent<ModelAnimator>();
@@ -33147,7 +34605,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* fh = dynamic_cast<FirstPersonHand*>(curComp)) {
-        if (CompHeader("Hand (legacy)", fh, &toRemove)) {
+        if (CompHeader("Hand (legacy)", fh, &toRemove) && !(UseOkayUIInspector() && DrawFirstPersonHandWithOkayUI(ed, fh, toRemove))) {   // OkayUI's with the preview switch (section 19)
             ImGui::TextDisabled("Shows your character's OWN arm in first person. Your body is\n"
                                 "hidden from your camera only (others see all of it) and never\n"
                                 "duplicated. Click to punch.");
@@ -33179,12 +34637,16 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* fhs = dynamic_cast<FirstPersonHands*>(curComp)) {
         if (CompHeader("First Person Hands", fhs, &toRemove)) {
-            DrawFpHandsBody(ed, fhs);
-            if (ImGui::SmallButton("Remove##fphs")) toRemove = fhs;
+            bool rm = false;
+            if (UseOkayUIInspector() && DrawFpHandsBodyOkayUI(ed, fhs, rm)) { if (rm) toRemove = fhs; }   // OkayUI's with the preview switch (section 21)
+            else {
+                DrawFpHandsBody(ed, fhs);
+                if (ImGui::SmallButton("Remove##fphs")) toRemove = fhs;
+            }
         }
     }
     if (auto* ns = dynamic_cast<NetworkSync*>(curComp)) {
-        if (CompHeader("Network Sync", ns, &toRemove)) {
+        if (CompHeader("Network Sync", ns, &toRemove) && !(UseOkayUIInspector() && DrawNetworkSyncWithOkayUI(ed, ns, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Replicates this object's position + rotation to every peer. Needs a Network Manager in the scene.");
             char nid[64]; std::snprintf(nid, sizeof(nid), "%s", ns->netId.c_str());
             if (ImGui::InputText("Net Id##ns", nid, sizeof(nid))) { ns->netId = nid; ed.dirty = true; }
@@ -33207,7 +34669,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ps = dynamic_cast<NetworkPlayerSpawner*>(curComp)) {
-        if (CompHeader("Network Player Spawner", ps, &toRemove)) {
+        if (CompHeader("Network Player Spawner", ps, &toRemove) && !(UseOkayUIInspector() && DrawNetworkPlayerSpawnerWithOkayUI(ed, ps, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Spawns a player copy for you (driveable) and for each peer\n"
                                 "(stripped to a moving/animating avatar). Needs a Network Manager.");
             char tn[64]; std::snprintf(tn, sizeof(tn), "%s", ps->playerTemplate.c_str());
@@ -33369,7 +34831,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* nv = dynamic_cast<NetValidator*>(curComp)) {
-        if (CompHeader("Net Validator", nv, &toRemove)) {
+        if (CompHeader("Net Validator", nv, &toRemove) && !(UseOkayUIInspector() && DrawNetValidatorWithOkayUI(ed, nv, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextDisabled("A rule a client's RPC must pass on the server (needs an Anti-Cheat Config).");
             ImGui::PopTextWrapPos();
@@ -33447,7 +34909,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ss = dynamic_cast<SaveConfig*>(curComp)) {
-        if (CompHeader("Save Settings", ss, &toRemove)) {
+        if (CompHeader("Save Settings", ss, &toRemove) && !(UseOkayUIInspector() && DrawSaveConfigWithOkayUI(ed, ss, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("When this scene saves by itself. One per scene.");
             if (ImGui::DragFloat("Autosave every (s)##ss", &ss->autosaveInterval, 1.0f, 0.0f, 7200.0f, "%.0f")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds of play between autosaves (0 = off).");
@@ -33497,7 +34959,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* pm = dynamic_cast<PauseMenu*>(curComp)) {
-        if (CompHeader("Pause Menu", pm, &toRemove)) {
+        if (CompHeader("Pause Menu", pm, &toRemove) && !(UseOkayUIInspector() && DrawPauseMenuWithOkayUI(ed, pm, toRemove))) {   // OkayUI's with the preview switch (section 19)
             // The menu UI lives in the scene as editable objects (under "PauseMenu UI")
             // so you can restyle it — it isn't spawned at Play. Create it if missing.
             if (!pm->HasUI()) {
@@ -33532,7 +34994,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ws = dynamic_cast<WorldStreamer*>(curComp)) {
-        if (CompHeader("World Streamer", ws, &toRemove)) {
+        if (CompHeader("World Streamer", ws, &toRemove) && !(UseOkayUIInspector() && DrawWorldStreamerWithOkayUI(ed, ws, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Streams cell prefabs in/out around the target (World Partition).");
             if (ImGui::DragFloat("Cell Size##ws", &ws->cellSize, 1.0f, 1.0f, 5000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("World units per chunk edge (XZ).");
@@ -33561,7 +35023,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* de = dynamic_cast<Destructible*>(curComp)) {
-        if (CompHeader("Destructible (Chaos)", de, &toRemove)) {
+        if (CompHeader("Destructible (Chaos)", de, &toRemove) && !(UseOkayUIInspector() && DrawDestructibleWithOkayUI(ed, de, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Voxel blocks shatter into physics debris; unsupported blocks collapse.");
             char tbuf[128]; std::snprintf(tbuf, sizeof(tbuf), "%s", de->blockTag.c_str());
             if (ImGui::InputText("Block Tag##de", tbuf, sizeof(tbuf))) { de->blockTag = tbuf; ed.dirty = true; }
@@ -33603,7 +35065,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ch = dynamic_cast<Character*>(curComp)) {
-        if (CompHeader("Character", ch, &toRemove)) {
+        if (CompHeader("Character", ch, &toRemove) && !(UseOkayUIInspector() && DrawCharacterWithOkayUI(ed, go, ch))) {   // OkayUI's with the preview switch (section 18)
             bool c = false;
             auto coledit = [&](const char* lbl, Color& col){ float v[3]={col.r,col.g,col.b}; if (ImGui::ColorEdit3(lbl, v)) { col={v[0],v[1],v[2],1.0f}; c=true; } };
 
@@ -34399,7 +35861,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* occ = dynamic_cast<Occluder*>(curComp)) {
-        if (CompHeader("Occluder", occ, &toRemove)) {
+        if (CompHeader("Occluder", occ, &toRemove) && !(UseOkayUIInspector() && DrawOccluderWithOkayUI(ed, occ, toRemove))) {   // OkayUI's with the preview switch (section 22)
             if (ImGui::Checkbox("Use mesh", &occ->useMesh)) ed.dirty = true;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("On: the real triangles hide what's behind them.\n"
@@ -34409,7 +35871,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* rb2 = dynamic_cast<Rigidbody2D*>(curComp))
-        if (CompHeader("Rigidbody2D", rb2, &toRemove)) {
+        if (CompHeader("Rigidbody2D", rb2, &toRemove) && !(UseOkayUIInspector() && DrawRigidbody2DWithOkayUI(ed, go->GetComponent<Rigidbody2D>(), toRemove))) {   // OkayUI's with the preview switch (section 16)
             auto* rb = go->GetComponent<Rigidbody2D>();
             int bt = (int)rb->bodyType;
             const char* types[] = {"Dynamic", "Kinematic", "Static"};
@@ -34433,7 +35895,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##rb")) toRemove = rb;
         }
     if (auto* bc = dynamic_cast<BoxCollider2D*>(curComp)) {
-        if (CompHeader("Box Collider 2D", bc, &toRemove)) {
+        if (CompHeader("Box Collider 2D", bc, &toRemove) && !(UseOkayUIInspector() && DrawBoxCollider2DWithOkayUI(ed, go, bc, toRemove))) {   // OkayUI's with the preview switch (section 16)
             float sz[2] = {bc->size.x, bc->size.y};
             if (ImGui::DragFloat2("Size##bc", sz, 0.05f, 0.0f, 1000.0f)) { bc->size = {sz[0], sz[1]}; ed.dirty = true; }
             oked::FieldTip("Size##bc");
@@ -34454,7 +35916,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cc = dynamic_cast<CircleCollider2D*>(curComp)) {
-        if (CompHeader("Circle Collider 2D", cc, &toRemove)) {
+        if (CompHeader("Circle Collider 2D", cc, &toRemove) && !(UseOkayUIInspector() && DrawCircleCollider2DWithOkayUI(ed, go, cc, toRemove))) {   // OkayUI's with the preview switch (section 16)
             ImGui::DragFloat("Radius##cc", &cc->radius, 0.05f, 0.0f, 1000.0f);
             float off[2] = {cc->offset.x, cc->offset.y};
             if (ImGui::DragFloat2("Offset##cc", off, 0.05f)) { cc->offset = {off[0], off[1]}; ed.dirty = true; }
@@ -34473,7 +35935,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cap = dynamic_cast<CapsuleCollider2D*>(curComp)) {
-        if (CompHeader("Capsule Collider 2D", cap, &toRemove)) {
+        if (CompHeader("Capsule Collider 2D", cap, &toRemove) && !(UseOkayUIInspector() && DrawCapsuleCollider2DWithOkayUI(ed, go, cap, toRemove))) {   // OkayUI's with the preview switch (section 16)
             float sz[2] = {cap->size.x, cap->size.y};
             if (ImGui::DragFloat2("Size##cap2", sz, 0.05f, 0.0f, 1000.0f)) { cap->size = {sz[0], sz[1]}; ed.dirty = true; }
             oked::FieldTip("Size##cap2");
@@ -34498,7 +35960,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ec = dynamic_cast<EdgeCollider2D*>(curComp)) {
-        if (CompHeader("Edge Collider 2D", ec, &toRemove)) {
+        if (CompHeader("Edge Collider 2D", ec, &toRemove) && !(UseOkayUIInspector() && DrawPointCollider2DWithOkayUI(ed, ec, true, toRemove))) {   // OkayUI's with the preview switch (section 16)
             ImGui::TextDisabled("Open polyline: ground, slopes, walls. Local-space points.");
             float off[2] = {ec->offset.x, ec->offset.y};
             if (ImGui::DragFloat2("Offset##ec2", off, 0.05f)) { ec->offset = {off[0], off[1]}; ed.dirty = true; }
@@ -34534,7 +35996,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* pc = dynamic_cast<PolygonCollider2D*>(curComp)) {
-        if (CompHeader("Polygon Collider 2D", pc, &toRemove)) {
+        if (CompHeader("Polygon Collider 2D", pc, &toRemove) && !(UseOkayUIInspector() && DrawPointCollider2DWithOkayUI(ed, pc, false, toRemove))) {   // OkayUI's with the preview switch (section 16)
             ImGui::TextDisabled("Closed loop (convex works best). Local-space vertices.");
             float off[2] = {pc->offset.x, pc->offset.y};
             if (ImGui::DragFloat2("Offset##pc2", off, 0.05f)) { pc->offset = {off[0], off[1]}; ed.dirty = true; }
@@ -34564,6 +36026,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* rb3 = dynamic_cast<Rigidbody3D*>(curComp))
         if (CompHeader("Rigidbody3D", rb3, &toRemove)) {
+            if (!(UseOkayUIInspector() && DrawRigidbody3DWithOkayUI(ed, go, rb3, toRemove))) {   // the body is OkayUI's with the preview switch (docs/own_ui_toolkit.md section 15)
             auto* rb = go->GetComponent<Rigidbody3D>();
             int bt = (int)rb->bodyType;
             const char* types[] = {"Dynamic", "Kinematic", "Static"};
@@ -34597,9 +36060,10 @@ void DrawInspector(EditorState& ed) {
             else
                 ImGui::TextDisabled("Parent this object and the body is carried with it. Physics steps: %.0f per second.", g_project.physicsHz);
             if (ImGui::SmallButton("Remove##rb3")) toRemove = rb;
+            }   // the Dear ImGui body
         }
     if (auto* jt = dynamic_cast<Joint3D*>(curComp)) {
-        if (CompHeader("Joint 3D", jt, &toRemove)) {
+        if (CompHeader("Joint 3D", jt, &toRemove) && !(UseOkayUIInspector() && DrawJoint3DWithOkayUI(ed, jt, toRemove))) {   // OkayUI's with the preview switch (section 20)
             ImGui::TextDisabled("Constrains this body to an anchor or another body.");
             const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)", "Slider (prismatic)"};
             ImGui::Combo("Mode##jt", &jt->mode, modes, 5);
@@ -34662,7 +36126,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* jt = dynamic_cast<Joint2D*>(curComp)) {
-        if (CompHeader("Joint 2D", jt, &toRemove)) {
+        if (CompHeader("Joint 2D", jt, &toRemove) && !(UseOkayUIInspector() && DrawJoint2DWithOkayUI(ed, jt, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Constrains this 2D body to an anchor or another body.");
             const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)"};
             ImGui::Combo("Mode##jt2", &jt->mode, modes, 4);
@@ -34746,7 +36210,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ikt = dynamic_cast<IKTarget*>(curComp)) {
-        if (CompHeader("IK Target", ikt, &toRemove)) {
+        if (CompHeader("IK Target", ikt, &toRemove) && !(UseOkayUIInspector() && DrawIKTargetWithOkayUI(ed, ikt, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("This object is where a hand, foot, or the head reaches.");
             char cn[64]; std::strncpy(cn, ikt->characterName.c_str(), sizeof(cn) - 1); cn[sizeof(cn) - 1] = '\0';
             if (ImGui::InputText("Character##ikt", cn, sizeof(cn))) { ikt->characterName = cn; ikt->character = nullptr; ed.dirty = true; }
@@ -34763,7 +36227,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ao = dynamic_cast<AimOffset*>(curComp)) {
-        if (CompHeader("Aim Offset", ao, &toRemove)) {
+        if (CompHeader("Aim Offset", ao, &toRemove) && !(UseOkayUIInspector() && DrawAimOffsetWithOkayUI(ed, ao, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Pitch and yaw on the spine, chest, and arms. Sits on top of item grips.");
             ImGui::Checkbox("Aim with the camera##ao", &ao->useCamera);
             char tn[64]; std::strncpy(tn, ao->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
@@ -35292,7 +36756,7 @@ void DrawInspector(EditorState& ed) {
             }
         }
         if (auto* ph = dynamic_cast<ProceduralObjectHolding*>(curComp)) {
-            if (CompHeader("Procedural Object Holding", ph, &toRemove)) {
+            if (CompHeader("Procedural Object Holding", ph, &toRemove) && !(UseOkayUIInspector() && DrawObjectHoldingWithOkayUI(ed, ph, toRemove))) {   // OkayUI's with the preview switch (section 18)
                 ImGui::TextDisabled("Hold objects with the hands: IK onto each object's grips.");
                 int hand = (int)ph->primaryHand;
                 if (ImGui::Combo("Primary Hand##poh", &hand, "Left\0Right\0Both\0")) { ph->primaryHand = (ProceduralObjectHolding::Hand)hand; ed.dirty = true; }
@@ -35337,7 +36801,7 @@ void DrawInspector(EditorState& ed) {
             }
         }
         if (auto* hp = dynamic_cast<HoldPrompt*>(curComp)) {
-            if (CompHeader("Hold Prompt", hp, &toRemove)) {
+            if (CompHeader("Hold Prompt", hp, &toRemove) && !(UseOkayUIInspector() && DrawHoldPromptWithOkayUI(ed, hp, toRemove))) {   // OkayUI's with the preview switch (section 19)
                 ImGui::TextDisabled("E picks a hold-in-hands item up. E again, or G, puts it down.");
                 char dk[2] = {hp->dropKey, 0};
                 if (ImGui::InputText("Drop Key##hp", dk, sizeof(dk))) { hp->dropKey = dk[0]; ed.dirty = true; }
@@ -35353,7 +36817,7 @@ void DrawInspector(EditorState& ed) {
             }
         }
         if (auto* ho = dynamic_cast<HoldableObject*>(curComp)) {
-            if (CompHeader("Holdable Object", ho, &toRemove)) {
+            if (CompHeader("Holdable Object", ho, &toRemove) && !(UseOkayUIInspector() && DrawHoldableWithOkayUI(ed, ho, toRemove))) {   // OkayUI's with the preview switch (section 18)
                 ImGui::TextDisabled("A character's Procedural Object Holding can pick this up.");
                 int st = (int)ho->style;
                 if (ImGui::Combo("Style##hold", &st,
@@ -35427,6 +36891,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* mcol = dynamic_cast<MeshCollider3D*>(curComp)) {
         if (CompHeader("Mesh Collider 3D", mcol, &toRemove)) {
+            if (!(UseOkayUIInspector() && DrawMeshCollider3DWithOkayUI(ed, go, mcol, toRemove))) {   // the body is OkayUI's with the preview switch (docs/ui/own_ui_toolkit.md section 15)
             // Exact triangles while static or kinematic. A dynamic body uses the convex hull.
             const std::string status = mcol->StatusMessage();
             if (mcol->UsesConvexHull()) {
@@ -35457,10 +36922,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rebuild the triangle BVH now (it also rebuilds automatically when the mesh changes).");
             ImGui::SameLine();
             if (ImGui::SmallButton("Remove##mc3")) toRemove = mcol;
+            }   // the Dear ImGui body
         }
     }
     if (auto* bc = dynamic_cast<BoxCollider3D*>(curComp); bc && !dynamic_cast<MeshCollider3D*>(curComp)) {
         if (CompHeader("Box Collider 3D", bc, &toRemove)) {
+            if (!(UseOkayUIInspector() && DrawBoxCollider3DWithOkayUI(ed, go, bc, toRemove))) {   // the body is OkayUI's with the preview switch (docs/own_ui_toolkit.md section 15)
             float sz[3] = {bc->size.x, bc->size.y, bc->size.z};
             if (DragVec3Axis("Size##bc3", sz, 0.05f)) { bc->size = {sz[0], sz[1], sz[2]}; ed.dirty = true; }
             float off[3] = {bc->offset.x, bc->offset.y, bc->offset.z};
@@ -35488,10 +36955,12 @@ void DrawInspector(EditorState& ed) {
                                   "pull each side of the box to match the model. Turn off when done.");
             if (g_colliderEdit) ImGui::TextDisabled("Drag the colored dots on each face in the Scene view.");
             if (ImGui::SmallButton("Remove##bc3")) toRemove = bc;
+            }   // the Dear ImGui body
         }
     }
     if (auto* sc = dynamic_cast<SphereCollider3D*>(curComp)) {
         if (CompHeader("Sphere Collider 3D", sc, &toRemove)) {
+            if (!(UseOkayUIInspector() && DrawSphereCollider3DWithOkayUI(ed, go, sc, toRemove))) {   // the body is OkayUI's with the preview switch (docs/own_ui_toolkit.md section 15)
             ImGui::DragFloat("Radius##sc3", &sc->radius, 0.05f, 0.0f, 1000.0f);
             float off[3] = {sc->offset.x, sc->offset.y, sc->offset.z};
             if (DragVec3Axis("Offset##sc3", off, 0.05f)) { sc->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
@@ -35508,11 +36977,13 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Auto Fit##sc3");
             if (sc->autoFit) FitColliders(go, true);
             if (ImGui::SmallButton("Remove##sc3")) toRemove = sc;
+            }   // the Dear ImGui body
         }
     }
     if (auto* cap = dynamic_cast<CapsuleCollider3D*>(curComp)) {
         if (CompHeader(cap->shape() == Collider3D::Shape::Cylinder ? "Cylinder Collider 3D" : "Capsule Collider 3D", cap, &toRemove)) {
             if (cap->shape() == Collider3D::Shape::Cylinder) ImGui::TextDisabled("Flat ends and sharp rims: it stands on its end and rolls on its side.");
+            if (!(UseOkayUIInspector() && DrawCapsuleCollider3DWithOkayUI(ed, go, cap, toRemove))) {   // the body is OkayUI's with the preview switch (docs/ui/own_ui_toolkit.md section 15)
             ImGui::DragFloat("Radius##cap3", &cap->radius, 0.05f, 0.0f, 1000.0f);
             ImGui::DragFloat("Height##cap3", &cap->height, 0.05f, 0.0f, 1000.0f);
             const char* axes[] = {"X", "Y", "Z"};
@@ -35532,6 +37003,7 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Auto Fit##cap3");
             if (cap->autoFit) FitColliders(go, true);
             if (ImGui::SmallButton("Remove##cap3")) toRemove = cap;
+            }   // the Dear ImGui body
         }
     }
     // Shared fields of the newer 3D colliders: offset, trigger, layer, physics material, trigger filter.
@@ -35554,10 +37026,13 @@ void DrawInspector(EditorState& ed) {
     if (auto* co = dynamic_cast<ConeCollider3D*>(curComp)) {
         if (CompHeader("Cone Collider 3D", co, &toRemove)) {
             ImGui::TextDisabled("A round base and a point: party hats, traffic cones, spikes.");
-            ImGui::DragFloat("Radius##cone3", &co->radius, 0.05f, 0.0f, 1000.0f);
-            ImGui::DragFloat("Height##cone3", &co->height, 0.05f, 0.0f, 1000.0f);
+            ImGui::DragFloat("Radius (m)##cone3", &co->radius, 0.05f, 0.0f, 1000.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "How wide the round base is, in metres. Default 0.5.");
+            ImGui::DragFloat("Height (m)##cone3", &co->height, 0.05f, 0.0f, 1000.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Base to tip, in metres. Default 1.");
             const char* axes[] = {"X", "Y", "Z"};
             ImGui::Combo("Tip points along##cone3", &co->axis, axes, 3);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Which direction the point faces (the positive side of this axis). Default Y = up.");
             colliderCommon3D(co, "cone3");
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##cone3")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
@@ -35570,7 +37045,7 @@ void DrawInspector(EditorState& ed) {
     if (auto* hc = dynamic_cast<ConvexHullCollider3D*>(curComp)) {
         if (CompHeader("Convex Hull Collider 3D", hc, &toRemove)) {
             ImGui::TextDisabled("Shrink-wrap around a cloud of points. Solid inside, so it can move and stack.");
-            ImGui::Text("Points: %d", hc->PointCount());
+            ImGui::Text("Points: %d (most 4096)", hc->PointCount());
             colliderCommon3D(hc, "hull3");
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Wrap around mesh##hull3")) { FitColliders(go); ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fill the points from the model, keeping only the outer corners.");
@@ -35607,11 +37082,16 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Heightfield Collider 3D", hf, &toRemove)) {
             ImGui::TextDisabled("Hilly ground from a grid of heights. Solid below the surface.");
             bool gridChanged = false;
-            gridChanged |= ImGui::DragInt("Columns##hf3", &hf->columns, 0.2f, 2, 2048);
-            gridChanged |= ImGui::DragInt("Rows##hf3", &hf->rows, 0.2f, 2, 2048);
-            ImGui::DragFloat("Cell width (X)##hf3", &hf->cellX, 0.05f, 0.01f, 1000.0f);
-            ImGui::DragFloat("Cell depth (Z)##hf3", &hf->cellZ, 0.05f, 0.01f, 1000.0f);
-            ImGui::DragFloat("Height scale##hf3", &hf->heightScale, 0.05f);
+            gridChanged |= ImGui::DragInt("Columns (samples)##hf3", &hf->columns, 0.2f, 2, 2048);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Height samples along X, 2 to 2048. Default 2.");
+            gridChanged |= ImGui::DragInt("Rows (samples)##hf3", &hf->rows, 0.2f, 2, 2048);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Height samples along Z, 2 to 2048. Default 2.");
+            ImGui::DragFloat("Cell width X (m)##hf3", &hf->cellX, 0.05f, 0.01f, 1000.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Metres between two samples along X. Default 1.");
+            ImGui::DragFloat("Cell depth Z (m)##hf3", &hf->cellZ, 0.05f, 0.01f, 1000.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Metres between two samples along Z. Default 1.");
+            ImGui::DragFloat("Height scale (x)##hf3", &hf->heightScale, 0.05f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Multiplies every height: 2 makes the hills twice as tall. Default 1.");
             if (gridChanged) { hf->columns = std::max(hf->columns, 2); hf->rows = std::max(hf->rows, 2); ed.dirty = true; }
             colliderCommon3D(hf, "hf3");
             if (go->GetComponent<Terrain>() && ImGui::SmallButton("Copy from Terrain##hf3")) { FitColliders(go); ed.dirty = true; }
@@ -35647,6 +37127,7 @@ void DrawInspector(EditorState& ed) {
                           : std::filesystem::path(sc->Path()).stem().string();
         std::string slabel = "Script (" + sname + ")";
         if (CompHeader(slabel.c_str(), sc, &toRemove)) {
+            if (!(UseOkayUIInspector() && DrawScriptWithOkayUI(ed, sc))) {   // the body is OkayUI's with the preview switch
             if (ImGui::SmallButton("Open in Script Editor")) {
                 g_showScriptEditor = true;
                 if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), sc) == g_scriptTabs.end())
@@ -35758,11 +37239,12 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PopID();
                 }
             }
+            }   // the Dear ImGui body
         }
         ImGui::PopID();
     }
     if (auto* cc = dynamic_cast<CharacterController2D*>(curComp)) {
-        if (CompHeader("Character Controller 2D", cc, &toRemove)) {
+        if (CompHeader("Character Controller 2D", cc, &toRemove) && !(UseOkayUIInspector() && DrawCharacterController2DWithOkayUI(ed, cc, toRemove))) {   // OkayUI's with the preview switch (section 16)
             int m = (int)cc->mode;
             const char* modes[] = {"Top-Down", "Platformer"};
             if (ImGui::Combo("Mode##cc2", &m, modes, 2)) { cc->mode = (CharacterController2D::Mode)m; ed.dirty = true; }
@@ -35860,7 +37342,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cc = dynamic_cast<CharacterController3D*>(curComp)) {
-        if (CompHeader("Character Controller 3D", cc, &toRemove)) {
+        if (CompHeader("Character Controller 3D", cc, &toRemove) && !(UseOkayUIInspector() && DrawCharacterController3DWithOkayUI(ed, cc, toRemove))) {   // OkayUI's with the preview switch (section 16)
             if (StanceControlFields(cc->stanceControl, "cc3")) ed.dirty = true;
             if (ImGui::DragFloat("Speed##cc3", &cc->speed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
             oked::FieldTip("Speed##cc3");
@@ -35937,7 +37419,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* v2 = dynamic_cast<VehicleController2D*>(curComp)) {
-        if (CompHeader("Vehicle Controller 2D", v2, &toRemove)) {
+        if (CompHeader("Vehicle Controller 2D", v2, &toRemove) && !(UseOkayUIInspector() && DrawVehicleController2DWithOkayUI(ed, v2, toRemove))) {   // OkayUI's with the preview switch (section 22)
             if (ImGui::Checkbox("Side View (platformer)##veh2", &v2->sideView)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = top-down (steer + drift). On = side-scroller car (A/D drive, gravity on).");
             if (ImGui::DragFloat("Max Speed##veh2", &v2->maxSpeed, 0.5f, 0.0f, 200.0f)) ed.dirty = true;
@@ -35963,7 +37445,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* bb = dynamic_cast<BlockBuilder*>(curComp)) {
-        if (CompHeader("Block Builder (voxel)", bb, &toRemove)) {
+        if (CompHeader("Block Builder (voxel)", bb, &toRemove) && !(UseOkayUIInspector() && DrawBlockBuilderWithOkayUI(ed, bb, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Look + click to place a cube on a grid; right-click removes it.");
             ImGui::TextDisabled("Attach to the Player (or its camera) — it ignores your own body.");
             if (ImGui::DragFloat("Block Size##bb", &bb->blockSize, 0.05f, 0.05f, 50.0f)) ed.dirty = true;
@@ -36048,7 +37530,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* bm = dynamic_cast<BuilderMode*>(curComp)) {
-        if (CompHeader("Builder Mode (in-game)", bm, &toRemove)) {
+        if (CompHeader("Builder Mode (in-game)", bm, &toRemove) && !(UseOkayUIInspector() && DrawBuilderModeWithOkayUI(ed, bm, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Walk + aim: click places the brush, right-click removes it.");
             ImGui::TextDisabled("R rotate, +/- scale, G grab a piece, P save the model as a prefab.");
             ImGui::TextDisabled("Attach to the Player (or its camera) — it ignores your own body.");
@@ -36105,7 +37587,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* bp = dynamic_cast<BuildPiece*>(curComp)) {
-        if (CompHeader("Build Piece", bp, &toRemove)) {
+        if (CompHeader("Build Piece", bp, &toRemove) && !(UseOkayUIInspector() && DrawBuildPieceWithOkayUI(ed, bp, toRemove))) {   // OkayUI's with the preview switch (section 22)
             const char* tiers[] = {"Wood", "Stone", "Metal"};
             int t = bp->tier < 0 ? 0 : (bp->tier > 2 ? 2 : bp->tier);
             if (ImGui::Combo("Tier##bp", &t, tiers, 3)) { bp->tier = t; ed.dirty = true; }
@@ -36236,7 +37718,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* bl = dynamic_cast<Buildable*>(curComp)) {
-        if (CompHeader("Buildable", bl, &toRemove)) {
+        if (CompHeader("Buildable", bl, &toRemove) && !(UseOkayUIInspector() && DrawBuildableWithOkayUI(ed, bl, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Players may edit this in build mode. Put one on every palette prefab");
             ImGui::TextDisabled("and on level props players are allowed to rearrange.");
             if (ImGui::Checkbox("Players can edit##bl", &bl->editable)) ed.dirty = true;
@@ -37039,7 +38521,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* pk = dynamic_cast<ItemPickup*>(curComp)) {
-        if (CompHeader("Item Pickup", pk, &toRemove)) {
+        if (CompHeader("Item Pickup", pk, &toRemove) && !(UseOkayUIInspector() && DrawItemPickupWithOkayUI(ed, pk))) {   // OkayUI's with the preview switch (section 19)
             ImGui::TextDisabled("An item in the world. Walk into it (trigger), come close, or press the key.");
             if (ItemPicker("Item##pk", pk->item, 160)) ed.dirty = true;
             if (ImGui::DragInt("Count##pk", &pk->count, 0.2f, 1, 99999)) ed.dirty = true;
@@ -37124,7 +38606,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ni = dynamic_cast<NetInventory*>(curComp)) {
-        if (CompHeader("Net Inventory", ni, &toRemove)) {
+        if (CompHeader("Net Inventory", ni, &toRemove) && !(UseOkayUIInspector() && DrawNetInventoryWithOkayUI(ed, ni, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Host owns this bag or chest. Clients send requests; they don't write the contents.");
             if (ImGui::DragFloat("Range##ni", &ni->range, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close someone must be to take from a chest (0 = any distance).");
@@ -37260,7 +38742,7 @@ void DrawInspector(EditorState& ed) {
             ed.dirty = true;
     };
     if (auto* c = dynamic_cast<HealthStat*>(curComp)) {
-        if (CompHeader("Stat: Health", c, &toRemove)) {
+        if (CompHeader("Stat: Health", c, &toRemove) && !(UseOkayUIInspector() && DrawHealthStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             statValue(&c->health, c->maxHealth, "sth");
             if (ImGui::DragFloat("Max Health##sth", &c->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Max Health##sth");
@@ -37318,7 +38800,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<Seat*>(curComp)) {
-        if (CompHeader("Seat", c, &toRemove)) {
+        if (CompHeader("Seat", c, &toRemove) && !(UseOkayUIInspector() && DrawSeatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             if (ImGui::DragFloat("Height##seat", &c->seatHeight, 0.01f, 0.0f, 2.0f, "%.2f m")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The chair clips are baked for 0.45 m. This moves the body onto the seat.");
             if (ImGui::DragFloat3("Sit Point##seat", &c->sitPoint.x, 0.01f)) ed.dirty = true;
@@ -37343,7 +38825,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<VehicleSeat*>(curComp)) {
-        if (CompHeader("Vehicle Seat", c, &toRemove)) {
+        if (CompHeader("Vehicle Seat", c, &toRemove) && !(UseOkayUIInspector() && DrawVehicleSeatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 20)
             if (ImGui::Checkbox("Driver Seat##vseat", &c->driver)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: sitting here drives the vehicle with the keyboard. Off: a passenger seat.");
             if (ImGui::DragFloat3("Sit Point##vseat", &c->sitPoint.x, 0.01f)) ed.dirty = true;
@@ -37364,7 +38846,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<HungerStat*>(curComp)) {
-        if (CompHeader("Stat: Hunger", c, &toRemove)) {
+        if (CompHeader("Stat: Hunger", c, &toRemove) && !(UseOkayUIInspector() && DrawHungerStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             statValue(&c->hunger, c->maxHunger, "sthu");
             if (ImGui::DragFloat("Max##sthu", &c->maxHunger, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Max##sthu");
@@ -37390,7 +38872,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<ThirstStat*>(curComp)) {
-        if (CompHeader("Stat: Thirst", c, &toRemove)) {
+        if (CompHeader("Stat: Thirst", c, &toRemove) && !(UseOkayUIInspector() && DrawThirstStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             statValue(&c->thirst, c->maxThirst, "stt");
             if (ImGui::DragFloat("Max##stt", &c->maxThirst, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Max##stt");
@@ -37413,7 +38895,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<StaminaStat*>(curComp)) {
-        if (CompHeader("Stat: Stamina", c, &toRemove)) {
+        if (CompHeader("Stat: Stamina", c, &toRemove) && !(UseOkayUIInspector() && DrawStaminaStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             statValue(&c->stamina, c->maxStamina, "sts");
             if (ImGui::DragFloat("Max##sts", &c->maxStamina, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Max##sts");
@@ -37440,7 +38922,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<OxygenStat*>(curComp)) {
-        if (CompHeader("Stat: Oxygen", c, &toRemove)) {
+        if (CompHeader("Stat: Oxygen", c, &toRemove) && !(UseOkayUIInspector() && DrawOxygenStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             statValue(&c->oxygen, c->maxOxygen, "sto");
             if (ImGui::DragFloat("Max##sto", &c->maxOxygen, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Max##sto");
@@ -37458,7 +38940,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<TemperatureStat*>(curComp)) {
-        if (CompHeader("Stat: Temperature", c, &toRemove)) {
+        if (CompHeader("Stat: Temperature", c, &toRemove) && !(UseOkayUIInspector() && DrawTemperatureStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             statValue(&c->warmth, c->maxWarmth, "stmp");
             if (ImGui::DragFloat("Max Warmth##stmp", &c->maxWarmth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Max Warmth##stmp");
@@ -37476,7 +38958,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<SleepStat*>(curComp)) {
-        if (CompHeader("Stat: Sleep / Energy", c, &toRemove)) {
+        if (CompHeader("Stat: Sleep / Energy", c, &toRemove) && !(UseOkayUIInspector() && DrawSleepStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             statValue(&c->energy, c->maxEnergy, "stsl");
             if (ImGui::DragFloat("Max Energy##stsl", &c->maxEnergy, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Max Energy##stsl");
@@ -37497,7 +38979,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<SanityStat*>(curComp)) {
-        if (CompHeader("Stat: Sanity", c, &toRemove)) {
+        if (CompHeader("Stat: Sanity", c, &toRemove) && !(UseOkayUIInspector() && DrawSanityStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             statValue(&c->sanity, c->maxSanity, "stsn");
             if (ImGui::DragFloat("Max##stsn", &c->maxSanity, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Max##stsn");
@@ -37515,7 +38997,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<RadiationStat*>(curComp)) {
-        if (CompHeader("Stat: Radiation", c, &toRemove)) {
+        if (CompHeader("Stat: Radiation", c, &toRemove) && !(UseOkayUIInspector() && DrawRadiationStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Builds in zones; past threshold it poisons Health.");
             statValue(&c->radiation, c->maxRadiation, "strd");
             if (ImGui::DragFloat("Max##strd", &c->maxRadiation, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
@@ -37534,7 +39016,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<BleedingStat*>(curComp)) {
-        if (CompHeader("Stat: Bleeding", c, &toRemove)) {
+        if (CompHeader("Stat: Bleeding", c, &toRemove) && !(UseOkayUIInspector() && DrawBleedingStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Wounds drain Health until bandaged.");
             statValue(&c->bleed, c->maxBleed, "stbl");
             if (ImGui::DragFloat("Max Bleed##stbl", &c->maxBleed, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
@@ -37549,7 +39031,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<PoisonStat*>(curComp)) {
-        if (CompHeader("Stat: Poison", c, &toRemove)) {
+        if (CompHeader("Stat: Poison", c, &toRemove) && !(UseOkayUIInspector() && DrawPoisonStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Toxin damages Health, then fades; antidote clears.");
             statValue(&c->poison, c->maxPoison, "stpo");
             if (ImGui::DragFloat("Max Poison##stpo", &c->maxPoison, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
@@ -37564,7 +39046,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<WetnessStat*>(curComp)) {
-        if (CompHeader("Stat: Wetness", c, &toRemove)) {
+        if (CompHeader("Stat: Wetness", c, &toRemove) && !(UseOkayUIInspector() && DrawWetnessStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Soaks in water/rain; chills warmth while wet.");
             statValue(&c->wetness, c->maxWetness, "stwe");
             if (ImGui::DragFloat("Max Wetness##stwe", &c->maxWetness, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
@@ -37583,7 +39065,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<CarryWeightStat*>(curComp)) {
-        if (CompHeader("Stat: Carry Weight", c, &toRemove)) {
+        if (CompHeader("Stat: Carry Weight", c, &toRemove) && !(UseOkayUIInspector() && DrawCarryWeightStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Over the limit: drains stamina, slows movement.");
             statValue(&c->load, c->maxLoad, "stcw");
             if (ImGui::DragFloat("Max Load##stcw", &c->maxLoad, 1.0f, 0.0f, 1000000.0f)) ed.dirty = true;
@@ -37598,7 +39080,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<StatusEffectStat*>(curComp)) {
-        if (CompHeader("Status Effects", c, &toRemove)) {
+        if (CompHeader("Status Effects", c, &toRemove) && !(UseOkayUIInspector() && DrawStatusEffectStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Timed buffs/debuffs (code/trigger-driven).");
             ImGui::TextDisabled("Apply(name, duration, hpPerSecond): -hp = damage, +hp = heal.");
             if (ImGui::Checkbox("Broadcast messages##stse", &c->sendMessages)) ed.dirty = true;
@@ -37609,7 +39091,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<SurvivalSave*>(curComp)) {
-        if (CompHeader("Survival Save / Load", c, &toRemove)) {
+        if (CompHeader("Survival Save / Load", c, &toRemove) && !(UseOkayUIInspector() && DrawSurvivalSaveWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Persists current stat values across sessions.");
             char key[64]; std::strncpy(key, c->saveKey.c_str(), sizeof(key) - 1); key[sizeof(key) - 1] = '\0';
             if (ImGui::InputText("Save Key##svsv", key, sizeof(key))) { c->saveKey = key; ed.dirty = true; }
@@ -37691,7 +39173,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<DayNightCycle*>(curComp)) {
-        if (CompHeader("Day / Night Cycle", c, &toRemove)) {
+        if (CompHeader("Day / Night Cycle", c, &toRemove) && !(UseOkayUIInspector() && DrawDayNightCycleWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
             int h = (int)c->time; int m = (int)((c->time - h) * 60.0f);
             ImGui::Text("Time: %02d:%02d  (%s)", h, m, c->IsNight() ? "night" : "day");
             if (ImGui::SliderFloat("Time of Day##dnc", &c->time, 0.0f, 24.0f, "%.2f h")) ed.dirty = true;
@@ -38112,6 +39594,11 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Start Delay##spwn");
             if (ImGui::Checkbox("Hide Template##spwn", &c->deactivateTemplate)) ed.dirty = true;
             oked::FieldTip("Hide Template##spwn");
+            if (ImGui::Checkbox("Use Pool##spwn", &c->usePool)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Reuse finished copies instead of making new ones. A copy that ends with a Lifetime,\n"
+                                  "a Projectile 3D or pool_release() goes back to this spawner's pool and the next spawn\n"
+                                  "takes it again, reset to a fresh copy of the template. Good for bullets, sparks and pickups.");
             ImGui::SeparatorText("Waves");
             if (ImGui::DragInt("Count Per Wave##spwn", &c->count, 0.1f, 1, 200)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawns per wave. 1 = classic steady drip (no waves).");
@@ -38125,10 +39612,25 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("%s — wave %d done, %d alive, %d spawned",
                                     c->Running() ? "Running" : "Stopped",
                                     c->WavesDone(), c->AliveCount(), c->Spawned());
+            if (ed.isPlaying() && c->Pool())
+                ImGui::TextDisabled("Pool: %d made, %d reused, %d waiting",
+                                    c->Pool()->CreatedCount(), c->Pool()->ReuseCount(), c->Pool()->IdleCount());
             if (ImGui::SmallButton("Remove##spwn")) toRemove = c;
         }
     }
-    if (auto* fp = dynamic_cast<FirstPersonController*>(curComp)) {
+    if (auto* fp = dynamic_cast<FirstPersonController*>(curComp); fp && !PlayerController::Of(go)) {
+        if (CompHeader("First-person settings", fp, &toRemove)) {
+            CharacterModelTools(ed, go, "fp");
+            oked::ctrlui::DrawSimple(ed, *fp, (ThirdPersonController*)nullptr, "fps");
+        }
+    }
+    if (auto* tp = dynamic_cast<ThirdPersonController*>(curComp); tp && !PlayerController::Of(go)) {
+        if (CompHeader("Third-person settings", tp, &toRemove)) {
+            CharacterModelTools(ed, go, "tp");
+            oked::ctrlui::DrawSimple(ed, *tp, (FirstPersonController*)nullptr, "tps");
+        }
+    }
+    if (auto* fp = kOldControllerPanels ? dynamic_cast<FirstPersonController*>(curComp) : nullptr) {
         bool owned = false;
         if (PlayerPartHeader(go, "First-person settings", fp, &toRemove, &owned)) {
             if (!owned) CharacterModelTools(ed, go, "fp");
@@ -38367,7 +39869,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Can Mantle##fp", &fp->canMantle)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a low or high ledge and climb it. Off by default.");
             if (ImGui::Checkbox("Can Ledge Grab##fp", &fp->canLedgeGrab)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands-on-ledge IK is not wired.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands go onto the ledge (two arm LimbIKs) through the Ledge Hands IK component: Add Component > Animation, or Wire missing animation and IK on the controller.");
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##fp", &fp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
@@ -38378,7 +39880,7 @@ void DrawInspector(EditorState& ed) {
             if (!owned && ImGui::SmallButton("Remove##fp")) toRemove = fp;
         }
     }
-    if (auto* tp = dynamic_cast<ThirdPersonController*>(curComp)) {
+    if (auto* tp = kOldControllerPanels ? dynamic_cast<ThirdPersonController*>(curComp) : nullptr) {
         bool owned = false;
         if (PlayerPartHeader(go, "Third-person settings", tp, &toRemove, &owned)) {
             if (!owned) CharacterModelTools(ed, go, "tp");
@@ -38669,7 +40171,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Can Mantle##tp", &tp->canMantle)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a low or high ledge and climb it. Off by default.");
             if (ImGui::Checkbox("Can Ledge Grab##tp", &tp->canLedgeGrab)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands-on-ledge IK is not wired.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands go onto the ledge (two arm LimbIKs) through the Ledge Hands IK component: Add Component > Animation, or Wire missing animation and IK on the controller.");
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##tp", &tp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
@@ -38691,7 +40193,10 @@ void DrawInspector(EditorState& ed) {
                          "a view that is off has no settings here and nothing of it is saved.";
         sPlayerControllerOpen = CompHeader("Player Controller", pc, &toRemove);
         pc->SyncEnabled();
-        if (sPlayerControllerOpen) {
+        if (sPlayerControllerOpen && !(UseOkayUIInspector() && DrawPlayerControllerWithOkayUI(ed, go, pc))) {   // OkayUI's with the preview switch (section 18)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.7f, 0.75f, 1.0f));
+            ImGui::TextWrapped("Moves and turns the player with keyboard, mouse or gamepad. Choose a first person view, a third person view, or both with a key to switch.");
+            ImGui::PopStyleColor();
             int mode = (int)pc->viewMode();
             const char* modes[] = {"First Person only", "Third Person only", "Both"};
             if (ImGui::Combo("View##pc", &mode, modes, 3) && mode != (int)pc->viewMode()) {
@@ -38709,6 +40214,8 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             CharacterModelTools(ed, go, "pc");
+            if (pc->third()) oked::ctrlui::DrawSimple(ed, *pc->third(), pc->first(), "pcs");
+            else if (pc->first()) oked::ctrlui::DrawSimple(ed, *pc->first(), (ThirdPersonController*)nullptr, "pcs");
             if (pc->viewMode() != PlayerController::ViewMode::Both)
                 ImGui::TextDisabled("%s only. Pick Both to let the player switch.",
                                     pc->viewMode() == PlayerController::ViewMode::First ? "First person" : "Third person");
@@ -38863,7 +40370,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* td = dynamic_cast<TopDownController*>(curComp)) {
-        if (CompHeader("Top Down Controller", td, &toRemove)) {
+        if (CompHeader("Top Down Controller", td, &toRemove) && !(UseOkayUIInspector() && DrawTopDownControllerWithOkayUI(ed, td, toRemove))) {   // OkayUI's with the preview switch (section 22)
             if (StanceControlFields(td->stanceControl, "td")) ed.dirty = true;
             SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##td", &td->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -38902,8 +40409,10 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* rd = dynamic_cast<Ragdoll*>(curComp)) {
-        if (CompHeader("Ragdoll", rd, &toRemove)) {
+        if (CompHeader("Ragdoll", rd, &toRemove) && !(UseOkayUIInspector() && DrawRagdollWithOkayUI(ed, rd, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).");
+            if (rd->gameObject && rd->gameObject->GetComponent<ActiveRagdoll>())
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "This object also has an Active Ragdoll: it takes over at Play and switches this Ragdoll off.");
             SectionHeader("Triggers");
             if (ImGui::Checkbox("Ragdoll On Death##rd", &rd->ragdollOnDeath)) ed.dirty = true;
             oked::FieldTip("Ragdoll On Death##rd");
@@ -38932,7 +40441,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sh = dynamic_cast<TopDownShooterController*>(curComp)) {
-        if (CompHeader("Top Down Shooter Controller", sh, &toRemove)) {
+        if (CompHeader("Top Down Shooter Controller", sh, &toRemove) && !(UseOkayUIInspector() && DrawTopDownShooterControllerWithOkayUI(ed, sh, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Twin-stick: WASD moves, the mouse aims, LMB fires, Space dashes, R reloads.");
             SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##tds", &sh->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -39218,7 +40727,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* pj = dynamic_cast<Projectile3D*>(curComp)) {
-        if (CompHeader("Projectile 3D", pj, &toRemove)) {
+        if (CompHeader("Projectile 3D", pj, &toRemove) && !(UseOkayUIInspector() && DrawProjectile3DWithOkayUI(ed, pj, toRemove))) {   // OkayUI's with the preview switch (section 22)
             if (ImGui::DragFloat3("Velocity##pj", &pj->velocity.x, 0.1f)) ed.dirty = true;
             oked::FieldTip("Velocity##pj");
             if (ImGui::DragFloat("Damage##pj", &pj->damage, 0.5f, 0.0f, 1000.0f)) ed.dirty = true;
@@ -39317,7 +40826,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* fr = dynamic_cast<FreeRoamController*>(curComp)) {
-        if (CompHeader("Free Roam (Fly) Controller", fr, &toRemove)) {
+        if (CompHeader("Free Roam (Fly) Controller", fr, &toRemove) && !(UseOkayUIInspector() && DrawFreeRoamControllerWithOkayUI(ed, fr, toRemove))) {   // OkayUI's with the preview switch (section 22)
             if (ImGui::DragFloat("Move Speed##fr", &fr->moveSpeed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
             oked::FieldTip("Move Speed##fr");
             if (ImGui::DragFloat("Boost x##fr", &fr->boostMultiplier, 0.1f, 1.0f, 20.0f)) ed.dirty = true;
@@ -39463,6 +40972,14 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Foot IK##ctm");
             if (ImGui::Checkbox("Pathfinding##ctm", &cm->usePathfinding)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clicks behind walls walk AROUND them (grid A*), Diablo-style.");
+            if (ImGui::Checkbox("Pick Colliders##ctm", &cm->pickColliders)) ed.dirty = true;
+            oked::FieldTip("Pick Colliders##ctm");
+            if (ImGui::Checkbox("Give Up When Stuck##ctm", &cm->giveUpWhenStuck)) ed.dirty = true;
+            oked::FieldTip("Give Up When Stuck##ctm");
+            if (cm->giveUpWhenStuck) {
+                if (ImGui::DragFloat("Stuck Time##ctm", &cm->stuckTime, 0.05f, 0.1f, 10.0f)) ed.dirty = true;
+                oked::FieldTip("Stuck Time##ctm");
+            }
             if (ImGui::Checkbox("Use Player Height##ctm", &cm->usePlayerHeight)) ed.dirty = true;
             oked::FieldTip("Use Player Height##ctm");
             if (!cm->usePlayerHeight) {
@@ -39497,7 +41014,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ft = dynamic_cast<FollowTarget2D*>(curComp)) {
-        if (CompHeader("Follow Target 2D", ft, &toRemove)) {
+        if (CompHeader("Follow Target 2D", ft, &toRemove) && !(UseOkayUIInspector() && DrawFollowTarget2DWithOkayUI(ed, ft, toRemove))) {   // OkayUI's with the preview switch (section 22)
             char tb[64];
             std::strncpy(tb, ft->target.c_str(), sizeof(tb) - 1); tb[sizeof(tb) - 1] = '\0';
             if (ImGui::InputText("Target##ft", tb, sizeof(tb))) { ft->target = tb; ed.dirty = true; }
@@ -39511,7 +41028,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* gp = dynamic_cast<GridPathAgent2D*>(curComp)) {
-        if (CompHeader("Grid Path Agent", gp, &toRemove)) {
+        if (CompHeader("Grid Path Agent", gp, &toRemove) && !(UseOkayUIInspector() && DrawGridPathAgent2DWithOkayUI(ed, gp, toRemove))) {   // OkayUI's with the preview switch (section 22)
             char mb[64];
             std::strncpy(mb, gp->mapName.c_str(), sizeof(mb) - 1); mb[sizeof(mb) - 1] = '\0';
             if (ImGui::InputText("Which tilemap##gp", mb, sizeof(mb))) { gp->mapName = mb; ed.dirty = true; }
@@ -39533,7 +41050,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* gc = dynamic_cast<GridCostLayer*>(curComp)) {
-        if (CompHeader("Grid Movement Costs", gc, &toRemove)) {
+        if (CompHeader("Grid Movement Costs", gc, &toRemove) && !(UseOkayUIInspector() && DrawGridCostLayerWithOkayUI(ed, gc, toRemove))) {   // OkayUI's with the preview switch (section 22)
             if (ImGui::DragInt("Road tile number##gc", &gc->roadTile, 0.1f, 0, 4095)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Which tile number is a road. Empty tiles are number 0 and cost 1.");
             if (ImGui::DragFloat("Road cost (lower is cheaper)##gc", &gc->roadCost, 0.05f, 0.0f, 1000.0f)) ed.dirty = true;
@@ -39547,7 +41064,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* go2 = dynamic_cast<GridObstacle2D*>(curComp)) {
-        if (CompHeader("Grid Obstacle", go2, &toRemove)) {
+        if (CompHeader("Grid Obstacle", go2, &toRemove) && !(UseOkayUIInspector() && DrawGridObstacle2DWithOkayUI(ed, go2, toRemove))) {   // OkayUI's with the preview switch (section 22)
             char mb[64];
             std::strncpy(mb, go2->mapName.c_str(), sizeof(mb) - 1); mb[sizeof(mb) - 1] = '\0';
             if (ImGui::InputText("Which tilemap##gob", mb, sizeof(mb))) { go2->mapName = mb; ed.dirty = true; }
@@ -39590,7 +41107,7 @@ void DrawInspector(EditorState& ed) {
         ImGui::PopID();
     }
     if (auto* a = dynamic_cast<AudioSource*>(curComp)) {
-        if (CompHeader("Audio Source", a, &toRemove)) {
+        if (CompHeader("Audio Source", a, &toRemove) && !(UseOkayUIInspector() && DrawAudioSourceWithOkayUI(ed, a, toRemove))) {   // OkayUI's with the preview switch (section 16)
             if (ImGui::DragFloat("Volume", &a->volume, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             oked::FieldTip("Volume");
             if (ImGui::DragFloat("Pitch##audio", &a->pitch, 0.01f, 0.1f, 3.0f)) ed.dirty = true;
@@ -39753,7 +41270,7 @@ void DrawInspector(EditorState& ed) {
     }
 
     if (auto* mv = dynamic_cast<Mover*>(curComp)) {
-        if (CompHeader("Mover", mv, &toRemove)) {
+        if (CompHeader("Mover", mv, &toRemove) && !(UseOkayUIInspector() && DrawMoverWithOkayUI(ed, mv, toRemove))) {   // OkayUI's with the preview switch (section 22)
             float v[3] = {mv->velocity.x, mv->velocity.y, mv->velocity.z};
             if (ImGui::DragFloat3("Velocity##mv", v, 0.05f)) { mv->velocity = {v[0], v[1], v[2]}; ed.dirty = true; }
             oked::FieldTip("Velocity##mv");
@@ -39762,7 +41279,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sp = dynamic_cast<Spinner*>(curComp)) {
-        if (CompHeader("Spinner", sp, &toRemove)) {
+        if (CompHeader("Spinner", sp, &toRemove) && !(UseOkayUIInspector() && DrawSpinnerWithOkayUI(ed, sp, toRemove))) {   // OkayUI's with the preview switch (section 22)
             float v[3] = {sp->angularVelocity.x, sp->angularVelocity.y, sp->angularVelocity.z};
             if (ImGui::DragFloat3("Angular Vel##sp", v, 0.5f)) { sp->angularVelocity = {v[0], v[1], v[2]}; ed.dirty = true; }
             oked::FieldTip("Angular Vel##sp");
@@ -39771,7 +41288,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* lt = dynamic_cast<Lifetime*>(curComp)) {
-        if (CompHeader("Lifetime", lt, &toRemove)) {
+        if (CompHeader("Lifetime", lt, &toRemove) && !(UseOkayUIInspector() && DrawLifetimeWithOkayUI(ed, lt, toRemove))) {   // OkayUI's with the preview switch (section 22)
             if (ImGui::DragFloat("Seconds##lt", &lt->seconds, 0.05f, 0.0f, 10000.0f)) ed.dirty = true;
             oked::FieldTip("Seconds##lt");
             ImGui::TextDisabled("destroys this object after N seconds of play");
@@ -39792,7 +41309,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Add a Collider (trigger) so this can react to touch.");
     };
     if (auto* co = dynamic_cast<Collectible*>(curComp)) {
-        if (CompHeader("Collectible", co, &toRemove)) {
+        if (CompHeader("Collectible", co, &toRemove) && !(UseOkayUIInspector() && DrawCollectibleWithOkayUI(ed, co, toRemove))) {   // OkayUI's with the preview switch (section 22)
             strField("Score Var##co", co->scoreVar, "coSV");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Variable to add to on pickup. The prebuilt HUD shows it via  Score: {score}.");
             if (ImGui::DragFloat("Points##co", &co->points, 0.1f, -100000.0f, 100000.0f)) ed.dirty = true;
@@ -39810,7 +41327,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dt = dynamic_cast<DamageOnTouch*>(curComp)) {
-        if (CompHeader("Damage On Touch", dt, &toRemove)) {
+        if (CompHeader("Damage On Touch", dt, &toRemove) && !(UseOkayUIInspector() && DrawDamageOnTouchWithOkayUI(ed, dt, toRemove))) {   // OkayUI's with the preview switch (section 22)
             if (ImGui::DragFloat("Damage##dot", &dt->damage, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Damage##dot");
             if (ImGui::DragFloat("Interval##dot", &dt->interval, 0.02f, 0.0f, 60.0f)) ed.dirty = true;
@@ -39828,7 +41345,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* jp = dynamic_cast<JumpPad*>(curComp)) {
-        if (CompHeader("Jump Pad", jp, &toRemove)) {
+        if (CompHeader("Jump Pad", jp, &toRemove) && !(UseOkayUIInspector() && DrawJumpPadWithOkayUI(ed, jp, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Launches bodies that touch it (needs a collider on this object).");
             if (ImGui::DragFloat("Force##jp", &jp->force, 0.2f, 0.0f, 100.0f)) ed.dirty = true;
             oked::FieldTip("Force##jp");
@@ -39845,7 +41362,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* tp = dynamic_cast<Teleporter*>(curComp)) {
-        if (CompHeader("Teleporter", tp, &toRemove)) {
+        if (CompHeader("Teleporter", tp, &toRemove) && !(UseOkayUIInspector() && DrawTeleporterWithOkayUI(ed, tp, toRemove))) {   // OkayUI's with the preview switch (section 22)
             strField("Target Object##tp", tp->targetName, "tpTN");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Teleport to this object's position. Leave empty to use the fixed destination below.");
             float d[3] = {tp->destination.x, tp->destination.y, tp->destination.z};
@@ -39885,7 +41402,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* st = dynamic_cast<Stats*>(curComp)) {
-        if (CompHeader("Stats", st, &toRemove)) {
+        if (CompHeader("Stats", st, &toRemove) && !(UseOkayUIInspector() && DrawStatsWithOkayUI(ed, st, toRemove))) {   // OkayUI's with the preview switch (section 20)
             SectionHeader("Vitals");
             if (ImGui::DragFloat("Health##st", &st->health, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Health##st");
@@ -39920,7 +41437,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* inv = dynamic_cast<Inventory*>(curComp)) {
-        if (CompHeader("Inventory", inv, &toRemove)) {
+        if (CompHeader("Inventory", inv, &toRemove) && !(UseOkayUIInspector() && DrawInventoryWithOkayUI(ed, inv, toRemove))) {   // OkayUI's with the preview switch (section 20)
             if (ed.isPlaying()) ImGui::TextDisabled("Live bag — Stop puts these slots back.");
             auto edited = [&](bool changed) {
                 if (ImGui::IsItemActivated()) ed.PushUndo();
@@ -40019,7 +41536,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cf = dynamic_cast<CameraFollow*>(curComp)) {
-        if (CompHeader("Camera Follow", cf, &toRemove)) {
+        if (CompHeader("Camera Follow", cf, &toRemove) && !(UseOkayUIInspector() && DrawCameraFollowWithOkayUI(ed, cf, toRemove))) {   // OkayUI's with the preview switch (section 20)
             char buf[128];
             std::strncpy(buf, cf->targetName.c_str(), sizeof(buf) - 1);
             buf[sizeof(buf) - 1] = '\0';
@@ -40137,6 +41654,14 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Look At##vcrig")) { vc->ApplyStyle(2); ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stands still and turns to watch the target.");
+                {
+                    ImGui::TextDisabled("Or a preset for a kind of game:");
+                    for (int pi = 0; pi < VirtualCamera::kPresetCount; ++pi) {
+                        if (pi % 3) ImGui::SameLine();
+                        if (ImGui::SmallButton((std::string(VirtualCamera::PresetName(pi)) + "##vcpre").c_str())) { vc->ApplyPreset(pi); ed.dirty = true; }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets the framing, smoothing and field of view for a %s camera. Your Follow and Look At names stay.", VirtualCamera::PresetName(pi));
+                    }
+                }
                 if (ImGui::Checkbox("Aim at what it follows##vcrig", &vc->aimAtFollow)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("With no Look At object, point the camera at the Follow object.\nTurn this off to copy the Follow object's own facing instead.");
                 int dm = (int)vc->dampingMode;
@@ -40280,6 +41805,31 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cb")) toRemove = cb;
         }
     }
+    if (auto* cz = dynamic_cast<CameraZone*>(curComp)) {
+        if (CompHeader("Camera Zone", cz, &toRemove)) {
+            float sz[3] = {cz->size.x, cz->size.y, cz->size.z};
+            if (DragVec3Axis("Size##cz", sz, 0.1f)) { cz->size = {sz[0], sz[1], sz[2]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How big the zone is. A camera rig following something inside it changes how it frames.");
+            float of[3] = {cz->offset.x, cz->offset.y, cz->offset.z};
+            if (DragVec3Axis("Centre offset##cz", of, 0.1f)) { cz->offset = {of[0], of[1], of[2]}; ed.dirty = true; }
+            if (ImGui::SliderFloat("Edge blend##cz", &cz->blend, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far in from the edge the effect takes to reach full strength. 0 = at once.");
+            if (ImGui::DragFloat("Field of view##cz", &cz->fieldOfView, 0.5f, 0.0f, 170.0f, cz->fieldOfView <= 0.0f ? "leave alone" : "%.0f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The view's width inside the zone. 0 = leave it alone.");
+            float fo[3] = {cz->followOffset.x, cz->followOffset.y, cz->followOffset.z};
+            if (DragVec3Axis("Move camera by##cz", fo, 0.05f)) { cz->followOffset = {fo[0], fo[1], fo[2]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Added to where the camera stands, while inside (pull in or back, up or down).");
+            if (ImGui::DragFloat("Snappiness##cz", &cz->positionDamping, 0.1f, -1.0f, 100.0f, cz->positionDamping < 0.0f ? "leave alone" : "%.1f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How quickly the camera follows inside. Higher is snappier. -1 = leave it alone.");
+            if (ImGui::DragInt("Priority##cz", &cz->priority, 0.2f, -100, 100)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Where two zones overlap, the higher number is applied over the lower.");
+            char zb[96]; std::snprintf(zb, sizeof(zb), "%s", cz->shot.c_str());
+            if (ImGui::InputText("Only this shot##cz", zb, sizeof(zb))) { cz->shot = zb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Type a camera rig's object name to affect only that shot. Blank = every shot.");
+            ImGui::TextDisabled("Shown as a cyan box in the Scene view.");
+            if (ImGui::SmallButton("Remove##cz")) toRemove = cz;
+        }
+    }
     if (auto* rm = dynamic_cast<CameraRoom*>(curComp)) {
         if (CompHeader("Camera Room", rm, &toRemove)) {
             float sz[2] = {rm->size.x, rm->size.y};
@@ -40311,7 +41861,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dc = dynamic_cast<DollyCart*>(curComp)) {
-        if (CompHeader("Dolly Cart", dc, &toRemove)) {
+        if (CompHeader("Dolly Cart", dc, &toRemove) && !(UseOkayUIInspector() && DrawDollyCartWithOkayUI(ed, dc, toRemove))) {   // OkayUI's with the preview switch (section 22)
             char db[128];
             std::strncpy(db, dc->path.c_str(), sizeof(db) - 1); db[sizeof(db) - 1] = '\0';
             if (ImGui::InputText("Path##dc", db, sizeof(db))) { dc->path = db; ed.dirty = true; }
@@ -40322,11 +41872,17 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Speed##dc");
             if (ImGui::Checkbox("Auto Move##dc", &dc->autoMove)) ed.dirty = true;
             oked::FieldTip("Auto Move##dc");
+            if (ImGui::Checkbox("Speed In Metres##dc", &dc->speedInMetres)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed is metres per second along the rail (else path fractions per second)");
+            if (ImGui::Checkbox("Ping Pong##dc", &dc->pingPong)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("On an open path, turn round at each end instead of stopping");
+            if (ImGui::Checkbox("Face Along Path##dc", &dc->orientToPath)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the object to face the way it travels along the rail");
             if (ImGui::SmallButton("Remove##dc")) toRemove = dc;
         }
     }
     if (auto* tr = dynamic_cast<TextRenderer*>(curComp)) {
-        if (CompHeader("Text", tr, &toRemove)) {
+        if (CompHeader("Text", tr, &toRemove) && !(UseOkayUIInspector() && DrawTextWithOkayUI(ed, go, tr, toRemove))) {   // OkayUI's with the preview switch (section 17)
             UIStyleBar(ed, tr);
             const bool trLoc = LocalizedTextField(ed, "txtloc", tr->loc, tr->text, go);   // or a string-table key
             char buf[512];
@@ -40457,7 +42013,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* w3 = dynamic_cast<WorldSpaceUI*>(curComp)) {
-        if (CompHeader("World Space UI (3D)", w3, &toRemove)) {
+        if (CompHeader("World Space UI (3D)", w3, &toRemove) && !(UseOkayUIInspector() && DrawWorldSpaceUIWithOkayUI(ed, w3, toRemove))) {   // OkayUI's with the preview switch (section 20)
             if (ImGui::DragFloat("Pixels / Unit##w3", &w3->pixelsPerUnit, 1.0f, 1.0f, 4000.0f, "%.0f"))
                 ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Design pixels per world unit (smaller = bigger in-world).");
@@ -40476,7 +42032,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cv = dynamic_cast<Canvas*>(curComp)) {
-        if (CompHeader("Canvas", cv, &toRemove)) {
+        if (CompHeader("Canvas", cv, &toRemove) && !(UseOkayUIInspector() && DrawCanvasWithOkayUI(ed, cv, toRemove))) {   // OkayUI's with the preview switch (section 17)
             if (ImGui::Checkbox("Visible##cv", &cv->visible)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide/show every widget under this canvas at once.");
             ImGui::SameLine();
@@ -40596,9 +42152,10 @@ void DrawInspector(EditorState& ed) {
     if (auto* nm = dynamic_cast<NetworkManager*>(curComp)) {
         if (CompHeader("Network Manager", nm, &toRemove)) {
             oked::DrawNetworkManagerAntiCheat(ed, nm);   // one-click anti-cheat while the scene has none
-            const char* modes[] = {"None (start via script/Services)", "Host on Play", "Join on Play"};
+            const char* modes[] = {"None (start via script/Services)", "Host on Play", "Join on Play",
+                                   "Host or Join on Play (this PC / LAN test)"};
             int m = (int)nm->autoStart;
-            if (ImGui::Combo("Auto Start##nm", &m, modes, 3)) { nm->autoStart = (NetworkManager::AutoStart)m; ed.dirty = true; }
+            if (ImGui::Combo("Auto Start##nm", &m, modes, 4)) { nm->autoStart = (NetworkManager::AutoStart)m; ed.dirty = true; }
             oked::FieldTip("Auto Start##nm");
             int port = nm->autoPort;
             ImGui::SetNextItemWidth(120);
@@ -40619,6 +42176,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Room (lobby)##nm", roomBuf, sizeof(roomBuf))) { nm->startRoom = roomBuf; ed.dirty = true; }
             oked::FieldTip("Room (lobby)##nm");
             ImGui::SliderFloat("Smoothing##nm", &nm->interpolationRate, 0.0f, 30.0f, "%.0f /s");
+            if (ImGui::TreeNode("Test a bad network##nm")) {
+                ImGui::SliderFloat("Added delay##nm", &nm->simulateLatencyMs, 0.0f, 500.0f, "%.0f ms");
+                ImGui::SliderFloat("Random extra delay##nm", &nm->simulateJitterMs, 0.0f, 200.0f, "%.0f ms");
+                ImGui::SliderFloat("Packets lost##nm", &nm->simulateLossPercent, 0.0f, 50.0f, "%.0f %%");
+                ImGui::TreePop();
+            }
 
             SectionHeader("Host settings");
             static char srvBuf[64]; static NetworkManager* sbound = nullptr;
@@ -40727,7 +42290,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* wu = dynamic_cast<WorldUI*>(curComp)) {
-        if (CompHeader("World UI (3D label)", wu, &toRemove)) {
+        if (CompHeader("World UI (3D label)", wu, &toRemove) && !(UseOkayUIInspector() && DrawWorldUIWithOkayUI(ed, go, wu, toRemove))) {   // OkayUI's with the preview switch (section 20)
             const bool wuLoc = LocalizedTextField(ed, "wuloc", wu->loc, wu->text, go);   // or a string-table key
             char tb[160]; std::strncpy(tb, wu->text.c_str(), sizeof(tb)-1); tb[sizeof(tb)-1]='\0';
             if (!wuLoc && ImGui::InputText("Text##wu", tb, sizeof(tb))) { wu->text = tb; ed.dirty = true; }
@@ -40758,7 +42321,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* btn = dynamic_cast<UIButton*>(curComp)) {
-        if (CompHeader("UI Button", btn, &toRemove)) {
+        if (CompHeader("UI Button", btn, &toRemove) && !(UseOkayUIInspector() && DrawUIButtonWithOkayUI(ed, go, btn, toRemove))) {   // OkayUI's with the preview switch (section 17)
             UIStyleBar(ed, btn);
             // The label lives on a child Text object. When one exists,
             // text is edited/styled THERE — don't show a duplicate text field on the
@@ -41015,7 +42578,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* in = dynamic_cast<UIInputField*>(curComp)) {
-        if (CompHeader("UI Input Field", in, &toRemove)) {
+        if (CompHeader("UI Input Field", in, &toRemove) && !(UseOkayUIInspector() && DrawUIInputFieldWithOkayUI(ed, go, in, toRemove))) {   // OkayUI's with the preview switch (section 17)
             UIStyleBar(ed, in);
             char tb[128]; std::strncpy(tb, in->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Text##uif", tb, sizeof(tb))) { in->text = tb; ed.dirty = true; }
@@ -41376,7 +42939,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dg = dynamic_cast<UIDraggable*>(curComp)) {
-        if (CompHeader("UI Draggable", dg, &toRemove)) {
+        if (CompHeader("UI Draggable", dg, &toRemove) && !(UseOkayUIInspector() && DrawUIDraggableWithOkayUI(ed, dg, toRemove))) {   // OkayUI's with the preview switch (section 22)
             if (ImGui::Checkbox("Return to Start##udg", &dg->returnToStart)) ed.dirty = true;
             oked::FieldTip("Return to Start##udg");
             if (ImGui::Checkbox("Any widget is a target##udg", &dg->anyTarget)) ed.dirty = true;
@@ -41401,7 +42964,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dt = dynamic_cast<UIDropTarget*>(curComp)) {
-        if (CompHeader("UI Drop Target", dt, &toRemove)) {
+        if (CompHeader("UI Drop Target", dt, &toRemove) && !(UseOkayUIInspector() && DrawUIDropTargetWithOkayUI(ed, dt, toRemove))) {   // OkayUI's with the preview switch (section 22)
             char tb[64]; std::strncpy(tb, dt->acceptTag.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Accept Tag##udt", tb, sizeof(tb))) { dt->acceptTag = tb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only accept draggables whose object Tag matches (empty = any)");
@@ -41448,7 +43011,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dg = dynamic_cast<Draggable*>(curComp)) {
-        if (CompHeader("Draggable (item)", dg, &toRemove)) {
+        if (CompHeader("Draggable (item)", dg, &toRemove) && !(UseOkayUIInspector() && DrawDraggableWithOkayUI(ed, dg, toRemove))) {   // OkayUI's with the preview switch (section 22)
             if (ImGui::Checkbox("Return to Start##dg", &dg->returnToStart)) ed.dirty = true;
             oked::FieldTip("Return to Start##dg");
             if (ImGui::Checkbox("Any sprite is a target##dg", &dg->anyTarget)) ed.dirty = true;
@@ -41475,7 +43038,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* dz = dynamic_cast<DropZone*>(curComp)) {
-        if (CompHeader("Drop Zone (item)", dz, &toRemove)) {
+        if (CompHeader("Drop Zone (item)", dz, &toRemove) && !(UseOkayUIInspector() && DrawDropZoneWithOkayUI(ed, dz, toRemove))) {   // OkayUI's with the preview switch (section 22)
             char tb[64]; std::strncpy(tb, dz->acceptTag.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Accept Tag##dz", tb, sizeof(tb))) { dz->acceptTag = tb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only accept draggables whose object Tag matches (empty = any)");
@@ -41484,7 +43047,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* lg = dynamic_cast<UILayoutGroup*>(curComp)) {
-        if (CompHeader("UI Layout Group", lg, &toRemove)) {
+        if (CompHeader("UI Layout Group", lg, &toRemove) && !(UseOkayUIInspector() && DrawUILayoutGroupWithOkayUI(ed, lg, toRemove))) {   // OkayUI's with the preview switch (section 17)
             const char* dirs[] = {"Vertical", "Horizontal", "Grid", "Flex Row", "Flex Column"};
             int d = (int)lg->direction;
             if (ImGui::Combo("Direction##lg", &d, dirs, 5)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
@@ -41548,7 +43111,7 @@ void DrawInspector(EditorState& ed) {
     oked::DrawMoreUIComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     oked::DrawRuntimeUIComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     if (auto* pb = dynamic_cast<UIProgressBar*>(curComp)) {
-        if (CompHeader("UI Progress Bar", pb, &toRemove)) {
+        if (CompHeader("UI Progress Bar", pb, &toRemove) && !(UseOkayUIInspector() && DrawUIProgressBarWithOkayUI(ed, pb, toRemove))) {   // OkayUI's with the preview switch (section 22)
             UIStyleBar(ed, pb);
             float pos[2] = {pb->position.x, pb->position.y};
             if (ImGui::DragFloat2("Pos (px)##upb", pos, 1.0f)) { pb->position = {pos[0], pos[1]}; ed.dirty = true; }
@@ -41622,7 +43185,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* rp = dynamic_cast<UIRadialProgress*>(curComp)) {
-        if (CompHeader("UI Radial Progress", rp, &toRemove)) {
+        if (CompHeader("UI Radial Progress", rp, &toRemove) && !(UseOkayUIInspector() && DrawUIRadialProgressWithOkayUI(ed, rp, toRemove))) {   // OkayUI's with the preview switch (section 22)
             UIStyleBar(ed, rp);
             float pos[2] = {rp->position.x, rp->position.y};
             if (ImGui::DragFloat2("Pos (px)##urp", pos, 1.0f)) { rp->position = {pos[0], pos[1]}; ed.dirty = true; }
@@ -41658,7 +43221,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* tb = dynamic_cast<UITextBind*>(curComp)) {
-        if (CompHeader("UI Text Bind", tb, &toRemove)) {
+        if (CompHeader("UI Text Bind", tb, &toRemove) && !(UseOkayUIInspector() && DrawUITextBindWithOkayUI(ed, tb, toRemove))) {   // OkayUI's with the preview switch (section 22)
             char fmt[256]; std::strncpy(fmt, tb->format.c_str(), sizeof(fmt) - 1); fmt[sizeof(fmt) - 1] = '\0';
             if (ImGui::InputText("Format##utbind", fmt, sizeof(fmt))) { tb->format = fmt; ed.dirty = true; }
             oked::FieldTip("Format##utbind");
@@ -41678,7 +43241,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* bb = dynamic_cast<UIBarBind*>(curComp)) {
-        if (CompHeader("UI Bar Bind", bb, &toRemove)) {
+        if (CompHeader("UI Bar Bind", bb, &toRemove) && !(UseOkayUIInspector() && DrawUIBarBindWithOkayUI(ed, bb, toRemove))) {   // OkayUI's with the preview switch (section 22)
             char vr[128]; std::strncpy(vr, bb->var.c_str(), sizeof(vr) - 1); vr[sizeof(vr) - 1] = '\0';
             if (ImGui::InputText("Variable##ubbind", vr, sizeof(vr))) { bb->var = vr; ed.dirty = true; }
             oked::FieldTip("Variable##ubbind");
@@ -41987,7 +43550,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cr = dynamic_cast<Crosshair*>(curComp)) {
-        if (CompHeader("Crosshair", cr, &toRemove)) {
+        if (CompHeader("Crosshair", cr, &toRemove) && !(UseOkayUIInspector() && DrawCrosshairWithOkayUI(ed, cr, toRemove))) {   // OkayUI's with the preview switch (section 22)
             float pos[2] = {cr->position.x, cr->position.y};
             if (ImGui::DragFloat2("Offset (px)##uch", pos, 1.0f)) { cr->position = {pos[0], pos[1]}; ed.dirty = true; }
             oked::FieldTip("Offset (px)##uch");
@@ -42196,7 +43759,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* im = dynamic_cast<UIImage*>(curComp)) {
-        if (CompHeader("UI Image", im, &toRemove)) {
+        if (CompHeader("UI Image", im, &toRemove) && !(UseOkayUIInspector() && DrawUIImageWithOkayUI(ed, im, toRemove))) {   // OkayUI's with the preview switch (section 17)
             AnchorCombo("Anchor##uim", im->anchor, ed);
             UIRectFields("uim", im->anchor, im->position, im->size, ed);
             ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Image"); ImGui::SameLine(80);
@@ -42261,7 +43824,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sl = dynamic_cast<UISlider*>(curComp)) {
-        if (CompHeader("UI Slider", sl, &toRemove)) {
+        if (CompHeader("UI Slider", sl, &toRemove) && !(UseOkayUIInspector() && DrawUISliderWithOkayUI(ed, sl, toRemove))) {   // OkayUI's with the preview switch (section 17)
             UIStyleBar(ed, sl);
             float pos[2] = {sl->position.x, sl->position.y};
             if (ImGui::DragFloat2("Pos (px)##usl", pos, 1.0f)) { sl->position = {pos[0], pos[1]}; ed.dirty = true; }
@@ -42349,7 +43912,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* st = dynamic_cast<UIStepper*>(curComp)) {
-        if (CompHeader("UI Stepper", st, &toRemove)) {
+        if (CompHeader("UI Stepper", st, &toRemove) && !(UseOkayUIInspector() && DrawUIStepperWithOkayUI(ed, st, toRemove))) {   // OkayUI's with the preview switch (section 22)
             float pos[2] = {st->position.x, st->position.y};
             if (ImGui::DragFloat2("Pos (px)##ust", pos, 1.0f)) { st->position = {pos[0], pos[1]}; ed.dirty = true; }
             oked::FieldTip("Pos (px)##ust");
@@ -42391,7 +43954,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* rt = dynamic_cast<UIRating*>(curComp)) {
-        if (CompHeader("UI Rating", rt, &toRemove)) {
+        if (CompHeader("UI Rating", rt, &toRemove) && !(UseOkayUIInspector() && DrawUIRatingWithOkayUI(ed, rt, toRemove))) {   // OkayUI's with the preview switch (section 22)
             float pos[2] = {rt->position.x, rt->position.y};
             if (ImGui::DragFloat2("Pos (px)##urt", pos, 1.0f)) { rt->position = {pos[0], pos[1]}; ed.dirty = true; }
             oked::FieldTip("Pos (px)##urt");
@@ -42419,7 +43982,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* tg = dynamic_cast<UIToggle*>(curComp)) {
-        if (CompHeader("UI Toggle", tg, &toRemove)) {
+        if (CompHeader("UI Toggle", tg, &toRemove) && !(UseOkayUIInspector() && DrawUIToggleWithOkayUI(ed, go, tg, toRemove))) {   // OkayUI's with the preview switch (section 17)
             UIStyleBar(ed, tg);
             const bool tgLoc = LocalizedTextField(ed, "utgloc", tg->loc, tg->label, go);   // or a string-table key
             char lb[128];
@@ -42691,7 +44254,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* an = dynamic_cast<SpriteAnimator*>(curComp)) {
-        if (CompHeader("Sprite Animator", an, &toRemove)) {
+        if (CompHeader("Sprite Animator", an, &toRemove) && !(UseOkayUIInspector() && DrawSpriteAnimatorWithOkayUI(ed, an, toRemove))) {   // OkayUI's with the preview switch (section 16)
             if (ImGui::DragFloat("FPS##anim", &an->fps, 0.25f, 0.0f, 120.0f)) ed.dirty = true;
             oked::FieldTip("FPS##anim");
             if (ImGui::Checkbox("Loop##anim", &an->loop)) ed.dirty = true;
@@ -42766,7 +44329,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* anm = dynamic_cast<Animator*>(curComp)) {
-        if (CompHeader("Animator", anm, &toRemove)) {
+        if (CompHeader(okay::editor::vsed::kClipPlayerTitle, anm, &toRemove) && !(UseOkayUIInspector() && DrawAnimatorWithOkayUI(ed, go, anm, toRemove))) {   // OkayUI's with the preview switch (section 16)
             char cn[64]; std::strncpy(cn, anm->clip.name.c_str(), sizeof(cn) - 1); cn[sizeof(cn)-1] = '\0';
             if (ImGui::InputText("Clip##anm", cn, sizeof(cn))) { anm->clip.name = cn; ed.dirty = true; }
             oked::FieldTip("Clip##anm");
@@ -42929,18 +44492,25 @@ void DrawInspector(EditorState& ed) {
     static char acFilter[64] = "";
     // Prominent, accent-tinted primary action — centre a wide
     // "Add Component" button under the component list.
-    ImGui::PushStyleColor(ImGuiCol_Button,        AccentCol(0.85f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  AccentCol(0.75f));
-    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1, 1, 1, 1));
-    float acW = ImGui::GetContentRegionAvail().x;
-    float acPad = acW > 300.0f ? (acW - 260.0f) * 0.5f : 0.0f;   // centre it on wide panels
-    if (acPad > 0.0f) ImGui::Indent(acPad);
     // The browser: categories on the left (plus Recent), that category's components
     // on the right as a plain list; typing searches every category at once.
     static std::string s_acCat;                  // selected category ("Recent" = recently added)
     static std::vector<std::string> s_acRecent;  // labels, most recent first
-    if (ImGui::Button("+  Add Component", ImVec2(acPad > 0.0f ? 260.0f : -1, 30))) {
+    bool acClicked = false;
+    // With the OkayUI preview the button is OkayUI's (docs/own_ui_toolkit.md section 14); the browser it opens stays Dear ImGui's.
+    if (!(UseOkayUIInspector() && oked::DrawAddComponentOkayUI(ImGui::ColorConvertFloat4ToU32(AccentCol(1.0f)), acClicked))) {
+        ImGui::PushStyleColor(ImGuiCol_Button,        AccentCol(0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  AccentCol(0.75f));
+        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1, 1, 1, 1));
+        float acW = ImGui::GetContentRegionAvail().x;
+        float acPad = acW > 300.0f ? (acW - 260.0f) * 0.5f : 0.0f;   // centre it on wide panels
+        if (acPad > 0.0f) ImGui::Indent(acPad);
+        acClicked = ImGui::Button("+  Add Component", ImVec2(acPad > 0.0f ? 260.0f : -1, 30));
+        if (acPad > 0.0f) ImGui::Unindent(acPad);
+        ImGui::PopStyleColor(4);
+    }
+    if (acClicked) {
         acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent");
         s_acCat = s_acRecent.empty() ? std::string("Rendering") : std::string("Recent");
     }
@@ -42949,8 +44519,6 @@ void DrawInspector(EditorState& ed) {
         acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent");
         s_acCat = s_acRecent.empty() ? std::string("Rendering") : std::string("Recent");
     }
-    if (acPad > 0.0f) ImGui::Unindent(acPad);
-    ImGui::PopStyleColor(4);
     ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_Always);
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopup("AddComponent")) {
@@ -43076,7 +44644,7 @@ void DrawInspector(EditorState& ed) {
 
         { bool o = BeginCat("Animation");
           if (o) {
-            if (item(!go->GetComponent<Animator>(), "Animator (keyframes)")) { go->AddComponent<Animator>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Animator>(), "Clip Player (keyframes)")) { go->AddComponent<Animator>(); ed.dirty = true; }
             if (item(!go->GetComponent<AnimStateMachine>(), "Animator (states + transitions)")) { go->AddComponent<AnimStateMachine>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<AimIK>(), "Aim IK (point a bone at a target)")) { go->AddComponent<AimIK>(); ed.dirty = true; }
@@ -43092,6 +44660,13 @@ void DrawInspector(EditorState& ed) {
             }
             if (item(!go->GetComponent<LimbIK>(), "Limb IK (arm/leg reach + grab)")) { go->AddComponent<LimbIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<ChainIK>(), "Chain IK (FABRIK/CCD long chain)")) { go->AddComponent<ChainIK>(); ed.dirty = true; }
+            if (item(!go->GetComponent<LedgeHandsIK>(), "Ledge Hands IK (hands on the ledge while hanging)")) {
+                auto* lh = go->AddComponent<LedgeHandsIK>();
+                const bool armed = lh->Wire();   // reuses a Limb IK already on each hand, else adds one (off)
+                ConsoleLog(armed ? "Ledge Hands IK: linked both arm Limb IKs." :
+                           "Ledge Hands IK: no humanoid arms found under this object; add it to the character (the object with the controller).", armed ? 0 : 1);
+                ed.dirty = true;
+            }
             if (item(!go->GetComponent<FullBodyIK>(), "Full Body IK (hands, feet, head, body pull)")) {
                 auto* fb = go->AddComponent<FullBodyIK>();
                 int n = fb->MapBones(true);
@@ -43134,7 +44709,7 @@ void DrawInspector(EditorState& ed) {
           if (o) {
             if (item(!go->GetComponent<Rigidbody3D>(), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Buoyancy>(), "Buoyancy (floats on Water)")) { ed.PushUndo(); go->AddComponent<Buoyancy>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); if (!go->GetComponent<Collider3D>()) { go->AddComponent<BoxCollider3D>(); FitColliders(go); } ed.dirty = true; }
-            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge/slider)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge/slider/ball/cone twist)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); FitColliders(go); ed.dirty = true; }
@@ -43179,6 +44754,7 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             if (item(!go->GetComponent<CameraRoom>(), "Camera Room")) { go->AddComponent<CameraRoom>(); ed.dirty = true; }
+            if (item(!go->GetComponent<CameraZone>(), "Camera Zone")) { go->AddComponent<CameraZone>(); ed.dirty = true; }
             if (item(!go->GetComponent<CinemachineBrain>(), "Cinemachine Brain")) { go->AddComponent<CinemachineBrain>(); ed.dirty = true; }
             if (item(!go->GetComponent<DollyPath>(), "Dolly Path")) { go->AddComponent<DollyPath>(); ed.dirty = true; }
             if (item(!go->GetComponent<DollyCart>(), "Dolly Cart")) { go->AddComponent<DollyCart>(); ed.dirty = true; }
@@ -43272,6 +44848,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
             if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<Ragdoll>(), "Ragdoll (death + hit reactions)")) { ed.PushUndo(); go->AddComponent<Ragdoll>(); ed.dirty = true; }
+            if (item(!go->GetComponent<ActiveRagdoll>(), "Active Ragdoll (balance, stumble, fall, get up)")) { ed.PushUndo(); go->AddComponent<ActiveRagdoll>(); ed.dirty = true; }
             if (item(!go->GetComponent<Seat>(), "Seat")) { go->AddComponent<Seat>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleSeat>(), "Vehicle Seat (get in and drive)")) { go->AddComponent<VehicleSeat>(); ed.dirty = true; }
             if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }
@@ -43300,14 +44877,11 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Spawner>(), "Spawner")) { go->AddComponent<Spawner>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { ed.PushUndo(); go->AddComponent<ClickToMoveController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<GridPathAgent2D>(), "Grid Path Agent (2D)")) { go->AddComponent<GridPathAgent2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<GridCostLayer>(), "Grid Movement Costs")) { go->AddComponent<GridCostLayer>(); ed.dirty = true; }
-            if (item(!go->GetComponent<GridObstacle2D>(), "Grid Obstacle (2D)")) { go->AddComponent<GridObstacle2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }
             if (item(!go->GetComponent<Spinner>(), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }
             if (item(!go->GetComponent<Lifetime>(), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }
             if (item(!go->GetComponent<SequencePlayer>(), "Sequence Player (cutscene)")) { go->AddComponent<SequencePlayer>(); ed.dirty = true; }
-            NavigationAddComponentItems(ed, go, item);   // Nav Mesh Surface / Agent / Obstacle
+            NavigationAddComponentItems(ed, go, item);   // Nav Mesh Surface / Agent / Obstacle, and the 2D grid agent, costs and obstacle
             // Dialogue and quests (View > Editors & Tools > Dialogue & Quests edits the files).
             if (item(!go->GetComponent<DialogueRunner>(), "Dialogue Runner (talk with E)")) { ed.PushUndo(); go->AddComponent<DialogueRunner>(); ed.dirty = true; }
             if (item(!go->GetComponent<QuestLog>(), "Quest Log (one per scene)")) { ed.PushUndo(); go->AddComponent<QuestLog>(); ed.dirty = true; }
@@ -43375,7 +44949,11 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Canvas>(), "Canvas")) { go->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; }
             if (item(!go->GetComponent<EventSystem>(), "Event System")) { go->AddComponent<EventSystem>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDocument>(), "UI Document")) { go->AddComponent<UIDocument>(); ed.dirty = true; }
-            if (item(!go->GetComponent<NetworkManager>(), "Network Manager")) { go->AddComponent<NetworkManager>(); ed.dirty = true; }
+            if (item(!go->GetComponent<NetworkManager>(), "Network Manager")) {
+                // A new one hosts on Play, or joins the copy already hosting on this PC: multiplayer with no setup.
+                go->AddComponent<NetworkManager>()->autoStart = NetworkManager::AutoStart::Auto;
+                ed.dirty = true;
+            }
             if (item(!go->GetComponent<NetworkSync>(), "Network Sync (replicate transform)")) { go->AddComponent<NetworkSync>(); ed.dirty = true; }
             if (item(!go->GetComponent<NetworkPlayerSpawner>(), "Network Player Spawner")) { go->AddComponent<NetworkPlayerSpawner>(); ed.dirty = true; }
             if (item(!go->GetComponent<AntiCheatConfig>(), "Anti-Cheat Config")) { go->AddComponent<AntiCheatConfig>(); ed.dirty = true; }
@@ -43920,6 +45498,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
                 const auto& it = inv->slots[idx];
                 DrawItemIconIm(dl, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2), ui->iconFolder, it.item);
+                if (ItemThumb(okay::ItemIconPath(ui->iconFolder, it.item)) == nullptr) {   // no picture: name along the bottom, cut to the slot width
+                    const okay::ItemDefinition* nd = okay::ItemDatabase::Get().Find(it.item);
+                    const std::string full = nd ? nd->DisplayName() : it.item;
+                    const std::string fit = okay::InventoryText::FitWidth(full, (p1.x - p0.x) - 2 * b - 4.0f,
+                        [](const std::string& s) { return ImGui::CalcTextSize(s.c_str()).x; });
+                    if (!fit.empty())
+                        dl->AddText(ImVec2(p0.x + b + 2, p1.y - b - ImGui::GetTextLineHeight() - 1), col(ui->countColor), fit.c_str());
+                }
                 if (ui->showCounts && shown > 1) {
                     std::string cs = std::to_string(shown);
                     ImVec2 ts = ImGui::CalcTextSize(cs.c_str());
@@ -46312,6 +47898,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 ImVec2 spv;
                 if (project(ip, spv)) { cameraIcon(spv, col, selv); if (!selv) iconLabel(spv, up->name.c_str(), col); }
             }
+            if (auto* czg = up->GetComponent<CameraZone>()) {
+                const ImU32 zc = (up.get() == ed.selected()) ? IM_COL32(90, 230, 255, 255) : IM_COL32(70, 170, 200, 150);
+                const Vec3 c0 = czg->Geometry().WorldCenter(*t);
+                const Vec3 hx = t->Right() * (czg->size.x * 0.5f), hy = t->Up() * (czg->size.y * 0.5f), hz = t->Forward() * (czg->size.z * 0.5f);
+                Vec3 cr[8];
+                for (int i = 0; i < 8; ++i) cr[i] = c0 + hx * ((i & 1) ? 1.0f : -1.0f) + hy * ((i & 2) ? 1.0f : -1.0f) + hz * ((i & 4) ? 1.0f : -1.0f);
+                for (int i = 0; i < 8; ++i) for (int b = 1; b < 8; b <<= 1) if (!(i & b)) line(cr[i], cr[i | b], zc, 1.5f);
+            }
             if (auto* room = up->GetComponent<CameraRoom>()) {
                 const okay::cam::Box2 b = room->Bounds();
                 const ImU32 rc2 = (up.get() == ed.selected()) ? IM_COL32(255, 230, 90, 255) : IM_COL32(220, 190, 70, 150);
@@ -47218,6 +48812,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (ImGui::IsKeyPressed(ImGuiKey_1, false)) g_meshSelMode = 0;
             if (ImGui::IsKeyPressed(ImGuiKey_2, false)) g_meshSelMode = 2;
             if (ImGui::IsKeyPressed(ImGuiKey_3, false)) g_meshSelMode = 1;
+            if (ImGui::IsKeyPressed(ImGuiKey_Period, false)) {   // '.' cycles what R / S turn around
+                g_mePivot = (std::clamp(g_mePivot, 0, 2) + 1) % 3;
+                ConsoleLog(std::string("Pivot: ") + okay::modeling::EditPivotName((okay::modeling::EditPivot)g_mePivot));
+            }
         }
         struct Pill { const char* label; bool on; int id; };
         std::vector<Pill> pills = {{"Object", !(g_meshEdit && g_meshEditObj == mo), 0}, {"Edit", g_meshEdit && g_meshEditObj == mo, 1}};
@@ -47347,11 +48945,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     Vec3 dirW = (eye - vWorld(bv)).Normalized();    // toward camera
                     Vec3 dirL = Minv.MultiplyVector(dirW);
                     Vec3 c = mesh.vertices[bv];                     // before the brush moves it
-                    mesh.SculptBrush(c, dirL, g_sculptRadius, g_sculptStrength, g_sculptMode);
-                    // Live X symmetry: repeat the stroke mirrored across the YZ plane.
-                    if (g_meshSymX)
-                        mesh.SculptBrush(Vec3{-c.x, c.y, c.z}, Vec3{-dirL.x, dirL.y, dirL.z},
-                                         g_sculptRadius, g_sculptStrength, g_sculptMode);
+                    // Live X symmetry: the stroke is mirrored across the YZ plane in the same pass.
+                    mesh.SculptBrush(c, dirL, g_sculptRadius, g_sculptStrength, g_sculptMode, g_meshSymX);
                     ed.dirty = true;
                 }
                 g_uiHandled = true;     // consume so the object isn't orbited/moved
@@ -47402,6 +48997,13 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 mdl::EditTransformOptions o;
                 o.softRadius = g_meshSoftSel ? g_meshSoftRadius : 0.0f;
                 o.mirrorX = g_meshSymX; o.mirrorY = g_meshSymY; o.mirrorZ = g_meshSymZ;
+                o.pivot = (mdl::EditPivot)std::clamp(g_mePivot, 0, 2);
+                if (g_meshSelMode == 1) o.faces = &g_meshSelFaces;        // Individual Origins: parts joined only through the picked faces
+                else if (g_meshSelMode == 2) o.edges = &g_meshSelEdges;   // ... or the picked edges
+                // The active vertex: the last vertex picked (or the end of the last edge, or a corner of the last face).
+                o.activeVertex = g_meshSelMode == 0 ? (g_meshSelVerts.empty() ? -1 : g_meshSelVerts.back())
+                               : g_meshSelMode == 2 ? (g_meshSelEdges.empty() ? -1 : g_meshSelEdges.back().second)
+                               : (!g_meshSelFaces.empty() && g_meshSelFaces.back() >= 0 && g_meshSelFaces.back() < mesh.TriangleCount() ? mesh.triangles[(std::size_t)g_meshSelFaces.back() * 3] : -1);
                 g_meModal.Begin(mesh, kind, affected, M, o);
                 if (!g_meModal.Active()) return;
                 g_meModalObj = meo; g_meModalObjGuid = meo ? meo->Guid() : std::string();
@@ -47413,7 +49015,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             auto statusLine = [&](const std::string& line, const char* help) {
                 ImVec2 ts = ImGui::CalcTextSize(line.c_str()), hs = ImGui::CalcTextSize(help);
                 float w = std::max(ts.x, hs.x) + 20.0f, lh = ImGui::GetTextLineHeight();
-                ImVec2 p0(canvasPos.x + (canvasSize.x - w) * 0.5f, canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);
+                ImVec2 p0(std::max(canvasPos.x + 4.0f, canvasPos.x + (canvasSize.x - w) * 0.5f), canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);   // a narrow view: keep the start (tool, value) in sight, the help runs off the right
                 dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + lh * 2.0f + 14.0f), IM_COL32(20, 22, 28, 215), 5.0f);
                 dl->AddText(ImVec2(p0.x + 10, p0.y + 5), IM_COL32(255, 200, 90, 255), line.c_str());
                 dl->AddText(ImVec2(p0.x + 10, p0.y + 8 + lh), IM_COL32(190, 195, 205, 255), help);
@@ -47448,7 +49050,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (loop.empty()) { ConsoleLog("Edge slide: select an edge loop first", 1); return; }
                 g_slideLoop = loop;
                 g_slideFrom = mesh.vertices;
-                g_slidePoly = okay::modeling::PolyMesh::FromMesh(mesh, {false, true, 1.0f});
+                g_slidePoly = okay::modeling::PolyMesh::FromMesh(mesh, {false, true, 1.0f}, &g_slideTriFace);
+                g_slideUVFrom = mesh.uvs;
+                g_slideCornerUVFrom = mesh.cornerUVs;
                 g_slideAfterCut = afterCut;
                 g_ptoolMouse0 = io.MousePos;
                 g_ptoolTyped.Clear();
@@ -47563,6 +49167,25 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 pm.verts = g_slideFrom;
                 okay::modeling::EdgeSlide(pm, g_slideLoop, amount, &g_slideFrom);
                 for (std::size_t i = 0; i < pm.verts.size() && i < mesh.vertices.size(); ++i) mesh.vertices[i] = pm.verts[i];
+                // The UVs slide with the vertices (each face keeps its own mapping, seams stay split).
+                if ((int)g_slideTriFace.size() == mesh.TriangleCount()) {
+                    const bool perCorner = g_slideCornerUVFrom.size() == mesh.triangles.size() && !g_slideCornerUVFrom.empty();
+                    const bool perVertex = g_slideUVFrom.size() == mesh.vertices.size() && !g_slideUVFrom.empty();
+                    for (int t = 0; t < mesh.TriangleCount() && (perCorner || perVertex); ++t) {
+                        const int f = g_slideTriFace[(std::size_t)t];
+                        if (f < 0 || f >= (int)pm.faces.size() || pm.faces[(std::size_t)f].uvs.size() != pm.faces[(std::size_t)f].verts.size()) continue;
+                        const okay::modeling::PolyFace& F = pm.faces[(std::size_t)f];
+                        for (int k = 0; k < 3; ++k) {
+                            const int v = mesh.triangles[(std::size_t)t * 3 + k];
+                            for (int c = 0; c < F.Size(); ++c)
+                                if (F.verts[(std::size_t)c] == v) {
+                                    if (perCorner) mesh.cornerUVs[(std::size_t)t * 3 + k] = F.uvs[(std::size_t)c];
+                                    else if (v >= 0 && v < (int)mesh.uvs.size()) mesh.uvs[(std::size_t)v] = F.uvs[(std::size_t)c];
+                                    break;
+                                }
+                        }
+                    }
+                }
                 mesh.normals.clear();
                 ed.dirty = true;
                 char buf[160];
@@ -47572,9 +49195,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 else if (confirmKey || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))) {
                     if (!g_slideAfterCut) {   // its own undo step (after a loop cut, the cut's step covers both)
                         const std::vector<Vec3> result = mesh.vertices;
+                        const std::vector<Vec2> resultUV = mesh.uvs, resultCornerUV = mesh.cornerUVs;
                         mesh.vertices = g_slideFrom;
+                        mesh.uvs = g_slideUVFrom;
+                        mesh.cornerUVs = g_slideCornerUVFrom;
                         EditUndoPoint(ed, emr);
                         mesh.vertices = result;
+                        mesh.uvs = resultUV;
+                        mesh.cornerUVs = resultCornerUV;
                     }
                     EndPolyTool(true);
                 }
@@ -48071,12 +49699,13 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 {
                     std::string line = std::string(mdl::EditXformName(g_meModal.Kind()));
                     if (!lock.Free()) line += "  along " + lock.Label();
+                    if (g_mePivot != 0 && g_meModal.Kind() != mdl::EditXform::Move) line += std::string("  about ") + mdl::EditPivotName((mdl::EditPivot)std::clamp(g_mePivot, 0, 2));
                     line += "   " + (typed ? std::string("typed ") + g_meModal.typed.Text() : readout);
                     if (snap) line += g_snapTarget > 0 && g_meModal.Kind() == mdl::EditXform::Move ? std::string("   (snapping to ") + mdl::SnapTargetName((mdl::SnapTarget)g_snapTarget) + ")" : std::string("   (snapping)");
                     const char* help = "X / Y / Z lock an axis, Shift+X/Y/Z a plane  -  type a value  -  Ctrl snaps  -  Enter or click to confirm, Esc or right-click to cancel";
                     ImVec2 ts = ImGui::CalcTextSize(line.c_str()), hs = ImGui::CalcTextSize(help);
                     float w = std::max(ts.x, hs.x) + 20.0f, lh = ImGui::GetTextLineHeight();
-                    ImVec2 p0(canvasPos.x + (canvasSize.x - w) * 0.5f, canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);
+                    ImVec2 p0(std::max(canvasPos.x + 4.0f, canvasPos.x + (canvasSize.x - w) * 0.5f), canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);   // a narrow view: keep the start (tool, value) in sight, the help runs off the right
                     dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + lh * 2.0f + 14.0f), IM_COL32(20, 22, 28, 215), 5.0f);
                     dl->AddText(ImVec2(p0.x + 10, p0.y + 5), IM_COL32(255, 200, 90, 255), line.c_str());
                     dl->AddText(ImVec2(p0.x + 10, p0.y + 8 + lh), IM_COL32(190, 195, 205, 255), help);
@@ -48122,9 +49751,16 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (oOk && hovered && !g_uiHandled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 float best = 10.0f; int pick = -1;
                 for (int i = 0; i < 3; ++i) if (tipOk[i]) { float d = SegDistPx(io.MousePos, so, tip[i]); if (d < best) { best = d; pick = i; } }
-                if (pick >= 0) { EditUndoPoint(ed, meo->GetComponent<MeshRenderer>()); g_meEditGrab = true; g_meEditAxis = pick; grabbedHandle = true; g_uiHandled = true; }
+                if (pick >= 0) {
+                    EditUndoPoint(ed, meo->GetComponent<MeshRenderer>()); g_meEditGrab = true; g_meEditAxis = pick; grabbedHandle = true; g_uiHandled = true;
+                    okay::modeling::EditTransformOptions ho;
+                    ho.softRadius = g_meshSoftSel ? g_meshSoftRadius : 0.0f;
+                    ho.mirrorX = g_meshSymX; ho.mirrorY = g_meshSymY; ho.mirrorZ = g_meshSymZ;
+                    g_meHandle.Begin(mesh, okay::modeling::EditXform::Move, affected, M, ho);
+                    g_meHandleOff = Vec3{0, 0, 0};
+                }
             }
-            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_meEditGrab = false; g_meEditAxis = -1; }
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_meEditGrab = false; g_meEditAxis = -1; g_meHandle.Confirm(); }
             // Drag the grabbed axis: project mouse motion onto it, move the selection.
             if (g_meEditGrab && g_meEditAxis >= 0 && oOk && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
                 int i = g_meEditAxis;
@@ -48133,29 +49769,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (slen > 1e-3f) {
                     float along = (io.MouseDelta.x * sdir.x + io.MouseDelta.y * sdir.y) / slen;
                     float amt = along * (L / slen);             // screen px -> world units
-                    Vec3 localDelta = Minv.MultiplyVector(axisW[i] * amt);
-                    // Live X symmetry: find the -X counterparts BEFORE moving (matched
-                    // against the pre-move positions), then give them the mirrored delta.
-                    std::vector<int> mirror;
-                    if (g_meshSymX) {
-                        for (int v : affected) {
-                            if (v < 0 || v >= (int)mesh.vertices.size()) continue;
-                            Vec3 want{-mesh.vertices[v].x, mesh.vertices[v].y, mesh.vertices[v].z};
-                            for (int w = 0; w < (int)mesh.vertices.size(); ++w) {
-                                Vec3 d = mesh.vertices[w] - want;
-                                if (d.x*d.x + d.y*d.y + d.z*d.z < 1e-6f && w != v &&
-                                    std::find(affected.begin(), affected.end(), w) == affected.end())
-                                    mirror.push_back(w);
-                            }
-                        }
-                    }
-                    if (g_meshSoftSel) mesh.MoveVerticesSoft(affected, localDelta, g_meshSoftRadius);
-                    else               mesh.MoveVertices(affected, localDelta);
-                    if (!mirror.empty()) {
-                        Vec3 md{-localDelta.x, localDelta.y, localDelta.z};
-                        if (g_meshSoftSel) mesh.MoveVerticesSoft(mirror, md, g_meshSoftRadius);
-                        else               mesh.MoveVertices(mirror, md);
-                    }
+                    // The drag goes through the same session as G, so Soft Select and Symmetry X / Y / Z
+                    // all apply. (It used to mirror across X only, and searched every vertex for each moved
+                    // vertex's partner on every frame, which froze big meshes.)
+                    g_meHandleOff += axisW[i] * amt;
+                    if (g_meHandle.Active()) g_meHandle.Apply(mesh, Mat4::Translate(g_meHandleOff));
                     mesh.normals.clear();        // keep flat (faceted) shading while editing
                     ed.dirty = true;
                 }
@@ -48171,11 +49789,21 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         float dx = sp.x - io.MousePos.x, dy = sp.y - io.MousePos.y, d = dx*dx + dy*dy;
                         if (d < best) { best = d; pv = i; }
                     }
+                    if (io.KeyCtrl && !io.KeyAlt && pv >= 0 && !g_meshSelVerts.empty()) {
+                        // Ctrl+click: add the shortest path along the edges from the last vertex picked.
+                        const std::vector<int> path = okay::modeling::ShortestVertPath(EditPoly(mesh), g_meshSelVerts.back(), pv);
+                        for (int v : path)
+                            if (std::find(g_meshSelVerts.begin(), g_meshSelVerts.end(), v) == g_meshSelVerts.end()) g_meshSelVerts.push_back(v);
+                        g_meshSelVerts.erase(std::remove(g_meshSelVerts.begin(), g_meshSelVerts.end(), pv), g_meshSelVerts.end());
+                        g_meshSelVerts.push_back(pv);   // the clicked one is the active vertex now
+                        if (path.empty()) ConsoleLog("No path along the edges joins those two vertices (separate parts)", 1);
+                    } else {
                     if (!add) g_meshSelVerts.clear();
                     if (pv >= 0) {
                         auto it = std::find(g_meshSelVerts.begin(), g_meshSelVerts.end(), pv);
                         if (it != g_meshSelVerts.end()) { if (add) g_meshSelVerts.erase(it); }
                         else g_meshSelVerts.push_back(pv);
+                    }
                     }
                 } else if (g_meshSelMode == 2) {
                     // Pick the nearest polygon edge by screen distance to its segment.
@@ -48186,8 +49814,27 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         float d = SegDistPx(io.MousePos, a, b);
                         if (d < best) { best = d; pe = e; }
                     }
-                    if (!add) g_meshSelEdges.clear();
-                    if (pe.first >= 0) {
+                    const bool pathClick = io.KeyCtrl && !io.KeyAlt && pe.first >= 0 && !g_meshSelEdges.empty();
+                    if (!add && !pathClick) g_meshSelEdges.clear();
+                    if (pathClick) {
+                        // Ctrl+click: join the last edge picked to this one by the shortest path along the edges.
+                        const okay::modeling::PolyMesh& pm = EditPoly(mesh);
+                        const std::pair<int, int> last = g_meshSelEdges.back();
+                        std::vector<int> best;
+                        for (int a : {last.first, last.second}) for (int b : {pe.first, pe.second}) {
+                            std::vector<int> p = okay::modeling::ShortestVertPath(pm, a, b);
+                            if (!p.empty() && (best.empty() || p.size() < best.size())) best = std::move(p);
+                        }
+                        auto addEdge = [&](int a, int b) {
+                            for (const auto& s : g_meshSelEdges) if ((s.first == a && s.second == b) || (s.first == b && s.second == a)) return;
+                            g_meshSelEdges.push_back({a, b});
+                        };
+                        for (std::size_t i = 1; i < best.size(); ++i) addEdge(best[i - 1], best[i]);
+                        g_meshSelEdges.erase(std::remove_if(g_meshSelEdges.begin(), g_meshSelEdges.end(), [&](const std::pair<int, int>& s) {
+                            return (s.first == pe.first && s.second == pe.second) || (s.first == pe.second && s.second == pe.first); }), g_meshSelEdges.end());
+                        g_meshSelEdges.push_back(pe);   // the clicked edge is the last one picked
+                        if (best.empty()) ConsoleLog("No path along the edges joins those two edges (separate parts)", 1);
+                    } else if (pe.first >= 0) {
                         if (io.KeyAlt || ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {   // double-click does the same as Alt+click
                             // Alt+Click: the edge loop through this edge (across 4-way
                             // vertices); Ctrl+Alt+Click: the ring of edges across the
@@ -48254,7 +49901,26 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         }
                         return -1;
                     };
-                    if (!add) g_meshSelFaces.clear();
+                    EditPoly(mesh);
+                    const bool polysKnown = (int)mesh.polyFace.size() == mesh.TriangleCount();
+                    const int lastTri = g_meshSelFaces.empty() ? -1 : g_meshSelFaces.back();
+                    if (io.KeyCtrl && !io.KeyAlt && pf >= 0 && polysKnown && lastTri >= 0 && lastTri < mesh.TriangleCount()) {
+                        // Ctrl+click: the shortest path of faces from the last face picked to this one.
+                        const std::vector<int> path = okay::modeling::ShortestFacePath(EditPoly(mesh), mesh.polyFace[lastTri], mesh.polyFace[pf]);
+                        std::set<int> want(path.begin(), path.end());
+                        std::set<int> have(g_meshSelFaces.begin(), g_meshSelFaces.end());
+                        std::vector<int> clickedTris;
+                        for (int t = 0; t < mesh.TriangleCount(); ++t) {
+                            if (mesh.polyFace[t] == mesh.polyFace[pf]) { clickedTris.push_back(t); continue; }
+                            if (want.count(mesh.polyFace[t]) && !have.count(t)) g_meshSelFaces.push_back(t);
+                        }
+                        for (int t : clickedTris) {   // the clicked face goes last: it is the one the next Ctrl+click starts from
+                            g_meshSelFaces.erase(std::remove(g_meshSelFaces.begin(), g_meshSelFaces.end(), t), g_meshSelFaces.end());
+                            g_meshSelFaces.push_back(t);
+                        }
+                        if (path.empty()) ConsoleLog("No path of faces joins those two faces (separate parts)", 1);
+                        pf = -1;   // handled
+                    } else if (!add) g_meshSelFaces.clear();
                     if (pf >= 0) {
                         auto toggleFace = [&](int fc) {
                             if (fc < 0 || fc >= mesh.TriangleCount()) return;
@@ -48285,7 +49951,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // Moving a collider's centre by a world-space step: Classic keeps the offset in world units, Improved in the object's own.
     auto shiftColliderOffset = [&](Collider3D* col, const Vec3& worldMove) {
         Transform* tr = col->transform;
-        if (tr && ed.scene().physics3D().quality == PhysicsQuality::Improved) {
+        if (tr) {
             Vec3 loc = tr->Rotation().Inverse() * worldMove; Vec3 ls = tr->LossyScale();
             col->offset = col->offset + Vec3{loc.x / (Mathf::Abs(ls.x) > 1e-4f ? ls.x : 1.0f), loc.y / (Mathf::Abs(ls.y) > 1e-4f ? ls.y : 1.0f), loc.z / (Mathf::Abs(ls.z) > 1e-4f ? ls.z : 1.0f)};
         } else col->offset = col->offset + worldMove;
@@ -49487,8 +51153,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 placed = okay::ImportModelScene(ed.scene(), path, &ok);
                 if (ok && placed) ApplyModelImportScale(placed, path);
                 if (!ok || !placed)
-                    ConsoleLog("Model import failed: " + path +
-                               (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.stl/.ply/.gltf/.glb; other formats need Assimp)"), 2);
+                    ConsoleLog(ModelImportFailLine("Model import", path), 2);
             }
             if (placed) {
                 placed->transform->SetPosition(drop);
@@ -50019,179 +51684,57 @@ void DrawPerfOverlay(EditorState& ed) {
 // CSV copy of the selected frame. Data comes from OKAY_PROFILE scopes in the engine +
 // editor; the window only enables timing while it's open.
 void DrawProfiler(EditorState& ed) {
+    // Drawn by OkayUI only (editor/OkayPanels.cpp; docs/ui/own_ui_toolkit.md section 25): the model is filled only while the window
+    // shows, as before; the scene's draw stats are fed into this frame then too.
     okay::Profiler& P = okay::Prof();
-    if (!ImGui::Begin("Profiler", &g_showProfiler)) { ImGui::End(); return; }
-
-    // Live scene draw stats -> fed into this frame.
-    int objs = 0, tris = 0, parts = 0;
-    for (const auto& up : ed.scene().Objects()) {
-        if (!up || !up->active) continue;
-        if (auto* mr = up->GetComponent<okay::MeshRenderer>()) if (mr->enabled && !mr->wireframe) { ++objs; tris += mr->DisplayMesh().TriangleCount(); }
-        if (auto* ps = up->GetComponent<okay::ParticleSystem>()) parts += ps->AliveCount();
-    }
-    P.Stat3(objs, tris, parts);
-
-    const int n = P.Count();
-    double avg = 0.0, peak = 0.0; P.Range(avg, peak);
-    float top = (float)(peak > 0.0 ? peak * 1.15 : 33.4);
-
-    // ---- Controls row ----
-    ImGui::Checkbox("Pause##prof", &P.paused);
-    ImGui::SameLine();
-    if (!P.paused) P.selected = -1;
-    if (P.paused) {
-        ImGui::SetNextItemWidth(220);
-        if (n > 1) ImGui::SliderInt("Frame##prof", &P.selected, 0, n - 1, "frame %d");
-        if (P.selected < 0) P.selected = n - 1;
-    } else ImGui::TextDisabled("(pause to scrub frames)");
-    ImGui::SameLine(); ImGui::TextDisabled("16.7ms=60FPS  33.3ms=30FPS");
-
-    // ---- Timeline graphs (oldest -> newest) ----
-    static std::vector<float> gTotal, gGpu, gScripts, gPhysics, gRender, gOther;
-    gTotal.resize(n); gGpu.resize(n); gScripts.resize(n); gPhysics.resize(n); gRender.resize(n); gOther.resize(n);
-    for (int i = 0; i < n; ++i) {
-        const okay::Profiler::Frame& f = P.FrameAt(i);
-        gTotal[i] = (float)f.total; gGpu[i] = (float)f.gpu;
-        float sc = (float)okay::Profiler::CategorySelf(f, "Scripts");
-        float ph = (float)okay::Profiler::CategorySelf(f, "Physics");
-        float rd = (float)okay::Profiler::CategorySelf(f, "Render");
-        gScripts[i] = sc; gPhysics[i] = ph; gRender[i] = rd;
-        gOther[i] = (float)f.cpu - sc - ph - rd; if (gOther[i] < 0) gOther[i] = 0;
-    }
-    char ov[96];
-    std::snprintf(ov, sizeof(ov), "%.2f ms   %.0f FPS", P.lastFrameMs, P.lastFrameMs > 0.001 ? 1000.0 / P.lastFrameMs : 0.0);
-    ImGui::PlotLines("##frame", gTotal.empty() ? nullptr : gTotal.data(), n, 0, ov, 0.0f, top, ImVec2(-1, 80));
-    {   // Budget guide lines over the frame graph: green 60 FPS, amber 30 FPS —
-        // "is this frame over budget?" becomes visible instead of arithmetic.
-        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-        ImDrawList* pdl = ImGui::GetWindowDrawList();
-        auto guide = [&](float ms, ImU32 col, const char* lbl) {
-            if (top <= ms) return;
-            float y = mx.y - (ms / top) * (mx.y - mn.y);
-            pdl->AddLine(ImVec2(mn.x, y), ImVec2(mx.x, y), col, 1.0f);
-            pdl->AddText(ImVec2(mn.x + 4.0f, y - ImGui::GetTextLineHeight() - 1.0f), col, lbl);
-        };
-        guide(16.7f, IM_COL32(110, 220, 130, 170), "16.7 (60)");
-        guide(33.3f, IM_COL32(240, 190, 80, 170), "33.3 (30)");
-        // Scrub marker: while paused, show which frame of the history is displayed.
-        if (P.paused && n > 1 && P.selected >= 0) {
-            float fx = mn.x + ((float)P.selected / (float)(n - 1)) * (mx.x - mn.x);
-            pdl->AddLine(ImVec2(fx, mn.y), ImVec2(fx, mx.y), IM_COL32(255, 210, 0, 220), 1.5f);
+    okaypanels::ProfilerIntent in;
+    DrawProfilerOkayUI(&g_showProfiler, [&](okaypanels::ProfilerModel& m) {
+        int objs = 0, tris = 0, parts = 0;
+        for (const auto& up : ed.scene().Objects()) {
+            if (!up || !up->active) continue;
+            if (auto* mr = up->GetComponent<okay::MeshRenderer>()) if (mr->enabled && !mr->wireframe) { ++objs; tris += mr->DisplayMesh().TriangleCount(); }
+            if (auto* ps = up->GetComponent<okay::ParticleSystem>()) parts += ps->AliveCount();
         }
-    }
-    ImGui::PlotLines("##gpu",   gGpu.empty()   ? nullptr : gGpu.data(),   n, 0, "GPU ms", 0.0f, top, ImVec2(-1, 44));
-
-    // ---- Readouts ----
-    const okay::Profiler::Frame& F = P.Displayed();
-    ImGui::Text("Frame %.2f ms (%.0f FPS)", F.total, F.total > 0.001 ? 1000.0 / F.total : 0.0);
-    ImGui::SameLine(); ImGui::TextColored(ImVec4(0.55f,0.8f,1,1), "CPU %.2f", F.cpu);
-    ImGui::SameLine(); ImGui::TextColored(ImVec4(1,0.78f,0.45f,1), "GPU %.2f", F.gpu);
-    ImGui::SameLine(); ImGui::Text("| avg %.2f  peak %.2f", avg, peak);
-    ImGui::Text("Meshes %d    Triangles %d    Particles %d", F.objects, F.triangles, F.particles);
-
-    // ---- CPU category bars (this frame) ----
-    auto bar = [&](const char* label, double ms, ImVec4 col) {
-        float frac = F.cpu > 0.0001 ? (float)(ms / F.cpu) : 0.0f;
-        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, col);
-        char t[48]; std::snprintf(t, sizeof(t), "%s %.2f ms (%.0f%%)", label, ms, frac * 100.0f);
-        ImGui::ProgressBar(frac, ImVec2(-1, 0), t);
-        ImGui::PopStyleColor();
-    };
-    double cSc = okay::Profiler::CategorySelf(F, "Scripts");
-    double cPh = okay::Profiler::CategorySelf(F, "Physics");
-    double cRd = okay::Profiler::CategorySelf(F, "Render");
-    double cOt = F.cpu - cSc - cPh - cRd; if (cOt < 0) cOt = 0;
-    bar("Scripts", cSc, ImVec4(0.45f,0.75f,1.0f,1));
-    bar("Physics", cPh, ImVec4(0.55f,0.9f,0.55f,1));
-    bar("Render",  cRd, ImVec4(1.0f,0.75f,0.4f,1));
-    bar("Other",   cOt, ImVec4(0.7f,0.7f,0.75f,1));
-
-    // Plain-language diagnosis: tell the user what to look at, so the profiler is
-    // actually actionable instead of just numbers.
-    {
-        const char* heaviestCat = "Scripts"; double cm = cSc;
-        if (cPh > cm) { cm = cPh; heaviestCat = "Physics"; }
-        if (cRd > cm) { cm = cRd; heaviestCat = "Render"; }
-        if (cOt > cm) { cm = cOt; heaviestCat = "Other (engine/UI)"; }
-        std::string heaviestSec; double hs = 0.0;
-        for (const auto& b : F.buckets) if (b.self > hs) { hs = b.self; heaviestSec = b.name; }
-        std::string diag;
-        if (F.total < 0.001) diag = "Waiting for frames...";
-        else if (F.gpu > F.cpu * 1.3) diag = "GPU-bound: rendering dominates. Lower resolution/AA, fewer triangles, or simpler shaders.";
-        else if (F.cpu > F.gpu * 1.3) diag = "CPU-bound: " + std::string(heaviestCat) + " is heaviest"
-                                              + (heaviestSec.empty() ? "" : " (top: " + heaviestSec + ").");
-        else diag = "Balanced CPU/GPU.";
-        if (F.total > 0.001) {
-            double fps = 1000.0 / F.total;
-            if (fps >= 58) diag += "  Running smoothly (60+ FPS).";
-            else if (fps >= 28) diag += "  ~30 FPS.";
-            else diag += "  Below 30 FPS — optimise the heaviest section above.";
-        }
-        ImGui::TextColored(ImVec4(0.85f,0.9f,1.0f,1.0f), "Diagnosis:");
-        ImGui::SameLine(); ImGui::TextWrapped("%s", diag.c_str());
-    }
-    ImGui::Separator();
-
-    // ---- CSV copy of the displayed frame ----
-    if (ImGui::SmallButton("Copy CSV##prof")) {
-        std::string csv = "Section,Self ms,Total ms,Calls,Avg ms,Min ms,Max ms\n";
+        P.Stat3(objs, tris, parts);
+        const int n = P.Count();
+        P.Range(m.avg, m.peak);
+        m.paused = &P.paused;
+        m.selected = &P.selected;
+        m.total.resize((std::size_t)n); m.gpu.resize((std::size_t)n);
+        for (int i = 0; i < n; ++i) { const okay::Profiler::Frame& f = P.FrameAt(i); m.total[(std::size_t)i] = (float)f.total; m.gpu[(std::size_t)i] = (float)f.gpu; }
+        okaypanels::ProfilerFixSelection(m);   // before Displayed(): the scrubbed frame is the one shown
+        m.lastFrameMs = P.lastFrameMs;
+        const okay::Profiler::Frame& F = P.Displayed();
+        m.frameMs = F.total; m.cpuMs = F.cpu; m.gpuMs = F.gpu;
+        m.meshes = F.objects; m.triangles = F.triangles; m.particles = F.particles;
+        m.scriptsMs = okay::Profiler::CategorySelf(F, "Scripts");
+        m.physicsMs = okay::Profiler::CategorySelf(F, "Physics");
+        m.renderMs = okay::Profiler::CategorySelf(F, "Render");
         for (const auto& b : F.buckets) {
-            okay::Profiler::Stat st = P.SectionStat(b.name);
-            char line[256];
-            std::snprintf(line, sizeof(line), "%s,%.4f,%.4f,%d,%.4f,%.4f,%.4f\n",
-                          b.name.c_str(), b.self, b.inclusive, b.calls, st.avg, st.mn, st.mx);
-            csv += line;
+            const okay::Profiler::Stat s = P.SectionStat(b.name);
+            okaypanels::ProfilerSection sec;
+            sec.name = b.name; sec.self = b.self; sec.inclusive = b.inclusive; sec.calls = b.calls; sec.depth = b.depth;
+            sec.min = s.mn; sec.avg = s.avg; sec.max = s.mx;
+            m.sections.push_back(sec);
         }
-        ImGui::SetClipboardText(csv.c_str());
-        ConsoleLog("Profiler frame copied as CSV.");
-    }
-    ImGui::SameLine(); ImGui::TextDisabled("section breakdown  (?)");
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Self ms  = time spent in this section, NOT counting nested sections.\n"
-                          "Total ms = time including everything it called (indented = nested).\n"
-                          "%%        = share of this frame's CPU.\n"
-                          "Calls    = how many times it ran this frame.\n"
-                          "Avg/Max  = over the recorded window.\n"
-                          "Red rows are 'hot' (>30%% of CPU) — start optimising there.");
-
-    // ---- Per-section table: self/total/calls/%, indented by call depth, with stats ----
-    if (ImGui::BeginTable("profrows", 7,
-            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp |
-            ImGuiTableFlags_ScrollY, ImVec2(0, 220))) {
-        ImGui::TableSetupColumn("Section", ImGuiTableColumnFlags_WidthStretch, 2.2f);
-        ImGui::TableSetupColumn("Self ms");
-        ImGui::TableSetupColumn("Total ms");
-        ImGui::TableSetupColumn("%");
-        ImGui::TableSetupColumn("Calls");
-        ImGui::TableSetupColumn("Avg");
-        ImGui::TableSetupColumn("Max");
-        ImGui::TableHeadersRow();
-        std::vector<okay::Profiler::Bucket> rows(F.buckets.begin(), F.buckets.end());
-        std::sort(rows.begin(), rows.end(),
-                  [](const okay::Profiler::Bucket& a, const okay::Profiler::Bucket& b){ return a.self > b.self; });
-        for (const auto& b : rows) {
-            okay::Profiler::Stat st = P.SectionStat(b.name);
-            float frac = F.cpu > 0.0001 ? (float)(b.self / F.cpu) : 0.0f;
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            if (b.depth > 0) ImGui::Indent(b.depth * 12.0f);
-            // Hot sections (heavy self time) flagged red.
-            if (b.self > F.cpu * 0.30 && F.cpu > 0.5) ImGui::TextColored(ImVec4(1,0.5f,0.45f,1), "%s", b.name.c_str());
-            else ImGui::TextUnformatted(b.name.c_str());
-            if (b.depth > 0) ImGui::Unindent(b.depth * 12.0f);
-            ImGui::TableNextColumn(); ImGui::Text("%.3f", b.self);
-            ImGui::TableNextColumn(); ImGui::Text("%.3f", b.inclusive);
-            ImGui::TableNextColumn(); ImGui::Text("%.0f%%", frac * 100.0f);
-            ImGui::TableNextColumn(); ImGui::Text("%d", b.calls);
-            ImGui::TableNextColumn(); ImGui::Text("%.3f", st.avg);
-            ImGui::TableNextColumn(); ImGui::Text("%.3f", st.mx);
-        }
-        ImGui::EndTable();
-    }
-    if (F.buckets.empty())
-        ImGui::TextDisabled(ed.isPlaying() ? "Collecting samples..."
-                                           : "Press Play to time Scripts/Physics; the editor render is always timed.");
-    ImGui::End();
+        m.playing = ed.isPlaying();
+        // Textures: every picture the shared texture library holds (Render/TextureAsset.hpp), its size and memory, and the budget
+        // (OKAY_TEXTURE_BUDGET_MB); asked only while the section is open.
+        m.textures = [](okaypanels::ProfilerTextures& t) {
+            const okay::textures::Stats ts = okay::textures::GetStats();
+            t.line = okay::textures::OverlayLine();
+            t.overBudget = ts.overBudget;
+            t.hotReload = okay::textures::HotReload();
+            t.reloads = (unsigned long long)ts.reloads; t.trimmed = (unsigned long long)ts.trimmed;
+            for (const okay::textures::Row& r : okay::textures::Report()) {
+                okaypanels::ProfilerTexture x;
+                x.path = r.path; x.width = r.width; x.height = r.height; x.mipLevels = r.mipLevels; x.megabytes = r.bytes / 1048576.0;
+                x.kind = r.registered ? "in memory" : r.normalMap ? "normal" : r.sRGB ? "colour" : "data";
+                t.rows.push_back(x);
+            }
+        };
+    }, in);
+    if (in.copyCsv) ConsoleLog("Profiler frame copied as CSV.");
 }
 
 // The phone / tablet body behind the emulated screen (drawn before the game).
@@ -51646,6 +53189,7 @@ static void UpdateCrashContext(EditorState& ed, bool slow) {
 
 int RunVsGraphShot(int argc, char** argv);
 
+const char* OkayEditorBuildStamp();   // editor/BuildStamp.cpp: __DATE__ " " __TIME__ kept out of this file so ccache can reuse it
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
@@ -51654,7 +53198,7 @@ int main(int argc, char** argv) {
     okay::ownswitches::Startup();   // View > Rendering & Performance > Experimental (same file as the launcher's Settings page): set the variables before anything reads them
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
     std::fprintf(stderr, "[updater] %s\n", okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys()).line.c_str());   // OFF is never silent (docs/online/security.md "Updater signing")
-    okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
+    okaycrash::handler::Install(OKAY_ENGINE_VERSION, OkayEditorBuildStamp());   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
     {   // the own-code line goes into every crash report (what is ours and what is third party in THIS run), with the OKAY_* switches that are on
         std::string line = okay::ownstack::Describe();
         if (const std::size_t at = line.find("stack: "); at != std::string::npos) line = line.substr(at + 7);
@@ -51775,7 +53319,7 @@ int main(int argc, char** argv) {
     else SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d11");
 #endif
 #ifdef OKAY_HAVE_OKAYUI
-    okay::pb::SetOwnPainterFactory([](okay::platform::Window& w) { return OkayUI::soft::CreateWindowPainter(w); });   // the software painter, for own-backend windows
+    okay::pb::SetOwnPainterFactory([](okay::platform::Window& w, const okay::platform::PainterDesc& d) { return OkayUI::soft::CreateWindowPainter(w, d); });   // the software painter, for own-backend windows
 #endif
     // An accelerated renderer (the driver the hint chose), else one with the default driver, else any (software). The painter owns it.
     SDL_Renderer* renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true);
@@ -51916,8 +53460,10 @@ int main(int argc, char** argv) {
         if (n == "Rigidbody3D") return go->GetComponent<Rigidbody3D>() != nullptr;
         if (n == "Rigidbody2D") return go->GetComponent<Rigidbody2D>() != nullptr;
         if (n == "Rigidbody") return go->GetComponent<Rigidbody3D>() || go->GetComponent<Rigidbody2D>();
-        if (n == "AnimStateMachine") return go->GetComponent<AnimStateMachine>() != nullptr;
-        if (n == "Animator") return go->GetComponent<Animator>() != nullptr;
+        // The animation ids ("Animator", "AnimStateMachine", "ClipPlayer", "Character", "ModelAnimator") are checked
+        // where their nodes look at run time (editor/AnimComponentNames.hpp).
+        if (okay::editor::vsed::VsAnimComponentFor(id) != okay::editor::vsed::VsAnimComponent::None)
+            return okay::editor::vsed::VsAnimHas(go, okay::editor::vsed::VsAnimComponentFor(id));
         if (n == "NavMeshAgent") return go->GetComponent<NavMeshAgent>() != nullptr;
         if (n == "Inventory") return go->GetComponent<Inventory>() != nullptr;
         if (n == "Equipment") return go->GetComponent<Equipment>() != nullptr;
@@ -51944,8 +53490,11 @@ int main(int argc, char** argv) {
         auto add = [&](auto* p) { if (p) { ConsoleLog(std::string("Added ") + id); return true; } return false; };
         if (n == "Rigidbody3D" || n == "Rigidbody") return add(go->AddComponent<Rigidbody3D>());
         if (n == "Rigidbody2D") return add(go->AddComponent<Rigidbody2D>());
-        if (n == "AnimStateMachine") return add(go->AddComponent<AnimStateMachine>());
-        if (n == "Animator") return add(go->AddComponent<Animator>());
+        if (okay::editor::vsed::VsAnimComponentFor(id) != okay::editor::vsed::VsAnimComponent::None) {   // AnimComponentNames.hpp
+            const bool ok = okay::editor::vsed::VsAnimAdd(go, okay::editor::vsed::VsAnimComponentFor(id));
+            if (ok) ConsoleLog(std::string("Added ") + id);
+            return ok;
+        }
         if (n == "NavMeshAgent") return add(go->AddComponent<NavMeshAgent>());
         if (n == "Inventory") return add(go->AddComponent<Inventory>());
         if (n == "Equipment") return add(go->AddComponent<Equipment>());
@@ -52122,6 +53671,8 @@ int main(int argc, char** argv) {
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
     g_previewEd = &ed;
+    // The Console panel's command line: standard cvars, the Play loop's time.* commands, `--cvar NAME=VALUE`.
+    const std::unique_ptr<okay::LoopConsole> consoleCmds = oked::ConsoleAttachHost(ed.playLoop(), argc, argv);
     // The project's own files follow the project: leaving one saves its settings and build settings,
     // entering one reads that project's (or the defaults), so nothing leaks from one project into the next.
     EditorState::onProjectChanged = [&ed](const std::string& oldDir, const std::string& newDir) {
@@ -52178,6 +53729,43 @@ int main(int argc, char** argv) {
     // never blocks the editor. The result is picked up in the main loop and, if
     // an update is available, the Update window pops up on its own.
     g_updateCheck = std::async(std::launch::async, updater::CheckLatest);
+
+    // The one shut-down of ImGui's two sides, the views' GL window and renderer, controllers, audio, the main window's renderer and
+    // window, and the platform backend, in the safe order. The end of main() runs it, and so does every early exit before std::exit
+    // (the OKAY_UI_QUIT screenshot hook): std::exit skips the end of main() and destroys the globals in reverse order instead, and
+    // okay::platform's backends (function-local statics, made after the globals) go first; a window still owned by a global
+    // (g_glWin) would then call a backend that is gone. Safe to call twice: the second call does nothing.
+    bool shutDownDone = false;
+    auto shutDown = [&]() {
+        if (shutDownDone) return;
+        shutDownDone = true;
+        if (g_imguiOwnRender) okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Shutdown();
+        if (g_imguiOwnFeed) g_imguiFeed.Shutdown(ImGui::GetIO()); else ImGui_ImplSDL2_Shutdown();
+        ImGui::DestroyContext();
+        // Tear down the optional GPU renderer: free its GL objects with its own context
+        // current, then drop the context + hidden window.
+        if (g_glRenderer || g_glCtx) {
+            okay::platform::Backend* glb = okay::platform::Default();
+            const okay::platform::GLCurrent prevGL = glb->CurrentGL();
+            if (g_glWin && g_glCtx) g_glWin->MakeCurrent();
+            if (g_glRenderer) { g_glRenderer->Destroy(); delete g_glRenderer; g_glRenderer = nullptr; }
+            glb->RestoreGL(prevGL);
+            if (g_glCtx) { g_glWin->DestroyGLContext(); g_glCtx = false; }
+            g_glWin.reset();   // destroys the hidden window too
+            g_glWindow = nullptr;
+            g_glReady = false;
+        }
+        g_glWin.reset();   // also when its GL context could not be made: the hidden window goes while its backend is alive
+        g_glWindow = nullptr;
+#if defined(_WIN32)
+        if (g_d3dRenderer) { g_d3dRenderer->Destroy(); delete g_d3dRenderer; g_d3dRenderer = nullptr; g_d3dReady = false; }
+#endif
+        g_pads.CloseAll();
+        audioDev.reset();
+        okay::pb::DestroyRenderer(renderer);   // its painter owns it
+        winSeam.reset();   // destroys the main window (after its renderer)
+        sdlSeam->Shutdown();
+    };
 
     bool running = true;
     std::string lastTitle;
@@ -52240,7 +53828,10 @@ int main(int argc, char** argv) {
             }
         }
         static const bool kPerfDump = std::getenv("OKAY_PERF_DUMP") != nullptr;   // dev: print frame breakdown to stdout
-        okay::Prof().enabled = g_showProfiler || g_showPerfOverlay || kPerfDump || (g_gameStatsOverlay && ed.isPlaying());   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
+        // The slow-frame log (okay_editor_perf.log) reads the profiler's scopes, so the timers stay on while it is (the default).
+        static okay::editor::perf::SlowFrameLog s_slowLog = [] {
+            okay::editor::perf::SlowFrameLog l; l.thresholdMs = okay::editor::perf::SlowFrameLog::ThresholdFrom(std::getenv("OKAY_SLOW_FRAME_MS")); return l; }();
+        okay::Prof().enabled = g_showProfiler || g_showPerfOverlay || kPerfDump || (g_gameStatsOverlay && ed.isPlaying()) || s_slowLog.thresholdMs > 0.0;   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
         // Pick up the background update check when it finishes (once).
         if (!g_autoCheckDone && g_updateCheck.valid() &&
@@ -52281,6 +53872,7 @@ int main(int argc, char** argv) {
             SDL_PumpEvents();
             if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT)) { s_lastInput = okay::platform::PerfCounter(); g_secSinceInput = 0.0; }
         }
+        okay::Prof().Begin("Editor.Events");   // reading the window system's events (closed after the loop; nothing leaves it early)
         okay::platform::Event e;
         while (sdlSeam->PollEvent(e)) {
             using EvT = okay::platform::EventType;
@@ -52293,16 +53885,12 @@ int main(int argc, char** argv) {
             // A key or click shorter than one frame still counts for the playing game (the held-key poll would miss it).
             if (ed.isPlaying() && !ImGui::GetIO().WantTextInput) {
                 if (e.type == EvT::KeyDown && !e.repeat) {
-                    const PKey sc = e.key;
-                    const char kc = sdlSeam->CharForKey(sc);   // what the key types on this layout
-                    if (kc >= 'a' && kc <= 'z') Input::FeedKeyTap(kc);
-                    else if (kc >= '0' && kc <= '9') Input::FeedKeyTap(kc);
-                    else if (sc >= PKey::A && sc <= PKey::Z) Input::FeedKeyTap((char)('a' + ((int)sc - (int)PKey::A)));
-                    else if (sc == PKey::Space) Input::FeedKeyTap(' ');
-                    else if (sc == PKey::Up) { Input::FeedKeyTap('w'); Input::FeedKeyTap(Input::KeyUp); }
-                    else if (sc == PKey::Down) { Input::FeedKeyTap('s'); Input::FeedKeyTap(Input::KeyDown); }
-                    else if (sc == PKey::Left) { Input::FeedKeyTap('a'); Input::FeedKeyTap(Input::KeyLeft); }
-                    else if (sc == PKey::Right) { Input::FeedKeyTap('d'); Input::FeedKeyTap(Input::KeyRight); }
+                    // The same rule as the held keys and the player: letters by the layout, or by position when
+                    // "keys by position" is on (KeyForLetter). Esc is left out: the editor gives it to the game by its
+                    // own release rule (PlayPointerFrame::feedEscapeToGame).
+                    std::vector<char> tapped;
+                    okay::TapCharsForKey(e.key, [&](char c) { return okay::KeyForLetter(*sdlSeam, c); }, tapped);
+                    for (char c : tapped) if (c != (char)27) Input::FeedKeyTap(c);
                 }
             }
             // A pop-out menu or dialog can be its own OS window. When it closes and the window system does not hand the
@@ -52316,7 +53904,28 @@ int main(int argc, char** argv) {
             // button and stops the game. The game still reads relative motion.
             const bool mouseEv = e.type == EvT::MouseMove || e.type == EvT::MouseButtonDown
                 || e.type == EvT::MouseButtonUp || e.type == EvT::MouseWheel;
-            if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge))
+            // A press or the wheel over an open OkayUI menu or list (a hosted panel's popup, which OkayUI draws over every ImGui
+            // window) is OkayUI's: ImGui does not get it too, so choosing a menu row over the Scene view does not also click the scene.
+            bool okayOverlay = false;
+#ifdef OKAY_HAVE_OKAYUI
+            if (OkayUIInputOn() && (e.type == EvT::MouseButtonDown || e.type == EvT::MouseWheel)) {
+                int ox = e.x, oy = e.y;
+                if (e.type == EvT::MouseWheel) sdlSeam->MouseState(&ox, &oy);
+                okayOverlay = e.windowId == winSeam->Id() && g_okayRegion.OwnsOverlay((float)ox, (float)oy);
+            }
+            // A key typed into a hosted OkayUI field is the field's: Dear ImGui does not queue it too. Dear ImGui hands queued keys out
+            // over the next frames, so at a low frame rate a letter typed into an OkayUI search field reached the editor's shortcuts
+            // after a click had moved the keyboard away ("S Health" typed, the row clicked: the "h" hid the object; stage 9).
+            // Modifier keys still go (Ctrl, Shift and Alt stay right in Dear ImGui), and Ctrl+P, which plays from any field.
+            if (OkayUIInputOn() && OkayUI::WantsTextInput() && (e.type == EvT::TextInput || e.type == EvT::KeyDown)) {
+                const PKey k = e.type == EvT::KeyDown ? e.key : PKey::Unknown;
+                const bool modifier = k == PKey::LCtrl || k == PKey::RCtrl || k == PKey::LShift || k == PKey::RShift || k == PKey::LAlt ||
+                                      k == PKey::RAlt || k == PKey::LGui || k == PKey::RGui;
+                const bool playKey = k == PKey::P && (e.mods & okay::platform::ModCtrl);
+                if (!modifier && !playKey) okayOverlay = true;   // (the same "not Dear ImGui's" switch as a press over an OkayUI list)
+            }
+#endif
+            if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge) && !okayOverlay)
                 FeedImGuiEvent(e);
             if (e.type == EvT::Quit) g_quitRequested = true;
             if (e.type == EvT::GamepadAdded) g_pads.Add(e.deviceId);
@@ -52371,6 +53980,7 @@ int main(int argc, char** argv) {
             }
         }
 
+        okay::Prof().End();                    // Editor.Events
         okay::Prof().Begin("Editor.Update");   // closed before the window title below (nothing in between leaves the loop body early)
         Uint64 now = okay::platform::PerfCounter();
         float dt = (float)((now - last) / (double)okay::platform::PerfFrequency());
@@ -52511,28 +54121,9 @@ int main(int argc, char** argv) {
             auto keyHeld = [&](PKey k) { return kb && kb->IsKeyDown(k); };
             std::vector<char> down;
             // By the layout's letter (AZERTY W is the key labelled W); a layout with no Latin letters
-            // (Russian, Greek...) falls back to the US place so W A S D stay alive.
-            auto letterDown = [&](char c) {
-                PKey sc = kb ? kb->KeyForChar(c) : PKey::Unknown;
-                if (sc == PKey::Unknown) sc = (PKey)(c >= 'a' ? (int)PKey::A + (c - 'a')
-                                                  : c == '0' ? (int)PKey::N0 : (int)PKey::N1 + (c - '1'));
-                return keyHeld(sc);
-            };
-            for (char c = 'a'; c <= 'z'; ++c)
-                if (letterDown(c)) down.push_back(c);
-            for (char c = '0'; c <= '9'; ++c)
-                if (letterDown(c)) down.push_back(c);
-            if (keyHeld(PKey::Space)) down.push_back(' ');
-            if (keyHeld(PKey::LShift) || keyHeld(PKey::RShift)) down.push_back(Input::KeyShift); // sprint
-            if (keyHeld(PKey::LCtrl)  || keyHeld(PKey::RCtrl))  down.push_back(Input::KeyCtrl);  // crouch
-            if (keyHeld(PKey::LGui)   || keyHeld(PKey::RGui))   down.push_back(Input::KeyCmd);   // Command, for copy / paste
-            if (keyHeld(PKey::Backspace)) down.push_back((char)8); // text editing
-            if (keyHeld(PKey::Return) || keyHeld(PKey::KpEnter)) down.push_back('\r');
-            if (pointer.feedEscapeToGame) down.push_back((char)27);
-            if (keyHeld(PKey::Up))    { down.push_back('w'); down.push_back(Input::KeyUp); }
-            if (keyHeld(PKey::Left))  { down.push_back('a'); down.push_back(Input::KeyLeft); }
-            if (keyHeld(PKey::Down))  { down.push_back('s'); down.push_back(Input::KeyDown); }
-            if (keyHeld(PKey::Right)) { down.push_back('d'); down.push_back(Input::KeyRight); }
+            // (Russian, Greek...) falls back to the US place so W A S D stay alive. Same mapping as the player.
+            okay::AppendHeldMainKeys(keyHeld, [&](char c) { return okay::KeyForLetter(kb ? kb->KeyForChar(c) : PKey::Unknown, c); },
+                                     pointer.feedEscapeToGame, down);
 
             // F-keys, Tab, the navigation block and left / right modifiers, as the player feeds them.
             if (okay::platform::Backend* pb = okay::platform::Default()) okay::AppendExtendedKeys(*pb, down);
@@ -52706,6 +54297,10 @@ int main(int argc, char** argv) {
             int mx = 0, my = 0; uint32_t mb = okay::platform::Default() ? okay::platform::Default()->MouseState(&mx, &my) : 0;
             OkayUI::Input uin;
             uin.mouseX = (float)mx; uin.mouseY = (float)my;
+            {   // over another OS window of Dear ImGui's (a hosted panel dragged out): ImGui's mouse, in the main window's pixels
+                ImVec2 vm;
+                if (okayuihost::MouseInOtherViewport(vm)) { uin.mouseX = vm.x; uin.mouseY = vm.y; }
+            }
             uin.mouseDown = (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0;
             uin.blocked = io.WantCaptureMouse;
             uin.text = g_okayUITyped[0] ? g_okayUITyped : nullptr;
@@ -52713,14 +54308,23 @@ int main(int argc, char** argv) {
             {   // The OkayUI backend: a hosted panel's region takes the mouse over ImGui's window, and a focused OkayUI field
                 // takes the full set of keys (the legacy path above only carries text and Backspace, for game ui_inputtext).
                 g_okayRegion.NextFrame();
+                g_okayHostedInput = okayuihost::HostedInputWanted(g_okayRegion, g_scriptCodeOwnsKeys);   // last frame's hover and focus
                 const bool left = uin.mouseDown;
-                const bool owns = UseOkayUIBackend() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
+                const bool owns = OkayUIInputOn() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
                 const bool blocked = io.WantCaptureMouse && !owns;
-                const bool keys = UseOkayUIBackend() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
-                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys);
-                if (UseOkayUIBackend()) {
+                const bool keys = OkayUIInputOn() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
+                // No field (ImGui's or OkayUI's) is typing: the held keys still go to OkayUI, so a hosted panel sees Ctrl/Shift on a
+                // click and its own keys (the Hierarchy's arrows, F2, Ctrl+A act only while its window has the focus).
+                const bool held = OkayUIInputOn() && !keys && !io.WantTextInput;
+                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys || held);
+                if (OkayUIInputOn()) {
                     uin.blocked = blocked; uin.mouseDown = h.mouseDown; uin.rightDown = h.rightDown; uin.wheel = h.wheel;   // (mouseDown also counts a click that came and went within one frame)
                     if (keys) uin = h;
+                    else if (held) {
+                        std::memcpy(uin.keyDown, h.keyDown, sizeof uin.keyDown);
+                        uin.ctrl = h.ctrl; uin.shift = h.shift;
+                    }
+                    uin.displayW = io.DisplaySize.x; uin.displayH = io.DisplaySize.y;   // popups and menus are kept inside the window
                 }
             }
             OkayUI::SetFont(OkayUI::FontDefault());
@@ -52915,7 +54519,14 @@ int main(int argc, char** argv) {
         // stopped/paused so editor keyboard nav still works.
         // Same in mesh edit mode: Enter confirms a G / R / S transform there, and
         // must not also press whichever button last had focus.
-        if ((ed.isPlaying() && !g_paused) || (g_meshEdit && g_meshEditObj))
+        // And while the OkayUI script editor has the keyboard (developer OkayUI backend), or a hosted OkayUI field has it:
+        // Space and Enter are typing there, and Space would otherwise press the ImGui item that last had nav focus.
+        const bool codeKeys = g_scriptCodeOwnsKeys; g_scriptCodeOwnsKeys = false;   // set again by this frame's Render
+        bool okayTyping = false;
+#ifdef OKAY_HAVE_OKAYUI
+        okayTyping = OkayUIInputOn() && OkayUI::WantsTextInput();
+#endif
+        if ((ed.isPlaying() && !g_paused) || (g_meshEdit && g_meshEditObj) || codeKeys || okayTyping)
             ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
         else
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -52952,6 +54563,18 @@ int main(int argc, char** argv) {
         if (GImGui && GImGui->ActiveId == 0 && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseDown(ImGuiMouseButton_Right))
             ed.CommitUndo();
         ApplyPrefabModeQueue(ed);   // prefab mode: open / leave / revert rebuild the scene, so they run here, between frames
+        {
+            // The shared texture library: a picture changed on disk shows in every view without a restart (hot reload
+            // on in the editor; OKAY_TEXTURE_HOT_RELOAD=0 turns it off), the memory budget, the F3 / Profiler numbers.
+            static const bool s_texHot = [] {
+                const char* e = std::getenv("OKAY_TEXTURE_HOT_RELOAD");
+                const bool on = !(e && e[0] == '0');
+                okay::textures::SetHotReload(on, 0.5);
+                return on;
+            }();
+            (void)s_texHot;
+            okay::textures::Pump();
+        }
         {
             TabPaddingScope tabPad;   // floating panel groups lay their tabs out in NewFrame()
             ImGui::NewFrame();
@@ -53079,9 +54702,24 @@ int main(int argc, char** argv) {
                 ed.scene().renderSettings.weather.intensity = 1.0f;
             }
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
+            if (std::getenv("OKAY_UI_TIMERS")) {
+                g_showTimers = true;
+                if (s_focusFrames == 40) {
+                    okay::Scheduler::Options opt;
+                    opt.tag = "demo";
+                    ed.scene().scheduler().Invoke(1.5f, [] {}, opt);
+                    auto tw = ed.scene().tweens().DelayedCall(0.8f, [] {});
+                    if (tw) tw->id = "fade";
+                }
+                if (s_focusFrames > 30 && s_focusFrames < 90) ImGui::SetWindowFocus("Timers");
+            }
+            if (std::getenv("OKAY_UI_PROFILER")) {
+                g_showProfiler = true;
+                if (s_focusFrames > 30 && s_focusFrames < 90) ImGui::SetWindowFocus("Profiler");
+            }
             if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
-            LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY
+            LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY / OKAY_UI_LOCIMPORT
             ContentEditorsDevHooks(ed); // OKAY_UI_CONTENT / OKAY_UI_CONTENT_TAB / OKAY_UI_CONTENT_DIR
             WeaponEditorDevHooks(ed);   // OKAY_UI_WEAPONS / OKAY_UI_WEAPONS_FILE
             SplineDevHooks(ed);       // OKAY_UI_SPLINE / SPLINESEL / SPLINECAM
@@ -53582,6 +55220,17 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.MaterialEditor"); DrawMaterialEditor(ed); }
         { OKAY_PROFILE("UI.GameView"); if (g_showGame)      DrawGameView(ed); }
         { OKAY_PROFILE("UI.Profiler"); if (g_showProfiler)  DrawProfiler(ed); }
+        if (g_showTimers) {
+            if (std::getenv("OKAY_UI_TIMERS")) {
+                ImGui::SetNextWindowPos(ImVec2(280, 80), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(720, 420), ImGuiCond_Always);
+            }
+            if (ImGui::Begin("Timers", &g_showTimers)) {
+                const std::string text = okay::editor::TimerDebugText(ed.scene());
+                ImGui::TextUnformatted(text.c_str());
+            }
+            ImGui::End();
+        }
         { OKAY_PROFILE("UI.PerfOverlay"); if (g_showPerfOverlay) DrawPerfOverlay(ed); }
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }
         DrawFpHandsPreviewWindow(ed);
@@ -53678,8 +55327,18 @@ int main(int argc, char** argv) {
 
         okay::filedialog::DrawBuiltin();   // the built-in file browser, when no system dialog is available
 #ifdef OKAY_HAVE_OKAYUI
-        if (UseOkayUIBackend() && OkayUI::WantsTextInput()) {   // a hosted OkayUI field has the keyboard: ImGui and the shortcuts must stay out
+        if (OkayUIInputOn() && OkayUI::WantsTextInput()) {   // a hosted OkayUI field has the keyboard: ImGui and the shortcuts must stay out
             GImGui->PlatformImeData.WantTextInput = true;
+            // The input method's candidate window goes where the OkayUI field or code editor says its caret is (OkayUI draws in the
+            // main window's own pixels; ImGui's positions are desktop positions with the multi-window viewports).
+            const OkayUI::ImeRect ime = OkayUI::GetImeRect();
+            if (ime.valid) {
+                const ImGuiViewport* mvp = ImGui::GetMainViewport();
+                GImGui->PlatformImeData.InputPos = ImVec2(mvp->Pos.x + ime.caret.x, mvp->Pos.y + ime.caret.y);
+                GImGui->PlatformImeData.InputLineHeight = ime.caret.h;
+                GImGui->PlatformImeData.ViewportId = mvp->ID;
+                GImGui->PlatformImeData.WantVisible = true;
+            }
             ImGui::SetNextFrameWantCaptureKeyboard(true);
             if (okay::platform::Backend* pb = okay::platform::Default()) pb->StartTextInput();
         }
@@ -53757,7 +55416,7 @@ int main(int argc, char** argv) {
             OkayUI::SetFont(OkayUI::FontDefault());
         }
         // Flush the whole OkayUI frame (game-script widgets + demo) every frame.
-        okay::pb::OkayUIEndFrame(renderer);
+        { OKAY_PROFILE("ImGui.OkayUI"); okay::pb::OkayUIEndFrame(renderer); }   // OkayUI's draw (its own renderer with OKAY_UI_OWN_RENDER)
         // Keep SDL text input alive for OkayUI text fields when ImGui isn't using it,
         // so they receive SDL_TEXTINPUT events (Test UI demo or a game's ui_inputtext).
         if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) { if (okay::platform::Backend* pb = okay::platform::Default()) pb->StartTextInput(); }
@@ -53776,7 +55435,11 @@ int main(int argc, char** argv) {
                         std::fflush(stdout);
                     }
                 }
-                if (std::getenv("OKAY_UI_QUIT")) std::exit(0);
+                if (std::getenv("OKAY_UI_QUIT")) {
+                    shutDown();   // std::exit skips the end of main(): close everything while the platform backend is alive
+                    std::fflush(nullptr);
+                    std::exit(0);
+                }
             }
         }
         if (const std::string shot = TakePendingEditorShot(); !shot.empty()) {
@@ -53816,13 +55479,14 @@ int main(int argc, char** argv) {
             if (target > 0.0) {
                 const double elapsed = (double)(okay::platform::PerfCounter() - g_frameT0) / (double)okay::platform::PerfFrequency();
                 const double wait = okay::editor::perf::SleepSeconds(target, elapsed);
-                if (wait >= 0.001) { OKAY_PROFILE("Pacing.Sleep"); SDL_Delay((Uint32)(wait * 1000.0)); }
+                if (wait >= 0.001) { OKAY_PROFILE("Pacing.Sleep"); okay::platform::DelayMs((uint32_t)(wait * 1000.0)); }
             }
         }
         {   // Close out the profiler frame (total wall time incl. present).
             Uint64 f1 = okay::platform::PerfCounter();
             double frameMs = (double)(f1 - g_frameT0) / (double)okay::platform::PerfFrequency() * 1000.0;
             okay::Prof().EndFrame(frameMs);
+            if (frameMs >= s_slowLog.thresholdMs && s_slowLog.thresholdMs > 0.0) WriteSlowFrame(s_slowLog, frameMs, ed.isPlaying());
             if (kPerfDump) {   // every ~2 s: average ms per section (inclusive), biggest first
                 static std::map<std::string, double> acc; static double accFrame = 0; static int n = 0;
                 const auto& fr = okay::Prof().Displayed();
@@ -53834,6 +55498,9 @@ int main(int argc, char** argv) {
                     std::sort(v.rbegin(), v.rend());
                     std::printf("[perf] frame %.2f ms (%.0f fps):", accFrame / n, 1000.0 / (accFrame / n));
                     for (size_t i = 0; i < v.size() && i < 14; ++i) std::printf("  %s %.2f", v[i].second.c_str(), v[i].first);
+#ifdef OKAY_HAVE_OKAYUI
+                    std::printf("  [OkayUI mouse areas: %d kept, %d without the mouse]", g_okayRegion.Count(), g_okayRegion.Overflowed());
+#endif
                     std::printf("\n"); std::fflush(stdout);
                     acc.clear(); accFrame = 0; n = 0;
                 }
@@ -53847,30 +55514,7 @@ int main(int argc, char** argv) {
     SyncProjectFiles(ed, true);   // the project's settings and build settings are never lost with the window
     ProjectUpgradeAtExit();       // the editor of the project's own version ("Keep"), or this one again after a restore, starts once this process is gone
 
-    if (g_imguiOwnRender) okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Shutdown();
-    if (g_imguiOwnFeed) g_imguiFeed.Shutdown(ImGui::GetIO()); else ImGui_ImplSDL2_Shutdown();
-    ImGui::DestroyContext();
-    // Tear down the optional GPU renderer: free its GL objects with its own context
-    // current, then drop the context + hidden window.
-    if (g_glRenderer || g_glCtx) {
-        okay::platform::Backend* glb = okay::platform::Default();
-        const okay::platform::GLCurrent prevGL = glb->CurrentGL();
-        if (g_glWin && g_glCtx) g_glWin->MakeCurrent();
-        if (g_glRenderer) { g_glRenderer->Destroy(); delete g_glRenderer; g_glRenderer = nullptr; }
-        glb->RestoreGL(prevGL);
-        if (g_glCtx) { g_glWin->DestroyGLContext(); g_glCtx = false; }
-        g_glWin.reset();   // destroys the hidden window too
-        g_glWindow = nullptr;
-        g_glReady = false;
-    }
-#if defined(_WIN32)
-    if (g_d3dRenderer) { g_d3dRenderer->Destroy(); delete g_d3dRenderer; g_d3dRenderer = nullptr; g_d3dReady = false; }
-#endif
-    g_pads.CloseAll();
-    audioDev.reset();
-    okay::pb::DestroyRenderer(renderer);   // its painter owns it
-    winSeam.reset();   // destroys the main window (after its renderer)
-    sdlSeam->Shutdown();
+    shutDown();
 #ifdef OKAY_ENABLE_TEST_HOOKS
     return testExitCode;   // 0 unless the test script said `exit N`
 #endif

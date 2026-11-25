@@ -39,6 +39,10 @@ Backend* Default();
 /// the whole process. Creating it does not touch the OS; call Backend::Init.
 Backend* Get(BackendKind k);
 BackendKind DefaultKind();
+/// True once a backend instance has been destroyed, which happens only at the very end of the process (static destruction after
+/// main() returns, or inside std::exit). From then on no backend and none of its windows may be called: a window destroyed that
+/// late (owned by a global) lets its OS window go without any call; the OS takes it back when the process ends.
+bool BackendsShutDown();
 
 // ---- Keys ------------------------------------------------------------------
 // Physical keys, numbered with the USB HID usage ids (the same numbers as SDL
@@ -87,9 +91,9 @@ enum class EventType {
     DropFile,          // text = the path
     GamepadAdded,      // deviceId = device index to pass to Backend::OpenGamepad
     GamepadRemoved,    // deviceId = Gamepad::InstanceId()
-    FingerDown, FingerMotion, FingerUp,   // touch: fingerId, fx, fy (0..1 of the window). sdl2 only; own never fires them
+    FingerDown, FingerMotion, FingerUp,   // touch: fingerId, fx, fy (0..1 of the window). sdl2 and the Xbox UWP backend (UNVERIFIED there); own desktop never fires them
     WindowDpiChanged,  // x = the window's new DPI (96 = 100 percent); the window has already been resized to the OS's suggestion. own Windows only
-    TextEditing,       // input method composition: text = UTF-8 being composed ("" = cleared), x = caret in code points. own Windows only
+    TextEditing,       // input method composition: text = UTF-8 being composed ("" = cleared), x = caret in code points. sdl2 (SDL_TEXTEDITING), own Windows and the Xbox UWP backend (UNVERIFIED there)
     RenderTargetsReset,   // the graphics device lost its render-target contents: draw them again. sdl2 only (own never fires it)
     RenderDeviceReset,    // the graphics device was lost and made again: every texture must be re-created. sdl2 only
     Other,             // an event the seam has no type for. Only the sdl2 backend, and only after ReportUnmappedEvents(true); `native` has it
@@ -111,6 +115,9 @@ struct Event {
     int width = 0, height = 0;
     int deviceId = 0;
     std::string text;
+    /// TextEditing only: clause boundaries of `text` in code points (first 0, last = length), from the input method. Empty when
+    /// the IME gave none (and always on the sdl2 backend, whose SDL_TEXTEDITING has no clauses).
+    std::vector<int> clauses;
     /// The backend's own record of this event (sdl2: a `const SDL_Event*`), for the one consumer that still needs it (Dear
     /// ImGui's imgui_impl_sdl2 while it is the default). Null on the own backends. Valid only until the next PollEvent
     /// or PumpEvents call on the same backend; copy nothing out of it later. A DropFile's string has already been taken

@@ -30,8 +30,16 @@ typedef LONG NTSTATUS;
 #include <ntdef.h>   // MinGW path, unchanged
 #endif
 #include <hidusage.h>
+#ifndef _MSC_VER
+// Some MinGW header versions (mingw-w64 11) declare the HidP_/HidD_ functions without extern "C", so a C++ file
+// links against mangled names that hid.dll does not have. A nested extern "C" is harmless where the header has one.
+extern "C" {
+#endif
 #include <hidpi.h>
 #include <hidsdi.h>
+#ifndef _MSC_VER
+}
+#endif
 #include <cstdio>
 #include <cstring>
 #include <deque>

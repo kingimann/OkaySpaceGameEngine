@@ -4,7 +4,7 @@
 >
 > **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
 >
-> **Last checked:** 2026-11-20 (moved into `platform/`, paths and links checked; the text itself was not re-checked against the code).
+> **Last checked:** 2026-11-24 (rounds 12 and 13 below measured against CMake; the older rounds were not re-checked).
 
 Internal note, not a guide. Owner, 2026-11-17: start, do not replace CMake tomorrow. OFF: not in CMake, CI or releases.
 Written from general knowledge of build systems (action graph, compiler depfiles, content hashes, worker pool).
@@ -460,3 +460,50 @@ Written from the public description of the CMake language (commands, quoting, `$
 - Real run, no CMake or Ninja: `okay-build cmake . --build-type None`, then `okay-build -f build.cmake.okay -j2 --build-dir /tmp/tree test_math` built the engine and `test_math` from that manifest: 351 of 351 steps, cold, `-O0`, `-j2` (wall time not meaningful: the machine was also running the test suite), tree 1.6 GB. Then `okay-build ... ctest` ran `math`, `sandbox`, `scene`, `serialize`, `structure_version`, `parent_cycles`, `jobs` and `versions_index` (a Python script test): 8 of 8 PASS. This machine has no libsodium, so the engine built the way CMake configures it here (own crypto fallback, `OKAY_HAVE_SODIUM` not set). The editor, player and launcher were compared at the compile-command level only and were **not built or linked** with okay-build (the link order of the mutually dependent UI libraries is unverified).
 - **Not done:** Windows and MSVC (the reader compiles for MinGW; nothing was run), `ctest` on Windows, downloads (FetchContent sources are given with `--fetched`), `install`, `configure_file` and custom commands (counted in `--audit`), shared and object libraries (the target is skipped with its reason), per-test `ENVIRONMENT`/`LABELS`/`DEPENDS`, test run time in JUnit XML for `ctest`, the CMake regular-expression dialect (the C++ standard library's is used; the patterns the project uses behave the same), and link-step flags that CMake adds (`-rdynamic`, RPATH). Source compiled by two targets is checked once by the comparison script. Next gaps in order: build and link the editor, player and launcher; compare the linked programs; `ctest` JUnit and `DEPENDS`; Windows run.
 - How to try it: `docs/try_it/okay-build.md`.
+
+## Round 12 on claude/third-party-okaybuild-1: files the CMake code writes, the module commands, linking the programs (2026-11-23)
+Written from the documented behaviour of each CMake command; no CMake, Ninja or other build-tool code was read or used (rule 19a).
+- **Measured before (main at `6d3fc2ec`).** `okay-build cmake` wrote 6 of 26 targets with the editor and player on: `okay_engine` and everything that links it (14 targets, all tests) were skipped, because the engine now writes `ui_library_data.cpp` while CMake reads its files (`file(READ)`, `file(WRITE)`, `cmake -E copy_if_different`), and the reader dropped those writes. The reader also ran a real `cmake` for `execute_process(COMMAND ${CMAKE_COMMAND} ...)`. `modules_enabled.cpp` (from `cmake/OkayModules.cmake`) needed `file(GLOB)` with a `*` in a folder name, `get/set_property(GLOBAL)`, `cmake_parse_arguments`, `while`, `math`, `list(TRANSFORM)`, `separate_arguments`, `get_target_property`, `cmake_language(DEFER)` (`math` was skipped without a count). The folder glob found nothing, which hid the rest; once it worked, 209 commands were not understood.
+- **What changed.** The reader keeps `file(WRITE/APPEND)` text in memory, reads it back, does `cmake -E copy_if_different/copy/make_directory/remove` itself and never runs `cmake`. A manifest `generate PATH` block carries each file (`text = "..."` lines with C escapes); the build writes it under `{bin}` before planning, only when the text changed, and a source in `{bin}` compiles like any other. `okay-build cmake` adds a `buildfile` block (every CMake file read plus `CMAKE_CONFIGURE_DEPENDS` inputs), so editing `assets/ui/*.okaydata` or a `CMakeLists.txt` makes the next build read the project again (`--no-regen` turns it off). Added commands: the ones listed above, `find_library`, `file(RELATIVE_PATH)`, `file(GLOB ... RELATIVE)`, `set_property(SOURCE/TARGET)`. `add_compile_definitions` now reaches every target of its folder, also ones made earlier (CMake applies it when it generates). Function scopes keep an undo record instead of copying every variable, and patterns are compiled once: reading the project takes 1.6 s of CPU (CMake's configure: 11 s here).
+- **Measured after (Linux, g++ 13.3).** Editor and player on: 1,039 of 1,045 targets written (the 6 others are aliases and a generator target), 1,050 of 1,054 tests, not understood 8 (`string(MD5)` x5, unused; `set_property(CACHE)` x2; `get_property(DIRECTORY)` x1, test labels only). Against real CMake's `compile_commands.json` on the same tree: **1,559 of 1,559 sources have identical `-D`, `-I` and flags**. `ui_library_data.cpp` and `modules_enabled.cpp` are byte-identical to CMake's. `okay_modules.tsv` differs only in the two build-folder paths (`{bin}` against CMake's real path).
+- **Building the programs from this manifest (no CMake, no Ninja):** `okay-build -f build.cmake.okay -j2 okay-editor okay-player okayspace-launcher test_math` plans 571 steps (about 440 of them the engine and its libraries). Run on a shared machine (load average 12 to 14 on 4 cores, about 2 compiles a minute) and stopped after 31 minutes: 70 of 571 steps done with no compile error (editor, player, launcher and engine objects, and `libokay_imgui.a`); the 2 steps running when it was stopped show as failed because they were interrupted. The linked editor, player and launcher are **not verified** yet.
+- Tests: `test_okaybuild.cpp` gains `testConfigureTimeFiles` (13 checks) and `testCmakeModuleCommands` (7 checks, one of them covers about 40 `expect()` values inside the CMake file); both fail on the old tool (13 of 13 and the first check). `testDistLayout` read only one-line example lists; the dist script now has one name per line.
+- **Review fixes (PR #1194).**
+  - A generated file must stay inside `{bin}`. The reader tidies `{bin}/a/../b` and refuses a write or copy that climbs above `{bin}`, as well as `{bin}x`; it counts these as "write outside the build folder". The manifest parser accepts only `generate {bin}/<path>` and treats two spellings of one file as a duplicate. `plan()` follows links and refuses a file that lands outside `<build>/<outdir>/ctest`.
+  - Only a real build writes generate files, and only the ones its planned compiles use, plus headers. `targets`, `graph`, `compdb` and `--dry-run` write nothing, and `clean` removes the files.
+  - `cmake -E copy` into a folder copies into it.
+  - `math(EXPR)` wraps `+ - * -x` around. A shift outside 0..63 and `INT64_MIN / -1` are errors.
+  - Test: `testGeneratedFileSafety` (22 checks; 19 failed on the tool before the fix, and the old tool wrote `build/ctestx.txt` and `build/x.txt` from bad manifests). The real tree still gives 1,559 of 1,559 identical compile commands, and a real build writes the two engine sources byte-identical to CMake's.
+- **Not done / unverified:** Windows (nothing run; the `buildfile` command runs through `sh`), `string(MD5)`, CMake's own regular-expression dialect (the C++ library's is used), install, custom commands, Release builds and `-g` objects not compared. Next: compare the linked editor, player and launcher with CMake's; `ctest` over the whole tree; a Windows run.
+
+## Round 13 on claude/third-party-okaybuild-2: linking the editor, launcher and player (2026-11-24)
+Written from the documented behaviour of each CMake command and from RFC 1321 (MD5); no CMake, Ninja or other tool's code was read or used (rule 19a).
+- **Gaps found by comparing link lines** (`tools/okaybuild/examples/compare_link_commands.py`, new: it maps each object back to its source through both compile databases, and opens an OBJECT library that okay-build links whole):
+  - `$<TARGET_OBJECTS:okay_editor_wm_panels>` expanded to nothing, so the editor lacked 3 objects (`OkayUIHostMenu/Objects/Panels.cpp`).
+  - The player's `LINKER:-Map={bin}/maps/okay-player.map` was passed through as written: no `-Wl,` and no build-folder path.
+  - The folder for the map (`file(MAKE_DIRECTORY)`) was never made.
+- **What changed.**
+  - `$<TARGET_OBJECTS:lib>` in a source list makes the program link that OBJECT library whole.
+  - `LINKER:` becomes `-Wl,`, and `SHELL:` is split into words.
+  - `{bin}` is resolved in compile and link flags.
+  - New manifest line `folder {bin}/<path>` (from `file(MAKE_DIRECTORY)`, only inside `{bin}`); a real build makes it.
+  - `string(MD5)` follows RFC 1321. The 5 anticheat key tests are named by an MD5 and had all been called `..._0`, so 4 were set aside; now all 1,055 tests are written.
+  - `set_property(CACHE)` is accepted (editor hints only). `get_property(DIRECTORY PROPERTY TESTS)` and `set_property(TEST)` work, so the module labels reach 993 tests.
+  - "Not understood" is now 0, both with default options and with the editor and player on.
+- **Link lines against CMake/Ninja** (same tree, `-DCMAKE_BUILD_TYPE=None`):
+  - Editor `OkayEngine`: 63 of 63 objects, the same set; the order differs, because the 3 panel objects come in through the whole-linked archive.
+  - Launcher `OkaySpace`: 20 of 20 objects, same order.
+  - Player `okay-player`: 2 of 2, same order; the map flag is the same apart from the build folder.
+  - For all three, our libraries are the same set but in a different order: ours is a dependency order, CMake's is the listed order with repeats.
+  - System libraries: CMake `-ldl -lSDL2`, okay-build the same plus `-lpthread` (CMake's Threads target adds nothing on this glibc).
+  - The player's POST_BUILD `module_sizes.py` step (a size report, not needed to run it) is not run.
+- **Built and linked with okay-build only** (no CMake, no Ninja; Linux, g++ 13.3, `-j2`, no optimisation):
+  - `okay-build -f build.cmake.okay -j2 okay-editor okayspace-launcher okay-player` ran 572 steps plus the 31 the first, stopped run had already done (603 in all), in 41 minutes, with no errors.
+  - The results: `OkayEngine` 148 MB, `OkaySpace` 119 MB and `okay-player` 113 MB, with the player's linker map in `{bin}/maps`.
+  - A second build ran 0 of 603 steps.
+- **Do they start?**
+  - `OkayEngine --selftest` printed `editor selftest: OK` (rc 0). `okay-build ctest '^editor$'` gave `PASS editor`.
+  - `okay-player --help` printed its usage (rc 0); `--build-info` said `build.json is missing` (rc 1, expected outside an exported game).
+  - The launcher has no headless mode. With `SDL_VIDEODRIVER=dummy` it started its UI and kept running, but did not stop on SIGTERM and had to be killed. Whether CMake's launcher behaves the same was not checked.
+- **Not compared:** the linked files byte for byte (CMake did not build them here), Release and `-g` builds, and Windows.
+

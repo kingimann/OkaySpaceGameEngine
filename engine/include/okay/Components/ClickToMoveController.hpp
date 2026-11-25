@@ -9,6 +9,7 @@
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/StanceControl.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/PlayerCollision.hpp"
 #include "okay/Components/UIAnchor.hpp"     // UICanvas::Width/Height (viewport)
 #include "okay/Input/Input.hpp"
@@ -59,6 +60,16 @@ public:
     float repathInterval = 0.6f;
     /// Spawn a brief expanding ring at the clicked point (in-game feedback).
     bool  clickMarker = true;
+    /// Click on real ground: the click ray stops at the first solid collider (or terrain) whose surface faces up
+    /// (a floor, a stair tread, a raised platform), so the player walks up to where the pointer is. A wall, a
+    /// trigger or the player's own body is skipped and the flat plane below is used, as before.
+    bool  pickColliders = true;
+    /// Stop walking when the body has barely moved for `stuckTime` seconds (pressed against a wall or a crowd),
+    /// instead of running on the spot forever.
+    bool  giveUpWhenStuck = true;
+    float stuckTime = 1.0f;
+    /// True when the last walk ended by giving up (stuck), false when it arrived or was cleared.
+    bool  GaveUp() const { return m_gaveUp; }
 
     // ---- Follow camera (RuneScape-style: trails the player, looks at it) ----
     bool  followCamera   = true;    // position the main Camera each frame
@@ -78,7 +89,7 @@ public:
     Vec3 Destination()    const { return m_dest; }
     void ClearDestination() { m_hasDest = false; }
     /// Send the player to a world point directly (for scripts / waypoints).
-    void MoveTo(const Vec3& worldPoint) { m_dest = worldPoint; m_hasDest = true; }
+    void MoveTo(const Vec3& worldPoint) { m_dest = worldPoint; m_hasDest = true; ResetStuck(); }
 
     /// Crouch and prone from scripts (SetStance; no keys by default): a smaller,
     /// slower body that eases between stances.
@@ -108,6 +119,7 @@ public:
             Vec3 hit;
             if (GroundPick(scene, hit)) {
                 m_dest = hit; m_hasDest = true;
+                if (!holdToMove) ResetStuck();
                 if (clickMarker) ShowMarker(scene, hit);
             }
         }
@@ -116,10 +128,16 @@ public:
 
         // ---- Steer toward the destination on the XZ plane ----
         Vec3 pos = transform->Position();
+        if (giveUpWhenStuck && StuckCheck(pos, dt)) {   // pressed against something: stop trying
+            m_hasDest = false; ResetStuck(); m_gaveUp = true;
+            Animate(dt, false);
+            StopXZ();
+            return;
+        }
         Vec3 to{m_dest.x - pos.x, 0.0f, m_dest.z - pos.z};
         float dist = std::sqrt(to.x * to.x + to.z * to.z);
         if (dist <= stopDistance) {                  // arrived
-            m_hasDest = false;
+            m_hasDest = false; m_gaveUp = false;
             Animate(dt, false);
             StopXZ();
             return;
@@ -152,6 +170,8 @@ public:
         // Don't overshoot on the final step.
         float step = speed * dt;
         bool lastStep = step >= dist;
+        m_askedStep = lastStep ? 0.0f : step;   // the final snap is not a stride to check
+        m_lastPos = pos; m_haveLastPos = true;
 
         auto* rb = gameObject->GetComponent<Rigidbody3D>();
         if (rb) {
@@ -175,6 +195,7 @@ public:
     // Rotate with a middle-mouse drag (or the rotate keys), zoom with the wheel.
     void LateUpdate(float dt) override {
         if (!followCamera || !transform || !gameObject || !gameObject->scene()) return;
+        if (!IsLocallyControlled(gameObject)) return;   // a remote copy never moves this machine's camera
         Scene* sc = gameObject->scene();
         if (!sc->mainCamera || !sc->mainCamera->transform) return;
         Transform* cam = sc->mainCamera->transform;
@@ -209,8 +230,9 @@ public:
 
         // Never let the follow camera dip to or below the floor: from under (or
         // grazing) the ground plane you'd see it edge-on, or — since the floor is a
-        // single-sided plane — not at all. Keep a small clearance above it.
-        float floorY = usePlayerHeight ? 0.0f : groundY;
+        // single-sided plane — not at all. Keep a small clearance above it. With Use Player Height the floor is
+        // the one the player stands on (it was y = 0, which pinned the camera far above a player below the origin).
+        float floorY = usePlayerHeight ? transform->Position().y : groundY;
         if (m_camPos.y < floorY + 0.5f) m_camPos.y = floorY + 0.5f;
 
         cam->SetPosition(m_camPos);
@@ -261,6 +283,24 @@ private:
 
     bool m_hasDest = false;
     Vec3 m_dest{0, 0, 0};
+    bool  m_gaveUp = false;
+    float m_stuckT = 0.0f;       // seconds of barely moving while walking
+    float m_askedStep = 0.0f;    // the step last frame asked for (metres)
+    Vec3  m_lastPos{0, 0, 0};
+    bool  m_haveLastPos = false;
+
+    void ResetStuck() { m_stuckT = 0.0f; m_askedStep = 0.0f; m_haveLastPos = false; m_gaveUp = false; }
+
+    // True once the body has covered less than a quarter of the asked-for distance for stuckTime seconds. A body
+    // that slides along a wall still covers more than that, so only a real dead end counts.
+    bool StuckCheck(const Vec3& pos, float dt) {
+        if (!m_haveLastPos || m_askedStep <= 1e-5f || !(dt > 0.0f)) return false;
+        const float dx = pos.x - m_lastPos.x, dz = pos.z - m_lastPos.z;
+        const float moved = std::sqrt(dx * dx + dz * dz);
+        if (moved < m_askedStep * 0.25f) m_stuckT += dt;
+        else m_stuckT = 0.0f;
+        return m_stuckT >= Mathf::Max(0.05f, stuckTime);
+    }
     Vec2 m_lastDrag{0, 0};
     bool m_haveDrag = false;
     Vec3 m_camPos{0, 0, 0};
@@ -299,6 +339,21 @@ private:
         return nullptr;
     }
 
+    // The first solid surface along the click ray: up-facing (a floor, at most 60 degrees from level) counts; the
+    // player's own body (and its children) is passed through; anything else in the way (a wall) means no pick.
+    bool PickSolidGround(Scene& scene, const Vec3& ro, const Vec3& rd, Vec3& out) const {
+        for (const RaycastHit3D& h : scene.physics3D().RaycastAll(scene, ro, rd, 5000.0f, gameObject,
+                                                                  Physics3D::kAllLayers, false)) {
+            if (!h.hit) continue;
+            if (h.gameObject && transform && h.gameObject->transform && h.gameObject->transform->IsChildOf(transform))
+                continue;   // the player itself, its model or held item
+            if (h.normal.y < 0.5f) return false;
+            out = h.point;
+            return true;
+        }
+        return false;
+    }
+
     // Unproject the cursor through the main camera onto the ground plane.
     bool GroundPick(Scene& scene, Vec3& out) const {
         Camera* cam = scene.mainCamera;
@@ -321,6 +376,8 @@ private:
         Vec3 ro = cam->gameObject->transform->Position();
         Vec3 rd = (farW - ro).Normalized();
         if (Mathf::Abs(rd.y) < 1e-5f) return false;   // ray parallel to the ground
+
+        if (pickColliders && PickSolidGround(scene, ro, rd, out)) return true;
 
         float planeY = usePlayerHeight && transform ? transform->Position().y : groundY;
         float t = (planeY - ro.y) / rd.y;

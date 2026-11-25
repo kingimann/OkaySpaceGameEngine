@@ -1,0 +1,15 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=dialogue_quests
+title=Dialogue and quests
+area=Gameplay
+description=Dialogue graphs, quest log, story state.
+default=on
+core=0
+requires=interaction,ui_kit
+provides=IStory
+components=DialogueRunner,QuestLog,QuestTrigger,StoryState,UIDialogueBox
+serializers=dialoguerunner,questlog,questtrigger,storystate,uidialoguebox
+vs_group=
+editor=Dialogue window
+sources=include/okay/Components/DialogueGraph.hpp include/okay/Components/DialogueRunner.hpp include/okay/Components/UIDialogueBox.hpp include/okay/Components/QuestLog.hpp include/okay/Components/StoryState.hpp src/Components/DialogueGraph.cpp src/Components/DialogueRunner.cpp src/Components/UIDialogueBox.cpp src/Components/QuestLog.cpp include/okay/Net/NetQuestSync.hpp src/Net/NetQuestSync.cpp
+tests=dialogue quests

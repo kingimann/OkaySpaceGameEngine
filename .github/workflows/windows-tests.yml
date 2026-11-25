@@ -17,9 +17,12 @@ on:
         required: false
         default: ""
 
+# One run per ref at a time, and a started run is never cancelled: with cancel-in-progress on, every push to main
+# cancelled the main run before it (a cold build takes up to three hours), so no run ever finished. Now the next run
+# waits; if more pushes land meanwhile, GitHub keeps only the newest of the waiting runs.
 concurrency:
   group: windows-tests-${{ inputs.ref || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -28,7 +31,9 @@ jobs:
   build:
     name: Build Windows tests (MinGW cross-compile)
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # 180, not 120: a cold build (no compiler cache) plus the upload of the bundle ran past 120 minutes and was cancelled
+    # before any test ran (runs 44910237711 and 44937036735).
+    timeout-minutes: 180
     env:
       SDL2_VERSION: 2.30.9
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -94,7 +99,7 @@ jobs:
           cmake -S . -B build-wt -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.toolchain.cmake -DCMAKE_BUILD_TYPE=Release \
             -DOKAY_BUILD_TESTS=ON -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \
-            -DOKAY_BUILD_PLAYER=OFF -DOKAY_BUILD_EDITOR=OFF \
+            -DOKAY_BUILD_PLAYER=OFF -DOKAY_BUILD_EDITOR=OFF -DOKAY_BUILD_PLATFORM_SELFTEST=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
             -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
@@ -115,7 +120,14 @@ jobs:
           for f in /usr/lib/gcc/x86_64-w64-mingw32/*-win32/{libstdc++-6,libgcc_s_seh-1}.dll; do [ -f "$f" ] && cp "$f" wt/bin/; done
           cp tests.json build-failures.txt wt/
           echo "$PWD/build-wt" > wt/build-root.txt
-          du -sh wt
+          echo "bundle before strip: $(du -sh wt | cut -f1)"
+          # Every test statically links the whole engine, and each .exe carried its own symbol table (names only: the
+          # tests never read them, and Windows does not need them to run). Stripping only our own copies, never the
+          # build tree, makes the bundle (about 3 GB unstripped, an upload that ran past the time limit) smaller. All
+          # executables stay in the bundle: some tests start a helper .exe by its build-tree path.
+          find wt/bin -name '*.exe' -print0 | xargs -0 -r -P "$(nproc)" -n 16 x86_64-w64-mingw32-strip --strip-all \
+            || echo "some executables could not be stripped; they are uploaded as built"
+          echo "bundle after strip: $(du -sh wt | cut -f1)"
 
       - name: Upload Windows tests
         uses: actions/upload-artifact@v6
@@ -142,6 +154,11 @@ jobs:
       SDL_VIDEODRIVER: dummy
       SDL_AUDIODRIVER: dummy
     steps:
+      # The runner's git turns LF into CRLF on checkout; the tests compare files byte for byte with what the code
+      # writes (docs/engine_api.md, scenes, fixtures), so check out exactly the bytes the Linux build saw.
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref }}
@@ -161,6 +178,26 @@ jobs:
             --log Testing/Temporary/LastTest.log --summary $env:GITHUB_STEP_SUMMARY --strict
           exit $LASTEXITCODE
 
+      # The own Win32 platform backend (okay::platform "own": window, events, WGL context, WASAPI, clipboard) on a real
+      # Windows desktop, the first run of it outside Wine. --ci: what the runner has no hardware for (an OpenGL driver
+      # newer than Windows' built-in 1.1, a sound device) is NOT TESTED with the reason; a window, the event pump,
+      # the clipboard or the timers not working is a FAIL and turns this job red. Runs even when unit tests failed.
+      - name: Own Win32 platform backend self-test
+        if: always()
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path wt/bin -Recurse -Filter okay-platform-selftest.exe | Select-Object -First 1
+          if (-not $exe) { Write-Output "okay-platform-selftest.exe is not in the bundle (did it compile? see build-failures.txt)"; exit 1 }
+          $env:PATH = "$PWD\wt\bin;$env:PATH"   # SDL2.dll, libsodium and the MinGW runtime DLLs sit there
+          & $exe.FullName --ci 2>&1 | Tee-Object -FilePath platform-selftest.txt
+          $rc = $LASTEXITCODE
+          "## Own Win32 platform backend self-test (exit $rc)" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          '```' | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          Get-Content platform-selftest.txt | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          '```' | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          exit $rc
+
       - name: Upload the test log
         if: always()
         uses: actions/upload-artifact@v6
@@ -169,4 +206,5 @@ jobs:
           path: |
             Testing/Temporary/LastTest.log
             wt/build-failures.txt
+            platform-selftest.txt
           retention-days: 14

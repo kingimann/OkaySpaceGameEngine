@@ -10,6 +10,7 @@
 
 - [OkayScript](#okayscript-1) (was `docs/scripting.md`)
 - [OkayScript function reference](#okayscript-function-reference) (was `docs/scripting_reference.md`)
+- [Standalone OkayScript](#standalone-okayscript) (internal notes: the engine-independent library and CLI)
 
 ## OkayScript
 
@@ -561,7 +562,7 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `flip_x(bool)` / `flip_y(bool)` | mirror this object's sprite |
 | `velocity_x()` / `velocity_y()` | read this object's Rigidbody2D velocity |
 | `set_velocity(x, y)` / `set_vx(x)` / `set_vy(y)` | set its velocity (jump, dash, top-down move) |
-| `add_force(x, y)` / `add_impulse(x, y)` | apply a continuous force / instant momentum |
+| `add_force(x, y [, z])` / `add_impulse(x, y [, z])` / `add_torque(x, y, z)` | apply a continuous force / instant momentum / a twist (2D or 3D body; a vector works too) |
 | `add_explosion_force(cx, cy, force, radius[, up])` | shove this 2D body away from a point; the push fades to nothing at `radius` |
 | `set_image(path)` | set this object's UIImage texture (swap icons/states) |
 | `set_interactable(bool)` | enable/disable this object's UIButton (grey out menu entries) |
@@ -572,7 +573,7 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `set_tab_badge(i, n)` / `set_tab_enabled(i, b)` | badge a tab (0 none, -1 dot, N number) / enable or disable it |
 | `tile_resize(w,h)` `set_tile(x,y,id)` `get_tile(x,y)` `tile_w()` `tile_h()` | edit a sibling Tilemap |
 | `emit(n)` | burst n particles from this object's ParticleSystem (explosions, dust) |
-| `particles_on(bool)` / `particles_alive()` | start/stop continuous emission / read live count |
+| `particles_on(bool)` / `particles_alive()` | start/stop emission (turning a finished one-shot on plays it again) / read live count |
 | `play_anim()` / `stop_anim()` | restart / pause this object's SpriteAnimator |
 | `play_sound()` | play this object's AudioSource |
 | `print(...)` | log values to the console |
@@ -603,7 +604,6 @@ write-through to disk — use the `save`/`load` family. Each value keeps its typ
 | `save_has(key[, file])` | does the key exist? |
 | `save_delete(key[, file])` | remove one key (and re-save) |
 | `save_clear([file])` | wipe a file's keys |
-| `save_exists([file])` | does the save file exist on disk? |
 | `save_delete_file([file])` | delete the whole save file |
 
 ```cs
@@ -615,7 +615,7 @@ save("spawn", new Vector3(4, 0, 2), "slot1.okaysave");
 int coins = load("coins", 0);
 string who = load("name", "Player");
 Vector3 at = load("spawn", new Vector3(0, 0, 0), "slot1.okaysave");
-if (!save_exists("slot1.okaysave")) { /* first time playing */ }
+if (!save_has("coins", "slot1.okaysave")) { /* first time playing */ }
 ```
 
 **File names stay inside the game.** Every script call that names a file
@@ -1445,7 +1445,7 @@ has the full list, plus the **Tween Animation** component for tweens without cod
 | `get_refresh_rate()` / `set_refresh_rate(hertz)` / `get_display_resolutions()` / `get_refresh_rates(width, height)` | The rate, the sizes on offer, and the rates for a size |
 | `begin_display_confirm()` / `keep_display_settings()` / `revert_display_settings()` / `get_display_confirm_seconds()` | Start the 10-second "keep these settings?" question, answer it, or read the seconds left |
 | `game_slot_text(slot)` / `game_slot_age(slot)` / `game_slot_label(slot)` | When a slot was saved (`"2026-11-08 14:03"` UTC, `""` if none), seconds since then (-1 if none), and its label |
-| `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
+| `save_exists([slot])` (the same as `has_save`) / `delete_save([slot])` | Manage save slots |
 | `play_sequence("name")` / `stop_sequence()` | Play / stop a cutscene sequence (see docs/gameplay/cutscenes.md) |
 | `sequence_playing()` / `sequence_time()` | 1 while a sequence plays / seconds into it; events reach `on_sequence_event(name)` |
 | `loc("key" [, args...])` | The key's text in the player's language; `{0}`, `{1}`... from the arguments, `{name}` from a map (see docs/engine/localization.md) |
@@ -1743,3 +1743,46 @@ If this object has a collider, define either of these to react to contacts:
 function on_collision() { /* hit a solid */ }
 function on_trigger()   { /* entered a trigger volume */ }
 ```
+
+## Standalone OkayScript
+
+*Internal notes, 2026-11-24 (branch `claude/okayscript-lang-1`; feature map 13.8; open items in `docs/status/UNFINISHED.md`
+"OkayScript standalone core").*
+
+- **Where:** `okayscript/` (library `okayscript_lang`, C++17 standard library only; CLI `okayscript_cli`, program name
+  `okayscript`). Headers in `okayscript/include/okayscript/`: `Token`, `Lexer`, `Error`, `Ast`, `Parser`, `Value`,
+  `Environment`, `Interpreter`, `Native`, `Stdlib`, `OkayScript` (all of them).
+- **Shared with the engine:** everything. The parser, syntax tree and interpreter core are templates over the value
+  type (`Runtime.hpp`, `detail/*.ipp`). The CLI runs them on `okayscript::Value`; `engine/src/Scripting/OkayScriptVM.cpp`
+  instantiates them for `vs::VsValue`, derives its `Runtime` from `BasicRuntime` (timers, coroutines, raycast
+  results), registers its commands as raw `builtins`, and answers scene names, object references, components and
+  `yield return` through `EngineHooks` (a `BasicHost`). The engine's old parser and runtime are gone.
+- **Language:** C#-style and C-style syntax with classes, enums, statics, events, lambdas, coroutines (when the host
+  runs them). Rules: blocks open no scope, a call does, and every scope on the stack is visible (dynamic scoping, so
+  lambdas do not capture); a name nobody set reads as 0; `x / 0` is 0; an index outside a list reads as 0; `==`
+  compares text as text, anything else as numbers. Numbers are 32-bit floats. Changes made while moving the engine on:
+  a declaration's words stop at the end of its line; `switch`/`try`/`catch`/`throw` at the top level are statements,
+  not functions; `xs[i] %= n` works; `m.key = v` sets a map entry. The engine sets `Limits::runtimeErrorLines` off,
+  so its runtime errors keep no line; the CLI and embedders get the line.
+- **Natives:** `Interpreter::Define(name, fn, Arity)` (raw `Runtime::builtins` take the values only, as the engine's do). `Args::Number/String/Bool/List/Map(i)` check one argument's type;
+  `Args::Fail` and any C++ exception become a runtime error on the calling line. Natives are found before script
+  functions (engine order). `okayscript::Host` (`ReadName`, `WriteName`, `CallUnknown`) is the seam for an embedder's
+  own names; the engine is meant to fill it in when it moves onto the library.
+- **CLI:** `okayscript file.okay [args]` runs the top level, then `main()` (given the argument list when it has a
+  parameter; the list is also the global `args`); `okayscript -e "code"`; `okayscript -- file` for a name starting with
+  `-`. Exit 0, 1 runtime error (or out of memory), 2 syntax error, 64 usage error, 66 unreadable file, or `exit(n)`
+  clamped to 0..255. Errors on stderr as `file:line: message`. The CLI turns the loop limit off; the recursion limit
+  (200 calls deep) stays. Text is capped at 64 Mi characters (`s + s` in a loop is a runtime error, not a crash), and
+  blocks, lambdas and namespaces nest at most 200 deep (a parse error).
+- **Builtins:** the maths and conversion builtins (`CoreBuiltins.hpp`) are one set the engine and the CLI both
+  register, with the engine's rules (`len(x, y)` is a 2D vector's length; `sqrt(-4)` is nan; `num("12abc")` is 12).
+  The CLI adds only input and output: print, println, write, input, exit.
+- **Speed:** everything runs as bytecode (`docs/scripting/okayscript_vm.md`; the tree walker is deleted); a
+  function's locals are frame slots; `return`, `break` and `continue` are jumps or a returned status, never C++
+  exceptions. Callgrind counts for `tests/bench_okayscript.cpp` (the tree walker on main / bytecode stage 1 / stage 2):
+  arith 218.4M / 55.4M / 56.2M, calls 196.4M / 139.9M / 68.4M, deep reads 100.6M / 9.2M / 9.0M, list work 133.0M /
+  77.4M / 80.4M, text building 2417.7M / 815.5M / 815.1M; `okayscript_bench` guards them.
+- **Tests:** `okayscript_lang_lexer`, `_parser`, `_interpreter`, `_native`, `_errors` (link only the library);
+  `okayscript_cli_<case>` from `tests/okayscript_cli/` (`.okay`, `.args`, `.in`, `.out`, `.err`, `.code`);
+  `okayscript_no_engine` (no engine include under `okayscript/`, the CLI links no engine library; CMake also refuses to
+  configure if it does).

@@ -11,12 +11,17 @@
 #include "XboxAudio.hpp"
 #include "XboxUwpBackend.hpp"
 #include "UwpPlatform.hpp"
+#include "tests/FakeCaptureHost.hpp"
 #include "XboxUwpAudit.hpp"
 #include "XboxGameConfig.hpp"
 #include "XboxOverlayMath.hpp"
 #include "XboxRecovery.hpp"
 #include "XboxHttp.hpp"
 #include "XboxOwnHttp.hpp"
+#include "XboxTitleSafe.hpp"
+#include "XboxPadSync.hpp"
+#include "XboxSuspend.hpp"
+#include "XboxTextEntry.hpp"
 #include "okay/Core/Paths.hpp"
 #include <cmath>
 #include <filesystem>
@@ -27,6 +32,7 @@
 #include <cstring>
 #include <map>
 #include <string>
+#include <stdexcept>
 
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++g_fail; } } while (0)
@@ -334,10 +340,13 @@ static void LifecycleTests() {
     l.Resuming(); CHECK(l.Phase() == AppPhase::Hidden); { LifecyclePending p = l.Take(); CHECK(p.resumed && !p.saveState); }
     l.Resuming(); CHECK(!l.Take().Any());                             // Resuming without Suspending is ignored
     l.VisibilityChanged(true);
-    // back button: exit request, not a state change by itself
-    l.BackRequested(); CHECK(l.Take().exitRequested); CHECK(l.Phase() == AppPhase::Active);
+    // back request (B on a console pad, Backspace or the back gesture): reported to the game as a back press, NOT an exit.
+    // Before 2026-11-22 it was an exit request, so pressing B anywhere in a game (B is a normal game button) closed the game.
+    l.BackRequested(); { LifecyclePending p = l.Take(); CHECK(p.back && !p.exitRequested && p.Any()); } CHECK(l.Phase() == AppPhase::Active);
     l.WindowClosed(); CHECK(l.Phase() == AppPhase::Closing && l.Take().exitRequested && !l.ShouldRunLogic());
     l.BackRequested(); CHECK(!l.Take().Any()); l.Suspending(5, 5000); CHECK(!l.Take().Any());
+    // no back press while suspended (the game is not running)
+    { Lifecycle s; s.Launched(); s.Suspending(0); s.Take(); s.BackRequested(); CHECK(!s.Take().back); s.Resuming(); s.BackRequested(); CHECK(s.Take().back); }
     // a suspend that arrives while hidden still saves
     Lifecycle h; h.Launched(); h.VisibilityChanged(false); h.Suspending(0); CHECK(h.Take().saveState);
 }
@@ -517,6 +526,9 @@ static void AudioTests() {
 // UwpPlatform.cpp (linked into this test) provides the base-class defaults and the registry, as it does in the UWP engine target.
 namespace {
 struct FakeUwpHost : okay::xbox::UwpHost {
+    FakeCaptureHost mic; bool hasMic = false; std::string lang = "en-US";
+    okay::xbox::CaptureHost* Capture() override { return hasMic ? &mic : nullptr; }
+    std::string InputLanguage() override { return lang; }
     int pumps = 0; std::function<void()> onPump; FakePad pad; int pads = 1; FakeAudioHost audio; bool hasAudio = true; std::string title;
     void* CoreWindowHandle() override { return this; }
     void PumpEvents() override { ++pumps; if (onPump) onPump(); }
@@ -585,19 +597,70 @@ static void BackendTests() {
       g.reset(); g1.reset(); Drain(b); b.clockOverride = nullptr; }
     // audio: through the host, capture refused, no host audio refused
     { AudioSpec want; want.freq = 48000; want.channels = 2; AudioSpec got; auto a = b.OpenAudio(want, false, nullptr, &got); CHECK(a && host.audio.started && got.freq == 48000 && b.AudioDeviceCount(false) == 1); }
-    CHECK(b.OpenAudio(AudioSpec(), true, nullptr, nullptr) == nullptr && b.LastError().find("capture") != std::string::npos);
+    CHECK(b.OpenAudio(AudioSpec(), true, nullptr, nullptr) == nullptr && b.LastError().find("capture") != std::string::npos && b.AudioDeviceCount(true) == 0);   // host without a microphone
+    // microphone through the backend: permission, device list, open by name, close
+    { host.hasMic = true; FakeCaptureHost& m = host.mic;
+      CHECK(b.AudioDeviceCount(true) == 2 && b.AudioDeviceName(1, true) == "Room mic" && b.AudioDeviceName(2, true).empty() && b.AudioDeviceName(0, true) == "Headset");
+      AudioSpec w; w.freq = 48000; w.channels = 1; w.format = SampleFormat::S16; AudioSpec got;
+      m.declared = false; CHECK(b.OpenAudio(w, true, nullptr, &got) == nullptr && b.LastError().find("manifest") != std::string::npos && m.starts == 0);
+      m.declared = true; m.consent = MicConsent::Denied; CHECK(b.OpenAudio(w, true, nullptr, &got) == nullptr && b.LastError().find("privacy") != std::string::npos);
+      m.consent = MicConsent::Unknown; m.startOk = false; CHECK(b.OpenAudio(w, true, nullptr, &got) == nullptr && b.LastError() == "prompt refused");   // asking is the open; the user said no
+      m.startOk = true; CHECK(b.OpenAudio(w, true, "Nope", &got) == nullptr && b.LastError().find("Nope") != std::string::npos);
+      m.fmt.bits = 24; m.fmt.isFloat = false; CHECK(b.OpenAudio(w, true, nullptr, &got) == nullptr && b.LastError().find("format") != std::string::npos);
+      m.fmt = {48000, 1, true, 32}; m.consent = MicConsent::Allowed;
+      { auto d = b.OpenAudio(w, true, "Room mic", &got); CHECK(d && m.starts == 1 && m.lastIndex == 1 && got.freq == 48000 && m.dev);
+        d->Pause(false); const float in[] = {0.5f, 0.5f, 0.5f}; m.dev->Deliver(in, sizeof(in), false);
+        CHECK(d->QueuedBytes() == 4);                                      // 3 frames in, 2 out (one held back), 2 bytes each
+        std::int16_t out[2] = {0, 0}; CHECK(d->Dequeue(out, 4) == 4 && out[0] == 16384 && out[1] == 16384); }   // 0.5 * 32767 = 16383.5, rounds to 16384
+      CHECK(m.stops == 1);                                                // dropping the device stops the host
+      host.hasMic = false; }
+    // key layout: US by default and from an en-US host (identical to before), the host's language tag picks the layout at Init / Refresh
+    { CHECK(b.GetKeyLayout() == KeyLayout::US && b.KeyForChar('w') == Key::W && b.KeyForChar('a') == Key::A && b.KeyForChar('-') == Key::Unknown && b.KeyForChar('\n') == Key::Unknown && b.CharForKey(Key::W) == 'w' && b.CharForKey(Key::N0) == '0' && b.CharForKey(Key::Space) == ' ');
+      CHECK(b.KeyLabel(Key::A) == "A" && b.KeyLabel(Key::Space) == "Space" && b.KeyLabel(Key::N1) == "1");
+      // French (AZERTY): WASD is on the physical keys Z Q S D; A is where Q is on US; digits need Shift but are the same physical keys
+      host.lang = "fr-FR"; b.RefreshKeyLayout(); CHECK(b.GetKeyLayout() == KeyLayout::French);
+      CHECK(b.KeyForChar('z') == Key::W && b.KeyForChar('q') == Key::A && b.KeyForChar('s') == Key::S && b.KeyForChar('d') == Key::D && b.KeyForChar('a') == Key::Q && b.KeyForChar('w') == Key::Z && b.KeyForChar('m') == (Key)51 && b.KeyForChar('Z') == Key::W);
+      CHECK(b.KeyForChar('1') == Key::N1 && b.KeyForChar('0') == Key::N0 && b.CharForKey(Key::W) == 'z' && b.CharForKey(Key::A) == 'q' && b.CharForKey(Key::Q) == 'a');
+      CHECK(b.KeyLabel(Key::A) == "Q" && b.KeyLabel(Key::W) == "Z" && b.KeyLabel(Key::N2) == "\xC3\x89");   // the 2 key types e-acute (U+00E9) unshifted; its label is E-acute
+      // German (QWERTZ): Z and Y swap
+      host.lang = "de-DE"; b.RefreshKeyLayout(); CHECK(b.GetKeyLayout() == KeyLayout::German);
+      CHECK(b.KeyForChar('z') == Key::Y && b.KeyForChar('y') == Key::Z && b.KeyForChar('w') == Key::W && b.KeyForChar('a') == Key::A && b.CharForKey(Key::Z) == 'y');
+      host.lang = "de-CH"; b.RefreshKeyLayout(); CHECK(b.GetKeyLayout() == KeyLayout::US);   // Swiss German is not covered: US
+      // Swedish / Finnish: Latin letters stay where they are
+      host.lang = "sv-SE"; b.RefreshKeyLayout(); CHECK(b.GetKeyLayout() == KeyLayout::Nordic && b.KeyForChar('w') == Key::W && b.KeyForChar('z') == Key::Z && b.KeyForChar('7') == Key::N7 && b.KeyLabel(Key::W) == "W");
+      host.lang = "fi-FI"; b.RefreshKeyLayout(); CHECK(b.GetKeyLayout() == KeyLayout::Nordic);
+      // Russian: Latin letters are not typed by any key (Unknown, so a game's WASD must fall back to the arrows); digits are on the same keys; labels are Cyrillic
+      host.lang = "ru-RU"; b.RefreshKeyLayout(); CHECK(b.GetKeyLayout() == KeyLayout::Russian);
+      CHECK(b.KeyForChar('w') == Key::Unknown && b.KeyForChar('a') == Key::Unknown && b.KeyForChar('5') == Key::N5 && b.KeyForChar(' ') == Key::Space && b.CharForKey(Key::W) == 0 && b.CharForKey(Key::N5) == '5');
+      CHECK(b.KeyLabel(Key::W) == "\xD0\xA6" && b.KeyLabel(Key::Q) == "\xD0\x99");   // Tse (U+0426) is on the W key, short I (U+0419) on Q (the top row reads Y-Ts-U-K-E-N)
+      // a layout set by hand is kept until the next refresh; Init takes the host's language again
+      b.SetKeyLayout(KeyLayout::German); CHECK(b.GetKeyLayout() == KeyLayout::German && b.KeyForChar('z') == Key::Y);
+      host.lang = "en-GB"; b.Init(InitFlags()); CHECK(b.GetKeyLayout() == KeyLayout::US && b.KeyForChar('z') == Key::Z);
+      // the held-key helper the runtime uses (KeyForLetter) follows the backend: nothing else changes for US
+    }
     host.hasAudio = false; CHECK(b.OpenAudio(AudioSpec(), false, nullptr, nullptr) == nullptr && b.AudioDeviceCount(false) == 0); host.hasAudio = true;
-    // lifecycle through events: suspend saves BEFORE the focus event is handled, resume comes back, B / back gives exactly one Quit
+    // lifecycle through events: suspend saves BEFORE the focus event is handled, resume comes back, B / back is a back press (no Quit),
+    // closing the window gives exactly one Quit
     int saved = 0, resumed = 0; b.onSuspend = [&] { ++saved; }; b.onResume = [&] { ++resumed; };
     b.Life().Suspending(b.TicksMs()); { auto ev = Drain(b); CHECK(saved == 1); bool lost = false; for (auto& e : ev) if (e.type == EventType::WindowFocusLost) lost = true; CHECK(lost); CHECK(b.Life().SuspendReady()); }
     b.Life().Resuming(); { auto ev = Drain(b); CHECK(resumed == 1); bool gained = false; for (auto& e : ev) if (e.type == EventType::WindowFocusGained) gained = true; CHECK(gained); }
-    b.Life().BackRequested(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 1); }
-    b.Life().BackRequested(); b.Life().WindowClosed(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 0); }   // already sent
+    CHECK(b.TakeBackPresses() == 0);
+    b.Life().BackRequested(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 0); }
+    b.Life().BackRequested(); Drain(b); CHECK(b.TakeBackPresses() == 2 && b.TakeBackPresses() == 0);   // counted, taken once
+    b.Life().WindowClosed(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 1); }
+    b.Life().BackRequested(); b.Life().WindowClosed(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 0); CHECK(b.TakeBackPresses() == 0); }   // already sent
     { using namespace okay::platform; CHECK(Default() == nullptr && Get(BackendKind::Own) == nullptr);
       InstallBackend(&b); CHECK(Default() == &b && Get(BackendKind::Own) == &b && Get(BackendKind::Sdl2) == nullptr && IsCompiledIn(BackendKind::Own) && !IsCompiledIn(BackendKind::Sdl2) && DefaultKind() == BackendKind::Own);
       CHECK(TicksMs() <= b.TicksMs() + 5); okay::platform::Log("through the registry"); CHECK(!b.LogLines().empty() && b.LogLines().back() == "through the registry");
       BackendKind k; CHECK(ParseBackendName("own", k) && k == BackendKind::Own && !ParseBackendName("x", k) && !ParseBackendName(nullptr, k)); InstallBackend(nullptr); CHECK(Default() == nullptr); }
     b.SetClipboardText("clip"); CHECK(b.GetClipboardText() == "clip");
+    { // a system clipboard installed on the backend: copy reaches it, text copied elsewhere arrives without blocking
+      struct Sys : okay::xbox::ClipboardHost { std::string sys, snap; bool fl = false, rdy = false;
+        bool Write(const std::string& t) override { sys = t; return true; } bool StartRead() override { snap = sys; fl = true; return true; }
+        bool TakeRead(std::string& t) override { if (fl && rdy) { fl = rdy = false; t = snap; return true; } return false; } } sys;
+      b.SetClipboardHost(&sys); b.SetClipboardText("to system"); CHECK(sys.sys == "to system" && b.GetClipboardText() == "to system");
+      sys.sys = "from outside"; sys.rdy = true; b.GetClipboardText(); sys.rdy = true; CHECK(b.GetClipboardText() == "from outside");
+      b.SetClipboardHost(nullptr); }
     b.ShowErrorBox("T", "x", nullptr); CHECK(!b.LogLines().empty());
     CHECK(b.PerfFrequency() == 1000000000ull); b.DelayMs(10);
     std::filesystem::remove_all(roots.local);
@@ -840,8 +903,199 @@ static void OwnHttpTests() {
     { MemDialer d; d.reply = "HTTP/1.1 302 Found\r\nLocation: https://cdn.example.com/z\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"; on::OwnHttpClient c(d); h::Request r; r.url = "http://lan.example/a"; h::Sink s; h::ClientResult cr = c.Send(r, s); CHECK(!cr.reached && d.dials == 1); }
 }
 
+// ---- title-safe area (XboxTitleSafe.hpp) ----
+static void TitleSafeTests() {
+    using namespace okay::xbox;
+    // The system default on a console keeps the app inside the TV-safe area already: nothing to add.
+    { SafeInsets i = TitleSafeInsets(BoundsMode::SystemSafe, true); CHECK(i.left == 0 && i.top == 0 && i.right == 0 && i.bottom == 0 && i.Zero()); }
+    // Drawn to the whole TV (UseCoreWindow): 5% on every edge (48 x 27 of 960 x 540 effective pixels).
+    { SafeInsets i = TitleSafeInsets(BoundsMode::FullScreen, true); CHECK(i.left == 0.05f && i.right == 0.05f && i.top == 0.05f && i.bottom == 0.05f && !i.Zero()); }
+    // A PC (desktop window, no TV overscan): nothing.
+    CHECK(TitleSafeInsets(BoundsMode::FullScreen, false).Zero() && TitleSafeInsets(BoundsMode::SystemSafe, false).Zero());
+    // Pixel rectangle on a 1920 x 1080 back buffer: 96 px left and right, 54 px top and bottom.
+    { SafeRect r = TitleSafeRect(1920, 1080, TitleSafeInsets(BoundsMode::FullScreen, true)); CHECK(r.x == 96 && r.y == 54 && r.w == 1728 && r.h == 972); }
+    { SafeRect r = TitleSafeRect(3840, 2160, TitleSafeInsets(BoundsMode::FullScreen, true)); CHECK(r.x == 192 && r.y == 108 && r.w == 3456 && r.h == 1944); }
+    { SafeRect r = TitleSafeRect(1280, 720, SafeInsets()); CHECK(r.x == 0 && r.y == 0 && r.w == 1280 && r.h == 720); }
+    { SafeRect r = TitleSafeRect(0, -5, TitleSafeInsets(BoundsMode::FullScreen, true)); CHECK(r.w == 0 && r.h == 0); }
+    // Device family string (AnalyticsInfo.VersionInfo.DeviceFamily): only "Windows.Xbox" is a console.
+    CHECK(IsXboxDeviceFamily("Windows.Xbox") && !IsXboxDeviceFamily("Windows.Desktop") && !IsXboxDeviceFamily("") && !IsXboxDeviceFamily("windows.xboxfoo") && IsXboxDeviceFamily("windows.xbox"));
+    // Hostile fractions are clamped: never negative, never more than 25% of a side.
+    { SafeInsets i; i.left = -1; i.right = 3; i.top = 0.1f; i.bottom = 0.0f / 0.0f; const SafeInsets c = Clamped(i); CHECK(c.left == 0 && c.right == 0.25f && c.top == 0.1f && c.bottom == 0); }
+}
+
+// ---- pad sync: the shell's list of connected pads (stable keys) -> hub slots, owned devices, events (XboxPadSync.hpp) ----
+// Before: the bridge made one PadDevice per INDEX of Gamepad::Gamepads() and deleted them all whenever the count changed, while
+// the backend's open pads still pointed at them (use after free on the next poll), and a pad unplugged in the middle moved every
+// later player down one index. Nothing called the hub (PadConnected / PadDisconnected) from the app.
+namespace {
+struct KeyPad : okay::xbox::PadDevice {
+    std::string key; int* alive; okay::xbox::PadReading r;
+    KeyPad(std::string k, int* a) : key(std::move(k)), alive(a) { ++*alive; }
+    ~KeyPad() override { --*alive; }
+    bool Read(okay::xbox::PadReading& o) override { o = r; return true; }
+    void SendVibration(const okay::xbox::Vibration&) override {}
+};
+}
+static void PadSyncTests() {
+    using namespace okay::xbox; using namespace okay::platform;
+    FakeUwpHost host; PathRoots roots; roots.install = "C:/x/"; roots.local = "/tmp/okay_xbox_padsync_local"; roots.temp = "/tmp/okay_xbox_padsync_temp";
+    UwpBackend b(&host, roots); b.Init(InitFlags());
+    std::uint64_t t = 0; b.clockOverride = [&] { return t; };
+    b.EnableHub(2, 1000);
+    int alive = 0;
+    std::map<std::string, KeyPad*> made;
+    auto make = [&](const std::string& k) -> std::unique_ptr<PadDevice> { auto* p = new KeyPad(k, &alive); made[k] = p; return std::unique_ptr<PadDevice>(p); };
+    PadSync sync;
+    CHECK(sync.Sync(b, {"padA", "padB", "padA"}, make) == 2 && alive == 2 && sync.Count() == 2);   // a repeated key is one pad
+    { auto ev = Drain(b); int adds = 0; for (auto& e : ev) if (e.type == EventType::GamepadAdded) ++adds; CHECK(adds == 2); }
+    auto g0 = b.OpenGamepad(0); auto g1 = b.OpenGamepad(1); CHECK(g0 && g1);
+    made["padB"]->r.buttons = kPadA; Drain(b); CHECK(g1->Button(GamepadButton::A) && !g0->Button(GamepadButton::A));
+    // padA unplugged: padB keeps slot 1 (no index shift), padA's device is freed, the open pad reads as disconnected, nothing dangles.
+    t = 100; CHECK(sync.Sync(b, {"padB"}, make) == 0 && alive == 1 && sync.Count() == 1);
+    Drain(b); CHECK(g1->Button(GamepadButton::A) && !g0->Button(GamepadButton::A) && !b.IsGamepad(0) && b.IsGamepad(1));
+    // padA back inside the grace time: same slot, same open pad object works again, a new device is made for it.
+    t = 500; made["padA"] = nullptr; CHECK(sync.Sync(b, {"padB", "padA"}, make) == 1 && alive == 2 && made["padA"]);
+    made["padA"]->r.buttons = kPadB; Drain(b); CHECK(g0->Button(GamepadButton::B) && b.IsGamepad(0));
+    // A third pad with both slots taken is refused and tried again on the next sync (not stored, no device kept).
+    CHECK(sync.Sync(b, {"padB", "padA", "padC"}, make) == 0 && alive == 2 && sync.Count() == 2);
+    t = 600; sync.Sync(b, {"padA", "padC"}, make);                  // padB leaves, but its slot is held for the grace time
+    CHECK(sync.Count() == 1 && alive == 1);
+    t = 1700; Drain(b);                                              // grace over: slot 1 freed (GamepadRemoved)
+    CHECK(sync.Sync(b, {"padA", "padC"}, make) == 1 && sync.Count() == 2 && alive == 2 && b.IsGamepad(1));
+    // Empty keys are ignored; Clear disconnects everything and frees every device.
+    CHECK(sync.Sync(b, {"padA", "padC", ""}, make) == 0 && sync.Count() == 2);
+    sync.Clear(b); CHECK(alive == 0 && sync.Count() == 0 && !b.IsGamepad(0) && !b.IsGamepad(1));
+    g0.reset(); g1.reset(); Drain(b);
+}
+
+// ---- suspend: where saves and settings go, the time budget, the ordered flush (XboxSuspend.hpp) ----
+// Before: the runtime never set Save::SetBaseDir (a game's own save slots resolved into the read-only install folder), never loaded
+// or saved Prefs (settings were lost on every exit or suspend), and the shell passed a fixed 4500 ms instead of the real deadline.
+static void SuspendTests() {
+    using namespace okay::xbox;
+    { SaveLayout l = SaveLayoutFor("C:\\Users\\u\\AppData\\Local\\Packages\\Okay\\LocalState");
+      CHECK(l.saveBase == "C:/Users/u/AppData/Local/Packages/Okay/LocalState/saves/");
+      CHECK(l.prefsFile == "C:/Users/u/AppData/Local/Packages/Okay/LocalState/saves/game.okayprefs");
+      CHECK(l.suspendDir == "C:/Users/u/AppData/Local/Packages/Okay/LocalState/suspend");   // NOT inside saves/: the suspend slot must not show in the game's load menu
+      CHECK(l.Valid()); }
+    { SaveLayout l = SaveLayoutFor("/tmp/local/"); CHECK(l.saveBase == "/tmp/local/saves/" && l.suspendDir == "/tmp/local/suspend"); }
+    CHECK(!SaveLayoutFor("").Valid() && SaveLayoutFor("").prefsFile.empty());
+    // SuspendingOperation.Deadline and "now" are Windows DateTime values (100 ns ticks).
+    CHECK(SuspendRemainingMs(50000000LL + 10000000LL, 10000000LL) == 5000);   // 5 s left
+    CHECK(SuspendRemainingMs(10000000LL, 20000000LL) == 0);                    // already past
+    CHECK(SuspendRemainingMs(0, 20000000LL) == kSuspendFallbackMs);             // deadline unknown: the documented 5 s
+    CHECK(SuspendRemainingMs(10000000LL + 600000000LL, 10000000LL) == kSuspendMaxMs);   // never trust more than the cap
+    CHECK(FlushBudgetMs(5000) == 4000 && FlushBudgetMs(1500) == 500 && FlushBudgetMs(800) == 400 && FlushBudgetMs(0) == 0);   // 1 s kept back for the trim and the deferral
+    // The flush runs steps in order, each timed; once the budget is used up the rest are skipped (and said so); a throwing step is caught.
+    { std::uint64_t t = 0; std::vector<std::string> ran; SuspendFlush f;
+      f.Add("settings", [&](std::string&) { ran.push_back("settings"); t += 5; return true; });
+      f.Add("game state", [&](std::string& e) { ran.push_back("game state"); t += 30; e = "disk full"; return false; });
+      f.Add("boom", [&](std::string&) -> bool { ran.push_back("boom"); throw std::runtime_error("bad"); });
+      f.Add("slow", [&](std::string&) { ran.push_back("slow"); t += 1000; return true; });
+      f.Add("late", [&](std::string&) { ran.push_back("late"); return true; });
+      const SuspendReport r = f.Run([&] { return t; }, 500);
+      CHECK(ran.size() == 4 && ran[0] == "settings" && ran[3] == "slow");      // "late" starts after the budget: skipped
+      CHECK(r.steps.size() == 5 && r.steps[0].ok && r.steps[0].ms == 5 && !r.steps[1].ok && r.steps[1].error == "disk full");
+      CHECK(r.steps[2].ran && !r.steps[2].ok && r.steps[2].error.find("bad") != std::string::npos);
+      CHECK(!r.steps[4].ran && r.Skipped() == 1 && !r.AllOk() && r.totalMs == 1035);
+      const std::string s = r.Summary(); CHECK(s.find("settings ok") != std::string::npos && s.find("game state FAILED: disk full") != std::string::npos && s.find("late skipped") != std::string::npos); }
+    { SuspendFlush f; std::uint64_t t = 0; f.Add("a", [&](std::string&) { return true; }); const SuspendReport r = f.Run([&] { return t; }, 0);
+      CHECK(r.steps.size() == 1 && r.steps[0].ran && r.AllOk()); }   // the first step always runs, even with no budget: settings matter most
+    { SuspendFlush f; const SuspendReport r = f.Run(nullptr, 100); CHECK(r.steps.empty() && r.AllOk()); }
+    // Lifecycle: the deadline the shell computed is kept (overdue = 500 ms before it).
+    { Lifecycle l; l.Launched(); l.Suspending(1000, 2000); CHECK(!l.SuspendOverdue(2499) && l.SuspendOverdue(2500)); }
+}
+
+// ---- rumble stops at suspend; battery level from Windows.Gaming.Input BatteryReport ----
+// Before: a pad that was rumbling when the app was suspended kept its motors on (Windows.Gaming.Input holds a vibration until it is
+// changed, and a suspended app never polls to end it); PowerLevel() was always -1 (unknown) on the Xbox.
+namespace {
+struct BatPad : FakePad {
+    okay::xbox::BatteryInfo bat; int batReads = 0; bool hasBat = true;
+    bool ReadBattery(okay::xbox::BatteryInfo& o) override { ++batReads; o = bat; return hasBat; }
+};
+}
+static void PadPowerTests() {
+    using namespace okay::xbox; using namespace okay::platform;
+    // BatteryStatus: NotPresent 0, Discharging 1, Idle 2, Charging 3. Levels: -1 unknown, 0 empty, 1 low, 2 medium, 3 full, 4 wired.
+    BatteryInfo b; CHECK(PowerLevelFromBattery(b) == -1);
+    b.status = 0; CHECK(PowerLevelFromBattery(b) == 4);                                     // no battery: wired
+    b.status = 1; b.fullMwh = 1000; b.remainingMwh = 20; CHECK(PowerLevelFromBattery(b) == 0);   // 2%
+    b.remainingMwh = 100; CHECK(PowerLevelFromBattery(b) == 1);                          // 10%
+    b.remainingMwh = 500; CHECK(PowerLevelFromBattery(b) == 2);
+    b.remainingMwh = 800; CHECK(PowerLevelFromBattery(b) == 3);
+    b.remainingMwh = 5000; CHECK(PowerLevelFromBattery(b) == 3);                         // more than full: clamped
+    b.status = 3; b.remainingMwh = 300; CHECK(PowerLevelFromBattery(b) == 2);            // charging still reports its level
+    b.fullMwh = -1; CHECK(PowerLevelFromBattery(b) == -1);                                // capacity unknown (null in the report)
+    b.fullMwh = 0; CHECK(PowerLevelFromBattery(b) == -1);
+    b.fullMwh = 1000; b.remainingMwh = -1; CHECK(PowerLevelFromBattery(b) == -1);
+    b.status = 9; b.remainingMwh = 500; CHECK(PowerLevelFromBattery(b) == -1);
+    // UwpGamepad reads the battery on the first poll, then at most every kBatteryPollMs; disconnected = unknown.
+    { BatPad d; d.bat.status = 1; d.bat.fullMwh = 100; d.bat.remainingMwh = 90; UwpGamepad g(1, &d);
+      CHECK(g.PowerLevel() == -1); g.Poll(0); CHECK(g.PowerLevel() == 3 && d.batReads == 1);
+      d.bat.remainingMwh = 10; g.Poll(100); CHECK(g.PowerLevel() == 3 && d.batReads == 1);
+      g.Poll(kBatteryPollMs); CHECK(g.PowerLevel() == 1 && d.batReads == 2);
+      d.connected = false; g.Poll(kBatteryPollMs + 10); CHECK(g.PowerLevel() == -1);
+      d.connected = true; g.Poll(kBatteryPollMs + 20); CHECK(g.PowerLevel() == 1 && d.batReads == 3);   // back: read again at once
+      d.hasBat = false; g.Poll(3 * kBatteryPollMs); CHECK(g.PowerLevel() == -1); }
+    { FakePad d; UwpGamepad g(1, &d); g.Poll(0); CHECK(g.PowerLevel() == -1); }   // a device without a battery report
+    // StopRumble: motors off at once, the timer forgotten.
+    { FakePad d; UwpGamepad g(1, &d); g.Poll(0); g.Rumble(65535, 65535, 10000); g.RumbleTriggers(65535, 65535, 10000); g.Poll(10);
+      CHECK(!d.sent.empty() && !d.sent.back().Zero()); g.StopRumble(); CHECK(d.sent.back().Zero()); const size_t n = d.sent.size();
+      g.Poll(20); CHECK(d.sent.size() <= n + 1 && d.sent.back().Zero());
+      g.Rumble(65535, 0, 100); g.Poll(30); CHECK(d.sent.back().leftMotor == 1.0 && d.sent.back().leftTrigger == 0); }   // trigger motors do not come back
+    // Backend: suspending stops every open pad's rumble before the save runs.
+    { FakeUwpHost host; PathRoots roots; roots.install = "C:/x/"; roots.local = "/tmp/okay_xbox_power_local"; roots.temp = "/tmp/okay_xbox_power_temp";
+      UwpBackend be(&host, roots); be.Init(InitFlags()); be.Life().Launched();
+      auto g = be.OpenGamepad(0); CHECK(g); g->Rumble(65535, 65535, 60000); Drain(be);
+      CHECK(!host.pad.sent.empty() && !host.pad.sent.back().Zero());
+      bool zeroAtSave = false; be.onSuspend = [&] { zeroAtSave = host.pad.sent.back().Zero(); };
+      be.Life().Suspending(be.TicksMs(), 5000); Drain(be); CHECK(zeroAtSave && host.pad.sent.back().Zero());
+      // the battery reaches the platform pad through the backend (and through the hub's slot proxy)
+      BatPad bp; bp.bat.status = 0; be.EnableHub(2, 1000); CHECK(be.PadConnected("k", &bp) == 0); Drain(be);
+      auto h = be.OpenGamepad(0); Drain(be); CHECK(h && h->PowerLevel() == 4);
+      h.reset(); g.reset(); Drain(be); }
+}
+
+// ---- controller-only text entry: the on-screen keyboard follows the edited field (XboxTextEntry.hpp) ----
+static void TextEntryTests() {
+    using namespace okay::xbox;
+    int fieldA = 0, fieldB = 0;
+    { TextEntry te; te.SetEnabled(true);
+      CHECK(te.Frame(nullptr, TextScope::Default).kind == TextEntryCommand::None);
+      TextEntryCommand c = te.Frame(&fieldA, TextScope::Number); CHECK(c.kind == TextEntryCommand::Show && c.scope == TextScope::Number);
+      CHECK(te.Frame(&fieldA, TextScope::Number).kind == TextEntryCommand::None);              // shown once, not every frame
+      te.KeyboardShown(); CHECK(te.Showing());
+      c = te.Frame(&fieldB, TextScope::Password); CHECK(c.kind == TextEntryCommand::Show && c.scope == TextScope::Password);   // another field: re-shown for it
+      c = te.Frame(nullptr, TextScope::Default); CHECK(c.kind == TextEntryCommand::Hide && !c.releaseField);   // editing ended in the game: hide
+      CHECK(te.Frame(nullptr, TextScope::Default).kind == TextEntryCommand::None); }
+    // The player closes the keyboard (B on the keyboard) while the field still edits: the field lets go, so the pad navigates again.
+    { TextEntry te; te.SetEnabled(true); te.Frame(&fieldA, TextScope::Default); te.KeyboardShown(); te.KeyboardHidden();
+      TextEntryCommand c = te.Frame(&fieldA, TextScope::Default); CHECK(c.kind == TextEntryCommand::None && c.releaseField);
+      { const TextEntryCommand n = te.Frame(nullptr, TextScope::Default); CHECK(!n.releaseField && n.kind == TextEntryCommand::None); }   // once; the field let go, nothing to hide
+      CHECK(te.Frame(&fieldA, TextScope::Default).kind == TextEntryCommand::Show); }           // editing it again shows it again
+    // A Hiding without a Showing (TryShow refused, or a stray event) does not release the field.
+    { TextEntry te; te.SetEnabled(true); te.Frame(&fieldA, TextScope::Default); te.KeyboardHidden(); CHECK(!te.Frame(&fieldA, TextScope::Default).releaseField); }
+    // Off (a PC: a real keyboard is there): never shows. Turning it off while shown hides it.
+    { TextEntry te; CHECK(te.Frame(&fieldA, TextScope::Default).kind == TextEntryCommand::None);
+      te.SetEnabled(true); CHECK(te.Frame(&fieldA, TextScope::Default).kind == TextEntryCommand::Show); te.KeyboardShown();
+      te.SetEnabled(false); CHECK(te.Frame(&fieldA, TextScope::Default).kind == TextEntryCommand::Hide); }
+    // The text the keyboard edits (CoreTextEditContext ranges are UTF-16 code units).
+    { TextMirror m; m.Reset("héllo"); CHECK(m.Utf16Size() == 5 && m.Utf8() == "héllo");
+      CHECK(m.Replace(5, 5, u"!") && m.Utf8() == "héllo!");
+      CHECK(m.Replace(0, 1, u"H") && m.Utf8() == "Héllo!");
+      CHECK(m.Replace(4, 6, u"") && m.Utf8() == "Héll");                                       // delete a range (backspace)
+      CHECK(!m.Replace(9, 12, u"x") && m.Utf8() == "Héll");                                     // out of range: refused, unchanged
+      CHECK(m.Replace(3, 1, u"x") && m.Utf8() == "Hxl");                                        // a reversed range is put in order: [1, 3) "él" -> "x"
+      m.Reset("a\xF0\x9F\x98\x80" "b"); CHECK(m.Utf16Size() == 4);                              // an emoji is a surrogate pair
+      CHECK(m.Replace(3, 4, u"") && m.Utf8() == "a\xF0\x9F\x98\x80");
+      CHECK(m.Caret16() == 3);                                                                  // caret after the last edit
+      CHECK(Utf16ToUtf8(Utf8ToUtf16("z\xC3\xA9\xE2\x82\xAC")) == "z\xC3\xA9\xE2\x82\xAC");
+      CHECK(Utf8ToUtf16("\xFF").size() == 1); }                                                 // a bad byte becomes one U+FFFD, never a crash
+}
+
 int main() {
-    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests(); RasterTests(); OverlayMathTests(); RecoveryTests(); HttpTests(); OwnHttpTests();
+    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests(); RasterTests(); OverlayMathTests(); RecoveryTests(); HttpTests(); OwnHttpTests(); TitleSafeTests(); PadSyncTests(); SuspendTests(); PadPowerTests(); TextEntryTests();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp_runtime: all passed\n");
     return 0;

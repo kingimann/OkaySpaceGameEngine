@@ -376,7 +376,9 @@ static void TestRegistryBasics() {
         "UITheme", "UIStyleVariant", "UIDamageNumbers", "UIDialogueBox", "UIInventoryBind",
         "UISearchBar", "UIDateTimePicker", "UIFilePicker", "UIAccordion", "UIBreadcrumbs",
         "UIPagination", "UISkeleton", "UIBottomSheet", "UIRangeSlider", "UIAspectRatio", "UIInputValidator", "UIRadialMenu", "UIKillFeed", "UIMenuBar", "UIToolbar", "UITreeView", "UIDataTable", "UIWizard", "UIFormGroup", "UIColorSquare", "UIAmmoCounter", "UIInteractionPrompt",
-        "UIObjectiveTracker", "UICompass", "UIItemTooltipCard", "UIAbilityIcon", "UIBind", "UIVisibleIf", "UIListBind", "UIHotReload", "UIFocusHint", "UIRichLinks"};
+        "UIObjectiveTracker", "UICompass", "UIItemTooltipCard", "UIAbilityIcon", "UIBind", "UIVisibleIf", "UIListBind", "UIHotReload", "UIFocusHint", "UIRichLinks",
+        "CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion", "SaveConfig", "Buildable", "TilemapCollider2D",
+        "EventSystem", "UIMask", "UISafeArea", "UIDocument"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");
@@ -399,10 +401,10 @@ static void TestRegistryBasics() {
     SubLight* sl = go->AddComponent<SubLight>();
     CHECK(PropertyRegistry::FindFor(*sl) == nullptr);
 
-    {   // bobSway is a real, editable setting now
+    {   // bobSway is still a registered property (saved, scriptable); the Inspector no longer shows it (automatic)
         auto fpc = PropertyRegistry::FindByName("FirstPersonController");
-        CHECK(fpc && fpc->Find("bobSway") && !fpc->Find("bobSway")->IsHidden());
-        CHECK(fpc && fpc->Find("bobAmount") && !fpc->Find("bobAmount")->IsHidden());
+        CHECK(fpc && fpc->Find("bobSway") && fpc->Find("bobSway")->IsHidden());
+        CHECK(fpc && fpc->Find("bobAmount") && !fpc->Find("bobAmount")->IsHidden());   // shown under the Head bob box
     }
     CHECK(light->Find("intensity") != nullptr);
     CHECK(light->Find("Intensity") == light->Find("intensity"));

@@ -2,6 +2,7 @@
 // downloads (success, HTTP errors, retries, truncated and over-long bodies, size caps, cancel, disk errors, redirect loops,
 // slow servers), HEAD size probes, link-preview prefix fetches, keep-alive across sequential calls, and a proxy that
 // refuses CONNECT. PATH is emptied, so a silent curl fallback would show up as a failure; the helpers never spawn anything.
+// TestSeam checks the seam calls (FetchToFile, HeadDump, FetchPrefix, Send) with the own client on, then with a stub curl.
 // Built only with -DOKAY_OWN_HTTP=ON on Linux. Standalone: g++ -std=c++17 -DOKAY_OWN_HTTP=1 -Iengine/include -Ilauncher tests/test_native_fetch.cpp -ldl -lpthread
 #include "okay/Platform/NativeFetch.hpp"
 #include "NetGuard.hpp"
@@ -252,6 +253,225 @@ static void TestProxyRefusal() {
     px.Stop(); origin.Stop();
 }
 
+// The seam itself (FetchToFile, HeadDump, FetchPrefix, Send): our own client first, then the curl fallback (a stub curl
+// that records its arguments), never curl for a POST that may have reached the server, and nothing at all with
+// OKAY_NO_CURL=1.
+static void TestSeam() {
+    Srv s;
+    const std::string payload(3000, 'q');
+    s.handler = [&](int, int, const std::string& h, int c) {
+        const std::string path = PathOf(h);
+        if (path == "/ok") { SendAll(c, h.rfind("HEAD", 0) == 0 ? "HTTP/1.1 200 OK\r\nContent-Length: 3000\r\n\r\n" : Ok(payload)); return true; }
+        if (path == "/page") { SendAll(c, "HTTP/1.1 206 Partial Content\r\nContent-Length: 10\r\nContent-Range: bytes 0-9/3000\r\n\r\n" + payload.substr(0, 10)); return true; }
+        if (path == "/echo") {   // the body is still in the server's buffer: answer with its announced length, then hang up
+            const size_t p = h.find("Content-Length: ");
+            const std::string n = p == std::string::npos ? "0" : std::to_string(std::atoi(h.c_str() + p + 16));
+            SendAll(c, "HTTP/1.1 201 Created\r\nContent-Length: " + std::to_string(n.size() + 4) + "\r\nConnection: close\r\n\r\ngot " + n); return false;
+        }
+        if (path == "/swallow") return false;   // reads the request, then hangs up without an answer
+        SendAll(c, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"); return true;
+    };
+    s.Start();
+    const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+    char tmpl[] = "/tmp/okay_seam_XXXXXX";
+    const std::string dir = ::mkdtemp(tmpl);
+    const std::string out = dir + "/file.bin", log = dir + "/curl.log";
+    fs::create_directories(dir + "/bin");
+    {
+        std::ofstream f(dir + "/bin/curl");
+        f << "#!/bin/sh\nlog='" << log << "'\necho \"run $*\" >> \"$log\"\no=; D=; K=; w=\n"
+             "while [ $# -gt 0 ]; do case \"$1\" in -o) o=\"$2\"; shift;; -D) D=\"$2\"; shift;; -K) K=\"$2\"; shift;; -w) w=\"$2\"; shift;; esac; shift; done\n"
+             "if [ -n \"$K\" ]; then while IFS= read -r l; do echo \"cfg $l\" >> \"$log\"; done < \"$K\"; fi\n"
+             "if [ -n \"$D\" ]; then printf 'HTTP/1.1 200 OK\\r\\nContent-Length: 77\\r\\n\\r\\n' > \"$D\"; fi\n"
+             "if [ -n \"$o\" ] && [ \"$o\" != /dev/null ]; then printf 'curlbody' > \"$o\"; fi\n"
+             "if [ -n \"$w\" ]; then printf '201'; fi\nexit 0\n";
+    }
+    fs::permissions(dir + "/bin/curl", fs::perms::owner_all);
+    const std::string savedPath = std::getenv("PATH") ? std::getenv("PATH") : "";
+    ::setenv("PATH", (dir + "/bin").c_str(), 1);
+    auto runs = [&] { std::ifstream f(log); int n = 0; std::string l; while (std::getline(f, l)) if (l.rfind("run ", 0) == 0) ++n; return n; };
+
+    // 1. Own client on: every answer is its own, curl never runs.
+    OwnDownloadSpec sp; sp.userAgent = "SeamTest";
+    OwnDownloadResult r = FetchToFile(base + "/ok", out, sp);
+    CHECK(r.outcome == OwnOutcome::Ok && !r.viaCurl && Slurp(out) == payload);
+    r = FetchToFile(base + "/missing", out, sp);
+    CHECK(r.outcome == OwnOutcome::HttpError && r.status == 404 && !fs::exists(out));
+    std::string dump, body;
+    CHECK(HeadDump(base + "/ok", "SeamTest", dump) && okay::netguard::ParseLastContentLength(dump) == 3000);
+    CHECK(FetchPrefix(base + "/page", "SeamTest", 1000, 9, 5000, body) == OwnOutcome::Ok && body == payload.substr(0, 10));
+    Result sr = Send("POST", base + "/echo", {"Content-Type: application/json"}, "{\"x\":1}");
+    CHECK(sr.reached && sr.status == 201 && sr.body == "got 7");
+    sr = Send("POST", base + "/swallow", {}, "once");   // may have arrived: not re-sent through curl
+    CHECK(!sr.reached && sr.maybeSent);
+    CHECK(runs() == 0);
+
+    // 2. Own client off: the curl fallback (the stub) answers, with the headers in a private config file, not argv.
+    ::unsetenv("OKAY_OWN_HTTP");
+    r = FetchToFile(base + "/ok", out, sp);
+    CHECK(r.outcome == OwnOutcome::Ok && r.viaCurl && Slurp(out) == "curlbody");
+    CHECK(HeadDump(base + "/ok", "SeamTest", dump) && okay::netguard::ParseLastContentLength(dump) == 77);
+    CHECK(FetchPrefix(base + "/page", "", 1000, 9, 5000, body) == OwnOutcome::Ok && body == "curlbody");
+    sr = Send("POST", base + "/echo", {"X-Authorization: secret-ticket"}, "{}");
+    CHECK(sr.reached && sr.status == 201 && sr.body == "curlbody");
+    {
+        const std::string l = Slurp(log);
+        CHECK(l.find("cfg header = \"X-Authorization: secret-ticket\"") != std::string::npos);
+        CHECK(l.find("run -s -X POST") != std::string::npos);
+        size_t runLine = l.rfind("run -s -X POST"); CHECK(l.substr(runLine, l.find('\n', runLine) - runLine).find("secret") == std::string::npos);
+    }
+    CHECK(runs() == 4);
+    {   // the temporary files the fallback used are gone
+        int left = 0; for (const auto& e : fs::directory_iterator(fs::temp_directory_path())) if (e.path().filename().string().rfind("okay_http_", 0) == 0) ++left;
+        CHECK(left == 0);
+    }
+
+    // 3. OKAY_NO_CURL=1: nothing is started, and the calls say so.
+    ::setenv("OKAY_NO_CURL", "1", 1);
+    fs::remove(out);
+    r = FetchToFile(base + "/ok", out, sp);
+    CHECK(r.outcome == OwnOutcome::NotHandled && !r.viaCurl && !fs::exists(out));
+    CHECK(!HeadDump(base + "/ok", "", dump));
+    CHECK(FetchPrefix(base + "/page", "", 1000, 9, 5000, body) == OwnOutcome::NotHandled);
+    CHECK(!Send("GET", base + "/ok", {}).reached);
+    CHECK(runs() == 4);
+    ::unsetenv("OKAY_NO_CURL");
+    ::setenv("OKAY_OWN_HTTP", "1", 1);
+    ::setenv("PATH", savedPath.c_str(), 1);
+    std::error_code ec; fs::remove_all(dir, ec);
+}
+
+// PR #1186 review fixes that can be checked on Linux: header lines lose CR/LF before the own client sees them (it used to
+// refuse the call, and the seam then ran curl, which strips them); a failed rename is not "disk full"; a cancel that
+// comes in after the bytes arrived still wins over the rename (a caller that gave up must never get a late file);
+// RequestEx sends If-Range with a resume; the If-Range validator and credential-header rules.
+static void TestReviewFixes() {
+    Srv s;
+    s.handler = [&](int, int, const std::string& h, int c) {
+        const std::string path = PathOf(h);
+        if (path == "/tail") {
+            if (h.find("If-Range: \"v1\"") != std::string::npos) SendAll(c, "HTTP/1.1 206 Partial Content\r\nContent-Length: 3\r\nContent-Range: bytes 2-4/5\r\n\r\ncde");
+            else SendAll(c, Ok("abcde"));
+            return true;
+        }
+        SendAll(c, Ok("hi")); return true;
+    };
+    s.Start();
+    const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+    {   // a CR/LF inside a header value is taken out, the call is made (before: refused, then curl, which is not on PATH)
+        const Result r = Send("GET", base + "/x", {"X-Test: a\r\nInjected: 1"});
+        CHECK(r.reached && r.status == 200);
+        const std::string h = s.Head((size_t)s.requests.load() - 1);
+        CHECK(h.find("X-Test: aInjected: 1\r\n") != std::string::npos && h.find("\r\nInjected:") == std::string::npos);
+    }
+    CHECK(CleanHeaderLine(std::string("A: b\r\nC: d\0e", 13)) == "A: bC: de");
+    CHECK(CleanHeaderLines({"\r\n", "X: 1"}).size() == 1);
+    CHECK(HeaderCarriesSecret("Authorization: Bearer x") && HeaderCarriesSecret("apikey: k") && HeaderCarriesSecret("X-Authorization: t"));
+    CHECK(!HeaderCarriesSecret("Content-Type: application/json") && !HeaderCarriesSecret("User-Agent: tokenish"));
+    CHECK(fetch_detail::IfRangeValidator(" \"v1\" ", "Mon") == "\"v1\"" && fetch_detail::IfRangeValidator("W/\"v1\"", "Mon, 01 Jan") == "Mon, 01 Jan");
+    CHECK(fetch_detail::IfRangeValidator("", "") == "");
+    {   // RequestEx: a resume carries If-Range
+        const std::string f = "/tmp/okay_nf_tail_" + std::to_string(::getpid());
+        { std::ofstream o(f, std::ios::binary); o << "ab"; }
+        RequestOptions ro; ro.resumeFrom = 2; ro.ifRange = "\"v1\"";
+        const ExResult r = RequestEx("GET", base + "/tail", {}, "", "", f, ro);
+        CHECK(r.reached && r.status == 206 && r.resumed && Slurp(f) == "abcde");
+        CHECK(s.Head((size_t)s.requests.load() - 1).find("If-Range: \"v1\"\r\n") != std::string::npos);
+        std::remove(f.c_str());
+    }
+    s.Stop();
+    {   // FetchToFile, any path: a failure removes an existing `path` too (the own client always did; WinHTTP and curl left
+        // the old file there, which the Windows run of winhttp_loopback showed). Here: own client off, curl not on PATH.
+        const fs::path old = fs::temp_directory_path() / ("okay_nf_old_" + std::to_string(::getpid()));
+        { std::ofstream o(old, std::ios::binary); o << "old"; }
+        ::unsetenv("OKAY_OWN_HTTP");
+        const OwnDownloadResult r = FetchToFile("http://127.0.0.1:1/x", old, OwnDownloadSpec());
+        ::setenv("OKAY_OWN_HTTP", "1", 1);
+        CHECK(r.outcome == OwnOutcome::NotHandled);
+        CHECK(!fs::exists(old));
+        std::error_code ec; fs::remove(old, ec);
+    }
+    {   // Finish: a rename that fails is NotHandled with its reason, never DiskFull
+        const fs::path dir = fs::temp_directory_path() / ("okay_nf_fin_" + std::to_string(::getpid()));
+        std::error_code ec; fs::remove_all(dir, ec); fs::create_directories(dir / "target" / "inside", ec);
+        const fs::path tmp = dir / "t.part";
+        { std::ofstream o(tmp, std::ios::binary); o << "data"; }
+        OwnDownloadSpec sp;
+        OwnDownloadResult r = fetch_detail::Finish(tmp, dir / "target", sp, OwnDownloadResult());   // a non-empty folder is in the way
+        CHECK(r.outcome == OwnOutcome::NotHandled && r.outcome != OwnOutcome::DiskFull && r.error.find("rename failed") == 0);
+        CHECK(!fs::exists(tmp));
+        // a cancel that came in after the bytes arrived: the file is dropped, the target is not touched
+        { std::ofstream o(tmp, std::ios::binary); o << "late"; }
+        { std::ofstream o(dir / "out.bin", std::ios::binary); o << "other"; }
+        sp.cancelled = [] { return true; };
+        r = fetch_detail::Finish(tmp, dir / "out.bin", sp, OwnDownloadResult());
+        CHECK(r.outcome == OwnOutcome::Cancelled && !fs::exists(tmp) && Slurp((dir / "out.bin").string()) == "other");
+        fs::remove_all(dir, ec);
+    }
+}
+
+// PR #1186 review follow-up: a download with an expected SHA-256 but no validator (no ETag, no Last-Modified) is dropped,
+// and the resume (sent without If-Range, since there is nothing to send) gets the tail of a file that changed on the
+// server. The glued file fails the checksum; the download must then fetch the file once more from byte 0 instead of
+// ending as ChecksumMismatch. A server whose file really does not match still ends as ChecksumMismatch, after that one
+// extra try (and a download that was never resumed is not tried again).
+static void TestChecksumAfterResume() {
+    const std::string a(6000, 'a'), b(6000, 'b');
+    std::atomic<int> fulls{0}, ranges{0};
+    Srv s;
+    s.handler = [&](int, int, const std::string& h, int c) {
+        const std::string path = PathOf(h);
+        const std::string& now = path == "/bad" ? a : (fulls.load() == 0 ? a : b);   // /changes: A first, then B
+        const size_t rp = h.find("Range: bytes=");
+        if (rp != std::string::npos) {
+            ++ranges;
+            const size_t from = (size_t)std::strtoull(h.c_str() + rp + 13, nullptr, 10);
+            const std::string& tail = path == "/bad" ? a : b;
+            SendAll(c, "HTTP/1.1 206 Partial Content\r\nContent-Length: " + std::to_string(tail.size() - from) + "\r\nContent-Range: bytes " +
+                       std::to_string(from) + "-" + std::to_string(tail.size() - 1) + "/" + std::to_string(tail.size()) + "\r\n\r\n" + tail.substr(from));
+            return true;
+        }
+        const int n = fulls++;
+        if (n == 0) {   // the first answer is cut in the middle: the client resumes with Range on its next try
+            SendAll(c, "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(now.size()) + "\r\n\r\n" + now.substr(0, 2500));
+            return false;
+        }
+        SendAll(c, Ok(now));
+        return true;
+    };
+    s.Start();
+    const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+    const fs::path dir = fs::temp_directory_path() / ("okay_nf_sha_" + std::to_string(::getpid()));
+    std::error_code ec; fs::remove_all(dir, ec); fs::create_directories(dir, ec);
+    const fs::path want = dir / "want.bin";
+    { std::ofstream o(want, std::ios::binary); o << b; }
+    const std::string shaB = fetch_detail::Sha256File(want);
+    {
+        OwnDownloadSpec sp; sp.retries = 1; sp.retryDelayMs = 10; sp.expectedSha256 = shaB;
+        const OwnDownloadResult r = FetchToFile(base + "/changes", dir / "out.bin", sp);
+        CHECK(r.outcome == OwnOutcome::Ok);
+        CHECK(ranges.load() == 1 && fulls.load() == 2);   // cut, resumed onto the new file, then fetched again from byte 0
+        CHECK(Slurp((dir / "out.bin").string()) == b);
+        if (r.outcome != OwnOutcome::Ok) std::printf("  outcome %d, attempts %d, error %s\n", (int)r.outcome, r.attempts, r.error.c_str());
+    }
+    {   // the server's file never matches: still ChecksumMismatch (one extra try from byte 0, not a loop), nothing kept
+        fulls = 0; ranges = 0;
+        OwnDownloadSpec sp; sp.retries = 1; sp.retryDelayMs = 10; sp.expectedSha256 = shaB;
+        const OwnDownloadResult r = FetchToFile(base + "/bad", dir / "bad.bin", sp);
+        CHECK(r.outcome == OwnOutcome::ChecksumMismatch);
+        CHECK(ranges.load() == 1 && fulls.load() == 2);
+        CHECK(!fs::exists(dir / "bad.bin"));
+    }
+    {   // never resumed (the first answer is whole): a mismatch is final at once
+        fulls = 1; ranges = 0;
+        OwnDownloadSpec sp; sp.retries = 1; sp.retryDelayMs = 10; sp.expectedSha256 = shaB;
+        const OwnDownloadResult r = FetchToFile(base + "/bad", dir / "bad.bin", sp);
+        CHECK(r.outcome == OwnOutcome::ChecksumMismatch && fulls.load() == 2 && ranges.load() == 0);
+    }
+    s.Stop();
+    fs::remove_all(dir, ec);
+}
+
 int main() {
     std::signal(SIGPIPE, SIG_IGN);
     ::setenv("OKAY_OWN_HTTP", "1", 1); ::unsetenv("OKAY_HTTP_CURL");
@@ -260,6 +480,9 @@ int main() {
     TestDownload();
     TestHeadAndPrefix();
     TestProxyRefusal();
+    TestSeam();
+    TestReviewFixes();
+    TestChecksumAfterResume();
     std::printf("native_fetch: %d checks, %d failed, %d skipped\n", g_checks, g_fail, g_skips);
     return g_fail ? 1 : 0;
 }

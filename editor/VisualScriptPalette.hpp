@@ -6,6 +6,8 @@
 #include "ScriptingDensity.hpp"   // Density: every size below comes from this table
 #include "VisualScriptSearchNav.hpp"   // the popup's pure logic: size, selection movement, scrolling, recent list
 #include "imgui.h"
+#include "okay/Modules/ModuleRegistry.hpp"
+#include "okay/VisualScript/VsNodeRegistry.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -416,14 +418,18 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     // the registry or a step catalogue changes size (a plugin or graph function was added or removed).
     static std::vector<Entry> s_all;
     static std::size_t s_regN = (std::size_t)-1, s_actN = (std::size_t)-1, s_condN = (std::size_t)-1;
+    static int s_modOn = -1;
     const std::size_t regN = Registry().size();
     const std::size_t actN = StepCatalog ? (StepCatalog(false) ? StepCatalog(false)->size() : 0) : 0;
     const std::size_t condN = StepCatalog ? (StepCatalog(true) ? StepCatalog(true)->size() : 0) : 0;
-    const bool rebuild = regN != s_regN || actN != s_actN || condN != s_condN;
+    int modOn = 0;
+    for (const auto& inf : okay::ModuleRegistry::Get().All()) if (inf.enabled) ++modOn;
+    const bool rebuild = regN != s_regN || actN != s_actN || condN != s_condN || modOn != s_modOn;
     std::vector<Entry>& all = s_all;
     static std::size_t s_gen = 0;                       // bumped each time the list is rebuilt (pointers into it go stale)
-    if (rebuild) { all.clear(); s_regN = regN; s_actN = actN; s_condN = condN; ++s_gen; }
+    if (rebuild) { all.clear(); s_regN = regN; s_actN = actN; s_condN = condN; s_modOn = modOn; ++s_gen; }
     if (rebuild) for (const auto& d : Registry()) {
+        if (d.type && okay::vs::VsNodeSuppressed(d.type)) continue;   // its module is off
         const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
         VsPlace place = api ? VsPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsPlaceForNode(d.type);
         if (VsPaletteHidden(d)) continue;   // one row per job; untested nodes wait

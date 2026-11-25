@@ -3,7 +3,7 @@ id: team-tooling
 ---
 ## Team tooling (not part of the Windows release)
 
-How to try the collaboration tools ([collaboration.md](process/collaboration.md)); these run on a Linux checkout and on GitHub, not in
+How to try the collaboration tools ([collaboration.md](../process/collaboration.md)); these run on a Linux checkout and on GitHub, not in
 `OkaySpace.exe`:
 
 1. Open `WORK_BOARD.md` on the `work-board` branch (after the workflow has run once on main): it now has a **Claims** table and

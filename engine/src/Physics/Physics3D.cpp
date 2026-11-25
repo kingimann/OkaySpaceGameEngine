@@ -1,8 +1,5 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/BodyPose.hpp"
-#include "okay/Physics/Broadphase.hpp"
-#include "okay/Physics/BoxManifold.hpp"
-#include "okay/Physics/ContactSolver.hpp"
 #include "okay/Physics/PhysicsMaterial.hpp"
 #include "okay/Components/PhysicsSurface.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -10,9 +7,11 @@
 #include "okay/Physics/ColliderShapes3D.hpp"
 #include "okay/Physics/ConvexContact.hpp"
 #include "okay/Physics/TriMesh.hpp"
+#include "okay/Physics/Core/World.hpp"
+#include "okay/Core/Jobs.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/StringId.hpp"
 #include "okay/Components/Joint3D.hpp"
-#include "okay/Math/JointLimit.hpp"
 #include "okay/Components/Terrain.hpp"
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -27,6 +26,7 @@
 #include <cmath>
 #include <functional>
 #include <iterator>
+#include <typeinfo>
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
@@ -81,19 +81,6 @@ void ClosestSegSeg(const Vec3& p1, const Vec3& q1, const Vec3& p2, const Vec3& q
     c2 = p2 + d2 * t;
 }
 
-Contact TestSphereSphere(const Vec3& ca, float ra, const Vec3& cb, float rb) {
-    Contact c;
-    Vec3 d = cb - ca;
-    float r = ra + rb;
-    float d2 = d.SqrMagnitude();
-    if (d2 >= r * r) return c;
-    float dist = Mathf::Sqrt(d2);
-    c.hit = true;
-    c.normal = dist > Mathf::Epsilon ? d / dist : Vec3{0, 1, 0};
-    c.penetration = r - dist;
-    c.point = ca + c.normal * ra;        // on A's surface toward B
-    return c;
-}
 
 // Box (A) vs sphere (B). Normal points from box toward sphere.
 Contact TestBoxSphere(const Vec3& cBox, const Vec3& hBox, const Vec3& cSph, float r) {
@@ -165,81 +152,7 @@ inline bool ExactMesh(Collider3D* col) {
 inline const TriMesh& ActiveTris(MeshCollider3D* mc) {
     return mc->UsesConvexHull() ? mc->HullTris() : mc->Tris();
 }
-trimesh::Contact TrisVsGeneric(MeshCollider3D* mc, Collider3D* other);   // below, with the other generic-shape tests
-// Mesh collider contacts, from the mesh surface toward the shape.
-trimesh::Contact MeshVsShape(MeshCollider3D* mc, Collider3D* other) {
-    if (IsGenericShape(other)) return TrisVsGeneric(mc, other);
-    trimesh::WorldView v(mc->Tris(), mc->WorldMatrix());
-    switch (other->shape()) {
-    case Collider3D::Shape::Sphere: {
-        auto* s = static_cast<SphereCollider3D*>(other);
-        return v.Sphere(s->WorldCenter(), s->WorldRadius());
-    }
-    case Collider3D::Shape::Capsule: {
-        auto* c = static_cast<CapsuleCollider3D*>(other);
-        Vec3 a, b; c->Segment(a, b);
-        return v.Capsule(a, b, c->WorldRadius());
-    }
-    case Collider3D::Shape::Box: {
-        auto* b = static_cast<BoxCollider3D*>(other);
-        Vec3 ax, ay, az; b->WorldAxes(ax, ay, az);
-        return v.Box(b->WorldCenter(), b->HalfExtents(), ax, ay, az);
-    }
-    case Collider3D::Shape::Mesh: {
-        // A box-fallback mesh (no triangles) acts as its box.
-        auto* b = static_cast<BoxCollider3D*>(other);
-        Vec3 ax, ay, az; b->WorldAxes(ax, ay, az);
-        return v.Box(b->WorldCenter(), b->HalfExtents(), ax, ay, az);
-    }
-    default: break;
-    }
-    return {};
-}
 
-// Deepest contact of a dynamic convex hull against one static triangle mesh.
-// The normal points from the mesh surface toward the hull.
-trimesh::Contact HullAgainstMesh(MeshCollider3D* hullBody, MeshCollider3D* mesh) {
-    trimesh::Contact best;
-    const Mesh& hull = hullBody->Hull();
-    if (hull.vertices.empty() || !mesh->HasTriangles()) return best;
-    Mat4 wm = hullBody->WorldMatrix();
-    Vec3 mn{1e30f, 1e30f, 1e30f}, mx{-1e30f, -1e30f, -1e30f};
-    for (const Vec3& v : hull.vertices) {
-        Vec3 w = wm.MultiplyPoint(v);
-        mn = {std::min(mn.x, w.x), std::min(mn.y, w.y), std::min(mn.z, w.z)};
-        mx = {std::max(mx.x, w.x), std::max(mx.y, w.y), std::max(mx.z, w.z)};
-    }
-    Mat4 l2w = mesh->WorldMatrix();
-    Mat4 w2l = l2w.Inverse();
-    Vec3 lmn{1e30f, 1e30f, 1e30f}, lmx{-1e30f, -1e30f, -1e30f};
-    for (int i = 0; i < 8; ++i) {
-        Vec3 p = w2l.MultiplyPoint({i & 1 ? mx.x : mn.x, i & 2 ? mx.y : mn.y, i & 4 ? mx.z : mn.z});
-        lmn = {std::min(lmn.x, p.x), std::min(lmn.y, p.y), std::min(lmn.z, p.z)};
-        lmx = {std::max(lmx.x, p.x), std::max(lmx.y, p.y), std::max(lmx.z, p.z)};
-    }
-    Vec3 pad = (lmx - lmn) * 1e-4f + Vec3(1e-4f, 1e-4f, 1e-4f);
-    lmn = lmn - pad; lmx = lmx + pad;
-    mesh->Tris().QueryAABB(lmn, lmx, [&](int ti) {
-        Vec3 la, lb, lc;
-        mesh->Tris().Triangle(ti, la, lb, lc);
-        Vec3 a = l2w.MultiplyPoint(la), b = l2w.MultiplyPoint(lb), c = l2w.MultiplyPoint(lc);
-        auto triSup = [&](const Vec3& d) {
-            Vec3 bestV = a; float bd = Vec3::Dot(a, d);
-            float db = Vec3::Dot(b, d); if (db > bd) { bd = db; bestV = b; }
-            float dc = Vec3::Dot(c, d); if (dc > bd) bestV = c;
-            return bestV;
-        };
-        auto hullSup = [&](const Vec3& d) { return hullBody->SupportWorld(d); };
-        // A = triangle, B = hull, so the normal points triangle -> hull.
-        ConvexHit hit = ConvexContact(triSup, hullSup);
-        if (!hit.hit || !std::isfinite(hit.penetration)) return;
-        if (!best.hit || hit.penetration > best.penetration) {
-            best.hit = true; best.normal = hit.normal; best.point = hit.point;
-            best.penetration = hit.penetration;
-        }
-    });
-    return best;
-}
 
 // An oriented box: center, half-extents, and its three world-space unit axes.
 struct OBB3 { Vec3 c, h, ax, ay, az; };
@@ -273,7 +186,27 @@ Vec3 SupportBase(Collider3D* col, const Vec3& dir) {
         Vec3 end = Vec3::Dot(dir, b - a) >= 0.0f ? b : a;
         return end + d * c->WorldRadius();
     }
-    return OBB3Support(MakeOBB3(static_cast<BoxCollider3D*>(col)), dir);
+    if (col->shape() == Collider3D::Shape::Box) return OBB3Support(MakeOBB3(static_cast<BoxCollider3D*>(col)), dir);
+    // Every other shape must not be read as a box: a Compound's part text sits where a box keeps its size, so the
+    // "size" was a heap address and the answer changed from run to run (the floor rescue then moved compound bodies
+    // differently each run, and a fast compound fell through thin floors).
+    if (col->shape() == Collider3D::Shape::Compound) {   // the furthest point of any part
+        auto* cc = static_cast<CompoundCollider3D*>(col);
+        const int n = cc->PartCount();
+        if (n == 0) return col->WorldCenter();
+        Vec3 best = cc->PartSupport(0, dir);
+        float bestD = Vec3::Dot(best, dir);
+        for (int i = 1; i < n; ++i) {
+            const Vec3 p = cc->PartSupport(i, dir);
+            const float pd = Vec3::Dot(p, dir);
+            if (pd > bestD) { bestD = pd; best = p; }
+        }
+        return best;
+    }
+    // Plane, Heightfield, a triangle mesh without a hull: the corner of the world bounding box furthest along dir.
+    Vec3 mn, mx;
+    col->WorldAABB(mn, mx);
+    return {dir.x >= 0.0f ? mx.x : mn.x, dir.y >= 0.0f ? mx.y : mn.y, dir.z >= 0.0f ? mx.z : mn.z};
 }
 // The same, grown by the collider's contact offset (a skin).
 Vec3 SupportOf(Collider3D* col, const Vec3& dir) {
@@ -283,14 +216,6 @@ Vec3 SupportOf(Collider3D* col, const Vec3& dir) {
         p = p + (m > 1e-12f ? dir * (col->contactOffset / m) : Vec3{0, 1, 0} * col->contactOffset);
     }
     return p;
-}
-Contact ConvexPair(Collider3D* a, Collider3D* b) {
-    ConvexHit h = ConvexContact([&](const Vec3& d) { return SupportOf(a, d); },
-                                [&](const Vec3& d) { return SupportOf(b, d); });
-    Contact c;
-    if (!h.hit) return c;
-    c.hit = true; c.normal = h.normal; c.penetration = h.penetration; c.point = h.point;
-    return c;
 }
 
 // ---- The shapes with their own exact tests: Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield ----
@@ -384,68 +309,6 @@ Contact GenericVs(Collider3D* col, const SupFn& supB, const Vec3& bmn, const Vec
     }
     return best;
 }
-// Pair test when at least one collider is a generic shape. Normal points A toward B.
-Contact TestGeneric(Collider3D* a, Collider3D* b) {
-    if (IsFieldShape(a) && IsFieldShape(b)) return {};
-    bool flip = false;
-    if (IsFieldShape(b)) { std::swap(a, b); flip = true; }
-    std::vector<Piece> pb; PiecesOf(b, pb);
-    Contact best;
-    for (const Piece& p : pb) {
-        Contact c = GenericVs(a, p.sup, p.mn, p.mx);
-        if (c.hit && (!best.hit || c.penetration > best.penetration)) best = c;
-    }
-    if (flip && best.hit) best.normal = best.normal * -1.0f;
-    return best;
-}
-// Deepest contact of a static triangle mesh against one generic shape. The normal points from the mesh toward the shape.
-trimesh::Contact TrisVsGeneric(MeshCollider3D* mesh, Collider3D* other) {
-    trimesh::Contact best;
-    if (IsFieldShape(other) || !mesh->HasTriangles()) return best;
-    std::vector<Piece> ps; PiecesOf(other, ps);
-    Mat4 l2w = mesh->WorldMatrix(), w2l = l2w.Inverse();
-    for (const Piece& p : ps) {
-        Vec3 lmn{1e30f, 1e30f, 1e30f}, lmx{-1e30f, -1e30f, -1e30f};
-        for (int i = 0; i < 8; ++i) {
-            Vec3 q = w2l.MultiplyPoint({i & 1 ? p.mx.x : p.mn.x, i & 2 ? p.mx.y : p.mn.y, i & 4 ? p.mx.z : p.mn.z});
-            lmn = Vec3::Min(lmn, q); lmx = Vec3::Max(lmx, q);
-        }
-        Vec3 pad = (lmx - lmn) * 1e-4f + Vec3(1e-4f, 1e-4f, 1e-4f);
-        lmn = lmn - pad; lmx = lmx + pad;
-        mesh->Tris().QueryAABB(lmn, lmx, [&](int ti) {
-            Vec3 la, lb, lc;
-            mesh->Tris().Triangle(ti, la, lb, lc);
-            Vec3 a = l2w.MultiplyPoint(la), b = l2w.MultiplyPoint(lb), c = l2w.MultiplyPoint(lc);
-            auto triSup = [&](const Vec3& d) {
-                Vec3 bv = a; float bd = Vec3::Dot(a, d);
-                float db = Vec3::Dot(b, d); if (db > bd) { bd = db; bv = b; }
-                float dc = Vec3::Dot(c, d); if (dc > bd) bv = c;
-                return bv;
-            };
-            ConvexHit h = ConvexContact(triSup, p.sup);
-            if (!h.hit || !std::isfinite(h.penetration)) return;
-            if (!best.hit || h.penetration > best.penetration) {
-                best.hit = true; best.normal = h.normal; best.point = h.point; best.penetration = h.penetration;
-            }
-        });
-    }
-    return best;
-}
-// The point of segment a-b nearest to a box, found by alternating nearest points (a box and a segment are both convex, so
-// this settles on the true closest pair). Used for capsule-versus-box so a capsule lying across a corner touches at the
-// corner, not at the point nearest the box's middle.
-Vec3 SegmentNearBox(const OBB3& o, const Vec3& a, const Vec3& b) {
-    auto onBox = [&](const Vec3& p) {
-        Vec3 d = p - o.c;
-        float x = Mathf::Clamp(Vec3::Dot(d, o.ax), -o.h.x, o.h.x);
-        float y = Mathf::Clamp(Vec3::Dot(d, o.ay), -o.h.y, o.h.y);
-        float z = Mathf::Clamp(Vec3::Dot(d, o.az), -o.h.z, o.h.z);
-        return o.c + o.ax * x + o.ay * y + o.az * z;
-    };
-    Vec3 p = ClosestOnSegment(o.c, a, b);
-    for (int it = 0; it < 4; ++it) p = ClosestOnSegment(onBox(p), a, b);
-    return p;
-}
 // Separating-axis test between two oriented boxes (15 axes: 3+3 faces, 9 edge
 // cross-products). Normal points A -> B.
 Contact TestOBB3OBB3(const OBB3& A, const OBB3& B) {
@@ -489,101 +352,7 @@ Contact TestOBB3Sphere(const OBB3& box, const Vec3& sc, float r) {
     return c;
 }
 
-Contact TestColliders(Collider3D* a, Collider3D* b) {
-    using S = Collider3D::Shape;
-    S sa = a->shape(), sb = b->shape();
 
-    // An exact (static / kinematic) triangle mesh is resolved in the mesh pass, so a
-    // solid pair is not also blocked here as a box. Triggers are reported here.
-    // A dynamic mesh is a convex hull and is solved with the other convex shapes below.
-    if (ExactMesh(a) || ExactMesh(b)) {
-        Contact out;
-        if (!(a->isTrigger || b->isTrigger)) return out;
-        MeshCollider3D* ma = ExactMesh(a) ? static_cast<MeshCollider3D*>(a) : nullptr;
-        MeshCollider3D* mb = ExactMesh(b) ? static_cast<MeshCollider3D*>(b) : nullptr;
-        if (ma && mb) return out;                          // two triangle meshes: no mesh-mesh test
-        if ((ma && UsesHull(b)) || (mb && UsesHull(a))) {
-            MeshCollider3D* mesh = ma ? ma : mb;
-            MeshCollider3D* hull = ma ? static_cast<MeshCollider3D*>(b) : static_cast<MeshCollider3D*>(a);
-            trimesh::Contact mc = HullAgainstMesh(hull, mesh);
-            if (!mc.hit) return out;
-            out.hit = true; out.penetration = mc.penetration; out.point = mc.point;
-            out.normal = ma ? mc.normal : mc.normal * -1.0f;   // A -> B (mc points mesh -> hull)
-            return out;
-        }
-        trimesh::Contact mc = ma ? MeshVsShape(ma, b) : MeshVsShape(mb, a);
-        if (!mc.hit) return out;
-        out.hit = true; out.penetration = mc.penetration; out.point = mc.point;
-        out.normal = ma ? mc.normal : mc.normal * -1.0f;   // A -> B
-        return out;
-    }
-    // The shapes with their own exact tests (Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield).
-    if (IsGenericShape(a) || IsGenericShape(b)) return TestGeneric(a, b);
-    // Dynamic mesh bodies: convex hull against any other convex shape (hull, box, sphere, capsule).
-    if (UsesHull(a) || UsesHull(b)) return ConvexPair(a, b);
-    // A contact offset (a skin) grows the shape: the exact convex test handles it for every convex pair.
-    if ((a->contactOffset > 0.0f || b->contactOffset > 0.0f) && !(MeshHasTris(a) || MeshHasTris(b))) return ConvexPair(a, b);
-    // A dynamic mesh that has triangles but no hull is refused (see IsDynamicConflict).
-    if ((a->shape() == S::Mesh && static_cast<MeshCollider3D*>(a)->IsDynamicConflict()) ||
-        (b->shape() == S::Mesh && static_cast<MeshCollider3D*>(b)->IsDynamicConflict())) {
-        return {};
-    }
-
-    // Capsule/cylinder vs capsule/cylinder: closest points between the two segments.
-    if (IsCapsuleLike(sa) && IsCapsuleLike(sb)) {
-        auto* ca = static_cast<CapsuleCollider3D*>(a);
-        auto* cb = static_cast<CapsuleCollider3D*>(b);
-        Vec3 a0, a1, b0, b1; ca->Segment(a0, a1); cb->Segment(b0, b1);
-        Vec3 pa, pb; ClosestSegSeg(a0, a1, b0, b1, pa, pb);
-        return TestSphereSphere(pa, ca->WorldRadius(), pb, cb->WorldRadius());
-    }
-
-    bool aBox = IsBoxLike(sa), bBox = IsBoxLike(sb);
-    if (aBox && bBox) {
-        return TestOBB3OBB3(MakeOBB3(static_cast<BoxCollider3D*>(a)),
-                            MakeOBB3(static_cast<BoxCollider3D*>(b)));
-    }
-    if (aBox) { // A box, B sphere/capsule
-        auto* box = static_cast<BoxCollider3D*>(a);
-        Vec3 sc; float sr; AsSphere(b, box->WorldCenter(), sc, sr);
-        if (IsCapsuleLike(sb)) { Vec3 s0, s1; static_cast<CapsuleCollider3D*>(b)->Segment(s0, s1); sc = SegmentNearBox(MakeOBB3(box), s0, s1); }
-        return TestOBB3Sphere(MakeOBB3(box), sc, sr);
-    }
-    if (bBox) { // A sphere/capsule, B box
-        auto* box = static_cast<BoxCollider3D*>(b);
-        Vec3 sc; float sr; AsSphere(a, box->WorldCenter(), sc, sr);
-        if (IsCapsuleLike(sa)) { Vec3 s0, s1; static_cast<CapsuleCollider3D*>(a)->Segment(s0, s1); sc = SegmentNearBox(MakeOBB3(box), s0, s1); }
-        Contact c = TestOBB3Sphere(MakeOBB3(box), sc, sr);
-        c.normal = -c.normal; // flip to point from A toward B
-        return c;
-    }
-    // Sphere/capsule vs sphere/capsule.
-    Vec3 ac, bc; float ar, br;
-    AsSphere(a, b->WorldCenter(), ac, ar);
-    AsSphere(b, a->WorldCenter(), bc, br);
-    return TestSphereSphere(ac, ar, bc, br);
-}
-
-// Inverse moment of inertia about the center, as an isotropic scalar (exact for
-// spheres; a good stable approximation for boxes/capsules). 0 when rotation is
-// locked, mass is infinite, or there's no collider to size the inertia from.
-float InvInertia(Rigidbody3D* rb, Collider3D* col) {
-    if (!rb || rb->freezeRotation || !col) return 0.0f;
-    if (rb->InvMass() <= 0.0f) return 0.0f;
-    float mass = rb->mass, I;
-    Vec3 mcom, mui; float mvol;
-    if (col->MassShape(mcom, mvol, mui)) {                 // an exact solid: its own inertia (averaged: this solver turns as one number)
-        I = mass * (mui.x + mui.y + mui.z) / 3.0f;
-    } else if (col->shape() == Collider3D::Shape::Sphere) {
-        float r = static_cast<SphereCollider3D*>(col)->WorldRadius();
-        I = 0.4f * mass * r * r;
-    } else {
-        Vec3 mn, mx; col->WorldAABB(mn, mx);
-        float w = mx.x - mn.x, h = mx.y - mn.y, d = mx.z - mn.z;
-        I = mass * (w * w + h * h + d * d) / 12.0f;   // isotropic box approximation
-    }
-    return I > 1e-8f ? 1.0f / I : 0.0f;
-}
 
 // Components a callback removes are skipped (`gone`), so a handler that removes
 // a sibling component (or its own collider/body) never runs a freed one. Once the
@@ -629,6 +398,25 @@ Collision3D MakeCollision(Collider3D* other, const Vec3& n, float pen, const Vec
 }
 
 // Does trigger collider `trig` react to `other`? (its tag / layer filter)
+// Two colliders stopped touching: OnTriggerExit3D (at the midpoint of their centres) or OnCollisionExit3D, to both.
+// (Shared by every physics quality.)
+void DispatchExit(Collider3D* a, Collider3D* b, const Scene::RemovalWatch& gone) {
+    if (a->isTrigger || b->isTrigger) {
+        // No overlap any more: report the midpoint between the two centres.
+        Vec3 mid = (a->WorldCenter() + b->WorldCenter()) * 0.5f;
+        Vec3 n = (b->WorldCenter() - a->WorldCenter()).Normalized();
+        DispatchTrigger(a, &Component::OnTriggerExit3D, b, mid, n, gone);
+        if (!gone.Gone(a) && !gone.Gone(b))
+            DispatchTrigger(b, &Component::OnTriggerExit3D, a, mid, -n, gone);
+    } else {
+        Collision3D forA = MakeCollision(b, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero, a);
+        Collision3D forB = MakeCollision(a, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero, b);
+        DispatchCollision(a->gameObject, &Component::OnCollisionExit3D, forA, gone);
+        if (!gone.Gone(a) && !gone.Gone(b))
+            DispatchCollision(b->gameObject, &Component::OnCollisionExit3D, forB, gone);
+    }
+}
+
 bool TriggerAccepts(const Collider3D* trig, const Collider3D* other) {
     if (!trig->isTrigger) return true;
     if (!trig->triggerTag.empty() && (!other->gameObject || other->gameObject->tag != trig->triggerTag))
@@ -645,643 +433,123 @@ bool RayCollider(Collider3D* c, const Vec3& o, const Vec3& d, float maxT, float&
 bool RayTerrain(Terrain* terr, const Vec3& origin, const Vec3& dir, float maxT, float& tOut, Vec3& nOut);
 bool TerrainPasses(Terrain* terr, GameObject* ignore, std::uint32_t mask);
 
-/// Downward rays for CatchTunneledFloor. That catch casts one vertical ray for every falling body, and Physics3D::Raycast
-/// measures every collider's world box for every ray: 500 falling bodies meant 250,000 box measurements in one step (38 percent
-/// of the frame in tests/bench_frame.cpp's bodies500 scene, docs/engine/perf_log.md). The boxes do not move while the catch loop runs
-/// (except when it lifts a body, which drops the index), so they are measured once and put in a grid over the ground plane; a vertical
-/// ray then only looks at the colliders whose box covers its column. Cast() returns exactly what Raycast returns for the same downward
-/// ray: the same filters, the same box test arithmetic, the same shape tests, colliders tried in the same order (a tie goes to the later
-/// one), then the terrains. Colliders whose box the grid cannot place (not finite, very far out, covering many cells) are tried for every ray.
-struct DownRays {
-    std::vector<Collider3D*> colliders;          // what Raycast would walk, in its order
-    std::vector<Terrain*> terrains;
-    std::function<void()> fetch;                 // fills colliders and terrains; run at the first ray, so a step that casts none pays nothing
-    bool built = false;
-    std::vector<Vec3> mn, mx;                    // each collider's world box, as Raycast measures it
-    std::vector<int> always;                     // indices tried for every ray (ascending)
-    float cell = 1.0f, x0 = 0.0f, z0 = 0.0f;
-    int nx = 0, nz = 0;
-    std::vector<int> cellStart, cellItems;       // per cell, the collider indices that cover it (ascending)
 
-    static constexpr float kMargin = 0.05f;      // slack on every box so rounding at the cell edges never loses a collider
-    static constexpr int kMaxCellsPerBox = 24;
-
-    void Build() {
-        built = true;
-        const std::size_t n = colliders.size();
-        mn.assign(n, Vec3{}); mx.assign(n, Vec3{});
-        always.clear(); cellStart.clear(); cellItems.clear(); nx = nz = 0;
-        std::vector<char> placed(n, 0);
-        std::vector<float> extent;
-        float lox = 1e30f, loz = 1e30f, hix = -1e30f, hiz = -1e30f;
-        for (std::size_t i = 0; i < n; ++i) {
-            colliders[i]->WorldAABB(mn[i], mx[i]);
-            const float s6 = mn[i].x + mn[i].y + mn[i].z + mx[i].x + mx[i].y + mx[i].z;
-            const float big = std::fmax(std::fmax(std::fabs(mn[i].x), std::fabs(mx[i].x)), std::fmax(std::fabs(mn[i].z), std::fabs(mx[i].z)));
-            if (!std::isfinite(s6) || !(big < 1.0e5f)) { always.push_back((int)i); continue; }
-            placed[i] = 1;
-            lox = std::fmin(lox, mn[i].x - kMargin); hix = std::fmax(hix, mx[i].x + kMargin);
-            loz = std::fmin(loz, mn[i].z - kMargin); hiz = std::fmax(hiz, mx[i].z + kMargin);
-            extent.push_back(std::fmax(mx[i].x - mn[i].x, mx[i].z - mn[i].z));
-        }
-        if (extent.empty()) return;
-        std::nth_element(extent.begin(), extent.begin() + (long)(extent.size() / 2), extent.end());
-        cell = std::fmax(1.0f, 2.0f * extent[extent.size() / 2]);
-        cell = std::fmax(cell, std::fmax((hix - lox) / 200.0f, (hiz - loz) / 200.0f));   // at most about 200 x 200 cells
-        x0 = lox; z0 = loz;
-        nx = (int)((hix - lox) / cell) + 1; nz = (int)((hiz - loz) / cell) + 1;
-        auto range = [&](std::size_t i, int& cx0, int& cx1, int& cz0, int& cz1) {
-            cx0 = (int)std::floor((mn[i].x - kMargin - x0) / cell); cx1 = (int)std::floor((mx[i].x + kMargin - x0) / cell);
-            cz0 = (int)std::floor((mn[i].z - kMargin - z0) / cell); cz1 = (int)std::floor((mx[i].z + kMargin - z0) / cell);
-            cx0 = std::max(cx0, 0); cz0 = std::max(cz0, 0); cx1 = std::min(cx1, nx - 1); cz1 = std::min(cz1, nz - 1);
-        };
-        std::vector<int> count((std::size_t)nx * (std::size_t)nz + 1, 0);
-        std::vector<char> inGrid(n, 0);
-        for (std::size_t i = 0; i < n; ++i) {
-            if (!placed[i]) continue;
-            int cx0, cx1, cz0, cz1; range(i, cx0, cx1, cz0, cz1);
-            if (cx1 < cx0 || cz1 < cz0) continue;                                    // (cannot happen: the grid covers every box)
-            if ((cx1 - cx0 + 1) * (cz1 - cz0 + 1) > kMaxCellsPerBox) { always.push_back((int)i); continue; }
-            inGrid[i] = 1;
-            for (int cz = cz0; cz <= cz1; ++cz) for (int cx = cx0; cx <= cx1; ++cx) ++count[(std::size_t)cz * nx + cx + 1];
-        }
-        std::sort(always.begin(), always.end());
-        cellStart.assign(count.size(), 0);
-        for (std::size_t k = 1; k < count.size(); ++k) cellStart[k] = cellStart[k - 1] + count[k];
-        cellItems.assign((std::size_t)cellStart.back(), 0);
-        std::vector<int> fill(cellStart.begin(), cellStart.end() - 1);
-        for (std::size_t i = 0; i < n; ++i) {                                         // ascending: each cell's list comes out ascending
-            if (!inGrid[i]) continue;
-            int cx0, cx1, cz0, cz1; range(i, cx0, cx1, cz0, cz1);
-            for (int cz = cz0; cz <= cz1; ++cz) for (int cx = cx0; cx <= cx1; ++cx) cellItems[(std::size_t)fill[(std::size_t)cz * nx + cx]++] = (int)i;
-        }
-    }
-
-    RaycastHit3D Cast(const Vec3& origin, float maxDistance, GameObject* ignore, std::uint32_t mask, bool queryTriggers) {
-        if (fetch) { fetch(); fetch = nullptr; }
-        if (!built) Build();
-        RaycastHit3D best;
-        best.distance = maxDistance;
-        const Vec3 dir = Vec3{0.0f, -1.0f, 0.0f}.Normalized();     // as Raycast normalises the direction it is given
-        // The colliders that can matter: those covering this column, and those tried for every ray, in collider order.
-        std::vector<int> candidates;
-        if (nx > 0) {
-            // (compared as floats before the cast: a huge but finite position must not overflow an int)
-            const float fx = std::floor((origin.x - x0) / cell), fz = std::floor((origin.z - z0) / cell);
-            if (fx >= 0.0f && fx < (float)nx && fz >= 0.0f && fz < (float)nz) {
-                const int cx = (int)fx, cz = (int)fz;
-                const int a = cellStart[(std::size_t)cz * nx + cx], b = cellStart[(std::size_t)cz * nx + cx + 1];
-                candidates.assign(cellItems.begin() + a, cellItems.begin() + b);
-            }
-        }
-        if (!always.empty()) {
-            std::vector<int> merged;
-            merged.reserve(candidates.size() + always.size());
-            std::merge(candidates.begin(), candidates.end(), always.begin(), always.end(), std::back_inserter(merged));
-            candidates.swap(merged);
-        }
-        for (int idx : candidates) {
-            Collider3D* c = colliders[(std::size_t)idx];
-            if (!Passes(c, ignore, mask, queryTriggers)) continue;
-            const Vec3 pad = (mx[(std::size_t)idx] - mn[(std::size_t)idx]) * 1e-4f + Vec3(1e-3f, 1e-3f, 1e-3f);   // RayNearBounds, with the stored box
-            float t0, t1;
-            if (!(RaySlabs(origin, dir, mn[(std::size_t)idx] - pad, mx[(std::size_t)idx] + pad, t0, t1) && t1 >= 0.0f && t0 <= best.distance)) continue;
-            float t; Vec3 n;
-            if (RayCollider(c, origin, dir, best.distance, t, n) && t <= best.distance) {
-                best.hit = true; best.collider = c; best.gameObject = c->gameObject;
-                best.distance = t; best.point = origin + dir * t; best.normal = n;
-            }
-        }
-        for (Terrain* terr : terrains) {
-            if (!TerrainPasses(terr, ignore, mask)) continue;
-            float t; Vec3 n;
-            if (RayTerrain(terr, origin, dir, best.distance, t, n) && t <= best.distance) {
-                best.hit = true; best.collider = nullptr; best.gameObject = terr->gameObject;
-                best.distance = t; best.point = origin + dir * t; best.normal = n;
-            }
-        }
-        return best;
-    }
-};
-
-/// A fast fall or a low frame rate can step a body through a thin floor. The
-/// voxel and mesh paths already march their own probes; a box floor does not.
-/// If the feet dropped through a static surface they were just standing on,
-/// put them back on it. A miss (walked off the edge) and a jump that is still
-/// above the hit are left alone.
-bool CatchTunneledFloor(Scene& scene, Rigidbody3D* rb, DownRays* rays) {
-    if (!rb || !rb->hasPrevPos || !rb->transform || !rb->gameObject) return false;
-    if (!rb->enabled || !rb->gameObject->ActiveInHierarchy()) return false;
-    if (rb->bodyType != Rigidbody3D::BodyType::Dynamic || rb->freezeY) return false;
-    Collider3D* col = rb->gameObject->GetComponent<Collider3D>();
-    if (!col || !col->enabled || col->isTrigger) return false;
-    const Vec3 pos = rb->transform->Position();
-    if (!std::isfinite(pos.x) || !std::isfinite(pos.y) || !std::isfinite(pos.z)) return false;
-    // The foot is the lowest point of the shape, and the floor is looked for under THAT point. (It used to be the bottom of the
-    // bounding box under the body's centre, which on a slope is always "below the floor": every step the body was lifted and its
-    // downward speed cleared, so nothing could slide down a ramp.)
-    const Vec3 foot = SupportOf(col, Vec3{0.0f, -1.0f, 0.0f});
-    if (!std::isfinite(foot.x + foot.y + foot.z)) return false;
-    float footOff = pos.y - foot.y;
-    if (footOff < 0.0f) footOff = 0.0f;
-    const float curFoot = foot.y;
-    const float prevFoot = rb->prevPos.y - footOff;
-    if (!(curFoot < prevFoot - 1.0e-4f)) return false;
-    const float startY = std::max(prevFoot, curFoot) + 1.25f;
-    const float reach = startY - curFoot + 0.05f;
-    if (!(reach > 0.05f)) return false;
-    Physics3D::IgnoreHierarchy own(rb->gameObject);
-    const RaycastHit3D hit = rays
-        ? rays->Cast(Vec3{foot.x, startY, foot.z}, reach, rb->gameObject, scene.physics3D().CollisionMask(col->layer), /*queryTriggers=*/false)
-        : scene.physics3D().Raycast(
-              scene, Vec3{foot.x, startY, foot.z}, Vec3{0.0f, -1.0f, 0.0f},
-              reach, rb->gameObject, scene.physics3D().CollisionMask(col->layer), /*queryTriggers=*/false);
-    if (!hit.hit || hit.normal.y <= 0.55f) return false;
-    // A dynamic mesh with no convex hull is refused: never lift onto it.
-    if (hit.collider && hit.collider->shape() == Collider3D::Shape::Mesh &&
-        static_cast<MeshCollider3D*>(hit.collider)->IsDynamicConflict()) return false;
-    if (!(curFoot < hit.point.y - 0.02f)) return false;
-    if (!(prevFoot >= hit.point.y - 0.35f)) return false;
-    const float lift = hit.point.y - curFoot;
-    if (!(lift > 0.0f && lift <= 2.5f)) return false;
-    MoveBodyWorld(rb->transform, Vec3{0.0f, lift, 0.0f});
-    if (rb->velocity.y < 0.0f) rb->velocity.y = 0.0f;
-    if (rb->sleeping) rb->WakeUp();
-    return true;   // the body moved: a ray index built before this is out of date
-}
 
 } // namespace
 
-#include "Physics3DImproved.inl"   // the Improved step (iterated contacts, sleeping groups, swept fast bodies)
+namespace {
+/// The body a collider belongs to: the Rigidbody3D on its object, else (only when that ancestor asks for it with
+/// `compoundChildren`) the nearest ancestor's body. nullptr = a static collider.
+Rigidbody3D* BodyOfCollider(Collider3D* c) {
+    GameObject* g = c ? c->gameObject : nullptr;
+    if (!g) return nullptr;
+    if (Rigidbody3D* r = g->GetComponent<Rigidbody3D>()) return r;
+    if (!g->transform) return nullptr;
+    for (Transform* t = g->transform->Parent(); t; t = t->Parent()) {
+        GameObject* pg = t->gameObject;
+        if (!pg) break;
+        if (Rigidbody3D* r = pg->GetComponent<Rigidbody3D>()) return r->compoundChildren ? r : nullptr;
+    }
+    return nullptr;
+}
+} // namespace
+
+Physics3D::Physics3D() { for (int i = 0; i < 32; ++i) m_layerMask[i] = 0xFFFFFFFFu; }
+
+/// The collider's centre: its offset turns and scales with the object, as a child at that local position would.
+Vec3 Collider3D::WorldCenter() const {
+    Vec3 p = transform ? transform->Position() : Vec3::Zero;
+    if (offset.x == 0.0f && offset.y == 0.0f && offset.z == 0.0f) return p;
+    if (!transform) return p + offset;
+    const Vec3 sc = transform->LossyScale();
+    return p + transform->Rotation() * Vec3{offset.x * sc.x, offset.y * sc.y, offset.z * sc.z};
+}
 
 void Physics3D::BeginDebugFrame() {
     m_debugRays.clear(); m_debugContacts.clear(); m_debugBodies.clear(); m_debugJoints.clear();
     MeshCollider3D::AdvanceEpoch();   // mesh colliders re-check their mesh data this frame
 }
 
+// One physics path: our own physics engine core (okay::phys, engine/include/okay/Physics/Core) moves every body,
+// finds every contact and solves every joint (Physics3DEngine.inl). What the core has no shape for yet is done here
+// after it: voxel terrain (a density field with caves) and the "standing on terrain" signals that character code reads.
 void Physics3D::Step(Scene& scene, float dt) {
     if (dt <= 0.0f) return;
-    if (quality == PhysicsQuality::Improved && dt > kMaxSolveSlice * 1.001f) {
-        const int n = (int)std::ceil(dt / kMaxSolveSlice - 0.001f);
-        for (int i = 0; i < n; ++i) StepSlice(scene, dt / (float)n);
-        return;
+    // a long step (30 steps a second, a slow frame) is solved in equal slices no longer than kMaxSolveSlice
+    const int slices = dt > kMaxSolveSlice * 1.001f ? (int)std::ceil(dt / kMaxSolveSlice - 0.001f) : 1;
+    for (int i = 0; i < slices; ++i) StepEngine(scene, dt / (float)slices);
+    StepTerrain(scene);
+
+    // Debug view: every moving body (a box around it, sleeping ones marked) and every joint (the line it holds).
+    if (PhysicsDebug::Collect()) {
+        for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
+            if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
+            if (rb->bodyType == Rigidbody3D::BodyType::Static || (int)m_debugBodies.size() >= PhysicsDebug::kMaxBodies) continue;
+            Collider3D* col = rb->gameObject->GetComponent<Collider3D>();
+            if (!col) continue;
+            Vec3 mn, mx; col->WorldAABB(mn, mx);
+            if (!std::isfinite(mn.x + mn.y + mn.z + mx.x + mx.y + mx.z)) continue;
+            m_debugBodies.push_back({(mn + mx) * 0.5f, (mx - mn) * 0.5f, rb->sleeping});
+        }
+        for (Joint3D* j : CachedComponents<Joint3D>(scene)) {
+            if (!j->gameObject || !j->transform || (int)m_debugJoints.size() >= PhysicsDebug::kMaxBodies) continue;
+            GameObject* other = Joint3DPartner(scene, j);
+            m_debugJoints.push_back({j->transform->Position(), other && other->transform ? other->transform->Position() : j->anchor, j->broken});
+        }
     }
-    StepSlice(scene, dt);
+
+    // Record where every moving body ended up (the voxel terrain's swept catch reads it next step).
+    for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
+        if (rb->bodyType == Rigidbody3D::BodyType::Static || !rb->transform) continue;
+        rb->prevPos = rb->transform->Position();
+        rb->hasPrevPos = true;
+    }
 }
 
-void Physics3D::StepSlice(Scene& scene, float dt) {
-    MeshCollider3D::AdvanceEpoch();
-
-    // Sleeping thresholds: under these speeds for kSleepTime seconds, a dynamic body
-    // sleeps (skipped until woken). Mirrors the PhysX rest optimisation.
-    constexpr float kLinSleep = 0.05f;   // world units / second
-    constexpr float kAngSleep = 0.05f;   // radians / second
-    constexpr float kSleepTime = 0.5f;   // seconds at rest before sleeping
-
-    // 1) Integrate dynamic / kinematic bodies.
-    auto bodies = CachedComponents<Rigidbody3D>(scene);
-    m_stats = PhysicsStepStats{};
-    // A slider remembers where it started (the offset between its two ends) before anything moves it this step.
-    const std::vector<Joint3D*> allJoints = CachedComponents<Joint3D>(scene);   // (one walk of the scene, used again by the joint pass)
-    for (Joint3D* j : allJoints) {
-        if (j->initialized || (Joint3D::Mode)j->mode != Joint3D::Mode::Slider || !j->gameObject || !j->transform) continue;
-        GameObject* other = CachedPartner(scene, j);
-        j->pinOffset = j->transform->Position() - (other && other->transform ? other->transform->Position() : j->anchor);
-        j->restLen = j->autoConfigure ? j->pinOffset.Magnitude() : j->distance;
-        j->hingeLever = Vec3::Zero;
-        j->refRot = j->transform->localRotation;
-        j->initialized = true;
-    }
-    const bool improved = quality == PhysicsQuality::Improved;   // the iterated contact step (see Physics3DImproved.inl)
-    if (improved) {
-        if (!m_solver) m_solver = std::make_unique<Solver>();
-        m_solver->Begin(bodies, dt, solverIterations);
-    }
-    for (Rigidbody3D* rb : bodies) {
-        if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
-        Transform* t = rb->transform;
-        // A sleeping body holds position until woken; a directly-set velocity above
-        // the threshold wakes it so scripted moves/teleports still take effect.
-        if (rb->bodyType == Rigidbody3D::BodyType::Dynamic && rb->sleeping) {
-            if (rb->velocity.SqrMagnitude() > kLinSleep * kLinSleep ||
-                rb->angularVelocity.SqrMagnitude() > kAngSleep * kAngSleep) {
-                rb->WakeUp();
-            } else {
-                rb->ConsumeForce(); rb->ConsumeTorque();
-                continue;
-            }
-        }
-        if (rb->bodyType == Rigidbody3D::BodyType::Dynamic) {
-            Vec3 accel = gravity * rb->gravityScale + rb->ConsumeForce() * rb->InvMass();
-            rb->velocity = rb->velocity + accel * dt;
-            if (rb->drag > 0.0f) rb->velocity = rb->velocity * (1.0f / (1.0f + rb->drag * dt));
-            if (rb->maxFallSpeed > 0.0f && rb->velocity.y < -rb->maxFallSpeed)
-                rb->velocity.y = -rb->maxFallSpeed;   // clamp terminal fall speed
-        }
-        if (rb->freezeX) rb->velocity.x = 0.0f;
-        if (rb->freezeY) rb->velocity.y = 0.0f;
-        if (rb->freezeZ) rb->velocity.z = 0.0f;
-        // Angular: apply accumulated torque (scaled by inverse inertia) and damp.
-        if (rb->bodyType == Rigidbody3D::BodyType::Dynamic && !rb->freezeRotation) {
-            if (improved) {   // real inertia of the shape (a plank turns easily about its length)
-                const Vec3 tq = rb->ConsumeTorque();
-                if (tq.SqrMagnitude() > 0.0f) rb->angularVelocity = rb->angularVelocity + InverseInertia(ComputeMassProps(rb).I) * tq * dt;
-            } else {
-                float invI = InvInertia(rb, rb->gameObject->GetComponent<Collider3D>());
-                rb->angularVelocity = rb->angularVelocity + rb->ConsumeTorque() * (invI * dt);
-            }
-            if (rb->angularDrag > 0.0f) rb->angularVelocity = rb->angularVelocity * (1.0f / (1.0f + rb->angularDrag * dt));
-        } else {
-            rb->ConsumeTorque();   // discard so it doesn't accumulate while frozen
-        }
-        if (!improved && rb->bodyType != Rigidbody3D::BodyType::Static) {   // (Improved moves bodies after the solve)
-            if (rb->continuousCollision) SweepBody(scene, rb, dt);   // stops at walls it would skip
-            else MoveBodyWorld(t, rb->velocity * dt);
-            // Integrate orientation: q += 0.5 * (ω as quat) * q * dt, renormalized.
-            if (!rb->freezeRotation && rb->angularVelocity.SqrMagnitude() > 1e-12f)
-                SpinBodyWorld(t, rb->angularVelocity, dt);
-        }
-    }
-
-    // 2) Broad + narrow phase over every collider pair.
-    auto colliders = CachedComponents<Collider3D>(scene);
-    std::set<Pair> current;
-    ++m_restStep;   // (Classic) m_restContacts: sleeping bodies resting on something without overlapping it; entries found this step carry this number
-    // Contact callbacks below may remove colliders / bodies (RemoveComponent frees
-    // them at once); every raw pointer held across a callback is checked first.
-    Scene::RemovalWatch gone(scene);
-
-    // Precompute each collider's world AABB once per step (it was recomputed O(n)
-    // times per collider inside the pair loop) and a fast membership set used by the
-    // exit-message cleanup below (was an O(contacts*colliders) linear scan).
-    const std::size_t nc = colliders.size();
-    std::vector<Vec3> aabbMin(nc), aabbMax(nc);
-    // A body whose pose or velocity went non-finite (NaN/inf) is left out of the
-    // contact phase: NaN fails every AABB rejection test, so it would "touch"
-    // everything and spread NaN into each body it's resolved against.
-    std::vector<char> finite(nc, 1);
-    std::unordered_set<Collider3D*> aliveSet;
-    aliveSet.reserve(nc * 2 + 1);
-    auto fin3 = [](const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); };
-    for (std::size_t i = 0; i < nc; ++i) {
-        colliders[i]->WorldAABB(aabbMin[i], aabbMax[i]);
-        aliveSet.insert(colliders[i]);
-        const Rigidbody3D* r = colliders[i]->gameObject->GetComponent<Rigidbody3D>();
-        finite[i] = fin3(aabbMin[i]) && fin3(aabbMax[i]) &&
-                    (!r || (fin3(r->velocity) && fin3(r->angularVelocity)));
-    }
-
-    // Broad phase: the pairs whose precomputed AABBs overlap (a NaN body, left out by `finite`, touches nothing), in
-    // the order the old all-pairs loop visited them: the solver applies impulses in pair order. The sweep (see
-    // Physics/Broadphase.hpp) finds them without comparing every collider with every other.
-    std::vector<broadphase::Box> boxes(nc);
-    for (std::size_t i = 0; i < nc; ++i) {
-        // (Improved looks at solid pairs within the contact skin of each other, so the boxes are grown by the skin; the exact test follows below.)
-        const float pad = improved ? kImpSkin : 0.0f;
-        boxes[i].lo[0] = aabbMin[i].x - pad; boxes[i].lo[1] = aabbMin[i].y - pad; boxes[i].lo[2] = aabbMin[i].z - pad;
-        boxes[i].hi[0] = aabbMax[i].x + pad; boxes[i].hi[1] = aabbMax[i].y + pad; boxes[i].hi[2] = aabbMax[i].z + pad;
-    }
-    const broadphase::PairList candidatePairs = broadphase::Pairs(boxes, finite);
-    for (const auto& candidate : candidatePairs) {
-        {   // one candidate pair (the block keeps the old nesting depth, so this change stays a small diff)
-            const std::size_t i = candidate.first, j = candidate.second;
-            Collider3D* a = colliders[i];
-            Collider3D* b = colliders[j];
-            if (gone.Gone(a)) continue;   // (the old loop broke out of this a's row: the same pairs are skipped)
-            if (gone.Gone(b)) continue;
-            if (!a->enabled || !b->enabled) continue;
-            if (!a->gameObject->ActiveInHierarchy() || !b->gameObject->ActiveInHierarchy()) continue;
-            if (a->gameObject == b->gameObject) continue;
-            if (!LayersCollide(a->layer, b->layer)) continue;
-
-            // Broad phase: AABB reject (precomputed AABBs).
-            const Vec3 &aMin = aabbMin[i], &aMax = aabbMax[i], &bMin = aabbMin[j], &bMax = aabbMax[j];
-            if (!improved) {
-                if (aMax.x < bMin.x || aMin.x > bMax.x ||
-                    aMax.y < bMin.y || aMin.y > bMax.y ||
-                    aMax.z < bMin.z || aMin.z > bMax.z) continue;
-            } else {
-                // (Improved: solid pairs are looked at when they are within the contact skin of each other, not only when they overlap.)
-                const float pad = (a->isTrigger || b->isTrigger) ? 0.0f : kImpSkin;
-                if (aMax.x + pad < bMin.x || aMin.x - pad > bMax.x ||
-                    aMax.y + pad < bMin.y || aMin.y - pad > bMax.y ||
-                    aMax.z + pad < bMin.z || aMin.z - pad > bMax.z) continue;
-            }
-
-            bool trigger = a->isTrigger || b->isTrigger;
-            // Trigger tag / layer filters: a filtered-out object passes through
-            // silently (no events on either side).
-            if (trigger && (!TriggerAccepts(a, b) || !TriggerAccepts(b, a))) continue;
-
-            Rigidbody3D* ra = improved ? BodyOfCollider(a) : a->gameObject->GetComponent<Rigidbody3D>();
-            Rigidbody3D* rb = improved ? BodyOfCollider(b) : b->gameObject->GetComponent<Rigidbody3D>();
-            if (improved && ra && ra == rb) continue;   // two colliders of one body never push each other
-            Contact c;
-            ImpManifold man;                            // the contact points (Improved, solid pairs)
-            if (improved && !trigger) c = ImprovedContact(a, b, kImpSkin, man);
-            else c = TestColliders(a, b);
-            if (!c.hit) {
-                // Classic: a sleeping body rests exactly touching what holds it up (no overlap), so nothing noticed when that
-                // went away or moved. Keep a quiet record of pairs that touch within the skin (no callbacks) and wake the sleeper
-                // when the pair ends or the other side moves.
-                if (!improved && !trigger && ((ra && ra->sleeping) || (rb && rb->sleeping))) {
-                    // (a pair found resting last step with both objects still where they were is not tested again: that keeps
-                    // hundreds of sleeping crates as cheap as they were)
-                    const Vec3 pa = a->transform ? a->transform->Position() : Vec3::Zero, pb = b->transform ? b->transform->Position() : Vec3::Zero;
-                    bool resting = false;
-                    auto prevRest = m_restContacts.find({a, b});
-                    if (prevRest != m_restContacts.end() && prevRest->second.a == pa && prevRest->second.b == pb) {
-                        prevRest->second.step = m_restStep;   // unchanged since last step: still resting, nothing to look at again
-                        resting = true;
-                    } else {
-                        ImpManifold near;
-                        resting = ImprovedContact(a, b, kImpSkin, near).hit;
-                        if (resting) m_restContacts[{a, b}] = RestStamp{pa, pb, m_restStep};
-                    }
-                    if (resting) {
-                        if (ra && ra->sleeping && CanWakeOthers(rb)) ra->WakeUp();
-                        if (rb && rb->sleeping && CanWakeOthers(ra)) rb->WakeUp();
-                    }
-                }
-                continue;
-            }
-            if (improved && c.penetration < 0.0f) c.penetration = 0.0f;   // inside the skin: touching, not overlapping
-
-            current.insert({a, b});
-
-            // Relative velocity before the solver changes it (for impact speed).
-            const Vec3 relVelBA = (rb ? rb->velocity : Vec3::Zero) - (ra ? ra->velocity : Vec3::Zero);
-            if (PhysicsDebug::Collect() && (int)m_debugContacts.size() < PhysicsDebug::kMaxContacts)
-                m_debugContacts.push_back({c.point, c.normal, trigger});
-
-            // 3) Resolve solids (skip triggers and pairs without dynamics).
-            if (!trigger && improved) {
-                // Wake a sleeping body when something that moves touches it; queue the pair for the solver when a side is awake.
-                if (ra && ra->sleeping && CanWakeOthers(rb)) ra->WakeUp();
-                if (rb && rb->sleeping && CanWakeOthers(ra)) rb->WakeUp();
-                const bool aMoves = ra && ra->bodyType == Rigidbody3D::BodyType::Dynamic && !ra->sleeping;
-                const bool bMoves = rb && rb->bodyType == Rigidbody3D::BodyType::Dynamic && !rb->sleeping;
-                if (aMoves || bMoves) m_solver->Queue(a, b, ra, rb, man);
-                else m_solver->Touch(a, b);
-            } else if (!trigger) {
-                // Wake a sleeping body when a moving body runs into it; two bodies
-                // both at rest stay asleep (resting stack).
-                auto awakeMover = [](Rigidbody3D* r) {
-                    return r && !r->sleeping && r->bodyType != Rigidbody3D::BodyType::Static;
-                };
-                if (ra && ra->sleeping && awakeMover(rb)) ra->WakeUp();
-                if (rb && rb->sleeping && awakeMover(ra)) rb->WakeUp();
-                if ((!(ra && ra->sleeping) || !(rb && rb->sleeping))) {
-                float ima = ra ? ra->InvMass() : 0.0f;
-                float imb = rb ? rb->InvMass() : 0.0f;
-                float imSum = ima + imb;
-                if (imSum > 0.0f) {
-                    Vec3 correction = c.normal * (c.penetration / imSum);
-                    MoveBodyWorld(a->transform, correction * -ima);
-                    MoveBodyWorld(b->transform, correction * imb);
-
-                    // Angular terms: lever arms from each body's center to the contact
-                    // point and inverse inertia. When rotation is locked these are 0, so
-                    // the math collapses to the old linear-only impulse exactly.
-                    float iia = InvInertia(ra, a);
-                    float iib = InvInertia(rb, b);
-                    Vec3 cenA = a->WorldCenter(), cenB = b->WorldCenter();
-                    Vec3 rA = c.point - cenA, rB = c.point - cenB;
-                    auto pointVel = [](const Vec3& v, const Vec3& w, const Vec3& r) {
-                        return v + Vec3::Cross(w, r);
-                    };
-                    Vec3 wa0 = ra ? ra->angularVelocity : Vec3::Zero;
-                    Vec3 wb0 = rb ? rb->angularVelocity : Vec3::Zero;
-                    Vec3 va = ra ? ra->velocity : Vec3::Zero;
-                    Vec3 vb = rb ? rb->velocity : Vec3::Zero;
-                    Vec3 rvel = pointVel(vb, wb0, rB) - pointVel(va, wa0, rA);
-                    float velAlongNormal = Vec3::Dot(rvel, c.normal);
-                    // Effective mass along n includes the angular term invI*|r×n|².
-                    Vec3 rnA = Vec3::Cross(rA, c.normal), rnB = Vec3::Cross(rB, c.normal);
-                    float denom = imSum + rnA.SqrMagnitude() * iia + rnB.SqrMagnitude() * iib;
-                    float jImp = 0.0f;
-                    if (velAlongNormal < 0.0f && denom > 0.0f) {
-                        float e = Mathf::Max(ra ? ra->bounciness : 0.0f,
-                                             rb ? rb->bounciness : 0.0f);
-                        // Below a small approach speed, drop restitution so bodies
-                        // settle (and then sleep) instead of buzzing with micro-bounces
-                        //.
-                        if (-velAlongNormal < 0.5f) e = 0.0f;
-                        jImp = -(1.0f + e) * velAlongNormal / denom;
-                        Vec3 impulse = c.normal * jImp;
-                        if (ra) { ra->velocity = ra->velocity - impulse * ima; ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, impulse) * iia; }
-                        if (rb) { rb->velocity = rb->velocity + impulse * imb; rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, impulse) * iib; }
-                    }
-                    // Coulomb friction at the contact point, clamped to friction x the
-                    // normal impulse. With gravity re-pressing each step this also gives
-                    // resting bodies static-like friction (they stop / stack / hold on
-                    // slopes), and the lever arm makes off-center drag spin the body.
-                    if (jImp > 0.0f) {
-                        Vec3 wa = ra ? ra->angularVelocity : Vec3::Zero;   // post-normal-impulse
-                        Vec3 wb = rb ? rb->angularVelocity : Vec3::Zero;
-                        va = ra ? ra->velocity : Vec3::Zero;
-                        vb = rb ? rb->velocity : Vec3::Zero;
-                        Vec3 rv = pointVel(vb, wb, rB) - pointVel(va, wa, rA);
-                        Vec3 tang = rv - c.normal * Vec3::Dot(rv, c.normal);
-                        float tlen = std::sqrt(Vec3::Dot(tang, tang));
-                        if (tlen > 1e-4f) {
-                            Vec3 t = tang * (1.0f / tlen);
-                            Vec3 rtA = Vec3::Cross(rA, t), rtB = Vec3::Cross(rB, t);
-                            float denomT = imSum + rtA.SqrMagnitude() * iia + rtB.SqrMagnitude() * iib;
-                            float jt = denomT > 0.0f ? -Vec3::Dot(rv, t) / denomT : 0.0f;
-                            float fa = ra ? ra->friction : 0.6f;
-                            float fb = rb ? rb->friction : 0.6f;
-                            float mu = std::sqrt((fa < 0 ? 0 : fa) * (fb < 0 ? 0 : fb));
-                            float maxF = mu * jImp;
-                            if (jt > maxF) jt = maxF; else if (jt < -maxF) jt = -maxF;
-                            Vec3 fimp = t * jt;
-                            if (ra) { ra->velocity = ra->velocity - fimp * ima; ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, fimp) * iia; }
-                            if (rb) { rb->velocity = rb->velocity + fimp * imb; rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, fimp) * iib; }
-                        }
-                    }
-                }
-                } // both-asleep guard
-            }
-
-            // 4) Fire enter/stay messages.
-            bool wasContact = m_contacts.count({a, b}) != 0;
-            if (trigger) {
-                if (!wasContact) {
-                    DispatchTrigger(a, &Component::OnTriggerEnter3D, b, c.point, c.normal, gone);
-                    if (!gone.Gone(a) && !gone.Gone(b))
-                        DispatchTrigger(b, &Component::OnTriggerEnter3D, a, c.point, -c.normal, gone);
-                } else {
-                    DispatchTrigger(a, &Component::OnTriggerStay3D, b, c.point, c.normal, gone);
-                    if (!gone.Gone(a) && !gone.Gone(b))
-                        DispatchTrigger(b, &Component::OnTriggerStay3D, a, c.point, -c.normal, gone);
-                }
-            } else {
-                Collision3D forA = MakeCollision(b, c.normal, c.penetration, c.point, relVelBA, a);
-                Collision3D forB = MakeCollision(a, -c.normal, c.penetration, c.point, -relVelBA, b);
-                if (!wasContact) {
-                    DispatchCollision(a->gameObject, &Component::OnCollisionEnter3D, forA, gone);
-                    if (!gone.Gone(a) && !gone.Gone(b))
-                        DispatchCollision(b->gameObject, &Component::OnCollisionEnter3D, forB, gone);
-                } else {
-                    DispatchCollision(a->gameObject, &Component::OnCollisionStay3D, forA, gone);
-                    if (!gone.Gone(a) && !gone.Gone(b))
-                        DispatchCollision(b->gameObject, &Component::OnCollisionStay3D, forB, gone);
-                }
-            }
-        }
-    }
-
-    if (!improved) {   // a sleeping body's support went away (moved, switched off, removed): wake it
-        for (auto it = m_restContacts.begin(); it != m_restContacts.end();) {
-            const Pair& rp = it->first;
-            if (it->second.step == m_restStep) { ++it; continue; }            // still resting this step
-            if (!current.count(rp)) {                                         // not touching any more (and not overlapping): wake what rested
-                const bool la = aliveSet.count(rp.first) && !gone.Gone(rp.first), lb = aliveSet.count(rp.second) && !gone.Gone(rp.second);
-                if (la) if (Rigidbody3D* r = rp.first->gameObject->GetComponent<Rigidbody3D>()) if (r->sleeping) r->WakeUp();
-                if (lb) if (Rigidbody3D* r = rp.second->gameObject->GetComponent<Rigidbody3D>()) if (r->sleeping) r->WakeUp();
-            }
-            it = m_restContacts.erase(it);
-        }
-    }
-    if (improved) {   // solve every queued pair, then move the bodies by their solved speeds
-        m_solver->Solve(gone, gravity);
-        int sweeps = 0;
-        m_solver->Move(*this, scene, bodies, dt, gone, sweeps);
-        m_stats.manifolds = (int)m_solver->manifolds.size();
-        for (const auto& m : m_solver->manifolds) m_stats.contacts += m.count;
-        m_stats.warmStarted = m_solver->warmCount;
-        m_stats.sweeps = sweeps;
-    }
-
-    // 5) Fire exit messages for contacts that ended. They go out in the order the scene lists the colliders (the contacts are
-    // kept in a set ordered by memory address, which is not the same from one run to the next: a replay or a rollback must
-    // see the same order every time).
-    std::vector<Pair> ended;
-    for (const Pair& p : m_contacts) if (!current.count(p)) ended.push_back(p);
-    if (ended.size() > 1) {
-        std::unordered_map<Collider3D*, std::size_t> rank;
-        rank.reserve(colliders.size() * 2 + 1);
-        for (std::size_t i = 0; i < colliders.size(); ++i) rank[colliders[i]] = i;
-        auto rankOf = [&](Collider3D* c) { auto it = rank.find(c); return it == rank.end() ? ~std::size_t(0) : it->second; };
-        std::stable_sort(ended.begin(), ended.end(), [&](const Pair& x, const Pair& y) {
-            const std::size_t xa = rankOf(x.first), ya = rankOf(y.first);
-            if (xa != ya) return xa < ya;
-            return rankOf(x.second) < rankOf(y.second);
-        });
-    }
-    for (const Pair& p : ended) {
-        Collider3D* a = p.first;
-        Collider3D* b = p.second;
-        {   // what held a sleeping body up has moved away, been switched off or been removed: wake it (both qualities)
-            const bool la = aliveSet.count(a) && !gone.Gone(a), lb = aliveSet.count(b) && !gone.Gone(b);
-            // (Classic: a pair that is still resting, touching without overlap, is not a lost support: its sleeper stays asleep.)
-            const bool stillResting = !improved && m_restContacts.count(p) != 0;
-            if (!stillResting && !((la && a->isTrigger) || (lb && b->isTrigger))) {
-                auto bodyOf = [&](Collider3D* c) { return improved ? BodyOfCollider(c) : c->gameObject->GetComponent<Rigidbody3D>(); };
-                if (la) if (Rigidbody3D* r = bodyOf(a)) if (r->sleeping) r->WakeUp();
-                if (lb) if (Rigidbody3D* r = bodyOf(b)) if (r->sleeping) r->WakeUp();
-            }
-        }
-        if (!aliveSet.count(a) || !aliveSet.count(b)) continue;
-        if (gone.Gone(a) || gone.Gone(b)) continue;
-        if (a->isTrigger || b->isTrigger) {
-            // No overlap any more: report the midpoint between the two centres.
-            Vec3 mid = (a->WorldCenter() + b->WorldCenter()) * 0.5f;
-            Vec3 n = (b->WorldCenter() - a->WorldCenter()).Normalized();
-            DispatchTrigger(a, &Component::OnTriggerExit3D, b, mid, n, gone);
-            if (!gone.Gone(a) && !gone.Gone(b))
-                DispatchTrigger(b, &Component::OnTriggerExit3D, a, mid, -n, gone);
-        } else {
-            Collision3D forA = MakeCollision(b, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero, a);
-            Collision3D forB = MakeCollision(a, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero, b);
-            DispatchCollision(a->gameObject, &Component::OnCollisionExit3D, forA, gone);
-            if (!gone.Gone(a) && !gone.Gone(b))
-                DispatchCollision(b->gameObject, &Component::OnCollisionExit3D, forB, gone);
-        }
-    }
-
-    // Drop pairs whose collider a callback removed, so no freed pointer is kept.
-    if (gone.Any())
-        for (auto it = current.begin(); it != current.end();)
-            it = (gone.Gone(it->first) || gone.Gone(it->second)) ? current.erase(it) : std::next(it);
-    m_contacts.swap(current);
-
-    // 4) Terrain ground-follow: heightmap terrain isn't a polygon collider, so make
-    // dynamic bodies stand on its surface directly — including craters/hills carved
-    // by the Terrain Digger. Each body samples the terrain height under it and is
-    // lifted to rest its collider's underside on the surface, grounding downward
-    // motion. Cheap (one bilinear height sample per body per terrain it's over).
-    // Clear the per-frame terrain-grounded flag on every body first, so both the
-    // heightmap and the voxel pass below can set it (and it falls back to false
-    // when a body is airborne over either kind of terrain).
+void Physics3D::StepTerrain(Scene& scene) {
+    // "Standing on terrain" (Rigidbody3D::groundedOnTerrain, groundNormal), read by character and vehicle code. The
+    // heightmap Terrain itself collides in the engine core (as a height grid); this only answers "is it on the ground":
+    // a body whose underside is on or within 5 cm above the surface is grounded, and gets the surface normal there.
     for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
         rb->groundedOnTerrain = false;
         rb->groundNormal = Vec3{0.0f, 1.0f, 0.0f};
     }
-
     auto terrains = CachedComponents<Terrain>(scene);
     if (!terrains.empty()) {
         for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
             if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
-            if (rb->bodyType == Rigidbody3D::BodyType::Static) continue;
-            Transform* t = rb->transform;
-            if (!t) continue;
-            Vec3 pos = t->Position();
-            // How far the body extends below its origin (so its feet, not its centre,
-            // sit on the ground). From its collider AABB, else a small default.
-            float foot = 0.5f;
+            if (rb->bodyType == Rigidbody3D::BodyType::Static || !rb->transform) continue;
+            const Vec3 pos = rb->transform->Position();
+            // The underside: the collider box's bottom and footprint (else 0.5 m below the origin, a point).
+            float bottom = pos.y - 0.5f;
+            Vec3 lo = pos, hi = pos;
             if (auto* col = rb->gameObject->GetComponent<Collider3D>()) {
-                Vec3 mn, mx; col->WorldAABB(mn, mx); foot = pos.y - mn.y;
-                if (foot < 0.0f) foot = 0.0f;
+                Vec3 mn, mx; col->WorldAABB(mn, mx);
+                bottom = std::min(mn.y, pos.y);
+                lo = mn; hi = mx;
             }
+            // The core rests the real shape on the grid, so on a slope a box stands on its downhill edge and the surface
+            // under its centre is lower than its bottom (0.14 m for a 0.6 m box on 25 degrees). Grounded when the bottom is
+            // within 5 cm of the surface under the centre OR any corner of the footprint. (Before the core collided terrain,
+            // the terrain step put the origin on the surface under the centre, so the centre alone was enough.)
+            const Vec3 probes[5] = {{pos.x, 0.0f, pos.z}, {lo.x, 0.0f, lo.z}, {hi.x, 0.0f, lo.z}, {lo.x, 0.0f, hi.z}, {hi.x, 0.0f, hi.z}};
             for (Terrain* terr : terrains) {
                 if (!terr->gameObject || !terr->gameObject->transform) continue;
-                // Work in the terrain's LOCAL space so a scaled (or rotated)
-                // terrain supports bodies across its whole VISIBLE footprint —
-                // the old world-offset math ignored the transform, so scaling a
-                // terrain up let players walk past the unscaled square and fall
-                // through ground that looked perfectly solid.
-                Mat4 l2w = terr->gameObject->transform->LocalToWorldMatrix();
-                Vec3 lp = l2w.Inverse().MultiplyPoint(pos);
-                float lx = lp.x, lz = lp.z;
-                float half = terr->size * 0.5f;
-                if (lx < -half || lx > half || lz < -half || lz > half) continue;
-                float targetY = l2w.MultiplyPoint({lx, terr->SampleHeight(lx, lz), lz}).y + foot;
-                // Resting on (or just above) the surface counts as grounded, so a
-                // player standing on terrain can jump repeatedly. A small skin
-                // tolerance avoids flicker from the per-frame gravity nudge.
-                if (pos.y <= targetY + 0.05f) {
-                    rb->groundedOnTerrain = true;
-                    rb->groundNormal = l2w.MultiplyVector(terr->NormalAt(lx, lz)).Normalized();
-                } else if (rb->sleeping && pos.y > targetY + 0.1f) {
-                    // The ground under a resting body was lowered (e.g. the Terrain
-                    // Digger carved a crater): wake it so gravity pulls it down into
-                    // the new hole instead of leaving it floating where it slept.
-                    rb->WakeUp();
+                const Mat4 l2w = terr->gameObject->transform->LocalToWorldMatrix();
+                const Mat4 w2l = l2w.Inverse();
+                const Vec3 lp = w2l.MultiplyPoint(pos);
+                const float half = terr->size * 0.5f;
+                if (lp.x < -half || lp.x > half || lp.z < -half || lp.z > half) continue;
+                bool onIt = false;
+                for (const Vec3& pr : probes) {
+                    const Vec3 lq = w2l.MultiplyPoint({pr.x, pos.y, pr.z});
+                    if (lq.x < -half || lq.x > half || lq.z < -half || lq.z > half) continue;
+                    const float groundY = l2w.MultiplyPoint({lq.x, terr->SampleHeight(lq.x, lq.z), lq.z}).y;
+                    if (bottom <= groundY + 0.05f) { onIt = true; break; }
                 }
-                if (pos.y < targetY) {                      // sank into the ground -> lift out
-                    MoveBodyWorld(t, Vec3{0.0f, targetY - pos.y, 0.0f});
-
-                    // Slope-aware response: resolve velocity against the terrain
-                    // surface normal instead of just zeroing Y. This lets bodies
-                    // slide down hills, bounce off (restitution) and lose tangential
-                    // speed to friction — so debris tumbles and rolls realistically
-                    // instead of sticking flat where it lands.
-                    Vec3 n = l2w.MultiplyVector(terr->NormalAt(lx, lz)).Normalized();   // surface normal, world space
-                    Vec3& v = rb->velocity;
-                    float vn = v.x * n.x + v.y * n.y + v.z * n.z;   // into-surface component
-                    if (vn < 0.0f) {
-                        float rest = rb->bounciness;        // 0 = no bounce
-                        // Remove the normal component, then add it back scaled by
-                        // restitution (a bounce). Tangential part stays (sliding).
-                        v.x -= vn * n.x * (1.0f + rest);
-                        v.y -= vn * n.y * (1.0f + rest);
-                        v.z -= vn * n.z * (1.0f + rest);
-                        // Kinetic friction on the remaining tangential velocity.
-                        const float friction = 0.18f;
-                        v.x *= (1.0f - friction);
-                        v.z *= (1.0f - friction);
-                    }
+                if (onIt) {
+                    rb->groundedOnTerrain = true;
+                    rb->groundNormal = l2w.MultiplyVector(terr->NormalAt(lp.x, lp.z)).Normalized();
                 }
             }
         }
@@ -1386,389 +654,6 @@ void Physics3D::StepSlice(Scene& scene, float dt) {
         }
     }
 
-    // 6) Mesh collider collision: a static or kinematic MeshCollider3D collides EXACTLY
-    // against its triangles (walls, floors, ramps, bowls, hollow rooms), through a BVH.
-    // A dynamic mesh is not in this list: it collides as its convex hull (pairwise, and
-    // as the body side of this pass). Every dynamic body is pushed out of any triangle
-    // it overlaps, and solid contacts raise OnCollisionEnter3D / Stay / Exit.
-    {
-        struct MeshRef { MeshCollider3D* mc; Mat4 m; Vec3 mn, mx; };
-        std::vector<MeshRef> meshes;
-        for (Collider3D* col : CachedComponents<Collider3D>(scene)) {
-            if (!Alive(col) || col->shape() != Collider3D::Shape::Mesh || col->isTrigger) continue;
-            if (!col->gameObject->transform) continue;
-            auto* mc = static_cast<MeshCollider3D*>(col);
-            if (!mc->HasTriangles()) continue;
-            if (mc->IsDynamicBody()) {
-                if (mc->IsDynamicConflict() && !mc->m_warnedDynamic) {
-                    mc->m_warnedDynamic = true;
-                    Log::Warning("MeshCollider3D on '", mc->gameObject->name,
-                                 "' has a dynamic Rigidbody3D but no convex hull could be built: the mesh collider is ignored "
-                                 "for physics contact. Use a Box/Sphere/Capsule collider on moving objects.");
-                }
-                continue;   // dynamic meshes collide as a convex hull, not as static world
-            }
-            MeshRef r{mc, mc->WorldMatrix(), {}, {}};
-            mc->WorldAABB(r.mn, r.mx);
-            meshes.push_back(r);
-        }
-        std::set<Pair> meshNow;
-        if (!meshes.empty()) {
-            for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
-                if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
-                if (rb->bodyType != Rigidbody3D::BodyType::Dynamic) continue;
-                Collider3D* self = rb->gameObject->GetComponent<Collider3D>();
-                if (self && (self->isTrigger || !self->enabled)) continue;
-                Transform* t = rb->transform; if (!t) continue;
-                if (!std::isfinite(t->localPosition.x + t->localPosition.y + t->localPosition.z)) continue;
-                const float invI = InvInertia(rb, self);
-                for (const MeshRef& mr : meshes) {
-                    if (mr.mc->gameObject == rb->gameObject) continue;
-                    if (self && !LayersCollide(self->layer, mr.mc->layer)) continue;
-                    if (gone.Gone(mr.mc) || (self && gone.Gone(self))) continue;
-                    trimesh::WorldView view(mr.mc->Tris(), mr.m);
-                    bool touched = false;
-                    Vec3 savedN{0, 1, 0}, savedP{0, 0, 0}, savedRel = rb->velocity;
-                    float savedPen = 0.0f;
-                    for (int iter = 0; iter < 4; ++iter) {
-                        // The body's shape at its current position. n will point surface -> body.
-                        trimesh::Contact k; Vec3 center = t->Position();
-                        if (self && UsesHull(self)) {
-                            center = self->WorldCenter();
-                            k = HullAgainstMesh(static_cast<MeshCollider3D*>(self), mr.mc);
-                        } else if (self && IsGenericShape(self)) {   // Cylinder, Cone, Convex Hull, Compound
-                            center = self->WorldCenter();
-                            k = TrisVsGeneric(mr.mc, self);
-                            k.normal = k.normal;               // (already mesh -> body)
-                        } else if (self && self->shape() == Collider3D::Shape::Sphere) {
-                            auto* sp = static_cast<SphereCollider3D*>(self);
-                            center = sp->WorldCenter();
-                            k = view.Sphere(center, sp->WorldRadius());
-                        } else if (self && IsCapsuleLike(self->shape())) {
-                            auto* cp = static_cast<CapsuleCollider3D*>(self);
-                            Vec3 a, b; cp->Segment(a, b); center = cp->WorldCenter();
-                            k = view.Capsule(a, b, cp->WorldRadius());
-                        } else if (self) {                       // box (or box-fallback mesh)
-                            auto* bx = static_cast<BoxCollider3D*>(self);
-                            Vec3 ax, ay, az; bx->WorldAxes(ax, ay, az); center = bx->WorldCenter();
-                            k = view.Box(center, bx->HalfExtents(), ax, ay, az);
-                        } else {                                 // no collider: a person-sized capsule
-                            Vec3 p = t->Position();
-                            k = view.Capsule({p.x, p.y + 0.35f, p.z}, {p.x, p.y + 1.25f, p.z}, 0.35f);
-                            center = {p.x, p.y + 0.8f, p.z};
-                        }
-                        if (!k.hit || k.penetration <= 1e-5f) break;
-                        if (!touched) {
-                            touched = true; savedN = k.normal; savedP = k.point; savedPen = k.penetration;
-                            savedRel = rb->velocity;             // mesh is immovable; capture before the impulse
-                        }
-                        const Vec3 n = k.normal;
-                        MoveBodyWorld(t, n * k.penetration);
-                        // Impulses against the immovable surface; n points surface -> body.
-                        const float im = rb->InvMass();
-                        Vec3 rA = k.point - center;
-                        Vec3 vp = rb->velocity + Vec3::Cross(rb->angularVelocity, rA);
-                        float vn = Vec3::Dot(vp, n);
-                        if (vn < 0.0f && im > 0.0f) {
-                            float e = rb->bounciness; if (-vn < 0.5f) e = 0.0f;
-                            Vec3 rn = Vec3::Cross(rA, n);
-                            float denom = im + rn.SqrMagnitude() * invI;
-                            float j = -(1.0f + e) * vn / denom;
-                            rb->velocity = rb->velocity + n * (j * im);
-                            rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rA, n * j) * invI;
-                            vp = rb->velocity + Vec3::Cross(rb->angularVelocity, rA);
-                            Vec3 tang = vp - n * Vec3::Dot(vp, n);
-                            float tl = std::sqrt(Vec3::Dot(tang, tang));
-                            if (tl > 1e-4f) {
-                                Vec3 tdir = tang * (1.0f / tl);
-                                Vec3 rt = Vec3::Cross(rA, tdir);
-                                float denomT = im + rt.SqrMagnitude() * invI;
-                                float jt = -tl / denomT;
-                                float mu = std::sqrt(std::max(0.0f, rb->friction) * 0.6f);
-                                float maxF = mu * j;
-                                if (jt > maxF) jt = maxF; else if (jt < -maxF) jt = -maxF;
-                                rb->velocity = rb->velocity + tdir * (jt * im);
-                                rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rA, tdir * jt) * invI;
-                            }
-                        }
-                        if (n.y > 0.4f) rb->groundedOnTerrain = true;   // standing on it
-                    }
-                    // Landing on a solid mesh: Enter the first step, Stay while it lasts.
-                    if (touched && self && !gone.Gone(self) && !gone.Gone(mr.mc)) {
-                        Pair key{self, mr.mc};
-                        meshNow.insert(key);
-                        bool was = m_meshContacts.count(key) != 0;
-                        // savedN points mesh -> body. Each side's normal points toward the other.
-                        Collision3D forBody = MakeCollision(mr.mc, -savedN, savedPen, savedP, -savedRel);
-                        Collision3D forMesh = MakeCollision(self, savedN, savedPen, savedP, savedRel);
-                        if (!was) {
-                            DispatchCollision(self->gameObject, &Component::OnCollisionEnter3D, forBody, gone);
-                            if (!gone.Gone(self) && !gone.Gone(mr.mc))
-                                DispatchCollision(mr.mc->gameObject, &Component::OnCollisionEnter3D, forMesh, gone);
-                        } else {
-                            DispatchCollision(self->gameObject, &Component::OnCollisionStay3D, forBody, gone);
-                            if (!gone.Gone(self) && !gone.Gone(mr.mc))
-                                DispatchCollision(mr.mc->gameObject, &Component::OnCollisionStay3D, forMesh, gone);
-                        }
-                    }
-                }
-            }
-        }
-        for (const Pair& p : m_meshContacts) {
-            if (meshNow.count(p)) continue;
-            Collider3D* body = p.first;
-            Collider3D* mesh = p.second;
-            if (!aliveSet.count(body) || !aliveSet.count(mesh)) continue;
-            if (gone.Gone(body) || gone.Gone(mesh)) continue;
-            Collision3D forBody = MakeCollision(mesh, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero);
-            Collision3D forMesh = MakeCollision(body, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero);
-            DispatchCollision(body->gameObject, &Component::OnCollisionExit3D, forBody, gone);
-            if (!gone.Gone(body) && !gone.Gone(mesh))
-                DispatchCollision(mesh->gameObject, &Component::OnCollisionExit3D, forMesh, gone);
-        }
-        if (gone.Any())
-            for (auto it = meshNow.begin(); it != meshNow.end();)
-                it = (gone.Gone(it->first) || gone.Gone(it->second)) ? meshNow.erase(it) : std::next(it);
-        m_meshContacts.swap(meshNow);
-    }
-
-    // ---- Joints: positional constraints (after collisions) ----
-    // (Improved: the constraint joints are solved several times, so a rope of balls or a heavy weight on a light chain stays
-    // near its length. A spring is a force and is applied once; a motor's limit is shared out over the passes.)
-    // A long chain needs about two passes per link for a push to cross it both ways; every other pass runs the joints in
-    // reverse order so the weight at one end reaches the hook at the other end (a 50 kg ball on 1 kg links held 13 m long
-    // for a rope of 8 m with a fixed order; see docs/physics/physics.md).
-    // (The extra passes are capped so that passes x joints stays under 6000: a scene with hundreds of joints does not pay for them.)
-    const int basePasses = std::max(4, solverIterations);
-    const int jointPasses = (improved && allJoints.size() > 0)
-        ? std::max(basePasses, std::min(std::min(60, 4 * (int)allJoints.size() + 4), 6000 / (int)allJoints.size())) : 1;
-    for (int jointPass = 0; jointPass < jointPasses; ++jointPass)
-    for (std::size_t jointIndex = 0; jointIndex < allJoints.size(); ++jointIndex) {
-        Joint3D* j = allJoints[(improved && (jointPass & 1)) ? allJoints.size() - 1 - jointIndex : jointIndex];
-        if (gone.Gone(j)) continue;
-        if (j->broken || !j->gameObject || !j->transform) continue;
-        if (jointPass > 0 && (Joint3D::Mode)j->mode == Joint3D::Mode::Spring) continue;
-        Rigidbody3D* ra = j->gameObject->GetComponent<Rigidbody3D>();
-        if (!ra) continue;                          // the joint moves THIS body
-        Transform* ta = j->transform;
-        Rigidbody3D* rbB = nullptr; Transform* tb = nullptr;
-        if (!j->connectedBody.empty())
-            if (GameObject* g = CachedPartner(scene, j)) { tb = g->transform; rbB = g->GetComponent<Rigidbody3D>(); }
-        Vec3 pa = ta->Position();
-        Vec3 pb = tb ? tb->Position() : j->anchor;
-        if (!j->initialized) {
-            j->pinOffset = pa - pb;
-            j->restLen = j->autoConfigure ? std::sqrt(Vec3::Dot(pa - pb, pa - pb)) : j->distance;
-            j->hingeLever = pb - pa;                     // world lever COM_A -> pivot, at init
-            j->refRot = ta->localRotation;
-            j->initialized = true;
-        }
-        float imA = ra->InvMass();
-        float imB = rbB ? rbB->InvMass() : 0.0f;
-        float imSum = imA + imB;
-        if (imSum <= 0.0f) continue;
-        Joint3D::Mode m = (Joint3D::Mode)j->mode;
-
-        if (m == Joint3D::Mode::Pin) {
-            Vec3 target = pb + j->pinOffset;
-            Vec3 err = target - pa;
-            if (j->breakable && std::sqrt(Vec3::Dot(err, err)) > j->breakForce) { j->broken = true; continue; }
-            MoveBodyWorld(ta, err * (imA / imSum));
-            if (tb && rbB && imB > 0.0f) MoveBodyWorld(tb, err * (-imB / imSum));
-            ra->velocity = rbB ? rbB->velocity : Vec3::Zero;   // weld: follow B (anchor -> freeze)
-            if (j->breakable && std::sqrt(Vec3::Dot(err, err)) > j->breakForce) j->broken = true;
-        } else if (m == Joint3D::Mode::Hinge) {
-            // Revolute joint: pin a material point of A to the pivot and lock rotation
-            // to `axis`, free to spin about it. (B supplies the pivot reference.)
-            if (imA <= 0.0f) continue;
-            Quat qDelta = ta->localRotation * j->refRot.Inverse();
-            Vec3 rA = qDelta * j->hingeLever;            // lever rotated with the body
-            Vec3 anchorWorld = pa + rA;
-            float iiA = InvInertia(ra, ra->gameObject->GetComponent<Collider3D>());
-            Vec3 axis = j->axis.Normalized();
-            Vec3 vB = rbB ? rbB->velocity : Vec3::Zero;
-
-            // 1) Point velocity constraint: cancel A's anchor-point velocity (vs B).
-            // K = (imA + iiA|rA|²)I - iiA (rA⊗rA); inverted via Sherman-Morrison.
-            Vec3 vAnchor = ra->velocity + Vec3::Cross(ra->angularVelocity, rA) - vB;
-            float a = imA + iiA * rA.SqrMagnitude();
-            if (a > 1e-9f) {
-                Vec3 P = (vAnchor + rA * (iiA / imA * Vec3::Dot(rA, vAnchor))) * (-1.0f / a);
-                ra->velocity = ra->velocity + P * imA;
-                ra->angularVelocity = ra->angularVelocity + Vec3::Cross(rA, P) * iiA;
-            }
-            // 2) Axis lock: keep only the spin component along the hinge axis.
-            Vec3 w = ra->angularVelocity;
-            ra->angularVelocity = axis * Vec3::Dot(w, axis);
-            // 3) Motor: drive the spin about the axis toward motorSpeed.
-            if (j->useMotor && iiA > 0.0f) {
-                float cur = Vec3::Dot(ra->angularVelocity, axis);
-                float Cdot = cur - j->motorSpeed * Mathf::Deg2Rad;
-                float imp = Mathf::Clamp(-Cdot / iiA, -j->maxMotorTorque * dt / (float)jointPasses, j->maxMotorTorque * dt / (float)jointPasses);
-                ra->angularVelocity = ra->angularVelocity + axis * (imp * iiA);
-            }
-            // 3b) Angle limits (JointLimit.hpp). Off until useLimits, so an existing
-            // hinge still spins freely. The stop is degrees from the pose at init;
-            // outward spin is removed so a motor cannot grind past a door or lever.
-            // Recompute the lever afterwards so this step's position correction
-            // pins the stopped pose, not the one that had already gone past.
-            if (j->useLimits && axis.SqrMagnitude() > 1e-8f) {
-                const float rel = HingeAngleDegrees(ta->localRotation, j->refRot, axis);
-                if (rel < j->minAngle || rel > j->maxAngle) {
-                    ta->localRotation = ClampHingeRotation(ta->localRotation, j->refRot, axis,
-                                                           j->minAngle, j->maxAngle);
-                    qDelta = ta->localRotation * j->refRot.Inverse();
-                    rA = qDelta * j->hingeLever;
-                    anchorWorld = pa + rA;
-                }
-                const float wAx = Vec3::Dot(ra->angularVelocity, axis);
-                if ((rel >= j->maxAngle && wAx > 0.0f) || (rel <= j->minAngle && wAx < 0.0f))
-                    ra->angularVelocity = ra->angularVelocity - axis * wAx;
-            }
-            // 4) Positional correction: pull A's anchor point back onto the pivot.
-            Vec3 Cpos = anchorWorld - pb;
-            MoveBodyWorld(ta, -Cpos);
-            if (j->breakable && std::sqrt(Vec3::Dot(Cpos, Cpos)) > j->breakForce) j->broken = true;
-        } else if (m == Joint3D::Mode::Slider) {
-            // Prismatic joint: A may only move along `axis` (a world direction fixed at the start) relative to B or the anchor,
-            // and cannot turn. Limits (metres from the start position) and a motor (metres per second) are optional.
-            Vec3 axis = j->axis.SqrMagnitude() > 1e-10f ? j->axis.Normalized() : Vec3{1, 0, 0};
-            const Vec3 e = pa - pb - j->pinOffset;
-            const Vec3 perp = e - axis * Vec3::Dot(e, axis);                 // sideways drift: pulled back
-            MoveBodyWorld(ta, perp * (-imA / imSum));
-            if (tb && rbB && imB > 0.0f) MoveBodyWorld(tb, perp * (imB / imSum));
-            Vec3 vB = rbB ? rbB->velocity : Vec3::Zero;
-            const Vec3 vrel = ra->velocity - vB;
-            const Vec3 vperp = vrel - axis * Vec3::Dot(vrel, axis);
-            ra->velocity = ra->velocity - vperp * (imA / imSum);
-            if (rbB && imB > 0.0f) rbB->velocity = rbB->velocity + vperp * (imB / imSum);
-            ra->angularVelocity = Vec3::Zero;
-            float along = Vec3::Dot(ta->Position() - (tb ? tb->Position() : j->anchor) - j->pinOffset, axis);
-            if (j->useLimits) {
-                const float clamped = Mathf::Clamp(along, j->minAngle, j->maxAngle);
-                if (clamped != along) {
-                    const Vec3 fix = axis * (clamped - along);
-                    MoveBodyWorld(ta, fix * (imA / imSum));
-                    if (tb && rbB && imB > 0.0f) MoveBodyWorld(tb, fix * (-imB / imSum));
-                    vB = rbB ? rbB->velocity : Vec3::Zero;
-                    const float vAlong = Vec3::Dot(ra->velocity - vB, axis);
-                    if ((clamped > along && vAlong < 0.0f) || (clamped < along && vAlong > 0.0f)) {   // moving further out: stop it
-                        ra->velocity = ra->velocity - axis * (vAlong * (imA / imSum));
-                        if (rbB && imB > 0.0f) rbB->velocity = rbB->velocity + axis * (vAlong * (imB / imSum));
-                    }
-                    along = clamped;
-                }
-            }
-            if (j->useMotor) {
-                vB = rbB ? rbB->velocity : Vec3::Zero;
-                const float vAlong = Vec3::Dot(ra->velocity - vB, axis);
-                float push = (j->motorSpeed - vAlong) / imSum;
-                const float cap = j->maxMotorTorque * dt / (float)jointPasses;     // (max force)
-                push = Mathf::Clamp(push, -cap, cap);
-                ra->velocity = ra->velocity + axis * (push * imA);
-                if (rbB && imB > 0.0f) rbB->velocity = rbB->velocity - axis * (push * imB);
-            }
-            if (j->breakable && std::sqrt(Vec3::Dot(perp, perp)) > j->breakForce) j->broken = true;
-        } else {
-            Vec3 d = pb - pa; float len = std::sqrt(Vec3::Dot(d, d));
-            Vec3 n = len > 1e-5f ? d * (1.0f / len) : Vec3{0, 1, 0};
-            float C = len - j->restLen;                 // +stretched / -compressed
-            if (j->breakable && std::fabs(C) > j->breakForce) { j->broken = true; continue; }   // snapped: do not hold it back this step
-            Vec3 va = ra->velocity, vb = rbB ? rbB->velocity : Vec3::Zero;
-            float vrelN = Vec3::Dot(vb - va, n);
-            if (m == Joint3D::Mode::Spring) {
-                const float K = imA + imB;
-                if (dt * dt * j->spring * K > 1.0f || dt * j->damper * K > 1.0f) {
-                    // Too stiff for a plain force at this step: the old force pushed the body past rest by more than it came
-                    // (stiffness 20000 on a 1 kg ball at 50 steps a second ended as NaN). Solve the spring implicitly instead:
-                    // a soft constraint with softness gamma = 1 / (h (c + h k)) and bias beta C / h, beta = h k / (c + h k),
-                    // stable for any stiffness. (Soft springs keep the old force below, so existing scenes play as before.)
-                    const float cd = j->damper, kk = j->spring;
-                    if (cd + dt * kk > 1e-9f && K > 0.0f) {
-                        const float gamma = 1.0f / (dt * (cd + dt * kk));
-                        const float beta = dt * kk / (cd + dt * kk);
-                        const float P = -(vrelN + beta / dt * C) / (K + gamma);
-                        ra->velocity = ra->velocity - n * (P * imA);
-                        if (rbB && imB > 0.0f) rbB->velocity = rbB->velocity + n * (P * imB);
-                    }
-                } else {
-                    float f = j->spring * C + j->damper * vrelN;   // restore + damp, along n (A->B)
-                    Vec3 imp = n * (f * dt);
-                    ra->velocity = ra->velocity + imp * imA;
-                    if (rbB && imB > 0.0f) rbB->velocity = rbB->velocity - imp * imB;
-                }
-            } else {                                    // Distance (rigid rod)
-                float jImp = -vrelN / imSum;
-                Vec3 imp = n * jImp;
-                ra->velocity = ra->velocity - imp * imA;
-                if (rbB && imB > 0.0f) rbB->velocity = rbB->velocity + imp * imB;
-                Vec3 corr = n * C;                       // restore the rest length
-                MoveBodyWorld(ta, corr * (imA / imSum));
-                if (tb && rbB && imB > 0.0f) MoveBodyWorld(tb, corr * (-imB / imSum));
-            }
-            if (j->breakable && std::fabs(C) > j->breakForce) j->broken = true;
-        }
-    }
-
-    // Sleep bookkeeping: a dynamic body under the speed thresholds for kSleepTime
-    // seconds sleeps (zeroed and skipped next step). Any motion resets the timer.
-    // (Improved: bodies that touch go to sleep together, see ImprovedSleep.)
-    if (improved) m_solver->Sleep(bodies, dt, gone, m_stats);
-    else for (Rigidbody3D* rb : bodies) {
-        if (gone.Gone(rb)) continue;                 // removed by a contact callback
-        if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
-        if (rb->bodyType != Rigidbody3D::BodyType::Dynamic) continue;
-        if (!rb->allowSleep) { rb->WakeUp(); continue; }
-        if (rb->sleeping) continue;
-        if (rb->velocity.SqrMagnitude() < kLinSleep * kLinSleep &&
-            rb->angularVelocity.SqrMagnitude() < kAngSleep * kAngSleep) {
-            rb->m_sleepTimer += dt;
-            if (rb->m_sleepTimer >= kSleepTime) {
-                rb->sleeping = true;
-                rb->velocity = Vec3::Zero;
-                rb->angularVelocity = Vec3::Zero;
-            }
-        } else {
-            rb->m_sleepTimer = 0.0f;
-        }
-    }
-
-    // Debug view: every moving body (a box around it, sleeping ones marked) and every joint (the line it holds).
-    if (PhysicsDebug::Collect()) {
-        for (Rigidbody3D* rb : bodies) {
-            if (gone.Gone(rb) || !rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
-            if (rb->bodyType == Rigidbody3D::BodyType::Static || (int)m_debugBodies.size() >= PhysicsDebug::kMaxBodies) continue;
-            Collider3D* col = rb->gameObject->GetComponent<Collider3D>();
-            if (!col) continue;
-            Vec3 mn, mx; col->WorldAABB(mn, mx);
-            if (!std::isfinite(mn.x + mn.y + mn.z + mx.x + mx.y + mx.z)) continue;
-            m_debugBodies.push_back({(mn + mx) * 0.5f, (mx - mn) * 0.5f, rb->sleeping});
-        }
-        for (Joint3D* j : allJoints) {
-            if (gone.Gone(j) || !j->gameObject || !j->transform || (int)m_debugJoints.size() >= PhysicsDebug::kMaxBodies) continue;
-            GameObject* other = CachedPartner(scene, j);
-            m_debugJoints.push_back({j->transform->Position(), other && other->transform ? other->transform->Position() : j->anchor, j->broken});
-        }
-    }
-
-    // A box floor has no swept catch of its own. Do this before prevPos is stored
-    // so the next step sees the recovered feet.
-    DownRays rays;
-    const bool useRays = !broadphase::ForceBruteForce();   // (the switch also brings back the plain Raycast for each body)
-    rays.fetch = [this, &scene, &rays]() { const QueryCache& q = QueryLists(scene); rays.colliders = q.colliders; rays.terrains = q.terrains; };
-    // (Improved with automatic continuous collision does not need it: a fast body is swept, and the rescue would also lift a ball
-    // that is about to bounce and clear its speed, so the bounce was lost.)
-    if (!(improved && autoContinuous)) for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
-        if (gone.Gone(rb)) continue;
-        if (CatchTunneledFloor(scene, rb, useRays ? &rays : nullptr)) rays.built = false;
-    }
-
-    // Record where every dynamic body ended up, for next step's swept collision.
-    for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
-        if (rb->bodyType == Rigidbody3D::BodyType::Static || !rb->transform) continue;
-        rb->prevPos = rb->transform->Position();
-        rb->hasPrevPos = true;
-    }
 }
 
 // ===================== Scene queries ===================================
@@ -2237,6 +1122,19 @@ std::vector<Collider3D*> Overlap(Scene& scene, const QueryShape& q, std::uint32_
     return out;
 }
 
+// The interval of a sweep where `c`'s bounds can meet the query. False when the bounds are unusable or the
+// shape never reaches them. `t0`/`t1` come back clamped to [0, maxDist].
+bool SweepWindow(Collider3D* c, const Vec3& origin, const Vec3& dir, const Vec3& extent, float maxDist, float& t0, float& t1) {
+    Vec3 mn, mx;
+    c->WorldAABB(mn, mx);
+    if (!(std::isfinite(mn.x + mn.y + mn.z + mx.x + mx.y + mx.z))) return false;
+    if (!RaySlabs(origin, dir, mn - extent, mx + extent, t0, t1)) return false;
+    if (t1 < 0.0f || t0 > maxDist) return false;
+    t0 = Mathf::Max(t0, 0.0f);
+    t1 = Mathf::Min(t1, maxDist);
+    return true;
+}
+
 // Sweep query shape q along unit `dir` up to maxDist; the nearest collider it
 // touches. Only the stretch of the path where a collider's (inflated) bounds
 // lie is marched, in steps of half the shape's thinnest size (so a thin wall
@@ -2258,14 +1156,10 @@ RaycastHit3D Sweep(Scene& scene, const QueryShape& q, const Vec3& dir, float max
     for (Collider3D* c : (only ? *only : everything)) {
         if (!Passes(c, ignore, mask, queryTriggers)) continue;
         if (skipTriMeshes && MeshHasTris(c)) continue;
-        Vec3 mn, mx; c->WorldAABB(mn, mx);
-        if (!(std::isfinite(mn.x + mn.y + mn.z + mx.x + mx.y + mx.z))) continue;   // NaN or infinite bounds: not a place to hit
         float t0, t1;
-        if (!RaySlabs(o, dir, mn - ext, mx + ext, t0, t1)) continue;
-        if (t1 < 0.0f || t0 > maxDist) continue;
+        if (!SweepWindow(c, o, dir, ext, maxDist, t0, t1)) continue;
         Vec3 n, p;   // (the bounds test comes first: it is cheap, and most colliders are nowhere near the path)
         if (skipStartOverlaps && ShapeTouch(c, q, n, p)) continue;
-        t0 = Mathf::Max(t0, 0.0f); t1 = Mathf::Min(t1, maxDist);
         cands.push_back({c, t0, t1});
         lo = Mathf::Min(lo, t0); hi = Mathf::Max(hi, t1);
     }
@@ -2309,6 +1203,119 @@ RaycastHit3D Sweep(Scene& scene, const QueryShape& q, const Vec3& dir, float max
     return best;
 }
 
+// How far `q` reaches from its centre along `n` (n should be unit length).
+float ShapeReach(const QueryShape& q, const Vec3& n) {
+    if (q.kind == QueryShape::Box)
+        return std::fabs(Vec3::Dot(q.box.ax, n)) * q.box.h.x
+             + std::fabs(Vec3::Dot(q.box.ay, n)) * q.box.h.y
+             + std::fabs(Vec3::Dot(q.box.az, n)) * q.box.h.z;
+    float reach = q.r;
+    if (q.kind == QueryShape::Capsule) {
+        Vec3 seg = q.b - q.a;
+        float len = seg.Magnitude();
+        if (len > 1e-8f) reach += 0.5f * len * std::fabs(Vec3::Dot(seg * (1.0f / len), n));
+    }
+    return reach;
+}
+
+// Terrain is part of every shape cast, not only a zero-radius ray. The ray hits the
+// surface; the cast hits earlier by the shape's reach along the ground normal.
+void AddTerrainSweep(Scene& scene, const QueryShape& q, const Vec3& dir, float maxDist,
+                     GameObject* ignore, std::uint32_t mask, std::vector<RaycastHit3D>& hits) {
+    if (!(dir.SqrMagnitude() > 0.5f) || !(maxDist > 0.0f)) return;
+    for (Terrain* terr : scene.FindObjectsOfType<Terrain>()) {
+        if (!TerrainPasses(terr, ignore, mask) || !terr->gameObject) continue;
+        float t = 0.0f;
+        Vec3 n{0, 1, 0};
+        float reachGuess = q.kind == QueryShape::Box ? (q.box.h.x + q.box.h.y + q.box.h.z) : q.r + 0.01f;
+        if (!RayTerrain(terr, q.Center(), dir, maxDist + reachGuess + 1.0f, t, n)) continue;
+        float approach = -Vec3::Dot(n, dir);
+        if (!(approach > 0.05f)) continue;
+        float hitT = t - ShapeReach(q, n) / approach;
+        if (hitT < 0.0f) hitT = 0.0f;
+        if (hitT > maxDist) continue;
+        RaycastHit3D h;
+        h.hit = true; h.collider = nullptr; h.gameObject = terr->gameObject;
+        h.distance = hitT; h.point = q.Center() + dir * t; h.normal = n;
+        hits.push_back(h);
+    }
+}
+
+// Every collider the sweep touches, nearest first. Each candidate is marched on its own, with the same
+// step and bisection as Sweep, so a thin wall between two samples is not skipped and a later wall is kept.
+// A zero direction or a zero distance still reports what the shape already overlaps, the same as SphereCast
+// testing the place it stands.
+std::vector<RaycastHit3D> SweepAll(Scene& scene, const QueryShape& q, const Vec3& dir, float maxDist,
+                                   GameObject* ignore, std::uint32_t mask, bool queryTriggers) {
+    std::vector<RaycastHit3D> hits;
+    const bool badDir = !(dir.SqrMagnitude() >= 1e-12f) || !std::isfinite(dir.x) || !std::isfinite(dir.y) || !std::isfinite(dir.z);
+    const bool zeroDist = !(maxDist > 1e-8f);
+    if (badDir || zeroDist) {
+        if (!(maxDist >= 0.0f) || !std::isfinite(maxDist)) return hits;
+        for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
+            if (!Passes(c, ignore, mask, queryTriggers)) continue;
+            Vec3 n, p;
+            if (!ShapeTouch(c, q, n, p)) continue;
+            RaycastHit3D h;
+            h.hit = true; h.collider = c; h.gameObject = c->gameObject;
+            h.distance = 0.0f; h.point = p; h.normal = n;
+            hits.push_back(h);
+        }
+        return hits;
+    }
+    struct Cand { Collider3D* c; float t0, t1; };
+    std::vector<Cand> cands;
+    const Vec3 o = q.Center(), ext = q.Extent();
+    for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
+        if (!Passes(c, ignore, mask, queryTriggers)) continue;
+        float t0, t1;
+        if (!SweepWindow(c, o, dir, ext, maxDist, t0, t1)) continue;
+        cands.push_back({c, t0, t1});
+    }
+    float step = Mathf::Max(q.Thinnest() * 0.5f, 0.02f);
+    if (!std::isfinite(step) || step <= 0.0f) return hits;
+    for (const Cand& cd : cands) {
+        if (!(cd.t1 >= cd.t0) || !std::isfinite(cd.t0 + cd.t1)) continue;
+        Vec3 n, p;
+        auto touchAt = [&](float t) { return ShapeTouch(cd.c, q.Moved(dir * t), n, p); };
+        float hitT = cd.t0;
+        bool found = touchAt(cd.t0);
+        if (!found) {
+            float prev = cd.t0;
+            float span = cd.t1 - cd.t0;
+            float st = (span / step > 20000.0f) ? span / 20000.0f : step;
+            int samples = 0;
+            for (float t = cd.t0 + st; ; t += st) {
+                bool last = t >= cd.t1 || ++samples > 20002;
+                if (last) t = cd.t1;
+                if (touchAt(t)) {
+                    float a = prev, b = t;
+                    for (int it = 0; it < 12 && b > a; ++it) {
+                        float m = (a + b) * 0.5f;
+                        if (touchAt(m)) b = m; else a = m;
+                    }
+                    hitT = b;
+                    touchAt(b);
+                    found = true;
+                    break;
+                }
+                if (last) break;
+                prev = t;
+            }
+        }
+        if (!found) continue;
+        RaycastHit3D h;
+        h.hit = true; h.collider = cd.c; h.gameObject = cd.c->gameObject;
+        h.distance = hitT; h.point = p; h.normal = n;
+        hits.push_back(h);
+    }
+    AddTerrainSweep(scene, q, dir, maxDist, ignore, mask, hits);
+    std::sort(hits.begin(), hits.end(), [](const RaycastHit3D& a, const RaycastHit3D& b) {
+        return a.distance < b.distance;
+    });
+    return hits;
+}
+
 QueryShape SphereShape(const Vec3& c, float r) {
     QueryShape q; q.kind = QueryShape::Sphere; q.c = c; q.r = r; return q;
 }
@@ -2320,6 +1327,89 @@ QueryShape BoxShape(const Vec3& c, const Vec3& h, const Quat& rot) {
 }
 QueryShape CapsuleShape(const Vec3& a, const Vec3& b, float r) {
     QueryShape q; q.kind = QueryShape::Capsule; q.a = a; q.b = b; q.r = r; return q;
+}
+
+// Push one sphere centre out of one solid collider. True when the centre moved.
+bool NudgeSphere(Collider3D* col, Vec3& c, float r) {
+    if (MeshCollider3D* mc = TriMeshOf(col)) {
+        trimesh::Contact k = trimesh::WorldView(ActiveTris(mc), mc->WorldMatrix()).Sphere(c, r);
+        if (k.hit && k.penetration > 1e-5f) { c = c + k.normal * k.penetration; return true; }
+        return false;
+    }
+    if (col->shape() == Collider3D::Shape::Sphere) {
+        Vec3 sc; float sr; AsSphere(col, c, sc, sr);
+        Vec3 d = c - sc; float dl = d.Magnitude();
+        if (dl < r + sr) {
+            Vec3 n = dl > 1e-5f ? d * (1.0f / dl) : Vec3{0, 1, 0};
+            c = sc + n * (r + sr); return true;
+        }
+        return false;
+    }
+    if (IsBoxLike(col->shape())) {
+        auto* box = static_cast<BoxCollider3D*>(col);
+        Vec3 bc = box->WorldCenter(), h = box->HalfExtents();
+        Vec3 ax, ay, az; box->WorldAxes(ax, ay, az);
+        Vec3 rel = c - bc;
+        Vec3 l{Vec3::Dot(rel, ax), Vec3::Dot(rel, ay), Vec3::Dot(rel, az)};
+        Vec3 cl = ClampVec(l, {-h.x, -h.y, -h.z}, {h.x, h.y, h.z});
+        Vec3 dl3 = l - cl; float dl = dl3.Magnitude();
+        Vec3 ln;
+        float push = 0.0f;
+        if (dl > 1e-5f) {
+            if (dl < r) { ln = dl3 * (1.0f / dl); push = r - dl; }
+        } else {
+            float dxl = l.x + h.x, dxh = h.x - l.x;
+            float dyl = l.y + h.y, dyh = h.y - l.y;
+            float dzl = l.z + h.z, dzh = h.z - l.z;
+            float m = dxl; ln = {-1, 0, 0};
+            if (dxh < m) { m = dxh; ln = {1, 0, 0}; }
+            if (dyl < m) { m = dyl; ln = {0, -1, 0}; }
+            if (dyh < m) { m = dyh; ln = {0, 1, 0}; }
+            if (dzl < m) { m = dzl; ln = {0, 0, -1}; }
+            if (dzh < m) { m = dzh; ln = {0, 0, 1}; }
+            push = m + r;
+        }
+        if (push > 0.0f) {
+            Vec3 wn = ax * ln.x + ay * ln.y + az * ln.z;
+            c = c + wn * push; return true;
+        }
+        return false;
+    }
+    if (IsGenericShape(col) || col->shape() == Collider3D::Shape::Capsule) {
+        Vec3 sn, sp;
+        if (!SphereTouch(col, c, r, sn, sp)) return false;
+        SupFn sup = [c, r](const Vec3& d) { float m = d.Magnitude(); return m > 1e-12f ? c + d * (r / m) : c; };
+        float depth;
+        if (IsGenericShape(col)) {
+            Contact k = GenericVs(col, sup, c - Vec3{r, r, r}, c + Vec3{r, r, r});
+            if (!k.hit) return false;
+            depth = k.penetration; sn = k.normal;
+        } else {
+            Vec3 sc; float sr; AsSphere(col, c, sc, sr);
+            Vec3 dv = c - sc; float dl = dv.Magnitude();
+            depth = r + sr - dl; sn = dl > 1e-6f ? dv * (1.0f / dl) : Vec3{0, 1, 0};
+        }
+        if (depth > 1e-5f) { c = c + sn * depth; return true; }
+        return false;
+    }
+    Vec3 mn, mx; col->WorldAABB(mn, mx);
+    Vec3 cp = ClampVec(c, mn, mx);
+    Vec3 d = c - cp; float dl = d.Magnitude();
+    if (dl > 1e-5f) {
+        if (dl < r) { c = cp + d * (1.0f / dl) * r; return true; }
+        return false;
+    }
+    float dxl = c.x - mn.x, dxh = mx.x - c.x;
+    float dyl = c.y - mn.y, dyh = mx.y - c.y;
+    float dzl = c.z - mn.z, dzh = mx.z - c.z;
+    float m = dxl; Vec3 n{-1, 0, 0};
+    if (dxh < m) { m = dxh; n = {1, 0, 0}; }
+    if (dyl < m) { m = dyl; n = {0, -1, 0}; }
+    if (dyh < m) { m = dyh; n = {0, 1, 0}; }
+    if (dzl < m) { m = dzl; n = {0, 0, -1}; }
+    if (dzh < m) { m = dzh; n = {0, 0, 1}; }
+    c = c + n * (m + r);
+    return true;
 }
 } // namespace
 
@@ -2353,11 +1443,29 @@ RaycastHit3D Physics3D::SphereCast(Scene& scene, const Vec3& origin, const Vec3&
                  queryTriggers, /*skipStartOverlaps*/ false);
 }
 
+std::vector<RaycastHit3D> Physics3D::SphereCastAll(Scene& scene, const Vec3& origin, const Vec3& direction,
+                                                   float radius, float maxDistance, GameObject* ignore,
+                                                   std::uint32_t layerMask, bool queryTriggers) {
+    Vec3 dir = direction.Normalized();
+    if (radius <= 0.0f) return RaycastAll(scene, origin, dir, maxDistance, ignore, layerMask, queryTriggers);
+    return SweepAll(scene, SphereShape(origin, radius), dir, maxDistance, ignore, layerMask, queryTriggers);
+}
+
 RaycastHit3D Physics3D::BoxCast(Scene& scene, const Vec3& center, const Vec3& halfExtents,
                                 const Vec3& direction, const Quat& rotation, float maxDistance,
                                 GameObject* ignore, std::uint32_t layerMask, bool queryTriggers) {
     return Sweep(scene, BoxShape(center, halfExtents, rotation), direction.Normalized(), maxDistance,
                  ignore, layerMask, queryTriggers, /*skipStartOverlaps*/ false);
+}
+
+std::vector<RaycastHit3D> Physics3D::BoxCastAll(Scene& scene, const Vec3& center, const Vec3& halfExtents,
+                                               const Vec3& direction, const Quat& rotation, float maxDistance,
+                                               GameObject* ignore, std::uint32_t layerMask, bool queryTriggers) {
+    // A box with no size is a ray, and a ray includes terrain (the same as SphereCastAll with radius 0).
+    if (!(halfExtents.x > 1e-6f) && !(halfExtents.y > 1e-6f) && !(halfExtents.z > 1e-6f))
+        return RaycastAll(scene, center, direction.Normalized(), maxDistance, ignore, layerMask, queryTriggers);
+    return SweepAll(scene, BoxShape(center, halfExtents, rotation), direction.Normalized(), maxDistance,
+                    ignore, layerMask, queryTriggers);
 }
 
 RaycastHit3D Physics3D::CapsuleCast(Scene& scene, const Vec3& a, const Vec3& b, float radius,
@@ -2367,65 +1475,13 @@ RaycastHit3D Physics3D::CapsuleCast(Scene& scene, const Vec3& a, const Vec3& b, 
                  ignore, layerMask, queryTriggers, /*skipStartOverlaps*/ false);
 }
 
-void Physics3D::SweepBody(Scene& scene, Rigidbody3D* rb, float dt) {
-    SweepBodyBy(scene, rb, rb->velocity * dt, false);
-}
-
-void Physics3D::SweepBodyBy(Scene& scene, Rigidbody3D* rb, const Vec3& motion, bool onlyStatics) {
-    Transform* t = rb->transform;
-    float len = motion.Magnitude();
-    Collider3D* self = rb->gameObject->GetComponent<Collider3D>();
-    if (!self || !Alive(self) || self->isTrigger || len < 1e-6f) {
-        MoveBodyWorld(t, motion);
-        return;
-    }
-    // The body as the sphere that fits inside its bounds: a slow body (moving
-    // less than half that per step) can't skip a wall, so it moves normally.
-    Vec3 mn, mx; self->WorldAABB(mn, mx);
-    float r = 0.5f * Mathf::Min(mx.x - mn.x, Mathf::Min(mx.y - mn.y, mx.z - mn.z));
-    if (r < 0.01f) r = 0.01f;
-    if (len <= r * 0.5f) { MoveBodyWorld(t, motion); return; }
-    Vec3 dir = motion * (1.0f / len);
-    // The colliders the sweep looks at: all of them, or (automatic continuous collision) the ones that are not dynamic bodies.
-    const std::vector<Collider3D*>* list = &QueryLists(scene).colliders;
-    std::vector<Collider3D*> extraList;
-    if (onlyStatics && m_solver) {
-        if (!m_solver->staticListBuilt) {
-            m_solver->staticList.clear(); m_solver->movingList.clear();
-            for (Collider3D* c : *list) {
-                Rigidbody3D* body = BodyOfCollider(c);
-                if (!body || body->bodyType != Rigidbody3D::BodyType::Dynamic) m_solver->staticList.push_back(c);
-                else m_solver->movingList.push_back(c);
-            }
-            m_solver->staticListBuilt = true;
-        }
-        list = &m_solver->staticList;
-        // Other moving bodies too, but only the ones thin enough to be jumped over in one step (a ball at 100 m/s against a
-        // light plate): a thick body is caught by the normal overlap test, and sweeping against all of them would cost too much.
-        extraList = m_solver->staticList;
-        for (Collider3D* c : m_solver->movingList) {
-            if (!Alive(c) || c->gameObject == rb->gameObject || c->isTrigger) continue;
-            Vec3 cmn, cmx; c->WorldAABB(cmn, cmx);
-            const float thin = Mathf::Min(cmx.x - cmn.x, Mathf::Min(cmx.y - cmn.y, cmx.z - cmn.z));
-            if (thin < len + 2.0f * r) extraList.push_back(c);
-        }
-        list = &extraList;
-    }
-    // (A compound body's own child colliders never block it.)
-    const IgnoreHierarchy own(quality == PhysicsQuality::Improved && rb->compoundChildren ? rb->gameObject : nullptr);
-    RaycastHit3D h = Sweep(scene, SphereShape(self->WorldCenter(), r), dir, len, rb->gameObject,
-                           m_layerMask[self->layer & 31], /*queryTriggers*/ false,
-                           /*skipStartOverlaps*/ true, /*skipTriMeshes*/ false, list);
-    float travel = len;
-    // Stop just inside the surface so this step's narrow phase sees the contact
-    // and bounces / stops the body as usual.
-    if (h.hit) {
-        // Classic stops just inside the surface so this step's narrow phase sees an overlap. Improved stops just short of it: the
-        // contact skin finds it next step with the full approach speed, so a bouncy ball bounces and nothing is lifted or slowed.
-        if (quality == PhysicsQuality::Improved) travel = Mathf::Max(0.0f, Mathf::Min(len, h.distance - 0.002f));
-        else travel = Mathf::Min(len, h.distance + Mathf::Min(0.02f, r * 0.2f));
-    }
-    MoveBodyWorld(t, dir * travel);
+std::vector<RaycastHit3D> Physics3D::CapsuleCastAll(Scene& scene, const Vec3& a, const Vec3& b, float radius,
+                                                   const Vec3& direction, float maxDistance, GameObject* ignore,
+                                                   std::uint32_t layerMask, bool queryTriggers) {
+    if (!(radius > 0.0f) && (a - b).SqrMagnitude() < 1e-12f)
+        return RaycastAll(scene, a, direction.Normalized(), maxDistance, ignore, layerMask, queryTriggers);
+    return SweepAll(scene, CapsuleShape(a, b, radius), direction.Normalized(), maxDistance,
+                    ignore, layerMask, queryTriggers);
 }
 
 const TriggerContact3D* Physics3D::CurrentTrigger() { return g_currentTrigger; }
@@ -2448,95 +1504,56 @@ Vec3 Physics3D::ResolveSphere(Scene& scene, Vec3 c, float r, GameObject* ignore,
         for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
             if (!Alive(col)) continue;
             if (ignore && col->gameObject == ignore) continue;
-            if (col->isTrigger) continue;                 // triggers never block
-            if (MeshCollider3D* mc = TriMeshOf(col)) {     // exact triangles, or the hull when dynamic
-                trimesh::Contact k = trimesh::WorldView(ActiveTris(mc), mc->WorldMatrix()).Sphere(c, r);
-                if (k.hit && k.penetration > 1e-5f) { c = c + k.normal * k.penetration; moved = true; }
-                continue;
-            }
-            if (col->shape() == Collider3D::Shape::Sphere) {
-                Vec3 sc; float sr; AsSphere(col, c, sc, sr);
-                Vec3 d = c - sc; float dl = d.Magnitude();
-                if (dl < r + sr) {
-                    Vec3 n = dl > 1e-5f ? d * (1.0f / dl) : Vec3{0, 1, 0};
-                    c = sc + n * (r + sr); moved = true;
-                }
-                continue;
-            }
-            if (IsBoxLike(col->shape())) {
-                // Oriented box: work in the box's local frame so a rotated platform
-                // pushes the sphere off its true faces, not its (larger) AABB.
-                auto* box = static_cast<BoxCollider3D*>(col);
-                Vec3 bc = box->WorldCenter(), h = box->HalfExtents();
-                Vec3 ax, ay, az; box->WorldAxes(ax, ay, az);
-                Vec3 rel = c - bc;
-                Vec3 l{Vec3::Dot(rel, ax), Vec3::Dot(rel, ay), Vec3::Dot(rel, az)};
-                Vec3 cl = ClampVec(l, {-h.x, -h.y, -h.z}, {h.x, h.y, h.z});
-                Vec3 dl3 = l - cl; float dl = dl3.Magnitude();
-                Vec3 ln;                                   // push direction, local space
-                float push = 0.0f;
-                if (dl > 1e-5f) {
-                    if (dl < r) { ln = dl3 * (1.0f / dl); push = r - dl; }
-                } else {
-                    // Centre inside: eject along the least-penetrating local axis.
-                    float dxl = l.x + h.x, dxh = h.x - l.x;
-                    float dyl = l.y + h.y, dyh = h.y - l.y;
-                    float dzl = l.z + h.z, dzh = h.z - l.z;
-                    float m = dxl; ln = {-1, 0, 0};
-                    if (dxh < m) { m = dxh; ln = {1, 0, 0}; }
-                    if (dyl < m) { m = dyl; ln = {0, -1, 0}; }
-                    if (dyh < m) { m = dyh; ln = {0, 1, 0}; }
-                    if (dzl < m) { m = dzl; ln = {0, 0, -1}; }
-                    if (dzh < m) { m = dzh; ln = {0, 0, 1}; }
-                    push = m + r;
-                }
-                if (push > 0.0f) {
-                    Vec3 wn = ax * ln.x + ay * ln.y + az * ln.z;   // local -> world normal
-                    c = c + wn * push; moved = true;
-                }
-                continue;
-            }
-            if (IsGenericShape(col) || col->shape() == Collider3D::Shape::Capsule) {
-                // Capsule, Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield: the exact shape, not its bounds.
-                Vec3 sn, sp;
-                if (!SphereTouch(col, c, r, sn, sp)) continue;
-                SupFn sup = [c, r](const Vec3& d) { float m = d.Magnitude(); return m > 1e-12f ? c + d * (r / m) : c; };
-                float depth;
-                if (IsGenericShape(col)) {
-                    Contact k = GenericVs(col, sup, c - Vec3{r, r, r}, c + Vec3{r, r, r});
-                    if (!k.hit) continue;
-                    depth = k.penetration; sn = k.normal;
-                } else {
-                    Vec3 sc; float sr; AsSphere(col, c, sc, sr);
-                    Vec3 dv = c - sc; float dl = dv.Magnitude();
-                    depth = r + sr - dl; sn = dl > 1e-6f ? dv * (1.0f / dl) : Vec3{0, 1, 0};
-                }
-                if (depth > 1e-5f) { c = c + sn * depth; moved = true; }
-                continue;
-            }
-            // Anything else (no exact shape): push out of the box surface.
-            Vec3 mn, mx; col->WorldAABB(mn, mx);
-            Vec3 cp = ClampVec(c, mn, mx);
-            Vec3 d = c - cp; float dl = d.Magnitude();
-            if (dl > 1e-5f) {
-                if (dl < r) { c = cp + d * (1.0f / dl) * r; moved = true; }
-            } else {
-                // Centre is inside the box: eject along the axis of least penetration.
-                float dxl = c.x - mn.x, dxh = mx.x - c.x;
-                float dyl = c.y - mn.y, dyh = mx.y - c.y;
-                float dzl = c.z - mn.z, dzh = mx.z - c.z;
-                float m = dxl; Vec3 n{-1, 0, 0};
-                if (dxh < m) { m = dxh; n = {1, 0, 0}; }
-                if (dyl < m) { m = dyl; n = {0, -1, 0}; }
-                if (dyh < m) { m = dyh; n = {0, 1, 0}; }
-                if (dzl < m) { m = dzl; n = {0, 0, -1}; }
-                if (dzh < m) { m = dzh; n = {0, 0, 1}; }
-                c = c + n * (m + r); moved = true;
-            }
+            if (col->isTrigger) continue;
+            if (NudgeSphere(col, c, r)) moved = true;
         }
         if (!moved) break;
     }
     return c;
 }
 
+Vec3 Physics3D::ResolveCapsule(Scene& scene, Vec3 center, Vec3 axis, float halfSegment, float radius,
+                               GameObject* ignore, int iterations) {
+    float al = axis.Magnitude();
+    if (al > 1e-8f) axis = axis * (1.0f / al);
+    else axis = {0, 1, 0};
+    if (!(halfSegment > 1e-4f) || !(radius > 0.0f))
+        return ResolveSphere(scene, center, std::max(radius, 0.0f), ignore, iterations);
+    for (int it = 0; it < iterations; ++it) {
+        bool moved = false;
+        Vec3 a = center - axis * halfSegment;
+        Vec3 b = center + axis * halfSegment;
+        for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
+            if (!Alive(col) || (ignore && col->gameObject == ignore) || col->isTrigger) continue;
+            // Seven stations along the segment, plus the point nearest this collider.
+            // Three stations (the two ends and the waist) miss a corner that overlaps
+            // the body between them.
+            Vec3 samples[8];
+            int ns = 0;
+            for (int s = 0; s <= 6; ++s) samples[ns++] = a + (b - a) * ((float)s / 6.0f);
+            samples[ns++] = ClosestOnSegment(col->WorldCenter(), a, b);
+            Vec3 best{0, 0, 0};
+            float best2 = 0.0f;
+            for (int si = 0; si < ns; ++si) {
+                const Vec3& sample = samples[si];
+                Vec3 s = sample;
+                if (!NudgeSphere(col, s, radius)) continue;
+                Vec3 d = s - sample;
+                float m = d.SqrMagnitude();
+                if (m > best2) { best2 = m; best = d; }
+            }
+            if (best2 > 1e-12f) {
+                center = center + best;
+                a = center - axis * halfSegment;
+                b = center + axis * halfSegment;
+                moved = true;
+            }
+        }
+        if (!moved) break;
+    }
+    return center;
+}
+
 } // namespace okay
+
+#include "Physics3DEngine.inl"   // our own physics engine core runs the scene

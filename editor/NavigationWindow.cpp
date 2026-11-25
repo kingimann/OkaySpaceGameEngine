@@ -5,9 +5,13 @@
 #include "NavigationWindow.hpp"
 #include "ConsolePanel.hpp"     // ConsoleLog
 #include "EditorWidgets.hpp"    // AccentCol
+#include "InspectorFieldsModel.hpp"   // the Nav Mesh Agent as OkayUI rows (stage 4)
 #include "okay/AI/NavMesh.hpp"
 #include "okay/AI/Navigation.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
+#include "okay/Components/GridCostLayer.hpp"
+#include "okay/Components/GridObstacle2D.hpp"
+#include "okay/Components/GridPathAgent2D.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
@@ -577,6 +581,74 @@ void DrawNavigationOverlay(EditorState& ed, ImDrawList* dl, const Mat4& vp, ImVe
 
 // ---- Inspectors / Add Component -------------------------------------------------
 
+static NavRowsDrawFn g_navRowsDraw = nullptr;
+void SetNavRowsDrawer(NavRowsDrawFn draw) { g_navRowsDraw = draw; }
+bool InspectorRowsOkayUI(okay::Component* comp, const char* id, okaypanels::InspFieldList& rows) { return g_navRowsDraw && g_navRowsDraw(comp, id, rows); }
+
+// The Nav Mesh Agent as rows: the Dear ImGui body's fields, labels, ranges and tips in its order; the Area Mask is a mask row with the
+// AreaMaskCombo's two preset buttons inside the list, its summary as the closed text and the area names. False: not drawn this frame.
+static bool DrawNavAgentRows(EditorState& ed, GameObject* go, NavMeshAgent* na, Component*& toRemove) {
+    using namespace okaypanels;
+    if (!g_navRowsDraw) return false;
+    static const char* const kPresetNames[] = {"All but Not Walkable", "Everything"};
+    static const int kPresetBits[] = {(int)kNavDefaultAreaMask, (int)kNavAllAreas};
+    InspFieldList L;
+    L.rows.reserve(32);
+    L.Drag("Radius##nava", &na->radius, 1, 0.01f, 0.05f, 5.0f, "%.2f");
+    L.Tip("Body radius for steering around other agents and obstacles (the mesh clearance comes from the bake).");
+    L.Drag("Height##nava", &na->height, 1, 0.05f, 0.1f, 10.0f, "%.2f");
+    L.Drag("Speed##nava", &na->speed, 1, 0.1f, 0.0f, 50.0f, "%.2f");
+    L.Drag("Acceleration##nava", &na->acceleration, 1, 0.1f, 0.0f, 100.0f, "%.1f"); L.Tip("How quickly it reaches its speed (0 = instantly).");
+    L.Drag("Angular Speed##nava", &na->angularSpeed, 1, 1.0f, 0.0f, 3600.0f, "%.0f deg/s");
+    L.Drag("Stopping Distance##nava", &na->stoppingDistance, 1, 0.01f, 0.0f, 10.0f, "%.2f");
+    L.Check("Auto Repath##nava", &na->autoRepath); L.Tip("Plan again every Repath Interval while walking (moving goals, opened doors).");
+    if (na->autoRepath) L.Drag("Repath Interval##nava", &na->repathInterval, 1, 0.05f, 0.05f, 10.0f, "%.2f s");
+    L.SliderInt("Avoidance Priority##nava", &na->avoidancePriority, 0, 99);
+    L.Tip("0: others get out of its way. 99: it yields to everyone. Equal priorities share the dodge.");
+    L.Drag("Avoidance Range##nava", &na->avoidanceRange, 1, 0.1f, 0.0f, 20.0f, "%.1f"); L.Tip("How far it looks for agents and obstacles to steer around (0 = none).");
+    L.Check("Auto Braking##nava", &na->autoBraking);
+    L.Check("Face Movement##nava", &na->faceMovement);
+    L.Check("Drive Animation##nava", &na->driveAnimation); L.Tip("Set a sibling Character's idle / walk / run from the movement.");
+    std::vector<std::string> names;
+    std::vector<const char*> namePtrs;
+    for (int i = 0; i < kNavAreaCount; ++i) names.push_back(AreaLabel(ed.scene(), i));
+    for (const std::string& n : names) namePtrs.push_back(n.c_str());
+    int on = 0; for (int i = 0; i < kNavAreaCount; ++i) if ((na->areaMask >> i) & 1u) ++on;
+    char summary[48];   // AreaMaskCombo's closed text
+    if (on == kNavAreaCount) std::snprintf(summary, sizeof(summary), "Everything");
+    else if (na->areaMask == kNavDefaultAreaMask) std::snprintf(summary, sizeof(summary), "All but Not Walkable");
+    else if (on == 0) std::snprintf(summary, sizeof(summary), "Nothing");
+    else std::snprintf(summary, sizeof(summary), "%d of %d areas", on, kNavAreaCount);
+    int bits = (int)na->areaMask;
+    const int kMask = L.Mask("Area Mask##nava", &bits);
+    { InspRow& r = L.Last(); r.count = kNavAreaCount; r.items = namePtrs.data(); r.preview = summary; r.pickKind = "areas";
+      r.presetNames = kPresetNames; r.presetBits = kPresetBits; r.presetCount = 2; }
+    L.Tip("Areas this agent may walk on and use links of. A forbidden area is never entered; a goal inside one has no path.");
+    L.Drag("Base Offset##nava", &na->baseOffset, 1, 0.01f, -5.0f, 5.0f, "%.2f");
+    L.Tip("The object's origin above its feet: 0 for a character pivoted at the feet, half the height for a cube.");
+    if (go->GetComponent<NPCController>() || go->GetComponent<ClickToMoveController>()) L.Note("Walks through this object's NPC / Click To Move controller.");
+    int kStop = -1, kResume = -1;
+    char state[64];
+    if (ed.isPlaying()) {
+        if (na->IsTraversingLink()) { std::snprintf(state, sizeof state, "Crossing a link: %.0f%%", na->LinkProgress() * 100.0f); L.Label(state, 0, false, true); }
+        else if (na->HasPath()) { std::snprintf(state, sizeof state, "%s: %.1f m left", na->IsStopped() ? "Stopped" : "Walking", na->RemainingDistance()); L.Label(state, 0, false, true); }
+        else L.Note(na->Arrived() ? "Arrived" : "Idle");
+        if (na->HasPath() && !na->IsStopped()) kStop = L.SmallButton("Stop##navagent");
+        else if (na->IsStopped()) kResume = L.SmallButton("Resume##navagent");
+    }
+    const int kSend = L.SmallButton(s_sendMode ? "Stop Sending##nava" : "Send To Click (Scene view)##nava");
+    L.Tip("Click the ground in the Scene view to order this agent there (it walks in Play).");
+    const int kRemove = L.SmallButton("Remove##navagent");
+    if (!g_navRowsDraw(na, "##okayui_navagent", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kMask].changed) na->areaMask = (std::uint32_t)bits;
+    if (kStop >= 0 && L[kStop].clicked) na->Stop();
+    if (kResume >= 0 && L[kResume].clicked) na->Resume();
+    if (L[kSend].clicked) { s_sendMode = !s_sendMode; if (s_sendMode) ed.Select(go); }
+    if (L[kRemove].clicked) toRemove = na;
+    return true;
+}
+
 void DrawNavigationInspector(EditorState& ed, GameObject* go, Component* comp, Component*& toRemove, CompHeaderFn header) {
     if (!go || !comp) return;
     if (auto* ns = dynamic_cast<NavMeshSurface*>(comp)) {
@@ -600,7 +672,7 @@ void DrawNavigationInspector(EditorState& ed, GameObject* go, Component* comp, C
         }
     }
     if (auto* na = dynamic_cast<NavMeshAgent*>(comp)) {
-        if (header("Nav Mesh Agent", na, &toRemove, true)) {
+        if (header("Nav Mesh Agent", na, &toRemove, true) && !DrawNavAgentRows(ed, go, na, toRemove)) {   // OkayUI's with the preview switch (section 17)
             if (ImGui::DragFloat("Radius##nava", &na->radius, 0.01f, 0.05f, 5.0f, "%.2f")) ed.dirty = true;
             Tip("Body radius for steering around other agents and obstacles (the mesh clearance comes from the bake).");
             if (ImGui::DragFloat("Height##nava", &na->height, 0.05f, 0.1f, 10.0f, "%.2f")) ed.dirty = true;
@@ -760,6 +832,16 @@ void NavigationAddComponentItems(EditorState& ed, GameObject* go, const std::fun
         ed.PushUndo();
         AddObstacleTo(go);
         ed.dirty = true;
+    }
+    // 2D grid navigation: the same system on a tilemap (Navigation::GridPath, one shared A*).
+    if (item(!go->GetComponent<GridPathAgent2D>(), "Grid Path Agent (2D)")) {
+        ed.PushUndo(); go->AddComponent<GridPathAgent2D>(); ed.dirty = true;
+    }
+    if (item(!go->GetComponent<GridCostLayer>(), "Grid Movement Costs")) {
+        ed.PushUndo(); go->AddComponent<GridCostLayer>(); ed.dirty = true;
+    }
+    if (item(!go->GetComponent<GridObstacle2D>(), "Grid Obstacle (2D)")) {
+        ed.PushUndo(); go->AddComponent<GridObstacle2D>(); ed.dirty = true;
     }
 }
 

@@ -6,6 +6,10 @@
 >
 > **Last checked:** 2026-11-20 (moved into `content/`, paths and links checked; the text itself was not re-checked against the code).
 
+> **2026-11-24: Assimp is deleted** (branch `claude/no-assimp-1`; ufbx was deleted on 2026-11-23). Our own readers are the only
+> model readers; a file one refuses fails the import (no fallback). Nendo `.ndo` is the one extension dropped
+> (`docs/content/model_readers.md`, section NDO). Text below that describes Assimp as a fallback or backend is history.
+
 > **2026-11-17: the model readers are flipped.** The owner approved ("start switching them so i can test them out"). Every
 > `OKAY_OWN_<FMT>` model reader option, `OKAY_OWN_FBX` and `OKAY_PREFER_OWN_READERS` (STL, PLY) are ON by default (NDO stays
 > OFF: a seam). Assimp and ufbx stay compiled in as the fallback. Ways back at run time: `OKAY_OWN_<FMT>=0` for one format,
@@ -103,6 +107,10 @@ to run; the instruction counts quoted below (callgrind) do not move.
 | **zae** (new) | 3 | 3 | 0.68x (27.5 / 40.5 ms) | met | 6.00 / 11.15 | met | 0.70x | 6.00 / 11.15 MB | 0 / 0 |
 | **xml** (new: by root element) | 9 | 4 | 0.70x (0.51 / 0.73 ms) | met | 0.14 / 0.20 | met | 0.71x | 0.14 / 0.20 MB | 1 / 0 |
 | **lxo** (Modo, new; the LWO reader) | 2 | 2 | 0.70x (1.25 / 1.77 ms) | met | 0.67 / 1.52 | met | 0.65x | 0.67 / 1.52 MB | 0 / 1 |
+| **q3bsp** (Quake III maps, new 2026-11-22, off by default) | 1 | 1 | 0.84x (5.2 / 6.2 ms) | met | 1.93 / 2.23 | met | 0.84x | 1.93 / 2.23 MB | 0 / 0 |
+| **mdl** (Quake 1 / Half-Life 1, new 2026-11-22, off by default) | 43 | 17 | 0.26x (1.0 / 3.9 ms) | met | 0.86 / 1.34 | met | 0.29x | 0.86 / 1.34 MB | 0 / 0; 6 GameStudio files read by Assimp only (ours refuses them, Assimp is the fallback), 20 refused by both |
+| **ogex** (OpenGEX, new 2026-11-22, off by default) | 6 | 3 | 0.46x (10.5 / 23.0 ms) | met | 1.73 / 4.81 | met | 0.52x | 1.73 / 4.81 MB | 0 / 0; `animation_example` read by ours only, 2 files (a camera or a light, no node) refused by both |
+| **gltf1** (glTF 1.0, new 2026-11-22, off by default) | 7 | 6 | 0.58x (1.42 / 2.44 ms) | met | 0.58 / 1.17 (summed 0.60x) | met | not comparable (see below) | 0.64 MB / - | 4 / 1 |
 
 `files slower / heavier` counts the files where ours took longer, or held more heap, than Assimp. "before" is the head of
 `claude2/own-collada-speed` (the first round, below); "now" is the head of `claude2/own-readers-speed-2`. LWS "before" had 14
@@ -123,6 +131,27 @@ still handed to Assimp with no reader of ours (`docs/status/own_code_roadmap.md`
   time (0.69x and 0.73x the peak), which is the Irrlicht mesh reader's own speed on them (the same file renamed `.irrmesh`
   measures the same within noise). A first version looked at the first 64 KiB of the file to pick the reader and held that
   buffer during the read, which made the peak 1.05x Assimp's; it now looks at 8 KiB on the stack and the memory is met.
+
+### glTF 1.0 (branch `claude2/own-readers-last`, 2026-11-22)
+
+`bench_model_readers --runs 15 --format gltf1` (the bench gives a `.gltf` / `.glb` of version 1 the format key `gltf1`; glTF 2.0
+does not go through this seam). One run, Linux, GCC 13, Release, the shared machine. Read times are tiny (0.06 to 0.55 ms), so a
+small file moves by tens of percent between runs.
+
+- **Only the read is compared.** "import, Assimp" fails on every file by design: the engine's scene import never hands a `.gltf`
+  / `.glb` to Assimp, and refuses glTF 1.0 when our reader is off. The bench therefore sums the gltf1 row over the read alone.
+- Per file (ours / Assimp, time and peak): CesiumMilkTruck 0.38x / 0.50x, BoxTextured embedded 0.49x / **1.28x** (0.19 / 0.15 MB:
+  ours holds the JSON text, which carries the buffer as base64, while it decodes it), BoxTextured 1.76x / 0.74x,
+  MaterialsCommon 1.54x / 0.61x, TwoBoxes 1.18x / 0.60x, Cube_v1 1.02x / 0.71x. The four slower files are 6 to 8 KB and take
+  0.12 to 0.18 ms; most of that is reading the separate `.bin` and image files and the folder checks. In total over the 6 files
+  both read: 0.58x the time, 0.50x the largest peak, 0.60x the summed peaks.
+- Assimp does not read `BoxTextured-glTF-Binary/BoxTextured.glb` at all (the file is 33 bytes shorter than its header says);
+  ours reads it with a note.
+- What differs (`--compare`): ours has one more node (the root `glTF`); Assimp joins equal vertices (CesiumMilkTruck 8,348 /
+  3,564, Cube_v1 142 / 64); Cube_v1 has 4 point and line primitives that Assimp keeps as 4 more parts (and their points widen
+  its box to z -3.5) while ours skips them with a note, and Assimp adds a default material there; CesiumMilkTruck's lowest point
+  is 0.001 for ours and -0.258 for Assimp: the wheel nodes' rotation, which ours applies as the specification's (x, y, z, w)
+  quaternion and which puts the wheels on the ground under the body (not looked into in Assimp's code).
 
 ### Third round (branch `claude2/own-readers-gap-2`, 2026-11-16): OGRE XML, LXO, LWO
 

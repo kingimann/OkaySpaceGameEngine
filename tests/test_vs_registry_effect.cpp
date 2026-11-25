@@ -42,6 +42,7 @@
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Components/UIButton.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Core/Log.hpp"
@@ -259,7 +260,7 @@ static void RichPopulate(Scene& s, GameObject*& me, int variant) {
 static bool NeedsOnline(const VsDef& d) {
     const std::string t = d.type;
     return d.cat == CAT_NET || t.rfind("Net", 0) == 0 || t.rfind("Steam", 0) == 0 || t.rfind("Pf", 0) == 0 || t.rfind("PlayFab", 0) == 0 ||
-           t.rfind("Fn.net_", 0) == 0 || t.rfind("Fn.steam", 0) == 0 || t.rfind("Fn.pf_", 0) == 0 || t.rfind("Fn.Steam", 0) == 0;
+           t.rfind("Fn.net_", 0) == 0 || t.rfind("Fn.net.", 0) == 0 || t.rfind("Fn.steam", 0) == 0 || t.rfind("Fn.pf_", 0) == 0 || t.rfind("Fn.Steam", 0) == 0;
 }
 // Proven by their own suites: the gameplay library (scene with the node against one without,
 // and value nodes against an empty scene) and, for the pure value nodes of the logic sets, test_vs_node_effect.
@@ -508,7 +509,7 @@ static std::string RunScenario(const Fix& fx, const std::string& text, int* errC
     Steam::Shutdown();
     vs::GlobalVariables().clear();
     Save::Clear();
-    TraverseJobs().clear(); HangPoints().clear(); HangGravity().clear();   // keyed by object address: a scene that ended mid-move leaves stale entries
+    TraverseJobs().clear(); HangPoints().clear(); HangEdges().clear(); HangGravity().clear();   // keyed by object address: a scene that ended mid-move leaves stale entries
     Scene s; s.physicsEnabled = true;
     GameObject* me; RichPopulate(s, me, fx.variant);
     if (fx.setup) fx.setup(s, me);
@@ -594,7 +595,8 @@ static std::vector<Ev> BuildEvents() {
         sp->Play();
         for (int i = 0; i < 6; ++i) s.Update(0.1f);
     }});
-    for (const char* t : {"OnObjectPlaced", "OnObjectRemoved", "OnLogicSignal", "OnCheatDetected", "OnValidateRpc", "OnValidateHit", "OnLanguageChanged"})
+    for (const char* t : {"OnObjectPlaced", "OnObjectRemoved", "OnLogicSignal", "OnCheatDetected", "OnValidateRpc", "OnValidateHit", "OnLanguageChanged",
+                          "OnPlayerJoined", "OnPlayerLeft", "OnOwnershipChanged", "OnHostMigrated"})   // the real dispatch is in net_easy / net_session
         e.push_back({t, "", "bus", "Me", raise(t, "")});
     // A finger stream the recogniser turns into one gesture, then one scene update so the
     // graph's event runs. The clock starts far from any earlier sample.
@@ -658,6 +660,13 @@ static std::vector<Ev> BuildEvents() {
         Gestures::Tick(70.20);
     })});
     e.push_back({"OnNetRpc", "ping", "bus", "Me", raise("OnNetRpc", "ping")});
+    // On Button Clicked: the UI button on the object named Other is pressed; this graph's next frame sees it.
+    e.push_back({"OnButtonClicked", "Other", "real", "Me", [](Scene& s, GameObject*, VC* vc) {
+        auto* b = s.Find("Other")->AddComponent<UIButton>(); b->Press(); vc->Update(0.1f); }});
+    // On Damaged: a hit through the one damage path, heard on this graph's next frame.
+    e.push_back({"OnDamaged", "", "real", "Me", [](Scene&, GameObject* me, VC* vc) {
+        auto* h = me->GetComponent<HealthStat>(); if (!h) h = me->AddComponent<HealthStat>();
+        h->playDeathAnim = false; h->playHitAnim = false; DealDamage(me, 5.0f, DamageType::Fire); vc->Update(0.1f); }});
     return e;
 }
 
@@ -939,7 +948,9 @@ int main() {
         const char* h = VsNodeHelp(d.type);
         const std::string help = h ? h : "";
         const bool mild = std::string(d.type) == "ExitBuildMode";   // only leaves build mode
-        const bool ok = mild ? help.find("build mode") != std::string::npos : help.find("not saved") != std::string::npos;
+        const bool seat = std::string(d.type) == "GlExitVehicle";   // only gets out of a vehicle seat
+        const bool ok = seat ? help.find("vehicle") != std::string::npos
+                      : mild ? help.find("build mode") != std::string::npos : help.find("not saved") != std::string::npos;
         if (!ok) std::printf("  help for %s does not warn: %s\n", d.type, help.c_str());
         CHECK(ok);
     }

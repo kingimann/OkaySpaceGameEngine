@@ -6,6 +6,8 @@
 >
 > **Last checked:** 2026-11-20.
 
+- [One table of engine functions](script_api_registry.md): The shared table every script language reads (OkayScript, C#, visual-script nodes); how to add a function once.
 - [OkayScript](scripting.md): The OkayScript language guide and its function reference, in one page.
+- [OkayScript bytecode machine](okayscript_vm.md): Design note for the compiler and stack machine that run OkayScript.
 - [Visual Script clarity](visual_script_clarity.md): How visual-script nodes explain themselves, and the audit behind it.
 - [OkayVS — the visual scripting text format](visual_scripting.md): A visual script is a graph of **nodes** wired by **execution** links (control flow) and **data** links (values).

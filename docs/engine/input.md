@@ -4,12 +4,78 @@
 >
 > **Status:** combined on 2026-11-20 from 2 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
 >
-> **Last checked:** 2026-11-20, paths and links against main.
+> **Last checked:** 2026-11-23, after the input systems were combined into one (section below).
 
 ## Contents
 
+- [One input system](#one-input-system) (2026-11-23)
 - [Input (internal record)](#input-internal-record) (was `docs/input.md`)
 - [Input audit](#input-audit) (was `docs/input_audit.md`)
+
+## One input system
+
+The owner, 2026-11-23: "you have 3 different input systems, combine it so you have one". The feature map listed them as
+**Input** (the devices), **Input Actions** (the typed `ActionSet`, the `.okayinput` asset, local players) and **Simple Input
+Actions** (the older `InputActions` table the built-in controllers read). PR #1139 had linked the last two for 11 actions;
+now they are one.
+
+**The one system.**
+- Devices: `Input` (keyboard, mouse, gamepads, touch). Unchanged; it was already the only device state.
+- Actions: one table, `InputRuntime::Actions()`, an `ActionSet`. It is the asset in use (the shipped default, a project's
+  `Assets/input.okayinput`, or `ia_load`) plus the actions code defines with `InputActions::Define` / `DefineIn`. A built-in
+  default (Jump, Move, Dig, Prone, the Vehicle keys ...) only adds what the asset lacks; a game's own `Define` replaces the
+  asset's bindings for that name. Every action is in it once.
+- One evaluation: `ActionSet::Update`. It took over what only the old table did: input contexts are action maps (a map can
+  consume its inputs or block every map below it: `PushMap` / `PopMap`), a held chord keeps its keys from single keys, an
+  action can add its bindings up (`sum`, asset option `sum=1`), the player's response (dead zone, curve, sensitivity, invert)
+  runs as processors, per-controller reads (`perPlayer`), on-screen contributions, hold-to-toggle, and press timing for
+  buffering, double tap and hold to confirm. No allocation per frame (`input_bench`).
+- One rebinding store: the table's overrides, saved in `inputov.player0` (`ov` lines; a list whose shape changed is one
+  `ovlist` line; lines for actions of another asset are kept as they were). For every action the name-based front can show,
+  the same store is also written in the old per-action form `input.<action>`, so earlier saves and builds still read it.
+  On load an action with an `input.<action>` pref takes it; the rest come from `inputov.player0`.
+- Local players: player 0's typed set has the table's bindings (copied whenever the table changes), so a rebind of either is
+  the same rebind. Players 1+ keep their own rebinding (`inputov.player<N>`), as before. Contexts pushed with
+  `InputActions::PushContext` reach every player's set too (the pause menu's Block stops the typed readers).
+
+**Old names, all kept, and where they go now.**
+
+| Old name | Now |
+|---|---|
+| `InputActions::Get / Down / Up / Value / Vector / Buffered / DoubleTap / HoldReached ...` | read the table's action |
+| `InputActions::Define / DefineIn / SetContext / SetThreshold / SetPerPlayer / SetResponse` | change the table (and every player's set) |
+| `InputActions::Rebind / Reset / ImportBindings / LoadProfile / ApplyPreset`, `RemapBind` (old Controls screen) | the table's rebinding, saved at once |
+| `InputActions::All / Find` | a read-only view of the table (a binding it cannot show is `Kind::None`) |
+| `InputActions::PushContext / PopContext / KeyConsumed` | the table's maps (`PushMap`, `PopMap`, `Consumed`) |
+| `InputActions::SetLegacy`, `OKAY_OLD_INPUT=1` | kept as names only: there is one evaluation |
+| script `action*`, `rebind`, `reset_bindings`, `input_preset`, engine API `Input.GetButton*` | `InputActions`, so the table |
+| script `ia_*`, engine API `Input.Player*`, "UI Keybind Field" with `ia:<action>@<player>`, Controls screen (`UIGallery::AddControlsScreen`) | player sets; player 0 = the table's bindings, `ia_save` = the one store |
+| Prefs `input.<action>`, `inputov.player<N>`, `inputresp.<action>`, `inputprofile.<name>` | read as before; `input.<action>` and `inputov.player0` are written together from the one store |
+| `.okayinput` files | load unchanged; new optional action option `sum=1` |
+
+**Deleted.** The old table's own action list, binding store, context stack, evaluation, chord and claim code and its second
+"legacy" evaluation (all in `engine/src/Input/InputActions.cpp`, now a front over the table), and PR #1139's linking code
+(`InputActions::SyncFrom`, `LinkJoined`, `SaveWithStore`, `InputRuntime::LinkedSet`, the push and pull between two stores).
+`VoxelDigger::ActionRebound` forwards to `InputActions::Rebound` instead of a copy of it. The kind names of bindings moved to
+`ActionSet` (`BindingKindName`, `ParseBindingKind`) from `InputAsset.cpp`.
+
+**What changed for players and games (on purpose).**
+- The shipped asset's Move and Look sticks lost their second dead zone (`deadzone(0.18,1)`; `Input` already applies the
+  stick dead zone) and Look's `curve(2)`, and Move and Look add their bindings up (`sum=1`), as the built-in controllers
+  always read them. Projects with their own `input.okayinput` keep what they wrote.
+- Pushing the "UI" context also turns on the asset's UI map: Navigate, Submit and Cancel then take W A S D, Space, Enter and
+  Escape from gameplay. A menu that should take only its own keys uses another context name.
+- A typed rebind is the rebind: what `ia_rebind` allows (a lone key on Look) every reader gets. `InputActions::Rebind` still
+  refuses a lone key for a direction action.
+- One save saves everything: an `InputActions` rebind (saved at once) also saves an earlier unsaved `ia_rebind` of player 0.
+
+**Not done.** `drivectl::ControlScheme` (`Components/VehicleControlScheme.hpp`, vehicle round 2) is a separate binding,
+rebinding and save format for vehicles; nothing uses it outside its test (the Vehicle Controller reads the "Vehicle"
+actions of the one table). It should become Vehicle actions in the table before it is wired in. Build Mode's
+`BuildBindings` and the controllers' own key fields are per-component key settings that follow actions where a
+`ControlKey` call exists (unchanged). Not run on Windows, in a real editor window or with a real controller.
+
+Written for this engine from its own code (no other project's code or text).
 
 ## Input (internal record)
 
@@ -26,8 +92,13 @@ Not a guide. Where things are and what is missing; the details are in the header
 - Playground station H (Controller) in `examples/input/input_playground.okayscene`; `examples/input/default.okayinput` equals the default asset (a test checks it).
 - Tests: `controller_mapping`, `action_set`, `action_phases`, `input_asset`, `input_script_api`, `action_editor`, `local_player_input`, `controls_screen`, `input_autoload`, `input_playground`, plus the older input suites.
 
+- Built-in controllers on actions: `InputActions::Rebound`, `ControlKey`, `ControlKeyDown`, `ControlMouse`, `ControlMouseDown`, `ControlMove`. A controller's key field reads that key until the player rebinds the matching action ("Jump", "Sprint", "Crouch", "Move", "Aim", "Fire", "Reload", "Interact"); then a field still on the action's default key follows the action (all its bindings, pads too) and the old key stops. A field set to another key stays that key. Used by First / Third Person, Character Controller 2D / 3D, Top Down (3D and 2D), Third Person Shooter, Top Down Shooter, Platformer 2.5D, `StanceControl`, Ranged Weapon, Melee Attacker, Item Pickup and Vehicle Seat. Test `controller_actions`.
+- Part 2 (same rule): Free Roam (rise = "Jump", Ctrl = "Crouch", boost = "Sprint", "Move"; its `downKey` C has no action and stays C). Platformer 2.5D movement ("Move"), layer keys (W / S follow "Move" up and down: `ControlDirKeyDown`) and grab (E follows "Interact"). New actions "Prone", "LeanLeft", "LeanRight" and "Dash" for the first / third person, shooter, stance, character 3D, top-down shooter and 2.5D controllers. They start with no binding of their own: their stock keys (Z, Q, E, Space) are Interact's and Jump's or keys games often give their own actions, and the Controls screen would report a clash. The controller keeps Z / Q / E / Space until the player binds them (`ControlKey(action, key, stockKey)`).
+- Vehicle Controller (both models) and Vehicle Controller 2D: new actions "Throttle" (W, Up), "Brake" (S, Down), "SteerLeft" (A, Left), "SteerRight" (D, Right), "Handbrake" (Space), "Boost" (Shift), "GearUp" (X), "GearDown" (Z), "Horn" (H), "Headlights" (L), all in the "Vehicle" context, keyboard only (the controller's own pad fields are unchanged). The older model's axis is `InputActions::ControlAxis`. A context action is sampled by `Tick` only while its context is pushed; otherwise `ControlKey` reads it straight from its bindings (`DirectHeld`, `DirectDown`), so nothing has to push "Vehicle". The Controls screen (`RemapConflicts`, `RemapAllConflicts`) now reports a shared key only between actions of one context, so W can be Move and Throttle.
+- Pause Menu: `InputActions::MenuKeyDown("Pause", toggleKey)`. Escape until "Pause" is rebound; then its bindings, read straight from the devices, so the same key also closes the menu while its Block context swallows every action.
+
 ### What is missing
-See the Input row in `docs/status/UNFINISHED.md`: the exported player does not load a project `input.okayinput` yet (the editor's Play does: `InputRuntime::UseProjectAsset`), touch leaf inputs, per-binding interactions, adaptive triggers / HD haptics. Everything was only run with fake devices; the ImGui drawing was never run in a real editor window; nothing on Windows.
+Controllers still on raw keys: the Vehicle Controller's recover, camera, look-back and separate-reverse keys and every vehicle pad field, Free Roam's C descend key and right-mouse look, dodge keys, throw (Procedural Object Holding), builders (Block / Structure Builder, Builder Mode, Build Mode), diggers other than VoxelDigger, Flashlight / Player View / inventory / crafting toggle keys, Boat Controller, Click To Move, UI widgets, visual-script and OkayScript key nodes. A lean key shared with a use prompt is checked against the controller's own key field, not the rebound key. See also the Input row in `docs/status/UNFINISHED.md`: the exported player does not load a project `input.okayinput` yet (the editor's Play does: `InputRuntime::UseProjectAsset`), touch leaf inputs, per-binding interactions, adaptive triggers / HD haptics. Everything was only run with fake devices; the ImGui drawing was never run in a real editor window; nothing on Windows.
 
 ### Pictures
 Not stored in the repository. `tools/input_shots.sh <imgui folder> [output folder]` draws them headless with ImGui (output defaults to `$OKAY_SHOT_DIR`).
@@ -132,7 +203,8 @@ temporary list of the inputs it listens to. After: a fixed table, a name index, 
 `OKAY_OLD_INPUT=1` brings back the old lookup and evaluation order but not the old key table, so it is not a
 byte-for-byte copy of the old speed.
 
-`OKAY_OLD_INPUT=1` (or `InputActions::SetLegacy(true)`) brings back the old lookup and the old evaluation order
+**Outdated (2026-11-23):** there is one evaluation now (see "One input system"); `OKAY_OLD_INPUT=1` and `SetLegacy` only
+record a flag. Before: `OKAY_OLD_INPUT=1` (or `InputActions::SetLegacy(true)`) brought back the old lookup and the old evaluation order
 for A/B. The test `upgrade_fast_path_matches_legacy` runs 600 random frames (keys, mouse, 4 controllers, chords,
 contexts, per-player actions) through both and requires every action value, vector and edge to match.
 

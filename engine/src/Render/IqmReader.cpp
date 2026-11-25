@@ -396,7 +396,7 @@ static bool ReadIqmImpl(const std::string& bytes, const std::string& baseDir, Im
             const Anim& a = anims[ai];
             if (a.count == 0 || numPoses == 0) continue;
             float rate = a.rate;
-            if (!(rate > 0.0f) || !std::isfinite(rate) || rate > 100000.0f) { rate = 30.0f; ++badRates; }
+            if (!(rate > 0.0f) || !std::isfinite(rate) || rate > 100000.0f || rate < 1e-3f) { rate = 30.0f; ++badRates; }   // below 1e-3 a frame number over the rate (up to 250000 / 1e-3) stays finite; a denormal rate made infinite key times
             ImportedClip clip;
             clip.name = a.name.empty() ? "animation" + std::to_string(ai) : a.name;
             for (std::uint32_t j = 0; j < numPoses; ++j) {

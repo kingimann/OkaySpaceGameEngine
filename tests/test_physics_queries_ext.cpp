@@ -296,14 +296,12 @@ int main() {
         s.Start();
         for (int i = 0; i < 4; ++i) s.Update(1.0f / 60.0f);
         float x3 = bullet->transform->Position().x, x2 = b2->transform->Position().x;
-        if (ccd == 0) {   // discrete: it jumps straight past the thin wall
-            CHECK(x3 > 6.0f);
-            CHECK(x2 > 6.0f);
-        } else {          // continuous: stopped at (or bounced back from) the wall
-            CHECK(x3 < 5.0f);
-            CHECK(x2 < 5.0f);
-            CHECK(rb->velocity.x <= 1e-3f);
-        }
+        // 3D stops it whether or not Continuous Collision is ticked (one physics path: fast bodies are always caught);
+        // 2D without it still jumps past the thin wall
+        CHECK(x3 < 5.0f);
+        CHECK(rb->velocity.x <= 1e-3f);
+        if (ccd == 0) CHECK(x2 > 6.0f);
+        else CHECK(x2 < 5.0f);
     }
 
     // ---- Debug recording is off by default and cheap ------------------------
@@ -371,7 +369,7 @@ int main() {
         s.physics3D().gravity = {0, 0, 0};
         GameObject* self = s.CreateGameObject("Eye");
         self->AddComponent<SphereCollider3D>()->radius = 0.25f;   // ignored by its own casts
-        Box3(s, "Target", {0, 0, 6}, {1, 1, 1});
+        Box3(s, "Target", {0, 0, -6}, {1, 1, 1});   // in front: an unrotated object faces -Z
         auto* vsc = self->AddComponent<VisualScriptComponent>();
         std::string err;
         CHECK(vsc->LoadFromText(
@@ -392,7 +390,7 @@ int main() {
         CHECK(err.empty());
         s.Start();
         s.Update(1.0f / 60.0f);
-        CHECK(vsc->GetVariable("hit").AsBool());                       // forward (+Z) hits the target
+        CHECK(vsc->GetVariable("hit").AsBool());                       // forward (-Z) hits the target
         CHECK(vsc->GetVariable("what").AsString() == "Target");
         CHECK_NEAR(vsc->GetVariable("dist").AsFloat(), 5.5f, 1e-3f);    // origin is the eye, which it skips
         CHECK_NEAR(vsc->GetVariable("n").AsFloat(), 1.0f, 1e-4f);       // the target, not itself

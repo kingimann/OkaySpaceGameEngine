@@ -1,0 +1,78 @@
+# Launcher split, move L6 (docs/engine/modularization_plan.md, Part C sections 18 and 21): public profiles - the
+# profile data and worker, my showcase on this device, the social-links table, badges (main.cpp 11774-11962 at the
+# base) and the sample profile, the page's drawing helpers and DrawPublicProfilePage (12189-13266) ->
+# launcher/PublicProfilePage.hpp / .cpp. The Account page's social-links editor stays in main.cpp.
+# Check it with (on the move commit):
+#   python3 scripts/check_pure_move.py --base HEAD~1 --head HEAD --source launcher/main.cpp \
+#       --dest launcher/PublicProfilePage.hpp --dest launcher/PublicProfilePage.cpp --dest launcher/LauncherShared.hpp \
+#       --rules docs/engine/moves/L6_public_profile_page.rules
+# Moved unchanged into PublicProfilePage.hpp (main.cpp uses them): struct PfLocalShowcase, struct SocialPlatform with
+# the kSocials table (constants), struct PfPageOut. Moved unchanged into LauncherShared.hpp: the accent presets table
+# (struct AccentPreset, kAccentPresets: constants used by main.cpp and the profile page).
+#
+# main.cpp: `static` dropped on what the moved code uses; main.cpp's ten forward declarations of the multiplayer
+# helpers (MpJoin ... MpPartyId) move to LauncherShared.hpp without `static`, and their definitions drop `static`.
+drop: ^\s*static std::vector<okay::PlaytimeEntry> g_playtime;(\s*//.*)?$
+add: ^\s*std::vector<okay::PlaytimeEntry> g_playtime;(\s*//.*)?$
+drop: ^\s*static void LoadPlaytime\(\) \{$
+add: ^\s*void LoadPlaytime\(\) \{$
+drop: ^\s*static bool PlaytimeRunning\(const std::string\& key\) \{$
+add: ^\s*bool PlaytimeRunning\(const std::string\& key\) \{$
+change: static void MpJoin(const std::string& link, const std::string& from);   // Multiplayer, below ==> void MpJoin(const std::string& link, const std::string& from);   // Multiplayer, below
+change: static bool MpCanInvite();                                             // in a joinable match right now ==> bool MpCanInvite();                                             // in a joinable match right now
+change: static std::string MpGameTitle();                                      // the game I'm playing ("" = none) ==> std::string MpGameTitle();                                      // the game I'm playing ("" = none)
+change: static void MpInviteUser(const std::string& uid, const std::string& name); ==> void MpInviteUser(const std::string& uid, const std::string& name);
+change: static void MpJoinFriend(const std::string& sessionCode, const std::string& name); ==> void MpJoinFriend(const std::string& sessionCode, const std::string& name);
+change: static void MpInviteGroup(long gid, const std::string& name);         // a whole group chat ==> void MpInviteGroup(long gid, const std::string& name);         // a whole group chat
+change: static std::string MpMyJoin();                                        // my session's public link ("" = none) ==> std::string MpMyJoin();                                        // my session's public link ("" = none)
+change: static void MpPartyInvite(const std::string& uid, const std::string& name);   // (makes a party if needed) ==> void MpPartyInvite(const std::string& uid, const std::string& name);   // (makes a party if needed)
+change: static void MpPartyJoinFromInvite(const std::string& body); ==> void MpPartyJoinFromInvite(const std::string& body);
+change: static std::string MpPartyId();                                       // my party ("" = none) ==> std::string MpPartyId();                                       // my party ("" = none)
+drop: ^\s*static bool MpCanInvite\(\) \{ return g_myGame\.running \&\& !g_myGame\.invite\.empty\(\); \}$
+add: ^\s*bool MpCanInvite\(\) \{ return g_myGame\.running \&\& !g_myGame\.invite\.empty\(\); \}$
+drop: ^\s*static std::string MpGameTitle\(\) \{ return g_myGame\.running \? g_myGame\.title : std::string\(\); \}$
+add: ^\s*std::string MpGameTitle\(\) \{ return g_myGame\.running \? g_myGame\.title : std::string\(\); \}$
+drop: ^\s*static void MpJoin\(const std::string\& text, const std::string\& from\) \{$
+add: ^\s*void MpJoin\(const std::string\& text, const std::string\& from\) \{$
+drop: ^\s*static void MpJoinFriend\(const std::string\& sessionCode, const std::string\& name\) \{$
+add: ^\s*void MpJoinFriend\(const std::string\& sessionCode, const std::string\& name\) \{$
+drop: ^\s*static void MpInviteUser\(const std::string\& uid, const std::string\& name\) \{$
+add: ^\s*void MpInviteUser\(const std::string\& uid, const std::string\& name\) \{$
+drop: ^\s*static void MpInviteGroup\(long gid, const std::string\& name\) \{$
+add: ^\s*void MpInviteGroup\(long gid, const std::string\& name\) \{$
+drop: ^\s*static std::string MpMyJoin\(\) \{ return g_myGame\.running \? g_myGame\.join : std::string\(\); \}$
+add: ^\s*std::string MpMyJoin\(\) \{ return g_myGame\.running \? g_myGame\.join : std::string\(\); \}$
+drop: ^\s*static std::string MpPartyId\(\) \{ return g_party\.id; \}$
+add: ^\s*std::string MpPartyId\(\) \{ return g_party\.id; \}$
+drop: ^\s*static void MpPartyInvite\(const std::string\& uid, const std::string\& name\) \{$
+add: ^\s*void MpPartyInvite\(const std::string\& uid, const std::string\& name\) \{$
+drop: ^\s*static void MpPartyJoinFromInvite\(const std::string\& body\) \{$
+add: ^\s*void MpPartyJoinFromInvite\(const std::string\& body\) \{$
+#
+# The moved code: `static` dropped on what main.cpp uses (declared in PublicProfilePage.hpp).
+change: static bool g_pfOpen = false;                  // the profile page is showing ==> bool g_pfOpen = false;                  // the profile page is showing
+change: static void ClosePublicProfile() { g_pfOpen = false; } ==> void ClosePublicProfile() { g_pfOpen = false; }
+change: static PfLocalShowcase LoadLocalShowcase() { ==> PfLocalShowcase LoadLocalShowcase() {
+change: static void SaveLocalShowcase(const PfLocalShowcase& s) { ==> void SaveLocalShowcase(const PfLocalShowcase& s) {
+change: static std::string CleanSocial(const std::string& key, std::string v) { ==> std::string CleanSocial(const std::string& key, std::string v) {
+change: static void DrawAchMedal(ImDrawList* dl, ImVec2 c, float r, const std::string& id, float alpha) { ==> void DrawAchMedal(ImDrawList* dl, ImVec2 c, float r, const std::string& id, float alpha) {
+change: static std::string PfPrettyId(const std::string& id) { ==> std::string PfPrettyId(const std::string& id) {
+change: static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int fromTab) { ==> PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int fromTab) {
+add: ^\s*extern bool g_pfOpen;(\s*//.*)?$
+add: ^\s*void ClosePublicProfile\(\);$
+add: ^\s*PfLocalShowcase LoadLocalShowcase\(\);(\s*//.*)?$
+add: ^\s*void SaveLocalShowcase\(const PfLocalShowcase\& s\);$
+add: ^\s*std::string CleanSocial\(const std::string\& key, std::string v\);(\s*//.*)?$
+add: ^\s*void DrawAchMedal\(ImDrawList\* dl, ImVec2 c, float r, const std::string\& id, float alpha\);(\s*//.*)?$
+add: ^\s*std::string PfPrettyId\(const std::string\& id\);(\s*//.*)?$
+add: ^\s*PfPageOut DrawPublicProfilePage\(okay::account::AccountService\& account, int fromTab\);$
+# What the moved code uses from main.cpp, declared in LauncherShared.hpp.
+add: ^\s*namespace okay \{ struct PlaytimeEntry; \}$
+add: ^\s*extern std::vector<okay::PlaytimeEntry> g_playtime;(\s*//.*)?$
+add: ^\s*void LoadPlaytime\(\);$
+add: ^\s*bool PlaytimeRunning\(const std::string\& key\);(\s*//.*)?$
+add: ^\s*extern bool g_raiseMainReq;(\s*//.*)?$
+add: ^\s*extern bool g_openPublishForm;(\s*//.*)?$
+add: ^\s*extern bool g_chatInOwnWindow;(\s*//.*)?$
+add: ^\s*void OpenChatWith\(const std::string\& uid, const std::string\& name, const std::string\& avatar\);(\s*//.*)?$
+

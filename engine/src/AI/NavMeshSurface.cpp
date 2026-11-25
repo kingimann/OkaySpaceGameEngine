@@ -1,4 +1,5 @@
 #include <cmath>
+#include "okay/Core/FileStamp.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Debug/DebugUtil.hpp"
@@ -85,14 +86,11 @@ std::string NormPath(const std::string& p) {
 debugutil::SpinLock& BakeRecordLock() { static debugutil::SpinLock l; return l; }
 std::map<std::string, BakeRecord>& BakeRecords() { static std::map<std::string, BakeRecord> r; return r; }
 
+// Size and time of the file; false unless both can be read (okay/Core/FileStamp.hpp).
 bool FileStamp(const std::string& path, std::uintmax_t& size, std::int64_t& time) {
-    std::error_code ec;
-    const auto fp = std::filesystem::u8path(path);
-    size = std::filesystem::file_size(fp, ec);
-    if (ec) return false;
-    const auto t = std::filesystem::last_write_time(fp, ec);
-    if (ec) return false;
-    time = (std::int64_t)t.time_since_epoch().count();
+    const auto s = okay::StampOf(path);   // (auto: this function shares the struct's name)
+    if (!s.sizeOk || !s.timeOk) return false;
+    size = s.size; time = s.time;
     return true;
 }
 }  // namespace
@@ -198,19 +196,32 @@ bool NavMeshSurface::StartBake(Scene& scene) {
     Job* j = job.get();
     const NavMeshBuildSettings s = settings;
     j->key = BakeKey(*input, settings);
-    j->thread = std::thread([j, input, s]() {
-        j->ok.store(NavMeshBaker::Bake(*input, s, *j->result, &j->progress, &j->cancel, &j->stats));
-        j->done.store(true);
-    });
+    // The job only touches `*j`, which lives until PollBake has seen `done` or CancelBake has
+    // cancelled or waited for the job (the destructor cancels), so it never outlives the surface.
+    JobSystem& sys = EngineJobs();
+    j->sys = &sys;
+    JobOptions opt;
+    opt.priority = JobPriority::Low;   // frame work (physics, skinning) goes first
+    opt.name = "NavMesh bake";
     m_job = std::move(job);
+    try {
+        j->handle = sys.Submit([j, input, s]() {
+            bool ok = false;
+            try { ok = NavMeshBaker::Bake(*input, s, *j->result, &j->progress, &j->cancel, &j->stats); } catch (...) { ok = false; }
+            j->ok.store(ok);
+            j->done.store(true);   // the last touch of *j
+        }, opt);
+    } catch (...) {
+        m_job.reset();   // could not queue the bake
+        return false;
+    }
     return true;
 }
 
 float NavMeshSurface::BakeProgress() const { return m_job ? m_job->progress.load() : 0.0f; }
 
 bool NavMeshSurface::PollBake(bool* ok) {
-    if (!m_job || !m_job->done.load()) return false;
-    if (m_job->thread.joinable()) m_job->thread.join();
+    if (!m_job || !m_job->done.load()) return false;   // (after `done` the job no longer touches m_job)
     const bool good = m_job->ok.load() && !m_job->cancel.load();
     if (good) { m_mesh = std::move(m_job->result); m_bakeKey = std::move(m_job->key); DropCarve(); m_stats = m_job->stats; m_triedPath = navPath; }
     m_job.reset();
@@ -220,8 +231,10 @@ bool NavMeshSurface::PollBake(bool* ok) {
 
 void NavMeshSurface::CancelBake() {
     if (!m_job) return;
-    m_job->cancel.store(true);
-    if (m_job->thread.joinable()) m_job->thread.join();
+    m_job->cancel.store(true);   // a running bake stops at its next check
+    if (m_job->sys && !m_job->done.load() && m_job->handle.Valid() && !m_job->sys->Cancel(m_job->handle)) {
+        try { m_job->sys->Wait(m_job->handle); } catch (...) {}
+    }
     m_job.reset();
 }
 

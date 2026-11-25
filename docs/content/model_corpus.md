@@ -10,7 +10,7 @@ Until this page the own readers had only been run on files we wrote ourselves. T
 
 ## The corpus
 
-The files are the `test/models` and `test/models-nonbsd` directories of an Assimp **v5.4.3** source checkout (the version `OKAY_USE_ASSIMP` fetches). They were obtained with
+The files are the `test/models` and `test/models-nonbsd` directories of an Assimp **v5.4.3** source checkout (the version `OKAY_USE_ASSIMP` fetched until Assimp was deleted on 2026-11-24; the tree is now used as data only). They were obtained with
 
 ```
 git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch dir>
@@ -24,7 +24,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | COLLADA | 26 | 25 in `Collada/` and one in `invalid/`; geometry, skins, animation, instancing, cameras and lights only, three encodings |
 | 3DS | 16 | static and keyframed, camera animation, textured, one empty file |
 | BVH | 3 | motion capture, 2,752 to 4,511 frames |
-| glTF / GLB | 54 (48 `.gltf`, 6 `.glb`) | glTF 2.0 samples, embedded and external buffers, skins, morph targets, texture transform, primitive modes, extensions, and about 15 deliberately broken files; 7 are glTF 1.0 (6 `.gltf` and one `.glb`) |
+| glTF / GLB | 54 (48 `.gltf`, 6 `.glb`) | glTF 2.0 samples, embedded and external buffers, skins, morph targets, texture transform, primitive modes, extensions, and about 15 deliberately broken files; 7 are glTF 1.0 (6 `.gltf` and one `.glb`): read since 2026-11-22 by our own glTF 1.0 reader (rows `gltf1`, switch on), refused by the 2.0 reader (rows `gltf`) |
 | OBJ | 28 | `models/OBJ` (23), `models-nonbsd/OBJ` (2), `models/invalid` (3): groups, `usemtl`, concave polygons, point and line elements, vertex colours, UTF-16 |
 | STL | 8 | ascii and binary, several solids, an empty solid |
 | PLY | 12 | ascii, binary little and big endian, point clouds, a truncated file, odd headers |
@@ -45,11 +45,15 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | B3D | 3 | `WusonBlitz` (static), `dwarf2` (47 nodes, 46 joints, 14,148 keys) and `turtle1` (25 nodes, 24 joints, 1,724 keys) |
 | X (DirectX) | 12 | 11 models (text: `test.x`, `test_cube_text.x`, `anim_test.x`, `BCN_Epileptic.X`, `Testwuson.X`, `kwxport_test_cubewithvcolors.x`, `dwarf.x` twice; binary: `fromtruespace_bin32.x`, `test_cube_binary.x`; MSZIP: `test_cube_compressed.x`) and one empty file |
 | AC3D | 11 | `models/AC`: `SphereWithLight` (UTF-8, UTF-16LE, UTF-8 with a byte order mark, `.acc` with per-vertex normals, a 4x texture scaling variant), `Wuson` (`.ac` and `.acc`), `sample_subdiv`, and three tiny line / no-surface files; plus `TestFormatDetection` without an extension (readers batch D) |
-| OGRE XML | 4 | `models-nonbsd/Ogre/OgreSDK` (`fish`, `ninja`, `razor`) and `models/Ogre/TheThing/Mesh.mesh.xml`; the binary `.mesh` files next to them are not read by our reader |
+| OGRE XML | 4 | `models-nonbsd/Ogre/OgreSDK` (`fish`, `ninja`, `razor`) and `models/Ogre/TheThing/Mesh.mesh.xml`; `fish` and `ninja` are skinned by the `.skeleton.xml` they link (5 and 28 bones, 1 and 20 clips); the binary `.mesh` files next to them are read by the `ogrebin` rows with the same counts |
 | XGL / ZGL | 7 | 6 `.zgl` (`Wuson`, `Spider_ascii`, `BCN_Epileptic`, `cubes_with_alpha`, `sphere_with_mat_gloss_10pc`, `wuson_dxf`) and `sample_official.xgl` (+ the same text as `.xml`, not routed) |
 | IRR | 21 | `models/IRR`: scenes with cubes, spheres, referenced meshes (`dwarf.x`, `cellar.irrmesh`, `spider.obj`), animators, instancing; each in UTF-8 and UTF-16LE except `instancing` |
 | NFF | 13 | `models/NFF/NFF` (the platonic solids, spheres, cones, a camera file) and `models-nonbsd/NFF/NFFSense8` (`teapot`, `HOME4`, `cokecan` with its `.mat`) |
 | Terragen | 2 | `models/TER`: `RealisticTerrain` (257 x 257 points, 30 m) and `RealisticTerrain_Large` (513 x 513, 19.53 m); both flat. Compared with Assimp v5.4.3 built with only its Terragen importer: same triangles and bounding box, area within 2e-6 (`docs/content/model_readers.md`) |
+| OpenGEX | 6 | `models/OpenGEX`: a scene with two boxes, a skinned and animated example, a camera, a COLLADA conversion, and two files with only a camera or a light (2026-11-22, our own OpenGEX reader: 4 read, those 2 refused by both) |
+| MDL | 43 | `models/MDL` and `models-nonbsd/MDL`: 3 Quake 1, 14 Half-Life 1 models, 19 Half-Life sequence-group files, 1 textures-only file, 6 3D GameStudio (MDL3, MDL5, MDL7) (2026-11-22, our own MDL reader: 17 read; 2026-11-23: 23 read, the 6 GameStudio files too) |
+| SIB | 1 | `models/SIB/heffalump.sib` (public domain, its readme says so): read by our own SIB reader since 2026-11-23 (`sib_import` checks it when `OKAY_MODEL_CORPUS` is set) |
+| PK3 | 1 | `models-nonbsd/PK3/SGDTT3.pk3`: one Quake III map (28 models, 1,400 triangles, no patch) (2026-11-22, our own Q3BSP reader) |
 
 ## Running it
 
@@ -61,12 +65,15 @@ OKAY_MODEL_CORPUS=<checkout>/test ctest -R "model_corpus|fbx_reader"
 - `model_corpus` reads every manifest row with the reader named in it. A file recorded as read must still read with the same mesh, triangle, bone, skinned-mesh, clip and material counts; a file recorded as failing must still fail (a fix therefore shows up as a manifest change).
 - `fbx_reader` (`tests/test_fbx_reader.cpp`) additionally imports every real `.fbx` through ufbx and through our reader and compares them the way it does for our own fixtures: object, mesh, joint, vertex, triangle and clip counts, names, bounding box, surface area, skin weights, inverse binds, clip samples.
 - Without `OKAY_MODEL_CORPUS` both tests run only on our fixtures and `model_corpus` prints "skipped".
+- CI: since 2026-11-24 the job "Model readers on the real-file corpus" (`model-corpus`, was "Model readers with Assimp") fetches the Assimp v5.4.3 tree as data only (nothing of it is compiled) and runs `model_corpus` and `own_dispatch_e2` (the three real RAW files) on its test folder. From 2026-11-21 to 2026-11-24 the Assimp job ran `model_corpus` on the test folder of the Assimp checkout it already has (step "Test the real-file corpus", about 7 seconds), so a reader change that alters a real file's counts fails the PR. Before that it ran nowhere, and the OGRE binary rows were stale from #1063 until 2026-11-21 (8 failed checks).
 - `test_model_corpus --one|--list|--fbxdump|--fbxdiff|--fbxclips|--keys ...` print what the readers found, for comparing with another importer. `--list` takes the readers `fbx-own`, `dae`, `3ds`, `bvh`, `obj`, `stl`, `ply` and `gltf` (`.gltf` and `.glb`); the batch-D readers `ac`, `ogre`, `xgl`, `irr` and `nff`, the batch-B readers `3mf`, `amf`, `x3d`, `dxf` and `lwo` and the batch-C readers `md2`, `md3`, `irrmesh`, `b3d` and `x` take the same arguments. For `obj`, `stl`, `ply` and `gltf` a row also carries `tex` (distinct texture files over all materials), `nodes`, `uv` and `nrm` (1 when some mesh has per-vertex UVs or normals); glTF sizes are the file's own (the importer's auto-scale of very large or tiny models is undone).
-- The Assimp side of the glTF/OBJ/STL/PLY comparison: `scripts/assimp_corpus_dump.cpp` prints Assimp's view of a file in the same TSV shape (meshes, triangles, area, bounding box, materials, distinct textures, nodes, animations and their length, UV and normal presence; only `aiProcess_Triangulate` is applied), and `scripts/compare_model_corpus.py ours.tsv assimp.tsv` lists the differences. It does not print two differences that are by design: Assimp adds a default material to a file whose meshes have none (its material count is one higher), and our readers generate normals a file lacks (Assimp leaves them absent). Build Assimp with only the importers needed: `cmake -DASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT=OFF -DASSIMP_BUILD_OBJ_IMPORTER=ON -DASSIMP_BUILD_STL_IMPORTER=ON -DASSIMP_BUILD_PLY_IMPORTER=ON -DASSIMP_BUILD_GLTF_IMPORTER=ON -DASSIMP_NO_EXPORT=ON` on the same v5.4.3 checkout.
+- The Assimp side of the glTF/OBJ/STL/PLY comparison (a standalone developer tool, never part of the engine or any build; kept so the recorded comparison can be repeated against a separate Assimp build): `scripts/assimp_corpus_dump.cpp` prints Assimp's view of a file in the same TSV shape (meshes, triangles, area, bounding box, materials, distinct textures, nodes, animations and their length, UV and normal presence; only `aiProcess_Triangulate` is applied), and `scripts/compare_model_corpus.py ours.tsv assimp.tsv` lists the differences. It does not print two differences that are by design: Assimp adds a default material to a file whose meshes have none (its material count is one higher), and our readers generate normals a file lacks (Assimp leaves them absent). Build Assimp with only the importers needed: `cmake -DASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT=OFF -DASSIMP_BUILD_OBJ_IMPORTER=ON -DASSIMP_BUILD_STL_IMPORTER=ON -DASSIMP_BUILD_PLY_IMPORTER=ON -DASSIMP_BUILD_GLTF_IMPORTER=ON -DASSIMP_NO_EXPORT=ON` on the same v5.4.3 checkout.
 
 ## Results
 
 ### FBX (own reader vs ufbx)
+
+**ufbx was deleted on 2026-11-23.** The comparison below was the last one: our reader's values from that run (where both agreed) are now fixed expected numbers, `tests/data/fbx_corpus_expected.txt`, checked by `fbx_reader` when `OKAY_MODEL_CORPUS` is set; `fbx_route` checks that every file is read by our reader. `test_model_corpus` lost its `fbx-ufbx` reader and `--fbxdiff` / `--fbxclips` modes.
 
 42 of 43 files read by our reader; the 43rd is a damaged file (every NUL byte in its header was replaced by a space) that ufbx and Assimp reject too. On the 42, **ufbx and ours agree** on object, mesh, skinned-mesh, joint, vertex (within 0.5 %, see below), triangle, blend-shape and clip counts and names; on bounding boxes and surface area (within 0.2 %); on skin weights and inverse binds of the two skinned files; and on clip samples (within 0.015 in a quaternion component, on two files; 0.002 elsewhere).
 

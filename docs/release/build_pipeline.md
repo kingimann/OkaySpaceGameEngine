@@ -10,7 +10,7 @@ How **File > Build Settings** (and the headless `OkayEngine --build-game`) turns
 what a build contains, every option and what it does, the build report, and what is not built yet.
 
 The pure logic (layout planner, dependency walk, manifest, report, zip) is `engine/include/okay/Core/BuildPipeline.hpp`;
-the editor's `builder::Build` (in `editor/main.cpp`) uses it; the player finds its files with the same
+the editor's `builder::Build` (in `editor/BuildGame.cpp`) uses it; the player finds its files with the same
 `FindDataDir`. Tests: `tests/test_build_pipeline.cpp` (unit) and `tests/export/verify_layout.sh` (a real export that is
 run).
 
@@ -49,7 +49,9 @@ The Folder layout, packed into one `.zip` named by **Archive name** (`{name}-{ve
 `{name} {version} {build} {platform} {date}`). Only the archive stays in the output folder. **Also create a .zip**
 (on the Folder or Compact layout) keeps the folder and writes the zip beside it. **Compress the archive** deflates
 files that shrink (already-compressed types such as `.png` and `.ogg` are stored); off, everything is stored. The result
-shows the archive size next to the folder size.
+shows the archive size next to the folder size. A file that cannot be read while the archive is written (locked by another
+program, or removed during the build) stops the build with "cannot read <path>" and no archive is left behind; before
+2026-11 such a file went into the zip empty without a word (`BuildPipeline::WriteZipEntries`, test `build_pipeline`).
 
 ### build.json
 

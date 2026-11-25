@@ -18,7 +18,7 @@ ImVec4 CategoryColor(const char* label) {
     auto has = [&](const char* k) { return std::strstr(label, k) != nullptr; };
     if (has("Collider") || has("Rigidbody") || has("Joint"))          return ImVec4(0.42f, 0.80f, 0.50f, 1.0f); // physics — green
     if (has("Audio"))                                                 return ImVec4(0.95f, 0.62f, 0.30f, 1.0f); // audio — orange
-    if (has("Animat") || has("IK") || has("Root Motion"))            return ImVec4(0.30f, 0.78f, 0.80f, 1.0f); // animation — teal
+    if (has("Animat") || has("Clip Player") || has("IK") || has("Root Motion"))            return ImVec4(0.30f, 0.78f, 0.80f, 1.0f); // animation — teal
     if (has("Script") || has("Visual Script"))                       return ImVec4(0.90f, 0.80f, 0.35f, 1.0f); // scripting — yellow
     if (has("UI ") || has("Canvas") || has("Button") || has("Panel") || has("Slider") ||
         has("Toggle") || has("Tabs") || has("Dropdown") || has("Scroll") || has("Layout") ||
@@ -36,7 +36,7 @@ int CategoryGlyph(const char* label) {
     auto has = [&](const char* k) { return std::strstr(label, k) != nullptr; };
     if (has("Collider") || has("Rigidbody") || has("Joint"))          return 2;
     if (has("Audio"))                                                 return 5;
-    if (has("Animat") || has("IK") || has("Root Motion"))             return 3;
+    if (has("Animat") || has("Clip Player") || has("IK") || has("Root Motion"))             return 3;
     if (has("Script") || has("Visual Script"))                        return 4;
     if (has("UI ") || has("Canvas") || has("Button") || has("Panel") || has("Slider") ||
         has("Toggle") || has("Tabs") || has("Dropdown") || has("Scroll") || has("Layout") ||

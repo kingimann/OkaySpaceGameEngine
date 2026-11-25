@@ -8,6 +8,7 @@
 // test_own_dispatch_c.cpp.
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
+#include "own_seam_checks.hpp"
 #include "batchd_fixtures.hpp"
 #include "batchc_fixtures.hpp"
 #include "okay/Render/ModelData.hpp"
@@ -85,9 +86,7 @@ int main() {
         CHECK(a.parts.size() == b.parts.size() && Verts(a) == Verts(b) && a.nodes.size() == b.nodes.size() && a.materials.size() == b.materials.size());
         CHECK(fx::TriCount(a) == expect && fx::TriCount(b) == c.tris);
         // flatten: one root node, no skins and no clips, same geometry (a rotation or scale on a node is baked into the vertices)
-        ImportedModel f;
-        CHECK(ImportModelData(path, f, ImportBackend::Own, true, &err) && f.nodes.size() == 1 && f.clips.empty() && fx::TriCount(f) == expect);
-        for (const ImportedPart& p : f.parts) CHECK(p.bones.empty() && p.node == 0);
+        seam::CheckFlattened(path, expect);
         // the extension list follows the switch
         CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") != std::string::npos);
         // the format-specific variable decides when nothing was chosen at run time
@@ -105,12 +104,12 @@ int main() {
         CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
         { ImportedModel e0; CHECK(ImportModelData(path, e0, ImportBackend::Default, false, &err) && e0.backend == "own"); }
         TestSetEnv("OKAY_THIRD_PARTY", "1");
-        CHECK(EffectiveImportBackend(c.ext) == (AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own));
+        CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
         TestUnsetEnv("OKAY_THIRD_PARTY");
         CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
         TestSetEnv(c.env, "0");
 #endif
-        if (!AssimpAvailable()) {
+        {
             CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
             CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") == std::string::npos);
             ImportedModel d; std::string e2;

@@ -6,6 +6,10 @@
 >
 > **Last checked:** 2026-11-20 (moved into `content/`, paths and links checked; the text itself was not re-checked against the code).
 
+> **2026-11-24: Assimp is deleted** (branch `claude/no-assimp-1`; ufbx was deleted on 2026-11-23). Our own readers are the only
+> model readers; a file one refuses fails the import (no fallback). Nendo `.ndo` is the one extension dropped
+> (`docs/content/model_readers.md`, section NDO). Text below that describes Assimp as a fallback or backend is history.
+
 > **2026-11-17: the model readers are flipped.** The owner approved ("start switching them so i can test them out"). Every
 > `OKAY_OWN_<FMT>` model reader option, `OKAY_OWN_FBX` and `OKAY_PREFER_OWN_READERS` (STL, PLY) are ON by default (NDO stays
 > OFF: a seam). Assimp and ufbx stay compiled in as the fallback. Ways back at run time: `OKAY_OWN_<FMT>=0` for one format,
@@ -43,7 +47,7 @@ format at a time. The plan is in `docs/status/own_code_roadmap.md`.
 | `.nff` `.enff` (Neutral File Format, and the Sense8 "nff" objects) | Same: `ReadNffFile`, **off by default** (`OKAY_OWN_NFF`; `docs/content/model_readers.md`) | one static part per sphere, cone, solid and polygon group | same as `.3ds` |
 | `.ter` (Terragen terrain) | Same: `ReadTerragenFile`, **off by default** (`OKAY_OWN_TER`; `docs/content/model_readers.md`) | one static part: the height grid in metres, normals and texture coordinates | same as `.3ds` |
 | `.mdc` (Return to Castle Wolfenstein) | Same: `ReadMdcFile`, **off by default** (`OKAY_OWN_MDC`; `docs/content/model_readers.md`) | first frame only, one static part per surface; tags become empty child nodes | same as `.3ds` |
-| `.hmp` (3D GameStudio terrain, HMP7 only) | Same: `ReadHmpFile`, **off by default** (`OKAY_OWN_HMP`; `docs/content/model_readers.md`) | one static part: the height grid; the embedded skin is skipped | same as `.3ds` |
+| `.hmp` (3D GameStudio terrain, HMP4, HMP5 and HMP7) | Same: `ReadHmpFile`, **off by default** (`OKAY_OWN_HMP`; `docs/content/model_readers.md`) | one static part: the height grid; the embedded skin is skipped | same as `.3ds` |
 | `.csm` (Character Studio motion capture) | Same: `ReadCsmFile`, **off by default** (`OKAY_OWN_CSM`; `docs/content/model_readers.md`) | no mesh: markers as nodes and one clip of position keys | same as `.3ds` |
 | `.q3o` `.q3s` (Quick3D) | Same: `ReadQ3dFile`, **off by default** (`OKAY_OWN_Q3D`; `docs/content/model_readers.md`, unverified against real files) | one static part per mesh and material | same as `.3ds` |
 | `.raw` (plain triangle text) | Same: `ReadRawFile`, **off by default** (`OKAY_OWN_RAW`; `docs/content/model_readers.md`, text form only, unverified against real files) | one static part per group | same as `.3ds` |

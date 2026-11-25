@@ -1,5 +1,5 @@
-// Core audit: regression tests for bugs found auditing the math types, ECS /
-// NetWorld, Camera, Layers, DataAsset and input action bindings.
+// Core audit: regression tests for bugs found auditing the math types,
+// Camera, Layers, DataAsset and input action bindings.
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include <cmath>
@@ -8,19 +8,11 @@
 #include <filesystem>
 
 using namespace okay;
-using namespace okay::ecs;
 
 namespace {
-struct Pos { float x, y, z; };
-struct Hp  { int hp; };
-
 bool Fin(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
 bool Fin(const Mat4& m) { for (float f : m.m) if (!std::isfinite(f)) return false; return true; }
 bool SameRot(const Quat& a, const Quat& b) { return std::fabs(Quat::Dot(a, b)) > 0.9999f; }
-
-void PutU32(std::vector<std::uint8_t>& b, std::uint32_t v) {
-    for (int i = 0; i < 4; ++i) b.push_back((std::uint8_t)((v >> (8 * i)) & 0xFF));
-}
 } // namespace
 
 int main() {
@@ -94,65 +86,6 @@ int main() {
             CHECK_NEAR(Easing::Evaluate((Ease)i, 0.0f), 0.0, 1e-5);
             CHECK_NEAR(Easing::Evaluate((Ease)i, 1.0f), 1.0, 1e-5);
         }
-    }
-
-    // ---- ECS: a destroyed entity must not come back through add ----
-    {
-        World w;
-        Entity a = w.create();
-        w.add<Hp>(a, {5});
-        w.destroy(a);
-        CHECK(!w.alive(a));
-        CHECK(!w.has<Hp>(a));
-        w.add<Hp>(a, {9});                 // stale handle: must not leave a zombie
-        int seen = 0; w.each<Hp>([&](Entity, Hp&) { ++seen; });
-        CHECK(seen == 0);
-        // The null entity never carries components or becomes alive.
-        w.add<Hp>(Null, {1});
-        CHECK(!w.has<Hp>(Null));
-        CHECK(!w.alive(Null));
-        CHECK(w.ensure(Null) == Null && !w.alive(Null));
-        // A huge network-supplied id must not wrap the id counter back to Null.
-        w.ensure(0xFFFFFFFFu);
-        CHECK(w.create() != Null);
-    }
-
-    // ---- ECS: destroying the current entity while iterating visits everyone once ----
-    {
-        World w;
-        std::vector<Entity> es;
-        for (int i = 0; i < 6; ++i) { Entity e = w.create(); w.add<Hp>(e, {i}); es.push_back(e); }
-        int visited = 0;
-        w.each<Hp>([&](Entity e, Hp&) { ++visited; w.destroy(e); });
-        CHECK(visited == 6);
-        CHECK(w.count() == 0);
-    }
-
-    // ---- NetWorld::apply with a damaged / hostile snapshot ----
-    {
-        NetWorld nw;
-        nw.replicate<Pos>(1);
-        // Claims a million entities but carries two.
-        std::vector<std::uint8_t> b;
-        PutU32(b, 1000000u); PutU32(b, 1); PutU32(b, 2);
-        b.push_back(0);
-        nw.apply(b);
-        CHECK(nw.world.count() <= 2);
-        CHECK(!nw.world.alive(Null));
-
-        // Component block claims 3 entries, holds one: no default-constructed ghosts.
-        NetWorld n2;
-        n2.replicate<Pos>(1);
-        std::vector<std::uint8_t> c;
-        PutU32(c, 1); PutU32(c, 7);        // one entity, id 7
-        c.push_back(1); c.push_back(1);    // one type block, id 1
-        PutU32(c, 3);                       // claims three components
-        PutU32(c, 7);
-        for (int i = 0; i < 3; ++i) PutU32(c, 0x3f800000u);   // 1.0f x3
-        n2.apply(c);
-        CHECK(!n2.world.alive(Null));
-        CHECK(!n2.world.has<Pos>(Null));
-        CHECK(n2.world.pool<Pos>().size() <= 1);
     }
 
     // ---- Camera: degenerate viewport sizes and clip planes ----

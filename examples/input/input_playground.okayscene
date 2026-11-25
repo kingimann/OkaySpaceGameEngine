@@ -136,6 +136,7 @@ gameobject 7 "E Rebind"
   var s = \"E. REBINDING   5 Interact->F   6 Jump->E (swap)   7 reset all\\n\";
   s = s + \"8 left-hand preset   9 right-hand preset\\n\";
   s = s + \"Jump = \" + action_label(\"jump\") + \"   Interact = \" + action_label(\"interact\") + \"   Fire = \" + action_label(\"fire\") + \"\\n\";
+  s = s + \"One input system: the typed side reads the same store, typed Jump: \" + ia_label(\"Jump\") + \"\\n\";
   s = s + \"E was also bound to: \" + get(\"conf\");
   set_text(s);
 }" "" 0

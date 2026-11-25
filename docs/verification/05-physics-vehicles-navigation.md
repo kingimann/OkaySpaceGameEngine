@@ -16,7 +16,7 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
     4. Walk to the right door (prompt says Ride) and press E.
   - **You should see (expected, not yet seen on Windows):** the car ignores keys until you press E at the driver door; you get out at the driver side; at the passenger door you are carried but cannot drive.
   - **Known partial:** wheels are for looks only and do not spin; no sitting animation; seats are not replicated in multiplayer; no script node to enter or exit yet (docs/gameplay/vehicles.md).
-  - **More:** [vehicle_controller.md](../../gameplay/vehicles.md#vehicle-controller-arcade)
+  - **More:** [vehicle_controller.md](../gameplay/vehicles.md#vehicle-controller-arcade)
 
 - [ ] **V-PH-002** Vehicle seats example scene
   - **Map:** 6, 11. **Where:** editor, File > Open...
@@ -25,7 +25,7 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
     2. Press Play and use E, W A S D and Space as in V-PH-001.
   - **You should see (expected, not yet seen on Windows):** the same get-in, drive, get-out and ride behaviour.
   - **Known partial:** the release may not ship the `examples` folder yet (PR #887); then open the scene from a source checkout. The headless test `vehicle_seat` covers the logic.
-  - **More:** [../../try_it.md](../../try_it.md)
+  - **More:** [../../try_it.md](../try_it.md)
 
 - [ ] **V-PH-003** Vehicle (3D) template with suspension
   - **Map:** 6. **Where:** editor, File > New Project...
@@ -34,7 +34,7 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
     2. Press Play and drive with W A S D.
   - **You should see (expected, not yet seen on Windows):** a car with suspension that drives on the road.
   - **Known partial:** see docs/gameplay/vehicles.md for known rough edges.
-  - **More:** [vehicle_controller.md](../../gameplay/vehicles.md#vehicle-controller-arcade)
+  - **More:** [vehicle_controller.md](../gameplay/vehicles.md#vehicle-controller-arcade)
 
 - [ ] **V-PH-004** Navmesh bake
   - **Map:** 9. **Where:** editor, View menu
@@ -44,7 +44,7 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
     3. Read the Console: "Navigation: baked N polygons ...".
   - **You should see (expected, not yet seen on Windows):** translucent blue polygons cover the floor in the Scene view; a `.okaynav` file appears next to the scene.
   - **Known partial:** one nav surface per scene is the normal case; carving only works while the scene runs (docs/gameplay/navigation.md).
-  - **More:** [navigation.md](../../gameplay/navigation.md)
+  - **More:** [navigation.md](../gameplay/navigation.md)
 
 - [ ] **V-PH-005** Navmesh from a Mesh Collider
   - **Map:** 9, 6. **Where:** editor
@@ -54,7 +54,7 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
     3. Use a ramp or an L-shaped mesh to see the difference.
   - **You should see (expected, not yet seen on Windows):** the baked area follows the real triangles, not a box; the Console prints the polygon and link counts.
   - **Known partial:** over 2,000,000 triangles are cut off with a warning; one crack makes the collider two-sided (docs/gameplay/navigation.md).
-  - **More:** [../../try_it.md](../../try_it.md)
+  - **More:** [../../try_it.md](../try_it.md)
 
 - [ ] **V-PH-006** Skipped bake before Play
   - **Map:** 9. **Where:** editor, Navigation window
@@ -64,7 +64,7 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
     3. Move a collider and press Play.
   - **You should see (expected, not yet seen on Windows):** the second Play does not rebake (the Console may say the bake was skipped); after you move a collider it rebakes.
   - **Known partial:** the "skipped" Console line is new and was never seen in a real editor.
-  - **More:** [../../try_it.md](../../try_it.md)
+  - **More:** [../../try_it.md](../try_it.md)
 
 - [ ] **V-PH-007** Show physics shapes
   - **Map:** 6. **Where:** editor, View menu
@@ -103,7 +103,7 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 9.1 Nav mesh bake and queries [Works]. Where: View > Editors & Tools > Navigation (Add Nav Mesh Surface, Bake, Clear); Scene view mesh overlay; Add...
     - 9.2 Nav agents and obstacles [Works]. Where: Add Component > Gameplay > Nav Mesh Agent and Nav Mesh Obstacle (box or capsule, Carve fields, red carve...
-    - 9.3 Grid pathfinding (older) [Works]. Where: Add Component > Gameplay > Grid Path Agent (2D), Grid Movement Costs, Grid Obstacle (2D). Inspector labels...
+    - 9.3 Grid pathfinding (part of Navigation) [Works]. Where: Add Component > Gameplay > Grid Path Agent (2D), Grid Movement Costs, Grid Obstacle (2D) (listed with the Nav...
     - 9.4 Behavior trees [Works]. Where: View > Editors & Tools > Behavior Tree; Add Component > Gameplay > Behavior Tree Runner; double-click a...
     - 9.5 NPCs and perception [Works]. Where: Add Component > Gameplay > NPC Controller; Inspector groups for movement, perception, aggression, combat
     - 9.6 Nav areas and off-mesh links [Works]. Where: Add Component > Gameplay > Nav Mesh Modifier and Nav Mesh Link; Nav Mesh Agent > Area Mask; Navigation window...

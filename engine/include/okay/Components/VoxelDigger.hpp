@@ -224,11 +224,7 @@ public:
 
     /// Input helpers (actions and raw buttons).
     static bool ActionRebound(const char* name) {
-        const InputActions::Action* a = InputActions::Find(name);
-        if (!a) return false;
-        if (a->bindings.size() != a->defaults.size()) return true;
-        for (std::size_t i = 0; i < a->bindings.size(); ++i) if (a->bindings[i].ToString() != a->defaults[i].ToString()) return true;
-        return false;
+        return InputActions::Rebound(name);
     }
     bool DigHeld() const {
         const bool rebound = useActions && ActionRebound("Dig");

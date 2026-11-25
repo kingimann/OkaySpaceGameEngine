@@ -1,24 +1,54 @@
 #pragma once
-// ScriptEditorCodeEdit: the script editor's view of OkayUI::CodeEdit, in the vocabulary the script editor already speaks
-// to ImGuiColorTextEdit (editor/vendor/TextEditor.h).
+// ScriptEditorCodeEdit: the script editor's code widget, OkayUI::CodeEdit, in the vocabulary the script editor speaks (the
+// vocabulary of the vendored ImGuiColorTextEdit it replaced; that copy is deleted). The script language's words and the palette
+// types the editor needs live here too (LanguageWords, ScriptPalette, PaletteIndex).
 //
 //  - Positions are Coord{line, column} where the column is a DISPLAY column (one character is one column, a tab advances
-//    to the next multiple of the tab size), like TextEditor::Coordinates. CodeEdit's own positions are byte offsets.
-//  - Error markers and breakpoints are keyed by 1-based line number, like TextEditor::ErrorMarkers and Breakpoints.
-//  - GetText() ends with a newline, like TextEditor::GetText().
+//    to the next multiple of the tab size). CodeEdit's own positions are byte offsets.
+//  - Error markers and breakpoints are keyed by 1-based line number.
+//  - GetText() ends with a newline.
 //  - Geometry (RowHeight, CharWidth, TextStartX, ContentOrigin, CaretScreenPosBelow, ScreenToCoords, FirstVisibleLine) is
 //    that of the last Draw, in screen pixels.
 //
 // This file and its .cpp use no Dear ImGui and no SDL: they build and are tested headless (okayui/tests/test_okayui_script_adapter.cpp).
-// The widget that picks between this and the ImGui editor is editor/ScriptEditorWidget.hpp.
+// The widget that draws it inside the Dear ImGui script editor window is editor/ScriptEditorWidget.hpp.
 #include "okay/UI/OkayUICodeEdit.hpp"
 
+#include <array>
 #include <map>
+#include <memory>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
 namespace scripteditor {
+
+/// The words of a script language: keywords, type names, known names (built-ins, in their own colour), line comment starts,
+/// the block comment pair, and the docs: what a word's hover tooltip says (a built-in's signature and doc, "X (built-in type)").
+struct LanguageWords {
+    std::vector<std::string> keywords, types, known, lineComments;
+    std::string blockStart, blockEnd;
+    std::map<std::string, std::string> docs;
+    /// Block words for folding, the indent after Enter and auto-dedent (Lua: function do then repeat else / end until elseif else);
+    /// empty: braces only (OkayScript, C#). See OkayUI::CodeLanguage.
+    std::vector<std::string> blockOpenWords, blockCloseWords, dedentWords;
+    bool foldByIndent = false;
+};
+
+/// Lua's block words (from the Lua 5.4 manual's grammar: `function`, `do`, `then`, `repeat` and `else` open a block, `end`, `until`,
+/// `elseif` and `else` close one), its dedent words, and folding by indent too. SetLanguage uses them for any language with
+/// Lua's "--" comments that brings no block words of its own.
+LanguageWords LuaBlockWords();
+
+/// The script editor's 24 colours, each 0xAABBGGRR like OkayUI, in this order (the order of the palette the vendored editor took;
+/// OkayScriptPalette in ScriptAssist.cpp fills it).
+enum class PaletteIndex : int {
+    Default, Keyword, Number, String, CharLiteral, Punctuation, Preprocessor, Identifier, KnownIdentifier, PreprocIdentifier,
+    Comment, MultiLineComment, Background, Cursor, Selection, ErrorMarker, Breakpoint, LineNumber, CurrentLineFill,
+    CurrentLineFillInactive, CurrentLineEdge, TypeName, Function, Member, Max
+};
+constexpr int kScriptPaletteSize = (int)PaletteIndex::Max;
+using ScriptPalette = std::array<unsigned, kScriptPaletteSize>;
 
 struct Coord {
     int mLine = 0, mColumn = 0;
@@ -69,30 +99,59 @@ public:
     // ---- configuration ----
     /// Colour with the OkayScript language (the script editor's keywords and types); `false` turns colouring off.
     void SetColorizerEnable(bool on);
+    /// Colour with these words instead (the script's language: OkayScript or C#, Lua on the Lua branch), a call coloured before a
+    /// known name. Kept across SetColorizerEnable(false / true). Its docs are the hover tooltips (with colouring on or off).
+    void SetLanguage(const LanguageWords& words);
+    /// The palette (kScriptPaletteSize colours in PaletteIndex order): text colours, background (also the gutter: one background
+    /// inside the frame), caret, selection, the error wash, the breakpoint wash, line numbers and the caret's line box.
+    void SetPaletteColors(const unsigned* colors, int count);
+    void SetPalette(const ScriptPalette& p) { SetPaletteColors(p.data(), (int)p.size()); }
+    /// Pixels between the line numbers and the text (the Density setting); at least 4.
+    void SetLeftMargin(int px) { ed_.SetTextMargin(px > 4 ? (float)px : 4.0f); }
     void SetUserTypes(const std::unordered_set<std::string>& types);
-    /// Error markers by 1-based line, as TextEditor::ErrorMarkers.
+    /// Error markers by 1-based line. A message that starts with "warning: " is a warning (amber). The message is the line's
+    /// tooltip ("Error at line N: "...); the text after the line is the script editor's own overlay (main.cpp), not drawn here.
     void SetErrorMarkers(const std::map<int, std::string>& markers);
-    /// Breakpoint marks by 1-based line, as TextEditor::Breakpoints.
+    /// Breakpoint marks by 1-based line.
     void SetBreakpoints(const std::unordered_set<int>& lines);
     void SetHandleKeyboardInputs(bool on) { ed_.SetHandleKeyboardInput(on); }
     void SetReadOnly(bool on) { ed_.SetReadOnly(on); }
     void SetTabSize(int n) { ed_.SetTabSize(n); }
+    /// The editing options of the Script Editor's View menu (each on the widget: OkayUI::CodeEdit).
+    void SetWordWrap(bool on) { ed_.SetWordWrap(on); }
+    void SetShowWhitespace(bool on) { ed_.SetShowWhitespace(on); }
+    void SetAutoClose(bool on) { ed_.SetAutoClose(on); }
     void SetLineSpacing(float s) { ed_.SetLineSpacing(s); }
 
-    // ---- geometry of the last Draw (screen pixels) ----
+    /// Draw the code in the embedded JetBrains Mono (shared/JetBrainsMonoFontOwn.h, OFL; the font the Dear ImGui script editor
+    /// uses) with a line of text `px` pixels tall. The font is decoded and made once for the whole program. False when it could
+    /// not be made (the editor then keeps the UI font).
+    bool UseCodeFont(float px);
+    /// The JetBrains Mono font, made on first use (null if that failed). Shared by every script editor.
+    static const OkayUI::Font* CodeFont();
+
+    // ---- geometry of the last Draw ----
+    /// Where OkayUI's pixels sit in the caller's coordinates. The script editor draws the widget in the editor window's own
+    /// pixels (OkayUI) but places popups and reads the mouse in Dear ImGui's screen coordinates, which with the multi-window
+    /// viewports are desktop positions: the offset is the window's position on the desktop. The geometry calls below are in
+    /// the caller's coordinates (the offset added), ScreenToCoords takes them (the offset taken off).
+    void SetScreenOffset(float x, float y) { offX_ = x; offY_ = y; }
     float RowHeight() const { return ed_.LineHeight(); }
     float CharWidth() const { return ed_.CharWidth(); }
     int   FirstVisibleLine() const { return ed_.FirstVisibleLine(); }
     /// Screen X where the text of a line starts (right of the gutter, scroll applied) and the top-left of line 0's text.
-    float TextStartX() const { return ed_.PosToScreen(OkayUI::CodePos{0, 0}).x; }
+    float TextStartX() const { return ed_.PosToScreen(OkayUI::CodePos{0, 0}).x + offX_; }
     OkayUI::Vec2 ContentOrigin() const;
-    OkayUI::Vec2 CaretScreenPosBelow() const { return ed_.CaretScreenPosBelow(); }
-    Coord ScreenToCoords(float x, float y) const { return ToCoord(ed_.ScreenToPos(x, y)); }
+    OkayUI::Vec2 CaretScreenPosBelow() const { const OkayUI::Vec2 v = ed_.CaretScreenPosBelow(); return OkayUI::Vec2{v.x + offX_, v.y + offY_}; }
+    Coord ScreenToCoords(float x, float y) const { return ToCoord(ed_.ScreenToPos(x - offX_, y - offY_)); }
 
 private:
     OkayUI::CodeEdit ed_;
     unsigned seenVersion_ = 0;
     bool colorize_ = true;
+    OkayUI::CodeLanguage language_;             // what SetColorizerEnable(true) turns back on
+    std::vector<std::string> userTypes_;
+    float offX_ = 0.0f, offY_ = 0.0f;
 };
 
 } // namespace scripteditor

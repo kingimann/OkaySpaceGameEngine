@@ -1,0 +1,38 @@
+#pragma once
+// The engine's one place for small text helpers (CLAUDE.md rule 19c, docs/engine/shared_code.md "string helpers").
+// Add to this file instead of writing another Trim/Lower/Split next to your code. Header-only, std only.
+// Written from scratch for this engine.
+#include <string>
+
+namespace okay::str {
+
+// ASCII-only lowercase: bytes 'A'..'Z' become 'a'..'z', every other byte (UTF-8 included) is left as it is.
+// Locale-independent, unlike std::tolower with a non-"C" locale.
+inline std::string LowerAscii(std::string s) {
+    for (char& c : s)
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    return s;
+}
+
+// ASCII-only case-blind compare: "Jump" equals "jUMP" (no copy, no allocation).
+inline bool EqualsNoCaseAscii(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        char x = a[i], y = b[i];
+        if (x >= 'A' && x <= 'Z') x = static_cast<char>(x - 'A' + 'a');
+        if (y >= 'A' && y <= 'Z') y = static_cast<char>(y - 'A' + 'a');
+        if (x != y) return false;
+    }
+    return true;
+}
+
+// `s` without the spaces, tabs, carriage returns and newlines at its two ends (ASCII whitespace only).
+inline std::string Trim(const std::string& s) {
+    std::size_t b = 0, e = s.size();
+    auto space = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f'; };
+    while (b < e && space(s[b])) ++b;
+    while (e > b && space(s[e - 1])) --e;
+    return s.substr(b, e - b);
+}
+
+}  // namespace okay::str

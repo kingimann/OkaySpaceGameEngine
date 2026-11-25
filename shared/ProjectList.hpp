@@ -105,6 +105,14 @@ inline std::string SceneIn(const fs::path& root) {
     return fs::is_empty(assets, e) ? preferred.string() : std::string();
 }
 
+// A copy the project upgrade made next to the project ("Name (backup v2.900.0)"). Every finished
+// backup holds this marker (kManifestRel in editor/ProjectUpgrade.cpp); a project merely named
+// "... (backup ...)" has none, so the name is never used to decide.
+inline bool IsUpgradeBackup(const fs::path& root) {
+    std::error_code e;
+    return fs::is_regular_file(root / ".okay" / "upgrade_backup.txt", e);
+}
+
 struct ListedProject { std::string name, scene; bool extra = false; };
 
 // The list. Folder projects first (not hidden), then extras not already listed and not hidden.
@@ -118,6 +126,7 @@ inline std::vector<ListedProject> ScanProjects(const fs::path& projectsDir, cons
         if (!it->is_directory(e)) continue;
         const std::string key = FolderKey(it->path(), foldCase);
         if (IsHidden(hidden, key, foldCase)) continue;
+        if (IsUpgradeBackup(it->path())) continue;   // the Create page lists projects, not upgrade backups
         const std::string sc = SceneIn(it->path());
         if (sc.empty()) continue;
         out.push_back({it->path().filename().string(), sc, false});
@@ -126,6 +135,7 @@ inline std::vector<ListedProject> ScanProjects(const fs::path& projectsDir, cons
     for (const auto& ep : extras) {
         const std::string key = RootKey(ep, foldCase);
         if (std::find(seen.begin(), seen.end(), key) != seen.end() || IsHidden(hidden, key, foldCase)) continue;
+        if (IsUpgradeBackup(SceneRoot(ep))) continue;
         seen.push_back(key);
         out.push_back({SceneRoot(ep).filename().string(), ep, true});
     }

@@ -6,10 +6,14 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | You see or say | Sub-area |
 |---|---|
 | (test build)" after a version | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
+| -- OkaySpace: 40 engine modules | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
+| ... files of okay_engine in modules` while configuring | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
 | 1 FPS with a large model | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
 | 1 item / 2 items" reads wrong | [1.8](01-core-scene.md#18-localization) Localization |
 | 2D enemies cut through walls or cannot find a route on a tilemap | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |
 | 3D looks different in the editor and the player | [2.1](02-rendering-world.md#21-renderers) Renderers |
+| [okay] modules: 40 modules, 40 on` in the player log | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
+| a "Modules" warning on a pushed branch | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
 | a "Test build of ..." message in the launcher | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
 | a .dae/.3ds file will not import without Assimp | [3.6](03-modeling-import.md#36-model-import) Model import |
 | a 10,000-row list is slow | [40.8](40-okayui-library.md#408-porting-helpers-tooltip-scope-style-fields-mapping-layer-list-clipper) Porting helpers: tooltip scope, style fields, mapping layer, list clipper |
@@ -21,6 +25,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a bench opens for the wrong player | [11.3](11-gameplay-systems.md#113-crafting-and-recipes) Crafting and recipes |
 | a bevel leaves a hole at a corner | [3.2](03-modeling-import.md#32-edge-and-loop-tools) Edge and loop tools |
 | a big message never arrives | [16.1](16-networking.md#161-transport-sealed-channels-packets) Transport, sealed channels, packets |
+| a big message takes seconds on a bad connection | [16.15](16-networking.md#1615-the-easy-layer-one-call-or-one-node-per-action) The easy layer: one call or one node per action |
 | a black window on start | [15.15](15-editor.md#1515-editor-shell-startup-and-lifecycle) Editor shell, startup and lifecycle |
 | a body spins when it should stay upright | [6.1](06-physics.md#61-2d-bodies-and-colliders) 2D bodies and colliders |
 | a bone stretches or turns NaN | [36.5](36-math-geometry.md#365-ik-math) IK math |
@@ -50,6 +55,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a camera glides forever toward a target | [36.1](36-math-geometry.md#361-vectors-and-colours) Vectors and colours |
 | a camera ray passes through a wall | [6.5](06-physics.md#65-queries-and-debug-draw) Queries and debug draw |
 | a change breaks rendering and nobody notices | [33.3](20-35-planned.md#333-regression-testing) Regression testing |
+| a change in one subsystem rebuilds everything | [19.4](19-docs-tests-health.md#194-splitting-the-largest-files-subsystem-boundaries-and-naming-engine-wide-modularization) Splitting the largest files, subsystem boundaries and naming (engine-wide modularization) |
 | a character cannot reach a platform | [9.1](09-ai-navigation.md#91-nav-mesh-bake-and-queries) Nav mesh bake and queries |
 | a character faces the wrong way | [2.12](02-rendering-world.md#212-sprites-and-sprite-animation) Sprites and sprite animation |
 | a character sinks into terrain | [6.2](06-physics.md#62-3d-bodies-and-colliders-collider-fit) 3D bodies and colliders, collider fit |
@@ -66,6 +72,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a collider is bigger or smaller than the mesh | [6.2](06-physics.md#62-3d-bodies-and-colliders-collider-fit) 3D bodies and colliders, collider fit |
 | a colour comes out too dark | [36.1](36-math-geometry.md#361-vectors-and-colours) Vectors and colours |
 | a Combo list draws under other widgets | [40.1](40-okayui-library.md#401-core-widgets-and-auto-layout) Core widgets and auto-layout |
+| a component body is still Dear ImGui with OkayUI on | [40.10](40-okayui-library.md#4010-the-inspector-on-okayui-preview-on-by-default) The Inspector on OkayUI (preview, on by default) |
 | a component has no card or a field is missing | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
 | a component's settings are lost after save and load | [1.5](01-core-scene.md#15-scene-serializer) Scene serializer |
 | a condition node always takes the false path | [10.2](10-story-cinematics.md#102-dialogue-graphs-and-dialogue-runner) Dialogue graphs and Dialogue Runner |
@@ -101,6 +108,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a feature missing on the web build (networking relay, encryption) | [18.2](18-build-export-release.md#182-web-and-mobile-export) Web and mobile export |
 | a fence changed height but one post did not | [3.11](03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) Guided creation (templates, parts, safe regeneration) |
 | a field does not show in the Inspector | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
+| a fighting game feels laggy | [16.15](16-networking.md#1615-the-easy-layer-one-call-or-one-node-per-action) The easy layer: one call or one node per action |
 | a file you did not expect is (or is not) in the build | [18.6](18-build-export-release.md#186-desktop-game-export-build-game-and-the-export-check) Desktop game export (Build Game) and the export check |
 | a flag does not wave | [2.4](02-rendering-world.md#24-sky-fog-and-weather) Sky, fog and weather |
 | a flashlight does not light the ground | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |
@@ -118,7 +126,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a grenade does not push crates | [6.8](06-physics.md#68-forces-explosions-and-body-push-out) Forces, explosions and body push-out |
 | a gunshot cuts off the previous one | [7.3](07-audio.md#73-audio-sources-and-music-player) Audio sources and music player |
 | a hand snaps to a new target | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
-| a handler still runs after it unsubscribed | [1.9](01-core-scene.md#19-events-and-ecs) Events and ECS |
+| a handler still runs after it unsubscribed | [1.9](01-core-scene.md#19-event-bus) Event bus |
 | a hat floats | [30.3](20-35-planned.md#303-clothing) Clothing |
 | a health bar does not follow hp | [12.13](12-ingame-ui.md#1213-data-binding-ui-animation-and-script-control) Data binding, UI animation and script control |
 | a hitch when a big file loads | [1.11](01-core-scene.md#111-asset-manager) Asset manager |
@@ -171,7 +179,9 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a moderation action is refused | [17.9](17-launcher-platform.md#179-admin) Admin |
 | a modified pack fails its checksum | [39.10](39-security-anticheat.md#3910-data-packs-and-obfuscation) Data packs and obfuscation |
 | a modifier shows red text and is skipped | [3.3](03-modeling-import.md#33-modifiers) Modifiers |
+| a Modules tab in Build Game's report | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
 | a nameplate does not follow its object | [12.6](12-ingame-ui.md#126-world-space-ui) World-space UI |
+| a native says "takes 2 arguments, got 3 | [13.8](13-scripting.md#138-standalone-okayscript-language-and-cli) Standalone OkayScript language and CLI |
 | a new account on the same PC still banned | [39.6](39-security-anticheat.md#396-reports-bans-appeals-and-the-hardware-hash) Reports, bans, appeals and the hardware hash |
 | a new feature works in one language and not the other | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |
 | a new light feature works on one backend only | [38.8](38-render-backends.md#388-shader-pipeline) Shader pipeline |
@@ -252,6 +262,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a script clip is overwritten by locomotion | [5.11](05-animation-ik.md#511-animation-script-control) Animation script control |
 | a script does nothing or errors at runtime | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
 | a script edit does not reload | [13.4](13-scripting.md#134-script-components-and-script-ui) Script components and script UI |
+| a script error names the wrong line | [13.8](13-scripting.md#138-standalone-okayscript-language-and-cli) Standalone OkayScript language and CLI |
 | a script is rejected with "isn't supported yet | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |
 | A script needs a class | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |
 | a script reads or writes files outside the game folder (should be refused with a Console line) | [17.11](17-launcher-platform.md#1711-security-plan-sec1) Security plan SEC1 |
@@ -352,7 +363,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an API member exists in the script but not as a node | [14.7](14-visual-scripting.md#147-engine-api-nodes) Engine API nodes |
 | an API node is missing from the palette | [13.6](13-scripting.md#136-engine-api-and-generated-docs) Engine API and generated docs |
 | an asset does not show or has the wrong icon | [15.4](15-editor.md#154-project-panel-and-asset-manager) Project panel and asset manager |
-| an ECS unit does not show on screen | [1.9](01-core-scene.md#19-events-and-ecs) Events and ECS |
 | an edited file does not show until restart | [1.11](01-core-scene.md#111-asset-manager) Asset manager |
 | an edited mesh reverts after reopening the scene | [3.5](03-modeling-import.md#35-mesh-assets-and-primitives) Mesh assets and primitives |
 | an edited mesh updates a moment late | [38.9](38-render-backends.md#389-gpu-resources) GPU resources |
@@ -360,6 +370,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an enemy cannot climb a ladder | [9.6](09-ai-navigation.md#96-nav-areas-and-off-mesh-links) Nav areas and off-mesh links |
 | an enemy never notices the player or notices from behind | [9.5](09-ai-navigation.md#95-npcs-and-perception) NPCs and perception |
 | an enemy sees through walls | [9.5](09-ai-navigation.md#95-npcs-and-perception) NPCs and perception |
+| an event arrives on the host but not on the other players | [16.15](16-networking.md#1615-the-easy-layer-one-call-or-one-node-per-action) The easy layer: one call or one node per action |
 | an example has no camera | [42.8](42-examples-samples.md#428-example-scenes-and-their-check) Example scenes and their check |
 | an example opens and shows only text | [42.8](42-examples-samples.md#428-example-scenes-and-their-check) Example scenes and their check |
 | an exe is missing SDL2.dll | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
@@ -399,6 +410,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | autocomplete does not offer a function | [13.5](13-scripting.md#135-script-editor-autocomplete-errors-rename-format) Script editor: autocomplete, errors, rename, format |
 | autosave file shows up in git | [22.2](20-35-planned.md#222-autosave) Autosave |
 | autosave files in my commits | [28.1](20-35-planned.md#281-git-integration) Git integration |
+| autosaves and build output in my commits | [41.14](41-build-tools-infra.md#4114-okay-command-line-with-git-underneath) okay command line (with Git underneath) |
 | ban banner on sign-in | [17.9](17-launcher-platform.md#179-admin) Admin |
 | black frame after a driver problem | [2.1](02-rendering-world.md#21-renderers) Renderers |
 | black frame at startup | [17.1](17-launcher-platform.md#171-launcher-shell-and-updater) Launcher shell and updater |
@@ -511,6 +523,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | each component needs hand-written Inspector and serializer code | [1.19](01-core-scene.md#119-property-reflection) Property reflection |
 | eating an item does nothing | [11.4](11-gameplay-systems.md#114-survival-stats-afflictions-zones) Survival: stats, afflictions, zones |
 | echo in the call | [16.7](16-networking.md#167-voice-chat-server) Voice chat server |
+| Edit > Project Settings > Modules | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
 | edited a material and objects did not change | [26.2](20-35-planned.md#262-material-editor) Material editor |
 | editing a part prefab does not update the big one | [21.2](20-35-planned.md#212-nested-prefabs) Nested prefabs |
 | editor closed by itself and I want my scene back | [22.3](20-35-planned.md#223-crash-recovery) Crash recovery |
@@ -532,6 +545,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | Esc does not release the mouse in Play | [5.13](05-animation-ik.md#513-player-animation-setup) Player animation setup |
 | Escape does not close a modal | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
 | events at time 0 never fire | [5.11](05-animation-ik.md#511-animation-script-control) Animation script control |
+| events come in the wrong order | [16.15](16-networking.md#1615-the-easy-layer-one-call-or-one-node-per-action) The easy layer: one call or one node per action |
 | events fire twice or never | [5.2](05-animation-ik.md#52-clips-and-curves) Clips and curves |
 | every object using the shared file changes at once | [3.5](03-modeling-import.md#35-mesh-assets-and-primitives) Mesh assets and primitives |
 | every tree in the forest looks the same | [3.10](03-modeling-import.md#310-add-library-and-procedural-props) Add library and procedural props |
@@ -610,6 +624,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | I changed a setting and nothing happened | [20.4](20-35-planned.md#204-import-settings) Import settings |
 | I changed the prefab but my placed copies did not change | [21.1](20-35-planned.md#211-reusable-objects) Reusable objects |
 | I do not know what to click first | [51.2](43-proposals.md#512-guided-tutorials-in-the-editor) Guided tutorials in the editor |
+| I don't know how to start a multiplayer game | [16.15](16-networking.md#1615-the-easy-layer-one-call-or-one-node-per-action) The easy layer: one call or one node per action |
 | I imported an asset pack and cannot tell which version it is | [25.4](20-35-planned.md#254-dependency-management) Dependency management |
 | I need a quick texture | [42.7](42-examples-samples.md#427-starter-assets) Starter assets |
 | I need one picture from many sprites | [2.13](02-rendering-world.md#213-texture-library-mipmaps-atlases-compression-streaming) Texture library (mipmaps, atlases, compression, streaming) |
@@ -622,6 +637,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | I want an example plugin to copy | [42.5](42-examples-samples.md#425-editor-plugin-examples) Editor plugin examples |
 | I want players to design their character | [30.1](20-35-planned.md#301-customization) Customization |
 | I want to commit from the editor | [28.1](20-35-planned.md#281-git-integration) Git integration |
+| I want to make and build a game from a terminal | [41.14](41-build-tools-infra.md#4114-okay-command-line-with-git-underneath) okay command line (with Git underneath) |
 | I want to paint forests | [29.2](20-35-planned.md#292-vegetation-painting) Vegetation painting |
 | I want to run my own account server | [42.4](42-examples-samples.md#424-account-server-example) Account server example |
 | I want to see the engine run without the editor | [42.1](42-examples-samples.md#421-sandbox-demo-solar-system) Sandbox demo (solar system) |
@@ -652,6 +668,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | jagged edges | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
 | Join button missing | [17.3](17-launcher-platform.md#173-friends-following-parties) Friends, following, parties |
 | Join does nothing | [17.15](17-launcher-platform.md#1715-multiplayer-page-and-game-link) Multiplayer page and game link |
+| joining does nothing and says nothing | [16.15](16-networking.md#1615-the-easy-layer-one-call-or-one-node-per-action) The easy layer: one call or one node per action |
 | jump feels floaty | [4.3](04-characters-cameras.md#43-2d-and-25d-controllers) 2D and 2.5D controllers |
 | jump plays when stepping off a curb | [5.3](05-animation-ik.md#53-model-clip-player-and-locomotion) Model clip player and locomotion |
 | jump pressed just before landing is ignored | [8.7](08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel) Input upgrade: timing, curves, per-player actions, recording, the Input panel |
@@ -682,7 +699,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | marketplace download is not listed | [15.4](15-editor.md#154-project-panel-and-asset-manager) Project panel and asset manager |
 | memory grows when many views are open | [38.9](38-render-backends.md#389-gpu-resources) GPU resources |
 | memory grows while playing | [23.2](20-35-planned.md#232-memory-tracking) Memory tracking |
-| merge conflicts in `launcher/main.cpp` or `editor/main.cpp | [19.4](19-docs-tests-health.md#194-splitting-the-largest-files-editor-launcher-okayscript-vm-serializer) Splitting the largest files (editor, launcher, OkayScript VM, serializer) |
+| merge conflicts in `launcher/main.cpp` or `editor/main.cpp | [19.4](19-docs-tests-health.md#194-splitting-the-largest-files-subsystem-boundaries-and-naming-engine-wide-modularization) Splitting the largest files, subsystem boundaries and naming (engine-wide modularization) |
 | merge conflicts in `main.cpp | [15.10](15-editor.md#1510-splitting-editormaincpp-into-panel-files-45k-lines) Splitting `editor/main.cpp` into panel files (~45k lines) |
 | merge conflicts in id files | [20.3](20-35-planned.md#203-guids) GUIDs |
 | messages arrive late or out of order | [16.1](16-networking.md#161-transport-sealed-channels-packets) Transport, sealed channels, packets |
@@ -767,6 +784,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | objects shake far from the centre | [45.2](43-proposals.md#452-large-world-coordinates) Large world coordinates |
 | objects vanish at screen edges | [2.8](02-rendering-world.md#28-culling-and-skinning) Culling and skinning |
 | odd files named `x` or `map` at the repo root | [19.6](19-docs-tests-health.md#196-repository-hygiene) Repository hygiene |
+| okayscript: can't read | [13.8](13-scripting.md#138-standalone-okayscript-language-and-cli) Standalone OkayScript language and CLI |
 | OkaySpace crashed" box | [22.3](20-35-planned.md#223-crash-recovery) Crash recovery |
 | OkayUI draws under ImGui or the game | [40.3](40-okayui-library.md#403-backends-and-frame-loop) Backends and frame loop |
 | old project opens with missing pieces | [25.3](20-35-planned.md#253-migration) Migration |
@@ -857,6 +875,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | scene file broken and no older copy | [22.4](20-35-planned.md#224-backups) Backups |
 | scene files in a built game aren't readable as text | [39.10](39-security-anticheat.md#3910-data-packs-and-obfuscation) Data packs and obfuscation |
 | scene will not open after a git merge | [28.4](20-35-planned.md#284-merge-conflict-tools) Merge conflict tools |
+| scenes clash after a git merge | [41.14](41-build-tools-infra.md#4114-okay-command-line-with-git-underneath) okay command line (with Git underneath) |
 | scores reset | [16.12](16-networking.md#1612-rooms-lobby-and-match-flow) Rooms, lobby and match flow |
 | script plays on the wrong model part | [5.11](05-animation-ik.md#511-animation-script-control) Animation script control |
 | script variables reset | [35.3](20-35-planned.md#353-serialization) Serialization |
@@ -885,7 +904,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | sit pose floats above the chair | [5.12](05-animation-ik.md#512-built-in-action-clips) Built-in action clips |
 | skip does not fire the last events | [10.1](10-story-cinematics.md#101-cutscene-sequences-and-sequence-player) Cutscene sequences and Sequence Player |
 | slide or dodge does nothing | [4.2](04-characters-cameras.md#42-stances-and-movement) Stances and movement |
-| slow builds when one file changes | [19.4](19-docs-tests-health.md#194-splitting-the-largest-files-editor-launcher-okayscript-vm-serializer) Splitting the largest files (editor, launcher, OkayScript VM, serializer) |
+| slow builds when one file changes | [19.4](19-docs-tests-health.md#194-splitting-the-largest-files-subsystem-boundaries-and-naming-engine-wide-modularization) Splitting the largest files, subsystem boundaries and naming (engine-wide modularization) |
 | slow first open of a folder full of models | [20.5](20-35-planned.md#205-thumbnails) Thumbnails |
 | slow motion and hit stop do nothing in the editor's Play mode | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
 | slow motion or pause does not stop something | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
@@ -981,7 +1000,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the character walking looks like running | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
 | the chest dips when reaching just past the hand | [5.7](05-animation-ik.md#57-look-at-aim-and-full-body-ik) Look-at, aim and full-body IK |
 | the chest shows items to players who are not near | [11.8](11-gameplay-systems.md#118-server-authoritative-inventory) Server-authoritative inventory |
-| the client's ECS world differs from the server's | [1.9](01-core-scene.md#19-events-and-ecs) Events and ECS |
 | the clip plays too fast or does not loop | [5.2](05-animation-ik.md#52-clips-and-curves) Clips and curves |
 | the collider ignores the modified mesh | [3.3](03-modeling-import.md#33-modifiers) Modifiers |
 | the Console is flooded by one repeated line | [15.11](15-editor.md#1511-console-and-diagnostics-panels) Console and diagnostics panels |
@@ -1027,6 +1045,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the frame looks washed out or too contrasty | [2.5](02-rendering-world.md#25-post-processing) Post-processing |
 | the friends list is empty | [37.9](37-platform-windowing.md#379-online-service-clients-shared-with-area-17) Online service clients (shared with area 17) |
 | the game closes in Enforce mode with "debugger detected | [39.5](39-security-anticheat.md#395-runtime-checks-and-the-clock-heartbeat) Runtime checks and the clock heartbeat |
+| the game ends for everyone when the host quits | [16.15](16-networking.md#1615-the-easy-layer-one-call-or-one-node-per-action) The easy layer: one call or one node per action |
 | the game freezes and the editor hangs | [14.5](14-visual-scripting.md#145-debugger-breakpoints-step-call-stack-watch) Debugger (breakpoints, step, call stack, watch) |
 | the game is loud again after restart | [7.4](07-audio.md#74-saved-volume-settings) Saved volume settings |
 | the game jumps ahead after a window drag | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
@@ -1052,6 +1071,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the head shows inside the first-person lens | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
 | the head stares at the origin or the target behind | [5.7](05-animation-ik.md#57-look-at-aim-and-full-body-ik) Look-at, aim and full-body IK |
 | the Inspector is slow with many components | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
+| the Inspector looks the same with OkayUI on | [40.10](40-okayui-library.md#4010-the-inspector-on-okayui-preview-on-by-default) The Inspector on OkayUI (preview, on by default) |
 | the installer asks to close OkaySpace | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | the Issues tab shows missing waypoints | [9.4](09-ai-navigation.md#94-behavior-trees) Behavior trees |
 | the item does not snap to the zone | [11.11](11-gameplay-systems.md#1111-world-drag-and-drop) World drag and drop |
@@ -1073,6 +1093,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the mobile build has no project to open | [37.5](37-platform-windowing.md#375-web-and-mobile-shims) Web and mobile shims |
 | the model pops at the screen edge | [5.5](05-animation-ik.md#55-root-motion-and-skinning) Root motion and skinning |
 | the model stays upright while the collider crouches | [5.3](05-animation-ik.md#53-model-clip-player-and-locomotion) Model clip player and locomotion |
+| the Modules line in File > New Project | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
 | the mouse is stuck in Play | [15.3](15-editor.md#153-scene-and-game-views-gizmos-spline-tools) Scene and Game views, gizmos, spline tools |
 | the mouse stays captured after alt-tab | [37.2](37-platform-windowing.md#372-focus-cursor-and-clipboard) Focus, cursor and clipboard |
 | the navmesh does not bake or shows wrong polygons | [15.6](15-editor.md#156-navigation-behavior-tree-dialogue-localization-modeling-windows) Navigation, Behavior Tree, Dialogue, Localization, Modeling windows |
@@ -1207,6 +1228,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | typing in a script UI input also moves the character | [40.4](40-okayui-library.md#404-hosts-script-bridge-and-built-in-windows) Hosts, script bridge and built-in windows |
 | typing in a text field also moves the player | [8.7](08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel) Input upgrade: timing, curves, per-player actions, recording, the Input panel |
 | typing in a text field drops a character | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
+| typing in an OkayUI field triggers an editor shortcut | [40.10](40-okayui-library.md#4010-the-inspector-on-okayui-preview-on-by-default) The Inspector on OkayUI (preview, on by default) |
 | typing lags in a big script | [13.5](13-scripting.md#135-script-editor-autocomplete-errors-rename-format) Script editor: autocomplete, errors, rename, format |
 | UDP port blocked by a firewall | [41.5](41-build-tools-infra.md#415-server-deployment-kits) Server deployment kits |
 | UI is slow with many widgets | [12.11](12-ingame-ui.md#1211-ui-renderer-painters-and-batching) UI renderer, painters and batching |
@@ -1231,6 +1253,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | updating a pack overwrites my edits | [25.4](20-35-planned.md#254-dependency-management) Dependency management |
 | using the software renderer briefly | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |
 | V does not switch view or the camera pops | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
+| vague one-letter names | [19.4](19-docs-tests-health.md#194-splitting-the-largest-files-subsystem-boundaries-and-naming-engine-wide-modularization) Splitting the largest files, subsystem boundaries and naming (engine-wide modularization) |
 | values reset after editing | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
 | vibration cannot be turned off by the player | [8.6](08-input.md#86-rumble-and-haptics) Rumble and haptics |
 | View as OkayScript names a node it cannot export | [14.8](14-visual-scripting.md#148-converting-between-graphs-and-scripts) Converting between graphs and scripts |

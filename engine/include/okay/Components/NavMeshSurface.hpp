@@ -1,11 +1,11 @@
 #pragma once
 #include "okay/AI/NavMesh.hpp"
 #include "okay/AI/NavMeshBake.hpp"
+#include "okay/Core/Jobs.hpp"
 #include "okay/Scene/Component.hpp"
 #include <atomic>
 #include <memory>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace okay {
@@ -15,7 +15,7 @@ class Scene;
 /// The scene's navigation mesh: bake settings, the baked mesh and the `.okaynav`
 /// file it lives in (next to the scene, referenced by path). One per scene is the
 /// normal case. Bake() builds the mesh from the static colliders synchronously;
-/// StartBake() does it on a worker thread with progress, PollBake() takes the
+/// StartBake() does it as a job on EngineJobs() with progress, PollBake() takes the
 /// result. The mesh loads from `navPath` the first time it is needed.
 class NavMeshSurface : public Component {
 public:
@@ -106,7 +106,8 @@ public:
 
 private:
     struct Job {
-        std::thread thread;
+        JobSystem* sys = nullptr;   // the system the bake job was submitted to
+        JobHandle handle;
         std::atomic<float> progress{0.0f};
         std::atomic<bool> done{false}, cancel{false}, ok{false};
         std::unique_ptr<NavMesh> result;

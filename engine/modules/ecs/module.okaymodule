@@ -1,0 +1,15 @@
+# Module manifest. Format: docs/engine/modular_engine.md. One key per line, lists are comma separated.
+name=ecs
+title=ECS
+area=Advanced
+description=Data-oriented world, systems, scene bridge.
+default=on
+core=0
+requires=core
+provides=
+components=
+serializers=
+vs_group=
+editor=
+sources=include/okay/ECS/*
+tests=ecs* core_events_ecs

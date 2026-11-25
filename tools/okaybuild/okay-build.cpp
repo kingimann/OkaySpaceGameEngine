@@ -870,6 +870,9 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         r.cmd = fixBin(r.cmd); r.output = fixBin(r.output); r.dir = fixBin(r.dir);
         for (auto& o : r.outputs) o = fixBin(o); for (auto& i : r.inputs) i = fixBin(i);
     }
+    // A missing source is an error only when a step the build was asked for compiles it (Ninja's rule: a target nobody asked for
+    // may lack a file, for example a library whose sources come from a fetch that was not run). Checked after the wanted steps are picked.
+    std::map<string, string> missingSrc;
     std::set<string> produced; // outputs of raw actions, so a generated source need not exist yet
     for (auto& r : raws) {
         if (!r.output.empty()) produced.insert(resolve(r.dir, r.output));
@@ -887,7 +890,8 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             string srcKey = resolve("", s);
             if (!produced.count(srcKey) && !genAt.count(s) && !fs::exists(s)) {
                 string hint; for (auto& f : m.fetches) if (s.compare(0, f.dir.size() + 1, f.dir + "/") == 0) hint = " (it comes from fetch '" + f.name + "': run okay-build fetch " + f.name + ")";
-                throw Fail("target '" + t.name + "': source '" + s + "' does not exist" + hint);
+                string why = "target '" + t.name + "': source '" + s + "' does not exist" + hint;
+                missingSrc.insert({s, why}); missingSrc.insert({srcKey, why});
             }
             bool isC = fs::path(s).extension() == ".c", isRc = fs::path(s).extension() == ".rc";
             string rel = sRaw.compare(0, 6, "{bin}/") == 0 ? "_bin/" + sRaw.substr(6) : fs::path(s).lexically_normal().generic_string();
@@ -1120,6 +1124,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         for (auto& tf : g.targetFinal) if (keep[tf.second]) h.targetFinal.push_back({tf.first, remap[tf.second]});
         g = h;
     }
+    for (auto& a : g.acts) if (a.kind == "CC" || a.kind == "RC") for (auto& i : a.inputs) { auto it = missingSrc.find(i); if (it != missingSrc.end()) throw Fail(it->second); }
     { // the generate files the remaining steps need: the sources they compile, and headers (any planned compile may include one)
         std::set<string> compiled; bool anyCompile = false;
         for (auto& a : g.acts) if (a.kind == "CC" || a.kind == "RC") { anyCompile = true; for (auto& i : a.inputs) compiled.insert(i); }
@@ -1387,8 +1392,8 @@ static long long nowNs();
 static thread_local long gLastPeakKb = 0; // peak memory of the last command this thread ran, in KiB (0 = not measured)
 // How the last runCmd child of this thread ended, beyond its exit code (ctest needs it: CTest fails a test that timed out, crashed or
 // could not start whatever WILL_FAIL or the output rules say). kind: 0 exited, 1 timed out, 2 killed by a signal, 3 could not start.
-struct ChildEnd { int kind = 0; string why; };
-static thread_local ChildEnd gLastEnd;
+struct ChildOutcome { int kind = 0; string why; };
+static thread_local ChildOutcome gLastEnd;
 #ifdef _WIN32
 struct Live {
     HANDLE proc = nullptr;
@@ -1466,7 +1471,7 @@ static bool spawnLive(const string& cmdline, const string& dir, bool stream, Liv
 }
 static int runCmd(const vector<string>& argv, string& out, bool stream = false) {
     Live L; string err;
-    gLastEnd = ChildEnd{};
+    gLastEnd = ChildOutcome{};
     if (!spawnLive(winJoin(argv), "", stream, L, err)) { out += err; gLastEnd.kind = 3; gLastEnd.why = err; return 127; }
     for (;;) {
         drainLive(L);
@@ -1629,7 +1634,7 @@ static int waitChild(pid_t pid) {
 static thread_local vector<string> gChildEnv; // ctest: NAME=VALUE words the next runCmd child gets
 static thread_local string gChildCwd; // ctest: the folder the next runCmd child starts in (empty = keep ours)
 static int runCmd(const vector<string>& argv, string& out, bool stream = false, long long timeoutNs = 0) {
-    gLastPeakKb = 0; gLastEnd = ChildEnd{};
+    gLastPeakKb = 0; gLastEnd = ChildOutcome{};
     int startPipe[2] = {-1, -1}; // the child writes errno here when it cannot start; a successful exec closes it (close-on-exec)
     auto child = [&]() {
         auto cannot = [&](int e) { if (startPipe[1] >= 0) { ssize_t w = write(startPipe[1], &e, sizeof e); (void)w; } };
@@ -3182,7 +3187,7 @@ static int cmdTest(Manifest& m, const Opts& o, const vector<string>& only) {
 // A test that timed out, was ended by a signal or could not start fails whatever those properties say (checked with real CTest 3.28:
 // WILL_FAIL does not turn a timeout or a crash into a pass, and the output rules are not looked at; a program that is not there is
 // "Not Run", counted among the failed tests).
-static int judgeTest(const CTestDecl& c, int code, const string& out, string& why, const ChildEnd& end = ChildEnd{}) {
+static int judgeTest(const CTestDecl& c, int code, const string& out, string& why, const ChildOutcome& end = ChildOutcome{}) {
     if (end.kind == 1) { why = "timeout"; return 1; }
     if (end.kind == 2) { why = "crashed: " + end.why; return 1; }
     if (end.kind == 3) { why = "not run: cannot start (" + end.why + ")"; return 1; }
@@ -3246,7 +3251,7 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
         }
         return w;
     };
-    struct Run { const CTestDecl* c; int code = 0; string out; double secs = 0; int state = 0; ChildEnd end; }; // state: 0 waiting, 1 running, 2 done
+    struct Run { const CTestDecl* c; int code = 0; string out; double secs = 0; int state = 0; ChildOutcome end; }; // state: 0 waiting, 1 running, 2 done
     vector<Run> runs; for (auto* c : pick) { Run r; r.c = c; runs.push_back(r); }
     int jobs = o.jobs > 0 ? o.jobs : (int)std::max(1u, std::thread::hardware_concurrency());
     auto runOne = [&](Run& r) {

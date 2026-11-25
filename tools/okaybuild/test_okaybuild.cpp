@@ -73,6 +73,12 @@ static void testMissingHeader() {
     check(o.find("nope.h") != string::npos && o.find("FAILED") != string::npos, "error names header and FAILED", o);
     write("src/main.cpp", "int main(){}\n"); write("build.okay", "target app exe\n sources = src/main.cpp src/ghost.cpp\nend\n");
     o = sh("", &rc); check(rc == 2 && o.find("src/ghost.cpp") != string::npos && o.find("does not exist") != string::npos, "missing source reported at plan time", o);
+    // round 17: like Ninja, a target nobody asked for may lack a source (the real tree's launcher_imgui before `okay-build fetch imgui`)
+    write("build.okay", "fetch imgui\n git = https://example.invalid/imgui.git\n commit = 0123456789012345678901234567890123456789\n dir = _deps/imgui\nend\n"
+          "target ui lib\n sources = _deps/imgui/imgui.cpp\nend\ntarget uiapp exe\n sources = src/main.cpp\n deps = ui\nend\ntarget app exe\n sources = src/main.cpp\nend\n");
+    o = sh("-j1 app", &rc); check(rc == 0 && fs::exists(gRoot / "build/app"), "a wanted target builds although another target's fetched source is missing", o);
+    o = sh("-j1 uiapp", &rc); check(rc == 2 && o.find("target 'ui': source '_deps/imgui/imgui.cpp' does not exist (it comes from fetch 'imgui'") != string::npos, "a target that needs the missing source still gets the error", o);
+    o = sh("-j1", &rc); check(rc == 2 && o.find("does not exist") != string::npos, "building everything still reports it", o);
 }
 static void testCycle() {
     printf("test: cyclic dependency detected\n"); fresh("cyc"); write("a.cpp", "int a(){return 1;}\n");
@@ -2750,7 +2756,7 @@ int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "r17") { testExecutePipelines(); testCtestEndStates(); testWindowsHost(); printf("okaybuild tests (round 17 only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
+        if (string(only) == "r17") { testMissingHeader(); testExecutePipelines(); testCtestEndStates(); testWindowsHost(); printf("okaybuild tests (round 17 only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
         if (string(only) == "asset") { testImporterTool(); printf("okaybuild tests (asset only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
         if (string(only) == "compilers") { testToolchainOkayCc(); testOkayCcEngineFiles(); testToolchainOkayMs(); printf("okaybuild tests (okay compilers only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
         if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); testLoopControlAndLinkProperties(); testConfigurationFlags(); testSourcePropertiesPerFolder(); testMingwToolchainFile(); testPostBuild(); testCtestOutputRules(); testCmakeScriptMode(); testExecutePipelines(); testCtestEndStates(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }

@@ -1932,6 +1932,28 @@ bool Parser::parse_unary(Node* out) {
                 }
                 return parse_postfix(out);
             }
+            std::vector<std::string> anon;
+            if (!is_field && !is(TLParen) && local_visible("this") && anon_path(cur_class, name, &anon)) {
+                // b in a member function, a member of an anonymous union of the class ([class.union.anon] 1: its
+                // members are members of the class): this->__anon.b (Round 31, Lua.hpp:83's Value::Truthy).
+                Node step = std::move(self);
+                Tok step_op = TArrow;
+                for (const std::string& hidden : anon) {
+                    Node f;
+                    f.kind = Node::Field;
+                    f.op = step_op;
+                    f.text = hidden;
+                    f.kids.push_back(std::move(step));
+                    step = std::move(f);
+                    step_op = TDot;
+                }
+                *out = Node{};
+                out->kind = Node::Field;
+                out->op = TDot;
+                out->text = name;
+                out->kids.push_back(std::move(step));
+                return parse_postfix(out);
+            }
             if (is(TLt) && !is_field) {
                 // Get<T>() in a member function: a member function template of the class called on this with explicit
                 // template arguments ([temp.names], [class.mfct.non.static] 2), as this->Get<T>() is.

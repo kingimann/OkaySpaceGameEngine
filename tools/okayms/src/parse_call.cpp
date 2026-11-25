@@ -570,6 +570,26 @@ bool Parser::free_call(const std::string& name, std::vector<Node> args, Node* ou
         if (name.compare(0, 8, "operator") != 0 || func_templates.count(name) == 0 || !func_template_takes(name, args.size()))
             return true;
         const std::string saved_error = error;
+        // Of several templates of this operator (pair's and chrono's operator<), the first whose parameters deduce
+        // from these operands ([over.match.funcs] 7).
+        std::vector<const TDecl*> cands{&func_templates[name]};
+        auto extra = func_template_extra.find(name);
+        if (extra != func_template_extra.end())
+            for (const TDecl& cand : extra->second) cands.push_back(&cand);
+        const TDecl* fit = nullptr;
+        for (const TDecl* cand : cands) {
+            if (!cand->takes(args.size())) continue;
+            std::vector<TArg> trial;
+            const bool deduced = deduce_args(*cand, name, &trial, args);
+            error = saved_error;
+            if (deduced) {
+                fit = cand;
+                break;
+            }
+        }
+        if (fit == nullptr) return true;
+        explicit_fit_ = {fit};
+        explicit_fit_name_ = name;
         std::string inst;
         if (!instantiate_function(name, {}, args, &inst)) {
             error = saved_error;

@@ -3357,6 +3357,30 @@ struct Parser {
         const int back = base_offset(to.struct_id, from.struct_id);
         if (back > 0) *value = offset_ptr_checked(std::move(*value), -back, to.struct_id);
     }
+    // `return value;` of an object of class type t: whether the result must be copy-constructed from it (Round 31). Not
+    // for a call or another prvalue (it is made in the result's place), a hidden temporary of this statement, or a
+    // local object of this function that its destructor list holds (that object becomes the result).
+    bool return_needs_copy(const Node& value, const Type& t) const {
+        if (value.kind == Node::Call || value.kind == Node::Ternary || value.kind == Node::Block) return false;
+        if (value.kind == Node::Name) {
+            const std::string& n = value.text;
+            if (n.compare(0, 4, "__bt") == 0 || n.compare(0, 4, "__br") == 0 || n.compare(0, 4, "__tn") == 0 ||
+                n.compare(0, 5, "__tmp") == 0 || n.compare(0, 4, "__il") == 0)
+                return false;
+            for (const auto& scope : dscopes)
+                for (const DObj& d : scope)
+                    if (d.kind == 0 && d.count == 0 && d.name == n) return false;
+            // A local object of a class with no destructor: its bytes are its value. (A by-value parameter of a class
+            // with one is copied: the caller destroys it.)
+            if (cur_locals != nullptr)
+                for (const Local& l : *cur_locals)
+                    if (l.name == n && !l.type.is_ref && l.symbol.empty() && !l.is_static)
+                        return class_needs_dtor(structs[static_cast<size_t>(t.struct_id)]);
+            return true;
+        }
+        // A member, an element, *p, a call's reference result, std::move(x) (made by the move constructor).
+        return value.kind == Node::Field || value.kind == Node::Index || value.kind == Node::Unary;
+    }
     // A null pointer constant (nullptr or 0, an integer constant that is not itself a member pointer) converted to a
     // pointer to a data member ([conv.mem] 1).
     static bool memptr_null_constant(const Node& value) {
@@ -8640,7 +8664,11 @@ struct Parser {
     // class template (or a class inside one) stays where it is and is not supported; a type nested in the class must be
     // named with its class.
     void hoist_friend_functions() {
-        for (size_t i = 0; i < tokens.size(); ++i) {
+        // From the last friend to the first (Round 31): each is put right after its class, so the earlier ones end up
+        // in front of the later ones, in the order they were written; a later friend's body may call an earlier one
+        // (operator!= calling operator==). Read first to last, the second was put in front of the first, and the call
+        // found no function.
+        for (size_t i = tokens.size(); i-- > 0;) {
             if (!(tokens[i].kind == TIdent && tokens[i].text == "friend")) continue;
             // The declaration: to the first ';' or '{' at this level; a function body follows a ')' (or `const`).
             size_t k = i + 1;
@@ -8715,7 +8743,6 @@ struct Parser {
             const size_t insert_at = class_end + 2;
             tokens.insert(tokens.begin() + static_cast<std::ptrdiff_t>(insert_at), fn.begin(), fn.end());
             tokens.erase(tokens.begin() + static_cast<std::ptrdiff_t>(i), tokens.begin() + static_cast<std::ptrdiff_t>(body_end + 1));
-            --i;
         }
     }
 

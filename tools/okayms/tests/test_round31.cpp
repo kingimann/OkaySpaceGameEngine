@@ -207,7 +207,8 @@ int entry(void) {
 
 // Pieces: the comma operator with floating-point operands (SoftwareRenderer.hpp:302, `++x, w0 += dw0, w1 += dw1`); a
 // class in a member function naming the function's static local (VisualScriptComponent.hpp:106); a default argument
-// `std::string()` of a by-value parameter (SaveFramework.hpp's SaveWriter, "not an address: a call of string").
+// `std::string()` of a by-value parameter (SaveFramework.hpp's SaveWriter, "not an address: a call of string"); a member
+// of an anonymous union named in a member function (Lua.hpp:83, "unknown name b").
 static void r31_pieces(Tally& tally) {
     std::printf("r31_pieces\n");
     okayms_test::run_both(kRun, tally, "pieces", std::string(kAlloc) + R"OKMS(
@@ -246,6 +247,15 @@ class W {
 };
 struct Doc { Block b; Block& Get(const std::string&) { return b; } W Writer(const std::string& name) { return W(Get(name)); } };
 int g(int b, std::string prefix = std::string()) { return b + (int)prefix.size(); }
+enum class VT { Nil, Bool, Int, Float };
+struct Value {
+  VT t = VT::Nil;
+  union { bool b; long long i; double n; };
+  Value() : i(0) {}
+  bool Truthy() const { return !(t == VT::Nil || (t == VT::Bool && !b)); }
+  double AsNum() const { return t == VT::Int ? (double)i : n; }
+  void SetInt(long long v) { t = VT::Int; i = v; }
+};
 int entry(void) {
   CK(1, raster(0, 7) == 4950);
   C c;
@@ -257,6 +267,13 @@ int entry(void) {
   d.b.n = 2;
   W w = d.Writer("x");
   CK(4, w.Size() == 2 && w.Scope("ab").Size() == 5 && g(3) == 3 && g(3, "xy") == 5);
+  Value v;
+  CK(5, !v.Truthy());
+  v.t = VT::Bool;
+  v.b = false;
+  CK(6, !v.Truthy());
+  v.SetInt(41);
+  CK(7, v.Truthy() && v.AsNum() == 41.0 && v.i == 41);
   return 0;
 }
 )OKMS", 0);
@@ -320,6 +337,22 @@ static void r31_class_operand_error(Tally& tally) {
     const auto compiled = okayms::compile_c(in);
     CHECK(tally, !compiled.ok());
     CHECK(tally, !compiled.ok() && compiled.error.find("no operator <") != std::string::npos);
+}
+
+// std::filesystem::filesystem_error ([fs.class.filesystem.error]) and std::system_error exist and can be thrown
+// (FileCopy.hpp:46, 4 files: "a thrown value of unknown type"). Compiled only: running a throw of one under okay-ms
+// hangs (see the plan's Round 31 "not done": a base constructor given a by-value class argument).
+static void r31_filesystem_error(Tally& tally) {
+    std::printf("r31_filesystem_error\n");
+    okayms::CompileInput in;
+    in.source = "#include <filesystem>\n#include <system_error>\n"
+                "void fail(const std::filesystem::path& a, const std::filesystem::path& b, std::error_code ec) {\n"
+                "  if (ec) throw std::filesystem::filesystem_error(\"copy\", a, b, ec);\n}\n"
+                "int code_of(const std::system_error& e) { return e.code().value() + (int)e.code().category().name()[0]; }\n";
+    in.include_paths.push_back("stdinc");
+    const auto compiled = okayms::compile_c(in);
+    CHECK(tally, compiled.ok());
+    if (!compiled.ok()) std::fprintf(stderr, "  %s\n", compiled.error.c_str());
 }
 
 static void r31_memptr_names(Tally& tally) {
@@ -527,6 +560,84 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// `return s;` of a class object that is not the function's own local (a reference parameter, a member, a global, *p):
+// the result is made by the copy constructor ([stmt.return] 2). Before Round 31 its bytes were copied, so a
+// std::string result shared the source's heap buffer and freed it when it was destroyed (path::string()'s
+// `return text_;`). Run with okay-ms's real heap (runtime/mem.c), where a freed buffer is reused: the bump allocator of
+// the other programs never reuses memory and hid it.
+static void r31_return_copy(Tally& tally) {
+    std::printf("r31_return_copy\n");
+    okayms_test::run_both(kRunEh, tally, "return_copy", R"OKMS(
+#include <string>
+#include <utility>
+std::string g_text("a/b.txt");
+std::string byref(const std::string& s) { return s; }
+std::string glob() { return g_text; }
+std::string byval(std::string s) { return s; }
+struct P {
+  std::string text_;
+  std::string list[2];
+  std::string str() const { return text_; }
+  std::string other() const { return this->list[1]; }
+  std::string take() { return std::move(text_); }
+};
+std::string deref(const P* p) { return p->text_; }
+int entry(void) {
+  std::string a("a/b.txt");
+  CK(1, byref(a) == "a/b.txt");
+  std::string fill1(100, 'x');
+  CK(2, a == "a/b.txt");
+  CK(3, glob() == "a/b.txt");
+  std::string fill2(100, 'y');
+  CK(4, g_text == "a/b.txt" && byval(a) == "a/b.txt" && a == "a/b.txt");
+  P p;
+  p.text_ = "a/b.txt";
+  p.list[1] = "second item";
+  CK(5, p.str() == "a/b.txt" && p.other() == "second item" && deref(&p) == "a/b.txt");
+  std::string fill3(100, 'z');
+  CK(6, p.text_ == "a/b.txt" && p.list[1] == "second item");
+  std::string moved = p.take();
+  std::string fill4(100, 'w');
+  CK(7, moved == "a/b.txt");
+  return 0;
+}
+)OKMS", 0);
+}
+
+// Operators that used to compare bytes: std::pair's comparisons ([pairs.spec]; Mesh.hpp sorts pair<float, int>), and a
+// hidden friend operator!= that calls the operator== defined before it in the class ([class.friend] 6: the friends
+// were moved out of the class in the wrong order, so the call found no operator== and compared the bytes).
+static void r31_pair_friend(Tally& tally) {
+    std::printf("r31_pair_friend\n");
+    okayms_test::run_both(kRun, tally, "pair_friend", std::string(kAlloc) + R"OKMS(
+#include <algorithm>
+#include <utility>
+#include <vector>
+namespace n {
+struct Id {
+  int v;
+  int pad;
+  friend bool operator==(Id a, Id b) { return a.v == b.v; }
+  friend bool operator!=(Id a, Id b) { return !(a == b); }
+};
+}
+int entry(void) {
+  std::vector<std::pair<float, int> > got;
+  got.push_back(std::make_pair(2.5f, 1));
+  got.push_back(std::make_pair(0.25f, 2));
+  got.push_back(std::make_pair(-1.0f, 3));
+  got.push_back(std::make_pair(0.25f, 0));
+  std::sort(got.begin(), got.end());
+  CK(1, got[0].second == 3 && got[1].second == 0 && got[2].second == 2 && got[3].second == 1);
+  std::pair<int, int> a(1, 2), b(1, 3);
+  CK(2, a < b && !(b < a) && a != b && a == std::make_pair(1, 2) && b > a && a <= a && b >= a);
+  n::Id x{1, 7}, y{1, 9}, z{2, 7};
+  CK(3, x == y && !(x != y) && x != z);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -545,5 +656,8 @@ int main(int argc, char** argv) {
     r31_chrono_tuple(tally);
     r31_stoi_throws(tally);
     r31_class_operand_error(tally);
-    return tally.finish(14);
+    r31_filesystem_error(tally);
+    r31_return_copy(tally);
+    r31_pair_friend(tally);
+    return tally.finish(17);
 }

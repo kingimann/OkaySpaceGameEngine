@@ -346,6 +346,20 @@ inline path operator/(const path& a, const path& b) {
 }
 inline path u8path(const std::string& s) { return path(s); }
 inline path u8path(const char* s) { return path(s); }
+// [fs.class.filesystem.error] (Round 31; FileCopy.hpp's CopyFileOver throws one): a system_error with the paths the
+// failed operation named.
+class filesystem_error : public system_error {
+    path path1_;
+    path path2_;
+
+public:
+    filesystem_error(const string& what_arg, error_code ec) : system_error(ec, what_arg) {}
+    filesystem_error(const string& what_arg, const path& p1, error_code ec) : system_error(ec, what_arg), path1_(p1) {}
+    filesystem_error(const string& what_arg, const path& p1, const path& p2, error_code ec)
+        : system_error(ec, what_arg), path1_(p1), path2_(p2) {}
+    const path& path1() const { return path1_; }
+    const path& path2() const { return path2_; }
+};
 
 enum class file_type { none, not_found, regular, directory, symlink, block, character, fifo, socket, unknown };
 enum class perms : unsigned { none = 0, owner_read = 0400, owner_write = 0200, owner_exec = 0100, owner_all = 0700,

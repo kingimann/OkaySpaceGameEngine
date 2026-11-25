@@ -343,7 +343,7 @@ bool DockContextQueueUndockWindow(Context*, const WindowRef* window) {
     return l.Float(window->Name, Rect{ window->Pos.x, window->Pos.y, window->Size.x > 1.0f ? window->Size.x : 320.0f, window->Size.y > 1.0f ? window->Size.y : 240.0f });
 }
 bool BeginDragDropTargetCustom(const ImRect& bb, unsigned id) { return BeginDragDropTargetCustom(Rect{bb.Min.x, bb.Min.y, bb.Max.x - bb.Min.x, bb.Max.y - bb.Min.y}, id); }
-bool InputInt(const char* label, int* value, int step, int, int) { return InputInt(label, value, step > 0 ? step : 1); }
+bool InputInt(const char* label, int* value, int step, int, int) { return InputInt(label, value, step); }
 bool DragFloat2(const char* l, float v[2], float sp, float mn, float mx, const char* fmt, int flags) { if (FramedNumbersOn()) return FramedDragFloatN(l, v, 2, sp, mn, mx, fmt, false); nextNum(fmt, flags); return DragFloat2(l, v, sp, mn, mx); }
 bool DragFloat3(const char* l, float v[3], float sp, float mn, float mx, const char* fmt, int flags) { if (FramedNumbersOn()) return FramedDragFloatN(l, v, 3, sp, mn, mx, fmt, false); nextNum(fmt, flags); return DragFloat3(l, v, sp, mn, mx); }
 bool DragFloat4(const char* l, float v[4], float sp, float mn, float mx, const char* fmt, int flags) { nextNum(fmt, flags); return DragFloat4(l, v, sp, mn, mx); }

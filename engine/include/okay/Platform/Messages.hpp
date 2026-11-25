@@ -112,6 +112,17 @@ public:
             out.push_back({std::atol(Field(o, "id").c_str()), Field(o, "sender"), Field(o, "recipient")});
         return out;
     }
+    /// The same for group chats (id, group, sender), for okay::chat::CountGroupUnread: the newest `limit` messages of
+    /// every group I am in (the server's "read group messages" rule only returns those).
+    std::vector<chat::GroupUnreadRow> GroupUnreadRows(int limit = 300) {
+        std::vector<chat::GroupUnreadRow> out;
+        if (!acct_.IsLoggedIn()) return out;
+        auto r = acct_.Api("/rest/v1/group_messages?select=id,convo_id,sender&order=id.desc&limit=" + std::to_string(limit), "GET");
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body))
+            out.push_back({std::atol(Field(o, "id").c_str()), std::atol(Field(o, "convo_id").c_str()), Field(o, "sender")});
+        return out;
+    }
     /// My own account id (looked up once), for CountUnread.
     std::string MyUserId() { return MyId(); }
 

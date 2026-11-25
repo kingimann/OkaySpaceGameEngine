@@ -247,6 +247,47 @@ inline std::map<std::string, long> SeenWithFloor(const std::map<std::string, lon
     }
     return out;
 }
+/// Group chats: one recent row of group_messages (id, group, sender), from Messages::GroupUnreadRows.
+struct GroupUnreadRow { long id = 0; long group = 0; std::string sender; };
+struct GroupUnreadSummary {
+    std::map<long, int> perGroup;   ///< unread messages in each group (only groups with some; muted groups too, for their dim badge)
+    int total = 0;                  ///< all of them, muted groups left out (they never raise the nav badge)
+    int conversations = 0;          ///< how many groups have any
+};
+/// How far I have read each group: the larger of this computer's mark (`local`) and the server's last_read (`server`,
+/// group_members.last_read via my_groups), so reading on another computer counts too.
+inline std::map<long, long> GroupSeen(const std::map<long, long>& local, const std::map<long, long>& server) {
+    std::map<long, long> out = local;
+    for (const auto& [g, id] : server) { long& v = out[g]; if (id > v) v = id; }
+    return out;
+}
+/// Count group messages from other people with an id above what I have read in that group (`seen`, missing = nothing).
+/// Blocked people never count. `newest` (group -> its newest message id, from my_groups) covers a group whose newest
+/// message is not in the rows (they are only the newest few hundred, and may be older than my_groups): it counts as at
+/// least 1, as the old badge did. A newest message that is in the rows and was not counted (mine, or blocked) adds nothing.
+/// `open` (the group on screen, 0 = none) counts nothing.
+inline GroupUnreadSummary CountGroupUnread(const std::vector<GroupUnreadRow>& rows, const std::string& myId,
+                                           const std::map<long, long>& seen, const std::set<std::string>& blocked,
+                                           const std::map<long, long>& newest = {}, const std::set<long>& muted = {},
+                                           long open = 0) {
+    GroupUnreadSummary u;
+    std::set<long> ids;   // the message ids read
+    for (const GroupUnreadRow& r : rows) {
+        ids.insert(r.id);
+        if (r.group <= 0 || r.group == open || r.sender.empty() || r.sender == myId || blocked.count(r.sender)) continue;
+        const auto it = seen.find(r.group);
+        if (r.id <= (it == seen.end() ? 0 : it->second)) continue;
+        ++u.perGroup[r.group];
+    }
+    for (const auto& [g, id] : newest) {   // newer than what I read, but not in the rows: at least one
+        if (g <= 0 || g == open || u.perGroup.count(g) || ids.count(id)) continue;
+        const auto it = seen.find(g);
+        if (id > (it == seen.end() ? 0 : it->second)) u.perGroup[g] = 1;
+    }
+    for (const auto& [g, n] : u.perGroup) if (!muted.count(g)) u.total += n;
+    u.conversations = (int)u.perGroup.size();
+    return u;
+}
 /// The badge on an avatar or a tab: "" for none, the number, "99+" above 99.
 inline std::string BadgeText(int n) { return n <= 0 ? std::string() : n > 99 ? std::string("99+") : std::to_string(n); }
 

@@ -5,7 +5,8 @@
 //   engine/include/okay/Platform/Invites.hpp       the invite record, what an invite card says, server answers,
 //                                                  "Join game" from a friend's presence
 //   engine/include/okay/Net/JoinLink.hpp           version, kind, players and invite id in the link
-//   shared/JoinPlan.hpp                            which program to start for a join (player, editor or a pick)
+//   shared/JoinPlan.hpp                            which program to start for a join (player, editor or a pick),
+//                                                  and the editor's --join (steps, version check, results in words)
 //   engine/include/okay/Platform/Privacy.hpp       the new server rule names
 //   engine/include/okay/Platform/Messages.hpp      the send request with a client id
 #include "test_framework.hpp"
@@ -559,6 +560,136 @@ static void TestJoinPlanButtons() {
     CHECK(GetVersionLabel(PlanJoin(l, {pr}, {"2.850.3"})).empty());   // OpenEditor: nothing to get
 }
 
+static void TestGroupUnread() {
+    RUN_SUITE("group chat unread counts");
+    const std::string me = "u-me";
+    std::vector<chat::GroupUnreadRow> rows = {
+        {120, 7, "u-maya"}, {119, 7, "u-jon"}, {118, 7, me}, {117, 7, "u-maya"}, {110, 7, "u-maya"},
+        {116, 9, "u-sam"}, {115, 9, "u-troll"},
+        {114, 4, me},
+        {113, 5, "u-maya"},
+    };
+    // Read up to 117 in group 7 here, 100 on the server; group 9 read on another computer up to 115.
+    const std::map<long, long> seen = chat::GroupSeen({{7, 117}, {9, 0}}, {{7, 100}, {9, 115}, {12, 40}});
+    CHECK(seen.at(7) == 117 && seen.at(9) == 115 && seen.at(12) == 40);
+    const std::set<std::string> blocked = {"u-troll"};
+    chat::GroupUnreadSummary u = chat::CountGroupUnread(rows, me, seen, blocked);
+    CHECK(u.perGroup.at(7) == 2);                       // 119 and 120 (118 is mine, 117 and older were read)
+    CHECK(u.perGroup.at(9) == 1);                       // 116 (115 was read elsewhere)
+    CHECK(u.perGroup.count(4) == 0);                    // only my own message
+    CHECK(u.perGroup.at(5) == 1);                       // never opened: everything counts
+    CHECK(u.total == 4 && u.conversations == 3);
+    // A blocked sender never counts.
+    std::vector<chat::GroupUnreadRow> onlyTroll = {{130, 3, "u-troll"}};
+    CHECK(chat::CountGroupUnread(onlyTroll, me, {}, blocked).total == 0);
+    // The newest message of a group is not in the rows (older than the window, or newer than the last read): at least 1.
+    // In the rows but mine: nothing.
+    const std::map<long, long> newest = {{7, 120}, {4, 114}, {12, 80}, {13, 50}};
+    u = chat::CountGroupUnread(rows, me, seen, blocked, newest);
+    CHECK(u.perGroup.at(7) == 2);                       // the real number wins
+    CHECK(u.perGroup.count(4) == 0);                    // 114 is mine and is in the rows
+    CHECK(u.perGroup.at(12) == 1);                      // 80 > 40 read, not in the rows
+    CHECK(u.perGroup.at(13) == 1);                      // nothing read, not in the rows
+    CHECK(u.total == 6);
+    std::map<long, long> readAll = seen; readAll[12] = 80;
+    CHECK(chat::CountGroupUnread(rows, me, readAll, blocked, newest).perGroup.count(12) == 0);
+    // Muted groups keep their (dim) number but are left out of the total; the open group counts nothing.
+    u = chat::CountGroupUnread(rows, me, seen, blocked, newest, {7}, 9);
+    CHECK(u.perGroup.at(7) == 2 && u.perGroup.count(9) == 0);
+    CHECK(u.total == 3);                                // 5, 12, 13
+    // Nothing at all.
+    CHECK(chat::CountGroupUnread({}, me, {}, {}).total == 0);
+}
+
+static void TestEditorJoin() {
+    RUN_SUITE("editor --join");
+    using namespace joinplan;
+    JoinLink l; l.game = "Star Arena"; l.relay = "relay.example.com:45100"; l.code = "K7Q29X"; l.host = "maya";
+    l.target = "project"; l.engine = "2.850.0";
+    const std::string link = l.Format();
+    // The command line: both spellings; a bad link or none is "".
+    CHECK(JoinArgFrom({"--launcher", "42", "--open", "/p/Assets/main.okayscene", "--join", link}) == link);
+    CHECK(JoinArgFrom({"--join=" + link}) == link);
+    CHECK(JoinArgFrom({"--join", "https://example.com"}).empty());
+    CHECK(JoinArgFrom({"--join"}).empty());
+    CHECK(JoinArgFrom({"--open", "x"}).empty());
+    // The launcher adds it after the open-with arguments; nothing for a bad link.
+    const std::vector<std::string> base = {"--launcher", "42", "--open", "/p/Assets/main.okayscene", "--keep-version"};
+    std::vector<std::string> withJoin = base; withJoin.push_back("--join"); withJoin.push_back(link);
+    CHECK(WithJoinArg(base, link) == withJoin);
+    CHECK(WithJoinArg(base, "") == base);
+    CHECK(WithJoinArg(base, "okay://join?game=x") == base);
+    CHECK(JoinArgFrom(WithJoinArg(base, link)) == link);
+
+    // Version: the same line joins (any patch), another line says both versions; a dev build or an unknown version never blocks.
+    CHECK(EditorJoinProblem(l, "2.850.3").empty());
+    const std::string mism = EditorJoinProblem(l, "2.849.0");
+    CHECK(mism.find("maya") != std::string::npos && mism.find("2.850") != std::string::npos && mism.find("2.849.0") != std::string::npos);
+    CHECK(EditorJoinProblem(l, "").empty());
+    JoinLink noEng = l; noEng.engine.clear();
+    CHECK(EditorJoinProblem(noEng, "2.849.0").empty());
+    CHECK(EditorJoinProblem(JoinLink{}, "2.850.0") == "That isn't a join link.");
+
+    // The steps: nothing before the sign-in gate and the project; then Play; then join.
+    EditorJoinState s;
+    CHECK(NextEditorJoinStep(s) == EditorJoinStep::Wait);                     // the sign-in gate is closed
+    s.projectOpen = true; s.playing = true;
+    CHECK(NextEditorJoinStep(s) == EditorJoinStep::Wait);                     // still closed, even with a project open
+    s = EditorJoinState{}; s.projectsAllowed = true; s.projectBusy = true;
+    CHECK(NextEditorJoinStep(s) == EditorJoinStep::Wait);                     // the project is still opening (or its question is up)
+    s.projectBusy = false;
+    CHECK(NextEditorJoinStep(s) == EditorJoinStep::Drop);                     // it did not open
+    CHECK(EditorJoinDropText(s, "Star Arena").find("Star Arena") != std::string::npos);
+    s.projectOpen = true; s.projectIsTheOneAsked = false;
+    CHECK(NextEditorJoinStep(s) == EditorJoinStep::Drop);                     // another project is open (the open was cancelled)
+    s.projectIsTheOneAsked = true;
+    CHECK(NextEditorJoinStep(s) == EditorJoinStep::EnterPlay);
+    s.playAsked = true; s.playBusy = true;
+    CHECK(NextEditorJoinStep(s) == EditorJoinStep::Wait);                     // "Save before continuing?" is up
+    s.playBusy = false;
+    CHECK(NextEditorJoinStep(s) == EditorJoinStep::Drop);                     // it was cancelled: no second Play
+    CHECK(EditorJoinDropText(s, "").find("Play mode did not start") == 0);
+    s.playing = true;
+    CHECK(NextEditorJoinStep(s) == EditorJoinStep::Join);
+    s.playAsked = false;
+    CHECK(NextEditorJoinStep(s) == EditorJoinStep::Join);                     // already playing (a hand-off): join straight away
+
+    // The result in words.
+    JoinProgress p;
+    CHECK(WatchEditorJoin(p, "maya").state == JoinState::Waiting);
+    p.joined = true;
+    JoinOutcome o = WatchEditorJoin(p, "maya");
+    CHECK(o.state == JoinState::Joined && o.text == "Joined maya's game.");
+    p = JoinProgress{}; p.rejected = true; p.rejectReason = "server is full";
+    o = WatchEditorJoin(p, "maya");
+    CHECK(o.state == JoinState::Failed && o.text.find("maya's game is full") == 0);
+    p.rejectReason = "wrong password";
+    CHECK(WatchEditorJoin(p, "maya").text.find("password") != std::string::npos);
+    p.rejectReason = "the host did not answer";
+    CHECK(WatchEditorJoin(p, "maya").text.find("may have ended") != std::string::npos);
+    p.rejectReason = "kicked by the anti-cheat; try again in 30 s";
+    CHECK(WatchEditorJoin(p, "maya").text == "Couldn't join maya's game: kicked by the anti-cheat; try again in 30 s.");
+    p = JoinProgress{}; p.lastError = "No game is hosted with code K7Q29X (check the code; the host may have stopped).";
+    o = WatchEditorJoin(p, "maya");
+    CHECK(o.state == JoinState::Failed && o.text.find("has ended") != std::string::npos);
+    p.lastError = "The online game ended: the relay session closed.";
+    CHECK(WatchEditorJoin(p, "maya").text == "maya's game has ended.");
+    p.lastError = "Could not reach the relay server r:1 (no answer after 8 s).";
+    CHECK(WatchEditorJoin(p, "").text.find("Could not reach the relay") != std::string::npos);
+    CHECK(WatchEditorJoin(p, "").text.find("the host's game") != std::string::npos);
+    p = JoinProgress{}; p.gateRefusal = "your session ticket was refused";
+    CHECK(WatchEditorJoin(p, "maya").text.find("ticket") != std::string::npos);
+    p = JoinProgress{}; p.stopped = true;
+    CHECK(WatchEditorJoin(p, "maya").state == JoinState::Failed);
+    p = JoinProgress{}; p.seconds = 29.0f;
+    CHECK(WatchEditorJoin(p, "maya").state == JoinState::Waiting);
+    p.seconds = 30.0f;
+    CHECK(WatchEditorJoin(p, "maya").text == "maya's game did not answer. It may have ended.");
+    // Joined wins over everything else.
+    p.joined = true; p.lastError = "x"; p.rejected = true;
+    CHECK(WatchEditorJoin(p, "maya").state == JoinState::Joined);
+}
+
 int main() {
     TestClientIds();
     TestRetryRules();
@@ -582,5 +713,7 @@ int main() {
     TestResumeQueue();
     TestKeepScroll();
     TestJoinPlanButtons();
+    TestGroupUnread();
+    TestEditorJoin();
     TEST_MAIN_RESULT();
 }

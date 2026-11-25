@@ -216,6 +216,8 @@ public:
     bool StartHost(std::uint16_t port);
     /// Join a multiplayer session.
     bool StartJoin(const std::string& host, std::uint16_t port);
+    /// Join a session from a join link (okay://join?...: direct or through the relay; the launcher's --join).
+    bool StartJoinLink(const std::string& link);
     void StopNetwork();
 
     /// Pump Steam callbacks and the network each editor frame.
@@ -458,6 +460,7 @@ private:
 
     std::unique_ptr<ISteamService>   m_steam;
     NetworkManager* m_net = nullptr; // component on a scene GameObject
+    NetworkManager* NewNetwork();    // a fresh m_net on a transient "__Network" object
 
     GameLoop m_loop;   // the Play loop (set up in the constructor)
 

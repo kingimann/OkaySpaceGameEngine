@@ -162,11 +162,11 @@ void MpLaunch(const okay::JoinLink& in) {
     if (plan.action == JA::NeedEditor || plan.action == JA::VersionMismatch) { g_mpPlan = plan; g_mpPlanReq = true; return; }
     if (plan.action == JA::OpenEditor) {
         const okay::joinplan::Candidate& pc = cands[plan.index];
-        if (!MpOpenProjectForJoin(plan.editorVersion, pc.path)) { Toast("Couldn't open " + pc.title + " in the editor v" + plan.editorVersion + ".", 2); return; }
-        ImGui::SetClipboardText(link.c_str());   // the editor has no --join: Play, then join with the copied link
+        // The editor opens the project, starts Play and joins (--join; editor/main.cpp EditorJoinFrame), after its sign-in gate.
+        if (!MpOpenProjectForJoin(plan.editorVersion, pc.path, link)) { Toast("Couldn't open " + pc.title + " in the editor v" + plan.editorVersion + ".", 2); return; }
         MpRemember(l);
-        Toast("Opening " + pc.title + " in the editor v" + plan.editorVersion + ". Press Play, then join " +
-              (l.host.empty() ? std::string("the match") : l.host) + " (the join link is copied).", 1);
+        Toast("Opening " + pc.title + " in the editor v" + plan.editorVersion + " to join " +
+              (l.host.empty() ? std::string("the match") : l.host) + "\xE2\x80\xA6", 1);
         return;
     }
     const MpLibGame* g = plan.index >= 0 && plan.index < (int)lib.size() ? &lib[plan.index] : nullptr;

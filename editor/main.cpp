@@ -1001,6 +1001,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "TestBuild.hpp"   // a test build says so in its version label (docs/release/release_channels.md "Test builds")
 #include "ProjectUpgradeUI.hpp"   // the project version question and File > Project Upgrade...
 #include "ProjectUpgrade.hpp"      // okayup::ProjectRootForScene (and okayver:: through it)
+#include "JoinPlan.hpp"            // --join: the steps, the version check and the results in words (shared/JoinPlan.hpp)
 #include "okay/Core/ThumbnailCache.hpp"   // Project panel thumbnails
 #include "ProjectBrowser.hpp"     // the Project panel's logic: folder model, safe file operations, references
 #include "ProjectPanelUI.hpp"     // the Project panel's name prompt, delete confirmation, import settings
@@ -1877,6 +1878,8 @@ std::string g_newProjectRoot;     // project folder requested via --new-project 
 std::string g_newProjectVersion;  // project.okayproj version from the launcher's More options ("" = 1.0.0)
 int g_newProjectGpu = -1;         // 1 GPU, 0 software, -1 leave the build default
 std::string g_openScenePath;      // scene to open at startup via --open (launcher)
+std::string g_joinLinkArg;        // --join <link> (launcher): join this session once the project is open (EditorJoinFrame)
+std::string g_joinProjectArg;     // the --open scene that came with it ("" = whatever project is open)
 
 // Panel visibility (View menu).
 bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
@@ -53017,6 +53020,7 @@ static void WriteHandoff() {
     if (g_newProjectGpu == 0 || g_newProjectGpu == 1) body += std::string("gpu\t") + (g_newProjectGpu ? "1" : "0") + "\n";
     if (!g_openScenePath.empty())      body += "open\t"        + g_openScenePath + "\n";
     if (!g_openScenePath.empty() && KeepVersionRequested()) body += "keep-version\t" + RunningVersion() + "\n";   // the version this editor is: honored only by an editor of that version
+    if (!g_joinLinkArg.empty())        body += "join\t"        + g_joinLinkArg + "\n";   // the running editor joins after it opens the project
     if (body.empty()) body = "focus\t1\n";   // plain "Open Editor": just bring to front
     std::error_code ec;
     std::filesystem::path f = OkayHandoffPath();
@@ -53047,6 +53051,7 @@ static bool PollHandoff(bool& raiseWindow) {
         else if (k == "version")     { g_newProjectVersion = v; }
         else if (k == "gpu")         { g_newProjectGpu = v == "0" ? 0 : 1; }
         else if (k == "open")        { g_openScenePath = v;      request = true; }
+        else if (k == "join")        { g_joinLinkArg = okay::joinplan::JoinArgFrom({"--join", v}); request = request || !g_joinLinkArg.empty(); }
         else if (k == "keep-version") { keepVersion = v; }
         else if (k == "focus")       { /* just raise */ }
     }
@@ -53055,6 +53060,121 @@ static bool PollHandoff(bool& raiseWindow) {
     std::filesystem::remove(f, ec);
     raiseWindow = true;
     return request;
+}
+
+// ==== Joining a friend from the launcher: --join <link> =======================
+// The launcher opens a friend's project in this editor with --join (or hands it over when an editor is already open). Once
+// the sign-in gate and the project allow it, Play starts and the session is joined through the scene's NetworkManager (the
+// launch-join hand-off the player uses: NetworkManager::SetLaunchJoin), or, with none in the scene, the Multiplayer panel's
+// own (EditorState::StartJoinLink). The decisions and the words are okay::joinplan (shared/JoinPlan.hpp, tested in
+// tests/test_chat_invites.cpp); a failure goes to the Console and a toast.
+namespace {
+struct EditorJoinRun {
+    std::string link, project, host, game;
+    bool active = false, playAsked = false, dispatched = false;
+    Uint32 playSeenMs = 0, dispatchMs = 0;
+};
+EditorJoinRun g_joinRun;
+std::string g_joinToast;      // the toast's text ("" = none)
+int g_joinToastLevel = 0;     // 0 ok, 2 error
+Uint32 g_joinToastUntil = 0;
+void JoinToast(const std::string& text, int level) {
+    ConsoleLog(text, level);
+    g_joinToast = text; g_joinToastLevel = level; g_joinToastUntil = okay::platform::TicksMs32() + 7000;
+}
+bool SameProjectRoot(const std::string& projectDir, const std::string& scene) {
+    namespace fs = std::filesystem;
+    fs::path want = okayup::ProjectRootForScene(scene);
+    if (want.empty()) want = ProjectRootOfScene(scene);
+    std::error_code ec;
+    return !projectDir.empty() && !want.empty() && (fs::equivalent(fs::path(projectDir), want, ec) || fs::path(projectDir) == want);
+}
+}  // namespace
+
+static void EditorJoinFrame(EditorState& ed) {
+    namespace jp = okay::joinplan;
+    if (!g_joinLinkArg.empty()) {   // a new request (the command line or a hand-off) replaces one still waiting
+        g_joinRun = EditorJoinRun{};
+        g_joinRun.link = g_joinLinkArg; g_joinRun.project = g_joinProjectArg;
+        g_joinLinkArg.clear(); g_joinProjectArg.clear();
+        okay::JoinLink l;
+        okay::JoinLink::Parse(g_joinRun.link, l);
+        g_joinRun.host = l.host; g_joinRun.game = l.game;
+        const std::string problem = jp::EditorJoinProblem(l, RunningVersion());
+        if (!problem.empty()) { JoinToast(problem, 2); return; }
+        g_joinRun.active = true;
+        ConsoleLog("Joining " + (l.host.empty() ? std::string("the game") : l.host + "'s game") + " (" + l.Where() + ") once the project is open and Play starts.");
+    }
+    if (!g_joinRun.active) return;
+    const Uint32 now = okay::platform::TicksMs32();
+    if (!g_joinRun.dispatched) {
+        jp::EditorJoinState st;
+        st.projectsAllowed = SignInAllowsProjects();
+        st.projectBusy = !g_openScenePath.empty() || !g_newProjectRoot.empty() || !g_newProjectTemplate.empty() || ProjectGateBusy() || g_savePromptOpen;
+        st.projectOpen = !ed.projectDir().empty();
+        st.projectIsTheOneAsked = g_joinRun.project.empty() || SameProjectRoot(ed.projectDir(), g_joinRun.project);
+        st.playing = ed.isPlaying();
+        st.playAsked = g_joinRun.playAsked;
+        st.playBusy = g_pendingAction == 1;
+        switch (jp::NextEditorJoinStep(st)) {
+            case jp::EditorJoinStep::Wait: return;
+            case jp::EditorJoinStep::Drop: JoinToast(jp::EditorJoinDropText(st, g_joinRun.game), 2); g_joinRun.active = false; return;
+            case jp::EditorJoinStep::EnterPlay:
+                g_joinRun.playAsked = true;
+                okay::NetworkManager::SetLaunchJoin(g_joinRun.link);   // the scene's NetworkManager joins it when it starts (instead of its auto-start)
+                RequestPlay(ed);
+                return;
+            case jp::EditorJoinStep::Join: break;
+        }
+        if (okay::Account::Get().IsLoggedIn())   // present the signed-in account, as the player does
+            okay::NetworkManager::SetDefaultIdentity(okay::Account::Token(), okay::Account::Username());
+        if (!g_joinRun.playAsked) {   // already playing (a hand-off): the running scene's NetworkManager takes it below
+            g_joinRun.playAsked = true;
+            okay::NetworkManager::SetLaunchJoin(g_joinRun.link);
+        }
+        if (g_joinRun.playSeenMs == 0) g_joinRun.playSeenMs = now;
+        if (now - g_joinRun.playSeenMs < 1500) return;   // let the scene's objects start (a NetworkManager takes the join in Start)
+        const std::string pending = okay::NetworkManager::TakeLaunchJoin();
+        if (!pending.empty()) {   // nothing took it: the scene's NetworkManager did not start, or there is none
+            NetworkManager* nm = ed.scene().FindObjectOfType<NetworkManager>();
+            if (nm && nm != ed.net()) nm->JoinByLink(pending);
+            else ed.StartJoinLink(pending);
+        }
+        g_joinRun.dispatched = true;
+        g_joinRun.dispatchMs = now;
+        return;
+    }
+    if (!ed.isPlaying()) { ConsoleLog("Play stopped before the join finished.", 1); g_joinRun.active = false; return; }
+    NetworkManager* nm = ed.net() ? ed.net() : ed.scene().FindObjectOfType<NetworkManager>();
+    jp::JoinProgress p;
+    p.seconds = (float)(now - g_joinRun.dispatchMs) / 1000.0f;
+    p.gateRefusal = okay::NetworkManager::LastJoinRefusal();
+    if (nm) {
+        p.joined = nm->Joined(); p.rejected = nm->JoinRejected(); p.rejectReason = nm->JoinRejectReason(); p.lastError = nm->LastError();
+        p.stopped = !nm->IsConnected();
+    } else p.stopped = true;
+    const jp::JoinOutcome o = jp::WatchEditorJoin(p, g_joinRun.host);
+    if (o.state == jp::JoinState::Waiting) return;
+    JoinToast(o.text, o.state == jp::JoinState::Joined ? 0 : 2);
+    g_joinRun.active = false;
+}
+// The toast: bottom centre of the editor window for a few seconds (also in the Console).
+static void DrawJoinToast() {
+    if (g_joinToast.empty()) return;
+    if ((int)(okay::platform::TicksMs32() - g_joinToastUntil) > 0) { g_joinToast.clear(); return; }
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y - 48.0f), ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(std::min(640.0f, vp->WorkSize.x - 32.0f), 400.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, g_joinToastLevel >= 2 ? IM_COL32(92, 34, 34, 240) : IM_COL32(30, 70, 46, 240));
+    if (ImGui::Begin("##jointoast", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoDocking)) {
+        ImGui::PushTextWrapPos(std::min(600.0f, vp->WorkSize.x - 48.0f));
+        ImGui::TextUnformatted(g_joinToast.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
 }
 
 // ==== Multi-window (dual monitor) support ====================================
@@ -53455,6 +53575,11 @@ int main(int argc, char** argv) {
         else if (a.rfind("--project-version=", 0) == 0) g_newProjectVersion = a.substr(18);
         else if (a == "--gpu" && i + 1 < argc) { g_newProjectGpu = std::string(argv[i + 1]) == "0" ? 0 : 1; ++i; }
         else if (a.rfind("--gpu=", 0) == 0) g_newProjectGpu = a.substr(6) == "0" ? 0 : 1;
+    }
+    {   // --join <link>: the launcher opens a friend's project to join them (feature map 17.15.7). Kept for after the sign-in gate.
+        const std::vector<std::string> all(argv + 1, argv + argc);
+        g_joinLinkArg = okay::joinplan::JoinArgFrom(all);
+        g_joinProjectArg = g_joinLinkArg.empty() ? std::string() : g_openScenePath;
     }
 
     ProjectUpgradeInit(argc, argv);   // --keep-version, and the version question that comes before any project is opened
@@ -54838,18 +54963,21 @@ int main(int argc, char** argv) {
         {
             bool raise = false;
             if (PollHandoff(raise)) {
-                const std::string hoRoot = g_newProjectRoot, hoTpl = g_newProjectTemplate, hoOpen = g_openScenePath;
-                g_newProjectRoot.clear(); g_newProjectTemplate.clear(); g_openScenePath.clear();
-                RunAfterSavePrompt(ed, !hoOpen.empty() ? "opening another project" : "creating a new project",
-                                   [hoRoot, hoTpl, hoOpen] { g_newProjectRoot = hoRoot; g_newProjectTemplate = hoTpl; g_openScenePath = hoOpen; },
-                                   // Cancel: the empty folder the launcher made for a new project must not be left behind.
-                                   [hoRoot] { if (!hoRoot.empty()) okayproj::RemoveEmptyShell(hoRoot); });
+                const std::string hoRoot = g_newProjectRoot, hoTpl = g_newProjectTemplate, hoOpen = g_openScenePath, hoJoin = g_joinLinkArg;
+                g_newProjectRoot.clear(); g_newProjectTemplate.clear(); g_openScenePath.clear(); g_joinLinkArg.clear();
+                if (hoOpen.empty() && hoRoot.empty() && hoTpl.empty()) g_joinLinkArg = hoJoin, g_joinProjectArg.clear();   // a join alone: in the project that is open
+                else RunAfterSavePrompt(ed, !hoOpen.empty() ? "opening another project" : "creating a new project",
+                                   [hoRoot, hoTpl, hoOpen, hoJoin] { g_newProjectRoot = hoRoot; g_newProjectTemplate = hoTpl; g_openScenePath = hoOpen;
+                                                                     g_joinLinkArg = hoJoin; g_joinProjectArg = hoJoin.empty() ? std::string() : hoOpen; },
+                                   // Cancel: the empty folder the launcher made for a new project must not be left behind (and no join).
+                                   [hoRoot, hoJoin] { if (!hoRoot.empty()) okayproj::RemoveEmptyShell(hoRoot);
+                                                      if (!hoJoin.empty()) ConsoleLog("The join was stopped: the project was not opened.", 1); });
             }
             if (raise && window) { winSeam->Restore(); winSeam->Raise(); winSeam->Show(); }
         }
 
         ProjectThumbFrame();   // thumbnails made this frame: a few milliseconds at most (the Project panel and the Scene Manager share them)
-        { OKAY_PROFILE("UI.NewProjectPopup"); DrawSignInGate(); if (SignInAllowsProjects()) { DrawNewProjectPopup(ed); DrawProjectGate(ed); } DrawNewProjectDialog(ed); DrawSavePrompt(ed); DrawPrefabLeavePrompt(ed); DrawErrorPopup(); ProjectUpgradeDraw(ed); }
+        { OKAY_PROFILE("UI.NewProjectPopup"); DrawSignInGate(); if (SignInAllowsProjects()) { DrawNewProjectPopup(ed); DrawProjectGate(ed); } EditorJoinFrame(ed); DrawJoinToast(); DrawNewProjectDialog(ed); DrawSavePrompt(ed); DrawPrefabLeavePrompt(ed); DrawErrorPopup(); ProjectUpgradeDraw(ed); }
         {   // dev screenshot hook: OKAY_UI_FOCUS="Inspector,Project" brings those dock tabs forward
             static int s_focusFrames = 0;
             if (s_focusFrames < 90) ++s_focusFrames;

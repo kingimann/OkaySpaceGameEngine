@@ -317,8 +317,9 @@ void DoRestore(okay::editor::EditorState& ed, const okayup::BackupInfo& b) {
     const std::vector<std::string>& cur = okay::restart::CurrentArguments();
     for (std::size_t i = 0; i < cur.size(); ++i) {
         const std::string& a = cur[i];
-        if ((a == "--open" || a == "--new-project" || a == "--template") && i + 1 < cur.size()) { ++i; continue; }
-        if (a.rfind("--open=", 0) == 0 || a.rfind("--new-project=", 0) == 0 || a.rfind("--template=", 0) == 0 || a.rfind("--keep-version", 0) == 0) continue;
+        if ((a == "--open" || a == "--new-project" || a == "--template" || a == "--join") && i + 1 < cur.size()) { ++i; continue; }   // (a join is not made again)
+        if (a.rfind("--open=", 0) == 0 || a.rfind("--new-project=", 0) == 0 || a.rfind("--template=", 0) == 0 || a.rfind("--keep-version", 0) == 0 ||
+            a.rfind("--join=", 0) == 0) continue;
         args.push_back(a);
     }
     if (!scene.empty()) { args.push_back("--open"); args.push_back(scene); }

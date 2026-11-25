@@ -1655,7 +1655,7 @@ std::string g_editorStartedVersion;
 // so the engine can only be opened through (and alongside) the launcher.
 void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
                   const std::string& newProjectDir = "", const std::string& openScene = "",
-                  const std::string& projectVersion = "", int gpu = -1) {
+                  const std::string& projectVersion = "", int gpu = -1, const std::string& joinLink = "") {
     if (exe.empty() || UpdateBlocksLaunch()) return;   // (an update is being installed)
     std::string args = "--launcher " + std::to_string(CurrentPid());
     // Every value is quoted for the platform's command line (spaces, quotes and `$` in a name or path stay one argument).
@@ -1668,6 +1668,7 @@ void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
     if (!projectVersion.empty() && projectVersion.find_first_of(" \t\"") == std::string::npos)
         args += " --project-version " + projectVersion;
     if (gpu == 0 || gpu == 1) args += std::string(" --gpu ") + (gpu ? "1" : "0");
+    if (!joinLink.empty()) args += " " + okayversions::JoinArgs(okay::joinplan::WithJoinArg({}, joinLink));   // join a friend once the project is open
     g_editorStartedVersion.clear();
     if (SpawnTracked(exe, args, "editor", "OkaySpace Editor")) return;   // time in the editor counts too
 #if defined(_WIN32)
@@ -1680,11 +1681,13 @@ void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
 
 // Open `scene` with an installed editor of another version, the way the editor expects (docs/editor/project_upgrade.md):
 // --launcher <pid> --open <scene> --keep-version. False when that version's editor is not there.
-bool LaunchEditorVersion(const std::string& version, const std::string& scene) {
+// A join link adds --join <link> (shared/JoinPlan.hpp WithJoinArg).
+bool LaunchEditorVersion(const std::string& version, const std::string& scene, const std::string& joinLink = "") {
     const fs::path exe = okayver::InstalledEditorPath(LauncherDirPath(), version);
     std::error_code ec;
     if (exe.empty() || scene.empty() || !fs::is_regular_file(exe, ec)) return false;
-    if (!SpawnTracked(exe.string(), okayversions::JoinArgs(okayversions::OpenWithArgs(CurrentPid(), scene)), "editor", "OkaySpace Editor")) return false;
+    const std::vector<std::string> args = okay::joinplan::WithJoinArg(okayversions::OpenWithArgs(CurrentPid(), scene), joinLink);
+    if (!SpawnTracked(exe.string(), okayversions::JoinArgs(args), "editor", "OkaySpace Editor")) return false;
     g_editorStartedVersion = okayver::NormalizeVersion(version);
     return true;
 }
@@ -1720,12 +1723,14 @@ std::vector<std::string> MpInstalledEditors() {
     if (!own.empty() && std::find(v.begin(), v.end(), own) == v.end()) v.push_back(own);   // the editor next to the launcher
     return v;
 }
-bool MpOpenProjectForJoin(const std::string& editorVersion, const std::string& scene) {
-    if (LaunchEditorVersion(editorVersion, scene)) return true;
+// An editor that is already open gets the request (with the join) through its single-instance hand-off: the new process
+// writes okayspace_editor.handoff and leaves (editor/main.cpp WriteHandoff).
+bool MpOpenProjectForJoin(const std::string& editorVersion, const std::string& scene, const std::string& joinLink) {
+    if (LaunchEditorVersion(editorVersion, scene, joinLink)) return true;
     if (okayver::NormalizeVersion(editorVersion) != okayver::NormalizeVersion(LocalVersion())) return false;
     const std::string exe = FindExe(EDITOR_EXE_NAMES);
     if (exe.empty()) return false;
-    LaunchEditor(exe, "", "", scene);
+    LaunchEditor(exe, "", "", scene, "", -1, joinLink);
     return true;
 }
 
@@ -2167,9 +2172,50 @@ const okay::chat::UnreadSummary& ChatUnread() {
     sum = okay::chat::CountUnread(g_unreadRows, g_unreadMe, seen, g_blockedUsers);
     return sum;
 }
-// The number on the Chat nav item, the tray's Friends item and the Chats switch.
-int ChatUnreadTotal() { return okayfriends::NavUnread(g_unreadKnown, ChatUnread().total, g_dmUnread); }
-static void ChatUnreadSignedOut() { if (std::getenv("OKAY_CHAT_DEMO")) return; g_unreadRows.clear(); g_unreadMe.clear(); g_unreadKnown = false; }
+// Group chats the same way (okay::chat::CountGroupUnread over Messages::GroupUnreadRows, with my_groups' newest id and my
+// server read mark per group). Published with the DM rows by the same two poll threads, under the same lock.
+static std::vector<okay::chat::GroupUnreadRow> g_groupUnreadIn;   // (guarded)
+static std::map<long, long> g_groupReadIn, g_groupNewestIn;       // (guarded) group -> my last_read / its newest message id
+static bool g_groupUnreadInFresh = false;                         // (guarded)
+static void PublishGroupUnread(std::vector<okay::chat::GroupUnreadRow> rows, const std::vector<okay::Messages::GroupConvo>& groups) {   // poll threads
+    if (!g_unreadMutex) return;
+    std::map<long, long> read, newest;
+    for (const auto& g : groups) { read[g.id] = g.lastRead; newest[g.id] = g.lastId; }
+    okay::thr::LockMutex(g_unreadMutex);
+    g_groupUnreadIn = std::move(rows); g_groupReadIn = std::move(read); g_groupNewestIn = std::move(newest); g_groupUnreadInFresh = true;
+    okay::thr::UnlockMutex(g_unreadMutex);
+}
+static std::vector<okay::chat::GroupUnreadRow> g_groupUnreadRows;   // (UI thread) the rows in use
+static std::map<long, long> g_groupServerRead, g_groupNewest;
+// The group counts now (at most every 100 ms; the UI thread only). Muted groups keep a number on their row but stay out of
+// the total; the open group counts nothing.
+const okay::chat::GroupUnreadSummary& ChatGroupUnread() {
+    static okay::chat::GroupUnreadSummary sum;
+    static Uint32 at = 0;
+    const Uint32 now = okay::platform::TicksMs32();
+    if (at != 0 && now - at < 100) return sum;
+    at = now;
+    if (g_unreadMutex) {
+        okay::thr::LockMutex(g_unreadMutex);
+        if (g_groupUnreadInFresh) {
+            g_groupUnreadRows.swap(g_groupUnreadIn); g_groupServerRead.swap(g_groupReadIn); g_groupNewest.swap(g_groupNewestIn);
+            g_groupUnreadInFresh = false;
+        }
+        okay::thr::UnlockMutex(g_unreadMutex);
+    }
+    std::set<long> muted;
+    for (const auto& k : g_mutedChats) if (k.rfind("g:", 0) == 0) muted.insert(std::atol(k.c_str() + 2));
+    sum = okay::chat::CountGroupUnread(g_groupUnreadRows, g_unreadMe, okay::chat::GroupSeen(g_chatSeenGroup, g_groupServerRead),
+                                       g_blockedUsers, g_groupNewest, muted, g_chatSelGroup);
+    return sum;
+}
+// The number on the Chat nav item, the tray's Friends item and the Chats switch: direct messages and group chats.
+int ChatUnreadTotal() { return okayfriends::NavUnread(g_unreadKnown, ChatUnread().total, g_dmUnread) + (g_unreadKnown ? ChatGroupUnread().total : 0); }
+static void ChatUnreadSignedOut() {
+    if (std::getenv("OKAY_CHAT_DEMO")) return;
+    g_unreadRows.clear(); g_unreadMe.clear(); g_unreadKnown = false;
+    g_groupUnreadRows.clear(); g_groupServerRead.clear(); g_groupNewest.clear();
+}
 int g_onlineStatus = 0;     // 0 Online, 1 Away, 2 Invisible, 3 Do not disturb (persisted; okayfriends::MyStatusLabel)
 // Your own status, for code outside this file (desktop notifications: Invisible and Do not disturb keep them quiet).
 // One of okayfriends::kOnline / kAway / kInvisible / kDoNotDisturb (launcher/FriendsList.hpp).
@@ -2375,7 +2421,7 @@ void RefreshNotifs() {
         UpsertNotif("dyn:friends", "Friend requests", b, 1, 6);
     } else RemoveNotif("dyn:friends");
     if (const int dmN = ChatUnreadTotal(); dmN > 0) {
-        std::snprintf(b, sizeof(b), "%d unread direct message%s", dmN, dmN == 1 ? "" : "s");
+        std::snprintf(b, sizeof(b), "%d unread message%s", dmN, dmN == 1 ? "" : "s");   // direct messages and group chats
         UpsertNotif("dyn:dms", "New messages", b, 2, 6);
     } else RemoveNotif("dyn:dms");
     if (GetState() == Up_Updated) {
@@ -7607,8 +7653,12 @@ void DrawChatWindow(okay::account::AccountService& account) {
         std::map<std::string, int> unreadN;   // the numbers on the rows, the tab strip and the Friends list
         {
             const okay::chat::UnreadSummary& us = ChatUnread();
+            const okay::chat::GroupUnreadSummary& gs = ChatGroupUnread();
             for (auto& r : rows) {
-                r.unreadN = r.gid ? (r.unread ? 1 : 0) : okayfriends::UnreadFor(us.perPeer, r.uid, r.unread);
+                if (r.gid) {   // the real number when the group rows have been read, else 1 (okay::chat::CountGroupUnread)
+                    const auto gn = gs.perGroup.find(r.gid);
+                    r.unreadN = !r.unread ? 0 : gn != gs.perGroup.end() && gn->second > 0 ? gn->second : 1;
+                } else r.unreadN = okayfriends::UnreadFor(us.perPeer, r.uid, r.unread);
                 if (r.unreadN > 0) unreadN[r.key] = r.unreadN;
             }
         }
@@ -9428,6 +9478,7 @@ static std::vector<PolledChatEvent> PollChatEvents(okay::account::AccountService
     }
     if (counts) {
         const auto gs = msgs.MyGroups();
+        PublishGroupUnread(msgs.GroupUnreadRows(), gs);   // the group numbers for the nav badge (ChatGroupUnread)
         for (const auto& e : okay::GroupMessageEvents(gs, groupSeen, okay::account::PublicName(who))) {
             std::string title;
             for (const auto& g : gs) if (g.id == e.groupId) title = g.title;
@@ -10437,6 +10488,7 @@ static int ChatPollWorker(void*) {
             }
             if (now >= nextGroups) {
                 auto gs = dm.MyGroups();
+                PublishGroupUnread(dm.GroupUnreadRows(), gs);   // group unread numbers too (ChatGroupUnread)
                 if (g_chatMutex) { okay::thr::LockMutex(g_chatMutex); g_chatGroups = std::move(gs); g_chatGroupsReady = true; okay::thr::UnlockMutex(g_chatMutex); }
                 nextGroups = now + 6000;
             }

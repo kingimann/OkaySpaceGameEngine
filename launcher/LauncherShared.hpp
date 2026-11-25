@@ -151,7 +151,8 @@ void MpJoinFriend(const std::string& sessionCode, const std::string& name);
 // opening a project's scene with one of them.
 std::vector<okay::joinplan::Candidate> MpJoinProjects();
 std::vector<std::string> MpInstalledEditors();
-bool MpOpenProjectForJoin(const std::string& editorVersion, const std::string& scene);
+/// The editor gets `--join <link>` and joins from Play mode once the project is open (an editor already open is handed it).
+bool MpOpenProjectForJoin(const std::string& editorVersion, const std::string& scene, const std::string& joinLink);
 void MpInviteGroup(long gid, const std::string& name);         // a whole group chat
 std::string MpMyJoin();                                        // my session's public link ("" = none)
 void MpPartyInvite(const std::string& uid, const std::string& name);

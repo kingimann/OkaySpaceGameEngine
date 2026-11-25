@@ -72,7 +72,8 @@ EditorState::EditorState() : m_scene("Untitled") {
     StartDocument();   // an empty scene is nothing to save
 }
 
-bool EditorState::StartHost(std::uint16_t port) {
+// The preview session's NetworkManager on a transient "__Network" object (Host, Join and a join link share it).
+NetworkManager* EditorState::NewNetwork() {
     StopNetwork();
     GameObject* go = m_scene.CreateGameObject("__Network");
     go->transient = true;   // a preview session's plumbing: never saved into the scene
@@ -83,22 +84,14 @@ bool EditorState::StartHost(std::uint16_t port) {
         peer->transient = true;
         return peer;
     });
-    return m_net->StartServer(port);
+    return m_net;
 }
 
-bool EditorState::StartJoin(const std::string& host, std::uint16_t port) {
-    StopNetwork();
-    GameObject* go = m_scene.CreateGameObject("__Network");
-    go->transient = true;   // a preview session's plumbing: never saved into the scene
-    m_net = go->AddComponent<NetworkManager>();
-    m_net->SetLocalAvatar(go->transform, '@');
-    m_net->SetRemoteFactory([this](std::uint32_t id, char) {
-        GameObject* peer = m_scene.CreateGameObject("Peer" + std::to_string(id));
-        peer->transient = true;
-        return peer;
-    });
-    return m_net->StartClient(host, port);
-}
+bool EditorState::StartHost(std::uint16_t port) { return NewNetwork()->StartServer(port); }
+
+bool EditorState::StartJoin(const std::string& host, std::uint16_t port) { return NewNetwork()->StartClient(host, port); }
+
+bool EditorState::StartJoinLink(const std::string& link) { return NewNetwork()->JoinByLink(link); }
 
 void EditorState::StopNetwork() {
     if (!m_net) return;

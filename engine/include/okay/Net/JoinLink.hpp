@@ -27,6 +27,15 @@ struct JoinLink {
     std::string password;      ///< only in private invites
     bool        needsPassword = false;
     std::string host;          ///< who's hosting / who sent it (display only)
+    std::string version;       ///< the game's version ("" = unknown); a join with another version is refused in words
+    std::string engine;        ///< the engine / editor version, for a project played in the editor ("" = unknown)
+    std::string target;        ///< "" | "exported" | "project" | "dedicated": what is hosting the session
+    int         players = 0;   ///< players in the session (0 = unknown)
+    int         maxPlayers = 0;///< its size (0 = unknown)
+    long        inviteId = 0;  ///< the game_invites record this link was sent with (docs/sql/chat_invites.sql), 0 = none
+
+    /// True only when both counts are known and the session is full.
+    bool Full() const { return maxPlayers > 0 && players >= maxPlayers; }
 
     bool Relayed() const { return !relay.empty() && !code.empty(); }
     bool Valid() const { return !game.empty() && (!addr.empty() || Relayed()); }
@@ -45,6 +54,12 @@ struct JoinLink {
         if (!room.empty())     s += "&room=" + Enc(room);
         if (!name.empty())     s += "&name=" + Enc(name);
         if (!host.empty())     s += "&host=" + Enc(host);
+        if (!version.empty())  s += "&ver=" + Enc(version);
+        if (!engine.empty())   s += "&eng=" + Enc(engine);
+        if (!target.empty())   s += "&kind=" + Enc(target);
+        if (players > 0)       s += "&p=" + std::to_string(players);
+        if (maxPlayers > 0)    s += "&max=" + std::to_string(maxPlayers);
+        if (inviteId > 0)      s += "&inv=" + std::to_string(inviteId);
         if (!password.empty()) s += "&pass=" + Enc(password);
         else if (needsPassword) s += "&pw=1";
         return s;
@@ -74,11 +89,24 @@ struct JoinLink {
             else if (k == "host") out.host = v;
             else if (k == "pass") { out.password = v; out.needsPassword = !v.empty(); }
             else if (k == "pw") out.needsPassword = (v == "1");
+            else if (k == "ver") out.version = v.substr(0, 40);
+            else if (k == "eng") out.engine = v.substr(0, 40);
+            else if (k == "kind") out.target = (v == "exported" || v == "project" || v == "dedicated") ? v : std::string();
+            else if (k == "p") out.players = (int)Count(v, 100000);
+            else if (k == "max") out.maxPlayers = (int)Count(v, 100000);
+            else if (k == "inv") out.inviteId = Count(v, 1000000000000L);
             p = amp + 1;
         }
         return !out.addr.empty() || out.Relayed();
     }
 
+    /// A plain decimal count in 1..cap, else 0 (signs, letters and huge numbers are not trusted).
+    static long Count(const std::string& v, long cap) {
+        if (v.empty() || v.size() > 13) return 0;
+        long n = 0;
+        for (char c : v) { if (c < '0' || c > '9') return 0; n = n * 10 + (c - '0'); }
+        return n <= cap ? n : 0;
+    }
     static std::string Enc(const std::string& s) {
         static const char* hex = "0123456789ABCDEF";
         std::string o;

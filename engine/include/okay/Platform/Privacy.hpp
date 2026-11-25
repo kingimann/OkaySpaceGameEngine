@@ -40,7 +40,9 @@ inline const char* SetupNote() {
 }
 
 // ---- Rules the database enforces ------------------------------------------
-enum class Rule { None, YouBlocked, DmRefused, DmFriendsOnly, CallsFriendsOnly, CallsRefused, FriendRequestsOff, Unknown };
+enum class Rule { None, YouBlocked, DmRefused, DmFriendsOnly, CallsFriendsOnly, CallsRefused, FriendRequestsOff,
+                  InviteFriendsOnly, RateLimited, TooLong,   // docs/sql/chat_invites.sql
+                  Unknown };
 
 // Finds "okay_rule:<reason>" anywhere in `text` (a response body or an error).
 inline Rule ParseRule(const std::string& text) {
@@ -56,6 +58,9 @@ inline Rule ParseRule(const std::string& text) {
     if (is("calls_friends")) return Rule::CallsFriendsOnly;
     if (is("calls_nobody")) return Rule::CallsRefused;
     if (is("friend_requests_off")) return Rule::FriendRequestsOff;
+    if (is("invite_friends")) return Rule::InviteFriendsOnly;
+    if (is("rate_limited")) return Rule::RateLimited;
+    if (is("too_long")) return Rule::TooLong;
     return Rule::Unknown;
 }
 inline const char* RuleText(Rule r) {
@@ -66,6 +71,9 @@ inline const char* RuleText(Rule r) {
         case Rule::CallsFriendsOnly:  return "This person only accepts calls from friends.";
         case Rule::CallsRefused:      return "This person does not accept calls from you.";
         case Rule::FriendRequestsOff: return "This person is not accepting friend requests from you.";
+        case Rule::InviteFriendsOnly: return "You can only invite friends. Add them as a friend first.";
+        case Rule::RateLimited:       return "You're sending too fast. Wait a minute and try again.";
+        case Rule::TooLong:           return "That message is too long (4000 characters at most).";
         case Rule::Unknown:           return "The server refused this because of a privacy rule.";
         default:                      return "";
     }
@@ -74,7 +82,7 @@ inline const char* RuleText(Rule r) {
 // those back as its error string).
 inline bool IsRuleText(const std::string& text) {
     for (Rule r : {Rule::YouBlocked, Rule::DmRefused, Rule::DmFriendsOnly, Rule::CallsFriendsOnly, Rule::CallsRefused,
-                   Rule::FriendRequestsOff, Rule::Unknown})
+                   Rule::FriendRequestsOff, Rule::InviteFriendsOnly, Rule::RateLimited, Rule::TooLong, Rule::Unknown})
         if (text == RuleText(r)) return true;
     return false;
 }

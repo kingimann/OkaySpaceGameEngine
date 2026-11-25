@@ -4313,6 +4313,30 @@ private:
         return false;
     }
 
+    // { declarations; if (cond) A else B } for if (init; cond) and if (T x = e): beginIfBlock opens
+    // the block's scopes; endIfBlock, once cond is read, adds the branches, then the destructors of
+    // what the block declared, and closes the scopes.
+    std::unique_ptr<Stmt> beginIfBlock(const Stmt& s) {
+        tscopes_.emplace_back();
+        dscopes_.emplace_back();
+        auto block = std::make_unique<Stmt>();
+        block->kind = Stmt::Kind::Block;
+        block->line = s.line;
+        block->col = s.col;
+        return block;
+    }
+    std::unique_ptr<Stmt> endIfBlock(std::unique_ptr<Stmt> block, std::unique_ptr<Stmt> s, std::size_t localMark) {
+        s->thenS = parseStmt();
+        if (eatKw("else")) s->elseS = parseStmt();
+        block->stmts.push_back(std::move(s));
+        auto ds = pendingDtors(dscopes_.size() - 1, here());
+        for (auto& d : ds) block->stmts.push_back(std::move(d));
+        dscopes_.pop_back();
+        tscopes_.pop_back();
+        localNames_.resize(localMark);
+        return block;
+    }
+
     std::unique_ptr<Stmt> parseIf() {
         auto s = std::make_unique<Stmt>();
         s->kind = Stmt::Kind::If;
@@ -4323,14 +4347,9 @@ private:
         if (hasInitStatement()) {
             // if (init; cond) A else B  is  { init; if (cond) A else B } ([stmt.if] p3): what init
             // declares is in scope in both branches and is destroyed after the whole statement.
-            tscopes_.emplace_back();
-            dscopes_.emplace_back();
             std::size_t localMark = localNames_.size();
-            auto block = std::make_unique<Stmt>();
-            block->kind = Stmt::Kind::Block;
-            block->line = s->line;
-            block->col = s->col;
-            std::size_t at0 = block->stmts.size();
+            auto block = beginIfBlock(*s);
+            std::size_t at0 = 0;
             if (isTypeKw(cur())) {
                 parseDeclInto(block->stmts, false);
             } else {
@@ -4346,42 +4365,21 @@ private:
             s->expr = parseExpr();
             flushPre(block->stmts, at1);
             expectP(")", ")");
-            s->thenS = parseStmt();
-            if (eatKw("else")) s->elseS = parseStmt();
-            block->stmts.push_back(std::move(s));
-            auto ds = pendingDtors(dscopes_.size() - 1, here());
-            for (auto& d : ds) block->stmts.push_back(std::move(d));
-            dscopes_.pop_back();
-            tscopes_.pop_back();
-            localNames_.resize(localMark);
-            return block;
+            return endIfBlock(std::move(block), std::move(s), localMark);
         }
         if (conditionIsDecl()) {
             // if (T x = e) A else B  is  { T x = e; if (x) A else B }: x is in scope in both
             // branches and is destroyed after the whole statement.
             Pos at = here();
-            tscopes_.emplace_back();
-            dscopes_.emplace_back();
             std::size_t localMark = localNames_.size();
-            auto block = std::make_unique<Stmt>();
-            block->kind = Stmt::Kind::Block;
-            block->line = s->line;
-            block->col = s->col;
-            std::size_t at0 = block->stmts.size();
+            auto block = beginIfBlock(*s);
+            std::size_t at0 = 0;
             parseDeclInto(block->stmts, false, true);
             flushPre(block->stmts, at0);
             std::string var = localNames_.size() > localMark ? localNames_.back() : std::string();
             expectP(")", ")");
             s->expr = eName(var, at);
-            s->thenS = parseStmt();
-            if (eatKw("else")) s->elseS = parseStmt();
-            block->stmts.push_back(std::move(s));
-            auto ds = pendingDtors(dscopes_.size() - 1, here());
-            for (auto& d : ds) block->stmts.push_back(std::move(d));
-            dscopes_.pop_back();
-            tscopes_.pop_back();
-            localNames_.resize(localMark);
-            return block;
+            return endIfBlock(std::move(block), std::move(s), localMark);
         }
         s->expr = parseExpr();
         expectP(")", ")");

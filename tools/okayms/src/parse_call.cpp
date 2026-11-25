@@ -242,7 +242,7 @@ bool Parser::qualified_call(Node* out, int cls, const std::string& name, std::ve
     int method_owner = cls;
     {
         int tmpl_owner = -1;
-        if (find_member_tmpl(cls, name, &tmpl_owner) != nullptr && find_method(cls, name, args.size(), &args) == nullptr) {
+        if (find_member_tmpl(cls, name, &tmpl_owner) != nullptr && !has_viable_method(cls, name, args)) {
             if (!instantiate_member(cls, name, std::move(targs), args, &method_name, &method_owner)) return false;
         }
     }
@@ -317,7 +317,7 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     int method_owner = sid;
     {
         int tmpl_owner = -1;
-        if (find_member_tmpl(sid, name, &tmpl_owner) != nullptr && find_method(sid, name, args.size(), &args) == nullptr) {
+        if (find_member_tmpl(sid, name, &tmpl_owner) != nullptr && !has_viable_method(sid, name, args)) {
             if (!instantiate_member(sid, name, std::move(targs), args, &method_name, &method_owner)) return false;
         }
     }

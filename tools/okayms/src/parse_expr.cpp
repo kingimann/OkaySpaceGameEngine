@@ -1240,7 +1240,10 @@ bool Parser::parse_unary(Node* out) {
                 for (const Method& m : def.methods)
                     if (m.name == name) is_method = true;
                 int tmpl_owner = -1;
-                if (find_member_tmpl(cur_class, name, &tmpl_owner) != nullptr) is_method = true;
+                // A constructor template (template <class It> string(It, It)) is not a member function: string(p, n)
+                // inside the class is a new object ([class.ctor] 2, [expr.type.conv]).
+                const bool own_name = name == def.name || (!def.tmpl.empty() && name == def.tmpl);
+                if (!own_name && find_member_tmpl(cur_class, name, &tmpl_owner) != nullptr) is_method = true;
                 bool any_object_fn = false;
                 for (const Method& m : def.methods)
                     if (m.name == name && !m.is_static) any_object_fn = true;
@@ -1928,11 +1931,18 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                 els.type.pointers == 0) {
                 // c ? a : b with integer constants is a constant ([expr.cond] 7, [expr.const]): the chosen operand
                 // in the common type of both (a static member such as `value = same ? 0 : 1 + next::value`).
-                const bool both_bool = mid.type.is_bool && els.type.is_bool;
-                const Type common = both_bool ? mid.type : const_common(mid.type, els.type);
+                // Operands of one type keep it ('-' : '+' stays a char, [expr.cond] 7.1); otherwise the usual
+                // arithmetic conversions.
+                const bool same = mid.type.base == els.type.base && mid.type.wide == els.type.wide &&
+                                  mid.type.is_unsigned == els.type.is_unsigned && mid.type.is_bool == els.type.is_bool &&
+                                  mid.text == els.text;
+                const Type common = const_common(mid.type, els.type);
                 Node chosen = tern.kids[0].number != 0 ? std::move(mid) : std::move(els);
-                chosen.number = const_norm(chosen.number, common);
-                chosen.type = common;
+                if (!same) {
+                    chosen.number = const_norm(chosen.number, common);
+                    chosen.type = common;
+                    chosen.text.clear();
+                }
                 *out = std::move(chosen);
                 continue;
             }
@@ -2152,7 +2162,7 @@ bool Parser::parse_type_trait(Node* out) {
                         v = true;
                 }
             if (!any_ctor && types.size() == 1) v = true;
-            if (has_ctor_template(a.struct_id)) v = true;
+            if (has_ctor_template_taking(a.struct_id, types.size() - 1)) v = true;
         }
     } else if (which == "__is_base_of") {
         if (types.size() != 2) {

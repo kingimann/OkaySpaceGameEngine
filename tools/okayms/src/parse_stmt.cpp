@@ -951,7 +951,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             if (static_type(init, &from) &&
                 (!(from.base == 3 && from.pointers == 0 && !from.is_array()) ||
                  (from.struct_id != decl.type.struct_id && !derives_from(from.struct_id, decl.type.struct_id) &&
-                  (converts_by_ctor(decl.type.struct_id, init, from) || has_ctor_template(decl.type.struct_id))))) {
+                  (converts_by_ctor(decl.type.struct_id, init, from) || has_ctor_template_taking(decl.type.struct_id, 1))))) {
                 ctor_args.push_back(std::move(init));
                 have_ctor_args = true;
                 has_init = false;

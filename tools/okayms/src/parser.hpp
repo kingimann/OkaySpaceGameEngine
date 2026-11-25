@@ -600,6 +600,21 @@ struct Parser {
             if (mt.first.first == sid && mt.first.second == mt.second.owner) return true;
         return false;
     }
+    // A constructor template of class sid that takes n arguments (one for a conversion, [over.ics.user]): string's
+    // template <class It> string(It, It) does not make a string from one value.
+    bool has_ctor_template_taking(int sid, size_t n) const {
+        for (const auto& mt : member_tmpls) {
+            if (mt.first.first != sid || mt.first.second != mt.second.owner) continue;
+            size_t fixed = 0;
+            bool pack = false;
+            for (const Type& t : mt.second.td.proto) {
+                if (t.pack) pack = true;
+                else ++fixed;
+            }
+            if (pack ? n >= fixed : n == fixed) return true;
+        }
+        return false;
+    }
     bool class_needs_ctor(const StructDef& d) const {
         for (const Method& m : d.methods)
             if (m.name == "<ctor>") return true;
@@ -2313,7 +2328,8 @@ struct Parser {
     bool converts_by_ctor(int sid, const Node& arg, const Type& a) const {
         if (sid < 0 || sid >= static_cast<int>(structs.size())) return false;
         // A constructor template (std::function's) is taken to accept the argument; its instance is made by the call.
-        if (has_ctor_template(sid) && !(a.base == 3 && a.pointers == 0 && !a.is_array() && a.struct_id == sid)) return true;
+        if (has_ctor_template_taking(sid, 1) && !(a.base == 3 && a.pointers == 0 && !a.is_array() && a.struct_id == sid))
+            return true;
         for (const Method& m : structs[static_cast<size_t>(sid)].methods) {
             if (m.name != "<ctor>" || m.params.empty() || required_args(m.defaults, m.params.size()) > 1) continue;
             Type first = m.params[0];
@@ -2416,6 +2432,19 @@ struct Parser {
 
     // The member function name taking these arguments. Among several of the same name the best match by the
     // ranks above wins; obj_const is 1 for a const object, 0 for a non-const one, -1 when not known.
+    // True when a member function (not a template) named `name` can take these arguments: find_method falls back to a
+    // method that cannot, which must not hide a member template that can ([over.match.viable]).
+    bool has_viable_method(int sid, const std::string& name, const std::vector<Node>& args) const {
+        if (sid < 0 || sid >= static_cast<int>(structs.size())) return false;
+        for (const Method& m : structs[static_cast<size_t>(sid)].methods) {
+            if (m.name != name) continue;
+            const bool exact = m.params.size() == args.size();
+            if (!exact && !(args.size() < m.params.size() && args.size() >= required_args(m.defaults, m.params.size())))
+                continue;
+            if (call_score(m.params, args) >= 0) return true;
+        }
+        return false;
+    }
     const Method* find_method(int sid, const std::string& name, size_t nargs, const std::vector<Node>* args = nullptr,
                               int obj_const = -1) const {
         if (sid < 0 || sid >= static_cast<int>(structs.size())) return nullptr;
@@ -5347,6 +5376,16 @@ struct Parser {
 
     // Fills the template arguments that were not given from the types of the call arguments
     // ([temp.deduct.call]); args holds the explicitly given ones on entry.
+    // f(true) deduces T = bool ([lex.bool]) and f('a') T = char ([lex.ccon]); their nodes are int constants here.
+    static void literal_type(const Node& arg, Type* t) {
+        if (arg.kind != Node::IntLit) return;
+        if (arg.text == "bool") {
+            *t = bool_type();
+        } else if (arg.text == "char") {
+            *t = Type{};
+            t->base = 2;
+        }
+    }
     bool deduce_args(const TDecl& td, const std::string& name, std::vector<TArg>* args_io,
                      const std::vector<Node>& call_args) {
         std::vector<TArg>& args = *args_io;
@@ -5368,6 +5407,7 @@ struct Parser {
                             error = "cannot deduce template arguments of " + name;
                             return false;
                         }
+                        literal_type(call_args[j], &t);
                         if (t.is_array()) {
                             t = peel_array(t);
                             t.pointers += 1;
@@ -5389,12 +5429,7 @@ struct Parser {
                 error = "cannot deduce template arguments of " + name;
                 return false;
             }
-            if (call_args[i].kind == Node::IntLit && call_args[i].text == "bool") {
-                at_type = bool_type();  // f(true) deduces T = bool ([lex.bool])
-            } else if (call_args[i].kind == Node::IntLit && call_args[i].text == "char") {
-                at_type = Type{};  // f('a') deduces T = char ([lex.ccon])
-                at_type.base = 2;
-            }
+            literal_type(call_args[i], &at_type);
             if (at_type.is_array()) {
                 at_type = peel_array(at_type);
                 at_type.pointers += 1;
@@ -5458,6 +5493,13 @@ struct Parser {
             codes += arg_code(args[i]);
         }
         key += ">";
+        {
+            // Overloads of one template name (next(It) and next(It, n)) are separate instances ([temp.over]).
+            auto extra = func_template_extra.find(name);
+            if (extra != func_template_extra.end())
+                for (size_t k = 0; k < extra->second.size(); ++k)
+                    if (&extra->second[k] == &td) key += "#" + std::to_string(k + 1);
+        }
         *out = key;
         for (const FuncDecl& fn : funcs)
             if (fn.name == key) return true;

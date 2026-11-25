@@ -2958,7 +2958,7 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
             ImGui::InputTextWithHint("##pname", "name", pendingName, sizeof(pendingName));
             ImGui::SameLine();
             ImGui::BeginDisabled(!pendingName[0] || g_libBusy);
-            if (PrimaryButton("Upload", ImVec2(70, 0))) { LibraryUpload(pendingPath, pendingFolder, pendingName); pendingPath.clear(); }
+            if (PrimaryButton("Upload", ImVec2(okl::FitButtonW("Upload", okl::UiPx(70.0f)), 0))) { LibraryUpload(pendingPath, pendingFolder, pendingName); pendingPath.clear(); }
             ImGui::EndDisabled();
             ImGui::SameLine();
             if (ImGui::Button("Cancel")) pendingPath.clear();
@@ -3172,7 +3172,7 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
                 ImGui::InputTextWithHint("##tenorkey", "Tenor API key", keyBuf, sizeof(keyBuf), ImGuiInputTextFlags_Password);
                 ImGui::SameLine();
                 ImGui::BeginDisabled(!keyBuf[0]);
-                if (PrimaryButton("Save", ImVec2(66, 0))) { g_tenorKey = keyBuf; keyBuf[0] = '\0'; SavePrefs(); GifSearch(""); }
+                if (PrimaryButton("Save", ImVec2(okl::FitButtonW("Save", okl::UiPx(66.0f)), 0))) { g_tenorKey = keyBuf; keyBuf[0] = '\0'; SavePrefs(); GifSearch(""); }
                 ImGui::EndDisabled();
                 if (ImGui::SmallButton("How to get a key")) OpenExternal("https://developers.google.com/tenor/guides/quickstart");
                 ImGui::EndChild();
@@ -4853,7 +4853,7 @@ static void DrawEditHistoryPopup() {
         }
         version("##cur", "Now", g_editHist.current, true);
         ImGui::Dummy(ImVec2(0, 4));
-        if (ImGui::Button("Close", ImVec2(100, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (ImGui::Button("Close", ImVec2(okl::FitButtonW("Close", okl::UiPx(100.0f)), 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }
@@ -4992,10 +4992,10 @@ void DrawScheduleDialog(const char* popupId, char* text, std::size_t cap,
     ImGui::Dummy(ImVec2(0, 4));
     std::string b = body; while (!b.empty() && (b.back() == ' ' || b.back() == '\n')) b.pop_back();
     const bool ok = !b.empty() && when > (long)now;
-    if (ImGui::Button("Cancel", ImVec2(100, 30))) ImGui::CloseCurrentPopup();
+    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
     ImGui::SameLine();
     ImGui::BeginDisabled(!ok);
-    if (PrimaryButton("Schedule", ImVec2(120, 30))) {
+    if (PrimaryButton("Schedule", ImVec2(okl::FitButtonW("Schedule", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) {
         ScheduleMessage(toUid, toName, toGroup, ExpandCustomEmoji(b.c_str()), when);
         Toast("Scheduled for " + SchedWhen(when), 1);
         text[0] = '\0'; (void)cap;
@@ -5160,13 +5160,13 @@ static void DrawStatusDialog(bool& req) {
     SlateCombo("##clearafter", &clearAfter, kClear, (int)(sizeof(kClear) / sizeof(kClear[0])));
     ImGui::Dummy(ImVec2(0, 6));
     if (!g_myStatus.empty()) {
-        if (ImGui::Button("Clear status", ImVec2(120, 30))) { SetMyStatus("", 0); Toast("Status cleared", 1); ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Clear status", ImVec2(okl::FitButtonW("Clear status", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) { SetMyStatus("", 0); Toast("Status cleared", 1); ImGui::CloseCurrentPopup(); }
         ImGui::SameLine();
     }
-    if (ImGui::Button("Cancel", ImVec2(90, 30))) ImGui::CloseCurrentPopup();
+    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(90.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
     ImGui::SameLine();
     std::string t = text; while (!t.empty() && t.back() == ' ') t.pop_back();
-    if (PrimaryButton("Save", ImVec2(100, 30))) {
+    if (PrimaryButton("Save", ImVec2(okl::FitButtonW("Save", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) {
         long until = 0;
         const std::time_t now = std::time(nullptr);
         switch (clearAfter) {
@@ -5593,7 +5593,7 @@ static void PollCreatorPopup(const char* id, const std::string& toUid, long toGr
         ImGui::SetNextItemWidth(opts.size() > 2 ? ImGui::GetContentRegionAvail().x - 30 : -1);
         char hint[24]; std::snprintf(hint, sizeof(hint), "Option %d", (int)i + 1);
         ImGui::InputTextWithHint("##po", hint, opts[i].data(), opts[i].size());
-        if (opts.size() > 2) { ImGui::SameLine(0, 4); if (ImGui::Button("x", ImVec2(26, 0))) removeAt = (int)i; }
+        if (opts.size() > 2) { ImGui::SameLine(0, 4); if (ImGui::Button("x", ImVec2(okl::FitButtonW("x", okl::UiPx(26.0f)), 0))) removeAt = (int)i; }
         ImGui::PopID();
     }
     if (removeAt >= 0) opts.erase(opts.begin() + removeAt);
@@ -5604,10 +5604,10 @@ static void PollCreatorPopup(const char* id, const std::string& toUid, long toGr
     std::string qs = q; while (!qs.empty() && qs.back() == ' ') qs.pop_back();
     const bool ok = !qs.empty() && filled.size() >= 2;
     auto reset = [&]() { q[0] = '\0'; opts.assign(2, {}); };
-    if (ImGui::Button("Cancel", ImVec2(90, 30))) { reset(); ImGui::CloseCurrentPopup(); }
+    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(90.0f)), okl::UiPx(30.0f)))) { reset(); ImGui::CloseCurrentPopup(); }
     ImGui::SameLine();
     ImGui::BeginDisabled(!ok);
-    if (PrimaryButton("Send poll", ImVec2(110, 30))) {
+    if (PrimaryButton("Send poll", ImVec2(okl::FitButtonW("Send poll", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) {
         OutboxSend(toUid, toGroup, PollMessageBody(qs, filled));
         reset(); ImGui::CloseCurrentPopup();
     }
@@ -8270,7 +8270,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::SetNextItemWidth(400);
                 ImGui::InputTextWithHint("##fwdnote", "Add a message (optional)", fwdNote, sizeof(fwdNote));
                 ImGui::Dummy(ImVec2(0, 4));
-                if (ImGui::Button("Cancel", ImVec2(100, 30))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
                 ImGui::SameLine();
                 ImGui::BeginDisabled(fwdSel.empty());
                 char sl[32]; std::snprintf(sl, sizeof(sl), fwdSel.size() > 1 ? "Send to %d" : "Send", (int)fwdSel.size());
@@ -10336,12 +10336,12 @@ static void DrawOfficialCard() {
         ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
         ImGui::BeginDisabled(running || job != Off_Idle);
-        const bool doIt = ImGui::Button("Uninstall", ImVec2(110, 0));
+        const bool doIt = ImGui::Button("Uninstall", ImVec2(okl::FitButtonW("Uninstall", okl::UiPx(110.0f)), 0));
         ImGui::EndDisabled();
         ImGui::PopStyleColor(2);
         if (doIt) { UninstallOfficial(); g_offConfirmUninstall = false; ImGui::CloseCurrentPopup(); }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0))) { g_offConfirmUninstall = false; ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) { g_offConfirmUninstall = false; ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
     ImGui::PopID();
@@ -10785,7 +10785,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
     }
     ImGui::Dummy(ImVec2(0, 4));
     ImGui::BeginDisabled(busy);
-    if (ImGui::Button("Refresh", ImVec2(100, 30))) refresh();
+    if (ImGui::Button("Refresh", ImVec2(okl::FitButtonW("Refresh", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) refresh();
     ImGui::EndDisabled();
     cardEnd();
 
@@ -10799,7 +10799,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
     ImGui::SetNextItemWidth(std::max(200.0f, ImGui::GetContentRegionAvail().x - 230));
     if (ImGui::InputTextWithHint("##oa_folder", "Built game folder", folder, sizeof(folder), ImGuiInputTextFlags_EnterReturnsTrue)) rescan();
     ImGui::SameLine(0, 8);
-    if (ImGui::Button("Browse\xE2\x80\xA6", ImVec2(100, 0))) {
+    if (ImGui::Button("Browse\xE2\x80\xA6", ImVec2(okl::FitButtonW("Browse\xE2\x80\xA6", okl::UiPx(100.0f)), 0))) {
         // `folder` and the scan state are statics of this function, so the callback can run on a later frame.
         okay::filedialog::FolderOne("Choose the built game folder", folder, [](const std::string& picked) {
             std::snprintf(folder, sizeof(folder), "%s", picked.c_str());
@@ -10808,7 +10808,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
     }
     ImGui::SameLine(0, 8);
     ImGui::BeginDisabled(!folder[0]);
-    if (ImGui::Button("Reload", ImVec2(100, 0))) rescan();
+    if (ImGui::Button("Reload", ImVec2(okl::FitButtonW("Reload", okl::UiPx(100.0f)), 0))) rescan();
     ImGui::EndDisabled();
     if (!scanErr.empty()) ImGui::TextColored(okaytheme::Current().danger, "%s", scanErr.c_str());
     if (scanned) {
@@ -10884,9 +10884,9 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
                     problems.push_back("v" + v.version + " is already in the bucket. Pick another version, or tick \"Allow same or older\" to replace it.");
             checked = true;
         };
-        if (ImGui::Button("Check", ImVec2(100, 34))) runCheck();
+        if (ImGui::Button("Check", ImVec2(okl::FitButtonW("Check", okl::UiPx(100.0f)), okl::UiPx(34.0f)))) runCheck();
         ImGui::SameLine(0, 8);
-        if (PrimaryButton("Publish\xE2\x80\xA6", ImVec2(140, 34))) {
+        if (PrimaryButton("Publish\xE2\x80\xA6", ImVec2(okl::FitButtonW("Publish\xE2\x80\xA6", okl::UiPx(140.0f)), okl::UiPx(34.0f)))) {
             runCheck();
             if (problems.empty()) confirmPublish = true;
         }
@@ -10953,13 +10953,13 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
         ImGui::SameLine(std::max(bx, ImGui::GetCursorPosX() + 8));
         const std::string why = og::MakeLiveProblem(v.version, s.live, names, v.manifestOk);
         ImGui::BeginDisabled(busy || !why.empty());
-        if (ImGui::Button("Make live", ImVec2(100, 0))) confirmLive = v.version;
+        if (ImGui::Button("Make live", ImVec2(okl::FitButtonW("Make live", okl::UiPx(100.0f)), 0))) confirmLive = v.version;
         ImGui::EndDisabled();
         if (!why.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", why.c_str());
         ImGui::SameLine(0, 6);
         ImGui::BeginDisabled(busy || v.version == s.live);
         ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
-        if (ImGui::Button("Delete", ImVec2(100, 0))) confirmDelete = v.version;
+        if (ImGui::Button("Delete", ImVec2(okl::FitButtonW("Delete", okl::UiPx(100.0f)), 0))) confirmDelete = v.version;
         ImGui::PopStyleColor();
         ImGui::EndDisabled();
         if (v.version == s.live && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The live version can't be deleted.");
@@ -11002,14 +11002,14 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
         ImGui::TextDisabled("%d files, %s, uploaded with your account. Players' launchers pick it up\non their next update check%s.",
                             (int)pf.files.size(), OffBytes((long long)pf.total()).c_str(), s.live.empty() ? "" : (" (replacing v" + s.live + ")").c_str());
         ImGui::Dummy(ImVec2(0, 6));
-        if (PrimaryButton("Publish", ImVec2(130, 0))) {
+        if (PrimaryButton("Publish", ImVec2(okl::FitButtonW("Publish", okl::UiPx(130.0f)), 0))) {
             auto* a = new OaJobArgs; a->kind = Oa_Publish; a->folder = scannedDir; a->name = og::Trim(nameBuf); a->version = og::Trim(verBuf);
             a->notes = notesBuf; a->allowNotNewer = allowOlder;
             if (!StartOfficialAdminJob(a)) Toast("Still working on the last action\xE2\x80\xA6", 0);
             confirmPublish = false; checked = false; ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0))) { confirmPublish = false; ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) { confirmPublish = false; ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
     if (modal("Make this version live?", !confirmLive.empty())) {
@@ -11019,13 +11019,13 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
                                 "already have v%s keep it; new installs get v%s.", s.live.c_str(), s.live.c_str(), confirmLive.c_str());
         else ImGui::TextDisabled("Players move from v%s to it on their launcher's next update check.", s.live.c_str());
         ImGui::Dummy(ImVec2(0, 6));
-        if (PrimaryButton("Make live", ImVec2(130, 0))) {
+        if (PrimaryButton("Make live", ImVec2(okl::FitButtonW("Make live", okl::UiPx(130.0f)), 0))) {
             auto* a = new OaJobArgs; a->kind = Oa_MakeLive; a->target = confirmLive;
             if (!StartOfficialAdminJob(a)) Toast("Still working on the last action\xE2\x80\xA6", 0);
             confirmLive.clear(); ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0))) { confirmLive.clear(); ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) { confirmLive.clear(); ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
     if (modal("Delete this version?", !confirmDelete.empty())) {
@@ -11038,7 +11038,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
             confirmDelete.clear(); ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Keep", ImVec2(110, 0))) { confirmDelete.clear(); ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Keep", ImVec2(okl::FitButtonW("Keep", okl::UiPx(110.0f)), 0))) { confirmDelete.clear(); ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
     if (modal("Clean up old versions?", confirmCleanup)) {
@@ -11056,7 +11056,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
             confirmCleanup = false; ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Keep them", ImVec2(110, 0))) { confirmCleanup = false; ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Keep them", ImVec2(okl::FitButtonW("Keep them", okl::UiPx(110.0f)), 0))) { confirmCleanup = false; ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
 }
@@ -12721,17 +12721,17 @@ int main(int argc, char** argv) {
                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
                 ImGui::TextUnformatted("Do you want to exit OkaySpace, or just minimize it?");
                 ImGui::Dummy(ImVec2(0, 10));
-                if (ImGui::Button("Exit", ImVec2(120, 0))) {
+                if (ImGui::Button("Exit", ImVec2(okl::FitButtonW("Exit", okl::UiPx(120.0f)), 0))) {
                     if (EditorRunning()) g_afterEditor = 1;   // the editor closes (saved) first
                     else running = false;
                     closeConfirm = false; ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Minimize", ImVec2(120, 0))) {
+                if (ImGui::Button("Minimize", ImVec2(okl::FitButtonW("Minimize", okl::UiPx(120.0f)), 0))) {
                     lw::Minimize(window); closeConfirm = false; ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(120, 0)) ||
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(120.0f)), 0)) ||
                     ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
                     closeConfirm = false; ImGui::CloseCurrentPopup();
                 }
@@ -12752,11 +12752,11 @@ int main(int argc, char** argv) {
             ImGui::TextWrapped("%s", okaycrash::upload::NoticeText().c_str());
             ImGui::PopTextWrapPos();
             ImGui::Dummy(ImVec2(0, 8));
-            if (ImGui::Button("OK, keep sending", ImVec2(180, 32))) {
+            if (ImGui::Button("OK, keep sending", ImVec2(okl::FitButtonW("OK, keep sending", okl::UiPx(180.0f)), okl::UiPx(32.0f)))) {
                 g_crashNoticeSeen = true; g_crashNoticeReq = false; SavePrefs(); ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            if (ImGui::Button("Turn it off", ImVec2(140, 32))) {
+            if (ImGui::Button("Turn it off", ImVec2(okl::FitButtonW("Turn it off", okl::UiPx(140.0f)), okl::UiPx(32.0f)))) {
                 g_crashUpload = false; g_crashNoticeSeen = true; g_crashNoticeReq = false; g_crashUpNote.clear(); SavePrefs(); ImGui::CloseCurrentPopup();
                 Toast("Crash reports will not be sent. They stay on this computer.", 1);
             }
@@ -12801,20 +12801,20 @@ int main(int argc, char** argv) {
                         if (RequestEditorSaveQuit()) { s_closing = true; s_sentAt = okay::platform::TicksMs32(); }
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(110, 32)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), okl::UiPx(32.0f))) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
                         g_afterEditor = 0; g_pendingOpenScene.clear(); g_pendingOpenVersion.clear(); g_pendingOpenName.clear(); ImGui::CloseCurrentPopup();
                     }
                 } else if (ack == "save-failed") {
                     ImGui::TextColored(okaytheme::Current().danger, "The editor couldn't save everything, so it stayed open.");
                     ImGui::TextDisabled("Save from the editor (File > Save), close it, then try again.");
-                    if (ImGui::Button("OK", ImVec2(110, 30))) { g_afterEditor = 0; s_closing = false; ImGui::CloseCurrentPopup(); }
+                    if (ImGui::Button("OK", ImVec2(okl::FitButtonW("OK", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) { g_afterEditor = 0; s_closing = false; ImGui::CloseCurrentPopup(); }
                 } else {
                     static const char* kDots[] = {"", ".", "..", "..."};
                     ImGui::Text("Saving your project and closing the editor%s", kDots[(okay::platform::TicksMs32() / 400) % 4]);
                     if (okay::platform::TicksMs32() - s_sentAt > 15000)
                         ImGui::TextDisabled("Still open - it may be waiting for you. Check the editor window.");
                     ImGui::Dummy(ImVec2(0, 6));
-                    if (ImGui::Button("Cancel", ImVec2(110, 30))) { g_afterEditor = 0; s_closing = false; ImGui::CloseCurrentPopup(); }
+                    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) { g_afterEditor = 0; s_closing = false; ImGui::CloseCurrentPopup(); }
                 }
                 ImGui::EndPopup();
             }
@@ -13934,12 +13934,12 @@ int main(int argc, char** argv) {
                     if (stackBtns) ImGui::SetCursorPos(ImVec2(16, cardH - 40));
                     else ImGui::SetCursorPos(ImVec2(cardW - 16 - 288, (cardH - 34) * 0.5f));
                     ImGui::BeginDisabled(editor.empty() || !pr.ready);
-                    if (PrimaryButton("Open", ImVec2(78, 34))) { s_openedAt[pr.scene] = okay::platform::TicksMs32(); openProject(pr); }
+                    if (PrimaryButton("Open", ImVec2(okl::FitButtonW("Open", okl::UiPx(78.0f)), okl::UiPx(34.0f)))) { s_openedAt[pr.scene] = okay::platform::TicksMs32(); openProject(pr); }
                     ImGui::EndDisabled();
                     ImGui::SameLine(0, 8);
-                    if (ImGui::Button("Remove", ImVec2(88, 34))) { forgetProject(pr.scene, pr.extra); Toast("Removed " + pr.name + " from the list", 1); }
+                    if (ImGui::Button("Remove", ImVec2(okl::FitButtonW("Remove", okl::UiPx(88.0f)), okl::UiPx(34.0f)))) { forgetProject(pr.scene, pr.extra); Toast("Removed " + pr.name + " from the list", 1); }
                     ImGui::SameLine(0, 8);
-                    if (ImGui::Button("More", ImVec2(64, 34))) ImGui::OpenPopup("projctx");
+                    if (ImGui::Button("More", ImVec2(okl::FitButtonW("More", okl::UiPx(64.0f)), okl::UiPx(34.0f)))) ImGui::OpenPopup("projctx");
                     ImGui::SameLine(0, 8);
                     ImGui::BeginDisabled(pr.missing);
                     if (RoundIconButton("##projcli", kIcoTerminal, 34.0f, okaytheme::Ink(16), okaytheme::Ink(32), crText,
@@ -14192,7 +14192,7 @@ int main(int argc, char** argv) {
                         ImGui::Separator();
                         ImGui::Dummy(ImVec2(0, 4));
                         if (s_wiz.step > 0) {
-                            if (ImGui::Button("Back", ImVec2(110, 40))) okayproj::WizardBack(s_wiz);
+                            if (ImGui::Button("Back", ImVec2(okl::FitButtonW("Back", okl::UiPx(110.0f)), okl::UiPx(40.0f)))) okayproj::WizardBack(s_wiz);
                         } else {
                             ImGui::Dummy(ImVec2(110, 40));
                         }
@@ -14266,7 +14266,7 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
                 ImGui::BeginDisabled(!delWhy.empty());
-                const bool doDelete = ImGui::Button("Delete from disk", ImVec2(150, 0));
+                const bool doDelete = ImGui::Button("Delete from disk", ImVec2(okl::FitButtonW("Delete from disk", okl::UiPx(150.0f)), 0));
                 ImGui::EndDisabled();
                 ImGui::PopStyleColor(2);
                 if (doDelete) {
@@ -14297,12 +14297,12 @@ int main(int argc, char** argv) {
                     }
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Remove from list", ImVec2(150, 0))) {
+                if (ImGui::Button("Remove from list", ImVec2(okl::FitButtonW("Remove from list", okl::UiPx(150.0f)), 0))) {
                     if (forgetProject(delScene, delExtra)) Toast("Removed " + delName + " from the list (its files are still on disk)", 1);
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
             // ---- Git commit-message + publish-URL popups ----
@@ -14311,7 +14311,7 @@ int main(int argc, char** argv) {
                 ImGui::TextDisabled("Commit all changes in \"%s\" and push to its Git server.", gitCommitName.c_str());
                 ImGui::SetNextItemWidth(360);
                 ImGui::InputTextWithHint("##cmsg", "Commit message", gitCommitMsg, sizeof(gitCommitMsg));
-                if (ImGui::Button("Commit & Push", ImVec2(150, 0)) && gitCommitMsg[0]) {
+                if (ImGui::Button("Commit & Push", ImVec2(okl::FitButtonW("Commit & Push", okl::UiPx(150.0f)), 0)) && gitCommitMsg[0]) {
                     GitJob* j = new GitJob();
                     j->cmds = { GitC(gitCommitRoot) + "add -A",
                                 GitC(gitCommitRoot) + "commit -m " + GitQ(gitCommitMsg),
@@ -14323,7 +14323,7 @@ int main(int argc, char** argv) {
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
             if (gitOpenPublish) { ImGui::OpenPopup("Publish with Git"); gitOpenPublish = false; }
@@ -14332,7 +14332,7 @@ int main(int argc, char** argv) {
                 ImGui::TextDisabled("Publishes \"%s\" to that repository (initial commit on main).", gitPublishName.c_str());
                 ImGui::SetNextItemWidth(380);
                 ImGui::InputTextWithHint("##purl", "https://example.com/you/your-repo.git", gitPublishUrl, sizeof(gitPublishUrl));
-                if (ImGui::Button("Publish", ImVec2(130, 0)) && gitPublishUrl[0]) {
+                if (ImGui::Button("Publish", ImVec2(okl::FitButtonW("Publish", okl::UiPx(130.0f)), 0)) && gitPublishUrl[0]) {
                     GitJob* j = new GitJob();
                     j->cmds = { GitC(gitPublishRoot) + "init",
                                 GitC(gitPublishRoot) + "add -A",
@@ -14347,7 +14347,7 @@ int main(int argc, char** argv) {
                     gitPublishUrl[0] = '\0'; ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
 
@@ -14744,7 +14744,7 @@ int main(int argc, char** argv) {
                     ImGui::EndGroup();
                     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 88);
                     ImGui::SetCursorPosY(7);
-                    if (PrimaryButton("Play", ImVec2(84, 34))) {
+                    if (PrimaryButton("Play", ImVec2(okl::FitButtonW("Play", okl::UiPx(84.0f)), okl::UiPx(34.0f)))) {
                         OpenExternal(wg.string());
                         Toast("Opening " + nm + " in your browser", 1);
                     }
@@ -14839,10 +14839,10 @@ int main(int argc, char** argv) {
                 ImGui::SameLine(0, 2);
                 viewBtn("Grid", 1);
                 ImGui::SameLine();
-                if (ImGui::Button("Folder", ImVec2(92, 0))) OpenExternal(g_exeDir);
+                if (ImGui::Button("Folder", ImVec2(okl::FitButtonW("Folder", okl::UiPx(92.0f)), 0))) OpenExternal(g_exeDir);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the games folder");
                 ImGui::SameLine();
-                if (ImGui::Button("Refresh", ImVec2(84, 0))) scenes = FindScenes();
+                if (ImGui::Button("Refresh", ImVec2(okl::FitButtonW("Refresh", okl::UiPx(84.0f)), 0))) scenes = FindScenes();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rescan for games");
                 ImGui::Dummy(ImVec2(0, 6));
 
@@ -14913,7 +14913,7 @@ int main(int argc, char** argv) {
                         ImGui::EndGroup();
                         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 100);
                         ImGui::SetCursorPosY(13.0f);
-                        if (PrimaryButton("Resume", ImVec2(96, 40))) {
+                        if (PrimaryButton("Resume", ImVec2(okl::FitButtonW("Resume", okl::UiPx(96.0f)), okl::UiPx(40.0f)))) {
                             Launch(player, resume); RecordPlayed(resume); SavePrefs();
                             Toast(std::string("Playing ") + rname);
                         }
@@ -15133,9 +15133,9 @@ int main(int argc, char** argv) {
                     }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip(fav ? "Unfavorite" : "Favorite");
                     ImGui::SameLine();
-                    if (ImGui::Button("Folder", ImVec2(82, 40))) OpenExternal(scenes[i].parent_path().string());
+                    if (ImGui::Button("Folder", ImVec2(okl::FitButtonW("Folder", okl::UiPx(82.0f)), okl::UiPx(40.0f)))) OpenExternal(scenes[i].parent_path().string());
                     ImGui::SameLine();
-                    if (PrimaryButton("Play", ImVec2(80, 40))) {
+                    if (PrimaryButton("Play", ImVec2(okl::FitButtonW("Play", okl::UiPx(80.0f)), okl::UiPx(40.0f)))) {
                         Launch(player, path);
                         RecordPlayed(path); SavePrefs();
                         Toast(std::string("Playing ") + name);
@@ -15544,7 +15544,7 @@ int main(int argc, char** argv) {
                 ImGui::Dummy(ImVec2(0, 6));
                 ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
-                bool doRemove = ImGui::Button("Remove", ImVec2(110, 0));
+                bool doRemove = ImGui::Button("Remove", ImVec2(okl::FitButtonW("Remove", okl::UiPx(110.0f)), 0));
                 ImGui::PopStyleColor(2);
                 if (doRemove) {
                     std::error_code rec; fs::remove_all(commRemovePath, rec);
@@ -15554,7 +15554,7 @@ int main(int argc, char** argv) {
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(110, 0))) {
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) {
                     commRemovePath.clear();
                     ImGui::CloseCurrentPopup();
                 }
@@ -15742,13 +15742,13 @@ int main(int argc, char** argv) {
                     // Actions, top-right over the banner.
                     ImGui::SetCursorScreenPos(ImVec2(o.x + W - 16 - 132 - 8 - 104, o.y + bannerH + 12));
                     ImGui::BeginDisabled(!account.IsOnline());
-                    if (PrimaryButton("View my profile", ImVec2(132, 32)))
+                    if (PrimaryButton("View my profile", ImVec2(okl::FitButtonW("View my profile", okl::UiPx(132.0f)), okl::UiPx(32.0f))))
                         OpenPublicProfile(acDemo ? std::string() : account.UserId(), myUser, shownName, s_myAvatar, acctAccent);   // by id: the saved name can lag the real one
                     ImGui::EndDisabled();
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                         ImGui::SetTooltip("%s", account.IsOnline() ? "See your public profile exactly as other players do" : "Public profiles need an online account");
                     ImGui::SameLine(0, 8);
-                    if (ImGui::Button("Sign out", ImVec2(104, 32)) && !acDemo) {
+                    if (ImGui::Button("Sign out", ImVec2(okl::FitButtonW("Sign out", okl::UiPx(104.0f)), okl::UiPx(32.0f))) && !acDemo) {
                         account.Logout();
                         acctMessage.clear();
                         acctUser[0] = acctPass[0] = '\0';
@@ -15909,7 +15909,7 @@ int main(int argc, char** argv) {
                             }
                         }
                         ImGui::SameLine(0, 8);
-                        if (ImGui::Button("Discard", ImVec2(100, 34))) fillForm();
+                        if (ImGui::Button("Discard", ImVec2(okl::FitButtonW("Discard", okl::UiPx(100.0f)), okl::UiPx(34.0f)))) fillForm();
                         ImGui::EndDisabled();
                         if (dirty && !g_acSaving) {
                             ImGui::SameLine(0, 12);
@@ -16038,12 +16038,12 @@ int main(int argc, char** argv) {
                     acRow("Signed in", online ? "Online OkaySpace account. Your session renews itself while the launcher is open."
                                               : "Local account: stored only on this computer.", 250.0f, 32.0f, [&](float) {
                         ImGui::BeginDisabled(!account.IsOnline());
-                        if (ImGui::Button("Re-check session", ImVec2(140, 32))) {
+                        if (ImGui::Button("Re-check session", ImVec2(okl::FitButtonW("Re-check session", okl::UiPx(140.0f)), okl::UiPx(32.0f)))) {
                             if (account.VerifySession()) Toast("Session is valid", 1); else Toast("Session expired \xE2\x80\x94 sign in again", 2);
                         }
                         ImGui::EndDisabled();
                         ImGui::SameLine(0, 8);
-                        if (ImGui::Button("Sign out##dev", ImVec2(102, 32)) && !acDemo) {
+                        if (ImGui::Button("Sign out##dev", ImVec2(okl::FitButtonW("Sign out##dev", okl::UiPx(102.0f)), okl::UiPx(32.0f))) && !acDemo) {
                             account.Logout();
                             acctMessage.clear();
                             acctUser[0] = acctPass[0] = '\0';
@@ -16105,7 +16105,7 @@ int main(int argc, char** argv) {
                             ImGui::Dummy(ImVec2(0, 4));
                             ImGui::BeginDisabled(!can);
                             ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
-                            if (ImGui::Button("Delete everything", ImVec2(200, 32)) && can) {
+                            if (ImGui::Button("Delete everything", ImVec2(okl::FitButtonW("Delete everything", okl::UiPx(200.0f)), okl::UiPx(32.0f))) && can) {
                                 AcctStartJob(2, myUser, adDelPass);
                                 adDelUser[0] = adDelPass[0] = '\0'; adDelAck = false;
                                 ImGui::CloseCurrentPopup();
@@ -16113,7 +16113,7 @@ int main(int argc, char** argv) {
                             ImGui::PopStyleColor();
                             ImGui::EndDisabled();
                             ImGui::SameLine(0, 8);
-                            if (ImGui::Button("Cancel", ImVec2(120, 32))) { adDelUser[0] = adDelPass[0] = '\0'; adDelAck = false; ImGui::CloseCurrentPopup(); }
+                            if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(120.0f)), okl::UiPx(32.0f)))) { adDelUser[0] = adDelPass[0] = '\0'; adDelAck = false; ImGui::CloseCurrentPopup(); }
                             ImGui::EndPopup();
                         }
                         // The account is gone: sign out here once, like the Sign out button.
@@ -16463,13 +16463,13 @@ int main(int argc, char** argv) {
                     });
                     rowDivider();
                     settingRow("Test the chime", "Hear what a new message sounds like.", 96.0f, 30.0f, [&](float) {
-                        if (ImGui::Button("Play sound", ImVec2(96, 30))) PlayChatChime();
+                        if (ImGui::Button("Play sound", ImVec2(okl::FitButtonW("Play sound", okl::UiPx(96.0f)), okl::UiPx(30.0f)))) PlayChatChime();
                     });
                     cardEnd();
 
                     cardBegin("##sc_notif", "NOTIFICATIONS");
                     settingRow("Notification center", "Friend requests, update notes and finished downloads collect here.", 96.0f, 30.0f, [&](float) {
-                        if (ImGui::Button("Open", ImVec2(96, 30))) tab = 16;
+                        if (ImGui::Button("Open", ImVec2(okl::FitButtonW("Open", okl::UiPx(96.0f)), okl::UiPx(30.0f)))) tab = 16;
                     });
                     cardEnd();
                 } else if (setCat == 7) {   // ---- Privacy & Safety ----
@@ -16583,7 +16583,7 @@ int main(int argc, char** argv) {
                         ImGui::AlignTextToFramePadding();
                         ImGui::TextUnformatted(name.c_str());
                         ImGui::SameLine(ImGui::GetContentRegionMax().x - 90);
-                        if (ImGui::Button("Unblock", ImVec2(90, 0))) unblock = uid;
+                        if (ImGui::Button("Unblock", ImVec2(okl::FitButtonW("Unblock", okl::UiPx(90.0f)), 0))) unblock = uid;
                         ImGui::PopID();
                     }
                     if (!unblock.empty()) SetBlocked(unblock, std::string(), false);
@@ -16647,7 +16647,7 @@ int main(int argc, char** argv) {
                         const bool live = micTest.Running();
                         const float level = live ? micTest.Level() : g_call.kind ? g_voice.SelfLevel() : 0.0f;
                         const float mw = std::min(ImGui::GetContentRegionAvail().x - 150.0f, 360.0f);
-                        if (live ? ImGui::Button("Stop test", ImVec2(130, 30)) : PrimaryButton("Test microphone", ImVec2(130, 30))) {
+                        if (live ? ImGui::Button("Stop test", ImVec2(okl::FitButtonW("Stop test", okl::UiPx(130.0f)), okl::UiPx(30.0f))) : PrimaryButton("Test microphone", ImVec2(okl::FitButtonW("Test microphone", okl::UiPx(130.0f)), okl::UiPx(30.0f)))) {
                             if (live) micTest.Stop();
                             else if (!micTest.Start(g_voiceInDev, g_voiceOutDev, hearMyself, g_voiceInGain)) Toast("Couldn't open the microphone", 2);
                         }
@@ -16693,7 +16693,7 @@ int main(int argc, char** argv) {
                             ImGui::SetNextItemWidth(std::min(w, 260.0f) - 70.0f);
                             ImGui::InputTextWithHint("##vsite", "voice.yourdomain.com:45100", sbuf, sizeof(sbuf));
                             ImGui::SameLine();
-                            if (ImGui::Button("Save##vsite", ImVec2(62, 0))) SaveSiteVoiceRelay(sbuf);
+                            if (ImGui::Button("Save##vsite", ImVec2(okl::FitButtonW("Save##vsite", okl::UiPx(62.0f)), 0))) SaveSiteVoiceRelay(sbuf);
                         });
                     }
                     rowDivider();
@@ -16752,7 +16752,7 @@ int main(int argc, char** argv) {
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paste the location of a PNG.");
                         ImGui::SameLine(0, 8);
                         ImGui::BeginDisabled(g_splashLogo.empty());
-                        if (ImGui::Button("Clear##splashlogo", ImVec2(74, 0))) { g_splashLogo.clear(); SavePrefs(); }
+                        if (ImGui::Button("Clear##splashlogo", ImVec2(okl::FitButtonW("Clear##splashlogo", okl::UiPx(74.0f)), 0))) { g_splashLogo.clear(); SavePrefs(); }
                         ImGui::EndDisabled();
                     });
                     rowDivider();
@@ -16830,12 +16830,12 @@ int main(int argc, char** argv) {
                         settingRow(runningTitle.c_str(), testsOn ? "You are running a test build. Switch Get test builds off above, then you can go back to the newest normal release here."
                                                                   : "You are running a test build and will not be offered more. Go back to the newest normal release whenever you like.",
                                    testsOn ? 40.0f : 230.0f, testsOn ? 22.0f : 30.0f, [&](float) {
-                            if (!testsOn && ImGui::Button("Go back to the stable version", ImVec2(230, 30))) StartGoBackToStable();
+                            if (!testsOn && ImGui::Button("Go back to the stable version", ImVec2(okl::FitButtonW("Go back to the stable version", okl::UiPx(230.0f)), okl::UiPx(30.0f)))) StartGoBackToStable();
                         });
                         rowDivider();
                     }
                     settingRow("Other versions of the editor", "Keep older editors next to this one and open each project with the version it was made with.", 150.0f, 30.0f, [&](float) {
-                        if (ImGui::Button("Manage versions", ImVec2(150, 30))) { tab = 15; g_lastTab = 15; }
+                        if (ImGui::Button("Manage versions", ImVec2(okl::FitButtonW("Manage versions", okl::UiPx(150.0f)), okl::UiPx(30.0f)))) { tab = 15; g_lastTab = 15; }
                     });
                     cardEnd();
 
@@ -16848,13 +16848,13 @@ int main(int argc, char** argv) {
 
                     cardBegin("##sc_maint", "MAINTENANCE");
                     settingRow("Configuration folder", "Preferences are stored in launcher.cfg next to the launcher.", 120.0f, 30.0f, [&](float) {
-                        if (ImGui::Button("Open folder", ImVec2(120, 30))) OpenExternal(g_exeDir);
+                        if (ImGui::Button("Open folder", ImVec2(okl::FitButtonW("Open folder", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) OpenExternal(g_exeDir);
                     });
                     rowDivider();
                     settingRow("Reset preferences", "Restores theme, accent, UI scale, sorting and update settings. Favorites and recent games are kept.", 120.0f, 30.0f, [&](float) {
                         ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::WithAlpha(okaytheme::DangerFill(), 0.55f));
                         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
-                        if (ImGui::Button("Reset\xE2\x80\xA6", ImVec2(120, 30))) setOpenReset = true;
+                        if (ImGui::Button("Reset\xE2\x80\xA6", ImVec2(okl::FitButtonW("Reset\xE2\x80\xA6", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) setOpenReset = true;
                         ImGui::PopStyleColor(2);
                     });
                     cardEnd();
@@ -16909,7 +16909,7 @@ int main(int argc, char** argv) {
                                                               libBuf, sizeof(libBuf), ImGuiInputTextFlags_EnterReturnsTrue);
                     ImGui::SameLine(0, 8);
                     ImGui::BeginDisabled(!libBuf[0]);
-                    bool addClick = PrimaryButton("Add folder", ImVec2(120, ImGui::GetFrameHeight()));
+                    bool addClick = PrimaryButton("Add folder", ImVec2(okl::FitButtonW("Add folder", okl::UiPx(120.0f)), ImGui::GetFrameHeight()));
                     ImGui::EndDisabled();
                     ImGui::PopStyleVar(2);
                     if ((addClick || addSubmit) && libBuf[0]) {
@@ -16938,11 +16938,11 @@ int main(int argc, char** argv) {
                     ImGui::Dummy(ImVec2(0, 6));
                     std::vector<std::string> allOn; osw::AllOn(allOn);
                     ImGui::BeginDisabled(st.chosen == allOn);
-                    if (ImGui::Button("All on (default)", ImVec2(220, 30))) { st.chosen = allOn; osw::SaveChosen(); }
+                    if (ImGui::Button("All on (default)", ImVec2(okl::FitButtonW("All on (default)", okl::UiPx(220.0f)), okl::UiPx(30.0f)))) { st.chosen = allOn; osw::SaveChosen(); }
                     ImGui::EndDisabled();
                     ImGui::SameLine();
                     ImGui::BeginDisabled(st.chosen.empty());
-                    if (ImGui::Button("All off (third-party parts)", ImVec2(220, 30))) { osw::AllOff(st.chosen); osw::SaveChosen(); }
+                    if (ImGui::Button("All off (third-party parts)", ImVec2(okl::FitButtonW("All off (third-party parts)", okl::UiPx(220.0f)), okl::UiPx(30.0f)))) { osw::AllOff(st.chosen); osw::SaveChosen(); }
                     ImGui::EndDisabled();
                     ImGui::Dummy(ImVec2(0, 4));
                     for (const osw::Item& it : osw::Items()) {
@@ -16966,7 +16966,7 @@ int main(int argc, char** argv) {
                         if (!altExe.empty()) {
                             rowDivider();
                             settingRow(alt.label, alt.desc, 150.0f, 30.0f, [&](float) {
-                                if (ImGui::Button("Restart", ImVec2(130, 30)) && !UpdateBlocksLaunch() && SpawnTracked(altExe, std::string(), "alt-launcher", "")) running = false;
+                                if (ImGui::Button("Restart", ImVec2(okl::FitButtonW("Restart", okl::UiPx(130.0f)), okl::UiPx(30.0f))) && !UpdateBlocksLaunch() && SpawnTracked(altExe, std::string(), "alt-launcher", "")) running = false;
                             });
                         }
                     }
@@ -17000,7 +17000,7 @@ int main(int argc, char** argv) {
                     rowDivider();
                     settingRow("Preview what would be sent", "The exact text of the newest report after names, folders, emails and addresses are removed. Looking sends nothing.", 130.0f, 30.0f, [&](float) {
                         ImGui::BeginDisabled(g_crashes.empty());
-                        if (ImGui::Button("Preview", ImVec2(130, 30))) { crashOpen = 0; crashView = 1; }
+                        if (ImGui::Button("Preview", ImVec2(okl::FitButtonW("Preview", okl::UiPx(130.0f)), okl::UiPx(30.0f)))) { crashOpen = 0; crashView = 1; }
                         ImGui::EndDisabled();
                     });
                     cardEnd();
@@ -17014,24 +17014,24 @@ int main(int argc, char** argv) {
                                        : "Newest first. Copy a report into a Forums post or send it to support so the crash can be fixed.",
                                    250.0f, 30.0f, [&](float) {
                             ImGui::BeginDisabled(crashDir.empty());
-                            if (ImGui::Button("Open folder", ImVec2(110, 30))) OpenExternal(crashDir.string());
+                            if (ImGui::Button("Open folder", ImVec2(okl::FitButtonW("Open folder", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) OpenExternal(crashDir.string());
                             ImGui::EndDisabled();
                             ImGui::SameLine();
                             ImGui::BeginDisabled(g_crashes.empty());
-                            if (ImGui::Button("Clear all", ImVec2(110, 30))) ImGui::OpenPopup("Clear crash reports?");
+                            if (ImGui::Button("Clear all", ImVec2(okl::FitButtonW("Clear all", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) ImGui::OpenPopup("Clear crash reports?");
                             ImGui::EndDisabled();
                             if (ImGui::BeginPopupModal("Clear crash reports?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
                                 ImGui::TextUnformatted("Delete every saved editor crash report?");
                                 ImGui::TextDisabled("They can't be brought back.");
                                 ImGui::Dummy(ImVec2(0, 6));
-                                if (ImGui::Button("Delete", ImVec2(100, 30))) {
+                                if (ImGui::Button("Delete", ImVec2(okl::FitButtonW("Delete", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) {
                                     if (okaycrash::Clear(crashDir)) Toast("Crash reports cleared", 1);
                                     else Toast("Couldn't delete the crash reports", 2);
                                     RefreshCrashes(true); crashOpen = -1;
                                     ImGui::CloseCurrentPopup();
                                 }
                                 ImGui::SameLine();
-                                if (ImGui::Button("Cancel", ImVec2(100, 30))) ImGui::CloseCurrentPopup();
+                                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
                                 ImGui::EndPopup();
                             }
                         });
@@ -17080,7 +17080,7 @@ int main(int argc, char** argv) {
                         const bool showDetails = open && crashView == 0, showPreview = open && crashView == 1;
                         if (ImGui::Button(showDetails ? "Hide details" : "Details", ImVec2(110, 28))) { crashOpen = showDetails ? -1 : i; crashView = 0; }
                         ImGui::SameLine();
-                        if (ImGui::Button("Copy report", ImVec2(110, 28))) {
+                        if (ImGui::Button("Copy report", ImVec2(okl::FitButtonW("Copy report", okl::UiPx(110.0f)), okl::UiPx(28.0f)))) {
                             ImGui::SetClipboardText(r.text.c_str());
                             Toast("Crash report copied", 1);
                         }
@@ -17144,7 +17144,7 @@ int main(int argc, char** argv) {
                         dl->AddText(ImVec2(tx, p.y + 28), cDim, FitText(sub, tr - tx).c_str());
                         ImVec2 bp = narrow ? ImVec2(p.x, p.y + A + 10) : ImVec2(p.x + w - 146.0f, p.y + (A - 34.0f) * 0.5f);
                         ImGui::SetCursorScreenPos(bp);
-                        if (signedIn ? ImGui::Button("Manage account", ImVec2(146, 34)) : PrimaryButton("Sign in", ImVec2(146, 34))) {
+                        if (signedIn ? ImGui::Button("Manage account", ImVec2(okl::FitButtonW("Manage account", okl::UiPx(146.0f)), okl::UiPx(34.0f))) : PrimaryButton("Sign in", ImVec2(okl::FitButtonW("Sign in", okl::UiPx(146.0f)), okl::UiPx(34.0f)))) {
                             tab = 3; g_lastTab = 3; SavePrefs();
                         }
                         ImGui::SetCursorScreenPos(ImVec2(p.x, narrow ? bp.y + 34 : p.y + A));
@@ -17233,7 +17233,7 @@ int main(int argc, char** argv) {
 
                     cardBegin("##sc_links", "RESOURCES");
                     settingRow("Version info", "Copy the version for bug reports.", 96.0f, 30.0f, [&](float) {
-                        if (ImGui::Button("Copy", ImVec2(96, 30))) {
+                        if (ImGui::Button("Copy", ImVec2(okl::FitButtonW("Copy", okl::UiPx(96.0f)), okl::UiPx(30.0f)))) {
                             ImGui::SetClipboardText((std::string("OkaySpace v" OKAY_ENGINE_VERSION) + okay::testbuild::Suffix(OKAY_ENGINE_VERSION)).c_str());
                             Toast("Version copied", 1);
                         }
@@ -17254,7 +17254,7 @@ int main(int argc, char** argv) {
                 ImGui::Dummy(ImVec2(0, 4));
                 ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
-                bool doReset = ImGui::Button("Reset", ImVec2(110, 0));
+                bool doReset = ImGui::Button("Reset", ImVec2(okl::FitButtonW("Reset", okl::UiPx(110.0f)), 0));
                 ImGui::PopStyleColor(2);
                 if (doReset) {
                     g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
@@ -17268,7 +17268,7 @@ int main(int argc, char** argv) {
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
         } else if (tab == 5) {                            // ---- Achievements ----
@@ -17489,7 +17489,7 @@ int main(int argc, char** argv) {
                     centered("Games award them with the \"Unlock Achievement\" action. Go play something!", true);
                     ImGui::Dummy(ImVec2(0, 8));
                     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (aw - 150) * 0.5f));
-                    if (PrimaryButton("Browse games", ImVec2(150, 34))) tab = 1;
+                    if (PrimaryButton("Browse games", ImVec2(okl::FitButtonW("Browse games", okl::UiPx(150.0f)), okl::UiPx(34.0f)))) tab = 1;
                 } else if (achView == 2) {
                     centered("Nothing showcased yet", false);
                     centered("Pick up to 6 achievements to show off on your profile (right-click a tile).", true);
@@ -17948,7 +17948,7 @@ int main(int argc, char** argv) {
                                                                       ImGuiInputTextFlags_EnterReturnsTrue);
                             ImGui::SameLine(0, 8);
                             ImGui::BeginDisabled(!flAddBuf[0] || g_flBusy);
-                            const bool go = PrimaryButton("Follow", ImVec2(110, ImGui::GetFrameHeight()));
+                            const bool go = PrimaryButton("Follow", ImVec2(okl::FitButtonW("Follow", okl::UiPx(110.0f)), ImGui::GetFrameHeight()));
                             ImGui::EndDisabled();
                             ImGui::PopStyleVar(2);
                             if ((go || sub) && flAddBuf[0]) {
@@ -18172,7 +18172,7 @@ int main(int argc, char** argv) {
                     ImGui::TextDisabled("Only you see this nickname.");
                     ImGui::SetNextItemWidth(260);
                     bool ok = ImGui::InputText("##nick", nickBuf, sizeof(nickBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-                    if (ImGui::Button("Save", ImVec2(110, 0)) || ok) {
+                    if (ImGui::Button("Save", ImVec2(okl::FitButtonW("Save", okl::UiPx(110.0f)), 0)) || ok) {
                         if (!nickUid.empty()) {
                             if (nickBuf[0]) g_friendNicks[nickUid] = nickBuf; else g_friendNicks.erase(nickUid);
                             SavePrefs();
@@ -18180,7 +18180,7 @@ int main(int argc, char** argv) {
                         nickUid.clear(); ImGui::CloseCurrentPopup();
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(110, 0))) { nickUid.clear(); ImGui::CloseCurrentPopup(); }
+                    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) { nickUid.clear(); ImGui::CloseCurrentPopup(); }
                     ImGui::EndPopup();
                 }
             }
@@ -18393,7 +18393,7 @@ int main(int argc, char** argv) {
                     }
                     ImGui::EndDisabled();
                     ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(100, 34))) wShowPublish = false;
+                    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(34.0f)))) wShowPublish = false;
                     if (!wErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
                                          ImGui::TextWrapped("%s", wErr.c_str()); ImGui::PopStyleColor(); }
                     ImGui::EndChild();
@@ -18840,7 +18840,7 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndDisabled();
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(100, 32))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(32.0f)))) ImGui::CloseCurrentPopup();
                 if (!edErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
                                       ImGui::TextWrapped("%s", edErr.c_str()); ImGui::PopStyleColor(); }
                 ImGui::EndPopup();
@@ -18861,7 +18861,7 @@ int main(int argc, char** argv) {
                 ImGui::Dummy(ImVec2(0, 2));
                 ImGui::TextDisabled("%s", getUrl.c_str());
                 ImGui::Dummy(ImVec2(0, 6));
-                if (PrimaryButton("Download", ImVec2(150, 34))) {
+                if (PrimaryButton("Download", ImVec2(okl::FitButtonW("Download", okl::UiPx(150.0f)), okl::UiPx(34.0f)))) {
                     StartDownload(getUrl, getTitle, getKind, getAuthor, std::to_string(getId));
                     okay::Workshop(account).NoteDownload(getId, getDl);
                     wNextRefresh = 0;
@@ -18871,14 +18871,14 @@ int main(int argc, char** argv) {
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Download to the launcher's Downloads tab (best for direct file links)");
                 ImGui::SameLine();
-                if (ImGui::Button("Open in browser", ImVec2(150, 34))) {
+                if (ImGui::Button("Open in browser", ImVec2(okl::FitButtonW("Open in browser", okl::UiPx(150.0f)), okl::UiPx(34.0f)))) {
                     OpenExternal(getUrl);
                     okay::Workshop(account).NoteDownload(getId, getDl);
                     wNextRefresh = 0;
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(90, 34))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(90.0f)), okl::UiPx(34.0f)))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
 
@@ -18925,7 +18925,7 @@ int main(int argc, char** argv) {
                 ImGui::Dummy(ImVec2(0, 30));
                 ImGui::SetNextItemWidth(-1);
                 ImGui::InputTextMultiline("##rvbody", rvBody, sizeof(rvBody), ImVec2(-1, 70));
-                if (ImGui::Button("Submit review", ImVec2(140, 0))) {
+                if (ImGui::Button("Submit review", ImVec2(okl::FitButtonW("Submit review", okl::UiPx(140.0f)), 0))) {
                     if (ws.SubmitReview(rvItem, rvStars, rvBody, &rvErr)) {
                         Toast("Review posted", 1);
                         rvList = ws.Reviews(rvItem);
@@ -18936,7 +18936,7 @@ int main(int argc, char** argv) {
                 bool haveMine = false; for (const auto& rev : rvList) if (rev.mine) haveMine = true;
                 if (haveMine) {
                     ImGui::SameLine();
-                    if (ImGui::Button("Delete mine", ImVec2(120, 0))) {
+                    if (ImGui::Button("Delete mine", ImVec2(okl::FitButtonW("Delete mine", okl::UiPx(120.0f)), 0))) {
                         ws.RemoveMyReview(rvItem);
                         rvStars = 5; rvBody[0] = '\0';
                         rvList = ws.Reviews(rvItem);
@@ -18964,7 +18964,7 @@ int main(int argc, char** argv) {
                     ImGui::EndChild();
                 }
                 ImGui::EndChild();
-                if (ImGui::Button("Close", ImVec2(100, 0))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Close", ImVec2(okl::FitButtonW("Close", okl::UiPx(100.0f)), 0))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
             }   // end marketplace
@@ -19177,9 +19177,9 @@ int main(int argc, char** argv) {
                     centered("Create one for your team, or join with an invite code.", true);
                     ImGui::Dummy(ImVec2(0, 10));
                     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (aw - 300.0f) * 0.5f));
-                    if (PrimaryButton("Create a server", ImVec2(146, 36))) { svAddOpen = true; svErr.clear(); }
+                    if (PrimaryButton("Create a server", ImVec2(okl::FitButtonW("Create a server", okl::UiPx(146.0f)), okl::UiPx(36.0f)))) { svAddOpen = true; svErr.clear(); }
                     ImGui::SameLine(0, 8);
-                    if (ImGui::Button("Join with code", ImVec2(146, 36))) { svAddOpen = true; svErr.clear(); }
+                    if (ImGui::Button("Join with code", ImVec2(okl::FitButtonW("Join with code", okl::UiPx(146.0f)), okl::UiPx(36.0f)))) { svAddOpen = true; svErr.clear(); }
                     ImGui::EndChild();
                 } else {
                     // ---- Pane 2: server header + channels (folds away: g_svChannelsFolded, PanelToggle, Ctrl+B; on a narrow
@@ -20019,12 +20019,12 @@ int main(int argc, char** argv) {
                 if (ImGui::BeginPopupModal("Rename channel", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
                     ImGui::SetNextItemWidth(260);
                     bool go = ImGui::InputTextWithHint("##renchan", "channel name", svRenChanBuf, sizeof(svRenChanBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-                    if ((PrimaryButton("Rename", ImVec2(120, 30)) || go) && svRenChanBuf[0]) {
+                    if ((PrimaryButton("Rename", ImVec2(okl::FitButtonW("Rename", okl::UiPx(120.0f)), okl::UiPx(30.0f))) || go) && svRenChanBuf[0]) {
                         if (sv.RenameChannel(svRenChanId, svRenChanBuf)) { g_srvForce = true; Toast("Channel renamed", 1); }
                         ImGui::CloseCurrentPopup();
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(100, 30))) ImGui::CloseCurrentPopup();
+                    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
                     ImGui::EndPopup();
                 }
 
@@ -20035,7 +20035,7 @@ int main(int argc, char** argv) {
                     ImGui::TextDisabled("Rename server");
                     ImGui::SetNextItemWidth(-1);
                     bool go = ImGui::InputTextWithHint("##rensrv", "server name", svRenSrvBuf, sizeof(svRenSrvBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-                    if ((ImGui::Button("Save name", ImVec2(130, 0)) || go) && svRenSrvBuf[0]) {
+                    if ((ImGui::Button("Save name", ImVec2(okl::FitButtonW("Save name", okl::UiPx(130.0f)), 0)) || go) && svRenSrvBuf[0]) {
                         if (sv.RenameServer(svSel, svRenSrvBuf)) { svSelName = svRenSrvBuf; svNextList = 0; Toast("Server renamed", 1); }
                     }
                     ImGui::Separator();
@@ -20051,17 +20051,17 @@ int main(int argc, char** argv) {
                         ImGui::TextWrapped("Delete \"%s\" for everyone? Its channels and messages are removed. This can't be undone.", svSelName.c_str());
                         ImGui::Dummy(ImVec2(0, 4));
                         ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
-                        if (ImGui::Button("Delete", ImVec2(120, 0))) {
+                        if (ImGui::Button("Delete", ImVec2(okl::FitButtonW("Delete", okl::UiPx(120.0f)), 0))) {
                             if (sv.DeleteServer(svSel)) { svSel = 0; svChan = 0; svNextList = 0; Toast("Server deleted", 1); }
                             ImGui::CloseCurrentPopup(); ImGui::CloseCurrentPopup();
                         }
                         ImGui::PopStyleColor();
                         ImGui::SameLine();
-                        if (ImGui::Button("Cancel", ImVec2(100, 0))) ImGui::CloseCurrentPopup();
+                        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), 0))) ImGui::CloseCurrentPopup();
                         ImGui::EndPopup();
                     }
                     ImGui::Dummy(ImVec2(0, 2));
-                    if (ImGui::Button("Close", ImVec2(100, 0))) ImGui::CloseCurrentPopup();
+                    if (ImGui::Button("Close", ImVec2(okl::FitButtonW("Close", okl::UiPx(100.0f)), 0))) ImGui::CloseCurrentPopup();
                     ImGui::EndPopup();
                 }
             }
@@ -20375,7 +20375,7 @@ int main(int argc, char** argv) {
                 if (canModerate(x->id)) {
                     bx -= 120;
                     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-                    if (ImGui::Button("Admin tools", ImVec2(120, 32))) {
+                    if (ImGui::Button("Admin tools", ImVec2(okl::FitButtonW("Admin tools", okl::UiPx(120.0f)), okl::UiPx(32.0f)))) {
                         foAdminOpen = true;
                         if (!kFoDemo) FireForumAction(new FoAction{20, "", x->id, 0, "", "", ""});
                     }
@@ -20385,8 +20385,8 @@ int main(int argc, char** argv) {
                     const bool joined = !x->myRole.empty();
                     bx -= 100;
                     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-                    if (x->banned) { ImGui::BeginDisabled(); ImGui::Button("Banned", ImVec2(100, 32)); ImGui::EndDisabled(); }
-                    else if (joined ? ImGui::Button(x->myRole == "admin" ? "Admin" : "Joined", ImVec2(100, 32)) : PrimaryButton("Join", ImVec2(100, 32))) {
+                    if (x->banned) { ImGui::BeginDisabled(); ImGui::Button("Banned", ImVec2(okl::FitButtonW("Banned", okl::UiPx(100.0f)), okl::UiPx(32.0f))); ImGui::EndDisabled(); }
+                    else if (joined ? ImGui::Button(x->myRole == "admin" ? "Admin" : "Joined", ImVec2(100, 32)) : PrimaryButton("Join", ImVec2(okl::FitButtonW("Join", okl::UiPx(100.0f)), okl::UiPx(32.0f)))) {
                         if (joined && x->myRole == "admin") Toast("You run this section \xE2\x80\x94 hand it over in Admin tools before leaving", 0);
                         else {
                             for (auto& y : foSections) if (y.id == x->id) { y.myRole = joined ? "" : "member"; y.members += joined ? -1 : 1; }
@@ -20433,7 +20433,7 @@ int main(int argc, char** argv) {
                     const bool ok = std::strlen(nm) >= 3 && slugOk;
                     ImGui::Dummy(ImVec2(0, 6));
                     ImGui::BeginDisabled(!ok);
-                    if (PrimaryButton("Create", ImVec2(110, 32))) {
+                    if (PrimaryButton("Create", ImVec2(okl::FitButtonW("Create", okl::UiPx(110.0f)), okl::UiPx(32.0f)))) {
                         if (!kFoDemo) FireForumAction(new FoAction{5, "", 0, col, slug, nm, desc});
                         else { okay::ForumSection x; x.id = 50 + (long)foSections.size(); x.slug = slug; x.name = nm; x.description = desc; x.color = col; x.members = 1; x.myRole = "admin"; foSections.push_back(x); foSection = x.id; }
                         nm[0] = slug[0] = desc[0] = '\0'; slugEdited = false; foNext = tnow + 1500;
@@ -20441,7 +20441,7 @@ int main(int argc, char** argv) {
                     }
                     ImGui::EndDisabled();
                     ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(90, 32))) ImGui::CloseCurrentPopup();
+                    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(90.0f)), okl::UiPx(32.0f)))) ImGui::CloseCurrentPopup();
                     if (!ok && nm[0]) { ImGui::SameLine(); ImGui::TextDisabled("Link: 3-24 a-z, 0-9, _"); }
                     ImGui::EndPopup();
                 }
@@ -20544,23 +20544,23 @@ int main(int argc, char** argv) {
                                 if (col == i) ImGui::GetWindowDrawList()->AddCircle(ImVec2(cp.x + 11, cp.y + 11), 12.0f, IM_COL32_WHITE, 20, 2.0f);
                             }
                             ImGui::Dummy(ImVec2(0, 4));
-                            if (PrimaryButton("Save", ImVec2(100, 30))) {
+                            if (PrimaryButton("Save", ImVec2(okl::FitButtonW("Save", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) {
                                 for (auto& y : foSections) if (y.id == ax->id) { y.description = desc; y.rules = rules; y.color = col; }
                                 if (!kFoDemo) FireForumAction(new FoAction{6, "", ax->id, col, desc, rules, ""});
                             }
                             ImGui::SameLine(0, 20);
                             ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
-                            if (ImGui::Button("Delete section", ImVec2(130, 30))) ImGui::OpenPopup("##delsec");
+                            if (ImGui::Button("Delete section", ImVec2(okl::FitButtonW("Delete section", okl::UiPx(130.0f)), okl::UiPx(30.0f)))) ImGui::OpenPopup("##delsec");
                             ImGui::PopStyleColor();
                             if (ImGui::BeginPopup("##delsec")) {
                                 ImGui::TextUnformatted("Delete this section and every post in it?");
-                                if (ImGui::Button("Delete", ImVec2(100, 0))) {
+                                if (ImGui::Button("Delete", ImVec2(okl::FitButtonW("Delete", okl::UiPx(100.0f)), 0))) {
                                     if (!kFoDemo) FireForumAction(new FoAction{7, "", ax->id, 0, "", "", ""});
                                     const long gone = ax->id;
                                     foSections.erase(std::remove_if(foSections.begin(), foSections.end(), [&](const okay::ForumSection& y) { return y.id == gone; }), foSections.end());
                                     foSection = 0; ImGui::CloseCurrentPopup();
                                 }
-                                ImGui::SameLine(); if (ImGui::Button("Cancel", ImVec2(90, 0))) ImGui::CloseCurrentPopup();
+                                ImGui::SameLine(); if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(90.0f)), 0))) ImGui::CloseCurrentPopup();
                                 ImGui::EndPopup();
                             }
                             ImGui::EndTabItem();
@@ -20568,7 +20568,7 @@ int main(int argc, char** argv) {
                         ImGui::EndTabBar();
                     }
                     ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 100, ImGui::GetWindowHeight() - 44));
-                    if (ImGui::Button("Close", ImVec2(84, 30))) ImGui::CloseCurrentPopup();
+                    if (ImGui::Button("Close", ImVec2(okl::FitButtonW("Close", okl::UiPx(84.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
                     ImGui::EndPopup();
                 }
 
@@ -20581,9 +20581,9 @@ int main(int argc, char** argv) {
                     ImGui::SetNextItemWidth(-1);
                     ImGui::InputTextWithHint("##staffwho", "Player username", who, sizeof(who));
                     ImGui::BeginDisabled(!who[0]);
-                    if (ImGui::Button("Verify", ImVec2(100, 0))) { if (!kFoDemo) FireForumAction(new FoAction{17, "", 0, 1, who, "", ""}); else Toast("Verified", 1); }
+                    if (ImGui::Button("Verify", ImVec2(okl::FitButtonW("Verify", okl::UiPx(100.0f)), 0))) { if (!kFoDemo) FireForumAction(new FoAction{17, "", 0, 1, who, "", ""}); else Toast("Verified", 1); }
                     ImGui::SameLine();
-                    if (ImGui::Button("Unverify", ImVec2(100, 0))) { if (!kFoDemo) FireForumAction(new FoAction{17, "", 0, 0, who, "", ""}); }
+                    if (ImGui::Button("Unverify", ImVec2(okl::FitButtonW("Unverify", okl::UiPx(100.0f)), 0))) { if (!kFoDemo) FireForumAction(new FoAction{17, "", 0, 0, who, "", ""}); }
                     ImGui::Separator();
                     ImGui::TextDisabled("Badges");
                     static const char* kBadges[] = {"developer", "moderator", "beta", "partner"};
@@ -20598,7 +20598,7 @@ int main(int argc, char** argv) {
                     }
                     ImGui::EndDisabled();
                     ImGui::Dummy(ImVec2(0, 6));
-                    if (ImGui::Button("Close", ImVec2(90, 30))) ImGui::CloseCurrentPopup();
+                    if (ImGui::Button("Close", ImVec2(okl::FitButtonW("Close", okl::UiPx(90.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
                     ImGui::EndPopup();
                 }
             };
@@ -20725,7 +20725,7 @@ int main(int argc, char** argv) {
                         ImGui::InputTextMultiline("##nb", newBody, sizeof(newBody), ImVec2(-1, 90));
                         ImGui::PopStyleVar(2);
                         ImGui::BeginDisabled(!newThread[0]);
-                        if (PrimaryButton("Post", ImVec2(110, 32))) {
+                        if (PrimaryButton("Post", ImVec2(okl::FitButtonW("Post", okl::UiPx(110.0f)), okl::UiPx(32.0f)))) {
                             // Fire the post off-thread; optimistically close the form.
                             const long toSec = foNewSection >= 0 ? foNewSection : foSection;
                             if (!kFoDemo) FireForumAction(new FoAction{2, "", toSec, 0, newThread, newBody, newCat});
@@ -20738,7 +20738,7 @@ int main(int argc, char** argv) {
                         }
                         ImGui::EndDisabled();
                         ImGui::SameLine();
-                        if (ImGui::Button("Cancel", ImVec2(90, 32))) foShowNew = false;
+                        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(90.0f)), okl::UiPx(32.0f)))) foShowNew = false;
                         if (!foErr.empty()) { ImGui::SameLine(); ImGui::TextColored(okaytheme::Current().danger, "%s", foErr.c_str()); }
                     }
                     ImGui::EndChild();
@@ -20945,12 +20945,12 @@ int main(int argc, char** argv) {
                         ImGui::PopStyleColor();
                         if (ImGui::BeginPopup("##rmthread")) {
                             ImGui::TextUnformatted("Remove this post and its comments?");
-                            if (ImGui::Button("Remove", ImVec2(110, 0))) {
+                            if (ImGui::Button("Remove", ImVec2(okl::FitButtonW("Remove", okl::UiPx(110.0f)), 0))) {
                                 if (!kFoDemo) FireForumAction(new FoAction{10, "", openThread, 0, "", "", ""});
                                 ftCache.erase(std::remove_if(ftCache.begin(), ftCache.end(), [&](const okay::ForumThread& t) { return t.id == openThread; }), ftCache.end());
                                 openThread = 0; ImGui::CloseCurrentPopup();
                             }
-                            ImGui::SameLine(); if (ImGui::Button("Cancel", ImVec2(90, 0))) ImGui::CloseCurrentPopup();
+                            ImGui::SameLine(); if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(90.0f)), 0))) ImGui::CloseCurrentPopup();
                             ImGui::EndPopup();
                         }
                     }
@@ -21018,7 +21018,7 @@ int main(int argc, char** argv) {
                                                    bannedHere ? "You're banned from this section" : "Add a comment\xE2\x80\xA6",
                                                    replyBuf, sizeof(replyBuf), ImGuiInputTextFlags_EnterReturnsTrue);
                 ImGui::SameLine(0, 8);
-                bool post = PrimaryButton("Comment", ImVec2(100, ImGui::GetFrameHeight()));
+                bool post = PrimaryButton("Comment", ImVec2(okl::FitButtonW("Comment", okl::UiPx(100.0f)), ImGui::GetFrameHeight()));
                 ImGui::EndDisabled();
                 ImGui::PopStyleVar(2);
                 if ((post || rp) && replyBuf[0]) {

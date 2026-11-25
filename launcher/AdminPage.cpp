@@ -241,7 +241,7 @@ void DrawReportPopup() {
         }
         if (busy) ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 30))) ImGui::CloseCurrentPopup();
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }
@@ -389,7 +389,7 @@ static void DrawReportsAdmin() {
                     RepAdminJob* j = new RepAdminJob; j->hasAction = true; j->action = q; j->okMsg = okMsg; queue(j); note[0] = '\0';
                 } else Toast(err, 2);
             };
-            if (r.status != "resolved" && PrimaryButton("Resolve", ImVec2(90, 0))) set("resolved", "Marked resolved");
+            if (r.status != "resolved" && PrimaryButton("Resolve", ImVec2(okl::FitButtonW("Resolve", okl::UiPx(90.0f)), 0))) set("resolved", "Marked resolved");
             ImGui::SameLine();
             if (r.status != "dismissed" && ImGui::Button("Dismiss")) set("dismissed", "Report dismissed");
             ImGui::SameLine();
@@ -416,13 +416,13 @@ void DrawAcReportPopup() {
         ImGui::SetNextItemWidth(420); ImGui::InputTextWithHint("##acrgame", "Game (optional)", repGame, sizeof(repGame));
         ImGui::InputTextMultiline("##acrdet", repDetails, sizeof(repDetails), ImVec2(420, 80));
         acb::Request q; std::string err;
-        if (PrimaryButton("Send report", ImVec2(140, 30))) {
+        if (PrimaryButton("Send report", ImVec2(okl::FitButtonW("Send report", okl::UiPx(140.0f)), okl::UiPx(30.0f)))) {
             if (std::getenv("OKAY_UI_DEMO_USER")) { Toast("Demo: nothing is sent", 0); ImGui::CloseCurrentPopup(); }
             else if (!acb::FileReport(g_acReportUid, repGame, repWhy, repDetails, std::string(), q, &err)) Toast(err, 2);
             else { AcMeJob* j = new AcMeJob; j->hasAction = true; j->action = q; j->okMsg = "Report sent. Thanks!"; AcMeQueue(j); ImGui::CloseCurrentPopup(); }
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 30))) ImGui::CloseCurrentPopup();
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }
@@ -619,9 +619,9 @@ void DrawAdminPage(okay::account::AccountService& account) {
         ImGui::Dummy(ImVec2(0, 4));
         logRows(D.log, 12);
         ImGui::Dummy(ImVec2(0, 4));
-        if (ImGui::Button("Full audit log", ImVec2(140, 30))) sub = 5;
+        if (ImGui::Button("Full audit log", ImVec2(okl::FitButtonW("Full audit log", okl::UiPx(140.0f)), okl::UiPx(30.0f)))) sub = 5;
         ImGui::SameLine();
-        if (ImGui::Button("Refresh", ImVec2(100, 30))) queue(job(1));
+        if (ImGui::Button("Refresh", ImVec2(okl::FitButtonW("Refresh", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) queue(job(1));
         cardEnd();
     } else if (sub == 1) {   // ======================= Players =======================
         const float aw = ImGui::GetContentRegionAvail().x;
@@ -677,7 +677,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
                                (u.online ? std::string("online now") : u.lastSeen > 0 ? "seen " + RelTime(u.lastSeen) : std::string("never online"));
             d->AddText(ImVec2(hp.x + 70, hp.y + 32), cDim, meta.c_str());
             ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + 64));
-            if (ImGui::Button("View profile", ImVec2(120, 28))) OpenPublicProfile(u.id, u.username, u.display, u.avatar);
+            if (ImGui::Button("View profile", ImVec2(okl::FitButtonW("View profile", okl::UiPx(120.0f)), okl::UiPx(28.0f)))) OpenPublicProfile(u.id, u.username, u.display, u.avatar);
             ImGui::Dummy(ImVec2(0, 8));
 
             // Roles.
@@ -731,7 +731,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
             if (u.banned) {
                 ImGui::TextColored(okaytheme::Current().danger, "Banned %s", u.banUntil > 0 ? ("until " + FormatDate(u.banUntil)).c_str() : "permanently");
                 if (!u.banReason.empty()) ImGui::TextWrapped("Reason: %s", u.banReason.c_str());
-                if (ImGui::Button("Lift ban", ImVec2(120, 30))) {
+                if (ImGui::Button("Lift ban", ImVec2(okl::FitButtonW("Lift ban", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) {
                     AdminJob* j = job(6); j->s1 = u.id; j->s3 = userQ; queue(j);
                     if (kDemo) { u.banned = false; Toast("Ban lifted", 1); }
                 }
@@ -747,7 +747,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
                 ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
                 ImGui::BeginDisabled(!banReason[0]);
-                if (ImGui::Button("Ban player", ImVec2(120, 0))) {
+                if (ImGui::Button("Ban player", ImVec2(okl::FitButtonW("Ban player", okl::UiPx(120.0f)), 0))) {
                     AdminJob* j = job(5); j->s1 = u.id; j->s2 = banReason; j->n1 = kHours[std::clamp(banDur, 0, 4)]; j->s3 = userQ; queue(j);
                     if (kDemo) { u.banned = true; u.banReason = banReason; Toast("Player banned", 1); }
                     banReason[0] = '\0';
@@ -809,7 +809,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
             ImGui::SameLine(0, 8);
             if (w.status != "approved") {
                 ImGui::BeginDisabled(!hosted);
-                if (PrimaryButton("Approve", ImVec2(110, 30))) { doId = w.id; doAct = "approve"; }
+                if (PrimaryButton("Approve", ImVec2(okl::FitButtonW("Approve", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) { doId = w.id; doAct = "approve"; }
                 ImGui::EndDisabled();
                 ImGui::SameLine(0, 8);
             }
@@ -822,7 +822,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
             }
             ImGui::BeginDisabled(myRank < 2);
             ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
-            if (ImGui::Button("Delete", ImVec2(80, 30))) { doId = w.id; doAct = "delete"; }
+            if (ImGui::Button("Delete", ImVec2(okl::FitButtonW("Delete", okl::UiPx(80.0f)), okl::UiPx(30.0f)))) { doId = w.id; doAct = "delete"; }
             ImGui::PopStyleColor();
             ImGui::EndDisabled();
             if (rejectId == w.id) {
@@ -830,10 +830,10 @@ void DrawAdminPage(okay::account::AccountService& account) {
                 ImGui::InputTextWithHint("##rnote", "Why? (the author sees this)", rejectNote, sizeof(rejectNote));
                 ImGui::SameLine(0, 8);
                 ImGui::BeginDisabled(!rejectNote[0]);
-                if (ImGui::Button("Confirm", ImVec2(96, 0))) { doId = w.id; doAct = "reject"; doNote = rejectNote; rejectId = 0; }
+                if (ImGui::Button("Confirm", ImVec2(okl::FitButtonW("Confirm", okl::UiPx(96.0f)), 0))) { doId = w.id; doAct = "reject"; doNote = rejectNote; rejectId = 0; }
                 ImGui::EndDisabled();
                 ImGui::SameLine(0, 6);
-                if (ImGui::Button("Cancel", ImVec2(80, 0))) rejectId = 0;
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(80.0f)), 0))) rejectId = 0;
             }
             cardEnd();
             ImGui::Dummy(ImVec2(0, 8));
@@ -913,14 +913,14 @@ void DrawAdminPage(okay::account::AccountService& account) {
             ImGui::BeginDisabled(myRank < 2);
             if (confirmDel != sec->id) {
                 ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
-                if (ImGui::Button("Delete section\xE2\x80\xA6", ImVec2(140, 30))) confirmDel = sec->id;
+                if (ImGui::Button("Delete section\xE2\x80\xA6", ImVec2(okl::FitButtonW("Delete section\xE2\x80\xA6", okl::UiPx(140.0f)), okl::UiPx(30.0f)))) confirmDel = sec->id;
                 ImGui::PopStyleColor();
             } else {
                 ImGui::TextColored(okaytheme::Current().danger, "Delete o/%s and all its posts?", sec->slug.c_str());
                 ImGui::SameLine();
-                if (ImGui::Button("Yes, delete", ImVec2(110, 0))) { AdminJob* j = job(12); j->n1 = sec->id; queue(j); confirmDel = 0; selSection = 0; }
+                if (ImGui::Button("Yes, delete", ImVec2(okl::FitButtonW("Yes, delete", okl::UiPx(110.0f)), 0))) { AdminJob* j = job(12); j->n1 = sec->id; queue(j); confirmDel = 0; selSection = 0; }
                 ImGui::SameLine();
-                if (ImGui::Button("Keep", ImVec2(70, 0))) confirmDel = 0;
+                if (ImGui::Button("Keep", ImVec2(okl::FitButtonW("Keep", okl::UiPx(70.0f)), 0))) confirmDel = 0;
             }
             ImGui::EndDisabled();
             cardEnd();
@@ -953,7 +953,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
             if (ImGui::Button(t.locked ? "Turn comments on" : "Turn comments off", ImVec2(160, 28))) { tId = t.id; tAct = t.locked ? "unlock" : "lock"; }
             ImGui::SameLine(0, 6);
             ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
-            if (ImGui::Button("Remove", ImVec2(110, 28))) { tId = t.id; tAct = "delete"; }
+            if (ImGui::Button("Remove", ImVec2(okl::FitButtonW("Remove", okl::UiPx(110.0f)), okl::UiPx(28.0f)))) { tId = t.id; tAct = "delete"; }
             ImGui::PopStyleColor();
             ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + 46));
             ImGui::Dummy(ImVec2(0, 0));
@@ -986,7 +986,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
             if (!b.reason.empty()) meta += "  \xC2\xB7  " + b.reason;
             d->AddText(ImVec2(rp.x, rp.y + 20), cDim, meta.c_str());
             ImGui::SetCursorScreenPos(ImVec2(rp.x + ImGui::GetContentRegionAvail().x - 110, rp.y + 4));
-            if (ImGui::Button("Lift ban", ImVec2(110, 28))) lift = b.userId;
+            if (ImGui::Button("Lift ban", ImVec2(okl::FitButtonW("Lift ban", okl::UiPx(110.0f)), okl::UiPx(28.0f)))) lift = b.userId;
             ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + 46));
             ImGui::Dummy(ImVec2(0, 0));
             ImGui::PopID();
@@ -1004,7 +1004,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
         ImGui::Dummy(ImVec2(0, 4));
         logRows(D.log, 200);
         ImGui::Dummy(ImVec2(0, 4));
-        if (ImGui::Button("Refresh", ImVec2(100, 30))) queue(job(16));
+        if (ImGui::Button("Refresh", ImVec2(okl::FitButtonW("Refresh", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) queue(job(16));
         cardEnd();
     }
 }

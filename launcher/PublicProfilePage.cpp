@@ -956,7 +956,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
             else {
                 ImGui::TextDisabled("You haven't published anything to the Marketplace yet.");
                 ImGui::Dummy(ImVec2(0, 2));
-                if (PrimaryButton("Publish a game", ImVec2(160, 0))) { out.gotoTab = 7; g_openPublishForm = true; ClosePublicProfile(); }
+                if (PrimaryButton("Publish a game", ImVec2(okl::FitButtonW("Publish a game", okl::UiPx(160.0f)), 0))) { out.gotoTab = 7; g_openPublishForm = true; ClosePublicProfile(); }
             }
         } else {
             const float iw = ImGui::GetContentRegionAvail().x, g = 12.0f, coverH = 92.0f, th = coverH + 56.0f;

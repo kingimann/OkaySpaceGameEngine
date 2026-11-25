@@ -653,7 +653,7 @@ static void DrawInvitePopups() {
             }
             ImGui::PopStyleColor(2);
             ImGui::SameLine();
-            if (ImGui::Button("Later", ImVec2(90, 28))) close = true;
+            if (ImGui::Button("Later", ImVec2(okl::FitButtonW("Later", okl::UiPx(90.0f)), okl::UiPx(28.0f)))) close = true;
         }
         ImGui::End();
         ImGui::PopStyleColor(2);
@@ -747,11 +747,11 @@ void DrawMpDialogs() {
         ImGui::EndChild();
         ImGui::Separator();
         ImGui::BeginDisabled(toParty || !MpCanInvite());
-        if (ImGui::Button("Copy invite link", ImVec2(150, 30))) { ImGui::SetClipboardText(g_myGame.invite.c_str()); Toast("Invite link copied \xE2\x80\x94 anyone with it can join", 1); }
+        if (ImGui::Button("Copy invite link", ImVec2(okl::FitButtonW("Copy invite link", okl::UiPx(150.0f)), okl::UiPx(30.0f)))) { ImGui::SetClipboardText(g_myGame.invite.c_str()); Toast("Invite link copied \xE2\x80\x94 anyone with it can join", 1); }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Paste it anywhere; in OkaySpace it opens as a Join card.");
         ImGui::SameLine(ImGui::GetWindowWidth() - 100);
-        if (ImGui::Button("Done", ImVec2(84, 30)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (ImGui::Button("Done", ImVec2(okl::FitButtonW("Done", okl::UiPx(84.0f)), okl::UiPx(30.0f))) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 
@@ -765,9 +765,9 @@ void DrawMpDialogs() {
         ImGui::SetNextItemWidth(300);
         const bool enter = ImGui::InputTextWithHint("##mppw", "Password", pw, sizeof(pw), ImGuiInputTextFlags_Password | ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::Dummy(ImVec2(0, 4));
-        if ((PrimaryButton("Join", ImVec2(120, 30)) || enter) && pw[0]) { l.password = pw; ImGui::CloseCurrentPopup(); MpLaunch(l); }
+        if ((PrimaryButton("Join", ImVec2(okl::FitButtonW("Join", okl::UiPx(120.0f)), okl::UiPx(30.0f))) || enter) && pw[0]) { l.password = pw; ImGui::CloseCurrentPopup(); MpLaunch(l); }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(100, 30))) ImGui::CloseCurrentPopup();
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 
@@ -790,7 +790,7 @@ void DrawMpDialogs() {
             }
         if (lib.empty()) ImGui::TextDisabled("Your library is empty.");
         ImGui::EndChild();
-        if (ImGui::Button("Cancel", ImVec2(100, 30))) ImGui::CloseCurrentPopup();
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 
@@ -821,7 +821,7 @@ void DrawMpDialogs() {
         const bool isLink = okay::JoinLink::Parse(addr, pasted);
         const bool ok = isLink || (okay::SplitHostPort(addr, h, port) && !lib.empty());
         ImGui::BeginDisabled(!ok);
-        if (PrimaryButton("Connect", ImVec2(120, 30))) {
+        if (PrimaryButton("Connect", ImVec2(okl::FitButtonW("Connect", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) {
             okay::JoinLink l = pasted;
             if (!isLink) { l = okay::JoinLink{}; l.game = lib[gameIdx].title; l.addr = h + ":" + std::to_string(port); }
             if (pw[0]) l.password = pw;
@@ -830,7 +830,7 @@ void DrawMpDialogs() {
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(100, 30))) ImGui::CloseCurrentPopup();
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }
@@ -856,9 +856,9 @@ static void DrawPartyCard() {
         ImGui::TextUnformatted("Play together with friends");
         ImGui::TextDisabled("The party leader picks the game and server \xE2\x80\x94 everyone in the party joins with them.");
         ImGui::SetCursorPos(ImVec2(right - 290, 18));
-        if (PrimaryButton("Create party", ImVec2(140, 32))) PartyRun(kPartyCreate);
+        if (PrimaryButton("Create party", ImVec2(okl::FitButtonW("Create party", okl::UiPx(140.0f)), okl::UiPx(32.0f)))) PartyRun(kPartyCreate);
         ImGui::SameLine();
-        if (ImGui::Button("Invite to party", ImVec2(140, 32))) { g_inviteMode = 1; g_inviteOpenReq = true; }
+        if (ImGui::Button("Invite to party", ImVec2(okl::FitButtonW("Invite to party", okl::UiPx(140.0f)), okl::UiPx(32.0f)))) { g_inviteMode = 1; g_inviteOpenReq = true; }
         ImGui::EndChild(); ImGui::PopStyleVar(); ImGui::PopStyleColor();
         return;
     }
@@ -873,20 +873,20 @@ static void DrawPartyCard() {
                      : leader ? std::string("Start a match \xE2\x80\x94 your party joins you") : (lead ? lead->Name() : std::string("The leader")) + " hasn't started a game yet";
     ImGui::TextUnformatted(what.c_str());
     ImGui::SetCursorPos(ImVec2(right - 360, 16));
-    if (ImGui::Button("Invite", ImVec2(100, 30))) { g_inviteMode = 1; g_inviteOpenReq = true; }
+    if (ImGui::Button("Invite", ImVec2(okl::FitButtonW("Invite", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) { g_inviteMode = 1; g_inviteOpenReq = true; }
     ImGui::SameLine();
     const bool ready = me && me->ready;
     if (ImGui::Button(ready ? "Ready" : "Not ready", ImVec2(110, 30))) PartyRun(kPartyReady, {}, {}, !ready);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip(ready ? "You're ready. Click to un-ready." : "Let the party know you're ready.");
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
-    if (ImGui::Button("Leave", ImVec2(110, 30))) PartyRun(kPartyLeave);
+    if (ImGui::Button("Leave", ImVec2(okl::FitButtonW("Leave", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) PartyRun(kPartyLeave);
     ImGui::PopStyleColor();
     if (!leader && !g_party.joinLink.empty()) {   // jump in now (e.g. after turning Follow off)
         ImGui::SetCursorPos(ImVec2(right - 360, 52));
         ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::SuccessFill());
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::SuccessFill());
-        if (ImGui::Button("Join the leader", ImVec2(342, 26))) MpJoin(g_party.joinLink, lead ? lead->Name() : std::string());
+        if (ImGui::Button("Join the leader", ImVec2(okl::FitButtonW("Join the leader", okl::UiPx(342.0f)), okl::UiPx(26.0f)))) MpJoin(g_party.joinLink, lead ? lead->Name() : std::string());
         ImGui::PopStyleColor(2);
     }
     ImGui::Dummy(ImVec2(0, 6));
@@ -1009,9 +1009,9 @@ static void DrawMpInfoPopup(const std::function<void(const MpRow&)>& join) {
         ImGui::EndTable();
     }
     ImGui::Dummy(ImVec2(0, 4));
-    if (PrimaryButton("Join", ImVec2(130, 30))) { ImGui::CloseCurrentPopup(); join(r); }
+    if (PrimaryButton("Join", ImVec2(okl::FitButtonW("Join", okl::UiPx(130.0f)), okl::UiPx(30.0f)))) { ImGui::CloseCurrentPopup(); join(r); }
     ImGui::SameLine();
-    if (ImGui::Button("Close", ImVec2(100, 30)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+    if (ImGui::Button("Close", ImVec2(okl::FitButtonW("Close", okl::UiPx(100.0f)), okl::UiPx(30.0f))) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }
 
@@ -1202,12 +1202,12 @@ static void DrawRecentPlayers(bool signedIn, bool reload) {
             const float by = ImGui::GetCursorPosY() + 4;
             ImGui::SetCursorPosY(by);
             ImGui::BeginDisabled(!canInvite);
-            if (ImGui::Button("Invite", ImVec2(110, 32))) MpInviteUser(r.uid, r.name);
+            if (ImGui::Button("Invite", ImVec2(okl::FitButtonW("Invite", okl::UiPx(110.0f)), okl::UiPx(32.0f)))) MpInviteUser(r.uid, r.name);
             ImGui::EndDisabled();
             if (!canInvite && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Host or join a match in a game first.");
             ImGui::SameLine();
             ImGui::SetCursorPosY(by);
-            if (ImGui::Button("Profile", ImVec2(110, 32))) OpenPublicProfile(r.uid, r.username, r.name, r.avatar, 0);
+            if (ImGui::Button("Profile", ImVec2(okl::FitButtonW("Profile", okl::UiPx(110.0f)), okl::UiPx(32.0f)))) OpenPublicProfile(r.uid, r.username, r.name, r.avatar, 0);
         }
         ImGui::EndChild();
         ImGui::PopStyleVar();
@@ -1375,7 +1375,7 @@ void DrawMultiplayerPage(bool signedIn) {
         static char fmMode[40] = "", fmRegion[24] = "";
         const auto lib = MpLibrary();
         ImGui::BeginDisabled(lib.empty() || !signedIn);
-        if (ImGui::Button("Find match", ImVec2(130, 32))) { fmGame = gameFilter > 0 ? gameFilter - 1 : 0; ImGui::OpenPopup("##findmatch"); }
+        if (ImGui::Button("Find match", ImVec2(okl::FitButtonW("Find match", okl::UiPx(130.0f)), okl::UiPx(32.0f)))) { fmGame = gameFilter > 0 ? gameFilter - 1 : 0; ImGui::OpenPopup("##findmatch"); }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip("%s", !signedIn ? "Sign in to use matchmaking." : lib.empty() ? "Build a game first: only exported games can be played online."
@@ -1394,9 +1394,9 @@ void DrawMultiplayerPage(bool signedIn) {
             ImGui::SetNextItemWidth(220); ImGui::InputTextWithHint("Mode", "(the game's default)", fmMode, sizeof(fmMode));
             ImGui::SetNextItemWidth(220); ImGui::InputTextWithHint("Region", "any", fmRegion, sizeof(fmRegion));
             ImGui::Dummy(ImVec2(0, 4));
-            if (PrimaryButton("Find match", ImVec2(150, 32)) && !lib.empty()) { MpFindMatch(lib[fmGame].title, fmMode, fmPlayers, fmRegion); ImGui::CloseCurrentPopup(); }
+            if (PrimaryButton("Find match", ImVec2(okl::FitButtonW("Find match", okl::UiPx(150.0f)), okl::UiPx(32.0f))) && !lib.empty()) { MpFindMatch(lib[fmGame].title, fmMode, fmPlayers, fmRegion); ImGui::CloseCurrentPopup(); }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(100, 32))) ImGui::CloseCurrentPopup();
+            if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(32.0f)))) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
         PumpQuickPlay();
@@ -1410,7 +1410,7 @@ void DrawMultiplayerPage(bool signedIn) {
                                                    : "Join the best open server for any game in your library");
     }
         ImGui::SameLine();
-        if (ImGui::Button("Connect to server\xE2\x80\xA6", ImVec2(170, 32))) g_mpConnectReq = true;
+        if (ImGui::Button("Connect to server\xE2\x80\xA6", ImVec2(okl::FitButtonW("Connect to server\xE2\x80\xA6", okl::UiPx(170.0f)), okl::UiPx(32.0f)))) g_mpConnectReq = true;
         ImGui::SameLine();
         ImGui::BeginDisabled(g_mpBusy);
         if (ImGui::Button(g_mpBusy ? "Refreshing\xE2\x80\xA6" : "Refresh", ImVec2(110, 32))) shownTab = -1;
@@ -1448,9 +1448,9 @@ void DrawMultiplayerPage(bool signedIn) {
         ImGui::SetCursorScreenPos(ImVec2(ImGui::GetWindowPos().x + bx, p.y + (tile - 32) * 0.5f));
         const bool can = !cur.invite.empty();
         ImGui::BeginDisabled(!can);
-        if (PrimaryButton("Invite friends", ImVec2(150, 32))) { g_inviteMode = 0; g_inviteOpenReq = true; }
+        if (PrimaryButton("Invite friends", ImVec2(okl::FitButtonW("Invite friends", okl::UiPx(150.0f)), okl::UiPx(32.0f)))) { g_inviteMode = 0; g_inviteOpenReq = true; }
         ImGui::SameLine();
-        if (ImGui::Button("Copy join link", ImVec2(130, 32))) { ImGui::SetClipboardText(cur.invite.c_str()); Toast("Join link copied", 1); }
+        if (ImGui::Button("Copy join link", ImVec2(okl::FitButtonW("Copy join link", okl::UiPx(130.0f)), okl::UiPx(32.0f)))) { ImGui::SetClipboardText(cur.invite.c_str()); Toast("Join link copied", 1); }
         ImGui::EndDisabled();
         if (!can && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip("Host or join a match in the game first.");
@@ -1671,7 +1671,7 @@ void DrawMultiplayerPage(bool signedIn) {
         ImGui::EndGroup();
         const float right = ImGui::GetContentRegionMax().x;
         ImGui::SameLine(right - 410);
-        if (ImGui::Button("Players", ImVec2(110, 36))) MpOpenInfo(*sr);
+        if (ImGui::Button("Players", ImVec2(okl::FitButtonW("Players", okl::UiPx(110.0f)), okl::UiPx(36.0f)))) MpOpenInfo(*sr);
         if (!sr->relayed && !sr->info.host.empty()) {
             ImGui::SameLine(right - 290);
             const bool fav = MpIsFav(sr->info.Address());

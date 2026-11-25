@@ -308,7 +308,7 @@ void DrawThisVersion(const Host& h) {
     if (ImGui::Button(busy ? "Checking\xE2\x80\xA6" : "Check again", ImVec2(140, 30))) StartIndex(h);
     ImGui::EndDisabled();
     ImGui::SameLine(0, 8);
-    if (ImGui::Button("Open install folder", ImVec2(158, 30))) {
+    if (ImGui::Button("Open install folder", ImVec2(okl::FitButtonW("Open install folder", okl::UiPx(158.0f)), okl::UiPx(30.0f)))) {
         std::error_code ec;
         fs::create_directories(okayver::VersionsDir(h.launcherDir), ec);
         if (h.openFolder) h.openFolder(okayver::VersionsDir(h.launcherDir).string());
@@ -500,7 +500,7 @@ void DrawInstalled(const Host& h) {
         if (ImGui::Button(isDefault ? "Default" : "Make default", ImVec2(120, 30))) { set.defaultEditor = in.version; if (h.savePrefs) h.savePrefs(); Toast(h, V(in.version) + " is now your default editor.", 1); }
         ImGui::EndDisabled();
         ImGui::SameLine(0, 8);
-        if (DangerButton("Remove", ImVec2(96, 30))) st.removeAsk = in.version;
+        if (DangerButton("Remove", ImVec2(okl::FitButtonW("Remove", okl::UiPx(96.0f)), okl::UiPx(30.0f)))) st.removeAsk = in.version;
         RowEnd(r, &in != &st.installed.back());
         ImGui::PopID();
     }
@@ -567,7 +567,7 @@ void DrawAvailable(const Host& h) {
         ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kRed), "%s", st.index.error.c_str());
         ImGui::PopTextWrapPos();
         ImGui::BeginDisabled(st.indexJob != nullptr);
-        if (ImGui::Button("Try again", ImVec2(120, 30))) StartIndex(h);
+        if (ImGui::Button("Try again", ImVec2(okl::FitButtonW("Try again", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) StartIndex(h);
         ImGui::EndDisabled();
     } else {
         const std::string cur = okayver::NormalizeVersion(h.currentVersion);
@@ -618,7 +618,7 @@ void DrawAvailable(const Host& h) {
                 ImGui::PopStyleColor();
                 ImGui::SetCursorScreenPos(ImVec2(barPos.x + rightW - 92.0f, barPos.y));
                 ImGui::BeginDisabled(st.job->cancel.load());
-                if (ImGui::Button("Cancel", ImVec2(84, 24))) st.job->cancel = true;
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(84.0f)), okl::UiPx(24.0f)))) st.job->cancel = true;
                 ImGui::EndDisabled();
             } else {
                 ImGui::SetCursorScreenPos(ImVec2(r.p0.x + r.width - 120.0f, r.p0.y + 14));
@@ -662,7 +662,7 @@ void DrawModals(const Host& h) {
         if (h.editorRunning) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kAmber), "An editor is open. A version that editor is using can't be removed.");
         ImGui::PopTextWrapPos();
         ImGui::Dummy(ImVec2(0, 6));
-        if (DangerButton("Remove", ImVec2(120, 0))) {
+        if (DangerButton("Remove", ImVec2(okl::FitButtonW("Remove", okl::UiPx(120.0f)), 0))) {
             const Result r = Remove(h.launcherDir, v, MakeGuards(h));
             Toast(h, r.message, r.ok() ? 1 : 2);
             st.removeAsk.clear();
@@ -670,7 +670,7 @@ void DrawModals(const Host& h) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { st.removeAsk.clear(); ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { st.removeAsk.clear(); ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     } else if (!ImGui::IsPopupOpen("Remove this version?")) st.removeAsk.clear();
 }

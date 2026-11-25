@@ -1348,6 +1348,25 @@ private:
         emit(in);
         return Operand::vreg(dst);
     }
+    // A class that is not trivial for the purposes of calls (it has a destructor, or a copy or
+    // move constructor that runs code) is passed by an invisible reference (Itanium C++ ABI 3.1.2.3):
+    // the caller makes the parameter object, passes its address and destroys it after the call; the
+    // callee works on that object in place. A copy of its bytes would leave two owners of the same
+    // resources (the callee's changes lost, a buffer freed twice).
+    static bool byAddress(const Type* t) {
+        if (!t || t->kind != Type::Kind::Struct || t->tag.empty()) return false;
+        const Type* c = canonOf(t);
+        if (!c) return false;
+        if (c->needDtor) return true;
+        for (const Param& p : c->params) {
+            if (p.name != "<ctor>" || !p.type || p.type->params.size() != 1) continue;
+            const Type* a = p.type->params[0].type.get();
+            if (a && a->kind == Type::Kind::Reference && a->inner && a->inner->kind == Type::Kind::Struct &&
+                a->inner->tag == c->tag)
+                return true;
+        }
+        return false;
+    }
     static int structPieces(const Type* t, int& sz, bool& memClass) {
         sz = t ? sizeOf(t) : 8;
         bool rec = t && (t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union);
@@ -2401,6 +2420,26 @@ private:
             // A struct of up to 16 bytes that is a call's result arrives in registers (rax, or
             // rax:rdx), not as an address: pass those eightbytes on as they are.
             const bool inRegs = !memClass && sz <= 16 && e.kids[i]->kind == Expr::Kind::Call;
+            if (!varExtra && byAddress(declared ? declared : t)) {
+                Operand at = v.op;
+                if (inRegs && (v.pair || nreg == 1)) {  // a call's result: into memory first
+                    int slot = fresh();
+                    Inst loc;
+                    loc.op = Inst::Op::Local;
+                    loc.dst = slot;
+                    loc.a = Operand::number(sz < 1 ? 1 : sz);
+                    emit(loc);
+                    storeBits(Operand::vreg(slot), v.op, sz >= 8 ? 8 : sz);
+                    if (v.pair) storeBits(addAddr(Operand::vreg(slot), 8), v.hi, sz - 8);
+                    at = Operand::vreg(slot);
+                }
+                if (reg >= 6) stack.push_back(at);
+                else {
+                    regs.push_back(at);
+                    ++reg;
+                }
+                continue;
+            }
             if (inRegs && (v.pair || nreg == 1)) {
                 Operand lo = v.op;
                 Operand hi = v.pair ? v.hi : Operand::number(0);
@@ -2942,6 +2981,7 @@ private:
             int size = 8;
             bool isStruct = false;
             bool isFp = false;
+            bool byAddr = false;  // its address (byAddress)
             int xmmAt = -1;
         };
         std::vector<PPlan> plans;
@@ -2972,12 +3012,17 @@ private:
                 }
                 plan.nreg = structPieces(p.type.get(), plan.size, memClass);
                 plan.isStruct = p.type && (p.type->kind == Type::Kind::Struct || p.type->kind == Type::Kind::Union);
+                if (plan.isStruct && byAddress(p.type.get())) {  // its address, in one eightbyte
+                    plan.byAddr = true;
+                    plan.nreg = 1;
+                    memClass = false;
+                }
                 if (memClass || reg + plan.nreg > 6) {
                     plan.memory = true;
                     plan.nreg = 0;
                     stack = alignUp(stack, 8);
                     plan.stackOff = stack;
-                    stack += (plan.size + 7) & ~7;
+                    stack += plan.byAddr ? 8 : (plan.size + 7) & ~7;
                 } else {
                     plan.regAt = reg;
                     reg += plan.nreg;
@@ -3005,7 +3050,13 @@ private:
                 const PPlan& plan = plans[i];
                 Sym s;
                 if (p.type) describe(s, p.type.get());
-                if (plan.isStruct) {
+                if (plan.isStruct && plan.byAddr) {
+                    int addr = fresh();
+                    if (plan.memory) emitMov(addr, loadBits(frameAddr(16 + plan.stackOff), 8), 8, true);
+                    else emitMov(addr, Operand::vreg(plan.regAt), 8, true);
+                    s.reg = addr;
+                    s.agg = true;
+                } else if (plan.isStruct) {
                     int addr = fresh();
                     if (plan.memory) {
                         Inst lea;

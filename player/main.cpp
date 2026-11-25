@@ -1461,7 +1461,8 @@ int main(int argc, char** argv) {
     // app folder when enabled — so saving works even from a read-only install (e.g.
     // Program Files) and two games never clash. Falls back to beside-the-exe.
     std::string saveDir = baseDir;
-    if (cfg.saveToUserDir) {
+    const std::string saveDirArg = pcl.Get("save-dir");   // the browser's per-site save folder: no per-user folder is made
+    if (cfg.saveToUserDir && saveDirArg.empty()) {
         const char* org = cfg.company.empty() ? "OkaySpace" : cfg.company.c_str();
         const char* app = cfg.title.empty() ? "Game" : cfg.title.c_str();
         const std::string pref = pb->PrefPath(org, app);
@@ -1477,10 +1478,10 @@ int main(int argc, char** argv) {
     }
 #endif
     // `--save-dir DIR` (the browser's per-site save folder): it wins over the build's setting.
-    if (const std::string sd = pcl.Get("save-dir"); !sd.empty()) {
+    if (!saveDirArg.empty()) {
         std::error_code sdec;
-        std::filesystem::create_directories(std::filesystem::u8path(sd), sdec);
-        saveDir = (sd.back() == '/' || sd.back() == '\\') ? sd : sd + "/";
+        std::filesystem::create_directories(std::filesystem::u8path(saveDirArg), sdec);
+        saveDir = (saveDirArg.back() == '/' || saveDirArg.back() == '\\') ? saveDirArg : saveDirArg + "/";
     }
     okay::Save::SetBaseDir(saveDir);  // relative SaveData files (save.okaysave, ...) land here
     // Build Settings > Game: how much the game logs, and an optional log file in the save folder.

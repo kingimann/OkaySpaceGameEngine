@@ -156,7 +156,7 @@ int main() {
             CHECK(plays == -1);
         }
         // The address field: type an address and press Enter.
-        sim2.Click(200, 12, ui2);
+        sim2.Click(330, 15, ui2);   // inside the address field
         sim2.Hold(UI::KeyId_Ctrl, false);
         sim2.Press(Key_SelectAll);
         sim2.Frame(ui2);

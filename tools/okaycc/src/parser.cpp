@@ -1995,6 +1995,19 @@ private:
                 parseUsing();
                 continue;
             }
+            if (isKw("typedef")) {
+                // A member typedef ([dcl.typedef], [class.mem]): typedef pair<const K, V> value_type;
+                // the name is known in the rest of the class, as a 'using' alias is.
+                advance();
+                auto base = parseBase();
+                for (;;) {
+                    Parsed d = parseDeclarator(true);
+                    addTypedef(d.name, apply(cloneType(*base), d.mods));
+                    if (!eatP(",")) break;
+                }
+                expectP(";", ";");
+                continue;
+            }
             if (isKw("template")) {
                 std::string savedTag = memberTag_;
                 std::string savedShort = memberShort_;

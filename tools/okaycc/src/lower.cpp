@@ -936,6 +936,15 @@ private:
 
     Addr lowerAddr(Expr& e) {
         Addr a;
+        if (e.kind == Expr::Kind::String) {
+            // A string literal is an lvalue array ([lex.string]): its address is where its bytes are
+            // (a reference to it, as a forwarding reference given "text" binds, takes this).
+            a.op = lowerExpr(e).op;
+            a.width = 1;
+            a.agg = true;
+            a.ok = true;
+            return a;
+        }
         if (e.kind == Expr::Kind::Comma && !e.kids.empty() && e.kids.back()) {
             // (x, y): x is evaluated for its effects, the address is y's.
             for (std::size_t i = 0; i + 1 < e.kids.size(); ++i)
@@ -1508,6 +1517,13 @@ private:
                 v.fields = p.fields.empty() ? layoutOf(e.checked.get()) : p.fields;
                 v.step = p.step;
                 v.inner = p.inner;
+                return v;
+            }
+            if (e.checked && e.checked->kind == Type::Kind::Array) {
+                // *p of an array (the result of a call returning T(&)[N]) is used through its
+                // address: the array decays to its first element, so nothing is loaded.
+                Val v = p;
+                if (e.checked->inner) v.step = sizeOf(e.checked->inner.get());
                 return v;
             }
             Val v = loadAddr(a, p.inner, e.checked && e.checked->unsign);
@@ -2858,7 +2874,8 @@ private:
                     s.reg = plan.regAt;
                     if (!p.name.empty() && addr_.count(p.name)) s.mem = true;
                 }
-                if (s.boolean && s.reg >= 0) {
+                if (s.boolean && !s.ref && s.reg >= 0) {
+                    // A bool parameter is 0 or 1 ([conv.bool]); a bool& parameter is an address.
                     Operand n = asBool(Operand::vreg(s.reg));
                     emitMov(s.reg, n, 1, true);
                 }

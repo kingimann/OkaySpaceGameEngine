@@ -1,0 +1,291 @@
+// The ordered tree behind okay-cc's <map> and <set> (ISO/IEC 14882 [associative.reqmts]). Our own
+// code: a binary search tree with parent links, kept balanced as an AVL tree (Adelson-Velsky and
+// Landis, 1962: the heights of a node's two subtrees differ by at most one; rotations restore it
+// after an insert or an erase). Each node holds a pair<const K, V>; set uses V = char and shows only
+// the key. Iterators walk in key order (in-order successor through the parent links); end() is the
+// iterator with no node, and --end() is the largest key. Iterators stay valid until their own
+// element is erased. Not thread safe.
+#pragma once
+#include <cstddef>
+#include <cstdlib>
+#include <functional>
+#include <initializer_list>
+#include <new>
+#include <utility>
+namespace std {
+
+template <typename K, typename V>
+struct __tree_node {
+    pair<const K, V> kv;
+    __tree_node<K, V> *l;
+    __tree_node<K, V> *r;
+    __tree_node<K, V> *p;
+    int h;
+};
+
+template <typename K, typename V>
+struct __tree_it {
+    __tree_node<K, V> *n;
+    __tree_node<K, V> *const *root;  // for --end()
+    __tree_it() : n(nullptr), root(nullptr) {}
+    __tree_it(__tree_node<K, V> *x, __tree_node<K, V> *const *r) : n(x), root(r) {}
+    pair<const K, V> &operator*() const { return n->kv; }
+    pair<const K, V> *operator->() const { return &n->kv; }
+    bool operator==(const __tree_it<K, V> &o) const { return n == o.n; }
+    bool operator!=(const __tree_it<K, V> &o) const { return n != o.n; }
+    __tree_it<K, V> &operator++() {
+        if (n->r) {
+            n = n->r;
+            while (n->l) n = n->l;
+        } else {
+            __tree_node<K, V> *c = n;
+            n = n->p;
+            while (n && c == n->r) {
+                c = n;
+                n = n->p;
+            }
+        }
+        return *this;
+    }
+    __tree_it<K, V> operator++(int) {
+        __tree_it<K, V> old = *this;
+        ++*this;
+        return old;
+    }
+    __tree_it<K, V> &operator--() {
+        if (!n) {
+            n = *root;
+            while (n && n->r) n = n->r;
+        } else if (n->l) {
+            n = n->l;
+            while (n->r) n = n->r;
+        } else {
+            __tree_node<K, V> *c = n;
+            n = n->p;
+            while (n && c == n->l) {
+                c = n;
+                n = n->p;
+            }
+        }
+        return *this;
+    }
+    __tree_it<K, V> operator--(int) {
+        __tree_it<K, V> old = *this;
+        --*this;
+        return old;
+    }
+};
+
+template <typename K, typename V, typename C>
+class __tree {
+public:
+    typedef __tree_node<K, V> node;
+    typedef pair<const K, V> value_type;
+    node *__root;
+    unsigned long __n;
+    C __cmp;
+
+    __tree() : __root(nullptr), __n(0), __cmp() {}
+    ~__tree() { clear(); }
+
+    static int height(node *x) { return x ? x->h : 0; }
+    static void fix(node *x) {
+        int a = height(x->l);
+        int b = height(x->r);
+        x->h = (a > b ? a : b) + 1;
+    }
+    // Put y where x was under x's parent.
+    void relink(node *x, node *y) {
+        if (y) y->p = x->p;
+        if (!x->p) __root = y;
+        else if (x->p->l == x) x->p->l = y;
+        else x->p->r = y;
+    }
+    node *rotateLeft(node *x) {
+        node *y = x->r;
+        relink(x, y);
+        x->r = y->l;
+        if (y->l) y->l->p = x;
+        y->l = x;
+        x->p = y;
+        fix(x);
+        fix(y);
+        return y;
+    }
+    node *rotateRight(node *x) {
+        node *y = x->l;
+        relink(x, y);
+        x->l = y->r;
+        if (y->r) y->r->p = x;
+        y->r = x;
+        x->p = y;
+        fix(x);
+        fix(y);
+        return y;
+    }
+    // Walk from x to the root restoring heights and the AVL balance.
+    void rebalance(node *x) {
+        while (x) {
+            fix(x);
+            int bal = height(x->l) - height(x->r);
+            if (bal > 1) {
+                if (height(x->l->l) < height(x->l->r)) rotateLeft(x->l);
+                x = rotateRight(x);
+            } else if (bal < -1) {
+                if (height(x->r->r) < height(x->r->l)) rotateRight(x->r);
+                x = rotateLeft(x);
+            }
+            x = x->p;
+        }
+    }
+
+    node *first() const {
+        node *x = __root;
+        while (x && x->l) x = x->l;
+        return x;
+    }
+    node *findNode(const K &k) const {
+        node *x = __root;
+        while (x) {
+            if (__cmp(k, x->kv.first)) x = x->l;
+            else if (__cmp(x->kv.first, k)) x = x->r;
+            else return x;
+        }
+        return nullptr;
+    }
+    // The first node whose key is not less than k (strict: greater than k).
+    node *bound(const K &k, bool strict) const {
+        node *x = __root;
+        node *best = nullptr;
+        while (x) {
+            bool goLeft = strict ? __cmp(k, x->kv.first) : !__cmp(x->kv.first, k);
+            if (goLeft) {
+                best = x;
+                x = x->l;
+            } else {
+                x = x->r;
+            }
+        }
+        return best;
+    }
+    // Where a node with key k goes: its parent and side, or the node that already has k.
+    node *place(const K &k, node *&parent, bool &left) const {
+        node *x = __root;
+        parent = nullptr;
+        left = false;
+        while (x) {
+            parent = x;
+            if (__cmp(k, x->kv.first)) {
+                x = x->l;
+                left = true;
+            } else if (__cmp(x->kv.first, k)) {
+                x = x->r;
+                left = false;
+            } else {
+                return x;
+            }
+        }
+        return nullptr;
+    }
+    node *newNode() {
+        node *x = (node *)malloc(sizeof(node));
+        x->l = nullptr;
+        x->r = nullptr;
+        x->p = nullptr;
+        x->h = 1;
+        return x;
+    }
+    void attach(node *x, node *parent, bool left) {
+        x->p = parent;
+        if (!parent) __root = x;
+        else if (left) parent->l = x;
+        else parent->r = x;
+        ++__n;
+        rebalance(parent);
+    }
+    // Insert a copy of kv unless its key is there; the node with the key, and whether it is new.
+    pair<node *, bool> insertValue(const pair<const K, V> &kv) {
+        node *parent = nullptr;
+        bool left = false;
+        node *had = place(kv.first, parent, left);
+        if (had) return pair<node *, bool>(had, false);
+        node *x = newNode();
+        new (&x->kv) pair<const K, V>(kv.first, kv.second);
+        attach(x, parent, left);
+        return pair<node *, bool>(x, true);
+    }
+    // The node for k, made with a default V if it is not there (map::operator[]).
+    node *at(const K &k) {
+        node *parent = nullptr;
+        bool left = false;
+        node *had = place(k, parent, left);
+        if (had) return had;
+        node *x = newNode();
+        new (&x->kv) pair<const K, V>(k, V());
+        attach(x, parent, left);
+        return x;
+    }
+    void eraseNode(node *z) {
+        node *from;
+        if (!z->l || !z->r) {
+            node *c = z->l ? z->l : z->r;
+            from = z->p;
+            relink(z, c);
+        } else {
+            // Two children: the successor y (no left child) takes z's place.
+            node *y = z->r;
+            while (y->l) y = y->l;
+            if (y->p != z) {
+                from = y->p;
+                relink(y, y->r);
+                y->r = z->r;
+                y->r->p = y;
+            } else {
+                from = y;
+            }
+            relink(z, y);
+            y->l = z->l;
+            y->l->p = y;
+        }
+        (&z->kv)->~value_type();
+        free(z);
+        --__n;
+        rebalance(from);
+    }
+    void clear() {
+        // Post-order without recursion: always delete a leaf.
+        node *x = __root;
+        while (x) {
+            if (x->l) x = x->l;
+            else if (x->r) x = x->r;
+            else {
+                node *up = x->p;
+                if (up) {
+                    if (up->l == x) up->l = nullptr;
+                    else up->r = nullptr;
+                }
+                (&x->kv)->~value_type();
+                free(x);
+                x = up;
+            }
+        }
+        __root = nullptr;
+        __n = 0;
+    }
+    void copyFrom(const __tree<K, V, C> &o) {
+        for (node *x = o.first(); x;) {
+            insertValue(x->kv);
+            __tree_it<K, V> it(x, &o.__root);
+            ++it;
+            x = it.n;
+        }
+    }
+    void takeFrom(__tree<K, V, C> &o) {
+        __root = o.__root;
+        __n = o.__n;
+        o.__root = nullptr;
+        o.__n = 0;
+    }
+};
+
+}  // namespace std

@@ -1,0 +1,90 @@
+// <set> for okay-cc (ISO/IEC 14882 [set]). Our own header: std::set over the AVL tree of <__tree>
+// (each node's value is an unused char); iterators show the key only. multiset is not done.
+#pragma once
+#include <__tree>
+namespace std {
+template <typename K>
+struct __set_it {
+    __tree_it<K, char> it;
+    __set_it() {}
+    __set_it(const __tree_it<K, char> &i) : it(i) {}
+    const K &operator*() const { return it.n->kv.first; }
+    const K *operator->() const { return &it.n->kv.first; }
+    bool operator==(const __set_it<K> &o) const { return it.n == o.it.n; }
+    bool operator!=(const __set_it<K> &o) const { return it.n != o.it.n; }
+    __set_it<K> &operator++() {
+        ++it;
+        return *this;
+    }
+    __set_it<K> operator++(int) {
+        __set_it<K> old = *this;
+        ++it;
+        return old;
+    }
+    __set_it<K> &operator--() {
+        --it;
+        return *this;
+    }
+};
+
+template <typename K, typename C = less<K>>
+class set {
+public:
+    typedef K key_type;
+    typedef K value_type;
+    typedef __set_it<K> iterator;
+    typedef __set_it<K> const_iterator;
+    __tree<K, char, C> __t;
+
+    set() {}
+    set(const set<K, C> &o) { __t.copyFrom(o.__t); }
+    set(set<K, C> &&o) { __t.takeFrom(o.__t); }
+    set(initializer_list<K> il) {
+        for (const K *p = il.begin(); p != il.end(); ++p) insert(*p);
+    }
+    set<K, C> &operator=(const set<K, C> &o) {
+        if (this != &o) {
+            __t.clear();
+            __t.copyFrom(o.__t);
+        }
+        return *this;
+    }
+    set<K, C> &operator=(set<K, C> &&o) {
+        if (this != &o) {
+            __t.clear();
+            __t.takeFrom(o.__t);
+        }
+        return *this;
+    }
+    unsigned long size() const { return __t.__n; }
+    bool empty() const { return __t.__n == 0; }
+    void clear() { __t.clear(); }
+    iterator begin() const { return iterator(__tree_it<K, char>(__t.first(), &__t.__root)); }
+    iterator end() const { return iterator(__tree_it<K, char>(nullptr, &__t.__root)); }
+    iterator find(const K &k) const { return iterator(__tree_it<K, char>(__t.findNode(k), &__t.__root)); }
+    unsigned long count(const K &k) const { return __t.findNode(k) ? 1 : 0; }
+    bool contains(const K &k) const { return __t.findNode(k) != nullptr; }
+    iterator lower_bound(const K &k) const { return iterator(__tree_it<K, char>(__t.bound(k, false), &__t.__root)); }
+    iterator upper_bound(const K &k) const { return iterator(__tree_it<K, char>(__t.bound(k, true), &__t.__root)); }
+    pair<iterator, bool> insert(const K &k) {
+        pair<__tree_node<K, char> *, bool> r = __t.insertValue(pair<const K, char>(k, 0));
+        return pair<iterator, bool>(iterator(__tree_it<K, char>(r.first, &__t.__root)), r.second);
+    }
+    template <typename A>
+    pair<iterator, bool> emplace(A &&a) {
+        return insert(K(std::forward<A>(a)));
+    }
+    unsigned long erase(const K &k) {
+        __tree_node<K, char> *x = __t.findNode(k);
+        if (!x) return 0;
+        __t.eraseNode(x);
+        return 1;
+    }
+    iterator erase(iterator it) {
+        iterator next = it;
+        ++next;
+        __t.eraseNode(it.it.n);
+        return next;
+    }
+};
+}  // namespace std

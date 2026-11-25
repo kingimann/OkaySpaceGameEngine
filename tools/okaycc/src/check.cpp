@@ -959,7 +959,8 @@ private:
         const bool simple = simpleOperand(lhs);
         // A left operand that is a call or another operator expression (a + b + c): check it once,
         // keep the result for the check that follows, and use it only for a class with the operator.
-        if (!simple && e.kind != Expr::Kind::Bin && e.kind != Expr::Kind::Index) return false;
+        if (!simple && e.kind != Expr::Kind::Bin && e.kind != Expr::Kind::Index && e.kind != Expr::Kind::Unary)
+            return false;  // (*s.begin(), -f(): a unary operator on a call result is a member call too)
         if (!simple && lhs.kind != Expr::Kind::Call && lhs.kind != Expr::Kind::Bin && lhs.kind != Expr::Kind::Comma &&
             lhs.kind != Expr::Kind::Unary)
             return false;

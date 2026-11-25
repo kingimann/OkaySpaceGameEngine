@@ -251,6 +251,9 @@ struct Global {
     // thread_local ([basic.stc.thread]): kept in the .tls$ section, one copy per thread made by the Windows loader from
     // the image's TLS template; reached through the thread's TLS array (gs:[0x58]) and _tls_index.
     bool tls = false;
+    // `extern T name;` ([basic.def] 2.3): declared here, defined in another file; no storage, an undefined symbol. A
+    // definition later in the same file takes its place.
+    bool external = false;
 };
 
 inline Type peel_array(const Type& type) {
@@ -301,6 +304,10 @@ struct Local {
     int reg = 0;
     // 0 is the parameter scope. A nested block uses a higher number.
     int scope = 0;
+    // `const int k = 8;` / `constexpr int k = 8;` in a function: an integer constant ([expr.const]), usable as an array
+    // length or template argument; cval is its value in the type's width.
+    bool has_cval = false;
+    uint64_t cval = 0;
 };
 
 struct FuncDecl {

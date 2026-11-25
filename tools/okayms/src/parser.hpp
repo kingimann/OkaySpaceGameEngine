@@ -2077,6 +2077,22 @@ struct Parser {
         return find_struct(member) < 0;
     }
 
+    bool extern_decl_ = false;  // `extern` was read before the declaration being parsed
+
+    // True inside a member function of a class with a data member of this name: the member hides a type of the same
+    // name ([basic.scope.hiding]; `duration` in a Tween, `thread` in a watcher, while std::chrono::duration and
+    // std::thread are bare type names here).
+    bool member_hides(const std::string& name) const {
+        if (cur_class < 0 || static_cast<size_t>(cur_class) >= structs.size()) return false;
+        const StructDef& d = structs[static_cast<size_t>(cur_class)];
+        if (find_field_named(d, name) >= 0) return true;
+        // A member function hides it too: `Bounds(lo, hi);` in a Mesh member calls Mesh::Bounds, though a struct Bounds
+        // exists elsewhere.
+        for (const Method& m : d.methods)
+            if (m.name == name) return true;
+        return false;
+    }
+
     bool is_decl_start() const {
         if (qualified_expr_ahead()) return false;
         // A parameter or local variable hides a type of the same name ([basic.scope.hiding]): `(seconds * rate)` with a
@@ -2084,9 +2100,7 @@ struct Parser {
         if (is(TIdent) && !cur().nsq && cur_locals != nullptr && local_visible(cur().text)) return false;
         // A data member hides a type of the same name inside its class's member functions: `thread = CreateThread(...)`
         // with a member `HANDLE thread` assigns to the member (std::thread is a bare type name here).
-        if (is(TIdent) && !cur().nsq && cur_class >= 0 && static_cast<size_t>(cur_class) < structs.size() &&
-            find_field_named(structs[static_cast<size_t>(cur_class)], cur().text) >= 0)
-            return false;
+        if (is(TIdent) && !cur().nsq && member_hides(cur().text)) return false;
         if (is(TInt) || is(TVoid) || is(TChar) || is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort) ||
             is(TStruct) || is(TUnion) || is(TEnum) || is(TTypedef) || is(TDeclspec) || is(TStatic) || is(TConst) ||
             is(TFloat) || is(TDouble))
@@ -2131,6 +2145,7 @@ struct Parser {
                 tokens[i + 1].kind == TAndAnd ||
                 ((tokens[i + 1].kind == TComma || tokens[i + 1].kind == TGt) && i >= 1 &&
                  (tokens[i - 1].kind == TLt || tokens[i - 1].kind == TComma ||
+                  tokens[i - 1].kind == TAssign ||  // a default template argument: template <class H = Tag>
                   (tokens[i - 1].kind == TConst && i >= 2 &&
                    (tokens[i - 2].kind == TLt || tokens[i - 2].kind == TComma)))));  // a template argument: Box<P, 3>, Box<const P>
     }
@@ -2263,6 +2278,33 @@ struct Parser {
     }
     // True while the operand of & is read: a name there stays a name so its address can be taken.
     bool no_const_subst = false;
+    // The innermost visible local of this name, when it is a const integer with a constant value: that value as a
+    // literal of its type.
+    bool local_const_node(const std::string& name, Node* out) const {
+        if (cur_locals == nullptr) return false;
+        for (size_t i = cur_locals->size(); i-- > 0;) {
+            const Local& local = (*cur_locals)[i];
+            if (local.name != name || !scope_visible(local.scope)) continue;
+            if (!local.has_cval) return false;
+            const Type& t = local.type;
+            uint64_t v = local.cval;
+            *out = Node{};
+            out->kind = Node::IntLit;
+            out->type.base = 1;
+            if (t.is_bool) v = v != 0 ? 1 : 0;
+            else if (t.base == 2) v = t.is_unsigned ? (v & 0xFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int8_t>(v)));
+            else if (t.base == 4) v = t.is_unsigned ? (v & 0xFFFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int16_t>(v)));
+            else {
+                out->type.wide = t.wide;
+                out->type.is_unsigned = t.is_unsigned;
+                v = const_norm(v, out->type);
+            }
+            out->number = v;
+            return true;
+        }
+        return false;
+    }
+
     // A global declared const (or constexpr) with a constant initial value, as a literal node.
     bool global_const_node(const std::string& name, Node* out) const {
         for (const Global& g : globals) {
@@ -4804,8 +4846,14 @@ struct Parser {
         return j < tokens.size() && tokens[j].kind == TRParen;
     }
     bool is_template_name_at(size_t i) const {
-        return i + 1 < tokens.size() && tokens[i].kind == TIdent && tokens[i + 1].kind == TLt &&
-               class_templates.count(tokens[i].text) > 0;
+        if (!(i + 1 < tokens.size() && tokens[i].kind == TIdent && tokens[i + 1].kind == TLt &&
+              class_templates.count(tokens[i].text) > 0))
+            return false;
+        // A local variable or a data member of the same name hides the template ([basic.scope.hiding]): `duration < k`
+        // in a Tween member compares its `duration`.
+        if (!tokens[i].nsq && ((cur_locals != nullptr && local_visible(tokens[i].text)) || member_hides(tokens[i].text)))
+            return false;
+        return true;
     }
 
     // At '<': the arguments up to '>', then the defaults. 'partial' lets a function template be
@@ -6992,6 +7040,13 @@ struct Parser {
                 update_ns();
                 continue;
             }
+            if (is(TIdent) && cur().text == "extern" && at + 1 < tokens.size() && tokens[at + 1].kind != TString) {
+                // extern T name; ([dcl.stc] 5): a declaration of a variable defined elsewhere (or of a function, where it
+                // changes nothing). The next declaration reads it (extern_decl_).
+                next();
+                extern_decl_ = true;
+                continue;
+            }
             if (is(TIdent) && cur().text == "extern" && at + 1 < tokens.size() && tokens[at + 1].kind == TString) {
                 // extern "C" { ... } and extern "C" declaration ([dcl.link]).
                 const bool c_lang = tokens[at + 1].text == "C";
@@ -7249,6 +7304,29 @@ struct Parser {
                 }
             }
             if (!gctor_args && !parse_declarator(type, &decl)) return false;
+            const bool decl_extern = extern_decl_;
+            extern_decl_ = false;
+            if (decl_extern && !decl.is_function && !is(TAssign) && !is(TLBrace)) {
+                // extern T a, b; : names only. Not when the file already defines the variable.
+                for (;;) {
+                    bool defined_here = false;
+                    for (const Global& earlier : globals)
+                        if (earlier.name == decl.name) defined_here = true;
+                    if (!defined_here) {
+                        Global global;
+                        global.name = decl.name;
+                        global.type = decl.type;
+                        global.type.is_const = is_const || decl.type.is_const;
+                        global.external = true;
+                        globals.push_back(global);
+                    }
+                    if (!accept(TComma)) break;
+                    decl = Declarator{};
+                    if (!parse_declarator(type, &decl)) return false;
+                }
+                if (!expect(TSemi, "';'")) return false;
+                continue;
+            }
             if (is_typedef) {
                 decl.type.is_const = is_const;
                 typedefs[decl.name] = decl.type;
@@ -7365,6 +7443,14 @@ struct Parser {
                         // variables are not kept apart by namespace here, so the later one gets its own internal name
                         // and what is read after it means that one.
                         bool taken = false;
+                        for (size_t gi = globals.size(); gi-- > 0;)
+                            if (globals[gi].name == global.name && globals[gi].external) {
+                                // The definition of a variable declared extern above: it takes the declaration's place
+                                // and has external linkage, also when it is const ([basic.link] 3.2).
+                                globals.erase(globals.begin() + static_cast<std::ptrdiff_t>(gi));
+                                global.is_static = is_static || anon_depth > 0;
+                            }
+                        if (decl_extern) global.is_static = false;
                         for (const Global& earlier : globals)
                             if (earlier.name == global.name) taken = true;
                         if (taken) {

@@ -1311,7 +1311,7 @@ bool Parser::parse_unary(Node* out) {
             if (alias != global_alias.end()) name = alias->second;
         }
         int scope_sid = -1;
-        if (is(TLt) && class_templates.count(name) > 0 && !local_visible(name)) {
+        if (is(TLt) && class_templates.count(name) > 0 && !local_visible(name) && !(!tokens[at - 1].nsq && member_hides(name))) {
             // Box<int>::member in an expression.
             std::vector<TArg> targs;
             if (!parse_template_args(class_templates[name], &targs, false)) return false;
@@ -1742,6 +1742,8 @@ bool Parser::parse_unary(Node* out) {
         } else if (!no_const_subst && !local_visible(name) && !is_assign_op(cur().kind) && !is(TPlusPlus) &&
                    !is(TMinusMinus) && global_const_node(name, out)) {
             // A const global with a constant initializer is a constant ([expr.const]).
+        } else if (!no_const_subst && local_const_node(name, out)) {
+            // A const local integer with a constant initializer is a constant too (`constexpr int kMax = 8; T a[kMax];`).
         } else {
             out->kind = Node::Name;
             out->text = name;
@@ -1771,12 +1773,12 @@ bool Parser::parse_unary(Node* out) {
                                 ahead == TSigned || ahead == TLong || ahead == TFloat || ahead == TDouble || ahead == TStruct ||
                                 ahead == TUnion || ahead == TEnum ||
                                 (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end() && !qualified_value_at(at + 1) &&
-                                 (tokens[at + 1].nsq || !local_visible(tokens[at + 1].text))) ||  // a parameter `seconds` hides chrono's type
+                                 (tokens[at + 1].nsq || (!local_visible(tokens[at + 1].text) && !member_hides(tokens[at + 1].text)))) ||  // a parameter `seconds` hides chrono's type
                                 (ahead == TIdent && class_name_at(at + 1) && !qualified_value_at(at + 1) &&
-                                 (tokens[at + 1].nsq || !local_visible(tokens[at + 1].text))) ||
+                                 (tokens[at + 1].nsq || (!local_visible(tokens[at + 1].text) && !member_hides(tokens[at + 1].text)))) ||
                                 // (std::vector<int>*)p, and static_cast<function<void()>*>(p), which is read as that
                                 (ahead == TIdent && is_template_name_at(at + 1) && !local_visible(tokens[at + 1].text) &&
-                                 template_id_cast_at(at + 1));
+                                 !member_hides(tokens[at + 1].text) && template_id_cast_at(at + 1));
         // (double(k) * 2) and (T(x) + 1): a type written like a call inside parentheses is a functional cast in an
         // expression, not a C cast ([expr.type.conv]). A function pointer type is (int (*)(int)), with '*' after '('.
         bool functional = false;
@@ -2268,8 +2270,7 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                 };
                 if (cur_locals != nullptr && static_type(mid, &ta) && static_type(els, &tb) && ta.base == 3 &&
                     ta.pointers == 0 && !ta.is_ref && !ta.is_array() && tb.base == 3 && tb.pointers == 0 && !tb.is_ref &&
-                    ta.struct_id >= 0 && ta.struct_id == tb.struct_id &&
-                    !class_needs_dtor(structs[static_cast<size_t>(ta.struct_id)]) && !(lvalue(mid) && lvalue(els))) {
+                    ta.struct_id >= 0 && ta.struct_id == tb.struct_id && !(lvalue(mid) && lvalue(els))) {
                     Local hidden;
                     hidden.name = "__tn" + std::to_string(tmp_count++);
                     hidden.type = ta;
@@ -2291,6 +2292,10 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                         chosen.kids.push_back(std::move(stmt));
                     }
                     stmt_pre.push_back(std::move(chosen));
+                    // A class with a destructor: the hidden object is destroyed after the full expression, like any
+                    // temporary ([class.temporary]).
+                    if (class_needs_dtor(structs[static_cast<size_t>(ta.struct_id)]))
+                        stmt_temps.push_back(Temp{hidden.name, ta.struct_id});
                     *out = node_name(hidden.name);
                     continue;
                 }

@@ -383,8 +383,8 @@ public:
         return npos;
     }
     size_t find_first_not_of(const char* set) const { return find_first_not_of(set, 0); }
-    size_t find_last_not_of(const char* set) const {
-        size_t i = size_;
+    size_t find_last_not_of(const char* set, size_t pos) const {
+        size_t i = pos < size_ ? pos + 1 : size_;
         while (i > 0) {
             --i;
             bool in = false;
@@ -394,6 +394,45 @@ public:
         }
         return npos;
     }
+    size_t find_last_not_of(const char* set) const { return find_last_not_of(set, npos); }
+    size_t find_last_of(const char* set, size_t pos) const {
+        size_t i = pos < size_ ? pos + 1 : size_;
+        while (i > 0) {
+            --i;
+            for (size_t k = 0; set[k] != 0; ++k)
+                if (data_[i] == set[k]) return i;
+        }
+        return npos;
+    }
+    size_t find_last_of(const char* set) const { return find_last_of(set, npos); }
+    // The one-character and string forms of the four searches ([string.find]): a char is a set of one.
+    size_t find_first_of(char c, size_t pos) const { return find(c, pos); }
+    size_t find_first_of(char c) const { return find(c, 0); }
+    size_t find_first_of(const string& set, size_t pos) const { return find_first_of(set.data_, pos); }
+    size_t find_first_of(const string& set) const { return find_first_of(set.data_, 0); }
+    size_t find_last_of(char c, size_t pos) const { return rfind(c, pos); }
+    size_t find_last_of(char c) const { return rfind(c, npos); }
+    size_t find_last_of(const string& set, size_t pos) const { return find_last_of(set.data_, pos); }
+    size_t find_last_of(const string& set) const { return find_last_of(set.data_, npos); }
+    size_t find_first_not_of(char c, size_t pos) const {
+        for (size_t i = pos; i < size_; ++i)
+            if (data_[i] != c) return i;
+        return npos;
+    }
+    size_t find_first_not_of(char c) const { return find_first_not_of(c, (size_t)0); }
+    size_t find_first_not_of(const string& set, size_t pos) const { return find_first_not_of(set.data_, pos); }
+    size_t find_first_not_of(const string& set) const { return find_first_not_of(set.data_, 0); }
+    size_t find_last_not_of(char c, size_t pos) const {
+        size_t i = pos < size_ ? pos + 1 : size_;
+        while (i > 0) {
+            --i;
+            if (data_[i] != c) return i;
+        }
+        return npos;
+    }
+    size_t find_last_not_of(char c) const { return find_last_not_of(c, npos); }
+    size_t find_last_not_of(const string& set, size_t pos) const { return find_last_not_of(set.data_, pos); }
+    size_t find_last_not_of(const string& set) const { return find_last_not_of(set.data_, npos); }
 
     string& erase(size_t pos, size_t n) {
         if (pos >= size_) return *this;

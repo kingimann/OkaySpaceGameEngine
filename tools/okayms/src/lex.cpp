@@ -459,6 +459,25 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             }
             tok.text = value;
             tok.ity = str_prefix == 8 ? 0 : str_prefix;
+            if (!tokens.empty() && tokens.back().kind == TString) {
+                // Adjacent string literals are one literal ([lex.string] 7, translation phase 6), also across lines. A
+                // plain part next to a wide one takes the wide encoding (its bytes are taken as code points).
+                Token& prev = tokens.back();
+                auto widen = [](const std::string& narrow, int width) {
+                    std::string units;
+                    for (unsigned char ch : narrow)
+                        for (int b = 0; b < width / 8; ++b) units.push_back(b == 0 ? static_cast<char>(ch) : '\0');
+                    return units;
+                };
+                if (prev.ity == 0 && tok.ity != 0) {
+                    prev.text = widen(prev.text, tok.ity);
+                    prev.ity = tok.ity;
+                } else if (prev.ity != 0 && tok.ity == 0) {
+                    tok.text = widen(tok.text, prev.ity);
+                }
+                prev.text += tok.text;
+                continue;
+            }
             tokens.push_back(tok);
             continue;
         }

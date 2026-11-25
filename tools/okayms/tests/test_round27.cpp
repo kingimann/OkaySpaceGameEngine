@@ -394,6 +394,142 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Hash containers with a hasher given (keys that have == and no <), and the ordered form kept for the default hasher.
+static void r27_unordered_hash(Tally& tally) {
+    std::printf("r27_unordered_hash\n");
+    okayms_test::run_both(kRun, tally, "unordered_hash", std::string(kAlloc) + R"OKMS(
+#include <unordered_map>
+#include <unordered_set>
+#include <string>
+struct Ep { unsigned a; unsigned short port; bool operator==(const Ep& o) const { return a == o.a && port == o.port; } };
+struct EpHash { unsigned long long operator()(const Ep& e) const { return ((unsigned long long)e.a << 16) ^ e.port; } };
+static Ep ep(unsigned a, unsigned short p) { Ep e; e.a = a; e.port = p; return e; }
+int entry(void) {
+  std::unordered_map<Ep, int, EpHash> m;
+  for (int i = 0; i < 100; ++i) m[ep((unsigned)i, (unsigned short)(i * 3))] = i * 2;
+  CK(1, m.size() == 100);
+  Ep k = ep(42, 126);
+  CK(2, m.count(k) == 1 && m[k] == 84 && m.find(k)->second == 84 && m.find(ep(42, 1)) == m.end());
+  int erased = 0;
+  for (auto it = m.begin(); it != m.end();) {
+    if (it->second % 4 == 0) {
+      it = m.erase(it);
+      ++erased;
+    } else {
+      ++it;
+    }
+  }
+  CK(3, erased == 50 && m.size() == 50 && m.count(k) == 0);
+  CK(4, m.at(ep(43, 129)) == 86);
+  int sum = 0;
+  for (auto& kv : m) sum += kv.second;
+  CK(5, sum == 5000);
+  CK(6, m.erase(ep(43, 129)) == 1 && m.erase(ep(43, 129)) == 0 && m.size() == 49);
+  auto ins = m.insert(std::pair<Ep, int>(ep(7, 7), 70));
+  CK(7, ins.second && ins.first->second == 70 && !m.insert(std::pair<Ep, int>(ep(7, 7), 1)).second);
+  std::unordered_set<Ep, EpHash> s;
+  s.insert(k);
+  s.insert(ep(1, 2));
+  s.insert(k);
+  CK(8, s.size() == 2 && s.count(ep(1, 2)) == 1);
+  s.erase(k);
+  CK(9, s.size() == 1 && s.count(k) == 0);
+  std::unordered_map<std::string, int> plain;
+  plain["b"] = 2;
+  plain["a"] = 1;
+  CK(10, plain.size() == 2 && plain["a"] == 1 && plain.count("c") == 0);
+  std::unordered_map<Ep, std::unordered_map<unsigned, int>, EpHash> nested;
+  nested[k][5] = 9;
+  CK(11, nested[k][5] == 9 && nested.size() == 1);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// More language pieces: c ? a : b with temporaries of a class with a destructor, if with an init statement, adjacent
+// string literals, extern variables defined later in the file, const locals as array lengths, member functions and
+// data members that hide a type or template name, a plain struct as a default template argument with a partial
+// specialization chosen through it, and a macro call over several lines.
+static void r27_lang2(Tally& tally) {
+    std::printf("r27_lang2\n");
+    okayms_test::run_both(kRun, tally, "lang2", std::string(kAlloc) + R"OKMS(
+#include <string>
+static int dtors = 0;
+struct Noisy { int v; Noisy(int x) : v(x) {} Noisy(const Noisy& o) : v(o.v) {} ~Noisy() { ++dtors; } };
+static Noisy make(int x) { return Noisy(x); }
+static std::string trim(const std::string& s) {
+  std::size_t a = s.find_first_not_of(' '), b = s.find_last_not_of(' ');
+  return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+}
+static int check(int n) { return n * 2; }
+extern int later_value;
+extern const char* const kLaterName;
+static int read_later() { return later_value; }
+int later_value = 41;
+extern const char* const kLaterName = "na" "me";
+struct Bounds { int unused; };
+struct duration { int unused; };
+template <typename T> struct Box { T v; };
+struct Shape {
+  int w = 3;
+  float duration = 2.0f;
+  void Bounds(int& lo, int& hi) const { lo = 1; hi = w; }
+  int Span() const { int lo, hi; Bounds(lo, hi); return hi - lo; }
+  int Box = 4;
+  bool Short() const { return duration < 3.0f && Box < 5; }
+};
+struct Tag {};
+template <typename K, typename H = Tag> struct Pick { int v() const { return 1; } };
+template <typename K> struct Pick<K, Tag> { int v() const { return 2; } };
+#define SUM3(a, b, c) ((a) + (b) + (c))
+int entry(void) {
+  {
+    bool c = true;
+    Noisy n = c ? make(1) : Noisy(2);
+    CK(1, n.v == 1);
+    c = false;
+    Noisy m = c ? make(3) : make(4);
+    CK(2, m.v == 4);
+  }
+  CK(3, dtors >= 2);
+  CK(4, trim("  ab ") == "ab" && trim("   ").empty() && trim("x") == "x");
+  if (const int w = check(3); w > 5) {
+    CK(5, w == 6);
+  } else {
+    return 6;
+  }
+  int hits = 0;
+  if (int q = 0; q == 0) hits = 1; else hits = 2;
+  CK(7, hits == 1);
+  const char* joined = "ab" "cd"
+                       "ef";
+  CK(8, joined[0] == 'a' && joined[4] == 'e' && joined[5] == 'f' && joined[6] == 0);
+  CK(9, read_later() == 41 && kLaterName[0] == 'n' && kLaterName[3] == 'e');
+  constexpr int kLen = 4;
+  const int kTwice = kLen * 2;
+  int arr[kLen];
+  int big[kTwice];
+  CK(10, sizeof(arr) == 16 && sizeof(big) == 32);
+  static const int kStatic = 3;
+  char small[kStatic];
+  CK(11, sizeof(small) == 3);
+  Shape s;
+  CK(12, s.Span() == 2 && s.Short());
+  Pick<int> p1;
+  Pick<int, int> p2;
+  CK(13, p1.v() == 2 && p2.v() == 1);
+  int total = SUM3(1,
+                   2,
+                   3);
+  CK(14, total == 6);
+  std::string path = "a/b/c.txt";
+  CK(15, path.find_last_of('/') == 3 && path.find_first_of('/') == 1 && path.find_last_of("/.") == 5 &&
+             path.find_first_not_of('a') == 1 && path.find_last_not_of('t') == 7 && path.find_last_not_of("tx") == 5);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -403,5 +539,7 @@ int main(int argc, char** argv) {
     r27_win_threads(tally);
     r27_winhttp(tally);
     r27_lang(tally);
-    return tally.finish(5);
+    r27_unordered_hash(tally);
+    r27_lang2(tally);
+    return tally.finish(7);
 }

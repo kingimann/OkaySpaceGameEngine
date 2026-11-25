@@ -77,8 +77,9 @@ int main() {
             {"a/d.okaydata", K::Data}, {"a/d.okaydialog", K::Data}, {"a/q.okayquest", K::Data}, {"a/b.okaybt", K::Data},
             {"a/c.okayseq", K::Data}, {"a/c.okayclip", K::Data}, {"a/x.json", K::Data}, {"a/x.txt", K::Data}, {"a/x.md", K::Data},
             {"a/blob.bin", K::Other}, {"a/f.ttf", K::Other}, {"a/z.zip", K::Other}, {"a/noext", K::Other}, {"a/.hidden", K::Other},
-            // a script or web page is not a text asset: Windows runs a .js, and a page is not edited here
-            {"a/x.js", K::Other}, {"a/x.JS", K::Other}, {"a/x.html", K::Other}, {"a/x.htm", K::Other}, {"a/x.bat", K::Other}, {"a/x.ps1", K::Other},
+            // .js / .mjs are our JavaScript scripts now (docs/scripting/javascript.md): Script, so they open in the Script Editor or a named
+            // text editor; OpenWithDefaultApp still refuses them (LaunchRefusal), because Windows runs a .js. A web page is not edited here.
+            {"a/x.js", K::Script}, {"a/x.JS", K::Script}, {"a/x.mjs", K::Script}, {"a/x.html", K::Other}, {"a/x.htm", K::Other}, {"a/x.bat", K::Other}, {"a/x.ps1", K::Other},
             {"a/x.vbs", K::Other}, {"a/x.hta", K::Other}, {"a/x.exe", K::Other}, {"a/x.sh", K::Other}, {"a/x.css", K::Data}, {"a/x.csv", K::Data},
         };
         for (const auto& t : table) {
@@ -96,7 +97,8 @@ int main() {
             CHECK(offered == (text && !st.runsCode));
             if (st.runsCode) { const ctx::Item* d = ctx::Find(ctx::ItemMenu(st), "open:default"); CHECK(d && !d->enabled); }   // a program or script is never handed to the system
         }
-        // .js is not text-openable, whichever way the kind is worked out
+        // .js / .mjs are Script now, but still never handed to the system or an outside editor, whichever way the kind is worked out
+        for (const char* f : {"a/b.js", "a/b.mjs", "a/b.cjs"}) { CHECK(ctx::RunsCode(f)); CHECK(!ctx::LaunchRefusal(f).empty()); }
         {
             ctx::State js; js.kind = MenuKind("a/b.js", false); js.runsCode = ctx::RunsCode("a/b.js");
             CHECK(!ctx::Find(ctx::ItemMenu(js), "open:external"));

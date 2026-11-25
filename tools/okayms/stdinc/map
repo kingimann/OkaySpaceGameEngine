@@ -43,6 +43,10 @@ public:
     map(initializer_list<pair<K, V> > list) : missing_() {
         for (size_t i = 0; i < list.size(); ++i) insert(list.begin()[i]);
     }
+    template <typename It>
+    map(It first, It last) : missing_() {
+        for (; first != last; ++first) insert(*first);
+    }
     size_t size() const { return items_.size(); }
     bool empty() const { return items_.empty(); }
     pair<K, V>* begin() { return items_.begin(); }

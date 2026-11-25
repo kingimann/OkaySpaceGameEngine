@@ -1015,6 +1015,10 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         global.bss = true;
         if (has_init && obj_needs_ctor(decl.type) && !decl.type.is_array() && !(init.kind == Node::Block && init.text == "init")) {
             static_dyn = true;  // static C x = value; : a constructor under the guard below
+        } else if (has_init && decl.type.is_array() && decl.type.more.empty() && decl.type.base == 3 &&
+                   decl.type.pointers == 0 && (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type)) &&
+                   init.kind == Node::Block && init.text == "init") {
+            // static C a[] = {x, y}; : the elements are made under the guard below, each by its constructor.
         } else if (has_init) {
             global.bss = false;
             // A static array of string pointers: the addresses are relocations. A part that is not a constant
@@ -1104,8 +1108,38 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         if (is_static) {
             // A static local object: built the first time control reaches the declaration (a
             // guard flag in a hidden global), destroyed by the program end function.
-            if (has_init || decl.type.is_array()) {
-                error = "a static local object takes no braced initializer and is not an array";
+            if (decl.type.is_array()) {
+                // static C a[N]; or static C a[] = {...}; ([stmt.dcl] 3): every element is made the first time control
+                // passes the declaration, under the guard, and the whole array is destroyed at the program end.
+                if (!decl.type.more.empty()) {
+                    error = "a static local array of objects needs one dimension";
+                    return false;
+                }
+                Node then_block;
+                if (!static_guard_block(local.symbol, &then_block)) return false;
+                Node calls_block;
+                calls_block.kind = Node::Block;
+                calls_block.line = stmt_line;
+                if (has_init) {
+                    if (!array_init_calls(local.symbol, decl.type, init, &calls_block.kids)) return false;
+                } else if (obj_needs_ctor(decl.type)) {
+                    Node loop;
+                    if (!element_loop(local.symbol, decl.type.array_len, false, sid, "<ctor>", &loop)) return false;
+                    calls_block.kids.push_back(std::move(loop));
+                }
+                finish_static_guard(&then_block, std::move(calls_block), local.symbol, out);
+                if (obj_needs_dtor(decl.type)) {
+                    GlobalObj g;
+                    g.name = local.symbol;
+                    g.sid = sid;
+                    g.count = decl.type.array_len;
+                    g.guard = local.symbol + "_guard";
+                    static_objs.push_back(std::move(g));
+                }
+                return end_decl(more);
+            }
+            if (has_init) {
+                error = "a static local object takes no braced initializer";
                 return false;
             }
             Node then_block;

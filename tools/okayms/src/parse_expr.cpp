@@ -1140,6 +1140,60 @@ bool Parser::parse_unary(Node* out) {
             out->text.append(static_cast<size_t>(cur().ity == 16 ? 1 : 3), '\0');
         }
         next();
+    } else if (is(TIdent) && cur().text == "dynamic_cast" && at + 1 < tokens.size() && tokens[at + 1].kind == TLt) {
+        // dynamic_cast<T*>(e) ([expr.dynamic.cast]): for a class T with virtual functions, a call of
+        // std::__okay_dynamic_cast (<typeinfo>) with e and T's type information, read back as a T*. A cast to a base
+        // (or the same class) needs no check. Own limits: pointers only, single inheritance.
+        next();
+        next();
+        Type ty;
+        bool imp = false;
+        bool exp = false;
+        if (!parse_type(&ty, &imp, &exp)) return false;
+        while (accept(TStar)) ++ty.pointers;
+        if (is(TAmp) || is(TAndAnd)) {
+            error = "dynamic_cast to a reference is not supported";
+            return false;
+        }
+        if (!expect(TGt, "'>'") || !expect(TLParen, "'('")) return false;
+        Node inner;
+        if (!parse_expr(0, &inner)) return false;
+        if (!expect(TRParen, "')'")) return false;
+        Type from;
+        if (!static_type(inner, &from)) {
+            error = "dynamic_cast of an expression whose type is not known";
+            return false;
+        }
+        if (ty.pointers != 1 || ty.base != 3 || ty.struct_id < 0) {
+            error = "dynamic_cast needs a pointer to a class";
+            return false;
+        }
+        if (from.pointers == 1 && from.base == 3 && from.struct_id >= 0 && derives_from(from.struct_id, ty.struct_id)) {
+            *out = cast_node(ty, std::move(inner));  // to a base or the same class: no check ([expr.dynamic.cast] 5)
+            return parse_postfix(out);
+        }
+        if (!names_function("std::__okay_dynamic_cast")) {
+            error = "dynamic_cast needs #include <typeinfo>";
+            return false;
+        }
+        const std::string sym = type_info_symbol(ty.struct_id, structs[static_cast<size_t>(ty.struct_id)].symname());
+        const int ti_sid = find_struct("type_info");
+        Type ti_ptr;
+        ti_ptr.base = 3;
+        ti_ptr.struct_id = ti_sid;
+        ti_ptr.pointers = 1;
+        std::vector<Node> cargs;
+        cargs.push_back(cast_node(void_ptr(), std::move(inner)));
+        cargs.push_back(cast_node(ti_ptr, node_addr(node_name(sym))));
+        Node call;
+        bool found = false;
+        if (!free_call("std::__okay_dynamic_cast", std::move(cargs), &call, &found)) return false;
+        if (!found) {
+            error = "dynamic_cast needs #include <typeinfo>";
+            return false;
+        }
+        *out = cast_node(ty, std::move(call));
+        return parse_postfix(out);
     } else if (is(TIdent) || (is(TColonColon) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent)) {
         const bool from_global = is(TColonColon);
         if (from_global) next();  // ::name: looked up at global scope, not in the namespaces around the call
@@ -1612,7 +1666,8 @@ bool Parser::parse_unary(Node* out) {
                                 (ahead == TIdent && class_name_at(at + 1) && !qualified_value_at(at + 1) &&
                                  (tokens[at + 1].nsq || !local_visible(tokens[at + 1].text))) ||
                                 // (std::vector<int>*)p, and static_cast<function<void()>*>(p), which is read as that
-                                (ahead == TIdent && is_template_name_at(at + 1) && !local_visible(tokens[at + 1].text));
+                                (ahead == TIdent && is_template_name_at(at + 1) && !local_visible(tokens[at + 1].text) &&
+                                 template_id_cast_at(at + 1));
         // (double(k) * 2) and (T(x) + 1): a type written like a call inside parentheses is a functional cast in an
         // expression, not a C cast ([expr.type.conv]). A function pointer type is (int (*)(int)), with '*' after '('.
         bool functional = false;
@@ -1861,7 +1916,22 @@ bool Parser::parse_postfix(Node* out) {
         if (is(TLBrack)) {
             next();
             Node index;
-            if (!parse_expr(0, &index)) return false;
+            Type sub_t;
+            if (is(TLBrace) && class_object_type(*out, &sub_t) && sub_t.struct_id >= 0) {
+                // m[{a, b}] ([expr.sub] 1, [over.sub]): the list makes a temporary of the class operator[] takes.
+                int key_sid = -1;
+                for (const Method& m : structs[static_cast<size_t>(sub_t.struct_id)].methods)
+                    if (m.name == "operator[]" && m.params.size() == 1 && m.params[0].base == 3 && m.params[0].pointers == 0 &&
+                        m.params[0].struct_id >= 0)
+                        key_sid = m.params[0].struct_id;
+                if (key_sid < 0) {
+                    error = "a braced list in [] needs an operator[] that takes a class";
+                    return false;
+                }
+                if (!braced_temp(key_sid, &index)) return false;
+            } else if (!parse_expr(0, &index)) {
+                return false;
+            }
             if (!expect(TRBrack, "']'")) return false;
             {
                 bool done = false;

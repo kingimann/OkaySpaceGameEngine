@@ -37,6 +37,11 @@ public:
     set(initializer_list<T> list) {
         for (size_t i = 0; i < list.size(); ++i) insert(list.begin()[i]);
     }
+    // The elements of [first, last) ([set.cons] 3).
+    template <typename It>
+    set(It first, It last) {
+        for (; first != last; ++first) insert(*first);
+    }
     size_t size() const { return items_.size(); }
     bool empty() const { return items_.empty(); }
     const T* begin() const { return items_.begin(); }

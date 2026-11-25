@@ -1115,14 +1115,23 @@ struct Parser {
         name.init_bytes.assign(text.begin(), text.end());
         name.init_bytes.push_back(0);
         globals.push_back(name);
+        // Round 26: a second pointer, to the type information of the class's base (0 when it has none or for a type
+        // that is not a class), so dynamic_cast can walk from the dynamic type up the single-inheritance chain.
+        std::string base_sym;
+        if (sid >= 0 && structs[static_cast<size_t>(sid)].base >= 0) {
+            const int bsid = structs[static_cast<size_t>(sid)].base;
+            base_sym = type_info_symbol(bsid, structs[static_cast<size_t>(bsid)].symname());
+        }
         Global ti;
         ti.name = sym;
         ti.is_static = true;
         ti.bss = false;
         ti.type.base = 0;
         ti.type.pointers = 1;
-        ti.init_bytes.assign(8, 0);
+        ti.type.array_len = 2;
+        ti.init_bytes.assign(16, 0);
         ti.addr_relocs.push_back({0u, name.name});
+        if (!base_sym.empty()) ti.addr_relocs.push_back({8u, base_sym});
         globals.push_back(ti);
         return sym;
     }
@@ -3436,7 +3445,38 @@ struct Parser {
                     sm.type.is_const = static_const || field.type.is_const;
                     def.cxx = true;
                     const bool scalar = sm.type.pointers == 0 && !sm.type.is_array() && sm.type.base != 3;
-                    if (accept(TAssign)) {
+                    const bool object_init = (is(TLBrace) || is(TAssign)) && !sm.type.is_array() && sm.type.base == 3 &&
+                                             sm.type.pointers == 0 && sm.type.struct_id >= 0 && sm.type.struct_id != self &&
+                                             (obj_needs_ctor(sm.type) || obj_needs_dtor(sm.type));
+                    if (object_init) {
+                        // static inline std::atomic<bool> s_quit{false}; static inline C c = value; ([dcl.inline],
+                        // [class.static.data]): an object made by its constructor at startup and destroyed at the end,
+                        // like a namespace-scope one. Own simplification: each file keeps its own copy (internal symbol).
+                        std::vector<Node> cargs;
+                        const bool braced = accept(TAssign) ? is(TLBrace) : true;
+                        if (braced) {
+                            if (!expect(TLBrace, "'{'")) return false;
+                            while (!is(TRBrace) && !is(TEnd)) {
+                                Node a;
+                                if (!parse_expr(1, &a)) return false;
+                                cargs.push_back(std::move(a));
+                                if (!accept(TComma)) break;
+                            }
+                            if (!expect(TRBrace, "'}'")) return false;
+                        } else {
+                            Node a;
+                            if (!parse_expr(1, &a)) return false;
+                            cargs.push_back(std::move(a));
+                        }
+                        sm.symbol = static_symbol(def, field.name, sm.type);
+                        Global g;
+                        g.name = sm.symbol;
+                        g.type = sm.type;
+                        g.bss = true;
+                        g.is_static = true;
+                        globals.push_back(g);
+                        if (!register_global_object(sm.symbol, sm.type, std::move(cargs))) return false;
+                    } else if (accept(TAssign)) {
                         Node init;
                         if (!parse_init(&init)) return false;
                         if (sm.type.is_const && scalar) {
@@ -4618,6 +4658,22 @@ struct Parser {
     std::map<std::string, std::vector<Type>> type_packs{};
     std::map<std::string, std::vector<std::string>> param_packs{};
 
+    // At a class template name inside '(': is it `(Box<T>)`, `(Box<T>*)` or `(Box<T>&)`, a cast? Not when the argument list
+    // is followed by anything else (`(is_arithmetic<It>::value)`, `(Box<int>(x) + 1)`).
+    bool template_id_cast_at(size_t i) const {
+        size_t k = i + 1;
+        int angle = 0;
+        for (; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+            if (tokens[k].kind == TLt) ++angle;
+            else if (tokens[k].kind == TGt && --angle == 0) break;
+        }
+        if (k + 1 >= tokens.size()) return false;
+        size_t j = k + 1;
+        while (j < tokens.size() && (tokens[j].kind == TStar || tokens[j].kind == TAmp || tokens[j].kind == TAndAnd ||
+                                     tokens[j].kind == TConst))
+            ++j;
+        return j < tokens.size() && tokens[j].kind == TRParen;
+    }
     bool is_template_name_at(size_t i) const {
         return i + 1 < tokens.size() && tokens[i].kind == TIdent && tokens[i + 1].kind == TLt &&
                class_templates.count(tokens[i].text) > 0;
@@ -5854,6 +5910,47 @@ struct Parser {
             if (i >= call_args.size()) break;
             if (pt.tpat == -2 || (pt.base < 100 && pt.tpat < 0)) continue;
             if (pt.tpat < 0 && explicit_given[static_cast<size_t>(pt.base - 100)]) continue;
+            if (pt.tpat >= 0 && call_args[i].kind == Node::Block && call_args[i].text == "tokbrace" &&
+                tpats[static_cast<size_t>(pt.tpat)].name == "initializer_list" &&
+                tpats[static_cast<size_t>(pt.tpat)].args.size() == 1) {
+                // max({a, b, c}) for a parameter initializer_list<T> ([temp.deduct.call] 1): T is deduced from each
+                // element of the list, and they must agree. The list is read here only for its types (what reading it
+                // made is dropped; adjust_args reads it again for the call).
+                const TArg elem_pat = tpats[static_cast<size_t>(pt.tpat)].args[0];
+                Node list;
+                {
+                    const size_t keep_at = at;
+                    const size_t keep_pre = stmt_pre.size();
+                    const size_t keep_temps = stmt_temps.size();
+                    at = static_cast<size_t>(call_args[i].number);
+                    const bool read = parse_init(&list);
+                    at = keep_at;
+                    stmt_pre.resize(keep_pre);
+                    stmt_temps.resize(keep_temps);
+                    if (!read || list.kids.empty()) {
+                        error = "cannot deduce template arguments of " + name;
+                        return false;
+                    }
+                }
+                for (const Node& kid : list.kids) {
+                    Type et;
+                    if (!static_type(kid, &et)) {
+                        error = "cannot deduce template arguments of " + name;
+                        return false;
+                    }
+                    literal_type(kid, &et);
+                    et.is_ref = false;
+                    et.is_const = false;
+                    et.pconst = false;
+                    TArg ea;
+                    ea.type = et;
+                    if (!match_arg(elem_pat, ea, &args, &given)) {
+                        error = "cannot deduce template arguments of " + name + " (the list's elements differ)";
+                        return false;
+                    }
+                }
+                continue;
+            }
             Type at_type;
             if (!static_type(call_args[i], &at_type)) {
                 error = "cannot deduce template arguments of " + name;
@@ -7009,7 +7106,8 @@ struct Parser {
                     (tokens[at + 3].kind == TIdent ||
                      ((tokens[at + 3].kind == TAmp || tokens[at + 3].kind == TStar) && at + 4 < tokens.size() &&
                       tokens[at + 4].kind == TIdent &&
-                      (typedefs.count(tokens[at + 2].text) > 0 || class_name_text(tokens[at + 2].text))));
+                      (typedefs.count(tokens[at + 2].text) > 0 || class_name_text(tokens[at + 2].text) ||
+                       find_struct(tokens[at + 2].text) >= 0)));  // `Vec3 f(PlainStruct& s)` is a function too
                 const bool template_type_start = after == TIdent && is_template_name_at(at + 2);  // `Foo(vector<int>& n)`
                 if (!type_start && !named_type_start && !template_type_start) {
                     // C g(args); a global object, the arguments go to a constructor.

@@ -16,6 +16,7 @@ const okayms_test::ProgramRun kRunIo{"r26",
                                      {"msvcrt.dll:fopen", "msvcrt.dll:_wfopen", "msvcrt.dll:fwrite", "msvcrt.dll:fread",
                                       "msvcrt.dll:fseek", "msvcrt.dll:ftell", "msvcrt.dll:rewind", "msvcrt.dll:fclose",
                                       "msvcrt.dll:_wremove"}};
+const okayms_test::ProgramRun kRunClock{"r26", {"QueryPerformanceCounter", "QueryPerformanceFrequency", "GetSystemTimeAsFileTime"}};
 const okayms_test::ProgramRun kRunSignal{"r26", {"msvcrt.dll:signal", "msvcrt.dll:raise"}};
 const okayms_test::ProgramRun kRunThreads{
     "r26",
@@ -580,6 +581,164 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// More fixes: m[{a, b}], static inline class members with initializers, std::minmax, find({a, b}), static const members
+// defined inline, set and map from a range, static local arrays of objects (made under the guard, destroyed at the end),
+// a function whose first parameter is a reference to a plain struct.
+static void r26_fixes3(Tally& tally) {
+    std::printf("r26_fixes3\n");
+    okayms_test::run_both(kRun, tally, "fixes3", std::string(kAlloc) + R"OKMS(
+#include <map>
+#include <utility>
+static int p1(void) {
+  std::map<std::pair<int, int>, int> edges;
+  ++edges[{1, 2}];
+  ++edges[{1, 2}];
+  ++edges[{2, 1}];
+  if (edges.size() != 2 || edges[{1, 2}] != 2) return 1;
+  return 0;
+}
+
+#include <atomic>
+#include <string>
+struct G { static inline bool s_p = false; static inline std::atomic<bool> s_quit{false}; static inline std::atomic<int> s_n{5}; static inline std::string s_name = "abc"; };
+static int p2(void) { if (G::s_quit.load()) return 1; G::s_quit.store(true); if (!G::s_quit.load() || G::s_n.load() != 5) return 2; return G::s_name == "abc" ? 0 : 3; }
+
+#include <algorithm>
+#include <map>
+#include <utility>
+struct V { float x, y, z; static const V Zero; };
+inline const V V::Zero {0, 0, 0};
+static void set0(V& o) { o = V::Zero; }
+static int p3(void) {
+  std::map<std::pair<int, int>, int> mids;
+  mids[{1, 2}] = 5;
+  auto key = std::minmax(2, 1);
+  if (key.first != 1 || key.second != 2) return 1;
+  auto it = mids.find({key.first, key.second});
+  if (it == mids.end() || it->second != 5) return 2;
+  V v; v.x = 3; set0(v);
+  if (v.x != 0) return 3;
+  return 0;
+}
+
+#include <set>
+#include <map>
+#include <vector>
+#include <algorithm>
+struct E { float original; bool blocking; };
+static float g(const E& e, float lowAlpha) { return e.blocking ? std::min(e.original, lowAlpha) : e.original; }
+static int p4(void) {
+  std::vector<int> faces = {3, 1, 3, 2};
+  std::set<int> sel(faces.begin(), faces.end());
+  if (sel.size() != 3 || *sel.begin() != 1) return 1;
+  std::set<int> copy(sel);
+  if (copy.size() != 3) return 2;
+  std::vector<std::pair<int, int>> kv = {{1, 10}, {0, 5}};
+  std::map<int, int> m(kv.begin(), kv.end());
+  if (m.size() != 2 || m[0] != 5) return 3;
+  E e{2.0f, true};
+  if (g(e, 1.0f) != 1.0f) return 4;
+  return 0;
+}
+
+#include <string_view>
+#include <string>
+static int f(std::string_view s) {
+  static constexpr std::string_view kDev[] = {"con", "prn", "aux"};
+  int n = 0;
+  for (auto d : kDev) if (d == s) ++n;
+  return n;
+}
+static int calls = 0;
+static const std::string& name(int i) {
+  static const std::string names[] = {"zero", std::string("one"), "two"};
+  ++calls;
+  return names[i];
+}
+struct P { int v; P() : v(4) {} };
+static int pv() { static P ps[3]; ps[1].v += 1; return ps[1].v; }
+static int p5(void) {
+  if (f("prn") != 1 || f("xyz") != 0) return 1;
+  if (name(1) != "one" || name(2) != "two" || calls != 2) return 2;
+  if (pv() != 5 || pv() != 6) return 3;
+  return 0;
+}
+
+struct PlainS { int k; };
+struct VecR { float x; VecR() : x(0) {} };
+inline VecR FromPlain(PlainS& s, int* parent, const VecR& base, float dt, VecR& outv) { outv.x = (float)s.k + dt; (void)parent; return base; }
+static int p6(void) { PlainS s; s.k = 2; VecR b, o; VecR r = FromPlain(s, nullptr, b, 0.5f, o); return o.x == 2.5f && r.x == 0 ? 0 : 1; }
+int entry(void) {
+  int r = p1(); if (r) return 10 + r;
+  r = p2(); if (r) return 20 + r;
+  r = p3(); if (r) return 30 + r;
+  r = p4(); if (r) return 40 + r;
+  r = p5(); if (r) return 50 + r;
+  r = p6(); if (r) return 60 + r;
+  return 0;
+}
+)OKMS", 0);
+}
+
+// steady_clock::time_point and system_clock::time_point, a brace-initialized time_point member, duration<double, milli>.
+static void r26_clock_types(Tally& tally) {
+    std::printf("r26_clock_types\n");
+    okayms_test::run_both(kRunClock, tally, "clock_types", std::string(kAlloc) + R"OKMS(
+#include <chrono>
+struct P { std::chrono::steady_clock::time_point m_start{}, m_epoch{}; };
+static double Ms(std::chrono::steady_clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); }
+int entry(void) {
+  P p;
+  p.m_start = std::chrono::steady_clock::now();
+  std::chrono::steady_clock::time_point t = std::chrono::steady_clock::now();
+  std::chrono::system_clock::time_point s = std::chrono::system_clock::now();
+  (void)s;
+  return Ms(t - p.m_start) >= 0.0 ? 0 : 1;
+}
+)OKMS", 0);
+}
+
+// dynamic_cast<T*> over a single-inheritance chain (the type information objects point to their base's), to a base
+// without a check, of a null pointer; std::max({...}) and std::min({...}) with T deduced from the braced list.
+static void r26_dynamic_cast(Tally& tally) {
+    std::printf("r26_dynamic_cast\n");
+    okayms_test::run_both(kRunRtti, tally, "dynamic_cast", std::string(kAlloc) + R"OKMS(
+#include <algorithm>
+#include <typeinfo>
+struct A { virtual ~A() {} int a; };
+struct B : A { int b; };
+struct C : B { int c; };
+struct D : A { int d; };
+static int check(A* p) {
+  int r = 0;
+  if (B* b = dynamic_cast<B*>(p)) r += 1 + 0 * b->b;
+  if (dynamic_cast<C*>(p) != nullptr) r += 10;
+  if (dynamic_cast<D*>(p) != nullptr) r += 100;
+  return r;
+}
+static int part1(void) {
+  A a; B b; C c; D d;
+  if (check(&a) != 0) return 1;
+  if (check(&b) != 1) return 2;
+  if (check(&c) != 11) return 3;
+  if (check(&d) != 100) return 4;
+  A* none = nullptr;
+  if (dynamic_cast<B*>(none) != nullptr) return 5;
+  B* up = &c;
+  if (dynamic_cast<A*>(up) != &c) return 6;
+  return 0;
+}
+
+static int part2(void) { float a = 2.0f, b = 5.0f; float m = std::max({a, b, 1e-3f}); float n = std::min({a, b, 3.0f}); float k = std::max(a, b); return m == 5.0f && n == 2.0f && k == 5.0f ? 0 : 1; }
+
+int entry(void) {
+  int r = part1();
+  if (r != 0) return r;
+  return part2() == 0 ? 0 : 20;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -597,5 +756,8 @@ int main(int argc, char** argv) {
     r26_csignal(tally);
     r26_threads(tally);
     r26_fixes2(tally);
-    return tally.finish(13);
+    r26_fixes3(tally);
+    r26_clock_types(tally);
+    r26_dynamic_cast(tally);
+    return tally.finish(16);
 }

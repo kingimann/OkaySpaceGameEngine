@@ -700,6 +700,7 @@ static bool ParseCore(Scene& scene, const std::string& text, bool clear,
 static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       GameObject** firstNew, std::string* error,
                       std::vector<std::string>* warnings = nullptr) {
+    SceneFileLoadScope loadingFile;   // don't invent components the file didn't write
     std::vector<std::string> found;
     auto report = [&]() {
         if (warnings) warnings->insert(warnings->end(), found.begin(), found.end());
@@ -782,6 +783,7 @@ float SceneLoadJob::Progress() const {
 
 bool SceneLoadJob::Step(Scene& scene, int maxObjects, std::string* error) {
     if (m_finished) return !m_failed;
+    SceneFileLoadScope loadingFile;   // as in ParseInto: don't invent components the file didn't write
     const std::string prevDir = g_loadingSceneDir;
     g_loadingSceneDir = m_dir;
     struct Restore { const std::string& d; ~Restore() { g_loadingSceneDir = d; } } restore{prevDir};

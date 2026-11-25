@@ -64,9 +64,12 @@ def is_stacked(root, A, B, base="origin/main"):
             return subprocess.run(["git", "-C", root, *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).returncode == 0
         stacked = any(ok("merge-base", "--is-ancestor", x["sha"], y["sha"]) for x, y in ((A, B), (B, A)))
         if not stacked:
-            mb = subprocess.run(["git", "-C", root, "merge-base", A["sha"], B["sha"]], stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, text=True).stdout.strip()
-            stacked = bool(mb) and not ok("merge-base", "--is-ancestor", mb, base)
+            # `merge-base` prints only one ancestor. After both branches merge main there are two:
+            # main itself, and the shared feature commit. One shared commit that is not on main
+            # still means one branch was built on the other.
+            out = subprocess.run(["git", "-C", root, "merge-base", "--all", A["sha"], B["sha"]],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout
+            stacked = any(mb and not ok("merge-base", "--is-ancestor", mb, base) for mb in out.split())
         _anc[k] = stacked
     return _anc[k]
 

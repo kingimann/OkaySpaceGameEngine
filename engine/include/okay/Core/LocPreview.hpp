@@ -83,4 +83,23 @@ private:
     bool m_mirrorRtl = true;
 };
 
+/// Visual order for a left-to-right renderer: Arabic letters take their joining form,
+/// then right-to-left runs are reversed (numbers and Latin stay in order).
+std::string ShapeForDisplay(const std::string& text);
+
+/// How many shaped strings ShapedForDisplay keeps. More right-to-left strings than this on one screen are
+/// shaped again each frame (still correct, only slower).
+constexpr int kShapeCacheSize = 128;
+
+/// ShapeForDisplay for the draw and measure path. Returns `text` itself when nothing changes (no right-to-left
+/// or Arabic character and no carriage return), else a cached shaped copy, so a steady frame allocates
+/// nothing. The UI thread only, like the rest of the UI renderer: the returned reference stays valid until
+/// the next call to this function.
+const std::string& ShapedForDisplay(const std::string& text);
+
+/// For one line (no '\n'): the byte offset in ShapeForDisplay(line) where the caret is drawn when it sits
+/// before byte `logicalByte` of `line`. The drawn width of the shaped line's bytes before that offset is the
+/// caret's x. Left-to-right text returns `logicalByte` unchanged.
+std::size_t ShapedCaretByte(const std::string& line, std::size_t logicalByte);
+
 } // namespace okay

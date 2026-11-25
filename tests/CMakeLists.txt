@@ -1057,7 +1057,7 @@ add_test(NAME ui_renderer_options COMMAND test_ui_renderer_options)
 
 add_executable(test_ui_render_bench test_ui_render_bench.cpp)
 target_link_libraries(test_ui_render_bench PRIVATE okay::engine)
-target_compile_definitions(test_ui_render_bench PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_definitions(test_ui_render_bench PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME ui_render_bench COMMAND test_ui_render_bench)
 
 add_executable(test_ui_layout_containers test_ui_layout_containers.cpp)
@@ -5329,6 +5329,58 @@ add_executable(test_vs_facing test_vs_facing.cpp)
 target_link_libraries(test_vs_facing PRIVATE okay::engine)
 target_compile_definitions(test_vs_facing PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_facing COMMAND test_vs_facing)
+
+# grok/core-1: area 1 core gaps. Additive block so another branch can keep its own registration at the end.
+add_executable(test_dataasset_file_appears test_dataasset_file_appears.cpp)
+target_link_libraries(test_dataasset_file_appears PRIVATE okay::engine)
+add_test(NAME dataasset_file_appears COMMAND test_dataasset_file_appears)
+
+add_executable(test_asset_guid_stable test_asset_guid_stable.cpp)
+target_link_libraries(test_asset_guid_stable PRIVATE okay::engine)
+add_test(NAME asset_guid_stable COMMAND test_asset_guid_stable)
+
+add_executable(test_model_deps test_model_deps.cpp)
+target_link_libraries(test_model_deps PRIVATE okay::engine)
+add_test(NAME model_deps COMMAND test_model_deps)
+
+add_executable(test_dataasset_reload_changed test_dataasset_reload_changed.cpp)
+target_link_libraries(test_dataasset_reload_changed PRIVATE okay::engine)
+add_test(NAME dataasset_reload_changed COMMAND test_dataasset_reload_changed)
+
+add_executable(test_save_export_legacy test_save_export_legacy.cpp)
+target_link_libraries(test_save_export_legacy PRIVATE okay::engine)
+add_test(NAME save_export_legacy COMMAND test_save_export_legacy)
+
+add_executable(test_thumb_data test_thumb_data.cpp)
+target_link_libraries(test_thumb_data PRIVATE okay::engine)
+add_test(NAME thumb_data COMMAND test_thumb_data)
+
+add_executable(test_profiler_jobs test_profiler_jobs.cpp)
+target_link_libraries(test_profiler_jobs PRIVATE okay::engine)
+target_compile_definitions(test_profiler_jobs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME profiler_jobs COMMAND test_profiler_jobs)
+
+add_executable(test_engine_bus test_engine_bus.cpp)
+target_link_libraries(test_engine_bus PRIVATE okay::engine)
+add_test(NAME engine_bus COMMAND test_engine_bus)
+
+add_executable(test_job_steal test_job_steal.cpp)
+target_link_libraries(test_job_steal PRIVATE okay::engine)
+add_test(NAME job_steal COMMAND test_job_steal)
+
+add_executable(test_dir_watch test_dir_watch.cpp)
+target_link_libraries(test_dir_watch PRIVATE okay::engine)
+add_test(NAME dir_watch COMMAND test_dir_watch)
+
+# grok/core-2: scene files keep an asset GUID beside the path.
+add_executable(test_scene_asset_guid test_scene_asset_guid.cpp)
+target_link_libraries(test_scene_asset_guid PRIVATE okay::engine)
+add_test(NAME scene_asset_guid COMMAND test_scene_asset_guid)
+
+add_executable(test_text_shape test_text_shape.cpp)
+target_link_libraries(test_text_shape PRIVATE okay::engine)
+target_compile_definitions(test_text_shape PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME text_shape COMMAND test_text_shape)
 
 # Grok physics: capsule character push-out, joints linked by object, shape casts that return every hit, closest point.
 add_executable(test_physics_grok test_physics_grok.cpp)

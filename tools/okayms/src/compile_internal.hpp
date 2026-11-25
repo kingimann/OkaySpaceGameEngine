@@ -60,6 +60,10 @@ inline std::vector<std::string>& enum_names() {
     return names;
 }
 
+struct Type;
+// The pointer-to-member types read so far (Type::memptr indexes it): the class, then the member's type.
+std::vector<std::pair<Type, Type>>& memptr_types();
+
 struct Type {
     int pointers = 0;
     // 0 void, 1 int, 2 char, 3 struct or union, 4 short
@@ -96,6 +100,10 @@ struct Type {
     // A placeholder return type ([dcl.spec.auto]): 1 `auto`, 2 `decltype(auto)`; 0 a written type. The function's
     // body is read once to learn the type of its first return (parse_function_body), then the type is replaced.
     int deduce = 0;
+    // A pointer to a data member ([dcl.mptr], `T C::*`; Round 30): its index in memptr_types(), or -1. The value is an
+    // int: the member's offset in C plus one, and 0 for a null member pointer (own representation; Microsoft keeps the
+    // offset and uses -1 for null).
+    int memptr = -1;
     bool pointer() const { return pointers > 0; }
     bool is_array() const { return array_len >= 0; }
     bool is_func() const { return func_id >= 0; }
@@ -336,6 +344,9 @@ struct Node {
     bool imported = false;
     // Line of the preprocessed text where a statement starts. 0 is unknown.
     int line = 0;
+    // A name written in the source: how many locals of the function had been declared when it was read, or -1. Of two
+    // locals of one name the code generator takes one declared before the use ([basic.scope.pdecl], Round 30).
+    int vis = -1;
     std::vector<Node> kids;
 };
 

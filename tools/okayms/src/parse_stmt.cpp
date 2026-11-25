@@ -1620,18 +1620,35 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
          (range.kind == Node::Unary && range.op == TStar))) {
         const Method* mb = find_method(range_type.struct_id, "begin", 0);
         const Method* me = find_method(range_type.struct_id, "end", 0);
+        if (mb == nullptr && me == nullptr) {
+            // No member begin or end ([stmt.ranged] 1.3): begin(range) and end(range) are free functions
+            // (std::filesystem::directory_iterator); both must return the same iterator class.
+            bool fb = false;
+            bool fe = false;
+            if (!free_call("begin", {range}, &begin_call, &fb)) return false;
+            if (!free_call("end", {range}, &end_call, &fe)) return false;
+            Type tb;
+            Type te;
+            if (fb && fe && static_type(begin_call, &tb) && static_type(end_call, &te) && tb.base == 3 &&
+                tb.pointers == 0 && !tb.is_array() && tb.struct_id >= 0 && te.base == 3 && te.pointers == 0 &&
+                te.struct_id == tb.struct_id) {
+                tb.is_ref = false;
+                tb.rref = false;
+                tb.is_const = false;
+                class_range = true;
+                iter_class = true;
+                iter_type = tb;
+            }
+        }
         const bool class_iters = mb != nullptr && me != nullptr && mb->ret.pointers == 0 && !mb->ret.is_ref &&
                                  mb->ret.base == 3 && mb->ret.struct_id >= 0 && me->ret.pointers == 0 &&
                                  me->ret.base == 3 && me->ret.struct_id == mb->ret.struct_id;
-        if (mb == nullptr || me == nullptr ||
-            (!class_iters && (mb->ret.pointers < 1 || me->ret.pointers != mb->ret.pointers))) {
+        if (!class_range && (mb == nullptr || me == nullptr ||
+                             (!class_iters && (mb->ret.pointers < 1 || me->ret.pointers != mb->ret.pointers)))) {
             error = "a range for over a class needs begin() and end() that return pointers or iterator objects";
             return false;
         }
-        class_range = true;
-        iter_class = class_iters;
-        iter_type = mb->ret;
-        for (int w = 0; w < 2; ++w) {
+        for (int w = 0; w < 2 && !class_range; ++w) {
             const Method* m = w == 0 ? mb : me;
             Node call;
             call.kind = Node::Call;
@@ -1640,6 +1657,11 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
             call.type = m->ret;
             call.kids.push_back(node_addr(range));
             (w == 0 ? begin_call : end_call) = std::move(call);
+        }
+        if (!class_range) {
+            class_range = true;
+            iter_class = class_iters;
+            iter_type = mb->ret;
         }
     } else if (!range_type.is_array() || range_type.array_len < 0) {
         error = "a range for needs an array of known length";
@@ -1651,6 +1673,7 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     // With iterator objects ([stmt.ranged] 1): the element is *__ri, the test __ri != __re and the step ++__ri, each by
     // the iterator class's operators. The iterators are destroyed after the loop.
     Node iter_deref;
+    bool elem_prvalue = false;  // *it gives a value, not a reference
     Node iter_cond;
     Node iter_step;
     const std::string iter_name = "__ri" + std::to_string(range_count);
@@ -1690,6 +1713,7 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
             error = "cannot work out the type of the range elements";
             return false;
         }
+        elem_prvalue = !elem.is_ref;
         elem.is_ref = false;
         elem.rref = false;
     }
@@ -1702,6 +1726,9 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
         next();
         declared = elem;
         if (is(TStar) && declared.pointers > 0) declared.pointers -= 1;
+        // `const auto& v` over an iterator whose operator* gives a value: v is bound to that temporary, whose life
+        // is extended to v's ([class.temporary] 6); here v is a copy of it, which reads the same.
+        if (elem_prvalue && (is(TAmp) || is(TAndAnd)) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent) next();
     } else {
         bool imp = false;
         bool exp = false;

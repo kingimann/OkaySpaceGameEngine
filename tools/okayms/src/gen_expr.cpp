@@ -173,7 +173,7 @@ bool Gen::gen_expr(const Node& node) {
         return true;
     }
     if (node.kind == Node::Name) {
-        if (Local* local = find_local(node.text)) {
+        if (Local* local = find_local(node)) {
             if (local->type.is_ref) {
                 load_slot(local->offset, true);
                 Type referred = local->type;
@@ -573,12 +573,12 @@ bool Gen::gen_expr(const Node& node) {
     if (node.kind == Node::Assign) {
         if (node.kids.size() == 2 && node.kids[1].kind == Node::Block && node.kids[1].text == "init" &&
             node.kids[0].kind == Node::Name) {
-            if (Local* local = find_local(node.kids[0].text)) return store_init(local->type, local->offset, node.kids[1]);
+            if (Local* local = find_local(node.kids[0])) return store_init(local->type, local->offset, node.kids[1]);
             error = "initializer is not a local";
             return false;
         }
         if (node.kids[0].kind == Node::Name && (node.op == TAssign || node.op == TEnd)) {
-            if (Local* local = find_local(node.kids[0].text)) {
+            if (Local* local = find_local(node.kids[0])) {
                 if (local->type.is_ref && node.number == 1) {
                     if (!gen_addr(node.kids[1])) return false;
                     const int addr = spill_addr();
@@ -605,7 +605,7 @@ bool Gen::gen_expr(const Node& node) {
             }
         }
         if (node.number != 1 && node.kids[0].kind == Node::Name) {
-            if (Local* local = find_local(node.kids[0].text)) {
+            if (Local* local = find_local(node.kids[0])) {
                 if (local->is_const) {
                     error = "assignment to const " + local->name;
                     return false;
@@ -696,7 +696,7 @@ bool Gen::gen_expr(const Node& node) {
             return true;
         }
         if (node.kids[0].kind == Node::Name) {
-            Local* local = find_local(node.kids[0].text);
+            Local* local = find_local(node.kids[0]);
             if (local != nullptr && !local->is_static) {
                 const bool big = local->type.base == 3 && local->type.pointers == 0 && !fits_register(local->type);
                 if (big && node.kids[1].kind == Node::Call) {
@@ -726,10 +726,10 @@ bool Gen::gen_expr(const Node& node) {
         }
         if (node.kids[0].kind == Node::Field || node.kids[0].kind == Node::Index ||
             (node.kids[0].kind == Node::Unary && node.kids[0].op == TStar) ||
-            (node.kids[0].kind == Node::Name && find_local(node.kids[0].text) != nullptr &&
-             (find_local(node.kids[0].text)->type.is_ref || find_local(node.kids[0].text)->is_static)) ||
+            (node.kids[0].kind == Node::Name && find_local(node.kids[0]) != nullptr &&
+             (find_local(node.kids[0])->type.is_ref || find_local(node.kids[0])->is_static)) ||
             // a static local or a global (static C x = f(); C g = f();): written through its address, not a stack slot
-            (node.kids[0].kind == Node::Name && find_local(node.kids[0].text) == nullptr &&
+            (node.kids[0].kind == Node::Name && find_local(node.kids[0]) == nullptr &&
              find_global(node.kids[0].text) != nullptr)) {
             // A big struct stored into a member, an element or through a pointer: the bytes are copied, or the
             // callee writes the result straight there. The address is worked out first; when the target turns
@@ -920,7 +920,7 @@ bool Gen::gen_expr(const Node& node) {
                 error = "va_arg list must be a name";
                 return false;
             }
-            Local* ap = find_local(node.kids[0].text);
+            Local* ap = find_local(node.kids[0]);
             if (ap == nullptr) {
                 error = "va_arg list must be a local";
                 return false;
@@ -955,7 +955,7 @@ bool Gen::gen_expr(const Node& node) {
             promote(&last_type);
             return true;
         }
-        Local* fp_local = node.text.empty() ? nullptr : find_local(node.text);
+        Local* fp_local = node.text.empty() ? nullptr : find_local(node);
         if (fp_local != nullptr && fp_local->type.func_id < 0) fp_local = nullptr;
         const bool indirect = node.text.empty() || fp_local != nullptr;
         FuncDecl* fn = nullptr;
@@ -965,6 +965,14 @@ bool Gen::gen_expr(const Node& node) {
         size_t arg0 = 0;
         if (fp_local != nullptr) {
             load_slot(fp_local->offset, true);
+            if (fp_local->type.is_ref) {
+                // A reference to a function pointer (Fn& f, or F&& f bound to a lambda without captures): the slot holds
+                // the pointer's address; the pointer itself is read from there (Round 30: the call went to the address
+                // of the pointer, a crash).
+                b(0x48);
+                b(0x8B);
+                b(0x00);  // mov rax, [rax]
+            }
             last_type = fp_local->type;
             if (func_types == nullptr || static_cast<size_t>(fp_local->type.func_id) >= func_types->size()) {
                 error = "call target is not a function";

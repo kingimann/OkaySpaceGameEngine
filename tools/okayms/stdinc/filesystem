@@ -8,7 +8,9 @@
 //   directory iterators, ...) are declared only. okay-ms's runtime does not define them yet, so a program that calls
 //   one links only against a library that does. Each has the std::error_code overload; there are no exceptions, so
 //   the overload without it reports nothing.
-// - No file_time_type clock, no space_info values, no permissions beyond the enumeration.
+// - file_time_type is a std::chrono::time_point of a file clock that counts 100-nanosecond steps since 1601-01-01, as
+//   Windows keeps file times ([fs.filesystem.syn]: a time_point of a trivial clock; Round 30). No space_info values,
+//   no permissions beyond the enumeration.
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -16,6 +18,7 @@
 #include <system_error>
 #include <vector>
 #include <iterator>
+#include <chrono>
 namespace std {
 namespace filesystem {
 
@@ -366,8 +369,22 @@ struct space_info {
     std::uintmax_t available;
 };
 
-// A count of 100-nanosecond intervals, as Windows keeps file times (own simplification: no clock type).
-typedef long long file_time_type;
+// The clock of file times (Round 30): 100-nanosecond steps since 1601-01-01, the unit and epoch of a Windows file time
+// (GetSystemTimeAsFileTime gives now()). [fs.filesystem.syn] asks for a trivial clock; C++20 names it file_clock.
+struct __okay_file_clock {
+    typedef long long rep;
+    typedef ratio<1, 10000000> period;
+    typedef chrono::duration<long long, ratio<1, 10000000> > duration;
+    static const bool is_steady = false;
+    static chrono::time_point<__okay_file_clock, chrono::duration<long long, ratio<1, 10000000> > > now() {
+        unsigned long long ft = 0;
+        GetSystemTimeAsFileTime(&ft);
+        return chrono::time_point<__okay_file_clock, chrono::duration<long long, ratio<1, 10000000> > >(
+            chrono::duration<long long, ratio<1, 10000000> >((long long)ft));
+    }
+    typedef chrono::time_point<__okay_file_clock, chrono::duration<long long, ratio<1, 10000000> > > time_point;
+};
+typedef chrono::time_point<__okay_file_clock, chrono::duration<long long, ratio<1, 10000000> > > file_time_type;
 
 // The operations ([fs.op.funcs]): declarations only (see the top of this header).
 bool exists(const path& p);

@@ -1537,6 +1537,11 @@ bool Parser::parse_unary(Node* out) {
         const bool from_global = is(TColonColon);
         if (from_global) next();  // ::name: looked up at global scope, not in the namespaces around the call
         std::string name = cur().text;
+        // A member function of the class being read hides a namespace function of the same name in a call
+        // ([basic.lookup.unqual] 1, [class.member.lookup]): `Text(s)` in a member calls the member Text, even when it is
+        // declared further down the class and a free Text exists.
+        const bool member_call = !from_global && !cur().nsq && at + 1 < tokens.size() &&
+                                 tokens[at + 1].kind == TLParen && member_hides(name, TLParen);
         next();
         if (!global_alias.empty() && !is(TLParen) && !local_visible(name)) {
             const auto alias = global_alias.find(name);
@@ -1587,7 +1592,7 @@ bool Parser::parse_unary(Node* out) {
         if (name.find("::") != std::string::npos)
             for (const FuncDecl& fd : funcs)
                 if (fd.name == name) exact_function = true;
-        if (!exact_function && !from_global && !current_ns.empty() && is(TLParen) && !local_visible(name)) {
+        if (!exact_function && !from_global && !member_call && !current_ns.empty() && is(TLParen) && !local_visible(name)) {
             // A bare name inside a namespace finds the functions of that namespace and of the ones around
             // it ([basic.lookup.unqual]), innermost first.
             std::string ns = current_ns;
@@ -1605,7 +1610,8 @@ bool Parser::parse_unary(Node* out) {
                 ns = ns.substr(0, cut);
             }
         }
-        if (name.find("::") == std::string::npos && is(TLParen) && !local_visible(name) && !using_namespaces.empty()) {
+        if (name.find("::") == std::string::npos && is(TLParen) && !member_call && !local_visible(name) &&
+            !using_namespaces.empty()) {
             // A bare call that names no function of its own: look in the namespaces of `using namespace`.
             bool own = false;
             for (const FuncDecl& fd : funcs)
@@ -1752,6 +1758,13 @@ bool Parser::parse_unary(Node* out) {
                 int nested = -1;
                 for (size_t k = 0; k < structs.size(); ++k)
                     if (structs[k].name == part && structs[k].parent == scope_sid) nested = static_cast<int>(k);
+                if (nested < 0) {
+                    // A member type that names a class (file_time_type::clock::now(), Round 30): its class.
+                    const auto td = structs[static_cast<size_t>(scope_sid)].tdefs.find(part);
+                    if (td != structs[static_cast<size_t>(scope_sid)].tdefs.end() && td->second.base == 3 &&
+                        td->second.pointers == 0 && td->second.struct_id >= 0)
+                        nested = td->second.struct_id;
+                }
                 if (nested < 0) break;
                 scope_sid = nested;
                 member = member.substr(step + 2);
@@ -2043,6 +2056,7 @@ bool Parser::parse_unary(Node* out) {
             out->kids = std::move(cargs);
             for (const FuncDecl& known : funcs) {
                 if (known.name != inst) continue;
+                if (!pad_defaults(known.defaults, known.params.size(), &out->kids)) return false;
                 std::vector<Type> source = known.params;
                 for (size_t i = 0; i < source.size() && i < known.param_ref.size(); ++i)
                     if (known.param_ref[i]) {
@@ -2171,6 +2185,7 @@ bool Parser::parse_unary(Node* out) {
         } else {
             out->kind = Node::Name;
             out->text = name;
+            if (cur_locals != nullptr) out->vis = static_cast<int>(cur_locals->size());
             if (!local_visible(name) && !names_function(name)) {
                 // std::hex used as a value: the namespace qualifier was dropped (namespaces are flat for names that
                 // are not called), so the function is found by its last name part when exactly one has it.
@@ -2364,6 +2379,8 @@ bool Parser::parse_unary(Node* out) {
         }
         *out = std::move(inner);
         return parse_postfix(out);
+    } else if (is(TAmp) && member_pointer_ahead()) {
+        return parse_member_pointer(out) && parse_postfix(out);
     } else if (is(TStar) || is(TAmp) || is(TMinus) || is(TNot) || is(TTilde)) {
         out->kind = Node::Unary;
         out->op = cur().kind;
@@ -2460,6 +2477,17 @@ bool Parser::parse_unary(Node* out) {
 
 bool Parser::parse_postfix(Node* out) {
     while (is(TLBrack) || is(TDot) || is(TArrow) || is(TLParen) || is(TPlusPlus) || is(TMinusMinus)) {
+        if ((is(TDot) || is(TArrow)) && at + 1 < tokens.size() && tokens[at + 1].kind == TStar) {
+            // obj.*pm and p->*pm (Round 30). Their operand binds as a cast-expression ([expr.mptr.oper]); what follows
+            // is left to the binary operators, so `(p->*m).f()` needs its parentheses, as in C++.
+            const bool arrow = is(TArrow);
+            next();
+            next();
+            Node result;
+            if (!apply_member_pointer(std::move(*out), arrow, &result)) return false;
+            *out = std::move(result);
+            return true;
+        }
         if (is(TPlusPlus) || is(TMinusMinus)) {
             {
                 bool done = false;
@@ -3110,5 +3138,123 @@ bool Parser::parse_type_trait(Node* out) {
     return parse_postfix(out);
 }
 
+}  // namespace compiler
+}  // namespace okayms
+
+namespace okayms {
+namespace compiler {
+// At '&': `&C::m` where m is a non-static data member of the class C (also Outer::Inner::m) ([expr.unary.op] 4).
+bool Parser::member_pointer_ahead() const {
+    size_t k = at + 1;
+    if (k + 2 >= tokens.size() || tokens[k].kind != TIdent || tokens[k + 1].kind != TColonColon) return false;
+    int sid = scope_class(tokens[k].text);
+    if (sid < 0 && typedefs.count(tokens[k].text) == 0) sid = find_struct(tokens[k].text);  // a plain struct too
+    if (sid < 0) return false;
+    k += 2;
+    while (k + 2 < tokens.size() && tokens[k].kind == TIdent && tokens[k + 1].kind == TColonColon) {
+        int nested = -1;
+        for (size_t n = 0; n < structs.size(); ++n)
+            if (structs[n].name == tokens[k].text && structs[n].parent == sid) nested = static_cast<int>(n);
+        if (nested < 0) return false;
+        sid = nested;
+        k += 2;
+    }
+    if (k + 1 >= tokens.size() || tokens[k].kind != TIdent) return false;
+    if (tokens[k + 1].kind == TLParen || tokens[k + 1].kind == TLt || tokens[k + 1].kind == TColonColon) return false;
+    const StructDef& d = structs[static_cast<size_t>(sid)];
+    if (d.statics.count(tokens[k].text) > 0) return false;
+    return find_field_named(d, tokens[k].text) >= 0;
+}
+
+// &C::m: a constant of type `T C::*`, the member's offset in C plus one (Type::memptr; Round 30).
+bool Parser::parse_member_pointer(Node* out) {
+    next();  // &
+    int sid = scope_class(cur().text);
+    if (sid < 0) sid = find_struct(cur().text);
+    next();
+    next();
+    while (is(TIdent) && at + 1 < tokens.size() && tokens[at + 1].kind == TColonColon) {
+        for (size_t n = 0; n < structs.size(); ++n)
+            if (structs[n].name == cur().text && structs[n].parent == sid) sid = static_cast<int>(n);
+        next();
+        next();
+    }
+    const StructDef& d = structs[static_cast<size_t>(sid)];
+    const int fi = find_field_named(d, cur().text);
+    next();
+    if (fi < 0) {
+        error = "no data member for a pointer to member";
+        return false;
+    }
+    const Field& f = d.fields[static_cast<size_t>(fi)];
+    if (f.type.bits >= 0) {
+        error = "a pointer to a bit-field member";
+        return false;
+    }
+    Type cls;
+    cls.base = 3;
+    cls.struct_id = sid;
+    Type member = f.type;
+    Type mp;
+    mp.base = 1;
+    mp.memptr = static_cast<int>(memptr_types().size());
+    memptr_types().emplace_back(cls, member);
+    *out = Node{};
+    out->kind = Node::IntLit;
+    out->number = static_cast<uint64_t>(f.offset + 1);
+    out->type = mp;
+    return true;
+}
+
+// obj.*pm and ptr->*pm ([expr.mptr.oper]): the member at the offset pm holds, as an lvalue of its type:
+// *(T*)((char*)&obj + pm - 1). A null pm is not checked (undefined behaviour in the standard).
+bool Parser::apply_member_pointer(Node object, bool arrow, Node* out) {
+    Node pm;
+    if (!parse_unary(&pm)) return false;
+    Type pt;
+    if (!static_type(pm, &pt) || pt.memptr < 0 || pt.pointers != 0) {
+        error = "the right side of .* or ->* is not a pointer to member";
+        return false;
+    }
+    const std::pair<Type, Type> mp = memptr_types()[static_cast<size_t>(pt.memptr)];
+    Type ot;
+    if (!static_type(object, &ot)) {
+        error = "cannot work out the class on the left of .* or ->*";
+        return false;
+    }
+    Node addr = arrow ? std::move(object) : node_addr(std::move(object));
+    if (ot.base == 3 && ot.struct_id >= 0 && mp.first.base == 3 && mp.first.struct_id >= 0 &&
+        ot.struct_id != mp.first.struct_id) {
+        // A member of a base class reached through a derived object: the base subobject first.
+        const int off = base_offset(ot.struct_id, mp.first.struct_id);
+        if (off > 0) addr = offset_ptr(std::move(addr), off, mp.first.struct_id);
+    }
+    Type bytes;
+    bytes.base = 2;
+    bytes.pointers = 1;
+    Node sum;
+    sum.kind = Node::Binary;
+    sum.op = TPlus;
+    sum.kids.push_back(cast_node(bytes, std::move(addr)));
+    Node off;
+    off.kind = Node::Binary;
+    off.op = TMinus;
+    Type wide;
+    wide.base = 1;
+    wide.wide = true;
+    off.kids.push_back(cast_node(wide, std::move(pm)));
+    off.kids.push_back(int_node(1));
+    sum.kids.push_back(std::move(off));
+    Type target = mp.second;
+    target.is_ref = false;
+    target.rref = false;
+    target.pointers += 1;
+    Node deref;
+    deref.kind = Node::Unary;
+    deref.op = TStar;
+    deref.kids.push_back(cast_node(target, std::move(sum)));
+    *out = std::move(deref);
+    return true;
+}
 }  // namespace compiler
 }  // namespace okayms

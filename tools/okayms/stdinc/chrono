@@ -63,6 +63,7 @@ class time_point {
     Dur since_;
 
 public:
+    typedef Clock clock;
     typedef Dur duration;
     time_point() : since_() {}
     explicit time_point(const Dur& d) : since_(d) {}

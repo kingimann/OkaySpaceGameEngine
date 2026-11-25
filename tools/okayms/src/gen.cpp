@@ -37,7 +37,7 @@ Type Gen::element_type(const Type& type) const { return peel_array(type); }
 
 bool Gen::gen_addr(const Node& node) {
     if (node.kind == Node::Name) {
-        if (Local* local = find_local(node.text)) {
+        if (Local* local = find_local(node)) {
             if (local->type.is_ref) {
                 load_slot(local->offset, true);
                 last_type = local->type;
@@ -91,7 +91,7 @@ bool Gen::gen_addr(const Node& node) {
     if (node.kind == Node::Index) {
         bool from_pointer = false;
         if (node.kids[0].kind == Node::Name) {
-            if (Local* local = find_local(node.kids[0].text))
+            if (Local* local = find_local(node.kids[0]))
                 from_pointer = local->type.pointers > 0 && !local->type.is_array();
             else if (Global* global = find_global(node.kids[0].text))
                 from_pointer = global->type.pointers > 0 && !global->type.is_array();

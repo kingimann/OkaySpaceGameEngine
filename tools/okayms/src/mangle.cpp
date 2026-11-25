@@ -7,7 +7,20 @@ namespace compiler {
 // MSVC decorated names, from the public decoration rules: '?' name '@'
 // namespace '@@YA' return-type argument-types '@Z'. H is int, X is void,
 // A in front of a type is a reference. Written here, not copied.
+std::vector<std::pair<Type, Type>>& memptr_types() {
+    static std::vector<std::pair<Type, Type>> types;
+    return types;
+}
+
 std::string cxx_type(const Type& type, const std::vector<StructDef>* structs) {
+    if (type.memptr >= 0 && type.memptr < static_cast<int>(memptr_types().size()) && !type.is_ref && type.pointers == 0) {
+        // T C::* (Round 30): P, E for 64-bit, Q and the class's name (as for a class type, without its U/V letter),
+        // then the member's type. Written from the public decoration rules; not compared with MSVC output.
+        const auto& mp = memptr_types()[static_cast<size_t>(type.memptr)];
+        std::string cls = cxx_type(mp.first, structs);
+        if (!cls.empty() && (cls[0] == 'U' || cls[0] == 'V' || cls[0] == 'T')) cls = cls.substr(1);
+        return "PEQ" + cls + cxx_type(mp.second, structs);
+    }
     if (type.is_ref) {
         // On x64 a reference is "AEA" (the E is the 64-bit pointer mark).
         Type inner = type;

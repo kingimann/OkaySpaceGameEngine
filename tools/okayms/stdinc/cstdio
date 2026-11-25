@@ -69,3 +69,14 @@ int _wrename(const unsigned short *from, const unsigned short *to);
 #define stdin (__acrt_iob_func(0))
 #define stdout (__acrt_iob_func(1))
 #define stderr (__acrt_iob_func(2))
+// POSIX.1-2017 <stdio.h> additions (Round 30) for the engine's POSIX paths (the plain survey): declared at global scope
+// only when _WIN32 is not defined. The Microsoft runtime spells them _fdopen, _fileno, _popen and _pclose, so nothing
+// that calls these names links on Windows.
+#if !defined(_WIN32)
+extern "C" {
+std::FILE *fdopen(int fd, const char *mode);
+int fileno(std::FILE *stream);
+std::FILE *popen(const char *command, const char *mode);
+int pclose(std::FILE *stream);
+}
+#endif

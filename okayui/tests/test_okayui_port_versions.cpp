@@ -8,6 +8,7 @@
 #include "OkayUITestKit.hpp"
 #include "VersionsUI.hpp"
 #include "ProjectVersion.hpp"
+#include "versions_list_fixture.hpp"   // tests/: the version lists (shared with tests/test_launcher_versions.cpp)
 
 #include <cstdio>
 #include <cstdlib>
@@ -50,21 +51,16 @@ static void Golden(const char* name, const Bitmap& b) {
 static int ShotRun(const std::string& out) {
     const fs::path dir = fs::temp_directory_path() / ("okayui_port_versions_shot_" + std::to_string((long long)getpid()));
     std::error_code ec; fs::remove_all(dir, ec); fs::create_directories(dir, ec);
+    using namespace okaytestlists;
     const std::string sha(64, 'a');
-    auto files = [&](bool withSha) {
-        return std::string("{\"OkayEngine.exe\":{\"size\":61000000") + (withSha ? ",\"sha256\":\"" + sha + "\"" : std::string()) +
-               "},\"OkaySpacePlayer.exe\":{\"size\":38000000,\"sha256\":\"" + sha + "\"},\"OkaySpace.exe\":{\"size\":29000000,\"sha256\":\"" + sha + "\"}}";
-    };
-    const std::string rel = "{\"schema\":1,\"latest\":\"2.903.8\",\"versions\":["
-        "{\"version\":\"2.903.8\",\"channel\":\"latest\",\"date\":\"2026-11-24\",\"inBucket\":true,\"files\":" + files(true) + "},"
-        "{\"version\":\"2.903.7\",\"date\":\"2026-11-23\",\"inBucket\":true,\"files\":" + files(true) + "},"
-        "{\"version\":\"2.903.6\",\"date\":\"2026-11-22\",\"inBucket\":true,\"files\":" + files(true) + "},"
-        "{\"version\":\"2.903.5\",\"date\":\"2026-11-21\",\"inBucket\":false,\"files\":" + files(true) + "}]}";
-    const std::string dev = "{\"schema\":1,\"versions\":["
-        "{\"version\":\"2.903.8.115\",\"date\":\"2026-11-25\",\"inBucket\":true,\"branch\":\"claude/launcher-fix\",\"sha\":\"abcdef1234\",\"files\":" + files(true) + "},"
-        "{\"version\":\"2.903.8.114\",\"date\":\"2026-11-25\",\"inBucket\":true,\"branch\":\"claude/work\",\"sha\":\"1234567abc\",\"files\":" + files(true) + "},"
-        "{\"version\":\"2.903.8.113\",\"date\":\"2026-11-24\",\"inBucket\":true,\"branch\":\"claude2/work\",\"files\":" + files(true) + "},"
-        "{\"version\":\"2.903.8.112\",\"date\":\"2026-11-24\",\"inBucket\":false,\"branch\":\"claude3/work\",\"files\":" + files(true) + "}]}";
+    const std::string rel = List({Entry("2.903.8", "2026-11-24", true, Files(sha, true, 61000000), ",\"channel\":\"latest\""),
+                                  Entry("2.903.7", "2026-11-23", true, Files(sha, true, 61000000)),
+                                  Entry("2.903.6", "2026-11-22", true, Files(sha, true, 61000000)),
+                                  Entry("2.903.5", "2026-11-21", false, Files(sha, true, 61000000))}, "2.903.8");
+    const std::string dev = List({Entry("2.903.8.115", "2026-11-25", true, Files(sha, true, 61000000), ",\"branch\":\"claude/launcher-fix\",\"sha\":\"abcdef1234\""),
+                                  Entry("2.903.8.114", "2026-11-25", true, Files(sha, true, 61000000), ",\"branch\":\"claude/work\",\"sha\":\"1234567abc\""),
+                                  Entry("2.903.8.113", "2026-11-24", true, Files(sha, true, 61000000), ",\"branch\":\"claude2/work\""),
+                                  Entry("2.903.8.112", "2026-11-24", false, Files(sha, true, 61000000), ",\"branch\":\"claude3/work\"")});
     okayversionsui::Host host;
     host.launcherDir = dir; host.currentVersion = "2.903.8.114"; host.launcherVersion = "2.903.8.114"; host.sources.trustedKeys = "";
     host.sources.bucketBase = "https://example.invalid/storage/v1/object/public/releases/";

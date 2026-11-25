@@ -9,6 +9,7 @@
 #include "VersionsNet.hpp"
 #include "UpdaterCore.hpp"   // the self-updater rules: checksum required, stage then swap, reasons
 #include "OfficialGame.hpp"   // the bundled SHA-256 (the same one the launcher checks downloads with)
+#include "versions_list_fixture.hpp"   // version lists for the Versions page tests (shared with okayui/tests/test_okayui_port_versions.cpp)
 
 #include <algorithm>
 #include <chrono>
@@ -1306,19 +1307,14 @@ int main() {
         CHECK(DescribeRequest("", "2.904.0", {}, true, true, "").kind == RequestBanner::None);
 
         // Test builds next to releases.
-        const std::string e1 = std::string(64, 'a'), p1 = std::string(64, 'b'), l1 = std::string(64, 'c');
-        auto files = [&](bool editorSha) {
-            return std::string("{\"OkayEngine.exe\":{\"size\":1000") + (editorSha ? ",\"sha256\":\"" + e1 + "\"" : std::string()) +
-                   "},\"OkaySpacePlayer.exe\":{\"size\":500,\"sha256\":\"" + p1 + "\"},\"OkaySpace.exe\":{\"size\":300,\"sha256\":\"" + l1 + "\"}}";
-        };
-        const Index rel = ParseIndex("{\"schema\":1,\"latest\":\"2.903.8\",\"versions\":["
-                                     "{\"version\":\"2.903.8\",\"channel\":\"latest\",\"date\":\"2026-11-24\",\"inBucket\":true,\"files\":" + files(true) + "},"
-                                     "{\"version\":\"2.903.7\",\"date\":\"2026-11-23\",\"inBucket\":true,\"files\":" + files(true) + "},"
-                                     "{\"version\":\"2.903.5\",\"date\":\"2026-11-21\",\"inBucket\":false,\"files\":" + files(true) + "}]}");
-        const Index dev = ParseIndex("{\"schema\":1,\"versions\":["
-                                     "{\"version\":\"2.903.8.112\",\"date\":\"2026-11-25\",\"inBucket\":true,\"branch\":\"claude/x\",\"files\":" + files(false) + "},"
-                                     "{\"version\":\"2.903.8.114\",\"date\":\"2026-11-25\",\"inBucket\":true,\"branch\":\"claude/launcher-fix\",\"sha\":\"abcdef1234\",\"files\":" + files(true) + "},"
-                                     "{\"version\":\"2.903.8.113\",\"date\":\"2026-11-25\",\"inBucket\":false,\"files\":" + files(true) + "}]}", IndexKind::TestBuilds);
+        using namespace okaytestlists;
+        const std::string e1 = std::string(64, 'a');
+        const Index rel = ParseIndex(List({Entry("2.903.8", "2026-11-24", true, Files(e1), ",\"channel\":\"latest\""),
+                                           Entry("2.903.7", "2026-11-23", true, Files(e1)),
+                                           Entry("2.903.5", "2026-11-21", false, Files(e1))}, "2.903.8"));
+        const Index dev = ParseIndex(List({Entry("2.903.8.112", "2026-11-25", true, Files(e1, false), ",\"branch\":\"claude/x\""),
+                                           Entry("2.903.8.114", "2026-11-25", true, Files(e1), ",\"branch\":\"claude/launcher-fix\",\"sha\":\"abcdef1234\""),
+                                           Entry("2.903.8.113", "2026-11-25", false, Files(e1))}), IndexKind::TestBuilds);
         CHECK(rel.ok && rel.versions.size() == 3 && dev.ok && dev.versions.size() == 3);
 
         std::vector<AvailableRow> rows = AvailableRows(rel, Index{}, "2.903.8", {});        // test builds off: releases only, as before

@@ -1,4 +1,4 @@
-// The editor's Crash Log, Audio Mixer and History windows as the editor draws them now: the OkayUI screen only (no Dear ImGui copy),
+// The editor's Crash Log, Audio Mixer, History, Problems, Stats and Profiler windows as the editor draws them now: the OkayUI screen only (no Dear ImGui copy),
 // hosted in a Dear ImGui window by okayuihost::HostPanelWindow (shared/OkayUIImGuiEmbed.hpp, the function editor/OkayPanels.cpp
 // calls). The body's shapes go into the ImGui window's draw list, so Dear ImGui's popups and windows in front are drawn over it.
 // Before, a covered panel switched to its Dear ImGui version for as long as something lay over it.
@@ -59,6 +59,9 @@ void EnableFakeViewports() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
     io.BackendFlags |= ImGuiBackendFlags_PlatformHasViewports | ImGuiBackendFlags_RendererHasViewports;
+    // The main viewport needs a platform handle, as a real backend gives it; without one Dear ImGui's own check fails in a
+    // build with asserts on (Debug, ASan), though a Release build skips it.
+    ImGui::GetMainViewport()->PlatformHandle = &g_osWindows;
     ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
     pio.Platform_CreateWindow = [](ImGuiViewport* v) { g_osWindows[v->ID] = FakeOsWindow{v->Pos, v->Size}; };
     pio.Platform_DestroyWindow = [](ImGuiViewport* v) { g_osWindows.erase(v->ID); };
@@ -223,6 +226,38 @@ struct HistoryData {
     }
 };
 
+struct ProblemsData {
+    P::ProblemsModel model = panelfix::Problems();
+    P::ProblemsState state;
+    okayuiscreens::ProblemsResult res;
+    P::ProblemsIntent seen;
+    std::function<void(ImVec2, ImVec2)> Body() {
+        return [this](ImVec2 p, ImVec2 a) {
+            res = okayuiscreens::DrawProblems(model, state, p.x, p.y, a.x, a.y);
+            if (res.intent.fix >= 0) seen.fix = res.intent.fix;
+            if (res.intent.open >= 0) seen.open = res.intent.open;
+        };
+    }
+};
+
+struct StatsPanelData {
+    panelfix::StatsData d;
+    okayuiscreens::StatsResult res;
+    bool changed = false;
+    std::function<void(ImVec2, ImVec2)> Body() {
+        return [this](ImVec2 p, ImVec2 a) { res = okayuiscreens::DrawStats(d.model, p.x, p.y, a.x, a.y); if (res.intent.changed) changed = true; };
+    }
+};
+
+struct ProfilerPanelData {
+    panelfix::ProfilerData d;
+    okayuiscreens::ProfilerResult res;
+    bool pauseChanged = false;
+    std::function<void(ImVec2, ImVec2)> Body() {
+        return [this](ImVec2 p, ImVec2 a) { res = okayuiscreens::DrawProfiler(d.model, p.x, p.y, a.x, a.y); if (res.intent.pauseChanged) pauseChanged = true; };
+    }
+};
+
 // The hosted picture against the old way's, for one screen.
 template <class Data>
 Diff HostedAgainstOldWay(const char* name, const char* title) {
@@ -252,6 +287,9 @@ void SamePictureAsBefore() {
     CHECK(HostedAgainstOldWay<CrashLogData>("crashlog", "Crash Log").clearly < 0.5);
     CHECK(HostedAgainstOldWay<MixerData>("audiomixer", "Audio Mixer").clearly < 0.5);
     CHECK(HostedAgainstOldWay<HistoryData>("history", "History").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<ProblemsData>("problems", "Problems###Problems").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<StatsPanelData>("stats", "Stats").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<ProfilerPanelData>("profiler", "Profiler").clearly < 0.5);
 }
 
 void ImGuiInFrontCoversThePanel() {
@@ -327,6 +365,47 @@ void ClicksReachThePanel() {
         const OkayUI::Rect r6 = d.res.rows[5];   // "Before: Rename Crate", three undos (as in okayui_editor_panels_imgui)
         e.Click(r6.x + 60.0f, r6.y + r6.h * 0.5f);
         CHECK(d.seen.undo == 3 && d.seen.redo == 0);
+    }
+}
+
+void MoreClicksReachThePanels() {
+    {   // Problems: the first row's Fix, then a click on the third row
+        ProblemsData d;
+        Editor e;
+        e.title = "Problems###Problems"; e.body = d.Body();
+        e.Frames(3);
+        CHECK(d.res.fixButtons.size() >= 3 && d.res.fixButtons[0].w > 0.0f);
+        const OkayUI::Rect f = d.res.fixButtons[0];
+        e.Click(f.x + f.w * 0.5f, f.y + f.h * 0.5f);
+        CHECK(d.seen.fix == d.res.rowIndex[0]);
+        const OkayUI::Rect r = d.res.rows[2];
+        e.Click(r.x + r.w * 0.5f, r.y + r.h * 0.5f);
+        CHECK(d.seen.open == d.res.rowIndex[2]);
+    }
+    {   // Stats: the Occlusion switch, written through its pointer (a taller window: the switches are below the census)
+        kH = 700;
+        StatsPanelData d;
+        Editor e;
+        e.winH = 660.0f;
+        e.title = "Stats"; e.body = d.Body();
+        e.Frames(3);
+        const OkayUI::Rect b = d.res.occlusionBox;
+        std::printf("  Occlusion at y %.0f..%.0f\n", b.y, b.y + b.h);
+        CHECK(b.w > 0.0f && !d.d.occlusion && b.y + b.h < kWinY + e.winH);
+        e.Click(b.x + 8.0f, b.y + b.h * 0.5f);
+        CHECK(d.d.occlusion && d.changed);
+        kH = 420;
+    }
+    {   // Profiler: Pause, written through its pointer; the scrub position goes to the newest frame
+        ProfilerPanelData d;
+        Editor e;
+        e.title = "Profiler"; e.body = d.Body();
+        e.Frames(3);
+        const OkayUI::Rect b = d.res.pauseBox;
+        CHECK(b.w > 0.0f && !d.d.paused);
+        e.Click(b.x + 8.0f, b.y + b.h * 0.5f);
+        e.Frames(1);
+        CHECK(d.d.paused && d.pauseChanged && d.d.selected == 239);
     }
 }
 
@@ -432,11 +511,12 @@ void HiddenDrawsNothing() {
 } // namespace
 
 int main() {
-    RUN_SUITE("okayui panels in Dear ImGui windows (Crash Log, Audio Mixer, History)");
+    RUN_SUITE("okayui panels in Dear ImGui windows (Crash Log, Audio Mixer, History, Problems, Stats, Profiler)");
     kH = 420;
     SamePictureAsBefore();
     ImGuiInFrontCoversThePanel();
     ClicksReachThePanel();
+    MoreClicksReachThePanels();
     ActiveOnlyWhenHoveredOrFocused();
     MenusCloseWhenImGuiTakesOver();
     PanelInAnotherOsWindow();

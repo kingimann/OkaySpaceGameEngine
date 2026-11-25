@@ -1,8 +1,8 @@
 #pragma once
 // The Dear ImGui bodies of the Problems, Stats, Tags and Layers, Physics, Profiler, Import settings, Post-processing, Player and
 // Rendering panels and sections, drawn from the models in shared/EditorPanelModels.hpp.
-// The editor opens the window (title, dock tab, close box) and calls a body inside it; the headless comparison test calls
-// the same body in a bare window, with no editor around it. Only Dear ImGui and the model header: no EditorState.
+// Not compiled into the editor (section 25 of docs/ui/own_ui_toolkit.md): only the headless comparison tests call these, in a bare
+// window, as the Dear ImGui reference the OkayUI ports are measured against. Only Dear ImGui and the model header: no EditorState.
 #include "EditorPanelModels.hpp"
 
 #include <cstddef>

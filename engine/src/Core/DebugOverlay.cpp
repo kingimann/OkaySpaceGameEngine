@@ -1,4 +1,5 @@
 #include "okay/Core/DebugOverlay.hpp"
+#include "okay/Render/RenderContributions.hpp"
 #include "okay/Core/BuildInfo.hpp"
 #include "okay/Core/Cvar.hpp"
 #include "okay/Core/Time.hpp"
@@ -28,7 +29,7 @@ DebugOverlay::Stats DebugOverlay::Capture(const Scene* scene) {
     return s;
 }
 
-std::vector<std::string> DebugOverlay::BuildLines(const Stats& s, bool detailed, bool ignoreEnabled) {
+std::vector<std::string> DebugOverlay::BuildLines(const Stats& s, bool detailed, bool ignoreEnabled, const Scene* scene) {
     std::vector<std::string> lines;
     if (!ignoreEnabled && !Enabled()) return lines;
     lines.push_back(Fmt("FPS: %.1f (%.1f ms)", s.fps, s.frameMs));
@@ -42,6 +43,7 @@ std::vector<std::string> DebugOverlay::BuildLines(const Stats& s, bool detailed,
     // would invalidate the list being walked. Lines added meanwhile first show in the next call.
     const std::vector<Provider> providers = Providers();
     for (const Provider& p : providers) { std::string t = p.fn(); if (!t.empty()) lines.push_back(std::move(t)); }
+    for (std::string& line : RenderContributionLines(scene)) lines.push_back(std::move(line));
     return lines;
 }
 

@@ -4,6 +4,7 @@
 #include "NavIcons.hpp"
 #include "PageLayout.hpp"
 #include "OkayTheme.hpp"
+#include "ImGuiDropdown.hpp"   // the dropdown look shared with the editor
 #include "HierarchyPanelModel.hpp"   // HierWrapWords: the one word wrapper (the editor's empty-panel note uses it too)
 #include <cfloat>
 #include <cstring>
@@ -398,23 +399,10 @@ void SectionLabel(const char* title, int n) {
 }
 
 bool BeginSlateCombo(const char* label, const char* preview, int flags) {
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float w = ImGui::CalcItemWidth(), h = ImGui::GetFrameHeight(), chev = h;
+    // The look (chevron inside the box) is shared with the editor: shared/ImGuiDropdown.hpp. The launcher shortens the preview first.
+    const float w = ImGui::CalcItemWidth(), chev = ImGui::GetFrameHeight();
     const std::string pv = FitText(preview ? preview : "", std::max(0.0f, w - ImGui::GetStyle().FramePadding.x * 2 - chev * 0.7f));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, std::max(ImGui::GetStyle().FrameRounding, UiPx(8.0f)));
-    const bool open = ImGui::BeginCombo(label, pv.c_str(), flags | ImGuiComboFlags_NoArrowButton);
-    ImGui::PopStyleVar();
-    // The chevron, inside the box (a "v" of two strokes), brighter while the list is open or the box is hovered.
-    const bool hot = open || ImGui::IsMouseHoveringRect(p, ImVec2(p.x + w, p.y + h));
-    const ImVec2 c(p.x + w - chev * 0.5f, p.y + h * 0.5f + 1.0f);
-    const float r = std::max(3.5f, h * 0.15f);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    if (open) dl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());   // (the window's own list belongs to the open popup now)
-    dl->PathLineTo(ImVec2(c.x - r, c.y - r * 0.5f));
-    dl->PathLineTo(ImVec2(c.x, c.y + r * 0.5f));
-    dl->PathLineTo(ImVec2(c.x + r, c.y - r * 0.5f));
-    dl->PathStroke(ImGui::GetColorU32(hot ? ImGuiCol_Text : ImGuiCol_TextDisabled), 0, 1.8f);
-    return open;
+    return okayshared::BeginChevronCombo(label, pv.c_str(), flags, UiPx(8.0f));
 }
 bool SlateCombo(const char* label, int* current, const char* const items[], int count, int popupMaxItems) {
     const char* preview = (*current >= 0 && *current < count) ? items[*current] : "";

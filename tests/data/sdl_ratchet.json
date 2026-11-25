@@ -3,7 +3,7 @@
  "totals": {
   "launcher": {
    "calls": 13,
-   "words": 283
+   "words": 284
   },
   "editor": {
    "calls": 23,
@@ -211,12 +211,12 @@
   },
   "launcher/LauncherShared.hpp": {
    "calls": 0,
-   "words": 24,
+   "words": 25,
    "by_word": {
     "#include<SDL.h>": 1,
     "SDL_Renderer": 2,
     "SDL_Texture": 2,
-    "SDL_Window": 18,
+    "SDL_Window": 19,
     "Uint32": 1
    }
   },

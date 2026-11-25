@@ -4,6 +4,7 @@
 #include "okay/Modules/ModuleRegistry.hpp"
 #include <algorithm>
 #include <iostream>
+#include <stdexcept>
 
 using namespace okay;
 
@@ -14,6 +15,9 @@ static int IndexOf(const std::vector<std::string>& v, const char* s) {
 
 static int g_hookRuns = 0;
 static void CountingHook(ModuleContext& c) { ++g_hookRuns; CHECK(c.registry.Find("core") != nullptr); }
+static int g_throwRuns = 0, g_laterRuns = 0;
+static void LaterHook(ModuleContext&) { ++g_laterRuns; }
+static void ThrowingHook(ModuleContext&) { ++g_throwRuns; throw std::runtime_error("hook failed on purpose"); }
 
 int main() {
     RUN_SUITE("modules");
@@ -33,6 +37,27 @@ int main() {
         CHECK(ModuleManifest::Parse("name=c\ncore=1\ndefault=off\n", m) && m.core && m.defaultOn);   // core is always on
         CHECK(ModuleManifest::Parse("name=t\n", m) && m.title == "t");        // the title falls back to the name
         CHECK(ModuleManifest::SplitList(" a, ,b ,") == std::vector<std::string>({"a", "b"}));
+    }
+
+    // ---- a hook that throws: the registry finishes, that module and what needs it are left off, the rest register
+    {
+        ModuleRegistry r = ModuleRegistry::Empty();
+        r.AddText("name=core\ncore=1\n", true);
+        r.AddText("name=broken\nrequires=core\n", true);
+        r.AddText("name=needsbroken\nrequires=broken\n", true);
+        r.AddText("name=fine\nrequires=core\n", true);
+        r.SetRegisterHook("broken", &ThrowingHook);
+        r.SetRegisterHook("needsbroken", &LaterHook);
+        r.SetRegisterHook("fine", &LaterHook);
+        bool escaped = false;
+        try { r.RunRegisterHooks(); r.RunRegisterHooks(); } catch (...) { escaped = true; }
+        CHECK(!escaped);                                   // first use (ModuleRegistry::Get) must be able to finish
+        CHECK(g_throwRuns == 1);                           // not tried again
+        CHECK(!r.IsEnabled("broken") && !r.IsEnabled("needsbroken"));
+        CHECK(r.IsEnabled("fine") && r.IsEnabled("core"));
+        CHECK(g_laterRuns == 1);                            // only `fine` registered
+        std::cout << "throwing hook: escaped " << escaped << ", broken on " << r.IsEnabled("broken") << ", needsbroken on "
+                  << r.IsEnabled("needsbroken") << ", other hooks run " << g_laterRuns << "\n";
     }
 
     // ---- a small registry: order, requirements, hooks, problems

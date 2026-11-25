@@ -1,0 +1,16 @@
+// <initializer_list> for okay-cc (ISO/IEC 14882 [support.initlist]). Our own header. The compiler
+// makes one from a braced list for a constructor that takes it: b_ points at a hidden array of the
+// elements and n_ is their number (the field names are what the checker fills in).
+#pragma once
+namespace std {
+template <typename E>
+class initializer_list {
+public:
+    const E *b_;
+    unsigned long n_;
+    initializer_list() : b_(nullptr), n_(0) {}
+    unsigned long size() const { return n_; }
+    const E *begin() const { return b_; }
+    const E *end() const { return b_ + n_; }
+};
+}  // namespace std

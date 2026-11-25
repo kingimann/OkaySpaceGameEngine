@@ -1,0 +1,8 @@
+geometry loaded
+6 6.28 1 1
+15 true
+the main program's own area 1
+in modules/cycle_a.okay:1: in cycle_b.okay:1: import cycle: modules/cycle_a.okay -> cycle_b.okay -> cycle_a.okay
+import "modules/missing.okay": can't read 'modules/missing.okay'
+in modules/broken.okay:2: call to undefined function 'nope'
+2 0

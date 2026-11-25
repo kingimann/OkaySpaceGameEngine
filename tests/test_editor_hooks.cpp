@@ -651,5 +651,21 @@ int main() {
         CHECK_NEAR(p->lastDt, 0.1, 1e-6);
     }
 
+    // The Timers window text is the scheduler dump and the tween dump.
+    {
+        Fresh();
+        EditorState ed;
+        Scheduler::Options opt;
+        opt.tag = "hello";
+        ed.scene().scheduler().Invoke(0.5f, [] {}, opt);
+        auto tw = ed.scene().tweens().DelayedCall(1.0f, [] {});
+        tw->id = "fade";
+        const std::string text = okay::editor::TimerDebugText(ed.scene());
+        CHECK(text.find("Scheduler: 1 task") != std::string::npos);
+        CHECK(text.find("tag=hello") != std::string::npos);
+        CHECK(text.find("Tweens: 1") != std::string::npos);
+        CHECK(text.find("fade") != std::string::npos);
+    }
+
     TEST_MAIN_RESULT();
 }

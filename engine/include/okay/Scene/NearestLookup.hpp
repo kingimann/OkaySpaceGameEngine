@@ -9,6 +9,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Components/Joint3D.hpp"
 #include <string>
 #include <vector>
 
@@ -59,6 +60,106 @@ inline GameObject* CachedPartner(const Scene& scene, J* j) {
     c.object = FindNearest(scene, j->connectedBody, j->gameObject);
     c.version = c.object ? version : 0;
     return c.object;
+}
+
+/// The other body of a Joint3D: the object ConnectTo linked, or the one its saved guid names, or (when
+/// neither was used) the one named `connectedBody`. A linked object that is gone does not fall back to a
+/// same-named stand-in.
+inline GameObject* Joint3DPartner(const Scene& scene, Joint3D* j) {
+    if (!j) return nullptr;
+    if (j->connectedId != 0 || !j->connectedGuid.empty()) {
+        if (j->linkedName.empty()) j->linkedName = j->connectedBody;   // a link that came with a copy: its name is the one it has now
+        else if (j->connectedBody != j->linkedName) j->ConnectTo(nullptr);   // a new name was typed: that is the partner now
+    }
+    if (j->connectedId != 0) {
+        GameObject* g = j->Linked();
+        if (!g || g->scene() != &scene) return nullptr;
+        return g;
+    }
+    if (!j->connectedGuid.empty()) {
+        GameObject* g = scene.FindByGuid(j->connectedGuid);
+        if (!g) return j->connectedBody.empty() ? nullptr : CachedPartner(scene, j);   // not in this scene (placed from a prefab or text): by name
+        if (g->IsDestroyed() || g->scene() != &scene) return nullptr;
+        j->connectedId = g->InstanceId();
+        j->partner.object = g;
+        j->partner.version = 0;
+        return g;
+    }
+    return j->connectedBody.empty() ? nullptr : CachedPartner(scene, j);
+}
+
+namespace jointlink {
+
+inline bool Under(const GameObject* root, const GameObject* obj) {
+    for (const GameObject* p = obj; p; ) {
+        if (p == root) return true;
+        const Transform* up = p->transform ? p->transform->Parent() : nullptr;
+        p = up ? up->gameObject : nullptr;
+    }
+    return false;
+}
+
+inline std::string PathFrom(const GameObject* root, const GameObject* obj) {
+    std::vector<std::string> names;
+    for (const GameObject* p = obj; p && p != root; ) {
+        names.push_back(p->name);
+        const Transform* up = p->transform ? p->transform->Parent() : nullptr;
+        p = up ? up->gameObject : nullptr;
+    }
+    std::string path;
+    for (auto it = names.rbegin(); it != names.rend(); ++it) {
+        if (!path.empty()) path += "/";
+        path += *it;
+    }
+    return path;
+}
+
+inline GameObject* AtPath(GameObject* root, const std::string& path) {
+    if (!root) return nullptr;
+    if (path.empty()) return root;
+    GameObject* cur = root;
+    std::size_t i = 0;
+    while (cur && i < path.size()) {
+        std::size_t j = path.find('/', i);
+        if (j == std::string::npos) j = path.size();
+        const std::string name = path.substr(i, j - i);
+        GameObject* next = nullptr;
+        if (cur->transform)
+            for (Transform* ch : cur->transform->Children())
+                if (ch && ch->gameObject && !ch->gameObject->IsDestroyed() && ch->gameObject->name == name) {
+                    next = ch->gameObject;
+                    break;
+                }
+        cur = next;
+        i = j + 1;
+    }
+    return cur;
+}
+
+} // namespace jointlink
+
+/// After a hierarchy is cloned, a joint whose partner was inside that hierarchy must link the copy,
+/// not the original. A partner that was outside the hierarchy keeps its link.
+inline void RetargetClonedJoints(const GameObject* oldRoot, GameObject* newRoot) {
+    if (!oldRoot || !newRoot || !newRoot->scene()) return;
+    std::vector<GameObject*> stack{newRoot};
+    while (!stack.empty()) {
+        GameObject* g = stack.back();
+        stack.pop_back();
+        if (!g || g->IsDestroyed()) continue;
+        for (Joint3D* j : g->GetComponents<Joint3D>()) {
+            if (!j) continue;
+            GameObject* partner = nullptr;
+            if (!j->connectedGuid.empty()) partner = newRoot->scene()->FindByGuid(j->connectedGuid);
+            if (!partner && j->connectedId != 0) partner = j->Linked();
+            if (!partner || !jointlink::Under(oldRoot, partner)) continue;
+            GameObject* copy = jointlink::AtPath(newRoot, jointlink::PathFrom(oldRoot, partner));
+            if (copy && copy != partner) j->ConnectTo(copy);
+        }
+        if (g->transform)
+            for (Transform* ch : g->transform->Children())
+                if (ch && ch->gameObject) stack.push_back(ch->gameObject);
+    }
 }
 
 } // namespace okay

@@ -780,12 +780,14 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `net.get` | `Fn.net.get` |
 | `net.give` | `Fn.net.give` |
 | `net.host` | `Fn.net.host` |
+| `net.host_online` | `Fn.net.host_online` |
 | `net.host_or_join` | `Fn.net.host_or_join` |
 | `net.id` | `Fn.net.id` |
 | `net.is_host` | `Fn.net.is_host` |
 | `net.is_mine` | `Fn.net.is_mine` |
 | `net.is_predicted` | `Fn.net.is_predicted` |
 | `net.join` | `Fn.net.join` |
+| `net.join_code` | `Fn.net.join_code` |
 | `net.join_lan` | `Fn.net.join_lan` |
 | `net.leave` | `Fn.net.leave` |
 | `net.loss` | `Fn.net.loss` |
@@ -795,10 +797,12 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `net.off` | `Fn.net.off` |
 | `net.on` | `Fn.net.on` |
 | `net.owner` | `Fn.net.owner` |
+| `net.path` | `Fn.net.path` |
 | `net.ping` | `Fn.net.ping` |
 | `net.player_count` | `Fn.net.player_count` |
 | `net.player_name` | `Fn.net.player_name` |
 | `net.players` | `Fn.net.players` |
+| `net.relay` | `Fn.net.relay` |
 | `net.request` | `Fn.net.request` |
 | `net.rollback_confirmed` | `Fn.net.rollback_confirmed` |
 | `net.rollback_frame` | `Fn.net.rollback_frame` |
@@ -807,6 +811,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `net.rollback_running` | `Fn.net.rollback_running` |
 | `net.rollback_start` | `Fn.net.rollback_start` |
 | `net.rollback_stop` | `Fn.net.rollback_stop` |
+| `net.room_code` | `Fn.net.room_code` |
 | `net.send` | `Fn.net.send` |
 | `net.send_to` | `Fn.net.send_to` |
 | `net.set` | `Fn.net.set` |

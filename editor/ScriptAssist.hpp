@@ -59,5 +59,7 @@ void DrawCodeSnippet(const std::string& code);
 // The OkayScript palette and language words (keywords, types, built-ins with their hover docs) the code widget uses.
 const scripteditor::ScriptPalette& OkayScriptPalette();
 const scripteditor::LanguageWords& OkayScriptLanguageWords();
+// The same for Lua scripts (language "lua"): Lua keywords and comments, the bound engine names with their docs.
+const scripteditor::LanguageWords& LuaLanguageWords();
 
 } // namespace oked

@@ -3,7 +3,10 @@
 #include "okay/Net/RelayServer.hpp"
 #include "okay/Net/RelayProtocol.hpp"
 #include "okay/Net/Packet.hpp"
+#include "okay/Net/RelayHello.hpp"
+#include "net_test_util.hpp"
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <random>
 #include <set>
@@ -12,6 +15,7 @@
 #include <vector>
 
 using namespace okay;
+using nettest::RawRelayPeer;
 using namespace okay::net;
 
 // The relay is reachable from the internet, so it must not let one session's
@@ -427,6 +431,128 @@ int main() {
             for (int k = 0; k < 28; ++k) relay.HandleDatagram(host, big.data(), big.size());
         }
         CHECK(relay.DroppedRate() > 0);
+        relay.Stop();
+    }
+
+    // ---- Version 5 (direct paths, host succession), from the review of PR #1240 ----
+    // Virtual time: each step is one Poll(dt) and every peer reads what the relay sent.
+    auto step = [](RelayServer& r, std::vector<RawRelayPeer*> ps, float dt = 0.02f) {
+        r.Poll(dt);
+        for (auto* p : ps) p->Drain();
+    };
+    auto join = [&](RelayServer& r, RawRelayPeer& p, RelayRole role, const std::string& code, std::uint8_t flags) {
+        p.Hello(role, code, 0, flags); step(r, {&p});   // the cookie
+        p.Hello(role, code, 0, flags); step(r, {&p});   // the slot
+    };
+
+    // V5-1: a player holding the successor key cannot take a LIVE host's place: not after one lost keepalive
+    // (even at the old one-a-second cadence), not during a 0.6 s host stall, with the attacker asking ten times a
+    // second. Only a host that is really gone (several hellos missed, or a bye) is replaced.
+    {
+        RelayServer relay;
+        CHECK(relay.Start(0));
+        RawRelayPeer host(relay.Port()), evil(relay.Port());
+        join(relay, host, RelayHost, "LIVE01", RelayHelloDirect);
+        join(relay, evil, RelayClient, "LIVE01", 0);
+        CHECK(host.succ != 0 && host.hostKey != 0);
+        const std::uint64_t key = host.succ;   // every player gets it from the host's migration list
+        const std::uint32_t hs = relay.HostSlotOf("LIVE01");
+        int takenAt = -1;
+        for (int frame = 0; frame < 500; ++frame) {   // 10 s
+            const bool lost = frame == 250;                       // one lost keepalive at t = 5 s (a 2 s gap)
+            const bool stalled = frame >= 400 && frame < 430;     // and a 0.6 s stall later
+            if (frame % 50 == 0 && !lost && !stalled) host.Hello(RelayHost, "LIVE01", host.hostKey, RelayHelloDirect);
+            if (frame % 5 == 0) evil.Hello(RelayHost, "LIVE01", key, 0);
+            step(relay, {&host, &evil});
+            if (takenAt < 0 && relay.HostSlotOf("LIVE01") != hs) takenAt = frame;
+        }
+        std::printf("  v5 live host: taken at frame %d; successions %llu\n", takenAt, (unsigned long long)relay.Successions());
+        CHECK(takenAt < 0);
+        CHECK(relay.Successions() == 0 && relay.HostSlotOf("LIVE01") == hs);
+        CHECK(host.hostSlot == host.slot);
+        // The host really goes (no hello at all): a key holder takes over once it has missed several hellos.
+        int frames = 0;
+        for (; frames < 400 && relay.HostSlotOf("LIVE01") == hs; ++frames) {
+            if (frames % 5 == 0) evil.Hello(RelayHost, "LIVE01", key, 0);
+            step(relay, {&host, &evil});
+        }
+        std::printf("  v5 host gone: taken over after %.2f s of silence\n", frames * 0.02f);
+        CHECK(relay.HostSlotOf("LIVE01") == evil.slot);
+        CHECK(frames * 0.02f >= kRelaySuccessionQuietSeconds - 1.0f && frames * 0.02f <= kRelaySuccessionQuietSeconds + 0.5f);
+        CHECK(kRelaySuccessionQuietSeconds >= 3.0f * 1.0f);   // three of the old one-a-second hellos missed, at least
+        relay.Stop();
+    }
+
+    // V5-2: a host that says bye is replaced at once, and two players asking at the same moment get one winner.
+    {
+        RelayServer relay;
+        CHECK(relay.Start(0));
+        RawRelayPeer host(relay.Port()), c1(relay.Port()), c2(relay.Port());
+        join(relay, host, RelayHost, "RACE01", 0);
+        join(relay, c1, RelayClient, "RACE01", 0);
+        join(relay, c2, RelayClient, "RACE01", 0);
+        const std::uint64_t key = host.succ;
+        host.Bye(); step(relay, {&host, &c1, &c2});
+        c1.Hello(RelayHost, "RACE01", key, 0); c2.Hello(RelayHost, "RACE01", key, 0);
+        step(relay, {&c1, &c2});
+        const std::uint32_t hs = relay.HostSlotOf("RACE01");
+        CHECK(relay.Successions() == 1 && (hs == c1.slot || hs == c2.slot));
+        CHECK(c1.hostSlot == hs && c2.hostSlot == hs);
+        RawRelayPeer back(relay.Port());   // the old host key cannot take it back from a new address
+        back.Hello(RelayHost, "RACE01", host.hostKey, 0); step(relay, {&back});
+        back.Hello(RelayHost, "RACE01", host.hostKey, 0); step(relay, {&back});
+        CHECK(relay.HostSlotOf("RACE01") == hs);
+        relay.Stop();
+    }
+
+    // V5-3: anyone with the room code is NOT told the host's address. The relay passes addresses on only for the
+    // clients the host names (RelayDirectAllow, with its host key): the ones that passed the game's own join.
+    {
+        RelayServer relay;
+        CHECK(relay.Start(0));
+        RawRelayPeer host(relay.Port()), stranger(relay.Port()), friendly(relay.Port());
+        join(relay, host, RelayHost, "ROOM42", RelayHelloDirect);
+        join(relay, stranger, RelayClient, "ROOM42", RelayHelloDirect);
+        join(relay, friendly, RelayClient, "ROOM42", RelayHelloDirect);
+        for (int i = 0; i < 20; ++i) {   // keepalives on both sides: still nothing
+            host.Hello(RelayHost, "ROOM42", host.hostKey, RelayHelloDirect);
+            stranger.Hello(RelayClient, "ROOM42", 0, RelayHelloDirect);
+            step(relay, {&host, &stranger, &friendly}, 0.1f);
+        }
+        CHECK(stranger.addrs.empty() && friendly.addrs.empty() && host.addrs.empty());
+        CHECK(relay.PeerAddrsSent() == 0);
+        // A forged allow (wrong key, or from a client) does nothing.
+        stranger.Send(net::BuildRelayDirectAllow(host.hostKey ^ 1, {stranger.slot}));
+        stranger.Send(net::BuildRelayDirectAllow(0, {stranger.slot}));
+        host.Send(net::BuildRelayDirectAllow(host.hostKey ^ 0x100, {stranger.slot}));
+        step(relay, {&host, &stranger, &friendly});
+        stranger.Hello(RelayClient, "ROOM42", 0, RelayHelloDirect); step(relay, {&host, &stranger, &friendly});
+        CHECK(stranger.addrs.empty() && relay.PeerAddrsSent() == 0);
+        // The host allows the friendly client only: it (and the host) learn the pair at once; the stranger nothing.
+        host.Send(net::BuildRelayDirectAllow(host.hostKey, {friendly.slot}));
+        step(relay, {&host, &stranger, &friendly});
+        CHECK(friendly.addrs.size() == 1 && friendly.addrs[0].port == host.Port() && friendly.addrs[0].slot == host.slot);
+        CHECK(host.addrs.size() == 1 && host.addrs[0].port == friendly.Port() && host.addrs[0].slot == friendly.slot);
+        CHECK(host.addrs[0].token == friendly.addrs[0].token);
+        for (int i = 0; i < 10; ++i) { stranger.Hello(RelayClient, "ROOM42", 0, RelayHelloDirect); step(relay, {&host, &stranger}, 0.1f); }
+        CHECK(stranger.addrs.empty());
+        // Version 5's keepalive cost (finding 5): ten client hellos a second apart bring at most one more address
+        // pair (it is resent only when it changes or every few seconds while the client still asks), so the relay
+        // sends less than it is sent.
+        const std::size_t inBefore = friendly.bytesOut, outBefore = friendly.bytesIn + host.bytesIn;
+        const std::size_t addrsBefore = friendly.addrs.size();
+        for (int i = 0; i < 10; ++i) { friendly.Hello(RelayClient, "ROOM42", 0, RelayHelloDirect); step(relay, {&host, &friendly}, 1.0f); }
+        const std::size_t in = friendly.bytesOut - inBefore, out = friendly.bytesIn + host.bytesIn - outBefore;
+        std::printf("  v5 keepalive: 10 client hellos, %zu B in; the relay sent %zu B (client and host), %zu address frame(s)\n",
+                    in, out, friendly.addrs.size() - addrsBefore);
+        CHECK(out <= in);
+        CHECK(friendly.addrs.size() - addrsBefore <= 4);
+        // The host drops it from the list (it left the game, or was kicked): no more addresses for it.
+        host.Send(net::BuildRelayDirectAllow(host.hostKey, {}));
+        step(relay, {&host, &friendly});
+        const std::size_t after = friendly.addrs.size();
+        for (int i = 0; i < 10; ++i) { friendly.Hello(RelayClient, "ROOM42", 0, RelayHelloDirect); step(relay, {&host, &friendly}, 1.0f); }
+        CHECK(friendly.addrs.size() == after);
         relay.Stop();
     }
 

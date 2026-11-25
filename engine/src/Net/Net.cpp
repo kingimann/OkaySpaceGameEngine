@@ -48,6 +48,10 @@ bool Net::Join(const std::string& address) {
     return n->StartClient(host, port);
 }
 
+bool Net::HostOnline(const std::string& code) { auto* n = Need("HostOnline"); return n && n->HostOnline(code); }
+bool Net::JoinCode(const std::string& code) { auto* n = Need("JoinCode"); return n && n->JoinCode(code); }
+std::string Net::RoomCode() { auto* n = Manager(); return n ? n->RoomCode() : std::string(); }
+
 void Net::Leave() { if (auto* n = Manager()) n->Stop(); }
 bool Net::IsHost() { auto* n = Manager(); return n && n->IsServer(); }
 bool Net::IsConnected() { auto* n = Manager(); return n && (n->IsServer() || (n->IsClient() && n->Joined())); }

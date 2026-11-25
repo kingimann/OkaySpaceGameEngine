@@ -10780,77 +10780,45 @@ static void DrawLookSections(EditorState& ed) {
     auto tip = [](const char* t) { if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t); };
 
     if (ImGui::CollapsingHeader("Post-processing", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Drawn by OkayUI only (okayuiscreens::DrawPostProcess, editor/OkayPanels.cpp); the scene's values go in and come back here.
         // Look presets fill sky / fog / post / weather in one go; Reset puts them back.
+        okaypanels::PostValues v;
+        v.filmic = rs.tonemap; v.exposure = post.exposure; v.tonemap = post.tonemap;
+        v.bloom = post.bloom; v.bloomThreshold = post.bloomThreshold; v.bloomIntensity = post.bloomIntensity;
+        v.bloomRadius = post.bloomRadius; v.bloomSoftness = post.bloomSoftness;
+        v.grading = post.grading; v.temperature = post.temperature; v.tint = post.tint; v.saturation = post.saturation; v.contrast = post.contrast;
+        const auto in3 = [](float* d, const Vec3& s3) { d[0] = s3.x; d[1] = s3.y; d[2] = s3.z; };
+        in3(v.lift, post.lift); in3(v.gamma, post.gamma); in3(v.gain, post.gain);
+        v.vignette = rs.vignette; v.vignetteSmooth = post.vignetteSmooth;
+        v.fxaa = post.fxaa; v.ssao = post.ssao; v.ssaoRadius = post.ssaoRadius; v.ssaoIntensity = post.ssaoIntensity; v.ssaoPower = post.ssaoPower;
+        v.dof = post.dof; v.dofFocus = post.dofFocus; v.dofRange = post.dofRange;
+        okaypanels::PostProcessModel pm;
+        pm.v = &v;
         int presetCount = 0;
         const char* const* presets = okay::LookPresetNames(presetCount);
-        if (ImGui::BeginCombo("Look Preset", "Choose...")) {
-            for (int i = 0; i < presetCount; ++i)
-                if (ImGui::Selectable(presets[i])) ApplyLookPresetToScene(ed, presets[i]);
-            ImGui::EndCombo();
+        for (int i = 0; i < presetCount; ++i) pm.presets.push_back(presets[i]);
+        pm.chainActive = okay::PostActive(rs);
+        const auto gap = [](okay::RenderFeature f) { const char* n = okay::FeatureGapNote(f); return std::string(n ? n : ""); };
+        pm.vignetteNote = gap(okay::RenderFeature::VignetteSmoothness);
+        pm.ssaoNote = gap(okay::RenderFeature::SceneSsao);
+        pm.dofNote = gap(okay::RenderFeature::DepthOfField);
+        okaypanels::PostProcessIntent pin;
+        oked::DrawPostProcessOkayUI(pm, pin);
+        if (pin.changed) {
+            rs.tonemap = v.filmic; post.exposure = v.exposure; post.tonemap = v.tonemap;
+            post.bloom = v.bloom; post.bloomThreshold = v.bloomThreshold; post.bloomIntensity = v.bloomIntensity;
+            post.bloomRadius = v.bloomRadius; post.bloomSoftness = v.bloomSoftness;
+            post.grading = v.grading; post.temperature = v.temperature; post.tint = v.tint; post.saturation = v.saturation; post.contrast = v.contrast;
+            post.lift = Vec3{v.lift[0], v.lift[1], v.lift[2]};
+            post.gamma = Vec3{v.gamma[0], v.gamma[1], v.gamma[2]};
+            post.gain = Vec3{v.gain[0], v.gain[1], v.gain[2]};
+            rs.vignette = v.vignette; post.vignetteSmooth = v.vignetteSmooth;
+            post.fxaa = v.fxaa; post.ssao = v.ssao; post.ssaoRadius = v.ssaoRadius; post.ssaoIntensity = v.ssaoIntensity; post.ssaoPower = v.ssaoPower;
+            post.dof = v.dof; post.dofFocus = v.dofFocus; post.dofRange = v.dofRange;
+            ed.dirty = true;
         }
-        tip("Ready-made looks: fills the post-processing, sky, fog and weather settings\n(Sunset / Night / Foggy morning / Storm also aim the sun light).");
-        ImGui::SameLine();
-        if (ImGui::Button("Reset##look")) { ed.PushUndo(); okay::ResetLook(rs); ed.dirty = true; }
-        tip("Post-processing off, Colour sky, no fog, no weather. The sky gradient colours are kept.");
-        ImGui::TextDisabled(okay::PostActive(rs) ? "GPU post chain: on" : "GPU post chain: off (the frame is untouched)");
-
-        if (ImGui::Checkbox("Filmic Rendering (linear lighting + tonemap)", &rs.tonemap)) ed.dirty = true;
-        tip("Gamma-correct pipeline: lighting in linear space, a tonemap roll-off and sRGB output.\nOn by default; off gives the legacy flat response (and no tonemap curve).");
-        if (ImGui::SliderFloat("Exposure", &post.exposure, 0.1f, 4.0f, "%.2f")) ed.dirty = true;
-        {
-            const char* curves[] = {"None", "ACES", "Filmic"};
-            if (ImGui::Combo("Tonemap", &post.tonemap, curves, 3)) ed.dirty = true;
-            tip("How highlights above white roll off (needs Filmic Rendering).\nACES = punchy, Filmic = a softer shoulder, None = clip.");
-        }
-        if (ImGui::Checkbox("Bloom", &post.bloom)) ed.dirty = true;
-        if (post.bloom) {
-            if (ImGui::SliderFloat("Threshold##bloom", &post.bloomThreshold, 0.0f, 3.0f, "%.2f")) ed.dirty = true;
-            tip("Brightness a pixel must exceed to glow (with Filmic Rendering, 1 = white).");
-            if (ImGui::SliderFloat("Intensity##bloom", &post.bloomIntensity, 0.0f, 3.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Radius##bloom", &post.bloomRadius, 0.25f, 3.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Softness##bloom", &post.bloomSoftness, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
-            tip("Softens the edge of the Threshold, so glow fades in instead of popping on.\n0 = the hard cut (the old look). OpenGL and Direct3D 11.");
-        }
-        if (ImGui::Checkbox("Colour Grading", &post.grading)) ed.dirty = true;
-        if (post.grading) {
-            if (ImGui::SliderFloat("Temperature", &post.temperature, -1.0f, 1.0f, "%.2f")) ed.dirty = true;
-            tip("Cool (blue) to warm (orange).");
-            if (ImGui::SliderFloat("Tint", &post.tint, -1.0f, 1.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Saturation", &post.saturation, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Contrast", &post.contrast, 0.5f, 2.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat3("Lift", &post.lift.x, -0.5f, 0.5f, "%.2f")) ed.dirty = true;
-            tip("Raises or lowers the blacks, per channel.");
-            if (ImGui::SliderFloat3("Gamma", &post.gamma.x, -1.0f, 1.0f, "%.2f")) ed.dirty = true;
-            tip("Brightens or darkens the mid-tones, per channel.");
-            if (ImGui::SliderFloat3("Gain", &post.gain.x, -0.5f, 0.5f, "%.2f")) ed.dirty = true;
-            tip("Scales the whites, per channel.");
-        }
-        if (ImGui::SliderFloat("Vignette", &rs.vignette, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
-        tip("Darken the frame's edges and corners. 0 = off. Drawn by the post chain when it runs,\notherwise as an overlay that looks the same on every renderer.");
-        if (rs.vignette > 0.0f) {
-            if (ImGui::SliderFloat("Vignette Smoothness", &post.vignetteSmooth, 0.05f, 1.0f, "%.2f")) ed.dirty = true;
-            DrawRendererNote(okay::RenderFeature::VignetteSmoothness);
-        }
-        if (ImGui::Checkbox("Anti-aliasing (FXAA)", &post.fxaa)) ed.dirty = true;
-        if (ImGui::Checkbox("Ambient Occlusion (SSAO)", &post.ssao)) ed.dirty = true;
-        DrawRendererNote(okay::RenderFeature::SceneSsao);
-        if (post.ssao) {
-            if (ImGui::SliderFloat("Radius##ssao", &post.ssaoRadius, 0.05f, 3.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Intensity##ssao", &post.ssaoIntensity, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Power##ssao", &post.ssaoPower, 0.25f, 4.0f, "%.2f")) ed.dirty = true;
-            tip("Shapes the shadow. 1 = the old look. Higher: only deep creases get dark, edges stay crisp.\nLower: a wider, lighter shadow.");
-        }
-        if (ImGui::Checkbox("Depth of Field", &post.dof)) ed.dirty = true;
-        DrawRendererNote(okay::RenderFeature::DepthOfField);
-        if (post.dof) {
-            if (ImGui::DragFloat("Focus Distance", &post.dofFocus, 0.1f, 0.1f, 500.0f, "%.1f")) ed.dirty = true;
-            if (ImGui::DragFloat("Focus Range", &post.dofRange, 0.1f, 0.1f, 500.0f, "%.1f")) ed.dirty = true;
-            tip("How far either side of the focus distance stays sharp.");
-        }
-        ImGui::Spacing();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("Linear lighting is not drawn on Direct3D 12 or the software renderer. Exposure, the tonemap curve, bloom, colour grading and anti-aliasing in this section are not drawn on Direct3D 12. The vignette amount is drawn on every renderer. The software renderer also has its own switches under Rendering below; the scene settings here take effect there too.");
-        ImGui::PopTextWrapPos();
+        if (pin.preset >= 0 && pin.preset < presetCount) ApplyLookPresetToScene(ed, presets[pin.preset]);
+        if (pin.reset) { ed.PushUndo(); okay::ResetLook(rs); ed.dirty = true; }
     }
 
     if (ImGui::CollapsingHeader("Sky", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -16372,26 +16340,17 @@ void DrawProjectSettings(EditorState& ed) {
             static std::string modulesNote;
             if (okaymod::DrawModulesSettings(g_project.modules, ed.scene(), modulesNote)) SaveProjectSettings();
         }
-        if (ImGui::CollapsingHeader("Loading screen")) {
-            ImGui::TextDisabled("Customize the editor's startup splash for this project.\nChanges apply the next time the editor opens the project.");
-            const auto pngFilt = okay::filedialog::Filters("PNG image", {"*.png"});
-            ImGui::SetNextItemWidth(360);
-            ImGui::InputTextWithHint("##pssplashlogo", "Logo image (PNG) — blank = built-in cube",
-                                     g_project.splashLogo, sizeof(g_project.splashLogo));
-            ImGui::SameLine();
-            if (oked::TipButton("Browse...", "...##pssplash")) {
+        if (ImGui::CollapsingHeader("Loading screen")) {   // drawn by OkayUI only (editor/OkayPanels.cpp); edited in place
+            okaypanels::LoadingScreenModel lm;
+            lm.logo = g_project.splashLogo; lm.logoSize = sizeof(g_project.splashLogo);
+            lm.accentOverride = &g_project.splashAccentOverride; lm.accent = g_project.splashAccent;
+            lm.bgTop = g_project.splashBgTop; lm.bgBottom = g_project.splashBgBot; lm.showBar = &g_project.splashShowBar;
+            okaypanels::LoadingScreenIntent lin;
+            oked::DrawLoadingScreenOkayUI(lm, lin);
+            if (lin.browse) {
+                const auto pngFilt = okay::filedialog::Filters("PNG image", {"*.png"});
                 PickOpenInto("Choose the splash logo", "", pngFilt, g_project.splashLogo, sizeof(g_project.splashLogo));
             }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Clear##pssplash")) g_project.splashLogo[0] = '\0';
-            ImGui::Checkbox("Custom splash accent##ps", &g_project.splashAccentOverride);
-            if (g_project.splashAccentOverride) {
-                ImGui::SameLine(); ImGui::SetNextItemWidth(220);
-                ImGui::ColorEdit3("##pssplashaccent", g_project.splashAccent);
-            }
-            ImGui::SetNextItemWidth(220); ImGui::ColorEdit3("Background top##ps", g_project.splashBgTop);
-            ImGui::SetNextItemWidth(220); ImGui::ColorEdit3("Background bottom##ps", g_project.splashBgBot);
-            ImGui::Checkbox("Show progress bar##ps", &g_project.splashShowBar);
         }
         ImGui::Separator();
         ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f));

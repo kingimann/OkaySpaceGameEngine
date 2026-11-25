@@ -2,7 +2,7 @@
 
 The OkayEngine editor (Dear ImGui on SDL): docked panels, Scene and Game views, Inspector, Project panel, many tool windows, Play mode and Build Game. About 65k lines in `editor/`, of which `editor/main.cpp` is still about 45k; the split-out panel files hold the rest.
 Only the headless logic (`EditorState`, tabs, game fiber, script text, graph model) has unit tests; the drawing code is checked by the CI `--selftest` run and by hand.
-Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move whenever the file is edited. Animation windows belong to Grok's animation sessions; leave them alone. PR #577 (a Cursor session, merged for 2.851.0) redesigned the Visual Script and Script Editor layouts and gave the whole editor a roomier layout; it edited `editor/main.cpp`, `editor/VisualScriptEditor.hpp`, `editor/ConsolePanel.cpp` and `editor/vendor/TextEditor.*` and added `editor/VsCanvasTools.hpp` (14.1.9, 13.5, 15.9.7). Draft PR #584 (updater restart after install, from the same kind of session) touches `editor/main.cpp`, `launcher/main.cpp` and adds `shared/AppRestart.hpp`; it is not on main.
+Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move whenever the file is edited. (The animation windows used to be reserved for Grok's sessions; Grok no longer writes code since 2026-11-24, rule 24d.) PR #577 (a Cursor session, merged for 2.851.0) redesigned the Visual Script and Script Editor layouts and gave the whole editor a roomier layout; it edited `editor/main.cpp`, `editor/VisualScriptEditor.hpp`, `editor/ConsolePanel.cpp` and `editor/vendor/TextEditor.*` and added `editor/VsCanvasTools.hpp` (14.1.9, 13.5, 15.9.7). Draft PR #584 (updater restart after install, from the same kind of session) touches `editor/main.cpp`, `launcher/main.cpp` and adds `shared/AppRestart.hpp`; it is not on main.
 
 ## 15. Editor
 
@@ -94,6 +94,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.4.1 Project panel - `editor/main.cpp` (`DrawProject`), `editor/ProjectBrowser.*` - folder tree, list and grid, search (`t:model`, `ext:png`, `l:tag`, `is:unused`, `is:broken`, `uses:`, `deps:`), smart filters (All Models, Recently Changed, Unused Assets), multi-select; the listing, counts, folders and dependency lookups come from `AssetDatabase`
   - 15.4.8 Project panel tab strip - `editor/ProjectTabs.hpp`, `editor/main.cpp` (`DrawProject`) - Assets / Favourites / Recent tabs (Search shows while the box has text) above the panes; Favourites is a flat list view of the starred items (smart view 102), Recent is the existing Recently Changed view; the last tab and folder are remembered per project in `.okay/projectview.txt`
   - 15.4.9 Project panel One column / Two columns - `editor/ProjectLayout.hpp`, `editor/EditorLayoutMath.hpp` (`ViewPrefs::projectColumns`), `editor/main.cpp` (`DrawProject`) - a switch on the tab row: Two columns (folder tree on the left, contents on the right, draggable divider that keeps minimum widths) or One column (a single list; the arrow of a folder opens it in place and shows its contents beneath); Left / Right open, close and step in and out, Up / Down / Home / End move, Enter opens; the choice is saved in `okay_settings.txt` (`projectcolumns`, old files mean two columns); the Assets / Favourites / Recent tabs work in both
+  - 15.4.10 Import settings - `editor/ProjectPanelUI.cpp` (`DrawImportSettings`: the rules), `okayui/screens/OkayUIEditorPanels.cpp` (`DrawImportSettings`: drawn by OkayUI only, in the Project panel and the Inspector) - a texture's largest side, kind, filter and anisotropy, wrap, mipmaps and mip filter, GPU compression, what is loaded and the .dds mipmap and compression tool; a model's scale, normals and animations; a sound's loading and mono mix; Apply and Revert
   - 15.4.2 Asset icons and thumbnails - `editor/main.cpp`, `editor/ProjectBrowser.*` - drawn icons per asset kind while a picture is not made yet; pictures from `ThumbnailCache` (textures, audio waveforms, models, meshes, materials, prefabs, scenes), tile size Small / Medium / Large and a slider, grid or list
   - 15.4.3 Asset color labels - `editor/main.cpp` (~8542-8589) - per-project labels stored in `.okaylabels`
   - 15.4.4 Import Model - `editor/main.cpp` (~2407-2512) - OS file picker first, then a settings dialog
@@ -114,7 +115,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 
 ### 15.5 Animator, Animation tab, Timeline
 - **System:** Animation
-- **What:** The animation tools: the Animator state-machine graph, the Animation tab (clips, dope sheet, curves, record), the cutscene Timeline, and the first-person hands preview. Owned by Grok's animation sessions; describe, do not edit.
+- **What:** The animation tools: the Animator state-machine graph, the Animation tab (clips, dope sheet, curves, record), the cutscene Timeline, and the first-person hands preview.
 - **Parts:**
   - 15.5.1 Animator window - `editor/AnimatorWindow.*` - state graph canvas, transitions, parameters, layers with bone masks, problems list, live state in Play
   - 15.5.2 Animator preview - `editor/AnimatorPreview.hpp` - one live preview at a time in the Scene view, restores the pose on stop
@@ -128,7 +129,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Editor:** Animation tab, Animator window, Timeline window
 - **Docs:** `docs/gameplay/animation.md`, `docs/gameplay/cutscenes.md`, `docs/editor/editor.md`
 - **Tests:** `animator_edit`, `anim_edit` (clip editing tools on AnimClip, engine side), `sequence` (engine side); the windows themselves are untested
-- **Status:** Works - windows exist and run; the animation PRs are in Grok's lane (in flight, #554 and others)
+- **Status:** Works - windows exist and run; the animation integration PR #554 merged on 2026-11-10
 - **Open:** possible overlap: the Animation tab (~3.5k lines in `main.cpp`) and `AnimatorWindow` both edit state machines or clips; splitting the Animation tab out is part of 15.10; Grok's pending PRs may touch these files
 - **Related:** 5.1, 5.2, 10.1, 15.10, 4.7
 - **Words:** Animator window, state machine graph, Animation tab, dope sheet, curves, record, onion skin, Timeline, cutscene editor, sequence, keyframes, bone mask, FP hands preview
@@ -323,8 +324,8 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **System:** Editor
 - **What:** Windows that configure the scene and project, show services status, and explain the editor: Lighting (scene settings), Project Settings, Services, Keyboard Shortcuts, About, update and quit prompts.
 - **Parts:**
-  - 15.14.1 Lighting window - `editor/main.cpp` (`DrawSceneSettings` ~10495-10800, look sections ~10359) - Environment (sky and light), Rendering (lighting and post FX), Debug View, Lightmap Baking and the scene UI font; the sky, fog, weather and post-processing sections
-  - 15.14.2 Project Settings - `editor/main.cpp` (`DrawProjectSettings`), `okayui/screens/OkayUIEditorPanels.cpp` (the Player, Physics, Rendering and Tags and Layers sections, drawn by OkayUI only; Modules, Loading screen and the rest still Dear ImGui) - project-wide defaults saved to `project.okayproj` (company, version, default size)
+  - 15.14.1 Lighting window - `editor/main.cpp` (`DrawSceneSettings` ~10495-10800, look sections ~10359) - Environment (sky and light), Rendering (lighting and post FX), Debug View, Lightmap Baking and the scene UI font; the sky, fog, weather and post-processing sections; Post-processing is drawn by OkayUI only (`okayui/screens/OkayUIEditorPanels.cpp`, `DrawPostProcess`)
+  - 15.14.2 Project Settings - `editor/main.cpp` (`DrawProjectSettings`), `okayui/screens/OkayUIEditorPanels.cpp` (the Player, Physics, Rendering, Tags and Layers and Loading screen sections, drawn by OkayUI only; Modules still Dear ImGui) - project-wide defaults saved to `project.okayproj` (company, version, default size)
   - 15.14.3 Services window - `editor/main.cpp` (`DrawServices` ~9805) - status of the online services that ship in the engine: Steam and Multiplayer
   - 15.14.4 Keyboard Shortcuts - `editor/main.cpp` (`DrawShortcutsWindow` ~10837) - list of editor shortcuts
   - 15.14.5 About, update and quit prompts - `editor/main.cpp` (`DrawAboutPopup` ~16869, `DrawUpdatePopup` ~17000, `DrawQuitPrompt` ~10801)

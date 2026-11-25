@@ -2,6 +2,7 @@
 // appeal, "Report cheating", and the session-ticket check before a join. Moved out of launcher/main.cpp unchanged
 // (docs/engine/modularization_plan.md, Part C section 19, batch L2).
 #include "LauncherShared.hpp"
+#include "NavIcons.hpp"   // SlateCombo, the launcher's dropdown
 #include "AntiCheatPages.hpp"
 #include "AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals
 #include "AntiCheatAdminTools.hpp"  // linked accounts, ban with devices, report evidence
@@ -258,7 +259,7 @@ void DrawAntiCheatAdmin() {
 
     if (view == 0) {   // ======================= Reports =======================
         ImGui::SetNextItemWidth(150);
-        if (ImGui::Combo("##acrepf", &repFilter, "Open\0Reviewing\0Actioned\0Dismissed\0All\0")) { selReport = 0; queue(new AcAdminJob); }
+        if (SlateCombo("##acrepf", &repFilter, "Open\0Reviewing\0Actioned\0Dismissed\0All\0")) { selReport = 0; queue(new AcAdminJob); }
         ImGui::SameLine();
         ImGui::TextDisabled("Player reports, and what players' own anti-cheat found (client checks). Reports go after 90 days.");
         ImGui::Dummy(ImVec2(0, 4));
@@ -406,7 +407,7 @@ void DrawAntiCheatAdmin() {
         ImGui::SetNextItemWidth(420);
         ImGui::InputTextWithHint("##acbanwhy", "Reason (the player sees it)", banReason, sizeof(banReason));
         ImGui::SetNextItemWidth(200);
-        ImGui::Combo("Length", &banDur, "Permanent\0" "1 day\0" "7 days\0" "30 days\0" "1 year\0");
+        SlateCombo("Length", &banDur, "Permanent\0" "1 day\0" "7 days\0" "30 days\0" "1 year\0");
         if (acb::IsHwHash(banHw)) ImGui::Checkbox("Also ban this machine (salted hardware hash)", &banMachine);
         if (!banUid.empty()) ImGui::Checkbox("Also ban every machine this account used (ac_ban_with_devices)", &banDevices);
         ImGui::Dummy(ImVec2(0, 4));

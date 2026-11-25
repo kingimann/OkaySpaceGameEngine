@@ -3,8 +3,8 @@
 // std::function ([func.wrap.func]): a copyable holder of any callable with the call signature R(A...). Own version:
 // the callable is kept in a heap object behind a virtual call; okay-ms maps function<R(A...)> to function__fn<R, A...>
 // (see instantiate_class). No target(), target_type() or allocator; calling an empty function returns R() for a
-// value type instead of throwing bad_function_call (there are no exceptions). No constructor or assignment from nullptr
-// (okay-ms reads nullptr as the number 0, so it cannot be told from a callable); use `function<...> f;` or `f = {}`.
+// value type instead of throwing bad_function_call (there are no exceptions). okay-ms reads nullptr as the number 0, so
+// construction, assignment and comparison with nullptr take an int: any int would be taken as "empty" (not standard).
 #pragma once
 #include <cstddef>
 #include <cstdlib>
@@ -34,6 +34,7 @@ class function__fn {
 
 public:
     function__fn() : held_(nullptr) {}
+    function__fn(int null_pointer) : held_(nullptr) { (void)null_pointer; }  // function<...> f = nullptr;
     template <typename F>
     function__fn(F f) : held_(new function_impl__<F, R, A...>(f)) {}
     function__fn(const function__fn& o) : held_(o.held_ ? o.held_->clone() : nullptr) {}
@@ -55,6 +56,14 @@ public:
         }
         return *this;
     }
+    function__fn& operator=(int null_pointer) {
+        (void)null_pointer;
+        delete held_;
+        held_ = nullptr;
+        return *this;
+    }
+    bool operator==(int null_pointer) const { return (void)null_pointer, held_ == nullptr; }
+    bool operator!=(int null_pointer) const { return (void)null_pointer, held_ != nullptr; }
     explicit operator bool() const { return held_ != nullptr; }
     R operator()(A... args) const { return held_->call(args...); }
     void swap(function__fn& o) {

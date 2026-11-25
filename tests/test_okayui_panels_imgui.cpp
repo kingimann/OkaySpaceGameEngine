@@ -1,5 +1,6 @@
 // The editor's Crash Log, Audio Mixer, History, Problems, Stats and Profiler windows as the editor draws them now: the OkayUI screen only (no Dear ImGui copy),
-// and Project Settings' Player, Physics, Rendering and Tags and Layers sections, each a part of its window (okayuihost::HostPanelSection),
+// and Project Settings' Player, Physics, Rendering and Tags and Layers sections, Lighting's Post-processing and the import settings, each a part
+// of its window (okayuihost::HostPanelSection),
 // hosted in a Dear ImGui window by okayuihost::HostPanelWindow (shared/OkayUIImGuiEmbed.hpp, the function editor/OkayPanels.cpp
 // calls). The body's shapes go into the ImGui window's draw list, so Dear ImGui's popups and windows in front are drawn over it.
 // Before, a covered panel switched to its Dear ImGui version for as long as something lay over it.
@@ -574,11 +575,36 @@ struct SettingsData {
     okayuiscreens::PhysicsSettingsResult phres;
     okayuiscreens::RenderingSettingsResult rres;
     okayuiscreens::TagsLayersResult tres;
+    panelfix::PostData post;
+    panelfix::ImportData import{P::ImportTexture};
+    okayuiscreens::PostProcessResult pores;
+    okayuiscreens::ImportSettingsResult ires;
+    panelfix::LoadingData loading;
+    okayuiscreens::LoadingScreenResult lres;
+    bool loadingBrowse = false;
     bool playerChanged = false, physicsApply = false, renderingChanged = false;
-    int removeTag = -1, renameTag = -1;
+    bool postChanged = false, importGenerate = false, importChanged = false;
+    int removeTag = -1, renameTag = -1, postPreset = -1;
     std::string renameTo;
-    void Add(Editor& e, bool withTags, bool withOthers = true) {
+    void Add(Editor& e, bool withTags, bool withOthers = true, bool withLook = false) {
         e.title = "Project Settings";
+        if (withLook) {   // Lighting > Post-processing and a texture's import settings (the Project panel and the Inspector show those)
+            e.title = "Lighting";
+            e.sections.push_back({"Post-processing", "##okayui_post", [this](float x, float y, float w, float h) {
+                pores = okayuiscreens::DrawPostProcess(post.model, x, y, w, h);
+                if (pores.intent.changed) postChanged = true;
+                if (pores.intent.preset >= 0) postPreset = pores.intent.preset;
+                return pores.contentHeight; }});
+            e.sections.push_back({"Import settings", "##okayui_import", [this](float x, float y, float w, float h) {
+                ires = okayuiscreens::DrawImportSettings(import.model, import.state, x, y, w, h);
+                if (ires.intent.generate) importGenerate = true;
+                if (ires.intent.changed) importChanged = true;
+                return ires.contentHeight; }});
+            e.sections.push_back({"Loading screen", "##okayui_loadingscreen", [this](float x, float y, float w, float h) {
+                lres = okayuiscreens::DrawLoadingScreen(loading.model, x, y, w, h);
+                if (lres.intent.browse) loadingBrowse = true;
+                return lres.contentHeight; }});
+        }
         if (withOthers) {
             e.sections.push_back({"Player", "##okayui_player", [this](float x, float y, float w, float h) {
                 pres = okayuiscreens::DrawPlayerSettings(player.model, x, y, w, h); if (pres.intent.changed) playerChanged = true; return pres.contentHeight; }});
@@ -596,18 +622,19 @@ struct SettingsData {
     }
 };
 
-Diff SectionsAgainstOldWay(const char* name, bool tags, bool others) {
+Diff SectionsAgainstOldWay(const char* name, bool tags, bool others, bool look = false, float scroll = -1.0f) {
     Bitmap oldWay(kW, kH);
     {
         SettingsData d;
         Editor e;
-        e.hosted = false; e.winH = (float)kH - 40.0f; d.Add(e, tags, others);
-        e.Frames(6);
+        e.hosted = false; e.winH = (float)kH - 40.0f; d.Add(e, tags, others, look);
+        e.Frames(3); e.scrollTo = scroll; e.Frames(3);
         oldWay = e.ras.bmp;
     }
     SettingsData d;
     Editor e;
-    e.winH = (float)kH - 40.0f; d.Add(e, tags, others);
+    e.winH = (float)kH - 40.0f; d.Add(e, tags, others, look);
+    e.Frames(3); e.scrollTo = scroll;
     e.Frames(6);
     for (const Editor::Section& sec : e.sections) CHECK(sec.shown);
     return HostedDiff(name, oldWay, e);
@@ -618,6 +645,10 @@ void SectionsSamePictureAsBefore() {
     CHECK(SectionsAgainstOldWay("settings_player_physics_rendering", false, true).clearly < 0.5);
     kH = 900;
     CHECK(SectionsAgainstOldWay("settings_tagslayers", true, false).clearly < 0.5);
+    // Lighting > Post-processing (the top of it) and, scrolled down, a texture's import settings
+    kH = 1000;
+    CHECK(SectionsAgainstOldWay("lighting_post", false, false, true).clearly < 0.5);
+    CHECK(SectionsAgainstOldWay("lighting_import", false, false, true, 1500.0f).clearly < 0.5);
     kH = 420;
 }
 
@@ -751,6 +782,80 @@ void SectionsScrollWithTheWindow() {
     kH = 420;
 }
 
+// ---- Lighting > Post-processing and the import settings (okayuihost::HostPanelSection) -------------------------------------------
+
+void LookSectionsCoveredByImGui() {
+    kH = 760;
+    SettingsData d;
+    Editor e;
+    e.winH = 720.0f; d.Add(e, false, false, true); e.front = true; e.tooltip = true;
+    e.Frames(4);
+    const int frontPx = Count(e.ras.bmp, 210, 160, 390, 245, kFront), tipPx = Count(e.ras.bmp, 110, 258, 210, 300, kFront);
+    std::printf("  post-processing: window in front %d of %d pixels its own colour; tooltip %d of %d\n", frontPx, 180 * 85, tipPx, 100 * 42);
+    CHECK(frontPx == 180 * 85 && tipPx == 100 * 42);
+    CHECK(e.sections[0].shown);                                   // still drawn: no Dear ImGui copy to switch to
+    e.sim.Move(300, 200); e.Frames(2);
+    CHECK(!e.offers.BodyHovered());
+    kH = 420;
+}
+
+void LookSectionsTakeClicks() {
+    kH = 760;
+    SettingsData d;
+    Editor e;
+    e.winH = 720.0f; d.Add(e, false, false, true);
+    e.Frames(3);
+    // the Bloom box: off, and its four rows go
+    const OkayUI::Rect b = d.pores.bloom;
+    CHECK(b.w > 0.0f && b.y + b.h < kWinY + e.winH);
+    const float liftY = d.pores.lift.y;
+    e.Click(b.x + 8.0f, b.y + b.h * 0.5f); e.Frames(1);
+    CHECK(!d.post.v.bloom && d.postChanged && d.pores.lift.y < liftY - 100.0f);
+    // the look preset list is an OkayUI overlay (offered, over everything); a row picks the preset
+    const OkayUI::Rect pr = d.pores.preset;
+    e.Click(pr.x + 20.0f, pr.y + pr.h * 0.5f); e.Frames(1);
+    CHECK(d.pores.popup.w > 0.0f && e.offers.Overlays() >= 1 && OkayUI::GetDrawData().indexCount > 0);
+    const OkayUI::Rect pp = d.pores.popup;
+    e.Click(pp.x + 30.0f, pp.y + 8.0f + (OkayUI::GetFontSize() * okayuiscreens::kEditorTextScale + 8.0f) * 1.5f);
+    CHECK(d.postPreset == 1);
+    // the list again, then a Dear ImGui modal: the list closes (it does not sit above the modal)
+    e.Click(pr.x + 20.0f, pr.y + pr.h * 0.5f); e.Frames(1);
+    CHECK(e.offers.Overlays() >= 1);
+    e.imguiModal = true; e.Frames(3);
+    CHECK(e.offers.Overlays() == 0);
+    e.imguiModal = false; e.Frames(2);
+    // scrolled down to the import settings: the window scrolls them, and their buttons take clicks
+    ImGuiWindow* w = ImGui::FindWindowByName("Lighting");
+    CHECK(w != nullptr);
+    if (!w) return;
+    auto inView = [&](const OkayUI::Rect& q) { return q.w > 0.0f && q.y > w->InnerClipRect.Min.y && q.y + q.h < w->InnerClipRect.Max.y; };
+    for (float sy = 600.0f; sy < 3000.0f && !inView(d.ires.generate); sy += 150.0f) { e.scrollTo = sy; e.Frames(2); }
+    const OkayUI::Rect g = d.ires.generate;
+    CHECK(inView(g));
+    e.Click(g.x + g.w * 0.5f, g.y + g.h * 0.5f);
+    CHECK(d.importGenerate);
+    for (float sy = w->Scroll.y; sy > 0.0f && !inView(d.ires.compress); sy -= 150.0f) { e.scrollTo = sy; e.Frames(2); }
+    const OkayUI::Rect c = d.ires.compress;
+    CHECK(inView(c));
+    e.Click(c.x + 8.0f, c.y + c.h * 0.5f);
+    CHECK(!d.import.edit.compress && d.importChanged);
+    e.Frames(1);
+    CHECK(d.ires.formatCombo.w == 0.0f);
+    // Apply is enabled now that a value differs from the saved one
+    CHECK(d.ires.enabled);
+    // further down, Project Settings' Loading screen: Browse asks the host, typing a logo path reaches the field
+    e.scrollTo = 4000.0f; e.Frames(3);                            // the bottom (clamped to the window's scroll range)
+    const OkayUI::Rect br = d.lres.browse;
+    CHECK(inView(br));
+    e.Click(br.x + br.w * 0.5f, br.y + br.h * 0.5f);
+    CHECK(d.loadingBrowse);
+    const OkayUI::Rect lg = d.lres.logo;
+    e.Click(lg.x + lg.w - 10.0f, lg.y + lg.h * 0.5f);
+    e.sim.Press(okayuitest::Key_SelectAll); e.Frame(); e.sim.Type("Splash.png"); e.Frame();
+    CHECK(std::string(d.loading.logo) == "Splash.png");
+    kH = 420;
+}
+
 void SectionsHiddenDrawNothing() {
     kH = 760;
     SettingsData d;
@@ -771,7 +876,7 @@ void SectionsHiddenDrawNothing() {
 } // namespace
 
 int main() {
-    RUN_SUITE("okayui panels in Dear ImGui windows (Crash Log, Audio Mixer, History, Problems, Stats, Profiler; Project Settings' Player, Physics, Rendering, Tags and Layers)");
+    RUN_SUITE("okayui panels in Dear ImGui windows (Crash Log, Audio Mixer, History, Problems, Stats, Profiler; Project Settings' Player, Physics, Rendering, Tags and Layers; Post-processing; import settings)");
     kH = 420;
     SamePictureAsBefore();
     ImGuiInFrontCoversThePanel();
@@ -787,5 +892,7 @@ int main() {
     SectionsTakeClicks();
     SectionsScrollWithTheWindow();
     SectionsHiddenDrawNothing();
+    LookSectionsCoveredByImGui();
+    LookSectionsTakeClicks();
     TEST_MAIN_RESULT();
 }

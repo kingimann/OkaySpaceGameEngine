@@ -14,14 +14,16 @@ it; the pull request list is the source of truth.
 
 Rules that govern it (`CLAUDE.md`): always be working on something real (rule 2); a PR merges only when every CI job is
 finished and green, "Build & test (Ubuntu)" and "Own stack" included (rule 6); nothing that replaces third-party code
-is the default until the owner approves it (rule 17). Rule 24c (PR #1035) records the owner's C# decision.
+is the default until the owner approves it (rule 17). Rule 24c (PR #1035) records the owner's C# decision. (These are
+the rules as of 2026-11-20; rules 6, 17 and 24c have changed since: read `CLAUDE.md`.)
 
 ## Owner decisions this session
 
 - Visual Script is the main way to script and must be easy for beginners; text scripting is for people who already
   know it (owner, 2026-11-19).
-- Our own OkayScript languages are to be replaced by C# and Lua. Nothing is deleted until both work and the owner
-  confirms; the plan is `docs/scripting_migration.md`.
+- (2026-11-20) Our own OkayScript languages were to be replaced by C# and Lua. **Superseded 2026-11-23** (#1214, rule 24c):
+  the owner kept OkayScript as our own language; C# and Lua are alternatives next to it. (`docs/scripting_migration.md`,
+  named here before, does not exist on main.)
 - C# runs on the Microsoft .NET runtime loaded at run time (rule 24c, PR #1035), off by default behind
   `OKAY_WITH_CSHARP`. Lua is written by us from the manual.
 - Release often: ship what is green now, one small release at a time.

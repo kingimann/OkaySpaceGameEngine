@@ -6,8 +6,8 @@
 > **Status:** rewritten on 2026-11-23 at the owner's request ("update the read me and the docs more in depth and
 > detail"). It is grouped by who reads it. Each folder still has its own `README.md` with every page, one line each.
 >
-> **Last checked:** 2026-11-23, against `main` (version 2.903.3 in `CMakeLists.txt`). Links checked; page contents were
-> not re-checked against the code.
+> **Last checked:** 2026-11-24, against `main` (version 2.903.9 in `CMakeLists.txt`). Links checked; every page in a
+> folder is listed in that folder's `README.md` or here.
 
 ## What OkaySpace is
 
@@ -18,7 +18,7 @@ OkaySpace is a game engine written in C++. It has three programs:
 - the **player** (`OkaySpacePlayer.exe`), which runs a finished game (and a dedicated server, with no window).
 
 Releases are for Windows only for now. The goal is to write every part ourselves. A few outside libraries are still
-used while our own versions are built (SDL2, Dear ImGui, Assimp, ufbx, curl, libsodium). The overview of every system
+used while our own versions are built (SDL2, Dear ImGui, Assimp, curl as the last HTTP fallback, libsodium; ufbx, ImGuiColorTextEdit and `SDL_LoadWAV` were replaced and deleted on 2026-11-23). The overview of every system
 is in the repository's [README](../README.md).
 
 **What changed lately:** every release in plain words is in [dist/CHANGELOG.txt](../dist/CHANGELOG.txt), and the
@@ -182,6 +182,7 @@ Each folder has a `README.md` that lists every page with one line each.
 | [content/](content/README.md) | Getting models in: import, our own model readers, real-file tests. |
 | [release/](release/README.md) | Getting builds to players: build pipeline, packaging, releasing, channels, the updater, installing, downloadable content. |
 | [verification/](verification/README.md) | The owner's test checklists for the Windows release (generated). |
+| [design/](design/modular_gameplay_contracts.md) | The modular engine: [the design](design/modular_gameplay_contracts.md) and [the state of each stage](design/modular_status.md) (no folder README). |
 | [feature_map/](feature_map/README.md) | The hand-written feature map pages, one per area; the source of FEATURE_MAP.md and SYSTEMS.md. |
 | [try_it/](try_it/) | Old "how to try it" entries, the source of try_it.md. |
 

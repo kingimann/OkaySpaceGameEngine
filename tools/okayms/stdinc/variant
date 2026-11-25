@@ -1,0 +1,190 @@
+// okay-ms own standard header: std::variant, written from ISO/IEC 14882 [variant] (a type-safe union: one object of
+// one of the listed types, and the index of which one it is). Own design: the object lives in a buffer of 64-bit
+// words big enough for the largest alternative, and the work that depends on which alternative is held (destroy,
+// copy, compare) is done by a chain of class template specializations that step through the list one type at a time.
+// Differences from the standard (okay-ms has no exceptions and no forwarding references yet):
+// - Alternatives are aligned to 8 bytes at most.
+// - The converting constructor and assignment take `const U&` and choose the alternative that is exactly U, else the
+//   first one U converts to that is not bool (a pointer or a number is not turned into bool) — simpler than the
+//   overload set of [variant.ctor] 14, which gives the same choice for the engine's uses.
+// - get with the wrong alternative and visit of a valueless variant cannot throw bad_variant_access; get returns the
+//   buffer as it is. valueless_by_exception() is always false.
+// - visit takes one variant; its result type is that of calling the visitor with the first alternative.
+#pragma once
+#include <cstddef>
+#include <new>
+#include <type_traits>
+#include <utility>
+namespace std {
+
+struct monostate {};
+inline bool operator==(const monostate&, const monostate&) { return true; }
+inline bool operator!=(const monostate&, const monostate&) { return false; }
+inline bool operator<(const monostate&, const monostate&) { return false; }
+
+static const size_t variant_npos = (size_t)-1;
+
+// The position of X in T... ([variant.helper]); 1000 or more when X is not there.
+template <typename X, typename... T> struct variant_find__ { static const size_t value = 1000; };
+template <typename X, typename H, typename... R> struct variant_find__<X, H, R...> {
+    static const size_t value = is_same<X, H>::value ? 0 : 1 + variant_find__<X, R...>::value;
+};
+// The first alternative U converts to, not counting bool for a U that is not bool.
+template <typename U, typename... T> struct variant_conv__ { static const size_t value = 1000; };
+template <typename U, typename H, typename... R> struct variant_conv__<U, H, R...> {
+    static const size_t value = (is_convertible<U, H>::value && (is_same<U, bool>::value || !is_same<H, bool>::value))
+                                    ? 0
+                                    : 1 + variant_conv__<U, R...>::value;
+};
+// The alternative a value of type U initializes: the same type first, then a conversion.
+template <typename U, typename... T> struct variant_pick__ {
+    static const size_t exact = variant_find__<U, T...>::value;
+    static const size_t value = exact < sizeof...(T) ? exact : variant_conv__<U, T...>::value;
+};
+// The alternative at position I ([variant.helper] variant_alternative).
+template <size_t I, typename... T> struct variant_at__ {};
+template <typename H, typename... R> struct variant_at__<0, H, R...> { typedef H type; };
+template <size_t I, typename H, typename... R> struct variant_at__<I, H, R...> {
+    typedef typename variant_at__<I - 1, R...>::type type;
+};
+// The size of the largest alternative.
+template <typename... T> struct variant_size_of__ { static const size_t value = 1; };
+template <typename H, typename... R> struct variant_size_of__<H, R...> {
+    static const size_t value =
+        sizeof(H) > variant_size_of__<R...>::value ? sizeof(H) : variant_size_of__<R...>::value;
+};
+
+template <typename H> void variant_destroy_one__(void* p) {
+    if constexpr (!is_trivially_destructible<H>::value) static_cast<H*>(p)->~H();
+}
+// Destroy, copy and compare the alternative at position i of T..., stepping one type at a time.
+template <typename... T> struct variant_ops__ {
+    static void destroy(size_t, void*) {}
+    static void copy(size_t, void*, const void*) {}
+    static void take(size_t, void*, void*) {}
+    static bool equal(size_t, const void*, const void*) { return true; }
+    static bool less(size_t, const void*, const void*) { return false; }
+};
+template <typename H, typename... R> struct variant_ops__<H, R...> {
+    static void destroy(size_t i, void* p) {
+        if (i == 0) variant_destroy_one__<H>(p);
+        else variant_ops__<R...>::destroy(i - 1, p);
+    }
+    static void copy(size_t i, void* to, const void* from) {
+        if (i == 0) new (to) H(*static_cast<const H*>(from));
+        else variant_ops__<R...>::copy(i - 1, to, from);
+    }
+    static void take(size_t i, void* to, void* from) {
+        if (i == 0) new (to) H(std::move(*static_cast<H*>(from)));
+        else variant_ops__<R...>::take(i - 1, to, from);
+    }
+    static bool equal(size_t i, const void* a, const void* b) {
+        if (i == 0) return *static_cast<const H*>(a) == *static_cast<const H*>(b);
+        return variant_ops__<R...>::equal(i - 1, a, b);
+    }
+    static bool less(size_t i, const void* a, const void* b) {
+        if (i == 0) return *static_cast<const H*>(a) < *static_cast<const H*>(b);
+        return variant_ops__<R...>::less(i - 1, a, b);
+    }
+};
+
+template <typename... T>
+class variant {
+public:
+    // Public so that get_if and holds_alternative can reach them (okay-ms does not read friend declarations).
+    unsigned long long store__[(variant_size_of__<T...>::value + 7) / 8];
+    size_t index__;
+
+    variant() : index__(0) { new (store__) typename variant_at__<0, T...>::type(); }
+    variant(const variant& o) : index__(o.index__) { variant_ops__<T...>::copy(index__, store__, o.store__); }
+    variant(variant&& o) : index__(o.index__) { variant_ops__<T...>::take(index__, store__, o.store__); }
+    template <typename U>
+    variant(const U& u) : index__(variant_pick__<U, T...>::value) {
+        new (store__) typename variant_at__<variant_pick__<U, T...>::value, T...>::type(u);
+    }
+    ~variant() { variant_ops__<T...>::destroy(index__, store__); }
+
+    variant& operator=(const variant& o) {
+        if (this == &o) return *this;
+        variant_ops__<T...>::destroy(index__, store__);
+        index__ = o.index__;
+        variant_ops__<T...>::copy(index__, store__, o.store__);
+        return *this;
+    }
+    variant& operator=(variant&& o) {
+        if (this == &o) return *this;
+        variant_ops__<T...>::destroy(index__, store__);
+        index__ = o.index__;
+        variant_ops__<T...>::take(index__, store__, o.store__);
+        return *this;
+    }
+    template <typename U>
+    variant& operator=(const U& u) {
+        typedef typename variant_at__<variant_pick__<U, T...>::value, T...>::type Alt;
+        if (index__ == variant_pick__<U, T...>::value) {
+            *reinterpret_cast<Alt*>(store__) = u;
+            return *this;
+        }
+        variant_ops__<T...>::destroy(index__, store__);
+        index__ = variant_pick__<U, T...>::value;
+        new (store__) Alt(u);
+        return *this;
+    }
+
+    size_t index() const { return index__; }
+    bool valueless_by_exception() const { return false; }
+
+    template <typename X>
+    X& emplace(const X& value) {
+        variant_ops__<T...>::destroy(index__, store__);
+        index__ = variant_find__<X, T...>::value;
+        new (store__) X(value);
+        return *reinterpret_cast<X*>(store__);
+    }
+    template <typename X>
+    X& emplace() {
+        variant_ops__<T...>::destroy(index__, store__);
+        index__ = variant_find__<X, T...>::value;
+        new (store__) X();
+        return *reinterpret_cast<X*>(store__);
+    }
+    void swap(variant& o) {
+        variant t(std::move(o));
+        o = std::move(*this);
+        *this = std::move(t);
+    }
+
+    bool operator==(const variant& o) const {
+        return index__ == o.index__ && variant_ops__<T...>::equal(index__, store__, o.store__);
+    }
+    bool operator!=(const variant& o) const { return !(*this == o); }
+    bool operator<(const variant& o) const {
+        if (index__ != o.index__) return index__ < o.index__;
+        return variant_ops__<T...>::less(index__, store__, o.store__);
+    }
+};
+
+template <typename V> struct variant_size {};
+template <typename... T> struct variant_size<variant<T...>> { static const size_t value = sizeof...(T); };
+template <size_t I, typename V> struct variant_alternative {};
+template <size_t I, typename... T> struct variant_alternative<I, variant<T...>> {
+    typedef typename variant_at__<I, T...>::type type;
+};
+
+template <typename X, typename... T> bool holds_alternative(const variant<T...>& v) {
+    return v.index__ == variant_find__<X, T...>::value;
+}
+template <typename X, typename... T> X* get_if(variant<T...>* v) {
+    if (v == 0 || v->index__ != variant_find__<X, T...>::value) return 0;
+    return reinterpret_cast<X*>(v->store__);
+}
+template <typename X, typename... T> const X* get_if(const variant<T...>* v) {
+    if (v == 0 || v->index__ != variant_find__<X, T...>::value) return 0;
+    return reinterpret_cast<const X*>(v->store__);
+}
+template <typename X, typename... T> X& get(variant<T...>& v) { return *reinterpret_cast<X*>(v.store__); }
+template <typename X, typename... T> const X& get(const variant<T...>& v) {
+    return *reinterpret_cast<const X*>(v.store__);
+}
+
+}  // namespace std

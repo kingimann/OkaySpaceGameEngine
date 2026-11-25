@@ -49,6 +49,7 @@ constexpr uint32_t kScnMemExecute = 0x20000000;
 constexpr uint32_t kScnMemRead = 0x40000000;
 constexpr uint32_t kScnMemWrite = 0x80000000;
 constexpr uint32_t kScnAlign1 = 0x00100000;
+constexpr uint32_t kScnAlign8 = 0x00400000;
 constexpr uint32_t kScnAlign16 = 0x00500000;
 
 // A relocation's symbol field is an index into ObjectFile::symbols

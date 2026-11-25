@@ -4227,6 +4227,11 @@ if(TARGET launcher_imgui)
     target_compile_definitions(test_launcher_page_layout PRIVATE OKAY_LAYOUT_REAL_FONT=1)
 endif()
 add_test(NAME launcher_page_layout COMMAND test_launcher_page_layout)
+# The launcher's sign-in gate and welcome screen rules (launcher/SignInGate.hpp, launcher/AuthForm.hpp). Std only.
+add_executable(test_signin_gate test_signin_gate.cpp)
+target_include_directories(test_signin_gate PRIVATE ${CMAKE_SOURCE_DIR}/launcher)
+target_compile_features(test_signin_gate PRIVATE cxx_std_17)
+add_test(NAME signin_gate COMMAND test_signin_gate)
 
 # The editor's frame-time maths (editor/EditorPerf.hpp, UI-library free): section breakdown, history numbers, idle throttle, viewport scale, performance mode.
 add_executable(test_editor_perf test_editor_perf.cpp)

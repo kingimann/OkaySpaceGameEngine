@@ -11733,6 +11733,11 @@ static void DrawWelcomeScreen(okay::account::AccountService& account, okay::sign
     ImGui::EndChild();
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor();
+    if (L.card.y + s_cardH + UiPx(80.0f) < avail.y) {   // the version, small, at the bottom of the card's side (when the card leaves room)
+        char ver[64]; std::snprintf(ver, sizeof(ver), "OkaySpace v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());
+        const ImVec2 vs = ImGui::CalcTextSize(ver);
+        dl->AddText(ImVec2(o.x + L.artPanel.w + (avail.x - L.artPanel.w - vs.x) * 0.5f, o.y + avail.y - vs.y - UiPx(14.0f)), ImGui::GetColorU32(ImGuiCol_TextDisabled), ver);
+    }
     // Quit, under the card.
     {
         const char* q = "Quit OkaySpace";
@@ -20718,8 +20723,8 @@ int main(int argc, char** argv) {
             DrawAdminPage(account);
         }
 
-        // ---- Footer (pinned to the bottom of the content panel) ----
-        {
+        // ---- Footer (pinned to the bottom of the content panel; the welcome screen shows the version itself) ----
+        if (gateOpen) {
             float fy = ImGui::GetWindowHeight() - (PageFooterH() - 8.0f);   // the pages leave PageFooterH() free for it
             if (fy > ImGui::GetCursorPosY()) ImGui::SetCursorPosY(fy);
             ImGui::Separator();

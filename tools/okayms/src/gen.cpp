@@ -85,7 +85,6 @@ bool Gen::gen_addr(const Node& node) {
     if (node.kind == Node::StringLit) {
         if (!gen_expr(node)) return false;
         last_type.pointers = 1;
-        last_type.base = 2;
         last_type.array_len = -1;
         return true;
     }

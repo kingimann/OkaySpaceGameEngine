@@ -23,7 +23,7 @@ public:
     /// Changes with every SetAsset (InputRuntime rebuilds its action table from the new asset).
     unsigned AssetSerial() const { return m_assetSerial; }
     const ActionSet& Asset() const { return m_asset; }
-    /// Add a player. Pad: `pad` is the controller number (0..3). Keyboard and Pad each pair a device exactly once.
+    /// Add a player. Pad: `pad` is the controller number (0..Input::kMaxGamepads-1). Keyboard and Pad each pair a device exactly once.
     /// Returns the player index, or -1 (device already paired, bad pad number, or no room).
     int Join(JoinDevice device, int pad = -1);
     /// "Press any button to join": the first unpaired controller with a button down, or Space / Enter on an unpaired keyboard.

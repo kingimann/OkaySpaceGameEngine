@@ -40,6 +40,8 @@ $$;
 alter table public.profiles add column if not exists followers_see_activity boolean not null default true;
 
 drop policy if exists "see friends activity" on public.activity;
+-- actor = auth.uid() stays on purpose: the profile page, the data export and pruning
+-- read your own rows; the Friends feed filters actor=neq.<me> (tests/sql/test_public_names.sql).
 create policy "see friends activity" on public.activity for select using (
   actor = auth.uid()
   or actor in (

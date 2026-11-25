@@ -34,8 +34,12 @@ public:
     static ActionSet* Set(int player = 0);
     /// Next phase event of this frame for `player` ("Jump:performed"), false when none are left.
     static bool PopEvent(int player, std::string& out);
+    /// Where a project keeps its input asset, relative to the project folder (and to a built game's data folder: the
+    /// export ships the file under the same path).
+    static constexpr const char* kProjectAssetRef = "Assets/input.okayinput";
     /// A new play session in a project: forget the players, then use <projectDir>/Assets/input.okayinput when it exists (the default asset
     /// otherwise). A Player Input component with its own asset path still replaces it. True when the project's file was loaded.
+    /// The editor's Play calls it with the project folder, the player with the game's data folder (a trailing '/' is fine).
     static bool UseProjectAsset(const std::string& projectDir);
     static void Update(float dt);
     /// Rebind one part of one binding of `player` (ActionSet::Rebind). Player 0's bindings are the table's, so InputActions and
@@ -46,7 +50,7 @@ public:
     /// Save `player`'s overrides (Prefs "inputov.player<N>"); player 0's are the table's (InputActions::Save).
     static void SaveOverrides(int player);
     static void Reset();                              ///< forget players and asset (tests)
-    /// Join from a word: "keyboard", "pad0".."pad3", "any". Returns the player index or -1.
+    /// Join from a word: "keyboard", "pad0".."pad7" (Input::kMaxGamepads controllers), "any". Returns the player index or -1.
     static int JoinNamed(const std::string& device);
 };
 

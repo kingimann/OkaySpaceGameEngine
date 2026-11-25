@@ -1,0 +1,80 @@
+// <unordered_set> for okay-cc (ISO/IEC 14882 [unord.set]). Our own header: std::unordered_set over
+// the hash table of <__hash_table> (each node's value is an unused char); iterators show the key.
+#pragma once
+#include <__hash_table>
+namespace std {
+template <typename K>
+struct __uset_it {
+    __hash_it<K, char> it;
+    __uset_it() {}
+    __uset_it(const __hash_it<K, char> &i) : it(i) {}
+    const K &operator*() const { return it.n->kv.first; }
+    const K *operator->() const { return &it.n->kv.first; }
+    bool operator==(const __uset_it<K> &o) const { return it.n == o.it.n; }
+    bool operator!=(const __uset_it<K> &o) const { return it.n != o.it.n; }
+    __uset_it<K> &operator++() {
+        ++it;
+        return *this;
+    }
+    __uset_it<K> operator++(int) {
+        __uset_it<K> old = *this;
+        ++it;
+        return old;
+    }
+};
+
+template <typename K, typename H = hash<K>, typename E = equal_to<K>>
+class unordered_set {
+public:
+    typedef K key_type;
+    typedef K value_type;
+    typedef __uset_it<K> iterator;
+    typedef __uset_it<K> const_iterator;
+    __hash_table<K, char, H, E> __t;
+
+    unordered_set() {}
+    unordered_set(const unordered_set<K, H, E> &o) { __t.copyFrom(o.__t); }
+    unordered_set(unordered_set<K, H, E> &&o) { __t.takeFrom(o.__t); }
+    unordered_set(initializer_list<K> il) {
+        for (const K *p = il.begin(); p != il.end(); ++p) insert(*p);
+    }
+    unordered_set<K, H, E> &operator=(const unordered_set<K, H, E> &o) {
+        if (this != &o) {
+            __t.clear();
+            __t.copyFrom(o.__t);
+        }
+        return *this;
+    }
+    unsigned long size() const { return __t.__n; }
+    bool empty() const { return __t.__n == 0; }
+    void clear() { __t.clear(); }
+    void reserve(unsigned long n) {
+        if (n > __t.__nb) __t.rehash(n);
+    }
+    iterator begin() const { return iterator(__t.begin()); }
+    iterator end() const { return iterator(__t.end()); }
+    iterator find(const K &k) const { return iterator(__t.at(__t.findNode(k))); }
+    unsigned long count(const K &k) const { return __t.findNode(k) ? 1 : 0; }
+    bool contains(const K &k) const { return __t.findNode(k) != nullptr; }
+    pair<iterator, bool> insert(const K &k) {
+        pair<__hash_node<K, char> *, bool> r = __t.insertValue(pair<const K, char>(k, 0));
+        return pair<iterator, bool>(iterator(__t.at(r.first)), r.second);
+    }
+    template <typename A>
+    pair<iterator, bool> emplace(A &&a) {
+        return insert(K(std::forward<A>(a)));
+    }
+    unsigned long erase(const K &k) {
+        __hash_node<K, char> *x = __t.findNode(k);
+        if (!x) return 0;
+        __t.eraseNode(x);
+        return 1;
+    }
+    iterator erase(iterator it) {
+        iterator next = it;
+        ++next;
+        __t.eraseNode(it.it.n);
+        return next;
+    }
+};
+}  // namespace std

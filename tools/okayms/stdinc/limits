@@ -1,5 +1,6 @@
-// okay-ms own standard header: numeric_limits for float, int and unsigned (ISO/IEC 14882
-// [numeric.limits], values from the IEEE-754 binary32 and two's complement definitions).
+// okay-ms own standard header: numeric_limits for float, double, int, unsigned, long long and unsigned long long
+// (ISO/IEC 14882 [numeric.limits], values from the IEEE-754 binary32 and binary64 and two's complement definitions;
+// the NaN and infinity values are built from their bit patterns).
 #pragma once
 namespace std {
 template <typename T> struct numeric_limits;
@@ -9,6 +10,51 @@ template <> struct numeric_limits<float> {
     static float lowest() { return -3.40282347e+38f; }
     static float epsilon() { return 1.19209290e-07f; }
     static float infinity() { return 3.40282347e+38f * 2.0f; }
+    static float quiet_NaN() {
+        union { unsigned u; float f; } b;
+        b.u = 0x7FC00000u;
+        return b.f;
+    }
+    static float denorm_min() {
+        union { unsigned u; float f; } b;
+        b.u = 1u;
+        return b.f;
+    }
+    static const bool is_signed = true;
+    static const bool is_integer = false;
+    static const bool has_infinity = true;
+    static const bool has_quiet_NaN = true;
+    static const int digits = 24;
+    static const int digits10 = 6;
+    static const int max_digits10 = 9;
+};
+template <> struct numeric_limits<double> {
+    static double max() { return 1.7976931348623157e+308; }
+    static double min() { return 2.2250738585072014e-308; }
+    static double lowest() { return -1.7976931348623157e+308; }
+    static double epsilon() { return 2.220446049250313e-16; }
+    static double infinity() {
+        union { unsigned long long u; double d; } b;
+        b.u = 0x7FF0000000000000ULL;
+        return b.d;
+    }
+    static double quiet_NaN() {
+        union { unsigned long long u; double d; } b;
+        b.u = 0x7FF8000000000000ULL;
+        return b.d;
+    }
+    static double denorm_min() {
+        union { unsigned long long u; double d; } b;
+        b.u = 1ULL;
+        return b.d;
+    }
+    static const bool is_signed = true;
+    static const bool is_integer = false;
+    static const bool has_infinity = true;
+    static const bool has_quiet_NaN = true;
+    static const int digits = 53;
+    static const int digits10 = 15;
+    static const int max_digits10 = 17;
 };
 template <> struct numeric_limits<int> {
     static int max() { return 2147483647; }
@@ -19,5 +65,15 @@ template <> struct numeric_limits<unsigned> {
     static unsigned max() { return 4294967295u; }
     static unsigned min() { return 0u; }
     static unsigned lowest() { return 0u; }
+};
+template <> struct numeric_limits<long long> {
+    static long long max() { return 9223372036854775807LL; }
+    static long long min() { return -9223372036854775807LL - 1; }
+    static long long lowest() { return -9223372036854775807LL - 1; }
+};
+template <> struct numeric_limits<unsigned long long> {
+    static unsigned long long max() { return 18446744073709551615ULL; }
+    static unsigned long long min() { return 0ULL; }
+    static unsigned long long lowest() { return 0ULL; }
 };
 }

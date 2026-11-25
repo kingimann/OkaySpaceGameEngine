@@ -56,7 +56,7 @@ bool InteractRead(int what, bool pads = true) {
         switch (b.kind) {
         case InputBinding::Kind::Key: {
             const char k = (char)b.code;
-            if (what == 0 ? Input::GetKeyGame(k) : what == 1 ? Input::GetKeyDownGame(k) : Input::GetKeyUp(k)) return true;
+            if (what == 0 ? Input::GetKeyGameExact(k) : what == 1 ? Input::GetKeyDownGameExact(k) : Input::GetKeyUp(k)) return true;
             break;
         }
         case InputBinding::Kind::Mouse:

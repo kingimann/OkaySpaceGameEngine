@@ -900,6 +900,11 @@ jobs:
       - name: Play the web test game in headless Chromium
         run: NODE_PATH="$RUNNER_TEMP/pw/node_modules" node tests/scripts/test_web_player.js build-web/site --json build-web/web_player_test.json
 
+      # okay.js (web/okayjs/, our own browser library with the engine's script API): its examples in the same Chromium
+      # (the lit cube's pixels, a key reaching the script, resize, pixel ratio 2, WebGL 1 asked for and as the fallback).
+      - name: okay.js in headless Chromium
+        run: NODE_PATH="$RUNNER_TEMP/pw/node_modules" node tests/okayjs/test_okayjs_browser.js
+
       - name: Upload WebGL build
         if: always()
         uses: actions/upload-artifact@v6

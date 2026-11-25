@@ -56,11 +56,21 @@ const pixel = (p, fx, fy) => p.evaluate(([fx, fy]) => {
     return r.readPixel(Math.floor(fx * (c.width - 1)), Math.floor(fy * (c.height - 1)));
 }, [fx, fy]);
 const shot = async (p, name) => { if (shots) { fs.mkdirSync(shots, { recursive: true }); await p.screenshot({ path: path.join(shots, name) }); } };
-const orange = px => px[0] > 110 && px[0] > px[1] + 30 && px[1] > px[2];
+const orange = px => px[0] > 60 && px[0] > px[1] * 1.4 && px[1] > px[2];   // the cube's orange, lit or in shade
 const bright = px => px[0] + px[1] + px[2];
+
+/** Stop the loop and draw one frame with the cube at a known turn, so the pixel checks do not depend on timing. */
+const freeze = p => p.evaluate(() => {
+    const ex = window.okayExample;
+    ex.game.stop();
+    ex.script.Set('yaw', 30);
+    ex.game.step(0);
+});
+const resume = p => p.evaluate(() => { window.okayExample.game.start(); });
 
 /** The lit cube in the middle: orange, and at least two faces of clearly different brightness. */
 async function cubeChecks(p, label) {
+    await freeze(p);
     const mid = await pixel(p, 0.5, 0.5);
     check(orange(mid), label + ': the middle of the canvas is the orange cube', JSON.stringify(mid));
     const samples = [];
@@ -70,6 +80,7 @@ async function cubeChecks(p, label) {
     check(lit.length > 20 && spread > 40, label + ': its faces are lit differently (directional light)', `${lit.length} cube pixels, brightness spread ${spread}`);
     const bg = await pixel(p, 0.98, 0.04);
     check(Math.abs(bg[0] - 49) < 6 && Math.abs(bg[1] - 77) < 6 && Math.abs(bg[2] - 121) < 6, label + ': the corner is the camera background', JSON.stringify(bg));
+    await resume(p);
 }
 
 let base = '';
@@ -83,10 +94,12 @@ let base = '';
             const { ctx, p, errors } = await openExample(browser, 'spinning_cube.html');
             check(await p.evaluate(() => window.okayExample.game.renderer.webglVersion) === 2, 'WebGL 2 is used when there is one');
             await cubeChecks(p, 'WebGL 2');
+            await freeze(p);
             const floor = await pixel(p, 0.5, 0.93);
             check(Math.abs(floor[0] - floor[2]) < 60 && bright(floor) > 60 && !orange(floor), 'the floor is drawn below the cube', JSON.stringify(floor));
             const badge = await pixel(p, 0.06, 0.06), bg = await pixel(p, 0.98, 0.04);
             check(bright(badge) < bright(bg) - 60, 'the 2D sprite (orthographic camera) is drawn in the top-left corner', JSON.stringify(badge));
+            await resume(p);
             const log = await p.evaluate(() => window.okayExample.game.log.map(l => l.text));
             check(log.includes('spinning Cube'), 'the script ran Start (Debug.Log reached the game log)', JSON.stringify(log));
             const yaw0 = await p.evaluate(() => window.okayExample.script.Get('yaw'));
@@ -106,7 +119,9 @@ let base = '';
             await frames(p, 4);
             const size = await p.evaluate(() => { const c = window.okayExample.game.renderer.canvas; return [c.width, c.height]; });
             check(size[0] === 900 && size[1] === 300, 'the canvas follows a resized page', JSON.stringify(size));
+            await freeze(p);
             check(orange(await pixel(p, 0.5, 0.5)), 'after the resize the cube is still in the middle');
+            await resume(p);
             const aspect = await p.evaluate(() => { const r = window.okayExample.game.renderer; return r.width / r.height; });
             check(Math.abs(aspect - 3) < 0.01, 'the renderer size matches the new shape', String(aspect));
             await shot(p, 'okayjs_cube_resized.png');
@@ -118,6 +133,7 @@ let base = '';
             const { ctx, p, errors } = await openExample(browser, 'spinning_cube.html', { viewport: { width: 400, height: 300 }, scale: 2 });
             const size = await p.evaluate(() => { const c = window.okayExample.game.renderer.canvas; return [c.width, c.height, window.okayExample.game.renderer.pixelRatio]; });
             check(size[0] === 800 && size[1] === 600 && size[2] === 2, 'at a pixel ratio of 2 the canvas has twice the device pixels', JSON.stringify(size));
+            await freeze(p);
             check(orange(await pixel(p, 0.5, 0.5)), 'at a pixel ratio of 2 the cube is in the middle');
             check(errors.length === 0, 'no page errors (pixel ratio 2)', errors.join(' | '));
             await ctx.close();
@@ -139,7 +155,9 @@ let base = '';
             };
             const { ctx, p, errors } = await openExample(browser, 'spinning_cube.html', { init: noWebGL2 });
             check(await p.evaluate(() => window.okayExample.game.renderer.webglVersion) === 1, 'without WebGL 2 the renderer falls back to WebGL 1');
-            check(orange(await pixel(p, 0.5, 0.5)), 'the fallback draws the cube');
+            await freeze(p);
+            const mid = await pixel(p, 0.5, 0.5);
+            check(orange(mid), 'the fallback draws the cube', JSON.stringify(mid));
             check(errors.length === 0, 'no page errors (fallback)', errors.join(' | '));
             await ctx.close();
         }

@@ -378,7 +378,9 @@ for jn, st in fast:
     check(st.get("if") == "inputs.stamp_version", "step %r is skipped unless stamp_version is set" % st.get("name"))
 rtext = open(os.path.join(ROOT, ".github/workflows/release.yml"), encoding="utf-8").read()
 check(rtext.count("if: inputs.stamp_version") == 3, "exactly 3 steps are gated on stamp_version")
-check("body_path: ${{ inputs.stamp_version && 'release-notes/body.md' || '' }}" in rtext, "the release body comes from the entries only in a fast release")
+check("body_path: ${{ inputs.stamp_version && 'release-notes/body.md' || 'github-release-body.md' }}" in rtext,
+      "the release body: the entries in a fast release, else the version's full changelog block")
+check("changelog-notes --version \"$VER\" --markdown > github-release-body.md" in rtext, "the full changelog block is written for the GitHub page")
 check("scripts/publish-supabase.sh" in rtext and "gh release edit" in rtext and "OKAY_UPDATE_TRUSTED_KEYS" in rtext, "publish, make-latest and signing are still release.yml's own")
 for jn, sn, block in run_blocks(REL):
     if sn.startswith("Fast release"):
@@ -414,6 +416,9 @@ with tempfile.TemporaryDirectory() as d:
     check(r.returncode == 0 and r.stdout.splitlines()[1] == "- Second thing.", "changelog-notes command prints the notes: %r" % r.stdout)
     r = subprocess.run([sys.executable, "-I", os.path.join(ROOT, "scripts", "fast_release.py"), "changelog-notes", "--version", "9.9.9", "--changelog", cp], capture_output=True, text=True)
     check(r.returncode == 1 and r.stdout == "", "changelog-notes exits 1 for a missing version (publish-supabase.sh then falls back)")
+long_ents = [{"bullets": ["x" * 300]} for _ in range(20)]
+check(len(fr.notes_lines(long_ents)) == 20 and fr.notes_lines(long_ents)[0] == "- " + "x" * 300, "full notes by default: every bullet, uncut")
+check(len(fr.notes_lines(long_ents, 3)) == 3 and fr.notes_lines(long_ents, 3)[0].endswith("..."), "a positive limit still caps and shortens")
 ptext = open(os.path.join(ROOT, "scripts", "publish-supabase.sh")).read()
 check("changelog-notes" in ptext, "publish-supabase.sh takes NOTES.txt from the changelog block")
 

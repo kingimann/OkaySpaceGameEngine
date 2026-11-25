@@ -5,9 +5,27 @@
 // [alg.binary.search], [alg.sort]. Iterators are plain pointers here (our vector, string and array use pointers).
 // sort is a heap sort (any order of equal elements is allowed by [alg.sort]; it is not stable).
 #pragma once
+#include <initializer_list>
+#include <utility>
 namespace std {
 template <typename T> const T &min(const T &a, const T &b) { return b < a ? b : a; }
 template <typename T> const T &max(const T &a, const T &b) { return a < b ? b : a; }
+// min({a, b, c}) and max({a, b, c}) ([alg.min.max] 3, 11): the first smallest and the first largest of the list.
+template <typename T> T min(initializer_list<T> list) {
+    const T* best = list.begin();
+    for (const T* p = list.begin() + 1; p < list.end(); ++p)
+        if (*p < *best) best = p;
+    return *best;
+}
+template <typename T> T max(initializer_list<T> list) {
+    const T* best = list.begin();
+    for (const T* p = list.begin() + 1; p < list.end(); ++p)
+        if (*best < *p) best = p;
+    return *best;
+}
+// minmax(a, b) ([alg.min.max] 21): the smaller and the larger (a first when they are equal). Own difference: the pair
+// holds copies, not references (pair<T, T>, where the standard has pair<const T&, const T&>).
+template <typename T> pair<T, T> minmax(const T &a, const T &b) { return b < a ? pair<T, T>(b, a) : pair<T, T>(a, b); }
 template <typename T> const T &clamp(const T &v, const T &lo, const T &hi) { return v < lo ? lo : hi < v ? hi : v; }
 template <typename T> void swap(T &a, T &b) { T t = a; a = b; b = t; }
 

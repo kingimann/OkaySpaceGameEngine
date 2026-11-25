@@ -6,6 +6,7 @@
 // Names are labels only: saved models and scenes never store them. Written from scratch for this engine.
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <sstream>
 #include <string>
@@ -281,6 +282,21 @@ inline const std::vector<Job>& Jobs() {
          {"Pick faces", "Click faces", "paint.faces", "Pick colour"}},
     };
     return j;
+}
+
+// ---- Tiles: one size for every grid of big buttons on the Easy page --------------------------------------------------------
+/// How a grid of same-size tiles fills a row `avail` px wide with `gap` px between tiles: as many columns as fit at
+/// `minW` (at least one), the tiles then widened to fill the row exactly, but never wider than `maxW` (then the row is
+/// left-aligned with a gap at the right). Every grid on the page uses the same `minW` / `maxW`, so the ready-made model
+/// tiles and the shape buttons line up in the same columns and have the same width.
+struct TileLayout { int cols = 1; float w = 0; };
+inline TileLayout TilesFor(float avail, float gap, float minW, float maxW) {
+    TileLayout t;
+    if (minW <= 0) minW = 1;
+    t.cols = std::max(1, (int)std::floor((avail + gap) / (minW + gap) + 1e-4f));   // (the epsilon: a row asked again with its own width keeps its columns)
+    t.w = (avail - gap * (float)(t.cols - 1)) / (float)t.cols;
+    t.w = std::max(minW, std::min(t.w, std::max(minW, maxW)));
+    return t;
 }
 
 // ---- Settings ---------------------------------------------------------------------------------------------------------

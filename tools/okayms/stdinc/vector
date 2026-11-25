@@ -212,6 +212,12 @@ public:
         size_ += n;
         return data_ + at;
     }
+    T* insert(T* pos, initializer_list<T> list) { return insert(pos, list.begin(), list.end()); }
+    T* insert(T* pos, size_t n, const T& value) {
+        const size_t at = (size_t)(pos - data_);
+        for (size_t k = 0; k < n; ++k) insert(data_ + at + k, value);
+        return data_ + at;
+    }
     T* erase(T* pos) {
         const size_t at = (size_t)(pos - data_);
         for (size_t i = at; i + 1 < size_; ++i) data_[i] = std::move(data_[i + 1]);

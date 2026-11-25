@@ -33,6 +33,8 @@ struct BodyData {
     bool bullet = false;
     bool massSet = false;            // SetMass was called (keep that mass when colliders change)
     float setMass = 0.0f;
+    bool inertiaSet = false;         // SetInertia was called (keep that inertia when colliders or the mass change)
+    M33 setInertia;
     float sleepTime = 0.0f;
     Xf xf, prevXf;                    // origin pose now and at the previous step
     V3 localCom, com;                 // centre of mass: body frame and world
@@ -75,6 +77,7 @@ struct ContactPair {
     bool sensor = false;
     bool touching = false, wasTouching = false;
     bool active = false;              // looked at this step (one side awake)
+    bool recheck = true;              // a still pair (World::reportStillPairs): look at it this step (new, or a side moved)
     V3 normal;                        // A to B
     bool mixed = false;               // points have their own normals (a mesh pair)
     int count = 0;

@@ -452,13 +452,17 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         EngineBridge::BodyRec& r = it->second;
         r.seen = true;
         const phys::BodyId id = r.id;
-        if (W.GetType(id) != type) W.SetType(id, type);
         // settings (cheap setters; they take effect from this step)
-        W.SetDamping(id, std::max(rb->drag, 0.0f), std::max(rb->angularDrag, 0.0f));
-        W.SetGravityScale(id, rb->gravityScale);
-        W.SetLocks(id, (std::uint8_t)((rb->freezeX ? 1 : 0) | (rb->freezeY ? 2 : 0) | (rb->freezeZ ? 4 : 0)), rb->freezeRotation ? 7 : 0);
-        W.SetBullet(id, rb->continuousCollision);
-        W.SetAllowSleep(id, rb->allowSleep);
+        phys::BodySettings set;
+        set.type = type;
+        set.linearDamping = std::max(rb->drag, 0.0f);
+        set.angularDamping = std::max(rb->angularDrag, 0.0f);
+        set.gravityScale = rb->gravityScale;
+        set.lockLinear = (std::uint8_t)((rb->freezeX ? 1 : 0) | (rb->freezeY ? 2 : 0) | (rb->freezeZ ? 4 : 0));
+        set.lockAngular = rb->freezeRotation ? 7 : 0;
+        set.bullet = rb->continuousCollision;
+        set.allowSleep = rb->allowSleep;
+        W.Configure(id, set);
         if (type == phys::BodyType::Dynamic && std::fabs(W.GetMass(id) - rb->mass) > 1e-6f * std::max(1.0f, rb->mass))
             W.SetMass(id, rb->mass > 0.0f ? rb->mass : 1.0f);
         // what game code changed since the last step. A NaN or infinite pose, speed or force is refused (logged once):

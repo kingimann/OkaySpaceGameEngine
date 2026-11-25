@@ -1,4 +1,5 @@
 #include "okay/Input/PadProfiles.hpp"
+#include "okay/Scripting/ScriptUI.hpp"   // the host's toast UI, for connect / disconnect notices
 #include "okay/Core/Prefs.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -36,6 +37,8 @@ void Notify(PadEvent e) {
     if (st.events.size() >= 16) st.events.pop_front();
     st.events.push_back(e);
     if (st.toast) st.toast(e.text);
+    // Nobody set a handler: the notice goes to the UI the host installed (OkayUI's toasts in the player and the editor's Play).
+    else if (ScriptUIBridge* ui = GetScriptUI()) ui->Toast(e.text.c_str(), 0, 3.0f);
 }
 }
 

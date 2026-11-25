@@ -1,0 +1,190 @@
+// <chrono> for okay-cc (ISO/IEC 14882 [time]): durations, time points and the system and steady
+// clocks. Our own header; the clocks read lib/time.c (clock_gettime). A duration converts to another
+// by the ratio of their periods: in long arithmetic when both counts are integers (truncated toward
+// zero, as duration_cast does) and in double otherwise ([time.duration.cast]). The operators that
+// mix two duration types are member templates (okay-cc has no non-member operator templates yet), so
+// a scalar on the left (2 * d) is not available.
+#pragma once
+#include <ctime>
+#include <ratio>
+namespace std {
+namespace chrono {
+template <typename T>
+struct __is_fp {
+    static constexpr bool value = false;
+};
+template <>
+struct __is_fp<double> {
+    static constexpr bool value = true;
+};
+template <>
+struct __is_fp<float> {
+    static constexpr bool value = true;
+};
+inline long __gcd(long a, long b) {
+    if (a < 0) a = -a;
+    if (b < 0) b = -b;
+    while (b != 0) {
+        long t = a % b;
+        a = b;
+        b = t;
+    }
+    return a == 0 ? 1 : a;
+}
+
+template <typename Rep, typename Period = ratio<1>>
+class duration {
+public:
+    typedef Rep rep;
+    typedef Period period;
+    duration() : __r(0) {}
+    duration(const duration<Rep, Period> &o) : __r(o.__r) {}
+    // From a count (a template on the count's type in the standard; okay-cc has no partial
+    // ordering of constructor templates yet, so a plain Rep, which other numbers convert to).
+    explicit duration(Rep r) : __r(r) {}
+    // From another duration: count * (P2 / Period), reduced first so that the products stay small.
+    template <typename R2, typename P2>
+    duration(const duration<R2, P2> &d) {
+        long n = P2::num * Period::den;
+        long m = P2::den * Period::num;
+        long g = std::chrono::__gcd(n, m);
+        n = n / g;
+        m = m / g;
+        if (std::chrono::__is_fp<Rep>::value || std::chrono::__is_fp<R2>::value) __r = (Rep)((double)d.count() * (double)n / (double)m);
+        else __r = (Rep)((long)d.count() * n / m);
+    }
+    duration<Rep, Period> &operator=(const duration<Rep, Period> &o) {
+        __r = o.__r;
+        return *this;
+    }
+    Rep count() const { return __r; }
+    static duration<Rep, Period> zero() { return duration<Rep, Period>(0); }
+    duration<Rep, Period> operator+() const { return *this; }
+    duration<Rep, Period> operator-() const { return duration<Rep, Period>(-__r); }
+    duration<Rep, Period> operator+(const duration<Rep, Period> &o) const { return duration<Rep, Period>(__r + o.__r); }
+    duration<Rep, Period> operator-(const duration<Rep, Period> &o) const { return duration<Rep, Period>(__r - o.__r); }
+    duration<Rep, Period> operator*(Rep k) const { return duration<Rep, Period>(__r * k); }
+    duration<Rep, Period> operator/(Rep k) const { return duration<Rep, Period>(__r / k); }
+    Rep operator/(const duration<Rep, Period> &o) const { return __r / o.__r; }
+    duration<Rep, Period> &operator+=(const duration<Rep, Period> &o) {
+        __r += o.__r;
+        return *this;
+    }
+    duration<Rep, Period> &operator-=(const duration<Rep, Period> &o) {
+        __r -= o.__r;
+        return *this;
+    }
+    duration<Rep, Period> &operator*=(Rep k) {
+        __r *= k;
+        return *this;
+    }
+    duration<Rep, Period> &operator/=(Rep k) {
+        __r /= k;
+        return *this;
+    }
+    duration<Rep, Period> &operator++() {
+        ++__r;
+        return *this;
+    }
+    duration<Rep, Period> &operator--() {
+        --__r;
+        return *this;
+    }
+    // Comparisons with any duration ([time.duration.comparisons]): both counts in the finer unit.
+    template <typename R2, typename P2>
+    int __cmp(const duration<R2, P2> &o) const {
+        long a = Period::num * P2::den;
+        long b = P2::num * Period::den;
+        long g = std::chrono::__gcd(a, b);
+        a = a / g;
+        b = b / g;
+        if (std::chrono::__is_fp<Rep>::value || std::chrono::__is_fp<R2>::value) {
+            double x = (double)__r * (double)a, y = (double)o.count() * (double)b;
+            return x < y ? -1 : x > y ? 1 : 0;
+        }
+        long x = (long)__r * a, y = (long)o.count() * b;
+        return x < y ? -1 : x > y ? 1 : 0;
+    }
+    template <typename R2, typename P2>
+    bool operator==(const duration<R2, P2> &o) const { return __cmp(o) == 0; }
+    template <typename R2, typename P2>
+    bool operator!=(const duration<R2, P2> &o) const { return __cmp(o) != 0; }
+    template <typename R2, typename P2>
+    bool operator<(const duration<R2, P2> &o) const { return __cmp(o) < 0; }
+    template <typename R2, typename P2>
+    bool operator>(const duration<R2, P2> &o) const { return __cmp(o) > 0; }
+    template <typename R2, typename P2>
+    bool operator<=(const duration<R2, P2> &o) const { return __cmp(o) <= 0; }
+    template <typename R2, typename P2>
+    bool operator>=(const duration<R2, P2> &o) const { return __cmp(o) >= 0; }
+
+private:
+    Rep __r;
+};
+
+typedef duration<long, nano> nanoseconds;
+typedef duration<long, micro> microseconds;
+typedef duration<long, milli> milliseconds;
+typedef duration<long> seconds;
+typedef duration<long, ratio<60>> minutes;
+typedef duration<long, ratio<3600>> hours;
+
+template <typename To, typename R, typename P>
+To duration_cast(const duration<R, P> &d) {
+    return To(d);
+}
+
+template <typename Clock, typename Dur = typename Clock::duration>
+class time_point {
+public:
+    typedef Clock clock;
+    typedef Dur duration;
+    time_point() : __d() {}
+    explicit time_point(const Dur &d) : __d(d) {}
+    Dur time_since_epoch() const { return __d; }
+    Dur operator-(const time_point<Clock, Dur> &o) const { return __d - o.__d; }
+    time_point<Clock, Dur> operator+(const Dur &d) const { return time_point<Clock, Dur>(__d + d); }
+    time_point<Clock, Dur> operator-(const Dur &d) const { return time_point<Clock, Dur>(__d - d); }
+    time_point<Clock, Dur> &operator+=(const Dur &d) {
+        __d += d;
+        return *this;
+    }
+    time_point<Clock, Dur> &operator-=(const Dur &d) {
+        __d -= d;
+        return *this;
+    }
+    bool operator==(const time_point<Clock, Dur> &o) const { return __d.count() == o.__d.count(); }
+    bool operator!=(const time_point<Clock, Dur> &o) const { return __d.count() != o.__d.count(); }
+    bool operator<(const time_point<Clock, Dur> &o) const { return __d.count() < o.__d.count(); }
+    bool operator>(const time_point<Clock, Dur> &o) const { return __d.count() > o.__d.count(); }
+    bool operator<=(const time_point<Clock, Dur> &o) const { return __d.count() <= o.__d.count(); }
+    bool operator>=(const time_point<Clock, Dur> &o) const { return __d.count() >= o.__d.count(); }
+    static time_point<Clock, Dur> min() { return time_point<Clock, Dur>(Dur(-9223372036854775807L - 1)); }
+    static time_point<Clock, Dur> max() { return time_point<Clock, Dur>(Dur(9223372036854775807L)); }
+
+private:
+    Dur __d;
+};
+
+// The clocks count nanoseconds ([time.clock.system], [time.clock.steady]).
+struct system_clock {
+    typedef long rep;
+    typedef nano period;
+    typedef nanoseconds duration;
+    typedef chrono::time_point<system_clock, nanoseconds> time_point;
+    static constexpr bool is_steady = false;
+    static time_point now() { return time_point(nanoseconds(__okay_clock_ns(0))); }
+    static time_t to_time_t(const time_point &t) { return (time_t)(t.time_since_epoch().count() / 1000000000L); }
+    static time_point from_time_t(time_t t) { return time_point(nanoseconds((long)t * 1000000000L)); }
+};
+struct steady_clock {
+    typedef long rep;
+    typedef nano period;
+    typedef nanoseconds duration;
+    typedef chrono::time_point<steady_clock, nanoseconds> time_point;
+    static constexpr bool is_steady = true;
+    static time_point now() { return time_point(nanoseconds(__okay_clock_ns(1))); }
+};
+typedef steady_clock high_resolution_clock;
+}  // namespace chrono
+}  // namespace std

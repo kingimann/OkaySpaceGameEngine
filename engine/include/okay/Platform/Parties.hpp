@@ -79,7 +79,7 @@ public:
                 for (const auto& o : SplitObjects(p.body)) {
                     const std::string id = Field(o, "id");
                     for (auto& m : out.members) if (m.uid == id) {
-                        m.username = Field(o, "username"); m.display = Field(o, "display_name");
+                        m.username = okay::account::PublicName(Field(o, "username")); m.display = okay::account::PublicName(Field(o, "display_name"));
                         m.avatar = Field(o, "avatar_url"); m.playing = Field(o, "playing");
                         const long seen = ParseIso(Field(o, "last_seen"));
                         m.online = seen > 0 && std::difftime(std::time(nullptr), (std::time_t)seen) < 180.0;

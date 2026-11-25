@@ -78,6 +78,7 @@ void UpdateMass(World::Impl& w, BodyId id) {
         b.inertiaLocal = b.inertiaLocal * s;
         b.mass = b.setMass;
     }
+    if (b.inertiaSet) b.inertiaLocal = b.setInertia;
     b.invMass = 1.0f / b.mass;
     b.invInertiaLocal = b.inertiaLocal.Inverse();
     b.com = b.xf.Apply(b.localCom);
@@ -159,9 +160,11 @@ void World::SetTransform(BodyId id, const V3& p, const Q& q) {
     b.com = b.xf.Apply(b.localCom);
     if (b.type != BodyType::Static) { b.awake = true; b.sleepTime = 0.0f; }
     // whatever rested on it must notice that it moved
-    for (const ContactPair& cp : m->contacts) {
+    for (ContactPair& cp : m->contacts) {
         if (!cp.alive) continue;
         const BodyId ba = m->colliders[cp.a].body, bb = m->colliders[cp.b].body;
+        if (ba != id && bb != id) continue;
+        cp.recheck = true;
         if (ba == id && bb != id) Wake(bb);
         else if (bb == id && ba != id) Wake(ba);
     }
@@ -193,6 +196,24 @@ void World::SetMass(BodyId id, float mass) {
     m->bodies[id].massSet = mass > 0.0f;
     m->bodies[id].setMass = mass;
     UpdateMass(*m, id);
+}
+void World::SetInertia(BodyId id, const M33& inertiaLocal) {
+    if (!IsValid(id)) return;
+    bool given = false;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) given = given || inertiaLocal.m[i][j] != 0.0f;
+    m->bodies[id].inertiaSet = given;
+    m->bodies[id].setInertia = inertiaLocal;
+    UpdateMass(*m, id);
+}
+void World::Configure(BodyId id, const BodySettings& s) {
+    if (!IsValid(id)) return;
+    SetType(id, s.type);   // (does nothing when the type is the same)
+    SetDamping(id, s.linearDamping, s.angularDamping);
+    SetGravityScale(id, s.gravityScale);
+    SetLocks(id, s.lockLinear, s.lockAngular);
+    SetBullet(id, s.bullet);
+    SetAllowSleep(id, s.allowSleep);
 }
 void World::SetDamping(BodyId id, float l, float a) { if (IsValid(id)) { m->bodies[id].linDamp = l; m->bodies[id].angDamp = a; } }
 void World::SetGravityScale(BodyId id, float s) { if (IsValid(id)) m->bodies[id].gravityScale = s; }
@@ -455,7 +476,7 @@ bool CanCollide(const World& world, const World::Impl& w, ColliderId ia, Collide
     const BodyData& ba = w.bodies[a.body];
     const BodyData& bb = w.bodies[b.body];
     const bool sensor = a.def.sensor || b.def.sensor;   // (a trigger reports overlaps with anything, still or moving)
-    if (ba.type != BodyType::Dynamic && bb.type != BodyType::Dynamic && !sensor) return false;
+    if (ba.type != BodyType::Dynamic && bb.type != BodyType::Dynamic && !sensor && !world.reportStillPairs) return false;
     if (!((a.def.mask >> (b.def.layer & 31)) & 1u) || !((b.def.mask >> (a.def.layer & 31)) & 1u)) return false;
     // joined bodies that should not collide
     const BodyData& small = ba.joints.size() <= bb.joints.size() ? ba : bb;
@@ -465,7 +486,6 @@ bool CanCollide(const World& world, const World::Impl& w, ColliderId ia, Collide
         if (!jd.alive || jd.def.collideConnected) continue;
         if (jd.def.bodyA == other || jd.def.bodyB == other) return false;
     }
-    (void)world;
     return true;
 }
 
@@ -589,7 +609,11 @@ void World::Step(float dt) {
             const BodyData& bb = w.bodies[cb.body];
             const bool aActive = ba.awake && ba.type != BodyType::Static;
             const bool bActive = bb.awake && bb.type != BodyType::Static;
-            cp.active = aActive || bActive || cp.sensor;   // (a trigger is looked at every step, even between still colliders)
+            // a still pair: neither side can be pushed; it only reports whether the two overlap, and is looked at while
+            // a side moves and once more after it stopped (the narrow phase sees the poses before this step's motion)
+            const bool still = reportStillPairs && !cp.sensor && ba.type != BodyType::Dynamic && bb.type != BodyType::Dynamic;
+            cp.active = aActive || bActive || cp.sensor || (still && cp.recheck);   // (a trigger is looked at every step, even between still colliders)
+            cp.recheck = aActive || bActive;
             if (!cp.active) continue;   // both asleep or fixed: keep last step's result
             cp.wasTouching = cp.touching;
             if (!m_tree.FatAabb(ca.proxy).Overlaps(m_tree.FatAabb(cb.proxy))) {
@@ -599,15 +623,16 @@ void World::Step(float dt) {
                 continue;
             }
             const Xf xa = ba.xf * ca.def.local, xb = bb.xf * cb.def.local;
-            float spec = cp.sensor ? 0.0f : spec0;
-            if (cont && !cp.sensor) {
+            float spec = cp.sensor || still ? 0.0f : spec0;
+            if (cont && !cp.sensor && !still) {
                 float mm = MotionMargin(ba, ca, dt) + MotionMargin(bb, cb, dt);
                 if (ba.bullet || bb.bullet) mm *= 1.5f;
                 spec += mm;
             }
             Manifold man;
             const float offs = ca.def.contactOffset + cb.def.contactOffset;
-            const bool hit = Collide(ca.def.shape, xa, cb.def.shape, xb, spec + offs, man);
+            const bool hit = Collide(ca.def.shape, xa, cb.def.shape, xb, spec + offs, man) &&
+                             (cp.sensor || !contactEnabled || contactEnabled(cp.a, cp.b));
             if (hit && offs > 0.0f)   // the colliders count as thicker: every point is that much closer
                 for (int k = 0; k < man.count; ++k) {
                     man.pts[k].pA += man.pts[k].normal * ca.def.contactOffset;
@@ -633,7 +658,7 @@ void World::Step(float dt) {
                 minSep = std::min(minSep, p.separation);
             }
             if (cp.sensor) { cp.touching = minSep <= 0.0f; cp.count = 0; continue; }
-            cp.touching = minSep <= linearSlop;
+            cp.touching = still ? minSep < 0.0f : minSep <= linearSlop;
             cp.minSeparation = minSep;
             {   // how fast the two close along the normal (for waking a sleeper a speculative contact is about to push)
                 const V3 pa = ba.xf.Apply(cp.pts[0].localA);

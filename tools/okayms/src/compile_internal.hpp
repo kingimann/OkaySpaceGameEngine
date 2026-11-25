@@ -44,6 +44,9 @@ struct Token {
     // The word `inline` stood in front of this token (the word itself is dropped): the function that follows is an inline
     // function, one copy per file.
     bool inl = false;
+    // Namespace names in front of this name were dropped (std::filesystem::path is read as path): it names something in
+    // a namespace, so a local variable of the same name does not hide it.
+    bool nsq = false;
     // `thread_local` was written here: the token is `static` and the variable gets storage per thread.
     bool tls = false;
 };
@@ -87,6 +90,9 @@ struct Type {
     bool is_enum() const { return enum_id >= 0; }
     // A function parameter pack (Rest... rest) while a template's parameter types are read.
     bool pack = false;
+    // A placeholder return type ([dcl.spec.auto]): 1 `auto`, 2 `decltype(auto)`; 0 a written type. The function's
+    // body is read once to learn the type of its first return (parse_function_body), then the type is replaced.
+    int deduce = 0;
     bool pointer() const { return pointers > 0; }
     bool is_array() const { return array_len >= 0; }
     bool is_func() const { return func_id >= 0; }

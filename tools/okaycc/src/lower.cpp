@@ -1600,6 +1600,12 @@ private:
             one->col = e.col;
             auto lhsType = e.kids[0]->checked ? cloneType(*e.kids[0]->checked) : nullptr;
             one->checked = std::make_unique<Type>();
+            // A pointer moves by the size of what it points to ([expr.pre.incr]): the += below is
+            // lowered as it is, without the checker's p = p + n scaling (++ on an int *& moved 1 byte).
+            if (lhsType && lhsType->kind == Type::Kind::Pointer) {
+                int st = valueStep(lhsType.get());
+                if (st > 1) one->ival = static_cast<std::uint64_t>(st);
+            }
             auto asg = std::make_unique<Expr>();
             asg->kind = Expr::Kind::Assign;
             asg->text = e.text == "--" ? "-=" : "+=";
@@ -1610,6 +1616,16 @@ private:
             asg->kids.push_back(std::move(one));
             if (lhsType) asg->checked = cloneType(*lhsType);
             if (pre) return lowerExpr(*asg);
+            if (lhsType && lhsType->kind == Type::Kind::Pointer) {
+                // p++ on a pointer: the new value less one step (the value of the += is not scaled
+                // again by a pointer subtraction).
+                Val after = lowerExpr(*asg);
+                int st = valueStep(lhsType.get());
+                int dst = fresh();
+                emitBin(e.text == "--" ? Inst::Op::Add : Inst::Op::Sub, dst, after.op,
+                        Operand::number(st > 1 ? st : 1));
+                return Val{Operand::vreg(dst), after.step, after.inner};
+            }
             auto back = std::make_unique<Expr>();
             back->kind = Expr::Kind::Bin;
             back->text = e.text == "--" ? "+" : "-";
@@ -1869,7 +1885,8 @@ private:
                 }
                 if (s->width > 0 && s->width < 8) result = narrow(result, s->width, s->zext);
                 storeNamed(*s, result);
-                if (s->global) return Val{result, s->step, s->inner};
+                // (a reference's register holds the referent's address: the value is result)
+                if (s->global || s->ref) return Val{result, s->step, s->inner};
                 return Val{Operand::vreg(s->reg), s->step, s->inner};
             }
             storeBits(addr.op, result, addr.width > 0 ? addr.width : 8);

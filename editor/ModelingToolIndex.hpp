@@ -12,19 +12,22 @@
 
 namespace oked::modeltools {
 
-struct Page { int legacy; const char* name; const char* desc; const char* job; const char* abbr; const char* was; };   // abbr: the two letters on the folded strip; was: the old technical title (still found by search); legacy = the page number the window and OKAY_UI_MODELPAGE use
+/// The picture of a page in the page list (drawn by the editor: oked::TbIcon). Folded, the list shows only these, with the
+/// page name as a tooltip, so no name is ever cut short.
+enum class PageIcon { Star, Shapes, Steps, Spin, Resize, Bend, Brush, Sparkle, Import };
+struct Page { int legacy; const char* name; const char* desc; const char* job; PageIcon icon; const char* was; };   // was: the old technical title (still found by search); legacy = the page number the window and OKAY_UI_MODELPAGE use
 /// The pages in the order of the sidebar, under their job headings. Titles are plain words for a beginner.
 inline const std::vector<Page>& Pages() {
     static const std::vector<Page> p = {
-        {8, "Easy",             "Big buttons, start here",   "Start here",     "Ea", "Simple view"},
-        {0, "Add shapes",       "Shapes, trees, props",  "Make something", "As", "Add"},
-        {7, "Step by step",     "Fences, buildings, cars",    "Make something", "St", "Guided"},
-        {4, "Make shapes",      "Spin, pipes and curves",     "Make something", "Ma", "Generate"},
-        {1, "Change the shape", "Size, colour, solid body",   "Change it",      "Ch", "Shape"},
-        {2, "Bend and cut",     "Bend, cut, mirror",  "Change it",      "Be", "Edit"},
-        {5, "Fix the surface",  "Pick, sculpt, paint parts",  "Fix parts",      "Fi", "Edit Mesh"},
-        {3, "Effects",          "Copies, joins, simpler",     "Extras",         "Ef", "Modifiers"},
-        {6, "Bring in a model", "Bring in and save files",    "Files",          "Br", "Import"},
+        {8, "Easy",             "Big buttons, start here",   "Start here",     PageIcon::Star, "Simple view"},
+        {0, "Add shapes",       "Shapes, trees, props",  "Make something", PageIcon::Shapes, "Add"},
+        {7, "Step by step",     "Fences, buildings, cars",    "Make something", PageIcon::Steps, "Guided"},
+        {4, "Make shapes",      "Spin, pipes and curves",     "Make something", PageIcon::Spin, "Generate"},
+        {1, "Change the shape", "Size, colour, solid body",   "Change it",      PageIcon::Resize, "Shape"},
+        {2, "Bend and cut",     "Bend, cut, mirror",  "Change it",      PageIcon::Bend, "Edit"},
+        {5, "Fix the surface",  "Pick, sculpt, paint parts",  "Fix parts",      PageIcon::Brush, "Edit Mesh"},
+        {3, "Effects",          "Copies, joins, simpler",     "Extras",         PageIcon::Sparkle, "Modifiers"},
+        {6, "Bring in a model", "Bring in and save files",    "Files",          PageIcon::Import, "Import"},
     };
     return p;
 }

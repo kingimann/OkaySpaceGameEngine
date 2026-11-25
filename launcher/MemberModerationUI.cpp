@@ -5,6 +5,7 @@
 #include "NavIcons.hpp"   // SlateCombo, the launcher's dropdown
 #include "MemberModerationUI.hpp"
 #include "okay/Platform/Platform.hpp"
+#include "OkayTheme.hpp"   // the theme palette's colours
 
 namespace okl {
 
@@ -40,8 +41,8 @@ static int ModWorker(void* p) {
                     if (p2.ok) for (const auto& o : okay::Servers::SplitObjects(p2.body)) {
                         const std::string id = okay::Servers::Field(o, "id");
                         for (auto& b : r.bans) if (b.uid == id) {
-                            b.name = okay::Servers::Field(o, "display_name");
-                            if (b.name.empty()) b.name = okay::Servers::Field(o, "username");
+                            b.name = okay::account::PublicName(okay::Servers::Field(o, "display_name"));
+                            if (b.name.empty()) b.name = okay::account::PublicName(okay::Servers::Field(o, "username"));
                         }
                     }
                 }
@@ -124,7 +125,7 @@ void ModMenuItems(mm::Scope sc, long cid, mm::Role actor, const std::string& uid
         if (ImGui::MenuItem((std::string("Remove from ") + noun).c_str())) {
             g_modDlg = ModDialogState(); g_modDlg.openReq = true; g_modDlg.action = 0; g_modDlg.scope = sc; g_modDlg.cid = cid; g_modDlg.uid = uid; g_modDlg.name = name;
         }
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
         if (ImGui::MenuItem("Ban\xE2\x80\xA6")) {
             g_modDlg = ModDialogState(); g_modDlg.openReq = true; g_modDlg.action = 1; g_modDlg.scope = sc; g_modDlg.cid = cid; g_modDlg.uid = uid; g_modDlg.name = name;
         }
@@ -138,7 +139,7 @@ void ModRowButton(const char* popupId, ImVec2 topLeft, float size, bool hasActio
     const bool clicked = ImGui::InvisibleButton("##modmore", ImVec2(size, size));
     const bool hov = ImGui::IsItemHovered();
     ImDrawList* d = ImGui::GetWindowDrawList();
-    if (hov) { d->AddRectFilled(topLeft, ImVec2(topLeft.x + size, topLeft.y + size), IM_COL32(255, 255, 255, 26), 6.0f); ImGui::SetTooltip("Manage member"); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
+    if (hov) { d->AddRectFilled(topLeft, ImVec2(topLeft.x + size, topLeft.y + size), okaytheme::Ink(26), 6.0f); ImGui::SetTooltip("Manage member"); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
     const ImU32 c = ImGui::GetColorU32(hov ? ImGuiCol_Text : ImGuiCol_TextDisabled);
     for (int i = -1; i <= 1; ++i) d->AddCircleFilled(ImVec2(topLeft.x + size * 0.5f + i * 5.0f, topLeft.y + size * 0.5f), 1.7f, c, 8);
     if (clicked) ImGui::OpenPopup(popupId);
@@ -174,7 +175,7 @@ void ModDialog() {
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(120.0f)), 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }
 // "Banned" list for owners and admins, with Unban. Fetches itself (and says plainly when it can't).
@@ -182,13 +183,13 @@ void ModDrawBanned(mm::Scope sc, long cid, mm::Role actor) {
     if (!mm::CanSeeBans(actor) || cid <= 0) return;
     ModBanList& b = ModBansFor(sc, cid);
     if (!b.inflight && okay::platform::TicksMs32() >= b.nextAt) ModFetchBans(sc, cid);
+    if (b.loaded && b.problem.empty() && b.list.empty()) return;   // nothing to manage: no "BANNED - 0" section (owner 2026-11-25)
     ImGui::Dummy(ImVec2(0, 6));
     ImGui::SetWindowFontScale(0.80f);
     ImGui::TextDisabled("  BANNED  \xE2\x80\x94  %d", (int)b.list.size());
     ImGui::SetWindowFontScale(1.0f);
-    if (!b.problem.empty()) { ImGui::PushTextWrapPos(0); ImGui::TextColored(ImVec4(0.96f, 0.6f, 0.45f, 1), "%s", b.problem.c_str()); ImGui::PopTextWrapPos(); return; }
+    if (!b.problem.empty()) { ImGui::PushTextWrapPos(0); ImGui::TextColored(okaytheme::Current().danger, "%s", b.problem.c_str()); ImGui::PopTextWrapPos(); return; }
     if (!b.loaded) { ImGui::TextDisabled("Loading\xE2\x80\xA6"); return; }
-    if (b.list.empty()) { ImGui::TextDisabled("Nobody is banned."); return; }
     for (const auto& e : b.list) {
         ImGui::PushID(e.uid.c_str());
         const std::string nm = e.name.empty() ? std::string("(unknown)") : e.name;

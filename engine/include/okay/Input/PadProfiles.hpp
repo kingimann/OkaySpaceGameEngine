@@ -84,7 +84,10 @@ public:
 
     // ---- events and requests
     static bool PopEvent(PadEvent& out);
-    /// Called with the toast text on every connect / disconnect. Set once by the game or the UI.
+    /// Called with the toast text on every connect / disconnect. Set by a game that shows its own notice. With no
+    /// handler (the default, or after SetToastHandler(nullptr)) the text is shown as a toast by the UI the host
+    /// installed (SetScriptUI: OkayUI's toasts in the player and in the editor's Play); with no UI nothing is shown.
+    /// A game that wants no notice at all sets a handler that does nothing.
     static void SetToastHandler(std::function<void(const std::string&)> fn);
     static void RequestLightbar(int slot, int r, int g, int b);
     static bool TakeLightbar(int slot, int& r, int& g, int& b);

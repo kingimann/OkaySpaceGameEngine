@@ -17,6 +17,7 @@
 #include "VersionsNet.hpp"
 #include "TestBuild.hpp"   // V(): a test build says so
 #include "NavIcons.hpp"   // okl::SlateCombo: the launcher's one dropdown look
+#include "OkayTheme.hpp"   // the theme palette's colours
 
 namespace okayversionsui {
 namespace {
@@ -105,7 +106,7 @@ State& S() {
 
 // ---- small drawing helpers ------------------------------------------------------------------------------------------------------
 
-const ImU32 kGreen = IM_COL32(110, 205, 140, 255), kRed = IM_COL32(240, 125, 120, 255), kAmber = IM_COL32(240, 200, 100, 255);
+const ImU32 kGreen = okaytheme::SuccessFillU32(), kRed = okaytheme::DangerFillU32(), kAmber = okaytheme::WarningFillU32();
 
 void CardBegin(const Host& h, const char* id, const char* title) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, h.cardBg);
@@ -159,14 +160,14 @@ bool AccentButton(const Host& h, const char* label, const ImVec2& size) {
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(h.accent.x, h.accent.y, h.accent.z, 0.92f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(lift(h.accent.x), lift(h.accent.y), lift(h.accent.z), 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, h.accentDim);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().onColor);
     const bool hit = ImGui::Button(label, size);
     ImGui::PopStyleColor(4);
     return hit;
 }
 bool DangerButton(const char* label, const ImVec2& size) {
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.20f, 0.20f, 0.55f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.26f, 0.26f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::WithAlpha(okaytheme::DangerFill(), 0.55f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
     const bool hit = ImGui::Button(label, size);
     ImGui::PopStyleColor(2);
     return hit;
@@ -262,7 +263,7 @@ void DrawRequestBanner(const Host& h) {
     else if (!st.highlight.empty()) text = "The editor needs " + line + " to open that project with its own version. Install " + V(st.highlight) + " below.";
     else if (!st.index.ok) text = line + " isn't installed, and the version list can't be read right now, so it can't be installed from here.";
     else text = line + " isn't installed and isn't in the version list, so it can't be installed from here.";
-    const ImVec4 base = col == kGreen ? ImVec4(0.43f, 0.80f, 0.55f, 1.0f) : ImVec4(0.94f, 0.78f, 0.39f, 1.0f);
+    const ImVec4 base = col == kGreen ? okaytheme::SuccessFill() : okaytheme::WarningFill();
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(base.x, base.y, base.z, 0.14f));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18, 12));
@@ -286,28 +287,34 @@ void DrawThisVersion(const Host& h) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
     const float W = ImGui::GetContentRegionAvail().x;
-    const float rowH = 54.0f;
     const std::string cur = okayver::NormalizeVersion(h.currentVersion);
     const std::string title = cur.empty() ? "You're running a development build" : "You're running " + V(cur);
-    DrawTextAt(dl, ImVec2(p0.x, p0.y + 2), title.c_str(), ImGui::GetColorU32(ImGuiCol_Text), 1.18f);
-    float x = p0.x + TextWidth(title.c_str(), 1.18f) + 12.0f;
+    const bool busy = st.indexJob != nullptr;
+    // The two buttons on the right, sized to their labels and the UI scale; the text gets the rest of the row.
+    const char* checkLbl = busy ? "Checking\xE2\x80\xA6" : "Check again";
+    const float bh = ImGui::GetFrameHeight() + okl::UiPx(8.0f), gap = okl::UiPx(8.0f);
+    const float b1 = okl::FitButtonW(checkLbl, okl::UiPx(120.0f)), b2 = okl::FitButtonW("Open install folder", okl::UiPx(150.0f));
+    const float titleH = ImGui::GetTextLineHeight() * 1.18f, lineH = ImGui::GetTextLineHeight();
+    const float rowH = std::max(titleH + okl::UiPx(6.0f) + lineH, bh) + okl::UiPx(6.0f);
+    const float textW = W - b1 - b2 - gap - okl::UiPx(20.0f);
+    DrawTextAt(dl, ImVec2(p0.x, p0.y + 2), Fit(title, textW / 1.18f).c_str(), ImGui::GetColorU32(ImGuiCol_Text), 1.18f);
+    float x = p0.x + std::min(TextWidth(title.c_str(), 1.18f), textW) + okl::UiPx(12.0f);
     if (st.haveIndex && st.index.ok && !cur.empty()) {
         if (cur == st.index.latest) x += DrawPill(dl, ImVec2(x, p0.y + 5), "Latest", Tint(h.accent, 0.32f), ImGui::GetColorU32(ImGuiCol_Text)) + 6.0f;
-        if (okayver::SameLine(cur, st.index.lts)) x += DrawPill(dl, ImVec2(x, p0.y + 5), "LTS", IM_COL32(70, 170, 120, 90), ImGui::GetColorU32(ImGuiCol_Text)) + 6.0f;
+        if (okayver::SameLine(cur, st.index.lts)) x += DrawPill(dl, ImVec2(x, p0.y + 5), "LTS", okaytheme::SuccessFillU32(0.353f), ImGui::GetColorU32(ImGuiCol_Text)) + 6.0f;
     }
     std::string sub;
     const std::string launcher = okayver::NormalizeVersion(h.launcherVersion);
     if (launcher.empty() || cur.empty() || launcher == cur) sub = "The launcher, the editor and the player are all this version.";
     else sub = "The editor and player are " + V(cur) + "; this launcher window is still " + V(launcher) + " until you restart it.";
-    DrawTextAt(dl, ImVec2(p0.x, p0.y + 30), Fit(sub, W - 330.0f).c_str(), ImGui::GetColorU32(ImGuiCol_TextDisabled));
+    DrawTextAt(dl, ImVec2(p0.x, p0.y + titleH + okl::UiPx(6.0f)), Fit(sub, textW).c_str(), ImGui::GetColorU32(ImGuiCol_TextDisabled));
 
-    const bool busy = st.indexJob != nullptr;
-    ImGui::SetCursorScreenPos(ImVec2(p0.x + W - 306.0f, p0.y + 8));
+    ImGui::SetCursorScreenPos(ImVec2(p0.x + W - b2 - gap - b1, p0.y + (rowH - bh) * 0.5f));
     ImGui::BeginDisabled(busy);
-    if (ImGui::Button(busy ? "Checking\xE2\x80\xA6" : "Check again", ImVec2(140, 30))) StartIndex(h);
+    if (ImGui::Button(checkLbl, ImVec2(b1, bh))) StartIndex(h);
     ImGui::EndDisabled();
-    ImGui::SameLine(0, 8);
-    if (ImGui::Button("Open install folder", ImVec2(158, 30))) {
+    ImGui::SameLine(0, gap);
+    if (ImGui::Button("Open install folder", ImVec2(b2, bh))) {
         std::error_code ec;
         fs::create_directories(okayver::VersionsDir(h.launcherDir), ec);
         if (h.openFolder) h.openFolder(okayver::VersionsDir(h.launcherDir).string());
@@ -411,7 +418,7 @@ void DrawChannel(const Host& h) {
     // The default editor, for any installed version.
     if (!st.installed.empty() || !set.defaultEditor.empty()) {
         ImGui::Dummy(ImVec2(0, 8));
-        ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(1, 1, 1, 0.06f));
+        ImGui::PushStyleColor(ImGuiCol_Separator, okaytheme::InkV(0.06f));
         ImGui::Separator();
         ImGui::PopStyleColor();
         ImGui::Dummy(ImVec2(0, 6));
@@ -445,7 +452,7 @@ void RowEnd(const Row& r, bool divider = true) {
     ImGui::Dummy(ImVec2(r.width, 0));
     if (divider) {
         const ImVec2 p = ImGui::GetCursorScreenPos();
-        r.dl->AddLine(ImVec2(p.x, p.y - 1), ImVec2(p.x + r.width, p.y - 1), IM_COL32(255, 255, 255, 14), 1.0f);
+        r.dl->AddLine(ImVec2(p.x, p.y - 1), ImVec2(p.x + r.width, p.y - 1), okaytheme::Ink(14), 1.0f);
     }
 }
 void RowHighlight(const Host& h, const Row& r) {
@@ -463,8 +470,8 @@ float RowTitle(const Host& h, const Row& r, const std::string& version, bool lat
     float x = r.p0.x + TextWidth(title.c_str(), 1.14f) + 10.0f;
     const ImU32 fg = ImGui::GetColorU32(ImGuiCol_Text);
     if (latest) x += DrawPill(r.dl, ImVec2(x, r.p0.y + 9), "Latest", Tint(h.accent, 0.32f), fg) + 6.0f;
-    if (lts) x += DrawPill(r.dl, ImVec2(x, r.p0.y + 9), "LTS", IM_COL32(70, 170, 120, 90), fg) + 6.0f;
-    if (isDefault) x += DrawPill(r.dl, ImVec2(x, r.p0.y + 9), "Default editor", IM_COL32(255, 255, 255, 30), fg) + 6.0f;
+    if (lts) x += DrawPill(r.dl, ImVec2(x, r.p0.y + 9), "LTS", okaytheme::SuccessFillU32(0.353f), fg) + 6.0f;
+    if (isDefault) x += DrawPill(r.dl, ImVec2(x, r.p0.y + 9), "Default editor", okaytheme::Ink(30), fg) + 6.0f;
     return x;
 }
 
@@ -499,14 +506,14 @@ void DrawInstalled(const Host& h) {
         if (ImGui::Button(isDefault ? "Default" : "Make default", ImVec2(120, 30))) { set.defaultEditor = in.version; if (h.savePrefs) h.savePrefs(); Toast(h, V(in.version) + " is now your default editor.", 1); }
         ImGui::EndDisabled();
         ImGui::SameLine(0, 8);
-        if (DangerButton("Remove", ImVec2(96, 30))) st.removeAsk = in.version;
+        if (DangerButton("Remove", ImVec2(okl::FitButtonW("Remove", okl::UiPx(96.0f)), okl::UiPx(30.0f)))) st.removeAsk = in.version;
         RowEnd(r, &in != &st.installed.back());
         ImGui::PopID();
     }
 
     // Keep previous versions: N.
     ImGui::Dummy(ImVec2(0, 6));
-    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(1, 1, 1, 0.06f));
+    ImGui::PushStyleColor(ImGuiCol_Separator, okaytheme::InkV(0.06f));
     ImGui::Separator();
     ImGui::PopStyleColor();
     ImGui::Dummy(ImVec2(0, 6));
@@ -566,7 +573,7 @@ void DrawAvailable(const Host& h) {
         ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kRed), "%s", st.index.error.c_str());
         ImGui::PopTextWrapPos();
         ImGui::BeginDisabled(st.indexJob != nullptr);
-        if (ImGui::Button("Try again", ImVec2(120, 30))) StartIndex(h);
+        if (ImGui::Button("Try again", ImVec2(okl::FitButtonW("Try again", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) StartIndex(h);
         ImGui::EndDisabled();
     } else {
         const std::string cur = okayver::NormalizeVersion(h.currentVersion);
@@ -617,7 +624,7 @@ void DrawAvailable(const Host& h) {
                 ImGui::PopStyleColor();
                 ImGui::SetCursorScreenPos(ImVec2(barPos.x + rightW - 92.0f, barPos.y));
                 ImGui::BeginDisabled(st.job->cancel.load());
-                if (ImGui::Button("Cancel", ImVec2(84, 24))) st.job->cancel = true;
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(84.0f)), okl::UiPx(24.0f)))) st.job->cancel = true;
                 ImGui::EndDisabled();
             } else {
                 ImGui::SetCursorScreenPos(ImVec2(r.p0.x + r.width - 120.0f, r.p0.y + 14));
@@ -661,7 +668,7 @@ void DrawModals(const Host& h) {
         if (h.editorRunning) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kAmber), "An editor is open. A version that editor is using can't be removed.");
         ImGui::PopTextWrapPos();
         ImGui::Dummy(ImVec2(0, 6));
-        if (DangerButton("Remove", ImVec2(120, 0))) {
+        if (DangerButton("Remove", ImVec2(okl::FitButtonW("Remove", okl::UiPx(120.0f)), 0))) {
             const Result r = Remove(h.launcherDir, v, MakeGuards(h));
             Toast(h, r.message, r.ok() ? 1 : 2);
             st.removeAsk.clear();
@@ -669,7 +676,7 @@ void DrawModals(const Host& h) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { st.removeAsk.clear(); ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { st.removeAsk.clear(); ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     } else if (!ImGui::IsPopupOpen("Remove this version?")) st.removeAsk.clear();
 }

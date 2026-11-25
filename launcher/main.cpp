@@ -15654,8 +15654,9 @@ int main(int argc, char** argv) {
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     ImVec2 p = ImGui::GetCursorScreenPos();
                     const float w = ImGui::GetContentRegionAvail().x;
-                    const bool stack = (w - ctrlW - 24.0f) < 180.0f;
-                    const float textW = stack ? w : w - ctrlW - 24.0f;
+                    ctrlW = UiPx(ctrlW);   // (callers give the size at UI scale 1)
+                    const bool stack = (w - ctrlW - UiPx(24.0f)) < UiPx(180.0f);
+                    const float textW = stack ? w : w - ctrlW - UiPx(24.0f);
                     const float lh = ImGui::GetTextLineHeight();
                     ImVec2 ds = (desc && *desc) ? ImGui::CalcTextSize(desc, nullptr, false, textW) : ImVec2(0, 0);
                     const float textH = lh + (ds.y > 0 ? 3.0f + ds.y : 0.0f);
@@ -16204,8 +16205,9 @@ int main(int argc, char** argv) {
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 ImVec2 p = ImGui::GetCursorScreenPos();
                 const float w = ImGui::GetContentRegionAvail().x;
-                const bool stack = ctrlW <= 0.0f || (w - ctrlW - 24.0f) < 200.0f;
-                const float textW = stack ? w : w - ctrlW - 24.0f;
+                ctrlW = UiPx(ctrlW);   // (callers give the size at UI scale 1)
+                const bool stack = ctrlW <= 0.0f || (w - ctrlW - UiPx(24.0f)) < UiPx(200.0f);
+                const float textW = stack ? w : w - ctrlW - UiPx(24.0f);
                 const float lh = ImGui::GetTextLineHeight();
                 ImVec2 ds = (desc && *desc) ? ImGui::CalcTextSize(desc, nullptr, false, textW) : ImVec2(0, 0);
                 const float textH = lh + (ds.y > 0 ? 3.0f + ds.y : 0.0f);

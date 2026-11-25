@@ -320,7 +320,7 @@ Token Lexer::Next() {
 // or a call whose result count is set later.
 enum class Opnd {
     Empty, Nil, True, False, Str, Int, Float,
-    Local,       ///< ref = index into FuncState::vars
+    Local,       ///< ref = index into FunctionScope::vars
     Upvalue,     ///< ref = upvalue index
     Keyed,       ///< t[k]: table at tableSlot, key just above it
     NamedField,  ///< t.name: table at tableSlot, keyConst = the name's constant
@@ -364,8 +364,8 @@ struct BlockScope {
     std::size_t firstLabel = 0, firstGoto = 0;
 };
 
-struct FuncState {
-    FuncState* parent = nullptr;
+struct FunctionScope {
+    FunctionScope* parent = nullptr;
     Proto* p = nullptr;
     std::vector<LocalVar> vars;     ///< every local declared (indexes are stable)
     std::vector<int> actives;       ///< indexes into vars, in scope order
@@ -483,9 +483,9 @@ private:
     int AddLocal(const std::string& name, int attrib = 0);
     void ActivateLocal(int var);   // the var's slot is the current top - 1
     LocalVar& Var(int i) { return fs_->vars[(std::size_t)i]; }
-    void Capture(FuncState* fs, int var);
-    static int FindActiveLocal(FuncState* fs, const std::string& name);
-    static int FindUpval(FuncState* fs, const std::string& name);
+    void Capture(FunctionScope* fs, int var);
+    static int FindActiveLocal(FunctionScope* fs, const std::string& name);
+    static int FindUpval(FunctionScope* fs, const std::string& name);
     bool ResolveName(const std::string& name, Operand& e);
     void NameOperand(const std::string& name, Operand& e);
     void Materialize(Operand& e);
@@ -498,7 +498,7 @@ private:
     void PopTo(int sp);   // drop operand / local slots down to sp (static)
     void ResolveGotos(BlockScope& bl, bool atEnd);
     void JumpTo(int pc, const Label& lb);
-    void StartFunc(FuncState& fs, Proto* p);
+    void StartFunc(FunctionScope& fs, Proto* p);
     void EndFunc();
 
     // ---- statements (manual 3.3, 9)
@@ -547,7 +547,7 @@ private:
     Token tok_, ahead_;
     int prevLine_ = 1;
     int nesting_ = 0;
-    FuncState* fs_ = nullptr;
+    FunctionScope* fs_ = nullptr;
     std::vector<Proto*> keep_;   // protos made so far (kept reachable while compiling)
 };
 
@@ -587,7 +587,7 @@ void Compiler::ActivateLocal(int var) {
     v.boxPc = Emit(NOP, v.slot);
 }
 
-void Compiler::Capture(FuncState* fs, int var) {
+void Compiler::Capture(FunctionScope* fs, int var) {
     LocalVar& v = fs->vars[(std::size_t)var];
     if (v.captured) return;
     v.captured = true;
@@ -601,7 +601,7 @@ void Compiler::Capture(FuncState* fs, int var) {
     v.accessPcs.clear();
 }
 
-int Compiler::FindActiveLocal(FuncState* fs, const std::string& name) {
+int Compiler::FindActiveLocal(FunctionScope* fs, const std::string& name) {
     for (std::size_t i = fs->actives.size(); i-- > 0;) {
         const int vi = fs->actives[i];
         if (fs->vars[(std::size_t)vi].name == name) return vi;
@@ -609,7 +609,7 @@ int Compiler::FindActiveLocal(FuncState* fs, const std::string& name) {
     return -1;
 }
 
-int Compiler::FindUpval(FuncState* fs, const std::string& name) {
+int Compiler::FindUpval(FunctionScope* fs, const std::string& name) {
     auto& u = fs->p->upvals;
     for (std::size_t i = 0; i < u.size(); ++i)
         if (u[i].name == name) return (int)i;
@@ -621,9 +621,9 @@ int Compiler::FindUpval(FuncState* fs, const std::string& name) {
 // enclosing function), an upvalue is added to every function between that one
 // and the current one, outermost first, each pointing at the one outside it.
 bool Compiler::ResolveName(const std::string& name, Operand& e) {
-    std::vector<FuncState*> path;   // path[0] is the current function
+    std::vector<FunctionScope*> path;   // path[0] is the current function
     int local = -1, upval = -1;
-    for (FuncState* f = fs_; f && local < 0 && upval < 0; f = f->parent) {
+    for (FunctionScope* f = fs_; f && local < 0 && upval < 0; f = f->parent) {
         path.push_back(f);
         local = FindActiveLocal(f, name);
         if (local < 0) upval = FindUpval(f, name);
@@ -728,7 +728,7 @@ void Compiler::StoreTop(Operand& t) {
         }
         case Opnd::Upvalue: {
             // is the captured variable a const one?
-            FuncState* f = fs_;
+            FunctionScope* f = fs_;
             int idx = t.ref;
             while (f && f->parent) {
                 const UpvalDesc& d = f->p->upvals[(std::size_t)idx];
@@ -841,7 +841,7 @@ void Compiler::CloseBlock() {
     }
 }
 
-void Compiler::StartFunc(FuncState& fs, Proto* p) {
+void Compiler::StartFunc(FunctionScope& fs, Proto* p) {
     fs.parent = fs_;
     fs.p = p;
     p->chunk = chunk_;
@@ -1280,7 +1280,7 @@ void Compiler::ParseFunctionBody(Operand& e, const FunctionHeader& h) {
     // the new function is reachable from its parent's list, which is reachable from keep_
     fs_->p->protos.push_back(p);
     const int index = (int)fs_->p->protos.size() - 1;
-    FuncState fs;
+    FunctionScope fs;
     StartFunc(fs, p);
     if (h.isMethod) {
         const int self = AddLocal("self");
@@ -1608,7 +1608,7 @@ Proto* Compiler::Run(std::vector<SyntaxError>& errs) {
     env.fromLocal = true;
     env.index = 0;
     main->upvals.push_back(env);
-    FuncState fs;
+    FunctionScope fs;
     // keep the protos reachable for the collector: it only runs at safe points, which
     // compiling never reaches, so nothing is freed meanwhile.
     try {

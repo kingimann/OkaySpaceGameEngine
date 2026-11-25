@@ -728,6 +728,19 @@ bool Parser::static_type(const Node& node, Type* out) const {
 // new T, new T(args): malloc, then the constructor (which returns its object). The program
 // declares malloc and free itself (the runtime provides them). Written from ISO/IEC 14882
 // [expr.new].
+// malloc(sizeof(T)): the storage of one new object.
+Node Parser::malloc_of(const Type& ty) const {
+    Node size;
+    size.kind = Node::IntLit;
+    size.number = static_cast<uint64_t>(size_of(ty));
+    size.type.base = 1;
+    Node alloc;
+    alloc.kind = Node::Call;
+    alloc.text = "malloc";
+    alloc.kids.push_back(std::move(size));
+    return alloc;
+}
+
 bool Parser::parse_new(Node* out) {
     next();
     // new (place) T(args) ([expr.new]): construct in storage that is already there; nothing is allocated.
@@ -813,19 +826,11 @@ bool Parser::parse_new(Node* out) {
         if (cls && class_needs_ctor(structs[static_cast<size_t>(ty.struct_id)])) {
             args = std::move(items);
         } else {
-            Node size;
-            size.kind = Node::IntLit;
-            size.number = static_cast<uint64_t>(size_of(ty));
-            size.type.base = 1;
-            Node alloc;
-            alloc.kind = Node::Call;
-            alloc.text = "malloc";
-            alloc.kids.push_back(std::move(size));
             Node cast;
             cast.kind = Node::Unary;
             cast.type = ty;
             cast.type.pointers += 1;
-            cast.kids.push_back(std::move(alloc));
+            cast.kids.push_back(malloc_of(ty));
             Local hidden;
             hidden.name = "__pn" + std::to_string(tmp_count++);
             hidden.type = cast.type;
@@ -917,19 +922,11 @@ bool Parser::parse_new(Node* out) {
         error = "new with arguments needs a class with a constructor";
         return false;
     }
-    Node size;
-    size.kind = Node::IntLit;
-    size.number = static_cast<uint64_t>(size_of(ty));
-    size.type.base = 1;
-    Node alloc;
-    alloc.kind = Node::Call;
-    alloc.text = "malloc";
-    alloc.kids.push_back(std::move(size));
     Node cast;
     cast.kind = Node::Unary;
     cast.type = ty;
     cast.type.pointers += 1;
-    cast.kids.push_back(has_place ? std::move(place) : std::move(alloc));
+    cast.kids.push_back(has_place ? std::move(place) : malloc_of(ty));
     if (!ctor && !args.empty()) {
         // new (p) int(v): the value is stored in a statement before this one, and the pointer is the result.
         Local hidden;

@@ -1,5 +1,5 @@
 // The runtime is C compiled by okay-cl into a static library: memcpy, memset,
-// strlen, strcmp, printf on WriteFile, and mainCRTStartup.
+// strlen, strcmp, memchr (round 27), printf on WriteFile, and mainCRTStartup.
 
 #include "check.hpp"
 #include "okayms/archive.hpp"
@@ -91,6 +91,9 @@ static void test_runtime(Tally& tally, const std::string& cl, const std::string&
                             "  memset(buf, 65, 2);\n"
                             "  if (buf[0] != 65 || buf[1] != 65) return 2;\n"
                             "  if (strlen(\"hi\") != 2) return 3;\n"
+                            "  char *hit; hit = memchr(\"abc\", 98, 3);\n"
+                            "  if (hit == 0 || *hit != 98) return 5;\n"
+                            "  if (memchr(\"abc\", 99, 2) != 0 || memchr(\"abc\", 97, 3) == 0) return 6;\n"
                             "  char *p; char small[16];\n"
                             "  p = malloc(16);\n"
                             "  if (p == 0) return 4;\n"

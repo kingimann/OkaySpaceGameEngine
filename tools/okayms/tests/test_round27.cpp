@@ -459,7 +459,7 @@ static void r27_lang2(Tally& tally) {
 static int dtors = 0;
 struct Noisy { int v; Noisy(int x) : v(x) {} Noisy(const Noisy& o) : v(o.v) {} ~Noisy() { ++dtors; } };
 static Noisy make(int x) { return Noisy(x); }
-static std::string trim(const std::string& s) {
+static std::string cut_spaces(const std::string& s) {
   std::size_t a = s.find_first_not_of(' '), b = s.find_last_not_of(' ');
   return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
 }
@@ -494,7 +494,7 @@ int entry(void) {
     CK(2, m.v == 4);
   }
   CK(3, dtors >= 2);
-  CK(4, trim("  ab ") == "ab" && trim("   ").empty() && trim("x") == "x");
+  CK(4, cut_spaces("  ab ") == "ab" && cut_spaces("   ").empty() && cut_spaces("x") == "x");
   if (const int w = check(3); w > 5) {
     CK(5, w == 6);
   } else {

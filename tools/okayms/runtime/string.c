@@ -16,6 +16,17 @@ void *memset(void *dst, int value, unsigned int n) {
     return dst;
 }
 
+/* memchr (ISO/IEC 9899 7.24.5.1): the first of the n bytes at s equal to c (as unsigned char), or null. */
+void *memchr(void *s, int c, unsigned long long n) {
+    unsigned char *p;
+    unsigned long long i;
+    p = s;
+    for (i = 0; i < n; i = i + 1) {
+        if (p[i] == (unsigned char)c) return p + i;
+    }
+    return 0;
+}
+
 unsigned int strlen(char *s) {
     unsigned int n;
     n = 0;

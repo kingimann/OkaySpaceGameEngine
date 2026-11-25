@@ -2167,6 +2167,7 @@ struct Parser {
     bool parse_pack_element(size_t from, size_t to, size_t k, bool unary, Node* out);
     bool try_fold(Node* out, bool* folded);
     bool parse_new(Node* out);
+    Node malloc_of(const Type& ty) const;
     bool ensure_vector_helpers(int sid);
     bool parse_delete(Node* out);
     bool method_call(Node* out, Node object, bool arrow, const std::string& name, std::vector<TArg> targs = {},
@@ -2283,6 +2284,23 @@ struct Parser {
     }
     // True while the operand of & is read: a name there stays a name so its address can be taken.
     bool no_const_subst = false;
+    // The integer literal for the stored bits v of a constant of integer type t: bool is 0 or 1, char and short are cut to
+    // their width (and sign-extended when signed), int and long long keep their width and signedness.
+    static void int_literal_of(uint64_t v, const Type& t, Node* out) {
+        *out = Node{};
+        out->kind = Node::IntLit;
+        out->type.base = 1;
+        out->type.wide = t.wide;
+        if (t.is_bool) v = v != 0 ? 1 : 0;
+        else if (t.base == 2) v = t.is_unsigned ? (v & 0xFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int8_t>(v)));
+        else if (t.base == 4) v = t.is_unsigned ? (v & 0xFFFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int16_t>(v)));
+        else {
+            out->type.is_unsigned = t.is_unsigned;
+            v = const_norm(v, out->type);
+        }
+        out->number = v;
+    }
+
     // The innermost visible local of this name, when it is a const integer with a constant value: that value as a
     // literal of its type.
     bool local_const_node(const std::string& name, Node* out) const {
@@ -2291,20 +2309,7 @@ struct Parser {
             const Local& local = (*cur_locals)[i];
             if (local.name != name || !scope_visible(local.scope)) continue;
             if (!local.has_cval) return false;
-            const Type& t = local.type;
-            uint64_t v = local.cval;
-            *out = Node{};
-            out->kind = Node::IntLit;
-            out->type.base = 1;
-            if (t.is_bool) v = v != 0 ? 1 : 0;
-            else if (t.base == 2) v = t.is_unsigned ? (v & 0xFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int8_t>(v)));
-            else if (t.base == 4) v = t.is_unsigned ? (v & 0xFFFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int16_t>(v)));
-            else {
-                out->type.wide = t.wide;
-                out->type.is_unsigned = t.is_unsigned;
-                v = const_norm(v, out->type);
-            }
-            out->number = v;
+            int_literal_of(local.cval, local.type, out);
             return true;
         }
         return false;
@@ -2328,19 +2333,7 @@ struct Parser {
                 out->number = v;
                 return true;
             }
-            out->type.base = 1;
-            out->type.wide = t.wide;
-            if (t.is_bool) {
-                out->number = v != 0 ? 1 : 0;
-                return true;
-            }
-            if (t.base == 2) v = t.is_unsigned ? (v & 0xFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int8_t>(v)));
-            else if (t.base == 4) v = t.is_unsigned ? (v & 0xFFFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int16_t>(v)));
-            else {
-                out->type.is_unsigned = t.is_unsigned;
-                v = const_norm(v, out->type);
-            }
-            out->number = v;
+            int_literal_of(v, t, out);
             return true;
         }
         return false;

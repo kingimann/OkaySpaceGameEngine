@@ -750,22 +750,21 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **System:** Physics
 - **What:** Fabric, flags, capes and hair that move with physics.
 - **Parts:**
-  - 52.1.1 Verlet particle chain - `Components/Ragdoll` - the ragdoll uses Verlet particles with distance constraints; the solver could be a base
-  - 52.1.2 Distance and spring joints - `Components/Joint3D` - `Mode { Distance, Spring, Pin, Hinge }`
-  - 52.1.3 Cloth component - `-` - not built (no cloth code found)
-- **Code:** `Components/Ragdoll`, `Components/Joint3D`
+  - 52.1.1 Distance and spring joints - `Components/Joint3D` - `Mode { Distance, Spring, Pin, Hinge }`
+  - 52.1.2 Cloth component - `-` - not built (no cloth code found)
+- **Code:** `Components/Joint3D`
 - **API:** none for cloth
 - **Editor:** none
 - **Docs:** `docs/physics/physics.md`
-- **Tests:** `ragdoll`, `physics_joints`
-- **Status:** Planned - no cloth, rope or hair code exists; only the ragdoll's particle chain.
-- **Exists today:** A particle chain solver inside the ragdoll; no mesh cloth.
+- **Tests:** `physics_joints`
+- **Status:** Planned - no cloth, rope or hair code exists (the ragdoll's Verlet particle chain was deleted when the ragdoll moved onto the physics core).
+- **Exists today:** Distance and spring joints; no mesh cloth.
 - **Suggested priority:** Low - visual polish.
 - **Open:** first step: a rope and flag component on a particle grid with pin points and wind from `Environment/Wind`.
 - **Related:** 5.8, 6.3, 30.3
 - **Words:** cloth, flag, cape, hair physics, rope, verlet, wind
 - **Seen as:** capes and flags are stiff
-- **Ask me like:** "add a simple flag and rope component on the ragdoll's solver"
+- **Ask me like:** "add a simple flag and rope component"
 
 ### 52.2 Soft bodies
 - **System:** Physics

@@ -4,7 +4,6 @@
 #include "okay/Scripting/ScriptBindings.hpp"
 #include <limits>
 #include "okay/Components/ActionList.hpp"
-#include "okay/Components/ActiveRagdoll.hpp"
 #include "okay/Components/AimIK.hpp"
 #include "okay/Components/AimOffset.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
@@ -250,27 +249,6 @@ void BindActionList() {
         {"ToText", {}, 0, ArgKind::String, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<ActionList&>(self); return V{s.ToText()}; }, true},
         {"FromText", {ArgKind::String}, 1, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<ActionList&>(self); s.FromText(a[0].AsString()); return V{}; }, false},
         {"BeginRun", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<ActionList&>(self); return V{s.BeginRun()}; }, false},
-    };
-    AddClass(std::move(c));
-}
-// okay/Components/ActiveRagdoll.hpp
-void BindActiveRagdoll() {
-    ClassBinding c = MakeClass<ActiveRagdoll>("ActiveRagdoll", nullptr, 0);
-    c.methods = {
-        {"Ready", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<ActiveRagdoll&>(self); return V{s.Ready()}; }, true},
-        {"Push", {ArgKind::Vec3}, 1, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<ActiveRagdoll&>(self); s.Push(a[0].AsVec3()); return V{}; }, false},
-        {"PushAt", {ArgKind::Vec3, ArgKind::Vec3}, 2, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<ActiveRagdoll&>(self); s.PushAt(a[0].AsVec3(), a[1].AsVec3()); return V{}; }, false},
-        {"Hit", {ArgKind::Vec3, ArgKind::Vec3}, 2, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<ActiveRagdoll&>(self); s.Hit(a[0].AsVec3(), a[1].AsVec3()); return V{}; }, false},
-        {"Shoot", {ArgKind::Vec3, ArgKind::Vec3, ArgKind::Float, ArgKind::Float}, 3, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { auto& s = static_cast<ActiveRagdoll&>(self); if (n >= 4) { return V{s.Shoot(a[0].AsVec3(), a[1].AsVec3(), static_cast<float>(a[2].AsFloat()), static_cast<float>(a[3].AsFloat()))}; } return V{s.Shoot(a[0].AsVec3(), a[1].AsVec3(), static_cast<float>(a[2].AsFloat()))}; }, false},
-        {"Explode", {ArgKind::Vec3, ArgKind::Float, ArgKind::Float}, 3, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<ActiveRagdoll&>(self); s.Explode(a[0].AsVec3(), static_cast<float>(a[1].AsFloat()), static_cast<float>(a[2].AsFloat())); return V{}; }, false},
-        {"Trigger", {ArgKind::String}, 1, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<ActiveRagdoll&>(self); return V{s.Trigger(a[0].AsString())}; }, false},
-        {"SetMode", {ArgKind::Int}, 1, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<ActiveRagdoll&>(self); s.SetMode(static_cast<int>(sb::ArgIntIn(a[0], 0, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()))); return V{}; }, false},
-        {"IsPhysical", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<ActiveRagdoll&>(self); return V{s.IsPhysical()}; }, true},
-        {"IsDown", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<ActiveRagdoll&>(self); return V{s.IsDown()}; }, true},
-        {"TookOverRagdoll", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<ActiveRagdoll&>(self); return V{s.TookOverRagdoll()}; }, true},
-        {"BoneTransform", {ArgKind::Int}, 1, ArgKind::Component, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<ActiveRagdoll&>(self); return sb::RetComponent(s.BoneTransform(static_cast<int>(sb::ArgIntIn(a[0], 0, std::numeric_limits<int>::min(), std::numeric_limits<int>::max())))); }, true},
-        {"Build", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<ActiveRagdoll&>(self); return V{s.Build()}; }, false},
-        {"ExecutionOrder", {}, 0, ArgKind::Int, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<ActiveRagdoll&>(self); return V{static_cast<float>(s.ExecutionOrder())}; }, true},
     };
     AddClass(std::move(c));
 }
@@ -2237,15 +2215,22 @@ void BindRadiationStat() {
 void BindRagdoll() {
     ClassBinding c = MakeClass<Ragdoll>("Ragdoll", nullptr, 0);
     c.methods = {
-        {"IsActive", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<Ragdoll&>(self); return V{s.IsActive()}; }, true},
-        {"IsReacting", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<Ragdoll&>(self); return V{s.IsReacting()}; }, true},
-        {"IsSettled", {ArgKind::Float}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { auto& s = static_cast<Ragdoll&>(self); if (n >= 1) { return V{s.IsSettled(static_cast<float>(a[0].AsFloat()))}; } return V{s.IsSettled()}; }, true},
-        {"ParticleCount", {}, 0, ArgKind::Int, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<Ragdoll&>(self); return V{static_cast<float>(s.ParticleCount())}; }, true},
-        {"ParticlePosition", {ArgKind::Int}, 1, ArgKind::Vec3, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<Ragdoll&>(self); return V{s.ParticlePosition(static_cast<int>(sb::ArgCount(a[0], 0, 1048576)))}; }, true},
-        {"BoneParticle", {ArgKind::Int}, 1, ArgKind::Int, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<Ragdoll&>(self); return V{static_cast<float>(s.BoneParticle(static_cast<int>(sb::ArgIntIn(a[0], 0, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()))))}; }, true},
+        {"Ready", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<Ragdoll&>(self); return V{s.Ready()}; }, true},
+        {"Push", {ArgKind::Vec3}, 1, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<Ragdoll&>(self); s.Push(a[0].AsVec3()); return V{}; }, false},
+        {"PushAt", {ArgKind::Vec3, ArgKind::Vec3}, 2, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<Ragdoll&>(self); s.PushAt(a[0].AsVec3(), a[1].AsVec3()); return V{}; }, false},
+        {"Hit", {ArgKind::Vec3, ArgKind::Vec3}, 2, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<Ragdoll&>(self); s.Hit(a[0].AsVec3(), a[1].AsVec3()); return V{}; }, false},
+        {"Shoot", {ArgKind::Vec3, ArgKind::Vec3, ArgKind::Float, ArgKind::Float}, 3, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { auto& s = static_cast<Ragdoll&>(self); if (n >= 4) { return V{s.Shoot(a[0].AsVec3(), a[1].AsVec3(), static_cast<float>(a[2].AsFloat()), static_cast<float>(a[3].AsFloat()))}; } return V{s.Shoot(a[0].AsVec3(), a[1].AsVec3(), static_cast<float>(a[2].AsFloat()))}; }, false},
+        {"Explode", {ArgKind::Vec3, ArgKind::Float, ArgKind::Float}, 3, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<Ragdoll&>(self); s.Explode(a[0].AsVec3(), static_cast<float>(a[1].AsFloat()), static_cast<float>(a[2].AsFloat())); return V{}; }, false},
+        {"Trigger", {ArgKind::String}, 1, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<Ragdoll&>(self); return V{s.Trigger(a[0].AsString())}; }, false},
+        {"SetMode", {ArgKind::Int}, 1, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<Ragdoll&>(self); s.SetMode(static_cast<int>(sb::ArgIntIn(a[0], 0, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()))); return V{}; }, false},
+        {"IsPhysical", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<Ragdoll&>(self); return V{s.IsPhysical()}; }, true},
+        {"IsDown", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<Ragdoll&>(self); return V{s.IsDown()}; }, true},
         {"Activate", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<Ragdoll&>(self); return V{s.Activate()}; }, false},
         {"Deactivate", {}, 0, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<Ragdoll&>(self); s.Deactivate(); return V{}; }, false},
-        {"Hit", {ArgKind::Vec3, ArgKind::Vec3}, 2, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<Ragdoll&>(self); s.Hit(a[0].AsVec3(), a[1].AsVec3()); return V{}; }, false},
+        {"IsActive", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<Ragdoll&>(self); return V{s.IsActive()}; }, true},
+        {"IsSettled", {ArgKind::Float}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { auto& s = static_cast<Ragdoll&>(self); if (n >= 1) { return V{s.IsSettled(static_cast<float>(a[0].AsFloat()))}; } return V{s.IsSettled()}; }, true},
+        {"BoneTransform", {ArgKind::Int}, 1, ArgKind::Component, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<Ragdoll&>(self); return sb::RetComponent(s.BoneTransform(static_cast<int>(sb::ArgIntIn(a[0], 0, std::numeric_limits<int>::min(), std::numeric_limits<int>::max())))); }, true},
+        {"Build", {}, 0, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<Ragdoll&>(self); return V{s.Build()}; }, false},
         {"ExecutionOrder", {}, 0, ArgKind::Int, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<Ragdoll&>(self); return V{static_cast<float>(s.ExecutionOrder())}; }, true},
     };
     AddClass(std::move(c));
@@ -4367,7 +4352,6 @@ void BindWorldUI() {
 
 void RegisterGeneratedBindings() {
     BindActionList();
-    BindActiveRagdoll();
     BindAimIK();
     BindAimOffset();
     BindAnimStateMachine();

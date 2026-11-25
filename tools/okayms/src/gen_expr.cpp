@@ -1083,7 +1083,9 @@ bool Gen::gen_expr(const Node& node) {
         } else if (fn->imported) {
             b(0xFF);
             b(0x15);
-            relocs.push_back({0, static_cast<uint32_t>(text.size()), "__imp_" + fn->name, kRelAmd64Rel32});
+            // The import slot of the symbol the declaration links to: an extern "C" function that is overloaded here
+            // (two declarations with other parameter types) still has its plain C name.
+            relocs.push_back({0, static_cast<uint32_t>(text.size()), "__imp_" + (fn->symbol.empty() ? fn->name : fn->symbol), kRelAmd64Rel32});
             u32(0);
         } else {
             b(0xE8);

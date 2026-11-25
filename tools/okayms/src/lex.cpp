@@ -108,8 +108,22 @@ bool decode_escape(const std::string& text, size_t* i, unsigned char* out) {
     if (c == 'n') *out = '\n';
     else if (c == 't') *out = '\t';
     else if (c == 'r') *out = '\r';
-    else if (c == '0') *out = 0;
-    else if (c == 'x') {
+    else if (c == 'a') *out = 7;
+    else if (c == 'b') *out = 8;
+    else if (c == 'f') *out = 12;
+    else if (c == 'v') *out = 11;
+    else if (c >= '0' && c <= '7') {
+        // An octal escape: one to three octal digits ([lex.ccon]), \0 among them.
+        int value = 0;
+        int count = 0;
+        while (count < 3 && *i < text.size() && text[*i] >= '0' && text[*i] <= '7') {
+            value = value * 8 + (text[*i] - '0');
+            ++*i;
+            ++count;
+        }
+        *out = static_cast<unsigned char>(value);
+        return true;
+    } else if (c == 'x') {
         ++*i;
         int value = 0;
         int count = 0;
@@ -151,7 +165,8 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             str_prefix = 8;
             i += 2;
         }
-        if (str_prefix == 0 && (std::isalpha(c) || c == '_')) {
+        const bool wide_char = (c == 'L' || c == 'u' || c == 'U') && i + 1 < text.size() && text[i + 1] == '\'';
+        if (str_prefix == 0 && !wide_char && (std::isalpha(c) || c == '_')) {
             size_t j = i + 1;
             while (j < text.size() && (std::isalnum(static_cast<unsigned char>(text[j])) || text[j] == '_')) ++j;
             tok.text = text.substr(i, j - i);
@@ -273,6 +288,55 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
                 else tok.ity = fits_uint ? 1 : 3;
             }
             i = j;
+            tokens.push_back(tok);
+            continue;
+        }
+        if ((c == 'L' || c == 'u' || c == 'U') && i + 1 < text.size() && text[i + 1] == '\'') {
+            // L'x', u'x', U'x' ([lex.ccon]): one code point, given as UTF-8 in the source, as an escape, or as \u / \U /
+            // \x with any number of hex digits. Own simplification: its value is an int here (wchar_t, char16_t and
+            // char32_t are not types of their own in okay-ms either).
+            i += 2;
+            uint32_t cp = 0;
+            if (i < text.size() && text[i] == '\\' && i + 1 < text.size() &&
+                (text[i + 1] == 'u' || text[i + 1] == 'U' || text[i + 1] == 'x')) {
+                i += 2;
+                int count = 0;
+                while (i < text.size() && hex_digit(text[i]) >= 0) {
+                    cp = cp * 16 + static_cast<uint32_t>(hex_digit(text[i]));
+                    ++i;
+                    ++count;
+                }
+                if (count == 0) {
+                    *error = "bad character escape at line " + std::to_string(line);
+                    return {};
+                }
+            } else if (i < text.size() && text[i] == '\\') {
+                ++i;
+                unsigned char value = 0;
+                if (!decode_escape(text, &i, &value)) {
+                    *error = "bad character escape";
+                    return {};
+                }
+                cp = value;
+            } else if (i < text.size()) {
+                const unsigned char b0 = static_cast<unsigned char>(text[i]);
+                int more = 0;
+                cp = b0;
+                if (b0 >= 0xF0 && b0 < 0xF8) { cp = b0 & 0x07; more = 3; }
+                else if (b0 >= 0xE0) { cp = b0 & 0x0F; more = 2; }
+                else if (b0 >= 0xC0) { cp = b0 & 0x1F; more = 1; }
+                ++i;
+                for (int m = 0; m < more && i < text.size(); ++m, ++i) cp = (cp << 6) | (static_cast<unsigned char>(text[i]) & 0x3F);
+            }
+            if (i >= text.size() || text[i] != '\'') {
+                *error = "unterminated character at line " + std::to_string(line);
+                return {};
+            }
+            ++i;
+            if (c != 'U') cp &= 0xFFFF;
+            tok.kind = TNumber;
+            tok.number = cp;
+            tok.ity = 0;
             tokens.push_back(tok);
             continue;
         }

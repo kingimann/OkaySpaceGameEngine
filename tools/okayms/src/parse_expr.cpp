@@ -753,6 +753,113 @@ bool Parser::parse_new(Node* out) {
     std::vector<Node> args;
     if (accept(TLParen)) {
         if (!parse_call_args(&args)) return false;
+    } else if (is(TLBrace) && !has_place) {
+        // new T{a, b} ([expr.new], [dcl.init.list]): a class with a constructor takes the list as constructor
+        // arguments; an aggregate gets its members in order, and the members after the last one given are zero; a
+        // scalar gets its one value (or zero for {}).
+        next();
+        std::vector<Node> items;
+        while (!is(TRBrace) && !is(TEnd)) {
+            Node item;
+            if (!parse_expr(1, &item)) return false;
+            items.push_back(std::move(item));
+            if (!accept(TComma)) break;
+        }
+        if (!expect(TRBrace, "'}'")) return false;
+        const bool cls = ty.base == 3 && ty.pointers == 0 && ty.struct_id >= 0;
+        if (cls && class_needs_ctor(structs[static_cast<size_t>(ty.struct_id)])) {
+            args = std::move(items);
+        } else {
+            Node size;
+            size.kind = Node::IntLit;
+            size.number = static_cast<uint64_t>(size_of(ty));
+            size.type.base = 1;
+            Node alloc;
+            alloc.kind = Node::Call;
+            alloc.text = "malloc";
+            alloc.kids.push_back(std::move(size));
+            Node cast;
+            cast.kind = Node::Unary;
+            cast.type = ty;
+            cast.type.pointers += 1;
+            cast.kids.push_back(std::move(alloc));
+            Local hidden;
+            hidden.name = "__pn" + std::to_string(tmp_count++);
+            hidden.type = cast.type;
+            place_local(cur_locals, hidden);
+            auto add_stmt = [&](Node e) {
+                Node st;
+                st.kind = Node::ExprStmt;
+                st.kids.push_back(std::move(e));
+                stmt_pre.push_back(std::move(st));
+            };
+            Node set_ptr;
+            set_ptr.kind = Node::Assign;
+            set_ptr.op = TAssign;
+            set_ptr.kids.push_back(node_name(hidden.name));
+            set_ptr.kids.push_back(std::move(cast));
+            add_stmt(std::move(set_ptr));
+            auto zero = []() {
+                Node z;
+                z.kind = Node::IntLit;
+                z.number = 0;
+                z.type.base = 1;
+                return z;
+            };
+            auto deref = [&]() {
+                Node d;
+                d.kind = Node::Unary;
+                d.op = TStar;
+                d.kids.push_back(node_name(hidden.name));
+                return d;
+            };
+            if (!cls) {
+                if (items.size() > 1) {
+                    error = "too many values in new T{...}";
+                    return false;
+                }
+                Node store;
+                store.kind = Node::Assign;
+                store.op = TAssign;
+                store.kids.push_back(deref());
+                store.kids.push_back(items.empty() ? zero() : std::move(items[0]));
+                add_stmt(std::move(store));
+            } else {
+                const StructDef def = structs[static_cast<size_t>(ty.struct_id)];
+                size_t next_item = 0;
+                for (const Field& f : def.fields) {
+                    if (f.name == "__vptr") continue;
+                    const bool scalar = f.type.pointers > 0 || (f.type.base != 3 && !f.type.is_array());
+                    if (next_item >= items.size()) {
+                        if (!scalar) {
+                            error = "new T{...} leaves out a member that is not a number or pointer (" + f.name + ")";
+                            return false;
+                        }
+                    } else if (!scalar) {
+                        error = "new T{...} of a member that is an array or class is not supported (" + f.name + ")";
+                        return false;
+                    }
+                    Node field;
+                    field.kind = Node::Field;
+                    field.op = TDot;
+                    field.text = f.name;
+                    field.kids.push_back(deref());
+                    Node store;
+                    store.kind = Node::Assign;
+                    store.op = TAssign;
+                    store.kids.push_back(std::move(field));
+                    store.kids.push_back(next_item < items.size() ? std::move(items[next_item]) : zero());
+                    ++next_item;
+                    add_stmt(std::move(store));
+                }
+                if (next_item < items.size()) {
+                    error = "too many values in new T{...}";
+                    return false;
+                }
+            }
+            *out = node_name(hidden.name);
+            return true;
+        }
     }
     const bool obj = ty.base == 3 && ty.pointers == 0 && ty.struct_id >= 0;
     bool plain_copy = false;  // new C(other) where C has constructors but no copy constructor: the bytes are copied
@@ -1349,6 +1456,7 @@ bool Parser::parse_unary(Node* out) {
             const std::string member = name.substr(colons + 2);
             if ((!is(TLParen) || static_object_call(scope_sid, member)) && static_member_expr(scope_sid, member, out))
                 return parse_postfix(out);
+            if (!is(TLParen) && !is(TLt) && static_method_ref(scope_sid, member, out)) return parse_postfix(out);
             std::vector<TArg> qtargs;
             if (is(TLt)) {
                 int tmpl_owner = -1;
@@ -1364,6 +1472,7 @@ bool Parser::parse_unary(Node* out) {
             bool is_field = false;
             for (const Field& field : def.fields)
                 if (field.name == name) is_field = true;
+            if (!is_field && !is(TLParen) && !is(TLt) && static_method_ref(cur_class, name, out)) return parse_postfix(out);
             Node self;
             self.kind = Node::Name;
             self.text = "this";
@@ -1696,6 +1805,37 @@ bool Parser::parse_unary(Node* out) {
             bool exp = false;
             if (!parse_type(&ty, &imp, &exp)) return false;
             while (accept(TStar)) ++ty.pointers;
+            if (is(TAmp) || is(TAndAnd)) {
+                // (T&)x, (const T&)x, (T&&)x, and static_cast<const Base&>(derived), which is read as that: the object x
+                // seen as a T ([expr.static.cast] 2, [expr.cast]), here *(T*)&x. When x already has type T (and is not
+                // an lvalue, such as a call result) it is x itself.
+                next();
+                if (!expect(TRParen, "')'")) return false;
+                Node inner;
+                if (!parse_unary(&inner)) return false;
+                Type from;
+                const bool known = static_type(inner, &from);
+                if (known && from.base == ty.base && from.pointers == ty.pointers && from.struct_id == ty.struct_id &&
+                    !(inner.kind == Node::Name || inner.kind == Node::Field || inner.kind == Node::Index ||
+                      (inner.kind == Node::Unary && inner.op == TStar))) {
+                    *out = std::move(inner);
+                    return parse_postfix(out);
+                }
+                Type pt = ty;
+                pt.is_ref = false;
+                pt.rref = false;
+                pt.is_const = false;
+                pt.pointers += 1;
+                Node cast;
+                cast.kind = Node::Unary;
+                cast.type = pt;
+                cast.kids.push_back(node_addr(std::move(inner)));
+                *out = Node{};
+                out->kind = Node::Unary;
+                out->op = TStar;
+                out->kids.push_back(std::move(cast));
+                return parse_postfix(out);
+            }
             if (!expect(TRParen, "')'")) return false;
             Node inner;
             if (!parse_unary(&inner)) return false;
@@ -1775,7 +1915,8 @@ bool Parser::parse_unary(Node* out) {
         no_const_subst = saved_subst;
         if (!inner_ok) return false;
         const Tok uop = out->op;
-        if (uop == TAmp && inner.kind == Node::Name && inner.kids.empty() && names_function(inner.text)) {
+        if (uop == TAmp && ((inner.kind == Node::Name && inner.kids.empty() && names_function(inner.text)) ||
+                            (inner.kind == Node::Unary && inner.op == TEnd && inner.text == "<static-fn>"))) {
             // &f of a function ([expr.unary.op] 3): the function's address, which the name alone already is ([conv.func]).
             *out = std::move(inner);
             return parse_postfix(out);
@@ -2057,6 +2198,27 @@ bool Parser::parse_postfix(Node* out) {
                     if (class_needs_dtor(structs[static_cast<size_t>(call_type.struct_id)]))
                         stmt_temps.push_back(Temp{hidden.name, call_type.struct_id});
                     *out = node_name(hidden.name);
+                }
+            }
+            {
+                // u.LowPart where LowPart is a member of an anonymous struct or union inside u: go through the hidden
+                // field(s) that hold it ([class.union.anon]).
+                Type holder;
+                std::vector<std::string> path;
+                if (static_type(*out, &holder) && holder.base == 3 && holder.struct_id >= 0 &&
+                    find_field_named(structs[static_cast<size_t>(holder.struct_id)], wrapped.text) < 0 &&
+                    anon_path(holder.struct_id, wrapped.text, &path)) {
+                    Tok step_op = op;
+                    for (const std::string& hidden : path) {
+                        Node step;
+                        step.kind = Node::Field;
+                        step.op = step_op;
+                        step.text = hidden;
+                        step.kids.push_back(std::move(*out));
+                        *out = std::move(step);
+                        step_op = TDot;
+                    }
+                    wrapped.op = TDot;
                 }
             }
             wrapped.kids.push_back(std::move(*out));

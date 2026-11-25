@@ -52,6 +52,22 @@ struct ProgramRun {
     bool rtti = false;  // g++ builds the reference with run-time type information (a program that uses typeid)
 };
 
+// The import libraries the g++ reference links for the DLLs a program names ("winhttp.dll:WinHttpCrackUrl" gives
+// -lwinhttp). kernel32 and the C runtime are linked by default.
+inline std::string gpp_dll_libs(const ProgramRun& run) {
+    std::string libs;
+    for (const std::string& fn : run.kernel32) {
+        const size_t colon = fn.find(':');
+        if (colon == std::string::npos) continue;
+        std::string dll = fn.substr(0, colon);
+        if (dll.size() > 4 && dll.compare(dll.size() - 4, 4, ".dll") == 0) dll.resize(dll.size() - 4);
+        if (dll == "kernel32" || dll == "msvcrt") continue;
+        const std::string flag = " -l" + dll;
+        if (libs.find(flag) == std::string::npos) libs += flag;
+    }
+    return libs;
+}
+
 // Builds `source` at each optimization level and runs it; MinGW g++ runs the same text. Both must exit with `want`.
 // object_out, when given, receives the /O0 object (for symbol checks).
 inline void run_both(const ProgramRun& run, Tally& tally, const std::string& name, const std::string& source, int want,
@@ -105,7 +121,7 @@ inline void run_both(const ProgramRun& run, Tally& tally, const std::string& nam
     }
     const std::string gpp_exe = dir + "/" + name + "-gpp.exe";
     const int built = run_shell(std::string("x86_64-w64-mingw32-g++ -static -fno-exceptions ") + (run.rtti ? "" : "-fno-rtti ") +
-                                "-w -o " + gpp_exe + " " + src +
+                                "-w -o " + gpp_exe + " " + src + gpp_dll_libs(run) +
                                 " 2>" + dir + "/" + name + ".log");
     CHECK(tally, built == 0);
     if (built != 0) return;

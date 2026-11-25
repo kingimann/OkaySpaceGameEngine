@@ -219,6 +219,14 @@ struct StructDef {
     // The class template and the arguments of an instance, for deduction through Node<T>.
     std::string tmpl;
     std::vector<TArg> targs;
+    // Anonymous struct and union members (`union { struct { DWORD Low; LONG High; }; long long Quad; }`,
+    // [class.union.anon] and the Microsoft anonymous struct): the hidden fields that hold them. Their members are
+    // named as members of this class (lookup goes through the hidden field).
+    std::vector<std::string> anon_fields;
+    // The class this one is nested in (-1 at namespace scope). Classes are kept under their plain names, so two nested
+    // classes of one name (Outer1::Entry and Outer2::Entry) are told apart by it: a name used inside a class finds the
+    // class nested there first (find_struct), and members of a nested class are decorated with the outer class too.
+    int parent = -1;
 };
 
 struct Global {

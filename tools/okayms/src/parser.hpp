@@ -289,6 +289,29 @@ struct Parser {
                 if (t.text == "inline" && i + 1 < tokens.size()) tokens[i + 1].inl = true;
                 continue;
             }
+            // new (std::nothrow) T ([new.delete.single]): here `new` calls malloc and never throws, so the tag is dropped
+            // and it is a plain new. Own simplification: the constructor still runs when malloc returns null.
+            if (t.kind == TIdent && t.text == "new" && i + 3 < tokens.size() && tokens[i + 1].kind == TLParen) {
+                size_t k = i + 2;
+                if (k + 1 < tokens.size() && tokens[k].kind == TIdent && tokens[k].text == "std" && tokens[k + 1].kind == TColonColon)
+                    k += 2;
+                if (k + 1 < tokens.size() && tokens[k].kind == TIdent && tokens[k].text == "nothrow" && tokens[k + 1].kind == TRParen) {
+                    out.push_back(t);
+                    i = k + 1;
+                    continue;
+                }
+            }
+            // Microsoft keywords that change nothing on x64: the calling-convention words (x64 has one convention; the
+            // compiler accepts and ignores them, per Microsoft's x64 calling convention documentation), the pointer-size
+            // words, and __forceinline / __inline (read as inline).
+            if (t.kind == TIdent && (t.text == "__forceinline" || t.text == "__inline")) {
+                if (i + 1 < tokens.size()) tokens[i + 1].inl = true;
+                continue;
+            }
+            if (t.kind == TIdent && (t.text == "__cdecl" || t.text == "__stdcall" || t.text == "__fastcall" ||
+                                      t.text == "__thiscall" || t.text == "__ptr64" || t.text == "__ptr32" ||
+                                      t.text == "__unaligned" || t.text == "__restrict" || t.text == "__w64"))
+                continue;
             if (t.kind == TConst && !out.empty() && out.back().kind == TStar) continue;  // int *const p
             if (t.kind == TIdent && t.text == "nullptr") {
                 Token z = t;
@@ -1163,9 +1186,38 @@ struct Parser {
         return true;
     }
     int find_struct(const std::string& name) const {
+        int first = -1;
+        int count = 0;
         for (size_t i = 0; i < structs.size(); ++i)
-            if (structs[i].name == name) return static_cast<int>(i);
-        return -1;
+            if (structs[i].name == name) {
+                if (first < 0) first = static_cast<int>(i);
+                ++count;
+            }
+        if (count <= 1) return first;
+        // Several classes of this name ([basic.lookup.unqual], [class.nest]): the one nested in the class being read, or
+        // in the class whose member function is being compiled, or in a class around those (innermost first); then
+        // one at namespace scope; else the first.
+        auto nested_in = [&](int ctx) {
+            for (size_t i = 0; i < structs.size(); ++i)
+                if (structs[i].name == name && structs[i].parent == ctx) return static_cast<int>(i);
+            return -1;
+        };
+        auto search_up = [&](int ctx) {
+            for (int depth = 0; ctx >= 0 && static_cast<size_t>(ctx) < structs.size() && depth < 64; ++depth) {
+                const int hit = nested_in(ctx);
+                if (hit >= 0) return hit;
+                ctx = structs[static_cast<size_t>(ctx)].parent;
+            }
+            return -1;
+        };
+        for (size_t k = open_structs.size(); k-- > 0;) {
+            const int hit = search_up(open_structs[k]);
+            if (hit >= 0) return hit;
+        }
+        const int in_method = search_up(cur_class);
+        if (in_method >= 0) return in_method;
+        const int top = nested_in(-1);
+        return top >= 0 ? top : first;
     }
     int size_of(const Type& type) const {
         if (type.is_ref) return 8;
@@ -1381,6 +1433,7 @@ struct Parser {
                         StructDef fwd;
                         fwd.name = name;
                         fwd.incomplete = true;
+                        if (!open_structs.empty()) fwd.parent = open_structs.back();  // class X; inside a class
                         fwd.cxx = true;
                         fwd.is_class = as_class;
                         fwd.is_union = as_union;
@@ -1425,6 +1478,7 @@ struct Parser {
                 StructDef fwd;
                 fwd.name = name;
                 fwd.incomplete = true;
+                if (!open_structs.empty()) fwd.parent = open_structs.back();  // class X; inside a class
                 fwd.cxx = true;
                 fwd.is_class = as_class;
                 fwd.is_union = as_union;
@@ -2028,6 +2082,11 @@ struct Parser {
         // A parameter or local variable hides a type of the same name ([basic.scope.hiding]): `(seconds * rate)` with a
         // parameter `seconds` is not a cast to std::chrono::seconds (namespaces are not kept apart here).
         if (is(TIdent) && !cur().nsq && cur_locals != nullptr && local_visible(cur().text)) return false;
+        // A data member hides a type of the same name inside its class's member functions: `thread = CreateThread(...)`
+        // with a member `HANDLE thread` assigns to the member (std::thread is a bare type name here).
+        if (is(TIdent) && !cur().nsq && cur_class >= 0 && static_cast<size_t>(cur_class) < structs.size() &&
+            find_field_named(structs[static_cast<size_t>(cur_class)], cur().text) >= 0)
+            return false;
         if (is(TInt) || is(TVoid) || is(TChar) || is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort) ||
             is(TStruct) || is(TUnion) || is(TEnum) || is(TTypedef) || is(TDeclspec) || is(TStatic) || is(TConst) ||
             is(TFloat) || is(TDouble))
@@ -2127,6 +2186,38 @@ struct Parser {
     }
     // A static data member or class constant used as an expression: a constant is its value, a
     // data member names its global.
+    // C::f or f (inside C) without a call, where f is C's only member function of that name and it is static: a pointer
+    // to it ([expr.prim.id.qual], [conv.func]). The node is a cast of the function's name to the pointer type, marked
+    // "<static-fn>" so that &C::f gives the same pointer.
+    bool static_method_ref(int sid, const std::string& name, Node* out) {
+        if (sid < 0 || static_cast<size_t>(sid) >= structs.size()) return false;
+        const Method* found = nullptr;
+        int count = 0;
+        for (const Method& m : structs[static_cast<size_t>(sid)].methods)
+            if (m.name == name) {
+                ++count;
+                found = &m;
+            }
+        if (count != 1 || !found->is_static) return false;
+        FuncType ft;
+        ft.ret = found->ret;
+        ft.params = found->params;
+        Type fp;
+        fp.base = 1;
+        fp.pointers = 1;
+        fp.func_id = static_cast<int>(func_types.size());
+        func_types.push_back(ft);
+        Node fn_name;
+        fn_name.kind = Node::Name;
+        fn_name.text = found->qname;
+        *out = Node{};
+        out->kind = Node::Unary;
+        out->type = fp;
+        out->text = "<static-fn>";
+        out->kids.push_back(std::move(fn_name));
+        return true;
+    }
+
     bool static_member_expr(int sid, const std::string& name, Node* out) const {
         if (sid < 0) return false;
         const StructDef& def = structs[static_cast<size_t>(sid)];
@@ -2994,7 +3085,7 @@ struct Parser {
                 def->vtable.push_back("");
             }
         }
-        m.qname = def->name + "::" + m.name + "/" + std::to_string(m.params.size());
+        m.qname = (def->parent >= 0 ? def->symname() : def->name) + "::" + m.name + "/" + std::to_string(m.params.size());
         if (collide) m.qname += "~" + new_sig + (m.is_const ? "K" : "");
         if (m.name == "<ctor>")
             for (const Type& param : m.params) m.qname += param.is_ref ? "r" : "v";  // constructors overload by type
@@ -3098,6 +3189,12 @@ struct Parser {
             def.targs = inst_args;
         }
         def.sym_name = pending_sym;
+        // A class nested in another ([class.nest]): remembered with its outer class, and decorated as Inner@Outer.
+        if (pending_sym.empty() && !open_structs.empty() && name.compare(0, 6, "__anon") != 0 &&
+            name.compare(0, 5, "__lam") != 0) {
+            def.parent = open_structs.back();
+            def.sym_name = name + "@" + structs[static_cast<size_t>(def.parent)].symname();
+        }
         pending_sym.clear();
         // The instance itself is named by its template (Box<int> has the constructor Box); a class nested in it by its own name.
         const std::string ctor_name = inst_base_name.empty() || def.sym_name.empty() ? name : inst_base_name;
@@ -3122,7 +3219,8 @@ struct Parser {
         const size_t enums_from = enums_declared.size();
         int self = -1;
         for (size_t k = 0; k < structs.size(); ++k)
-            if (structs[k].incomplete && structs[k].name == name) self = static_cast<int>(k);
+            if (structs[k].incomplete && structs[k].name == name && (structs[k].parent == def.parent || def.parent < 0))
+                self = static_cast<int>(k);
         if (self >= 0) {
             structs[static_cast<size_t>(self)] = def;  // the definition of a class declared before
         } else {
@@ -3363,6 +3461,16 @@ struct Parser {
             bool imp = false;
             bool exp = false;
             if (!parse_type(&field.type, &imp, &exp)) return false;
+            if (!static_member && is(TSemi) && field.type.base == 3 && field.type.pointers == 0 && field.type.struct_id >= 0 &&
+                structs[static_cast<size_t>(field.type.struct_id)].name.compare(0, 6, "__anon") == 0) {
+                // struct { ... }; or union { ... }; as a member: an anonymous member ([class.union.anon]). It is kept as
+                // a hidden field; its members are found through it by name (anon_path).
+                next();
+                field.name = "__anonm" + std::to_string(def.anon_fields.size());
+                def.anon_fields.push_back(field.name);
+                def.fields.push_back(field);
+                continue;
+            }
             if (is(TSemi) && !static_member) {  // enum { E = 3 };
                 next();
                 continue;
@@ -3958,6 +4066,27 @@ struct Parser {
             if (class_needs_ctor(structs[static_cast<size_t>(ft.struct_id)]) && !takes_no_args(ft.struct_id)) return false;
         }
         return true;
+    }
+
+    // The hidden anonymous-member fields to go through to reach `name` in class sid (outermost first), when name is not
+    // a direct member but a member of an anonymous struct or union in it (searched depth first). False when none has it.
+    bool anon_path(int sid, const std::string& name, std::vector<std::string>* path) const {
+        if (sid < 0 || static_cast<size_t>(sid) >= structs.size()) return false;
+        const StructDef& d = structs[static_cast<size_t>(sid)];
+        for (const std::string& hidden : d.anon_fields) {
+            const int k = find_field_named(d, hidden);
+            if (k < 0) continue;
+            const int inner = d.fields[static_cast<size_t>(k)].type.struct_id;
+            if (inner < 0 || static_cast<size_t>(inner) >= structs.size()) continue;
+            if (find_field_named(structs[static_cast<size_t>(inner)], name) >= 0) {
+                path->push_back(hidden);
+                return true;
+            }
+            path->push_back(hidden);
+            if (anon_path(inner, name, path)) return true;
+            path->pop_back();
+        }
+        return false;
     }
 
     static int find_field_named(const StructDef& d, const std::string& name) {
@@ -7123,6 +7252,13 @@ struct Parser {
             if (is_typedef) {
                 decl.type.is_const = is_const;
                 typedefs[decl.name] = decl.type;
+                // typedef struct _X { ... } X, *PX, *LPX; ([dcl.typedef]): every declarator names the type read first.
+                while (accept(TComma)) {
+                    Declarator more;
+                    if (!parse_declarator(type, &more)) return false;
+                    more.type.is_const = is_const;
+                    typedefs[more.name] = more.type;
+                }
                 if (!expect(TSemi, "';'")) return false;
                 continue;
             }

@@ -537,14 +537,18 @@ struct Parser {
                 if (i < tokens.size()) out.push_back(tokens[i]);
                 continue;
             }
+            // ::okay::Scope: a leading :: names the global namespace ([namespace.qual]); it goes with the names.
+            const bool global_qual = i > 0 && tokens[i - 1].kind == TColonColon &&
+                                     !(i > 1 && (tokens[i - 2].kind == TIdent || tokens[i - 2].kind == TGt));
             if (tokens[i].kind == TIdent && namespaces.count(tokens[i].text) > 0 && i + 1 < tokens.size() &&
-                tokens[i + 1].kind == TColonColon && !(i > 0 && tokens[i - 1].kind == TColonColon)) {
+                tokens[i + 1].kind == TColonColon && (!(i > 0 && tokens[i - 1].kind == TColonColon) || global_qual)) {
                 size_t k = i;
                 while (k + 1 < tokens.size() && tokens[k].kind == TIdent && namespaces.count(tokens[k].text) > 0 &&
                        tokens[k + 1].kind == TColonColon)
                     k += 2;
                 const bool call = k + 1 < tokens.size() && tokens[k].kind == TIdent && tokens[k + 1].kind == TLParen;
                 if (!call && k < tokens.size() && tokens[k].kind == TIdent) {
+                    if (global_qual && !out.empty() && out.back().kind == TColonColon) out.pop_back();
                     if (tokens[i].inl) tokens[k].inl = true;  // `inline std::uint32_t f()`: the mark moves to the type name
                     i = k - 1;  // the leading namespace names and their '::' are dropped
                     continue;
@@ -1218,6 +1222,8 @@ struct Parser {
     bool parse_type(Type* type, bool* imported, bool* exported) {
         while (accept(TConst)) {
         }
+        // const ::okay::Vec3&: a type named from the global namespace (see parse_stmt_inner).
+        if (is(TColonColon) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent) next();
         if (!parse_type_core(type, imported, exported)) return false;
         while (accept(TConst)) {
         }

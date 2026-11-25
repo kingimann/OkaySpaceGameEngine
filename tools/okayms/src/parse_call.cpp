@@ -562,7 +562,8 @@ bool Parser::class_object_type(const Node& node, Type* out) const {
 // A call of the free function `name` (found in any namespace) with these arguments, when one fits.
 bool Parser::free_call(const std::string& name, std::vector<Node> args, Node* out, bool* found) {
     *found = false;
-    const std::string picked = pick_any_ns(name, args, true);
+    std::string picked = pick_any_ns(name, args, true);
+    bool from_template = false;
     if (picked.empty()) {
         // An operator function template ([over.match.oper] 3, [temp.deduct.call]; Round 31): <chrono>'s comparisons
         // of durations of any two units. A template whose arguments cannot be deduced from these operands is not a
@@ -590,29 +591,11 @@ bool Parser::free_call(const std::string& name, std::vector<Node> args, Node* ou
         if (fit == nullptr) return true;
         explicit_fit_ = {fit};
         explicit_fit_name_ = name;
-        std::string inst;
-        if (!instantiate_function(name, {}, args, &inst)) {
+        if (!instantiate_function(name, {}, args, &picked)) {
             error = saved_error;
             return true;
         }
-        Node call;
-        call.kind = Node::Call;
-        call.text = inst;
-        call.kids = std::move(args);
-        for (const FuncDecl& known : funcs) {
-            if (known.name != inst) continue;
-            std::vector<Type> source = known.params;
-            for (size_t i = 0; i < source.size() && i < known.param_ref.size(); ++i)
-                if (known.param_ref[i]) {
-                    source[i].pointers -= 1;
-                    source[i].is_ref = true;
-                }
-            if (!adjust_args(source, &call.kids)) return false;
-            *found = true;
-            *out = known.ret_ref ? reference_result(std::move(call), true, known.ret.rref) : std::move(call);
-            return true;
-        }
-        return true;
+        from_template = true;
     }
     for (const FuncDecl& known : funcs) {
         if (known.name != picked) continue;
@@ -621,7 +604,7 @@ bool Parser::free_call(const std::string& name, std::vector<Node> args, Node* ou
         call.kind = Node::Call;
         call.text = picked;
         call.kids = std::move(args);
-        if (!pad_func_defaults(picked, &call.kids)) return false;
+        if (!from_template && !pad_func_defaults(picked, &call.kids)) return false;
         std::vector<Type> source = known.params;
         for (size_t i = 0; i < source.size() && i < known.param_ref.size(); ++i)
             if (known.param_ref[i]) {

@@ -1587,6 +1587,7 @@ struct Parser {
         return outer.empty() || outer == inner ||
                (inner.size() > outer.size() && inner.compare(0, outer.size(), outer) == 0 && inner.compare(outer.size(), 2, "::") == 0);
     }
+    // Whether namespace ns is the one q names: q itself or a suffix of it after "::" (crypto names okay::crypto).
     static bool ns_names(const std::string& ns, const std::string& q) {
         return ns == q || (ns.size() > q.size() && ns.compare(ns.size() - q.size(), q.size(), q) == 0 &&
                            ns.compare(ns.size() - q.size() - 2, 2, "::") == 0);
@@ -1655,21 +1656,15 @@ struct Parser {
         // (okay::crypto::Sha256, also as a suffix: crypto::Sha256), else the namespace being read or the nearest one
         // around it.
         const std::string qual = at < tokens.size() && tokens[at].text == name ? tokens[at].qual : std::string();
-        auto ns_match = [](const std::string& ns, const std::string& q) {
-            return ns == q || (ns.size() > q.size() && ns.compare(ns.size() - q.size(), q.size(), q) == 0 &&
-                               ns.compare(ns.size() - q.size() - 2, 2, "::") == 0);
-        };
         if (!qual.empty())
             for (size_t i = 0; i < structs.size(); ++i)
-                if (structs[i].name == name && structs[i].parent < 0 && ns_match(structs[i].ns, qual)) return static_cast<int>(i);
+                if (structs[i].name == name && structs[i].parent < 0 && ns_names(structs[i].ns, qual)) return static_cast<int>(i);
         int best = -1;
         size_t best_len = 0;
         for (size_t i = 0; i < structs.size(); ++i) {
             if (structs[i].name != name || structs[i].parent >= 0) continue;
             const std::string& ns = structs[i].ns;
-            const bool encloses = ns.empty() || current_ns == ns ||
-                                  (current_ns.size() > ns.size() && current_ns.compare(0, ns.size(), ns) == 0 &&
-                                   current_ns.compare(ns.size(), 2, "::") == 0);
+            const bool encloses = ns_encloses(ns, current_ns);
             if (encloses && (best < 0 || ns.size() > best_len)) {
                 best = static_cast<int>(i);
                 best_len = ns.size();
@@ -2316,11 +2311,9 @@ struct Parser {
         return t.base == 3 && t.struct_id >= 0 && !structs[static_cast<size_t>(t.struct_id)].is_union &&
                !class_needs_ctor(structs[static_cast<size_t>(t.struct_id)]);
     }
-    Node fill_aggregate(const Type& t, const std::vector<Node>& items, size_t* pos) const {
-        Node list;
-        list.kind = Node::Block;
-        list.text = "init";
-        list.number = 7;  // already regular
+    // The types an aggregate's braced list names in order ([dcl.init.aggr] 3): each element of an array, or each
+    // member of a class but its table pointer.
+    std::vector<Type> aggregate_parts(const Type& t) const {
         std::vector<Type> parts;
         if (t.is_array()) {
             const Type elem = peel_array(t);
@@ -2329,6 +2322,14 @@ struct Parser {
             for (const Field& f : structs[static_cast<size_t>(t.struct_id)].fields)
                 if (f.name.compare(0, 6, "__vptr") != 0) parts.push_back(f.type);
         }
+        return parts;
+    }
+    Node fill_aggregate(const Type& t, const std::vector<Node>& items, size_t* pos) const {
+        Node list;
+        list.kind = Node::Block;
+        list.text = "init";
+        list.number = 7;  // already regular
+        const std::vector<Type> parts = aggregate_parts(t);
         for (const Type& part : parts) {
             if (*pos >= items.size()) break;
             const Node& item = items[*pos];
@@ -3417,14 +3418,7 @@ struct Parser {
             return;
         }
         if (!list) return;
-        std::vector<Type> parts;
-        if (t.is_array()) {
-            const Type elem = peel_array(t);
-            for (int i = 0; i < t.array_len; ++i) parts.push_back(elem);
-        } else {
-            for (const Field& f : structs[static_cast<size_t>(t.struct_id)].fields)
-                if (f.name.compare(0, 6, "__vptr") != 0) parts.push_back(f.type);
-        }
+        const std::vector<Type> parts = aggregate_parts(t);
         size_t last = 0;  // one past the last part that holds a member pointer
         for (size_t i = 0; i < parts.size(); ++i)
             if (has_memptr(parts[i])) last = i + 1;

@@ -836,37 +836,28 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
                 return false;
             if (!braced_ret && !cur_ret_ref) class_ptr_convert(&value, cur_ret);  // return derived; as a Base* (Round 29)
             Type value_type;
-            if (!braced_ret && !cur_ret_ref && cur_ret.base == 3 && cur_ret.pointers == 0 && !cur_ret.is_ref &&
+            // return 0; or return nullptr; or return p; for a class result: copy-initialization of the result from a
+            // value that is not an object, by the converting constructor ([stmt.return] 2, [dcl.init] 17.6.3).
+            const bool by_conversion =
+                !braced_ret && !cur_ret_ref && cur_ret.base == 3 && cur_ret.pointers == 0 && !cur_ret.is_ref &&
                 !cur_ret.is_array() && cur_ret.struct_id >= 0 && obj_needs_ctor(cur_ret) && static_type(value, &value_type) &&
-                !(value_type.base == 3 && value_type.pointers == 0 && !value_type.is_array())) {
-                // return 0; or return nullptr; or return p; for a class result: copy-initialization of the result from a
-                // value that is not an object, by the converting constructor ([stmt.return] 2, [dcl.init] 17.6.3). The
-                // object is made in a hidden local that becomes the result (as for return {a, b}).
-                Local hidden;
-                hidden.name = "__br" + std::to_string(rv_count++);
-                hidden.type = cur_ret;
-                place_local(locals, hidden);
-                std::vector<Node> cargs;
-                cargs.push_back(std::move(value));
-                Node call;
-                if (!special_call(cur_ret.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs), &call))
-                    return false;
-                stmt_pre.push_back(std::move(call));
-                value = node_name(hidden.name);
-            }
-            if (!braced_ret && !cur_ret_ref && cur_ret.base == 3 && cur_ret.pointers == 0 && !cur_ret.is_ref &&
-                !cur_ret.is_array() && cur_ret.struct_id >= 0 && copy_ctor(cur_ret.struct_id) != nullptr &&
+                !(value_type.base == 3 && value_type.pointers == 0 && !value_type.is_array());
+            // return s; of an object that is not this function's own local and not a temporary (a reference parameter,
+            // a member, a global, *p, a[i]): the result is copy-initialized from it ([stmt.return] 2,
+            // [class.copy.ctor]) by the copy constructor. Before Round 31 its bytes were copied: the result shared the
+            // source's heap memory (std::string's buffer), and the result's destructor freed it under the source
+            // ("return text_;" in path::string()).
+            const bool by_copy =
+                !by_conversion && !braced_ret && !cur_ret_ref && cur_ret.base == 3 && cur_ret.pointers == 0 &&
+                !cur_ret.is_ref && !cur_ret.is_array() && cur_ret.struct_id >= 0 && copy_ctor(cur_ret.struct_id) != nullptr &&
                 static_type(value, &value_type) && value_type.base == 3 && value_type.pointers == 0 &&
-                !value_type.is_array() && value_type.struct_id >= 0 && return_needs_copy(value, value_type)) {
-                // return s; of an object that is not this function's own local and not a temporary (a reference
-                // parameter, a member, a global, *p, a[i]): the result is copy-initialized from it ([stmt.return] 2,
-                // [class.copy.ctor]), so the copy constructor makes it in a hidden local that becomes the result. Before
-                // Round 31 its bytes were copied: the result shared the source's heap memory (std::string's buffer), and
-                // the result's destructor freed it under the source ("return text_;" in path::string()).
+                !value_type.is_array() && value_type.struct_id >= 0 && return_needs_copy(value, value_type);
+            if (by_conversion || by_copy) {
+                // The object is made in a hidden local that becomes the result (as for return {a, b}).
                 Local hidden;
                 hidden.name = "__br" + std::to_string(rv_count++);
                 hidden.type = cur_ret;
-                hidden.type.is_const = false;
+                if (by_copy) hidden.type.is_const = false;
                 place_local(locals, hidden);
                 std::vector<Node> cargs;
                 cargs.push_back(std::move(value));

@@ -25,6 +25,13 @@ static string sh(const string& args = "", int* rc = nullptr) {
 }
 static int ran(const string& out) { auto p = out.find("ran "); return p == string::npos ? -1 : atoi(out.c_str() + p + 4); }
 static void check(bool c, const string& what, const string& ctx = "") { if (c) ++gPass; else { ++gFail; printf("  FAIL: %s\n%s\n", what.c_str(), ctx.c_str()); } }
+// A check that cannot run on this machine (no working wine, a library that is not installed) is counted as skipped, never as
+// passed, and the reason is printed. OKAYBUILD_NO_SKIP=1 counts every skip as a failure (for a machine that should run them all).
+static int gSkip = 0;
+static void skip(int n, const string& why) {
+    if (getenv("OKAYBUILD_NO_SKIP")) { gFail += n; printf("  FAIL (%d check(s) cannot run, OKAYBUILD_NO_SKIP is set): %s\n", n, why.c_str()); return; }
+    gSkip += n; printf("  SKIP (%d check(s)): %s\n", n, why.c_str());
+}
 static void fresh(const string& name) { gRoot = fs::temp_directory_path() / ("okaybuild_test_" + name); fs::remove_all(gRoot); fs::create_directories(gRoot); }
 static void sleepMs() { std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
 static long long mtimeNs(const fs::path& p) { struct stat st{}; if (stat(p.c_str(), &st) != 0) return -1; return (long long)st.st_mtim.tv_sec * 1000000000ll + st.st_mtim.tv_nsec; }
@@ -376,6 +383,25 @@ static string capture(const string& cmd, int* rc = nullptr) {
     size_t n; while ((n = fread(b, 1, sizeof b, p)) > 0) out.append(b, n);
     int st = pclose(p); if (rc) *rc = WEXITSTATUS(st); return out;
 }
+// Why the Windows checks cannot run here: "" when wine starts cmd.exe and prints what it was told to. Asked once. A wine that is
+// installed but broken (this machine: wine64 without wine32 aborts with "free(): invalid pointer") is a reason, not a failure of
+// okay-build.
+static string wineProblem() {
+    static int asked = 0; static string why;
+    if (asked++) return why;
+    if (system("command -v wine >/dev/null 2>&1") != 0) return why = "wine is not installed";
+    int rc = 0; string o = capture("WINEPREFIX=$HOME/.wine-okay WINEDEBUG=-all timeout 120 wine cmd.exe /c echo okay-wine-probe 2>&1", &rc);
+    if (o.find("okay-wine-probe") != string::npos) return why = "";
+    string first = o.substr(0, o.find('\n'));
+    return why = "wine is installed but cannot start cmd.exe (exit " + std::to_string(rc) + ": " + (first.empty() ? "no output" : first) + ")";
+}
+// Why a link with these libraries cannot work here: "" when g++ links an empty program with them.
+static string linkProblem(const string& libs) {
+    int rc = 0; string o = capture("printf 'int main(){return 0;}\\n' | g++ -x c++ - -o /dev/null " + libs + " 2>&1", &rc);
+    if (rc == 0) return "";
+    string first = o.substr(0, o.find('\n'));
+    return "these libraries cannot be linked on this machine (" + libs + "): " + first;
+}
 // Cross-compiling okay-build itself used to fail at sys/wait.h. The Windows host must compile with the
 // win32 MinGW g++ and, under Wine, run cmd.exe commands (echo, a dependency edge, a failing step).
 static void testConfigsAndToolchains() {
@@ -429,7 +455,8 @@ static void testConfigsAndToolchains() {
     check(o.find("host=posix") != string::npos, "this machine reports a posix host", o);
     check(o.find((gRoot / "fakevs/VC/Tools/MSVC/14.40/bin/Hostx64/x64/cl.exe").string()) != string::npos, "msvc compiler path is under the given root", o);
     fs::path exe = fs::temp_directory_path() / "okay-build-win-host.exe";
-    if (fs::exists(exe) && system("command -v wine >/dev/null 2>&1") == 0) {
+    if (fs::exists(exe) && !wineProblem().empty()) skip(1, "cross-compiled probe under wine: " + wineProblem());
+    else if (fs::exists(exe)) {
         string wo = capture("WINEPREFIX=$HOME/.wine-okay WINEDEBUG=-all wine '" + exe.string() + "' toolchains 2>&1", &rc);
         check(rc == 0 && wo.find("host=windows") != string::npos && wo.find("msvc\t") != string::npos, "cross-compiled probe runs under wine and names the windows host", wo);
     }
@@ -653,7 +680,7 @@ static void testWindowsHost() {
     FILE* ff = popen(("file '" + exe.string() + "'").c_str(), "r");
     char fb[256] = {}; if (ff) { size_t n = fread(fb, 1, sizeof fb - 1, ff); pclose(ff); fb[n] = 0; }
     check(std::string(fb).find("PE32+") != std::string::npos, "Windows okay-build is PE32+", fb);
-    if (system("command -v wine >/dev/null 2>&1") != 0) { printf("  wine not installed, runtime skipped\n"); return; }
+    if (!wineProblem().empty()) { skip(4, "okay-build.exe under wine: " + wineProblem()); return; }
     fresh("winhost");
     write("build.okay",
           "pool link\n  depth = 1\nend\n"
@@ -787,9 +814,12 @@ static void testNativeManifest() {
     check(man.find("target okay_engine lib") != string::npos && man.find("target okay_crypto lib") != string::npos, "engine and crypto targets", man);
     check(man.find("ModelImportAssimp") == string::npos && man.find("OwnWin32") == string::npos, "optional files are left out", man);
     check(man.find("tests/test_math.cpp") != string::npos && man.find("ufbx.c") != string::npos, "test_math and ufbx are included", man);
-    o = sh("-j2 test_math", &rc);
-    check(rc == 0, "the generated manifest builds test_math", o);
-    check(system(("'" + (gRoot / "build/test_math").string() + "' >/dev/null").c_str()) == 0, "test_math runs");
+    if (string lp = linkProblem("-lsodium -lSDL2"); !lp.empty()) skip(2, "building and running test_math from the native manifest: " + lp);
+    else {
+        o = sh("-j2 test_math", &rc);
+        check(rc == 0, "the generated manifest builds test_math", o);
+        check(system(("'" + (gRoot / "build/test_math").string() + "' >/dev/null").c_str()) == 0, "test_math runs");
+    }
     { // member order follows engine/CMakeLists.txt when it lists the files
         write("engine/src/Crypto/B.cpp", "int cb(){return 0;}\n");
         write("engine/CMakeLists.txt", "add_library(okay_crypto STATIC\n  src/Crypto/B.cpp\n  src/Crypto/A.cpp\n)\n");
@@ -2198,7 +2228,7 @@ static void testConfigurationFlags() {
     check(link.find("-fno-omit-frame-pointer -g1 -gz -Wl,--compress-debug-sections=zlib") != string::npos && link.find("-gz") < link.find("app/main.cpp.o"), "Debug link: C++ flags, then CMAKE_EXE_LINKER_FLAGS, before the objects", link);
     o = sh("cmake . -o none.okay --build-type None", &rc); o = sh("-f none.okay --dry-run -v app", &rc);
     cc = lineWith(o, "-c " + (gRoot / "main.cpp").string());
-    check(cc.find("-O") == string::npos && cc.find(" -g") == string::npos && cc.find("NDEBUG") == string::npos, "build type None adds no flags", cc);
+    check(cc.find(" -O") == string::npos && cc.find(" -g") == string::npos && cc.find("NDEBUG") == string::npos, "build type None adds no flags", cc);
     o = sh("-f rel.okay app", &rc);
     check(rc == 0 && system(("'" + (gRoot / "build/app").string() + "'").c_str()) == 0, "the Release program builds and runs", o);
 }
@@ -2344,10 +2374,161 @@ static void testPostBuild() {
     o = sh("-f build.okay app", &rc);
     check(rc == 0 && readFile(gRoot / "build/post.txt") == "sub it is \"fine\"\nsub it is \"fine\"\n", "a new link runs the step again", o);
 }
+// ---- Our own compilers (tools/okaycc: okay-cc and okay-ld for Linux; tools/okayms: okay-cl and okay-link for Windows) driven by
+// okay-build through 'toolchain okay-cc' and 'toolchain okay-ms'. The four programs come from OKAYBUILD_OWN_TOOLS (build.sh builds
+// them there); without them these checks are skipped, never passed.
+static string ownTool(const char* name) {
+    const char* d = getenv("OKAYBUILD_OWN_TOOLS"); if (!d) return "";
+    fs::path p = fs::path(d) / name; return fs::exists(p) ? fs::absolute(p).string() : "";
+}
+static fs::path repoRoot() { return fs::absolute(fs::path(__FILE__)).parent_path().parent_path().parent_path(); }
+static void ownCcProject(const string& extraTarget = "", const string& toolFlags = "-O2 -g -Wall -std=c++17") {
+    write("util.h", "#ifdef __cplusplus\nextern \"C\" {\n#endif\nint add3(int);\n#ifdef __cplusplus\n}\n#endif\n");
+    write("src/util.c", "#include \"util.h\"\nint add3(int x) { return x + 3; }\n");
+    write("src/twice.cpp", "namespace m { int twice(int x) { return 2 * x; } }\n");
+    write("src/main.cpp", "#include \"util.h\"\n#include <cstdio>\nnamespace m { int twice(int); }\n"
+                          "int main() { std::printf(\"%d %d\\n\", add3(4), m::twice(7)); return 0; }\n");
+    string rt; for (const char* f : {"write", "exit", "mem", "str", "printf", "extra", "alloc", "eh", "m", "stdio"}) rt += string(" repo/tools/okaycc/lib/") + f + ".c";
+    write("build.okay",
+          "toolchain okay-cc\n cc = " + ownTool("okay-cc") + "\n cxx = " + ownTool("okay-cc") + "\n ld = " + ownTool("okay-ld") + "\n"
+          " flags = " + toolFlags + " -Irepo/tools/okaycc/include\nend\n"
+          "target okayrt lib\n sources =" + rt + "\nend\n"
+          "target util lib\n sources = src/util.c\n include = .\nend\n"
+          "target app exe\n sources = src/main.cpp src/twice.cpp\n include = .\n deps = util okayrt\nend\n" + extraTarget);
+}
+static void testOwnCompilerOkayCc() {
+    printf("test: toolchain okay-cc builds and links with our own compiler and linker\n");
+    if (ownTool("okay-cc").empty() || ownTool("okay-ld").empty()) { skip(12, "okay-cc and okay-ld are not built (set OKAYBUILD_OWN_TOOLS to their folder; build.sh does)"); return; }
+    fresh("own_cc"); fs::create_directory_symlink(repoRoot(), gRoot / "repo");
+    ownCcProject();
+    int rc; string o = sh("-j1 -v", &rc);
+    check(rc == 0, "okay-cc toolchain builds a two-library program", o);
+    check(o.find(ownTool("okay-cc") + " --obj") != string::npos && o.find("-MMD") == string::npos && o.find(" -O2") == string::npos && o.find(" -Wall") == string::npos,
+          "compiles are 'okay-cc --obj OUT -I... SRC' (no depfile flags; -O2 -g -Wall -std are dropped, okay-cc has none of them)", o);
+    size_t at = o.find(ownTool("okay-ld") + " -o build/app"); string linkLine = at == string::npos ? "" : o.substr(at, o.find('\n', at) - at);
+    check(linkLine.find("libutil.a") == string::npos && linkLine.find("util/src/util.c.o") != string::npos && linkLine.find("lib/printf.c.o") != string::npos,
+          "the link is 'okay-ld -o OUT objects', with each library's objects (okay-ld reads no archives)", o);
+    int prc = 0; string prog = capture("'" + (gRoot / "build/app").string() + "'", &prc);
+    check(prc == 0 && prog == "7 14\n", "the program made by okay-cc and okay-ld runs and prints 7 14", prog);
+    check(fs::exists(gRoot / "build/libutil.a"), "the static library is still made (build/libutil.a)");
+    o = sh("-j1", &rc);
+    check(rc == 0 && ran(o) == 0, "a second build does nothing", o);
+    sleepMs(); write("util.h", "#ifdef __cplusplus\nextern \"C\" {\n#endif\nint add3(int);  // changed\n#ifdef __cplusplus\n}\n#endif\n");
+    o = sh("-j1", &rc);
+    check(rc == 0 && o.find("CC src/util.c") != string::npos && o.find("CC src/main.cpp") != string::npos && o.find("CC src/twice.cpp") == string::npos,
+          "a changed header rebuilds exactly the files that include it (okay-build scans the includes itself)", o);
+    o = sh("compdb", &rc); string j = readFile(gRoot / "compile_commands.json");
+    check(rc == 0 && j.find("--obj") != string::npos, "compdb lists the okay-cc commands", j);
+    // what okay-cc cannot do is an error that names the gap, never a silently different build
+    ownCcProject("target bad exe\n sources = src/twice.cpp\n define = FOO=1\nend\n");
+    o = sh("-j1 bad", &rc);
+    check(rc != 0 && o.find("okay-cc has no -D") != string::npos, "a define is an error with okay-cc (it has no -D)", o);
+    ownCcProject("target bad exe\n sources = src/twice.cpp\n flags = --coverage\nend\n");
+    o = sh("-j1 bad", &rc);
+    check(rc != 0 && o.find("okay-cc does not take the flag '--coverage'") != string::npos, "an unknown flag is an error that names it", o);
+    ownCcProject("target bad exe\n sources = src/twice.cpp\n libs = m\nend\n");
+    o = sh("-j1 bad", &rc);
+    check(rc != 0 && o.find("okay-ld links no system libraries") != string::npos, "a system library is an error with okay-ld", o);
+    ownCcProject();
+    o = sh("--toolchain okay-cc -j1", &rc);
+    check(rc == 0, "--toolchain okay-cc keeps the tools the manifest names", o);
+}
+// Real engine files that okay-cc already compiles (docs/platform/own_compiler_plan.md rounds 16 to 21), with the drivers from
+// tools/okaycc/tests/progs_cpp_engine: built once by okay-build with okay-cc and once with g++, and the outputs compared.
+static void testOwnCompilerEngineFiles() {
+    printf("test: engine files through okay-build with okay-cc print the same as with g++\n");
+    if (ownTool("okay-cc").empty() || ownTool("okay-ld").empty()) { skip(4, "okay-cc and okay-ld are not built (OKAYBUILD_OWN_TOOLS)"); return; }
+    fresh("own_cc_engine"); fs::create_directory_symlink(repoRoot(), gRoot / "repo");
+    struct P { const char* name; const char* driver; std::vector<string> files; };
+    const std::vector<P> progs = {{"font", "font_main", {"Graphics/Font.cpp"}}, {"focus", "focus_main", {"UI/FocusGraph.cpp"}},
+                             {"mip", "mip_main", {"Texture/Mip.cpp", "Texture/Texture.cpp"}}, {"gesture", "gesture_main", {"Input/GestureRecognizer.cpp"}},
+                             {"bc", "bc_main", {"Texture/Bc.cpp"}}};
+    string targets;
+    for (auto& p : progs) {
+        targets += string("target ") + p.name + " exe\n sources = repo/tools/okaycc/tests/progs_cpp_engine/" + p.driver + ".cpp";
+        for (auto& f : p.files) targets += " repo/engine/src/" + f;
+        targets += "\n include = repo/engine/include\n deps = {rt}\nend\n";
+    }
+    string rt; for (const char* f : {"write", "exit", "mem", "str", "printf", "extra", "alloc", "eh", "m", "stdio"}) rt += string(" repo/tools/okaycc/lib/") + f + ".c";
+    auto fill = [&](string t, const string& v) { for (size_t q; (q = t.find("{rt}")) != string::npos;) t.replace(q, 4, v); return t; };
+    write("own.okay", "toolchain okay-cc\n cc = " + ownTool("okay-cc") + "\n cxx = " + ownTool("okay-cc") + "\n ld = " + ownTool("okay-ld") + "\n"
+          " flags = -Irepo/tools/okaycc/include\nend\ntarget okayrt lib\n sources =" + rt + "\nend\n" + fill(targets, "okayrt"));
+    write("gcc.okay", "toolchain gcc\n flags = -O0 -w\n link_flags = -lm\nend\n" + fill(targets, ""));
+    int rc; string o = sh("-f own.okay -j1 -v --build-dir own", &rc);
+    check(rc == 0, "okay-build builds 5 engine programs (7 engine files) with okay-cc and okay-ld", o);
+    string o2 = sh("-f gcc.okay -j1 --build-dir gnu", &rc);
+    check(rc == 0, "the same programs build with g++", o2);
+    int same = 0; string diff;
+    for (auto& p : progs) {
+        int a = 0, b = 0; string x = capture("'" + (gRoot / "own/build" / p.name).string() + "'", &a), y = capture("'" + (gRoot / "gnu/build" / p.name).string() + "'", &b);
+        if (a == b && x == y && !x.empty()) ++same; else diff += string(p.name) + ": okay-cc exit " + std::to_string(a) + ", g++ exit " + std::to_string(b) + "\n";
+    }
+    check(same == (int)progs.size(), "all 5 programs print the same with okay-cc as with g++", diff);
+    check(o.find("-O0") == string::npos && o.find("-MMD") == string::npos, "no GNU-only words reach okay-cc", o);
+}
+static void testOwnCompilerOkayMs() {
+    printf("test: toolchain okay-ms builds Windows objects, a .lib and a PE program with our own okay-cl and okay-link\n");
+    if (ownTool("okay-cl").empty() || ownTool("okay-link").empty()) { skip(11, "okay-cl and okay-link are not built (OKAYBUILD_OWN_TOOLS)"); return; }
+    fresh("own_ms"); fs::create_directory_symlink(repoRoot(), gRoot / "repo");
+    write("util.h", "int add3(int);\n");
+    write("src/util.c", "#include \"util.h\"\nint add3(int x) { return x + BASE; }\n");
+    write("src/entry.c", "#include \"util.h\"\nint start(void) { return add3(4); }\n");
+    auto man = [&](const string& extra, const string& opt = "-O2") {
+        write("build.okay", "toolchain okay-ms\n cc = " + ownTool("okay-cl") + "\n cxx = " + ownTool("okay-cl") + "\n ld = " + ownTool("okay-link") + "\n"
+              " flags = " + opt + " /W4 /EHsc /std:c++17\nend\n"
+              "target util lib\n sources = src/util.c\n include = .\n define = BASE=3\nend\n"
+              "target app exe\n sources = src/entry.c\n include = .\n link_flags = /ENTRY:start /SUBSYSTEM:CONSOLE /INCREMENTAL:NO\n deps = util\nend\n" + extra);
+    };
+    man("");
+    int rc; string o = sh("-j1 -v", &rc);
+    check(rc == 0, "okay-ms toolchain builds a library and a program", o);
+    check(o.find(ownTool("okay-cl") + " /c") != string::npos && o.find("/O2") != string::npos && o.find("/DBASE=3") != string::npos && o.find("/Fo") != string::npos,
+          "compiles are okay-cl /c ... /D /I /O2 /Fo (MSVC spelling)", o);
+    check(o.find("/nologo") == string::npos && o.find("/showIncludes") == string::npos && o.find("/W4") == string::npos && o.find("/EHsc") == string::npos && o.find("/std:") == string::npos,
+          "words okay-cl does not take are left out (/nologo /showIncludes /W4 /EHsc /std:)", o);
+    check(o.find(ownTool("okay-link") + " /ENTRY:start /SUBSYSTEM:CONSOLE") != string::npos && o.find("build/util.lib /OUT:build/app.exe") != string::npos && o.find("/INCREMENTAL") == string::npos,
+          "the link is okay-link with the .lib archive and /OUT:", o);
+    string exe = readFile(gRoot / "build/app.exe");
+    size_t pe = exe.size() > 0x40 ? (unsigned char)exe[0x3c] | ((unsigned char)exe[0x3d] << 8) : 0;
+    check(exe.compare(0, 2, "MZ") == 0 && pe + 6 < exe.size() && exe.compare(pe, 4, string("PE\0\0", 4)) == 0 && (unsigned char)exe[pe + 4] == 0x64 && (unsigned char)exe[pe + 5] == 0x86,
+          "build/app.exe is a PE file for x86-64");
+    string lib = readFile(gRoot / "build/util.lib");
+    check(lib.compare(0, 8, "!<arch>\n") == 0, "build/util.lib is an archive");
+    o = sh("-j1", &rc);
+    check(rc == 0 && ran(o) == 0, "a second build does nothing", o);
+    sleepMs(); write("util.h", "int add3(int);  // changed\n");
+    o = sh("-j1", &rc);
+    check(rc == 0 && o.find("CC src/util.c") != string::npos && o.find("CC src/entry.c") != string::npos, "a changed header rebuilds the files that include it", o);
+    if (!wineProblem().empty()) skip(1, "running app.exe: " + wineProblem());
+    else { int prc = 0; capture("WINEPREFIX=$HOME/.wine-okay WINEDEBUG=-all timeout 120 wine '" + (gRoot / "build/app.exe").string() + "'", &prc); check(prc == 7, "app.exe exits with 7 under wine"); }
+    man("target bad exe\n sources = src/entry.c\n flags = /GL\nend\n");
+    o = sh("-j1 bad", &rc);
+    check(rc != 0 && o.find("okay-cl does not take the flag '/GL'") != string::npos, "an unknown flag is an error that names it", o);
+    // okay-link misreads GNU ar's table of long member names: okay-build says so before the link, and link_archives = off links the objects
+    write("src/a_rather_long_name.c", "int unused_helper(void) { return 1; }\n");
+    string longT = "target longlib lib\n sources = src/a_rather_long_name.c\nend\ntarget app2 exe\n sources = src/entry.c\n include = .\n link_flags = /ENTRY:start\n deps = longlib util\nend\n";
+    man(longT);
+    o = sh("-j1 app2", &rc);
+    check(rc != 0 && o.find("set link_archives = off") != string::npos, "a long archive member name is a clear error with okay-link", o);
+    write("build.okay", readFile(gRoot / "build.okay").replace(readFile(gRoot / "build.okay").find("end\n"), 4, " link_archives = off\nend\n"));
+    o = sh("-j1 -v app2", &rc);
+    size_t at = o.find(ownTool("okay-link") + " "); string linkLine = at == string::npos ? "" : o.substr(at, o.find('\n', at) - at);
+    check(rc == 0 && linkLine.find("longlib/src/a_rather_long_name.c.obj") != string::npos && linkLine.find("longlib.lib") == string::npos, "link_archives = off links the library's objects instead", o);
+    // real engine files okay-cl compiles (docs/platform/own_msvc_plan.md): one static library through okay-build
+    man("target engine_part lib\n sources = repo/engine/src/Graphics/Font.cpp repo/engine/src/UI/FocusGraph.cpp repo/engine/src/Texture/Mip.cpp "
+        "repo/engine/src/Texture/Texture.cpp repo/engine/src/Core/BuildInfo.cpp repo/engine/src/Audio/WavDecoder.cpp repo/engine/src/Optimize/MipBudget.cpp "
+        "repo/engine/src/Input/GestureRecognizer.cpp repo/engine/src/Texture/Bc.cpp\n include = repo/engine/include repo/engine/src repo/tools/okayms/stdinc\nend\n",
+        "-O1"); // at /O2 okay-cl stops on Bc.cpp ("not an address (in okay::tex::EncodeBc)"), recorded in the plan
+    o = sh("-j1 engine_part", &rc);
+    int coff = 0; if (fs::exists(gRoot / ".okaybuild/obj/engine_part")) for (auto& e : fs::recursive_directory_iterator(gRoot / ".okaybuild/obj/engine_part")) if (e.path().extension() == ".obj") { string b = readFile(e.path()); if (b.size() > 2 && (unsigned char)b[0] == 0x64 && (unsigned char)b[1] == 0x86) ++coff; }
+    check(rc == 0 && coff == 9, "9 engine files compile to x86-64 COFF objects with okay-cl through okay-build", o + "coff objects: " + std::to_string(coff));
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
+        if (string(only) == "own") { testOwnCompilerOkayCc(); testOwnCompilerEngineFiles(); testOwnCompilerOkayMs(); printf("okaybuild tests (own compilers only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
         if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); testLoopControlAndLinkProperties(); testConfigurationFlags(); testSourcePropertiesPerFolder(); testMingwToolchainFile(); testPostBuild(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
@@ -2380,5 +2561,8 @@ int main(int argc, char** argv) {
     testSourcePropertiesPerFolder();
     testMingwToolchainFile();
     testPostBuild();
-    printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
+    testOwnCompilerOkayCc();
+    testOwnCompilerEngineFiles();
+    testOwnCompilerOkayMs();
+    printf("okaybuild tests: %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0;
 }

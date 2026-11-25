@@ -2430,9 +2430,16 @@ private:
                 std::int64_t n = static_cast<std::int64_t>(d.init->ival);
                 if (d.type->kind == Type::Kind::Bool) n = n != 0;
                 putAt(g.bytes, 0, n, sz > 8 ? 8 : sz);
-            } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array) {
-                fillInit(d.type.get(), d.init.get(), g.bytes, 0);  // static char a[] = "text"
+            } else if (d.init && ((d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array) ||
+                                  d.init->kind == Expr::Kind::Brace)) {
+                // static char a[] = "text", static const E all[] = {E::A, E::B}: constant data, set
+                // once in the image like a global's ([basic.start.static]). A value that is not a
+                // constant is reported by fillInit (dynamic initialization of a static local is not
+                // supported); it was silently zero before.
+                fillInit(d.type.get(), d.init.get(), g.bytes, 0);
                 g.bytes.resize(static_cast<std::size_t>(sz));
+            } else if (d.init) {
+                err(d.line, d.col, "a static local initialized by a value that is not a constant is not supported");
             }
             mod_.globals.push_back(std::move(g));
             Sym s;

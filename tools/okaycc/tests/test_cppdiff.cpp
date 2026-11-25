@@ -274,6 +274,7 @@ int main() {
         engineDiff("tests/progs_cpp_engine/spatialfx_main.cpp", "../../engine/src/Audio/SpatialFx.cpp");
         // Round 20: GestureRecognizer.cpp (if-condition declarations, remove_if and erase of a range).
         engineDiff("tests/progs_cpp_engine/gesture_main.cpp", "../../engine/src/Input/GestureRecognizer.cpp");
+        engineDiff("tests/progs_cpp_engine/bc_main.cpp", "../../engine/src/Texture/Bc.cpp");
     }
     if (files == 0) {
         std::fprintf(stderr, "FAIL no programs\n");

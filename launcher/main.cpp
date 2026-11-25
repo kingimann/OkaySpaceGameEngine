@@ -133,6 +133,8 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "AntiCheatPages.hpp"   // Admin > Anti-cheat, my bans and appeals, session tickets
 #include "CoverArtAvatars.hpp"  // game cover art, avatar textures
 #include "NavIcons.hpp"         // the sidebar's line icons, round icon buttons, stars
+#include "SignInGate.hpp"       // what the window may show before and after signing in (tested headless)
+#include "AuthForm.hpp"         // the welcome screen's fields, checks and plain-words errors (tested headless)
 #include "PageLayout.hpp"       // where the page toolbar, chips, card grids and listing cards go (tested headless)
 #include "NewsHistory.hpp"      // What's New history (news.cfg)
 #include "AdminPage.hpp"        // reports, Admin > Reports, the Admin page, the ban banner
@@ -11345,6 +11347,404 @@ static int DrawNotificationsPage(okay::account::AccountService& account) {
     return gotoTab;
 }
 
+// ---- The sign-in gate and the welcome screen (owner 2026-11-25: "forced to sign in", "fully blocked", "improve the login and
+// sign up screen") ------------------------------------------------------------------------------------------------------------
+// The rules are pure and tested: launcher/SignInGate.hpp (what the window may show) and launcher/AuthForm.hpp (fields, checks,
+// errors in plain words, where things go). Every request goes through the one account client (okay::account::AccountService),
+// on a worker thread so the window stays alive and the button can show it is busy.
+struct AuthJob {
+    okay::account::AccountService* acct = nullptr;
+    int kind = 0;                 // 1 sign in, 2 create account, 3 reset email, 4 resend confirmation, 5 check the saved session, 6 reset with code
+    std::string a, b, c;          // identifier/email, password, username/code
+    okay::account::Result r;
+    bool reached = true;
+    volatile bool done = false;
+};
+static AuthJob* g_authJob = nullptr;           // the request in flight (main thread owns it; the worker only fills it)
+static int g_signinCheck = -1;                 // this start's check of the saved session: -1 not answered, 0 not reached, 1 confirmed
+static bool g_staySignedIn = true;             // "Stay signed in": off = signed out when the launcher closes
+static int AuthWorker(void* p) {
+    AuthJob* j = (AuthJob*)p;
+    try {
+        switch (j->kind) {
+        case 1: j->r = j->acct->Login(j->a, j->b); break;
+        case 2: j->r = j->acct->Register(j->a, j->b, j->c); break;
+        case 3: j->r = j->acct->RequestPasswordReset(j->a); break;
+        case 4: j->r = j->acct->ResendConfirmation(j->a); break;
+        case 5: j->r.ok = j->acct->VerifySession(&j->reached); break;
+        case 6: j->r = j->acct->ResetPasswordWithCode(j->a, j->c, j->b); break;
+        }
+    } catch (...) { j->r.ok = false; j->r.error = "Something went wrong."; }
+    j->done = true;
+    return 0;
+}
+static bool StartAuthJob(okay::account::AccountService& acct, int kind, const std::string& a, const std::string& b, const std::string& c) {
+    if (g_authJob) return false;
+    g_authJob = new AuthJob{&acct, kind, a, b, c};
+    if (okay::thr::Thread* t = okay::thr::CreateThread(AuthWorker, "okay-auth", g_authJob)) { okay::thr::DetachThread(t); return true; }
+    delete g_authJob; g_authJob = nullptr;
+    return false;
+}
+/// Start this start's check of a saved session (and "Try again" on the blocked screen).
+static void StartSessionCheck(okay::account::AccountService& acct) {
+    if (acct.IsLoggedIn() && acct.IsOnline() && StartAuthJob(acct, 5, "", "", "")) g_signinCheck = -1;
+}
+
+// The OkaySpace mark: a ringed planet, `L` pixels across, centred at c.
+static void DrawLogoMark(ImDrawList* ld, ImVec2 c, float L) {
+    ld->AddCircleFilled(c, L * 0.30f, ImGui::GetColorU32(kAccent), 32);
+    ld->AddCircleFilled(ImVec2(c.x - L * 0.07f, c.y - L * 0.07f), L * 0.30f, IM_COL32(255, 255, 255, 40), 32);
+    ImVec2 ring[32];
+    for (int k = 0; k < 32; ++k) {
+        const float a = k * (6.2831853f / 32), rx = L * 0.46f, ry = L * 0.16f, rot = -0.5f;
+        const float ex = std::cos(a) * rx, ey = std::sin(a) * ry;
+        ring[k] = ImVec2(c.x + ex * std::cos(rot) - ey * std::sin(rot), c.y + ex * std::sin(rot) + ey * std::cos(rot));
+    }
+    ld->AddPolyline(ring, 32, IM_COL32(220, 232, 255, 235), ImDrawFlags_Closed, std::max(1.8f, L * 0.03f));
+}
+
+// The left art panel at the wide sizes: a calm gradient, a few planets and a dust of stars (generated, no images).
+static void DrawWelcomeArt(ImDrawList* dl, ImVec2 a, ImVec2 b) {
+    const ImU32 top = ImGui::GetColorU32(ImVec4(kAccent.x * 0.35f + 0.05f, kAccent.y * 0.35f + 0.06f, kAccent.z * 0.35f + 0.10f, 1.0f));
+    const ImU32 bot = ImGui::GetColorU32(okaytheme::kDeep);
+    dl->AddRectFilledMultiColor(a, b, top, top, bot, bot);
+    const float w = b.x - a.x, h = b.y - a.y;
+    unsigned seed = 1234567u;
+    auto rnd = [&]() { seed = seed * 1103515245u + 12345u; return (float)((seed >> 8) & 0xFFFF) / 65535.0f; };
+    for (int i = 0; i < 90; ++i) {
+        const ImVec2 p(a.x + rnd() * w, a.y + rnd() * h);
+        dl->AddCircleFilled(p, 0.6f + rnd() * 1.2f, IM_COL32(255, 255, 255, (int)(40 + rnd() * 120)), 8);
+    }
+    const ImVec2 big(a.x + w * 0.62f, a.y + h * 0.40f);
+    const float R = std::min(w, h) * 0.22f;
+    dl->AddCircleFilled(big, R * 1.35f, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.07f)), 64);
+    dl->AddCircleFilled(big, R, ImGui::GetColorU32(ImVec4(kAccent.x * 0.8f + 0.1f, kAccent.y * 0.8f + 0.1f, kAccent.z * 0.8f + 0.15f, 1.0f)), 64);
+    dl->AddCircleFilled(ImVec2(big.x - R * 0.25f, big.y - R * 0.25f), R * 0.78f, IM_COL32(255, 255, 255, 26), 64);
+    ImVec2 ring[64];
+    for (int k = 0; k < 64; ++k) {
+        const float t = k * (6.2831853f / 64), rx = R * 1.75f, ry = R * 0.42f, rot = -0.35f;
+        const float ex = std::cos(t) * rx, ey = std::sin(t) * ry;
+        ring[k] = ImVec2(big.x + ex * std::cos(rot) - ey * std::sin(rot), big.y + ex * std::sin(rot) + ey * std::cos(rot));
+    }
+    dl->AddPolyline(ring, 64, IM_COL32(220, 232, 255, 150), ImDrawFlags_Closed, 2.0f);
+    dl->AddCircleFilled(ImVec2(a.x + w * 0.25f, a.y + h * 0.72f), R * 0.32f, IM_COL32(120, 200, 170, 200), 40);
+    dl->AddCircleFilled(ImVec2(a.x + w * 0.80f, a.y + h * 0.80f), R * 0.18f, IM_COL32(240, 180, 110, 210), 32);
+    const char* t1 = "Make games. Share them.";
+    const char* t2 = "Play what others build.";
+    ImGui::SetWindowFontScale(1.5f);
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(a.x + UiPx(36.0f), b.y - UiPx(130.0f)), IM_COL32(240, 244, 252, 255), t1);
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(a.x + UiPx(36.0f), b.y - UiPx(130.0f) + ImGui::GetTextLineHeight() + UiPx(4.0f)), IM_COL32(240, 244, 252, 170), t2);
+    ImGui::SetWindowFontScale(1.0f);
+}
+
+/// The whole window while the pages are not allowed: the welcome screen with sign in / create account / forgot password, or the
+/// check of a saved session, or the blocked screen when the server can't be reached. `running` false = quit.
+static void DrawWelcomeScreen(okay::account::AccountService& account, okay::signingate::State gate, bool& running) {
+    namespace AF = okay::authform;
+    using GS = okay::signingate::State;
+    static AF::Step step = AF::Step::SignIn;
+    static char fId[128] = "", fUser[64] = "", fEmail[128] = "", fPass[128] = "", fConfirm[128] = "", fDisplay[64] = "", fCode[16] = "", fNewPass[128] = "";
+    static bool showPass = false, submitted = false, haveCode = false;
+    static std::string banner;           // the last answer, in plain words
+    static bool bannerError = true, bannerUnreachable = false;
+    static std::string sentTo;           // the email a link or a confirmation went to
+    static bool s_demoOnce = false;
+    if (!s_demoOnce) {   // dev screenshot hook (OKAY_UI_DEMO_GATE): the screen in a given state, with sample text
+        s_demoOnce = true;
+        if (const char* g = std::getenv("OKAY_UI_DEMO_GATE")) {
+            const std::string d = g;
+            if (d == "signup" || d == "errors") {
+                step = AF::Step::SignUp;
+                std::snprintf(fUser, sizeof(fUser), "%s", d == "errors" ? "x" : "starpilot");
+                std::snprintf(fEmail, sizeof(fEmail), "%s", d == "errors" ? "star@pilot" : "star@example.com");
+                std::snprintf(fPass, sizeof(fPass), "%s", d == "errors" ? "abc" : "Orbit42!");
+                std::snprintf(fConfirm, sizeof(fConfirm), "%s", d == "errors" ? "abd" : "Orbit42!");
+                if (d == "errors") { submitted = true; banner = AF::FriendlyError("User already registered").text; }
+            } else if (d == "forgot") { step = AF::Step::Forgot; std::snprintf(fEmail, sizeof(fEmail), "star@example.com"); }
+            else if (d == "sent") { step = AF::Step::ForgotSent; sentTo = "star@example.com"; }
+            else if (d == "check") { step = AF::Step::CheckEmail; sentTo = "star@example.com"; }
+            else if (d == "unreach") { std::snprintf(fId, sizeof(fId), "starpilot"); banner = AF::FriendlyError("Couldn't reach the account server (offline or unreachable).").text; bannerUnreachable = true; }
+            else if (d == "wrong") { std::snprintf(fId, sizeof(fId), "starpilot"); banner = AF::FriendlyError("Invalid login credentials").text; }
+        }
+    }
+    const bool emailAccounts = account.UsesEmail();
+    const bool busy = g_authJob != nullptr;
+    // A finished request: what it means for the screen.
+    if (g_authJob && g_authJob->done) {
+        AuthJob* j = g_authJob; g_authJob = nullptr;
+        if (j->kind == 5) {
+            if (!j->reached) g_signinCheck = 0;
+            else { g_signinCheck = account.IsLoggedIn() ? 1 : -1; if (!account.IsLoggedIn()) { banner = "Your sign-in has expired. Sign in again."; bannerError = true; bannerUnreachable = false; } }
+        } else if (j->r.ok) {
+            banner.clear(); bannerUnreachable = false;
+            if (j->kind == 1 || j->kind == 2) {
+                if (account.IsLoggedIn()) {
+                    g_signinCheck = 1;   // the server just answered: this start is confirmed
+                    if (j->kind == 2 && fDisplay[0]) okay::Friends(account).SetDisplayName(fDisplay);
+                    std::memset(fPass, 0, sizeof(fPass)); std::memset(fConfirm, 0, sizeof(fConfirm));
+                    Toast("Signed in", 1);
+                }
+            } else if (j->kind == 3) { step = AF::Step::ForgotSent; sentTo = j->a; }
+            else if (j->kind == 4) { banner = "Sent again. It can take a minute to arrive."; bannerError = false; }
+            else if (j->kind == 6) { step = AF::Step::SignIn; haveCode = false; banner = "Your password is changed. Sign in with the new one."; bannerError = false; std::memset(fNewPass, 0, sizeof(fNewPass)); }
+        } else {
+            const AF::Friendly f = AF::FriendlyError(j->r.error);
+            if (f.outcome == AF::Outcome::CheckYourEmail) { step = AF::Step::CheckEmail; sentTo = j->a; banner.clear(); }
+            else { banner = f.text; bannerError = true; bannerUnreachable = f.outcome == AF::Outcome::Unreachable; }
+        }
+        delete j;
+    }
+
+    const ImVec2 o = ImGui::GetCursorScreenPos();
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float lh = ImGui::GetTextLineHeight(), pad = UiPx(28.0f), fieldH = ImGui::GetFrameHeight() + UiPx(14.0f), btnH = UiPx(46.0f);
+    const float logoH = UiPx(96.0f);
+    // The card's height for this step (to centre it): measured last frame.
+    static float s_cardH = UiPx(420.0f);
+    const AF::Welcome L = AF::LayoutWelcome(avail.x, avail.y, UiPx(420.0f), s_cardH, logoH, UiPx(24.0f), UiPx(1100.0f));
+    if (L.art) DrawWelcomeArt(dl, o, ImVec2(o.x + L.artPanel.w, o.y + avail.y));
+    // Logo and name.
+    {
+        const ImVec2 lc(o.x + L.logo.x + L.logo.w * 0.5f, o.y + L.logo.y + UiPx(30.0f));
+        DrawLogoMark(dl, lc, UiPx(60.0f));
+        ImGui::SetWindowFontScale(1.6f);
+        const char* name = "OkaySpace";
+        const ImVec2 ns = ImGui::CalcTextSize(name);
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(lc.x - ns.x * 0.5f, o.y + L.logo.y + UiPx(62.0f)), ImGui::GetColorU32(ImGuiCol_Text), name);
+        ImGui::SetWindowFontScale(1.0f);
+    }
+    // A launcher update is allowed before signing in.
+    if (!g_upAvailable.empty()) {
+        const std::string t = "A launcher update is ready (v" + g_upAvailable + ").";
+        const float bw = FitButtonW("Install now");
+        const ImVec2 bp(o.x + avail.x - pad - bw, o.y + UiPx(16.0f));
+        dl->AddText(ImVec2(bp.x - UiPx(12.0f) - ImGui::CalcTextSize(t.c_str()).x, bp.y + (ImGui::GetFrameHeight() - lh) * 0.5f), ImGui::GetColorU32(ImVec4(0.45f, 0.82f, 0.56f, 1.0f)), t.c_str());
+        ImGui::SetCursorScreenPos(bp);
+        if (PrimaryButton("Install now", ImVec2(bw, 0))) StartUpdateCheck(true);
+    }
+
+    // ---- The card ----
+    ImGui::SetCursorScreenPos(ImVec2(o.x + L.card.x, o.y + L.card.y));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiPx(16.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(UiPx(8.0f), UiPx(6.0f)));
+    ImGui::BeginChild("##welcomecard", ImVec2(L.card.w, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
+    const float cw = ImGui::GetContentRegionAvail().x;
+    ImDrawList* cdl = ImGui::GetWindowDrawList();
+    auto title = [&](const char* t, const char* sub) {
+        ImGui::SetWindowFontScale(1.35f);
+        ImGui::TextUnformatted(t);
+        ImGui::SetWindowFontScale(1.0f);
+        if (sub) { ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cw); ImGui::TextDisabled("%s", sub); ImGui::PopTextWrapPos(); }
+        ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+    };
+    auto errorLine = [&](const std::string& e) {
+        if (e.empty()) return;
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.58f, 0.55f, 1.0f));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cw);
+        ImGui::TextUnformatted(e.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+    };
+    auto spinner = [&](ImVec2 c, float r) {
+        const float a0 = (float)ImGui::GetTime() * 6.0f;
+        cdl->PathArcTo(c, r, a0, a0 + 4.4f, 24);
+        cdl->PathStroke(IM_COL32_WHITE, 0, 2.2f);
+    };
+    // The big main button, with a spinner while the request runs. True when pressed (or Enter in a field).
+    auto mainButton = [&](const char* label, const char* busyLabel, bool enabled, bool enter) {
+        ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+        ImGui::BeginDisabled(!enabled || busy);
+        const ImVec2 bp = ImGui::GetCursorScreenPos();
+        const bool hit = PrimaryButton(busy ? busyLabel : label, ImVec2(cw, btnH));
+        ImGui::EndDisabled();
+        if (busy) spinner(ImVec2(bp.x + UiPx(22.0f), bp.y + btnH * 0.5f), UiPx(8.0f));
+        return (hit || (enter && enabled)) && !busy;
+    };
+    auto link = [&](const char* id, const char* prefix, const char* label) {
+        if (prefix && *prefix) { ImGui::TextDisabled("%s", prefix); ImGui::SameLine(0, UiPx(6.0f)); }
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const ImVec2 ts = ImGui::CalcTextSize(label);
+        ImGui::PushID(id);
+        const bool c = ImGui::InvisibleButton("##link", ImVec2(ts.x, lh));
+        ImGui::PopID();
+        const bool h = ImGui::IsItemHovered();
+        const ImVec4 lc(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+        cdl->AddText(p, ImGui::GetColorU32(lc), label);
+        if (h) { cdl->AddLine(ImVec2(p.x, p.y + lh), ImVec2(p.x + ts.x, p.y + lh), ImGui::GetColorU32(lc), 1.0f); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
+        return c && !busy;
+    };
+    auto bannerBox = [&]() {
+        if (banner.empty()) return;
+        ImGui::Dummy(ImVec2(0, UiPx(2.0f)));
+        const ImVec2 bp = ImGui::GetCursorScreenPos();
+        const float th = ImGui::CalcTextSize(banner.c_str(), nullptr, false, cw - UiPx(24.0f)).y;
+        const float bh = th + UiPx(20.0f);
+        cdl->AddRectFilled(bp, ImVec2(bp.x + cw, bp.y + bh), bannerError ? IM_COL32(150, 50, 50, 60) : IM_COL32(50, 140, 80, 60), UiPx(10.0f));
+        cdl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(bp.x + UiPx(12.0f), bp.y + UiPx(10.0f)),
+                     bannerError ? IM_COL32(255, 170, 165, 255) : IM_COL32(150, 230, 170, 255), banner.c_str(), nullptr, cw - UiPx(24.0f));
+        ImGui::Dummy(ImVec2(cw, bh));
+    };
+    // One labelled field; returns true on Enter. `check` is shown under it in red.
+    bool enter = false;
+    auto field = [&](const char* label, const char* id, const char* hint, char* buf, std::size_t cap, int flags, const std::string& check, bool eye) {
+        ImGui::TextUnformatted(label);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(UiPx(12.0f), (fieldH - lh) * 0.5f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UiPx(10.0f));
+        const ImVec2 fp = ImGui::GetCursorScreenPos();
+        const float eyeW = eye ? FitButtonW(showPass ? "Hide" : "Show") : 0.0f;
+        ImGui::SetNextItemWidth(cw);
+        if (!check.empty()) ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 0.45f, 0.45f, 0.8f));
+        if (!check.empty()) ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        if (ImGui::InputTextWithHint(id, hint, buf, cap, flags | ImGuiInputTextFlags_EnterReturnsTrue)) enter = true;
+        if (!check.empty()) { ImGui::PopStyleVar(); ImGui::PopStyleColor(); }
+        const bool active = ImGui::IsItemActive();
+        ImGui::PopStyleVar(2);
+        if (eye) {   // show / hide, inside the field's right end (not a Tab stop: Tab goes field to field)
+            const ImVec2 ep(fp.x + cw - eyeW - UiPx(4.0f), fp.y + (fieldH - ImGui::GetFrameHeight()) * 0.5f);
+            const ImVec2 after = ImGui::GetCursorScreenPos();
+            ImGui::SetCursorScreenPos(ep);
+            ImGui::PushItemFlag(ImGuiItemFlags_NoTabStop, true);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+            if (ImGui::Button(showPass ? "Hide" : "Show", ImVec2(eyeW, 0))) showPass = !showPass;
+            ImGui::PopStyleColor();
+            ImGui::PopItemFlag();
+            ImGui::SetCursorScreenPos(after);
+            if (active && (SDL_GetModState() & KMOD_CAPS)) {   // caps lock warning
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.78f, 0.40f, 1.0f));
+                ImGui::TextUnformatted("Caps Lock is on.");
+                ImGui::PopStyleColor();
+            }
+        }
+        errorLine(check);
+        ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+    };
+
+    if (gate == GS::Checking) {
+        title("Signing you in", "Checking your saved sign-in with the OkaySpace server.");
+        const ImVec2 sp = ImGui::GetCursorScreenPos();
+        const float a0 = (float)ImGui::GetTime() * 6.0f;
+        cdl->PathArcTo(ImVec2(sp.x + cw * 0.5f, sp.y + UiPx(24.0f)), UiPx(16.0f), a0, a0 + 4.4f, 32);
+        cdl->PathStroke(ImGui::GetColorU32(kAccent), 0, 3.0f);
+        ImGui::Dummy(ImVec2(cw, UiPx(56.0f)));
+    } else if (gate == GS::Blocked) {
+        title("Can't reach the OkaySpace server", "OkaySpace checks your sign-in with the server each time it starts. Check your internet connection, then try again.");
+        if (mainButton("Try again", "Checking\xE2\x80\xA6", true, false)) StartSessionCheck(account);
+        ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+        if (link("##out", "", "Sign in with another account")) { account.Logout(); g_signinCheck = -1; step = AF::Step::SignIn; }
+    } else if (step == AF::Step::SignIn) {
+        title("Welcome back", "Sign in to use OkaySpace.");
+        const std::string eId = AF::CheckIdentifier(fId, submitted), ePass = AF::CheckPassword(fPass, false, submitted);
+        for (AF::Field f : AF::FieldOrder(step, emailAccounts)) {
+            if (f == AF::Field::Identifier) field(emailAccounts ? "Email or username" : "Username", "##wid", emailAccounts ? "you@example.com or your username" : "your username", fId, sizeof(fId), 0, eId, false);
+            if (f == AF::Field::Password) field("Password", "##wpass", "Your password", fPass, sizeof(fPass), showPass ? 0 : ImGuiInputTextFlags_Password, ePass, true);
+        }
+        ImGui::Checkbox("Stay signed in", &g_staySignedIn);
+        if (emailAccounts) { ImGui::SameLine(); ImGui::SetCursorPosX(ImGui::GetCursorStartPos().x + cw - ImGui::CalcTextSize("Forgot password?").x); if (link("##forgot", "", "Forgot password?")) { step = AF::Step::Forgot; banner.clear(); submitted = false; if (std::strchr(fId, '@')) std::snprintf(fEmail, sizeof(fEmail), "%s", fId); } }
+        bannerBox();
+        if (bannerUnreachable && !banner.empty() && link("##retry", "", "Try again")) { submitted = true; if (AF::CanSubmit(step, emailAccounts, fId, fUser, fEmail, fPass, fConfirm)) StartAuthJob(account, 1, AF::Trim(fId), fPass, ""); }
+        if (mainButton("Sign in", "Signing in\xE2\x80\xA6", true, enter)) {
+            submitted = true;
+            if (AF::CanSubmit(step, emailAccounts, fId, fUser, fEmail, fPass, fConfirm)) { banner.clear(); StartAuthJob(account, 1, AF::Trim(fId), fPass, ""); }
+        }
+        ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+        if (link("##tosignup", "New here?", "Create an account")) { step = AF::Step::SignUp; banner.clear(); submitted = false; }
+    } else if (step == AF::Step::SignUp) {
+        title("Create your account", "One account for the launcher, the editor and playing online.");
+        const std::string eUser = AF::CheckUsername(fUser, submitted), eEmail = AF::CheckEmail(fEmail, submitted);
+        const std::string ePass = AF::CheckPassword(fPass, true, submitted), eConf = AF::CheckConfirm(fPass, fConfirm, submitted);
+        for (AF::Field f : AF::FieldOrder(step, emailAccounts)) {
+            switch (f) {
+            case AF::Field::Username: field("Username", "##wuser", "e.g. starpilot", fUser, sizeof(fUser), 0, eUser, false); break;
+            case AF::Field::Email: field("Email", "##wemail", "you@example.com", fEmail, sizeof(fEmail), 0, eEmail, false); break;
+            case AF::Field::Password: {
+                field("Password", "##wpass2", "Choose a password", fPass, sizeof(fPass), showPass ? 0 : ImGuiInputTextFlags_Password, ePass, true);
+                if (fPass[0]) {   // strength meter + the rules, as you type
+                    const int st = AF::PasswordStrength(fPass);
+                    const ImVec2 mp = ImGui::GetCursorScreenPos();
+                    const float segW = (cw - UiPx(90.0f) - 3 * UiPx(4.0f)) / 4.0f;
+                    const ImU32 on = st <= 1 ? IM_COL32(235, 100, 95, 255) : st == 2 ? IM_COL32(235, 180, 80, 255) : IM_COL32(90, 200, 120, 255);
+                    for (int k = 0; k < 4; ++k) {
+                        const ImVec2 a(mp.x + k * (segW + UiPx(4.0f)), mp.y + UiPx(4.0f));
+                        cdl->AddRectFilled(a, ImVec2(a.x + segW, a.y + UiPx(5.0f)), k < st ? on : IM_COL32(255, 255, 255, 26), UiPx(3.0f));
+                    }
+                    cdl->AddText(ImVec2(mp.x + cw - UiPx(84.0f), mp.y - UiPx(2.0f)), on, AF::StrengthWord(st));
+                    ImGui::Dummy(ImVec2(cw, lh));
+                    for (const AF::Rule& r : AF::PasswordRules(fPass)) {
+                        const ImVec2 rp = ImGui::GetCursorScreenPos();
+                        const ImVec2 c(rp.x + UiPx(6.0f), rp.y + lh * 0.5f);
+                        if (r.met) { cdl->PathLineTo(ImVec2(c.x - 4, c.y)); cdl->PathLineTo(ImVec2(c.x - 1, c.y + 3)); cdl->PathLineTo(ImVec2(c.x + 4, c.y - 3)); cdl->PathStroke(IM_COL32(110, 210, 140, 255), 0, 1.8f); }
+                        else cdl->AddCircle(c, 3.0f, r.required ? IM_COL32(255, 150, 140, 255) : IM_COL32(255, 255, 255, 90), 12, 1.4f);
+                        cdl->AddText(ImVec2(rp.x + UiPx(18.0f), rp.y), r.met ? ImGui::GetColorU32(ImGuiCol_Text, 0.85f) : ImGui::GetColorU32(ImGuiCol_TextDisabled), r.text);
+                        ImGui::Dummy(ImVec2(cw, lh));
+                    }
+                    ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+                }
+                break;
+            }
+            case AF::Field::Confirm: field("Confirm password", "##wconf", "Type it again", fConfirm, sizeof(fConfirm), showPass ? 0 : ImGuiInputTextFlags_Password, eConf, false); break;
+            case AF::Field::DisplayName: field("Display name (optional)", "##wdisp", "e.g. Star Pilot", fDisplay, sizeof(fDisplay), 0, "", false); break;
+            default: break;
+            }
+        }
+        bannerBox();
+        if (mainButton("Create account", "Creating your account\xE2\x80\xA6", true, enter)) {
+            submitted = true;
+            if (AF::CanSubmit(step, emailAccounts, fId, fUser, fEmail, fPass, fConfirm)) {
+                banner.clear();
+                if (emailAccounts) StartAuthJob(account, 2, AF::Trim(fEmail), fPass, AF::Trim(fUser));
+                else StartAuthJob(account, 2, AF::Trim(fUser), fPass, "");
+            }
+        }
+        ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+        if (link("##tosignin", "Already have an account?", "Sign in")) { step = AF::Step::SignIn; banner.clear(); submitted = false; }
+    } else if (step == AF::Step::Forgot || step == AF::Step::ForgotSent) {
+        if (step == AF::Step::Forgot) {
+            title("Reset your password", "Enter the email of your account. We'll send you a link to choose a new password.");
+            field("Email", "##wfemail", "you@example.com", fEmail, sizeof(fEmail), 0, AF::CheckEmail(fEmail, submitted), false);
+            bannerBox();
+            if (mainButton("Send reset link", "Sending\xE2\x80\xA6", true, enter)) {
+                submitted = true;
+                if (AF::CanSubmit(step, emailAccounts, fId, fUser, fEmail, fPass, fConfirm)) { banner.clear(); StartAuthJob(account, 3, AF::Trim(fEmail), "", ""); }
+            }
+        } else {
+            title("We sent you a link", ("Open the email we sent to " + sentTo + " and follow the link to choose a new password.").c_str());
+            if (!haveCode) { if (link("##havecode", "The email has a code instead?", "Enter it here")) haveCode = true; }
+            else {
+                field("Code from the email", "##wcode", "123456", fCode, sizeof(fCode), ImGuiInputTextFlags_CharsDecimal, "", false);
+                field("New password", "##wnew", "At least 6 characters", fNewPass, sizeof(fNewPass), showPass ? 0 : ImGuiInputTextFlags_Password, AF::CheckPassword(fNewPass, true, false), true);
+                bannerBox();
+                if (mainButton("Set new password", "Saving\xE2\x80\xA6", fCode[0] && std::strlen(fNewPass) >= 6, enter)) StartAuthJob(account, 6, sentTo, fNewPass, fCode);
+            }
+        }
+        ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+        if (link("##backsignin", "", "Back to sign in")) { step = AF::Step::SignIn; banner.clear(); submitted = false; haveCode = false; }
+    } else if (step == AF::Step::CheckEmail) {
+        title("Check your email", ("We sent a link to " + sentTo + ". Open it to confirm your account, then sign in here.").c_str());
+        bannerBox();
+        if (mainButton("Back to sign in", "Back to sign in", true, false)) { step = AF::Step::SignIn; banner.clear(); std::snprintf(fId, sizeof(fId), "%s", sentTo.c_str()); }
+        ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+        if (link("##resend", "Nothing arrived?", "Send it again")) StartAuthJob(account, 4, sentTo, "", "");
+    }
+    ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+    s_cardH = ImGui::GetWindowHeight();
+    ImGui::EndChild();
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor();
+    // Quit, under the card.
+    {
+        const char* q = "Quit OkaySpace";
+        const ImVec2 qs = ImGui::CalcTextSize(q);
+        ImGui::SetCursorScreenPos(ImVec2(o.x + L.card.x + (L.card.w - qs.x) * 0.5f, o.y + L.card.y + s_cardH + UiPx(18.0f)));
+        if (ImGui::InvisibleButton("##quit", qs)) running = false;
+        const bool h = ImGui::IsItemHovered();
+        dl->AddText(ImGui::GetItemRectMin(), ImGui::GetColorU32(h ? ImGuiCol_Text : ImGuiCol_TextDisabled), q);
+        if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+}
+
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
@@ -11573,20 +11973,9 @@ int main(int argc, char** argv) {
     // needed before the UI: a still-valid token goes straight in, and the
     // background refresher (PumpTokenRefresh) renews it before it lapses. That
     // removes the network wait from every normal startup.
-    const long tokExp = accountPtr->IsLoggedIn() && accountPtr->IsOnline() ? accountPtr->TokenExpiresAt() : 0;
-    const bool needVerify = accountPtr->IsLoggedIn() && accountPtr->IsOnline() &&
-                            (tokExp <= 0 || tokExp - (long)std::time(nullptr) < 120);
-    if (needVerify) {
-        VerifyJob vj{ accountPtr.get(), false };
-        okay::thr::Thread* vt = okay::thr::CreateThread(VerifySessionWorker, "okay-verify", &vj);
-        while (!vj.done) {
-            sdlSeam->PumpEvents();   // keep the window responsive (and mapped) while we wait
-            int sw = g_winW, sh = g_winH; okay::pb::OutputSize(renderer, &sw, &sh);
-            okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
-            okay::platform::DelayMs(16);
-        }
-        if (vt) okay::thr::WaitThread(vt, nullptr);
-    }
+    // Every start confirms a saved session with the server ("fully blocked": no offline use). It runs on a worker; the window
+    // shows "Signing you in" until it answers, then the pages, or the blocked screen when the server could not be reached.
+    StartSessionCheck(*accountPtr);
 
     // Start the background friends/DM poll (its own service, read from disk each
     // cycle) so the nav badges never block the UI on the network.
@@ -11610,9 +11999,6 @@ int main(int argc, char** argv) {
     // or any way to change it in the UI — it just uses whatever was configured.
     char acctUser[64] = {0};
     char acctPass[64] = {0};
-    char acctName[64] = {0};             // username (handle) on register
-    char acctDisplay[64] = {0};          // display name on register (optional)
-    bool acctShowPass = false;           // show/hide the password field
     char acctNewPass[64] = {0};          // change-password field (signed in)
     char acctChgName[64] = {0};          // change-username field (signed in)
     char acctChgDisplay[64] = {0};       // change-display-name field (signed in)
@@ -11624,10 +12010,8 @@ int main(int argc, char** argv) {
     int  acctAccent = 0;                 // chosen profile accent index
     bool acctProfileLoaded = false;      // customization fields fetched once
     char acctChgEmail[64] = {0};         // change-email field (signed in)
-    bool acctRegisterMode = false;       // false = sign in, true = create account
     std::string acctMessage;             // last error/status, shown under the form
     bool acctMessageError = true;
-    bool acctBusy = false;
     char adDelUser[64] = {0}, adDelPass[128] = {0};   // delete-account confirmation fields
     bool adDelAck = false;
 
@@ -11666,6 +12050,17 @@ int main(int argc, char** argv) {
         // code reads naturally; the Settings tab may rebuild accountPtr (which
         // is why the Settings tab uses accountPtr-> directly, not this alias).
         acct::AccountService& account = *accountPtr;
+        // The sign-in gate (launcher/SignInGate.hpp): the pages only for a session the server confirmed this start.
+        static const bool kGateDemoMode = okay::IsLauncherDemoMode();
+        static const char* kGateDemo = std::getenv("OKAY_UI_DEMO_GATE");   // dev screenshot hook: signin signup errors forgot sent check unreach blocked checking
+        okay::signingate::State gateState = kGateDemoMode ? okay::signingate::State::Open
+                                          : okay::signingate::Decide(account.IsLoggedIn(), account.IsOnline(), g_signinCheck);
+        if (kGateDemo) {
+            const std::string g = kGateDemo;
+            gateState = g == "blocked" ? okay::signingate::State::Blocked : g == "checking" ? okay::signingate::State::Checking : okay::signingate::State::SignIn;
+        }
+        const bool gateOpen = okay::signingate::PagesAllowed(gateState);
+        if (!gateOpen && g_pfOpen) ClosePublicProfile();
 #ifdef OKAY_ENABLE_TEST_HOOKS
         testHooks.Frame();   // due scripted events are pushed into the queue the loop below polls
         if (testHooks.QuitNow()) { testExitCode = testHooks.ExitCode(); running = false; }
@@ -12270,9 +12665,9 @@ int main(int argc, char** argv) {
             focusSearch = true;
         g_panelShortcut = ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B, false) && !ImGui::GetIO().WantTextInput;   // Ctrl+B: fold a side panel
         g_lastTab = tab == 11 ? 0 : tab;   // persisted on exit (and every SavePrefs)
-        PumpRoleCheck(account.IsLoggedIn() && account.IsOnline());
-        PumpBlocks(account);
-        PumpPrivacy(account);
+        if (gateOpen) PumpRoleCheck(account.IsLoggedIn() && account.IsOnline());
+        if (gateOpen) PumpBlocks(account);
+        if (gateOpen) PumpPrivacy(account);
         PumpCrashUpload();
         PumpAcMyBans(account.IsLoggedIn() && account.IsOnline());
         PumpTicketPreflight();
@@ -12392,6 +12787,7 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(0, 4));
         };
 
+        if (gateOpen) {   // the sidebar only once signed in (okay::signingate)
         ImGui::PushStyleColor(ImGuiCol_ChildBg, navBg);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 14));
         ImGui::BeginChild("nav", ImVec2(navW, 0), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
@@ -12713,7 +13109,8 @@ int main(int argc, char** argv) {
         }
 
         ImGui::SameLine(0, 0);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28, 20));
+        }   // (sidebar)
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, gateOpen ? ImVec2(28, 20) : ImVec2(0, 0));
         ImGui::BeginChild("content", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
         ImGui::PopStyleVar();
 
@@ -12770,7 +13167,9 @@ int main(int argc, char** argv) {
         DrawBanBanner();
         DrawAcBanBanner();
         DrawReportPopup();
-        if (g_pfOpen) {
+        if (!gateOpen) {   // ---- Signed out, checking, or blocked: the welcome screen and nothing else ----
+            DrawWelcomeScreen(account, gateState, running);
+        } else if (g_pfOpen) {
             PfPageOut po = DrawPublicProfilePage(account, tab);
             if (po.gotoTab >= 0) {
                 tab = po.gotoTab;
@@ -15371,176 +15770,7 @@ int main(int argc, char** argv) {
                     acCardEnd();
                 }
             } else {
-                ImGui::TextWrapped(account.IsOnline()
-                    ? "Sign in to your OkaySpace account to sync your work and use "
-                      "Friends and the Marketplace."
-                    : "Using a local account on this device.");
-                ImGui::Dummy(ImVec2(0, 12));
-
-                // --- Centered sign-in / create-account card ---
-                const float cardW = 420.0f;
-                float offx = (ImGui::GetContentRegionAvail().x - cardW) * 0.5f;
-                if (offx > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offx);
-                ImGui::BeginChild("##authcard", ImVec2(cardW, 0), true);
-                float innerW = ImGui::GetContentRegionAvail().x;
-
-                // Centered OkaySpace logo mark (ringed planet) atop the card.
-                {
-                    const float L = 46.0f;
-                    ImGui::Dummy(ImVec2(0, 6));
-                    float cxpos = (ImGui::GetContentRegionAvail().x - L) * 0.5f;
-                    if (cxpos > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + cxpos);
-                    ImVec2 lp = ImGui::GetCursorScreenPos();
-                    ImDrawList* ld = ImGui::GetWindowDrawList();
-                    ImVec2 c(lp.x + L * 0.5f, lp.y + L * 0.5f);
-                    ld->AddCircleFilled(c, L * 0.30f, ImGui::GetColorU32(kAccent), 28);
-                    ld->AddCircleFilled(ImVec2(c.x - L*0.07f, c.y - L*0.07f), L*0.30f, IM_COL32(255,255,255,40), 28);
-                    ImVec2 ring[28];
-                    for (int k = 0; k < 28; ++k) {
-                        float a = k * (6.2831853f/28), rx = L*0.46f, ry = L*0.16f, rot = -0.5f;
-                        float ex = std::cos(a)*rx, ey = std::sin(a)*ry;
-                        ring[k] = ImVec2(c.x + ex*std::cos(rot) - ey*std::sin(rot),
-                                         c.y + ex*std::sin(rot) + ey*std::cos(rot));
-                    }
-                    ld->AddPolyline(ring, 28, IM_COL32(220,232,255,235), ImDrawFlags_Closed, 1.8f);
-                    ImGui::Dummy(ImVec2(L, L));
-                }
-
-                // Heading (centered).
-                auto centerText = [&](const char* t, bool disabled) {
-                    float w = ImGui::CalcTextSize(t).x;
-                    float cxpos = (ImGui::GetContentRegionAvail().x - w) * 0.5f;
-                    if (cxpos > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + cxpos);
-                    if (disabled) ImGui::TextDisabled("%s", t); else ImGui::TextUnformatted(t);
-                };
-                centerText(acctRegisterMode ? "Create your account" : "Sign in to OkaySpace", false);
-                centerText(acctRegisterMode
-                    ? "Join to use Friends, the Marketplace, DMs and forums."
-                    : "Welcome back.", true);
-                ImGui::Dummy(ImVec2(0, 10));
-
-                // Segmented Sign in / Create toggle (two half-width buttons). The
-                // active mode is clearly highlighted in the accent with white text.
-                auto seg = [&](const char* label, bool active, float w) {
-                    if (active) {
-                        ImGui::PushStyleColor(ImGuiCol_Button, kAccent);
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccent);
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-                    }
-                    bool c = ImGui::Button(label, ImVec2(w, 0));
-                    if (active) ImGui::PopStyleColor(3);
-                    return c;
-                };
-                float halfW = (innerW - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-                if (seg("Sign in", !acctRegisterMode, halfW)) { acctRegisterMode = false; acctMessage.clear(); }
-                ImGui::SameLine();
-                if (seg("Create account", acctRegisterMode, halfW)) { acctRegisterMode = true; acctMessage.clear(); }
-                ImGui::Dummy(ImVec2(0, 10));
-
-                // Register takes an email; sign-in accepts email OR username.
-                const char* idHint = !account.UsesEmail() ? "Username"
-                                   : acctRegisterMode ? "Email" : "Email or username";
-                ImGui::TextDisabled("%s", idHint);
-                ImGui::SetNextItemWidth(innerW);
-                ImGui::InputTextWithHint("##acctUser",
-                    !account.UsesEmail() ? "username" : acctRegisterMode ? "you@example.com" : "email or username",
-                    acctUser, sizeof(acctUser));
-
-                if (acctRegisterMode && account.UsesEmail()) {
-                    ImGui::TextDisabled("Username (unique handle)");
-                    ImGui::SetNextItemWidth(innerW);
-                    ImGui::InputTextWithHint("##acctName", "e.g. starpilot", acctName, sizeof(acctName));
-                    ImGui::TextDisabled("Display name (optional)");
-                    ImGui::SetNextItemWidth(innerW);
-                    ImGui::InputTextWithHint("##acctDisplay", "e.g. Star Pilot", acctDisplay, sizeof(acctDisplay));
-                }
-
-                ImGui::TextDisabled("Password");
-                ImGuiInputTextFlags pf = ImGuiInputTextFlags_EnterReturnsTrue |
-                    (acctShowPass ? 0 : ImGuiInputTextFlags_Password);
-                ImGui::SetNextItemWidth(innerW - 86);
-                bool submit = ImGui::InputTextWithHint("##acctPass", "••••••••", acctPass, sizeof(acctPass), pf);
-                ImGui::SameLine();
-                if (ImGui::Button(acctShowPass ? "Hide" : "Show", ImVec2(80, 0))) acctShowPass = !acctShowPass;
-                if (acctRegisterMode && account.UsesEmail())
-                    ImGui::TextDisabled("Use a real email (for password resets). Password: 6+ characters.");
-                ImGui::Dummy(ImVec2(0, 10));
-
-                const char* btn = acctRegisterMode ? "Create account" : "Sign in";
-                ImGui::BeginDisabled(acctBusy);
-                if (PrimaryButton(btn, ImVec2(innerW, 46)) || submit) {
-                    acctBusy = true;
-                    // On sign-up, require a username and reject one already taken.
-                    acct::Result r;
-                    if (acctRegisterMode && account.UsesEmail() && !acctName[0]) {
-                        r.ok = false; r.error = "Choose a username.";
-                    } else if (acctRegisterMode && account.UsesEmail() &&
-                               !account.UsernameAvailable(acctName)) {
-                        r.ok = false; r.error = "That username is taken — pick another.";
-                    } else {
-                        r = acctRegisterMode
-                            ? account.Register(acctUser, acctPass, acctName)
-                            : account.Login(acctUser, acctPass);
-                    }
-                    acctBusy = false;
-                    acctMessageError = !r.ok;
-                    if (r.ok) {
-                        acctMessage.clear();
-                        // Set the optional display name right after signing up.
-                        if (acctRegisterMode && account.IsLoggedIn() && acctDisplay[0])
-                            okay::Friends(account).SetDisplayName(acctDisplay);
-                        std::fill(acctPass, acctPass + sizeof(acctPass), '\0');
-                        acctDisplay[0] = '\0';
-                        if (account.IsLoggedIn()) Toast("Signed in", 1);
-                    } else {
-                        acctMessage = r.error;
-                    }
-                }
-                ImGui::EndDisabled();
-
-                // Forgot password (online/Supabase): emails a reset CODE, typed in here with the new password. No web page is
-                // needed (the old landing page was on GitHub Pages; the programs never need GitHub, owner decision 2026-11-20).
-                static bool resetCodeOpen = false;
-                static char resetCode[16] = "", resetPass[128] = "";
-                if (account.UsesEmail() && !acctRegisterMode) {
-                    if (ImGui::SmallButton("Forgot password?")) {
-                        acct::Result r = account.RequestPasswordReset(acctUser);
-                        acctMessageError = !r.ok;
-                        if (!r.ok) acctMessage = r.error;
-                        else {
-                            acctMessage = account.HasResetRedirect()
-                                ? "Password reset email sent. Open the link in it, or type the code from it below."
-                                : "Password reset email sent. Type the code from it below and choose a new password.";
-                            resetCodeOpen = true;
-                        }
-                    }
-                    if (resetCodeOpen) {
-                        ImGui::SetNextItemWidth(160);
-                        ImGui::InputTextWithHint("##resetcode", "Code from the email", resetCode, sizeof(resetCode), ImGuiInputTextFlags_CharsDecimal);
-                        ImGui::SetNextItemWidth(220);
-                        ImGui::InputTextWithHint("##resetpass", "New password", resetPass, sizeof(resetPass), ImGuiInputTextFlags_Password);
-                        if (ImGui::Button("Set new password")) {
-                            acct::Result r = account.ResetPasswordWithCode(acctUser, resetCode, resetPass);
-                            acctMessageError = !r.ok;
-                            acctMessage = r.ok ? "Your password is changed. Sign in with the new one." : r.error;
-                            if (r.ok) { resetCodeOpen = false; resetCode[0] = 0; }
-                            std::memset(resetPass, 0, sizeof(resetPass));
-                        }
-                        ImGui::SameLine();
-                        if (ImGui::SmallButton("Cancel##reset")) { resetCodeOpen = false; resetCode[0] = 0; std::memset(resetPass, 0, sizeof(resetPass)); }
-                    }
-                }
-
-                if (!acctMessage.empty()) {
-                    ImGui::Dummy(ImVec2(0, 4));
-                    ImGui::PushTextWrapPos(0.0f);
-                    ImGui::TextColored(acctMessageError ? ImVec4(1, 0.55f, 0.55f, 1)
-                                                        : ImVec4(0.55f, 0.9f, 0.6f, 1),
-                                       "%s", acctMessage.c_str());
-                    ImGui::PopTextWrapPos();
-                }
-                ImGui::Dummy(ImVec2(0, 4));
-                ImGui::EndChild();
+                DrawWelcomeScreen(account, okay::signingate::State::SignIn, running);   // (the one sign-in screen; normally the gate shows it)
             }
         } else if (tab == 4) {                            // ---- Settings ----
             sectionHeader("Settings", nullptr);
@@ -20541,6 +20771,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (!g_staySignedIn) accountPtr->Logout();   // "Stay signed in" was unticked: the next start asks again
     // Remember the window size for next launch.
     ChatHostSaveGeometry();
     { int w = 0, h = 0; lw::GetSize(window, &w, &h);

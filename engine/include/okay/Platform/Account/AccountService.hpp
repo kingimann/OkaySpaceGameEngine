@@ -476,6 +476,19 @@ public:
         return u;
     }
 
+    /// Send the sign-up confirmation email again (Supabase only), for "Check your email" after creating an account.
+    Result ResendConfirmation(const std::string& email) {
+        if (provider_ != Provider::Supabase) return Fail("Confirmation emails need the online (Supabase) account server.");
+        if (!LooksLikeEmail(email)) return Fail("Enter a valid email address.");
+        std::string base = serverUrl_;
+        if (!base.empty() && base.back() == '/') base.pop_back();
+        ApiResponse r = HttpRequest("POST", base + "/auth/v1/resend",
+                                    "{\"type\":\"signup\",\"email\":\"" + detail::JsonEscape(email) + "\"}", /*authToken=*/{});
+        if (!r.reached) return Fail("Couldn't reach the account server.");
+        if (!r.ok) return Fail("Couldn't send the email again (HTTP " + std::to_string(r.status) + ").");
+        Result ok; ok.ok = true; return ok;
+    }
+
     /// Send a password-reset email (Supabase only). The user follows the emailed
     /// link to set a new password. Returns ok when the request was accepted.
     Result RequestPasswordReset(const std::string& email) {
@@ -720,13 +733,15 @@ public:
     /// session is cleared so the player is signed out. Network errors leave the
     /// session intact (so being offline doesn't sign players out). The local
     /// backend has nothing to check, so it just reports whether someone is in.
-    bool VerifySession() {
+    /// `reached` (optional): false when the server could not be asked (the launcher's sign-in gate blocks then).
+    bool VerifySession(bool* reached = nullptr) {
+        if (reached) *reached = true;
         if (!session_.loggedIn) return false;
         if (!IsOnline()) return true;
         // Supabase exposes the signed-in user at auth/v1/user; our custom server
         // uses /verify.
         ApiResponse r = Api(provider_ == Provider::Supabase ? "/auth/v1/user" : "/verify");
-        if (!r.reached) return true;                 // offline: keep the session
+        if (!r.reached) { if (reached) *reached = false; return true; }   // offline: keep the session
         if (r.status == 401 || r.status == 403) {    // token expired/revoked
             // Try to renew from the refresh token before giving up — a 1-hour
             // Supabase access token expiring shouldn't sign the player out.

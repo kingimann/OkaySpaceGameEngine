@@ -5411,3 +5411,13 @@ target_include_directories(test_launcher_cli PRIVATE ${CMAKE_SOURCE_DIR}/launche
                            ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME launcher_cli COMMAND test_launcher_cli)
 set_tests_properties(launcher_cli PROPERTIES TIMEOUT 120)
+
+# The launcher's system tray (launcher/TrayLogic.hpp: X / minimize / tray menu / double-click / Explorer restart / the
+# slower loop while hidden, through a fake shell) and where its chat is drawn (launcher/ChatPlacement.hpp: in, out,
+# closed means in, remembered geometry, one chat view drawn in both places). Headless; no SDL or ImGui.
+add_executable(test_launcher_tray test_launcher_tray.cpp)
+target_compile_features(test_launcher_tray PRIVATE cxx_std_17)
+target_include_directories(test_launcher_tray PRIVATE ${CMAKE_SOURCE_DIR}/launcher)
+target_compile_definitions(test_launcher_tray PRIVATE OKAY_LAUNCHER_MAIN="${CMAKE_SOURCE_DIR}/launcher/main.cpp")
+add_test(NAME launcher_tray COMMAND test_launcher_tray)
+set_tests_properties(launcher_tray PROPERTIES TIMEOUT 60)

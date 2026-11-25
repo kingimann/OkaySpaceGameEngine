@@ -36,7 +36,15 @@ struct ArchiveMember {
 
 struct Archive {
     std::vector<ArchiveMember> members;
+    // Write the first and second linker members (the "/" members that index every public symbol, "PE Format",
+    // "First Linker Member" and "Second Linker Member") before the members, so other linkers (link.exe, GNU ld) can
+    // find what each member defines. okay-link does not need them; read_archive skips them.
+    bool symbol_index = false;
 };
+
+// The public symbols of a member, as the linker members list them: __imp_name and (for code) name for an import, the
+// external defined symbols of an object.
+std::vector<std::string> member_symbols(const ArchiveMember& member);
 
 Result<std::vector<uint8_t>> write_archive(const Archive& archive);
 Result<Archive> read_archive(const uint8_t* data, size_t size);

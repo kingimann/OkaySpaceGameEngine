@@ -3262,7 +3262,7 @@ static void OkayUIFrameBegin() {
         const okaytheme::Palette& P = okaytheme::Current();
         put(t.bg, P.control); put(t.bgHover, okaytheme::Mix(P.control, P.ink, 0.08f)); put(t.bgDown, okaytheme::Mix(P.control, P.ink, 0.14f));
         put(t.border, okaytheme::Mix(P.raised, P.ink, 0.10f)); put(t.text, P.text); put(t.textDim, P.textDim);
-        put(t.panel, P.raised); put(t.track, P.sunken); put(t.titleBg, P.deep); put(t.field, P.field);
+        put(t.panel, P.base); put(t.track, P.sunken);   // (cards are a step up from the panel: OkayUI BeginCard) put(t.titleBg, P.deep); put(t.field, P.field);
     }
     t.accent[0] = (unsigned char)(kAccent.x * 255.0f + 0.5f); t.accent[1] = (unsigned char)(kAccent.y * 255.0f + 0.5f);
     t.accent[2] = (unsigned char)(kAccent.z * 255.0f + 0.5f);
@@ -6179,6 +6179,15 @@ static void RenderChatCallCard(const CallBody& cb, long endSecs, bool ended, boo
     ImGui::EndGroup();
 }
 
+// The text inside one of my chat bubbles (a filled accent or chat-theme colour): white, and the dim text a softer white, in every
+// theme (on Light the page text is dark). Push after the bubble's BeginChild, pop before its EndChild.
+void ChatBubbleTextPush(bool mine) {
+    if (!mine) return;
+    ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().onColor);
+    ImGui::PushStyleColor(ImGuiCol_TextDisabled, okaytheme::WithAlpha(okaytheme::Current().onColor, 0.72f));
+}
+void ChatBubbleTextPop(bool mine) { if (mine) ImGui::PopStyleColor(2); }
+
 // One reaction under a chat message: the emoji (or the heart) and the count in a pill; yours is tinted. Returns true when
 // clicked (the caller toggles the reaction). Used by direct messages and group conversations.
 bool ReactionPill(ImDrawList* dl, const std::string& key, const std::string& cnt, bool mine) {
@@ -7727,6 +7736,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::BeginChild("##bubble", ImVec2(useW, 0),
                                   ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                ChatBubbleTextPush(m.mine && !bare);   // my bubble is a filled colour: its text is white in every theme
                 ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
                 ImDrawList* bdl = ImGui::GetWindowDrawList();
                 if (rep) {                                  // quoted message (click to jump)
@@ -7847,6 +7857,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         ImGui::SetTooltip("%s", ds == 3 ? "Read" : ds == 2 ? "Delivered" : "Sent");
                 }
                 ImGui::PopStyleVar();                       // ItemSpacing
+                ChatBubbleTextPop(m.mine && !bare);
                 ImGui::EndChild();
                 ImGui::PopStyleVar(2);                      // ChildRounding, WindowPadding
                 ImGui::PopStyleColor();                     // ChildBg
@@ -19741,6 +19752,7 @@ int main(int argc, char** argv) {
                             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(svPadX, svPadY));
                             ImGui::BeginChild("##svbub", ImVec2(useW, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
                                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                            ChatBubbleTextPush(mine);   // my bubble is a filled colour: its text is white in every theme
                             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
                             if (hasQuote) {
                                 ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ImGui::GetColorU32(accLt)), "@%s", quoteWho.c_str());
@@ -19761,6 +19773,7 @@ int main(int argc, char** argv) {
                                 ImGui::PopStyleColor();
                             }
                             ImGui::PopStyleVar();
+                            ChatBubbleTextPop(mine);
                             ImGui::EndChild();
                             ImGui::PopStyleVar(2);
                             ImGui::PopStyleColor();

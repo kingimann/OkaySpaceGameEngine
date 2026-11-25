@@ -238,6 +238,8 @@ extern std::map<long, long> g_pinsDm, g_pinsGroup;   // message id -> pinned at 
 extern ImVec4 kAccentDim;                      // the darker accent
 extern const char* kChatThemeNames[];          // the chat colour themes (kChatThemeCount)
 extern const ImVec4& kChatWinBg;
+void ChatBubbleTextPush(bool mine);   // white text in my chat bubbles (main.cpp)
+void ChatBubbleTextPop(bool mine);
 bool ReactionPill(ImDrawList* dl, const std::string& key, const std::string& cnt, bool mine);   // a chat reaction pill (main.cpp)                // the chat window's background
 // Games, friends and presence (main.cpp): what the multiplayer code shares with the rest.
 struct PlayProc {

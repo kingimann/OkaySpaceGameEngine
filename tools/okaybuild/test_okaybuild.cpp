@@ -2077,11 +2077,112 @@ endif()
     write("bad.okay", "folder {bin}/../x\ntarget t exe\n  sources = main.cpp\nend\n");
     o = sh("-f bad.okay targets", &rc); check(rc == 2 && o.find("folder") != string::npos, "folder above {bin} is refused", o);
 }
+// Round 14: okayscript/CMakeLists.txt walks a link closure with continue(), list(POP_FRONT) and get_target_property(LINK_LIBRARIES,
+// INTERFACE_LINK_LIBRARIES, ALIASED_TARGET). Without them the reader looped until while() gave up, so `okay-build cmake .` failed on main.
+static void testLoopControlAndLinkProperties() {
+    printf("test: okay-build cmake: continue(), list(POP_FRONT/POP_BACK), link properties of targets\n");
+    fresh("linkprops");
+    write("a.cpp", "int a(){return 1;}\n"); write("main.cpp", "int main(){return 0;}\n");
+    write("CMakeLists.txt", R"CM(cmake_minimum_required(VERSION 3.16)
+project(lk CXX)
+function(expect name want)
+    if(NOT "${${name}}" STREQUAL "${want}")
+        message(FATAL_ERROR "${name} is '${${name}}', want '${want}'")
+    endif()
+endfunction()
+set(out "")
+foreach(x 1 2 3 4)
+    if(x EQUAL 2)
+        continue()
+    endif()
+    list(APPEND out ${x})
+endforeach()
+expect(out "1;3;4")
+set(i 0)
+set(out "")
+while(i LESS 5)
+    math(EXPR i "${i} + 1")
+    if(i EQUAL 3)
+        continue()
+    endif()
+    list(APPEND out ${i})
+endwhile()
+expect(out "1;2;4;5")
+set(q a b c d)
+list(POP_FRONT q first)
+expect(first a)
+expect(q "b;c;d")
+list(POP_BACK q last)
+expect(last d)
+list(POP_FRONT q one two)
+expect(one b)
+expect(two c)
+expect(q "")
+list(POP_FRONT q nothing)
+if(DEFINED nothing)
+    message(FATAL_ERROR "POP_FRONT of an empty list must leave the variable unset")
+endif()
+add_library(base STATIC a.cpp)
+add_library(iface INTERFACE)
+target_link_libraries(iface INTERFACE base)
+add_library(mid STATIC a.cpp)
+target_link_libraries(mid PUBLIC iface PRIVATE m)
+add_library(okay::mid ALIAS mid)
+add_executable(app main.cpp)
+target_link_libraries(app PRIVATE okay::mid)
+get_target_property(l app LINK_LIBRARIES)
+expect(l "okay::mid")
+get_target_property(l mid LINK_LIBRARIES)
+expect(l "iface;m")
+get_target_property(l mid INTERFACE_LINK_LIBRARIES)
+expect(l "iface;$<LINK_ONLY:m>")
+get_target_property(l iface INTERFACE_LINK_LIBRARIES)
+expect(l "base")
+get_target_property(l iface LINK_LIBRARIES)
+expect(l "l-NOTFOUND")
+get_target_property(al okay::mid ALIASED_TARGET)
+expect(al mid)
+get_target_property(al mid ALIASED_TARGET)
+expect(al "al-NOTFOUND")
+function(closure target out)
+    set(seen "")
+    set(todo ${target})
+    while(todo)
+        list(POP_FRONT todo t)
+        if(t IN_LIST seen)
+            continue()
+        endif()
+        list(APPEND seen ${t})
+        if(TARGET ${t})
+            get_target_property(aliased ${t} ALIASED_TARGET)
+            if(aliased)
+                list(APPEND todo ${aliased})
+            endif()
+            foreach(prop LINK_LIBRARIES INTERFACE_LINK_LIBRARIES)
+                get_target_property(libs ${t} ${prop})
+                if(libs)
+                    foreach(l IN LISTS libs)
+                        string(REGEX REPLACE "^\\$<LINK_ONLY:(.*)>$" "\\1" l "${l}")
+                        list(APPEND todo ${l})
+                    endforeach()
+                endif()
+            endforeach()
+        endif()
+    endwhile()
+    set(${out} "${seen}" PARENT_SCOPE)
+endfunction()
+closure(app c)
+expect(c "app;okay::mid;mid;iface;m;base")
+)CM");
+    int rc; string o = sh("cmake . -o build.okay --audit", &rc);
+    check(rc == 0, "continue(), POP_FRONT/POP_BACK and the link properties give CMake's values", o);
+    check(o.find("not understood    0") != string::npos, "nothing in the file is left not understood", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); testLoopControlAndLinkProperties(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -2108,5 +2209,6 @@ int main(int argc, char** argv) {
     testCmakeModuleCommands();
     testGeneratedFileSafety();
     testLinkPieces();
+    testLoopControlAndLinkProperties();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

@@ -177,6 +177,7 @@ struct Target {
     // directory-wide settings captured when the target was made
     vector<string> dirIncs, dirDefs, dirOpts, dirLinkOpts;
     vector<std::pair<string, string>> fileFlags, fileDefines, fileIncludes;
+    vector<string> linkProp, ifLinkProp; // LINK_LIBRARIES and INTERFACE_LINK_LIBRARIES as get_target_property reads them, in call order
     std::map<string, string> props;
     bool cxx17 = false, excluded = false;
     string skipReason; // set when the target cannot be written (missing source, needs a download, ...)
@@ -225,7 +226,7 @@ struct Interp {
     vector<string> dirDefs, dirOpts, dirIncs, dirLinkOpts;
     string curSrc, curBin; // CMAKE_CURRENT_SOURCE_DIR / BINARY_DIR
     vector<std::pair<string, string>> parentWrites; // PARENT_SCOPE writes seen in the running function/directory
-    int depth = 0; bool returning = false, breaking = false;
+    int depth = 0; bool returning = false, breaking = false, continuing = false; // continuing: continue() skips the rest of this loop pass
     std::map<string, string> srcProps; // "file|PROP" -> value (per-file properties collected as set_source_files_properties runs)
     bool testingOn = false;
     // Files the CMake code writes while it is read (file(WRITE/APPEND), cmake -E copy): path -> text. Only paths in the build folder
@@ -314,6 +315,9 @@ struct Interp {
             return joinList(v);
         }
         if (head == "CXX_COMPILER_ID") return "";
+        // $<LINK_ONLY:x> stays as text: it is a value CMake keeps in link properties (and a regex may look for it); a link item
+        // spelled this way is linked as x (resolveTarget)
+        if (head == "LINK_ONLY") { tally.genex["LINK_ONLY"]++; return "$<LINK_ONLY:" + expand(rest) + ">"; }
         tally.genex["$<" + head + ">"]++; return "";
     }
     // arguments as the command sees them: expanded, unquoted ones split at ';' and dropped when empty
@@ -427,7 +431,7 @@ struct Interp {
             "target_compile_options", "target_compile_features", "target_sources", "target_link_options", "set_target_properties", "add_test", "set_tests_properties",
             "find_package", "find_program", "find_path", "pkg_check_modules", "check_include_file_cxx", "add_compile_options", "add_compile_definitions",
             "add_link_options", "include_directories", "enable_testing", "cmake_minimum_required", "enable_language", "get_filename_component",
-            "set_source_files_properties", "set_property", "get_property", "get_target_property", "cmake_parse_arguments", "separate_arguments", "cmake_language", "while", "find_library", "execute_process", "FetchContent_Declare", "FetchContent_MakeAvailable", "return", "break", "math", "cmake_policy"};
+            "set_source_files_properties", "set_property", "get_property", "get_target_property", "cmake_parse_arguments", "separate_arguments", "cmake_language", "while", "find_library", "execute_process", "FetchContent_Declare", "FetchContent_MakeAvailable", "return", "break", "continue", "math", "cmake_policy"};
         return k.count(n) > 0;
     }
 
@@ -461,7 +465,7 @@ static size_t matchEnd(const vector<Cmd>& cs, size_t i, size_t e, const char* op
 }
 
 inline void Interp::run(const vector<Cmd>& cs, size_t b, size_t e) {
-    for (size_t i = b; i < e && !returning && !breaking;) exec(cs, i, e);
+    for (size_t i = b; i < e && !returning && !breaking && !continuing;) exec(cs, i, e);
 }
 
 inline void Interp::exec(const vector<Cmd>& cs, size_t& i, size_t e) {
@@ -497,7 +501,7 @@ inline void Interp::exec(const vector<Cmd>& cs, size_t& i, size_t e) {
             for (long k = lo; k <= hi; ++k) items.push_back(std::to_string(k));
         } else for (size_t k = 1; k < a.size(); ++k) items.push_back(a[k]);
         bool had = has(var); string old = get(var);
-        for (auto& it : items) { vars[var] = it; run(cs, i + 1, end); if (breaking) { breaking = false; break; } if (returning) break; }
+        for (auto& it : items) { vars[var] = it; run(cs, i + 1, end); continuing = false; if (breaking) { breaking = false; break; } if (returning) break; }
         if (!had) vars.erase(var); else vars[var] = old;
         i = end + 1; return;
     }
@@ -505,7 +509,7 @@ inline void Interp::exec(const vector<Cmd>& cs, size_t& i, size_t e) {
         size_t end = matchEnd(cs, i, e, "while", "endwhile"); long passes = 0;
         while (!returning && condArgs(c)) {
             if (++passes > 100000) throw ReadError{c.file + ":" + std::to_string(c.line) + ": while() ran 100000 times; stopping"};
-            run(cs, i + 1, end); if (breaking) { breaking = false; break; }
+            run(cs, i + 1, end); continuing = false; if (breaking) { breaking = false; break; }
         }
         i = end + 1; return;
     }
@@ -517,6 +521,7 @@ inline void Interp::exec(const vector<Cmd>& cs, size_t& i, size_t e) {
     }
     if (n == "return") { returning = true; ++i; return; }
     if (n == "break") { breaking = true; ++i; return; }
+    if (n == "continue") { continuing = true; ++i; return; }
     ++i;
     auto fit = funcs.find(n);
     if (fit != funcs.end()) { callFunc(fit->second, n, args(c.args)); return; }
@@ -597,6 +602,12 @@ inline void Interp::doList(const vector<string>& a) {
     else if (op == "GET" && a.size() > 3) {
         vector<string> r; for (size_t k = 2; k + 1 < a.size(); ++k) { long idx = atol(a[k].c_str()); if (idx < 0) idx += (long)cur.size(); r.push_back(idx >= 0 && idx < (long)cur.size() ? cur[(size_t)idx] : ""); }
         vars[a.back()] = joinList(r);
+    }
+    else if (op == "POP_FRONT" || op == "POP_BACK") { // list(POP_FRONT <list> [<out>...]): each out takes one item; with none, one item is dropped
+        bool front = op == "POP_FRONT"; vector<string> outs(a.begin() + 2, a.end());
+        if (outs.empty()) { if (!cur.empty()) { if (front) cur.erase(cur.begin()); else cur.pop_back(); } }
+        for (auto& o : outs) { if (cur.empty()) break; if (front) { vars[o] = cur.front(); cur.erase(cur.begin()); } else { vars[o] = cur.back(); cur.pop_back(); } }
+        if (cur.empty()) vars.erase(var); else vars[var] = joinList(cur);
     }
     else if (op == "REMOVE_ITEM") { vector<string> r; for (auto& x : cur) if (std::find(a.begin() + 2, a.end(), x) == a.end()) r.push_back(x); vars[var] = joinList(r); }
     else if (op == "REMOVE_DUPLICATES") { vector<string> r; for (auto& x : cur) if (std::find(r.begin(), r.end(), x) == r.end()) r.push_back(x); vars[var] = joinList(r); }
@@ -957,7 +968,15 @@ inline void Interp::doTarget(const Cmd& c, const vector<string>& a) {
         else if (n == "target_compile_definitions") into(t->defs, t->pubDefs, t->ifDefs, w);
         else if (n == "target_compile_options") into(t->opts, t->pubOpts, t->ifOpts, w);
         else if (n == "target_link_options") t->linkOpts.push_back(w);
-        else if (n == "target_link_libraries") { if (w == "debug" || w == "optimized" || w == "general") continue; into(t->links, t->pubLinks, t->ifLinks, w); }
+        else if (n == "target_link_libraries") {
+            if (w == "debug" || w == "optimized" || w == "general") continue;
+            into(t->links, t->pubLinks, t->ifLinks, w);
+            // the properties: PRIVATE and PUBLIC are the target's own links; PUBLIC and INTERFACE go to its users, and a static
+            // library hands its PRIVATE links on as $<LINK_ONLY:x> (its users must link them too)
+            if (t->kind != "iface" && scope != "INTERFACE") t->linkProp.push_back(w);
+            if (scope != "PRIVATE" || t->kind == "iface") t->ifLinkProp.push_back(w);
+            else if (t->kind == "lib" && t->libKind != "shared" && t->libKind != "object") t->ifLinkProp.push_back("$<LINK_ONLY:" + w + ">");
+        }
         else if (n == "target_compile_features") { if (w == "cxx_std_17" || w == "cxx_std_20" || w == "cxx_std_14" || w == "cxx_std_11") t->cxx17 = true; }
     }
 }
@@ -1057,6 +1076,12 @@ inline void Interp::builtin(const Cmd& c) {
     }
     if (n == "get_target_property" && a.size() >= 3) { // SOURCES and SOURCE_DIR come from what the reader recorded; other properties from set_target_properties
         Target* t = tgt(a[1]); string v; bool ok = t != nullptr;
+        auto raw = targets.find(a[1]);
+        if (a[2] == "ALIASED_TARGET") { bool al = raw != targets.end() && !raw->second.aliasOf.empty(); vars[a[0]] = al ? raw->second.aliasOf : a[0] + "-NOTFOUND"; return; }
+        if (t && (a[2] == "LINK_LIBRARIES" || a[2] == "INTERFACE_LINK_LIBRARIES")) {
+            const vector<string>& l = a[2] == "LINK_LIBRARIES" ? t->linkProp : t->ifLinkProp; // recorded by target_link_libraries
+            vars[a[0]] = l.empty() ? a[0] + "-NOTFOUND" : joinList(l); return;
+        }
         if (t && a[2] == "SOURCES") v = joinList(t->sources); else if (t && a[2] == "SOURCE_DIR") v = t->dir; else if (t && a[2] == "NAME") v = t->name;
         else if (t) { auto it = t->props.find(a[2]); ok = it != t->props.end(); if (ok) v = it->second; }
         vars[a[0]] = ok ? v : a[0] + "-NOTFOUND"; return;
@@ -1190,6 +1215,7 @@ static Resolved resolveTarget(Interp& in, Target& t, Report& rep) {
     std::function<void(const string&, bool)> item = [&](const string& w, bool direct) {
         (void)direct;
         if (w.empty()) return;
+        if (w.compare(0, 12, "$<LINK_ONLY:") == 0 && w.back() == '>') { item(w.substr(12, w.size() - 13), direct); return; }
         if (w[0] == '-') { if (w.compare(0, 2, "-l") == 0) addUnique(r.libs, w.substr(2)); else addUnique(r.linkFlags, w); return; }
         Target* d = in.tgt(w);
         if (!d) {

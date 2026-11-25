@@ -89,11 +89,15 @@ struct Fail : std::runtime_error { using std::runtime_error::runtime_error; };
 struct Toolchain {
     string name = "gcc", cc = "gcc", cxx = "g++", ld, ar = "ar", obj = ".o", exe, libp = "lib", libs = ".a";
     vector<string> flags, linkFlags; size_t rspThreshold = 30000; bool msvc = false; bool rspUtf16 = false;
+    // the configuration's words, as CMake places them: c_flags / cxx_flags first on every compile of that language; link_lead right
+    // after the linker on every link (CMake passes the language flags to the linking driver too), then exe_link_flags on a program
+    // or shared_link_flags on a shared library, all before the objects
+    vector<string> cFlags, cxxFlags, linkLead, exeLinkFlags, sharedLinkFlags;
     bool pathMap = false; // path_map = on: absolute source/include paths plus -ffile-prefix-map, so __FILE__ does not depend on the checkout folder
     bool autoPick = false; vector<string> setKeys; // 'toolchain auto'; tool fields the manifest set by hand
 };
 static bool applyPreset(Toolchain& c, const string& name) {
-    Toolchain d; d.flags = c.flags; d.linkFlags = c.linkFlags; d.rspThreshold = c.rspThreshold; d.autoPick = c.autoPick; d.setKeys = c.setKeys;
+    Toolchain d; d.flags = c.flags; d.linkFlags = c.linkFlags; d.cFlags = c.cFlags; d.cxxFlags = c.cxxFlags; d.linkLead = c.linkLead; d.exeLinkFlags = c.exeLinkFlags; d.sharedLinkFlags = c.sharedLinkFlags; d.rspThreshold = c.rspThreshold; d.autoPick = c.autoPick; d.setKeys = c.setKeys;
     if (name == "gcc") {}
     else if (name == "clang") { d.cc = "clang"; d.cxx = "clang++"; }
     else if (name == "mingw") { d.cc = "x86_64-w64-mingw32-gcc-win32"; d.cxx = "x86_64-w64-mingw32-g++-win32"; d.ar = "x86_64-w64-mingw32-ar"; d.exe = ".exe"; }
@@ -331,6 +335,8 @@ static Manifest parseManifest(const string& file) {
             else if (k == "obj_suffix") one(c.obj); else if (k == "exe_suffix") one(c.exe);
             else if (k == "lib_prefix") one(c.libp); else if (k == "lib_suffix") one(c.libs);
             else if (k == "flags") add(c.flags); else if (k == "link_flags") add(c.linkFlags);
+            else if (k == "c_flags") add(c.cFlags); else if (k == "cxx_flags") add(c.cxxFlags); else if (k == "link_lead") add(c.linkLead);
+            else if (k == "exe_link_flags") add(c.exeLinkFlags); else if (k == "shared_link_flags") add(c.sharedLinkFlags);
             else if (k == "rsp_threshold") { if (v.size() != 1) throw err("rsp_threshold takes one value"); c.rspThreshold = (size_t)atoll(v[0].c_str()); }
             else if (k == "rsp_utf16") c.rspUtf16 = oneFlag(v, "rsp_utf16");
             else if (k == "path_map") c.pathMap = oneFlag(v, "path_map");
@@ -776,6 +782,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
                 a.argv.push_back("/nologo"); a.argv.push_back("/showIncludes");
                 for (auto& f : m.tc.flags) a.argv.push_back(spellMsvc(f, false));
+                for (auto& f : isC ? m.tc.cFlags : m.tc.cxxFlags) a.argv.push_back(spellMsvc(f, false));
                 for (auto& f : t.flags) a.argv.push_back(spellMsvc(fixBin(f), false));
                 for (auto& i : t.includes) a.argv.push_back("/I" + i);
                 for (auto& i : t.exportIncludes) a.argv.push_back("/I" + i);
@@ -789,6 +796,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             } else {
                 a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
                 for (auto& f : m.tc.flags) a.argv.push_back(f);
+                for (auto& f : isC ? m.tc.cFlags : m.tc.cxxFlags) a.argv.push_back(f);
                 if (t.libKind == "shared") a.argv.push_back("-fPIC");
                 for (auto& f : t.flags) { if (isC && (f.rfind("-std=c++", 0) == 0 || f.rfind("-std=gnu++", 0) == 0)) continue; a.argv.push_back(fixBin(f)); } // a C++ standard does not apply to a C file
                 for (auto& i : t.includes) a.argv.push_back("-I" + i);
@@ -823,6 +831,8 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             string linker = m.tc.ld.empty() ? m.tc.cxx : m.tc.ld;
             a.argv = {linker}; a.rspHead = 1;
             if (m.tc.msvc) a.argv.push_back("/nologo");
+            for (auto& f : m.tc.linkLead) a.argv.push_back(m.tc.msvc ? spellMsvc(f, true) : f);
+            for (auto& f : t.libKind == "shared" ? m.tc.sharedLinkFlags : m.tc.exeLinkFlags) a.argv.push_back(m.tc.msvc ? spellMsvc(f, true) : f);
             if (t.libKind == "shared" && !m.tc.msvc) a.argv.push_back("-shared");
             if (t.libKind == "shared" && !m.tc.msvc) a.argv.push_back("-Wl,-soname," + fs::path(a.output).filename().string()); // so a program records "libX.so", not the path we linked with
             for (auto& o : objs) a.argv.push_back(o);

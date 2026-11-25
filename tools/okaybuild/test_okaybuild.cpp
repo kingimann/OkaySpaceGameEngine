@@ -2178,11 +2178,65 @@ expect(c "app;okay::mid;mid;iface;m;base")
     check(rc == 0, "continue(), POP_FRONT/POP_BACK and the link properties give CMake's values", o);
     check(o.find("not understood    0") != string::npos, "nothing in the file is left not understood", o);
 }
+// Round 14: the configuration's flags. CMake puts CMAKE_<LANG>_FLAGS and CMAKE_<LANG>_FLAGS_<CONFIG> first on every compile of that
+// language and also on the link line (before the objects), with CMAKE_EXE_LINKER_FLAGS[_<CONFIG>] for programs. The CI's ASan job
+// sets CMAKE_CXX_FLAGS_DEBUG and CMAKE_EXE_LINKER_FLAGS on the command line. Expected lines were taken from `ninja -t commands`
+// of a real CMake configure of the same project.
+static string lineWith(const string& text, const string& word) { size_t at = text.find(word); if (at == string::npos) return ""; size_t b = text.rfind('\n', at); size_t e = text.find('\n', at); return text.substr(b == string::npos ? 0 : b + 1, e == string::npos ? string::npos : e - (b == string::npos ? 0 : b + 1)); }
+static void testConfigurationFlags() {
+    printf("test: okay-build cmake: CMAKE_<LANG>_FLAGS[_<CONFIG>] and CMAKE_EXE_LINKER_FLAGS on compiles and links\n");
+    fresh("cfgflags");
+    write("main.cpp", "extern \"C\" int c_part();\nint main(){ return c_part(); }\n");
+    write("part.c", "int c_part(void){ return 0; }\n");
+    write("CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(cf C CXX)\nset(CMAKE_CXX_STANDARD 17)\nadd_executable(app main.cpp part.c)\n");
+    int rc; string o = sh("cmake . -o rel.okay --build-type Release", &rc);
+    o = sh("-f rel.okay --dry-run -v app", &rc);
+    string link = lineWith(o, " -o build/app");
+    check(rc == 0 && link.find("-O3 -DNDEBUG") != string::npos && link.find("-O3") < link.find("app/main.cpp.o"), "Release: the link line starts with -O3 -DNDEBUG, before the objects", o);
+    string cc = lineWith(o, "-c " + (gRoot / "main.cpp").string());
+    check(cc.find("-O3 -DNDEBUG -std=gnu++17") != string::npos, "Release: a C++ compile has -O3 -DNDEBUG before the standard (CMake's order)", cc);
+    o = sh("cmake . -o dbg.okay --build-type Debug --opt \"CMAKE_CXX_FLAGS_DEBUG=-g1 -gz\" --opt CMAKE_CXX_FLAGS=-fno-omit-frame-pointer --opt CMAKE_C_FLAGS=-DONLY_C --opt CMAKE_EXE_LINKER_FLAGS=-Wl,--compress-debug-sections=zlib", &rc);
+    o = sh("-f dbg.okay --dry-run -v app", &rc);
+    cc = lineWith(o, "-c " + (gRoot / "main.cpp").string()); string c = lineWith(o, "-c " + (gRoot / "part.c").string());
+    link = lineWith(o, " -o build/app");
+    check(cc.find("-fno-omit-frame-pointer -g1 -gz") != string::npos && cc.find(" -g ") == string::npos && cc.find("ONLY_C") == string::npos, "Debug with CMAKE_CXX_FLAGS and CMAKE_CXX_FLAGS_DEBUG given: the C++ compile has them instead of -g", cc);
+    check(c.find("-DONLY_C -g") != string::npos && c.find("-fno-omit-frame-pointer") == string::npos && c.find("-g1") == string::npos, "a C file gets CMAKE_C_FLAGS and CMAKE_C_FLAGS_DEBUG, not the C++ ones", c);
+    check(link.find("-fno-omit-frame-pointer -g1 -gz -Wl,--compress-debug-sections=zlib") != string::npos && link.find("-gz") < link.find("app/main.cpp.o"), "Debug link: C++ flags, then CMAKE_EXE_LINKER_FLAGS, before the objects", link);
+    o = sh("cmake . -o none.okay --build-type None", &rc); o = sh("-f none.okay --dry-run -v app", &rc);
+    cc = lineWith(o, "-c " + (gRoot / "main.cpp").string());
+    check(cc.find("-O") == string::npos && cc.find(" -g") == string::npos && cc.find("NDEBUG") == string::npos, "build type None adds no flags", cc);
+    o = sh("-f rel.okay app", &rc);
+    check(rc == 0 && system(("'" + (gRoot / "build/app").string() + "'").c_str()) == 0, "the Release program builds and runs", o);
+}
+// Round 14: a source file property belongs to the folder whose CMakeLists.txt set it, and only targets made in that folder see it.
+// Found with the ASan CI configuration (OKAY_BUILD_XBOX_UWP=ON): platform/xbox_uwp gives ModelImport.cpp extra definitions for its
+// test only, and engine/ gives Image.cpp -w for the engine only; okay-build had applied both everywhere. Checked against real CMake.
+static void testSourcePropertiesPerFolder() {
+    printf("test: okay-build cmake: source properties are per folder; set_source_files_properties replaces a value\n");
+    fresh("srcpropdir");
+    write("shared.cpp", "int shared(){return 0;}\n"); write("main.cpp", "int main(){return 0;}\n");
+    write("CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(sp CXX)\n"
+        "set_source_files_properties(shared.cpp PROPERTIES COMPILE_OPTIONS \"-w\")\n"
+        "set_source_files_properties(shared.cpp PROPERTIES COMPILE_DEFINITIONS ROOT_ONLY=1)\n"
+        "set_source_files_properties(shared.cpp PROPERTIES COMPILE_DEFINITIONS ROOT_ONLY=2)\n"
+        "add_executable(root_app main.cpp shared.cpp)\nadd_subdirectory(sub)\n");
+    write("sub/CMakeLists.txt", "set_source_files_properties(${CMAKE_SOURCE_DIR}/shared.cpp PROPERTIES COMPILE_DEFINITIONS SUB_ONLY)\n"
+        "add_executable(sub_app ${CMAKE_SOURCE_DIR}/main.cpp ${CMAKE_SOURCE_DIR}/shared.cpp)\n"
+        "get_source_file_property(v ${CMAKE_SOURCE_DIR}/shared.cpp COMPILE_DEFINITIONS)\n"
+        "if(NOT v STREQUAL \"SUB_ONLY\")\n  message(FATAL_ERROR \"sub sees ${v}\")\nendif()\n");
+    int rc; string o = sh("cmake . -o build.okay", &rc); string man = readFile(gRoot / "build.okay");
+    check(rc == 0, "the folder reads its own value of the property", o);
+    size_t r = man.find("target root_app"), s = man.find("target sub_app");
+    string root = r == string::npos ? "" : man.substr(r, man.find("\nend\n", r) - r), sub = s == string::npos ? "" : man.substr(s, man.find("\nend\n", s) - s);
+    check(root.find("file_define = shared.cpp ROOT_ONLY=2") != string::npos && root.find("ROOT_ONLY=1") == string::npos && root.find("SUB_ONLY") == string::npos && root.find("file_flag = shared.cpp -w") != string::npos,
+          "the root target has the root folder's settings, the last value set", root);
+    check(sub.find("file_define = shared.cpp SUB_ONLY") != string::npos && sub.find("ROOT_ONLY") == string::npos && sub.find("-w") == string::npos, "the sub folder's target has only the sub folder's setting", sub);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); testLoopControlAndLinkProperties(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); testLoopControlAndLinkProperties(); testConfigurationFlags(); testSourcePropertiesPerFolder(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -2210,5 +2264,7 @@ int main(int argc, char** argv) {
     testGeneratedFileSafety();
     testLinkPieces();
     testLoopControlAndLinkProperties();
+    testConfigurationFlags();
+    testSourcePropertiesPerFolder();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

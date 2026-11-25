@@ -554,7 +554,8 @@ projects. No CMake, Ninja, Meson or make code was read or used (rule 19a). No cr
 - **Tests:** `test_okaybuild.cpp` gains `testLoopControlAndLinkProperties`, `testConfigurationFlags`,
   `testSourcePropertiesPerFolder`, `testMingwToolchainFile` (it builds `app.exe` with a resource and checks `.rsrc`, the GUI
   subsystem and the winpthread copy without `version.o`) and `testPostBuild`. Run against the tool from main: 30 of their 30
-  checks fail; with this round: all pass. Totals: see the round report below.
+  checks fail; with this round: all pass. Whole suite (`tools/okaybuild/build.sh`): 497 checks pass, 7 fail; the 7 are the
+  known ones that need wine (5) or libsodium (2: the old native manifest links `-lsodium`), as in earlier rounds.
 - **A finding outside okay-build (not changed here):** `okayscript.exe` from the MinGW build (CMake's as well as ours) imports
   `libstdc++-6.dll`, although `okayscript/CMakeLists.txt` links it `-static` to need no MinGW runtime DLLs. The toolchain
   file's `-Wl,...,-Bdynamic` comes before `-static` on the link line.

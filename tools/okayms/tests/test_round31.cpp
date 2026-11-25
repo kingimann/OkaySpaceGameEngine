@@ -16,6 +16,7 @@
 namespace {
 using okayms_test::Tally;
 const okayms_test::ProgramRun kRun{"r31", {}};
+const okayms_test::ProgramRun kRunEh{"r31", {}, false, true};
 }  // namespace
 
 static const char* kAlloc = okayms_test::bump_alloc();
@@ -310,6 +311,17 @@ int entry(void) {
 
 // The decorated names of functions taking pointers to data members (Microsoft's public x64 rules: P, E, then Q for a
 // member pointer, R when the member type is const, the class's name and @@, then the member's type).
+// Two objects of a class with no operator for them and no conversion: an error, where Round 30 compared their first
+// bytes ([over.match.oper] 9).
+static void r31_class_operand_error(Tally& tally) {
+    std::printf("r31_class_operand_error\n");
+    okayms::CompileInput in;
+    in.source = "struct A { long long n; };\nint less(A a, A b) { return a < b; }\n";
+    const auto compiled = okayms::compile_c(in);
+    CHECK(tally, !compiled.ok());
+    CHECK(tally, !compiled.ok() && compiled.error.find("no operator <") != std::string::npos);
+}
+
 static void r31_memptr_names(Tally& tally) {
     std::printf("r31_memptr_names\n");
     okayms::CompileInput in;
@@ -447,6 +459,74 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Durations of different units compared ([time.duration.comparisons]: in their common unit), as SceneSerializer.cpp's
+// `(std::filesystem::file_time_type::clock::now() - mtime) > std::chrono::seconds(2)`, whose parenthesized start, a
+// type's nested name followed by `::now()`, was read as a cast ("expected ')'"). Structured bindings of std::tuple, a
+// tuple-like type ([dcl.struct.bind] 4).
+static void r31_chrono_tuple(Tally& tally) {
+    std::printf("r31_chrono_tuple\n");
+    okayms_test::run_both(kRun, tally, "chrono_tuple", std::string(kAlloc) + R"OKMS(
+#include <chrono>
+#include <tuple>
+#include <string>
+struct Clock { static long long now() { return 42; } };
+int entry(void) {
+  std::chrono::milliseconds ms(2500);
+  std::chrono::seconds s(2);
+  int r = 0;
+  if (ms > s) r += 1;
+  if (s < ms) r += 2;
+  if (std::chrono::milliseconds(2000) == s) r += 4;
+  if (ms != s) r += 8;
+  if (std::chrono::seconds(3) >= ms) r += 16;
+  if (s <= std::chrono::milliseconds(1999)) r += 32;
+  if (std::chrono::nanoseconds(1) < std::chrono::hours(1)) r += 64;
+  CK(1, r == 1 + 2 + 4 + 8 + 16 + 64);
+  CK(2, (Clock::now() - 2) == 40);
+  std::tuple<int, std::string, double> t(7, "ab", 2.5);
+  auto [a, b, c] = t;
+  CK(3, a == 7 && b == "ab" && c == 2.5);
+  auto& [x, y, z] = t;
+  x = 9;
+  y += "c";
+  CK(4, std::get<0>(t) == 9 && std::get<1>(t) == "abc" && z == 2.5);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// std::stoi and its siblings throw invalid_argument for text that is not a number and out_of_range for a value outside
+// int ([string.conversions]), in a file that uses exceptions (Round 30's had no exceptions and gave 0).
+static void r31_stoi_throws(Tally& tally) {
+    std::printf("r31_stoi_throws\n");
+    okayms_test::run_both(kRunEh, tally, "stoi_throws", R"OKMS(
+#include <string>
+#include <stdexcept>
+int parse(const std::string& s, int fallback) {
+  try {
+    return std::stoi(s);
+  } catch (const std::invalid_argument&) {
+    return fallback;
+  } catch (const std::out_of_range&) {
+    return fallback * 2;
+  }
+}
+int entry(void) {
+  CK(1, parse("42", -1) == 42 && parse(" -7x", -1) == -7);
+  CK(2, parse("abc", -1) == -1 && parse("", -3) == -3);
+  CK(3, parse("99999999999", 5) == 10);
+  bool caught = false;
+  try {
+    (void)std::stod(std::string("x1"));
+  } catch (const std::exception& e) {
+    caught = std::string(e.what()) == "stod";
+  }
+  CK(4, caught && std::stod(std::string("1.5")) == 1.5);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -462,5 +542,8 @@ int main(int argc, char** argv) {
     r31_memfn(tally);
     r31_memfn_names(tally);
     r31_enum_class_names(tally);
-    return tally.finish(11);
+    r31_chrono_tuple(tally);
+    r31_stoi_throws(tally);
+    r31_class_operand_error(tally);
+    return tally.finish(14);
 }

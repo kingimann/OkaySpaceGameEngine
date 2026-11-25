@@ -2279,10 +2279,19 @@ bool Parser::parse_unary(Node* out) {
                 }
             } else if (tokens[k].kind == TIdent) {
                 ++k;
+                // (T::clock::now() - t): a name qualified by the type is not a cast's type when what follows it cannot
+                // end one (Round 31: `(std::filesystem::file_time_type::clock::now() - mtime)`, SceneSerializer.cpp).
+                const size_t name_end = k;
+                while (k + 1 < tokens.size() && tokens[k].kind == TColonColon && tokens[k + 1].kind == TIdent) k += 2;
+                if (k > name_end && k < tokens.size() && tokens[k].kind != TRParen && tokens[k].kind != TStar &&
+                    tokens[k].kind != TAmp && tokens[k].kind != TAndAnd && tokens[k].kind != TConst &&
+                    tokens[k].kind != TLParen)
+                    functional = true;
             } else {
                 k = after_type_keywords(k);
             }
-            functional = k > tn && k + 1 < tokens.size() && tokens[k].kind == TLParen && tokens[k + 1].kind != TStar;
+            functional = functional ||
+                         (k > tn && k + 1 < tokens.size() && tokens[k].kind == TLParen && tokens[k + 1].kind != TStar);
             // (Vec3{0, 0, 0} - v): a braced temporary ([expr.type.conv] 2) in parentheses, not a cast (Round 30).
             if (k > tn && k < tokens.size() && tokens[k].kind == TLBrace) functional = true;
         }

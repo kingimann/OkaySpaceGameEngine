@@ -380,6 +380,29 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
     if (is(TIdent) && cur().text == "try" && at + 1 < tokens.size() && tokens[at + 1].kind == TLBrace)
         return parse_try(out, locals, stmt_line);
     if (is(TIdent) && cur().text == "throw") return parse_throw(out, locals);
+    if (is(TIdent) && cur().text == "__okay_throw_if_eh") {
+        // __okay_throw_if_eh(e); in okay-ms's own headers (Round 31, std::stoi): `throw e;` in a file that uses
+        // exceptions (try or throw written in it), and nothing in one that does not, where a throw could only end the
+        // program. The word is not `throw`, so a header that has it does not turn on the exception frames of every
+        // file that includes it. In a file without exceptions the operand is skipped, not evaluated.
+        next();
+        if (!expect(TLParen, "'('")) return false;
+        if (!eh_) {
+            int depth = 1;
+            while (!is(TEnd) && depth > 0) {
+                if (is(TLParen)) ++depth;
+                else if (is(TRParen)) --depth;
+                if (depth > 0) next();
+            }
+            if (!expect(TRParen, "')'") || !expect(TSemi, "';'")) return false;
+            out->kind = Node::Block;
+            return true;
+        }
+        Node value;
+        if (!parse_expr(0, &value)) return false;
+        if (!expect(TRParen, "')'") || !expect(TSemi, "';'")) return false;
+        return build_throw(std::move(value), locals, out);
+    }
     if (is(TGoto)) {
         next();
         if (!is(TIdent)) {
@@ -1937,7 +1960,7 @@ bool Parser::binding_ahead() const {
 // A structured binding ([dcl.struct.bind]), Round 29: `auto [a, b] = e;`, `const auto& [k, v] = e;` and the same in a
 // range for. A hidden variable __sbN is declared as `auto __sbN = e` (with the & or && written), from the initializer
 // read before (has_preset); then each name is a reference to the next non-static data member of its class (or the next
-// element of an array) ([dcl.struct.bind] 3, 5). Own limits: no tuple-like types (get<i>), and a name is always a
+// element of an array) ([dcl.struct.bind] 3, 5). Own limits: of the tuple-like types only std::tuple (Round 31), and a name is always a
 // reference to the member of the hidden variable (as the standard says for the class case).
 bool Parser::parse_binding_decl(const Type& declared, bool is_const, Node* out, std::vector<Local>* locals,
                                 int stmt_line) {
@@ -1989,6 +2012,34 @@ bool Parser::parse_binding_decl(const Type& declared, bool is_const, Node* out, 
             elem.kids.push_back(node_name(hidden));
             elem.kids.push_back(int_node(static_cast<long long>(i)));
             parts.push_back({peel_array(whole), std::move(elem)});
+        }
+    } else if (whole.base == 3 && whole.pointers == 0 && whole.struct_id >= 0 &&
+               structs[static_cast<size_t>(whole.struct_id)].tmpl == "tuple" &&
+               find_field_named(structs[static_cast<size_t>(whole.struct_id)], "head__") >= 0) {
+        // A tuple-like type ([dcl.struct.bind] 4; Round 31): std::tuple, whose get<i> is the head of the i-th tail in
+        // <tuple>'s own layout, so the i-th name refers to that member.
+        Node at_node = node_name(hidden);
+        int sid = whole.struct_id;
+        while (sid >= 0) {
+            const StructDef& td = structs[static_cast<size_t>(sid)];
+            const int hi = find_field_named(td, "head__");
+            const int ti = find_field_named(td, "tail__");
+            if (hi < 0) break;
+            Node head;
+            head.kind = Node::Field;
+            head.op = TDot;
+            head.text = "head__";
+            head.kids.push_back(at_node);
+            parts.push_back({td.fields[static_cast<size_t>(hi)].type, std::move(head)});
+            if (ti < 0) break;
+            Node tail;
+            tail.kind = Node::Field;
+            tail.op = TDot;
+            tail.text = "tail__";
+            tail.kids.push_back(std::move(at_node));
+            at_node = std::move(tail);
+            const Type& tt = td.fields[static_cast<size_t>(ti)].type;
+            sid = tt.base == 3 && tt.pointers == 0 ? tt.struct_id : -1;
         }
     } else if (whole.base == 3 && whole.pointers == 0 && whole.struct_id >= 0) {
         for (const Field& f : structs[static_cast<size_t>(whole.struct_id)].fields) {

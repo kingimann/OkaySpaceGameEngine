@@ -563,7 +563,37 @@ bool Parser::class_object_type(const Node& node, Type* out) const {
 bool Parser::free_call(const std::string& name, std::vector<Node> args, Node* out, bool* found) {
     *found = false;
     const std::string picked = pick_any_ns(name, args, true);
-    if (picked.empty()) return true;
+    if (picked.empty()) {
+        // An operator function template ([over.match.oper] 3, [temp.deduct.call]; Round 31): <chrono>'s comparisons
+        // of durations of any two units. A template whose arguments cannot be deduced from these operands is not a
+        // candidate: its error is dropped.
+        if (name.compare(0, 8, "operator") != 0 || func_templates.count(name) == 0 || !func_template_takes(name, args.size()))
+            return true;
+        const std::string saved_error = error;
+        std::string inst;
+        if (!instantiate_function(name, {}, args, &inst)) {
+            error = saved_error;
+            return true;
+        }
+        Node call;
+        call.kind = Node::Call;
+        call.text = inst;
+        call.kids = std::move(args);
+        for (const FuncDecl& known : funcs) {
+            if (known.name != inst) continue;
+            std::vector<Type> source = known.params;
+            for (size_t i = 0; i < source.size() && i < known.param_ref.size(); ++i)
+                if (known.param_ref[i]) {
+                    source[i].pointers -= 1;
+                    source[i].is_ref = true;
+                }
+            if (!adjust_args(source, &call.kids)) return false;
+            *found = true;
+            *out = known.ret_ref ? reference_result(std::move(call), true, known.ret.rref) : std::move(call);
+            return true;
+        }
+        return true;
+    }
     for (const FuncDecl& known : funcs) {
         if (known.name != picked) continue;
         *found = true;
@@ -680,6 +710,14 @@ bool Parser::operator_binary(Tok op, Node* left, Node* right, bool* done) {
         Type ltype;
         if (static_type(*left, &ltype) && arith_type(ltype) && op != TAndAnd && op != TOrOr && (ltype.base >= 5 || ltype.wide)) other = ltype;
         if (!convert_class(right, other)) return false;
+    }
+    // An object of a class that no operator function takes and that converts to nothing: the built-in operator does
+    // not apply ([over.match.oper] 9). Before Round 31 the object's first bytes were compared or added (two
+    // std::chrono durations of other units compared their bare counts).
+    Type still;
+    if (op != TComma && (class_object_type(*left, &still) || class_object_type(*right, &still))) {
+        error = "no operator " + name.substr(8) + " for an object of class " + structs[static_cast<size_t>(still.struct_id)].name;
+        return false;
     }
     return true;
 }

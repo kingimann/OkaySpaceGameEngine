@@ -164,6 +164,15 @@ public:
         pop_back();
         return block_ + head_ + at;
     }
+    // [sequence.reqmts]: the elements in [first, last) are removed (Round 30, WeaponBook.cpp's erase-remove).
+    T* erase(T* first, T* last) {
+        const size_t at = (size_t)(first - (block_ + head_));
+        const size_t n = (size_t)(last - first);
+        if (n == 0) return block_ + head_ + at;
+        for (size_t i = at; i + n < size_; ++i) block_[head_ + i] = std::move(block_[head_ + i + n]);
+        for (size_t k = 0; k < n; ++k) pop_back();
+        return block_ + head_ + at;
+    }
     T* insert(T* pos, const T& value) {
         const size_t at = (size_t)(pos - (block_ + head_));
         T copy(value);

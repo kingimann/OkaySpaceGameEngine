@@ -2250,6 +2250,8 @@ bool Parser::parse_unary(Node* out) {
                 k = after_type_keywords(k);
             }
             functional = k > at + 1 && k + 1 < tokens.size() && tokens[k].kind == TLParen && tokens[k + 1].kind != TStar;
+            // (Vec3{0, 0, 0} - v): a braced temporary ([expr.type.conv] 2) in parentheses, not a cast (Round 30).
+            if (k > at + 1 && k < tokens.size() && tokens[k].kind == TLBrace) functional = true;
         }
         if (type_ahead && !functional) {
             const bool reinterp = cur().text == "(reinterpret";

@@ -147,7 +147,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         const int outgoing = max_args > 0 ? 32 + 8 * std::max(0, max_args - 4) : 0;
         const int local_end = fn.locals.empty() ? 0 : -fn.locals.back().offset;
         const int copy_bytes = struct_arg_space(fn.body, funcs, gen);
-        int frame = local_end + 128 + copy_bytes + outgoing;
+        int frame = local_end + 8 * Gen::kTempSlots + copy_bytes + outgoing;
         frame = (frame + 15) & ~15;
         if (frame < 0x20) frame = 0x20;
         bool needs_nv = false;
@@ -235,7 +235,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         gen.extra_pops.clear();
         gen.locals = fn.locals;
         gen.temp_base = -(((local_end + 7) & ~7) + 8);
-        gen.struct_copy = -((((local_end + 7) & ~7) + 128 + copy_bytes));
+        gen.struct_copy = -((((local_end + 7) & ~7) + 8 * Gen::kTempSlots + copy_bytes));
         gen.frame = frame;
         const uint32_t start = static_cast<uint32_t>(gen.text.size());
         gen.lines.clear();

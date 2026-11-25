@@ -138,8 +138,11 @@ struct Gen {
         b(0xB8);
         u32(value);
     }
+    // Room for spilled values below the locals (Round 30: 16 before; a call with 35 arguments, ThirdPersonController's
+    // PlaceThirdPersonOrbit, needed more). emit.cpp sizes the frame with it.
+    static constexpr int kTempSlots = 48;
     int spill() {
-        if (temp_depth >= 16) {
+        if (temp_depth >= kTempSlots) {
             error = "expression is too deep";
             return 0;
         }

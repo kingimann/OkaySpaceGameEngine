@@ -1092,6 +1092,16 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
     bool has_init = false;
     const bool preset = has_preset && (is(TAssign) || is(TColon));
     Type list_type_local;
+    // std::function<void(T*)> walk = [&](T* t) { ... walk(c); ... }: the name is declared before its initializer
+    // ([basic.scope.pdecl] 1), so a lambda there can capture it by reference (Round 30, Character.cpp's recursive
+    // walk). Only for a lambda initializer of a written class type; other declarations keep the old order.
+    bool placed_early = false;
+    if (!preset && !is_static && !is_typedef && is(TAssign) && at + 1 < tokens.size() && tokens[at + 1].kind == TLBrack &&
+        decl.type.base == 3 && decl.type.pointers == 0 && !decl.type.is_ref && !decl.type.is_array() &&
+        decl.type.struct_id >= 0) {
+        place_local(locals, local);
+        placed_early = true;
+    }
     if (preset || have_paren_init || accept(TAssign) || (is(TLBrace) && !have_ctor_args)) {
         if (preset) {
             init = std::move(preset_init);
@@ -1203,7 +1213,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         local.symbol = global.name;
         globals.push_back(global);
     }
-    place_local(locals, local);
+    if (!placed_early) place_local(locals, local);
     out->kind = Node::Block;
     Node static_prvalue;  // static C x = f(); with f returning a C: f writes x itself ([dcl.init], [class.copy.elision])
     if (static_dyn && obj_needs_ctor(decl.type) && !decl.type.is_array() && !(init.kind == Node::Block && init.text == "init")) {

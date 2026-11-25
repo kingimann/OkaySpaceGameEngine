@@ -449,6 +449,101 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// More of the survey's next blockers: a call with 36 arguments (ThirdPersonController.hpp:906 passes 35; 16 values was
+// the limit of the spill area), members of a nested class defined outside it (`void RoomReverb::Ring::Resize(int)`),
+// a local class naming its function's static local ([class.local]), a std::function initialized with a lambda that
+// calls it ([basic.scope.pdecl]), `(V{0, 0, 0} - v)` in parentheses, `case K::Key:` through `using K = Def::Kind;`,
+// std::set_union and std::set_difference, deque::erase(first, last), and EOF after <sstream>.
+static void r30_pieces2(Tally& tally) {
+    std::printf("r30_pieces2\n");
+    okayms_test::run_both(kRun, tally, "pieces2", std::string(kAlloc) + R"OKMS(
+#include <algorithm>
+#include <deque>
+#include <functional>
+#include <iterator>
+#include <sstream>
+#include <string>
+#include <vector>
+float many(float a0, float a1, float a2, float a3, float a4, float a5, float a6, float a7, float a8, float a9, float a10, float a11, float a12, float a13, float a14, float a15, float a16, float a17, float a18, float a19, float a20, float a21, float a22, float a23, float a24, float a25, float a26, float a27, float a28, float a29, float a30, float a31, float a32, float a33, float a34, float a35) { return a0 * 1 + a1 * 2 + a2 * 3 + a3 * 4 + a4 * 5 + a5 * 6 + a6 * 7 + a7 * 8 + a8 * 9 + a9 * 10 + a10 * 11 + a11 * 12 + a12 * 13 + a13 * 14 + a14 * 15 + a15 * 16 + a16 * 17 + a17 * 18 + a18 * 19 + a19 * 20 + a20 * 21 + a21 * 22 + a22 * 23 + a23 * 24 + a24 * 25 + a25 * 26 + a26 * 27 + a27 * 28 + a28 * 29 + a29 * 30 + a30 * 31 + a31 * 32 + a32 * 33 + a33 * 34 + a34 * 35 + a35 * 36; }
+struct Room {
+  struct Ring { int pos; Ring(int p); ~Ring(); void Resize(int n); int Read() const; };
+};
+int ring_dtors;
+Room::Ring::Ring(int p) : pos(p) {}
+Room::Ring::~Ring() { ++ring_dtors; }
+void Room::Ring::Resize(int n) { pos = n; }
+int Room::Ring::Read() const { return pos * 2; }
+int fire(int n) {
+  static int depth = 0;
+  if (depth >= 3) return 100;
+  struct Depth { Depth() { ++depth; } ~Depth() { --depth; } } guard;
+  return n > 0 ? fire(n - 1) + depth : depth;
+}
+struct N { int v; std::vector<N*> kids; };
+int sum_tree(N* root) {
+  int total = 0;
+  std::function<void(N*)> walk = [&](N* t) {
+    if (!t) return;
+    total += t->v;
+    for (N* c : t->kids) walk(c);
+  };
+  walk(root);
+  return total;
+}
+struct V {
+  float x, y, z;
+  V operator-(const V& o) const { return V{x - o.x, y - o.y, z - o.z}; }
+  V operator*(float s) const { return V{x * s, y * s, z * s}; }
+};
+struct Def { enum Kind { Number, Key, Text }; Kind kind = Key; };
+using K = Def::Kind;
+int what(const Def& d) {
+  switch (d.kind) {
+    case K::Number: return 1;
+    case K::Key: return 2;
+    default: return 3;
+  }
+}
+int peek_end(const std::string& text) {
+  std::istringstream ls(text);
+  int n = 0;
+  while (ls && ls.peek() != EOF) { ls.get(); ++n; }
+  return n;
+}
+int entry(void) {
+  int k = 1;
+  CK(1, many((float)(k + 0), (float)(k + 1), (float)(k + 2), (float)(k + 3), (float)(k + 4), (float)(k + 5), (float)(k + 6), (float)(k + 7), (float)(k + 8), (float)(k + 9), (float)(k + 10), (float)(k + 11), (float)(k + 12), (float)(k + 13), (float)(k + 14), (float)(k + 15), (float)(k + 16), (float)(k + 17), (float)(k + 18), (float)(k + 19), (float)(k + 20), (float)(k + 21), (float)(k + 22), (float)(k + 23), (float)(k + 24), (float)(k + 25), (float)(k + 26), (float)(k + 27), (float)(k + 28), (float)(k + 29), (float)(k + 30), (float)(k + 31), (float)(k + 32), (float)(k + 33), (float)(k + 34), (float)(k + 35)) == 16206.0f);
+  {
+    Room::Ring r(3);
+    r.Resize(4);
+    CK(2, r.Read() == 8);
+  }
+  CK(3, ring_dtors == 1 && fire(1) == 3 && fire(9) == 106);
+  N a{1, {}}, b{2, {}}, c{4, {}};
+  b.kids.push_back(&c);
+  a.kids.push_back(&b);
+  CK(4, sum_tree(&a) == 7);
+  V m{2, 4, 6};
+  V r = (V{0, 0, 0} - m) * 0.5f;
+  CK(5, r.x == -1.0f && r.z == -3.0f);
+  Def d;
+  CK(6, what(d) == 2);
+  d.kind = K::Text;
+  CK(7, what(d) == 3);
+  std::vector<int> x{1, 3, 5, 7}, y{3, 4, 7, 9}, u, df;
+  std::set_union(x.begin(), x.end(), y.begin(), y.end(), std::back_inserter(u));
+  std::set_difference(x.begin(), x.end(), y.begin(), y.end(), std::back_inserter(df));
+  CK(8, u.size() == 6 && u[0] == 1 && u[2] == 4 && u[5] == 9 && df.size() == 2 && df[0] == 1 && df[1] == 5);
+  std::deque<int> q;
+  for (int i = 0; i < 6; ++i) q.push_back(i);
+  q.erase(std::remove_if(q.begin(), q.end(), [](int v) { return v % 2 == 1; }), q.end());
+  CK(9, q.size() == 3 && q[0] == 0 && q[1] == 2 && q[2] == 4);
+  CK(10, peek_end("abc") == 3);
+  return 0;
+}
+)OKMS", 0);
+}
+
 // IMAGE_SCN_LNK_NRELOC_OVFL (PE Format, Section Flags): a section with more relocations than NumberOfRelocations can
 // hold. write_coff writes 0xFFFF there, sets the flag and puts the real count (the records plus the one that holds the
 // count) in the VirtualAddress field of a first record; read_coff reads it back to the same relocations.
@@ -566,7 +661,8 @@ int main(int argc, char** argv) {
     r30_fp_reference(tally);
     r30_lambda_instances(tally);
     r30_pieces(tally);
+    r30_pieces2(tally);
     r30_reloc_overflow(tally);
     r30_big_reloc_program(tally);
-    return tally.finish(13);
+    return tally.finish(14);
 }

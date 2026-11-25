@@ -1433,8 +1433,18 @@ struct Parser {
         const std::string cls = prev == std::string::npos ? qual : qual.substr(prev + 2);
         const std::string member = name.substr(last + 2);
         if (enum_values.find(member) == enum_values.end()) return false;
-        const int sid = find_struct(cls);
-        if (sid < 0) return false;
+        int sid = find_struct(cls);
+        if (sid < 0) {
+            // K::Key with `using K = BtParamDef::Kind;` (an alias of an unscoped enumeration; Round 30): the enumerator
+            // when the flat table says it belongs to that enumeration.
+            const auto td = typedefs.find(cls);
+            const auto eo = enum_of.find(member);
+            if (td == typedefs.end() || !td->second.is_enum() || td->second.pointers != 0 || eo == enum_of.end() ||
+                eo->second != td->second.enum_id)
+                return false;
+            *value = enum_values.at(member);
+            return true;
+        }
         const auto& statics = structs[static_cast<size_t>(sid)].statics;
         const auto it = statics.find(member);
         if (it == statics.end() || !it->second.has_const) return false;
@@ -4071,6 +4081,7 @@ struct Parser {
         }
         def.ns = current_ns;
         if (def.parent < 0 && pending_sym.empty() && cur_class >= 0 && cur_locals != nullptr) def.local_in = cur_class;
+        if (def.parent < 0 && pending_sym.empty() && cur_locals != nullptr) def.local_fn = true;
         if (pending_sym.empty() && def.parent < 0 && name.compare(0, 6, "__anon") != 0 && name.compare(0, 5, "__lam") != 0 &&
             !ns_mangled.empty())
             for (const StructDef& other : structs)
@@ -5627,6 +5638,18 @@ struct Parser {
             place_local(&locals, local);
         }
         fn->nparams = static_cast<int>(fn->params.size());
+        if (cls >= 0 && structs[static_cast<size_t>(cls)].local_fn && saved_locals != nullptr &&
+            structs[static_cast<size_t>(cls)].name.compare(0, 5, "__lam") != 0) {
+            // A class defined in a function body may name the function's static locals ([class.local] 1; Round 30,
+            // VisualScriptComponent.hpp's `struct Depth { Depth() { ++depth; } ... }` beside `static int depth`).
+            for (const Local& outer : *saved_locals) {
+                if (!outer.is_static) continue;
+                bool hidden = false;
+                for (const Local& own : locals)
+                    if (own.name == outer.name) hidden = true;
+                if (!hidden) place_local(&locals, outer);
+            }
+        }
         current_fn = fn->name;
         cur_locals = &locals;
         fn->line = cur().line;
@@ -8630,9 +8653,22 @@ struct Parser {
             if (!is_typedef && is(TIdent) && at + 3 < tokens.size() && tokens[at + 1].kind == TColonColon &&
                 class_name_at(at)) {
                 // int C::f(int x) { ... } for a function declared in class C.
-                const int sid = find_struct(cur().text);
+                int sid = find_struct(cur().text);
                 next();
                 next();
+                // void Outer::Inner::f() { ... }: a member of a class nested in C ([class.nest] 3; Round 30,
+                // RoomReverb::Ring::Resize in SpatialFx.cpp).
+                while (is(TIdent) && at + 2 < tokens.size() && tokens[at + 1].kind == TColonColon &&
+                       (tokens[at + 2].kind == TIdent || tokens[at + 2].kind == TTilde)) {
+                    int nested = -1;
+                    for (size_t k = 0; k < structs.size(); ++k)
+                        if (structs[k].name == cur().text && structs[k].parent == sid && !structs[k].incomplete)
+                            nested = static_cast<int>(k);
+                    if (nested < 0) break;
+                    sid = nested;
+                    next();
+                    next();
+                }
                 if (!is(TIdent)) {
                     error = "expected a member function name";
                     return false;

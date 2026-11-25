@@ -31,7 +31,15 @@ std::string mangleType(const Type& t) {
     case Type::Kind::Float: return "f";
     case Type::Kind::Double: return "d";
     // A const pointee is K<type> ([mangle.qualified-type]); top-level const is not mangled.
-    case Type::Kind::Pointer: return t.inner ? "P" + std::string(t.inner->cnst ? "K" : "") + mangleType(*t.inner) : "Pv";
+    case Type::Kind::Pointer:
+        if (!t.memberOf.empty() && t.inner) {
+            // A pointer to member: M <class type> <member type> ([mangle.pointer-to-member-type]).
+            Type cls;
+            cls.kind = Type::Kind::Struct;
+            cls.tag = t.memberOf;
+            return "M" + mangleType(cls) + std::string(t.inner->cnst ? "K" : "") + mangleType(*t.inner);
+        }
+        return t.inner ? "P" + std::string(t.inner->cnst ? "K" : "") + mangleType(*t.inner) : "Pv";
     case Type::Kind::Reference:
         return t.inner ? (t.rref ? "O" : "R") + std::string(t.inner->cnst ? "K" : "") + mangleType(*t.inner) : "Rv";
     case Type::Kind::Struct:
@@ -144,6 +152,9 @@ void makeTypeInfo(const Type& t, std::vector<std::unique_ptr<Decl>>& out, std::s
     std::string sym = typeInfoSym(*u);
     if (!done.insert(sym).second) return;
     std::string base;
+    // The bases after the primary one ([class.mi]): their type_info and their offset in the
+    // object (the subobject member "__mb:<tag>"), for dynamic_cast to and across them.
+    std::vector<std::string> more;
     if (u->kind == Type::Kind::Struct && !u->tag.empty()) {
         auto it = canonStructs().find(u->tag);
         if (it != canonStructs().end() && it->second && !it->second->base.empty()) {
@@ -152,6 +163,21 @@ void makeTypeInfo(const Type& t, std::vector<std::unique_ptr<Decl>>& out, std::s
             b.tag = it->second->base;
             base = typeInfoSym(b);
             makeTypeInfo(b, out, done, line, col, file);
+        }
+        if (it != canonStructs().end() && it->second) {
+            std::vector<std::string> tags;
+            for (const Param& p : it->second->params)
+                if (p.name.compare(0, 5, "__mb:") == 0 && p.type) tags.push_back(p.type->tag);
+            for (const std::string& tag : tags) {
+                const int off = memberOffset(u->tag, "__mb:" + tag);
+                if (off < 0) continue;
+                Type b;
+                b.kind = Type::Kind::Struct;
+                b.tag = tag;
+                makeTypeInfo(b, out, done, line, col, file);
+                more.push_back(typeInfoSym(b));
+                more.push_back("\x01#" + std::to_string(off));
+            }
         }
     }
     std::string nameText = sym.substr(4);
@@ -188,9 +214,12 @@ void makeTypeInfo(const Type& t, std::vector<std::unique_ptr<Decl>>& out, std::s
     words->inner->inner->kind = Type::Kind::Void;
     words->bound = std::make_unique<Expr>();
     words->bound->kind = Expr::Kind::Int;
-    words->bound->ival = 3;
+    // 0 unused, 1 the name, 2 the primary base's type_info or 0, 3 how many other bases, then each
+    // other base's type_info and offset (lib/eh.c __okay_dyncast_ptr).
+    words->bound->ival = 4 + more.size();
     ti->type = std::move(words);
-    ti->vt = {"", "_ZTS" + nameText, base};
+    ti->vt = {"", "_ZTS" + nameText, base, "\x01#" + std::to_string(more.size() / 2)};
+    for (std::string& m : more) ti->vt.push_back(std::move(m));
     out.push_back(std::move(ti));
 }
 

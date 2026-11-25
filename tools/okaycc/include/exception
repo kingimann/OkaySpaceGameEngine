@@ -71,3 +71,6 @@ exception_ptr make_exception_ptr(E e) {
     return exception_ptr();
 }
 }  // namespace std
+// A failed dynamic_cast to a reference throws std::bad_cast ([expr.dynamic.cast] p9): the checker
+// calls this (src/check.cpp checkDyncast).
+inline void __okay_throw_bad_cast() { throw std::bad_cast(); }

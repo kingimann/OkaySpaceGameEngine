@@ -7,7 +7,7 @@ namespace compiler {
 std::string strip_comments(const std::string& in) {
     std::string out;
     for (size_t i = 0; i < in.size();) {
-        if (in[i] == '"' || in[i] == '\'') {
+        if ((in[i] == '"' || in[i] == '\'') && !is_digit_separator(in, i)) {
             const char quote = in[i];
             out.push_back(in[i++]);
             while (i < in.size() && in[i] != quote) {

@@ -1,0 +1,63 @@
+// okay-ms own standard header: <stdexcept>, written from ISO/IEC 14882 [std.exceptions]: logic_error and runtime_error
+// and the classes derived from them, each holding the message given to its constructor and returning it from what().
+#pragma once
+#include <exception>
+#include <string>
+namespace std {
+
+class logic_error : public exception {
+    string message__;
+
+public:
+    explicit logic_error(const string& what_arg) : message__(what_arg) {}
+    explicit logic_error(const char* what_arg) : message__(what_arg) {}
+    logic_error(const logic_error& o) : message__(o.message__) {}
+    const char* what() const noexcept { return message__.c_str(); }
+};
+class domain_error : public logic_error {
+public:
+    explicit domain_error(const string& m) : logic_error(m) {}
+    explicit domain_error(const char* m) : logic_error(m) {}
+};
+class invalid_argument : public logic_error {
+public:
+    explicit invalid_argument(const string& m) : logic_error(m) {}
+    explicit invalid_argument(const char* m) : logic_error(m) {}
+};
+class length_error : public logic_error {
+public:
+    explicit length_error(const string& m) : logic_error(m) {}
+    explicit length_error(const char* m) : logic_error(m) {}
+};
+class out_of_range : public logic_error {
+public:
+    explicit out_of_range(const string& m) : logic_error(m) {}
+    explicit out_of_range(const char* m) : logic_error(m) {}
+};
+
+class runtime_error : public exception {
+    string message__;
+
+public:
+    explicit runtime_error(const string& what_arg) : message__(what_arg) {}
+    explicit runtime_error(const char* what_arg) : message__(what_arg) {}
+    runtime_error(const runtime_error& o) : message__(o.message__) {}
+    const char* what() const noexcept { return message__.c_str(); }
+};
+class range_error : public runtime_error {
+public:
+    explicit range_error(const string& m) : runtime_error(m) {}
+    explicit range_error(const char* m) : runtime_error(m) {}
+};
+class overflow_error : public runtime_error {
+public:
+    explicit overflow_error(const string& m) : runtime_error(m) {}
+    explicit overflow_error(const char* m) : runtime_error(m) {}
+};
+class underflow_error : public runtime_error {
+public:
+    explicit underflow_error(const string& m) : runtime_error(m) {}
+    explicit underflow_error(const char* m) : runtime_error(m) {}
+};
+
+}  // namespace std

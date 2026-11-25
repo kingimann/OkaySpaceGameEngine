@@ -426,7 +426,9 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         else add_sym(extern_name, 0, 0, kClassExternal, 0);
     }
     std::vector<uint8_t> data_bytes;
+    std::vector<uint8_t> tls_bytes;  // thread_local variables: the template each thread's copy is made from
     uint32_t bss_size = 0;
+    if (gen.uses_tls) add_sym("_tls_index", 0, 0, kClassExternal, 0);
     auto align_to = [](uint32_t value, uint32_t align) {
         if (align == 0) return value;
         return (value + align - 1u) & ~(align - 1u);
@@ -453,6 +455,21 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         }
         const int size = std::max(1, gen.size_of(global.type));
         const int align = global.type.pointer() ? 8 : 4;
+        if (global.tls) {
+            // .tls$ holds initialized bytes only (zeros for a variable without an initializer), so the whole
+            // template is copied for each thread ([basic.stc.thread], PE/COFF "The .tls Section").
+            const uint32_t at = align_to(static_cast<uint32_t>(tls_bytes.size()), 8);
+            tls_bytes.resize(at, 0);
+            if (!global.bss && !global.init_bytes.empty()) {
+                tls_bytes.insert(tls_bytes.end(), global.init_bytes.begin(), global.init_bytes.end());
+            } else if (!global.bss) {
+                for (int k = 0; k < 4; ++k) tls_bytes.push_back(static_cast<uint8_t>(global.init >> (8 * k)));
+            }
+            tls_bytes.resize(std::max<size_t>(tls_bytes.size(), at + static_cast<uint32_t>(size)), 0);
+            add_sym(global.name, at, 0, global.is_static ? kClassStatic : kClassExternal, 0);
+            for (const auto& slot : global.addr_relocs) gen.relocs.push_back({4, at + slot.first, slot.second, kRelAmd64Addr64});
+            continue;
+        }
         if (global.bss) {
             bss_size = align_to(bss_size, static_cast<uint32_t>(align));
             add_sym(global.name, bss_size, 0, global.is_static ? kClassStatic : kClassExternal, 0);
@@ -481,15 +498,20 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     int rdata_section = 0;
     int xdata_section = 0;
     int pdata_section = 0;
+    int tls_section = 0;
     if (!data_bytes.empty()) data_section = next_section++;
     if (bss_size != 0) bss_section = next_section++;
     if (!gen.rdata.empty()) rdata_section = next_section++;
     if (!gen.xdata.empty()) xdata_section = next_section++;
     if (!gen.pdata.empty()) pdata_section = next_section++;
+    if (!tls_bytes.empty()) tls_section = next_section++;
     for (Sym& sym : symbols) {
         for (const Global& global : globals) {
             if (sym.name != global.name) continue;
-            sym.section = static_cast<int16_t>(global.vtable ? rdata_section : global.bss ? bss_section : data_section);
+            sym.section = static_cast<int16_t>(global.vtable ? rdata_section
+                                               : global.tls ? tls_section
+                                               : global.bss ? bss_section
+                                                            : data_section);
         }
     }
     for (const auto& str : gen.string_at) add_sym(str.first, str.second, static_cast<int16_t>(rdata_section), kClassStatic, 0);
@@ -534,6 +556,14 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     add_data(".rdata", gen.rdata);
     add_data(".xdata", gen.xdata);
     add_data(".pdata", gen.pdata);
+    if (!tls_bytes.empty()) {
+        Section tls;
+        tls.name = ".tls$";
+        tls.virtual_size = static_cast<uint32_t>(tls_bytes.size());
+        tls.data = std::move(tls_bytes);
+        tls.characteristics = kScnCntInitData | kScnMemRead | kScnMemWrite | kScnAlign8;
+        object.sections.push_back(std::move(tls));
+    }
     int debug_index = -1;
     if (line_source.enabled && line_source.origin != nullptr && line_source.files != nullptr) {
         // CodeView C13 subsections in .debug$S: signature 4, then one
@@ -647,6 +677,8 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             sec = rdata_section - 1;
         } else if (named.section == 3) {
             sec = data_section - 1;
+        } else if (named.section == 4) {
+            sec = tls_section - 1;
         }
         const auto found = index.find(named.symbol);
         if (found == index.end()) {

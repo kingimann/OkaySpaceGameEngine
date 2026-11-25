@@ -44,7 +44,8 @@ inline bool has_symbol(const okayms::ObjectFile& object, const std::string& name
 inline const char* check_macro() { return "#define CK(n, c) if (!(c)) return n;\n"; }
 
 // What one test file passes to run_both: its tag ("r23": the folder /tmp/okayms-r23 and the "r23 program" line), the
-// kernel32 functions its programs may import, and whether g++ needs run-time type information.
+// kernel32 functions its programs may import ("dll:name" for another DLL), and whether g++ needs run-time type
+// information.
 struct ProgramRun {
     std::string tag;
     std::vector<std::string> kernel32;
@@ -75,8 +76,10 @@ inline void run_both(const ProgramRun& run, Tally& tally, const std::string& nam
         okayms::LinkOptions link_options;
         for (const std::string& fn : run.kernel32) {
             okayms::ImportedSymbol imp;
-            imp.dll = "kernel32.dll";
-            imp.name = fn;
+            // "bcrypt.dll:BCryptGenRandom" names another DLL; a bare name is a kernel32 function.
+            const size_t colon = fn.find(':');
+            imp.dll = colon == std::string::npos ? "kernel32.dll" : fn.substr(0, colon);
+            imp.name = colon == std::string::npos ? fn : fn.substr(colon + 1);
             link_options.imports.push_back(imp);
         }
         const auto linked = okayms::link_executable({compiled.value.object}, link_options);

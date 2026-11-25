@@ -66,9 +66,9 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Code:** `.github/workflows/ci.yml`, `.github/PULL_REQUEST_TEMPLATE.md`, `tests/export/verify.sh`, `tests/export/verify.ps1`
 - **API:** jobs `build-and-test`, `sanitizers`, `windows-cross`, `windows-export`, `web-build`; env `OKAY_SANITIZE`, `ASAN_OPTIONS`, `UBSAN_OPTIONS`
 - **Editor:** none (`OkayEngine --selftest` is the headless editor check)
-- **Docs:** `docs/process/qa_workflow.md`, `ROADMAP.md` ("every PR merges once its five CI jobs are green")
+- **Docs:** `docs/process/qa_workflow.md`, `ROADMAP.md`, `docs/process/automated_testing.md`
 - **Tests:** CI-specific runs: `vs_acceptance`, `vs_debug`, `game_fiber`, `polymesh`, `mesh_asset`, `poly_ops` (the six that also run on Windows), and the 38-test sanitizer subset listed in 19.2.5 (including `net_hardening`, `net_races`, `loaders_robust`, `physics_nan`)
-- **Status:** Works - the workflow file is read in full; all five jobs run on each PR
+- **Status:** Works - rechecked 2026-11-24: `ci.yml` now has about 20 jobs (also `player`, `editor`, `export-check`, `assimp-models`, `own-http`, `own-stack`, `windows-restart`, `msvc-build`, `sql-tests` and others); since 2026-11-23 a pull request runs only the Windows cross-compile here (plus branch-lint and the PR-body check), the author runs `scripts/precheck.sh --build <dir> --tests` before the push, and the whole suite runs on every push to main and nightly (`CLAUDE.md` rules 6 and 7a); #1219 made the MinGW install reliable and cached (`scripts/ci-install-mingw.sh`) and let ccache reuse `editor/main.cpp`; #1222 did the same for `release.yml` and moved the exact build stamp into `editor/BuildStamp.cpp`
 - **Open:** possible gaps: the Ubuntu job installs no libsodium-dev, so encryption tests may run their stub branch (the ASan job builds with sodium off on purpose); `net_races` needs ThreadSanitizer but there is no TSan job; only six tests ever run on real Windows; no macOS job; nothing builds `-DOKAY_WITH_PHOTON`, `-DOKAY_WITH_STEAM`, Lua or C#; PR #572 changes `tests/CMakeLists.txt`
 - **Related:** 19.2, 19.7, 41.8, 18.4
 - **Words:** CI, GitHub Actions, workflow, ci.yml, ASan, UBSan, sanitizers, MinGW, windows-export, WebGL, emsdk, selftest, ctest, build-and-test, red CI

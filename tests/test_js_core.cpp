@@ -215,8 +215,9 @@ void SyntaxErrors() {
     CHECK(e.line == 1 && !e.message.empty());
     e = first("'abc");
     CHECK(e.message.find("never closed") != std::string::npos);
-    e = first("x = /re/;");
-    CHECK(e.message.find("regular expression") != std::string::npos);
+    e = first("x = /(re/;");
+    CHECK(e.message.find("bad regular expression") != std::string::npos);
+    CHECK(rt.CheckSyntax("const r = /a\\/b[/]c/gi, q = 4 / 2 / 1;", "s").empty());   // a regex and two divisions
     e = first("a ?? b || c");
     CHECK(e.message.find("??") != std::string::npos);
     e = first("-2 ** 2");
@@ -288,6 +289,14 @@ void HostileOneLiners() {
         {"const o = { get x() { return this.x; } }; o.x", "RangeError"},
         {"const o = { valueOf() { return o + 1; } }; o + 1", "RangeError"},
         {"let a = [1, 2, 3]; a.sort(() => { a.push(1); return 1; })", "OK"},
+        {"/(a+)+$/.test('a'.repeat(40) + 'b')", "instruction budget"},              // catastrophic backtracking
+        {"/(x|x)*y/.test('x'.repeat(60))", "instruction budget"},
+        {"/(a*)*b/.test('a'.repeat(5000))", ""},                                  // empty-loop check, then budget or a result
+        {"'ab'.repeat(1e6).replace(/(a)(b)/g, '$2$1').length", "OK"},
+        {"'x'.repeat(1 << 16).split(/(?:)/).length", "OK"},
+        {"new RegExp('('.repeat(5000))", "SyntaxError"},
+        {"new RegExp('a{1,100000}'.repeat(10))", "SyntaxError"},
+        {"let r = /a/g; for (;;) r.exec('aaaa')", "instruction budget"},
         {"Promise.resolve().then(function f() { return Promise.resolve().then(f); })", ""},   // budget or memory, whichever first
     };
     for (const Hostile& h : cases) {

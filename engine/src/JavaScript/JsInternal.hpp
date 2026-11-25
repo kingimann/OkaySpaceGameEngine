@@ -11,7 +11,7 @@
 namespace okay::js {
 
 // ============================================================ tokens (ECMA-262 ch. 12)
-enum class TT : std::uint8_t { End, Name, Num, Str, Template, Punct, PrivateName };
+enum class TT : std::uint8_t { End, Name, Num, Str, Template, Punct, PrivateName, Regex };
 
 // Punctuators, longest first within each starting character is handled by the lexer.
 enum P : std::uint16_t {
@@ -33,7 +33,8 @@ struct Token {
     int line = 0, col = 0;
     int match = -1;             ///< for ( [ {: the index of the closing token
     double n = 0;
-    std::u16string s;           ///< name text, string value, template cooked text
+    std::u16string s;           ///< name text, string value, template cooked text, regular expression body
+    std::u16string flags;       ///< regular expression flags
     bool badEscape = false;     ///< a template piece with an invalid escape (only allowed when tagged)
 };
 
@@ -44,13 +45,16 @@ bool Tokenize(const std::string& src, std::vector<Token>& out, SyntaxError& err)
 extern const int kReservedCount;
 /// WhiteSpace and LineTerminator code units (12.2, 12.3): what trim and the number readers skip.
 bool IsJsSpace(char16_t c);
+/// Simple one-to-one case mapping (ASCII, Latin-1, Latin Extended-A, Greek, Cyrillic).
+char16_t JsLower(char16_t c);
+char16_t JsUpper(char16_t c);
 
 // ============================================================ syntax tree (ch. 13-16)
 enum class NK : std::uint8_t {
     // expressions
     Num, Str, Template, Ident, This, Super, NewTarget, Null, True, False, Array, Object, Func, Class,
     Unary, Update, Binary, Logical, Assign, Cond, Call, New, Member, Index, OptChain, Seq, Spread,
-    Yield, Await, Hole, TaggedTemplate,
+    Yield, Await, Hole, TaggedTemplate, Regex,
     // object literal parts
     PropInit, PropGet, PropSet, PropSpread,
     // patterns
@@ -163,7 +167,7 @@ enum Op : std::uint16_t {
     OP_ForInPrep, OP_ForInNext,
     OP_Throw, OP_TryBegin, OP_TryEnd, OP_ThrowConst,
     OP_GenStart, OP_AsyncStart, OP_Yield, OP_Await, OP_ResumeCheck, OP_IterSend,
-    OP_Arguments, OP_RestArgs, OP_CheckCoercible, OP_Debugger, OP_SetName,
+    OP_Arguments, OP_RestArgs, OP_CheckCoercible, OP_Debugger, OP_SetName, OP_NewRegExp,
     OP_Count
 };
 
@@ -297,6 +301,24 @@ struct ErrorObj : Object {
     ErrorObj() : Object(Cls::Error) {}
 };
 
+struct RegexProg;
+/// A RegExp object (22.2.4): its compiled pattern, source and flags; lastIndex is an own property.
+struct RegExpObj : Object {
+    std::shared_ptr<RegexProg> prog;
+    String* source = nullptr;
+    String* flags = nullptr;
+    RegExpObj() : Object(Cls::RegExpLike) {}
+    void Trace(Runtime& rt) override;
+};
+/// The parser's early check of a regular expression literal (22.2.3.1).
+bool RegexSyntaxOk(const std::u16string& pattern, const std::u16string& flags, std::string& err);
+bool IsRegExp(const Value& v);
+Value MakeRegExpLiteral(Runtime& rt, String* pattern, String* flags);
+/// The String methods with a RegExp argument (JsRegExp.cpp).
+Value RegExpReplace(Runtime& rt, const Value& rx, String* str, const Value& replacement, bool all);
+Value RegExpSplit(Runtime& rt, const Value& rx, String* str, std::uint32_t limit);
+Value RegExpMatch(Runtime& rt, const Value& rx, String* str, int mode);   ///< 0 match, 1 matchAll, 2 search
+
 struct ForInObj : Object {
     Value obj;
     std::vector<GcObj*> keys;
@@ -391,6 +413,7 @@ void InstallMathLib(Runtime& rt);
 void InstallJsonLib(Runtime& rt);
 void InstallCollectionsLib(Runtime& rt);
 void InstallGlobalLib(Runtime& rt);
+void InstallRegExpLib(Runtime& rt);
 
 // small helpers for library code
 NativeFunc* DefNative(Runtime& rt, Object* on, const char* name, NativeFn fn, int length, std::uint8_t flags = kHidden);

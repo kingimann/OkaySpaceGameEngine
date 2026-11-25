@@ -25,6 +25,7 @@ engine was used, ported or followed, and their structure, names and error messag
 | `engine/src/JavaScript/JsLibString.cpp` | 22.1 String (22.1.3.19.1 GetSubstitution for the `$` patterns) |
 | `engine/src/JavaScript/JsLibNumber.cpp` | 21.1 Number (toFixed / toPrecision / toExponential round the exact decimal value half up as 21.1.3.3-21.1.3.5 say), 21.3 Math; Math.random is our own xorshift64* generator |
 | `engine/src/JavaScript/JsLibJson.cpp` | 25.5 JSON (ECMA-404 grammar, InternalizeJSONProperty, SerializeJSONProperty, QuoteJSONString) |
+| `engine/src/JavaScript/JsRegExp.cpp` | 22.2 RegExp (the pattern grammar of 22.2.1, the flags of 22.2.3, 22.2.7.2 RegExpBuiltinExec) and the String methods that take one; our own backtracking machine with an explicit stack and the empty-loop check of 22.2.2.3.1; 12.9.5 for the literal (a `/` starts one where an expression may start, chosen from the previous token) |
 | `engine/src/JavaScript/JsLibCollections.cpp` | 7.4 (iterator operations), 27.1 (iteration), 23.1.5 / 22.1.5 (array and string iterators), 24.1 Map, 24.2 Set, 27.5 generator objects, 27.2 Promise with the jobs of 27.2.2 |
 | `engine/src/JavaScript/JavaScriptVM.cpp` | the engine's `IScriptVM`, the typed binding table (`engine/src/Script/EngineApi.cpp`) and the generated binding layer (`okay/Scripting/ScriptBindings.hpp`) |
 | `engine/src/Scripting/ScriptLanguageGlue.cpp` | language-neutral helpers (handler names, engine-set names, type words, signatures, the deny rules for typed methods); Lua's private copies of these can move onto it (Lua is Claude 3's lane) |
@@ -49,10 +50,11 @@ conditional operator, optional chaining (`a?.b`, `a?.[k]`, `f?.()`), `??` and th
 `??=`, `typeof`, `instanceof` (with `Symbol.hasInstance`), `in`, `delete`, `void`, the comma operator, every
 arithmetic, bitwise, shift and comparison operator with the spec's precedence, generators (`function*`, `yield`,
 `yield*`, `next` / `return` / `throw`), `async` functions and arrows with `await`, numeric separators, binary / octal /
-hex literals, `export default <expression | class | function>` and `export <declaration>` at the top level.
+hex literals, regular expression literals, `export default <expression | class | function>` and `export <declaration>`
+at the top level.
 
-Not supported (yet): regular expressions (a `/` where a value is expected is a syntax error; `replace`, `split`,
-`includes` take strings), tagged templates and `String.raw`, `#private` class members, `static { }` blocks, computed
+Not supported (yet): lookbehind `(?<= )` / `(?<! )`, Unicode property escapes `\p{...}` and the `v` flag in regular
+expressions (the `d` flag is accepted but makes no indices), tagged templates and `String.raw`, `#private` class members, `static { }` blocks, computed
 class field names, BigInt, `import` / modules across files, `for await`, async generators, labelled function
 declarations, `Proxy`, `WeakMap` / `WeakSet` / `WeakRef`, typed arrays and `ArrayBuffer`, `Date`, `Intl` and locale
 rules (`localeCompare` compares code units, case mapping covers ASCII, Latin-1, Latin Extended-A, Greek and Cyrillic),
@@ -75,7 +77,11 @@ map, pop, push, reduce, reduceRight, reverse, shift, slice, some, sort with a co
 toString, unshift, values, Symbol.iterator), `String` (fromCharCode, fromCodePoint; at, charAt, charCodeAt,
 codePointAt, concat, endsWith, includes, indexOf, lastIndexOf, localeCompare, padEnd, padStart, repeat, replace,
 replaceAll, slice, split, startsWith, substr, substring, toLowerCase, toUpperCase, trim, trimStart, trimEnd, iterator),
-`Number` (constants, isFinite, isInteger, isNaN, isSafeInteger; toString(radix), toFixed, toPrecision, toExponential),
+`RegExp` (literals and the constructor, exec, test, toString, lastIndex, source, flags and the flag getters; flags
+d g i m s u y; groups, named groups, backreferences, lookahead, greedy and lazy quantifiers, classes and the \d \w \s
+escapes; String match, matchAll, replace and replaceAll with `$1` `$<name>` `$&` patterns or a function, search and
+split with a RegExp), `Number` (constants, isFinite, isInteger, isNaN, isSafeInteger; toString(radix), toFixed,
+toPrecision, toExponential),
 `Boolean`, `Symbol` (for, keyFor, description, the well-known iterator, asyncIterator, toPrimitive, toStringTag,
 hasInstance), `Math` (every function and constant of 21.3), `JSON` (parse with a reviver, stringify with a replacer
 function or list, indent and toJSON), `Error`, `TypeError`, `RangeError`, `SyntaxError`, `ReferenceError`, `EvalError`,
@@ -91,7 +97,8 @@ and `console.log` / `info` / `warn` / `error` / `debug` (to the engine Console).
   as Lua (`scriptbind::IsDeniedClass` / `IsDeniedMethod`), for the typed table and the generated layer alike.
 - An instruction budget per callback (`JavaScriptVM::kDefaultBudget`, 20 million): every bytecode instruction counts,
   and library functions charge in proportion to their work (string building, join, split, repeat, pad, sort, JSON
-  both ways, spread, Array.from, flat, iteration steps, a thrown exception and a new error's stack text). When it runs
+  both ways, spread, Array.from, flat, iteration steps, every step of the regular expression machine, a thrown
+  exception and a new error's stack text), so catastrophic backtracking (`/(a+)+$/` on a long string) stops too. When it runs
   out the script stops with "the script ran past its instruction budget"; `try` / `catch` can not catch the stop. The
   next callback gets a fresh budget.
 - A heap limit (`Runtime::memoryLimit`, 256 MB by default, `JavaScriptVM::SetMemoryLimit`): "the script used more

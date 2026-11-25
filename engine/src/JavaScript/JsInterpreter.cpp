@@ -1517,6 +1517,12 @@ Value Execute(Runtime& rt, int entry) {
                         *SP++ = Value::Obj(a);
                         break;
                     }
+                    case OP_NewRegExp: {
+                        Value r = MakeRegExpLiteral(rt, SP[-2].S(), SP[-1].S());
+                        SP[-2] = r;
+                        --SP;
+                        break;
+                    }
                     case OP_CheckCoercible:
                         if (TOP.IsNullish()) rt.ThrowType(std::string("can not destructure ") + (TOP.IsNull() ? "null" : "undefined"));
                         break;

@@ -750,7 +750,7 @@ set(OKAY_JS_CORE_SOURCES
     ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsInterpreter.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibObject.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibArray.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibString.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibNumber.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibJson.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibCollections.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibCollections.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsRegExp.cpp)
 add_executable(test_js_core test_js_core.cpp ${OKAY_JS_CORE_SOURCES})
 target_compile_features(test_js_core PRIVATE cxx_std_17)
 target_include_directories(test_js_core PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)

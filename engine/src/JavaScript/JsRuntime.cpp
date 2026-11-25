@@ -428,6 +428,39 @@ bool IsJsSpace(char16_t c) {
     }
 }
 
+// Simple case mapping for toLowerCase / toUpperCase and the RegExp i flag (22.1.3.28 / 22.1.3.30 without the
+// whole Unicode table): ASCII, Latin-1, Latin Extended-A, Greek and Cyrillic.
+char16_t JsLower(char16_t c) {
+    if (c >= 'A' && c <= 'Z') return (char16_t)(c + 32);
+    if (c < 0x80) return c;
+    if ((c >= 0xC0 && c <= 0xDE && c != 0xD7)) return (char16_t)(c + 32);
+    if (c >= 0x391 && c <= 0x3A9 && c != 0x3A2) return (char16_t)(c + 32);
+    if (c >= 0x410 && c <= 0x42F) return (char16_t)(c + 32);
+    if (c >= 0x400 && c <= 0x40F) return (char16_t)(c + 80);
+    if (c >= 0x100 && c <= 0x17F && c != 0x130 && c != 0x131 && c != 0x138 && c != 0x149 && c != 0x17F) {
+        bool evenUpper = (c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177);
+        if (evenUpper) return (c % 2 == 0) ? (char16_t)(c + 1) : c;
+        if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E)) return (c % 2 == 1) ? (char16_t)(c + 1) : c;
+    }
+    return c;
+}
+char16_t JsUpper(char16_t c) {
+    if (c >= 'a' && c <= 'z') return (char16_t)(c - 32);
+    if (c < 0x80) return c;
+    if (c >= 0xE0 && c <= 0xFE && c != 0xF7) return (char16_t)(c - 32);
+    if (c == 0xFF) return 0x178;
+    if (c >= 0x3B1 && c <= 0x3C9 && c != 0x3C2) return (char16_t)(c - 32);
+    if (c == 0x3C2) return 0x3A3;
+    if (c >= 0x430 && c <= 0x44F) return (char16_t)(c - 32);
+    if (c >= 0x450 && c <= 0x45F) return (char16_t)(c - 80);
+    if (c >= 0x100 && c <= 0x17F) {
+        bool evenUpper = (c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177);
+        if (evenUpper) return (c % 2 == 1) ? (char16_t)(c - 1) : c;
+        if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E)) return (c % 2 == 0) ? (char16_t)(c - 1) : c;
+    }
+    return c;
+}
+
 // 7.1.4.1.1 StringToNumber: the StringNumericLiteral grammar, checked by hand, then strtod on the ASCII text.
 double Runtime::StringToNumber(const std::u16string& s) {
     std::size_t a = 0, b = s.size();
@@ -1429,7 +1462,7 @@ void Runtime::Collect() {
     Object* intr[] = {objectProto, functionProto, arrayProto, stringProto, numberProto, booleanProto, symbolProto,
                       errorProto, iteratorProto, arrayIterProto, mapIterProto, setIterProto, stringIterProto,
                       generatorProto, generatorFnProto, asyncFnProto, mapProto, setProto, promiseProto, promiseCtor,
-                      arrayCtor, objectCtor, throwTypeErrorFn, vm->arrayValues, vm->arrayIterNext,
+                      arrayCtor, objectCtor, throwTypeErrorFn, regexpProto, vm->arrayValues, vm->arrayIterNext,
                       vm->stringIterator, vm->stringIterNext};
     for (Object* o : intr) if (o) Mark(o);
     for (Object* o : errorProtos) if (o) Mark(o);
@@ -1679,6 +1712,7 @@ void Runtime::InitIntrinsics() {
     InstallMathLib(*this);
     InstallJsonLib(*this);
     InstallCollectionsLib(*this);
+    InstallRegExpLib(*this);
     InstallGlobalLib(*this);
 }
 

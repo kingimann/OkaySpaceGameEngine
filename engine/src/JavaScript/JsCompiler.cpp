@@ -119,7 +119,7 @@ struct Compiler {
             case OP_Gt: case OP_Ge: case OP_JumpF: case OP_JumpT: case OP_ArrPush: case OP_ArrSpread:
             case OP_DefFieldK: case OP_CopyProps: case OP_DelElem: case OP_RunFields: case OP_StoreThis:
             case OP_IterClose: case OP_IterStep: case OP_Throw: case OP_LtJumpF: case OP_Return:
-            case OP_Class: case OP_IterSend: case OP_SetFieldInit:
+            case OP_Class: case OP_IterSend: case OP_SetFieldInit: case OP_NewRegExp:
                 return op == OP_LtJumpF ? -2 : op == OP_Class ? 1 : -1;
             case OP_SetElem: case OP_DefField: case OP_DefGetter: case OP_DefSetter: case OP_DefMethod:
             case OP_SuperGet:
@@ -1127,6 +1127,11 @@ struct Compiler {
         switch (n->k) {
             case NK::Num: EmitNum(n->num); return;
             case NK::Str: EmitStr(n->str); return;
+            case NK::Regex:   // 13.2.7.3: a new RegExp object each time the literal is evaluated
+                EmitStr(n->str);
+                EmitStr(n->a->str);
+                Emit(OP_NewRegExp);
+                return;
             case NK::True: Emit(OP_True); return;
             case NK::False: Emit(OP_False); return;
             case NK::Null: Emit(OP_Null); return;

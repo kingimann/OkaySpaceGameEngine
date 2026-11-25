@@ -681,6 +681,65 @@ throws("typeof tdz", () => { typeof q; let q; }, ReferenceError);
 // Function.prototype.bind with new
 { function P(a, b) { this.s = a + b; } const B = P.bind(null, 1); eq("bound new", new B(2).s, 3); eq("bound name", B.name, "bound P"); }
 
+// ---- 22.2 regular expressions: syntax, flags, groups, lookahead, backreferences, exec / lastIndex, and the
+// String methods that take a RegExp
+eq("test", /ab+c/.test("xabbbcx"), true);
+eq("test2", /^ab+c$/.test("xabbbcx"), false);
+eq("exec groups", /(\d+)-(\d+)/.exec("tel 12-345").slice(1).join(), "12,345");
+eq("exec index", /\d/.exec("ab3").index, 2);
+eq("named", /(?<y>\d{4})-(?<m>\d\d)/.exec("2026-11").groups.m, "11");
+eq("icase", /HELLO/i.test("say hello"), true);
+eq("class", /[a-c]+/.exec("xxbcaz")[0], "bca");
+eq("neg class", /[^0-9]+/.exec("12ab34")[0], "ab");
+eq("escapes", /\w+\s\w+/.exec("  foo bar  ")[0], "foo bar");
+eq("dot", /a.c/.test("a\nc"), false);
+eq("dotall", /a.c/s.test("a\nc"), true);
+eq("multiline", "a\nb".match(/^b$/m)[0], "b");
+eq("lazy", /<.+?>/.exec("<a><b>")[0], "<a>");
+eq("greedy", /<.+>/.exec("<a><b>")[0], "<a><b>");
+eq("counted", /^a{2,3}$/.test("aaaa"), false);
+eq("counted2", /^a{2,}$/.test("aaaa"), true);
+eq("alt", /cat|dog/.exec("hotdog")[0], "dog");
+eq("backref", /(\w)\1/.exec("abccd")[0], "cc");
+eq("lookahead", /\d+(?=px)/.exec("10em 20px")[0], "20");
+eq("neg lookahead", /\d+(?![\dp])/.exec("20px 30em")[0], "30");
+eq("word boundary", "the cat sat".match(/\bc\w+/)[0], "cat");
+eq("global match", "a1b22c333".match(/\d+/g).join(), "1,22,333");
+eq("no match", "abc".match(/\d/), null);
+eq("replace global", "a-b-c".replace(/-/g, "+"), "a+b+c");
+eq("replace groups", "John Smith".replace(/(\w+)\s(\w+)/, "$2, $1"), "Smith, John");
+eq("replace named", "2026-11".replace(/(?<y>\d+)-(?<m>\d+)/, "$<m>/$<y>"), "11/2026");
+eq("replace fn", "a1b2".replace(/\d/g, d => d * 2), "a2b4");
+eq("replaceAll rx", "aXbX".replaceAll(/x/gi, "_"), "a_b_");
+throws("replaceAll needs g", () => "a".replaceAll(/a/, "b"), TypeError);
+eq("split rx", "a1b22c".split(/\d+/).join("|"), "a|b|c");
+eq("split captures", "a1b".split(/(\d)/).join("|"), "a|1|b");
+eq("split empty rx", "abc".split(/(?:)/).join("|"), "a|b|c");
+eq("search", "hello world".search(/o\sw/), 4);
+eq("matchAll", [..."a1b2".matchAll(/[a-z](\d)/g)].map(m => m[1]).join(), "1,2");
+eq("lastIndex", (() => { const r = /a/g; r.test("aa"); return r.lastIndex; })(), 1);
+eq("sticky", /b/y.test("ab"), false);
+eq("toString", String(/a\/b/gi), "/a\\/b/gi");
+eq("source", new RegExp("x+", "g").source + new RegExp("x+", "g").flags, "x+g");
+eq("ctor copy", new RegExp(/ab/g).global, true);
+eq("unicode", /^.$/u.test("😀"), true);
+eq("non unicode", /^.$/.test("😀"), false);
+eq("unicode escape", /\u{1F600}/u.test("😀"), true);
+eq("empty loop", /(a*)*b/.test("aaab"), true);
+eq("empty alt", /(|a)+b/.test("ab"), true);
+eq("division still works", (10 / 2) / 5, 1);
+let x = 6, y = 2, g = 3; eq("division names", x / y / g, 1);
+eq("regex after return", (function () { return /z/.test("z"); })(), true);
+eq("in array", [/a/, /b/].length, 2);
+eq("class with slash", /[/]/.test("/"), true);
+eq("case-insensitive class", /[A-Z]/i.test("q"), true);
+eq("digits shorthand", /^\D+$/.test("abc"), true);
+throws("bad regex", () => new RegExp("("), SyntaxError);
+throws("bad flags", () => new RegExp("a", "zz"), SyntaxError);
+throws("lookbehind", () => new RegExp("(?<=a)b"), SyntaxError);
+eq("json-ish", /^\s*\{.*\}\s*$/.test(' {"a":1} '), true);
+eq("email-ish", /^[\w.+-]+@[\w-]+\.[\w.]+$/.test("a.b+c@d-e.fg"), true);
+
 // ---- eval and Function are not available (sandbox)
 throws("no eval", () => eval("1"), EvalError);
 throws("no Function", () => Function("return 1"), EvalError);

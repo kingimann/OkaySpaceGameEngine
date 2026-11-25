@@ -3,7 +3,7 @@
 // with strings as sequences of UTF-16 code units. Patterns are plain strings:
 // regular expressions are not supported, so replace / split / includes take a
 // string to look for (replace keeps the $$ $& $` $' replacement patterns of
-// 22.1.3.19.1 GetSubstitution). Case mapping covers ASCII, Latin-1, Greek and
+// 22.1.3.19.1 GetSubstitution) or a RegExp (JsRegExp.cpp). Case mapping covers ASCII, Latin-1, Greek and
 // Cyrillic (not the whole Unicode table). Every method charges the run budget in
 // proportion to the characters it makes or scans.
 #include "JsInternal.hpp"
@@ -25,37 +25,6 @@ Value Str(Runtime& rt, std::u16string s) {
     return Value::Str(rt.NewString(std::move(s)));
 }
 
-
-char16_t Lower(char16_t c) {
-    if (c >= 'A' && c <= 'Z') return (char16_t)(c + 32);
-    if (c < 0x80) return c;
-    if ((c >= 0xC0 && c <= 0xDE && c != 0xD7)) return (char16_t)(c + 32);
-    if (c >= 0x391 && c <= 0x3A9 && c != 0x3A2) return (char16_t)(c + 32);
-    if (c >= 0x410 && c <= 0x42F) return (char16_t)(c + 32);
-    if (c >= 0x400 && c <= 0x40F) return (char16_t)(c + 80);
-    if (c >= 0x100 && c <= 0x17F && c != 0x130 && c != 0x131 && c != 0x138 && c != 0x149 && c != 0x17F) {
-        bool evenUpper = (c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177);
-        if (evenUpper) return (c % 2 == 0) ? (char16_t)(c + 1) : c;
-        if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E)) return (c % 2 == 1) ? (char16_t)(c + 1) : c;
-    }
-    return c;
-}
-char16_t Upper(char16_t c) {
-    if (c >= 'a' && c <= 'z') return (char16_t)(c - 32);
-    if (c < 0x80) return c;
-    if (c >= 0xE0 && c <= 0xFE && c != 0xF7) return (char16_t)(c - 32);
-    if (c == 0xFF) return 0x178;
-    if (c >= 0x3B1 && c <= 0x3C9 && c != 0x3C2) return (char16_t)(c - 32);
-    if (c == 0x3C2) return 0x3A3;
-    if (c >= 0x430 && c <= 0x44F) return (char16_t)(c - 32);
-    if (c >= 0x450 && c <= 0x45F) return (char16_t)(c - 80);
-    if (c >= 0x100 && c <= 0x17F) {
-        bool evenUpper = (c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177);
-        if (evenUpper) return (c % 2 == 1) ? (char16_t)(c - 1) : c;
-        if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E)) return (c % 2 == 0) ? (char16_t)(c - 1) : c;
-    }
-    return c;
-}
 
 std::size_t FindFrom(Runtime& rt, const std::u16string& s, const std::u16string& pat, std::size_t from) {
     rt.Charge((s.size() > from ? s.size() - from : 0) / 8 + 1);
@@ -81,8 +50,11 @@ std::u16string Substitute(const std::u16string& matched, const std::u16string& s
 
 Value ReplaceImpl(Runtime& rt, CallArgs& a, bool all) {
     std::u16string s = ThisStr(rt, a, all ? "replaceAll" : "replace");
-    if (a[0].IsObj() && !a[0].O()->IsCallable() && a[0].O()->cls == Cls::RegExpLike)
-        rt.ThrowType("regular expressions are not supported; pass a string to look for");
+    if (IsRegExp(a[0])) {
+        String* str = rt.NewString(s);
+        rt.Keep(Value::Str(str));
+        return RegExpReplace(rt, a[0], str, a[1], all);
+    }
     std::u16string pat = rt.ToU16(a[0]);
     Value rep = a[1];
     bool fn = rt.IsCallable(rep);
@@ -110,6 +82,20 @@ Value ReplaceImpl(Runtime& rt, CallArgs& a, bool all) {
     }
     if (last < s.size()) out += s.substr(last);
     return Str(rt, std::move(out));
+}
+
+Value StringMatch(Runtime& rt, CallArgs& a, int mode, const char* name) {
+    std::u16string s = ThisStr(rt, a, name);
+    String* str = rt.NewString(s);
+    rt.Keep(Value::Str(str));
+    Value rx = a[0];
+    if (!IsRegExp(rx)) {
+        Value ctor = rt.GetGlobal("RegExp");
+        Value args[2] = {rx.IsUndef() ? Value::Str(rt.atoms->empty) : Value::Str(rt.ToString(rx)),
+                         Value::Str(rt.NewStringAscii(mode == 1 ? "g" : ""))};
+        rx = rt.Construct(ctor, args, 2);
+    }
+    return RegExpMatch(rt, rx, str, mode);
 }
 
 } // namespace
@@ -219,7 +205,7 @@ void InstallStringLib(Runtime& rt) {
     }, 1);
     DefNative(rt, sp, "includes", [](Runtime& rt, CallArgs& a) {
         std::u16string s = ThisStr(rt, a, "includes");
-        if (a[0].IsObj() && a[0].O()->cls == Cls::RegExpLike) rt.ThrowType("includes needs a string, not a regular expression");
+        if (IsRegExp(a[0])) rt.ThrowType("includes needs a string, not a regular expression");
         std::u16string p = rt.ToU16(a[0]);
         double from = std::min(std::max(rt.ToIntegerOrInfinity(a[1]), 0.0), (double)s.size());
         return Value::Bool(FindFrom(rt, s, p, (std::size_t)from) != std::u16string::npos);
@@ -266,7 +252,7 @@ void InstallStringLib(Runtime& rt) {
     }, 2);
     DefNative(rt, sp, "toLowerCase", [](Runtime& rt, CallArgs& a) {
         std::u16string s = ThisStr(rt, a, "toLowerCase");
-        for (char16_t& c : s) c = Lower(c);
+        for (char16_t& c : s) c = JsLower(c);
         return Str(rt, std::move(s));
     }, 0);
     DefNative(rt, sp, "toUpperCase", [](Runtime& rt, CallArgs& a) {
@@ -275,7 +261,7 @@ void InstallStringLib(Runtime& rt) {
         o.reserve(s.size());
         for (char16_t c : s) {
             if (c == 0xDF) { o += u"SS"; continue; }
-            o += Upper(c);
+            o += JsUpper(c);
         }
         return Str(rt, std::move(o));
     }, 0);
@@ -344,8 +330,12 @@ void InstallStringLib(Runtime& rt) {
     }, 1);
     DefNative(rt, sp, "split", [](Runtime& rt, CallArgs& a) {
         std::u16string s = ThisStr(rt, a, "split");
-        if (a[0].IsObj() && a[0].O()->cls == Cls::RegExpLike) rt.ThrowType("split needs a string, not a regular expression");
         std::uint32_t lim = a[1].IsUndef() ? 4294967295u : rt.ToUint32(a[1]);
+        if (IsRegExp(a[0])) {
+            String* str = rt.NewString(s);
+            rt.Keep(Value::Str(str));
+            return RegExpSplit(rt, a[0], str, lim);
+        }
         ArrayObj* out = rt.NewArray();
         rt.Keep(Value::Obj(out));
         if (lim == 0) return Value::Obj(out);
@@ -376,6 +366,15 @@ void InstallStringLib(Runtime& rt) {
     }, 2);
     DefNative(rt, sp, "replace", [](Runtime& rt, CallArgs& a) { return ReplaceImpl(rt, a, false); }, 2);
     DefNative(rt, sp, "replaceAll", [](Runtime& rt, CallArgs& a) { return ReplaceImpl(rt, a, true); }, 2);
+    // match / matchAll / search (22.1.3.13, 22.1.3.14, 22.1.3.22): a string argument becomes a RegExp
+    static const NativeFn matchFns[3] = {
+        [](Runtime& rt, CallArgs& a) -> Value { return StringMatch(rt, a, 0, "match"); },
+        [](Runtime& rt, CallArgs& a) -> Value { return StringMatch(rt, a, 1, "matchAll"); },
+        [](Runtime& rt, CallArgs& a) -> Value { return StringMatch(rt, a, 2, "search"); },
+    };
+    DefNative(rt, sp, "match", matchFns[0], 1);
+    DefNative(rt, sp, "matchAll", matchFns[1], 1);
+    DefNative(rt, sp, "search", matchFns[2], 1);
     DefNative(rt, sp, "localeCompare", [](Runtime& rt, CallArgs& a) {
         std::u16string s = ThisStr(rt, a, "localeCompare");
         std::u16string t = rt.ToU16(a[0]);

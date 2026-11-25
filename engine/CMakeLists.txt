@@ -229,6 +229,7 @@ add_library(okay_engine
     src/JavaScript/JsLibNumber.cpp
     src/JavaScript/JsLibJson.cpp
     src/JavaScript/JsLibCollections.cpp
+    src/JavaScript/JsRegExp.cpp
     src/JavaScript/JavaScriptVM.cpp
     src/Scripting/ScriptLanguageGlue.cpp
     src/Components/ScriptComponent.cpp

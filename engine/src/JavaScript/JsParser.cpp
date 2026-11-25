@@ -137,13 +137,12 @@ struct Parser {
             case TT::Str: return "a string";
             case TT::Template: return "a template";
             case TT::PrivateName: return "a #private name";
+            case TT::Regex: return "a regular expression";
             case TT::Punct: return std::string("'") + PunctName(t.p) + "'";
         }
         return "?";
     }
     [[noreturn]] void Unexpected(const char* wanted = nullptr) {
-        if (Cur().t == TT::Punct && Cur().p == P_Slash)
-            Fail("unexpected '/' (regular expression literals are not supported)");
         if (Cur().t == TT::PrivateName) Fail("#private class members are not supported");
         std::string m = "unexpected " + Describe(Cur());
         if (wanted) m += std::string(", expected ") + wanted;
@@ -1095,6 +1094,15 @@ struct Parser {
             case TT::Num: { Node* n = N(NK::Num); n->num = t.n; Next(); return n; }
             case TT::Str: { Node* n = N(NK::Str); n->str = t.s; Next(); return n; }
             case TT::Template: return TemplateLit();
+            case TT::Regex: {
+                Node* n = N(NK::Regex);
+                n->str = t.s;
+                Node* f = N(NK::Str);
+                f->str = t.flags;
+                n->a = f;
+                Next();
+                return n;
+            }
             case TT::End: Unexpected();
             case TT::PrivateName: Fail("#private class members are not supported");
             case TT::Punct:

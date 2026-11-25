@@ -421,6 +421,75 @@ struct Lexer {
         }
     }
 
+    // 12.9.5 / 12: a '/' starts a regular expression literal where an expression may start (the
+    // InputElementRegExp goal), and is division after a value. We tell them apart by the previous token.
+    bool RegexAllowed() const {
+        if (out.empty()) return true;
+        const Token& t = out.back();
+        switch (t.t) {
+            case TT::Num: case TT::Str: case TT::PrivateName: case TT::Regex: return false;
+            case TT::Template: return t.tpl == 1 || t.tpl == 2;   // after `...${ an expression starts
+            case TT::Punct: return !(t.p == P_RParen || t.p == P_RBrack || t.p == P_RBrace || t.p == P_Inc || t.p == P_Dec);
+            case TT::Name: {
+                static const char* const before[] = {"return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
+                                                     "throw", "case", "do", "else", "yield", "await"};
+                for (const char* w : before) {
+                    std::size_t n = std::char_traits<char>::length(w);
+                    if (t.s.size() != n) continue;
+                    std::size_t k = 0;
+                    while (k < n && t.s[k] == (char16_t)w[k]) ++k;
+                    if (k == n && !t.escaped) return true;
+                }
+                return false;
+            }
+            default: return true;
+        }
+    }
+
+    bool RegexLit(int ln, int col) {
+        ++i;   // the opening /
+        std::u16string body;
+        bool inClass = false;
+        while (true) {
+            if (i >= s.size() || s[i] == '\n' || s[i] == '\r') return Fail("this regular expression is never closed with '/'");
+            char c = s[i];
+            if (c == '\\') {
+                body += u'\\';
+                ++i;
+                if (i >= s.size() || s[i] == '\n') return Fail("this regular expression is never closed with '/'");
+                int len;
+                std::uint32_t cp = PeekCp(i, &len);
+                i += (std::size_t)len;
+                Append(body, cp);
+                continue;
+            }
+            if (c == '[') inClass = true;
+            else if (c == ']') inClass = false;
+            else if (c == '/' && !inClass) { ++i; break; }
+            int len;
+            std::uint32_t cp = PeekCp(i, &len);
+            i += (std::size_t)len;
+            Append(body, cp);
+        }
+        std::u16string flags;
+        while (i < s.size()) {
+            int len;
+            std::uint32_t cp = PeekCp(i, &len);
+            if (!IsIdPart(cp)) break;
+            Append(flags, cp);
+            i += (std::size_t)len;
+        }
+        std::string why;
+        if (!RegexSyntaxOk(body, flags, why)) {
+            line = ln;
+            return Fail("bad regular expression: " + why);
+        }
+        Token& t = Push(TT::Regex, ln, col);
+        t.s = std::move(body);
+        t.flags = std::move(flags);
+        return true;
+    }
+
     bool Run() {
         while (true) {
             if (!Skip()) return false;
@@ -470,6 +539,10 @@ struct Lexer {
             if (c == '`') {
                 ++i;
                 if (!TemplatePiece(ln, col, true)) return false;
+                continue;
+            }
+            if (c == '/' && RegexAllowed()) {
+                if (!RegexLit(ln, col)) return false;
                 continue;
             }
             if (c == '}' && !braces.empty() && braces.back() == 1) {

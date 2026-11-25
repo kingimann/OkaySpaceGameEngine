@@ -436,7 +436,7 @@ public:
            *iteratorProto = nullptr, *arrayIterProto = nullptr, *mapIterProto = nullptr, *setIterProto = nullptr,
            *stringIterProto = nullptr, *generatorProto = nullptr, *generatorFnProto = nullptr, *asyncFnProto = nullptr,
            *mapProto = nullptr, *setProto = nullptr, *promiseProto = nullptr, *promiseCtor = nullptr,
-           *arrayCtor = nullptr, *objectCtor = nullptr, *throwTypeErrorFn = nullptr;
+           *arrayCtor = nullptr, *objectCtor = nullptr, *throwTypeErrorFn = nullptr, *regexpProto = nullptr;
     Object* errorProtos[8] = {};
     Symbol *symIterator = nullptr, *symAsyncIterator = nullptr, *symToPrimitive = nullptr, *symToStringTag = nullptr,
            *symHasInstance = nullptr;

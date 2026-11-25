@@ -1055,9 +1055,10 @@ const char* const kLibMembers[][2] = {
     {"String", "fromCharCode fromCodePoint"},
     {"Promise", "all allSettled any race reject resolve"},
     {"Symbol", "for keyFor iterator asyncIterator toPrimitive toStringTag hasInstance"},
+    {"RegExp", "prototype"},
     {"Reflect", "apply construct defineProperty deleteProperty get getOwnPropertyDescriptor getPrototypeOf has isExtensible ownKeys preventExtensions set setPrototypeOf"},
 };
-const char* const kGlobals[] = {"console", "Math", "JSON", "Object", "Array", "String", "Number", "Boolean", "Symbol",
+const char* const kGlobals[] = {"console", "Math", "JSON", "Object", "Array", "String", "Number", "Boolean", "Symbol", "RegExp",
                                 "Map", "Set", "Promise", "Error", "TypeError", "RangeError", "ReferenceError",
                                 "SyntaxError", "Reflect", "parseInt", "parseFloat", "isNaN", "isFinite", "globalThis",
                                 "queueMicrotask", "GetComponent", "Destroy", "gameObject", "transform", "this",

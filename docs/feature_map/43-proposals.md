@@ -1111,16 +1111,17 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Run games in a browser.
 - **Parts:**
   - 56.3.1 Emscripten build - `scripts/build-web.sh`, `player/CMakeLists.txt` - the player runs under `emscripten_set_main_loop`; CI job `web-build`
-  - 56.3.2 Web export from Build Game - `editor/main.cpp` - writes a game folder and build instructions
-- **Code:** `scripts/build-web.sh`, `editor/main.cpp`
+  - 56.3.2 Web export from Build Game - `editor/BuildGame.cpp` - writes a game folder and a build script that makes `web/` and an itch.io zip
+  - 56.3.3 Page, saves, input and Run in browser - see 18.2.5 to 18.2.9
+- **Code:** `scripts/build-web.sh`, `scripts/web_package.py`, `platform/web/`, `editor/BuildGame.cpp`, `editor/WebRun.cpp`
 - **API:** Build Settings target Web
 - **Editor:** Build Settings
 - **Docs:** `docs/platform/web_mobile.md`
-- **Tests:** CI `web-build`
-- **Status:** Partial - builds in CI; networking (UDP) does not work in the browser (per `docs/platform/web_mobile.md`).
+- **Tests:** CI `web-build` (headless Chromium), `web_export`, `web_package_script`
+- **Status:** Partial - builds, packs, loads, saves and takes input in headless Chromium; networking (UDP) does not work in the browser.
 - **Exists today:** Parts above.
 - **Suggested priority:** Low.
-- **Open:** first step: package the web build as a zip ready for itch.io from the editor when emscripten is installed.
+- **Open:** next steps: a WebSocket transport through the relay for multiplayer; running Emscripten from the editor when it is installed; lazy asset packs.
 - **Related:** 18.2
 - **Words:** web export, WebAssembly, Emscripten, WebGL, itch.io, browser game
 - **Seen as:** web build needs manual steps

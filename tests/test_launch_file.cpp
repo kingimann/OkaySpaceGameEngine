@@ -111,6 +111,16 @@ int main() {
         CHECK(r.ok);
         CHECK(Next(log, seen, 2) == (std::vector<std::string>{"PROG:xdg-open", "ARG:./-rf.png"}));
     }
+    // Build Settings > Web > Run in browser: only a page on this computer, as one argument
+    {
+        CHECK(oked::launch::OpenLocalUrl("http://127.0.0.1:8080/").ok);
+        CHECK(Next(log, seen, 2) == (std::vector<std::string>{"PROG:xdg-open", "ARG:http://127.0.0.1:8080/"}));
+        for (const char* bad : {"https://example.com/", "file:///etc/passwd", "http://127.0.0.1:8080/ --new-window",
+                                "http://127.0.0.1:8080/\"x", "http://localhost:8080/", "-http://127.0.0.1:1/", ""}) {
+            CHECK(!oked::launch::OpenLocalUrl(bad).ok);
+            CHECK(NothingStarted(log, seen));
+        }
+    }
     // a file with no extension and no execute bit is data; the same file marked executable is a program
     {
         WriteFile(root / "Assets" / "data", "x", 0644);

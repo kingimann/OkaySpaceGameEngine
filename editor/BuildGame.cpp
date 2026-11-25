@@ -12,6 +12,7 @@
 #include "LocalizationWindow.hpp"    // CopyLocalizationFiles: strings.okayloc and its fonts go into the build
 #include "ModulesModel.hpp"          // okaymod::Selection / UsedButOff / UsageInScene: Build warns about modules in use but off
 #include "okay/Core/BuildPipeline.hpp"
+#include "WebRun.hpp"                // the web game folder's sizes (Build Settings > Web)
 #if defined(OKAY_XBOX_UWP)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/platform/xbox_uwp.md
 #include "XboxExport.hpp"
 #include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
@@ -748,6 +749,10 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
     }
 #endif
     if (target == 1) {   // ---- Web (Emscripten / WebGL) ----
+        // One build script for every game: the engine's scripts/build-web.sh builds the player (once; later games reuse
+        // it) and packs game/ beside it into web/ (index.html, okay-player.js, okay-player.wasm.gz, game.okaypack.gz)
+        // plus a zip with index.html at its root for itch.io-style hosts. Build Settings > Web > Run in browser serves web/.
+        const std::string zipName = okay::buildpipe::FileSafeName(gameName, "Game") + "-web.zip";
         std::ofstream sh((dir / "build-web.sh").string());
         sh << "#!/usr/bin/env bash\n"
               "# Build this game for the web (WebAssembly + WebGL) with Emscripten.\n"
@@ -756,26 +761,24 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
               "set -euo pipefail\n"
               "cd \"$(dirname \"$0\")\"\n"
               ": \"${OKAY_SRC:?Set OKAY_SRC to the OkaySpace engine source folder}\"\n"
-              "command -v emcmake >/dev/null || { echo 'Emscripten not found: source emsdk_env.sh'; exit 1; }\n"
-              "emcmake cmake -S \"$OKAY_SRC\" -B build-web -DCMAKE_BUILD_TYPE=Release \\\n"
-              "  -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \\\n"
-              "  -DCMAKE_EXE_LINKER_FLAGS=\"--preload-file game@/\"\n"
-              "cmake --build build-web -j\n"
-              "echo 'Built build-web/web/okay-player.html — serve it: python3 -m http.server -d build-web/web'\n";
+              "bash \"$OKAY_SRC/scripts/build-web.sh\" --game \"$PWD/game\" --out \"$PWD/web\" --zip \"$PWD/" << zipName << "\" \"$@\"\n";
         std::ofstream rd((dir / "README.txt").string());
         rd << "OkaySpace - Web (WebGL / WebAssembly) export of '" << gameName << "'\n"
               "======================================================\n\n"
               "game/         your scene + assets (game.okayscene, game.okayconfig, ...)\n"
-              "build-web.sh  builds a browser build with Emscripten.\n\n"
+              "build-web.sh  builds the browser version with Emscripten into web/ and " << zipName << "\n\n"
               "Steps:\n"
               "  1. Install the Emscripten SDK, then: source /path/to/emsdk/emsdk_env.sh\n"
               "  2. export OKAY_SRC=/path/to/OkaySpace   (the engine source checkout)\n"
-              "  3. ./build-web.sh\n"
-              "  4. Serve build-web/web/ over HTTP and open okay-player.html\n\n"
-              "The engine ships this path as scripts/build-web.sh; this export bundles\n"
-              "your game's data and a matching build command.\n";
-        return "Exported Web (WebGL) project to " + dir.string() + " (" + std::to_string(copied) +
-               " asset(s)). Run build-web.sh with Emscripten to produce the .wasm build.";
+              "  3. ./build-web.sh            (add --fit aspect to keep the game's shape, --no-compress for hosts that compress)\n"
+              "  4. Build Settings > Web > Run in browser, or upload " << zipName << " (index.html is at its root).\n\n"
+              "web/ holds index.html, okay-player.js, okay-player.wasm.gz (the program) and game.okaypack.gz (your files).\n"
+              "Saves are kept in the browser (IndexedDB) and survive a reload.\n";
+        const oked::webrun::Sizes ws = oked::webrun::Measure((dir / "web").u8string());
+        std::string msg = "Exported Web (WebGL) project to " + dir.string() + " (" + std::to_string(copied) + " asset(s)).";
+        if (ws.built) msg += " The web build in web/ is from before this export: run build-web.sh again to update it (" + oked::webrun::SizeLine(ws) + ").";
+        else msg += " Run build-web.sh with Emscripten to make the browser version in web/.";
+        return msg;
     }
 
     // target == 2: ---- Android (SDL2 + NDK) ----

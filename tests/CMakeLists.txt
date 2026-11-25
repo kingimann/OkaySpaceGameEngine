@@ -63,6 +63,9 @@ if(Python3_Interpreter_FOUND)
     # scripts/module_sizes.py (bytes of each module in a linked program) on a made-up linker map.
     add_test(NAME module_sizes_script COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_module_sizes.py
              ${PROJECT_SOURCE_DIR}/scripts/module_sizes.py)
+    # scripts/web_package.py (the web game folder: index.html, the gzip program and game pack, the itch.io zip) on a made-up build.
+    add_test(NAME web_package_script COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_web_package.py
+             ${PROJECT_SOURCE_DIR}/scripts/web_package.py)
 endif()
 # Review fix: a record whose module is off, or has no reader, is kept by load then save (all six gated records).
 add_executable(test_module_records_kept test_module_records_kept.cpp)
@@ -1309,6 +1312,13 @@ if(NOT WIN32)
     target_include_directories(test_launch_file PRIVATE ${PROJECT_SOURCE_DIR}/editor)
     add_test(NAME launch_file COMMAND test_launch_file)
 endif()
+
+# The web export's C++ parts: Build Settings > Web's sizes and local Run in browser server (editor/WebRun.cpp: request
+# parsing, the path rules, a real loopback GET of a 3 MB file, an idle connection) and the web player's save folder and
+# prefs timing (platform/web/WebPlayer.hpp). The loopback part runs on Linux; on Windows the pure parts run.
+add_executable(test_web_export test_web_export.cpp ${PROJECT_SOURCE_DIR}/editor/WebRun.cpp)
+target_link_libraries(test_web_export PRIVATE okay::engine)
+add_test(NAME web_export COMMAND test_web_export)
 
 # Import settings that really change behaviour: texture Filter / Wrap / Mipmaps (software sampler + sidecar read by the OpenGL path), model Normals / Smoothing angle / Import animations.
 add_executable(test_import_settings_real test_import_settings_real.cpp)

@@ -1219,6 +1219,8 @@ static void DrawRecentPlayers(bool signedIn, bool reload) {
         ImGui::TextDisabled("Match history isn't set up on the server yet (docs/sql/matches.sql), so only games on this PC are listed.");
     ImGui::EndChild();
 }
+// The same list on the Friends page's "Add friend" view (people you met in a game are the likeliest new friends).
+void DrawRecentPlayersPanel(bool signedIn) { DrawRecentPlayers(signedIn, false); }
 
 // Per-game leaderboards from match results, plus my own line.
 static void DrawGameLeaderboards(bool signedIn, bool reload) {

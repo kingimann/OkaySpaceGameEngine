@@ -17800,7 +17800,8 @@ int main(int argc, char** argv) {
                     if (fav) DrawStar(dl, ImVec2(ap.x + 3, ap.y + 3), 6.0f, okaytheme::WarningFillU32());
                     // Name, @username, status line.
                     const float tx = rp.x + 10 + A + 12, ty = rp.y + 12;
-                    const int nBtns = kind == 1 ? 2 : kind == 2 ? 1 : (joinable ? 3 : 2);
+                    const bool invitable = accepted && f->online && !joinable && MpCanInvite();   // you're in a joinable match: invite them
+                    const int nBtns = kind == 1 ? 2 : kind == 2 ? 1 : 2 + (joinable ? 1 : 0) + (invitable ? 1 : 0);
                     const float right = rp.x + w - 12 - nBtns * (d + 8);
                     std::string nm = FitText(dispName, right - tx - 10);
                     dl->AddText(ImVec2(tx, ty), cText, nm.c_str());
@@ -17837,6 +17838,12 @@ int main(int argc, char** argv) {
                             at();
                             if (RoundIconButton("##join", kRibPlay, d, okaytheme::SuccessFillU32(), okaytheme::SuccessFillU32(), IM_COL32_WHITE, "Join their game"))
                                 MpJoinFriend(f->sessionCode, dispName);
+                        }
+                        if (invitable) {
+                            at();
+                            if (RoundIconButton("##invite", kRibPlay, d, ImGui::GetColorU32(kAccent), ImGui::GetColorU32(kAccent), okaytheme::OnColorU32(),
+                                                ("Invite to " + MpGameTitle()).c_str()))
+                                MpInviteUser(f->id, dispName);
                         }
                         at(); if (RoundIconButton("##msg", kRibChat, d, bg, bgh, cText, "Message")) OpenChatWith(f->id, dispName, f->avatar);
                     }
@@ -18020,12 +18027,13 @@ int main(int argc, char** argv) {
                     ImGui::Dummy(ImVec2(0, 6));
                     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
                     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 9));
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 156.0f);
+                    const float sendW = FitButtonW("Send request", UiPx(146.0f));
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - sendW - UiPx(10.0f));
                     bool submit = ImGui::InputTextWithHint("##addfriend", "Username or friend code", addBuf, sizeof(addBuf),
                                                            ImGuiInputTextFlags_EnterReturnsTrue);
-                    ImGui::SameLine(0, 10);
+                    ImGui::SameLine(0, UiPx(10.0f));
                     ImGui::BeginDisabled(!addBuf[0]);
-                    bool send = PrimaryButton("Send request", ImVec2(146, ImGui::GetFrameHeight()));
+                    bool send = PrimaryButton("Send request", ImVec2(sendW, ImGui::GetFrameHeight()));
                     ImGui::EndDisabled();
                     ImGui::PopStyleVar(2);
                     if ((send || submit) && addBuf[0]) {
@@ -18048,6 +18056,10 @@ int main(int argc, char** argv) {
                     ImGui::PopStyleVar();
                     ImGui::PopStyleColor();
                     if (!side) { ImGui::Dummy(ImVec2(0, 10)); codeCard(); }
+                    // People you played with recently (the Multiplayer page's list): open a profile to add them.
+                    ImGui::Dummy(ImVec2(0, UiPx(18.0f)));
+                    SectionLabel("PEOPLE YOU PLAYED WITH", -1);
+                    DrawRecentPlayersPanel(account.IsLoggedIn() || kUiDemoUser);
                 } else {
                     // Search pill.
                     static char friendFilter[64] = "";

@@ -147,7 +147,8 @@ void MpInviteUser(const std::string& uid, const std::string& name);
 void MpJoinFriend(const std::string& sessionCode, const std::string& name);
 void MpInviteGroup(long gid, const std::string& name);         // a whole group chat
 std::string MpMyJoin();                                        // my session's public link ("" = none)
-void MpPartyInvite(const std::string& uid, const std::string& name);   // (makes a party if needed)
+void MpPartyInvite(const std::string& uid, const std::string& name);
+void DrawRecentPlayersPanel(bool signedIn);                     // Multiplayer's recent players (Friends > Add friend shows it too)   // (makes a party if needed)
 void MpPartyJoinFromInvite(const std::string& body);
 std::string MpPartyId();                                       // my party ("" = none)
 // Playtime and state (main.cpp).

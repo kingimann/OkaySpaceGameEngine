@@ -41,11 +41,10 @@ int RunOkayUIHostMode(int, char**) {
     if (haveSaved) ApplyPersisted(state, saved);
     okay::platform::WindowDesc d; d.title = "OkaySpace Editor (OkayUI window mode)"; d.width = ws.w; d.height = ws.h; d.resizable = true;
     if (ws.x != INT_MIN) { d.x = ws.x; d.y = ws.y; }
-    std::unique_ptr<okay::platform::Window> win = be->MakeWindow(d);
-    if (!win) { std::fprintf(stderr, "[okayui-host] no window: %s\n", be->LastError().c_str()); be->Shutdown(); return 1; }
+    std::unique_ptr<okay::platform::Window> win;
+    std::unique_ptr<okay::platform::Painter> painter;
     std::string err;
-    std::unique_ptr<okay::platform::Painter> painter = okay::platform::CreateSdl2Painter(*win, okay::platform::PainterDesc(), &err);
-    if (!painter) { std::fprintf(stderr, "[okayui-host] no painter: %s\n", err.c_str()); be->Shutdown(); return 1; }
+    if (!okayuihost::platform::OpenWindow(*be, d, win, painter, err)) { std::fprintf(stderr, "[okayui-host] %s\n", err.c_str()); be->Shutdown(); return 1; }
     okay::editor::EditorState editor;   // the real editor state: the same scene, Play loop and services the Dear ImGui editor drives
     {   // the real panels: Console, Scene Manager and the Project window over the project folder (OKAY_UI_HOST_PROJECT, else ./Assets's folder, else none)
         const char* pe = std::getenv("OKAY_UI_HOST_PROJECT");

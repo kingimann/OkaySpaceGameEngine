@@ -84,11 +84,10 @@ int main(int argc, char** argv) {
     wd.width = 1100;
     wd.height = 760;
     wd.resizable = true;
-    std::unique_ptr<okay::platform::Window> win = be->MakeWindow(wd);
-    if (!win) { std::fprintf(stderr, "[browser] no window: %s\n", be->LastError().c_str()); be->Shutdown(); return 1; }
+    std::unique_ptr<okay::platform::Window> win;
+    std::unique_ptr<okay::platform::Painter> painter;
     std::string err;
-    std::unique_ptr<okay::platform::Painter> painter = okay::platform::CreateSdl2Painter(*win, okay::platform::PainterDesc(), &err);
-    if (!painter) { std::fprintf(stderr, "[browser] no painter: %s\n", err.c_str()); be->Shutdown(); return 1; }
+    if (!okayuihost::platform::OpenWindow(*be, wd, win, painter, err)) { std::fprintf(stderr, "[browser] %s\n", err.c_str()); be->Shutdown(); return 1; }
 
     br::TabHost::TextureFns tex;
     okay::platform::Painter* p = painter.get();

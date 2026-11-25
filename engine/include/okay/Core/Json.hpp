@@ -13,6 +13,8 @@
 //     okay::json::Value v; std::string why;
 //     if (!okay::json::Parse(text, v, &why)) ... why says where and what;
 //     if (const okay::json::Value* files = v.Get("files")) for (const auto& f : files->array) ...
+#include "okay/Core/Utf8.hpp"
+
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -79,23 +81,12 @@ struct Reader {
         i += word.size();
         return true;
     }
-    static void PutUtf8(std::string& o, std::uint32_t cp) {
-        if (cp < 0x80) o += (char)cp;
-        else if (cp < 0x800) { o += (char)(0xC0 | (cp >> 6)); o += (char)(0x80 | (cp & 0x3F)); }
-        else if (cp < 0x10000) { o += (char)(0xE0 | (cp >> 12)); o += (char)(0x80 | ((cp >> 6) & 0x3F)); o += (char)(0x80 | (cp & 0x3F)); }
-        else { o += (char)(0xF0 | (cp >> 18)); o += (char)(0x80 | ((cp >> 12) & 0x3F)); o += (char)(0x80 | ((cp >> 6) & 0x3F)); o += (char)(0x80 | (cp & 0x3F)); }
-    }
+    // The four hex digits of a \u escape (from_chars reads base 16 with no sign or prefix; all four must be digits).
     bool Hex4(std::uint32_t& v) {
         if (i + 4 > t.size()) return Fail("short \\u escape");
-        v = 0;
-        for (int k = 0; k < 4; ++k) {
-            const char c = t[i++];
-            v <<= 4;
-            if (c >= '0' && c <= '9') v |= (std::uint32_t)(c - '0');
-            else if (c >= 'a' && c <= 'f') v |= (std::uint32_t)(c - 'a' + 10);
-            else if (c >= 'A' && c <= 'F') v |= (std::uint32_t)(c - 'A' + 10);
-            else return Fail("bad \\u escape");
-        }
+        const auto r = std::from_chars(t.data() + i, t.data() + i + 4, v, 16);
+        if (r.ec != std::errc() || r.ptr != t.data() + i + 4) return Fail("bad \\u escape");
+        i += 4;
         return true;
     }
     bool String(std::string& out) {
@@ -125,7 +116,7 @@ struct Reader {
                     if (lo < 0xDC00 || lo > 0xDFFF) return Fail("bad surrogate pair");
                     cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
                 }
-                PutUtf8(out, cp);
+                utf8::Append(out, cp);
                 break;
             }
             default: return Fail("unknown escape");

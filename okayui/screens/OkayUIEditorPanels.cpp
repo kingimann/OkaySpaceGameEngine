@@ -803,6 +803,40 @@ ProfilerResult DrawProfiler(ProfilerModel& m, float x, float y, float w, float h
         UI::PopStyleVar();
         UI::PopStyleColor(4);
         if (m.sections.empty()) { UI::TextDisabled(ProfilerEmptyText(m)); res.empty = true; }
+        // ---- the texture library: every picture it holds, its size and memory, and the budget (asked only while open) ----
+        if (m.textures) {
+            const bool open = UI::CollapsingHeader("Textures");
+            res.texturesHeader = UI::GetItemRect();
+            if (open) {
+                ProfilerTextures tx;
+                m.textures(tx);
+                UI::TextUnformatted(tx.line.c_str());
+                if (tx.overBudget) { UI::TextColored(255, 128, 115, kProfilerOverBudget); res.texturesOverBudget = true; }
+                UI::TextDisabled(ProfilerTexturesNote(tx).c_str());
+                UI::PushStyleVar(UI::StyleVar_CellPadding, UI::Vec2{10.0f, 6.0f});
+                if (UI::BeginTable("proftex", 5, UI::Table_RowBg | UI::Table_BordersInnerH | UI::Table_BordersOuter | UI::Table_ScrollY | UI::Table_NoResize,
+                                   UI::Vec2{0.0f, 180.0f})) {
+                    UI::TableSetupColumn(kProfilerTextureColumns[0], UI::Col_None, 3.0f);
+                    for (int c = 1; c < 5; ++c) UI::TableSetupColumn(kProfilerTextureColumns[c], UI::Col_None, 1.0f);
+                    UI::TableSetupScrollFreeze(0, 1);
+                    UI::TableHeadersRow();
+                    for (const ProfilerTexture& t : tx.rows) {
+                        char cell[48];
+                        UI::TableNextRow();
+                        UI::TableNextColumn();
+                        UI::TextUnformatted(ProfilerTextureName(t.path).c_str());
+                        res.textureRows.push_back(UI::GetItemRect());
+                        if (UI::IsItemHovered()) UI::SetTooltip("%s", t.path.c_str());
+                        UI::TableNextColumn(); std::snprintf(cell, sizeof(cell), "%dx%d", t.width, t.height); UI::Text(cell);
+                        UI::TableNextColumn(); std::snprintf(cell, sizeof(cell), "%d", t.mipLevels); UI::Text(cell);
+                        UI::TableNextColumn(); std::snprintf(cell, sizeof(cell), "%.2f", t.megabytes); UI::Text(cell);
+                        UI::TableNextColumn(); UI::TextUnformatted(t.kind.c_str());
+                    }
+                    UI::EndTable();
+                }
+                UI::PopStyleVar();
+            }
+        }
         UI::EndChild();
     }
     UI::End();

@@ -507,5 +507,10 @@ private:
     static constexpr std::size_t kMaxUndo = 100;   // steps kept
 };
 
+/// The text of the Timers window: the scene scheduler, then the tween list.
+inline std::string TimerDebugText(Scene& scene) {
+    return scene.scheduler().Dump() + "\n\n" + scene.tweens().Dump();
+}
+
 } // namespace okay::editor
 #endif // OKAYUI_PORT_STAND_IN_EDITORSTATE

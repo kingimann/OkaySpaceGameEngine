@@ -110,6 +110,9 @@ struct ProfilerResult {
     std::vector<OkayUI::Rect> rows;                           // the table's rows drawn (in ProfilerRows order)
     float guide60 = 0.0f, guide30 = 0.0f, scrubX = 0.0f;     // the guide lines' y and the scrub marker's x (0 = not drawn)
     bool empty = false;
+    OkayUI::Rect texturesHeader;                              // the "Textures" fold-out (zero without model.textures)
+    std::vector<OkayUI::Rect> textureRows;                    // its rows drawn while open (the file name cell)
+    bool texturesOverBudget = false;                          // the budget warning is showing
 };
 
 ProfilerResult DrawProfiler(okaypanels::ProfilerModel& model, float x, float y, float w, float h);

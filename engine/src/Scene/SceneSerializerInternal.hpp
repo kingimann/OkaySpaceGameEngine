@@ -59,7 +59,10 @@ void ReadStatTail(std::istream& in, StatComponent* c);
 void ReadAnchor(std::istream& in, UIAnchor& anchor);
 std::filesystem::path FilePath(const std::string& utf8);
 extern thread_local std::string g_loadingSceneDir;
-void WriteComponentRecords(std::ostream& out, GameObject* go);   // SceneSerializerWrite.cpp
+// `localIndex` (SerializeObject only) maps each object of the text being written to its number in it, so a joint can say
+// which object of the same text its partner is (a `jointat` record) and keep that link when the text is placed again.
+using ObjectNumbers = std::unordered_map<const GameObject*, int>;
+void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumbers* localIndex = nullptr);   // SceneSerializerWrite.cpp
 void WriteDisabledComponents(std::ostream& out, const GameObject* go);
 bool AllowsMultiple(const Component*);
 void ApplyComponentOrder(GameObject& go, const std::vector<std::string>& names);
@@ -228,6 +231,8 @@ struct ParseSession {
     std::vector<std::string> warnings;            // unknown records skipped so far
     std::unordered_map<int, int> siblingHints;    // child index -> saved position among its siblings
     std::unordered_set<std::string> seenGuids;
+    struct JointAt { GameObject* owner; int jointOrdinal; int partnerIndex; };
+    std::vector<JointAt> jointLinks;              // `jointat` records, resolved once every object exists
 };
 
 namespace sceneser {

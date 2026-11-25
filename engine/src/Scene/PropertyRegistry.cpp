@@ -1,4 +1,5 @@
 #include "okay/Scene/PropertyRegistry.hpp"
+#include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include <algorithm>
@@ -496,6 +497,8 @@ PropertyRegistry::ScopedHookSuppression::~ScopedHookSuppression() { --t_suppress
 
 // ---- Builtins -------------------------------------------------------------------------------
 
+void ApplyPropertyContributors();
+
 void RegisterBuiltinProperties() {
     Table& t = GetTable();
     if (t.builtinsDone.load(std::memory_order_acquire)) return;
@@ -507,7 +510,46 @@ void RegisterBuiltinProperties() {
     if (t.builtinsDone.load(std::memory_order_acquire)) return;
     struct Guard { bool& flag; explicit Guard(bool& f) : flag(f) { flag = true; } ~Guard() { flag = false; } } guard(registering);
     detail::RegisterBuiltinPropertyTable();
+    ApplyPropertyContributors();
     t.builtinsDone.store(true, std::memory_order_release);
+}
+
+namespace {
+struct PropertyContributor { std::string module; void (*fn)(); };
+std::vector<PropertyContributor>& PropertyContributors() {
+    static std::vector<PropertyContributor> v;
+    return v;
+}
+// A short spin lock, held only while the list is copied or appended to. It is not the builtin mutex: a
+// hook that runs on another thread (inside ModuleRegistry::Get) must be able to add a contributor while
+// this thread holds that mutex and waits for the hooks to finish.
+struct ContributorGuard {
+    static std::atomic_flag& Flag() { static std::atomic_flag f = ATOMIC_FLAG_INIT; return f; }
+    ContributorGuard() { while (Flag().test_and_set(std::memory_order_acquire)) {} }
+    ~ContributorGuard() { Flag().clear(std::memory_order_release); }
+    ContributorGuard(const ContributorGuard&) = delete;
+    ContributorGuard& operator=(const ContributorGuard&) = delete;
+};
+} // namespace
+
+void AddPropertyContributor(const char* module, void (*fn)()) {
+    if (!fn) return;
+    ContributorGuard guard;
+    for (const PropertyContributor& c : PropertyContributors()) if (c.fn == fn) return;
+    PropertyContributors().push_back({module ? module : "", fn});
+}
+
+void ApplyPropertyContributors() {
+    ModuleRegistry::Get();   // hooks record contributors; this call is what fills the list the first time
+    std::vector<PropertyContributor> copy;
+    {
+        ContributorGuard guard;
+        copy = PropertyContributors();
+    }
+    for (const PropertyContributor& c : copy) {
+        if (!c.module.empty() && !ModuleRegistry::Get().IsEnabled(c.module)) continue;
+        c.fn();
+    }
 }
 
 // ---- Snapshot, diff, copy ----------------------------------------------------------------------

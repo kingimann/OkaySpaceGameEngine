@@ -1,12 +1,12 @@
 # Security (plan SEC1)
 
-> **What this is:** Four protections, one section each: what was wrong, what changed, how you see it working, what is not done.
+> **What this is:** Five protections, one section each: what was wrong, what changed, how you see it working, what is not done.
 >
 > **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
 >
 > **Last checked:** 2026-11-20 (moved into `online/`, paths and links checked; the text itself was not re-checked against the code).
 
-Four protections, one section each: what was wrong, what changed, how you see it working, what is not done. Every claim
+Five protections, one section each: what was wrong, what changed, how you see it working, what is not done. Every claim
 about a result says what was run. Nothing here ran on Windows, and nothing ran against the real Supabase project: those
 two are unverified and are listed under "Your steps" and at the end.
 
@@ -167,3 +167,18 @@ is missing; run it again once that is in). **Nothing here was applied to your pr
 returns rows of (target_id, emoji, n, mine) and no user column. To run the check yourself on any machine with Postgres:
 `OKAY_SQL_TEST_PGHOST=/var/run/postgresql bash tests/scripts/test_reactions_sql.sh` (24 checks; CI runs it in the `sql-tests` job);
 `python3 tests/scripts/test_reactions_sql_static.py` is the cheap version that needs no database.
+
+## 5. Public names (SQL)
+
+Several tables keep a copy of the author's name next to the author's user id (`forum_posts.author_name` and so on). The client
+wrote that text, and an older launcher wrote the sign-in e-mail there, so other players saw an e-mail as a forum author. The
+launcher now cleans names when it shows them (`okay::account::PublicName`); `docs/sql/public_names.sql` makes the database safe too:
+`public_name_for(uid)` (display name, else username, cut at any '@', else 'Player') is the only source of those columns, a trigger
+on each table replaces whatever the client sends, `profiles.username` and `display_name` are cut at '@', and old rows are cleaned once.
+Covered: `activity`, `forum_threads`, `forum_posts`, `workshop_items`, `workshop_reviews`, `channel_messages`, `group_messages`,
+`forum_section_members`, `forum_section_bans`, `admin_log` (actor and target), `blocks`. Checked by `tests/scripts/test_public_names_sql.sh`
+on a throwaway local Postgres (**not** the real Supabase).
+
+**Your steps:** SQL Editor > paste all of `docs/sql/public_names.sql` > Run, after `social.sql` and the optional files you use
+(`profile_extras.sql`, `forum_sections.sql`, `group_chats.sql`, `admin.sql`, `blocks.sql`). Safe to run twice; run it again after
+adding one of those files later. **Nothing here was applied to your project.**

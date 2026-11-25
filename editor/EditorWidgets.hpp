@@ -24,7 +24,9 @@ int CategoryGlyph(const char* label);
 bool AccentToggleButton(const char* label, bool active, const ImVec2& size = ImVec2(0, 0));
 
 // Drawn vector glyphs for compact toolbar buttons (the UI font has no icons).
-enum class TbIcon { More, Plus, Move, Rotate, Scale, Global, Local, Snap, Frame, Search, Clear, Expand, Collapse, Sort, Folder, Grid, List };
+enum class TbIcon { More, Plus, Move, Rotate, Scale, Global, Local, Snap, Frame, Search, Clear, Expand, Collapse, Sort, Folder, Grid, List,
+                    // the Modeling window's page list (one per page) and its fold button
+                    Star, Shapes, Steps, Spin, Bend, Brush, Sparkle, Import, PanelLeft };
 void DrawTbIcon(ImDrawList* dl, TbIcon ic, ImVec2 c, float s, ImU32 col);
 // Square icon button (frame height); accent-tinted while `active`. `tip` shows on hover.
 bool IconButton(const char* id, TbIcon ic, const char* tip = nullptr, bool active = false);
@@ -38,5 +40,23 @@ bool TipArrowButton(const char* tip, const char* id, ImGuiDir dir);
 bool SearchField(const char* id, char* buf, std::size_t bufSize, const char* hint, float width);
 // Right-align the next `w` pixels of items on the current line.
 void SameLineRight(float w);
+
+// ---- Controls with a state you can see -------------------------------------------------------------------------
+// An on / off switch drawn as a button with a check box inside it: the box is empty and outlined when off, filled with
+// the accent colour and a tick when on, so the state reads at a glance (a plain checkbox in this theme looked like an
+// empty square). Click anywhere on it to flip `*v`. Returns true when it changed. `tip` shows on hover.
+bool ToggleChip(const char* label, bool* v, const char* tip = nullptr);
+float ToggleChipWidth(const char* label);   // the width ToggleChip takes (for toolbar planning)
+// A button that clearly looks off when it cannot be used: when `enabled` it is a normal filled button with bright text;
+// when not, it has no fill, a faint outline and dimmed text, and cannot be clicked. `tip` (enabled) / `whyNot`
+// (disabled) show on hover.
+bool StateButton(const char* label, bool enabled, const ImVec2& size, const char* tip = nullptr, const char* whyNot = nullptr);
+// The editor's dropdown: the chevron inside the box, the same look as the launcher's (shared/ImGuiDropdown.hpp).
+// Same arguments as ImGui::BeginCombo; close with ImGui::EndCombo.
+bool BeginDropdown(const char* label, const char* preview, int flags = 0);
+// Tabs that show which one is open: the open tab is filled with the accent colour and white text, the others are
+// plain buttons. Wrap ImGui::BeginTabBar ... EndTabBar in these.
+void PushClearTabColors();
+void PopClearTabColors();
 
 } // namespace oked

@@ -70,7 +70,8 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Net/UdpSocket.cpp)
 if(WIN32)
     enable_language(RC)
-    list(APPEND OKAY_LAUNCHER_SOURCES okayspace.rc)
+    list(APPEND OKAY_LAUNCHER_SOURCES okayspace.rc
+         TrayWin32.cpp)   # the system-tray icon and its menu (Shell_NotifyIconW); the decisions are in TrayLogic.hpp
 endif()
 # Our own image decoder (cover art, avatars, chat images): self-contained, std-only, so it is
 # compiled straight into the launcher rather than linking the engine.

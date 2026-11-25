@@ -92,6 +92,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     WeaponEditor.cpp                                                   # the Weapons window (weapon definitions)
     LocalizationTools.cpp                                              # grid, check, scan and preview the window draws (ImGui-free)
     ModelingEasyUi.cpp                                                 # beginner view of the Modeling window (logic in ModelingEasy*.hpp)
+    ModelingSidebarUi.cpp                                              # the Modeling window's page list (icons + names, folds to icons)
     GuidedPanel.cpp                                                    # Guided page of the Modeling window (templates, parts, regeneration)
     ContentEditors.cpp                                                 # Items, Loot & Recipes (.okayitems, .okayloot, .okayrecipes)
     ProjectBrowser.cpp ProjectPanelUI.cpp                              # the Project panel: folder model + safe file operations, name prompt / delete confirm / import settings

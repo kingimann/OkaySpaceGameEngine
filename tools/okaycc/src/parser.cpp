@@ -3451,6 +3451,7 @@ private:
     void addLocal(std::vector<std::unique_ptr<Stmt>>& out, std::unique_ptr<Decl> decl,
                   std::vector<std::unique_ptr<Expr>> ctorArgs, bool haveCtorArgs) {
         std::string name = decl->name;
+        localNames_.push_back(name);
         Pos p;
         p.line = decl->line;
         p.col = decl->col;
@@ -3568,7 +3569,7 @@ private:
         }
     }
 
-    void parseDeclInto(std::vector<std::unique_ptr<Stmt>>& out, bool forInit) {
+    void parseDeclInto(std::vector<std::unique_ptr<Stmt>>& out, bool forInit, bool condition = false) {
         bool st = eatKw("static");
         bool td = eatKw("typedef");
         auto base = parseBase();
@@ -3654,10 +3655,33 @@ private:
                     addLocal(out, std::move(decl), std::move(args), direct);
                 }
             }
-            if (!eatP(",")) break;
+            if (condition || !eatP(",")) break;
         }
-        expectP(";", ";");
+        if (!condition) expectP(";", ";");
         (void)forInit;
+    }
+
+    // `if (T x = e)`: a condition that declares a variable ([stmt.select] p2, [stmt.pre]). It is
+    // told from an expression by a type at the start and `name =` or `name {` at the top level
+    // before the closing parenthesis.
+    bool conditionIsDecl() const {
+        if (atEnd() || !isTypeKw(cur())) return false;
+        int depth = 0;
+        for (std::size_t j = i_; j < toks_.size(); ++j) {
+            const Token& t = toks_[j];
+            if (t.kind == Tok::End) return false;
+            if (isP(t, "(") || isP(t, "[")) ++depth;
+            else if (isP(t, ")") || isP(t, "]")) {
+                if (depth == 0) return false;
+                --depth;
+            } else if (depth == 0 && (isP(t, "=") || isP(t, "{")) && j > i_ && toks_[j - 1].kind == Tok::Ident &&
+                       j - 1 > i_) {
+                return true;
+            } else if (depth == 0 && isP(t, ";")) {
+                return false;
+            }
+        }
+        return false;
     }
 
     std::unique_ptr<Expr> parseInitializer() {
@@ -3677,6 +3701,16 @@ private:
         return parseAssign();
     }
 
+    // Names of the local variables declared so far in the enclosing blocks of the function being
+    // parsed ([basic.scope.block]): such a name hides a namespace function template of that name,
+    // so `count < 5` with a local count is a comparison, not count<...>.
+    std::vector<std::string> localNames_;
+    bool isLocalName(const std::string& n) const {
+        for (const std::string& l : localNames_)
+            if (l == n) return true;
+        return false;
+    }
+
     std::unique_ptr<Stmt> parseCompound() {
         Guard nest(*this);
         if (!nest) {
@@ -3687,6 +3721,7 @@ private:
         auto saved = cur();
         expectP("{", "{");
         tscopes_.emplace_back();
+        std::size_t localMark = localNames_.size();
         auto s = std::make_unique<Stmt>();
         s->kind = Stmt::Kind::Block;
         s->line = saved.line;
@@ -3717,6 +3752,7 @@ private:
         }
         if (!dscopes_.empty()) dscopes_.pop_back();
         if (!tscopes_.empty()) tscopes_.pop_back();
+        localNames_.resize(localMark);
         return s;
     }
 
@@ -3907,6 +3943,33 @@ private:
         s->col = cur().column;
         advance();
         expectP("(", "(");
+        if (conditionIsDecl()) {
+            // if (T x = e) A else B  is  { T x = e; if (x) A else B }: x is in scope in both
+            // branches and is destroyed after the whole statement.
+            Pos at = here();
+            tscopes_.emplace_back();
+            dscopes_.emplace_back();
+            std::size_t localMark = localNames_.size();
+            auto block = std::make_unique<Stmt>();
+            block->kind = Stmt::Kind::Block;
+            block->line = s->line;
+            block->col = s->col;
+            std::size_t at0 = block->stmts.size();
+            parseDeclInto(block->stmts, false, true);
+            flushPre(block->stmts, at0);
+            std::string var = localNames_.size() > localMark ? localNames_.back() : std::string();
+            expectP(")", ")");
+            s->expr = eName(var, at);
+            s->thenS = parseStmt();
+            if (eatKw("else")) s->elseS = parseStmt();
+            block->stmts.push_back(std::move(s));
+            auto ds = pendingDtors(dscopes_.size() - 1, here());
+            for (auto& d : ds) block->stmts.push_back(std::move(d));
+            dscopes_.pop_back();
+            tscopes_.pop_back();
+            localNames_.resize(localMark);
+            return block;
+        }
         s->expr = parseExpr();
         expectP(")", ")");
         s->thenS = parseStmt();
@@ -4226,7 +4289,29 @@ private:
         Parsed d = parseDeclarator(true);
         auto elemType = apply(std::move(base), d.mods);
         expectP(":", ":");
-        auto range = parseExpr();
+        std::unique_ptr<Expr> range;
+        std::unique_ptr<Type> listArray;
+        if (isP("{")) {
+            // for (T x : {a, b, c}): the list is a std::initializer_list<T> ([stmt.ranged] p1,
+            // [dcl.init.list] p5), an array of the elements that lives through the loop. Here it is
+            // a hidden array of the element type the loop names (without its reference or const).
+            range = parseInitializer();
+            const Type* et = elemType.get();
+            while (et && et->kind == Type::Kind::Reference && et->inner) et = et->inner.get();
+            if (!et || (et->kind == Type::Kind::Struct && et->tag == "\x03" "auto")) {
+                err("a range-for over a braced list needs a named element type here");
+            } else {
+                listArray = ty(Type::Kind::Array);
+                listArray->inner = cloneType(*et);
+                listArray->inner->cnst = false;
+                auto bound = std::make_unique<Expr>();
+                bound->kind = Expr::Kind::Int;
+                bound->ival = range->kids.empty() ? 1 : range->kids.size();
+                listArray->bound = std::move(bound);
+            }
+        } else {
+            range = parseExpr();
+        }
         expectP(")", ")");
         auto mkDecl = [&](const std::string& name, std::unique_ptr<Type> type, std::unique_ptr<Expr> init) {
             auto dd = std::make_unique<Decl>();
@@ -4248,6 +4333,11 @@ private:
             return x;
         };
         auto outer = sBlock(pos);
+        if (listArray) {
+            std::string rl = "__rl" + std::to_string(n);
+            outer->stmts.push_back(declStmt(mkDecl(rl, std::move(listArray), std::move(range))));
+            range = eName(rl, pos);
+        }
         auto refAuto = ty(Type::Kind::Reference);
         refAuto->inner = autoType();
         outer->stmts.push_back(declStmt(mkDecl(rg, std::move(refAuto), std::move(range))));
@@ -5002,7 +5092,8 @@ private:
         }
         // A function template's name is a template only where it is called or given template
         // arguments; `bool forward` or `count = 0` is an ordinary name (a variable of that name).
-        if (cur().kind == Tok::Ident && ftmpl_.count(cur().text) && (nextIs("(") || nextIs("<"))) {
+        if (cur().kind == Tok::Ident && ftmpl_.count(cur().text) && (nextIs("(") || nextIs("<")) &&
+            !isLocalName(cur().text)) {
             std::string name = cur().text;
             Token at = cur();
             TDecl td = ftmpl_[name];

@@ -2325,6 +2325,22 @@ private:
                     src = checkExpr(*e.kids[i + 1]);
                     if (src.bad) return bad(e.line, e.col);
                 }
+                if (src.type && want.kind != Type::Kind::Struct && want.kind != Type::Kind::Union &&
+                    want.kind != Type::Kind::Array && src.type->kind != Type::Kind::Struct &&
+                    (want.cnst || fn.params[i].type->rref) && !sameType(want, *src.type) && canAssign(want, src)) {
+                    // A const T& (or T&&) of a number or pointer given a value of another type
+                    // (std::min<std::uint64_t>(u32, u64)): the value is converted into a temporary
+                    // of type T and the reference binds to it ([dcl.init.ref] p5.4).
+                    auto wt = cloneType(want);
+                    wt->cnst = false;
+                    std::string tmp = newTemp(*wt, e, false);
+                    auto first = eAssignNode(mkName(tmp, e), std::move(e.kids[i + 1]), e);
+                    auto both = eCommaNode(std::move(first), eUnary("&", mkName(tmp, e), e), e);
+                    both->ival = 1;
+                    e.kids[i + 1] = std::move(both);
+                    if (checkExpr(*e.kids[i + 1]).bad) return bad(e.line, e.col);
+                    continue;
+                }
                 if (!src.lvalue) {
                     // A reference to const may bind to a temporary: copy the value into a hidden
                     // local and pass its address.

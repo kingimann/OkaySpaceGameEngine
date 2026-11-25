@@ -238,6 +238,35 @@ int main() {
         CHECK(worst < 0.01f);
     }
     {
+        // the same pendulum on a body kept in the x/y plane (cannot move along z, turns about z only: a 2D body), and a
+        // body pinned at its own centre: the point constraint has no push to give along z and must still hold the rest
+        World w;
+        BodyDef bd; bd.position = V3{2, 5, 0}; bd.lockLinear = 4; bd.lockAngular = 3;
+        const BodyId bob = w.CreateBody(bd);
+        bd.position = V3{10, 5, 0};
+        const BodyId pinned = w.CreateBody(bd);
+        ColliderDef cd; cd.shape = Shape::Sphere(0.2f);
+        w.AddCollider(bob, cd);
+        w.AddCollider(pinned, cd);
+        JointDef jd; jd.type = JointType::Ball; jd.bodyA = kInvalidId; jd.bodyB = bob;
+        jd.frameA.p = V3{0, 5, 0}; jd.frameB.p = V3{-2, 0, 0};
+        SetupJoint(jd);
+        w.CreateJoint(jd);
+        JointDef pin; pin.type = JointType::Ball; pin.bodyA = kInvalidId; pin.bodyB = pinned;
+        pin.frameA.p = V3{10, 5, 0};
+        SetupJoint(pin);
+        w.CreateJoint(pin);
+        float worst = 0.0f, worstPin = 0.0f;
+        for (int i = 0; i < 300; ++i) {
+            w.Step(kDt);
+            worst = std::max(worst, std::fabs(Len(w.GetPosition(bob) - V3{0, 5, 0}) - 2.0f));
+            worstPin = std::max(worstPin, Len(w.GetPosition(pinned) - V3{10, 5, 0}));
+        }
+        std::cout << "  pendulum in the plane: length error " << worst << " m, pinned body drift " << worstPin << " m\n";
+        CHECK(worst < 0.01f);
+        CHECK(worstPin < 0.01f);
+    }
+    {
         // hinge with limits: a door that swings under a push stops at 30 degrees
         World w;
         w.gravity = V3{};

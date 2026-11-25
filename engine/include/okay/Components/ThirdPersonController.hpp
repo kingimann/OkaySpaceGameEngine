@@ -596,7 +596,7 @@ public:
         } else if (moving) {
             transform->Translate(dir * (speed * dt));
             if (gameObject && gameObject->scene())
-                ResolvePlayerBody(*gameObject->scene(), gameObject);   // no clipping
+                ResolvePlayerBody(*gameObject->scene(), gameObject, Mathf::Max(0.0f, stepOffset));   // no clipping; stepOffset is the tallest ledge climbed
         }
         // Chest rides the surface unless Space / crouch is driving it. Once the
         // bank is under the feet, don't pull the body back down into it.

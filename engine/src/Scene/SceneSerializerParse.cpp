@@ -1623,7 +1623,7 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "jointlink") {   // the partner's guid, written after that joint
                     const std::string g = ReadQuoted(in);
                     auto joints = go->GetComponents<Joint3D>();
-                    if (!joints.empty() && joints.back()) { joints.back()->connectedGuid = g; joints.back()->linkedName = joints.back()->connectedBody; }
+                    if (!joints.empty() && joints.back()) { joints.back()->connectedGuid = g; joints.back()->NoteLinkedName(); }
                 } else if (field == "jointat") {   // the partner is object N of this same text: it stays the partner in a copy
                     int at = -1;
                     in >> at;
@@ -2061,6 +2061,7 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         in >> std::ws; if (std::isdigit(in.peek())) { int pc = 1; in >> pc; cm->pickColliders = (pc != 0); }
                         in >> std::ws; if (std::isdigit(in.peek())) { int gu = 1; in >> gu; cm->giveUpWhenStuck = (gu != 0); }
                         if (LooksNumeric(in)) in >> cm->stuckTime;
+                        if (LooksNumeric(in)) in >> cm->stepOffset;   // step limit (added later still)
                     }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);
@@ -3049,6 +3050,7 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     td->sprintKey = KeyFromToken(sk);
                     td->driveAnimation = (da != 0); td->rotateToFace = (rf != 0); td->cameraRelative = (cr != 0);
                     in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; td->footIK = (fik != 0); }
+                    if (LooksNumeric(in)) in >> td->stepOffset;   // step limit (added later; older scenes keep the default)
                 } else if (field == "tdsctrl") {
                     auto* ts = go->AddComponent<TopDownShooterController>();
                     KvIn k(in);
@@ -3068,6 +3070,7 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.f("camDamp", ts->cameraDamping); k.f("lead", ts->aimLookAhead); k.f("maxLead", ts->maxLookAhead);
                     k.b("zoom", ts->wheelZoom); k.f("minDist", ts->minDistance); k.f("maxDist", ts->maxDistance);
                     k.f("shake", ts->fireShake); k.str("proj", ts->projectile); k.str("weapon", ts->weapon);
+                    k.f("step", ts->stepOffset);   // step limit (added later; older scenes keep the default)
                 } else if (field == "ragdoll") {
                     // The old Verlet Ragdoll (before 2026-11-25). It loads into the one Ragdoll: going limp on death and
                     // reacting to hits carry over; the particle settings (gravity, damping, friction, skin, iterations,

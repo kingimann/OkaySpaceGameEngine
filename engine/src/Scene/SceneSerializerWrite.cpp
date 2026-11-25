@@ -2158,7 +2158,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
             << td->acceleration << " " << td->deceleration << " " << (td->cameraRelative ? 1 : 0) << " "
             << td->cameraDistance << " " << td->cameraPitch << " " << td->cameraYaw << " "
             << td->lookHeight << " " << td->cameraDamping
-            << " " << (td->footIK ? 1 : 0) << "\n";
+            << " " << (td->footIK ? 1 : 0);
+        if (td->stepOffset != 0.35f) out << " " << td->stepOffset;   // added later: written only when not the default
+        out << "\n";
     }
     for (auto* ts : go->GetComponents<TopDownShooterController>()) {
         out << "  tdsctrl";
@@ -2177,6 +2179,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
          ("camDist", ts->cameraDistance)("camPitch", ts->cameraPitch)("camYaw", ts->cameraYaw)("camDamp", ts->cameraDamping)
          ("lead", ts->aimLookAhead)("maxLead", ts->maxLookAhead).b("zoom", ts->wheelZoom)("minDist", ts->minDistance)
          ("maxDist", ts->maxDistance)("shake", ts->fireShake).str("proj", ts->projectile);
+        if (ts->stepOffset != 0.35f) k("step", ts->stepOffset);   // added later: written only when not the default
         if (!ts->weapon.empty()) k.str("weapon", ts->weapon);
         out << "\n";
     }
@@ -2277,8 +2280,11 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
             << " " << (cm->usePathfinding ? 1 : 0) << " " << cm->repathInterval;
         // extended (back-compatible trailing fields): click on colliders, give up when stuck. Written only when one differs
         // from its default, so a scene saved before they existed saves byte for byte the same (registry_serializer).
-        if (!cm->pickColliders || !cm->giveUpWhenStuck || cm->stuckTime != 1.0f)
+        // The step limit comes after them (added later still), so it needs them written first.
+        const bool stepSet = cm->stepOffset != 0.35f;
+        if (stepSet || !cm->pickColliders || !cm->giveUpWhenStuck || cm->stuckTime != 1.0f)
             out << " " << (cm->pickColliders ? 1 : 0) << " " << (cm->giveUpWhenStuck ? 1 : 0) << " " << cm->stuckTime;
+        if (stepSet) out << " " << cm->stepOffset;
         out << "\n";
     }
     for (auto* ft : go->GetComponents<FollowTarget2D>()) {

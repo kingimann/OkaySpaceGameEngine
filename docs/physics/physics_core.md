@@ -1,4 +1,4 @@
-# Our own physics engine core (okay::phys): the one 3D physics path
+# Our own physics engine core (okay::phys): the one physics path, 3D and 2D
 
 The owner asked (2026-11-22) for our own 3D physics at the level of a full engine such as Bullet, written only from
 published papers and textbooks, with joints and motors solid enough for a Euphoria-style active ragdoll. This page is
@@ -23,6 +23,7 @@ It uses the engine's `StringId` hash for its state hash and signatures; `okay_en
 | `Physics/Core/Joint.cpp` | one general joint: per-axis lock / limit / free, velocity motors, springs, elliptical swing cone, orientation drive, position drive, breaking; Fixed, Ball, Hinge, Slider, ConeTwist, Distance and SixDof are presets | Catto 2005 / GDC 2009 (constraint rows, point block); Catto GDC 2011 "Soft Constraints" (springs and drives from k, c or frequency and damping ratio); Grassia 1998 (exponential map, swing-twist) |
 | `Physics/Core/Horizon.hpp` | the horizon loop shared by the hull builder and EPA (edges of the faces a new point sees) | de Berg et al. ch. 11; van den Bergen 2001 |
 | `src/Physics/Physics3DEngine.inl` | the bridge: scene <-> world sync, events, joint breaking, materials | written for this engine |
+| `src/Physics/Physics2DEngine.inl` | the 2D bridge: the same for Rigidbody2D, the 2D colliders and Joint2D (section "2D on the core") | written for this engine |
 
 ## How a step runs (World::Step)
 
@@ -43,8 +44,8 @@ It uses the engine's `StringId` hash for its state hash and signatures; `okay_en
 
 ## One physics path (owner, 2026-11-22: "No classic, replace with improved. I don't want duplicates.")
 
-Every 3D scene runs on this core. The old Classic and Improved 3D steps and the separate Engine choice are gone. 2D has
-one step too (2D Classic was removed; the core has no 2D yet, so 2D keeps its own Improved step).
+Every 3D and every 2D scene runs on this core. The old Classic and Improved 3D steps, the separate Engine choice and
+the separate 2D step are gone (2D moved onto the core on 2026-11-24, branch `claude/physics-2d-core-1`).
 
 The **physics quality** value is kept only so old scene files load and save back unchanged: a file that says Classic,
 Improved, Engine or nothing loads, and saves the same line it had. The value changes nothing (`test_physics_one_path`
@@ -64,12 +65,46 @@ proves both). The editor no longer shows it; **Solver iterations** stays.
 | Joint3D Ball, ConeTwist | engine Ball and ConeTwist with `anchor` as the world pivot, swing cone (`swingLimit1`, `swingLimit2`), twist limits (`minAngle`, `maxAngle`), and a drive (`useDrive`, `driveTarget` Euler degrees, `driveStiffness` and `driveDamping` or `driveFrequency` and `driveDampingRatio`, `driveMaxTorque`). These drive field names are kept stable: the active ragdoll moves onto them. They are saved only when not default. |
 | A joint whose partner object is destroyed | keeps its length and hangs from the partner's last position (it is not flung) |
 | Events | OnCollisionEnter3D / Stay / Exit with normal, point, penetration and impact speed; one Enter and one Exit per pair of components (a compound's pieces or a collider rebuilt while playing do not repeat them); the event pass costs one look per touching pair |
-| Queries | Raycast, shape casts and overlaps are `Physics3D`'s own (the core keeps no second ray or sweep code; it only has an overlap test built on its contact code) |
+| Queries | Raycast, shape casts, overlaps and closest point are `Physics3D`'s own exact tests (the core keeps no second ray or sweep code; it only has an overlap test built on its contact code). They ask a broad phase first: one `DynamicTree` (the core's tree class) over the scene's collider list, brought up to date at every query (`Physics3D.cpp`, "The broad phase of the scene queries"; test `physics_query_broadphase`) |
 | Step length | a frame longer than 1/45 s is cut into equal slices no longer than that |
 | Advanced | `Physics3D::EngineWorld()`, `EngineBody(rb)`, `EngineJoint(j)` reach the engine world (e.g. an active ragdoll setting drive targets every frame) |
 
 Ids: a body, collider or joint id carries a generation in its top 8 bits, so an id kept after its object was destroyed
 never reaches a new object that took the same slot.
+
+## 2D on the core (`Physics2DEngine.inl`, 2026-11-24)
+
+`Physics2D` owns its own `phys::World` (2D and 3D things never met, and still do not). The public `Physics2D` API, the
+components and the saved-scene fields are unchanged.
+
+| 2D part | How it runs |
+| --- | --- |
+| Rigidbody2D | one core body with linear z and angular x, y locked (`SetLocks(4, 3)`; Freeze Rotation locks z as well). The object's z position and its other angles are left alone. Mass, drag, angular drag, gravity scale, allow sleep, Continuous Collision (a wider margin; every body is stopped by speculative contacts anyway). A pose or speed set by game code is copied in; a kinematic body moved by game code is driven there (it carries and pushes) unless the jump is faster than 50 units a second |
+| Box, Circle, Capsule, Polygon, Composite, Edge colliders | the collider's convex pieces (`shape2d::PiecesOf`) pushed out along z: rectangle -> box, circle -> ball, capsule -> capsule, convex polygon -> prism (hull), edge segment -> a strip 2 mm thick. Each shape is at least twice as deep along z as it reaches in the plane, so the shallowest way out of an overlap is always in the plane. Each piece's density is set so it weighs its 2D area, and the body's turning inertia is the real 2D figure (`World::SetInertia`): a disc turns as a disc, not as a ball |
+| A collider with no Rigidbody2D on its object | a kinematic core body of its own that never moves by itself. When game code moves the object (a platform on a tween) it is driven there like a kinematic body, so it lifts and carries what stands on it; a jump faster than 50 units a second is a teleport |
+| Triggers, layers, materials | sensors with the tag and layer filter checked every step; the scene's layer matrix; per-collider friction and bounciness with the combine modes (`CombineSurface`); hits slower than 0.5 units a second do not bounce (the old 2D rule) |
+| One-way platforms (Edge collider) | `World::contactEnabled`: asked every step for each close pair; the pair is switched off while the other collider's centre is on the far side of the edge (the old rule) |
+| Joint2D Distance, Spring, Pin, Hinge | core Distance (rod, or spring in N/m), Fixed, Hinge about z with limits and motor. A partner object without a body is followed when it moves. `breakForce` is a stretch length, as before |
+| Events | OnCollisionEnter2D / Stay / Exit and OnTriggerEnter2D / Stay / Exit from the world's touching pairs, one per pair of components. Two solid colliders that cannot be pushed (two fixed ones, a kinematic body or a collider moved by its transform against a wall) still raise OnCollision while they overlap, as the old 2D step did (`World::reportStillPairs`; nothing is pushed) |
+| Queries | `Physics2D`'s own ray, overlap and cast code, unchanged (it never used the step) |
+| Step length | a step longer than 1/45 s is solved in equal slices (forces are applied in every slice) |
+
+Added to the core for this: `World::contactEnabled` (a per-step switch for a pair), `World::reportStillPairs` (solid pairs
+without a dynamic body are reported; off in 3D), `World::SetInertia` (a given inertia instead of the shapes') and `World::Configure` (the per-step body settings in one call; the 3D bridge uses it
+too). One core fault was fixed: a joint that holds a point (Fixed, Ball, Hinge) did nothing on a body with a locked
+axis, because the point constraint's matrix had an empty row and no inverse; an axis neither body can move along is
+now left out (`PointInverse` in `Joint.cpp`, tested in `physcore_world` and by the 2D pin and hinge tests). The solver,
+the narrow phase and the locks are the ones 3D uses.
+
+What a 2D game can notice (stacks, resting depth, waking and the carried crate were measured in `physics2d_core`; the
+rest follows from the code and was not measured): stacks stand instead of sinking; resting
+things sit 1 to 2 mm into each other, about 1 cm under a 50 kg crate (the core's slop and soft position correction), instead of exactly touching;
+bodies fall asleep in groups and wake when their support goes; a collider without a Rigidbody2D that game code moves now
+carries what stands on it sideways; a Pin joint is a weld (it also holds the turn, as in
+3D; the old 2D pin only held the position); a hinge pushes back on its partner body; Rolling Resistance (default 0.03)
+now slows a rolling ball; a collider's own friction and bounciness (>= 0) are used, before only the body's were; a body
+going up through a one-way platform raises no collision callbacks until it lands; two solid colliders that only touch
+edge to edge without a dynamic body raise no callbacks (they must overlap); speeds are capped at 10,000 units a second.
 
 ## Memory
 
@@ -119,7 +154,8 @@ bit-identical results depend on in one place. It stays.
 
 ## Tests
 
-`physcore_tree`, `physcore_collide`, `physcore_world` (core only, link `okay::physcore`); `physics_engine_mode` (the
+`physics2d_core` (2D: a 10-crate stack at 30, 60 and 120 steps a second, waking on lost support, heavy on light, a fast
+ball at a thin wall). `physcore_tree`, `physcore_collide`, `physcore_world` (core only, link `okay::physcore`); `physics_engine_mode` (the
 core in real scenes: stacks, callbacks, triggers, fast bodies, teleports, every joint mode, every collider and floor
 kind, save and load, determinism with 0 and 3 job workers); `physics_one_path` (old files with any quality value load
 and save back unchanged; the value changes nothing); `physics_core_regressions` (the 13 problems the independent
@@ -130,12 +166,13 @@ and controller test runs on this one path.
 
 ## Not done yet
 
-* Scene queries through the engine tree (today `Physics3D`'s own query code runs; the core keeps no second ray code).
-  Doing it needs the tree to follow bodies that scripts move between steps.
+* Scene queries on the world's own tree and shapes. Today they use a tree of their own (the same `DynamicTree` class,
+  over the scene's collider list, checked against the scene at every query) and `Physics3D`'s exact tests, because the
+  world only knows what the last step saw and scripts move things between steps.
 * Voxel terrain inside the core (it runs as the old pass after the core step); mesh-mesh pairs (static meshes only
   meet convex shapes); a terrain raises no collision callbacks (as before).
 * A dedicated configurable 6-DOF Joint3D mode in the editor (the core's SixDof joint is reachable from code).
-* 2D on the core.
+* 2D: a slider joint, 2D bodies and joints in the debug view, 2D queries through the core tree.
 
 ## Contact and joint correction shares (2026-11-25)
 

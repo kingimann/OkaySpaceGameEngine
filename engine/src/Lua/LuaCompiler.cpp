@@ -2,10 +2,13 @@
 //
 // Written from the Lua 5.4 Reference Manual: section 3.1 (lexical conventions),
 // 3.2-3.5 (variables, statements, expressions, visibility rules), 3.4.8
-// (operator precedence) and 9 (the complete syntax). The code generator uses
-// the general "expression descriptor" technique (an expression is described
-// first and turned into code only when its use is known), so the same parse
-// can produce a read, an assignment target or a multi-value call.
+// (operator precedence) and 9 (the complete syntax), in our own structure:
+// statements are parsed by one function per statement form of section 9,
+// expressions by an operator-stack reader over our own level table (see
+// kBinaryOperators), and names are resolved by walking out through the
+// enclosing functions in a loop. An expression is first recorded as an
+// Operand and turned into stack code only when its use is known, so the
+// same parse serves a read, an assignment target or a multi-value call.
 #include "LuaCode.hpp"
 #include <cctype>
 #include <cmath>
@@ -309,19 +312,35 @@ Token Lexer::Next() {
 }
 
 // ---------------------------------------------------------------- code generation
-enum EK { VVOID, VNIL, VTRUE, VFALSE, VKSTR, VINT, VFLT, VLOCAL, VUPVAL, VINDEXED, VINDEXEDK, VINDEXEDUPK, VCALL, VVARARG, VPUSHED };
+//
+// An Operand records what a parsed expression is (a constant, a local, an
+// upvalue, a field of a table already on the stack, a call, ...) without
+// emitting code for it yet; Materialize turns it into "one value on the stack"
+// once its use is known, so the same parse serves a read, an assignment target
+// or a call whose result count is set later.
+enum class Opnd {
+    Empty, Nil, True, False, Str, Int, Float,
+    Local,       ///< ref = index into FuncState::vars
+    Upvalue,     ///< ref = upvalue index
+    Keyed,       ///< t[k]: table at tableSlot, key just above it
+    NamedField,  ///< t.name: table at tableSlot, keyConst = the name's constant
+    EnvGlobal,   ///< _ENV.name with _ENV an upvalue: ref = upvalue, keyConst = name
+    Call,        ///< ref = pc of the CALL
+    Varargs,     ///< ref = pc of the VARARG
+    OnStack,     ///< already one value on the stack
+};
 
-struct ExpDesc {
-    EK k = VVOID;
-    int info = 0;        ///< local var index / upvalue / constant / pc of CALL or VARARG
-    int aux = 0;         ///< VINDEXEDK / VINDEXEDUPK: constant index of the key
-    int tpos = 0;        ///< VINDEXED(K): stack slot of the table
-    std::int64_t ival = 0;
-    double nval = 0;
-    std::string sval;    ///< VKSTR
-    std::string desc;    ///< for error messages
-    std::string odesc;   ///< VINDEXED(K): what the indexed value was
-    int concatPc = -1;   ///< the expression's last step was this CONCAT (for fusing a .. b .. c)
+struct Operand {
+    Opnd kind = Opnd::Empty;
+    int ref = 0;
+    int keyConst = 0;
+    int tableSlot = 0;
+    std::int64_t intVal = 0;
+    double numVal = 0;
+    std::string strVal;
+    std::string what;       ///< for error messages, e.g. "local 'x'"
+    std::string baseWhat;   ///< Keyed / NamedField: what the indexed value was
+    int concatPc = -1;      ///< the expression's last step was this CONCAT (to fuse a .. b .. c)
 };
 
 struct LocalVar {
@@ -358,16 +377,59 @@ struct FuncState {
     int tbcActive = 0;
 };
 
+// ---------------------------------------------------------------- operator table
+//
+// Worked out from manual 3.4.8. Binary operators are grouped in levels, the
+// loosest first; a higher level binds tighter. '..' and '^' group to the
+// right, all others to the left. The unary operators (not # - ~) sit between
+// the multiplicative level and '^', so -x^2 is -(x^2) and 2^-3 is 2^(-3).
+struct BinaryOperator {
+    int token;
+    Op op;
+    unsigned char level;
+    bool groupsRight;
+};
+constexpr BinaryOperator kBinaryOperators[] = {
+    {T_OR, ORJ, 1, false},
+    {T_AND, ANDJ, 2, false},
+    {'<', LT, 3, false}, {'>', GT, 3, false}, {T_LE, LE, 3, false}, {T_GE, GE, 3, false},
+    {T_NE, NE, 3, false}, {T_EQ, EQ, 3, false},
+    {'|', BOR, 4, false},
+    {'~', BXOR, 5, false},
+    {'&', BAND, 6, false},
+    {T_SHL, SHL, 7, false}, {T_SHR, SHR, 7, false},
+    {T_CONCAT, CONCAT, 8, true},
+    {'+', ADD, 9, false}, {'-', SUB, 9, false},
+    {'*', MUL, 10, false}, {'/', DIV, 10, false}, {T_IDIV, IDIV, 10, false}, {'%', MOD, 10, false},
+    {'^', POW, 12, true},
+};
+constexpr unsigned char kUnaryLevel = 11;
+
+const BinaryOperator* FindBinaryOperator(int token) {
+    for (const BinaryOperator& b : kBinaryOperators)
+        if (b.token == token) return &b;
+    return nullptr;
+}
+
+bool IsUnaryToken(int t) { return t == T_NOT || t == '-' || t == '#' || t == '~'; }
+
+// The tokens that end a block (manual 9: block is followed by one of them).
+bool EndsBlock(int t) {
+    return t == T_ELSE || t == T_ELSEIF || t == T_END || t == T_EOF || t == T_UNTIL;
+}
+
+constexpr int kMaxNesting = 190;   ///< nested blocks / parenthesised expressions before we give up
+
 class Compiler {
 public:
     Compiler(State& L, const std::string& src, const std::string& chunk, bool collectAll)
         : L_(L), lex_(src, chunk), chunk_(chunk), collect_(collectAll) {}
     Proto* Run(std::vector<SyntaxError>& errs);
 private:
-    // tokens
+    // ---- tokens
     void Next() { prevLine_ = tok_.line; tok_ = ahead_.t != 0 ? ahead_ : lex_.Next(); ahead_ = Token{}; ahead_.t = 0; }
-    const Token& Lookahead() { if (ahead_.t == 0) ahead_ = lex_.Next(); return ahead_; }
-    bool Test(int t) { if (tok_.t == t) { Next(); return true; } return false; }
+    const Token& PeekToken() { if (ahead_.t == 0) ahead_ = lex_.Next(); return ahead_; }
+    bool Accept(int t) { if (tok_.t == t) { Next(); return true; } return false; }
     [[noreturn]] void ErrorAt(const std::string& msg, const Token& t) {
         std::string nearText;
         switch (t.t) {
@@ -379,18 +441,29 @@ private:
     }
     [[noreturn]] void Error(const std::string& msg) { ErrorAt(msg, tok_); }
     [[noreturn]] void ErrorPlain(const std::string& msg) { throw CompileError{msg, prevLine_, tok_.col}; }
-    void Check(int t) { if (tok_.t != t) Error(TokText(t) + " expected"); }
-    void CheckNext(int t) { Check(t); Next(); }
-    void CheckMatch(int what, int who, int line) {
-        if (tok_.t == what) { Next(); return; }
-        if (line == tok_.line) Error(TokText(what) + " expected");
-        Error(TokText(what) + " expected (to close " + TokText(who) + " at line " + std::to_string(line) + ")");
+    void Require(int t) { if (tok_.t != t) Error(TokText(t) + " expected"); }
+    void Consume(int t) { Require(t); Next(); }
+    // the closing token of a construct opened by `opener` on line `line`
+    void ConsumeCloser(int closer, int opener, int line) {
+        if (Accept(closer)) return;
+        if (line == tok_.line) Error(TokText(closer) + " expected");
+        Error(TokText(closer) + " expected (to close " + TokText(opener) + " at line " + std::to_string(line) + ")");
     }
-    std::string CheckName() { Check(T_NAME); std::string s = tok_.s; Next(); return s; }
-    void EnterLevel() { if (++depth_ > 190) Error("chunk has too many syntax levels"); }
-    void LeaveLevel() { --depth_; }
+    std::string RequireName() { Require(T_NAME); std::string s = tok_.s; Next(); return s; }
 
-    // emission
+    // nesting guard for blocks and sub-expressions (protects the C++ stack)
+    struct Nested {
+        Compiler& c;
+        explicit Nested(Compiler& cc) : c(cc) {
+            if (++c.nesting_ > kMaxNesting) {
+                --c.nesting_;
+                c.Error("code is nested too deeply (more than " + std::to_string(kMaxNesting) + " levels)");
+            }
+        }
+        ~Nested() { --c.nesting_; }
+    };
+
+    // ---- emission
     int Emit(Op op, int a = 0, int b = 0, int c = 0, int delta = 0) {
         Proto* p = fs_->p;
         p->code.push_back(Instr{op, a, b, c});
@@ -406,57 +479,66 @@ private:
     int ConstNum(const Value& v);
     void Hint(int pc, const std::string& d) { if (!d.empty()) fs_->p->hints[pc] = d; }
 
-    // variables
+    // ---- variables and values
     int AddLocal(const std::string& name, int attrib = 0);
     void ActivateLocal(int var);   // the var's slot is the current top - 1
     LocalVar& Var(int i) { return fs_->vars[(std::size_t)i]; }
     void Capture(FuncState* fs, int var);
-    int FindUpval(FuncState* fs, const std::string& name);
-    bool SingleVarAux(FuncState* fs, const std::string& name, ExpDesc& e, bool base);
-    void SingleVar(const std::string& name, ExpDesc& e);
-    void Discharge(ExpDesc& e);
-    void SetMulti(ExpDesc& e, int n);   // VCALL / VVARARG produce n results (-1 = all)
-    bool IsMulti(const ExpDesc& e) const { return e.k == VCALL || e.k == VVARARG; }
-    void StoreVar(ExpDesc& target);     // assign the top value to target (pops it)
-    void AdjustAssign(int nvars, int nexps, ExpDesc& last);
+    static int FindActiveLocal(FuncState* fs, const std::string& name);
+    static int FindUpval(FuncState* fs, const std::string& name);
+    bool ResolveName(const std::string& name, Operand& e);
+    void NameOperand(const std::string& name, Operand& e);
+    void Materialize(Operand& e);
+    void SetResultCount(Operand& e, int n);   // Call / Varargs produce n results (-1 = all)
+    static bool IsOpen(const Operand& e) { return e.kind == Opnd::Call || e.kind == Opnd::Varargs; }
+    void StoreTop(Operand& target);          // assign the top value to target (pops it)
+    void FitValueCount(int wanted, int given, Operand& last);
     void OpenBlock(BlockScope& bl, bool loop);
     void CloseBlock();
     void PopTo(int sp);   // drop operand / local slots down to sp (static)
-
-    // grammar
-    bool BlockFollow(bool withUntil) const;
-    void StatList();
-    void Statement();
-    void Block();
-    void IfStat(int line);
-    void WhileStat(int line);
-    void RepeatStat(int line);
-    void ForStat(int line);
-    void ForNum(const std::string& name, int line);
-    void ForList(const std::string& first);
-    void FuncStat(int line);
-    void LocalFunc();
-    void LocalStat();
-    void ReturnStat();
-    void BreakStat();
-    void GotoStat();
-    void LabelStat(const std::string& name, int line);
-    void ExprStat();
-    void Body(ExpDesc& e, bool isMethod, int line, const std::string& name);
-    void ParList();
-    int ExpList(ExpDesc& e);
-    void Expr(ExpDesc& e) { SubExpr(e, 0); }
-    int SubExpr(ExpDesc& e, int limit);
-    void SimpleExp(ExpDesc& e);
-    void PrimaryExp(ExpDesc& e);
-    void SuffixedExp(ExpDesc& e);
-    void FieldSel(ExpDesc& e);
-    void FuncArgs(ExpDesc& f, bool isSelf);
-    void Constructor(ExpDesc& e);
     void ResolveGotos(BlockScope& bl, bool atEnd);
     void JumpTo(int pc, const Label& lb);
     void StartFunc(FuncState& fs, Proto* p);
     void EndFunc();
+
+    // ---- statements (manual 3.3, 9)
+    void ParseStatements();
+    void ParseStatement();
+    void ParseScopedBlock();
+    int ParseConditionJump();
+    void ParseIf(int line);
+    void ParseWhile(int line);
+    void ParseRepeat(int line);
+    void ParseFor(int line);
+    void EmitCountingLoop(const std::string& name);
+    void EmitIteratorLoop(const std::vector<std::string>& names);
+    void ParseFunctionStatement(int line);
+    void ParseLocalFunction();
+    void ParseLocalNames();
+    void ParseReturn();
+    void ParseBreak();
+    void ParseGoto();
+    void DefineLabel(const std::string& name, int line);
+    void ParseCallOrAssignment();
+
+    // ---- functions
+    struct FunctionHeader { int line; bool isMethod; std::string name; };
+    void ParseFunctionBody(Operand& e, const FunctionHeader& h);
+    void ParseParameters();
+
+    // ---- expressions (manual 3.4, 9)
+    int ParseExpressionList(Operand& last);
+    void ParseExpression(Operand& e);
+    void ParseOperand(Operand& e);
+    void ParsePostfix(Operand& e);
+    void ParseBaseValue(Operand& e);
+    void IndexByName(Operand& e);
+    void IndexByExpression(Operand& e);
+    void ParseMethodCall(Operand& e);
+    void ParseCallArguments(Operand& callee, bool hasSelf);
+    void ParseTableConstructor(Operand& e);
+    void ApplyUnary(int token, int line, Operand& e);
+    void ApplyBinary(const BinaryOperator& b, int line, const std::string& leftWhat, int jumpPc, Operand& right);
 
     State& L_;
     Lexer lex_;
@@ -464,7 +546,7 @@ private:
     bool collect_;
     Token tok_, ahead_;
     int prevLine_ = 1;
-    int depth_ = 0;
+    int nesting_ = 0;
     FuncState* fs_ = nullptr;
     std::vector<Proto*> keep_;   // protos made so far (kept reachable while compiling)
 };
@@ -486,7 +568,7 @@ int Compiler::ConstNum(const Value& v) {
 }
 
 int Compiler::AddLocal(const std::string& name, int attrib) {
-    if (fs_->actives.size() >= 200) Error("too many local variables (limit is 200) in function");
+    if (fs_->actives.size() >= 200) Error("a function can have at most 200 local variables in scope at once");
     LocalVar v;
     v.name = name;
     v.attrib = attrib;
@@ -519,6 +601,14 @@ void Compiler::Capture(FuncState* fs, int var) {
     v.accessPcs.clear();
 }
 
+int Compiler::FindActiveLocal(FuncState* fs, const std::string& name) {
+    for (std::size_t i = fs->actives.size(); i-- > 0;) {
+        const int vi = fs->actives[i];
+        if (fs->vars[(std::size_t)vi].name == name) return vi;
+    }
+    return -1;
+}
+
 int Compiler::FindUpval(FuncState* fs, const std::string& name) {
     auto& u = fs->p->upvals;
     for (std::size_t i = 0; i < u.size(); ++i)
@@ -526,86 +616,97 @@ int Compiler::FindUpval(FuncState* fs, const std::string& name) {
     return -1;
 }
 
-// Resolve `name` in fs: a local (VLOCAL), an upvalue (VUPVAL), or not found (false).
-bool Compiler::SingleVarAux(FuncState* fs, const std::string& name, ExpDesc& e, bool base) {
-    if (!fs) return false;
-    for (int i = (int)fs->actives.size() - 1; i >= 0; --i) {
-        int vi = fs->actives[(std::size_t)i];
-        if (fs->vars[(std::size_t)vi].name == name) {
-            if (!base) Capture(fs, vi);
-            e.k = VLOCAL;
-            e.info = vi;
-            e.desc = "local '" + name + "'";
-            return true;
-        }
+// Find `name` from the current function outwards. A local of the current
+// function is used directly. Found further out (as a local or an upvalue of an
+// enclosing function), an upvalue is added to every function between that one
+// and the current one, outermost first, each pointing at the one outside it.
+bool Compiler::ResolveName(const std::string& name, Operand& e) {
+    std::vector<FuncState*> path;   // path[0] is the current function
+    int local = -1, upval = -1;
+    for (FuncState* f = fs_; f && local < 0 && upval < 0; f = f->parent) {
+        path.push_back(f);
+        local = FindActiveLocal(f, name);
+        if (local < 0) upval = FindUpval(f, name);
     }
-    int u = FindUpval(fs, name);
-    if (u < 0) {
-        ExpDesc pe;
-        if (!SingleVarAux(fs->parent, name, pe, false)) return false;
-        UpvalDesc d;
-        d.name = name;
-        if (pe.k == VLOCAL) { d.fromLocal = true; d.index = fs->parent->vars[(std::size_t)pe.info].slot; }
-        else { d.fromLocal = false; d.index = pe.info; }
-        if (fs->p->upvals.size() >= 255) Error("too many upvalues (limit is 255)");
-        fs->p->upvals.push_back(d);
-        u = (int)fs->p->upvals.size() - 1;
+    if (local < 0 && upval < 0) return false;
+    const std::size_t owner = path.size() - 1;
+    if (owner == 0) {
+        e.kind = local >= 0 ? Opnd::Local : Opnd::Upvalue;
+        e.ref = local >= 0 ? local : upval;
+        e.what = (local >= 0 ? "local '" : "upvalue '") + name + "'";
+        return true;
     }
-    e.k = VUPVAL;
-    e.info = u;
-    e.desc = "upvalue '" + name + "'";
+    UpvalDesc link;
+    link.name = name;
+    if (local >= 0) {
+        Capture(path[owner], local);
+        link.fromLocal = true;
+        link.index = path[owner]->vars[(std::size_t)local].slot;
+    } else {
+        link.fromLocal = false;
+        link.index = upval;
+    }
+    for (std::size_t k = owner; k-- > 0;) {
+        Proto* p = path[k]->p;
+        if (p->upvals.size() >= 255) Error("a function can use at most 255 variables from enclosing functions");
+        p->upvals.push_back(link);
+        link.fromLocal = false;
+        link.index = (int)p->upvals.size() - 1;
+    }
+    e.kind = Opnd::Upvalue;
+    e.ref = link.index;
+    e.what = "upvalue '" + name + "'";
     return true;
 }
 
-void Compiler::SingleVar(const std::string& name, ExpDesc& e) {
-    if (SingleVarAux(fs_, name, e, true)) return;
-    // a global: _ENV.name
-    ExpDesc env;
-    SingleVarAux(fs_, "_ENV", env, true);   // always found: the main chunk's upvalue 0
-    int k = ConstStr(name);
-    if (env.k == VUPVAL) {
-        e.k = VINDEXEDUPK;
-        e.info = env.info;
-        e.aux = k;
+// A name in an expression: a local, an upvalue or a global (a field of _ENV).
+void Compiler::NameOperand(const std::string& name, Operand& e) {
+    if (ResolveName(name, e)) return;
+    Operand env;
+    ResolveName("_ENV", env);   // always found: the main chunk's upvalue 0
+    const int key = ConstStr(name);
+    if (env.kind == Opnd::Upvalue) {
+        e.kind = Opnd::EnvGlobal;
+        e.ref = env.ref;
     } else {
-        Discharge(env);
-        e.k = VINDEXEDK;
-        e.tpos = fs_->sp - 1;
-        e.aux = k;
+        Materialize(env);
+        e.kind = Opnd::NamedField;
+        e.tableSlot = fs_->sp - 1;
     }
-    e.desc = "global '" + name + "'";
+    e.keyConst = key;
+    e.what = "global '" + name + "'";
 }
 
-void Compiler::Discharge(ExpDesc& e) {
-    switch (e.k) {
-        case VVOID: Emit(PUSHNIL, 1, 0, 0, 1); break;   // should not happen; keeps the stack consistent
-        case VNIL: Emit(PUSHNIL, 1, 0, 0, 1); break;
-        case VTRUE: Emit(PUSHTRUE, 0, 0, 0, 1); break;
-        case VFALSE: Emit(PUSHFALSE, 0, 0, 0, 1); break;
-        case VKSTR: Emit(PUSHK, ConstStr(e.sval), 0, 0, 1); break;
-        case VINT:
-            if (e.ival >= INT32_MIN && e.ival <= INT32_MAX) Emit(PUSHINT, (int)e.ival, 0, 0, 1);
-            else Emit(PUSHK, ConstNum(Value::Int(e.ival)), 0, 0, 1);
+void Compiler::Materialize(Operand& e) {
+    switch (e.kind) {
+        case Opnd::Empty: Emit(PUSHNIL, 1, 0, 0, 1); break;   // should not happen; keeps the stack consistent
+        case Opnd::Nil: Emit(PUSHNIL, 1, 0, 0, 1); break;
+        case Opnd::True: Emit(PUSHTRUE, 0, 0, 0, 1); break;
+        case Opnd::False: Emit(PUSHFALSE, 0, 0, 0, 1); break;
+        case Opnd::Str: Emit(PUSHK, ConstStr(e.strVal), 0, 0, 1); break;
+        case Opnd::Int:
+            if (e.intVal >= INT32_MIN && e.intVal <= INT32_MAX) Emit(PUSHINT, (int)e.intVal, 0, 0, 1);
+            else Emit(PUSHK, ConstNum(Value::Int(e.intVal)), 0, 0, 1);
             break;
-        case VFLT: Emit(PUSHK, ConstNum(Value::Num(e.nval)), 0, 0, 1); break;
-        case VLOCAL: {
-            LocalVar& v = Var(e.info);
+        case Opnd::Float: Emit(PUSHK, ConstNum(Value::Num(e.numVal)), 0, 0, 1); break;
+        case Opnd::Local: {
+            LocalVar& v = Var(e.ref);
             int pc = Emit(v.captured ? GETBOX : GETLOCAL, v.slot, 0, 0, 1);
             if (!v.captured) v.accessPcs.push_back(pc);
             break;
         }
-        case VUPVAL: Emit(GETUP, e.info, 0, 0, 1); break;
-        case VINDEXED: Hint(Emit(GETINDEX, 0, 0, 0, -1), e.odesc); break;
-        case VINDEXEDK: Hint(Emit(GETFIELD, e.aux, 0, 0, 0), e.odesc); break;
-        case VINDEXEDUPK: Emit(GETTABUPK, e.info, e.aux, 0, 1); break;
-        case VCALL: case VVARARG: case VPUSHED: break;   // already one value on the stack
+        case Opnd::Upvalue: Emit(GETUP, e.ref, 0, 0, 1); break;
+        case Opnd::Keyed: Hint(Emit(GETINDEX, 0, 0, 0, -1), e.baseWhat); break;
+        case Opnd::NamedField: Hint(Emit(GETFIELD, e.keyConst, 0, 0, 0), e.baseWhat); break;
+        case Opnd::EnvGlobal: Emit(GETTABUPK, e.ref, e.keyConst, 0, 1); break;
+        case Opnd::Call: case Opnd::Varargs: case Opnd::OnStack: break;   // already one value on the stack
     }
-    e.k = VPUSHED;
+    e.kind = Opnd::OnStack;
 }
 
-void Compiler::SetMulti(ExpDesc& e, int n) {
-    Instr& in = fs_->p->code[(std::size_t)e.info];
-    if (e.k == VCALL) {
+void Compiler::SetResultCount(Operand& e, int n) {
+    Instr& in = fs_->p->code[(std::size_t)e.ref];
+    if (e.kind == Opnd::Call) {
         // the function sat at slot in.a; results start there
         in.c = n;
         fs_->sp = in.a + (n < 0 ? 0 : n);
@@ -616,19 +717,19 @@ void Compiler::SetMulti(ExpDesc& e, int n) {
     if (fs_->sp > fs_->p->maxStack) fs_->p->maxStack = fs_->sp;
 }
 
-void Compiler::StoreVar(ExpDesc& t) {
-    switch (t.k) {
-        case VLOCAL: {
-            LocalVar& v = Var(t.info);
+void Compiler::StoreTop(Operand& t) {
+    switch (t.kind) {
+        case Opnd::Local: {
+            LocalVar& v = Var(t.ref);
             if (v.attrib) ErrorPlain("attempt to assign to const variable '" + v.name + "'");
             int pc = Emit(v.captured ? SETBOX : SETLOCAL, v.slot, 0, 0, -1);
             if (!v.captured) v.accessPcs.push_back(pc);
             break;
         }
-        case VUPVAL: {
+        case Opnd::Upvalue: {
             // is the captured variable a const one?
             FuncState* f = fs_;
-            int idx = t.info;
+            int idx = t.ref;
             while (f && f->parent) {
                 const UpvalDesc& d = f->p->upvals[(std::size_t)idx];
                 if (d.fromLocal) {
@@ -640,28 +741,30 @@ void Compiler::StoreVar(ExpDesc& t) {
                 idx = d.index;
                 f = f->parent;
             }
-            Emit(SETUP, t.info, 0, 0, -1);
+            Emit(SETUP, t.ref, 0, 0, -1);
             break;
         }
-        case VINDEXEDUPK: Emit(SETTABUPK, t.info, t.aux, 0, -1); break;
-        case VINDEXED: Hint(Emit(SETINDEXAT, t.tpos, 0, 0, -1), t.odesc); break;
-        case VINDEXEDK: Hint(Emit(SETFIELDAT, t.tpos, t.aux, 0, -1), t.odesc); break;
+        case Opnd::EnvGlobal: Emit(SETTABUPK, t.ref, t.keyConst, 0, -1); break;
+        case Opnd::Keyed: Hint(Emit(SETINDEXAT, t.tableSlot, 0, 0, -1), t.baseWhat); break;
+        case Opnd::NamedField: Hint(Emit(SETFIELDAT, t.tableSlot, t.keyConst, 0, -1), t.baseWhat); break;
         default: Error("syntax error");
     }
 }
 
-void Compiler::AdjustAssign(int nvars, int nexps, ExpDesc& e) {
-    if (IsMulti(e)) {
-        int extra = nvars - nexps + 1;   // values wanted from the call / ...
-        if (extra >= 0) { SetMulti(e, extra); return; }
-        SetMulti(e, 0);                  // more expressions than variables
-        Emit(POP, -extra, 0, 0, extra);
+// `given` expressions were parsed, all but the last one already on the stack;
+// make them leave exactly `wanted` values. An open last one (a call or '...')
+// supplies whatever is missing; otherwise nils pad or extra values are dropped.
+void Compiler::FitValueCount(int wanted, int given, Operand& last) {
+    const int surplus = given - wanted;
+    if (IsOpen(last)) {
+        if (surplus <= 0) { SetResultCount(last, 1 - surplus); return; }
+        SetResultCount(last, 0);
+        if (surplus > 1) Emit(POP, surplus - 1, 0, 0, 1 - surplus);
         return;
     }
-    if (e.k != VVOID) Discharge(e);
-    int needed = nvars - nexps;
-    if (needed > 0) Emit(PUSHNIL, needed, 0, 0, needed);
-    else if (needed < 0) Emit(POP, -needed, 0, 0, needed);
+    if (last.kind != Opnd::Empty) Materialize(last);
+    if (surplus < 0) Emit(PUSHNIL, -surplus, 0, 0, -surplus);
+    else if (surplus > 0) Emit(POP, surplus, 0, 0, -surplus);
 }
 
 void Compiler::PopTo(int sp) {
@@ -738,434 +841,6 @@ void Compiler::CloseBlock() {
     }
 }
 
-bool Compiler::BlockFollow(bool withUntil) const {
-    switch (tok_.t) {
-        case T_ELSE: case T_ELSEIF: case T_END: case T_EOF: return true;
-        case T_UNTIL: return withUntil;
-        default: return false;
-    }
-}
-
-void Compiler::StatList() {
-    while (!BlockFollow(true)) {
-        if (tok_.t == T_RETURN) { Statement(); return; }
-        Statement();
-    }
-}
-
-void Compiler::Block() {
-    BlockScope bl;
-    OpenBlock(bl, false);
-    StatList();
-    CloseBlock();
-}
-
-void Compiler::Statement() {
-    int line = tok_.line;
-    EnterLevel();
-    switch (tok_.t) {
-        case ';': Next(); break;
-        case T_IF: IfStat(line); break;
-        case T_WHILE: WhileStat(line); break;
-        case T_DO: Next(); Block(); CheckMatch(T_END, T_DO, line); break;
-        case T_FOR: ForStat(line); break;
-        case T_REPEAT: RepeatStat(line); break;
-        case T_FUNCTION: FuncStat(line); break;
-        case T_LOCAL:
-            Next();
-            if (Test(T_FUNCTION)) LocalFunc(); else LocalStat();
-            break;
-        case T_DBCOLON: {
-            Next();
-            std::string name = CheckName();
-            CheckNext(T_DBCOLON);
-            LabelStat(name, line);
-            break;
-        }
-        case T_RETURN: Next(); ReturnStat(); break;
-        case T_BREAK: BreakStat(); break;
-        case T_GOTO: Next(); GotoStat(); break;
-        default: ExprStat(); break;
-    }
-    LeaveLevel();
-}
-
-void Compiler::IfStat(int line) {
-    std::vector<int> ends;
-    do {
-        Next();   // 'if' or 'elseif'
-        ExpDesc c;
-        Expr(c);
-        Discharge(c);
-        int jf = Emit(JMPIFNOT, 0, 0, 0, -1);
-        CheckNext(T_THEN);
-        Block();
-        if (tok_.t == T_ELSE || tok_.t == T_ELSEIF) ends.push_back(Emit(JMP, 0, -1, -1));
-        Patch(jf, Pc());
-    } while (tok_.t == T_ELSEIF);
-    if (Test(T_ELSE)) Block();
-    CheckMatch(T_END, T_IF, line);
-    for (int pc : ends) Patch(pc, Pc());
-}
-
-void Compiler::WhileStat(int line) {
-    Next();
-    int start = Pc();
-    ExpDesc c;
-    Expr(c);
-    Discharge(c);
-    int exitJ = Emit(JMPIFNOT, 0, 0, 0, -1);
-    CheckNext(T_DO);
-    BlockScope bl;
-    OpenBlock(bl, true);
-    StatList();
-    int sp = fs_->blocks.back().sp;
-    // the back jump drops the body's locals (and closes them)
-    std::vector<int> brk = fs_->blocks.back().breaks;
-    fs_->blocks.back().breaks.clear();
-    CloseBlock();
-    Emit(JMP, start, sp, sp);
-    CheckMatch(T_END, T_WHILE, line);
-    Patch(exitJ, Pc());
-    for (int pc : brk) Patch(pc, Pc());
-}
-
-void Compiler::RepeatStat(int line) {
-    Next();
-    int start = Pc();
-    BlockScope loop;
-    OpenBlock(loop, true);      // breaks
-    BlockScope scope;
-    OpenBlock(scope, false);    // the body's locals are visible in the condition
-    StatList();
-    CheckMatch(T_UNTIL, T_REPEAT, line);
-    ExpDesc c;
-    Expr(c);
-    Discharge(c);
-    int done = Emit(JMPIF, 0, 0, 0, -1);
-    // not done: drop the body's locals and go round again
-    int sp = fs_->blocks.back().sp;
-    {
-        BlockScope& bl = fs_->blocks.back();
-        ResolveGotos(bl, false);
-    }
-    Emit(JMP, start, sp, sp);
-    Patch(done, Pc());
-    CloseBlock();
-    CloseBlock();
-}
-
-void Compiler::ForStat(int line) {
-    Next();
-    std::string name = CheckName();
-    BlockScope bl;
-    OpenBlock(bl, true);
-    if (tok_.t == '=') ForNum(name, line);
-    else if (tok_.t == ',' || tok_.t == T_IN) ForList(name);
-    else Error("'=' or 'in' expected");
-    CheckMatch(T_END, T_FOR, line);
-    CloseBlock();
-}
-
-void Compiler::ForNum(const std::string& name, int line) {
-    (void)line;
-    Next();   // '='
-    int base = fs_->sp;
-    ExpDesc e;
-    Expr(e); Discharge(e);
-    CheckNext(',');
-    Expr(e); Discharge(e);
-    if (Test(',')) { Expr(e); Discharge(e); }
-    else Emit(PUSHINT, 1, 0, 0, 1);
-    // three hidden locals hold start, limit and step
-    for (int h = 0; h < 3; ++h) {
-        int v = AddLocal("(for state)");
-        Var(v).slot = base + h;
-        fs_->actives.push_back(v);
-    }
-    CheckNext(T_DO);
-    int prep = Emit(FORPREP, base, 0, 0, 1);   // pushes the loop variable (on iteration)
-    int body = Pc();
-    BlockScope inner;
-    OpenBlock(inner, false);
-    int var = AddLocal(name);
-    ActivateLocal(var);
-    StatList();
-    CloseBlock();   // pops the body's locals; the loop variable's slot stays for FORLOOP
-    Emit(FORLOOP, base, body, 0, -1);
-    fs_->p->code[(std::size_t)prep].b = Pc();
-}
-
-void Compiler::ForList(const std::string& first) {
-    int base = fs_->sp;
-    std::vector<std::string> names{first};
-    while (Test(',')) names.push_back(CheckName());
-    CheckNext(T_IN);
-    int line = tok_.line;
-    ExpDesc e;
-    int n = ExpList(e);
-    AdjustAssign(4, n, e);
-    for (int i = 0; i < 4; ++i) {
-        int v = AddLocal("(for state)");
-        Var(v).slot = base + i;
-        fs_->actives.push_back(v);
-    }
-    // the fourth value is closed when the loop ends
-    Var(fs_->actives.back()).attrib = 2;
-    ++fs_->tbcActive;
-    Emit(TBC, base + 3);
-    CheckNext(T_DO);
-    int start = Pc();
-    Emit(GETLOCAL, base, 0, 0, 1);
-    Emit(GETLOCAL, base + 1, 0, 0, 1);
-    Emit(GETLOCAL, base + 2, 0, 0, 1);
-    prevLine_ = line;
-    int call = Emit(CALL, base + 4, 2, (int)names.size(), 0);
-    fs_->sp = base + 4 + (int)names.size();
-    if (fs_->sp > fs_->p->maxStack) fs_->p->maxStack = fs_->sp;
-    Hint(call, "for iterator 'for iterator'");
-    int test = Emit(TFORTEST, base, 0, 0, 0);
-    BlockScope inner;
-    OpenBlock(inner, false);
-    fs_->blocks.back().sp = base + 4;
-    fs_->sp = base + 4;
-    for (const auto& nm : names) {
-        int v = AddLocal(nm);
-        fs_->sp++;
-        ActivateLocal(v);
-    }
-    fs_->sp = base + 4 + (int)names.size();
-    StatList();
-    CloseBlock();
-    Emit(JMP, start, base + 4, base + 4);
-    fs_->p->code[(std::size_t)test].b = Pc();
-    // the outer block's end closes the fourth value and pops the hidden slots
-}
-
-void Compiler::LabelStat(const std::string& name, int line) {
-    for (std::size_t i = 0; i < fs_->labels.size(); ++i)
-        if (fs_->labels[i].name == name)
-            ErrorPlain("label '" + name + "' already defined on line " + std::to_string(fs_->labels[i].line));
-    // skip other no-op statements: a label at the end of a block is outside the block's locals
-    while (tok_.t == ';' || tok_.t == T_DBCOLON) {
-        if (tok_.t == ';') { Next(); continue; }
-        break;
-    }
-    Label lb;
-    lb.name = name;
-    lb.pc = Pc();
-    lb.line = line;
-    lb.block = fs_->blocks.back().id;
-    lb.nactive = (int)fs_->actives.size();
-    lb.sp = fs_->sp;
-    if (BlockFollow(false)) {
-        // at the end of its block the label is outside the block's locals; a jump arriving
-        // from before them raises the top to sp with nils (CloseBlock's POP then drops them)
-        lb.nactive = fs_->blocks.back().nactive;
-    }
-    fs_->labels.push_back(lb);
-    // backward-looking: pending gotos in this block (or nested, already moved here)
-    ResolveGotos(fs_->blocks.back(), false);
-}
-
-void Compiler::GotoStat() {
-    int line = tok_.line, col = tok_.col;
-    std::string name = CheckName();
-    // a visible label already defined (backward jump)?
-    for (int i = (int)fs_->labels.size() - 1; i >= 0; --i) {
-        const Label& lb = fs_->labels[(std::size_t)i];
-        if (lb.name != name) continue;
-        int pc = Emit(JMP, 0, 0, 0);
-        JumpTo(pc, lb);
-        return;
-    }
-    int pc = Emit(JMP, 0, 0, 0);
-    fs_->gotos.push_back(PendingGoto{name, pc, (int)fs_->actives.size(), line, col, fs_->blocks.back().id});
-}
-
-void Compiler::BreakStat() {
-    int line = tok_.line;
-    Next();
-    for (int i = (int)fs_->blocks.size() - 1; i >= 0; --i) {
-        BlockScope& bl = fs_->blocks[(std::size_t)i];
-        if (!bl.isLoop) continue;
-        bl.breaks.push_back(Emit(JMP, 0, bl.sp, bl.sp));
-        return;
-    }
-    throw CompileError{"break outside a loop at line " + std::to_string(line), line, 1};
-}
-
-void Compiler::ReturnStat() {
-    int first = fs_->sp;
-    if (BlockFollow(true) || tok_.t == ';') {
-        Emit(RETURN, first, 0);
-    } else {
-        ExpDesc e;
-        int n = ExpList(e);
-        if (IsMulti(e)) {
-            if (n == 1 && e.k == VCALL && fs_->tbcActive == 0) {
-                fs_->p->code[(std::size_t)e.info].op = TAILCALL;
-                SetMulti(e, -1);
-                Emit(RETURN, first, -1);
-            } else {
-                SetMulti(e, -1);
-                Emit(RETURN, first, -1);
-            }
-        } else {
-            Discharge(e);
-            Emit(RETURN, first, n);
-        }
-    }
-    Test(';');
-    fs_->sp = first;
-    if (!BlockFollow(true)) Error("'<eof>' expected");
-}
-
-void Compiler::FuncStat(int line) {
-    Next();
-    // funcname: Name {'.' Name} [':' Name]
-    std::string name = CheckName();
-    std::string full = name;
-    ExpDesc v;
-    SingleVar(name, v);
-    bool method = false;
-    while (tok_.t == '.' || tok_.t == ':') {
-        method = tok_.t == ':';
-        Next();
-        std::string key = CheckName();
-        full += (method ? ":" : ".") + key;
-        std::string od = v.desc;
-        Discharge(v);
-        v.odesc = od;
-        v.k = VINDEXEDK;
-        v.tpos = fs_->sp - 1;
-        v.aux = ConstStr(key);
-        v.desc = "field '" + key + "'";
-        if (method) break;
-    }
-    ExpDesc b;
-    Body(b, method, line, full);
-    if (v.k == VINDEXEDK) {
-        Hint(Emit(SETFIELD, v.aux, 0, 0, -2), v.odesc);
-    } else {
-        StoreVar(v);
-    }
-}
-
-void Compiler::LocalFunc() {
-    std::string name = CheckName();
-    int var = AddLocal(name);
-    Emit(PUSHNIL, 1, 0, 0, 1);
-    ActivateLocal(var);
-    ExpDesc b;
-    Body(b, false, tok_.line, name);
-    LocalVar& v = Var(var);
-    int pc = Emit(v.captured ? SETBOX : SETLOCAL, v.slot, 0, 0, -1);
-    if (!v.captured) v.accessPcs.push_back(pc);
-}
-
-void Compiler::LocalStat() {
-    std::vector<int> vars;
-    int closeCount = 0;
-    do {
-        std::string name = CheckName();
-        int attrib = 0;
-        if (Test('<')) {
-            std::string a = CheckName();
-            if (a == "const") attrib = 1;
-            else if (a == "close") attrib = 2;
-            else Error("unknown attribute '" + a + "'");
-            CheckNext('>');
-            if (attrib == 2 && ++closeCount > 1) Error("multiple to-be-closed variables in local list");
-        }
-        vars.push_back(AddLocal(name, attrib));
-    } while (Test(','));
-    int nvars = (int)vars.size();
-    if (Test('=')) {
-        ExpDesc e;
-        int n = ExpList(e);
-        AdjustAssign(nvars, n, e);
-    } else {
-        Emit(PUSHNIL, nvars, 0, 0, nvars);
-    }
-    // the values sit in the new locals' slots; now they come into scope
-    int top = fs_->sp;
-    fs_->sp = top - nvars;
-    for (int v : vars) {
-        fs_->sp++;
-        ActivateLocal(v);
-        if (Var(v).attrib == 2) {
-            Emit(TBC, Var(v).slot);
-            ++fs_->tbcActive;
-        }
-    }
-}
-
-void Compiler::ExprStat() {
-    ExpDesc e;
-    SuffixedExp(e);
-    if (tok_.t == '=' || tok_.t == ',') {
-        std::vector<ExpDesc> targets{e};
-        int firstSp = -1;
-        auto check = [&](const ExpDesc& t) {
-            if (t.k != VLOCAL && t.k != VUPVAL && t.k != VINDEXED && t.k != VINDEXEDK && t.k != VINDEXEDUPK)
-                Error("syntax error");
-        };
-        check(e);
-        while (Test(',')) {
-            ExpDesc t;
-            SuffixedExp(t);
-            check(t);
-            targets.push_back(t);
-        }
-        (void)firstSp;
-        CheckNext('=');
-        // how many slots the targets left on the stack (tables and keys)
-        int below = 0;
-        for (auto& t : targets) below += t.k == VINDEXED ? 2 : t.k == VINDEXEDK ? 1 : 0;
-        ExpDesc v;
-        int n = ExpList(v);
-        int nt = (int)targets.size();
-        if (nt == 1 && n == 1 && !IsMulti(v)) {
-            Discharge(v);
-            ExpDesc& t = targets[0];
-            if (t.k == VINDEXED) { Hint(Emit(SETINDEX, 0, 0, 0, -3), t.odesc); return; }
-            if (t.k == VINDEXEDK) { Hint(Emit(SETFIELD, t.aux, 0, 0, -2), t.odesc); return; }
-            StoreVar(t);
-            return;
-        }
-        AdjustAssign(nt, n, v);
-        for (int i = nt - 1; i >= 0; --i) StoreVar(targets[(std::size_t)i]);
-        if (below) Emit(POP, below, 0, 0, -below);
-        return;
-    }
-    if (e.k != VCALL) Error("syntax error");
-    SetMulti(e, 0);
-}
-
-void Compiler::ParList() {
-    Proto* p = fs_->p;
-    int np = 0;
-    if (tok_.t != ')') {
-        do {
-            if (tok_.t == T_NAME) {
-                int v = AddLocal(tok_.s);
-                Next();
-                fs_->sp++;
-                ActivateLocal(v);
-                ++np;
-            } else if (tok_.t == T_DOTS) {
-                Next();
-                p->isVararg = true;
-                break;
-            } else {
-                Error("<name> expected");
-            }
-        } while (Test(','));
-    }
-    p->numParams = np;
-}
-
 void Compiler::StartFunc(FuncState& fs, Proto* p) {
     fs.parent = fs_;
     fs.p = p;
@@ -1182,340 +857,746 @@ void Compiler::EndFunc() {
     fs_ = fs_->parent;
 }
 
-void Compiler::Body(ExpDesc& e, bool isMethod, int line, const std::string& name) {
-    Proto* p = L_.Alloc<Proto>();
-    p->lineDefined = line;
-    p->name = name.empty() ? "anonymous function" : "function '" + name + "'";
-    // the new function is reachable from its parent's list, which is reachable from keep_
-    fs_->p->protos.push_back(p);
-    int idx = (int)fs_->p->protos.size() - 1;
-    FuncState fs;
-    StartFunc(fs, p);
-    if (isMethod) {
-        int v = AddLocal("self");
+// ---------------------------------------------------------------- statements
+
+// block ::= {stat} [retstat]; a return statement must be the last one
+void Compiler::ParseStatements() {
+    while (!EndsBlock(tok_.t)) {
+        const bool wasReturn = tok_.t == T_RETURN;
+        ParseStatement();
+        if (wasReturn) return;
+    }
+}
+
+void Compiler::ParseScopedBlock() {
+    BlockScope bl;
+    OpenBlock(bl, false);
+    ParseStatements();
+    CloseBlock();
+}
+
+void Compiler::ParseStatement() {
+    const int line = tok_.line;
+    Nested guard(*this);
+    switch (tok_.t) {
+        case ';': Next(); return;
+        case T_IF: ParseIf(line); return;
+        case T_WHILE: ParseWhile(line); return;
+        case T_DO: Next(); ParseScopedBlock(); ConsumeCloser(T_END, T_DO, line); return;
+        case T_FOR: ParseFor(line); return;
+        case T_REPEAT: ParseRepeat(line); return;
+        case T_FUNCTION: ParseFunctionStatement(line); return;
+        case T_LOCAL:
+            Next();
+            if (Accept(T_FUNCTION)) ParseLocalFunction();
+            else ParseLocalNames();
+            return;
+        case T_DBCOLON: {
+            Next();
+            std::string name = RequireName();
+            Consume(T_DBCOLON);
+            DefineLabel(name, line);
+            return;
+        }
+        case T_RETURN: Next(); ParseReturn(); return;
+        case T_BREAK: ParseBreak(); return;
+        case T_GOTO: Next(); ParseGoto(); return;
+        default: ParseCallOrAssignment(); return;
+    }
+}
+
+// a condition followed by the jump that skips what it guards when it is false
+int Compiler::ParseConditionJump() {
+    Operand cond;
+    ParseExpression(cond);
+    Materialize(cond);
+    return Emit(JMPIFNOT, 0, 0, 0, -1);
+}
+
+// if exp then block {elseif exp then block} [else block] end: one arm per condition
+void Compiler::ParseIf(int line) {
+    std::vector<int> pastEnd;   // the jump at the end of each arm that has a later arm
+    for (;;) {
+        Next();   // 'if' or 'elseif'
+        const int skipArm = ParseConditionJump();
+        Consume(T_THEN);
+        ParseScopedBlock();
+        if (tok_.t == T_ELSE || tok_.t == T_ELSEIF) pastEnd.push_back(Emit(JMP, 0, -1, -1));
+        Patch(skipArm, Pc());
+        if (tok_.t != T_ELSEIF) break;
+    }
+    if (Accept(T_ELSE)) ParseScopedBlock();
+    ConsumeCloser(T_END, T_IF, line);
+    for (int pc : pastEnd) Patch(pc, Pc());
+}
+
+void Compiler::ParseWhile(int line) {
+    Next();
+    const int top = Pc();
+    const int leave = ParseConditionJump();
+    Consume(T_DO);
+    BlockScope bl;
+    OpenBlock(bl, true);
+    ParseStatements();
+    const int sp = fs_->blocks.back().sp;
+    // the back jump drops the body's locals (and closes them); breaks go past the loop
+    std::vector<int> breaks;
+    breaks.swap(fs_->blocks.back().breaks);
+    CloseBlock();
+    Emit(JMP, top, sp, sp);
+    ConsumeCloser(T_END, T_WHILE, line);
+    Patch(leave, Pc());
+    for (int pc : breaks) Patch(pc, Pc());
+}
+
+void Compiler::ParseRepeat(int line) {
+    Next();
+    const int top = Pc();
+    BlockScope loop;
+    OpenBlock(loop, true);      // breaks
+    BlockScope body;
+    OpenBlock(body, false);     // the body's locals are visible in the condition
+    ParseStatements();
+    ConsumeCloser(T_UNTIL, T_REPEAT, line);
+    Operand cond;
+    ParseExpression(cond);
+    Materialize(cond);
+    const int finished = Emit(JMPIF, 0, 0, 0, -1);
+    // not finished: drop the body's locals and go round again
+    const int sp = fs_->blocks.back().sp;
+    ResolveGotos(fs_->blocks.back(), false);
+    Emit(JMP, top, sp, sp);
+    Patch(finished, Pc());
+    CloseBlock();
+    CloseBlock();
+}
+
+// for Name = exp, exp [, exp] do block end   |   for namelist in explist do block end
+void Compiler::ParseFor(int line) {
+    Next();
+    std::vector<std::string> names{RequireName()};
+    BlockScope bl;
+    OpenBlock(bl, true);
+    if (tok_.t == '=') {
+        EmitCountingLoop(names[0]);
+    } else {
+        if (tok_.t != ',' && tok_.t != T_IN) Error("'=' or 'in' expected");
+        while (Accept(',')) names.push_back(RequireName());
+        EmitIteratorLoop(names);
+    }
+    ConsumeCloser(T_END, T_FOR, line);
+    CloseBlock();
+}
+
+void Compiler::EmitCountingLoop(const std::string& name) {
+    Next();   // '='
+    const int base = fs_->sp;
+    Operand e;
+    ParseExpression(e); Materialize(e);
+    Consume(',');
+    ParseExpression(e); Materialize(e);
+    if (Accept(',')) { ParseExpression(e); Materialize(e); }
+    else Emit(PUSHINT, 1, 0, 0, 1);
+    // three hidden locals hold start, limit and step
+    for (int h = 0; h < 3; ++h) {
+        int v = AddLocal("(for state)");
+        Var(v).slot = base + h;
+        fs_->actives.push_back(v);
+    }
+    Consume(T_DO);
+    const int prep = Emit(FORPREP, base, 0, 0, 1);   // pushes the loop variable (on iteration)
+    const int body = Pc();
+    BlockScope inner;
+    OpenBlock(inner, false);
+    ActivateLocal(AddLocal(name));
+    ParseStatements();
+    CloseBlock();   // pops the body's locals; the loop variable's slot stays for FORLOOP
+    Emit(FORLOOP, base, body, 0, -1);
+    fs_->p->code[(std::size_t)prep].b = Pc();
+}
+
+void Compiler::EmitIteratorLoop(const std::vector<std::string>& names) {
+    const int base = fs_->sp;
+    Consume(T_IN);
+    const int line = tok_.line;
+    Operand last;
+    const int given = ParseExpressionList(last);
+    FitValueCount(4, given, last);   // iterator, state, control, closing value
+    for (int i = 0; i < 4; ++i) {
+        int v = AddLocal("(for state)");
+        Var(v).slot = base + i;
+        fs_->actives.push_back(v);
+    }
+    // the fourth value is closed when the loop ends
+    Var(fs_->actives.back()).attrib = 2;
+    ++fs_->tbcActive;
+    Emit(TBC, base + 3);
+    Consume(T_DO);
+    const int top = Pc();
+    Emit(GETLOCAL, base, 0, 0, 1);
+    Emit(GETLOCAL, base + 1, 0, 0, 1);
+    Emit(GETLOCAL, base + 2, 0, 0, 1);
+    prevLine_ = line;
+    const int call = Emit(CALL, base + 4, 2, (int)names.size(), 0);
+    fs_->sp = base + 4 + (int)names.size();
+    if (fs_->sp > fs_->p->maxStack) fs_->p->maxStack = fs_->sp;
+    Hint(call, "for iterator 'for iterator'");
+    const int test = Emit(TFORTEST, base, 0, 0, 0);
+    BlockScope inner;
+    OpenBlock(inner, false);
+    fs_->blocks.back().sp = base + 4;
+    fs_->sp = base + 4;
+    for (const auto& nm : names) {
+        int v = AddLocal(nm);
         fs_->sp++;
         ActivateLocal(v);
     }
-    CheckNext('(');
-    ParList();
-    if (isMethod) p->numParams += 1;
-    CheckNext(')');
-    StatList();
-    CheckMatch(T_END, T_FUNCTION, line);
+    fs_->sp = base + 4 + (int)names.size();
+    ParseStatements();
+    CloseBlock();
+    Emit(JMP, top, base + 4, base + 4);
+    fs_->p->code[(std::size_t)test].b = Pc();
+    // the outer block's end closes the fourth value and pops the hidden slots
+}
+
+void Compiler::DefineLabel(const std::string& name, int line) {
+    for (const Label& lb : fs_->labels)
+        if (lb.name == name) ErrorPlain("label '" + name + "' already defined on line " + std::to_string(lb.line));
+    while (tok_.t == ';') Next();   // empty statements after a label do not count
+    Label lb;
+    lb.name = name;
+    lb.pc = Pc();
+    lb.line = line;
+    lb.block = fs_->blocks.back().id;
+    lb.nactive = (int)fs_->actives.size();
+    lb.sp = fs_->sp;
+    if (EndsBlock(tok_.t) && tok_.t != T_UNTIL) {
+        // at the end of its block the label is outside the block's locals; a jump arriving
+        // from before them raises the top to sp with nils (CloseBlock's POP then drops them)
+        lb.nactive = fs_->blocks.back().nactive;
+    }
+    fs_->labels.push_back(lb);
+    // gotos earlier in this block (or moved here from nested blocks) may jump to it
+    ResolveGotos(fs_->blocks.back(), false);
+}
+
+void Compiler::ParseGoto() {
+    const int line = tok_.line, col = tok_.col;
+    std::string name = RequireName();
+    const int pc = Emit(JMP, 0, 0, 0);
+    // a visible label already defined: a backward jump, resolved now
+    for (std::size_t i = fs_->labels.size(); i-- > 0;) {
+        if (fs_->labels[i].name != name) continue;
+        JumpTo(pc, fs_->labels[i]);
+        return;
+    }
+    fs_->gotos.push_back(PendingGoto{name, pc, (int)fs_->actives.size(), line, col, fs_->blocks.back().id});
+}
+
+void Compiler::ParseBreak() {
+    const int line = tok_.line;
+    Next();
+    for (std::size_t i = fs_->blocks.size(); i-- > 0;) {
+        BlockScope& bl = fs_->blocks[i];
+        if (!bl.isLoop) continue;
+        bl.breaks.push_back(Emit(JMP, 0, bl.sp, bl.sp));
+        return;
+    }
+    throw CompileError{"break outside a loop at line " + std::to_string(line), line, 1};
+}
+
+void Compiler::ParseReturn() {
+    const int first = fs_->sp;
+    if (EndsBlock(tok_.t) || tok_.t == ';') {
+        Emit(RETURN, first, 0);
+    } else {
+        Operand last;
+        const int count = ParseExpressionList(last);
+        if (IsOpen(last)) {
+            // a lone call with nothing to close becomes a tail call
+            if (count == 1 && last.kind == Opnd::Call && fs_->tbcActive == 0)
+                fs_->p->code[(std::size_t)last.ref].op = TAILCALL;
+            SetResultCount(last, -1);
+            Emit(RETURN, first, -1);
+        } else {
+            Materialize(last);
+            Emit(RETURN, first, count);
+        }
+    }
+    Accept(';');
+    fs_->sp = first;
+    if (!EndsBlock(tok_.t)) Error("'<eof>' expected");
+}
+
+// function funcname body, funcname ::= Name {'.' Name} [':' Name]
+void Compiler::ParseFunctionStatement(int line) {
+    Next();
+    std::string full = RequireName();
+    Operand target;
+    NameOperand(full, target);
+    bool method = false;
+    while (!method && (tok_.t == '.' || tok_.t == ':')) {
+        method = tok_.t == ':';
+        Next();
+        const std::string key = RequireName();
+        full += (method ? ":" : ".") + key;
+        const std::string base = target.what;
+        Materialize(target);
+        target.baseWhat = base;
+        target.kind = Opnd::NamedField;
+        target.tableSlot = fs_->sp - 1;
+        target.keyConst = ConstStr(key);
+        target.what = "field '" + key + "'";
+    }
+    Operand fn;
+    ParseFunctionBody(fn, FunctionHeader{line, method, full});
+    if (target.kind == Opnd::NamedField) Hint(Emit(SETFIELD, target.keyConst, 0, 0, -2), target.baseWhat);
+    else StoreTop(target);
+}
+
+void Compiler::ParseLocalFunction() {
+    const std::string name = RequireName();
+    const int var = AddLocal(name);
+    Emit(PUSHNIL, 1, 0, 0, 1);
+    ActivateLocal(var);   // in scope inside its own body, so it can call itself
+    Operand fn;
+    ParseFunctionBody(fn, FunctionHeader{tok_.line, false, name});
+    LocalVar& v = Var(var);
+    const int pc = Emit(v.captured ? SETBOX : SETLOCAL, v.slot, 0, 0, -1);
+    if (!v.captured) v.accessPcs.push_back(pc);
+}
+
+// local attnamelist ['=' explist]
+void Compiler::ParseLocalNames() {
+    std::vector<int> vars;
+    bool sawClose = false;
+    do {
+        const std::string name = RequireName();
+        int attrib = 0;
+        if (Accept('<')) {
+            const std::string a = RequireName();
+            if (a == "const") attrib = 1;
+            else if (a == "close") attrib = 2;
+            else Error("unknown attribute '" + a + "'");
+            Consume('>');
+            if (attrib == 2) {
+                if (sawClose) Error("multiple to-be-closed variables in local list");
+                sawClose = true;
+            }
+        }
+        vars.push_back(AddLocal(name, attrib));
+    } while (Accept(','));
+    const int count = (int)vars.size();
+    if (Accept('=')) {
+        Operand last;
+        const int given = ParseExpressionList(last);
+        FitValueCount(count, given, last);
+    } else {
+        Emit(PUSHNIL, count, 0, 0, count);
+    }
+    // the values sit in the new locals' slots; now they come into scope
+    fs_->sp -= count;
+    for (int v : vars) {
+        fs_->sp++;
+        ActivateLocal(v);
+        if (Var(v).attrib == 2) {
+            Emit(TBC, Var(v).slot);
+            ++fs_->tbcActive;
+        }
+    }
+}
+
+// varlist '=' explist   |   functioncall
+void Compiler::ParseCallOrAssignment() {
+    Operand first;
+    ParsePostfix(first);
+    if (tok_.t != '=' && tok_.t != ',') {
+        if (first.kind != Opnd::Call) Error("syntax error");
+        SetResultCount(first, 0);
+        return;
+    }
+    auto assignable = [&](const Operand& t) {
+        if (t.kind != Opnd::Local && t.kind != Opnd::Upvalue && t.kind != Opnd::Keyed &&
+            t.kind != Opnd::NamedField && t.kind != Opnd::EnvGlobal)
+            Error("syntax error");
+    };
+    std::vector<Operand> targets{first};
+    assignable(first);
+    while (Accept(',')) {
+        Operand t;
+        ParsePostfix(t);
+        assignable(t);
+        targets.push_back(t);
+    }
+    Consume('=');
+    // the slots the targets left on the stack (tables and keys), dropped at the end
+    int leftBelow = 0;
+    for (const Operand& t : targets) leftBelow += t.kind == Opnd::Keyed ? 2 : t.kind == Opnd::NamedField ? 1 : 0;
+    Operand last;
+    const int given = ParseExpressionList(last);
+    const int count = (int)targets.size();
+    if (count == 1 && given == 1 && !IsOpen(last)) {
+        // a single assignment stores straight into the table slots it left
+        Materialize(last);
+        Operand& t = targets[0];
+        if (t.kind == Opnd::Keyed) { Hint(Emit(SETINDEX, 0, 0, 0, -3), t.baseWhat); return; }
+        if (t.kind == Opnd::NamedField) { Hint(Emit(SETFIELD, t.keyConst, 0, 0, -2), t.baseWhat); return; }
+        StoreTop(t);
+        return;
+    }
+    FitValueCount(count, given, last);
+    for (std::size_t i = targets.size(); i-- > 0;) StoreTop(targets[i]);
+    if (leftBelow) Emit(POP, leftBelow, 0, 0, -leftBelow);
+}
+
+// ---------------------------------------------------------------- functions
+
+void Compiler::ParseParameters() {
+    Proto* p = fs_->p;
+    int named = 0;
+    if (tok_.t != ')') {
+        do {
+            if (tok_.t == T_DOTS) {
+                Next();
+                p->isVararg = true;
+                break;
+            }
+            if (tok_.t != T_NAME) Error("<name> expected");
+            const int v = AddLocal(tok_.s);
+            Next();
+            fs_->sp++;
+            ActivateLocal(v);
+            ++named;
+        } while (Accept(','));
+    }
+    p->numParams = named;
+}
+
+// funcbody ::= '(' [parlist] ')' block end
+void Compiler::ParseFunctionBody(Operand& e, const FunctionHeader& h) {
+    Proto* p = L_.Alloc<Proto>();
+    p->lineDefined = h.line;
+    p->name = h.name.empty() ? "anonymous function" : "function '" + h.name + "'";
+    // the new function is reachable from its parent's list, which is reachable from keep_
+    fs_->p->protos.push_back(p);
+    const int index = (int)fs_->p->protos.size() - 1;
+    FuncState fs;
+    StartFunc(fs, p);
+    if (h.isMethod) {
+        const int self = AddLocal("self");
+        fs_->sp++;
+        ActivateLocal(self);
+    }
+    Consume('(');
+    ParseParameters();
+    if (h.isMethod) p->numParams += 1;
+    Consume(')');
+    ParseStatements();
+    ConsumeCloser(T_END, T_FUNCTION, h.line);
     EndFunc();
-    Emit(CLOSURE, idx, 0, 0, 1);
-    e.k = VPUSHED;
+    Emit(CLOSURE, index, 0, 0, 1);
+    e.kind = Opnd::OnStack;
 }
 
-int Compiler::ExpList(ExpDesc& e) {
-    int n = 1;
-    Expr(e);
-    while (Test(',')) {
-        Discharge(e);
-        Expr(e);
-        ++n;
+// ---------------------------------------------------------------- expressions
+
+// explist ::= exp {',' exp}; all but the last are put on the stack, the last is left open
+int Compiler::ParseExpressionList(Operand& last) {
+    int count = 1;
+    ParseExpression(last);
+    while (Accept(',')) {
+        Materialize(last);
+        last = Operand{};
+        ParseExpression(last);
+        ++count;
     }
-    return n;
+    return count;
 }
 
-void Compiler::PrimaryExp(ExpDesc& e) {
+// The operand grammar (manual 9): simpleexp and the prefixexp chains.
+void Compiler::ParseOperand(Operand& e) {
+    e = Operand{};
     switch (tok_.t) {
-        case T_NAME: {
-            std::string n = tok_.s;
+        case T_FLT: e.kind = Opnd::Float; e.numVal = tok_.n; Next(); return;
+        case T_INT: e.kind = Opnd::Int; e.intVal = tok_.i; Next(); return;
+        case T_STRING: e.kind = Opnd::Str; e.strVal = tok_.s; Next(); return;
+        case T_NIL: e.kind = Opnd::Nil; Next(); return;
+        case T_TRUE: e.kind = Opnd::True; Next(); return;
+        case T_FALSE: e.kind = Opnd::False; Next(); return;
+        case T_DOTS:
+            if (!fs_->p->isVararg) Error("cannot use '...' outside a vararg function");
             Next();
-            SingleVar(n, e);
+            e.kind = Opnd::Varargs;
+            e.ref = Emit(VARARG, 1, 0, 0, 1);
+            return;
+        case '{': ParseTableConstructor(e); return;
+        case T_FUNCTION: {
+            const int line = tok_.line;
+            Next();
+            ParseFunctionBody(e, FunctionHeader{line, false, ""});
             return;
         }
-        case '(': {
-            int line = tok_.line;
-            Next();
-            Expr(e);
-            CheckMatch(')', '(', line);
-            Discharge(e);   // (f()) is one value
-            e.desc.clear();
-            e.concatPc = -1;
-            return;
-        }
-        default: Error("unexpected symbol");
+        default: ParsePostfix(e); return;
     }
 }
 
-void Compiler::FieldSel(ExpDesc& e) {
-    std::string d = e.desc;
-    Discharge(e);
-    Next();   // '.'
-    std::string key = CheckName();
-    e.k = VINDEXEDK;
-    e.tpos = fs_->sp - 1;
-    e.aux = ConstStr(key);
-    e.desc = "field '" + key + "'";
-    e.odesc = d;   // a failure to index reports what the indexed value was
+// Name or '(' exp ')': where every prefixexp starts
+void Compiler::ParseBaseValue(Operand& e) {
+    if (tok_.t == T_NAME) {
+        const std::string name = tok_.s;
+        Next();
+        NameOperand(name, e);
+        return;
+    }
+    if (tok_.t == '(') {
+        const int line = tok_.line;
+        Next();
+        ParseExpression(e);
+        ConsumeCloser(')', '(', line);
+        Materialize(e);   // (f()) is one value
+        e.what.clear();
+        e.concatPc = -1;
+        return;
+    }
+    Error("unexpected symbol");
 }
 
-void Compiler::SuffixedExp(ExpDesc& e) {
-    PrimaryExp(e);
+// a base value followed by any number of .name, [exp], :name args and args
+void Compiler::ParsePostfix(Operand& e) {
+    ParseBaseValue(e);
     for (;;) {
         switch (tok_.t) {
-            case '.': FieldSel(e); break;
-            case '[': {
-                std::string d = e.desc;
-                Discharge(e);
-                int tpos = fs_->sp - 1;
-                Next();
-                ExpDesc k;
-                Expr(k);
-                Discharge(k);
-                CheckNext(']');
-                e.k = VINDEXED;
-                e.tpos = tpos;
-                e.odesc = d;   // GETINDEX failing reports the table
-                e.desc.clear();
+            case '.': IndexByName(e); break;
+            case '[': IndexByExpression(e); break;
+            case ':': ParseMethodCall(e); break;
+            case '(': case T_STRING: case '{':
+                Materialize(e);
+                ParseCallArguments(e, false);
                 break;
-            }
-            case ':': {
-                std::string d = e.desc;
-                Next();
-                std::string m = CheckName();
-                Discharge(e);
-                Hint(Emit(SELF, ConstStr(m), 0, 0, 1), d);
-                ExpDesc f;
-                f.k = VPUSHED;
-                f.desc = "method '" + m + "'";
-                FuncArgs(f, true);   // the function is below self
-                e = f;
-                break;
-            }
-            case '(': case T_STRING: case '{': {
-                Discharge(e);
-                FuncArgs(e, false);
-                break;
-            }
             default: return;
         }
     }
 }
 
-void Compiler::FuncArgs(ExpDesc& f, bool isSelf) {
+void Compiler::IndexByName(Operand& e) {
+    const std::string base = e.what;
+    Materialize(e);
+    Next();   // '.'
+    const std::string key = RequireName();
+    e.kind = Opnd::NamedField;
+    e.tableSlot = fs_->sp - 1;
+    e.keyConst = ConstStr(key);
+    e.what = "field '" + key + "'";
+    e.baseWhat = base;   // a failure to index reports what the indexed value was
+}
+
+void Compiler::IndexByExpression(Operand& e) {
+    const std::string base = e.what;
+    Materialize(e);
+    const int slot = fs_->sp - 1;
+    Next();   // '['
+    Operand key;
+    ParseExpression(key);
+    Materialize(key);
+    Consume(']');
+    e.kind = Opnd::Keyed;
+    e.tableSlot = slot;
+    e.baseWhat = base;   // GETINDEX failing reports the table
+    e.what.clear();
+}
+
+void Compiler::ParseMethodCall(Operand& e) {
+    const std::string base = e.what;
+    Next();   // ':'
+    const std::string method = RequireName();
+    Materialize(e);
+    Hint(Emit(SELF, ConstStr(method), 0, 0, 1), base);
+    Operand callee;
+    callee.kind = Opnd::OnStack;
+    callee.what = "method '" + method + "'";
+    ParseCallArguments(callee, true);   // the function is below self
+    e = callee;
+}
+
+// args ::= '(' [explist] ')' | tableconstructor | LiteralString
+void Compiler::ParseCallArguments(Operand& callee, bool hasSelf) {
     // the function value (and self, for a method call) is already on the stack
-    int funcPos = fs_->sp - (isSelf ? 2 : 1);
-    int callLine = tok_.line;
-    int nargs = isSelf ? 1 : 0;
-    bool open = false;
-    switch (tok_.t) {
-        case '(': {
-            int l = tok_.line;
-            Next();
-            if (tok_.t != ')') {
-                ExpDesc a;
-                int n = ExpList(a);
-                if (IsMulti(a)) { SetMulti(a, -1); open = true; nargs += n - 1; }
-                else { Discharge(a); nargs += n; }
-            }
-            CheckMatch(')', '(', l);
-            break;
+    const int funcSlot = fs_->sp - (hasSelf ? 2 : 1);
+    const int callLine = tok_.line;
+    int argCount = hasSelf ? 1 : 0;
+    bool openEnded = false;
+    if (tok_.t == '(') {
+        const int line = tok_.line;
+        Next();
+        if (tok_.t != ')') {
+            Operand last;
+            const int given = ParseExpressionList(last);
+            if (IsOpen(last)) { SetResultCount(last, -1); openEnded = true; argCount += given - 1; }
+            else { Materialize(last); argCount += given; }
         }
-        case '{': {
-            ExpDesc t;
-            Constructor(t);
-            ++nargs;
-            break;
-        }
-        case T_STRING: {
-            Emit(PUSHK, ConstStr(tok_.s), 0, 0, 1);
-            Next();
-            ++nargs;
-            break;
-        }
-        default: Error("function arguments expected");
+        ConsumeCloser(')', '(', line);
+    } else if (tok_.t == '{') {
+        Operand table;
+        ParseTableConstructor(table);
+        ++argCount;
+    } else if (tok_.t == T_STRING) {
+        Emit(PUSHK, ConstStr(tok_.s), 0, 0, 1);
+        Next();
+        ++argCount;
+    } else {
+        Error("function arguments expected");
     }
     prevLine_ = callLine;
-    int pc = Emit(CALL, funcPos, open ? -1 : nargs, 1, 0);
-    fs_->sp = funcPos + 1;
+    const int pc = Emit(CALL, funcSlot, openEnded ? -1 : argCount, 1, 0);
+    fs_->sp = funcSlot + 1;
     if (fs_->sp > fs_->p->maxStack) fs_->p->maxStack = fs_->sp;
-    Hint(pc, f.desc);
-    f.k = VCALL;
-    f.info = pc;
-    f.desc.clear();
+    Hint(pc, callee.what);
+    callee.kind = Opnd::Call;
+    callee.ref = pc;
+    callee.what.clear();
 }
 
-void Compiler::Constructor(ExpDesc& e) {
-    int line = tok_.line;
-    CheckNext('{');
-    int tpos = fs_->sp;
-    int newPc = Emit(NEWTABLE, 0, 0, 0, 1);
-    int pending = 0, arrayCount = 0, hashCount = 0;
-    auto flush = [&](bool open) {
-        Emit(SETLIST, tpos, open ? -1 : pending, arrayCount - pending + 1, 0);
-        fs_->sp = tpos + 1;
-        pending = 0;
+// tableconstructor ::= '{' [field {sep field} [sep]] '}'
+void Compiler::ParseTableConstructor(Operand& e) {
+    const int line = tok_.line;
+    Consume('{');
+    const int tableSlot = fs_->sp;
+    const int newPc = Emit(NEWTABLE, 0, 0, 0, 1);
+    int waiting = 0, listItems = 0, keyedItems = 0;   // list items not yet stored, totals
+    auto storeList = [&](bool openEnded) {
+        Emit(SETLIST, tableSlot, openEnded ? -1 : waiting, listItems - waiting + 1, 0);
+        fs_->sp = tableSlot + 1;
+        waiting = 0;
     };
     while (tok_.t != '}') {
-        if (tok_.t == T_NAME && Lookahead().t == '=') {
-            std::string key = tok_.s;
+        if (tok_.t == T_NAME && PeekToken().t == '=') {          // name = exp
+            const std::string key = tok_.s;
             Next(); Next();
-            ExpDesc v;
-            Expr(v);
-            Discharge(v);
-            Emit(SETFIELDAT, tpos, ConstStr(key), 0, -1);
-            ++hashCount;
-        } else if (tok_.t == '[') {
+            Operand v;
+            ParseExpression(v);
+            Materialize(v);
+            Emit(SETFIELDAT, tableSlot, ConstStr(key), 0, -1);
+            ++keyedItems;
+        } else if (tok_.t == '[') {                               // [exp] = exp
             Next();
-            ExpDesc k;
-            Expr(k);
-            Discharge(k);
-            CheckNext(']');
-            CheckNext('=');
-            ExpDesc v;
-            Expr(v);
-            Discharge(v);
-            Emit(SETKV, tpos, 0, 0, -2);
-            ++hashCount;
-        } else {
-            ExpDesc v;
-            Expr(v);
-            bool sep = Test(',') || Test(';');
-            ++arrayCount;
-            ++pending;
-            if (IsMulti(v) && tok_.t == '}') {
-                SetMulti(v, -1);   // the last item gives all its values
-                flush(true);
+            Operand k;
+            ParseExpression(k);
+            Materialize(k);
+            Consume(']');
+            Consume('=');
+            Operand v;
+            ParseExpression(v);
+            Materialize(v);
+            Emit(SETKV, tableSlot, 0, 0, -2);
+            ++keyedItems;
+        } else {                                                  // exp (a list item)
+            Operand v;
+            ParseExpression(v);
+            const bool separated = Accept(',') || Accept(';');
+            ++listItems;
+            ++waiting;
+            if (IsOpen(v) && tok_.t == '}') {
+                SetResultCount(v, -1);   // the last item gives all its values
+                storeList(true);
                 break;
             }
-            Discharge(v);
-            if (pending >= 50) flush(false);
-            if (!sep) break;
+            Materialize(v);
+            if (waiting >= 50) storeList(false);
+            if (!separated) break;
             continue;
         }
-        if (!Test(',') && !Test(';')) break;
+        if (!Accept(',') && !Accept(';')) break;
     }
-    CheckMatch('}', '{', line);
-    if (pending > 0) flush(false);
-    fs_->p->code[(std::size_t)newPc].a = arrayCount;
-    fs_->p->code[(std::size_t)newPc].b = hashCount;
-    e.k = VPUSHED;
+    ConsumeCloser('}', '{', line);
+    if (waiting > 0) storeList(false);
+    fs_->p->code[(std::size_t)newPc].a = listItems;
+    fs_->p->code[(std::size_t)newPc].b = keyedItems;
+    e.kind = Opnd::OnStack;
 }
 
-void Compiler::SimpleExp(ExpDesc& e) {
-    switch (tok_.t) {
-        case T_FLT: e = ExpDesc{}; e.k = VFLT; e.nval = tok_.n; Next(); return;
-        case T_INT: e = ExpDesc{}; e.k = VINT; e.ival = tok_.i; Next(); return;
-        case T_STRING: e = ExpDesc{}; e.k = VKSTR; e.sval = tok_.s; Next(); return;
-        case T_NIL: e = ExpDesc{}; e.k = VNIL; Next(); return;
-        case T_TRUE: e = ExpDesc{}; e.k = VTRUE; Next(); return;
-        case T_FALSE: e = ExpDesc{}; e.k = VFALSE; Next(); return;
-        case T_DOTS: {
-            if (!fs_->p->isVararg) Error("cannot use '...' outside a vararg function");
-            Next();
-            e = ExpDesc{};
-            e.k = VVARARG;
-            e.info = Emit(VARARG, 1, 0, 0, 1);
-            return;
-        }
-        case '{': Constructor(e); return;
-        case T_FUNCTION: {
-            int line = tok_.line;
-            Next();
-            Body(e, false, line, "");
-            return;
-        }
-        default: SuffixedExp(e); return;
+void Compiler::ApplyUnary(int token, int line, Operand& e) {
+    if (token == '-' && (e.kind == Opnd::Int || e.kind == Opnd::Float)) {
+        // fold a negative number literal (integer negation wraps around)
+        if (e.kind == Opnd::Int) e.intVal = (std::int64_t)(0ull - (std::uint64_t)e.intVal);
+        else e.numVal = -e.numVal;
+        return;
     }
+    const std::string what = e.what;
+    Materialize(e);
+    prevLine_ = line;
+    const Op op = token == T_NOT ? NOT : token == '-' ? UNM : token == '#' ? LEN : BNOT;
+    Hint(Emit(op, 0, 0, 0, 0), what);
+    e = Operand{};
+    e.kind = Opnd::OnStack;
 }
 
-struct BinPri { int left, right; Op op; };
-bool BinaryOp(int t, BinPri& out) {
-    switch (t) {
-        case '+': out = {10, 10, ADD}; return true;
-        case '-': out = {10, 10, SUB}; return true;
-        case '*': out = {11, 11, MUL}; return true;
-        case '%': out = {11, 11, MOD}; return true;
-        case '^': out = {14, 13, POW}; return true;
-        case '/': out = {11, 11, DIV}; return true;
-        case T_IDIV: out = {11, 11, IDIV}; return true;
-        case '&': out = {6, 6, BAND}; return true;
-        case '|': out = {4, 4, BOR}; return true;
-        case '~': out = {5, 5, BXOR}; return true;
-        case T_SHL: out = {7, 7, SHL}; return true;
-        case T_SHR: out = {7, 7, SHR}; return true;
-        case T_CONCAT: out = {9, 8, CONCAT}; return true;
-        case T_EQ: out = {3, 3, EQ}; return true;
-        case T_NE: out = {3, 3, NE}; return true;
-        case '<': out = {3, 3, LT}; return true;
-        case T_LE: out = {3, 3, LE}; return true;
-        case '>': out = {3, 3, GT}; return true;
-        case T_GE: out = {3, 3, GE}; return true;
-        case T_AND: out = {2, 2, ANDJ}; return true;
-        case T_OR: out = {1, 1, ORJ}; return true;
-        default: return false;
-    }
-}
-constexpr int kUnaryPri = 12;
-
-int Compiler::SubExpr(ExpDesc& e, int limit) {
-    EnterLevel();
-    int ut = tok_.t;
-    if (ut == T_NOT || ut == '-' || ut == '#' || ut == '~') {
-        int line = tok_.line;
-        Next();
-        SubExpr(e, kUnaryPri);
-        if (ut == '-' && (e.k == VINT || e.k == VFLT)) {
-            // fold a negative number literal (integer negation wraps around)
-            if (e.k == VINT) e.ival = (std::int64_t)(0ull - (std::uint64_t)e.ival);
-            else e.nval = -e.nval;
-        } else {
-            std::string d = e.desc;
-            Discharge(e);
-            prevLine_ = line;
-            int pc = Emit(ut == T_NOT ? NOT : ut == '-' ? UNM : ut == '#' ? LEN : BNOT, 0, 0, 0, 0);
-            Hint(pc, d);
-            e = ExpDesc{};
-            e.k = VPUSHED;
-        }
-    } else {
-        SimpleExp(e);
-    }
-    BinPri bp;
-    while (BinaryOp(tok_.t, bp) && bp.left > limit) {
-        int line = tok_.line;
-        Next();
-        if (bp.op == ANDJ || bp.op == ORJ) {
-            Discharge(e);
-            int j = Emit(bp.op, 0, 0, 0, -1);
-            ExpDesc e2;
-            SubExpr(e2, bp.right);
-            Discharge(e2);
-            Patch(j, Pc());
-            e = ExpDesc{};
-            e.k = VPUSHED;
-            continue;
-        }
-        std::string d1 = e.desc;
-        Discharge(e);
-        ExpDesc e2;
-        SubExpr(e2, bp.right);
-        std::string d2 = e2.desc;
-        Discharge(e2);
+// Combine the left value (already on the stack; for and / or its jump is at
+// jumpPc) with `right`, the right operand.
+void Compiler::ApplyBinary(const BinaryOperator& b, int line, const std::string& leftWhat, int jumpPc, Operand& right) {
+    const std::string rightWhat = right.what;
+    Materialize(right);
+    int concatPc = -1;
+    if (b.op == ANDJ || b.op == ORJ) {
+        Patch(jumpPc, Pc());
+    } else if (b.op == CONCAT) {
         prevLine_ = line;
-        int cpc = -1;
-        if (bp.op == CONCAT) {
-            // fuse a .. (b .. c): the right side's last step was its own CONCAT
-            if (e2.concatPc >= 0 && e2.concatPc == Pc() - 1) {
-                fs_->p->code.back().a += 1;
-                fs_->sp -= 1;
-            } else {
-                Emit(CONCAT, 2, 0, 0, -1);
-            }
-            cpc = Pc() - 1;
+        // a .. (b .. c): when the right side ended in its own CONCAT, widen that one
+        if (right.concatPc >= 0 && right.concatPc == Pc() - 1) {
+            fs_->p->code.back().a += 1;
+            fs_->sp -= 1;
         } else {
-            int pc = Emit(bp.op, 0, 0, 0, -1);
-            if (!d1.empty() || !d2.empty()) Hint(pc, d1 + "\n" + d2);
+            Emit(CONCAT, 2, 0, 0, -1);
         }
-        e = ExpDesc{};
-        e.k = VPUSHED;
-        e.concatPc = cpc;
+        concatPc = Pc() - 1;
+    } else {
+        prevLine_ = line;
+        const int pc = Emit(b.op, 0, 0, 0, -1);
+        if (!leftWhat.empty() || !rightWhat.empty()) Hint(pc, leftWhat + "\n" + rightWhat);
     }
-    LeaveLevel();
-    return 0;
+    right = Operand{};
+    right.kind = Opnd::OnStack;
+    right.concatPc = concatPc;
+}
+
+// exp (manual 3.4): operands and operators are read left to right with a stack
+// of operators still waiting for their right operand. Before an operator is
+// pushed, the waiting ones that bind at least as tightly (and group to the
+// left) are applied. Because the stack machine keeps every left operand on
+// the stack, only the operand being read now is held as an Operand.
+void Compiler::ParseExpression(Operand& e) {
+    Nested guard(*this);
+    struct Waiting {
+        const BinaryOperator* binary;   ///< null for a unary operator
+        int token, line, jumpPc;
+        std::string leftWhat;
+        unsigned char level() const { return binary ? binary->level : kUnaryLevel; }
+    };
+    std::vector<Waiting> waiting;
+    auto applyTop = [&]() {
+        Waiting w = std::move(waiting.back());
+        waiting.pop_back();
+        if (w.binary) ApplyBinary(*w.binary, w.line, w.leftWhat, w.jumpPc, e);
+        else ApplyUnary(w.token, w.line, e);
+    };
+    for (;;) {
+        while (IsUnaryToken(tok_.t)) {
+            waiting.push_back(Waiting{nullptr, tok_.t, tok_.line, -1, std::string()});
+            Next();
+        }
+        ParseOperand(e);
+        const BinaryOperator* b = FindBinaryOperator(tok_.t);
+        if (!b) break;
+        while (!waiting.empty() &&
+               (waiting.back().level() > b->level || (waiting.back().level() == b->level && !b->groupsRight)))
+            applyTop();
+        const int line = tok_.line;
+        Next();
+        Waiting w{b, b->token, line, -1, e.what};
+        Materialize(e);
+        if (b->op == ANDJ || b->op == ORJ) w.jumpPc = Emit(b->op, 0, 0, 0, -1);
+        waiting.push_back(std::move(w));
+    }
+    while (!waiting.empty()) applyTop();
 }
 
 Proto* Compiler::Run(std::vector<SyntaxError>& errs) {
@@ -1536,7 +1617,7 @@ Proto* Compiler::Run(std::vector<SyntaxError>& errs) {
         StartFunc(fs, main);
         for (;;) {
             try {
-                StatList();
+                ParseStatements();
                 if (tok_.t != T_EOF) Error("'<eof>' expected");
                 break;
             } catch (const CompileError& e) {
@@ -1555,7 +1636,7 @@ Proto* Compiler::Run(std::vector<SyntaxError>& errs) {
                 fs.gotos.clear();
                 fs.sp = 0;
                 fs.tbcActive = 0;
-                depth_ = 0;
+                nesting_ = 0;
                 bool moved = false;
                 for (;;) {
                     try {

@@ -7,6 +7,7 @@
 // tests/lua/conformance.lua (checks written from the reference manual).
 #include "test_framework.hpp"
 #include "okay/Lua/Lua.hpp"
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <random>
@@ -175,9 +176,9 @@ void BudgetAndLimits() {
         CHECK(L.MemoryInUse() < (16u << 20));
     }
     out = Run("print(pcall(string.rep, 'x', 1 << 40))");
-    CHECK(out.find("too large") != std::string::npos);
+    CHECK(out.find("longer than") != std::string::npos);
     out = Run("print(pcall(string.format, '%999d', 1))");
-    CHECK(out.find("invalid conversion") != std::string::npos);
+    CHECK(out.find("is not supported") != std::string::npos);
     out = Run("print(pcall(load, string.rep('(', 1000) .. '1' .. string.rep(')', 1000)))");
     CHECK(out.find("ERROR") == std::string::npos);
     out = Run("local t = setmetatable({}, {}) getmetatable(t).__index = t print(pcall(function() return t.x end))");
@@ -323,6 +324,118 @@ void Fuzz() {
     std::cout << "  fuzz: " << ran << " inputs, " << okRuns << " ran without error\n";
 }
 
+// Patterns (manual 6.4.1) and the string functions that use them (6.4), written from the
+// manual's text and its examples: anchors, %b, %f, captures, position captures, back
+// references, the repeat marks * + - ? and the character classes and sets.
+void Patterns() {
+    // the manual's own examples (string.find, string.gsub, string.gmatch, 6.4.1)
+    Expect("print(string.find('hello world', 'o w'))", "5\t7");
+    Expect("print(string.gsub('hello world', '(%w+)', '%1 %1'))", "hello hello world world\t2");
+    Expect("print(string.gsub('hello world', '%w+', '%0 %0', 1))", "hello hello world\t1");
+    Expect("print(string.gsub('hello world from Lua', '(%w+)%s*(%w+)', '%2 %1'))", "world hello Lua from\t2");
+    Expect("print(string.gsub('4+5 = $return 4+5$', '%$(.-)%$', function(s) return load(s)() end))", "4+5 = 9\t1");
+    Expect("local t = {name = 'lua', version = '5.4'} print(string.gsub('$name-$version.tar.gz', '%$(%w+)', t))",
+           "lua-5.4.tar.gz\t2");
+    Expect("local r = {} for w in string.gmatch('hello world from Lua', '%a+') do r[#r + 1] = w end print(table.concat(r, '|'))",
+           "hello|world|from|Lua");
+    Expect("local r = {} for k, v in string.gmatch('from=world, to=Lua', '(%w+)=(%w+)') do r[#r + 1] = k .. ':' .. v end "
+           "print(table.concat(r, ' '))", "from:world to:Lua");
+    Expect("print(string.find('flaaap', '()aa()'))", "3\t4\t3\t5");
+    Expect("print(string.match(' xay  z', '(a*(.)%w(%s*))'))", " x\t \t");
+    Expect("print(string.match('aaxy  z', '(a*(.)%w(%s*))'))", "aaxy  \tx\t  ");
+    // anchors: '^' only at the start (and never in gmatch), '$' only at the end
+    Expect("print(('hello'):find('^h'), ('hello'):find('^e'), ('hello'):find('o$'))", "1\tnil\t5\t5");
+    Expect("print(('a$b'):find('$b'), ('a^b'):find('a^'), ('x'):match('^$'), (''):match('^$'))", "2\t1\tnil\t");
+    Expect("local n = 0 for _ in ('^a^a'):gmatch('^a') do n = n + 1 end print(n)", "2");
+    Expect("print(('aaa'):gsub('^a', 'b'))", "baa\t1");
+    // repeats: greedy *, +, lazy -, optional ?
+    Expect("print(('<a><b>'):match('<(.-)>'), ('<a><b>'):match('<(.*)>'))", "a\ta><b");
+    Expect("print(('color colour colouur'):gsub('colou?r', 'X'))", "X X colouur\t2");
+    Expect("print(('aaab'):match('a+'), ('b'):match('a+'), ('b'):match('a*'), ('aaab'):match('a-b'))", "aaa\tnil\t\taaab");
+    Expect("print(('abc'):gsub('x*', '-'))", "-a-b-c-\t4");
+    Expect("print(('  trim me  '):match('^%s*(.-)%s*$') .. '|')", "trim me|");
+    // classes and their complements
+    Expect("print(('a1 B_\\t.'):gsub('%a', ''), ('a1 B_\\t.'):gsub('%A', ''))", "1 _\t.\taB\t5");
+    Expect("print(('a1 B_.'):gsub('%d', '#'), ('x9F g'):gsub('%x', '#'), ('aB'):gsub('%l', 'l'), ('aB'):gsub('%u', 'u'))",
+           "a# B_.\tx## g\tlB\tau\t1");
+    Expect("print(('a,b.c!'):gsub('%p', ''), ('a b\\tc'):gsub('%s', ''), ('a_1 ?'):gsub('%w', ''), ('a\\1b'):gsub('%c', ''))",
+           "abc\tabc\t_ ?\tab\t1");
+    Expect("print(('a b'):gsub('%g', '*'), ('1.5%'):gsub('%.', ','), ('50%'):gsub('%%', ' percent'))",
+           "* *\t1,5%\t50 percent\t1");
+    // sets: ranges, classes inside, complement, ']' first, '-' at the end
+    Expect("print(('x_1 y2'):match('[%a_][%w_]*'), ('017389'):match('[0-7]+'), ('a]b'):match('[]]'), ('a-b'):match('[b-]+'))",
+           "x_1\t0173\t]\t-b");
+    Expect("print(('hello world'):match('[^%s]+'), ('abc123'):match('[^%a]+'), ('a^b'):match('[%^]'))", "hello\t123\t^");
+    // %b balanced, including the same character twice
+    Expect("print(('x(a(b)c)y'):match('%b()'), ('if [[a]] [b'):match('%b[]'), ('say \"hi\" ok'):match('%b\"\"'))",
+           "(a(b)c)\t[[a]]\t\"hi\"");
+    Expect("print(('(((x'):match('%b()'), ('f(a)(b)'):gsub('%b()', '_'))", "nil\tf__\t2");
+    // %f frontier: the subject ends count as '\\0'
+    Expect("print(('THE (quick) fox'):gsub('%f[%a]%a+', 'W'))", "W (W) W\t3");
+    Expect("print(('THE (quick) fox'):find('%f[%a]%a+%f[%A]'), ('ab'):find('%f[%c]'))", "1\t3\t2");
+    Expect("print(('hello world'):gsub('%f[%w]%w', string.upper))", "Hello World\t2");
+    // back references
+    Expect("print(('say \\'hi\\' and \"ho\"'):gsub('([\"\\'])(.-)%1', '<%2>'))", "say <hi> and <ho>\t2");
+    Expect("print(('abab cdcd xyxz'):gsub('(%a%a)%1', '[%1]'))", "[ab] [cd] xyxz\t2");
+    Expect("print(('aa'):find('()%1'))", "nil");
+    // find returns positions then captures; init, plain, and an empty pattern
+    Expect("print(('key=val'):find('(%w+)=(%w+)'), ('a.b'):find('.', 1, true), ('aaa'):find('a', -1), ('abc'):find('', 10))",
+           "1\t2\t3\tnil");
+    Expect("print(('key=val'):find('(%w+)=(%w+)'))", "1\t7\tkey\tval");
+    Expect("print(('abc'):match('.', 2), ('abc'):match('()', 4), ('abc'):find('', 4))", "b\t4\t4\t3");
+    Expect("print(('abc'):gsub('%w', '%0%0'), ('abc'):gsub('', '-'), ('ab'):gsub('.', {a = 1, b = false}))",
+           "aabbcc\t-a-b-c-\t1b\t2");
+    // 32 captures are allowed, more are an error
+    Expect("print(select('#', ('x'):rep(32):match(('(x)'):rep(32))))", "32");
+    // pattern mistakes are reported in our own words, before matching
+    Expect("print(pcall(string.find, 'a', '%'))", "false\tbad pattern: it ends with a '%' that escapes nothing");
+    Expect("print(pcall(string.find, 'a', '[a'))", "false\tbad pattern: a '[' set has no closing ']'");
+    Expect("print(pcall(string.find, 'a', '(a'))", "false\tbad pattern: a '(' in the pattern has no matching ')'");
+    Expect("print(pcall(string.match, 'a', 'a)'))", "false\tbad pattern: a ')' with no '(' before it");
+    Expect("print(pcall(string.find, 'a', '%b('))", "false\tbad pattern: '%b' needs two characters after it");
+    Expect("print(pcall(string.find, 'a', '%fa'))", "false\tbad pattern: '%f' must be followed by a set in '[ ]'");
+    Expect("print(pcall(string.find, 'a', '(a%1)'))",
+           "false\tbad pattern: '%1' names a capture that is not complete at that point");
+    Expect("print(pcall(string.find, 'a', ('(x)'):rep(33)))", "false\tbad pattern: more than 32 captures");
+    Expect("print(pcall(string.gsub, 'a', 'a', '%2'))", "false\tcapture %2 does not exist (the pattern has no captures)");
+    Expect("print(pcall(string.gsub, 'a', 'a', '%x'))",
+           "false\tgsub: in the replacement string a '%' must be followed by a digit or another '%'");
+    // the utf8 library's pattern goes through the same code (a '\\0' inside a set)
+    Expect("local n = 0 for c in ('a\\u{E4}\\u{20AC}'):gmatch(utf8.charpattern) do n = n + 1 end print(n)", "3");
+}
+
+// One line in a script's Update must not freeze a frame: each of these ends with the budget
+// error, quickly, because the library charges the work it does.
+void HostileOneLiners() {
+    const char* lines[] = {
+        "string.rep('', 2^40)",                                                       // empty pieces, 2^40 copies
+        "string.find(string.rep('a', 1e5), '[' .. string.rep('b', 1e5) .. ']')",      // a huge set at every position
+        "string.find(string.rep('a', 1e5), '(a+)%1b')",                               // long back reference compares
+        "string.find(string.rep('a', 1e6), string.rep('a', 1e5) .. 'b', 1, true)",   // a plain needle that almost matches
+        "local s = string.rep('a', 1e6) for i = 1, 1e7 do s:upper() end",            // byte work in a cheap loop
+        "local s = string.rep('a', 1e6) for i = 1, 1e7 do s:sub(2) end",
+        "local s = string.rep('a', 1e6) for i = 1, 1e7 do s:gsub('^b', '') end",
+        "local s = string.rep('a', 1e6) for i = 1, 1e7 do utf8.len(s) end",
+        "local s = string.rep('a', 1e6) for i = 1, 1e7 do tostring(s) end",
+        "local s = string.rep('a', 1e6) for i = 1, 1e7 do string.pack('z', s) end",
+        "local src = string.rep('x = 1 ', 1e5) for i = 1, 1e6 do load(src) end",    // compiling a big chunk again and again
+        "local a = string.rep('a', 1e7) local b = a .. '' for i = 1, 1e7 do local _ = a == b end",   // long equal strings
+        "local a = string.rep('a', 1e7) local b = a .. '' for i = 1, 1e7 do local _ = a < b end",
+        "local s = string.rep(' ', 1e7) .. '1' for i = 1, 1e7 do local _ = s + 0 end",   // a padded numeral read each time
+        "table.sort(setmetatable({}, {__len = function() return 2^31 - 2 end}))",     // a fake length: no 32 GB copy
+        "table.concat(setmetatable({}, {__index = tostring}), '', 1, 1e9)",            // a native __index per item
+    };
+    for (const char* line : lines) {
+        const auto t0 = std::chrono::steady_clock::now();
+        std::string out = Run(line, false, 5'000'000);
+        const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        const bool stopped = out.find("instruction budget exceeded") != std::string::npos;
+        if (!stopped || secs >= 3.0) std::cerr << "  hostile: " << line << " -> " << out << "  (" << secs << " s)\n";
+        CHECK(stopped);
+        CHECK(secs < 3.0);   // a hang would take minutes; 3 s leaves room for slow sanitizer runs
+    }
+}
+
 } // namespace
 
 int main() {
@@ -332,6 +445,8 @@ int main() {
     Coroutines();
     Errors();
     BudgetAndLimits();
+    Patterns();
+    HostileOneLiners();
     HostApi();
     Programs(false);
     Programs(true);

@@ -163,7 +163,7 @@ check("neg set", ("a1b2"):gsub("[^%d]", "") == "12")
 check("format", string.format("%-5s|%05d|%+.1f|%%|%c", "ab", 42, 3.14159, 65) == "ab   |00042|+3.1|%|A")
 check("format q int", string.format("%q", 1 / 0) == "1e9999")
 check("format err", err(string.format, "%d", 1.5):find("number has no integer representation"))
-check("rep big", err(string.rep, "x", 1 << 40):find("too large"))
+check("rep big", err(string.rep, "x", 1 << 40):find("longer than"))
 check("byte neg", ("abc"):byte(-1) == 99)
 check("tostring int", tostring(10) == "10" and tostring(-0) == "0")
 check("tonumber bad", tonumber("0x") == nil and tonumber("1e") == nil and tonumber("") == nil and tonumber(" ") == nil and tonumber("inf") == nil and tonumber("nan") == nil)
@@ -172,10 +172,10 @@ check("tonumber ok", tonumber(".5") == 0.5 and tonumber("5.") == 5.0 and tonumbe
 local tl = {1, 2, 3}
 table.insert(tl, 1, 0); check("insert", table.concat(tl) == "0123")
 check("remove", table.remove(tl) == 3 and table.remove(tl, 1) == 0 and table.concat(tl) == "12")
-check("insert oob", err(table.insert, tl, 10, 1):find("position out of bounds"))
+check("insert oob", err(table.insert, tl, 10, 1):find("outside the list"))
 check("move", table.concat(table.move({1, 2, 3}, 1, 3, 2), ",") == "1,1,2,3")
 check("pack", table.pack(1, nil, 3).n == 3)
-check("sort invalid", err(table.sort, {3, 1, 2, 5, 4, 7, 6, 9, 8, 10, 12, 11, 15, 13, 14}, function(x, y) return true end):find("invalid order function") ~= nil)
+check("sort invalid", err(table.sort, {3, 1, 2, 5, 4, 7, 6, 9, 8, 10, 12, 11, 15, 13, 14}, function(x, y) return true end):find("not a consistent order") ~= nil)
 local srt = {}
 for q = 1, 500 do srt[q] = (q * 7919) % 501 end
 table.sort(srt)
@@ -375,7 +375,7 @@ check("pack Xop", string.pack("<!4 i1 Xi4 i1", 1, 2) == "\1\0\0\0\2" and string.
 check("pack align pow2", not pcall(string.packsize, "!3 i1 i3"))
 check("packsize", string.packsize("i4i8") == 12 and string.packsize("<!2 b h") == 4 and not pcall(string.packsize, "s") and not pcall(string.packsize, "z"))
 check("pack sizes", string.packsize("b h i l j T f d n") == 1 + 2 + 4 + 8 + 8 + 8 + 4 + 8 + 8)
-check("pack bad option", select(2, pcall(string.pack, "y", 1)):find("invalid format option 'y'") ~= nil)
+check("pack bad option", select(2, pcall(string.pack, "y", 1)):find("unknown format option 'y'") ~= nil)
 check("pack bad size", not pcall(string.pack, "i17", 1) and not pcall(string.pack, "i0", 1))
 do
   local a, b, c, nextpos = string.unpack("<i2 z B", string.pack("<i2 z B", 7, "hey", 9))

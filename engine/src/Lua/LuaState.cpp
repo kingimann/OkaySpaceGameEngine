@@ -1104,9 +1104,16 @@ bool State::Equals(const Value& a, const Value& b) {
     L.Error(std::string("attempt to compare ") + t1 + " with " + t2);
 }
 
+// Comparing two long strings reads their bytes: charge them, so a loop that compares huge
+// strings pays for the work and not one unit per comparison.
+void State::ChargeStringCompare(const Value& a, const Value& b) {
+    if (a.o == b.o) return;
+    Charge(std::min(a.Str()->s.size(), b.Str()->s.size()) / 64);
+}
+
 bool State::LessThan(const Value& a, const Value& b) {
     if (a.IsNumber() && b.IsNumber()) return NumLt(a, b);
-    if (a.IsString() && b.IsString()) return StrCmp(a.Str(), b.Str()) < 0;
+    if (a.IsString() && b.IsString()) { ChargeStringCompare(a, b); return StrCmp(a.Str(), b.Str()) < 0; }
     Value tm = GetTM(a, TM_LT);
     if (tm.IsNil()) tm = GetTM(b, TM_LT);
     if (tm.IsNil()) CompareError(*this, a, b);
@@ -1115,7 +1122,7 @@ bool State::LessThan(const Value& a, const Value& b) {
 
 bool State::LessEqual(const Value& a, const Value& b) {
     if (a.IsNumber() && b.IsNumber()) return NumLe(a, b);
-    if (a.IsString() && b.IsString()) return StrCmp(a.Str(), b.Str()) <= 0;
+    if (a.IsString() && b.IsString()) { ChargeStringCompare(a, b); return StrCmp(a.Str(), b.Str()) <= 0; }
     Value tm = GetTM(a, TM_LE);
     if (tm.IsNil()) tm = GetTM(b, TM_LE);
     if (tm.IsNil()) CompareError(*this, a, b);
@@ -1190,6 +1197,10 @@ static bool ArithNum(State& L, int op, const Value& a, const Value& b, Value& r)
 
 Value State::Arith(int op, const Value& a, const Value& b) {
     Value x, y, r;
+    // a string operand is read as a numeral: charge its bytes, so a loop over a huge string
+    // operand pays for the reading (manual 3.4.3, string to number conversion)
+    if (a.IsString()) Charge(a.Str()->s.size() / 16);
+    if (b.IsString()) Charge(b.Str()->s.size() / 16);
     if (op >= BAND) {
         if (a.IsNumber() && b.IsNumber() && ArithNum(*this, op, a, b, r)) return r;
     } else if (ToNumber(a, x) && ToNumber(b, y)) {
@@ -2008,6 +2019,7 @@ newframe:
                 else if (v.t == Type::Float) S(TOP - 1) = Value::Num(-v.n);
                 else {
                     Value n;
+                    if (v.IsString()) Charge(v.Str()->s.size() / 16);   // the numeral is read
                     if (ToNumber(v, n)) S(TOP - 1) = n.t == Type::Int ? Value::Int((std::int64_t)(0ull - (std::uint64_t)n.i)) : Value::Num(-n.n);
                     else {
                         Value tm = GetTM(v, TM_UNM);
@@ -2133,6 +2145,8 @@ newframe:
                         goto newframe;
                     }
                 }
+                if (a.t == Type::String && b.t == Type::String && a.Str()->s.size() == b.Str()->s.size())
+                    ChargeStringCompare(a, b);
                 bool r = (a.t == b.t && a.t != Type::Table && a.t != Type::Userdata) ? RawEquals(a, b) : Equals(a, b);
                 --TOP;
                 S(TOP - 1) = Value::Bool(in.op == EQ ? r : !r);

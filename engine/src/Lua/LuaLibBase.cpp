@@ -40,6 +40,7 @@ int B_tostring(State& L, int n) {
     (void)n;
     L.CheckAny(0, "tostring");
     std::string s = L.ToStringMeta(L.Arg(0));
+    L.Charge(s.size() / 16 + 1);   // the bytes copied
     L.Push(Str(L, s));
     return 1;
 }
@@ -57,6 +58,7 @@ int B_tonumber(State& L, int n) {
     if (!v.IsString()) L.TypeError(0, "tonumber", "string");
     if (base < 2 || base > 36) L.ArgError(1, "tonumber", "base out of range");
     const std::string& s = v.Str()->s;
+    L.Charge(s.size() / 16 + 1);   // the bytes read
     std::size_t i = 0;
     while (i < s.size() && std::strchr(" \t\n\r\f\v", s[i]) && s[i]) ++i;
     bool neg = false;
@@ -300,6 +302,8 @@ int B_load(State& L, int n) {
         L.PushString("attempt to load a text chunk (mode is '" + mode + "')");
         return 2;
     }
+    // compiling reads every byte and builds code for it: four units per source byte
+    L.Charge((std::uint64_t)src.size() * 4 + 1);
     Table* env = nullptr;
     bool hasEnv = n >= 4;
     if (hasEnv && L.Arg(3).IsTable()) env = L.Arg(3).Tab();
@@ -679,7 +683,7 @@ int O_date(State& L, int n) {
     for (std::size_t i = 0; i < fmt.size(); ++i) {
         if (fmt[i] != '%') { out += fmt[i]; continue; }
         if (i + 1 >= fmt.size() || !std::strchr(kValid, fmt[i + 1]) || fmt[i + 1] == 0)
-            L.ArgError(0, "date", "invalid conversion specifier '%" + fmt.substr(i + 1, 1) + "'");
+            L.ArgError(0, "date", "'%" + fmt.substr(i + 1, 1) + "' is not a conversion os.date knows");
         char spec[3] = {'%', fmt[i + 1], 0};
         char buf[256];
         std::size_t len = std::strftime(buf, sizeof buf, spec, &tm);

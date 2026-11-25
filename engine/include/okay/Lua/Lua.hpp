@@ -313,6 +313,7 @@ public:
     void SetBudget(std::uint64_t instructions) { budget_ = instructions; used_ = 0; }
     std::uint64_t BudgetUsed() const { return used_; }
     void Charge(std::uint64_t n);   ///< library work (pattern steps, big copies) counts against the budget
+    void ChargeStringCompare(const Value& a, const Value& b);   ///< two strings about to be compared
     std::size_t memoryLimit = 256u << 20;   ///< bytes
     std::size_t MemoryInUse() const { return bytes_; }
     void CollectGarbage();

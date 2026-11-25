@@ -14,19 +14,25 @@ namespace okay::lua {
 
 namespace {
 
+// An access through a metatable may call an __index / __newindex; a native one runs no
+// instructions of its own, so the access is charged like a few instructions.
+constexpr std::uint64_t kMetaAccessCost = 8;
+
 Value GetI(State& L, const Value& t, std::int64_t i) {
     if (t.IsTable() && !t.Tab()->meta) return t.Tab()->GetInt(i);
+    L.Charge(kMetaAccessCost);
     return L.Index(t, Value::Int(i));
 }
 void SetI(State& L, const Value& t, std::int64_t i, const Value& v) {
     if (t.IsTable() && !t.Tab()->meta) { t.Tab()->SetInt(L, i, v); return; }
+    L.Charge(kMetaAccessCost);
     L.SetIndex(t, Value::Int(i), v);
 }
 std::int64_t LenOf(State& L, const Value& t) {
     if (t.IsTable() && !t.Tab()->meta) return t.Tab()->Length();
     Value n = L.Length(t);
     std::int64_t r;
-    if (!State::ToInteger(n, r)) L.Error("object length is not an integer");
+    if (!State::ToInteger(n, r)) L.Error("the length (__len) of the table is not an integer");
     return r;
 }
 // a table, or anything with the metamethods the operation needs
@@ -46,11 +52,11 @@ int T_insert(State& L, int n) {
         pos = e;
     } else if (n == 3) {
         pos = L.CheckInt(1, "insert");
-        if ((std::uint64_t)pos - 1u >= (std::uint64_t)e) L.ArgError(1, "insert", "position out of bounds");
-        L.Charge((std::uint64_t)(e - pos) / 8);
+        if ((std::uint64_t)pos - 1u >= (std::uint64_t)e) L.ArgError(1, "insert", "position is outside the list (1 to #t + 1)");
+        L.Charge((std::uint64_t)(e - pos) + 1);   // one unit per item moved
         for (std::int64_t i = e; i > pos; --i) SetI(L, t, i, GetI(L, t, i - 1));
     } else {
-        L.Error("wrong number of arguments to 'insert'");
+        L.Error("table.insert takes 2 or 3 arguments");
     }
     SetI(L, t, pos, L.Arg(n - 1));
     return 0;
@@ -62,10 +68,10 @@ int T_remove(State& L, int n) {
     std::int64_t pos = size;
     if (n >= 2) {
         pos = L.CheckInt(1, "remove");
-        if (pos != size && (std::uint64_t)pos - 1u > (std::uint64_t)size) L.ArgError(1, "remove", "position out of bounds");
+        if (pos != size && (std::uint64_t)pos - 1u > (std::uint64_t)size) L.ArgError(1, "remove", "position is outside the list (1 to #t + 1)");
     }
     L.Push(GetI(L, t, pos));
-    L.Charge((std::uint64_t)(size > pos ? size - pos : 0) / 8);
+    L.Charge((std::uint64_t)(size > pos ? size - pos : 0) + 1);   // one unit per item moved
     for (; pos < size; ++pos) SetI(L, t, pos, GetI(L, t, pos + 1));
     SetI(L, t, pos, Value());
     return 1;
@@ -78,15 +84,16 @@ int T_concat(State& L, int n) {
     std::int64_t j = n >= 4 && !L.Arg(3).IsNil() ? L.CheckInt(3, "concat") : LenOf(L, t);
     std::string out;
     for (std::int64_t k = i; k <= j; ++k) {
+        L.Charge(1);   // one unit per item (an __index can make every read a call)
         Value v = GetI(L, t, k);
         if (v.IsString()) out += v.Str()->s;
         else if (v.IsNumber()) out += State::NumberToString(v);
-        else L.Error(std::string("invalid value (at index ") + std::to_string(k) + ") in table for 'concat'");
+        else L.Error("table.concat: item " + std::to_string(k) + " is not a string or a number");
         if (k < j) out += sep;
-        if (out.size() > (std::size_t(1) << 30)) L.Error("resulting string too large");
+        if (out.size() > (std::size_t(1) << 30)) L.Error("table.concat: the result would be longer than 1 GB");
         if (k == INT64_MAX) break;
     }
-    L.Charge(out.size() / 64);
+    L.Charge(out.size() / 16);
     L.PushString(out);
     return 1;
 }
@@ -97,7 +104,8 @@ int T_unpack(State& L, int n) {
     std::int64_t j = n >= 3 && !L.Arg(2).IsNil() ? L.CheckInt(2, "unpack") : LenOf(L, t);
     if (i > j) return 0;
     std::uint64_t cnt = (std::uint64_t)j - (std::uint64_t)i;
-    if (cnt >= 1000000) L.Error("too many results to unpack");
+    if (cnt >= 1000000) L.Error("table.unpack: asked for more than a million values");
+    L.Charge(cnt + 1);   // one unit per value pushed
     L.CheckStack((int)cnt + 1);
     for (std::int64_t k = i;; ++k) {
         L.Push(GetI(L, t, k));
@@ -121,9 +129,9 @@ int T_move(State& L, int n) {
     std::int64_t t = L.CheckInt(3, "move");
     Value a2 = n >= 5 && !L.Arg(4).IsNil() ? CheckTab(L, 4, "move") : a1;
     if (e >= f) {
-        if (!(f > 0 || e < INT64_MAX + f)) L.ArgError(2, "move", "too many elements to move");
-        if (t > INT64_MAX - (e - f)) L.ArgError(3, "move", "destination wrap around");
-        L.Charge((std::uint64_t)(e - f) / 8);
+        if (!(f > 0 || e < INT64_MAX + f)) L.ArgError(2, "move", "the range has too many items");
+        if (t > INT64_MAX - (e - f)) L.ArgError(3, "move", "the destination would pass the largest integer");
+        L.Charge((std::uint64_t)(e - f) + 1);   // one unit per item copied
         bool overlap = t > f && t <= e && (a2.t == a1.t && a2.o == a1.o);
         if (!overlap) {
             for (std::int64_t i = 0; i <= e - f; ++i) SetI(L, a2, t + i, GetI(L, a1, f + i));
@@ -151,7 +159,7 @@ struct Sorter {
         L.CallAt(func, 1);
         return L.Pop().Truthy();
     }
-    [[noreturn]] void Bad() { L.Error("invalid order function for sorting"); }
+    [[noreturn]] void Bad() { L.Error("table.sort: the compare function is not a consistent order"); }
     void Insertion(std::size_t lo, std::size_t hi) {   // [lo, hi]
         for (std::size_t i = lo + 1; i <= hi; ++i) {
             std::size_t j = i;
@@ -195,13 +203,18 @@ int T_sort(State& L, int n) {
     Value t = CheckTab(L, 0, "sort");
     std::int64_t len = LenOf(L, t);
     if (len > 1) {
-        if (len >= INT32_MAX) L.ArgError(0, "sort", "array too big");
+        if (len >= INT32_MAX) L.ArgError(0, "sort", "the list is too long to sort");
         Value cmp = n >= 2 ? L.Arg(1) : Value();
         if (!cmp.IsNil() && !cmp.IsFunction()) L.TypeError(1, "sort", "function");
+        // A __len can claim any length: charge one unit per item and check the copy against the
+        // memory limit before allocating it, so a fake length can neither hang nor exhaust memory.
+        L.Charge((std::uint64_t)len);
+        if ((std::uint64_t)len > L.memoryLimit / sizeof(Value)) L.Error("not enough memory");
         std::vector<Value> items((std::size_t)len);
-        for (std::int64_t i = 0; i < len; ++i) items[(std::size_t)i] = GetI(L, t, i + 1);
+        // rooted before it is filled: an __index call can run the collector part way through
         L.tempRoots.push_back(&items);
         struct Pop { State& L; ~Pop() { L.tempRoots.pop_back(); } } pop{L};
+        for (std::int64_t i = 0; i < len; ++i) items[(std::size_t)i] = GetI(L, t, i + 1);
         Sorter s{L, items, cmp};
         s.Sort(0, items.size() - 1, 0);
         for (std::int64_t i = 0; i < len; ++i) SetI(L, t, i + 1, items[(std::size_t)i]);

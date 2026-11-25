@@ -1,16 +1,16 @@
 // okay::lua string library and pattern matching.
 //
 // Written from the Lua 5.4 Reference Manual, section 6.4 (string
-// manipulation) and 6.4.1 (patterns: character classes, sets, items *, +, -,
-// ?, %n back references, %b balanced matches, %f frontiers, anchors and
-// captures). The matcher is a plain backtracking matcher of our own design
-// with a depth limit and every step counted against the run budget, so a
-// hostile pattern can not hang the game. Character classes are ASCII only
-// (independent of the C locale). string.pack / unpack / packsize follow
-// manual 6.4.2 (format strings): our own format reader and byte writer, with
-// the sizes of this build's types (C int 4, long / lua_Integer / size_t 8,
-// float 4, double / lua_Number 8, native order little-endian, native maximum
-// alignment 8). string.dump is not provided (no binary chunks).
+// manipulation), 6.4.1 (patterns) and 6.4.2 (format strings for pack and
+// unpack), in our own design and words. The pattern code (PatternBuilder,
+// PatternWalker) first turns a pattern into a step list and then walks it
+// with backtracking; see the comment above PatternBuilder. All its work is
+// charged to the run budget, so a hostile pattern can not hang the game.
+// Character classes are ASCII only (independent of the C locale). The pack
+// functions use this build's type sizes (C int 4, long / lua_Integer /
+// size_t 8, float 4, double / lua_Number 8, native order little-endian,
+// native maximum alignment 8). string.dump is not provided (no binary chunks).
+// Error messages are our own wording.
 #include "LuaCode.hpp"
 #include <algorithm>
 #include <cmath>
@@ -22,9 +22,11 @@ namespace okay::lua {
 
 namespace {
 
-constexpr int kMaxCaptures = 32;
-constexpr int kMaxMatchDepth = 200;
 constexpr std::size_t kMaxStringResult = std::size_t(1) << 30;
+
+// The run budget for byte work: one unit per 16 bytes read, written or compared
+// (plus one), so a loop over a big string pays for the bytes, not only the call.
+void ChargeBytes(State& L, std::size_t bytes) { L.Charge(bytes / 16 + 1); }
 
 // ---------------------------------------------------------------- ASCII classes
 bool IsAlpha(int c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
@@ -39,234 +41,435 @@ bool IsGraph(int c) { return c > 32 && c < 127; }
 int ToLower(int c) { return IsUpper(c) ? c + 32 : c; }
 int ToUpper(int c) { return IsLower(c) ? c - 32 : c; }
 
-// ---------------------------------------------------------------- the matcher
-struct Matcher {
-    State* L;
-    const char* srcBegin;
-    const char* srcEnd;
-    const char* patEnd;
-    int depth = 0;
-    int level = 0;                         ///< captures opened so far
-    struct Cap { const char* init; std::ptrdiff_t len; } cap[kMaxCaptures];   // len: -1 open, -2 position
-    std::uint64_t steps = 0;
+// ---------------------------------------------------------------- patterns (manual 6.4.1)
+//
+// Two stages. PatternBuilder reads the pattern text once and turns it into a
+// flat list of PatStep records (a literal byte, any byte, a %class, a [set],
+// %b, %f, a %n back reference, the capture marks and the '$' end mark), each
+// with its repeat mark. Sets become a run of SetPart records (one byte, a
+// byte range or a %class). All mistakes in the pattern are reported here,
+// before any matching starts. PatternWalker then runs the step list against
+// the subject with backtracking only where a repeat mark leaves a choice.
+//
+// Every unit of work is metered and charged to the run budget: one unit per
+// step taken, per subject byte tested, per set part looked at, per byte a
+// back reference compares and per byte a %b scan passes. A hostile pattern
+// therefore stops with the budget error instead of freezing a frame.
 
-    [[noreturn]] void Fail(const char* msg) { L->Error(msg); }
-    void Step() {
-        if (++steps >= 4096) { L->Charge(steps / 2); steps = 0; }
-    }
+constexpr int kMaxPatternCaptures = 32;   ///< the most captures one pattern may hold
+constexpr int kMaxChoiceNesting = 200;    ///< the deepest chain of open repeat choices
+constexpr std::size_t kNoMatch = static_cast<std::size_t>(-1);
 
-    const char* ClassEnd(const char* p) {
-        char c = *p++;
-        if (c == '%') {
-            if (p >= patEnd) Fail("malformed pattern (ends with '%')");
-            return p + 1;
-        }
-        if (c == '[') {
-            if (p < patEnd && *p == '^') ++p;
-            do {   // the first character of a set may be ']'
-                if (p >= patEnd) Fail("malformed pattern (missing ']')");
-                char x = *p++;
-                if (x == '%') {
-                    if (p >= patEnd) Fail("malformed pattern (missing ']')");
-                    ++p;
-                }
-            } while (p >= patEnd || *p != ']');
-            return p + 1;
-        }
-        return p;
-    }
-
-    static bool ClassMatch(int c, int cl) {
-        bool r;
-        switch (ToLower(cl)) {
-            case 'a': r = IsAlpha(c); break;
-            case 'c': r = IsCntrl(c); break;
-            case 'd': r = IsDigit(c); break;
-            case 'g': r = IsGraph(c); break;
-            case 'l': r = IsLower(c); break;
-            case 'p': r = IsPunct(c); break;
-            case 's': r = IsSpace(c); break;
-            case 'u': r = IsUpper(c); break;
-            case 'w': r = IsAlpha(c) || IsDigit(c); break;
-            case 'x': r = IsXDigit(c); break;
-            default: return cl == c;
-        }
-        return IsUpper(cl) ? !r : r;
-    }
-
-    // p at '[', ec at the closing ']'
-    static bool SetMatch(int c, const char* p, const char* ec) {
-        bool neg = false;
-        ++p;
-        if (*p == '^') { neg = true; ++p; }
-        while (p < ec) {
-            if (*p == '%' && p + 1 < ec) {
-                ++p;
-                if (ClassMatch(c, (unsigned char)*p)) return !neg;
-                ++p;
-            } else if (p + 2 < ec && p[1] == '-') {
-                if ((unsigned char)p[0] <= c && c <= (unsigned char)p[2]) return !neg;
-                p += 3;
-            } else {
-                if ((unsigned char)*p == c) return !neg;
-                ++p;
-            }
-        }
-        return neg;
-    }
-
-    bool Single(const char* s, const char* p, const char* ep) const {
-        if (s >= srcEnd) return false;
-        int c = (unsigned char)*s;
-        switch (*p) {
-            case '.': return true;
-            case '%': return ClassMatch(c, (unsigned char)p[1]);
-            case '[': return SetMatch(c, p, ep - 1);
-            default: return (unsigned char)*p == c;
-        }
-    }
-
-    const char* Balance(const char* s, const char* p) {
-        if (p + 1 >= patEnd) Fail("malformed pattern (missing arguments to '%b')");
-        if (s >= srcEnd || *s != *p) return nullptr;
-        char open = p[0], close = p[1];
-        int count = 1;
-        while (++s < srcEnd) {
-            Step();
-            if (*s == close) { if (--count == 0) return s + 1; }
-            else if (*s == open) ++count;
-        }
-        return nullptr;
-    }
-
-    const char* MaxExpand(const char* s, const char* p, const char* ep) {
-        std::ptrdiff_t i = 0;
-        while (Single(s + i, p, ep)) { ++i; Step(); }
-        while (i >= 0) {   // try the longest first, then shorter
-            const char* r = Match(s + i, ep + 1);
-            if (r) return r;
-            --i;
-        }
-        return nullptr;
-    }
-
-    const char* MinExpand(const char* s, const char* p, const char* ep) {
-        for (;;) {
-            Step();
-            const char* r = Match(s, ep + 1);
-            if (r) return r;
-            if (Single(s, p, ep)) ++s;
-            else return nullptr;
-        }
-    }
-
-    const char* StartCapture(const char* s, const char* p, std::ptrdiff_t what) {
-        if (level >= kMaxCaptures) Fail("too many captures");
-        cap[level].init = s;
-        cap[level].len = what;
-        ++level;
-        const char* r = Match(s, p);
-        if (!r) --level;
-        return r;
-    }
-
-    const char* EndCapture(const char* s, const char* p) {
-        int l = -1;
-        for (int i = level - 1; i >= 0; --i)
-            if (cap[i].len == -1) { l = i; break; }
-        if (l < 0) Fail("invalid pattern capture");
-        cap[l].len = s - cap[l].init;
-        const char* r = Match(s, p);
-        if (!r) cap[l].len = -1;
-        return r;
-    }
-
-    const char* MatchBackref(const char* s, int l) {
-        l -= '1';
-        if (l < 0 || l >= level || cap[l].len == -1) L->Error("invalid capture index %" + std::to_string(l + 1));
-        std::size_t len = (std::size_t)cap[l].len;
-        if ((std::size_t)(srcEnd - s) >= len && std::memcmp(cap[l].init, s, len) == 0) return s + len;
-        return nullptr;
-    }
-
-    const char* Match(const char* s, const char* p) {
-        if (++depth > kMaxMatchDepth) Fail("pattern too complex");
-        struct Leave { int& d; ~Leave() { --d; } } leave{depth};
-        for (;;) {
-            Step();
-            if (p >= patEnd) return s;
-            switch (*p) {
-                case '(':
-                    if (p + 1 < patEnd && p[1] == ')') return StartCapture(s, p + 2, -2);
-                    return StartCapture(s, p + 1, -1);
-                case ')': return EndCapture(s, p + 1);
-                case '$':
-                    if (p + 1 == patEnd) return s == srcEnd ? s : nullptr;
-                    break;   // an ordinary '$'
-                case '%':
-                    if (p + 1 < patEnd && p[1] == 'b') {
-                        s = Balance(s, p + 2);
-                        if (!s) return nullptr;
-                        p += 4;
-                        continue;
-                    }
-                    if (p + 1 < patEnd && p[1] == 'f') {
-                        p += 2;
-                        if (p >= patEnd || *p != '[') Fail("missing '[' after '%f' in pattern");
-                        const char* ep = ClassEnd(p);
-                        int prev = s == srcBegin ? 0 : (unsigned char)s[-1];
-                        int cur = s < srcEnd ? (unsigned char)*s : 0;
-                        if (!SetMatch(prev, p, ep - 1) && SetMatch(cur, p, ep - 1)) { p = ep; continue; }
-                        return nullptr;
-                    }
-                    if (p + 1 < patEnd && IsDigit((unsigned char)p[1])) {
-                        s = MatchBackref(s, (unsigned char)p[1]);
-                        if (!s) return nullptr;
-                        p += 2;
-                        continue;
-                    }
-                    break;
-                default: break;
-            }
-            const char* ep = ClassEnd(p);
-            char suffix = ep < patEnd ? *ep : '\0';
-            if (!Single(s, p, ep)) {
-                if (suffix == '*' || suffix == '?' || suffix == '-') { p = ep + 1; continue; }   // zero occurrences
-                return nullptr;
-            }
-            switch (suffix) {
-                case '?': {
-                    const char* r = Match(s + 1, ep + 1);
-                    if (r) return r;
-                    p = ep + 1;
-                    continue;
-                }
-                case '+': return MaxExpand(s + 1, p, ep);
-                case '*': return MaxExpand(s, p, ep);
-                case '-': return MinExpand(s, p, ep);
-                default: ++s; p = ep; continue;
-            }
-        }
-    }
-
-    // capture i as a value (whole match when there are no captures)
-    Value Capture(int i, const char* s, const char* e) {
-        if (i >= level) {
-            if (i != 0) L->Error("invalid capture index %" + std::to_string(i + 1));
-            return Value::Obj(L->NewString(s, (std::size_t)(e - s)));
-        }
-        if (cap[i].len == -1) Fail("unfinished capture");
-        if (cap[i].len == -2) return Value::Int((std::int64_t)(cap[i].init - srcBegin) + 1);
-        return Value::Obj(L->NewString(cap[i].init, (std::size_t)cap[i].len));
-    }
-    int PushCaptures(const char* s, const char* e, bool wholeIfNone) {
-        int n = (level == 0 && wholeIfNone) ? 1 : level;
-        L->CheckStack(n);
-        for (int i = 0; i < n; ++i) L->Push(Capture(i, s, e));
-        return n;
-    }
+enum class StepKind : unsigned char {
+    Byte,         ///< one literal byte (`lit`)
+    AnyByte,      ///< '.'
+    Class,        ///< %a, %d, ... (`lit` is the class letter)
+    Set,          ///< [...] (`firstPart`, `partCount`, `negated`)
+    Balanced,     ///< %bxy (`lit` = x, `lit2` = y)
+    Frontier,     ///< %f[...] (set fields as for Set)
+    SameAs,       ///< %1 .. %9 (`index`)
+    CaptureOpen,  ///< '(' (`index`)
+    CapturePos,   ///< '()' (`index`)
+    CaptureClose, ///< ')' (`index` of the capture it closes)
+    SubjectEnd,   ///< '$' as the last pattern byte
 };
 
+enum class Repeat : unsigned char { One, Any, AtLeastOne, AnyFewest, Maybe };
+
+struct SetPart {
+    unsigned char from = 0, to = 0;   ///< a byte range (a single byte has from == to)
+    unsigned char classLetter = 0;    ///< nonzero: a %class instead of a range
+};
+
+struct PatStep {
+    StepKind kind = StepKind::Byte;
+    Repeat repeat = Repeat::One;
+    bool negated = false;
+    unsigned char lit = 0, lit2 = 0;
+    int index = 0;
+    std::uint32_t firstPart = 0, partCount = 0;
+};
+
+struct CompiledPattern {
+    std::vector<PatStep> steps;
+    std::vector<SetPart> parts;
+    bool anchored = false;   ///< a leading '^' (find, match, gsub only)
+    int captureCount = 0;
+};
+
+// The class letters of manual 6.4.1; an upper-case letter is the complement.
+bool IsClassLetter(unsigned char c) {
+    switch (ToLower(c)) {
+        case 'a': case 'c': case 'd': case 'g': case 'l': case 'p': case 's': case 'u': case 'w': case 'x': return true;
+        default: return false;
+    }
+}
+
+bool InClass(unsigned char letter, int c) {
+    bool yes = false;
+    switch (ToLower(letter)) {
+        case 'a': yes = IsAlpha(c); break;
+        case 'c': yes = IsCntrl(c); break;
+        case 'd': yes = IsDigit(c); break;
+        case 'g': yes = IsGraph(c); break;
+        case 'l': yes = IsLower(c); break;
+        case 'p': yes = IsPunct(c); break;
+        case 's': yes = IsSpace(c); break;
+        case 'u': yes = IsUpper(c); break;
+        case 'w': yes = IsAlpha(c) || IsDigit(c); break;
+        case 'x': yes = IsXDigit(c); break;
+        default: break;
+    }
+    return IsUpper(letter) ? !yes : yes;
+}
+
+class PatternBuilder {
+public:
+    PatternBuilder(State& L, const std::string& text, CompiledPattern& out) : L_(L), text_(text), out_(out) {}
+
+    void Build(bool caretAnchors) {
+        L_.Charge(text_.size() / 4 + 1);
+        std::size_t at = 0;
+        if (caretAnchors && !text_.empty() && text_[0] == '^') { out_.anchored = true; at = 1; }
+        while (at < text_.size()) at = ReadOne(at);
+        if (!openCaptures_.empty()) Bad("a '(' in the pattern has no matching ')'");
+    }
+
+private:
+    [[noreturn]] void Bad(const std::string& why) { L_.Error("bad pattern: " + why); }
+    unsigned char At(std::size_t i) const { return (unsigned char)text_[i]; }
+    bool Has(std::size_t i) const { return i < text_.size(); }
+
+    // one pattern item starting at text_[at]; returns where the next one starts
+    std::size_t ReadOne(std::size_t at) {
+        PatStep st;
+        const unsigned char c = At(at);
+        if (c == '(') {
+            if (out_.captureCount >= kMaxPatternCaptures)
+                Bad("more than " + std::to_string(kMaxPatternCaptures) + " captures");
+            st.index = out_.captureCount++;
+            finished_.push_back(false);
+            if (Has(at + 1) && At(at + 1) == ')') {
+                st.kind = StepKind::CapturePos;
+                finished_.back() = true;
+                out_.steps.push_back(st);
+                return at + 2;
+            }
+            st.kind = StepKind::CaptureOpen;
+            openCaptures_.push_back(st.index);
+            out_.steps.push_back(st);
+            return at + 1;
+        }
+        if (c == ')') {
+            if (openCaptures_.empty()) Bad("a ')' with no '(' before it");
+            st.kind = StepKind::CaptureClose;
+            st.index = openCaptures_.back();
+            openCaptures_.pop_back();
+            finished_[(std::size_t)st.index] = true;
+            out_.steps.push_back(st);
+            return at + 1;
+        }
+        if (c == '$' && at + 1 == text_.size()) {
+            st.kind = StepKind::SubjectEnd;
+            out_.steps.push_back(st);
+            return at + 1;
+        }
+        if (c == '%' && Has(at + 1)) {
+            const unsigned char d = At(at + 1);
+            if (d == 'b') {
+                if (!Has(at + 3)) Bad("'%b' needs two characters after it");
+                st.kind = StepKind::Balanced;
+                st.lit = At(at + 2);
+                st.lit2 = At(at + 3);
+                out_.steps.push_back(st);
+                return at + 4;
+            }
+            if (d == 'f') {
+                if (!Has(at + 2) || At(at + 2) != '[') Bad("'%f' must be followed by a set in '[ ]'");
+                st.kind = StepKind::Frontier;
+                std::size_t next = ReadSet(at + 2, st);
+                out_.steps.push_back(st);
+                return next;
+            }
+            if (IsDigit(d)) {
+                const int want = d - '1';
+                if (d == '0' || want >= out_.captureCount || !finished_[(std::size_t)want])
+                    Bad("'%" + std::string(1, (char)d) + "' names a capture that is not complete at that point");
+                st.kind = StepKind::SameAs;
+                st.index = want;
+                out_.steps.push_back(st);
+                return at + 2;
+            }
+        }
+        std::size_t next = ReadSingle(at, st);
+        if (Has(next)) {
+            switch (At(next)) {
+                case '*': st.repeat = Repeat::Any; ++next; break;
+                case '+': st.repeat = Repeat::AtLeastOne; ++next; break;
+                case '-': st.repeat = Repeat::AnyFewest; ++next; break;
+                case '?': st.repeat = Repeat::Maybe; ++next; break;
+                default: break;
+            }
+        }
+        out_.steps.push_back(st);
+        return next;
+    }
+
+    // a single character class (manual 6.4.1): x, '.', %x, [set]
+    std::size_t ReadSingle(std::size_t at, PatStep& st) {
+        const unsigned char c = At(at);
+        if (c == '.') { st.kind = StepKind::AnyByte; return at + 1; }
+        if (c == '[') { st.kind = StepKind::Set; return ReadSet(at, st); }
+        if (c == '%') {
+            if (!Has(at + 1)) Bad("it ends with a '%' that escapes nothing");
+            const unsigned char d = At(at + 1);
+            st.kind = IsClassLetter(d) ? StepKind::Class : StepKind::Byte;
+            st.lit = d;
+            return at + 2;
+        }
+        st.kind = StepKind::Byte;
+        st.lit = c;
+        return at + 1;
+    }
+
+    // text_[at] is '['; fills the set fields of st, returns the index after the closing ']'
+    std::size_t ReadSet(std::size_t at, PatStep& st) {
+        ++at;
+        if (Has(at) && At(at) == '^') { st.negated = true; ++at; }
+        st.firstPart = (std::uint32_t)out_.parts.size();
+        bool first = true;   // a ']' right after '[' or '[^' is a member, not the end
+        for (;;) {
+            if (!Has(at)) Bad("a '[' set has no closing ']'");
+            const unsigned char c = At(at);
+            if (c == ']' && !first) { ++at; break; }
+            first = false;
+            SetPart part;
+            if (c == '%') {
+                if (!Has(at + 1)) Bad("a '[' set has no closing ']'");
+                const unsigned char d = At(at + 1);
+                if (IsClassLetter(d)) part.classLetter = d;
+                else part.from = part.to = d;
+                at += 2;
+            } else if (Has(at + 2) && At(at + 1) == '-' && At(at + 2) != ']' && At(at + 2) != '%') {
+                part.from = c;
+                part.to = At(at + 2);
+                at += 3;
+            } else {
+                part.from = part.to = c;
+                at += 1;
+            }
+            out_.parts.push_back(part);
+        }
+        st.partCount = (std::uint32_t)out_.parts.size() - st.firstPart;
+        return at;
+    }
+
+    State& L_;
+    const std::string& text_;
+    CompiledPattern& out_;
+    std::vector<int> openCaptures_;   ///< indexes of '(' still waiting for their ')'
+    std::vector<bool> finished_;      ///< per capture: its ')' (or '()') has been read
+};
+
+void CompilePattern(State& L, const std::string& text, bool caretAnchors, CompiledPattern& out) {
+    PatternBuilder(L, text, out).Build(caretAnchors);
+}
+
+class PatternWalker {
+public:
+    PatternWalker(State& L, const CompiledPattern& pat, const char* subject, std::size_t size)
+        : L_(L), pat_(pat), subj_(subject), size_(size) {}
+    ~PatternWalker() = default;
+
+    /// Try a match starting exactly at `start`; the end of the match, or kNoMatch.
+    std::size_t TryAt(std::size_t start) {
+        nesting_ = 0;
+        std::size_t end = Walk(0, start);
+        Settle();
+        return end;
+    }
+
+    /// Settle the metered work with the run budget.
+    void Settle() {
+        if (pending_) { L_.Charge(pending_); pending_ = 0; }
+    }
+
+    int CaptureCount() const { return pat_.captureCount; }
+
+    /// Capture `i` (0-based) of the match [from, to) as a Lua value. With no
+    /// captures in the pattern, capture 0 is the whole match.
+    Value CaptureValue(int i, std::size_t from, std::size_t to) {
+        if (pat_.captureCount == 0) {
+            if (i != 0) L_.Error("capture %" + std::to_string(i + 1) + " does not exist (the pattern has no captures)");
+            return Value::Obj(L_.NewString(subj_ + from, to - from));
+        }
+        if (i < 0 || i >= pat_.captureCount)
+            L_.Error("capture %" + std::to_string(i + 1) + " does not exist (the pattern has " +
+                     std::to_string(pat_.captureCount) + ")");
+        const Slot& s = slots_[i];
+        if (s.isPosition) return Value::Int((std::int64_t)s.start + 1);
+        return Value::Obj(L_.NewString(subj_ + s.start, s.length));
+    }
+
+    /// Push the captures of the match [from, to); the whole match when there are none and `wholeIfNone`.
+    int PushCaptures(std::size_t from, std::size_t to, bool wholeIfNone) {
+        const int count = pat_.captureCount == 0 ? (wholeIfNone ? 1 : 0) : pat_.captureCount;
+        L_.CheckStack(count);
+        for (int i = 0; i < count; ++i) L_.Push(CaptureValue(i, from, to));
+        return count;
+    }
+
+private:
+    struct Slot {
+        std::size_t start = 0, length = 0;
+        bool isPosition = false;
+    };
+
+    void Meter(std::uint64_t units) {
+        pending_ += units;
+        if (pending_ >= 4096) Settle();
+    }
+
+    bool SetHas(const PatStep& st, int c) {
+        const SetPart* part = pat_.parts.data() + st.firstPart;
+        bool hit = false;
+        std::uint32_t looked = 0;
+        while (looked < st.partCount) {
+            const SetPart& p = part[looked++];
+            if (p.classLetter ? InClass(p.classLetter, c) : (c >= p.from && c <= p.to)) { hit = true; break; }
+        }
+        Meter(looked);
+        return hit != st.negated;
+    }
+
+    // does the single-byte step st accept the subject byte at `at`?
+    bool Accepts(const PatStep& st, std::size_t at) {
+        Meter(1);
+        if (at >= size_) return false;
+        const unsigned char c = (unsigned char)subj_[at];
+        switch (st.kind) {
+            case StepKind::Byte: return c == st.lit;
+            case StepKind::AnyByte: return true;
+            case StepKind::Class: return InClass(st.lit, c);
+            case StepKind::Set: return SetHas(st, c);
+            default: return false;
+        }
+    }
+
+    std::size_t BalancedEnd(const PatStep& st, std::size_t at) {
+        if (at >= size_ || (unsigned char)subj_[at] != st.lit) return kNoMatch;
+        std::size_t depth = 1;
+        for (std::size_t k = at + 1; k < size_; ++k) {
+            Meter(1);
+            const unsigned char c = (unsigned char)subj_[k];
+            if (c == st.lit2) {
+                if (--depth == 0) return k + 1;
+            } else if (c == st.lit) {
+                ++depth;
+            }
+        }
+        return kNoMatch;
+    }
+
+    // run the rest of the pattern from step i at subject position `at`, as a new choice point
+    std::size_t Choice(std::size_t i, std::size_t at) {
+        if (++nesting_ > kMaxChoiceNesting) L_.Error("pattern too deeply nested to match (too many open repeats)");
+        std::size_t r = Walk(i, at);
+        --nesting_;
+        return r;
+    }
+
+    std::size_t Walk(std::size_t i, std::size_t at) {
+        const std::size_t count = pat_.steps.size();
+        for (;;) {
+            Meter(1);
+            if (i == count) return at;
+            const PatStep& st = pat_.steps[i];
+            switch (st.kind) {
+                case StepKind::CaptureOpen:
+                    slots_[st.index] = Slot{at, 0, false};
+                    ++i;
+                    continue;
+                case StepKind::CapturePos:
+                    slots_[st.index] = Slot{at, 0, true};
+                    ++i;
+                    continue;
+                case StepKind::CaptureClose:
+                    slots_[st.index].length = at - slots_[st.index].start;
+                    ++i;
+                    continue;
+                case StepKind::SubjectEnd:
+                    if (at != size_) return kNoMatch;
+                    ++i;
+                    continue;
+                case StepKind::Balanced:
+                    at = BalancedEnd(st, at);
+                    if (at == kNoMatch) return kNoMatch;
+                    ++i;
+                    continue;
+                case StepKind::Frontier: {
+                    const int before = at == 0 ? 0 : (unsigned char)subj_[at - 1];
+                    const int after = at < size_ ? (unsigned char)subj_[at] : 0;
+                    if (SetHas(st, before) || !SetHas(st, after)) return kNoMatch;
+                    ++i;
+                    continue;
+                }
+                case StepKind::SameAs: {
+                    const Slot& s = slots_[st.index];
+                    if (s.isPosition || size_ - at < s.length) return kNoMatch;
+                    Meter(s.length);
+                    if (s.length && std::memcmp(subj_ + s.start, subj_ + at, s.length) != 0) return kNoMatch;
+                    at += s.length;
+                    ++i;
+                    continue;
+                }
+                default: break;
+            }
+            switch (st.repeat) {
+                case Repeat::One:
+                    if (!Accepts(st, at)) return kNoMatch;
+                    ++at;
+                    ++i;
+                    continue;
+                case Repeat::Maybe:
+                    if (Accepts(st, at)) {
+                        std::size_t r = Choice(i + 1, at + 1);
+                        if (r != kNoMatch) return r;
+                    }
+                    ++i;
+                    continue;
+                case Repeat::Any:
+                case Repeat::AtLeastOne: {
+                    std::size_t run = 0;
+                    while (Accepts(st, at + run)) ++run;
+                    const std::size_t fewest = st.repeat == Repeat::AtLeastOne ? 1 : 0;
+                    if (run < fewest) return kNoMatch;
+                    if (i + 1 == count) return at + run;   // nothing after it: take the longest run
+                    for (std::size_t take = run + 1; take-- > fewest;) {
+                        std::size_t r = Choice(i + 1, at + take);
+                        if (r != kNoMatch) return r;
+                    }
+                    return kNoMatch;
+                }
+                case Repeat::AnyFewest:
+                    for (;;) {
+                        std::size_t r = Choice(i + 1, at);
+                        if (r != kNoMatch) return r;
+                        if (!Accepts(st, at)) return kNoMatch;
+                        ++at;
+                    }
+            }
+        }
+    }
+
+    State& L_;
+    const CompiledPattern& pat_;
+    const char* subj_;
+    std::size_t size_;
+    Slot slots_[kMaxPatternCaptures];
+    std::uint64_t pending_ = 0;
+    int nesting_ = 0;
+};
 std::int64_t PosRelStart(std::int64_t pos, std::size_t len) {
     if (pos > 0) return pos;
     if (pos == 0) return 1;
@@ -296,14 +499,16 @@ int S_sub(State& L, int n) {
     std::size_t len = s->s.size();
     std::int64_t i = PosRelStart(L.OptInt(1, "sub", 1), len);
     std::int64_t j = PosRelEnd(n >= 3 ? L.OptInt(2, "sub", -1) : -1, len);
-    if (i > j) L.PushString("");
-    else L.Push(Value::Obj(L.NewString(s->s.data() + i - 1, (std::size_t)(j - i + 1))));
+    if (i > j) { L.PushString(""); return 1; }
+    ChargeBytes(L, (std::size_t)(j - i + 1));
+    L.Push(Value::Obj(L.NewString(s->s.data() + i - 1, (std::size_t)(j - i + 1))));
     return 1;
 }
 
 int S_upper(State& L, int n) {
     (void)n;
     std::string s = L.CheckStr(0, "upper")->s;
+    ChargeBytes(L, s.size());
     for (char& c : s) c = (char)ToUpper((unsigned char)c);
     L.PushString(s);
     return 1;
@@ -312,6 +517,7 @@ int S_upper(State& L, int n) {
 int S_lower(State& L, int n) {
     (void)n;
     std::string s = L.CheckStr(0, "lower")->s;
+    ChargeBytes(L, s.size());
     for (char& c : s) c = (char)ToLower((unsigned char)c);
     L.PushString(s);
     return 1;
@@ -320,6 +526,7 @@ int S_lower(State& L, int n) {
 int S_reverse(State& L, int n) {
     (void)n;
     std::string s = L.CheckStr(0, "reverse")->s;
+    ChargeBytes(L, s.size());
     std::reverse(s.begin(), s.end());
     L.PushString(s);
     return 1;
@@ -330,16 +537,22 @@ int S_rep(State& L, int n) {
     std::int64_t count = L.CheckInt(1, "rep");
     std::string sep = n >= 3 && !L.Arg(2).IsNil() ? L.CheckStr(2, "rep")->s : std::string();
     if (count <= 0) { L.PushString(""); return 1; }
-    std::size_t unit = s->s.size() + sep.size();
-    if (unit != 0 && (std::uint64_t)count > kMaxStringResult / unit) L.Error("resulting string too large");
-    std::size_t total = unit * (std::size_t)count;
+    // The work is one step per copy plus the bytes written. Charge it before doing it, so a
+    // huge count of an empty string ends with the budget error instead of a long empty loop.
+    const std::uint64_t copies = (std::uint64_t)count;
+    const std::uint64_t piece = (std::uint64_t)s->s.size() + sep.size();
+    if (piece != 0 && copies > kMaxStringResult / piece)
+        L.Error("string.rep: the result would be longer than " + std::to_string(kMaxStringResult) + " bytes");
+    L.Charge(std::min<std::uint64_t>(copies, kMaxStringResult) / 8 + 1);
+    const std::size_t total = (std::size_t)(piece * copies);
     L.Charge(total / 64);
     if (total > L.memoryLimit) L.Error("not enough memory");
     std::string out;
+    if (piece == 0) { L.PushString(out); return 1; }
     out.reserve(total);
-    for (std::int64_t k = 0; k < count; ++k) {
+    for (std::uint64_t k = 0; k < copies; ++k) {
+        if (k) out += sep;
         out += s->s;
-        if (k + 1 < count) out += sep;
     }
     L.PushString(out);
     return 1;
@@ -351,8 +564,9 @@ int S_byte(State& L, int n) {
     std::int64_t i = PosRelStart(L.OptInt(1, "byte", 1), len);
     std::int64_t j = PosRelEnd(n >= 3 ? L.OptInt(2, "byte", i) : i, len);
     if (i > j) return 0;
-    if (j - i >= 1000000) L.Error("string slice too long");
+    if (j - i >= 1000000) L.Error("string.byte: asked for more than a million bytes at once");
     int cnt = (int)(j - i + 1);
+    L.Charge((std::uint64_t)cnt);   // one unit per value pushed
     L.CheckStack(cnt);
     for (int k = 0; k < cnt; ++k) L.Push(Value::Int((unsigned char)s->s[(std::size_t)(i - 1 + k)]));
     return cnt;
@@ -362,170 +576,193 @@ int S_char(State& L, int n) {
     std::string out;
     for (int i = 0; i < n; ++i) {
         std::int64_t c = L.CheckInt(i, "char");
-        if (c < 0 || c > 255) L.ArgError(i, "char", "value out of range");
+        if (c < 0 || c > 255) L.ArgError(i, "char", "byte value must be from 0 to 255");
         out += (char)c;
     }
     L.PushString(out);
     return 1;
 }
 
-int FindAux(State& L, int n, bool find) {
-    const char* fname = find ? "find" : "match";
-    LString* s = L.CheckStr(0, fname);
-    LString* p = L.CheckStr(1, fname);
-    std::size_t len = s->s.size();
-    std::int64_t init = PosRelStart(L.OptInt(2, fname, 1), len);
-    if (init > (std::int64_t)len + 1) { L.PushNil(); return 1; }
-    bool plain = find && n >= 4 && L.Arg(3).Truthy();
-    if (find && (plain || !HasSpecials(p->s))) {
-        std::size_t pos = s->s.find(p->s, (std::size_t)(init - 1));
-        L.Charge(len / 64);
-        if (pos == std::string::npos) { L.PushNil(); return 1; }
-        L.Push(Value::Int((std::int64_t)pos + 1));
-        L.Push(Value::Int((std::int64_t)(pos + p->s.size())));
+// Find `needle` in `hay` from `from` on; kNoMatch when it is not there. Each place where the
+// first byte matches costs the bytes compared there, so a needle that almost matches
+// everywhere pays for all the comparing instead of hanging inside one call.
+std::size_t PlainFind(State& L, const std::string& hay, const std::string& needle, std::size_t from) {
+    const std::size_t m = needle.size();
+    if (m == 0) return from <= hay.size() ? from : kNoMatch;
+    if (from >= hay.size() || hay.size() - from < m) { ChargeBytes(L, 0); return kNoMatch; }
+    const char* base = hay.data();
+    const char* p = base + from;
+    const char* last = base + (hay.size() - m);   // the last place a match can start
+    std::size_t scanned = 0;
+    while (p <= last) {
+        const void* hit = std::memchr(p, needle[0], (std::size_t)(last - p) + 1);
+        if (!hit) break;
+        const char* h = static_cast<const char*>(hit);
+        scanned += (std::size_t)(h - p);
+        L.Charge(m / 16 + 1);
+        if (std::memcmp(h, needle.data(), m) == 0) { ChargeBytes(L, scanned); return (std::size_t)(h - base); }
+        p = h + 1;
+    }
+    ChargeBytes(L, scanned + (std::size_t)(p <= last ? last - p + 1 : 0));
+    return kNoMatch;
+}
+
+// string.find and string.match (manual 6.4): the same search, different results.
+int SearchCommon(State& L, int n, bool wantPositions) {
+    const char* fname = wantPositions ? "find" : "match";
+    LString* subject = L.CheckStr(0, fname);
+    LString* pattern = L.CheckStr(1, fname);
+    const std::size_t size = subject->s.size();
+    const std::int64_t init = PosRelStart(L.OptInt(2, fname, 1), size);
+    if (init > (std::int64_t)size + 1) { L.PushNil(); return 1; }
+    const bool plain = wantPositions && n >= 4 && L.Arg(3).Truthy();
+    if (wantPositions && (plain || !HasSpecials(pattern->s))) {
+        // a plain substring search
+        const std::size_t at = PlainFind(L, subject->s, pattern->s, (std::size_t)(init - 1));
+        if (at == kNoMatch) { L.PushNil(); return 1; }
+        L.Push(Value::Int((std::int64_t)at + 1));
+        L.Push(Value::Int((std::int64_t)(at + pattern->s.size())));
         return 2;
     }
-    Matcher m;
-    m.L = &L;
-    m.srcBegin = s->s.data();
-    m.srcEnd = m.srcBegin + len;
-    const char* pat = p->s.data();
-    m.patEnd = pat + p->s.size();
-    bool anchor = !p->s.empty() && *pat == '^';
-    if (anchor) ++pat;
-    const char* src = m.srcBegin + init - 1;
-    do {
-        m.level = 0;
-        m.depth = 0;
-        const char* e = m.Match(src, pat);
-        if (e) {
-            if (find) {
-                L.Push(Value::Int((std::int64_t)(src - m.srcBegin) + 1));
-                L.Push(Value::Int((std::int64_t)(e - m.srcBegin)));
-                return m.PushCaptures(nullptr, nullptr, false) + 2;
-            }
-            return m.PushCaptures(src, e, true);
+    CompiledPattern compiled;
+    CompilePattern(L, pattern->s, true, compiled);
+    PatternWalker walker(L, compiled, subject->s.data(), size);
+    for (std::size_t start = (std::size_t)(init - 1); start <= size; ++start) {
+        const std::size_t end = walker.TryAt(start);
+        if (end != kNoMatch) {
+            if (!wantPositions) return walker.PushCaptures(start, end, true);
+            L.Push(Value::Int((std::int64_t)start + 1));
+            L.Push(Value::Int((std::int64_t)end));
+            return 2 + walker.PushCaptures(start, end, false);
         }
-    } while (src++ < m.srcEnd && !anchor);
+        if (compiled.anchored) break;
+    }
     L.PushNil();
     return 1;
 }
-int S_find(State& L, int n) { return FindAux(L, n, true); }
-int S_match(State& L, int n) { return FindAux(L, n, false); }
+int S_find(State& L, int n) { return SearchCommon(L, n, true); }
+int S_match(State& L, int n) { return SearchCommon(L, n, false); }
 
-// gmatch iterator: up = {string, pattern, position (0-based), last match end (-1 none)}
-int GmatchAux(State& L, int n) {
+// The gmatch iterator. Its upvalues: the subject, the pattern, the next start
+// (0-based) and where the last match ended (-1 before the first), so an empty
+// match right where the previous one ended is skipped.
+int GmatchStep(State& L, int n) {
     (void)n;
     NClosure* self = L.Current()->frames.back().ncl;
-    LString* s = self->up[0].Str();
-    LString* p = self->up[1].Str();
-    Matcher m;
-    m.L = &L;
-    m.srcBegin = s->s.data();
-    m.srcEnd = m.srcBegin + s->s.size();
-    m.patEnd = p->s.data() + p->s.size();
-    std::int64_t lastEnd = self->up[3].i;
-    for (const char* src = m.srcBegin + self->up[2].i; src <= m.srcEnd; ++src) {
-        m.level = 0;
-        m.depth = 0;
-        const char* e = m.Match(src, p->s.data());
-        if (e && (e - m.srcBegin) != lastEnd) {
-            self->up[2] = Value::Int(e - m.srcBegin);
-            self->up[3] = Value::Int(e - m.srcBegin);
-            return m.PushCaptures(src, e, true);
-        }
+    LString* subject = self->up[0].Str();
+    LString* pattern = self->up[1].Str();
+    CompiledPattern compiled;
+    CompilePattern(L, pattern->s, false, compiled);   // '^' is an ordinary byte here (manual 6.4)
+    const std::size_t size = subject->s.size();
+    PatternWalker walker(L, compiled, subject->s.data(), size);
+    const std::int64_t previousEnd = self->up[3].i;
+    for (std::size_t start = (std::size_t)self->up[2].i; start <= size; ++start) {
+        const std::size_t end = walker.TryAt(start);
+        if (end == kNoMatch || (std::int64_t)end == previousEnd) continue;
+        self->up[2] = Value::Int((std::int64_t)end);
+        self->up[3] = Value::Int((std::int64_t)end);
+        return walker.PushCaptures(start, end, true);
     }
-    self->up[2] = Value::Int((std::int64_t)s->s.size() + 1);
+    self->up[2] = Value::Int((std::int64_t)size + 1);
     return 0;
 }
 
 int S_gmatch(State& L, int n) {
-    LString* s = L.CheckStr(0, "gmatch");
-    LString* p = L.CheckStr(1, "gmatch");
-    std::size_t len = s->s.size();
-    std::int64_t init = PosRelStart(n >= 3 ? L.OptInt(2, "gmatch", 1) : 1, len);
-    if (init > (std::int64_t)len + 1) init = (std::int64_t)len + 1;
-    NClosure* c = L.NewNative(GmatchAux, "gmatch_iterator",
-                              {Value::Obj(s), Value::Obj(p), Value::Int(init - 1), Value::Int(-1)});
+    LString* subject = L.CheckStr(0, "gmatch");
+    LString* pattern = L.CheckStr(1, "gmatch");
+    const std::size_t size = subject->s.size();
+    std::int64_t init = PosRelStart(n >= 3 ? L.OptInt(2, "gmatch", 1) : 1, size);
+    if (init > (std::int64_t)size + 1) init = (std::int64_t)size + 1;
+    NClosure* c = L.NewNative(GmatchStep, "gmatch_iterator",
+                              {Value::Obj(subject), Value::Obj(pattern), Value::Int(init - 1), Value::Int(-1)});
     L.Push(Value::Obj(c));
     return 1;
 }
 
-void AddReplacement(State& L, Matcher& m, std::string& out, const char* s, const char* e, int replIdx) {
-    Value repl = L.Arg(replIdx);
-    Value v;
+void CheckGsubSize(State& L, const std::string& out) {
+    if (out.size() > kMaxStringResult) L.Error("gsub: the result would be longer than " + std::to_string(kMaxStringResult) + " bytes");
+}
+
+void AppendValueText(State& L, std::string& out, const Value& v) {
+    if (v.IsString()) {
+        ChargeBytes(L, v.Str()->s.size());
+        out += v.Str()->s;
+    } else {
+        out += State::NumberToString(v);
+    }
+    CheckGsubSize(L, out);
+}
+
+// Add the replacement for the match [from, to) to `out` (manual 6.4, string.gsub).
+void Replace(State& L, PatternWalker& walker, std::string& out, const char* subject, std::size_t from,
+             std::size_t to, const Value& repl) {
     if (repl.IsString() || repl.IsNumber()) {
-        std::string r = repl.IsString() ? repl.Str()->s : State::NumberToString(repl);
-        for (std::size_t i = 0; i < r.size(); ++i) {
-            char c = r[i];
-            if (c != '%') { out += c; continue; }
-            ++i;
-            if (i >= r.size()) L.Error("invalid use of '%' in replacement string");
-            char d = r[i];
-            if (d == '%') { out += '%'; continue; }
-            if (!IsDigit((unsigned char)d)) L.Error("invalid use of '%' in replacement string");
-            Value cv = d == '0' ? Value::Obj(L.NewString(s, (std::size_t)(e - s))) : m.Capture(d - '1', s, e);
-            if (cv.IsString()) out += cv.Str()->s; else out += State::NumberToString(cv);
-            if (out.size() > kMaxStringResult) L.Error("resulting string too large");
+        const std::string text = repl.IsString() ? repl.Str()->s : State::NumberToString(repl);
+        L.Charge(text.size() / 16 + 1);
+        for (std::size_t i = 0; i < text.size(); ++i) {
+            if (text[i] != '%') { out += text[i]; continue; }
+            if (++i >= text.size() || (text[i] != '%' && !IsDigit((unsigned char)text[i])))
+                L.Error("gsub: in the replacement string a '%' must be followed by a digit or another '%'");
+            if (text[i] == '%') { out += '%'; continue; }
+            if (text[i] == '0') {
+                ChargeBytes(L, to - from);
+                out.append(subject + from, to - from);
+                CheckGsubSize(L, out);
+            }
+            else AppendValueText(L, out, walker.CaptureValue(text[i] - '1', from, to));
         }
         return;
     }
-    Value key = m.Capture(0, s, e);
+    Value got;
     if (repl.IsTable()) {
-        L.Push(key);   // keep it reachable
-        v = L.Index(repl, key);
+        Value key = walker.CaptureValue(0, from, to);
+        L.Push(key);   // keep it reachable during the lookup
+        got = L.Index(repl, key);
         L.Pop();
     } else {
-        int func = L.Current()->top;
+        const int func = L.Current()->top;
         L.Push(repl);
-        int nc = m.PushCaptures(s, e, true);
-        (void)nc;
+        walker.PushCaptures(from, to, true);
         L.CallAt(func, 1);
-        v = L.Pop();
+        got = L.Pop();
     }
-    if (!v.Truthy()) { out.append(s, (std::size_t)(e - s)); return; }
-    if (v.IsString()) out += v.Str()->s;
-    else if (v.IsNumber()) out += State::NumberToString(v);
-    else L.Error(std::string("invalid replacement value (a ") + L.TypeName(v) + ")");
-    if (out.size() > kMaxStringResult) L.Error("resulting string too large");
+    if (!got.Truthy()) { ChargeBytes(L, to - from); out.append(subject + from, to - from); return; }
+    if (!got.IsString() && !got.IsNumber())
+        L.Error(std::string("gsub: the replacement table or function gave a ") + L.TypeName(got) +
+                ", but only a string, a number, false or nil can be used");
+    AppendValueText(L, out, got);
 }
 
 int S_gsub(State& L, int n) {
-    LString* s = L.CheckStr(0, "gsub");
-    LString* p = L.CheckStr(1, "gsub");
-    Value repl = L.Arg(2);
+    LString* subject = L.CheckStr(0, "gsub");
+    LString* pattern = L.CheckStr(1, "gsub");
+    const Value repl = L.Arg(2);
     if (!(repl.IsString() || repl.IsNumber() || repl.IsTable() || repl.IsFunction()))
         L.TypeError(2, "gsub", "string/function/table");
-    std::int64_t maxN = n >= 4 && !L.Arg(3).IsNil() ? L.CheckInt(3, "gsub") : (std::int64_t)s->s.size() + 1;
-    Matcher m;
-    m.L = &L;
-    m.srcBegin = s->s.data();
-    m.srcEnd = m.srcBegin + s->s.size();
-    const char* pat = p->s.data();
-    m.patEnd = pat + p->s.size();
-    bool anchor = !p->s.empty() && *pat == '^';
-    if (anchor) ++pat;
+    const std::size_t size = subject->s.size();
+    const std::int64_t limit = n >= 4 && !L.Arg(3).IsNil() ? L.CheckInt(3, "gsub") : (std::int64_t)size + 1;
+    CompiledPattern compiled;
+    CompilePattern(L, pattern->s, true, compiled);
+    const char* text = subject->s.data();
+    PatternWalker walker(L, compiled, text, size);
     std::string out;
-    const char* src = m.srcBegin;
-    std::int64_t count = 0;
-    while (count < maxN) {
-        m.level = 0;
-        m.depth = 0;
-        const char* e = m.Match(src, pat);
-        if (e) {
-            ++count;
-            AddReplacement(L, m, out, src, e, 2);
-            // a function replacement may have run a collection; our strings are arguments, so still alive
-            m.srcBegin = s->s.data();
+    std::size_t at = 0;
+    std::int64_t done = 0;
+    while (done < limit) {
+        const std::size_t end = walker.TryAt(at);
+        if (end != kNoMatch) {
+            ++done;
+            Replace(L, walker, out, text, at, end, repl);
         }
-        if (e && e > src) src = e;
-        else if (src < m.srcEnd) out += *src++;
+        if (end != kNoMatch && end > at) at = end;
+        else if (at < size) out += text[at++];
         else break;
-        if (anchor) break;
+        if (compiled.anchored) break;
     }
-    if (src < m.srcEnd) out.append(src, (std::size_t)(m.srcEnd - src));
+    if (at < size) out.append(text + at, size - at);
+    ChargeBytes(L, out.size());
     L.PushString(out);
-    L.Push(Value::Int(count));
+    L.Push(Value::Int(done));
     return 2;
 }
 
@@ -565,7 +802,7 @@ void AddQuoted(State& L, std::string& out, const Value& v) {
         return;
     }
     if (v.IsNil() || v.t == Type::Bool) { out += L.ToStringBasic(v); return; }
-    L.Error("value has no literal form");
+    L.Error(std::string("%q can not write a ") + L.TypeName(v) + " as Lua source");
 }
 
 int S_format(State& L, int n) {
@@ -575,7 +812,7 @@ int S_format(State& L, int n) {
     for (std::size_t i = 0; i < fmt.size(); ++i) {
         char c = fmt[i];
         if (c != '%') { out += c; continue; }
-        if (++i >= fmt.size()) L.Error("invalid conversion '%' to 'format'");
+        if (++i >= fmt.size()) L.Error("format string ends with a lone '%'");
         if (fmt[i] == '%') { out += '%'; continue; }
         // flags, width, precision (at most two digits each)
         std::string spec = "%";
@@ -593,7 +830,7 @@ int S_format(State& L, int n) {
             if (digits > 2) badWidth = true;
         }
         if (i >= fmt.size() || badWidth || spec.size() - 1 > 6)
-            L.Error("invalid conversion '%" + fmt.substr(start, std::min<std::size_t>(i - start + 1, 10)) + "' to 'format'");
+            L.Error("format item '%" + fmt.substr(start, std::min<std::size_t>(i - start + 1, 10)) + "' is not supported (too long or unfinished)");
         char conv = fmt[i];
         ++arg;
         if (arg >= n && conv != '%') L.ArgError(arg, "format", "no value");
@@ -648,7 +885,7 @@ int S_format(State& L, int n) {
                 break;
             }
             case 'q': {
-                if (spec.size() != 1) L.Error("specifier '%q' cannot have modifiers");
+                if (spec.size() != 1) L.Error("format item '%q' takes no flags, width or precision");
                 AddQuoted(L, out, L.Arg(arg));
                 break;
             }
@@ -661,10 +898,11 @@ int S_format(State& L, int n) {
                 break;
             }
             default:
-                L.Error("invalid conversion '%" + fmt.substr(start, i - start + 1) + "' to 'format'");
+                L.Error("format item '%" + fmt.substr(start, i - start + 1) + "' is not supported");
         }
-        if (out.size() > kMaxStringResult) L.Error("resulting string too large");
+        if (out.size() > kMaxStringResult) L.Error("the result would be longer than " + std::to_string(kMaxStringResult) + " bytes");
     }
+    ChargeBytes(L, out.size());
     L.PushString(out);
     return 1;
 }
@@ -693,13 +931,13 @@ struct PackReader {
         std::int64_t n = 0;
         while (pos < fmt.size() && Digit(fmt[pos])) {
             n = n * 10 + (fmt[pos++] - '0');
-            if (n > 0x7fffffff / 10) L.ArgError(0, fname, "invalid format (size too large)");
+            if (n > 0x7fffffff / 10) L.ArgError(0, fname, "a size in the format is too big");
         }
         return (int)n;
     }
     int IntSize(int def) {
         int n = Size(def);
-        if (n < 1 || n > 16) L.Error(std::string("integral size (") + std::to_string(n) + ") out of limits [1,16]");
+        if (n < 1 || n > 16) L.Error("integer size " + std::to_string(n) + " in the format must be from 1 to 16");
         return n;
     }
     // the next option without alignment; returns false at the end of the format
@@ -715,7 +953,7 @@ struct PackReader {
                 case '=': little = true; continue;   // this build's native order
                 case '!': {
                     int n = Size(8);
-                    if (n < 1 || n > 16) L.Error(std::string("integral size (") + std::to_string(n) + ") out of limits [1,16]");
+                    if (n < 1 || n > 16) L.Error("integer size " + std::to_string(n) + " in the format must be from 1 to 16");
                     maxAlign = n;
                     continue;
                 }
@@ -733,13 +971,13 @@ struct PackReader {
                 case 'z': it.kind = PackKind::Zstr; return true;
                 case 'x': it.kind = PackKind::Pad; it.size = 1; return true;
                 case 'c': {
-                    if (pos >= fmt.size() || !Digit(fmt[pos])) L.Error("missing size for format option 'c'");
+                    if (pos >= fmt.size() || !Digit(fmt[pos])) L.Error("format option 'c' needs a size after it");
                     it.kind = PackKind::Char;
                     it.size = Size(0);
                     return true;
                 }
                 case 'X': it.kind = PackKind::PadAlign; return true;
-                default: L.Error(std::string("invalid format option '") + c + "'");
+                default: L.Error(std::string("unknown format option '") + c + "'");
             }
         }
     }
@@ -752,7 +990,7 @@ struct PackReader {
             PackItem op;
             std::size_t save = pos;
             if (!Option(op) || op.kind == PackKind::Char || op.kind == PackKind::Zstr || op.kind == PackKind::PadAlign || op.size == 0)
-                L.ArgError(0, fname, "invalid next option for option 'X'");
+                L.ArgError(0, fname, "format option 'X' must be followed by a fixed-size option");
             (void)save;
             align = op.size;
             it.size = 0;
@@ -761,7 +999,7 @@ struct PackReader {
                                it.kind == PackKind::Double || it.kind == PackKind::PadAlign;
         if (alignable && align > 1) {
             if (align > maxAlign) align = maxAlign;
-            if ((align & (align - 1)) != 0) L.ArgError(0, fname, "format asks for alignment not power of 2");
+            if ((align & (align - 1)) != 0) L.ArgError(0, fname, "the format asks for an alignment that is not a power of two");
             it.align = (int)((std::size_t)(align - (int)(total & (std::size_t)(align - 1))) & (std::size_t)(align - 1));
         }
         return true;
@@ -791,7 +1029,7 @@ std::uint64_t ReadUInt(State& L, const char* p, int size, bool little, bool isSi
         unsigned char fill = (isSigned && (std::int64_t)v < 0) ? 0xff : 0;
         for (int i = 8; i < size; ++i)
             if ((unsigned char)p[little ? i : size - 1 - i] != fill)
-                L.Error(std::to_string(size) + "-byte integer does not fit into Lua Integer");
+                L.Error("a " + std::to_string(size) + "-byte integer in the data is too big for a Lua integer");
     }
     return v;
 }
@@ -810,9 +1048,9 @@ int S_pack(State& L, int n) {
                 if (it.size < 8) {
                     if (it.kind == PackKind::Int) {
                         std::int64_t lim = std::int64_t(1) << (it.size * 8 - 1);
-                        if (v < -lim || v >= lim) L.ArgError(arg, "pack", "integer overflow");
+                        if (v < -lim || v >= lim) L.ArgError(arg, "pack", "integer does not fit in the size (overflow)");
                     } else if ((std::uint64_t)v >= (std::uint64_t(1) << (it.size * 8))) {
-                        L.ArgError(arg, "pack", "unsigned overflow");
+                        L.ArgError(arg, "pack", "unsigned integer does not fit in the size (overflow)");
                     }
                 }
                 PackInt(out, (std::uint64_t)v, it.size, rd.little, v < 0);
@@ -835,7 +1073,7 @@ int S_pack(State& L, int n) {
             }
             case PackKind::Char: {
                 const std::string& str = L.CheckStr(arg, "pack")->s;
-                if (str.size() > (std::size_t)it.size) L.ArgError(arg, "pack", "string longer than given size");
+                if (str.size() > (std::size_t)it.size) L.ArgError(arg, "pack", "string is longer than the size of the 'c' option");
                 out += str;
                 out.append((std::size_t)it.size - str.size(), '\0');
                 ++arg;
@@ -844,7 +1082,7 @@ int S_pack(State& L, int n) {
             case PackKind::String: {
                 const std::string& str = L.CheckStr(arg, "pack")->s;
                 if (it.size < 8 && (std::uint64_t)str.size() >= (std::uint64_t(1) << (it.size * 8)))
-                    L.ArgError(arg, "pack", "string length does not fit in given size");
+                    L.ArgError(arg, "pack", "the string's length does not fit in the length field");
                 PackInt(out, (std::uint64_t)str.size(), it.size, rd.little, false);
                 out += str;
                 ++arg;
@@ -852,7 +1090,7 @@ int S_pack(State& L, int n) {
             }
             case PackKind::Zstr: {
                 const std::string& str = L.CheckStr(arg, "pack")->s;
-                if (str.find('\0') != std::string::npos) L.ArgError(arg, "pack", "string contains zeros");
+                if (str.find('\0') != std::string::npos) L.ArgError(arg, "pack", "a 'z' string can not hold a zero byte");
                 out += str;
                 out += '\0';
                 ++arg;
@@ -861,8 +1099,9 @@ int S_pack(State& L, int n) {
             case PackKind::Pad: out += '\0'; break;
             case PackKind::PadAlign: case PackKind::None: break;
         }
-        if (out.size() > kMaxStringResult) L.Error("resulting string too large");
+        if (out.size() > kMaxStringResult) L.Error("the result would be longer than " + std::to_string(kMaxStringResult) + " bytes");
     }
+    ChargeBytes(L, out.size());
     (void)n;
     L.Charge(out.size() / 64);
     L.PushString(out);
@@ -876,9 +1115,9 @@ int S_packsize(State& L, int n) {
     std::size_t total = 0;
     PackItem it;
     while (rd.Next(it, total)) {
-        if (it.kind == PackKind::String || it.kind == PackKind::Zstr) L.ArgError(0, "packsize", "variable-length format");
+        if (it.kind == PackKind::String || it.kind == PackKind::Zstr) L.ArgError(0, "packsize", "the format has an option with no fixed size ('s' or 'z')");
         total += (std::size_t)it.align + (std::size_t)it.size;
-        if (total > 0x7fffffff) L.ArgError(0, "packsize", "format result too large");
+        if (total > 0x7fffffff) L.ArgError(0, "packsize", "the packed size would be over 2 GB");
     }
     L.Push(Value::Int((std::int64_t)total));
     return 1;
@@ -890,13 +1129,13 @@ int S_unpack(State& L, int n) {
     const std::string& d = data->s;
     std::int64_t init = n >= 3 ? L.OptInt(2, "unpack", 1) : 1;
     if (init < 0) init = (std::int64_t)d.size() + init + 1;
-    if (init < 1 || init - 1 > (std::int64_t)d.size()) L.ArgError(2, "unpack", "initial position out of string");
+    if (init < 1 || init - 1 > (std::int64_t)d.size()) L.ArgError(2, "unpack", "start position is outside the data");
     std::size_t pos = (std::size_t)(init - 1);
     PackReader rd{L, "unpack", fmt};
     PackItem it;
     int results = 0;
     auto need = [&](std::size_t bytes) {
-        if (bytes > d.size() || pos > d.size() - bytes) L.ArgError(1, "unpack", "data string too short");
+        if (bytes > d.size() || pos > d.size() - bytes) L.ArgError(1, "unpack", "the data ends before the format does");
     };
     while (rd.Next(it, pos)) {
         need((std::size_t)it.align + (std::size_t)it.size);
@@ -932,7 +1171,7 @@ int S_unpack(State& L, int n) {
             case PackKind::String: {
                 std::uint64_t len = ReadUInt(L, d.data() + pos, it.size, rd.little, false);
                 pos += (std::size_t)it.size;
-                if (len > d.size() - pos) L.ArgError(1, "unpack", "data string too short");
+                if (len > d.size() - pos) L.ArgError(1, "unpack", "the data ends before the format does");
                 L.Push(Value::Obj(L.NewString(d.data() + pos, (std::size_t)len)));
                 pos += (std::size_t)len;
                 it.size = 0;
@@ -941,7 +1180,7 @@ int S_unpack(State& L, int n) {
             }
             case PackKind::Zstr: {
                 std::size_t end = d.find('\0', pos);
-                if (end == std::string::npos) L.ArgError(1, "unpack", "unfinished string for format 'z'");
+                if (end == std::string::npos) L.ArgError(1, "unpack", "a 'z' string has no zero byte at its end");
                 L.Push(Value::Obj(L.NewString(d.data() + pos, end - pos)));
                 pos = end + 1;
                 ++results;
@@ -952,6 +1191,8 @@ int S_unpack(State& L, int n) {
         pos += (std::size_t)it.size;
         if (results > 200) L.CheckStack(results);
     }
+    ChargeBytes(L, pos - (std::size_t)(init - 1));   // the data read
+    L.Charge((std::uint64_t)results);
     L.Push(Value::Int((std::int64_t)pos + 1));
     return results + 1;
 }

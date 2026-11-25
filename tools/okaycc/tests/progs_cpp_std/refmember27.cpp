@@ -6,6 +6,17 @@
 #include <utility>
 #include <vector>
 struct Named { std::vector<int> &v; int k; };
+struct Holder {  // an unnamed class in a member function, as in Render/Mesh.hpp
+    std::vector<std::vector<std::pair<int, int>>> corners;
+    int Sum() const {
+        int total = 0;
+        for (auto &cvv : corners) {
+            struct { const std::vector<std::pair<int, int>> &second; } cv{cvv};
+            for (auto &tk : cv.second) total += tk.first * 10 + tk.second;
+        }
+        return total;
+    }
+};
 int main() {
     std::vector<std::vector<std::pair<int, int>>> corners(3);
     corners[1].push_back({4, 5});
@@ -25,5 +36,9 @@ int main() {
     struct { int &r; double d; } b{total, 0.5};
     b.r += 1000;
     std::printf("%d %zu %zu %zu %d %g\n", total, corners[1].size(), corners[2].size(), w.size(), w.back(), b.d);
+    Holder h;
+    h.corners.resize(2);
+    h.corners[1].push_back({4, 5});
+    std::printf("%d\n", h.Sum());
     return 0;
 }

@@ -258,6 +258,10 @@ private:
     void advance() {
         if (i_ < toks_.size()) ++i_;
     }
+    // A C source or header (.c, .h): C's rules for tags and unnamed structs, not C++'s.
+    static bool cSourceFile(const std::string& f) {
+        return f.size() >= 2 && (f.compare(f.size() - 2, 2, ".c") == 0 || f.compare(f.size() - 2, 2, ".h") == 0);
+    }
     bool isP(const Token& t, const char* s) const {
         if (t.kind != Tok::Punct) return false;
         if (t.text == s) return true;
@@ -2479,13 +2483,24 @@ private:
             tplShort = shortName(tag);
             tag += "__local" + std::to_string(localClassN_++);
         }
-        if (tag.empty() && !isUnion && bodyDepth_ > 0 && classStack_.empty() && isP("{")) {
+        if (tag.empty() && !isUnion && bodyDepth_ > 0 && isP("{") && [&] {
+                // only one with a declarator after its body (an anonymous member, struct { .. };,
+                // keeps its members in the enclosing class)
+                int braces = 0;
+                for (std::size_t k = i_; k < toks_.size(); ++k) {
+                    if (isP(toks_[k], "{")) ++braces;
+                    else if (isP(toks_[k], "}") && --braces == 0)
+                        return k + 1 < toks_.size() && (toks_[k + 1].kind == Tok::Ident || isP(toks_[k + 1], "*") ||
+                                                         isP(toks_[k + 1], "&"));
+                }
+                return false;
+            }()) {
             // An unnamed class defined in a C++ function (struct { T &r; } cv{x}; in
             // Render/Mesh.hpp): a hidden name, so it is a class like any other and a braced
             // initializer initializes its members ([dcl.init.aggr]). (In C, unnamed structs keep
             // the C rules.)
             const std::string& f = at.file;
-            bool cSource = f.size() >= 2 && (f.compare(f.size() - 2, 2, ".c") == 0 || f.compare(f.size() - 2, 2, ".h") == 0);
+            bool cSource = cSourceFile(f);
             if (!cSource && !f.empty()) tag = "__unnamed" + std::to_string(localClassN_++);
         }
         if (!instOverrideName_.empty() && (tag == instOverrideName_ || shortName(tag) == instOverrideName_)) {
@@ -2580,7 +2595,7 @@ private:
                 inc->tag = tag;
                 structs_[tag] = cloneType(*inc);
                 const std::string& f = at.file;
-                bool cSource = f.size() >= 2 && (f.compare(f.size() - 2, 2, ".c") == 0 || f.compare(f.size() - 2, 2, ".h") == 0);
+                bool cSource = cSourceFile(f);
                 if (!isUnion && (isClass || !ns_.empty() || !cSource) && !findTypedef(shortName(tag)))
                     addTypedef(shortName(tag), cloneType(*inc));
                 return inc;
@@ -2590,7 +2605,7 @@ private:
                 // a parameter list: void f(class Camera *c); [basic.scope.pdecl] p7): `class
                 // Camera;` here makes the name a type name in this scope.
                 const std::string& f = at.file;
-                bool cSource = f.size() >= 2 && (f.compare(f.size() - 2, 2, ".c") == 0 || f.compare(f.size() - 2, 2, ".h") == 0);
+                bool cSource = cSourceFile(f);
                 if (!isUnion && !cSource && isP(";") && !findTypedef(shortName(tag)))
                     addTypedef(shortName(tag), cloneType(*it->second));
             }

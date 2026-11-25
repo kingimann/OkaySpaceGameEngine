@@ -418,6 +418,100 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// More of what the survey stopped at once the blockers above were gone: std::string(s, pos) (a constructor with a
+// default argument beats the iterator-pair template), C::~C() = default; outside the class, an alias template declared
+// in a class (EventBus::Handler), explicit template arguments with a lambda for a std::function<...T...> parameter
+// (AssetManager::RegisterLoader), lower_bound and upper_bound with a comparison, string::replace, Outer::Inner{...} for
+// a nested class whose plain name another class also has, a nested class named past a scoped enumeration of the same
+// name elsewhere (AnimStateMachine::State::IkKey beside Countdown::State), and a template instance calling itself
+// (FindInTree<T>).
+static void r29_more(Tally& tally) {
+    std::printf("r29_more\n");
+    okayms_test::run_both(kRun, tally, "more", std::string(kAlloc) + R"OKMS(
+#include <string>
+#include <vector>
+#include <map>
+#include <memory>
+#include <functional>
+#include <algorithm>
+struct Impl { int v = 3; };
+class Clock {
+public:
+  Clock();
+  ~Clock();
+  int Get() const { return m_impl->v; }
+private:
+  std::unique_ptr<Impl> m_impl;
+};
+Clock::Clock() { m_impl = std::make_unique<Impl>(); }
+Clock::~Clock() = default;
+class Bus {
+public:
+  template <typename E>
+  using Handler = std::function<void(const E&)>;
+  template <typename E> int Add(Handler<E> h) { E e{}; h(e); return 1; }
+};
+struct Ev { int x = 4; };
+struct Loader {
+  template <class T>
+  int Reg(std::string name, std::function<std::shared_ptr<T>(const std::string& path, std::string& error)> load) {
+    std::string err;
+    std::shared_ptr<T> p = load(name, err);
+    return *p;
+  }
+};
+struct Key { float t; int v; };
+class Countdown { public: enum class State { Idle, Running, Done }; State s = State::Idle; };
+namespace other { class Log { public: struct State { int a = 0; }; }; }
+class Machine {
+public:
+  struct State {
+    int x = 1;
+    struct IkKey { float t = 0.0f; float w = 1.0f; };
+    std::vector<IkKey> ik;
+  };
+  static float Sample(const std::vector<State::IkKey>& keys, float scale) { return keys.empty() ? 0.0f : keys[0].w * scale; }
+};
+struct N { int v; N* kid; };
+template <class T> T* deepest(N* n, int depth) {
+  if (!n->kid || depth > 5) return (T*)n;
+  if (auto* c = deepest<T>(n->kid, depth + 1)) return c;
+  return nullptr;
+}
+int entry(void) {
+  const std::string design = "user:ab";
+  std::map<std::string, int> parts;
+  parts["ab"] = 4;
+  auto it = parts.find(std::string(design, 5));
+  CK(1, it != parts.end() && it->second == 4 && std::string(design, 1, 3) == "ser");
+  Clock c;
+  CK(2, c.Get() == 3);
+  Bus b;
+  int got = 0;
+  b.Add<Ev>([&](const Ev& e) { got = e.x; });
+  CK(3, got == 4);
+  Loader l;
+  CK(4, l.Reg<int>("x", [](const std::string& p, std::string& e) { return std::make_shared<int>((int)p.size() + 4); }) == 5);
+  std::vector<Key> keys{{0.0f, 1}, {1.0f, 2}, {2.0f, 3}};
+  auto lo = std::lower_bound(keys.begin(), keys.end(), 1.0f, [](const Key& k, float t) { return k.t < t; });
+  auto hi = std::upper_bound(keys.begin(), keys.end(), 1.0f, [](float t, const Key& k) { return t < k.t; });
+  CK(5, lo->v == 2 && hi->v == 3);
+  std::string s = "a_X_b_X";
+  for (size_t p = 0; (p = s.find("X", p)) != std::string::npos; p += 3) s.replace(p, 1, "YYY");
+  std::string t = "abc";
+  t.replace(1, 1, 3, 'z');
+  CK(6, s == "a_YYY_b_YYY" && t == "azzzc");
+  Machine::State st;
+  st.ik.push_back(Machine::State::IkKey{0.5f, 2.0f});
+  Countdown cd;
+  CK(7, Machine::Sample(st.ik, 3.0f) == 6.0f && cd.s == Countdown::State::Idle);
+  N n3{3, nullptr}, n2{2, &n3}, n1{1, &n2};
+  CK(8, deepest<N>(&n1, 0)->v == 3);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -429,5 +523,6 @@ int main(int argc, char** argv) {
     r29_braced_overload(tally);
     r29_pieces(tally);
     r29_bindings(tally);
-    return tally.finish(7);
+    r29_more(tally);
+    return tally.finish(8);
 }

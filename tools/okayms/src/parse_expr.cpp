@@ -1710,6 +1710,27 @@ bool Parser::parse_unary(Node* out) {
             // Outer::Nested(args) and Outer::Nested{args}: a temporary of a nested class (std::thread::id()), when the
             // class has no member function of that name. Nested classes are kept under their plain name.
             const std::string member = name.substr(colons + 2);
+            if (is(TLBrace) && cur_locals != nullptr) {
+                // Outer::Inner{args} and Outer::Mid::Inner{args} (Round 29: Inventory::Slot{...}): the class nested in
+                // the named class, found by its parent (another class of the same plain name elsewhere is not taken).
+                int walk = scope_sid;
+                std::string rest = member;
+                while (walk >= 0) {
+                    const size_t step = rest.find("::");
+                    const std::string part = rest.substr(0, step);
+                    int nested = -1;
+                    for (size_t k = 0; k < structs.size(); ++k)
+                        if (structs[k].name == part && structs[k].parent == walk && !structs[k].incomplete)
+                            nested = static_cast<int>(k);
+                    walk = nested;
+                    if (step == std::string::npos) break;
+                    rest = rest.substr(step + 2);
+                }
+                if (walk >= 0) {
+                    if (!braced_temp(walk, out)) return false;
+                    return parse_postfix(out);
+                }
+            }
             bool member_fn = false;
             for (const Method& m : structs[static_cast<size_t>(scope_sid)].methods)
                 if (m.name == member) member_fn = true;

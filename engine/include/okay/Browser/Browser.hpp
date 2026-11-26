@@ -221,7 +221,7 @@ private:
     float m_viewH = 0.0f;
     ScrollOffsets m_boxScroll;
     // the page's scripts, in page order: inline text, or a src file that is fetched first
-    struct ScriptSource { std::string url, text; bool waiting = false; };
+    struct ScriptSource { std::string url, text; bool waiting = false, refused = false; };   // refused: another site, or the fetch failed
     std::unique_ptr<PageScripts> m_scripts;
     std::vector<ScriptSource> m_scriptQueue;
     std::size_t m_nextScript = 0;

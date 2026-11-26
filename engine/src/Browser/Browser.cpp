@@ -564,8 +564,7 @@ void BrowserTab::StartScripts(const std::string& baseUrl) {
                                 m_fetches.push_back(src.url);
                             }
                         } else {
-                            src.text.clear();
-                            src.url = "!" + src.url;   // not fetched: a line in the console says why
+                            src.refused = true;   // not fetched: a line in the console says why
                         }
                     } else {
                         src.text = n->TextContent();
@@ -591,8 +590,8 @@ void BrowserTab::RunReadyScripts() {
         ScriptSource& s = m_scriptQueue[m_nextScript];
         if (s.waiting) return;   // in order: the rest waits for this file
         ++m_nextScript;
-        if (!s.url.empty() && s.url[0] == '!') {
-            m_scripts->AddConsole(ConsoleLine::Warn, "The script " + s.url.substr(1) + " was not run: it is from another site or could not be fetched.");
+        if (s.refused) {
+            m_scripts->AddConsole(ConsoleLine::Warn, "The script " + s.url + " was not run: it is from another site or could not be fetched.");
             continue;
         }
         const std::string text = std::move(s.text);
@@ -614,7 +613,7 @@ void BrowserTab::DeliverScript(const std::string& url, bool ok, const std::strin
         if (!s.waiting || s.url != u) continue;
         s.waiting = false;
         s.text = ok ? text : std::string();
-        if (!ok) s.url = "!" + s.url;
+        s.refused = !ok;
         any = true;
     }
     if (any) RunReadyScripts();

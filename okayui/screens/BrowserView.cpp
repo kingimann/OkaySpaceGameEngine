@@ -527,7 +527,7 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                     }
                     UI::PopID();
                     const std::string typed(edit->buf.data());
-                    if (typed != value) { fs.SetValue(*editing, typed); tab.FormChanged(); }
+                    if (typed != value) { fs.SetValue(*editing, typed); tab.FormChanged(); tab.ControlInput(*editing); }
                     if (enter) {   // Enter: implicit submission (HTML 4.10.21.2)
                         const br::Node* form = nullptr; const br::Node* submitter = nullptr;
                         if (fs.ImplicitSubmitter(*editing, *doc, form, submitter) && form) {
@@ -563,10 +563,20 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                         fg->AddText(UI::Vec2(sx + 6, ry + (rowH - 16) * 0.5f), 0xFF202020u, opts[i].second.c_str(), 2.0f);
                         if (hov && UI::IsMouseClicked(0)) chosen = (int)i;
                     }
-                    if (chosen >= 0) { fs.Select(*sel, chosen); tab.FormChanged(); edit->selectOpen = nullptr; controlTook = true; }
+                    if (chosen >= 0) { fs.Select(*sel, chosen); tab.FormChanged(); tab.ControlInput(*sel); edit->selectOpen = nullptr; controlTook = true; }
                     else if (UI::IsMouseClicked(0) || UI::IsKeyPressed(UI::KeyId_Escape, false)) { edit->selectOpen = nullptr; controlTook = true; }
                     else if (UI::IsMouseHoveringRect(UI::Vec2(sx, sy), UI::Vec2(sx + lw, sy + rowH * (float)opts.size() + 4))) controlTook = true;
                 }
+            }
+            // the page's scripts see the click first (on the control, the link, else the innermost box under the pointer); a
+            // page that cancels it (preventDefault) keeps the link from being followed and the control from being worked
+            if (inView && hotPlay < 0 && !controlTook && doc && !loading && tab.Scripts() && UI::IsMouseClicked(0)) {
+                const int ci = br::ControlAt(page, pmx, pmy, &boxScroll, pageScroll);
+                const int link = br::LinkAt(page, pmx, pmy, &boxScroll, pageScroll);
+                const br::Node* target = ci >= 0 ? page.controls[(std::size_t)ci].node : nullptr;
+                if (!target && link >= 0 && (std::size_t)link < page.linkNodes.size()) target = page.linkNodes[(std::size_t)link];
+                if (!target) target = NodeAt(page, pmx, pmy, link);
+                if (target && tab.Click(*target)) controlTook = true;
             }
             // clicks on form controls and labels
             if (edit && inView && hotPlay < 0 && !controlTook && doc && !loading && UI::IsMouseClicked(0)) {
@@ -584,7 +594,7 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                     else {
                         edit->node = nullptr;
                         tab.SetFocus(target);
-                        if (k == br::ControlKind::Checkbox || k == br::ControlKind::Radio) { fs.Toggle(*target); tab.FormChanged(); }
+                        if (k == br::ControlKind::Checkbox || k == br::ControlKind::Radio) { fs.Toggle(*target); tab.FormChanged(); tab.ControlInput(*target); }
                         else if (k == br::ControlKind::Select) edit->selectOpen = target;
                         else if (k == br::ControlKind::Submit) {
                             if (const br::Node* form = br::FormState::FormOwner(*target, *doc)) res.formSent = tab.SubmitForm(*form, target, res.formNote);

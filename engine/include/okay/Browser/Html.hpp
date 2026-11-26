@@ -68,6 +68,13 @@ HtmlDocument ParseHtml(const std::string& text, const HtmlLimits& limits = HtmlL
 ///   <!DOCTYPE html>   <tag>   name="value" (attributes, under their element)   "text"   <!-- comment -->
 std::string DumpTree(const Node& node);
 
+/// The children of `node` as HTML text (the standard's "HTML fragment serialization algorithm", 13.3: what innerHTML reads):
+/// text escaped (& < > and the no-break space; inside an attribute also "), void elements without an end tag, the text of
+/// style / script / xmp / iframe / noembed / noframes / plaintext as it is.
+std::string SerializeChildren(const Node& node);
+/// `node` itself and its children as HTML text (what outerHTML reads).
+std::string SerializeNode(const Node& node);
+
 /// Decode the character references in `text` ("&amp;", "&#169;", "&#x1F600;" ...). In an attribute value a named reference
 /// without its ';' that is followed by '=' or a letter or digit is left as written (13.2.5.73).
 std::string DecodeCharRefs(const std::string& text, bool inAttribute);

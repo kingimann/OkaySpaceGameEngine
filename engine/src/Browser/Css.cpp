@@ -624,6 +624,8 @@ bool ParseAnB(std::string t, int& a, int& b) {
     return true;
 }
 
+} // namespace
+
 bool ParseSelectorList(const std::string& text, std::vector<Selector>& out, int& maxSpec) {
     maxSpec = 0;
     std::size_t s = 0;
@@ -642,8 +644,6 @@ bool ParseSelectorList(const std::string& text, std::vector<Selector>& out, int&
     }
     return !out.empty();
 }
-
-} // namespace
 
 bool ParseSelector(const std::string& textIn, Selector& out) {
     out = Selector();

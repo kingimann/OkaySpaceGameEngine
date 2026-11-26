@@ -1,10 +1,15 @@
 #pragma once
 // Browser (system "Browser", docs/feature_map/17-launcher-platform.md 17.18): our own web browser's page engine. Step 1 shows
-// our own web pages (HTML and a CSS subset, no JavaScript) with links, back / forward and a loading and error state; the
+// our own web pages (HTML and a CSS subset; JavaScript since round 2, below) with links, back / forward and a loading and error state; the
 // launcher is its first user, and a standalone browser program will use the same library later (plan:
 // docs/platform/browser_plan.md). This is the entry file: BrowserTab is one tab - its history, the current page, and what a
 // click does. The parts it uses: Html.hpp (the HTML reader), Css.hpp (style sheets), Layout.hpp (layout, including the
 // box an embedded game will get), Url.hpp (addresses).
+//
+// Round 2: the page's JavaScript runs on our own engine (Script.hpp, PageScripts): <script> elements in page order once the
+// page is read (a <script src> waits for its file, fetched like an image: same origin only in the launcher), then
+// DOMContentLoaded and load. The host moves the page's clock with Tick() and passes a person's clicks and typing on
+// (Click, ControlInput); a page that cancels a click keeps its link from being followed. Scripting is on by default.
 //
 // The tab does no network and no drawing itself, so it is the same in the launcher, a browser program and the tests:
 //   * the host asks TakeFetches() each frame and fetches those addresses (NativeFetch in the launcher), then hands the
@@ -20,6 +25,7 @@
 #include "okay/Browser/Forms.hpp"
 #include "okay/Browser/Html.hpp"
 #include "okay/Browser/Layout.hpp"
+#include "okay/Browser/Script.hpp"
 #include "okay/Browser/Url.hpp"
 
 #include <cstddef>
@@ -125,7 +131,7 @@ public:
 
     // ---- round 1 of the browser program: style sheets, web fonts, forms, :hover / :focus, scrolling areas ----
     /// What a fetch the tab asked for is: the page, an image, a style sheet (<link rel=stylesheet>, @import) or a web font.
-    enum class FetchKind { Page, Image, Style, Font };
+    enum class FetchKind { Page, Image, Style, Font, Script };
     FetchKind KindOfFetch(const std::string& url) const;
     /// A linked style sheet arrived (`ok` false: it could not be fetched). Its url() values are resolved against its address.
     void DeliverStyle(const std::string& url, bool ok, const std::string& css);
@@ -150,6 +156,28 @@ public:
     void SetViewportHeight(float h);
     /// Scroll offsets of the page's scrolling areas (LayoutResult::scrollers), kept per page.
     ScrollOffsets& BoxScroll() { return m_boxScroll; }
+
+    // ---- round 2: JavaScript (Script.hpp) ----
+    /// Run the pages' scripts (default: on). Off: <script> is skipped, <noscript> is shown. Takes effect at the next page.
+    void SetScripting(bool on) { m_scripting = on; }
+    bool Scripting() const { return m_scripting; }
+    /// A <script src> file arrived (`ok` false: it could not be fetched); the scripts waiting for it run now.
+    void DeliverScript(const std::string& url, bool ok, const std::string& text);
+    /// Move the page's clock on by `ms` (the time since the last call, once a frame): its timers run, and a location change
+    /// a script asked for is followed (same rules as a link).
+    void Tick(double ms);
+    /// A person clicked `el` (the innermost element under the pointer, a link or a control): the page's click listeners run.
+    /// True when the page cancelled it (preventDefault): the host then does not follow the link or work the control.
+    bool Click(const Node& el);
+    /// A person changed a control's value (typed, ticked, chose): the page's input listeners run (and change, for a
+    /// checkbox, radio button or select).
+    void ControlInput(const Node& control);
+    /// The page's console (empty when it has no scripts).
+    const std::vector<ConsoleLine>& ConsoleLines() const;
+    /// Lines written so far on this page (also ones the console has dropped): the host shows new ones.
+    std::uint64_t ConsoleCount() const { return m_scripts ? m_scripts->ConsoleCount() : 0; }
+    /// The page's scripts (null: the page has none, scripting is off, or no page is shown).
+    PageScripts* Scripts() { return m_scripts.get(); }
 
 private:
     struct Entry { std::string url; float scrollY = 0.0f; bool post = false; std::string body; };
@@ -192,6 +220,16 @@ private:
     const Node* m_hover = nullptr;
     float m_viewH = 0.0f;
     ScrollOffsets m_boxScroll;
+    // the page's scripts, in page order: inline text, or a src file that is fetched first
+    struct ScriptSource { std::string url, text; bool waiting = false; };
+    std::unique_ptr<PageScripts> m_scripts;
+    std::vector<ScriptSource> m_scriptQueue;
+    std::size_t m_nextScript = 0;
+    std::vector<std::string> m_scriptRequests;
+    std::string m_scriptNav;   // location.href set by a script: followed at the next Tick (never inside a script)
+    bool m_scripting = true;
+    void StartScripts(const std::string& baseUrl);
+    void RunReadyScripts();
 };
 
 /// The page shown for a plain-text address (".txt"): the text in a <pre>, with < and & escaped.

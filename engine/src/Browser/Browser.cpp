@@ -57,6 +57,10 @@ bool BrowserTab::Open(const std::string& url) {
     m_fontFor.clear();
     m_sources.clear();
     m_sheetPtrs.clear();
+    m_scripts.reset();
+    m_scriptQueue.clear();
+    m_scriptRequests.clear();
+    m_scriptNav.clear();
     m_forms = FormState();
     m_focus = m_hover = nullptr;
     m_doc = HtmlDocument();
@@ -216,6 +220,7 @@ void BrowserTab::DeliverPage(const std::string& url, bool ok, int status, const 
     m_loading.clear();
     if (!ok) {
         m_state = State::Error;
+        m_scripts.reset();
         m_doc = HtmlDocument();
         m_title.clear();
         if (!error.empty()) m_error = error;
@@ -238,7 +243,23 @@ void BrowserTab::DeliverPage(const std::string& url, bool ok, int status, const 
 
 void BrowserTab::ShowPage(const std::string& url, const std::string& body) {
     const std::string ext = ExtensionOf(url);
+    m_scripts.reset();   // the old page's scripts go before its tree
+    m_scriptQueue.clear();
+    m_scriptRequests.clear();
+    m_nextScript = 0;
+    m_scriptNav.clear();
     m_doc = (ext == "txt" || ext == "md") ? ParseHtml(PlainTextPage(body)) : ParseHtml(body);
+    if (m_scripting && m_doc.root) {   // scripting is on: <noscript> is not shown (HTML 4.12.2)
+        std::vector<Node*> todo{m_doc.root.get()};
+        while (!todo.empty()) {
+            Node* n = todo.back();
+            todo.pop_back();
+            for (std::size_t k = n->children.size(); k-- > 0;) {
+                if (n->children[k]->IsElement("noscript")) n->children.erase(n->children.begin() + (std::ptrdiff_t)k);
+                else todo.push_back(n->children[k].get());
+            }
+        }
+    }
     m_title = m_doc.title;
     m_forms.Reset(m_doc);
     m_focus = nullptr;
@@ -299,6 +320,9 @@ void BrowserTab::ShowPage(const std::string& url, const std::string& body) {
         }
         for (std::size_t k = n->children.size(); k-- > 0;) todo.push_back(n->children[k].get());
     }
+    std::string base = url;
+    if (!m_doc.baseHref.empty()) base = ResolveUrl(base, m_doc.baseHref);
+    StartScripts(base);
 }
 
 std::string BrowserTab::ResolveImage(const std::string& src) const {
@@ -406,6 +430,7 @@ BrowserTab::FetchKind BrowserTab::KindOfFetch(const std::string& url) const {
     if (!m_loading.empty() && u == m_loading) return FetchKind::Page;
     if (std::find(m_styleRequests.begin(), m_styleRequests.end(), u) != m_styleRequests.end()) return FetchKind::Style;
     if (std::find(m_fontRequests.begin(), m_fontRequests.end(), u) != m_fontRequests.end()) return FetchKind::Font;
+    if (std::find(m_scriptRequests.begin(), m_scriptRequests.end(), u) != m_scriptRequests.end()) return FetchKind::Script;
     if (!m_history.empty() && u == WithoutFragment(Url())) return FetchKind::Page;
     return FetchKind::Image;
 }
@@ -416,6 +441,8 @@ const FontFace* BrowserTab::FontFor(const std::string& url) const {
 }
 
 bool BrowserTab::SubmitForm(const Node& form, const Node* submitter, std::string& note) {
+    if (m_state != State::Ready) { note = "The page is not loaded."; return false; }
+    if (m_scripts && m_scripts->Dispatch(form, "submit")) { note.clear(); return false; }   // the page handled it
     if (m_state != State::Ready) { note = "The page is not loaded."; return false; }
     const Submission s = m_forms.Submit(form, submitter, Url(), m_doc);
     note = s.note;
@@ -475,6 +502,11 @@ const LayoutResult& BrowserTab::Layout(float width, const TextMeasure& measure) 
         m_layoutWidth = width;
         m_layoutDirty = false;
         RequestImagesOf(m_layout);
+        if (m_scripts) {   // the new layout no longer points at nodes a script removed: free the ones no script holds
+            if (m_focus && !m_scripts->Connected(m_focus)) m_focus = nullptr;
+            if (m_hover && !m_scripts->Connected(m_hover)) m_hover = nullptr;
+            m_scripts->FreeRemoved([this](const Node& n) { m_forms.Forget(n); });
+        }
     }
     if (!m_pendingFragment.empty()) {
         for (const auto& a : m_layout.anchors) if (a.first == m_pendingFragment) { m_pendingScroll = a.second; break; }
@@ -505,6 +537,118 @@ BrowserTab::Action BrowserTab::Activate(const std::string& href) {
     a.kind = Action::Navigated;
     Navigate(target);
     return a;
+}
+
+// ---- round 2: JavaScript ----
+
+void BrowserTab::StartScripts(const std::string& baseUrl) {
+    if (!m_scripting || !m_doc.root) return;
+    // the classic scripts in page order; a page with none (and no on...="" attributes) gets no JavaScript engine at all
+    bool handlers = false;
+    std::vector<const Node*> todo{m_doc.root.get()};
+    while (!todo.empty()) {
+        const Node* n = todo.back();
+        todo.pop_back();
+        if (n->kind == NodeKind::Element) {
+            for (const auto& a : n->attrs) if (a.first.size() > 2 && a.first[0] == 'o' && a.first[1] == 'n') handlers = true;
+            if (n->name == "script" && m_scriptQueue.size() < 256) {
+                const std::string* type = n->Attr("type");
+                if (IsClassicScriptType(type ? *type : std::string())) {
+                    ScriptSource src;
+                    if (const std::string* s = n->Attr("src")) {
+                        src.url = WithoutFragment(ResolveUrl(baseUrl, *s));
+                        if (InScope(src.url) && !IsInternalPage(src.url)) {
+                            src.waiting = true;
+                            if (std::find(m_scriptRequests.begin(), m_scriptRequests.end(), src.url) == m_scriptRequests.end()) {
+                                m_scriptRequests.push_back(src.url);
+                                m_fetches.push_back(src.url);
+                            }
+                        } else {
+                            src.text.clear();
+                            src.url = "!" + src.url;   // not fetched: a line in the console says why
+                        }
+                    } else {
+                        src.text = n->TextContent();
+                    }
+                    m_scriptQueue.push_back(std::move(src));
+                }
+            }
+        }
+        for (std::size_t k = n->children.size(); k-- > 0;) todo.push_back(n->children[k].get());
+    }
+    if (m_scriptQueue.empty() && !handlers) return;
+    PageScripts::Hooks hooks;
+    hooks.changed = [this]() { m_layoutDirty = true; };
+    hooks.title = [this](const std::string& t) { m_title = t; };
+    hooks.navigate = [this](const std::string& where) { m_scriptNav = where; };
+    m_scripts.reset(new PageScripts(m_doc, m_forms, Url(), std::move(hooks)));
+    RunReadyScripts();
+}
+
+void BrowserTab::RunReadyScripts() {
+    if (!m_scripts) return;
+    while (m_nextScript < m_scriptQueue.size()) {
+        ScriptSource& s = m_scriptQueue[m_nextScript];
+        if (s.waiting) return;   // in order: the rest waits for this file
+        ++m_nextScript;
+        if (!s.url.empty() && s.url[0] == '!') {
+            m_scripts->AddConsole(ConsoleLine::Warn, "The script " + s.url.substr(1) + " was not run: it is from another site or could not be fetched.");
+            continue;
+        }
+        const std::string text = std::move(s.text);
+        s.text.clear();
+        m_scripts->RunScript(text, s.url);
+        if (!m_scripts) return;
+    }
+    if (m_nextScript == m_scriptQueue.size()) {
+        ++m_nextScript;   // once
+        m_scripts->PageLoaded();
+    }
+}
+
+void BrowserTab::DeliverScript(const std::string& url, bool ok, const std::string& text) {
+    const std::string u = WithoutFragment(url);
+    bool any = false;
+    for (std::size_t i = m_nextScript; i < m_scriptQueue.size(); ++i) {
+        ScriptSource& s = m_scriptQueue[i];
+        if (!s.waiting || s.url != u) continue;
+        s.waiting = false;
+        s.text = ok ? text : std::string();
+        if (!ok) s.url = "!" + s.url;
+        any = true;
+    }
+    if (any) RunReadyScripts();
+}
+
+void BrowserTab::Tick(double ms) {
+    if (m_scripts && m_state == State::Ready) m_scripts->Tick(ms);
+    if (!m_scriptNav.empty()) {
+        const std::string where = m_scriptNav;
+        m_scriptNav.clear();
+        if (m_state == State::Ready) {   // the link rules: same origin in the launcher, never javascript: or file:
+            const Action a = Activate(where);
+            if (a.kind == Action::Scrolled) m_pendingScroll = a.scrollY;
+            else if (a.kind != Action::Navigated && m_scripts)
+                m_scripts->AddConsole(ConsoleLine::Warn, "The page asked to go to " + a.url + "; that is not followed in this tab.");
+        }
+    }
+}
+
+bool BrowserTab::Click(const Node& el) {
+    if (!m_scripts || m_state != State::Ready) return false;
+    return m_scripts->Dispatch(el, "click");
+}
+
+void BrowserTab::ControlInput(const Node& control) {
+    if (!m_scripts || m_state != State::Ready) return;
+    const ControlKind k = KindOf(control);
+    m_scripts->Dispatch(control, "input");
+    if (k == ControlKind::Checkbox || k == ControlKind::Radio || k == ControlKind::Select) m_scripts->Dispatch(control, "change");
+}
+
+const std::vector<ConsoleLine>& BrowserTab::ConsoleLines() const {
+    static const std::vector<ConsoleLine> none;
+    return m_scripts ? m_scripts->Console() : none;
 }
 
 } // namespace okay::browser

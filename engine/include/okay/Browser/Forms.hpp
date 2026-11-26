@@ -72,6 +72,9 @@ public:
     /// False when Enter does not submit.
     bool ImplicitSubmitter(const Node& control, const HtmlDocument& doc, const Node*& form, const Node*& submitter) const;
 
+    /// Drop what is kept for `control` (a script removed it from the page and it is about to be freed).
+    void Forget(const Node& control);
+
     static constexpr std::size_t kMaxValueBytes = 1u << 20;   ///< what one field keeps
 
 private:

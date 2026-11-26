@@ -9,6 +9,8 @@
 #include "okay/Core/ImageDecode.hpp"
 #include "okay/Platform/NativeFetch.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -60,6 +62,8 @@ struct TabHost::Impl {
     std::string runningUrl;          // the game the child is running
     std::string childErr;
     std::string userAgent;
+    std::chrono::steady_clock::time_point lastTick{};   // the page's clock (its timers) moves by the real time between pumps
+    bool ticked = false;
 };
 
 namespace {
@@ -255,6 +259,14 @@ void TabHost::DeliverPageAnswerImpl(const std::string& url, bool ok, long status
 
 void TabHost::Pump() {
     TabHostShared& s = *m_impl->sh;
+    {   // the page's timers, and a location change its scripts asked for (before the fetches, so its load starts now)
+        const auto nowT = std::chrono::steady_clock::now();
+        double ms = m_impl->ticked ? std::chrono::duration<double, std::milli>(nowT - m_impl->lastTick).count() : 0.0;
+        ms = std::max(0.0, std::min(ms, 1000.0));   // a pause (the window hidden) does not fire a second's worth of timers at once
+        m_impl->lastTick = nowT;
+        m_impl->ticked = true;
+        m_tab.Tick(ms);
+    }
     // pages and images
     std::vector<std::string> urls = m_tab.TakeFetches();
     // our own pages are made here, not fetched
@@ -295,6 +307,7 @@ void TabHost::Pump() {
         }
         const BrowserTab::FetchKind kind = m_tab.KindOfFetch(d.url);
         if (kind == BrowserTab::FetchKind::Style) { m_tab.DeliverStyle(d.url, d.ok, d.body); continue; }
+        if (kind == BrowserTab::FetchKind::Script) { m_tab.DeliverScript(d.url, d.ok, d.body); continue; }
         if (kind == BrowserTab::FetchKind::Font) {
             // only TrueType (0x00010000, "true") and OpenType ("OTTO") files: our rasterizer reads those (not WOFF)
             const std::string& b = d.body;

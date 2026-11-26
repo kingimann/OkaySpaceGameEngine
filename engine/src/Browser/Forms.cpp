@@ -184,6 +184,15 @@ void FormState::ResetForm(const Node* form) {
     for (auto& kv : m_defaultSelected) if (!form || FormOwner(*kv.first, *m_doc) == form) m_selected[kv.first] = kv.second;
 }
 
+void FormState::Forget(const Node& c) {
+    m_values.erase(&c);
+    m_checked.erase(&c);
+    m_selected.erase(&c);
+    m_defaultValues.erase(&c);
+    m_defaultChecked.erase(&c);
+    m_defaultSelected.erase(&c);
+}
+
 std::string FormState::Value(const Node& c) const {
     auto it = m_values.find(&c);
     if (it != m_values.end()) return it->second;

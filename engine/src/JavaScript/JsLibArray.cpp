@@ -675,6 +675,34 @@ void InstallArrayLib(Runtime& rt) {
         Flatten(rt, out, t.v, t.len, 1, &fn, a[1], 0);
         return Value::Obj(out);
     }, 1);
+    DefNative(rt, ap, "with", [](Runtime& rt, CallArgs& a) {   // 23.1.3.39 Array.prototype.with
+        ArrThis t = This(rt, a);
+        double rel = rt.ToIntegerOrInfinity(a[0]);
+        double at = rel >= 0 ? rel : (double)t.len + rel;
+        if (at >= (double)t.len || at < 0) rt.ThrowRange("with: the index is out of range");
+        if (t.len > (1u << 26)) rt.ThrowRange("with: the array is too big");
+        ArrayObj* out = rt.NewArray((std::size_t)t.len);
+        for (std::uint64_t k = 0; k < t.len; ++k) {
+            rt.Charge(1);
+            rt.DefineIndex(out, (std::uint32_t)k, k == (std::uint64_t)at ? a[1] : GetAt(rt, t.v, k));
+        }
+        return Value::Obj(out);
+    }, 2);
+    DefNative(rt, ap, "toSpliced", [](Runtime& rt, CallArgs& a) {   // 23.1.3.35 Array.prototype.toSpliced
+        ArrThis t = This(rt, a);
+        std::int64_t start = RelIndex(rt, a[0], (std::int64_t)t.len, 0);
+        std::int64_t skip = a.argc == 0 ? 0 : a.argc == 1 ? (std::int64_t)t.len - start
+                          : (std::int64_t)std::min(std::max(rt.ToIntegerOrInfinity(a[1]), 0.0), (double)((std::int64_t)t.len - start));
+        int inserts = a.argc > 2 ? a.argc - 2 : 0;
+        std::uint64_t newLen = t.len - (std::uint64_t)skip + (std::uint64_t)inserts;
+        if (newLen > (1u << 26)) rt.ThrowRange("toSpliced: the array is too big");
+        ArrayObj* out = rt.NewArray((std::size_t)newLen);
+        std::uint32_t w = 0;
+        for (std::int64_t k = 0; k < start; ++k, ++w) { rt.Charge(1); rt.DefineIndex(out, w, GetAt(rt, t.v, (std::uint64_t)k)); }
+        for (int k = 0; k < inserts; ++k, ++w) rt.DefineIndex(out, w, a[2 + k]);
+        for (std::uint64_t k = (std::uint64_t)(start + skip); k < t.len; ++k, ++w) { rt.Charge(1); rt.DefineIndex(out, w, GetAt(rt, t.v, k)); }
+        return Value::Obj(out);
+    }, 2);
     DefNative(rt, ap, "toReversed", [](Runtime& rt, CallArgs& a) {
         ArrThis t = This(rt, a);
         if (t.len > (1u << 26)) rt.ThrowRange("toReversed: the array is too big");

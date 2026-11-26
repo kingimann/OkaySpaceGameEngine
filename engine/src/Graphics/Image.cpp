@@ -7,7 +7,7 @@
 namespace okay {
 
 bool Image::Load(const std::string& path, std::string* error) {
-    // Our own decoder (Core/ImageDecode): PNG, JPG, BMP, TGA, GIF (first frame), HDR (tone-mapped), PSD.
+    // Our own decoder (Core/ImageDecode): PNG, JPG, BMP, TGA, GIF (first frame), HDR (tone-mapped), PSD, WebP, SVG (its own size).
     // It refuses absurd sizes and headers that claim far more pixels than the file could hold.
     // The buffer is always RGBA8.
     DecodedImage img;

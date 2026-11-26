@@ -1,5 +1,5 @@
 // Hostile-input tests and a deterministic mutation fuzz for our own image decoders (engine/src/Core/ImageDecode*.cpp: PNG, JPEG, BMP, TGA,
-// GIF, HDR, PSD, PNM, and the inflater). Written from the public file-format descriptions (PNG with its CRC-32 definition, JFIF/JPEG, BMP, TGA,
+// GIF, HDR, PSD, PNM, WebP, and the inflater). Written from the public file-format descriptions (PNG with its CRC-32 definition, JFIF/JPEG, BMP, TGA,
 // GIF89a, Radiance RGBE, PSD, RFC 1950/1951) and nothing else. test_image_decoder already truncates and flips bytes in the small fixtures;
 // this adds what it lacks: every fixture of any size, a "lying header field" sweep (every 1, 2 and 4 byte field in the first 128 bytes set to
 // extreme values, both byte orders), PNG files with valid CRCs and extreme headers, decompression bombs, huge claimed sizes with tiny data,
@@ -8,6 +8,7 @@
 #include "test_framework.hpp"
 #include "okay/Core/ImageDecode.hpp"
 #include "okay/Core/ImageWrite.hpp"
+#include "webp_test_encoder.hpp"   // WebP seeds made by our own test encoders
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -143,6 +144,47 @@ static Bytes ZlibZeros(std::size_t n) {
     while (left > 0) { w.Huff(0x30, 8); --left; }
     w.Huff(0, 7);                                             // end of block
     return w.b;
+}
+
+// WebP files from the test encoders: lossless with every transform and the colour cache, lossy with the loop filter,
+// segments and partitions, the extended format with an ALPH chunk, and a two-frame animation.
+static std::vector<Bytes> WebpSeeds() {
+    using namespace webptest;
+    std::vector<Bytes> out;
+    std::vector<std::uint32_t> px(23 * 11);
+    for (std::size_t i = 0; i < px.size(); ++i) px[i] = (i % 5 == 0 && i) ? px[i - 1] : (std::uint32_t)Rnd();
+    LLOptions all;
+    all.subtractGreen = all.predictor = all.crossColor = all.lz77 = all.maxSymbol = true; all.cacheBits = 4; all.metaBits = 2;
+    LLOptions pal;
+    pal.palette = true;
+    std::vector<std::uint32_t> few(px.size());
+    for (std::size_t i = 0; i < few.size(); ++i) few[i] = 0xFF000000u | (std::uint32_t)(i % 3) * 0x404040u;
+    for (const auto& c : {std::make_pair(&px, all), std::make_pair(&few, pal)}) { Bytes ch; AddChunk(ch, "VP8L", EncodeVp8l(*c.first, 23, 11, c.second)); out.push_back(Riff(ch)); }
+    const Planes pl = TestPlanes(37, 21, 5);
+    LossyOptions lo;
+    lo.q = 30; lo.level = 25; lo.log2Parts = 1; lo.segments = true; lo.segQ[1] = 20; lo.segLf[2] = 10;
+    const Bytes frame = EncodeVp8(pl, lo);
+    { Bytes ch; AddChunk(ch, "VP8 ", frame); out.push_back(Riff(ch)); }
+    {
+        std::vector<std::uint8_t> alpha(37 * 21);
+        for (std::size_t i = 0; i < alpha.size(); ++i) alpha[i] = (std::uint8_t)(i * 7);
+        Bytes x;
+        x.push_back(0x10); x.insert(x.end(), {0, 0, 0}); PutLe(x, 36, 3); PutLe(x, 20, 3);
+        Bytes ch; AddChunk(ch, "VP8X", x); AddChunk(ch, "ALPH", EncodeAlph(alpha, 37, 21, 3, true, LLOptions())); AddChunk(ch, "VP8 ", frame);
+        out.push_back(Riff(ch));
+    }
+    {
+        Bytes x;
+        x.push_back(0x12); x.insert(x.end(), {0, 0, 0}); PutLe(x, 29, 3); PutLe(x, 15, 3);
+        Bytes ch; AddChunk(ch, "VP8X", x);
+        Bytes anim; PutLe(anim, 0, 6); AddChunk(ch, "ANIM", anim);
+        for (int k = 0; k < 2; ++k) {
+            Bytes fr; PutLe(fr, (std::uint32_t)k, 3); PutLe(fr, 0, 3); PutLe(fr, 22, 3); PutLe(fr, 10, 3); PutLe(fr, 50, 3); fr.push_back(0);
+            AddChunk(fr, "VP8L", EncodeVp8l(px, 23, 11, LLOptions())); AddChunk(ch, "ANMF", fr);
+        }
+        out.push_back(Riff(ch));
+    }
+    return out;
 }
 
 int main() {
@@ -352,6 +394,7 @@ int main() {
     {
         std::vector<Bytes> seeds; for (const auto& c : corpus) seeds.push_back(c.second);
         for (int ch = 1; ch <= 4; ++ch) { Bytes px((std::size_t)9 * 7 * (std::size_t)ch); for (auto& p : px) p = (std::uint8_t)Rnd(); seeds.push_back(ImageWrite::EncodePNG(9, 7, ch, px.data())); }
+        for (const Bytes& w : WebpSeeds()) seeds.push_back(w);
         const char* e = std::getenv("OKAY_READER_FUZZ_ITERS"); const long iters = e ? std::atol(e) : 12000L;
         for (long it = 0; it < iters; ++it) {
             Bytes s = seeds[Rnd() % seeds.size()]; const int ops = 1 + (int)(Rnd() % 5);
@@ -379,6 +422,20 @@ int main() {
         }
         std::printf("  fuzz: %ld iterations\n", iters);
     }
+    // ---- 10. WebP: every seed truncated at every length, and lying sizes in each header ----
+    {
+        const std::vector<Bytes> ws = WebpSeeds();
+        long n = 0;
+        for (const Bytes& w : ws) for (std::size_t len = 0; len < w.size(); len += 1 + len / 64) { Try(Bytes(w.begin(), w.begin() + (std::ptrdiff_t)len)); ++n; }
+        for (const Bytes& w : ws) {
+            for (std::size_t at = 4; at + 4 <= std::min<std::size_t>(w.size(), 64); ++at)
+                for (std::uint64_t v : {0x0ull, 0xFFull, 0x3FFFull, 0xFFFFull, 0xFFFFFFull, 0xFFFFFFFFull, 0x7FFF7FFFull}) {
+                    for (int width : {1, 2, 3, 4}) { Bytes b = w; Put(b, at, v, width); Try(b); ++n; }
+                }
+        }
+        std::printf("  webp: %ld inputs\n", n);
+    }
+
     // ---- 9. PNM (P1..P6, our own decoder, OKAY_OWN_PNM=1): truncations, lying headers, comment storms, garbage ----
     {
         const char* oldEnv = std::getenv("OKAY_OWN_PNM"); const std::string saved = oldEnv ? oldEnv : ""; const bool had = oldEnv != nullptr;

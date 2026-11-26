@@ -235,7 +235,7 @@ public:
     /// The folder a script's versions are kept in.
     std::string FolderFor(const std::string& scriptPath) const;
 private:
-    void Trim(const std::string& folder);
+    void Prune(const std::string& folder);   // drop the oldest copies over the bounds
     std::string dir_;
     std::size_t maxPerFile_, maxBytes_;
     std::unordered_map<std::string, std::int64_t> last_;

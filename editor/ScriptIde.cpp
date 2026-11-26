@@ -847,7 +847,7 @@ bool LocalHistory::Record(const std::string& scriptPath, const std::string& text
         if (!f) return false;
     }
     last_[scriptPath] = timeMs;
-    Trim(folder);
+    Prune(folder);
     return true;
 }
 
@@ -862,7 +862,7 @@ bool LocalHistory::MaybeRecord(const std::string& scriptPath, const std::string&
     return Record(scriptPath, text, timeMs, "Auto");
 }
 
-void LocalHistory::Trim(const std::string& folder) {
+void LocalHistory::Prune(const std::string& folder) {
     std::error_code ec;
     // Per script: the newest maxPerFile_.
     std::vector<fs::path> mine;

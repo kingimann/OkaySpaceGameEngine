@@ -156,5 +156,59 @@ int main() {
         CHECK(c && Near(c->h, 13));   // monospace at 13 px
     }
 
+    // ---- round 4: the CSS user-interface properties and animations' end state (CSS UI 4, CSS Animations 1) ----
+    {
+        // pointer-events: none: a see-through overlay over a link takes no clicks (its own link neither); the link under it does
+        const LayoutResult r = Lay(B0 + "<a id=u href='/under' style='display:block;height:40px'>under</a>"
+                                   "<div id=o style='position:absolute;left:0;top:0;width:300px;height:100px;pointer-events:none'><a href='/over'>over</a>"
+                                   "<span style='pointer-events:auto'><a href='/back'>back</a></span></div>", 300);
+        const int at = LinkAt(r, 100, 30);
+        CHECK(at >= 0 && r.links[(std::size_t)at] == "/under");
+        const BoxInfo* o = ById(r, "o");
+        CHECK(o && o->noHit);
+        const DrawCmd* back = TextCmd(r, "back");
+        const int b = back ? LinkAt(r, back->x + 1, back->y + 2) : -1;   // pointer-events: auto inside it is a target again
+        CHECK(b >= 0 && r.links[(std::size_t)b] == "/back");
+        const LayoutResult r2 = Lay(B0 + "<input id=i style='pointer-events:none;width:100px'><button style='pointer-events:none'>b</button>", 300);
+        CHECK(r2.controls.size() == 2 && r2.controls[0].noHit && r2.controls[1].noHit && ControlAt(r2, 5, 5) < 0);
+    }
+    {
+        // cursor (inherited; a url() list falls back to its keyword), user-select: none, appearance: none
+        const LayoutResult r = Lay(B0 + "<div id=d style='cursor:url(a.cur), pointer'><p id=p style='margin:0'>x</p></div>"
+                                   "<p id=q style='margin:0;cursor:not-allowed;user-select:none'>no</p><p style='-webkit-user-select:none;margin:0'><span style='user-select:text'>yes</span></p>"
+                                   "<input type=checkbox style='-webkit-appearance:none'><select style='appearance:none'><option>o</option></select><input type=radio>", 300);
+        const BoxInfo* d = ById(r, "d"); const BoxInfo* p = ById(r, "p"); const BoxInfo* q = ById(r, "q");
+        CHECK(d && d->cursor == Cursor::Pointer && p && p->cursor == Cursor::Pointer && q && q->cursor == Cursor::NotAllowed);
+        const DrawCmd* no = TextCmd(r, "no"); const DrawCmd* yes = TextCmd(r, "yes"); const DrawCmd* x = TextCmd(r, "x");
+        CHECK(no && no->noSelect && yes && !yes->noSelect && x && !x->noSelect);
+        CHECK(r.controls.size() == 3 && r.controls[0].appearanceNone && r.controls[1].appearanceNone && !r.controls[2].appearanceNone);
+    }
+    {
+        // a finite animation that fills forwards shows its last keyframe (the end state, at once): content faded in from
+        // opacity 0 is visible; without forwards the element is as its own style says; reverse ends on "from"; infinite never ends
+        const std::string css = "<style>@keyframes in { from { opacity: 0 } to { opacity: 1; color: #0000ff } }"
+                                "@-webkit-keyframes slide { 0% { margin-left: 50px } 100% { margin-left: var(--end) } }"
+                                ".f { opacity: 0; animation: in .3s ease-out .5s forwards }"
+                                ".n { opacity: 0; animation: in .3s }"
+                                ".r { opacity: 0; animation-name: in; animation-fill-mode: both; animation-direction: reverse; color: #ff0000 }"
+                                ".i { opacity: 0; animation: in 1s infinite both }"
+                                ".s { --end: 20px; -webkit-animation: slide 1s forwards }</style>" + B0;
+        const LayoutResult r = Lay(css + "<p class=f>f</p><p class=n>n</p><p class=r>r</p><p class=i>i</p><p id=s class=s>s</p>", 300);
+        const DrawCmd* f = TextCmd(r, "f"); const DrawCmd* n = TextCmd(r, "n"); const DrawCmd* rr = TextCmd(r, "r"); const DrawCmd* i = TextCmd(r, "i");
+        CHECK(f && f->color.a == 255 && f->color == blue);
+        CHECK(!n || n->color.a == 0);
+        CHECK(!rr || rr->color.a == 0);
+        CHECK(!i || i->color.a == 0);
+        CHECK(TextAt(r, "s", 20, ById(r, "s") ? ById(r, "s")->y + 1.6f : -1));
+    }
+    {
+        // the timing properties are read (the end state is shown at once, so they change nothing on the screen): not reported
+        static std::vector<std::string> notUsed;
+        SetCssNotUsedReporter([](const char* what, const std::string& text) { if (std::string(what) == "property") notUsed.push_back(text); });
+        Lay("<p style='transition: opacity .2s; transition-delay: 1s; animation-duration: 2s; -webkit-transition: none; cursor: pointer; "
+            "pointer-events: none; user-select: none; -webkit-appearance: none; animation-play-state: paused; zoomy: 1'>x</p>", 300);
+        SetCssNotUsedReporter(nullptr);
+        CHECK(notUsed.size() == 1 && notUsed[0] == "zoomy");
+    }
     TEST_MAIN_RESULT();
 }

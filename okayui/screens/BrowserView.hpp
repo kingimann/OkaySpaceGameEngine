@@ -52,7 +52,13 @@ struct BrowserViewResult {
 /// Web fonts (@font-face) the host loaded: a TrueType face made by OkayUI::AddFontTtf, under its family name (lower-case), weight
 /// and style. Text whose font-family names a registered family is measured and drawn with it (the closest weight and style;
 /// a bold face when there is one, else the default bold look). The default font otherwise.
-void RegisterWebFont(const std::string& family, int weight, bool italic, const OkayUI::Font* font);
+/// A font's vertical size in em (CSS sizes text by the em; OkayUI sizes a font by its line, ascent - descent): the line and the
+/// ascent per em. The default (1, 0.8) is what the layout assumes, so text drawn with it is as before.
+struct FontEm { float linePerEm = 1.0f; float ascentPerEm = 0.8f; };
+/// The em of a TrueType / OpenType file (its head unitsPerEm and hhea ascent / descent); false (and `out` unchanged) when the
+/// bytes are not a font we read or its numbers are not believable.
+bool FontEmOf(const std::uint8_t* data, std::size_t size, FontEm& out);
+void RegisterWebFont(const std::string& family, int weight, bool italic, const OkayUI::Font* font, const FontEm& em = FontEm());
 void ClearWebFonts();
 
 /// Text measured with OkayUI's current font, for the layout.

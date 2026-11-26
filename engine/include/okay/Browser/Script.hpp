@@ -81,6 +81,23 @@ struct PageDialog {
     std::string message, defaultText;
 };
 
+/// A box of the page's last layout (CSSOM View 6, getBoundingClientRect): the border box in page coordinates, or in view
+/// coordinates for a box of position: fixed (it does not move with the page's scroll).
+struct PageRect {
+    float x = 0, y = 0, w = 0, h = 0;
+    float border[4] = {0, 0, 0, 0};   ///< top, right, bottom, left
+    bool fixed = false;
+};
+/// The view the page is shown in: its size in CSS px and how far the page is scrolled (window.innerWidth, scrollY ...).
+struct PageView {
+    float width = 1024.0f, height = 768.0f;
+    float scrollX = 0.0f, scrollY = 0.0f;
+    float pageWidth = 0.0f, pageHeight = 0.0f;   ///< the laid-out page (documentElement.scrollWidth / scrollHeight)
+    bool operator==(const PageView& o) const {
+        return width == o.width && height == o.height && scrollX == o.scrollX && scrollY == o.scrollY;
+    }
+};
+
 /// One line of a page's console.
 struct ConsoleLine {
     enum Level { Log, Warn, Error } level = Log;
@@ -113,6 +130,14 @@ public:
         std::function<void(const PageDialog&)> dialog;           ///< alert / confirm / prompt
         /// getComputedStyle(el): the tab computes the style with its sheets; false when it can not.
         std::function<bool(const Node& el, ComputedStyle& out)> computedStyle;
+        // ---- round 4 (each may be empty: the page then sees a default)
+        std::string userAgent;                                   ///< navigator.userAgent ("" = kDefaultUserAgent)
+        std::string language = "en-US";                          ///< navigator.language (a BCP 47 tag)
+        std::function<PageView()> view;                          ///< the view's size and the page's scroll
+        std::function<bool(const std::string& query)> matchMedia;   ///< does this media query list match the view now?
+        /// Element `el`'s box in the last layout; false when it has none (display: none, or not laid out yet).
+        std::function<bool(const Node& el, PageRect& out)> box;
+        std::function<void(float x, float y)> scrollTo;          ///< window.scrollTo / scrollBy / scrollIntoView: scroll the page there
     };
 
     static constexpr std::uint64_t kBudgetPerCall = 20'000'000;   ///< instructions one host entry may use (about 0.1-0.3 s)
@@ -127,6 +152,9 @@ public:
     static constexpr std::size_t kMaxStateBytes = 640u << 10;     ///< a history state (as JSON)
     static constexpr std::size_t kMaxDialogs = 3;                 ///< dialogs one host entry may open (the rest go to the console)
     static constexpr int kMaxEventDepth = 32;                     ///< events dispatched inside each other (click() in a click ...)
+    static constexpr std::size_t kMaxObservers = 1000;            ///< MutationObservers a page may have at once
+    static constexpr std::size_t kMaxMutationRecords = 10000;     ///< records one observer keeps before its callback runs (more are dropped)
+    static constexpr const char* kDefaultUserAgent = "Mozilla/5.0 OkaySpaceBrowser/1.0";
 
     /// `doc` and `forms` belong to the tab and must outlive this; `pageUrl` is the page's address (location.href).
     PageScripts(HtmlDocument& doc, FormState& forms, const std::string& pageUrl, Hooks hooks);
@@ -177,6 +205,11 @@ public:
     bool Dispatch(const Node& target, const std::string& type);
     /// Move the page's clock on by `ms` and run the timers that are due (and the animation frame callbacks).
     void Tick(double ms);
+    /// The page was laid out again, or the view scrolled or changed size (the tab calls it once a frame when something did):
+    /// window gets resize / scroll events (CSSOM View 13.1, 13.2) when the view's size / the scroll changed, then the
+    /// matchMedia lists whose answer changed fire change, and the IntersectionObserver and ResizeObserver callbacks run for
+    /// the targets whose state changed (Intersection Observer 3.2.8, Resize Observer 3.4).
+    void ViewChanged();
     /// Milliseconds until the next timer is due (-1: none). The host may sleep that long.
     double NextTimerIn() const;
     std::size_t PendingTimers() const;

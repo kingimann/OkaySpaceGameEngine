@@ -8,6 +8,7 @@
 // Only the layout API that existed before round 3 is used here, so this file also builds against the old library (and fails).
 #include "BrowserLayoutTestKit.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <deque>
 #include <string>
@@ -416,6 +417,38 @@ int main() {
         const DrawCmd* xq = TextCmd(q, "x"); const DrawCmd* xd = TextCmd(d, "x");
         CHECK(xq && Near(xq->x, 100));
         CHECK(xd && Near(xd->x, 196));
+    }
+    {
+        // grid-column: content with [content-start] / [content-end] lines in the template (CSS Grid 8.3.1, the implicit -start / -end
+        // lines of a lone name; MDN's page layout): the items go into the middle column instead of being auto-placed into the
+        // first ones (they were 100 px and 340 px wide at the left, and MDN's text went off the right edge of the view)
+        const LayoutResult r = Lay("<body style='margin:0'><div style='display:grid;grid-template-columns:[a-start] 100px [full-start] 1fr "
+                                   "[content-start] minmax(0,400px) [content-end] 1fr [full-end] 100px [a-end]'><div id=x style='grid-column:content'>x</div>"
+                                   "<div id=y style='grid-column:content'>y</div><div id=f style='grid-column:full'>f</div></div>", 1280);
+        const BoxInfo* x = ById(r, "x"); const BoxInfo* y = ById(r, "y"); const BoxInfo* f = ById(r, "f");
+        CHECK(x && Near(x->x, 440) && Near(x->w, 400));
+        CHECK(y && Near(y->x, 440) && Near(y->w, 400) && x && y->y > x->y);
+        CHECK(f && Near(f->x, 100) && Near(f->w, 1080));
+    }
+    {
+        // ::before / ::after are made of the layout's own nodes, which are gone once it returns: no box, run or link of the result
+        // may point at them (the page's scripts read DrawCmd::node for element boxes; a dangling one ended the browser on a real site)
+        const HtmlDocument doc = ParseHtml("<style>.x::before{content:'hi';display:block} .y::after{content:' there'}</style>"
+                                           "<p class=x>a</p><span class=y>b</span><a class=x href=/l>c</a>");
+        const LayoutResult r = LayoutPage(doc, 300, Measure());
+        std::vector<const Node*> all;
+        std::vector<const Node*> todo{doc.root.get()};
+        while (!todo.empty()) { const Node* n = todo.back(); todo.pop_back(); all.push_back(n); for (auto& c : n->children) todo.push_back(c.get()); }
+        auto real = [&](const Node* n) { return !n || std::find(all.begin(), all.end(), n) != all.end(); };
+        bool ok = true;
+        for (const BoxInfo& b : r.boxes) ok = ok && real(b.node);
+        for (const DrawCmd& c : r.cmds) ok = ok && real(c.node);
+        for (const Node* n : r.linkNodes) ok = ok && real(n);
+        CHECK(ok);
+        const DrawCmd* hi = TextCmd(r, "hi");
+        CHECK(hi && hi->node == nullptr);
+        const DrawCmd* a = TextCmd(r, "a");
+        CHECK(a && a->node && a->node->kind == NodeKind::Text);
     }
     TEST_MAIN_RESULT();
 }

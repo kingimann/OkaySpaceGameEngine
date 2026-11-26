@@ -32,6 +32,13 @@ std::string g_restoreSummary;                     // the "Restored" window's tex
 okayup::BackupInfo g_restoreAsk;                  // the backup the confirm window is about
 bool g_restoreAskOpen = false;
 bool g_exitNow = false;                           // the editor leaves now (Keep started another one, or a restore asked for a restart)
+struct OutsideSave {                              // Save Scene As picked a place outside the project's Assets folder
+    bool open = false;
+    std::string path, inside;                     // where it was going, and the place inside the project offered instead
+    bool outsideProject = false;                  // outside the project folder (else: in it, but not in Assets)
+    std::function<void(const std::string&)> save;
+};
+OutsideSave g_outside;
 
 const ImVec4 kRed(0.96f, 0.55f, 0.50f, 1.0f), kAmber(0.95f, 0.80f, 0.35f, 1.0f), kGreen(0.45f, 0.82f, 0.56f, 1.0f);
 
@@ -85,7 +92,7 @@ std::vector<std::string> OutputDirs(const std::string& projectDir) {
         if (d.empty()) return;
         fs::path p(d);
         out.push_back(p.is_absolute() ? p.string() : (fs::path(projectDir) / p).string());
-        if (!p.is_absolute()) out.push_back(okayproj::Absolute(p).string());   // the builder resolves it against the working folder
+        if (!p.is_absolute()) out.push_back(okayproj::Absolute(p).string());   // older editors built into the working folder
     };
     std::string text;
     if (okayproj::ReadText(BuildProfilesFile(projectDir), text)) for (const BuildProfile& p : ParseBuildProfiles(text)) add(p.outputDir);
@@ -107,6 +114,8 @@ okayup::GateEnv MakeEnv(const std::vector<std::string>& args) {
     }
     env.legacySettings = [] { std::string t; okayproj::ReadText(okayproj::SettingsFileName(), t); return t; };
     env.outputDirs = OutputDirs;
+    env.askTidy = true;   // an older project's loose files: ask to move them into the standard folders (docs/engine/project_layout.md)
+    env.moved = [](const std::string& from, const std::string& to) { if (g_upgradeHooks.pathMoved) g_upgradeHooks.pathMoved(from, to); };
     return env;
 }
 
@@ -291,6 +300,55 @@ void DrawGatePrompt() {
             if (!r.backupDir.empty()) ImGui::TextWrapped("The backup is at %s", r.backupDir.c_str());
             ImGui::Dummy(ImVec2(0, 8));
             if (Btn("Close", first, true) || esc) g_gate.Answer(Choice::Close);
+            if (!r.backupDir.empty() && Btn("Open backup folder", first)) OpenFolder(r.backupDir);
+            break;
+        }
+        case PromptKind::Tidy: {
+            const okayup::TidyPlan& lp = pr.tidy;
+            ImGui::TextDisabled("PROJECT FOLDERS");
+            Heading(("Some of " + pr.projectName + "'s files are not in the project's standard folders.").c_str(), ImVec4(1, 1, 1, 1));
+            ImGui::TextDisabled("%s", FitEnd(pr.root, textW).c_str());
+            ImGui::Dummy(ImVec2(0, 4));
+            ImGui::TextWrapped("Scenes and assets go in Assets, settings in ProjectSettings, caches in Library and logs in Logs. "
+                               "Moving puts %s there and updates %s that name them. A backup copy of every file that moves or changes is made first, next to the project.",
+                               Plural((int)lp.moves.size(), "file", "files").c_str(), Plural(lp.referrers, "file", "files").c_str());
+            if (ImGui::CollapsingHeader(("What moves (" + Plural((int)lp.moves.size(), "file", "files") + ")").c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::BeginChild("##tidymoves", ImVec2(0, 150), true);
+                for (const okayup::TidyMove& m : lp.moves) ImGui::TextUnformatted((m.from + "  ->  " + m.to).c_str());
+                ImGui::EndChild();
+            }
+            if (!lp.kept.empty() && ImGui::CollapsingHeader(("What stays (" + Plural((int)lp.kept.size(), "file", "files") + ")").c_str())) {
+                ImGui::BeginChild("##tidykept", ImVec2(0, 90), true);
+                for (const std::string& k : lp.kept) ImGui::TextWrapped("%s", k.c_str());
+                ImGui::EndChild();
+            }
+            ImGui::TextDisabled("Not now: nothing moves, and the project opens as it is.");
+            ImGui::Dummy(ImVec2(0, 8));
+            if (Btn("Move the files", first, true)) g_gate.Answer(Choice::Upgrade);
+            if (Btn("Not now", first) || esc) g_gate.Answer(Choice::Keep);
+            if (Btn("Cancel", first)) g_gate.Answer(Choice::Cancel);
+            break;
+        }
+        case PromptKind::TidyDone: {
+            const okayup::TidyResult& r = pr.tidyResult;
+            ImGui::TextDisabled(r.ok ? "PROJECT FOLDERS TIDIED" : "NOTHING WAS MOVED");
+            if (r.ok) Heading(("Moved " + Plural(r.moved, "file", "files") + " and updated " + Plural(r.refsUpdated, "reference", "references") + ".").c_str(), kGreen);
+            else {
+                Heading("The files could not be moved.", kRed);
+                ImGui::PushStyleColor(ImGuiCol_Text, kRed);
+                ImGui::TextWrapped("%s", r.error.c_str());
+                ImGui::PopStyleColor();
+                ImGui::TextWrapped("%s", r.note.c_str());
+            }
+            if (!r.backupDir.empty()) ImGui::TextWrapped("Backup at %s", r.backupDir.c_str());
+            if ((!r.log.empty() || !r.kept.empty()) && ImGui::CollapsingHeader("Details")) {
+                ImGui::BeginChild("##tidylog", ImVec2(0, 150), true);
+                for (const std::string& l : r.log) ImGui::TextWrapped("%s", l.c_str());
+                for (const std::string& k : r.kept) ImGui::TextColored(kAmber, "Stayed: %s", k.c_str());
+                ImGui::EndChild();
+            }
+            ImGui::Dummy(ImVec2(0, 8));
+            if (Btn("Open project", first, true)) g_gate.Answer(Choice::Continue);
             if (!r.backupDir.empty() && Btn("Open backup folder", first)) OpenFolder(r.backupDir);
             break;
         }
@@ -483,6 +541,19 @@ void RunAfterProjectCheck(okay::editor::EditorState&, const std::string& scene, 
 
 void NoteProjectCreated(const std::string& root) { g_gate.MarkCleared(root); }
 
+std::string ScenePathAfterTidy(const std::string& scene) { return g_gate.ScenePathNow(scene); }
+
+void SaveInsideProjectOrAsk(const std::string& projectDir, const std::string& path, std::function<void(const std::string&)> save) {
+    using okayproj::layout::SaveTarget;
+    const SaveTarget where = okayproj::layout::CheckSaveTarget(projectDir, path);
+    if (where == SaveTarget::InAssets || where == SaveTarget::NoProject || g_outside.open) { if (save) save(path); return; }
+    g_outside.open = true;
+    g_outside.path = path;
+    g_outside.inside = okayproj::layout::InsideCopyPath(fs::path(projectDir), path).string();
+    g_outside.outsideProject = where == SaveTarget::Outside;
+    g_outside.save = std::move(save);
+}
+
 std::string StampedNewProjectText(const std::string& generated) {
     return okayver::ComposeProjectFile(generated, "", okayver::NormalizeVersion(RunningVersion()), okayup::IsKnownProjectKey);
 }
@@ -512,11 +583,44 @@ void NoteKeepVersionHandoff(const std::string& scene, const std::string& version
 
 bool KeepVersionRequested() { return g_keepFlag; }
 
+void DrawOutsideSave() {
+    const bool wanted = g_outside.open;
+    if (wanted) okayed::modalguard::OpenModalWhenFree("Save outside the project");   // one question at a time
+    if (!wanted && !ImGui::IsPopupOpen("Save outside the project")) return;
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(560, 0), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal("Save outside the project", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar)) return;
+    const float textW = ImGui::GetContentRegionAvail().x;
+    bool first = true;
+    auto done = [](const std::string& where) {
+        auto save = std::move(g_outside.save);
+        g_outside = OutsideSave{};
+        if (save && !where.empty()) save(where);
+    };
+    if (wanted) {
+        ImGui::TextDisabled("SAVE SCENE");
+        Heading(g_outside.outsideProject ? "That place is outside the project." : "That place is in the project folder, but not in Assets.", kAmber);
+        ImGui::TextDisabled("%s", FitEnd(g_outside.path, textW).c_str());
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::TextWrapped("Scenes and assets belong in the project's Assets folder: the Project panel shows them there, a build finds them, "
+                           "and the project can be moved or shared as one folder.");
+        ImGui::TextDisabled("%s", ("Inside the project: " + FitEnd(g_outside.inside, textW - 130.0f)).c_str());
+        ImGui::Dummy(ImVec2(0, 8));
+        const bool esc = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+        if (Btn("Save inside the project", first, true)) done(g_outside.inside);
+        else if (Btn("Save there anyway", first)) done(g_outside.path);
+        else if (Btn("Cancel", first) || esc) done(std::string());
+    }
+    if (!g_outside.open) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
 void ProjectUpgradeDraw(okay::editor::EditorState& ed) {
     g_gate.Tick(std::chrono::milliseconds(10));
     DrawGatePrompt();
     DrawUpgradeWindow(ed);
     DrawRestored();
+    DrawOutsideSave();
     // what the answers asked for (taken after the windows, so an answer is acted on in the frame it was given)
     if (auto l = g_gate.TakeLaunch()) QueueLaunch(l->exe, l->args, l->workDir);
     if (g_gate.TakeQuitRequest()) g_exitNow = true;

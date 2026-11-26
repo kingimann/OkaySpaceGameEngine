@@ -3,13 +3,14 @@
 // layout) are in VisualScriptStart.hpp and tested; this file only paints them with ImGui and handles the clicks.
 // Included from VisualScriptEditor.hpp after the editor state exists.
 #include "VisualScriptStart.hpp"
+#include "EditorTabs.hpp"   // okay::edtabs::UserFile: the per-user folder
 #include "VisualScriptUsagePrefs.hpp"
 
 namespace okay::editor::vsed {
 
 /// What is remembered about this person (loaded once from okay_vs_usage.txt, saved when it changes).
-inline VsUsagePrefs& VsPrefs() { static VsUsagePrefs p = VsUsagePrefsLoad(); return p; }
-inline void VsPrefsSave() { VsUsagePrefsSave(VsPrefs()); }
+inline VsUsagePrefs& VsPrefs() { static VsUsagePrefs p = VsUsagePrefsLoad(okay::edtabs::UserFile("okay_vs_usage.txt")); return p; }   // the per-user folder
+inline void VsPrefsSave() { VsUsagePrefsSave(VsPrefs(), okay::edtabs::UserFile("okay_vs_usage.txt")); }
 
 /// Put recipe `index` on the canvas, wired, selected and framed, and give the selected object the parts it needs.
 /// One undo step (the canvas records a graph change once).

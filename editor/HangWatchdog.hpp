@@ -138,7 +138,7 @@ inline std::string AskText(double stuckSeconds, const std::string& stage) {
     std::snprintf(buf, sizeof(buf), "%.0f seconds", stuckSeconds);
     return "The editor is not responding (stuck in: " + stage + ", for " + buf + ").\n\n"
            "Yes: wait for it.\nNo: close the editor now. Changes since the last save or autosave are lost.\n\n"
-           "What it was doing is saved in okay_hang.txt next to the crash reports.";
+           "What it was doing is saved in okay_hang.txt in your OkaySpace logs folder.";
 }
 
 /// The exit code when the person chose Close.

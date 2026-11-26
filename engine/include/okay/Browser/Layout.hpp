@@ -96,6 +96,10 @@ struct DrawCmd {
     /// through it (page coordinates, before scrolling and zoom: a point p of the command is drawn at xform(p)). Identity for
     /// everything else (translate and positive scale are applied to x, y, w, h and the font size already).
     Transform2D xform;
+    /// The node it was made from: Text, the text node; Image and Embed, the element (null for everything else). The page's
+    /// scripts read element boxes through it (getBoundingClientRect of an inline element: the union of its runs).
+    const Node* node = nullptr;
+    bool noSelect = false;   ///< Text: user-select: none (the view does not select or copy it)
 };
 
 struct LinkArea {
@@ -104,6 +108,7 @@ struct LinkArea {
     int clip = -1;
     bool fixed = false;
     int layer = 0;       ///< paint order: a higher layer is on top (LinkAt takes the topmost)
+    Cursor cursor = Cursor::Auto;   ///< the link's cursor property (Auto: the host shows a hand)
 };
 
 /// A clip region: a box whose overflow is not visible (its padding box). Things inside are clipped to it and to its parents.
@@ -128,6 +133,9 @@ struct ControlBox {
     bool fixed = false;
     FontSpec font;
     Color color;
+    bool noHit = false;            ///< pointer-events: none: clicks go through it (ControlAt skips it)
+    bool appearanceNone = false;   ///< appearance: none: the host draws no native parts (check mark, radio dot, list arrow)
+    Cursor cursor = Cursor::Auto;
 };
 
 /// One block-level box, for tests and tools.
@@ -137,6 +145,10 @@ struct BoxInfo {
     float x = 0, y = 0, w = 0, h = 0;   ///< the border box
     std::size_t firstCmd = 0;           ///< the index in cmds of the first thing drawn at or after this box's start
     const Node* node = nullptr;         ///< the element (null for an anonymous box)
+    bool fixed = false;                 ///< position: fixed (or inside such a box): its place is in the view, not the page
+    float border[4] = {0, 0, 0, 0};     ///< the used border widths: top, right, bottom, left
+    bool noHit = false;                 ///< pointer-events: none: the mouse goes through it (the host looks under it)
+    Cursor cursor = Cursor::Auto;       ///< its cursor property
 };
 
 struct LayoutResult {

@@ -9,10 +9,13 @@
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <map>
 #include <sstream>
 
 #include "ProjectState.hpp"
+#include "okay/Core/AssetDatabase.hpp"   // the reference scanners a tidy rewrites with
 #include "okay/Core/FileCopy.hpp"
+#include "okay/Core/ImportSettings.hpp"   // AssetTypeFromPath: which Assets folder a file belongs in
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneMigration.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
@@ -126,7 +129,7 @@ std::string PathKey(const fs::path& p) {
 bool IsProjectRoot(const fs::path& dir) {
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) return false;
-    return fs::is_directory(dir / "Assets", ec) || fs::exists(dir / okayproj::SettingsFileName(), ec) || fs::is_directory(dir / ".okay", ec);
+    return fs::is_directory(dir / "Assets", ec) || okayproj::HasSettingsFile(dir) || fs::is_directory(dir / ".okay", ec);
 }
 
 std::string ProjectRootForScene(const std::string& scene) {
@@ -462,7 +465,8 @@ struct UpgradeJob::Impl {
     bool SkipDir(const fs::path& p, const std::string& rel, std::size_t depth, const std::string& nm) const {
         if (SkipVcsDir(nm)) return true;
         if (rel == ".okay/backups") return true;
-        if (depth == 0 && Lower(nm) == "build") return true;     // build output (Build Settings' default folder)
+        if (depth == 0 && (Lower(nm) == "build" || nm == okayproj::layout::kBuilds)) return true;   // build output (Build Settings' default folder, old and new)
+        if (depth == 0 && (nm == okayproj::layout::kLibrary || nm == okayproj::layout::kTemp || nm == okayproj::layout::kLogs)) return true;   // caches, scratch and logs: rebuilt, never project data
         return skipKeys.count(PathKey(p)) != 0;
     }
 
@@ -562,7 +566,7 @@ struct UpgradeJob::Impl {
         // the stamp: project.okayproj last
         {
             const std::string to = okayver::NormalizeVersion(opt.toVersion);
-            const fs::path pf = root / okayproj::SettingsFileName();
+            const fs::path pf = okayproj::SettingsPath(root.string());   // ProjectSettings/project.okayproj, or the top of an older project
             std::error_code ec;
             std::string old;
             const bool exists = fs::exists(pf, ec) && !fs::is_directory(pf, ec);
@@ -571,7 +575,7 @@ struct UpgradeJob::Impl {
             if (!exists || text != old) {
                 if (exists && ReadOnly(pf)) return Fail("\"project.okayproj\" is read-only, so the project can't be stamped with the new version. Make it writable and try again. Nothing was changed.");
                 Change c;
-                c.rel = okayproj::SettingsFileName(); c.isProject = true; c.existed = exists; c.text = text; c.hash = HashText(old);
+                c.rel = pf.lexically_relative(root).generic_string(); c.isProject = true; c.existed = exists; c.text = text; c.hash = HashText(old);
                 if (exists) { c.size = fs::file_size(pf, ec); c.mtime = fs::last_write_time(pf, ec); }
                 changes.push_back(std::move(c));
             }
@@ -909,6 +913,430 @@ RestoreResult RestoreBackup(const BackupInfo& backup, const std::string& project
     return r;
 }
 
+// ---- tidying the folders --------------------------------------------------------------------------------------------------
+// Written for this engine from the layout in docs/engine/project_layout.md. The references are found with the asset
+// database's own scanners (okay/Core/AssetDatabase.hpp), the same ones the Project panel rewrites with on a rename.
+
+namespace {
+
+// The standard Assets folder a file belongs in, or "" when the tidy leaves it where it is (data files the editor reads at
+// the top of the project, notes, anything it does not know).
+std::string AssetFolderFor(const std::string& name) {
+    using okay::AssetType;
+    if (HasExt(name, ".okay")) return "Scripts";   // OkayScript
+    switch (okay::AssetTypeFromPath(name)) {
+        case AssetType::Scene: return okayproj::layout::kScenes;
+        case AssetType::Prefab: return "Prefabs";
+        case AssetType::Material: return "Materials";
+        case AssetType::Model: case AssetType::Mesh: return "Models";
+        case AssetType::Texture: return "Textures";
+        case AssetType::Audio: return "Audio";
+        case AssetType::Animation: return "Animations";
+        case AssetType::Dialogue: return "Dialogue";
+        case AssetType::Quest: return "Quests";
+        case AssetType::BehaviorTree: return "AI";
+        case AssetType::VisualScript: case AssetType::Script: return "Scripts";
+        case AssetType::Sequence: return "Cutscenes";
+        case AssetType::Font: return "Fonts";
+        default: return "";
+    }
+}
+
+// Files a tidy reads for references, and the scanner for each (the extensions AssetDatabase registers in AssetDatabaseDeps.cpp).
+enum class RefKind { None, Scene, Material, Text, Model, SceneList };
+RefKind RefKindOf(const std::string& rel) {
+    const std::string name = fs::path(rel).filename().string();
+    if (name == "scene_build.txt") return RefKind::SceneList;
+    const std::string ext = Lower(fs::path(rel).extension().string());
+    if (ext == ".okayscene" || ext == ".okayprefab") return RefKind::Scene;
+    if (ext == ".okaymat") return RefKind::Material;
+    if (ext == ".obj" || ext == ".mtl" || ext == ".dae" || ext == ".fbx") return RefKind::Model;
+    static const char* text[] = {".okayanim", ".okayclip", ".okaydialog", ".okayquest", ".okaybt", ".okayvs", ".okayseq", ".okayloot",
+                                 ".okayitems", ".okayweapon", ".okayrecipes", ".okaydata", ".okaynav", ".gltf"};
+    for (const char* e : text) if (ext == e) return RefKind::Text;
+    return RefKind::None;
+}
+
+// Scenes In Build: "<on>|<path>" lines.
+std::vector<okay::FoundRef> ExtractSceneListRefs(const std::string& text) {
+    std::vector<okay::FoundRef> out;
+    std::size_t at = 0;
+    while (at < text.size()) {
+        std::size_t end = text.find('\n', at);
+        if (end == std::string::npos) end = text.size();
+        std::size_t le = end;
+        if (le > at && text[le - 1] == '\r') --le;
+        const std::size_t bar = text.find('|', at);
+        if (bar != std::string::npos && bar < le && bar + 1 < le) {
+            okay::FoundRef r;
+            r.begin = bar + 1; r.end = le; r.path = text.substr(r.begin, r.end - r.begin);
+            out.push_back(std::move(r));
+        }
+        at = end + 1;
+    }
+    return out;
+}
+
+std::vector<okay::FoundRef> RefsIn(RefKind k, const std::string& text) {
+    switch (k) {
+        case RefKind::Scene: return okay::ExtractSceneRefs(text);
+        case RefKind::Material: return okay::ExtractMaterialRefs(text);
+        case RefKind::Text: return okay::ExtractTextRefs(text);
+        case RefKind::Model: return okay::ExtractModelRefs(text);
+        case RefKind::SceneList: return ExtractSceneListRefs(text);
+        default: return {};
+    }
+}
+
+// A project-relative path as a lookup key: '/' separators, lexically normal, lower case on Windows.
+std::string RelKey(const std::string& rel) {
+    std::string s = fs::path(rel).lexically_normal().generic_string();
+#if defined(_WIN32)
+    s = Lower(s);
+#endif
+    return s;
+}
+
+// Top-level folders a tidy never looks into: version control, caches, logs, scratch, build output, and the editor's own.
+bool TidySkipsDir(const std::string& rel) {
+    const std::string top = rel.substr(0, rel.find('/'));
+    if (SkipVcsDir(top) || Lower(top) == "build") return true;
+    if (top == okayproj::layout::kLibrary || top == okayproj::layout::kLogs || top == okayproj::layout::kTemp || top == okayproj::layout::kBuilds) return true;
+    return rel == ".okay/backups" || rel == ".okay/trash" || rel == ".okay/thumbs" || rel == ".okay/history";
+}
+
+struct ProjectFiles {
+    std::vector<std::string> rels;   // every regular file, project-relative
+    std::set<std::string> keys;      // RelKey of each
+};
+ProjectFiles ListProjectFiles(const fs::path& root) {
+    ProjectFiles pf;
+    std::error_code ec;
+    std::size_t seen = 0;
+    for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+        if (++seen > 200000) break;
+        std::error_code e2;
+        const std::string rel = it->path().lexically_relative(root).generic_string();
+        if (it->is_symlink(e2)) { if (it->is_directory(e2)) it.disable_recursion_pending(); continue; }
+        if (it->is_directory(e2)) { if (TidySkipsDir(rel)) it.disable_recursion_pending(); continue; }
+        if (!it->is_regular_file(e2)) continue;
+        pf.rels.push_back(rel);
+        pf.keys.insert(RelKey(rel));
+    }
+    std::sort(pf.rels.begin(), pf.rels.end());
+    return pf;
+}
+
+// One file whose references change.
+struct RefEdit {
+    std::string rel;        // where it is now
+    std::string newRel;     // where it will be (== rel when it does not move)
+    std::string oldText, newText;
+    int count = 0;
+    bool readOnly = false;
+    std::set<std::string> targets;   // RelKey of the moved files it names
+};
+
+// Every reference to change when `moves` are made. A reference is read the way the loaders read it: relative to the folder of
+// the file that holds it first, then relative to the project. It is written back in the same style; an absolute path inside the
+// project stays absolute.
+std::vector<RefEdit> ComputeRefEdits(const fs::path& root, const ProjectFiles& files, const std::vector<TidyMove>& moves) {
+    std::map<std::string, std::string> to;   // RelKey(from) -> to
+    for (const TidyMove& m : moves) to[RelKey(m.from)] = m.to;
+    auto movedTo = [&](const std::string& rel) -> std::string {
+        auto it = to.find(RelKey(rel));
+        return it == to.end() ? rel : it->second;
+    };
+    const std::string rootText = root.lexically_normal().generic_string();
+    std::vector<RefEdit> out;
+    for (const std::string& rel : files.rels) {
+        const RefKind kind = RefKindOf(rel);
+        if (kind == RefKind::None) continue;
+        std::error_code ec;
+        const fs::path abs = root / fs::path(rel);
+        if (fs::file_size(abs, ec) > (64u << 20)) continue;   // not a text asset anyone writes by hand
+        RefEdit e;
+        e.rel = rel;
+        e.newRel = movedTo(rel);
+        if (!okayproj::ReadText(abs.string(), e.oldText)) continue;
+        const std::string dirOld = fs::path(rel).parent_path().generic_string();
+        const std::string dirNew = fs::path(e.newRel).parent_path().generic_string();
+        std::vector<okay::RefRewrite> reps;
+        std::set<std::pair<std::size_t, std::size_t>> spans;
+        for (const okay::FoundRef& r : RefsIn(kind, e.oldText)) {
+            if (r.begin == std::string::npos || r.end > e.oldText.size() || r.begin >= r.end || !spans.insert({r.begin, r.end}).second) continue;
+            std::string written = r.path;
+            for (char& c : written) if (c == '\\') c = '/';
+            if (written.empty()) continue;
+            const fs::path wp(written);
+            std::string target, style;   // style: "file" (relative to the holder), "project", "absolute"
+            if (wp.is_absolute()) {
+                const std::string a = wp.lexically_normal().generic_string();
+                if (a.size() > rootText.size() + 1 && a.compare(0, rootText.size(), rootText) == 0 && a[rootText.size()] == '/') {
+                    target = a.substr(rootText.size() + 1); style = "absolute";
+                }
+            } else {
+                const std::string viaFile = (fs::path(dirOld) / wp).lexically_normal().generic_string();
+                const std::string viaProject = wp.lexically_normal().generic_string();
+                if (viaFile.rfind("..", 0) != 0 && files.keys.count(RelKey(viaFile))) { target = viaFile; style = "file"; }
+                else if (viaProject.rfind("..", 0) != 0 && files.keys.count(RelKey(viaProject))) { target = viaProject; style = "project"; }
+            }
+            if (target.empty()) continue;
+            // A file at the top of the project reads the same either way. Behaviour trees and clip files are looked up from the
+            // project folder (BehaviorTreeRunner, Character: AssetBaseDir); everything else from the folder of the scene.
+            if (style == "file" && dirOld.empty()) {
+                const okay::AssetType ty = okay::AssetTypeFromPath(target);
+                if (ty == okay::AssetType::BehaviorTree || ty == okay::AssetType::Animation) style = "project";
+            }
+            const std::string tNew = movedTo(target);
+            const bool targetMoves = RelKey(tNew) != RelKey(target);
+            if (!targetMoves && (style != "file" || dirOld == dirNew)) continue;   // nothing about this reference changes
+            std::string nt;
+            if (style == "file") nt = fs::path(tNew).lexically_relative(fs::path(dirNew.empty() ? "." : dirNew)).generic_string();
+            else if (style == "project") nt = tNew;
+            else nt = (root / fs::path(tNew)).lexically_normal().generic_string();
+            if (nt.empty() || nt == written) continue;
+            if (targetMoves) e.targets.insert(RelKey(target));
+            reps.push_back(okay::RewriteRef(r, std::move(nt)));   // the asset database's own way: backslashes kept, quotes escaped
+        }
+        if (reps.empty()) continue;
+        e.count = static_cast<int>(reps.size());
+        e.newText = okay::ApplyRefRewrites(e.oldText, std::move(reps));
+        e.readOnly = ReadOnly(abs);
+        out.push_back(std::move(e));
+    }
+    return out;
+}
+
+void AddMove(TidyPlan& p, const fs::path& root, const ProjectFiles& files, const std::string& from, const std::string& to) {
+    std::error_code ec;
+    if (fs::exists(root / fs::path(to), ec) || files.keys.count(RelKey(to))) { p.kept.push_back(from + ": " + to + " is already there"); return; }
+    for (const TidyMove& m : p.moves) if (RelKey(m.to) == RelKey(to)) { p.kept.push_back(from + ": " + to + " is taken by " + m.from); return; }
+    if (ReadOnly(root / fs::path(from))) { p.kept.push_back(from + ": read-only"); return; }
+    p.moves.push_back({from, to});
+    for (const char* side : {".okaymeta", ".autosave"}) {   // a file's sidecars go with it
+        const std::string s = from + side;
+        if (!files.keys.count(RelKey(s))) continue;
+        if (fs::exists(root / fs::path(to + side), ec) || ReadOnly(root / fs::path(s))) { p.kept.push_back(s + ": stays (its new place is taken, or it is read-only)"); continue; }
+        p.moves.push_back({s, to + side});
+    }
+}
+
+std::string ContentHash(const fs::path& p, std::uint64_t& size, bool& ok) {
+    std::string t;
+    ok = okayproj::ReadText(p.string(), t);
+    size = t.size();
+    return Hex(HashText(t));
+}
+
+}  // namespace
+
+TidyPlan PlanTidy(const std::string& projectDir) {
+    TidyPlan p;
+    p.projectDir = projectDir;
+    std::error_code ec;
+    const fs::path root = okayproj::Absolute(fs::path(projectDir));
+    if (projectDir.empty() || !IsProjectRoot(root)) return p;
+    // Only the top of the project and .okay/ can hold files to move, so only they are listed first: opening a project that
+    // needs nothing (every project made by this editor) costs a look at two folders, not a walk of the whole project.
+    ProjectFiles files;
+    for (const fs::path& dir : {root, root / ".okay"}) {
+        for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+            std::error_code e2;
+            if (!it->is_regular_file(e2) || it->is_symlink(e2)) continue;
+            const std::string rel = it->path().lexically_relative(root).generic_string();
+            files.rels.push_back(rel);
+            files.keys.insert(RelKey(rel));
+        }
+        ec.clear();
+    }
+    std::sort(files.rels.begin(), files.rels.end());
+    namespace L = okayproj::layout;
+    // 1. the settings files, the old build report and the old thumbnails
+    struct Fixed { const char* from; std::string to; };
+    const Fixed fixed[] = {
+        {"project.okayproj", std::string(L::kSettings) + "/project.okayproj"},
+        {".okay/build_profiles.cfg", std::string(L::kSettings) + "/build_profiles.cfg"},
+        {".okay/scene_build.txt", std::string(L::kSettings) + "/scene_build.txt"},
+        {".okay/build_report.txt", std::string(L::kLogs) + "/build_report.txt"},
+    };
+    for (const Fixed& f : fixed) if (files.keys.count(RelKey(f.from))) AddMove(p, root, files, f.from, f.to);
+    const fs::path thumbs = root / ".okay" / "thumbs";
+    if (fs::is_directory(thumbs, ec)) {
+        std::size_t n = 0;
+        for (fs::recursive_directory_iterator it(thumbs, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end && n < 50000; it.increment(ec), ++n) {
+            std::error_code e2;
+            if (!it->is_regular_file(e2) || it->is_symlink(e2)) continue;
+            const std::string rel = it->path().lexically_relative(root).generic_string();
+            const std::string sub = it->path().lexically_relative(thumbs).generic_string();
+            const ProjectFiles none;
+            AddMove(p, root, none, rel, std::string(L::kLibrary) + "/Thumbnails/" + sub);
+        }
+    }
+    // 2. scenes and assets lying next to project.okayproj (an old flat project) go into Assets/<folder>
+    for (const std::string& rel : files.rels) {
+        if (rel.find('/') != std::string::npos) continue;
+        const std::string folder = AssetFolderFor(rel);
+        if (folder.empty()) continue;
+        AddMove(p, root, files, rel, std::string(L::kAssets) + "/" + folder + "/" + rel);
+    }
+    if (p.moves.empty()) return p;
+    // 3. a file that a read-only file names stays where it is (the read-only file could not be updated)
+    const ProjectFiles all = ListProjectFiles(root);
+    std::vector<RefEdit> edits = ComputeRefEdits(root, all, p.moves);
+    std::set<std::string> blocked;
+    for (const RefEdit& e : edits)
+        if (e.readOnly) for (const std::string& k : e.targets) if (blocked.insert(k).second) p.kept.push_back(k + ": " + e.rel + " names it and is read-only");
+    if (!blocked.empty()) {
+        std::vector<TidyMove> keep;
+        for (const TidyMove& m : p.moves) {
+            const bool sidecarOfBlocked = (HasExt(m.from, ".okaymeta") || HasExt(m.from, ".autosave")) &&
+                                          blocked.count(RelKey(m.from.substr(0, m.from.rfind('.'))));
+            if (!blocked.count(RelKey(m.from)) && !sidecarOfBlocked) keep.push_back(m);
+        }
+        p.moves = std::move(keep);
+        edits = ComputeRefEdits(root, all, p.moves);
+    }
+    p.referrers = static_cast<int>(edits.size());
+    return p;
+}
+
+TidyResult ApplyTidy(const TidyPlan& plan, const TidyOptions& opt) {
+    TidyResult r;
+    r.kept = plan.kept;
+    auto hook = [&](const char* stage, const std::string& what) { return opt.fail && opt.fail(stage, what); };
+    auto fail = [&](const std::string& why, const std::string& note) { r.ok = false; r.error = why; r.note = note; return r; };
+    const fs::path root = okayproj::Absolute(fs::path(plan.projectDir));
+    std::error_code ec;
+    if (plan.projectDir.empty() || !fs::is_directory(root, ec)) return fail("The project folder isn't there.", "Nothing was changed.");
+    if (plan.moves.empty()) { r.ok = true; return r; }
+
+    // 1. the plan must still hold, and every file that changes must be writable
+    for (const TidyMove& m : plan.moves) {
+        if (!fs::is_regular_file(root / fs::path(m.from), ec)) return fail("\"" + m.from + "\" is gone since the list was made.", "Nothing was changed.");
+        if (fs::exists(root / fs::path(m.to), ec)) return fail("\"" + m.to + "\" appeared since the list was made.", "Nothing was changed.");
+    }
+    const ProjectFiles files = ListProjectFiles(root);
+    const std::vector<RefEdit> edits = ComputeRefEdits(root, files, plan.moves);
+    for (const RefEdit& e : edits)
+        if (e.readOnly) return fail("\"" + e.rel + "\" is read-only, so its references can't be updated.", "Nothing was changed.");
+
+    // 2. the backup: every file that moves or is rewritten, checked, with a manifest RestoreBackup reads
+    std::vector<std::string> backupRels;
+    std::set<std::string> inBackup;
+    for (const TidyMove& m : plan.moves) if (inBackup.insert(RelKey(m.from)).second) backupRels.push_back(m.from);
+    for (const RefEdit& e : edits) if (inBackup.insert(RelKey(e.rel)).second) backupRels.push_back(e.rel);
+    std::string parentText = opt.backupParent;
+    const fs::path parent = parentText.empty() ? root.parent_path() : fs::path(parentText);
+    std::string name = root.filename().string();
+    if (name.empty()) name = root.parent_path().filename().string();
+    const fs::path bdir = FreeBackupPath(parent, name + " (backup before tidy)");
+    std::string manifest = std::string(kManifestMagic) + "\nproject=" + name + "\nfrom=\nto=\nmode=tidy\nmade=" + NowUtc() + "\n";
+    std::uint64_t bytes = 0;
+    auto dropBackup = [&]() { std::error_code e2; fs::remove_all(bdir, e2); };
+    for (const std::string& rel : backupRels) {
+        if (hook("tidy-backup", rel)) { dropBackup(); return fail("Couldn't make the backup of \"" + rel + "\": the disk refused.", "Nothing was changed."); }
+        const fs::path src = root / fs::path(rel), dst = bdir / fs::path(rel);
+        std::error_code e2;
+        fs::create_directories(dst.parent_path(), e2);
+        okay::CopyFileOver(src, dst, e2);
+        std::uint64_t s1 = 0, s2 = 0; bool ok1 = false, ok2 = false;
+        const std::string h1 = ContentHash(src, s1, ok1), h2 = ContentHash(dst, s2, ok2);
+        if (e2 || !ok1 || !ok2 || s1 != s2 || h1 != h2) { dropBackup(); return fail("Couldn't make the backup of \"" + rel + "\"" + (e2 ? ": " + e2.message() : std::string(".")), "Nothing was changed."); }
+        bytes += s1;
+        manifest += "changed=" + std::to_string(s1) + " " + h1 + " " + Esc(rel) + "\n";
+    }
+    for (const TidyMove& m : plan.moves) manifest += "created=" + Esc(m.to) + "\n";
+    manifest += "files=" + std::to_string(backupRels.size()) + "\nbytes=" + std::to_string(bytes) + "\n";
+    {
+        std::string err;
+        std::error_code e2;
+        fs::create_directories((bdir / kManifestRel).parent_path(), e2);
+        if (hook("tidy-backup", "manifest") || !okayproj::WriteTextAtomic((bdir / kManifestRel).string(), manifest, &err)) {
+            dropBackup();
+            return fail("Couldn't finish the backup" + (err.empty() ? std::string(".") : ": " + err), "Nothing was changed.");
+        }
+    }
+    r.backupDir = bdir.string();
+    r.log.push_back("Backup of " + Count(static_cast<int>(backupRels.size()), "file", "files") + " in \"" + bdir.string() + "\".");
+
+    // 3. copy each file to its new place and check the copy; 4. write the updated references. A failure takes back all of it.
+    std::vector<fs::path> made;                       // copies and folders made, newest last
+    std::vector<std::pair<fs::path, std::string>> rewrittenInPlace;   // files that did not move, with their old text
+    auto undo = [&]() {
+        std::error_code e2;
+        for (auto it = rewrittenInPlace.rbegin(); it != rewrittenInPlace.rend(); ++it) okayproj::WriteTextAtomic(it->first.string(), it->second);
+        for (auto it = made.rbegin(); it != made.rend(); ++it) {
+            if (fs::is_directory(*it, e2)) { if (fs::is_empty(*it, e2)) fs::remove(*it, e2); }
+            else fs::remove(*it, e2);
+        }
+    };
+    const std::string kept = "Nothing was changed: the files are where they were.";
+    for (const TidyMove& m : plan.moves) {
+        const fs::path src = root / fs::path(m.from), dst = root / fs::path(m.to);
+        std::vector<fs::path> dirs;
+        for (fs::path d = dst.parent_path(); !d.empty() && d != root && !fs::exists(d, ec); d = d.parent_path()) dirs.push_back(d);
+        for (auto it = dirs.rbegin(); it != dirs.rend(); ++it) { std::error_code e2; if (fs::create_directory(*it, e2)) made.push_back(*it); }
+        std::error_code e2;
+        if (hook("tidy-copy", m.from) || !fs::copy_file(src, dst, fs::copy_options::none, e2) || e2) {
+            undo(); dropBackup(); r.backupDir.clear();
+            return fail("Couldn't copy \"" + m.from + "\" to \"" + m.to + "\"" + (e2 ? ": " + e2.message() : std::string(".")), kept);
+        }
+        made.push_back(dst);
+        std::uint64_t s1 = 0, s2 = 0; bool ok1 = false, ok2 = false;
+        const std::string h1 = ContentHash(src, s1, ok1), h2 = ContentHash(dst, s2, ok2);
+        if (hook("tidy-verify", m.to) || !ok1 || !ok2 || s1 != s2 || h1 != h2) { undo(); dropBackup(); r.backupDir.clear(); return fail("The copy of \"" + m.from + "\" didn't match it.", kept); }
+    }
+    for (const RefEdit& e : edits) {
+        const bool moves = RelKey(e.newRel) != RelKey(e.rel);
+        const fs::path where = root / fs::path(moves ? e.newRel : e.rel);
+        std::string err;
+        if (hook("tidy-refs", e.rel) || !okayproj::WriteTextAtomic(where.string(), e.newText, &err)) {
+            undo(); dropBackup(); r.backupDir.clear();
+            return fail("Couldn't update the references in \"" + e.rel + "\"" + (err.empty() ? std::string(".") : ": " + err), kept);
+        }
+        if (!moves) rewrittenInPlace.push_back({where, e.oldText});
+        r.refsUpdated += e.count;
+        r.rewritten.push_back(moves ? e.newRel : e.rel);
+        r.log.push_back("Updated " + Count(e.count, "reference", "references") + " in " + (moves ? e.newRel : e.rel) + ".");
+    }
+
+    // 5. only now the old files go (each one's copy was checked above). One that can't be removed stays: nothing is lost.
+    for (const TidyMove& m : plan.moves) {
+        std::error_code e2;
+        if (hook("tidy-remove", m.from) || !fs::remove(root / fs::path(m.from), e2) || e2) {
+            r.kept.push_back(m.from + ": copied to " + m.to + ", but the old file could not be removed" + (e2 ? " (" + e2.message() + ")" : std::string()));
+        }
+        r.done.push_back(m);
+        ++r.moved;
+        r.log.push_back("Moved " + m.from + " to " + m.to + ".");
+    }
+    // an empty .okay/thumbs left behind by the move is taken away (only empty folders)
+    for (const char* d : {".okay/thumbs"}) {
+        const fs::path dir = root / d;
+        std::vector<fs::path> dirs;
+        for (fs::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) { std::error_code e2; if (it->is_directory(e2)) dirs.push_back(it->path()); }
+        std::sort(dirs.begin(), dirs.end(), [](const fs::path& a, const fs::path& b) { return a.native().size() > b.native().size(); });
+        for (const fs::path& p : dirs) { std::error_code e2; if (fs::is_empty(p, e2)) fs::remove(p, e2); }
+        std::error_code e2;
+        if (fs::is_directory(dir, e2) && fs::is_empty(dir, e2)) fs::remove(dir, e2);
+    }
+    r.ok = true;
+    return r;
+}
+
+std::string MovedPath(const TidyResult& r, const std::string& projectDir, const std::string& path) {
+    if (path.empty()) return path;
+    const fs::path root = okayproj::Absolute(fs::path(projectDir));
+    const fs::path p(path);
+    const bool abs = p.is_absolute();
+    const std::string rel = abs ? okayproj::Absolute(p).lexically_relative(root).generic_string() : p.lexically_normal().generic_string();
+    if (rel.empty() || rel.rfind("..", 0) == 0) return path;
+    for (const TidyMove& m : r.done)
+        if (RelKey(m.from) == RelKey(rel)) return abs ? (root / fs::path(m.to)).string() : m.to;
+    return path;
+}
+
 // ---- the gate ---------------------------------------------------------------------------------------------------------------
 
 ProjectGate::ProjectGate(GateEnv env) : env_(std::move(env)) {}
@@ -955,11 +1383,12 @@ void ProjectGate::Open(const std::string& scene, std::function<void()> proceed, 
         case okayver::Decision::SamePatchLine:   // another patch of this line: formats never change in a patch, so nothing to ask
         case okayver::Decision::DevBuild:
             MarkCleared(root);
-            if (proceed) proceed();
+            proceed_ = std::move(proceed); cancel_ = std::move(cancel);
+            ProceedOrTidy(root, scene);
             return;
         case okayver::Decision::Older:
         case okayver::Decision::Unknown:
-            if (IsKept(root)) { MarkCleared(root); if (proceed) proceed(); return; }
+            if (IsKept(root)) { MarkCleared(root); proceed_ = std::move(proceed); cancel_ = std::move(cancel); ProceedOrTidy(root, scene); return; }
             proceed_ = std::move(proceed); cancel_ = std::move(cancel);
             Ask(d == okayver::Decision::Older ? PromptKind::Older : PromptKind::Unknown, root, scene, st.version);
             return;
@@ -1065,7 +1494,19 @@ void ProjectGate::Answer(Choice c) {
             if (c == Choice::Cancel && job_) job_->Cancel();
             return;
         case PromptKind::Done:
-            if (c == Choice::Continue) { MarkCleared(prompt_.root); Finish(true); }
+            if (c == Choice::Continue) {
+                MarkCleared(prompt_.root);
+                if (prompt_.backupOnly) Finish(true);   // a newer project opened as it is: its folders are left alone too
+                else { const std::string root = prompt_.root, scene = prompt_.scene; ProceedOrTidy(root, scene); }
+            }
+            return;
+        case PromptKind::Tidy:
+            if (c == Choice::Upgrade) RunTidy();
+            else if (c == Choice::Keep) Finish(true);   // "Not now": nothing moves, and it is not asked again this session
+            else if (c == Choice::Cancel) Finish(false);
+            return;
+        case PromptKind::TidyDone:
+            if (c == Choice::Continue || c == Choice::Close) Finish(true);   // moved or not, the project opens (a failed tidy changed nothing)
             return;
         case PromptKind::Failed:
             if (c == Choice::Close || c == Choice::Cancel) Finish(false);
@@ -1073,6 +1514,45 @@ void ProjectGate::Answer(Choice c) {
         case PromptKind::None:
             return;
     }
+}
+
+void ProjectGate::ProceedOrTidy(const std::string& root, const std::string& scene) {
+    if (env_.askTidy && !root.empty() && tidyAsked_.insert(RootKey(root)).second) {
+        TidyPlan plan = PlanTidy(root);
+        if (!plan.Empty()) {
+            prompt_ = Prompt{};
+            prompt_.kind = PromptKind::Tidy;
+            prompt_.root = root;
+            prompt_.scene = scene;
+            prompt_.projectName = fs::path(root).filename().string();
+            prompt_.runningVersion = okayver::NormalizeVersion(env_.running);
+            prompt_.tidy = std::move(plan);
+            return;
+        }
+    }
+    Finish(true);
+}
+
+void ProjectGate::RunTidy() {
+    TidyOptions o;
+    o.fail = env_.fail;
+    TidyResult r = ApplyTidy(prompt_.tidy, o);
+    if (r.ok) {
+        const std::string sceneNow = MovedPath(r, prompt_.root, prompt_.scene);
+        if (sceneNow != prompt_.scene) movedScenes_.push_back({RootKey(prompt_.scene), sceneNow});
+        if (env_.moved) {
+            const fs::path root = okayproj::Absolute(fs::path(prompt_.root));
+            for (const TidyMove& m : r.done) env_.moved((root / fs::path(m.from)).string(), (root / fs::path(m.to)).string());
+        }
+    }
+    prompt_.tidyResult = std::move(r);
+    prompt_.kind = PromptKind::TidyDone;
+}
+
+std::string ProjectGate::ScenePathNow(const std::string& scene) const {
+    const std::string k = RootKey(scene);
+    for (const auto& m : movedScenes_) if (m.first == k) return m.second;
+    return scene;
 }
 
 void ProjectGate::Tick(std::chrono::milliseconds budget) {

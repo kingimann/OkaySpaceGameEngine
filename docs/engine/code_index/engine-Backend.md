@@ -2,7 +2,7 @@
 
 # Code index: engine-Backend
 
-Back to the [code index](../code_index.md). 4 headers, 18 names.
+Back to the [code index](../code_index.md). 5 headers, 25 names.
 
 ## `engine/include/okay/Backend/Auth.hpp`
 
@@ -13,16 +13,26 @@ Back to the [code index](../code_index.md). 4 headers, 18 names.
 
 ## `engine/include/okay/Backend/Backend.hpp`
 
-- `ProviderKind` enum, line 31: Which provider serves the programs.
-- `ProviderKindName` function, line 33
-- `ParseProviderKind` function, line 43: "supabase", "local" or "auto" in any letter case, spaces and line ends around it ignored. Anything else is Auto, so a
-- `Config` struct, line 55: The backend configuration in force, and where the choice came from ("OKAY_BACKEND", "backend.json" or "default").
-- `LoadConfig` function, line 62: Read the configuration: 'envValue' (the OKAY_BACKEND variable, null when unset) wins; then "provider" in
+- `ProviderKind` enum, line 33: Which provider serves the programs.
+- `ProviderKindName` function, line 35
+- `ParseProviderKind` function, line 45: "supabase", "local" or "auto" in any letter case, spaces and line ends around it ignored. Anything else is Auto, so a
+- `Config` struct, line 57: The backend configuration in force, and where the choice came from ("OKAY_BACKEND", "backend.json" or "default").
+- `LoadConfig` function, line 64: Read the configuration: 'envValue' (the OKAY_BACKEND variable, null when unset) wins; then "provider" in
+
+## `engine/include/okay/Backend/Database.hpp`
+
+- `DbRequest` struct, line 32: One database request as a provider receives it: the method, the resource ("table?query", no leading "/"), the body
+- `ValueText` enum, line 43: How a filter value is written into the address. Encoded (the default) percent-encodes every byte outside RFC 3986's
+- `Return` enum, line 46: What an insert, upsert or update answers with ("Prefer: return=..."). Unset sends no return= option.
+- `IsValue` enum, line 49: The values PostgREST's "is" operator accepts.
+- `Query` class, line 56: A request on one table, built step by step. Each step adds its part to the address in call order (two Order steps share
+- `Database` class, line 186: The Database calls. A provider sends a DbRequest (the Supabase provider under "/rest/v1/") and runs functions.
 
 ## `engine/include/okay/Backend/Supabase.hpp`
 
-- `SplitHeaders` function, line 25: Extra header lines, one per line ("x-upsert: true\ncache-control: max-age=30"). Blank lines and stray quotes are dropped.
-- `Auth` class, line 58: The Auth calls on Supabase. Holds the address, the publishable key and the transport it sends through (the transport
+- `SplitHeaders` function, line 30: Extra header lines, one per line ("x-upsert: true\ncache-control: max-age=30"). Blank lines and stray quotes are dropped.
+- `Auth` class, line 63: The Auth calls on Supabase. Holds the address, the publishable key and the transport it sends through (the transport
+- `Database` class, line 212: The Database calls on Supabase (PostgREST): a table request goes to "/rest/v1/<table>?<query>", a function to
 
 ## `engine/include/okay/Backend/Transport.hpp`
 

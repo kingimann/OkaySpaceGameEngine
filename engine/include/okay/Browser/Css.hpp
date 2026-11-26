@@ -144,6 +144,9 @@ struct Transform2D {
 bool ParseTransform(const std::string& text, float em, float boxW, float boxH, Transform2D& out);
 
 enum class DecoStyle { Solid, Double, Dotted, Dashed, Wavy };
+/// The mouse pointer's shape over an element (CSS UI 4, 5.1 cursor): the shapes a host can show; the other keywords (help, cell,
+/// crosshair, zoom-in ...) are Default, and grab / grabbing / all-scroll are Move.
+enum class Cursor : std::uint8_t { Auto, Default, None, Pointer, Text, Move, NotAllowed, Wait, Progress, ResizeNS, ResizeEW, ResizeNESW, ResizeNWSE };
 enum class ObjectFit { Fill, Contain, Cover, None, ScaleDown };
 
 struct BoxShadow {
@@ -249,6 +252,15 @@ struct ComputedStyle {
     bool hasContent = false;
     std::string content;
     std::shared_ptr<const CustomProps> vars;
+    // ---- user interface (CSS UI 4) and animations (CSS Animations 1)
+    bool pointerNone = false;         ///< pointer-events: none (inherited): the mouse goes through it to what is under it
+    Cursor cursor = Cursor::Auto;     ///< cursor (inherited)
+    bool noSelect = false;            ///< user-select: none (and the prefixed ones): its text is not selected or copied
+    bool appearanceNone = false;      ///< appearance: none (and -webkit- / -moz-): a form control has no native parts (check mark, list arrow)
+    std::string animationName;        ///< animation-name ("" / "none": no animation)
+    bool animFillsForwards = false;   ///< animation-fill-mode forwards or both
+    bool animReverse = false;         ///< animation-direction reverse or alternate-reverse: it ends on its first keyframe
+    bool animInfinite = false;        ///< animation-iteration-count: infinite (it never ends)
 
     float LineHeightPx() const {
         if (lineHeightFactor >= 0.0f) return lineHeightFactor * fontSize;
@@ -326,8 +338,14 @@ struct FontFace {
     int weight = 400;
     bool italic = false;
 };
+/// An @keyframes rule (CSS Animations 1, 3), kept for its ends: the declarations of its "from" / 0% and "to" / 100% keyframes.
+struct Keyframes {
+    std::string name;
+    std::vector<Declaration> from, to;
+};
 struct StyleSheet {
     std::vector<Rule> rules;
+    std::vector<Keyframes> keyframes;   ///< at most 512
     std::vector<MediaQuery> media;
     std::vector<FontFace> fontFaces;
     std::vector<std::string> imports;   ///< @import url() as written, in order

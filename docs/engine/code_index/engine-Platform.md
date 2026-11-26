@@ -35,7 +35,7 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 - `Provider` enum, line 109: Which backend signs players in.
 - `SessionCheck` enum, line 112: How a check of the saved session with the server went (AccountService::CheckSession).
 - `AccountService` class, line 118: A client-side account service. Construct it with a config directory (where a
-- `DefaultConfigDir` function, line 978: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
+- `DefaultConfigDir` function, line 985: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
 
 ## `engine/include/okay/Platform/Achievements.hpp`
 
@@ -172,36 +172,36 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 - `NativeAvailable` function, line 123: True where the native client exists: Windows (WinHTTP), or POSIX built with OKAY_OWN_HTTP (our own client, always on;
 - `NoClientReason` function, line 134: Why a call failed on a build with no native client (the error text of Request, RequestEx and the seam).
 - `RequestOptions` struct, line 144: Extra controls for downloads (the own client on Linux, WinHTTP on Windows; elsewhere RequestEx returns
-- `ExResult` struct, line 181: Result of RequestEx: Result plus what a resumable download needs.
+- `ExResult` struct, line 183: Result of RequestEx: Result plus what a resumable download needs.
 
 ## `engine/include/okay/Platform/OwnHttp.hpp`
 
-- `Err` enum, line 39
-- `ErrName` function, line 44
-- `Stream` struct, line 65: Byte stream the parser reads from and the builder writes to.
-- `Limits` struct, line 78
-- `Header` struct, line 87
-- `Url` struct, line 89
-- `Response` struct, line 105
-- `ParseUrl` function, line 166: URL
-- `RemoveDotSegments` function, line 219
-- `ResolveLocation` function, line 242: Resolve a Location header against the URL that produced it.
-- `ParseHeaderLine` function, line 271: Request builder
-- `Reader` struct, line 314: Response reader
-- `ReadHead` function, line 364: Reads the response head (skipping 1xx interim responses except 101).
-- `Framing` enum, line 408
-- `ContentCoding` function, line 411: 0 = none/identity or not decodable, 1 = gzip, 2 = zlib "deflate". Only when Limits::allowGzip.
-- `CookieJar` class, line 554: Cookies (opt-in, per call)
-- `Connector` struct, line 652: Fetch with redirects
-- `FetchRequest` struct, line 664
-- `FetchHooks` struct, line 680
-- `FetchResult` struct, line 690
-- `ParseContentRange` function, line 708: "bytes first-last/total" (total may be "*"). Strict: digits only, first <= last < total.
-- `RequestedRangeStart` function, line 727: First byte of a "Range: bytes=N-" or "bytes=N-M" request header; false when there is none or it is another shape.
-- `RangeSpec` struct, line 744: What a "Range" request header asks for, so a 206 can be checked against it.
-- `ParseRangeRequest` function, line 749
-- `SensitiveHeader` function, line 776
-- `ConnectionReusable` function, line 785: True when the connection that carried 'head' (its body already read) can serve another request: HTTP/1.1, no
+- `Err` enum, line 40
+- `ErrName` function, line 45
+- `Stream` struct, line 66: Byte stream the parser reads from and the builder writes to.
+- `Limits` struct, line 83
+- `Header` struct, line 94
+- `Url` struct, line 96
+- `Response` struct, line 112
+- `ParseUrl` function, line 173: URL
+- `RemoveDotSegments` function, line 226
+- `ResolveLocation` function, line 249: Resolve a Location header against the URL that produced it.
+- `ParseHeaderLine` function, line 278: Request builder
+- `Reader` struct, line 321: Response reader
+- `ReadHead` function, line 371: Reads the response head (skipping 1xx interim responses except 101).
+- `Framing` enum, line 415
+- `ContentCoding` function, line 418: 0 = none/identity or not decodable, 1 = gzip, 2 = zlib "deflate", 3 = Brotli (with Limits::brotli). Only when Limits::allowGzip.
+- `CookieJar` class, line 563: Cookies (opt-in, per call)
+- `Connector` struct, line 661: Fetch with redirects
+- `FetchRequest` struct, line 673
+- `FetchHooks` struct, line 689
+- `FetchResult` struct, line 699
+- `ParseContentRange` function, line 717: "bytes first-last/total" (total may be "*"). Strict: digits only, first <= last < total.
+- `RequestedRangeStart` function, line 736: First byte of a "Range: bytes=N-" or "bytes=N-M" request header; false when there is none or it is another shape.
+- `RangeSpec` struct, line 753: What a "Range" request header asks for, so a 206 can be checked against it.
+- `ParseRangeRequest` function, line 758
+- `SensitiveHeader` function, line 785
+- `ConnectionReusable` function, line 794: True when the connection that carried 'head' (its body already read) can serve another request: HTTP/1.1, no
 
 ## `engine/include/okay/Platform/OwnHttpDownload.hpp`
 

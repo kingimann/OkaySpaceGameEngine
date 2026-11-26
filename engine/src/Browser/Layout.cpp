@@ -10,6 +10,7 @@
 #include <deque>
 #include <map>
 #include <tuple>
+#include <unordered_set>
 
 namespace okay::browser {
 
@@ -413,6 +414,7 @@ struct Frag {
     float w = 0, h = 0;            // measured / sized (Atomic: the margin box)
     float ascent = -1;             // Atomic: the baseline below the margin box's top (< 0: the bottom)
     int atomicMark = -1;           // Atomic: index into Layouter::atomicMarks (where its draw commands are)
+    const Node* src = nullptr;     // Word / Space: the text node it came from (DrawCmd::node, for the page's scripts)
 };
 
 struct BoxDraw { int bg = -1; int border[4] = {-1, -1, -1, -1}; int ring = -1; int grad = -1; };
@@ -493,9 +495,12 @@ struct Layouter {
         cmdKey.push_back(curKey);
         cmdGrad.push_back(-1);
     }
-    void Area(float x, float y, float w, float h, int link) {
+    // A link's clickable area; none for a part with pointer-events: none (CSS UI 4: the mouse goes through to what is under it).
+    void Area(float x, float y, float w, float h, int link, const ComputedStyle* st = nullptr) {
+        if (st && st->pointerNone) return;
         LinkArea a;
         a.x = x; a.y = y; a.w = w; a.h = h; a.link = link;
+        if (st) a.cursor = st->cursor;
         a.clip = curClip; a.fixed = curFixed; a.layer = curKey;
         r.areas.push_back(a);
     }
@@ -697,7 +702,7 @@ struct Layouter {
 
     // ---- flattening inline content into fragments ----
     void Flatten(const SNode& n, int link, std::vector<Frag>& out, bool& lastSpace, bool& wordStart, bool dry) {
-        if (n.text) { FlattenText(n.node->data, n.st, link, out, lastSpace, wordStart); return; }
+        if (n.text) { FlattenText(n.node->data, n.st, link, out, lastSpace, wordStart, n.node); return; }
         if (!n.node) { for (const SNode& k : n.kids) Flatten(k, link, out, lastSpace, wordStart, dry); return; }
         const Node& el = *n.node;
         if (n.st.floating != Float::None || n.st.OutOfFlow()) {
@@ -736,7 +741,8 @@ struct Layouter {
         if (padR != 0.0f) { Frag f; f.kind = Frag::Pad; f.w = padR; f.st = &n.st; f.link = link; out.push_back(f); }
     }
 
-    void FlattenText(const std::string& sIn, const ComputedStyle& st, int link, std::vector<Frag>& out, bool& lastSpace, bool& wordStart) {
+    void FlattenText(const std::string& sIn, const ComputedStyle& st, int link, std::vector<Frag>& out, bool& lastSpace, bool& wordStart,
+                     const Node* src = nullptr) {
         const std::string s = Transform(sIn, st.textTransform, wordStart);
         const WhiteSpace ws = st.whiteSpace;
         const bool keepSpaces = ws == WhiteSpace::Pre || ws == WhiteSpace::PreWrap;
@@ -744,7 +750,7 @@ struct Layouter {
         const bool wraps = ws != WhiteSpace::Pre && ws != WhiteSpace::NoWrap;
         auto pushOne = [&](Frag::Kind k, std::string t, const ComputedStyle* fs) {
             Frag f;
-            f.kind = k; f.text = std::move(t); f.st = fs; f.link = link;
+            f.kind = k; f.text = std::move(t); f.st = fs; f.link = link; f.src = src;
             if (k == Frag::Word) f.breakBefore = wraps && (out.empty() || out.back().kind == Frag::Space);
             out.push_back(std::move(f));
         };
@@ -1279,14 +1285,14 @@ struct Layouter {
             const Frag& f = *p.f;
             const float x = Finite(cx + dx + p.x + extra[pi]);
             if (f.kind == Frag::Anchor) { r.anchors.push_back({f.text, top}); run = -1; continue; }
-            if (f.kind == Frag::Pad) { run = -1; if (f.link >= 0) Area(x, top, p.w, 0.0f, f.link); continue; }
+            if (f.kind == Frag::Pad) { run = -1; if (f.link >= 0) Area(x, top, p.w, 0.0f, f.link, f.st); continue; }
             if (f.kind == Frag::Atomic) {
                 run = -1;
                 float a, d;
                 boxMetrics(f, a, d);
                 if (f.atomicMark >= 0 && (std::size_t)f.atomicMark < atomicMarks.size())
                     ShiftRange(atomicMarks[(std::size_t)f.atomicMark].first, atomicMarks[(std::size_t)f.atomicMark].second, x, Finite(base - a));
-                if (f.link >= 0) Area(x, Finite(base - a), f.w, f.h, f.link);
+                if (f.link >= 0) Area(x, Finite(base - a), f.w, f.h, f.link, f.st);
                 continue;
             }
             if (f.kind == Frag::Image || f.kind == Frag::Embed) {
@@ -1299,12 +1305,13 @@ struct Layouter {
                 c.x = x; c.y = Finite(base - a); c.w = f.w; c.h = f.h;
                 c.text = f.text;
                 c.tag = f.sn->node->name;
+                c.node = f.sn->node;
                 c.link = f.link;
                 c.color = f.st->color;
                 c.color.a = 255;
                 if (c.kind == DrawCmd::Embed) { r.embeds.push_back((int)r.cmds.size()); Emit(c); }
                 else EmitImage(c, *f.sn);
-                if (f.link >= 0) Area(c.x, c.y, c.w, c.h, f.link);
+                if (f.link >= 0) Area(c.x, c.y, c.w, c.h, f.link, f.st);
                 continue;
             }
             if (!f.st->visible) { run = -1; continue; }
@@ -1337,6 +1344,8 @@ struct Layouter {
             c.kind = DrawCmd::Text;
             c.x = x; c.y = Finite(base - f.st->baselineShift - f.st->fontSize * 0.8f); c.w = p.w; c.h = f.st->fontSize;
             c.text = f.text;
+            c.node = f.src;
+            c.noSelect = f.st->noSelect;
             c.font = FontOf(*f.st);
             c.color = f.st->color;
             c.underline = f.st->underline; c.strike = f.st->strike;
@@ -1346,7 +1355,7 @@ struct Layouter {
             run = (int)r.cmds.size() - 1;
             runStyle = f.st;
             runs.push_back({run, f.st});
-            if (f.link >= 0) Area(c.x, top, c.w, lineH, f.link);
+            if (f.link >= 0) Area(c.x, top, c.w, lineH, f.link, f.st);
         }
         if (container.ellipsis && container.Clips() && lineW > cw + 0.01f && !runs.empty()) Ellipsis(runs, cx + cw);
         for (const auto& rs : runs) if (CustomDecoration(*rs.second) && rs.second->visible) Decorations(r.cmds[(std::size_t)rs.first], *rs.second);
@@ -1588,6 +1597,10 @@ struct Layouter {
         b.node = n.node;
         b.depth = depth;
         b.x = x; b.y = y; b.w = w;
+        b.fixed = curFixed || n.st.position == Position::Fixed;
+        b.noHit = n.st.pointerNone;
+        b.cursor = n.st.cursor;
+        for (int i = 0; i < 4; ++i) b.border[i] = n.st.border[i];
         b.firstCmd = r.cmds.size();
         r.boxes.push_back(b);
         draws.push_back(BoxDraw());
@@ -1963,7 +1976,7 @@ struct Layouter {
             }
         }
         FinishBox(bi, n, h, bws);
-        if (curLink != savedLink && curLink >= 0) Area(bx, y, bwid, h, curLink);
+        if (curLink != savedLink && curLink >= 0) Area(bx, y, bwid, h, curLink, &st);
         curLink = savedLink;
         if (n.node && n.node->name == "button") {   // a <button> takes clicks like a form control
             ControlBox cbx;
@@ -1972,6 +1985,9 @@ struct Layouter {
             cbx.clip = curClip; cbx.fixed = curFixed;
             cbx.font = FontOf(st);
             cbx.color = st.color;
+            cbx.noHit = st.pointerNone;
+            cbx.appearanceNone = st.appearanceNone;
+            cbx.cursor = st.cursor;
             r.controls.push_back(cbx);
         }
         // the absolutely positioned boxes this one contains, now that its padding box is known
@@ -2040,6 +2056,9 @@ struct Layouter {
         cb.fixed = curFixed;
         cb.font = FontOf(st);
         cb.color = st.color;
+        cb.noHit = st.pointerNone;
+        cb.appearanceNone = st.appearanceNone;
+        cb.cursor = st.cursor;
         DrawCmd c;
         c.kind = DrawCmd::Control;
         c.x = x; c.y = y; c.w = w; c.h = h;
@@ -2960,9 +2979,13 @@ struct Layouter {
                     auto it2 = areas.find(g.name.substr(0, g.name.size() - suffix.size()));
                     if (it2 != areas.end()) { outLine = isRow ? (isEnd ? it2->second.r1 : it2->second.r0) : (isEnd ? it2->second.c1 : it2->second.c0); return true; }
                 }
+                // CSS Grid 8.3.1: a lone name means the implicit "<name>-start" (or "-end") line first ("grid-column: content"
+                // with "[content-start] ... [content-end]" in the template), then a line of that very name
                 const GridTemplate& t = isRow ? cs.gridRows : cs.gridColumns;
-                for (std::size_t li = 0; li < t.lineNames.size(); ++li)
-                    for (const std::string& ln : t.lineNames[li]) if (ln == g.name) { outLine = (int)li; return true; }
+                const std::string implicit = g.name + suffix;
+                for (const std::string* want : {&implicit, &g.name})
+                    for (std::size_t li = 0; li < t.lineNames.size(); ++li)
+                        for (const std::string& ln : t.lineNames[li]) if (ln == *want) { outLine = (int)li; return true; }
                 return false;
             }
             if (g.line > 0) { outLine = g.line - 1; return true; }
@@ -3311,6 +3334,16 @@ LayoutResult LayoutPage(const HtmlDocument& doc, float widthIn, const TextMeasur
     // the page grows to hold positioned content (fixed content is on the view, not the page)
     for (const DrawCmd& c : r.cmds) if (!c.fixed && c.clip < 0 && c.kind != DrawCmd::Shadow) r.height = std::max(r.height, Finite(c.y + c.h));
     L.ExpandGradients();
+    // the ::before / ::after boxes and their text are nodes of the builder's own (synth), gone when this returns: nothing in the
+    // result may point at them (the host hovers BoxInfo::node, the page's scripts read DrawCmd::node)
+    if (!builder.synth.empty()) {
+        std::unordered_set<const Node*> synth;
+        for (const Node& n : builder.synth) synth.insert(&n);
+        for (BoxInfo& b : r.boxes) if (synth.count(b.node)) b.node = nullptr;
+        for (DrawCmd& c : r.cmds) if (synth.count(c.node)) c.node = nullptr;
+        for (ControlBox& c : r.controls) if (synth.count(c.node)) c.node = nullptr;
+        for (const Node*& n : r.linkNodes) if (synth.count(n)) n = nullptr;
+    }
     // paint order: stable by layer
     const std::vector<int> rank = L.LayerRanks();
     std::vector<std::size_t> perm(r.cmds.size());
@@ -3421,6 +3454,7 @@ int ControlAt(const LayoutResult& r, float x, float y, const ScrollOffsets* offs
     int best = -1;
     for (std::size_t i = 0; i < r.controls.size(); ++i) {
         const ControlBox& c = r.controls[i];
+        if (c.noHit) continue;   // pointer-events: none
         float px = x, py = c.fixed ? y - pageScrollY : y;
         if (!InsideClip(r, c.clip, offsets, px, py, px, py)) continue;
         if (px >= c.x && px < c.x + c.w && py >= c.y && py < c.y + c.h) best = (int)i;

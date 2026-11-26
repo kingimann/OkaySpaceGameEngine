@@ -34,6 +34,7 @@
 #include "Git.hpp"
 #include "Process.hpp"
 #include "ProjectState.hpp"     // editor/: ProjectSettings and the text of project.okayproj
+#include "ProjectList.hpp"      // shared/: SceneIn, the scene a project starts with
 #include "ProjectCreate.hpp"    // shared/: name and place checks, the folders of a new project, templates
 #include "ProjectVersion.hpp"   // shared/: the engine_version stamp and what a version difference means
 #include "okay/Core/CommandLine.hpp"
@@ -305,7 +306,7 @@ std::string FindProjectRoot(const std::string& start) {
     if (!fs::is_directory(p, ec)) p = p.parent_path();
     fs::path withAssets;
     for (fs::path q = p; !q.empty(); q = q.parent_path()) {
-        if (fs::is_regular_file(q / okayproj::SettingsFileName(), ec)) return q.string();
+        if (okayproj::HasSettingsFile(q)) return q.string();   // ProjectSettings/project.okayproj or the older place
         if (withAssets.empty() && fs::is_directory(q / "Assets", ec)) withAssets = q;
         if (q == q.parent_path()) break;
     }
@@ -314,7 +315,7 @@ std::string FindProjectRoot(const std::string& start) {
 
 std::string MainScene(const std::string& root) {
     std::error_code ec;
-    std::ifstream f((fs::path(root) / ".okay" / "scene_build.txt").string());
+    std::ifstream f(okayproj::layout::SettingsFile(fs::path(root), "scene_build.txt", ".okay/scene_build.txt").string());
     for (std::string line; f && std::getline(f, line);) {   // "1|Assets/Level.okayscene": ticked, path (the Scene Manager's list)
         while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
         if (line.size() < 3 || line[0] != '1' || line[1] != '|') continue;
@@ -322,18 +323,10 @@ std::string MainScene(const std::string& root) {
         if (!p.is_absolute()) p = fs::path(root) / p;
         if (fs::is_regular_file(p, ec)) return p.lexically_normal().string();
     }
-    std::vector<std::string> found;
-    const fs::path assets = fs::path(root) / "Assets";
-    if (!fs::is_directory(assets, ec)) return "";
-    for (fs::recursive_directory_iterator it(assets, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec))
-        if (it->is_regular_file(ec) && it->path().extension() == ".okayscene") found.push_back(it->path().string());
-    if (found.empty()) return "";
-    std::sort(found.begin(), found.end(), [](const std::string& a, const std::string& b) {
-        const auto da = std::count(a.begin(), a.end(), '/') + std::count(a.begin(), a.end(), '\\');
-        const auto db = std::count(b.begin(), b.end(), '/') + std::count(b.begin(), b.end(), '\\');
-        return da != db ? da < db : a < b;   // a scene at the top of Assets first, then by name
-    });
-    return found.front();
+    // else the scene named after the project (Assets/Scenes/<Name>, Assets/<Name>), else the shallowest scene in Assets:
+    // the launcher's rule (shared/ProjectList.hpp)
+    const std::string scene = okayproj::SceneIn(fs::path(root));
+    return !scene.empty() && fs::is_regular_file(scene, ec) ? scene : std::string();
 }
 
 bool CreateEmptyProject(const std::string& root, const std::string& name, const std::string& version, std::string& error) {
@@ -349,7 +342,7 @@ bool CreateEmptyProject(const std::string& root, const std::string& name, const 
     const std::string stamp = okayver::NormalizeVersion(EngineVersion());
     if (!stamp.empty()) text = okayver::SetStampInText(text, stamp);
     const fs::path settingsFile = okayproj::SettingsPath(root);
-    const fs::path scene = fs::path(root) / "Assets" / (name + ".okayscene");
+    const fs::path scene = okayproj::layout::FirstScenePath(fs::path(root), name);   // <root>/Assets/Scenes
     const fs::path input = fs::path(root) / "Assets" / "input.okayinput";
     okay::Scene empty(name);
     bool ok = okayproj::WriteTextAtomic(settingsFile.string(), text, &error);

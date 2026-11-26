@@ -26,6 +26,7 @@ inline ImportSettingsResult DrawImportSettings_WM(okaypanels::ImportSettingsMode
 #define RunAfterSavePrompt RunAfterSavePrompt_WM
 #define OpenScriptFileInEditorAt OpenScriptFileInEditorAt_WM
 #define ConsoleSetMirror ConsoleSetMirror_WM
+#define ConsoleSetProjectDir ConsoleSetProjectDir_WM   // Console > Save folder (#1350): window mode keeps its own
 #define ConsoleRunLine ConsoleRunLine_WM        // the console command line (claude2/found-console): window mode keeps its own copy
 #define ConsoleAttachHost ConsoleAttachHost_WM
 #define g_consoleMirror g_consoleMirror_WM

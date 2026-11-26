@@ -394,6 +394,10 @@ BACKEND_PATTERNS = [
     (re.compile(r"api\.supabase\.com/v1/projects/[^/\s\"]*/([a-z-]*)"), "Management API"),
     # Helpers that build a Supabase address with no route text on the calling line: count each call.
     (re.compile(r"(?<![\w:])okayversions::ReleasesBucketBase\(()"), "Storage"),
+    # Calls through OkayBackend's Database (engine/include/okay/Backend/Database.hpp, round 3): the table or function name
+    # is on the calling line, the route is the provider's. Counted so a moved site stays in the inventory.
+    (re.compile(r'(?:\.|->)From\(\s*"([A-Za-z_]\w*)"'), "Database", "okay::backend"),
+    (re.compile(r'(?:\.|->)Rpc\(\s*"([A-Za-z_]\w*)"'), "RPC", "okay::backend"),
 ]
 CONFIG_NAME = re.compile(r"\b(SUPABASE_[A-Z_]+|OKAY_(?:ACCOUNT|DEFAULT_ACCOUNT|UPDATE_SERVER|PUBLIC_ACCOUNT|TICKET|RESET)"
                          r"[A-Z_]*)\b|secrets\.([A-Z][A-Z0-9_]+)")
@@ -491,7 +495,8 @@ def backend(summary, with_tests):
             s = l.strip()
             if _is_comment(rel, s) or (is_test and not with_tests): continue
             if SAMPLE_HOST.search(l): continue          # made-up addresses in UI previews and demo data, not a call
-            for rx, service in BACKEND_PATTERNS:
+            for entry in BACKEND_PATTERNS:
+                rx, service = entry[0], entry[1]
                 for m in rx.finditer(l):
                     res = (m.group(1) if m.groups() else "") or ""
                     if "ReleasesBucketBase" in m.group(0): res = "public:releases"
@@ -505,7 +510,7 @@ def backend(summary, with_tests):
                     res = res.rstrip("/-") or "(dynamic)"
                     progs = _programs(rel, by, memo)
                     rows.append((rel, i, ", ".join(sorted(progs)), service, res,
-                                 _auth(rel, service, res.split(":")[0], progs), _client(rel)))
+                                 _auth(rel, service, res.split(":")[0], progs), entry[2] if len(entry) > 2 else _client(rel)))
     if not summary:
         print("# file:line | program(s) | service | table / bucket / function | key | HTTP client")
         for r in rows: print("%s:%d | %s | %s | %s | %s | %s" % r)

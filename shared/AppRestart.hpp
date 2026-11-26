@@ -266,11 +266,24 @@ inline std::string Stamp() {
     return buf;
 }
 
+/// A log AppendLog writes is started again past this size; the full one is kept as "<name>.old" (one older file, replaced
+/// each time), so a log never takes more than about twice this on disk.
+constexpr std::uintmax_t kMaxLogBytes = 1024u * 1024u;
+
 inline void AppendLog(const fs::path& log, const std::string& message) {
     const std::string line = Stamp() + " [" + std::to_string(CurrentPid()) + "] " + message + "\n";
     if (!log.empty()) {
         std::error_code ec;
         if (!log.parent_path().empty()) fs::create_directories(log.parent_path(), ec);
+        const std::uintmax_t size = fs::file_size(log, ec);
+        if (!ec && size + line.size() > kMaxLogBytes) {   // rotate: the full file becomes <name>.old
+            fs::path old = log;
+            old += ".old";
+            std::error_code re;
+            fs::remove(old, re);
+            fs::rename(log, old, re);
+        }
+        ec.clear();
         std::ofstream o(log, std::ios::app | std::ios::binary);
         if (o) { o << line; o.flush(); return; }
     }

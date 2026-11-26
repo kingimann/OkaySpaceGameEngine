@@ -74,6 +74,15 @@ struct FoundRef {
     std::size_t begin = std::string::npos, end = std::string::npos;   ///< span of the raw text in the file
     bool quoted = false;               ///< the span is inside a "quoted" string (escape on rewrite)
 };
+/// One rewrite of a found reference: its span and the text to put there.
+struct RefRewrite { std::size_t begin = 0, end = 0; std::string text; };
+/// The rewrite that makes `r` name `newPath` ('/' separators): written with backslashes when the old reference used only
+/// backslashes, and escaped when it sits in a "quoted" string. FixStaleReferences and the project tidy (editor/ProjectUpgrade.cpp)
+/// both write references this way.
+RefRewrite RewriteRef(const FoundRef& r, std::string newPath);
+/// `text` with the rewrites spliced in (from the end, so the spans stay valid; spans must not overlap).
+std::string ApplyRefRewrites(std::string text, std::vector<RefRewrite> rewrites);
+
 /// Finds the asset paths in one text asset. `assetPath` is the asset's own project path.
 using RefExtractor = std::function<void(const std::string& assetPath, const std::string& text, std::vector<FoundRef>& out)>;
 

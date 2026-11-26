@@ -199,7 +199,7 @@ std::vector<Cause> CausesOf(const SiteResult& r) {
         Add(out, seen, Area::Network, "page answered HTTP " + std::to_string(page->status), page->finalUrl);
     for (const Fetch& f : r.fetches) {
         const std::string enc = str::LowerAscii(str::Trim(f.contentEncoding));
-        if (!enc.empty() && enc != "identity" && enc != "gzip" && enc != "x-gzip" && enc != "deflate")
+        if (!enc.empty() && enc != "identity" && enc != "gzip" && enc != "x-gzip" && enc != "deflate" && enc != "br")   // br: round 4
             Add(out, seen, Area::Network, "Content-Encoding '" + enc + "' not read", f.url);
         if (f.note == "redirect refused") Add(out, seen, Area::Network, "redirect refused (" + f.kind + ")", f.url);
         if (f.kind == "page") continue;
@@ -209,7 +209,7 @@ std::vector<Cause> CausesOf(const SiteResult& r) {
             const std::string fmt = ImageFormatOf(f.head, f.contentType);
             Add(out, seen, Area::Images, "image format " + (fmt.empty() ? std::string("unknown") : fmt) + " not decoded", f.url);
         }
-        if (f.note == "font not TrueType or OpenType") {
+        if (StartsWith(f.note, "font not decoded")) {   // the host could not turn it into a TrueType / OpenType file (WebFont.hpp)
             const std::string fmt = FontFormatOf(f.head);
             Add(out, seen, Area::Fonts, "font format " + (fmt.empty() ? std::string("unknown") : fmt) + " not used", f.url);
         }

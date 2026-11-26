@@ -135,7 +135,7 @@ void InstallStringLib(Runtime& rt) {
             rt.Charge(1);
             r += rt.ToU16(rt.GetV(lits, Value::Num((double)k)));
             if (k + 1 == len) break;
-            if ((int)k + 1 < a.argc) r += rt.ToU16(a[(int)k + 1]);
+            if (k + 1 < (std::uint64_t)a.argc) r += rt.ToU16(a[(int)(k + 1)]);
             rt.Charge(r.size() / 64);
             if (r.size() > (1u << 28)) rt.ThrowRange("the string is too long");
         }

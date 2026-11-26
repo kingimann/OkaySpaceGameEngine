@@ -190,8 +190,9 @@ void InstallNumberLib(Runtime& rt) {
     DefNative(rt, np, "valueOf", [](Runtime& rt, CallArgs& a) { return Value::Num(ThisNum(rt, a.thisv, "valueOf")); }, 0);
     DefNative(rt, np, "toString", [](Runtime& rt, CallArgs& a) {
         double x = ThisNum(rt, a.thisv, "toString");
-        int radix = a[0].IsUndef() ? 10 : (int)rt.ToIntegerOrInfinity(a[0]);
-        if (radix < 2 || radix > 36) rt.ThrowRange("toString's radix must be between 2 and 36");
+        double rd = a[0].IsUndef() ? 10 : rt.ToIntegerOrInfinity(a[0]);   // checked before the cast (Infinity)
+        if (rd < 2 || rd > 36) rt.ThrowRange("toString's radix must be between 2 and 36");
+        int radix = (int)rd;
         if (radix == 10 || !std::isfinite(x)) return Value::Str(rt.NewString(rt.NumberToU16(x)));
         return Value::Str(rt.NewStringAscii(RadixText(x, radix).c_str()));
     }, 1);
@@ -1481,8 +1482,9 @@ void InstallBigIntLib(Runtime& rt) {
     DefNative(rt, ctor, "asUintN", [](Runtime& rt, CallArgs& a) { return AsBits(rt, a, false); }, 2);
     DefNative(rt, bp, "toString", [](Runtime& rt, CallArgs& a) {
         Value x = ThisBig(rt, a.thisv, "toString");
-        int radix = a[0].IsUndef() ? 10 : (int)rt.ToIntegerOrInfinity(a[0]);
-        if (radix < 2 || radix > 36) rt.ThrowRange("toString's radix must be between 2 and 36");
+        double rd = a[0].IsUndef() ? 10 : rt.ToIntegerOrInfinity(a[0]);   // checked before the cast (Infinity)
+        if (rd < 2 || rd > 36) rt.ThrowRange("toString's radix must be between 2 and 36");
+        int radix = (int)rd;
         return Value::Str(rt.NewString(BigToString(rt, x, radix)));
     }, 0);
     DefNative(rt, bp, "toLocaleString", [](Runtime& rt, CallArgs& a) {   // en-US: groups of three digits

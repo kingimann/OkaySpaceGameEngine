@@ -435,6 +435,9 @@ void BigInts() {
            "if (b !== 0n && (a / b) * b + a % b !== a) bad++; if (b !== 0n && (a * b) / b !== a) bad++; if (((a << k) >> k) !== a) bad++;"
            "if ((a ^ b ^ b) !== a || (a & b) + (a | b) !== a + b || ~~a !== a) bad++; if (BigInt('0x' + (a < 0n ? -a : a).toString(16)) !== (a < 0n ? -a : a)) bad++;"
            "if (b !== 0n && a % b === 0n && a / b * b !== a) bad++; } console.log('bad', bad)", "bad 0");
+    ExpectError("(5n).toString(Infinity)", "RangeError");
+    ExpectError("(5).toString(-Infinity)", "RangeError");
+    ExpectError("String.raw({raw: {length: 1e15}}, 1)", "budget");
     ExpectError("1n + 1", "TypeError");
     ExpectError("+1n", "TypeError");
     ExpectError("1n >>> 0n", "TypeError");

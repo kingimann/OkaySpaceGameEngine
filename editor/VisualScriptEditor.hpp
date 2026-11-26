@@ -5,6 +5,7 @@
 // runs at play time. Self-contained: it keeps its own editable model and writes
 // the same text format the engine parses (node/pos/exec/data/entry lines).
 #include "imgui.h"
+#include "EditorTabs.hpp"   // okay::edtabs::UserFile: the per-user folder
 #include "EditorState.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/ActionList.hpp"
@@ -3175,7 +3176,7 @@ inline void VsDirtyTitles(std::vector<std::string>& out) {
         if (t && t->g.dirty) out.push_back(std::string("Graph: ") + VsTabTitle(*t));
 }
 inline void VsSaveTabList() {
-    std::ofstream f("okay_vs_tabs.txt");
+    std::ofstream f(okay::edtabs::UserFile("okay_vs_tabs.txt"));   // the per-user folder, not the working folder
     const VsSession& s = Session();
     f << s.active << "\n";
     for (const auto& t : s.tabs)
@@ -3284,7 +3285,7 @@ inline void VsRestoreTabs() {
     VsSession& s = Session();
     if (s.restored) return;
     s.restored = true;
-    std::ifstream f("okay_vs_tabs.txt");
+    std::ifstream f(okay::edtabs::UserFile("okay_vs_tabs.txt"));
     if (!f) return;
     int active = 0;
     f >> active;

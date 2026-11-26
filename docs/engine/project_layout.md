@@ -116,7 +116,67 @@ Already in the person's settings folder (`%APPDATA%/OkaySpace/config/editor`): `
 | `sync_state.txt`, `current.txt`, `apply.txt` | engine, launcher | per-person data folders | save sync and content-update state | on change |
 | `okay_bans.txt` | dedicated server | server folder | banned players | on change |
 
-## 3. Next
+## 3. What changed (branch claude/project-layout-1)
 
-The changes follow in the same branch: the layout rules, new projects, safe save paths, the tidy-up of existing
-projects and the `.txt` clean-up. This section is filled in with them.
+- **The rules, in one place.** `okayproj::layout` in `shared/ProjectCreate.hpp`: the folder names, `SettingsFile` (new place
+  first, old place second), `FirstScenePath`, `CheckSaveTarget` (inside Assets / elsewhere in the project / outside it /
+  no project), `InsideCopyPath` (never an existing file), `ResolveInProject` (a relative build folder is inside the project),
+  `DefaultBuildDir`, `LogFile`. `SettingsPath` and `HasSettingsFile` use them.
+- **New projects** (editor, launcher, `okay new`) get `ProjectSettings/` and their first scene in `Assets/Scenes`.
+- **Readers.** `RootOfScene` (the nearest `Assets` above the scene), `SceneIn`, `IsProjectFolder`, Open Project Folder, the
+  editor's `ProjectRootOfScene` (now the shared one), `okay` `FindProjectRoot` and `MainScene`, the upgrade's `IsProjectRoot`
+  and stamp: all understand `Assets/Scenes` and `ProjectSettings`.
+- **Saving.** Save Scene As outside `Assets` asks first and offers `Assets/Scenes/<name>` instead (`SaveInsideProjectOrAsk`,
+  `editor/ProjectUpgradeUI.cpp`). With no project open a new scene goes to the person's data folder, not the working folder.
+  The default build folder is `Builds/<Name>`; a relative build folder (the old `build/MyGame` too) is inside the project.
+- **Per-person files** leave the working folder and the program's folder: recovery copies and save backups go to
+  `<user data>/Recovery` and `<user data>/Backups`; `okay_vs_tabs.txt`, `okay_vsnodes.txt`, `okay_vs_usage.txt`,
+  `okay_vs_bookmarks.txt` and `plugins_disabled.txt` go to the editor's settings folder (`okay::edtabs::UserFile`);
+  `okay_editor_perf.log` and `okay_hang.txt` go to the person's log folder. Each old file or folder is copied once and left
+  where it was.
+- **Project files**: Console > Save writes `Logs/console_log.txt`; the build report is `Logs/build_report.txt`; thumbnails
+  are cached in `Library/Thumbnails`; `okay vc` ignores `/Library/`, `/Logs/`, `/Temp/`, `/Builds/`.
+- **Logs are limited**: `okay::restart::AppendLog` (the perf log, the update log, the launch log) starts a new file past
+  1 MB and keeps one `<name>.old`.
+
+## 4. Tidying an existing project
+
+When a project is opened and some of its files are not where the layout puts them, the editor lists the moves and asks
+(once a session). "Not now" moves nothing; "Cancel" does not open the project. "Move the files" (`okayup::ApplyLayout`):
+
+1. plans every move (`okayup::PlanLayout`): scenes, prefabs, materials, models, textures, sounds, scripts, graphs,
+   dialogue, quests, behaviour trees, cutscenes and fonts next to `project.okayproj` go into the matching `Assets/<folder>`;
+   `project.okayproj`, `.okay/build_profiles.cfg` and `.okay/scene_build.txt` go to `ProjectSettings/`; the old build report
+   to `Logs/`; the old thumbnails to `Library/Thumbnails`. Sidecars (`.okaymeta` with the asset id, `.autosave`) move with
+   their file. Data files the editor reads at the top of the project (`items.okayitems`, `strings.okayloc`, ...), notes and
+   unknown files stay. A file whose new place is taken, a read-only file, and a file a read-only file names stay, with the reason;
+2. checks again that every file to change is writable, then copies every file that will move or be rewritten into
+   `<Name> (backup before tidy)` next to the project, checks each copy (size and content hash) and writes a manifest, so
+   File > Project Upgrade > Restore can put it back;
+3. copies each file to its new place and checks the copy;
+4. rewrites the references found by the asset database's scanners (scenes, prefabs, materials, text assets, text models)
+   and the Scenes In Build list. A path relative to the file that holds it stays relative to it; a project path stays a
+   project path; an absolute path inside the project stays absolute. For a file at the top of the project both readings
+   are the same: behaviour trees and clip files become project paths (their loaders look from the project folder), the
+   rest relative paths (scene loaders look from the scene's folder);
+5. only then removes each old file. One that cannot be removed stays next to its checked copy, and is listed.
+
+A failure in steps 2 to 4 takes back everything it made: the project is byte for byte as it was, and no half backup is left.
+The recent-scenes list follows a moved scene, and the scene that was being opened is opened from its new place. Running it
+on a tidied project does nothing.
+
+Tests: `tests/test_project_upgrade.cpp` ("tidying an old project"), `tests/test_project_create.cpp` (path rules),
+`tests/test_project_list.cpp`, `tests/test_project_delete.cpp`, `tests/test_editor_tabs.cpp` (`UserFile`),
+`tests/test_app_restart.cpp` (log limit), `tests/test_hang_watchdog.cpp`, `tests/test_okay_cli.cpp`.
+
+## 5. Not done
+
+- With no project open, the create-asset actions listed in 2.1 still write to `cwd/Assets`.
+- The crash reports (`okay_crash.txt`, `okay_crashlog.txt`) stay next to the program: the launcher picks them up there to
+  send them. Moving them needs the launcher and the editor changed together.
+- `launcher.cfg`, `okay_update.log` and the launcher hand-shake files stay next to the launcher (the update flow reads them).
+- `.okay/build_live.cfg` and `.okay/build_history.txt` stay in `.okay/` (Build Settings, Claude 3's lane).
+- Root-level folders of an old project (for example `Textures/` next to `project.okayproj`) are not moved, only files.
+- The launcher's "extra projects" list keeps the old scene path of a project opened from elsewhere and tidied; the
+  launcher shows it as missing until it is opened again.
+- `Temp/` is defined but nothing writes there yet.

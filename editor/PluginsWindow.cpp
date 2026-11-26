@@ -1,6 +1,7 @@
 // Editor plugins (PluginsWindow.hpp): OkayScript editor extensions, their editor_* builtins, the Plugins menu and the
 // Plugin Manager window. Moved out of main.cpp unchanged (docs/editor/main_split_plan.md, move 5).
 #include "EditorCommon.hpp"
+#include "EditorTabs.hpp"   // okay::edtabs::UserFile: the per-user folder
 #include "PluginsWindow.hpp"
 #include "MainShared.hpp"          // g_showPluginManager, OkayExeDir, SectionHeader, OpenScriptFileInEditorAt, extide (main.cpp)
 #include "ConsolePanel.hpp"        // ConsoleLog
@@ -257,11 +258,11 @@ static void ScanPlugins(EditorState& ed, bool force = false) {
     }
 }
 void SavePluginPrefs() {
-    std::ofstream f(std::filesystem::path(OkayExeDir()) / "plugins_disabled.txt");
+    std::ofstream f(okay::edtabs::UserFile("plugins_disabled.txt", OkayExeDir()));   // the per-user folder (once copied from beside the editor)
     for (const auto& s : g_pluginsDisabled) f << s << "\n";
 }
 static void LoadPluginPrefs() {
-    std::ifstream f(std::filesystem::path(OkayExeDir()) / "plugins_disabled.txt");
+    std::ifstream f(okay::edtabs::UserFile("plugins_disabled.txt", OkayExeDir()));
     std::string l; while (std::getline(f, l)) if (!l.empty()) g_pluginsDisabled.insert(l);
 }
 // Create a starter plugin in the project (or user folder) and open it in the Script Editor.

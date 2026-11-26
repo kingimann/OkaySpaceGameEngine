@@ -5,6 +5,7 @@
 // The thread test uses <thread> for the fake main loop's sleeps only (tests are not built for Windows with it; rule 21a is for the
 // programs).
 #include "test_framework.hpp"
+#include "okay/Core/Paths.hpp"
 #include "HangWatchdog.hpp"
 #include "CrashContext.hpp"
 #include "CrashHandler.hpp"
@@ -104,6 +105,9 @@ int main() {
 #if defined(_WIN32)
         std::wcsncpy(okaycrash::handler::g_cfg.dirW, dir.wstring().c_str(), 1000);
 #endif
+        setenv("XDG_STATE_HOME", dir.string().c_str(), 1);   // the report goes to the person's log folder (okay::Paths::LogDir), here inside dir
+        const fs::path logs = fs::u8path(okay::Paths::LogDir());
+        CHECK(logs == dir / "OkaySpace" / "logs");
         setenv("OKAY_HANG_REPORT_S", "1", 1);
         setenv("OKAY_HANG_ASK_S", "0", 1);   // no question in a test
         okay::Profiler& pr = okay::Prof();
@@ -117,7 +121,7 @@ int main() {
             pr.EndFrame(16.0);
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
-        CHECK(!fs::exists(dir / "okay_hang.txt"));
+        CHECK(!fs::exists(logs / "okay_hang.txt"));
         // now the frame gets stuck inside two scopes after a project-open breadcrumb
         okaycrash::ctx::NextFrame();
         pr.BeginFrame();
@@ -128,13 +132,13 @@ int main() {
         bool seen = false;
         while (!seen && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(4)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            seen = fs::exists(dir / "okay_hang.txt");
+            seen = fs::exists(logs / "okay_hang.txt");
         }
         const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         CHECK(seen);
         CHECK(took >= 0.9 && took < 2.5);   // 1 s threshold, looked at every 250 ms
         std::this_thread::sleep_for(std::chrono::milliseconds(100));   // the file is written in one go; let it close
-        const std::string rep = ReadAll(dir / "okay_hang.txt");
+        const std::string rep = ReadAll(logs / "okay_hang.txt");
         CHECK(Has(rep, "Stuck in: Editor.Update > UI.Project"));
         CHECK(Has(rep, "Project open: indexing the assets"));
         pr.End(); pr.End();

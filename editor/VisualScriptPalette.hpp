@@ -2,6 +2,7 @@
 // The add-node panel: search, a topic list on the left (grouped under section headings), favourites, and a
 // details pane. Shared by the right-click menu, a wire dropped in empty space, and Add node.
 #include "VisualScriptNodeDocs.hpp"
+#include "EditorTabs.hpp"   // okay::edtabs::UserFile: the per-user folder
 #include "VisualScriptSearch.hpp"   // plain-word search, synonyms, starter boost
 #include "ScriptingDensity.hpp"   // Density: every size below comes from this table
 #include "VisualScriptSearchNav.hpp"   // the popup's pure logic: size, selection movement, scrolling, recent list
@@ -335,7 +336,7 @@ struct VsPaletteStore {
     bool loaded = false;
     void load() {
         loaded = true;
-        std::ifstream f("okay_vsnodes.txt"); std::string kind, k;
+        std::ifstream f(okay::edtabs::UserFile("okay_vsnodes.txt")); std::string kind, k;   // the per-user folder
         while (f >> kind >> k) {
             if (kind == "lvl") filter = std::clamp(std::atoi(k.c_str()), 0, 3);
             else if (kind == "all") allNodes = k == "1";
@@ -346,7 +347,7 @@ struct VsPaletteStore {
         searchnav::RecentClean(recent);
     }
     void save() const {
-        std::ofstream f("okay_vsnodes.txt");
+        std::ofstream f(okay::edtabs::UserFile("okay_vsnodes.txt"));
         f << "lvl " << filter << "\n";
         f << "all " << (allNodes ? 1 : 0) << "\n";
         if (size.w > 0 && size.h > 0) f << "size " << searchnav::FormatPanelSize(size) << "\n";

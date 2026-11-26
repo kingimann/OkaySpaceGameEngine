@@ -266,7 +266,7 @@ public:
     void AddThumbGenerator(const std::vector<std::string>& extensions, std::function<okay::Image(const std::string&)> render);
     /// Forget a file's picture (memory and disk) so it is made again (Reimport, import settings changed).
     void ForgetThumb(const std::string& path);
-    /// The cache (memory layer, disk folder <project>/.okay/thumbs): for tests and the stats. Made on first use.
+    /// The cache (memory layer, disk folder <project>/Library/Thumbnails): for tests and the stats. Made on first use.
     okay::ThumbnailCache& Thumbs();
     /// Delete cached pictures of assets that no longer exist.
     int PruneThumbs();

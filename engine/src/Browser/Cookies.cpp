@@ -270,6 +270,22 @@ bool CookieStore::Set(const std::string& url, const std::string& setCookie, std:
     return true;
 }
 
+void CookieStore::MergeSaved(const CookieStore& saved, bool replace) {
+    const bool changedBefore = m_changed;
+    auto same = [](const Cookie& a, const Cookie& b) {
+        return a.name == b.name && a.domain == b.domain && a.hostOnly == b.hostOnly && a.path == b.path;
+    };
+    if (replace) m_items.erase(std::remove_if(m_items.begin(), m_items.end(), [](const Cookie& c) { return c.persistent; }), m_items.end());
+    for (const Cookie& c : saved.m_items) {
+        bool have = false;
+        for (const Cookie& o : m_items) if (same(o, c)) { have = true; break; }
+        if (have) continue;
+        m_items.push_back(c);
+        Evict(c.domain);
+    }
+    m_changed = changedBefore;
+}
+
 void CookieStore::Evict(const std::string& domain) {
     // too many for one domain, or in all: the one used longest ago goes (5.3 step 12, with our own limits)
     auto dropOldest = [this](const std::string* only) {

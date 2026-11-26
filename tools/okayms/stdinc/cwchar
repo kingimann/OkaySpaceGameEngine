@@ -1,0 +1,16 @@
+// okay-ms own standard header: <cwchar>, declarations only (ISO/IEC 14882 [cwchar.syn], ISO/IEC 9899 7.29.4.6.1). Round 32:
+// NativeHttp.hpp calls wcslen with only <string> and <windows.h> included, as the Microsoft headers allow, so <string>
+// includes this header. wchar_t is 16 bits on Windows (UTF-16 units). wcslen is in okay-ms's runtime (string.c) and in
+// the C runtime DLL.
+// Declared twice, in namespace std and at global scope (as the standard allows, [headers] 9): okay-ms finds an
+// extern "C" function declared inside namespace std only as std::wcslen, and the engine calls it unqualified. Both are
+// the one C function wcslen.
+#pragma once
+namespace std {
+extern "C" {
+unsigned long long wcslen(const wchar_t *s);
+}
+}
+extern "C" {
+unsigned long long wcslen(const wchar_t *s);
+}

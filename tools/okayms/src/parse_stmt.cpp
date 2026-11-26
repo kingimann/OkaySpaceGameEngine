@@ -99,8 +99,10 @@ bool Parser::flatten_init(const Type& type, const Node& node_given, std::vector<
         return true;
     }
     if (node.kind != Node::IntLit) {
-        if (dyn_leaves != nullptr && type.bits < 0 && !type.is_array() && !type.is_ref) {
-            // Not a constant: zero here, stored at run time ([basic.start.dynamic]).
+        if (dyn_leaves != nullptr && type.bits < 0 && !type.is_array() && (!type.is_ref || at == 0)) {
+            // Not a constant: zero here, stored at run time ([basic.start.dynamic]). A whole reference (`static T& r =
+            // f();`, CameraStack.hpp; Round 32) is bound there, by the initializing assignment of dyn_leaf_stmts
+            // ([dcl.init.ref], [stmt.dcl] 3); a reference inside an aggregate is still refused.
             ensure(at + std::max(1, size_of(type)));
             DynLeaf leaf;
             leaf.at = at;
@@ -936,7 +938,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         out->kids.push_back(std::move(ret));
         return true;
     }
-    if (is_decl_start()) {
+    if (!temporary_expr_stmt_ahead() && is_decl_start()) {
         bool is_typedef = false;
         bool is_static = false;
         bool is_const = false;

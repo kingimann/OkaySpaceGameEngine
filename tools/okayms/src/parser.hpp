@@ -395,8 +395,44 @@ struct Parser {
                 out.push_back(c);
                 continue;
             }
-            if (t.kind == TIdent && (t.text == "inline" || t.text == "explicit" || t.text == "override" || t.text == "mutable" ||
-                                      t.text == "final" || t.text == "consteval" || t.text == "constinit" ||
+            // `override` and `final` are identifiers with a special meaning only where a virt-specifier or a
+            // class-virt-specifier stands ([lex.name] 2, [class.mem], [class.pre]): after a function declarator (its `)`,
+            // a cv or ref qualifier, or another virt-specifier) or after the name of a class in its head, and before
+            // `{`, `;`, `=`, `:`, `try` or another virt-specifier. Anywhere else they are plain names (Inflate.hpp's
+            // `bool ok = true, final = false;`); Round 31 and before dropped the word everywhere.
+            if (t.kind == TIdent && (t.text == "override" || t.text == "final")) {
+                const Tok nk = i + 1 < tokens.size() ? tokens[i + 1].kind : TEnd;
+                const bool next_ok = nk == TLBrace || nk == TSemi || nk == TAssign || nk == TColon ||
+                                     (nk == TIdent && (tokens[i + 1].text == "override" || tokens[i + 1].text == "final" ||
+                                                       tokens[i + 1].text == "try" || tokens[i + 1].text == "noexcept"));
+                bool prev_ok = false;
+                if (!out.empty()) {
+                    const Token& pv = out.back();
+                    prev_ok = pv.kind == TRParen || pv.kind == TConst || pv.kind == TAmp || pv.kind == TAndAnd ||
+                              (pv.kind == TIdent && (pv.text == "noexcept" || pv.text == "override" || pv.text == "final"));
+                    // class-head: struct/class/union Name final, also with namespace names or template arguments.
+                    if (!prev_ok && t.text == "final" && (pv.kind == TIdent || pv.kind == TGt) && (nk == TLBrace || nk == TColon)) {
+                        size_t k = out.size();
+                        int angle = 0;
+                        while (k > 0) {
+                            const Token& q = out[k - 1];
+                            if (q.kind == TGt) ++angle;
+                            else if (q.kind == TLt) --angle;
+                            else if (angle == 0 && (q.kind == TStruct || q.kind == TUnion ||
+                                                    (q.kind == TIdent && q.text == "class"))) {
+                                prev_ok = true;
+                                break;
+                            } else if (angle == 0 && q.kind != TIdent && q.kind != TColonColon) break;
+                            --k;
+                        }
+                    }
+                }
+                if (next_ok && prev_ok) continue;
+                out.push_back(t);
+                continue;
+            }
+            if (t.kind == TIdent && (t.text == "inline" || t.text == "explicit" || t.text == "mutable" ||
+                                      t.text == "consteval" || t.text == "constinit" ||
                                       t.text == "volatile")) {
                 if (t.text == "inline" && i + 1 < tokens.size()) tokens[i + 1].inl = true;
                 continue;
@@ -2085,6 +2121,32 @@ struct Parser {
             type->base = 1;
             return true;
         }
+        if (is_template_name_at(at) && pat_values != nullptr && cur().text == "void_t__alias" && at + 1 < tokens.size() &&
+            tokens[at + 1].kind == TLt) {
+            // std::void_t<...> in a specialization's pattern: it is void, and its arguments are checked when the
+            // pattern is matched (ClassSpec::checks). They are not read here, where the parameters are only markers.
+            next();
+            const size_t open = at;
+            int angle = 0;
+            int parens = 0;
+            for (; at < tokens.size() && !is(TEnd); ++at) {
+                const Tok k = cur().kind;
+                if (k == TLParen || k == TLBrack) ++parens;
+                else if (k == TRParen || k == TRBrack) --parens;
+                else if (parens == 0 && k == TLt) ++angle;
+                else if (parens == 0 && k == TGt && --angle == 0) break;
+            }
+            if (!is(TGt)) {
+                error = "expected '>'";
+                return false;
+            }
+            pat_checks.push_back({open + 1, at});
+            next();
+            if (is(TColonColon) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent && tokens[at + 1].text == "type")
+                at += 2;
+            type->base = 0;
+            return true;
+        }
         if (is_template_name_at(at)) {
             const std::string tname = cur().text;
             next();
@@ -2473,6 +2535,16 @@ struct Parser {
                 pname = cur().text;
                 next();
                 if (!expect(TRParen, "')'")) return false;
+                if (stars == 1 && is(TLBrack)) {
+                    // T (*p)[N]: a pointer to an array of N (ImageDecode.cpp's `const std::uint8_t (*pal)[3]`; Round 32).
+                    // A parameter `T p[][N]` has this type too ([dcl.fct] 5), and okay-ms already reads that one:
+                    // the parameter is made the same.
+                    if (!add_dim(&pt, 0) || !parse_brackets(&pt)) return false;
+                    pt.is_ref = true;  // as T p[][N] below
+                    out->params.push_back(pt);
+                    out->param_names.push_back(pname);
+                    continue;
+                }
                 if (!expect(TLParen, "'('")) return false;
                 Declarator fp;
                 if (!parse_param_list(&fp)) return false;
@@ -2532,6 +2604,13 @@ struct Parser {
             if (pt.array_len >= 0 && pt.more.empty()) {  // T a[] and T a[16] as a parameter are T *a ([dcl.fct])
                 pt.array_len = -1;
                 ++pt.pointers;
+            } else if (pt.array_len >= 0) {
+                // T a[][N] (and T a[M][N]) as a parameter is T (*a)[N] ([dcl.fct] 5): the argument is the address of the
+                // first row. Here it is held as a reference to the array, so that a[i][j] reads through the address the
+                // caller passed (Round 32: the array was read from the parameter's own slot, silent wrong values).
+                // Own difference: the parameter cannot be moved (a = b, ++a) and sizeof(a) is not that of a pointer.
+                pt.array_len = 0;
+                pt.is_ref = true;
             }
             const size_t param_index = out->params.size();
             if (accept(TAssign)) {
@@ -2764,6 +2843,38 @@ struct Parser {
         return false;
     }
 
+    // At a statement that starts with a type name, maybe with template arguments, then a parenthesized list whose ')' is
+    // followed by '.' or '->': `std::vector<std::uint8_t>().swap(idat);` (ImageDecode.cpp; Round 32). Such a
+    // statement cannot be a declaration (a declarator does not continue with those after its parameter list), so it is
+    // an expression statement whose first operand is a temporary ([stmt.ambig] 1, [expr.type.conv]). Not '[': `S (a)[3];`
+    // declares an array.
+    bool temporary_expr_stmt_ahead() const {
+        if (!is(TIdent)) return false;
+        size_t k = at + 1;
+        if (k < tokens.size() && tokens[k].kind == TLt) {
+            int angle = 0;
+            int parens = 0;
+            for (; k < tokens.size() && tokens[k].kind != TEnd && tokens[k].kind != TSemi; ++k) {
+                const Tok kk = tokens[k].kind;
+                if (kk == TLParen) ++parens;
+                else if (kk == TRParen) --parens;
+                else if (parens == 0 && kk == TLt) ++angle;
+                else if (parens == 0 && kk == TGt && --angle == 0) break;
+            }
+            if (k >= tokens.size() || tokens[k].kind != TGt) return false;
+            ++k;
+        }
+        if (k >= tokens.size() || tokens[k].kind != TLParen) return false;
+        int depth = 0;
+        for (; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+            if (tokens[k].kind == TLParen) ++depth;
+            else if (tokens[k].kind == TRParen && --depth == 0) break;
+        }
+        if (k + 1 >= tokens.size()) return false;
+        const Tok after = tokens[k + 1].kind;
+        if (after != TDot && after != TArrow) return false;
+        return (typedefs.find(cur().text) != typedefs.end()) || is_class_name() || is_template_name_at(at);
+    }
     bool is_decl_start() const {
         if (qualified_expr_ahead()) return false;
         // A parameter or local variable hides a type of the same name ([basic.scope.hiding]): `(seconds * rate)` with a
@@ -2817,8 +2928,17 @@ struct Parser {
              structs[static_cast<size_t>(id)].tdefs.count(tokens[i + 2].text) > 0) &&
             tokens[i + 3].kind != TLParen)
             return true;  // S::Nested names a nested class, enumeration or typedef of a plain struct
-        if (i >= 1 && tokens[i - 1].kind == TLt && i + 1 < tokens.size() && tokens[i + 1].kind == TLParen)
-            return true;  // a function type as a template argument: std::function<S(int)> ([dcl.fct])
+        if (i >= 1 && i + 1 < tokens.size() && tokens[i + 1].kind == TLParen) {
+            // a function type as a template argument: std::function<S(int)> ([dcl.fct]), also with the namespace names
+            // that were kept in front because a '(' follows (std::function<okay::http::Result(int)>, AccountService.hpp;
+            // Round 32)
+            size_t b = i;
+            while (b >= 2 && tokens[b - 1].kind == TColonColon && tokens[b - 2].kind == TIdent &&
+                   namespaces.count(tokens[b - 2].text) > 0)
+                b -= 2;
+            if (b >= 1 && tokens[b - 1].kind == TColonColon) --b;  // ::okay::...
+            if (b >= 1 && tokens[b - 1].kind == TLt) return true;
+        }
         return i + 1 < tokens.size() &&
                (tokens[i + 1].kind == TIdent || tokens[i + 1].kind == TStar || tokens[i + 1].kind == TAmp ||
                 tokens[i + 1].kind == TAndAnd ||
@@ -5668,11 +5788,16 @@ struct Parser {
                         at = static_cast<size_t>(field.init_at);
                         if (field.init_aggr) ++at;  // `T x = {a, b};`: past the '{'
                         bool ok = true;
-                        do {
-                            Node arg;
-                            ok = parse_expr(1, &arg);
-                            if (ok) args.push_back(std::move(arg));
-                        } while (ok && (field.init_braced || field.init_aggr) && accept(TComma));
+                        // `T x = {};` and `T a[N] = {};` (Profiler.hpp's `std::atomic<const char*> m_live[kLiveDepth] =
+                        // {};`): an empty list is value-initialization, the default constructor of each object
+                        // ([dcl.init.list] 3.5, 3.4; Round 32). It read an expression at the '}' before.
+                        if (!(field.init_aggr && is(TRBrace))) {
+                            do {
+                                Node arg;
+                                ok = parse_expr(1, &arg);
+                                if (ok) args.push_back(std::move(arg));
+                            } while (ok && (field.init_braced || field.init_aggr) && accept(TComma));
+                        }
                         at = saved_at;
                         if (!ok) return false;
                     }
@@ -5904,7 +6029,14 @@ struct Parser {
             fn->ret.is_ref = false;
             fn->ret.pointers += 1;
         }
-        if (fn->func_id >= 0) func_types[static_cast<size_t>(fn->func_id)].ret = fn->ret;
+        if (fn->func_id >= 0) {
+            Type& fr = func_types[static_cast<size_t>(fn->func_id)].ret;
+            fr = fn->ret;
+            if (fn->ret_ref) {  // as finish_signature: the pointer's signature keeps the reference (Round 32)
+                fr.pointers -= 1;
+                fr.is_ref = true;
+            }
+        }
         fn->sret = fn->ret.base == 3 && fn->ret.pointers == 0 && !fits_register(fn->ret);
         return true;
     }
@@ -6005,6 +6137,13 @@ struct Parser {
         }
         FuncType ft;
         ft.ret = fn->ret;
+        if (fn->ret_ref) {
+            // A function that returns a reference keeps it in its pointer's signature (Round 32): a call through the
+            // pointer, or of a lambda without captures (called by its name), is then an lvalue of the referred type
+            // (fp_reference_result), as `[]() -> int& {...}()` must be ([expr.call] 14). It read as a pointer before.
+            ft.ret.pointers -= 1;
+            ft.ret.is_ref = true;
+        }
         ft.params = fn->params;
         // The pointer's signature keeps the reference parameters as references, as a declared function pointer type
         // has them: a call through it binds its arguments the same way (adjust_fp_args), and the code generator passes
@@ -6063,6 +6202,10 @@ struct Parser {
         TDecl td;
         std::vector<TArg> pattern;
         std::string key;  // the argument list spelled with parameters numbered, to pair definitions
+        // The argument lists of std::void_t<...> in the pattern (token ranges, '<' excluded, '>' excluded): the
+        // specialization fits only when each of their types can be formed with the deduced arguments ([temp.alias] 2,
+        // [temp.deduct] 8, [meta.trans.other] void_t; Round 32, okayscript's HasInt<V, void_t<decltype(...)>>).
+        std::vector<std::pair<size_t, size_t>> checks;
     };
     struct OolDef {
         TDecl td;
@@ -6168,6 +6311,7 @@ struct Parser {
     std::map<std::string, std::vector<OolDef>> ool_defs{};
     std::map<std::string, size_t> func_specs{};  // key of an explicit specialization -> its declaration
     const std::map<std::string, size_t>* pat_values = nullptr;  // set while a pattern is read
+    std::vector<std::pair<size_t, size_t>> pat_checks{};  // the void_t argument lists of the pattern being read
     bool pat_rest_ok = false;  // a class specialization's pattern may end in `Rest...`
     std::vector<TArg> inst_args{};
     std::vector<TArg> inst_spec_args{};
@@ -6714,6 +6858,42 @@ struct Parser {
         return true;
     }
 
+    // Whether every type in the void_t argument lists of a specialization can be formed with its deduced arguments: a
+    // type that cannot (a member that does not exist, a decltype of a call that does not compile) is a deduction failure
+    // and the specialization is set aside ([temp.deduct] 8). Own simplification: any error while forming the type counts
+    // as such a failure, also one inside a class template instance made on the way (the standard calls that ill-formed).
+    bool void_t_checks_hold(const ClassSpec& spec, const std::vector<TArg>& deduced) {
+        const auto bound = bind_params(spec.td, deduced);
+        const size_t saved_at = at;
+        const std::string saved_error = error;
+        const std::vector<Node> keep_pre = stmt_pre;
+        const std::vector<Temp> keep_temps = stmt_temps;
+        bool ok = true;
+        for (const auto& range : spec.checks) {
+            at = range.first;
+            while (ok && at < range.second) {
+                Type t;
+                bool imp = false;
+                bool exp = false;
+                if (!parse_type(&t, &imp, &exp)) {
+                    ok = false;
+                    break;
+                }
+                while (accept(TStar) || accept(TConst)) {
+                }
+                if (!accept(TAmp)) accept(TAndAnd);
+                if (at < range.second && !accept(TComma)) ok = false;
+            }
+            if (!ok) break;
+        }
+        stmt_pre = keep_pre;
+        stmt_temps = keep_temps;
+        error = saved_error;
+        at = saved_at;
+        unbind_params(bound);
+        return ok;
+    }
+
     bool instantiate_class(const std::string& name, const std::vector<TArg>& args_in, Type* out) {
         if (args_in.size() == 1 && !args_in[0].is_value && !args_in[0].is_pack && args_in[0].type.func_id >= 0 &&
             args_in[0].type.pointers == 0 && args_in[0].type.base == 0 && class_templates.count(name + "__fn") > 0) {
@@ -6747,6 +6927,7 @@ struct Parser {
                     for (size_t i = 0; i < args.size() && fits; ++i)
                         fits = match_arg(spec.pattern[i], args[i], &deduced, &got);
                     for (size_t i = 0; i < got.size() && fits; ++i) fits = got[i];
+                    if (fits && !spec.checks.empty()) fits = void_t_checks_hold(spec, deduced);
                     if (!fits) continue;
                     if (best == nullptr || spec.td.params.size() < best->td.params.size()) {
                         best = &spec;
@@ -7007,7 +7188,10 @@ struct Parser {
                 at = td.start + 2;
                 pat_values = &values;
                 pat_rest_ok = true;
+                pat_checks.clear();
                 const bool ok = parse_template_args(primary->second, &spec.pattern, false);
+                spec.checks = pat_checks;
+                pat_checks.clear();
                 pat_rest_ok = false;
                 pat_values = nullptr;
                 at = was_at;
@@ -7294,6 +7478,14 @@ struct Parser {
         if (!parse_tparams(&mt.td)) return false;
         if (!expect(TGt, "'>'")) return false;
         mt.td.start = at;
+        if ((is(TStruct) || is(TUnion)) && at + 2 < tokens.size() && tokens[at + 1].kind == TIdent &&
+            (tokens[at + 2].kind == TLBrace || tokens[at + 2].kind == TColon || tokens[at + 2].kind == TSemi)) {
+            // A member class template (`template <class U> struct rebind { using other = A<U>; };`, FbxReader.hpp's
+            // UninitAllocator; [temp.mem]). Own limit (Round 32): it is stepped over and not made; a use of it is an
+            // error (an unknown name), never a wrong type.
+            at = template_decl_end(at, true);
+            return true;
+        }
         mt.td.end = template_decl_end(at, false);
         size_t paren = first_decl_paren(mt.td.start, mt.td.end);
         if (paren == mt.td.start || paren >= mt.td.end || tokens[paren - 1].kind != TIdent) {
@@ -7870,7 +8062,17 @@ struct Parser {
                 early.defined = false;
                 funcs.push_back(std::move(early));
             }
-            if (!parse_function_body(&fn, -1)) ok = false;
+            if (is(TSemi)) {
+                // A function template declared without a body (`template <class T> T&& declval();`, [declval]; Round 32):
+                // the instance is a declaration only. A call in an unevaluated operand (decltype) is dropped; any other
+                // call needs a definition from another file.
+                if (fn.ret.deduce != 0) {
+                    error = "a function template with a deduced result type and no body";
+                    ok = false;
+                } else {
+                    next();
+                }
+            } else if (!parse_function_body(&fn, -1)) ok = false;
             else funcs.push_back(std::move(fn));
         }
         unbind_params(saved);
@@ -9133,6 +9335,7 @@ struct Parser {
                 for (size_t k = decl_begin; k < at && k < tokens.size(); ++k)
                     if (tokens[k].inl) inline_var = true;
             if (inline_var) is_static = true;
+        next_class_object:  // C a{1}, b{2}; : each declarator after a comma comes back here (Round 32)
             if (!decl.is_function && (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type))) {
                 if (decl_tls) {
                     // thread_local C t; for a class whose only constructor is the implicit one and whose default member
@@ -9214,7 +9417,7 @@ struct Parser {
                     }
                     has_ginit = true;
                 }
-                if (!expect(TSemi, "';'")) return false;
+                if (!is(TComma) && !expect(TSemi, "';'")) return false;
                 Global global;
                 global.name = decl.name;
                 global.type = decl.type;
@@ -9223,6 +9426,29 @@ struct Parser {
                 globals.push_back(global);
                 if (!register_global_object(decl.name, decl.type, std::move(gargs), has_ginit ? &ginit : nullptr))
                     return false;
+                if (accept(TComma)) {
+                    // `std::atomic<int> g_pending{0}, g_finished{0};` (MatchResults.cpp): every declarator of a class
+                    // type is an object of its own, made at startup in order ([dcl.decl] 3, [basic.start.dynamic]).
+                    decl = Declarator{};
+                    gargs.clear();
+                    gctor_args = false;
+                    if (is(TIdent) && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen) {
+                        decl.name = cur().text;  // b(args): the arguments go to a constructor
+                        decl.type = type;
+                        next();
+                        next();
+                        if (!parse_call_args(&gargs)) return false;
+                        gctor_args = true;
+                    } else if (!parse_declarator(type, &decl)) {
+                        return false;
+                    }
+                    decl.type.is_const = is_const;
+                    if (decl.is_function) {
+                        error = "a function after a comma in a declaration of objects";
+                        return false;
+                    }
+                    goto next_class_object;
+                }
                 continue;
             }
             if (!decl.is_function) {
@@ -9235,9 +9461,24 @@ struct Parser {
                     // ([basic.link]): every file keeps its own copy, so two files may use the same name.
                     global.is_static = is_static || decl.type.is_const || anon_depth > 0;
                     global.tls = decl_tls;
-                    if (accept(TAssign)) {
+                    if (accept(TAssign) || is(TLBrace)) {
+                        // T g = init; or T g{init}; ([dcl.init.list] 3: for an aggregate or a scalar, list-initialization
+                        // of a namespace-scope variable is its aggregate or scalar initialization; Round 32).
                         Node init;
                         if (!parse_init(&init)) return false;
+                        if (init.kind == Node::Block && init.text == "init" && !decl.type.is_array() &&
+                            !(decl.type.base == 3 && decl.type.pointers == 0) && init.kids.size() <= 1) {
+                            // int n{5}; int z{}; : a scalar takes the one value, or zero ([dcl.init.list] 3.9, 3.11).
+                            if (init.kids.empty()) {
+                                Node zero;
+                                zero.kind = Node::IntLit;
+                                zero.type.base = 1;
+                                init = std::move(zero);
+                            } else {
+                                Node only = std::move(init.kids[0]);
+                                init = std::move(only);
+                            }
+                        }
                         global.bss = false;
                         if (!fix_unsized(&decl.type, init)) return false;
                         global.type = decl.type;

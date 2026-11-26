@@ -1,9 +1,8 @@
-// The launcher's command line. See CommandLine.hpp. Our own code: word splitting, completion and history written for
-// this page; programs start only through tools/okay-cli/Process.cpp; the command list is tools/okay-cli/CommandTable.cpp.
+// The launcher's command line. See CommandLine.hpp. Our own code: word splitting, completion and history are
+// tools/okay-cli/CommandInput.cpp (shared with the editor's Command Line panel); programs start only through
+// tools/okay-cli/Process.cpp; the command list is tools/okay-cli/CommandTable.cpp.
 #include "CommandLine.hpp"
 
-#include "CommandTable.hpp"   // tools/okay-cli: okay's commands and sub-commands
-#include "okay/Core/StringUtil.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -26,56 +25,7 @@ namespace okaylcli {
 namespace fs = std::filesystem;
 
 // ---- words and arguments ------------------------------------------------------------------------------------------
-
-bool SplitWords(const std::string& line, std::vector<std::string>& words, std::string& error) {
-    words.clear();
-    std::string cur;
-    bool inWord = false;
-    char quote = 0;
-    for (std::size_t i = 0; i < line.size(); ++i) {
-        const char c = line[i];
-        if (quote) {
-            if (c == quote) { quote = 0; continue; }
-            if (quote == '"' && c == '\\' && i + 1 < line.size() && (line[i + 1] == '"' || line[i + 1] == '\\')) {
-                cur += line[++i];
-                continue;
-            }
-            cur += c;
-            continue;
-        }
-        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-            if (inWord) { words.push_back(cur); cur.clear(); inWord = false; }
-            continue;
-        }
-        inWord = true;
-        if (c == '"' || c == '\'') { quote = c; continue; }
-        cur += c;
-    }
-    if (quote) {
-        error = std::string("A ") + (quote == '"' ? "double" : "single") + " quote is not closed.";
-        words.clear();
-        return false;
-    }
-    if (inWord) words.push_back(cur);
-    return true;
-}
-
-namespace {
-using okay::str::LowerAscii;   // engine/include/okay/Core/StringUtil.hpp: the one lower-case helper
-bool IsOkayWord(const std::string& w) {
-    const std::string l = LowerAscii(w);
-    return l == "okay" || l == "okay.exe";
-}
-} // namespace
-
-LineKind Classify(const std::string& line) {
-    std::vector<std::string> words;
-    std::string err;
-    if (!SplitWords(line, words, err)) return LineKind::Okay;   // BuildArgv says what is wrong
-    if (words.empty()) return LineKind::Empty;
-    if (words.size() == 1 && (LowerAscii(words[0]) == "clear" || LowerAscii(words[0]) == "cls")) return LineKind::Clear;
-    return LineKind::Okay;
-}
+// SplitWords, Classify, Complete, History and the output lines: tools/okay-cli/CommandInput.cpp (shared with the editor).
 
 bool BuildArgv(const std::string& okayExe, const std::string& line, std::vector<std::string>& argv, std::string& error) {
     argv.clear();
@@ -85,138 +35,14 @@ bool BuildArgv(const std::string& okayExe, const std::string& line, std::vector<
     }
     std::vector<std::string> words;
     if (!SplitWords(line, words, error)) return false;
-    if (!words.empty() && IsOkayWord(words[0])) words.erase(words.begin());
+    if (!words.empty() && okaycli::IsOkayWord(words[0])) words.erase(words.begin());
     if (words.empty()) { error = "Type a command for okay, for example: help"; return false; }
     argv.push_back(okayExe);
     argv.insert(argv.end(), words.begin(), words.end());
     return true;
 }
 
-// ---- Tab completion -----------------------------------------------------------------------------------------------
-
-Completion Complete(const std::string& line) {
-    Completion c;
-    c.line = line;
-    // The words before the one being typed (plain spaces; quoted words never need completing here).
-    std::vector<std::string> done;
-    std::size_t start = 0;
-    {
-        std::size_t i = 0;
-        while (i < line.size()) {
-            while (i < line.size() && line[i] == ' ') ++i;
-            if (i >= line.size()) { start = line.size(); break; }
-            std::size_t j = i;
-            while (j < line.size() && line[j] != ' ') ++j;
-            if (j >= line.size()) { start = i; break; }   // the last word, still being typed
-            done.push_back(line.substr(i, j - i));
-            i = j;
-            start = line.size();
-        }
-    }
-    const std::string word = line.substr(start);
-    if (!done.empty() && IsOkayWord(done[0])) done.erase(done.begin());
-    std::vector<std::string> pool;
-    if (done.empty()) {
-        pool = okaycli::CommandNames();
-        pool.push_back("clear");   // the page's own command
-    } else if (done.size() == 1) {
-        pool = done[0] == "help" ? okaycli::CommandNames() : okaycli::SubCommandNames(done[0]);
-    }
-    std::vector<std::string> fit;
-    for (const std::string& p : pool)
-        if (p.compare(0, word.size(), word) == 0) fit.push_back(p);
-    if (fit.empty()) return c;
-    if (fit.size() == 1) { c.line = line.substr(0, start) + fit[0] + " "; return c; }
-    std::string common = fit[0];
-    for (const std::string& f : fit) {
-        std::size_t k = 0;
-        while (k < common.size() && k < f.size() && common[k] == f[k]) ++k;
-        common.resize(k);
-    }
-    c.line = line.substr(0, start) + common;
-    c.choices = fit;
-    return c;
-}
-
-// ---- history ------------------------------------------------------------------------------------------------------
-
-void History::Push(const std::string& line) {
-    if (line.empty()) { pos_ = lines_.size(); return; }
-    if (lines_.empty() || lines_.back() != line) lines_.push_back(line);
-    if (lines_.size() > limit_) lines_.erase(lines_.begin(), lines_.begin() + (long)(lines_.size() - limit_));
-    pos_ = lines_.size();
-    draft_.clear();
-}
-
-bool History::Up(const std::string& current, std::string& line) {
-    if (lines_.empty() || pos_ == 0) return false;
-    if (pos_ >= lines_.size()) { draft_ = current; pos_ = lines_.size(); }
-    --pos_;
-    line = lines_[pos_];
-    return true;
-}
-
-bool History::Down(std::string& line) {
-    if (pos_ >= lines_.size()) return false;
-    ++pos_;
-    line = pos_ == lines_.size() ? draft_ : lines_[pos_];
-    return true;
-}
-
 // ---- a session ----------------------------------------------------------------------------------------------------
-
-std::string CleanOutput(const std::string& text) {
-    std::string o;
-    o.reserve(text.size());
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        const char c = text[i];
-        if (c == '\x1b' && i + 1 < text.size() && text[i + 1] == '[') {   // a colour code: ESC [ digits ; ... letter
-            std::size_t j = i + 2;
-            while (j < text.size() && !((text[j] >= '@' && text[j] <= '~'))) ++j;
-            i = j;
-            continue;
-        }
-        if (c == '\r') continue;
-        o += c;
-    }
-    return o;
-}
-
-void Session::RebuildText() {
-    text_.clear();
-    for (std::size_t i = 0; i < lines_.size(); ++i) {
-        if (i) text_ += '\n';
-        text_ += lines_[i].text;
-    }
-}
-
-void Session::AddLine(const std::string& text, OutLine::Kind kind) {
-    OutLine l;
-    l.text = text;
-    l.kind = kind;
-    lines_.push_back(l);
-    if (lines_.size() > maxLines_) {
-        lines_.erase(lines_.begin(), lines_.begin() + (long)(lines_.size() - maxLines_));
-        RebuildText();
-    } else {
-        if (lines_.size() > 1) text_ += '\n';
-        text_ += text;
-    }
-    ++revision_;
-}
-
-void Session::Feed(std::string& partial, const std::string& bytes, OutLine::Kind kind, bool flush) {
-    partial += CleanOutput(bytes);
-    std::size_t at = 0;
-    for (;;) {
-        const std::size_t nl = partial.find('\n', at);
-        if (nl == std::string::npos) break;
-        AddLine(partial.substr(at, nl - at), kind);
-        at = nl + 1;
-    }
-    partial.erase(0, at);
-    if (flush && !partial.empty()) { AddLine(partial, kind); partial.clear(); }
-}
 
 bool Session::Submit(const std::string& line) {
     history_.Push(line);
@@ -226,7 +52,7 @@ bool Session::Submit(const std::string& line) {
     case LineKind::Okay: break;
     }
     if (child_.Running()) { Note("A command is still running. Wait for it, or press Stop."); return false; }
-    AddLine("> " + line, OutLine::Note);
+    log_.Add("> " + line, OutLine::Note);
     std::vector<std::string> argv;
     std::string error;
     if (!BuildArgv(okay_, line, argv, error)) { Note(error); return false; }
@@ -239,8 +65,8 @@ void Session::Poll() {
     if (!running_) return;
     std::string out, err;
     const bool still = child_.Poll(out, err);
-    Feed(outPartial_, out, OutLine::Out, !still);
-    Feed(errPartial_, err, OutLine::Err, !still);
+    log_.Feed(outPartial_, out, OutLine::Out, !still);
+    log_.Feed(errPartial_, err, OutLine::Err, !still);
     if (!still) {
         running_ = false;
         if (child_.Stopped()) Note("Stopped.");
@@ -253,10 +79,36 @@ void Session::Stop() {
     if (child_.Running()) child_.Stop();
 }
 
-void Session::Clear() {
-    lines_.clear();
-    text_.clear();
-    ++revision_;
+// ---- the programs of their own -------------------------------------------------------------------------------------
+
+const std::vector<ToolProgram>& ToolPrograms() {
+    static const std::vector<ToolProgram> k = {
+        {"Browser", "The OkaySpace browser in a window of its own (the same browser as the Browser page).",
+         {"OkaySpaceBrowser.exe", "okay-browser.exe", "okay-browser"}},
+        {"Script Editor", "The Script Editor in a window of its own.",
+         {"OkaySpaceScriptEditor.exe", "okay-script-editor.exe", "okay-script-editor"}},
+        {"Visual Script", "The Visual Script editor in a window of its own.",
+         {"OkaySpaceVisualScript.exe", "okay-visual-script.exe", "okay-visual-script"}},
+    };
+    return k;
+}
+
+std::vector<FoundProgram> FindPrograms(const std::vector<std::string>& dirs) {
+    std::vector<FoundProgram> found;
+    std::error_code ec;
+    for (const ToolProgram& p : ToolPrograms()) {
+        std::string path;
+        for (const std::string& d : dirs) {
+            if (d.empty()) continue;
+            for (const std::string& f : p.files) {
+                const fs::path full = fs::u8path(d) / fs::u8path(f);
+                if (fs::is_regular_file(full, ec)) { path = full.u8string(); break; }
+            }
+            if (!path.empty()) break;
+        }
+        if (!path.empty()) found.push_back({p.label, p.tip, path});
+    }
+    return found;
 }
 
 // ---- shells -------------------------------------------------------------------------------------------------------

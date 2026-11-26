@@ -152,6 +152,8 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
 # okay: the engine's command line (tools/okay-cli): new, open, play, build, test, and version control with git (okay vc).
 # It sits beside the editor and the player so it finds them.
 [ -f "$BUILD_DIR/bin/okay.exe" ] && cp "$BUILD_DIR/bin/okay.exe" "$OUT_DIR/Tools/"
+# OkaySpaceBrowser.exe: the browser in a window of its own (browser/; the launcher's Command line page has a button for it when it is here).
+[ -f "$BUILD_DIR/bin/OkaySpaceBrowser.exe" ] && cp "$BUILD_DIR/bin/OkaySpaceBrowser.exe" "$OUT_DIR/Tools/"
 # okay-texture.exe: our texture tool (mips, atlas, compress to DDS); examples\texture shows how to use it.
 [ -f "$BUILD_DIR/bin/okay-texture.exe" ] && cp "$BUILD_DIR/bin/okay-texture.exe" "$OUT_DIR/Tools/"
 # OkayUI's standalone Direct3D 11 demo (no SDL): a raw DX11 app rendering OkayUI.

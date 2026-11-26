@@ -2,8 +2,8 @@
 # docs/platform/browser_plan.md). A window of its own on the Browser's page engine (okay_browser), the OkayUI view
 # (okay_ui_screens), the shared browser (shared/BrowserApp.cpp: the launcher's Browser page draws the same one) and tab host (shared/BrowserHost.cpp), drawn in OkayUI's window mode through okay::platform
 # (okay_ui_soft's painter frame drawer). Games on a page run with the player (okay-player), found beside this program.
-# Built whenever OkayUI is (on by default, CLAUDE.md rule 17). Not in the release packaging yet: that is the coordinator's
-# and the owner's decision.
+# Built whenever OkayUI is (on by default, CLAUDE.md rule 17). The Windows package copies it into Tools/ (scripts/build-windows-dist.sh)
+# and the launcher's Command line page has a button for it; it is not updated on its own (it comes with each release).
 if(NOT TARGET okay_ui_screens OR NOT TARGET okay_ui_soft)
     return()
 endif()

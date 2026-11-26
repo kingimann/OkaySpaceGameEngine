@@ -448,17 +448,79 @@ void BrowserDelayedTooltip(unsigned id, const std::string& text) {
     if (UI::GetTime() - since >= 0.5 && !UI::IsMouseDown(0)) UI::SetTooltip("%s", text.c_str());
 }
 
-bool BrowserIconButton(const char* id, BrowserIcon icon, float x, float y, float size, bool enabled, const char* tip, bool* rightClicked) {
+bool BrowserIconButton(const char* id, BrowserIcon icon, float x, float y, float size, bool enabled, const char* tip, bool* rightClicked,
+                       bool* held) {
     UI::SetCursorScreenPos(UI::Vec2(x, y));
     const bool clicked = UI::InvisibleButton(id, size, size);
     const bool hov = UI::IsItemHovered();
+    const unsigned itemId = UI::GetItemID();
     const auto& dl = UI::GetWindowDrawList();
     const UI::Vec2 c(x + size * 0.5f, y + size * 0.5f);
     if (enabled && hov) dl->AddCircleFilled(c, size * 0.5f, UI::IsMouseDown(0) ? lk::kPressed : lk::kHover);
     DrawBrowserIcon(icon, c.x, c.y, size * 0.55f, enabled ? lk::kText : lk::kIconOff);
     if (rightClicked && enabled && hov && UI::IsMouseClicked(1)) *rightClicked = true;
-    if (hov && tip && *tip) BrowserDelayedTooltip(UI::GetItemID(), tip);
-    return clicked && enabled;
+    if (hov && tip && *tip) BrowserDelayedTooltip(itemId, tip);
+    // press and hold: one button at a time is followed from its press until the button is let go
+    static unsigned holdId = 0;
+    static double holdSince = 0.0;
+    static bool holdFired = false;
+    bool swallow = false;
+    if (held && enabled) {
+        if (hov && UI::IsMouseClicked(0)) { holdId = itemId; holdSince = UI::GetTime(); holdFired = false; }
+        if (holdId == itemId) {
+            if (UI::IsMouseDown(0)) {
+                if (!holdFired && hov && UI::GetTime() - holdSince >= kHoldSeconds) { holdFired = true; *held = true; }
+            } else {
+                swallow = holdFired;   // the press opened the list: letting go is not a click
+                holdId = 0;
+                holdFired = false;
+            }
+        }
+    }
+    return clicked && enabled && !swallow;
+}
+
+bool PageKeyInfo(UI::KeyId key, br::KeyInfo& out) {
+    out = br::KeyInfo();
+    const UI::Input& in = UI::GetFrameInput();
+    out.shift = in.shift || UI::IsKeyDown(UI::KeyId_Shift);
+    out.ctrl = in.ctrl || UI::IsKeyDown(UI::KeyId_Ctrl);
+    out.alt = UI::IsKeyDown(UI::KeyId_Alt);
+    // UI Events KeyboardEvent key / code values and the legacy keyCode (the US layout's: the OkayUI keys are physical keys)
+    if (key >= UI::KeyId_A && key <= UI::KeyId_Z) {
+        const char ch = (char)('a' + (key - UI::KeyId_A));
+        out.key = std::string(1, out.shift ? (char)(ch - 32) : ch);
+        out.code = std::string("Key") + (char)(ch - 32);
+        out.keyCode = ch - 32;
+        return true;
+    }
+    if (key >= UI::KeyId_0 && key <= UI::KeyId_9) {
+        const char ch = (char)('0' + (key - UI::KeyId_0));
+        out.key = std::string(1, ch);
+        out.code = std::string("Digit") + ch;
+        out.keyCode = ch;
+        return true;
+    }
+    if (key >= UI::KeyId_F1 && key <= UI::KeyId_F12) {
+        out.key = out.code = "F" + std::to_string(1 + (key - UI::KeyId_F1));
+        out.keyCode = 112 + (key - UI::KeyId_F1);
+        return true;
+    }
+    struct Named { UI::KeyId id; const char* key; const char* code; int keyCode; };
+    static const Named kNamed[] = {
+        {UI::KeyId_Enter, "Enter", "Enter", 13}, {UI::KeyId_Escape, "Escape", "Escape", 27}, {UI::KeyId_Tab, "Tab", "Tab", 9},
+        {UI::KeyId_Backspace, "Backspace", "Backspace", 8}, {UI::KeyId_Delete, "Delete", "Delete", 46}, {UI::KeyId_Space, " ", "Space", 32},
+        {UI::KeyId_Left, "ArrowLeft", "ArrowLeft", 37}, {UI::KeyId_Up, "ArrowUp", "ArrowUp", 38}, {UI::KeyId_Right, "ArrowRight", "ArrowRight", 39},
+        {UI::KeyId_Down, "ArrowDown", "ArrowDown", 40}, {UI::KeyId_PageUp, "PageUp", "PageUp", 33}, {UI::KeyId_PageDown, "PageDown", "PageDown", 34},
+        {UI::KeyId_Home, "Home", "Home", 36}, {UI::KeyId_End, "End", "End", 35}, {UI::KeyId_Insert, "Insert", "Insert", 45},
+        {UI::KeyId_Minus, "-", "Minus", 189}, {UI::KeyId_Equal, "=", "Equal", 187}, {UI::KeyId_Comma, ",", "Comma", 188},
+        {UI::KeyId_Period, ".", "Period", 190}, {UI::KeyId_Slash, "/", "Slash", 191}, {UI::KeyId_Semicolon, ";", "Semicolon", 186},
+        {UI::KeyId_Apostrophe, "'", "Quote", 222}, {UI::KeyId_LeftBracket, "[", "BracketLeft", 219}, {UI::KeyId_RightBracket, "]", "BracketRight", 221},
+        {UI::KeyId_Backslash, "\\", "Backslash", 220}, {UI::KeyId_GraveAccent, "`", "Backquote", 192},
+    };
+    for (const Named& n : kNamed)
+        if (n.id == key) { out.key = n.key; out.code = n.code; out.keyCode = n.keyCode; return true; }
+    return false;
 }
 
 namespace {
@@ -486,9 +548,16 @@ void ProgramToolbar(br::BrowserTab& tab, float x, float y, float w, float tbH, c
     const float bs = 30.0f, by = y + (tbH - bs) * 0.5f;
     float bx = x + 8.0f;
     const bool loadingNow = tab.GetState() == br::BrowserTab::State::Loading;
-    if (BrowserIconButton("##back", BrowserIcon::Back, bx, by, bs, tab.CanGoBack(), "Back (Alt+Left)")) res.back = true;
+    // Back and Forward: a right click, or a press held on them, shows the tab's history list under the button
+    bool listBack = false, listForward = false;
+    if (BrowserIconButton("##back", BrowserIcon::Back, bx, by, bs, tab.CanGoBack(), "Back (Alt+Left); right-click or hold for history", &listBack, &listBack))
+        res.back = true;
+    if (listBack) { res.historyMenu = -1; res.historyAt = UI::Vec2(bx, by + bs + 4.0f); }
     bx += bs + 2.0f;
-    if (BrowserIconButton("##forward", BrowserIcon::Forward, bx, by, bs, tab.CanGoForward(), "Forward (Alt+Right)")) res.forward = true;
+    if (BrowserIconButton("##forward", BrowserIcon::Forward, bx, by, bs, tab.CanGoForward(), "Forward (Alt+Right); right-click or hold for history",
+                          &listForward, &listForward))
+        res.forward = true;
+    if (listForward) { res.historyMenu = 1; res.historyAt = UI::Vec2(bx, by + bs + 4.0f); }
     bx += bs + 2.0f;
     if (loadingNow) { if (BrowserIconButton("##stop", BrowserIcon::Stop, bx, by, bs, true, "Stop loading (Esc)")) res.stop = true; }
     else if (BrowserIconButton("##reload", BrowserIcon::Reload, bx, by, bs, !tab.Url().empty(), "Reload (Ctrl+R)")) res.reload = true;
@@ -664,6 +733,69 @@ bool TextPlaceAt(const br::LayoutResult& page, float px, float py, int& cmd, int
     return true;
 }
 
+constexpr float kWheelStep = 100.0f;   // px a notch of the wheel scrolls the page (it glides there)
+
+// This frame's keys for the page's scripts: keydown (and keypress for a key that makes a character) when a key goes down or
+// repeats, keyup when it comes up. The browser's own shortcuts are left out. True when the page cancelled one; this frame's
+// typed text is then dropped, so no field types it.
+bool SendPageKeys(br::BrowserTab& tab) {
+    bool cancelled = false;
+    for (int k = UI::KeyId_None + 1; k < UI::KeyId_COUNT; ++k) {
+        const UI::KeyId id = (UI::KeyId)k;
+        const bool down = UI::IsKeyPressed(id, true), up = UI::IsKeyReleased(id);
+        if (!down && !up) continue;
+        br::KeyInfo ki;
+        if (!PageKeyInfo(id, ki) || br::IsBrowserShortcut(ki)) continue;
+        if (down) {
+            ki.repeat = !UI::IsKeyPressed(id, false);
+            if (tab.KeyEvent("keydown", ki)) cancelled = true;
+            else if (!ki.ctrl && !ki.alt && (ki.key.size() == 1 || ki.key == "Enter") && tab.KeyEvent("keypress", ki)) cancelled = true;
+        }
+        if (up) tab.KeyEvent("keyup", ki);
+    }
+    if (cancelled) UI::GetIO().InputQueueCharacters.resize(0);
+    return cancelled;
+}
+
+// This frame's mouse for the page's scripts, at the element under the pointer (its form control, its link, else its innermost
+// box): mousedown / mouseup for each button that went down / up, mousemove when the pointer moved. True when a mousedown was
+// cancelled.
+// The element a page's mouse event goes to at the page point (pmx, pmy): its form control, its link, else its innermost box.
+const br::Node* EventTargetAt(const br::LayoutResult& page, float pmx, float pmy, const br::ScrollOffsets* boxScroll, float pageScroll) {
+    const int ci = br::ControlAt(page, pmx, pmy, boxScroll, pageScroll);
+    const int link = br::LinkAt(page, pmx, pmy, boxScroll, pageScroll);
+    const br::Node* target = ci >= 0 ? page.controls[(std::size_t)ci].node : nullptr;
+    if (!target && link >= 0 && (std::size_t)link < page.linkNodes.size()) target = page.linkNodes[(std::size_t)link];
+    if (!target) target = NodeAt(page, pmx, pmy, link);
+    return target;
+}
+
+bool SendPageMouse(br::BrowserTab& tab, const br::LayoutResult& page, float pmx, float pmy, float clientY,
+                   const br::ScrollOffsets* boxScroll, float pageScroll) {
+    const br::Node* target = EventTargetAt(page, pmx, pmy, boxScroll, pageScroll);
+    if (!target) return false;
+    br::MouseInfo mi;
+    mi.x = pmx;
+    mi.y = clientY;
+    const UI::Input& in = UI::GetFrameInput();
+    mi.shift = in.shift;
+    mi.ctrl = in.ctrl;
+    mi.alt = UI::IsKeyDown(UI::KeyId_Alt);
+    // OkayUI's buttons are 0 left, 1 right, 2 middle; the page's are 0 left, 1 middle, 2 right (buttons: 1, 4, 2 as bits)
+    static const int kDomButton[3] = {0, 2, 1};
+    static const int kDomBit[3] = {1, 2, 4};
+    for (int b = 0; b < 3; ++b) if (UI::IsMouseDown(b)) mi.buttons |= kDomBit[b];
+    bool cancelled = false;
+    for (int b = 0; b < 3; ++b) {
+        mi.button = kDomButton[b];
+        if (UI::IsMouseClicked(b) && tab.PointerEvent(*target, "mousedown", mi)) cancelled = true;
+        if (UI::IsMouseReleased(b)) tab.PointerEvent(*target, "mouseup", mi);
+    }
+    const UI::Vec2 d = UI::GetMouseDelta();
+    if (d.x != 0.0f || d.y != 0.0f) { mi.button = 0; tab.PointerEvent(*target, "mousemove", mi); }
+    return cancelled;
+}
+
 // A page that could not be opened: a large sign, what happened in a sentence, what to do, the small print, Try again.
 void ErrorPage(br::BrowserTab& tab, float left, float top, float viewW, float viewH, BrowserViewResult& res) {
     const br::LoadErrorInfo e = br::DescribeLoadError(tab.Url(), tab.Error());
@@ -805,9 +937,10 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
             UI::BeginChild("##browserpage", UI::Vec2(0.0f, std::max(20.0f, avail.y)), UI::Child_None);
             UI::PopStyleVar(1);
         } else UI::BeginChild("##browserpage", 0.0f, std::max(20.0f, avail.y), false);
-        const UI::Vec2 origin = UI::GetCursorScreenPos();   // the page's top-left (already moved up by the scroll)
+        const UI::Vec2 layoutOrigin = UI::GetCursorScreenPos();   // the page's top-left (already moved up by the scroll)
+        UI::Vec2 origin = layoutOrigin;                           // ... where it is drawn (a wheel glide draws it where the glide is)
         const float viewW = std::max(20.0f, UI::GetContentRegionAvail().x);
-        const float scroll = UI::GetScrollY();
+        float scroll = UI::GetScrollY();
         const float viewTop = origin.y + scroll;
         const float viewH = std::max(20.0f, avail.y);
         res.page.x = origin.x; res.page.y = viewTop; res.page.w = viewW; res.page.h = viewH;
@@ -841,12 +974,16 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                 const bool ctrlK = UI::GetFrameInput().ctrl, shiftK = UI::GetFrameInput().shift, altK = UI::IsKeyDown(UI::KeyId_Alt);
                 const bool typing = UI::WantsTextInput();
                 const bool pageField = kedit && kedit->node && typing;   // a field of the page has the keyboard
+                // the page's scripts see the keys first (keydown / keypress / keyup at the focused element); a key they cancel is
+                // not typed and does not scroll or move the focus. The browser's own keys (Ctrl+T ...) never reach them.
+                if (tab.Scripts() && (!typing || pageField)) res.keyCancelled = SendPageKeys(tab);
+                const bool keysFree = !res.keyCancelled;
                 const float maxScroll = std::max(0.0f, std::min(page.height * zoom - viewH, UI::GetScrollMaxY() > 0.0f ? UI::GetScrollMaxY() : FLT_MAX));
                 const br::Node* fc = static_cast<const br::Node*>(nav->focusControl);
                 const br::ControlKind fk = fc ? br::KindOf(*fc) : br::ControlKind::Text;
                 const bool spaceWorksControl = fc && (fk == br::ControlKind::Checkbox || fk == br::ControlKind::Radio || fk == br::ControlKind::Submit ||
                                                       fk == br::ControlKind::Select || fk == br::ControlKind::Button || fk == br::ControlKind::Reset);
-                if (!typing && !ctrlK && !altK) {
+                if (keysFree && !typing && !ctrlK && !altK) {
                     float delta = 0.0f, dest = -1.0f;
                     const float pageStep = std::max(40.0f, viewH * 0.875f);
                     if (UI::IsKeyPressed(UI::KeyId_Down)) delta = 40.0f;
@@ -862,7 +999,7 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                         nav->glideFrames = 0;
                     }
                 }
-                if ((!typing || pageField) && !ctrlK && !altK && UI::IsKeyPressed(UI::KeyId_Tab)) {
+                if (keysFree && (!typing || pageField) && !ctrlK && !altK && UI::IsKeyPressed(UI::KeyId_Tab)) {
                     const std::vector<Focusable> order = FocusOrder(page);
                     if (!order.empty()) {
                         int cur = -1;
@@ -889,12 +1026,12 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                         }
                     }
                 }
-                if (!typing && !ctrlK && !altK && nav->focusLink >= 0 && nav->focusLink < (int)page.links.size() && UI::IsKeyPressed(UI::KeyId_Enter, false)) {
+                if (keysFree && !typing && !ctrlK && !altK && nav->focusLink >= 0 && nav->focusLink < (int)page.links.size() && UI::IsKeyPressed(UI::KeyId_Enter, false)) {
                     res.linkClicked = nav->focusLink;
                     res.linkInNewTab = false;
                 }
                 // Space or Enter on a focused box, button or list works it like a click
-                if (!typing && fc && kedit && (UI::IsKeyPressed(UI::KeyId_Space, false) || UI::IsKeyPressed(UI::KeyId_Enter, false))) {
+                if (keysFree && !typing && fc && kedit && (UI::IsKeyPressed(UI::KeyId_Space, false) || UI::IsKeyPressed(UI::KeyId_Enter, false))) {
                     br::FormState& fs = tab.Forms();
                     if (fk == br::ControlKind::Checkbox || fk == br::ControlKind::Radio) { fs.Toggle(*fc); tab.FormChanged(); tab.ControlInput(*fc); }
                     else if (fk == br::ControlKind::Select) kedit->selectOpen = fc;
@@ -903,31 +1040,51 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                     } else if (fk == br::ControlKind::Reset) { fs.ResetForm(br::FormState::FormOwner(*fc, *kdoc)); tab.FormChanged(); }
                 }
             }
-            if (nav && nav->scrollTarget >= 0.0f && !loading) {
-                if (UI::GetFrameInput().wheel != 0.0f) nav->scrollTarget = -1.0f;   // the wheel takes over
-                else {
-                    float next = options.smoothScroll ? scroll + (nav->scrollTarget - scroll) * 0.35f : nav->scrollTarget;
-                    if (std::fabs(nav->scrollTarget - next) < 1.0f || ++nav->glideFrames > 40) { next = nav->scrollTarget; nav->scrollTarget = -1.0f; }
-                    UI::SetScrollY(next);
-                    tab.ScrollY() = next;
-                }
-            }
             const UI::Vec2 m = UI::GetMousePos();
             const bool inView = !options.blockInput &&
                                 UI::IsMouseHoveringRect(UI::Vec2(origin.x, viewTop), UI::Vec2(origin.x + viewW, viewTop + viewH));
-            const float pmx = (m.x - origin.x) / zoom, pmy = (m.y - origin.y) / zoom;   // the pointer in page coordinates
-            const float pageScroll = scroll / zoom;
-            // the wheel over a scrolling area scrolls it, not the page
-            if (inView && UI::GetFrameInput().wheel != 0.0f) {
-                const int sc = br::ScrollerAt(page, pmx, pmy, &boxScroll, pageScroll);
+            const float wheel = UI::GetFrameInput().wheel;
+            // the wheel over a scrolling area scrolls it, not the page (which stays where it was)
+            bool wheelTaken = false;
+            if (inView && wheel != 0.0f) {
+                const int sc = br::ScrollerAt(page, (m.x - origin.x) / zoom, (m.y - origin.y) / zoom, &boxScroll, scroll / zoom);
                 if (sc >= 0) {
                     const br::Scroller& s = page.scrollers[(std::size_t)sc];
                     float& off = boxScroll[(std::size_t)sc].second;
                     const float before = off;
-                    off = std::max(0.0f, std::min(std::max(0.0f, s.contentH - s.h), off - UI::GetFrameInput().wheel * 48.0f));
-                    if (off != before) { UI::SetScrollY(prevScroll); tab.ScrollY() = prevScroll; }
+                    off = std::max(0.0f, std::min(std::max(0.0f, s.contentH - s.h), off - wheel * 48.0f));
+                    if (off != before) {
+                        UI::SetScrollY(prevScroll);
+                        tab.ScrollY() = prevScroll;
+                        origin.y += scroll - prevScroll;
+                        scroll = prevScroll;
+                        wheelTaken = true;
+                    }
                 }
             }
+            // the wheel over the page glides there over a few frames, like the keys (the view's own jump is undone)
+            bool wheelGlide = false;
+            if (nav && options.smoothScroll && !loading && inView && wheel != 0.0f && !wheelTaken) {
+                const float maxS = std::max(0.0f, std::min(page.height * zoom - viewH, UI::GetScrollMaxY() > 0.0f ? UI::GetScrollMaxY() : FLT_MAX));
+                const float base = nav->scrollTarget >= 0.0f ? nav->scrollTarget : prevScroll;
+                nav->scrollTarget = std::max(0.0f, std::min(maxS, base - wheel * kWheelStep));
+                nav->glideFrames = 0;
+                wheelGlide = true;
+            }
+            if (nav && nav->scrollTarget >= 0.0f && !loading) {
+                if (wheel != 0.0f && !wheelGlide) nav->scrollTarget = -1.0f;   // the wheel took over (a scrolling area, or no glide)
+                else {
+                    const float from = wheelGlide ? prevScroll : scroll;
+                    float next = options.smoothScroll ? from + (nav->scrollTarget - from) * 0.35f : nav->scrollTarget;
+                    if (std::fabs(nav->scrollTarget - next) < 1.0f || ++nav->glideFrames > 40) { next = nav->scrollTarget; nav->scrollTarget = -1.0f; }
+                    UI::SetScrollY(next);
+                    tab.ScrollY() = next;
+                    if (wheelGlide) { origin.y += scroll - next; scroll = next; }   // drawn where the glide is, not where the wheel jumped
+                }
+            }
+            res.pageTop = origin.y;
+            const float pmx = (m.x - origin.x) / zoom, pmy = (m.y - origin.y) / zoom;   // the pointer in page coordinates
+            const float pageScroll = scroll / zoom;
             // the Play button of an embedded game under the pointer (index into cmds), checked before drawing so it lights up
             int hotPlay = -1;
             if (inView && options.embedState)
@@ -1009,12 +1166,15 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                         // the multi-line field takes no SetKeyboardFocusHere: it is given the keyboard by its id after it is drawn
                         const bool give = edit->focusNow;
                         edit->focusNow = false;
-                        UI::InputTextMultiline("##field", edit->buf.data(), (int)edit->buf.size(), UI::Vec2(cb.w * zoom, cb.h * zoom));
+                        UI::InputTextMultiline("##field", edit->buf.data(), (int)edit->buf.size(), UI::Vec2(cb.w * zoom, cb.h * zoom),
+                                               res.keyCancelled ? UI::InputText_ReadOnly : 0u);
                         if (give) UI::SetKeyboardFocusId((int)UI::GetItemID());
                     } else {
                         UI::SetNextItemWidth(cb.w * zoom);
                         enter = UI::InputText("##field", edit->buf.data(), (int)edit->buf.size(),
-                                              UI::InputText_EnterReturnsTrue | (kind == br::ControlKind::Password ? UI::InputText_Password : 0));
+                                              UI::InputText_EnterReturnsTrue | (kind == br::ControlKind::Password ? UI::InputText_Password : 0) |
+                                                  (res.keyCancelled ? UI::InputText_ReadOnly : 0));   // a key the page cancelled is not typed
+                        if (res.keyCancelled) enter = false;
                     }
                     UI::PopID();
                     const std::string typed(edit->buf.data());
@@ -1059,15 +1219,14 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                     else if (UI::IsMouseHoveringRect(UI::Vec2(sx, sy), UI::Vec2(sx + lw, sy + rowH * (float)opts.size() + 4))) controlTook = true;
                 }
             }
+            // the page's scripts see the mouse: mousedown / mouseup for each button and mousemove, at the element under the pointer
+            if (inView && hotPlay < 0 && !controlTook && doc && !loading && tab.Scripts())
+                res.mouseDownCancelled = SendPageMouse(tab, page, pmx, pmy, (m.y - viewTop) / zoom, &boxScroll, pageScroll);
             if (nav && inView && UI::IsMouseClicked(0)) { nav->focusLink = -1; nav->focusControl = nullptr; }
             // the page's scripts see the click first (on the control, the link, else the innermost box under the pointer); a
             // page that cancels it (preventDefault) keeps the link from being followed and the control from being worked
             if (inView && hotPlay < 0 && !controlTook && doc && !loading && tab.Scripts() && UI::IsMouseClicked(0)) {
-                const int ci = br::ControlAt(page, pmx, pmy, &boxScroll, pageScroll);
-                const int link = br::LinkAt(page, pmx, pmy, &boxScroll, pageScroll);
-                const br::Node* target = ci >= 0 ? page.controls[(std::size_t)ci].node : nullptr;
-                if (!target && link >= 0 && (std::size_t)link < page.linkNodes.size()) target = page.linkNodes[(std::size_t)link];
-                if (!target) target = NodeAt(page, pmx, pmy, link);
+                const br::Node* target = EventTargetAt(page, pmx, pmy, &boxScroll, pageScroll);
                 if (target && tab.Click(*target)) controlTook = true;
             }
             // clicks on form controls and labels
@@ -1082,7 +1241,12 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                 if (target && !br::FormState::IsDisabled(*target)) {
                     controlTook = true;
                     const br::ControlKind k = br::KindOf(*target);
-                    if (br::FormState::IsTypable(*target)) { if (edit->node != target) { edit->node = target; edit->buf.assign(4096, 0); edit->focusNow = true; } tab.SetFocus(target); }
+                    if (br::FormState::IsTypable(*target)) {
+                        if (!res.mouseDownCancelled) {   // a page that cancels mousedown keeps the field from taking the keyboard
+                            if (edit->node != target) { edit->node = target; edit->buf.assign(4096, 0); edit->focusNow = true; }
+                            tab.SetFocus(target);
+                        }
+                    }
                     else {
                         edit->node = nullptr;
                         tab.SetFocus(target);
@@ -1121,7 +1285,7 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
             // text selection: a press on the page's text (not a link, a field or a button) starts it, dragging moves its end;
             // Ctrl+A selects all the text and Ctrl+C copies it while no field has the keyboard
             if (nav && !loading && !options.blockInput) {
-                if (inView && hotPlay < 0 && !controlTook && UI::IsMouseClicked(0)) {
+                if (inView && hotPlay < 0 && !controlTook && !res.mouseDownCancelled && UI::IsMouseClicked(0)) {
                     nav->ClearSelection();
                     int sc, sa;
                     if (br::LinkAt(page, pmx, pmy, &boxScroll, pageScroll) < 0 && br::ControlAt(page, pmx, pmy, &boxScroll, pageScroll) < 0 &&
@@ -1144,7 +1308,7 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                         UI::SetClipboardText(SelectedPageText(page, *nav).c_str());
                 }
             }
-            UI::SetCursorScreenPos(origin);
+            UI::SetCursorScreenPos(layoutOrigin);   // the content's height is measured from where the view laid it out
             UI::Dummy(viewW, std::max(page.height * zoom, 1.0f));
         } else if (tab.GetState() == br::BrowserTab::State::Loading) {
             UI::Spacing(24.0f);

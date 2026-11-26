@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 72 headers, 1092 names.
+Back to the [code index](../code_index.md). 73 headers, 1093 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -178,12 +178,16 @@ Back to the [code index](../code_index.md). 72 headers, 1092 names.
 
 ## `shared/BrowserHost.hpp`
 
-- `TabHost` class, line 29
-- `DownloadHost` class, line 104: The browser program's downloads: each file is fetched into its place (NativeFetch's FetchToFile: a temporary file renamed
+- `TabHost` class, line 31
+- `DownloadHost` class, line 115: The browser program's downloads: each file is fetched into its place (NativeFetch's FetchToFile: a temporary file renamed
 
 ## `shared/BrowserPluginCommands.hpp`
 
 - `OwnerOf` function, line 15
+
+## `shared/CommandLinePanel.hpp`
+
+- `CommandLinePanel` class, line 22
 
 ## `shared/ConsoleScriptLink.hpp`
 

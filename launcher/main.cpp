@@ -12453,6 +12453,7 @@ static const okaylcli::Host& CommandLineHost() {
         builtAt = now;
         h.okayExe = FindExe({"okay.exe", "okay"});
         h.toolsDir = h.okayExe.empty() ? std::string() : fs::path(h.okayExe).parent_path().string();
+        h.programs = okaylcli::FindPrograms({g_exeDir, (fs::path(g_exeDir) / "Tools").string()});   // browser, Script Editor, Visual Script
         h.projects.clear();
         const fs::path dir = g_projectsDir.empty() ? fs::path(g_exeDir) / "Projects" : fs::path(g_projectsDir);
         for (const auto& lp : okayproj::ScanProjects(dir, g_hiddenProjects, g_extraProjects))
@@ -22876,6 +22877,7 @@ int main(int argc, char** argv) {
             okayversionsui::DrawPage(VersionsHost());
         } else if (tab == 17) {                           // ---- Command line ----
             sectionHeader("Command line", "Run okay, the engine's command line, on a project: check scenes, build, save versions and more.");
+            okaylcli::DrawProgramsRow(CommandLineHost());   // the programs of their own that are installed (hidden when missing)
             okaylcli::DrawPage(CommandLineHost());
         } else if (tab == 11) {                           // ---- Admin ----
             DrawAdminPage(account);

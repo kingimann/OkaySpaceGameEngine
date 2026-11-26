@@ -67,5 +67,12 @@ typedef int clockid_t;
 extern "C" {
 int nanosleep(const struct timespec *want, struct timespec *left);
 int clock_gettime(clockid_t clock, struct timespec *out);
+// timegm: a broken-down UTC time to seconds since 1970 (POSIX.1-2024 <time.h>; Round 32, MatchResults.hpp's plain path).
+time_t timegm(struct tm *t);
 }
 #endif
+// _mkgmtime (Round 32, MatchResults.hpp:222): Microsoft's C runtime documentation describes it as the UTC form of mktime;
+// with a 64-bit time_t the name stands for _mkgmtime64, the function the runtime DLL exports. A macro, as localtime_s
+// above, so a file that only includes <ctime> imports nothing.
+extern "C" time_t _mkgmtime64(struct tm *t);
+#define _mkgmtime(t) _mkgmtime64((t))

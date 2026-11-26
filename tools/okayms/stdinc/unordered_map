@@ -95,8 +95,16 @@ public:
         if (idx >= 0) return items_[(size_t)idx].second;
         return add(key, V())->second;
     }
-    V& at(const K& key) { return items_[(size_t)slot_of(key)].second; }
-    const V& at(const K& key) const { return items_[(size_t)slot_of(key)].second; }
+    // A missing key: out_of_range where exceptions are used, else a value-initialized V, as map::at (Round 32: it read
+    // items_[-1]).
+    V& at(const K& key) {
+        const long long idx = slot_of(key);
+        return idx >= 0 ? items_[(size_t)idx].second : map<K, V>::__okay_missing();
+    }
+    const V& at(const K& key) const {
+        const long long idx = slot_of(key);
+        return idx >= 0 ? items_[(size_t)idx].second : map<K, V>::__okay_missing();
+    }
     pair<pair<K, V>*, bool> insert(const pair<K, V>& entry) {
         const long long idx = slot_of(entry.first);
         if (idx >= 0) return pair<pair<K, V>*, bool>(items_.data() + idx, false);

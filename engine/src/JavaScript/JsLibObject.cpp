@@ -130,6 +130,8 @@ const char* BuiltinTag(Object* o) {
         case Cls::BoolBox: return "Boolean";
         case Cls::NumberBox: return "Number";
         case Cls::StringBox: return "String";
+        case Cls::DateBox: return "Date";
+        case Cls::BigIntBox: return "BigInt";
         default: return "Object";
     }
 }
@@ -229,6 +231,20 @@ void InstallObjectLib(Runtime& rt) {
             if (p == self) return Value::Bool(true);
         return Value::Bool(false);
     }, 1);
+    {   // B.2.2.1 Object.prototype.__proto__: an accessor over [[GetPrototypeOf]] / [[SetPrototypeOf]]
+        NativeFunc* g = rt.NewNative([](Runtime& rt, CallArgs& a) {
+            Object* o = rt.ToObject(a.thisv);
+            return o->proto ? Value::Obj(o->proto) : Value::Null();
+        }, "get __proto__", 0);
+        NativeFunc* s = rt.NewNative([](Runtime& rt, CallArgs& a) {
+            if (a.thisv.IsNullish()) rt.ThrowType("can not set __proto__ of " + std::string(a.thisv.IsNull() ? "null" : "undefined"));
+            if ((!a[0].IsObj() && !a[0].IsNull()) || !a.thisv.IsObj()) return Value();
+            if (!rt.SetPrototype(a.thisv.O(), a[0].IsNull() ? nullptr : a[0].O()))
+                rt.ThrowType("can not set this prototype (not extensible, or a cycle)");
+            return Value();
+        }, "set __proto__", 1);
+        rt.DefineAccessor(op, rt.Intern("__proto__"), g, s, kConfigurable);
+    }
     DefNative(rt, op, "propertyIsEnumerable", [](Runtime& rt, CallArgs& a) {
         GcObj* k = rt.ToPropertyKey(a[0]);
         Prop p;
@@ -366,6 +382,28 @@ void InstallObjectLib(Runtime& rt) {
         }
         return Value::Obj(o);
     }, 1);
+    DefNative(rt, ctor, "groupBy", [](Runtime& rt, CallArgs& a) {   // 20.1.2.12 Object.groupBy (7.3.35 GroupBy)
+        if (!rt.IsCallable(a[1])) rt.ThrowType("Object.groupBy needs a function");
+        Object* o = rt.NewObject(nullptr);
+        IterRec* r = GetIterator(rt, a[0]);
+        Value e;
+        double k = 0;
+        while (IterStep(rt, r, e)) {
+            Runtime::ScratchScope ss(rt);
+            rt.Keep(e);
+            Value args[2] = {e, Value::Num(k++)};
+            GcObj* key = rt.ToPropertyKey(rt.Call(a[1], Value(), args, 2));
+            rt.Keep(key);
+            Value g = rt.Get(Value::Obj(o), key);
+            if (!g.IsObj()) {
+                g = Value::Obj(rt.NewArray());
+                rt.DefineData(o, key, g);
+            }
+            ArrayObj* arr = static_cast<ArrayObj*>(g.O());
+            rt.DefineIndex(arr, arr->length, e);
+        }
+        return Value::Obj(o);
+    }, 2);
 }
 
 void InstallFunctionLib(Runtime& rt) {
@@ -443,6 +481,106 @@ void InstallErrorLib(Runtime& rt) {
     }, 0);
 }
 
+
+namespace {
+// ---- 19.2.6 URI handling: Encode (19.2.6.5) and Decode (19.2.6.6) with UTF-8 (RFC 3629), and B.2.1 escape / unescape
+bool UriUnreserved(char16_t c) {   // uriAlpha, DecimalDigit and uriMark
+    return (c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z') || (c >= u'0' && c <= u'9') || c == u'-' || c == u'_' ||
+           c == u'.' || c == u'!' || c == u'~' || c == u'*' || c == u'\'' || c == u'(' || c == u')';
+}
+bool UriReservedOrHash(char16_t c) {   // uriReserved and "#"
+    return c == u';' || c == u'/' || c == u'?' || c == u':' || c == u'@' || c == u'&' || c == u'=' || c == u'+' ||
+           c == u'$' || c == u',' || c == u'#';
+}
+const char kHex[] = "0123456789ABCDEF";
+void PutEscaped(std::u16string& out, unsigned byte) {
+    out += u'%';
+    out += (char16_t)kHex[byte >> 4];
+    out += (char16_t)kHex[byte & 15];
+}
+Value UriEncode(Runtime& rt, const Value& v, bool keepReserved) {
+    const std::u16string s = rt.ToU16(v);
+    rt.Charge(s.size() / 4 + 1);
+    std::u16string out;
+    out.reserve(s.size());
+    for (std::size_t k = 0; k < s.size(); ++k) {
+        char16_t c = s[k];
+        if (UriUnreserved(c) || (keepReserved && UriReservedOrHash(c))) {
+            out += c;
+            continue;
+        }
+        std::uint32_t cp = c;
+        if (c >= 0xDC00 && c <= 0xDFFF) rt.ThrowError(ErrorType::URIError, "URI malformed: a lone low surrogate");
+        if (c >= 0xD800 && c <= 0xDBFF) {
+            if (k + 1 >= s.size() || s[k + 1] < 0xDC00 || s[k + 1] > 0xDFFF)
+                rt.ThrowError(ErrorType::URIError, "URI malformed: a lone high surrogate");
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (s[++k] - 0xDC00);
+        }
+        if (cp < 0x80) PutEscaped(out, cp);
+        else if (cp < 0x800) { PutEscaped(out, 0xC0 | (cp >> 6)); PutEscaped(out, 0x80 | (cp & 63)); }
+        else if (cp < 0x10000) {
+            PutEscaped(out, 0xE0 | (cp >> 12));
+            PutEscaped(out, 0x80 | ((cp >> 6) & 63));
+            PutEscaped(out, 0x80 | (cp & 63));
+        } else {
+            PutEscaped(out, 0xF0 | (cp >> 18));
+            PutEscaped(out, 0x80 | ((cp >> 12) & 63));
+            PutEscaped(out, 0x80 | ((cp >> 6) & 63));
+            PutEscaped(out, 0x80 | (cp & 63));
+        }
+        if (out.size() > (1u << 28)) rt.ThrowRange("the string is too long");
+    }
+    return Value::Str(rt.NewString(std::move(out)));
+}
+// "%XX" at s[k]: the byte, or -1.
+int EscapedByte(const std::u16string& s, std::size_t k) {
+    if (k + 2 >= s.size() || s[k] != u'%') return -1;
+    int h = HexDigitValue(s[k + 1]), l = HexDigitValue(s[k + 2]);
+    return h < 0 || l < 0 ? -1 : h * 16 + l;
+}
+Value UriDecode(Runtime& rt, const Value& v, bool keepReserved) {
+    const std::u16string s = rt.ToU16(v);
+    rt.Charge(s.size() / 4 + 1);
+    std::u16string out;
+    out.reserve(s.size());
+    auto bad = [&rt]() { rt.ThrowError(ErrorType::URIError, "URI malformed"); };
+    for (std::size_t k = 0; k < s.size(); ++k) {
+        if (s[k] != u'%') {
+            out += s[k];
+            continue;
+        }
+        int b = EscapedByte(s, k);
+        if (b < 0) bad();
+        if (b < 0x80) {
+            if (keepReserved && UriReservedOrHash((char16_t)b)) out.append(s, k, 3);   // decodeURI leaves these escaped
+            else out += (char16_t)b;
+            k += 2;
+            continue;
+        }
+        int n = (b & 0xE0) == 0xC0 ? 2 : (b & 0xF0) == 0xE0 ? 3 : (b & 0xF8) == 0xF0 ? 4 : 0;
+        if (!n) bad();
+        std::uint32_t cp = (std::uint32_t)b & (n == 2 ? 0x1F : n == 3 ? 0x0F : 0x07);
+        k += 2;
+        for (int j = 1; j < n; ++j) {
+            int c = EscapedByte(s, k + 1);
+            if (c < 0 || (c & 0xC0) != 0x80) bad();
+            cp = (cp << 6) | (std::uint32_t)(c & 0x3F);
+            k += 3;
+        }
+        // RFC 3629: no overlong forms, no surrogates, nothing past U+10FFFF
+        static const std::uint32_t minFor[5] = {0, 0, 0x80, 0x800, 0x10000};
+        if (cp < minFor[n] || (cp >= 0xD800 && cp <= 0xDFFF) || cp > 0x10FFFF) bad();
+        if (cp < 0x10000) out += (char16_t)cp;
+        else {
+            cp -= 0x10000;
+            out += (char16_t)(0xD800 + (cp >> 10));
+            out += (char16_t)(0xDC00 + (cp & 0x3FF));
+        }
+    }
+    return Value::Str(rt.NewString(std::move(out)));
+}
+} // namespace
+
 void InstallGlobalLib(Runtime& rt) {
     Object* g = rt.global;
     DefValue(rt, g, "globalThis", Value::Obj(g));
@@ -481,7 +619,53 @@ void InstallGlobalLib(Runtime& rt) {
         }
         return Value::Num(std::strtod(t.c_str(), nullptr));
     }, 1);
-    DefNative(rt, g, "parseInt", [](Runtime& rt, CallArgs& a) { return ParseIntImpl(rt, a[0], a[1]); }, 2);
+    NativeFunc* pi = DefNative(rt, g, "parseInt", [](Runtime& rt, CallArgs& a) { return ParseIntImpl(rt, a[0], a[1]); }, 2);
+    if (Prop* num = g->FindRaw(rt.Intern("Number"))) {   // 21.1.2.12 / 21.1.2.13: the same function objects as the globals
+        DefValue(rt, num->v.O(), "parseInt", Value::Obj(pi));
+        DefValue(rt, num->v.O(), "parseFloat", g->FindRaw(rt.Intern("parseFloat"))->v);
+    }
+    DefNative(rt, g, "encodeURIComponent", [](Runtime& rt, CallArgs& a) { return UriEncode(rt, a[0], false); }, 1);
+    DefNative(rt, g, "encodeURI", [](Runtime& rt, CallArgs& a) { return UriEncode(rt, a[0], true); }, 1);
+    DefNative(rt, g, "decodeURIComponent", [](Runtime& rt, CallArgs& a) { return UriDecode(rt, a[0], false); }, 1);
+    DefNative(rt, g, "decodeURI", [](Runtime& rt, CallArgs& a) { return UriDecode(rt, a[0], true); }, 1);
+    DefNative(rt, g, "escape", [](Runtime& rt, CallArgs& a) {   // B.2.1.1
+        const std::u16string s = rt.ToU16(a[0]);
+        rt.Charge(s.size() / 4 + 1);
+        std::u16string out;
+        for (char16_t c : s) {
+            bool keep = (c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z') || (c >= u'0' && c <= u'9') || c == u'@' ||
+                        c == u'*' || c == u'_' || c == u'+' || c == u'-' || c == u'.' || c == u'/';
+            if (keep) out += c;
+            else if (c < 256) PutEscaped(out, c);
+            else {
+                out += u"%u";
+                for (int sh = 12; sh >= 0; sh -= 4) out += (char16_t)kHex[(c >> sh) & 15];
+            }
+        }
+        return Value::Str(rt.NewString(std::move(out)));
+    }, 1);
+    DefNative(rt, g, "unescape", [](Runtime& rt, CallArgs& a) {   // B.2.1.2
+        const std::u16string s = rt.ToU16(a[0]);
+        rt.Charge(s.size() / 4 + 1);
+        std::u16string out;
+        for (std::size_t k = 0; k < s.size(); ++k) {
+            char16_t c = s[k];
+            if (c == u'%' && k + 5 < s.size() && s[k + 1] == u'u') {
+                int h[4] = {HexDigitValue(s[k + 2]), HexDigitValue(s[k + 3]), HexDigitValue(s[k + 4]), HexDigitValue(s[k + 5])};
+                if (h[0] >= 0 && h[1] >= 0 && h[2] >= 0 && h[3] >= 0) {
+                    out += (char16_t)((h[0] << 12) | (h[1] << 8) | (h[2] << 4) | h[3]);
+                    k += 5;
+                    continue;
+                }
+            }
+            int b = c == u'%' ? EscapedByte(s, k) : -1;
+            if (b >= 0) {
+                out += (char16_t)b;
+                k += 2;
+            } else out += c;
+        }
+        return Value::Str(rt.NewString(std::move(out)));
+    }, 1);
     DefNative(rt, g, "queueMicrotask", [](Runtime& rt, CallArgs& a) {
         if (!rt.IsCallable(a[0])) rt.ThrowType("queueMicrotask needs a function");
         Job j;
@@ -550,6 +734,11 @@ void InstallGlobalLib(Runtime& rt) {
     DefValue(rt, sc, "toPrimitive", Value::Sym(rt.symToPrimitive), 0);
     DefValue(rt, sc, "toStringTag", Value::Sym(rt.symToStringTag), 0);
     DefValue(rt, sc, "hasInstance", Value::Sym(rt.symHasInstance), 0);
+    // 20.4.2: the other well-known symbols, so code can name them (the library does not consult them yet)
+    for (const char* name : {"species", "match", "matchAll", "replace", "search", "split", "unscopables", "isConcatSpreadable"}) {
+        Symbol* y = rt.NewSymbol(rt.Intern((std::string("Symbol.") + name).c_str()));
+        DefValue(rt, sc, name, Value::Sym(y), 0);
+    }
     DefNative(rt, sc, "for", [](Runtime& rt, CallArgs& a) {
         std::u16string k = rt.ToU16(a[0]);
         auto it = rt.symbolRegistry.find(k);

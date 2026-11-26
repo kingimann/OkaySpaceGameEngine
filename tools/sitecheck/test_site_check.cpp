@@ -7,12 +7,15 @@
 #include "BrowserHost.hpp"
 #include "okay/Browser/Browser.hpp"
 #include "okay/Core/Json.hpp"
+#include "okay/Graphics/TtfFont.hpp"   // EmbeddedUIFontData: a real TrueType file to wrap in WOFF
 
+#include <atomic>
 #include <chrono>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <string>
+#include <thread>   // the test's own little server (this test is not built for Windows)
 #include <vector>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -68,6 +71,87 @@ int ClosedPort() {
     return port;
 }
 
+// A small HTTP/1.1 server on 127.0.0.1 for the tab host tests: it answers each request from `answer` (path -> whole response) and
+// keeps the request heads it saw. Written for this test from RFC 9112 (one request per connection, "Connection: close").
+struct LocalServer {
+    int fd = -1, port = 0;
+    std::map<std::string, std::string> answer;
+    std::vector<std::string> heads;
+    std::atomic<bool> stop{false};
+    std::thread th;
+    bool Start() {
+        fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        socklen_t n = sizeof a;
+        if (fd < 0 || ::bind(fd, (sockaddr*)&a, sizeof a) != 0 || ::listen(fd, 16) != 0 || ::getsockname(fd, (sockaddr*)&a, &n) != 0) return false;
+        port = ntohs(a.sin_port);
+        th = std::thread([this] {
+            while (!stop) {
+                timeval tv{0, 100000};
+                fd_set rd;
+                FD_ZERO(&rd);
+                FD_SET(fd, &rd);
+                if (::select(fd + 1, &rd, nullptr, nullptr, &tv) <= 0) continue;
+                const int c = ::accept(fd, nullptr, nullptr);
+                if (c < 0) continue;
+                std::string req;
+                char buf[4096];
+                while (req.find("\r\n\r\n") == std::string::npos) {
+                    const ssize_t got = ::recv(c, buf, sizeof buf, 0);
+                    if (got <= 0) break;
+                    req.append(buf, (std::size_t)got);
+                }
+                heads.push_back(req.substr(0, req.find("\r\n\r\n") + 2));   // each header line ends with CRLF
+                const std::size_t sp = req.find(' '), sp2 = req.find(' ', sp + 1);
+                const std::string path = sp == std::string::npos || sp2 == std::string::npos ? std::string() : req.substr(sp + 1, sp2 - sp - 1);
+                auto it = answer.find(path);
+                const std::string out = it != answer.end() ? it->second : std::string("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                std::size_t sent = 0;
+                while (sent < out.size()) {
+                    const ssize_t w = ::send(c, out.data() + sent, out.size() - sent, MSG_NOSIGNAL);
+                    if (w <= 0) break;
+                    sent += (std::size_t)w;
+                }
+                ::close(c);
+            }
+        });
+        return true;
+    }
+    ~LocalServer() { stop = true; if (th.joinable()) th.join(); if (fd >= 0) ::close(fd); }
+};
+std::string Answer(const std::string& type, const std::string& body, const std::string& extra = std::string()) {
+    return "HTTP/1.1 200 OK\r\nContent-Type: " + type + "\r\nContent-Length: " + std::to_string(body.size()) + "\r\n" + extra +
+           "Connection: close\r\n\r\n" + body;
+}
+// A WOFF 1.0 file (W3C WOFF 1.0, 4 and 5) holding the tables of `sfnt` as they are (stored, not compressed).
+std::string WoffOf(const std::vector<unsigned char>& sfnt) {
+    auto rd16 = [&](std::size_t at) { return (unsigned)(sfnt[at] << 8 | sfnt[at + 1]); };
+    auto rd32 = [&](std::size_t at) { return (unsigned)sfnt[at] << 24 | (unsigned)sfnt[at + 1] << 16 | (unsigned)sfnt[at + 2] << 8 | sfnt[at + 3]; };
+    std::string b;
+    auto put32 = [&](unsigned v) { for (int s = 24; s >= 0; s -= 8) b += (char)((v >> s) & 0xFF); };
+    auto put16 = [&](unsigned v) { b += (char)((v >> 8) & 0xFF); b += (char)(v & 0xFF); };
+    auto set32 = [&](std::size_t at, unsigned v) { for (int k = 0; k < 4; ++k) b[at + k] = (char)((v >> (24 - 8 * k)) & 0xFF); };
+    const unsigned n = rd16(4);
+    put32(0x774F4646u); put32(rd32(0)); put32(0); put16(n); put16(0); put32((unsigned)sfnt.size()); put16(1); put16(0);
+    for (int k = 0; k < 5; ++k) put32(0);
+    const std::size_t dir = b.size();
+    b.resize(b.size() + 20 * n);
+    for (unsigned i = 0; i < n; ++i) {
+        const std::size_t e = 12 + 16 * i;
+        const unsigned off = rd32(e + 8), len = rd32(e + 12);
+        while (b.size() % 4) b += '\0';
+        const std::size_t at = b.size();
+        b.append((const char*)sfnt.data() + off, len);
+        set32(dir + 20 * i, rd32(e)); set32(dir + 20 * i + 4, (unsigned)at); set32(dir + 20 * i + 8, len); set32(dir + 20 * i + 12, len);
+        set32(dir + 20 * i + 16, rd32(e + 4));
+    }
+    while (b.size() % 4) b += '\0';
+    set32(8, (unsigned)b.size());
+    return b;
+}
+
 } // namespace
 
 int main() {
@@ -115,11 +199,12 @@ int main() {
     CHECK(br::MissingWebApi("x.js:1:1: TypeError: 'el.closest' is undefined, not a function") == "*.closest");
     CHECK(br::MissingWebApi("x.js:1:1: TypeError: 'app.start' is undefined, not a function").empty());
     {
-        const std::vector<std::string> c = ConsoleOf("new IntersectionObserver(function () {});");
-        CHECK(Has(c, "not implemented: IntersectionObserver"));
+        // (IntersectionObserver was the example until round 4 built it; customElements is still missing)
+        const std::vector<std::string> c = ConsoleOf("customElements.define('x-a', class {});");
+        CHECK(Has(c, "not implemented: customElements"));
         const std::vector<std::string> d = ConsoleOf("myOwnLib.start();");
         CHECK(!Has(d, "not implemented"));
-        if (!Has(c, "not implemented: IntersectionObserver")) for (const std::string& l : c) std::cerr << "  console: " << l << "\n";
+        if (!Has(c, "not implemented: customElements")) for (const std::string& l : c) std::cerr << "  console: " << l << "\n";
     }
 
     // ---- the CSS reporter (Css.hpp): a property the cascade does not use, a selector the reader drops; null = off
@@ -154,11 +239,12 @@ int main() {
         Fetch page; page.kind = "page"; page.reached = true; page.status = 200; r.fetches.push_back(page);
         Fetch img; img.kind = "image"; img.reached = true; img.status = 200; img.note = "image not decoded"; img.head = std::string("RIFF\x10\0\0\0WEBPVP8 ", 16);
         img.url = "https://shop.test/a.webp"; r.fetches.push_back(img);
-        Fetch font; font.kind = "font"; font.reached = true; font.status = 200; font.note = "font not TrueType or OpenType"; font.head = "wOF2abcd";
+        Fetch font; font.kind = "font"; font.reached = true; font.status = 200; font.note = "font not decoded: not a WOFF2 file"; font.head = "wOF2abcd";
         r.fetches.push_back(font);
         Fetch js; js.kind = "script"; js.reached = false; js.netError = "TLS handshake failed"; r.fetches.push_back(js);
         Fetch gone; gone.kind = "image"; gone.reached = true; gone.status = 404; r.fetches.push_back(gone);
-        Fetch br2; br2.kind = "style"; br2.reached = true; br2.status = 200; br2.contentEncoding = "br"; r.fetches.push_back(br2);
+        Fetch br2; br2.kind = "style"; br2.reached = true; br2.status = 200; br2.contentEncoding = "zstd"; r.fetches.push_back(br2);
+        Fetch br3 = br2; br3.contentEncoding = "br"; r.fetches.push_back(br3);
         r.console = {"a.js:1:1: ReferenceError: 'IntersectionObserver' is not defined", "not implemented: IntersectionObserver",
                      "b.js:2:2: SyntaxError: unexpected token '#'", "not implemented: Object.hasOwn", "not implemented: Date"};
         r.cssProperties["container-type"] = 3;
@@ -169,7 +255,7 @@ int main() {
         CHECK(HasKey(cs, "font format WOFF2 not used", &a) && a == Area::Fonts);
         CHECK(HasKey(cs, "script request failed: TLS", &a) && a == Area::Network);
         CHECK(HasKey(cs, "image answered HTTP 404"));
-        CHECK(HasKey(cs, "Content-Encoding 'br' not read"));
+        CHECK(HasKey(cs, "Content-Encoding 'zstd' not read") && !HasKey(cs, "Content-Encoding 'br' not read"));   // br is read since round 4 (the tab host's client decodes it)
         CHECK(HasKey(cs, "not implemented: IntersectionObserver", &a) && a == Area::DomApi);
         CHECK(HasKey(cs, "not implemented: Object.hasOwn", &a) && a == Area::JavaScript);
         CHECK(HasKey(cs, "not implemented: Date", &a) && a == Area::JavaScript);
@@ -232,6 +318,77 @@ int main() {
             if (!HasKey(CausesOf(r), "page not reached: connect")) std::cerr << Dump(CausesOf(r));
         }
         CHECK(host.Tab().GetState() == br::BrowserTab::State::Error);
+    }
+
+    // ---- round 4, through the tab host and a local server: the page's charset from its Content-Type, a WOFF font decoded for
+    // the font loader, the standard request headers (no client hints, no other browser's names), Brotli answers, navigator
+    {
+        std::vector<unsigned char> ttf;
+        CHECK(okay::EmbeddedUIFontData(ttf));
+        LocalServer srv;
+        CHECK(srv.Start());
+        const std::string base = "http://127.0.0.1:" + std::to_string(srv.port);
+        // "caf\xE9" is windows-1252 (no <meta charset>): only the Content-Type says so
+        srv.answer["/"] = Answer("text/html; charset=windows-1252",
+            "<html><head><style>@font-face { font-family: Shop; src: url(/f.woff) format('woff') } p { font-family: Shop }</style>"
+            "<link rel=stylesheet href=/s.css></head><body><p id=p>caf\xE9</p><img src=/i.png>"
+            "<script>fetch('/api').then(r => r.text()).then(t => { document.title = navigator.userAgent + '|' + t; });</script></body></html>");
+        srv.answer["/f.woff"] = Answer("font/woff", WoffOf(ttf));
+        // a Brotli stream (RFC 7932): WBITS 16, one stored meta-block of "p{}" (ISUNCOMPRESSED), then an empty last meta-block
+        srv.answer["/s.css"] = Answer("text/css", std::string("\x20\x00\x10p{}\x03", 7), "Content-Encoding: br\r\n");
+        srv.answer["/api"] = Answer("text/plain", "ok");
+        br::TabHost host(br::TabHost::TextureFns(), "OkaySpace Browser/9");
+        host.Tab().SetAnyOrigin(true);
+        int fonts = 0;
+        std::size_t fontBytes = 0;
+        bool sfntFont = false;
+        host.SetFontLoader([&](const br::FontFace& face, const std::vector<std::uint8_t>& bytes) {
+            ++fonts;
+            fontBytes = bytes.size();
+            sfntFont = face.family == "shop" && bytes.size() > 4 && bytes[0] == 0 && bytes[1] == 1 && bytes[2] == 0 && bytes[3] == 0;
+        });
+        std::vector<br::TabHost::FetchReport> seen;
+        bool brotliOk = false;
+        host.SetFetchReporter([&](const br::TabHost::FetchReport& f) {
+            seen.push_back(f);
+            if (std::string(f.kind) == "style" && f.reached && f.status == 200 && f.body && *f.body == "p{}") brotliOk = true;   // body: during the call only
+        });
+        CHECK(host.Open(base + "/"));
+        const auto start = std::chrono::steady_clock::now();
+        while (std::chrono::steady_clock::now() - start < std::chrono::seconds(20)) {
+            host.Pump();
+            host.Tab().Layout(800, br::FixedMeasure());
+            if (fonts > 0 && host.Tab().Title().find("|ok") != std::string::npos && seen.size() >= 5) break;
+            timespec ts{0, 10000000L};
+            ::nanosleep(&ts, nullptr);
+        }
+        const br::Node* p = host.Tab().Document() ? host.Tab().Document()->FindAnchor("p") : nullptr;
+        CHECK(p && p->TextContent() == "caf\xC3\xA9");   // windows-1252 E9 read as U+00E9
+        CHECK(fonts == 1 && sfntFont && fontBytes == ttf.size());   // the WOFF file decoded back to the TrueType file it holds
+        CHECK(host.Tab().Title() == "OkaySpace Browser/9|ok");      // navigator.userAgent is what the requests carry
+        CHECK(brotliOk);
+        auto head = [&](const std::string& path) {
+            for (const std::string& h : srv.heads) if (h.rfind("GET " + path + " ", 0) == 0) return h;
+            return std::string();
+        };
+        const std::string page = head("/"), css = head("/s.css"), img = head("/i.png"), font = head("/f.woff"), api = head("/api");
+        CHECK(page.find("\r\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n") != std::string::npos);
+        CHECK(page.find("\r\nAccept-Encoding: gzip, deflate, br\r\n") != std::string::npos);
+        CHECK(page.find("\r\nAccept-Language: en-US,en;q=0.9\r\n") != std::string::npos);
+        CHECK(page.find("\r\nUpgrade-Insecure-Requests: 1\r\n") != std::string::npos);
+        CHECK(page.find("\r\nSec-Fetch-Dest: document\r\nSec-Fetch-Mode: navigate\r\nSec-Fetch-Site: none\r\nSec-Fetch-User: ?1\r\n") != std::string::npos);
+        CHECK(page.find("\r\nUser-Agent: OkaySpace Browser/9\r\n") != std::string::npos && page.find("Referer") == std::string::npos);
+        CHECK(css.find("\r\nAccept: text/css,*/*;q=0.1\r\n") != std::string::npos && css.find("Sec-Fetch-Dest: style\r\nSec-Fetch-Mode: no-cors\r\nSec-Fetch-Site: same-origin") != std::string::npos);
+        CHECK(css.find("\r\nReferer: " + base + "/\r\n") != std::string::npos);
+        CHECK(img.find("\r\nAccept: image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5\r\n") != std::string::npos && img.find("Sec-Fetch-Dest: image") != std::string::npos);
+        CHECK(font.find("Sec-Fetch-Dest: font\r\nSec-Fetch-Mode: cors") != std::string::npos);
+        CHECK(api.find("\r\nAccept: */*\r\n") != std::string::npos && api.find("Sec-Fetch-Dest: empty\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Site: same-origin") != std::string::npos);
+        for (const std::string& h : srv.heads) {   // what is never sent: client hints, another browser's brand
+            CHECK(h.find("Sec-CH-") == std::string::npos && h.find("sec-ch-") == std::string::npos);
+            CHECK(h.find("Chrome") == std::string::npos && h.find("Firefox") == std::string::npos && h.find("Safari") == std::string::npos);
+        }
+        if (page.find("Sec-Fetch-User") == std::string::npos || css.find("Referer") == std::string::npos)
+            std::cerr << "  heads seen: " << srv.heads.size() << "\n--- page\n" << page << "\n--- css\n" << css << "\n";
     }
 
     TEST_MAIN_RESULT();

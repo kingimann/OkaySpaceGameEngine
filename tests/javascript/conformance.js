@@ -736,7 +736,8 @@ eq("case-insensitive class", /[A-Z]/i.test("q"), true);
 eq("digits shorthand", /^\D+$/.test("abc"), true);
 throws("bad regex", () => new RegExp("("), SyntaxError);
 throws("bad flags", () => new RegExp("a", "zz"), SyntaxError);
-throws("lookbehind", () => new RegExp("(?<=a)b"), SyntaxError);
+eq("lookbehind", new RegExp("(?<=a)b").exec("cb, ab").index, 5);
+throws("quantified lookbehind", () => new RegExp("(?<=a)*b"), SyntaxError);
 eq("json-ish", /^\s*\{.*\}\s*$/.test(' {"a":1} '), true);
 eq("email-ish", /^[\w.+-]+@[\w-]+\.[\w.]+$/.test("a.b+c@d-e.fg"), true);
 

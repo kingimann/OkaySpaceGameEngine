@@ -1,0 +1,12 @@
+section: Fixes and new things
+roadmap: Launcher: skip an update; test builds that are ahead of a release are not "updated" backwards
+---
+- Launcher: the update window has "Skip this version". A skipped version is
+  never shown or installed by itself again; a newer one is offered as usual.
+  What's New, Versions and Settings can still install it or stop skipping.
+- Launcher: the start-up setting is now called "Automatic updates" (still on
+  by default), and it never installs a version you skipped.
+- Launcher: on a test build that already has everything in a new release,
+  you see "You already have everything in vX (your test build is newer)"
+  instead of an update. When that can't be told, it asks instead of
+  installing by itself.

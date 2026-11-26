@@ -19,8 +19,10 @@ Schema (version 1):
   { "schema": 1, "latest": "2.856.0", "lts": "2.850.1",
     "bucketPath": "v{version}/{file}",
     "versions": [ { "version": "2.856.0", "channel": "latest", "date": "2026-11-09",
-                    "inBucket": true,
+                    "inBucket": true, "mainCount": 1490, "mainSha": "<main commit>",
                     "files": { "OkayEngine.exe": { "size": 123, "sha256": "..." } } } ] }
+"mainCount" / "mainSha" (optional, --main-count / --main-sha): the build's place on main, git rev-list --count of the main commit it
+was built from; the launcher uses it to tell whether a release holds anything a running test build does not. Missing = not known.
 Versions are sorted newest first. "channel" is the channel a version was published on.
 """
 import argparse
@@ -36,6 +38,7 @@ BUCKET_PATH = "v{version}/{file}"
 _VERSION_RE = re.compile(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$")
 _FILE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+_COMMIT_RE = re.compile(r"^[0-9a-f]{7,40}$")
 # The files the launcher's updater downloads. It REFUSES to install a file that has no checksum in the index
 # (launcher/UpdaterCore.hpp), so a publish that cannot list a size and SHA-256 for every one of these must fail.
 REQUIRED_FILES = ("OkayEngine.exe", "OkaySpacePlayer.exe", "OkaySpace.exe")
@@ -75,6 +78,30 @@ def file_entry(path):
     return {"size": os.path.getsize(path), "sha256": sha256_file(path)}
 
 
+def main_position(count, sha):
+    """The build's place on main as entry fields: {"mainCount": N, "mainSha": "..."} (git rev-list --count of the main commit it was built
+    from, and that commit; the launcher compares counts, launcher/UpdaterCore.hpp DecideOffer). None / "" = not given: {}.
+    Raises ValueError for a count that is not a whole number above 0 or a commit that is not 7 to 40 lowercase hex digits."""
+    out = {}
+    if count is not None:
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise ValueError("bad mainCount: %r (a whole number above 0)" % (count,))
+        out["mainCount"] = count
+    if sha:
+        if not isinstance(sha, str) or not _COMMIT_RE.match(sha):
+            raise ValueError("bad mainSha: %r (7 to 40 lowercase hex digits)" % (sha,))
+        out["mainSha"] = sha
+    return out
+
+
+def _kept_position(e):
+    """The mainCount / mainSha of an existing entry, the usable parts only (junk is dropped, never refused: old lists stay readable)."""
+    try:
+        return main_position(e.get("mainCount"), None)
+    except ValueError:
+        return {}
+
+
 def _clean_entry(e):
     """An entry from an existing index, or None if it is unusable."""
     if not isinstance(e, dict):
@@ -94,8 +121,12 @@ def _clean_entry(e):
                 files[name] = {"size": size, "sha256": sha}
     channel = e.get("channel") if e.get("channel") in CHANNELS else "latest"
     date = e.get("date") if isinstance(e.get("date"), str) else ""
-    return {"version": ver, "channel": channel, "date": date,
-            "inBucket": bool(e.get("inBucket", False)), "files": files}
+    out = {"version": ver, "channel": channel, "date": date,
+           "inBucket": bool(e.get("inBucket", False)), "files": files}
+    out.update(_kept_position(e))
+    if isinstance(e.get("mainSha"), str) and _COMMIT_RE.match(e["mainSha"]):
+        out["mainSha"] = e["mainSha"]
+    return out
 
 
 def missing_checksums(files, required=REQUIRED_FILES):
@@ -110,7 +141,7 @@ def missing_checksums(files, required=REQUIRED_FILES):
     return bad
 
 
-def merge(existing, version, channel, files, date, bucket_versions, latest, lts, repo, required=REQUIRED_FILES):
+def merge(existing, version, channel, files, date, bucket_versions, latest, lts, repo, required=REQUIRED_FILES, main_count=None, main_sha=None):
     """Return the new index (a dict). `existing` may be None or garbage.
     Raises ValueError unless `files` has a size and SHA-256 for every name in `required`."""
     ver = canonical(version)
@@ -124,6 +155,7 @@ def merge(existing, version, channel, files, date, bucket_versions, latest, lts,
         if not _SHA_RE.match(info.get("sha256", "")):
             raise ValueError("bad sha256 for %s" % name)
 
+    position = main_position(main_count, main_sha)
     lacking = missing_checksums(files, required)
     if lacking:
         raise ValueError("no checksum for %s: the updater refuses files without one, so this release cannot be published"
@@ -137,6 +169,7 @@ def merge(existing, version, channel, files, date, bucket_versions, latest, lts,
             entries[c["version"]] = c
     entries[ver] = {"version": ver, "channel": channel, "date": date or "",
                     "inBucket": True, "files": dict(sorted(files.items()))}
+    entries[ver].update(position)
 
     if bucket_versions is not None:
         present = set(filter(None, (canonical(v) for v in bucket_versions)))
@@ -196,6 +229,15 @@ def _cmd_check(a):
     return 1 if problems else 0
 
 
+def _count_arg(text):
+    """--main-count: "" / "0" = not known (None); anything else must be a whole number (merge checks it)."""
+    if text in (None, "", "0"):
+        return None
+    if not re.match(r"^[0-9]{1,12}$", text):
+        raise ValueError("bad --main-count %r" % (text,))
+    return int(text)
+
+
 def _cmd_merge(a):
     files = {}
     for spec in a.file or []:
@@ -207,7 +249,7 @@ def _cmd_merge(a):
     bucket = a.bucket_versions.split() if a.bucket_versions is not None else None
     try:
         out = merge(_read_json(a.existing), a.version, a.channel, files, a.date,
-                    bucket, a.latest, a.lts, a.repo)
+                    bucket, a.latest, a.lts, a.repo, main_count=_count_arg(getattr(a, "main_count", "")), main_sha=getattr(a, "main_sha", "") or None)
     except ValueError as err:
         sys.stderr.write("versions_index: %s\n" % err)
         return 2
@@ -258,6 +300,34 @@ def _self_test():
     old = [v for v in idx4["versions"] if v["version"] == "2.855.0"][0]
     check(old["inBucket"] is False and old["files"]["OkayEngine.exe"]["sha256"] == sha, "pruned stays indexed")
     check(idx4["lts"] == "2.850.1", "lts kept when not passed")
+
+    # The build's place on main (mainCount = git rev-list --count of its main commit, mainSha = that commit): written when given, kept by later
+    # publishes, junk refused; old entries without it stay valid (the launcher reads a missing count as "not known").
+    m40 = "c" * 40
+    idx5 = merge(idx4, "2.858.0", "latest", f1, "2026-11-13", None, "2.858.0", None, "o/n", main_count=1490, main_sha=m40)
+    e5 = idx5["versions"][0]
+    check(e5["mainCount"] == 1490 and e5["mainSha"] == m40, "mainCount and mainSha written")
+    check("mainCount" not in [v for v in idx5["versions"] if v["version"] == "2.857.0"][0], "an old entry has no mainCount")
+    idx6 = merge(idx5, "2.859.0", "latest", f1, "2026-11-14", None, "2.859.0", None, "o/n")
+    kept = [v for v in idx6["versions"] if v["version"] == "2.858.0"][0]
+    check(kept["mainCount"] == 1490 and kept["mainSha"] == m40, "mainCount kept by the next publish")
+    check("mainCount" not in idx6["versions"][0], "no count given: none written")
+    for bad in (-1, 0, True, "12", 1.5):
+        try:
+            merge(idx4, "2.858.0", "latest", f1, "2026-11-13", None, "2.858.0", None, "o/n", main_count=bad)
+            check(False, "bad mainCount %r refused" % (bad,))
+        except ValueError:
+            pass
+    try:
+        merge(idx4, "2.858.0", "latest", f1, "2026-11-13", None, "2.858.0", None, "o/n", main_count=5, main_sha="xyz")
+        check(False, "bad mainSha refused")
+    except ValueError:
+        pass
+    junk = dict(idx5)
+    junk["versions"] = [dict(idx5["versions"][0], mainCount="lots", mainSha="no")] + idx5["versions"][1:]
+    j = merge(junk, "2.859.0", "latest", f1, "2026-11-14", None, "2.859.0", None, "o/n")
+    jj = [v for v in j["versions"] if v["version"] == "2.858.0"][0]
+    check("mainCount" not in jj and "mainSha" not in jj, "junk mainCount in an old list is dropped")
 
     # Re-publishing a version replaces its entry, no duplicates.
     f2 = {n: {"size": 11, "sha256": "b" * 64} for n in REQUIRED_FILES}
@@ -331,6 +401,11 @@ def _self_test():
         a.existing = out
         check(_cmd_merge(a) == 0, "cli merge over a damaged index")
         # check: the written index matches the files; a missing hash or a different file fails
+        ap = argparse.Namespace(**vars(a))
+        ap.version, ap.latest, ap.main_count, ap.main_sha, ap.out = "2.9.1", "2.9.1", "1490", "c" * 40, out + ".pos"
+        check(_cmd_merge(ap) == 0 and _read_json(ap.out)["versions"][0].get("mainCount") == 1490, "cli writes --main-count")
+        ap.main_count, ap.out = "lots", out + ".pos2"
+        check(_cmd_merge(ap) == 2 and not os.path.exists(ap.out), "cli refuses a --main-count that is not a number")
         ca = argparse.Namespace(index=out, version="2.9.0", file=[n + "=" + paths[n] for n in REQUIRED_FILES])
         check(_cmd_check(ca) == 0, "check passes on a good index")
         ca.version = "9.9.9"
@@ -374,6 +449,8 @@ def main(argv):
     m.add_argument("--latest", default="")
     m.add_argument("--lts", default="")
     m.add_argument("--repo", required=True)
+    m.add_argument("--main-count", default="")   # the build's place on main (git rev-list --count); "" or 0 = not known
+    m.add_argument("--main-sha", default="")     # the main commit it was built from
     m.add_argument("--out", required=True)
     a = p.parse_args(argv)
     if a.self_test:

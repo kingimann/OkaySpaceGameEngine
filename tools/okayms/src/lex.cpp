@@ -234,8 +234,18 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             int frac_digits = 0;
             int exp10 = 0;
             bool exp_neg = false;
-            if (base == 10 && j < text.size() && text[j] == '.' && j + 1 < text.size() &&
-                std::isdigit(static_cast<unsigned char>(text[j + 1]))) {
+            // "2.5", and "2." with no digits after the point ([lex.fcon]: `digit-sequence .`), as in 255.f, 2.e3
+            // and 1. (Round 30: "255.f" was read as 255, '.', f: a member access on a number).
+            const auto bare_point = [&]() {
+                if (j + 1 >= text.size()) return true;
+                const char n = text[j + 1];
+                if (n == '.' || n == '_') return false;
+                if (std::isalpha(static_cast<unsigned char>(n)))
+                    return n == 'f' || n == 'F' || n == 'e' || n == 'E';
+                return true;
+            };
+            if (base == 10 && any && suf_l == 0 && !suf_u && j < text.size() && text[j] == '.' &&
+                ((j + 1 < text.size() && std::isdigit(static_cast<unsigned char>(text[j + 1]))) || bare_point())) {
                 real = true;
                 ++j;
                 while (j < text.size() && std::isdigit(static_cast<unsigned char>(text[j]))) {

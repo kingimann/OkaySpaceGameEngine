@@ -37,7 +37,8 @@ struct WhatsNewModel {
     std::string currentVersion;          // "2.860.0" (shown as "You're on v...")
     UpdateState state = UpdateState::Idle;
     std::string availableVersion;
-    std::string message;
+    bool availableSkipped = false;       // availableVersion is the version the person skipped: "v... is available (skipped)" with Install
+    std::string message;                 // Checking / Failed: the updater's words; Available: why it is not installed by itself; UpToDate: a line instead of "You're up to date."
     bool restartNeeded = false;
     std::vector<Release> releases;       // newest first; the first one carries the "Latest" pill
     bool placeholder = false;            // `releases` is the built-in highlights, not fetched notes: say so under them
@@ -63,6 +64,7 @@ struct WhatsNewResult {
     bool openUpdateSettings = false;     // "Open update settings" (test builds are off)
     bool checkAgain = false;             // "Check again" (the test builds' list could not be read)
     OkayUI::Rect sectionButtons[2];      // where the two section buttons are
+    std::string statusLine;              // the update status line as drawn (for the host's tests)
 };
 
 /// The page's title line, shown above the content. Kept as text so the host and the tests agree on it.

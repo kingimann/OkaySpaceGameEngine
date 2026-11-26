@@ -51,6 +51,7 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     CoverArtAvatars.cpp   # game cover art, avatar textures (moved out of main.cpp)
     NavIcons.cpp          # the sidebar's line icons, round icon buttons, stars (moved out of main.cpp)
     NewsHistory.cpp       # What's New history, news.cfg (moved out of main.cpp)
+    BrowserPage.cpp       # the Browser page: our own web pages shown with our own page engine (engine/include/okay/Browser/)
     AdminPage.cpp         # reports, Admin > Reports, the Admin page, the ban banner (moved out of main.cpp)
     PublicProfilePage.cpp # public profiles: the page, showcase, badges (moved out of main.cpp)
     MemberModerationUI.cpp   # kick / ban / unban / admin role for servers and group chats (moved out of main.cpp)
@@ -64,6 +65,7 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     Terminal.cpp          # the Command line page's terminal emulator: screen, scrollback, VT parser, selection, keys (no ImGui; tested by launcher_terminal)
     ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp   # okay's own command list (Tab completion), std only
     ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp        # okay's one place that starts a program (no shell)
+    ${CMAKE_SOURCE_DIR}/shared/BrowserHost.cpp                        # the Browser page's fetches and images (shared with browser/)
     ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                         # file picker (chat attachments): system dialogs or the built-in browser
     ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Net/ServerQuery.cpp                # server browser queries (+ LAN scan)
@@ -104,6 +106,8 @@ if(TARGET okay_ui_screens)
         target_link_libraries(okayspace-launcher PRIVATE okay_ui_render)
     endif()
     target_compile_definitions(okayspace-launcher PRIVATE OKAY_HAVE_OKAYUI=1)
+    # the Browser page (sidebar > Browser): the same browser as the browser program (tabs, menus, find, downloads, games)
+    target_sources(okayspace-launcher PRIVATE ${CMAKE_SOURCE_DIR}/shared/BrowserApp.cpp)
 endif()
 if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui" OR OKAY_OWN_STACK)   # OKAY_OWN_STACK: the dogfood build starts on OkayUI
     target_compile_definitions(okayspace-launcher PRIVATE OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
@@ -113,6 +117,7 @@ target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_
 if(TARGET okay_engine)
     target_link_libraries(okayspace-launcher PRIVATE okay_engine)
 endif()
+target_link_libraries(okayspace-launcher PRIVATE okay_browser)   # the Browser page (BrowserPage.cpp)
 # shared/AntiCheatCrypto.hpp is a thin wrapper over okay::crypto (our own Ed25519 and SHA-512; libsodium is used for
 # Ed25519 instead where the build has it). Link the crypto library by itself so the launcher does not depend on the
 # engine for it. (okay_crypto is always defined: engine/ is always added.)

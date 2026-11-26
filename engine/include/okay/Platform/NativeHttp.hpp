@@ -185,6 +185,8 @@ struct ExResult : Result {
     int      reusedConnections = 0; ///< requests of this call that used a kept-alive connection
     long     answerStatus = 0;      ///< the final answer's status even when the call then failed (a body cut short); 0 = no answer
     std::string rawHead;            ///< the final answer's status line and headers as text (like `curl -D`), for callers that parse them
+    std::string finalUrl;           ///< the address of the final answer after redirects ("" when unknown); the browser resolves a
+                                    ///< page's links against it (okay/Browser, shared/BrowserHost.cpp)
 };
 
 #if defined(OKAY_HTTP_WINHTTP)
@@ -399,6 +401,14 @@ inline ExResult WinRequestEx(const std::string& method, const std::string& url, 
     r.status = (long)code;
     r.answerStatus = (long)code;
     r.rawHead = QueryText(req, WINHTTP_QUERY_RAW_HEADERS_CRLF);
+    {   // the address after redirects (WINHTTP_OPTION_URL)
+        DWORD ulen = 0;
+        WinHttpQueryOption(req, WINHTTP_OPTION_URL, nullptr, &ulen);
+        if (ulen > 0 && ulen < 65536) {
+            std::wstring wu(ulen / sizeof(wchar_t) + 1, L'\0');
+            if (WinHttpQueryOption(req, WINHTTP_OPTION_URL, &wu[0], &ulen)) r.finalUrl = Narrow(wu.c_str(), wcslen(wu.c_str()));
+        }
+    }
     r.etag = QueryText(req, WINHTTP_QUERY_ETAG);
     r.lastModified = QueryText(req, WINHTTP_QUERY_LAST_MODIFIED);
     r.notModified = code == 304;
@@ -621,6 +631,7 @@ inline ExResult RequestEx(const std::string& method, const std::string& url,
         r.rawHead = "HTTP/1." + std::string(fr.response.minor ? "1" : "0") + " " + std::to_string(fr.response.status) + " " + fr.response.reason + "\r\n";
         for (const okay::ownhttp::Header& h : fr.response.headers) r.rawHead += h.name + ": " + h.value + "\r\n";
         r.rawHead += "\r\n";
+        if (!fr.finalUrl.host.empty()) r.finalUrl = fr.finalUrl.scheme + "://" + fr.finalUrl.HostPort() + fr.finalUrl.target;
         r.reusedConnections = fr.reusedConnections;
         if (const std::string* v = fr.response.Get("etag")) r.etag = *v;
         if (const std::string* v = fr.response.Get("last-modified")) r.lastModified = *v;

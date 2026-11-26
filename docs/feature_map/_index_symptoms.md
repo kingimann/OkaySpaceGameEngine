@@ -62,6 +62,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a character sinks into terrain | [6.2](06-physics.md#62-3d-bodies-and-colliders-collider-fit) 3D bodies and colliders, collider fit |
 | a character spins the wrong way | [36.1](36-math-geometry.md#361-vectors-and-colours) Vectors and colours |
 | a chat line is cut off | [16.11](16-networking.md#1611-rpc-syncvars-spawning-and-chat) RPC, SyncVars, spawning and chat |
+| a chat link opens in the system browser instead of the launcher's Browser page | [17.18](17-launcher-platform.md#1718-browser-our-own-web-browser-page-engine-the-browser-program-native-okayspace-web-games) Browser: our own web browser (page engine, the browser program, native OkaySpace web games) |
 | a chest opens for the wrong player | [11.1](11-gameplay-systems.md#111-inventory-bag-grid-chests-equipment) Inventory: bag, grid, chests, equipment |
 | a child jumps when re-parented | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | a child still collides under a switched-off parent | [1.17](01-core-scene.md#117-scene-hierarchy-search-and-validation) Scene hierarchy, search and validation |
@@ -106,6 +107,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a failed load leaves no reason | [1.17](01-core-scene.md#117-scene-hierarchy-search-and-validation) Scene hierarchy, search and validation |
 | a far-away player still pops in | [16.3](16-networking.md#163-snapshots-and-sync-interest) Snapshots and sync, interest |
 | a feature exists in OkayUI but not in the scene UI (or the reverse) | [40.5](40-okayui-library.md#405-how-okayui-relates-to-scene-ui) How OkayUI relates to scene UI |
+| a feature looks different on OpenGL and Direct3D | [38.12](38-render-backends.md#3812-rendering-hardware-interface-rhi) Rendering hardware interface (RHI) |
 | a feature missing on the web build (networking relay, encryption) | [18.2](18-build-export-release.md#182-web-and-mobile-export) Web and mobile export |
 | a fence changed height but one post did not | [3.11](03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) Guided creation (templates, parts, safe regeneration) |
 | a field does not show in the Inspector | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
@@ -156,6 +158,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a limb flips | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
 | a limb pops at full extension | [36.5](36-math-geometry.md#365-ik-math) IK math |
 | a line starting `[okay] stack:` in the log | [41.11](41-build-tools-infra.md#4111-own-stack-dogfood-switch-and-startup-line) Own-stack dogfood switch and startup line |
+| a link does nothing | [17.18](17-launcher-platform.md#1718-browser-our-own-web-browser-page-engine-the-browser-program-native-okayspace-web-games) Browser: our own web browser (page engine, the browser program, native OkaySpace web games) |
 | a link stops working after loading | [11.5](11-gameplay-systems.md#115-building-build-mode-structure-builder-snapping) Building: build mode, structure builder, snapping |
 | a long list is slow or drops rows | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
 | a long song uses a lot of memory (tick Stream) | [7.2](07-audio.md#72-formats-and-clips) Formats and clips |
@@ -198,6 +201,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a node is in the docs but not in the palette | [14.4](14-visual-scripting.md#144-node-library-physics-story-build-math) Node library (physics, story, build, math) |
 | a number pin refuses text | [14.2](14-visual-scripting.md#142-typed-pins-variables-and-scopes-object-references) Typed pins, variables and scopes, object references |
 | a one-object change shows hundreds of changed lines | [28.2](20-35-planned.md#282-diffs) Diffs |
+| a page looks different from Chrome | [17.18](17-launcher-platform.md#1718-browser-our-own-web-browser-page-engine-the-browser-program-native-okayspace-web-games) Browser: our own web browser (page engine, the browser program, native OkaySpace web games) |
 | a parent cycle is refused | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | a parented object does not collide | [6.2](06-physics.md#62-3d-bodies-and-colliders-collider-fit) 3D bodies and colliders, collider fit |
 | a party member doesn't follow the leader | [17.3](17-launcher-platform.md#173-friends-following-parties) Friends, following, parties |
@@ -350,6 +354,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | achievements don't appear on Steam | [17.10](17-launcher-platform.md#1710-steam-and-playfab) Steam and PlayFab |
 | achievements never unlock on Steam | [37.7](37-platform-windowing.md#377-steam-backend) Steam backend |
 | Add Component search cannot find a component | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
+| adding an effect means writing it four times | [38.12](38-render-backends.md#3812-rendering-hardware-interface-rhi) Rendering hardware interface (RHI) |
 | Admin tab missing (rank 0) | [17.9](17-launcher-platform.md#179-admin) Admin |
 | after dying I restart the whole level | [35.2](20-35-planned.md#352-checkpoints) Checkpoints |
 | aim cursor offset from the crosshair | [4.4](04-characters-cameras.md#44-shooter-and-top-down) Shooter and top-down |
@@ -380,6 +385,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an exe is missing SDL2.dll | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | an exe's Properties show the wrong version | [41.9](41-build-tools-infra.md#419-versioning-and-release-prep) Versioning and release prep |
 | an explosion preset is too slow | [2.7](02-rendering-world.md#27-particles-and-lines) Particles and lines |
+| an image is missing | [17.18](17-launcher-platform.md#1718-browser-our-own-web-browser-page-engine-the-browser-program-native-okayspace-web-games) Browser: our own web browser (page engine, the browser program, native OkaySpace web games) |
 | an image shows a red box or "can't load | [12.2](12-ingame-ui.md#122-widgets-button-image-raw-image-text-panel-progress-rating) Widgets: button, image, raw image, text, panel, progress, rating |
 | an instance lost its colour change after re-apply | [1.6](01-core-scene.md#16-prefabs-and-templates) Prefabs and templates |
 | an intro animation snaps | [12.13](12-ingame-ui.md#1213-data-binding-ui-animation-and-script-control) Data binding, UI animation and script control |
@@ -982,6 +988,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the bind field does not remember its key | [12.3](12-ingame-ui.md#123-input-widgets-slider-toggle-input-field-dropdown-stepper-keybind) Input widgets: slider, toggle, input field, dropdown, stepper, keybind |
 | the blue overlay does not match the level | [9.1](09-ai-navigation.md#91-nav-mesh-bake-and-queries) Nav mesh bake and queries |
 | the body is hidden after a model swap | [4.9](04-characters-cameras.md#49-blocky-character-and-customization) Blocky Character and customization |
+| the Browser page says it needs OkayUI | [17.18](17-launcher-platform.md#1718-browser-our-own-web-browser-page-engine-the-browser-program-native-okayspace-web-games) Browser: our own web browser (page engine, the browser program, native OkaySpace web games) |
 | the browser shows the wrong game's servers | [16.4](16-networking.md#164-matchmaking-queues-server-browser-join-links) Matchmaking, queues, server browser, join links |
 | the build contains files nothing uses | [20.2](20-35-planned.md#202-dependencies-and-references) Dependencies and references |
 | the build is large and I do not know why | [58.4](43-proposals.md#584-build-size-and-load-time-report) Build size and load-time report |

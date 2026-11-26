@@ -34,6 +34,7 @@
 #include "ProjectList.hpp"    // Create page: the project list, "Remove from list", prefs lines
 #include "LibraryScan.hpp"    // Play / Community: the library scan, each scene once
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
+#include "BrowserPage.hpp"   // the Browser page (sidebar > Browser): the browser program's browser inside the launcher
 #include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: WinHTTP / our own client (downloads, size probes)
@@ -73,13 +74,10 @@
 #ifdef OKAY_HAVE_OKAYUI
 #include "OkayUIFrame.hpp"   // OkayUI end-of-frame on an SDL renderer or an own-backend painter
 #include "OkayUIHost.hpp"
-#include "OkayUIHostImGui.hpp"   // is an ImGui popup in the way of the hosted rectangle?
+#include "OkayUIImGuiEmbed.hpp"  // HostPanelArea: the OkayUI pages drawn in Dear ImGui's draw order (popups and tooltips over them)
 #include "okay/UI/OkayUI.hpp"
 #include "OkayUIScreens.hpp"
 #include "OkayUIPanels.hpp"
-#else
-// Without OkayUI there is never an OkayUI frame (okayFrame stays false), but the page conditions below still name the host helper.
-namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) { return false; } }
 #endif
 
 #include <algorithm>
@@ -4117,7 +4115,7 @@ void DrawChatLinkConfirm() {
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, 6));
     const ImVec2 bs(okl::FitButtonW("Open", okl::UiPx(110.0f)), okl::UiPx(30.0f));
-    if (PrimaryButton("Open", bs)) { OpenExternal(g_linkAskUrl); g_linkAskUrl.clear(); ImGui::CloseCurrentPopup(); }
+    if (PrimaryButton("Open", bs)) { OpenPageLink(g_linkAskUrl); g_linkAskUrl.clear(); ImGui::CloseCurrentPopup(); }   // a new tab of the Browser page (switch on), else the system browser
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f))) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         g_linkAskUrl.clear(); ImGui::CloseCurrentPopup();
@@ -12846,18 +12844,18 @@ static void DrawCommunityShowcase(okay::account::AccountService& account, int vi
     }
 }
 
-// Is the page rectangle (w x h at the cursor) under something Dear ImGui draws in front: an open popup, or a window above the
-// launcher's root window (the floating chat window, an incoming call, a toast ...)? An OkayUI-drawn page is
-// flushed after ImGui and would paint over it (owner's screenshot, What's New over the Notifications flyout), so while this is
-// true the page's Dear ImGui version is drawn instead, which ImGui layers correctly. (Notifications is a page now, not a flyout.)
-static bool OkayPageCovered(float w, float h) {
 #ifdef OKAY_HAVE_OKAYUI
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    return okayuihost::CoveredInImGui(ImGui::GetCurrentWindow(), p.x, p.y, w, h);
-#else
-    (void)w; (void)h; return false;
-#endif
+// An OkayUI page (What's New, Tips) in the rectangle `ra` at the cursor of the page area, hosted in Dear ImGui's draw order
+// (okayuihost::HostPanelArea): its shapes go into the page's draw list, so ImGui's popups, tooltips and windows in front (the chat
+// window, an incoming call, a toast) are drawn over it, and the page never swaps to its Dear ImGui copy while they show. It used to:
+// hovering the sidebar's profile row showed a tooltip over a corner of the page, and the whole What's New switched to the other
+// version until the mouse moved away (owner's recording, 2026-11-26). Which surface draws a page: launcher/PageLayout.hpp OkayUIDrawsPage.
+template <class Draw>
+static void HostOkayPage(const char* itemId, ImVec2 ra, Draw draw) {
+    static OkayUI::CapturedGeometry s_cap;
+    okayuihost::HostPanelArea(itemId, ra, g_okayRegion, okayuihost::SharedImGuiEmbed(), s_cap, draw);
 }
+#endif
 
 // ---- The Notifications page (sidebar > Notifications; it replaced the flyout over the current page, owner 2026-11-25) ----------
 // Header actions (Mark all read, Clear), filter chips, pending friend requests with Accept / Decline, then the feed grouped
@@ -13760,7 +13758,7 @@ int main(int argc, char** argv) {
     std::string commRemovePath;   // community item pending delete-confirmation
     std::string commRemoveName;
     // Reopen on the section the launcher was last closed on.
-    int tab = (g_lastTab >= 0 && g_lastTab <= 17 && g_lastTab != 11) ? g_lastTab : 0;
+    int tab = RestoreTab(g_lastTab);   // any sidebar page up to the Browser page, never Admin
     if (const char* dt = std::getenv("OKAY_UI_DEMO_TAB")) tab = std::atoi(dt);   // dev screenshot hook
     if (launchArgs.versions) { okayversionsui::RequestPage(launchArgs.version); tab = 15; }
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
@@ -14193,6 +14191,9 @@ int main(int argc, char** argv) {
 #ifdef OKAY_HAVE_OKAYUI
         if (g_uiBackend == okayuibackend::Backend::OkayUI) { OkayUIFrameBegin(); okayFrame = true; }
 #endif
+        SetBrowserHostAvailable(okayFrame);   // the Browser page draws with OkayUI: without a frame, links open in the system browser
+        PumpBrowser();                        // its pages, downloads and games move along whichever page is shown
+        if (TakeShowRequest()) { tab = kBrowserTab; ClosePublicProfile(); }   // a chat link opened in a new tab of the Browser page
 
         // ---- Exit / Minimize confirmation (raised by the window [X] or Alt+F4) ----
         // Closing the launcher asks first, so an accidental [X] doesn't quit mid-task;
@@ -14543,14 +14544,15 @@ int main(int argc, char** argv) {
         // Keyboard shortcuts: 1-5 switch tabs (when not typing in a field);
         // Ctrl+F focuses the current tab's search box; Esc clears every search.
         if (!closeConfirm && !ImGui::GetIO().WantTextInput) {
-            for (int i = 0; i < 9; ++i)
+            for (int i = 0; i < 9 && tab != kBrowserTab; ++i)   // (the Browser page has its own Ctrl+1..9 for its tabs)
                 if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i), false)) tab = i;
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
                 playFilter[0] = commFilter[0] = marketFilter[0] = '\0';
         }
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false))
             focusSearch = true;
-        g_panelShortcut = ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B, false) && !ImGui::GetIO().WantTextInput;   // Ctrl+B: fold a side panel
+        g_panelShortcut = ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B, false) && !ImGui::GetIO().WantTextInput &&   // Ctrl+B: fold a side panel
+                          !(tab == kBrowserTab && ImGui::GetIO().KeyShift);   // (Ctrl+Shift+B is the Browser page's bookmarks bar)
         g_lastTab = tab == 11 ? 0 : tab;   // persisted on exit (and every SavePrefs)
         if (gateOpen) PumpRoleCheck(account.IsLoggedIn() && account.IsOnline());
         if (gateOpen) PumpBlocks(account);
@@ -14787,6 +14789,7 @@ int main(int argc, char** argv) {
         tabRow(2);
         tabRow(7);
         tabRow(10, ActiveDownloads(), navAccent);         // in-flight downloads
+        if (navRow("##navbrowser", "Browser", kIcoGlobe, tab == kBrowserTab && !g_pfOpen, 0, 0)) { tab = kBrowserTab; ClosePublicProfile(); }
         if (navRow("##navver", "Versions", kIcoRefresh, tab == 15 && !g_pfOpen, okayversionsui::InstallRunning() ? 1 : 0, navAccent)) { tab = 15; ClosePublicProfile(); }
         if (navRow("##navcli", "Command line", kIcoTerminal, tab == 17 && !g_pfOpen, 0, 0)) { tab = 17; ClosePublicProfile(); }
         navSection("SOCIAL");
@@ -15065,6 +15068,25 @@ int main(int argc, char** argv) {
             if (po.gotoTab >= 0) {
                 tab = po.gotoTab;
                 if (!po.marketSearch.empty()) std::snprintf(marketFilter, sizeof(marketFilter), "%s", po.marketSearch.c_str());
+            }
+        } else if (tab == kBrowserTab) {                  // ---- Browser: the browser program's browser, drawn by OkayUI ----
+            const BrowserPageMode mode = PageMode(BrowserSwitchOn(), okayFrame);
+            if (mode == BrowserPageMode::Browser && !OkayPageCovered(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {
+                const ImVec2 rp = ImGui::GetCursorScreenPos();
+                ImVec2 ra = ImGui::GetContentRegionAvail();
+                ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - PageFooterH(), 8.0f);
+                ImGui::InvisibleButton("##okayui_browser", ra);
+                ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);   // the wheel scrolls the page, not the ImGui window under it
+#ifdef OKAY_HAVE_OKAYUI
+                g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+#endif
+                DrawBrowserPage(rp.x, rp.y, ra.x, ra.y);
+            } else if (mode == BrowserPageMode::SwitchedOff) {
+                sectionHeader("Browser", nullptr);
+                EmptyState(kIcoGlobe, "The browser is switched off", "Turn on Settings > Experimental > Browser and restart the launcher to browse the web here. Links open in your system browser meanwhile.", UiPx(40.0f));
+            } else if (mode == BrowserPageMode::NeedsOkayUi) {
+                sectionHeader("Browser", nullptr);
+                EmptyState(kIcoGlobe, "The browser needs OkayUI screens", "The browser is drawn with our own UI toolkit. Turn on Settings > Experimental > OkayUI screens and restart the launcher. Links open in your system browser meanwhile.", UiPx(40.0f));
             }
         } else if (tab == 0) {                            // ---- Create ----
             sectionHeader("Create", nullptr);
@@ -15857,8 +15879,7 @@ int main(int argc, char** argv) {
 
         } else if (tab == 14) {                           // ---- Multiplayer ----
             DrawMultiplayerPage(account.IsLoggedIn() || kUiDemoUser);
-        } else if (tab == 12 && okayFrame && !OkayPageCovered(
-                                                                          ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- What's New, drawn by OkayUI (preview backend) ----
+        } else if (tab == 12 && okay::launcherlayout::OkayUIDrawsPage(tab, okayFrame)) {   // ---- What's New, drawn by OkayUI ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same data and same actions as the Dear ImGui page below: your version, the update status with its button,
             // the newest notes, the earlier releases, the link to all releases. Differences are listed in
@@ -15892,14 +15913,9 @@ int main(int argc, char** argv) {
                     "Updates download straight from the OkaySpace update server",
                 }});
             }
-            // The page's rectangle: an invisible item the size of the free space, so ImGui sees an item under the mouse
-            // (it neither drags the window nor scrolls the page) and says whether another window covers it.
-            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            // The page's rectangle: the free space above the footer (the version line stays below, pinned by ImGui).
             ImVec2 ra = ImGui::GetContentRegionAvail();
-            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer (the version line) stays below, pinned by ImGui
-            ImGui::InvisibleButton("##okayui_whatsnew", ra);
-            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);   // the wheel scrolls the OkayUI page, not the ImGui window under it
-            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);
             {   // the two sections, as on the Dear ImGui page
                 std::vector<DevBuildRow> devRows; std::string devNotes; int devState = 0; std::map<std::string, std::string> relDates; bool testsOn = false;
                 WhatsNewData(devRows, devNotes, devState, relDates, testsOn);
@@ -15916,7 +15932,8 @@ int main(int argc, char** argv) {
                     a = e + 1;
                 }
             }
-            const okayuiscreens::WhatsNewResult wr = okayuiscreens::DrawWhatsNew(wn, rp.x, rp.y, ra.x, ra.y);
+            okayuiscreens::WhatsNewResult wr;
+            HostOkayPage("##okayui_whatsnew", ra, [&](ImVec2 p, ImVec2 a) { wr = okayuiscreens::DrawWhatsNew(wn, p.x, p.y, a.x, a.y); });
             if (wr.sectionClicked >= 0) g_wnSection = wr.sectionClicked;
             if (wr.openUpdateSettings) { tab = 4; g_setCatJump = 3; }
             if (wr.checkAgain) StartUpdateCheck();
@@ -16122,8 +16139,7 @@ int main(int argc, char** argv) {
                 }
             }
             ImGui::EndChild();   // ##wnbody
-        } else if (tab == 13 && okayFrame && !OkayPageCovered(
-                                                                          ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Tips, drawn by OkayUI (preview backend) ----
+        } else if (tab == 13 && okay::launcherlayout::OkayUIDrawsPage(tab, okayFrame)) {   // ---- Tips, drawn by OkayUI ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same tips (shared/LauncherTips.hpp), tip of the day, category pills and search as the Dear ImGui page below; the
             // differences are listed in docs/ui/own_ui_toolkit.md section 6.
@@ -16135,13 +16151,9 @@ int main(int argc, char** argv) {
             }
             tm.dayNumber = (long long)(std::time(nullptr) / 86400);
             if (focusSearch) { ts.focusSearch = true; focusSearch = false; }
-            const ImVec2 rp = ImGui::GetCursorScreenPos();
             ImVec2 ra = ImGui::GetContentRegionAvail();
             ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer stays below, pinned by ImGui
-            ImGui::InvisibleButton("##okayui_tips", ra);
-            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
-            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
-            okayuiscreens::DrawTips(tm, ts, rp.x, rp.y, ra.x, ra.y);
+            HostOkayPage("##okayui_tips", ra, [&](ImVec2 p, ImVec2 a) { okayuiscreens::DrawTips(tm, ts, p.x, p.y, a.x, a.y); });
 #endif
         } else if (tab == 13) {                           // ---- Tips ----
             sectionHeader("Tips", "Shortcuts and tricks for the editor, scripting, building and the launcher.");
@@ -22972,6 +22984,7 @@ int main(int argc, char** argv) {
     if (g_upMutex) { okay::thr::DestroyMutex(g_upMutex); g_upMutex = nullptr; }
     okayversionsui::Shutdown();   // cancels a running version download and joins its thread
     okaylcli::Shutdown();         // ends a command still running on the Command line page
+    ShutdownBrowser();            // saves the browser's profile, stops its games, frees its textures (the renderer still exists)
     // Stop any in-flight downloads and join their worker threads before teardown.
     if (g_dlMutex) {
         okay::thr::LockMutex(g_dlMutex);

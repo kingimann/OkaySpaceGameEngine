@@ -18,6 +18,7 @@
 #include "okay/Render/OkayShader.hpp"     // Custom (.okayshader) surfaces
 
 #include "GLRendererInternal.hpp"
+#include "okay/Render/RHI/BloomPass.hpp"   // the full-screen vertex shader and the gaussian blur live there once
 
 namespace okay {
 namespace gl_render {
@@ -413,32 +414,8 @@ GLuint compile(GLenum type, const char* src) {
     if (!ok) { char log[512]; g.GetShaderInfoLog(s, 512, nullptr, log); Log::Error("[gl] shader: ", log); g.DeleteShader(s); return 0; }
     return s;
 }
-const char* kQuadVert =
-    "#version 120\n"
-    "attribute vec2 aPos; varying vec2 vUV;\n"
-    "void main(){ vUV = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }\n";
-const char* kBrightFrag =
-    "#version 120\n"
-    "uniform sampler2D uSrc; uniform float uThresh; varying vec2 vUV;\n"
-    "void main(){\n"
-    "  vec3 c = texture2D(uSrc, vUV).rgb;\n"
-    "  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
-    "  float k = max(l - uThresh, 0.0) / max(l, 1e-4);\n"   // keep only the over-threshold part
-    "  gl_FragColor = vec4(c * k, 1.0);\n"
-    "}\n";
-const char* kBlurFrag =
-    "#version 120\n"
-    "uniform sampler2D uSrc; uniform vec2 uDir; varying vec2 vUV;\n"   // uDir = one texel H or V
-    "void main(){\n"                                                   // 9-tap gaussian (linear-sampled 5-tap)
-    "  vec3 s = texture2D(uSrc, vUV).rgb * 0.227027;\n"
-    "  s += (texture2D(uSrc, vUV + uDir * 1.384615).rgb + texture2D(uSrc, vUV - uDir * 1.384615).rgb) * 0.316216;\n"
-    "  s += (texture2D(uSrc, vUV + uDir * 3.230769).rgb + texture2D(uSrc, vUV - uDir * 3.230769).rgb) * 0.070270;\n"
-    "  gl_FragColor = vec4(s, 1.0);\n"
-    "}\n";
-const char* kAddFrag =
-    "#version 120\n"
-    "uniform sampler2D uSrc; uniform float uStrength; varying vec2 vUV;\n"
-    "void main(){ gl_FragColor = vec4(texture2D(uSrc, vUV).rgb * uStrength, 0.0); }\n";
+const char* kQuadVert = rhi::kFullscreenVertGlsl;
+const char* kBlurFrag = rhi::kGaussianBlurGlsl;
 const char* kSsaoDepthVert =
     "#version 120\n"
     "SKIN\n"

@@ -2105,7 +2105,7 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
     endif()
     target_link_libraries(test_okayui_panels_imgui PRIVATE okay_ui_render okay_ui_screens)
     target_include_directories(test_okayui_panels_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
-                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/launcher)
     add_test(NAME okayui_panels_imgui COMMAND test_okayui_panels_imgui)
     set_tests_properties(okayui_panels_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()

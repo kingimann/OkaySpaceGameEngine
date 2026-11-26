@@ -8,6 +8,7 @@
 #include "okay/Core/StringUtil.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -869,6 +870,169 @@ int main() {
         mine.ok = true; mine.status = 200; mine.body = "for page two";
         if (!second.empty()) t.DeliverScriptResponse(second[0].id, mine);
         CHECK(ConsoleHas(t.ConsoleLines(), "two got for page two"));
+    }
+
+    // ---- round 4: navigator, URL / URLSearchParams, performance, queueMicrotask / requestIdleCallback (the site check's list)
+    {
+        Page p("<p id=a>x</p>");
+        CHECK(p.Eval("typeof navigator") == "object");
+        CHECK(p.Eval("navigator.userAgent") == "Mozilla/5.0 OkaySpaceBrowser/1.0");   // PageScripts::kDefaultUserAgent
+        CHECK(p.Eval("navigator.language + ' ' + navigator.languages.join(',')") == "en-US en-US,en");
+        CHECK(p.Eval("navigator.onLine && navigator.hardwareConcurrency > 0 && typeof navigator.platform") == "string");
+        CHECK(p.Eval("'serviceWorker' in navigator") == "false");   // absent: pages take their plain path
+        CHECK(p.Eval("navigator.cookieEnabled") == "false");        // this page has no cookie store
+        // URL (WHATWG URL 6.1) on our parser
+        CHECK(p.Eval("new URL('https://User:Pw@Example.COM:443/a/./b/../c?x=1&y=two#h').href") == "https://User:Pw@example.com/a/c?x=1&y=two#h");
+        CHECK(p.Eval("(u => [u.protocol, u.host, u.hostname, u.port, u.pathname, u.search, u.hash, u.origin].join('|'))(new URL('http://a.test:8080/p?q#f'))")
+              == "http:|a.test:8080|a.test|8080|/p|?q|#f|http://a.test:8080");
+        CHECK(p.Eval("new URL('../x/y z?k=v w', 'https://site.test/a/b/c.html').href") == "https://site.test/a/x/y%20z?k=v%20w");
+        CHECK(p.Eval("new URL('//cdn.test/s.js', 'https://site.test/').href") == "https://cdn.test/s.js");
+        CHECK(p.Eval("new URL('http:\\\\\\\\h.test\\\\p\\\\q').href") == "http://h.test/p/q");
+        CHECK(p.Eval("new URL('HTTPS://h.test').pathname") == "/");
+        CHECK(p.Eval("new URL('mailto:a@b.test').pathname + ' ' + new URL('mailto:a@b.test').origin") == "a@b.test null");
+        CHECK(p.Eval("(() => { try { new URL('/relative'); return 'no'; } catch (e) { return e.name; } })()") == "TypeError");
+        CHECK(p.Eval("[URL.canParse('https://x.test'), URL.canParse('nope'), URL.canParse('http://'), URL.canParse('http://a b.test/')].join()") == "true,false,false,false");
+        CHECK(p.Eval("(() => { try { new URL('http://h.test:99999/'); return 'no'; } catch (e) { return e.name; } })()") == "TypeError");   // port > 65535
+        CHECK(p.Eval("(u => { u.pathname = 'p q'; u.hash = 'top'; u.search = 'a=1'; u.port = '8443'; return u.href; })(new URL('https://h.test/'))")
+              == "https://h.test:8443/p%20q?a=1#top");
+        // URLSearchParams (WHATWG URL 6.2), live with its URL
+        CHECK(p.Eval("new URLSearchParams('?a=1&b=x+y&a=%C3%A9&c').getAll('a').join('|')") == "1|\xC3\xA9");
+        CHECK(p.Eval("new URLSearchParams('b=x+y').get('b')") == "x y");
+        CHECK(p.Eval("(s => { s.append('z', 'a b&c'); s.set('a', '9'); s.delete('c'); s.sort(); return s.toString() + ' ' + s.size; })(new URLSearchParams('c=3&a=1&b=2&a=5'))")
+              == "a=9&b=2&z=a+b%26c 3");
+        CHECK(p.Eval("new URLSearchParams({x: 1, y: 'two'}).toString() + ' ' + new URLSearchParams([['k', 'v']]).has('k')") == "x=1&y=two true");
+        CHECK(p.Eval("(u => { u.searchParams.set('q', 'a b'); return u.href + ' ' + u.searchParams.get('q'); })(new URL('https://s.test/p?q=1#f'))")
+              == "https://s.test/p?q=a+b#f a b");
+        CHECK(p.Eval("[...new URLSearchParams('a=1&b=2')].map(e => e.join('=')).join(';')") == "a=1;b=2");
+        // performance (High Resolution Time, User Timing)
+        CHECK(p.Eval("typeof performance.now() === 'number' && performance.now() >= 0 && performance.timeOrigin > 1.6e12") == "true");
+        CHECK(p.Eval("(() => { performance.mark('a'); performance.mark('b'); const m = performance.measure('ab', 'a', 'b');"
+                     " return [m.entryType, m.duration >= 0, performance.getEntriesByType('mark').length, performance.getEntriesByName('ab').length].join(); })()")
+              == "measure,true,2,1");
+        CHECK(p.Eval("(() => { try { performance.measure('x', 'nope'); return 'no'; } catch (e) { return e.name; } })()") == "SyntaxError");
+        // queueMicrotask runs before a timer; requestIdleCallback runs on the clock with a deadline
+        p.Run("window.order = []; setTimeout(() => order.push('timer'), 0); queueMicrotask(() => order.push('micro'));"
+              "requestIdleCallback(d => order.push('idle ' + (d.timeRemaining() > 0) + ' ' + d.didTimeout)); order.push('sync');");
+        p.js->Tick(5);
+        CHECK(p.Eval("order.join()") == "sync,micro,timer,idle true false");
+        // atob / btoa (HTML 8.3)
+        CHECK(p.Eval("btoa('Hello, world') + ' ' + atob('SGVsbG8sIHdvcmxk') + ' ' + atob(' SGk= ')") == "SGVsbG8sIHdvcmxk Hello, world Hi");
+        CHECK(p.Eval("(() => { try { btoa('\\u0100'); return 'no'; } catch (e) { return e.name; } })()") == "InvalidCharacterError");
+        CHECK(p.Eval("(() => { try { atob('a'); return 'no'; } catch (e) { return e.name; } })()") == "InvalidCharacterError");
+    }
+
+    // ---- round 4: interfaces and instanceof, constructors, Event / CustomEvent and dispatchEvent, EventTarget
+    {
+        Page p("<div id=d><span id=s>t</span><img id=i><svg id=v></svg></div><!-- c -->");
+        // (named access on window, HTML 7.2.2.3, is not offered: the elements are looked up)
+        p.Run("var d = document.getElementById('d'), s = document.getElementById('s'), i = document.getElementById('i'), v = document.getElementById('v');");
+        CHECK(p.Eval("[d instanceof HTMLElement, d instanceof Element, d instanceof Node, d instanceof HTMLDivElement, s instanceof HTMLDivElement].join()")
+              == "true,true,true,true,false");
+        CHECK(p.Eval("[i instanceof HTMLImageElement, v instanceof SVGElement, v instanceof HTMLElement, d.firstChild instanceof Text].join()")
+              == "true,true,false,false");
+        CHECK(p.Eval("[document instanceof Document, document.body.lastChild instanceof Comment, d.childNodes[0] instanceof Element, Node.ELEMENT_NODE, d.TEXT_NODE].join()")
+              == "true,true,true,1,3");
+        CHECK(p.Eval("(() => { try { new HTMLElement(); return 'no'; } catch (e) { return e.name; } })()") == "TypeError");
+        CHECK(p.Eval("(im => [im.tagName, im.getAttribute('width'), im instanceof HTMLImageElement, im instanceof Image].join())(new Image(40, 30))")
+              == "IMG,40,true,true");
+        CHECK(p.Eval("(o => [o.textContent, o.value, o instanceof HTMLOptionElement].join())(new Option('One', '1'))") == "One,1,true");
+        CHECK(p.Eval("(t => t.nodeType + ' ' + t.data + ' ' + (t instanceof CharacterData))(new Text('hi'))") == "3 hi true");
+        CHECK(p.Eval("Object.prototype.toString.call(document.createElement('table')) + ' ' + (document.createElement('table') instanceof HTMLTableElement)")
+              == "[object HTMLTableElement] true");
+        // Event / CustomEvent constructors and dispatchEvent through capture, target and bubble (DOM 2.9)
+        p.Run("window.seen = [];"
+              "document.body.addEventListener('ping', e => seen.push('body ' + e.eventPhase + ' ' + e.detail.n), true);"
+              "s.addEventListener('ping', e => { seen.push('span ' + e.eventPhase + ' ' + e.isTrusted + ' ' + (e.target === s)); });"
+              "d.addEventListener('ping', e => { seen.push('div ' + e.eventPhase); e.preventDefault(); });"
+              "window.addEventListener('ping', e => seen.push('window ' + (e instanceof CustomEvent)));"
+              "window.ret = s.dispatchEvent(new CustomEvent('ping', {bubbles: true, cancelable: true, detail: {n: 7}}));");
+        CHECK(p.Eval("seen.join('; ') + ' -> ' + ret") == "body 1 7; span 2 false true; div 3; window true -> false");
+        CHECK(p.Eval("(() => { const e = new Event('x'); return [e.type, e.bubbles, e.cancelable, e.defaultPrevented, e instanceof Event, Event.BUBBLING_PHASE].join(); })()")
+              == "x,false,false,false,true,3");
+        CHECK(p.Eval("(() => { const k = new KeyboardEvent('keydown', {key: 'a', ctrlKey: true}); return [k.key, k.ctrlKey, k.shiftKey, k instanceof UIEvent, k instanceof Event].join(); })()")
+              == "a,true,false,true,true");
+        CHECK(p.Eval("(() => { class My extends Event { constructor() { super('mine'); this.extra = 1; } } const m = new My(); let got = 0;"
+                     " s.addEventListener('mine', e => got = e.extra); s.dispatchEvent(m); return got + ' ' + (m instanceof My); })()") == "1 true");
+        CHECK(p.Eval("(() => { try { s.dispatchEvent({type: 'x'}); return 'no'; } catch (e) { return e.name; } })()") == "TypeError");
+        CHECK(p.Eval("(() => { const e = document.createEvent('Event'); e.initEvent('old', true, true); let n = 0; d.addEventListener('old', () => n++); s.dispatchEvent(e); return n; })()") == "1");
+        CHECK(p.Eval("(() => { const t = new EventTarget(); let got = ''; t.addEventListener('go', e => { got = e.type; e.preventDefault(); }); const r = t.dispatchEvent(new Event('go', {cancelable: true})); return got + ' ' + r; })()")
+              == "go false");
+        CHECK(p.Eval("(() => { let n = 0; window.addEventListener('w', () => n++); dispatchEvent(new Event('w')); return n; })()") == "1");
+        // the tab's own events have their interfaces
+        p.Run("window.kinds = []; document.body.addEventListener('keydown', e => kinds.push(e instanceof KeyboardEvent));");
+        KeyInfo k; k.key = "a"; k.code = "KeyA";
+        p.js->DispatchKey(nullptr, "keydown", k);
+        CHECK(p.Eval("kinds.join()") == "true");
+    }
+
+    // ---- round 4: MutationObserver (DOM 4.3): childList, attributes, characterData, subtree, old values, filter, takeRecords
+    {
+        Page p("<div id=root><p id=a class=x>one</p><p id=b>two</p></div>", true);
+        p.Run("var root = document.getElementById('root'), a = document.getElementById('a'), b = document.getElementById('b');"
+              "window.got = [];"
+              "window.mo = new MutationObserver((recs, obs) => { for (const r of recs) got.push(r.type + ':' + (r.attributeName || '') + ':' +"
+              "  (r.oldValue === null ? '-' : r.oldValue) + ':' + r.addedNodes.length + '/' + r.removedNodes.length + ':' + (r.target.id || r.target.nodeName)); got.push(obs === mo); });"
+              "mo.observe(root, {childList: true, subtree: true, attributes: true, attributeOldValue: true, characterData: true, characterDataOldValue: true});"
+              "a.className = 'y'; root.appendChild(document.createElement('i')); b.remove(); a.firstChild.data = 'uno'; a.setAttribute('data-k', '1');"
+              "got.push('sync ' + got.length);");
+        CHECK(p.Eval("got.join(' ')") == "sync 0 attributes:class:x:0/0:a childList::-:1/0:root childList::-:0/1:root characterData::one:0/0:#text "
+                                         "attributes:data-k:-:0/0:a true");
+        // a filter, no subtree, takeRecords and disconnect
+        p.Run("got = []; const m2 = new MutationObserver(r => got.push('cb ' + r.length));"
+              "m2.observe(a, {attributes: true, attributeFilter: ['title']});"
+              "a.title = 't'; a.id = 'a'; a.setAttribute('title', 'u'); window.taken = m2.takeRecords().length; m2.disconnect(); a.title = 'v'; mo.disconnect();");
+        p.js->Tick(1);
+        CHECK(p.Eval("taken + ' ' + got.join()") == "2 ");
+        CHECK(p.Eval("(() => { try { new MutationObserver(() => {}).observe(a, {}); return 'no'; } catch (e) { return e.name; } })()") == "TypeError");
+        // innerHTML replaces the children in one record each way; an observer nothing reaches is let go
+        p.Run("got = []; window.m3 = new MutationObserver(r => r.forEach(x => got.push(x.addedNodes.length + '+' + x.removedNodes.length)));"
+              "m3.observe(root, {childList: true}); root.innerHTML = '<b>1</b><b>2</b><b>3</b>';");
+        CHECK(p.Eval("got.join()") == "0+2,3+0");
+    }
+
+    // ---- round 4: geometry from the layout, scrolling, matchMedia, IntersectionObserver, ResizeObserver, resize / scroll events
+    {
+        BrowserTab t;
+        t.Open("https://site.test/geo.html");
+        t.TakeFetches();
+        t.DeliverPage("https://site.test/geo.html", true, 200,
+                      "<style>body{margin:0} #top{height:100px;border:5px solid red} #far{margin-top:2000px;height:50px} #end{height:1000px}</style>"
+                      "<div id=top>top <span id=sp>span text</span></div><div id=far>far</div><div id=end></div>"
+                      "<script>window.log = []; window.mq = matchMedia('(max-width: 600px)'); mq.addEventListener('change', e => log.push('mq ' + e.matches));"
+                      "new IntersectionObserver(es => es.forEach(e => log.push('io ' + e.target.id + ' ' + e.isIntersecting))).observe(document.getElementById('far'));"
+                      "new IntersectionObserver(es => es.forEach(e => log.push('io ' + e.target.id + ' ' + e.isIntersecting + ' ' + e.intersectionRatio))).observe(document.getElementById('top'));"
+                      "new ResizeObserver(es => es.forEach(e => log.push('ro ' + e.target.id + ' ' + e.contentRect.width + 'x' + e.contentRect.height))).observe(document.getElementById('top'));"
+                      "window.addEventListener('scroll', () => log.push('scroll ' + scrollY)); window.addEventListener('resize', () => log.push('resize ' + innerWidth));"
+                      "log.push('mq0 ' + mq.matches);"
+                      "</script>");
+        t.SetViewportHeight(600);
+        t.Layout(800, kMeasure);
+        t.Tick(16);   // the update steps after the first layout; then the observers' first callbacks
+        t.Tick(16);
+        auto eval = [&](const std::string& expr) {
+            t.Scripts()->ClearConsole();
+            t.Scripts()->RunScript("console.log(String(" + expr + "))", "test.js");
+            return t.ConsoleLines().empty() ? std::string("<none>") : t.ConsoleLines().back().text;
+        };
+        CHECK(eval("log.join('; ')") == "mq0 false; io far false; io top true 1; ro top 790x100");
+        CHECK(eval("(r => [r.x, r.y, r.width, r.height, r.bottom].join())(document.getElementById('top').getBoundingClientRect())") == "0,0,800,110,110");
+        CHECK(eval("(e => [e.offsetWidth, e.offsetHeight, e.offsetTop, e.clientWidth, e.clientHeight, e.clientTop].join())(document.getElementById('top'))")
+              == "800,110,0,790,100,5");
+        // an inline element: the box of its run (the em box on the line: 5 px border + 1.6 px half-leading)
+        CHECK(eval("(r => [r.x, r.width, r.height, Math.round(r.y * 10)].join())(document.getElementById('sp').getBoundingClientRect())") == "37,72,16,66");
+        CHECK(eval("[innerWidth, innerHeight, document.documentElement.clientWidth, document.documentElement.scrollHeight > 2000].join()") == "800,600,800,true");
+        CHECK(eval("document.getElementById('nope') === null && document.createElement('p').getBoundingClientRect().width") == "0");
+        // the page scrolls (window.scrollTo): the host is told, the boxes move, scroll fires, the far box comes into view
+        t.Scripts()->RunScript("log = []; scrollTo(0, 1800);", "test.js");
+        CHECK(std::fabs(t.PendingScroll() - 1800.0f) < 0.5f);
+        t.ScrollY() = 1800.0f;   // what the view does with PendingScroll
+        t.Tick(16);
+        CHECK(eval("log.join('; ')") == "scroll 1800; io far true; io top false 0");
+        CHECK(eval("document.getElementById('far').getBoundingClientRect().y") == "310");
+        // a narrower view: resize, the media query's change, the resize observer
+        t.Layout(500, kMeasure);
+        t.Tick(16);
+        CHECK(eval("log.slice(3).join('; ')") == "resize 500; mq true; ro top 490x100");
     }
 
     // ---- the browser's own keys never reach the page (it could cancel them)

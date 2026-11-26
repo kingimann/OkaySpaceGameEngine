@@ -1154,6 +1154,26 @@ void ParseRules(const std::string& css, std::size_t from, std::size_t to, StyleS
                     // unless it asks for the absence of something ("not (...)")
                     if (LowerAscii(prelude).compare(0, 3, "not") != 0) ParseRules(css, inner, innerEnd, sheet, media, limits, nesting + 1);
                 } else ParseRules(css, inner, innerEnd, sheet, media, limits, nesting + 1);
+            } else if ((name == "keyframes" || name == "-webkit-keyframes" || name == "-moz-keyframes") && sheet.keyframes.size() < 512) {
+                // CSS Animations 1, 3: the keyframe blocks by their selectors; only the two ends are kept (the end state is shown)
+                Keyframes kf;
+                kf.name = Unquote(prelude);
+                std::size_t b = inner;
+                while (b < innerEnd) {
+                    const std::size_t open = css.find('{', b);
+                    if (open == std::string::npos || open >= innerEnd) break;
+                    const std::size_t end = std::min(BlockEnd(css, open + 1), innerEnd);
+                    const std::string sel = LowerAscii(css.substr(b, open - b));
+                    const std::vector<Declaration> decls = ParseDeclarations(css.substr(open + 1, end - open - 1), limits);
+                    for (const std::vector<std::string>& g : CommaGroups(Words(sel))) {
+                        if (g.size() != 1) continue;
+                        if (g[0] == "from" || g[0] == "0%") kf.from.insert(kf.from.end(), decls.begin(), decls.end());
+                        else if (g[0] == "to" || g[0] == "100%") kf.to.insert(kf.to.end(), decls.begin(), decls.end());
+                    }
+                    if (kf.from.size() + kf.to.size() > 1000) break;
+                    b = end + 1;
+                }
+                if (!kf.name.empty()) sheet.keyframes.push_back(std::move(kf));
             } else if (name == "font-face") {
                 FontFace ff;
                 for (const Declaration& d : ParseDeclarations(css.substr(inner, innerEnd - inner), limits)) {
@@ -1652,6 +1672,76 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
     };
     auto nonNegative = [&](const std::string& w, Length& out) { return ParseLength(w, em, true, out) && out.value >= 0; };
 
+    if (p == "pointer-events") {   // CSS UI 4 / SVG 2: none, or one of the values that mean "a target" for HTML boxes
+        if (v == "none") s.pointerNone = true;
+        else if (v == "auto" || v == "all" || v == "visible" || v == "visiblepainted" || v == "painted" || v == "fill" || v == "stroke" ||
+                 v == "visiblefill" || v == "visiblestroke" || v == "bounding-box") s.pointerNone = false;
+        return;
+    }
+    if (p == "cursor") {   // CSS UI 4, 5.1: url() images are not loaded; the keyword after them is used
+        if (words.empty()) return;
+        const std::string k = LowerAscii(words.back());
+        struct C { const char* k; Cursor c; };
+        static const C kCursors[] = {{"auto", Cursor::Auto}, {"default", Cursor::Default}, {"none", Cursor::None}, {"pointer", Cursor::Pointer},
+            {"hand", Cursor::Pointer}, {"text", Cursor::Text}, {"vertical-text", Cursor::Text}, {"move", Cursor::Move}, {"all-scroll", Cursor::Move},
+            {"grab", Cursor::Move}, {"grabbing", Cursor::Move}, {"-webkit-grab", Cursor::Move}, {"-webkit-grabbing", Cursor::Move},
+            {"not-allowed", Cursor::NotAllowed}, {"no-drop", Cursor::NotAllowed}, {"wait", Cursor::Wait}, {"progress", Cursor::Progress},
+            {"ns-resize", Cursor::ResizeNS}, {"n-resize", Cursor::ResizeNS}, {"s-resize", Cursor::ResizeNS}, {"row-resize", Cursor::ResizeNS},
+            {"ew-resize", Cursor::ResizeEW}, {"e-resize", Cursor::ResizeEW}, {"w-resize", Cursor::ResizeEW}, {"col-resize", Cursor::ResizeEW},
+            {"nesw-resize", Cursor::ResizeNESW}, {"ne-resize", Cursor::ResizeNESW}, {"sw-resize", Cursor::ResizeNESW},
+            {"nwse-resize", Cursor::ResizeNWSE}, {"nw-resize", Cursor::ResizeNWSE}, {"se-resize", Cursor::ResizeNWSE},
+            {"help", Cursor::Default}, {"crosshair", Cursor::Default}, {"cell", Cursor::Default}, {"context-menu", Cursor::Default},
+            {"copy", Cursor::Default}, {"alias", Cursor::Default}, {"zoom-in", Cursor::Default}, {"zoom-out", Cursor::Default}};
+        for (const C& x : kCursors) if (k == x.k) { s.cursor = x.c; break; }
+        return;
+    }
+    if (p == "user-select" || p == "-webkit-user-select" || p == "-moz-user-select" || p == "-ms-user-select") {   // CSS UI 4, 6.1
+        if (v == "none") s.noSelect = true;
+        else if (v == "text" || v == "all" || v == "contain" || v == "element") s.noSelect = false;   // auto: as the parent
+        return;
+    }
+    if (p == "appearance" || p == "-webkit-appearance" || p == "-moz-appearance") {   // CSS UI 4, 7.2
+        s.appearanceNone = v == "none";
+        return;
+    }
+    if (p == "animation" || p == "-webkit-animation" || p == "animation-name" || p == "-webkit-animation-name" ||
+        p == "animation-fill-mode" || p == "-webkit-animation-fill-mode" || p == "animation-direction" || p == "-webkit-animation-direction" ||
+        p == "animation-iteration-count" || p == "-webkit-animation-iteration-count") {
+        // CSS Animations 1: only what decides the end state is kept (the first animation of a list); the end state is shown at once
+        const std::vector<std::vector<std::string>> groups = CommaGroups(words);
+        const std::vector<std::string> ws = groups.empty() ? std::vector<std::string>() : groups[0];
+        const std::string base = p[0] == '-' ? p.substr(p.find('-', 1) + 1) : p;
+        auto fill = [&](const std::string& w) { s.animFillsForwards = w == "forwards" || w == "both"; };
+        auto dir = [&](const std::string& w) { s.animReverse = w == "reverse" || w == "alternate-reverse"; };
+        if (base == "animation-name") s.animationName = ws.empty() || LowerAscii(ws[0]) == "none" ? std::string() : Unquote(ws[0]);
+        else if (base == "animation-fill-mode") { if (!ws.empty()) fill(LowerAscii(ws[0])); }
+        else if (base == "animation-direction") { if (!ws.empty()) dir(LowerAscii(ws[0])); }
+        else if (base == "animation-iteration-count") s.animInfinite = !ws.empty() && LowerAscii(ws[0]) == "infinite";
+        else {   // the shorthand: the keywords and numbers go to their longhands, the one word left is the name
+            s.animationName.clear(); s.animFillsForwards = false; s.animReverse = false; s.animInfinite = false;
+            static const char* const kKeywords[] = {"linear", "ease", "ease-in", "ease-out", "ease-in-out", "step-start", "step-end",
+                "normal", "alternate", "running", "paused", "initial", "inherit", "unset", nullptr};
+            for (const std::string& w : ws) {
+                const std::string lw = LowerAscii(w);
+                if (lw == "forwards" || lw == "both" || lw == "backwards" || lw == "none") { if (lw != "none") fill(lw); continue; }
+                if (lw == "reverse" || lw == "alternate-reverse") { dir(lw); continue; }
+                if (lw == "infinite") { s.animInfinite = true; continue; }
+                float n; std::string u;
+                if (ParseNumber(lw, n, u)) continue;   // a duration, a delay or an iteration count
+                if (lw.find('(') != std::string::npos) continue;   // cubic-bezier(), steps()
+                bool kw = false;
+                for (const char* const* k = kKeywords; *k; ++k) if (lw == *k) kw = true;
+                if (!kw && s.animationName.empty()) s.animationName = Unquote(w);
+            }
+        }
+        return;
+    }
+    if (p.compare(0, 9, "animation") == 0 || p.compare(0, 17, "-webkit-animation") == 0 || p.compare(0, 10, "transition") == 0 ||
+        p.compare(0, 18, "-webkit-transition") == 0) {
+        // CSS Transitions 1 / Animations 1 timing (durations, delays, curves, play state): the end state is shown at once, so a
+        // transition changes nothing on the screen and these need no value
+        return;
+    }
     if (p == "display") {
         struct K { const char* k; Display d; };
         static const K keys[] = {{"block", Display::Block}, {"flow-root", Display::FlowRoot}, {"flex", Display::Flex}, {"grid", Display::Grid},
@@ -2544,6 +2634,9 @@ ComputedStyle InheritedStyle(const ComputedStyle& parent) {
     s.captionBottom = parent.captionBottom;
     s.baselineShift = parent.baselineShift;   // reset below for anything that is not inline (ComputeStyle)
     s.vars = parent.vars;
+    s.pointerNone = parent.pointerNone;
+    s.cursor = parent.cursor;
+    s.noSelect = parent.noSelect;   // user-select: auto inside a none element computes to none (CSS UI 4, 6.1)
     // the rest start at their initial values
     for (int k = 0; k < 4; ++k) { s.margin[k] = Length::Px_(0); s.padding[k] = Length::Px_(0); }
     s.maxWidth.unit = Length::None;
@@ -2666,6 +2759,29 @@ ComputedStyle ComputeStyle(const Node& el, const ComputedStyle& parent, const st
         if (c.decl->property == "font-size" || c.decl->value.empty() || c.decl->property.compare(0, 2, "--") == 0) continue;
         if (ApplyKeyword(s, wk, *c.decl, parent)) continue;
         Apply(s, wk, *c.decl, parent);
+    }
+    // CSS Animations 1: a finite animation that fills forwards ends showing its last keyframe (the first one when it runs in
+    // reverse). Animations are not played (the end state is shown at once), so that keyframe is the element's style now: content
+    // a page fades in (opacity: 0 and an animation to 1) is shown instead of staying invisible.
+    if (!s.animationName.empty() && s.animFillsForwards && !s.animInfinite) {
+        const Keyframes* kf = nullptr;
+        for (const StyleSheet* sh : author)
+            if (sh) for (const Keyframes& k : sh->keyframes) if (k.name == s.animationName) kf = &k;   // the last one wins
+        if (kf) {
+            const std::vector<Declaration>& end = s.animReverse ? kf->from : kf->to;
+            for (const Declaration& d0 : end) {
+                if (d0.property == "font-size" || d0.property.compare(0, 2, "--") == 0 || d0.property.compare(0, 9, "animation") == 0) continue;
+                Declaration d = d0;
+                if (d.value.find("var(") != std::string::npos) {
+                    std::string out;
+                    std::size_t budget = 16384;
+                    if (!SubstituteVars(d.value, s.vars.get(), out, 0, budget)) continue;
+                    d.value = Trim(out);
+                }
+                if (d.value.empty()) continue;
+                if (!ApplyKeyword(s, wk, d, parent)) Apply(s, wk, d, parent);
+            }
+        }
     }
     for (int k = 0; k < 4; ++k) {
         s.border[k] = wk.borderStyle[k] ? std::min(wk.borderWidth[k], 1000.0f) : 0.0f;

@@ -67,8 +67,9 @@ public:
     /// The browser program's own pages ("about:newtab" ..., okay/Browser/Profile.hpp): the host makes their HTML with this
     /// instead of fetching them. Unset (the launcher): such an address is never fetched.
     void SetInternalPages(std::function<std::string(const std::string& url)> make) { m_internal = std::move(make); }
-    /// Web fonts (@font-face): the host is handed each TrueType / OpenType file that arrives with its rule (the program makes an
-    /// OkayUI font of it). Unset: fonts are not fetched into anything.
+    /// Web fonts (@font-face): the host is handed each font file that arrives with its rule as a TrueType / OpenType file (WOFF and
+    /// WOFF2 files are decoded first, okay/Browser/WebFont.hpp; the program makes an OkayUI font of it). Unset: fonts are not
+    /// fetched into anything.
     void SetFontLoader(std::function<void(const FontFace& face, const std::vector<std::uint8_t>& bytes)> load) { m_fontLoader = std::move(load); }
 
     void SetGameRunner(const GameRunner& runner) { m_runner = runner; }
@@ -97,7 +98,7 @@ public:
         std::string netError;        ///< the HTTP client's reason when no answer came (DNS, TLS, timeout ...)
         std::string rawHead;         ///< the answer's head
         const std::string* body = nullptr;
-        std::string note;            ///< what the host did not use: "redirect refused", "image not decoded", "font not TrueType or OpenType"
+        std::string note;            ///< what the host did not use: "redirect refused", "image not decoded", "font not decoded: <why>"
     };
     void SetFetchReporter(std::function<void(const FetchReport&)> report) { m_reporter = std::move(report); }
 

@@ -12,7 +12,13 @@ v2.904.1
   - Web pages run their own JavaScript on our own engine: page scripts, clicks and typing, timers, and a Console (F12).
   - Pages are styled much more like other browsers: real table column widths, colour gradients, proper spacing between blocks, the standard default styles, and many more text and border styles.
   - Accented letters show properly on pages written in older character sets (no more "Fran?ais"), Google's search box is centred with nothing on top of it, and older web pages (font tags, centred blocks) look right.
-  - Web fonts in WOFF and WOFF2 format can be read (they show on pages once the next step is done).
+  - Web fonts in WOFF and WOFF2 format can be read, and sites' own fonts in those formats now show on their pages.
+  - Browser: sites keep you signed in (cookies are saved), remember their settings (saved site data), and can load more content while you read.
+  - Browser: pages react to your keys and mouse, can show their alert, confirm and prompt boxes, and Back / Forward show the list of pages you visited when you hold or right-click them; the mouse wheel scrolls smoothly.
+  - Browser: text on pages is the right size (it was about 15% too small), and pages written in older character sets show their accents even when only the server says which set they use.
+  - Browser: more sites work: their scripts can now use the standard web features for addresses, timing, screen size, page changes and elements coming into view, and lists of terms, MDN's page layout and pages that fade their content in now show properly.
+  - Browser: the mouse pointer changes as the page asks (a hand, a text cursor, "not allowed" ...), see-through overlays no longer block clicks, text a page marks as not selectable is left out of Ctrl+A, and pages that draw their own check boxes and lists look right.
+  - Browser: pages download faster from sites that compress with Brotli, and requests carry the standard browser headers.
   - The browser names itself to sites in the standard way, without pretending to be another browser, and the address bar says "Search the web or type an address".
   - Game scripts can be written in JavaScript, run by our own JavaScript engine.
   - Script editor: Go to File, project-wide symbol search and rename, regex find, quick fixes, Local History and plugins.

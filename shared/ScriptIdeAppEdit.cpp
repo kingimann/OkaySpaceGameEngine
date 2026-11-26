@@ -154,9 +154,7 @@ void ScriptIdeApp::Impl::drawQuickFixes() {
     float w = 200.0f;
     for (const QuickFix& f : fixes) w = std::max(w, UI::CalcTextWidth(f.title.c_str()) + 30.0f);
     const float h = rowH * (float)fixes.size() + 8.0f;
-    const auto& fg = UI::GetForegroundDrawList();
-    fg->AddRectFilled(UI::Vec2(at.x, at.y), UI::Vec2(at.x + w, at.y + h), kPanel, 4.0f);
-    fg->AddRect(UI::Vec2(at.x, at.y), UI::Vec2(at.x + w, at.y + h), kLine, 4.0f, 1.0f);
+    const auto& fg = PopupBox(at.x, at.y, w, h);
     const UI::Vec2 m = UI::GetMousePos();
     int pick = -1;
     for (std::size_t i = 0; i < fixes.size(); ++i) {
@@ -276,9 +274,7 @@ void ScriptIdeApp::Impl::drawSignature(Doc& d) {
     float w = std::max(UI::CalcTextWidth(sigText.c_str()), UI::CalcTextWidth(sigDoc.c_str())) + 20.0f;
     w = std::min(w, 520.0f);
     const float x = below.x, y = below.y - e.LineHeight() - h - 2.0f;
-    const auto& fg = UI::GetForegroundDrawList();
-    fg->AddRectFilled(UI::Vec2(x, y), UI::Vec2(x + w, y + h), kPanel, 4.0f);
-    fg->AddRect(UI::Vec2(x, y), UI::Vec2(x + w, y + h), kLine, 4.0f, 1.0f);
+    const auto& fg = PopupBox(x, y, w, h);
     fg->AddText(UI::Vec2(x + 10, y + 4), Rgb(255, 214, 140), Fit(sigText, w - 20).c_str());
     if (!sigDoc.empty()) fg->AddText(UI::Vec2(x + 10, y + 4 + rowH), kDim, Fit(sigDoc, w - 20).c_str());
 }

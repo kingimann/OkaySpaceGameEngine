@@ -602,6 +602,14 @@ struct ScriptIdeApp::Impl {
         return false;
     }
 
+    // A box drawn over everything (lists and notes beside the caret): its fill and edge; the draw list to draw its inside on.
+    static const UI::DrawListHandle& PopupBox(float x, float y, float w, float h) {
+        const auto& fg = UI::GetForegroundDrawList();
+        fg->AddRectFilled(UI::Vec2(x, y), UI::Vec2(x + w, y + h), kPanel, 4.0f);
+        fg->AddRect(UI::Vec2(x, y), UI::Vec2(x + w, y + h), kLine, 4.0f, 1.0f);
+        return fg;
+    }
+
     static UI::Color32 KindColor(char k) {
         switch (k) {
         case 'k': return Rgb(204, 120, 50);
@@ -623,9 +631,7 @@ struct ScriptIdeApp::Impl {
             w = std::max(w, UI::CalcTextWidth(acItems[(std::size_t)i].label.c_str()) + UI::CalcTextWidth(acItems[(std::size_t)i].detail.c_str()) + 60.0f);
         w = std::min(w, 520.0f);
         const float h = rowH * (float)shown + 8.0f;
-        const auto& fg = UI::GetForegroundDrawList();
-        fg->AddRectFilled(UI::Vec2(at.x, at.y), UI::Vec2(at.x + w, at.y + h), kPanel, 4.0f);
-        fg->AddRect(UI::Vec2(at.x, at.y), UI::Vec2(at.x + w, at.y + h), kLine, 4.0f, 1.0f);
+        const auto& fg = PopupBox(at.x, at.y, w, h);
         const UI::Vec2 m = UI::GetMousePos();
         int click = -1;
         for (int i = first; i < first + shown; ++i) {
@@ -674,8 +680,7 @@ struct ScriptIdeApp::Impl {
                 std::vector<std::string> ex;
                 if (!it.example.empty()) { std::istringstream in(it.example); std::string l; while (std::getline(in, l)) ex.push_back(l); }
                 const float ph = 12 + rowH * (float)(docLines + (ex.empty() ? 0 : ex.size() + 1));
-                fg->AddRectFilled(UI::Vec2(px, at.y), UI::Vec2(px + pw, at.y + ph), kPanel, 4.0f);
-                fg->AddRect(UI::Vec2(px, at.y), UI::Vec2(px + pw, at.y + ph), kLine, 4.0f, 1.0f);
+                PopupBox(px, at.y, pw, ph);
                 float y = at.y + 6;
                 for (std::size_t i = 0; i < docLines; ++i, y += rowH) fg->AddText(UI::Vec2(px + 10, y), i == 0 ? kText : kDim, lines[i].c_str());
                 if (!ex.empty()) {

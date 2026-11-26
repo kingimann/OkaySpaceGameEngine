@@ -353,6 +353,19 @@ struct PageScripts::Impl {
         }
         ~Entry() { --I.depth; }
     };
+    // Runtime::Run from the host, where nothing outside would catch what it lets out: a script whose compiling runs out of the
+    // heap stops with an error line (Runtime::Compile throws JsTerminate for it) instead of ending the browser.
+    bool RunTop(const std::string& source, const std::string& chunk, std::string* err) {
+        try {
+            return rt.Run(source, chunk, err);
+        } catch (const js::JsTerminate& t) {
+            if (err) *err = chunk + ": " + t.why;
+        } catch (const js::JsThrow&) {
+            if (err) *err = rt.ExceptionText(rt.exception);
+            rt.exception = js::Value();
+        }
+        return false;
+    }
     bool CallFn(const js::Value& fn, const js::Value& thisv, const std::vector<js::Value>& args, js::Value* out = nullptr) {
         std::string err;
         if (rt.CallHost(fn, thisv, args, out, &err)) return true;
@@ -910,6 +923,21 @@ struct PageScripts::Impl {
     // bubbles and cancelable are used. Otherwise a new event of interface `proto` (null: Event) is made.
     bool DispatchEvent(Node* target, const std::string& type, bool bubbles, bool cancelable,
                        const std::function<void(js::Object*)>& extra = nullptr, js::Object* given = nullptr, js::Object* proto = nullptr) {
+        if (depth > 0) return DispatchEventIn(target, type, bubbles, cancelable, extra, given, proto);   // a script's: it unwinds
+        // from the host: making the event can run out of the heap (Runtime::Alloc throws), and nothing outside would catch it
+        try {
+            return DispatchEventIn(target, type, bubbles, cancelable, extra, given, proto);
+        } catch (const js::JsTerminate& t) {
+            Log(ConsoleLine::Error, "the event '" + type + "' stopped: " + t.why);
+        } catch (const js::JsThrow&) {
+            Log(ConsoleLine::Error, rt.ExceptionText(rt.exception));
+            rt.exception = js::Value();
+        }
+        dispatching.clear();
+        return false;
+    }
+    bool DispatchEventIn(Node* target, const std::string& type, bool bubbles, bool cancelable,
+                         const std::function<void(js::Object*)>& extra, js::Object* given, js::Object* proto) {
         if ((int)dispatching.size() >= kMaxEventDepth) {
             Log(ConsoleLine::Warn, "the event '" + type + "' was not sent: too many events inside each other");
             return false;
@@ -3633,8 +3661,8 @@ PageScripts::PageScripts(HtmlDocument& doc, FormState& forms, const std::string&
     Install(*m);
     Impl::Entry entry(*m);
     std::string err;
-    if (!m->rt.Run(kPrelude, "browser prelude", &err)) m->Log(ConsoleLine::Error, err);
-    if (!m->rt.Run(kPrelude4, "browser prelude 4", &err)) m->Log(ConsoleLine::Error, err);
+    if (!m->RunTop(kPrelude, "browser prelude", &err)) m->Log(ConsoleLine::Error, err);
+    if (!m->RunTop(kPrelude4, "browser prelude 4", &err)) m->Log(ConsoleLine::Error, err);
 }
 
 PageScripts::~PageScripts() = default;
@@ -3650,7 +3678,7 @@ bool PageScripts::RunScript(const std::string& source, const std::string& chunk,
     I.parserScript = parser && element != nullptr;
     if (element) I.started.insert(element);
     std::string err;
-    const bool ok = I.rt.Run(source, chunk.empty() ? "inline script " + std::to_string(++I.inlineCount) : chunk, &err);
+    const bool ok = I.RunTop(source, chunk.empty() ? "inline script " + std::to_string(++I.inlineCount) : chunk, &err);
     if (!ok) { I.Log(ConsoleLine::Error, err); I.writeBuffer.clear(); }
     else if (I.parserScript) I.FlushWrite(element);
     I.writeBuffer.swap(prevBuffer);

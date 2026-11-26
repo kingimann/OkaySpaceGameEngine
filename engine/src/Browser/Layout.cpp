@@ -10,6 +10,7 @@
 #include <deque>
 #include <map>
 #include <tuple>
+#include <unordered_set>
 
 namespace okay::browser {
 
@@ -2966,9 +2967,13 @@ struct Layouter {
                     auto it2 = areas.find(g.name.substr(0, g.name.size() - suffix.size()));
                     if (it2 != areas.end()) { outLine = isRow ? (isEnd ? it2->second.r1 : it2->second.r0) : (isEnd ? it2->second.c1 : it2->second.c0); return true; }
                 }
+                // CSS Grid 8.3.1: a lone name means the implicit "<name>-start" (or "-end") line first ("grid-column: content"
+                // with "[content-start] ... [content-end]" in the template), then a line of that very name
                 const GridTemplate& t = isRow ? cs.gridRows : cs.gridColumns;
-                for (std::size_t li = 0; li < t.lineNames.size(); ++li)
-                    for (const std::string& ln : t.lineNames[li]) if (ln == g.name) { outLine = (int)li; return true; }
+                const std::string implicit = g.name + suffix;
+                for (const std::string* want : {&implicit, &g.name})
+                    for (std::size_t li = 0; li < t.lineNames.size(); ++li)
+                        for (const std::string& ln : t.lineNames[li]) if (ln == *want) { outLine = (int)li; return true; }
                 return false;
             }
             if (g.line > 0) { outLine = g.line - 1; return true; }
@@ -3317,6 +3322,16 @@ LayoutResult LayoutPage(const HtmlDocument& doc, float widthIn, const TextMeasur
     // the page grows to hold positioned content (fixed content is on the view, not the page)
     for (const DrawCmd& c : r.cmds) if (!c.fixed && c.clip < 0 && c.kind != DrawCmd::Shadow) r.height = std::max(r.height, Finite(c.y + c.h));
     L.ExpandGradients();
+    // the ::before / ::after boxes and their text are nodes of the builder's own (synth), gone when this returns: nothing in the
+    // result may point at them (the host hovers BoxInfo::node, the page's scripts read DrawCmd::node)
+    if (!builder.synth.empty()) {
+        std::unordered_set<const Node*> synth;
+        for (const Node& n : builder.synth) synth.insert(&n);
+        for (BoxInfo& b : r.boxes) if (synth.count(b.node)) b.node = nullptr;
+        for (DrawCmd& c : r.cmds) if (synth.count(c.node)) c.node = nullptr;
+        for (ControlBox& c : r.controls) if (synth.count(c.node)) c.node = nullptr;
+        for (const Node*& n : r.linkNodes) if (synth.count(n)) n = nullptr;
+    }
     // paint order: stable by layer
     const std::vector<int> rank = L.LayerRanks();
     std::vector<std::size_t> perm(r.cmds.size());

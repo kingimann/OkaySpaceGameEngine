@@ -626,21 +626,27 @@ bool ParseAnB(std::string t, int& a, int& b) {
 
 } // namespace
 
-bool ParseSelectorList(const std::string& text, std::vector<Selector>& out, int& maxSpec) {
-    maxSpec = 0;
+// A selector list split at its top-level commas (not inside brackets or parentheses).
+static std::vector<std::string> SplitSelectorList(const std::string& text) {
+    std::vector<std::string> parts;
     std::size_t s = 0;
     int depth = 0;
     for (std::size_t i = 0; i <= text.size(); ++i) {
         const char c = i < text.size() ? text[i] : ',';
         if (c == '(' || c == '[') ++depth;
         else if ((c == ')' || c == ']') && depth > 0) --depth;
-        else if (c == ',' && depth == 0) {
-            Selector sel;
-            if (!ParseSelector(text.substr(s, i - s), sel)) return false;
-            maxSpec = std::max(maxSpec, sel.specificity);
-            out.push_back(std::move(sel));
-            s = i + 1;
-        }
+        else if (c == ',' && depth == 0) { parts.push_back(text.substr(s, i - s)); s = i + 1; }
+    }
+    return parts;
+}
+
+bool ParseSelectorList(const std::string& text, std::vector<Selector>& out, int& maxSpec) {
+    maxSpec = 0;
+    for (const std::string& part : SplitSelectorList(text)) {
+        Selector sel;
+        if (!ParseSelector(part, sel)) return false;
+        maxSpec = std::max(maxSpec, sel.specificity);
+        out.push_back(std::move(sel));
     }
     return !out.empty();
 }
@@ -648,25 +654,17 @@ bool ParseSelectorList(const std::string& text, std::vector<Selector>& out, int&
 // :has()'s argument: comma-separated selectors, each with an optional leading combinator (' ' when none).
 static bool ParseRelativeList(const std::string& text, std::vector<Selector>& out, std::vector<char>& combs, int& maxSpec) {
     maxSpec = 0;
-    std::size_t s = 0;
-    int depth = 0;
-    for (std::size_t i = 0; i <= text.size(); ++i) {
-        const char c = i < text.size() ? text[i] : ',';
-        if (c == '(' || c == '[') ++depth;
-        else if ((c == ')' || c == ']') && depth > 0) --depth;
-        else if (c == ',' && depth == 0) {
-            std::string part = Trim(text.substr(s, i - s));
-            char comb = ' ';
-            if (!part.empty() && (part[0] == '>' || part[0] == '+' || part[0] == '~')) { comb = part[0]; part = Trim(part.substr(1)); }
-            Selector sel;
-            if (!ParseSelector(part, sel) || sel.pseudoElement) return false;
-            for (const Compound& cp : sel.parts) for (const PseudoSel& ps : cp.pseudos) if (ps.kind == PseudoSel::Has) return false;
-            maxSpec = std::max(maxSpec, sel.specificity);
-            out.push_back(std::move(sel));
-            combs.push_back(comb);
-            s = i + 1;
-            if (out.size() > 64) return false;
-        }
+    for (const std::string& raw : SplitSelectorList(text)) {
+        std::string part = Trim(raw);
+        char comb = ' ';
+        if (!part.empty() && (part[0] == '>' || part[0] == '+' || part[0] == '~')) { comb = part[0]; part = Trim(part.substr(1)); }
+        Selector sel;
+        if (!ParseSelector(part, sel) || sel.pseudoElement) return false;
+        for (const Compound& cp : sel.parts) for (const PseudoSel& ps : cp.pseudos) if (ps.kind == PseudoSel::Has) return false;
+        maxSpec = std::max(maxSpec, sel.specificity);
+        out.push_back(std::move(sel));
+        combs.push_back(comb);
+        if (out.size() > 64) return false;
     }
     return !out.empty();
 }
@@ -2391,11 +2389,11 @@ bool ParseGradient(const std::string& text, float em, Gradient& out) {
                 const std::string lw = LowerAscii(g0[k]);
                 if (lw == "at") break;
                 if (lw == "circle" || lw == "ellipse") { if (shapeSet) return false; shapeSet = true; g.circle = lw == "circle"; continue; }
-                struct K { const char* k; Gradient::Size s; };
+                struct K { const char* k; Gradient::Extent s; };
                 static const K keys[] = {{"closest-side", Gradient::ClosestSide}, {"farthest-side", Gradient::FarthestSide},
                                          {"closest-corner", Gradient::ClosestCorner}, {"farthest-corner", Gradient::FarthestCorner}};
                 bool kw = false;
-                for (const K& key : keys) if (lw == key.k) { if (sizeSet) return false; g.size = key.s; sizeSet = kw = true; }
+                for (const K& key : keys) if (lw == key.k) { if (sizeSet) return false; g.extent = key.s; sizeSet = kw = true; }
                 if (kw) continue;
                 Length l;
                 if (ParseLength(g0[k], em, true, l) && l.value >= 0 && sizes.size() < 2) { sizes.push_back(l); continue; }
@@ -2403,7 +2401,7 @@ bool ParseGradient(const std::string& text, float em, Gradient& out) {
             }
             if (!sizes.empty()) {
                 if (sizeSet) return false;
-                g.size = Gradient::Explicit;
+                g.extent = Gradient::Explicit;
                 if (sizes.size() == 1) {   // one length: a circle (a percentage is not allowed for a circle)
                     if (sizes[0].unit == Length::Percent || (shapeSet && !g.circle)) return false;
                     g.circle = true; g.rx = g.ry = sizes[0];
@@ -2508,12 +2506,12 @@ Color GradientColorAt(const Gradient& g, float w, float h, float px, float py) {
         float rx = 0, ry = 0;
         const float sx = std::min(std::fabs(l), std::fabs(rr)), sy = std::min(std::fabs(tp), std::fabs(bt));
         const float fx = std::max(std::fabs(l), std::fabs(rr)), fy = std::max(std::fabs(tp), std::fabs(bt));
-        switch (g.size) {
+        switch (g.extent) {
         case Gradient::ClosestSide: if (g.circle) rx = ry = std::min(sx, sy); else { rx = sx; ry = sy; } break;
         case Gradient::FarthestSide: if (g.circle) rx = ry = std::max(fx, fy); else { rx = fx; ry = fy; } break;
         case Gradient::ClosestCorner:
         case Gradient::FarthestCorner: {
-            const float cxr = g.size == Gradient::ClosestCorner ? sx : fx, cyr = g.size == Gradient::ClosestCorner ? sy : fy;
+            const float cxr = g.extent == Gradient::ClosestCorner ? sx : fx, cyr = g.extent == Gradient::ClosestCorner ? sy : fy;
             if (g.circle) rx = ry = std::sqrt(cxr * cxr + cyr * cyr);
             else { rx = cxr * 1.41421356f; ry = cyr * 1.41421356f; }   // same aspect as the sides, through the corner (3.2.2)
             break;

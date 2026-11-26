@@ -218,9 +218,9 @@ int main() {
         CHECK(!g.radial && !g.repeating && g.angle == 90.0f && g.stops.size() == 2 && g.stops[1].pos.unit == Length::Percent && g.stops[1].pos.value == 80.0f);
         CHECK(ParseGradient("linear-gradient(0.25turn, red, blue)", 16, g) && std::fabs(g.angle - 90.0f) < 1e-3f);
         CHECK(ParseGradient("linear-gradient(to left top, red, blue)", 16, g) && g.cornerX == -1 && g.cornerY == -1);
-        CHECK(ParseGradient("radial-gradient(circle 20px at 10% 30%, red, blue)", 16, g) && g.radial && g.circle && g.size == Gradient::Explicit &&
+        CHECK(ParseGradient("radial-gradient(circle 20px at 10% 30%, red, blue)", 16, g) && g.radial && g.circle && g.extent == Gradient::Explicit &&
               g.rx.value == 20.0f && g.posX.value == 10.0f && g.posY.value == 30.0f);
-        CHECK(ParseGradient("repeating-radial-gradient(ellipse closest-side, red, blue 10px)", 16, g) && g.repeating && !g.circle && g.size == Gradient::ClosestSide);
+        CHECK(ParseGradient("repeating-radial-gradient(ellipse closest-side, red, blue 10px)", 16, g) && g.repeating && !g.circle && g.extent == Gradient::ClosestSide);
         CHECK(ParseGradient("linear-gradient(red 10% 20%, blue)", 16, g) && g.stops.size() == 3);   // two positions: the colour twice
         CHECK(!ParseGradient("linear-gradient(red)", 16, g));                 // one stop
         CHECK(!ParseGradient("linear-gradient(to middle, red, blue)", 16, g));

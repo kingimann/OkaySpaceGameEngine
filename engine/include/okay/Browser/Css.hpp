@@ -122,7 +122,7 @@ struct Gradient {
     int cornerX = 0, cornerY = 0;   ///< "to left top" ...: -1 / +1 per axis (0, 0: use `angle`)
     // radial
     bool circle = false;
-    enum Size { ClosestSide, FarthestSide, ClosestCorner, FarthestCorner, Explicit } size = FarthestCorner;
+    enum Extent { ClosestSide, FarthestSide, ClosestCorner, FarthestCorner, Explicit } extent = FarthestCorner;
     Length rx, ry;                  ///< Explicit sizes
     Length posX, posY;              ///< the centre ("at ..."; 50% 50% by default)
     std::vector<GradientStop> stops;

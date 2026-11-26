@@ -6,8 +6,7 @@
 // for tables. The fixed text measure: every character is half the font size wide (8 px at 16 px), a normal line is
 // 1.2 x 16 = 19.2 px and the text's em box starts 1.6 px below the line top.
 // Only the layout API that existed before round 3 is used here, so this file also builds against the old library (and fails).
-#include "test_framework.hpp"
-#include "okay/Browser/Layout.hpp"
+#include "BrowserLayoutTestKit.hpp"
 
 #include <cmath>
 #include <deque>
@@ -15,41 +14,8 @@
 
 using namespace okay::browser;
 
-static const FixedMeasure kMeasure(0.5f);
+using namespace browsertest;
 
-static std::deque<HtmlDocument> g_docs;
-static LayoutResult Lay(const std::string& html, float width, const ImageSizeFn& img = ImageSizeFn()) {
-    g_docs.push_back(ParseHtml(html));
-    return LayoutPage(g_docs.back(), width, kMeasure, img);
-}
-static const BoxInfo* ById(const LayoutResult& r, const std::string& id) {
-    for (const BoxInfo& b : r.boxes) if (b.node) if (const std::string* v = b.node->Attr("id")) if (*v == id) return &b;
-    return nullptr;
-}
-static bool Near(float a, float b) { return std::fabs(a - b) < 0.05f; }
-static bool BoxIs(const LayoutResult& r, const std::string& id, float x, float y, float w, float h) {
-    const BoxInfo* b = ById(r, id);
-    if (!b) { std::cerr << "  no box #" << id << "\n"; return false; }
-    if (Near(b->x, x) && Near(b->y, y) && Near(b->w, w) && Near(b->h, h)) return true;
-    std::cerr << "  #" << id << ": got " << b->x << "," << b->y << " " << b->w << "x" << b->h << "  want " << x << "," << y << " " << w << "x" << h << "\n";
-    return false;
-}
-static const DrawCmd* TextCmd(const LayoutResult& r, const std::string& text) {
-    for (const DrawCmd& c : r.cmds) if (c.kind == DrawCmd::Text && c.text == text) return &c;
-    return nullptr;
-}
-static bool TextAt(const LayoutResult& r, const std::string& text, float x, float y) {
-    const DrawCmd* c = TextCmd(r, text);
-    if (!c) {
-        std::cerr << "  no text '" << text << "'; runs:";
-        for (const DrawCmd& k : r.cmds) if (k.kind == DrawCmd::Text) std::cerr << " '" << k.text << "'";
-        std::cerr << "\n";
-        return false;
-    }
-    if (Near(c->x, x) && Near(c->y, y)) return true;
-    std::cerr << "  '" << text << "': got " << c->x << "," << c->y << " want " << x << "," << y << "\n";
-    return false;
-}
 static int CountFill(const LayoutResult& r, Color c) {
     int n = 0;
     for (const DrawCmd& k : r.cmds) if (k.kind == DrawCmd::Fill && k.color == c) ++n;

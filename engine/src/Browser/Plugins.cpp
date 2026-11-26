@@ -5,6 +5,7 @@
 
 #include "okay/Browser/Url.hpp"
 #include "okay/Core/Json.hpp"
+#include "okay/Core/StringUtil.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -13,12 +14,9 @@ namespace okay::browser {
 
 namespace {
 
-std::string Lower(std::string s) {
-    for (char& c : s) if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
-    return s;
-}
+using okay::str::LowerAscii;
 bool HttpAddress(const std::string& u) {
-    const std::string l = Lower(u);
+    const std::string l = LowerAscii(u);
     return (l.compare(0, 7, "http://") == 0 || l.compare(0, 8, "https://") == 0) && u.size() <= 4096 &&
            u.find_first_of(std::string("\r\n\t\0 ", 5)) == std::string::npos;
 }
@@ -62,7 +60,7 @@ bool Glob(const std::string& s, const std::string& p) {
     return j == p.size();
 }
 std::string HostOnly(const std::string& url) {
-    std::string h = Lower(HostOf(url));
+    std::string h = LowerAscii(HostOf(url));
     const std::size_t at = h.rfind('@');
     if (at != std::string::npos) h = h.substr(at + 1);
     if (!h.empty() && h[0] != '[') { const std::size_t colon = h.find(':'); if (colon != std::string::npos) h = h.substr(0, colon); }
@@ -104,7 +102,7 @@ std::string PermissionNames(unsigned p) {
 bool UrlMatchesPattern(const std::string& url, const std::string& pattern) {
     if (pattern.empty() || url.empty()) return false;
     if (pattern.compare(0, 2, "||") == 0) {
-        std::string host = Lower(pattern.substr(2));
+        std::string host = LowerAscii(pattern.substr(2));
         const std::size_t end = host.find_first_of("/^*");
         if (end != std::string::npos) host = host.substr(0, end);
         return HostUnder(HostOnly(url), host);
@@ -112,7 +110,7 @@ bool UrlMatchesPattern(const std::string& url, const std::string& pattern) {
     return Glob(url, pattern);
 }
 bool SiteMatches(const std::string& url, const std::string& siteIn) {
-    const std::string site = Lower(siteIn);
+    const std::string site = LowerAscii(siteIn);
     const std::string host = HostOnly(url);
     if (site == "*") return !host.empty();
     if (site.compare(0, 2, "*.") == 0) return HostUnder(host, site.substr(2));
@@ -141,10 +139,10 @@ std::string InertCss(const std::string& css) {
             i = j;
             continue;
         }
-        if (c == '@' && Lower(css.substr(i, 7)) == "@import") { i = std::min(n, SkipTo(css, i, ';') + 1); continue; }   // the whole rule goes
+        if (c == '@' && LowerAscii(css.substr(i, 7)) == "@import") { i = std::min(n, SkipTo(css, i, ';') + 1); continue; }   // the whole rule goes
         const bool identBefore = i > 0 && (std::isalnum((unsigned char)css[i - 1]) || css[i - 1] == '-' || css[i - 1] == '_');
-        if (!identBefore && (c == 'u' || c == 'U') && Lower(css.substr(i, 4)) == "url(") { out += "none"; i = std::min(n, SkipTo(css, i + 4, ')') + 1); continue; }
-        if (!identBefore && (c == 'i' || c == 'I') && Lower(css.substr(i, 10)) == "image-set(") { out += "none"; i = std::min(n, SkipTo(css, i + 10, ')') + 1); continue; }
+        if (!identBefore && (c == 'u' || c == 'U') && LowerAscii(css.substr(i, 4)) == "url(") { out += "none"; i = std::min(n, SkipTo(css, i + 4, ')') + 1); continue; }
+        if (!identBefore && (c == 'i' || c == 'I') && LowerAscii(css.substr(i, 10)) == "image-set(") { out += "none"; i = std::min(n, SkipTo(css, i + 10, ')') + 1); continue; }
         out += c;
         ++i;
     }

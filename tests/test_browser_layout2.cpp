@@ -3,8 +3,7 @@
 // Box Layout 1 section 9, CSS Grid Layout 1 sections 7, 8 and 11, CSS Box Sizing 3, CSS Values 4, Media Queries 4, Selectors 4)
 // with the fixed text measure of the layout test: every character is half the font size wide (8 px at 16 px), a normal line is
 // 1.2 x 16 = 19.2 px and the text's em box starts 1.6 px below the line top.
-#include "test_framework.hpp"
-#include "okay/Browser/Layout.hpp"
+#include "BrowserLayoutTestKit.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -13,37 +12,8 @@
 
 using namespace okay::browser;
 
-static const FixedMeasure kMeasure(0.5f);
+using namespace browsertest;
 
-static std::deque<HtmlDocument> g_docs;   // kept: the boxes point at their elements
-static LayoutResult Lay(const std::string& html, float width, const ImageSizeFn& img = ImageSizeFn(), const LayoutContext* ctx = nullptr) {
-    g_docs.push_back(ParseHtml(html));
-    return LayoutPage(g_docs.back(), width, kMeasure, img, ctx);
-}
-// The box of the element with id `id`.
-static const BoxInfo* ById(const LayoutResult& r, const std::string& id) {
-    for (const BoxInfo& b : r.boxes) if (b.node) if (const std::string* v = b.node->Attr("id")) if (*v == id) return &b;
-    return nullptr;
-}
-static bool Near(float a, float b) { return std::fabs(a - b) < 0.05f; }
-static bool BoxIs(const LayoutResult& r, const std::string& id, float x, float y, float w, float h) {
-    const BoxInfo* b = ById(r, id);
-    if (!b) { std::cerr << "  no box #" << id << "\n"; return false; }
-    if (Near(b->x, x) && Near(b->y, y) && Near(b->w, w) && Near(b->h, h)) return true;
-    std::cerr << "  #" << id << ": got " << b->x << "," << b->y << " " << b->w << "x" << b->h << "  want " << x << "," << y << " " << w << "x" << h << "\n";
-    return false;
-}
-static const DrawCmd* TextCmd(const LayoutResult& r, const std::string& text) {
-    for (const DrawCmd& c : r.cmds) if (c.kind == DrawCmd::Text && c.text == text) return &c;
-    return nullptr;
-}
-static bool TextAt(const LayoutResult& r, const std::string& text, float x, float y) {
-    const DrawCmd* c = TextCmd(r, text);
-    if (!c) { std::cerr << "  no text '" << text << "'\n"; return false; }
-    if (Near(c->x, x) && Near(c->y, y)) return true;
-    std::cerr << "  '" << text << "': got " << c->x << "," << c->y << " want " << x << "," << y << "\n";
-    return false;
-}
 static int IndexOfFill(const LayoutResult& r, Color c) {
     for (std::size_t i = 0; i < r.cmds.size(); ++i) if (r.cmds[i].kind == DrawCmd::Fill && r.cmds[i].color == c) return (int)i;
     return -1;
@@ -309,7 +279,7 @@ int main() {
         const std::string body = "<ul style='margin:0;padding:0'><li id=l1 class=a>1</li><li id=l2>2</li><li id=l3 class=b>3</li><li id=l4 data-k=abc>4</li><li id=l5 class=b>5</li></ul>"
                                  "<p id=p>hi</p><a id=h href=#>h</a>";
         const HtmlDocument d = ParseHtml(css + B0 + body);
-        const LayoutResult r = LayoutPage(d, 400, kMeasure);
+        const LayoutResult r = LayoutPage(d, 400, Measure());
         const BoxInfo* l1 = ById(r, "l1"); const BoxInfo* l2 = ById(r, "l2"); const BoxInfo* l3 = ById(r, "l3"); const BoxInfo* l4 = ById(r, "l4"); const BoxInfo* l5 = ById(r, "l5");
         CHECK(l1 && l2 && l3 && l4 && l5);
         if (l1 && l2 && l3 && l4 && l5) {
@@ -328,7 +298,7 @@ int main() {
         CHECK(r.dynamic);
         LayoutContext ctx;
         ctx.style.hover = link;
-        const LayoutResult rh = LayoutPage(d, 400, kMeasure, ImageSizeFn(), &ctx);
+        const LayoutResult rh = LayoutPage(d, 400, Measure(), ImageSizeFn(), &ctx);
         CHECK(ById(rh, "h") && Near(ById(rh, "h")->w, 60));
         CHECK(!ById(r, "h"));   // not hovered: inline, no box of its own
     }

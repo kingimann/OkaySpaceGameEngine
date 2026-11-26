@@ -241,8 +241,14 @@ def _source_notes(t):
     return bad
 
 
+def _browser_words(t):
+    """A8: the address bar's placeholder uses neutral words, not a look-alike of another browser's."""
+    return _grep(t, "engine/src/Browser/Profile.cpp", r'"Search Google or type')
+
+
 GUARDS = [
     ("A4", "shipped version information states a licence other than ours", _own_licence),
+    ("A8", "the browser placeholder copies another browser's wording", _browser_words),
     ("A10", "a published shader constant has no source note near it", _source_notes),
 ]
 

@@ -64,7 +64,7 @@ std::string SearchUrl(const std::string& tmpl, const std::string& terms) {
 
 std::string AddressPlaceholder(const std::string& tmpl) {
     if (Trim(tmpl).empty()) return "Type an address";
-    if (HostOf(tmpl) == "www.google.com" || HostOf(tmpl) == "google.com") return "Search Google or type an address";
+    if (HostOf(tmpl) == "www.google.com" || HostOf(tmpl) == "google.com") return "Search the web or type an address";
     return "Search or type an address";
 }
 

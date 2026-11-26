@@ -57,6 +57,9 @@ copied code in this scan; see "Clean" and "Limits".
 
 - **A4 fixed.** `cmake/okay_version.rc.in` now says "Copyright (c) 2026 OkaySpaceGameEngine. All rights reserved. See
   LICENSE." Guard: `check` refuses another licence name in `LegalCopyright`.
+- **A8 fixed (wording).** The empty address bar says "Search the web or type an address" (was "Search Google or
+  type an address", close to Chrome's own words). Google stays the default search, as the owner chose; the
+  "Use Google" button in the browser settings stays (it names the service it picks). Guard: `check`.
 - **A10 fixed.** One source line at each place: the Narkowicz ACES fit and Hable's curve (GL, D3D, CPU), Jimenez's
   interleaved gradient noise (GL, D3D), and the 9-tap gaussian in 5 linear taps, now derived in `SsaoMath.hpp` from the
   binomial row n = 12 and checked against it by `tests/test_post_quality_math.cpp`; the GL / D3D / DoF / bloom blurs

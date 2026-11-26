@@ -12,7 +12,9 @@
 //   - an ImGui tooltip and an ImGui window in front cover the panel, and the panel offers no mouse while covered;
 //   - the panel's own modal ("Clear crash reports?") stays on OkayUI's top layer, over everything;
 //   - clicks reach the panel: Refresh, Reset, a History row;
-//   - a collapsed window draws nothing and offers nothing.
+//   - a collapsed window draws nothing and offers nothing;
+//   - the launcher's What's New and Browser pages (okayuihost::HostPanelArea): the profile row's ImGui tooltip lies over them, the
+//     page does not change, the Browser page's images (textures the launcher made) are drawn, and typing reaches its fields.
 #include "test_framework.hpp"
 #include "imgui.h"            // first: OkayUI.hpp keeps Dear ImGui's ImTextureID_Invalid when imgui.h came before it
 #include "imgui_internal.h"
@@ -890,6 +892,10 @@ struct LauncherWin {
     okayuitest::Sim sim{(float)kW, (float)kH};
     okayuiscreens::WhatsNewModel model;
     int tab = 12;
+    static constexpr int kBrowserTab = 30;     // the Browser page (launcher/main.cpp kBrowserTab)
+    bool browserHosted = true;                 // false: the Browser page as #1314 drew it (left in OkayUI's frame, drawn after ImGui)
+    ImU32 tipBg = 0;                           // != 0: the profile row's tooltip in this colour (to find its pixels)
+    char address[128] = "okay://news";         // the Browser page's address field
     bool okayFrame = true;                     // the OkayUI backend is on (the launcher's default)
     int okayDrew = 0, imguiDrew = 0;           // which surface drew the What's New page this frame
     int notifDrew = 0;                         // the Notifications page was drawn this frame
@@ -925,7 +931,12 @@ struct LauncherWin {
         {   // the profile row: its tooltip, as launcher/main.cpp's ("Account  (right-click to set a status)")
             profileRow = ImGui::GetCursorScreenPos();
             ImGui::InvisibleButton("##navprofile", ImVec2(ImGui::GetContentRegionAvail().x, kRowH));
-            if (ImGui::IsItemHovered()) { ImGui::SetTooltip("Account  (right-click to set a status)"); tooltipShown = true; }
+            if (ImGui::IsItemHovered()) {
+                if (tipBg) ImGui::PushStyleColor(ImGuiCol_PopupBg, tipBg);
+                ImGui::SetTooltip("Account  (right-click to set a status)");
+                if (tipBg) ImGui::PopStyleColor();
+                tooltipShown = true;
+            }
         }
         ImGui::EndChild();
         ImGui::SameLine(0, 0);
@@ -941,8 +952,48 @@ struct LauncherWin {
         } else if (tab == 16) {
             ++notifDrew;
             ImGui::TextUnformatted("Notifications");
+        } else if (tab == kBrowserTab) {                                            // ---- Browser (launcher/main.cpp, HostOkayPage)
+            ++okayDrew;
+            const ImVec2 ra = ImGui::GetContentRegionAvail();
+            if (browserHosted) {
+                embed.SetHostTextures([](const void* t) { return (ImTextureID)(std::uintptr_t)t; });   // as the launcher's HostOkayPage
+                okayuihost::HostPanelArea("##okayui_browser", ra, offers, embed, cap, [&](ImVec2 p, ImVec2 a) { BrowserBody(p, a); });
+            } else {                                                                // #1314's way: a placeholder, the page in OkayUI's frame
+                const ImVec2 rp = ImGui::GetCursorScreenPos();
+                ImGui::InvisibleButton("##okayui_browser", ra);
+                ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+                offers.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+                BrowserBody(rp, ra);
+            }
         }
         ImGui::EndChild();
+    }
+    // A page of the launcher's Browser (shared/BrowserApp.cpp Frame draws it this way): one bare OkayUI window over the area, the
+    // address field, and the page under it in a clip (the view), with a picture whose texture the launcher made (TabHost::ImageFor:
+    // an SDL texture from TextureFromRgba), wider than the view so the clip cuts it.
+    static constexpr std::uint8_t kImg[3] = {30, 200, 90};
+    std::uint8_t imgKey = 0;                                      // the "SDL texture" of the page's picture (a key the rasteriser knows)
+    SDL_Texture* PageImage() { return (SDL_Texture*)(void*)&imgKey; }
+    ImVec2 imgMin, imgMax;                                        // where the picture is (its visible part ends at viewMax.x)
+    float viewMaxX = 0.0f;
+    ImVec2 pageMin, pageMax;                                      // the page's rectangle
+    void BrowserBody(ImVec2 p, ImVec2 a) {
+        pageMin = p; pageMax = ImVec2(p.x + a.x, p.y + a.y);
+        OkayUI::BareNextWindow();
+        if (OkayUI::Begin("##launcher_browser", p.x, p.y, a.x, a.y)) {
+            OkayUI::GetWindowDrawList()->AddRectFilled(OkayUI::Vec2(p.x, p.y), OkayUI::Vec2(p.x + a.x, p.y + a.y), OkayUI::RGBA(244, 244, 244));   // the page
+            OkayUI::SetCursorScreenPos(OkayUI::Vec2(p.x + 10.0f, p.y + 8.0f));
+            OkayUI::SetNextItemWidth(a.x - 20.0f);
+            OkayUI::InputText("##address", address, (int)sizeof address);
+            viewMaxX = p.x + a.x - 40.0f;
+            const float vy = p.y + 50.0f;
+            OkayUI::PushClipRect(p.x, vy, viewMaxX - p.x, a.y - 50.0f);
+            imgMin = ImVec2(p.x + 14.0f, p.y + a.y - 130.0f);
+            imgMax = ImVec2(viewMaxX + 30.0f, p.y + a.y - 20.0f);
+            OkayUI::GetWindowDrawList()->AddImage(PageImage(), OkayUI::Vec2(imgMin.x, imgMin.y), OkayUI::Vec2(imgMax.x, imgMax.y));
+            OkayUI::PopClipRect();
+        }
+        OkayUI::End();
     }
     bool Owns(float x, float y) const {
         for (const Offers::O& o : lastOffers.list) if (o.hovered && x >= o.x && y >= o.y && x < o.x + o.w && y < o.y + o.h) return true;
@@ -953,6 +1004,7 @@ struct LauncherWin {
         offers.list.clear(); offers.active = false;
         im.mx = sim.mx; im.my = sim.my; im.down = sim.down; im.rdown = sim.rdown;
         sim.blocked = !Owns(sim.mx, sim.my);   // launcher/main.cpp OkayUIFrameBegin: ImGui has the mouse unless a hosted page owns it
+        if (!(OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0)) sim.text.clear();   // and the keys only while an OkayUI field types
         sim.Frame([&] { im.Frame([&] { Body(); }); });
         ras.DrawImGui();
         ras.renderer.Render(OkayUI::GetDrawData(), ras.fi);
@@ -1012,6 +1064,68 @@ void LauncherPageClickOnNotificationsLandsAndStays() {
     kH = 420;
 }
 
+// The Browser page (launcher/main.cpp, tab kBrowserTab) hosted like What's New (HostOkayPage). #1314 drew it in OkayUI's frame, after
+// Dear ImGui, and #1321 removed the check that hid tooltips there: the profile row's tooltip went UNDER the page. Hosted, the tooltip
+// lies over it; the page is the same picture as before (its picture, a texture the launcher made, included: the embed skipped such
+// shapes until the launcher named its textures to ImGui, SetHostTextures), and typing still reaches its address field.
+void LauncherBrowserPageUnderImGuiTooltips() {
+    kH = 600;
+    struct Shot { Bitmap page, tip; int tipOverPage = 0, img = 0, imgPastClip = 0, skipped = 0; std::string typed; };
+    auto run = [](bool hosted) {
+        Shot r;
+        LauncherWin w;
+        w.tab = LauncherWin::kBrowserTab;
+        w.browserHosted = hosted;
+        w.tipBg = IM_COL32(kFront[0], kFront[1], kFront[2], 255);
+        const std::uint8_t px[4 * 4 * 4] = {
+            30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255,
+            30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255};
+        w.ras.renderer.SetImage(w.PageImage(), 4, 4, px, false);
+        w.sim.Move(500, 300); w.Frames(4);   // the mouse over the page
+        r.page = w.ras.bmp;
+        r.skipped = w.embed.Skipped();
+        const int ix0 = (int)w.imgMin.x + 2, iy0 = (int)w.imgMin.y + 2, ix1 = (int)w.viewMaxX - 2, iy1 = (int)w.imgMax.y - 2;
+        r.img = Count(r.page, ix0, iy0, ix1, iy1, LauncherWin::kImg);
+        r.imgPastClip = Count(r.page, (int)w.viewMaxX + 2, iy0, (int)w.imgMax.x - 2, iy1, LauncherWin::kImg);
+        // the profile row's tooltip reaches into the page (over its picture)
+        w.sim.Move(w.profileRow.x + 100.0f, w.profileRow.y + 10.0f); w.Frames(3);
+        CHECK(w.tooltipShown && w.okayDrew == 1);
+        r.tip = w.ras.bmp;
+        r.tipOverPage = Count(r.tip, (int)w.pageMin.x + 1, (int)w.pageMin.y + 1, (int)w.pageMax.x - 1, (int)w.pageMax.y - 1, kFront);
+        // typing reaches the address field: click it, select all, type
+        w.sim.Move(500, 30); w.Frame(); w.sim.Down(); w.Frames(2); w.sim.Up(); w.Frames(2);
+        w.sim.Press(okayuitest::Key_SelectAll); w.Frame();
+        w.sim.Type("okay://store"); w.Frames(2);
+        r.typed = w.address;
+        Save(hosted ? "launcher_browser_hosted" : "launcher_browser_oldway", "profilehover", r.tip);
+        return r;
+    };
+    const Shot oldWay = run(false), hosted = run(true);
+    std::printf("  tooltip pixels over the page: old way %d, hosted %d\n", oldWay.tipOverPage, hosted.tipOverPage);
+    std::printf("  page picture pixels: old way %d, hosted %d (past the view's clip: %d, %d); shapes the embed skipped: %d\n",
+                oldWay.img, hosted.img, oldWay.imgPastClip, hosted.imgPastClip, hosted.skipped);
+    std::printf("  typed into the address field: old way \"%s\", hosted \"%s\"\n", oldWay.typed.c_str(), hosted.typed.c_str());
+    CHECK(oldWay.tipOverPage == 0);          // the bug: the page lay over ImGui's tooltip
+    CHECK(hosted.tipOverPage > 500);         // hosted: the tooltip is over the page
+    CHECK(oldWay.img > 1000 && hosted.img == oldWay.img);   // the page's picture is drawn, the same
+    CHECK(oldWay.imgPastClip == 0 && hosted.imgPastClip == 0);   // and clipped to the view
+    CHECK(hosted.skipped == 0);
+    const Diff d = Compare(oldWay.page, hosted.page);
+    std::printf("  page hosted against the old way: average difference %.3f, clearly different %.3f%%\n", d.avg, d.clearly);
+    CHECK(d.clearly < 0.05);                 // the page does not change
+    // away from the tooltip, the page does not change while it shows
+    int diff = 0;
+    for (int y = 10; y < 400; ++y) for (int x = (int)LauncherWin::kNavW + 20; x < kW - 10; ++x) {
+        const std::uint8_t* a = &hosted.page.rgba[((std::size_t)y * (std::size_t)kW + (std::size_t)x) * 4];
+        const std::uint8_t* b = &hosted.tip.rgba[((std::size_t)y * (std::size_t)kW + (std::size_t)x) * 4];
+        if (std::abs(a[0] - b[0]) > 8 || std::abs(a[1] - b[1]) > 8 || std::abs(a[2] - b[2]) > 8) ++diff;
+    }
+    std::printf("  page pixels changed by the hover (above the tooltip): %d\n", diff);
+    CHECK(diff == 0);
+    CHECK(oldWay.typed == "okay://store" && hosted.typed == "okay://store");
+    kH = 420;
+}
+
 } // namespace
 
 int main() {
@@ -1035,5 +1149,6 @@ int main() {
     LookSectionsTakeClicks();
     LauncherPageOneSurfaceWhileTheProfileTooltipShows();
     LauncherPageClickOnNotificationsLandsAndStays();
+    LauncherBrowserPageUnderImGuiTooltips();
     TEST_MAIN_RESULT();
 }

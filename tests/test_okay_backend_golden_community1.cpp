@@ -534,6 +534,202 @@ static std::vector<Scenario> Scenarios() {
         out += "=> " + B(ps.SetSession("", "g", "l")) + "\n";
         return out + f.log;
     }});
+    // Ids holding PostgREST's reserved characters (a comma, brackets, a quote) inside or=(...) and in.(...): the moved sites
+    // must send them exactly as before (percent-encoded but not quoted in Profiles and Friends, unchanged in Parties). Normal
+    // ids are user ids and never hold them; this pins the bytes anyway (docs/platform/okay_backend.md section 18).
+    v.push_back({"reserved_characters_in_lists", [](const fs::path& d) {
+        Fake f; f.queue = {Http(200, "[{\"id\":\"a,b(c)\\\"d\",\"username\":\"q\"}]"),                  // Load(id): the profile row
+                           Http(404, "{}"), Http(404, "{}"), Http(404, "{}"), Http(404, "{}"), Http(404, "{}"), Http(404, "{}"),
+                           Http(200, "[]"), Http(200, "[{\"id\":\"u1\"}]"),                          // follow counts, MyId
+                           Http(200, "[]"), Http(200, "[]"), Http(200, "[]"),                            // follows, friendships, activity
+                           Http(200, "[{\"follower\":\"a,b\"},{\"follower\":\"c(d)\"},{\"follower\":\" e\\\"\"}]"), Http(200, "[]"),
+                           Http(200, "[{\"actor\":\"x,y\",\"actor_name\":\"x\"},{\"actor\":\"(z)\",\"actor_name\":\"z\"}]"), Http(200, "[]"),
+                           Http(200, "[{\"id\":\"u1\"}]"), Http(200, "[{\"party_id\":\"p,1\"}]"), Http(200, "[{\"id\":\"p,1\"}]"),
+                           Http(200, "[{\"member\":\"m,1\"},{\"member\":\"m(2)\"}]"), Http(200, "[]")};
+        auto a = SignedIn(d, f);
+        std::string out;
+        okay::Profiles pr(*a);
+        out += Bundle(pr.Load("a,b(c)\"d", false));
+        out += "=> " + std::to_string(pr.FollowList("", true).size()) + "\n";
+        okay::Friends fr(*a);
+        out += "=> " + std::to_string(fr.Feed(2).size()) + "\n";
+        okay::Parties ps(*a);
+        okay::Party p;
+        const bool mine = ps.Mine(p);
+        out += "=> " + B(mine) + "\n" + PartyText(p);
+        return out + f.log;
+    }});
+    return v;
+}
+
+// ---- The same requests through the Supabase provider directly (okay::backend::supabase::Database, RecordingTransport) ------
+// Each flow sends, in order, the requests its scenario of the same name sent (the user-id lookups included), built only with
+// the Query builder: a builder or provider change that alters one byte fails here even when a header still matches.
+struct ProviderRun : golden::Recorder {
+    okay::backend::supabase::Database Db() { return okay::backend::supabase::Database(kUrl, kKey, rec, Tok(1)); }
+};
+using ProviderFlow = std::function<void(ProviderRun&)>;
+static std::vector<std::pair<const char*, ProviderFlow>> ProviderFlows() {
+    namespace ob = okay::backend;
+    using Q = ob::Query;
+    const auto unquoted = ob::ValueText::EncodedUnquoted;
+    const auto asIs = ob::ValueText::AsIs;
+    static const std::string kBase = "id,username,display_name,avatar_url,bio,accent,status,favorite_game,location,playing,session_code,last_seen,created_at";
+    static const std::string kFriendRow = "username,friend_code,playing,session_code,display_name,avatar_url,bio,accent,status,favorite_game,location,last_seen";
+    std::vector<std::pair<const char*, ProviderFlow>> v;
+    v.push_back({"profiles_load_by_name_full", [=](ProviderRun& p) {
+        p.Db().From("profiles").Select("id").Eq("username", "b o&x=1").Get();
+        p.Db().From("profiles_visible").Select(kBase + ",showcase_achievements,showcase_games,banner_accent,social_links,verified").Eq("id", "u-2").Get();
+        p.Db().From("user_achievements").Select("ach_id,label,unlocked_at,points").Eq("owner", "u-2").Order("unlocked_at", true).Get();
+        p.Db().From("workshop_items").Select("id,author_name,title,description,kind,storage_path,downloads").Eq("author", "u-2").Order("downloads", true).Get();
+        p.Db().From("profile_badges").Select("badge").Eq("owner", "u-2").Order("awarded_at").Get();
+        p.Db().From("user_playtime").Select("game_key,title,seconds,last_played").Eq("owner", "u-2").Order("seconds", true).Limit(30).Get();
+        p.Db().Rpc("profile_friend_count", "{\"p_uid\":\"u-2\"}");
+        p.Db().Rpc("follow_counts", "{\"p_uid\":\"u-2\"}");
+        p.Db().From("profiles").Select("id").Eq("username", "alex").Get();
+        p.Db().From("follows").Select("follower,followee")
+            .Or({Q::And({Q::Cond("follower", "eq", "u1", unquoted), Q::Cond("followee", "eq", "u-2", unquoted)}),
+                 Q::And({Q::Cond("follower", "eq", "u-2", unquoted), Q::Cond("followee", "eq", "u1", unquoted)})}).Get();
+        p.Db().From("friendships").Select("id,status,requester,addressee")
+            .Or({Q::Cond("requester", "eq", "u-2", unquoted), Q::Cond("addressee", "eq", "u-2", unquoted)}).Get();
+        p.Db().From("activity").Select("actor_name,kind,detail,created_at").Eq("actor", "u-2").Order("created_at", true).Limit(8).Get();
+    }});
+    v.push_back({"profiles_writes", [](ProviderRun& p) {
+        p.Db().From("profiles").Select("id").Eq("username", "alex").Get();
+        p.Db().From("profiles").Eq("id", "u1").Update("{\"showcase_achievements\":[\"a1\",\"a\\\"2\",\"a3\",\"a4\",\"a5\",\"a6\"],\"showcase_games\":[7,8,9,10],\"banner_accent\":3}");
+        p.Db().From("user_achievements").OnConflict("owner,ach_id").Upsert("[{\"ach_id\":\"first\",\"label\":\"First \\\"one\\\"\",\"unlocked_at\":\"2023-11-14T22:13:20Z\",\"points\":25},{\"ach_id\":\"b\\\\2\",\"label\":\"Two\\nlines\",\"points\":10}]");
+        p.Db().From("user_achievements").OnConflict("owner,ach_id").Upsert("[{\"ach_id\":\"first\",\"label\":\"First \\\"one\\\"\",\"unlocked_at\":\"2023-11-14T22:13:20Z\"},{\"ach_id\":\"b\\\\2\",\"label\":\"Two\\nlines\"}]");
+        p.Db().From("user_achievements").OnConflict("owner,ach_id").Upsert("[{\"ach_id\":\"b\\\\2\",\"label\":\"Two\\nlines\",\"points\":10}]");
+        for (int i = 0; i < 2; ++i) p.Db().From("profiles").Select("social_links").Eq("id", "u1").Get();
+        p.Db().From("profiles").Eq("id", "u1").Update("{\"social_links\":{\"x\":\"@me\",\"web\":\"" + std::string(200, 'w') + "\"}}");
+        p.Db().From("user_playtime").OnConflict("owner,game_key").Upsert("[{\"game_key\":\"arena\",\"title\":\"Arena \\\"1\\\"\",\"seconds\":3600,\"last_played\":\"2023-11-14T22:13:20Z\"},{\"game_key\":\"editor\",\"title\":\"Editor\",\"seconds\":0}]");
+        p.Db().From("follows").Insert("{\"followee\":\"u-2\"}");
+        p.Db().From("follows").Insert("{\"followee\":\"u \\\"3\\\"\"}");
+        p.Db().From("follows").Eq("follower", "u1").Eq("followee", "u-2&x").Delete();
+        p.Db().From("follows").Eq("follower", "u-4").Eq("followee", "u1").Delete();
+        p.Db().From("profiles").Eq("id", "u1").Update("{\"followers_see_activity\":true}");
+        p.Db().From("friendships").Insert("{\"addressee\":\"u-5\"}");
+        p.Db().From("friendships").Eq("id", "12").Update("{\"status\":\"accepted\"}");
+        p.Db().From("friendships").Eq("id", "13").Delete();
+    }});
+    v.push_back({"profiles_follow_lists", [=](ProviderRun& p) {
+        p.Db().From("profiles").Select("id").Eq("username", "al ex+\xc3\xa9").Get();
+        p.Db().From("follows").Select("follower,followee").Eq("followee", "u1").Order("created_at", true).Limit(200).Get();
+        p.Db().From("profiles_visible").Select("id,username,display_name,avatar_url,last_seen").In("id", {"u-2", "u-3"}, unquoted).Get();
+        p.Db().From("follows").Select("follower,followee").Eq("follower", "u-9").Order("created_at", true).Limit(200).Get();
+        p.Db().From("follows").Select("follower,followee").Eq("followee", "u-9").Order("created_at", true).Limit(200).Get();
+        p.Db().From("profiles").Select("id").Eq("username", "dee").Get();
+        p.Db().From("follows").Insert("{\"followee\":\"u-7\"}");
+        for (const char* n : {"al ex+\xc3\xa9", "nobody", "eve"}) p.Db().From("profiles").Select("id").Eq("username", n).Get();
+        p.Db().From("follows").Insert("{\"followee\":\"u-8\"}");
+    }});
+    v.push_back({"friends_profile", [=](ProviderRun& p) {
+        p.Db().From("profiles").OnConflict("id").Upsert("{\"username\":\"alex\"}");
+        p.Db().From("profiles").Select("id").Eq("username", "alex").Get();
+        p.Db().From("profiles_visible").Select(kFriendRow).Eq("id", "u1").Get();
+        p.Db().From("profiles").Eq("id", "u1").Update("{\"friend_code\":\"<CODE>\"}");   // (the scenario's code, as the test writes it)
+        p.Db().From("profiles_visible").Select(kFriendRow).Eq("id", "u1").Get();
+        for (const char* body : {"{\"display_name\":\"Alex \\\"A\\\"\"}", "{\"avatar_url\":\"https://a.example.test/a b.png\"}",
+                                 "{\"bio\":\"line1\\nline2\\t\\u0001\"}"}) {
+            if (std::string(body).find("display") != std::string::npos) p.Db().From("profiles").Select(kFriendRow).Eq("id", "u1").Get();
+            p.Db().From("profiles").Select(kFriendRow).Eq("id", "u1").Get();
+            p.Db().From("profiles").Eq("id", "u1").Update(body);
+        }
+        p.Db().From("profiles").Select(kFriendRow).Eq("id", "u1").Get();
+        for (const char* body : {"{\"accent\":-2}", "{\"status\":\"away\"}", "{\"favorite_game\":\"Arena\"}", "{\"location\":\"Moon\"}"}) {
+            p.Db().From("profiles").Select(kFriendRow).Eq("id", "u1").Get();
+            p.Db().From("profiles").Eq("id", "u1").Update(body);
+        }
+    }});
+    v.push_back({"friends_requests_list", [=](ProviderRun& p) {
+        const char* uids[] = {"u-2", "", "u-3", "u-4"};
+        const char* names[] = {"bo", "nobody", "cy", "dee"};
+        for (int i = 0; i < 4; ++i) {
+            p.Db().From("profiles").Select("id").Eq("username", names[i]).Get();
+            if (*uids[i]) p.Db().From("friendships").Insert("{\"addressee\":\"" + std::string(uids[i]) + "\"}");
+        }
+        p.Db().From("profiles").Select("id").Eq("friend_code", "AB1 2CD").Get();
+        p.Db().From("friendships").Insert("{\"addressee\":\"u-5\"}");
+        p.Db().From("friendships").Eq("id", "5").Update("{\"status\":\"accepted\"}");
+        p.Db().From("friendships").Eq("id", "-3").Delete();
+        p.Db().From("friendships").Select("id,requester,addressee,status").Get();
+        for (const char* id : {"u1", "u-2", "u-3", "u1"}) p.Db().From("profiles_visible").Select(kFriendRow).Eq("id", id).Get();
+        p.Db().From("profiles").Select("id").Eq("username", "alex").Get();
+        p.Db().From("friendships").Select("addressee,status").Eq("status", "pending").Get();
+    }});
+    v.push_back({"friends_presence_feed", [=](ProviderRun& p) {
+        p.Db().From("profiles").Select("id").Eq("username", "alex").Get();
+        for (const char* body : {"{\"last_seen\":\"<NOW>\",\"playing\":\"Playing \\\"Arena\\\"\",\"session_code\":\"R-9\"}",
+                                 "{\"last_seen\":\"2000-01-01T00:00:00Z\",\"playing\":null,\"session_code\":null}",
+                                 "{\"last_seen\":\"<NOW>\",\"playing\":\"In the launcher\",\"session_code\":\"\"}",
+                                 "{\"last_seen\":\"<NOW>\",\"playing\":\"In the launcher\",\"session_code\":\"\"}"})
+            p.Db().From("profiles").Eq("id", "u1").Update(body);
+        p.Db().From("activity").Insert("{\"kind\":\"achievement\",\"detail\":\"First \\\"win\\\"\",\"actor_name\":\"alex\"}");
+        p.Db().From("activity").Select("actor,actor_name,kind,detail,created_at").Neq("actor", "u1").Order("created_at", true).Limit(5).Get();
+        p.Db().From("profiles").Select("id,username").In("id", {"u-2", "u-3"}, unquoted).Get();
+        p.Db().From("activity").Select("actor,actor_name,kind,detail,created_at").Neq("actor", "u1").Order("created_at", true).Limit(20).Get();
+    }});
+    v.push_back({"blocklist", [=](ProviderRun& p) {
+        p.Db().From("profiles").Select("id").Eq("username", "al ex+\xc3\xa9").Get();
+        p.Db().From("blocks").Select("blocked,blocked_name").Eq("blocker", "u1", asIs).Get();
+        auto block = [&p](const std::string& body) {
+            p.Db().From("blocks").OnConflict("blocker,blocked").Prefer("resolution=ignore-duplicates").Insert(body);
+        };
+        block("{\"blocked\":\"u-4\",\"blocked_name\":\"Dee \\\"D\\\"\"}");
+        block("{\"blocked\":\"u-5\",\"blocked_name\":\"\"}");
+        p.Db().From("blocks").Eq("blocked", "u-4", asIs).Delete();
+        p.Db().From("blocks").Eq("blocked", "u 5&x", asIs).Delete();
+        for (int i = 0; i < 2; ++i) p.Db().From("privacy_settings").Select("dm_from,profile_visibility,online_visibility,friend_requests,calls_from").Get();
+        for (int i = 0; i < 2; ++i)
+            p.Db().From("privacy_settings").OnConflict("user_id").Upsert("{\"dm_from\":\"nobody\",\"profile_visibility\":\"nobody\",\"online_visibility\":\"everyone\",\"friend_requests\":\"nobody\",\"calls_from\":\"everyone\"}");
+        block("{\"blocked\":\"u-6\",\"blocked_name\":\"x\"}");
+        p.Db().From("blocks").Eq("blocked", "u-6", asIs).Delete();
+        p.Db().From("blocks").Select("blocked,blocked_name").Eq("blocker", "u1", asIs).Get();
+    }});
+    v.push_back({"invites", [](ProviderRun& p) {
+        okay::GameInvite g; g.kind = "game"; g.title = "Arena \"1\""; g.link = "okay://join/R-1"; g.gameVersion = "1.2"; g.target = "exported";
+        g.created = 1000; g.expires = 4600;
+        auto send = [&p](const std::string& body) { p.Db().From("game_invites").Returning(ob::Return::Representation).Insert(Steady(body)); };
+        send(okay::Invites::SendBody("u-2", g));
+        g.expires = 0;
+        send(okay::Invites::SendBody("u-2", g));
+        send(okay::Invites::SendBody("u-3", g));
+        auto list = [&p](const std::function<void(Q&)>& f, long long limit) {
+            auto db = p.Db();
+            Q q = db.From("game_invites").Select("*");
+            f(q);
+            q.Order("id", true).Limit(limit).Get();
+        };
+        list([](Q& q) { q.Eq("recipient", "u1").Gt("id", "5"); }, 10);
+        list([](Q& q) { q.Eq("recipient", "u1").Gt("id", "0"); }, 30);
+        list([](Q& q) { q.Eq("sender", "u1"); }, -2);
+        list([](Q& q) { q.Eq("id", "31"); }, 1);
+        p.Db().Rpc("respond_invite", "{\"p_id\":31,\"p_accept\":true}");
+        p.Db().Rpc("respond_invite", "{\"p_id\":32,\"p_accept\":false}");
+        p.Db().Rpc("cancel_invite", "{\"p_id\":33}");
+        p.Db().Rpc("cancel_invite", "{\"p_id\":-1}");
+    }});
+    v.push_back({"parties_mine", [=](ProviderRun& p) {
+        p.Db().From("profiles").Select("id").Eq("username", "al ex+\xc3\xa9").Get();
+        p.Db().From("party_members").Select("party_id").Eq("member", "u1", asIs).Get();
+        p.Db().From("parties").Select("id,leader,game,join_link,max_size").Eq("id", "p-1", asIs).Get();
+        p.Db().From("party_members").Select("member,ready,joined_at").Eq("party_id", "p-1", asIs).Order("joined_at").Get();
+        p.Db().From("profiles_visible").Select("id,username,display_name,avatar_url,last_seen,playing").In("id", {"u1", "u-2"}, asIs).Get();
+        for (int i = 0; i < 2; ++i) p.Db().From("party_members").Select("party_id").Eq("member", "u1", asIs).Get();
+    }});
+    v.push_back({"parties_actions", [=](ProviderRun& p) {
+        p.Db().Rpc("create_party", "{}");
+        p.Db().Rpc("join_party", "{\"p_party\":\"p-2\"}");
+        p.Db().Rpc("join_party", "{\"p_party\":\"p \\\"3\\\"\"}");
+        p.Db().Rpc("leave_party", "{}");
+        p.Db().Rpc("kick_from_party", "{\"p_member\":\"u-2\"}");
+        p.Db().Rpc("promote_party_leader", "{\"p_member\":\"u-3\\n\"}");
+        p.Db().Rpc("promote_party_leader", "{\"p_member\":\"u-4\"}");
+        p.Db().From("profiles").Select("id").Eq("username", "alex").Get();
+        p.Db().From("party_members").Eq("party_id", "p-1", asIs).Eq("member", "u1", asIs).Update("{\"ready\":true}");
+        p.Db().From("party_members").Eq("party_id", "p 1&x", asIs).Eq("member", "u1", asIs).Update("{\"ready\":false}");
+        p.Db().From("parties").Eq("id", "p-1", asIs).Update("{\"game\":\"Arena \\\"1\\\"\",\"join_link\":\"okay://join/R\\n\"}");
+    }});
     return v;
 }
 
@@ -549,6 +745,11 @@ int main() {
     golden::RunScenarios("tests/test_okay_backend_golden_community1.cpp", all, kGolden, root, print);
     if (print) return 0;
     CHECK(g_badSteady == 0);   // the presence time, the invite expiry and the new friend code were what they should be
+
+    // 2. The Supabase provider called directly sends the same bytes.
+    const auto flows = ProviderFlows();
+    golden::RunProviderFlows<ProviderRun>(flows, kGolden, [](const char*, const char*, ProviderRun& p) { CHECK(!p.rec.sent.empty()); });
+    CHECK(flows.size() >= 10);
 
     std::error_code ec;
     fs::remove_all(root, ec);

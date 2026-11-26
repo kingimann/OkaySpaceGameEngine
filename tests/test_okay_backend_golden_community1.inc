@@ -2,7 +2,8 @@
 // (ProfilesGet), Invites.hpp and Parties.hpp at commit b2f943ed7, BEFORE they moved onto okay::backend::Database (round 5); recorded
 // twice with the same result. Never edit by hand: a change here means the programs send something new. Re-record only from the old
 // code: OKAY_GOLDEN_PRINT=1 ./test_okay_backend_golden_community1 > this file (then put back these header lines and the two
-// duplicate-guard marker lines).
+// duplicate-guard marker lines). The last text, reserved_characters_in_lists, was added after the move but recorded the same way
+// from the same old headers (git show b2f943ed7:<header> into a folder put first on the include path), twice with the same result.
 // Recorded with OKAY_GOLDEN_PRINT=1 (tests/test_okay_backend_golden_community1.cpp).
 // dup-allow-begin: recorded request texts; the same header lines repeat in every request, as in the round 2 to 4 golden texts
 static const char* const kGolden[][2] = {
@@ -1224,6 +1225,145 @@ Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH
 Content-Type: application/json
 
 {"game":"Arena \"1\"","join_link":"okay://join/R\n"}
+---
+)GOLD"},
+    {"reserved_characters_in_lists", R"GOLD(  found=1 reached=1 failed=0 showcase=1 ach=0 extras=1 follow=1
+  id=[a,b(c)"d] user=[q] display=[q] avatar=[] bio=[] accent=0 status=[] fav=[] loc=[] playing=[] code=[] seen=0 since=0 online=0
+  showAch=[] showGames=[] banner=-1 verified=0 socials={} badges=[]
+  friends=-1 followers=-1 following=-1 iFollow=0 followsMe=0 isMe=0 row=0 status=[] incoming=0
+=> 0
+=> 2
+=> 1
+  party id=[p,1] leader=[] game=[] link=[] max=1
+  member [m,1] user=[] display=[] avatar=[] ready=0 online=0 playing=[] joined=0
+  member [m(2)] user=[] display=[] avatar=[] ready=0 online=0 playing=[] joined=0
+GET https://backend.example.test/rest/v1/profiles_visible?select=id,username,display_name,avatar_url,bio,accent,status,favorite_game,location,playing,session_code,last_seen,created_at,showcase_achievements,showcase_games,banner_accent,social_links,verified&id=eq.a%2Cb%28c%29%22d
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/user_achievements?select=ach_id,label,unlocked_at,points&owner=eq.a%2Cb%28c%29%22d&order=unlocked_at.desc
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/user_achievements?select=ach_id,label,unlocked_at&owner=eq.a%2Cb%28c%29%22d&order=unlocked_at.desc
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/workshop_items?select=id,author_name,title,description,kind,storage_path,downloads&author=eq.a%2Cb%28c%29%22d&order=downloads.desc
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/profile_badges?select=badge&owner=eq.a%2Cb%28c%29%22d&order=awarded_at.asc
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/user_playtime?select=game_key,title,seconds,last_played&owner=eq.a%2Cb%28c%29%22d&order=seconds.desc&limit=30
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+POST https://backend.example.test/rest/v1/rpc/profile_friend_count
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+Content-Type: application/json
+
+{"p_uid":"a,b(c)\"d"}
+---
+POST https://backend.example.test/rest/v1/rpc/follow_counts
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+Content-Type: application/json
+
+{"p_uid":"a,b(c)\"d"}
+---
+GET https://backend.example.test/rest/v1/profiles?select=id&username=eq.alex
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/follows?select=follower,followee&or=(and(follower.eq.u1,followee.eq.a%2Cb%28c%29%22d),and(follower.eq.a%2Cb%28c%29%22d,followee.eq.u1))
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/friendships?select=id,status,requester,addressee&or=(requester.eq.a%2Cb%28c%29%22d,addressee.eq.a%2Cb%28c%29%22d)
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/activity?select=actor_name,kind,detail,created_at&actor=eq.a%2Cb%28c%29%22d&order=created_at.desc&limit=8
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/follows?select=follower,followee&followee=eq.u1&order=created_at.desc&limit=200
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/profiles_visible?select=id,username,display_name,avatar_url,last_seen&id=in.(a%2Cb,c%28d%29,%20e%22)
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/activity?select=actor,actor_name,kind,detail,created_at&actor=neq.u1&order=created_at.desc&limit=2
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/profiles?select=id,username&id=in.(x%2Cy,%28z%29)
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/profiles?select=id&username=eq.alex
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/party_members?select=party_id&member=eq.u1
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/parties?select=id,leader,game,join_link,max_size&id=eq.p,1
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/party_members?select=member,ready,joined_at&party_id=eq.p,1&order=joined_at.asc
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
+---
+GET https://backend.example.test/rest/v1/profiles_visible?select=id,username,display_name,avatar_url,last_seen,playing&id=in.(m,1,m(2))
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSIsImV4cCI6NDEwMjQ0NDgwMH0.sig
+
+
 ---
 )GOLD"},
 };

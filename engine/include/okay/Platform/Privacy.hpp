@@ -14,6 +14,7 @@
 #include "okay/Platform/Account/AccountService.hpp"
 #include <atomic>
 #include <cctype>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -175,8 +176,30 @@ inline LocalListAction ClassifyLocalList(const std::string& marker, const std::s
 // ---- Reading profiles ---------------------------------------------------------
 inline std::atomic<int>& ProfilesViewState() { static std::atomic<int> s{0}; return s; }   // 0 unknown, 1 view works, 2 view missing
 
-// GET /rest/v1/profiles?<query> but through profiles_visible when it exists (so
-// blocked people and visibility settings are honoured), else the plain table.
+// Reads profiles through profiles_visible when it exists (so blocked people and
+// visibility settings are honoured), else the plain table. `shape` adds the
+// select, filters and order to the request on either (OkayBackend's Database,
+// okay/Backend/Database.hpp; round 5), e.g.
+//   ProfilesGet(acct, [&](okay::backend::Query& q) { q.Select("id,username").Eq("id", uid); });
+inline okay::account::ApiResponse ProfilesGet(const okay::account::AccountService& acct,
+                                              const std::function<void(okay::backend::Query&)>& shape) {
+    auto db = acct.Db();
+    if (ProfilesViewState().load() != 2) {
+        okay::backend::Query view = db.From("profiles_visible");
+        shape(view);
+        okay::account::ApiResponse r = view.Get();
+        if (r.ok) { ProfilesViewState() = 1; return r; }
+        if (!(r.reached && IsMissingTable(r.status, r.body))) return r;
+        ProfilesViewState() = 2;
+    }
+    okay::backend::Query table = db.From("profiles");
+    shape(table);
+    return table.Get();
+}
+
+// The same with the query written by hand ("select=...&id=eq...."). Only Messages,
+// Servers and Admin still use it; they move onto the form above in rounds 6 and 7,
+// and then this one goes.
 inline okay::account::ApiResponse ProfilesGet(const okay::account::AccountService& acct, const std::string& query) {
     if (ProfilesViewState().load() != 2) {
         okay::account::ApiResponse r = acct.Api("/rest/v1/profiles_visible?" + query, "GET");

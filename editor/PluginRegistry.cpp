@@ -7,7 +7,6 @@
 
 namespace pluginreg {
 
-static std::string Upper(std::string s) { for (char& c : s) c = (char)std::toupper((unsigned char)c); return s; }
 
 bool ParseShortcut(const std::string& text, Shortcut& out) {
     out = Shortcut{};
@@ -18,7 +17,8 @@ bool ParseShortcut(const std::string& text, Shortcut& out) {
     while (a < t.size()) {
         std::size_t p = t.find('+', a);
         if (p == a) p = t.find('+', a + 1);              // a '+' key on its own ("Ctrl++")
-        const std::string part = Upper(t.substr(a, p == std::string::npos ? std::string::npos : p - a));
+        std::string part = t.substr(a, p == std::string::npos ? std::string::npos : p - a);
+        for (char& c : part) c = (char)std::toupper((unsigned char)c);   // key names are kept in upper case
         const bool last = p == std::string::npos;
         if (part == "CTRL" || part == "CMD" || part == "CONTROL") out.ctrl = true;
         else if (part == "SHIFT") out.shift = true;

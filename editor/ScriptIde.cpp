@@ -5,6 +5,7 @@
 #include "VisualScriptSearchNav.hpp"             // okay::editor::vsed::searchnav::EditDistance
 #include "okay/Scripting/StarterScripts.hpp"     // okay::StarterScriptSource: the first template of each language
 #include "okay/Lua/Lua.hpp"                      // okay::lua::kKeywords: Lua's reserved words
+#include "okay/Core/StringUtil.hpp"               // okay::str::LowerAscii
 #include "../shared/OkayThreads.hpp"             // okay::thr: the symbol index builds on a worker (rule 21a: no <thread>)
 
 #include <algorithm>
@@ -19,7 +20,7 @@ namespace scriptide {
 
 namespace fs = std::filesystem;
 
-static std::string Lower(std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; }
+static std::string Lower(const std::string& s) { return okay::str::LowerAscii(s); }
 static bool IsIdent(char c) { return std::isalnum((unsigned char)c) || c == '_'; }
 static bool IsIdentStart(char c) { return std::isalpha((unsigned char)c) || c == '_'; }
 

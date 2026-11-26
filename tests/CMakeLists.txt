@@ -765,6 +765,28 @@ set_tests_properties(lua_core PROPERTIES TIMEOUT 600)
 add_executable(test_lua_script test_lua_script.cpp)
 target_link_libraries(test_lua_script PRIVATE okay::engine)
 add_test(NAME lua_script COMMAND test_lua_script)
+# okay::js, our own JavaScript engine (ECMA-262): parser and machine on spec behaviours, the conformance
+# script tests/javascript/conformance.js, hostile one-liners against the run budget and memory limit, a
+# collection at every safe point and a mutation fuzz. Standalone (only engine/src/JavaScript/Js*.cpp), so it
+# also builds under sanitizers.
+set(OKAY_JS_CORE_SOURCES
+    ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLexer.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsParser.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsCompiler.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsRuntime.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsInterpreter.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibObject.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibArray.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibString.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibNumber.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibJson.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibCollections.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsRegExp.cpp)
+add_executable(test_js_core test_js_core.cpp ${OKAY_JS_CORE_SOURCES})
+target_compile_features(test_js_core PRIVATE cxx_std_17)
+target_include_directories(test_js_core PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_js_core PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME js_core COMMAND test_js_core)
+set_tests_properties(js_core PROPERTIES TIMEOUT 600)
+# JavaScript game scripts (language "javascript") on okay::js driving GameObjects through the shared binding table.
+add_executable(test_js_script test_js_script.cpp)
+target_link_libraries(test_js_script PRIVATE okay::engine)
+target_compile_definitions(test_js_script PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")   # tests/javascript/game_scripts
+add_test(NAME js_script COMMAND test_js_script)
 
 add_executable(test_follow test_follow.cpp)
 target_link_libraries(test_follow PRIVATE okay::engine)

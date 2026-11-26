@@ -61,5 +61,9 @@ const scripteditor::ScriptPalette& OkayScriptPalette();
 const scripteditor::LanguageWords& OkayScriptLanguageWords();
 // The same for Lua scripts (language "lua"): Lua keywords and comments, the bound engine names with their docs.
 const scripteditor::LanguageWords& LuaLanguageWords();
+// The same for JavaScript scripts (language "javascript"): reserved words, // and /* */ comments, the bound engine names.
+const scripteditor::LanguageWords& JavaScriptLanguageWords();
+// The words for a script's language id (Lua, JavaScript, else OkayScript).
+const scripteditor::LanguageWords& LanguageWordsFor(const std::string& language);
 
 } // namespace oked

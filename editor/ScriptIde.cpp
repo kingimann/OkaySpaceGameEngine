@@ -67,6 +67,7 @@ std::string LanguageForPath(const std::string& path) {
     if (ext == ".okay") return "okayscript";
     if (ext == ".lua") return "lua";
     if (ext == ".cs") return "csharp";
+    if (ext == ".js" || ext == ".mjs") return "javascript";
     return "";
 }
 std::string LineCommentFor(const std::string& language) { return language == "lua" ? "--" : "//"; }

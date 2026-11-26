@@ -306,10 +306,7 @@ inline const std::vector<const VsDef*>& VsNodesFittingPin(bool exec, bool fromOu
     }
     // A pin of exactly the same type is a better suggestion than one that merely accepts it (Any, or a conversion).
     auto exactMatch = [&](const VsDef* d) {
-        if (exec || pin == okay::vs::PinType::Any) return false;
-        if (fromOutput) { for (int i = 0; i < (int)d->dataIn.size(); ++i) if (okay::vs::InputType(d->type, i) == pin) return true; }
-        else            { for (int i = 0; i < (int)d->dataOut.size(); ++i) if (okay::vs::OutputType(d->type, i, "") == pin) return true; }
-        return false;
+        return !exec && pin != okay::vs::PinType::Any && VsPinFitRank(*d, exec, fromOutput, pin) == 0;
     };
     std::vector<std::pair<const VsDef*, int>> ranked;   // (node, rank): lower is listed first
     for (const VsDef* d : out) ranked.push_back({d, (int)d->level * 4 + (exactMatch(d) ? 0 : 2) + (std::strchr(d->type, '.') ? 1 : 0)});
@@ -317,6 +314,10 @@ inline const std::vector<const VsDef*>& VsNodesFittingPin(bool exec, bool fromOu
     for (std::size_t i = 0; i < ranked.size(); ++i) out[i] = ranked[i].first;
     return cache.emplace(key, std::move(out)).first->second;
 }
+
+/// Extra search score for a typed search while a wire is dragged: a node with a pin of exactly the dragged type
+/// (VsPinFitRank 0) is lifted above one that only takes the value through Any or a conversion.
+inline int VsWireSearchBoost(int pinRank) { return pinRank == 0 ? 35 : pinRank == 1 ? 10 : 0; }
 
 /// An Actions step with the same label as a hand-written node: the node is the one row.
 inline bool VsPaletteStepIsDuplicate(const std::string& label) {
@@ -393,6 +394,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         int intent = 11;                        // the "what do you want to do?" heading (VisualScriptGuide.hpp)
         int catIndex = 0, rank = 0; bool browse = true; ImU32 col = 0;
         bool fits = true;                       // can take the wire being dragged (set each frame, cheap)
+        int pinRank = 0;                        // how well it fits that wire: 0 a pin of the same type first (VsPinFitRank)
         std::string titleLower;                 // lower-cased once, when the list is built
         mutable std::string blobLower;          // everything searchable, lower-cased on first use
         mutable bool blobBuilt = false;
@@ -748,7 +750,10 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                           (long long)st.linkNode, (long long)st.linkPin, s_filter, s_showAll, s_allNodes};
         if (!s_sideInit || !(key == s_sideKey)) {
             s_sideKey = key; s_sideInit = true;
-            for (auto& e : all) e.fits = !st.linkPending || !e.def || fits(*e.def);
+            for (auto& e : all) {
+                e.fits = !st.linkPending || !e.def || fits(*e.def);
+                e.pinRank = st.linkPending && e.def && e.fits ? std::max(0, VsPinFitRank(*e.def, st.linkExec, st.linkFromOutput, dragged)) : 0;
+            }
             s_catCount.assign((std::size_t)std::max(1, VsPaletteCategoryCount()), 0);
             s_browseAll = 0; s_starterN = 0; s_quickN = 0; s_beginnerN = 0; for (int& gn : s_groupN) gn = 0; for (int& in : s_intentN) in = 0;
             for (const auto& e : all) {
@@ -848,7 +853,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                     if (s_side == -1 && !isFav(e.key)) continue;
                     if (s_side == -2 && std::find(s_recent.begin(), s_recent.end(), e.key) == s_recent.end()) continue;
                 }
-                const int sc = needle.empty() ? score(e, hits) : VsStarterBoost(score(e, hits), e.def && (VsIsStarter(e.def->type) || okay::vs::FindQuickBlock(e.def->type)), e.def && std::strncmp(e.def->type, "Fn.", 3) == 0);
+                int sc = needle.empty() ? score(e, hits) : VsStarterBoost(score(e, hits), e.def && (VsIsStarter(e.def->type) || okay::vs::FindQuickBlock(e.def->type)), e.def && std::strncmp(e.def->type, "Fn.", 3) == 0);
+                if (sc > 0 && st.linkPending && !needle.empty()) sc += VsWireSearchBoost(e.pinRank);   // a pin of the dragged type ranks higher
                 if (sc > 0) s_rows.push_back(Row{&e, sc});
             }
             if (!needle.empty())
@@ -866,6 +872,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                 });
             else if (st.linkPending)
                 std::stable_sort(s_rows.begin(), s_rows.end(), [](const Row& a, const Row& b) {
+                    if (a.e->pinRank != b.e->pinRank) return a.e->pinRank < b.e->pinRank;   // the dragged type exactly first
                     if (a.e->level != b.e->level) return (int)a.e->level < (int)b.e->level;
                     if (a.e->catIndex != b.e->catIndex) return a.e->catIndex < b.e->catIndex;
                     return a.e->rank < b.e->rank;

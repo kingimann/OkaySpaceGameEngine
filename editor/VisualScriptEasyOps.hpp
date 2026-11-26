@@ -340,19 +340,119 @@ inline bool VsFixMismatch(VsEditGraph& g, int consumer, int inPin) {
     return false;
 }
 
+/// The variable a "read but never set" finding names ("" when the message is another one).
+inline std::string VsUnsetVariableIn(const std::string& message) {
+    if (message.rfind("variable '", 0) != 0 || message.find("is read but this graph never sets it") == std::string::npos) return {};
+    const auto q = message.find('\'', 10);
+    return q == std::string::npos ? std::string() : message.substr(10, q - 10);
+}
+
+/// "Variable 'x' is read but never set": declare it on this object at its type's default (Number 0 unless the
+/// block reading it says another type), so it shows in the Variables list and the Inspector can set it.
+inline bool VsFixDeclareVariable(VsEditGraph& g, const std::string& name) {
+    if (name.empty()) return false;
+    for (const auto& v : g.vars) if (v.name == name) return false;   // already declared somewhere: not this fix
+    return g.declare(name, "Number", "object");
+}
+
+/// A required input left empty: give it the value that makes the block do its plain job (a Branch's Condition
+/// becomes true; a variable block with no name gets the graph's first variable, or "value").
+inline bool VsFixRequired(VsEditGraph& g, int node, const std::string& message) {
+    VsEditNode* n = g.find(node);
+    if (!n) return false;
+    if (n->type == "Branch" && message.find("condition") != std::string::npos && !VsInputWired(g, node, 0)) {
+        n->pinDefault[0] = "true"; g.dirty = true; return true;
+    }
+    if ((n->type == "GetVar" || n->type == "SetVar") && n->arg.empty()) {
+        n->arg = g.vars.empty() ? std::string("value") : g.vars.front().name; g.dirty = true; return true;
+    }
+    return false;
+}
+
 /// The one-click fix for a finding of the graph checker, when there is an obvious one: a plug that gets the wrong
-/// kind of value (a block that turns one into the other goes between), or a block nothing reaches (it is plugged
-/// in after the nearest free block). False, graph unchanged, otherwise.
+/// kind of value (a block that turns one into the other goes between), a block nothing reaches (it is plugged
+/// in after the nearest free block), a variable read but never set (it is declared), or a required input left
+/// empty (it gets a plain default). False, graph unchanged, otherwise.
 inline bool VsFixIssue(VsEditGraph& g, const std::string& message, int node, int pin, int pinDir) {
     if (node < 0) return false;
     if (pin >= 0 && pinDir == 0 && VsPlainIssue(message).rfind("This plug needs", 0) == 0) return VsFixMismatch(g, node, pin);
     if (VsPlainIssue(message) == VsPlainNotConnected()) return VsFixNotConnected(g, node);
+    if (const std::string v = VsUnsetVariableIn(message); !v.empty()) return VsFixDeclareVariable(g, v);
+    if (message.rfind("Required: ", 0) == 0) return VsFixRequired(g, node, message);
     return false;
+}
+
+/// What the fix button for a finding does, in a few words ("" when there is no fix). Shown on the node's menu and
+/// as the quick fix's title (VsIdeProviders.hpp).
+inline std::string VsFixLabel(const VsEditGraph& g, const std::string& message, int node, int pin, int pinDir) {
+    if (node < 0) return {};
+    if (pin >= 0 && pinDir == 0 && VsPlainIssue(message).rfind("This plug needs", 0) == 0) {
+        for (const VsDataLink& l : g.dataLinks)
+            if (l.consumer == node && l.inPin == pin) {
+                const VsConvertOffer o = VsOfferConvert((char)VsOutPinType(g, l.producer, l.outPin), (char)VsInPinType(g, node, pin));
+                if (!o.type.empty()) {
+                    const VsDef* d = FindDef(o.type);
+                    return std::string("Insert ") + (d && d->title ? d->title : o.type.c_str()) + " between them";
+                }
+            }
+        return {};
+    }
+    if (VsPlainIssue(message) == VsPlainNotConnected()) return "Plug it in after the nearest block";
+    if (const std::string v = VsUnsetVariableIn(message); !v.empty()) return "Create variable '" + v + "'";
+    if (message.rfind("Required: ", 0) == 0) {
+        const VsEditNode* n = VsFind(g, node);
+        if (n && n->type == "Branch") return "Set Condition to true";
+        if (n && (n->type == "GetVar" || n->type == "SetVar")) return "Name the variable";
+    }
+    return {};
 }
 /// Would VsFixIssue do something? (Tried on a copy, so the button only shows when it will work.)
 inline bool VsFixAvailable(const VsEditGraph& g, const std::string& message, int node, int pin, int pinDir) {
     VsEditGraph copy = g;
     return VsFixIssue(copy, message, node, pin, pinDir);
+}
+
+/// A wire was dragged off plug `linkPin` of `linkNode` and a new block `newId` was picked from the search: which of the
+/// new block's plugs it goes into. The plug of exactly the dragged type wins, then one that takes anything, then one that
+/// converts (the same order the search lists blocks in, VsPinFitRank); a plug already wired or holding a typed value
+/// comes after an empty one. -1 when none fits.
+inline int VsPickWirePin(const VsEditGraph& g, int newId, bool fromOutput, int linkNode, int linkPin) {
+    const VsEditNode* nn = VsFind(g, newId);
+    const VsDef* d = nn ? VsDefFor(g, *nn) : nullptr;
+    if (!d) return -1;
+    const okay::vs::PinType have = fromOutput ? VsOutPinType(g, linkNode, linkPin) : VsInPinType(g, linkNode, linkPin);
+    int best = -1, bestScore = 1 << 20;
+    const int count = fromOutput ? (int)d->dataIn.size() : (int)d->dataOut.size();
+    for (int p = 0; p < count; ++p) {
+        const bool ok = fromOutput ? VsWireOk(g, newId, p, linkNode, linkPin) : VsWireOk(g, linkNode, linkPin, newId, p);
+        if (!ok) continue;
+        const int r = VsPinFitRank(have, fromOutput ? VsInPinType(g, newId, p) : VsOutPinType(g, newId, p), fromOutput);
+        if (r < 0) continue;
+        const bool busy = fromOutput && (VsInputWired(g, newId, p) || VsInputHasValue(*nn, p));
+        const int score = r * 4 + (busy ? 2 : 0);
+        if (score < bestScore) { bestScore = score; best = p; }
+    }
+    return best;
+}
+
+/// Wire the block just picked from the wire-drop search to the plug the wire was dragged from. Flow: the dragged "then"
+/// goes into the block (or the block's first "then" into a dragged flow input). A value: the best plug (VsPickWirePin).
+/// True when a wire was made.
+inline bool VsConnectPendingWire(VsEditGraph& g, int newId, bool exec, bool fromOutput, int linkNode, int linkPin) {
+    const VsEditNode* nn = g.find(newId);
+    const VsDef* d = nn ? VsDefFor(g, *nn) : nullptr;
+    if (!d || !g.find(linkNode)) return false;
+    if (exec) {
+        if (fromOutput) { if (!d->execIn) return false; g.linkExec(linkNode, linkPin, newId); return true; }
+        if (d->execOut.empty()) return false;
+        g.linkExec(newId, 0, linkNode);
+        return true;
+    }
+    const int p = VsPickWirePin(g, newId, fromOutput, linkNode, linkPin);
+    if (p < 0) return false;
+    if (fromOutput) g.linkData(newId, p, linkNode, linkPin);
+    else g.linkData(linkNode, linkPin, newId, p);
+    return true;
 }
 
 /// While a wire is dragged from one plug: would the plug `node`/`idx` (on the opposite side, same kind) take it?

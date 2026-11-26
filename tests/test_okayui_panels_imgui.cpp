@@ -1012,6 +1012,17 @@ struct LauncherWin {
     void Frames(int n) { for (int i = 0; i < n; ++i) Frame(); }
 };
 
+// How many pixels of the launcher's page area (right of the sidebar, rows 10 to `yEnd`) differ by more than 8 levels between two pictures.
+int PagePixelsChanged(const Bitmap& a, const Bitmap& b, int yEnd) {
+    int diff = 0;
+    for (int y = 10; y < yEnd; ++y) for (int x = (int)LauncherWin::kNavW + 20; x < kW - 10; ++x) {
+        const std::uint8_t* pa = &a.rgba[((std::size_t)y * (std::size_t)kW + (std::size_t)x) * 4];
+        const std::uint8_t* pb = &b.rgba[((std::size_t)y * (std::size_t)kW + (std::size_t)x) * 4];
+        if (std::abs(pa[0] - pb[0]) > 8 || std::abs(pa[1] - pb[1]) > 8 || std::abs(pa[2] - pb[2]) > 8) ++diff;
+    }
+    return diff;
+}
+
 void LauncherPageOneSurfaceWhileTheProfileTooltipShows() {
     kH = 600;
     LauncherWin w;
@@ -1027,12 +1038,7 @@ void LauncherPageOneSurfaceWhileTheProfileTooltipShows() {
     CHECK(swaps == 0);                                                    // one surface, unchanged by the hover
     CHECK(w.okayDrew == 1 && w.tab == 12);
     // the page looks the same away from the tooltip (its top half: the tooltip is by the sidebar's bottom)
-    int diff = 0;
-    for (int y = 10; y < 300; ++y) for (int x = (int)LauncherWin::kNavW + 20; x < kW - 10; ++x) {
-        const std::uint8_t* a = &before.rgba[((std::size_t)y * (std::size_t)kW + (std::size_t)x) * 4];
-        const std::uint8_t* b = &w.ras.bmp.rgba[((std::size_t)y * (std::size_t)kW + (std::size_t)x) * 4];
-        if (std::abs(a[0] - b[0]) > 8 || std::abs(a[1] - b[1]) > 8 || std::abs(a[2] - b[2]) > 8) ++diff;
-    }
+    const int diff = PagePixelsChanged(before, w.ras.bmp, 300);
     std::printf("  page pixels changed by the hover (top half): %d\n", diff);
     CHECK(diff == 0);
     Save("launcher_whatsnew", "profilehover", w.ras.bmp);
@@ -1114,12 +1120,7 @@ void LauncherBrowserPageUnderImGuiTooltips() {
     std::printf("  page hosted against the old way: average difference %.3f, clearly different %.3f%%\n", d.avg, d.clearly);
     CHECK(d.clearly < 0.05);                 // the page does not change
     // away from the tooltip, the page does not change while it shows
-    int diff = 0;
-    for (int y = 10; y < 400; ++y) for (int x = (int)LauncherWin::kNavW + 20; x < kW - 10; ++x) {
-        const std::uint8_t* a = &hosted.page.rgba[((std::size_t)y * (std::size_t)kW + (std::size_t)x) * 4];
-        const std::uint8_t* b = &hosted.tip.rgba[((std::size_t)y * (std::size_t)kW + (std::size_t)x) * 4];
-        if (std::abs(a[0] - b[0]) > 8 || std::abs(a[1] - b[1]) > 8 || std::abs(a[2] - b[2]) > 8) ++diff;
-    }
+    const int diff = PagePixelsChanged(hosted.page, hosted.tip, 400);
     std::printf("  page pixels changed by the hover (above the tooltip): %d\n", diff);
     CHECK(diff == 0);
     CHECK(oldWay.typed == "okay://store" && hosted.typed == "okay://store");

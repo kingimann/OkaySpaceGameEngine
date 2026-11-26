@@ -289,12 +289,41 @@ stores, `Cookies.hpp` and `Storage.hpp`):
   answers false and prompt null at once (what the standard returns when the browser does not show a modal dialog). At most 3
   dialogs per script run and 8 waiting; the rest go to the console.
 
-**What the host must call (okayui BrowserView / shared BrowserApp, not in this change):** `SetCookieStore` and
-`SetLocalStorage` on every tab (one store each per profile, loaded from and saved to the profile folder with
-`ToJson` / `FromJson` when `TakeChanged()` says so); `CookieHeader` on each fetch of `TakeFetches()` and `ReceiveCookies` with
-its Set-Cookie headers; `TakeScriptRequests` each frame, send each (method, headers, body as given) and answer with
-`DeliverScriptResponse` (status, headers, body, final address); `KeyEvent` before typing a key into a control (skip it when it
-returns true); `PointerEvent` for mouse buttons and moves; `TakeDialog` each frame to show alerts.
+**What the host calls (done in round 3 of the host, `claude/browser-host-3`):** written from RFC 6265 (5.4: each request carries
+the cookies of its own address, so the host follows redirects itself, one hop at a time; RFC 9110 15.4 for the method a redirect
+keeps), the Fetch standard (a request is sent with the method, headers and body the page gave), UI Events (keyboard and mouse
+events, their key / code values, keyCode and buttons) and the HTML standard (8.4 "simple dialogs"). No code from any browser.
+- **One cookie store and one localStorage per profile** (`SiteData` in `Browser/Profile.hpp`): `cookies.json` and
+  `local_storage.json` in the profile's folder (`PrefPath("OkaySpace", "Browser")`), written to a temporary file and renamed
+  (`WriteFileReplacing`, shared with profile.json). Every tab, new tabs included, gets both (`TabHost::SetSiteData`, set again
+  when the tab is made anew). They are saved about once a second after `TakeChanged()`. **The program and the launcher at once:**
+  like profile.json (`SharedFile` remembers size, time and hash), a file the other program replaced is read first; with nothing
+  unsaved here it replaces this program's data (its session cookies stay), with unsaved changes this program keeps its own and
+  adds what only the file has, then writes. Nothing one program set is lost; a cookie or key removed in one program at the same
+  moment as the other saved can come back (the safe default, written down here).
+- **Cookies on every load:** each page, image, style, script and font request gets `Cookie: <tab.CookieHeader(url)>`; the
+  answer's Set-Cookie headers (also those of each redirect hop) go to `tab.ReceiveCookies(url, values)`. Both HTTP clients give
+  the raw head (`ExResult::rawHead`); `followRedirects = false` now works on our own client too (it was WinHTTP only), and
+  `callerCookies` turns WinHTTP's own per-session cookies off for these requests, so only our store decides. Cookie values and
+  bodies are never logged. A subresource or fetch of an https page is never redirected to plain http.
+- **The page's fetch() / XMLHttpRequest:** `TakeScriptRequests()` each frame; each is sent as given on the tab host's worker
+  threads (now up to 4 per tab, so a slow fetch does not hold up the page) and answered with `DeliverScriptResponse` (status,
+  reason, every header, body, final address). A redirect hop to another site carries no cookies. Request ids are now the tab's
+  own (they were the page's, so an old page's late answer could reach the next page's request with the same number).
+- **Keys and mouse:** the view (`BrowserView.cpp`) sends keydown (and keypress for a key that makes a character), keyup,
+  mousedown / mouseup for each button and mousemove to the page before it uses them. A cancelled key is not typed into the
+  field (the typed text is dropped and the field is read-only for that frame) and does not scroll or move the focus; a
+  cancelled mousedown starts no text selection and gives no field the keyboard. The browser's own shortcuts
+  (`IsBrowserShortcut`: Ctrl+T, W, L, Tab, 1-9, Alt+Left ...) are never sent to the page, and they are handled before the
+  page sees anything, so a page cannot stop them.
+- **Dialogs:** `TakeDialog` each frame for the shown tab; shown over the page in the browser's dialog style as "<site> says",
+  with OK (Enter / Esc). A confirm / prompt says the page went on without the answer (the script never waits, see above).
+- **Back / Forward history list:** a right click on Back or Forward, or a press held half a second, lists that side's entries
+  (nearest first, at most 16; the page's title, else the history's title, else the address); a click goes there with
+  `BrowserTab::GoTo(index)` (`HistoryEntries`, `HistoryIndex`): a pushState entry of the shown page gets popstate, any other
+  is loaded.
+- **The wheel glides** like the key scrolls (100 px a notch, over a few frames; a scrolling area under the pointer still
+  takes the wheel first).
 
 **Checked (2026-11-26):** `browser_script` (279 checks) and the other browser tests pass on Linux. Nothing was run in the
 program or the launcher (the host wiring is not done) or on Windows.

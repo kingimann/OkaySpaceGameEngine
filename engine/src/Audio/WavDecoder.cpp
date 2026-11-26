@@ -478,5 +478,8 @@ std::vector<std::int16_t> ToS16(const WavAudio& a) {
     return o;
 }
 
+const int* ImaAdpcmSteps() { return kImaStep; }
+const int* ImaAdpcmIndexAdjust() { return kImaIndexAdjust; }
+
 } // namespace wav
 } // namespace okay

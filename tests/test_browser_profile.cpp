@@ -71,7 +71,7 @@ int main() {
     CHECK(Decides("a b", K::Search, "https://search.example/find?q=a+b", "https://search.example/find?q="));
     CHECK(Decides("a b", K::NoSearch, "", ""));
     CHECK(Decides("example.com", K::Address, "https://example.com", ""));
-    CHECK(AddressPlaceholder(kDefaultSearchUrl) == "Search Google or type an address");
+    CHECK(AddressPlaceholder(kDefaultSearchUrl) == "Search the web or type an address");   // neutral words, no look-alike of another browser (IP audit A8)
     CHECK(AddressPlaceholder("https://search.example/?q=%s") == "Search or type an address");
     CHECK(AddressPlaceholder("") == "Type an address");
 

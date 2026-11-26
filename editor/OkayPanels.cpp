@@ -76,16 +76,19 @@ struct MetricsFromImGui {
 // the close box, the body is drawn into the window's draw list, so Dear ImGui's popups and the windows in front cover it as they
 // cover any ImGui panel. There is no Dear ImGui version to fall back to. A new window with no saved place opens at 440 x 340 (times
 // the UI scale).
+// `firstW` x `firstH`: the size a window with no saved place opens at (before the UI scale). `flags` are added to the window's;
+// `fit` (optional): the body is that big (a window that sizes itself around its body, ImGuiWindowFlags_AlwaysAutoResize).
 template <class Draw>
-bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw) {
+bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw, float firstW = 440.0f, float firstH = 340.0f,
+                ImGuiWindowFlags flags = 0, const ImVec2* fit = nullptr) {
     static OkayUI::CapturedGeometry cap;            // scratch: the panels are drawn one after another
     return okayuihost::HostPanelWindow(title, open, itemId, OkayUIRegion(), okayuihost::SharedImGuiEmbed(), cap,
-                                       ImVec2(440.0f * g_uiScale, 340.0f * g_uiScale), [&](ImVec2 p, ImVec2 a) {
+                                       ImVec2(firstW * g_uiScale, firstH * g_uiScale), [&](ImVec2 p, ImVec2 a) {
         OkayUI::PushTextScale(g_uiScale);
         MetricsFromImGui metrics_;
         draw(p, a);
         OkayUI::PopTextScale();
-    });
+    }, flags, fit);
 }
 
 // An OkayUI body inside part of an ImGui window (a section of Project Settings): a placeholder item as tall as the body drew on the
@@ -157,7 +160,10 @@ bool HostSection(const char* itemId, Draw draw, float bleed = 0.0f, float bleedR
 
 // The host of the panels drawn by OkayUI only (below the two hosts).
 template <class Draw>
-bool PanelWindow(const char* title, bool* open, const char* itemId, Draw draw) { return HostWindow(title, open, itemId, draw); }
+bool PanelWindow(const char* title, bool* open, const char* itemId, Draw draw, float firstW = 440.0f, float firstH = 340.0f,
+                 ImGuiWindowFlags flags = 0, const ImVec2* fit = nullptr) {
+    return HostWindow(title, open, itemId, draw, firstW, firstH, flags, fit);
+}
 
 // The host of the sections drawn by OkayUI only (Project Settings' Player, Physics, Rendering, Tags and Layers): the body goes into the
 // ImGui window's draw list in Dear ImGui's order (okayuihost::HostPanelSection), so there is no Dear ImGui version to switch to when a
@@ -325,13 +331,15 @@ namespace oked {
 // OkayUI windows already, so the body is drawn straight into the window.
 namespace {
 template <class Draw>
-bool PanelWindow(const char* title, bool* open, const char*, Draw draw) {
+bool PanelWindow(const char* title, bool* open, const char*, Draw draw, float firstW = 440.0f, float firstH = 340.0f,
+                 ImGuiWindowFlags flags = 0, const ImVec2* fit = nullptr) {
     if (open && !*open) return false;
-    ImGui::SetNextWindowSize(ImVec2(440.0f * g_uiScale, 340.0f * g_uiScale), ImGuiCond_FirstUseEver);
-    const bool shown = ImGui::Begin(title, open);
+    if (!fit) ImGui::SetNextWindowSize(ImVec2(firstW * g_uiScale, firstH * g_uiScale), ImGuiCond_FirstUseEver);
+    const bool shown = ImGui::Begin(title, open, flags);
     if (shown) {
-        const ImVec2 p = ImGui::GetCursorScreenPos(), a = ImGui::GetContentRegionAvail();
+        const ImVec2 p = ImGui::GetCursorScreenPos(), a = fit ? *fit : ImGui::GetContentRegionAvail();
         draw(p, ImVec2(std::max(a.x, 8.0f), std::max(a.y, 8.0f)));
+        if (fit) ImGui::Dummy(*fit);   // the window fits itself around the body
     }
     ImGui::End();
     return shown;
@@ -363,6 +371,26 @@ bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel&, okaypanels::TagsLa
 bool DrawLoadingScreenOkayUI(okaypanels::LoadingScreenModel&, okaypanels::LoadingScreenIntent&) { return false; }
 bool DrawImportSettingsOkayUI(const char*, okaypanels::ImportSettingsModel&, okaypanels::ImportSettingsState&, okaypanels::ImportSettingsIntent&) { return false; }
 bool DrawPostProcessOkayUI(okaypanels::PostProcessModel&, okaypanels::PostProcessIntent&) { return false; }
+bool DrawShortcutsOkayUI(bool*) { return false; }
+bool DrawNetSimOkayUI(bool*, okaypanels::NetSimModel&, okaypanels::NetSimIntent& intent) { intent = okaypanels::NetSimIntent(); return false; }
+bool DrawFindInFilesOkayUI(bool*, const okaypanels::FindInFilesModel&, okaypanels::FindInFilesState&, okaypanels::FindInFilesIntent& intent) {
+    intent = okaypanels::FindInFilesIntent(); return false;
+}
+bool DrawDataAssetOkayUI(bool*, okaypanels::DataAssetModel&, okaypanels::DataAssetIntent& intent) { intent = okaypanels::DataAssetIntent(); return false; }
+bool DrawPluginManagerOkayUI(bool*, const okaypanels::PluginManagerModel&, okaypanels::PluginManagerIntent& intent) {
+    intent = okaypanels::PluginManagerIntent(); return false;
+}
+bool DrawBoneMapOkayUI(bool*, okaypanels::BoneMapModel&, okaypanels::BoneMapIntent& intent) { intent = okaypanels::BoneMapIntent(); return false; }
+bool DrawSaveManagerOkayUI(bool*, okaypanels::SaveManagerModel&, const std::function<void(okaypanels::SaveManagerModel&)>&,
+                           okaypanels::SaveManagerState&, okaypanels::SaveManagerIntent& intent) { intent = okaypanels::SaveManagerIntent(); return false; }
+bool DrawMaterialOkayUI(bool*, okaypanels::MaterialModel&, okaypanels::MaterialIntent& intent) { intent = okaypanels::MaterialIntent(); return false; }
+bool DrawPerfOverlayOkayUI(bool*, okaypanels::PerfOverlayModel&, const std::function<void(okaypanels::PerfOverlayModel&)>&,
+                           okaypanels::PerfOverlayIntent& intent) { intent = okaypanels::PerfOverlayIntent(); return false; }
+bool DrawInputPanelOkayUI(bool*, okaypanels::InputPanelModel&, const std::function<void(okaypanels::InputPanelModel&)>&,
+                          okaypanels::InputPanelState&, okaypanels::InputPanelIntent& intent) { intent = okaypanels::InputPanelIntent(); return false; }
+bool DrawTimersOkayUI(bool*, const std::function<std::string()>&) { return false; }
+bool DrawInputActionsOkayUI(bool*, okaypanels::InputActionsModel&, const std::function<void(okaypanels::InputActionsModel&)>&,
+                            okaypanels::InputActionsState&, okaypanels::InputActionsIntent& intent) { intent = okaypanels::InputActionsIntent(); return false; }
 #endif
 bool DrawHierarchyOkayUI(bool*, okaypanels::HierarchyModel&, okaypanels::HierarchyState&, okaypanels::HierarchyIntent&) { return false; }
 bool DrawInspectorHeaderOkayUI(okaypanels::InspectorHeaderModel&, okaypanels::InspectorHeaderState&, okaypanels::InspectorHeaderIntent&) { return false; }
@@ -517,6 +545,145 @@ bool DrawPostProcessOkayUI(okaypanels::PostProcessModel& model, okaypanels::Post
         intent = r.intent;
         return r.contentHeight;
     });
+}
+
+// The small tool windows (docs/ui/own_ui_toolkit.md section 28): OkayUI only, each a whole window like Stats. The titles are the
+// ones the Dear ImGui windows had, so saved layouts keep their place.
+bool DrawShortcutsOkayUI(bool* open) {
+    static okaypanels::ShortcutsState state;
+    return PanelWindow("Keyboard Shortcuts", open, "##okayui_shortcuts", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        okayuiscreens::DrawShortcuts(okaypanels::KeyboardShortcuts(), state, p.x, p.y, a.x, a.y);
+        OkayUI::PopTextScale();
+    }, 520.0f, 560.0f);
+}
+
+bool DrawNetSimOkayUI(bool* open, okaypanels::NetSimModel& model, okaypanels::NetSimIntent& intent) {
+    intent = okaypanels::NetSimIntent();
+    return PanelWindow("Net###Net", open, "##okayui_net", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawNetSim(model, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+    });
+}
+
+bool DrawFindInFilesOkayUI(bool* open, const okaypanels::FindInFilesModel& model, okaypanels::FindInFilesState& state,
+                           okaypanels::FindInFilesIntent& intent) {
+    intent = okaypanels::FindInFilesIntent();
+    return PanelWindow("Find in Files", open, "##okayui_findinfiles", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawFindInFiles(model, state, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+    }, 600.0f, 420.0f);
+}
+
+bool DrawDataAssetOkayUI(bool* open, okaypanels::DataAssetModel& model, okaypanels::DataAssetIntent& intent) {
+    intent = okaypanels::DataAssetIntent();
+    return PanelWindow("Data Asset", open, "##okayui_dataasset", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawDataAsset(model, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+    });
+}
+
+bool DrawPluginManagerOkayUI(bool* open, const okaypanels::PluginManagerModel& model, okaypanels::PluginManagerIntent& intent) {
+    intent = okaypanels::PluginManagerIntent();
+    return PanelWindow("Plugin Manager", open, "##okayui_plugins", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawPluginManager(model, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+    }, 560.0f, 360.0f);
+}
+
+// More tool windows (docs/ui/own_ui_toolkit.md section 29): OkayUI only, each a whole window. The titles are the Dear ImGui ones.
+bool DrawBoneMapOkayUI(bool* open, okaypanels::BoneMapModel& model, okaypanels::BoneMapIntent& intent) {
+    intent = okaypanels::BoneMapIntent();
+    return PanelWindow("Map Humanoid Bones", open, "##okayui_bonemap", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawBoneMap(model, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+    }, 460.0f, 560.0f);
+}
+
+bool DrawSaveManagerOkayUI(bool* open, okaypanels::SaveManagerModel& model, const std::function<void(okaypanels::SaveManagerModel&)>& fill,
+                           okaypanels::SaveManagerState& state, okaypanels::SaveManagerIntent& intent) {
+    intent = okaypanels::SaveManagerIntent();
+    return PanelWindow("Save Manager", open, "##okayui_savemanager", [&](ImVec2 p, ImVec2 a) {
+        fill(model);
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawSaveManager(model, state, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+    }, 560.0f, 480.0f);
+}
+
+bool DrawMaterialOkayUI(bool* open, okaypanels::MaterialModel& model, okaypanels::MaterialIntent& intent) {
+    intent = okaypanels::MaterialIntent();
+    return PanelWindow("Material", open, "##okayui_material", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        const okayuiscreens::MaterialResult r = okayuiscreens::DrawMaterial(model, p.x, p.y, a.x, a.y);
+        OkayUI::PopTextScale();
+        intent = r.intent;
+#ifdef OKAY_HAVE_OKAYUI
+        // an image dragged from the Project panel (a Dear ImGui drag) drops onto the texture field (OkayUI's)
+        const ImVec2 o = ImGui::GetMainViewport()->Pos;
+        const OkayUI::Rect& q = r.texture;
+        if (q.w > 0.0f && q.h > 0.0f && ImGui::BeginDragDropTargetCustom(ImRect(o.x + q.x, o.y + q.y, o.x + q.x + q.w, o.y + q.y + q.h),
+                                                                         ImGui::GetID("##mattexdrop"))) {
+            if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("ASSET_PATH")) { model.texture = (const char*)pl->Data; intent.changed = true; }
+            ImGui::EndDragDropTarget();
+        }
+#endif
+    });
+}
+
+bool DrawPerfOverlayOkayUI(bool* open, okaypanels::PerfOverlayModel& model, const std::function<void(okaypanels::PerfOverlayModel&)>& fill,
+                           okaypanels::PerfOverlayIntent& intent) {
+    intent = okaypanels::PerfOverlayIntent();
+    static ImVec2 fit(400.0f, 300.0f);   // the body's size on the last frame (the window fits itself around it)
+    if (open && !*open) return false;    // (before the next window's place is set: it would go to another window)
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 12.0f, vp->WorkPos.y + 36.0f), ImGuiCond_FirstUseEver, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.88f);
+    return PanelWindow("Frame time###PerfOverlay", open, "##okayui_perfoverlay", [&](ImVec2 p, ImVec2 a) {
+        fill(model);
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        const okayuiscreens::PerfOverlayResult r = okayuiscreens::DrawPerfOverlay(model, p.x, p.y, a.x, a.y);
+        OkayUI::PopTextScale();
+        intent = r.intent;
+        if (r.contentW > 1.0f && r.contentH > 1.0f) fit = ImVec2(r.contentW, r.contentH);
+    }, 400.0f, 300.0f, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav, &fit);
+}
+
+bool DrawInputPanelOkayUI(bool* open, okaypanels::InputPanelModel& model, const std::function<void(okaypanels::InputPanelModel&)>& fill,
+                          okaypanels::InputPanelState& state, okaypanels::InputPanelIntent& intent) {
+    intent = okaypanels::InputPanelIntent();
+    return PanelWindow("Input", open, "##okayui_input", [&](ImVec2 p, ImVec2 a) {
+        fill(model);
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawInputPanel(model, state, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+    }, 520.0f, 560.0f);
+}
+
+// Timers and Input Actions (docs/ui/own_ui_toolkit.md section 30): OkayUI only, each a whole window, titled as before.
+bool DrawTimersOkayUI(bool* open, const std::function<std::string()>& text) {
+    return PanelWindow("Timers", open, "##okayui_timers", [&](ImVec2 p, ImVec2 a) {
+        const std::string t = text ? text() : std::string();
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        okayuiscreens::DrawTimers(t, p.x, p.y, a.x, a.y);
+        OkayUI::PopTextScale();
+    }, 560.0f, 360.0f);
+}
+
+bool DrawInputActionsOkayUI(bool* open, okaypanels::InputActionsModel& model, const std::function<void(okaypanels::InputActionsModel&)>& fill,
+                            okaypanels::InputActionsState& state, okaypanels::InputActionsIntent& intent) {
+    intent = okaypanels::InputActionsIntent();
+    return PanelWindow("Input Actions", open, "##okayui_inputactions", [&](ImVec2 p, ImVec2 a) {
+        fill(model);
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawInputActions(model, state, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+    }, 900.0f, 600.0f);
 }
 
 } // namespace oked

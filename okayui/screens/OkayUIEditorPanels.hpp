@@ -267,4 +267,132 @@ struct LoadingScreenResult {
 
 LoadingScreenResult DrawLoadingScreen(okaypanels::LoadingScreenModel& model, float x, float y, float w, float h);
 
+// ---- the small tool windows: Keyboard Shortcuts, Net, Find in Files, Data Asset, Plugin Manager (own_ui_toolkit.md section 28) --
+
+struct ShortcutsResult {
+    OkayUI::Rect filter;
+    std::vector<OkayUI::Rect> titles;                // one per section shown
+    std::vector<OkayUI::Rect> keys;                  // one per row shown, its keys ...
+    std::vector<OkayUI::Rect> whats;                 // ... and its description
+};
+/// The filter field, then each section's title and its rows (keys at the left, what they do at a fixed column), in a scrolling list.
+ShortcutsResult DrawShortcuts(const std::vector<okaypanels::ShortcutSection>& all, okaypanels::ShortcutsState& state,
+                              float x, float y, float w, float h);
+
+struct NetSimResult {
+    okaypanels::NetSimIntent intent;
+    OkayUI::Rect simulate, latency, jitter, loss, duplicate, wire, table;
+    std::vector<OkayUI::Rect> rows;                  // one per traffic row, its name cell
+};
+/// The Simulate switch and four sliders (edited in place, kept in range), the wire totals and the traffic table.
+NetSimResult DrawNetSim(okaypanels::NetSimModel& model, float x, float y, float w, float h);
+
+struct FindInFilesResult {
+    okaypanels::FindInFilesIntent intent;
+    OkayUI::Rect query, search, matchCase, wholeWord, regex, replaceField, replace, status, list;
+    std::vector<OkayUI::Rect> hits;                  // one per hit, its file:line label
+};
+/// The search field and Search, Match case / Whole word / Regex (a change searches again), Replace with and Replace in
+/// All Files (off until a search found something), the status line (a bad regex in red) and the hits (file:line, then the line's text); a click on a hit opens it.
+FindInFilesResult DrawFindInFiles(const okaypanels::FindInFilesModel& model, okaypanels::FindInFilesState& state, float x, float y, float w, float h);
+
+struct DataAssetResult {
+    okaypanels::DataAssetIntent intent;
+    std::vector<OkayUI::Rect> keys, values, removes; // one per field
+    OkayUI::Rect add, save;
+};
+/// The file's path and the script note, a key field, a value field and X per field, then Add Field and Save.
+DataAssetResult DrawDataAsset(okaypanels::DataAssetModel& model, float x, float y, float w, float h);
+
+struct PluginManagerResult {
+    okaypanels::PluginManagerIntent intent;
+    OkayUI::Rect newPlugin, reloadAll, openFolder, table;
+    std::vector<OkayUI::Rect> switches, names, edits, openCloses;   // one per row (openCloses: zero size when the plugin has no window)
+    bool empty = false;                              // the "No plugins found" line is showing
+};
+/// The three buttons, the note, then a table: the switch, the name with its description or error, the scope, Edit and Open / Close.
+PluginManagerResult DrawPluginManager(const okaypanels::PluginManagerModel& model, float x, float y, float w, float h);
+
+// ---- more tool windows: Map Humanoid Bones, Save Manager, Material, Frame time, Input (own_ui_toolkit.md section 29) -----------
+
+struct BoneMapResult {
+    okaypanels::BoneMapIntent intent;
+    std::vector<OkayUI::Rect> slots;                 // one per slot, its list box (zero size when scrolled out of view)
+    std::vector<OkayUI::Rect> listRows;              // the open list's rows: Auto, None, then the bones (zero size out of view)
+    OkayUI::Rect popup, status, clear, apply;
+    bool empty = false;                              // no model: only the hint line
+};
+/// The model's name and a note, a list per body slot (Auto, None or a bone), the mapper's verdict, Clear and the action button.
+BoneMapResult DrawBoneMap(okaypanels::BoneMapModel& model, float x, float y, float w, float h);
+
+struct SaveManagerResult {
+    okaypanels::SaveManagerIntent intent;
+    OkayUI::Rect fileCombo, reload, filter, table, newKey, newType, newValue, add, save, clearAll, count;
+    std::vector<int> rowIndex;                       // the model row of each values[] entry (the filter hides rows)
+    std::vector<OkayUI::Rect> values, removes;
+    std::vector<OkayUI::Rect> listRows;              // the open file list's rows, or the type list's
+    OkayUI::Rect popup, confirmClear, cancelClear;   // the open list; the "Clear save keys?" box's buttons while it is open
+    bool noFile = false;
+};
+/// The note and the file list (Reload beside it), the key filter, the key table (key, type, value field and X), the new-key row,
+/// Save to disk, Clear all keys (asks first), the key count and the unsaved mark.
+SaveManagerResult DrawSaveManager(const okaypanels::SaveManagerModel& model, okaypanels::SaveManagerState& state, float x, float y, float w, float h);
+
+struct MaterialResult {
+    okaypanels::MaterialIntent intent;
+    OkayUI::Rect preview, albedo, emissive, specular, shininess, unlit, doubleSided, texture, browse, tiling, save, apply;
+};
+/// The path, the preview ball, Albedo and Emissive, Specular (Shininess while it is above 0), Unlit and Double-sided, the texture
+/// field with "...", Tiling, Save and Apply to Selection. The values are edited in place.
+MaterialResult DrawMaterial(okaypanels::MaterialModel& model, float x, float y, float w, float h);
+
+struct PerfOverlayResult {
+    okaypanels::PerfOverlayIntent intent;
+    OkayUI::Rect fps, plot, copyReport, openProfiler;
+    std::vector<OkayUI::Rect> bars;                  // one per section shown
+    float contentW = 0.0f, contentH = 0.0f;          // the size the body needs (the window sizes itself to it)
+};
+/// The FPS and frame times, the graph, the sections' bars, the renderer and Scene view lines, Copy report and Open Profiler.
+PerfOverlayResult DrawPerfOverlay(const okaypanels::PerfOverlayModel& model, float x, float y, float w, float h);
+
+struct InputPanelResult {
+    okaypanels::InputPanelIntent intent;
+    OkayUI::Rect headers[5];                         // Right now, Controllers and typed actions, Last events, Record and replay, Response curves
+    OkayUI::Rect clear, events, record, stop, replay, copyText;
+    OkayUI::Rect action, deadzone, curve, sensitivity, invertX, invertY, reset, plot;   // zero size while their section is closed
+    std::vector<OkayUI::Rect> listRows;              // the open action list's rows
+    float contentHeight = 0.0f;                      // how tall the open sections are (the body scrolls past the window)
+};
+/// The five sections of the Input panel (the first three open at first); the body scrolls.
+InputPanelResult DrawInputPanel(okaypanels::InputPanelModel& model, okaypanels::InputPanelState& state, float x, float y, float w, float h);
+
+struct TimersResult {
+    OkayUI::Rect body;                               // the scrolling text area
+    std::vector<OkayUI::Rect> lines;                 // one per line of the text
+};
+/// The Timers window: the scheduler and tween dump (okay::editor::TimerDebugText), a line each, in a scrolling body.
+TimersResult DrawTimers(const std::string& text, float x, float y, float w, float h);
+
+struct InputActionsResult {
+    okaypanels::InputActionsIntent intent;
+    OkayUI::Rect file, load, save, newDefault, migrate, useInGame, unsaved, status;
+    OkayUI::Rect left, right;                        // the two framed halves
+    OkayUI::Rect name, addMap, addScheme, newType, addAction;
+    std::vector<OkayUI::Rect> mapTitles;             // one per map
+    std::vector<OkayUI::Rect> actions;               // one per action row, the maps' actions in order
+    OkayUI::Rect tabs[3];                            // Action, Check, Live
+    // the Action tab (zero size or empty on another tab)
+    std::vector<OkayUI::Rect> parts;                 // every binding's input fields one after the other (InputPartOffsets)
+    std::vector<OkayUI::Rect> processors, removeBindings;   // one per binding
+    OkayUI::Rect addBinding[5], interaction, deleteAction;
+    std::vector<OkayUI::Rect> interactions, removeInteractions;
+    std::vector<OkayUI::Rect> problems;              // the Check tab's rows
+    std::vector<OkayUI::Rect> liveLines;             // the Live tab's lines (controllers, then each player's title and lines)
+};
+/// The Input Actions window: the file row (path, Load, Save, New from default, Migrate Input Actions, Use in game), the status, then
+/// on the left the schemes, the name field with + Map and + Scheme, the maps with their actions (a click selects one) and + Action;
+/// on the right the Action, Check and Live tabs. The binding fields keep their text in `state` while they are edited; Enter asks
+/// the host to set it.
+InputActionsResult DrawInputActions(const okaypanels::InputActionsModel& model, okaypanels::InputActionsState& state, float x, float y, float w, float h);
+
 } // namespace okayuiscreens

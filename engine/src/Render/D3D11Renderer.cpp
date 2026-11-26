@@ -257,7 +257,7 @@ struct D3D11Renderer::Impl {
     void ReleasePostTargets();
     // Post chain / sky pipeline objects, compiled on first use.
     ID3D11VertexShader* vsQuad = nullptr;
-    ID3D11PixelShader *psSky = nullptr, *psDown = nullptr, *psBlur = nullptr, *psUber = nullptr, *psFxaa = nullptr;
+    ID3D11PixelShader *psSky = nullptr, *psDown = nullptr, *psBlur = nullptr, *psUber = nullptr, *psEdgeSmooth = nullptr;
     // Ambient occlusion (the Ambient Occlusion switch; see SsaoMath.hpp). Own
     // shaders and half-resolution targets, built on first use, so a failure here
     // only turns SSAO off. UNVERIFIED on a real GPU.
@@ -653,7 +653,7 @@ bool D3D11Renderer::Impl::EnsurePost() {
     bool ok = CompileShader("VSQuad", "vs_4_0", vb) &&
               SUCCEEDED(dev->CreateVertexShader(vb.Ptr(), vb.Size(), nullptr, &vsQuad));
     if (!ok && !vb.error.empty()) Log::Warning("[d3d11] quad shader: " + vb.error);
-    ok = ok && ps("PSSky", psSky) && ps("PSDown", psDown) && ps("PSBlur", psBlur) && ps("PSUber", psUber) && ps("PSFxaa", psFxaa);
+    ok = ok && ps("PSSky", psSky) && ps("PSDown", psDown) && ps("PSBlur", psBlur) && ps("PSUber", psUber) && ps("PSEdgeSmooth", psEdgeSmooth);
     if (ok) {
         D3D11_BUFFER_DESC cbd; std::memset(&cbd, 0, sizeof(cbd));
         cbd.ByteWidth = sizeof(PostCB); cbd.Usage = D3D11_USAGE_DYNAMIC;
@@ -2003,7 +2003,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             }
         }
         // 2) Exposure, bloom composite, tonemap, grading, vignette -> the output
-        //    (or the ping texture when FXAA follows).
+        //    (or the ping texture when edge smoothing follows).
         ID3D11RenderTargetView* directRtv = nullptr;
         if (p->directDst) p->dev->CreateRenderTargetView(p->directDst, nullptr, &directRtv);   // may fail: copied below instead
         ID3D11RenderTargetView* finalRtv = directRtv ? directRtv : p->out.rtv;
@@ -2033,10 +2033,10 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             pass(p->psDof, ps.fxaa ? p->ping[1].rtv : finalRtv, w, h, cur, bA.srv, aoSet->depth.srv);
             cur = p->ping[1].srv;
         }
-        // 4) FXAA last, on the display image.
+        // 4) Edge smoothing (the scene's fxaa switch) last, on the display image.
         if (ps.fxaa) {
             pc.texel[0] = 1.0f / (float)w; pc.texel[1] = 1.0f / (float)h;
-            pass(p->psFxaa, finalRtv, w, h, cur, nullptr, nullptr);
+            pass(p->psEdgeSmooth, finalRtv, w, h, cur, nullptr, nullptr);
         }
         c->PSSetShaderResources(0, 3, nulls);
         c->OMSetRenderTargets(0, nullptr, nullptr);
@@ -2192,7 +2192,7 @@ void D3D11Renderer::Destroy() {
     if (p->cookieTex) p->cookieTex->Release();
     if (p->depthOff) p->depthOff->Release();
     if (p->vsQuad) p->vsQuad->Release();
-    for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psFxaa, p->psAoDepth, p->psAo, p->psAoMul, p->psDof, p->psDofCopy, p->psDofBlur}) if (s) s->Release();
+    for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psEdgeSmooth, p->psAoDepth, p->psAo, p->psAoMul, p->psDof, p->psDofCopy, p->psDofBlur}) if (s) s->Release();
     for (auto& t : p->ssaoSets) t.Release();
     p->ssaoSets.clear();
     if (p->depthPlanar) p->depthPlanar->Release();

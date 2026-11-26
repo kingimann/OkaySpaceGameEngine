@@ -545,6 +545,11 @@ private:
                 out = sizeOf(e.ty.get());
                 return out > 0;
             }
+            if (e.text == "sizeof" && !e.kids.empty() && e.kids[0] && e.kids[0]->checked) {
+                // sizeof expr: the size of the type the checker gave it (a constant, [expr.sizeof])
+                out = sizeOf(e.kids[0]->checked.get());
+                return out > 0;
+            }
             if (e.kids.empty() || !e.kids[0] || !constInt(*e.kids[0], v)) return false;
             if (e.text == "-") out = static_cast<std::int64_t>(0 - static_cast<std::uint64_t>(v));
             else if (e.text == "+") out = v;

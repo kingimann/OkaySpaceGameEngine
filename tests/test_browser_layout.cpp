@@ -36,10 +36,11 @@ static int Count(const LayoutResult& r, DrawCmd::Kind k) {
 int main() {
     RUN_SUITE("page layout");
 
-    // One paragraph: html and body hold the paragraph and its 16 px margins (siblings collapse, parents do not).
+    // One paragraph: the paragraph's 16 px margins collapse through body (no border or padding) and end up outside it; html is
+    // the root (a new formatting context) and holds them (CSS 2.1 8.3.1).
     CHECK(Dump("<body style='margin:0'><p>Hello world</p>", 800,
                "block html 0,0 800x51\n"
-               "block body 0,0 800x51\n"
+               "block body 0,16 800x19\n"
                "block p 0,16 800x19\n"
                "text 0,18 'Hello world'\n"));
 
@@ -164,17 +165,18 @@ int main() {
         for (const DrawCmd& c : wide.cmds) if (c.kind == DrawCmd::Image) { CHECK(c.w == 60.0f && c.h == 30.0f); }
     }
 
-    // <br>, <pre> keeps spaces and line ends and does not wrap.
+    // <br>, <pre> keeps spaces and line ends and does not wrap. <pre> is monospace at 13 px (0.8125em, the HTML standard's
+    // Rendering section): lines of 15.6 px, text 1.3 px below the line top.
     CHECK(Dump("<body style='margin:0'><pre style='margin:0'>a  b\nc</pre><div>x<br>y<br><br>z</div>", 20,
-               "block html 0,0 20x115\n"
-               "block body 0,0 20x115\n"
-               "block pre 0,0 20x38\n"
-               "text 0,2 'a  b'\n"
-               "text 0,21 'c'\n"
-               "block div 0,38 20x77\n"
-               "text 0,40 'x'\n"
-               "text 0,59 'y'\n"
-               "text 0,98 'z'\n"));
+               "block html 0,0 20x108\n"
+               "block body 0,0 20x108\n"
+               "block pre 0,0 20x31\n"
+               "text 0,1 'a  b'\n"
+               "text 0,17 'c'\n"
+               "block div 0,31 20x77\n"
+               "text 0,33 'x'\n"
+               "text 0,52 'y'\n"
+               "text 0,90 'z'\n"));
 
     // Links: the run's area, LinkAt, links listed once per <a>.
     {
@@ -196,7 +198,9 @@ int main() {
         CHECK(FindBox(r, "p") == nullptr && FindBox(r, "div") == nullptr && FindText(r, "no") == nullptr);
     }
 
-    // Tables: equal columns, 2 px spacing, rows as tall as the tallest cell.
+    // Tables (CSS 2.1 17.5.2.2, automatic layout): column 1 wants 10 px ("a" + 2 px padding) at most, column 2 at least 10 and
+    // at most 218 (27 characters + padding); 200 - 3 x 2 px spacing = 194 lies between the sums (20 and 228), so each column
+    // gets its minimum plus its share of the rest in proportion to max - min: 10 and 184. Rows are as tall as their tallest cell.
     {
         const LayoutResult r = Lay("<body style='margin:0'><table><tr><td>a<td>b b b b b b b b b b b b b b<tr><td>c</table>", 200);
         const BoxInfo* t = FindBox(r, "table");
@@ -206,7 +210,7 @@ int main() {
         CHECK(t && t->w == 200.0f);
         CHECK(c1 && c2 && c3);
         if (c1 && c2 && c3) {
-            CHECK(c1->x == 2.0f && c1->w == 97.0f && c2->x == 101.0f && c2->w == 97.0f);
+            CHECK(c1->x == 2.0f && c1->w == 10.0f && c2->x == 14.0f && c2->w == 184.0f);
             CHECK(c1->y == 2.0f && c2->y == 2.0f);
             CHECK(c1->h == c2->h && c2->h > 40.0f);
             CHECK_NEAR(c3->y, c1->y + c1->h + 2.0f, 0.01f);

@@ -40,6 +40,7 @@ public:
     unsigned long length() const { return size(); }
     bool empty() const { return size() == 0; }
     void reserve(unsigned long n) { v_.reserve(n + 1); }
+    unsigned long capacity() const { return v_.capacity() - 1; }
     void clear() {
         v_.clear();
         v_.push_back(C());
@@ -69,6 +70,12 @@ public:
         for (unsigned long i = 0; i < o.size(); ++i) push_back(o[i]);
         return *this;
     }
+    basic_string<C> &operator+=(const C *s) {
+        for (; s && *s; ++s) push_back(*s);
+        return *this;
+    }
+    basic_string<C> &append(const C *s) { return *this += s; }
+    basic_string<C> &append(const basic_string<C> &o) { return *this += o; }
     basic_string<C> &append(const C *s, unsigned long n) {
         for (unsigned long i = 0; i < n; ++i) push_back(s[i]);
         return *this;
@@ -87,8 +94,233 @@ public:
     bool operator==(const basic_string<C> &o) const { return compare(o) == 0; }
     bool operator!=(const basic_string<C> &o) const { return compare(o) != 0; }
     bool operator<(const basic_string<C> &o) const { return compare(o) < 0; }
+    bool operator>(const basic_string<C> &o) const { return compare(o) > 0; }
+    bool operator<=(const basic_string<C> &o) const { return compare(o) <= 0; }
+    bool operator>=(const basic_string<C> &o) const { return compare(o) >= 0; }
+    bool operator==(const C *s) const { return compare(basic_string<C>(s)) == 0; }
+    bool operator!=(const C *s) const { return compare(basic_string<C>(s)) != 0; }
+    // Round 32, the rest of [basic.string] the engine's JavaScript runtime uses on u16string.
+    unsigned long max_size() const { return ((unsigned long)-1) / sizeof(C) / 2; }
+    void shrink_to_fit() {}
+    const C &at(unsigned long i) const { return v_[i]; }
+    C &at(unsigned long i) { return v_[i]; }
+    C &front() { return v_[0]; }
+    const C &front() const { return v_[0]; }
+    const C &back() const { return v_[size() - 1]; }
+    void resize(unsigned long n, C c = C()) {
+        v_.pop_back();
+        while (v_.size() > n) v_.pop_back();
+        while (v_.size() < n) v_.push_back(c);
+        v_.push_back(C());
+    }
+    void swap(basic_string<C> &o) { v_.swap(o.v_); }
+    basic_string<C> &assign(const C *s, unsigned long n) {
+        clear();
+        return append(s, n);
+    }
+    basic_string<C> &assign(const basic_string<C> &o) { return *this = o; }
+    basic_string<C> &append(unsigned long n, C c) {
+        for (unsigned long i = 0; i < n; ++i) push_back(c);
+        return *this;
+    }
+    template <typename It>
+    basic_string<C> &append(It first, It last) {
+        for (; first != last; ++first) push_back((C)*first);
+        return *this;
+    }
+    basic_string<C> &insert(unsigned long pos, const basic_string<C> &s) {
+        basic_string<C> tail = substr(pos);
+        resize(pos < size() ? pos : size());
+        *this += s;
+        return *this += tail;
+    }
+    basic_string<C> &insert(unsigned long pos, unsigned long n, C c) { return insert(pos, basic_string<C>(n, c)); }
+    basic_string<C> &insert(unsigned long pos, const C *s) { return insert(pos, basic_string<C>(s)); }
+    C *insert(const C *p, C c) {
+        unsigned long pos = (unsigned long)(p - data());
+        insert(pos, 1ul, c);
+        return begin() + pos;
+    }
+    basic_string<C> &erase(unsigned long pos = 0, unsigned long n = (unsigned long)-1) {
+        if (pos > size()) pos = size();
+        if (n > size() - pos) n = size() - pos;
+        basic_string<C> tail = substr(pos + n);
+        resize(pos);
+        return *this += tail;
+    }
+    C *erase(const C *p) {
+        unsigned long pos = (unsigned long)(p - data());
+        erase(pos, 1);
+        return begin() + pos;
+    }
+    C *erase(const C *first, const C *last) {
+        unsigned long pos = (unsigned long)(first - data());
+        erase(pos, (unsigned long)(last - first));
+        return begin() + pos;
+    }
+    basic_string<C> &replace(unsigned long pos, unsigned long n, const basic_string<C> &s) {
+        erase(pos, n);
+        return insert(pos, s);
+    }
+    int compare(unsigned long pos, unsigned long n, const basic_string<C> &o) const { return substr(pos, n).compare(o); }
+    int compare(const C *s) const { return compare(basic_string<C>(s)); }
+    // [string.find]: the first (find) or last (rfind) place where the text starts, or npos.
+    unsigned long find(const C *s, unsigned long pos, unsigned long n) const {
+        if (n == 0) return pos <= size() ? pos : npos;
+        for (unsigned long i = pos; i + n <= size(); ++i) {
+            unsigned long k = 0;
+            while (k < n && v_[i + k] == s[k]) ++k;
+            if (k == n) return i;
+        }
+        return npos;
+    }
+    unsigned long find(const basic_string<C> &s, unsigned long pos = 0) const { return find(s.data(), pos, s.size()); }
+    unsigned long find(const C *s, unsigned long pos = 0) const { return find(basic_string<C>(s), pos); }
+    unsigned long find(C c, unsigned long pos = 0) const { return find(&c, pos, 1); }
+    unsigned long rfind(const C *s, unsigned long pos, unsigned long n) const {
+        if (n > size()) return npos;
+        unsigned long i = size() - n < pos ? size() - n : pos;
+        for (;; --i) {
+            unsigned long k = 0;
+            while (k < n && v_[i + k] == s[k]) ++k;
+            if (k == n) return i;
+            if (i == 0) return npos;
+        }
+    }
+    unsigned long rfind(const basic_string<C> &s, unsigned long pos = (unsigned long)-1) const {
+        return rfind(s.data(), pos, s.size());
+    }
+    unsigned long rfind(C c, unsigned long pos = (unsigned long)-1) const { return rfind(&c, pos, 1); }
+    // [string.find.first.of] and the others: a character of the set (or not of it).
+    unsigned long find_first_of(const basic_string<C> &set, unsigned long pos = 0) const {
+        for (unsigned long i = pos; i < size(); ++i)
+            if (set.find(v_[i]) != npos) return i;
+        return npos;
+    }
+    unsigned long find_first_not_of(const basic_string<C> &set, unsigned long pos = 0) const {
+        for (unsigned long i = pos; i < size(); ++i)
+            if (set.find(v_[i]) == npos) return i;
+        return npos;
+    }
+    unsigned long find_last_of(const basic_string<C> &set, unsigned long pos = (unsigned long)-1) const {
+        for (unsigned long i = size() < pos + 1 ? size() : pos + 1; i-- > 0;)
+            if (set.find(v_[i]) != npos) return i;
+        return npos;
+    }
+    unsigned long find_last_not_of(const basic_string<C> &set, unsigned long pos = (unsigned long)-1) const {
+        for (unsigned long i = size() < pos + 1 ? size() : pos + 1; i-- > 0;)
+            if (set.find(v_[i]) == npos) return i;
+        return npos;
+    }
 };
+// [string.op.plus]
+template <typename C>
+basic_string<C> operator+(const basic_string<C> &a, const basic_string<C> &b) {
+    basic_string<C> r = a;
+    r += b;
+    return r;
+}
+template <typename C>
+basic_string<C> operator+(const basic_string<C> &a, const C *b) {
+    basic_string<C> r = a;
+    r += b;
+    return r;
+}
+template <typename C>
+basic_string<C> operator+(const C *a, const basic_string<C> &b) {
+    basic_string<C> r(a);
+    r += b;
+    return r;
+}
+template <typename C>
+basic_string<C> operator+(const basic_string<C> &a, C b) {
+    basic_string<C> r = a;
+    r += b;
+    return r;
+}
+template <typename C>
+basic_string<C> operator+(C a, const basic_string<C> &b) {
+    basic_string<C> r(1ul, a);
+    r += b;
+    return r;
+}
 typedef basic_string<char16_t> u16string;
 typedef basic_string<char32_t> u32string;
 typedef basic_string<wchar_t> wstring;
+// basic_string_view for the wide character types ([string.view.template]): a pointer and a length,
+// owning nothing; compared character by character, as basic_string<C> is.
+template <typename C>
+class basic_string_view {
+    const C *p_;
+    unsigned long n_;
+
+public:
+    typedef C value_type;
+    typedef const C *iterator;
+    typedef const C *const_iterator;
+    typedef unsigned long size_type;
+    static const unsigned long npos = (unsigned long)-1;
+    basic_string_view() : p_(nullptr), n_(0) {}
+    basic_string_view(const C *s, unsigned long n) : p_(s), n_(n) {}
+    basic_string_view(const C *s) : p_(s), n_(0) {
+        while (s && s[n_]) ++n_;
+    }
+    basic_string_view(const basic_string<C> &s) : p_(s.data()), n_(s.size()) {}
+    unsigned long size() const { return n_; }
+    unsigned long length() const { return n_; }
+    bool empty() const { return n_ == 0; }
+    const C *data() const { return p_; }
+    const C *begin() const { return p_; }
+    const C *end() const { return p_ + n_; }
+    const C &operator[](unsigned long i) const { return p_[i]; }
+    const C &front() const { return p_[0]; }
+    const C &back() const { return p_[n_ - 1]; }
+    void remove_prefix(unsigned long k) {
+        p_ += k;
+        n_ -= k;
+    }
+    void remove_suffix(unsigned long k) { n_ -= k; }
+    basic_string_view<C> substr(unsigned long pos, unsigned long n = (unsigned long)-1) const {
+        if (pos > n_) pos = n_;
+        if (n > n_ - pos) n = n_ - pos;
+        return basic_string_view<C>(p_ + pos, n);
+    }
+    int compare(basic_string_view<C> o) const {
+        unsigned long n = n_ < o.n_ ? n_ : o.n_;
+        for (unsigned long i = 0; i < n; ++i)
+            if (p_[i] != o.p_[i]) return p_[i] < o.p_[i] ? -1 : 1;
+        return n_ == o.n_ ? 0 : (n_ < o.n_ ? -1 : 1);
+    }
+    unsigned long find(C c, unsigned long pos = 0) const {
+        for (unsigned long i = pos; i < n_; ++i)
+            if (p_[i] == c) return i;
+        return npos;
+    }
+    bool operator==(basic_string_view<C> o) const { return compare(o) == 0; }
+    bool operator!=(basic_string_view<C> o) const { return compare(o) != 0; }
+    bool operator<(basic_string_view<C> o) const { return compare(o) < 0; }
+};
+typedef basic_string_view<char16_t> u16string_view;
+typedef basic_string_view<char32_t> u32string_view;
+typedef basic_string_view<wchar_t> wstring_view;
+// hash of the wide strings and views ([basic.string.hash], [string.view.hash]): FNV-1a over the
+// bytes of each character, low byte first, as hash<string> is over its bytes (our own choice);
+// a string and a view of the same text hash alike.
+inline unsigned long __okay_wide_hash(const void *p, unsigned long bytes) {
+    const unsigned char *b = (const unsigned char *)p;
+    unsigned long h = 14695981039346656037UL;
+    for (unsigned long i = 0; i < bytes; ++i) {
+        h ^= b[i];
+        h *= 1099511628211UL;
+    }
+    return h;
+}
+template <typename C>
+struct hash<basic_string<C>> {
+    unsigned long operator()(const basic_string<C> &s) const { return __okay_wide_hash(s.data(), s.size() * sizeof(C)); }
+};
+template <typename C>
+struct hash<basic_string_view<C>> {
+    unsigned long operator()(basic_string_view<C> s) const { return __okay_wide_hash(s.data(), s.size() * sizeof(C)); }
+};
 }  // namespace std

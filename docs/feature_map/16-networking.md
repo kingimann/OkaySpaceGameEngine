@@ -278,7 +278,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Parts:**
   - 16.13.1 Simulator - `Net/NetSim` - `SimSettings` applied once per datagram: on the way out, or, when it goes to another socket of this program that reads through the simulator, when that one reads it (two managers in one process see the setting, not twice it); up to 4096 datagrams waiting per socket and direction (`SimulatorOverflows()` counts any beyond, apart from loss); off by default so packets go straight to the socket
   - 16.13.2 Traffic counter - `Net/NetSim` - `TrafficRow` counts logical messages by object id or RPC name and raw bytes; does not change what is sent
-  - 16.13.3 Net panel - `editor/NetSimPanel.*` - View > Panels > Net: toggles, sliders and the traffic table
+  - 16.13.3 Net panel - `editor/NetSimPanel.*`, `okayui/screens/OkayUIEditorPanels.cpp` (drawn by OkayUI only) - View > Panels > Net: toggles, sliders and the traffic table
 - **Code:** `Net/NetSim`, `editor/NetSimPanel.*`
 - **API:** `okay::net::Simulator()`, `SimSettings`, `TrafficRow`
 - **Editor:** View > Panels > Net

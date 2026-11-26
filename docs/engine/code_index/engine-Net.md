@@ -141,7 +141,7 @@ Back to the [code index](../code_index.md). 34 headers, 167 names.
 - `SignKeypair` function, line 103
 - `Sign` function, line 111
 - `Verify` function, line 118
-- `Sha256` function, line 125
+- `Sha256` function, line 139
 
 ## `engine/include/okay/Net/NetDelta.hpp`
 

@@ -1,7 +1,9 @@
 #pragma once
 // The Input panel (View > Panels > Input): what the engine sees right now (keys, mouse, controllers,
 // actions), the last events, and each action's response curve with sliders for dead zone, curve,
-// sensitivity and invert. Reads okay::InputDebug and okay::InputActions only; draws with ImGui.
+// sensitivity and invert. Reads okay::InputDebug and okay::InputActions only. OkayUI draws it (no Dear
+// ImGui version; docs/ui/own_ui_toolkit.md section 29): FillInputPanel builds the model the window shows
+// (tools/input_shots.cpp uses it too, for its pictures), ApplyInputPanelIntent does what the person asked.
 // Written for this project from the InputDebug / InputActions interfaces; no outside code.
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
@@ -9,86 +11,73 @@
 #include "okay/Input/ActionEditor.hpp"
 #include "okay/Input/InputRuntime.hpp"
 #include "okay/Input/InputRecorder.hpp"
-#include <imgui.h>
+#include "EditorPanelModels.hpp"
+#include "OkayPanels.hpp"   // DrawInputPanelOkayUI (only DrawInputDebugger needs it)
+#include <cstdio>
+#include <functional>
 #include <string>
 #include <vector>
 
 namespace okay::editor {
 
-/// The body of the "Controllers and typed actions" section: which controller is plugged in (family, ids, mapping), then every local player's
-/// actions: value, phase and the binding that drives it.
-inline void DrawControllersAndTypedActions() {
-        // Which controller is plugged in (family, ids, mapping), then every local player's actions: value, phase and the binding that drives it.
-        for (const std::string& l : ControllerDebugLines()) ImGui::TextWrapped("%s", l.c_str());
-        PlayerInputManager& pm = InputRuntime::Players();
-        for (int p = 0; p < pm.Count(); ++p) {
-            const ActionSet* s = pm.Player(p);
-            if (!s) continue;
-            ImGui::Separator();
-            ImGui::Text("Player %d", p + 1);
-            for (const std::string& l : ActionSetDebugLines(*s)) ImGui::TextWrapped("%s", l.c_str());
-        }
-        if (pm.Count() == 0) ImGui::TextDisabled("No local player yet (ia_join or the first ia_ read creates one).");
+inline InputActions::Response ToEngineResponse(const okaypanels::InputResponse& r) {
+    InputActions::Response e;
+    e.deadzone = r.deadzone; e.curve = r.curve; e.sensitivity = r.sensitivity; e.invertX = r.invertX; e.invertY = r.invertY;
+    return e;
 }
 
-inline void DrawInputDebugger(bool* open, bool playing) {
+/// The panel's model from the engine's input state now. `state.action` picks the action whose response curve is shown (kept in range).
+inline void FillInputPanel(okaypanels::InputPanelModel& m, okaypanels::InputPanelState& state, bool playing) {
+    m.playing = playing;
+    m.snapshot = InputDebug::Snapshot();
+    // Which controller is plugged in (family, ids, mapping), then every local player's actions: value, phase and the binding that drives it.
+    m.controllers = ControllerDebugLines();
+    PlayerInputManager& pm = InputRuntime::Players();
+    for (int p = 0; p < pm.Count(); ++p)
+        if (const ActionSet* s = pm.Player(p)) m.players.push_back({p + 1, ActionSetDebugLines(*s)});
+    const auto& ev = InputDebug::Events();
+    for (std::size_t i = ev.size(); i-- > 0;) m.events.push_back(ev[i]);   // newest first
+    char rec[64];
+    std::snprintf(rec, sizeof rec, "%s %zu frames", InputRecorder::Recording() ? "Recording:" : InputRecorder::Playing() ? "Replaying:" : "Kept:",
+                  InputRecorder::FrameCount());
+    m.recordStatus = rec;
+    const auto& all = InputActions::All();
+    for (const InputActions::Action& a : all) m.actions.push_back(a.name);
+    if (state.action < 0 || state.action >= (int)all.size()) state.action = 0;
+    if (!all.empty()) {
+        const InputActions::Action& a = all[(std::size_t)state.action];
+        const InputActions::Response r = InputActions::GetResponse(a.name);
+        m.response = {r.deadzone, r.curve, r.sensitivity, r.invertX, r.invertY};
+        m.direction = a.direction;
+        m.value = a.value;
+    }
+    m.shape = [](float in, const okaypanels::InputResponse& r) { return InputActions::ShapeValue(in, ToEngineResponse(r)); };
+}
+
+/// Do what the person asked for. `action` is the action the model was filled for (its response is in `m`); `copy` puts text on the clipboard.
+inline void ApplyInputPanelIntent(const okaypanels::InputPanelModel& m, int action, const okaypanels::InputPanelIntent& in,
+                                  const std::function<void(const std::string&)>& copy) {
+    if (in.clearEvents) InputDebug::Clear();
+    if (in.record) InputRecorder::StartRecording();
+    if (in.stop) { InputRecorder::StopRecording(); InputRecorder::StopPlayback(); }
+    if (in.replay) InputRecorder::StartPlayback(InputRecorder::Text());
+    if (in.copyText && copy) copy(InputRecorder::Text());
+    if (action < 0 || (std::size_t)action >= m.actions.size()) return;
+    const std::string& name = m.actions[(std::size_t)action];
+    if (in.responseChanged) InputActions::SetResponse(name, ToEngineResponse(m.response));
+    if (in.resetCurve) InputActions::SetResponse(name, InputActions::Response{});
+}
+
+/// `copy` puts text on the clipboard (Copy text).
+inline void DrawInputDebugger(bool* open, bool playing, const std::function<void(const std::string&)>& copy) {
     if (!open || !*open) { if (InputDebug::Enabled()) InputDebug::Enable(false); return; }
     InputDebug::Enable(true);
-    ImGui::SetNextWindowSize(ImVec2(520, 560), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Input", open)) { ImGui::End(); return; }
-    if (!playing) ImGui::TextDisabled("Press Play, then click the Game view: the game only receives input while it plays.");
-
-    if (ImGui::CollapsingHeader("Right now", ImGuiTreeNodeFlags_DefaultOpen))
-        for (const std::string& l : InputDebug::Snapshot()) ImGui::TextWrapped("%s", l.c_str());
-
-    if (ImGui::CollapsingHeader("Controllers and typed actions", ImGuiTreeNodeFlags_DefaultOpen)) DrawControllersAndTypedActions();
-
-    if (ImGui::CollapsingHeader("Last events", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (ImGui::SmallButton("Clear")) InputDebug::Clear();
-        const auto& ev = InputDebug::Events();
-        ImGui::BeginChild("##inputevents", ImVec2(0, 130), true);
-        for (std::size_t i = ev.size(); i-- > 0;) ImGui::TextUnformatted(ev[i].c_str());
-        ImGui::EndChild();
-    }
-
-    if (ImGui::CollapsingHeader("Record and replay")) {
-        ImGui::TextWrapped("Record what you press while the game plays, then replay it to reproduce a bug. While it replays, the keyboard and mouse are ignored.");
-        if (ImGui::Button("Record")) InputRecorder::StartRecording();
-        ImGui::SameLine();
-        if (ImGui::Button("Stop")) { InputRecorder::StopRecording(); InputRecorder::StopPlayback(); }
-        ImGui::SameLine();
-        if (ImGui::Button("Replay")) InputRecorder::StartPlayback(InputRecorder::Text());
-        ImGui::SameLine();
-        if (ImGui::Button("Copy text")) ImGui::SetClipboardText(InputRecorder::Text().c_str());
-        ImGui::Text("%s %zu frames", InputRecorder::Recording() ? "Recording:" : InputRecorder::Playing() ? "Replaying:" : "Kept:", InputRecorder::FrameCount());
-    }
-
-    if (ImGui::CollapsingHeader("Response curves")) {
-        static int sel = 0;
-        const auto& all = InputActions::All();
-        if (sel >= (int)all.size()) sel = 0;
-        if (ImGui::BeginCombo("Action", all.empty() ? "" : all[(std::size_t)sel].name.c_str())) {
-            for (int i = 0; i < (int)all.size(); ++i)
-                if (ImGui::Selectable(all[(std::size_t)i].name.c_str(), i == sel)) sel = i;
-            ImGui::EndCombo();
-        }
-        if (!all.empty()) {
-            const InputActions::Action& a = all[(std::size_t)sel];
-            InputActions::Response r = InputActions::GetResponse(a.name);
-            bool changed = false;
-            changed |= ImGui::SliderFloat("Dead zone", &r.deadzone, 0.0f, 0.9f);
-            changed |= ImGui::SliderFloat("Curve", &r.curve, 0.3f, 4.0f, "%.2f (1 = straight, 2 = gentle near centre)");
-            changed |= ImGui::SliderFloat("Sensitivity", &r.sensitivity, 0.1f, 5.0f);
-            if (a.direction) { changed |= ImGui::Checkbox("Invert X", &r.invertX); ImGui::SameLine(); changed |= ImGui::Checkbox("Invert Y", &r.invertY); }
-            if (changed) InputActions::SetResponse(a.name, r);
-            if (ImGui::SmallButton("Reset curve")) InputActions::SetResponse(a.name, InputActions::Response{});
-            float pts[64];
-            for (int i = 0; i < 64; ++i) pts[i] = InputActions::ShapeValue((float)i / 63.0f, r);
-            ImGui::PlotLines("##curve", pts, 64, 0, "how far you push (left to right) -> what the game gets", 0.0f, std::max(1.0f, r.sensitivity), ImVec2(0, 90));
-            ImGui::Text("Reads now: %.2f", a.value);
-        }
-    }
-    ImGui::End();
+    static okaypanels::InputPanelState state;
+    okaypanels::InputPanelModel model;
+    okaypanels::InputPanelIntent in;
+    int filledFor = -1;
+    oked::DrawInputPanelOkayUI(open, model, [&](okaypanels::InputPanelModel& m) { FillInputPanel(m, state, playing); filledFor = state.action; }, state, in);
+    ApplyInputPanelIntent(model, filledFor, in, copy);
 }
 
 } // namespace okay::editor

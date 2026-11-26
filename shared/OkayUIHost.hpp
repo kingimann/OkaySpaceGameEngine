@@ -57,18 +57,19 @@ public:
         }
         case SDL_KEYDOWN:
         case SDL_KEYUP: {
+            const bool down = e.type != SDL_KEYUP;
             m_shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
             const bool ctrl = (e.key.keysym.mod & (KMOD_CTRL | KMOD_GUI)) != 0;
             m_ctrl = ctrl;
-            if (e.type == SDL_KEYDOWN) { m_ctrlAtPress |= ctrl; m_shiftAtPress |= m_shift; }   // (see m_ctrlAtPress)
+            if (down) { m_ctrlAtPress |= ctrl; m_shiftAtPress |= m_shift; }   // (see m_ctrlAtPress)
             {   // held state of the named keys (Input::keyDown); a press and release between two frames still shows for one frame
                 const int id = KeyIdOf(e.key.keysym.sym);
                 if (id != OkayUI::KeyId_None) {
-                    m_keyHeld[id] = (e.type == SDL_KEYDOWN);
-                    if (e.type == SDL_KEYDOWN) m_keyTap[id] = true;
+                    m_keyHeld[id] = down;
+                    if (down) m_keyTap[id] = true;
                 }
             }
-            if (e.type != SDL_KEYDOWN) break;                 // key repeat arrives as more KEYDOWN events: each one is an edge
+            if (!down) break;                 // key repeat arrives as more KEYDOWN events: each one is an edge
             switch (e.key.keysym.sym) {
             case SDLK_BACKSPACE: m_back = true; break;
             case SDLK_DELETE:    m_del = true; break;

@@ -42,13 +42,13 @@ public:
         auto* rb = gameObject->GetComponent<Rigidbody3D>();
         const float speed = rb ? rb->velocity.Magnitude() : 0.0f;
         still = (rb && (rb->sleeping || speed < 0.15f)) ? still + dt : 0.0f;
-        bool near = false;
+        bool closeToCamera = false;
         if (toStore) {
             Scene* s = GetScene();
             if (s && s->mainCamera && s->mainCamera->gameObject && s->mainCamera->gameObject->transform)
-                near = (s->mainCamera->gameObject->transform->Position() - gameObject->transform->Position()).Magnitude() < pickupRange;
+                closeToCamera = (s->mainCamera->gameObject->transform->Position() - gameObject->transform->Position()).Magnitude() < pickupRange;
         }
-        if (still > 1.2f || age > life || near) Finish();
+        if (still > 1.2f || age > life || closeToCamera) Finish();
     }
 
     /// Put the volume away now (also what the tests call).

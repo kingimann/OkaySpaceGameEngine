@@ -7,6 +7,11 @@
 // Run with --selftest to exercise the (headless) editor logic without opening a
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
+// Before any header that may pull in SDL.h: SDL must not #define main to SDL_main (shared/Splash.hpp used to do this
+// first; it no longer includes SDL).
+#ifndef SDL_MAIN_HANDLED
+#define SDL_MAIN_HANDLED
+#endif
 #include "EditorState.hpp"
 #include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
@@ -124,7 +129,7 @@
 #include "okay/Core/GameSaves.hpp"
 #include "okay/UI/TooltipPlace.hpp"
 #include "okay/Core/DisplaySettings.hpp"
-#include "SdlDisplays.hpp"             // monitor list and display modes, shared with the player (SDL, not the platform seam)
+#include "PlatformDisplays.hpp"        // monitor list and display modes through okay::platform, shared with the player
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
@@ -163,6 +168,7 @@
 #endif
 #include "ImGuiPainterRenderer.hpp"   // our own Dear ImGui renderer over okay::platform::Painter (OKAY_IMGUI_RENDER=own; default stays imgui_impl_sdlrenderer2)
 #include "PainterBridge.hpp"   // the 2D renderer calls, through okay::platform::Painter
+#include "OwnPainter.hpp"      // which painter draws an own-backend window (OpenGL, else software)
 #include "ImGuiPlatformFeed.hpp"          // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
 
 #include <numeric>
@@ -775,8 +781,10 @@ int main(int argc, char** argv) {
 #else
 
 // Take control of the program entry point ourselves so SDL doesn't #define
-// `main` to SDL_main (which would also rewrite identifiers like `cam->main`).
+// `main` to SDL_main (which would also rewrite identifiers like `cam->main`). (Also defined at the top of this file.)
+#ifndef SDL_MAIN_HANDLED
 #define SDL_MAIN_HANDLED
+#endif
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "okay/Platform/WindowLogic.hpp" // first-run UI scale, focus hand-back decision
@@ -1794,14 +1802,12 @@ static void LogModelReport(EditorState& ed, GameObject* root) {
 
 // Draw a shaded material ball (albedo sphere with a highlight) into a rect —
 // the Project browser's stand-in for a rendered material preview.
+// (Placed by okaypanels::MaterialBallIn, which the Material window's preview uses too.)
 static void DrawMaterialBall(ImDrawList* dl, const ImVec2& mn, const ImVec2& mx, const ImVec4& col) {
-    ImVec2 c((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f);
-    float r = (mx.x - mn.x) * 0.32f;
-    if ((mx.y - mn.y) * 0.32f < r) r = (mx.y - mn.y) * 0.32f;
-    dl->AddCircleFilled(c, r, ImGui::GetColorU32(col), 32);
-    dl->AddCircleFilled(ImVec2(c.x - r * 0.35f, c.y - r * 0.38f), r * 0.28f,
-                        IM_COL32(255, 255, 255, 70), 24);
-    dl->AddCircle(c, r, IM_COL32(0, 0, 0, 90), 32, 1.5f);
+    const okaypanels::MaterialBall b = okaypanels::MaterialBallIn(mn.x, mn.y, mx.x, mx.y);
+    dl->AddCircleFilled(ImVec2(b.cx, b.cy), b.r, ImGui::GetColorU32(col), 32);
+    dl->AddCircleFilled(ImVec2(b.spotX, b.spotY), b.spotR, IM_COL32(255, 255, 255, 70), 24);
+    dl->AddCircle(ImVec2(b.cx, b.cy), b.r, IM_COL32(0, 0, 0, 90), 32, 1.5f);
 }
 
 // ---- Built-in 2D sprite shapes --------------------------------------------
@@ -3341,9 +3347,9 @@ static void MdlMark(const char* label) {   // call right after a button: outline
     }
     if (ImGui::IsItemHovered()) if (const auto* t = oked::modeltools::FindByLabel(g_mdlCurPage, l)) g_mdlHint = std::string(t->name) + ": " + t->hint;
 }
-static bool ToolButton(const char* label, bool ok, const char* why, bool small = false) {
+static bool ToolButton(const char* label, bool ok, const char* why, bool smallButton = false) {
     ImGui::BeginDisabled(!ok);
-    const bool hit = small ? ImGui::SmallButton(label) : ImGui::Button(label);
+    const bool hit = smallButton ? ImGui::SmallButton(label) : ImGui::Button(label);
     ImGui::EndDisabled();
     MdlMark(label);
     if (!ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", why);
@@ -3454,9 +3460,9 @@ static bool ModelOp(EditorState& ed, MeshRenderer* mr, const char* label, const 
     return changed;
 }
 // One of the detail / pivot buttons both panels show (okay/Modeling/ShapeOps.hpp): the same code, the same undo.
-static void ShapeOpButton(EditorState& ed, MeshRenderer* mr, okay::modeling::ShapeOp op, bool small, const char* idSuffix) {
+static void ShapeOpButton(EditorState& ed, MeshRenderer* mr, okay::modeling::ShapeOp op, bool smallButton, const char* idSuffix) {
     const std::string id = std::string(okay::modeling::ShapeOpLabel(op)) + idSuffix;
-    const bool pressed = small ? ImGui::SmallButton(id.c_str()) : ImGui::Button(id.c_str());
+    const bool pressed = smallButton ? ImGui::SmallButton(id.c_str()) : ImGui::Button(id.c_str());
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", okay::modeling::ShapeOpTip(op));
     if (!pressed || !mr) return;
     const std::vector<int> faces = op == okay::modeling::ShapeOp::Subdivide ? g_meshSelFaces : std::vector<int>{};
@@ -6296,13 +6302,13 @@ static void DrawCameraBookmarkMenuItems(EditorState& ed) {
     }
 }
 
-// What this PC offers, for the Auto choices (AutoPerf.hpp). Read from SDL (cores, RAM), the platform layer (refresh rate)
+// What this PC offers, for the Auto choices (AutoPerf.hpp). Read from the platform layer (cores, RAM, refresh rate)
 // and the renderer that was created.
 static oked::autoperf::Hardware ReadHardware() {
     oked::autoperf::Hardware h;
     if (g_sdlRenderer) h.gpuRenderer = okay::pb::IsAccelerated(g_sdlRenderer);
-    h.cpuCores = SDL_GetCPUCount();
-    h.ramMB = SDL_GetSystemRAM();
+    h.cpuCores = okay::platform::CpuCount();
+    h.ramMB = okay::platform::SystemRamMB();
     okay::platform::DisplayInfo di;   // the first (primary) display's refresh rate, through the platform layer
     if (okay::platform::Backend* pb = okay::platform::Default(); pb && pb->DisplayAt(0, di)) h.displayHz = di.refreshHz;
     return h;
@@ -6436,7 +6442,7 @@ static void DrawRenderingMenuItems(EditorState& ed) {
         ImGui::EndMenu();
     }
     if (ImGui::MenuItem("Performance mode (Scene view)", nullptr, &g_perfMode)) SaveSettings();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cheaper Scene view only (the Game view and your builds keep the scene's own look):\nno ambient occlusion, bloom, FXAA or supersampling, render scale at most 75%%,\nand one small shadow cascade while the Game panel is closed.");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cheaper Scene view only (the Game view and your builds keep the scene's own look):\nno ambient occlusion, bloom, edge smoothing or supersampling, render scale at most 75%%,\nand one small shadow cascade while the Game panel is closed.");
 }
 
 // ---- Creators shared by GameObject > Create, the Hierarchy menus and the Scene view's right-click menu (and its search box). ----
@@ -8403,60 +8409,39 @@ static void OpenBoneMap(GameObject* root, HumanoidRetarget* hr) {
     g_boneMapRoot = root; g_boneMapRetarget = hr; g_showBoneMap = true;
     for (int b = 0; b < humanoid::BoneCount; ++b) g_boneMap[b] = hr ? hr->boneMap[b] : std::string();
 }
+// OkayUI draws the window (no Dear ImGui version; docs/ui/own_ui_toolkit.md section 29): the picks are edited in place, the action
+// button comes back as the intent and is carried out here while the picks make a humanoid.
+static_assert(okaypanels::kBoneSlotCount == humanoid::BoneCount, "the window lists the engine humanoid's bones");
 static void DrawBoneMap(EditorState& ed) {
     if (!g_showBoneMap) return;
-    ImGui::SetNextWindowSize(ImVec2(460, 560), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Map Humanoid Bones", &g_showBoneMap)) { ImGui::End(); return; }
     GameObject* root = g_boneMapRoot;
     bool alive = false;
     for (const auto& up : ed.scene().Objects()) if (up.get() == root) { alive = true; break; }
-    if (!root || !alive || !root->transform) {
-        ImGui::TextDisabled("Select an imported model and choose Map Humanoid Bones.");
-        ImGui::End(); return;
+    okaypanels::BoneMapModel model;
+    if (root && alive && root->transform) {
+        model.hasModel = true;
+        model.modelName = root->name;
+        for (const auto& up : ed.scene().Objects())
+            if (up && up.get() != root && up->IsSelfOrDescendantOf(root) && up->transform) model.bones.push_back(up->name);
+        const humanoid::BoneMap autoMap = humanoid::MapHumanoidBones(root);
+        for (int b = 0; b < humanoid::BoneCount; ++b) model.autoName[b] = autoMap.bone[b] ? autoMap.bone[b]->name : std::string("none");
+        model.picks = g_boneMap;
+        const humanoid::BoneMap m = humanoid::MapHumanoidBones(root, g_boneMap);
+        model.humanoid = m.humanoid; model.found = m.found; model.why = m.why;
+        model.forRetarget = g_boneMapRetarget != nullptr;
     }
-    ImGui::Text("Model: %s", root->name.c_str());
-    ImGui::TextDisabled("Pick each body bone. Auto keeps the bone found by its name.");
-    std::vector<std::string> names;
-    for (const auto& up : ed.scene().Objects())
-        if (up && up.get() != root && up->IsSelfOrDescendantOf(root) && up->transform) names.push_back(up->name);
-    const humanoid::BoneMap autoMap = humanoid::MapHumanoidBones(root);
-    static const char* kSlot[humanoid::BoneCount] = {"Hips", "Spine / chest", "Head",
-        "Left upper arm", "Left forearm", "Left hand", "Right upper arm", "Right forearm", "Right hand",
-        "Left thigh", "Left shin", "Left foot", "Right thigh", "Right shin", "Right foot"};
-    if (ImGui::BeginTable("##bonemap", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-        for (int b = 0; b < humanoid::BoneCount; ++b) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn(); ImGui::TextUnformatted(kSlot[b]);
-            ImGui::TableNextColumn();
-            std::string& pick = g_boneMap[b];
-            const std::string autoName = autoMap.bone[b] ? autoMap.bone[b]->name : std::string("none");
-            const std::string shown = pick.empty() ? "Auto (" + autoName + ")" : pick == "-" ? std::string("None") : pick;
-            ImGui::SetNextItemWidth(-1);
-            if (ImGui::BeginCombo(("##bm" + std::to_string(b)).c_str(), shown.c_str())) {
-                if (ImGui::Selectable(("Auto (" + autoName + ")").c_str(), pick.empty())) pick.clear();
-                if (ImGui::Selectable("None", pick == "-")) pick = "-";
-                for (const std::string& n : names)
-                    if (ImGui::Selectable((n + "##bmn" + std::to_string(b)).c_str(), pick == n)) pick = n;
-                ImGui::EndCombo();
-            }
-        }
-        ImGui::EndTable();
-    }
-    const humanoid::BoneMap m = humanoid::MapHumanoidBones(root, g_boneMap);
-    if (m.humanoid) ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1), "Humanoid: %d/15 bones mapped", m.found);
-    else ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.35f, 1), "Not a humanoid yet: %s", m.why.c_str());
-    if (ImGui::Button("Clear (all Auto)")) for (auto& n : g_boneMap) n.clear();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!m.humanoid);
+    okaypanels::BoneMapIntent intent;
+    oked::DrawBoneMapOkayUI(&g_showBoneMap, model, intent);
+    if (!intent.apply || !model.hasModel) return;
+    const humanoid::BoneMap m = humanoid::MapHumanoidBones(root, g_boneMap);   // the picks as they are now
+    if (!m.humanoid) return;
     if (g_boneMapRetarget) {
-        if (ImGui::Button("Apply to Humanoid Retarget")) {
-            ed.PushUndo();
-            for (int b = 0; b < humanoid::BoneCount; ++b) g_boneMapRetarget->boneMap[b] = g_boneMap[b];
-            g_boneMapRetarget->Rewire();
-            ed.dirty = true;
-            ConsoleLog("Humanoid Retarget: bone map saved (" + std::to_string(m.found) + "/15) - press Play");
-        }
-    } else if (ImGui::Button("Use Built-in Animations")) {
+        ed.PushUndo();
+        for (int b = 0; b < humanoid::BoneCount; ++b) g_boneMapRetarget->boneMap[b] = g_boneMap[b];
+        g_boneMapRetarget->Rewire();
+        ed.dirty = true;
+        ConsoleLog("Humanoid Retarget: bone map saved (" + std::to_string(m.found) + "/15) - press Play");
+    } else {
         ed.PushUndo();
         std::string log;
         const int found = okay::EnableBuiltinAnimations(ed.scene(), root, &log, g_boneMap);
@@ -8464,8 +8449,6 @@ static void DrawBoneMap(EditorState& ed) {
         if (found >= 8) { ed.Select(root); g_showBoneMap = false; }
         ed.dirty = true;
     }
-    ImGui::EndDisabled();
-    ImGui::End();
 }
 
 // Project type filters (g_projFilter ids): 1 scripts, 2 images, 3 scenes,
@@ -10623,172 +10606,70 @@ void DrawServices(EditorState& ed) {
     ImGui::End();
 }
 
-// Scriptable Object editor: edit a .okaydata file's key/value fields.
+// Scriptable Object editor: edit a .okaydata file's key/value fields. OkayUI draws the window (no Dear ImGui version); X, Add Field
+// and Save come back as the intent.
 void DrawDataAssetEditor() {
     if (!g_dataAssetOpen) return;
     static std::string loaded;
     static DataAsset asset;
     if (loaded != g_dataAssetPath) { asset = DataAsset{}; asset.Load(g_dataAssetPath); loaded = g_dataAssetPath; }
-    if (!ImGui::Begin("Data Asset", &g_dataAssetOpen)) { ImGui::End(); return; }
-    ImGui::TextDisabled("%s", g_dataAssetPath.c_str());
-    ImGui::TextDisabled("Read from script: data_num(\"file.okaydata\", \"key\") / data_str(...)");
-    ImGui::Separator();
+    okaypanels::DataAssetModel model;
+    model.path = g_dataAssetPath;
+    model.fields = &asset.Fields();
+    okaypanels::DataAssetIntent intent;
+    oked::DrawDataAssetOkayUI(&g_dataAssetOpen, model, intent);
     auto& fields = asset.Fields();
-    int remove = -1;
-    for (std::size_t i = 0; i < fields.size(); ++i) {
-        ImGui::PushID((int)i);
-        char k[64]; std::strncpy(k, fields[i].first.c_str(), sizeof(k) - 1); k[sizeof(k)-1] = '\0';
-        ImGui::SetNextItemWidth(140);
-        if (ImGui::InputText("##k", k, sizeof(k))) fields[i].first = k;
-        ImGui::SameLine();
-        char v[192]; std::strncpy(v, fields[i].second.c_str(), sizeof(v) - 1); v[sizeof(v)-1] = '\0';
-        ImGui::SetNextItemWidth(200);
-        if (ImGui::InputText("##v", v, sizeof(v))) fields[i].second = v;
-        ImGui::SameLine();
-        if (ImGui::SmallButton("X")) remove = (int)i;
-        ImGui::PopID();
-    }
-    if (remove >= 0) fields.erase(fields.begin() + remove);
-    if (ImGui::Button("Add Field")) fields.emplace_back("key", "value");
-    ImGui::SameLine();
-    if (ImGui::Button("Save")) {
+    if (intent.remove >= 0 && (std::size_t)intent.remove < fields.size()) fields.erase(fields.begin() + intent.remove);
+    if (intent.add) fields.emplace_back("key", "value");
+    if (intent.save) {
         if (asset.Save(g_dataAssetPath)) ConsoleLog("Saved " + g_dataAssetPath);
         else ConsoleLog("Save failed: " + g_dataAssetPath);
     }
-    ImGui::End();
 }
 
 // Save Manager: browse the .okaysave files in a project and view/edit their
 // keys (the runtime side of the Easy-Save-style save system). Lets you inspect
-// what a playtest wrote, tweak values, add/remove keys, or wipe a save.
+// what a playtest wrote, tweak values, add/remove keys, or wipe a save. OkayUI draws the window (no Dear ImGui version; docs/ui/
+// own_ui_toolkit.md section 29); the files are looked for only while it shows, and what the person asked for is done here.
 void DrawSaveManager(EditorState& ed) {
     namespace fs = std::filesystem;
-    if (!ImGui::Begin("Save Manager", &g_showSaveManager)) { ImGui::End(); return; }
-
+    if (!g_showSaveManager) return;
     static std::string sel;            // selected .okaysave path
     static okay::SaveFile file;        // working copy of the selected file
     static std::string loaded;         // path currently loaded into `file`
-
-    // Gather candidate save files: the default, plus any *.okaysave in the project.
-    std::vector<std::string> files;
-    files.push_back(okay::Save::DefaultFile());
-    fs::path root = ed.projectDir().empty() ? fs::path(".") : fs::path(ed.projectDir());
-    std::error_code ec;
-    if (fs::exists(root, ec))
-        for (auto& e : fs::recursive_directory_iterator(root, ec))
-            if (e.is_regular_file() && e.path().extension() == ".okaysave")
-                files.push_back(e.path().string());
-
-    ImGui::TextDisabled("Runtime save files (Easy-Save-style key/value data)");
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::BeginCombo("##savefile", sel.empty() ? "(choose a save file)" : sel.c_str())) {
-        for (auto& f : files)
-            if (ImGui::Selectable(f.c_str(), f == sel)) { sel = f; loaded.clear(); }
-        ImGui::EndCombo();
-    }
     static bool s_dirty = false;       // edits not yet saved to disk
-    if (sel.empty()) { ImGui::TextDisabled("No file selected."); ImGui::End(); return; }
-    if (loaded != sel) { file = okay::SaveFile{}; file.Load(sel); loaded = sel; s_dirty = false; }
-
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Reload")) { file = okay::SaveFile{}; file.Load(sel); s_dirty = false; }
-    static char kfilter[64] = "";
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##savefilter", "filter keys...", kfilter, sizeof(kfilter));
-    ImGui::Separator();
-
-    // Editable key table. Values are stored as type:payload; show the type and an
-    // editable payload, re-encoding on change.
-    if (ImGui::BeginTable("savekeys", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                          ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthStretch, 0.4f);
-        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.6f);
-        ImGui::TableHeadersRow();
-
-        std::string deleteKey;
-        // Snapshot keys (sorted) so editing during iteration is safe.
-        std::vector<std::pair<std::string, std::string>> rows(file.Raw().begin(), file.Raw().end());
-        std::sort(rows.begin(), rows.end(), [](auto& a, auto& b){ return a.first < b.first; });
-        for (auto& kv : rows) {
-            if (kfilter[0]) {   // case-insensitive key filter
-                std::string lk = kv.first, lf = kfilter;
-                for (auto& c : lk) c = (char)std::tolower((unsigned char)c);
-                for (auto& c : lf) c = (char)std::tolower((unsigned char)c);
-                if (lk.find(lf) == std::string::npos) continue;
-            }
-            ImGui::PushID(kv.first.c_str());
-            char type = kv.second.empty() ? 's' : kv.second[0];
-            std::string payload = kv.second.size() > 2 ? kv.second.substr(2) : "";
-            const char* tname = type == 'f' ? "float" : type == 'i' ? "int"
-                              : type == 'b' ? "bool" : type == 'v' ? "Vector3" : "string";
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn(); ImGui::TextUnformatted(kv.first.c_str());
-            ImGui::TableNextColumn(); ImGui::TextDisabled("%s", tname);
-            ImGui::TableNextColumn();
-            char vbuf[256]; std::strncpy(vbuf, payload.c_str(), sizeof(vbuf) - 1); vbuf[sizeof(vbuf)-1] = '\0';
-            ImGui::SetNextItemWidth(-44);
-            if (ImGui::InputText("##v", vbuf, sizeof(vbuf))) {
-                file.SetRaw(kv.first, std::string(1, type) + ":" + vbuf);
-                s_dirty = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("X")) deleteKey = kv.first;
-            ImGui::PopID();
-        }
-        ImGui::EndTable();
-        if (!deleteKey.empty()) { file.Delete(deleteKey); s_dirty = true; }
-    }
-
-    // Add a new key (typed).
-    ImGui::Spacing();
-    static char newKey[64] = "";
-    static int newType = 0;     // 0 float,1 int,2 bool,3 string,4 vec3
-    static char newVal[128] = "0";
-    ImGui::SetNextItemWidth(140); ImGui::InputTextWithHint("##nk", "new key", newKey, sizeof(newKey));
-    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
-    ImGui::Combo("##nt", &newType, "float\0int\0bool\0string\0Vector3\0");
-    ImGui::SameLine(); ImGui::SetNextItemWidth(140); ImGui::InputText("##nv", newVal, sizeof(newVal));
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Add") && newKey[0]) {
-        const char tc[] = {'f', 'i', 'b', 's', 'v'};
-        file.SetRaw(newKey, std::string(1, tc[newType]) + ":" + newVal);
-        newKey[0] = '\0';
-        s_dirty = true;
-    }
-
-    ImGui::Separator();
-    if (ImGui::Button("Save to disk")) {
+    static okaypanels::SaveManagerState state;
+    okaypanels::SaveManagerModel model;
+    okaypanels::SaveManagerIntent in;
+    oked::DrawSaveManagerOkayUI(&g_showSaveManager, model, [&](okaypanels::SaveManagerModel& m) {
+        // the candidate save files: the default, plus any *.okaysave in the project
+        m.files.push_back(okay::Save::DefaultFile());
+        fs::path root = ed.projectDir().empty() ? fs::path(".") : fs::path(ed.projectDir());
+        std::error_code ec;
+        if (fs::exists(root, ec))
+            for (auto& e : fs::recursive_directory_iterator(root, ec))
+                if (e.is_regular_file() && e.path().extension() == ".okaysave") m.files.push_back(e.path().string());
+        if (!sel.empty() && loaded != sel) { file = okay::SaveFile{}; file.Load(sel); loaded = sel; s_dirty = false; }
+        m.selected = sel;
+        if (!sel.empty()) m.rows = okaypanels::SaveKeyRows(file.Raw());
+        m.dirty = s_dirty;
+    }, state, in);
+    if (in.choose >= 0 && (std::size_t)in.choose < model.files.size()) { sel = model.files[(std::size_t)in.choose]; loaded.clear(); return; }
+    if (sel.empty() || loaded != sel) return;
+    auto rowKey = [&](int i) { return i >= 0 && (std::size_t)i < model.rows.size() ? model.rows[(std::size_t)i].key : std::string(); };
+    if (in.reload) { file = okay::SaveFile{}; file.Load(sel); s_dirty = false; }
+    if (in.edit >= 0 && !rowKey(in.edit).empty()) { file.SetRaw(rowKey(in.edit), in.editRaw); s_dirty = true; }
+    if (in.remove >= 0 && !rowKey(in.remove).empty()) { file.Delete(rowKey(in.remove)); s_dirty = true; }
+    if (in.add && !in.addKey.empty()) { file.SetRaw(in.addKey, in.addRaw); s_dirty = true; }
+    if (in.clearAll) { file.Clear(); s_dirty = true; }
+    if (in.save) {
         if (file.Save(sel)) { ConsoleLog("Saved " + sel); s_dirty = false; }
         else ConsoleLog("Save failed: " + sel);
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Clear all keys")) ImGui::OpenPopup("Clear save keys?");
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal("Clear save keys?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Remove all %d keys from this save?", (int)file.Count());
-        ImGui::TextDisabled("Nothing is written to disk until you press Save to disk.");
-        ImGui::Dummy(ImVec2(0, 4));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
-        bool doClr = ImGui::Button("Clear", ImVec2(110, 0));
-        ImGui::PopStyleColor(2);
-        if (doClr) { file.Clear(); s_dirty = true; ImGui::CloseCurrentPopup(); }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("%d keys", (int)file.Count());
-    if (s_dirty) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f), "unsaved edits");
-    }
-    ImGui::End();
 }
 
-// Edit a .okaymat asset: tweak the surface
-// look and Save, or stamp it onto the selected mesh with Apply to Selection.
+// Edit a .okaymat asset: tweak the surface look and Save, or stamp it onto the selected mesh with Apply to Selection. OkayUI draws
+// the window (no Dear ImGui version; docs/ui/own_ui_toolkit.md section 29): the values come back edited, the buttons as the intent.
 void DrawMaterialEditor(EditorState& ed) {
     if (!g_matAssetOpen) return;
     static std::string loaded;
@@ -10796,70 +10677,39 @@ void DrawMaterialEditor(EditorState& ed) {
     if (loaded != g_matAssetPath) {
         mat = Material{}; Material::LoadFromFile(g_matAssetPath, mat); loaded = g_matAssetPath;
     }
-    if (!ImGui::Begin("Material", &g_matAssetOpen)) { ImGui::End(); return; }
-    ImGui::TextDisabled("%s", g_matAssetPath.c_str());
-    ImGui::Separator();
-    // Live preview ball: albedo shaded sphere, brightened by emissive, with a
-    // stronger highlight as specular rises — updates as you drag the values.
-    {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImVec2 pv = ImGui::GetCursorScreenPos();
-        float pw = ImGui::GetContentRegionAvail().x, ph = 74.0f;
-        dl->AddRectFilled(pv, ImVec2(pv.x + pw, pv.y + ph), IM_COL32(28, 29, 34, 255), 5.0f);
-        ImVec4 shown(mat.color.r + mat.emissive.r * 0.6f,
-                     mat.color.g + mat.emissive.g * 0.6f,
-                     mat.color.b + mat.emissive.b * 0.6f, 1.0f);
-        if (shown.x > 1) shown.x = 1; if (shown.y > 1) shown.y = 1; if (shown.z > 1) shown.z = 1;
-        DrawMaterialBall(dl, pv, ImVec2(pv.x + pw, pv.y + ph), shown);
-        if (mat.specular > 0.0f) {
-            ImVec2 c(pv.x + pw * 0.5f, pv.y + ph * 0.5f);
-            float r = ph * 0.32f;
-            dl->AddCircleFilled(ImVec2(c.x - r * 0.30f, c.y - r * 0.34f), r * 0.12f,
-                                IM_COL32(255, 255, 255, (int)(120 + 130 * mat.specular)), 16);
-        }
-        ImGui::Dummy(ImVec2(0, ph + 6.0f));
+    okaypanels::MaterialModel model;
+    model.path = g_matAssetPath;
+    const float col[4] = {mat.color.r, mat.color.g, mat.color.b, mat.color.a};
+    std::copy(col, col + 4, model.color);
+    model.emissive[0] = mat.emissive.r; model.emissive[1] = mat.emissive.g; model.emissive[2] = mat.emissive.b;
+    model.specular = mat.specular; model.shininess = mat.shininess;
+    model.unlit = mat.unlit; model.doubleSided = mat.doubleSided;
+    model.texture = mat.texture;
+    model.tiling[0] = mat.tiling.x; model.tiling[1] = mat.tiling.y;
+    model.canApply = ed.selected() && ed.selected()->GetComponent<MeshRenderer>();
+    okaypanels::MaterialIntent in;
+    oked::DrawMaterialOkayUI(&g_matAssetOpen, model, in);
+    if (in.changed) {
+        mat.color = {model.color[0], model.color[1], model.color[2], model.color[3]};
+        mat.emissive = {model.emissive[0], model.emissive[1], model.emissive[2], 1.0f};
+        mat.specular = model.specular; mat.shininess = model.shininess;
+        mat.unlit = model.unlit; mat.doubleSided = model.doubleSided;
+        mat.texture = model.texture;
+        mat.tiling = {model.tiling[0], model.tiling[1]};
     }
-    float col[4] = {mat.color.r, mat.color.g, mat.color.b, mat.color.a};
-    if (ImGui::ColorEdit4("Albedo", col)) mat.color = {col[0], col[1], col[2], col[3]};
-    float em[3] = {mat.emissive.r, mat.emissive.g, mat.emissive.b};
-    if (ImGui::ColorEdit3("Emissive", em)) mat.emissive = {em[0], em[1], em[2], 1.0f};
-    ImGui::SliderFloat("Specular", &mat.specular, 0.0f, 1.0f);
-    if (mat.specular > 0.0f) ImGui::SliderFloat("Shininess", &mat.shininess, 1.0f, 128.0f);
-    ImGui::Checkbox("Unlit", &mat.unlit);
-    ImGui::SameLine();
-    ImGui::Checkbox("Double-sided", &mat.doubleSided);
-    char tex[256]; std::strncpy(tex, mat.texture.c_str(), sizeof(tex) - 1); tex[sizeof(tex) - 1] = '\0';
-    ImGui::SetNextItemWidth(210);
-    if (ImGui::InputText("##mattex", tex, sizeof(tex))) mat.texture = tex;
-    if (ImGui::BeginDragDropTarget()) {   // drop an image from the Project panel
-        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) mat.texture = (const char*)p->Data;
-        ImGui::EndDragDropTarget();
-    }
-    ImGui::SameLine(0, 4);
-    if (oked::TipButton("Browse...", "...##mattexbrowse")) {
+    if (in.browse) {
         Material* matp = &mat;
         okay::filedialog::OpenOne("Choose a texture image", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.bmp"}),
                                   [matp](const std::string& p) { matp->texture = p; });
     }
-    ImGui::SameLine(0, 4);
-    ImGui::TextUnformatted("Texture");
-    float til[2] = {mat.tiling.x, mat.tiling.y};
-    if (ImGui::DragFloat2("Tiling", til, 0.05f, 0.01f, 64.0f)) mat.tiling = {til[0], til[1]};
-    ImGui::Separator();
-    if (ImGui::Button("Save")) {
+    if (in.save) {
         if (mat.SaveToFile(g_matAssetPath)) ConsoleLog("Saved " + g_matAssetPath);
         else ConsoleLog("Save failed: " + g_matAssetPath);
     }
-    ImGui::SameLine();
-    bool canApply = ed.selected() && ed.selected()->GetComponent<MeshRenderer>();
-    ImGui::BeginDisabled(!canApply);
-    if (ImGui::Button("Apply to Selection")) {
+    if (in.apply && model.canApply) {
         mat.ApplyTo(*ed.selected()->GetComponent<MeshRenderer>());
         ed.dirty = true; ConsoleLog("Applied material to " + ed.selected()->name);
     }
-    ImGui::EndDisabled();
-    if (!canApply) { ImGui::SameLine(); ImGui::TextDisabled("(select a mesh to apply)"); }
-    ImGui::End();
 }
 
 // The scene counts the Stats window shows, in its order (shared by the Dear ImGui window and the OkayUI one so they cannot drift).
@@ -11331,12 +11181,12 @@ void DrawSceneSettings(EditorState& ed) {
             ImGui::SliderFloat("Bloom intensity", &BloomIntensity(), 0.0f, 2.0f, "%.2f");
         }
 
-        ImGui::Checkbox("Tone mapping (ACES)", &ToneMapEnabled());
+        ImGui::Checkbox("Tone mapping (punchy filmic)", &ToneMapEnabled());
         DrawRendererNote(okay::RenderFeature::SoftwareToneMap);
         if (ToneMapEnabled())
             ImGui::SliderFloat("Exposure", &Exposure(), 0.1f, 4.0f, "%.2f");
 
-        ImGui::Checkbox("Anti-aliasing (FXAA)", &FXAAEnabled());
+        ImGui::Checkbox("Anti-aliasing (edge smoothing)", &FXAAEnabled());
         DrawRendererNote(okay::RenderFeature::BuildFxaa);
 
         ImGui::Checkbox("Color grading", &ColorGradeEnabled());
@@ -11484,109 +11334,11 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
     }
 }
 
-// Keyboard shortcut cheatsheet (Help > Keyboard Shortcuts): every binding in
-// one searchable place, grouped by the panel it applies to.
+// Keyboard shortcut cheatsheet (Help > Keyboard Shortcuts): every binding in one searchable place, grouped by the panel it applies
+// to. The list and the filter are okaypanels::KeyboardShortcuts / FilterShortcuts; OkayUI draws the window (no Dear ImGui version).
 void DrawShortcutsWindow() {
     if (!g_showShortcuts) return;
-    ImGui::SetNextWindowSize(ImVec2(520, 560), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Keyboard Shortcuts", &g_showShortcuts)) { ImGui::End(); return; }
-    static char filter[48] = "";
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##scfilter", "filter...", filter, sizeof(filter));
-    ImGui::Separator();
-    auto lc = [](std::string s) { for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
-    std::string q = lc(filter);
-    struct Row { const char* keys; const char* what; };
-    auto section = [&](const char* title, std::initializer_list<Row> rows) {
-        // Show a section only if any row matches the filter.
-        bool any = q.empty();
-        for (const Row& r : rows)
-            if (!any && (lc(r.keys).find(q) != std::string::npos ||
-                         lc(r.what).find(q) != std::string::npos)) any = true;
-        if (!any) return;
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.8f, 1.0f, 1.0f));
-        ImGui::SeparatorText(title);
-        ImGui::PopStyleColor();
-        for (const Row& r : rows) {
-            if (!q.empty() && lc(r.keys).find(q) == std::string::npos &&
-                lc(r.what).find(q) == std::string::npos) continue;
-            ImGui::TextColored(ImVec4(0.85f, 0.90f, 0.72f, 1.0f), "%-18s", r.keys);
-            ImGui::SameLine(150);
-            ImGui::TextDisabled("%s", r.what);
-        }
-    };
-    section("General", {
-        {"Ctrl+P",        "Play / Stop"},
-        {"Ctrl+S",        "Save scene"},
-        {"Ctrl+Alt+S",    "Save project (everything)"},
-        {"Ctrl+Shift+S",  "Save scene as..."},
-        {"Ctrl+O",        "Open scene"},
-        {"Ctrl+Z / Ctrl+Y","Undo / Redo"},
-        {"Ctrl+B",        "Build Settings (in mesh edit mode: bevel)"},
-        {"Ctrl+C / Ctrl+V","Copy / paste object"},
-        {"Ctrl+D",        "Duplicate selection"},
-        {"Ctrl+Shift+G",  "Group selection"},
-        {"Delete",        "Delete selection"},
-    });
-    section("Scene view", {
-        {"W / E / R",     "Move / Rotate / Scale tool"},
-        {"X",             "Local / world gizmo space"},
-        {"F",             "Frame (focus) the selection"},
-        {"Shift+I",       "Isolate selection (Esc exits)"},
-        {"Shift+Space",   "Maximize the Scene view / bring the panels back"},
-        {"Ctrl+Alt+1..3", "Save camera bookmark"},
-        {"Ctrl+1..3",     "Recall camera bookmark"},
-        {"Arrows",        "Nudge selected UI widget (Shift = grid step)"},
-        {"Ctrl+Wheel",    "Zoom UI authoring view"},
-    });
-    section("Mesh edit mode", {
-        {"Tab",           "Object / Edit mode"},
-        {"1 / 2 / 3",     "Vertex / Edge / Face select"},
-        {"G / R / S",     "Move / Rotate / Scale the selection"},
-        {"G G",           "Edge slide"},
-        {"Ctrl+R",        "Loop cut (scroll for more cuts)"},
-        {"Ctrl+B",        "Bevel the selected edges"},
-        {"K",             "Knife (Enter cuts)"},
-        {"Alt+Click",     "Select an edge loop"},
-        {"Ctrl+Alt+Click","Select an edge ring"},
-    });
-    section("Panels & tabs", {
-        {"Ctrl+Tab",      "Switch to the previous panel (hold Ctrl, Tab again to go further)"},
-        {"Ctrl+Shift+Tab","Switch panels, going backwards"},
-        {"Middle-click",  "Close a panel tab"},
-        {"Drag a tab",    "Reorder it, dock it elsewhere, or drag it out to float"},
-        {"Right-click tab","Tab menu: add a tab, close, float, layouts, side tabs"},
-    });
-    section("Hierarchy", {
-        {"F2",            "Rename object"},
-        {"Ctrl+Click",    "Add/remove from selection"},
-        {"Shift+Click",   "Range select"},
-        {"Ctrl+Up/Down",  "Reorder among siblings"},
-        {"Double-click",  "Frame object (in search results)"},
-    });
-    section("Script Editor", {
-        {"Ctrl+F",        "Find in this file"},
-        {"Ctrl+Shift+F",  "Find in Files (project-wide)"},
-        {"Ctrl+Click",    "Go to definition"},
-        {"Ctrl+E",        "Command palette"},
-        {"Ctrl+G",        "Go to line"},
-        {"Ctrl+Alt+L",    "Format document"},
-        {"F2",            "Next warning"},
-    });
-    section("Visual Script graph", {
-        {"Right-click / Space", "Add a node or an action step"},
-        {"Right- / middle-drag", "Pan"},
-        {"Scroll",        "Zoom"},
-        {"Home / F",      "Show all / frame selection"},
-        {"Ctrl+C / Ctrl+V / Ctrl+D","Copy / paste / duplicate"},
-        {"Delete",        "Delete selection"},
-        {"C",             "Comment around selection"},
-    });
-    section("Sprite Editor", {
-        {"P / E / F / I", "Pencil / Eraser / Fill / Pick tool"},
-        {"Ctrl+Z",        "Undo stroke"},
-    });
-    ImGui::End();
+    oked::DrawShortcutsOkayUI(&g_showShortcuts);
 }
 
 // One script code widget (ScriptEditorWidget) per open script, lazily created and configured.
@@ -15711,7 +15463,7 @@ void DrawFileDialogs(EditorState& ed) {
                 DrawRendererNote(okay::RenderFeature::BuildBloom);
                 ImGui::Checkbox("Ambient occlusion", &g_build.ssao);
                 DrawRendererNote(okay::RenderFeature::BuildSsao);
-                ImGui::Checkbox("FXAA", &g_build.fxaa);
+                ImGui::Checkbox("Edge smoothing", &g_build.fxaa);
                 DrawRendererNote(okay::RenderFeature::BuildFxaa);
                 DrawRendererNote(okay::RenderFeature::PerPixelLighting);
                 const char* aaOpts[] = {"Off", "2x", "4x"};
@@ -30009,10 +29761,10 @@ static bool DrawFirstPersonHandWithOkayUI(EditorState& ed, FirstPersonHand* fh, 
     L.rows.reserve(16);
     L.Note("Shows your character's OWN arm in first person. Your body is hidden from your camera only (others see all of it) and never duplicated. Click to punch.", false, true);
     L.SliderInt("Attack Button##fh", &fh->attackButton, 0, 2); L.Tip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
-    L.Check("Swing while held##fh", &fh->holdToSwing); L.Tip("Keep swinging while the button is held (Minecraft mining).");
+    L.Check("Swing while held##fh", &fh->holdToSwing); L.Tip("Keep swinging while the button is held (hold to keep mining).");
     int si = fh->showLeftArm ? 1 : 0;
     const int kSide = L.Combo("Arm side##fh", &si, kSides, 2); L.TipLookup();
-    L.Check("Follow camera look##fh", &fh->followPitch); L.Tip("The arm tilts up/down with your view (Minecraft-style).");
+    L.Check("Follow camera look##fh", &fh->followPitch); L.Tip("The arm tilts up/down with your view.");
     L.Check("Bobbing##fh", &fh->bobbing); L.Tip("A small up-and-down bob on the viewmodel arm. It does not roll, and it does not move the shared body.");
     L.Check("Steady arm (ignore lean/crouch/prone)##fh", &fh->steadyArm); L.TipLookup();
     L.Check("Show While Running##fh", &fh->showWhileRunning);
@@ -30299,7 +30051,7 @@ static bool DrawInventoryWithOkayUI(EditorState& ed, Inventory* inv, okay::Compo
     if (ed.isPlaying()) L.Note("Live bag \xE2\x80\x94 Stop puts these slots back.", false, true);
     L.DragInt("Capacity##inv", &inv->capacity, 0.2f, 1, 999);
     L.DragInt("Max Stack##inv", &inv->maxStack, 0.2f, 0, 9999);
-    L.Tip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this, like Minecraft's 64.");
+    L.Tip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this (64 is a common size).");
     L.Drag("Weight Limit##inv", &inv->weightLimit, 1, 0.5f, 0.0f, 100000.0f);
     L.Tip("Carry limit from the item definitions' weights (0 = none). Scripts get on_encumbered(true/false).");
     if (inv->weightLimit > 0.0f) {
@@ -30967,7 +30719,7 @@ static bool DrawBlockBuilderWithOkayUI(EditorState& ed, BlockBuilder* bb, okay::
     L.Check("Crosshair##bb", &bb->showCrosshair);
     L.Tip("Add an aim reticle at screen center on Play (if the scene has none).");
     L.Check("Place in mid-air##bb", &bb->placeInAir);
-    L.Tip("Off (Minecraft-style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
+    L.Tip("Off (block-game style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
     const int kRemove = L.SmallButton("Remove##bb");
     if (!DrawRowsOkayUI(bb, "##okayui_blockbuilder", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35004,13 +34756,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SliderInt("Attack Button##fh", &fh->attackButton, 0, 2)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
             if (ImGui::Checkbox("Swing while held##fh", &fh->holdToSwing)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep swinging while the button is held (Minecraft mining).");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep swinging while the button is held (hold to keep mining).");
             const char* sides[] = {"Right arm", "Left arm"};
             int si = fh->showLeftArm ? 1 : 0;
             if (ImGui::Combo("Arm side##fh", &si, sides, 2)) { fh->showLeftArm = (si == 1); ed.dirty = true; }
             oked::FieldTip("Arm side##fh");
             if (ImGui::Checkbox("Follow camera look##fh", &fh->followPitch)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The arm tilts up/down with your view (Minecraft-style).");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The arm tilts up/down with your view.");
             if (ImGui::Checkbox("Bobbing##fh", &fh->bobbing)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small up-and-down bob on the viewmodel arm. It does not roll, and it does not move the shared body.");
             if (ImGui::Checkbox("Steady arm (ignore lean/crouch/prone)##fh", &fh->steadyArm)) ed.dirty = true;
@@ -37863,7 +37615,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Crosshair##bb", &bb->showCrosshair)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an aim reticle at screen center on Play (if the scene has none).");
             if (ImGui::Checkbox("Place in mid-air##bb", &bb->placeInAir)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off (Minecraft-style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off (block-game style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
             if (ImGui::SmallButton("Remove##bb")) toRemove = bb;
         }
     }
@@ -38460,7 +38212,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ui = dynamic_cast<InventoryUI*>(curComp)) {
-        if (CompHeader("Inventory UI (Minecraft-style)", ui, &toRemove)) {
+        if (CompHeader("Inventory UI (hotbar + backpack)", ui, &toRemove)) {
             ImGui::TextDisabled("Hotbar + backpack drawn from a sibling/owner Inventory.");
             if (!ui->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add an Inventory component to show items.");
             if (ImGui::SliderInt("Hotbar Slots##iu", &ui->hotbarSlots, 1, 9)) ed.dirty = true;
@@ -38525,7 +38277,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("Background panel##iu", &ui->showPanel)) ed.dirty = true; ImGui::SameLine();
                 oked::FieldTip("Background panel##iu");
                 if (ImGui::Checkbox("Held item name##iu", &ui->showSelectedName)) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the selected item's name above the hotbar (Minecraft-style).");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the selected item's name above the hotbar.");
                 if (ui->showPanel && ImGui::DragFloat("Panel Padding##iu", &ui->panelPad, 0.25f, 0.0f, 40.0f)) ed.dirty = true;
                 float pc[4] = {ui->panelColor.r, ui->panelColor.g, ui->panelColor.b, ui->panelColor.a};
                 if (ImGui::ColorEdit4("Panel Color##iu", pc)) { ui->panelColor = {pc[0], pc[1], pc[2], pc[3]}; ed.dirty = true; }
@@ -41805,7 +41557,7 @@ void DrawInspector(EditorState& ed) {
             };
             edited(ImGui::DragInt("Capacity##inv", &inv->capacity, 0.2f, 1, 999));
             edited(ImGui::DragInt("Max Stack##inv", &inv->maxStack, 0.2f, 0, 9999));
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this, like Minecraft's 64.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this (64 is a common size).");
             edited(ImGui::DragFloat("Weight Limit##inv", &inv->weightLimit, 0.5f, 0.0f, 100000.0f));
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carry limit from the item definitions' weights (0 = none). Scripts get on_encumbered(true/false).");
             if (inv->weightLimit > 0.0f) {
@@ -51973,68 +51725,52 @@ void DrawUIThemer(EditorState& ed) {
 // The frame-time overlay (View > Rendering > Frame-time overlay): FPS and frame time over the last frames, a graph, and where
 // the newest frames went (okay::editor::perf::Break over the profiler's own scopes; same data as the Profiler window, in a
 // small panel you can leave open). "Copy report" puts a plain-text version on the clipboard to send back.
+// OkayUI draws the window (no Dear ImGui version; docs/ui/own_ui_toolkit.md section 29); the numbers are worked out only while it shows.
 void DrawPerfOverlay(EditorState& ed) {
     namespace perf = okay::editor::perf;
     okay::Profiler& P = okay::Prof();
-    ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->WorkPos.x + ImGui::GetMainViewport()->WorkSize.x - 12.0f,
-                                   ImGui::GetMainViewport()->WorkPos.y + 36.0f), ImGuiCond_FirstUseEver, ImVec2(1.0f, 0.0f));
-    ImGui::SetNextWindowBgAlpha(0.88f);
-    const bool open = ImGui::Begin("Frame time###PerfOverlay", &g_showPerfOverlay,
-                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
-    if (!g_showPerfOverlay) SaveSettings();   // closed with its X
-    if (!open) { ImGui::End(); return; }
-    const int n = P.Count();
-    const int kStatFrames = 120, kBreakFrames = 30;
-    static std::vector<double> ms; static std::vector<float> plot;
-    ms.clear(); plot.clear();
-    for (int i = std::max(0, n - kStatFrames); i < n; ++i) { ms.push_back(P.FrameAt(i).total); plot.push_back((float)P.FrameAt(i).total); }
-    const perf::HistoryStats st = perf::Stats(ms);
-    // Average of the newest frames, section by section (one frame jumps around too much to read).
+    const bool wasOpen = g_showPerfOverlay;
+    perf::HistoryStats st{};
     perf::Breakdown avg;
     int bn = 0;
-    for (int i = std::max(0, n - kBreakFrames); i < n; ++i) {
-        const perf::Breakdown b = perf::Break(P.FrameAt(i));
-        for (int k = 0; k < (int)perf::Section::Count; ++k) avg.ms[k] += b.ms[k];
-        avg.total += b.total; ++bn;
-    }
-    if (bn > 0) { for (int k = 0; k < (int)perf::Section::Count; ++k) avg.ms[k] /= bn; avg.total /= bn; }
-    const double sleepMs = avg.ms[(int)perf::Section::Sleep];
-    const double workMs = avg.total - sleepMs;   // what the frame costs without the on-purpose sleep
-    ImVec4 col = st.fps >= 100.0 ? ImVec4(0.45f, 0.85f, 0.55f, 1) : st.fps >= 60.0 ? ImVec4(0.95f, 0.80f, 0.35f, 1) : ImVec4(0.95f, 0.45f, 0.40f, 1);
-    ImGui::TextColored(col, "%.0f FPS", st.fps);
-    ImGui::SameLine(); ImGui::TextDisabled("%.2f ms avg   95%%: %.2f   worst: %.2f   1%% low: %.0f FPS", st.avgMs, st.p95Ms, st.worstMs, st.lowFps);
-    if (sleepMs > 0.05 && workMs > 0.0) ImGui::TextDisabled("Without the limiter's sleep: %.2f ms = %.0f FPS possible", workMs, 1000.0 / workMs);
-    if (!P.enabled || n < 2) ImGui::TextDisabled("Collecting frames ...");
-    if (!plot.empty()) {
-        const float top = (float)std::max(16.7, st.worstMs * 1.1);
-        char ov[48]; std::snprintf(ov, sizeof(ov), "last %d frames, top %.0f ms", (int)plot.size(), (double)top);
-        ImGui::PlotLines("##perfms", plot.data(), (int)plot.size(), 0, ov, 0.0f, top, ImVec2(360, 56));
-    }
-    ImGui::Separator();
-    ImGui::TextDisabled("Where the frame goes (average of the last %d frames)", bn);
-    int order[(int)perf::Section::Count];
-    for (int k = 0; k < (int)perf::Section::Count; ++k) order[k] = k;
-    std::sort(order, order + (int)perf::Section::Count, [&](int a, int b) { return avg.ms[a] > avg.ms[b]; });
-    for (int oi = 0; oi < (int)perf::Section::Count; ++oi) {
-        const int k = order[oi];
-        if (avg.ms[k] < 0.005 && k != (int)perf::Section::Viewport3D) continue;
-        const float share = avg.total > 0.0 ? (float)(avg.ms[k] / avg.total) : 0.0f;
-        char lb[40]; std::snprintf(lb, sizeof(lb), "%.2f ms  %.0f%%", avg.ms[k], (double)share * 100.0);
-        ImGui::ProgressBar(share, ImVec2(150, 0), lb);
-        ImGui::SameLine(); ImGui::TextUnformatted(perf::SectionName((perf::Section)k));
-    }
-    ImGui::Separator();
-    ImGui::TextDisabled("Renderer: %s", okay::FrameOverlay::RendererName().c_str());
-    ImGui::TextDisabled("Scene view %dx%d, scale %.2f%s", g_lastSceneW, g_lastSceneH, (double)perf::EffectiveScale(g_renderScale, g_perfMode), g_perfMode ? ", performance mode" : "");
-    if (ImGui::Button("Copy report")) {
+    okaypanels::PerfOverlayModel model;
+    okaypanels::PerfOverlayIntent in;
+    oked::DrawPerfOverlayOkayUI(&g_showPerfOverlay, model, [&](okaypanels::PerfOverlayModel& m) {
+        const int n = P.Count();
+        const int kStatFrames = 120, kBreakFrames = 30;
+        static std::vector<double> ms;
+        ms.clear();
+        for (int i = std::max(0, n - kStatFrames); i < n; ++i) { ms.push_back(P.FrameAt(i).total); m.plot.push_back((float)P.FrameAt(i).total); }
+        st = perf::Stats(ms);
+        // Average of the newest frames, section by section (one frame jumps around too much to read).
+        for (int i = std::max(0, n - kBreakFrames); i < n; ++i) {
+            const perf::Breakdown b = perf::Break(P.FrameAt(i));
+            for (int k = 0; k < (int)perf::Section::Count; ++k) avg.ms[k] += b.ms[k];
+            avg.total += b.total; ++bn;
+        }
+        if (bn > 0) { for (int k = 0; k < (int)perf::Section::Count; ++k) avg.ms[k] /= bn; avg.total /= bn; }
+        m.fps = st.fps; m.avgMs = st.avgMs; m.p95Ms = st.p95Ms; m.worstMs = st.worstMs; m.lowFps = st.lowFps;
+        m.sleepMs = avg.ms[(int)perf::Section::Sleep];
+        m.workMs = avg.total - m.sleepMs;   // what the frame costs without the on-purpose sleep
+        m.collecting = !P.enabled || n < 2;
+        m.breakFrames = bn;
+        std::vector<std::string> names;
+        std::vector<double> secMs;
+        for (int k = 0; k < (int)perf::Section::Count; ++k) { names.push_back(perf::SectionName((perf::Section)k)); secMs.push_back(avg.ms[k]); }
+        m.sections = okaypanels::PerfSections(names, secMs, avg.total, (int)perf::Section::Viewport3D);
+        m.renderer = okay::FrameOverlay::RendererName();
+        m.sceneW = g_lastSceneW; m.sceneH = g_lastSceneH;
+        m.scale = perf::EffectiveScale(g_renderScale, g_perfMode);
+        m.perfMode = g_perfMode;
+    }, in);
+    if (wasOpen && !g_showPerfOverlay) SaveSettings();   // closed with its X
+    if (in.copyReport) {
         const std::string rep = perf::Report(st, bn > 0 ? avg : perf::Break(P.Displayed()), okay::FrameOverlay::RendererName().c_str(), ed.isPlaying(),
                                               g_lastSceneW, g_lastSceneH, perf::EffectiveScale(g_renderScale, g_perfMode), g_perfMode, g_fpsCapEditor, g_idleThrottle);
         ImGui::SetClipboardText(rep.c_str());
         ConsoleLog("Frame-time report copied to the clipboard.");
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Open Profiler")) g_showProfiler = true;
-    ImGui::End();
+    if (in.openProfiler) g_showProfiler = true;
 }
 
 // Advanced CPU/GPU profiler. A frame/CPU/GPU timeline you can pause and
@@ -53841,7 +53577,7 @@ static bool StartSplashLateStep() {
     return false;
 }
 // Drawn over the main loop's frame, just before it is presented.
-static void DrawStartSplashOverlay(SDL_Renderer* renderer) {
+static void DrawStartSplashOverlay(okay::platform::Painter* painter) {
     EditorStartSplash& s = StartSplash();
     if (s.finish.Done()) return;
     const bool hold = StartSplashLateStep();
@@ -53850,8 +53586,9 @@ static void DrawStartSplashOverlay(SDL_Renderer* renderer) {
     okay::SplashProgress st = StartSplashProgress();
     st.opacity = op;
     st.present = false;
-    int sw = 1280, sh = 800; okay::pb::OutputSize(renderer, &sw, &sh);
-    okay::DrawSplashStyled(renderer, sw, sh, s.style, &st);
+    if (!painter) return;
+    int sw = 1280, sh = 800; painter->OutputSize(&sw, &sh);
+    okay::DrawSplashStyled(painter, sw, sh, s.style, &st);
 }
 
 int RunVsGraphShot(int argc, char** argv);
@@ -53926,7 +53663,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    SDL_SetMainReady(); // we manage the entry point (SDL_MAIN_HANDLED)
+    // (SDL_MAIN_HANDLED: the sdl2 backend's Init calls SDL_SetMainReady before SDL_Init, so the app does not.)
     // Windows 11 / high-DPI: declare the process per-monitor-DPI-aware BEFORE init so
     // Windows renders the window at native resolution (crisp) instead of bitmap-
     // stretching a 96-DPI surface (the blurry look on 125%/150% scaled displays).
@@ -53970,6 +53707,7 @@ int main(int argc, char** argv) {
     okay::platform::WindowDesc mainDesc;
     mainDesc.title = "OkayEngine"; mainDesc.width = 1280; mainDesc.height = 800;
     mainDesc.resizable = true; mainDesc.highDpi = true; mainDesc.hidden = true;
+    mainDesc.opengl = okay::pb::OwnWindowsWantGL(sdlSeam);   // own backend: a GL pixel format for the OpenGL painter (sdl2: unchanged)
     // The seam's window (it owns the window and destroys it); the SDL_Window* inside is what the ImGui backends and SDL_Renderer take.
     std::unique_ptr<okay::platform::Window> winSeam = sdlSeam->MakeWindow(mainDesc);
     if (!winSeam) { std::cerr << "CreateWindow failed: " << sdlSeam->LastError() << "\n"; return 1; }
@@ -53985,14 +53723,12 @@ int main(int argc, char** argv) {
     if (const char* rd = std::getenv("OKAY_RENDER_DRIVER")) SDL_SetHint(SDL_HINT_RENDER_DRIVER, rd);
     else SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d11");
 #endif
-#ifdef OKAY_HAVE_OKAYUI
-    okay::pb::SetOwnPainterFactory([](okay::platform::Window& w, const okay::platform::PainterDesc& d) { return OkayUI::soft::CreateWindowPainter(w, d); });   // the software painter, for own-backend windows
-#endif
+    okay::pb::SetOwnPainterFactory(okay::pb::MakeOwnPainter);   // own-backend windows: the OpenGL painter, else the software one (shared/OwnPainter.hpp)
     // An accelerated renderer (the driver the hint chose), else one with the default driver, else any (software). The painter owns it.
     SDL_Renderer* renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true);
     if (!renderer) { SDL_SetHint(SDL_HINT_RENDER_DRIVER, ""); renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true); }
     if (!renderer) renderer = okay::pb::CreateRenderer(*winSeam);
-    if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
+    if (!renderer) { std::cerr << "CreateRenderer failed: " << sdlSeam->LastError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
     ResolveAutoRendering();   // VSync and 3D anti-aliasing: Auto picks for this PC (re-run after the saved settings load)
     // Load the project's settings early (<project>/project.okayproj) so the loading screen can show
@@ -54038,9 +53774,9 @@ int main(int argc, char** argv) {
         ImVec4 acc = AccentCol(1.0f);
         if (g_project.splashAccentOverride) { st.ar = g_project.splashAccent[0]; st.ag = g_project.splashAccent[1]; st.ab = g_project.splashAccent[2]; }
         else { st.ar = acc.x; st.ag = acc.y; st.ab = acc.z; }
-        auto C = [](const float* c) -> SDL_Color {
+        auto C = [](const float* c) -> okay::ui2d::RGBA {
             auto u = [](float v){ return (Uint8)((!(v > 0) ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };   // nan counts as 0 (a nan cast is undefined)
-            return SDL_Color{u(c[0]), u(c[1]), u(c[2]), 255}; };
+            return okay::ui2d::RGBA{u(c[0]), u(c[1]), u(c[2]), 255}; };
         st.bgTop = C(g_project.splashBgTop); st.bgBottom = C(g_project.splashBgBot);
         st.logo = g_editorSplashLogo; st.showProgress = g_project.splashShowBar;
         return st;
@@ -54277,7 +54013,7 @@ int main(int argc, char** argv) {
     if (g_multiWindow) {
         if (ViewportsSupported()) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
         else {
-            const char* drv = sdlSeam->Kind() == okay::platform::BackendKind::Sdl2 ? SDL_GetCurrentVideoDriver() : "own";
+            const char* drv = sdlSeam->Name();   // the platform backend ("sdl2" or "own")
             const std::string msg = std::string("Multi-window panels are off: the video driver '") + (drv ? drv : "?") +
                                     "' cannot open extra windows here, so panels stay inside the editor window.";
             std::printf("[okay] %s\n", msg.c_str());
@@ -54592,8 +54328,8 @@ int main(int argc, char** argv) {
         {   // seconds since the last event of any kind (the idle throttle reads this; the first frame counts as just now)
             static Uint64 s_lastInput = okay::platform::PerfCounter();
             g_secSinceInput = (double)(okay::platform::PerfCounter() - s_lastInput) / (double)okay::platform::PerfFrequency();
-            SDL_PumpEvents();
-            if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT)) { s_lastInput = okay::platform::PerfCounter(); g_secSinceInput = 0.0; }
+            sdlSeam->PumpEvents();
+            if (sdlSeam->HasPendingEvents()) { s_lastInput = okay::platform::PerfCounter(); g_secSinceInput = 0.0; }
         }
         okay::Prof().Begin("Editor.Events");   // reading the window system's events (closed after the loop; nothing leaves it early)
         okay::platform::Event e;
@@ -54906,9 +54642,9 @@ int main(int argc, char** argv) {
                     s_gameVMouse.y += (float)dyp;
                 }
                 unsigned mask = 0;
-                if (rmb & SDL_BUTTON(SDL_BUTTON_LEFT))   mask |= 1u << 0;
-                if (rmb & SDL_BUTTON(SDL_BUTTON_RIGHT))  mask |= 1u << 1;
-                if (rmb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
+                if (rmb & okay::platform::MouseMask(okay::platform::MouseLeft))   mask |= 1u << 0;
+                if (rmb & okay::platform::MouseMask(okay::platform::MouseRight))  mask |= 1u << 1;
+                if (rmb & okay::platform::MouseMask(okay::platform::MouseMiddle)) mask |= 1u << 2;
                 Input::FeedMouse(s_gameVMouse, mask);
             } else {
                 if (s_playLookLocked) {
@@ -55040,7 +54776,7 @@ int main(int argc, char** argv) {
                 // No field (ImGui's or OkayUI's) is typing: the held keys still go to OkayUI, so a hosted panel sees Ctrl/Shift on a
                 // click and its own keys (the Hierarchy's arrows, F2, Ctrl+A act only while its window has the focus).
                 const bool held = OkayUIInputOn() && !keys && !io.WantTextInput;
-                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys || held);
+                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & okay::platform::MouseMask(okay::platform::MouseRight)) != 0, blocked, keys || held);
                 if (OkayUIInputOn()) {
                     uin.blocked = blocked; uin.mouseDown = h.mouseDown; uin.rightDown = h.rightDown; uin.wheel = h.wheel;   // (mouseDown also counts a click that came and went within one frame)
                     if (keys) uin = h;
@@ -55080,14 +54816,14 @@ int main(int argc, char** argv) {
                 static bool s_monitors = false;
                 if (!s_monitors && window) {
                     s_monitors = true;
-                    okay::DisplaySettings::SetMonitors(okay::sdldisplay::ListMonitors());
+                    okay::DisplaySettings::SetMonitors(okay::platformdisplay::ListMonitors(sdlSeam));
                 }
                 okay::DisplaySettings::TickTrial(dt);
                 static int s_dispGen = 0;
                 const int gen = okay::DisplaySettings::Generation();
                 if (gen != s_dispGen) {
                     s_dispGen = gen;
-                    if (window) okay::sdldisplay::Apply(window, okay::DisplaySettings::CurrentApply());
+                    if (window) okay::platformdisplay::Apply(winSeam.get(), okay::DisplaySettings::CurrentApply());
                     g_vsync = okay::DisplaySettings::VSync();
                     if (renderer) okay::pb::SetVSync(renderer, g_vsync);
                     okay::DisplaySettings::ApplyQuality();
@@ -55973,16 +55709,12 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.MaterialEditor"); DrawMaterialEditor(ed); }
         { OKAY_PROFILE("UI.GameView"); if (g_showGame)      DrawGameView(ed); }
         { OKAY_PROFILE("UI.Profiler"); if (g_showProfiler)  DrawProfiler(ed); }
-        if (g_showTimers) {
+        if (g_showTimers) {   // OkayUI draws the window (no Dear ImGui version; docs/ui/own_ui_toolkit.md section 30)
             if (std::getenv("OKAY_UI_TIMERS")) {
                 ImGui::SetNextWindowPos(ImVec2(280, 80), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(ImVec2(720, 420), ImGuiCond_Always);
+                ImGui::SetWindowSize("Timers", ImVec2(720, 420), ImGuiCond_Always);   // (the host sets the first-use size itself, so by name)
             }
-            if (ImGui::Begin("Timers", &g_showTimers)) {
-                const std::string text = okay::editor::TimerDebugText(ed.scene());
-                ImGui::TextUnformatted(text.c_str());
-            }
-            ImGui::End();
+            DrawTimersOkayUI(&g_showTimers, [&] { return okay::editor::TimerDebugText(ed.scene()); });
         }
         { OKAY_PROFILE("UI.PerfOverlay"); if (g_showPerfOverlay) DrawPerfOverlay(ed); }
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }
@@ -55991,7 +55723,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.Console"); if (g_showConsole)   DrawConsole(); }
         { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
         { OKAY_PROFILE("UI.AudioMixer"); if (g_showAudioMixer) DrawAudioMixer(); }
-        okay::editor::DrawInputDebugger(&g_showInputDebug, ed.isPlaying());
+        okay::editor::DrawInputDebugger(&g_showInputDebug, ed.isPlaying(), [](const std::string& t) { ImGui::SetClipboardText(t.c_str()); });
         okay::editor::DrawInputActionsWindow(&g_showInputActions, ed.projectDir());
         { OKAY_PROFILE("UI.AssetManager"); if (g_showAssetManager) DrawAssetManager(ed); }
         { OKAY_PROFILE("UI.Plugins"); TickPlugins(ed); DrawPluginManager(ed); }
@@ -56212,7 +55944,7 @@ int main(int argc, char** argv) {
         for (const std::string& shot : testHooks.TakeShots())
             if (!okay::testhooks::SavePicture(*okay::pb::For(renderer), shot)) std::fprintf(stderr, "[test-hook] could not save %s\n", shot.c_str());
 #endif
-        DrawStartSplashOverlay(renderer);   // the loading screen over the first frames, then its fade (after the pictures above: they show the editor)
+        DrawStartSplashOverlay(okay::pb::For(renderer));   // the loading screen over the first frames, then its fade (after the pictures above: they show the editor)
         { OKAY_PROFILE("Present"); okay::pb::Present(renderer); }
 
         // Multi-window panels: create/size/paint the extra OS windows (tabs

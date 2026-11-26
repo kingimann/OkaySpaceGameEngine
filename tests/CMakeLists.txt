@@ -112,6 +112,9 @@ if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
     # scripts/dev_index.py maintains dev/versions.json, the list of test builds (the dev channel; docs/release/release_channels.md "Test builds").
     add_test(NAME dev_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/dev_index.py --self-test)
+    # SDL use may only go down: fails and lists the words when a file uses more SDL than tests/data/sdl_ratchet.json
+    # (docs/platform/platform_layer.md). Reads the working tree, so it sees an uncommitted new SDL call too.
+    add_test(NAME sdl_ratchet COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/sdl_inventory.py --ratchet)
     # scripts/main_position.sh: a build's place on main (mainCount in both lists, OKAY_MAIN_COUNT in the launcher), on a throw-away git repository.
     find_program(OKAY_GIT_FOR_TESTS git)
     if(OKAY_GIT_FOR_TESTS AND NOT WIN32)
@@ -4031,6 +4034,15 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
         set_tests_properties(platform_window_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     endforeach()
 
+    # Displays through the seam (shared/PlatformDisplays.cpp, which replaced shared/SdlDisplays.cpp): pure checks, then the own
+    # X11 RandR list against the sdl2 backend on the same Xvfb server.
+    add_executable(test_platform_displays test_platform_displays.cpp ${CMAKE_SOURCE_DIR}/shared/PlatformDisplays.cpp)
+    target_link_libraries(test_platform_displays PRIVATE okay::engine)
+    target_include_directories(test_platform_displays PRIVATE ${CMAKE_SOURCE_DIR}/engine/src ${CMAKE_SOURCE_DIR}/shared)
+    add_test(NAME platform_displays COMMAND test_platform_displays)
+    add_test(NAME platform_displays_xvfb COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_displays> xvfb)
+    set_tests_properties(platform_displays_xvfb PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
     # Ending through std::exit while globals still own windows (the editor's g_glWin): the backends are destroyed first, the
     # windows must then let go without calling them. Must end with 0 (the editor crashed with 139 on OKAY_UI_QUIT runs).
     add_executable(test_platform_exit test_platform_exit.cpp)
@@ -4767,20 +4779,11 @@ foreach(_f MDC HMP CSM)   # -DOKAY_OWN_<FMT>=ON: the test then requires the own 
 endforeach()
 add_test(NAME own_dispatch_e COMMAND test_own_dispatch_e WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-# WAV playback seam (okay/Audio/WavPlayback.hpp, shared/WavPlayback.hpp): own path, error paths, and with SDL2 the launcher's seam.
+# WAV playback seam (okay/Audio/WavPlayback.hpp, shared/WavPlayback.hpp): own path, error paths and the launcher's seam (no SDL).
 # check_wav_seam_wiring fails if SDL_LoadWAV or the deleted OKAY_OWN_WAV switch comes back anywhere in shipped code.
 add_executable(test_wav_playback test_wav_playback.cpp)
 target_link_libraries(test_wav_playback PRIVATE okay::engine)
-find_package(SDL2 QUIET)
-if(SDL2_FOUND)
-    target_compile_definitions(test_wav_playback PRIVATE OKAY_TEST_HAVE_SDL)
-    target_include_directories(test_wav_playback PRIVATE ${SDL2_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/shared)
-    if(TARGET SDL2::SDL2)
-        target_link_libraries(test_wav_playback PRIVATE SDL2::SDL2)
-    else()
-        target_link_libraries(test_wav_playback PRIVATE ${SDL2_LIBRARIES})
-    endif()
-endif()
+target_include_directories(test_wav_playback PRIVATE ${PROJECT_SOURCE_DIR}/shared)
 add_test(NAME wav_playback COMMAND test_wav_playback WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_test(NAME wav_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_wav_seam_wiring.cmake)
 # HTTP seam (okay/Platform/NativeFetch.hpp): no shipped program starts the external curl program; WinHTTP on Windows,
@@ -5695,12 +5698,26 @@ add_test(NAME launcher_friends COMMAND test_launcher_friends)
 set_tests_properties(launcher_friends PROPERTIES TIMEOUT 60)
 
 # Browser (page engine, engine/include/okay/Browser/): the HTML reader's trees, the CSS cascade, layout positions and line
-# breaks, addresses and a tab's navigation, hostile input, step 2's game packs and launch rules (browser_game), and round 2's
+# breaks, addresses and a tab's navigation, hostile input, round 3's tables / gradients / margins / counters (browser_layout3),
+# WOFF fonts (browser_webfont) and browser plugins (browser_plugins), step 2's game packs and launch rules (browser_game), and round 2's
 # page JavaScript (browser_script: the DOM binding, events, timers, budget). They link only okay_browser (standard library
 # and okay_js).
-foreach(_bt browser_html browser_css browser_layout browser_layout2 browser_url browser_hostile browser_game browser_profile browser_forms browser_script)
+foreach(_bt browser_html browser_css browser_layout browser_layout2 browser_layout3 browser_style3 browser_webfont browser_plugins browser_url browser_hostile browser_game browser_profile browser_forms browser_script)
     add_executable(test_${_bt} test_${_bt}.cpp)
     target_include_directories(test_${_bt} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/launcher)   # launcher/BrowserPage.hpp: the link rule
     target_link_libraries(test_${_bt} PRIVATE okay::browser)
     add_test(NAME ${_bt} COMMAND test_${_bt})
 endforeach()
+# Brotli (RFC 7932, engine/include/okay/Core/Brotli.hpp): the decoder's tables against the RFC, the RFC's examples, hand-built
+# streams (tests/brotli_writer.hpp) and hostile input. browser_webfont also builds WOFF2 files from assets/fonts/DejaVuSans.ttf.
+add_executable(test_brotli test_brotli.cpp)
+target_include_directories(test_brotli PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_link_libraries(test_brotli PRIVATE okay::brotli)
+add_test(NAME brotli COMMAND test_brotli)
+target_compile_definitions(test_browser_webfont PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+# Round 3: browser plugins also go through the shared plugin registry (editor/PluginRegistry.hpp; shared/BrowserPluginCommands.hpp).
+target_sources(test_browser_plugins PRIVATE ${CMAKE_SOURCE_DIR}/editor/PluginRegistry.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptIde.cpp)
+target_include_directories(test_browser_plugins PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
+if(TARGET Threads::Threads)
+    target_link_libraries(test_browser_plugins PRIVATE Threads::Threads)
+endif()

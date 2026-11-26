@@ -16,14 +16,18 @@
 // Properties read: display (block, inline, inline-block, flow-root, list-item, flex, inline-flex, grid, inline-grid, table parts,
 // contents, none), float, clear, position, top / right / bottom / left, z-index, overflow / overflow-x / overflow-y, box-sizing,
 // margin and padding (and their sides), border (and every part of it), border-radius, box-shadow, color, background (colour,
-// url() image, the first colour of a gradient), background-color / -image / -size / -repeat / -position, opacity, visibility,
+// url() image, a linear / radial / repeating gradient), background-color / -image / -size / -repeat / -position, opacity, visibility,
 // font-size, font-weight, font-style, font-family, font, text-align, text-indent, text-transform, line-height, width / height,
 // min- and max- width / height, text-decoration, white-space, list-style(-type), vertical-align (middle, top, bottom for inline
 // boxes), flex-direction, flex-wrap, flex-flow, flex, flex-grow / -shrink / -basis, order, justify-content, align-items,
 // align-self, align-content, gap / row-gap / column-gap, grid-template-columns / -rows (px, %, fr, auto, min-content,
 // max-content, minmax(), repeat() with a count or auto-fill / auto-fit), grid-template-areas, grid-template, grid-auto-rows /
 // -columns, grid-auto-flow, grid-column / grid-row (-start, -end; numbers, negative numbers, span n, area names), grid-area,
-// justify-items, justify-self, place-items, place-self, place-content. Everything else is read and ignored.
+// justify-items, justify-self, place-items, place-self, place-content; round 3: border-spacing, border-collapse, table-layout,
+// caption-side, text-decoration-line / -style / -color, text-overflow, object-fit, object-position, transform, transform-origin,
+// counter-reset / -increment / -set and counter() / counters() in content, the HTML presentational attributes of tables and cells,
+// and :has() (Selectors 4); CSS Nesting 1, the CSS-wide keywords (inherit, initial, unset, revert), logical properties,
+// letter-spacing, word-spacing, text-shadow, font-variant, outline, aspect-ratio, filter, ::first-letter, ::marker. Everything else (transition, animation ...) is read and ignored.
 // Standard library only.
 #include "okay/Browser/Html.hpp"
 
@@ -60,13 +64,20 @@ struct Length {
 
 enum class Display {
     Inline, Block, ListItem, None, Table, TableRow, TableCell, TableSection,
-    InlineBlock, FlowRoot, Flex, InlineFlex, Grid, InlineGrid
+    InlineBlock, FlowRoot, Flex, InlineFlex, Grid, InlineGrid,
+    TableCaption, TableHeaderGroup, TableFooterGroup   ///< a caption; thead / tfoot (moved to the top / bottom of the table)
 };
+inline bool IsTableSection(Display d) { return d == Display::TableSection || d == Display::TableHeaderGroup || d == Display::TableFooterGroup; }
 /// Laid out inside a line like a word (inline, and the inline-* boxes that are atomic in a line).
 inline bool IsInlineLevel(Display d) { return d == Display::Inline || d == Display::InlineBlock || d == Display::InlineFlex || d == Display::InlineGrid; }
 enum class TextAlign { Left, Right, Center, Justify };
 enum class WhiteSpace { Normal, Pre, NoWrap, PreWrap, PreLine };
-enum class ListStyle { Disc, Circle, Square, Decimal, LowerAlpha, UpperAlpha, LowerRoman, UpperRoman, None };
+enum class ListStyle { Disc, Circle, Square, Decimal, LowerAlpha, UpperAlpha, LowerRoman, UpperRoman, None, DecimalLeadingZero, LowerGreek };
+/// A counter value written in a list style (CSS Counter Styles 3 / CSS 2.1 12.6.2): "4", "04", "d", "D", "iv", "IV", "δ"; a
+/// marker style (disc ...) gives the bullet character; none gives "".
+std::string CounterText(int value, ListStyle style);
+/// A list-style-type name ("lower-roman" ...): true and the style, false for a name we do not know.
+bool ListStyleFromName(const std::string& name, ListStyle& out);
 enum class Float { None, Left, Right };
 enum class Clear { None, Left, Right, Both };
 enum class Position { Static, Relative, Absolute, Fixed, Sticky };
@@ -100,6 +111,41 @@ struct GridLine {
     std::string name;   ///< an area or line name ("" = none)
 };
 
+/// A CSS gradient (CSS Images 3, section 3): linear-gradient(), radial-gradient() and their repeating- forms.
+struct GradientStop {
+    Color color;
+    Length pos;   ///< Auto: no position given (spread evenly between its neighbours); Px or Percent of the gradient line
+};
+struct Gradient {
+    bool radial = false, repeating = false;
+    // linear: the angle in degrees (0 = to top, 90 = to right, 180 = to bottom); or toward a corner
+    float angle = 180.0f;
+    int cornerX = 0, cornerY = 0;   ///< "to left top" ...: -1 / +1 per axis (0, 0: use `angle`)
+    // radial
+    bool circle = false;
+    enum Extent { ClosestSide, FarthestSide, ClosestCorner, FarthestCorner, Explicit } extent = FarthestCorner;
+    Length rx, ry;                  ///< Explicit sizes
+    Length posX, posY;              ///< the centre ("at ..."; 50% 50% by default)
+    std::vector<GradientStop> stops;
+};
+/// Read a gradient function ("linear-gradient(to right, red, blue 80%)"); false for anything else or a broken one.
+bool ParseGradient(const std::string& text, float em, Gradient& out);
+/// The colour of `g` drawn in a w x h box at (px, py) (box coordinates), premultiplied interpolation in sRGB.
+Color GradientColorAt(const Gradient& g, float w, float h, float px, float py);
+
+/// A 2D affine transform (CSS Transforms 1): x' = a x + c y + e, y' = b x + d y + f.
+struct Transform2D {
+    float a = 1, b = 0, c = 0, d = 1, e = 0, f = 0;
+    bool IsIdentity() const { return a == 1 && b == 0 && c == 0 && d == 1 && e == 0 && f == 0; }
+    Transform2D Then(const Transform2D& o) const;   ///< this first, then o
+};
+/// Read a transform list (translate(), translateX/Y(), scale(), scaleX/Y(), rotate(), skew(), skewX/Y(), matrix(); % of a
+/// translate is of the box: `boxW` x `boxH`). False for none or anything broken.
+bool ParseTransform(const std::string& text, float em, float boxW, float boxH, Transform2D& out);
+
+enum class DecoStyle { Solid, Double, Dotted, Dashed, Wavy };
+enum class ObjectFit { Fill, Contain, Cover, None, ScaleDown };
+
 struct BoxShadow {
     float x = 0, y = 0, blur = 0, spread = 0;
     Color color{0, 0, 0, 80};
@@ -113,17 +159,20 @@ struct ComputedStyle {
     Display display = Display::Inline;
     Length margin[4], padding[4];   ///< top, right, bottom, left
     float border[4] = {0, 0, 0, 0};   ///< used widths (0 when the side's style is none)
+    std::uint8_t borderLine[4] = {0, 0, 0, 0};   ///< the line of each side: 0 none, 1 solid, 2 dashed, 3 dotted, 4 double
     Color borderColor[4];
     float radius[4] = {0, 0, 0, 0};   ///< border-radius: top-left, top-right, bottom-right, bottom-left (px)
     Color color;                      ///< black
     Color background{0, 0, 0, 0};     ///< transparent
     std::string backgroundImage;      ///< url() as written ("" = none)
+    std::shared_ptr<const Gradient> bgGradient;   ///< a gradient background image (null = none)
     enum BgSize { BgAuto, BgCover, BgContain, BgExplicit } bgSize = BgAuto;
     Length bgW, bgH;                  ///< BgExplicit
     bool bgRepeatX = true, bgRepeatY = true;
     Length bgPosX, bgPosY;            ///< background-position (default 0% 0%)
     std::vector<BoxShadow> shadows;
     float opacity = 1.0f;
+    bool maskUrl = false;             ///< mask-image (or -webkit-, or the mask shorthand) names an image file: not loaded, see Layout
     bool visible = true;              ///< visibility (inherited)
     float fontSize = 16.0f;
     bool bold = false, italic = false, mono = false;
@@ -137,10 +186,41 @@ struct ComputedStyle {
     Length width, maxWidth, height, minWidth, minHeight, maxHeight;
     bool minWidthAuto = true, minHeightAuto = true;   ///< min-width / min-height: auto (flex items use their content)
     bool borderBox = false;           ///< box-sizing: border-box
-    bool underline = false, strike = false;
+    bool smallCaps = false;           ///< font-variant: small-caps (inherited)
+    float letterSpacing = 0.0f, wordSpacing = 0.0f;   ///< extra px after every character / every space (inherited)
+    std::vector<BoxShadow> textShadows;               ///< text-shadow (inherited; spread and inset unused)
+    float outlineWidth = 0.0f, outlineOffset = 0.0f;  ///< outline (drawn outside the border box, takes no room)
+    Color outlineColor{0, 0, 0, 0};
+    std::uint8_t outlineLine = 1;     ///< as borderLine
+    float aspectRatio = 0.0f;         ///< aspect-ratio width / height (0: auto)
+    float filterGray = 0.0f, filterBright = 1.0f, filterBlur = 0.0f;   ///< filter: grayscale(), brightness(), blur() (blur is not drawn)
+    bool underline = false, strike = false, overline = false;
+    DecoStyle decoStyle = DecoStyle::Solid;
+    Color decoColor{0, 0, 0, 0};      ///< text-decoration-color (alpha 0: the text colour)
+    bool ellipsis = false;            ///< text-overflow: ellipsis
+    ObjectFit objectFit = ObjectFit::Fill;
+    Length objectPosX, objectPosY;    ///< object-position (50% 50%)
+    std::string transform;            ///< the transform list as written ("" = none; read at layout, when the box size is known)
+    Length originX, originY;          ///< transform-origin (50% 50%)
+    // tables (CSS 2.1 chapter 17)
+    float borderSpacingH = 0.0f, borderSpacingV = 0.0f;   ///< border-spacing (inherited)
+    bool borderCollapse = false;      ///< border-collapse: collapse (inherited)
+    bool tableFixed = false;          ///< table-layout: fixed
+    bool captionBottom = false;       ///< caption-side: bottom (inherited)
+    // counters (CSS 2.1 12.4)
+    std::vector<std::pair<std::string, int>> counterReset, counterIncrement, counterSet;
     WhiteSpace whiteSpace = WhiteSpace::Normal;
     ListStyle listStyle = ListStyle::Disc;
     VAlign verticalAlign = VAlign::Baseline;
+    /// How far inline text is raised (+) or lowered (-) from its line's baseline, in px: vertical-align sub / super / <length> /
+    /// <percentage> of this inline element and of the inline elements around it added up (CSS 2.1 10.8.1). 0 in a block.
+    float baselineShift = 0.0f;
+    /// HTML 15.3.3 "align descendants" (<center>, align="center" / "right" / "left", text-align: -webkit-center ...): 0 none,
+    /// 1 centre, 2 right, 3 left. Inherited with text-align; any other text-align value clears it.
+    std::uint8_t legacyAlign = 0;
+    /// The parent's legacyAlign: a block box with a width narrower than its container (and no auto margins) is centred or
+    /// moved right in it, as old pages expect from <center><table width=85%>.
+    std::uint8_t alignedByParent = 0;
     // positioning (CSS 2.1 chapter 9, CSS Positioned Layout 3)
     Float floating = Float::None;
     Clear clear = Clear::None;
@@ -164,7 +244,8 @@ struct ComputedStyle {
     GridTrack gridAutoRows, gridAutoColumns;
     bool gridAutoFlowColumn = false, gridDense = false;
     GridLine gridColumnStart, gridColumnEnd, gridRowStart, gridRowEnd;
-    // generated content (::before / ::after)
+    // generated content (::before / ::after); counter() / counters() are kept as \x03name\x1fstyle\x04 and
+    // \x05name\x1fseparator\x1fstyle\x06 until the layout fills them in (the counters depend on the tree order)
     bool hasContent = false;
     std::string content;
     std::shared_ptr<const CustomProps> vars;
@@ -197,10 +278,11 @@ struct PseudoSel {
     enum Kind {
         FirstChild, LastChild, OnlyChild, NthChild, NthLastChild, FirstOfType, LastOfType, OnlyOfType, NthOfType, NthLastOfType,
         Root, Empty, Link, Visited, Hover, Focus, FocusWithin, Active, Checked, Disabled, Enabled, Required, Optional, Not, Is,
-        Never
+        Never, Has
     } kind = Never;
     int a = 0, b = 0;                         ///< An+B
-    std::vector<Selector> list;               ///< :not() / :is() / :where()
+    std::vector<Selector> list;               ///< :not() / :is() / :where(); :has(): relative selectors
+    std::vector<char> relative;               ///< :has(): each relative selector's leading combinator (' ', '>', '+', '~')
 };
 
 /// One compound selector: [type or *][#id][.class ...][attribute ...][:pseudo-class ...].
@@ -215,7 +297,7 @@ struct Selector {
     std::vector<Compound> parts;      ///< left to right
     std::vector<char> combinators;    ///< between parts: ' ' (descendant), '>' (child), '+' (next sibling), '~' (later sibling)
     int specificity = 0;              ///< a * 10000 + b * 100 + c (ids, classes / attributes / pseudo-classes, types)
-    int pseudoElement = 0;            ///< 0 = the element itself, 1 = ::before, 2 = ::after, 3 = another (never matches)
+    int pseudoElement = 0;            ///< 0 = the element itself, 1 = ::before, 2 = ::after, 3 = another (never matches), 4 = ::first-letter, 5 = ::marker
     bool dynamic = false;             ///< uses :hover / :focus / :active / :focus-within (the layout is redone when they change)
 };
 
@@ -280,6 +362,7 @@ struct StyleContext {
     const void* checkedUser = nullptr;
     MediaEnv media;
     float rootFontSize = 16.0f;
+    bool quirks = false;   ///< the document is in quirks mode (HtmlDocument::quirks): the quirks rules of the default sheet apply
 };
 
 /// Does `el` (an element) match `sel` (for its pseudo-element `pseudo`: 0 the element, 1 ::before, 2 ::after)?

@@ -20,19 +20,19 @@ Back to the [code index](../code_index.md). 52 headers, 518 names.
 - `EffectiveFogColor` function, line 82: ---- Fog ---------------------------------------------------------------------
 - `FogActive` function, line 87: True when the fog settings produce any fog at all.
 - `FogFactor` function, line 94: How much fog (0 = none .. 1 = solid) covers a point 'dist' from the eye, at
-- `TonemapACES` function, line 115: ---- Post-processing ---------------------------------------------------------
-- `TonemapFilmic` function, line 120: Filmic curve (Hable): a softer shoulder with more room for highlights.
-- `TonemapColor` function, line 128: Apply the scene's tonemap choice to a linear colour.
-- `ExposureScale` function, line 136: The exposure the frame is rendered with: the setting, boosted by a lightning flash.
-- `PostActive` function, line 141: Whether the GPU post chain has anything to do. With everything off / neutral
-- `TonemapFromName` function, line 150: ---- Names <-> values (scripting, presets, the editor) ---------------------------
-- `FogModeFromName` function, line 155
-- `WeatherPresetFromName` function, line 160
-- `WeatherPresetName` function, line 167
-- `PostSet` function, line 174: Set one post-processing value by name (the post_set builtin and
-- `ResetLook` function, line 205: Put the sky, fog, post and weather settings back to their defaults (the
-- `LookPresetNames` function, line 218: The look presets the editor's Lighting panel offers.
-- `ApplyLookPreset` function, line 227: Fill the settings with a ready-made look. Presets that need the sun at a
+- `TonemapACES` function, line 116: ---- Post-processing ---------------------------------------------------------
+- `TonemapFilmic` function, line 122: Filmic curve (Hable): a softer shoulder with more room for highlights. Source: J. Hable, "Uncharted 2: HDR Lighting"
+- `TonemapColor` function, line 130: Apply the scene's tonemap choice to a linear colour.
+- `ExposureScale` function, line 138: The exposure the frame is rendered with: the setting, boosted by a lightning flash.
+- `PostActive` function, line 143: Whether the GPU post chain has anything to do. With everything off / neutral
+- `TonemapFromName` function, line 152: ---- Names <-> values (scripting, presets, the editor) ---------------------------
+- `FogModeFromName` function, line 157
+- `WeatherPresetFromName` function, line 162
+- `WeatherPresetName` function, line 169
+- `PostSet` function, line 176: Set one post-processing value by name (the post_set builtin and
+- `ResetLook` function, line 207: Put the sky, fog, post and weather settings back to their defaults (the
+- `LookPresetNames` function, line 220: The look presets the editor's Lighting panel offers.
+- `ApplyLookPreset` function, line 229: Fill the settings with a ready-made look. Presets that need the sun at a
 
 ## `engine/include/okay/Render/CameraStack.hpp`
 
@@ -592,14 +592,14 @@ Back to the [code index](../code_index.md). 52 headers, 518 names.
 
 ## `engine/include/okay/Render/SsaoMath.hpp`
 
-- `ScreenRadius` function, line 74: The tap radius on screen, in uv units, for a pixel at normalised depth 'd'
-- `TapOffset` function, line 82: Offset (uv) of tap 'i' for screen radius 'sr'. 'aspect' = texelX / texelY, so
-- `TapOcclusion` function, line 92: Occlusion (0..1) one tap adds: 'd' is the pixel's depth, 'ds' the tap's, both
-- `AoAt` function, line 102: Ambient light left (1 = open, lower = occluded) at uv (u, v). 'depthAt(u, v)'
-- `Apply` function, line 116: The final multiply: colour *= Apply(ao, strength). Strength is capped at 1.
-- `Grid` struct, line 123: A w*h float image with clamp-to-edge bilinear sampling at texel centres, the
-- `Estimate` function, line 149: Step 2 on the CPU: AO for every texel of a depth image (normalised depth).
-- `Blur` function, line 160: Step 3 on the CPU: one gaussian pass along (dx, dy) = (1, 0) or (0, 1).
+- `ScreenRadius` function, line 80: The tap radius on screen, in uv units, for a pixel at normalised depth 'd'
+- `TapOffset` function, line 88: Offset (uv) of tap 'i' for screen radius 'sr'. 'aspect' = texelX / texelY, so
+- `TapOcclusion` function, line 98: Occlusion (0..1) one tap adds: 'd' is the pixel's depth, 'ds' the tap's, both
+- `AoAt` function, line 108: Ambient light left (1 = open, lower = occluded) at uv (u, v). 'depthAt(u, v)'
+- `Apply` function, line 122: The final multiply: colour *= Apply(ao, strength). Strength is capped at 1.
+- `Grid` struct, line 129: A w*h float image with clamp-to-edge bilinear sampling at texel centres, the
+- `Estimate` function, line 155: Step 2 on the CPU: AO for every texel of a depth image (normalised depth).
+- `Blur` function, line 166: Step 3 on the CPU: one gaussian pass along (dx, dy) = (1, 0) or (0, 1).
 
 ## `engine/include/okay/Render/SurfaceRaycast.hpp`
 

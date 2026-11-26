@@ -117,6 +117,8 @@ public:
     }
     unsigned long size() const { return size_; }
     unsigned long capacity() const { return cap_; }
+    // [vector.capacity] p8: a non-binding request to reduce capacity() to size(); kept as it is.
+    void shrink_to_fit() {}
     bool empty() const { return size_ == 0; }
     T *data() { return data_; }
     T *begin() { return data_; }

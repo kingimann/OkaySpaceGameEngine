@@ -2200,7 +2200,13 @@ private:
                 }
                 return Val{val, 0, 0};
             }
-            emitMov(s->reg, rhs.op, s->width, s->zext);
+            // (an int read from an int variable is a plain copy: the value already has the width;
+            // the optimizer takes only a full-width move for a copy. The result of x + y is not:
+            // it may need wrapping.)
+            const Type* rt = e.kids[1]->checked.get();
+            const bool sameInt = s->width == 4 && !s->zext && e.kids[1]->kind == Expr::Kind::Name && rt &&
+                                 rt->kind == Type::Kind::Int && !rt->unsign;
+            emitMov(s->reg, rhs.op, sameInt ? 8 : s->width, s->zext);
             return Val{Operand::vreg(s->reg), s->step, s->inner};
         }
         Addr a = lowerAddr(lhs);

@@ -375,7 +375,9 @@ private:
             const Token& n2 = toks_[idx + 2];
             return isP(n2, "~") || (n2.kind == Tok::Ident && n2.text == t.text);
         }
-        return n.kind == Tok::Punct && (n.text == "*" || n.text == "&" || n.text == "&&" || n.text == ")" || n.text == ">");
+        // (and in C++, before ',': an unnamed parameter of a class type, f(Handler h, Scoped, int p))
+        return n.kind == Tok::Punct && (n.text == "*" || n.text == "&" || n.text == "&&" || n.text == ")" || n.text == ">" ||
+                                        (n.text == "," && !cSourceFile(t.file)));
     }
     // A qualified type name at token idx: N::C or N::M::C naming a class, or N::T naming a typedef
     // declared while namespace N was open (typedef names are kept unqualified). end is set to the
@@ -3465,6 +3467,9 @@ private:
                     j += 2;
                 }
                 std::string cls = j < toks_.size() && isP(toks_[j], "*") ? classPrefix(q) : "";
+                if (cls.empty() && protoDepth_ > 0 && j < toks_.size() && isP(toks_[j], "*"))
+                    if (const Type* tp = findTypedef(q))  // bool Owner::*m with Owner a template parameter
+                        if (tp->kind == Type::Kind::Struct && tp->tag.find('\x02') != std::string::npos) cls = tp->tag;
                 if (!cls.empty()) {
                     i_ = j + 1;
                     prefix.push_back(Mod::Kind::Ptr);
@@ -4119,6 +4124,18 @@ private:
         else if (isP("{")) decl->init = parseInitializer();
         if (decl->init) decl->isStatic = true;
         else decl->isExtern = true;
+        if (decl->init && decl->init->kind != Expr::Kind::Brace && decl->type && decl->type->kind == Type::Kind::Struct &&
+            !decl->type->tag.empty() && classOf(decl->type->tag) && !classOf(decl->type->tag)->needCtor &&
+            !classOf(decl->type->tag)->needDtor && bodyDepth_ == 0) {
+            // static inline Vec3 listener = Vec3::Zero; (a class without constructors, from another
+            // object): copied when the program starts ([basic.start.dynamic]), as a namespace one is.
+            Pos gp{d.line, d.col, d.file};
+            std::vector<std::unique_ptr<Expr>> a;
+            a.push_back(eAddr(eName(q, gp), gp));
+            a.push_back(std::move(decl->init));
+            globalInit_.push_back(sExpr(eCall(eName("\x01" "cinit:" + decl->type->tag, gp), std::move(a), gp), gp));
+            decl->init.reset();
+        }
         if (decl->init && decl->type && (decl->type->kind == Type::Kind::Int || decl->type->kind == Type::Kind::Long ||
                                          decl->type->kind == Type::Kind::Short || decl->type->kind == Type::Kind::Char ||
                                          decl->type->kind == Type::Kind::Bool)) {
@@ -5814,8 +5831,13 @@ private:
                 }
             }
         }
+        // (also G g = e; for a class without constructors when e is no braced list: g = V::Zero
+        // copies another object when the program starts, [basic.start.dynamic])
+        const bool copyOfObject = gEnd + 2 < toks_.size() && isP(toks_[gEnd + 1], "=") && !isP(toks_[gEnd + 2], "{") &&
+                                  base && base->kind == Type::Kind::Struct && !base->tag.empty() && classOf(base->tag) &&
+                                  !classOf(base->tag)->params.empty() && bodyDepth_ == 0;
         if (!td && !ext && base && base->kind == Type::Kind::Struct && !base->tag.empty() && classOf(base->tag) &&
-            (classOf(base->tag)->needCtor || classOf(base->tag)->needDtor) && !atEnd() &&
+            (classOf(base->tag)->needCtor || classOf(base->tag)->needDtor || copyOfObject) && !atEnd() &&
             cur().kind == Tok::Ident && gEnd + 1 < toks_.size() &&
             (isP(toks_[gEnd + 1], ";") || (isP(toks_[gEnd + 1], "=") && gEnd + 2 < toks_.size() && !isP(toks_[gEnd + 2], "{")) ||
              (isP(toks_[gEnd + 1], "(") && gEnd + 2 < toks_.size() && !isP(toks_[gEnd + 2], ")") && !isTypeKw(toks_[gEnd + 2])) ||

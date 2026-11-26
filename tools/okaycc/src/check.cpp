@@ -719,7 +719,26 @@ private:
                 return r;
             }
             if (a.type && b.type && isIntish(*a.type) && isIntish(*b.type)) {
-                r.type = prim(Type::Kind::Int);
+                // The usual arithmetic conversions ([expr.cond] p7.3, [expr.arith.conv]): a long
+                // branch makes the result long (unsigned when that long is), else int, unsigned when
+                // an int branch is. (It was always int: c ? f() : 0L with a long f() lost its top half.)
+                const Type* at = a.type.get();
+                const Type* bt = b.type.get();
+                const bool al = at->kind == Type::Kind::Long, bl = bt->kind == Type::Kind::Long;
+                auto rt = prim(al || bl ? Type::Kind::Long : Type::Kind::Int);
+                if (al || bl) rt->unsign = (al && at->unsign) || (bl && bt->unsign);
+                else rt->unsign = (at->kind == Type::Kind::Int && at->unsign) || (bt->kind == Type::Kind::Int && bt->unsign);
+                if (rt->kind == Type::Kind::Long)
+                    for (int bi = 1; bi <= 2; ++bi) {
+                        const Type* t = bi == 1 ? at : bt;
+                        if (t->kind == Type::Kind::Long && t->unsign == rt->unsign) continue;
+                        auto cast = mkE(Expr::Kind::Cast, e);
+                        cast->ty = cloneType(*rt);
+                        cast->kids.push_back(std::move(e.kids[static_cast<std::size_t>(bi)]));
+                        cast->checked = cloneType(*rt);
+                        e.kids[static_cast<std::size_t>(bi)] = std::move(cast);
+                    }
+                r.type = std::move(rt);
                 return r;
             }
             if (a.type && b.type && (isIntish(*a.type) || isFp(*a.type)) && (isIntish(*b.type) || isFp(*b.type))) {
@@ -1885,6 +1904,20 @@ private:
         e.checked.reset();
     }
 
+    // The address of an lvalue that may be a conditional: c ? a : (d ? b : x) gives
+    // c ? &a : (d ? &b : &x), so a nested conditional is an lvalue too ([expr.cond] p4).
+    std::unique_ptr<Expr> condAddress(std::unique_ptr<Expr> x) {
+        if (x->kind != Expr::Kind::Cond || x->kids.size() != 3 || !x->kids[1] || !x->kids[2]) {
+            Expr& at = *x;
+            auto u = mkE(Expr::Kind::Unary, at);
+            u->text = "&";
+            u->kids.push_back(std::move(x));
+            return u;
+        }
+        x->kids[1] = condAddress(std::move(x->kids[1]));
+        x->kids[2] = condAddress(std::move(x->kids[2]));
+        return x;
+    }
     ET checkExpr(Expr& e) {
         if (!e.file.empty()) file_ = e.file;
         {
@@ -1900,13 +1933,12 @@ private:
             !e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Cond && e.kids[0]->kids.size() == 3) {
             // (c ? a : b) = v, ++(c ? a : b): with two lvalues of one type the conditional is an
             // lvalue (ISO/IEC 14882 [expr.cond]); it becomes *(c ? &a : &b).
-            Expr& cond = *e.kids[0];
-            auto lv = mkE(Expr::Kind::Cond, cond);
-            lv->kids.push_back(std::move(cond.kids[0]));
-            lv->kids.push_back(eUnary("&", std::move(cond.kids[1]), cond));
-            lv->kids.push_back(eUnary("&", std::move(cond.kids[2]), cond));
-            auto d = eUnary("*", std::move(lv), cond);
-            e.kids[0] = std::move(d);
+            Expr at = Expr();
+            at.line = e.kids[0]->line;
+            at.col = e.kids[0]->col;
+            at.file = e.kids[0]->file;
+            auto addr = condAddress(std::move(e.kids[0]));
+            e.kids[0] = eUnary("*", std::move(addr), at);
         }
         if (e.kind == Expr::Kind::Assign && e.text == "=" && e.kids.size() == 2 && e.kids[0] && e.kids[1] &&
             e.kids[1]->kind == Expr::Kind::Brace)

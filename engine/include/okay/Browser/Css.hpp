@@ -211,6 +211,9 @@ struct ComputedStyle {
     WhiteSpace whiteSpace = WhiteSpace::Normal;
     ListStyle listStyle = ListStyle::Disc;
     VAlign verticalAlign = VAlign::Baseline;
+    /// How far inline text is raised (+) or lowered (-) from its line's baseline, in px: vertical-align sub / super / <length> /
+    /// <percentage> of this inline element and of the inline elements around it added up (CSS 2.1 10.8.1). 0 in a block.
+    float baselineShift = 0.0f;
     // positioning (CSS 2.1 chapter 9, CSS Positioned Layout 3)
     Float floating = Float::None;
     Clear clear = Clear::None;

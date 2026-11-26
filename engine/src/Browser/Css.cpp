@@ -1291,6 +1291,7 @@ const StyleSheet& DefaultStyleSheet() {
         "u, ins { text-decoration: underline }\n"
         "s, strike, del { text-decoration: line-through }\n"
         "small, sub, sup { font-size: smaller }\n"
+        "sub { vertical-align: sub } sup { vertical-align: super }\n"
         "big { font-size: larger }\n"
         "center { text-align: center }\n"
         "hr { margin: 0.5em auto; border-width: 1px; border-style: inset; border-color: gray }\n"
@@ -2001,6 +2002,16 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
         if (v == "inherit") { s.verticalAlign = parent.verticalAlign; return; }
         s.verticalAlign = v == "middle" ? VAlign::Middle : v == "top" ? VAlign::Top : v == "bottom" ? VAlign::Bottom
                         : v == "text-top" ? VAlign::TextTop : v == "text-bottom" ? VAlign::TextBottom : VAlign::Baseline;
+        // sub / super / a length / a percentage of the line height move the baseline of the text inside (CSS 2.1 10.8.1). The
+        // parent's font has no subscript metrics here: a subscript goes down a fifth of the parent's font size, a superscript up
+        // a third (what common browsers draw when the font gives none).
+        s.baselineShift = parent.baselineShift;
+        if (v == "sub") s.baselineShift -= parent.fontSize * 0.2f;
+        else if (v == "super") s.baselineShift += parent.fontSize * (1.0f / 3.0f);
+        else if (!v.empty() && ((v[0] >= '0' && v[0] <= '9') || v[0] == '-' || v[0] == '.' || v[0] == '+')) {
+            Length l;
+            if (ParseLength(v, s.fontSize, true, l)) s.baselineShift += std::max(-1000.0f, std::min(1000.0f, l.Resolve(s.LineHeightPx())));
+        }
     } else if (p == "float") {
         s.floating = v == "left" || v == "inline-start" ? Float::Left : v == "right" || v == "inline-end" ? Float::Right : Float::None;
     } else if (p == "clear") {
@@ -2510,6 +2521,7 @@ ComputedStyle InheritedStyle(const ComputedStyle& parent) {
     s.borderSpacingH = parent.borderSpacingH; s.borderSpacingV = parent.borderSpacingV;
     s.borderCollapse = parent.borderCollapse;
     s.captionBottom = parent.captionBottom;
+    s.baselineShift = parent.baselineShift;   // reset below for anything that is not inline (ComputeStyle)
     s.vars = parent.vars;
     // the rest start at their initial values
     for (int k = 0; k < 4; ++k) { s.margin[k] = Length::Px_(0); s.padding[k] = Length::Px_(0); }
@@ -2637,6 +2649,7 @@ ComputedStyle ComputeStyle(const Node& el, const ComputedStyle& parent, const st
         else if (s.display == Display::TableRow || s.display == Display::TableCell || IsTableSection(s.display) || s.display == Display::TableCaption) s.display = Display::Block;
     }
     if (s.OutOfFlow()) s.floating = Float::None;
+    if (s.display != Display::Inline) s.baselineShift = 0.0f;   // a new line box: the text inside starts on its own baseline
     // generated content: attr() filled in from the element
     if (pseudo != 0 && s.hasContent) {
         std::string out;

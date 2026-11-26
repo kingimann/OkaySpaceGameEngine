@@ -1237,7 +1237,7 @@ struct Layouter {
         metrics(container, maxA, maxD);   // the strut
         for (const Placed& p : line) {
             float a = 0, d = 0;
-            if (p.f->kind == Frag::Word || p.f->kind == Frag::Space) metrics(*p.f->st, a, d);
+            if (p.f->kind == Frag::Word || p.f->kind == Frag::Space) { metrics(*p.f->st, a, d); a += p.f->st->baselineShift; d -= p.f->st->baselineShift; }
             else if (p.f->kind == Frag::Image || p.f->kind == Frag::Embed || p.f->kind == Frag::Atomic) boxMetrics(*p.f, a, d);
             else continue;
             maxA = std::max(maxA, a);
@@ -1319,7 +1319,7 @@ struct Layouter {
                 if (sh.color.a == 0) continue;
                 DrawCmd sc;
                 sc.kind = DrawCmd::Text;
-                sc.x = Finite(x + sh.x); sc.y = Finite(base - f.st->fontSize * 0.8f + sh.y); sc.w = p.w; sc.h = f.st->fontSize;
+                sc.x = Finite(x + sh.x); sc.y = Finite(base - f.st->baselineShift - f.st->fontSize * 0.8f + sh.y); sc.w = p.w; sc.h = f.st->fontSize;
                 sc.text = f.text;
                 sc.font = FontOf(*f.st);
                 sc.color = sh.color;
@@ -1329,7 +1329,7 @@ struct Layouter {
             }
             DrawCmd c;
             c.kind = DrawCmd::Text;
-            c.x = x; c.y = Finite(base - f.st->fontSize * 0.8f); c.w = p.w; c.h = f.st->fontSize;
+            c.x = x; c.y = Finite(base - f.st->baselineShift - f.st->fontSize * 0.8f); c.w = p.w; c.h = f.st->fontSize;
             c.text = f.text;
             c.font = FontOf(*f.st);
             c.color = f.st->color;

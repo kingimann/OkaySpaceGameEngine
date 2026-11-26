@@ -362,5 +362,20 @@ int main() {
         const DrawCmd* ab = TextCmd(r, "ab");
         CHECK(ab && Near(ab->x, (100 - 16) * 0.5f));
     }
+    {
+        // sub / sup (HTML 15.3.4: vertical-align sub / super, font-size smaller): the superscript's baseline is a third of the
+        // parent's 20 px font above the line's (6.67 px), the subscript's a fifth below (4 px); a link inside the <sup> moves
+        // with it. Text is drawn from its em box top, 0.8 of its font size above its baseline: "x" at base - 16, "2" (16.67 px)
+        // at base - 6.67 - 13.33 = base - 20, "3" at base + 4 - 13.33.
+        const LayoutResult r = Lay(B0 + "<p style='font-size:20px;line-height:30px'>x<sup>2<a href='#n'>[1]</a></sup>y<sub>3</sub></p>", 400);
+        const DrawCmd* x = TextCmd(r, "x"); const DrawCmd* two = TextCmd(r, "2"); const DrawCmd* one = TextCmd(r, "[1]");
+        const DrawCmd* three = TextCmd(r, "3");
+        CHECK(x && two && one && three);
+        if (x && two && one && three) {
+            CHECK(Near(two->y - x->y, -4.0f));
+            CHECK(Near(one->y, two->y));
+            CHECK(Near(three->y - x->y, 16.0f + 4.0f - 20.0f / 1.2f * 0.8f));
+        }
+    }
     TEST_MAIN_RESULT();
 }

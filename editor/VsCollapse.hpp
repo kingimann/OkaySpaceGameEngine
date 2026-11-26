@@ -184,16 +184,17 @@ inline VsCollapseResult VsCollapseToFunction(VsEditGraph& g, const std::set<int>
         sig += " -> ";
         for (std::size_t i = 0; i < rets.size(); ++i) sig += (i ? ", " : "") + rets[i].name + ": " + okay::vs::PinTypeName(rets[i].type);
     }
-    // Where things go: the call where the selection was; the body moved below everything, the Function block on its left.
+    // Where things go: the call where the first step was (so it lands in the flow, not on a block left outside); the body moved below everything, the Function block on its left.
     float minX = 1e9f, minY = 1e9f, maxX = -1e9f, graphMaxY = -1e9f;
     for (int id : sel) { const VsEditNode* n = g.find(id); minX = std::min(minX, n->x); minY = std::min(minY, n->y); maxX = std::max(maxX, n->x); }
     for (const auto& n : g.nodes) graphMaxY = std::max(graphMaxY, n.y);
+    const float callX = g.find(entry)->x, callY = g.find(entry)->y;
     const float dy = graphMaxY + 260.0f - minY;
     for (int id : sel) g.find(id)->y += dy;
 
     r.functionNode = g.add("FunctionStart", minX - 280.0f, minY + dy);
     g.find(r.functionNode)->arg = sig;
-    r.callNode = g.add("CallFunction", minX, minY);
+    r.callNode = g.add("CallFunction", callX, callY);
     g.find(r.callNode)->arg = r.name;
     r.params = (int)params.size(); r.returns = (int)rets.size();
 

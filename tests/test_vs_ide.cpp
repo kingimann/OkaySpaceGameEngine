@@ -307,7 +307,7 @@ int main() {
         CHECK_NEAR(xs[0] + 25, 125, 1e-4); CHECK_NEAR(xs[1] + 75, 125, 1e-4);
         xs = {0, 10, 300}; ys = {0, 50, 0}; ws = {100, 100, 100}; hs = {40, 40, 40};
         VsDistributeNodes(xs, ys, ws, hs, true);
-        CHECK_NEAR(xs[0], 0, 1e-4); CHECK_NEAR(xs[1], 100, 1e-4); CHECK_NEAR(xs[2], 200, 1e-4);
+        CHECK_NEAR(xs[0], 0, 1e-4); CHECK_NEAR(xs[1], 150, 1e-4); CHECK_NEAR(xs[2], 300, 1e-4);   // ends stay, gaps of 50
         xs = {0, 0, 0}; ys = {0, 500, 100}; hs = {40, 60, 40};
         VsDistributeNodes(xs, ys, ws, hs, false);   // order by position: 0, 100, 500; ends stay
         CHECK_NEAR(ys[0], 0, 1e-4); CHECK_NEAR(ys[1], 500, 1e-4); CHECK_NEAR(ys[2], 0 + 40 + (560 - 140) / 2.0f, 1e-3);

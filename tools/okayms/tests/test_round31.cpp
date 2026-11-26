@@ -239,7 +239,7 @@ struct Block { int n = 0; };
 class W {
  public:
   explicit W(Block& b, std::string prefix = std::string()) : m_block(&b), m_prefix(std::move(prefix)) {}
-  int Size() const { return (int)m_prefix.size() + m_block->n; }
+  int Length() const { return (int)m_prefix.size() + m_block->n; }
   W Scope(const std::string& name) const { return W(*m_block, m_prefix + name + "."); }
  private:
   Block* m_block;
@@ -266,7 +266,7 @@ int entry(void) {
   Doc d;
   d.b.n = 2;
   W w = d.Writer("x");
-  CK(4, w.Size() == 2 && w.Scope("ab").Size() == 5 && g(3) == 3 && g(3, "xy") == 5);
+  CK(4, w.Length() == 2 && w.Scope("ab").Length() == 5 && g(3) == 3 && g(3, "xy") == 5);
   Value v;
   CK(5, !v.Truthy());
   v.t = VT::Bool;

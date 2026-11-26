@@ -270,6 +270,12 @@ public:
     /// The header line pinned at the top while the view is inside a block ("" = none), and where the caret is ("Update").
     std::string StickyHeader();
     std::string Breadcrumb();
+    /// Every open document: its key, file, tab label, language, whether it has unsaved edits and its text's version (it changes
+    /// with every edit).
+    struct DocumentInfo { std::string key, path, label, language; bool dirty = false; unsigned version = 0; };
+    std::vector<DocumentInfo> Documents() const;
+    /// Save one document by its key (a file is written, a host's document goes to its save hook). False when it could not be.
+    bool SaveDocument(const std::string& key);
     /// Put text at the shown document's caret (over the selection), or replace its whole text; one undo step each (the editor
     /// plugins' script_insert and script_set_text).
     bool InsertText(const std::string& text);

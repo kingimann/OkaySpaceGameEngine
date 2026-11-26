@@ -1,6 +1,6 @@
 #pragma once
 // ScriptIde: the Script Editor's workspace model, with no GUI (no Dear ImGui, no OkayUI, no SDL), so tests/test_script_ide.cpp
-// runs it headless. The Script Editor window (DrawScriptEditor in editor/main.cpp) and its IDE panels (editor/ScriptIdeUi.cpp)
+// runs it headless. The Script Editor (shared/ScriptIdeApp.hpp: the program and the editor's Script Editor window)
 // draw it; this file only decides.
 //
 //  - Fuzzy matching (FuzzyScore) for Quick Open, Search Everywhere, the command palette and autocomplete.

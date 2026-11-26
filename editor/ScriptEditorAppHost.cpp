@@ -19,13 +19,16 @@
 #include <cctype>
 #include <unordered_set>
 
+#include <cstring>
 #include <filesystem>
+#include <map>
 #include <fstream>
 #include <memory>
 
-namespace oked {
+// The editable text of a script component that Play compiles and the Inspector reads (main.cpp, keyed by the component).
+void SetCodeBuffer(void* key, const std::string& text);
 
-bool g_showScriptEditorApp = false;
+namespace oked {
 
 namespace {
 namespace fs = std::filesystem;
@@ -361,6 +364,22 @@ scriptide::ScriptIdeApp& App() {
     }
     return *app;
 }
+
+// Play compiles what is on screen and the Inspector shows the fields of the unsaved text: each changed tab's text goes into the
+// code buffer of every component that uses it.
+void SyncCodeBuffers(scriptide::ScriptIdeApp& app) {
+    static std::map<std::string, unsigned> seen;
+    for (const scriptide::ScriptIdeApp::DocumentInfo& d : app.Documents()) {
+        auto it = seen.find(d.key);
+        if (it != seen.end() && it->second == d.version) continue;
+        seen[d.key] = d.version;
+        const std::string text = app.DocumentText(d.key);
+        ForEachScript([&](okay::GameObject& go, okay::ScriptComponent& sc, int n) {
+            if (KeyOf(go, sc, n) == d.key) SetCodeBuffer(&sc, text);
+            return false;
+        });
+    }
+}
 } // namespace
 
 void ApplyScriptDockRequest() {
@@ -377,7 +396,8 @@ void ApplyScriptDockRequest() {
 }
 
 void DrawScriptEditorApp(okay::editor::EditorState& ed) {
-    if (!g_showScriptEditorApp) return;
+    g_ed = &ed;
+    if (!g_showScriptEditor) return;
     g_ed = &ed;
     scriptide::ScriptIdeApp& app = App();
     // selecting an object (or one that just gained a script) opens its scripts and shows the first
@@ -413,9 +433,97 @@ void DrawScriptEditorApp(okay::editor::EditorState& ed) {
     host.setText = [&app](const std::string& t) { app.SetActiveText(t); };
     host.open = [&app](const std::string& p, int line) { app.OpenFile(p, line); };
     struct HostReset { ~HostReset() { ScriptEditorHostApi() = ScriptEditorHost{}; } } hostReset;
-    DrawAppWindowOkayUI("Script Editor (Files)", &g_showScriptEditorApp, "##okayui_script_editor_app",
+    // the window keeps the old one's title and flag, so saved layouts and the "Scripting" layout still place it
+    DrawAppWindowOkayUI("Script Editor", &g_showScriptEditor, "##okayui_script_editor_app",
                         [&app](float x, float y, float w, float h) { app.Frame(x, y, w, h); }, 980.0f, 640.0f,
                         [&app](const std::string& dropped) { if (!scriptide::LanguageForPath(dropped).empty()) app.OpenFile(dropped); });
+    SyncCodeBuffers(app);
+    {   // the code or a field of the app has the keyboard: the editor routes every key to it
+        OkayUI::CodeEdit* e = app.ActiveEdit();
+        g_scriptCodeOwnsKeys = (e && e->Focused()) || OkayUI::WantsTextInput();
+    }
+}
+
+void ScriptEditorOpenFile(const std::string& path, int line) {
+    g_showScriptEditor = true;
+    App().OpenFile(path, line);
+}
+
+void ScriptEditorShowComponent(okay::editor::EditorState& ed, okay::ScriptComponent* sc) {
+    g_ed = &ed;
+    g_showScriptEditor = true;
+    if (!sc) return;
+    ForEachScript([&](okay::GameObject& go, okay::ScriptComponent& c, int n) {
+        if (&c != sc) return false;
+        scriptide::DocumentSpec spec;
+        if (DocumentFor(KeyOf(go, c, n), spec)) App().ShowDocuments({spec});
+        return true;
+    });
+}
+
+std::vector<std::string> ScriptEditorUnsavedTitles() {
+    std::vector<std::string> out;
+    for (const auto& d : App().Documents())
+        if (d.dirty) out.push_back("Script: " + (d.path.empty() ? d.label : d.path));
+    return out;
+}
+
+bool ScriptEditorHasUnsaved() { return !ScriptEditorUnsavedTitles().empty(); }
+
+int ScriptEditorSaveAll(bool withFileOnly, std::string* failed) {
+    int n = 0;
+    for (const auto& d : App().Documents()) {
+        if (!d.dirty || (withFileOnly && d.path.empty())) continue;
+        if (App().SaveDocument(d.key)) ++n;
+        else if (failed && failed->empty()) *failed = d.path.empty() ? d.label : d.path;
+    }
+    if (n) SyncCodeBuffers(App());
+    return n;
+}
+
+std::vector<std::pair<std::string, std::string>> ScriptEditorUnsavedTexts() {
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const auto& d : App().Documents())
+        if (d.dirty) out.emplace_back(d.path.empty() ? std::string("untitled-script") : d.path, App().DocumentText(d.key));
+    return out;
+}
+
+void ScriptEditorRestore(const std::string& key, const std::string& text) {
+    g_showScriptEditor = true;
+    scriptide::ScriptIdeApp& app = App();
+    if (key.rfind("untitled", 0) == 0) {   // a script that had no file: a tab that saves into Assets/Scripts
+        static int count = 0;
+        scriptide::DocumentSpec spec;
+        spec.key = "untitled:" + std::to_string(++count);
+        spec.label = "Untitled";
+        spec.language = "okayscript";
+        spec.save = [](const std::string& t, std::string& why) {
+            const std::string path = scriptide::DefaultScriptPath(g_ed ? g_ed->projectDir() : std::string(), "Untitled", "okayscript");
+            std::error_code ec;
+            fs::create_directories(fs::u8path(path).parent_path(), ec);
+            std::ofstream f(fs::u8path(path), std::ios::binary | std::ios::trunc);
+            f << t;
+            if (!f) { why = "cannot write " + path; return false; }
+            ConsoleLog("[Script Editor] saved the recovered script as " + path);
+            return true;
+        };
+        if (app.OpenDocument(spec)) app.SetActiveText(text);
+        return;
+    }
+    if (app.OpenFile(key)) app.SetActiveText(text);   // the recovered text, unsaved (one undo step back to the file)
+}
+
+bool ScriptEditorHasDocument() { return !App().Documents().empty(); }
+
+void ScriptEditorDemo(const std::string& what) {
+    g_showScriptEditor = true;
+    scriptide::ScriptIdeApp& app = App();
+    if (what == "new") app.OpenNewScript();
+    else if (what == "quickopen") app.OpenPicker(5);
+    else if (what == "palette") app.OpenPicker(6);
+    else if (what == "search") app.OpenPicker(5);
+    else if (what == "rename") app.OpenRename("Fire");
+    else if (what == "quickfix") app.OpenQuickFixes();
 }
 
 } // namespace oked

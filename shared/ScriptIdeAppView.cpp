@@ -343,6 +343,13 @@ std::string ScriptIdeApp::Breadcrumb() {
     return s ? s->display : std::string();
 }
 void ScriptIdeApp::ShowQuickReference() { m->refOpen = true; }
+std::vector<ScriptIdeApp::DocumentInfo> ScriptIdeApp::Documents() const {
+    std::vector<DocumentInfo> out;
+    for (const auto& d : m->docs)
+        out.push_back(DocumentInfo{d->key, d->path, d->label, d->language, m->dirty(*d), d->code.Edit().Version()});
+    return out;
+}
+bool ScriptIdeApp::SaveDocument(const std::string& key) { Impl::Doc* d = m->byKey(key); return d && m->save(*d); }
 bool ScriptIdeApp::InsertText(const std::string& text) { Impl::Doc* d = m->activeDoc(); if (!d) return false; m->insertAtCaret(*d, text); return true; }
 bool ScriptIdeApp::SetActiveText(const std::string& text) { Impl::Doc* d = m->activeDoc(); if (!d) return false; m->setText(*d, text); return true; }
 bool ScriptIdeApp::QuickReferenceOpen() const { return m->refOpen; }

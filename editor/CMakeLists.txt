@@ -62,11 +62,10 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     ScriptAssist.cpp                                                   # Scripting Reference window; the Script Editor's completion, signatures, docs, C# members, palette
     ScriptAssistBindings.cpp                                           # Script assist from the engine's binding table: component members, argument hints, docs
     FindInFiles.cpp                                                    # Find in Files: search every project script, open a hit in the Script Editor
-    ScriptEditorAppHost.cpp ${CMAKE_SOURCE_DIR}/shared/ScriptIdeApp.cpp   # the Script Editor app (the Script Editor program's) in an editor window
+    ScriptEditorAppHost.cpp ${CMAKE_SOURCE_DIR}/shared/ScriptIdeApp.cpp   # the Script Editor window: the Script Editor program's app
     ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppScene.cpp ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppNav.cpp ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppEdit.cpp
     ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppView.cpp   # its scene scripts, New Script, find, navigation, edits, the view and the disk
     ScriptIde.cpp                                                      # the Script Editor's workspace model: Quick Open, symbol index, rename, find/replace, quick fixes, local history
-    ScriptIdeUi.cpp                                                    # the Script Editor's IDE panels: Quick Open, script tree, rename preview, quick fixes, local history, plugin panels
     PluginRegistry.cpp                                                 # editor plugins: the commands and providers they add to the Script Editor
     PluginScriptApi.cpp                                                # editor plugins: the script_* builtins (commands, lint, completion, formatter, hover, snippets, panels)
     AssetManagerWindow.cpp                                             # the Asset Manager window: Marketplace downloads listed by type, imported into the project

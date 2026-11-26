@@ -1,6 +1,6 @@
 // Script Editor program (system "Script Editor", docs/feature_map/13-scripting.md 13.5.13): the script editor in a window of its
 // own, without the editor. The Script Editor itself (the project tree, tabs, save, Find in Files, Go to File, Local History, the
-// checks, settings) is shared/ScriptIdeApp.hpp, the same one the editor shows in its "Script Editor (Files)" window; this file is
+// checks, settings) is shared/ScriptIdeApp.hpp, the same one the editor shows in its Script Editor window; this file is
 // only the program's window around it (OkayUI's window mode on okay::platform, shared/OkayUIFrameLoop.hpp RunProgram; no Dear ImGui).
 //
 //   okay-script-editor [FOLDER | FILE ...] [--frames N]

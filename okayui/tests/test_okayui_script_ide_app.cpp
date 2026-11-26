@@ -502,6 +502,16 @@ int main() {
         // selecting the ship: both of its scripts open, the first shown
         app.ShowDocuments({specFor("scene:ship/0"), specFor("scene:ship/1")});
         CHECK(app.OpenFiles().size() == 2 && app.ActiveKey() == "scene:ship/0");
+        {   // what the editor's save prompts, Save Project and recovery read: the documents, changed or not, and saving one
+            const auto docs = app.Documents();
+            CHECK(docs.size() == 2 && docs[0].key == "scene:ship/0" && !docs[0].dirty && docs[1].language == "okayscript");
+            if (UI::CodeEdit* e0 = app.ActiveEdit()) e0->InsertText("-- x\n");
+            CHECK(app.Documents()[0].dirty && app.Documents()[0].version != docs[0].version);
+            CHECK(app.SaveDocument("scene:ship/0") && !app.Documents()[0].dirty && source["scene:ship/0"].rfind("-- x\n", 0) == 0);
+            CHECK(!app.SaveDocument("nope"));
+            CHECK(app.ReloadDocument("scene:ship/0", kEnemy));
+            source["scene:ship/0"] = kEnemy;
+        }
         sim.Frames(2, ui);
         // the tree's "Scene scripts" section: a click on the door's row opens it (found from the top down)
         {

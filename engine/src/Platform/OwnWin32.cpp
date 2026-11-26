@@ -427,6 +427,17 @@ public:
         return p;
     }
     void ReleaseCurrent() override { wglMakeCurrent(nullptr, nullptr); }
+    // WGL: wglGetCurrentContext / wglGetCurrentDC on this thread, and wglMakeCurrent to put them back (null releases).
+    GLCurrent CurrentGL() override {
+        GLCurrent c;
+        c.context = (void*)wglGetCurrentContext();
+        c.window = c.context ? (void*)wglGetCurrentDC() : nullptr;
+        return c;
+    }
+    bool RestoreGL(const GLCurrent& s) override {
+        if (!s.context) return wglMakeCurrent(nullptr, nullptr) != FALSE;
+        return wglMakeCurrent((HDC)s.window, (HGLRC)s.context) != FALSE;
+    }
 
     void StartTextInput() override { m_text = true; }
     void StopTextInput() override { m_text = false; }

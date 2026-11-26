@@ -66,6 +66,8 @@ public:
     }
     void* GLProcAddress(const char* n) override { return m_x11 ? m_x11->GLProcAddress(n) : nullptr; }
     void ReleaseCurrent() override { if (m_x11) m_x11->ReleaseCurrent(); }
+    GLCurrent CurrentGL() override { return m_x11 ? m_x11->CurrentGL() : GLCurrent(); }
+    bool RestoreGL(const GLCurrent& s) override { return m_x11 && m_x11->RestoreGL(s); }
 
     void StartTextInput() override { if (m_x11) m_x11->StartTextInput(); }
     void StopTextInput() override { if (m_x11) m_x11->StopTextInput(); }

@@ -121,6 +121,7 @@ namespace {
     F(Bool, glXMakeCurrent, (Display*, GLXDrawable, GLXContext)) \
     F(void, glXSwapBuffers, (Display*, GLXDrawable)) \
     F(GLXContext, glXGetCurrentContext, (void)) \
+    F(GLXDrawable, glXGetCurrentDrawable, (void)) \
     F(__GLXextFuncPtr, glXGetProcAddressARB, (const GLubyte*)) \
     F(Bool, glXQueryExtension, (Display*, int*, int*))
 
@@ -609,6 +610,19 @@ public:
         return (void*)m_glx.glXGetProcAddressARB((const GLubyte*)name);
     }
     void ReleaseCurrent() override { if (m_hasGlx) m_glx.glXMakeCurrent(m_dpy, None, nullptr); }
+    // GLX 1.3: the current context and drawable of this thread, and glXMakeCurrent to put them back (None + null releases).
+    GLCurrent CurrentGL() override {
+        GLCurrent c;
+        if (!m_hasGlx) return c;
+        c.context = (void*)m_glx.glXGetCurrentContext();
+        c.window = c.context ? (void*)(uintptr_t)m_glx.glXGetCurrentDrawable() : nullptr;
+        return c;
+    }
+    bool RestoreGL(const GLCurrent& s) override {
+        if (!m_hasGlx) return false;
+        if (!s.context) return m_glx.glXMakeCurrent(m_dpy, None, nullptr) != False;
+        return m_glx.glXMakeCurrent(m_dpy, (GLXDrawable)(uintptr_t)s.window, (GLXContext)s.context) != False;
+    }
     void StartTextInput() override { m_textInput = true; }
     void StopTextInput() override { m_textInput = false; }
     bool IsKeyDown(Key k) override {

@@ -22,6 +22,8 @@ public:
     virtual bool PollEvent(Event& out) = 0;
     virtual void* GLProcAddress(const char* name) = 0;
     virtual void ReleaseCurrent() = 0;
+    virtual GLCurrent CurrentGL() = 0;                  // glXGetCurrentContext / glXGetCurrentDrawable
+    virtual bool RestoreGL(const GLCurrent& s) = 0;     // glXMakeCurrent with them (a null context releases)
     virtual void StartTextInput() = 0;
     virtual void StopTextInput() = 0;
     virtual bool IsKeyDown(Key k) = 0;

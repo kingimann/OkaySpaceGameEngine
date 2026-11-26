@@ -24,8 +24,8 @@ public:
         if (maxGapMs == 0 || maxGapMs > 5000) maxGapMs = 500;
         const uint32_t gap = timeMs - lastTime_;   // unsigned: correct across the 32-bit wrap
         const int dx = x - lastX_, dy = y - lastY_;
-        const bool near = (dx < 0 ? -dx : dx) * 2 <= boxW && (dy < 0 ? -dy : dy) * 2 <= boxH;
-        count_ = (count_ > 0 && button == lastButton_ && gap <= maxGapMs && near) ? count_ + 1 : 1;
+        const bool closeBy = (dx < 0 ? -dx : dx) * 2 <= boxW && (dy < 0 ? -dy : dy) * 2 <= boxH;
+        count_ = (count_ > 0 && button == lastButton_ && gap <= maxGapMs && closeBy) ? count_ + 1 : 1;
         lastButton_ = button; lastX_ = x; lastY_ = y; lastTime_ = timeMs;
         return count_;
     }

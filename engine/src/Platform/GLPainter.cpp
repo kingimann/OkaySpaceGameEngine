@@ -197,6 +197,8 @@ public:
             if (!m_win.CreateGLContext(legacy)) { err = "the window has no GL context (was it made with WindowDesc::opengl?)"; return false; }
         }
         g_currentPainter = this;
+        m_backend = &b;
+        m_ctx = b.CurrentGL().context;   // this window's context, to tell later whether someone else made theirs current
         std::string missing;
         if (!m_gl.Load(b, missing)) { err = "OpenGL 3.0 entry point missing: " + missing; return false; }
         const char* ver = (const char*)m_gl.GetString(kVersion);
@@ -457,8 +459,11 @@ public:
     }
 
 private:
+    // Make this painter's context current. Other GL code on this thread (the editor's 3D view, the player's GL path) makes its own
+    // context current without going through a painter, so when the backend can say what is current that is checked too, not only
+    // which painter drew last.
     void Use() {
-        if (g_currentPainter == this) return;
+        if (g_currentPainter == this && (!m_ctx || m_backend->CurrentGL().context == m_ctx)) return;
         m_win.MakeCurrent();
         g_currentPainter = this;
     }
@@ -637,6 +642,8 @@ private:
     }
 
     Window& m_win;
+    Backend* m_backend = nullptr;   // the backend that made the window (CurrentGL)
+    void* m_ctx = nullptr;          // the backend's handle of this painter's context; null when the backend cannot tell
     Gl m_gl;
     bool m_ready = false;
     bool m_vsync;

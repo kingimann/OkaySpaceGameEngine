@@ -18,6 +18,7 @@
 //  * A download is only ever run (moved into place) after its size and SHA-256 match versions.json. Without a checksum
 //    (no index) the size must match the server's and the person must confirm.
 //  * Nothing here touches a project folder, and nothing writes outside <launcher dir>/Versions.
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -132,6 +133,50 @@ Index LoadDevIndex(const Sources& sources, const FetchTextFn& fetch);
 /// newest listed version of the same line (the LTS head when that is of the line), else "".
 std::string PickHighlight(const Index& index, const std::string& requested);
 
+// ---- the Versions page's model (launcher/VersionsUI.cpp draws it) ---------------------------------------------------------------
+
+/// What the banner at the top of the Versions page says after a request for a version (`--versions <v>` from the editor's "Open launcher",
+/// a project's "Get more versions…", a join that needs an editor).
+struct RequestBanner {
+    enum Kind {
+        None,          ///< nothing was requested
+        Running,       ///< the running editor is of the requested line: it opens those projects, nothing to install
+        Installed,     ///< a version of that line is installed next to this one
+        Looking,       ///< the version list is still being read
+        Install,       ///< `highlight` is in the list: install it
+        Unreadable,    ///< not installed, and the list can't be read
+        NotListed,     ///< not installed, and not in the list
+    } kind = None;
+    std::string text;
+    bool Satisfied() const { return kind == Running || kind == Installed; }   ///< green: nothing to install
+};
+/// `requested` the requested version; `running` the editor a plain Open starts (a test build's four numbers count as its line: v2.903.8.114
+/// is of v2.903.x); `installed` the versions under Versions/; `listReady` the list has been read; `listOk` it could be; `highlight` the row
+/// PickHighlight chose.
+RequestBanner DescribeRequest(const std::string& requested, const std::string& running, const std::vector<std::string>& installed,
+                              bool listReady, bool listOk, const std::string& highlight);
+
+/// One row of "Available to install".
+struct AvailableRow {
+    const Entry* entry = nullptr;        ///< points into the releases or the test builds index passed in
+    bool testBuild = false;              ///< from the test builds' list (dev/versions.json)
+    bool downloadable = false;           ///< in the bucket: the Install button can be pressed (the plan still checks the checksums)
+    bool checkable = false;              ///< the editor has a SHA-256 in the list
+    std::string detail;                  ///< the grey line under the version: date, size, where from, what is missing
+};
+/// How many of each list can be installed side by side (owner, 2026-11-26: "only allow 3 versions of release and 3 versions of test builds to
+/// install"): the newest 3 releases and the newest 3 test builds (okay::testbuild::kKept, also how many the bucket keeps). Versions already
+/// installed stay installed and listed under "Installed next to this version" whatever their age.
+constexpr std::size_t kInstallableReleases = 3;
+/// The newest `kInstallableReleases` releases of `releases`, or the newest okay::testbuild::kKept test builds of a test builds' list: the only
+/// versions offered and planned. Newest first.
+std::vector<const Entry*> InstallableWindow(const Index& list, bool testBuilds);
+/// The versions that can be installed, in two groups: the releases of InstallableWindow(releases), then the test builds of
+/// InstallableWindow(testBuilds) (an empty Index when "Get test builds" is off), each newest first, without the running version and those
+/// already installed.
+std::vector<AvailableRow> AvailableRows(const Index& releases, const Index& testBuilds, const std::string& running,
+                                        const std::vector<std::string>& installed);
+
 // ---- the one place updates come from ---------------------------------------------------------------------------------------
 // Owner decision 2026-11-20: the shipped programs never need GitHub at run time. Updates, the version list, old versions and
 // "what's new" come only from the public Supabase "releases" bucket.
@@ -176,6 +221,11 @@ struct InstallPlan {
 /// index, a fallback index (no versions.json) or a file without a SHA-256 is `ok = false` with the reason, never an install anyway.
 InstallPlan PlanInstall(const Index& index, const std::string& version, const std::string& bucketBase, const fs::path& localSdl,
                         bool requireSdl = kRequireSdl);
+/// The same for the Versions page, which lists releases and (with "Get test builds" on) test builds: a test version (four numbers) is planned
+/// only from `testBuilds` (LoadDevIndex) with its files under <bucket>/dev/, any other version only from `releases`, and only one of the
+/// InstallableWindow (the newest 3 of its list). The checksum rules are PlanInstall's. Pass an empty Index for `testBuilds` when test builds are off: a test version is then refused.
+InstallPlan PlanInstall(const Index& releases, const Index& testBuilds, const std::string& version, const std::string& bucketBase,
+                        const fs::path& localSdl, bool requireSdl = kRequireSdl);
 
 // ---- doing it --------------------------------------------------------------------------------------------------------------
 
@@ -237,8 +287,10 @@ std::vector<Installed> ListInstalled(const fs::path& launcherDir);
 std::uint64_t DiskUsage(const fs::path& launcherDir);
 /// The sum of every file under `dir` (0 when it is not there); stops counting after 200000 entries.
 std::uint64_t DirectorySize(const fs::path& dir);
-/// Remove scratch folders (.partial-*, .removing-*) left by a crash or a failed delete. Returns how many were removed.
-int CleanStale(const fs::path& launcherDir);
+/// Remove scratch folders (.partial-*, .removing-*) left by a crash or a failed delete. Returns how many were removed. A .partial- folder in
+/// which something was written less than `busyFor` ago is left alone: it may be an install, or the update's copy of the current editor
+/// (KeepCurrent, on the update thread), still at work (the page's start-up clean-up used to delete those, and the kept copy never appeared).
+int CleanStale(const fs::path& launcherDir, std::chrono::seconds busyFor = std::chrono::seconds(0));
 
 struct RemoveGuards {
     std::string running;                 ///< the version of the editor/launcher in use (the one in Tools/): never removed

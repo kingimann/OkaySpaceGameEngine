@@ -115,11 +115,11 @@ inline const std::vector<QuickBlock>& QuickBlocks() {
          "Slides this object while you hold the keys, all the time.", "Hold the right arrow to go right.", false, false,
          {{"Keys", "arrows", QbKind::Choice, "arrow keys~arrows|W A S D~wasd|both~both"}, {"Speed", "5", QbKind::Number}},
          "N u OnUpdate\nE OnUpdate u\n"
-         "N ra Key {kr1:0}\nN rb Key {kr2:0}\nN ro Or\nW ro 0 ra 0\nW ro 1 rb 0\n"
-         "N la Key {kl1:0}\nN lb Key {kl2:0}\nN lo Or\nW lo 0 la 0\nW lo 1 lb 0\n"
+         "N ra Key {kr1:0} exact\nN rb Key {kr2:0} exact\nN ro Or\nW ro 0 ra 0\nW ro 1 rb 0\n"
+         "N la Key {kl1:0} exact\nN lb Key {kl2:0} exact\nN lo Or\nW lo 0 la 0\nW lo 1 lb 0\n"
          "N c Sub\nW c 0 ro 0\nW c 1 lo 0\nN d Mul\nD d 1 {v1}\nW d 0 c 0\nN e DeltaTime\nN f Mul\nW f 0 d 0\nW f 1 e 0\n"
-         "N ua Key {ku1:0}\nN ub Key {ku2:0}\nN uo Or\nW uo 0 ua 0\nW uo 1 ub 0\n"
-         "N da Key {kd1:0}\nN db Key {kd2:0}\nN do Or\nW do 0 da 0\nW do 1 db 0\n"
+         "N ua Key {ku1:0} exact\nN ub Key {ku2:0} exact\nN uo Or\nW uo 0 ua 0\nW uo 1 ub 0\n"
+         "N da Key {kd1:0} exact\nN db Key {kd2:0} exact\nN do Or\nW do 0 da 0\nW do 1 db 0\n"
          "N i Sub\nW i 0 uo 0\nW i 1 do 0\nN j Mul\nD j 1 {v1}\nW j 0 i 0\nN k Mul\nW k 0 j 0\nW k 1 e 0\n"
          "N t Translate\nW t 0 f 0\nW t 1 k 0\nD t 2 0\nX u 0 t\nIN u\n"},
         {"QbMoveToward", "Move To Spot", "Movement",

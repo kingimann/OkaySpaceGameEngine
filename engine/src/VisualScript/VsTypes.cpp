@@ -1186,7 +1186,8 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
     for (const auto& kv : nodes) {
         const std::string& t = kv.second.type;
         if (t == "OnKey" || t == "OnKeyUp" || t == "Key" || t == "KeyDown" || t == "KeyUp") {
-            const std::string k = kv.second.arg.empty() ? "space" : kv.second.arg;
+            std::string k = kv.second.arg.empty() ? "space" : kv.second.arg;
+            if (t == "Key" && k.size() > 6 && k.compare(k.size() - 6, 6, " exact") == 0) k.resize(k.size() - 6);   // "Key right exact"
             if (!Input::IsKnownKeyName(k))
                 issues.push_back({0, kv.first, "'" + k + "' isn't a key name OkaySpace knows - it would act as '" +
                                                std::string(1, (char)std::tolower((unsigned char)k[0])) +

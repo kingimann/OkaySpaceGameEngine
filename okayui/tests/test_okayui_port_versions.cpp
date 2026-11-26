@@ -73,10 +73,10 @@ static int ShotRun(const std::string& out) {
     okayversions::GlobalSettings().testBuilds = true;
     okayversionsui::RequestPage("2.903.8.114");
     Reset(); UI::UseLauncherLook(true);
-    Sim s(900, 1100);
+    Sim s(900, 1500);
     auto ui = [&] {
         okayversionsui::Tick(host);
-        UI::SetNextWindowPos({10, 10}, UI::Cond_Always); UI::SetNextWindowSize({880, 1080}, UI::Cond_Always);
+        UI::SetNextWindowPos({10, 10}, UI::Cond_Always); UI::SetNextWindowSize({880, 1480}, UI::Cond_Always);
         if (UI::Begin("Versions", nullptr, UI::Window_NoMove | UI::Window_NoResize)) okayversionsui::DrawPage(host);
         UI::End();
     };

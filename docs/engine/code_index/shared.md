@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 71 headers, 1023 names.
+Back to the [code index](../code_index.md). 71 headers, 1025 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -805,13 +805,15 @@ Back to the [code index](../code_index.md). 71 headers, 1023 names.
 
 ## `shared/OkayUIHost.hpp`
 
-- `InputCollector` class, line 31: Collects what OkayUI needs from SDL events between two frames.
-- `Region` class, line 291: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
-- `HostedInputWanted` function, line 346: Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
-- `WantsKeyboard` function, line 349: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
-- `KeyIdOf` function, line 373: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
-- `EventCollector` class, line 400: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
-- `Host` class, line 478: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
+- `HostKeys` enum, line 31: Which keys the host hands OkayUI this frame (HostedKeys, below Region, says which).
+- `InputCollector` class, line 34: Collects what OkayUI needs from SDL events between two frames.
+- `Region` class, line 314: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
+- `HostedInputWanted` function, line 369: Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
+- `HostedKeys` function, line 380: Which keys a host that draws Dear ImGui and hosted OkayUI pages hands OkayUI this frame (InputCollector::Build).
+- `WantsKeyboard` function, line 387: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
+- `KeyIdOf` function, line 411: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
+- `EventCollector` class, line 438: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
+- `Host` class, line 518: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
 
 ## `shared/OkayUIHostImGui.hpp`
 

@@ -138,7 +138,10 @@ struct Builder {
         all.push_back(&DefaultStyleSheet());   // the default sheet has ::before rules too (q, summary)
         for (const StyleSheet* s : all) {
             if (!s) continue;
-            for (const Rule& r : s->rules) for (const Selector& sel : r.selectors) if (sel.pseudoElement == 1 || sel.pseudoElement == 2 || sel.pseudoElement == 4 || sel.pseudoElement == 5) anyPseudo[sel.pseudoElement] = true;
+            for (const Rule& r : s->rules) for (const Selector& sel : r.selectors) if (sel.pseudoElement == 1 || sel.pseudoElement == 2 || sel.pseudoElement == 4 || sel.pseudoElement == 5) {
+                anyPseudo[sel.pseudoElement] = true;
+                if (pseudoSels[sel.pseudoElement].size() < 100000) pseudoSels[sel.pseudoElement].push_back(&sel);
+            }
         }
     }
 
@@ -237,11 +240,10 @@ struct Builder {
         out.kids.swap(kids);
     }
 
+    std::vector<const Selector*> pseudoSels[6];   // the selectors of each pseudo-element, from every sheet (Prepare)
+    // Whether some rule gives `el` this pseudo-element (checked before its whole style is worked out: most elements have none).
     bool HasPseudoRule(const Node& el, int which) const {
-        for (const StyleSheet* s : sheets) {
-            if (!s) continue;
-            for (const Rule& r : s->rules) for (const Selector& sel : r.selectors) if (sel.pseudoElement == which && Matches(sel, el, ctx, which)) return true;
-        }
+        for (const Selector* sel : pseudoSels[which]) if (Matches(*sel, el, ctx, which)) return true;
         return false;
     }
     // ::first-letter (CSS Pseudo-Elements 4, 2.2): the first letter of the box's first line of text (with punctuation before
@@ -307,6 +309,7 @@ struct Builder {
     }
 
     void AddPseudo(const Node& el, SNode& out, int which) {
+        if (!HasPseudoRule(el, which)) return;
         ComputedStyle ps = ComputeStyle(el, out.st, sheets, ctx, which);
         if (!ps.hasContent || ps.display == Display::None) return;
         ApplyCounters(ps);

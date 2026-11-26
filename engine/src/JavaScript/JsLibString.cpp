@@ -124,6 +124,23 @@ void InstallStringLib(Runtime& rt) {
         for (int i = 0; i < a.argc; ++i) s += (char16_t)(rt.ToUint32(a[i]) & 0xFFFF);
         return Str(rt, std::move(s));
     }, 1);
+    DefNative(rt, ctor, "raw", [](Runtime& rt, CallArgs& a) {   // 22.1.2.4 String.raw
+        Object* cooked = rt.ToObject(a[0]);
+        Value lits = Value::Obj(rt.ToObject(rt.Get(Value::Obj(cooked), rt.atoms->raw)));
+        rt.Keep(lits);
+        std::uint64_t len = rt.LengthOf(lits);
+        std::u16string r;
+        for (std::uint64_t k = 0; k < len; ++k) {
+            Runtime::ScratchScope ss(rt);
+            rt.Charge(1);
+            r += rt.ToU16(rt.GetV(lits, Value::Num((double)k)));
+            if (k + 1 == len) break;
+            if ((int)k + 1 < a.argc) r += rt.ToU16(a[(int)k + 1]);
+            rt.Charge(r.size() / 64);
+            if (r.size() > (1u << 28)) rt.ThrowRange("the string is too long");
+        }
+        return Value::Str(rt.NewString(std::move(r)));
+    }, 1);
     DefNative(rt, ctor, "fromCodePoint", [](Runtime& rt, CallArgs& a) {
         std::u16string s;
         for (int i = 0; i < a.argc; ++i) {

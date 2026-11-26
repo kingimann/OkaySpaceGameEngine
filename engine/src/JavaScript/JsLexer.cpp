@@ -380,23 +380,41 @@ struct Lexer {
     bool TemplatePiece(int ln, int col, bool head) {
         std::u16string v;
         bool bad = false;
+        const std::size_t start = i;
+        // the raw text (TRV) of s[start, end): as written, with CR LF and CR read as LF
+        auto rawOf = [&](std::size_t end) {
+            std::u16string r = Utf8To16(std::string_view(s).substr(start, end - start));
+            std::u16string out;
+            out.reserve(r.size());
+            for (std::size_t k = 0; k < r.size(); ++k) {
+                if (r[k] == u'\r') {
+                    out += u'\n';
+                    if (k + 1 < r.size() && r[k + 1] == u'\n') ++k;
+                } else out += r[k];
+            }
+            return out;
+        };
         while (true) {
             if (i >= s.size()) { line = ln; return Fail("this `template` is never closed"); }
             char c = s[i];
             if (c == '`') {
+                std::u16string raw = rawOf(i);
                 ++i;
                 Token& t = Push(TT::Template, ln, col);
                 t.tpl = head ? 0 : 3;
                 t.s = std::move(v);
+                t.raw = std::move(raw);
                 t.badEscape = bad;
                 return true;
             }
             if (c == '$' && i + 1 < s.size() && s[i + 1] == '{') {
+                std::u16string raw = rawOf(i);
                 i += 2;
                 braces.push_back(1);
                 Token& t = Push(TT::Template, ln, col);
                 t.tpl = head ? 1 : 2;
                 t.s = std::move(v);
+                t.raw = std::move(raw);
                 t.badEscape = bad;
                 return true;
             }

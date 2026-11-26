@@ -388,6 +388,23 @@ void WeakCollections() {
               "let s = 0; for (const k of ks) s += m.get(k).v; console.log(s)", true) == "44850\n");
 }
 
+// 13.3.11 tagged templates, 13.2.8.4 GetTemplateObject, 12.9.6 the raw strings, 22.1.2.4 String.raw
+void TaggedTemplates() {
+    Expect("function tag(s, ...v) { return s.join('|') + '#' + v.join(',') + '#' + s.raw.join('|'); } console.log(tag`a${1}b${'x'}c`, tag`plain`)",
+           "a|b|c#1,x#a|b|c plain##plain");
+    Expect("const t = s => s; const a = []; for (let i = 0; i < 2; i++) a.push(t`x${i}y`); console.log(a[0] === a[1], t`x` === t`x`, Object.isFrozen(a[0]), Object.isFrozen(a[0].raw), Object.keys(a[0]).join())",
+           "true false true true 0,1");
+    Expect("const t = s => [s[0], s.raw[0]]; const r = t`\\n\\u0041\\x`; console.log(r[0], r[1], String.raw`a\\nb${1 + 1}\\t` )",
+           "undefined \\n\\u0041\\x a\\nb2\\t");
+    Expect("const o = { n: 'o', tag(s) { return this.n + s[0]; } }; console.log(o.tag`!`, o['tag']`?`)", "o! o?");
+    Expect("console.log(String.raw({raw: ['a', 'b', 'c']}, 1, 2, 3), String.raw({raw: 'xyz'}, '-', '+'), String.raw({raw: []}))", "a1b2c x-y+z ");
+    Expect("function C(s) { return function D() { this.v = s[0]; }; } console.log(new C`hi`().v)", "hi");   // new (C`hi`)()
+    Expect("const t = (s, ...v) => v.length; console.log(t`${1}${2}${3}`, t``)", "3 0");
+    ExpectError("const f = null; f?.g`x`", "SyntaxError");
+    ExpectError("`\\u{zz}`", "SyntaxError");   // a bad escape is still an error in an untagged template
+    ExpectError("String.raw()", "TypeError");
+}
+
 struct Hostile {
     const char* src;
     const char* want;   ///< part of the error, "" for any error, "OK" when it must finish without one
@@ -627,6 +644,7 @@ int main() {
     Dates();
     UriFunctions();
     WeakCollections();
+    TaggedTemplates();
     ConformanceScript(false);
     ConformanceScript(true);
     HostileOneLiners();

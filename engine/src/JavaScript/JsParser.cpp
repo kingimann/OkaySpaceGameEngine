@@ -1030,7 +1030,8 @@ struct Parser {
             }
             if (t.t == TT::Template && (t.tpl == 0 || t.tpl == 1)) {
                 if (chain) Fail("a tagged template can not follow an optional chain");
-                Fail("tagged templates are not supported yet");
+                e = TaggedTemplate(e, t);
+                continue;
             }
             break;
         }
@@ -1078,6 +1079,10 @@ struct Parser {
                 x->b = Expression();
                 Expect(P_RBrack);
                 callee = x;
+                continue;
+            }
+            if (m.t == TT::Template && (m.tpl == 0 || m.tpl == 1)) {   // new tag`x` (MemberExpression TemplateLiteral)
+                callee = TaggedTemplate(callee, m);
                 continue;
             }
             if (m.t == TT::Punct && m.p == P_QDot) Fail("an optional chain is not allowed in a 'new' expression");
@@ -1168,6 +1173,34 @@ struct Parser {
         }
         Ref(n->str);
         return n;
+    }
+
+    // 13.3.11 tagged templates: tag`a${x}b` is the call tag(templateObject, x). The template object node
+    // (NK::TaggedTemplate) carries the cooked strings (undefined for a piece with a bad escape) in `list` and
+    // the raw strings in `b->list`; the compiler makes one frozen object per site (13.2.8.4 GetTemplateObject).
+    Node* TaggedTemplate(Node* tag, const Token& at) {
+        Node* call = ast.NewNode(NK::Call, at.line, at.col);
+        call->a = tag;
+        Node* obj = ast.NewNode(NK::TaggedTemplate, at.line, at.col);
+        obj->b = ast.NewNode(NK::Array, at.line, at.col);
+        call->list.push_back(obj);
+        while (true) {
+            const Token& t = Cur();
+            if (t.t != TT::Template) Unexpected("the rest of the template");
+            Node* cooked = N(t.badEscape ? NK::Hole : NK::Str);
+            cooked->str = t.s;
+            obj->list.push_back(cooked);
+            Node* raw = N(NK::Str);
+            raw->str = t.raw;
+            obj->b->list.push_back(raw);
+            std::uint8_t kind = t.tpl;
+            Next();
+            if (kind == 0 || kind == 3) break;
+            NoInGuard ng(*this, false);
+            call->list.push_back(Assignment());
+            if (Cur().t != TT::Template || (Cur().tpl != 2 && Cur().tpl != 3)) Unexpected("'}' closing the ${ }");
+        }
+        return call;
     }
 
     Node* TemplateLit() {

@@ -1208,6 +1208,29 @@ Value Execute(Runtime& rt, int entry) {
                         SP -= 2;
                         break;
                     }
+                    case OP_TemplateObj: {
+                        // 13.2.8.4 GetTemplateObject: consts [a] cache, [a+1 ..] cooked strings, then the raw strings
+                        std::vector<Value>& kc = cl->code->consts;
+                        if (!kc[(std::size_t)I.a].IsObj()) {
+                            const std::size_t n = I.b, at = (std::size_t)I.a + 1;
+                            ArrayObj* raw = rt.NewArray(n);
+                            ArrayObj* tpl = rt.NewArray(n);
+                            for (std::size_t k = 0; k < n; ++k) {
+                                tpl->elems.push_back(kc[at + k]);
+                                raw->elems.push_back(kc[at + n + k]);
+                            }
+                            for (ArrayObj* arr : {raw, tpl}) {
+                                arr->length = (std::uint32_t)n;
+                                arr->frozenElems = arr->sealedElems = true;
+                                arr->lengthWritable = false;
+                            }
+                            tpl->AddRaw(rt.atoms->raw, Value::Obj(raw), 0);
+                            raw->extensible = tpl->extensible = false;
+                            kc[(std::size_t)I.a] = Value::Obj(tpl);
+                        }
+                        *SP++ = kc[(std::size_t)I.a];
+                        break;
+                    }
                     case OP_SetProtoLit: {
                         // [obj value]: B.3.1 PropertyDefinitionEvaluation for `__proto__: value`
                         if (SP[-1].IsObj()) rt.SetPrototype(SP[-2].O(), SP[-1].O());

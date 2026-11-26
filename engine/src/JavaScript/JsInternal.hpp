@@ -38,6 +38,7 @@ struct Token {
     std::u16string s;           ///< name text, string value, template cooked text, regular expression body
     std::u16string flags;       ///< regular expression flags
     bool badEscape = false;     ///< a template piece with an invalid escape (only allowed when tagged)
+    std::u16string raw;         ///< a template piece's raw text (12.9.6 TRV: as written, CR LF read as LF)
 };
 
 /// Tokenize the whole source (templates are split into pieces; regular expression
@@ -170,7 +171,7 @@ enum Op : std::uint16_t {
     OP_Throw, OP_TryBegin, OP_TryEnd, OP_ThrowConst,
     OP_GenStart, OP_AsyncStart, OP_Yield, OP_Await, OP_ResumeCheck, OP_IterSend,
     OP_Arguments, OP_RestArgs, OP_CheckCoercible, OP_Debugger, OP_SetName, OP_NewRegExp,
-    OP_SetProtoLit,
+    OP_SetProtoLit, OP_TemplateObj,
     OP_Count
 };
 

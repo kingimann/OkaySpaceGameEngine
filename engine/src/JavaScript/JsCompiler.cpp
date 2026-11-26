@@ -109,7 +109,7 @@ struct Compiler {
             case OP_Dup: case OP_GetLoc: case OP_GetLocChk: case OP_GetCell: case OP_GetCellChk: case OP_GetUp:
             case OP_GetUpChk: case OP_GetGlobal: case OP_TypeofGlobal: case OP_NewObject: case OP_LoadThis:
             case OP_LoadThisChk: case OP_LoadNewTarget: case OP_LoadFunc: case OP_LoadHome: case OP_Closure:
-            case OP_Arguments: case OP_RestArgs: case OP_DupX1: case OP_DupX2: case OP_GetPropKeep:
+            case OP_Arguments: case OP_RestArgs: case OP_DupX1: case OP_DupX2: case OP_GetPropKeep: case OP_TemplateObj:
                 return 1;
             case OP_Dup2: return 2;
             case OP_Pop: case OP_PutLoc: case OP_PutCell: case OP_PutUp: case OP_InitLex: case OP_SetProp:
@@ -1156,6 +1156,17 @@ struct Compiler {
                     first = false;
                 }
                 if (first) EmitStr(u"");
+                return;
+            }
+            case NK::TaggedTemplate: {
+                // [cache, cooked..., raw...] in a row of constants; OP_TemplateObj builds the object once (the
+                // cache slot keeps it), so each evaluation of this site gets the same object (13.2.8.4)
+                auto& c = fs->p->consts;
+                int at = (int)c.size();
+                c.push_back(Value());
+                for (Node* q : n->list) c.push_back(q->k == NK::Hole ? Value() : Value::Str(rt.Intern(q->str)));
+                for (Node* q : n->b->list) c.push_back(Value::Str(rt.Intern(q->str)));
+                Emit(OP_TemplateObj, at, (int)n->list.size());
                 return;
             }
             case NK::Array: ArrayLiteral(n); return;

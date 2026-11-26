@@ -5561,7 +5561,7 @@ set_tests_properties(launcher_friends PROPERTIES TIMEOUT 60)
 # Browser (page engine, engine/include/okay/Browser/): the HTML reader's trees, the CSS cascade, layout positions and line
 # breaks, addresses and a tab's navigation, hostile input, and step 2's game packs and launch rules (browser_game). They link
 # only okay_browser (standard library only).
-foreach(_bt browser_html browser_css browser_layout browser_url browser_hostile browser_game browser_profile)
+foreach(_bt browser_html browser_css browser_layout browser_layout2 browser_url browser_hostile browser_game browser_profile browser_forms)
     add_executable(test_${_bt} test_${_bt}.cpp)
     target_include_directories(test_${_bt} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/launcher)   # launcher/BrowserPage.hpp: the link rule
     target_link_libraries(test_${_bt} PRIVATE okay::browser)

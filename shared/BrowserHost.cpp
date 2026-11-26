@@ -270,7 +270,7 @@ void TabHost::Pump() {
         for (const std::string& u : urls) {
             FetchJob j;
             j.url = u;
-            j.image = u != WithoutFragment(m_tab.Url());
+            j.image = m_tab.KindOfFetch(u) != BrowserTab::FetchKind::Page;
             j.generation = m_impl->generation;
             j.post = !j.image && m_tab.PostBody(u, j.body);
             s.jobs.push_back(std::move(j));
@@ -291,6 +291,15 @@ void TabHost::Pump() {
         if (d.generation != m_impl->generation) continue;
         if (!d.image) {
             DeliverPageAnswerImpl(d.url, d.ok, d.status, d.body, d.error, d.contentType, d.disposition, d.finalUrl, d.size, d.tooBig);
+            continue;
+        }
+        const BrowserTab::FetchKind kind = m_tab.KindOfFetch(d.url);
+        if (kind == BrowserTab::FetchKind::Style) { m_tab.DeliverStyle(d.url, d.ok, d.body); continue; }
+        if (kind == BrowserTab::FetchKind::Font) {
+            // only TrueType (0x00010000, "true") and OpenType ("OTTO") files: our rasterizer reads those (not WOFF)
+            const std::string& b = d.body;
+            const bool sfnt = b.size() > 12 && (b.compare(0, 4, std::string("\0\1\0\0", 4)) == 0 || b.compare(0, 4, "true") == 0 || b.compare(0, 4, "OTTO") == 0);
+            if (d.ok && sfnt && m_fontLoader) if (const FontFace* f = m_tab.FontFor(d.url)) m_fontLoader(*f, std::vector<std::uint8_t>(b.begin(), b.end()));
             continue;
         }
         int w = 0, h = 0;

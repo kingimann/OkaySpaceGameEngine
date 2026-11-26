@@ -5,6 +5,7 @@
 
 #include "okay/Browser/Url.hpp"
 #include "okay/Core/Json.hpp"
+#include "okay/Core/PathSafety.hpp"
 #include "okay/Core/StringUtil.hpp"
 
 #include <algorithm>
@@ -414,12 +415,8 @@ AnswerUse UseOfAnswer(const std::string& ct, const std::string& disposition, con
 
 namespace {
 
-int HexVal(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
+using okay::str::HexDigitValue;
+int HexVal(char c) { return HexDigitValue(c); }
 
 std::string PercentDecode(const std::string& s) {
     std::string out;
@@ -478,11 +475,8 @@ std::string CleanFileName(std::string n) {
         while (keep > 0 && ((unsigned char)out[keep] & 0xC0) == 0x80) --keep;   // not inside a character
         out = out.substr(0, keep) + ext;
     }
-    // Windows device names, also with an extension (CON.txt)
-    std::string stem = LowerAscii(out.substr(0, out.find('.')));
-    static const char* const dev[] = {"con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
-                                      "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"};
-    for (const char* d : dev) if (stem == d) { out = "_" + out; break; }
+    // Windows device names, also with an extension (CON.txt): the engine's one check (Core/PathSafety.hpp)
+    if (okay::pathsafety::detail::IsDeviceName(out)) out = "_" + out;
     return out;
 }
 

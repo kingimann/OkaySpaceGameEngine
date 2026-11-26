@@ -4,6 +4,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/StringId.hpp"
+#include "okay/Core/StringUtil.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -67,12 +68,7 @@ std::uint64_t Splitmix(std::uint64_t x) {
     return x ^ (x >> 31);
 }
 
-int HexVal(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
+int HexVal(char c) { return okay::str::HexDigitValue(c); }
 
 std::int64_t EpochSeconds(fs::file_time_type t) {
     using namespace std::chrono;

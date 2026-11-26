@@ -38,4 +38,12 @@ inline std::string Trim(const std::string& s) {
     return s.substr(b, e - b);
 }
 
+// The value of one hexadecimal digit (0-9, a-f, A-F), or -1 for any other character.
+inline int HexDigitValue(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
 }  // namespace okay::str

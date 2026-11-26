@@ -108,7 +108,7 @@ struct Scroller {
     int clip = -1;
     bool fixed = false;
 };
-/// A form control on the page (Forms.hpp keeps its value): the element and where its box is.
+/// A form control on the page (Forms.hpp keeps its value), or a <button>: the element and where its box is.
 struct ControlBox {
     const Node* node = nullptr;
     float x = 0, y = 0, w = 0, h = 0;   ///< the border box
@@ -130,7 +130,8 @@ struct BoxInfo {
 struct LayoutResult {
     std::vector<DrawCmd> cmds;            ///< in painting order
     std::vector<LinkArea> areas;          ///< where each link run is, for clicks
-    std::vector<std::string> links;       ///< the href of each link, as written
+    std::vector<std::string> links;       ///< the href of each link, as written ("" for a <label>)
+    std::vector<const Node*> linkNodes;   ///< the element of each link: its <a>, or a <label> (clicking it works its control)
     std::vector<BoxInfo> boxes;           ///< block boxes in tree order
     std::vector<std::string> images;      ///< the src of every <img> and background image, as written, once each
     std::vector<int> embeds;              ///< indexes into cmds of the Embed boxes, in page order
@@ -162,8 +163,8 @@ std::string DumpLayout(const LayoutResult& r);
 
 /// Scroll offsets of the scrollable areas (index = LayoutResult::scrollers), as the view keeps them.
 using ScrollOffsets = std::vector<std::pair<float, float>>;
-/// Where the page point (x, y) really is drawn: moved up and left by the scrolling of every scroll container it is inside.
-/// `pageScrollY` is the page's own scroll (for fixed boxes). True when the point is inside all its clips.
+/// For something inside clip region `clip`: how far the scroll containers around it move it (dx, dy) and the visible rectangle
+/// (x0, y0)-(x1, y1) in unscrolled page coordinates of the view. False when nothing of it can be seen.
 bool ClipAndScroll(const LayoutResult& r, int clip, const ScrollOffsets* offsets, float& dx, float& dy, float& cx0, float& cy0,
                    float& cx1, float& cy1);
 

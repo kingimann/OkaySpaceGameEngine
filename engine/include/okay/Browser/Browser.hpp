@@ -17,6 +17,7 @@
 // Profile.hpp), whose HTML the host hands back like any other page.
 // Standard library only.
 #include "okay/Browser/Css.hpp"
+#include "okay/Browser/Forms.hpp"
 #include "okay/Browser/Html.hpp"
 #include "okay/Browser/Layout.hpp"
 #include "okay/Browser/Url.hpp"
@@ -24,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -121,6 +123,34 @@ public:
     /// True when `url` may be shown in this viewer (same origin as the visit, http or https).
     bool InScope(const std::string& url) const;
 
+    // ---- round 1 of the browser program: style sheets, web fonts, forms, :hover / :focus, scrolling areas ----
+    /// What a fetch the tab asked for is: the page, an image, a style sheet (<link rel=stylesheet>, @import) or a web font.
+    enum class FetchKind { Page, Image, Style, Font };
+    FetchKind KindOfFetch(const std::string& url) const;
+    /// A linked style sheet arrived (`ok` false: it could not be fetched). Its url() values are resolved against its address.
+    void DeliverStyle(const std::string& url, bool ok, const std::string& css);
+    /// The @font-face rule a font fetch is for (null: none).
+    const FontFace* FontFor(const std::string& url) const;
+    /// The style sheets of the page in order (the <style> elements and the linked sheets that arrived), already read.
+    const std::vector<const StyleSheet*>& Sheets() const { return m_sheetPtrs; }
+    /// The form controls' state of the page shown (reset when a page is shown).
+    FormState& Forms() { return m_forms; }
+    /// A control's value changed: lay out again.
+    void FormChanged() { m_layoutDirty = true; }
+    /// Send `form` (with the button `submitter`, or null for Enter): a GET or POST load in this tab. False with `note` when it
+    /// cannot be sent; `note` may also say what was left out.
+    bool SubmitForm(const Node& form, const Node* submitter, std::string& note);
+    const Node* Focus() const { return m_focus; }
+    const Node* Hover() const { return m_hover; }
+    /// The element with the keyboard / under the pointer (null: none). A page whose styles use :hover / :focus is laid out
+    /// again when they change.
+    void SetFocus(const Node* el);
+    void SetHover(const Node* el);
+    /// The view's height (vh units and fixed boxes); the layout is redone when it changes.
+    void SetViewportHeight(float h);
+    /// Scroll offsets of the page's scrolling areas (LayoutResult::scrollers), kept per page.
+    ScrollOffsets& BoxScroll() { return m_boxScroll; }
+
 private:
     struct Entry { std::string url; float scrollY = 0.0f; bool post = false; std::string body; };
     void StartLoad();
@@ -148,6 +178,20 @@ private:
     std::size_t m_shownIndex = 0;   // the history entry whose page m_doc holds
     bool m_shownValid = false;
     DownloadOffer m_offer;
+    // style sheets in page order: inline ones are read at once, linked ones when they arrive
+    struct SheetSource { std::string url; std::unique_ptr<StyleSheet> sheet; int depth = 0; };
+    std::vector<SheetSource> m_sources;
+    std::vector<const StyleSheet*> m_sheetPtrs;
+    std::vector<std::string> m_styleRequests, m_fontRequests;
+    std::map<std::string, FontFace> m_fontFor;
+    void RebuildSheets();
+    void AddSheet(std::size_t at, const std::string& baseUrl, const std::string& css, int depth);
+    void RequestImagesOf(const LayoutResult& r);
+    FormState m_forms;
+    const Node* m_focus = nullptr;
+    const Node* m_hover = nullptr;
+    float m_viewH = 0.0f;
+    ScrollOffsets m_boxScroll;
 };
 
 /// The page shown for a plain-text address (".txt"): the text in a <pre>, with < and & escaped.

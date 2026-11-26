@@ -25,6 +25,7 @@
 #include "okay/Platform/Painter.hpp"
 #include "okay/Platform/Platform.hpp"
 #include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUICompat.hpp"   // AddFontTtf: web fonts as OkayUI TrueType fonts
 
 #include <algorithm>
 #include <cmath>
@@ -98,6 +99,7 @@ struct TabView {
     float pageW = 800.0f;                     // the page area's width last frame
     std::vector<br::FindHit> hits;
     std::string hitsKey;                      // what `hits` were found for
+    S::ControlEdit edit;                      // the page's form field being typed in
 };
 
 // A small menu drawn over everything (the main menu, the context menu, a bookmark's menu).
@@ -202,6 +204,11 @@ int main(int argc, char** argv) {
         tv.host->Tab().SetAnyOrigin(true);
         tv.host->SetGameRunner(runner);
         tv.host->SetInternalPages(internalPages);
+        tv.host->SetFontLoader([](const br::FontFace& face, const std::vector<std::uint8_t>& bytes) {
+            // our own TrueType rasterizer through OkayUI's font store (it keeps a copy of the bytes; a few files at most)
+            if (const UI::Font* f = UI::AddFontTtf(bytes.data(), bytes.size(), 16.0f, face.family.c_str()))
+                S::RegisterWebFont(face.family, face.weight, face.italic, f);
+        });
         const std::string u = url.empty() ? homeAddress() : url;
         if (!off) load(tv, u);
         tv.focusAddress = u == "about:newtab";
@@ -451,6 +458,7 @@ int main(int argc, char** argv) {
         cur.focusAddress = false;
         opt.blockInput = modal;
         opt.zoom = zoom;
+        opt.edit = &cur.edit;
         if (findOpen && nHits > 0) {
             opt.findHits = &cur.hits;
             opt.findCurrent = findCurrent;
@@ -520,6 +528,8 @@ int main(int argc, char** argv) {
             menu.link = profile.bookmarks.Items()[(std::size_t)barRight].url;
             openMenu(barRightAt, {{"Open", "", A_OpenBookmarkNewTab}, {"Copy address", "", A_CopyLink}, {"", "", 0}, {"Remove bookmark", "", A_RemoveBookmark}});
         }
+        if (r.formSent) notice = r.formNote;
+        else if (!r.formNote.empty()) notice = r.formNote;
         if (r.back) { t.GoBack(); notice.clear(); }
         if (r.forward) { t.GoForward(); notice.clear(); }
         if (r.reload) t.Reload();

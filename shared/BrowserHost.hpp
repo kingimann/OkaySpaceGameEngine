@@ -22,6 +22,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace okay::browser {
 
@@ -64,6 +65,9 @@ public:
     /// The browser program's own pages ("about:newtab" ..., okay/Browser/Profile.hpp): the host makes their HTML with this
     /// instead of fetching them. Unset (the launcher): such an address is never fetched.
     void SetInternalPages(std::function<std::string(const std::string& url)> make) { m_internal = std::move(make); }
+    /// Web fonts (@font-face): the host is handed each TrueType / OpenType file that arrives with its rule (the program makes an
+    /// OkayUI font of it). Unset: fonts are not fetched into anything.
+    void SetFontLoader(std::function<void(const FontFace& face, const std::vector<std::uint8_t>& bytes)> load) { m_fontLoader = std::move(load); }
 
     void SetGameRunner(const GameRunner& runner) { m_runner = runner; }
     bool CanRunGames() const { return !m_runner.dataRoot.empty() && !m_runner.playerExe.empty(); }
@@ -91,6 +95,7 @@ private:
     const HtmlDocument* m_configFor = nullptr;   // the document m_webConfig was read from
     std::map<std::string, void*> m_images;       // resolved image address -> texture
     std::function<std::string(const std::string&)> m_internal;
+    std::function<void(const FontFace&, const std::vector<std::uint8_t>&)> m_fontLoader;
     std::unique_ptr<Impl> m_impl;
 };
 

@@ -4,6 +4,7 @@
 #include "okay/Browser/Profile.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 namespace okay::browser {
 
@@ -51,6 +52,13 @@ bool BrowserTab::Open(const std::string& url) {
     m_fetches.clear();
     m_images.clear();
     m_imageRequests.clear();
+    m_styleRequests.clear();
+    m_fontRequests.clear();
+    m_fontFor.clear();
+    m_sources.clear();
+    m_sheetPtrs.clear();
+    m_forms = FormState();
+    m_focus = m_hover = nullptr;
     m_doc = HtmlDocument();
     m_title.clear();
     m_loading.clear();
@@ -232,6 +240,45 @@ void BrowserTab::ShowPage(const std::string& url, const std::string& body) {
     const std::string ext = ExtensionOf(url);
     m_doc = (ext == "txt" || ext == "md") ? ParseHtml(PlainTextPage(body)) : ParseHtml(body);
     m_title = m_doc.title;
+    m_forms.Reset(m_doc);
+    m_focus = nullptr;
+    m_hover = nullptr;
+    m_boxScroll.clear();
+    // the style sheets, in page order: <style> elements now, <link rel=stylesheet> when they arrive
+    m_sources.clear();
+    {
+        std::string base = url;
+        if (!m_doc.baseHref.empty()) base = ResolveUrl(base, m_doc.baseHref);
+        std::vector<const Node*> todo{m_doc.root.get()};
+        while (!todo.empty()) {
+            const Node* n = todo.back();
+            todo.pop_back();
+            if (n->kind == NodeKind::Element) {
+                const std::string* media = n->Attr("media");
+                const bool print = media && media->find("print") != std::string::npos && media->find("screen") == std::string::npos &&
+                                   media->find("all") == std::string::npos;
+                if (n->name == "style" && !print) AddSheet(m_sources.size(), base, n->TextContent(), 0);
+                else if (n->name == "link" && !print && m_sources.size() < 64) {
+                    const std::string* rel = n->Attr("rel");
+                    const std::string* href = n->Attr("href");
+                    std::string relL = rel ? *rel : std::string();
+                    for (char& c : relL) if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+                    if (href && relL.find("stylesheet") != std::string::npos && relL.find("alternate") == std::string::npos) {
+                        const std::string abs = WithoutFragment(ResolveUrl(base, *href));
+                        if (InScope(abs) && std::find(m_styleRequests.begin(), m_styleRequests.end(), abs) == m_styleRequests.end()) {
+                            m_styleRequests.push_back(abs);
+                            m_fetches.push_back(abs);
+                        }
+                        SheetSource src;
+                        src.url = abs;
+                        m_sources.push_back(std::move(src));
+                    }
+                }
+            }
+            for (std::size_t k = n->children.size(); k-- > 0;) todo.push_back(n->children[k].get());
+        }
+        RebuildSheets();
+    }
     m_state = State::Ready;
     m_shownIndex = m_index;
     m_shownValid = true;
@@ -273,6 +320,140 @@ bool BrowserTab::ImageSize(const std::string& src, int& w, int& h) const {
     return true;
 }
 
+namespace {
+bool IsCheckedFn(const Node& el, const void* user) { return static_cast<const FormState*>(user)->Checked(el); }
+// url(x) in a sheet read from `base`: made absolute, so the page resolves it the same wherever the sheet came from.
+std::string AbsoluteUrls(const std::string& value, const std::string& base) {
+    std::string out;
+    std::size_t i = 0;
+    while (true) {
+        std::size_t at = value.find("url(", i);
+        if (at == std::string::npos) { out.append(value, i, std::string::npos); break; }
+        const std::size_t close = value.find(')', at);
+        if (close == std::string::npos) { out.append(value, i, std::string::npos); break; }
+        out.append(value, i, at - i);
+        std::string inner = value.substr(at + 4, close - at - 4);
+        while (!inner.empty() && (inner.front() == ' ' || inner.front() == '"' || inner.front() == '\'')) inner.erase(inner.begin());
+        while (!inner.empty() && (inner.back() == ' ' || inner.back() == '"' || inner.back() == '\'')) inner.pop_back();
+        const std::string abs = inner.compare(0, 5, "data:") == 0 ? std::string() : ResolveUrl(base, inner);
+        out += "url(\"";
+        for (char c : abs) if (c != '"' && c != '\n') out += c;
+        out += "\")";
+        i = close + 1;
+    }
+    return out;
+}
+} // namespace
+
+void BrowserTab::AddSheet(std::size_t at, const std::string& baseUrl, const std::string& css, int depth) {
+    SheetSource src;
+    src.url = baseUrl;
+    src.depth = depth;
+    src.sheet.reset(new StyleSheet(ParseStyleSheet(css)));
+    StyleSheet& sh = *src.sheet;
+    for (Rule& r : sh.rules)
+        for (Declaration& d : r.declarations)
+            if (d.value.find("url(") != std::string::npos) d.value = AbsoluteUrls(d.value, baseUrl);
+    for (FontFace& f : sh.fontFaces) {
+        f.url = WithoutFragment(ResolveUrl(baseUrl, f.url));
+        if (InScope(f.url) && m_fontRequests.size() < 32 && std::find(m_fontRequests.begin(), m_fontRequests.end(), f.url) == m_fontRequests.end()) {
+            m_fontRequests.push_back(f.url);
+            m_fontFor[f.url] = f;
+            m_fetches.push_back(f.url);
+        }
+    }
+    // @import: fetched, and placed before this sheet
+    std::vector<SheetSource> imports;
+    if (depth < 4)
+        for (const std::string& imp : sh.imports) {
+            const std::string abs = WithoutFragment(ResolveUrl(baseUrl, imp));
+            if (!InScope(abs) || m_sources.size() + imports.size() >= 64) continue;
+            if (std::find(m_styleRequests.begin(), m_styleRequests.end(), abs) == m_styleRequests.end()) {
+                m_styleRequests.push_back(abs);
+                m_fetches.push_back(abs);
+            }
+            SheetSource is;
+            is.url = abs;
+            is.depth = depth + 1;
+            imports.push_back(std::move(is));
+        }
+    at = std::min(at, m_sources.size());
+    m_sources.insert(m_sources.begin() + (std::ptrdiff_t)at, std::move(src));
+    for (std::size_t k = 0; k < imports.size(); ++k) m_sources.insert(m_sources.begin() + (std::ptrdiff_t)(at + k), std::move(imports[k]));
+}
+
+void BrowserTab::RebuildSheets() {
+    m_sheetPtrs.clear();
+    for (const SheetSource& s : m_sources) if (s.sheet) m_sheetPtrs.push_back(s.sheet.get());
+    m_layoutDirty = true;
+}
+
+void BrowserTab::DeliverStyle(const std::string& url, bool ok, const std::string& css) {
+    const std::string u = WithoutFragment(url);
+    if (m_state != State::Ready && m_state != State::Loading) return;
+    for (std::size_t i = 0; i < m_sources.size(); ++i) {
+        if (m_sources[i].sheet || m_sources[i].url != u) continue;
+        const int depth = m_sources[i].depth;
+        m_sources.erase(m_sources.begin() + (std::ptrdiff_t)i);
+        if (ok) AddSheet(i, u, css.size() > (2u << 20) ? css.substr(0, 2u << 20) : css, depth);
+        RebuildSheets();
+        return;
+    }
+}
+
+BrowserTab::FetchKind BrowserTab::KindOfFetch(const std::string& url) const {
+    const std::string u = WithoutFragment(url);
+    if (!m_loading.empty() && u == m_loading) return FetchKind::Page;
+    if (std::find(m_styleRequests.begin(), m_styleRequests.end(), u) != m_styleRequests.end()) return FetchKind::Style;
+    if (std::find(m_fontRequests.begin(), m_fontRequests.end(), u) != m_fontRequests.end()) return FetchKind::Font;
+    if (!m_history.empty() && u == WithoutFragment(Url())) return FetchKind::Page;
+    return FetchKind::Image;
+}
+
+const FontFace* BrowserTab::FontFor(const std::string& url) const {
+    auto it = m_fontFor.find(WithoutFragment(url));
+    return it == m_fontFor.end() ? nullptr : &it->second;
+}
+
+bool BrowserTab::SubmitForm(const Node& form, const Node* submitter, std::string& note) {
+    if (m_state != State::Ready) { note = "The page is not loaded."; return false; }
+    const Submission s = m_forms.Submit(form, submitter, Url(), m_doc);
+    note = s.note;
+    if (!s.ok) return false;
+    if (!m_anyOrigin && !InScope(s.url)) { note = "The form sends to another site."; return false; }
+    Submit(s.url, s.method, s.body);
+    return true;
+}
+
+void BrowserTab::SetFocus(const Node* el) {
+    if (el == m_focus) return;
+    m_focus = el;
+    if (m_layout.dynamic) m_layoutDirty = true;
+}
+
+void BrowserTab::SetHover(const Node* el) {
+    if (el == m_hover) return;
+    m_hover = el;
+    if (m_layout.dynamic) m_layoutDirty = true;
+}
+
+void BrowserTab::SetViewportHeight(float h) {
+    if (std::fabs(h - m_viewH) < 0.5f) return;
+    m_viewH = h;
+    m_layoutDirty = true;
+}
+
+void BrowserTab::RequestImagesOf(const LayoutResult& r) {
+    for (const std::string& src : r.images) {
+        const std::string abs = WithoutFragment(ResolveImage(src));
+        if (InScope(abs) && IsInternalPage(abs) == false && std::find(m_imageRequests.begin(), m_imageRequests.end(), abs) == m_imageRequests.end() &&
+            m_imageRequests.size() < 512) {
+            m_imageRequests.push_back(abs);
+            m_fetches.push_back(abs);
+        }
+    }
+}
+
 const LayoutResult& BrowserTab::Layout(float width, const TextMeasure& measure) {
     if (m_state == State::Loading && HasPage() && !m_layoutDirty && width == m_layoutWidth) return m_layout;   // the last page
     if (m_state != State::Ready) {
@@ -282,9 +463,18 @@ const LayoutResult& BrowserTab::Layout(float width, const TextMeasure& measure) 
         return m_layout;
     }
     if (m_layoutDirty || width != m_layoutWidth) {
-        m_layout = LayoutPage(m_doc, width, measure, [this](const std::string& src, int& w, int& h) { return ImageSize(src, w, h); });
+        LayoutContext ctx;
+        ctx.sheets = &m_sheetPtrs;
+        ctx.viewportHeight = m_viewH;
+        ctx.style.hover = m_hover;
+        ctx.style.focus = m_focus;
+        ctx.style.isChecked = IsCheckedFn;
+        ctx.style.checkedUser = &m_forms;
+        ctx.controlText = [this](const Node& n) { return m_forms.Display(n); };
+        m_layout = LayoutPage(m_doc, width, measure, [this](const std::string& src, int& w, int& h) { return ImageSize(src, w, h); }, &ctx);
         m_layoutWidth = width;
         m_layoutDirty = false;
+        RequestImagesOf(m_layout);
     }
     if (!m_pendingFragment.empty()) {
         for (const auto& a : m_layout.anchors) if (a.first == m_pendingFragment) { m_pendingScroll = a.second; break; }

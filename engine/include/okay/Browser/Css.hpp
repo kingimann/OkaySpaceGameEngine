@@ -287,6 +287,10 @@ bool Matches(const Selector& sel, const Node& el, const StyleContext* ctx = null
 /// section 15.
 const StyleSheet& DefaultStyleSheet();
 
+/// A style that has `parent`'s inherited properties (colour, font, text, white-space, list style, visibility, custom
+/// properties ...) and every other property at its initial value: the start of ComputeStyle, and the style of an anonymous box.
+ComputedStyle InheritedStyle(const ComputedStyle& parent);
+
 /// The computed style of element `el` whose parent's style is `parent` (the root's parent is a default ComputedStyle):
 /// the default sheet, then `author` sheets in order, then el's style attribute; inherited properties come from `parent`.
 /// `pseudo` 1 / 2: the style of el's ::before / ::after (hasContent tells whether it exists).

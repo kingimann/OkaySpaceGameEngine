@@ -50,14 +50,7 @@ bool OnlySpaceText(const std::string& s) {
 
 // The style of an anonymous box inside `parent`: the inherited properties, nothing of the box.
 ComputedStyle AnonymousStyle(const ComputedStyle& parent, Display d) {
-    ComputedStyle s;
-    s.color = parent.color; s.fontSize = parent.fontSize; s.bold = parent.bold; s.italic = parent.italic; s.mono = parent.mono;
-    s.weight = parent.weight; s.family = parent.family; s.textAlign = parent.textAlign; s.textTransform = parent.textTransform;
-    s.lineHeight = parent.lineHeight; s.lineHeightFactor = parent.lineHeightFactor; s.whiteSpace = parent.whiteSpace;
-    s.listStyle = parent.listStyle; s.visible = parent.visible; s.underline = parent.underline; s.strike = parent.strike;
-    s.vars = parent.vars;
-    for (int k = 0; k < 4; ++k) { s.margin[k] = Length::Px_(0); s.padding[k] = Length::Px_(0); }
-    s.maxWidth.unit = Length::None; s.maxHeight.unit = Length::None;
+    ComputedStyle s = InheritedStyle(parent);
     s.display = d;
     return s;
 }
@@ -353,6 +346,7 @@ struct Layouter {
         r.boxes.resize(m.boxes); draws.resize(m.boxes);
         r.anchors.resize(m.anchors);
         r.links.resize(m.links);
+        r.linkNodes.resize(m.links);
         r.embeds.resize(m.embeds);
         r.clips.resize(m.clips);
         r.scrollers.resize(m.scrollers);
@@ -524,7 +518,11 @@ struct Layouter {
         if (!dry) if (const std::string* id = el.Attr("id")) { Frag a; a.kind = Frag::Anchor; a.text = *id; a.st = &n.st; out.push_back(a); }
         if (el.name == "a") {
             if (!dry) if (const std::string* nm = el.Attr("name")) { Frag a; a.kind = Frag::Anchor; a.text = *nm; a.st = &n.st; out.push_back(a); }
-            if (!dry) if (const std::string* href = el.Attr("href")) { link = (int)r.links.size(); r.links.push_back(*href); }
+            if (!dry) if (const std::string* href = el.Attr("href")) { link = (int)r.links.size(); r.links.push_back(*href); r.linkNodes.push_back(&el); }
+        } else if (el.name == "label" && !dry && link < 0) {   // a label's text works its control (HTML 4.10.4)
+            link = (int)r.links.size();
+            r.links.push_back(std::string());
+            r.linkNodes.push_back(&el);
         }
         for (const SNode& k : n.kids) Flatten(k, link, out, lastSpace, wordStart, dry);
     }
@@ -1281,6 +1279,15 @@ struct Layouter {
         }
         for (const auto& s : shadows) { r.cmds[(std::size_t)s.first].h = h + 2 * s.second; r.cmds[(std::size_t)s.first].radius = Radius(st, bwid, h); }
         FinishBox(bi, n, h);
+        if (n.node && n.node->name == "button") {   // a <button> takes clicks like a form control
+            ControlBox cbx;
+            cbx.node = n.node;
+            cbx.x = bx; cbx.y = y; cbx.w = bwid; cbx.h = h;
+            cbx.clip = curClip; cbx.fixed = curFixed;
+            cbx.font = FontOf(st);
+            cbx.color = st.color;
+            r.controls.push_back(cbx);
+        }
         // the absolutely positioned boxes this one contains, now that its padding box is known
         if (positioned) {
             cbStack.pop_back();

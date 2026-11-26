@@ -22,12 +22,7 @@ using okay::str::LowerAscii;
 bool IsIdentChar(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || (unsigned char)c >= 0x80;
 }
-int Hex(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
+int Hex(char c) { return okay::str::HexDigitValue(c); }
 
 // The units em, rem, vw and vh need: set by ComputeStyle while it works (the page engine runs on one thread).
 struct Units { float rem = 16.0f, vw = 10.24f, vh = 7.68f; };
@@ -1933,8 +1928,7 @@ bool SubstituteVars(const std::string& in, const CustomProps* vars, std::string&
 
 } // namespace
 
-ComputedStyle ComputeStyle(const Node& el, const ComputedStyle& parent, const std::vector<const StyleSheet*>& author,
-                           const StyleContext* ctx, int pseudo) {
+ComputedStyle InheritedStyle(const ComputedStyle& parent) {
     ComputedStyle s;
     // inherited properties
     s.color = parent.color;
@@ -1957,6 +1951,12 @@ ComputedStyle ComputeStyle(const Node& el, const ComputedStyle& parent, const st
     s.minWidth = Length::Px_(0); s.minHeight = Length::Px_(0);
     s.bgPosX = s.bgPosY = Length::Px_(0);
     s.rowGap = s.columnGap = Length::Px_(0);
+    return s;
+}
+
+ComputedStyle ComputeStyle(const Node& el, const ComputedStyle& parent, const std::vector<const StyleSheet*>& author,
+                           const StyleContext* ctx, int pseudo) {
+    ComputedStyle s = InheritedStyle(parent);
     if (el.kind != NodeKind::Element) return s;
 
     // the units of this element's lengths

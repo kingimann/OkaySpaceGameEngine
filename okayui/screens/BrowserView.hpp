@@ -30,10 +30,18 @@ struct BrowserViewResult {
     int contextLink = -1;               // ... on this link (index into links), or -1
     std::string contextText;            // ... the text run under the pointer ("" when none)
     OkayUI::Vec2 contextAt;             // ... where (screen)
+    bool formSent = false;              // a form was sent (the tab is loading its answer)
+    std::string formNote;               // what the form submission said (why it was not sent, or what was left out)
     std::string hoverHref;              // the link under the pointer, as written ("" when none)
     OkayUI::Rect page;                  // where the page area is on the screen
     float pageTop = 0.0f;               // the screen y of the page's own top (the page area's top minus the scroll)
 };
+
+/// Web fonts (@font-face) the host loaded: a TrueType face made by OkayUI::AddFontTtf, under its family name (lower-case), weight
+/// and style. Text whose font-family names a registered family is measured and drawn with it (the closest weight and style;
+/// a bold face when there is one, else the default bold look). The default font otherwise.
+void RegisterWebFont(const std::string& family, int weight, bool italic, const OkayUI::Font* font);
+void ClearWebFonts();
 
 /// Text measured with OkayUI's current font, for the layout.
 class OkayUIMeasure : public okay::browser::TextMeasure {
@@ -59,6 +67,14 @@ struct AddressField {
     std::string shownFor;   ///< the address `text` was last filled from (refilled when the tab's address changes)
 };
 
+/// The browser program's form editing state for one tab (the host keeps one per tab): the field being typed in.
+struct ControlEdit {
+    const void* node = nullptr;     ///< the focused field (an element of the tab's page)
+    std::vector<char> buf;          ///< its text while it is typed
+    bool focusNow = false;          ///< give the keyboard to it this frame
+    const void* selectOpen = nullptr;   ///< a <select> whose list is open
+};
+
 struct BrowserViewOptions {
     AddressField* address = nullptr;   ///< set: an address field and a Go button; null: the address as text (the launcher)
     bool hostButtons = true;           ///< "Open in browser" and "Close" (the launcher's page has them; the program does not)
@@ -73,6 +89,7 @@ struct BrowserViewOptions {
     const std::vector<okay::browser::FindHit>* findHits = nullptr;   ///< find on the page: highlight these
     int findCurrent = -1;              ///< ... and this one more strongly
     float scrollToPageY = -1.0f;       ///< scroll so this page y (unzoomed) is in view (the current find hit); < 0 = no
+    ControlEdit* edit = nullptr;       ///< set: the page's form controls take clicks and typing (the tab's FormState), forms are sent
     /// A row the program draws between the toolbar and the page (the bookmarks bar): called inside the view's window with the
     /// row's screen position and width; `belowToolbarH` px are kept for it.
     std::function<void(float x, float y, float w)> belowToolbar;
@@ -93,6 +110,6 @@ BrowserViewResult DrawBrowserView(okay::browser::BrowserTab& tab, float x, float
 void DrawBrowserPage(const okay::browser::LayoutResult& page, float x, float y, float w, float h, float scrollY,
                      const BrowserImageFn& image = BrowserImageFn(), const EmbedStateFn& embedState = EmbedStateFn(),
                      int hoveredPlay = -1, float zoom = 1.0f, const std::vector<okay::browser::FindHit>* findHits = nullptr,
-                     int findCurrent = -1);
+                     int findCurrent = -1, const okay::browser::ScrollOffsets* boxScroll = nullptr, const void* editing = nullptr);
 
 } // namespace okayuiscreens

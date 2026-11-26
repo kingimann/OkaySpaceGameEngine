@@ -49,6 +49,7 @@ add_library(okay_browser STATIC
     src/Browser/Css.cpp
     src/Browser/Layout.cpp
     src/Browser/Browser.cpp
+    src/Browser/Forms.cpp        # the browser program: form controls' values, the entry list, GET and POST submission
     src/Browser/Profile.cpp      # the browser program: address bar, tabs, history, bookmarks, zoom, downloads, our own pages
     src/Browser/GamePack.cpp     # step 2: the web game pack reader (the native twin of platform/web/okay_web.js)
     src/Browser/GameLaunch.cpp   # step 2: which page elements run a game, per-site folders, the player's command line

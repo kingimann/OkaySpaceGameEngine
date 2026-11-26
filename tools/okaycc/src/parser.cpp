@@ -674,7 +674,7 @@ private:
     }
 
     // [captures](params) mutable -> ret { body }. See LambdaInfo in ast.hpp.
-    std::vector<LambdaInfo> lambdas_;
+    std::deque<LambdaInfo> lambdas_;
     std::unique_ptr<Expr> parseLambda() {
         Token at = cur();
         Pos pos = here();
@@ -1109,6 +1109,9 @@ private:
         std::uint64_t count = 0;  // above 0: an array of that many objects
         std::string guard;        // a static local: destroyed only if this flag is set
         int kind = 0;             // 0 object, 1 try frame (popped), 2 handler (ended)
+        // A hidden pointer to the object, made where a local of an inner block takes its name
+        // (shadowLocals): while that pointer is in scope, the object is destroyed through it.
+        std::string alias;
     };
     std::vector<std::vector<DVar>> dscopes_;
     std::size_t dbase_ = 0;
@@ -3364,6 +3367,32 @@ private:
             advance();
         }
     }
+    // The members of a class and of its bases that have the name of a function or variable
+    // template (data members) or of a type (data members and member functions): inside a member
+    // function the member hides it ([class.member.lookup], [basic.lookup.unqual] p8), so `max < 0`
+    // there compares the member `max`, and `Value(i)` calls the member function Value, not a
+    // class okay::uivars::Value. They are put among the local names while the body is read; the
+    // caller cuts localNames_ back to the returned mark.
+    std::size_t pushMemberNames(const Type* cls) {
+        std::size_t mark = localNames_.size();
+        const std::string own = cls ? shortName(cls->tag) : std::string();
+        for (int depth = 0; cls && depth < 64; ++depth) {
+            for (const Param& p : cls->params) {
+                if (!p.type || p.name.empty() || p.name == own || !(std::isalpha(static_cast<unsigned char>(p.name[0])) || p.name[0] == '_'))
+                    continue;
+                const bool fn = p.type->kind == Type::Kind::Function;
+                if ((!fn && (ftmpl_.count(p.name) || varTmpl_.count(p.name))) ||
+                    (p.name.compare(0, 8, "operator") != 0 && findTypedef(p.name)))
+                    localNames_.push_back(p.name);
+            }
+            auto sf = staticFns_.find(cls->tag);  // static member functions (Cable::Curve beside a class Curve)
+            if (sf != staticFns_.end())
+                for (const std::string& n : sf->second)
+                    if (n != own && n.compare(0, 8, "operator") != 0 && findTypedef(n)) localNames_.push_back(n);
+            cls = cls->base.empty() ? nullptr : classOf(cls->base);
+        }
+        return mark;
+    }
     void readDeferred(std::vector<DeferredBody>& bodies, ClassCtx& cx) {
         std::size_t saved = i_;
         bool savedHalf = halfGt_;
@@ -3371,7 +3400,9 @@ private:
         for (DeferredBody& db : bodies) {
             i_ = db.at;
             lastParams_ = db.params;
+            std::size_t memberMark = pushMemberNames(cx.t);
             auto body = parseBody(db.ret.get());
+            localNames_.resize(memberMark);
             if (db.kind == 0) cx.dtorBody = std::move(body);
             else if (db.kind == 1 && db.index < cx.ctors.size()) cx.ctors[db.index].body = std::move(body);
             else if (db.kind == 2 && db.decl) db.decl->body = std::move(body);
@@ -5942,7 +5973,9 @@ private:
                 decl->isInline = inl;
                 const Type* ret = type->inner.get();
                 decl->type = std::move(type);
+                std::size_t memberMark = pushMemberNames(classOf(clsTag));
                 decl->body = parseBody(ret);
+                localNames_.resize(memberMark);
                 extras_.push_back(std::move(decl));
                 flushExtras(tu);
                 return;
@@ -5962,7 +5995,9 @@ private:
                     decl->isInline = inl;
                     std::string savedBody = bodyClass_;
                     bodyClass_ = clsTag;
+                    std::size_t memberMark = pushMemberNames(classOf(clsTag));
                     decl->body = parseBody(type->inner.get());
+                    localNames_.resize(memberMark);
                     bodyClass_ = savedBody;
                     extras_.push_back(std::move(decl));
                 }
@@ -6108,6 +6143,44 @@ private:
         const Type* c = e->tag.empty() ? nullptr : classOf(e->tag);
         return c && !c->needCtor && !c->needDtor;
     }
+    // A local of an inner block that takes the name of an object with a destructor of an enclosing
+    // block ([basic.scope.block]; std::vector v, then if (auto *v = ..)): a return or break from
+    // inside the inner block destroyed `v`, which there names the new local. The object gets a
+    // hidden pointer, declared just before the new local, and is destroyed through it while that
+    // pointer is in scope (pendingDtors).
+    void shadowLocals(std::vector<std::unique_ptr<Stmt>>& out, const std::string& name, int line, int col,
+                      const std::string& file) {
+        if (name.empty() || dscopes_.size() < 2 || !isLocalName(name)) return;
+        for (std::size_t sc = dscopes_.size() - 1; sc-- > dbase_;)
+            for (DVar& v : dscopes_[sc]) {
+                if (v.kind != 0 || v.count != 0 || v.name != name || !v.guard.empty() || v.tag.empty() ||
+                    v.tag[0] == '\x03' || (!v.alias.empty() && isLocalName(v.alias)))
+                    continue;
+                auto d = std::make_unique<Decl>();
+                d->name = "__dal" + std::to_string(newN_++);
+                d->line = line;
+                d->col = col;
+                d->file = file;
+                auto cls = ty(Type::Kind::Struct);
+                cls->tag = v.tag;
+                d->type = ty(Type::Kind::Pointer);
+                d->type->inner = std::move(cls);
+                Pos p{line, col, file};
+                d->init = eAddr(eName(name, p), p);
+                v.alias = d->name;
+                localNames_.push_back(d->name);
+                out.push_back(declStmt(std::move(d)));
+            }
+    }
+    // The type of a new-expression as the parser writes it, (__newN = (T *)malloc(..), ..): T *.
+    static const Type* newExprType(const Expr& e) {
+        if (e.kind != Expr::Kind::Comma || e.kids.empty() || !e.kids[0]) return nullptr;
+        const Expr& a = *e.kids[0];
+        if (a.kind != Expr::Kind::Assign || a.kids.size() != 2 || !a.kids[1] || a.kids[1]->kind != Expr::Kind::Cast)
+            return nullptr;
+        const Type* t = a.kids[1]->ty.get();
+        return t && t->kind == Type::Kind::Pointer ? t : nullptr;
+    }
     void addLocal(std::vector<std::unique_ptr<Stmt>>& out, std::unique_ptr<Decl> decl,
                   std::vector<std::unique_ptr<Expr>> ctorArgs, bool haveCtorArgs) {
         std::string name = decl->name;
@@ -6124,6 +6197,7 @@ private:
         // of the class: its value, so the table is constant data (Input/Input.hpp).
         if (decl->isStatic && decl->init && decl->init->kind == Expr::Kind::Brace && bodyDepth_ > 0)
             boundConsts(*decl->init);
+        shadowLocals(out, name, decl->line, decl->col, decl->file);
         localNames_.push_back(name);
         Pos p;
         p.line = decl->line;
@@ -6176,6 +6250,13 @@ private:
             arrayInit(thenB->stmts, *eName(gname, p), decl->type.get(), decl->init.get(), p);
             out.push_back(guardIf(guard, std::move(thenB), p));
             return;
+        }
+        if (decl->isStatic && decl->init && decl->type && bodyDepth_ > 0) {
+            // static auto *s = new T(..); the global made for it needs the type now: T *.
+            const Type* a = decl->type.get();
+            if (a->kind == Type::Kind::Pointer && a->inner) a = a->inner.get();
+            if (a->kind == Type::Kind::Struct && a->tag == "\x03" "auto")
+                if (const Type* nt = newExprType(*decl->init)) decl->type = cloneType(*nt);
         }
         if (decl->isStatic && decl->init && decl->type && !name.empty() && bodyDepth_ > 0 &&
             (decl->type->kind == Type::Kind::Bool || decl->type->kind == Type::Kind::Char ||
@@ -6607,7 +6688,8 @@ private:
                     if (eh_) out.push_back(sExpr(ehCall("__okay_eh_pop", {}, p), p));
                     continue;
                 }
-                auto call = dtorCall(vars[i].tag, eAddr(eName(vars[i].name, p), p), p);
+                const bool viaAlias = !vars[i].alias.empty() && isLocalName(vars[i].alias);  // (shadowLocals)
+                auto call = dtorCall(vars[i].tag, viaAlias ? eName(vars[i].alias, p) : eAddr(eName(vars[i].name, p), p), p);
                 const bool had = call != nullptr;
                 if (had) out.push_back(sExpr(std::move(call), p));
                 // (An "auto x = e;" local has no unwinding record: no pop for it. Popping one
@@ -8361,7 +8443,7 @@ private:
                 // T(args) for a class T: a temporary, constructed in a hidden local declared before
                 // the statement. Its destructor does not run (see the plan: temporaries).
                 const Type* td = instTd ? instTd.get() : findTypedef(cur().text);
-                if (td && !instTd && fnNames_.count(cur().text)) td = nullptr;
+                if (td && !instTd && (fnNames_.count(cur().text) || isLocalName(cur().text))) td = nullptr;  // (a local or member hides it)
                 if (td && td->kind == Type::Kind::Struct && !td->tag.empty()) {
                     Token at = cur();
                     if (!instTd) advance();

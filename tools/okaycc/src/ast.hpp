@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <initializer_list>
 #include <limits>
@@ -30,6 +31,42 @@ struct Expr;
 struct Type;
 struct Stmt;
 struct Decl;
+
+// A type shared instead of copied (the checker's results, ET::type, and the type a checked node
+// keeps, Expr::checked): copying a TypeRef counts one more owner of the same type. It is read as
+// const; mut() gives a type of this holder's own to change, a copy when another owner holds it
+// (copy on write), and take() gives it up as a unique_ptr, copied when shared.
+class TypeRef {
+public:
+    TypeRef() = default;
+    TypeRef(std::unique_ptr<Type> t);  // NOLINT: implicit, like the unique_ptr it replaces
+    TypeRef(std::nullptr_t) {}
+    TypeRef(const TypeRef& o);
+    TypeRef(TypeRef&& o) noexcept : p_(o.p_) { o.p_ = nullptr; }
+    TypeRef& operator=(const TypeRef& o);
+    TypeRef& operator=(TypeRef&& o) noexcept {
+        std::swap(p_, o.p_);
+        return *this;
+    }
+    TypeRef& operator=(std::unique_ptr<Type> t);
+    TypeRef& operator=(std::nullptr_t) {
+        reset();
+        return *this;
+    }
+    ~TypeRef();
+    const Type* get() const { return p_; }
+    const Type& operator*() const { return *p_; }
+    const Type* operator->() const { return p_; }
+    explicit operator bool() const { return p_ != nullptr; }
+    void reset();
+    Type* mut();
+    std::unique_ptr<Type> take();
+    operator std::unique_ptr<Type>() && { return take(); }  // NOLINT: std::move(r.type) where a unique_ptr goes
+
+private:
+    void drop();
+    Type* p_ = nullptr;
+};
 
 struct Param {
     std::string name;
@@ -60,7 +97,7 @@ struct Expr {
     std::string file;
     std::vector<std::unique_ptr<Expr>> kids;
     std::unique_ptr<Type> ty;
-    std::unique_ptr<Type> checked;
+    TypeRef checked;  // the type the checker gave the node (shared with its result)
     // A number no other node made in this run has: a node made later at the address of a freed one
     // is told apart from it (the checker's kept results, Checker::memo_).
     std::uint64_t serial;
@@ -91,9 +128,60 @@ struct Type {
     bool needCtor = false;           // construction must run code
     bool needDtor = false;           // destruction must run code
     std::vector<std::string> vslots; // symbol that fills each vtable slot ("" = null)
+    // Owners of a type the checker shares between results (TypeRef in check.cpp); 0 elsewhere.
+    // cloneType does not copy it.
+    int owners = 0;
     Type();
     ~Type();
 };
+
+std::unique_ptr<Type> cloneType(const Type& t, bool withDefaults);
+inline TypeRef::TypeRef(std::unique_ptr<Type> t) : p_(t.release()) {
+    if (p_) p_->owners = 1;
+}
+inline TypeRef::TypeRef(const TypeRef& o) : p_(o.p_) {
+    if (p_) ++p_->owners;
+}
+inline TypeRef& TypeRef::operator=(const TypeRef& o) {
+    TypeRef n(o);
+    std::swap(p_, n.p_);
+    return *this;
+}
+inline TypeRef& TypeRef::operator=(std::unique_ptr<Type> t) {
+    TypeRef n(std::move(t));
+    std::swap(p_, n.p_);
+    return *this;
+}
+inline TypeRef::~TypeRef() { drop(); }
+inline void TypeRef::drop() {
+    if (p_ && --p_->owners == 0) delete p_;
+}
+inline void TypeRef::reset() {
+    drop();
+    p_ = nullptr;
+}
+inline Type* TypeRef::mut() {
+    if (p_ && p_->owners > 1) {
+        Type* c = cloneType(*p_, true).release();
+        --p_->owners;
+        p_ = c;
+        p_->owners = 1;
+    }
+    return p_;
+}
+inline std::unique_ptr<Type> TypeRef::take() {
+    if (!p_) return nullptr;
+    std::unique_ptr<Type> r;
+    if (p_->owners == 1) {
+        p_->owners = 0;
+        r.reset(p_);
+    } else {
+        r = cloneType(*p_, true);
+        --p_->owners;
+    }
+    p_ = nullptr;
+    return r;
+}
 
 struct Decl {
     std::string name;
@@ -149,7 +237,9 @@ struct LambdaInfo {
 
 struct Tu {
     std::vector<std::unique_ptr<Decl>> decls;
-    std::vector<LambdaInfo> lambdas;
+    // A deque: the checker adds the lambdas of each instance of a generic lambda while it holds
+    // references to others (checkLambda).
+    std::deque<LambdaInfo> lambdas;
     std::vector<std::string> usingNs;                 // using namespace N; (qualified names)
     std::map<std::string, std::string> usingDecl;     // using N::f;  f -> N::f
 };
@@ -160,6 +250,10 @@ std::unique_ptr<Type> cloneType(const Type& t, bool withDefaults = true);
 std::unique_ptr<Type> classByName(const Type& in);
 bool finishedClassCopy(const Type& t);
 std::unique_ptr<Expr> cloneExpr(const Expr& e);
+// Deep copies of a statement and of a declaration (a generic lambda's function, copied unchecked
+// for each instance).
+std::unique_ptr<Stmt> cloneStmt(const Stmt& s);
+std::unique_ptr<Decl> cloneDecl(const Decl& d);
 
 std::string exprStr(const Expr& e);
 std::string typeStr(const Type& t);

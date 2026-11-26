@@ -14,7 +14,8 @@
 // Deliberately strict: bare LF or CR in a head, obsolete line folding, duplicate
 // or conflicting Content-Length, Content-Length together with Transfer-Encoding,
 // unknown transfer or content encodings, CR/LF/NUL in anything we send, and an
-// https -> http redirect are all refused. We send `Accept-Encoding: identity` (gzip only when asked) and
+// https -> http redirect are all refused. We send `Accept-Encoding: identity` (gzip only when asked, and br with it when the
+// caller hands in a Brotli decoder, Limits::brotli) and
 // `Connection: close`, unless the caller asks for keep-alive (FetchRequest::keepAlive): then a finished
 // connection with clear framing can be handed to the Connector and used again by the next request to the same
 // host (GET, HEAD and OPTIONS only, one safe retry on a connection that went stale). Cookies are off unless the caller
@@ -75,6 +76,10 @@ struct Stream {
     virtual bool StillUsable() { return true; }
 };
 
+/// A Brotli decoder (RFC 7932) for Content-Encoding: br, handed in by a caller that links one (the engine's okay::brotli): this
+/// header stays free of it. `in` is the whole encoded body; false (and `why`) when it is broken or decodes past `maxOut`.
+using BrotliFn = bool (*)(const std::string& in, size_t maxOut, std::string& out, std::string& why);
+
 struct Limits {
     size_t   maxHeaderBytes = 64 * 1024;   ///< whole response head
     size_t   maxHeaders     = 100;
@@ -82,6 +87,8 @@ struct Limits {
     int      maxRedirects   = 10;
     bool     allowGzip      = false;       ///< accept Content-Encoding gzip, x-gzip and deflate (else they are refused)
     uint64_t maxEncodedBytes = 64ull * 1024 * 1024;   ///< compressed body held in memory before it is decoded
+    /// With allowGzip: "br" is asked for too (Accept-Encoding: gzip, deflate, br) and Content-Encoding: br is decoded with it.
+    BrotliFn brotli = nullptr;
 };
 
 struct Header { std::string name, value; };
@@ -279,7 +286,7 @@ inline bool ParseHeaderLine(const std::string& line, Header& h) {
 
 inline bool BuildRequest(const std::string& method, const Url& u, const std::vector<Header>& headers,
                          const std::string& body, bool absoluteForm, std::string& out,
-                         Err& e, std::string* msg = nullptr, bool acceptGzip = false, bool keepAlive = false) {
+                         Err& e, std::string* msg = nullptr, bool acceptGzip = false, bool keepAlive = false, bool acceptBr = false) {
     using detail::Set;
     if (!detail::IsToken(method) || method.size() > 16) return Set(e, msg, Err::BadHeader, "bad method");
     if (u.host.empty() || u.target.empty() || u.target[0] != '/') return Set(e, msg, Err::BadUrl, "bad url");
@@ -296,7 +303,7 @@ inline bool BuildRequest(const std::string& method, const Url& u, const std::vec
     if (absoluteForm) r += u.scheme + "://" + u.HostPort();
     r += u.target + " HTTP/1.1\r\nHost: " + u.HostPort() + "\r\n";
     if (!haveUa) r += "User-Agent: OkaySpace/1.0\r\n";
-    r += acceptGzip ? "Accept-Encoding: gzip, deflate\r\n" : "Accept-Encoding: identity\r\n";
+    r += acceptGzip ? (acceptBr ? "Accept-Encoding: gzip, deflate, br\r\n" : "Accept-Encoding: gzip, deflate\r\n") : "Accept-Encoding: identity\r\n";
     if (!keepAlive) r += "Connection: close\r\n";
     for (const Header& h : headers) r += h.name + ": " + h.value + "\r\n";
     if (!body.empty() || method == "POST" || method == "PUT" || method == "PATCH")
@@ -407,13 +414,14 @@ inline bool ReadHead(Reader& rd, const Limits& lim, Response& out, Err& e, std::
 
 enum class Framing { None, Length, Chunked, UntilClose };
 
-/// 0 = none/identity or not decodable, 1 = gzip, 2 = zlib "deflate". Only when Limits::allowGzip.
+/// 0 = none/identity or not decodable, 1 = gzip, 2 = zlib "deflate", 3 = Brotli (with Limits::brotli). Only when Limits::allowGzip.
 inline int ContentCoding(const Response& r, const Limits& lim) {
     const std::string* ce = r.Get("content-encoding");
     if (!ce || !lim.allowGzip) return 0;
     std::string v = detail::Trim(*ce);
     if (detail::IEq(v, "gzip") || detail::IEq(v, "x-gzip")) return 1;
     if (detail::IEq(v, "deflate")) return 2;
+    if (detail::IEq(v, "br") && lim.brotli) return 3;
     return 0;
 }
 
@@ -475,7 +483,8 @@ inline bool ReadBody(Reader& rd, const Response& head, const std::string& method
     auto finish = [&]() -> bool {
         if (!coding) return true;
         std::string out, why;
-        if (!InflateBody(encoded, coding == 1, size_t(std::min<uint64_t>(lim.maxBodyBytes, SIZE_MAX / 2)), out, why)) {
+        const size_t maxOut = size_t(std::min<uint64_t>(lim.maxBodyBytes, SIZE_MAX / 2));
+        if (coding == 3 ? !lim.brotli(encoded, maxOut, out, why) : !InflateBody(encoded, coding == 1, maxOut, out, why)) {
             Set(e, m, why.find("larger than the limit") != std::string::npos ? Err::TooLarge : Err::BadResponse, why.c_str());
             return false;
         }
@@ -822,7 +831,8 @@ inline FetchResult Fetch(Connector& conn, const FetchRequest& req, const Limits&
             }
         }
         std::string wire;
-        if (!BuildRequest(method, url, sendHeaders, body, conn.AbsoluteForm(url), wire, e, &msg, req.acceptGzip, req.keepAlive)) return bad(e, msg);
+        if (!BuildRequest(method, url, sendHeaders, body, conn.AbsoluteForm(url), wire, e, &msg, req.acceptGzip, req.keepAlive,
+                          req.acceptGzip && lim.brotli != nullptr)) return bad(e, msg);
         // Only GET, HEAD and OPTIONS may ride a kept connection and be sent again after it turned out stale.
         // PUT and DELETE are repeatable by the book but a server may already have acted, so they never use the pool.
         const bool poolable = method == "GET" || method == "HEAD" || method == "OPTIONS";

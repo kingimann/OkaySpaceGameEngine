@@ -9,8 +9,11 @@
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "BrowserView.hpp"
+#include "okay/Graphics/TtfFont.hpp"   // EmbeddedUIFontData: the launcher look's font
 
+#include <cmath>
 #include <string>
+#include <vector>
 
 using namespace okayuitest;
 namespace UI = OkayUI;
@@ -281,6 +284,55 @@ int main() {
             break;
         }
         CHECK(clicked == 0 && !keys.HasSelection());
+    }
+
+    // ---- round 4: text is sized by its em (CSS font-size), not its line; the page's cursor property; user-select: none
+    {
+        std::vector<unsigned char> font;
+        S::FontEm em;
+        CHECK(okay::EmbeddedUIFontData(font) && S::FontEmOf(font.data(), font.size(), em));
+        CHECK(em.linePerEm > 1.1f && em.linePerEm < 1.3f && em.ascentPerEm > 0.85f && em.ascentPerEm < 1.0f);   // Roboto: 2400 / 2048, 1900 / 2048
+        S::FontEm none;
+        CHECK(!S::FontEmOf(font.data(), 12, none) && none.linePerEm == 1.0f);   // not a font: false, the default kept
+        // a 16 px run is as wide as the font's 16 px em makes it: linePerEm times the width at a 16 px line (what was drawn before)
+        br::FontSpec fs;
+        fs.size = 16.0f;
+        const float now = S::OkayUIMeasure().Width("Patch notes", fs);
+        const float saved = UI::Style().textScale;
+        UI::Style().textScale = 2.0f;   // OkayUI's 8 px cell twice: a 16 px line
+        const float lineSized = UI::CalcTextWidth("Patch notes");
+        UI::Style().textScale = saved;
+        CHECK(lineSized > 0 && std::fabs(now / lineSized - em.linePerEm) < 0.02f);
+
+        br::BrowserTab tab5;
+        CHECK(tab5.Open("https://pages.test/ui.html"));
+        tab5.TakeFetches();
+        tab5.DeliverPage("https://pages.test/ui.html", true, 200,
+            "<body style='margin:0'><div id=na style='cursor:not-allowed;height:60px'>no</div><p style='margin:0'><a href='/w' style='cursor:wait'>busy link</a></p>"
+            "<p style='margin:0;height:40px'>plain text</p><p style='margin:0'>Keep</p><p style='margin:0;user-select:none'>Skip</p><p style='margin:0'>End</p></body>");
+        S::PageKeys keys5;
+        S::BrowserViewOptions opt5;
+        opt5.keys = &keys5;
+        Sim sim5(480, 320);
+        S::BrowserViewResult r5;
+        auto ui5 = [&] { r5 = S::DrawBrowserView(tab5, 0, 0, 480, 320, S::BrowserImageFn(), opt5); };
+        sim5.Frames(3, ui5);
+        const br::LayoutResult& p5 = tab5.Layout(r5.page.w, S::OkayUIMeasure());
+        auto cursorAt = [&](const char* text) {
+            for (const br::DrawCmd& c : p5.cmds)
+                if (c.kind == br::DrawCmd::Text && c.text == text) {
+                    sim5.Move(r5.page.x + c.x + 2.0f, r5.pageTop + c.y + c.h * 0.5f);
+                    sim5.Frame(ui5);
+                    return UI::GetMouseCursor();
+                }
+            return UI::MouseCursor_COUNT;
+        };
+        CHECK(cursorAt("no") == UI::MouseCursor_NotAllowed);
+        CHECK(cursorAt("busy link") == UI::MouseCursor_Wait);
+        CHECK(cursorAt("plain text") == UI::MouseCursor_Arrow);
+        // Ctrl+A leaves the user-select: none text out
+        sim5.ctrl = true; sim5.Hold(UI::KeyId_A, true); sim5.Frame(ui5); sim5.Hold(UI::KeyId_A, false); sim5.Frame(ui5); sim5.ctrl = false;
+        CHECK(S::SelectedPageText(p5, keys5) == "no\nbusy link\nplain text\nKeep\nEnd");
     }
 
     UI::UseLauncherLook(false);

@@ -315,6 +315,33 @@ int main() {
         CHECK(tab2.Document() && tab2.Document()->Body() && tab2.Document()->Body()->TextContent() == "Fran\xC3\xA7" "ais");
     }
 
+    // </dd> and </dt> close only their own element (13.2.6.4.7 "generate implied end tags, except for ... the same tag name"):
+    // they used to pop everything up to <html>, so the rest of the page landed after <body> (MDN's menus, any definition list)
+    CHECK(Tree("<body><div><dl><dt>t</dt><dd>x</dd></dl><p>after</p></div>",
+               "<html>\n"
+               "  <head>\n"
+               "  <body>\n"
+               "    <div>\n"
+               "      <dl>\n"
+               "        <dt>\n"
+               "          \"t\"\n"
+               "        <dd>\n"
+               "          \"x\"\n"
+               "      <p>\n"
+               "        \"after\"\n"));
+    CHECK(Tree("<ul><li>a<dl><dt>b</dt></dl></li><li>c</li></ul>",
+               "<html>\n"
+               "  <head>\n"
+               "  <body>\n"
+               "    <ul>\n"
+               "      <li>\n"
+               "        \"a\"\n"
+               "        <dl>\n"
+               "          <dt>\n"
+               "            \"b\"\n"
+               "      <li>\n"
+               "        \"c\"\n"));
+
     // Quirks mode from the DOCTYPE (HTML 13.2.6.4.1).
     CHECK(!ParseHtml("<!DOCTYPE html><p>x").quirks);
     CHECK(!ParseHtml("<!doctype HTML>").quirks);

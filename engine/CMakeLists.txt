@@ -542,8 +542,11 @@ target_include_directories(okay_engine PUBLIC
 # Image.cpp keeps the warning settings it had while it compiled the vendored stb tables (`-Wno-narrowing`:
 # Clang for Emscripten/WASM treats a `char` table initialised with 0xFF as a narrowing ERROR that `-w` does
 # not downgrade). Not checked yet whether our own code there still needs them.
-set_source_files_properties(src/Graphics/Image.cpp
-    PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
+# GCC / Clang flags only: MSVC's cl reads `-Wno-narrowing` as a bad /W level (D8021).
+if(NOT MSVC)
+    set_source_files_properties(src/Graphics/Image.cpp
+        PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
+endif()
 # The built-in UI font (the launcher's Roboto) lives in shared/RobotoFontOwn.h, in our own OKF1 container (shared/OkfDecode.hpp).
 set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)

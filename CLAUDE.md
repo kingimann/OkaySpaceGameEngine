@@ -117,7 +117,8 @@ then this file gets updated. Keep this file short and true.
       the launcher's test channel) on every push to main and for every PR whose checks finish green. Start one by hand
       for anything else the owner should try. Tell the owner what each one has; fix what they find and push again.
     - **A release gathers many test builds into one big update, and only the owner starts one.** (Owner, 2026-11-25: "i
-      will tell you when to send out releases, only send out test builds if i dont say release".) Never dispatch
+      will tell you when to send out releases, only send out test builds if i dont say release"; again 2026-11-26: "no
+      more releases only test builds". An earlier "send out a release" was for that one release only.) Never dispatch
       `release.yml` or open a version PR unless the owner said "release" for it; otherwise send test builds. Bump `CMakeLists.txt`, add a `ROADMAP.md` row and a full, plain-language
       `dist/CHANGELOG.txt` block (it IS the launcher's What's New and the GitHub release notes, in full), merge, then
       dispatch `release.yml` (ref `main`, channel `latest`) from a main commit whose full run is green.

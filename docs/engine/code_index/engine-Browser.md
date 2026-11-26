@@ -2,12 +2,21 @@
 
 # Code index: engine-Browser
 
-Back to the [code index](../code_index.md). 10 headers, 129 names.
+Back to the [code index](../code_index.md). 12 headers, 142 names.
 
 ## `engine/include/okay/Browser/Browser.hpp`
 
-- `BrowserTab` class, line 40
-- `PlainTextPage` function, line 236: The page shown for a plain-text address (".txt"): the text in a <pre>, with < and & escaped.
+- `BrowserTab` class, line 50
+- `PlainTextPage` function, line 311: The page shown for a plain-text address (".txt"): the text in a <pre>, with < and & escaped.
+
+## `engine/include/okay/Browser/Cookies.hpp`
+
+- `Cookie` struct, line 24
+- `CookieContext` struct, line 39: Who is asking (RFC 6265bis 5.2 "same-site" and "top-level navigation"; RFC 6265 5.2 "non-HTTP API").
+- `CookieStore` class, line 46
+- `ParseCookieDate` function, line 85: RFC 6265 5.1.1: a cookie date ("Wed, 21 Oct 2015 07:28:00 GMT" and the older forms) as seconds since 1970; false when
+- `DomainMatches` function, line 87: RFC 6265 5.1.3: does 'host' domain-match 'domain'?
+- `SiteOf` function, line 90: The "site" of a host for SameSite and for the Domain check: its last two labels (three under a shared suffix such as
 
 ## `engine/include/okay/Browser/Css.hpp`
 
@@ -143,9 +152,19 @@ Back to the [code index](../code_index.md). 10 headers, 129 names.
 
 ## `engine/include/okay/Browser/Script.hpp`
 
-- `ConsoleLine` struct, line 35: One line of a page's console.
-- `PageScripts` class, line 40
-- `IsJavaScriptType` function, line 107: Is 'type' (a <script type="..."> value, "" when there is none) a classic script we run? (HTML 4.12.1.1: the JavaScript
+- `ScriptRequest` struct, line 48: A fetch() or XMLHttpRequest a page asked for; the tab checks it, adds cookies and hands it to the host.
+- `ScriptResponse` struct, line 56: The answer for a ScriptRequest. 'ok' false: a network error ('error' says why; the page sees a TypeError / onerror).
+- `KeyInfo` struct, line 66: A key event (UI Events KeyboardEvent): key is "a", "Enter", "ArrowLeft" ...; code is the physical key ("KeyA").
+- `MouseInfo` struct, line 72: A mouse event (UI Events MouseEvent): page view coordinates in CSS px, button 0 left / 1 middle / 2 right.
+- `PageDialog` struct, line 79: alert / confirm / prompt: the tab shows it; the script did not wait for it.
+- `ConsoleLine` struct, line 85: One line of a page's console.
+- `PageScripts` class, line 90
+- `IsJavaScriptType` function, line 213: Is 'type' (a <script type="..."> value, "" when there is none) a classic script we run? (HTML 4.12.1.1: the JavaScript
+
+## `engine/include/okay/Browser/Storage.hpp`
+
+- `StorageArea` class, line 19
+- `WebStorage` class, line 39
 
 ## `engine/include/okay/Browser/Url.hpp`
 

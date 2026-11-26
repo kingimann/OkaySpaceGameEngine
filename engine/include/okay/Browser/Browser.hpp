@@ -20,12 +20,22 @@
 // (javascript:, file:, data: ...) is refused. The browser program (browser/) switches that off with SetAnyOrigin(true): a
 // tab there goes to any http(s) site like a regular browser's, and also shows our own pages ("about:newtab" ...,
 // Profile.hpp), whose HTML the host hands back like any other page.
+//
+// Round 3: the page's fetch() / XMLHttpRequest go through the tab (TakeScriptRequests / DeliverScriptResponse, same rules as
+// a <script src>), cookies (Cookies.hpp, one store per profile: SetCookieStore) go on every request and come back from every
+// answer (CookieHeader / ReceiveCookies for the fetches the host makes itself), localStorage (SetLocalStorage, per profile)
+// and sessionStorage (per tab) are kept per site, history.pushState / back / forward move within one page's own entries
+// (popstate, no load), the person's keys, mouse and focus reach the page (KeyEvent, PointerEvent, SetFocus, SetHover), and
+// alert / confirm / prompt become dialogs the host shows (TakeDialog). Scripts run in page order, with defer ones after the
+// rest and async ones when they arrive; document.write puts its text right after its script.
 // Standard library only.
+#include "okay/Browser/Cookies.hpp"
 #include "okay/Browser/Css.hpp"
 #include "okay/Browser/Forms.hpp"
 #include "okay/Browser/Html.hpp"
 #include "okay/Browser/Layout.hpp"
 #include "okay/Browser/Script.hpp"
+#include "okay/Browser/Storage.hpp"
 #include "okay/Browser/Url.hpp"
 
 #include <cstddef>
@@ -179,8 +189,39 @@ public:
     /// The page's scripts (null: the page has none, scripting is off, or no page is shown).
     PageScripts* Scripts() { return m_scripts.get(); }
 
+    // ---- round 3: fetch, cookies, storage, history, keys and mouse, dialogs ----
+    /// The profile's cookies (null: no cookies are kept or sent). Not owned; it must outlive the tab (or be set to null).
+    void SetCookieStore(CookieStore* store) { m_cookies = store; }
+    CookieStore* Cookies() const { return m_cookies; }
+    /// The profile's localStorage (null: off). Not owned. sessionStorage is the tab's own.
+    void SetLocalStorage(WebStorage* store) { m_local = store; }
+    WebStorage& SessionStorage() { return m_session; }
+    /// The Cookie header value for a fetch the host makes for this tab (TakeFetches' addresses): "" when none. `now` is seconds
+    /// since 1970 (0 = the system clock).
+    std::string CookieHeader(const std::string& url, std::int64_t now = 0) const;
+    /// The Set-Cookie header values of an answer the host fetched for this tab (pages, images, styles, scripts).
+    void ReceiveCookies(const std::string& url, const std::vector<std::string>& setCookies, std::int64_t now = 0);
+    /// The page's fetch() / XMLHttpRequest calls the host should make now (each once). Their headers already carry the
+    /// cookies; the host sends them as they are and hands the answer to DeliverScriptResponse.
+    std::vector<ScriptRequest> TakeScriptRequests();
+    /// The answer for request `id`. Its Set-Cookie headers are stored (and not shown to the page). An answer for a page that
+    /// is gone is ignored.
+    void DeliverScriptResponse(int id, const ScriptResponse& r);
+    /// A key event (`type` keydown / keyup / keypress) for the focused element (or the body). True when the page cancelled it:
+    /// the host then does not type the key into a control or scroll.
+    bool KeyEvent(const std::string& type, const KeyInfo& k);
+    /// A mouse event (`type` mousedown / mouseup / mousemove / dblclick / contextmenu ...) at `el` (the element under the
+    /// pointer). True when cancelled. SetHover fires mouseover / mouseout.
+    bool PointerEvent(const Node& el, const std::string& type, const MouseInfo& m);
+    /// A dialog the page opened (alert / confirm / prompt); the host shows it. False when there is none.
+    bool TakeDialog(PageDialog& out);
+    static constexpr std::size_t kMaxQueuedDialogs = 8;
+    /// The site of the page that started the current load ("" = the person: typed, bookmark, back). For SameSite cookies.
+    const std::string& Initiator() const { return m_initiator; }
+
 private:
-    struct Entry { std::string url; float scrollY = 0.0f; bool post = false; std::string body; };
+    // doc: the page (ShowPage count) the entry belongs to; entries made by pushState share their page's number
+    struct Entry { std::string url; float scrollY = 0.0f; bool post = false; std::string body; std::uint64_t doc = 0; std::string state; };
     void StartLoad();
     void ShowPage(const std::string& url, const std::string& body);
     std::vector<Entry> m_history;
@@ -221,7 +262,12 @@ private:
     float m_viewH = 0.0f;
     ScrollOffsets m_boxScroll;
     // the page's scripts, in page order: inline text, or a src file that is fetched first
-    struct ScriptSource { std::string url, text; bool waiting = false, refused = false; };   // refused: another site, or the fetch failed
+    struct ScriptSource {
+        std::string url, text;
+        bool waiting = false, refused = false;   // refused: another site, or the fetch failed
+        const Node* el = nullptr;                // the <script> element (null once the page changed)
+        bool async = false;                      // runs when it arrives, out of order (async, or added by a script)
+    };
     std::unique_ptr<PageScripts> m_scripts;
     std::vector<ScriptSource> m_scriptQueue;
     std::size_t m_nextScript = 0;
@@ -230,6 +276,35 @@ private:
     bool m_scripting = true;
     void StartScripts(const std::string& baseUrl);
     void RunReadyScripts();
+    // round 3
+    void RunOne(ScriptSource& s);
+    void QueueScript(const Node& el, const std::string& baseUrl, std::size_t at, bool parser);
+    void RunAsyncScripts();
+    void AfterScripts();             // the effects of a host entry: written scripts, styles, focus
+    void CollectSheets(const std::string& base);
+    std::string BaseUrl() const;
+    std::int64_t Now(std::int64_t now) const;
+    CookieStore* m_cookies = nullptr;
+    WebStorage* m_local = nullptr;
+    WebStorage m_session;
+    std::vector<ScriptSource> m_asyncScripts;
+    std::vector<ScriptRequest> m_scriptFetches;   // asked by the page, not taken by the host yet
+    struct OpenRequest { std::string url; bool cross = false; };
+    std::map<int, OpenRequest> m_openRequests;    // asked by the page, not answered (cross: another origin, CORS rules)
+    std::vector<PageDialog> m_dialogs;
+    int m_traverse = 0;                           // history.back / forward asked by a script
+    bool m_stylesDirty = false;
+    bool m_contentLoaded = false, m_loadFired = false;
+    std::uint64_t m_docSerial = 0;
+    std::string m_initiator;
+    std::map<std::string, std::string> m_linkedCss;   // linked sheets that arrived (address -> text), for CollectSheets
+    bool SameDocument(std::size_t index) const;
+    void PushEntry(Entry e);                      // a new last entry after the current one (forward entries go)
+    void GoTo(std::size_t index);                 // back / forward: within the page's own entries, or a load
+    void FocusTo(const Node* el, bool fromScript);
+    void ForgetScriptNode(const Node& n);         // a freed node: no queued script points at it any more
+    void FillArrived();                           // linked sheets that already arrived go in their places
+    StorageArea* StorageFor(bool local);
 };
 
 /// The page shown for a plain-text address (".txt"): the text in a <pre>, with < and & escaped.

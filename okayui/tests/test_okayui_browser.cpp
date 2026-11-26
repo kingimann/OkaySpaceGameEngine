@@ -9,8 +9,11 @@
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "BrowserView.hpp"
+#include "okay/Graphics/TtfFont.hpp"   // EmbeddedUIFontData: the launcher look's font
 
+#include <cmath>
 #include <string>
+#include <vector>
 
 using namespace okayuitest;
 namespace UI = OkayUI;
@@ -281,6 +284,26 @@ int main() {
             break;
         }
         CHECK(clicked == 0 && !keys.HasSelection());
+    }
+
+    // ---- round 4: text is sized by its em (CSS font-size), not its line
+    {
+        std::vector<unsigned char> font;
+        S::FontEm em;
+        CHECK(okay::EmbeddedUIFontData(font) && S::FontEmOf(font.data(), font.size(), em));
+        CHECK(em.linePerEm > 1.1f && em.linePerEm < 1.3f && em.ascentPerEm > 0.85f && em.ascentPerEm < 1.0f);   // Roboto: 2400 / 2048, 1900 / 2048
+        S::FontEm none;
+        CHECK(!S::FontEmOf(font.data(), 12, none) && none.linePerEm == 1.0f);   // not a font: false, the default kept
+        // a 16 px run is as wide as the font's 16 px em makes it: linePerEm times the width at a 16 px line (what was drawn before)
+        br::FontSpec fs;
+        fs.size = 16.0f;
+        const float now = S::OkayUIMeasure().Width("Patch notes", fs);
+        const float saved = UI::Style().textScale;
+        UI::Style().textScale = 2.0f;   // OkayUI's 8 px cell twice: a 16 px line
+        const float lineSized = UI::CalcTextWidth("Patch notes");
+        UI::Style().textScale = saved;
+        CHECK(lineSized > 0 && std::fabs(now / lineSized - em.linePerEm) < 0.02f);
+
     }
 
     UI::UseLauncherLook(false);

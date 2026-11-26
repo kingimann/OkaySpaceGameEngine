@@ -154,7 +154,7 @@ int main() {
         Fetch page; page.kind = "page"; page.reached = true; page.status = 200; r.fetches.push_back(page);
         Fetch img; img.kind = "image"; img.reached = true; img.status = 200; img.note = "image not decoded"; img.head = std::string("RIFF\x10\0\0\0WEBPVP8 ", 16);
         img.url = "https://shop.test/a.webp"; r.fetches.push_back(img);
-        Fetch font; font.kind = "font"; font.reached = true; font.status = 200; font.note = "font not TrueType or OpenType"; font.head = "wOF2abcd";
+        Fetch font; font.kind = "font"; font.reached = true; font.status = 200; font.note = "font not decoded: not a WOFF2 file"; font.head = "wOF2abcd";
         r.fetches.push_back(font);
         Fetch js; js.kind = "script"; js.reached = false; js.netError = "TLS handshake failed"; r.fetches.push_back(js);
         Fetch gone; gone.kind = "image"; gone.reached = true; gone.status = 404; r.fetches.push_back(gone);

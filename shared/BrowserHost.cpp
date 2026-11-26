@@ -6,6 +6,7 @@
 #include "OkayThreads.hpp"
 #include "Process.hpp"
 #include "okay/Browser/GamePack.hpp"
+#include "okay/Browser/WebFont.hpp"
 #include "okay/Core/ImageDecode.hpp"
 #include "okay/Core/StringUtil.hpp"
 #include "okay/Platform/NativeFetch.hpp"
@@ -283,8 +284,11 @@ void TabHost::DeliverPageAnswerImpl(const std::string& url, bool ok, long status
         body = "<!DOCTYPE html><html><head><title>" + HtmlEscape(name.empty() ? at : name) +
                "</title></head><body style=\"margin:0;background:#0e0e0e\"><img src=\"" + HtmlEscape(at) +
                "\" style=\"display:block;margin:0 auto\"></body></html>";
+        m_tab.DeliverPage(at, ok, (int)status, body, error, "text/html; charset=utf-8");   // the page made here is UTF-8
+        return;
     }
-    m_tab.DeliverPage(at, ok, (int)status, body, error);
+    // the answer's Content-Type goes with the bytes: its charset says how they become text (Encoding.hpp DecodePage)
+    m_tab.DeliverPage(at, ok, (int)status, body, error, contentType);
 }
 
 void TabHost::Pump() {
@@ -386,11 +390,13 @@ void TabHost::Pump() {
         if (kind == BrowserTab::FetchKind::Style) { report("style"); m_tab.DeliverStyle(at, d.ok, d.body); continue; }
         if (kind == BrowserTab::FetchKind::Script) { report("script"); m_tab.DeliverScript(at, d.ok, d.body); continue; }
         if (kind == BrowserTab::FetchKind::Font) {
-            // only TrueType (0x00010000, "true") and OpenType ("OTTO") files: our rasterizer reads those (not WOFF)
-            const std::string& b = d.body;
-            const bool sfnt = b.size() > 12 && (b.compare(0, 4, std::string("\0\1\0\0", 4)) == 0 || b.compare(0, 4, "true") == 0 || b.compare(0, 4, "OTTO") == 0);
-            if (d.ok && sfnt && m_fontLoader) if (const FontFace* f = m_tab.FontFor(at)) m_fontLoader(*f, std::vector<std::uint8_t>(b.begin(), b.end()));
-            if (d.ok && !sfnt && note.empty()) note = "font not TrueType or OpenType";
+            // TrueType / OpenType files as they are; WOFF and WOFF2 files decoded back to the sfnt file they were made from
+            // (WebFont.hpp), so our rasterizer reads them all
+            std::vector<std::uint8_t> sfnt;
+            std::string why;
+            const bool good = d.ok && DecodeWebFont((const std::uint8_t*)d.body.data(), d.body.size(), sfnt, why);
+            if (good && m_fontLoader) if (const FontFace* f = m_tab.FontFor(at)) m_fontLoader(*f, sfnt);
+            if (d.ok && !good && note.empty()) note = "font not decoded: " + why;
             report("font");
             continue;
         }

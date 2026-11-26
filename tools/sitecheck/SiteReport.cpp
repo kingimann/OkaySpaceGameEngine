@@ -209,7 +209,7 @@ std::vector<Cause> CausesOf(const SiteResult& r) {
             const std::string fmt = ImageFormatOf(f.head, f.contentType);
             Add(out, seen, Area::Images, "image format " + (fmt.empty() ? std::string("unknown") : fmt) + " not decoded", f.url);
         }
-        if (f.note == "font not TrueType or OpenType") {
+        if (StartsWith(f.note, "font not decoded")) {   // the host could not turn it into a TrueType / OpenType file (WebFont.hpp)
             const std::string fmt = FontFormatOf(f.head);
             Add(out, seen, Area::Fonts, "font format " + (fmt.empty() ? std::string("unknown") : fmt) + " not used", f.url);
         }

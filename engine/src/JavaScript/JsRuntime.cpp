@@ -1529,7 +1529,7 @@ std::vector<GcObj*> Runtime::OwnKeys(Object* o, bool strings, bool symbols) {
     }
     if (symbols)
         for (const Prop& p : o->props)
-            if (p.key->kind == Kind::Symbol) out.push_back(p.key);
+            if (p.key->kind == Kind::Symbol && !static_cast<Symbol*>(p.key)->priv) out.push_back(p.key);
     return out;
 }
 

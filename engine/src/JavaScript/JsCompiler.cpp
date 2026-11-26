@@ -112,7 +112,11 @@ struct Compiler {
             case OP_GetUpChk: case OP_GetGlobal: case OP_TypeofGlobal: case OP_NewObject: case OP_LoadThis:
             case OP_LoadThisChk: case OP_LoadNewTarget: case OP_LoadFunc: case OP_LoadHome: case OP_Closure:
             case OP_Arguments: case OP_RestArgs: case OP_DupX1: case OP_DupX2: case OP_GetPropKeep: case OP_TemplateObj:
+            case OP_NewPrivate:
                 return 1;
+            case OP_GetPrivate: case OP_HasPrivate: return -1;
+            case OP_SetPrivate: return -2;
+            case OP_DefPrivate: return -3;
             case OP_Dup2: return 2;
             case OP_Pop: case OP_PutLoc: case OP_PutCell: case OP_PutUp: case OP_InitLex: case OP_SetProp:
             case OP_GetElem: case OP_In: case OP_InstanceOf: case OP_Add: case OP_Sub: case OP_Mul: case OP_Div:
@@ -527,6 +531,15 @@ struct Compiler {
                     Emit(OP_Pop);
                     continue;
                 }
+                if (field->flags & NF_Private) {   // 7.3.31 PrivateFieldAdd / 7.3.32 PrivateMethodOrAccessorAdd
+                    Emit(OP_LoadThis);
+                    EmitLoad(field->str, field);
+                    if (field->flags & NF_Method) EmitLoad(field->c->str, field->c);
+                    else if (field->a) Expr(field->a);
+                    else Emit(OP_Undef);
+                    Emit(OP_DefPrivate, 0, (field->flags & NF_Method) ? 1 + field->op : 0);
+                    continue;
+                }
                 Emit(OP_LoadThis);
                 if (field->a) Expr(field->a);
                 else Emit(OP_Undef);
@@ -841,7 +854,11 @@ struct Compiler {
             case NK::Member:
                 Expr(p->a);
                 Emit(OP_Swap);
-                Emit(OP_SetProp, AtomConst(p->str));
+                if (p->flags & NF_Private) {   // [o v] -> [o k v]
+                    EmitLoad(p->str, p);
+                    Emit(OP_Swap);
+                    Emit(OP_SetPrivate);
+                } else Emit(OP_SetProp, AtomConst(p->str));
                 Emit(OP_Pop);
                 return;
             case NK::Index: {
@@ -1223,6 +1240,12 @@ struct Compiler {
             case NK::Unary: UnaryExpr(n); return;
             case NK::Update: UpdateExpr(n); return;
             case NK::Binary: {
+                if (n->op == 1000 && n->a->k == NK::PrivName) {   // #x in obj (13.10.1)
+                    EmitLoad(n->a->str, n->a);
+                    Expr(n->b);
+                    Emit(OP_HasPrivate);
+                    return;
+                }
                 Expr(n->a);
                 Expr(n->b);
                 static const struct { int p; int op; } map[] = {
@@ -1272,9 +1295,15 @@ struct Compiler {
                 }
                 Expr(n->a);
                 if (n->flags & NF_Optional) ChainJump(OP_JumpNullish);
+                if (n->flags & NF_Private) {
+                    EmitLoad(n->str, n);
+                    Emit(OP_GetPrivate);
+                    return;
+                }
                 Emit(OP_GetProp, AtomConst(n->str));
                 return;
             }
+            case NK::PrivName: Fail(n, "'" + Utf16To8(n->str) + "' can only be used before 'in' or after '.'");
             case NK::Index: {
                 if (n->a->k == NK::Super) {
                     EmitThis();
@@ -1377,7 +1406,14 @@ struct Compiler {
             AfterSuperCall();
             return;
         }
-        if (callee->k == NK::Member && callee->a->k != NK::Super) {
+        if (callee->k == NK::Member && (callee->flags & NF_Private)) {   // [obj] -> [fn obj]
+            Expr(callee->a);
+            if (callee->flags & NF_Optional) ChainJump(OP_JumpNullish);
+            Emit(OP_Dup);
+            EmitLoad(callee->str, callee);
+            Emit(OP_GetPrivate);
+            Emit(OP_Swap);
+        } else if (callee->k == NK::Member && callee->a->k != NK::Super) {
             Expr(callee->a);
             if (callee->flags & NF_Optional) ChainJump(OP_JumpNullish);
             Emit(OP_GetPropKeep, AtomConst(callee->str));
@@ -1493,6 +1529,18 @@ struct Compiler {
             if (!prefix) Emit(OP_Pop);
             return;
         }
+        if (t->k == NK::Member && (t->flags & NF_Private)) {
+            Expr(t->a);
+            EmitLoad(t->str, t);
+            Emit(OP_Dup2);
+            Emit(OP_GetPrivate);
+            Emit(OP_ToNum);
+            if (!prefix) Emit(OP_DupX2);
+            Emit(incOp);
+            Emit(OP_SetPrivate);
+            if (!prefix) Emit(OP_Pop);
+            return;
+        }
         if (t->k == NK::Member) {
             if (t->a->k == NK::Super) Fail(t, "++ on super properties is not supported");
             Expr(t->a);
@@ -1548,6 +1596,13 @@ struct Compiler {
                 EmitStore(t->str, true, t);
                 return;
             }
+            if (t->k == NK::Member && (t->flags & NF_Private)) {
+                Expr(t->a);
+                EmitLoad(t->str, t);
+                Expr(n->b);
+                Emit(OP_SetPrivate);
+                return;
+            }
             if (t->k == NK::Member) {
                 if (t->a->k == NK::Super) {
                     EmitThis();
@@ -1601,7 +1656,33 @@ struct Compiler {
             EmitStore(t->str, true, t);
             return;
         }
+        const bool priv = t->k == NK::Member && (t->flags & NF_Private);
         if (t->a->k == NK::Super) Fail(t, "compound assignment to super properties is not supported");
+        if (priv) {   // the Index sequence with the private name as the key: [o k v]
+            Expr(t->a);
+            EmitLoad(t->str, t);
+            Emit(OP_Dup2);
+            Emit(OP_GetPrivate);
+            if (logical) {
+                int j = EmitJump(jop);
+                Emit(OP_Pop);
+                fs->depth += 1;
+                Expr(n->b);
+                Emit(OP_SetPrivate);
+                int je = EmitJump(OP_Jump);
+                Patch(j);
+                Emit(OP_DupX2);
+                Emit(OP_Pop);
+                Emit(OP_Pop);
+                Emit(OP_Pop);
+                Patch(je);
+                return;
+            }
+            Expr(n->b);
+            Emit(CompoundOp(n->op));
+            Emit(OP_SetPrivate);
+            return;
+        }
         if (t->k == NK::Member) {
             Expr(t->a);
             Emit(OP_Dup);
@@ -1738,14 +1819,24 @@ struct Compiler {
         struct Leave { int& d; ~Leave() { --d; } } leave{classDepth};
         ClassInfo* ci = n->ci;
         bool named = !n->str.empty();
-        if (named) {
-            PushScope();
-            Var* v = Declare(n->str, VK_Const, n);
+        const bool scoped = named || !ci->privNames.empty();
+        if (scoped) PushScope();
+        auto declareEmpty = [&](const std::u16string& name) {
+            Var* v = Declare(name, VK_Const, n);
             if (v->captured) Emit(OP_NewCell, v->slot, 1);
             else { Emit(OP_PushEmpty); Emit(OP_PutLoc, v->slot); }
-        }
+        };
+        if (named) declareEmpty(n->str);
         if (ci->heritage) Expr(ci->heritage);
         else Emit(OP_PushEmpty);
+        // 15.7.14 steps 5-6: a new Private Name for each #name of the body (after the heritage, which sees the outer ones)
+        for (const std::u16string& pn : ci->privNames) {
+            declareEmpty(pn);
+            Emit(OP_NewPrivate, AtomConst(pn));
+            EmitStore(pn, false, n, true);
+            MarkInit(pn);
+        }
+        for (const std::u16string& h : ci->privHidden) declareEmpty(h);
         Proto* ctor = CompileFunction(ci->ctor, false);
         fs->p->protos.push_back(ctor);
         Emit(OP_Class, (int)fs->p->protos.size() - 1, ci->heritage ? 1 : 0);   // [heritage] -> [ctor proto]
@@ -1754,10 +1845,30 @@ struct Compiler {
             bool isStatic = (m->flags & NF_Static) != 0;
             if (isStatic) { Emit(OP_Dup2); Emit(OP_Pop); }
             else Emit(OP_Dup);
+            if (m->flags & NF_Private) {   // [ctor proto home] -> the method in its hidden binding, its home set
+                const std::u16string hidden = m->str + (m->op == 1 ? u":g" : m->op == 2 ? u":s" : u":m");
+                EmitClosure(m->b);
+                Emit(OP_Swap);
+                Emit(OP_SetHome);
+                Emit(OP_Pop);
+                EmitStore(hidden, false, m, true);
+                MarkInit(hidden);
+                continue;
+            }
             PushKey(m);
             EmitClosure(m->b);
             Emit(m->op == 1 ? OP_DefGetter : m->op == 2 ? OP_DefSetter : OP_DefMethod, 0, 0);
             Emit(OP_Pop);
+        }
+        // the static private methods go on the class itself, before the static fields run (15.7.14 step 32)
+        for (Node* m : n->list) {
+            if (!(m->flags & NF_Private) || !(m->flags & NF_Static)) continue;
+            line = m->line;
+            Emit(OP_Dup2);
+            Emit(OP_Pop);
+            EmitLoad(m->str, m);
+            EmitLoad(m->str + (m->op == 1 ? u":g" : m->op == 2 ? u":s" : u":m"), m);
+            Emit(OP_DefPrivate, 0, 1 + m->op);
         }
         if (ci->instFields) {
             Proto* f = CompileFunction(ci->instFields, false);
@@ -1782,7 +1893,7 @@ struct Compiler {
             Emit(OP_Call, 0);
             Emit(OP_Pop);
         }
-        if (named) PopScope();
+        if (scoped) PopScope();
     }
 
     void YieldExpr(Node* n) {

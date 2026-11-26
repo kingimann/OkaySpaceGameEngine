@@ -143,7 +143,6 @@ struct Parser {
         return "?";
     }
     [[noreturn]] void Unexpected(const char* wanted = nullptr) {
-        if (Cur().t == TT::PrivateName) Fail("#private class members are not supported");
         std::string m = "unexpected " + Describe(Cur());
         if (wanted) m += std::string(", expected ") + wanted;
         Fail(m);
@@ -179,6 +178,61 @@ struct Parser {
     bool InGenerator() const { return !fstack.empty() && fstack.back()->generator; }
     bool InAsync() const { return !fstack.empty() && fstack.back()->async; }
     void Ref(const std::u16string& name) { refs.back().insert(name); }
+
+    // ---- private names (15.7: each class body is a private environment; a #name must be declared by an enclosing class)
+    struct PrivScope {
+        std::unordered_map<std::u16string, int> declared;   ///< "#x" -> PK_* bits
+        std::vector<std::pair<std::u16string, std::pair<int, int>>> refs;   ///< names used here, with line and column
+    };
+    std::vector<PrivScope> privScopes;
+    enum { PK_Field = 1, PK_Method = 2, PK_Get = 4, PK_Set = 8, PK_Static = 16 };
+    void PrivRef(const std::u16string& name, const Token& at) {
+        if (privScopes.empty()) FailAt(at, "'" + Utf16To8(name) + "' is not declared in an enclosing class");
+        privScopes.back().refs.push_back({name, {at.line, at.col}});
+        Ref(name);
+    }
+    Node* PrivateMember(Node* obj, const Token& dot, bool optional) {
+        const Token& pt = Cur();
+        Node* m = ast.NewNode(NK::Member, dot.line, dot.col);
+        m->a = obj;
+        m->str = u"#" + pt.s;
+        m->flags |= NF_Private;
+        if (optional) m->flags |= NF_Optional;
+        PrivRef(m->str, pt);
+        Next();
+        return m;
+    }
+    // 15.7.1 static semantics: a #name is declared once, except a getter and a setter pair of the same placement
+    void DeclarePrivate(ClassInfo* ci, const std::u16string& name, int kind, const Token& at) {
+        if (name == u"#constructor") FailAt(at, "a class member can not be named #constructor");
+        auto& d = privScopes.back().declared;
+        auto it = d.find(name);
+        if (it == d.end()) {
+            d[name] = kind;
+            ci->privNames.push_back(name);
+            return;
+        }
+        const int had = it->second;
+        const bool pair = ((had & ~PK_Static) == PK_Get && (kind & ~PK_Static) == PK_Set) ||
+                          ((had & ~PK_Static) == PK_Set && (kind & ~PK_Static) == PK_Get);
+        if (!pair || (had & PK_Static) != (kind & PK_Static)) FailAt(at, "'" + Utf16To8(name) + "' is already declared in this class");
+        it->second = had | kind;
+    }
+    void EndPrivScope() {
+        PrivScope done = std::move(privScopes.back());
+        privScopes.pop_back();
+        for (auto& r : done.refs) {
+            if (done.declared.count(r.first)) continue;
+            if (!privScopes.empty()) {
+                privScopes.back().refs.push_back(r);
+                continue;
+            }
+            err.line = r.second.first;
+            err.column = r.second.second;
+            err.message = "'" + Utf16To8(r.first) + "' is not declared in an enclosing class";
+            throw ParseFail{};
+        }
+    }
 
     void PushFunc(FuncInfo* fi) {
         fstack.push_back(fi);
@@ -396,7 +450,6 @@ struct Parser {
             Expect(P_RBrack);
             return;
         }
-        if (t.t == TT::PrivateName) Fail("#private class members are not supported");
         Unexpected("a property name");
     }
     Node* ObjectBindingPattern() {
@@ -859,7 +912,15 @@ struct Parser {
     }
 
     Node* Binary(int minPrec) {
-        Node* left = Unary();
+        Node* left;
+        if (Cur().t == TT::PrivateName && !noIn && At(pos + 1).t == TT::Name && Eq(At(pos + 1).s, "in") && !At(pos + 1).escaped) {
+            // 13.10 RelationalExpression: PrivateIdentifier in ShiftExpression (an ergonomic brand check)
+            const Token& pt = Cur();
+            left = N(NK::PrivName, pt);
+            left->str = u"#" + pt.s;
+            PrivRef(left->str, pt);
+            Next();
+        } else left = Unary();
         while (true) {
             const Token& t = Cur();
             int prec = BinaryPrec(t, noIn);
@@ -922,6 +983,10 @@ struct Parser {
                 Next();
                 n->a = Unary();
                 if (n->op == 2002 && n->a->k == NK::Ident) FailAt(t, "deleting a plain variable is not allowed in strict code");
+                if (n->op == 2002) {   // 13.5.1.1: delete of a private reference is an early error
+                    Node* x = n->a->k == NK::OptChain ? n->a->a : n->a;
+                    if (x && x->k == NK::Member && (x->flags & NF_Private)) FailAt(t, "a #private member can not be deleted");
+                }
                 return n;
             }
             if (Eq(t.s, "await") && InAsync()) {
@@ -980,7 +1045,11 @@ struct Parser {
             const Token& t = Cur();
             if (t.t == TT::Punct && t.p == P_Dot) {
                 Next();
-                if (Cur().t == TT::PrivateName) Fail("#private class members are not supported");
+                if (Cur().t == TT::PrivateName) {   // 13.3.1 MemberExpression . PrivateIdentifier
+                    if (e->k == NK::Super) Fail("super.#name is not allowed");
+                    e = PrivateMember(e, t, false);
+                    continue;
+                }
                 if (Cur().t != TT::Name) Unexpected("a property name after '.'");
                 Node* m = ast.NewNode(NK::Member, t.line, t.col);
                 m->a = e;
@@ -1008,6 +1077,8 @@ struct Parser {
                     m->b = Expression();
                     Expect(P_RBrack);
                     e = m;
+                } else if (Cur().t == TT::PrivateName) {
+                    e = PrivateMember(e, t, true);
                 } else {
                     if (Cur().t != TT::Name) Unexpected("a property name after '?.'");
                     Node* m = ast.NewNode(NK::Member, t.line, t.col);
@@ -1072,6 +1143,10 @@ struct Parser {
             const Token& m = Cur();
             if (m.t == TT::Punct && m.p == P_Dot) {
                 Next();
+                if (Cur().t == TT::PrivateName) {
+                    callee = PrivateMember(callee, m, false);
+                    continue;
+                }
                 if (Cur().t != TT::Name) Unexpected("a property name after '.'");
                 Node* x = ast.NewNode(NK::Member, m.line, m.col);
                 x->a = callee;
@@ -1122,7 +1197,7 @@ struct Parser {
                 return n;
             }
             case TT::End: Unexpected();
-            case TT::PrivateName: Fail("#private class members are not supported");
+            case TT::PrivateName: Fail("'#" + Utf16To8(t.s) + "' can only be used as obj.#" + Utf16To8(t.s) + " or before 'in'");
             case TT::Punct:
                 if (t.p == P_LParen) {
                     Next();
@@ -1515,6 +1590,36 @@ struct Parser {
         init->body->list.push_back(stmt);
     }
 
+    // A #method / get #x / set #x: declared, kept in a hidden binding of the class scope ("#x:m", "#x:g", "#x:s"), and,
+    // for an instance one, added to each new object by the field initializer before the fields (7.3.34 InitializeInstanceElements).
+    void PrivateMethod(ClassInfo* ci, Node* m, bool isStatic, int accessor, const Token& kt) {
+        DeclarePrivate(ci, m->str, (accessor == 1 ? PK_Get : accessor == 2 ? PK_Set : PK_Method) | (isStatic ? PK_Static : 0), kt);
+        const std::u16string hidden = m->str + (accessor == 1 ? u":g" : accessor == 2 ? u":s" : u":m");
+        ci->privHidden.push_back(hidden);
+        if (isStatic) return;
+        FuncInfo*& init = ci->instFields;
+        if (!init) {
+            init = ast.NewFunc();
+            init->method = true;
+            init->fieldInit = true;
+            init->line = kt.line;
+            init->col = kt.col;
+            init->name = u"<fields>";
+            init->body = ast.NewNode(NK::Block, kt.line, kt.col);
+        }
+        Node* f = ast.NewNode(NK::ClassField, kt.line, kt.col);
+        f->str = m->str;
+        f->flags |= NF_Private | NF_Method;
+        f->op = accessor;
+        f->c = ast.NewNode(NK::Ident, kt.line, kt.col);
+        f->c->str = hidden;
+        init->body->list.insert(init->body->list.begin() + ci->privInstMethods++, f);
+        PushFunc(init);
+        Ref(m->str);
+        Ref(hidden);
+        PopFunc();
+    }
+
     // class [name] [extends expr] { members } (15.7)
     Node* ClassExpr(bool isExpr) {
         const Token& t = Cur();
@@ -1529,6 +1634,7 @@ struct Parser {
         n->a = ci->heritage;
         NoInGuard ng(*this, false);   // ClassBody has no [In] parameter: its keys and fields allow `in`
         Expect(P_LBrace);
+        privScopes.emplace_back();
         bool derived = ci->heritage != nullptr;
         while (!IsP(P_RBrace)) {
             if (Eat(P_Semi)) continue;
@@ -1561,7 +1667,11 @@ struct Parser {
             Node* m = ast.NewNode(NK::ClassMethod, mt.line, mt.col);
             if (isStatic) m->flags |= NF_Static;
             const Token& kt = Cur();
-            PropertyName(m);
+            if (kt.t == TT::PrivateName) {
+                m->str = u"#" + kt.s;
+                m->flags |= NF_Private;
+                Next();
+            } else PropertyName(m);
             bool isCtorName = !(m->flags & NF_Computed) && kt.t != TT::Num && Eq(m->str, "constructor");
             if (IsP(P_LParen)) {
                 if (isCtorName && !isStatic) {
@@ -1585,6 +1695,7 @@ struct Parser {
                 m->op = accessor;   // 0 method, 1 get, 2 set
                 m->b = MethodFunction(m, isAsync, isGen, accessor, true, ci);
                 n->list.push_back(m);
+                if (m->flags & NF_Private) PrivateMethod(ci, m, isStatic, accessor, kt);
                 continue;
             }
             // a field
@@ -1605,6 +1716,13 @@ struct Parser {
             }
             Node* f = ast.NewNode(NK::ClassField, kt.line, kt.col);
             f->str = m->str;
+            if (m->flags & NF_Private) {
+                f->flags |= NF_Private;
+                DeclarePrivate(ci, f->str, PK_Field | (isStatic ? PK_Static : 0), kt);
+                PushFunc(init);
+                Ref(f->str);
+                PopFunc();
+            }
             if (Eat(P_Assign)) {
                 PushFunc(init);
                 std::vector<Node*> savedCover;
@@ -1618,6 +1736,7 @@ struct Parser {
             init->body->list.push_back(f);
             Semicolon();
         }
+        EndPrivScope();
         Next();
         if (!ci->ctor) {
             FuncInfo* fi = ast.NewFunc();

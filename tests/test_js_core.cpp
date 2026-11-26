@@ -141,7 +141,7 @@ void Prototypes() {
            "hi d true false");
     Expect("const o = {}; Object.defineProperty(o, 'x', { get() { return 7; }, enumerable: false }); console.log(o.x, Object.keys(o).length, JSON.stringify(Object.getOwnPropertyDescriptor(o, 'x')))",
            "7 0 {\"enumerable\":false,\"configurable\":false}");
-    Expect("class C { #p = 1; }", "ERROR: t.js:1: SyntaxError: #private class members are not supported");
+    Expect("class C { #p = 1; p() { return this.#p; } } console.log(new C().p())", "1");   // #private members (15.7) work since round 2
     Expect("class Q { a = 1; b = this.a + 1; static c = 3; } const q = new Q(); console.log(q.a, q.b, Q.c)", "1 2 3");
     Expect("class V { get len() { return 3; } set len(v) { this._l = v; } } const v = new V(); v.len = 9; console.log(v.len, v._l)", "3 9");
 }
@@ -739,6 +739,48 @@ void Proxies() {
     CHECK(Run("const h = {}; const p = new Proxy({}, h); let n = 0; for (let i = 0; i < 300; i++) { h.get = (t, k) => ({k}); n += p['a' + i].k.length; } console.log(n)", true) == "1090\n");
 }
 
+// 15.7 class definitions with #private fields, methods and accessors, static privates, `#x in obj` (13.10.1), and
+// the early errors of 15.7.1 (an undeclared #name, a duplicate, delete of a private reference)
+void PrivateMembers() {
+    Expect("class C { #n = 1; #m() { return this.#n * 10; } get #v() { return this.#n; } set #v(x) { this.#n = x; }"
+           "bump() { this.#v = this.#v + 1; this.#n += 5; this.#n++; return this.#m(); } static has(o) { return #n in o; } }"
+           "const c = new C(); console.log(c.bump(), C.has(c), C.has({}), Object.keys(c).length, JSON.stringify(c), Reflect.ownKeys(c).length)",
+           "80 true false 0 {} 0");
+    Expect("class S { static #count = 0; static #inc() { return ++S.#count; } static next() { return S.#inc(); } } S.next(); console.log(S.next(), Object.getOwnPropertyNames(S).includes('#count'))",
+           "2 false");
+    Expect("class A { #x = 'a'; static read(o) { return o.#x; } } class B { #x = 'b'; static read(o) { return o.#x; } }"
+           "const a = new A(); console.log(A.read(a)); try { B.read(a); } catch (e) { console.log(e.name); } try { A.read(new Proxy(a, {})); } catch (e) { console.log(e.name); }",
+           "a\nTypeError\nTypeError");
+    Expect("class P { #v; constructor(v) { this.#v = v; } equals(o) { return #v in o && this.#v === o.#v; } } console.log(new P(1).equals(new P(1)), new P(1).equals(new P(2)), new P(1).equals({}))",
+           "true false false");
+    Expect("class M { #f() { return 1; } same(o) { return this.#f === o.#f; } } console.log(new M().same(new M()))", "true");
+    Expect("class Base { #b = 1; get b() { return this.#b; } } class D extends Base { #d = 2; sum() { return this.b + this.#d; } } console.log(new D().sum())", "3");
+    Expect("class F { #x = 1; m() { const g = () => this.#x; return g() + (() => this?.#x)(); } } console.log(new F().m())", "2");
+    Expect("class O { #x = 5; static get(o) { return o?.#x; } } console.log(O.get(null), O.get(new O()))", "undefined 5");
+    Expect("class Fr { #x = 1; set(v) { this.#x = v; return this.#x; } } const f = Object.freeze(new Fr()); console.log(f.set(7), Object.isFrozen(f))", "7 true");
+    Expect("class D { #a; #b; swap(o) { [this.#a, this.#b] = [1, 2]; ({ q: this.#a } = { q: 3 }); return this.#a + this.#b; } } console.log(new D().swap())", "5");
+    Expect("class N { static #s = 'st'; static { N.got = N.#s; } #m = () => this; check() { return this.#m() === this; } } console.log(N.got, new N().check())", "st true");
+    Expect("class Outer { #o = 1; inner() { const self = this; return new (class { #i = 2; sum() { return self.#o + this.#i; } })().sum(); } } console.log(new Outer().inner())",
+           "3");
+    ExpectError("class C { #m() {} x() { this.#m = 1; } } new C().x()", "TypeError");
+    ExpectError("class C { get #g() { return 1; } x() { this.#g = 1; } } new C().x()", "TypeError");
+    ExpectError("class C { set #s(v) {} x() { return this.#s; } } new C().x()", "TypeError");
+    ExpectError("class C { #x; static m(o) { return #x in o; } } C.m(1)", "TypeError");
+    ExpectError("class C { m() { return this.#nope; } }", "SyntaxError");
+    ExpectError("this.#x", "SyntaxError");
+    ExpectError("class C { #a; #a; }", "SyntaxError");
+    ExpectError("class C { #a; m() { delete this.#a; } }", "SyntaxError");
+    ExpectError("class C { #constructor() {} }", "SyntaxError");
+    ExpectError("class C { get #a() {} static set #a(v) {} }", "SyntaxError");
+    Expect("class C { get #a() { return 1; } set #a(v) {} m() { return this.#a; } } console.log(new C().m())", "1");
+    // a class whose constructor returns another object installs its fields there; doing it twice is a TypeError
+    ExpectError("class Base { constructor(o) { return o; } } class Stamp extends Base { #s = 1; static has(o) { return #s in o; } } const o = {}; new Stamp(o); console.log(Stamp.has(o)); new Stamp(o);",
+                "TypeError");
+    Expect("class Base { constructor(o) { return o; } } class Stamp extends Base { #s = 1; static has(o) { return #s in o; } } const o = Object.preventExtensions({}); new Stamp(o); console.log(Stamp.has(o))",
+           "true");
+    CHECK(Run("class K { #v; constructor(i) { this.#v = {i}; } get v() { return this.#v.i; } } let s = 0; for (let i = 0; i < 300; i++) s += new K(i).v; console.log(s)", true) == "44850\n");
+}
+
 // Classic page scripts are sloppy code where assigning an undeclared name makes a global (ECMA-262 6.2.5.6 PutValue
 // step 5.b; React's streaming markup does `$RB=[]`). Runtime::sloppyScripts turns that on (the browser); game scripts
 // keep the default (everything strict). "use strict" and class bodies stay strict either way.
@@ -1001,6 +1043,9 @@ void Fuzz() {
         "let s = 'abc'.split('').reverse().join('').padStart(5).toUpperCase(); s.at(-1) ?? s?.x?.y;",
         "const m = 'a1b22'.replace(/(\\d+)/g, '<$1>').match(/<(?<n>\\d)+>/g); /^(?:a|b(?=c))*?[^x-z]{1,3}$/iu.test('abc');",
         "new RegExp('(\\\\w+)\\\\s*=\\\\s*(\\\\d+)', 'g').exec('x = 12; y=3').slice(1).join().split(/,|;/);",
+        "class P { #x = 1; static #s = 2; #m() { return this.#x; } get #g() { return P.#s; } t(o) { return #x in o && o.#m() + this.#g; } } new P().t(new P());",
+        "const b = new ArrayBuffer(8), u = new Uint16Array(b, 2, 2), d = new DataView(b); u[1] = 7; d.setInt8(0, -1); b.transfer(); u.fill(1, 0); u[0];",
+        "const p = new Proxy({a: 1}, { get(t, k, r) { return Reflect.get(t, k, r); }, ownKeys: t => Reflect.ownKeys(t) }); Object.keys(p); p.a; 'a' in p;",
     };
     const char* frag[] = {"(", ")", "{", "}", "[", "]", "=>", "yield", "await", "...", "`${", "'", "\"", "/", "*", ",",
                           ";", "\n", "class", "function", "new", "super", "this", "?.", "??", "#", "\\u", "0x", "1e"};
@@ -1067,6 +1112,7 @@ int main() {
     WeakCollections();
     TypedArrays();
     Proxies();
+    PrivateMembers();
     TaggedTemplates();
     BigInts();
     RegexLookbehind();

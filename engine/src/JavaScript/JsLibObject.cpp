@@ -91,6 +91,7 @@ void SetIntegrity(Runtime& rt, Object* o, bool frozen) {
     }
     if (o->lazy) rt.MakeLazyProps(o);
     for (Prop& p : o->props) {
+        if (p.key->kind == Kind::Symbol && static_cast<Symbol*>(p.key)->priv) continue;   // #private elements are not properties
         p.flags = (std::uint8_t)(p.flags & ~kConfigurable);
         if (frozen && !(p.flags & kAccessor)) p.flags = (std::uint8_t)(p.flags & ~kWritable);
     }
@@ -118,6 +119,7 @@ bool TestIntegrity(Runtime& rt, Object* o, bool frozen) {
     }
     if (o->lazy) rt.MakeLazyProps(o);
     for (const Prop& p : o->props) {
+        if (p.key->kind == Kind::Symbol && static_cast<Symbol*>(p.key)->priv) continue;
         if (p.flags & kConfigurable) return false;
         if (frozen && !(p.flags & kAccessor) && (p.flags & kWritable)) return false;
     }

@@ -1464,6 +1464,74 @@ Value Execute(Runtime& rt, int entry) {
                         }
                         break;
                     }
+                    // ---- private names (6.2.12, 7.3.31-7.3.33 PrivateFieldAdd / PrivateMethodOrAccessorAdd / PrivateGet / PrivateSet)
+                    case OP_NewPrivate: {
+                        Symbol* y = rt.NewSymbol(static_cast<String*>(KEY(I.a)));
+                        y->priv = true;
+                        *SP++ = Value::Sym(y);
+                        break;
+                    }
+                    case OP_GetPrivate: {   // [obj key] -> [value]
+                        Symbol* key = SP[-1].Y();
+                        if (!SP[-2].IsObj()) rt.ThrowType("can not read " + KeyText(rt, key->desc) + " of " + Describe(SP[-2]));
+                        Object* o = SP[-2].O();
+                        Prop* p = o->FindRaw(key);
+                        if (!p) rt.ThrowType("can not read " + KeyText(rt, key->desc) + ": the object was not made by its class");
+                        if (p->flags & kAccessor) {
+                            if (!p->get) rt.ThrowType(KeyText(rt, key->desc) + " has a setter but no getter");
+                            Value g = Value::Obj(p->get), ov = SP[-2];
+                            f->pc = pc;
+                            Value r = rt.Call(g, ov, nullptr, 0);
+                            SP[-2] = r;
+                        } else SP[-2] = p->v;
+                        --SP;
+                        break;
+                    }
+                    case OP_SetPrivate: {   // [obj key value] -> [value]
+                        Symbol* key = SP[-2].Y();
+                        if (!SP[-3].IsObj()) rt.ThrowType("can not set " + KeyText(rt, key->desc) + " of " + Describe(SP[-3]));
+                        Object* o = SP[-3].O();
+                        Prop* p = o->FindRaw(key);
+                        if (!p) rt.ThrowType("can not set " + KeyText(rt, key->desc) + ": the object was not made by its class");
+                        Value v = SP[-1];
+                        if (p->flags & kAccessor) {
+                            if (!p->set) rt.ThrowType(KeyText(rt, key->desc) + " has a getter but no setter");
+                            Value s = Value::Obj(p->set), ov = SP[-3];
+                            f->pc = pc;
+                            rt.Call(s, ov, &v, 1);
+                        } else if (!(p->flags & kWritable)) rt.ThrowType("the private method " + KeyText(rt, key->desc) + " can not be assigned");
+                        else p->v = v;
+                        SP[-3] = v;
+                        SP -= 2;
+                        break;
+                    }
+                    case OP_DefPrivate: {   // [obj key value] -> []; b: 0 field, 1 method, 2 getter, 3 setter
+                        Symbol* key = SP[-2].Y();
+                        Object* o = SP[-3].O();
+                        Prop* p = o->FindRaw(key);
+                        if (I.b == 2 || I.b == 3) {
+                            Object* fn = SP[-1].O();
+                            if (p && (!(p->flags & kAccessor) || (I.b == 2 ? p->get : p->set)))
+                                rt.ThrowType(KeyText(rt, key->desc) + " is already on this object");
+                            if (!p) {
+                                p = o->AddRaw(key, Value(), kAccessor);
+                                rt.CountBytes(sizeof(Prop));
+                            }
+                            (I.b == 2 ? p->get : p->set) = fn;
+                        } else {
+                            if (p) rt.ThrowType(KeyText(rt, key->desc) + " is already on this object (a class initialized it twice)");
+                            o->AddRaw(key, SP[-1], I.b == 0 ? kWritable : 0);   // even on a non-extensible object (7.3.31)
+                            rt.CountBytes(sizeof(Prop));
+                        }
+                        SP -= 3;
+                        break;
+                    }
+                    case OP_HasPrivate: {   // [key obj] -> [bool]
+                        if (!SP[-1].IsObj()) rt.ThrowType("the right side of 'in' must be an object, not " + Describe(SP[-1]));
+                        SP[-2] = Value::Bool(SP[-1].O()->FindRaw(SP[-2].p) != nullptr);
+                        --SP;
+                        break;
+                    }
                     case OP_SetHome:   // [fn home]: the static initializer's [[HomeObject]] is the class
                         if (SP[-2].IsObj() && SP[-2].O()->cls == Cls::Closure && SP[-1].IsObj())
                             static_cast<Closure*>(SP[-2].O())->home = SP[-1].O();

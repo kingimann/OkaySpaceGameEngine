@@ -65,6 +65,7 @@ enum class NK : std::uint8_t {
     Num, Str, Template, Ident, This, Super, NewTarget, Null, True, False, Array, Object, Func, Class,
     Unary, Update, Binary, Logical, Assign, Cond, Call, New, Member, Index, OptChain, Seq, Spread,
     Yield, Await, Hole, TaggedTemplate, Regex, BigInt, ImportCall,
+    PrivName,   ///< `#x` on the left of `in` (15.7, 13.10.1)
     // object literal parts
     PropInit, PropGet, PropSet, PropSpread,
     // patterns
@@ -102,6 +103,7 @@ enum NodeFlag : std::uint32_t {
     NF_CoverInit = 128,    ///< {a = 1} seen in a literal (only valid as a pattern)
     NF_Paren = 256,        ///< written in parentheses
     NF_Await = 512,        ///< for await (...)
+    NF_Private = 1024,     ///< a #private member (o.#x, a #x class element; str is "#x")
 };
 
 enum DeclKind : int { DK_Var = 0, DK_Let = 1, DK_Const = 2 };
@@ -125,6 +127,9 @@ struct FuncInfo {
 };
 
 struct ClassInfo {
+    std::vector<std::u16string> privNames;    ///< the #names this class declares (15.7.6 PrivateBoundIdentifiers), "#x"
+    std::vector<std::u16string> privHidden;   ///< bindings for its private methods: "#x:m", "#x:g", "#x:s"
+    int privInstMethods = 0;                  ///< instance private methods at the front of instFields' body
     Node* heritage = nullptr;
     FuncInfo* ctor = nullptr;
     FuncInfo* instFields = nullptr;
@@ -180,6 +185,7 @@ enum Op : std::uint16_t {
     OP_GenStart, OP_AsyncStart, OP_Yield, OP_Await, OP_ResumeCheck, OP_IterSend,
     OP_Arguments, OP_RestArgs, OP_CheckCoercible, OP_Debugger, OP_SetName, OP_NewRegExp,
     OP_SetProtoLit, OP_TemplateObj, OP_GetAsyncIter, OP_AsyncIterNext, OP_AsyncIterValue, OP_SetHome, OP_ImportCall,
+    OP_NewPrivate, OP_GetPrivate, OP_SetPrivate, OP_DefPrivate, OP_HasPrivate,
     OP_Count
 };
 

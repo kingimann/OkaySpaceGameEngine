@@ -115,6 +115,7 @@ struct String : GcObj {
 struct Symbol : GcObj {
     String* desc = nullptr;     ///< nullptr = no description
     bool registered = false;    ///< made by Symbol.for
+    bool priv = false;          ///< a Private Name (6.2.12): the key of #private class elements, never an own key
     Symbol() : GcObj(Kind::Symbol) {}
     void Trace(Runtime& rt) override;
 };

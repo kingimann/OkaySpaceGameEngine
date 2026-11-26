@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html><head><title>Pricing</title>
+<style>
+body { margin: 0; font-family: "Helvetica Neue", Arial, sans-serif; color: #1a1a2e; background: #fff; }
+h1 { text-align: center; margin: 24px 0 4px; }
+.lead { text-align: center; color: #666; margin: 0 0 20px; }
+.plans { display: flex; justify-content: center; gap: 16px; padding: 0 16px; }
+.plan { flex: 0 1 180px; border: 1px solid #e0e0e8; border-radius: 10px; padding: 16px; text-align: center; }
+.plan.best { border: 2px solid #4f46e5; box-shadow: 0 4px 14px rgba(79,70,229,.25); transform: scale(1.04); }
+.plan h2 { font-size: 16px; margin: 0; text-transform: uppercase; letter-spacing: 1px; color: #4f46e5; }
+.amount { font-size: 34px; font-weight: bold; margin: 8px 0; }
+.amount small { font-size: 14px; color: #888; font-weight: normal; }
+.plan ul { list-style: none; padding: 0; text-align: left; font-size: 14px; }
+.plan li { padding: 4px 0; border-bottom: 1px dashed #ddd; }
+.plan li::before { content: "\2713  "; color: #16a34a; }
+.cta { display: inline-block; padding: 8px 16px; border-radius: 6px; background: #4f46e5; color: #fff; text-decoration: none; }
+table.compare { margin: 28px auto; border-collapse: collapse; font-size: 14px; }
+table.compare th, table.compare td { padding: 6px 14px; border-bottom: 1px solid #eee; }
+table.compare th { background: #f4f4fb; }
+table.compare td:not(:first-child) { text-align: center; }
+</style></head>
+<body>
+<h1>Simple pricing</h1>
+<p class="lead">Pick the plan that fits. Change any time.</p>
+<div class="plans">
+<div class="plan"><h2>Free</h2><div class="amount">$0<small>/mo</small></div><ul><li>1 project</li><li>Community help</li></ul><a class="cta" href="/free">Start</a></div>
+<div class="plan best"><h2>Pro</h2><div class="amount">$12<small>/mo</small></div><ul><li>10 projects</li><li>Email help</li><li>Backups</li></ul><a class="cta" href="/pro">Try Pro</a></div>
+<div class="plan"><h2>Team</h2><div class="amount">$40<small>/mo</small></div><ul><li>Unlimited</li><li>Phone help</li><li>Single sign-on</li></ul><a class="cta" href="/team">Contact us</a></div>
+</div>
+<table class="compare"><thead><tr><th>Feature</th><th>Free</th><th>Pro</th><th>Team</th></tr></thead>
+<tbody><tr><td>Projects</td><td>1</td><td>10</td><td>Unlimited</td></tr><tr><td>Storage</td><td>1 GB</td><td>50 GB</td><td>1 TB</td></tr><tr><td>Support</td><td>&mdash;</td><td>Email</td><td>Phone</td></tr></tbody></table>
+</body></html>

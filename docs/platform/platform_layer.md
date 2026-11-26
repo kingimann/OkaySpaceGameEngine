@@ -697,6 +697,28 @@ documentation (`EnumDisplaySettingsW`, `GetSystemInfo`, `GlobalMemoryStatusEx`, 
   `SDL_Renderer` path (`okayui/src`, 122 calls, the OkayUI work). The `OKAY_NO_SDL` build of `claude/own-platform-6` (2026-11-19)
   was not brought over: it needs OkayUI to compile with no SDL types (that branch did it with no-op macros) and was never merged.
 
+## Round 16 (branch `claude/no-sdl2-1`, 2026-11-26): the editor on the OpenGL painter
+
+Written from the GLX 1.3 specification (`glXGetCurrentContext`, `glXGetCurrentDrawable`, `glXMakeCurrent`) and the Microsoft WGL
+documentation (`wglGetCurrentContext`, `wglGetCurrentDC`, `wglMakeCurrent`); no SDL or other project code.
+
+* **The bug that blocked it.** The OpenGL painter only remembered which painter drew last. The editor's 3D view (and the player's
+  GL path) make their own hidden context current without a painter, so the painter then drew into that context. The own
+  backends also had no `CurrentGL` / `RestoreGL`, so the editor's save and restore around its 3D view did nothing there.
+* **Fix.** Own Linux and own Win32 now answer `CurrentGL` and do `RestoreGL` (a null state releases). The GL painter keeps the
+  backend's handle of its context and, before it draws, makes it current again when another one is current.
+* **Editor.** On the own backend (the Linux default) the editor's window is drawn by the OpenGL painter, like the launcher's
+  (`shared/OwnPainter.hpp`: `MakeOwnPainter`, `OwnWindowsWantGL`); `OKAY_OWN_PAINTER=software` picks the CPU painter. The sdl2
+  backend (the Windows default) is unchanged.
+* **Test** `gl_painter`: a second window's context is made current between two painter frames. Before the fix 68 checks,
+  8 failures (the fill went to the other context); after, 0 failures.
+* **Run** (Xvfb, Mesa llvmpipe, `examples/lighting/sunny_day.okayscene`, `scripts/headless_app_shot.sh`, pictures not kept):
+  GL painter, software painter and sdl2 all start and draw the editor with the 3D Scene view; the three pictures differ only in the
+  console and status-bar counters. Under gdb the GL painter run made 10 OpenGL 3D renders and 10 X11 `RestoreGL` calls.
+* **Not verified:** Windows (the Win32 part compiled with MinGW `-fsyntax-only` only), a real GPU, clicks and typing in the
+  editor on the GL painter, the player on the GL painter (it still uses the software painter on own; this fix removes the
+  reason given in round 15, but the player was not switched or run).
+
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 
 The window, event loop and GL context of the editor, launcher and player still call SDL directly. Moving them needs more than

@@ -108,14 +108,16 @@ int main(int argc, char** argv) {
     app->SetAutoplay(autoplay);
 
     UI::UseLauncherLook(true);
-    okayuihost::platform::FrameLoop loop(*be, *painter);
-    std::string shownTitle;
-    while (!app->WantsQuit() && loop.Frame([&] {
-        app->Frame(0, 0, (float)loop.GetHost().DisplayWidth(), (float)loop.GetHost().DisplayHeight());
-        const std::string title = app->WindowTitle();   // the window's title: the page's title
-        if (title != shownTitle) { win->SetTitle(title); shownTitle = title; }
-    })) {}
-    app.reset();   // saves the profile, stops running games and frees the textures while the painter still exists
+    {   // the frame loop (and its OkayUI host, which uses the painter) ends before the painter does
+        okayuihost::platform::FrameLoop loop(*be, *painter);
+        std::string shownTitle;
+        while (!app->WantsQuit() && loop.Frame([&] {
+            app->Frame(0, 0, (float)loop.GetHost().DisplayWidth(), (float)loop.GetHost().DisplayHeight());
+            const std::string title = app->WindowTitle();   // the window's title: the page's title
+            if (title != shownTitle) { win->SetTitle(title); shownTitle = title; }
+        })) {}
+        app.reset();   // saves the profile, stops running games and frees the textures while the painter still exists
+    }
     painter.reset();
     win.reset();
     be->Shutdown();

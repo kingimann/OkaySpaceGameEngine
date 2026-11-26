@@ -173,5 +173,10 @@ the new-tab and history pages, zoom. Not checked: real web sites, the launcher's
   is the bookmarks bar, not the sidebar fold.
 - **Checked (2026-11-26):** `okayui_browser_app` (the whole browser at the launcher page's offset, golden picture, keys, the
   profile seen by a second browser, the download prompt, the switch off), `browser_url` (where links open), `browser_profile`
-  (two programs on one profile file), on Linux. Not run on Windows.
+  (two programs on one profile file), the launcher_* tests and own_switches, on Linux. The launcher was run under a virtual
+  display (Xvfb) with the OkayUI screens on, against a local test server: the Browser entry in the sidebar, four tabs, a click on
+  another tab, the menu, find with highlights. The program was run again after the move: pages, Ctrl+Q and SIGTERM end it
+  cleanly (the frame loop now ends before the painter; before, the program aborted at exit with "pure virtual method called").
+  Not run: a chat link clicked in the launcher (the routing rule is tested, the click path was not driven), a download or a
+  game from the launcher's page, two programs writing the profile at the same moment. Nothing was run on Windows.
 

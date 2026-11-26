@@ -671,6 +671,21 @@ void MemoryLimit() {
 
 // The collector at every safe point, with library calls that call back while they hold values (the class of
 // bug the Lua review found in table.sort): sort, map, reduce, JSON revivers, Map.forEach, getters, spread.
+// A heap that stays close to its limit must not make the collector run at every safe point (each run walks the
+// whole heap): a page with ~14.7 MB of live data under a 16 MB limit used to collect on every loop turn and seemed hung.
+void NearFullHeap() {
+    Runtime rt;
+    rt.memoryLimit = 16u << 20;
+    rt.SetBudget(50'000'000);
+    std::string err;
+    bool ok = rt.Run("const keep = []; for (let i = 0; i < 460; i++) keep.push('x'.repeat(16000) + i);"   // ~14.7 MB of UTF-16
+                     "let n = 0; for (let i = 0; i < 20000; i++) { const o = {i}; n += o.i & 1; } globalThis.n = n;", "full.js", &err);
+    if (!ok) std::cerr << "  near full: " << err << "\n";
+    CHECK(ok);
+    if (rt.Collections() >= 200) std::cerr << "  near full: " << rt.Collections() << " collections\n";
+    CHECK(rt.Collections() < 200);
+}
+
 void Rooting() {
     const char* src =
         "const a = []; for (let i = 0; i < 200; i++) a.push({v: (i * 37) % 101, s: 'x' + i});\n"
@@ -832,6 +847,7 @@ int main() {
     ConformanceScript(true);
     HostileOneLiners();
     MemoryLimit();
+    NearFullHeap();
     Rooting();
     HostApi();
     Fuzz();

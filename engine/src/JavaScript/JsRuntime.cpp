@@ -1474,6 +1474,7 @@ void Runtime::Mark(GcObj* o) {
 }
 
 void Runtime::Collect() {
+    ++collections_;
     gray_.clear();
     for (Value* v = vm->stack; v < vm->sp; ++v) MarkValue(*v);
     for (int i = 0; i < vm->nframes; ++i) {
@@ -1589,8 +1590,12 @@ void Runtime::Sweep() {
         }
     }
     bytes_ = live;
-    gcThreshold_ = std::max<std::size_t>(4u << 20, live * 2);
-    if (gcThreshold_ > memoryLimit) gcThreshold_ = memoryLimit - memoryLimit / 8;
+    // The next run comes after the heap doubles, but never later than halfway into the room that is left, and never
+    // sooner than 1/64 of the limit more: a heap close to its limit used to sit above a fixed threshold and collect at
+    // every safe point (each run walks the whole heap), which looked like a hang on big pages.
+    const std::size_t room = memoryLimit > live ? memoryLimit - live : 0;
+    const std::size_t latest = live + std::max(room / 2, memoryLimit / 64);
+    gcThreshold_ = std::min(std::max<std::size_t>(4u << 20, live * 2), latest);
 }
 
 // ============================================================ console.log formatting

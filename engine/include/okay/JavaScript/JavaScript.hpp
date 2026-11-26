@@ -307,6 +307,7 @@ public:
     std::size_t memoryLimit = 256u << 20;
     bool gcStress = false;          ///< collect at every safe point (tests: finds values that are not kept)
     std::size_t BytesInUse() const { return bytes_; }
+    std::uint64_t Collections() const { return collections_; }   ///< how many times the collector has run
     std::function<void(const std::string&)> printSink;   ///< console.log; nullptr = nowhere
     std::function<void(HostObj*)> onHostFree;            ///< an engine object is about to be freed
     /// import(specifier): return a promise for the module namespace. Unset (game scripts): the promise is
@@ -466,6 +467,7 @@ private:
     void InitIntrinsics();
     GcObj* gcList_ = nullptr;
     std::size_t bytes_ = 0, gcThreshold_ = 4u << 20;
+    std::uint64_t collections_ = 0;
     std::uint64_t budget_ = 0, left_ = ~0ull;
     std::unordered_map<std::u16string_view, String*> atomTable_;
     std::vector<Value> refs_;

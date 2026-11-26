@@ -602,6 +602,19 @@ add_executable(test_debug_overlay test_debug_overlay.cpp)
 target_link_libraries(test_debug_overlay PRIVATE okay::engine)
 add_test(NAME debug_overlay COMMAND test_debug_overlay)
 
+# Asset packages (okay/Core/AssetPackage.hpp, docs/engine/asset_packages.md): hash, ids and collisions, round trips,
+# byte-identical output, damaged packages (truncation, flipped bytes, crafted fields, random mutation), patches, the
+# manifest, data folder mount and view, packing an exported folder, async reads, the AssetManager mount.
+add_executable(test_asset_package test_asset_package.cpp)
+target_link_libraries(test_asset_package PRIVATE okay::engine)
+add_test(NAME asset_package COMMAND test_asset_package)
+set_tests_properties(asset_package PROPERTIES TIMEOUT 300)
+# The package benchmark (pack / unpack speed, load time against loose files, memory). Prints numbers; run by hand:
+# test_asset_package_bench [files] [MB]. Under ctest it runs a small size so it stays quick.
+add_executable(test_asset_package_bench test_asset_package_bench.cpp)
+target_link_libraries(test_asset_package_bench PRIVATE okay::engine)
+add_test(NAME asset_package_bench COMMAND test_asset_package_bench 200 8)
+
 add_executable(test_datapack test_datapack.cpp)
 target_link_libraries(test_datapack PRIVATE okay::engine)
 add_test(NAME datapack COMMAND test_datapack)

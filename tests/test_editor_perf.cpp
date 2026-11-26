@@ -94,6 +94,16 @@ int main() {
         CHECK_NEAR(perf::TargetFps(p, false, false, 5.0), 30.0, 1e-9);
         p.idleFps = 1;                                                    // out-of-range idle rate is held to 5
         CHECK_NEAR(perf::TargetFps(p, false, false, 5.0), 5.0, 1e-9);
+        // A minimized editor (nothing playing) holds 10 FPS whatever the settings: its present no longer waits for the display.
+        perf::PacingSettings off;
+        CHECK_NEAR(perf::TargetFps(off, false, false, 0.0, true), perf::kMinimizedFps, 1e-9);
+        CHECK(perf::TargetFps(off, true, false, 0.0, true) == 0.0);       // a running game is left alone
+        off.fpsCap = 5;
+        CHECK_NEAR(perf::TargetFps(off, false, false, 0.0, true), 5.0, 1e-9);   // a lower cap still wins
+        // 100 loop turns of 1 ms each while minimized: the pacing sleeps the rest of every 100 ms frame (was: no sleep at all).
+        double slept = 0.0;
+        for (int i = 0; i < 100; ++i) slept += perf::SleepSeconds(perf::TargetFps(perf::PacingSettings{}, false, false, 0.0, true), 0.001);
+        CHECK(slept > 9.8);
         CHECK_NEAR(perf::SleepSeconds(100.0, 0.004), 0.006, 1e-12);
         CHECK(perf::SleepSeconds(100.0, 0.02) == 0.0);                    // a late frame is not paid back
         CHECK(perf::SleepSeconds(0.0, 0.001) == 0.0);

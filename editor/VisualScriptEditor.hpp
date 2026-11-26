@@ -60,6 +60,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace okay::editor::vsed {
@@ -970,8 +971,15 @@ inline bool KeyPicker(std::string& arg, float width) {
 }
 
 inline const VsDef* FindDef(const std::string& type) {
-    for (const auto& d : Registry()) if (type == d.type) return &d;
-    return nullptr;
+    // Asked several times per node per frame by the canvas; the registry has hundreds of entries and never changes after it is
+    // built, so an index (the first entry of a type wins, as the scan did) replaces a string compare against every entry.
+    static const std::unordered_map<std::string, const VsDef*> index = [] {
+        std::unordered_map<std::string, const VsDef*> m;
+        for (const auto& d : Registry()) m.emplace(d.type, &d);
+        return m;
+    }();
+    auto it = index.find(type);
+    return it == index.end() ? nullptr : it->second;
 }
 
 // ---- Editable graph model --------------------------------------------------
@@ -2682,8 +2690,11 @@ inline std::string CompileToOkayScript(const VsEditGraph& g, std::vector<okay::v
 /// What the Problems button lists: the graph checker's findings only. Nodes the OkayScript preview cannot write are
 /// not problems with the graph (it still runs in the game), so they go to `exportOut` for the Script preview and are
 /// never shown as red errors in Problems or on the nodes.
+/// How many times the checker ran (tests/test_vs_check_cost.cpp counts it).
+inline int& VsCheckRuns() { static int n = 0; return n; }
 inline std::vector<okay::vs::VsIssue> VsCheckGraph(const VsEditGraph& g, const std::string& text, const std::string& baseDir,
                                                    std::vector<okay::vs::VsIssue>* exportOut = nullptr) {
+    ++VsCheckRuns();
     std::vector<okay::vs::VsIssue> issues = okay::vs::ValidateGraphText(text, baseDir);
     std::vector<okay::vs::VsIssue> exp;
     CompileToOkayScript(g, &exp);
@@ -2760,8 +2771,8 @@ struct VsEditState {
     std::string offerType, offerWhy;
     bool   frameSel = false;     // fit the selected nodes (F)
     bool   needsEvent = false;   // nodes but no event node: hint on the canvas
-    // The graph checker's findings for the graph on screen (recomputed when it changes).
-    std::string checkedText; std::vector<okay::vs::VsIssue> issues;
+    // The graph checker's findings for the graph on screen (recomputed when it changes; VsRefreshChecks).
+    std::string checkedText; std::vector<okay::vs::VsIssue> issues;   // checkedText: VsCheckKey of the graph last checked
     std::vector<okay::vs::VsIssue> exportIssues;   // nodes the OkayScript preview cannot write (not graph problems)
     bool   showIssues = false;
     std::string refuseMsg; float refuseTime = 0.0f;   // why a wire was refused (shown a few seconds)
@@ -2772,6 +2783,31 @@ struct VsEditState {
     bool missing = false;     // the file in `g.path` could not be read
     int tabId = 0;
 };
+
+/// What the graph checker reads, out of the graph's text: everything but where the nodes and comment frames sit on the canvas.
+/// Dragging a node changes its "pos" line every frame; the checker (ValidateGraphText: a full parse, and a look on disk for every
+/// prefab a node names; then the whole OkayScript export) ran in every frame of a drag, which is where the owner's log saw the
+/// Visual Script panel at 263-352 ms a frame (2026-11-25). Neither the checks nor the export depend on positions.
+inline std::string VsCheckKey(const std::string& text) {
+    std::string key;
+    key.reserve(text.size());
+    std::size_t a = 0;
+    while (a < text.size()) {
+        std::size_t e = text.find('\n', a);
+        if (e == std::string::npos) e = text.size();
+        if (text.compare(a, 4, "pos ") != 0 && text.compare(a, 8, "comment ") != 0) key.append(text, a, e - a + (e < text.size() ? 1 : 0));
+        a = e + 1;
+    }
+    return key;
+}
+/// Run the checker when what it reads changed since the last run (`text` is g.toText()); true when it ran.
+inline bool VsRefreshChecks(VsEditState& st, const VsEditGraph& g, const std::string& text, const std::string& baseDir) {
+    std::string key = VsCheckKey(text);
+    if (key == st.checkedText) return false;
+    st.issues = VsCheckGraph(g, text, baseDir, &st.exportIssues);
+    st.checkedText = std::move(key);
+    return true;
+}
 
 inline void VsRefreshDirty(VsEditState& st) {
     if (!st.baselineSet) {
@@ -4193,11 +4229,7 @@ inline void Draw(EditorState& ed, bool* open) {
     // The graph checker: re-run whenever the graph changes (wires that can't
     // work, nodes nothing runs, unset variables, bad key names, missing prefabs).
     {
-        std::string now = g.toText();
-        if (now != st.checkedText) {
-            st.issues = VsCheckGraph(g, now, ed.projectDir(), &st.exportIssues);
-            st.checkedText = std::move(now);
-        }
+        VsRefreshChecks(st, g, g.toText(), ed.projectDir());
     }
     // Right side of the one toolbar: problems, fit, zoom, the two panels.
     {

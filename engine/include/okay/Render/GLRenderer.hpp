@@ -30,6 +30,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <vector>
 #include <string>
 #include <array>
@@ -38,6 +39,7 @@
 namespace okay {
 
 class SkinnedMesh;
+namespace rhi { class Device; class BloomPass; }
 
 class GLRenderer {
 public:
@@ -55,7 +57,7 @@ public:
     bool SupportsGpuSkinning() const;
     int  GpuSkinJoints() const;
 
-    GLRenderer() = default;
+    GLRenderer();   // out of line: the RHI members are only declared here
     ~GLRenderer();
 
     /// Render the scene's active solid meshes on the GPU at w*h with `samples`
@@ -114,9 +116,14 @@ private:
     void DrawLinearDepth(const Scene& scene, const Mat4& vp, const Vec3& eye, const GameObject* ignore,
                          const struct Frustum& viewFr);   // the half-res packed-depth pass (SSAO, DoF)
     void DestroyShadow();
-    bool EnsurePostProgs();               // fullscreen-quad programs (bloom chain)
-    bool EnsureBloomTargets(int w, int h);
+    bool EnsurePostProgs();               // the fullscreen blur program (SSAO, post chain) + the quad
     void DestroyBloom();
+    // Bloom without the post chain runs on the RHI (docs/rendering/rhi.md): an RHI OpenGL device on this
+    // context and the RHI bloom pass, made on first use. Declared in this order so the pass goes first.
+    bool EnsureRhiBloom();
+    std::unique_ptr<rhi::Device> m_rhi;
+    std::unique_ptr<rhi::BloomPass> m_rhiBloom;
+    bool m_rhiFailed = false;
     bool EnsureSsaoProgs();               // linear-depth + AO + multiply programs
     bool EnsureSsaoTargets(int w, int h);
     void DestroySsao();
@@ -132,16 +139,13 @@ private:
     int m_uLRect = -1, m_uLRight = -1, m_uLUp = -1, m_uCookieTex = -1, m_uCookieRows = -1, m_uSunSoft = -1, m_uFadeDist = -1;
     unsigned int m_localFbo = 0, m_localTex = 0;              // spot/point light tile atlas (4x4)
     int m_localW = 0, m_localH = 0;
-    // Bloom post chain: bright-pass into a half-res ping-pong pair, separable
-    // gaussian blur, then additive composite back onto the resolve target.
+    // The post chain's bloom: half-res ping-pong pair (A/B) and the separable gaussian blur.
     unsigned int m_quadVbo = 0;                               // fullscreen quad (2 tris)
-    unsigned int m_brightProg = 0, m_blurProg = 0, m_addProg = 0;
+    unsigned int m_blurProg = 0;
     unsigned int m_bloomFboA = 0, m_bloomTexA = 0;
     unsigned int m_bloomFboB = 0, m_bloomTexB = 0;
     int m_bloomW = 0, m_bloomH = 0;
-    int m_ubSrc = -1, m_ubThresh = -1;                        // bright-pass uniforms
     int m_ublSrc = -1, m_ublDir = -1;                         // blur uniforms
-    int m_uaSrc = -1, m_uaStrength = -1;                      // composite uniforms
     // SSAO: geometry re-rendered at half res as packed linear depth, a spiral
     // depth-difference AO pass, one blur round, multiplicative composite.
     unsigned int m_ssaoDepthProg = 0, m_ssaoProg = 0, m_mulProg = 0;

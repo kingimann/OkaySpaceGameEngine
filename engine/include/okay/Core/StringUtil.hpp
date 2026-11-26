@@ -14,6 +14,16 @@ inline std::string LowerAscii(std::string s) {
     return s;
 }
 
+// ASCII-only uppercase: bytes 'a'..'z' become 'A'..'Z', every other byte is left as it is (the DOM's tagName).
+inline std::string UpperAscii(std::string s) {
+    for (char& c : s)
+        if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+    return s;
+}
+
+// One byte of LowerAscii (for readers that fold as they scan).
+inline char LowerAsciiChar(char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; }
+
 // ASCII-only case-blind compare: "Jump" equals "jUMP" (no copy, no allocation).
 inline bool EqualsNoCaseAscii(const std::string& a, const std::string& b) {
     if (a.size() != b.size()) return false;
@@ -33,6 +43,14 @@ inline std::string Trim(const std::string& s) {
     while (b < e && space(s[b])) ++b;
     while (e > b && space(s[e - 1])) --e;
     return s.substr(b, e - b);
+}
+
+// The value of one hexadecimal digit (0-9, a-f, A-F), or -1 for any other character.
+inline int HexDigitValue(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
 }
 
 }  // namespace okay::str

@@ -1,5 +1,54 @@
 OkaySpace Game Engine — Changelog
 
+v2.904.1
+  A browser, a new graphics layer, JavaScript and better script editors
+  - Restore after a crash works: one question per crashed session,
+    scripts come back as scripts, and if something cannot be restored
+    you are told and the copy is kept.
+  - Launcher: you can skip an update ("Skip this version"), and a
+    release is no longer offered when your test build is newer.
+  - What's New no longer flickers when you hover the profile icon.
+  - Our own web browser, opened from the launcher's Browser page. Menus
+    and tooltips draw over it, and the usual keys work (Ctrl+F, Ctrl+L,
+    Ctrl+T, Ctrl+W, Ctrl+D, F5, Alt+arrows, Ctrl+Tab). It is early:
+    pages show text, links, pictures and forms, but no JavaScript yet.
+  - The engine draws through our own graphics layer, with OpenGL and
+    Direct3D 11 behind it; Bloom is the first effect moved onto it.
+  - Script editor: Go to File, project-wide symbols and rename, regex
+    find, quick fixes, Local History and plugins.
+  - Visual Script editor: debugger watches, collapse to a function,
+    layout tools, find references, quick fixes and graph diff.
+  - Game scripts can be written in JavaScript, run by our own engine.
+
+v2.904.0
+  The editor works again, and faster
+  - The editor signs in again on Windows and opens your project. Before,
+    it could not reach the OkaySpace server at all.
+  - The editor no longer ignores every click after an unclean exit: the
+    recovery questions now show one at a time in the middle of the screen.
+  - Quit in the editor's sign-in window works.
+  - If the editor ever stops responding, it now writes okay_hang.txt and
+    offers Wait or Close after a few seconds, so you no longer need Task
+    Manager.
+  - Opening a project and the Problems list are much faster: the project
+    files are read in the background.
+  - The Visual Script panel is three to six times faster on big graphs,
+    Project panel pictures no longer stall the editor, and update checks
+    run in the background.
+  - The editor's loading screen shows real progress, what is loading, the
+    project name and the version.
+  - The launcher sees a closed editor as closed, even after Task Manager.
+  - Versions page: install the newest three releases and, with Get test
+    builds on, the newest three test builds. It also shows when the editor
+    was left on another version and offers Repair.
+  - Test-build updates now follow the main build only, in order.
+  - Big worlds load around the player in the background, a little each
+    frame, instead of all at once (asset streaming, first part).
+  - Game invites keep their id on Windows, Run in browser sends whole
+    files, and Move With Keys reacts only to the keys you chose.
+  - Also in this release: everything listed under v2.903.9 below, which
+    was never released on its own.
+
 v2.903.9
   Easy multiplayer and much faster OkayScript
   - Multiplayer is much easier: add a Network Manager, tick "Networked"

@@ -2,6 +2,7 @@
 // holding N elements, element access, iterators as pointers, size, fill). No exceptions: at() does not check.
 #pragma once
 #include <cstddef>
+#include <iterator>
 namespace std {
 template <typename T, size_t N>
 struct array {
@@ -24,9 +25,32 @@ struct array {
     const T* begin() const { return elems_; }
     T* end() { return elems_ + N; }
     const T* end() const { return elems_ + N; }
+    std::reverse_iterator<T*> rbegin() { return std::reverse_iterator<T*>(elems_ + N); }
+    std::reverse_iterator<const T*> rbegin() const { return std::reverse_iterator<const T*>(elems_ + N); }
+    std::reverse_iterator<T*> rend() { return std::reverse_iterator<T*>(elems_); }
+    std::reverse_iterator<const T*> rend() const { return std::reverse_iterator<const T*>(elems_); }
     size_t size() const { return N; }
     size_t max_size() const { return N; }
     bool empty() const { return N == 0; }
     void fill(const T& value) { for (size_t i = 0; i < N; ++i) elems_[i] = value; }
+    // [array.syn] comparisons (Round 31): elementwise ==, and < in lexicographic order. Before, there were none, and
+    // okay-ms compared two arrays' bytes (SkinnedMesh.hpp's `!=` of array<float, 4>; a std::map keyed by array<double, 3>
+    // in FbxReader.cpp ordered by bytes).
+    bool operator==(const array& o) const {
+        for (size_t i = 0; i < N; ++i)
+            if (!(elems_[i] == o.elems_[i])) return false;
+        return true;
+    }
+    bool operator!=(const array& o) const { return !(*this == o); }
+    bool operator<(const array& o) const {
+        for (size_t i = 0; i < N; ++i) {
+            if (elems_[i] < o.elems_[i]) return true;
+            if (o.elems_[i] < elems_[i]) return false;
+        }
+        return false;
+    }
+    bool operator>(const array& o) const { return o < *this; }
+    bool operator<=(const array& o) const { return !(o < *this); }
+    bool operator>=(const array& o) const { return !(*this < o); }
 };
 }

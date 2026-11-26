@@ -1,6 +1,9 @@
 #pragma once
 // The launcher's Command line page (sidebar: Create > Command line) and the "Open command line" action. The rules live in
-// CommandLine.cpp (no ImGui, tested headless); this file only draws them. main.cpp calls Tick() once a frame, DrawPage()
+// CommandLine.cpp and the terminal emulator in Terminal.cpp (no ImGui, tested headless); this file only draws them: tabs
+// ("+", close, rename), each with its shell (PowerShell, Command Prompt or the person's shell, or "okay only") and its
+// project folder; the terminal grid in the launcher's mono font with a blinking cursor, mouse selection, the scrollback,
+// a right-click menu (Copy, Paste, Select all, Clear) and Ctrl+= / Ctrl+- for the text size. main.cpp calls Tick() once a frame, DrawPage()
 // while the page shows and Shutdown() before it closes, and hands over what the page needs through Host, so nothing here
 // reaches into main.cpp.
 #include <functional>
@@ -30,14 +33,15 @@ void SetProject(const std::string& root, const std::string& name);
 /// The "Open command line" action: a terminal window in `root` with the Tools folder first on PATH. Says how it went
 /// through host.toast.
 void OpenTerminalFor(const Host& host, const std::string& root, const std::string& name);
-/// Once a frame, whichever page shows: reads a running command's output.
+/// Once a frame, whichever page shows: reads every tab's output (shells and okay commands keep running in the background).
 void Tick();
 /// The page body, under the launcher's section header.
 void DrawPage(const Host& host);
-/// Ends a running command. Call before the launcher closes.
+/// Ends every tab's shell and running command. Call before the launcher closes.
 void Shutdown();
 
-/// The one-line hint under the project picker (also read by the test).
+/// The one-line hint under the project picker in okay-only mode, and in a shell tab.
 const char* HintText();
+const char* ShellHintText();
 
 }  // namespace okaylcli

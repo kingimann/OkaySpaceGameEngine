@@ -1,8 +1,13 @@
-// okay-ms own standard header: std::atomic, written from ISO/IEC 14882 [atomics]. THIS IS THE SINGLE-THREAD SUBSET:
-// every operation is a plain read and write (okay-ms has no lock-prefixed intrinsics yet), so it is correct for one
-// thread and for a signal handler on that thread, and it is NOT safe between threads. The memory_order arguments
-// are accepted and ignored. A multi-thread build needs real atomic instructions first.
+// okay-ms own standard header: std::atomic, written from ISO/IEC 14882 [atomics]. Every operation is atomic between
+// threads: it is one of the interlocked intrinsics of <intrin.h>, which okay-ms compiles inline as an x64 instruction
+// with a LOCK prefix (XCHG, XADD, CMPXCHG; Intel and AMD manuals). Those are full barriers, so every operation is
+// sequentially consistent whatever memory_order is given (the orders are accepted and need nothing weaker). A load is a
+// compare-exchange of the value with itself (it writes back what it read, so it is atomic and a barrier too); a store
+// is an exchange. Objects of 1, 2, 4 or 8 bytes (integers, bool, enumerations, pointers, float, double, small trivially
+// copyable structs) are supported; the value is moved in and out by its bytes. fetch_and, fetch_or and fetch_xor, and
+// fetch_add of a floating-point value, are compare-exchange loops.
 #pragma once
+#include <intrin.h>
 namespace std {
 enum memory_order {
     memory_order_relaxed,
@@ -13,137 +18,194 @@ enum memory_order {
     memory_order_seq_cst
 };
 
-template <typename T>
-struct atomic {
+// The bytes of a value as the low bytes of a 64-bit integer (the rest zero), and back.
+template <typename T> long long __okay_atomic_bits(const T& value) {
+    long long bits = 0;
+    const unsigned char* from = (const unsigned char*)&value;
+    unsigned char* to = (unsigned char*)&bits;
+    for (unsigned i = 0; i < sizeof(T); ++i) to[i] = from[i];
+    return bits;
+}
+template <typename T> T __okay_atomic_value(long long bits) {
+    T value;
+    const unsigned char* from = (const unsigned char*)&bits;
+    unsigned char* to = (unsigned char*)&value;
+    for (unsigned i = 0; i < sizeof(T); ++i) to[i] = from[i];
+    return value;
+}
+
+// The interlocked operations on N bytes at p; values and results are the N bytes, zero-extended.
+template <int N> struct __okay_atomic_raw;
+template <> struct __okay_atomic_raw<1> {
+    static long long exchange(void* p, long long v) { return (unsigned char)_InterlockedExchange8((char*)p, (char)v); }
+    static long long add(void* p, long long v) { return (unsigned char)_InterlockedExchangeAdd8((char*)p, (char)v); }
+    static long long cas(void* p, long long desired, long long expected) {
+        return (unsigned char)_InterlockedCompareExchange8((char*)p, (char)desired, (char)expected);
+    }
+};
+template <> struct __okay_atomic_raw<2> {
+    static long long exchange(void* p, long long v) { return (unsigned short)_InterlockedExchange16((short*)p, (short)v); }
+    static long long add(void* p, long long v) { return (unsigned short)_InterlockedExchangeAdd16((short*)p, (short)v); }
+    static long long cas(void* p, long long desired, long long expected) {
+        return (unsigned short)_InterlockedCompareExchange16((short*)p, (short)desired, (short)expected);
+    }
+};
+template <> struct __okay_atomic_raw<4> {
+    static long long exchange(void* p, long long v) { return (unsigned)_InterlockedExchange((long*)p, (long)v); }
+    static long long add(void* p, long long v) { return (unsigned)_InterlockedExchangeAdd((long*)p, (long)v); }
+    static long long cas(void* p, long long desired, long long expected) {
+        return (unsigned)_InterlockedCompareExchange((long*)p, (long)desired, (long)expected);
+    }
+};
+template <> struct __okay_atomic_raw<8> {
+    static long long exchange(void* p, long long v) { return _InterlockedExchange64((__int64*)p, v); }
+    static long long add(void* p, long long v) { return _InterlockedExchangeAdd64((__int64*)p, v); }
+    static long long cas(void* p, long long desired, long long expected) {
+        return _InterlockedCompareExchange64((__int64*)p, desired, expected);
+    }
+};
+
+// What every atomic<T> shares: load, store, exchange and compare-exchange on the bytes of v_.
+template <typename T> struct __okay_atomic_base {
     T v_;
-    atomic() : v_() {}
-    atomic(T desired) : v_(desired) {}
-    T load(memory_order = memory_order_seq_cst) const { return v_; }
-    void store(T desired, memory_order = memory_order_seq_cst) { v_ = desired; }
+    typedef __okay_atomic_raw<sizeof(T)> raw_;
+    __okay_atomic_base() : v_() {}
+    __okay_atomic_base(T desired) : v_(desired) {}
+    T load(memory_order = memory_order_seq_cst) const { return __okay_atomic_value<T>(raw_::cas((void*)&v_, 0, 0)); }
+    void store(T desired, memory_order = memory_order_seq_cst) { raw_::exchange((void*)&v_, __okay_atomic_bits(desired)); }
     T exchange(T desired, memory_order = memory_order_seq_cst) {
-        T old = v_;
-        v_ = desired;
-        return old;
+        return __okay_atomic_value<T>(raw_::exchange((void*)&v_, __okay_atomic_bits(desired)));
     }
     bool compare_exchange_strong(T& expected, T desired, memory_order = memory_order_seq_cst) {
-        if (v_ == expected) {
-            v_ = desired;
-            return true;
-        }
-        expected = v_;
+        const long long want = __okay_atomic_bits(expected);
+        const long long was = raw_::cas((void*)&v_, __okay_atomic_bits(desired), want);
+        if (was == want) return true;
+        expected = __okay_atomic_value<T>(was);
         return false;
     }
     bool compare_exchange_weak(T& expected, T desired, memory_order = memory_order_seq_cst) {
         return compare_exchange_strong(expected, desired);
     }
-    T fetch_add(T arg, memory_order = memory_order_seq_cst) { T old = v_; v_ = v_ + arg; return old; }
-    T fetch_sub(T arg, memory_order = memory_order_seq_cst) { T old = v_; v_ = v_ - arg; return old; }
-    T fetch_and(T arg, memory_order = memory_order_seq_cst) { T old = v_; v_ = v_ & arg; return old; }
-    T fetch_or(T arg, memory_order = memory_order_seq_cst) { T old = v_; v_ = v_ | arg; return old; }
-    T fetch_xor(T arg, memory_order = memory_order_seq_cst) { T old = v_; v_ = v_ ^ arg; return old; }
-    bool is_lock_free() const { return true; }
-    operator T() const { return v_; }
-    T operator=(T desired) { v_ = desired; return desired; }
-    T operator++() { v_ = v_ + 1; return v_; }
-    T operator++(int) { T old = v_; v_ = v_ + 1; return old; }
-    T operator--() { v_ = v_ - 1; return v_; }
-    T operator--(int) { T old = v_; v_ = v_ - 1; return old; }
-    T operator+=(T arg) { v_ = v_ + arg; return v_; }
-    T operator-=(T arg) { v_ = v_ - arg; return v_; }
-    T operator&=(T arg) { v_ = v_ & arg; return v_; }
-    T operator|=(T arg) { v_ = v_ | arg; return v_; }
-    T operator^=(T arg) { v_ = v_ ^ arg; return v_; }
-};
-
-template <>
-struct atomic<float> {
-    // No bit operations on a floating-point type ([atomics.types.generic]): the same members without fetch_and/or/xor.
-    float v_;
-    atomic() : v_(0) {}
-    atomic(float desired) : v_(desired) {}
-    float load(memory_order = memory_order_seq_cst) const { return v_; }
-    void store(float desired, memory_order = memory_order_seq_cst) { v_ = desired; }
-    float exchange(float desired, memory_order = memory_order_seq_cst) { float old = v_; v_ = desired; return old; }
-    bool compare_exchange_strong(float& expected, float desired, memory_order = memory_order_seq_cst) {
-        if (v_ == expected) {
-            v_ = desired;
-            return true;
-        }
-        expected = v_;
-        return false;
-    }
-    bool compare_exchange_weak(float& expected, float desired, memory_order = memory_order_seq_cst) {
+    // The forms with a separate order for success and for failure ([atomics.types.operations] 21).
+    bool compare_exchange_strong(T& expected, T desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
         return compare_exchange_strong(expected, desired);
     }
-    float fetch_add(float arg, memory_order = memory_order_seq_cst) { float old = v_; v_ = v_ + arg; return old; }
-    float fetch_sub(float arg, memory_order = memory_order_seq_cst) { float old = v_; v_ = v_ - arg; return old; }
-    bool is_lock_free() const { return true; }
-    operator float() const { return v_; }
-    float operator=(float desired) { v_ = desired; return desired; }
-    float operator+=(float arg) { v_ = v_ + arg; return v_; }
-    float operator-=(float arg) { v_ = v_ - arg; return v_; }
-};
-
-template <>
-struct atomic<double> {
-    // No bit operations on a floating-point type ([atomics.types.generic]): the same members without fetch_and/or/xor.
-    double v_;
-    atomic() : v_(0) {}
-    atomic(double desired) : v_(desired) {}
-    double load(memory_order = memory_order_seq_cst) const { return v_; }
-    void store(double desired, memory_order = memory_order_seq_cst) { v_ = desired; }
-    double exchange(double desired, memory_order = memory_order_seq_cst) { double old = v_; v_ = desired; return old; }
-    bool compare_exchange_strong(double& expected, double desired, memory_order = memory_order_seq_cst) {
-        if (v_ == expected) {
-            v_ = desired;
-            return true;
-        }
-        expected = v_;
-        return false;
-    }
-    bool compare_exchange_weak(double& expected, double desired, memory_order = memory_order_seq_cst) {
+    bool compare_exchange_weak(T& expected, T desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
         return compare_exchange_strong(expected, desired);
     }
-    double fetch_add(double arg, memory_order = memory_order_seq_cst) { double old = v_; v_ = v_ + arg; return old; }
-    double fetch_sub(double arg, memory_order = memory_order_seq_cst) { double old = v_; v_ = v_ - arg; return old; }
     bool is_lock_free() const { return true; }
-    operator double() const { return v_; }
-    double operator=(double desired) { v_ = desired; return desired; }
-    double operator+=(double arg) { v_ = v_ + arg; return v_; }
-    double operator-=(double arg) { v_ = v_ - arg; return v_; }
+    operator T() const { return load(); }
 };
 
 template <typename T>
-struct atomic<T*> {
-    // Pointer arithmetic in units of T ([atomics.types.pointer]); no bit operations.
-    T* v_;
-    atomic() : v_(0) {}
-    atomic(T* desired) : v_(desired) {}
-    T* load(memory_order = memory_order_seq_cst) const { return v_; }
-    void store(T* desired, memory_order = memory_order_seq_cst) { v_ = desired; }
-    T* exchange(T* desired, memory_order = memory_order_seq_cst) { T* old = v_; v_ = desired; return old; }
-    bool compare_exchange_strong(T*& expected, T* desired, memory_order = memory_order_seq_cst) {
-        if (v_ == expected) {
-            v_ = desired;
-            return true;
+struct atomic : __okay_atomic_base<T> {
+    atomic() : __okay_atomic_base<T>() {}
+    atomic(T desired) : __okay_atomic_base<T>(desired) {}
+    T operator=(T desired) {
+        this->store(desired);
+        return desired;
+    }
+    // Integers: the bytes are added as integers of the same width (two's complement wraps the same way).
+    T fetch_add(T arg, memory_order = memory_order_seq_cst) {
+        return __okay_atomic_value<T>(__okay_atomic_raw<sizeof(T)>::add((void*)&this->v_, __okay_atomic_bits(arg)));
+    }
+    T fetch_sub(T arg, memory_order = memory_order_seq_cst) {
+        const T negated = (T)(0 - arg);
+        return __okay_atomic_value<T>(__okay_atomic_raw<sizeof(T)>::add((void*)&this->v_, __okay_atomic_bits(negated)));
+    }
+    T fetch_and(T arg, memory_order = memory_order_seq_cst) {
+        T old = this->load();
+        while (!this->compare_exchange_strong(old, (T)(old & arg))) {
         }
-        expected = v_;
-        return false;
+        return old;
     }
-    bool compare_exchange_weak(T*& expected, T* desired, memory_order = memory_order_seq_cst) {
-        return compare_exchange_strong(expected, desired);
+    T fetch_or(T arg, memory_order = memory_order_seq_cst) {
+        T old = this->load();
+        while (!this->compare_exchange_strong(old, (T)(old | arg))) {
+        }
+        return old;
     }
-    T* fetch_add(long long arg, memory_order = memory_order_seq_cst) { T* old = v_; v_ = v_ + arg; return old; }
-    T* fetch_sub(long long arg, memory_order = memory_order_seq_cst) { T* old = v_; v_ = v_ - arg; return old; }
-    bool is_lock_free() const { return true; }
-    operator T*() const { return v_; }
-    T* operator=(T* desired) { v_ = desired; return desired; }
-    T* operator++() { v_ = v_ + 1; return v_; }
-    T* operator++(int) { T* old = v_; v_ = v_ + 1; return old; }
-    T* operator--() { v_ = v_ - 1; return v_; }
-    T* operator--(int) { T* old = v_; v_ = v_ - 1; return old; }
-    T* operator+=(long long arg) { v_ = v_ + arg; return v_; }
-    T* operator-=(long long arg) { v_ = v_ - arg; return v_; }
+    T fetch_xor(T arg, memory_order = memory_order_seq_cst) {
+        T old = this->load();
+        while (!this->compare_exchange_strong(old, (T)(old ^ arg))) {
+        }
+        return old;
+    }
+    T operator++() { return (T)(fetch_add((T)1) + 1); }
+    T operator++(int) { return fetch_add((T)1); }
+    T operator--() { return (T)(fetch_sub((T)1) - 1); }
+    T operator--(int) { return fetch_sub((T)1); }
+    T operator+=(T arg) { return (T)(fetch_add(arg) + arg); }
+    T operator-=(T arg) { return (T)(fetch_sub(arg) - arg); }
+    T operator&=(T arg) { return (T)(fetch_and(arg) & arg); }
+    T operator|=(T arg) { return (T)(fetch_or(arg) | arg); }
+    T operator^=(T arg) { return (T)(fetch_xor(arg) ^ arg); }
+};
+
+template <>
+struct atomic<float> : __okay_atomic_base<float> {
+    // No bit operations on a floating-point type ([atomics.types.float]); fetch_add is a compare-exchange loop.
+    atomic() : __okay_atomic_base<float>(0.0f) {}
+    atomic(float desired) : __okay_atomic_base<float>(desired) {}
+    float operator=(float desired) {
+        store(desired);
+        return desired;
+    }
+    float fetch_add(float arg, memory_order = memory_order_seq_cst) {
+        float old = load();
+        while (!compare_exchange_strong(old, old + arg)) {
+        }
+        return old;
+    }
+    float fetch_sub(float arg, memory_order = memory_order_seq_cst) { return fetch_add(-arg); }
+    float operator+=(float arg) { return fetch_add(arg) + arg; }
+    float operator-=(float arg) { return fetch_add(-arg) - arg; }
+};
+
+template <>
+struct atomic<double> : __okay_atomic_base<double> {
+    atomic() : __okay_atomic_base<double>(0.0) {}
+    atomic(double desired) : __okay_atomic_base<double>(desired) {}
+    double operator=(double desired) {
+        store(desired);
+        return desired;
+    }
+    double fetch_add(double arg, memory_order = memory_order_seq_cst) {
+        double old = load();
+        while (!compare_exchange_strong(old, old + arg)) {
+        }
+        return old;
+    }
+    double fetch_sub(double arg, memory_order = memory_order_seq_cst) { return fetch_add(-arg); }
+    double operator+=(double arg) { return fetch_add(arg) + arg; }
+    double operator-=(double arg) { return fetch_add(-arg) - arg; }
+};
+
+template <typename T>
+struct atomic<T*> : __okay_atomic_base<T*> {
+    // Pointer arithmetic in units of T ([atomics.types.pointer]); no bit operations.
+    atomic() : __okay_atomic_base<T*>(0) {}
+    atomic(T* desired) : __okay_atomic_base<T*>(desired) {}
+    T* operator=(T* desired) {
+        this->store(desired);
+        return desired;
+    }
+    T* fetch_add(long long arg, memory_order = memory_order_seq_cst) {
+        return (T*)__okay_atomic_raw<8>::add((void*)&this->v_, arg * (long long)sizeof(T));
+    }
+    T* fetch_sub(long long arg, memory_order = memory_order_seq_cst) {
+        return (T*)__okay_atomic_raw<8>::add((void*)&this->v_, -arg * (long long)sizeof(T));
+    }
+    T* operator++() { return fetch_add(1) + 1; }
+    T* operator++(int) { return fetch_add(1); }
+    T* operator--() { return fetch_sub(1) - 1; }
+    T* operator--(int) { return fetch_sub(1); }
+    T* operator+=(long long arg) { return fetch_add(arg) + arg; }
+    T* operator-=(long long arg) { return fetch_sub(arg) - arg; }
 };
 
 typedef atomic<bool> atomic_bool;
@@ -152,26 +214,29 @@ typedef atomic<unsigned> atomic_uint;
 typedef atomic<long long> atomic_llong;
 typedef atomic<unsigned long long> atomic_ullong;
 
-// atomic_flag ([atomics.flag]), the same single-thread subset: test_and_set sets the flag and returns what it was.
+// atomic_flag ([atomics.flag]): one byte; test_and_set is an exchange with 1 and returns what the flag was.
 struct atomic_flag {
     bool v_;
     bool test_and_set(memory_order order = memory_order_seq_cst) {
         (void)order;
-        const bool was = v_;
-        v_ = true;
-        return was;
+        return __okay_atomic_raw<1>::exchange((void*)&v_, 1) != 0;
     }
     void clear(memory_order order = memory_order_seq_cst) {
         (void)order;
-        v_ = false;
+        __okay_atomic_raw<1>::exchange((void*)&v_, 0);
     }
     bool test(memory_order order = memory_order_seq_cst) const {
         (void)order;
-        return v_;
+        return __okay_atomic_raw<1>::cas((void*)&v_, 0, 0) != 0;
     }
 };
 #define ATOMIC_FLAG_INIT {false}
 
-inline void atomic_thread_fence(memory_order) {}
+// A full barrier: an interlocked operation on a local (any locked instruction orders all memory accesses around it).
+inline void atomic_thread_fence(memory_order order) {
+    (void)order;
+    long fence = 0;
+    _InterlockedExchange(&fence, 1);
+}
 inline void atomic_signal_fence(memory_order) {}
 }

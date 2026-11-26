@@ -1,6 +1,7 @@
 // <cstdio> for okay-cc (ISO/IEC 14882 [cstdio.syn], ISO C 7.21). Our own header: the functions of
 // lib/printf.c (the formatting, snprintf), lib/stdio.c (files on Linux system calls) and lib/extra.c
-// (puts). Not declared yet: the scanf family, tmpfile, setvbuf, fgetpos and fsetpos.
+// (puts), sscanf and vsscanf (lib/stdio.c). Not declared yet: scanf and fscanf, tmpfile, setvbuf,
+// fgetpos and fsetpos.
 #pragma once
 #include <stdarg.h>
 #define EOF (-1)
@@ -21,6 +22,8 @@ int snprintf(char *buf, unsigned long n, const char *fmt, ...);
 int vsnprintf(char *buf, unsigned long n, const char *fmt, va_list ap);
 int sprintf(char *buf, const char *fmt, ...);
 int vsprintf(char *buf, const char *fmt, va_list ap);
+int sscanf(const char *s, const char *fmt, ...);
+int vsscanf(const char *s, const char *fmt, va_list ap);
 int fprintf(FILE *f, const char *fmt, ...);
 int vfprintf(FILE *f, const char *fmt, va_list ap);
 FILE *fopen(const char *path, const char *mode);
@@ -62,6 +65,8 @@ int snprintf(char *buf, unsigned long n, const char *fmt, ...);
 int vsnprintf(char *buf, unsigned long n, const char *fmt, va_list ap);
 int sprintf(char *buf, const char *fmt, ...);
 int vsprintf(char *buf, const char *fmt, va_list ap);
+int sscanf(const char *s, const char *fmt, ...);
+int vsscanf(const char *s, const char *fmt, va_list ap);
 int fprintf(FILE *f, const char *fmt, ...);
 int vfprintf(FILE *f, const char *fmt, va_list ap);
 FILE *fopen(const char *path, const char *mode);

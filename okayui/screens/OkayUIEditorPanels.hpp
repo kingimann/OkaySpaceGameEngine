@@ -289,10 +289,11 @@ NetSimResult DrawNetSim(okaypanels::NetSimModel& model, float x, float y, float 
 
 struct FindInFilesResult {
     okaypanels::FindInFilesIntent intent;
-    OkayUI::Rect query, search, status, list;
+    OkayUI::Rect query, search, matchCase, wholeWord, regex, replaceField, replace, status, list;
     std::vector<OkayUI::Rect> hits;                  // one per hit, its file:line label
 };
-/// The search field and Search, the status line and the hits (file:line, then the line's text); a click on a hit opens it.
+/// The search field and Search, Match case / Whole word / Regex (a change searches again), Replace with and Replace in
+/// All Files (off until a search found something), the status line (a bad regex in red) and the hits (file:line, then the line's text); a click on a hit opens it.
 FindInFilesResult DrawFindInFiles(const okaypanels::FindInFilesModel& model, okaypanels::FindInFilesState& state, float x, float y, float w, float h);
 
 struct DataAssetResult {

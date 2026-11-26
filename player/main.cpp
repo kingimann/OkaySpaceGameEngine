@@ -25,6 +25,7 @@
 #include <unistd.h>
 #endif
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
+#include "okay/Input/InputRuntime.hpp"      // the game's own input asset at start-up
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Core/SystemCost.hpp"       // F3 second page: ms per system
 #include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
@@ -74,6 +75,10 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#include "WebPlayer.hpp"   // platform/web: the IndexedDB save folder and the prefs write timing (the page side is okay_web.js)
+// The page (platform/web/okay_web.js) calls this when it is hidden or closed: write the prefs now, then it stores the saves.
+static std::function<void()> g_webFlush;
+extern "C" EMSCRIPTEN_KEEPALIVE void okay_web_flush() { if (g_webFlush) g_webFlush(); }
 #endif
 
 #include <algorithm>
@@ -1166,6 +1171,9 @@ int main(int argc, char** argv) {
                         "Account (for headless servers):\n"
                         "  --login NAME         sign this machine in (password from OKAY_LOGIN_PASSWORD or typed)\n"
                         "  --logout             sign out\n\n"
+                        "A game from the browser (browser/, docs/platform/browser_plan.md):\n"
+                        "  --game-dir DIR       run the game in DIR instead of the one beside this program\n"
+                        "  --save-dir DIR       write saves and settings in DIR\n\n"
                         "Build:\n"
                         "  --build-info         print which build this is (version, build number, engine, date) and exit\n\n%s", argv[0], argv[0], okay::DedicatedServerUsage());
             return 0;
@@ -1193,7 +1201,7 @@ int main(int argc, char** argv) {
     for (const char* v : {"join", "connect", "password", "room", "match-players", "match-min", "region",
                           "login", "log", "config", "scene", "port", "name", "max-players", "tick",
                           "status", "run-for", "public-addr", "max-speed", "rate-limit", "kick-after",
-                          "anticheat", "host-key"})
+                          "anticheat", "host-key", "game-dir", "save-dir"})
         pcl.Value(v, "VALUE");
     pcl.OptionalValue("find-match", "MODE");
     for (const char* f : {"server", "auth", "no-encryption", "report-kicks", "fixed-tick", "authoritative",
@@ -1307,7 +1315,9 @@ int main(int argc, char** argv) {
 
     // Resolve where the game files live: <Name>_Data/ beside the exe (the Folder layout), Data/ (the compact
     // layout), or the exe's own folder (the flat layout older builds used), so every build the editor ever made still runs.
-    const std::string baseDir = okay::buildpipe::FindDataDir(pb->BasePath(), PlayerExeStem(argv[0]));
+    // `--game-dir DIR` (the browser runs a web game it unpacked there): the same lookup, in DIR instead of beside the exe.
+    const std::string gameDirArg = pcl.Get("game-dir");
+    const std::string baseDir = okay::buildpipe::FindDataDir(gameDirArg.empty() ? pb->BasePath() : gameDirArg, PlayerExeStem(argv[0]));
     okay::Paths::SetStreamingAssetsDir(std::filesystem::is_directory(std::filesystem::u8path(baseDir) / "StreamingAssets") ? baseDir + "StreamingAssets/" : std::string());
 
     // Build settings (written by the editor's Build Settings) live in an optional
@@ -1451,11 +1461,27 @@ int main(int argc, char** argv) {
     // app folder when enabled — so saving works even from a read-only install (e.g.
     // Program Files) and two games never clash. Falls back to beside-the-exe.
     std::string saveDir = baseDir;
-    if (cfg.saveToUserDir) {
+    const std::string saveDirArg = pcl.Get("save-dir");   // the browser's per-site save folder: no per-user folder is made
+    if (cfg.saveToUserDir && saveDirArg.empty()) {
         const char* org = cfg.company.empty() ? "OkaySpace" : cfg.company.c_str();
         const char* app = cfg.title.empty() ? "Game" : cfg.title.c_str();
         const std::string pref = pb->PrefPath(org, app);
         if (!pref.empty()) saveDir = pref;
+    }
+#ifdef __EMSCRIPTEN__
+    // In the browser the save folder is the one the page keeps in IndexedDB (platform/web/okay_web.js), whatever the
+    // build's save setting: any other folder lives only in memory and is gone after a reload.
+    {
+        const std::string webSaves = okay::web::SaveDirFromEnv(std::getenv("OKAY_WEB_SAVE_DIR"));
+        if (!webSaves.empty()) saveDir = webSaves;
+        else pb->Log("web: no browser save folder; saves last until the page is closed");
+    }
+#endif
+    // `--save-dir DIR` (the browser's per-site save folder): it wins over the build's setting.
+    if (!saveDirArg.empty()) {
+        std::error_code sdec;
+        std::filesystem::create_directories(std::filesystem::u8path(saveDirArg), sdec);
+        saveDir = (saveDirArg.back() == '/' || saveDirArg.back() == '\\') ? saveDirArg : saveDirArg + "/";
     }
     okay::Save::SetBaseDir(saveDir);  // relative SaveData files (save.okaysave, ...) land here
     // Build Settings > Game: how much the game logs, and an optional log file in the save folder.
@@ -1502,6 +1528,13 @@ int main(int argc, char** argv) {
     // Persistent prefs (high scores, settings) live in the save folder.
     std::string prefsPath = saveDir + "game.okayprefs";
     Prefs::Load(prefsPath);
+#ifdef __EMSCRIPTEN__
+    // The desktop writes the prefs when the game closes; a browser tab just goes away, so write them half a second after
+    // the last change (and when the page is hidden, through okay_web_flush).
+    static okay::web::PendingWrite s_webPrefs(0.5);
+    Prefs::AddListener([](const std::string& key) { if (!key.empty()) s_webPrefs.Touch(okay::platform::TicksMs() / 1000.0); });
+    g_webFlush = [prefsPath] { if (s_webPrefs.Pending()) { Prefs::Save(prefsPath); s_webPrefs.Done(); } };
+#endif
     okay::Accessibility::Load();   // the player's saved accessibility choices (text size, contrast, motion, colour filter)
     okay::DisplaySettings::Restore();   // the player's saved fullscreen, vsync and quality apply on the first frame (the watcher below)
     DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
@@ -1644,6 +1677,9 @@ int main(int argc, char** argv) {
     okay::platform::WindowDesc wd;
     wd.highDpi = true;
     wd.resizable = cfg.resizable;
+#ifdef __EMSCRIPTEN__
+    wd.resizable = true;   // the page sizes the canvas (platform/web/shell.html); SDL follows its CSS size only for a resizable window
+#endif
     wd.fullscreen = cfg.fullscreen;
     wd.borderless = cfg.borderless;
     wd.maximized = cfg.startMaximized && cfg.resizable && !cfg.fullscreen;
@@ -1830,6 +1866,7 @@ int main(int argc, char** argv) {
     AudioMixer::groupVolume[(int)AudioGroup::Music] = cfg.extra.musicVolume;   // Build Settings > Game: starting group volumes
     AudioMixer::groupVolume[(int)AudioGroup::SFX] = cfg.extra.sfxVolume;
     AudioMixer::LoadSettings();   // the player's own volume settings win over it
+    okay::InputRuntime::UseProjectAsset(baseDir);   // the game's own input asset (<data>/Assets/input.okayinput, shipped by the export), else the default one
     InputActions::Load();   // the player's own control bindings
 
     // baseDir (resolved above) is where the game files live, for relative paths.
@@ -1939,6 +1976,7 @@ int main(int argc, char** argv) {
     }
     Uint32 presenceAt = 0, presenceWritten = 0;
     std::string presenceLast;
+    const std::string presenceGameVersion = okay::buildpipe::ManifestVersionNear(baseDir, scenePath);   // the game's version (build.json), for the join link
     std::map<std::string, Uint32> playedWith;   // who we've logged this run (key -> when)
     auto pumpPresence = [&]() {
         const Uint32 now = okay::platform::TicksMs32();
@@ -1982,7 +2020,9 @@ int main(int argc, char** argv) {
             }
             if (!met.empty()) okay::GameIpc::RecordPlayedWith(met);
         }
-        okay::GamePresence g = okay::DescribeSession(nm, gameTitle, lanAddr);
+        // The join link says what this is (an exported game on this engine version) so a friend's launcher picks the right program.
+        okay::SessionTags tags; tags.gameVersion = presenceGameVersion; tags.engineVersion = okay::BuildInfo::Version(); tags.target = "exported";
+        okay::GamePresence g = okay::DescribeSession(nm, gameTitle, lanAddr, nullptr, tags);
         const std::string key = g.status + "|" + g.join + "|" + std::to_string(g.players);
         if (key != presenceLast || now - presenceWritten > 10000) {
             okay::GameIpc::WritePresence(g);
@@ -2054,13 +2094,9 @@ int main(int argc, char** argv) {
                 okay::TapCharsForKey(e.key, [&](char c) { return okay::KeyForLetter(*pb, c); }, tapped);
                 for (char c : tapped) Input::FeedKeyTap(c);
             }
-            if (e.type == ET::MouseButtonDown) {
-                if (e.button == okay::platform::MouseLeft) Input::FeedMouseTap(0);
-                else if (e.button == okay::platform::MouseRight) Input::FeedMouseTap(1);
-                else if (e.button == okay::platform::MouseMiddle) Input::FeedMouseTap(2);
-            }
+            if (e.type == ET::MouseButtonDown) Input::FeedMouseTap(okay::InputMouseButton(e.button));   // left, right, middle and the two side buttons
             if (e.type == ET::TextInput) Input::FeedText(e.text.c_str());   // real characters
-            if (e.type == ET::MouseWheel) Input::FeedMouseWheel(osWheelY);
+            if (e.type == ET::MouseWheel) { Input::FeedMouseWheel(osWheelY); Input::FeedMouseWheelX(e.wheelFlipped ? -e.wheelX : e.wheelX); }
             if (e.type == ET::FingerDown || e.type == ET::FingerMotion || e.type == ET::FingerUp) {
                 // Finger coordinates are 0..1 of the window; the UI works in renderer pixels.
                 int ow = 0, oh = 0;
@@ -2167,7 +2203,7 @@ int main(int argc, char** argv) {
         bool showCursor = (Cursor::visible || gameModal || cursorReleased) && !itemDragging;
         pb->ShowCursor(showCursor);
 
-        // Feed the mouse (position in pixels + left/right/middle button state). When
+        // Feed the mouse (position in pixels + button state, side buttons included). When
         // locked we accumulate relative motion into a virtual position so the
         // controllers' look deltas keep working with a hidden, centred cursor.
         int mx, my; Uint32 mb;
@@ -2192,11 +2228,7 @@ int main(int argc, char** argv) {
             }
             s_virtualMouse = Vec2{ax * sx, ay * sy};
         }
-        unsigned mask = 0;
-        if (mb & okay::platform::MouseMask(okay::platform::MouseLeft))   mask |= 1u << 0;
-        if (mb & okay::platform::MouseMask(okay::platform::MouseRight))  mask |= 1u << 1;
-        if (mb & okay::platform::MouseMask(okay::platform::MouseMiddle)) mask |= 1u << 2;
-        Input::FeedMouse(s_virtualMouse, mask);
+        Input::FeedMouse(s_virtualMouse, okay::InputMouseMask(mb));   // left, right, middle and the two side buttons
         // On-screen controls and gestures read the SDL finger events already fed above
         // (desktop and the web build). This stays on the SDL player path: it does not
         // switch on the own platform backend.
@@ -2992,8 +3024,17 @@ int main(int argc, char** argv) {
         }
         { OKAY_PROFILE("Render.Present"); renderer->Present(); }
         okay::Prof().EndFrame((okay::platform::PerfCounter() - fStart) * 1000.0 / (double)okay::platform::PerfFrequency());
+#ifdef __EMSCRIPTEN__
+        {   // The page hides its loading screen on the first frame; the prefs are written once they are quiet.
+            static bool s_shown = false;
+            if (!s_shown) { s_shown = true; EM_ASM({ if (Module['okayFirstFrame']) Module['okayFirstFrame'](); }); }
+            if (s_webPrefs.Due(okay::platform::TicksMs() / 1000.0)) { Prefs::Save(prefsPath); s_webPrefs.Done(); }
+        }
+#endif
 
-        // Optional frame-rate cap: sleep the remainder of the frame budget.
+        // Optional frame-rate cap: sleep the remainder of the frame budget. Not in the browser: there a wait would
+        // spin the page's only thread, so the cap is given to the browser's own frame loop below.
+#ifndef __EMSCRIPTEN__
         if (cfg.fpsCap > 0) {
             double budget = 1.0 / cfg.fpsCap;
             double freq = (double)okay::platform::PerfFrequency();
@@ -3001,6 +3042,7 @@ int main(int argc, char** argv) {
             double remain = budget - elapsed;
             if (remain > 0.0015) okay::platform::DelayMs((Uint32)((remain - 0.0005) * 1000.0));
         }
+#endif
     };
 
     // Drive the frame loop: the browser owns the loop on web (a blocking while
@@ -3008,7 +3050,8 @@ int main(int argc, char** argv) {
 #ifdef __EMSCRIPTEN__
     (void)running;
     static auto* s_frame = &frame;
-    emscripten_set_main_loop([]() { (*s_frame)(); }, 0, 1);
+    // 0 = the browser's display rate (requestAnimationFrame); a frame-rate cap is the browser's timer at that rate.
+    emscripten_set_main_loop([]() { (*s_frame)(); }, cfg.fpsCap > 0 ? cfg.fpsCap : 0, 1);
 #else
     // Startup splash: show a logo over a solid colour, fading in and
     // out, before the game proper. Skippable with a key/click; closing quits.

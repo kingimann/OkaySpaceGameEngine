@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 67 headers, 981 names.
+Back to the [code index](../code_index.md). 71 headers, 1025 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -163,14 +163,23 @@ Back to the [code index](../code_index.md). 67 headers, 981 names.
 - `WriteRequest` function, line 306
 - `LoadRequest` function, line 337
 - `PidAlive` function, line 434
-- `WaitForExit` function, line 448
-- `LaunchOnce` function, line 466
-- `EnvironmentBlock` function, line 518
-- `RunAndWait` function, line 579
-- `RunHelper` function, line 581
-- `SpawnHelperProcess` function, line 668
-- `StartHelper` function, line 744: Starts the helper and returns. The caller must exit so the wait can finish.
-- `DispatchHelper` function, line 763: Run as the first thing in main. Returns -1 when this is a normal launch.
+- `WaitForExit` function, line 459
+- `LaunchOnce` function, line 477
+- `EnvironmentBlock` function, line 529
+- `RunAndWait` function, line 590
+- `RunHelper` function, line 592
+- `SpawnHelperProcess` function, line 679
+- `StartHelper` function, line 755: Starts the helper and returns. The caller must exit so the wait can finish.
+- `DispatchHelper` function, line 774: Run as the first thing in main. Returns -1 when this is a normal launch.
+
+## `shared/BrowserApp.hpp`
+
+- `BrowserApp` class, line 24
+
+## `shared/BrowserHost.hpp`
+
+- `TabHost` class, line 29
+- `DownloadHost` class, line 104: The browser program's downloads: each file is fetched into its place (NativeFetch's FetchToFile: a temporary file renamed
 
 ## `shared/ConsoleScriptLink.hpp`
 
@@ -241,34 +250,36 @@ Back to the [code index](../code_index.md). 67 headers, 981 names.
 - `Crumb` struct, line 34
 - `ConsoleEntry` struct, line 35
 - `State` struct, line 37
-- `SetText` function, line 64: ---- Writers (the editor calls these; all bounded, none allocate) ---------------------------------------------------------------
-- `SetVersion` function, line 73
-- `SetBuild` function, line 74
-- `SetOs` function, line 75
-- `SetCpu` function, line 76
-- `SetGpu` function, line 77
-- `SetUiBackend` function, line 78
-- `SetOwnCode` function, line 79
-- `SetRamTotalMb` function, line 80
-- `StartClock` function, line 81
-- `NextFrame` function, line 82
-- `Frame` function, line 83
-- `SetMode` function, line 84
-- `SetAutosave` function, line 85
-- `SetSceneStats` function, line 86
-- `SetSceneName` function, line 89: The open scene: the file name only. A full path would carry the user's folders (and name).
-- `Breadcrumb` function, line 98: One step of what the editor is doing ("UI.Inspector", "Render3D:gl"). The same step twice in a row only raises a counter,
-- `LastStep` function, line 116: The newest step ("startup" before the first one); the pointer is into the static block.
-- `ConsoleLine` function, line 124: One Console line: 0 = info, 1 = warning, 2 = error. Kept as it was logged (cut at 231 bytes; a cut is marked with "...").
-- `Reset` function, line 136: Tests only: back to the empty block.
-- `SwitchNameAllowed` function, line 151: ---- Which OKAY_* switches are on ---------------------------------------------------------------------------------------------------
-- `SwitchValueAllowed` function, line 160
-- `FormatSwitches` function, line 169
-- `Out` class, line 191: ---- A bounded text writer (no stdio, no heap) -------------------------------------------------------------------------------------
-- `FormatWhen` function, line 230: ---- Dates without localtime (it can take a lock) ------------------------------------------------------------------------------------
-- `Fault` struct, line 248: ---- The report text -------------------------------------------------------------------------------------------------------------------
-- `ComposeHead` function, line 266: Everything up to and including the "Backtrace:" line. The platform code then writes one line per frame (FrameLine).
-- `ComposeTail` function, line 317: The step trail, the Console lines and the end marker.
+- `WaitingOnPerson` function, line 65
+- `PersonWait` struct, line 66
+- `SetText` function, line 75: ---- Writers (the editor calls these; all bounded, none allocate) ---------------------------------------------------------------
+- `SetVersion` function, line 84
+- `SetBuild` function, line 85
+- `SetOs` function, line 86
+- `SetCpu` function, line 87
+- `SetGpu` function, line 88
+- `SetUiBackend` function, line 89
+- `SetOwnCode` function, line 90
+- `SetRamTotalMb` function, line 91
+- `StartClock` function, line 92
+- `NextFrame` function, line 93
+- `Frame` function, line 94
+- `SetMode` function, line 95
+- `SetAutosave` function, line 96
+- `SetSceneStats` function, line 97
+- `SetSceneName` function, line 100: The open scene: the file name only. A full path would carry the user's folders (and name).
+- `Breadcrumb` function, line 109: One step of what the editor is doing ("UI.Inspector", "Render3D:gl"). The same step twice in a row only raises a counter,
+- `LastStep` function, line 127: The newest step ("startup" before the first one); the pointer is into the static block.
+- `ConsoleLine` function, line 135: One Console line: 0 = info, 1 = warning, 2 = error. Kept as it was logged (cut at 231 bytes; a cut is marked with "...").
+- `Reset` function, line 147: Tests only: back to the empty block.
+- `SwitchNameAllowed` function, line 162: ---- Which OKAY_* switches are on ---------------------------------------------------------------------------------------------------
+- `SwitchValueAllowed` function, line 171
+- `FormatSwitches` function, line 180
+- `Out` class, line 202: ---- A bounded text writer (no stdio, no heap) -------------------------------------------------------------------------------------
+- `FormatWhen` function, line 241: ---- Dates without localtime (it can take a lock) ------------------------------------------------------------------------------------
+- `Fault` struct, line 259: ---- The report text -------------------------------------------------------------------------------------------------------------------
+- `ComposeHead` function, line 277: Everything up to and including the "Backtrace:" line. The platform code then writes one line per frame (FrameLine).
+- `ComposeTail` function, line 328: The step trail, the Console lines and the end marker.
 
 ## `shared/CrashHandler.hpp`
 
@@ -566,6 +577,10 @@ Back to the [code index](../code_index.md). 67 headers, 981 names.
 - `HierDrawLock` function, line 496: The padlock left of the eye: amber when locked, a faint hint while the row is hovered, nothing otherwise.
 - `HierDrawDiag` function, line 507: The problems marker (editor/ProblemsPanel.cpp DrawMarker): an amber or red dot with a dark rim and a "!" centred at (cx, cy).
 
+## `shared/ImGuiDropdown.hpp`
+
+- `BeginChevronCombo` function, line 15: Same arguments as ImGui::BeginCombo (the width comes from SetNextItemWidth / the item width), plus the smallest corner
+
 ## `shared/ImGuiPainterRenderer.hpp`
 
 - `OwnRequested` function, line 30: True when OKAY_IMGUI_RENDER is "own" (anything else, or unset, keeps imgui_impl_sdlrenderer2).
@@ -636,6 +651,14 @@ Back to the [code index](../code_index.md). 67 headers, 981 names.
 - `ColorByte` function, line 322: A colour field's channels as Dear ImGui's ColorEdit shows them: whole numbers 0 to 255.
 - `AddComponentWidth` function, line 331: The button's width: 260 pixels, centred, on a panel wider than 300; otherwise the whole width.
 
+## `shared/JoinPlan.hpp`
+
+- `Candidate` struct, line 19
+- `Action` enum, line 27
+- `Plan` struct, line 37
+- `GetVersionLabel` function, line 47: The button under a NeedEditor or VersionMismatch answer, which opens the Versions page ("" = no button).
+- `PlanJoin` function, line 60
+
 ## `shared/LauncherDemo.hpp`
 
 - `IsDemoEnvName` function, line 17: Is 'name' the name of a demo / screenshot variable?
@@ -701,18 +724,39 @@ Back to the [code index](../code_index.md). 67 headers, 981 names.
 
 ## `shared/OkayTheme.hpp`
 
-- `kDeep` function, line 15: Surfaces, darkest to lightest.
-- `kSunken` function, line 16
-- `kBase` function, line 17
-- `kRaised` function, line 18
-- `kField` function, line 19
-- `kControl` function, line 20
-- `kText` function, line 22: Text.
-- `kTextDim` function, line 23
-- `Mix` function, line 25
-- `WithAlpha` function, line 28
-- `ApplySlateMetrics` function, line 31: Rounding + borders (spacing/padding stay per-app). Call before ScaleAllSizes.
-- `ApplySlateColors` function, line 40: The full colour palette for a given accent.
+- `Palette` struct, line 20: ---- The palette: every colour the launcher draws comes from these named colours ------------------------------------------
+- `SlatePalette` function, line 30
+- `MidnightPalette` function, line 41: Midnight: near-black with an indigo tint, brighter text and stronger hairlines (an OLED-style high-contrast dark theme).
+- `LightPalette` function, line 52: Light: white cards on a pale grey page, near-black text, darker status colours (so they read as text on white).
+- `Current` function, line 62
+- `SetPalette` function, line 73
+- `Ink` function, line 86: A see-through tint over a surface (hover fills, hairlines, soft backgrounds): 'alpha' 0..255 as it was written for the dark
+- `InkV` function, line 91
+- `Shade` function, line 93: A shadow or a dim layer (black in every theme, lighter on Light).
+- `TextU32` function, line 94
+- `TextDimU32` function, line 95
+- `SuccessU32` function, line 96
+- `DangerU32` function, line 97
+- `WarningU32` function, line 98
+- `InfoU32` function, line 99
+- `OnColorU32` function, line 100
+- `SurfaceU32` function, line 101
+- `SuccessFill` function, line 103: Filled status colours (a badge, a dot, a button) keep their full colour in every theme: one per status.
+- `DangerFill` function, line 104
+- `WarningFill` function, line 105
+- `SuccessFillU32` function, line 106
+- `DangerFillU32` function, line 107
+- `WarningFillU32` function, line 108
+- `Luminance` function, line 111: WCAG contrast ratio of two opaque colours (1..21).
+- `Contrast` function, line 115
+- `Mix` function, line 120
+- `WithAlpha` function, line 123
+- `ReadableOn` function, line 125: Any colour (a section's, a category's) as text on the page: lightened on the dark themes, darkened on Light.
+- `OnFillSoft` function, line 132: The softer text on a filled colour (the time, "edited" and the receipt ticks on my chat bubble): the theme's onColor, made as
+- `AccentText` function, line 139: The accent as text or a selected label: lighter on the dark themes, darker on Light (so it reads on the page).
+- `ApplySlateMetrics` function, line 146: Rounding + borders (spacing/padding stay per-app). Call before ScaleAllSizes.
+- `ApplyColors` function, line 155: ImGui's colours from a palette and an accent (every theme; the editor passes Slate).
+- `ApplySlateColors` function, line 221: The Slate colours (the editor and the launcher's default theme).
 
 ## `shared/OkayThreads.hpp`
 
@@ -757,17 +801,19 @@ Back to the [code index](../code_index.md). 67 headers, 981 names.
 
 ## `shared/OkayUIFrameLoop.hpp`
 
-- `FrameLoop` class, line 21
+- `FrameLoop` class, line 35
 
 ## `shared/OkayUIHost.hpp`
 
-- `InputCollector` class, line 31: Collects what OkayUI needs from SDL events between two frames.
-- `Region` class, line 291: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
-- `HostedInputWanted` function, line 346: Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
-- `WantsKeyboard` function, line 349: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
-- `KeyIdOf` function, line 373: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
-- `EventCollector` class, line 400: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
-- `Host` class, line 478: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
+- `HostKeys` enum, line 31: Which keys the host hands OkayUI this frame (HostedKeys, below Region, says which).
+- `InputCollector` class, line 34: Collects what OkayUI needs from SDL events between two frames.
+- `Region` class, line 314: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
+- `HostedInputWanted` function, line 369: Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
+- `HostedKeys` function, line 380: Which keys a host that draws Dear ImGui and hosted OkayUI pages hands OkayUI this frame (InputCollector::Build).
+- `WantsKeyboard` function, line 387: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
+- `KeyIdOf` function, line 411: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
+- `EventCollector` class, line 438: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
+- `Host` class, line 518: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
 
 ## `shared/OkayUIHostImGui.hpp`
 
@@ -804,9 +850,10 @@ Back to the [code index](../code_index.md). 67 headers, 981 names.
 
 ## `shared/OkayUIImGuiEmbed.hpp`
 
-- `ImGuiEmbed` class, line 31
-- `SharedImGuiEmbed` function, line 138: The one embed the editor's hosted OkayUI widgets share (one set of textures).
-- `HostPanelSection` function, line 241: A part of a Dear ImGui window drawn by OkayUI only, with no Dear ImGui copy (the editor's Project Settings sections Player,
+- `ImGuiEmbed` class, line 33
+- `SharedImGuiEmbed` function, line 154: The one embed the editor's hosted OkayUI widgets share (one set of textures).
+- `HostPanelArea` function, line 254: A rectangle of the current Dear ImGui window drawn by OkayUI, 'size' big at the cursor: HostPanelWindow's way for a page that
+- `HostPanelSection` function, line 285: A part of a Dear ImGui window drawn by OkayUI only, with no Dear ImGui copy (the editor's Project Settings sections Player,
 
 ## `shared/OkayUIImGuiMap.hpp`
 
@@ -834,53 +881,53 @@ Back to the [code index](../code_index.md). 67 headers, 981 names.
 - `ReaderSwitch` struct, line 38: One own reader that can be chosen at run time: the environment variable, the file extension the import table knows it
 - `Readers` function, line 40
 - `Setting` struct, line 53
-- `RuntimeSettings` function, line 58: Everything OKAY_OWN_STACK=1 sets (when not already set): the readers, our HTTP client, the okay::platform backend and OkayUI.
-- `Requested` function, line 70: True when OKAY_OWN_STACK is "1" in the environment.
-- `SetIfUnset` function, line 75
-- `ApplyEnvironment` function, line 86: With OKAY_OWN_STACK=1, set every run-time switch that is not set yet. Returns how many it set (0 when not requested).
-- `Info` struct, line 95
-- `FormatLine` function, line 105: Pure text: '[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui'.
-- `CryptoLabel` function, line 123: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
-- `PrintAndExitRequested` function, line 130: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
-- `Gather` function, line 137: What this process would use right now. 'ui' is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
-- `Describe` function, line 172
-- `Startup` function, line 176: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
+- `RuntimeSettings` function, line 58: Everything OKAY_OWN_STACK=1 sets (when not already set): the readers, the okay::platform backend and OkayUI (our HTTP client
+- `Requested` function, line 69: True when OKAY_OWN_STACK is "1" in the environment.
+- `SetIfUnset` function, line 74
+- `ApplyEnvironment` function, line 85: With OKAY_OWN_STACK=1, set every run-time switch that is not set yet. Returns how many it set (0 when not requested).
+- `Info` struct, line 94
+- `FormatLine` function, line 104: Pure text: '[okay] stack: platform=own http=own readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui'.
+- `CryptoLabel` function, line 122: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
+- `PrintAndExitRequested` function, line 129: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
+- `Gather` function, line 136: What this process would use right now. 'ui' is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
+- `Describe` function, line 171
+- `Startup` function, line 175: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
 
 ## `shared/OwnSwitches.hpp`
 
 - `Needs` enum, line 33: What an item needs from the build or the system. A screen passes what is true here; an unavailable item is hidden.
 - `Item` struct, line 35
-- `Items` function, line 46: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
-- `AlternativeExe` struct, line 60: A second program built from the same sources against our own UI (CMake options OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): the
-- `Alternative` function, line 64
-- `Context` struct, line 78: What is true on this machine: used to hide items that cannot work here.
-- `Available` function, line 93
-- `SplitIds` function, line 101
-- `JoinIds` function, line 110
-- `Has` function, line 115
-- `Find` function, line 119
-- `Select` function, line 125: The ids of 'items' for which 'pick(id)' is true, in table order.
-- `Parse` function, line 134: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
-- `Serialize` function, line 144: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
-- `AllOn` function, line 151: The default: everything on.
-- `AllOff` function, line 153: "Back to the third-party parts": everything off.
-- `Set` function, line 154
-- `AppliedVar` function, line 163
-- `PutEnv` function, line 165
-- `DropEnv` function, line 172
-- `AppliedNow` function, line 179
-- `SetByUser` function, line 185: True when the person set the item's variable themselves (it is set and we did not set it).
-- `Apply` function, line 191: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
-- `Status` enum, line 206
-- `StatusOf` function, line 209: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
-- `StatusText` function, line 216
-- `DefaultPath` function, line 227: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
-- `LoadFile` function, line 241
-- `SaveFile` function, line 248
-- `State` struct, line 259: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
-- `Global` function, line 264
-- `Startup` function, line 267: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
-- `SaveChosen` function, line 274: Save the screen's choice to the file Startup() read.
+- `Items` function, line 47: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
+- `AlternativeExe` struct, line 61: A second program built from the same sources against our own UI (CMake options OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): the
+- `Alternative` function, line 65
+- `Context` struct, line 79: What is true on this machine: used to hide items that cannot work here.
+- `Available` function, line 94
+- `SplitIds` function, line 102
+- `JoinIds` function, line 111
+- `Has` function, line 116
+- `Find` function, line 120
+- `Select` function, line 126: The ids of 'items' for which 'pick(id)' is true, in table order.
+- `Parse` function, line 135: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
+- `Serialize` function, line 145: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
+- `AllOn` function, line 152: The default: everything on.
+- `AllOff` function, line 154: "Back to the third-party parts": everything off.
+- `Set` function, line 155
+- `AppliedVar` function, line 164
+- `PutEnv` function, line 166
+- `DropEnv` function, line 173
+- `AppliedNow` function, line 180
+- `SetByUser` function, line 186: True when the person set the item's variable themselves (it is set and we did not set it).
+- `Apply` function, line 192: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
+- `Status` enum, line 207
+- `StatusOf` function, line 210: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
+- `StatusText` function, line 217
+- `DefaultPath` function, line 228: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
+- `LoadFile` function, line 242
+- `SaveFile` function, line 249
+- `State` struct, line 260: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
+- `Global` function, line 265
+- `Startup` function, line 268: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
+- `SaveChosen` function, line 275: Save the screen's choice to the file Startup() read.
 
 ## `shared/PainterBridge.hpp`
 
@@ -1056,9 +1103,15 @@ Back to the [code index](../code_index.md). 67 headers, 981 names.
 
 ## `shared/Splash.hpp`
 
-- `SplashStyle` struct, line 27: How the splash looks — lets a host customize the loading screen: the accent
-- `DrawSplashStyled` function, line 43: Draw one animated splash frame (into 'style') and present it:
-- `DrawSplash` function, line 170: Backward-compatible helper: draw the splash with just an accent colour.
+- `SplashStyle` struct, line 40: How the splash looks — lets a host customize the loading screen: the accent
+- `SplashProgress` struct, line 52: What the splash says and how far start-up is. Every field is optional.
+- `SplashLayout` struct, line 66: Where the parts of the splash go on a w x h output (the drawing and the tests use the same numbers).
+- `SplashClamp01` function, line 77
+- `ComputeSplashLayout` function, line 79
+- `DrawSplashStyled` function, line 115: Draw one animated splash frame (into 'style') and present it:
+- `DrawSplash` function, line 318: Backward-compatible helper: draw the splash with just an accent colour.
+- `SplashSteps` class, line 327: A host's start-up as named steps with weights (how long each roughly takes), turned into the progress value
+- `SplashFinish` class, line 370: The end of the splash, drawn over the host's first frames: fully up while the host still holds it (a start-up
 
 ## `shared/StartupUpdate.hpp`
 
@@ -1077,29 +1130,32 @@ Back to the [code index](../code_index.md). 67 headers, 981 names.
 
 ## `shared/TestBuild.hpp`
 
-- `NumberCount` function, line 48: How many numbers a version has ("2.876.0" -> 3, "2.876.0.17" -> 4); 0 when 'text' is not a version.
-- `IsReleaseShaped` function, line 53: A normal release: one to three numbers (2.876.0). Text that is not a version is not one.
-- `IsTestVersion` function, line 58: A test build: exactly four numbers, the fourth at least 1 (2.876.0.17).
-- `BaseRelease` function, line 63: The release a test build was made on: "2.876.0.17" -> "2.876.0"; "" when 'text' is not a test version.
-- `Serial` function, line 69: The fourth number ("2.876.0.17" -> 17); 0 when 'text' is not a test version.
-- `MakeVersion` function, line 73: "2.876.0" + 17 -> "2.876.0.17". "" unless 'base' is exactly three numbers and 'serial' is at least 1.
-- `Suffix` function, line 79: " (test build)" for a test version, "" for anything else: what follows a version where it is shown ("v2.876.0.17 (test build)").
-- `DisplayVersion` function, line 81: "v2.876.0.17 (test build)", or "v2.876.0" for a release; the text itself when it is not a version.
-- `CleanLine` function, line 89: One line of plain printable ASCII: other characters are dropped, runs of spaces become one, the ends are trimmed, at most 'maxChars' long.
-- `CleanBranch` function, line 103: A git branch (or tag) name as a label: letters, digits and . _ / + - only, at most 80 characters, no "..", no leading '/', '-' or '.', no
-- `CleanSha` function, line 112: A commit id: lowercase hex, 7 to 40 digits (upper case is folded). "" when it is not.
-- `ShortSha` function, line 123: The seven digits people say ("abc1234"); "" when 'sha' is not a commit id.
-- `DisplayBranch` function, line 129: The branch as people say it: the lane folders "claude/", "claude2/", "claude3/" and "grok/" are dropped ("claude/walk-vs-run" -> "walk-vs-run").
-- `Title` function, line 135: "Test build of walk-vs-run (abc1234)". Missing parts are left out: no commit gives "Test build of walk-vs-run", neither gives "Test build".
-- `Choice` struct, line 146: What the update check should install. 'version' is normalized; 'note' says in one plain sentence why there is nothing to do.
-- `Marker` struct, line 192
-- `MarkerText` function, line 197
-- `ParseMarker` function, line 206
-- `MarkerPath` function, line 229
-- `WriteMarker` function, line 232: Write the marker (through a temp file and a rename). False when it could not be written; the update that asked for it does not depend on it.
-- `ReadMarker` function, line 249
-- `RemoveMarker` function, line 258
-- `RunningTitle` function, line 268: What About says about the running program: "" for a normal release (nothing to add), otherwise "Test build of walk-vs-run (abc1234)" when the
+- `NumberCount` function, line 51: How many numbers a version has ("2.876.0" -> 3, "2.876.0.17" -> 4); 0 when 'text' is not a version.
+- `IsReleaseShaped` function, line 56: A normal release: one to three numbers (2.876.0). Text that is not a version is not one.
+- `IsTestVersion` function, line 61: A test build: exactly four numbers, the fourth at least 1 (2.876.0.17).
+- `BaseRelease` function, line 66: The release a test build was made on: "2.876.0.17" -> "2.876.0"; "" when 'text' is not a test version.
+- `Serial` function, line 72: The fourth number ("2.876.0.17" -> 17); 0 when 'text' is not a test version.
+- `MakeVersion` function, line 76: "2.876.0" + 17 -> "2.876.0.17". "" unless 'base' is exactly three numbers and 'serial' is at least 1.
+- `Suffix` function, line 82: " (test build)" for a test version, "" for anything else: what follows a version where it is shown ("v2.876.0.17 (test build)").
+- `DisplayVersion` function, line 84: "v2.876.0.17 (test build)", or "v2.876.0" for a release; the text itself when it is not a version.
+- `CleanLine` function, line 92: One line of plain printable ASCII: other characters are dropped, runs of spaces become one, the ends are trimmed, at most 'maxChars' long.
+- `CleanBranch` function, line 106: A git branch (or tag) name as a label: letters, digits and . _ / + - only, at most 80 characters, no "..", no leading '/', '-' or '.', no
+- `CleanSha` function, line 115: A commit id: lowercase hex, 7 to 40 digits (upper case is folded). "" when it is not.
+- `ShortSha` function, line 126: The seven digits people say ("abc1234"); "" when 'sha' is not a commit id.
+- `DisplayBranch` function, line 132: The branch as people say it: the lane folders "claude/", "claude2/", "claude3/" and "grok/" are dropped ("claude/walk-vs-run" -> "walk-vs-run").
+- `IsMainBranch` function, line 138: A build of 'main' (exactly that name): the only test builds the automatic update installs. Builds of other branches are installed by hand.
+- `Title` function, line 140: "Test build of walk-vs-run (abc1234)". Missing parts are left out: no commit gives "Test build of walk-vs-run", neither gives "Test build".
+- `Choice` struct, line 151: What the update check should install. 'version' is normalized; 'note' says in one plain sentence why there is nothing to do.
+- `Ahead` enum, line 170
+- `ContentAhead` function, line 172: Is a build at place 'a' on main ahead of one at place 'b' (it holds commits 'b' does not)? Unknown when either place is not known (0).
+- `Marker` struct, line 217
+- `MarkerText` function, line 222
+- `ParseMarker` function, line 231
+- `MarkerPath` function, line 254
+- `WriteMarker` function, line 257: Write the marker (through a temp file and a rename). False when it could not be written; the update that asked for it does not depend on it.
+- `ReadMarker` function, line 274
+- `RemoveMarker` function, line 283
+- `RunningTitle` function, line 293: What About says about the running program: "" for a normal release (nothing to add), otherwise "Test build of walk-vs-run (abc1234)" when the
 
 ## `shared/TestHooks.hpp`
 

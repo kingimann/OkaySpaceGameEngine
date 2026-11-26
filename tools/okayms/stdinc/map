@@ -3,18 +3,20 @@
 // iterators are plain pointers to pair<K, V> and an insert or erase in the middle moves the entries after it (linear
 // time, where the standard says logarithmic). Differences from the standard: the element is pair<K, V>, not
 // pair<const K, V> (the key can be written through an iterator, which the standard forbids); iterators and references
-// are invalidated by an insert or erase; ordering is by operator< on the key (no comparator argument); at() of a
+// are invalidated by an insert or erase; ordering is by the comparator C (std::less<K>, operator< on the key, unless another is given); at() of a
 // missing key returns a default value kept in the map (there are no exceptions). No allocator.
 #pragma once
 #include <cstddef>
 #include <initializer_list>
 #include <utility>
 #include <vector>
+#include <iterator>
 namespace std {
-template <typename K, typename V>
+template <typename K, typename V, typename C = less<K> >
 class map {
     vector<pair<K, V> > items_;
     V missing_;
+    C cmp_;
 
     // The index of the first entry whose key is not less than key.
     size_t lower(const K& key) const {
@@ -22,15 +24,16 @@ class map {
         size_t hi = items_.size();
         while (lo < hi) {
             const size_t mid = lo + (hi - lo) / 2;
-            if (items_[mid].first < key) lo = mid + 1;
+            if (cmp_(items_[mid].first, key)) lo = mid + 1;
             else hi = mid;
         }
         return lo;
     }
-    bool found_at(size_t at, const K& key) const { return at < items_.size() && !(key < items_[at].first); }
+    bool found_at(size_t at, const K& key) const { return at < items_.size() && !cmp_(key, items_[at].first); }
 
 public:
     typedef K key_type;
+    typedef C key_compare;
     typedef V mapped_type;
     typedef pair<K, V> value_type;
     typedef size_t size_type;
@@ -41,13 +44,23 @@ public:
     map(initializer_list<pair<K, V> > list) : missing_() {
         for (size_t i = 0; i < list.size(); ++i) insert(list.begin()[i]);
     }
+    template <typename It>
+    map(It first, It last) : missing_() {
+        for (; first != last; ++first) insert(*first);
+    }
     size_t size() const { return items_.size(); }
     bool empty() const { return items_.empty(); }
     pair<K, V>* begin() { return items_.begin(); }
     const pair<K, V>* begin() const { return items_.begin(); }
     pair<K, V>* end() { return items_.end(); }
     const pair<K, V>* end() const { return items_.end(); }
+    std::reverse_iterator<pair<K, V>*> rbegin() { return std::reverse_iterator<pair<K, V>*>(end()); }
+    std::reverse_iterator<const pair<K, V>*> rbegin() const { return std::reverse_iterator<const pair<K, V>*>(end()); }
+    std::reverse_iterator<pair<K, V>*> rend() { return std::reverse_iterator<pair<K, V>*>(begin()); }
+    std::reverse_iterator<const pair<K, V>*> rend() const { return std::reverse_iterator<const pair<K, V>*>(begin()); }
     void clear() { items_.clear(); }
+    // Exchanges the contents with another map ([map.overview], [container.reqmts]).
+    void swap(map& other) { items_.swap(other.items_); }
     size_t count(const K& key) const { return found_at(lower(key), key) ? 1 : 0; }
     bool contains(const K& key) const { return found_at(lower(key), key); }
     pair<K, V>* find(const K& key) {
@@ -109,5 +122,9 @@ public:
         if (found_at(at, key)) ++at;
         return items_.begin() + at;
     }
+    // [container.reqmts] == and != (Round 31): before, there were none and okay-ms compared the objects' bytes
+    // (SaveFramework.hpp's `m_values == o.m_values` on a std::map).
+    bool operator==(const map& o) const { return items_ == o.items_; }
+    bool operator!=(const map& o) const { return !(*this == o); }
 };
 }

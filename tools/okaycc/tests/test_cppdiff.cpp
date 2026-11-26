@@ -12,6 +12,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <cstdlib>
+#include <ctime>
 
 static int gOk = 0;
 
@@ -29,7 +30,8 @@ static int runCapture(const std::string& bin, const std::string& outPath) {
 
 static std::vector<std::vector<unsigned char>> loadLibc() {
     const char* files[] = {"lib/write.c", "lib/exit.c", "lib/mem.c", "lib/str.c", "lib/printf.c", "lib/extra.c",
-                           "lib/alloc.c", "lib/eh.c", "lib/m.c", "lib/stdio.c"};
+                           "lib/alloc.c", "lib/eh.c", "lib/m.c", "lib/stdio.c", "lib/time.c", "lib/signal.c",
+                           "lib/net.c"};
     std::vector<std::string> inc = {"include"};
     std::vector<std::vector<unsigned char>> objs;
     for (const char* path : files) {
@@ -41,11 +43,15 @@ static std::vector<std::vector<unsigned char>> loadLibc() {
     return objs;
 }
 
-static void diffOne(const std::string& name, const std::string& srcPath, const std::vector<std::string>& inc = {}) {
+// viaObject: always compile to a relocatable object and link it with our C library (the path the
+// engine tests take), not to one executable image.
+static void diffOne(const std::string& name, const std::string& srcPath, const std::vector<std::string>& inc = {},
+                    bool viaObject = false) {
     std::string src = readFile(srcPath);
     okaycc::Diagnostics d;
-    std::vector<unsigned char> bin = okaycc::compileToElf(src, d, srcPath, inc);
-    if (!d.ok() || bin.empty()) {
+    std::vector<unsigned char> bin;
+    if (!viaObject) bin = okaycc::compileToElf(src, d, srcPath, inc);
+    if (viaObject || !d.ok() || bin.empty()) {
         okaycc::Diagnostics d2;
         auto obj = okaycc::compileToObject(src, d2, srcPath, inc);
         auto libc = loadLibc();
@@ -159,7 +165,8 @@ static void linkTwo() {
 // Round 17 adds engine/src/UI/FocusGraph.cpp (std::vector, <algorithm>, lambdas, enum class,
 // default member initializers, default arguments, range-for, auto), with our own headers.
 static void engineDiff(const char* driver, const char* engineFile, const char* engineFile2 = nullptr) {
-    std::vector<const char*> files = {driver, engineFile};
+    std::vector<const char*> files = {driver};
+    if (engineFile) files.push_back(engineFile);  // (none: the driver tests a header-only part)
     if (engineFile2) files.push_back(engineFile2);
     std::vector<std::string> inc = {"../../engine/include", "include"};
     std::vector<std::vector<unsigned char>> objs;
@@ -209,7 +216,7 @@ static void engineDiff(const char* driver, const char* engineFile, const char* e
     std::string s2 = readFile(folder + "/o2");
     std::system(("rm -rf " + folder).c_str());
     if (e1 != e2 || s1 != s2 || s1.empty()) {
-        std::fprintf(stderr, "FAIL engine %s okay-cc exit %d [%s] gcc exit %d [%s]\n", engineFile, e1, s1.c_str(), e2,
+        std::fprintf(stderr, "FAIL engine %s okay-cc exit %d [%s] gcc exit %d [%s]\n", engineFile ? engineFile : driver, e1, s1.c_str(), e2,
                      s2.c_str());
         ++okaycc_test::gFail;
         return;
@@ -224,6 +231,41 @@ static void expectNewArrayError() {
                             "newarr.cpp");
     if (d.ok() || d.format().find("needs a default constructor") == std::string::npos) {
         std::fprintf(stderr, "FAIL new[] without a default constructor gave: %s\n", d.format().c_str());
+        ++okaycc_test::gFail;
+        return;
+    }
+    ++gOk;
+}
+
+// Round 23: a static_assert whose condition the compiler works out to false is an error.
+static void expectStaticAssert() {
+    okaycc::Diagnostics d;
+    okaycc::compileToObject("template <class T, class U> struct S { static constexpr bool value = false; };\n"
+                            "template <class T> struct S<T, T> { static constexpr bool value = true; };\n"
+                            "static_assert(S<int, int>::value, \"fine\");\n"
+                            "struct A { static_assert(!S<int, int>::value, \"boom\"); };\n"
+                            "int main() { return 0; }\n",
+                            d, "sa.cpp");
+    if (d.ok() || d.format().find("static assertion failed: boom") == std::string::npos ||
+        d.format().find("fine") != std::string::npos) {
+        std::fprintf(stderr, "FAIL static_assert gave: %s\n", d.format().c_str());
+        ++okaycc_test::gFail;
+        return;
+    }
+    ++gOk;
+}
+
+// Round 27: a chain of operators is checked in time that grows with its length, not twice over per
+// link (chain27.cpp took 65 seconds with round 26's okay-cc built with -O2; now well under one).
+static void compileTime() {
+    const char* path = "tests/progs_cpp_std/chain27.cpp";
+    std::string src = readFile(path);
+    okaycc::Diagnostics d;
+    std::clock_t t0 = std::clock();
+    auto obj = okaycc::compileToObject(src, d, path, {"include"});
+    double secs = double(std::clock() - t0) / CLOCKS_PER_SEC;
+    if (!d.ok() || obj.empty() || secs > 10) {
+        std::fprintf(stderr, "FAIL compile time of chain27.cpp: %.1f s\n%s", secs, d.format().c_str());
         ++okaycc_test::gFail;
         return;
     }
@@ -261,6 +303,8 @@ int main() {
     if (!std::getenv("CPPDIFF_ONLY")) {
         linkTwo();
         expectNewArrayError();
+        expectStaticAssert();
+        compileTime();
         engineDiff("tests/progs_cpp_engine/font_main.cpp", "../../engine/src/Graphics/Font.cpp");
         engineDiff("tests/progs_cpp_engine/focus_main.cpp", "../../engine/src/UI/FocusGraph.cpp");
         // Round 18: Mip.cpp and the Texture.cpp it calls (vector<Surface>, member templates, our libm).
@@ -277,6 +321,18 @@ int main() {
         engineDiff("tests/progs_cpp_engine/bc_main.cpp", "../../engine/src/Texture/Bc.cpp");
         // Round 21:
         engineDiff("tests/progs_cpp_engine/wav_main.cpp", "../../engine/src/Audio/WavDecoder.cpp");
+        // Round 22: the streams through an object file. Its vtables (.rodata) sat between .data
+        // items, and their relocations went to the wrong section: every virtual slot was null.
+        diffOne("stream22.cpp (object)", "tests/progs_cpp_std/stream22.cpp", {"include"}, true);
+        engineDiff("tests/progs_cpp_engine/manifest_main.cpp", "../../engine/src/Modules/ModuleManifest.cpp");
+        // Round 23: Core/Log.hpp, the first header of about a hundred engine files.
+        engineDiff("tests/progs_cpp_engine/log_main.cpp", nullptr);
+        // Round 24: Math/Quat.hpp (round 23: "cannot assign this value" in Quat::Euler).
+        engineDiff("tests/progs_cpp_engine/quat_main.cpp", nullptr);
+        // Round 25: Math/Easing.hpp, and a class whose constructor and destructor are defined in
+        // another file (arrays of it call them through the helpers made at the end of the class).
+        engineDiff("tests/progs_cpp_engine/easing_main.cpp", nullptr);
+        engineDiff("tests/progs_cpp_multi/later25_main.cpp", "tests/progs_cpp_multi/later25_def.cpp");
     }
     if (files == 0) {
         std::fprintf(stderr, "FAIL no programs\n");

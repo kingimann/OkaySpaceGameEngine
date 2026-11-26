@@ -893,6 +893,8 @@ void Avatar(const char* name, float size = 0.0f);
 /// A raised, rounded card; widgets until EndCard() go inside (it fits its content).
 void BeginCard(const char* id);
 void EndCard();
+/// The fill colour BeginCard uses in the launcher look, from the current theme (RGBA). One rule for the drawing and its tests.
+void CardFillColor(unsigned char out[4]);
 /// A list row: avatar, title, dim subtitle, optional right-aligned text. True when clicked.
 bool ListItem(const char* title, const char* subtitle = nullptr, const char* right = nullptr, bool selected = false);
 /// A dim label on the left and its value on the right (stats, settings summaries).

@@ -125,6 +125,13 @@ int main() {
         CHECK(pub.game == "Arena" && pub.needsPassword && pub.password.empty());   // public: no password
         CHECK(inv.password == "letmein" && inv.addr == "127.0.0.1:" + std::to_string(host->ServerPort()));
         CHECK(DescribeSession(nullptr, "Arena", "").status == "In the menus");
+        // The link also says the versions, what is hosting and the player counts (shared/JoinPlan.hpp reads them).
+        CHECK(pub.players == 1 && pub.maxPlayers == 4 && pub.version.empty() && pub.target.empty());
+        SessionTags tags; tags.gameVersion = "1.4.2"; tags.engineVersion = "2.850.1"; tags.target = "exported";
+        GamePresence tp = DescribeSession(host, "Arena", "127.0.0.1", nullptr, tags);
+        JoinLink tl;
+        CHECK(JoinLink::Parse(tp.join, tl) && tl.version == "1.4.2" && tl.engine == "2.850.1" && tl.target == "exported");
+        CHECK(tl.players == 1 && tl.maxPlayers == 4 && tl.SameSession(pub));   // the counts do not make it another session
 
         // A game started to join (--join): its NetworkManager joins on Start.
         NetworkManager::SetLaunchJoin(inviteLink);

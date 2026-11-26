@@ -70,7 +70,7 @@ inline Section Classify(const std::string& name) {
     if (name == "ImGui.NewFrame") return Section::EditorUpdate;
     if (StartsWith(name, "Editor.")) return Section::EditorUpdate;
     if (StartsWith(name, "ImGui.")) return Section::ImGuiDraw;
-    if (name == "Present") return Section::Present;
+    if (name == "Present" || StartsWith(name, "Present.")) return Section::Present;   // Present.Windows: the multi-window panels' own presents
     if (name == "Pacing.Sleep") return Section::Sleep;
     return Section::Play;
 }
@@ -148,10 +148,17 @@ struct PacingSettings {
     double idleAfterSeconds = 0.75; // how long without a click, key or scroll counts as idle
 };
 
+/// The rate the editor holds while its main window is minimized and nothing is playing, whatever the settings: nobody can see a
+/// frame, and a minimized (occluded) window's present returns at once instead of waiting for the display, so without this the
+/// loop ran flat out on a full core.
+constexpr double kMinimizedFps = 10.0;
+
 /// The frame rate to hold this frame, 0 = do not sleep. Idle throttle applies only when nothing is playing and the
-/// last input was `secondsSinceInput` ago; the lower of the cap and the idle rate wins.
-inline double TargetFps(const PacingSettings& p, bool playing, bool busy, double secondsSinceInput) {
+/// last input was `secondsSinceInput` ago; the lower of the cap and the idle rate wins. A minimized window (not playing) holds
+/// kMinimizedFps at most.
+inline double TargetFps(const PacingSettings& p, bool playing, bool busy, double secondsSinceInput, bool minimized = false) {
     double target = p.fpsCap > 0 ? (double)p.fpsCap : 0.0;
+    if (minimized && !playing) target = target > 0.0 ? std::min(target, kMinimizedFps) : kMinimizedFps;
     const bool idle = p.idleThrottle && !playing && !busy && std::isfinite(secondsSinceInput) &&
                       secondsSinceInput >= p.idleAfterSeconds;
     if (idle) {
@@ -263,6 +270,56 @@ struct SlowFrameLog {
         if (!context.empty()) line += " | " + context;
         if (written == maxLines) line += " (the log is full: no more slow frames are written this run)";
         return line;
+    }
+};
+
+// ---------------------------------------------------------------- the once-a-minute FPS summary
+
+/// One line in okay_editor_perf.log every `periodSeconds` (default 60), so a steady low frame rate shows up too, not only the frames
+/// over the slow-frame threshold: frames, average and 1%-low FPS (okay::FrameStats, as the overlay), and the three scopes with the
+/// most self time per frame on average. Fed every frame with the frame's time and the profiler's buckets (none: no scopes).
+struct FpsSummary {
+    double periodSeconds = 60.0;   // 0 or less: off
+    std::vector<double> frames;
+    std::vector<std::pair<std::string, double>> selfMs;   // scope name -> self ms summed over the period
+    double elapsedMs = 0.0;
+
+    /// The line when a period is complete ("" otherwise); the period then starts again.
+    std::string Add(const Profiler::Frame& f, double frameMs) {
+        if (!(periodSeconds > 0.0) || !std::isfinite(frameMs) || frameMs <= 0.0) return std::string();
+        frames.push_back(frameMs);
+        elapsedMs += frameMs;
+        for (const Profiler::Bucket& b : f.buckets) {
+            if (!(b.self > 0.0)) continue;
+            bool found = false;
+            for (auto& s : selfMs) if (s.first == b.name) { s.second += b.self; found = true; break; }
+            if (!found) selfMs.emplace_back(b.name, b.self);
+        }
+        if (elapsedMs < periodSeconds * 1000.0) return std::string();
+        const HistoryStats st = Stats(frames);
+        std::sort(selfMs.begin(), selfMs.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+        char buf[192];
+        std::snprintf(buf, sizeof(buf), "fps summary: %zu frames in %.0f s, average %.1f FPS (%.1f ms), 1%% low %.1f FPS, worst %.0f ms",
+                      st.frames, elapsedMs / 1000.0, st.fps, st.avgMs, st.lowFps, st.worstMs);
+        std::string line = buf;
+        const std::size_t n = frames.size();
+        for (std::size_t i = 0; i < selfMs.size() && i < 3; ++i) {
+            std::snprintf(buf, sizeof(buf), "%s%s %.1f ms", i == 0 ? "; top scopes per frame: " : ", ", selfMs[i].first.c_str(), selfMs[i].second / (double)n);
+            line += buf;
+        }
+        frames.clear(); selfMs.clear(); elapsedMs = 0.0;
+        return line;
+    }
+
+    /// The period from OKAY_FPS_SUMMARY_S (null or unreadable: 60 s; "0": off; at least 5 s).
+    static double PeriodFrom(const char* env) { return SecondsOr(env, 60.0, 5.0); }
+    static double SecondsOr(const char* env, double def, double least) {
+        if (!env || !*env) return def;
+        char* end = nullptr;
+        const double v = std::strtod(env, &end);
+        if (end == env || !std::isfinite(v)) return def;
+        if (v <= 0.0) return 0.0;
+        return std::max(least, v);
     }
 };
 

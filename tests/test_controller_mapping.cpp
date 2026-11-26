@@ -260,10 +260,12 @@ int main() {
         const std::size_t before = toasts.size();
         set.Swap(1, 2);
         CHECK(PadProfiles::Get(1).id.name == n1 && PadProfiles::Get(2).id.name == n0 && toasts.size() == before);
-        // A full set refuses the fifth pad and takes it once a slot frees.
+        // A full set (Input::kMaxGamepads = 8 slots) refuses the ninth pad.
         auto d = Raw(15, "Pad D", 4, 10, 1, true, 0x2222, 0x0001);
         auto e = Raw(16, "Pad E", 4, 10, 1, true, 0x2222, 0x0002);
         CHECK(set.Attach(std::move(d)) == 3);
+        for (int extra = 4; extra < Input::kMaxGamepads; ++extra)
+            CHECK(set.Attach(Raw(20 + extra, "Pad More", 4, 10, 1, true, 0x2222, (uint16_t)(0x0010 + extra))) == extra);
         CHECK(set.Attach(std::move(e)) == -1);
         set.CloseAll();
         PadProfiles::SetToastHandler(nullptr);

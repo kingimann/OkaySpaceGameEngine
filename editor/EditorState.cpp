@@ -996,14 +996,15 @@ bool EditorState::LoadRecoveredText(const std::string& text, const std::string& 
     const std::string tmp = keepPath.empty() ? std::string("okay_scene_recovery.okayscene") : keepPath + ".recovery-tmp";
     {
         std::ofstream f(tmp, std::ios::binary);
-        if (!f) { if (error) *error = "couldn't write the recovery file"; return false; }
+        if (!f) { if (error) *error = "couldn't write the recovery file " + tmp; return false; }
         f << text;
     }
-    if (!Load(tmp, error)) return false;
+    const bool loaded = Load(tmp, error);
+    std::error_code ec;
+    std::filesystem::remove(tmp, ec);   // also when the load failed: no stray "<scene>.recovery-tmp" left beside the scene
+    if (!loaded) return false;
     m_path = keepPath;
     dirty = true;
-    std::error_code ec;
-    std::filesystem::remove(tmp, ec);
     return true;
 }
 

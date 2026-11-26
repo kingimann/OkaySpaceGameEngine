@@ -8,10 +8,17 @@
 #pragma once
 #include "VersionsManager.hpp"
 #include "AppRestart.hpp"
+#include "TestBuild.hpp"   // DisplayVersion: "v2.903.8.115 (test build)"
 
+#include <cctype>
+#include <cstdint>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace okayupdater {
@@ -157,6 +164,152 @@ inline void Discard(const fs::path& dest) {
     fs::path tmp = dest; tmp += ".new";
     std::error_code ec;
     fs::remove(tmp, ec);
+}
+
+// ---- which version a program really is -------------------------------------------------------------------------------------
+// The launcher, the editor and the player must be one version after an update (owner, 2026-11-25: "the launcher is on 115 but the editor is
+// on 114"). VERSION.txt only says what the last update wrote, so the programs themselves are asked: every Windows program we build carries a
+// version resource (cmake/okay_version.rc.in) whose "ProductVersion" string is the full version, a test build's four numbers included.
+// Written from the documented layout of a version resource's String block: WORD wLength, WORD wValueLength, WORD wType (1 = text), the key
+// in UTF-16LE ending in a 0, padding to the next 4-byte boundary, then the value in UTF-16LE ending in a 0. No Windows API, so it is the same
+// code (and the same tests) on every platform. A program without one (a Linux build) reads as "" = not known, never as wrong.
+
+/// The ProductVersion in `bytes` (normalized, "" when there is none). `base` is the file offset of bytes[0] (a multiple of 4): the padding
+/// after the key is counted from the file, as Windows lays it out. The LAST well-formed one wins.
+inline std::string ProgramVersionInBytes(std::string_view bytes, std::uint64_t base = 0) {
+    static const char kKey[] = "ProductVersion";
+    std::string needle;
+    for (const char* k = kKey; *k; ++k) { needle += *k; needle += '\0'; }
+    needle += std::string(2, '\0');                                   // the key's terminating 0 (UTF-16)
+    std::string found;
+    for (std::size_t at = bytes.find(needle); at != std::string_view::npos; at = bytes.find(needle, at + 2)) {
+        if (at < 6 || ((base + at) % 2) != 0) continue;
+        const auto word = [&](std::size_t i) { return (unsigned)(unsigned char)bytes[i] | ((unsigned)(unsigned char)bytes[i + 1] << 8); };
+        const std::size_t start = at - 6;                             // the String block: wLength, wValueLength, wType, then the key
+        const unsigned wLength = word(start), wValueLength = word(start + 2), wType = word(start + 4);
+        // (wValueLength is counted in characters by rc.exe and in bytes by some other resource compilers: only "some value" is required of it)
+        if (wType != 1 || wValueLength == 0 || wLength < 6 + needle.size() + 4) continue;
+        std::size_t v = at + needle.size();
+        while ((v - start) % 4 != 0) ++v;                              // padding to a 32-bit boundary from the block's start
+        std::string text;
+        bool good = false;                                             // true once the value's terminating 0 is seen
+        for (std::size_t i = 0; i < 64 && v + 1 < bytes.size(); ++i, v += 2) {
+            const unsigned c = word(v);
+            if (c == 0) { good = true; break; }
+            if (c > 0x7E || !(std::isdigit((int)c) || c == '.')) break;
+            text += (char)c;
+        }
+        const std::string n = okayver::NormalizeVersion(text);
+        if (good && !n.empty() && n == text) found = n;
+    }
+    return found;
+}
+
+/// The ProductVersion of the program at `exe` ("" = no file, no version resource). Reads the file in 4 MiB pieces (overlapping, so a block
+/// across two pieces is still seen).
+inline std::string ProgramVersion(const fs::path& exe) {
+    std::ifstream in(exe, std::ios::binary);
+    if (!in) return {};
+    constexpr std::size_t kPiece = 4u << 20, kOverlap = 512;          // kPiece - kOverlap is a multiple of 4: offsets stay aligned
+    std::string buf(kPiece, '\0'), found;
+    std::uint64_t base = 0;
+    std::size_t have = 0;
+    for (;;) {
+        in.read(&buf[have], (std::streamsize)(kPiece - have));
+        const std::size_t got = have + (std::size_t)in.gcount();
+        if (got == 0) break;
+        const std::string v = ProgramVersionInBytes(std::string_view(buf.data(), got), base);
+        if (!v.empty()) found = v;
+        if (!in || got < kPiece) break;
+        std::memmove(&buf[0], &buf[kPiece - kOverlap], kOverlap);   // keep the tail: a block may straddle the two pieces
+        base += kPiece - kOverlap;
+        have = kOverlap;
+    }
+    return found;
+}
+
+/// The programs whose real version is not `installed` (what the launcher says is installed), in the order given: {name, its version}.
+/// A program whose version is not known ("") is never in the list.
+inline std::vector<std::pair<std::string, std::string>> MismatchedPrograms(const std::string& installed,
+                                                                          const std::vector<std::pair<std::string, std::string>>& programs) {
+    std::vector<std::pair<std::string, std::string>> out;
+    const std::string want = okayver::NormalizeVersion(installed);
+    if (want.empty()) return out;
+    for (const auto& p : programs)
+        if (!p.second.empty() && okayver::NormalizeVersion(p.second) != want) out.push_back(p);
+    return out;
+}
+
+/// One plain sentence for a launcher whose editor or player is another version ("" when nothing differs), with what fixes it.
+inline std::string MismatchSentence(const std::string& installed, const std::vector<std::pair<std::string, std::string>>& mismatched) {
+    if (mismatched.empty()) return {};
+    std::string what;
+    for (std::size_t i = 0; i < mismatched.size(); ++i) {
+        const std::string& n = mismatched[i].first;
+        const std::string who = n == "OkayEngine.exe" ? "the editor" : n == "OkaySpacePlayer.exe" ? "the player" : n;
+        what += (i == 0 ? "" : i + 1 == mismatched.size() ? " and " : ", ") + who + " is still " + okay::testbuild::DisplayVersion(mismatched[i].second);
+    }
+    return "This launcher is " + okay::testbuild::DisplayVersion(installed) + ", but " + what +
+           ": the last update didn't replace it. Close the editor and use Repair (Versions page) to download " +
+           okay::testbuild::DisplayVersion(installed) + " again; your projects are not touched.";
+}
+
+// ---- whether to install what the check found (owner, 2026-11-26) -------------------------------------------------------------------
+// Two things can hold back a version that is newer by number: the person skipped it ("Skip this version", launcher.cfg skipped_version), or the
+// running program is a test build that already has everything in that release (their places on main, okay::testbuild::ContentAhead). The
+// checksum, signature, stage and swap rules above are not touched: this only decides whether the install starts at all.
+
+struct OfferInputs {
+    std::string local;                       ///< the running version
+    std::string target;                      ///< what the update check found ("" = nothing)
+    std::uint64_t localMainCount = 0;        ///< the running build's place on main (OKAY_MAIN_COUNT; 0 = not known)
+    std::uint64_t targetMainCount = 0;       ///< the target's place on main (versions.json "mainCount"; 0 = not known)
+    std::string skipped;                     ///< launcher.cfg skipped_version ("" = none)
+    std::string confirmed;                   ///< the version the person pressed Install now on for this check ("" = none: automatic or "Check for updates")
+    bool goBack = false;                     ///< the deliberate way back from a test build (Settings): never held back
+};
+struct Offer {
+    enum Kind {
+        Nothing,       ///< not newer: up to date
+        Install,       ///< install it now
+        Ask,           ///< show it with Install now, never install it by itself (a release over a test build whose order is not known)
+        Skipped,       ///< the person skipped it: not shown or installed by itself; "Check for updates" shows it again, marked skipped
+        AlreadyHave,   ///< a release a running test build already has everything of: no offer, `note` says so
+    } kind = Nothing;
+    std::string note;                        ///< one plain sentence for Ask, Skipped and AlreadyHave
+};
+
+inline Offer DecideOffer(const OfferInputs& in) {
+    Offer o;
+    const std::string local = okayver::NormalizeVersion(in.local), target = okayver::NormalizeVersion(in.target);
+    if (target.empty()) return o;
+    if (in.goBack) { o.kind = Offer::Install; return o; }
+    if (!local.empty() && okayver::CompareVersions(local, target) >= 0) return o;
+    const std::string v = okayver::DisplayVersion(target);
+    bool unknownOrder = false;
+    if (okay::testbuild::IsTestVersion(local) && okay::testbuild::IsReleaseShaped(target)) {   // a release offered to a test build: by content
+        switch (okay::testbuild::ContentAhead(in.targetMainCount, in.localMainCount)) {
+            case okay::testbuild::Ahead::No:
+                o.kind = Offer::AlreadyHave;
+                o.note = "You already have everything in " + v + " (your test build is newer).";
+                return o;
+            case okay::testbuild::Ahead::Unknown: unknownOrder = true; break;
+            case okay::testbuild::Ahead::Yes: break;
+        }
+    }
+    const bool confirmed = !in.confirmed.empty() && okayver::NormalizeVersion(in.confirmed) == target;
+    if (!in.skipped.empty() && okayver::NormalizeVersion(in.skipped) == target && !confirmed) {
+        o.kind = Offer::Skipped;
+        o.note = v + " is available (skipped)";
+        return o;
+    }
+    if (unknownOrder && !confirmed) {
+        o.kind = Offer::Ask;
+        o.note = "You're on a test build, and it isn't known whether it already has everything in " + v + ", so it is not installed by itself.";
+        return o;
+    }
+    o.kind = Offer::Install;
+    return o;
 }
 
 }  // namespace okayupdater

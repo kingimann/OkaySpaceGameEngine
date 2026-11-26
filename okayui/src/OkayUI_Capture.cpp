@@ -154,4 +154,10 @@ bool GetTexturePixels(const void* texture, TexturePixels& out) {
     return false;
 }
 
+bool IsHostTexture(const void* texture) {
+    if (!texture || texture == (const void*)kAtlasTex) return false;
+    for (int i = 0; i < g_nfb; ++i) if (texture == (const void*)g_fbFonts[i]) return false;
+    return true;
+}
+
 } // namespace OkayUI

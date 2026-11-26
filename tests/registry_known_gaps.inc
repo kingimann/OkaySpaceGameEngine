@@ -14,7 +14,7 @@
 "LookAtIK", "LootSource", "MeshModifiers", "Minimap", "MinimapBlip", "ModelAnimator",
 "NPCController", "NetInventory", "NetValidator", "NetworkManager", "Occluder",
 "OxygenStat", "PauseMenu", "PieceLife", "PoisonStat", "PoseCapture", "ProceduralObjectHolding",
-"QuestLog", "QuestTrigger", "RadiationStat", "Ragdoll", "RootMotion", "SanityStat",
+"QuestLog", "QuestTrigger", "RadiationStat", "RootMotion", "SanityStat",
 "Saveable", "ScriptComponent", "Seat", "SequencePlayer", "SettingsScreen",
 "SkinnedMesh", "SleepStat", "Spline", "SplineFollower", "SplineInstancer", "SplineMesh",
 "SpriteAnimator", "StaminaStat", "Stats", "StatusEffectStat", "SteamManager", "StoryState",

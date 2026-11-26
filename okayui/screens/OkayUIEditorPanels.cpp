@@ -3812,9 +3812,31 @@ FindInFilesResult DrawFindInFiles(const FindInFilesModel& m, FindInFilesState& s
         UI::SameLine();
         if (UI::Button("Search", UI::Vec2{buttonW, 0.0f})) go = true;
         res.search = UI::GetItemRect();
+        go |= UI::Checkbox("Match case", &st.matchCase);
+        res.matchCase = UI::GetItemRect();
+        UI::SameLine();
+        go |= UI::Checkbox("Whole word", &st.wholeWord);
+        res.wholeWord = UI::GetItemRect();
+        UI::SameLine();
+        go |= UI::Checkbox("Regex", &st.regex);
+        res.regex = UI::GetItemRect();
+        if (UI::IsItemHovered()) UI::SetTooltip("A regular expression (ECMAScript); the replacement can use $1, $2 and $&.");
         if (go && st.query[0]) res.intent.search = true;
+        const float replaceW = 160.0f;
+        UI::SetNextItemWidth(std::max(UI::GetContentRegionAvail().x - replaceW - g_metrics.itemSpacing.x, 40.0f));
+        UI::InputTextWithHint("##fifr", "Replace with...", st.replaceWith, (int)sizeof(st.replaceWith));
+        res.replaceField = UI::GetItemRect();
+        UI::SameLine();
+        UI::BeginDisabled(!FindInFilesCanReplace(m, st));
+        if (UI::Button("Replace in All Files", UI::Vec2{replaceW, 0.0f}) && FindInFilesCanReplace(m, st)) res.intent.replaceAll = true;
+        res.replace = UI::GetItemRect();
+        UI::EndDisabled();
         Divider();
-        UI::TextDisabled(FindInFilesStatus(m, st.query).c_str());
+        if (!m.error.empty()) {
+            UI::TextColored(kBad[0], kBad[1], kBad[2], m.error.c_str());
+        } else {
+            UI::TextDisabled(FindInFilesStatus(m, st.query).c_str());
+        }
         res.status = UI::GetItemRect();
         UI::BeginChild("##fifres", UI::Vec2{0.0f, 0.0f}, UI::Child_None);
         res.list = UI::Rect{UI::GetCursorScreenPos().x, UI::GetCursorScreenPos().y, UI::GetContentRegionAvail().x, UI::GetContentRegionAvail().y};

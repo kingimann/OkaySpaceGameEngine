@@ -1,6 +1,7 @@
 // okay-ms own standard library: the shared body of <ios> <iosfwd> <ostream> <istream> <sstream> <fstream> <iostream>
 // <iomanip>, written from ISO/IEC 14882 [input.output]. Own minimal version for char only (no wchar_t, no traits or
-// allocator arguments, no locales: imbue() accepts anything and does nothing, no exceptions()).
+// allocator arguments, no exceptions()). Locales: imbue() keeps a locale's num_get and num_put facets and the number
+// operators call them (see <locale>); without one the stream's own code reads and writes numbers ("C" locale).
 // - A stream writes to and reads from a streambuf through two virtual functions of our own (put, get with peek), not the
 //   standard's overflow/underflow protocol.
 // - The string streams are complete for these operations. The file streams (ifstream, ofstream, fstream, in
@@ -13,6 +14,7 @@
 // - The console objects are a separate object in each file that includes <iostream> (no shared state is needed).
 #pragma once
 #include <cstddef>
+#include <cstdio>  // EOF, which peek() and get() return at the end (Round 30: StoryKv.hpp names it after <sstream>)
 #include <string>
 namespace std {
 typedef long long streamsize;
@@ -32,42 +34,10 @@ public:
     static const openmode app = 1, ate = 2, binary = 4, in = 8, out = 16, trunc = 32;
     static const iostate goodbit = 0, badbit = 1, eofbit = 2, failbit = 4;
     static const seekdir beg = 0, cur = 1, end = 2;
-};
 
-// The device a stream talks to. put writes n bytes and returns how many went; get returns the next byte (0 to 255) and
-// takes it, or -1 at the end; peek is get without taking it; seek and tell move and report the position (-1 when not
-// possible).
-class streambuf {
-public:
-    virtual ~streambuf() {}
-    virtual size_t put(const char* s, size_t n) { (void)s; (void)n; return 0; }
-    virtual int get() { return -1; }
-    virtual int peek() { return -1; }
-    virtual streampos seek(streamoff off, int dir, unsigned which) { (void)off; (void)dir; (void)which; return -1; }
-    virtual streampos tell(unsigned which) { (void)which; return -1; }
-    virtual void sync() {}
-};
-
-class ios : public ios_base {
-protected:
-    streambuf* buf_;
-    iostate state_;
-    fmtflags flags_;
-    streamsize precision_;
-    streamsize width_;
-    char fill_;
-
-public:
-    ios() : buf_(nullptr), state_(0), flags_(dec | skipws), precision_(6), width_(0), fill_(' ') {}
-    bool good() const { return state_ == 0; }
-    bool fail() const { return (state_ & (failbit | badbit)) != 0; }
-    bool bad() const { return (state_ & badbit) != 0; }
-    bool eof() const { return (state_ & eofbit) != 0; }
-    iostate rdstate() const { return state_; }
-    void setstate(iostate s) { state_ |= s; }
-    void clear(iostate s = 0) { state_ = s; }
-    explicit operator bool() const { return !fail(); }
-    bool operator!() const { return fail(); }
+    // The formatting state is here, as in the standard ([ios.base] 1), so a locale facet that is given an ios_base& can
+    // read it.
+    ios_base() : flags_(dec | skipws), precision_(6), width_(0) {}
     fmtflags flags() const { return flags_; }
     fmtflags flags(fmtflags f) {
         const fmtflags old = flags_;
@@ -97,6 +67,62 @@ public:
         width_ = w;
         return old;
     }
+
+protected:
+    fmtflags flags_;
+    streamsize precision_;
+    streamsize width_;
+};
+
+// The device a stream talks to. put writes n bytes and returns how many went; get returns the next byte (0 to 255) and
+// takes it, or -1 at the end; peek is get without taking it; seek and tell move and report the position (-1 when not
+// possible).
+class streambuf {
+public:
+    virtual ~streambuf() {}
+    virtual size_t put(const char* s, size_t n) { (void)s; (void)n; return 0; }
+    virtual int get() { return -1; }
+    virtual int peek() { return -1; }
+    virtual streampos seek(streamoff off, int dir, unsigned which) { (void)off; (void)dir; (void)which; return -1; }
+    virtual streampos tell(unsigned which) { (void)which; return -1; }
+    virtual void sync() {}
+};
+
+// What a stream asks of a locale's num_get and num_put facets (<locale>). The facets are templates on the iterator
+// type; these non-template bases let the stream, written before them, call them through the device.
+class __num_get_facet {
+public:
+    virtual ~__num_get_facet() {}
+    virtual void __get_double(streambuf* sb, ios_base& str, ios_base::iostate& err, double& v) const = 0;
+    virtual void __get_float(streambuf* sb, ios_base& str, ios_base::iostate& err, float& v) const = 0;
+};
+class __num_put_facet {
+public:
+    virtual ~__num_put_facet() {}
+    virtual void __put_double(streambuf* sb, ios_base& str, char fill, double v) const = 0;
+};
+
+class ios : public ios_base {
+protected:
+    streambuf* buf_;
+    iostate state_;
+    char fill_;
+    // The number facets of the locale the stream was imbued with (<locale>), or null for the "C" locale, whose number
+    // reading and writing are the stream's own code.
+    const __num_get_facet* nget_;
+    const __num_put_facet* nput_;
+
+public:
+    ios() : buf_(nullptr), state_(0), fill_(' '), nget_(nullptr), nput_(nullptr) {}
+    bool good() const { return state_ == 0; }
+    bool fail() const { return (state_ & (failbit | badbit)) != 0; }
+    bool bad() const { return (state_ & badbit) != 0; }
+    bool eof() const { return (state_ & eofbit) != 0; }
+    iostate rdstate() const { return state_; }
+    void setstate(iostate s) { state_ |= s; }
+    void clear(iostate s = 0) { state_ = s; }
+    explicit operator bool() const { return !fail(); }
+    bool operator!() const { return fail(); }
     char fill() const { return fill_; }
     char fill(char c) {
         const char old = fill_;
@@ -104,8 +130,12 @@ public:
         return old;
     }
     streambuf* rdbuf() const { return buf_; }
+    // imbue(locale) ([ios.base.locales]): the stream keeps the locale's number facets (std::locale, in <locale>).
     template <typename L>
-    void imbue(const L&) {}
+    void imbue(const L& loc) {
+        nget_ = loc.get__;
+        nput_ = loc.put__;
+    }
 };
 
 namespace okay_io {
@@ -288,6 +318,11 @@ public:
     iostream& operator<<(unsigned short v) { return *this << (unsigned long long)v; }
     iostream& operator<<(unsigned char v) { return *this << (char)v; }
     iostream& operator<<(double v) {
+        if (nput_ != nullptr && buf_ != nullptr) {  // the imbued locale's num_put writes it ([ostream.inserters.arithmetic])
+            nput_->__put_double(buf_, *this, fill_, v);
+            width_ = 0;
+            return *this;
+        }
         put_text(okay_io::float_text(v, flags_, precision_));
         return *this;
     }
@@ -481,6 +516,13 @@ public:
         return *this;
     }
     iostream& operator>>(double& v) {
+        if (nget_ != nullptr && buf_ != nullptr) {  // the imbued locale's num_get reads it ([istream.formatted.arithmetic])
+            skip_space();
+            iostate err = 0;
+            nget_->__get_double(buf_, *this, err, v);
+            if (err != 0) setstate(err);
+            return *this;
+        }
         const string t = number_text(true);
         if (fail()) {
             v = 0;
@@ -518,6 +560,13 @@ public:
         return *this;
     }
     iostream& operator>>(float& v) {
+        if (nget_ != nullptr && buf_ != nullptr) {
+            skip_space();
+            iostate err = 0;
+            nget_->__get_float(buf_, *this, err, v);
+            if (err != 0) setstate(err);
+            return *this;
+        }
         double d = 0;
         *this >> d;
         v = (float)d;

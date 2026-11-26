@@ -1,0 +1,135 @@
+// std::reverse_iterator and std::move_iterator for okay-cc (ISO/IEC 14882 [reverse.iterators], [move.iterators]). Our own header, included by
+// the containers for rbegin and rend and by <iterator>. It holds the iterator one past the element
+// it names: *r is *(base - 1), ++r moves the base back.
+#pragma once
+namespace std {
+// What *it and it-> give: the iterator's own reference and pointer types, T & and T * for a pointer.
+template <typename It>
+struct __iter_types {
+    typedef typename It::reference reference;
+    typedef typename It::pointer pointer;
+};
+template <typename T>
+struct __iter_types<T *> {
+    typedef T &reference;
+    typedef T *pointer;
+};
+template <typename It>
+class reverse_iterator {
+public:
+    It __cur;
+    reverse_iterator() : __cur() {}
+    explicit reverse_iterator(It it) : __cur(it) {}
+    It base() const { return __cur; }
+    typename __iter_types<It>::reference operator*() const {
+        It t = __cur;
+        --t;
+        return *t;
+    }
+    typename __iter_types<It>::pointer operator->() const {
+        It t = __cur;
+        --t;
+        return &*t;
+    }
+    reverse_iterator<It> &operator++() {
+        --__cur;
+        return *this;
+    }
+    reverse_iterator<It> operator++(int) {
+        reverse_iterator<It> old = *this;
+        --__cur;
+        return old;
+    }
+    reverse_iterator<It> &operator--() {
+        ++__cur;
+        return *this;
+    }
+    reverse_iterator<It> operator--(int) {
+        reverse_iterator<It> old = *this;
+        ++__cur;
+        return old;
+    }
+    // (random access, for iterators that are pointers)
+    reverse_iterator<It> operator+(long n) const { return reverse_iterator<It>(__cur - n); }
+    reverse_iterator<It> operator-(long n) const { return reverse_iterator<It>(__cur + n); }
+    reverse_iterator<It> &operator+=(long n) {
+        __cur -= n;
+        return *this;
+    }
+    reverse_iterator<It> &operator-=(long n) {
+        __cur += n;
+        return *this;
+    }
+    long operator-(const reverse_iterator<It> &o) const { return o.__cur - __cur; }
+    typename __iter_types<It>::reference operator[](long n) const { return *(__cur - n - 1); }
+    bool operator==(const reverse_iterator<It> &o) const { return __cur == o.__cur; }
+    bool operator!=(const reverse_iterator<It> &o) const { return __cur != o.__cur; }
+    bool operator<(const reverse_iterator<It> &o) const { return o.__cur < __cur; }
+    bool operator>(const reverse_iterator<It> &o) const { return __cur < o.__cur; }
+    bool operator<=(const reverse_iterator<It> &o) const { return !(__cur < o.__cur); }
+    bool operator>=(const reverse_iterator<It> &o) const { return !(o.__cur < __cur); }
+};
+template <typename It>
+reverse_iterator<It> make_reverse_iterator(It it) {
+    return reverse_iterator<It>(it);
+}
+
+// std::move_iterator ([move.iterators]): the same steps as It, but *it is an rvalue (T &&), so what
+// reads it moves the element out (v.insert(pos, make_move_iterator(a), make_move_iterator(b))).
+template <typename It>
+struct __move_ref {
+    typedef typename It::value_type &&type;
+};
+template <typename T>
+struct __move_ref<T *> {
+    typedef T &&type;
+};
+template <typename It>
+class move_iterator {
+public:
+    It __cur;
+    move_iterator() : __cur() {}
+    explicit move_iterator(It it) : __cur(it) {}
+    It base() const { return __cur; }
+    typename __move_ref<It>::type operator*() const { return static_cast<typename __move_ref<It>::type>(*__cur); }
+    move_iterator<It> &operator++() {
+        ++__cur;
+        return *this;
+    }
+    move_iterator<It> operator++(int) {
+        move_iterator<It> old = *this;
+        ++__cur;
+        return old;
+    }
+    move_iterator<It> &operator--() {
+        --__cur;
+        return *this;
+    }
+    long operator-(const move_iterator<It> &o) const { return __cur - o.__cur; }
+    bool operator==(const move_iterator<It> &o) const { return __cur == o.__cur; }
+    bool operator!=(const move_iterator<It> &o) const { return __cur != o.__cur; }
+};
+template <typename It>
+move_iterator<It> make_move_iterator(It it) {
+    return move_iterator<It>(it);
+}
+
+// std::begin and std::end ([iterator.range] p2-p3): c.begin() and c.end() of a container, and of
+// an array its first element and one past its last.
+template <typename C>
+auto begin(C &c) {
+    if constexpr (__okay_is_array(C)) {
+        return &c[0];
+    } else {
+        return c.begin();
+    }
+}
+template <typename C>
+auto end(C &c) {
+    if constexpr (__okay_is_array(C)) {
+        return &c[0] + sizeof(c) / sizeof(c[0]);
+    } else {
+        return c.end();
+    }
+}
+}  // namespace std

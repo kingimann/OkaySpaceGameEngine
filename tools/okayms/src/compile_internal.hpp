@@ -44,6 +44,12 @@ struct Token {
     // The word `inline` stood in front of this token (the word itself is dropped): the function that follows is an inline
     // function, one copy per file.
     bool inl = false;
+    // Namespace names in front of this name were dropped (std::filesystem::path is read as path): it names something in
+    // a namespace, so a local variable of the same name does not hide it.
+    bool nsq = false;
+    // The namespace names that were dropped in front of it ("okay::crypto" for okay::crypto::Sha256): used to choose
+    // between classes of one name in different namespaces.
+    std::string qual;
     // `thread_local` was written here: the token is `static` and the variable gets storage per thread.
     bool tls = false;
 };
@@ -53,6 +59,13 @@ inline std::vector<std::string>& enum_names() {
     static std::vector<std::string> names;
     return names;
 }
+
+struct Type;
+// The pointer-to-member types read so far (Type::memptr indexes it): the class, then the member's type.
+std::vector<std::pair<Type, Type>>& memptr_types();
+// The pointer-to-member-function types read so far (Type::memfn indexes it; Round 31), for their decorated names.
+struct MemFnType;
+std::vector<MemFnType>& memfn_types();
 
 struct Type {
     int pointers = 0;
@@ -87,6 +100,18 @@ struct Type {
     bool is_enum() const { return enum_id >= 0; }
     // A function parameter pack (Rest... rest) while a template's parameter types are read.
     bool pack = false;
+    // A placeholder return type ([dcl.spec.auto]): 1 `auto`, 2 `decltype(auto)`; 0 a written type. The function's
+    // body is read once to learn the type of its first return (parse_function_body), then the type is replaced.
+    int deduce = 0;
+    // A pointer to a data member ([dcl.mptr], `T C::*`; Round 30): its index in memptr_types(), or -1. The value is an
+    // int: the member's offset in C, and -1 for a null member pointer (Microsoft's representation for a class without
+    // virtual bases, from Round 31; Round 30 kept the offset plus one and 0 for null).
+    int memptr = -1;
+    // A pointer to a member function ([dcl.mptr], `R (C::*)(P...)`; Round 31): its index in memfn_types(), or -1. The
+    // type is also a function pointer (pointers 1, func_id) whose first parameter is `C*`: the value is the address of
+    // the function, or of a thunk that makes the virtual call (Microsoft's representation for a class with one base or
+    // none), and 0 for null.
+    int memfn = -1;
     bool pointer() const { return pointers > 0; }
     bool is_array() const { return array_len >= 0; }
     bool is_func() const { return func_id >= 0; }
@@ -111,6 +136,13 @@ struct FuncType {
     Type ret{};
     std::vector<Type> params;
     bool vararg = false;
+};
+
+struct MemFnType {
+    Type cls{};
+    Type ret{};
+    std::vector<Type> params;  // without the object parameter
+    bool is_const = false;     // R (C::*)(P...) const
 };
 
 struct Field {
@@ -169,6 +201,14 @@ struct Method {
     std::string tsym;
     // Default arguments ([dcl.fct.default]): defaults[i] is the expression for parameter i, or an empty Block.
     std::vector<Node> defaults;
+    // Round 29, multiple inheritance ([class.mi]): a function reached through a base that is not at offset 0 of the
+    // class whose list holds this entry. A direct call passes the object's address plus this_adj, as a pointer to
+    // this_sid (-1: the owner); a virtual call reads the table pointer at vt_adj (the base subobject whose table holds
+    // the slot) and passes that address, as a pointer to vt_sid (-1: the owner). Both are 0 for the first base.
+    int this_adj = 0;
+    int this_sid = -1;
+    int vt_adj = 0;
+    int vt_sid = -1;
 };
 
 // A static data member, or a constant (static const integral, an enumerator) of a class.
@@ -195,7 +235,30 @@ struct StructDef {
     bool is_class = false;
     // True for a class, or any struct with a base class or member functions.
     bool cxx = false;
+    // The first base ([class.derived]): with several, the first one with virtual functions (it shares the class's
+    // address and its table is the class's own, as in the Microsoft x64 layout), else the first one written.
     int base = -1;
+    // Every direct base in declaration order (Round 29): its class, its offset in this class, and where its fields
+    // are in `fields` (the bases' fields come first, then this class's own from base_fields on).
+    struct BaseInfo {
+        int sid = -1;
+        int off = 0;
+        size_t f0 = 0;
+        size_t f1 = 0;
+    };
+    std::vector<BaseInfo> bases;
+    int bases_size = 0;  // the end of the last base: this class's own fields start here (before alignment)
+    // The tables of the bases that are not at offset 0 and have virtual functions (one per such base subobject, the
+    // ones nested in them included): where the table pointer is, the subobject's class, the slots (an override in this
+    // class is an adjustor thunk), the destructor's slot (-1: none) and the table's symbol.
+    struct SecTable {
+        int off = 0;
+        int sid = -1;
+        std::vector<std::string> slots;
+        int dtor_slot = -1;
+        std::string sym;
+    };
+    std::vector<SecTable> sec_tables;
     size_t base_fields = 0;
     bool poly = false;
     std::vector<Method> methods;
@@ -213,6 +276,31 @@ struct StructDef {
     // The class template and the arguments of an instance, for deduction through Node<T>.
     std::string tmpl;
     std::vector<TArg> targs;
+    // Anonymous struct and union members (`union { struct { DWORD Low; LONG High; }; long long Quad; }`,
+    // [class.union.anon] and the Microsoft anonymous struct): the hidden fields that hold them. Their members are
+    // named as members of this class (lookup goes through the hidden field).
+    std::vector<std::string> anon_fields;
+    // The class this one is nested in (-1 at namespace scope). Classes are kept under their plain names, so two nested
+    // classes of one name (Outer1::Entry and Outer2::Entry) are told apart by it: a name used inside a class finds the
+    // class nested there first (find_struct), and members of a nested class are decorated with the outer class too.
+    int parent = -1;
+    // The namespace the class was declared in ("okay::crypto"; empty at global scope). Classes are kept by their plain
+    // names; when two at namespace scope share one, the later one is decorated Name@ns (ns_dup) and lookups prefer the
+    // one of the namespace written in front of the name, then the one of the namespace being read.
+    std::string ns;
+    bool ns_dup = false;
+    // A local class written in a member function of a class: that class, whose static members its member functions
+    // name by their plain names ([class.local], [basic.lookup.unqual] 8). -1 otherwise.
+    int local_in = -1;
+    // A class defined in a function body (Round 30): its member functions name the function's static locals.
+    bool local_fn = false;
+    // A lambda's closure class that captured `this` ([expr.prim.lambda.capture] 10): the class of the member function the
+    // lambda was written in. The pointer is the closure's field "__this"; names of that class's members used in the
+    // body are read through it.
+    int lam_outer = -1;
+    // Any lambda's closure class written in a member function: that class. Its static members are found from the body
+    // without a capture ([expr.prim.lambda.closure] 13, names are looked up in the enclosing scopes).
+    int lam_scope = -1;
 };
 
 struct Global {
@@ -234,9 +322,15 @@ struct Global {
     // A virtual table: the type information object of its class, whose address is in the slot just before the first
     // function (the table pointer of an object points at the first function). Empty for none.
     std::string rtti;
+    // A virtual table: the offset of the subobject that points at it inside the whole object, kept in the slot before
+    // the type information (Round 29; dynamic_cast finds the whole object with it). 0 for a class's own table.
+    long long top_off = 0;
     // thread_local ([basic.stc.thread]): kept in the .tls$ section, one copy per thread made by the Windows loader from
     // the image's TLS template; reached through the thread's TLS array (gs:[0x58]) and _tls_index.
     bool tls = false;
+    // `extern T name;` ([basic.def] 2.3): declared here, defined in another file; no storage, an undefined symbol. A
+    // definition later in the same file takes its place.
+    bool external = false;
 };
 
 inline Type peel_array(const Type& type) {
@@ -267,6 +361,9 @@ struct Node {
     bool imported = false;
     // Line of the preprocessed text where a statement starts. 0 is unknown.
     int line = 0;
+    // A name read by the parser: the parser's count of declared locals (Local::seq) at that point, or -1. Of two locals
+    // of one name the code generator takes one declared before the name was read ([basic.scope.pdecl], Round 30).
+    int vis = -1;
     std::vector<Node> kids;
 };
 
@@ -287,6 +384,13 @@ struct Local {
     int reg = 0;
     // 0 is the parameter scope. A nested block uses a higher number.
     int scope = 0;
+    // `const int k = 8;` / `constexpr int k = 8;` in a function: an integer constant ([expr.const]), usable as an array
+    // length or template argument; cval is its value in the type's width.
+    bool has_cval = false;
+    uint64_t cval = 0;
+    // When it was declared: the parser's running count of declared locals (place_local), 0 for one made otherwise.
+    // A name read before it (Node::vis) does not mean it (Round 30).
+    int seq = 0;
 };
 
 struct FuncDecl {
@@ -318,6 +422,15 @@ struct FuncDecl {
     // First and last line of the body (the braces), for the line table.
     int line = 0;
     int end_line = 0;
+    // An adjustor thunk (Round 29): no body; the code subtracts thunk_adj from the register that holds `this` (rcx, or
+    // rdx when the target returns a class through memory) and jumps to thunk_target.
+    std::string thunk_target;
+    int thunk_adj = 0;
+    bool thunk_rdx = false;
+    // A virtual call thunk (Round 31, the value of &C::f for a virtual f): the code reads the table pointer at
+    // thunk_vptr in the object (rcx, or rdx as above) and jumps to the function in slot thunk_vslot. -1: not one.
+    int thunk_vslot = -1;
+    int thunk_vptr = 0;
 };
 
 // Where the lines of the preprocessed text came from, for the line table.

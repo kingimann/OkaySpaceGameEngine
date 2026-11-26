@@ -5,12 +5,29 @@
 // does. The block is a class with a virtual dispose(), so a shared_ptr<Base> made from a Derived* destroys
 // it as a Derived. make_shared allocates the object and the block separately. Not thread safe: the counts
 // are plain integers. The members of the smart pointers are public (with reserved names) because the
-// conversions between instances read each other's members.
+// conversions between instances read each other's members. enable_shared_from_this keeps a weak
+// reference to the count block in a base class that is not a template (__esft_base), set when a
+// shared_ptr is made from the object.
 #pragma once
 #include <cstddef>
+#include <cstdlib>
 #include <new>
+#include <type_traits>
 #include <utility>
 namespace std {
+
+// [default.allocator]: raw memory for n objects of T (from malloc here). Our containers do not take
+// an allocator (std::vector<T, A> leaves A out), so this is for classes derived from it.
+template <typename T>
+struct allocator {
+    typedef T value_type;
+    typedef unsigned long size_type;
+    allocator() {}
+    template <typename U>
+    allocator(const allocator<U> &) {}
+    T *allocate(unsigned long n) { return (T *)malloc(n * sizeof(T)); }
+    void deallocate(T *p, unsigned long) { free(p); }
+};
 
 template <typename T>
 struct default_delete {
@@ -160,6 +177,26 @@ struct __sp_count_of : __sp_count {
 template <typename T>
 class weak_ptr;
 
+// The part of enable_shared_from_this ([util.smartptr.enab]) that is not a template: a weak
+// reference to the object's count block, set by the first shared_ptr made from the object.
+struct __esft_base {
+    __sp_count *__wc;
+    __esft_base() : __wc(nullptr) {}
+    __esft_base(const __esft_base &) : __wc(nullptr) {}
+    __esft_base &operator=(const __esft_base &) { return *this; }
+    // virtual: a class with virtual functions may derive from enable_shared_from_this (okay-cc
+    // puts the vtable pointer of single inheritance in the first base, so that base must have one)
+    virtual ~__esft_base() {
+        if (__wc) __wc->__drop_weak();
+    }
+    void __own(__sp_count *c) {
+        if (__wc && __wc->__uses > 0) return;  // already owned by a live shared_ptr
+        if (__wc) __wc->__drop_weak();
+        __wc = c;
+        if (__wc) __wc->__add_weak();
+    }
+};
+
 template <typename T>
 class shared_ptr {
 public:
@@ -168,7 +205,11 @@ public:
     shared_ptr() : __p(nullptr), __c(nullptr) {}
     shared_ptr(nullptr_t) : __p(nullptr), __c(nullptr) {}
     template <typename U>
-    explicit shared_ptr(U *p) : __p(p), __c(p ? new __sp_count_of<U>(p) : nullptr) {}
+    explicit shared_ptr(U *p) : __p(p), __c(p ? new __sp_count_of<U>(p) : nullptr) {
+        if constexpr (is_base_of<__esft_base, U>::value) {
+            if (p) static_cast<__esft_base *>(p)->__own(__c);
+        }
+    }
     shared_ptr(const shared_ptr<T> &o) : __p(o.__p), __c(o.__c) {
         if (__c) __c->__add_use();
     }
@@ -293,6 +334,21 @@ public:
         __p = nullptr;
         __c = nullptr;
     }
+};
+
+template <typename T>
+class enable_shared_from_this : public __esft_base {
+public:
+    shared_ptr<T> shared_from_this() {
+        shared_ptr<T> s;
+        if (__wc && __wc->__uses > 0) {
+            __wc->__add_use();
+            s.__p = static_cast<T *>(this);
+            s.__c = __wc;
+        }
+        return s;  // C++17 throws bad_weak_ptr when no shared_ptr owns the object; empty here
+    }
+    weak_ptr<T> weak_from_this() { return weak_ptr<T>(shared_from_this()); }
 };
 
 template <typename T, typename... A>

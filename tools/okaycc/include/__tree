@@ -25,6 +25,8 @@ struct __tree_node {
 
 template <typename K, typename V>
 struct __tree_it {
+    typedef pair<const K, V> &reference;  // (reverse_iterator)
+    typedef pair<const K, V> *pointer;
     __tree_node<K, V> *n;
     __tree_node<K, V> *const *root;  // for --end()
     __tree_it() : n(nullptr), root(nullptr) {}

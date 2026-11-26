@@ -4,6 +4,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/StringId.hpp"
+#include "okay/Core/StringUtil.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -15,7 +16,10 @@
 #include <set>
 #include <sstream>
 #if defined(_WIN32)
-#else
+#elif defined(__linux__)
+// Folder watching uses inotify, which only Linux has. Other systems (the WebAssembly player, macOS) build without it and
+// StartWatch says the watch is not available there.
+#define OKAY_ASSETDB_INOTIFY 1
 #include <poll.h>
 #include <sys/inotify.h>
 #include <unistd.h>
@@ -64,12 +68,7 @@ std::uint64_t Splitmix(std::uint64_t x) {
     return x ^ (x >> 31);
 }
 
-int HexVal(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
+int HexVal(char c) { return okay::str::HexDigitValue(c); }
 
 std::int64_t EpochSeconds(fs::file_time_type t) {
     using namespace std::chrono;
@@ -358,6 +357,25 @@ void AssetDatabase::Clear() {
     m_folders.clear();
 }
 
+void AssetDatabase::TakeIndexFrom(AssetDatabase& other) {
+    if (&other == this) return;
+    m_root = std::move(other.m_root);
+    m_options = other.m_options;
+    m_slots = std::move(other.m_slots);
+    m_pathIndex = std::move(other.m_pathIndex);
+    m_redirects = std::move(other.m_redirects);
+    m_vanished = std::move(other.m_vanished);
+    m_orphans = std::move(other.m_orphans);
+    m_folders = std::move(other.m_folders);
+    for (ReimportEvent& e : other.m_pending) m_pending.push_back(std::move(e));
+    for (ReimportEvent& e : other.m_fresh) m_fresh.push_back(std::move(e));
+    m_revision = std::max(m_revision, other.m_revision) + 1;
+    m_signature = other.m_signature;
+    m_reverse.clear();
+    m_reverseValid = false;
+    other.Clear();
+}
+
 std::string AssetDatabase::KeyOf(const std::string& projectPath) const { return AssetManager::Normalize(projectPath); }
 
 Guid AssetDatabase::NewGuid() const {
@@ -471,6 +489,9 @@ void AssetDatabase::RebuildIndexes() {
 
 // --- Hashing -------------------------------------------------------------------------------
 
+namespace { thread_local std::uint64_t t_bytesHashed = 0; }
+std::uint64_t AssetDatabase::BytesHashedOnThisThread() { return t_bytesHashed; }
+
 std::uint64_t AssetDatabase::HashFile(const std::string& absolutePath, std::int64_t* size, std::size_t fullHashLimit) {
     if (size) *size = 0;
     std::ifstream f(PathFromU8(absolutePath), std::ios::binary);
@@ -489,6 +510,7 @@ std::uint64_t AssetDatabase::HashFile(const std::string& absolutePath, std::int6
             const std::streamsize got = f.gcount();
             if (got <= 0) break;
             h = savefmt::Fnv1a(buf.data(), static_cast<std::size_t>(got), h);
+            t_bytesHashed += static_cast<std::uint64_t>(got);
             count -= got;
         }
     };
@@ -1383,7 +1405,7 @@ bool AssetDatabase::StartWatch(std::string* error) {
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr);
     if (w.handle == INVALID_HANDLE_VALUE) { if (error) *error = "cannot watch the folder"; return false; }
-#else
+#elif defined(OKAY_ASSETDB_INOTIFY)
     w.fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
     if (w.fd < 0) { if (error) *error = "cannot watch the folder"; return false; }
     auto add = [&](const fs::path& p, const std::string& rel) {
@@ -1400,6 +1422,9 @@ bool AssetDatabase::StartWatch(std::string* error) {
         if (rel.empty() || rel[0] == '.') { it.disable_recursion_pending(); continue; }
         add(it->path(), rel);
     }
+#else
+    if (error) *error = "watching a folder for changes is not available on this platform";
+    return false;
 #endif
     Watches().emplace(this, std::move(w));
 #if defined(_WIN32)
@@ -1460,7 +1485,7 @@ std::vector<std::string> AssetDatabase::PollWatch() {
     CloseHandle(w.ov.hEvent);
     w.ov.hEvent = nullptr;
     Arm(w);
-#else
+#elif defined(OKAY_ASSETDB_INOTIFY)
     pollfd pfd{};
     pfd.fd = w.fd;
     pfd.events = POLLIN;
@@ -1488,6 +1513,8 @@ std::vector<std::string> AssetDatabase::PollWatch() {
             i += sizeof(inotify_event) + ev->len;
         }
     }
+#else
+    (void)w; (void)add;   // StartWatch never starts a watch here
 #endif
     return out;
 }
@@ -1507,7 +1534,7 @@ void AssetDatabase::StopWatch() {
     }
     if (w.ov.hEvent) CloseHandle(w.ov.hEvent);
     if (it->second.handle != INVALID_HANDLE_VALUE) CloseHandle(it->second.handle);
-#else
+#elif defined(OKAY_ASSETDB_INOTIFY)
     if (it->second.fd >= 0) ::close(it->second.fd);
 #endif
     Watches().erase(it);

@@ -6,6 +6,7 @@
 #include "ConsolePanel.hpp"        // ConsoleLog
 #include "OkayPanels.hpp"          // DrawPluginManagerOkayUI
 #include "okay/Platform/Platform.hpp"   // okay::platform
+#include "PluginScriptApi.hpp"      // the script_* calls: what a plugin adds to the Script Editor (PluginRegistry)
 
 namespace oked {
 
@@ -199,12 +200,19 @@ static void LoadPlugin(EditorPlugin& p) {
         else if (t.find("@window") != std::string::npos) p.window = true;
     }
     if (src.find("on_gui") != std::string::npos) p.window = true;
+    // What the old VM added to the Script Editor goes with it (a reload adds it again; a plugin turned off adds nothing).
+    pluginreg::ScriptEditorPlugins().RemoveOwner(p.path);
     if (!p.enabled) return;
     p.vm = std::make_unique<okay::OkayScriptVM>();
     RegisterPluginBuiltins(*p.vm);
+    RegisterScriptEditorApi(*p.vm, pluginreg::ScriptEditorPlugins(), p.path, p.name);
     p.vm->Bind(&p.host);
     std::string err;
-    if (!p.vm->Load(src, &err)) { p.error = err.empty() ? "failed to load" : err; p.vm.reset(); ConsoleLog("Plugin '" + p.name + "': " + p.error, 2); return; }
+    if (!p.vm->Load(src, &err)) {
+        p.error = err.empty() ? "failed to load" : err;
+        pluginreg::ScriptEditorPlugins().RemoveOwner(p.path);   // nothing may keep pointing at the VM about to go
+        p.vm.reset(); ConsoleLog("Plugin '" + p.name + "': " + p.error, 2); return;
+    }
     p.hasMenu = p.vm->HasEvent("on_menu");
     p.vm->CallStart();
 }
@@ -223,7 +231,9 @@ static void ScanPlugins(EditorState& ed, bool force = false) {
     g_pluginsProject = ed.projectDir();
     // Drop plugins whose file is gone.
     g_plugins.erase(std::remove_if(g_plugins.begin(), g_plugins.end(), [&](const std::unique_ptr<EditorPlugin>& p) {
-        return std::none_of(files.begin(), files.end(), [&](const auto& f) { return f.first == p->path; });
+        const bool gone = std::none_of(files.begin(), files.end(), [&](const auto& f) { return f.first == p->path; });
+        if (gone) pluginreg::ScriptEditorPlugins().RemoveOwner(p->path);
+        return gone;
     }), g_plugins.end());
     g_pluginEd = &ed;
     for (const auto& f : files) {
@@ -339,6 +349,14 @@ void TickPlugins(EditorState& ed) {
         }
         ImGui::End();
     }
+}
+void DrawPluginPanelBody(const std::function<void()>& draw) {
+    if (!draw) return;
+    okay::ScriptUIBridge* prevUI = okay::GetScriptUI();
+    g_pluginUI.n = 0;
+    okay::SetScriptUI(&g_pluginUI);
+    draw();
+    okay::SetScriptUI(prevUI);
 }
 static void PluginMenuTip(const EditorPlugin& p) {
     if (!ImGui::IsItemHovered()) return;

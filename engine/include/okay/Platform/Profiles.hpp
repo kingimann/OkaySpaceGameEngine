@@ -112,8 +112,8 @@ public:
         const std::string& o = objs[0];
         PublicProfile& p = b.p;
         p.id           = Field(o, "id");
-        p.username     = Field(o, "username");
-        p.display      = Field(o, "display_name");
+        p.username     = okay::account::PublicName(Field(o, "username"));
+        p.display      = okay::account::PublicName(Field(o, "display_name"));
         if (p.display.empty()) p.display = p.username;
         p.avatar       = Field(o, "avatar_url");
         p.bio          = Field(o, "bio");
@@ -161,7 +161,7 @@ public:
         if (rg.ok) {
             for (const auto& x : SplitObjects(rg.body)) {
                 WorkshopItem w;
-                w.id = std::atol(Field(x, "id").c_str()); w.author = Field(x, "author_name");
+                w.id = std::atol(Field(x, "id").c_str()); w.author = okay::account::PublicName(Field(x, "author_name"));
                 w.title = Field(x, "title"); w.description = Field(x, "description");
                 w.kind = Field(x, "kind"); w.url = Field(x, "storage_path");
                 w.downloads = std::atol(Field(x, "downloads").c_str());
@@ -222,7 +222,7 @@ public:
                             "&actor=eq." + Url(uid) + "&order=created_at.desc&limit=8", "GET");
         if (rv.ok) {
             for (const auto& x : SplitObjects(rv.body)) {
-                FriendEvent e; e.actor = Field(x, "actor_name"); e.kind = Field(x, "kind");
+                FriendEvent e; e.actor = okay::account::PublicName(Field(x, "actor_name")); e.kind = Field(x, "kind");
                 if (!b.p.username.empty()) e.actor = b.p.username;   // never the old email
                 e.detail = Field(x, "detail"); e.when = ParseIso(Field(x, "created_at"));
                 b.activity.push_back(e);
@@ -352,8 +352,8 @@ public:
         for (const auto& id : ids)   // keep newest-first order
             for (const auto& o : objs) {
                 if (Field(o, "id") != id) continue;
-                FollowEntry e; e.id = id; e.username = Field(o, "username");
-                e.display = Field(o, "display_name"); if (e.display.empty()) e.display = e.username;
+                FollowEntry e; e.id = id; e.username = okay::account::PublicName(Field(o, "username"));
+                e.display = okay::account::PublicName(Field(o, "display_name")); if (e.display.empty()) e.display = e.username;
                 e.avatar = Field(o, "avatar_url"); e.lastSeen = ParseIso(Field(o, "last_seen"));
                 e.online = e.lastSeen > 0 && std::difftime(std::time(nullptr), (std::time_t)e.lastSeen) < 180.0;
                 out.push_back(e);

@@ -1,11 +1,82 @@
-// okay-ms own standard header: declarations only (ISO/IEC 14882 [cstdio.syn]). The functions are the C runtime's
-// (tools/okayms/runtime/printf.c); the conversions a program can use are listed there (d i u x X c s f, flags - + 0
-// space, width, precision, length l ll z j t h).
+// okay-ms own standard header: declarations only (ISO/IEC 14882 [cstdio.syn], ISO/IEC 9899 7.21). printf, snprintf
+// and puts are the okay-cl runtime's (tools/okayms/runtime/printf.c); the conversions a program can use are listed
+// there (d i u x X c s f, flags - + 0 space, width, precision, length l ll z j t h). The file functions (fopen, fread,
+// fprintf, ...) and Microsoft's _wfopen are declared here with the C names a Windows C runtime DLL exports (msvcrt.dll
+// has every one of them); okay-ms's own runtime does not define them yet, so a program that calls one links only
+// against a library that does. FILE is opaque. stdin, stdout and stderr are the C runtime's streams 0, 1 and 2, reached
+// through __acrt_iob_func (the documented UCRT entry point that gives the address of stream i). remove(path) and rename
+// share their names with the algorithms std::remove(first, last, v); okay-cl tells them apart by the number of
+// arguments (a template that cannot take that many is passed over).
 #pragma once
 namespace std {
+typedef unsigned long long size_t;
+struct FILE;
+typedef long long fpos_t;
 extern "C" {
 int printf(const char *fmt, ...);
 int snprintf(char *buf, unsigned long long cap, const char *fmt, ...);
 int puts(const char *s);
+FILE *fopen(const char *path, const char *mode);
+FILE *freopen(const char *path, const char *mode, FILE *stream);
+int fclose(FILE *stream);
+int fflush(FILE *stream);
+size_t fread(void *buf, size_t size, size_t count, FILE *stream);
+size_t fwrite(const void *buf, size_t size, size_t count, FILE *stream);
+int fseek(FILE *stream, long offset, int origin);
+long ftell(FILE *stream);
+void rewind(FILE *stream);
+int fgetc(FILE *stream);
+int getc(FILE *stream);
+int ungetc(int c, FILE *stream);
+char *fgets(char *buf, int count, FILE *stream);
+int fputc(int c, FILE *stream);
+int putc(int c, FILE *stream);
+int fputs(const char *s, FILE *stream);
+int putchar(int c);
+int getchar(void);
+int feof(FILE *stream);
+int ferror(FILE *stream);
+void clearerr(FILE *stream);
+int fprintf(FILE *stream, const char *fmt, ...);
+int sprintf(char *buf, const char *fmt, ...);
+int sscanf(const char *s, const char *fmt, ...);
+int fscanf(FILE *stream, const char *fmt, ...);
+void perror(const char *s);
+int remove(const char *path);
+int rename(const char *from, const char *to);
+int setvbuf(FILE *stream, char *buf, int mode, size_t size);
+FILE *tmpfile(void);
 }
 }
+// Microsoft's own C runtime functions are in the global namespace, as in its headers.
+extern "C" {
+std::FILE *__acrt_iob_func(unsigned index);
+std::FILE *_wfopen(const unsigned short *path, const unsigned short *mode);
+int _fseeki64(std::FILE *stream, long long offset, int origin);
+long long _ftelli64(std::FILE *stream);
+int _wremove(const unsigned short *path);
+int _wrename(const unsigned short *from, const unsigned short *to);
+}
+#define EOF (-1)
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+#define BUFSIZ 512
+#define FILENAME_MAX 260
+#define _IOFBF 0x0000
+#define _IOLBF 0x0040
+#define _IONBF 0x0004
+#define stdin (__acrt_iob_func(0))
+#define stdout (__acrt_iob_func(1))
+#define stderr (__acrt_iob_func(2))
+// POSIX.1-2017 <stdio.h> additions (Round 30) for the engine's POSIX paths (the plain survey): declared at global scope
+// only when _WIN32 is not defined. The Microsoft runtime spells them _fdopen, _fileno, _popen and _pclose, so nothing
+// that calls these names links on Windows.
+#if !defined(_WIN32)
+extern "C" {
+std::FILE *fdopen(int fd, const char *mode);
+int fileno(std::FILE *stream);
+std::FILE *popen(const char *command, const char *mode);
+int pclose(std::FILE *stream);
+}
+#endif

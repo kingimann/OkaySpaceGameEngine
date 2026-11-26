@@ -1,0 +1,176 @@
+// std::string_view for okay-cc (ISO/IEC 14882 [string.view]). Our own header, read by <string>
+// (before std::string, which converts to and from it) and by <string_view>. A view is a pointer and
+// a length; it owns nothing. Comparisons are by bytes, as char_traits<char>::compare is.
+#pragma once
+#include <cstddef>
+namespace std {
+// std::char_traits<char> ([char.traits.specializations.char]): the character operations of the
+// strings, on bytes; eof() is -1, as EOF of <cstdio> and istream::peek give.
+template <typename C>
+struct char_traits;
+template <>
+struct char_traits<char> {
+    typedef char char_type;
+    typedef int int_type;
+    static constexpr int eof() { return -1; }
+    static constexpr int not_eof(int i) { return i == -1 ? 0 : i; }
+    static constexpr int to_int_type(char c) { return (int)(unsigned char)c; }
+    static constexpr char to_char_type(int i) { return (char)i; }
+    static constexpr bool eq_int_type(int a, int b) { return a == b; }
+    static constexpr bool eq(char a, char b) { return a == b; }
+    static constexpr bool lt(char a, char b) { return (unsigned char)a < (unsigned char)b; }
+    static unsigned long length(const char *s) {
+        unsigned long n = 0;
+        while (s[n]) ++n;
+        return n;
+    }
+    static int compare(const char *a, const char *b, unsigned long n) {
+        for (unsigned long i = 0; i < n; ++i)
+            if (a[i] != b[i]) return (unsigned char)a[i] < (unsigned char)b[i] ? -1 : 1;
+        return 0;
+    }
+};
+class string;
+class string_view {
+public:
+    static const unsigned long npos = (unsigned long)-1;
+    string_view() : __p(nullptr), __n(0) {}
+    string_view(const char *s) : __p(s), __n(0) {
+        if (s)
+            while (s[__n]) ++__n;
+    }
+    string_view(const char *s, unsigned long n) : __p(s), __n(n) {}
+    string_view(const string &s);
+    const char *data() const { return __p; }
+    unsigned long size() const { return __n; }
+    unsigned long length() const { return __n; }
+    bool empty() const { return __n == 0; }
+    const char *begin() const { return __p; }
+    const char *end() const { return __p + __n; }
+    const char *cbegin() const { return __p; }
+    const char *cend() const { return __p + __n; }
+    char operator[](unsigned long i) const { return __p[i]; }
+    char at(unsigned long i) const { return __p[i]; }
+    char front() const { return __p[0]; }
+    char back() const { return __p[__n - 1]; }
+    void remove_prefix(unsigned long n) {
+        __p += n;
+        __n -= n;
+    }
+    void remove_suffix(unsigned long n) { __n -= n; }
+    string_view substr(unsigned long pos = 0, unsigned long n = (unsigned long)-1) const {
+        if (pos > __n) pos = __n;
+        unsigned long k = __n - pos;
+        if (n < k) k = n;
+        return string_view(__p + pos, k);
+    }
+    unsigned long copy(char *dst, unsigned long n, unsigned long pos = 0) const {
+        unsigned long k = 0;
+        for (; k < n && pos + k < __n; ++k) dst[k] = __p[pos + k];
+        return k;
+    }
+    int compare(string_view o) const {
+        unsigned long m = __n < o.__n ? __n : o.__n;
+        for (unsigned long i = 0; i < m; ++i) {
+            unsigned char a = (unsigned char)__p[i];
+            unsigned char b = (unsigned char)o.__p[i];
+            if (a != b) return a < b ? -1 : 1;
+        }
+        return __n == o.__n ? 0 : (__n < o.__n ? -1 : 1);
+    }
+    // [string.view.ops] compare(pos1, n1, v) is substr(pos1, n1).compare(v), and so on.
+    int compare(unsigned long pos, unsigned long n, string_view o) const { return substr(pos, n).compare(o); }
+    int compare(unsigned long pos, unsigned long n, string_view o, unsigned long pos2, unsigned long n2) const {
+        return substr(pos, n).compare(o.substr(pos2, n2));
+    }
+    int compare(unsigned long pos, unsigned long n, const char *s) const { return substr(pos, n).compare(string_view(s)); }
+    int compare(unsigned long pos, unsigned long n, const char *s, unsigned long m) const {
+        return substr(pos, n).compare(string_view(s, m));
+    }
+    bool starts_with(string_view o) const { return __n >= o.__n && substr(0, o.__n).compare(o) == 0; }
+    bool starts_with(char c) const { return __n > 0 && __p[0] == c; }
+    bool ends_with(string_view o) const { return __n >= o.__n && substr(__n - o.__n).compare(o) == 0; }
+    bool ends_with(char c) const { return __n > 0 && __p[__n - 1] == c; }
+    unsigned long find(string_view o, unsigned long pos = 0) const {
+        if (o.__n == 0) return pos <= __n ? pos : npos;
+        for (unsigned long i = pos; i + o.__n <= __n; ++i)
+            if (substr(i, o.__n).compare(o) == 0) return i;
+        return npos;
+    }
+    unsigned long find(char c, unsigned long pos = 0) const {
+        for (unsigned long i = pos; i < __n; ++i)
+            if (__p[i] == c) return i;
+        return npos;
+    }
+    unsigned long find(const char *s, unsigned long pos = 0) const { return find(string_view(s), pos); }
+    unsigned long rfind(string_view o, unsigned long pos = (unsigned long)-1) const {
+        if (o.__n > __n) return npos;
+        unsigned long i = __n - o.__n;
+        if (pos < i) i = pos;
+        for (;; --i) {
+            if (substr(i, o.__n).compare(o) == 0) return i;
+            if (i == 0) break;
+        }
+        return npos;
+    }
+    unsigned long rfind(char c, unsigned long pos = (unsigned long)-1) const {
+        if (__n == 0) return npos;
+        unsigned long i = __n - 1;
+        if (pos < i) i = pos;
+        for (;; --i) {
+            if (__p[i] == c) return i;
+            if (i == 0) break;
+        }
+        return npos;
+    }
+    unsigned long find_first_of(string_view set, unsigned long pos = 0) const {
+        for (unsigned long i = pos; i < __n; ++i)
+            if (set.find(__p[i]) != npos) return i;
+        return npos;
+    }
+    unsigned long find_first_of(char c, unsigned long pos = 0) const { return find(c, pos); }
+    unsigned long find_first_not_of(string_view set, unsigned long pos = 0) const {
+        for (unsigned long i = pos; i < __n; ++i)
+            if (set.find(__p[i]) == npos) return i;
+        return npos;
+    }
+    unsigned long find_first_not_of(char c, unsigned long pos = 0) const {
+        for (unsigned long i = pos; i < __n; ++i)
+            if (__p[i] != c) return i;
+        return npos;
+    }
+    unsigned long find_last_of(string_view set, unsigned long pos = (unsigned long)-1) const {
+        if (__n == 0) return npos;
+        unsigned long i = __n - 1;
+        if (pos < i) i = pos;
+        for (;; --i) {
+            if (set.find(__p[i]) != npos) return i;
+            if (i == 0) break;
+        }
+        return npos;
+    }
+    unsigned long find_last_of(char c, unsigned long pos = (unsigned long)-1) const { return rfind(c, pos); }
+    unsigned long find_last_not_of(string_view set, unsigned long pos = (unsigned long)-1) const {
+        if (__n == 0) return npos;
+        unsigned long i = __n - 1;
+        if (pos < i) i = pos;
+        for (;; --i) {
+            if (set.find(__p[i]) == npos) return i;
+            if (i == 0) break;
+        }
+        return npos;
+    }
+    bool operator==(string_view o) const { return compare(o) == 0; }
+    bool operator!=(string_view o) const { return compare(o) != 0; }
+    bool operator<(string_view o) const { return compare(o) < 0; }
+    bool operator>(string_view o) const { return compare(o) > 0; }
+    bool operator<=(string_view o) const { return compare(o) <= 0; }
+    bool operator>=(string_view o) const { return compare(o) >= 0; }
+
+private:
+    const char *__p;
+    unsigned long __n;
+};
+inline bool operator==(const char *a, string_view b) { return b == string_view(a); }
+inline bool operator!=(const char *a, string_view b) { return b != string_view(a); }
+}  // namespace std

@@ -117,7 +117,8 @@ then this file gets updated. Keep this file short and true.
       the launcher's test channel) on every push to main and for every PR whose checks finish green. Start one by hand
       for anything else the owner should try. Tell the owner what each one has; fix what they find and push again.
     - **A release gathers many test builds into one big update, and only the owner starts one.** (Owner, 2026-11-25: "i
-      will tell you when to send out releases, only send out test builds if i dont say release".) Never dispatch
+      will tell you when to send out releases, only send out test builds if i dont say release"; again 2026-11-26: "no
+      more releases only test builds". An earlier "send out a release" was for that one release only.) Never dispatch
       `release.yml` or open a version PR unless the owner said "release" for it; otherwise send test builds. Bump `CMakeLists.txt`, add a `ROADMAP.md` row and a full, plain-language
       `dist/CHANGELOG.txt` block (it IS the launcher's What's New and the GitHub release notes, in full), merge, then
       dispatch `release.yml` (ref `main`, channel `latest`) from a main commit whose full run is green.
@@ -178,6 +179,14 @@ then this file gets updated. Keep this file short and true.
       notice work is only for assets that stay (fonts, images and data).
     - Third-party code that is already here (listed in `docs/status/THIRD_PARTY.md` and `docs/status/provenance_audit.md`) stays only
       until our own replacement is ready; nothing new may be added.
+    - **Flag possible IP conflicts.** (Owner, 2026-11-26: "Implement systems independently using publicly documented
+      standards, mathematical principles and technical specifications. Do not copy proprietary source code or incorporate
+      third-party code without identifying its source and license. Flag potential intellectual property conflicts.")
+      Every agent report and every PR names what each new file was written from, and lists anything that could be a
+      copyright, licence, patent or trademark conflict (data tables taken from a spec, such as RFC 7932's Brotli
+      dictionary; a patented algorithm; another product's names, icons or look). It says "none found" when there are none.
+      A flagged item is not merged until its source and licence are recorded in `docs/status/THIRD_PARTY.md`, or the
+      owner decides.
 
 19b. **GitHub is only for the owner and Claude.** (Owner rule, 2026-11-20: "I don't want any one to depend on GitHub. GitHub
     should be only for me and you.") Nothing public may need GitHub: not the launcher, editor, player or server, not their

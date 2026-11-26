@@ -2,15 +2,11 @@
 
 # Code index: engine-Components
 
-Back to the [code index](../code_index.md). 262 headers, 741 names.
+Back to the [code index](../code_index.md). 261 headers, 740 names.
 
 ## `engine/include/okay/Components/ActionList.hpp`
 
 - `ActionList` class, line 20: A Game-Creator-style visual script: a **Trigger** fires the list, optional
-
-## `engine/include/okay/Components/ActiveRagdoll.hpp`
-
-- `ActiveRagdoll` class, line 30
 
 ## `engine/include/okay/Components/AimAssist.hpp`
 
@@ -802,7 +798,7 @@ Back to the [code index](../code_index.md). 262 headers, 741 names.
 
 ## `engine/include/okay/Components/Ragdoll.hpp`
 
-- `Ragdoll` class, line 35
+- `Ragdoll` class, line 38
 
 ## `engine/include/okay/Components/RagdollShared.hpp`
 
@@ -1525,7 +1521,7 @@ Back to the [code index](../code_index.md). 262 headers, 741 names.
 
 ## `engine/include/okay/Components/WorldStreamer.hpp`
 
-- `WorldStreamer` class, line 34: World Partition / level streaming — "only load the map near the
+- `WorldStreamer` class, line 29: World Partition / level streaming — "only load the map near the player" without the 32 GB RAM bill. The world is
 
 ## `engine/include/okay/Components/WorldUI.hpp`
 

@@ -4,7 +4,7 @@
 >
 > **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
 >
-> **Last checked:** 2026-11-20 (moved into `editor/`, paths and links checked; the text itself was not re-checked against the code).
+> **Last checked:** 2026-11-20 (moved into `editor/`, paths and links checked; the text itself was not re-checked against the code). 2026-11-26: the Script Editor API section and TodoTools added (owner asked for plugins of the script editor).
 
 You can extend the OkaySpace editor itself with **plugins** written in
 OkayScript (the same language as game scripts). A plugin can add a panel with
@@ -100,9 +100,29 @@ Objects are addressed by **name**; pass `""` for the current selection.
 Every other OkayScript builtin (math, strings, `random_range`, JSON, files...)
 works too.
 
+## Script Editor API
+
+A plugin can also add to the Script Editor (2026-11-26). Call these from `start()` (or the top level); they are
+removed when the plugin is turned off or reloaded. Code: `editor/PluginScriptApi.cpp` (the calls),
+`editor/PluginRegistry.hpp` (what they fill; the Browser can make its own registry later).
+
+| Call | Does |
+| --- | --- |
+| `script_command(id, title, shortcut, fn)` | a command in the command palette (Ctrl+Shift+P) and Search Everywhere; `shortcut` like `"Ctrl+Alt+T"` ("" for none) runs it while the Script Editor has the focus; `fn` is the function to call (default: `id`) |
+| `script_lint(fn, language)` | `fn(path, text, language)` checks the open script; inside it, `script_problem(line, col, severity, message)` reports one ("error", "warning" or "info") and `script_fix(title, line, col, length, text)` gives the last problem a quick fix (Alt+Enter, the light bulb). `language` "" means every language |
+| `script_completion(fn, language)` | `fn(prefix, language)` calls `script_suggest(label, detail)` for words the autocomplete list should offer |
+| `script_formatter(fn, language)` | `fn(text, language)` returns the formatted text (or "" for no change); Format Document uses it first |
+| `script_hover(fn, language)` | `fn(word, language)` returns text shown when the pointer rests on a word |
+| `script_snippet(prefix, body, language, title)` | a snippet; the palette lists it as "Insert Snippet: title" |
+| `script_panel(title, fn)` | a section in the Script Editor's side pane; `fn()` draws it with the `ui_*` widgets |
+| `script_text()`, `script_path()`, `script_language()`, `script_caret_line()` | the open script (empty outside the Script Editor) |
+| `script_insert(text)`, `script_set_text(text)`, `script_open(path, line)` | change the open script (one undo step) or open another |
+
 ## Examples
 
-`examples/editor-plugins/` has two to copy into your project's `EditorPlugins/`:
+`examples/editor-plugins/` has three to copy into your project's `EditorPlugins/`:
 
 - **AlignTools.okay** — a panel that aligns, spaces out and drops the selection.
 - **CleanupNames.okay** — a one-click menu command that strips `" (3)"` suffixes.
+- **TodoTools.okay** — a Script Editor command (Insert TODO Note, Ctrl+Alt+T) and a check that lists every TODO
+  and FIXME in Problems, with a quick fix that turns FIXME into TODO.

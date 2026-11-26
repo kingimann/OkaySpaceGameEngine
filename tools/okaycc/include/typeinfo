@@ -1,0 +1,35 @@
+// <typeinfo> for okay-cc (ISO/IEC 14882 [support.rtti], [type.info]). Our own header. The objects
+// that typeid returns are made by the compiler (src/mangle.cpp makeTypeInfo), laid out after the
+// Itanium C++ ABI 2.9.5: a word left for the ABI's vtable pointer (zero: type_info has no virtual
+// functions here), the name (the mangled type without "_Z": "i", "3Foo", as g++'s name() gives it),
+// and the base class's type_info (single inheritance), which dynamic_cast follows. Two type_info
+// objects are equal when their names are (each file may hold its own weak copy).
+#pragma once
+#include <cstddef>
+#include <exception>
+extern "C" int strcmp(const char *, const char *);
+namespace std {
+class type_info {
+public:
+    const char *name() const { return __n; }
+    bool operator==(const type_info &o) const { return this == &o || strcmp(__n, o.__n) == 0; }
+    bool operator!=(const type_info &o) const { return !(*this == o); }
+    bool before(const type_info &o) const { return strcmp(__n, o.__n) < 0; }
+    // FNV-1a over the name (Fowler, Noll and Vo), as hash<string> does: equal types hash alike.
+    size_t hash_code() const {
+        unsigned long h = 14695981039346656037UL;
+        for (const char *p = __n; *p; ++p) {
+            h ^= (unsigned char)*p;
+            h *= 1099511628211UL;
+        }
+        return h;
+    }
+    const void *__vp;
+    const char *__n;
+    const type_info *__b;
+};
+class bad_typeid : public exception {
+public:
+    const char *what() const { return "std::bad_typeid"; }
+};
+}  // namespace std

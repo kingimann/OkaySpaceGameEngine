@@ -1,4 +1,5 @@
 #include "elf.hpp"
+#include "link.hpp"
 
 #include "ir.hpp"
 
@@ -664,13 +665,17 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
             movReg(im, kArg[i], Rax);
         }
         if (in.func.empty()) {
+            // a call through a pointer: the float and double arguments in xmm0-7 as well (System V
+            // AMD64 ABI 3.2.3), al their count for a variadic one (codegen.cpp does the same)
+            for (std::size_t i = 0; i < in.xmm.size() && i < 8; ++i)
+                loadXmm(im, in.xmm[i], static_cast<int>(i), i < in.xmmW.size() ? in.xmmW[i] : 8);
             loadRaxCall(im, in.a, spilled);
             if (in.va) {
-                u8(im, 0x49);
+                u8(im, 0x49);  // mov r11, rax
                 u8(im, 0x89);
                 u8(im, 0xC3);
-                u8(im, 0x31);
-                u8(im, 0xC0);
+                u8(im, 0xB8);  // mov eax, n
+                u32(im, static_cast<std::uint32_t>(in.xmm.size() < 8 ? in.xmm.size() : 8));
                 u8(im, 0x41);
                 u8(im, 0xFF);
                 u8(im, 0xD3);
@@ -705,12 +710,28 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
         } else if (const std::vector<unsigned char>* seq = atomicCode(in.func)) {
             for (unsigned char c : *seq) u8(im, c);
         } else if (in.func == "syscall") {
-            // Linux syscall: C call syscall(number, a, b, c) is already in rdi, rsi, rdx, rcx.
+            // Linux syscall: C call syscall(number, a, b, c[, d[, e]]) is already in rdi, rsi, rdx,
+            // rcx, r8 and r9; the kernel takes the fourth argument in r10 and the fifth in r8.
             movReg(im, Rax, Rdi);
             movReg(im, Rdi, Rsi);
             movReg(im, Rsi, Rdx);
             movReg(im, Rdx, Rcx);
+            u8(im, 0x4D);  // mov r10, r8
+            u8(im, 0x89);
+            u8(im, 0xC2);
+            u8(im, 0x4D);  // mov r8, r9
+            u8(im, 0x89);
+            u8(im, 0xC8);
             u8(im, 0x0F);
+            u8(im, 0x05);
+        } else if (in.func == "__okay_sigreturn") {
+            // The restorer of a signal handler (lib/signal.c): leave undoes this function's frame
+            // (push rbp; mov rbp, rsp; ...), so rsp is where the kernel put the signal frame, then
+            // rt_sigreturn (15). It does not come back.
+            u8(im, 0xC9);  // leave
+            u8(im, 0xB8);  // mov eax, 15
+            u32(im, 15);
+            u8(im, 0x0F);  // syscall
             u8(im, 0x05);
         } else {
             for (std::size_t i = 0; i < in.xmm.size() && i < 8; ++i)
@@ -925,8 +946,14 @@ void emitFunction(Image& im, const Function& f) {
 }
 
 void emitData(Image& im, const Module& m) {
+    // Read-only items first, then the writable ones: each section is one run of bytes
+    // [roStart, roEnd) and [dataStart, dataEnd). Interleaved, a vtable in .rodata between two .data
+    // items fell inside the .data run and its relocations were written for the wrong section (its
+    // slots were null at run time).
+    for (int pass = 0; pass < 2; ++pass)
     for (const Global& g : m.globals) {
         bool ro = g.rodata;
+        if (ro != (pass == 0)) continue;
         if (ro) {
             if (im.roStart == im.roEnd) im.roStart = im.bytes.size();
             else
@@ -946,6 +973,8 @@ void emitData(Image& im, const Module& m) {
             im.fixes.push_back(f);
             u64(im, 0);
         } else if (!g.relocs.empty()) {
+            // Addresses at their offsets; the other bytes as they are (a table of structs mixes
+            // pointers and numbers: { "name", 0.25f, ... }).
             int total = g.size > 0 ? g.size : static_cast<int>(g.bytes.size());
             for (int off = 0; off < total; off += 8) {
                 std::string sym;
@@ -957,8 +986,11 @@ void emitData(Image& im, const Module& m) {
                     f.at = im.bytes.size();
                     f.target = sym;
                     im.fixes.push_back(f);
+                    u64(im, 0);
+                    continue;
                 }
-                u64(im, 0);
+                for (int k = off; k < off + 8 && k < total; ++k)
+                    u8(im, static_cast<std::size_t>(k) < g.bytes.size() ? g.bytes[static_cast<std::size_t>(k)] : 0);
             }
         } else if (!g.bytes.empty()) {
             bool zero = true;
@@ -1272,12 +1304,15 @@ std::vector<unsigned char> compileToElf(const std::string& source, Diagnostics& 
     }
     std::size_t entry = im.bytes.size();
     im.labels["_start"] = entry;
+    // main(argc, argv, envp), as linkObjects's start code passes them (link.hpp).
+    for (unsigned char b : kStartArgs) u8(im, b);
     // Global objects: __okay_init_* before main, __okay_fini_* after it.
     std::vector<std::string> finis;
     for (const auto& kv : im.labels) {
         if (kv.first.compare(0, 12, "__okay_init_") == 0) callRel(im, kv.first);
         if (kv.first.compare(0, 12, "__okay_fini_") == 0) finis.insert(finis.begin(), kv.first);
     }
+    for (unsigned char b : kMainArgs) u8(im, b);
     callRel(im, "main");
     u8(im, 0x50);  // push rax twice: keeps the stack aligned
     u8(im, 0x50);

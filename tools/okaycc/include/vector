@@ -7,10 +7,21 @@
 #include <initializer_list>
 #include <new>
 #include <utility>
+#include <__reverse_iterator>
 namespace std {
-template <typename T>
+// The allocator argument (vector<T, A>, [vector.overview]) is accepted and not used: the elements
+// always live in malloc'd memory (okay-cc leaves out a template argument for a parameter named
+// __okay_drop..).
+template <typename T, typename __okay_drop_alloc = void>
 class vector {
 public:
+    // the member types ([vector.overview]); the iterators are pointers
+    typedef T value_type;
+    typedef T *iterator;
+    typedef const T *const_iterator;
+    typedef unsigned long size_type;
+    typedef T &reference;
+    typedef const T &const_reference;
     vector() : data_(nullptr), size_(0), cap_(0) {}
     explicit vector(unsigned long n) : data_(nullptr), size_(0), cap_(0) { resize(n); }
     vector(const T *first, const T *last) : data_(nullptr), size_(0), cap_(0) {
@@ -18,6 +29,16 @@ public:
         for (const T *p = first; p != last; ++p) {
             new (data_ + size_) T(*p);
             ++size_;
+        }
+    }
+    // From any input iterators ([sequence.reqmts] p14): a reverse_iterator, a set's iterator; two
+    // integers are a count and a value.
+    template <class It>
+    vector(It first, It last) : data_(nullptr), size_(0), cap_(0) {
+        if constexpr (__okay_is_integral(It)) {
+            assign((unsigned long)first, (T)last);
+        } else {
+            for (; first != last; ++first) push_back(*first);
         }
     }
     vector(unsigned long n, const T &v) : data_(nullptr), size_(0), cap_(0) {
@@ -78,12 +99,32 @@ public:
         o.size_ = s;
         o.cap_ = c;
     }
+    // ==, != and < ([container.reqmts], [container.opt.reqmts]: element by element, < in
+    // lexicographical order); members here, so a vector of a class with its own == compares too.
+    bool operator==(const vector &o) const {
+        if (size_ != o.size_) return false;
+        for (unsigned long i = 0; i < size_; ++i)
+            if (!(data_[i] == o.data_[i])) return false;
+        return true;
+    }
+    bool operator!=(const vector &o) const { return !(*this == o); }
+    bool operator<(const vector &o) const {
+        for (unsigned long i = 0; i < size_ && i < o.size_; ++i) {
+            if (data_[i] < o.data_[i]) return true;
+            if (o.data_[i] < data_[i]) return false;
+        }
+        return size_ < o.size_;
+    }
     unsigned long size() const { return size_; }
     unsigned long capacity() const { return cap_; }
     bool empty() const { return size_ == 0; }
     T *data() { return data_; }
     T *begin() { return data_; }
     T *end() { return data_ + size_; }
+    reverse_iterator<T *> rbegin() const { return reverse_iterator<T *>(data_ + size_); }
+    reverse_iterator<T *> rend() const { return reverse_iterator<T *>(data_); }
+    reverse_iterator<T *> crbegin() const { return rbegin(); }
+    reverse_iterator<T *> crend() const { return rend(); }
     T &operator[](unsigned long i) { return data_[i]; }
     T &at(unsigned long i) { return data_[i]; }
     T &front() { return data_[0]; }
@@ -120,14 +161,23 @@ public:
         }
         ++size_;
     }
-    // emplace_back with one or two constructor arguments (no variadic templates yet).
-    template <typename A>
-    void emplace_back(A a) {
-        push_back(T(a));
-    }
-    template <typename A, typename B>
-    void emplace_back(A a, B b) {
-        push_back(T(a, b));
+    // emplace_back(args...) ([sequence.reqmts] p71): the element is built from the arguments in
+    // place; when the block must grow, it is built first in a spare cell, as an argument may refer
+    // to an element of this vector.
+    template <typename... A>
+    T &emplace_back(A &&...a) {
+        if (size_ == cap_) {
+            T *spare = (T *)malloc(sizeof(T));
+            new (spare) T(std::forward<A>(a)...);
+            reserve(cap_ == 0 ? 4 : cap_ * 2);
+            new (data_ + size_) T(std::move(*spare));
+            spare->~T();
+            free(spare);
+        } else {
+            new (data_ + size_) T(std::forward<A>(a)...);
+        }
+        ++size_;
+        return data_[size_ - 1];
     }
     void pop_back() {
         --size_;
@@ -144,10 +194,29 @@ public:
         for (unsigned long i = 0; i < n; ++i) new (data_ + i) T(copy);
         size_ = n;
     }
+    // assign(first, last) and assign(list) ([sequence.reqmts]); two integers are a count and a value.
+    template <class It>
+    void assign(It first, It last) {
+        if constexpr (__okay_is_integral(It)) {
+            assign((unsigned long)first, (T)last);
+        } else {
+            vector<T> tmp;  // the range may be in this vector: copy it first
+            for (; first != last; ++first) tmp.push_back(*first);
+            swap(tmp);
+        }
+    }
+    void assign(initializer_list<T> il) { assign(il.begin(), il.end()); }
     void resize(unsigned long n) {
         while (size_ > n) pop_back();
         reserve(n);
         for (unsigned long i = size_; i < n; ++i) new (data_ + i) T();
+        size_ = n;
+    }
+    void resize(unsigned long n, const T &v) {  // new elements are copies of v ([vector.capacity])
+        T copy = v;  // v may be one of the elements
+        while (size_ > n) pop_back();
+        reserve(n);
+        for (unsigned long i = size_; i < n; ++i) new (data_ + i) T(copy);
         size_ = n;
     }
     T *erase(T *pos) {
@@ -174,8 +243,50 @@ public:
         data_[at] = std::move(keep);
         return data_ + at;
     }
+    // insert(pos, n, v) and insert(pos, first, last) ([vector.modifiers]): the new elements go at
+    // the end, then turn into place. Two integers are a count and a value ([sequence.reqmts] p14).
+    T *insert(T *pos, unsigned long n, const T &v) {
+        T keep = v;
+        unsigned long at = (unsigned long)(pos - data_);
+        for (unsigned long i = 0; i < n; ++i) push_back(keep);
+        turnEnd(at, n);
+        return data_ + at;
+    }
+    template <class It>
+    T *insert(T *pos, It first, It last) {
+        unsigned long at = (unsigned long)(pos - data_);
+        if constexpr (__okay_is_integral(It)) {
+            return insert(pos, (unsigned long)first, (T)last);
+        } else {
+            unsigned long n = 0;
+            vector<T> tmp;  // the range may be in this vector: copy it first
+            for (; first != last; ++first) tmp.push_back(*first);
+            for (unsigned long i = 0; i < tmp.size_; ++i) push_back(std::move(tmp.data_[i]));
+            n = tmp.size_;
+            turnEnd(at, n);
+            return data_ + at;
+        }
+    }
+    T *insert(T *pos, initializer_list<T> il) { return insert(pos, il.begin(), il.end()); }
 
 private:
+    // The last n elements move to place at, the ones from at on move up behind them: three
+    // reversals (a rotation).
+    void turnEnd(unsigned long at, unsigned long n) {
+        if (n == 0 || at + n >= size_ + 0 && at + n == size_) return;
+        flip(at, size_ - n);
+        flip(size_ - n, size_);
+        flip(at, size_);
+    }
+    void flip(unsigned long a, unsigned long b) {
+        while (b > a + 1) {
+            --b;
+            T t = std::move(data_[a]);
+            data_[a] = std::move(data_[b]);
+            data_[b] = std::move(t);
+            ++a;
+        }
+    }
     T *data_;
     unsigned long size_;
     unsigned long cap_;

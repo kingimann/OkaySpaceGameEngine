@@ -7,6 +7,7 @@
 #include "check.hpp"
 #include "okayms/coff.hpp"
 #include "okayms/compile.hpp"
+#include "okayms/file_io.hpp"
 #include "okayms/link.hpp"
 
 #include <cstdio>
@@ -30,9 +31,8 @@ inline int wine_exit(const std::string& exe) {
 }
 
 inline bool write_bytes(const std::string& path, const std::vector<uint8_t>& bytes) {
-    std::ofstream out(path.c_str(), std::ios::binary);
-    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    return static_cast<bool>(out);
+    std::string error;
+    return okayms::write_file(path, bytes, &error);
 }
 
 inline bool has_symbol(const okayms::ObjectFile& object, const std::string& name) {
@@ -50,7 +50,48 @@ struct ProgramRun {
     std::string tag;
     std::vector<std::string> kernel32;
     bool rtti = false;  // g++ builds the reference with run-time type information (a program that uses typeid)
+    // The program throws and catches (Round 31): okay-ms links its own exception runtime, heap and string functions
+    // (runtime/eh.c, mem.c and string.c, so the program does not use bump_alloc), and g++ builds the reference with
+    // exceptions.
+    bool eh = false;
 };
+
+// Compiles one file of okay-ms's own C runtime (tools/okayms/runtime, read from the folder the tests run in).
+inline bool compile_runtime_file(const std::string& name, okayms::ObjectFile* out) {
+    std::string error;
+    const std::vector<uint8_t> bytes = okayms::read_file("runtime/" + name, &error);
+    if (!error.empty()) {
+        std::fprintf(stderr, "  runtime %s: %s\n", name.c_str(), error.c_str());
+        return false;
+    }
+    okayms::CompileInput in;
+    in.source.assign(bytes.begin(), bytes.end());
+    in.name = name;
+    in.include_paths.push_back("runtime");
+    const auto compiled = okayms::compile_c(in);
+    if (!compiled.ok()) {
+        std::fprintf(stderr, "  runtime %s: %s\n", name.c_str(), compiled.error.c_str());
+        return false;
+    }
+    *out = compiled.value.object;
+    return true;
+}
+
+// The import libraries the g++ reference links for the DLLs a program names ("winhttp.dll:WinHttpCrackUrl" gives
+// -lwinhttp). kernel32 and the C runtime are linked by default.
+inline std::string gpp_dll_libs(const ProgramRun& run) {
+    std::string libs;
+    for (const std::string& fn : run.kernel32) {
+        const size_t colon = fn.find(':');
+        if (colon == std::string::npos) continue;
+        std::string dll = fn.substr(0, colon);
+        if (dll.size() > 4 && dll.compare(dll.size() - 4, 4, ".dll") == 0) dll.resize(dll.size() - 4);
+        if (dll == "kernel32" || dll == "msvcrt") continue;
+        const std::string flag = " -l" + dll;
+        if (libs.find(flag) == std::string::npos) libs += flag;
+    }
+    return libs;
+}
 
 // Builds `source` at each optimization level and runs it; MinGW g++ runs the same text. Both must exit with `want`.
 // object_out, when given, receives the /O0 object (for symbol checks).
@@ -82,7 +123,24 @@ inline void run_both(const ProgramRun& run, Tally& tally, const std::string& nam
             imp.name = colon == std::string::npos ? fn : fn.substr(colon + 1);
             link_options.imports.push_back(imp);
         }
-        const auto linked = okayms::link_executable({compiled.value.object}, link_options);
+        std::vector<okayms::ObjectFile> objects{compiled.value.object};
+        if (run.eh) {
+            okayms::ObjectFile eh_obj;
+            okayms::ObjectFile mem_obj;
+            okayms::ObjectFile string_obj;
+            CHECK(tally, compile_runtime_file("eh.c", &eh_obj) && compile_runtime_file("mem.c", &mem_obj) &&
+                             compile_runtime_file("string.c", &string_obj));
+            objects.push_back(eh_obj);
+            objects.push_back(mem_obj);
+            objects.push_back(string_obj);
+            for (const char* fn : {"GetProcessHeap", "HeapAlloc", "HeapFree", "GetStdHandle", "WriteFile", "ExitProcess"}) {
+                okayms::ImportedSymbol imp;
+                imp.dll = "kernel32.dll";
+                imp.name = fn;
+                link_options.imports.push_back(imp);
+            }
+        }
+        const auto linked = okayms::link_executable(objects, link_options);
         CHECK(tally, linked.ok());
         if (!linked.ok()) {
             std::fprintf(stderr, "  %s\n", linked.error.c_str());
@@ -104,8 +162,9 @@ inline void run_both(const ProgramRun& run, Tally& tally, const std::string& nam
         out << check_macro() << "#include <cstdint>\n#include <cstddef>\n" << source << "\nint main() { return entry(); }\n";
     }
     const std::string gpp_exe = dir + "/" + name + "-gpp.exe";
-    const int built = run_shell(std::string("x86_64-w64-mingw32-g++ -static -fno-exceptions ") + (run.rtti ? "" : "-fno-rtti ") +
-                                "-w -o " + gpp_exe + " " + src +
+    const int built = run_shell(std::string("x86_64-w64-mingw32-g++ -static ") + (run.eh ? "" : "-fno-exceptions ") +
+                                (run.rtti ? "" : "-fno-rtti ") +
+                                "-w -o " + gpp_exe + " " + src + gpp_dll_libs(run) +
                                 " 2>" + dir + "/" + name + ".log");
     CHECK(tally, built == 0);
     if (built != 0) return;

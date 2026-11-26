@@ -12,7 +12,22 @@ struct pair {
     pair(const A& a, const B& b) : first(a), second(b) {}
 };
 template <typename A, typename B> pair<A, B> make_pair(const A& a, const B& b) { return pair<A, B>(a, b); }
+// [pairs.spec] (Round 31): == compares both members, < compares first and then second. Before, there were none, and
+// okay-ms compared two pairs' bytes (std::sort of pair<float, int> in Mesh.hpp's nearest-point search).
+template <typename A, typename B> bool operator==(const pair<A, B>& x, const pair<A, B>& y) {
+    return x.first == y.first && x.second == y.second;
+}
+template <typename A, typename B> bool operator!=(const pair<A, B>& x, const pair<A, B>& y) { return !(x == y); }
+template <typename A, typename B> bool operator<(const pair<A, B>& x, const pair<A, B>& y) {
+    return x.first < y.first || (!(y.first < x.first) && x.second < y.second);
+}
+template <typename A, typename B> bool operator>(const pair<A, B>& x, const pair<A, B>& y) { return y < x; }
+template <typename A, typename B> bool operator<=(const pair<A, B>& x, const pair<A, B>& y) { return !(y < x); }
+template <typename A, typename B> bool operator>=(const pair<A, B>& x, const pair<A, B>& y) { return !(x < y); }
 template <typename T> T&& move(T& x) { return x; }
 template <typename T> T&& forward(T& x) { return x; }
 template <typename T> void swap(T& a, T& b) { T t = move(a); a = move(b); b = move(t); }
+// [comparisons]: the function objects the ordered containers default to (also reached through <functional>).
+template <typename T> struct less { bool operator()(const T& a, const T& b) const { return a < b; } };
+template <typename T> struct greater { bool operator()(const T& a, const T& b) const { return a > b; } };
 }

@@ -6,6 +6,7 @@
 >
 > **Last checked:** 2026-11-20.
 
+- [Browser plan](browser_plan.md): Internal design note for our own browser (feature map 17.18): step 1 page engine done, native OkaySpace web games next.
 - [Our own crypto (okay::crypto): stage 1, side by side, off by default](crypto.md): **UNREVIEWED. NOT THE DEFAULT.** This code was written from the RFCs by the engine team.
 - [okay::crypto: package for an outside security review](crypto_review_package.md): **Status: UNREVIEWED, off by default.** This is what a reviewer needs to work from.
 - [Asking for an outside review of our own cryptography](crypto_review_request.md): **Update (2026-11-14): the owner decided not to hire a reviewer.** libsodium stays the default and `okay::crypto` stays off by default.

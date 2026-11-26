@@ -885,17 +885,27 @@ struct FindInFilesModel {
     std::vector<FindHit> hits;
     bool ran = false;                       // a search has run (the status line says how many it found)
     bool focusQuery = false;                // put the keyboard in the field this frame (the window was just opened)
+    std::string error;                      // a bad regex: shown in red instead of the status line
 };
 
-struct FindInFilesState { char query[128] = ""; };
+struct FindInFilesState {
+    char query[128] = "";
+    char replaceWith[128] = "";             // Replace in All Files writes this over every match (a regex can use $1, $2 and $&)
+    bool matchCase = false, wholeWord = false, regex = false;   // the Script Editor's find bar has the same three
+};
 
 struct FindInFilesIntent {
-    bool search = false;                    // Enter in the field or Search, with a term typed: the host runs the search
+    bool search = false;                    // Enter in the field, Search, or an option changed, with a term typed: the host runs the search
+    bool replaceAll = false;                // Replace in All Files (only with a term and hits): the host rewrites every changed script
     int open = -1;                          // a hit was clicked (index into hits): the host opens the script at that line
 };
 
+/// Replace in All Files is offered only once a search with a term has found something.
+inline bool FindInFilesCanReplace(const FindInFilesModel& m, const FindInFilesState& st) { return st.query[0] && !m.hits.empty(); }
+
 /// The line under the field: a hint before the first search, else how many hits (and whether the cap was reached).
 inline std::string FindInFilesStatus(const FindInFilesModel& m, const char* query) {
+    if (!m.error.empty()) return m.error;
     if (!m.ran) return "Type a term and press Enter. Searches .okay / .lua / .cs scripts under Assets.";
     if (m.hits.empty()) return std::string("No matches for \"") + (query ? query : "") + "\".";
     char b[64];

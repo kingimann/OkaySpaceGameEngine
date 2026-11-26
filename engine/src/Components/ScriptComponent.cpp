@@ -162,7 +162,8 @@ void ScriptComponent::FireWithObject(const char* event, GameObject* other) {
     // acts on that copy, not the first one with the name (#888 Finding 108).
     // Lua gets the same (as a GameObject). Other languages keep receiving the name.
     const bool okay = std::strcmp(m_vm->Language(), "okayscript") == 0
-                      || std::strcmp(m_vm->Language(), "lua") == 0;   // Lua handlers get the GameObject too
+                      || std::strcmp(m_vm->Language(), "lua") == 0          // Lua handlers get the GameObject too
+                      || std::strcmp(m_vm->Language(), "javascript") == 0;  // and JavaScript ones
     vs::VsValue name = (okay && other) ? vs::VsValue::Object(other->InstanceId())
                                        : vs::VsValue(other ? other->name : std::string());
     m_vm->SetGlobal("other", name);

@@ -1,7 +1,8 @@
 # Run with: cmake -DSOURCE_ROOT=<repo root> -P check_wav_seam_wiring.cmake
 #
 # Our own WAV decoder (okay::wav) is the only WAV reader. SDL_LoadWAV / SDL_FreeWAV and the old OKAY_OWN_WAV switch
-# (okay::wav::OwnWavEnabled) were deleted (rule 17: the replacement is the path and the old code goes in the same change).
+# (okay::wav::OwnWavEnabled) were deleted (rule 17: the replacement is the path and the old code goes in the same change),
+# and so was the older streaming header parser (ParseWav, ConvertWavFrames, WavInfo): AudioStream uses okay::wav::WavStream.
 # This fails and names the file if any of them comes back anywhere in shipped code (launcher/, shared/, editor/,
 # player/, engine/, tools/, okayui/, platform/ and the top CMakeLists.txt). Comments are not counted. It also checks
 # that the launcher's seam, shared/WavPlayback.hpp, still loads through okay::wav::LoadForPlayback.
@@ -28,13 +29,13 @@ foreach(_f IN LISTS _files)
     else()
         string(REGEX REPLACE "//[^\n]*" "" _code "${_code}")     # C++ line comments
     endif()
-    if(_code MATCHES "SDL_LoadWAV|SDL_FreeWAV|OwnWavEnabled|OKAY_OWN_WAV")
+    if(_code MATCHES "SDL_LoadWAV|SDL_FreeWAV|OwnWavEnabled|OKAY_OWN_WAV|ParseWav|ConvertWavFrames|WavInfo")
         list(APPEND _bad "${_f}")
     endif()
 endforeach()
 if(_bad)
     string(REPLACE ";" "\n  " _list "${_bad}")
-    message(FATAL_ERROR "check_wav_seam_wiring: SDL_LoadWAV / SDL_FreeWAV / the old OKAY_OWN_WAV switch found in:\n  ${_list}\nUse okay::wav (LoadForPlayback, DecodeWav); there is no other WAV reader.")
+    message(FATAL_ERROR "check_wav_seam_wiring: SDL_LoadWAV / SDL_FreeWAV / the old OKAY_OWN_WAV switch / the old streaming WAV parser found in:\n  ${_list}\nUse okay::wav (LoadForPlayback, DecodeWav, WavStream); there is no other WAV reader.")
 endif()
 file(READ "${SOURCE_ROOT}/shared/WavPlayback.hpp" _seam)
 if(NOT _seam MATCHES "LoadForPlayback")

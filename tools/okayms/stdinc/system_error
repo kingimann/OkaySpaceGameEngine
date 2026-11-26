@@ -1,7 +1,8 @@
 // okay-ms own standard header: std::error_code, written from ISO/IEC 14882 [syserr.errcode]. Own minimal version: the
-// code is an int with no category object (category() is not here); message() gives the number as text. Enough for the `std::error_code ec;` out-parameters of <filesystem>.
+// code is an int and a category that is only a name (Round 31); message() gives the number as text. Enough for the `std::error_code ec;` out-parameters of <filesystem>.
 #pragma once
 #include <string>
+#include <stdexcept>
 namespace std {
 // The error conditions <charconv> and <filesystem> report ([syserr]); the values are the POSIX errno numbers.
 enum class errc {
@@ -12,15 +13,44 @@ enum class errc {
     permission_denied = 13,
     value_too_large = 132
 };
-class error_code {
-    int value_;
+// [syserr.errcat] (Round 31), minimal: a category is its name; generic_category() and system_category() are the two
+// there are. Own difference: no virtual message() or equivalent(), and each file has its own copy of each category
+// object (okay-ms gives an inline function's static object an internal symbol), so categories compare by name.
+class error_category {
+    const char* name_;
 
 public:
-    error_code() : value_(0) {}
-    explicit error_code(int v) : value_(v) {}
+    explicit error_category(const char* n) : name_(n) {}
+    const char* name() const { return name_; }
+    bool operator==(const error_category& o) const {
+        const char* a = name_;
+        const char* b = o.name_;
+        while (*a && *a == *b) { ++a; ++b; }
+        return *a == *b;
+    }
+    bool operator!=(const error_category& o) const { return !(*this == o); }
+};
+inline const error_category& generic_category() {
+    static const error_category c("generic");
+    return c;
+}
+inline const error_category& system_category() {
+    static const error_category c("system");
+    return c;
+}
+class error_code {
+    int value_;
+    const error_category* cat_;
+
+public:
+    error_code() : value_(0), cat_(&system_category()) {}
+    explicit error_code(int v) : value_(v), cat_(&system_category()) {}
+    error_code(int v, const error_category& c) : value_(v), cat_(&c) {}
+    const error_category& category() const { return *cat_; }
     int value() const { return value_; }
-    void clear() { value_ = 0; }
+    void clear() { value_ = 0; cat_ = &system_category(); }
     void assign(int v) { value_ = v; }
+    void assign(int v, const error_category& c) { value_ = v; cat_ = &c; }
     explicit operator bool() const { return value_ != 0; }
     string message() const {
         if (value_ == 0) return string("ok");
@@ -30,5 +60,15 @@ public:
     }
     bool operator==(const error_code& o) const { return value_ == o.value_; }
     bool operator!=(const error_code& o) const { return value_ != o.value_; }
+};
+// [syserr.syserr] (Round 31): an exception that carries an error_code; what() is the text given, ": " and the code's
+// message.
+class system_error : public runtime_error {
+    error_code code_;
+
+public:
+    system_error(error_code ec, const string& what_arg) : runtime_error(what_arg + ": " + ec.message()), code_(ec) {}
+    explicit system_error(error_code ec) : runtime_error(ec.message()), code_(ec) {}
+    const error_code& code() const { return code_; }
 };
 }

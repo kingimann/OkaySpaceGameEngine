@@ -27,7 +27,8 @@ static void own_switches_real_table_is_sane() {
         CHECK(!Has(seen, i.id));
         seen.push_back(i.id);
     }
-    CHECK(Find("http", Items()) != nullptr);
+    CHECK(Find("http", Items()) == nullptr);   // our own web client is the only one now (no curl): no switch, an old off=http line is ignored
+    CHECK(JoinIds(Parse("off=http\n", Items())) == JoinIds(Parse("", Items())));
     CHECK(Find("wav", Items()) == nullptr);   // our own WAV reader is the only one now: no switch (an old off=wav line is ignored)
     CHECK(JoinIds(Parse("off=wav\n", Items())) == JoinIds(Parse("", Items())));
     {   // the OkayUI Inspector item: on unless turned off, sets OKAY_UI_INSPECTOR=1, hidden where OkayUI is not built in
@@ -153,13 +154,14 @@ static void own_switches_file_round_trip() {
 static void own_switches_default_reaches_the_okayui_gates() {
     // The real table, never chosen, on a machine with OkayUI: the variables are set, and the OkayUI gates read them in a NORMAL run
     // (no OKAY_DEV): the screens and the Inspector switch to OkayUI. Turning "okayui" off (off=okayui) leaves Dear ImGui.
-    const char* names[] = {"OKAY_UI_BACKEND", "OKAY_UI_INSPECTOR", "OKAY_UI_OWN_RENDER", "OKAY_OWN_WAV", "OKAY_OWN_HTTP", "OKAY_PLATFORM_BACKEND", "OKAY_DEV"};
+    const char* names[] = {"OKAY_UI_BACKEND", "OKAY_UI_INSPECTOR", "OKAY_UI_OWN_RENDER", "OKAY_OWN_WAV", "OKAY_OWN_HTTP", "OKAY_PLATFORM_BACKEND", "OKAY_BROWSER", "OKAY_DEV"};
     std::vector<std::string> saved(sizeof(names) / sizeof(names[0])); std::vector<bool> had(saved.size());
     for (std::size_t i = 0; i < saved.size(); ++i) { const char* e = std::getenv(names[i]); had[i] = e != nullptr; saved[i] = e ? e : ""; DropEnv(names[i]); }
     DropEnv(AppliedVar());
     Context ctx; ctx.windows = true; ctx.okayUi = true;
     auto got = Apply(Parse("", Items()), Items(), ctx);
-    CHECK(JoinIds(got) == "okayui,inspector,ownrender");                        // http and platform are not offered on Windows
+    CHECK(JoinIds(got) == "okayui,inspector,ownrender,browser");                // platform is not offered on Windows
+    CHECK(Get("OKAY_BROWSER") && std::string(Get("OKAY_BROWSER")) == "1");     // the Browser page (launcher/BrowserPage.hpp) starts on
     CHECK(Get("OKAY_OWN_HTTP") == nullptr && Get("OKAY_PLATFORM_BACKEND") == nullptr);
     CHECK(okayuibackend::Resolve(Get("OKAY_UI_BACKEND"), "", okayuibackend::DevMode(Get("OKAY_DEV")), true) == okayuibackend::Backend::OkayUI);
     CHECK(okayuibackend::InspectorOn(okayuibackend::Backend::OkayUI, Get("OKAY_DEV"), Get("OKAY_UI_INSPECTOR")));

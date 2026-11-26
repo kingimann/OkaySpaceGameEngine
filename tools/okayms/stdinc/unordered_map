@@ -1,12 +1,145 @@
-// okay-ms own standard header: std::unordered_map, written from ISO/IEC 14882 [unord.map]. Own minimal version: it is
-// the sorted-vector map of <map> (needs operator< on the key, not std::hash), so iteration is in ascending key order,
-// which the standard allows ("unspecified order"), and an insert or erase in the middle is linear time. The
-// differences from the standard listed in <map> hold here too.
+// okay-ms own standard header: std::unordered_map, written from ISO/IEC 14882 [unord.map]. Own minimal version in two
+// forms:
+// - with the default hasher it is the sorted-vector map of <map> (needs operator< on the key, not std::hash), so
+//   iteration is in ascending key order, which the standard allows ("unspecified order"), and an insert or erase in the
+//   middle is linear time;
+// - with a hasher given (unordered_map<Endpoint, Peer, EndpointHash>, for keys that have == but no <) it is an
+//   open-addressing hash table over a dense array of the entries: the hasher picks the first slot, equal keys are found
+//   with ==, and an erase moves the last entry into the hole and builds the slots again (so it is linear time, and
+//   erase(it) returns the place of the next entry to visit).
+// Iterators are pointers to the entries in both forms. A key-equality argument (the fourth template argument) is not
+// used: keys are compared with ==. The differences from the standard listed in <map> hold here too.
 #pragma once
 #include <map>
+#include <vector>
 namespace std {
-template <typename K, typename V>
+// The "no hasher given" marker: the default third argument, which selects the ordered form below.
+struct __okay_ordered_keys {};
+
+template <typename K, typename V, typename H = __okay_ordered_keys, typename E = void>
 class unordered_map {
+    vector<pair<K, V> > items_;
+    vector<long long> slots_;  // index into items_, or -1 for an empty slot; the size is a power of two
+
+    long long slot_of(const K& key) const {
+        if (slots_.empty()) return -1;
+        const size_t mask = slots_.size() - 1;
+        size_t at = H()(key) & mask;
+        for (size_t probe = 0; probe < slots_.size(); ++probe) {
+            const long long idx = slots_[at];
+            if (idx < 0) return -1;
+            if (items_[(size_t)idx].first == key) return idx;
+            at = (at + 1) & mask;
+        }
+        return -1;
+    }
+    void place(size_t idx) {
+        const size_t mask = slots_.size() - 1;
+        size_t at = H()(items_[idx].first) & mask;
+        while (slots_[at] >= 0) at = (at + 1) & mask;
+        slots_[at] = (long long)idx;
+    }
+    void rebuild(size_t want) {
+        size_t n = 8;
+        while (n < want * 2) n *= 2;
+        slots_.assign(n, (long long)-1);
+        for (size_t i = 0; i < items_.size(); ++i) place(i);
+    }
+    pair<K, V>* add(const K& key, const V& value) {
+        items_.push_back(pair<K, V>(key, value));
+        if (items_.size() * 2 > slots_.size()) rebuild(items_.size());
+        else place(items_.size() - 1);
+        return &items_.back();
+    }
+
+public:
+    typedef K key_type;
+    typedef V mapped_type;
+    typedef pair<K, V> value_type;
+    typedef size_t size_type;
+    typedef pair<K, V>* iterator;
+    typedef const pair<K, V>* const_iterator;
+    unordered_map() {}
+    unordered_map(initializer_list<pair<K, V> > list) {
+        for (const pair<K, V>* p = list.begin(); p != list.end(); ++p) insert(*p);
+    }
+    size_t size() const { return items_.size(); }
+    bool empty() const { return items_.empty(); }
+    pair<K, V>* begin() { return items_.data(); }
+    const pair<K, V>* begin() const { return items_.data(); }
+    pair<K, V>* end() { return items_.data() + items_.size(); }
+    const pair<K, V>* end() const { return items_.data() + items_.size(); }
+    void clear() {
+        items_.clear();
+        slots_.clear();
+    }
+    void swap(unordered_map& other) {
+        items_.swap(other.items_);
+        slots_.swap(other.slots_);
+    }
+    void reserve(size_t n) {
+        if (n * 2 > slots_.size()) rebuild(n);
+    }
+    size_t count(const K& key) const { return slot_of(key) >= 0 ? 1 : 0; }
+    bool contains(const K& key) const { return slot_of(key) >= 0; }
+    pair<K, V>* find(const K& key) {
+        const long long idx = slot_of(key);
+        return idx >= 0 ? items_.data() + idx : end();
+    }
+    const pair<K, V>* find(const K& key) const {
+        const long long idx = slot_of(key);
+        return idx >= 0 ? items_.data() + idx : end();
+    }
+    V& operator[](const K& key) {
+        const long long idx = slot_of(key);
+        if (idx >= 0) return items_[(size_t)idx].second;
+        return add(key, V())->second;
+    }
+    V& at(const K& key) { return items_[(size_t)slot_of(key)].second; }
+    const V& at(const K& key) const { return items_[(size_t)slot_of(key)].second; }
+    pair<pair<K, V>*, bool> insert(const pair<K, V>& entry) {
+        const long long idx = slot_of(entry.first);
+        if (idx >= 0) return pair<pair<K, V>*, bool>(items_.data() + idx, false);
+        return pair<pair<K, V>*, bool>(add(entry.first, entry.second), true);
+    }
+    pair<pair<K, V>*, bool> emplace(const K& key, const V& value) { return insert(pair<K, V>(key, value)); }
+    pair<pair<K, V>*, bool> insert_or_assign(const K& key, const V& value) {
+        const long long idx = slot_of(key);
+        if (idx >= 0) {
+            items_[(size_t)idx].second = value;
+            return pair<pair<K, V>*, bool>(items_.data() + idx, false);
+        }
+        return pair<pair<K, V>*, bool>(add(key, value), true);
+    }
+    pair<K, V>* erase(pair<K, V>* pos) {
+        const size_t idx = (size_t)(pos - items_.data());
+        if (idx + 1 < items_.size()) items_[idx] = items_.back();
+        items_.pop_back();
+        rebuild(items_.size());
+        return items_.data() + idx;
+    }
+    size_t erase(const K& key) {
+        const long long idx = slot_of(key);
+        if (idx < 0) return 0;
+        erase(items_.data() + idx);
+        return 1;
+    }
+    // [container.reqmts] == and != (Round 31): before, there were none and okay-ms compared the objects' bytes
+    // (SaveFramework.hpp's `m_values == o.m_values` on a std::map).
+    // Equal when they hold the same keys with equal values, in any order ([unord.req] 12).
+    bool operator==(const unordered_map& o) const {
+        if (size() != o.size()) return false;
+        for (const pair<K, V>* p = begin(); p != end(); ++p) {
+            const pair<K, V>* q = o.find(p->first);
+            if (q == o.end() || !(q->second == p->second)) return false;
+        }
+        return true;
+    }
+    bool operator!=(const unordered_map& o) const { return !(*this == o); }
+};
+
+template <typename K, typename V>
+class unordered_map<K, V, __okay_ordered_keys, void> {
     map<K, V> items_;
 
 public:
@@ -25,6 +158,7 @@ public:
     pair<K, V>* end() { return items_.end(); }
     const pair<K, V>* end() const { return items_.end(); }
     void clear() { items_.clear(); }
+    void swap(unordered_map& other) { items_.swap(other.items_); }
     void reserve(size_t) {}
     size_t count(const K& key) const { return items_.count(key); }
     bool contains(const K& key) const { return items_.contains(key); }
@@ -38,5 +172,9 @@ public:
     pair<pair<K, V>*, bool> insert_or_assign(const K& key, const V& value) { return items_.insert_or_assign(key, value); }
     size_t erase(const K& key) { return items_.erase(key); }
     pair<K, V>* erase(pair<K, V>* pos) { return items_.erase(pos); }
+    // [container.reqmts] == and != (Round 31): before, there were none and okay-ms compared the objects' bytes
+    // (SaveFramework.hpp's `m_values == o.m_values` on a std::map).
+    bool operator==(const unordered_map& o) const { return items_ == o.items_; }
+    bool operator!=(const unordered_map& o) const { return !(*this == o); }
 };
 }

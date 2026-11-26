@@ -7,6 +7,7 @@
 #include <SDL.h>
 #include "OkayThreads.hpp"   // okay::thr (the launcher's mutexes and threads)
 #include "okay/Net/JoinLink.hpp"            // ChatInviteInfo holds a link
+#include "JoinPlan.hpp"                     // okay::joinplan::Candidate (MpJoinProjects)
 #include "okay/Platform/Messages.hpp"      // okay::Messages (chat helpers)
 #include "okay/Platform/Friends.hpp"       // okay::Friend (the friends list)
 #include <algorithm>
@@ -111,6 +112,7 @@ void GetNews(std::string& ver, std::string& lines);   // the latest release note
 int CompareVersions(const std::string& a, const std::string& b);   // <0, 0, >0 like strcmp
 // Marketplace listing types (workshop_items.kind).
 struct MktKind { const char* key; const char* label; const char* plural; const char* desc; ImVec4 color; };
+// theme-allow-begin: the listing type colours (filled tiles and chips, with white text)
 static const MktKind kMktKinds[] = {
     {"game",     "Full game",   "Games",       "A finished, playable game (File > Build Game).",   ImVec4(0.26f, 0.55f, 0.85f, 1)},
     {"template", "Template",    "Templates",   "A starter project others build on.",               ImVec4(0.58f, 0.45f, 0.82f, 1)},
@@ -122,10 +124,12 @@ static const MktKind kMktKinds[] = {
     {"tool",     "Tool",        "Tools",       "Editor tools, plugins and utilities.",             ImVec4(0.60f, 0.65f, 0.72f, 1)},
     {"scene",    "Scene",       "Scenes",      "A single scene or level.",                         ImVec4(0.30f, 0.62f, 0.40f, 1)},
 };
+// theme-allow-end
 static const int kMktKindN = (int)(sizeof(kMktKinds) / sizeof(kMktKinds[0]));
 int MktKindIndex(const std::string& k);       // the kMktKinds row of a kind key (unknown -> game)
 // Selectable accent colors (name, main, dim) — mirror the editor's accent presets.
 struct AccentPreset { const char* name; ImVec4 col; ImVec4 dim; };
+// theme-allow-begin: the accent colours people pick
 const AccentPreset kAccentPresets[] = {
     {"Classic", ImVec4(0.235f, 0.475f, 0.800f, 1), ImVec4(0.172f, 0.360f, 0.600f, 1)},  // muted selection blue (default)
     {"Blue",   ImVec4(0.26f, 0.59f, 0.98f, 1), ImVec4(0.19f, 0.43f, 0.72f, 1)},
@@ -135,15 +139,23 @@ const AccentPreset kAccentPresets[] = {
     {"Amber",  ImVec4(0.95f, 0.66f, 0.26f, 1), ImVec4(0.70f, 0.48f, 0.19f, 1)},
     {"Rose",   ImVec4(0.96f, 0.42f, 0.56f, 1), ImVec4(0.70f, 0.30f, 0.41f, 1)},
 };
+// theme-allow-end
 // Multiplayer (main.cpp): joining and inviting, used by the chat and the profile page.
 void MpJoin(const std::string& link, const std::string& from);   // Multiplayer, below
 bool MpCanInvite();                                             // in a joinable match right now
 std::string MpGameTitle();                                      // the game I'm playing ("" = none)
 void MpInviteUser(const std::string& uid, const std::string& name);
 void MpJoinFriend(const std::string& sessionCode, const std::string& name);
+// For a join that opens a project in the editor (MpLaunch, shared/JoinPlan.hpp; main.cpp): your editor projects with
+// their engine_version stamps, the editor versions you have (this launcher's own and those under Versions/), and
+// opening a project's scene with one of them.
+std::vector<okay::joinplan::Candidate> MpJoinProjects();
+std::vector<std::string> MpInstalledEditors();
+bool MpOpenProjectForJoin(const std::string& editorVersion, const std::string& scene);
 void MpInviteGroup(long gid, const std::string& name);         // a whole group chat
 std::string MpMyJoin();                                        // my session's public link ("" = none)
-void MpPartyInvite(const std::string& uid, const std::string& name);   // (makes a party if needed)
+void MpPartyInvite(const std::string& uid, const std::string& name);
+void DrawRecentPlayersPanel(bool signedIn);                     // Multiplayer's recent players (Friends > Add friend shows it too)   // (makes a party if needed)
 void MpPartyJoinFromInvite(const std::string& body);
 std::string MpPartyId();                                       // my party ("" = none)
 // Playtime and state (main.cpp).
@@ -160,6 +172,9 @@ struct SchedMsg { long id = 0; std::string toUid, toName; long toGroup = 0; std:
 struct ChatFileInfo { std::string name, size, url; };
 struct ChatPollInfo { std::string question; std::vector<std::string> options; };
 struct ChatInviteInfo { std::string title; okay::JoinLink link; };
+// Who an invite card is with (the other person in a 1:1 chat): their public name, and their presence join link when the
+// friend list has been read (`peerKnown`), so a card can say the match is over or full.
+struct ChatInviteCtx { std::string peerUid, peerName; bool peerKnown = false; std::string peerLink; };
 struct ChatFwd { bool ok = false; std::string from, body; };
 struct ChatVoiceInfo { int secs = 0; std::string url; };
 struct ChatPinRef { long id = 0; long when = 0; std::string preview, who; };
@@ -201,7 +216,9 @@ bool ParseChatInvite(const std::string& body, ChatInviteInfo& out);
 bool ParseChatPoll(const std::string& body, ChatPollInfo& p);
 bool ParseChatVoice(const std::string& body, ChatVoiceInfo& out);
 void RenderChatFileCard(const ChatFileInfo& f, float width);
-void RenderChatInvite(const ChatInviteInfo& inv, bool mine, long when, float width);
+void RenderChatInvite(const ChatInviteInfo& inv, bool mine, long when, float width, const ChatInviteCtx* ctx = nullptr);
+void OpenChatLink(const std::string& url);       // a click on a link in a message (okay::chat::ClickLink: confirm, join or refuse)
+void DrawChatLinkConfirm();                       // the "Open link?" question, in the window where the link was clicked
 void RenderChatVoice(const ChatVoiceInfo& v, float width, bool mine, ImVec4 accent);
 bool VoiceRecordingFor(const std::string& uid, long gid, long channel = 0);
 extern volatile bool g_attBusy;
@@ -227,12 +244,16 @@ void RenderChatPoll(const ChatPollInfo& p, bool group, long id, const std::map<s
 void DrawStar(ImDrawList* dl, ImVec2 c, float r, ImU32 col);
 bool VoiceRecording();                         // a voice message is being recorded
 void OutboxSend(const std::string& toUid, long toGroup, const std::string& body, long replyTo = 0, long toChannel = 0);   // send through the outbox
+void OutboxSendInvite(const std::string& toUid, const std::string& body);   // a game invite card to a friend, with its game_invites record
 void SavePrefs();                              // write the launcher's preferences file
 ChatFwd ParseChatFwd(const std::string& b);    // a forwarded message: who from, and the body
 extern std::map<long, long> g_pinsDm, g_pinsGroup;   // message id -> pinned at (unix)
 extern ImVec4 kAccentDim;                      // the darker accent
 extern const char* kChatThemeNames[];          // the chat colour themes (kChatThemeCount)
-extern const ImVec4 kChatWinBg;                // the chat window's background
+extern const ImVec4& kChatWinBg;
+void ChatBubbleTextPush(bool mine);   // white text in my chat bubbles (main.cpp)
+void ChatBubbleTextPop(bool mine);
+bool ReactionPill(ImDrawList* dl, const std::string& key, const std::string& cnt, bool mine);   // a chat reaction pill (main.cpp)                // the chat window's background
 // Games, friends and presence (main.cpp): what the multiplayer code shares with the rest.
 struct PlayProc {
     std::string key, title; Uint32 lastCredit = 0;
@@ -255,6 +276,7 @@ std::string InviteMessageBody(const std::string& title, const std::string& link)
 bool IsBuiltGame(const fs::path& scene);
 std::string LastOnline(long when);
 void PlayChatChime();
+int MyOnlineStatus();   // your status: okayfriends::kOnline / kAway / kInvisible / kDoNotDisturb (launcher/FriendsList.hpp)
 std::string PresenceText();
 void RecordPlayed(const std::string& p);
 bool SpawnTracked(const std::string& exe, const std::string& args, const std::string& key, const std::string& title);

@@ -50,6 +50,7 @@ target_link_libraries(okay_imgui PUBLIC ${OKAY_SDL_LIB})
 target_compile_options(okay_imgui PRIVATE -w) # silence third-party warnings
 
 add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
+    HangWatchdog.cpp                                                   # the hang watchdog: a stuck main loop is reported (okay_hang.txt) and, on Windows, Wait / Close is offered
     BuildStamp.cpp                                                     # __DATE__ " " __TIME__ for the crash handler, out of main.cpp so ccache can reuse main.cpp
     UIGalleryWindow.cpp                                                # the UI Gallery window (search every UI part, preview it, add it)
     AnimatorWindow.cpp                                                 # the Animator window (state-machine graph)
@@ -61,6 +62,10 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     ScriptAssist.cpp                                                   # Scripting Reference window; the Script Editor's completion, signatures, docs, C# members, palette
     ScriptAssistBindings.cpp                                           # Script assist from the engine's binding table: component members, argument hints, docs
     FindInFiles.cpp                                                    # Find in Files: search every project script, open a hit in the Script Editor
+    ScriptIde.cpp                                                      # the Script Editor's workspace model: Quick Open, symbol index, rename, find/replace, quick fixes, local history
+    ScriptIdeUi.cpp                                                    # the Script Editor's IDE panels: Quick Open, script tree, rename preview, quick fixes, local history, plugin panels
+    PluginRegistry.cpp                                                 # editor plugins: the commands and providers they add to the Script Editor
+    PluginScriptApi.cpp                                                # editor plugins: the script_* builtins (commands, lint, completion, formatter, hover, snippets, panels)
     AssetManagerWindow.cpp                                             # the Asset Manager window: Marketplace downloads listed by type, imported into the project
     PluginsWindow.cpp                                                  # editor plugins (OkayScript): editor_* builtins, Plugins menu, Plugin Manager
     DialogueWindow.cpp                                                 # the Dialogue window (dialogue graphs + quests)
@@ -78,6 +83,8 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     OkayUIHostViews.cpp                                                # window mode: the Scene and Game views (SceneViewCore.hpp, the engine software renderer, no Dear ImGui)
     ScriptEditorCodeEdit.cpp                                           # the script editor's adapter over OkayUI::CodeEdit (no ImGui)
     ProblemsPanel.cpp                                                  # Problems panel + project diagnostics
+    ProjectDiagRunner.cpp                                              # when the Problems checks run: the project-wide one on a worker
+    WorkerCall.cpp                                                     # one call on its own thread, collected on a later frame (update check, Problems pass)
     SceneManagerPanel.cpp                                              # Scene Manager window
     NetSimPanel.cpp                                                    # net simulator + traffic panel
     AntiCheatSetupUi.cpp                                               # easy anti-cheat setup: presets, Add Anti-Cheat, checklist
@@ -92,11 +99,13 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     WeaponEditor.cpp                                                   # the Weapons window (weapon definitions)
     LocalizationTools.cpp                                              # grid, check, scan and preview the window draws (ImGui-free)
     ModelingEasyUi.cpp                                                 # beginner view of the Modeling window (logic in ModelingEasy*.hpp)
+    ModelingSidebarUi.cpp                                              # the Modeling window's page list (icons + names, folds to icons)
     GuidedPanel.cpp                                                    # Guided page of the Modeling window (templates, parts, regeneration)
     ContentEditors.cpp                                                 # Items, Loot & Recipes (.okayitems, .okayloot, .okayrecipes)
     ProjectBrowser.cpp ProjectPanelUI.cpp                              # the Project panel: folder model + safe file operations, name prompt / delete confirm / import settings
     ProjectMenuDraw.cpp                                                # drawing of the Project panel's right-click menus and the Properties rows (ImGui only; drawn headless for the screenshots)
     LaunchFile.cpp                                                     # open a file with the system's program, in a text editor, or show it in the file manager (no shell; never a program or script)
+    WebRun.cpp                                                         # Build Settings > Web: web build sizes and the local Run in browser server (127.0.0.1 only)
     ${CMAKE_SOURCE_DIR}/launcher/VersionsManager.cpp                  # the version list reader + download plan (checksums required), shared with the launcher updater
     ProjectUpgrade.cpp ProjectUpgradeUI.cpp                            # the project version question, backup + upgrade, File > Project Upgrade...
     VsGraphShot.cpp                                                    # --vs-shot: screenshots of example graphs
@@ -162,7 +171,7 @@ endif()
 # EXPERIMENTAL Xbox One Developer Mode (UWP) export entry in File > Build Settings. OFF unless -DOKAY_BUILD_XBOX_UWP=ON
 # (docs/platform/xbox_uwp.md). Header-only: nothing to link.
 if(OKAY_BUILD_XBOX_UWP)
-    target_compile_definitions(okay-editor PRIVATE OKAY_XBOX_UWP=1)
+    target_compile_definitions(okay-editor PRIVATE OKAY_XBOX_UWP_EXPORT=1)   # only the File > Build Settings export entry: NEVER OKAY_XBOX_UWP, which makes the engine headers act as the Xbox app (no WinHTTP, Xbox IPC and sign-in)
     target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/platform/xbox_uwp)
 endif()
 

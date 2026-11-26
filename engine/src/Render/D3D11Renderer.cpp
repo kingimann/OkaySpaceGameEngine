@@ -26,10 +26,14 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Render/OkayShader.hpp"   // Custom (.okayshader) surfaces
+#include "okay/Render/RHI/BloomPass.hpp"   // Bloom without the post chain, on the RHI (docs/rendering/rhi.md)
 
 #include <d3d11.h>
 #if !defined(OKAY_XBOX_UWP)
 #include <d3dcompiler.h>   // run-time HLSL compile: desktop only. A UWP app loads the .cso bundle instead (ShaderBundle.hpp).
+#include "okay/Render/ShaderBundle.hpp"   // CompileCache: what D3DCompile made is kept between runs (SetShaderCacheDir)
+#include <filesystem>
+#include <fstream>
 #else
 #include "okay/Render/ShaderBundle.hpp"
 #include "okay/Render/D3D11OverlayHlsl.hpp"   // the text the bundle is built from (renderer HLSL + the UI overlay shaders)
@@ -43,6 +47,7 @@
 #include <string>
 #include <chrono>
 #include <unordered_map>
+#include <memory>
 
 namespace okay {
 namespace {
@@ -84,6 +89,37 @@ bool EnsureBundle() {
     return g_bundleOk;
 }
 #endif
+#if !defined(OKAY_XBOX_UWP)
+std::string g_cacheDir;                      // set by D3D11Renderer::SetShaderCacheDir (UTF-8); empty = compile every start, keep nothing
+shaderbundle::CompileCache g_compileCache; bool g_compileCacheOpen = false;
+void EnsureCompileCache() {
+    if (g_compileCacheOpen) return;
+    g_compileCacheOpen = true;
+    if (g_cacheDir.empty()) { g_compileCache.Open(nullptr, nullptr, kHLSL); return; }
+    const std::filesystem::path dir = std::filesystem::u8path(g_cacheDir);
+    auto rd = [dir](const std::string& name, std::vector<unsigned char>& out) {
+        std::ifstream in(dir / name, std::ios::binary);
+        if (!in) return false;
+        out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        return true;
+    };
+    auto wr = [dir](const std::string& name, const std::vector<unsigned char>& bytes) {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        const std::filesystem::path tmp = dir / (name + ".tmp");
+        {
+            std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
+            if (!o) return false;
+            o.write(reinterpret_cast<const char*>(bytes.data()), (std::streamsize)bytes.size());
+            if (!o) return false;
+        }
+        std::filesystem::rename(tmp, dir / name, ec);   // whole or not at all: another editor may read the folder at the same time
+        if (ec) { std::filesystem::remove(tmp, ec); return false; }
+        return true;
+    };
+    g_compileCache.Open(rd, wr, kHLSL);
+}
+#endif
 bool CompileShader(const char* entry, const char* profile, ShaderCode& out) {
 #if defined(OKAY_XBOX_UWP)
     (void)profile;
@@ -93,15 +129,27 @@ bool CompileShader(const char* entry, const char* profile, ShaderCode& out) {
     out.data = b->data(); out.size = (SIZE_T)b->size();
     return true;
 #else
-    ID3DBlob* err = nullptr;
-    const SIZE_T n = (SIZE_T)std::strlen(kHLSL);
-    if (FAILED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, entry, profile, 0, 0, &out.blob, &err))) {
-        if (err) { out.error = (const char*)err->GetBufferPointer(); err->Release(); }
-        if (out.blob) { out.blob->Release(); out.blob = nullptr; }
-        return false;
-    }
-    if (err) err->Release();
-    out.data = out.blob->GetBufferPointer(); out.size = out.blob->GetBufferSize();
+    // From the shader cache folder when it holds this HLSL text's bytes; else D3DCompile (seconds for the whole set) and kept there.
+    EnsureCompileCache();
+    std::string error;
+    const std::vector<unsigned char>* bytes = g_compileCache.Get(entry, profile,
+        [&error](const char* e, const char* prof, std::vector<unsigned char>& outBytes) {
+            ID3DBlob* blob = nullptr;
+            ID3DBlob* err = nullptr;
+            const SIZE_T n = (SIZE_T)std::strlen(kHLSL);
+            if (FAILED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, e, prof, 0, 0, &blob, &err))) {
+                if (err) { error = (const char*)err->GetBufferPointer(); err->Release(); }
+                if (blob) blob->Release();
+                return false;
+            }
+            if (err) err->Release();
+            const unsigned char* p = static_cast<const unsigned char*>(blob->GetBufferPointer());
+            outBytes.assign(p, p + blob->GetBufferSize());
+            blob->Release();
+            return true;
+        });
+    if (!bytes) { out.error = error; return false; }
+    out.data = bytes->data(); out.size = (SIZE_T)bytes->size();   // owned by g_compileCache for the life of the process
     return true;
 #endif
 }
@@ -317,6 +365,24 @@ struct D3D11Renderer::Impl {
     CustomPS* EnsureCustomPS(const std::string& path);
     bool EnsureTargets(int W, int H, int S);
     void DestroyTargets();
+    // Bloom without the post chain (View > Lighting "Bloom"): rhi::BloomPass on an RHI device made on
+    // THIS device and context (no second device), the same pass the OpenGL renderer runs. UNVERIFIED on Windows.
+    std::unique_ptr<rhi::Device> rhiDev;
+    std::unique_ptr<rhi::BloomPass> rhiBloom;
+    bool rhiFailed = false;
+    bool EnsureRhiBloom() {
+        if (rhiBloom) return true;
+        if (rhiFailed || !dev) return false;
+        if (!rhiDev) rhiDev = rhi::CreateD3D11Device(dev);
+        if (rhiDev) {
+            rhiBloom.reset(new rhi::BloomPass());
+            if (rhiBloom->Init(*rhiDev)) return true;
+            Log::Error("[d3d11] RHI bloom pass: ", rhiDev->LastError());
+            rhiBloom.reset();
+        }
+        rhiFailed = true;   // not again every frame
+        return false;
+    }
 };
 
 D3D11Renderer::Impl::CustomPS* D3D11Renderer::Impl::EnsureCustomPS(const std::string& path) {
@@ -732,7 +798,8 @@ bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
     if (FAILED(dev->CreateDepthStencilView(depthTex, nullptr, &dsv))) return false;
 
     D3D11_TEXTURE2D_DESC tr = td;
-    tr.SampleDesc.Count = 1; tr.BindFlags = D3D11_BIND_SHADER_RESOURCE;   // the post chain samples the resolve
+    tr.SampleDesc.Count = 1;
+    tr.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;   // the post chain samples the resolve; the RHI bloom draws onto it
     if (FAILED(dev->CreateTexture2D(&tr, nullptr, &resolveTex))) return false;
     if (FAILED(dev->CreateShaderResourceView(resolveTex, nullptr, &resolveSrv))) return false;
 
@@ -1843,8 +1910,15 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         c->OMSetBlendState(nullptr, abf, 0xffffffff);
         drawCasters(vp, nullptr, /*forView=*/true);
     }
+    // Bloom without the chain (View > Lighting "Bloom"; with the chain the uber pass does bloom).
+    bool rhiBloomOn = !useChain && BloomEnabled();
+    if (rhiBloomOn && p->directDst) {   // the glowing resolve is copied to the host's texture: same format only
+        D3D11_TEXTURE2D_DESC dd; p->directDst->GetDesc(&dd);
+        rhiBloomOn = dd.Format == p->fmt;
+    }
+    rhiBloomOn = rhiBloomOn && p->EnsureRhiBloom();
     // RenderToTexture without the chain: resolve straight into the host's texture and stop here.
-    if (p->directDst && !useChain) {
+    if (p->directDst && !useChain && !rhiBloomOn) {
         if (p->samples > 1) c->ResolveSubresource(p->directDst, 0, p->colorTex, 0, p->fmt);
         else                c->CopyResource(p->directDst, p->colorTex);
         { ID3D11ShaderResourceView* nullsrv[2] = {nullptr, nullptr}; c->PSSetShaderResources(4, 2, nullsrv); }
@@ -1855,6 +1929,22 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     if (p->samples > 1) c->ResolveSubresource(p->resolveTex, 0, p->colorTex, 0, p->fmt);
     else                c->CopyResource(p->resolveTex, p->colorTex);
     ID3D11Texture2D* readTex = p->resolveTex;   // what the staging copy reads
+    if (rhiBloomOn) {
+        // Bright pass at half size, two gaussian rounds, added back onto the resolve (rhi::BloomPass). Alpha
+        // stays: the editor paints the sky behind pixels the 3D pass left clear. A failure only skips the glow.
+        rhi::TextureDesc td;
+        td.width = w; td.height = h; td.renderTarget = true;
+        td.format = p->fmt == DXGI_FORMAT_R16G16B16A16_FLOAT ? rhi::Format::RGBA16F : rhi::Format::RGBA8;
+        const rhi::TextureHandle frame = rhi::WrapD3D11Texture(*p->rhiDev, p->resolveTex, td);
+        if (!frame || !p->rhiBloom->Apply(frame, w, h, BloomThreshold(), BloomIntensity()))
+            Log::Error("[d3d11] RHI bloom: ", p->rhiDev->LastError());
+        p->rhiDev->Destroy(frame);   // the wrap only: the texture stays the renderer's
+        if (p->directDst) {
+            c->CopyResource(p->directDst, p->resolveTex);
+            { ID3D11ShaderResourceView* nullsrv[2] = {nullptr, nullptr}; c->PSSetShaderResources(4, 2, nullsrv); }
+            return reinterpret_cast<const std::uint32_t*>(p->directDst);
+        }
+    }
     if (useChain) {
         const auto& ps = rsTop.post;
         beginQuadPasses();
@@ -2035,6 +2125,13 @@ void D3D11Renderer::SetShaderBundleDir(const char* dir) {
     (void)dir;
 #endif
 }
+void D3D11Renderer::SetShaderCacheDir(const char* dir) {
+#if !defined(OKAY_XBOX_UWP)
+    if (!g_compileCacheOpen) g_cacheDir = dir ? dir : "";   // only before the first compile: the cache hands out pointers into itself
+#else
+    (void)dir;
+#endif
+}
 void* D3D11Renderer::DeviceForPresent() const { return m_impl ? static_cast<void*>(m_impl->dev) : nullptr; }
 void D3D11Renderer::ReleaseCom(void* unknown) { if (unknown) static_cast<IUnknown*>(unknown)->Release(); }
 
@@ -2084,6 +2181,8 @@ void D3D11Renderer::Destroy() {
     p->sampCombo.clear();
     for (auto& kv : p->meshVB) if (kv.second.vbuf) kv.second.vbuf->Release();
     p->meshVB.clear();
+    p->rhiBloom.reset();   // frees its shaders, quad and targets on the RHI device
+    p->rhiDev.reset();     // drops its references to dev and ctx (released below)
     p->sunAtlas.Release();
     p->localAtlas.Release();
     if (p->shCB) p->shCB->Release();

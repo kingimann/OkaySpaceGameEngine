@@ -5,10 +5,13 @@
 // names the Script Editor still in main.cpp uses differ.
 #include "EditorCommon.hpp"
 #include "ScriptAssist.hpp"
+#include "ScriptIde.hpp"   // scriptide::FuzzyScore
 #include "MainShared.hpp"          // g_showScriptDocs, g_codeFont, SectionHeader (main.cpp)
 #include "ConsolePanel.hpp"        // ConsoleLog
 #include "okay/Lua/Lua.hpp"         // okay::lua::kKeywords
 #include "okay/Lua/LuaScriptVM.hpp" // LuaLanguageWords: the bound engine names and their docs for Lua scripts
+#include "okay/JavaScript/JavaScript.hpp"   // okay::js::kKeywords
+#include "okay/JavaScript/JavaScriptVM.hpp" // JavaScriptLanguageWords: the same for JavaScript scripts
 #include "ScriptAssistBindings.hpp" // components' members, argument hints and docs from the engine's binding table
 
 namespace oked {
@@ -1070,27 +1073,9 @@ void AcKindTag(AcKind k, char& letter, ImU32& col) {
 // insensitively? Returns a score (higher = better: contiguous runs, a match at a word
 // start, and an early first-match all score higher) or -1 for no match. This is what
 // lets "mvfwd" find "move_forward" the way Rider/IntelliJ do.
-int FuzzyScore(const std::string& pat, const std::string& cand) {
-    if (pat.empty()) return 0;
-    int score = 0, ci = 0, run = 0, firstAt = -1;
-    for (std::size_t pi = 0; pi < pat.size(); ) {
-        char pc = (char)std::tolower((unsigned char)pat[pi]);
-        bool found = false;
-        for (; ci < (int)cand.size(); ++ci) {
-            if ((char)std::tolower((unsigned char)cand[ci]) == pc) {
-                if (firstAt < 0) firstAt = ci;
-                bool wordStart = (ci == 0) || cand[ci-1] == '_' ||
-                                 (std::islower((unsigned char)cand[ci-1]) && std::isupper((unsigned char)cand[ci]));
-                score += 1 + run * 2 + (wordStart ? 4 : 0);
-                ++run; ++ci; ++pi; found = true; break;
-            } else run = 0;
-        }
-        if (!found) return -1;
-    }
-    if (firstAt == 0) score += 6;               // matched from the very start
-    score -= firstAt > 0 ? firstAt : 0;         // prefer earlier first-hit
-    return score;
-}
+// The one fuzzy match of the Script Editor (Quick Open, Search Everywhere, the command palette and this autocomplete):
+// editor/ScriptIde.cpp.
+int FuzzyScore(const std::string& pat, const std::string& cand) { return scriptide::FuzzyScore(pat, cand); }
 
 // A one-line human description for a builtin, shown under its signature in the
 // hover tooltip and autocomplete. Only the less-obvious / newer builtins are
@@ -1978,28 +1963,57 @@ const scripteditor::LanguageWords& OkayScriptLanguageWords() {
     return d;
 }
 
+namespace {
+// One text language's words: its keywords, a few type names to colour, every bound name with its hover doc
+// (`doc` gives "" for a name it does not know: `fallback` is shown then), and its comment markers.
+scripteditor::LanguageWords BuildWords(const std::vector<std::string>& keywords, std::initializer_list<const char*> types,
+                                       const std::vector<std::string>& names, std::string (*doc)(const std::string&),
+                                       const char* fallback, const char* line, const char* blockStart, const char* blockEnd) {
+    scripteditor::LanguageWords d;
+    d.keywords = keywords;
+    for (const char* t : types) d.types.push_back(t);
+    for (const auto& name : names) {
+        if (std::find(d.keywords.begin(), d.keywords.end(), name) != d.keywords.end()) continue;
+        std::string text = doc(name);
+        d.known.push_back(name);
+        d.docs.emplace(name, text.empty() ? std::string(fallback) : text);
+    }
+    d.lineComments = {line};
+    d.blockStart = blockStart;
+    d.blockEnd = blockEnd;
+    return d;
+}
+} // namespace
+
 // Lua scripts (language "lua", our own interpreter okay::lua): the Lua keywords, '--' and '--[[ ]]' comments,
 // and every bound engine type and member (LuaScriptVM::CompletionNames) with its hover doc (CompletionDoc).
 const scripteditor::LanguageWords& LuaLanguageWords() {
-    static bool inited = false;
-    static scripteditor::LanguageWords d;
-    if (!inited) {
-        for (const char* k : okay::lua::kKeywords) d.keywords.push_back(k);
-        d.keywords.push_back("self");
-        for (const char* t : {"GameObject", "Transform", "Vector3", "Input", "Time", "Debug", "Mathf", "Rigidbody"})
-            d.types.push_back(t);
-        for (const auto& name : okay::LuaScriptVM::CompletionNames()) {
-            if (std::find(d.keywords.begin(), d.keywords.end(), name) != d.keywords.end()) continue;
-            std::string doc = okay::LuaScriptVM::CompletionDoc(name);
-            d.known.push_back(name);
-            d.docs.emplace(name, doc.empty() ? std::string("Lua name") : doc);
-        }
-        d.lineComments = {"--"};
-        d.blockStart = "--[[";
-        d.blockEnd = "]]";
-        inited = true;
-    }
+    static const scripteditor::LanguageWords d = [] {
+        std::vector<std::string> kw(std::begin(okay::lua::kKeywords), std::end(okay::lua::kKeywords));
+        kw.push_back("self");
+        return BuildWords(kw, {"GameObject", "Transform", "Vector3", "Input", "Time", "Debug", "Mathf", "Rigidbody"},
+                          okay::LuaScriptVM::CompletionNames(), okay::LuaScriptVM::CompletionDoc, "Lua name", "--", "--[[", "]]");
+    }();
     return d;
+}
+
+// JavaScript scripts (language "javascript", our own engine okay::js): the reserved and contextual words, '//'
+// and '/* */' comments, braces for blocks, and every bound engine type and member (JavaScriptVM::CompletionNames)
+// with its hover doc (CompletionDoc).
+const scripteditor::LanguageWords& JavaScriptLanguageWords() {
+    static const scripteditor::LanguageWords d = [] {
+        std::vector<std::string> kw(okay::js::kKeywords, okay::js::kKeywords + okay::js::kKeywordCount);
+        return BuildWords(kw, {"GameObject", "Transform", "Vector3", "Input", "Time", "Debug", "Mathf", "Rigidbody", "Math",
+                               "JSON", "Object", "Array", "String", "Number", "Map", "Set", "Promise", "Error"},
+                          okay::JavaScriptVM::CompletionNames(), okay::JavaScriptVM::CompletionDoc, "JavaScript name", "//", "/*", "*/");
+    }();
+    return d;
+}
+
+const scripteditor::LanguageWords& LanguageWordsFor(const std::string& language) {
+    if (language == okay::LuaScriptVM::kLanguage) return LuaLanguageWords();
+    if (language == okay::JavaScriptVM::kLanguage) return JavaScriptLanguageWords();
+    return OkayScriptLanguageWords();
 }
 
 } // namespace oked

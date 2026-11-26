@@ -237,3 +237,26 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Words:** GPU timer, draw calls, frame debugger, render stats, GPU profiler, overdraw
 - **Seen as:** cannot tell whether the CPU or GPU is the bottleneck
 - **Ask me like:** "Show draw calls and triangles per frame on a debug overlay"
+
+### 38.12 Rendering hardware interface (RHI)
+- **System:** RHI - The one set of drawing calls (device, buffers, textures, shaders, pipelines, render passes, command lists) every graphics backend implements, so a rendering feature is written once.
+  Home: `engine/include/okay/Render/RHI/`, `engine/src/Render/RHI/`. Entry: `engine/include/okay/Render/RHI/RHI.hpp`. Also called: rendering hardware interface, graphics abstraction layer, GAL, okay::rhi, render device, command list.
+- **What:** The layer under the renderers: features move onto it one at a time, each proved with a picture test, and each backend's own copy of that feature is deleted in the same change.
+- **Parts:**
+  - 38.12.1 Core - `Render/RHI/RHI` - `Device`, `CommandList` (validation, uniform memory, texture state transitions placed before passes), handles, `Caps`, deferred destruction for backends that run ahead
+  - 38.12.2 Software backend - `Render/RHI/SoftwareDevice` - CPU clipping, fixed-point rasterizer with a top-left rule, depth, blending, GL-style sampling; the reference picture
+  - 38.12.3 OpenGL backend - `Render/RHI/GLDevice` - shares `GLRenderer::LoadGL`'s entry points; `WrapGLTexture` for the renderer's own targets
+  - 38.12.4 OkayShader bridge - `Render/RHI/SurfaceShader` - an unlit `.okayshader` surface as one RHI shader (GLSL on OpenGL, the CPU program on Software)
+  - 38.12.5 Bloom pass - `Render/RHI/BloomPass` - the first feature moved onto the RHI: Bloom without the post chain, GLSL, HLSL and C++ in one file; used by the OpenGL and Direct3D 11 renderers
+  - 38.12.6 Direct3D 11 backend - `Render/RHI/D3D11Device` - on the D3D11 renderer's own device and context (no second device); HLSL from `ShaderDesc` compiled with D3DCompile; `WrapD3D11Texture`; context state saved and restored around each submit; unverified until run on Windows
+- **Code:** `Render/RHI/RHI`, `Render/RHI/SoftwareDevice`, `Render/RHI/GLDevice`, `Render/RHI/D3D11Device`, `Render/RHI/SurfaceShader`, `Render/RHI/BloomPass`
+- **API:** `rhi::Device`, `rhi::CreateSoftwareDevice`, `rhi::CreateOpenGLDevice`, `rhi::CreateD3D11Device`, `rhi::WrapD3D11Texture`, `rhi::ValidateHlslDesc`, `rhi::CommandList`, `rhi::ShaderDesc`, `rhi::PipelineDesc`, `rhi::ShaderFromSurface`, `rhi::BloomPass`
+- **Editor:** none directly; the OpenGL and Direct3D 11 Scene and Game views use it for Bloom (View > Lighting "Bloom", when the scene's post chain is off)
+- **Docs:** `docs/rendering/rhi.md`
+- **Tests:** `rhi`, `rhi_gl`
+- **Status:** Partial - round 2: core, Software, OpenGL and Direct3D 11 backends (Direct3D 11 compile-checked with MinGW only, unverified on Windows), Bloom without the post chain on OpenGL and Direct3D 11; Direct3D 12, Vulkan and WebGPU backends are later rounds
+- **Open:** run the Direct3D 11 backend on Windows (picture test against Software); HLSL for OkayShader surfaces; RHI shaders in the Xbox shader bundle; OkayShader pass shaders so the hand-written GLSL/C++ twins go; the rest of the passes (migration order in the design note); lines, scissor, mips, MSAA, base vertex on OpenGL
+- **Related:** 38.1, 38.2, 38.5, 38.8, 2.1
+- **Words:** RHI, rendering hardware interface, graphics API abstraction, render device, command list, command buffer, pipeline state, render pass, barrier, swap chain
+- **Seen as:** a feature looks different on OpenGL and Direct3D; adding an effect means writing it four times
+- **Ask me like:** "Move the SSAO pass onto the RHI"; "Add a Direct3D 11 backend to the RHI"

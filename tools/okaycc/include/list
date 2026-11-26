@@ -1,0 +1,298 @@
+// <list> for okay-cc (ISO/IEC 14882 [list]). Our own header. A doubly linked ring of nodes around a
+// sentinel node that holds no value (end()); each node is allocated with new and holds its value.
+// Iterators are node pointers and stay valid until their own node is erased; splice moves nodes
+// without copying. sort is a stable merge sort over the links. emplace takes up to two arguments.
+// const_iterator is the iterator (as in <deque> here).
+#pragma once
+#include <cstddef>
+#include <initializer_list>
+#include <utility>
+#include <__reverse_iterator>
+namespace std {
+template <typename T>
+struct __list_node {
+    __list_node<T> *prev;
+    __list_node<T> *next;
+    T *val;  // null in the sentinel
+};
+template <typename T>
+struct __list_it {
+    typedef T &reference;  // (reverse_iterator)
+    typedef T *pointer;
+    __list_node<T> *n;
+    T &operator*() const { return *n->val; }
+    T *operator->() const { return n->val; }
+    __list_it<T> &operator++() {
+        n = n->next;
+        return *this;
+    }
+    __list_it<T> operator++(int) {
+        __list_it<T> o = *this;
+        n = n->next;
+        return o;
+    }
+    __list_it<T> &operator--() {
+        n = n->prev;
+        return *this;
+    }
+    __list_it<T> operator--(int) {
+        __list_it<T> o = *this;
+        n = n->prev;
+        return o;
+    }
+    bool operator==(const __list_it<T> &o) const { return n == o.n; }
+    bool operator!=(const __list_it<T> &o) const { return n != o.n; }
+};
+template <typename T>
+class list {
+public:
+    typedef T value_type;
+    typedef __list_it<T> iterator;
+    typedef __list_it<T> const_iterator;
+    typedef unsigned long size_type;
+    typedef T &reference;
+    typedef const T &const_reference;
+
+    list() : __n(0) { __init(); }
+    list(const list<T> &o) : __n(0) {
+        __init();
+        for (__list_node<T> *p = o.__end->next; p != o.__end; p = p->next) push_back(*p->val);
+    }
+    list(list<T> &&o) : __n(0) {
+        __init();
+        swap(o);
+    }
+    list(initializer_list<T> il) : __n(0) {
+        __init();
+        for (const T *p = il.begin(); p != il.end(); ++p) push_back(*p);
+    }
+    list(unsigned long n, const T &v) : __n(0) {
+        __init();
+        for (unsigned long i = 0; i < n; ++i) push_back(v);
+    }
+    template <typename It>
+    list(It first, It last) : __n(0) {
+        __init();
+        for (; first != last; ++first) push_back(*first);
+    }
+    ~list() {
+        clear();
+        delete __end;
+    }
+    list<T> &operator=(const list<T> &o) {
+        if (this != &o) {
+            clear();
+            for (__list_node<T> *p = o.__end->next; p != o.__end; p = p->next) push_back(*p->val);
+        }
+        return *this;
+    }
+    list<T> &operator=(list<T> &&o) {
+        if (this != &o) {
+            clear();
+            swap(o);
+        }
+        return *this;
+    }
+
+    iterator begin() const { return iterator{__end->next}; }
+    iterator end() const { return iterator{__end}; }
+    reverse_iterator<iterator> rbegin() const { return reverse_iterator<iterator>(end()); }
+    reverse_iterator<iterator> rend() const { return reverse_iterator<iterator>(begin()); }
+    reverse_iterator<iterator> crbegin() const { return rbegin(); }
+    reverse_iterator<iterator> crend() const { return rend(); }
+    iterator cbegin() const { return begin(); }
+    iterator cend() const { return end(); }
+    unsigned long size() const { return __n; }
+    bool empty() const { return __n == 0; }
+    T &front() const { return *__end->next->val; }
+    T &back() const { return *__end->prev->val; }
+
+    void push_back(const T &v) { __link(__end, new T(v)); }
+    void push_back(T &&v) { __link(__end, new T(std::move(v))); }
+    void push_front(const T &v) { __link(__end->next, new T(v)); }
+    void push_front(T &&v) { __link(__end->next, new T(std::move(v))); }
+    T &emplace_back() { return *__link(__end, new T())->val; }
+    template <typename A>
+    T &emplace_back(A a) { return *__link(__end, new T(a))->val; }
+    template <typename A, typename B>
+    T &emplace_back(A a, B b) { return *__link(__end, new T(a, b))->val; }
+    T &emplace_front() { return *__link(__end->next, new T())->val; }
+    template <typename A>
+    T &emplace_front(A a) { return *__link(__end->next, new T(a))->val; }
+    void pop_back() { __unlink(__end->prev); }
+    void pop_front() { __unlink(__end->next); }
+    iterator insert(iterator pos, const T &v) { return iterator{__link(pos.n, new T(v))}; }
+    iterator insert(iterator pos, T &&v) { return iterator{__link(pos.n, new T(std::move(v)))}; }
+    iterator erase(iterator pos) {
+        __list_node<T> *next = pos.n->next;
+        __unlink(pos.n);
+        return iterator{next};
+    }
+    iterator erase(iterator first, iterator last) {
+        while (first != last) first = erase(first);
+        return last;
+    }
+    void clear() {
+        while (__n) __unlink(__end->next);
+    }
+    void resize(unsigned long n) {
+        while (__n > n) pop_back();
+        while (__n < n) emplace_back();
+    }
+    void swap(list<T> &o) {
+        __list_node<T> *e = __end;
+        __end = o.__end;
+        o.__end = e;
+        unsigned long n = __n;
+        __n = o.__n;
+        o.__n = n;
+    }
+    // [list.ops]: splice moves nodes from o (which may be this list) before pos.
+    void splice(iterator pos, list<T> &o, iterator it) {
+        if (it.n == pos.n || it.n->next == pos.n) return;
+        __detach(it.n);
+        --o.__n;
+        __attach(pos.n, it.n);
+        ++__n;
+    }
+    void splice(iterator pos, list<T> &o) { splice(pos, o, o.begin(), o.end()); }
+    void splice(iterator pos, list<T> &o, iterator first, iterator last) {
+        while (first != last) {
+            iterator next = first;
+            ++next;
+            splice(pos, o, first);
+            first = next;
+        }
+    }
+    void splice(iterator pos, list<T> &&o, iterator it) { splice(pos, o, it); }
+    void splice(iterator pos, list<T> &&o) { splice(pos, o); }
+    void remove(const T &v) {
+        for (iterator it = begin(); it != end();) {
+            if (*it == v) it = erase(it);
+            else ++it;
+        }
+    }
+    template <typename P>
+    void remove_if(P pred) {
+        for (iterator it = begin(); it != end();) {
+            if (pred(*it)) it = erase(it);
+            else ++it;
+        }
+    }
+    void reverse() {
+        __list_node<T> *p = __end;
+        do {
+            __list_node<T> *t = p->next;
+            p->next = p->prev;
+            p->prev = t;
+            p = t;
+        } while (p != __end);
+    }
+    void unique() {
+        if (__n < 2) return;
+        iterator it = begin();
+        iterator next = it;
+        ++next;
+        while (next != end()) {
+            if (*next == *it) next = erase(next);
+            else it = next++;
+        }
+    }
+    void sort() { __sort(__less()); }
+    template <typename C>
+    void sort(C comp) { __sort(comp); }
+    void merge(list<T> &o) {
+        if (&o == this) return;
+        iterator a = begin();
+        while (!o.empty()) {
+            iterator b = o.begin();
+            while (a != end() && !(*b < *a)) ++a;
+            splice(a, o, b);
+        }
+    }
+    bool operator==(const list<T> &o) const {
+        if (__n != o.__n) return false;
+        for (iterator a = begin(), b = o.begin(); a != end(); ++a, ++b)
+            if (!(*a == *b)) return false;
+        return true;
+    }
+    bool operator!=(const list<T> &o) const { return !(*this == o); }
+
+    __list_node<T> *__end;
+    unsigned long __n;
+    struct __less {
+        bool operator()(const T &a, const T &b) const { return a < b; }
+    };
+    void __init() {
+        __end = new __list_node<T>;
+        __end->prev = __end;
+        __end->next = __end;
+        __end->val = nullptr;
+    }
+    static void __detach(__list_node<T> *n) {
+        n->prev->next = n->next;
+        n->next->prev = n->prev;
+    }
+    static void __attach(__list_node<T> *before, __list_node<T> *n) {
+        n->prev = before->prev;
+        n->next = before;
+        before->prev->next = n;
+        before->prev = n;
+    }
+    __list_node<T> *__link(__list_node<T> *before, T *v) {
+        __list_node<T> *n = new __list_node<T>;
+        n->val = v;
+        __attach(before, n);
+        ++__n;
+        return n;
+    }
+    void __unlink(__list_node<T> *n) {
+        __detach(n);
+        --__n;
+        delete n->val;
+        delete n;
+    }
+    // Merge sort by runs: the list is split into sorted runs of doubling length and merged
+    // (stable: of equal values the earlier stays first).
+    template <typename C>
+    void __sort(C comp) {
+        if (__n < 2) return;
+        for (unsigned long width = 1; width < __n; width *= 2) {
+            __list_node<T> *cur = __end->next;
+            while (cur != __end) {
+                __list_node<T> *a = cur;
+                __list_node<T> *b = a;
+                unsigned long na = 0;
+                while (na < width && b != __end) {
+                    b = b->next;
+                    ++na;
+                }
+                unsigned long nb = 0;
+                __list_node<T> *stop = b;
+                while (nb < width && stop != __end) {
+                    stop = stop->next;
+                    ++nb;
+                }
+                // merge [a, b) and [b, stop) in place
+                while (na > 0 && nb > 0) {
+                    if (comp(*b->val, *a->val)) {
+                        __list_node<T> *move = b;
+                        b = b->next;
+                        --nb;
+                        __detach(move);
+                        __attach(a, move);
+                    } else {
+                        a = a->next;
+                        --na;
+                    }
+                }
+                cur = stop;
+            }
+        }
+    }
+};
+template <typename T>
+void swap(list<T> &a, list<T> &b) {
+    a.swap(b);
+}
+}  // namespace std

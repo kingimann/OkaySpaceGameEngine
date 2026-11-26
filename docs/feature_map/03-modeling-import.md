@@ -20,7 +20,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
   - 3.1.7 Edit-session undo - `editor/main.cpp` - Ctrl+Z steps through single mesh edits; leaving edit mode makes the whole session one scene undo step (per docs)
 - **Code:** `Modeling/EditTransform`, `Modeling/PolyMesh`, `Render/Mesh`, `editor/main.cpp`, `editor/EditorState.*`
 - **API:** `EditTransformSession`, `AxisLock`, `NumericInput`, `PolyMesh::FromMesh/ToMesh`, `Mesh::ExtrudeFaces`, `InsetFaces`, `OrientFacesOutward`; keys Tab, G, R, S, X/Y/Z, Ctrl+Z
-- **Editor:** Modeling window (View > Editors & Tools > Modeling), the 3D view's Object/Edit header and status line, Edit Mesh section
+- **Editor:** Modeling window (View > Editors & Tools > Modeling; its page list `editor/ModelingSidebarUi.*` shows icon + full name, or folds to icons with the names as tooltips, never cut), the 3D view's Object/Edit header and status line, Edit Mesh section
 - **Docs:** `docs/editor/modeling.md`
 - **Tests:** `edit_transform`, `meshedit`, `polymesh`, `modeling`, `poly_ops`
 - **Status:** Works - four test suites cover the maths and mesh ops; I read the headers but not the editor key handling in main.cpp

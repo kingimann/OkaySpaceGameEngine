@@ -1,9 +1,9 @@
 // PlayFab's HTTP calls (engine/include/okay/Platform/PlayFab/PlayFab.hpp, Post) through our own HTTP client, against a
 // loopback server that plays the PlayFab API: login without the session header, calls with it, an HTTP 400 body that
 // carries the error message, a server that answers with nonsense. PATH holds only a FAKE curl that appends a line to a
-// file when it runs (and fails), so a silent fallback is both unable to succeed and counted. A POST that may have reached
-// the server (closed without an answer, garbage, cut off, stalled past the timeout) must be seen by the server exactly
-// once and must never be sent again through curl. Built only with -DOKAY_OWN_HTTP=ON (Linux).
+// file when it runs (and fails); it must never run. A POST that may have reached the server (closed without an answer,
+// garbage, cut off, stalled past the timeout) must be seen by the server exactly once and never sent again, and a clean
+// failure (nothing listening) is a failure. Built only with -DOKAY_OWN_HTTP=ON (Linux).
 #define OKAY_PLAYFAB_TESTING 1
 #include "okay/Platform/PlayFab/PlayFab.hpp"
 
@@ -28,7 +28,7 @@ static std::string Json(int status, const std::string& body) {
 
 int main() {
     std::signal(SIGPIPE, SIG_IGN);
-    ::setenv("OKAY_OWN_HTTP", "1", 1); ::unsetenv("OKAY_HTTP_CURL");
+    ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("OKAY_HTTP_CURL");   // our own client needs no switch
     ::setenv("NO_PROXY", "127.0.0.1", 1); ::unsetenv("HTTP_PROXY"); ::unsetenv("http_proxy");
     namespace fs = std::filesystem;
     const fs::path tmp = fs::temp_directory_path() / ("okay_pfown_" + std::to_string(::getpid()));
@@ -36,7 +36,7 @@ int main() {
     const std::string curlLog = (tmp / "curl.log").string();
     { std::ofstream f(tmp / "bin" / "curl"); f << "#!/bin/sh\necho run >> '" << curlLog << "'\nexit 7\n"; }
     fs::permissions(tmp / "bin" / "curl", fs::perms::owner_all);
-    ::setenv("PATH", (tmp / "bin").string().c_str(), 1);   // only the fake curl: a fallback is counted and cannot succeed
+    ::setenv("PATH", (tmp / "bin").string().c_str(), 1);   // only the fake curl: a run would be counted
     auto curlRuns = [&] { std::ifstream f(curlLog); int n = 0; std::string l; while (std::getline(f, l)) ++n; return n; };
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in a{}; a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -90,7 +90,7 @@ int main() {
     CHECK(pf.LastError().find("Name not available") != std::string::npos && pf.LastError().find("HTTP 400") != std::string::npos);
     { std::lock_guard<std::mutex> lk(mu); CHECK(heads.size() == 3); }    // three calls, three requests: nothing was replayed (these are POSTs: each is sent once, on a connection the client may reuse)
     CHECK(curlRuns() == 0);
-    // A POST that may have reached the server must not be sent again through curl (a registration could succeed and
+    // A POST that may have reached the server must not be sent again (a registration could succeed and
     // then report "name taken"; a Sum statistic could be counted twice).
     struct Case { int m; const char* what; } cases[] = {{3, "closed without an answer"}, {1, "garbage answer"}, {2, "cut-off answer"}, {4, "stalled past the timeout"}};
     for (const Case& cs : cases) {
@@ -105,14 +105,14 @@ int main() {
         CHECK(curlRuns() == 0);       // and curl never ran
         CHECK(last.find("HTTP 0") != std::string::npos);
     }
-    {   // a clean failure (nothing listening) may still fall back to curl: the fake one runs once
+    {   // a clean failure (nothing listening): a failure, and curl does not run
         const std::string good = base;
         int tf = ::socket(AF_INET, SOCK_STREAM, 0); sockaddr_in ta{}; ta.sin_family = AF_INET; ta.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         ::bind(tf, (sockaddr*)&ta, sizeof ta); socklen_t tl = sizeof ta; ::getsockname(tf, (sockaddr*)&ta, &tl); ::close(tf);   // a port that is now closed
         pf.SetBaseUrlForTests("http://127.0.0.1:" + std::to_string(ntohs(ta.sin_port)));
         mode = 0;
         CHECK(!pf.SetStat("score", 45));
-        CHECK(curlRuns() == 1);
+        CHECK(curlRuns() == 0);
         pf.SetBaseUrlForTests(good);
     }
     mode = 0;

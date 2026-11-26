@@ -29,3 +29,43 @@ struct tm *localtime(const time_t *t);
 size_t strftime(char *out, size_t n, const char *format, const struct tm *t);
 }
 }
+// The Microsoft C runtime's thread-safe forms (Microsoft's documentation of localtime_s and gmtime_s): they fill the
+// caller's tm and return 0, or an error number. In the runtime DLL they are the 64-bit-time functions _localtime64_s and
+// _gmtime64_s, which these call.
+extern "C" {
+int _localtime64_s(struct tm *out, const time_t *t);
+int _gmtime64_s(struct tm *out, const time_t *t);
+}
+// Macros, not inline functions: okay-ms emits every inline function of a file, and the program would then always import
+// the two runtime functions.
+#define localtime_s(out, t) _localtime64_s((out), (t))
+#define gmtime_s(out, t) _gmtime64_s((out), (t))
+// The POSIX thread-safe forms localtime_r and gmtime_r (POSIX.1-2017, <time.h>): they fill the caller's tm and return
+// it, or null. The Microsoft C runtime has no such functions; here they are the forms above. Function templates (made
+// only where they are called, so a file that only includes <ctime> imports nothing), named through macros so that
+// ::localtime_r(&t, &out) reads as well.
+template <typename T> struct tm *__okay_localtime_r(const T *t, struct tm *out) {
+    return _localtime64_s(out, t) == 0 ? out : (struct tm *)0;
+}
+template <typename T> struct tm *__okay_gmtime_r(const T *t, struct tm *out) {
+    return _gmtime64_s(out, t) == 0 ? out : (struct tm *)0;
+}
+#define localtime_r __okay_localtime_r
+#define gmtime_r __okay_gmtime_r
+// struct timespec (ISO/IEC 9899:2011 7.27.1; Round 30): seconds and nanoseconds.
+struct timespec {
+    time_t tv_sec;
+    long tv_nsec;
+};
+// POSIX.1-2017 nanosleep and clock_gettime (Round 30), for the engine's POSIX paths (the plain survey). Declared only
+// when _WIN32 is not defined: the Microsoft runtime has neither, so nothing that calls them links on Windows. The clock
+// numbers are our own choice.
+#if !defined(_WIN32)
+typedef int clockid_t;
+#define CLOCK_REALTIME 0
+#define CLOCK_MONOTONIC 1
+extern "C" {
+int nanosleep(const struct timespec *want, struct timespec *left);
+int clock_gettime(clockid_t clock, struct timespec *out);
+}
+#endif

@@ -37,7 +37,7 @@ Type Gen::element_type(const Type& type) const { return peel_array(type); }
 
 bool Gen::gen_addr(const Node& node) {
     if (node.kind == Node::Name) {
-        if (Local* local = find_local(node.text)) {
+        if (Local* local = find_local(node)) {
             if (local->type.is_ref) {
                 load_slot(local->offset, true);
                 last_type = local->type;
@@ -85,14 +85,13 @@ bool Gen::gen_addr(const Node& node) {
     if (node.kind == Node::StringLit) {
         if (!gen_expr(node)) return false;
         last_type.pointers = 1;
-        last_type.base = 2;
         last_type.array_len = -1;
         return true;
     }
     if (node.kind == Node::Index) {
         bool from_pointer = false;
         if (node.kids[0].kind == Node::Name) {
-            if (Local* local = find_local(node.kids[0].text))
+            if (Local* local = find_local(node.kids[0]))
                 from_pointer = local->type.pointers > 0 && !local->type.is_array();
             else if (Global* global = find_global(node.kids[0].text))
                 from_pointer = global->type.pointers > 0 && !global->type.is_array();
@@ -180,7 +179,25 @@ bool Gen::gen_addr(const Node& node) {
         last_type = first;
         return true;
     }
-    error = "not an address";
+    if (node.kind == Node::Assign && node.op == TAssign && node.kids.size() == 2 && !has_effects(node.kids[0])) {
+        // a = b as an lvalue ([expr.ass] 1: the result is the left operand), as in `x = y = v` with objects: the
+        // assignment, then the left operand's address (read again; it has no effects, so none are repeated).
+        if (!gen_expr(node)) return false;
+        return gen_addr(node.kids[0]);
+    }
+    // What the operand was, for the message (Round 30): the survey's "not an address" lines then say where to look.
+    std::string what;
+    switch (node.kind) {
+        case Node::Call: what = "a call of " + (node.text.empty() ? std::string("a function pointer") : node.text); break;
+        case Node::Name: what = "the name " + node.text; break;
+        case Node::IntLit: what = "a constant"; break;
+        case Node::StringLit: what = "a string"; break;
+        case Node::Binary: what = "a binary operator"; break;
+        case Node::Unary: what = "a unary operator or cast"; break;
+        case Node::Assign: what = "an assignment"; break;
+        default: what = "an expression"; break;
+    }
+    error = "not an address: " + what;
     return false;
 }
 
@@ -255,8 +272,87 @@ void Gen::promote(Type* type) const {
     }
 }
 
+// Brace elision ([dcl.init.aggr] 16): in `v.push_back({a, b, c})` for a std::array<int, 3> the list names the elements
+// of the array inside the struct, not the struct's one member. The items from *pos on are given out member by member,
+// a nested aggregate taking as many as it needs; an item that is itself a braced list is taken whole.
+static Node elide_items(const std::vector<StructDef>* structs, const Type& type, const std::vector<Node>& items, size_t* pos) {
+    Node list;
+    list.kind = Node::Block;
+    list.text = "init";
+    auto aggregate = [&](const Type& t) { return t.array_len >= 0; };
+    auto take = [&](const Type& t) {
+        if (*pos >= items.size()) return;
+        const Node& item = items[*pos];
+        if (aggregate(t) && !(item.kind == Node::Block && item.text == "init")) {
+            list.kids.push_back(elide_items(structs, t, items, pos));
+        } else {
+            list.kids.push_back(item);
+            ++*pos;
+        }
+    };
+    if (type.array_len >= 0) {
+        const Type elem = peel_array(type);
+        for (int i = 0; i < type.array_len && *pos < items.size(); ++i) take(elem);
+    } else if (type.base == 3 && structs != nullptr && type.struct_id >= 0 &&
+               type.struct_id < static_cast<int>(structs->size())) {
+        for (const Field& field : (*structs)[static_cast<size_t>(type.struct_id)].fields) {
+            if (field.name.compare(0, 6, "__vptr") == 0) continue;
+            if (*pos >= items.size()) break;
+            take(field.type);
+        }
+    }
+    return list;
+}
+
+// A class whose objects are copied by copying their bytes: no destructor, no copy constructor and no virtual functions,
+// and the same for its members of class type ([class.prop] 1, trivially copyable, as okay-ms can tell it).
+bool Gen::bytes_copyable(int sid) const {
+    const StructDef& def = (*structs)[static_cast<size_t>(sid)];
+    if (def.poly) return false;
+    for (const Method& m : def.methods) {
+        if (m.name == "<dtor>") return false;
+        if (m.name == "<ctor>" && m.params.size() == 1 && m.params[0].base == 3 && m.params[0].struct_id == sid &&
+            (m.params[0].pointers == 1 || m.params[0].is_ref))
+            return false;
+    }
+    for (const Field& f : def.fields)
+        if (f.type.base == 3 && f.type.pointers == 0 && f.type.struct_id >= 0 && f.type.struct_id != sid &&
+            !bytes_copyable(f.type.struct_id))
+            return false;
+    return true;
+}
+
 bool Gen::store_init(const Type& type, int offset, const Node& node) {
     if (node.kind == Node::Block && node.text == "init") {
+        // A scalar item where a member or element is itself an aggregate: the braces were left out (elided).
+        bool elided = false;
+        // Own limit: only an array member is taken as elided (std::array's), not a member of class type, whose item may
+        // be an object of that class.
+        if (type.array_len >= 0) {
+            const Type elem = peel_array(type);
+            const bool agg = elem.array_len >= 0;
+            for (const Node& kid : node.kids)
+                if (agg && !(kid.kind == Node::Block && kid.text == "init")) elided = true;
+        } else if (type.base == 3 && type.pointers == 0 && structs != nullptr && type.struct_id >= 0 &&
+                   type.struct_id < static_cast<int>(structs->size())) {
+            size_t k = 0;
+            for (const Field& field : (*structs)[static_cast<size_t>(type.struct_id)].fields) {
+                if (field.name.compare(0, 6, "__vptr") == 0) continue;
+                if (k >= node.kids.size()) break;
+                const bool agg = field.type.array_len >= 0;
+                const Node& kid = node.kids[k++];
+                if (agg && !(kid.kind == Node::Block && kid.text == "init")) elided = true;
+            }
+        }
+        if (elided) {
+            size_t pos = 0;
+            const Node full = elide_items(structs, type, node.kids, &pos);
+            if (pos < node.kids.size()) {
+                error = "too many initializers";
+                return false;
+            }
+            return store_init(type, offset, full);
+        }
         // The elements not named are zero ([dcl.init.aggr]).
         Node zero;
         zero.kind = Node::IntLit;
@@ -279,9 +375,19 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
             const StructDef& def = (*structs)[static_cast<size_t>(type.struct_id)];
             for (size_t i = 0; i < def.fields.size(); ++i) {
                 const Field& field = def.fields[i];
-                if (field.name == "__vptr") continue;
+                if (field.name.compare(0, 6, "__vptr") == 0) continue;
                 const bool nested = field.type.array_len >= 0 || (field.type.base == 3 && field.type.pointers == 0);
                 const Node& item = i < node.kids.size() ? node.kids[i] : nested ? empty : zero;
+                if (def.ref_members.count(field.name) > 0 && item.kind != Node::IntLit && item.kind != Node::Block) {
+                    // A reference member made from a braced list (`struct { T& r; } s{x};`, [dcl.init.aggr]): the field
+                    // holds the address of what it refers to.
+                    if (!gen_addr(item)) return false;
+                    b(0x48);  // mov [rbp+offset], rax
+                    b(0x89);
+                    b(0x85);
+                    disp(offset + field.offset);
+                    continue;
+                }
                 if (!store_init(field.type, offset + field.offset, item)) return false;
             }
             return true;
@@ -289,9 +395,37 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
         error = "initializer does not match the type";
         return false;
     }
+    if (node.kind != Node::IntLit && type.base == 3 && type.pointers == 0 && !type.is_array() && structs != nullptr &&
+        type.struct_id >= 0 && type.struct_id < static_cast<int>(structs->size()) && bytes_copyable(type.struct_id)) {
+        // An element or member of a class type made from an object of that class (std::array<Vec3, 4> c = {p, p, p, p};):
+        // copy-initialization, which for a class with no copy constructor and no destructor copies the bytes
+        // ([class.copy.ctor] 14). A call returning a big object writes it in place.
+        if (node.kind == Node::Call && !fits_register(type)) {
+            sret_dest_set = true;
+            sret_dest_off = offset;
+            return gen_expr(node);
+        }
+        if (!gen_addr(node)) return false;
+        if (last_type.base == 3 && last_type.pointers == 0 && last_type.struct_id == type.struct_id) {
+            b(0x48);  // mov rsi, rax
+            b(0x89);
+            b(0xC6);
+            b(0x48);  // lea rdi, [rbp+offset]
+            b(0x8D);
+            b(0xBD);
+            disp(offset);
+            b(0xB9);  // mov ecx, size
+            u32(static_cast<uint32_t>(size_of(type)));
+            b(0xF3);  // rep movsb
+            b(0xA4);
+            return true;
+        }
+        error = "initializer must be a constant";
+        return false;
+    }
     if (node.kind != Node::IntLit) {
         // A value computed at run time: evaluated, converted to the element type and stored.
-        if (type.base == 3 || type.array_len >= 0) {
+        if ((type.base == 3 && type.pointers == 0) || type.array_len >= 0) {  // (a pointer to a class is a value)
             error = "initializer must be a constant";
             return false;
         }
@@ -346,6 +480,7 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
 
 bool Gen::gen_stmt(const Node& node) {
     temp_depth = 0;
+    if (node.line > 0 && node.kind != Node::Block) stmt_line = node.line;
     if (debug_lines && node.line > 0 && node.kind != Node::Block)
         lines.push_back({static_cast<uint32_t>(text.size()), node.line});
     if (node.kind == Node::Block) {

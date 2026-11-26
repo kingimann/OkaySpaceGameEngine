@@ -4,7 +4,7 @@
 >
 > **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
 >
-> **Last checked:** 2026-11-20 (moved into `status/`, paths and links checked; the text itself was not re-checked against the code).
+> **Last checked:** 2026-11-26 (two sections added by the IP audit, `provenance_audit.md` 2026-11-26; the rest as on 2026-11-20).
 
 OkaySpace is mostly our own code. This page lists what we wrote, and the outside libraries and
 services we build on, with their licences. The engine itself is proprietary (see `LICENSE`); third-party components keep their own licences.
@@ -54,8 +54,31 @@ Services run by other companies (Steamworks, Photon, our hosting) are not librar
 | [libsodium](https://libsodium.org) | Authenticated packet encryption, session tickets, host identity | ISC | System package (optional, `OKAY_USE_SODIUM`); MinGW prebuilt in CI | `okay::crypto`, off, unreviewed; needs an outside review first |
 | ~~[ImGuiColorTextEdit](https://github.com/BalazsJako/ImGuiColorTextEdit)~~ | Was: the script editor's code view (vendored in `editor/vendor/TextEditor.*`) | MIT | **Removed** (2026-11-23, branch `claude/third-party-4`). The script editor's code is our own `OkayUI::CodeEdit` (`docs/ui/own_ui_code_editor.md`); the palette and language types the editor took from its header are ours in `editor/ScriptEditorCodeEdit.hpp` | Done. Not run on Windows yet |
 | ~~TweetNaCl (public domain, ported to C++)~~ | Was: Ed25519 and SHA-512 when there is no libsodium and no `OKAY_OWN_CRYPTO` (anti-cheat manifest, launcher) | Public domain | **Removed.** `shared/AntiCheatCrypto.hpp` is now a thin wrapper with no crypto code of its own | Done. Without libsodium (and with `OKAY_OWN_CRYPTO`) `okayac::ed25519` and `okayac::sha512::Hash` use `okay::crypto`, our own code (static library `okay_crypto`); libsodium stays the preferred Ed25519 where it is built. `okay::crypto` has **not** had its outside review yet (`CLAUDE.md` rule 18); the owner approved this replacement. `tests/test_anticheat_golden.cpp` pins what the old port answered (recorded before it was deleted) |
-| curl (external program, not linked) | The last fallback for HTTP calls; the default on Linux while our own client is opt-in there | curl licence | Run as a program from the user's system | Since #1186 (2026-11-23) every runtime HTTP call goes through one seam (`okay/Platform/NativeFetch.hpp`): WinHTTP on Windows (it had been compiled out by mistake since #1001, so Windows used to spawn curl for every call), our own HTTP/1.1 client `okay::ownhttp` on Linux with `OKAY_OWN_HTTP=1` (`docs/platform/own_http.md`; the system OpenSSL is loaded at run time, not linked or shipped). curl is started only in `okay/Platform/CurlFallback.hpp`, when the native client is missing or gives no clear answer and the call is safe to repeat; `OKAY_NO_CURL=1` turns it off; the `curl_seam_wiring` test fails on a curl start anywhere else. macOS has no native client (parked, rule 14) |
+| curl (external program, not linked) | Downloads in the launcher and editor, HTTP calls on Linux and macOS | curl licence | Run as a program from the user's system | **No longer used by any shipped program (`claude/no-curl-1`, 2026-11-25):** our own HTTP/1.1 client `okay::ownhttp` (`docs/platform/own_http.md`) on Linux, with the system OpenSSL loaded at run time for TLS (a system library we call, not linked or shipped); WinHTTP on Windows; no client on macOS. Only CI and release scripts (`scripts/*.sh`) still run curl |
 | stb `stb_decompress` (public domain, one routine) | Used to read the embedded Dear ImGui font arrays in `engine/src/Graphics/EmbeddedFont.cpp` | Public domain | **Removed from the engine.** The engine now reads its own OKF1 container (`shared/OkfDecode.hpp`, data in `shared/RobotoFontOwn.h`, generator `scripts/gen_embedded_fonts.py`). The old base85 arrays stay in `shared/RobotoFont.h` and `shared/JetBrainsMonoFont.h` only because the editor and launcher still load them through Dear ImGui's own loader | The two legacy headers go with Dear ImGui (the editor and launcher can instead decode OKF1 and call `AddFontFromMemoryTTF`; not done, because it cannot be built and run here) |
+
+## Built into what we ship, but not ours (added 2026-11-26, `provenance_audit.md` A5 to A7)
+
+Found by the 2026-11-26 audit. The "what" and "where" columns were checked in the files named; the licence column is
+from memory and is **unverified** (the licence pages could not be reached). No notice file for any of these is
+written by any script yet (`provenance_audit.md` F6).
+
+| What | Where it gets in | Licence (unverified) | Replacement |
+|---|---|---|---|
+| MinGW-w64 GCC runtime: libgcc and libstdc++ | linked statically into every Windows program (`cmake/mingw-w64-x86_64.toolchain.cmake`, `-static-libgcc -static-libstdc++`) | GPLv3 with the GCC Runtime Library Exception | our own compilers (`tools/okaycc`, `tools/okayms`) and their own runtimes, not yet used for releases (rule 24a) |
+| winpthreads (MinGW-w64) | linked statically, whole archive, into every Windows program (same file); its own version resource is taken out of the copy | MIT-style, asks for its notice in copies | none planned yet |
+| libsodium | linked **statically** (`libsodium.a`, `SODIUM_STATIC`) into release builds, which must have it (`OKAY_REQUIRE_SODIUM`, `engine/CMakeLists.txt`) | ISC | `okay::crypto`, off until reviewed (rule 18) |
+| Emscripten runtime and system libraries, and its SDL2 port | compiled into the web player `okay-player.js` / `.wasm` (`player/CMakeLists.txt`, `-sUSE_SDL=2`; CI uses Emscripten 3.1.51) | Emscripten MIT / NCSA; its C library (musl-based) MIT; libc++ Apache-2.0 with LLVM exception; SDL2 zlib | none planned yet |
+| `steam_api64.dll` (Steamworks SDK redistributable) | copied into the Windows package only when `STEAMWORKS_SDK_PATH` is set (`scripts/build-windows-dist.sh`) | Valve's Steamworks SDK terms (proprietary) | none: an optional service hook (rule 19a) |
+
+## Data in our code that came from outside (added 2026-11-26)
+
+| Data | Where | Source as the code or file states it | Licence |
+|---|---|---|---|
+| Marching-cubes edge and triangle tables | `engine/src/Components/VoxelTerrain.cpp` (`kEdge`, `kTri`) | "Marching cubes tables (Paul Bourke)" (the code's own comment) | not recorded; owner decision pending (`provenance_audit.md` A1) |
+| Unicode bidi class L ranges and Arabic joining forms | `engine/src/Core/Localization.cpp` | "worked out from the Unicode Character Database (UCD 14.0)" (the code's comment) | Unicode's data licence; whether a notice is needed is unverified |
+| Test audio `tests/data/audio/ogg/`, `mp3/`, `flac/` | test data only, not shipped | encoded by ffmpeg (`Lavf60.16.100` in the files), with LAME 3.100 for MP3 and libvorbis for Ogg (encoder strings in the files); the source signal and the script that made them are not recorded | encoder output; nothing of the encoders is in the repository |
+| `tests/ttf_refs.inc` | test data only | FreeType's unhinted rendering of DejaVu Sans (`tests/test_ttf_rasterizer.cpp`) | program output; DejaVu's licence as below |
 
 Fonts are assets, not code, and stay with their licences:
 

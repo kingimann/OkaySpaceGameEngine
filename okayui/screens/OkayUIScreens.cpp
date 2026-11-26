@@ -49,29 +49,38 @@ WhatsNewResult DrawWhatsNew(const WhatsNewModel& m, float x, float y, float w, f
         UI::Text(line);
         UI::PopTextScale();
         const bool busy = m.state == UpdateState::Checking;
+        // Status colours that read on the page: the launcher's Light theme has a light panel, so darker ones there.
+        const unsigned char* pn = UI::Style().panel;
+        const bool lightPage = pn[0] * 0.2126f + pn[1] * 0.7152f + pn[2] * 0.0722f > 140.0f;
+        static const unsigned char kGreenOnLight[3] = {18, 107, 54}, kRedOnLight[3] = {184, 33, 41};
+        const unsigned char* green = lightPage ? kGreenOnLight : kGreen;
+        const unsigned char* red = lightPage ? kRedOnLight : kRed;
         switch (m.state) {
         case UpdateState::Available:
-            std::snprintf(line, sizeof(line), "v%s is ready to install.", m.availableVersion.c_str());
-            UI::TextColored(kGreen[0], kGreen[1], kGreen[2], line);
+            std::snprintf(line, sizeof(line), m.availableSkipped ? "v%s is available (skipped)" : "v%s is ready to install.", m.availableVersion.c_str());
+            res.statusLine = line;
+            UI::TextColored(green[0], green[1], green[2], line);
+            if (!m.message.empty()) UI::TextWrapped(m.message.c_str());   // why it is not installed by itself
             break;
         case UpdateState::Checking:
             UI::TextDisabled(m.message.empty() ? "Checking for updates..." : m.message.c_str());
             break;
         case UpdateState::Installed:
-            UI::TextColored(kGreen[0], kGreen[1], kGreen[2], "Update installed.");
+            UI::TextColored(green[0], green[1], green[2], "Update installed.");
             break;
         case UpdateState::Failed:
-            UI::TextColored(kRed[0], kRed[1], kRed[2], m.message.c_str());
+            UI::TextColored(red[0], red[1], red[2], m.message.c_str());
             break;
         case UpdateState::UpToDate:
-            UI::TextDisabled("You're up to date.");
+            res.statusLine = m.message.empty() ? "You're up to date." : m.message;   // (a test build ahead of the release says so)
+            UI::TextDisabled(res.statusLine.c_str());
             break;
         case UpdateState::Idle:
             UI::TextDisabled("Updates are checked automatically while the launcher is open.");
             break;
         }
         if (m.state == UpdateState::Available) {
-            if (UI::PrimaryButton("Install now")) res.installNow = true;
+            if (m.availableSkipped ? UI::Button("Install") : UI::PrimaryButton("Install now")) res.installNow = true;
             res.updateButton = UI::GetItemRect();
         } else if (m.state == UpdateState::Installed && m.restartNeeded) {
             if (UI::PrimaryButton("Restart now")) res.restartNow = true;

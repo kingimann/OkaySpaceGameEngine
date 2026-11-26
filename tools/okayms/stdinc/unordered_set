@@ -1,11 +1,109 @@
-// okay-ms own standard header: std::unordered_set, written from ISO/IEC 14882 [unord.set]. Own minimal version: it is
-// the sorted-array set of <set> (needs operator< on the element, not std::hash), so iteration is in ascending order,
-// which the standard allows ("unspecified order"), and an insert or erase in the middle is linear time.
+// okay-ms own standard header: std::unordered_set, written from ISO/IEC 14882 [unord.set]. Own minimal version in two
+// forms, as <unordered_map>: with the default hasher it is the sorted-array set of <set> (needs operator< on the
+// element, not std::hash; iteration in ascending order, which the standard allows); with a hasher given
+// (unordered_set<Guid, GuidHash>) it is an open-addressing hash table over a dense array, elements compared with ==,
+// and an erase moves the last element into the hole (linear time; erase(it) returns the place of the next one).
 #pragma once
 #include <set>
+#include <unordered_map>
+#include <vector>
 namespace std {
-template <typename T>
+template <typename T, typename H = __okay_ordered_keys, typename E = void>
 class unordered_set {
+    vector<T> items_;
+    vector<long long> slots_;  // index into items_, or -1 for an empty slot; the size is a power of two
+
+    long long slot_of(const T& value) const {
+        if (slots_.empty()) return -1;
+        const size_t mask = slots_.size() - 1;
+        size_t at = H()(value) & mask;
+        for (size_t probe = 0; probe < slots_.size(); ++probe) {
+            const long long idx = slots_[at];
+            if (idx < 0) return -1;
+            if (items_[(size_t)idx] == value) return idx;
+            at = (at + 1) & mask;
+        }
+        return -1;
+    }
+    void place(size_t idx) {
+        const size_t mask = slots_.size() - 1;
+        size_t at = H()(items_[idx]) & mask;
+        while (slots_[at] >= 0) at = (at + 1) & mask;
+        slots_[at] = (long long)idx;
+    }
+    void rebuild(size_t want) {
+        size_t n = 8;
+        while (n < want * 2) n *= 2;
+        slots_.assign(n, (long long)-1);
+        for (size_t i = 0; i < items_.size(); ++i) place(i);
+    }
+
+public:
+    typedef T key_type;
+    typedef T value_type;
+    typedef size_t size_type;
+    typedef const T* iterator;
+    typedef const T* const_iterator;
+    unordered_set() {}
+    unordered_set(initializer_list<T> list) {
+        for (const T* p = list.begin(); p != list.end(); ++p) insert(*p);
+    }
+    size_t size() const { return items_.size(); }
+    bool empty() const { return items_.empty(); }
+    const T* begin() const { return items_.data(); }
+    const T* end() const { return items_.data() + items_.size(); }
+    void clear() {
+        items_.clear();
+        slots_.clear();
+    }
+    void swap(unordered_set& other) {
+        items_.swap(other.items_);
+        slots_.swap(other.slots_);
+    }
+    void reserve(size_t n) {
+        if (n * 2 > slots_.size()) rebuild(n);
+    }
+    size_t count(const T& value) const { return slot_of(value) >= 0 ? 1 : 0; }
+    bool contains(const T& value) const { return slot_of(value) >= 0; }
+    const T* find(const T& value) const {
+        const long long idx = slot_of(value);
+        return idx >= 0 ? items_.data() + idx : end();
+    }
+    pair<const T*, bool> insert(const T& value) {
+        const long long idx = slot_of(value);
+        if (idx >= 0) return pair<const T*, bool>(items_.data() + idx, false);
+        items_.push_back(value);
+        if (items_.size() * 2 > slots_.size()) rebuild(items_.size());
+        else place(items_.size() - 1);
+        return pair<const T*, bool>(items_.data() + items_.size() - 1, true);
+    }
+    const T* erase(const T* pos) {
+        const size_t idx = (size_t)(pos - items_.data());
+        if (idx + 1 < items_.size()) items_[idx] = items_.back();
+        items_.pop_back();
+        rebuild(items_.size());
+        return items_.data() + idx;
+    }
+    size_t erase(const T& value) {
+        const long long idx = slot_of(value);
+        if (idx < 0) return 0;
+        erase(items_.data() + idx);
+        return 1;
+    }
+    // [container.reqmts] == and != (Round 31): before, there were none and okay-ms compared the objects' bytes
+    // (SaveFramework.hpp's `m_values == o.m_values` on a std::map).
+    // Equal when they hold the same values, in any order ([unord.req] 12).
+    bool operator==(const unordered_set& o) const {
+        if (size() != o.size()) return false;
+        for (const T* p = begin(); p != end(); ++p)
+            if (o.count(*p) == 0) return false;
+        return true;
+    }
+    bool operator!=(const unordered_set& o) const { return !(*this == o); }
+};
+
+template <typename T>
+class unordered_set<T, __okay_ordered_keys, void> {
     set<T> items_;
 
 public:
@@ -21,11 +119,16 @@ public:
     const T* begin() const { return items_.begin(); }
     const T* end() const { return items_.end(); }
     void clear() { items_.clear(); }
+    void swap(unordered_set& other) { items_.swap(other.items_); }
     void reserve(size_t) {}
     size_t count(const T& value) const { return items_.count(value); }
     const T* find(const T& value) const { return items_.find(value); }
     pair<const T*, bool> insert(const T& value) { return items_.insert(value); }
     size_t erase(const T& value) { return items_.erase(value); }
     const T* erase(const T* pos) { return items_.erase(pos); }
+    // [container.reqmts] == and != (Round 31): before, there were none and okay-ms compared the objects' bytes
+    // (SaveFramework.hpp's `m_values == o.m_values` on a std::map).
+    bool operator==(const unordered_set& o) const { return items_ == o.items_; }
+    bool operator!=(const unordered_set& o) const { return !(*this == o); }
 };
 }

@@ -36,14 +36,38 @@ bool Parser::parse_pack_element(size_t from, size_t to, size_t k, bool unary, No
     const std::vector<std::string> names = packs_in(from, to);
     std::vector<Token> saved(tokens.begin() + static_cast<std::ptrdiff_t>(from),
                              tokens.begin() + static_cast<std::ptrdiff_t>(to));
+    // A type pack named in the pattern (std::forward<A>(a)...) stands for its k-th type in element k: it is a typedef of
+    // that type while the element is read.
+    std::map<std::string, std::vector<Type>> type_elems;
+    std::map<std::string, Type> old_typedefs;
     if (k != static_cast<size_t>(-1)) {
-        for (size_t i = from; i < to; ++i)
-            if (tokens[i].kind == TIdent && param_packs.count(tokens[i].text) > 0)
+        for (size_t i = from; i < to; ++i) {
+            if (tokens[i].kind != TIdent) continue;
+            if (param_packs.count(tokens[i].text) > 0) {
                 tokens[i].text = param_packs[tokens[i].text][k];
+                continue;
+            }
+            auto tp = type_packs.find(tokens[i].text);
+            if (tp == type_packs.end() || k >= tp->second.size() || type_elems.count(tp->first) > 0) continue;
+            if (i + 1 < to && tokens[i + 1].kind == TEllipsis) continue;  // a nested A... stays a pack
+            type_elems[tp->first] = tp->second;
+            auto td = typedefs.find(tp->first);
+            if (td != typedefs.end()) old_typedefs[tp->first] = td->second;
+        }
+        for (const auto& te : type_elems) {
+            typedefs[te.first] = te.second[k];
+            type_packs.erase(te.first);
+        }
     }
     const size_t was_at = at;
     at = from;
     const bool ok = unary ? parse_unary(out) : parse_expr(1, out);
+    for (const auto& te : type_elems) {
+        type_packs[te.first] = te.second;
+        typedefs.erase(te.first);
+        auto od = old_typedefs.find(te.first);
+        if (od != old_typedefs.end()) typedefs[te.first] = od->second;
+    }
     const bool whole = at == to;
     at = was_at;
     std::copy(saved.begin(), saved.end(), tokens.begin() + static_cast<std::ptrdiff_t>(from));
@@ -131,7 +155,15 @@ bool Parser::try_fold(Node* out, bool* folded) {
     }
     Node init;
     if (has_init && !parse_pack_element(init_from, init_to, static_cast<size_t>(-1), true, &init)) return false;
-    const auto combine = [op](Node a, Node b) {
+    // One step of the fold: an overloaded operator of a class (`(os << ... << args)` with a stream) is called, as it would
+    // be for the expression written out ([temp.variadic] 10, [over.match.oper]); else the built-in operator.
+    bool combine_ok = true;
+    const auto combine = [this, op, &combine_ok](Node a, Node b) {
+        bool handled = false;
+        if (op != TComma && op != TAndAnd && op != TOrOr) {
+            if (!operator_binary(op, &a, &b, &handled)) combine_ok = false;
+            if (handled) return a;
+        }
         Node bin;
         bin.kind = Node::Binary;
         bin.op = op;
@@ -158,8 +190,46 @@ bool Parser::try_fold(Node* out, bool* folded) {
         for (size_t k = elems.size() - 1; k-- > 0;) acc = combine(std::move(elems[k]), std::move(acc));
         *out = std::move(acc);
     }
+    if (!combine_ok) return false;
     at = close + 1;
     *folded = true;
+    return true;
+}
+
+// At an item of a call's argument list or of a braced list: `g(xs)...` or `T(std::forward<A>(a))...`, a pattern that
+// names a parameter pack and ends with '...', is read once per element of the pack ([temp.variadic] 5; Round 31 also
+// in a braced list: `std::vector<LocArg>{LocArg(std::forward<A>(args))...}` of Localization.hpp). *done tells whether
+// the items were read; a bare `xs...` is left to the caller unless allow_bare.
+bool Parser::pack_expansion_items(bool allow_bare, std::vector<Node>* items, bool* done) {
+    *done = false;
+    const size_t start = at;
+    size_t e = start;
+    int depth = 0;
+    for (; e < tokens.size() && tokens[e].kind != TEnd; ++e) {
+        const Tok kind = tokens[e].kind;
+        if (kind == TLParen || kind == TLBrack || kind == TLBrace) ++depth;
+        else if (kind == TRParen || kind == TRBrack || kind == TRBrace) {
+            if (depth == 0) break;
+            --depth;
+        } else if (kind == TComma && depth == 0) break;
+    }
+    const bool bare = e == start + 2 && tokens[start].kind == TIdent;
+    if (!(e > start + 1 && tokens[e - 1].kind == TEllipsis && (allow_bare || !bare))) return true;
+    const std::vector<std::string> names = packs_in(start, e - 1);
+    if (names.empty()) return true;
+    const size_t count = param_packs[names[0]].size();
+    for (const std::string& n : names)
+        if (param_packs[n].size() != count) {
+            error = "the packs of an expansion differ in length";
+            return false;
+        }
+    for (size_t k = 0; k < count; ++k) {
+        Node element;
+        if (!parse_pack_element(start, e - 1, k, false, &element)) return false;
+        items->push_back(std::move(element));
+    }
+    at = e;
+    *done = true;
     return true;
 }
 
@@ -168,36 +238,9 @@ bool Parser::parse_call_args(std::vector<Node>* args) {
     do {
         {
             // f(g(xs)...): a pattern that is not a bare pack name is written once per element.
-            const size_t start = at;
-            size_t e = start;
-            int depth = 0;
-            for (; e < tokens.size() && tokens[e].kind != TEnd; ++e) {
-                const Tok kind = tokens[e].kind;
-                if (kind == TLParen || kind == TLBrack || kind == TLBrace) ++depth;
-                else if (kind == TRParen || kind == TRBrack || kind == TRBrace) {
-                    if (depth == 0) break;
-                    --depth;
-                } else if (kind == TComma && depth == 0) break;
-            }
-            const bool bare = e == start + 2 && tokens[start].kind == TIdent;
-            if (e > start + 1 && tokens[e - 1].kind == TEllipsis && !bare) {
-                const std::vector<std::string> names = packs_in(start, e - 1);
-                if (!names.empty()) {
-                    const size_t count = param_packs[names[0]].size();
-                    for (const std::string& n : names)
-                        if (param_packs[n].size() != count) {
-                            error = "the packs of an expansion differ in length";
-                            return false;
-                        }
-                    for (size_t k = 0; k < count; ++k) {
-                        Node element;
-                        if (!parse_pack_element(start, e - 1, k, false, &element)) return false;
-                        args->push_back(std::move(element));
-                    }
-                    at = e;
-                    continue;
-                }
-            }
+            bool expanded = false;
+            if (!pack_expansion_items(false, args, &expanded)) return false;
+            if (expanded) continue;
         }
         Node arg;
         if (is(TLBrace)) {
@@ -267,6 +310,12 @@ bool Parser::qualified_call(Node* out, int cls, const std::string& name, std::ve
         Node self;
         self.kind = Node::Name;
         self.text = "this";
+        // Base::f() from a class with several bases (Round 29): the base subobject of this.
+        const int to_owner = cur_class >= 0 && method_owner != cur_class && base_offset(cur_class, method_owner) > 0
+                                 ? base_offset(cur_class, method_owner)
+                                 : 0;
+        if (to_owner + m->this_adj != 0)
+            self = offset_ptr(std::move(self), to_owner + m->this_adj, m->this_sid >= 0 ? m->this_sid : m->owner);
         call.kids.push_back(std::move(self));
     }
     for (Node& arg : args) call.kids.push_back(std::move(arg));
@@ -345,18 +394,55 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     call.kind = Node::Call;
     call.number = 1;
     call.type = m->ret;
+    Node hoist;  // a virtual call's object with side effects: the store of its address (see below)
+    // A function of a base that is not at offset 0 (Round 29, [class.mi]): the object's address moves to that base
+    // subobject (for a virtual call, to the subobject whose table holds the slot).
+    const int owner_off = method_owner != sid && base_offset(sid, method_owner) > 0 ? base_offset(sid, method_owner) : 0;
     if (!dynamic) {
         call.text = m->qname;
+        if (!m->is_static && owner_off + m->this_adj != 0)
+            self = offset_ptr(std::move(self), owner_off + m->this_adj, m->this_sid >= 0 ? m->this_sid : m->owner);
     } else {
         if (has_effects(self)) {
-            error = "a virtual call needs an object expression without side effects";
-            return false;
+            // p->f() where p is an expression with effects (sp->f() through a smart pointer's operator->): its value
+            // goes to a hidden local first, so it is computed once ([expr.call] 7: the object expression is evaluated
+            // once). For a result in rax the store and the call are one comma expression, in place; for a floating
+            // point or class result the store goes before the statement.
+            if (cur_locals == nullptr) {
+                error = "a virtual call needs an object expression without side effects";
+                return false;
+            }
+            Local hidden;
+            hidden.name = "__vo" + std::to_string(tmp_count++);
+            hidden.type.base = 3;
+            hidden.type.struct_id = sid;
+            hidden.type.pointers = 1;
+            place_local(cur_locals, hidden);
+            Node assign;
+            assign.kind = Node::Assign;
+            assign.op = TAssign;
+            assign.kids.push_back(node_name(hidden.name));
+            assign.kids.push_back(std::move(self));
+            self = node_name(hidden.name);
+            const Type& r = m->ret;
+            const bool in_rax = r.is_ref || r.pointers > 0 || r.base == 0 ||
+                                ((r.base == 1 || r.base == 2 || r.base == 4) && !r.is_array());
+            if (in_rax) {
+                hoist = std::move(assign);
+            } else {
+                Node stmt;
+                stmt.kind = Node::ExprStmt;
+                stmt.kids.push_back(std::move(assign));
+                stmt_pre.push_back(std::move(stmt));
+            }
         }
+        if (owner_off + m->vt_adj != 0)
+            self = offset_ptr(std::move(self), owner_off + m->vt_adj, m->vt_sid >= 0 ? m->vt_sid : m->owner);
         FuncType ft;
         ft.ret = m->ret;
         Type self_ptr;
         self_ptr.base = 3;
-        self_ptr.struct_id = m->owner;
+        self_ptr.struct_id = m->vt_adj != 0 && m->vt_sid >= 0 ? m->vt_sid : m->owner;
         self_ptr.pointers = 1;
         ft.params.push_back(self_ptr);
         // A reference parameter is passed as its address (adjust_args took it), as for a direct call: the pointer
@@ -400,6 +486,22 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     }
     if (!m->is_static) call.kids.push_back(std::move(self));
     for (Node& arg : args) call.kids.push_back(std::move(arg));
+    if (hoist.kind == Node::Assign) {
+        Type ct = m->ret;
+        if (ct.is_ref) {
+            ct.is_ref = false;
+            ct.rref = false;
+            ct.pointers += 1;
+        }
+        Node comma;
+        comma.kind = Node::Binary;
+        comma.op = TComma;
+        comma.type = ct;
+        comma.kids.push_back(std::move(hoist));
+        comma.kids.push_back(std::move(call));
+        *out = reference_result(std::move(comma), m->ret.is_ref, m->ret.rref);
+        return true;
+    }
     *out = reference_result(std::move(call), m->ret.is_ref, m->ret.rref);
     return true;
 }
@@ -460,8 +562,41 @@ bool Parser::class_object_type(const Node& node, Type* out) const {
 // A call of the free function `name` (found in any namespace) with these arguments, when one fits.
 bool Parser::free_call(const std::string& name, std::vector<Node> args, Node* out, bool* found) {
     *found = false;
-    const std::string picked = pick_any_ns(name, args, true);
-    if (picked.empty()) return true;
+    std::string picked = pick_any_ns(name, args, true);
+    bool from_template = false;
+    if (picked.empty()) {
+        // An operator function template ([over.match.oper] 3, [temp.deduct.call]; Round 31): <chrono>'s comparisons
+        // of durations of any two units. A template whose arguments cannot be deduced from these operands is not a
+        // candidate: its error is dropped.
+        if (name.compare(0, 8, "operator") != 0 || func_templates.count(name) == 0 || !func_template_takes(name, args.size()))
+            return true;
+        const std::string saved_error = error;
+        // Of several templates of this operator (pair's and chrono's operator<), the first whose parameters deduce
+        // from these operands ([over.match.funcs] 7).
+        std::vector<const TDecl*> cands{&func_templates[name]};
+        auto extra = func_template_extra.find(name);
+        if (extra != func_template_extra.end())
+            for (const TDecl& cand : extra->second) cands.push_back(&cand);
+        const TDecl* fit = nullptr;
+        for (const TDecl* cand : cands) {
+            if (!cand->takes(args.size())) continue;
+            std::vector<TArg> trial;
+            const bool deduced = deduce_args(*cand, name, &trial, args);
+            error = saved_error;
+            if (deduced) {
+                fit = cand;
+                break;
+            }
+        }
+        if (fit == nullptr) return true;
+        explicit_fit_ = {fit};
+        explicit_fit_name_ = name;
+        if (!instantiate_function(name, {}, args, &picked)) {
+            error = saved_error;
+            return true;
+        }
+        from_template = true;
+    }
     for (const FuncDecl& known : funcs) {
         if (known.name != picked) continue;
         *found = true;
@@ -469,7 +604,7 @@ bool Parser::free_call(const std::string& name, std::vector<Node> args, Node* ou
         call.kind = Node::Call;
         call.text = picked;
         call.kids = std::move(args);
-        if (!pad_func_defaults(picked, &call.kids)) return false;
+        if (!from_template && !pad_func_defaults(picked, &call.kids)) return false;
         std::vector<Type> source = known.params;
         for (size_t i = 0; i < source.size() && i < known.param_ref.size(); ++i)
             if (known.param_ref[i]) {
@@ -485,6 +620,7 @@ bool Parser::free_call(const std::string& name, std::vector<Node> args, Node* ou
 
 // An object of a class used where a number or a pointer is wanted: its conversion function is called.
 bool Parser::convert_class(Node* node, const Type& target) {
+    if (target.is_bool && target.pointers == 0 && !target.is_array()) memptr_truth(node);  // `if (pm)`, `bool b = pm;`
     Type t;
     if (!class_object_type(*node, &t)) return true;
     const Method* m = conv_for(t.struct_id, target);
@@ -505,6 +641,10 @@ bool Parser::operator_binary(Tok op, Node* left, Node* right, bool* done) {
     Type rt;
     const bool lc = class_object_type(*left, &lt);
     const bool rc = class_object_type(*right, &rt);
+    if (op == TAndAnd || op == TOrOr) {
+        memptr_truth(left);  // pm && x: a member pointer is true when it is not null (Round 31)
+        memptr_truth(right);
+    }
     std::string name;
     if (!operator_name(op, &name)) return true;
     if (!lc && !rc) return true;
@@ -573,6 +713,14 @@ bool Parser::operator_binary(Tok op, Node* left, Node* right, bool* done) {
         Type ltype;
         if (static_type(*left, &ltype) && arith_type(ltype) && op != TAndAnd && op != TOrOr && (ltype.base >= 5 || ltype.wide)) other = ltype;
         if (!convert_class(right, other)) return false;
+    }
+    // An object of a class that no operator function takes and that converts to nothing: the built-in operator does
+    // not apply ([over.match.oper] 9). Before Round 31 the object's first bytes were compared or added (two
+    // std::chrono durations of other units compared their bare counts).
+    Type still;
+    if (op != TComma && (class_object_type(*left, &still) || class_object_type(*right, &still))) {
+        error = "no operator " + name.substr(8) + " for an object of class " + structs[static_cast<size_t>(still.struct_id)].name;
+        return false;
     }
     return true;
 }

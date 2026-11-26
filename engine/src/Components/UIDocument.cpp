@@ -17,6 +17,8 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Browser/Css.hpp"    // the one CSS reader (the Browser's)
+#include "okay/Browser/Html.hpp"   // the one HTML reader (the Browser's)
 
 #include <sstream>
 #include <vector>
@@ -471,106 +473,27 @@ struct HtmlNode {
 
 std::string Lower(std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; }
 
-// Decode the common HTML entities so e.g. onclick="f(&quot;x&quot;)" works inside a
-// double-quoted attribute (and &amp; &lt; &gt; &#39; in text/labels).
-std::string DecodeEntities(const std::string& s) {
-    if (s.find('&') == std::string::npos) return s;
-    struct E { const char* k; char v; };
-    static const E ents[] = {{"&quot;", '"'}, {"&apos;", '\''}, {"&#39;", '\''},
-                             {"&lt;", '<'}, {"&gt;", '>'}, {"&amp;", '&'}};
-    std::string out; out.reserve(s.size());
-    for (std::size_t i = 0; i < s.size();) {
-        bool hit = false;
-        if (s[i] == '&')
-            for (const E& e : ents) {
-                std::size_t n = std::strlen(e.k);
-                if (s.compare(i, n, e.k) == 0) { out += e.v; i += n; hit = true; break; }
-            }
-        if (!hit) out += s[i++];
-    }
-    return out;
-}
 std::string TrimStr(const std::string& s) {
     std::size_t a = s.find_first_not_of(" \t\r\n");
     if (a == std::string::npos) return "";
     std::size_t b = s.find_last_not_of(" \t\r\n");
     return s.substr(a, b - a + 1);
 }
-bool HtmlVoid(const std::string& t) {
-    static const char* v[] = {"img", "input", "br", "hr", "meta", "link"};
-    for (auto* s : v) if (t == s) return true;
-    return false;
-}
-
-// Parse the attributes inside a start tag (after the tag name, up to '>').
-void ParseAttrs(const std::string& s, std::vector<std::pair<std::string, std::string>>& out) {
-    std::size_t i = 0, n = s.size();
-    auto ws = [&] { while (i < n && std::isspace((unsigned char)s[i])) ++i; };
-    while (true) {
-        ws();
-        if (i >= n) break;
-        std::string key;
-        while (i < n && s[i] != '=' && !std::isspace((unsigned char)s[i]) && s[i] != '/') key += s[i++];
-        if (key.empty()) { if (i < n) ++i; continue; }
-        std::string val;
-        ws();
-        if (i < n && s[i] == '=') {
-            ++i; ws();
-            if (i < n && (s[i] == '"' || s[i] == '\'')) {
-                char q = s[i++];
-                while (i < n && s[i] != q) val += s[i++];
-                if (i < n) ++i;
-            } else {
-                while (i < n && !std::isspace((unsigned char)s[i]) && s[i] != '/') val += s[i++];
-            }
-        }
-        out.emplace_back(Lower(key), DecodeEntities(val));
-    }
-}
-
-// Recursive-descent HTML parse. Stops when it sees `</until>` (consumed). Any
-// <style>...</style> content is appended to `styleOut` and not treated as nodes.
-void ParseNodes(const std::string& s, std::size_t& i, const std::string& until,
-                std::vector<HtmlNode>& out, std::string& styleOut) {
-    std::size_t n = s.size();
-    while (i < n) {
-        if (s[i] == '<') {
-            if (s.compare(i, 4, "<!--") == 0) {            // comment
-                std::size_t e = s.find("-->", i + 4);
-                i = (e == std::string::npos) ? n : e + 3;
-                continue;
-            }
-            if (i + 1 < n && s[i + 1] == '/') {            // closing tag </x>
-                std::size_t e = s.find('>', i);
-                std::string close = Lower(TrimStr(s.substr(i + 2, (e == std::string::npos ? n : e) - (i + 2))));
-                i = (e == std::string::npos) ? n : e + 1;
-                if (until.empty() || close == until) return;  // pop to parent
-                continue;                                   // stray close: ignore
-            }
-            std::size_t e = s.find('>', i);
-            if (e == std::string::npos) { i = n; break; }
-            std::string inner = s.substr(i + 1, e - i - 1);
-            bool selfClose = (!inner.empty() && inner.back() == '/');
-            if (selfClose) inner.pop_back();
-            i = e + 1;
-            std::size_t sp = 0; while (sp < inner.size() && !std::isspace((unsigned char)inner[sp])) ++sp;
-            HtmlNode node; node.tag = Lower(inner.substr(0, sp));
-            if (sp < inner.size()) ParseAttrs(inner.substr(sp), node.attrs);
-            if (node.tag == "style") {                      // capture raw CSS
-                std::size_t e2 = s.find("</style", i);
-                styleOut += s.substr(i, (e2 == std::string::npos ? n : e2) - i);
-                std::size_t e3 = (e2 == std::string::npos) ? n : s.find('>', e2);
-                i = (e3 == std::string::npos) ? n : e3 + 1;
-                continue;
-            }
-            if (!selfClose && !HtmlVoid(node.tag))
-                ParseNodes(s, i, node.tag, node.kids, styleOut);
-            out.push_back(std::move(node));
-        } else {                                            // text run
-            std::size_t e = s.find('<', i);
-            std::string txt = TrimStr(s.substr(i, (e == std::string::npos ? n : e) - i));
-            if (!txt.empty()) { HtmlNode tn; tn.isText = true; tn.text = DecodeEntities(txt); out.push_back(std::move(tn)); }
-            i = (e == std::string::npos) ? n : e;
+// The document's tree comes from the Browser's HTML reader (okay/Browser/Html.hpp), the one HTML reader in the engine; this
+// turns it into the builder's nodes: text trimmed (whitespace-only text dropped), <style> and comments left out (the
+// reader already collected the <style> text).
+void FromBrowserTree(const okay::browser::Node& n, std::vector<HtmlNode>& out) {
+    for (const auto& c : n.children) {
+        if (c->kind == okay::browser::NodeKind::Text) {
+            const std::string txt = TrimStr(c->data);
+            if (!txt.empty()) { HtmlNode tn; tn.isText = true; tn.text = txt; out.push_back(std::move(tn)); }
+        } else if (c->kind == okay::browser::NodeKind::Element) {
+            if (c->name == "style") continue;
+            HtmlNode el;
+            el.tag = c->name;
+            el.attrs = c->attrs;
+            FromBrowserTree(*c, el.kids);
+            out.push_back(std::move(el));
         }
     }
 }
@@ -578,29 +501,27 @@ void ParseNodes(const std::string& s, std::size_t& i, const std::string& until,
 // A CSS rule: one selector + its declarations.
 struct CssRule { std::string sel; std::vector<std::pair<std::string, std::string>> decls; };
 
+// The sheet comes from the Browser's CSS reader (okay/Browser/Css.hpp). The builder matches one tag, one .class or one #id
+// (or *); any other selector is kept as text that matches nothing, as before.
+std::string SelectorKey(const okay::browser::Selector& sel) {
+    if (sel.parts.size() != 1) return "\x01";
+    const okay::browser::Compound& c = sel.parts[0];
+    const bool tag = !c.tag.empty();
+    if (tag && c.id.empty() && c.classes.empty()) return c.tag;
+    if (!tag && !c.id.empty() && c.classes.empty()) return "#" + c.id;
+    if (!tag && c.id.empty() && c.classes.size() == 1) return "." + c.classes[0];
+    return "\x01";
+}
+std::vector<std::pair<std::string, std::string>> CssDecls(const std::vector<okay::browser::Declaration>& in) {
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const auto& d : in) out.emplace_back(d.property, d.value);
+    return out;
+}
 std::vector<CssRule> ParseCss(const std::string& css) {
     std::vector<CssRule> rules;
-    std::size_t i = 0, n = css.size();
-    while (i < n) {
-        std::size_t open = css.find('{', i);
-        if (open == std::string::npos) break;
-        std::size_t close = css.find('}', open);
-        if (close == std::string::npos) break;
-        std::string sels = css.substr(i, open - i);
-        std::string body = css.substr(open + 1, close - open - 1);
-        std::vector<std::pair<std::string, std::string>> decls;
-        std::stringstream ds(body); std::string d;
-        while (std::getline(ds, d, ';')) {
-            std::size_t c = d.find(':');
-            if (c == std::string::npos) continue;
-            decls.emplace_back(Lower(TrimStr(d.substr(0, c))), TrimStr(d.substr(c + 1)));
-        }
-        std::stringstream ss(sels); std::string one;          // selector list: a, .b, #c
-        while (std::getline(ss, one, ',')) {
-            std::string sel = TrimStr(one);
-            if (!sel.empty()) rules.push_back({Lower(sel), decls});
-        }
-        i = close + 1;
+    for (const okay::browser::Rule& r : okay::browser::ParseStyleSheet(css).rules) {
+        const auto decls = CssDecls(r.declarations);
+        for (const okay::browser::Selector& sel : r.selectors) rules.push_back({SelectorKey(sel), decls});
     }
     return rules;
 }
@@ -723,9 +644,7 @@ void BuildHtmlElement(Scene& scene, const HtmlNode& el, Transform* parentT,
     for (const CssRule& r : css) if (r.sel == el.tag || r.sel == "*") applyDecls(r.decls);
     for (const CssRule& r : css) if (!r.sel.empty() && r.sel[0] == '.' && classHas(r.sel.substr(1))) applyDecls(r.decls);
     for (const CssRule& r : css) if (!r.sel.empty() && r.sel[0] == '#' && r.sel.substr(1) == id) applyDecls(r.decls);
-    if (el.has("style")) {                                  // inline style="" wins
-        for (const CssRule& r : ParseCss("x{" + el.attr("style") + "}")) applyDecls(r.decls);
-    }
+    if (el.has("style")) applyDecls(CssDecls(okay::browser::ParseDeclarations(el.attr("style"))));   // inline style="" wins
     // Fold accumulated geometry into pos/size props.
     if (!w.empty() || !h.empty()) {
         std::string sz = (w.empty() ? "0" : w);
@@ -800,10 +719,11 @@ void UIDocument::Rebuild() {
     // '<'), parse the tag tree + a <style> block of CSS and build the same widgets.
     if (LooksLikeHtml(markup)) {
         m_diagnostics.clear();
+        const okay::browser::HtmlDocument page = okay::browser::ParseHtml(markup);
         std::string cssText;
+        for (const std::string& sheet : page.styleSheets) cssText += sheet + "\n";
         std::vector<HtmlNode> roots;
-        std::size_t hi = 0;
-        ParseNodes(markup, hi, /*until=*/"", roots, cssText);
+        FromBrowserTree(*page.root, roots);
         std::vector<CssRule> css = ParseCss(cssText);
         BuildHtmlNodes(scene, roots, gameObject->transform, css, m_generated);
         return;

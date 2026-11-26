@@ -494,7 +494,7 @@ inline const std::vector<std::string>& RunnableExtensions() {
         "library-ms", "search-ms", "searchconnector-ms", "settingcontent-ms", "chm", "hlp",
         "appx", "appxbundle", "msix", "msixbundle", "appinstaller", "msu", "rdp", "theme", "themepack", "shb", "shs", "xnk", "ins", "isp", "job",
         // script hosts: Windows Script Host, HTML applications, PowerShell, Visual Basic, AutoHotkey, AutoIt
-        "vbs", "vbe", "vb", "bas", "js", "jse", "ws", "wsf", "wsh", "wsc", "sct", "hta", "ps1", "ps1xml", "ps2", "ps2xml", "psc1", "psc2", "psd1", "psm1",
+        "vbs", "vbe", "vb", "bas", "js", "mjs", "cjs", "jse", "ws", "wsf", "wsh", "wsc", "sct", "hta", "ps1", "ps1xml", "ps2", "ps2xml", "psc1", "psc2", "psd1", "psm1",
         "msh", "msh1", "msh2", "mshxml", "msh1xml", "msh2xml", "ahk", "au3",
         // Access files (they carry macros and code)
         "ade", "adp", "mda", "mdb", "mde", "mdt", "mdw", "mdz",

@@ -305,7 +305,8 @@ std::size_t DefaultBudget() {
         const long mb = std::atol(e);
         if (mb >= 0) return static_cast<std::size_t>(mb) * 1024u * 1024u;
     }
-    return std::size_t(1024) * 1024u * 1024u;
+    // Automatic: the asset streamer's video memory budget (from the renderer's report or the machine).
+    return AssetManager::Instance().VramBudget();
 }
 
 void EnsureLoader() {
@@ -524,6 +525,27 @@ const TextureAsset* ForRender(const std::string& name) {
     it->second.lastUsed = L.frame;
     const TextureAsset* a = it->second.p.get();
     return a && a->Valid() ? a : nullptr;
+}
+
+bool Prefetch(const std::string& name, float priority) {
+    if (name.empty() || name[0] == '@' || name.rfind("proc:", 0) == 0 || ReadOnly()) return false;
+    Library& L = Lib();
+    if (L.held.count(name)) return false;
+    EnsureLoader();
+    Slot s;
+    s.pending = AssetManager::Instance().Stream<TextureAsset>(name, priority);
+    s.loading = true;
+    s.lastUsed = L.frame;
+    L.held.emplace(name, std::move(s));
+    return true;
+}
+
+bool Loading(const std::string& name) {
+    Library& L = Lib();
+    auto it = L.held.find(name);
+    if (it == L.held.end()) return false;
+    if (!ReadOnly()) Resolve(it->first, it->second);
+    return it->second.loading;
 }
 
 void Drop(const std::string& name) {

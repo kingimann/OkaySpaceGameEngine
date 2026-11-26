@@ -8,16 +8,21 @@
 //   directory iterators, ...) are declared only. okay-ms's runtime does not define them yet, so a program that calls
 //   one links only against a library that does. Each has the std::error_code overload; there are no exceptions, so
 //   the overload without it reports nothing.
-// - No file_time_type clock, no space_info values, no permissions beyond the enumeration.
+// - file_time_type is a std::chrono::time_point of a file clock that counts 100-nanosecond steps since 1601-01-01, as
+//   Windows keeps file times ([fs.filesystem.syn]: a time_point of a trivial clock; Round 30). No space_info values,
+//   no permissions beyond the enumeration.
 #pragma once
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <system_error>
 #include <vector>
+#include <iterator>
+#include <chrono>
 namespace std {
 namespace filesystem {
 
+class path__iterator;
 class path {
     string text_;
 
@@ -183,6 +188,13 @@ public:
         return *this;
     }
 
+    // Iteration over the elements ([fs.path.itr]): a bidirectional iterator whose value is a path. Own version: each
+    // step reads the elements again (parts()), so walking a path of n elements costs n * n.
+    typedef path__iterator iterator;
+    typedef path__iterator const_iterator;
+    path__iterator begin() const;
+    path__iterator end() const;
+
     // The elements: root name, root directory, then each file name; separators are not elements ([fs.path.itr]).
     std::vector<path> parts() const {
         std::vector<path> out;
@@ -273,6 +285,60 @@ public:
     operator std::string() const { return text_; }
 };
 
+class path__iterator {
+    const path* owner_;
+    size_t index_;
+    path elem_;
+    void load() {
+        std::vector<path> all;
+        if (owner_) all = owner_->parts();
+        if (index_ < all.size()) elem_ = all[index_];
+        else elem_ = path();
+    }
+
+public:
+    typedef path value_type;
+    typedef const path& reference;
+    typedef const path* pointer;
+    typedef long long difference_type;
+    typedef bidirectional_iterator_tag iterator_category;
+    path__iterator() : owner_(0), index_(0) {}
+    path__iterator(const path* owner, size_t index) : owner_(owner), index_(index) { load(); }
+    path__iterator(const path__iterator& o) : owner_(o.owner_), index_(o.index_), elem_(o.elem_) {}
+    path__iterator& operator=(const path__iterator& o) {
+        owner_ = o.owner_;
+        index_ = o.index_;
+        elem_ = o.elem_;
+        return *this;
+    }
+    const path& operator*() const { return elem_; }
+    const path* operator->() const { return &elem_; }
+    path__iterator& operator++() {
+        ++index_;
+        load();
+        return *this;
+    }
+    path__iterator operator++(int) {
+        path__iterator was(*this);
+        ++*this;
+        return was;
+    }
+    path__iterator& operator--() {
+        --index_;
+        load();
+        return *this;
+    }
+    path__iterator operator--(int) {
+        path__iterator was(*this);
+        --*this;
+        return was;
+    }
+    bool operator==(const path__iterator& o) const { return owner_ == o.owner_ && index_ == o.index_; }
+    bool operator!=(const path__iterator& o) const { return !(*this == o); }
+};
+inline path__iterator path::begin() const { return path__iterator(this, 0); }
+inline path__iterator path::end() const { return path__iterator(this, parts().size()); }
+
 inline path operator/(const path& a, const path& b) {
     path out = a;
     out /= b;
@@ -280,6 +346,20 @@ inline path operator/(const path& a, const path& b) {
 }
 inline path u8path(const std::string& s) { return path(s); }
 inline path u8path(const char* s) { return path(s); }
+// [fs.class.filesystem.error] (Round 31; FileCopy.hpp's CopyFileOver throws one): a system_error with the paths the
+// failed operation named.
+class filesystem_error : public system_error {
+    path path1_;
+    path path2_;
+
+public:
+    filesystem_error(const string& what_arg, error_code ec) : system_error(ec, what_arg) {}
+    filesystem_error(const string& what_arg, const path& p1, error_code ec) : system_error(ec, what_arg), path1_(p1) {}
+    filesystem_error(const string& what_arg, const path& p1, const path& p2, error_code ec)
+        : system_error(ec, what_arg), path1_(p1), path2_(p2) {}
+    const path& path1() const { return path1_; }
+    const path& path2() const { return path2_; }
+};
 
 enum class file_type { none, not_found, regular, directory, symlink, block, character, fifo, socket, unknown };
 enum class perms : unsigned { none = 0, owner_read = 0400, owner_write = 0200, owner_exec = 0100, owner_all = 0700,
@@ -303,8 +383,23 @@ struct space_info {
     std::uintmax_t available;
 };
 
-// A count of 100-nanosecond intervals, as Windows keeps file times (own simplification: no clock type).
-typedef long long file_time_type;
+// The clock of file times (Round 30): 100-nanosecond steps since 1601-01-01, the unit and epoch of a Windows file time
+// (GetSystemTimeAsFileTime gives now()). [fs.filesystem.syn] asks for a trivial clock; C++20 names it file_clock.
+struct __okay_file_clock {
+    typedef long long rep;
+    typedef ratio<1, 10000000> period;
+    typedef chrono::duration<long long, ratio<1, 10000000> > duration;
+    static const bool is_steady = false;
+    template <class Unused = void>  // made only where it is called (see steady_clock::now in <chrono>)
+    static chrono::time_point<__okay_file_clock, chrono::duration<long long, ratio<1, 10000000> > > now() {
+        unsigned long long ft = 0;
+        GetSystemTimeAsFileTime(&ft);
+        return chrono::time_point<__okay_file_clock, chrono::duration<long long, ratio<1, 10000000> > >(
+            chrono::duration<long long, ratio<1, 10000000> >((long long)ft));
+    }
+    typedef chrono::time_point<__okay_file_clock, chrono::duration<long long, ratio<1, 10000000> > > time_point;
+};
+typedef chrono::time_point<__okay_file_clock, chrono::duration<long long, ratio<1, 10000000> > > file_time_type;
 
 // The operations ([fs.op.funcs]): declarations only (see the top of this header).
 bool exists(const path& p);
@@ -369,6 +464,8 @@ public:
     bool is_regular_file() const;
     bool is_directory(error_code& ec) const;
     bool is_regular_file(error_code& ec) const;
+    bool is_symlink() const;
+    bool is_symlink(error_code& ec) const;
     std::uintmax_t file_size() const;
     std::uintmax_t file_size(error_code& ec) const;
     file_time_type last_write_time() const;

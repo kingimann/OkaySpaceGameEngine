@@ -9,6 +9,12 @@ constexpr uint32_t kMaxSections = 96;
 constexpr uint32_t kMaxSymbolRecords = 100000;
 constexpr uint32_t kMaxSectionBytes = 32u * 1024u * 1024u;
 constexpr uint32_t kMaxStringBytes = 16u * 1024u * 1024u;
+// PE Format, Section Flags: IMAGE_SCN_LNK_NRELOC_OVFL, "the section contains extended relocations". A section with more
+// relocations than the 16-bit NumberOfRelocations field can hold sets it, writes 0xFFFF in that field and stores the
+// real count in the VirtualAddress field of a first relocation record. That first record is counted too (the count
+// is the number of 10-byte records in the table).
+constexpr uint32_t kScnNrelocOvfl = 0x01000000u;
+constexpr uint32_t kMaxRelocations = 4u * 1024u * 1024u;
 
 void append_u16(std::vector<uint8_t>& out, uint16_t value) {
     out.push_back(static_cast<uint8_t>(value));
@@ -95,7 +101,7 @@ Result<std::vector<uint8_t>> write_coff(const ObjectFile& object) {
         if (section.data.size() > kMaxSectionBytes) {
             return Result<std::vector<uint8_t>>::fail("section is too large");
         }
-        if (section.relocations.size() > 65535u) {
+        if (section.relocations.size() > kMaxRelocations) {
             return Result<std::vector<uint8_t>>::fail("too many relocations in one section");
         }
         for (const Relocation& reloc : section.relocations) {
@@ -155,6 +161,7 @@ Result<std::vector<uint8_t>> write_coff(const ObjectFile& object) {
         if (!section.relocations.empty()) {
             reloc_pointer[i] = cursor;
             cursor += 10u * static_cast<uint32_t>(section.relocations.size());
+            if (section.relocations.size() >= 0xFFFFu) cursor += 10u;  // the record that holds the count
         }
     }
     const uint32_t symbol_pointer = emit_strings ? cursor : 0;
@@ -195,14 +202,20 @@ Result<std::vector<uint8_t>> write_coff(const ObjectFile& object) {
         append_u32(out, raw_pointer[i]);
         append_u32(out, reloc_pointer[i]);
         append_u32(out, 0);
-        append_u16(out, static_cast<uint16_t>(section.relocations.size()));
+        const bool overflow = section.relocations.size() >= 0xFFFFu;
+        append_u16(out, overflow ? 0xFFFFu : static_cast<uint16_t>(section.relocations.size()));
         append_u16(out, 0);
-        append_u32(out, section.characteristics);
+        append_u32(out, overflow ? (section.characteristics | kScnNrelocOvfl) : section.characteristics);
     }
 
     for (size_t i = 0; i < object.sections.size(); ++i) {
         const Section& section = object.sections[i];
         out.insert(out.end(), section.data.begin(), section.data.end());
+        if (section.relocations.size() >= 0xFFFFu) {
+            append_u32(out, static_cast<uint32_t>(section.relocations.size()) + 1u);
+            append_u32(out, 0);
+            append_u16(out, 0);
+        }
         for (const Relocation& reloc : section.relocations) {
             append_u32(out, reloc.offset);
             append_u32(out, logical_to_raw[reloc.symbol]);
@@ -268,7 +281,8 @@ Result<ObjectFile> read_coff(const uint8_t* data, size_t size) {
         uint32_t raw_size;
         uint32_t raw_pointer;
         uint32_t reloc_pointer;
-        uint16_t reloc_count;
+        uint32_t reloc_count;
+        uint32_t reloc_skip;  // 1 when the first record holds the count (IMAGE_SCN_LNK_NRELOC_OVFL)
         uint32_t characteristics;
         bool long_name;
         uint32_t name_offset;
@@ -284,6 +298,20 @@ Result<ObjectFile> read_coff(const uint8_t* data, size_t size) {
         section.reloc_pointer = read_u32(header + 24);
         section.reloc_count = read_u16(header + 32);
         section.characteristics = read_u32(header + 36);
+        section.reloc_skip = 0;
+        if ((section.characteristics & kScnNrelocOvfl) != 0 && section.reloc_count == 0xFFFFu) {
+            if (!range_ok(section.reloc_pointer, 10, size)) {
+                return Result<ObjectFile>::fail("truncated relocation table");
+            }
+            const uint32_t count = read_u32(data + section.reloc_pointer);
+            if (count < 0xFFFFu || count > kMaxRelocations + 1u) {
+                return Result<ObjectFile>::fail("bad extended relocation count");
+            }
+            // The count includes the record that holds it.
+            section.reloc_count = count - 1u;
+            section.reloc_skip = 1;
+            section.characteristics &= ~kScnNrelocOvfl;
+        }
         if (header[0] == '/') {
             if (header[1] < '0' || header[1] > '9') {
                 return Result<ObjectFile>::fail("section name is not a string-table offset");
@@ -308,7 +336,7 @@ Result<ObjectFile> read_coff(const uint8_t* data, size_t size) {
         if (section.raw_size != 0 && !range_ok(section.raw_pointer, section.raw_size, size)) {
             return Result<ObjectFile>::fail("truncated section data");
         }
-        const size_t reloc_bytes = static_cast<size_t>(section.reloc_count) * 10u;
+        const size_t reloc_bytes = static_cast<size_t>(section.reloc_count + section.reloc_skip) * 10u;
         if (section.reloc_count != 0 && !range_ok(section.reloc_pointer, reloc_bytes, size)) {
             return Result<ObjectFile>::fail("truncated relocation table");
         }
@@ -356,8 +384,8 @@ Result<ObjectFile> read_coff(const uint8_t* data, size_t size) {
             section.data.assign(data + raw.raw_pointer, data + raw.raw_pointer + raw.raw_size);
         }
         section.relocations.resize(raw.reloc_count);
-        for (uint16_t r = 0; r < raw.reloc_count; ++r) {
-            const uint8_t* rec = data + raw.reloc_pointer + static_cast<size_t>(r) * 10u;
+        for (uint32_t r = 0; r < raw.reloc_count; ++r) {
+            const uint8_t* rec = data + raw.reloc_pointer + static_cast<size_t>(r + raw.reloc_skip) * 10u;
             section.relocations[r].offset = read_u32(rec);
             section.relocations[r].symbol = read_u32(rec + 4);
             section.relocations[r].type = read_u16(rec + 8);

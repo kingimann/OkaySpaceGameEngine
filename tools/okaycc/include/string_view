@@ -1,0 +1,4 @@
+// <string_view> for okay-cc (ISO/IEC 14882 [string.view.synop]). Our own header: the class is in
+// <__string_view>; <string> adds the conversions to and from std::string and hash<string_view>.
+#pragma once
+#include <string>

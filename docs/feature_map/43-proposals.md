@@ -188,14 +188,14 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   Home: `engine/include/okay/Components/WorldStreamer.hpp`, `engine/include/okay/Optimize/StreamingGrid.hpp`, `engine/include/okay/Texture/Stream.hpp`, `engine/include/okay/Audio/AudioStream.hpp`. Entry: `engine/include/okay/Components/WorldStreamer.hpp`. Also called: WorldStreamer, World Partition, level streaming, chunk streaming, StreamingGrid. Fix: One okay/World folder (architecture.md): WorldStreamer, StreamingGrid, Texture/Stream, Audio/AudioStream.
 - **What:** Split one big scene into streaming cells and manage them, so open worlds can be edited as one map.
 - **Parts:**
-  - 45.1.1 Streamer component - `Components/WorldStreamer` - loads cells named `<prefix>_<x>_<z>.okayprefab` within a radius of the camera; hysteresis between load and unload radius
+  - 45.1.1 Streamer component - `Components/WorldStreamer` - streams cells named `<prefix>_<x>_<z>.okayprefab` within a radius of the camera (on `Optimize/StreamingGrid`, through the asset streamer: no hitches, see 27.4); hysteresis between load and unload radius
   - 45.1.2 Additive scene merge - `Scene/SceneSerializer` - `MergeFromText` with an offset places scene "chunks" side by side
   - 45.1.3 Cell editor - `-` - not built (cells are written by hand today)
 - **Code:** `Components/WorldStreamer`, `Scene/SceneSerializer`
-- **API:** `WorldStreamer` (`cellSize`, `loadRadius`, `unloadRadius`, `folder`, `prefix`), `SyncNow`, `LoadedCells`
+- **API:** `WorldStreamer` (`cellSize`, `loadRadius`, `unloadRadius`, `folder`, `prefix`), `SyncNow`, `LoadedCells`, `GetCellState`
 - **Editor:** WorldStreamer Inspector section
-- **Docs:** `docs/engine/scene_management.md`
-- **Tests:** `worldstreamer`
+- **Docs:** `docs/engine/scene_management.md`, `docs/engine/asset_streaming.md`
+- **Tests:** `worldstreamer`, `asset_streaming`
 - **Status:** Partial - runtime streaming works; authoring is manual.
 - **Exists today:** The streamer, as above. It assumes each cell prefab already holds objects at final world positions.
 - **Suggested priority:** Medium - open worlds are a stated goal of the terrain tools; this is the missing workflow.
@@ -750,22 +750,21 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **System:** Physics
 - **What:** Fabric, flags, capes and hair that move with physics.
 - **Parts:**
-  - 52.1.1 Verlet particle chain - `Components/Ragdoll` - the ragdoll uses Verlet particles with distance constraints; the solver could be a base
-  - 52.1.2 Distance and spring joints - `Components/Joint3D` - `Mode { Distance, Spring, Pin, Hinge }`
-  - 52.1.3 Cloth component - `-` - not built (no cloth code found)
-- **Code:** `Components/Ragdoll`, `Components/Joint3D`
+  - 52.1.1 Distance and spring joints - `Components/Joint3D` - `Mode { Distance, Spring, Pin, Hinge }`
+  - 52.1.2 Cloth component - `-` - not built (no cloth code found)
+- **Code:** `Components/Joint3D`
 - **API:** none for cloth
 - **Editor:** none
 - **Docs:** `docs/physics/physics.md`
-- **Tests:** `ragdoll`, `physics_joints`
-- **Status:** Planned - no cloth, rope or hair code exists; only the ragdoll's particle chain.
-- **Exists today:** A particle chain solver inside the ragdoll; no mesh cloth.
+- **Tests:** `physics_joints`
+- **Status:** Planned - no cloth, rope or hair code exists (the ragdoll's Verlet particle chain was deleted when the ragdoll moved onto the physics core).
+- **Exists today:** Distance and spring joints; no mesh cloth.
 - **Suggested priority:** Low - visual polish.
 - **Open:** first step: a rope and flag component on a particle grid with pin points and wind from `Environment/Wind`.
 - **Related:** 5.8, 6.3, 30.3
 - **Words:** cloth, flag, cape, hair physics, rope, verlet, wind
 - **Seen as:** capes and flags are stiff
-- **Ask me like:** "add a simple flag and rope component on the ragdoll's solver"
+- **Ask me like:** "add a simple flag and rope component"
 
 ### 52.2 Soft bodies
 - **System:** Physics
@@ -1111,16 +1110,17 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Run games in a browser.
 - **Parts:**
   - 56.3.1 Emscripten build - `scripts/build-web.sh`, `player/CMakeLists.txt` - the player runs under `emscripten_set_main_loop`; CI job `web-build`
-  - 56.3.2 Web export from Build Game - `editor/main.cpp` - writes a game folder and build instructions
-- **Code:** `scripts/build-web.sh`, `editor/main.cpp`
+  - 56.3.2 Web export from Build Game - `editor/BuildGame.cpp` - writes a game folder and a build script that makes `web/` and an itch.io zip
+  - 56.3.3 Page, saves, input and Run in browser - see 18.2.5 to 18.2.9
+- **Code:** `scripts/build-web.sh`, `scripts/web_package.py`, `platform/web/`, `editor/BuildGame.cpp`, `editor/WebRun.cpp`
 - **API:** Build Settings target Web
 - **Editor:** Build Settings
 - **Docs:** `docs/platform/web_mobile.md`
-- **Tests:** CI `web-build`
-- **Status:** Partial - builds in CI; networking (UDP) does not work in the browser (per `docs/platform/web_mobile.md`).
+- **Tests:** CI `web-build` (headless Chromium), `web_export`, `web_package_script`
+- **Status:** Partial - builds, packs, loads, saves and takes input in headless Chromium; networking (UDP) does not work in the browser.
 - **Exists today:** Parts above.
 - **Suggested priority:** Low.
-- **Open:** first step: package the web build as a zip ready for itch.io from the editor when emscripten is installed.
+- **Open:** next steps: a WebSocket transport through the relay for multiplayer; running Emscripten from the editor when it is installed; lazy asset packs.
 - **Related:** 18.2
 - **Words:** web export, WebAssembly, Emscripten, WebGL, itch.io, browser game
 - **Seen as:** web build needs manual steps

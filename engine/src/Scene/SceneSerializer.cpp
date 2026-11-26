@@ -1,4 +1,5 @@
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Core/AssetDatabase.hpp"
 #include "okay/Scene/PrefabTools.hpp"
 #include "okay/Scene/SceneText.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
@@ -745,6 +746,7 @@ SceneLoadJob::~SceneLoadJob() = default;
 std::unique_ptr<SceneLoadJob> SceneLoadJob::OpenText(std::string text, bool additive, const Vec3& offset) {
     std::unique_ptr<SceneLoadJob> j(new SceneLoadJob());
     j->m_size = text.empty() ? 1 : text.size();
+    j->m_prefabStructure = PrefabTools::UsesPrefabStructure(text);
     j->m_session = std::make_unique<ParseSession>(std::move(text));
     j->m_additive = additive;
     j->m_offset = offset;
@@ -752,7 +754,8 @@ std::unique_ptr<SceneLoadJob> SceneLoadJob::OpenText(std::string text, bool addi
 }
 
 std::unique_ptr<SceneLoadJob> SceneLoadJob::OpenFile(const std::string& path, bool additive,
-                                                     const Vec3& offset, std::string* error) {
+                                                     const Vec3& offset, std::string* error,
+                                                     std::vector<std::string>* referencedFiles) {
     std::ifstream f(FilePath(path), std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return nullptr; }
     std::stringstream ss;
@@ -760,6 +763,8 @@ std::unique_ptr<SceneLoadJob> SceneLoadJob::OpenFile(const std::string& path, bo
     std::string raw = ss.str();
     std::string text = DataPack::Unpack(raw);
     if (text.empty() && DataPack::IsPacked(raw)) { if (error) *error = "tampered or unreadable " + path; return nullptr; }
+    if (referencedFiles)
+        for (const FoundRef& r : ExtractSceneRefs(text)) referencedFiles->push_back(r.path);
     auto j = OpenText(std::move(text), additive, offset);
     const std::size_t slash = path.find_last_of("/\\");
     j->m_dir = slash == std::string::npos ? std::string() : path.substr(0, slash + 1);

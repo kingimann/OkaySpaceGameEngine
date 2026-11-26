@@ -287,6 +287,11 @@ Index ParseIndex(std::string_view text, IndexKind kind) {
             if (const Value* c = ev.get("channel"); c && c->kind == Value::String && (c->str == "latest" || c->str == "lts")) e.channel = c->str;
             if (const Value* d = ev.get("date"); d && d->kind == Value::String && d->str.size() <= 32 && PlainText(d->str, 32)) e.date = d->str;
             if (const Value* b = ev.get("inBucket"); b && b->kind == Value::Bool) e.inBucket = b->b;
+            if (const Value* mc = ev.get("mainCount"); mc && mc->kind == Value::Number) {   // the build's place on main (0 / missing / junk = not known)
+                std::uint64_t n = 0;
+                if (okayofficial::ParseSize(mc, n) && n <= (1ull << 40)) e.mainCount = n;
+            }
+            if (const Value* ms = ev.get("mainSha"); ms && ms->kind == Value::String && ms->str.size() <= 64) e.mainSha = okay::testbuild::CleanSha(ms->str);
             if (kind == IndexKind::TestBuilds) {   // where the build came from: cleaned, display-only (anything unusable is simply left out)
                 auto text = [&](const char* key) -> std::string_view {
                     const Value* t = ev.get(key);
@@ -449,10 +454,20 @@ Index LoadDevIndex(const Sources& src, const FetchTextFn& fetch) {
     idx.signedByPublisher = sig.kind == okayupdate::Kind::Valid;
     if (!idx.ok) return idx;
     idx.lts.clear();
-    idx.latest.clear();
-    for (const Entry& e : idx.versions)                                  // newest first
-        if (e.inBucket && HasAllChecksums(e)) { idx.latest = e.version; break; }
+    idx.latest = TestBuildHead(idx, "");                                 // the newest installable MAIN build; a branch build never is the head
     return idx;
+}
+
+std::string TestBuildHead(const Index& testBuilds, const std::string& running) {
+    if (!testBuilds.ok) return {};
+    const std::string cur = okayver::NormalizeVersion(running);
+    for (const Entry& e : testBuilds.versions) {                        // newest first (ParseIndex sorts)
+        if (!okay::testbuild::IsTestVersion(e.version) || !okay::testbuild::IsMainBranch(e.branch) || !e.inBucket || !HasAllChecksums(e)) continue;
+        // The newest installable main build, and only when it is newer than what runs: never back down to a lower number by itself (a person on a
+        // branch build that finished later waits for the next main build, which always gets a higher number).
+        return (cur.empty() || okayver::CompareVersions(e.version, cur) > 0) ? e.version : std::string();
+    }
+    return {};
 }
 
 std::string PickHighlight(const Index& index, const std::string& requested) {
@@ -463,6 +478,98 @@ std::string PickHighlight(const Index& index, const std::string& requested) {
     for (const Entry& e : index.versions)           // newest first
         if (okayver::SameLine(e.version, v)) return e.version;
     return {};
+}
+
+// ---- the Versions page's model ---------------------------------------------------------------------------------------------
+
+RequestBanner DescribeRequest(const std::string& requestedIn, const std::string& running, const std::vector<std::string>& installed,
+                              bool listReady, bool listOk, const std::string& highlight) {
+    RequestBanner b;
+    const std::string requested = okayver::NormalizeVersion(requestedIn);
+    if (requested.empty()) return b;
+    const std::string line = okayver::LineLabel(requested);
+    auto shown = [](const std::string& v) { return okay::testbuild::DisplayVersion(v); };
+    std::string match;
+    for (const std::string& v : installed) if (okayver::SameLine(v, requested)) { match = okayver::NormalizeVersion(v); break; }
+    const std::string cur = okayver::NormalizeVersion(running);
+    // The running editor first: a request for its own line (v2.903.x while v2.903.8.114, a test build of that line, runs) needs nothing
+    // installed. Without this the banner asked the person to install the release they were already on (owner, 2026-11-25).
+    if (!cur.empty() && okayver::SameLine(cur, requested)) {
+        b.kind = RequestBanner::Running;
+        b.text = "You're running " + shown(cur) + ", which is " + line + ", so it opens projects of that version. Nothing else has to be installed.";
+    } else if (!match.empty()) {
+        b.kind = RequestBanner::Installed;
+        b.text = line + " is already installed (" + shown(match) + "). Projects of that version can be opened with it from their Open with menu.";
+    } else if (!listReady) {
+        b.kind = RequestBanner::Looking;
+        b.text = "Looking for " + line + " in the version list\xE2\x80\xA6";
+    } else if (!highlight.empty()) {
+        b.kind = RequestBanner::Install;
+        b.text = "The editor needs " + line + " to open that project with its own version. Install " + shown(highlight) + " below.";
+    } else if (!listOk) {
+        b.kind = RequestBanner::Unreadable;
+        b.text = line + " isn't installed, and the version list can't be read right now, so it can't be installed from here.";
+    } else {
+        b.kind = RequestBanner::NotListed;
+        b.text = line + " isn't installed, and it isn't one of the newest " + std::to_string(kInstallableReleases) +
+                 " releases that can be installed here, so it can't be installed from here.";
+    }
+    return b;
+}
+
+std::vector<const Entry*> InstallableWindow(const Index& list, bool testBuilds) {
+    std::vector<const Entry*> out;
+    if (!list.ok) return out;
+    const std::size_t n = testBuilds ? (std::size_t)okay::testbuild::kKept : kInstallableReleases;
+    for (const Entry& e : list.versions) {   // newest first (ParseIndex sorts); each list holds only its own kind, checked again here
+        if (testBuilds ? !okay::testbuild::IsTestVersion(e.version) : !okay::testbuild::IsReleaseShaped(e.version)) continue;
+        out.push_back(&e);
+    }
+    std::stable_sort(out.begin(), out.end(), [](const Entry* a, const Entry* b) { return okayver::CompareVersions(a->version, b->version) > 0; });
+    if (out.size() > n) out.resize(n);
+    return out;
+}
+
+std::vector<AvailableRow> AvailableRows(const Index& releases, const Index& testBuilds, const std::string& running,
+                                        const std::vector<std::string>& installed, std::uint64_t runningMainCount, const std::string& skipped) {
+    const std::string cur = okayver::NormalizeVersion(running), skip = okayver::NormalizeVersion(skipped);
+    const bool onTestBuild = okay::testbuild::IsTestVersion(cur);
+    std::set<std::string> have;
+    for (const std::string& v : installed) have.insert(okayver::NormalizeVersion(v));
+    std::vector<AvailableRow> rows;
+    auto add = [&](const Index& idx, bool test) {
+        for (const Entry* ep : InstallableWindow(idx, test)) {
+            const Entry& e = *ep;
+            if (e.version == cur || have.count(e.version)) continue;
+            AvailableRow r;
+            r.entry = &e;
+            r.testBuild = test;
+            r.downloadable = e.inBucket;
+            const auto ed = e.files.find(IndexName(Asset::Editor));
+            r.checkable = ed != e.files.end() && ed->second.sha256.size() == 64;
+            auto part = [&](const std::string& s) { if (!s.empty()) r.detail += (r.detail.empty() ? "" : "  \xC2\xB7  ") + s; };
+            part(e.date);
+            std::uint64_t bytes = 0;
+            for (Asset a : {Asset::Editor, Asset::Player, Asset::Sdl}) {
+                const auto it = e.files.find(IndexName(a));
+                if (it != e.files.end()) bytes += it->second.size;
+            }
+            if (bytes) part("about " + HumanSize(bytes));
+            if (test) part(okay::testbuild::Title(e.branch, e.sha));
+            if (!e.inBucket) part(test ? "no longer on the download server: can't be downloaded any more"
+                                       : "older than the download server: can't be downloaded any more");
+            else part("from the OkaySpace download server");
+            if (!r.checkable) part("no checksum: can't be installed here");
+            if (!test && !idx.lts.empty() && e.version == idx.lts) part("only gets fixes");
+            if (!test && onTestBuild && okay::testbuild::ContentAhead(e.mainCount, runningMainCount) == okay::testbuild::Ahead::No)
+                part("older than your test build");   // its place on main is not after the running test build's (both known)
+            if (!skip.empty() && e.version == skip) part("skipped");
+            rows.push_back(std::move(r));
+        }
+    };
+    add(releases, false);   // two groups, each newest first: the releases, then the test builds
+    add(testBuilds, true);
+    return rows;
 }
 
 // ---- the plan --------------------------------------------------------------------------------------------------------------
@@ -527,6 +634,36 @@ InstallPlan PlanInstall(const Index& index, const std::string& versionIn, const 
     }
     p.ok = true;
     return p;
+}
+
+InstallPlan PlanInstall(const Index& releases, const Index& testBuilds, const std::string& version, const std::string& bucketBase,
+                        const fs::path& localSdl, bool requireSdl) {
+    const bool test = okay::testbuild::IsTestVersion(version);
+    const Index& list = test ? testBuilds : releases;
+    // Listed but older than the newest 3 of its kind: not offered, not installed. (The long-term-support head is the exception: the Update channel
+    // card installs it next to a newer launcher, whatever its age.)
+    if (list.ok && list.Find(okayver::NormalizeVersion(version)) && !(!test && okayver::NormalizeVersion(version) == releases.lts)) {
+        bool inWindow = false;
+        for (const Entry* e : InstallableWindow(list, test)) if (e->version == okayver::NormalizeVersion(version)) inWindow = true;
+        if (!inWindow) {
+            InstallPlan p;
+            p.version = okayver::NormalizeVersion(version);
+            p.error = "Only the newest " + std::to_string(test ? (std::size_t)okay::testbuild::kKept : kInstallableReleases) + (test ? " test builds" : " releases") +
+                      " can be installed here, and v" + p.version + " is older than those.";
+            return p;
+        }
+    }
+    if (!test) return PlanInstall(releases, version, bucketBase, localSdl, requireSdl);
+    if (!testBuilds.ok) {
+        InstallPlan p;
+        p.version = okayver::NormalizeVersion(version);
+        p.error = "v" + p.version + " is a test build, and the list of test builds is not available. Switch Get test builds on to install test builds.";
+        return p;
+    }
+    std::string base = bucketBase;
+    if (!base.empty() && base.back() != '/') base += '/';
+    if (!base.empty()) base += std::string(okay::testbuild::kArea) + "/";   // <bucket>/dev/ : the test builds' files (LoadDevIndex)
+    return PlanInstall(testBuilds, version, base, localSdl, requireSdl);
 }
 
 // ---- installing ------------------------------------------------------------------------------------------------------------
@@ -700,12 +837,24 @@ std::vector<Installed> ListInstalled(const fs::path& launcherDir) {
     return out;
 }
 
-int CleanStale(const fs::path& launcherDir) {
+int CleanStale(const fs::path& launcherDir, std::chrono::seconds busyFor) {
     int removed = 0;
     std::error_code ec;
     std::vector<fs::path> stale;
+    const fs::file_time_type now = fs::file_time_type::clock::now();
+    auto busy = [&](const fs::path& dir) {                         // anything in it (the folder itself included) written within `busyFor`
+        if (busyFor.count() <= 0) return false;
+        std::error_code e;
+        auto recent = [&](const fs::path& p) { const auto t = fs::last_write_time(p, e); return !e && now - t < busyFor; };
+        if (recent(dir)) return true;
+        int n = 0;
+        for (fs::recursive_directory_iterator it(dir, e), end; !e && it != end && n < 1000; it.increment(e), ++n)
+            if (recent(it->path())) return true;
+        return false;
+    };
     for (fs::directory_iterator it(VersionsRoot(launcherDir), ec), end; !ec && it != end; it.increment(ec)) {
         const std::string name = it->path().filename().string();
+        if (name.rfind(".partial-", 0) == 0 && busy(it->path())) continue;
         if (name.rfind(".partial-", 0) == 0 || name.rfind(".removing-", 0) == 0) stale.push_back(it->path());
     }
     for (const fs::path& p : stale) {
@@ -922,6 +1071,7 @@ bool ApplySettingLine(Settings& s, const std::string& key, const std::string& va
     if (key == "default_editor") { s.defaultEditor = okayver::NormalizeVersion(value); return true; }
     if (key == "lts_line") { s.ltsLine = okayver::LineOf(value); return true; }
     if (key == "test_builds") { s.testBuilds = value == "1"; return true; }   // only an exact 1 turns it on
+    if (key == "skipped_version") { s.skippedVersion = okayver::NormalizeVersion(value); return true; }   // junk = nothing skipped
     return false;
 }
 void WriteSettings(const Settings& s, std::ostream& out) {
@@ -930,6 +1080,7 @@ void WriteSettings(const Settings& s, std::ostream& out) {
     if (!s.defaultEditor.empty()) out << "default_editor=" << s.defaultEditor << "\n";
     if (!s.ltsLine.empty()) out << "lts_line=" << s.ltsLine << "\n";
     if (s.testBuilds) out << "test_builds=1\n";   // written only when on: a launcher.cfg that never used test builds stays exactly as it was
+    if (!s.skippedVersion.empty()) out << "skipped_version=" << s.skippedVersion << "\n";   // (only when one is skipped)
 }
 
 // ---- projects and "Open with" ----------------------------------------------------------------------------------------------

@@ -15,6 +15,7 @@
 
 #include <map>   // the pictures go through a painter, as in the program: the code font is a font of its own
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -947,6 +948,110 @@ int main() {
         CHECK(app.ActiveText().find("Walk(2)") != std::string::npos && app.DocumentDirty(userKey));
         CHECK(ReadFile(cproj / "Assets/Scripts/Mover.lua").find("function Walk(x)") != std::string::npos);
         (void)mover;
+    }
+
+    // ---- batch D: Insert (behaviour templates, API commands, C# snippets), Help (C# quick reference), Reload from Disk, outside
+    // changes loaded or asked about, the changed-line bars, the pinned header, the breadcrumb, the view settings ----
+    {
+        Reset();
+        UI::UseLauncherLook(true);
+        UI::Style().caretBlink = false;
+        const fs::path dproj = dir / "Batch D";
+        std::string big = "local Big = {}\n\nfunction Big.Run(dt)\n";
+        for (int i = 0; i < 60; ++i) big += "    Big.n = dt * " + std::to_string(i) + "\n";
+        big += "    pirnt(dt)\nend\n\nreturn Big\n";
+        WriteFile(dproj / "Assets/Scripts/Big.lua", big);
+        const float W = 900, H = 560;
+        Sim sim(W, H);
+        si::ScriptIdeApp::Config hc = cfg;
+        hc.settingsPath = (dir / "settings_d.json").u8string();
+        hc.idPrefix = "##test_se_batch_d";
+        si::ScriptIdeApp app(hc);
+        auto ui = [&] { app.Frame(0, 0, W, H); };
+        CHECK(app.OpenFolder(dproj.u8string()));
+        const fs::path bigPath = dproj / "Assets/Scripts/Big.lua";
+        CHECK(app.OpenFile(bigPath.u8string()));
+        const std::string bigKey = app.ActiveKey();
+        sim.Frames(2, ui);
+        UI::CodeEdit* e = app.ActiveEdit();
+        CHECK(e != nullptr);
+        if (!e) { TEST_MAIN_RESULT(); }
+
+        // Insert > API Command: Lua's bound names with their docs; a pick puts the call at the caret
+        e->SetCaret(UI::CodePos{1, 0});
+        app.OpenPicker(8, "Debug.Log");
+        CHECK(!app.PickerRows().empty());
+        CHECK(app.PickRow(0) && e->Line(1).find("Debug.Log(") == 0);
+        e->Undo();
+        // Insert > Behaviour Template for an OkayScript document; the C# snippets and the quick reference
+        si::DocumentSpec os;
+        os.key = "tpl"; os.label = "tpl.okay"; os.language = "okayscript"; os.text = "\n";
+        os.save = [](const std::string&, std::string&) { return true; };
+        CHECK(app.OpenDocument(os));
+        app.OpenPicker(7, "pause toggle");
+        CHECK(!app.PickerRows().empty() && app.PickerRows()[0].find("Pause toggle") != std::string::npos);
+        CHECK(app.PickRow(0) && app.ActiveText().find("key_down(\"p\")") != std::string::npos);
+        int cs = 0;
+        for (const auto& sn : si::BuiltinSnippets()) if (sn.group == "C#") ++cs;
+        CHECK(cs == 12 && si::BuiltinSnippets().size() > 60 && si::CSharpQuickReference().size() == 15);
+        CHECK(si::CallTemplate("move", "move(x, y)") == "move(x, y)" && si::CallTemplate("f", "f(a | b)") == "f(");
+        app.ShowQuickReference();
+        CHECK(app.QuickReferenceOpen());
+        sim.Frame(ui);
+        sim.Hold(UI::KeyId_Escape, true); sim.Frame(ui); sim.Hold(UI::KeyId_Escape, false); sim.Frame(ui);
+        CHECK(!app.QuickReferenceOpen());
+        app.Close("tpl");
+
+        // the changed lines since the save, the pinned header while scrolled into Big.Run, the breadcrumb
+        CHECK(app.OpenFile(bigPath.u8string()));
+        sim.Frame(ui);
+        CHECK(app.ChangedLines().empty());
+        e->SetCaret(UI::CodePos{5, 4});
+        e->InsertText("-- note ");
+        CHECK(app.ChangedLines() == std::vector<int>{6});
+        CHECK(app.Breadcrumb() == "Big.Run");
+        e->SetScroll(0, e->LineHeight() * 20);
+        sim.Frames(2, ui);
+        CHECK(app.StickyHeader() == "function Big.Run(dt)");
+        sim.Move(5, H - 5);
+        sim.Frame(ui);
+        {
+            std::string why;
+            const bool same = MatchesGolden("script_ide_app_view", Picture(sim, 30, 32, 37), &why);
+            if (!same) std::cerr << "  golden script_ide_app_view: " << why << "\n";
+            CHECK(same);
+        }
+        e->Undo();
+        CHECK(app.ChangedLines().empty() && !app.ActiveDirty());
+
+        // the disk: an outside change to a tab with no edits is loaded; with edits, the tab asks
+        auto touch = [&](const std::string& text, int secs) {
+            WriteFile(bigPath, text);
+            std::error_code tec;
+            fs::last_write_time(bigPath, fs::file_time_type::clock::now() + std::chrono::seconds(secs), tec);
+        };
+        touch("local Big = {}\nreturn Big\n", 5);
+        app.CheckDiskNow();
+        CHECK(app.ActiveText() == "local Big = {}\nreturn Big\n" && !app.ActiveDirty() && !app.ConflictOpen());
+        e->SetCaret(UI::CodePos{0, 0});
+        e->InsertText("-- mine\n");
+        touch("local Big = { outside = true }\nreturn Big\n", 10);
+        app.CheckDiskNow();
+        CHECK(app.ConflictOpen() && app.ActiveText().find("-- mine") == 0);
+        app.ResolveConflict(true);
+        CHECK(!app.ConflictOpen() && app.ActiveText().find("outside = true") != std::string::npos && !app.ActiveDirty());
+        // Reload from Disk (one undo step brings the tab's text back)
+        e->InsertText("x");
+        touch(big, 15);
+        CHECK(app.ReloadFromDisk() && app.ActiveText() == big);
+        e->Undo();
+        CHECK(app.ActiveText() != big);
+
+        // the view settings are kept
+        app.Settings().showMinimap = false; app.Settings().density = 2; app.Settings().syntaxColors = false;
+        app.SaveSettings();
+        const si::AppSettings back = si::AppSettings::Parse(ReadFile(dir / "settings_d.json"));
+        CHECK(!back.showMinimap && back.density == 2 && !back.syntaxColors && back.showRuler && back.liveSync);
     }
 
     // ---- the new-script helpers of the model ----

@@ -35,6 +35,13 @@ struct AppSettings {
     bool showWhitespace = false;
     bool showTree = true;
     float codeFontPx = 15.0f;                 ///< the code's line of text, in pixels (10..32)
+    bool showMinimap = true;                  ///< the overview of the whole file beside the code (click to scroll)
+    bool showRuler = true;                    ///< a faint line at column 120
+    bool inlineProblems = true;               ///< a line's first problem written after its code
+    bool syntaxColors = true;
+    bool autoClose = true;                    ///< brackets and quotes typed in pairs
+    bool liveSync = true;                     ///< an open file changed outside is loaded again (a changed tab asks first)
+    int density = 1;                          ///< 0 compact, 1 comfortable, 2 spacious: the space between code lines
     std::string lastFolder;                   ///< the folder that was open last (the program opens it again with no argument)
     std::vector<std::string> recentFolders;   ///< most recent first, at most 10
 
@@ -85,6 +92,9 @@ struct DocumentSpec {
     /// Save: the host keeps the text (true) or says why not (false and `why`). Empty: written to `path`.
     std::function<bool(const std::string& text, std::string& why)> save;
 };
+
+/// One function of the scripting API for Insert > API Command: its name, signature ("move(x, y)") and what it does.
+struct ApiEntry { std::string name, signature, doc; };
 
 /// A command of the command list (Ctrl+Shift+P) and Search Everywhere: its title, its keys as text ("" = none), what it does.
 struct AppCommand { std::string title, shortcut; std::function<void()> run; };
@@ -156,6 +166,16 @@ public:
         /// Attach a script file New Script made to that object; true and the key of its document (opened with documentFor), or
         /// false (the file is then opened as a file).
         std::function<bool(const std::string& path, const std::string& language, std::string& key)> attachScript;
+        /// Insert's snippets for a language (Behaviour Template, the C# snippets, the host's plugin snippets). Empty: BuiltinSnippets.
+        std::function<std::vector<Snippet>(const std::string& language)> snippets;
+        /// Insert > API Command's list for a language. Empty: the engine's bound names and their docs (Lua, JavaScript).
+        std::function<std::vector<ApiEntry>(const std::string& language)> api;
+        /// Help > Scripting Docs (the editor: its Scripting Reference window). Empty: no such item.
+        std::function<void()> showDocs;
+        /// File > Open in External Editor (a text editor of the system). Empty: no such item.
+        std::function<void(const std::string& path)> openExternal;
+        /// View > Window: the host's items for the window the app is in (the editor: Float Window, Dock Window).
+        std::function<std::vector<AppCommand>()> windowCommands;
         /// More commands for the command list and Search Everywhere (the editor: its plugins' commands).
         std::function<std::vector<AppCommand>()> commands;
         /// A clock in milliseconds since 1970 for Local History (empty: the system clock). Tests pin it.
@@ -237,6 +257,27 @@ public:
     /// The signature help shown now ("" = none).
     std::string SignatureShown() const;
 
+    // ---- the view, the disk and Insert ----
+    /// Read the shown file again from the disk (its unsaved edits go; one undo step brings them back).
+    bool ReloadFromDisk();
+    /// Look at the open files on the disk now (also done every second): one changed outside is loaded again when its tab has no
+    /// edits, else its tab shows "changed on disk" with Load External and Keep Mine.
+    void CheckDiskNow();
+    bool ConflictOpen() const;
+    void ResolveConflict(bool loadExternal);
+    /// The shown document's lines (1-based) that differ from its saved text (the bars beside the line numbers).
+    std::vector<int> ChangedLines();
+    /// The header line pinned at the top while the view is inside a block ("" = none), and where the caret is ("Update").
+    std::string StickyHeader();
+    std::string Breadcrumb();
+    /// Put text at the shown document's caret (over the selection), or replace its whole text; one undo step each (the editor
+    /// plugins' script_insert and script_set_text).
+    bool InsertText(const std::string& text);
+    bool SetActiveText(const std::string& text);
+    /// Help > C# Quick Reference.
+    void ShowQuickReference();
+    bool QuickReferenceOpen() const;
+
     // ---- find and navigation ----
     /// The find bar over the code (Ctrl+F; with Replace: Ctrl+H): what to find, the replacement, the options.
     void OpenFindBar(const std::string& needle, bool replace = false, const FindOptions& options = FindOptions(),
@@ -267,7 +308,8 @@ public:
     bool GoBack();
     bool GoForward();
     /// The lists to pick from: 1 Go to Line (Ctrl+G), 2 Go to Symbol (Ctrl+Shift+O), 3 switch tabs (Ctrl+E), 4 bookmarks
-    /// (Shift+F11), 5 Search Everywhere (Shift twice), 6 the commands (Ctrl+Shift+P). 0 closes.
+    /// (Shift+F11), 5 Search Everywhere (Shift twice), 6 the commands (Ctrl+Shift+P), 7 Insert > Behaviour Template, 8 Insert >
+    /// API Command. 0 closes.
     void OpenPicker(int which, const std::string& query = "");
     int PickerOpen() const;
     /// The picker's rows for its query as they are shown: "label" (detail left out).

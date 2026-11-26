@@ -221,6 +221,17 @@ struct ScriptTemplate { std::string id, title, body; };
 std::vector<ScriptTemplate> TemplatesFor(const std::string& language);
 std::string FillTemplate(const std::string& body, const std::string& name);
 
+// ---- snippets and reference ---------------------------------------------------------------------------------------------------
+/// A piece of code Insert puts at the caret: its group, title, what it does, the code and its language.
+struct Snippet { std::string group, title, description, body, language; };
+/// Insert > Behaviour Template (plain-English OkayScript behaviours, "Basics" to "Multiplayer") and the C# snippets (group "C#").
+const std::vector<Snippet>& BuiltinSnippets();
+/// Help > C# Quick Reference: rows of {code, what it does}.
+const std::vector<std::pair<std::string, std::string>>& CSharpQuickReference();
+/// What Insert > API Command puts at the caret for a function: its whole signature when it is a plain call ("move(x, y)"), else
+/// the name and "(".
+std::string CallTemplate(const std::string& name, const std::string& signature);
+
 // ---- new script files -----------------------------------------------------------------------------------------------------
 /// The file extension of a script language, without the dot: "lua", "js", "cs", else "okay".
 std::string ExtensionFor(const std::string& language);

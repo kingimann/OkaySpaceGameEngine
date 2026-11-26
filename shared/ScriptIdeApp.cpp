@@ -39,7 +39,11 @@ namespace UI = OkayUI;
 std::string AppSettings::Serialize() const {
     std::string o = "{\n  \"tabSize\": " + std::to_string(tabSize) + ",\n  \"wordWrap\": " + (wordWrap ? "true" : "false") +
                     ",\n  \"showWhitespace\": " + (showWhitespace ? "true" : "false") + ",\n  \"showTree\": " + (showTree ? "true" : "false") +
-                    ",\n  \"codeFontPx\": " + std::to_string((int)codeFontPx) + ",\n  \"lastFolder\": ";
+                    ",\n  \"codeFontPx\": " + std::to_string((int)codeFontPx) + ",\n  \"showMinimap\": " + (showMinimap ? "true" : "false") +
+                    ",\n  \"showRuler\": " + (showRuler ? "true" : "false") + ",\n  \"inlineProblems\": " + (inlineProblems ? "true" : "false") +
+                    ",\n  \"syntaxColors\": " + (syntaxColors ? "true" : "false") + ",\n  \"autoClose\": " + (autoClose ? "true" : "false") +
+                    ",\n  \"liveSync\": " + (liveSync ? "true" : "false") + ",\n  \"density\": " + std::to_string(density) +
+                    ",\n  \"lastFolder\": ";
     okay::json::Escape(lastFolder, o);
     o += ",\n  \"recentFolders\": [";
     for (std::size_t i = 0; i < recentFolders.size(); ++i) {
@@ -64,6 +68,13 @@ AppSettings AppSettings::Parse(const std::string& text) {
     s.wordWrap = flag("wordWrap", s.wordWrap);
     s.showWhitespace = flag("showWhitespace", s.showWhitespace);
     s.showTree = flag("showTree", s.showTree);
+    s.showMinimap = flag("showMinimap", s.showMinimap);
+    s.showRuler = flag("showRuler", s.showRuler);
+    s.inlineProblems = flag("inlineProblems", s.inlineProblems);
+    s.syntaxColors = flag("syntaxColors", s.syntaxColors);
+    s.autoClose = flag("autoClose", s.autoClose);
+    s.liveSync = flag("liveSync", s.liveSync);
+    s.density = whole("density", 0, 2, s.density);
     if (const okay::json::Value* f = v.Get("lastFolder"); f && f->IsString()) s.lastFolder = f->string;
     if (const okay::json::Value* r = v.Get("recentFolders"); r && r->IsArray())
         for (const okay::json::Value& f : r->array)
@@ -268,6 +279,9 @@ void ScriptIdeApp::Impl::drawMenu(float X, float Y, float W, float h) {
                 if (UI::MenuItem("Save All", "Ctrl+Shift+S", false, !docs.empty())) saveAll();
                 if (UI::MenuItem("Close Tab", "Ctrl+W", false, d != nullptr)) requestClose(active);
                 if (UI::MenuItem("Reopen Closed Tab", "Ctrl+Shift+T", false, !closed.empty())) reopenClosed();
+                if (UI::MenuItem("Reload from Disk", nullptr, false, d && !d->path.empty())) reloadFromDisk(*d);
+                if (cfg.openExternal && UI::MenuItem("Open in External Editor", nullptr, false, d && !d->path.empty())) cfg.openExternal(d->path);
+                if (UI::MenuItem("Load Outside Changes", nullptr, settings.liveSync)) { settings.liveSync = !settings.liveSync; saveSettings(); }
                 if (cfg.quitItem) { UI::MenuSeparator(); if (UI::MenuItem("Quit", "Ctrl+Q")) requestQuit(); }
                 UI::EndMenu();
             }
@@ -319,6 +333,8 @@ void ScriptIdeApp::Impl::drawMenu(float X, float Y, float W, float h) {
                 if (UI::MenuItem("Show Whitespace", nullptr, settings.showWhitespace)) { settings.showWhitespace = !settings.showWhitespace; changed = true; }
                 if (UI::MenuItem("Larger Code Text", "Ctrl+=")) { settings.codeFontPx = std::min(32.0f, settings.codeFontPx + 1.0f); changed = true; }
                 if (UI::MenuItem("Smaller Code Text", "Ctrl+-")) { settings.codeFontPx = std::max(10.0f, settings.codeFontPx - 1.0f); changed = true; }
+                UI::MenuSeparator();
+                drawViewExtras(d, changed);
                 if (changed) { for (auto& doc : docs) applyView(*doc); saveSettings(); }
                 UI::EndMenu();
             }
@@ -333,6 +349,8 @@ void ScriptIdeApp::Impl::drawMenu(float X, float Y, float W, float h) {
                     cfg.showInHost(d->path.empty() ? d->key : d->path, d->code.Edit().Caret().line + 1);
                 UI::EndMenu();
             }
+            drawInsertMenu(d);
+            drawHelpMenu();
             UI::EndMenuBar();
         }
     }
@@ -447,9 +465,21 @@ void ScriptIdeApp::Impl::drawCode(float X, float Y, float W, float H, bool modal
             e.SetReadOnly(modal);
             e.SetHandleKeyboardInput(!acKeys && !fixesOpen && !keysTaken);
             UI::SetCursorScreenPos(UI::Vec2(X, Y));
-            e.Draw((pre + "_edit").c_str(), W, H);
+            const float mmW = W > 300 ? minimapWidth() : 0.0f;
+            e.Draw((pre + "_edit").c_str(), W - mmW, H);
             e.SetReadOnly(false);
             e.SetHandleKeyboardInput(true);
+            drawOverlays(*d);
+            if (mmW > 0) drawMinimap(*d, X + W - mmW, Y, mmW, H, modal);
+            {   // Ctrl+wheel over the code: bigger or smaller code text
+                const UI::Input& zi = UI::GetFrameInput();
+                const UI::Vec2 zp = UI::GetMousePos();
+                if (!modal && zi.ctrl && zi.wheel != 0 && zp.x >= X && zp.x < X + W && zp.y >= Y && zp.y < Y + H) {
+                    settings.codeFontPx = std::min(32.0f, std::max(10.0f, settings.codeFontPx + (zi.wheel > 0 ? 1.0f : -1.0f)));
+                    for (auto& doc : docs) applyView(*doc);
+                    saveSettings();
+                }
+            }
             {   // Ctrl+click on a name: go to where it is defined (a name defined nowhere keeps the widget's extra caret)
                 const UI::Input& ci = UI::GetFrameInput();
                 const UI::Rect v = e.ViewRect();
@@ -639,7 +669,10 @@ void ScriptIdeApp::Impl::drawStatus(float X, float Y, float W, float h) {
             if (errors) right(std::to_string(errors) + (errors == 1 ? " error" : " errors"), kError);
             if (!errors && !warnings) right("no problems", kAdd);
         }
-        const std::string left = notice.empty() ? (d ? (d->path.empty() ? d->label : relative(d->path)) : folder) : notice;
+        std::string left = notice.empty() ? (d ? (d->path.empty() ? d->label : relative(d->path)) : folder) : notice;
+        if (notice.empty() && d) {   // the breadcrumb: the block the caret is in
+            if (const Symbol* s = enclosing(*const_cast<Doc*>(d), d->code.Edit().Caret().line)) left += "  >  " + s->display;
+        }
         dl->AddText(UI::Vec2(X + 10, ty), notice.empty() ? kDim : kText, Fit(left, std::max(40.0f, rx - X - 20)).c_str());
     }
     UI::End();
@@ -774,6 +807,7 @@ void ScriptIdeApp::Impl::frame(float X, float Y, float W, float H) {
 
     // the script list follows the disk now and then, and a file is checked a short while after its last edit
     if (!folder.empty() && UI::GetTime() >= nextScan) scan();
+    if (settings.liveSync && UI::GetTime() >= nextDiskCheck) { nextDiskCheck = UI::GetTime() + 1.0; checkDisk(); }
     d = activeDoc();
     if (d && d->checkedVersion != d->code.Edit().Version() && UI::GetTime() - d->editedAt > 0.4) check(*d);
 
@@ -785,9 +819,10 @@ void ScriptIdeApp::Impl::frame(float X, float Y, float W, float H) {
     if (treeW > 0) drawTree(X, bodyY, treeW, bodyH, modal);
     const float cx = X + treeW, cw = std::max(40.0f, W - treeW);
     drawTabs(cx, bodyY, cw, tabH, modal);
-    const float fbH = activeDoc() ? findBarHeight() : 0.0f;
-    drawCode(cx, bodyY + tabH + fbH, cw, std::max(20.0f, bodyH - tabH - panelH - fbH), modal);
+    const float fbH = activeDoc() ? findBarHeight() : 0.0f, cfH = conflictHeight();
+    drawCode(cx, bodyY + tabH + fbH + cfH, cw, std::max(20.0f, bodyH - tabH - panelH - fbH - cfH), modal);
     if (fbH > 0) drawFindBar(cx, bodyY + tabH, cw, fbH, modal);   // after the code, so its field can take the keyboard from it
+    if (cfH > 0) drawConflict(cx, bodyY + tabH + fbH, cw, cfH, modal);
     if (panelH > 0) drawPanel(cx, bodyY + bodyH - panelH, cw, panelH, modal);
     drawStatus(X, Y + H - statusH, W, statusH);
     if (goOpen) drawGoToFile(X, Y, W, H);
@@ -796,6 +831,7 @@ void ScriptIdeApp::Impl::frame(float X, float Y, float W, float H) {
     if (promptOpen) drawClosePrompt(X, Y, W, H);
     if (picker != K_None) drawPicker(X, Y, W, H);
     if (renameOpen) drawRename(X, Y, W, H);
+    if (refOpen) drawQuickReference(X, Y, W, H);
 }
 
 // ---- ScriptIdeApp -----------------------------------------------------------------------------------------------------------

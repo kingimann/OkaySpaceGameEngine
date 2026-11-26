@@ -125,7 +125,8 @@ bool OkayUIHasKeyboard();
 /// A whole OkayUI app in an editor window of its own (the Script Editor's shared app, shared/ScriptIdeApp.hpp; the Visual Script
 /// editor next): the window's free area goes to `frame(x, y, w, h)` every frame it shows. `firstW` x `firstH`: the size a window with
 /// no saved place opens at. Same return value as the Crash Log.
+/// `drop` (optional): a file dragged from the Project panel was dropped on the window.
 bool DrawAppWindowOkayUI(const char* title, bool* open, const char* itemId, const std::function<void(float x, float y, float w, float h)>& frame,
-                         float firstW = 900.0f, float firstH = 600.0f);
+                         float firstW = 900.0f, float firstH = 600.0f, const std::function<void(const std::string& path)>& drop = {});
 
 } // namespace oked

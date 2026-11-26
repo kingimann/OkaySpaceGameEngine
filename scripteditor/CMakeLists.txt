@@ -14,6 +14,7 @@ add_library(okay_script_editor_app STATIC
     ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppScene.cpp        # the host's scene scripts, New Script, Save changes?, reopen, language
     ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppNav.cpp          # find / replace, go to line / symbol / definition, references, history
     ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppEdit.cpp         # format, rename with a preview, quick fixes, join lines, signature help
+    ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppView.cpp         # minimap, pinned header, changed lines, the disk, Insert and Help
     ${CMAKE_SOURCE_DIR}/editor/ScriptIde.cpp                # the headless model: script list, tree, Go to File, find, lint, Local History
     ${CMAKE_SOURCE_DIR}/editor/ScriptEditorCodeEdit.cpp)    # OkayUI::CodeEdit with a script language's words and the code font
 target_include_directories(okay_script_editor_app PUBLIC ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)

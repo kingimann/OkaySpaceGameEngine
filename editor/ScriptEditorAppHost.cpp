@@ -5,6 +5,7 @@
 #include "ScriptIdeApp.hpp"
 #include "OkayPanels.hpp"          // DrawAppWindowOkayUI: a whole OkayUI app in an editor window
 #include "PluginRegistry.hpp"      // ScriptEditorPlugins, ScriptProblems: the editor plugins' lint
+#include "PluginScriptApi.hpp"     // ScriptEditorHostApi: what plugins' script_* calls reach
 #include "MainShared.hpp"          // OpenScriptFileInEditorAt (main.cpp)
 #include "ConsolePanel.hpp"        // ConsoleLog
 #include "okay/Platform/Platform.hpp"   // PrefPath: the settings folder the Script Editor program uses too
@@ -291,6 +292,44 @@ scriptide::ScriptIdeApp& App() {
             if (const std::string* dc = ScriptDoc(name)) doc = *dc;
             return *sg;
         };
+        cfg.snippets = [](const std::string& language) {   // the built-in ones, then the editor plugins' snippets
+            std::vector<scriptide::Snippet> out;
+            for (const scriptide::Snippet& s : scriptide::BuiltinSnippets())
+                if (s.language == language || s.group == "C#") out.push_back(s);
+            for (const auto& p : pluginreg::ScriptEditorPlugins().Snippets(language))
+                out.push_back(scriptide::Snippet{"Plugins", p.title.empty() ? p.prefix : p.title, p.prefix, p.body, p.language});
+            return out;
+        };
+        cfg.api = [](const std::string& language) {   // OkayScript: the signature table; Lua and JavaScript: the app's own list
+            std::vector<scriptide::ApiEntry> out;
+            if (language == okay::LuaScriptVM::kLanguage || language == okay::JavaScriptVM::kLanguage) {
+                const bool lua = language == okay::LuaScriptVM::kLanguage;
+                for (const std::string& n : lua ? okay::LuaScriptVM::CompletionNames() : okay::JavaScriptVM::CompletionNames()) {
+                    scriptide::ApiEntry a;
+                    a.name = n;
+                    a.doc = lua ? okay::LuaScriptVM::CompletionDoc(n) : okay::JavaScriptVM::CompletionDoc(n);
+                    const std::string first = a.doc.substr(0, a.doc.find('\n'));
+                    a.signature = first.find('(') != std::string::npos ? first : n;
+                    out.push_back(std::move(a));
+                }
+            } else {
+                for (const auto& kv : ScriptSignatureMap()) {
+                    scriptide::ApiEntry a;
+                    a.name = kv.first;
+                    a.signature = kv.second;
+                    if (const std::string* d = ScriptDoc(kv.first)) a.doc = *d;
+                    out.push_back(std::move(a));
+                }
+            }
+            std::sort(out.begin(), out.end(), [](const scriptide::ApiEntry& x, const scriptide::ApiEntry& y) { return x.name < y.name; });
+            return out;
+        };
+        cfg.showDocs = [] { g_showScriptDocs = true; };
+        cfg.openExternal = [](const std::string& path) { extide::OpenExternal(path); ConsoleLog("Opened " + path + " in an outside editor"); };
+        cfg.windowCommands = [] {
+            return std::vector<scriptide::AppCommand>{{"Float Window", "", [] { g_scriptDockReq = 1; }},
+                                                      {"Dock Window", "", [] { g_scriptDockReq = 2; }}};
+        };
         cfg.format = [](const std::string& language, const std::string& path, const std::string& text, std::string& out) {
             pluginreg::DocContext ctx;   // an editor plugin's formatter for the language first; else the app's own
             ctx.language = language; ctx.path = path; ctx.text = text;
@@ -350,8 +389,30 @@ void DrawScriptEditorApp(okay::editor::EditorState& ed) {
         followed = ed.projectDir();
         if (!followed.empty()) app.OpenFolder(followed);
     }
+    // Float / Dock (View > Window): applied for one frame before the window begins
+    if (g_scriptDockReq == 1) {
+        ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
+        const ImVec2 vs = ImGui::GetMainViewport()->Size;
+        ImGui::SetNextWindowSize(ImVec2(std::max(760.0f, vs.x * 0.62f), std::max(560.0f, vs.y * 0.78f)), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        g_scriptDockReq = 0;
+    } else if (g_scriptDockReq == 2 && g_dockspaceId) {
+        ImGui::SetNextWindowDockID(g_dockspaceId, ImGuiCond_Always);
+        g_scriptDockReq = 0;
+    }
+    // what plugins' script_* calls reach while the window is drawn
+    ScriptEditorHost& host = ScriptEditorHostApi();
+    host.text = [&app] { return app.ActiveText(); };
+    host.path = [&app] { return app.ActivePath(); };
+    host.language = [&app] { return app.ActiveLanguage(); };
+    host.caretLine = [&app] { OkayUI::CodeEdit* e = app.ActiveEdit(); return e ? e->Caret().line + 1 : 0; };
+    host.insert = [&app](const std::string& t) { app.InsertText(t); };
+    host.setText = [&app](const std::string& t) { app.SetActiveText(t); };
+    host.open = [&app](const std::string& p, int line) { app.OpenFile(p, line); };
+    struct HostReset { ~HostReset() { ScriptEditorHostApi() = ScriptEditorHost{}; } } hostReset;
     DrawAppWindowOkayUI("Script Editor (Files)", &g_showScriptEditorApp, "##okayui_script_editor_app",
-                        [&app](float x, float y, float w, float h) { app.Frame(x, y, w, h); }, 980.0f, 640.0f);
+                        [&app](float x, float y, float w, float h) { app.Frame(x, y, w, h); }, 980.0f, 640.0f,
+                        [&app](const std::string& dropped) { if (!scriptide::LanguageForPath(dropped).empty()) app.OpenFile(dropped); });
 }
 
 } // namespace oked

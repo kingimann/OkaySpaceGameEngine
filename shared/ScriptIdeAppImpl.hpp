@@ -104,6 +104,12 @@ struct ScriptIdeApp::Impl {
         unsigned seenVersion = 0, checkedVersion = ~0u;
         double editedAt = 0.0;
         int gotoLine = 0;
+        fs::file_time_type mtime{};     // the file's time when it was last read or written here
+        bool hasMtime = false, conflict = false;   // conflict: changed on disk while the tab has edits
+        unsigned marksVersion = ~0u;    // the changed-line marks below are of this text version
+        std::vector<char> lineMarks;    // per line: 1 changed or added since the save, 2 lines deleted above it
+        unsigned outlineVersion = ~0u;
+        std::vector<Symbol> outline;    // the file's symbols, for the sticky header and the breadcrumb
         std::string shownFind;          // what the widget highlights (the find bar's text; "" none)
         bool shownFindCase = false;
     };
@@ -167,7 +173,7 @@ struct ScriptIdeApp::Impl {
     struct BarCache { std::string key, needle; unsigned version = ~0u; bool regex = false, matchCase = false, word = false; std::vector<TextMatch> hits; } barCache;
     char fifWith[256] = "";   // Find in Files: Replace with
     // a list to pick from (Go to Line, Go to Symbol, the switcher, the bookmarks, Search Everywhere, the commands)
-    enum Picker { K_None, K_Line, K_Symbol, K_Switch, K_Bookmarks, K_Everywhere, K_Commands };
+    enum Picker { K_None, K_Line, K_Symbol, K_Switch, K_Bookmarks, K_Everywhere, K_Commands, K_Snippets, K_Api };
     int picker = K_None;
     char pickBuf[160] = "";
     int pickSel = 0;
@@ -212,7 +218,29 @@ struct ScriptIdeApp::Impl {
     void drawSignature(Doc& d);
     void setText(Doc& d, const std::string& text);   // the whole text, one undo step, the caret kept on its line
 
-    bool modalOpen() const { return goOpen || folderOpen || newOpen || promptOpen || picker != K_None || renameOpen; }
+    // ---- the view, the disk and Insert (ScriptIdeAppView.cpp) ----
+    double nextDiskCheck = 0.0;
+    bool refOpen = false;   // Help > C# Quick Reference
+    void noteDiskTime(Doc& d);
+    void checkDisk();
+    bool reloadFromDisk(Doc& d);
+    const std::vector<char>& changedMarks(Doc& d);
+    const std::vector<Symbol>& outlineOf(Doc& d);
+    const Symbol* enclosing(Doc& d, int line0);
+    void drawOverlays(Doc& d);
+    float minimapWidth() const { return settings.showMinimap ? 72.0f : 0.0f; }
+    void drawMinimap(Doc& d, float X, float Y, float W, float H, bool modal);
+    float conflictHeight() const { const Doc* d = activeDoc(); return d && d->conflict ? 34.0f : 0.0f; }
+    void drawConflict(float X, float Y, float W, float h, bool modal);
+    void drawQuickReference(float X, float Y, float W, float H);
+    void drawInsertMenu(Doc* d);
+    void drawHelpMenu();
+    void drawViewExtras(Doc* d, bool& changed);
+    std::vector<Snippet> snippetsFor(const std::string& language);
+    std::vector<ApiEntry> apiFor(const std::string& language);
+    void insertAtCaret(Doc& d, const std::string& text);
+
+    bool modalOpen() const { return goOpen || folderOpen || newOpen || promptOpen || picker != K_None || renameOpen || refOpen; }
     void openFindBar(bool replace);
     const std::vector<TextMatch>& barHits(Doc& d);
     bool findStep(bool forward);
@@ -309,6 +337,10 @@ struct ScriptIdeApp::Impl {
         d.code.SetTabSize(settings.tabSize);
         d.code.SetWordWrap(settings.wordWrap);
         d.code.SetShowWhitespace(settings.showWhitespace);
+        d.code.SetColorizerEnable(settings.syntaxColors);
+        d.code.SetAutoClose(settings.autoClose);
+        static const float kSpacing[3] = {1.3f, 1.55f, 1.85f};   // compact, comfortable, spacious
+        d.code.SetLineSpacing(kSpacing[std::min(std::max(settings.density, 0), 2)]);
         if (cfg.useCodeFont) d.code.UseCodeFont(settings.codeFontPx);
     }
 
@@ -354,6 +386,7 @@ struct ScriptIdeApp::Impl {
         d->saved = d->code.Edit().GetText();
         d->seenVersion = d->code.Edit().Version();
         d->gotoLine = line;
+        if (!d->path.empty()) noteDiskTime(*d);
         docs.push_back(std::move(d));
         active = (int)docs.size() - 1;
         return *docs.back();
@@ -429,7 +462,8 @@ struct ScriptIdeApp::Impl {
             if (!d.saveFn(text, why)) { notice = "Could not save " + d.label + (why.empty() ? std::string() : ": " + why); return false; }
         } else if (d.path.empty() || !WriteText(d.path, text)) { notice = "Could not save " + (d.path.empty() ? d.label : d.path); return false; }
         d.saved = d.code.Edit().GetText();
-        if (!d.path.empty()) history.Record(d.path, text, now(), "Saved");
+        d.conflict = false;
+        if (!d.path.empty()) { history.Record(d.path, text, now(), "Saved"); noteDiskTime(d); }
         check(d);
         notice = "Saved " + (d.path.empty() ? d.label : relative(d.path));
         if (cfg.saved) cfg.saved(d.path.empty() ? d.key : d.path, text);

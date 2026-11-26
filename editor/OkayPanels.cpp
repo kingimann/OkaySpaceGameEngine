@@ -395,7 +395,8 @@ bool DrawTimersOkayUI(bool*, const std::function<std::string()>&) { return false
 bool DrawCommandLineOkayUI(bool*, const std::string&) { return false; }
 bool DrawInputActionsOkayUI(bool*, okaypanels::InputActionsModel&, const std::function<void(okaypanels::InputActionsModel&)>&,
                             okaypanels::InputActionsState&, okaypanels::InputActionsIntent& intent) { intent = okaypanels::InputActionsIntent(); return false; }
-bool DrawAppWindowOkayUI(const char*, bool*, const char*, const std::function<void(float, float, float, float)>&, float, float) { return false; }
+bool DrawAppWindowOkayUI(const char*, bool*, const char*, const std::function<void(float, float, float, float)>&, float, float,
+                         const std::function<void(const std::string&)>&) { return false; }
 #endif
 bool DrawHierarchyOkayUI(bool*, okaypanels::HierarchyModel&, okaypanels::HierarchyState&, okaypanels::HierarchyIntent&) { return false; }
 bool DrawInspectorHeaderOkayUI(okaypanels::InspectorHeaderModel&, okaypanels::InspectorHeaderState&, okaypanels::InspectorHeaderIntent&) { return false; }
@@ -714,8 +715,18 @@ bool DrawInputActionsOkayUI(bool* open, okaypanels::InputActionsModel& model, co
 
 // A whole OkayUI app in a window (the Script Editor's shared app): the free area is the app's.
 bool DrawAppWindowOkayUI(const char* title, bool* open, const char* itemId, const std::function<void(float x, float y, float w, float h)>& frame,
-                         float firstW, float firstH) {
-    return PanelWindow(title, open, itemId, [&](ImVec2 p, ImVec2 a) { if (frame) frame(p.x, p.y, a.x, a.y); }, firstW, firstH);
+                         float firstW, float firstH, const std::function<void(const std::string& path)>& drop) {
+    return PanelWindow(title, open, itemId, [&](ImVec2 p, ImVec2 a) {
+        if (frame) frame(p.x, p.y, a.x, a.y);
+#if defined(OKAY_HAVE_OKAYUI) && !defined(OKAY_ON_OKAYUI)
+        if (drop) {   // a file dragged from the Project panel onto the app (Dear ImGui's drag and drop: payload ASSET_PATH)
+            if (ImGui::BeginDragDropTargetCustom(ImRect(p, ImVec2(p.x + a.x, p.y + a.y)), ImGui::GetID(itemId))) {
+                if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("ASSET_PATH")) drop(std::string(static_cast<const char*>(pl->Data)));
+                ImGui::EndDragDropTarget();
+            }
+        }
+#endif
+    }, firstW, firstH);
 }
 
 } // namespace oked

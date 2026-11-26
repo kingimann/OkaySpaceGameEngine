@@ -89,6 +89,9 @@ int SysNoWindow(const std::string& cmd);
 // The Scripting Reference window's visibility (Help > Scripting Reference, the Script Editor's Docs), the Script
 // Editor's monospace face, and the accent-ticked section heading every panel uses (main.cpp).
 extern bool g_showScriptDocs;
+// The main dockspace, and the Script Editor's float / dock request applied before its window begins (0 none, 1 float, 2 dock).
+extern ImGuiID g_dockspaceId;
+extern int g_scriptDockReq;
 extern ImFont* g_codeFont;
 void SectionHeader(const char* label);
 // Panel and window visibility the split-out windows read or set (main.cpp).
@@ -106,6 +109,7 @@ namespace extide {
 bool WriteFile(const std::string& path, const std::string& text);
 std::string ReadFile(const std::string& path);
 void RevealInFiles(const std::string& path);
+void OpenExternal(const std::string& path);   // in a text editor of the system (never "open" for a script)
 } // namespace extide
 // The open project's settings (main.cpp; the struct is in ProjectState.hpp).
 struct ProjectSettings;

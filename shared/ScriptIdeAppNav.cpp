@@ -370,6 +370,10 @@ std::vector<AppCommand> ScriptIdeApp::Impl::commands() {
     add("Quick Fixes...", "Alt+Enter", [this] { fixes = fixesAtCaret(); fixSel = 0; fixesOpen = !fixes.empty(); fixesFresh = true; });
     add("Join Lines", "Ctrl+Shift+J", [this] { joinLines(); });
     add("Expand Selection", "Alt+Shift+Up", [this] { expandSelection(); });
+    add("Reload from Disk", "", [this] { if (Doc* d = activeDoc()) reloadFromDisk(*d); });
+    add("Insert Behaviour Template...", "", [this] { openPicker(K_Snippets); });
+    add("Insert API Command...", "", [this] { openPicker(K_Api); });
+    add("C# Quick Reference", "", [this] { refOpen = true; });
     add("Toggle Comment", "Ctrl+/", [this] { if (Doc* d = activeDoc()) d->code.Edit().ToggleLineComment(LineCommentFor(d->language)); });
     add("Check", "F7", [this] { if (Doc* d = activeDoc()) { check(*d); notice = std::to_string(d->problems.size()) + " problems"; } });
     add(cfg.runLabel.c_str(), "F5", [this] { run(); });
@@ -442,6 +446,28 @@ std::vector<ScriptIdeApp::Impl::PickItem> ScriptIdeApp::Impl::pickItems() {
                 if (FuzzyScore(q, label) < 0) continue;
                 out.push_back(PickItem{label, "", [this, key, line] { jumpTo(key, line); }});
             }
+    } else if ((picker == K_Snippets || picker == K_Api) && d) {
+        std::vector<Scored> v;
+        const std::string key = d->key;
+        if (picker == K_Snippets) {
+            for (const Snippet& sn : snippetsFor(d->language)) {
+                const std::string hay = sn.group + ": " + sn.title + " " + sn.description;
+                const int sc = q.empty() ? 0 : FuzzyScore(q, hay);
+                if (sc < 0) continue;
+                const std::string body = sn.body;
+                v.push_back({sc, PickItem{sn.group + ": " + sn.title, sn.description, [this, key, body] { if (Doc* t = byKey(key)) insertAtCaret(*t, body); }}});
+            }
+        } else {
+            for (const ApiEntry& a : apiFor(d->language)) {
+                const int sc = q.empty() ? 0 : std::max(FuzzyScore(q, a.name), FuzzyScore(q, a.signature) - 5);
+                if (sc < 0) continue;
+                const std::string ins = CallTemplate(a.name, a.signature);
+                v.push_back({sc, PickItem{a.signature.empty() ? a.name : a.signature, a.doc.substr(0, a.doc.find('\n')),
+                                          [this, key, ins] { if (Doc* t = byKey(key)) insertAtCaret(*t, ins); }}});
+            }
+        }
+        if (q.empty()) for (Scored& sc : v) out.push_back(std::move(sc.item));   // the list's own order
+        else out = ranked(v, 80);
     } else if (picker == K_Everywhere || picker == K_Commands) {
         std::vector<Scored> v;
         for (AppCommand& c : commands()) {
@@ -473,12 +499,13 @@ std::vector<ScriptIdeApp::Impl::PickItem> ScriptIdeApp::Impl::pickItems() {
 
 void ScriptIdeApp::Impl::drawPicker(float X, float Y, float W, float H) {
     static const char* const kTitles[] = {"", "Go to Line (line or line:column)", "Go to Symbol in this file", "Switch Tab",
-                                          "Bookmarks", "Search Everywhere: files, symbols, commands", "Commands"};
+                                          "Bookmarks", "Search Everywhere: files, symbols, commands", "Commands",
+                                          "Insert a Behaviour Template", "Insert an API Command"};
     float bx = 0, by = 0;
     const float bw = std::min(600.0f, W - 40.0f), bh = std::min(420.0f, H - 40.0f);
     if (beginDialog(cfg.idPrefix + "_picker", X, Y, W, H, bw, bh, bx, by)) {
         UI::SetCursorScreenPos(UI::Vec2(bx, by));
-        UI::TextUnformatted(kTitles[picker > 0 && picker <= K_Commands ? picker : 0]);
+        UI::TextUnformatted(kTitles[picker > 0 && picker <= K_Api ? picker : 0]);
         UI::SetCursorScreenPos(UI::Vec2(bx, UI::GetCursorScreenPos().y + 2));
         UI::SetNextItemWidth(bw - 28);
         if (pickFocus) { pickFocus = false; }
@@ -552,7 +579,7 @@ bool ScriptIdeApp::OpenReference(std::size_t index) {
 bool ScriptIdeApp::GoBack() { return m->goBack(false); }
 bool ScriptIdeApp::GoForward() { return m->goBack(true); }
 void ScriptIdeApp::OpenPicker(int which, const std::string& query) {
-    if (which <= 0 || which > Impl::K_Commands) { m->picker = Impl::K_None; return; }
+    if (which <= 0 || which > Impl::K_Api) { m->picker = Impl::K_None; return; }
     m->openPicker(which);
     std::snprintf(m->pickBuf, sizeof m->pickBuf, "%s", query.c_str());
 }

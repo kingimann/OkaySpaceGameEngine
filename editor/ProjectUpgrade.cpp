@@ -1061,13 +1061,11 @@ std::vector<RefEdit> ComputeRefEdits(const fs::path& root, const ProjectFiles& f
         if (!okayproj::ReadText(abs.string(), e.oldText)) continue;
         const std::string dirOld = fs::path(rel).parent_path().generic_string();
         const std::string dirNew = fs::path(e.newRel).parent_path().generic_string();
-        struct Rep { std::size_t begin, end; std::string text; };
-        std::vector<Rep> reps;
+        std::vector<okay::RefRewrite> reps;
         std::set<std::pair<std::size_t, std::size_t>> spans;
         for (const okay::FoundRef& r : RefsIn(kind, e.oldText)) {
             if (r.begin == std::string::npos || r.end > e.oldText.size() || r.begin >= r.end || !spans.insert({r.begin, r.end}).second) continue;
             std::string written = r.path;
-            const bool back = written.find('\\') != std::string::npos && written.find('/') == std::string::npos;
             for (char& c : written) if (c == '\\') c = '/';
             if (written.empty()) continue;
             const fs::path wp(written);
@@ -1099,19 +1097,11 @@ std::vector<RefEdit> ComputeRefEdits(const fs::path& root, const ProjectFiles& f
             else nt = (root / fs::path(tNew)).lexically_normal().generic_string();
             if (nt.empty() || nt == written) continue;
             if (targetMoves) e.targets.insert(RelKey(target));
-            if (back) for (char& c : nt) if (c == '/') c = '\\';
-            if (r.quoted) {
-                std::string esc;
-                for (char c : nt) { if (c == '"' || c == '\\') esc += '\\'; esc += c; }
-                nt = esc;
-            }
-            reps.push_back({r.begin, r.end, nt});
+            reps.push_back(okay::RewriteRef(r, std::move(nt)));   // the asset database's own way: backslashes kept, quotes escaped
         }
         if (reps.empty()) continue;
-        std::sort(reps.begin(), reps.end(), [](const Rep& a, const Rep& b) { return a.begin > b.begin; });
-        e.newText = e.oldText;
-        for (const Rep& r : reps) e.newText.replace(r.begin, r.end - r.begin, r.text);
         e.count = static_cast<int>(reps.size());
+        e.newText = okay::ApplyRefRewrites(e.oldText, std::move(reps));
         e.readOnly = ReadOnly(abs);
         out.push_back(std::move(e));
     }

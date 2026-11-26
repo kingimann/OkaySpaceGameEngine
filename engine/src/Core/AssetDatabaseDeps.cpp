@@ -658,8 +658,7 @@ int AssetDatabase::FixStaleReferences(std::vector<std::string>* changedFiles) {
             if (!applies) continue;
             try { e.fn(s.rec.path, text, refs); } catch (...) {}
         }
-        struct Rep { std::size_t begin, end; std::string text; };
-        std::vector<Rep> reps;
+        std::vector<RefRewrite> reps;
         std::set<std::pair<std::size_t, std::size_t>> seen;
         const std::size_t dirEnd = s.rec.path.find_last_of('/');
         const std::string dir = dirEnd == std::string::npos ? std::string() : s.rec.path.substr(0, dirEnd);
@@ -672,24 +671,34 @@ int AssetDatabase::FixStaleReferences(std::vector<std::string>* changedFiles) {
             std::string nt;
             if (m.style == 1) nt = U8(fs::path(target->rec.path).lexically_relative(fs::path(dir.empty() ? "." : dir)));
             else nt = m.prefix + target->rec.path;
-            if (r.path.find('\\') != std::string::npos && r.path.find('/') == std::string::npos)
-                for (char& c : nt) if (c == '/') c = '\\';
-            if (r.quoted) {
-                std::string esc;
-                for (char c : nt) { if (c == '"' || c == '\\') esc += '\\'; esc += c; }
-                nt = esc;
-            }
-            reps.push_back({r.begin, r.end, nt});
+            reps.push_back(RewriteRef(r, std::move(nt)));
         }
         if (reps.empty()) continue;
-        std::sort(reps.begin(), reps.end(), [](const Rep& a, const Rep& b) { return a.begin > b.begin; });
-        for (const Rep& r : reps) text.replace(r.begin, r.end - r.begin, r.text);
+        text = ApplyRefRewrites(std::move(text), std::move(reps));
         if (!savefmt::AtomicWrite(abs, text)) continue;
         total += static_cast<int>(reps.size());
         if (changedFiles) changedFiles->push_back(s.rec.path);
         RefreshFile(s.rec.path);
     }
     return total;
+}
+
+RefRewrite RewriteRef(const FoundRef& r, std::string newPath) {
+    if (r.path.find('\\') != std::string::npos && r.path.find('/') == std::string::npos)
+        for (char& c : newPath) if (c == '/') c = '\\';
+    if (r.quoted) {
+        std::string esc;
+        for (char c : newPath) { if (c == '"' || c == '\\') esc += '\\'; esc += c; }
+        newPath = std::move(esc);
+    }
+    return RefRewrite{r.begin, r.end, std::move(newPath)};
+}
+
+std::string ApplyRefRewrites(std::string text, std::vector<RefRewrite> rewrites) {
+    std::sort(rewrites.begin(), rewrites.end(), [](const RefRewrite& a, const RefRewrite& b) { return a.begin > b.begin; });
+    for (const RefRewrite& r : rewrites)
+        if (r.begin <= r.end && r.end <= text.size()) text.replace(r.begin, r.end - r.begin, r.text);
+    return text;
 }
 
 } // namespace okay

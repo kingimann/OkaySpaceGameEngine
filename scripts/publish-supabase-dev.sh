@@ -112,7 +112,7 @@ IDX=(python3 -I scripts/dev_index.py)
 
 # ---- The words and the checksums (no network, no key) -----------------------------------------------------------------------------
 # dev_index.py checks the branch, the commit and the note (and writes the notes); a bad one stops here, before anything is read or written.
-"${IDX[@]}" notes --version "$VER" --base "$BASE" --branch="$DEV_BRANCH" --sha="$DEV_SHA" --note="$DEV_NOTE" --out "$T/NOTES-DEV.txt" ||
+"${IDX[@]}" notes --version "$VER" --base "$BASE" --branch="$DEV_BRANCH" --sha="$DEV_SHA" --note="$DEV_NOTE" --changelog dist/CHANGELOG.txt --out "$T/NOTES-DEV.txt" ||
     die "the branch, the commit or the note was refused (see above)"
 TITLE="$(head -n1 "$T/NOTES-DEV.txt")"
 DATE="$(date -u +%F)"

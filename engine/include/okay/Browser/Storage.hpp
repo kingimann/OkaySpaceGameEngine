@@ -55,6 +55,10 @@ public:
     std::string ToJson() const;
     /// Read what ToJson wrote; false when the text is not ours (nothing is changed then).
     bool FromJson(const std::string& text);
+    /// Another program on the same profile saved its localStorage (`saved`): with `replace` this store becomes the saved one;
+    /// without, only the origins and keys this store does not have are added (a store with unsaved changes keeps its own
+    /// values). Does not set TakeChanged.
+    void MergeSaved(const WebStorage& saved, bool replace);
 
 private:
     std::map<std::string, StorageArea> m_areas;

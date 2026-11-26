@@ -1929,6 +1929,7 @@ bool g_showPluginManager = false;  // Plugin Manager (editor plugins)
 bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt reports)
 bool g_showInputActions = false; // Input Actions window (author a .okayinput asset, live view)
 bool g_showInputDebug = false; // Input panel (live keys, axes, actions, events, response curves)
+bool g_showCommandLine = false; // Command Line panel: okay commands run inside the editor (shared/CommandLinePanel.hpp)
 bool g_showAudioMixer = false; // Audio Mixer window (master + group volumes, meters, ducking)
 bool g_showSpriteEditor = false; // pixel-art Sprite Editor (paint/shape custom sprites)
 bool g_showUIThemer = false;     // UI Theme window (reusable styles applied across widgets)
@@ -4458,6 +4459,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Crash Log",     "Crash Log",                 &g_showCrashLog,      "Panels", PI_Warning},
         {"Audio Mixer",   "Audio Mixer",               &g_showAudioMixer,    "Panels", PI_Stats},
         {"Input",         "Input",                     &g_showInputDebug,    "Panels", PI_Stats},
+        {"Command Line",  "Command Line",              &g_showCommandLine,   "Panels", PI_Console},
         {"Script Editor", "Script Editor",             &g_showScriptEditor,  "Editors & Tools", PI_Script},
         {"Visual Script", "Visual Script",             &g_showVisualScript,  "Editors & Tools", PI_Nodes},
         {"Animation",     "Animation###AnimationDock", &g_showAnimation,     "Editors & Tools", PI_Animation},
@@ -6101,7 +6103,7 @@ static bool* MenuFlag(const std::string& id) {
         {"panel.services", &g_showServices}, {"panel.scenemanager", &g_showScenes}, {"panel.net", &g_showNet},
         {"panel.savemanager", &g_showSaveManager}, {"panel.history", &g_showHistory},
         {"panel.stats", &g_showStats}, {"panel.lighting", &g_showSceneSettings}, {"panel.profiler", &g_showProfiler},
-        {"panel.assetmanager", &g_showAssetManager}, {"panel.crashlog", &g_showCrashLog}, {"panel.audiomixer", &g_showAudioMixer}, {"panel.input", &g_showInputDebug},
+        {"panel.assetmanager", &g_showAssetManager}, {"panel.crashlog", &g_showCrashLog}, {"panel.audiomixer", &g_showAudioMixer}, {"panel.input", &g_showInputDebug}, {"panel.commandline", &g_showCommandLine},
         {"tool.visualscript", &g_showVisualScript}, {"tool.scripteditor", &g_showScriptEditor},
         {"tool.animation", &g_showAnimation}, {"tool.animator", &g_showAnimatorGraph}, {"tool.timeline", &g_showTimeline},
         {"tool.navigation", &g_showNavigation}, {"tool.dialogue", &g_showDialogue}, {"tool.behaviortree", &g_showBehaviorTree},
@@ -55725,6 +55727,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.AudioMixer"); if (g_showAudioMixer) DrawAudioMixer(); }
         okay::editor::DrawInputDebugger(&g_showInputDebug, ed.isPlaying(), [](const std::string& t) { ImGui::SetClipboardText(t.c_str()); });
         okay::editor::DrawInputActionsWindow(&g_showInputActions, ed.projectDir());
+        if (g_showCommandLine) DrawCommandLineOkayUI(&g_showCommandLine, ed.projectDir());   // View > Panels > Command Line
         { OKAY_PROFILE("UI.AssetManager"); if (g_showAssetManager) DrawAssetManager(ed); }
         { OKAY_PROFILE("UI.Plugins"); TickPlugins(ed); DrawPluginManager(ed); }
         {   // Every scene needs a camera (the Game view and builds render through it):

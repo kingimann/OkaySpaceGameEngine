@@ -10,4 +10,22 @@ namespace std {
 struct nothrow_t {
     explicit nothrow_t() {}
 };
+// std::allocator ([default.allocator]; Round 32, FbxReader.hpp's `struct UninitAllocator : std::allocator<T>`): the
+// default allocator, memory from malloc and free like `new`. The standard declares it in <memory>; it is here so that
+// <vector> (which includes <new>) can name it as its default second argument, and <memory> includes <new>.
+template <typename T>
+class allocator {
+public:
+    typedef T value_type;
+    typedef unsigned long long size_type;
+    typedef long long difference_type;
+    allocator() {}
+    allocator(const allocator&) {}
+    template <typename U>
+    allocator(const allocator<U>&) {}
+    T* allocate(unsigned long long n) { return (T*)malloc(n * sizeof(T)); }
+    void deallocate(T* p, unsigned long long) { free(p); }
+    bool operator==(const allocator&) const { return true; }
+    bool operator!=(const allocator&) const { return false; }
+};
 }

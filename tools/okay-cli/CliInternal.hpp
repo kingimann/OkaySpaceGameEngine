@@ -27,6 +27,8 @@ bool HasClashMarks(const std::string& text);
 /// The okay program git's drivers should run: one that survives the launcher removing an old version. `okay` on PATH,
 /// else the launcher-level Tools/okay when this one is a kept copy under Versions/<v>/, else this program.
 std::string StableOkayPath();
+/// True while RunInProcess runs a command on this thread (inside the editor, not the okay program). CommandJob.cpp.
+bool RunningInsideHost();
 /// `s` as a JSON string, quotes included.
 std::string JsonText(const std::string& s);
 /// `okay project|scene|script|vs|asset <sub> ...` (args start after the command). Content.cpp.

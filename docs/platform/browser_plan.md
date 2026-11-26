@@ -20,8 +20,8 @@ The owner asked for our own browser (2026-11-25): an installable program for pla
    (`player/main.cpp`), which already reads a game folder. Open questions: where saves go (per site), and what a game from
    another site may do (a permission prompt).
 3. **Standalone program (first version done).** `okay-browser` (`browser/`, `OkaySpaceBrowser.exe` on Windows): a browser
-   window of its own on the same library. Still to do: installing it like the launcher and updating it from our own server
-   (the release packaging is the coordinator's and the owner's decision).
+   window of its own on the same library. The Windows package carries it in `Tools/` (2026-11-26, a launcher button starts
+   it). Still to do: installing it like the launcher and updating it from our own server on its own.
 3a. **A regular browser, round 1 (owner, 2026-11-25: "i want the browser to be like a regular browser"; branch
    `claude/browser-full-1`).** Browser basics in the program, real layout, forms. See "Round 1" below.
 3b. **The browser in the launcher (owner, 2026-11-26: "can you allow user to launch browser in the launcher"; branch
@@ -289,12 +289,41 @@ stores, `Cookies.hpp` and `Storage.hpp`):
   answers false and prompt null at once (what the standard returns when the browser does not show a modal dialog). At most 3
   dialogs per script run and 8 waiting; the rest go to the console.
 
-**What the host must call (okayui BrowserView / shared BrowserApp, not in this change):** `SetCookieStore` and
-`SetLocalStorage` on every tab (one store each per profile, loaded from and saved to the profile folder with
-`ToJson` / `FromJson` when `TakeChanged()` says so); `CookieHeader` on each fetch of `TakeFetches()` and `ReceiveCookies` with
-its Set-Cookie headers; `TakeScriptRequests` each frame, send each (method, headers, body as given) and answer with
-`DeliverScriptResponse` (status, headers, body, final address); `KeyEvent` before typing a key into a control (skip it when it
-returns true); `PointerEvent` for mouse buttons and moves; `TakeDialog` each frame to show alerts.
+**What the host calls (done in round 3 of the host, `claude/browser-host-3`):** written from RFC 6265 (5.4: each request carries
+the cookies of its own address, so the host follows redirects itself, one hop at a time; RFC 9110 15.4 for the method a redirect
+keeps), the Fetch standard (a request is sent with the method, headers and body the page gave), UI Events (keyboard and mouse
+events, their key / code values, keyCode and buttons) and the HTML standard (8.4 "simple dialogs"). No code from any browser.
+- **One cookie store and one localStorage per profile** (`SiteData` in `Browser/Profile.hpp`): `cookies.json` and
+  `local_storage.json` in the profile's folder (`PrefPath("OkaySpace", "Browser")`), written to a temporary file and renamed
+  (`WriteFileReplacing`, shared with profile.json). Every tab, new tabs included, gets both (`TabHost::SetSiteData`, set again
+  when the tab is made anew). They are saved about once a second after `TakeChanged()`. **The program and the launcher at once:**
+  like profile.json (`SharedFile` remembers size, time and hash), a file the other program replaced is read first; with nothing
+  unsaved here it replaces this program's data (its session cookies stay), with unsaved changes this program keeps its own and
+  adds what only the file has, then writes. Nothing one program set is lost; a cookie or key removed in one program at the same
+  moment as the other saved can come back (the safe default, written down here).
+- **Cookies on every load:** each page, image, style, script and font request gets `Cookie: <tab.CookieHeader(url)>`; the
+  answer's Set-Cookie headers (also those of each redirect hop) go to `tab.ReceiveCookies(url, values)`. Both HTTP clients give
+  the raw head (`ExResult::rawHead`); `followRedirects = false` now works on our own client too (it was WinHTTP only), and
+  `callerCookies` turns WinHTTP's own per-session cookies off for these requests, so only our store decides. Cookie values and
+  bodies are never logged. A subresource or fetch of an https page is never redirected to plain http.
+- **The page's fetch() / XMLHttpRequest:** `TakeScriptRequests()` each frame; each is sent as given on the tab host's worker
+  threads (now up to 4 per tab, so a slow fetch does not hold up the page) and answered with `DeliverScriptResponse` (status,
+  reason, every header, body, final address). A redirect hop to another site carries no cookies. Request ids are now the tab's
+  own (they were the page's, so an old page's late answer could reach the next page's request with the same number).
+- **Keys and mouse:** the view (`BrowserView.cpp`) sends keydown (and keypress for a key that makes a character), keyup,
+  mousedown / mouseup for each button and mousemove to the page before it uses them. A cancelled key is not typed into the
+  field (the typed text is dropped and the field is read-only for that frame) and does not scroll or move the focus; a
+  cancelled mousedown starts no text selection and gives no field the keyboard. The browser's own shortcuts
+  (`IsBrowserShortcut`: Ctrl+T, W, L, Tab, 1-9, Alt+Left ...) are never sent to the page, and they are handled before the
+  page sees anything, so a page cannot stop them.
+- **Dialogs:** `TakeDialog` each frame for the shown tab; shown over the page in the browser's dialog style as "<site> says",
+  with OK (Enter / Esc). A confirm / prompt says the page went on without the answer (the script never waits, see above).
+- **Back / Forward history list:** a right click on Back or Forward, or a press held half a second, lists that side's entries
+  (nearest first, at most 16; the page's title, else the history's title, else the address); a click goes there with
+  `BrowserTab::GoTo(index)` (`HistoryEntries`, `HistoryIndex`): a pushState entry of the shown page gets popstate, any other
+  is loaded.
+- **The wheel glides** like the key scrolls (100 px a notch, over a few frames; a scrolling area under the pointer still
+  takes the wheel first).
 
 **Checked (2026-11-26):** `browser_script` (279 checks) and the other browser tests pass on Linux. Nothing was run in the
 program or the launcher (the host wiring is not done) or on Windows.
@@ -410,3 +439,27 @@ DOCTYPE), `browser_layout3` (the cases above, worked out by hand), `okayui_brows
 scales by the font's ascent-to-descent height, not its em size); a text run with one glyph the launcher font lacks (≠, €, ™,
 IPA) is not drawn at all in headless renders; icon fonts (Material Icons ligatures) show their names; images were not
 loaded in these renders. Nothing was run on Windows.
+
+## Site check: real sites, failures ranked (2026-11-26, branch `claude/site-check-1`)
+
+Owner: "i want all sites to load properly". `okay-sitecheck` (`tools/sitecheck/`, feature map 17.20) loads the 61 public home
+pages of `tools/sitecheck/sites.txt` through the browser program's own tab host, page engine and view (with main as of #1342 and
+its User-Agent), one at a time, and ranks the causes by how many sites each hits. Run on Linux on 2026-11-26 (our own HTTP
+client with the system OpenSSL, not WinHTTP as on Windows); 58 of 61 shown. Reports and screenshots stay outside the
+repository. The order to fix things in, by sites hit:
+
+- JavaScript language: syntax we do not read: `__proto__: value` in object literals (18), a construct with `in` that stops
+  the parser ("unexpected 'in'", 17 + 16 sites; the exact construct is not found yet), tagged templates (3), and single sites
+  with BigInt literals, regex lookbehind, `for await`, `static {}`, `import`. Missing globals: `Date` (14), `decodeURIComponent`
+  (4), `encodeURIComponent`, `WeakMap`, `Intl` (2 each). Most of the 20 sites with "a global of the page is not defined"
+  follow from an earlier script that failed to parse.
+- DOM API: `navigator` (8), `URL` (4), `performance` (4), `Element`, `Image`, `MutationObserver`, `matchMedia` (2 each).
+- Images: SVG (20), WebP (5). Fonts: WOFF2 (15; no Brotli yet) and WOFF (6; the decoder exists, the tab host does not call it).
+- Layout: 18 screenshots are nearly one flat colour and 7 pages drew almost nothing, mostly pages built by their scripts
+  (Twitch, Reddit, Pinterest, Dailymotion, Mastodon) or sites that answered 403.
+- Network: 12 sites answered the home page with 403 (bot checks; the Guardian loaded with the earlier User-Agent), a TLS
+  handshake failure with DuckDuckGo (2 runs of 3), a timeout with Best Buy, two scripts over the 16 MB limit (YouTube,
+  Bluesky), fonts answered 404 (6).
+- CSS: properties the cascade does not use, on most sites: `cursor` (35), `-webkit-text-size-adjust` (28), `transition` (26),
+  `pointer-events` (24), `fill` (23), `-webkit-appearance` (22), `user-select` (20), `animation` (18); selectors with
+  `::-webkit-scrollbar` (21) or `::-moz-focus-inner` (19) are dropped. Many of these change nothing visible.

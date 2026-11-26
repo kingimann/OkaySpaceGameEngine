@@ -163,6 +163,92 @@ int main() {
     CHECK(ob::supabase::Auth::RecoverUrl("https://p.example.test", "ftp://x") == "https://p.example.test/auth/v1/recover");
     CHECK(acc::AccountService::RecoveryVerifyBody("e@x.test", "123456") == ob::supabase::Auth::RecoveryVerifyBody("e@x.test", "123456"));
 
+    // ---- Database (round 3): the query text, every operator, encoding, hostile values ----
+    {
+        ob::RecordingTransport rec;
+        rec.answer = [](const ob::Request&) { ob::Response r; r.reached = r.ok = true; r.status = 200; r.body = "[]"; return r; };
+        ob::supabase::Database db("https://p.example.test/", "key-1", rec, "tok-1");
+        auto path = [&db](const ob::Query& q) { return q.Build("GET").path; };
+        // Every filter operator, in call order.
+        CHECK(path(db.From("t").Select("a,b").Eq("c", "1").Neq("d", "2").Gt("e", "3").Gte("f", "4").Lt("g", "5").Lte("h", "6")) ==
+              "t?select=a,b&c=eq.1&d=neq.2&e=gt.3&f=gte.4&g=lt.5&h=lte.6");
+        CHECK(path(db.From("t").Like("n", "al*").Ilike("m", "*X*")) == "t?n=like.al%2A&m=ilike.%2AX%2A");
+        CHECK(path(db.From("t").Is("a", ob::IsValue::Null).Is("b", ob::IsValue::True).Is("c", ob::IsValue::False).Is("d", ob::IsValue::Unknown)) ==
+              "t?a=is.null&b=is.true&c=is.false&d=is.unknown");
+        CHECK(path(db.From("t").In("id", {"a", "b c", "x,y", "q\"t", ""})) == "t?id=in.(a,b%20c,%22x%2Cy%22,%22q%5C%22t%22,%22%22)");
+        CHECK(path(db.From("t").In("id", {})) == "t?id=in.()");
+        // Order: one part, tie-breakers added to it; limit, offset, range.
+        CHECK(path(db.From("t").Order("a", true).Eq("x", "1").Order("b")) == "t?order=a.desc,b.asc&x=eq.1");
+        CHECK(path(db.From("t").Limit(5).Offset(10)) == "t?limit=5&offset=10");
+        CHECK(path(db.From("t").Range(20, 29)) == "t?offset=20&limit=10");
+        CHECK(path(db.From("t").Range(5, 2)) == "t?offset=5&limit=0");
+        CHECK(path(db.From("t").Range(-4, 0)) == "t?offset=0&limit=1");
+        CHECK(path(db.From("t").Range(0, 0x7fffffffffffffffLL)) == "t?offset=0&limit=9223372036854775807");
+        CHECK(path(db.From("t").Select("a").Select("b")) == "t?select=b");   // a second Select replaces the first
+        CHECK(path(db.From("t")) == "t");
+        // Values are percent-encoded (RFC 3986 unreserved kept): a value can never add a part to the query.
+        CHECK(path(db.From("t").Eq("n", "a&select=*,x=y#z?")) == "t?n=eq.a%26select%3D%2A%2Cx%3Dy%23z%3F");
+        CHECK(path(db.From("t").Eq("n", std::string("\xc3\xa9\x00\n", 4))) == "t?n=eq.%C3%A9%00%0A");
+        CHECK(path(db.From("t").Eq("n", "A-z_0.9~")) == "t?n=eq.A-z_0.9~");
+        CHECK(path(db.From("t").Gt("at", "2026-01-02T03:04:05Z", ob::ValueText::AsIs)) == "t?at=gt.2026-01-02T03:04:05Z");
+        // Names keep PostgREST's select characters and encode the rest (no "&", "=", "#", "?" or space gets through).
+        CHECK(path(db.From("t").Select("*,profiles(name),a->b,c:d,e!f")) == "t?select=*,profiles(name),a->b,c:d,e!f");
+        CHECK(path(db.From("t&x=1").Select("a b").Eq("c=d", "1")) == "t%26x%3D1?select=a%20b&c%3Dd=eq.1");
+        // Prefer and Accept headers.
+        CHECK(db.From("t").Build("POST", "{}").headers.empty());
+        CHECK(db.From("t").Returning(ob::Return::Minimal).Build("POST", "{}", true).headers == "Prefer: resolution=merge-duplicates,return=minimal");
+        CHECK(db.From("t").Returning(ob::Return::Representation).Build("POST", "{}").headers == "Prefer: return=representation");
+        CHECK(db.From("t").Prefer("count=exact").Returning(ob::Return::Minimal).Build("PATCH", "{}").headers == "Prefer: return=minimal,count=exact");
+        CHECK(db.From("t").Single().Build("GET").headers == "Accept: application/vnd.pgrst.object+json");
+        CHECK(db.From("t").Single().Returning(ob::Return::Representation).Build("POST", "{}").headers ==
+              "Prefer: return=representation\nAccept: application/vnd.pgrst.object+json");
+        CHECK(path(db.From("t").OnConflict("board,user_id")) == "t?on_conflict=board,user_id");
+        // What goes on the wire: methods, the /rest/v1 prefix, the header order (key, token, Prefer / Accept, Content-Type).
+        db.From("t").Eq("a", "1").Get();
+        db.From("t").Returning(ob::Return::Minimal).Insert("[{\"a\":1}]");
+        db.From("t").OnConflict("a").Upsert("[{\"a\":1}]");
+        db.From("t").Eq("a", "1").Update("{\"b\":2}");
+        db.From("t").Eq("a", "1").Delete();
+        db.From("t").Single().Eq("a", "1").Get();
+        db.Rpc("my_fn", "{\"p\":1}");
+        db.Rpc("bad/../fn?x", "{}");
+        CHECK(rec.sent.size() == 8);
+        if (rec.sent.size() == 8) {
+            const auto& s = rec.sent;
+            CHECK(s[0].method == "GET" && s[0].url == "https://p.example.test/rest/v1/t?a=eq.1" && s[0].body.empty());
+            CHECK((s[0].headers == std::vector<std::string>{"apikey: key-1", "Authorization: Bearer tok-1"}));
+            CHECK(s[1].method == "POST" && s[1].url == "https://p.example.test/rest/v1/t" && s[1].body == "[{\"a\":1}]");
+            CHECK((s[1].headers == std::vector<std::string>{"apikey: key-1", "Authorization: Bearer tok-1", "Prefer: return=minimal",
+                                                             "Content-Type: application/json"}));
+            CHECK(s[2].method == "POST" && s[2].url == "https://p.example.test/rest/v1/t?on_conflict=a");
+            CHECK(s[2].headers.size() == 4 && s[2].headers[2] == "Prefer: resolution=merge-duplicates");
+            CHECK(s[3].method == "PATCH" && s[3].url == "https://p.example.test/rest/v1/t?a=eq.1" && s[3].body == "{\"b\":2}");
+            CHECK(s[4].method == "DELETE" && s[4].url == "https://p.example.test/rest/v1/t?a=eq.1" && s[4].headers.size() == 2);
+            CHECK(s[5].headers.size() == 3 && s[5].headers[2] == "Accept: application/vnd.pgrst.object+json");
+            CHECK(s[6].method == "POST" && s[6].url == "https://p.example.test/rest/v1/rpc/my_fn" && s[6].body == "{\"p\":1}");
+            CHECK(s[7].url == "https://p.example.test/rest/v1/rpc/bad%2F..%2Ffn%3Fx");   // a name can't leave rpc/
+        }
+        // No token: the publishable key only. The answer comes back as the provider got it.
+        ob::supabase::Database anon("https://p.example.test", "key-1", rec);
+        const ob::Response r = anon.From("profiles").Select("id").Eq("username", "a b").Get();
+        CHECK(r.ok && r.body == "[]");
+        CHECK(rec.sent.back().url == "https://p.example.test/rest/v1/profiles?select=id&username=eq.a%20b");
+        CHECK((rec.sent.back().headers == std::vector<std::string>{"apikey: key-1"}));
+        // A sender (how AccountService plugs in its Api): gets the path from the project address and the header lines.
+        std::string seen;
+        ob::supabase::Database viaSender([&seen](const std::string& m, const std::string& p, const std::string& b, const std::string& h) {
+            seen = m + " " + p + " " + b + " [" + h + "]";
+            return ob::Response{};
+        });
+        viaSender.From("cloud_saves").Returning(ob::Return::Minimal).Upsert("[]");
+        CHECK(seen == "POST /rest/v1/cloud_saves [] [Prefer: resolution=merge-duplicates,return=minimal]");
+        viaSender.Rpc("queue_poll", "{}");
+        CHECK(seen == "POST /rest/v1/rpc/queue_poll {} []");
+        // AccountService hands out the same: signed out, its Api sends nothing and answers "not reached".
+        acc::AccountService a(root / "db", "https://p.example.test", "key-1");
+        CHECK(!a.Db().From("cloud_saves").Select("key").Get().reached);
+    }
+
     std::error_code ec;
     fs::remove_all(root, ec);
     TEST_MAIN_RESULT();

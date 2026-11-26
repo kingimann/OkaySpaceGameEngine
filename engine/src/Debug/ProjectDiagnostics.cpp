@@ -579,6 +579,8 @@ bool AddMissingRequirements(GameObject& go) {
 // References to files that are not in the project. Reads the project's text assets directly (scenes, prefabs,
 // materials, clips, ...) and never writes: an earlier version indexed the folder with the asset database, which
 // wrote a .okaymeta next to every file it looked at.
+thread_local std::uint64_t t_assetFilesRead = 0;
+
 void AppendAssetIndex(const ProjectDiagOptions& options, std::vector<Diagnostic>& items) {
     if (!options.checkAssetIndex || options.assetRoot.empty()) return;
     namespace fs = std::filesystem;
@@ -633,6 +635,7 @@ void AppendAssetIndex(const ProjectDiagOptions& options, std::vector<Diagnostic>
         if (e1 || size > (16u << 20)) continue;
         std::ifstream in(it->path(), std::ios::binary);
         if (!in) continue;
+        ++t_assetFilesRead;
         std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         std::vector<FoundRef> refs;
         if (ext == "okayscene" || ext == "okayprefab") refs = ExtractSceneRefs(body);
@@ -659,6 +662,19 @@ void AppendAssetIndex(const ProjectDiagOptions& options, std::vector<Diagnostic>
 }
 
 } // namespace
+
+std::vector<Diagnostic> CollectProjectAssetDiagnostics(const ProjectDiagOptions& options) {
+    std::vector<Diagnostic> items;
+    AppendAssetIndex(options, items);
+    return items;
+}
+
+void MergeProjectAssetDiagnostics(std::vector<Diagnostic>& items, const std::vector<Diagnostic>& assetItems) {
+    for (const Diagnostic& d : assetItems)
+        if (!AlreadyMissingAsset(items, "", d.source.assetPath)) items.push_back(d);
+}
+
+std::uint64_t ProjectAssetFilesReadOnThisThread() { return t_assetFilesRead; }
 
 ProjectDiagResult CollectProjectDiagnostics(const Scene& scene, const ProjectDiagOptions& options) {
     ProjectDiagResult result;

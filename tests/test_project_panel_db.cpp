@@ -467,5 +467,46 @@ int main() {
         CHECK(b.Revision() > rev);
     }
 
+    // Opening a project must not read the assets on the editor's main thread (owner bug 2026-11-25: the editor froze while
+    // opening a project and had to be ended in Task Manager). The first index hashes every asset file and reads every text
+    // asset for its references: on a big project, a cold disk or a cloud-synced folder that is minutes. The Project panel's
+    // per-frame call (Browser::Update) starts it on a worker and takes the finished index in a later frame.
+    {
+        RUN_SUITE("project_open_index_off_main_thread");
+        TempDir td;
+        WriteFile(td.at("Art/big.raw"), std::string(3u << 20, 'x'));     // 3 MB: hashed in full by the first index
+        WriteFile(td.at("Art/small.okaydata"), "name = S\n");
+        WriteFile(td.at("Scenes/main.okayscene"), "# scene\n");
+        Browser b(td.assets());
+        const std::uint64_t before = okay::AssetDatabase::BytesHashedOnThisThread();
+        const auto t0 = std::chrono::steady_clock::now();
+        bool first = true, firstAlreadyIndexed = false;
+        while (!b.Indexed() && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(20)) {
+            b.Update(1000);
+            if (first) { firstAlreadyIndexed = b.Indexed(); first = false; }
+            if (!b.Indexed()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        CHECK(okay::AssetDatabase::BytesHashedOnThisThread() == before);   // before the fix: 3 MB and more read right here
+        CHECK(!firstAlreadyIndexed);                                         // the first frame came back without waiting for the scan
+        CHECK(b.Indexed());
+        CHECK(b.AssetCount() == 3);
+        CHECK(Contains(b.List(td.at("Art"), ListOptions()), "big.raw"));
+        CHECK(okay::SceneAssetIndex() == &b.Db());
+        CHECK(b.Db().Find(b.Db().PathToGuid("Art/big.raw")) && b.Db().Find(b.Db().PathToGuid("Art/big.raw"))->hash != 0);   // the worker hashed it
+        // After that, refreshes are incremental on the main thread as before (nothing changed: nothing is read again).
+        const std::uint64_t mid = okay::AssetDatabase::BytesHashedOnThisThread();
+        CHECK(b.Sync());
+        CHECK(okay::AssetDatabase::BytesHashedOnThisThread() == mid);
+    }
+    {
+        RUN_SUITE("project_open_index_closed_early");   // the project is closed (another opened) while its first index runs
+        TempDir td;
+        for (int i = 0; i < 50; ++i) WriteFile(td.at("f" + std::to_string(i) + ".raw"), std::string(64u << 10, 'y'));
+        { Browser b(td.assets()); b.Update(1000); }   // destroyed at once: the worker finishes on its own and frees what it made
+        Browser c(td.assets());
+        CHECK(c.Sync() && c.AssetCount() == 50);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+
     TEST_MAIN_RESULT();
 }

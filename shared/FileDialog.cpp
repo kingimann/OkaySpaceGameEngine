@@ -1,6 +1,7 @@
 // FileDialog: see FileDialog.hpp. System dialogs per platform + the pure helpers + the built-in
 // browser's model. The ImGui drawing of the browser is in FileDialogUI.cpp.
 #include "FileDialog.hpp"
+#include "CrashContext.hpp"   // PersonWait: a native dialog is the person choosing, not a hang (editor/HangWatchdog.hpp)
 
 #include <algorithm>
 #include <cctype>
@@ -793,7 +794,9 @@ void Show(const Request& r0, Callback cb) {
     Request r = r0;
     if (g_ctxGetter) r.uiContext = g_ctxGetter();
     std::vector<std::string> paths;
-    if (!BuiltinOpen() && RunNative(r, paths)) {
+    bool native = false;
+    if (!BuiltinOpen()) { okaycrash::ctx::PersonWait waiting; native = RunNative(r, paths); }
+    if (native) {
         if (!paths.empty()) cb(paths);
         return;
     }

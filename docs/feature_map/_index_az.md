@@ -2119,6 +2119,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Handles and slot maps (1.18.5)
 - hands (4.7)
 - Hands window and preview (4.7.4)
+- Hang watchdog (15.11.11)
 - hanging (29.4)
 - haptics (8.6)
 - Hard-coded gizmos (54.2.1)

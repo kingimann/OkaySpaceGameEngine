@@ -12,7 +12,7 @@ namespace okay::browser {
 namespace {
 
 using okay::str::Trim;
-std::string Lower(const std::string& s) { return okay::str::LowerAscii(s); }
+using okay::str::LowerAscii;
 std::string AttrOr(const Node& el, const char* name, const std::string& fallback = std::string()) {
     const std::string* v = el.Attr(name);
     return v ? *v : fallback;
@@ -58,7 +58,7 @@ std::vector<const Node*> OptionsOf(const Node& select) {
 } // namespace
 
 std::string InputType(const Node& el) {
-    const std::string t = Lower(Trim(AttrOr(el, "type", "text")));
+    const std::string t = LowerAscii(Trim(AttrOr(el, "type", "text")));
     static const char* const known[] = {"text", "password", "checkbox", "radio", "submit", "reset", "button", "hidden", "email",
                                         "search", "url", "tel", "number", "file", "image", "range", "date", "color", "time",
                                         "datetime-local", "month", "week", nullptr};
@@ -71,7 +71,7 @@ ControlKind KindOf(const Node& el) {
     if (el.name == "textarea") return ControlKind::TextArea;
     if (el.name == "select") return ControlKind::Select;
     if (el.name == "button") {
-        const std::string t = Lower(Trim(AttrOr(el, "type", "submit")));
+        const std::string t = LowerAscii(Trim(AttrOr(el, "type", "submit")));
         return t == "reset" ? ControlKind::Reset : t == "button" ? ControlKind::Button : ControlKind::Submit;
     }
     if (el.name != "input") return ControlKind::None;
@@ -309,8 +309,8 @@ Submission FormState::Submit(const Node& form, const Node* submitter, const std:
     std::string url = action.empty() ? pageUrl : ResolveUrl(base, action);
     const std::string scheme = ParseUrl(url).scheme;
     if (scheme != "http" && scheme != "https") { s.note = "The form sends to an address that cannot be opened (only http and https)."; return s; }
-    const std::string method = Lower(Trim(pick("formmethod", "method")));
-    std::string enctype = Lower(Trim(pick("formenctype", "enctype")));
+    const std::string method = LowerAscii(Trim(pick("formmethod", "method")));
+    std::string enctype = LowerAscii(Trim(pick("formenctype", "enctype")));
     const auto entries = Entries(form, submitter, doc);
     if (enctype == "multipart/form-data") {
         enctype = "application/x-www-form-urlencoded";

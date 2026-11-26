@@ -596,7 +596,7 @@ std::string When(std::int64_t t) {
     const std::int64_t d = doy - (153 * mp + 2) / 5 + 1;
     const std::int64_t m = mp < 10 ? mp + 3 : mp - 9;
     if (m <= 2) ++y;
-    char buf[48];
+    char buf[96];
     std::snprintf(buf, sizeof buf, "%04lld-%02lld-%02lld %02lld:%02lld UTC", (long long)y, (long long)m, (long long)d,
                   (long long)(secs / 3600), (long long)(secs / 60 % 60));
     return buf;

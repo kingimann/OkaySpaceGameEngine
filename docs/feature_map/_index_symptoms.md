@@ -441,6 +441,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | call button does nothing | [17.4](17-launcher-platform.md#174-chat-dms-groups-voice-notes-calls-polls-gifs-emoji) Chat: DMs, groups, voice notes, calls, polls, GIFs, emoji |
 | calls work for me but not for a friend behind a strict router | [16.7](16-networking.md#167-voice-chat-server) Voice chat server |
 | camera cuts instead of blending | [4.8](04-characters-cameras.md#48-virtual-cameras-and-dollies) Virtual cameras and dollies |
+| can we run without Supabase | [17.19](17-launcher-platform.md#1719-okaybackend-one-backend-layer-for-every-program-supabase-today-our-own-local-backend-beside-it) OkayBackend: one backend layer for every program (Supabase today, our own Local backend beside it) |
 | can't join with an invite code | [17.8](17-launcher-platform.md#178-servers-page-discord-style-community-servers) Servers page (Discord-style community servers) |
 | can't post | [17.5](17-launcher-platform.md#175-forums) Forums |
 | can't sign in | [17.2](17-launcher-platform.md#172-accounts-and-sign-in) Accounts and sign-in |
@@ -729,6 +730,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | model faces the wrong way or is a tiny or huge size | [3.6](03-modeling-import.md#36-model-import) Model import |
 | model floats or sinks | [3.7](03-modeling-import.md#37-rigging-and-playable-setup) Rigging and playable setup |
 | mouse-look jumps on the first frame | [8.1](08-input.md#81-keyboard-and-mouse) Keyboard and mouse |
+| move our data off Supabase | [17.19](17-launcher-platform.md#1719-okaybackend-one-backend-layer-for-every-program-supabase-today-our-own-local-backend-beside-it) OkayBackend: one backend layer for every program (Supabase today, our own Local backend beside it) |
 | movement judders although the frame rate looks steady | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
 | movement stutters or jitters when frame rate differs from the physics rate | [6.4](06-physics.md#64-fixed-step-with-render-interpolation-pose-history) Fixed step with render interpolation, pose history |
 | moving a file in the project loses its texture in scenes | [1.12](01-core-scene.md#112-asset-database) Asset database |
@@ -1293,6 +1295,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | web export looks flatter or runs slowly than desktop | [38.7](38-render-backends.md#387-web-webgl-path) Web (WebGL) path |
 | what's new" shows commit messages | [18.5](18-build-export-release.md#185-update-feed) Update feed |
 | where do I get the headers to build a plugin | [24.4](20-35-planned.md#244-plugin-sdk) Plugin SDK |
+| where does the launcher talk to Supabase | [17.19](17-launcher-platform.md#1719-okaybackend-one-backend-layer-for-every-program-supabase-today-our-own-local-backend-beside-it) OkayBackend: one backend layer for every program (Supabase today, our own Local backend beside it) |
 | which UI should I use | [40.5](40-okayui-library.md#405-how-okayui-relates-to-scene-ui) How OkayUI relates to scene UI |
 | wind does not move particles | [2.4](02-rendering-world.md#24-sky-fog-and-weather) Sky, fog and weather |
 | window size ignored in the built game | [25.2](20-35-planned.md#252-project-settings) Project settings |

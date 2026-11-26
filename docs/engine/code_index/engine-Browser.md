@@ -2,7 +2,7 @@
 
 # Code index: engine-Browser
 
-Back to the [code index](../code_index.md). 12 headers, 142 names.
+Back to the [code index](../code_index.md). 12 headers, 152 names.
 
 ## `engine/include/okay/Browser/Browser.hpp`
 
@@ -149,6 +149,16 @@ Back to the [code index](../code_index.md). 12 headers, 142 names.
 - `IsInternalPage` function, line 238: True for the addresses of our own pages ("about:newtab", "about:history", "about:bookmarks", "about:downloads",
 - `InternalPage` function, line 240: The HTML of one of our own pages (text escaped; every link is an http(s) address or another of our pages).
 - `HtmlEscape` function, line 242: Text with <, >, & and " escaped for HTML.
+- `OpenTabInfo` struct, line 247: An open tab, for the address bar's "switch to this tab" rows.
+- `Suggestion` struct, line 253: One row under the address bar while the person types.
+- `SiteMark` struct, line 279: The badge in front of the address: https is Secure (a lock), http is NotSecure (spelled out, as common browsers do),
+- `SiteMarkOf` function, line 284
+- `SiteBadge` enum, line 286
+- `BadgeOf` function, line 287
+- `AddressShown` struct, line 292: The address as the bar shows it while the person is not typing in it: the host stands out, the rest is quieter. "https://"
+- `ShowAddress` function, line 295
+- `LoadErrorInfo` struct, line 298: What the error page says for a tab that could not load 'url' (BrowserTab::Error() is 'error').
+- `DescribeLoadError` function, line 304
 
 ## `engine/include/okay/Browser/Script.hpp`
 

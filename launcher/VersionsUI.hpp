@@ -30,6 +30,11 @@ struct Host {
     std::function<void()> savePrefs;
     std::function<void()> startUpdate;           ///< the launcher's own update (the sidebar's "Install now")
     std::function<void()> channelChanged;        ///< the channel was switched: look for updates again
+    /// "" when the editor and the player next to this launcher are its version; otherwise the plain sentence saying which one is not and how to
+    /// fix it (okayupdater::MismatchSentence, from the programs' own version resource).
+    std::string programsNote;
+    std::function<void()> repair;                ///< download this version's editor and player again (the "Repair" button under programsNote)
+    std::function<void()> testBuildsChanged;     ///< "Get test builds" was switched on the page: save it and look for updates again (as Settings > Behavior does)
     /// An editor download finished (ok) or failed (`message` says why). Set: it tells the person (a desktop notification
     /// or the toast, launcher/DesktopNotify.hpp) instead of the plain toast.
     std::function<void(const std::string& version, bool ok, const std::string& message)> downloadDone;

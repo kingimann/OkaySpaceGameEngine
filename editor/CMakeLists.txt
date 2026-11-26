@@ -166,7 +166,7 @@ endif()
 # EXPERIMENTAL Xbox One Developer Mode (UWP) export entry in File > Build Settings. OFF unless -DOKAY_BUILD_XBOX_UWP=ON
 # (docs/platform/xbox_uwp.md). Header-only: nothing to link.
 if(OKAY_BUILD_XBOX_UWP)
-    target_compile_definitions(okay-editor PRIVATE OKAY_XBOX_UWP=1)
+    target_compile_definitions(okay-editor PRIVATE OKAY_XBOX_UWP_EXPORT=1)   # only the File > Build Settings export entry: NEVER OKAY_XBOX_UWP, which makes the engine headers act as the Xbox app (no WinHTTP, Xbox IPC and sign-in)
     target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/platform/xbox_uwp)
 endif()
 

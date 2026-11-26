@@ -1091,7 +1091,7 @@ std::vector<Declaration> ParseDeclarations(const std::string& textIn, const CssL
 namespace {
 
 // A rule's block split into its own declarations and the rules nested in it (prelude, block) (CSS Nesting 1).
-void SplitNested(const std::string& body, std::string& own, std::vector<std::pair<std::string, std::string>>& nested) {
+void SplitNested(const std::string& body, std::string& own, std::vector<std::pair<std::string, std::string>>& nested) {   // dup-allow: splits a CSS block into declarations and nested rules (CSS Nesting 1), not a string Split
     std::size_t s = 0;
     int depth = 0;
     for (std::size_t i = 0; i < body.size(); ++i) {

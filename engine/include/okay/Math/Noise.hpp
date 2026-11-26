@@ -1,6 +1,6 @@
 #pragma once
 // One shared, seedable, allocation-free noise library: gradient noise (Perlin),
-// simplex, value noise, Worley / cellular, plus fBm / ridged / turbulence layering.
+// simplex-lattice noise, value noise, Worley / cellular, plus fBm / ridged / turbulence layering.
 //
 //   NoiseField n(1234);                  // same seed => identical output on every platform
 //   float h = n.Fbm2(NoiseType::Perlin, x * 0.01f, z * 0.01f);   // [-1, 1]
@@ -82,48 +82,20 @@ public:
         return Clamp1(Lerp(Lerp(x00, x10, v), Lerp(x01, x11, v), w));
     }
 
-    // ---- simplex noise ----
-    float Simplex2(float x, float y) const {
-        const float F2 = 0.3660254037844386f, G2c = 0.21132486540518713f;
-        float s = (x + y) * F2;
-        int i = FloorI(x + s), j = FloorI(y + s);
-        float t = (i + j) * G2c;
-        float x0 = x - (i - t), y0 = y - (j - t);
-        int i1 = x0 > y0 ? 1 : 0, j1 = 1 - i1;
-        float x1 = x0 - i1 + G2c, y1 = y0 - j1 + G2c;
-        float x2 = x0 - 1.0f + 2.0f * G2c, y2 = y0 - 1.0f + 2.0f * G2c;
-        float n = 0.0f;
-        float t0 = 0.5f - x0 * x0 - y0 * y0; if (t0 > 0) { t0 *= t0; n += t0 * t0 * G2(Hash(i, j), x0, y0); }
-        float t1 = 0.5f - x1 * x1 - y1 * y1; if (t1 > 0) { t1 *= t1; n += t1 * t1 * G2(Hash(i + i1, j + j1), x1, y1); }
-        float t2 = 0.5f - x2 * x2 - y2 * y2; if (t2 > 0) { t2 *= t2; n += t2 * t2 * G2(Hash(i + 1, j + 1), x2, y2); }
-        return Clamp1(70.0f * n);
-    }
-    float Simplex3(float x, float y, float z) const {
-        const float F3 = 1.0f / 3.0f, G3c = 1.0f / 6.0f;
-        float s = (x + y + z) * F3;
-        int i = FloorI(x + s), j = FloorI(y + s), k = FloorI(z + s);
-        float t = (i + j + k) * G3c;
-        float x0 = x - (i - t), y0 = y - (j - t), z0 = z - (k - t);
-        int i1, j1, k1, i2, j2, k2;
-        if (x0 >= y0) {
-            if (y0 >= z0)      { i1 = 1; j1 = 0; k1 = 0; i2 = 1; j2 = 1; k2 = 0; }
-            else if (x0 >= z0) { i1 = 1; j1 = 0; k1 = 0; i2 = 1; j2 = 0; k2 = 1; }
-            else               { i1 = 0; j1 = 0; k1 = 1; i2 = 1; j2 = 0; k2 = 1; }
-        } else {
-            if (y0 < z0)       { i1 = 0; j1 = 0; k1 = 1; i2 = 0; j2 = 1; k2 = 1; }
-            else if (x0 < z0)  { i1 = 0; j1 = 1; k1 = 0; i2 = 0; j2 = 1; k2 = 1; }
-            else               { i1 = 0; j1 = 1; k1 = 0; i2 = 1; j2 = 1; k2 = 0; }
-        }
-        float x1 = x0 - i1 + G3c, y1 = y0 - j1 + G3c, z1 = z0 - k1 + G3c;
-        float x2 = x0 - i2 + 2 * G3c, y2 = y0 - j2 + 2 * G3c, z2 = z0 - k2 + 2 * G3c;
-        float x3 = x0 - 1 + 3 * G3c, y3 = y0 - 1 + 3 * G3c, z3 = z0 - 1 + 3 * G3c;
-        float n = 0.0f;
-        float t0 = 0.6f - x0*x0 - y0*y0 - z0*z0; if (t0 > 0) { t0 *= t0; n += t0 * t0 * G3(Hash(i, j, k), x0, y0, z0); }
-        float t1 = 0.6f - x1*x1 - y1*y1 - z1*z1; if (t1 > 0) { t1 *= t1; n += t1 * t1 * G3(Hash(i + i1, j + j1, k + k1), x1, y1, z1); }
-        float t2 = 0.6f - x2*x2 - y2*y2 - z2*z2; if (t2 > 0) { t2 *= t2; n += t2 * t2 * G3(Hash(i + i2, j + j2, k + k2), x2, y2, z2); }
-        float t3 = 0.6f - x3*x3 - y3*y3 - z3*z3; if (t3 > 0) { t3 *= t3; n += t3 * t3 * G3(Hash(i + 1, j + 1, k + 1), x3, y3, z3); }
-        return Clamp1(32.0f * n);
-    }
+    // ---- simplex-lattice noise ----
+    // Written from the idea only (Perlin's simplex grid): skew space so the integer lattice cubes split into
+    // simplices, find the simplex around the point by ranking its fractional parts, and add one radial kernel
+    // times a gradient for each of the simplex's D + 1 corners. Our own structure and our own numbers, each worked
+    // out and checked by TestNoise in tests/test_math_geometry.cpp:
+    //   - kernel (r^2 - d^2)^3 with r^2 = 1/2: the smallest distance^2 from a point to a lattice corner outside its
+    //     own simplex is exactly 1/2 in 2D and in 3D (measured over random points), so a corner's kernel is zero
+    //     before any other simplex begins and the noise is continuous; the cube makes it twice differentiable;
+    //   - gradients: 16 unit directions at odd multiples of 11.25 degrees (2D) and the 12 icosahedron vertices
+    //     (0, +-1, +-phi) and their cyclic shifts, normalised (3D);
+    //   - output scale 1 / (largest corner sum when every corner takes its best gradient), found by search:
+    //     0.030176 in 2D and 0.024307 in 3D, so 33 and 41 (rounded down) keep the result inside [-1, 1].
+    float Simplex2(float x, float y) const { const float p[2] = {x, y}; return SimplexLattice<2>(p, 33.0f); }
+    float Simplex3(float x, float y, float z) const { const float p[3] = {x, y, z}; return SimplexLattice<3>(p, 41.0f); }
 
     // ---- Worley / cellular ----
     /// `jitter` 0 = points on a regular lattice, 1 = fully random inside each cell.
@@ -206,6 +178,61 @@ private:
                                        {1,0,-1},{-1,0,-1},{0,1,1},{0,-1,1},{0,1,-1},{0,-1,-1}};
         const float* a = g[(h >> 3) % 12u];
         return a[0] * x + a[1] * y + a[2] * z;
+    }
+
+    // Gradient of the simplex-lattice noise at one corner, dotted with the offset d from that corner.
+    static float SimplexGrad(std::uint32_t h, const float* d, int dims) {
+        if (dims == 2) {
+            // cos and sin of 11.25 and 33.75 degrees; swap and signs give the other 14 directions.
+            const bool wide = (h >> 7) & 1u;
+            float gx = wide ? 0.83146961f : 0.98078528f, gy = wide ? 0.55557023f : 0.19509032f;
+            if ((h >> 6) & 1u) { const float t = gx; gx = gy; gy = t; }
+            if ((h >> 4) & 1u) gx = -gx;
+            if ((h >> 5) & 1u) gy = -gy;
+            return gx * d[0] + gy * d[1];
+        }
+        // 1 / sqrt(1 + phi^2) and phi / sqrt(1 + phi^2), phi the golden ratio.
+        const std::uint32_t k = (h >> 4) % 12u;
+        float g[3] = {0.0f, (k & 1u) ? -0.52573111f : 0.52573111f, (k & 2u) ? -0.85065081f : 0.85065081f};
+        const int shift = (int)(k >> 2);       // 0, 1 or 2: rotate the axes
+        return g[(3 - shift) % 3] * d[0] + g[(4 - shift) % 3] * d[1] + g[(5 - shift) % 3] * d[2];
+    }
+    template <int D>
+    float SimplexLattice(const float* p, float scale) const {
+        const float root = D == 2 ? 1.7320508f : 2.0f;            // sqrt(D + 1)
+        const float skew = (root - 1.0f) / D, unskew = (1.0f - 1.0f / root) / D;
+        float sum = 0.0f;
+        for (int a = 0; a < D; ++a) sum += p[a];
+        int cell[D], cellSum = 0, rank[D];
+        float frac[D], off[D];
+        for (int a = 0; a < D; ++a) {
+            cell[a] = FloorI(p[a] + sum * skew);
+            frac[a] = p[a] + sum * skew - (float)cell[a];
+            cellSum += cell[a];
+        }
+        // Offset from the cell's first corner, back in unskewed space.
+        for (int a = 0; a < D; ++a) off[a] = p[a] - (float)cell[a] + (float)cellSum * unskew;
+        // Axis with the largest fractional part steps first (ties: lower axis first).
+        for (int a = 0; a < D; ++a) {
+            rank[a] = 0;
+            for (int b = 0; b < D; ++b)
+                if (frac[b] > frac[a] || (frac[b] == frac[a] && b < a)) ++rank[a];
+        }
+        float total = 0.0f;
+        for (int c = 0; c <= D; ++c) {                            // corner c has taken c steps
+            int at[3] = {0, 0, 0};
+            float d[3] = {0.0f, 0.0f, 0.0f}, len2 = 0.0f;
+            for (int a = 0; a < D; ++a) {
+                const int step = rank[a] < c ? 1 : 0;
+                at[a] = cell[a] + step;
+                d[a] = off[a] - (float)step + (float)c * unskew;
+                len2 += d[a] * d[a];
+            }
+            const float w = 0.5f - len2;
+            if (w <= 0.0f) continue;
+            total += w * w * w * SimplexGrad(Hash(at[0], at[1], at[2]), d, D);
+        }
+        return Clamp1(total * scale);
     }
 
     // mode 0 fbm, 1 ridged, 2 turbulence

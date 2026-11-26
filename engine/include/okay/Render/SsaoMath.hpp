@@ -41,6 +41,12 @@
 #define OKAY_SSAO_RING_SPAN 0.75         // the taps cover 0.25 .. 1.0 of the radius
 #define OKAY_SSAO_RANGE_SCALE 1.6        // occluders further than radius * this are ignored
 #define OKAY_SSAO_MIN_DIFF 0.03          // occluder must be nearer by more than this (world)
+// The 9-tap gaussian in 5 linear-filtered taps (the idea: D. Rakos, "Efficient Gaussian blur with linear sampling",
+// 2010). Worked out here from the binomial row n = 12 without its two outer pairs, total 4096 - 2 * (1 + 12) = 4070:
+// centre 924 / 4070 = 0.227027; neighbours 792, 495, 220, 66 / 4070. One bilinear tap reads two neighbours:
+// W1 = (792 + 495) / 4070 = 0.316216 at OFF1 = (1 * 792 + 2 * 495) / (792 + 495) = 1.384615 texels;
+// W2 = (220 + 66) / 4070 = 0.070270 at OFF2 = (3 * 220 + 4 * 66) / (220 + 66) = 3.230769. tests/test_post_quality_math.cpp
+// checks these numbers against the binomials.
 #define OKAY_SSAO_BLUR_W0 0.227027       // gaussian centre weight
 #define OKAY_SSAO_BLUR_W1 0.316216       // weight of the tap pair at +-OFF1
 #define OKAY_SSAO_BLUR_W2 0.070270       // weight of the tap pair at +-OFF2

@@ -4,7 +4,7 @@
 Checks the hostable folder it writes: index.html with the game's config in place of the shell's mark (and "</" escaped),
 the program and the pack gzip-compressed and unchanged after unpacking, every game file in the pack at its path,
 sizes in the config that match the files, the zip with index.html at its root and the .gz files stored, the same input
-giving the same bytes, --no-compress, and the plain-words errors for a missing build and a shell without the mark."""
+giving the same bytes, the licence notices (dist/THIRD_PARTY_NOTICES.txt) beside the page and in the zip, --no-compress, and the plain-words errors for a missing build and a shell without the mark."""
 import gzip, importlib.util, json, os, subprocess, sys, tempfile, zipfile
 
 SCRIPT = os.path.abspath(sys.argv[1])
@@ -53,7 +53,10 @@ with tempfile.TemporaryDirectory() as tmp:
     check(r.returncode == 0, "package exits 0: " + r.stderr)
     rep = json.loads(r.stdout)
     names = sorted(f["name"] for f in rep["files"])
-    check(names == ["game.okaypack.gz", "index.html", "okay-player.js", "okay-player.wasm.gz"], "output files: %s" % names)
+    check(names == ["THIRD_PARTY_NOTICES.txt", "game.okaypack.gz", "index.html", "okay-player.js", "okay-player.wasm.gz"], "output files: %s" % names)
+    notices = os.path.join(os.path.dirname(SCRIPT), "..", "dist", "THIRD_PARTY_NOTICES.txt")
+    check(os.path.isfile(os.path.join(out, "THIRD_PARTY_NOTICES.txt")) and os.path.isfile(notices)
+          and read(os.path.join(out, "THIRD_PARTY_NOTICES.txt")) == read(notices), "the licence notices ship with the web build, unchanged")
     check(rep["total"] == sum(os.path.getsize(os.path.join(out, n)) for n in names), "total is the sum of the files")
     check(gzip.decompress(read(os.path.join(out, "okay-player.wasm.gz"))) == wasm, "the program unpacks unchanged")
     check(os.path.getsize(os.path.join(out, "okay-player.wasm.gz")) < len(wasm), "the program is smaller packed")
@@ -75,6 +78,7 @@ with tempfile.TemporaryDirectory() as tmp:
     with zipfile.ZipFile(os.path.join(tmp, "g.zip")) as z:
         infos = {i.filename: i for i in z.infolist()}
         check("index.html" in infos, "index.html at the zip's root")
+        check("THIRD_PARTY_NOTICES.txt" in infos, "the licence notices are in the zip")
         check(infos["okay-player.wasm.gz"].compress_type == zipfile.ZIP_STORED, ".gz stored in the zip, not packed twice")
         check(z.read("okay-player.wasm.gz") == read(os.path.join(out, "okay-player.wasm.gz")), "zip holds the same bytes")
     check(rep["zip"]["bytes"] == os.path.getsize(os.path.join(tmp, "g.zip")), "zip size reported")
@@ -89,7 +93,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # --no-compress: plain files, and no stale .gz left behind in the same folder
     r = run("--build", build, "--game", game, "--out", out, "--no-compress", "--fit", "aspect")
     check(r.returncode == 0, "--no-compress exits 0")
-    check(sorted(os.listdir(out)) == ["game.okaypack", "index.html", "okay-player.js", "okay-player.wasm"], "plain files: %s" % sorted(os.listdir(out)))
+    check(sorted(os.listdir(out)) == ["THIRD_PARTY_NOTICES.txt", "game.okaypack", "index.html", "okay-player.js", "okay-player.wasm"], "plain files: %s" % sorted(os.listdir(out)))
     check(read(os.path.join(out, "okay-player.wasm")) == wasm, "plain program unchanged")
     check('"fit":"aspect"' in read(os.path.join(out, "index.html")).decode(), "fit aspect in the config")
     check("total download" in r.stdout, "the human size report")

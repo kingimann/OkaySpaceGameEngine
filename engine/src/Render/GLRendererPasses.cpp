@@ -477,7 +477,7 @@ void GLRenderer::DestroySsao() {
 // of view, and its colours come from the sun's height (SkyPaletteFor). The post
 // chain runs when PostActive(): the scene resolves from a float target, then
 // SSAO -> bloom (half + quarter res) -> exposure / tonemap / grading / vignette
-// -> depth of field -> FXAA, ending in an RGBA8 texture the host reads back.
+// -> depth of field -> edge smoothing, ending in an RGBA8 texture the host reads back.
 bool GLRenderer::EnsureQuad() {
     if (m_quadVbo) return true;
     static const float quad[12] = {-1,-1,  1,-1,  1,1,  -1,-1,  1,1,  -1,1};
@@ -514,7 +514,7 @@ bool GLRenderer::EnsureSkyProgram() {
 }
 
 bool GLRenderer::EnsurePostChain() {
-    if (m_uberProg && m_fxaaProg && m_dofProg && m_dofCopyProg && m_dofBlurProg && m_downProg) return true;
+    if (m_uberProg && m_edgeSmoothProg && m_dofProg && m_dofCopyProg && m_dofBlurProg && m_downProg) return true;
     if (!EnsurePostProgs()) return false;   // the shared blur program + the quad
     if (!m_uberProg) {
         m_uberProg = buildQuadProgram(kUberFrag);
@@ -528,10 +528,10 @@ bool GLRenderer::EnsurePostChain() {
         m_uuLift = u("uLift"); m_uuGamma = u("uGamma"); m_uuGain = u("uGain");
         m_uuVignette = u("uVignette"); m_uuVignetteSmooth = u("uVignetteSmooth"); m_uuAspect = u("uAspect");
     }
-    if (!m_fxaaProg) {
-        m_fxaaProg = buildQuadProgram(kFxaaFrag);
-        if (!m_fxaaProg) return false;
-        m_ufSrc = g.GetUniformLocation(m_fxaaProg, "uSrc"); m_ufTexel = g.GetUniformLocation(m_fxaaProg, "uTexel");
+    if (!m_edgeSmoothProg) {
+        m_edgeSmoothProg = buildQuadProgram(kEdgeSmoothFrag);
+        if (!m_edgeSmoothProg) return false;
+        m_ufSrc = g.GetUniformLocation(m_edgeSmoothProg, "uSrc"); m_ufTexel = g.GetUniformLocation(m_edgeSmoothProg, "uTexel");
     }
     if (!m_dofProg) {
         m_dofProg = buildQuadProgram(kDofFrag);

@@ -990,10 +990,10 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             cur = dst == m_outFbo ? m_outTex : m_pingTex[ping];
             if (dst != m_outFbo) ping ^= 1;
         }
-        // 5) FXAA last, on the display image.
+        // 5) Edge smoothing (the scene's fxaa switch) last, on the display image.
         if (ps.fxaa) {
             unsigned int dst = nextTarget();
-            quadPass(m_fxaaProg, dst, w, h, cur, m_ufSrc);
+            quadPass(m_edgeSmoothProg, dst, w, h, cur, m_ufSrc);
             g.Uniform2f(m_ufTexel, 1.0f / (float)w, 1.0f / (float)h);
             DrawQuad();
         }
@@ -1090,7 +1090,7 @@ void GLRenderer::Destroy() {
     if (m_blurProg) { g.DeleteProgram(m_blurProg); m_blurProg = 0; }
     if (m_skyProg) { g.DeleteProgram(m_skyProg); m_skyProg = 0; }
     if (m_uberProg) { g.DeleteProgram(m_uberProg); m_uberProg = 0; }
-    if (m_fxaaProg) { g.DeleteProgram(m_fxaaProg); m_fxaaProg = 0; }
+    if (m_edgeSmoothProg) { g.DeleteProgram(m_edgeSmoothProg); m_edgeSmoothProg = 0; }
     if (m_dofProg) { g.DeleteProgram(m_dofProg); m_dofProg = 0; }
     if (m_dofCopyProg) { g.DeleteProgram(m_dofCopyProg); m_dofCopyProg = 0; }
     if (m_dofBlurProg) { g.DeleteProgram(m_dofBlurProg); m_dofBlurProg = 0; }

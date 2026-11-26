@@ -10,6 +10,7 @@ Output folder:
     okay-player.js        the runtime
     okay-player.wasm.gz   the program, gzip-compressed (unpacked by the browser's own DecompressionStream)
     game.okaypack.gz      every game file in one pack, gzip-compressed; written into the virtual disk before main()
+    THIRD_PARTY_NOTICES.txt  the licences of the parts written by others (dist/THIRD_PARTY_NOTICES.txt)
 The pack format is written here and read by platform/web/okay_web.js:
     b"OKWPACK1", u32 little-endian manifest length, manifest JSON {"files": [{"path", "offset", "size"}]}, file bytes.
 --zip also writes a zip with index.html at its root, the layout itch.io and similar hosts ask for.
@@ -25,6 +26,8 @@ import sys
 import zipfile
 
 MAGIC = b"OKWPACK1"
+# The licences of the parts written by others (Emscripten's runtime, SDL2, the Roboto font, ...): every web build ships them.
+NOTICES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "dist", "THIRD_PARTY_NOTICES.txt")
 CONFIG_MARK = "OKAY_WEB_CONFIG"   # the shell reads window.OKAY_WEB_CONFIG; the config script goes in <head>
 
 
@@ -150,6 +153,10 @@ def package(build_dir, game_dir, out_dir, title="", company="", fit="fill", comp
     put(wasm_name, wasm_out)
     if packs:
         put(packs[0]["file"], pack_out)
+    if not os.path.isfile(NOTICES):
+        raise FileNotFoundError("the licence notices are missing: " + NOTICES)
+    with open(NOTICES, "rb") as f:
+        put("THIRD_PARTY_NOTICES.txt", f.read())
 
     report = {"out": out_dir, "files": [{"name": n, "bytes": b} for n, b in sizes],
               "total": sum(b for _, b in sizes), "wasmUncompressed": len(wasm),

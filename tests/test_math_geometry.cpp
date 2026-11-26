@@ -457,6 +457,54 @@ static void TestNoise() {
         worst = std::max(worst, std::fabs(n.Value2(x, y) - n.Value2(x + 0.001f, y)));
     }
     CHECK(worst < 0.02f);
+    // Simplex-lattice noise (provenance audit A2: our own kernel, gradients and scale; see Noise.hpp).
+    {
+        // Continuous: the steepest change seen with a step of 1e-3 and with 1e-4 are about the same slope. A jump
+        // at a simplex border (a kernel radius too big) shows as a slope ten times larger at the smaller step.
+        auto steepest = [&](float h, int dims) {
+            float s = 0;
+            for (int i = 0; i < 400000; ++i) {
+                const float x = -20.0f + i * 1e-4f * 1.37f, y = 7.3f + i * 1e-4f * 0.61f, z = -3.1f + i * 1e-4f * 0.89f;
+                const float a = dims == 2 ? n.Simplex2(x, y) : n.Simplex3(x, y, z);
+                const float b = dims == 2 ? n.Simplex2(x + h * 0.8f, y + h * 0.6f) : n.Simplex3(x + h * 0.48f, y + h * 0.6f, z + h * 0.64f);
+                s = std::max(s, std::fabs(b - a) / h);
+            }
+            return s;
+        };
+        for (int dims = 2; dims <= 3; ++dims) {
+            const float coarse = steepest(1e-3f, dims), fine = steepest(1e-4f, dims);
+            CHECK(fine < coarse * 1.5f + 0.5f);
+            CHECK(coarse > 0.5f && coarse < 12.0f);
+        }
+        // Inside [-1, 1] without leaning on the clamp, but using most of it; centred; deterministic per seed.
+        const NoiseField other(43);                                // (n3 was set back to seed 42 above)
+        float lo2 = 1, hi2 = -1, lo3 = 1, hi3 = -1; double m2 = 0, m3 = 0; int clamped = 0, differ = 0;
+        const int N = 200000;
+        for (int i = 0; i < N; ++i) {
+            const float x = (i % 499) * 0.0731f - 13.0f, y = (i / 499) * 0.0917f - 9.0f, z = (i % 37) * 0.113f;
+            const float a = n.Simplex2(x, y), b = n.Simplex3(x, y, z);
+            lo2 = std::min(lo2, a); hi2 = std::max(hi2, a); lo3 = std::min(lo3, b); hi3 = std::max(hi3, b);
+            m2 += a; m3 += b;
+            if (std::fabs(a) >= 1.0f || std::fabs(b) >= 1.0f) ++clamped;
+            if (i % 97 == 0 && (other.Simplex2(x, y) != a || other.Simplex3(x, y, z) != b)) ++differ;
+        }
+        CHECK(clamped == 0);
+        CHECK(hi2 - lo2 > 1.2f); CHECK(hi3 - lo3 > 1.2f);
+        CHECK(std::fabs(m2 / N) < 0.05); CHECK(std::fabs(m3 / N) < 0.05);
+        CHECK(differ > N / 97 * 9 / 10);                          // another seed gives other noise
+        CHECK(NoiseField(42).Simplex2(3.7f, -1.2f) == n.Simplex2(3.7f, -1.2f));
+        // No grid look: the average steepness along x, y and the diagonals agree within 15 percent.
+        double dirs[4] = {0, 0, 0, 0};
+        const float dx[4] = {1, 0, 0.7071068f, 0.7071068f}, dy[4] = {0, 1, 0.7071068f, -0.7071068f};
+        for (int i = 0; i < 40000; ++i) {
+            const float x = (i % 211) * 0.173f - 17.0f, y = (i / 211) * 0.197f - 11.0f;
+            const float v = n.Simplex2(x, y);
+            for (int k = 0; k < 4; ++k) dirs[k] += std::fabs(n.Simplex2(x + dx[k] * 0.01f, y + dy[k] * 0.01f) - v);
+        }
+        const double dmin = std::min(std::min(dirs[0], dirs[1]), std::min(dirs[2], dirs[3]));
+        const double dmax = std::max(std::max(dirs[0], dirs[1]), std::max(dirs[2], dirs[3]));
+        CHECK(dmax < dmin * 1.15);
+    }
     // Value noise hits lattice values exactly: Hash-based and in [-1,1].
     CHECK_NEAR(n.Value2(3.0f, 4.0f), n.Hash01(3, 4, 0) * 2 - 1, 1e-5);
     float h01 = n.Hash01(5, 6, 7); CHECK(h01 >= 0.0f && h01 < 1.0f);

@@ -60,8 +60,13 @@ Services run by other companies (Steamworks, Photon, our hosting) are not librar
 ## Built into what we ship, but not ours (added 2026-11-26, `provenance_audit.md` A5 to A7)
 
 Found by the 2026-11-26 audit. The "what" and "where" columns were checked in the files named; the licence column is
-from memory and is **unverified** (the licence pages could not be reached). No notice file for any of these is
-written by any script yet (`provenance_audit.md` F6).
+from memory and is **unverified** (the licence pages could not be reached). **Notice file (2026-11-26):**
+`dist/THIRD_PARTY_NOTICES.txt` names every part below plus Dear ImGui, SDL2 and the fonts, with the licence texts
+(taken from the Debian copyright files of the build machine's MinGW-w64, GCC, libsodium and SDL2 packages, Dear
+ImGui's own LICENSE.txt and the font licence files; the Emscripten and Steamworks lines are still from memory and
+marked UNVERIFIED in the file). It ships beside `OkaySpace.exe` and in `Tools\` (`scripts/build-windows-dist.sh`, so
+also in the installer), in every exported desktop game (`editor/BuildGame.cpp`) and in every web build
+(`scripts/web_package.py`, checked by `tests/scripts/test_web_package.py`).
 
 | What | Where it gets in | Licence (unverified) | Replacement |
 |---|---|---|---|
@@ -88,7 +93,7 @@ Fonts are assets, not code, and stay with their licences:
 |---|---|---|
 | [DejaVu Sans](https://dejavu-fonts.github.io) | `assets/fonts/DejaVuSans.ttf` | Free font licence; the text is in `assets/fonts/DejaVuSans-LICENSE.txt` |
 | JetBrains Mono (Regular) | `shared/JetBrainsMonoFont.h` (Dear ImGui format, editor and launcher) and `shared/JetBrainsMonoFontOwn.h` (OKF1, engine side); embedded for the script editor | SIL Open Font License 1.1, "Copyright 2020 The JetBrains Mono Project Authors". The licence and copyright text is now in `assets/fonts/JetBrainsMono-OFL.txt`, copied unmodified from `https://raw.githubusercontent.com/JetBrains/JetBrainsMono/v2.242/OFL.txt` (git blob 821a3dac22aff15a1f1c9689a1d79c45bb58ca39, fetched 2026-11-13). The embedded font file says "Version 2.211" in its own name table; I could not fetch a `v2.211` tag, and the licence text of the tags I could fetch (v2.242, v2.304, master) is the same apart from the URL line and whitespace. **Still to do:** check that the installer and release archives ship that file next to the font. |
-| Roboto Medium | `shared/RobotoFont.h` (Dear ImGui format, editor and launcher) and `shared/RobotoFontOwn.h` (OKF1, engine side), embedded for the launcher | **The repository still has no licence file for it, and nothing was added here.** What exists: the font file's own name table (decoded from the embedded data) says "Copyright 2011 Google Inc. All Rights Reserved", "Version 2.001152; 2014" and, in its licence fields (name ids 13 and 14), "Licensed under the Apache License, Version 2.0" with the URL `http://www.apache.org/licenses/LICENSE-2.0`; `editor/main.cpp` and `launcher/main.cpp` carry a comment calling it Apache 2.0; the first comment line of `shared/RobotoFont.h` says it was exported with Dear ImGui's tool from a `misc/fonts/Roboto-Medium.ttf`. Those are leads, not a verified grant: the owner must confirm the source and add the licence text. |
+| Roboto Medium | `shared/RobotoFont.h` (Dear ImGui format, editor and launcher) and `shared/RobotoFontOwn.h` (OKF1, engine side), embedded for the launcher | **Licence file added 2026-11-26:** `assets/fonts/Roboto-LICENSE.txt` is the Apache License 2.0 text (the same text as `tests/wycheproof/LICENSE`), the licence the font's own name table names, and `dist/THIRD_PARTY_NOTICES.txt` carries it with the font's copyright line. Where the font file came from is still for the owner to confirm. Earlier note: What exists: the font file's own name table (decoded from the embedded data) says "Copyright 2011 Google Inc. All Rights Reserved", "Version 2.001152; 2014" and, in its licence fields (name ids 13 and 14), "Licensed under the Apache License, Version 2.0" with the URL `http://www.apache.org/licenses/LICENSE-2.0`; `editor/main.cpp` and `launcher/main.cpp` carry a comment calling it Apache 2.0; the first comment line of `shared/RobotoFont.h` says it was exported with Dear ImGui's tool from a `misc/fonts/Roboto-Medium.ttf`. Those are leads, not a verified grant: the owner must confirm the source and add the licence text. |
 
 **To resolve (we do not guess a licence):** (1) the owner confirms where Roboto Medium was obtained and under which
 licence, then adds that licence text next to it (for example `assets/fonts/Roboto-LICENSE.txt`) and a header line in

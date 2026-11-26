@@ -122,6 +122,20 @@ inline bool Verify(const std::uint8_t* sig, const std::uint8_t* m, std::size_t n
     return crypto_sign_verify_detached(sig, m, n, pk) == 0;
 #endif
 }
+/// ChaCha20 keystream XOR (RFC 8439: 32-byte key, 12-byte nonce, 32-bit block counter starting at `counter`); `out`
+/// may equal `in`. Returns false, writing nothing, when the message needs more blocks than the counter has left. The
+/// launcher's voice chat encrypts its frames with it.
+inline bool StreamXor(std::uint8_t* out, const std::uint8_t* in, std::size_t n, const std::uint8_t* key,
+                      const std::uint8_t* nonce, std::uint32_t counter) {
+#ifdef OKAY_OWN_CRYPTO
+    return crypto::ChaCha20Xor(out, in, n, key, nonce, counter);
+#else
+    const unsigned long long blocks = ((unsigned long long)n + 63u) / 64u;
+    if (blocks > 0x100000000ull - counter) return false;
+    return crypto_stream_chacha20_ietf_xor_ic(out, in, (unsigned long long)n, nonce, counter, key) == 0;
+#endif
+}
+
 inline void Sha256(std::uint8_t* out, const std::uint8_t* m, std::size_t n) {
 #ifdef OKAY_OWN_CRYPTO
     crypto::Sha256Hash(out, m, n);

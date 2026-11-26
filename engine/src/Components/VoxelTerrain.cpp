@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <string>
@@ -56,286 +57,114 @@ static float Fractal2(float x, float z, int oct, unsigned seed) {
     return Fractal3(x, 0.0f, z, oct, seed);   // y=0 slice reads as 2D noise
 }
 
-// ===================== Marching cubes tables (Paul Bourke) ==================
-static const int kEdge[256] = {
-0x0,0x109,0x203,0x30a,0x406,0x50f,0x605,0x70c,0x80c,0x905,0xa0f,0xb06,0xc0a,0xd03,0xe09,0xf00,
-0x190,0x99,0x393,0x29a,0x596,0x49f,0x795,0x69c,0x99c,0x895,0xb9f,0xa96,0xd9a,0xc93,0xf99,0xe90,
-0x230,0x339,0x33,0x13a,0x636,0x73f,0x435,0x53c,0xa3c,0xb35,0x83f,0x936,0xe3a,0xf33,0xc39,0xd30,
-0x3a0,0x2a9,0x1a3,0xaa,0x7a6,0x6af,0x5a5,0x4ac,0xbac,0xaa5,0x9af,0x8a6,0xfaa,0xea3,0xda9,0xca0,
-0x460,0x569,0x663,0x76a,0x66,0x16f,0x265,0x36c,0xc6c,0xd65,0xe6f,0xf66,0x86a,0x963,0xa69,0xb60,
-0x5f0,0x4f9,0x7f3,0x6fa,0x1f6,0xff,0x3f5,0x2fc,0xdfc,0xcf5,0xfff,0xef6,0x9fa,0x8f3,0xbf9,0xaf0,
-0x650,0x759,0x453,0x55a,0x256,0x35f,0x55,0x15c,0xe5c,0xf55,0xc5f,0xd56,0xa5a,0xb53,0x859,0x950,
-0x7c0,0x6c9,0x5c3,0x4ca,0x3c6,0x2cf,0x1c5,0xcc,0xfcc,0xec5,0xdcf,0xcc6,0xbca,0xac3,0x9c9,0x8c0,
-0x8c0,0x9c9,0xac3,0xbca,0xcc6,0xdcf,0xec5,0xfcc,0xcc,0x1c5,0x2cf,0x3c6,0x4ca,0x5c3,0x6c9,0x7c0,
-0x950,0x859,0xb53,0xa5a,0xd56,0xc5f,0xf55,0xe5c,0x15c,0x55,0x35f,0x256,0x55a,0x453,0x759,0x650,
-0xaf0,0xbf9,0x8f3,0x9fa,0xef6,0xfff,0xcf5,0xdfc,0x2fc,0x3f5,0xff,0x1f6,0x6fa,0x7f3,0x4f9,0x5f0,
-0xb60,0xa69,0x963,0x86a,0xf66,0xe6f,0xd65,0xc6c,0x36c,0x265,0x16f,0x66,0x76a,0x663,0x569,0x460,
-0xca0,0xda9,0xea3,0xfaa,0x8a6,0x9af,0xaa5,0xbac,0x4ac,0x5a5,0x6af,0x7a6,0xaa,0x1a3,0x2a9,0x3a0,
-0xd30,0xc39,0xf33,0xe3a,0x936,0x83f,0xb35,0xa3c,0x53c,0x435,0x73f,0x636,0x13a,0x33,0x339,0x230,
-0xe90,0xf99,0xc93,0xd9a,0xa96,0xb9f,0x895,0x99c,0x69c,0x795,0x49f,0x596,0x29a,0x393,0x99,0x190,
-0xf00,0xe09,0xd03,0xc0a,0xb06,0xa0f,0x905,0x80c,0x70c,0x605,0x50f,0x406,0x30a,0x203,0x109,0x0 };
+// ===================== Marching-cubes cases, worked out by our own code =======
+// Written from the idea of the method only (Lorensen and Cline, SIGGRAPH 1987): the surface crosses every cube
+// edge whose two corners lie on opposite sides of iso, and each cube's crossings are joined into polygons. No
+// case table is typed in: CubeCases() works out all 256 corner patterns once, by walking the cube's six faces.
+//
+// Corner c of a cube sits at (c & 1, (c >> 1) & 1, (c >> 2) & 1). The 12 edges are the corner pairs that differ in
+// one bit, lower corner first, so neighbouring cubes interpolate a shared edge the same way round.
+//
+// A pattern has bit c set when corner c is below iso (air). On each face, walking its corners counter-clockwise
+// as seen from outside, every entry into an air run is joined to the exit from that run. A face with two air
+// corners on a diagonal therefore cuts each air corner off on its own (the solid stays joined across the face).
+// The rule reads only the face's four corners, so the two cubes sharing a face draw the same segments and the
+// surface has no cracks. Each crossing edge is an entry on one of its faces and an exit on the other, so the
+// segments close into loops; each loop is split into triangles (SplitLoop), wound so they face the air.
+namespace {
+struct CubeCase {
+    std::uint16_t edges = 0;           // bit e: the surface crosses edge e
+    std::uint8_t  triCount = 0;        // at most 10: 12 crossings, at least one loop
+    std::uint8_t  tri[30] = {};        // three edge numbers per triangle
+};
+struct CubeCaseTable {
+    std::uint8_t edgeA[12] = {}, edgeB[12] = {};
+    CubeCase cases[256];
+};
 
-static const int kTri[256][16] = {
-{-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{0,8,3,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{0,1,9,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{1,8,3,9,8,1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{1,2,10,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{0,8,3,1,2,10,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{9,2,10,0,2,9,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{2,8,3,2,10,8,10,9,8,-1,-1,-1,-1,-1,-1,-1},
-{3,11,2,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{0,11,2,8,11,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{1,9,0,2,3,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{1,11,2,1,9,11,9,8,11,-1,-1,-1,-1,-1,-1,-1},
-{3,10,1,11,10,3,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{0,10,1,0,8,10,8,11,10,-1,-1,-1,-1,-1,-1,-1},
-{3,9,0,3,11,9,11,10,9,-1,-1,-1,-1,-1,-1,-1},
-{9,8,10,10,8,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{4,7,8,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{4,3,0,7,3,4,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{0,1,9,8,4,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{4,1,9,4,7,1,7,3,1,-1,-1,-1,-1,-1,-1,-1},
-{1,2,10,8,4,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{3,4,7,3,0,4,1,2,10,-1,-1,-1,-1,-1,-1,-1},
-{9,2,10,9,0,2,8,4,7,-1,-1,-1,-1,-1,-1,-1},
-{2,10,9,2,9,7,2,7,3,7,9,4,-1,-1,-1,-1},
-{8,4,7,3,11,2,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{11,4,7,11,2,4,2,0,4,-1,-1,-1,-1,-1,-1,-1},
-{9,0,1,8,4,7,2,3,11,-1,-1,-1,-1,-1,-1,-1},
-{4,7,11,9,4,11,9,11,2,9,2,1,-1,-1,-1,-1},
-{3,10,1,3,11,10,7,8,4,-1,-1,-1,-1,-1,-1,-1},
-{1,11,10,1,4,11,1,0,4,7,11,4,-1,-1,-1,-1},
-{4,7,8,9,0,11,9,11,10,11,0,3,-1,-1,-1,-1},
-{4,7,11,4,11,9,9,11,10,-1,-1,-1,-1,-1,-1,-1},
-{9,5,4,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{9,5,4,0,8,3,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{0,5,4,1,5,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{8,5,4,8,3,5,3,1,5,-1,-1,-1,-1,-1,-1,-1},
-{1,2,10,9,5,4,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{3,0,8,1,2,10,4,9,5,-1,-1,-1,-1,-1,-1,-1},
-{5,2,10,5,4,2,4,0,2,-1,-1,-1,-1,-1,-1,-1},
-{2,10,5,3,2,5,3,5,4,3,4,8,-1,-1,-1,-1},
-{9,5,4,2,3,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{0,11,2,0,8,11,4,9,5,-1,-1,-1,-1,-1,-1,-1},
-{0,5,4,0,1,5,2,3,11,-1,-1,-1,-1,-1,-1,-1},
-{2,1,5,2,5,8,2,8,11,4,8,5,-1,-1,-1,-1},
-{10,3,11,10,1,3,9,5,4,-1,-1,-1,-1,-1,-1,-1},
-{4,9,5,0,8,1,8,10,1,8,11,10,-1,-1,-1,-1},
-{5,4,0,5,0,11,5,11,10,11,0,3,-1,-1,-1,-1},
-{5,4,8,5,8,10,10,8,11,-1,-1,-1,-1,-1,-1,-1},
-{9,7,8,5,7,9,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{9,3,0,9,5,3,5,7,3,-1,-1,-1,-1,-1,-1,-1},
-{0,7,8,0,1,7,1,5,7,-1,-1,-1,-1,-1,-1,-1},
-{1,5,3,3,5,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{9,7,8,9,5,7,10,1,2,-1,-1,-1,-1,-1,-1,-1},
-{10,1,2,9,5,0,5,3,0,5,7,3,-1,-1,-1,-1},
-{8,0,2,8,2,5,8,5,7,10,5,2,-1,-1,-1,-1},
-{2,10,5,2,5,3,3,5,7,-1,-1,-1,-1,-1,-1,-1},
-{7,9,5,7,8,9,3,11,2,-1,-1,-1,-1,-1,-1,-1},
-{9,5,7,9,7,2,9,2,0,2,7,11,-1,-1,-1,-1},
-{2,3,11,0,1,8,1,7,8,1,5,7,-1,-1,-1,-1},
-{11,2,1,11,1,7,7,1,5,-1,-1,-1,-1,-1,-1,-1},
-{9,5,8,8,5,7,10,1,3,10,3,11,-1,-1,-1,-1},
-{5,7,0,5,0,9,7,11,0,1,0,10,11,10,0,-1},
-{11,10,0,11,0,3,10,5,0,8,0,7,5,7,0,-1},
-{11,10,5,7,11,5,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{10,6,5,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{0,8,3,5,10,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{9,0,1,5,10,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{1,8,3,1,9,8,5,10,6,-1,-1,-1,-1,-1,-1,-1},
-{1,6,5,2,6,1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{1,6,5,1,2,6,3,0,8,-1,-1,-1,-1,-1,-1,-1},
-{9,6,5,9,0,6,0,2,6,-1,-1,-1,-1,-1,-1,-1},
-{5,9,8,5,8,2,5,2,6,3,2,8,-1,-1,-1,-1},
-{2,3,11,10,6,5,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{11,0,8,11,2,0,10,6,5,-1,-1,-1,-1,-1,-1,-1},
-{0,1,9,2,3,11,5,10,6,-1,-1,-1,-1,-1,-1,-1},
-{5,10,6,1,9,2,9,11,2,9,8,11,-1,-1,-1,-1},
-{6,3,11,6,5,3,5,1,3,-1,-1,-1,-1,-1,-1,-1},
-{0,8,11,0,11,5,0,5,1,5,11,6,-1,-1,-1,-1},
-{3,11,6,0,3,6,0,6,5,0,5,9,-1,-1,-1,-1},
-{6,5,9,6,9,11,11,9,8,-1,-1,-1,-1,-1,-1,-1},
-{5,10,6,4,7,8,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{4,3,0,4,7,3,6,5,10,-1,-1,-1,-1,-1,-1,-1},
-{1,9,0,5,10,6,8,4,7,-1,-1,-1,-1,-1,-1,-1},
-{10,6,5,1,9,7,1,7,3,7,9,4,-1,-1,-1,-1},
-{6,1,2,6,5,1,4,7,8,-1,-1,-1,-1,-1,-1,-1},
-{1,2,5,5,2,6,3,0,4,3,4,7,-1,-1,-1,-1},
-{8,4,7,9,0,5,0,6,5,0,2,6,-1,-1,-1,-1},
-{7,3,9,7,9,4,3,2,9,5,9,6,2,6,9,-1},
-{3,11,2,7,8,4,10,6,5,-1,-1,-1,-1,-1,-1,-1},
-{5,10,6,4,7,2,4,2,0,2,7,11,-1,-1,-1,-1},
-{0,1,9,4,7,8,2,3,11,5,10,6,-1,-1,-1,-1},
-{9,2,1,9,11,2,9,4,11,7,11,4,5,10,6,-1},
-{8,4,7,3,11,5,3,5,1,5,11,6,-1,-1,-1,-1},
-{5,1,11,5,11,6,1,0,11,7,11,4,0,4,11,-1},
-{0,5,9,0,6,5,0,3,6,11,6,3,8,4,7,-1},
-{6,5,9,6,9,11,4,7,9,7,11,9,-1,-1,-1,-1},
-{10,4,9,6,4,10,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{4,10,6,4,9,10,0,8,3,-1,-1,-1,-1,-1,-1,-1},
-{10,0,1,10,6,0,6,4,0,-1,-1,-1,-1,-1,-1,-1},
-{8,3,1,8,1,6,8,6,4,6,1,10,-1,-1,-1,-1},
-{1,4,9,1,2,4,2,6,4,-1,-1,-1,-1,-1,-1,-1},
-{3,0,8,1,2,9,2,4,9,2,6,4,-1,-1,-1,-1},
-{0,2,4,4,2,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{8,3,2,8,2,4,4,2,6,-1,-1,-1,-1,-1,-1,-1},
-{10,4,9,10,6,4,11,2,3,-1,-1,-1,-1,-1,-1,-1},
-{0,8,2,2,8,11,4,9,10,4,10,6,-1,-1,-1,-1},
-{3,11,2,0,1,6,0,6,4,6,1,10,-1,-1,-1,-1},
-{6,4,1,6,1,10,4,8,1,2,1,11,8,11,1,-1},
-{9,6,4,9,3,6,9,1,3,11,6,3,-1,-1,-1,-1},
-{8,11,1,8,1,0,11,6,1,9,1,4,6,4,1,-1},
-{3,11,6,3,6,0,0,6,4,-1,-1,-1,-1,-1,-1,-1},
-{6,4,8,11,6,8,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{7,10,6,7,8,10,8,9,10,-1,-1,-1,-1,-1,-1,-1},
-{0,7,3,0,10,7,0,9,10,6,7,10,-1,-1,-1,-1},
-{10,6,7,1,10,7,1,7,8,1,8,0,-1,-1,-1,-1},
-{10,6,7,10,7,1,1,7,3,-1,-1,-1,-1,-1,-1,-1},
-{1,2,6,1,6,8,1,8,9,8,6,7,-1,-1,-1,-1},
-{2,6,9,2,9,1,6,7,9,0,9,3,7,3,9,-1},
-{7,8,0,7,0,6,6,0,2,-1,-1,-1,-1,-1,-1,-1},
-{7,3,2,6,7,2,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{2,3,11,10,6,8,10,8,9,8,6,7,-1,-1,-1,-1},
-{2,0,7,2,7,11,0,9,7,6,7,10,9,10,7,-1},
-{1,8,0,1,7,8,1,10,7,6,7,10,2,3,11,-1},
-{11,2,1,11,1,7,10,6,1,6,7,1,-1,-1,-1,-1},
-{8,9,6,8,6,7,9,1,6,11,6,3,1,3,6,-1},
-{0,9,1,11,6,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{7,8,0,7,0,6,3,11,0,11,6,0,-1,-1,-1,-1},
-{7,11,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{7,6,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{3,0,8,11,7,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{0,1,9,11,7,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{8,1,9,8,3,1,11,7,6,-1,-1,-1,-1,-1,-1,-1},
-{10,1,2,6,11,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{1,2,10,3,0,8,6,11,7,-1,-1,-1,-1,-1,-1,-1},
-{2,9,0,2,10,9,6,11,7,-1,-1,-1,-1,-1,-1,-1},
-{6,11,7,2,10,3,10,8,3,10,9,8,-1,-1,-1,-1},
-{7,2,3,6,2,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{7,0,8,7,6,0,6,2,0,-1,-1,-1,-1,-1,-1,-1},
-{2,7,6,2,3,7,0,1,9,-1,-1,-1,-1,-1,-1,-1},
-{1,6,2,1,8,6,1,9,8,8,7,6,-1,-1,-1,-1},
-{10,7,6,10,1,7,1,3,7,-1,-1,-1,-1,-1,-1,-1},
-{10,7,6,1,7,10,1,8,7,1,0,8,-1,-1,-1,-1},
-{0,3,7,0,7,10,0,10,9,6,10,7,-1,-1,-1,-1},
-{7,6,10,7,10,8,8,10,9,-1,-1,-1,-1,-1,-1,-1},
-{6,8,4,11,8,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{3,6,11,3,0,6,0,4,6,-1,-1,-1,-1,-1,-1,-1},
-{8,6,11,8,4,6,9,0,1,-1,-1,-1,-1,-1,-1,-1},
-{9,4,6,9,6,3,9,3,1,11,3,6,-1,-1,-1,-1},
-{6,8,4,6,11,8,2,10,1,-1,-1,-1,-1,-1,-1,-1},
-{1,2,10,3,0,11,0,6,11,0,4,6,-1,-1,-1,-1},
-{4,11,8,4,6,11,0,2,9,2,10,9,-1,-1,-1,-1},
-{10,9,3,10,3,2,9,4,3,11,3,6,4,6,3,-1},
-{8,2,3,8,4,2,4,6,2,-1,-1,-1,-1,-1,-1,-1},
-{0,4,2,4,6,2,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{1,9,0,2,3,4,2,4,6,4,3,8,-1,-1,-1,-1},
-{1,9,4,1,4,2,2,4,6,-1,-1,-1,-1,-1,-1,-1},
-{8,1,3,8,6,1,8,4,6,6,10,1,-1,-1,-1,-1},
-{10,1,0,10,0,6,6,0,4,-1,-1,-1,-1,-1,-1,-1},
-{4,6,3,4,3,8,6,10,3,0,3,9,10,9,3,-1},
-{10,9,4,6,10,4,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{4,9,5,7,6,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{0,8,3,4,9,5,11,7,6,-1,-1,-1,-1,-1,-1,-1},
-{5,0,1,5,4,0,7,6,11,-1,-1,-1,-1,-1,-1,-1},
-{11,7,6,8,3,4,3,5,4,3,1,5,-1,-1,-1,-1},
-{9,5,4,10,1,2,7,6,11,-1,-1,-1,-1,-1,-1,-1},
-{6,11,7,1,2,10,0,8,3,4,9,5,-1,-1,-1,-1},
-{7,6,11,5,4,10,4,2,10,4,0,2,-1,-1,-1,-1},
-{3,4,8,3,5,4,3,2,5,10,5,2,11,7,6,-1},
-{7,2,3,7,6,2,5,4,9,-1,-1,-1,-1,-1,-1,-1},
-{9,5,4,0,8,6,0,6,2,6,8,7,-1,-1,-1,-1},
-{3,6,2,3,7,6,1,5,0,5,4,0,-1,-1,-1,-1},
-{6,2,8,6,8,7,2,1,8,4,8,5,1,5,8,-1},
-{9,5,4,10,1,6,1,7,6,1,3,7,-1,-1,-1,-1},
-{1,6,10,1,7,6,1,0,7,8,7,0,9,5,4,-1},
-{4,0,10,4,10,5,0,3,10,6,10,7,3,7,10,-1},
-{7,6,10,7,10,8,5,4,10,4,8,10,-1,-1,-1,-1},
-{6,9,5,6,11,9,11,8,9,-1,-1,-1,-1,-1,-1,-1},
-{3,6,11,0,6,3,0,5,6,0,9,5,-1,-1,-1,-1},
-{0,11,8,0,5,11,0,1,5,5,6,11,-1,-1,-1,-1},
-{6,11,3,6,3,5,5,3,1,-1,-1,-1,-1,-1,-1,-1},
-{1,2,10,9,5,11,9,11,8,11,5,6,-1,-1,-1,-1},
-{0,11,3,0,6,11,0,9,6,5,6,9,1,2,10,-1},
-{11,8,5,11,5,6,8,0,5,10,5,2,0,2,5,-1},
-{6,11,3,6,3,5,2,10,3,10,5,3,-1,-1,-1,-1},
-{5,8,9,5,2,8,5,6,2,3,8,2,-1,-1,-1,-1},
-{9,5,6,9,6,0,0,6,2,-1,-1,-1,-1,-1,-1,-1},
-{1,5,8,1,8,0,5,6,8,3,8,2,6,2,8,-1},
-{1,5,6,2,1,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{1,3,6,1,6,10,3,8,6,5,6,9,8,9,6,-1},
-{10,1,0,10,0,6,9,5,0,5,6,0,-1,-1,-1,-1},
-{0,3,8,5,6,10,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{10,5,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{11,5,10,7,5,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{11,5,10,11,7,5,8,3,0,-1,-1,-1,-1,-1,-1,-1},
-{5,11,7,5,10,11,1,9,0,-1,-1,-1,-1,-1,-1,-1},
-{10,7,5,10,11,7,9,8,1,8,3,1,-1,-1,-1,-1},
-{11,1,2,11,7,1,7,5,1,-1,-1,-1,-1,-1,-1,-1},
-{0,8,3,1,2,7,1,7,5,7,2,11,-1,-1,-1,-1},
-{9,7,5,9,2,7,9,0,2,2,11,7,-1,-1,-1,-1},
-{7,5,2,7,2,11,5,9,2,3,2,8,9,8,2,-1},
-{2,5,10,2,3,5,3,7,5,-1,-1,-1,-1,-1,-1,-1},
-{8,2,0,8,5,2,8,7,5,10,2,5,-1,-1,-1,-1},
-{9,0,1,5,10,3,5,3,7,3,10,2,-1,-1,-1,-1},
-{9,8,2,9,2,1,8,7,2,10,2,5,7,5,2,-1},
-{1,3,5,3,7,5,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{0,8,7,0,7,1,1,7,5,-1,-1,-1,-1,-1,-1,-1},
-{9,0,3,9,3,5,5,3,7,-1,-1,-1,-1,-1,-1,-1},
-{9,8,7,5,9,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{5,8,4,5,10,8,10,11,8,-1,-1,-1,-1,-1,-1,-1},
-{5,0,4,5,11,0,5,10,11,11,3,0,-1,-1,-1,-1},
-{0,1,9,8,4,10,8,10,11,10,4,5,-1,-1,-1,-1},
-{10,11,4,10,4,5,11,3,4,9,4,1,3,1,4,-1},
-{2,5,1,2,8,5,2,11,8,4,5,8,-1,-1,-1,-1},
-{0,4,11,0,11,3,4,5,11,2,11,1,5,1,11,-1},
-{0,2,5,0,5,9,2,11,5,4,5,8,11,8,5,-1},
-{9,4,5,2,11,3,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{2,5,10,3,5,2,3,4,5,3,8,4,-1,-1,-1,-1},
-{5,10,2,5,2,4,4,2,0,-1,-1,-1,-1,-1,-1,-1},
-{3,10,2,3,5,10,3,8,5,4,5,8,0,1,9,-1},
-{5,10,2,5,2,4,1,9,2,9,4,2,-1,-1,-1,-1},
-{8,4,5,8,5,3,3,5,1,-1,-1,-1,-1,-1,-1,-1},
-{0,4,5,1,0,5,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{8,4,5,8,5,3,9,0,5,0,3,5,-1,-1,-1,-1},
-{9,4,5,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{4,11,7,4,9,11,9,10,11,-1,-1,-1,-1,-1,-1,-1},
-{0,8,3,4,9,7,9,11,7,9,10,11,-1,-1,-1,-1},
-{1,10,11,1,11,4,1,4,0,7,4,11,-1,-1,-1,-1},
-{3,1,4,3,4,8,1,10,4,7,4,11,10,11,4,-1},
-{4,11,7,9,11,4,9,2,11,9,1,2,-1,-1,-1,-1},
-{9,7,4,9,11,7,9,1,11,2,11,1,0,8,3,-1},
-{11,7,4,11,4,2,2,4,0,-1,-1,-1,-1,-1,-1,-1},
-{11,7,4,11,4,2,8,3,4,3,2,4,-1,-1,-1,-1},
-{2,9,10,2,7,9,2,3,7,7,4,9,-1,-1,-1,-1},
-{9,10,7,9,7,4,10,2,7,8,7,0,2,0,7,-1},
-{3,7,10,3,10,2,7,4,10,1,10,0,4,0,10,-1},
-{1,10,2,8,7,4,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{4,9,1,4,1,7,7,1,3,-1,-1,-1,-1,-1,-1,-1},
-{4,9,1,4,1,7,0,8,1,8,7,1,-1,-1,-1,-1},
-{4,0,3,7,4,3,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{4,8,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{9,10,8,10,11,8,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{3,0,9,3,9,11,11,9,10,-1,-1,-1,-1,-1,-1,-1},
-{0,1,10,0,10,8,8,10,11,-1,-1,-1,-1,-1,-1,-1},
-{3,1,10,11,3,10,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{1,2,11,1,11,9,9,11,8,-1,-1,-1,-1,-1,-1,-1},
-{3,0,9,3,9,11,1,2,9,2,11,9,-1,-1,-1,-1},
-{0,2,11,8,0,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{3,2,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{2,3,8,2,8,10,10,8,9,-1,-1,-1,-1,-1,-1,-1},
-{9,10,2,0,9,2,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{2,3,8,2,8,10,0,1,8,1,10,8,-1,-1,-1,-1},
-{1,10,2,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{1,3,8,9,1,8,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{0,9,1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{0,3,8,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
-{-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1} };
+// Triangulates the loop positions first..last (in loop order) into `tris`, using as inner edges only pairs of points
+// that share no cube face (faceOf: one bit per face an edge lies on). Tries each apex for the side (first, last).
+bool SplitLoop(const int* loop, int first, int last, const unsigned* faceOf, int (*tris)[3], int& count) {
+    if (last - first < 2) return true;
+    const int mark = count;
+    for (int apex = first + 1; apex < last; ++apex) {
+        const bool leftOk = apex == first + 1 || !(faceOf[loop[first]] & faceOf[loop[apex]]);
+        const bool rightOk = apex == last - 1 || !(faceOf[loop[apex]] & faceOf[loop[last]]);
+        if (!leftOk || !rightOk) continue;
+        count = mark;
+        tris[count][0] = first; tris[count][1] = apex; tris[count][2] = last; ++count;
+        if (SplitLoop(loop, first, apex, faceOf, tris, count) && SplitLoop(loop, apex, last, faceOf, tris, count)) return true;
+    }
+    count = mark;
+    return false;
+}
 
-// Cube-corner offsets and the 12 edges (pairs of corner indices), Bourke order.
-static const int kCorner[8][3] = {{0,0,0},{1,0,0},{1,1,0},{0,1,0},{0,0,1},{1,0,1},{1,1,1},{0,1,1}};
-static const int kEdgeC[12][2] = {{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}};
+CubeCaseTable BuildCubeCases() {
+    CubeCaseTable t;
+    int edgeOf[8][8];
+    unsigned faceOf[12] = {};
+    int ne = 0;
+    for (int c = 0; c < 8; ++c)
+        for (int bit = 1; bit < 8; bit <<= 1)
+            if (!(c & bit)) {
+                t.edgeA[ne] = (std::uint8_t)c; t.edgeB[ne] = (std::uint8_t)(c | bit); edgeOf[c][c | bit] = edgeOf[c | bit][c] = ne;
+                for (int axis = 0; axis < 3; ++axis)                     // the two faces the edge lies on
+                    if ((1 << axis) != bit) faceOf[ne] |= 1u << (axis * 2 + ((c >> axis) & 1));
+                ++ne;
+            }
+    // The six faces as rings of four corners, counter-clockwise seen from outside the cube.
+    int ring[6][4];
+    for (int axis = 0; axis < 3; ++axis)
+        for (int side = 0; side < 2; ++side) {
+            const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+            const int du[4] = {0, 1, 1, 0}, dv[4] = {0, 0, 1, 1};
+            for (int k = 0; k < 4; ++k) {
+                const int corner = (side << axis) | (du[k] << u) | (dv[k] << v);
+                ring[axis * 2 + side][side ? k : 3 - k] = corner;
+            }
+        }
+    for (int pattern = 0; pattern < 256; ++pattern) {
+        CubeCase& cc = t.cases[pattern];
+        auto air = [&](int corner) { return ((pattern >> corner) & 1) != 0; };
+        for (int e = 0; e < 12; ++e)
+            if (air(t.edgeA[e]) != air(t.edgeB[e])) cc.edges |= (std::uint16_t)(1u << e);
+        int next[12];
+        for (int e = 0; e < 12; ++e) next[e] = -1;
+        for (const auto& q : ring)
+            for (int k = 0; k < 4; ++k) {
+                if (air(q[k]) || !air(q[(k + 1) & 3])) continue;          // not an entry into an air run
+                int m = (k + 1) & 3;
+                while (air(q[(m + 1) & 3])) m = (m + 1) & 3;             // last air corner of the run
+                next[edgeOf[q[k]][q[(k + 1) & 3]]] = edgeOf[q[m]][q[(m + 1) & 3]];
+            }
+        bool used[12] = {};
+        for (int start = 0; start < 12; ++start) {
+            if (next[start] < 0 || used[start]) continue;
+            int loop[12], len = 0;
+            for (int e = start; !used[e]; e = next[e]) { used[e] = true; loop[len++] = e; }
+            // Split the loop into triangles whose inner edges never join two points of the same cube face: such an
+            // edge would lie in the face, where the neighbouring cube draws only the face's own segments, and the two
+            // cubes would put triangles on top of each other there. The walk goes round the air clockwise seen
+            // from the air side, so each triangle is written the other way round (facing the air).
+            int tris[10][3], count = 0;
+            if (!SplitLoop(loop, 0, len - 1, faceOf, tris, count)) {
+                count = 0;                                            // no such split: a plain fan (not seen in the 256)
+                for (int i = 1; i + 1 < len; ++i) { tris[count][0] = 0; tris[count][1] = i; tris[count][2] = i + 1; ++count; }
+            }
+            for (int k = 0; k < count; ++k) {
+                std::uint8_t* out = cc.tri + 3 * cc.triCount++;
+                out[0] = (std::uint8_t)loop[tris[k][0]]; out[1] = (std::uint8_t)loop[tris[k][2]]; out[2] = (std::uint8_t)loop[tris[k][1]];
+            }
+        }
+    }
+    return t;
+}
+
+const CubeCaseTable& CubeCases() {
+    static const CubeCaseTable table = BuildCubeCases();
+    return table;
+}
+} // namespace
 
 
 // ===================== VoxelTerrain =========================================
@@ -874,34 +703,36 @@ void VoxelTerrain::AppendCubes(Mesh& m, int x0, int y0, int z0, int x1, int y1, 
                      grassColor.b + (soilColor.b - grassColor.b) * t, 1.0f};
     };
 
+    const CubeCaseTable& cases = CubeCases();
+    // Corner c of the cube at p is p[cornerOff[c]] (corner numbering: see CubeCases).
+    const std::ptrdiff_t cornerOff[8] = {0, 1, sy, sy + 1, sz, sz + 1, sz + sy, sz + sy + 1};
     for (int z = z0; z < z1; ++z)
         for (int y = y0; y < y1; ++y) {
             const float* row = dens + ((std::ptrdiff_t)y * sy + (std::ptrdiff_t)z * sz);
             for (int x = x0; x < x1; ++x) {
                 const float* p = row + x;
                 float val[8];
-                val[0] = p[0];      val[1] = p[1];          val[2] = p[sy + 1];       val[3] = p[sy];
-                val[4] = p[sz];     val[5] = p[sz + 1];     val[6] = p[sz + sy + 1];  val[7] = p[sz + sy];
-                int cubeindex = 0;
-                for (int i = 0; i < 8; ++i) if (val[i] < iso) cubeindex |= (1 << i);
-                if (cubeindex == 0 || cubeindex == 255) continue;     // all corners on one side: no surface here
-                const int edges = kEdge[cubeindex];
+                for (int i = 0; i < 8; ++i) val[i] = p[cornerOff[i]];
+                int pattern = 0;
+                for (int i = 0; i < 8; ++i) if (val[i] < iso) pattern |= (1 << i);
+                if (pattern == 0 || pattern == 255) continue;         // all corners on one side: no surface here
+                const CubeCase& cc = cases.cases[pattern];
+                const int edges = cc.edges;
                 if (edges == 0) continue;
                 Vec3 pos[8];
                 for (int i = 0; i < 8; ++i)
-                    pos[i] = Vec3{(x + kCorner[i][0]) * vs - halfX, (y + kCorner[i][1]) * vs, (z + kCorner[i][2]) * vs - halfZ};
+                    pos[i] = Vec3{(x + (i & 1)) * vs - halfX, (y + ((i >> 1) & 1)) * vs, (z + ((i >> 2) & 1)) * vs - halfZ};
                 Vec3 vert[12], nrm[12];
                 unsigned nmask = 0;
                 for (int ed = 0; ed < 12; ++ed) {
                     if (!(edges & (1 << ed))) continue;
-                    const int a = kEdgeC[ed][0], b = kEdgeC[ed][1];
+                    const int a = cases.edgeA[ed], b = cases.edgeB[ed];
                     const float v1 = val[a], v2 = val[b];
                     const float t = (std::fabs(v2 - v1) > 1e-6f) ? (iso - v1) / (v2 - v1) : 0.5f;
                     vert[ed] = pos[a] + (pos[b] - pos[a]) * t;
                 }
-                const int* tri = kTri[cubeindex];
-                for (int t = 0; tri[t] != -1; t += 3) {
-                    const int ea = tri[t], eb = tri[t + 1], ec = tri[t + 2];
+                for (int t = 0; t < 3 * cc.triCount; t += 3) {
+                    const int ea = cc.tri[t], eb = cc.tri[t + 1], ec = cc.tri[t + 2];
                     Vec3 a = vert[ea], b = vert[eb], c = vert[ec];
                     auto nrmOf = [&](int ed) -> Vec3 {
                         if (!(nmask & (1u << ed))) { nrm[ed] = normalAt(vert[ed]); nmask |= 1u << ed; }
@@ -926,9 +757,8 @@ void VoxelTerrain::AppendCubes(Mesh& m, int x0, int y0, int z0, int x1, int y1, 
                     m.triangles.push_back(base); m.triangles.push_back(base + 1); m.triangles.push_back(base + 2);
                     if (useMat) {
                         // the face takes the colour of the most solid corner of its cube
-                        const std::ptrdiff_t offs[8] = {0, 1, sy + 1, sy, sz, sz + 1, sz + sy + 1, sz + sy};
                         int bi = 0; for (int i = 1; i < 8; ++i) if (val[i] > val[bi]) bi = i;
-                        const std::size_t mi = (std::size_t)((p - dens) + offs[bi]);
+                        const std::size_t mi = (std::size_t)((p - dens) + cornerOff[bi]);
                         const unsigned char id = material[mi];
                         m.triColors.push_back(id < materials.size() ? materials[id].color : color);
                     } else if (autoColor) {
@@ -941,8 +771,8 @@ void VoxelTerrain::AppendCubes(Mesh& m, int x0, int y0, int z0, int x1, int y1, 
         }
 }
 
-// The original marching-cubes loop, unchanged apart from its name. It is the reference the tests hold
-// AppendCubes to, and what OKAY_VOXEL_OLD_REMESH=1 runs.
+// The original marching-cubes loop, unchanged apart from its name and the case table (both loops read
+// CubeCases()). It is the reference the tests hold AppendCubes to, and what OKAY_VOXEL_OLD_REMESH=1 runs.
 void VoxelTerrain::AppendCubesReference(Mesh& m, int x0, int y0, int z0, int x1, int y1, int z1) const {
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
@@ -975,29 +805,31 @@ void VoxelTerrain::AppendCubesReference(Mesh& m, int x0, int y0, int z0, int x1,
                      grassColor.b + (soilColor.b - grassColor.b) * t, 1.0f};
     };
 
+    const CubeCaseTable& cases = CubeCases();
     for (int z = z0; z < z1; ++z)
         for (int y = y0; y < y1; ++y)
             for (int x = x0; x < x1; ++x) {
                 float val[8]; Vec3 pos[8];
-                int cubeindex = 0;
+                int pattern = 0;
                 for (int i = 0; i < 8; ++i) {
-                    int cx = x + kCorner[i][0], cy = y + kCorner[i][1], cz = z + kCorner[i][2];
+                    int cx = x + (i & 1), cy = y + ((i >> 1) & 1), cz = z + ((i >> 2) & 1);
                     val[i] = density[Index(cx, cy, cz)];
                     pos[i] = GridToLocal(cx, cy, cz);
-                    if (val[i] < iso) cubeindex |= (1 << i);
+                    if (val[i] < iso) pattern |= (1 << i);
                 }
-                int edges = kEdge[cubeindex];
+                const CubeCase& cc = cases.cases[pattern];
+                int edges = cc.edges;
                 if (edges == 0) continue;
                 Vec3 vert[12];
                 for (int e = 0; e < 12; ++e) {
                     if (!(edges & (1 << e))) continue;
-                    int a = kEdgeC[e][0], b = kEdgeC[e][1];
+                    int a = cases.edgeA[e], b = cases.edgeB[e];
                     vert[e] = interp(pos[a], pos[b], val[a], val[b]);
                 }
-                for (int t = 0; kTri[cubeindex][t] != -1; t += 3) {
-                    Vec3 a = vert[kTri[cubeindex][t]];
-                    Vec3 b = vert[kTri[cubeindex][t + 1]];
-                    Vec3 c = vert[kTri[cubeindex][t + 2]];
+                for (int t = 0; t < 3 * cc.triCount; t += 3) {
+                    Vec3 a = vert[cc.tri[t]];
+                    Vec3 b = vert[cc.tri[t + 1]];
+                    Vec3 c = vert[cc.tri[t + 2]];
                     Vec3 na = normalAt(a), nb = normalAt(b), nc = normalAt(c);
                     Vec3 g = Vec3::Cross(b - a, c - a);
                     Vec3 navg{na.x + nb.x + nc.x, na.y + nb.y + nc.y, na.z + nb.z + nc.z};

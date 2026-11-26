@@ -487,6 +487,10 @@ void RegexLookbehind() {
     Expect("function f() {} /x/.test('x') && console.log('regex after a block'); const h = 4 / 2 / 1; console.log(h, {} / 1, (function () { return 6; })() / 3)",
            "regex after a block\n2 NaN 2");
     Expect("if (true) {}\n/a/g.test('a') && console.log('ok'); const o = {a: 1}\n/2/1; console.log(typeof o)", "ok\nnumber");
+    Expect("const n = {onClick: 1}; let c = 0; for (const e in n) /^on[A-Z]/.test(e) && c++; if (c) /x/.test('x') && console.log('after a head', c); const d = (8) / 2 / (2); console.log(d)",
+           "after a head 1\n2");
+    // 13.5.1.2: delete on an optional chain, also when it stops early
+    Expect("const v = {a: {b: 1}}; console.log(delete v?.a?.b, JSON.stringify(v), delete v?.z?.q, delete v?.a, JSON.stringify(v))", "true {\"a\":{}} true true {}");
 }
 
 // 15.7.11 static blocks, 14.7.5 for await, and newer library methods real pages use (23.1.3.35 toSpliced,

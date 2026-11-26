@@ -1424,6 +1424,26 @@ struct Compiler {
         }
         if (n->op == 2002) {   // delete
             Node* t = n->a;
+            if (t->k == NK::OptChain && (t->a->k == NK::Member || t->a->k == NK::Index)) {
+                // 13.5.1.2 delete a?.b: when the chain stops early (a is nullish) the result is true
+                Node* m = t->a;
+                std::vector<int> jumps;
+                chainStack.push_back(&jumps);
+                Expr(m->a);
+                if (m->flags & NF_Optional) ChainJump(OP_JumpNullish);
+                chainStack.pop_back();
+                if (m->k == NK::Member) Emit(OP_DelProp, AtomConst(m->str));
+                else {
+                    Expr(m->b);
+                    Emit(OP_DelElem);
+                }
+                int jend = EmitJump(OP_Jump);
+                for (int j : jumps) Patch(j);
+                Emit(OP_Pop);   // the undefined a short-circuit leaves
+                Emit(OP_True);
+                Patch(jend);
+                return;
+            }
             if (t->k == NK::OptChain) t = t->a;
             if (t->k == NK::Member && t->a->k != NK::Super) {
                 Expr(t->a);

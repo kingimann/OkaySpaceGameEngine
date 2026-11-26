@@ -103,6 +103,7 @@ struct Lexer {
     SyntaxError& err;
     std::vector<Token>& out;
     std::vector<int> braces;   // 0 = an expression's { (object literal), 1 = a template's ${, 2 = a block's {
+    std::vector<bool> parens;  // per open '(': it holds the head of if / for / while / with
     bool sawNl = false;
 
     Lexer(const std::string& src, std::vector<Token>& o, SyntaxError& e) : s(src), err(e), out(o) {}
@@ -465,7 +466,8 @@ struct Lexer {
             case TT::Template: return t.tpl == 1 || t.tpl == 2;   // after `...${ an expression starts
             case TT::Punct:
                 if (t.p == P_RBrace) return t.tpl == 1;   // after a block (function f() {} /re/.test(x)), not after an object literal
-                return !(t.p == P_RParen || t.p == P_RBrack || t.p == P_Inc || t.p == P_Dec);
+                if (t.p == P_RParen) return t.tpl == 1;   // after if (...) / for (...) / while (...): a statement starts
+                return !(t.p == P_RBrack || t.p == P_Inc || t.p == P_Dec);
             case TT::Name: {
                 static const char* const before[] = {"return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
                                                      "throw", "case", "do", "else", "yield", "await"};
@@ -500,6 +502,13 @@ struct Lexer {
             if (k == n && !t.escaped) return false;
         }
         return true;   // else, do, try, finally, a class name, extends X ...
+    }
+
+    // Whether the '(' about to be read is the head of if / for / while / with (its ')' starts a statement).
+    bool ControlHeadAhead() const {
+        if (out.empty() || out.back().t != TT::Name || out.back().escaped) return false;
+        const std::u16string& w = out.back().s;
+        return w == u"if" || w == u"for" || w == u"while" || w == u"with";
     }
 
     bool RegexLit(int ln, int col) {
@@ -614,6 +623,11 @@ struct Lexer {
                 if (s.compare(i, n, p.text) != 0) continue;
                 if (p.id == P_QDot && i + 2 < s.size() && s[i + 2] >= '0' && s[i + 2] <= '9') continue;
                 bool closesBlock = false;
+                if (p.id == P_LParen) parens.push_back(ControlHeadAhead());
+                if (p.id == P_RParen && !parens.empty()) {
+                    closesBlock = parens.back();
+                    parens.pop_back();
+                }
                 if (p.id == P_LBrace) braces.push_back(BlockBraceAhead() ? 2 : 0);
                 if (p.id == P_RBrace && !braces.empty()) {
                     closesBlock = braces.back() == 2;
@@ -621,7 +635,7 @@ struct Lexer {
                 }
                 Token& t = Push(TT::Punct, ln, col);
                 t.p = (std::uint16_t)p.id;
-                t.tpl = closesBlock ? 1 : 0;   // on a '}': it closed a block, so a '/' after it starts a regular expression
+                t.tpl = closesBlock ? 1 : 0;   // on a '}' or ')': it closed a block or a statement head, so '/' starts a regex
                 i += n;
                 matched = true;
                 break;

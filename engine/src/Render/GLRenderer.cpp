@@ -104,6 +104,13 @@ bool GLRenderer::LoadGL(GLGetProc gp) {
     load(g.CompressedTexImage2D, gp, "glCompressedTexImage2D");
     load(g.GetString, gp, "glGetString");
     load(g.GetStringi, gp, "glGetStringi");
+    // Optional: the RHI OpenGL backend (rhi::CreateOpenGLDevice) needs these too.
+    load(g.ColorMask, gp, "glColorMask");
+    load(g.CullFace, gp, "glCullFace");
+    load(g.DrawElements, gp, "glDrawElements");
+    load(g.BlendFuncSeparate, gp, "glBlendFuncSeparate");
+    load(g.BufferSubData, gp, "glBufferSubData");
+    load(g.ClearDepth, gp, "glClearDepth");
     g.ok = r;
     if (!r) Log::Error("[gl] required OpenGL entry points missing — using software renderer");
     return r;

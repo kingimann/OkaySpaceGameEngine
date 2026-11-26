@@ -102,6 +102,12 @@ add_library(okay_engine
     src/Render/GLRendererPasses.cpp
     src/Render/GLRendererResources.cpp
     src/Render/OkayShader.cpp
+    # RHI: the rendering hardware interface (docs/rendering/rhi.md)
+    src/Render/RHI/RHI.cpp
+    src/Render/RHI/SoftwareDevice.cpp
+    src/Render/RHI/GLDevice.cpp
+    src/Render/RHI/SurfaceShader.cpp
+    src/Render/RHI/BloomPass.cpp
     src/Render/D3D11Renderer.cpp
     src/Render/D3D12Renderer.cpp
     src/Scene/Component.cpp

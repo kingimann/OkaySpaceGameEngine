@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Platform/Platform.hpp"
+#include "gl_test_context.hpp"
 #include "okay/Render/GLRenderer.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"
 #include <cstdio>
@@ -22,18 +23,8 @@ int Ch(std::uint32_t v, int k) { return (int)((v >> (k * 8)) & 0xFF); }
 
 int main() {
     RUN_SUITE("gl_post_alpha");
-    if (!std::getenv("DISPLAY")) { std::printf("SKIP: no $DISPLAY (run through tests/run_under_xvfb.sh)\n"); return 77; }
-    platform::Backend* b = platform::Default();
-    if (!b || !b->Init(platform::InitFlags{true, false, false})) { std::printf("SKIP: no window backend\n"); return 77; }
-    platform::WindowDesc d;
-    d.title = "gl_post_alpha"; d.width = 64; d.height = 64; d.opengl = true; d.hidden = true; d.resizable = false;
-    auto win = b->MakeWindow(d);
-    if (!win) { std::printf("SKIP: MakeWindow failed: %s\n", b->LastError().c_str()); return 77; }
-    platform::GLAttributes gla;
-    if (!win->CreateGLContext(gla)) { std::printf("SKIP: no GL context\n"); return 77; }
-    if (!GLRenderer::LoadGL([](const char* n) -> void* { return platform::Default()->GLProcAddress(n); })) {
-        std::printf("SKIP: GL entry points missing\n"); return 77;
-    }
+    std::unique_ptr<platform::Window> win;
+    if (const int skip = gltest::OpenContext("gl_post_alpha", 64, 64, win)) return skip;
     auto gl = std::make_unique<GLRenderer>();
 
     // A cube in focus in front of an empty (sky) background, seen from a perspective camera.

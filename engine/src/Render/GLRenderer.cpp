@@ -17,6 +17,7 @@
 #include "okay/Core/Time.hpp"
 #include "okay/Render/OkayShader.hpp"     // Custom (.okayshader) surfaces
 
+#include "okay/Render/RHI/BloomPass.hpp"   // Bloom without the post chain
 #include "GLRendererInternal.hpp"
 namespace okay {
 using namespace gl_render;
@@ -118,7 +119,26 @@ bool GLRenderer::LoadGL(GLGetProc gp) {
 
 bool GLRenderer::Available() { return g.ok; }
 
-GLRenderer::~GLRenderer() { /* GL objects freed via Destroy() with context current */ }
+GLRenderer::GLRenderer() = default;
+
+GLRenderer::~GLRenderer() {
+    // GL objects are freed by Destroy() with the context current; without it the RHI device must not touch GL.
+    if (m_rhi) rhi::AbandonGLDevice(*m_rhi);
+}
+
+bool GLRenderer::EnsureRhiBloom() {
+    if (m_rhiBloom) return true;
+    if (m_rhiFailed) return false;
+    if (!m_rhi) m_rhi = rhi::CreateOpenGLDevice();
+    if (m_rhi) {
+        m_rhiBloom.reset(new rhi::BloomPass());
+        if (m_rhiBloom->Init(*m_rhi)) return true;
+        Log::Error("[gl] RHI bloom pass: ", m_rhi->LastError());
+        m_rhiBloom.reset();
+    }
+    m_rhiFailed = true;   // not again every frame; Destroy() lets it try again
+    return false;
+}
 
 
 
@@ -994,35 +1014,19 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             g.ClearColor(clearR, clearG, clearB, clearA);     // restore the caller's clear
         }
 
-        // Bloom: bright-pass the resolved frame at half res, blur, add back on top.
-        // Any failure just skips the effect (the frame is already complete without it).
-        if (BloomEnabled() && EnsurePostProgs() && EnsureBloomTargets(hw, hh)) {
-            g.Disable(GL_DEPTH_TEST);
-            g.Disable(GL_BLEND);
-            // 1) bright-pass: resolve texture -> half-res A
-            quadPass(m_brightProg, m_bloomFboA, m_bloomW, m_bloomH, m_resolveTex, m_ubSrc);
-            g.Uniform1f(m_ubThresh, BloomThreshold());
-            DrawQuad();
-            // 2) two separable gaussian rounds: A -> B (horizontal), B -> A (vertical)
-            for (int it = 0; it < 2; ++it) {
-                quadPass(m_blurProg, m_bloomFboB, m_bloomW, m_bloomH, m_bloomTexA, m_ublSrc);
-                g.Uniform2f(m_ublDir, 1.0f / (float)m_bloomW, 0.0f);
-                DrawQuad();
-                quadPass(m_blurProg, m_bloomFboA, m_bloomW, m_bloomH, m_bloomTexB, m_ublSrc);
-                g.Uniform2f(m_ublDir, 0.0f, 1.0f / (float)m_bloomH);
-                DrawQuad();
-            }
-            // 3) additive composite onto the resolved frame. Alpha stays as it
-            //    was: the editor paints the sky behind pixels the 3D pass left
-            //    clear, and an opaque add turned that sky black and hazy.
-            quadPass(m_addProg, m_resolveFbo, w, h, m_bloomTexA, m_uaSrc);
-            g.Uniform1f(m_uaStrength, BloomIntensity());
-            g.Enable(GL_BLEND);
-            g.BlendFunc(GL_ONE, GL_ONE);   // shader alpha is 0, so the clear/sky alpha is kept
-            DrawQuad();
-            g.Disable(GL_BLEND);
+        // Bloom: bright-pass the resolved frame at half res, blur, add back on top, through the RHI
+        // (rhi::BloomPass: the same pass on every RHI backend; docs/rendering/rhi.md). Alpha stays as it
+        // was: the editor paints the sky behind pixels the 3D pass left clear. Any failure just skips
+        // the effect (the frame is already complete without it).
+        if (BloomEnabled() && EnsureRhiBloom()) {
+            rhi::TextureDesc td;
+            td.width = w; td.height = h; td.renderTarget = true;
+            td.format = m_hdr ? rhi::Format::RGBA16F : rhi::Format::RGBA8;
+            const rhi::TextureHandle frame = rhi::WrapGLTexture(*m_rhi, m_resolveTex, td);
+            if (!m_rhiBloom->Apply(frame, w, h, BloomThreshold(), BloomIntensity()))
+                Log::Error("[gl] RHI bloom: ", m_rhi->LastError());
+            m_rhi->Destroy(frame);   // the wrap only: the texture stays the renderer's
             g.Enable(GL_DEPTH_TEST);
-            g.BindTexture(GL_TEXTURE_2D, 0);
         }
     }
 
@@ -1058,6 +1062,9 @@ void GLRenderer::DestroyTargets() {
 }
 
 void GLRenderer::Destroy() {
+    m_rhiBloom.reset();   // frees its shaders, quad and targets on the RHI device
+    m_rhi.reset();
+    m_rhiFailed = false;
     for (SizeSet& ps : m_parkedSets) DeleteSizeSet(ps);
     m_parkedSets.clear();
     DestroyTargets();
@@ -1080,9 +1087,7 @@ void GLRenderer::Destroy() {
     if (m_quadVbo) { g.DeleteBuffers(1, &m_quadVbo); m_quadVbo = 0; }
     if (m_vao && g.DeleteVertexArrays) { g.DeleteVertexArrays(1, &m_vao); m_vao = 0; }
     if (m_depthProg) { g.DeleteProgram(m_depthProg); m_depthProg = 0; }
-    if (m_brightProg) { g.DeleteProgram(m_brightProg); m_brightProg = 0; }
     if (m_blurProg) { g.DeleteProgram(m_blurProg); m_blurProg = 0; }
-    if (m_addProg) { g.DeleteProgram(m_addProg); m_addProg = 0; }
     if (m_skyProg) { g.DeleteProgram(m_skyProg); m_skyProg = 0; }
     if (m_uberProg) { g.DeleteProgram(m_uberProg); m_uberProg = 0; }
     if (m_fxaaProg) { g.DeleteProgram(m_fxaaProg); m_fxaaProg = 0; }

@@ -218,10 +218,8 @@ extern const char* kVert;
 extern const char* kFrag;
 extern const char* kDepthVert;
 extern const char* kDepthFrag;
-extern const char* kQuadVert;
-extern const char* kBrightFrag;
-extern const char* kBlurFrag;
-extern const char* kAddFrag;
+extern const char* kQuadVert;   // = rhi::kFullscreenVertGlsl
+extern const char* kBlurFrag;   // = rhi::kGaussianBlurGlsl
 extern const char* kSsaoDepthVert;
 extern const char* kSsaoDepthFrag;
 extern const char* kSsaoFrag;

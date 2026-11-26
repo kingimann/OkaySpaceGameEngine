@@ -2,7 +2,7 @@
 
 # Code index: okayui
 
-Back to the [code index](../code_index.md). 12 headers, 643 names.
+Back to the [code index](../code_index.md). 12 headers, 644 names.
 
 ## `okayui/include/okay/UI/OkayUI.hpp`
 
@@ -350,6 +350,7 @@ Back to the [code index](../code_index.md). 12 headers, 643 names.
 - `Capturing` function, line 43: True between BeginCapture and its EndCapture.
 - `TexturePixels` struct, line 47: The pixels behind a DrawCmd::texture: RGBA8, top row first, 'w' x 'h'. 'generation' changes when the pixels change (a font
 - `GetTexturePixels` function, line 48
+- `IsHostTexture` function, line 53: True for a texture the host itself gave OkayUI (Image, ImageButton, DrawList::AddImage, PushTexture: an SDL texture or whatever
 
 ## `okayui/include/okay/UI/OkayUICodeEdit.hpp`
 

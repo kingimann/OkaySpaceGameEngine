@@ -12850,10 +12850,14 @@ static void DrawCommunityShowcase(okay::account::AccountService& account, int vi
 // window, an incoming call, a toast) are drawn over it, and the page never swaps to its Dear ImGui copy while they show. It used to:
 // hovering the sidebar's profile row showed a tooltip over a corner of the page, and the whole What's New switched to the other
 // version until the mouse moved away (owner's recording, 2026-11-26). Which surface draws a page: launcher/PageLayout.hpp OkayUIDrawsPage.
+// The Browser page is hosted the same way; its page images are textures the launcher made (TextureFromRgba), which both of its
+// ImGui renderers take as an ImTextureID, as its own ImGui::Image calls do (okayuihost::ImGuiEmbed::SetHostTextures).
 template <class Draw>
 static void HostOkayPage(const char* itemId, ImVec2 ra, Draw draw) {
     static OkayUI::CapturedGeometry s_cap;
-    okayuihost::HostPanelArea(itemId, ra, g_okayRegion, okayuihost::SharedImGuiEmbed(), s_cap, draw);
+    okayuihost::ImGuiEmbed& embed = okayuihost::SharedImGuiEmbed();
+    embed.SetHostTextures([](const void* t) { return (ImTextureID)(intptr_t)t; });
+    okayuihost::HostPanelArea(itemId, ra, g_okayRegion, embed, s_cap, draw);
 }
 #endif
 
@@ -15071,16 +15075,14 @@ int main(int argc, char** argv) {
             }
         } else if (tab == kBrowserTab) {                  // ---- Browser: the browser program's browser, drawn by OkayUI ----
             const BrowserPageMode mode = PageMode(BrowserSwitchOn(), okayFrame);
-            if (mode == BrowserPageMode::Browser) {   // OkayPageCovered went with #1316; hosting in ImGui's draw order (HostOkayPage) is next
-                const ImVec2 rp = ImGui::GetCursorScreenPos();
+            if (mode == BrowserPageMode::Browser) {   // hosted in Dear ImGui's draw order, like What's New: ImGui's tooltips and popups lie over it
                 ImVec2 ra = ImGui::GetContentRegionAvail();
                 ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - PageFooterH(), 8.0f);
-                ImGui::InvisibleButton("##okayui_browser", ra);
-                ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);   // the wheel scrolls the page, not the ImGui window under it
 #ifdef OKAY_HAVE_OKAYUI
-                g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+                HostOkayPage("##okayui_browser", ra, [&](ImVec2 p, ImVec2 a) { DrawBrowserPage(p.x, p.y, a.x, a.y); });
+#else
+                ImGui::Dummy(ra);
 #endif
-                DrawBrowserPage(rp.x, rp.y, ra.x, ra.y);
             } else if (mode == BrowserPageMode::SwitchedOff) {
                 sectionHeader("Browser", nullptr);
                 EmptyState(kIcoGlobe, "The browser is switched off", "Turn on Settings > Experimental > Browser and restart the launcher to browse the web here. Links open in your system browser meanwhile.", UiPx(40.0f));

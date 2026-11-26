@@ -848,10 +848,10 @@ Back to the [code index](../code_index.md). 71 headers, 1023 names.
 
 ## `shared/OkayUIImGuiEmbed.hpp`
 
-- `ImGuiEmbed` class, line 31
-- `SharedImGuiEmbed` function, line 138: The one embed the editor's hosted OkayUI widgets share (one set of textures).
-- `HostPanelArea` function, line 237: A rectangle of the current Dear ImGui window drawn by OkayUI, 'size' big at the cursor: HostPanelWindow's way for a page that
-- `HostPanelSection` function, line 268: A part of a Dear ImGui window drawn by OkayUI only, with no Dear ImGui copy (the editor's Project Settings sections Player,
+- `ImGuiEmbed` class, line 33
+- `SharedImGuiEmbed` function, line 154: The one embed the editor's hosted OkayUI widgets share (one set of textures).
+- `HostPanelArea` function, line 254: A rectangle of the current Dear ImGui window drawn by OkayUI, 'size' big at the cursor: HostPanelWindow's way for a page that
+- `HostPanelSection` function, line 285: A part of a Dear ImGui window drawn by OkayUI only, with no Dear ImGui copy (the editor's Project Settings sections Player,
 
 ## `shared/OkayUIImGuiMap.hpp`
 

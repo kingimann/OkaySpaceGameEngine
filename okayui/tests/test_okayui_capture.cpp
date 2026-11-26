@@ -278,6 +278,8 @@ void TexturePixels() {
     CHECK(!UI::GetTexturePixels(nullptr, tp));
     int dummy = 0;
     CHECK(!UI::GetTexturePixels(&dummy, tp));       // not a texture OkayUI knows
+    CHECK(!UI::IsHostTexture(nullptr));
+    CHECK(UI::IsHostTexture(&dummy));               // so it is one the host made (an Image): the host names it to its toolkit itself
     // the launcher look: flat shapes and text sample its atlas; the host gets the atlas's pixels
     Rig r;
     UI::UseLauncherLook(true);
@@ -288,6 +290,7 @@ void TexturePixels() {
         UI::TexturePixels p;
         CHECK(UI::GetTexturePixels(c.texture, p));
         CHECK(p.rgba && p.w > 0 && p.h > 0);
+        CHECK(!UI::IsHostTexture(c.texture));       // OkayUI's own atlas: never handed on as a host texture
         sawAtlas = true;
     }
     CHECK(sawAtlas);

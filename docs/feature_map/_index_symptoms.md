@@ -140,6 +140,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a huge image crashes the load | [2.9](02-rendering-world.md#29-fonts-and-images) Fonts and images |
 | a huge map in one scene is slow to edit and load | [45.1](43-proposals.md#451-cell-authoring-and-baking) Cell authoring and baking |
 | a hundred NPCs make the game slow | [52.5](43-proposals.md#525-crowds) Crowds |
+| a JavaScript script errors with "script:12: TypeError: ... | [13.9](13-scripting.md#139-javascript-scripts-our-own-engine) JavaScript scripts (our own engine) |
 | a join refused with "no encryption" or a pinned-key mismatch | [39.2](39-security-anticheat.md#392-transport-security-encryption-replay-protection-sealed-join-host-keys) Transport security: encryption, replay protection, sealed join, host keys |
 | a joint snaps unexpectedly | [6.3](06-physics.md#63-joints) Joints |
 | a key does nothing in the game | [8.1](08-input.md#81-keyboard-and-mouse) Keyboard and mouse |
@@ -273,11 +274,13 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a script is rejected with "isn't supported yet | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |
 | A script needs a class | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |
 | a script reads or writes files outside the game folder (should be refused with a Console line) | [17.11](17-launcher-platform.md#1711-security-plan-sec1) Security plan SEC1 |
+| a script stops with "ran past its instruction budget | [13.9](13-scripting.md#139-javascript-scripts-our-own-engine) JavaScript scripts (our own engine) |
 | a script that works in the engine fails in a web page | [18.12](18-build-export-release.md#1812-okayjs-web-library-the-engines-script-api-in-a-plain-web-page) okay.js web library (the engine's script API in a plain web page) |
 | a script UI window and a scene HUD overlap | [40.5](40-okayui-library.md#405-how-okayui-relates-to-scene-ui) How OkayUI relates to scene UI |
 | a script's file call returns false or does nothing for an absolute path | [39.9](39-security-anticheat.md#399-script-and-file-path-safety) Script and file path safety |
 | a scroll list shows items outside its box | [12.1](12-ingame-ui.md#121-canvas-anchors-flex-layout-safe-area) Canvas, anchors, flex layout, safe area |
 | a second controller is ignored | [8.2](08-input.md#82-gamepad-sdl) Gamepad (SDL) |
+| a setting is missing in the Inspector (only fields of the exported class count) | [13.9](13-scripting.md#139-javascript-scripts-our-own-engine) JavaScript scripts (our own engine) |
 | a shader mode looks different between OpenGL and Direct3D | [38.8](38-render-backends.md#388-shader-pipeline) Shader pipeline |
 | a shared ball is owned by nobody | [16.3](16-networking.md#163-snapshots-and-sync-interest) Snapshots and sync, interest |
 | a shared ball kicks players | [16.6](16-networking.md#166-anti-cheat-server-side) Anti-cheat (server side) |
@@ -702,6 +705,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | log lost when the editor closes | [23.4](20-35-planned.md#234-error-console) Error console |
 | log spam from one system | [1.10](01-core-scene.md#110-logging-and-profiling) Logging and profiling |
 | look-down turns into a top-down view | [4.6](04-characters-cameras.md#46-third-person-camera) Third-person camera |
+| lookbehind (?<= ) and (?<! ) are not supported | [13.9](13-scripting.md#139-javascript-scripts-our-own-engine) JavaScript scripts (our own engine) |
 | looking down shows the inside of the shirt | [4.7](04-characters-cameras.md#47-first-person-camera-and-hands) First-person camera and hands |
 | loot rolls the same every time or differs between runs | [11.2](11-gameplay-systems.md#112-items-and-loot) Items and loot |
 | lost an hour of work after a crash | [22.2](20-35-planned.md#222-autosave) Autosave |

@@ -4,6 +4,7 @@
 // console.log for game scripts. Written from those spec sections. There is no
 // eval and no Function constructor: game scripts can not compile code from strings.
 #include "JsInternal.hpp"
+#include <unordered_set>
 #include <cmath>
 #include <cstdlib>
 
@@ -63,6 +64,22 @@ void DefineOrThrow(Runtime& rt, Object* o, GcObj* k, const Runtime::Descriptor& 
 
 // 7.3.15 SetIntegrityLevel / 7.3.16 TestIntegrityLevel
 void SetIntegrity(Runtime& rt, Object* o, bool frozen) {
+    if (o->cls == Cls::Proxy || o->cls == Cls::TypedArray) {   // the spec's steps, through the object's own internal methods
+        if (!rt.PreventExtensions(o)) rt.ThrowType("the object refused to stop being extensible");
+        std::vector<GcObj*> keys = rt.OwnKeys(o, true, true);
+        for (GcObj* k : keys) {
+            rt.Charge(1);
+            Runtime::Descriptor d;
+            d.hasConfigurable = true;
+            if (frozen) {
+                Prop cur;
+                if (!rt.GetOwnProperty(o, k, cur)) continue;
+                if (!(cur.flags & kAccessor)) d.hasWritable = true;
+            }
+            DefineOrThrow(rt, o, k, d);
+        }
+        return;
+    }
     rt.PreventExtensions(o);
     if (o->cls == Cls::Array || o->cls == Cls::Arguments) {
         ArrayObj* a = static_cast<ArrayObj*>(o);
@@ -79,6 +96,17 @@ void SetIntegrity(Runtime& rt, Object* o, bool frozen) {
     }
 }
 bool TestIntegrity(Runtime& rt, Object* o, bool frozen) {
+    if (o->cls == Cls::Proxy || o->cls == Cls::TypedArray) {
+        if (rt.IsExtensible(o)) return false;
+        for (GcObj* k : rt.OwnKeys(o, true, true)) {
+            rt.Charge(1);
+            Prop cur;
+            if (!rt.GetOwnProperty(o, k, cur)) continue;
+            if (cur.flags & kConfigurable) return false;
+            if (frozen && !(cur.flags & kAccessor) && (cur.flags & kWritable)) return false;
+        }
+        return true;
+    }
     if (o->extensible) return false;
     if (o->cls == Cls::Array || o->cls == Cls::Arguments) {
         ArrayObj* a = static_cast<ArrayObj*>(o);
@@ -132,6 +160,7 @@ const char* BuiltinTag(Object* o) {
         case Cls::StringBox: return "String";
         case Cls::DateBox: return "Date";
         case Cls::BigIntBox: return "BigInt";
+        case Cls::Proxy: return o->proxyFn ? "Function" : "Object";   // 20.1.3.6 (IsArray is asked first)
         default: return "Object";
     }
 }
@@ -227,14 +256,17 @@ void InstallObjectLib(Runtime& rt) {
     DefNative(rt, op, "isPrototypeOf", [](Runtime& rt, CallArgs& a) {
         if (!a[0].IsObj()) return Value::Bool(false);
         Object* self = rt.ToObject(a.thisv);
-        for (Object* p = a[0].O()->proto; p; p = p->proto)
+        int guard = 0;
+        for (Object* p = rt.GetPrototypeOf(a[0].O()); p; p = rt.GetPrototypeOf(p)) {
             if (p == self) return Value::Bool(true);
+            if (++guard > 100000) break;
+        }
         return Value::Bool(false);
     }, 1);
     {   // B.2.2.1 Object.prototype.__proto__: an accessor over [[GetPrototypeOf]] / [[SetPrototypeOf]]
         NativeFunc* g = rt.NewNative([](Runtime& rt, CallArgs& a) {
-            Object* o = rt.ToObject(a.thisv);
-            return o->proto ? Value::Obj(o->proto) : Value::Null();
+            Object* o = rt.GetPrototypeOf(rt.ToObject(a.thisv));
+            return o ? Value::Obj(o) : Value::Null();
         }, "get __proto__", 0);
         NativeFunc* s = rt.NewNative([](Runtime& rt, CallArgs& a) {
             if (a.thisv.IsNullish()) rt.ThrowType("can not set __proto__ of " + std::string(a.thisv.IsNull() ? "null" : "undefined"));
@@ -254,7 +286,7 @@ void InstallObjectLib(Runtime& rt) {
         if (a.thisv.IsUndef()) return Value::Str(rt.Intern("[object Undefined]"));
         if (a.thisv.IsNull()) return Value::Str(rt.Intern("[object Null]"));
         Object* o = rt.ToObject(a.thisv);
-        std::string tag = BuiltinTag(o);
+        std::string tag = rt.IsArray(Value::Obj(o)) ? "Array" : BuiltinTag(o);
         Value t = rt.Get(Value::Obj(o), rt.symToStringTag);
         if (t.IsStr()) tag = Utf16To8(t.S()->s);
         return Value::Str(rt.NewStringUtf8("[object " + tag + "]"));
@@ -346,8 +378,8 @@ void InstallObjectLib(Runtime& rt) {
         return Value::Obj(out);
     }, 1);
     DefNative(rt, ctor, "getPrototypeOf", [](Runtime& rt, CallArgs& a) {
-        Object* o = rt.ToObject(a[0]);
-        return o->proto ? Value::Obj(o->proto) : Value::Null();
+        Object* o = rt.GetPrototypeOf(rt.ToObject(a[0]));
+        return o ? Value::Obj(o) : Value::Null();
     }, 1);
     DefNative(rt, ctor, "setPrototypeOf", [](Runtime& rt, CallArgs& a) {
         if (a[0].IsNullish()) rt.ThrowType("Object.setPrototypeOf needs an object");
@@ -361,7 +393,7 @@ void InstallObjectLib(Runtime& rt) {
     DefNative(rt, ctor, "preventExtensions", [](Runtime& rt, CallArgs& a) { if (a[0].IsObj()) rt.PreventExtensions(a[0].O()); return a[0]; }, 1);
     DefNative(rt, ctor, "isFrozen", [](Runtime& rt, CallArgs& a) { return Value::Bool(!a[0].IsObj() || TestIntegrity(rt, a[0].O(), true)); }, 1);
     DefNative(rt, ctor, "isSealed", [](Runtime& rt, CallArgs& a) { return Value::Bool(!a[0].IsObj() || TestIntegrity(rt, a[0].O(), false)); }, 1);
-    DefNative(rt, ctor, "isExtensible", [](Runtime&, CallArgs& a) { return Value::Bool(a[0].IsObj() && a[0].O()->extensible); }, 1);
+    DefNative(rt, ctor, "isExtensible", [](Runtime& rt, CallArgs& a) { return Value::Bool(a[0].IsObj() && rt.IsExtensible(a[0].O())); }, 1);
     DefNative(rt, ctor, "is", [](Runtime&, CallArgs& a) { return Value::Bool(SameValue(a[0], a[1])); }, 2);
     DefNative(rt, ctor, "hasOwn", [](Runtime& rt, CallArgs& a) {
         Object* o = rt.ToObject(a[0]);
@@ -824,15 +856,10 @@ void InstallGlobalLib(Runtime& rt) {
         Value o = ObjectArg(rt, a[0], "Reflect.get");
         return rt.Get(o, rt.ToPropertyKey(a[1]), a.argc > 2 ? a[2] : o);
     }, 2);
-    DefNative(rt, rf, "set", [](Runtime& rt, CallArgs& a) {
+    DefNative(rt, rf, "set", [](Runtime& rt, CallArgs& a) {   // 28.1.12: [[Set]] with the receiver, false when refused
         Value o = ObjectArg(rt, a[0], "Reflect.set");
-        try {
-            rt.Put(o, rt.ToPropertyKey(a[1]), a[2]);
-        } catch (const JsThrow&) {
-            rt.exception = Value();
-            return Value::Bool(false);
-        }
-        return Value::Bool(true);
+        GcObj* k = rt.ToPropertyKey(a[1]);
+        return Value::Bool(rt.SetWithReceiver(o.O(), k, a[2], a.argc > 3 ? a[3] : o));
     }, 3);
     DefNative(rt, rf, "has", [](Runtime& rt, CallArgs& a) {
         Value o = ObjectArg(rt, a[0], "Reflect.has");
@@ -840,7 +867,8 @@ void InstallGlobalLib(Runtime& rt) {
     }, 2);
     DefNative(rt, rf, "getPrototypeOf", [](Runtime& rt, CallArgs& a) {
         Value o = ObjectArg(rt, a[0], "Reflect.getPrototypeOf");
-        return o.O()->proto ? Value::Obj(o.O()->proto) : Value::Null();
+        Object* p = rt.GetPrototypeOf(o.O());
+        return p ? Value::Obj(p) : Value::Null();
     }, 1);
     DefNative(rt, rf, "setPrototypeOf", [](Runtime& rt, CallArgs& a) {
         Value o = ObjectArg(rt, a[0], "Reflect.setPrototypeOf");
@@ -854,7 +882,7 @@ void InstallGlobalLib(Runtime& rt) {
         return FromDescriptor(rt, p);
     }, 2);
     DefNative(rt, rf, "isExtensible", [](Runtime& rt, CallArgs& a) {
-        return Value::Bool(ObjectArg(rt, a[0], "Reflect.isExtensible").O()->extensible);
+        return Value::Bool(rt.IsExtensible(ObjectArg(rt, a[0], "Reflect.isExtensible").O()));
     }, 1);
     DefNative(rt, rf, "preventExtensions", [](Runtime& rt, CallArgs& a) {
         return Value::Bool(rt.PreventExtensions(ObjectArg(rt, a[0], "Reflect.preventExtensions").O()));
@@ -866,6 +894,397 @@ void InstallGlobalLib(Runtime& rt) {
             rt.DefineIndex(out, out->length, k->kind == Kind::String ? Value::Str(static_cast<String*>(k)) : Value::Sym(static_cast<Symbol*>(k)));
         return Value::Obj(out);
     }, 1);
+}
+
+
+// ============================================================ Proxy (10.5, 28.2)
+// Written from ECMA-262 10.5.1-10.5.13 (the proxy internal methods and the invariants each one enforces), 10.5.14
+// ProxyCreate, 28.2.1 the constructor and 28.2.2.1 Proxy.revocable, with 6.2.6 for descriptors and 10.1.6.2
+// IsCompatiblePropertyDescriptor. Every proxy step charges the budget, and proxies running inside each other (a
+// chain of proxies, or a proxy target that is itself a proxy) are bounded by Impl::kMaxProxyDepth, so a long chain
+// is a RangeError instead of a deep native recursion. A trap that calls back into its own proxy goes through
+// Runtime::Call, whose library-call depth limit stops it.
+namespace {
+
+struct ProxyGuard {
+    Runtime& rt;
+    explicit ProxyGuard(Runtime& r) : rt(r) {
+        if (rt.vm->proxyDepth >= Runtime::Impl::kMaxProxyDepth) rt.ThrowRange("too much recursion (proxies nested too deeply)");
+        ++rt.vm->proxyDepth;
+        rt.Charge(1);
+    }
+    ~ProxyGuard() { --rt.vm->proxyDepth; }
+    ProxyGuard(const ProxyGuard&) = delete;
+    ProxyGuard& operator=(const ProxyGuard&) = delete;
+};
+
+// the handler, or a TypeError when the proxy was revoked; the trap (7.3.11 GetMethod), or undefined
+Value Trap(Runtime& rt, ProxyObj* p, const char* name) {
+    if (!p->handler) rt.ThrowType(std::string("can not use a revoked proxy ('") + name + "')");
+    rt.Keep(p->handler);
+    rt.Keep(p->target);
+    Value t = rt.Get(Value::Obj(p->handler), rt.Intern(name));
+    if (t.IsNullish()) return Value();
+    if (!rt.IsCallable(t)) rt.ThrowType(std::string("the proxy's '") + name + "' trap is not a function");
+    rt.Keep(t);
+    return t;
+}
+// after the trap ran the proxy may have been revoked; the target and handler were read before (10.5.x step 1-3)
+Value KeyValue(GcObj* k) {
+    return k->kind == Kind::String ? Value::Str(static_cast<String*>(k)) : Value::Sym(static_cast<Symbol*>(k));
+}
+Value DescToObject(Runtime& rt, const Runtime::Descriptor& d) {   // 6.2.6.4 FromPropertyDescriptor (only the fields given)
+    Object* o = rt.NewObject();
+    if (d.hasValue) rt.DefineData(o, rt.atoms->value, d.value);
+    if (d.hasWritable) rt.DefineData(o, rt.atoms->writable, Value::Bool(d.writable));
+    if (d.hasGet) rt.DefineData(o, rt.atoms->get, d.get ? Value::Obj(d.get) : Value());
+    if (d.hasSet) rt.DefineData(o, rt.atoms->set, d.set ? Value::Obj(d.set) : Value());
+    if (d.hasEnumerable) rt.DefineData(o, rt.atoms->enumerable, Value::Bool(d.enumerable));
+    if (d.hasConfigurable) rt.DefineData(o, rt.atoms->configurable, Value::Bool(d.configurable));
+    return Value::Obj(o);
+}
+bool IsAccessorDesc(const Runtime::Descriptor& d) { return d.hasGet || d.hasSet; }
+bool IsDataDesc(const Runtime::Descriptor& d) { return d.hasValue || d.hasWritable; }
+// 10.1.6.2 IsCompatiblePropertyDescriptor (10.1.6.3 ValidateAndApplyPropertyDescriptor with O undefined)
+bool Compatible(bool extensible, const Runtime::Descriptor& d, bool hasCurrent, const Prop& cur) {
+    if (!hasCurrent) return extensible;
+    if (cur.flags & kConfigurable) return true;
+    if (d.hasConfigurable && d.configurable) return false;
+    if (d.hasEnumerable && d.enumerable != (bool)(cur.flags & kEnumerable)) return false;
+    const bool curAcc = cur.flags & kAccessor;
+    if ((IsAccessorDesc(d) || IsDataDesc(d)) && IsAccessorDesc(d) != curAcc) return false;
+    if (curAcc) {
+        if (d.hasGet && d.get != cur.get) return false;
+        if (d.hasSet && d.set != cur.set) return false;
+    } else if (!(cur.flags & kWritable)) {
+        if (d.hasWritable && d.writable) return false;
+        if (d.hasValue && !SameValue(d.value, cur.v)) return false;
+    }
+    return true;
+}
+Value ArgList(Runtime& rt, const Value* args, int argc) {   // 7.3.18 CreateArrayFromList
+    ArrayObj* a = rt.NewArray((std::size_t)argc);
+    for (int i = 0; i < argc; ++i) a->elems.push_back(args[i]);
+    a->length = (std::uint32_t)argc;
+    rt.CountBytes((std::ptrdiff_t)(argc * sizeof(Value)));
+    return Value::Obj(a);
+}
+
+} // namespace
+
+void ProxyObj::Trace(Runtime& rt) {
+    Object::Trace(rt);
+    if (target) rt.Mark(target);
+    if (handler) rt.Mark(handler);
+}
+
+// 10.5.1 [[GetPrototypeOf]]
+Object* ProxyGetPrototypeOf(Runtime& rt, ProxyObj* p) {
+    ProxyGuard g(rt);
+    Value trap = Trap(rt, p, "getPrototypeOf");
+    Object* target = p->target;
+    if (trap.IsUndef()) return rt.GetPrototypeOf(target);
+    Value targetV = Value::Obj(target);
+    Value r = rt.Call(trap, Value::Obj(p->handler), &targetV, 1);
+    if (!r.IsObj() && !r.IsNull()) rt.ThrowType("the proxy's getPrototypeOf trap must return an object or null");
+    Object* proto = r.IsNull() ? nullptr : r.O();
+    if (rt.IsExtensible(target)) return proto;
+    if (rt.GetPrototypeOf(target) != proto) rt.ThrowType("the proxy's getPrototypeOf trap disagrees with its non-extensible target");
+    return proto;
+}
+
+// 10.5.2 [[SetPrototypeOf]]
+bool ProxySetPrototypeOf(Runtime& rt, ProxyObj* p, Object* proto) {
+    ProxyGuard g(rt);
+    Value trap = Trap(rt, p, "setPrototypeOf");
+    Object* target = p->target;
+    if (trap.IsUndef()) return rt.SetPrototype(target, proto);
+    Value args[2] = {Value::Obj(target), proto ? Value::Obj(proto) : Value::Null()};
+    if (!rt.ToBoolean(rt.Call(trap, Value::Obj(p->handler), args, 2))) return false;
+    if (rt.IsExtensible(target)) return true;
+    if (rt.GetPrototypeOf(target) != proto) rt.ThrowType("the proxy's setPrototypeOf trap disagrees with its non-extensible target");
+    return true;
+}
+
+// 10.5.3 [[IsExtensible]]
+bool ProxyIsExtensible(Runtime& rt, ProxyObj* p) {
+    ProxyGuard g(rt);
+    Value trap = Trap(rt, p, "isExtensible");
+    Object* target = p->target;
+    if (trap.IsUndef()) return rt.IsExtensible(target);
+    Value targetV = Value::Obj(target);
+    const bool r = rt.ToBoolean(rt.Call(trap, Value::Obj(p->handler), &targetV, 1));
+    if (r != rt.IsExtensible(target)) rt.ThrowType("the proxy's isExtensible trap disagrees with its target");
+    return r;
+}
+
+// 10.5.4 [[PreventExtensions]]
+bool ProxyPreventExtensions(Runtime& rt, ProxyObj* p) {
+    ProxyGuard g(rt);
+    Value trap = Trap(rt, p, "preventExtensions");
+    Object* target = p->target;
+    if (trap.IsUndef()) return rt.PreventExtensions(target);
+    Value targetV = Value::Obj(target);
+    const bool r = rt.ToBoolean(rt.Call(trap, Value::Obj(p->handler), &targetV, 1));
+    if (r && rt.IsExtensible(target)) rt.ThrowType("the proxy's preventExtensions trap returned true but its target is still extensible");
+    return r;
+}
+
+// 10.5.5 [[GetOwnProperty]]
+bool ProxyGetOwnProperty(Runtime& rt, ProxyObj* p, GcObj* key, Prop& out) {
+    ProxyGuard g(rt);
+    Value trap = Trap(rt, p, "getOwnPropertyDescriptor");
+    Object* target = p->target;
+    if (trap.IsUndef()) return rt.GetOwnProperty(target, key, out);
+    Value args[2] = {Value::Obj(target), KeyValue(key)};
+    Value r = rt.Call(trap, Value::Obj(p->handler), args, 2);
+    if (!r.IsObj() && !r.IsUndef()) rt.ThrowType("the proxy's getOwnPropertyDescriptor trap must return an object or undefined");
+    Prop cur;
+    const bool hasCur = rt.GetOwnProperty(target, key, cur);
+    if (hasCur) {
+        rt.Keep(cur.v);
+        if (cur.get) rt.Keep(cur.get);
+        if (cur.set) rt.Keep(cur.set);
+    }
+    const std::string what = "the proxy's getOwnPropertyDescriptor trap for '" + KeyText(rt, key) + "'";
+    if (r.IsUndef()) {
+        if (!hasCur) return false;
+        if (!(cur.flags & kConfigurable)) rt.ThrowType(what + " hides a property its target can not lose");
+        if (!rt.IsExtensible(target)) rt.ThrowType(what + " hides a property of a non-extensible target");
+        return false;
+    }
+    const bool extensible = rt.IsExtensible(target);
+    Runtime::Descriptor d = ToDescriptor(rt, r);
+    // 6.2.6.6 CompletePropertyDescriptor
+    if (!IsAccessorDesc(d)) {
+        if (!d.hasValue) { d.hasValue = true; d.value = Value(); }
+        if (!d.hasWritable) { d.hasWritable = true; d.writable = false; }
+    } else {
+        if (!d.hasGet) { d.hasGet = true; d.get = nullptr; }
+        if (!d.hasSet) { d.hasSet = true; d.set = nullptr; }
+    }
+    if (!d.hasEnumerable) { d.hasEnumerable = true; d.enumerable = false; }
+    if (!d.hasConfigurable) { d.hasConfigurable = true; d.configurable = false; }
+    if (!Compatible(extensible, d, hasCur, cur)) rt.ThrowType(what + " reports a property its target can not have");
+    if (!d.configurable) {
+        if (!hasCur || (cur.flags & kConfigurable)) rt.ThrowType(what + " reports a non-configurable property the target does not have");
+        if (d.hasWritable && !d.writable && !(cur.flags & kAccessor) && (cur.flags & kWritable))
+            rt.ThrowType(what + " reports a read-only property that is writable on the target");
+    }
+    out = Prop{};
+    out.key = key;
+    if (IsAccessorDesc(d)) {
+        out.flags = kAccessor;
+        out.get = d.get;
+        out.set = d.set;
+    } else {
+        out.v = d.value;
+        out.flags = d.writable ? kWritable : 0;
+    }
+    if (d.enumerable) out.flags |= kEnumerable;
+    if (d.configurable) out.flags |= kConfigurable;
+    return true;
+}
+
+// 10.5.6 [[DefineOwnProperty]]
+bool ProxyDefineOwnProperty(Runtime& rt, ProxyObj* p, GcObj* key, const Runtime::Descriptor& d) {
+    ProxyGuard g(rt);
+    Value trap = Trap(rt, p, "defineProperty");
+    Object* target = p->target;
+    if (trap.IsUndef()) return rt.DefineOwnProperty(target, key, d);
+    Value args[3] = {Value::Obj(target), KeyValue(key), DescToObject(rt, d)};
+    if (!rt.ToBoolean(rt.Call(trap, Value::Obj(p->handler), args, 3))) return false;
+    Prop cur;
+    const bool hasCur = rt.GetOwnProperty(target, key, cur);
+    const bool extensible = rt.IsExtensible(target);
+    const bool settingConfigFalse = d.hasConfigurable && !d.configurable;
+    const std::string what = "the proxy's defineProperty trap for '" + KeyText(rt, key) + "'";
+    if (!hasCur) {
+        if (!extensible) rt.ThrowType(what + " added a property to a non-extensible target");
+        if (settingConfigFalse) rt.ThrowType(what + " reports a non-configurable property the target does not have");
+    } else {
+        if (!Compatible(extensible, d, true, cur)) rt.ThrowType(what + " reports a change its target can not make");
+        if (settingConfigFalse && (cur.flags & kConfigurable)) rt.ThrowType(what + " reports a non-configurable property that is configurable on the target");
+        if (!(cur.flags & kAccessor) && !(cur.flags & kConfigurable) && (cur.flags & kWritable) && d.hasWritable && !d.writable)
+            rt.ThrowType(what + " reports a read-only property that is writable on the target");
+    }
+    return true;
+}
+
+// 10.5.7 [[HasProperty]]
+bool ProxyHas(Runtime& rt, ProxyObj* p, GcObj* key) {
+    ProxyGuard g(rt);
+    Value trap = Trap(rt, p, "has");
+    Object* target = p->target;
+    if (trap.IsUndef()) return rt.HasProperty(target, key);
+    Value args[2] = {Value::Obj(target), KeyValue(key)};
+    const bool r = rt.ToBoolean(rt.Call(trap, Value::Obj(p->handler), args, 2));
+    if (!r) {
+        Prop cur;
+        if (rt.GetOwnProperty(target, key, cur)) {
+            if (!(cur.flags & kConfigurable)) rt.ThrowType("the proxy's has trap hides the non-configurable property '" + KeyText(rt, key) + "'");
+            if (!rt.IsExtensible(target)) rt.ThrowType("the proxy's has trap hides '" + KeyText(rt, key) + "' of a non-extensible target");
+        }
+    }
+    return r;
+}
+
+// 10.5.8 [[Get]]
+Value ProxyGet(Runtime& rt, ProxyObj* p, GcObj* key, const Value& receiver) {
+    ProxyGuard g(rt);
+    Value trap = Trap(rt, p, "get");
+    Object* target = p->target;
+    if (trap.IsUndef()) return rt.Get(Value::Obj(target), key, receiver);
+    Value args[3] = {Value::Obj(target), KeyValue(key), receiver};
+    Value r = rt.Call(trap, Value::Obj(p->handler), args, 3);
+    Prop cur;
+    if (rt.GetOwnProperty(target, key, cur) && !(cur.flags & kConfigurable)) {
+        if (!(cur.flags & kAccessor) && !(cur.flags & kWritable) && !SameValue(r, cur.v))
+            rt.ThrowType("the proxy's get trap reports a different value for the read-only property '" + KeyText(rt, key) + "'");
+        if ((cur.flags & kAccessor) && !cur.get && !r.IsUndef())
+            rt.ThrowType("the proxy's get trap reports a value for '" + KeyText(rt, key) + "', which has no getter on the target");
+    }
+    return r;
+}
+
+// 10.5.9 [[Set]]
+bool ProxySet(Runtime& rt, ProxyObj* p, GcObj* key, const Value& v, const Value& receiver) {
+    ProxyGuard g(rt);
+    Value trap = Trap(rt, p, "set");
+    Object* target = p->target;
+    if (trap.IsUndef()) return rt.SetWithReceiver(target, key, v, receiver);
+    Value args[4] = {Value::Obj(target), KeyValue(key), v, receiver};
+    if (!rt.ToBoolean(rt.Call(trap, Value::Obj(p->handler), args, 4))) return false;
+    Prop cur;
+    if (rt.GetOwnProperty(target, key, cur) && !(cur.flags & kConfigurable)) {
+        if (!(cur.flags & kAccessor) && !(cur.flags & kWritable) && !SameValue(v, cur.v))
+            rt.ThrowType("the proxy's set trap reports a change to the read-only property '" + KeyText(rt, key) + "'");
+        if ((cur.flags & kAccessor) && !cur.set)
+            rt.ThrowType("the proxy's set trap reports a change to '" + KeyText(rt, key) + "', which has no setter on the target");
+    }
+    return true;
+}
+
+// 10.5.10 [[Delete]]
+bool ProxyDelete(Runtime& rt, ProxyObj* p, GcObj* key) {
+    ProxyGuard g(rt);
+    Value trap = Trap(rt, p, "deleteProperty");
+    Object* target = p->target;
+    if (trap.IsUndef()) return rt.Delete(target, key);
+    Value args[2] = {Value::Obj(target), KeyValue(key)};
+    if (!rt.ToBoolean(rt.Call(trap, Value::Obj(p->handler), args, 2))) return false;
+    Prop cur;
+    if (!rt.GetOwnProperty(target, key, cur)) return true;
+    if (!(cur.flags & kConfigurable)) rt.ThrowType("the proxy's deleteProperty trap reports deleting the non-configurable property '" + KeyText(rt, key) + "'");
+    if (!rt.IsExtensible(target)) rt.ThrowType("the proxy's deleteProperty trap reports deleting '" + KeyText(rt, key) + "' of a non-extensible target");
+    return true;
+}
+
+// 10.5.11 [[OwnPropertyKeys]]
+std::vector<GcObj*> ProxyOwnKeys(Runtime& rt, ProxyObj* p) {
+    ProxyGuard g(rt);
+    Value trap = Trap(rt, p, "ownKeys");
+    Object* target = p->target;
+    if (trap.IsUndef()) return rt.OwnKeys(target, true, true);
+    Value targetV = Value::Obj(target);
+    Value r = rt.Call(trap, Value::Obj(p->handler), &targetV, 1);
+    // 7.3.19 CreateListFromArrayLike with the types String and Symbol
+    if (!r.IsObj()) rt.ThrowType("the proxy's ownKeys trap must return an array-like object");
+    const std::uint64_t n = rt.LengthOf(r);
+    if (n > (1u << 24)) rt.ThrowRange("the proxy's ownKeys trap returned too many keys");
+    std::vector<GcObj*> keys;
+    std::unordered_set<GcObj*> seen;
+    for (std::uint64_t i = 0; i < n; ++i) {
+        rt.Charge(1);
+        Value k = rt.GetIndex(r, (std::uint32_t)i);
+        if (!k.IsStr() && !k.IsSym()) rt.ThrowType("the proxy's ownKeys trap returned a key that is not a string or a symbol");
+        GcObj* key = rt.ToPropertyKey(k);
+        rt.Keep(key);
+        if (!seen.insert(key).second) rt.ThrowType("the proxy's ownKeys trap returned '" + KeyText(rt, key) + "' twice");
+        keys.push_back(key);
+    }
+    const bool extensible = rt.IsExtensible(target);
+    std::vector<GcObj*> targetKeys = rt.OwnKeys(target, true, true);
+    std::vector<GcObj*> configurable, fixed;
+    for (GcObj* k : targetKeys) {
+        rt.Charge(1);
+        Prop cur;
+        if (rt.GetOwnProperty(target, k, cur) && !(cur.flags & kConfigurable)) fixed.push_back(k);
+        else configurable.push_back(k);
+    }
+    if (extensible && fixed.empty()) return keys;
+    std::unordered_set<GcObj*> unchecked(keys.begin(), keys.end());
+    for (GcObj* k : fixed)
+        if (!unchecked.erase(k)) rt.ThrowType("the proxy's ownKeys trap leaves out the non-configurable property '" + KeyText(rt, k) + "'");
+    if (extensible) return keys;
+    for (GcObj* k : configurable)
+        if (!unchecked.erase(k)) rt.ThrowType("the proxy's ownKeys trap leaves out '" + KeyText(rt, k) + "' of a non-extensible target");
+    if (!unchecked.empty()) rt.ThrowType("the proxy's ownKeys trap adds keys to a non-extensible target");
+    return keys;
+}
+
+// 10.5.12 [[Call]]
+Value ProxyCall(Runtime& rt, ProxyObj* p, const Value& thisv, const Value* args, int argc) {
+    ProxyGuard g(rt);
+    Value trap = Trap(rt, p, "apply");
+    Object* target = p->target;
+    if (trap.IsUndef()) return rt.Call(Value::Obj(target), thisv, args, argc);
+    Value list = ArgList(rt, args, argc);
+    Value targs[3] = {Value::Obj(target), thisv, list};
+    return rt.Call(trap, Value::Obj(p->handler), targs, 3);
+}
+
+// 10.5.13 [[Construct]]
+Value ProxyConstruct(Runtime& rt, ProxyObj* p, const Value* args, int argc, Object* newTarget) {
+    ProxyGuard g(rt);
+    Value trap = Trap(rt, p, "construct");
+    Object* target = p->target;
+    if (trap.IsUndef()) return rt.Construct(Value::Obj(target), args, argc, newTarget ? newTarget : p);
+    Value list = ArgList(rt, args, argc);
+    Value targs[3] = {Value::Obj(target), list, Value::Obj(newTarget ? newTarget : p)};
+    Value r = rt.Call(trap, Value::Obj(p->handler), targs, 3);
+    if (!r.IsObj()) rt.ThrowType("the proxy's construct trap must return an object");
+    return r;
+}
+
+namespace {
+// 10.5.14 ProxyCreate
+ProxyObj* NewProxy(Runtime& rt, const Value& target, const Value& handler) {
+    if (!target.IsObj() || !handler.IsObj()) rt.ThrowType("a Proxy needs an object as its target and its handler");
+    ProxyObj* p = rt.Alloc<ProxyObj>();
+    p->proto = nullptr;
+    p->extensible = true;
+    p->target = target.O();
+    p->handler = handler.O();
+    if (rt.IsCallable(target)) p->proxyFn = rt.IsConstructor(target) ? 3 : 1;
+    return p;
+}
+}
+
+void InstallProxyLib(Runtime& rt) {
+    NativeFunc* pc = rt.NewNative([](Runtime& rt, CallArgs& a) {
+        if (!a.newTarget) rt.ThrowType("Proxy must be called with 'new'");
+        return Value::Obj(NewProxy(rt, a[0], a[1]));
+    }, "Proxy", 2);
+    pc->ctor = true;   // 28.2.1: no "prototype" property
+    rt.global->AddRaw(rt.Intern("Proxy"), Value::Obj(pc), kHidden);
+    DefNative(rt, pc, "revocable", [](Runtime& rt, CallArgs& a) {   // 28.2.2.1
+        ProxyObj* p = NewProxy(rt, a[0], a[1]);
+        NativeFunc* revoke = rt.NewNative([](Runtime&, CallArgs& a) {
+            NativeFunc* self = a.callee;
+            if (!self->slots.empty() && self->slots[0].IsObj()) {
+                ProxyObj* q = static_cast<ProxyObj*>(self->slots[0].O());
+                q->handler = nullptr;
+                q->target = nullptr;
+                self->slots[0] = Value();
+            }
+            return Value();
+        }, "", 0, {Value::Obj(p)});
+        Object* r = rt.NewObject();
+        rt.DefineData(r, rt.Intern("proxy"), Value::Obj(p));
+        rt.DefineData(r, rt.Intern("revoke"), Value::Obj(revoke));
+        return Value::Obj(r);
+    }, 2);
 }
 
 } // namespace okay::js

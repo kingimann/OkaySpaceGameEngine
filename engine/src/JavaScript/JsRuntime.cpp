@@ -702,11 +702,20 @@ bool Runtime::IsConstructor(const Value& v) const {
     }
     if (o->cls == Cls::Native) return static_cast<NativeFunc*>(o)->ctor;
     if (o->cls == Cls::Bound) return IsConstructor(Value::Obj(static_cast<BoundFunc*>(o)->target));
+    if (o->cls == Cls::Proxy) return (o->proxyFn & 2) != 0;
     return false;
 }
 
 bool Runtime::IsArray(const Value& v) {
-    return v.IsObj() && v.O()->cls == Cls::Array;
+    if (!v.IsObj()) return false;
+    Object* o = v.O();
+    for (int depth = 0; o->cls == Cls::Proxy; ++depth) {   // 7.2.2 step 3: through the proxy to its target
+        ProxyObj* p = static_cast<ProxyObj*>(o);
+        if (!p->handler) ThrowType("Array.isArray: the proxy was revoked");
+        if (depth > Impl::kMaxProxyDepth) ThrowRange("too much recursion (proxies nested too deeply)");
+        o = p->target;
+    }
+    return o->cls == Cls::Array;
 }
 
 const char* Runtime::TypeOf(const Value& v) const {
@@ -767,7 +776,8 @@ bool Runtime::InstanceOf(const Value& v, const Value& target) {
     Value p = Get(target, atoms->prototype);
     if (!p.IsObj()) ThrowType("the 'prototype' of the right side of 'instanceof' is not an object");
     int guard = 0;
-    for (Object* o = v.O()->proto; o; o = o->proto) {
+    Keep(p);
+    for (Object* o = GetPrototypeOf(v.O()); o; o = GetPrototypeOf(o)) {
         if (o == p.O()) return true;
         if (++guard > 100000) break;
     }
@@ -896,6 +906,7 @@ static bool ExoticOwn(Runtime& rt, Object* o, GcObj* key, Prop& out, bool& found
 }
 
 bool Runtime::GetOwnProperty(Object* o, GcObj* key, Prop& out) {
+    if (o->cls == Cls::Proxy) return ProxyGetOwnProperty(*this, static_cast<ProxyObj*>(o), key, out);
     bool found = false;
     if (ExoticOwn(*this, o, key, out, found)) return found;
     if (o->lazy && LazyKey(*this, key)) MakeLazyProps(o);
@@ -933,6 +944,7 @@ Value Runtime::Get(const Value& base, GcObj* key, const Value& receiver) {
                 double n;
                 if (CanonicalNumericKey(*this, key, n)) return TypedArrayGet(*this, static_cast<TypedArrayObj*>(o), n);
             }
+            if (o->cls == Cls::Proxy) return ProxyGet(*this, static_cast<ProxyObj*>(o), key, receiver);
             Prop ex;
             bool found = false;
             if (ExoticOwn(*this, o, key, ex, found)) {
@@ -1089,6 +1101,9 @@ void Runtime::Put(const Value& base, GcObj* key, const Value& v) {
                 if (ExoticOwn(*this, o, key, ex, found) && found) ThrowType("the characters of a String are read-only");
                 break;
             }
+            case Cls::Proxy:
+                if (!ProxySet(*this, static_cast<ProxyObj*>(o), key, v, base)) ThrowType("the proxy refused to set '" + KeyText(*this, key) + "'");
+                return;
             case Cls::TypedArray: {   // 10.4.5.5 [[Set]] with the typed array as the receiver: no error for a bad index
                 double n;
                 if (CanonicalNumericKey(*this, key, n)) {
@@ -1121,6 +1136,10 @@ void Runtime::Put(const Value& base, GcObj* key, const Value& v) {
     int guard = 0;
     for (; q; q = q->proto) {
         if (q->cls != Cls::Ordinary) {
+            if (q->cls == Cls::Proxy) {   // the rest of the chain is the proxy's [[Set]] with our receiver
+                if (!ProxySet(*this, static_cast<ProxyObj*>(q), key, v, base)) ThrowType("the proxy refused to set '" + KeyText(*this, key) + "'");
+                return;
+            }
             if (q->cls == Cls::TypedArray) {   // 10.4.5.5 step 1.b.ii: an index that is not valid there is a quiet no-op
                 double n;
                 if (CanonicalNumericKey(*this, key, n) && !ValidIntegerIndex(static_cast<TypedArrayObj*>(q), n)) return;
@@ -1207,6 +1226,7 @@ bool Runtime::HasOwn(Object* o, GcObj* key) {
 bool Runtime::HasProperty(Object* o, GcObj* key) {
     int guard = 0;
     for (; o; o = o->proto) {
+        if (o->cls == Cls::Proxy) return ProxyHas(*this, static_cast<ProxyObj*>(o), key);
         if (o->cls == Cls::TypedArray) {   // 10.4.5.2 [[HasProperty]]
             double n;
             if (CanonicalNumericKey(*this, key, n)) return ValidIntegerIndex(static_cast<TypedArrayObj*>(o), n);
@@ -1247,6 +1267,7 @@ bool Runtime::Delete(Object* o, GcObj* key) {
             break;
         }
         case Cls::Host: return true;
+        case Cls::Proxy: return ProxyDelete(*this, static_cast<ProxyObj*>(o), key);
         case Cls::TypedArray: {   // 10.4.5.6 [[Delete]]
             double n;
             if (CanonicalNumericKey(*this, key, n)) return !ValidIntegerIndex(static_cast<TypedArrayObj*>(o), n);
@@ -1286,18 +1307,16 @@ void Runtime::DefineData(Object* o, GcObj* key, const Value& v, std::uint8_t fla
         Put(Value::Obj(o), key, v);
         return;
     }
-    if (o->cls == Cls::TypedArray) {
-        double n;
-        if (CanonicalNumericKey(*this, key, n)) {
-            Descriptor d;
-            d.hasValue = d.hasWritable = d.hasEnumerable = d.hasConfigurable = true;
-            d.value = v;
-            d.writable = flags & kWritable;
-            d.enumerable = flags & kEnumerable;
-            d.configurable = flags & kConfigurable;
-            if (!DefineOwnProperty(o, key, d)) ThrowType("can not define element '" + KeyText(*this, key) + "' of a typed array");
-            return;
-        }
+    double tn;
+    if (o->cls == Cls::Proxy || (o->cls == Cls::TypedArray && CanonicalNumericKey(*this, key, tn))) {
+        Descriptor d;   // the exotic [[DefineOwnProperty]] decides (a proxy's trap, a typed array's index rules)
+        d.hasValue = d.hasWritable = d.hasEnumerable = d.hasConfigurable = true;
+        d.value = v;
+        d.writable = flags & kWritable;
+        d.enumerable = flags & kEnumerable;
+        d.configurable = flags & kConfigurable;
+        if (!DefineOwnProperty(o, key, d)) ThrowType("can not define '" + KeyText(*this, key) + "'");
+        return;
     }
     if (o->lazy && LazyKey(*this, key)) MakeLazyProps(o);
     Prop* p = o->FindRaw(key);
@@ -1332,7 +1351,7 @@ void Runtime::DefineAccessor(Object* o, GcObj* key, Object* getter, Object* sett
     if ((o == arrayProto || o == objectProto) && KeyIndex(key) >= 0) arrayProtoHasIndex_ = true;
     double tn;
     if (((o->cls == Cls::Array || o->cls == Cls::Arguments) && (KeyIndex(key) >= 0 || key == atoms->length)) ||
-        (o->cls == Cls::TypedArray && CanonicalNumericKey(*this, key, tn))) {
+        (o->cls == Cls::TypedArray && CanonicalNumericKey(*this, key, tn)) || o->cls == Cls::Proxy) {
         Descriptor d;
         d.hasEnumerable = d.hasConfigurable = true;
         d.enumerable = flags & kEnumerable;
@@ -1358,6 +1377,7 @@ void Runtime::DefineAccessor(Object* o, GcObj* key, Object* getter, Object* sett
 
 // 10.1.6.3 ValidateAndApplyPropertyDescriptor (for ordinary objects; arrays turn the element into a property)
 bool Runtime::DefineOwnProperty(Object* o, GcObj* key, const Descriptor& d) {
+    if (o->cls == Cls::Proxy) return ProxyDefineOwnProperty(*this, static_cast<ProxyObj*>(o), key, d);
     if (o->lazy) MakeLazyProps(o);
     if (o->cls == Cls::TypedArray) {   // 10.4.5.3 [[DefineOwnProperty]]
         double n;
@@ -1469,6 +1489,14 @@ bool Runtime::DefineOwnProperty(Object* o, GcObj* key, const Descriptor& d) {
 
 // 10.1.11.1 OrdinaryOwnPropertyKeys
 std::vector<GcObj*> Runtime::OwnKeys(Object* o, bool strings, bool symbols) {
+    if (o->cls == Cls::Proxy) {
+        std::vector<GcObj*> all = ProxyOwnKeys(*this, static_cast<ProxyObj*>(o));
+        if (strings && symbols) return all;
+        std::vector<GcObj*> out;
+        for (GcObj* k : all)
+            if ((k->kind == Kind::String) ? strings : symbols) out.push_back(k);
+        return out;
+    }
     if (o->lazy) MakeLazyProps(o);
     std::vector<GcObj*> out;
     std::vector<std::pair<std::uint32_t, GcObj*>> idx;
@@ -1505,19 +1533,85 @@ std::vector<GcObj*> Runtime::OwnKeys(Object* o, bool strings, bool symbols) {
     return out;
 }
 
+// 10.1.2.1 OrdinarySetPrototypeOf (the cycle check stops at a proxy, as step 8.c.i says)
 bool Runtime::SetPrototype(Object* o, Object* proto) {
+    if (o->cls == Cls::Proxy) return ProxySetPrototypeOf(*this, static_cast<ProxyObj*>(o), proto);
     if (o->proto == proto) return true;
     if (!o->extensible) return false;
-    for (Object* p = proto; p; p = p->proto)
+    for (Object* p = proto; p; p = p->proto) {
         if (p == o) return false;
+        if (p->cls == Cls::Proxy) break;
+    }
     o->proto = proto;
     return true;
 }
 
 bool Runtime::PreventExtensions(Object* o) {
+    if (o->cls == Cls::Proxy) return ProxyPreventExtensions(*this, static_cast<ProxyObj*>(o));
     if (o->lazy) MakeLazyProps(o);
     o->extensible = false;
     return true;
+}
+
+Object* Runtime::GetPrototypeOf(Object* o) {
+    if (o->cls == Cls::Proxy) return ProxyGetPrototypeOf(*this, static_cast<ProxyObj*>(o));
+    return o->proto;
+}
+
+bool Runtime::IsExtensible(Object* o) {
+    if (o->cls == Cls::Proxy) return ProxyIsExtensible(*this, static_cast<ProxyObj*>(o));
+    return o->extensible;
+}
+
+// 10.1.9.2 OrdinarySetWithOwnDescriptor, walking the chain with each object's own [[GetOwnProperty]]; a proxy on
+// the way takes over with its [[Set]]. Put is the fast form of this for receiver == the object.
+bool Runtime::SetWithReceiver(Object* o, GcObj* key, const Value& v, const Value& receiver) {
+    int guard = 0;
+    Prop own;
+    bool found = false;
+    for (Object* q = o; q; q = q->proto) {
+        if (q->cls == Cls::Proxy) return ProxySet(*this, static_cast<ProxyObj*>(q), key, v, receiver);
+        if (q->cls == Cls::TypedArray) {   // 10.4.5.5
+            double n;
+            if (CanonicalNumericKey(*this, key, n)) {
+                TypedArrayObj* t = static_cast<TypedArrayObj*>(q);
+                if (receiver.IsObj() && receiver.O() == q) {
+                    TypedArraySet(*this, t, n, v);
+                    return true;
+                }
+                if (!ValidIntegerIndex(t, n)) return true;
+            }
+        }
+        if (GetOwnProperty(q, key, own)) {
+            found = true;
+            break;
+        }
+        if (++guard > 100000) ThrowRange("the prototype chain is too long");
+    }
+    if (found && (own.flags & kAccessor)) {
+        if (!own.set) return false;
+        Value arg = v;
+        Call(Value::Obj(own.set), receiver, &arg, 1);
+        return true;
+    }
+    if (found && !(own.flags & kWritable)) return false;
+    if (!receiver.IsObj()) return false;
+    Object* r = receiver.O();
+    Keep(r);
+    Prop existing;
+    if (GetOwnProperty(r, key, existing)) {
+        if (existing.flags & kAccessor) return false;
+        if (!(existing.flags & kWritable)) return false;
+        Descriptor d;
+        d.hasValue = true;
+        d.value = v;
+        return DefineOwnProperty(r, key, d);
+    }
+    Descriptor d;   // 7.3.5 CreateDataProperty
+    d.hasValue = d.hasWritable = d.hasEnumerable = d.hasConfigurable = true;
+    d.value = v;
+    d.writable = d.enumerable = d.configurable = true;
+    return DefineOwnProperty(r, key, d);
 }
 
 // ============================================================ globals and references
@@ -1888,6 +1982,7 @@ void Runtime::InitIntrinsics() {
     InstallCollectionsLib(*this);
     InstallWeakLib(*this);
     InstallBinaryLib(*this);
+    InstallProxyLib(*this);
     InstallTextCodingLib(*this);
     InstallRegExpLib(*this);
     InstallGlobalLib(*this);

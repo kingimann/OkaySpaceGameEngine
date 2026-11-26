@@ -255,7 +255,8 @@ ForInObj* ForInPrepare(Runtime& rt, const Value& v) {
     std::vector<GcObj*> seen;
     std::unordered_set<GcObj*> seenSet;
     int guard = 0;
-    for (Object* q = o; q; q = q->proto) {
+    for (Object* q = o; q; q = rt.GetPrototypeOf(q)) {
+        rt.Keep(q);
         std::vector<GcObj*> keys = rt.OwnKeys(q, true, false);
         rt.Charge(keys.size());
         for (GcObj* k : keys) {
@@ -353,6 +354,12 @@ static Value CallAt(Runtime& rt, Value* at, int argc) {
             for (int i = 0; i < argc; ++i) args.push_back(at[2 + i]);
             return rt.Call(Value::Obj(b->target), b->thisv, args.data(), (int)args.size());
         }
+        case Cls::Proxy:
+            if (o->proxyFn) {
+                std::vector<Value> args(at + 2, at + 2 + argc);   // the value stack above `at` is reused by the trap call
+                return ProxyCall(rt, static_cast<ProxyObj*>(o), at[1], args.data(), argc);
+            }
+            rt.ThrowType("this value is not a function");
         default: rt.ThrowType("this value is not a function");
     }
 }
@@ -393,6 +400,7 @@ Value Runtime::Construct(const Value& fn, const Value* args, int argc, Object* n
         for (int i = 0; i < argc; ++i) all.push_back(args[i]);
         return Construct(Value::Obj(b->target), all.data(), (int)all.size(), newTarget == o ? b->target : newTarget);
     }
+    if (o->cls == Cls::Proxy) return ProxyConstruct(*this, static_cast<ProxyObj*>(o), args, argc, newTarget);
     if (M.nativeDepth >= M_t::kMaxNativeDepth) ThrowRange("too much recursion (library calls nested too deeply)");
     if (M.sp + argc + 64 > M.stackEnd) ThrowRange("too much recursion (the value stack is full)");
     Value* at = M.sp;
@@ -1120,7 +1128,7 @@ Value Execute(Runtime& rt, int entry) {
                                 *SP++ = r;
                                 break;
                             }
-                            if (o->cls == Cls::Bound) {
+                            if (o->cls == Cls::Bound || o->proxyFn) {
                                 f->pc = pc;
                                 Value r = CallAt(rt, fs, argc);
                                 SP = fs;

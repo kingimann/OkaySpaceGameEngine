@@ -681,6 +681,64 @@ void TypedArrays() {
           "90000\n");
 }
 
+// 10.5 proxy exotic objects (every trap and its invariant checks), 28.2 Proxy, 28.1 Reflect
+void Proxies() {
+    Expect("const log = []; const t = {a: 1}; const p = new Proxy(t, { get(o, k, r) { log.push('get ' + String(k)); return k === 'b' ? 42 : Reflect.get(o, k, r); },"
+           "set(o, k, v, r) { log.push('set ' + k); o[k] = v * 2; return true; }, has(o, k) { return k === 'z' || k in o; },"
+           "deleteProperty(o, k) { log.push('del ' + k); return delete o[k]; } });"
+           "p.c = 5; console.log(p.a, p.b, t.c, 'z' in p, 'q' in p, delete p.a, t.a, log.join())",
+           "1 42 10 true false true undefined set c,get a,get b,del a");
+    Expect("const p = new Proxy({x: 1, y: 2}, { ownKeys() { return ['y', 'x', 'w']; }, getOwnPropertyDescriptor(t, k) { return k === 'w' ? undefined : Reflect.getOwnPropertyDescriptor(t, k); } });"
+           "const keys = []; for (const k in p) keys.push(k); console.log(Object.keys(p).join(), keys.join(), JSON.stringify(p), JSON.stringify({...p}), Reflect.ownKeys(p).join())",
+           "y,x y,x {\"y\":2,\"x\":1} {\"y\":2,\"x\":1} y,x,w");
+    Expect("const f = new Proxy(function (a, b) { return a + b; }, { apply(t, th, args) { return t(...args) * 10; }, construct(t, args, nt) { return {made: args[0], nt: nt === P}; } });"
+           "const P = f; console.log(typeof f, f(1, 2), new f(7).made, new f(7).nt, typeof new Proxy({}, {}), f.call(null, 2, 3), Reflect.apply(f, null, [1, 1]))",
+           "function 30 7 true object 50 20");
+    Expect("class A {} const p = new Proxy({}, { getPrototypeOf() { return A.prototype; } }); console.log(p instanceof A, Object.getPrototypeOf(p) === A.prototype, A.prototype.isPrototypeOf(p))",
+           "true true true");
+    Expect("const t = {}; const log = []; const p = new Proxy(t, { defineProperty(o, k, d) { log.push(k + ':' + d.value); return Reflect.defineProperty(o, k, d); } });"
+           "p.a = 1; Object.defineProperty(p, 'b', {value: 2, configurable: true}); console.log(log.join(), t.a, t.b)", "a:1,b:2 1 2");
+    Expect("const p = new Proxy({}, {}); p.x = 1; Object.preventExtensions(p); console.log(Object.isExtensible(p), Reflect.set(p, 'y', 2), p.x, Reflect.setPrototypeOf(p, null), Array.isArray(new Proxy([], {})), Array.isArray(p))",
+           "false false 1 false true false");
+    Expect("const proto = new Proxy({}, { get(t, k, r) { return k === 'who' ? r.name : undefined; } }); const o = Object.create(proto); o.name = 'kid'; console.log(o.who, o.nope)",
+           "kid undefined");
+    Expect("const o = {}; const r = {}; Reflect.set(o, 'x', 1, r); const g = {get v() { return this.n; }}; console.log(o.x, r.x, Reflect.get(g, 'v', {n: 9}), Reflect.has({a: 1}, 'a'),"
+           "Reflect.ownKeys({b: 1, 1: 2, [Symbol.iterator]: 3}).length, Reflect.construct(function () { this.nt = new.target; }, [], Array).nt === Array,"
+           "Reflect.getOwnPropertyDescriptor({q: 1}, 'q').writable, Reflect.set(Object.freeze({z: 1}), 'z', 2))",
+           "undefined 1 9 true 3 true true false");
+    Expect("const {proxy, revoke} = Proxy.revocable(function () {}, {}); revoke(); revoke(); console.log(typeof proxy); try { proxy.x; } catch (e) { console.log(e.name); }"
+           "try { proxy(); } catch (e) { console.log(e.name); } try { Array.isArray(proxy); } catch (e) { console.log(e.name); }",
+           "function\nTypeError\nTypeError\nTypeError");
+    // the invariants of 10.5 (a trap that lies about the target is a TypeError)
+    const char* frozen = "const t = {}; Object.defineProperty(t, 'k', {value: 1}); ";
+    ExpectError(std::string(frozen) + "new Proxy(t, { get() { return 2; } }).k", "TypeError");
+    ExpectError(std::string(frozen) + "new Proxy(t, { has() { return false; } }); 'k' in new Proxy(t, { has() { return false; } })", "TypeError");
+    ExpectError(std::string(frozen) + "Object.keys(new Proxy(t, { ownKeys() { return []; } }))", "TypeError");
+    ExpectError("Reflect.ownKeys(new Proxy({}, { ownKeys() { return ['a', 'a']; } }))", "TypeError");
+    ExpectError("Reflect.ownKeys(new Proxy({}, { ownKeys() { return [1]; } }))", "TypeError");
+    ExpectError(std::string(frozen) + "new Proxy(t, { deleteProperty() { return true; } }); delete new Proxy(t, { deleteProperty() { return true; } }).k", "TypeError");
+    ExpectError(std::string(frozen) + "new Proxy(t, { set() { return true; } }).k = 5", "TypeError");
+    ExpectError(std::string(frozen) + "Object.getOwnPropertyDescriptor(new Proxy(t, { getOwnPropertyDescriptor() { return undefined; } }), 'k')", "TypeError");
+    ExpectError("Object.isExtensible(new Proxy({}, { isExtensible() { return false; } }))", "TypeError");
+    ExpectError("Object.preventExtensions(new Proxy({}, { preventExtensions() { return true; } }))", "TypeError");
+    ExpectError("Object.getPrototypeOf(new Proxy(Object.preventExtensions({}), { getPrototypeOf() { return Array.prototype; } }))", "TypeError");
+    ExpectError("Object.defineProperty(new Proxy(Object.preventExtensions({}), { defineProperty() { return true; } }), 'n', {value: 1})", "TypeError");
+    ExpectError("new (new Proxy(function () {}, { construct() { return 1; } }))()", "TypeError");
+    ExpectError("new Proxy({}, { get: 5 }).x", "TypeError");
+    ExpectError("Proxy({}, {})", "TypeError");
+    ExpectError("new Proxy(1, {})", "TypeError");
+    ExpectError("new (new Proxy({}, {}))()", "TypeError");
+    ExpectError("(new Proxy({}, {}))()", "TypeError");
+    // hostile: long proxy chains, a trap that recurses into its own proxy, a trap loop, all stop with an error
+    ExpectError("let p = {}; for (let i = 0; i < 100000; i++) p = new Proxy(p, {}); p.x", "RangeError");
+    ExpectError("let p = Object.create(null); for (let i = 0; i < 100000; i++) p = Object.create(new Proxy(p, {})); 'x' in p", "RangeError");
+    ExpectError("const p = new Proxy({}, { get(t, k, r) { return r[k]; } }); p.x", "RangeError");
+    ExpectError("const p = new Proxy({}, { ownKeys() { return Reflect.ownKeys(p); } }); Object.keys(p)", "RangeError");
+    ExpectError("let f = function () {}; for (let i = 0; i < 100000; i++) f = new Proxy(f, {}); f()", "RangeError");
+    CHECK(Run("const p = new Proxy({}, { get() { return 1; } }); let s = 0; for (;;) s += p.x;", false, 2'000'000).find("budget") != std::string::npos);
+    CHECK(Run("const h = {}; const p = new Proxy({}, h); let n = 0; for (let i = 0; i < 300; i++) { h.get = (t, k) => ({k}); n += p['a' + i].k.length; } console.log(n)", true) == "1090\n");
+}
+
 // Classic page scripts are sloppy code where assigning an undeclared name makes a global (ECMA-262 6.2.5.6 PutValue
 // step 5.b; React's streaming markup does `$RB=[]`). Runtime::sloppyScripts turns that on (the browser); game scripts
 // keep the default (everything strict). "use strict" and class bodies stay strict either way.
@@ -1008,6 +1066,7 @@ int main() {
     UriFunctions();
     WeakCollections();
     TypedArrays();
+    Proxies();
     TaggedTemplates();
     BigInts();
     RegexLookbehind();

@@ -36,4 +36,13 @@ struct ProjectDiagResult {
 /// touch EditorDiagnostics; the caller ReplaceOwner's the result.
 ProjectDiagResult CollectProjectDiagnostics(const Scene& scene, const ProjectDiagOptions& options = {});
 
+/// The project-wide part alone (checkAssetIndex): every text asset under `options.assetRoot` is read and each file it names
+/// is looked for. It does not look at a scene and touches nothing shared, so it may run on a worker thread (the editor's
+/// Problems list does: editor/ProjectDiagRunner.*). Empty when the root is empty or checkAssetIndex is off.
+std::vector<Diagnostic> CollectProjectAssetDiagnostics(const ProjectDiagOptions& options);
+/// Add the project-wide results to a scene's, leaving out a missing file the scene's own checks already report.
+void MergeProjectAssetDiagnostics(std::vector<Diagnostic>& items, const std::vector<Diagnostic>& assetItems);
+/// How many text assets the project-wide part has read on the calling thread since the program started (tests).
+std::uint64_t ProjectAssetFilesReadOnThisThread();
+
 } // namespace okay

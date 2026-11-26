@@ -876,7 +876,7 @@ struct UpdateTarget {
 };
 // Test builds (docs/release/release_channels.md "Test builds"): reached only when the person switched "Get test builds" on or asked to go back. With both off
 // ResolveTarget never calls this, so nothing under dev/ is fetched and the answer is exactly what it always was. The newer of "the newest normal
-// release" and "the newest test build" wins (okay::testbuild::ChooseTarget); a test build is downloaded from <bucket>/dev/v<version>/ and its checksums
+// release" and "the newest main test build" wins (okay::testbuild::ChooseTarget, okayversions::TestBuildHead: main only, never lower); a test build is downloaded from <bucket>/dev/v<version>/ and its checksums
 // come from the signed dev/versions.json, with the same rules as any update.
 static void ApplyTestBuilds(const okayversions::Settings& st, bool goBack, UpdateTarget& t, std::string& base, bool& fromSupabase) {
     const std::string stableHead = t.version;             // the newest normal release, as the normal path found it
@@ -886,7 +886,7 @@ static void ApplyTestBuilds(const okayversions::Settings& st, bool goBack, Updat
         okayversions::Sources src;
         src.bucketBase = sb;
         t.devIndex = okayversions::LoadDevIndex(src, FetchTextFile);
-        if (t.devIndex.ok) testHead = t.devIndex.latest;
+        if (t.devIndex.ok) testHead = okayversions::TestBuildHead(t.devIndex, LocalVersion());   // main builds only, never a lower number
     }
     const okay::testbuild::Choice c = okay::testbuild::ChooseTarget(LocalVersion(), stableHead, testHead, st.testBuilds,
                                                                     st.channel == okayversions::Channel::Lts, goBack);

@@ -125,9 +125,14 @@ struct Sources {
 Index LoadIndex(const Sources& sources, const FetchTextFn& fetch);
 /// The test builds that exist: <bucket>/dev/versions.json (and its signature, checked exactly like the real list's). It reads nothing outside
 /// <bucket>/dev/ and never falls back to anything: no usable list, no test build (a test build without a checksum cannot be installed). `versions`
-/// holds the well-formed test builds, newest first; `latest` is the newest one that can really be installed (in the bucket, with a size and
-/// SHA-256 for the editor, the player and the launcher), "" when there is none; `lts` is always empty. Install one with PlanInstall(index, version, <bucket>/dev/, ...): its files are dev/v<version>/<file>.
+/// holds the well-formed test builds, newest first; `latest` is the newest MAIN build that can really be installed (TestBuildHead with no running
+/// version: in the bucket, with a size and SHA-256 for the editor, the player and the launcher), "" when there is none; `lts` is always empty. Install one with PlanInstall(index, version, <bucket>/dev/, ...): its files are dev/v<version>/<file>.
 Index LoadDevIndex(const Sources& sources, const FetchTextFn& fetch);
+/// What the automatic test-build update works towards (docs/release/release_channels.md "Test builds", owner 2026-11-26): the newest test build of
+/// `testBuilds` whose branch is exactly `main` (okay::testbuild::IsMainBranch) and that can really be installed (in the bucket, every checksum), and
+/// only when it is newer than `running` ("" = no running version to compare). "" otherwise: no main build, or the newest one is not newer. Builds
+/// of other branches are never the answer (not even when no main build exists); they are installed by hand from the Versions page.
+std::string TestBuildHead(const Index& testBuilds, const std::string& running);
 
 /// The version a launch with `--versions <requested>` should highlight: the exact version when the index lists it, else the
 /// newest listed version of the same line (the LTS head when that is of the line), else "".

@@ -874,6 +874,16 @@ add_executable(test_worldstreamer test_worldstreamer.cpp)
 target_link_libraries(test_worldstreamer PRIVATE okay::engine)
 add_test(NAME worldstreamer COMMAND test_worldstreamer)
 
+# Asset streaming core: AssetManager::Stream priorities / cancel / RAM budget, streamed scene loads under the frame
+# budget, spread unloads, WorldStreamer cells (docs/engine/asset_streaming.md).
+add_executable(test_asset_streaming test_asset_streaming.cpp)
+target_link_libraries(test_asset_streaming PRIVATE okay::engine)
+add_test(NAME asset_streaming COMMAND test_asset_streaming)
+# Large-world stress test: streamed vs. everything up front (frame time, memory, pop-in).
+add_executable(test_asset_streaming_stress test_asset_streaming_stress.cpp)
+target_link_libraries(test_asset_streaming_stress PRIVATE okay::engine)
+add_test(NAME asset_streaming_stress COMMAND test_asset_streaming_stress)
+
 add_executable(test_destructible test_destructible.cpp)
 target_link_libraries(test_destructible PRIVATE okay::engine)
 add_test(NAME destructible COMMAND test_destructible)

@@ -29,6 +29,9 @@ The owner asked for our own browser (2026-11-25): an installable program for pla
 4. **Round 2: JavaScript in pages (branch `claude/browser-js-1`).** The page's scripts run on our own JavaScript engine
    (`engine/include/okay/JavaScript/`, merged in #1322; the browser uses that one, not a second one: its core became the
    library `okay_js`, linked by both the engine and `okay_browser`). See "Round 2" below.
+4a. **Round 3: the web platform scripts need (branch `claude/browser-js-2`, on top of round 2).** fetch / XMLHttpRequest,
+   cookies, storage, history, key / mouse / focus events, document.write, async / defer, live collections,
+   getComputedStyle, dialogs. See "Round 3" below.
 5. **Next.** More of the DOM and the web platform (below), then WebAssembly and WebGL, so other engines' web games and normal
    sites work.
 
@@ -171,6 +174,7 @@ dragging tabs, a downloads folder picker, file inputs. Nothing of round 1 was bu
 **Not done in round 2:** XMLHttpRequest / fetch, `document.write`, running scripts while the page is parsed, scripts a script
 adds, `<style>` added or changed by a script, keyboard / mouse-move / focus events, live NodeLists, getComputedStyle, canvas,
 storage, the history API, cookies. A node whose own listener's closure holds it stays until the page goes (the listener is a
+storage, the history API, cookies (all but canvas came in round 3, below). A node whose own listener's closure holds it stays until the page goes (the listener is a
 root). The Console strip and the view's click / input wiring were compiled but not run in a window; nothing on Windows.
 
 **Checked so far (2026-11-26):** the browser tests above and `okayui_browser` pass on Linux (ctest); the program was run on Linux
@@ -238,6 +242,62 @@ drawn by the view: OkayUI has no sheared text call yet); the host calls below. N
   draw `ToolbarButtons()` and `PageActionsFor(pageUrl)` and call `Press`, opening `PluginEffect::url` for `OpenUrl`;
   append `NewTabHtml()` to the new-tab page; `browserplugins::SyncCommands(plugins, registry, ...)` after every load, grant or
   switch, so the buttons are commands of the browser's `pluginreg::PluginRegistry`.
+## Round 3: fetch, cookies, storage, history, input events
+
+What a page's scripts can do now that they could not in round 2 (all in `okay/Browser/Script.hpp`, `Browser.hpp`, and two new
+stores, `Cookies.hpp` and `Storage.hpp`):
+
+- **fetch() and XMLHttpRequest** go through the tab: `BrowserTab::TakeScriptRequests` / `DeliverScriptResponse`, same rules
+  as a `<script src>` (in the launcher only the page's own site). fetch is Promise-based (`Response` with status, ok, headers,
+  text(), json(), clone(); `Headers`); XMLHttpRequest has readyState 1-4, onload / onerror / onreadystatechange and
+  addEventListener, getResponseHeader, responseType "json". Both are written in JavaScript (`kPrelude` in Script.cpp) on one
+  native request function. In the browser program a request to another site carries no cookies and an `Origin` header; its
+  answer is read only when the site allows it (`Access-Control-Allow-Origin`); a same-site request redirected to another site
+  is checked the same way. Only "simple" requests go to another site (a CORS preflight is not done yet: those are refused).
+  Set-Cookie headers are stored and never shown to the page. Limits: 64 waiting requests, 16 MB request body, 16 MB answer.
+  Synchronous XMLHttpRequest is refused (InvalidAccessError).
+- **Cookies** (`CookieStore`, one per profile, `BrowserTab::SetCookieStore`): RFC 6265 dates, Domain (no public suffix
+  list yet: a short built-in list of shared suffixes like co.uk is refused), Path, Expires / Max-Age (at most 400 days),
+  Secure, HttpOnly, SameSite (no attribute = Lax; None needs Secure; a cross-site top-level GET gets Lax ones), `__Secure-` /
+  `__Host-` names. Sent on the page's fetches by the tab; for the host's own fetches it asks `CookieHeader(url)` and hands back
+  `ReceiveCookies(url, setCookieValues)`. `document.cookie` reads and writes the same store without HttpOnly ones. Saved as
+  JSON (`ToJson` / `FromJson`, persistent cookies only). Caps: 4096 bytes a cookie, 50 per domain, 3000 in all.
+  The engine's other cookie jar (`ownhttp::CookieJar` in `Platform/OwnHttp.hpp`) is a strict per-call jar for one request
+  and its redirects, with no disk and no Domain cookies; it was left as it is (a different job, another system's file).
+- **localStorage and sessionStorage** (`WebStorage`, per origin; localStorage per profile via `SetLocalStorage`, saved with
+  `ToJson`; sessionStorage per tab). 5 MB per origin (QuotaExceededError past it), at most 1000 origins. Property access
+  (`localStorage.x = 1`) works; `delete localStorage.x` does not (use removeItem). No `storage` event to other tabs yet.
+- **History**: pushState / replaceState (same origin only, state as JSON, 640 KB), back / forward / go, length, state.
+  Back and forward between one page's own entries do not load anything; the page gets popstate. Leaving the page and coming
+  back loads the entry's address again (no page cache), with its state.
+- **Input events**: `BrowserTab::KeyEvent` (keydown / keyup / keypress with key, code, keyCode, modifiers; cancelling one
+  tells the host not to type it), `PointerEvent` (mousedown / mouseup / mousemove ... with clientX / Y, button), `SetHover`
+  fires mouseover / mouseout, `SetFocus` fires blur, focusout, focus, focusin; `el.focus()` / `el.blur()` move the tab's
+  focus and `document.activeElement` follows. No mouseenter / mouseleave, no wheel, no pointer events yet.
+- **Scripts while the page is read**: the page is still read in one go, then its scripts run in order, but
+  `document.write` from a page script puts its text right after that script (so it shows where it would), and scripts in it
+  run next. `defer` scripts run after the others and before DOMContentLoaded; `async` ones when they arrive (load waits for
+  them). A script added by a script runs (inline at once, src when it arrives, with load / error on the element); a
+  `<style>` or style link a script adds, removes or changes is applied at the next layout. `document.currentScript` works.
+  Difference from a browser: a script sees the whole page, also the part after it. `document.write` after the page was read
+  is ignored with a console line (a browser would wipe the page).
+- **Live collections**: children, childNodes, getElementsByTagName / ClassName follow the tree (item, namedItem, length,
+  index, for...of, forEach); querySelectorAll stays a fixed list, as in the standard. **dataset** writes set data-*
+  attributes. **getComputedStyle** gives the cascade's values (display, colours, font, sizes, margins, padding, position ...;
+  widths are the computed ones, not the laid-out pixels).
+- **alert / confirm / prompt** become dialogs the host shows (`TakeDialog`). The script does not stop for them: confirm
+  answers false and prompt null at once (what the standard returns when the browser does not show a modal dialog). At most 3
+  dialogs per script run and 8 waiting; the rest go to the console.
+
+**What the host must call (okayui BrowserView / shared BrowserApp, not in this change):** `SetCookieStore` and
+`SetLocalStorage` on every tab (one store each per profile, loaded from and saved to the profile folder with
+`ToJson` / `FromJson` when `TakeChanged()` says so); `CookieHeader` on each fetch of `TakeFetches()` and `ReceiveCookies` with
+its Set-Cookie headers; `TakeScriptRequests` each frame, send each (method, headers, body as given) and answer with
+`DeliverScriptResponse` (status, headers, body, final address); `KeyEvent` before typing a key into a control (skip it when it
+returns true); `PointerEvent` for mouse buttons and moves; `TakeDialog` each frame to show alerts.
+
+**Checked (2026-11-26):** `browser_script` (279 checks) and the other browser tests pass on Linux. Nothing was run in the
+program or the launcher (the host wiring is not done) or on Windows.
 
 ## The launcher's Browser page (2026-11-26)
 
@@ -271,3 +331,51 @@ drawn by the view: OkayUI has no sheared text call yet); the host calls below. N
   Not run: a chat link clicked in the launcher (the routing rule is tested, the click path was not driven), a download or a
   game from the launcher's page, two programs writing the profile at the same moment. Nothing was run on Windows.
 
+
+## Round 2 of the look: like a regular browser (2026-11-26)
+
+Chrome and Edge were the reference for how it looks and behaves (watched, not copied: no code, no pictures). The icons are
+drawn with lines by our own code. What changed (`shared/BrowserApp.cpp`, `okayui/screens/BrowserView.cpp`, the model in
+`okay/Browser/Profile.hpp`):
+
+- **Tab strip.** Rounded tabs; the shown tab and the toolbar are one surface; a
+  site badge on each tab (a round badge with the site's first letter in a colour of its own, a globe for our own pages, a
+  warning sign for a page that failed, a turning arc while loading); the close button on the shown tab, the tab under the
+  pointer, and every tab wide enough; thin lines between tabs; a round + button; tabs shrink as more open (a narrow tab shows
+  only its badge); a tooltip with the whole title and the host after the pointer rests half a second; dragging a tab moves it
+  (`TabOrder::Move`).
+- **Toolbar.** Round icon buttons (Back, Forward, Reload / Stop, Home, the menu) with hover and pressed circles and tooltips; a
+  rounded address bar with a lock for https, "Not secure" for http and a sign for our own pages (`BadgeOf`); while the person is
+  not typing in it, the address is shown with the host bright and the rest dim, without "https://" (`ShowAddress`); the
+  bookmark star inside the bar's right end.
+- **Suggestions while typing** (`SuggestAddresses`): the first row is what Enter does (go to the address, or search Google),
+  then open tabs ("Switch to this tab"), bookmarks and history whose title or address holds every typed word; a match at the
+  start of the host ranks first, then the start of a word, then anywhere; pages visited more often first. Up / Down move the
+  highlight, Enter opens it, Esc closes the list, a click picks a row.
+- **Status bubble.** The pointer over a link (or the link Tab focused) shows its full address, resolved against the page, in a
+  rounded bubble at the bottom-left.
+- **Keyboard on the page** (`PageKeys`, while no field has the keyboard): Space / Shift+Space and Page Down / Page Up scroll by
+  7/8 of the view, the arrow keys by 40 px, Home / End to the top and the bottom; these glide over a few frames. Tab /
+  Shift+Tab move the focus over the links and form fields in reading order, with a blue ring, and bring it into view; Enter
+  follows the focused link; Space or Enter works a focused checkbox, radio button, list or button; Tab out of a text field
+  goes on to the next.
+- **Text selection.** Dragging over the page's text selects it (drawn under a see-through blue); Ctrl+C copies it, Ctrl+A
+  selects all the page's text, the context menu's Copy copies it. Lines are joined with a new line. Text inside scrolling areas
+  and fixed boxes is not selectable yet.
+- **Error pages** (`DescribeLoadError`): "This site cannot be reached", "This page was not found" (404 / 410), "The site has a
+  problem" (5xx), "This page is not open to you" (401 / 403), "This address cannot be opened here", "too large", "Loading was
+  stopped", each with what to do, the host and the code in small print, a Try again button and Go back.
+- **New-tab page.** A search box in the middle that sends to the search address (a GET form; a search address with other
+  query parts keeps them as hidden fields; none when no search is set), and up to 8 shortcut tiles (bookmarks first, then the
+  pages visited most often), and small links to History, Bookmarks and Downloads.
+
+**Tests:** `browser_profile` (suggestions, badge, address shown, error texts, the new-tab search box and tiles),
+`okayui_browser` (text selection by dragging, Ctrl+C, Ctrl+A, a link press selects nothing; golden `browser_select`),
+`okayui_browser_app` (suggestions picked with Down + Enter switch tabs; End / Home / Space glide; Tab, Tab, Enter follows the
+second link; the error page; dragging a tab to the front; goldens `browser_app`, `browser_app_suggest`, `browser_app_focus`,
+`browser_app_error`).
+
+**Not done in this round:** the list of earlier pages on a right click or long press on Back / Forward (it needs the tab to
+give its history entries: `BrowserTab` has no call for that yet), smooth scrolling for the mouse wheel (only keys glide), a
+page-wide UI scale setting (the browser draws at OkayUI's text size; 150% was not checked), double-click to select a word,
+selecting text in scrolling areas, drag a tab out into a new window. Nothing was run on Windows.

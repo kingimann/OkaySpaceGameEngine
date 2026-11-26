@@ -79,9 +79,12 @@ std::string MakeCell(const fs::path& dir, const std::string& name, int n, const 
     return path;
 }
 
-template <class F> int RunFrames(Scene& s, F done, int maxFrames = 5000) {
+// maxFrames < 0: until done or 10 s of wall time. A frame here does almost no work, so a fixed 5000 frames passed in a few
+// milliseconds and a busy CI machine had not finished the background read by then (main's full run, 2026-11-26).
+template <class F> int RunFrames(Scene& s, F done, int maxFrames = -1) {
     int frames = 0;
-    while (!done() && frames < maxFrames) {
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!done() && (maxFrames >= 0 ? frames < maxFrames : std::chrono::steady_clock::now() < until)) {
         s.Update(0.016f);
         AssetManager::Instance().Pump();
         ++frames;

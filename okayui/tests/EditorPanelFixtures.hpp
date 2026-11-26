@@ -189,4 +189,149 @@ struct LoadingData {
     LoadingData(const LoadingData&) = delete;
 };
 
+// The Net panel: the simulator on with some delay, three traffic rows.
+struct NetData {
+    bool enabled = true;
+    float latency = 80.0f, jitter = 10.0f, loss = 0.02f, duplicate = 0.0f;
+    NetSimModel model;
+    NetData() {
+        model.enabled = &enabled; model.latencyMs = &latency; model.jitterMs = &jitter; model.loss = &loss; model.duplicate = &duplicate;
+        model.wireInPerSec = 5324.8f; model.wireOutPerSec = 2150.4f;
+        model.rows = {{"player:1", 30.0f, 1840.0f}, {"rpc:Fire", 4.5f, 320.0f}, {"chat", 0.5f, 48.0f}};
+    }
+    NetData(const NetData&) = delete;
+};
+
+// Find in Files after a search for "health".
+inline FindInFilesModel FindHits() {
+    FindInFilesModel m;
+    m.ran = true;
+    m.hits = {{"Assets/Scripts/Player.okay", 12, "var health = 100"},
+              {"Assets/Scripts/Enemy.lua", 40, "if health <= 0 then die() end"},
+              {"Assets\\UI\\Hud.cs", 7, "label.text = $\"HP {health}\";"}};
+    return m;
+}
+
+// A .okaydata file with three fields.
+struct DataAssetData {
+    std::vector<std::pair<std::string, std::string>> fields = {{"maxHealth", "100"}, {"speed", "4.5"}, {"title", "Knight"}};
+    DataAssetModel model;
+    DataAssetData() { model.path = "Assets/Data/knight.okaydata"; model.fields = &fields; }
+    DataAssetData(const DataAssetData&) = delete;
+};
+
+// The Plugin Manager with three plugins: one on with a window, one with an error, one for all projects.
+inline PluginManagerModel Plugins() {
+    PluginManagerModel m;
+    PluginRow a; a.name = "Batch Rename"; a.description = "Rename the selection with a pattern."; a.enabled = true; a.hasWindow = true;
+    PluginRow b; b.name = "Level Stats"; b.error = "line 12: unknown function 'editor_count'";
+    PluginRow c; c.name = "Snap All"; c.description = "Snap every object to the grid."; c.enabled = true; c.user = true;
+    m.rows = {a, b, c};
+    return m;
+}
+
+
+// Map Humanoid Bones for a rig with numbered bones: three picks made by hand, the rest Auto.
+struct BoneMapData {
+    std::string picks[kBoneSlotCount];
+    BoneMapModel model;
+    BoneMapData() {
+        model.hasModel = true;
+        model.modelName = "Robot_rig";
+        model.bones = {"Bone.000", "Bone.001", "Bone.002", "Bone.003", "joint12", "joint13", "Head_end"};
+        for (int b = 0; b < kBoneSlotCount; ++b) model.autoName[b] = "none";
+        model.autoName[0] = "Bone.000"; model.autoName[2] = "Head_end";
+        picks[1] = "Bone.001"; picks[3] = "joint12"; picks[4] = "-";
+        model.picks = picks;
+        model.humanoid = false; model.found = 6; model.why = "no left thigh";
+    }
+    BoneMapData(const BoneMapData&) = delete;
+};
+
+// The Save Manager on a playtest's save with five keys of each type.
+inline SaveManagerModel Saves() {
+    SaveManagerModel m;
+    m.files = {"save.okaysave", "Assets/Saves/slot1.okaysave", "Assets/Saves/slot2.okaysave"};
+    m.selected = m.files[1];
+    std::vector<std::pair<std::string, std::string>> raw = {{"player.name", "s:Ada"}, {"coins", "i:120"}, {"music", "b:1"},
+                                                            {"spawn", "v:1,0,4.5"}, {"health", "f:87.5"}};
+    m.rows = SaveKeyRows(raw);
+    m.dirty = true;
+    return m;
+}
+
+// A red, slightly shiny material.
+inline MaterialModel Material() {
+    MaterialModel m;
+    m.path = "Assets/Materials/red_paint.okaymat";
+    m.color[0] = 0.85f; m.color[1] = 0.20f; m.color[2] = 0.18f; m.color[3] = 1.0f;
+    m.emissive[0] = 0.10f;
+    m.specular = 0.4f; m.shininess = 48.0f;
+    m.texture = "Assets/Textures/paint.png";
+    m.tiling[0] = 2.0f; m.tiling[1] = 1.0f;
+    return m;
+}
+
+// The frame-time overlay after 120 steady frames with a few slow ones.
+inline PerfOverlayModel Perf() {
+    PerfOverlayModel m;
+    m.fps = 142.0; m.avgMs = 7.04; m.p95Ms = 8.9; m.worstMs = 14.2; m.lowFps = 74.0;
+    m.workMs = 4.1; m.sleepMs = 2.9;
+    for (int i = 0; i < 120; ++i) m.plot.push_back(6.5f + (float)((i * 7) % 11) * 0.12f + (i % 37 == 0 ? 6.0f : 0.0f));
+    m.breakFrames = 30;
+    m.sections = PerfSections({"Scene view", "UI", "Sleep", "Scripts", "Physics"}, {2.4, 1.1, 2.9, 0.55, 0.0}, 7.04, 0);
+    m.renderer = "OpenGL 3.3";
+    m.sceneW = 1280; m.sceneH = 720; m.scale = 1.0f;
+    return m;
+}
+
+// The Input panel while the game plays: two keys down, a controller, one player, three events, two actions.
+inline InputPanelModel InputPanel() {
+    InputPanelModel m;
+    m.playing = true;
+    m.snapshot = {"Keys down: W D Space", "Mouse 412, 300  buttons: none  wheel 0", "Controller 1: left stick -0.55, 0.35  A"};
+    m.controllers = {"Controller 1: DualSense (054c:0ce6), mapped"};
+    m.players = {{1, {"Move  Vector2  -0.55, 0.35  performed  stick:left", "Jump  Button  DOWN  started  pad:a"}}};
+    m.events = {"key down Space", "pad 1 A down", "key down D"};
+    m.recordStatus = "Kept: 0 frames";
+    m.actions = {"Move", "Look", "Jump"};
+    m.direction = true;
+    m.value = 0.65f;
+    m.shape = [](float in, const InputResponse& r) {
+        const float d = in <= r.deadzone ? 0.0f : (in - r.deadzone) / (1.0f - r.deadzone);
+        return std::pow(d, r.curve) * r.sensitivity;
+    };
+    return m;
+}
+
+// The Timers window: two scheduler tasks and one tween, as the engine dumps them (made up, in the dump's shape).
+inline const char* kTimersText =
+    "Scheduler: 2 tasks (1 repeating)\n"
+    "  #1 invoke   0.42s / 0.5s   tag=hello\n"
+    "  #2 repeat   0.10s / 0.25s  left 3  owner=Spawner\n"
+    "\n"
+    "Tweens: 1\n"
+    "  fade  DelayedCall  0.30s / 1s  running\n";
+
+// The Input Actions window on the default asset: two schemes, two maps, the Move action selected with two bindings and one
+// interaction, one problem, a controller and one player.
+inline InputActionsModel InputActions() {
+    InputActionsModel m;
+    m.dirty = true;
+    m.schemes = {"Keyboard+Mouse keyboard mouse", "Gamepad gamepad"};
+    InputActionMapRow game; game.name = "Gameplay"; game.priority = 0;
+    game.actions = {{"Move", "vector2"}, {"Jump", "button"}, {"Fire", "button"}};
+    InputActionMapRow ui; ui.name = "UI"; ui.priority = 10; ui.consume = true; ui.enabled = false;
+    ui.actions = {{"Submit", "button"}};
+    m.maps = {game, ui};
+    m.hasAction = true;
+    m.describe = {"Move (vector2) in map Gameplay", "2 bindings, 1 interaction"};
+    m.bindings = {{{"key:w", "key:s", "key:a", "key:d"}, ""}, {{"stick:left"}, "deadzone(0.2,0.9)"}};
+    m.interactions = {"hold(0.5)"};
+    m.problems = {"Fire has no binding for the Gamepad scheme"};
+    m.controllers = {"Controller 1: DualSense (054c:0ce6), mapped"};
+    m.players = {{1, {"Move  Vector2  -0.55, 0.35  performed  stick:left"}}};
+    return m;
+}
+
 } // namespace panelfix

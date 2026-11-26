@@ -31,6 +31,8 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 |---|---|---|---|
 | JSON read | planned `Core/Json.hpp` (dedup in progress). For now: `JsonReader` in `engine/src/Scripting/OkayScriptVM.cpp` is the reader to copy behaviour from | planned `okay::json::Parse` | planned: `auto v = json::Parse(text);` |
 | JSON escape and write | planned `Core/Json.hpp` (dedup in progress). For now: `okayscript::detail::JsonEscape` in `okayscript/include/okayscript/CoreBuiltins.hpp` (the script builtins; the engine includes it) | `JsonEscape(s, out)` | `JsonEscape(name, out);  // appends "name" with quotes and escapes` |
+| Online service request (headers, sending, test recording) | `engine/include/okay/Backend/Supabase.hpp` (`MakeRequest`), `engine/include/okay/Backend/Transport.hpp` (OkayBackend) | `okay::backend::supabase::MakeRequest`, `okay::backend::Transport`, `RecordingTransport` | `t.Send(supabase::MakeRequest(key, "GET", url, {}, token));` |
+| Read a claim from a JSON web token (no signature check) | `engine/include/okay/Backend/Auth.hpp` | `okay::backend::TokenClaim` | `TokenClaim(jwt, "sub")` |
 | Base64 | planned `Core/Base64.hpp` (dedup in progress). For now: `Base64Decode` in `Render/Gltf.hpp` | `Base64Decode` | `std::vector<std::uint8_t> bytes; Base64Decode(text, bytes);` |
 | FNV-1a string hash | `Core/StringId.hpp` | `okay::StringId::HashOf`, `StringId::Make` | `constexpr auto h = StringId::HashOf("player");` |
 | SHA-256, HMAC, PBKDF2 | `Crypto/Sha256.hpp` | `okay::crypto::Sha256Hash`, `Sha256`, `HmacSha256Mac`, `Pbkdf2HmacSha256` | `std::uint8_t d[32]; crypto::Sha256Hash(d, data, n);` |

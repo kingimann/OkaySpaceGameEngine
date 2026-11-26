@@ -73,6 +73,11 @@ public:
     std::string ToJson(std::int64_t now) const;
     /// Read what ToJson wrote (expired ones are dropped); false when the text is not ours (the store is left empty).
     bool FromJson(const std::string& text, std::int64_t now);
+    /// Another program on the same profile saved its cookies (`saved`, read with FromJson): with `replace`, this store's
+    /// persistent cookies become the saved ones (its session cookies stay, and win over a saved cookie of the same name,
+    /// domain and path); without, only saved cookies this store does not have are added (a store with unsaved changes keeps
+    /// its own). Does not set TakeChanged.
+    void MergeSaved(const CookieStore& saved, bool replace);
 
 private:
     std::vector<Cookie> m_items;

@@ -7,6 +7,7 @@
 #include "Process.hpp"
 #include "okay/Browser/GamePack.hpp"
 #include "okay/Core/ImageDecode.hpp"
+#include "okay/Core/StringUtil.hpp"
 #include "okay/Platform/NativeFetch.hpp"
 
 #include <algorithm>
@@ -22,15 +23,36 @@ namespace okay::browser {
 
 namespace fs = std::filesystem;
 
+// One request on the wire. Redirects are not followed by the HTTP client: each hop comes back to the main thread, which stores
+// its Set-Cookie headers in the profile's CookieStore and asks the tab for the next hop's Cookie header (RFC 6265 5.4: the
+// cookies of the address each request goes to), so the worker threads never touch the tab or the stores.
+struct TabFetch {
+    enum Kind { Page, Sub, Script } kind = Page;   // the page being loaded; an image / style / script / font; a page's fetch()
+    std::string url;                               // this hop's address
+    std::string firstUrl;                          // what the tab asked for (subresources are handed back under it)
+    std::string method = "GET";
+    std::vector<std::string> headers;              // "Name: value" lines (Cookie included when there are cookies)
+    std::string body;
+    int generation = 0;
+    int hops = 0;
+    int scriptId = 0;                              // Script: the tab's request id
+    bool cross = false;                            // Script: the request went to another site than the page's
+};
+
 namespace {
 
-struct FetchJob { std::string url; bool image = false; int generation = 0; bool post = false; std::string body; };
 struct FetchDone {
-    std::string url; bool image = false; int generation = 0; bool ok = false; long status = 0; std::string body, error;
-    std::string contentType, disposition, finalUrl;   // pages: from the answer's head
+    TabFetch job;
+    bool reached = false;   // an answer came (any status)
+    std::string netError;   // the HTTP client's own reason when no answer came (for the site check's report only)
+    bool ok = false; long status = 0; std::string body, error;
+    std::string rawHead;                              // the answer's head (Set-Cookie, Location, Content-Type ...)
     std::int64_t size = -1;                           // pages: Content-Length when the server said it
-    bool tooBig = false;                              // pages: more than a page may be (then it is offered as a download)
+    bool tooBig = false;                              // more than the job's cap (a page: then it is offered as a download)
 };
+
+constexpr int kMaxFetchWorkers = 4;     // requests on the wire at once for one tab (a slow fetch() does not hold up the page)
+constexpr int kMaxRedirectHops = 10;
 
 constexpr std::size_t kMaxGameLog = 4096;   // the tail of what a game wrote to stderr, for the message when it fails
 
@@ -42,9 +64,9 @@ std::string Tail(const std::string& s, std::size_t n) { return s.size() <= n ? s
 // download runs does not pull the state out from under them (the worker finishes and drops it).
 struct TabHostShared {
     okay::thr::Mutex* mutex = okay::thr::CreateMutex();
-    std::vector<FetchJob> jobs;
+    std::vector<TabFetch> jobs;
     std::vector<FetchDone> done;
-    bool fetchRunning = false;
+    int fetchWorkers = 0;            // worker threads taking jobs now
     // the game being prepared (one at a time)
     std::string gameUrl;
     TabHost::GameStatus game;
@@ -70,57 +92,56 @@ namespace {
 
 struct FetchArgs { std::shared_ptr<TabHostShared> sh; std::string userAgent; };
 
+bool IsRedirectStatus(long s) { return s == 301 || s == 302 || s == 303 || s == 307 || s == 308; }
+
 int FetchWorker(void* p) {
     std::unique_ptr<FetchArgs> args(static_cast<FetchArgs*>(p));
     TabHostShared& s = *args->sh;
     while (true) {
-        FetchJob job;
+        TabFetch job;
         s.Lock();
-        if (s.jobs.empty() || okay::thr::AtomicGet(&s.cancel)) { s.fetchRunning = false; s.Unlock(); break; }
-        job = s.jobs.front();
+        if (s.jobs.empty() || okay::thr::AtomicGet(&s.cancel)) { --s.fetchWorkers; s.Unlock(); break; }
+        job = std::move(s.jobs.front());
         s.jobs.erase(s.jobs.begin());
         s.Unlock();
         FetchDone d;
-        d.url = job.url; d.image = job.image; d.generation = job.generation;
-        if (job.image) {
-            const std::uint64_t cap = TabHost::kMaxImageBytes;
-            const okay::http::OwnOutcome o = okay::http::FetchPrefix(job.url, args->userAgent, cap, cap - 1, 15000, d.body, &d.status);
-            d.ok = o == okay::http::OwnOutcome::Ok;
-            if (!d.ok) d.body.clear();
-        } else {
-            // A page: one request (GET, or POST with the form's body) whose head says what the answer is (Profile.hpp
-            // UseOfAnswer: a page, text, an image, or a file to save).
-            okay::http::RequestOptions ro;
-            ro.maxBytes = BrowserTab::kMaxPageBytes;
-            ro.maxRedirects = 10;
-            ro.connectMs = 8000; ro.ioMs = 15000; ro.totalMs = 30000;
-            ro.acceptGzip = true;
-            std::vector<std::string> hdrs;
-            if (!args->userAgent.empty()) hdrs.push_back("User-Agent: " + args->userAgent);
-            hdrs.push_back("Accept: text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8");
-            if (job.post) hdrs.push_back("Content-Type: application/x-www-form-urlencoded");
-            okay::http::ExResult r;
-            if (okay::http::NativeAvailable())
-                r = okay::http::RequestEx(job.post ? "POST" : "GET", job.url, okay::http::CleanHeaderLines(hdrs), job.body, std::string(),
-                                          std::string(), ro);
-            else r.error = okay::http::NoClientReason();
-            d.status = r.status;
-            d.contentType = HeaderValue(r.rawHead, "Content-Type");
-            d.disposition = HeaderValue(r.rawHead, "Content-Disposition");
-            d.finalUrl = r.finalUrl;
-            const std::string len = HeaderValue(r.rawHead, "Content-Length");
-            if (!len.empty() && len.find_first_not_of("0123456789") == std::string::npos && len.size() < 19) d.size = std::stoll(len);
-            if (!r.reached) {
-                d.tooBig = r.error.rfind("too-large", 0) == 0;
-                d.error = d.tooBig ? "The page is too large." : "Could not reach the server. Check your connection and try again.";
-            } else if (r.status >= 200 && r.status < 300) {
-                d.ok = true;
-                d.body = std::move(r.body);
-            } else if (r.status >= 400 && !r.body.empty() && MediaType(d.contentType) == "text/html") {
-                d.ok = true;   // the server's own error page is shown, like other browsers do
-                d.body = std::move(r.body);
-            }
+        // One request, its redirect not followed (see TabFetch). A page's head says what the answer is (Profile.hpp
+        // UseOfAnswer: a page, text, an image, or a file to save); a page's fetch() gets any status as its answer.
+        okay::http::RequestOptions ro;
+        ro.maxBytes = job.kind == TabFetch::Page ? BrowserTab::kMaxPageBytes
+                    : job.kind == TabFetch::Script ? PageScripts::kMaxResponseBytes : TabHost::kMaxImageBytes;
+        ro.followRedirects = false;
+        ro.callerCookies = true;
+        ro.connectMs = 8000; ro.ioMs = 15000; ro.totalMs = job.kind == TabFetch::Script ? 60000 : 30000;
+        ro.acceptGzip = true;
+        ro.cancel = [&s] { return okay::thr::AtomicGet(&s.cancel) != 0; };
+        std::vector<std::string> hdrs;
+        bool hasAgent = false;
+        for (const std::string& h : job.headers) if (okay::str::LowerAscii(h.substr(0, 11)) == "user-agent:") hasAgent = true;
+        if (!args->userAgent.empty() && !hasAgent) hdrs.push_back("User-Agent: " + args->userAgent);
+        if (job.kind == TabFetch::Page) hdrs.push_back("Accept: text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8");
+        for (const std::string& h : job.headers) hdrs.push_back(h);
+        okay::http::ExResult r;
+        if (okay::http::NativeAvailable())
+            r = okay::http::RequestEx(job.method, job.url, okay::http::CleanHeaderLines(hdrs), job.body, std::string(), std::string(), ro);
+        else r.error = okay::http::NoClientReason();
+        d.reached = r.reached;
+        d.netError = r.error;
+        d.status = r.status;
+        d.rawHead = std::move(r.rawHead);
+        const std::string len = HeaderValue(d.rawHead, "Content-Length");
+        if (!len.empty() && len.find_first_not_of("0123456789") == std::string::npos && len.size() < 19) d.size = std::stoll(len);
+        if (!r.reached) {
+            d.tooBig = r.error.rfind("too-large", 0) == 0;
+            d.error = d.tooBig ? "The page is too large." : "Could not reach the server. Check your connection and try again.";
+        } else if (job.kind == TabFetch::Script || (r.status >= 200 && r.status < 300)) {
+            d.ok = true;
+            d.body = std::move(r.body);
+        } else if (job.kind == TabFetch::Page && r.status >= 400 && !r.body.empty() && MediaType(HeaderValue(d.rawHead, "Content-Type")) == "text/html") {
+            d.ok = true;   // the server's own error page is shown, like other browsers do
+            d.body = std::move(r.body);
         }
+        d.job = std::move(job);
         s.Lock();
         s.done.push_back(std::move(d));
         s.Unlock();
@@ -204,8 +225,17 @@ void TabHost::Reset() {
     const bool any = m_tab.AnyOrigin();
     m_tab = BrowserTab();
     m_tab.SetAnyOrigin(any);
+    m_tab.SetCookieStore(m_cookies);
+    m_tab.SetLocalStorage(m_local);
     m_webConfig = WebExportConfig();
     m_configFor = nullptr;
+}
+
+void TabHost::SetSiteData(CookieStore* cookies, WebStorage* local) {
+    m_cookies = cookies;
+    m_local = local;
+    m_tab.SetCookieStore(cookies);
+    m_tab.SetLocalStorage(local);
 }
 
 bool TabHost::Open(const std::string& url) {
@@ -267,52 +297,101 @@ void TabHost::Pump() {
         m_impl->ticked = true;
         m_tab.Tick(ms);
     }
-    // pages and images
-    std::vector<std::string> urls = m_tab.TakeFetches();
-    // our own pages are made here, not fetched
-    for (std::size_t i = 0; i < urls.size();) {
-        if (!IsInternalPage(urls[i])) { ++i; continue; }
-        const std::string u = urls[i];
-        urls.erase(urls.begin() + (std::ptrdiff_t)i);
-        if (m_internal) m_tab.DeliverPage(u, true, 200, m_internal(u));
-        else m_tab.DeliverPage(u, false, 0, std::string(), "This page is not available here.");
-    }
-    if (!urls.empty()) {
-        s.Lock();
-        for (const std::string& u : urls) {
-            FetchJob j;
-            j.url = u;
-            j.image = m_tab.KindOfFetch(u) != BrowserTab::FetchKind::Page;
-            j.generation = m_impl->generation;
-            j.post = !j.image && m_tab.PostBody(u, j.body);
-            s.jobs.push_back(std::move(j));
+    // pages, images, styles, scripts, fonts, and the page's fetch() / XMLHttpRequest: one job each, on the worker threads
+    std::vector<TabFetch> jobs;
+    for (const std::string& u : m_tab.TakeFetches()) {
+        if (IsInternalPage(u)) {   // our own pages are made here, not fetched
+            if (m_internal) m_tab.DeliverPage(u, true, 200, m_internal(u));
+            else m_tab.DeliverPage(u, false, 0, std::string(), "This page is not available here.");
+            continue;
         }
-        const bool start = !s.fetchRunning;
-        if (start) s.fetchRunning = true;
-        s.Unlock();
-        if (start) {
-            if (okay::thr::Thread* t = okay::thr::CreateThread(FetchWorker, "okay-browser", new FetchArgs{m_impl->sh, m_userAgent})) okay::thr::DetachThread(t);
-            else { s.Lock(); s.fetchRunning = false; s.Unlock(); }
+        TabFetch j;
+        j.url = j.firstUrl = u;
+        j.kind = m_tab.KindOfFetch(u) == BrowserTab::FetchKind::Page ? TabFetch::Page : TabFetch::Sub;
+        j.generation = m_impl->generation;
+        if (j.kind == TabFetch::Page && m_tab.PostBody(u, j.body)) {
+            j.method = "POST";
+            j.headers.push_back("Content-Type: application/x-www-form-urlencoded");
         }
+        const std::string cookie = m_tab.CookieHeader(u);   // never logged
+        if (!cookie.empty()) j.headers.push_back("Cookie: " + cookie);
+        jobs.push_back(std::move(j));
     }
+    for (ScriptRequest& r : m_tab.TakeScriptRequests()) {   // sent as the page gave them (the tab added its cookies)
+        TabFetch j;
+        j.kind = TabFetch::Script;
+        j.url = j.firstUrl = r.url;
+        j.method = r.method;
+        for (const auto& h : r.headers) j.headers.push_back(h.first + ": " + h.second);
+        j.body = std::move(r.body);
+        j.scriptId = r.id;
+        j.cross = !SameOrigin(r.url, m_tab.Url());
+        j.generation = m_impl->generation;
+        jobs.push_back(std::move(j));
+    }
+    Send(std::move(jobs));
     std::vector<FetchDone> done;
     s.Lock();
     done.swap(s.done);
     s.Unlock();
+    std::vector<TabFetch> next;
     for (FetchDone& d : done) {
-        if (d.generation != m_impl->generation) continue;
-        if (!d.image) {
-            DeliverPageAnswerImpl(d.url, d.ok, d.status, d.body, d.error, d.contentType, d.disposition, d.finalUrl, d.size, d.tooBig);
+        if (d.job.generation != m_impl->generation) continue;
+        TabFetch& job = d.job;
+        std::vector<std::string> setCookies;
+        std::string location, reason;
+        const std::vector<std::pair<std::string, std::string>> heads = HeaderLines(d.rawHead, &reason);
+        for (const auto& h : heads) {
+            if (okay::str::EqualsNoCaseAscii(h.first, "Set-Cookie")) setCookies.push_back(h.second);
+            else if (okay::str::EqualsNoCaseAscii(h.first, "Location")) location = h.second;
+        }
+        // a redirect: this hop's cookies are stored, and the next hop is sent with the cookies of its own address
+        std::string note;   // for the site check's reporter
+        if (d.reached && IsRedirectStatus(d.status) && !location.empty()) {
+            if (FollowRedirect(job, d.status, location, setCookies, next)) continue;
+            d.ok = false;
+            d.error = "The site sent the page somewhere it cannot be opened from here.";
+            note = "redirect refused";
+        }
+        auto report = [&](const char* kind) {
+            if (!m_reporter) return;
+            FetchReport f;
+            f.url = job.firstUrl; f.finalUrl = job.url; f.kind = kind; f.reached = d.reached; f.status = d.status;
+            f.netError = d.netError; f.rawHead = d.rawHead; f.body = &d.body; f.note = note;
+            m_reporter(f);
+        };
+        if (job.kind == TabFetch::Script) {
+            report("request");
+            ScriptResponse a;
+            a.ok = d.reached;
+            a.status = (int)d.status;
+            a.statusText = reason;
+            a.headers = heads;   // the tab keeps their Set-Cookie headers from the page
+            a.body = std::move(d.body);
+            a.url = job.url;
+            if (!d.reached) a.error = d.tooBig ? "the answer is too large" : "the server could not be reached";
+            else if (!d.ok) { a.ok = false; a.error = d.error; }
+            m_tab.DeliverScriptResponse(job.scriptId, a);
             continue;
         }
-        const BrowserTab::FetchKind kind = m_tab.KindOfFetch(d.url);
-        if (kind == BrowserTab::FetchKind::Style) { m_tab.DeliverStyle(d.url, d.ok, d.body); continue; }
-        if (kind == BrowserTab::FetchKind::Script) { m_tab.DeliverScript(d.url, d.ok, d.body); continue; }
+        if (d.reached) m_tab.ReceiveCookies(job.url, setCookies);
+        if (job.kind == TabFetch::Page) {
+            report("page");
+            DeliverPageAnswerImpl(job.url, d.ok, d.status, d.body, d.error, HeaderValue(d.rawHead, "Content-Type"),
+                                  HeaderValue(d.rawHead, "Content-Disposition"), std::string(), d.size, d.tooBig);
+            continue;
+        }
+        const std::string& at = job.firstUrl;   // the tab knows a subresource by the address it asked for
+        const BrowserTab::FetchKind kind = m_tab.KindOfFetch(at);
+        if (kind == BrowserTab::FetchKind::Style) { report("style"); m_tab.DeliverStyle(at, d.ok, d.body); continue; }
+        if (kind == BrowserTab::FetchKind::Script) { report("script"); m_tab.DeliverScript(at, d.ok, d.body); continue; }
         if (kind == BrowserTab::FetchKind::Font) {
             // only TrueType (0x00010000, "true") and OpenType ("OTTO") files: our rasterizer reads those (not WOFF)
             const std::string& b = d.body;
             const bool sfnt = b.size() > 12 && (b.compare(0, 4, std::string("\0\1\0\0", 4)) == 0 || b.compare(0, 4, "true") == 0 || b.compare(0, 4, "OTTO") == 0);
-            if (d.ok && sfnt && m_fontLoader) if (const FontFace* f = m_tab.FontFor(d.url)) m_fontLoader(*f, std::vector<std::uint8_t>(b.begin(), b.end()));
+            if (d.ok && sfnt && m_fontLoader) if (const FontFace* f = m_tab.FontFor(at)) m_fontLoader(*f, std::vector<std::uint8_t>(b.begin(), b.end()));
+            if (d.ok && !sfnt && note.empty()) note = "font not TrueType or OpenType";
+            report("font");
             continue;
         }
         int w = 0, h = 0;
@@ -321,15 +400,18 @@ void TabHost::Pump() {
             if (okay::DecodeImage((const std::uint8_t*)d.body.data(), d.body.size(), img) && img.width > 0 && img.height > 0 &&
                 img.width <= 8192 && img.height <= 8192) {
                 if (void* t = m_textures.make(img.rgba.data(), img.width, img.height)) {
-                    auto old = m_images.find(d.url);
+                    auto old = m_images.find(at);
                     if (old != m_images.end() && old->second && m_textures.destroy) m_textures.destroy(old->second);
-                    m_images[d.url] = t;
+                    m_images[at] = t;
                     w = img.width; h = img.height;
                 }
             }
         }
-        m_tab.DeliverImage(d.url, w, h);
+        if (d.ok && w == 0 && note.empty()) note = "image not decoded";
+        report("image");
+        m_tab.DeliverImage(at, w, h);
     }
+    Send(std::move(next));
     RefreshPageInfo();
 
     // games: start the player once the pack is unpacked; follow it while it runs
@@ -367,6 +449,56 @@ void TabHost::Pump() {
             m_impl->runningUrl.clear();
         }
     }
+}
+
+void TabHost::Send(std::vector<TabFetch> jobs) {
+    if (jobs.empty()) return;
+    TabHostShared& s = *m_impl->sh;
+    s.Lock();
+    for (TabFetch& j : jobs) s.jobs.push_back(std::move(j));
+    int start = 0;
+    while (s.fetchWorkers + start < kMaxFetchWorkers && s.fetchWorkers + start < (int)s.jobs.size()) ++start;
+    s.fetchWorkers += start;
+    s.Unlock();
+    for (int i = 0; i < start; ++i) {
+        if (okay::thr::Thread* t = okay::thr::CreateThread(FetchWorker, "okay-browser", new FetchArgs{m_impl->sh, m_userAgent})) okay::thr::DetachThread(t);
+        else { s.Lock(); --s.fetchWorkers; s.Unlock(); }
+    }
+}
+
+bool TabHost::FollowRedirect(TabFetch& job, long status, const std::string& location, const std::vector<std::string>& setCookies,
+                             std::vector<TabFetch>& next) {
+    const std::string to = WithoutFragment(ResolveUrl(job.url, location));
+    const Url u = ParseUrl(to);
+    if (job.hops + 1 > kMaxRedirectHops || (u.scheme != "http" && u.scheme != "https") || HostOf(to).empty()) return false;
+    // a picture, style, script or fetch() of an https page is never fetched over plain http (mixed content)
+    if (job.kind != TabFetch::Page && ParseUrl(job.url).scheme == "https" && u.scheme == "http") return false;
+    const bool pageSite = SameOrigin(job.url, m_tab.Url()) && SameOrigin(to, m_tab.Url());
+    if (job.kind != TabFetch::Script) m_tab.ReceiveCookies(job.url, setCookies);
+    else if (!job.cross && pageSite) m_tab.ReceiveCookies(job.url, setCookies);   // like the tab does for the answer itself
+    if (job.kind == TabFetch::Page) {
+        m_tab.Redirected(job.url, to);   // the history entry takes the new address (refused when the tab may not show it)
+        if (m_tab.GetState() != BrowserTab::State::Loading || WithoutFragment(m_tab.Url()) != to) return false;
+    }
+    TabFetch n = std::move(job);
+    // RFC 9110 15.4: 303 (and 301 / 302 after a POST, as browsers do) becomes a GET without a body
+    if (status == 303 || ((status == 301 || status == 302) && n.method == "POST")) {
+        if (n.method != "HEAD") n.method = "GET";
+        n.body.clear();
+        n.headers.erase(std::remove_if(n.headers.begin(), n.headers.end(), [](const std::string& h) {
+            return okay::str::LowerAscii(h.substr(0, 8)) == "content-";
+        }), n.headers.end());
+    }
+    n.headers.erase(std::remove_if(n.headers.begin(), n.headers.end(), [](const std::string& h) {
+        return okay::str::LowerAscii(h.substr(0, 7)) == "cookie:";
+    }), n.headers.end());
+    // the next address's own cookies; a page's fetch() only carries cookies to its own site
+    const std::string cookie = n.kind == TabFetch::Script && (n.cross || !SameOrigin(to, m_tab.Url())) ? std::string() : m_tab.CookieHeader(to);
+    if (!cookie.empty()) n.headers.push_back("Cookie: " + cookie);
+    n.url = to;
+    ++n.hops;
+    next.push_back(std::move(n));
+    return true;
 }
 
 TabHost::GameStatus TabHost::Game(const std::string& packUrl) const {

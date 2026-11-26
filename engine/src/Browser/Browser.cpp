@@ -6,6 +6,7 @@
 #include "okay/Core/StringUtil.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <ctime>
 
@@ -19,6 +20,24 @@ bool IsHttp(const std::string& url) {
 }
 
 } // namespace
+
+bool IsBrowserShortcut(const KeyInfo& k) {
+    // the program's own keys (shared/BrowserApp.cpp): with Ctrl (or Cmd), with Alt, and the function keys it uses
+    std::string key = k.key;
+    if (key.size() == 1) key[0] = (char)std::tolower((unsigned char)key[0]);
+    if (key == "F3" || key == "F5" || key == "F6" || key == "F12") return true;
+    const bool ctrl = k.ctrl || k.meta;
+    if (ctrl && !k.alt) {
+        static const char* const kCtrl[] = {"t", "w", "n", "l", "q", "h", "j", "d", "r", "f", "g", "o", "b", "Tab", "PageUp", "PageDown",
+                                            "F4", "=", "+", "-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"};
+        for (const char* c : kCtrl) if (key == c) return true;
+    }
+    if (k.alt && !ctrl) {
+        static const char* const kAlt[] = {"ArrowLeft", "ArrowRight", "Home", "d"};
+        for (const char* c : kAlt) if (key == c) return true;
+    }
+    return false;
+}
 
 std::string PlainTextPage(const std::string& text) {
     std::string out = "<!DOCTYPE html><html><body><pre style=\"white-space: pre-wrap\">";
@@ -87,7 +106,7 @@ bool BrowserTab::Open(const std::string& url) {
         return false;
     }
     m_origin = OriginOf(url);
-    m_history.push_back(Entry{url, 0.0f, false, std::string(), 0, std::string()});
+    m_history.push_back(Entry{url, 0.0f, false, std::string(), 0, std::string(), std::string()});
     StartLoad();
     return true;
 }
@@ -106,7 +125,7 @@ void BrowserTab::PushEntry(Entry e) {
 void BrowserTab::Navigate(const std::string& url) {
     if (m_history.empty()) { Open(url); return; }
     m_initiator.clear();
-    PushEntry(Entry{url, 0.0f, false, std::string(), 0, std::string()});
+    PushEntry(Entry{url, 0.0f, false, std::string(), 0, std::string(), std::string()});
     StartLoad();
 }
 
@@ -115,7 +134,7 @@ bool BrowserTab::SameDocument(std::size_t index) const {
            m_history[index].doc != 0 && m_history[index].doc == m_history[m_shownIndex].doc;
 }
 
-void BrowserTab::GoTo(std::size_t index) {
+void BrowserTab::Traverse(std::size_t index) {
     m_index = index;
     m_initiator.clear();
     if (!SameDocument(index)) { StartLoad(); return; }
@@ -137,13 +156,26 @@ void BrowserTab::GoTo(std::size_t index) {
 
 bool BrowserTab::GoBack() {
     if (!CanGoBack()) return false;
-    GoTo(m_index - 1);
+    Traverse(m_index - 1);
     return true;
+}
+
+bool BrowserTab::GoTo(std::size_t index) {
+    if (index >= m_history.size() || index == m_index) return false;
+    Traverse(index);
+    return true;
+}
+
+std::vector<BrowserTab::HistoryItem> BrowserTab::HistoryEntries() const {
+    std::vector<HistoryItem> out;
+    out.reserve(m_history.size());
+    for (const Entry& e : m_history) out.push_back(HistoryItem{e.url, e.title});
+    return out;
 }
 
 bool BrowserTab::GoForward() {
     if (!CanGoForward()) return false;
-    GoTo(m_index + 1);
+    Traverse(m_index + 1);
     return true;
 }
 
@@ -172,7 +204,7 @@ void BrowserTab::Submit(const std::string& url, const std::string& method, const
     const bool post = method == "POST" || method == "post";
     if (m_history.empty()) { Open(url); if (post && !m_history.empty()) { m_history.back().post = true; m_history.back().body = body; } return; }
     m_initiator.clear();
-    PushEntry(Entry{url, 0.0f, post, post ? body : std::string(), 0, std::string()});
+    PushEntry(Entry{url, 0.0f, post, post ? body : std::string(), 0, std::string(), std::string()});
     if (post) {   // a POST answer is never taken from the cache
         const std::string page = WithoutFragment(url);
         m_cache.erase(page);
@@ -303,6 +335,7 @@ void BrowserTab::ShowPage(const std::string& url, const std::string& body) {
         }
     }
     m_title = m_doc.title;
+    m_history[m_index].title = m_title;
     m_forms.Reset(m_doc);
     m_focus = nullptr;
     m_hover = nullptr;
@@ -699,7 +732,10 @@ void BrowserTab::StartScripts(const std::string& baseUrl) {
     if (scripts.empty() && !handlers) return;
     PageScripts::Hooks hooks;
     hooks.changed = [this]() { m_layoutDirty = true; };
-    hooks.title = [this](const std::string& t) { m_title = t; };
+    hooks.title = [this](const std::string& t) {
+        m_title = t;
+        if (m_shownValid && m_shownIndex < m_history.size()) m_history[m_shownIndex].title = t;
+    };
     hooks.navigate = [this](const std::string& where) { m_scriptNav = where; };
     // fetch() / XMLHttpRequest: the same rules as a <script src>; another origin (the browser program only) gets no cookies
     // and must allow the page to read its answer (CORS), and only "simple" requests are sent there (no preflight yet)
@@ -727,6 +763,10 @@ void BrowserTab::StartScripts(const std::string& baseUrl) {
             const std::string c = m_cookies->Header(req.url, Now(0), ctx);
             if (!c.empty()) req.headers.emplace_back("Cookie", c);
         }
+        // the id is the tab's own (the page's would start again at 1 on the next page, and an old page's late answer
+        // would then reach the new page's request); the page keeps the id it is given here
+        if (++m_nextRequestId > 2000000000) m_nextRequestId = 1;
+        req.id = m_nextRequestId;
         m_openRequests[req.id] = OpenRequest{req.url, cross};
         m_scriptFetches.push_back(req);
         return true;
@@ -752,7 +792,7 @@ void BrowserTab::StartScripts(const std::string& baseUrl) {
             m_history[m_index].url = url;
             m_history[m_index].state = state;
         } else {
-            Entry e{url, 0.0f, false, std::string(), m_history[m_shownIndex].doc, state};
+            Entry e{url, 0.0f, false, std::string(), m_history[m_shownIndex].doc, state, m_title};
             PushEntry(std::move(e));
             m_shownIndex = m_index;
         }
@@ -889,7 +929,7 @@ void BrowserTab::Tick(double ms) {
     if (m_traverse != 0) {   // history.back / forward / go from a script: after it ran, like a person's Back
         const long target = (long)m_index + m_traverse;
         m_traverse = 0;
-        if (target >= 0 && target < (long)m_history.size() && (std::size_t)target != m_index && m_state == State::Ready) GoTo((std::size_t)target);
+        if (target >= 0 && target < (long)m_history.size() && (std::size_t)target != m_index && m_state == State::Ready) Traverse((std::size_t)target);
     }
     if (!m_scriptNav.empty()) {
         const std::string where = m_scriptNav;

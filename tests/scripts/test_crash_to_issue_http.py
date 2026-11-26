@@ -28,7 +28,7 @@ import crash_to_issue as c  # noqa: E402
 os.environ["no_proxy"] = "127.0.0.1,localhost"   # the sandbox's proxy must not see these calls
 os.environ["NO_PROXY"] = "127.0.0.1,localhost"
 
-SERVICE_KEY = "sb_secret_localtestkey0123456789"  # lint-allow: secret (made up; a non-JWT key goes in apikey only)
+SERVICE_KEY = "sb_secret_TESTONLY00000000000000"  # lint-allow: secret (made up; a non-JWT key goes in apikey only)
 GH_TOKEN = "ghs_localtesttoken_not_real_0123456789"  # lint-allow: secret (made up)
 SIG_A, SIG_B, SIG_C = "0123456789abcdef", "fedcba9876543210", "aaaaaaaaaaaaaaaa"
 

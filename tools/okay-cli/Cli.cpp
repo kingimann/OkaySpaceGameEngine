@@ -34,6 +34,7 @@
 #include "Git.hpp"
 #include "Process.hpp"
 #include "ProjectState.hpp"     // editor/: ProjectSettings and the text of project.okayproj
+#include "ProjectList.hpp"      // shared/: SceneIn, the scene a project starts with
 #include "ProjectCreate.hpp"    // shared/: name and place checks, the folders of a new project, templates
 #include "ProjectVersion.hpp"   // shared/: the engine_version stamp and what a version difference means
 #include "okay/Core/CommandLine.hpp"
@@ -310,18 +311,10 @@ std::string MainScene(const std::string& root) {
         if (!p.is_absolute()) p = fs::path(root) / p;
         if (fs::is_regular_file(p, ec)) return p.lexically_normal().string();
     }
-    std::vector<std::string> found;
-    const fs::path assets = fs::path(root) / "Assets";
-    if (!fs::is_directory(assets, ec)) return "";
-    for (fs::recursive_directory_iterator it(assets, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec))
-        if (it->is_regular_file(ec) && it->path().extension() == ".okayscene") found.push_back(it->path().string());
-    if (found.empty()) return "";
-    std::sort(found.begin(), found.end(), [](const std::string& a, const std::string& b) {
-        const auto da = std::count(a.begin(), a.end(), '/') + std::count(a.begin(), a.end(), '\\');
-        const auto db = std::count(b.begin(), b.end(), '/') + std::count(b.begin(), b.end(), '\\');
-        return da != db ? da < db : a < b;   // a scene at the top of Assets first, then by name
-    });
-    return found.front();
+    // else the scene named after the project (Assets/Scenes/<Name>, Assets/<Name>), else the shallowest scene in Assets:
+    // the launcher's rule (shared/ProjectList.hpp)
+    const std::string scene = okayproj::SceneIn(fs::path(root));
+    return !scene.empty() && fs::is_regular_file(scene, ec) ? scene : std::string();
 }
 
 bool CreateEmptyProject(const std::string& root, const std::string& name, const std::string& version, std::string& error) {

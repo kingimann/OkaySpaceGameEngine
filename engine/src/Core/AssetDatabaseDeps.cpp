@@ -674,9 +674,10 @@ int AssetDatabase::FixStaleReferences(std::vector<std::string>* changedFiles) {
             reps.push_back(RewriteRef(r, std::move(nt)));
         }
         if (reps.empty()) continue;
+        const int count = static_cast<int>(reps.size());
         text = ApplyRefRewrites(std::move(text), std::move(reps));
         if (!savefmt::AtomicWrite(abs, text)) continue;
-        total += static_cast<int>(reps.size());
+        total += count;
         if (changedFiles) changedFiles->push_back(s.rec.path);
         RefreshFile(s.rec.path);
     }

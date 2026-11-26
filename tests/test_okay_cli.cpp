@@ -1030,9 +1030,9 @@ void TestSceneCommands(const fs::path& tmp) {
     CHECK(Cli({"--project", P, "scene", "new", "Level2"}, s) == 0 && fs::exists(proj / "Assets" / "Scenes" / "Level2.okayscene"));
     CHECK(Cli({"--project", P, "scene", "new", "Level2"}, s) == 1);
     CHECK(Cli({"--project", P, "scene", "new", "a/b"}, s) == 2);
-    CHECK(Cli({"--project", P, "scene", "list"}, s) == 0 && Has(s.out, "Assets/SceneGame.okayscene   (the start scene)") &&
+    CHECK(Cli({"--project", P, "scene", "list"}, s) == 0 && Has(s.out, "Assets/Scenes/SceneGame.okayscene   (the start scene)") &&
           Has(s.out, "Assets/Scenes/Level2.okayscene") && Has(s.out, "2 scenes"));
-    CHECK(Cli({"--project", P, "scene", "list", "--json"}, s) == 0 && Has(s.out, "{\"path\":\"Assets/SceneGame.okayscene\",\"start\":true}") &&
+    CHECK(Cli({"--project", P, "scene", "list", "--json"}, s) == 0 && Has(s.out, "{\"path\":\"Assets/Scenes/SceneGame.okayscene\",\"start\":true}") &&
           Has(s.out, "\"count\":2"));
     // A scene with a script that points at a file that is not there, and one at a file that is.
     {

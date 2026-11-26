@@ -115,6 +115,7 @@ Already in the person's settings folder (`%APPDATA%/OkaySpace/config/editor`): `
 | `module_sizes.txt` | release packaging | next to the player | engine module sizes for the build report (read by `editor/BuildGame.cpp:591`); not written by the editor | per release |
 | `sync_state.txt`, `current.txt`, `apply.txt` | engine, launcher | per-person data folders | save sync and content-update state | on change |
 | `okay_bans.txt` | dedicated server | server folder | banned players | on change |
+| `game.log`, `anticheat.log` (player) | a built game | the game's per-person save folder | the game's own log (only when Build Settings turn it on) | per run |
 
 ## 3. What changed (branch claude/project-layout-1)
 

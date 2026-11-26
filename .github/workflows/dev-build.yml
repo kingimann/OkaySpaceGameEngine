@@ -59,6 +59,8 @@ jobs:
       base: ${{ steps.number.outputs.base }}
       branch: ${{ steps.who.outputs.branch }}
       sha: ${{ steps.who.outputs.sha }}
+      main_count: ${{ steps.who.outputs.main_count }}
+      main_sha: ${{ steps.who.outputs.main_sha }}
     env:
       SDL2_VERSION: 2.30.9
       # Compiler cache kept between builds (restored here, saved by release.yml only).
@@ -119,6 +121,18 @@ jobs:
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "Building $BRANCH at $SHA"
+          # Its place on main (owner, 2026-11-26): the main commit it was built from or on top of, and git rev-list --count of it. Built into
+          # the launcher (OKAY_MAIN_COUNT) and written into dev/versions.json (mainCount, mainSha). Not found = empty = "not known".
+          pos="$(bash scripts/main_position.sh HEAD || true)"
+          count="${pos%% *}"; msha="${pos#* }"
+          if [[ "$count" =~ ^[1-9][0-9]*$ && "$msha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "main_count=$count" >> "$GITHUB_OUTPUT"
+            echo "main_sha=$msha" >> "$GITHUB_OUTPUT"
+            echo "OKAY_MAIN_COUNT=$count" >> "$GITHUB_ENV"
+            echo "Built on main commit $count ($msha)."
+          else
+            echo "::warning title=Place on main not known::scripts/main_position.sh found nothing; this test build is published without mainCount."
+          fi
 
       - name: Number this test build
         id: number
@@ -285,6 +299,8 @@ jobs:
     env:
       DEV_BRANCH: ${{ needs.windows-exe.outputs.branch }}
       DEV_SHA: ${{ needs.windows-exe.outputs.sha }}
+      DEV_MAIN_COUNT: ${{ needs.windows-exe.outputs.main_count }}
+      DEV_MAIN_SHA: ${{ needs.windows-exe.outputs.main_sha }}
       DEV_NOTE: ${{ inputs.note }}
       DIST_DIR: dev-dist
     steps:

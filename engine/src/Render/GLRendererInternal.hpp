@@ -162,6 +162,13 @@ typedef void   (*PFNReadBuffer)(GLenum);
 typedef void   (*PFNGetActiveUniform)(GLuint, GLuint, GLsizei, GLsizei*, GLint*, GLenum*, char*);
 typedef void   (*PFNGetUniformfv)(GLuint, GLint, GLfloat*);
 typedef void   (*PFNGetUniformiv)(GLuint, GLint, GLint*);
+// The RHI's OpenGL backend (engine/src/Render/RHI/GLDevice.cpp) shares this table; these it needs as well.
+typedef void   (*PFNColorMask)(GLboolean, GLboolean, GLboolean, GLboolean);
+typedef void   (*PFNCullFace)(GLenum);
+typedef void   (*PFNDrawElements)(GLenum, GLsizei, GLenum, const void*);
+typedef void   (*PFNBlendFuncSeparate)(GLenum, GLenum, GLenum, GLenum);
+typedef void   (*PFNBufferSubData)(GLenum, GLsizeiptrOK, GLsizeiptrOK, const void*);
+typedef void   (*PFNClearDepth)(GLdouble);
 
 struct GL {
     PFNCreateShader CreateShader; PFNShaderSource ShaderSource; PFNCompileShader CompileShader;
@@ -194,6 +201,9 @@ struct GL {
     PFNGetActiveUniform GetActiveUniform = nullptr; PFNGetUniformfv GetUniformfv = nullptr; PFNGetUniformiv GetUniformiv = nullptr;
     // optional: block-compressed textures (.dds) and the extension list that says which formats the GPU takes
     PFNCompressedTexImage2D CompressedTexImage2D = nullptr; PFNGetString GetString = nullptr; PFNGetStringi GetStringi = nullptr;
+    // optional: the RHI OpenGL backend (it refuses to start without ColorMask, CullFace and DrawElements)
+    PFNColorMask ColorMask = nullptr; PFNCullFace CullFace = nullptr; PFNDrawElements DrawElements = nullptr;
+    PFNBlendFuncSeparate BlendFuncSeparate = nullptr; PFNBufferSubData BufferSubData = nullptr; PFNClearDepth ClearDepth = nullptr;
     bool ok = false;
 };
 extern GL g;   // resolved entry points (defined in GLRendererShaders.cpp)
@@ -208,10 +218,8 @@ extern const char* kVert;
 extern const char* kFrag;
 extern const char* kDepthVert;
 extern const char* kDepthFrag;
-extern const char* kQuadVert;
-extern const char* kBrightFrag;
-extern const char* kBlurFrag;
-extern const char* kAddFrag;
+extern const char* kQuadVert;   // = rhi::kFullscreenVertGlsl
+extern const char* kBlurFrag;   // = rhi::kGaussianBlurGlsl
 extern const char* kSsaoDepthVert;
 extern const char* kSsaoDepthFrag;
 extern const char* kSsaoFrag;

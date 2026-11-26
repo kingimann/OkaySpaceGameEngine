@@ -647,49 +647,56 @@ inline string to_string(int v) { return to_string((long long)v); }
 inline string to_string(unsigned v) { return to_string((unsigned long long)v); }
 
 // stoi, stol, stoll, stoul, stoull, stof and stod ([string.conversions] 1-6), on strtol and its siblings: idx gets the
-// number of characters read. Differences: no exceptions (text that is not a number gives 0, where the standard throws
-// invalid_argument or out_of_range). Function templates (S is the string type), so they are made only in a file that
-// calls them, with one overload per number of arguments (okay-ms does not read default arguments of function
-// templates). Round 29.
-template <typename S> long long __okay_sto_ll(const S& s, size_t* idx, int base) {
+// number of characters read. Text that is not a number throws invalid_argument, and stoi and stol (long is 32 bits on
+// Windows) throw out_of_range for a value outside int (Round 31), in a file that uses exceptions; in a file that does
+// not (no try or throw in it) the result is 0 as before (__okay_throw_if_eh). Not checked: a value outside long long
+// (strtoll's ERANGE). Function templates (S is the string type), so they are made only in a file that calls them, with
+// one overload per number of arguments. Round 29.
+template <typename S> long long __okay_sto_ll(const S& s, size_t* idx, int base, const char* who, bool to_int) {
     const char* b = s.c_str();
     char* e = 0;
     const long long v = strtoll(b, &e, base);
+    if (e == b) { __okay_throw_if_eh(invalid_argument(who)); }
+    if (to_int && (v < -2147483647LL - 1 || v > 2147483647LL)) { __okay_throw_if_eh(out_of_range(who)); }
     if (idx) *idx = (size_t)(e - b);
     return v;
 }
-template <typename S> unsigned long long __okay_sto_ull(const S& s, size_t* idx, int base) {
+template <typename S> unsigned long long __okay_sto_ull(const S& s, size_t* idx, int base, const char* who) {
     const char* b = s.c_str();
     char* e = 0;
     const unsigned long long v = strtoull(b, &e, base);
+    if (e == b) { __okay_throw_if_eh(invalid_argument(who)); }
     if (idx) *idx = (size_t)(e - b);
     return v;
 }
-template <typename S> double __okay_sto_d(const S& s, size_t* idx) {
+template <typename S> double __okay_sto_d(const S& s, size_t* idx, const char* who) {
     const char* b = s.c_str();
     char* e = 0;
     const double v = strtod(b, &e);
+    if (e == b) { __okay_throw_if_eh(invalid_argument(who)); }
     if (idx) *idx = (size_t)(e - b);
     return v;
 }
-template <typename S> int stoi(const S& s) { return (int)__okay_sto_ll(s, (size_t*)0, 10); }
-template <typename S> int stoi(const S& s, size_t* idx) { return (int)__okay_sto_ll(s, idx, 10); }
-template <typename S> int stoi(const S& s, size_t* idx, int base) { return (int)__okay_sto_ll(s, idx, base); }
-template <typename S> long stol(const S& s) { return (long)__okay_sto_ll(s, (size_t*)0, 10); }
-template <typename S> long stol(const S& s, size_t* idx) { return (long)__okay_sto_ll(s, idx, 10); }
-template <typename S> long stol(const S& s, size_t* idx, int base) { return (long)__okay_sto_ll(s, idx, base); }
-template <typename S> long long stoll(const S& s) { return __okay_sto_ll(s, (size_t*)0, 10); }
-template <typename S> long long stoll(const S& s, size_t* idx) { return __okay_sto_ll(s, idx, 10); }
-template <typename S> long long stoll(const S& s, size_t* idx, int base) { return __okay_sto_ll(s, idx, base); }
-template <typename S> unsigned long stoul(const S& s) { return (unsigned long)__okay_sto_ull(s, (size_t*)0, 10); }
-template <typename S> unsigned long stoul(const S& s, size_t* idx) { return (unsigned long)__okay_sto_ull(s, idx, 10); }
-template <typename S> unsigned long stoul(const S& s, size_t* idx, int base) { return (unsigned long)__okay_sto_ull(s, idx, base); }
-template <typename S> unsigned long long stoull(const S& s) { return __okay_sto_ull(s, (size_t*)0, 10); }
-template <typename S> unsigned long long stoull(const S& s, size_t* idx) { return __okay_sto_ull(s, idx, 10); }
-template <typename S> unsigned long long stoull(const S& s, size_t* idx, int base) { return __okay_sto_ull(s, idx, base); }
-template <typename S> float stof(const S& s) { return (float)__okay_sto_d(s, (size_t*)0); }
-template <typename S> float stof(const S& s, size_t* idx) { return (float)__okay_sto_d(s, idx); }
-template <typename S> double stod(const S& s) { return __okay_sto_d(s, (size_t*)0); }
-template <typename S> double stod(const S& s, size_t* idx) { return __okay_sto_d(s, idx); }
+template <typename S> int stoi(const S& s) { return (int)__okay_sto_ll(s, (size_t*)0, 10, "stoi", true); }
+template <typename S> int stoi(const S& s, size_t* idx) { return (int)__okay_sto_ll(s, idx, 10, "stoi", true); }
+template <typename S> int stoi(const S& s, size_t* idx, int base) { return (int)__okay_sto_ll(s, idx, base, "stoi", true); }
+template <typename S> long stol(const S& s) { return (long)__okay_sto_ll(s, (size_t*)0, 10, "stol", true); }
+template <typename S> long stol(const S& s, size_t* idx) { return (long)__okay_sto_ll(s, idx, 10, "stol", true); }
+template <typename S> long stol(const S& s, size_t* idx, int base) { return (long)__okay_sto_ll(s, idx, base, "stol", true); }
+template <typename S> long long stoll(const S& s) { return __okay_sto_ll(s, (size_t*)0, 10, "stoll", false); }
+template <typename S> long long stoll(const S& s, size_t* idx) { return __okay_sto_ll(s, idx, 10, "stoll", false); }
+template <typename S> long long stoll(const S& s, size_t* idx, int base) { return __okay_sto_ll(s, idx, base, "stoll", false); }
+template <typename S> unsigned long stoul(const S& s) { return (unsigned long)__okay_sto_ull(s, (size_t*)0, 10, "stoul"); }
+template <typename S> unsigned long stoul(const S& s, size_t* idx) { return (unsigned long)__okay_sto_ull(s, idx, 10, "stoul"); }
+template <typename S> unsigned long stoul(const S& s, size_t* idx, int base) { return (unsigned long)__okay_sto_ull(s, idx, base, "stoul"); }
+template <typename S> unsigned long long stoull(const S& s) { return __okay_sto_ull(s, (size_t*)0, 10, "stoull"); }
+template <typename S> unsigned long long stoull(const S& s, size_t* idx) { return __okay_sto_ull(s, idx, 10, "stoull"); }
+template <typename S> unsigned long long stoull(const S& s, size_t* idx, int base) { return __okay_sto_ull(s, idx, base, "stoull"); }
+template <typename S> float stof(const S& s) { return (float)__okay_sto_d(s, (size_t*)0, "stof"); }
+template <typename S> float stof(const S& s, size_t* idx) { return (float)__okay_sto_d(s, idx, "stof"); }
+template <typename S> double stod(const S& s) { return __okay_sto_d(s, (size_t*)0, "stod"); }
+template <typename S> double stod(const S& s, size_t* idx) { return __okay_sto_d(s, idx, "stod"); }
 }
 #include <okay_ustring>
+// invalid_argument and out_of_range for the conversions above (named where an instance is made).
+#include <stdexcept>

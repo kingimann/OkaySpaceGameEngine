@@ -1,6 +1,7 @@
 // The launcher's Versions page. The rules are in VersionsManager.cpp and the download in VersionsNet.cpp; this file draws the
 // page and runs its two background jobs on SDL threads (the launcher does not use std::thread / std::mutex: see main.cpp).
 #include "VersionsUI.hpp"
+#include "UpdateView.hpp"   // okay::updateview::SkippedLine (the same words as What's New)
 
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
@@ -340,6 +341,14 @@ void DrawThisVersion(const Host& h) {
         if (h.repair && AccentButton(h, "Repair", ImVec2(okl::FitButtonW("Repair", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) h.repair();
         ImGui::Dummy(ImVec2(0, 4));
     }
+    // The update the person skipped ("Skip this version"): still there, with the way back.
+    if (!h.skippedUpdate.empty()) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(okay::updateview::SkippedLine(h.skippedUpdate).c_str());
+        ImGui::SameLine(0, 12);
+        if (h.installSkipped && AccentButton(h, "Install", ImVec2(okl::FitButtonW("Install", okl::UiPx(120.0f)), 0))) h.installSkipped(h.skippedUpdate);
+        ImGui::Dummy(ImVec2(0, 4));
+    }
     // How complete the version list is.
     if (st.indexJob && !st.haveIndex) ImGui::TextDisabled("Looking up the version list\xE2\x80\xA6");
     else if (st.haveIndex && !st.index.ok) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kRed), "%s", st.index.error.c_str());
@@ -604,7 +613,8 @@ void DrawAvailable(const Host& h) {
         ImGui::EndDisabled();
     } else {
         // Releases and, with "Get test builds" on, the test builds (marked "(test build)" by V()), newest first: VersionsManager's AvailableRows.
-        const std::vector<AvailableRow> rows = AvailableRows(st.index, st.testBuilds, h.currentVersion, st.installedVersions);
+        const std::vector<AvailableRow> rows = AvailableRows(st.index, st.testBuilds, h.currentVersion, st.installedVersions, h.runningMainCount,
+                                                             set.skippedVersion);
         if (rows.empty()) ImGui::TextDisabled("Every version in the list is installed or is the one you're running.");
         if (set.testBuilds && st.haveIndex && !st.indexJob && !st.testBuilds.ok && !st.testBuilds.error.empty()) {
             ImGui::PushTextWrapPos(0.0f);

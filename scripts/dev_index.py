@@ -22,9 +22,10 @@ checksum somebody has already seen cannot change (CLAUDE.md rule 12).
 Schema (version 1, the same envelope as the real list so the launcher's reader can parse it; it has no "latest", "lts" or "archive"):
   { "schema": 1, "dev": "2.876.0.17", "bucketPath": "v{version}/{file}",
     "versions": [ { "version": "2.876.0.17", "channel": "dev", "date": "2026-11-16", "inBucket": true,
-                    "branch": "claude/walk-vs-run", "sha": "<commit>", "note": "...",
+                    "branch": "claude/walk-vs-run", "sha": "<commit>", "note": "...", "mainCount": 1500, "mainSha": "<main commit>",
                     "files": { "OkayEngine.exe": { "size": 123, "sha256": "..." } } } ] }
-The files live at <bucket>/dev/v<version>/<file>. Versions that were pruned from the bucket stay in the list with inBucket false (their number
+"mainCount" / "mainSha" (optional, --main-count / --main-sha): the build's place on main (git rev-list --count of the main commit it was
+built from or on top of); missing = not known. The files live at <bucket>/dev/v<version>/<file>. Versions that were pruned from the bucket stay in the list with inBucket false (their number
 is never used again) and are never offered. Written from the plain description above; standard library only.
 """
 import argparse
@@ -218,6 +219,24 @@ def missing_checksums(files):
     return bad
 
 
+def position_fields(count, sha):
+    """The test build's place on main as entry fields ({"mainCount": N, "mainSha": "..."}): git rev-list --count of the main commit it was built
+    from (a branch build: the main commit it was built on top of) and that commit. The launcher compares it with a release's (scripts/versions_index.py
+    writes the same two fields for releases; launcher/UpdaterCore.hpp DecideOffer). None / "" = not given. Refused: a count that is not a whole
+    number above 0, a commit that is not a commit id."""
+    fields = {}
+    if count is not None:
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise Refused("the place on main %r is not a whole number above 0" % (count,))
+        fields["mainCount"] = count
+    if sha:
+        c = clean_sha(sha)
+        if c is None:
+            raise Refused("the main commit %r is not 7 to 40 hex digits" % (sha,))
+        fields["mainSha"] = c
+    return fields
+
+
 def _clean_entry(e):
     """An entry of an existing list, or None when it is unusable (anything that is not a well-formed test build)."""
     if not isinstance(e, dict) or parse_test_version(e.get("version")) is None:
@@ -232,9 +251,14 @@ def _clean_entry(e):
             if isinstance(size, int) and not isinstance(size, bool) and size >= 0 and isinstance(sha, str) and _SHA256_RE.match(sha):
                 files[name] = {"size": size, "sha256": sha}
     date = e.get("date") if isinstance(e.get("date"), str) and _DATE_RE.match(e.get("date")) else ""
-    return {"version": e["version"], "channel": "dev", "date": date, "inBucket": bool(e.get("inBucket", False)),
-            "branch": clean_branch(e.get("branch")) or "", "sha": clean_sha(e.get("sha")) or "",
-            "note": clean_line(e.get("note")), "files": files}
+    out = {"version": e["version"], "channel": "dev", "date": date, "inBucket": bool(e.get("inBucket", False)),
+           "branch": clean_branch(e.get("branch")) or "", "sha": clean_sha(e.get("sha")) or "",
+           "note": clean_line(e.get("note")), "files": files}
+    try:   # an old list's place on main: kept when usable, dropped (never refused) when not
+        out.update(position_fields(e.get("mainCount"), e.get("mainSha")))
+    except Refused:
+        pass
+    return out
 
 
 def _entries_of(existing):
@@ -274,7 +298,8 @@ def kept_versions(branch_of, candidates, keep, must=None):
     return set(chosen)
 
 
-def merge(existing, version, files, date, branch, sha, note, bucket_versions=None, keep=DEFAULT_KEEP, max_entries=DEFAULT_MAX_ENTRIES):
+def merge(existing, version, files, date, branch, sha, note, bucket_versions=None, keep=DEFAULT_KEEP, max_entries=DEFAULT_MAX_ENTRIES,
+          main_count=None, main_sha=None):
     """Return the new list (a dict). Raises Refused for input that must not be published and Exists when the version is already listed."""
     if parse_test_version(version) is None:
         raise Refused("%r is not a test version: it needs four numbers, the fourth at least 1 (for example 2.876.0.17). Real releases "
@@ -299,6 +324,7 @@ def merge(existing, version, files, date, branch, sha, note, bucket_versions=Non
     lacking = missing_checksums(files)
     if lacking:
         raise Refused("no checksum for %s: the updater refuses files without one, so this test build cannot be published" % ", ".join(lacking))
+    position = position_fields(main_count, main_sha)
 
     entries = _entries_of(existing)
     if version in entries:
@@ -306,6 +332,7 @@ def merge(existing, version, files, date, branch, sha, note, bucket_versions=Non
                      "Start a new test build instead" % version)
     entries[version] = {"version": version, "channel": "dev", "date": date, "inBucket": True, "branch": b, "sha": s,
                         "note": clean_line(note), "files": dict(sorted(files.items()))}
+    entries[version].update(position)
 
     if bucket_versions is not None:
         present = set(v for v in bucket_versions if parse_test_version(v) is not None)
@@ -402,7 +429,11 @@ def _cmd_merge(a):
         if err:
             raise Refused("the existing test build list is damaged and was left alone: " + err)
         bucket = a.bucket_versions.split() if a.bucket_versions is not None else None
-        out = merge(existing, a.version, files, a.date, a.branch, a.sha, a.note, bucket, a.keep, a.max_entries)
+        mc = getattr(a, "main_count", "") or ""
+        if mc not in ("", "0") and not re.match(r"^[0-9]{1,12}$", mc):
+            raise Refused("--main-count %r is not a number" % (mc,))
+        count = int(mc) if mc not in ("", "0") else None
+        out = merge(existing, a.version, files, a.date, a.branch, a.sha, a.note, bucket, a.keep, a.max_entries, count, getattr(a, "main_sha", "") or None)
     except Refused as e:
         return _die(2, str(e))
     except Exists as e:
@@ -510,6 +541,18 @@ def _self_test():
     idx4 = merge(idx3, "2.877.0.1", f1, "2026-11-17", "main", "abc1234", "")
     ok(idx4["versions"][0]["version"] == "2.877.0.1" and idx4["dev"] == "2.877.0.1", "a newer base sorts first")
 
+    # The build's place on main (mainCount = git rev-list --count of the main commit it was built from or on top of, mainSha = that commit):
+    # written when given, kept by later merges; a list without it stays valid (the launcher reads a missing count as "not known").
+    m40 = "d" * 40
+    mi = merge(idx4, "2.877.0.2", f1, "2026-11-17", "main", "abc1234", "", main_count=1500, main_sha=m40)
+    ok(mi["versions"][0]["mainCount"] == 1500 and mi["versions"][0]["mainSha"] == m40, "mainCount and mainSha written")
+    ok("mainCount" not in mi["versions"][1], "an old entry has no mainCount")
+    mj = merge(mi, "2.877.0.3", f1, "2026-11-17", "main", "abc1234", "")
+    ok(next(v for v in mj["versions"] if v["version"] == "2.877.0.2")["mainCount"] == 1500, "mainCount kept by the next merge")
+    ok("mainCount" not in mj["versions"][0], "no count given: none written")
+    for badc in (-1, 0, True, "12", 1.5):
+        raises(Refused, lambda b=badc: merge(idx4, "2.877.0.2", f1, "2026-11-17", "main", "abc1234", "", main_count=b), "bad mainCount %r" % (badc,))
+    raises(Refused, lambda: merge(idx4, "2.877.0.2", f1, "2026-11-17", "main", "abc1234", "", main_count=5, main_sha="nope"), "bad mainSha")
     raises(Exists, lambda: merge(idx, "2.876.0.17", f1, "2026-11-16", "main", "abc1234", ""), "an existing version")
     pruned = merge(idx2, "2.876.0.19", f1, "2026-11-16", "main", "abc1234", "", ["2.876.0.19", "2.876.0.18"])   # .17 was pruned
     raises(Exists, lambda: merge(pruned, "2.876.0.17", f1, "2026-11-16", "main", "abc1234", ""), "a pruned version is never reused")
@@ -612,6 +655,11 @@ def _self_test():
         ok(_cmd_merge(a4) == 2 and not os.path.exists(a4.out), "cli: a missing file (no checksum) is exit 2 and writes nothing")
         with open(os.path.join(d, "damaged.json"), "w", encoding="utf-8") as fh:
             fh.write("{ not json")
+        a6 = argparse.Namespace(**vars(a))
+        a6.version, a6.out, a6.main_count, a6.main_sha = "2.876.0.18", os.path.join(d, "pos.json"), "1500", "d" * 40
+        ok(_cmd_merge(a6) == 0 and _read_json(a6.out)[0]["versions"][0]["mainCount"] == 1500, "cli: --main-count is written")
+        a6.main_count, a6.out = "12x", os.path.join(d, "pos2.json")
+        ok(_cmd_merge(a6) == 2 and not os.path.exists(a6.out), "cli: a --main-count that is not a number is exit 2")
         a5 = argparse.Namespace(**vars(a))
         a5.existing = os.path.join(d, "damaged.json")
         a5.out = os.path.join(d, "fresh.json")
@@ -655,6 +703,8 @@ def main(argv):
     m.add_argument("--bucket-versions", default=None)
     m.add_argument("--keep", type=int, default=DEFAULT_KEEP)
     m.add_argument("--max-entries", type=int, default=DEFAULT_MAX_ENTRIES)
+    m.add_argument("--main-count", default="")   # the build's place on main (git rev-list --count); "" or 0 = not known
+    m.add_argument("--main-sha", default="")     # the main commit it was built from (or on top of)
     m.add_argument("--out", required=True)
     n = sub.add_parser("notes")
     n.add_argument("--version", required=True)

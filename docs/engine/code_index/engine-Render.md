@@ -2,7 +2,7 @@
 
 # Code index: engine-Render
 
-Back to the [code index](../code_index.md). 49 headers, 470 names.
+Back to the [code index](../code_index.md). 52 headers, 515 names.
 
 ## `engine/include/okay/Render/AmfReader.hpp`
 
@@ -140,7 +140,7 @@ Back to the [code index](../code_index.md). 49 headers, 470 names.
 
 ## `engine/include/okay/Render/GLRenderer.hpp`
 
-- `GLRenderer` class, line 42
+- `GLRenderer` class, line 44
 
 ## `engine/include/okay/Render/Gltf.hpp`
 
@@ -401,6 +401,60 @@ Back to the [code index](../code_index.md). 49 headers, 470 names.
 
 - `ProcTextureNames` function, line 88: Names of every built-in procedural texture (for editor pickers), "proc:"-less.
 - `GenerateProcTexture` function, line 98: Generate a built-in procedural texture by its "proc:<name>" id (or bare
+
+## `engine/include/okay/Render/RHI/BloomPass.hpp`
+
+- `BloomPass` class, line 24
+
+## `engine/include/okay/Render/RHI/RHI.hpp`
+
+- `Backend` enum, line 45
+- `BackendName` function, line 46
+- `Handle` struct, line 50: ---- Handles --------------------------------------------------------------------
+- `BufferTag` struct, line 56
+- `Format` enum, line 65: ---- Resource descriptions --------------------------------------------------------
+- `IsDepth` function, line 66
+- `BytesPerPixel` function, line 67
+- `BufferUsage` enum, line 69
+- `BufferDesc` struct, line 70
+- `TextureDesc` struct, line 78
+- `Filter` enum, line 87
+- `Wrap` enum, line 88
+- `SamplerDesc` struct, line 91: No mip levels yet, so minification and magnification read the same level; the Software
+- `UniformType` enum, line 97: ---- Shaders ----------------------------------------------------------------------
+- `UniformTypeSize` function, line 98
+- `UniformField` struct, line 102: One field of a shader's uniform block. Offsets follow the 16-byte rule of HLSL
+- `FragmentContext` struct, line 109: What a CPU (Software backend) fragment function sees.
+- `ShaderDesc` struct, line 130
+- `ValidateShaderDesc` function, line 147: Checks a description for mistakes every backend would make (layout overlaps,
+- `VertexFormat` enum, line 150: ---- Pipelines --------------------------------------------------------------------
+- `VertexAttribute` struct, line 151
+- `VertexLayout` struct, line 156
+- `BlendFactor` enum, line 161
+- `BlendState` struct, line 165
+- `CompareOp` enum, line 177
+- `DepthState` struct, line 178
+- `CullMode` enum, line 182
+- `Topology` enum, line 183
+- `PipelineDesc` struct, line 185
+- `ValidatePipelineDesc` function, line 196: Checks a pipeline's vertex layout (locations in range and not repeated, each attribute inside
+- `LoadOp` enum, line 199: ---- Render passes ------------------------------------------------------------------
+- `RenderPassDesc` struct, line 200
+- `ResourceState` enum, line 210: The state a texture is in, for the backends that need barriers between uses
+- `IndexType` enum, line 213: ---- Command lists ------------------------------------------------------------------
+- `CommandList` class, line 215
+- `Caps` struct, line 263: ---- Capabilities -------------------------------------------------------------------
+- `Stats` struct, line 276
+- `Device` class, line 282: ---- Device ------------------------------------------------------------------------
+- `CreateSoftwareDevice` function, line 347: A CPU device: rasterizes the command lists itself. Always available; the reference
+- `GLDeviceOptions` struct, line 349
+- `CreateOpenGLDevice` function, line 356: An OpenGL device on the CURRENT context. Needs GLRenderer::LoadGL() to have
+- `WrapGLTexture` function, line 359: OpenGL only: use an existing GL texture (made by other code) as an RHI texture. The
+- `AbandonGLDevice` function, line 362: OpenGL only: the context is gone (or not current) and the device is being thrown away;
+
+## `engine/include/okay/Render/RHI/SurfaceShader.hpp`
+
+- `ShaderFromSurface` function, line 31: Build the RHI shader description of an unlit surface. False (and 'error' set) when the
 
 ## `engine/include/okay/Render/RenderContributions.hpp`
 

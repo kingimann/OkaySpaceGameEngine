@@ -112,6 +112,11 @@ if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
     # scripts/dev_index.py maintains dev/versions.json, the list of test builds (the dev channel; docs/release/release_channels.md "Test builds").
     add_test(NAME dev_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/dev_index.py --self-test)
+    # scripts/main_position.sh: a build's place on main (mainCount in both lists, OKAY_MAIN_COUNT in the launcher), on a throw-away git repository.
+    find_program(OKAY_GIT_FOR_TESTS git)
+    if(OKAY_GIT_FOR_TESTS AND NOT WIN32)
+        add_test(NAME main_position COMMAND bash ${CMAKE_SOURCE_DIR}/scripts/main_position.sh --self-test)
+    endif()
     # The systems list (docs/SYSTEMS.md) made by scripts/gen_feature_map.py: temp folders only.
     add_test(NAME gen_feature_map_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_gen_feature_map.py)
     # The collaboration scripts (docs/process/collaboration.md): throw-away git repos only, no GitHub, no feature map.
@@ -791,6 +796,18 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     target_compile_definitions(test_okayshader_gl PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     add_test(NAME okayshader_gl COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_okayshader_gl>)
     set_tests_properties(okayshader_gl PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+endif()
+
+# The RHI (docs/rendering/rhi.md): its Software backend headless, and OpenGL against Software under Xvfb.
+add_executable(test_rhi test_rhi.cpp)
+target_link_libraries(test_rhi PRIVATE okay::engine)
+target_compile_definitions(test_rhi PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME rhi COMMAND test_rhi)
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_rhi_gl test_rhi_gl.cpp)
+    target_link_libraries(test_rhi_gl PRIVATE okay::engine okay::platform)
+    add_test(NAME rhi_gl COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_rhi_gl>)
+    set_tests_properties(rhi_gl PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 endif()
 
 add_executable(test_uishape test_uishape.cpp)
@@ -2088,7 +2105,7 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
     endif()
     target_link_libraries(test_okayui_panels_imgui PRIVATE okay_ui_render okay_ui_screens)
     target_include_directories(test_okayui_panels_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
-                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/launcher)
     add_test(NAME okayui_panels_imgui COMMAND test_okayui_panels_imgui)
     set_tests_properties(okayui_panels_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()
@@ -2098,6 +2115,15 @@ target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/edit
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
 target_compile_definitions(test_vs_editor_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
+
+# The Visual Script editor's IDE tools (model level): pin-aware search, watches and the lit path while stepping in a
+# GameFiber, collapse to function (same results before and after), layout, references across graph files, bookmarks,
+# checker fixes, graph diff, and the providers for the script IDE's shared layers.
+add_executable(test_vs_ide test_vs_ide.cpp)
+target_include_directories(test_vs_ide PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_ide PRIVATE okay::engine)
+target_compile_definitions(test_vs_ide PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_ide COMMAND test_vs_ide)
 
 # Our own Dear ImGui platform feed (shared/ImGuiPlatformFeed.hpp): key table, event translation, and a real ImGui context
 # fed through a fake host (no window, no SDL). Links the editor's okay_imgui when it is in the build, else compiles the
@@ -5628,3 +5654,13 @@ target_include_directories(test_launcher_friends PRIVATE ${CMAKE_SOURCE_DIR}/lau
 target_compile_definitions(test_launcher_friends PRIVATE OKAY_LAUNCHER_MAIN="${CMAKE_SOURCE_DIR}/launcher/main.cpp")
 add_test(NAME launcher_friends COMMAND test_launcher_friends)
 set_tests_properties(launcher_friends PROPERTIES TIMEOUT 60)
+
+# Browser (page engine, engine/include/okay/Browser/): the HTML reader's trees, the CSS cascade, layout positions and line
+# breaks, addresses and a tab's navigation, hostile input, and step 2's game packs and launch rules (browser_game). They link
+# only okay_browser (standard library only).
+foreach(_bt browser_html browser_css browser_layout browser_layout2 browser_url browser_hostile browser_game browser_profile browser_forms)
+    add_executable(test_${_bt} test_${_bt}.cpp)
+    target_include_directories(test_${_bt} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/launcher)   # launcher/BrowserPage.hpp: the link rule
+    target_link_libraries(test_${_bt} PRIVATE okay::browser)
+    add_test(NAME ${_bt} COMMAND test_${_bt})
+endforeach()

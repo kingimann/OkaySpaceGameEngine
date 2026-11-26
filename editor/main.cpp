@@ -53852,6 +53852,17 @@ int main(int argc, char** argv) {
                 ConsoleLog("Restored a previous version. Save if you want to keep it.");
             }
         }
+        // Compare one of them with the graph on screen, block by block (VsGraphDiff.hpp).
+        if (ImGui::BeginMenu("Compare with")) {
+            int cmp = 0;
+            for (const auto& b : list) {
+                if (cmp++ >= 5) break;
+                const std::string label = okay::BackupManager::FormatStamp(b.timestamp);
+                std::string text;
+                if (ImGui::MenuItem(label.c_str()) && EditorBackups().Read(b, text)) okay::editor::vsed::VsShowDiff(path, label, text);
+            }
+            ImGui::EndMenu();
+        }
     };
     okay::editor::vsed::VsHasComponent = [](GameObject* go, const char* id) -> bool {
         if (!go || !id) return false;

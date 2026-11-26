@@ -1,4 +1,4 @@
-// std::reverse_iterator for okay-cc (ISO/IEC 14882 [reverse.iterators]). Our own header, included by
+// std::reverse_iterator and std::move_iterator for okay-cc (ISO/IEC 14882 [reverse.iterators], [move.iterators]). Our own header, included by
 // the containers for rbegin and rend and by <iterator>. It holds the iterator one past the element
 // it names: *r is *(base - 1), ++r moves the base back.
 #pragma once
@@ -72,5 +72,64 @@ public:
 template <typename It>
 reverse_iterator<It> make_reverse_iterator(It it) {
     return reverse_iterator<It>(it);
+}
+
+// std::move_iterator ([move.iterators]): the same steps as It, but *it is an rvalue (T &&), so what
+// reads it moves the element out (v.insert(pos, make_move_iterator(a), make_move_iterator(b))).
+template <typename It>
+struct __move_ref {
+    typedef typename It::value_type &&type;
+};
+template <typename T>
+struct __move_ref<T *> {
+    typedef T &&type;
+};
+template <typename It>
+class move_iterator {
+public:
+    It __cur;
+    move_iterator() : __cur() {}
+    explicit move_iterator(It it) : __cur(it) {}
+    It base() const { return __cur; }
+    typename __move_ref<It>::type operator*() const { return static_cast<typename __move_ref<It>::type>(*__cur); }
+    move_iterator<It> &operator++() {
+        ++__cur;
+        return *this;
+    }
+    move_iterator<It> operator++(int) {
+        move_iterator<It> old = *this;
+        ++__cur;
+        return old;
+    }
+    move_iterator<It> &operator--() {
+        --__cur;
+        return *this;
+    }
+    long operator-(const move_iterator<It> &o) const { return __cur - o.__cur; }
+    bool operator==(const move_iterator<It> &o) const { return __cur == o.__cur; }
+    bool operator!=(const move_iterator<It> &o) const { return __cur != o.__cur; }
+};
+template <typename It>
+move_iterator<It> make_move_iterator(It it) {
+    return move_iterator<It>(it);
+}
+
+// std::begin and std::end ([iterator.range] p2-p3): c.begin() and c.end() of a container, and of
+// an array its first element and one past its last.
+template <typename C>
+auto begin(C &c) {
+    if constexpr (__okay_is_array(C)) {
+        return &c[0];
+    } else {
+        return c.begin();
+    }
+}
+template <typename C>
+auto end(C &c) {
+    if constexpr (__okay_is_array(C)) {
+        return &c[0] + sizeof(c) / sizeof(c[0]);
+    } else {
+        return c.end();
+    }
 }
 }  // namespace std

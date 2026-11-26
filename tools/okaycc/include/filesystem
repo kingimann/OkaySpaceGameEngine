@@ -949,4 +949,21 @@ inline unsigned long remove_all(const path &p) {
     return n;
 }
 }  // namespace filesystem
+
+// The file streams opened by a path ([ifstream.cons] p4, [ofstream.cons], [fstream.cons]).
+inline ifstream::ifstream(const filesystem::path &path, openmode m) {
+    __sb = &__buf;
+    open(path.c_str(), m);
+}
+inline void ifstream::open(const filesystem::path &path, openmode m) { open(path.c_str(), m); }
+inline ofstream::ofstream(const filesystem::path &path, openmode m) {
+    __sb = &__buf;
+    open(path.c_str(), m);
+}
+inline void ofstream::open(const filesystem::path &path, openmode m) { open(path.c_str(), m); }
+inline fstream::fstream(const filesystem::path &path, openmode m) {
+    __sb = &__buf;
+    open(path.c_str(), m);
+}
+inline void fstream::open(const filesystem::path &path, openmode m) { open(path.c_str(), m); }
 }  // namespace std

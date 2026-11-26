@@ -1,4 +1,5 @@
 #include "elf.hpp"
+#include "link.hpp"
 
 #include "ir.hpp"
 
@@ -1303,12 +1304,15 @@ std::vector<unsigned char> compileToElf(const std::string& source, Diagnostics& 
     }
     std::size_t entry = im.bytes.size();
     im.labels["_start"] = entry;
+    // main(argc, argv, envp), as linkObjects's start code passes them (link.hpp).
+    for (unsigned char b : kStartArgs) u8(im, b);
     // Global objects: __okay_init_* before main, __okay_fini_* after it.
     std::vector<std::string> finis;
     for (const auto& kv : im.labels) {
         if (kv.first.compare(0, 12, "__okay_init_") == 0) callRel(im, kv.first);
         if (kv.first.compare(0, 12, "__okay_fini_") == 0) finis.insert(finis.begin(), kv.first);
     }
+    for (unsigned char b : kMainArgs) u8(im, b);
     callRel(im, "main");
     u8(im, 0x50);  // push rax twice: keeps the stack aligned
     u8(im, 0x50);

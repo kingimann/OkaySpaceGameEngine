@@ -1,5 +1,5 @@
 // <cstdlib> for okay-cc (ISO/IEC 14882 [cstdlib.syn], ISO C 7.22). Our own header: the memory and
-// number functions of lib/alloc.c, lib/exit.c, lib/str.c and lib/extra.c (atoi, atol, the strtol
+// number functions of lib/alloc.c, lib/exit.c, lib/str.c and lib/extra.c (atoi, atol, atoll, the strtol
 // family, strtod, strtof, atof), getenv (lib/extra.c) and abs for the integer types.
 #pragma once
 extern "C" {
@@ -11,6 +11,7 @@ void exit(int code);
 void abort(void);
 int atoi(const char *s);
 long atol(const char *s);
+long long atoll(const char *s);
 long strtol(const char *s, char **end, int base);
 unsigned long strtoul(const char *s, char **end, int base);
 long long strtoll(const char *s, char **end, int base);
@@ -30,6 +31,7 @@ void exit(int code);
 void abort(void);
 int atoi(const char *s);
 long atol(const char *s);
+long long atoll(const char *s);
 long strtol(const char *s, char **end, int base);
 unsigned long strtoul(const char *s, char **end, int base);
 long long strtoll(const char *s, char **end, int base);

@@ -413,6 +413,7 @@ struct Frag {
     float w = 0, h = 0;            // measured / sized (Atomic: the margin box)
     float ascent = -1;             // Atomic: the baseline below the margin box's top (< 0: the bottom)
     int atomicMark = -1;           // Atomic: index into Layouter::atomicMarks (where its draw commands are)
+    const Node* src = nullptr;     // Word / Space: the text node it came from (DrawCmd::node, for the page's scripts)
 };
 
 struct BoxDraw { int bg = -1; int border[4] = {-1, -1, -1, -1}; int ring = -1; int grad = -1; };
@@ -697,7 +698,7 @@ struct Layouter {
 
     // ---- flattening inline content into fragments ----
     void Flatten(const SNode& n, int link, std::vector<Frag>& out, bool& lastSpace, bool& wordStart, bool dry) {
-        if (n.text) { FlattenText(n.node->data, n.st, link, out, lastSpace, wordStart); return; }
+        if (n.text) { FlattenText(n.node->data, n.st, link, out, lastSpace, wordStart, n.node); return; }
         if (!n.node) { for (const SNode& k : n.kids) Flatten(k, link, out, lastSpace, wordStart, dry); return; }
         const Node& el = *n.node;
         if (n.st.floating != Float::None || n.st.OutOfFlow()) {
@@ -736,7 +737,8 @@ struct Layouter {
         if (padR != 0.0f) { Frag f; f.kind = Frag::Pad; f.w = padR; f.st = &n.st; f.link = link; out.push_back(f); }
     }
 
-    void FlattenText(const std::string& sIn, const ComputedStyle& st, int link, std::vector<Frag>& out, bool& lastSpace, bool& wordStart) {
+    void FlattenText(const std::string& sIn, const ComputedStyle& st, int link, std::vector<Frag>& out, bool& lastSpace, bool& wordStart,
+                     const Node* src = nullptr) {
         const std::string s = Transform(sIn, st.textTransform, wordStart);
         const WhiteSpace ws = st.whiteSpace;
         const bool keepSpaces = ws == WhiteSpace::Pre || ws == WhiteSpace::PreWrap;
@@ -744,7 +746,7 @@ struct Layouter {
         const bool wraps = ws != WhiteSpace::Pre && ws != WhiteSpace::NoWrap;
         auto pushOne = [&](Frag::Kind k, std::string t, const ComputedStyle* fs) {
             Frag f;
-            f.kind = k; f.text = std::move(t); f.st = fs; f.link = link;
+            f.kind = k; f.text = std::move(t); f.st = fs; f.link = link; f.src = src;
             if (k == Frag::Word) f.breakBefore = wraps && (out.empty() || out.back().kind == Frag::Space);
             out.push_back(std::move(f));
         };
@@ -1299,6 +1301,7 @@ struct Layouter {
                 c.x = x; c.y = Finite(base - a); c.w = f.w; c.h = f.h;
                 c.text = f.text;
                 c.tag = f.sn->node->name;
+                c.node = f.sn->node;
                 c.link = f.link;
                 c.color = f.st->color;
                 c.color.a = 255;
@@ -1337,6 +1340,7 @@ struct Layouter {
             c.kind = DrawCmd::Text;
             c.x = x; c.y = Finite(base - f.st->baselineShift - f.st->fontSize * 0.8f); c.w = p.w; c.h = f.st->fontSize;
             c.text = f.text;
+            c.node = f.src;
             c.font = FontOf(*f.st);
             c.color = f.st->color;
             c.underline = f.st->underline; c.strike = f.st->strike;
@@ -1588,6 +1592,8 @@ struct Layouter {
         b.node = n.node;
         b.depth = depth;
         b.x = x; b.y = y; b.w = w;
+        b.fixed = curFixed || n.st.position == Position::Fixed;
+        for (int i = 0; i < 4; ++i) b.border[i] = n.st.border[i];
         b.firstCmd = r.cmds.size();
         r.boxes.push_back(b);
         draws.push_back(BoxDraw());

@@ -115,11 +115,12 @@ int main() {
     CHECK(br::MissingWebApi("x.js:1:1: TypeError: 'el.closest' is undefined, not a function") == "*.closest");
     CHECK(br::MissingWebApi("x.js:1:1: TypeError: 'app.start' is undefined, not a function").empty());
     {
-        const std::vector<std::string> c = ConsoleOf("new IntersectionObserver(function () {});");
-        CHECK(Has(c, "not implemented: IntersectionObserver"));
+        // (IntersectionObserver was the example until round 4 built it; customElements is still missing)
+        const std::vector<std::string> c = ConsoleOf("customElements.define('x-a', class {});");
+        CHECK(Has(c, "not implemented: customElements"));
         const std::vector<std::string> d = ConsoleOf("myOwnLib.start();");
         CHECK(!Has(d, "not implemented"));
-        if (!Has(c, "not implemented: IntersectionObserver")) for (const std::string& l : c) std::cerr << "  console: " << l << "\n";
+        if (!Has(c, "not implemented: customElements")) for (const std::string& l : c) std::cerr << "  console: " << l << "\n";
     }
 
     // ---- the CSS reporter (Css.hpp): a property the cascade does not use, a selector the reader drops; null = off

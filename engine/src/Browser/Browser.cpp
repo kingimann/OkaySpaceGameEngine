@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cmath>
 #include <ctime>
+#include <set>
 
 namespace okay::browser {
 
@@ -309,6 +310,8 @@ void BrowserTab::DeliverPage(const std::string& url, bool ok, int status, const 
 }
 
 void BrowserTab::ShowPage(const std::string& url, const std::string& body) {
+    m_boxIndex.clear();
+    m_boxIndexFor = m_layoutSerial;   // the last layout is the old page's: no element of the new page has a box until the next one
     const std::string ext = ExtensionOf(url);
     m_scripts.reset();   // the old page's scripts go before its tree
     m_scriptQueue.clear();
@@ -626,6 +629,7 @@ const LayoutResult& BrowserTab::Layout(float width, const TextMeasure& measure) 
         m_layout = LayoutPage(m_doc, width, measure, [this](const std::string& src, int& w, int& h) { return ImageSize(src, w, h); }, &ctx);
         m_layoutWidth = width;
         m_layoutDirty = false;
+        ++m_layoutSerial;
         RequestImagesOf(m_layout);
         if (m_scripts) {   // the new layout no longer points at nodes a script removed: free the ones no script holds
             if (m_focus && !m_scripts->Connected(m_focus)) m_focus = nullptr;
@@ -834,6 +838,21 @@ void BrowserTab::StartScripts(const std::string& baseUrl) {
         out = st;
         return true;
     };
+    // round 4: the view, element boxes and media queries (CSSOM View), navigator
+    hooks.userAgent = m_userAgent;
+    hooks.view = [this]() { return View(); };
+    hooks.box = [this](const Node& el, PageRect& out) { return BoxOf(el, out); };
+    hooks.matchMedia = [this](const std::string& query) {
+        MediaEnv env;
+        const PageView v = View();
+        env.width = v.width;
+        env.height = v.height;
+        return MediaMatches(ParseMediaQuery(query), env);
+    };
+    hooks.scrollTo = [this](float, float y) {   // the page scrolls only up and down (the view has no sideways scroll)
+        const float most = std::max(0.0f, m_layout.height - (m_viewH > 0 ? m_viewH : m_layoutWidth * 0.75f));
+        m_pendingScroll = std::max(0.0f, std::min(std::isfinite(y) ? y : 0.0f, most));
+    };
     m_scripts.reset(new PageScripts(m_doc, m_forms, Url(), std::move(hooks)));
     m_scripts->SetHistoryState(m_history[m_index].state);
     std::vector<const Node*> deferred;
@@ -924,8 +943,63 @@ void BrowserTab::DeliverScript(const std::string& url, bool ok, const std::strin
     if (any) RunReadyScripts();
 }
 
+PageView BrowserTab::View() {
+    PageView v;
+    if (m_layoutWidth > 0) v.width = m_layoutWidth;
+    v.height = m_viewH > 0 ? m_viewH : v.width * 0.75f;
+    v.scrollY = m_history.empty() ? 0.0f : ScrollY();
+    v.pageWidth = m_layout.width;
+    v.pageHeight = m_layout.height;
+    return v;
+}
+
+bool BrowserTab::BoxOf(const Node& el, PageRect& out) {
+    if (m_layoutSerial == 0) return false;
+    if (m_boxIndexFor != m_layoutSerial) {   // made once per layout: block boxes, then the runs and images of inline elements
+        m_boxIndexFor = m_layoutSerial;
+        m_boxIndex.clear();
+        auto unite = [this](const Node* n, float x, float y, float w, float h, bool fixed) {
+            auto ins = m_boxIndex.emplace(n, PageRect());
+            PageRect& r = ins.first->second;
+            if (ins.second) { r.x = x; r.y = y; r.w = w; r.h = h; r.fixed = fixed; return; }
+            const float x0 = std::min(r.x, x), y0 = std::min(r.y, y), x1 = std::max(r.x + r.w, x + w), y1 = std::max(r.y + r.h, y + h);
+            r.x = x0; r.y = y0; r.w = x1 - x0; r.h = y1 - y0;
+        };
+        std::set<const Node*> blocks;
+        for (const BoxInfo& b : m_layout.boxes) {
+            if (!b.node) continue;
+            const bool first = blocks.insert(b.node).second;
+            unite(b.node, b.x, b.y, b.w, b.h, b.fixed);
+            if (first) for (int i = 0; i < 4; ++i) m_boxIndex[b.node].border[i] = b.border[i];
+        }
+        for (const DrawCmd& c : m_layout.cmds) {
+            if (!c.node || (c.kind != DrawCmd::Text && c.kind != DrawCmd::Image && c.kind != DrawCmd::Embed)) continue;
+            int depth = 0;
+            for (const Node* n = c.node->kind == NodeKind::Element ? c.node : c.node->parent; n && n->kind == NodeKind::Element && depth < 64; n = n->parent, ++depth) {
+                if (blocks.count(n)) break;   // a block box's own box already holds it
+                unite(n, c.x, c.y, c.w, c.h, c.fixed);
+            }
+        }
+        for (const ControlBox& cb : m_layout.controls)
+            if (cb.node && !blocks.count(cb.node)) unite(cb.node, cb.x, cb.y, cb.w, cb.h, cb.fixed);
+    }
+    auto it = m_boxIndex.find(&el);
+    if (it == m_boxIndex.end()) return false;
+    out = it->second;
+    return true;
+}
+
 void BrowserTab::Tick(double ms) {
     if (m_scripts && m_state == State::Ready) { m_scripts->Tick(ms); AfterScripts(); }
+    if (m_scripts && m_state == State::Ready && m_layoutSerial > 0) {   // a new layout, or the view scrolled or changed size
+        const PageView v = View();
+        if (m_viewSentSerial != m_layoutSerial || !(v == m_viewSent)) {
+            m_viewSentSerial = m_layoutSerial;
+            m_viewSent = v;
+            m_scripts->ViewChanged();
+            AfterScripts();
+        }
+    }
     if (m_traverse != 0) {   // history.back / forward / go from a script: after it ran, like a person's Back
         const long target = (long)m_index + m_traverse;
         m_traverse = 0;

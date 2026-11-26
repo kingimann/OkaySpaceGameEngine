@@ -212,6 +212,7 @@ int GameWorker(void* p) {
 TabHost::TabHost(TextureFns textures, std::string userAgent)
     : m_textures(std::move(textures)), m_userAgent(std::move(userAgent)), m_impl(new Impl()) {
     m_impl->userAgent = m_userAgent;
+    m_tab.SetUserAgent(m_userAgent);
 }
 
 TabHost::~TabHost() {
@@ -228,6 +229,7 @@ void TabHost::Reset() {
     m_tab.SetAnyOrigin(any);
     m_tab.SetCookieStore(m_cookies);
     m_tab.SetLocalStorage(m_local);
+    m_tab.SetUserAgent(m_userAgent);   // navigator.userAgent says what the requests say
     m_webConfig = WebExportConfig();
     m_configFor = nullptr;
 }

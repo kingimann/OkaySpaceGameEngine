@@ -47,5 +47,27 @@ std::string HostOf(const std::string& url);
 std::string FormUrlEncode(const std::string& text);
 /// name=value pairs, each encoded with FormUrlEncode, joined with '&' (the standard's urlencoded serializer).
 std::string FormUrlEncodePairs(const std::vector<std::pair<std::string, std::string>>& pairs);
+/// The application/x-www-form-urlencoded byte decoding of the WHATWG URL standard (section 5.1, one name or value): '+' becomes a
+/// space and %XX the byte XX (a '%' not followed by two hex digits stays); the bytes are then read as UTF-8, with U+FFFD for any
+/// sequence that is not valid UTF-8.
+std::string FormUrlDecode(const std::string& text);
+
+/// An address split the way the WHATWG URL standard's URL object shows it (section 6.1: protocol "https:", hostname, port without
+/// the default, pathname, search "?..." and hash "#..." with the empty ones as "").
+struct WebUrl {
+    std::string protocol, username, password, hostname, port, pathname, search, hash;
+    bool special = false;        ///< http, https, ws, wss, ftp or file (the standard's "special schemes")
+    bool hasAuthority = false;   ///< "//host" (an opaque address like "mailto:a@b" has none)
+    std::string Href() const;    ///< the address put back together (the standard's URL serializer)
+    std::string Origin() const;  ///< "scheme://host[:port]" for http(s) / ws(s) / ftp, else "null"
+};
+/// The WHATWG URL standard's basic URL parser (section 4.4), reduced to what pages use, on top of the RFC 3986 split and resolution
+/// above: leading and trailing C0 controls and spaces and every tab and newline are removed, a special address's '\' is '/',
+/// a relative `input` is resolved against `base` (null: no base; then a relative input fails), a special address needs a host
+/// (file excepted), the host is lower-cased and may not hold a forbidden host code point, a port must be digits up to 65535 and
+/// the scheme's default port is dropped, an empty special path is "/", and spaces, controls, quotes, '<', '>', '`', '{', '}'
+/// and non-ASCII bytes are percent-encoded per part (the standard's path, query and fragment percent-encode sets). Not done:
+/// IDNA (a non-ASCII host is kept as written, lower-cased) and IPv4 number forms (kept as written). False when it is not a URL.
+bool ParseWebUrl(const std::string& input, const std::string* base, WebUrl& out);
 
 } // namespace okay::browser

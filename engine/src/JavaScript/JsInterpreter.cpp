@@ -14,6 +14,7 @@
 // try handlers) in its GenObj while it is suspended and copies it back to resume.
 // The collector runs only at safe points of this loop: backward jumps and calls.
 #include "JsInternal.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 

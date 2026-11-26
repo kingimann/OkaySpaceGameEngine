@@ -15,7 +15,10 @@
 //     if (const okay::json::Value* files = v.Get("files")) for (const auto& f : files->array) ...
 #include "okay/Core/Utf8.hpp"
 
+#include <cerrno>
 #include <charconv>
+#include <clocale>
+#include <cstdlib>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -143,8 +146,20 @@ struct Reader {
         }
         // The text is checked above, so from_chars (no locale, unlike strtod) reads exactly it; a number too large for a
         // double is refused rather than turned into infinity.
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
         const auto r = std::from_chars(t.data() + start, t.data() + i, out);
         if (r.ec != std::errc() || r.ptr != t.data() + i) return Fail("number out of range");
+#else
+        // No from_chars for double in this C++ library (Emscripten's): strtod on a copy, with '.' turned into the C
+        // library's decimal point, and ERANGE refused as above.
+        std::string s(t.data() + start, i - start);
+        const char* dp = std::localeconv()->decimal_point;
+        if (dp && dp[0] && dp[0] != '.') for (char& ch : s) if (ch == '.') ch = dp[0];
+        char* end = nullptr;
+        errno = 0;
+        out = std::strtod(s.c_str(), &end);
+        if (errno == ERANGE || end != s.c_str() + s.size()) return Fail("number out of range");
+#endif
         return true;
     }
     bool Val(Value& v) {

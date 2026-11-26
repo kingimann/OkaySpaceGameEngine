@@ -327,6 +327,25 @@ void Dates() {
 #endif
 }
 
+// 19.2.6 encodeURI / encodeURIComponent / decodeURI / decodeURIComponent (UTF-8) and B.2.1 escape / unescape
+void UriFunctions() {
+    Expect("console.log(encodeURIComponent('a b&c=d/é€😀'), encodeURI('http://x.y/a b?q=1&r=é#h'))",
+           "a%20b%26c%3Dd%2F%C3%A9%E2%82%AC%F0%9F%98%80 http://x.y/a%20b?q=1&r=%C3%A9#h");
+    Expect("console.log(encodeURIComponent(\"-_.!~*'()\"), encodeURIComponent(';/?:@&=+$,#'))", "-_.!~*'() %3B%2F%3F%3A%40%26%3D%2B%24%2C%23");
+    Expect("console.log(decodeURIComponent('a%20b%26%C3%A9%e2%82%ac%F0%9F%98%80'), decodeURI('%3B%2f%41%20%23'))", "a b&é€😀 %3B%2fA %23");
+    Expect("const s = 'x\\u00ff\\u0800\\uffff\\ud800\\udc00'; console.log(decodeURIComponent(encodeURIComponent(s)) === s)", "true");
+    ExpectError("encodeURIComponent('\\ud800')", "URIError");
+    ExpectError("encodeURIComponent('\\udc00x')", "URIError");
+    ExpectError("decodeURIComponent('%')", "URIError");
+    ExpectError("decodeURIComponent('%zz')", "URIError");
+    ExpectError("decodeURIComponent('%C0%80')", "URIError");   // overlong
+    ExpectError("decodeURIComponent('%ED%A0%80')", "URIError");   // a surrogate
+    ExpectError("decodeURIComponent('%F4%90%80%80')", "URIError");   // past U+10FFFF
+    ExpectError("decodeURIComponent('%E2%82')", "URIError");   // cut short
+    Expect("try { decodeURI('%'); } catch (e) { console.log(e instanceof URIError, e.name); }", "true URIError");
+    Expect("console.log(escape('a b+é\\u0100'), unescape('%u0100%E9%zz%'))", "a%20b+%E9%u0100 \xc4\x80" "é%zz%");
+}
+
 struct Hostile {
     const char* src;
     const char* want;   ///< part of the error, "" for any error, "OK" when it must finish without one
@@ -564,6 +583,7 @@ int main() {
     ForInHeads();
     ProtoLiteral();
     Dates();
+    UriFunctions();
     ConformanceScript(false);
     ConformanceScript(true);
     HostileOneLiners();

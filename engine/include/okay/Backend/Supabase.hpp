@@ -215,6 +215,21 @@ private:
 /// "/rest/v1/rpc/<name>" as a POST. How it is sent is up to the sender: AccountService passes its own Api (the signed-in
 /// token, the "online and signed in" check, and the re-read of a newer saved token after a 401) or ApiAnon (the publishable
 /// key only); a program with no account service passes the address, key, token and transport.
+/// How a provider part sends when it is given the address, key, token and transport directly (no account service): one request
+/// through MakeRequest's header order to `transport`, which must outlive it. `accessToken` "" sends the publishable key only.
+struct DirectSend {
+    std::string base, key, token;   // base: the project address without one trailing "/"
+    Transport* transport = nullptr;
+    DirectSend(std::string projectUrl, std::string apiKey, Transport& t, std::string accessToken)
+        : base(std::move(projectUrl)), key(std::move(apiKey)), token(std::move(accessToken)), transport(&t) {
+        if (!base.empty() && base.back() == '/') base.pop_back();
+    }
+    Response operator()(const std::string& method, const std::string& path, const std::string& body, const std::string& extra,
+                        const std::string& bodyFile = {}, const std::string& bodyType = {}, int timeoutSec = 0) const {
+        return transport->Send(MakeRequest(key, method, base + path, body, token, extra, bodyFile, bodyType, timeoutSec));
+    }
+};
+
 class Database final : public okay::backend::Database {
 public:
     /// (method, path from the project address such as "/rest/v1/cloud_saves?select=key", body, extra header lines)
@@ -223,11 +238,7 @@ public:
     explicit Database(Sender send) : send_(std::move(send)) {}
     /// Straight to `transport` with MakeRequest's header order. `accessToken` "" sends the publishable key only.
     Database(std::string projectUrl, std::string apiKey, Transport& transport, std::string accessToken = {}) {
-        if (!projectUrl.empty() && projectUrl.back() == '/') projectUrl.pop_back();
-        send_ = [base = std::move(projectUrl), key = std::move(apiKey), token = std::move(accessToken), &transport](
-                    const std::string& method, const std::string& path, const std::string& body, const std::string& extra) {
-            return transport.Send(MakeRequest(key, method, base + path, body, token, extra));
-        };
+        send_ = DirectSend(std::move(projectUrl), std::move(apiKey), transport, std::move(accessToken));
     }
 
     /// The path of a table request (pure, for tests).
@@ -262,16 +273,11 @@ public:
     }
     /// Straight to `transport` with MakeRequest's header order. `accessToken` "" sends the publishable key only.
     Storage(std::string projectUrl, std::string apiKey, Transport& transport, std::string accessToken = {}) {
-        if (!projectUrl.empty() && projectUrl.back() == '/') projectUrl.pop_back();
-        base_ = projectUrl;
-        send_ = [base = projectUrl, key = apiKey, token = accessToken, &transport](
-                    const std::string& method, const std::string& path, const std::string& body, const std::string& extra) {
-            return transport.Send(MakeRequest(key, method, base + path, body, token, extra));
-        };
-        upload_ = [base = std::move(projectUrl), key = std::move(apiKey), token = std::move(accessToken), &transport](
-                      const std::string& path, const std::string& file, const std::string& type, const std::string& extra) {
-            return transport.Send(MakeRequest(key, "POST", base + path, {}, token, extra, file,
-                                              type.empty() ? "application/octet-stream" : type));
+        const DirectSend d(std::move(projectUrl), std::move(apiKey), transport, std::move(accessToken));
+        base_ = d.base;
+        send_ = d;
+        upload_ = [d](const std::string& path, const std::string& file, const std::string& type, const std::string& extra) {
+            return d("POST", path, {}, extra, file, type.empty() ? "application/octet-stream" : type);
         };
     }
 
@@ -331,10 +337,9 @@ public:
     explicit Functions(Sender send) : send_(std::move(send)) {}
     /// Straight to `transport` with MakeRequest's header order.
     Functions(std::string projectUrl, std::string apiKey, Transport& transport, std::string accessToken = {}) {
-        if (!projectUrl.empty() && projectUrl.back() == '/') projectUrl.pop_back();
-        send_ = [base = std::move(projectUrl), key = std::move(apiKey), token = std::move(accessToken), &transport](
+        send_ = [d = DirectSend(std::move(projectUrl), std::move(apiKey), transport, std::move(accessToken))](
                     const std::string& method, const std::string& path, const std::string& body, const std::string& extra, int timeoutSec) {
-            return transport.Send(MakeRequest(key, method, base + path, body, token, extra, {}, {}, timeoutSec));
+            return d(method, path, body, extra, {}, {}, timeoutSec);
         };
     }
 

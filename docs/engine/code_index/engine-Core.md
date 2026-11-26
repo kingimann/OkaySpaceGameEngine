@@ -355,11 +355,11 @@ Back to the [code index](../code_index.md). 81 headers, 514 names.
 
 ## `engine/include/okay/Core/Json.hpp`
 
-- `Type` enum, line 28
-- `Value` struct, line 30
-- `Limits` struct, line 60
-- `Parse` function, line 196: Read 'text' as one JSON value. False (and 'out' left as Null) with a reason in 'error' for anything RFC 8259 does not
-- `Escape` function, line 213: Append 's' (UTF-8) to 'out' as a JSON string, with its quotes: '"' and '\\' escaped, \n, \r and \t, other control characters
+- `Type` enum, line 31
+- `Value` struct, line 33
+- `Limits` struct, line 63
+- `Parse` function, line 211: Read 'text' as one JSON value. False (and 'out' left as Null) with a reason in 'error' for anything RFC 8259 does not
+- `Escape` function, line 228: Append 's' (UTF-8) to 'out' as a JSON string, with its quotes: '"' and '\\' escaped, \n, \r and \t, other control characters
 
 ## `engine/include/okay/Core/LocCheck.hpp`
 

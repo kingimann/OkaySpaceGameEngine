@@ -124,6 +124,23 @@ void InstallStringLib(Runtime& rt) {
         for (int i = 0; i < a.argc; ++i) s += (char16_t)(rt.ToUint32(a[i]) & 0xFFFF);
         return Str(rt, std::move(s));
     }, 1);
+    DefNative(rt, ctor, "raw", [](Runtime& rt, CallArgs& a) {   // 22.1.2.4 String.raw
+        Object* cooked = rt.ToObject(a[0]);
+        Value lits = Value::Obj(rt.ToObject(rt.Get(Value::Obj(cooked), rt.atoms->raw)));
+        rt.Keep(lits);
+        std::uint64_t len = rt.LengthOf(lits);
+        std::u16string r;
+        for (std::uint64_t k = 0; k < len; ++k) {
+            Runtime::ScratchScope ss(rt);
+            rt.Charge(1);
+            r += rt.ToU16(rt.GetV(lits, Value::Num((double)k)));
+            if (k + 1 == len) break;
+            if (k + 1 < (std::uint64_t)a.argc) r += rt.ToU16(a[(int)(k + 1)]);
+            rt.Charge(r.size() / 64);
+            if (r.size() > (1u << 28)) rt.ThrowRange("the string is too long");
+        }
+        return Value::Str(rt.NewString(std::move(r)));
+    }, 1);
     DefNative(rt, ctor, "fromCodePoint", [](Runtime& rt, CallArgs& a) {
         std::u16string s;
         for (int i = 0; i < a.argc; ++i) {
@@ -288,6 +305,30 @@ void InstallStringLib(Runtime& rt) {
         std::size_t e = s.size();
         while (e > 0 && IsJsSpace(s[e - 1])) --e;
         return Str(rt, s.substr(0, e));
+    }, 0);
+    // B.2.2.15 / B.2.2.16: trimLeft and trimRight are the same function objects as trimStart and trimEnd
+    DefValue(rt, sp, "trimLeft", sp->FindRaw(rt.Intern("trimStart"))->v);
+    DefValue(rt, sp, "trimRight", sp->FindRaw(rt.Intern("trimEnd"))->v);
+    // 22.1.3.10 isWellFormed / 22.1.3.31 toWellFormed: lone surrogates, and replacing them with U+FFFD
+    DefNative(rt, sp, "isWellFormed", [](Runtime& rt, CallArgs& a) {
+        std::u16string s = ThisStr(rt, a, "isWellFormed");
+        rt.Charge(s.size() / 32 + 1);
+        for (std::size_t k = 0; k < s.size(); ++k) {
+            char16_t c = s[k];
+            if (c >= 0xD800 && c <= 0xDBFF && k + 1 < s.size() && s[k + 1] >= 0xDC00 && s[k + 1] <= 0xDFFF) { ++k; continue; }
+            if (c >= 0xD800 && c <= 0xDFFF) return Value::Bool(false);
+        }
+        return Value::Bool(true);
+    }, 0);
+    DefNative(rt, sp, "toWellFormed", [](Runtime& rt, CallArgs& a) {
+        std::u16string s = ThisStr(rt, a, "toWellFormed");
+        rt.Charge(s.size() / 32 + 1);
+        for (std::size_t k = 0; k < s.size(); ++k) {
+            char16_t c = s[k];
+            if (c >= 0xD800 && c <= 0xDBFF && k + 1 < s.size() && s[k + 1] >= 0xDC00 && s[k + 1] <= 0xDFFF) { ++k; continue; }
+            if (c >= 0xD800 && c <= 0xDFFF) s[k] = 0xFFFD;
+        }
+        return Str(rt, s);
     }, 0);
     DefNative(rt, sp, "padStart", [](Runtime& rt, CallArgs& a) {
         std::u16string s = ThisStr(rt, a, "padStart");

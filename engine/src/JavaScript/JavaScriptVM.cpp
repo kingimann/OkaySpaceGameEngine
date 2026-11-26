@@ -1049,19 +1049,24 @@ const char* const kLibMembers[][2] = {
     {"Math", "abs acos acosh asin asinh atan atan2 atanh cbrt ceil clz32 cos cosh E exp expm1 floor fround hypot imul LN10 LN2 log log10 log1p log2 LOG10E LOG2E max min PI pow random round sign sin sinh sqrt SQRT1_2 SQRT2 tan tanh trunc"},
     {"JSON", "parse stringify"},
     {"console", "log info warn error debug"},
-    {"Object", "assign create defineProperties defineProperty entries freeze fromEntries getOwnPropertyDescriptor getOwnPropertyDescriptors getOwnPropertyNames getOwnPropertySymbols getPrototypeOf hasOwn is isExtensible isFrozen isSealed keys preventExtensions seal setPrototypeOf values"},
+    {"Object", "assign create defineProperties defineProperty entries freeze fromEntries getOwnPropertyDescriptor groupBy getOwnPropertyDescriptors getOwnPropertyNames getOwnPropertySymbols getPrototypeOf hasOwn is isExtensible isFrozen isSealed keys preventExtensions seal setPrototypeOf values"},
     {"Array", "from isArray of"},
     {"Number", "EPSILON isFinite isInteger isNaN isSafeInteger MAX_SAFE_INTEGER MAX_VALUE MIN_SAFE_INTEGER MIN_VALUE NaN NEGATIVE_INFINITY parseFloat parseInt POSITIVE_INFINITY"},
-    {"String", "fromCharCode fromCodePoint"},
-    {"Promise", "all allSettled any race reject resolve"},
+    {"String", "fromCharCode fromCodePoint raw"},
+    {"Promise", "all allSettled any race reject resolve withResolvers"},
     {"Symbol", "for keyFor iterator asyncIterator toPrimitive toStringTag hasInstance"},
     {"RegExp", "prototype"},
     {"Reflect", "apply construct defineProperty deleteProperty get getOwnPropertyDescriptor getPrototypeOf has isExtensible ownKeys preventExtensions set setPrototypeOf"},
+    {"Date", "now parse UTC"},
+    {"BigInt", "asIntN asUintN"},
+    {"Intl", "Collator DateTimeFormat ListFormat NumberFormat PluralRules RelativeTimeFormat getCanonicalLocales"},
 };
 const char* const kGlobals[] = {"console", "Math", "JSON", "Object", "Array", "String", "Number", "Boolean", "Symbol", "RegExp",
                                 "Map", "Set", "Promise", "Error", "TypeError", "RangeError", "ReferenceError",
                                 "SyntaxError", "Reflect", "parseInt", "parseFloat", "isNaN", "isFinite", "globalThis",
-                                "queueMicrotask", "GetComponent", "Destroy", "gameObject", "transform", "this",
+                                "queueMicrotask", "Date", "BigInt", "Intl", "WeakMap", "WeakSet", "WeakRef",
+                                "FinalizationRegistry", "encodeURIComponent", "decodeURIComponent", "encodeURI", "decodeURI",
+                                "GetComponent", "Destroy", "gameObject", "transform", "this",
                                 "undefined", "null", "NaN", "Infinity", "console.log"};
 
 // The space-separated names of a library row.

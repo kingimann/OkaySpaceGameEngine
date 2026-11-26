@@ -463,3 +463,65 @@ repository. The order to fix things in, by sites hit:
 - CSS: properties the cascade does not use, on most sites: `cursor` (35), `-webkit-text-size-adjust` (28), `transition` (26),
   `pointer-events` (24), `fill` (23), `-webkit-appearance` (22), `user-select` (20), `animation` (18); selectors with
   `::-webkit-scrollbar` (21) or `::-moz-focus-inner` (19) are dropped. Many of these change nothing visible.
+
+## Round 4: the site check's list (2026-11-26, branch `claude/browser-round4`)
+
+Driven by the site check's ranking above. What was done, what each part was written from, and what is left:
+
+- **The host wirings that waited for #1336.** `TabHost` hands the page answer's Content-Type to `BrowserTab::DeliverPage` (its
+  charset decides the page's encoding, Encoding.hpp); font answers go through `DecodeWebFont` (WOFF and WOFF2 become the
+  TrueType / OpenType file the rasterizer reads); `BrowserView`'s `TextScaleFor` sizes text by the font's em (CSS Fonts 4
+  font-size) instead of its line (ascent - descent): `FontEmOf` reads head.unitsPerEm and the hhea ascent / descent (OpenType
+  spec), the launcher look's font gives about 1.17 lines per em, so text was about 15% too small, and the drawn baseline is put
+  where the layout puts it (0.8 em). Web fonts carry their own em (`RegisterWebFont(..., FontEm)`).
+- **DOM and web APIs** (`Script.cpp`, `InstallRound4` and the round-4 prelude; written from the WHATWG DOM, HTML, URL, Fetch
+  standards, CSSOM View, Intersection Observer, Resize Observer, UI Events, High Resolution Time, User Timing, Geometry
+  Interfaces, Cooperative Scheduling of Background Tasks and Web IDL): `navigator` (user agent = the host's, language,
+  platform, onLine, cookieEnabled, hardwareConcurrency 4, sendBeacon; no serviceWorker, so pages take their plain path), `URL`
+  and `URLSearchParams` (on `ParseWebUrl`, Url.cpp: the WHATWG basic URL parser reduced to what pages use, on top of the RFC 3986
+  split; no IDNA, no IPv4 number forms), `performance` (now, timeOrigin, marks and measures; `PerformanceObserver` reports
+  nothing), `matchMedia` with change events (the tab's media query evaluator), the interface objects (`Node`, `Element`,
+  `HTMLElement`, the HTML element interfaces by tag, `SVGElement`, `Text`, `Comment`, `Document`; `instanceof` and
+  `[object HTMLDivElement]` work; `new Image()`, `new Option()`, `new Audio()`, `new Text()`), `Event` / `CustomEvent` / the UI
+  Events interfaces as constructors and `dispatchEvent` on nodes and window, `EventTarget` for a script's own objects,
+  `MutationObserver` (childList, attributes, characterData, subtree, old values, attributeFilter, takeRecords; records are
+  delivered in a microtask), `requestIdleCallback`, `getBoundingClientRect` / `getClientRects`, `offset*`, `client*` and the
+  root's `scroll*` from the last layout (an inline element's box is the union of its runs), `scrollTo` / `scrollBy` /
+  `scrollIntoView`, `innerWidth` and the other window sizes, `screen` (the view's size), resize and scroll events,
+  `IntersectionObserver` (the root is the view or an element's box; clipping by scrolling boxes between is not looked at) and
+  `ResizeObserver` (the content box is the border box less the borders), `before` / `after` / `replaceWith` /
+  `replaceChildren` / `insertAdjacentHTML` / `insertAdjacentElement` / `insertAdjacentText` / `toggleAttribute` /
+  `getAttributeNames` / `getRootNode`, `atob` / `btoa`, `CSS.escape`, `document.fonts` (nothing waits for fonts),
+  `postMessage` to the page itself. Element boxes come from the last layout (`BrowserTab::BoxOf`, a map made once per layout):
+  a script never forces a layout, so an element added in the same script has no box until the next frame.
+- **Why pages were blank or one colour.** Ours, fixed: `</dd>` and `</dt>` popped every element up to `<html>` (the rest of the
+  page landed after `<body>`: every definition list, MDN's menus); `grid-column: content` did not find the implicit
+  `content-start` / `content-end` lines (MDN's text was placed off the right edge); a script whose compiling runs out of the
+  page's heap ended the whole browser (it now stops with a console line); pages that fade their content in with a
+  `forwards` animation stayed at opacity 0 (see below). Not ours or not this round, listed for the owners: the JavaScript
+  language gaps (sloppy-mode assignment to an undeclared name such as React's `$RB=[]`, which keeps Pinterest's and
+  Nintendo's streamed content hidden; `__proto__:` literals, the `in` construct, tagged templates, `Date`,
+  `decodeURIComponent`, `Intl`, typed arrays, `ReadableStream`) for `claude/js-compat-1`; `customElements` and shadow DOM
+  (archive.org, GOG); inline SVG drawing; sites that answer a bot check (Reddit's challenge page, the 403s).
+- **CSS with a visible effect** (Css.cpp, Layout.cpp, BrowserView.cpp; CSS UI 4, CSS Animations 1, CSS Transitions 1):
+  `pointer-events: none` (the box, its links and controls take no clicks or hover; the view looks under them), `cursor` (the view
+  sets the mouse pointer; url() images are not loaded, the keyword after them is used), `user-select: none` (not selected, not
+  copied), `appearance: none` and its prefixed forms (no native check mark, radio dot or list arrow), and the end state of
+  animations: a finite animation that fills forwards shows its last keyframe (`@keyframes`, `@-webkit-keyframes`; the first
+  keyframe when it runs in reverse). Transition and animation timing properties are read and need no value (the end state is
+  shown at once).
+- **Network.** Every request carries the standard set and nothing else: Accept by destination (Fetch 4.1), Accept-Language,
+  Accept-Encoding `gzip, deflate, br` (Brotli through `okay::brotli`, handed to the HTTP client as `Limits::brotli`), Sec-Fetch-Dest /
+  -Mode / -Site / -User (Fetch Metadata Request Headers), Upgrade-Insecure-Requests on page loads, Referer by the default
+  policy strict-origin-when-cross-origin; no client hints, no other browser's names. The 12 sites that answer 403 still do from
+  this machine: curl with and without the standard set got the same 403s, so their bot checks look at something other than
+  these headers (unverified what; it was not probed further).
+- **The site check before and after** (the same 61 sites, Linux, 2026-11-26; before = the site check's branch with main as of
+  #1336, after = this branch): distinct causes 612 -> 548; sites with a DOM API cause 26 -> 3 (left: `customElements` on 2,
+  `Blob` on 1); with a fonts cause 18 -> 1 (one WOFF2 file our decoder refuses); the CSS causes `cursor` (35 sites),
+  `transition` (26), `pointer-events` (25), `-webkit-appearance` (22), `appearance` (19), `user-select` (20), `animation` (17)
+  are gone from the list; "nearly one flat colour" 18 -> 16 (MDN now draws its page; Google is plain white by design); "drew
+  almost nothing" stays at 7; HTTP 403 stays at 12. Sites with a JavaScript-language cause went up, 40 -> 49: scripts that
+  used to stop at a missing DOM API now run on and stop at a language gap instead. The top of the list is now
+  `-webkit-text-size-adjust` (30, no effect on a desktop browser), `fill` (24, SVG), the JavaScript-language gaps above,
+  `::-webkit-scrollbar` (21) and SVG images (20).

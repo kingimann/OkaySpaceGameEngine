@@ -391,6 +391,8 @@ add_library(okay_engine
     src/Core/BuildPipeline.cpp
     src/Core/ImageDecode.cpp
     src/Core/ImageDecodeJpeg.cpp
+    src/Core/ImageDecodeWebp.cpp
+    src/Core/ImageDecodeSvg.cpp
     src/Graphics/Image.cpp
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp

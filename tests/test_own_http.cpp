@@ -512,6 +512,31 @@ static void TestContentCoding() {
       ScriptConnForGzip c2; c2.reply = resp("gzip", kGz);
       rq.acceptGzip = false; r = Fetch(c2, rq, Limits(), 5000);
       CHECK(!r.ok && r.err == Err::Unsupported && c2.wire.find("Accept-Encoding: identity") != std::string::npos); }
+    // Content-Encoding: br through a decoder the caller hands in (Limits::brotli; the browser passes okay::brotli). The stand-in
+    // here "decodes" by reversing the bytes, so the test sees exactly what the client did with the body.
+    {
+        BrotliFn fake = [](const std::string& in, size_t maxOut, std::string& out, std::string& why) {
+            if (in.find("bad") != std::string::npos) { why = "brotli: broken stream"; return false; }
+            if (in.size() > maxOut) { why = "brotli: decoded data larger than the limit"; return false; }
+            out.assign(in.rbegin(), in.rend());
+            return true;
+        };
+        Limits br = lim; br.brotli = fake;
+        p = Parse(resp("br", "olleh"), "GET", 1 << 20, br); CHECK(p.ok && p.r.body == "hello");
+        p = Parse(resp("BR", "dlrow", true), "GET", 2, br); CHECK(p.ok && p.r.body == "world");        // chunked, tiny pieces
+        p = Parse(resp("br", "bad stream"), "GET", 1 << 20, br); CHECK(!p.ok && p.e == Err::BadResponse);
+        { Limits small = br; small.maxBodyBytes = 3; p = Parse(resp("br", "olleh"), "GET", 1 << 20, small); CHECK(!p.ok && p.e == Err::TooLarge); }
+        Limits off = br; off.allowGzip = false;
+        p = Parse(resp("br", "olleh"), "GET", 1 << 20, off); CHECK(!p.ok && p.e == Err::Unsupported);   // not asked for
+        ScriptConnForGzip c; c.reply = resp("br", "olleh");
+        FetchRequest rq; rq.url = "https://h/x"; rq.acceptGzip = true;
+        Limits withBr; withBr.brotli = fake;
+        FetchResult r = Fetch(c, rq, withBr, 5000);
+        CHECK(r.ok && r.response.body == "hello" && c.wire.find("Accept-Encoding: gzip, deflate, br\r\n") != std::string::npos);
+        ScriptConnForGzip c2; c2.reply = resp("gzip", kGz);
+        r = Fetch(c2, rq, Limits(), 5000);   // no decoder: br is not asked for
+        CHECK(r.ok && c2.wire.find("Accept-Encoding: gzip, deflate\r\n") != std::string::npos);
+    }
 }
 
 static void TestRange() {

@@ -595,7 +595,30 @@ void InstallCollectionsLib(Runtime& rt) {
     // Map (24.1)
     rt.mapProto = rt.NewObject();
     NativeFunc* mapCtor = DefCtor(rt, "Map", [](Runtime& rt, CallArgs& a) { return MapCtor(rt, a, Cls::Map); }, 0, rt.mapProto);
-    (void)mapCtor;
+    DefNative(rt, mapCtor, "groupBy", [](Runtime& rt, CallArgs& a) {   // 24.1.2.1 Map.groupBy
+        if (!rt.IsCallable(a[1])) rt.ThrowType("Map.groupBy needs a function");
+        MapObj* m = rt.Alloc<MapObj>();
+        m->cls = Cls::Map;
+        m->proto = rt.mapProto;
+        IterRec* r = GetIterator(rt, a[0]);
+        Value e;
+        double k = 0;
+        while (IterStep(rt, r, e)) {
+            Runtime::ScratchScope ss(rt);
+            rt.Keep(e);
+            Value args[2] = {e, Value::Num(k++)};
+            Value key = MapObj::Norm(rt.Call(a[1], Value(), args, 2));
+            rt.Keep(key);
+            auto it = m->index.find(key);
+            ArrayObj* arr;
+            if (it == m->index.end()) {
+                arr = rt.NewArray();
+                MapPut(rt, m, key, Value::Obj(arr));
+            } else arr = static_cast<ArrayObj*>(m->entries[it->second].v.O());
+            rt.DefineIndex(arr, arr->length, e);
+        }
+        return Value::Obj(m);
+    }, 2);
     DefNative(rt, rt.mapProto, "get", [](Runtime& rt, CallArgs& a) {
         MapObj* m = ThisMap(rt, a, Cls::Map);
         auto it = m->index.find(MapObj::Norm(a[0]));
@@ -730,6 +753,16 @@ void InstallCollectionsLib(Runtime& rt) {
         return Value::Obj(p);
     }, 1);
     DefNative(rt, pc, "all", [](Runtime& rt, CallArgs& a) { return Combine(rt, a, Combinator::All); }, 1);
+    DefNative(rt, pc, "withResolvers", [](Runtime& rt, CallArgs&) {   // 27.2.4.9 Promise.withResolvers
+        PromiseObj* p = NewPromise(rt);
+        Value res, rej;
+        MakeResolvers(rt, p, res, rej);
+        Object* o = rt.NewObject();
+        rt.DefineData(o, rt.Intern("promise"), Value::Obj(p));
+        rt.DefineData(o, rt.Intern("resolve"), res);
+        rt.DefineData(o, rt.Intern("reject"), rej);
+        return Value::Obj(o);
+    }, 0);
     DefNative(rt, pc, "allSettled", [](Runtime& rt, CallArgs& a) { return Combine(rt, a, Combinator::AllSettled); }, 1);
     DefNative(rt, pc, "any", [](Runtime& rt, CallArgs& a) { return Combine(rt, a, Combinator::Any); }, 1);
     DefNative(rt, pc, "race", [](Runtime& rt, CallArgs& a) {
@@ -750,6 +783,165 @@ void InstallCollectionsLib(Runtime& rt) {
         }
         return Value::Obj(p);
     }, 1);
+}
+
+// ============================================================ WeakMap, WeakSet (24.3, 24.4), WeakRef, FinalizationRegistry (26.1, 26.2)
+bool CanBeHeldWeakly(const Value& v) {   // CanBeHeldWeakly (9.13): objects and symbols that Symbol.for did not register
+    return v.IsObj() || (v.IsSym() && !v.Y()->registered);
+}
+
+namespace {
+
+WeakObj* ThisWeak(Runtime& rt, CallArgs& a, Cls c, const char* what) {
+    if (!a.thisv.IsObj() || a.thisv.O()->cls != c) rt.ThrowType(std::string("this is not a ") + what);
+    return static_cast<WeakObj*>(a.thisv.O());
+}
+
+WeakObj* NewWeak(Runtime& rt, CallArgs& a, Cls c, Object* dflt, const char* what) {
+    if (!a.newTarget) rt.ThrowType(std::string(what) + " must be called with 'new'");
+    WeakObj* w = rt.Alloc<WeakObj>();
+    w->cls = c;
+    Value pr = rt.Get(Value::Obj(a.newTarget), rt.atoms->prototype);
+    w->proto = pr.IsObj() ? pr.O() : dflt;
+    rt.weakObjs.push_back(w);
+    return w;
+}
+
+// new WeakMap(iterable) / new WeakSet(iterable): add each entry through this.set / this.add (24.1.1.2 AddEntriesFromIterable)
+void FillWeak(Runtime& rt, WeakObj* w, const Value& src, bool isMap) {
+    if (src.IsNullish()) return;
+    Value adder = rt.Get(Value::Obj(w), rt.Intern(isMap ? "set" : "add"));
+    if (!rt.IsCallable(adder)) rt.ThrowType(isMap ? "WeakMap.prototype.set is not a function" : "WeakSet.prototype.add is not a function");
+    rt.Keep(adder);
+    IterRec* r = GetIterator(rt, src);
+    Value e;
+    while (true) {
+        Runtime::ScratchScope ss(rt);
+        if (!IterStep(rt, r, e)) break;
+        rt.Charge(1);
+        try {
+            if (isMap) {
+                if (!e.IsObj()) rt.ThrowType("a WeakMap is made from [key, value] pairs");
+                rt.Keep(e);
+                Value k = rt.GetIndex(e, 0);
+                rt.Keep(k);
+                Value v = rt.GetIndex(e, 1);
+                Value args[2] = {k, v};
+                rt.Call(adder, Value::Obj(w), args, 2);
+            } else rt.Call(adder, Value::Obj(w), &e, 1);
+        } catch (const JsThrow&) {
+            Value exc = rt.exception;
+            rt.Keep(exc);
+            try { IterClose(rt, r); } catch (const JsThrow&) {}
+            rt.Throw(exc);
+        }
+    }
+}
+
+} // namespace
+
+void InstallWeakLib(Runtime& rt) {
+    Object* wmp = rt.NewObject();
+    NativeFunc* wm = DefCtor(rt, "WeakMap", [](Runtime& rt, CallArgs& a) {
+        WeakObj* w = NewWeak(rt, a, Cls::WeakMap, a.callee->slots[0].O(), "WeakMap");
+        FillWeak(rt, w, a[0], true);
+        return Value::Obj(w);
+    }, 0, wmp);
+    wm->slots = {Value::Obj(wmp)};
+    DefNative(rt, wmp, "get", [](Runtime& rt, CallArgs& a) {
+        WeakObj* w = ThisWeak(rt, a, Cls::WeakMap, "WeakMap");
+        if (!CanBeHeldWeakly(a[0])) return Value();
+        auto it = w->entries.find(a[0].p);
+        return it == w->entries.end() ? Value() : it->second;
+    }, 1);
+    DefNative(rt, wmp, "set", [](Runtime& rt, CallArgs& a) {
+        WeakObj* w = ThisWeak(rt, a, Cls::WeakMap, "WeakMap");
+        if (!CanBeHeldWeakly(a[0])) rt.ThrowType("a WeakMap key must be an object or a symbol that is not registered");
+        auto it = w->entries.find(a[0].p);
+        if (it == w->entries.end()) rt.CountBytes(48);
+        w->entries[a[0].p] = a[1];
+        return a.thisv;
+    }, 2);
+    DefNative(rt, wmp, "has", [](Runtime& rt, CallArgs& a) {
+        WeakObj* w = ThisWeak(rt, a, Cls::WeakMap, "WeakMap");
+        return Value::Bool(CanBeHeldWeakly(a[0]) && w->entries.count(a[0].p) > 0);
+    }, 1);
+    DefNative(rt, wmp, "delete", [](Runtime& rt, CallArgs& a) {
+        WeakObj* w = ThisWeak(rt, a, Cls::WeakMap, "WeakMap");
+        return Value::Bool(CanBeHeldWeakly(a[0]) && w->entries.erase(a[0].p) > 0);
+    }, 1);
+    wmp->AddRaw(rt.symToStringTag, Value::Str(rt.Intern("WeakMap")), kConfigurable);
+
+    Object* wsp = rt.NewObject();
+    DefCtor(rt, "WeakSet", [](Runtime& rt, CallArgs& a) {
+        WeakObj* w = NewWeak(rt, a, Cls::WeakSet, a.callee->slots[0].O(), "WeakSet");
+        FillWeak(rt, w, a[0], false);
+        return Value::Obj(w);
+    }, 0, wsp)->slots = {Value::Obj(wsp)};
+    DefNative(rt, wsp, "add", [](Runtime& rt, CallArgs& a) {
+        WeakObj* w = ThisWeak(rt, a, Cls::WeakSet, "WeakSet");
+        if (!CanBeHeldWeakly(a[0])) rt.ThrowType("a WeakSet value must be an object or a symbol that is not registered");
+        if (w->entries.emplace(a[0].p, Value()).second) rt.CountBytes(48);
+        return a.thisv;
+    }, 1);
+    DefNative(rt, wsp, "has", [](Runtime& rt, CallArgs& a) {
+        WeakObj* w = ThisWeak(rt, a, Cls::WeakSet, "WeakSet");
+        return Value::Bool(CanBeHeldWeakly(a[0]) && w->entries.count(a[0].p) > 0);
+    }, 1);
+    DefNative(rt, wsp, "delete", [](Runtime& rt, CallArgs& a) {
+        WeakObj* w = ThisWeak(rt, a, Cls::WeakSet, "WeakSet");
+        return Value::Bool(CanBeHeldWeakly(a[0]) && w->entries.erase(a[0].p) > 0);
+    }, 1);
+    wsp->AddRaw(rt.symToStringTag, Value::Str(rt.Intern("WeakSet")), kConfigurable);
+
+    Object* wrp = rt.NewObject();
+    DefCtor(rt, "WeakRef", [](Runtime& rt, CallArgs& a) {
+        if (a.newTarget && !CanBeHeldWeakly(a[0])) rt.ThrowType("WeakRef needs an object or a symbol that is not registered");
+        WeakObj* w = NewWeak(rt, a, Cls::WeakRef, a.callee->slots[0].O(), "WeakRef");
+        w->target = a[0].p;
+        rt.Keep(a[0]);   // AddToKeptObjects: alive at least until this call returns
+        return Value::Obj(w);
+    }, 1, wrp)->slots = {Value::Obj(wrp)};
+    DefNative(rt, wrp, "deref", [](Runtime& rt, CallArgs& a) {
+        WeakObj* w = ThisWeak(rt, a, Cls::WeakRef, "WeakRef");
+        if (!w->target) return Value();
+        Value v = w->target->kind == Kind::Symbol ? Value::Sym(static_cast<Symbol*>(w->target)) : Value::Obj(static_cast<Object*>(w->target));
+        rt.Keep(v);
+        return v;
+    }, 0);
+    wrp->AddRaw(rt.symToStringTag, Value::Str(rt.Intern("WeakRef")), kConfigurable);
+
+    Object* frp = rt.NewObject();
+    DefCtor(rt, "FinalizationRegistry", [](Runtime& rt, CallArgs& a) {
+        if (a.newTarget && !rt.IsCallable(a[0])) rt.ThrowType("FinalizationRegistry needs a cleanup function");
+        WeakObj* w = NewWeak(rt, a, Cls::FinalizationRegistry, a.callee->slots[0].O(), "FinalizationRegistry");
+        w->cleanup = a[0];
+        return Value::Obj(w);
+    }, 1, frp)->slots = {Value::Obj(frp)};
+    DefNative(rt, frp, "register", [](Runtime& rt, CallArgs& a) {
+        WeakObj* w = ThisWeak(rt, a, Cls::FinalizationRegistry, "FinalizationRegistry");
+        if (!CanBeHeldWeakly(a[0])) rt.ThrowType("register needs an object or a symbol that is not registered");
+        if (SameValue(a[0], a[1])) rt.ThrowType("the target and the held value must differ");
+        if (!CanBeHeldWeakly(a[2]) && !a[2].IsUndef()) rt.ThrowType("an unregister token must be an object or a symbol");
+        if (w->cells.size() >= (1u << 24)) rt.ThrowRange("too many registrations");
+        w->cells.push_back({a[0].p, a[1], a[2].IsUndef() ? nullptr : a[2].p});
+        rt.CountBytes(sizeof(WeakObj::Cell));
+        return Value();
+    }, 2);
+    DefNative(rt, frp, "unregister", [](Runtime& rt, CallArgs& a) {
+        WeakObj* w = ThisWeak(rt, a, Cls::FinalizationRegistry, "FinalizationRegistry");
+        if (!CanBeHeldWeakly(a[0])) rt.ThrowType("unregister needs an object or a symbol that is not registered");
+        std::size_t c = 0;
+        bool removed = false;
+        rt.Charge(w->cells.size() / 8 + 1);
+        for (WeakObj::Cell& cell : w->cells) {
+            if (cell.token == a[0].p) { removed = true; continue; }
+            w->cells[c++] = cell;
+        }
+        w->cells.resize(c);
+        return Value::Bool(removed);
+    }, 1);
+    frp->AddRaw(rt.symToStringTag, Value::Str(rt.Intern("FinalizationRegistry")), kConfigurable);
 }
 
 } // namespace okay::js

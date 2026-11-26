@@ -82,6 +82,33 @@ int main() {
         CHECK(RemoveDotSegments("mid/content=5/../6") == "mid/6");
     }
 
+    // ---- the WHATWG URL view of an address (ParseWebUrl, for the page's URL object) and the urlencoded decoder
+    {
+        WebUrl w;
+        const std::string base = "https://site.test/a/b/c?q#f";
+        CHECK(ParseWebUrl("  HTTP://Ex.Test:80/x/../y?a b#c d \n", nullptr, w) && w.Href() == "http://ex.test/y?a%20b#c%20d");
+        CHECK(w.protocol == "http:" && w.hostname == "ex.test" && w.port.empty() && w.pathname == "/y" && w.Origin() == "http://ex.test");
+        CHECK(ParseWebUrl("h\tttps://a.test:08443", nullptr, w) && w.Href() == "https://a.test:8443/" && w.port == "8443");
+        CHECK(ParseWebUrl("../d", &base, w) && w.Href() == "https://site.test/a/d");
+        CHECK(ParseWebUrl("?x", &base, w) && w.Href() == "https://site.test/a/b/c?x");
+        CHECK(ParseWebUrl("#top", &base, w) && w.Href() == "https://site.test/a/b/c?q#top");
+        CHECK(ParseWebUrl("\\\\other.test\\p", &base, w) && w.Href() == "https://other.test/p");
+        CHECK(ParseWebUrl("https:rel", &base, w) && w.Href() == "https://site.test/a/b/rel");   // same special scheme: relative
+        CHECK(ParseWebUrl("http:////a.test/p", nullptr, w) && w.Href() == "http://a.test/p");
+        CHECK(ParseWebUrl("https://[::1]:443/", nullptr, w) && w.hostname == "[::1]" && w.port.empty());
+        CHECK(ParseWebUrl("data:text/plain,hi", nullptr, w) && !w.hasAuthority && w.pathname == "text/plain,hi" && w.Origin() == "null");
+        CHECK(ParseWebUrl("https://u:p@a.test/\xC3\xA9", nullptr, w) && w.username == "u" && w.password == "p" && w.pathname == "/%C3%A9");
+        CHECK(!ParseWebUrl("relative/only", nullptr, w));
+        CHECK(!ParseWebUrl("https://", nullptr, w) && !ParseWebUrl("https://a b.test/", nullptr, w) && !ParseWebUrl("https://a.test:65536/", nullptr, w));
+        CHECK(!ParseWebUrl("https://a.test:8x/", nullptr, w) && !ParseWebUrl("https://[::1/", nullptr, w) && !ParseWebUrl("https://a%41.test/", nullptr, w));
+        const std::string opaque = "mailto:a@b.test";
+        CHECK(!ParseWebUrl("x", &opaque, w) && ParseWebUrl("#f", &opaque, w));
+        const std::string badBase = "not a url";
+        CHECK(!ParseWebUrl("https://a.test/", &badBase, w));
+        CHECK(!ParseWebUrl(std::string(3u << 20, 'a'), nullptr, w));   // hostile: too long
+        CHECK(FormUrlDecode("a+b%20c%C3%A9%zz%4") == "a b c\xC3\xA9%zz%4" && FormUrlDecode("%FF") == "\xEF\xBF\xBD");
+    }
+
     RUN_SUITE("browser tab");
     const FixedMeasure measure;
     const std::string home = "https://site.test/docs/index.html";

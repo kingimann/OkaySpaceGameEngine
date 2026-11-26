@@ -664,13 +664,17 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
             movReg(im, kArg[i], Rax);
         }
         if (in.func.empty()) {
+            // a call through a pointer: the float and double arguments in xmm0-7 as well (System V
+            // AMD64 ABI 3.2.3), al their count for a variadic one (codegen.cpp does the same)
+            for (std::size_t i = 0; i < in.xmm.size() && i < 8; ++i)
+                loadXmm(im, in.xmm[i], static_cast<int>(i), i < in.xmmW.size() ? in.xmmW[i] : 8);
             loadRaxCall(im, in.a, spilled);
             if (in.va) {
-                u8(im, 0x49);
+                u8(im, 0x49);  // mov r11, rax
                 u8(im, 0x89);
                 u8(im, 0xC3);
-                u8(im, 0x31);
-                u8(im, 0xC0);
+                u8(im, 0xB8);  // mov eax, n
+                u32(im, static_cast<std::uint32_t>(in.xmm.size() < 8 ? in.xmm.size() : 8));
                 u8(im, 0x41);
                 u8(im, 0xFF);
                 u8(im, 0xD3);
@@ -705,12 +709,28 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
         } else if (const std::vector<unsigned char>* seq = atomicCode(in.func)) {
             for (unsigned char c : *seq) u8(im, c);
         } else if (in.func == "syscall") {
-            // Linux syscall: C call syscall(number, a, b, c) is already in rdi, rsi, rdx, rcx.
+            // Linux syscall: C call syscall(number, a, b, c[, d[, e]]) is already in rdi, rsi, rdx,
+            // rcx, r8 and r9; the kernel takes the fourth argument in r10 and the fifth in r8.
             movReg(im, Rax, Rdi);
             movReg(im, Rdi, Rsi);
             movReg(im, Rsi, Rdx);
             movReg(im, Rdx, Rcx);
+            u8(im, 0x4D);  // mov r10, r8
+            u8(im, 0x89);
+            u8(im, 0xC2);
+            u8(im, 0x4D);  // mov r8, r9
+            u8(im, 0x89);
+            u8(im, 0xC8);
             u8(im, 0x0F);
+            u8(im, 0x05);
+        } else if (in.func == "__okay_sigreturn") {
+            // The restorer of a signal handler (lib/signal.c): leave undoes this function's frame
+            // (push rbp; mov rbp, rsp; ...), so rsp is where the kernel put the signal frame, then
+            // rt_sigreturn (15). It does not come back.
+            u8(im, 0xC9);  // leave
+            u8(im, 0xB8);  // mov eax, 15
+            u32(im, 15);
+            u8(im, 0x0F);  // syscall
             u8(im, 0x05);
         } else {
             for (std::size_t i = 0; i < in.xmm.size() && i < 8; ++i)

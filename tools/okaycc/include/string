@@ -31,6 +31,11 @@ public:
     string(const char *s, unsigned long n) : p_(nullptr), n_(0), cap_(0) { assignChars(s, n); }
     // from a string_view ([string.cons] p8, explicit as there)
     explicit string(string_view v) : p_(nullptr), n_(0), cap_(0) { assignChars(v.data(), v.size()); }
+    // n characters of v from pos ([string.cons] p6: the template taking a T that converts to a view)
+    string(string_view v, unsigned long pos, unsigned long n) : p_(nullptr), n_(0), cap_(0) {
+        if (pos > v.size()) pos = v.size();
+        assignChars(v.data() + pos, v.size() - pos < n ? v.size() - pos : n);
+    }
     string(unsigned long n, char c) : p_(nullptr), n_(0), cap_(0) {
         release(grow(n));
         for (unsigned long i = 0; i < n; ++i) p_[i] = c;
@@ -106,6 +111,11 @@ public:
         r.append(o);
         return r;
     }
+    string operator+(char c) const {  // ([string.op.plus]) s + 'c'
+        string r = *this;
+        r.push_back(c);
+        return r;
+    }
     string &operator+=(const string &o) { return append(o); }
     string &operator+=(string_view v) { return append(v.data(), v.size()); }
     string &append(string_view v) { return append(v.data(), v.size()); }
@@ -134,6 +144,18 @@ public:
         if (n > n_ - pos) n = n_ - pos;
         return string(p_ + pos, n);
     }
+    // [string.append] p3: at most n characters of o from pos (pos past the end appends nothing;
+    // the standard throws out_of_range there, which this subset does not do).
+    string &append(const string &o, unsigned long pos, unsigned long n = npos) {
+        if (pos > o.n_) pos = o.n_;
+        if (n > o.n_ - pos) n = o.n_ - pos;
+        string part(o.p_ + pos, n);  // (o may be this string)
+        return append(part.p_, n);
+    }
+    string &append(unsigned long n, char c) {  // [string.append] n copies of c
+        for (unsigned long i = 0; i < n; ++i) push_back(c);
+        return *this;
+    }
     string &append(const char *s, unsigned long n) {
         char *old = grow(n_ + n);
         for (unsigned long i = 0; i < n; ++i) p_[n_ + i] = s[i];
@@ -154,6 +176,10 @@ public:
         if (pos > o.n_) pos = o.n_;
         return assign(o.p_ + pos, o.n_ - pos < n ? o.n_ - pos : n);
     }
+    string &assign(string_view v, unsigned long pos, unsigned long n = npos) {
+        if (pos > v.size()) pos = v.size();
+        return assign(v.data() + pos, v.size() - pos < n ? v.size() - pos : n);
+    }
     string &assign(unsigned long n, char c) {
         string t(n, c);
         swap(t);
@@ -166,6 +192,12 @@ public:
         n_ -= n;
         return *this;
     }
+    // [string.erase] erase(first, last): the characters in [first, last); returns where they were.
+    char *erase(char *first, char *last) {
+        unsigned long pos = (unsigned long)(first - p_);
+        erase(pos, (unsigned long)(last - first));
+        return p_ + pos;
+    }
     string &insert(unsigned long pos, const char *s) {
         string tail = substr(pos);
         n_ = pos < n_ ? pos : n_;
@@ -174,6 +206,20 @@ public:
         return append(tail);
     }
     string &insert(unsigned long pos, const string &s) { return insert(pos, s.c_str()); }
+    // [string.insert]: n characters from s (which may point into this string), and n copies of c.
+    string &insert(unsigned long pos, const char *s, unsigned long n) {
+        string part(s, n);
+        string tail = substr(pos);
+        n_ = pos < n_ ? pos : n_;
+        p_[n_] = 0;
+        append(part.p_, n);
+        return append(tail);
+    }
+    string &insert(unsigned long pos, unsigned long n, char c) {
+        string part;
+        part.append(n, c);
+        return insert(pos, part.p_, n);
+    }
     // [string.find]: the first (or, for rfind, the last) place at or after (before) pos.
     unsigned long find(char c, unsigned long pos = 0) const {
         for (unsigned long i = pos; i < n_; ++i)

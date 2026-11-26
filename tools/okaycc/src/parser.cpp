@@ -12,6 +12,7 @@
 #include "token.hpp"
 
 #include <cstdio>
+#include <ctime>
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
@@ -33,6 +34,7 @@ struct Mod {
     bool variadic = false;
     std::vector<Param> params;
     std::unique_ptr<Type> trailing;  // auto f(..) -> T: the return type ([dcl.fct] p2)
+    std::string memberOf;            // Ptr: T C::* ([dcl.mptr])
 };
 
 struct Parsed {
@@ -45,7 +47,12 @@ struct Parsed {
 
 class Parser {
 public:
-    Parser(std::vector<Token> toks, Diagnostics& diags) : toks_(std::move(toks)), diags_(diags) {}
+    // The tokens are only read: a caller that keeps them (frontEnd, once per round) lends them,
+    // which saves copying every token of the file each round.
+    Parser(const std::vector<Token>& toks, Diagnostics& diags) : toks_(toks), diags_(diags) {}
+    Parser(std::vector<Token>&& toks, Diagnostics& diags) : own_(std::move(toks)), toks_(own_), diags_(diags) {}
+    Parser(const Parser&) = delete;
+    Parser& operator=(const Parser&) = delete;
 
     Tu parseTu() {
         Tu tu;
@@ -203,7 +210,8 @@ public:
     }
 
 private:
-    std::vector<Token> toks_;
+    std::vector<Token> own_;
+    const std::vector<Token>& toks_;
     Diagnostics& diags_;
     std::size_t i_ = 0;
     bool reported_ = false;
@@ -257,14 +265,22 @@ private:
     void advance() {
         if (i_ < toks_.size()) ++i_;
     }
+    // A C source or header (.c, .h): C's rules for tags and unnamed structs, not C++'s.
+    static bool cSourceFile(const std::string& f) {
+        return f.size() >= 2 && (f.compare(f.size() - 2, 2, ".c") == 0 || f.compare(f.size() - 2, 2, ".h") == 0);
+    }
     bool isP(const Token& t, const char* s) const {
         if (t.kind != Tok::Punct) return false;
         if (t.text == s) return true;
-        if (std::string(s) == "[" && t.text == "<:") return true;
-        if (std::string(s) == "]" && t.text == ":>") return true;
-        if (std::string(s) == "{" && t.text == "<%") return true;
-        if (std::string(s) == "}" && t.text == "%>") return true;
-        return false;
+        // the digraphs ([lex.digraph]); no string is made here, this test runs for every token
+        if (t.text.size() != 2 || !s[0] || s[1]) return false;
+        switch (s[0]) {
+        case '[': return t.text == "<:";
+        case ']': return t.text == ":>";
+        case '{': return t.text == "<%";
+        case '}': return t.text == "%>";
+        default: return false;
+        }
     }
     bool isP(const char* s) const { return !atEnd() && isP(cur(), s); }
     bool nextIs(const char* s) const {
@@ -779,6 +795,7 @@ private:
             t->tag = "\x03" "decltype";
             t->bound = parseExpr();
             expectP(")", ")");
+            if (collectDecltype_ && t->bound) collectDecltype_->push_back(cloneExpr(*t->bound));
             return t;
         }
         if (isKw("struct") || isKw("union") || isKw("class")) return parseStructType();
@@ -1065,12 +1082,19 @@ private:
         std::vector<std::unique_ptr<Stmt>> pre;  // hidden locals the initializers use
         std::unique_ptr<Stmt> body;
         bool hasBody = false;
+        bool defaulted = false;  // C(..) = default;
+        Pos pos;
+    };
+    struct DefaultedAssign {  // C &operator=(..) = default; in the class: made when it is finished
+        std::string mangled;
+        std::unique_ptr<Type> fn;
         Pos pos;
     };
     struct ClassCtx {
         std::string tag;
         Type* t = nullptr;
         std::vector<CtorDef> ctors;
+        std::vector<DefaultedAssign> defaultAssigns;
         bool dtorDeclared = false;
         bool dtorVirtual = false;
         std::unique_ptr<Stmt> dtorBody;
@@ -1101,6 +1125,13 @@ private:
     Type* classOf(const std::string& tag) {
         auto it = structs_.find(tag);
         return it == structs_.end() ? nullptr : it->second.get();
+    }
+    // A member whose type is a lambda's closure class (a class template argument, F f;). The
+    // checker makes that class (and its copy constructor and destructor, when it owns a class
+    // object) after the parse, so such a member is copied with "\x01cinit:" and destroyed with
+    // "\x01dtorif:", which the checker resolves against the finished closure class.
+    static bool closureField(const Type* t) {
+        return t && t->kind == Type::Kind::Struct && t->tag.compare(0, 10, "__closure_") == 0;
     }
     static std::string shortName(const std::string& tag) {
         std::size_t c = tag.rfind("::");
@@ -1260,6 +1291,9 @@ private:
         return false;
     }
     std::set<std::string> userCtors_;
+    // Names of functions declared at namespace scope: a function hides a class of the same name
+    // ([class.name] p2), so sigaction(..) calls the function, not struct sigaction's constructor.
+    std::set<std::string> fnNames_;
     std::set<std::string> deletedFns_;  // symbols of special members declared "= delete"
     std::vector<Type*> classStack_;  // classes whose body is being parsed, innermost last
     std::unique_ptr<Expr> braceTemp(const Type& td, std::vector<std::unique_ptr<Expr>> args, const Pos& pos) {
@@ -1337,6 +1371,13 @@ private:
                         // (name = "text" for a std::string field).
                         auto field = eArrow(eName(tmp, pos), f.name, pos);
                         field->text = ".";
+                        if (f.type && f.type->kind == Type::Kind::Reference) {
+                            // A reference member is bound to the value, not assigned through
+                            // ([dcl.init.aggr] p4, [dcl.init.ref]): its slot (ival 11) takes the
+                            // address. (It wrote through the slot's garbage: a crash.)
+                            field->ival = 11;
+                            v = eAddr(std::move(v), pos);
+                        }
                         addE(eAssign(std::move(field), std::move(v), pos));
                     }
                 }
@@ -1612,18 +1653,42 @@ private:
         return true;
     }
 
+    // The data members a class declares itself: those after the copies of its base's members,
+    // which come first in the same order (a member of the same name as a base's is the class's own).
     std::vector<std::pair<std::string, const Type*>> ownFields(const Type& T) {
         std::vector<std::pair<std::string, const Type*>> out;
         const Type* B = T.base.empty() ? nullptr : classOf(T.base);
+        std::size_t skip = 0;
+        if (B)
+            for (const Param& bp : B->params)
+                if (isDataField(bp)) ++skip;
         for (const Param& p : T.params) {
             if (!isDataField(p)) continue;
-            bool inherited = false;
-            if (B)
-                for (const Param& bp : B->params)
-                    if (isDataField(bp) && bp.name == p.name) inherited = true;
-            if (!inherited) out.emplace_back(p.name, p.type.get());
+            if (skip > 0) {
+                --skip;
+                continue;
+            }
+            out.emplace_back(p.name, p.type.get());
         }
         return out;
+    }
+    // A data member with the name of a base's member hides it ([class.member.lookup]): the base's
+    // copy among the class's members is renamed, so a name finds the class's own member; the base's
+    // own functions still reach theirs through the base class.
+    void hideBaseFields(Type& T) {
+        const Type* B = T.base.empty() ? nullptr : classOf(T.base);
+        if (!B) return;
+        std::size_t inherited = 0;
+        for (const Param& bp : B->params)
+            if (isDataField(bp)) ++inherited;
+        std::set<std::string> own;
+        for (const auto& f : ownFields(T)) own.insert(f.first);
+        std::size_t k = 0;
+        for (Param& p : T.params) {
+            if (!isDataField(p)) continue;
+            if (k++ >= inherited) break;
+            if (own.count(p.name)) p.name += "\x05" + T.base;
+        }
     }
 
     std::unique_ptr<Decl> newMethodDecl(const std::string& tag, const std::string& mangled, const Type& userFn,
@@ -1718,8 +1783,21 @@ private:
             const Expr* dm = mi ? nullptr : memberDefault(tag, f.first);
             if (ft && ft->needCtor) {
                 std::vector<std::unique_ptr<Expr>> args;
+                bool listArg = false;  // the one argument is the whole braced list
                 if (mi) args = std::move(mi->args);
-                else if (dm && dm->kind == Expr::Kind::Brace)
+                else if (dm && dm->kind == Expr::Kind::Brace && !dm->kids.empty() && hasListCtor(*ft)) {
+                    // std::vector<std::string> items{"a", "b"}; an initializer-list constructor
+                    // takes the whole list ([dcl.init.list] p3.6), as for a local
+                    auto br = std::make_unique<Expr>();
+                    br->kind = Expr::Kind::Brace;
+                    br->ival = 5;
+                    br->line = dm->line;
+                    br->col = dm->col;
+                    br->file = dm->file;
+                    for (const auto& k : dm->kids) br->kids.push_back(cloneExpr(*k));
+                    args.push_back(std::move(br));
+                    listArg = true;
+                } else if (dm && dm->kind == Expr::Kind::Brace)
                     for (const auto& k : dm->kids) args.push_back(cloneExpr(*k));
                 else if (dm) args.push_back(cloneExpr(*dm));
                 if (args.empty() && userCtors_.count(f.second->tag) && !defaultConstructible(*ft)) {
@@ -1728,7 +1806,7 @@ private:
                     // (struct R { std::type_index t; ..} r{typeid(X), ..}), which assigns the member.
                     continue;
                 }
-                if (args.size() == 1) {
+                if (args.size() == 1 && !listArg) {
                     // One argument: an object of the class is copied, anything else goes to a constructor.
                     std::vector<std::unique_ptr<Expr>> a;
                     a.push_back(eAddr(eArrow(eName("this", p), f.first, p), p));
@@ -1753,6 +1831,11 @@ private:
                 body->stmts.push_back(fieldLoop(f.first, f.second->bound->ival, false, p, [&](std::unique_ptr<Expr> at) {
                     return ctorCall(et, std::move(at), {}, p);
                 }));
+            } else if (mi && mi->args.size() == 1 && closureField(f.second)) {
+                std::vector<std::unique_ptr<Expr>> a;
+                a.push_back(eAddr(eArrow(eName("this", p), f.first, p), p));
+                a.push_back(std::move(mi->args[0]));
+                body->stmts.push_back(sExpr(eCall(eName("\x01" "cinit:" + f.second->tag, p), std::move(a), p), p));
             } else if (mi && mi->args.size() == 1 && f.second && f.second->kind == Type::Kind::Reference) {
                 // A reference member is bound, not assigned ([class.base.init] p8, [dcl.init.ref]):
                 // it holds the address of its referent. ival 11 names the reference itself.
@@ -1783,6 +1866,25 @@ private:
             }
         }
         otherVptrStores(*T, tag, body->stmts, p);
+        // A member of an anonymous union or struct member (union { bool b; int64_t i; }; .. : i(0)),
+        // [class.union.anon] p1: its members are members of the class. It is assigned here.
+        for (std::size_t k = 0; k < d.inits.size();) {
+            MemInit& m = d.inits[k];
+            bool inAnon = false;
+            for (auto& f : ownFields(*T)) {
+                if (f.first.compare(0, 6, "__anon") != 0 || !f.second || f.second->tag.size() ||
+                    (f.second->kind != Type::Kind::Union && f.second->kind != Type::Kind::Struct))
+                    continue;
+                for (const Param& q : f.second->params)
+                    if (q.name == m.name) inAnon = true;
+            }
+            if (!inAnon || m.args.size() != 1) {
+                ++k;
+                continue;
+            }
+            body->stmts.push_back(sExpr(eAssign(eArrow(eName("this", p), m.name, p), std::move(m.args[0]), p), p));
+            d.inits.erase(d.inits.begin() + static_cast<std::ptrdiff_t>(k));
+        }
         for (MemInit& m : d.inits) {
             bool ok = (B && (m.name == shortName(T->base) || m.name == T->base));
             for (auto& f : ownFields(*T))
@@ -1848,6 +1950,12 @@ private:
                                                 [&](std::unique_ptr<Expr> at) { return dtorCall(et, std::move(at), p); }));
                 continue;
             }
+            if (closureField(ft) && !classOf(ft->tag)) {
+                std::vector<std::unique_ptr<Expr>> args;
+                args.push_back(eAddr(eArrow(eName("this", p), fields[static_cast<std::size_t>(i)].first, p), p));
+                body->stmts.push_back(sExpr(eCall(eName("\x01" "dtorif:" + ft->tag, p), std::move(args), p), p));
+                continue;
+            }
             if (ft && ft->kind == Type::Kind::Struct && !ft->tag.empty()) {
                 Type* c = classOf(ft->tag);
                 if (c && c->needDtor) {
@@ -1888,6 +1996,21 @@ private:
                 continue;
             }
             std::unique_ptr<Expr> v;
+            if (t->inner && (t->inner->kind == Type::Kind::Struct || t->inner->kind == Type::Kind::Union)) {
+                // S a[4]{} or {{..}, {..}}: each element from its own braced list, the rest from {}
+                // (value-initialized, [dcl.init.aggr] p5); the element is an object, not a number.
+                if (item) {
+                    v = cloneExpr(*item);
+                } else {
+                    v = std::make_unique<Expr>();
+                    v->kind = Expr::Kind::Brace;
+                    v->line = p.line;
+                    v->col = p.col;
+                    v->file = p.file;
+                }
+                out.push_back(sExpr(eAssign(std::move(el), std::move(v), p), p));
+                continue;
+            }
             if (item && item->kind != Expr::Kind::Brace) v = cloneExpr(*item);
             else if (item && !item->kids.empty() && item->kids[0]) v = cloneExpr(*item->kids[0]);
             else {
@@ -1954,20 +2077,67 @@ private:
         m.type = cloneType(*fn);
         T.params.push_back(std::move(m));
         auto decl = newMethodDecl(c.tag, T.params.back().mangled, *fn, fn->params, p);
-        auto body = sBlock(p);
-        auto other = [&](const std::string& field) {
-            auto dot = std::make_unique<Expr>();
-            dot->kind = Expr::Kind::Member;
-            dot->text = ".";
-            dot->line = p.line;
-            dot->col = p.col;
-            dot->file = p.file;
-            dot->kids.push_back(eName("__o", p));
-            dot->kids.push_back(eName(field, p));
-            return dot;
+        decl->body = memberwiseAssign(T, false, p);
+        extras_.push_back(std::move(decl));
+    }
+
+    // std::move(x) written out: *&x marked as an xvalue (ival 5, as the checker marks the result
+    // of a call returning T&&).
+    std::unique_ptr<Expr> eXvalue(std::unique_ptr<Expr> x, const Pos& p) {
+        auto d = std::make_unique<Expr>();
+        d->kind = Expr::Kind::Unary;
+        d->text = "*";
+        d->ival = 5;
+        d->line = p.line;
+        d->col = p.col;
+        d->file = p.file;
+        d->kids.push_back(eAddr(std::move(x), p));
+        return d;
+    }
+    // __o.field: a part of the object copied or moved from.
+    std::unique_ptr<Expr> eOther(const std::string& field, const Pos& p) {
+        auto dot = std::make_unique<Expr>();
+        dot->kind = Expr::Kind::Member;
+        dot->text = ".";
+        dot->line = p.line;
+        dot->col = p.col;
+        dot->file = p.file;
+        dot->kids.push_back(eName("__o", p));
+        dot->kids.push_back(eName(field, p));
+        return dot;
+    }
+    // this->field = __o.field, an array member element by element; for a move, a part of class
+    // type is moved.
+    void assignPart(Stmt& body, const std::string& field, const Type* ft, bool move, const Pos& p) {
+        auto from = [&](std::unique_ptr<Expr> x, const Type* t) {
+            return move && t && t->kind == Type::Kind::Struct ? eXvalue(std::move(x), p) : std::move(x);
         };
-        if (B) {
-            // *(B *)this = *(B *)&__o: the base part, with the base's own operator= when it has one.
+        if (ft && ft->kind == Type::Kind::Array) {
+            std::uint64_t n = ft->bound && ft->bound->kind == Expr::Kind::Int ? ft->bound->ival : 0;
+            for (std::uint64_t k = 0; k < n; ++k) {
+                auto idx = [&](std::unique_ptr<Expr> base) {
+                    auto el = std::make_unique<Expr>();
+                    el->kind = Expr::Kind::Index;
+                    el->line = p.line;
+                    el->col = p.col;
+                    el->file = p.file;
+                    el->kids.push_back(std::move(base));
+                    el->kids.push_back(eInt(k, p));
+                    return el;
+                };
+                body.stmts.push_back(sExpr(
+                    eAssign(idx(eArrow(eName("this", p), field, p)), from(idx(eOther(field, p)), ft->inner.get()), p), p));
+            }
+            return;
+        }
+        body.stmts.push_back(sExpr(eAssign(eArrow(eName("this", p), field, p), from(eOther(field, p), ft), p), p));
+    }
+    // The body of an implicit or defaulted copy or move assignment ([class.copy.assign] p12): the
+    // base part (*(B *)this = *(B *)&__o, with the base's own operator= when it has one), then
+    // each member in turn, then return *this. A move assignment moves each part.
+    std::unique_ptr<Stmt> memberwiseAssign(const Type& T, bool move, const Pos& p) {
+        auto body = sBlock(p);
+        if (!T.base.empty() && classOf(T.base)) {
             auto castTo = [&](std::unique_ptr<Expr> x) {
                 auto cst = std::make_unique<Expr>();
                 cst->kind = Expr::Kind::Cast;
@@ -1987,32 +2157,11 @@ private:
                 d->kids.push_back(std::move(cst));
                 return d;
             };
-            body->stmts.push_back(sExpr(eAssign(castTo(eName("this", p)), castTo(eAddr(eName("__o", p), p)), p), p));
+            auto src = castTo(eAddr(eName("__o", p), p));
+            if (move) src = eXvalue(std::move(src), p);
+            body->stmts.push_back(sExpr(eAssign(castTo(eName("this", p)), std::move(src), p), p));
         }
-        for (auto& f : ownFields(T)) {
-            if (f.second && f.second->kind == Type::Kind::Array) {
-                std::uint64_t n = f.second->bound && f.second->bound->kind == Expr::Kind::Int ? f.second->bound->ival : 0;
-                for (std::uint64_t k = 0; k < n; ++k) {
-                    auto idx = [&](std::unique_ptr<Expr> base) {
-                        auto i = std::make_unique<Expr>();
-                        i->kind = Expr::Kind::Int;
-                        i->ival = k;
-                        auto el = std::make_unique<Expr>();
-                        el->kind = Expr::Kind::Index;
-                        el->line = p.line;
-                        el->col = p.col;
-                        el->file = p.file;
-                        el->kids.push_back(std::move(base));
-                        el->kids.push_back(std::move(i));
-                        return el;
-                    };
-                    body->stmts.push_back(
-                        sExpr(eAssign(idx(eArrow(eName("this", p), f.first, p)), idx(other(f.first)), p), p));
-                }
-                continue;
-            }
-            body->stmts.push_back(sExpr(eAssign(eArrow(eName("this", p), f.first, p), other(f.first), p), p));
-        }
+        for (auto& f : ownFields(T)) assignPart(*body, f.first, f.second, move, p);
         auto ret = std::make_unique<Stmt>();
         ret->kind = Stmt::Kind::Return;
         ret->line = p.line;
@@ -2027,8 +2176,59 @@ private:
         self->kids.push_back(eName("this", p));
         ret->expr = std::move(self);
         body->stmts.push_back(std::move(ret));
-        decl->body = std::move(body);
-        extras_.push_back(std::move(decl));
+        return body;
+    }
+    // The member initializers of an implicit or defaulted copy or move constructor ([class.copy.ctor]
+    // p14): the base from __o, then each member from __o's (moved for a move). An array member is
+    // copied element by element in the body. The constructor's one parameter becomes __o.
+    void memberwiseInits(CtorDef& d, const Type& T, bool move, const Pos& p) {
+        if (d.params.size() != 1) return;
+        d.params[0].name = "__o";
+        d.inits.clear();
+        d.body = sBlock(p);
+        d.hasBody = true;
+        if (!T.base.empty()) {
+            MemInit mi;
+            mi.name = shortName(T.base);
+            mi.args.push_back(move ? eXvalue(eName("__o", p), p) : eName("__o", p));
+            d.inits.push_back(std::move(mi));
+        }
+        for (auto& f : ownFields(T)) {
+            const Type* ft = f.second;
+            if (ft && ft->kind == Type::Kind::Array) {
+                assignPart(*d.body, f.first, ft, move, p);
+                continue;
+            }
+            MemInit mi;
+            mi.name = f.first;
+            auto from = eOther(f.first, p);
+            mi.args.push_back(move && ft && ft->kind == Type::Kind::Struct ? eXvalue(std::move(from), p) : std::move(from));
+            d.inits.push_back(std::move(mi));
+        }
+    }
+    // A defaulted constructor whose one parameter is a reference to its own class: a copy or move
+    // constructor; it gets the implicit one's member initializers ([dcl.fct.def.default] p5).
+    void defaultCopyCtor(CtorDef& d, const std::string& tag, const Type& T) {
+        if (d.params.size() != 1 || !d.params[0].type) return;
+        const Type* a = d.params[0].type.get();
+        if (a->kind != Type::Kind::Reference || !a->inner || a->inner->kind != Type::Kind::Struct || a->inner->tag != tag)
+            return;
+        memberwiseInits(d, T, a->rref, d.pos);
+    }
+    // A defaulted operator= whose parameter is a reference to its own class: the copy or move
+    // assignment, with the implicit one's body. Returns the definition (or null when it is not one).
+    std::unique_ptr<Decl> defaultAssign(const std::string& tag, const std::string& mangled, const Type& fn,
+                                        const Pos& p) {
+        const Type* T = classOf(tag);
+        if (!T || fn.params.size() != 1 || !fn.params[0].type) return nullptr;
+        const Type* a = fn.params[0].type.get();
+        if (a->kind != Type::Kind::Reference || !a->inner || a->inner->kind != Type::Kind::Struct || a->inner->tag != tag)
+            return nullptr;
+        auto f = cloneType(fn);
+        f->params[0].name = "__o";
+        auto decl = newMethodDecl(tag, mangled, *f, f->params, p);
+        decl->body = memberwiseAssign(*T, a->rref, p);
+        return decl;
     }
 
     // The class of a field: the field's own type, or the element type of a one-level array of a
@@ -2055,6 +2255,7 @@ private:
         if (dmi_.count(c.tag) && !dmi_[c.tag].empty()) needCtor = true;
         bool needDtor = c.dtorDeclared || (B && B->needDtor);
         for (auto& f : ownFields(T)) {
+            if (closureField(f.second)) needDtor = true;  // (its destructor, if any, is the checker's)
             const Type* el = arrayElemClass(f.second);
             if (el) {
                 Type* m = classOf(el->tag);
@@ -2083,6 +2284,8 @@ private:
             T.params.push_back(std::move(cp));
             c.ctors.push_back(std::move(d));
         }
+        for (CtorDef& d : c.ctors)
+            if (d.defaulted) defaultCopyCtor(d, c.tag, T);
         // The implicit copy constructor: a class with no copy constructor of its own whose base or
         // member has one copies the base and each member with them. (Not made when a part could not
         // be copied that way: an array member, a base without a copy constructor.)
@@ -2115,6 +2318,7 @@ private:
             for (auto& f : ownFields(T)) {
                 if (!f.second) continue;
                 if (f.second->kind == Type::Kind::Array) ok = false;
+                if (closureField(f.second)) parts = true;
                 if (f.second->kind == Type::Kind::Struct && !f.second->tag.empty()) {
                     Type* m = classOf(f.second->tag);
                     if (m && hasCopy(m)) parts = true;
@@ -2126,23 +2330,8 @@ private:
             // deleted too ([class.copy.ctor] p10); its implicit move constructor is made instead,
             // moving each part (it used to be a copy constructor calling the deleted one).
             const bool asMove = deletedPart;
-            auto moved = [&](std::unique_ptr<Expr> x, const Type* t) {
-                // std::move(x) written out: *&x marked as an xvalue (ival 5, as the checker marks
-                // the result of a call returning T&&), for the base or member of class type t.
-                if (!asMove || !t) return x;
-                auto deref = std::make_unique<Expr>();
-                deref->kind = Expr::Kind::Unary;
-                deref->text = "*";
-                deref->ival = 5;
-                deref->line = p.line;
-                deref->col = p.col;
-                deref->file = p.file;
-                deref->kids.push_back(eAddr(std::move(x), p));
-                return deref;
-            };
             if (!userCopy && parts && ok) {
                 CtorDef d;
-                d.hasBody = true;
                 d.pos = p;
                 Param op;
                 op.name = "__o";
@@ -2150,32 +2339,11 @@ private:
                 refT->rref = asMove;
                 refT->inner = ty(Type::Kind::Struct);
                 refT->inner->tag = c.tag;
+                // C(const C &): a const object is copied too ([class.copy.ctor] p7)
+                refT->inner->cnst = !asMove;
                 op.type = std::move(refT);
                 d.params.push_back(std::move(op));
-                if (B) {
-                    MemInit mi;
-                    mi.name = shortName(T.base);
-                    auto bt = ty(Type::Kind::Struct);
-                    bt->tag = T.base;
-                    mi.args.push_back(moved(eName("__o", p), bt.get()));
-                    d.inits.push_back(std::move(mi));
-                }
-                for (auto& f : ownFields(T)) {
-                    MemInit mi;
-                    mi.name = f.first;
-                    auto dot = std::make_unique<Expr>();
-                    dot->kind = Expr::Kind::Member;
-                    dot->text = ".";
-                    dot->line = p.line;
-                    dot->col = p.col;
-                    dot->file = p.file;
-                    dot->kids.push_back(eName("__o", p));
-                    dot->kids.push_back(eName(f.first, p));
-                    const Type* ft = f.second;
-                    bool cls = ft && ft->kind == Type::Kind::Struct;
-                    mi.args.push_back(cls ? moved(std::move(dot), ft) : std::move(dot));
-                    d.inits.push_back(std::move(mi));
-                }
+                memberwiseInits(d, T, asMove, p);
                 Param cp;
                 cp.name = "<ctor>";
                 auto fn = fnTypeOf(d.params);
@@ -2362,6 +2530,8 @@ private:
             auto fn = fnTypeOf(d.params);
             extras_.push_back(newMethodDecl(c.tag, mangleSpecial(c.tag, "C1", *fn), *fn, d.params, d.pos));
         }
+        for (DefaultedAssign& da : c.defaultAssigns)
+            if (auto decl = defaultAssign(c.tag, da.mangled, *da.fn, da.pos)) extras_.push_back(std::move(decl));
         emitVectorHelpers(c, T);
         for (CtorDef& d : c.ctors) {
             if (!d.hasBody) continue;
@@ -2463,6 +2633,26 @@ private:
             tplShort = shortName(tag);
             tag += "__local" + std::to_string(localClassN_++);
         }
+        if (tag.empty() && !isUnion && (bodyDepth_ > 0 || !classStack_.empty()) && isP("{") && [&] {
+                // only one with a declarator after its body (an anonymous member, struct { .. };,
+                // keeps its members in the enclosing class)
+                int braces = 0;
+                for (std::size_t k = i_; k < toks_.size(); ++k) {
+                    if (isP(toks_[k], "{")) ++braces;
+                    else if (isP(toks_[k], "}") && --braces == 0)
+                        return k + 1 < toks_.size() && (toks_[k + 1].kind == Tok::Ident || isP(toks_[k + 1], "*") ||
+                                                         isP(toks_[k + 1], "&"));
+                }
+                return false;
+            }()) {
+            // An unnamed class defined in a C++ function (struct { T &r; } cv{x}; in
+            // Render/Mesh.hpp) or class (struct { int a; } s{1}; a member): a hidden name, so it is a class like any other and a braced
+            // initializer initializes its members ([dcl.init.aggr]). (In C, unnamed structs keep
+            // the C rules.)
+            const std::string& f = at.file;
+            bool cSource = cSourceFile(f);
+            if (!cSource && !f.empty()) tag = "__unnamed" + std::to_string(localClassN_++);
+        }
         if (!instOverrideName_.empty() && (tag == instOverrideName_ || shortName(tag) == instOverrideName_)) {
             tplShort = instOverrideName_;
             tag = instOverrideTag_;
@@ -2480,7 +2670,7 @@ private:
             auto inc = ty(Type::Kind::Struct);
             inc->tag = tag;
             structs_[tag] = cloneType(*inc);
-            if (!findTypedef(shortName(tag))) addTypedef(shortName(tag), cloneType(*inc));
+            if (namesNoClassHere(tag)) addTypedef(shortName(tag), cloneType(*inc));
             preDeclared = true;
         }
         std::vector<std::string> moreBases;  // the bases after the first ([class.mi])
@@ -2489,6 +2679,7 @@ private:
           for (;;) {
             while (isKw("public") || isKw("private") || isKw("protected") || isKw("virtual")) advance();
             std::string bn;
+            std::size_t bnAt = 0;
             std::string one;
             if (!atEnd() && cur().kind == Tok::Ident && nextIs("::")) {
                 // N::B<T> as a base (std::enable_shared_from_this<C>): the template after its namespaces.
@@ -2500,6 +2691,7 @@ private:
                 if (bt && !bt->tag.empty() && classOf(bt->tag)) one = bt->tag;
                 else err("unknown base class");
             } else if (!atEnd() && cur().kind == Tok::Ident) {
+                bnAt = i_;
                 bn = cur().text;
                 advance();
                 while (eatP("::")) {
@@ -2510,6 +2702,8 @@ private:
                 }
             }
             const Type* td = findTypedef(bn);
+            std::size_t qend = 0;
+            if (!td && bn.find("::") != std::string::npos) td = qualTypeAt(bnAt, qend);  // std::true_type
             if (!one.empty()) {
             } else if (classOf(qualify(bn))) one = qualify(bn);
             else if (classOf(bn)) one = bn;
@@ -2551,10 +2745,19 @@ private:
                 inc->tag = tag;
                 structs_[tag] = cloneType(*inc);
                 const std::string& f = at.file;
-                bool cSource = f.size() >= 2 && (f.compare(f.size() - 2, 2, ".c") == 0 || f.compare(f.size() - 2, 2, ".h") == 0);
-                if (!isUnion && (isClass || !ns_.empty() || !cSource) && !findTypedef(shortName(tag)))
+                bool cSource = cSourceFile(f);
+                if (!isUnion && (isClass || !ns_.empty() || !cSource) && namesNoClassHere(tag))
                     addTypedef(shortName(tag), cloneType(*inc));
                 return inc;
+            }
+            {
+                // The class was first named where its name was not left behind as a type name (in
+                // a parameter list: void f(class Camera *c); [basic.scope.pdecl] p7): `class
+                // Camera;` here makes the name a type name in this scope.
+                const std::string& f = at.file;
+                bool cSource = cSourceFile(f);
+                if (!isUnion && !cSource && isP(";") && !findTypedef(shortName(tag)))
+                    addTypedef(shortName(tag), cloneType(*it->second));
             }
             return cloneType(*it->second);
         }
@@ -2696,6 +2899,7 @@ private:
             implicitTags_.insert(shortTag);
         }
         while (!atEnd() && !isP("}")) {
+            if (isKw("using") && inheritCtors(cx, *t)) continue;
             if (isKw("using")) {
                 parseUsing();
                 continue;
@@ -2801,6 +3005,7 @@ private:
                 } else if (eatP("=")) {
                     if (isKw("default")) {
                         cd.hasBody = true;
+                        cd.defaulted = true;
                         cd.body = sBlock(cd.pos);
                     } else if (isKw("delete")) {
                         deletedFns_.insert(t->params.back().mangled);  // C(const C&) = delete
@@ -2852,6 +3057,18 @@ private:
                     advance();
                     continue;
                 }
+                if (base && (base->kind == Type::Kind::Struct || base->kind == Type::Kind::Union) && isP(";") &&
+                    base->tag.empty() && !base->params.empty()) {
+                    // An anonymous union or struct member, union { bool b; int64_t i; }; ([class.union.anon]
+                    // p1, C11 6.7.2.1 p13): a member with a hidden name, whose members the checker finds
+                    // as members of the class.
+                    advance();
+                    Param anon;
+                    anon.name = "__anon" + std::to_string(newN_++);
+                    anon.type = std::move(base);
+                    t->params.push_back(std::move(anon));
+                    continue;
+                }
                 if (base && (base->kind == Type::Kind::Struct || base->kind == Type::Kind::Union) && isP(";")) {
                     // A nested class: struct Inner { ... }; (its name is kept at namespace scope)
                     advance();
@@ -2871,13 +3088,16 @@ private:
                 if (cx.cxx && !classy) classy = true;
                 bool pure = false;
                 bool cmethod = false;
+                bool defaulted = false;
                 while (isKw("const") || isKw("override") || isKw("final") || isKw("noexcept")) {
                     if (isKw("const")) cmethod = true;
-                    advance();
+                    if (isKw("noexcept")) skipNoexcept();  // noexcept(true) too
+                    else advance();
                 }
                 if (isP("=")) {
                     advance();
                     if (!atEnd() && cur().kind == Tok::Int && cur().uval == 0) pure = true;
+                    if (isKw("default")) defaulted = true;
                     advance();
                 }
                 Param field;
@@ -2911,6 +3131,11 @@ private:
                                               Pos{d.line, d.col, d.file});
                     deferBody(2, 0, decl.get(), fieldType->inner.get());
                     extras_.push_back(std::move(decl));
+                } else if (defaulted && d.name == "operator=") {
+                    // C &operator=(const C &) = default: memberwise, made when the class is finished.
+                    expectP(";", ";");
+                    cx.defaultAssigns.push_back(
+                        DefaultedAssign{t->params.back().mangled, cloneType(*fieldType), Pos{d.line, d.col, d.file}});
                 } else {
                     expectP(";", ";");
                     if (!pure) {
@@ -2964,6 +3189,7 @@ private:
             if (already) {
                 diags_.error(at.file.empty() ? "t.c" : at.file, at.line, at.column, "redefined struct '" + tag + "'");
             } else {
+                hideBaseFields(*t);
                 if (cx.cxx) finishClass(cx);
                 structs_[tag] = cloneType(*t);
                 canonStructs()[tag] = cloneType(*t);
@@ -2974,7 +3200,19 @@ private:
                     addTypedef(shortTag, cloneType(*t));
                     // (not a template instance's name: less<int> must not make "less" a type name
                     // everywhere, where a parameter called less is called as less(a, b))
-                    if (tplShort.empty() && classOuter_ < tscopes_.size()) tscopes_[classOuter_][shortTag] = cloneType(*t);
+                    // A class nested in another is not found by its short name outside that class
+                    // ([class.nest] p1): UISkeleton::Bar made gx::Bar(..) a cast, Random::State
+                    // took the place of lua::State.
+                    const bool nested = classStack_.size() > 1 && classStack_[classStack_.size() - 2];
+                    if (tplShort.empty() && !nested && classOuter_ < tscopes_.size())
+                        tscopes_[classOuter_][shortTag] = cloneType(*t);
+                    else if (tplShort.empty() && nested && tscopes_.size() >= 2) {
+                        tscopes_[tscopes_.size() - 2][shortTag] = cloneType(*t);  // the enclosing class's scope
+                        // a member type of the enclosing class: found in its derived classes and
+                        // in its member functions defined outside it
+                        const Type* outerCls = classStack_[classStack_.size() - 2];
+                        if (!outerCls->tag.empty()) memberTypes_[outerCls->tag + "::" + shortTag] = classByName(*t);
+                    }
                 }
                 readDeferred(deferred, cx);
                 if (cx.cxx) emitClassDecls(cx);
@@ -3172,6 +3410,7 @@ private:
         Guard nest(*this);
         if (!nest) return Parsed();
         std::vector<Mod::Kind> prefix;
+        std::vector<std::string> memberOf;  // the class of each T C::* in prefix
         while (!atEnd()) {
             if (eatKw("const") || eatKw("volatile")) continue;
             if (eatP("*")) {
@@ -3186,12 +3425,30 @@ private:
                 prefix.push_back(Mod::Kind::RRef);  // T&&: an rvalue (or forwarding) reference
                 continue;
             }
+            if (!atEnd() && cur().kind == Tok::Ident && nextIs("::")) {
+                // T C::*name: a pointer to a data member of class C ([dcl.mptr]).
+                std::size_t j = i_;
+                std::string q;
+                while (j + 1 < toks_.size() && toks_[j].kind == Tok::Ident && isP(toks_[j + 1], "::")) {
+                    q += (q.empty() ? "" : "::") + toks_[j].text;
+                    j += 2;
+                }
+                std::string cls = j < toks_.size() && isP(toks_[j], "*") ? classPrefix(q) : "";
+                if (!cls.empty()) {
+                    i_ = j + 1;
+                    prefix.push_back(Mod::Kind::Ptr);
+                    memberOf.resize(prefix.size());
+                    memberOf.back() = cls;
+                    continue;
+                }
+            }
             break;
         }
         Parsed d = parseDirect(needName);
         for (int n = static_cast<int>(prefix.size()) - 1; n >= 0; --n) {
             Mod m;
             m.kind = prefix[static_cast<std::size_t>(n)];
+            if (static_cast<std::size_t>(n) < memberOf.size()) m.memberOf = memberOf[static_cast<std::size_t>(n)];
             d.mods.push_back(std::move(m));
         }
         return d;
@@ -3221,6 +3478,13 @@ private:
                 d.name += op;
             };
             if (d.name == "operator" && !atEnd() && cur().kind == Tok::Punct) operatorSymbol();
+            if (d.name == "operator" && !atEnd() && cur().kind == Tok::StringLit && cur().decoded.empty() &&
+                i_ + 1 < toks_.size() && toks_[i_ + 1].kind == Tok::Ident) {
+                // operator""_sfx, a literal operator ([over.literal]); mangled li<name>.
+                advance();
+                d.name += "\"\"" + cur().text;
+                advance();
+            }
             while (eatP("::")) {
                 if (atEnd() || cur().kind != Tok::Ident) {
                     err("expected a name");
@@ -3348,6 +3612,7 @@ private:
             Mod& m = mods[static_cast<std::size_t>(n)];
             if (m.kind == Mod::Kind::Ptr) {
                 t->kind = Type::Kind::Pointer;
+                t->memberOf = m.memberOf;
                 t->inner = std::move(base);
             } else if (m.kind == Mod::Kind::Ref || m.kind == Mod::Kind::RRef) {
                 if (base && base->kind == Type::Kind::Reference) {
@@ -3415,16 +3680,31 @@ private:
     void enterMemberScope(const std::string& tag) {
         if (tag.empty() || memberScope_ >= 0) return;
         std::map<std::string, std::unique_ptr<Type>> names;
-        std::string pre = tag + "::";
-        for (auto it = memberTypes_.lower_bound(pre); it != memberTypes_.end() && it->first.compare(0, pre.size(), pre) == 0; ++it)
-            if (it->second && it->first.find("::", pre.size()) == std::string::npos)
-                names[it->first.substr(pre.size())] = cloneType(*it->second);
-        for (auto it = structs_.lower_bound(pre); it != structs_.end() && it->first.compare(0, pre.size(), pre) == 0; ++it)
-            if (it->second && it->first.find("::", pre.size()) == std::string::npos && !it->second->tag.empty()) {
-                auto t = ty(Type::Kind::Struct);
-                t->tag = it->second->tag;
-                names[it->first.substr(pre.size())] = std::move(t);
+        // The class's member types, then those of the classes it is nested in, and each of those
+        // classes' own names ([basic.lookup.unqual] p8, [class.nest]): in Paths::Env::Current()
+        // "Env" is the class itself (nested class names are not kept outside their class).
+        for (std::string cls = tag; !cls.empty() && classOf(cls);) {
+            std::string pre = cls + "::";
+            for (auto it = memberTypes_.lower_bound(pre); it != memberTypes_.end() && it->first.compare(0, pre.size(), pre) == 0; ++it)
+                if (it->second && it->first.find("::", pre.size()) == std::string::npos &&
+                    !names.count(it->first.substr(pre.size())))
+                    names[it->first.substr(pre.size())] = cloneType(*it->second);
+            for (auto it = structs_.lower_bound(pre); it != structs_.end() && it->first.compare(0, pre.size(), pre) == 0; ++it)
+                if (it->second && it->first.find("::", pre.size()) == std::string::npos && !it->second->tag.empty() &&
+                    !names.count(it->first.substr(pre.size()))) {
+                    auto t = ty(Type::Kind::Struct);
+                    t->tag = it->second->tag;
+                    names[it->first.substr(pre.size())] = std::move(t);
+                }
+            const std::size_t cut = cls.rfind("::");
+            if (cls.find('<') == std::string::npos && !names.count(shortName(cls))) {
+                auto self = ty(Type::Kind::Struct);
+                self->tag = cls;
+                names[shortName(cls)] = std::move(self);
             }
+            if (cut == std::string::npos) break;
+            cls = cls.substr(0, cut);
+        }
         if (names.empty()) return;
         tscopes_.emplace_back();
         memberScope_ = static_cast<long>(tscopes_.size()) - 1;
@@ -3456,6 +3736,17 @@ private:
         return {};
     }
 
+    // Whether "class C;" (or C's base clause) makes C's short name a type name here: when it names
+    // nothing yet, or names a class nested in another class (class names of nested classes are kept
+    // in the scope around the outermost class, but outside that class they are not found by an
+    // unqualified name, [class.nest] p1; "class State;" in okay::lua named okay::Random::State).
+    bool namesNoClassHere(const std::string& tag) const {
+        const Type* old = findTypedef(shortName(tag));
+        if (!old) return true;
+        if ((old->kind != Type::Kind::Struct && old->kind != Type::Kind::Union) || old->tag == tag) return false;
+        const std::size_t cut = old->tag.rfind("::");
+        return cut != std::string::npos && structs_.count(old->tag.substr(0, cut)) && !inProgress(old->tag.substr(0, cut));
+    }
     std::string qualify(const std::string& name) const {
         if (name.empty() || ns_.empty() || name.find("::") != std::string::npos) return name;
         std::string q;
@@ -3496,10 +3787,34 @@ private:
     // constants of classes (trait values), !, -, ~, the binary operators, ?: and casts. False when
     // 'e' is not one the parser can work out (the checker sees it then).
     bool evalConst(const Expr& e, long& out) {
+        int width = 8;
+        bool uns = false;
+        return evalConstTyped(e, out, width, uns);
+    }
+    // A value of the given width (4 or 8 bytes after the integral promotions) and signedness, held
+    // sign- or zero-extended in a long.
+    static long fitConst(long v, int width, bool uns) {
+        if (width >= 8) return v;
+        const unsigned long bits = static_cast<unsigned long>(v) & 0xffffffffUL;
+        if (!uns && (bits & 0x80000000UL)) return static_cast<long>(bits | ~0xffffffffUL);
+        return static_cast<long>(bits);
+    }
+    // The constant value of e, with its type's width and signedness ([expr.const]; the usual
+    // arithmetic conversions, [expr.arith.conv]): (unsigned long)-1 < 0ul is false, not true, so
+    // numeric_limits<unsigned long>::digits is 64.
+    bool evalConstTyped(const Expr& e, long& out, int& width, bool& uns) {
+        width = 4;
+        uns = false;
         switch (e.kind) {
         case Expr::Kind::Int:
-        case Expr::Kind::Char: out = static_cast<long>(e.ival); return true;
+        case Expr::Kind::Char:
+            out = static_cast<long>(e.ival);
+            uns = e.litUnsigned;
+            if (e.litRank > 0 || (uns ? e.ival > 0xffffffffULL : e.ival > 0x7fffffffULL)) width = 8;
+            if (!uns && e.ival > 0x7fffffffffffffffULL) uns = true;
+            return true;
         case Expr::Kind::Name: {
+            width = 8;
             if (e.text.find("::") == std::string::npos && classConst(e.text, out)) return true;
             if (memberConst(e.text, out)) return true;
             for (std::size_t keep = ns_.size(); keep > 0; --keep) {
@@ -3515,54 +3830,114 @@ private:
                 const int n = typeSize(*e.ty);
                 if (n <= 0) return false;
                 out = n;
+                width = 8;
+                uns = true;
                 return true;
             }
             long v = 0;
-            if (e.kids.empty() || !e.kids[0] || !evalConst(*e.kids[0], v)) return false;
-            if (e.text == "!") out = !v;
-            else if (e.text == "-") out = -v;
+            if (e.kids.empty() || !e.kids[0] || !evalConstTyped(*e.kids[0], v, width, uns)) return false;
+            if (e.text == "!") {
+                out = !v;
+                width = 4;
+                uns = false;
+                return true;
+            }
+            if (e.text == "-") out = static_cast<long>(0UL - static_cast<unsigned long>(v));
             else if (e.text == "~") out = ~v;
             else if (e.text == "+") out = v;
             else return false;
+            out = fitConst(out, width, uns);
             return true;
         }
         case Expr::Kind::Cast: {
             long v = 0;
-            if (e.kids.empty() || !e.kids[0] || !evalConst(*e.kids[0], v)) return false;
-            out = e.ty && e.ty->kind == Type::Kind::Bool ? (v != 0) : v;
+            if (e.kids.empty() || !e.kids[0] || !evalConstTyped(*e.kids[0], v, width, uns)) return false;
+            const Type* t = e.ty.get();
+            if (t && t->kind == Type::Kind::Bool) {
+                out = v != 0;
+                width = 4;
+                uns = false;
+                return true;
+            }
+            if (t && (t->kind == Type::Kind::Char || t->kind == Type::Kind::Short || t->kind == Type::Kind::Int ||
+                      t->kind == Type::Kind::Long)) {
+                // to a narrower type: its bits, then the promotion to int
+                const int w = t->kind == Type::Kind::Char ? 1 : t->kind == Type::Kind::Short ? 2 : t->kind == Type::Kind::Int ? 4 : 8;
+                unsigned long bits = static_cast<unsigned long>(v);
+                if (w < 8) {
+                    const unsigned long mask = (1UL << (8 * w)) - 1;
+                    bits &= mask;
+                    if (!t->unsign && (bits >> (8 * w - 1)) & 1UL) bits |= ~mask;
+                }
+                out = static_cast<long>(bits);
+                width = w < 4 ? 4 : w;
+                uns = t->unsign && w >= 4;
+                return true;
+            }
+            out = v;
             return true;
         }
         case Expr::Kind::Cond: {
             long c = 0;
-            if (e.kids.size() != 3 || !e.kids[0] || !evalConst(*e.kids[0], c)) return false;
-            return e.kids[c ? 1 : 2] && evalConst(*e.kids[c ? 1 : 2], out);
+            int cw = 4;
+            bool cu = false;
+            if (e.kids.size() != 3 || !e.kids[0] || !evalConstTyped(*e.kids[0], c, cw, cu)) return false;
+            return e.kids[c ? 1 : 2] && evalConstTyped(*e.kids[c ? 1 : 2], out, width, uns);
         }
         case Expr::Kind::Bin: {
             long a = 0;
             long b = 0;
-            if (e.kids.size() != 2 || !e.kids[0] || !e.kids[1] || !evalConst(*e.kids[0], a)) return false;
+            int wa = 4, wb = 4;
+            bool ua = false, ub = false;
+            if (e.kids.size() != 2 || !e.kids[0] || !e.kids[1] || !evalConstTyped(*e.kids[0], a, wa, ua)) return false;
             if (e.text == "&&" && !a) return (out = 0, true);
             if (e.text == "||" && a) return (out = 1, true);
-            if (!evalConst(*e.kids[1], b)) return false;
+            if (!evalConstTyped(*e.kids[1], b, wb, ub)) return false;
             const std::string& o = e.text;
-            if (o == "&&" || o == "||") out = b != 0;
-            else if (o == "==") out = a == b;
+            if (o == "&&" || o == "||") {
+                out = b != 0;
+                return true;
+            }
+            if (o == "<<" || o == ">>") {
+                // the type of the promoted left operand
+                width = wa;
+                uns = ua;
+                if (b < 0 || b >= 8 * width) return false;
+                if (o == "<<") out = static_cast<long>(static_cast<unsigned long>(a) << b);
+                else out = uns ? static_cast<long>(static_cast<unsigned long>(fitConst(a, width, true)) >> b) : a >> b;
+                out = fitConst(out, width, uns);
+                return true;
+            }
+            // the usual arithmetic conversions: the wider type; at one width, unsigned if either is
+            width = wa > wb ? wa : wb;
+            uns = wa == wb ? (ua || ub) : (wa > wb ? ua : ub);
+            a = fitConst(a, width, uns);
+            b = fitConst(b, width, uns);
+            const unsigned long xa = static_cast<unsigned long>(a), xb = static_cast<unsigned long>(b);
+            bool cmp = true;
+            if (o == "==") out = a == b;
             else if (o == "!=") out = a != b;
-            else if (o == "<") out = a < b;
-            else if (o == ">") out = a > b;
-            else if (o == "<=") out = a <= b;
-            else if (o == ">=") out = a >= b;
-            else if (o == "+") out = a + b;
-            else if (o == "-") out = a - b;
-            else if (o == "*") out = a * b;
-            else if (o == "/" && b) out = a / b;
-            else if (o == "%" && b) out = a % b;
-            else if (o == "&") out = a & b;
-            else if (o == "|") out = a | b;
-            else if (o == "^") out = a ^ b;
-            else if (o == "<<") out = a << b;
-            else if (o == ">>") out = a >> b;
-            else return false;
+            else if (o == "<") out = uns ? xa < xb : a < b;
+            else if (o == ">") out = uns ? xa > xb : a > b;
+            else if (o == "<=") out = uns ? xa <= xb : a <= b;
+            else if (o == ">=") out = uns ? xa >= xb : a >= b;
+            else {
+                cmp = false;
+                if (o == "+") out = static_cast<long>(xa + xb);
+                else if (o == "-") out = static_cast<long>(xa - xb);
+                else if (o == "*") out = static_cast<long>(xa * xb);
+                else if (o == "/" && b) out = uns ? static_cast<long>(xa / xb) : a / b;
+                else if (o == "%" && b) out = uns ? static_cast<long>(xa % xb) : a % b;
+                else if (o == "&") out = a & b;
+                else if (o == "|") out = a | b;
+                else if (o == "^") out = a ^ b;
+                else return false;
+                out = fitConst(out, width, uns);
+            }
+            if (cmp) {
+                width = 4;
+                uns = false;
+            }
             return true;
         }
         default: return false;
@@ -3635,6 +4010,7 @@ private:
             e.ival = static_cast<std::uint64_t>(cv);
             return;
         }
+        if (e.kind == Expr::Kind::Name && isLocalName(e.text)) return;  // a local hides the class's name
         if (e.kind == Expr::Kind::Name && e.text.find("::") == std::string::npos && classConst(e.text, cv)) {
             e.kind = Expr::Kind::Int;
             e.text.clear();
@@ -3974,6 +4350,7 @@ private:
         std::size_t skipTo = 0;    // just after the pattern's '>'
     };
     std::map<std::string, std::vector<Partial>> partials_;
+    std::vector<std::unique_ptr<Expr>>* collectDecltype_ = nullptr;  // decltype(e) read now go here
     int protoDepth_ = 0;  // reading a function template's prototype (parameters stand for themselves)
 
     // Match a pattern type (parameters as "\x02P" placeholders) against an argument type, binding
@@ -4072,12 +4449,46 @@ private:
             for (auto& b : bound)
                 if (!b) ok = false;
             if (!ok) continue;
-            own.clear();
+            std::vector<TArg> mine;
             for (auto& b : bound) {
                 TArg a;
                 a.type = std::move(b);
-                own.push_back(std::move(a));
+                mine.push_back(std::move(a));
             }
+            bool hasDecltype = false;
+            for (std::size_t k = ps.skipFrom; k < ps.skipTo && k < toks_.size(); ++k)
+                if (isKwTok(toks_[k], "decltype")) hasDecltype = true;
+            if (hasDecltype) {
+                // SFINAE in the pattern ([temp.spec.partial.match] p2, [temp.deduct] p8): the
+                // pattern with these arguments must be formed. The decltype expressions in it are
+                // given to the checker (specChecks); one that had no type in an earlier round has
+                // put this key in sfinaeFailed(), and the specialization does not match.
+                std::string key = name + "|" + std::to_string(n) + "|";
+                for (const TArg& a : args) key += argMangle(a) + ",";
+                if (sfinaeFailed().count(key)) continue;
+                bool known = false;
+                for (const SpecCheck& c : specChecks())
+                    if (c.key == key) known = true;
+                if (!known) {
+                    SpecCheck chk;
+                    chk.key = key;
+                    std::vector<std::unique_ptr<Expr>>* savedCollect = collectDecltype_;
+                    collectDecltype_ = &chk.exprs;
+                    std::size_t at = i_;
+                    bool half = halfGt_;
+                    halfGt_ = false;
+                    auto es = bindParams(ps.td, mine);
+                    i_ = ps.skipFrom;
+                    std::vector<TArg> formed;
+                    parseTemplateArgs(primary, formed, true);
+                    unbindParams(es);
+                    i_ = at;
+                    halfGt_ = half;
+                    collectDecltype_ = savedCollect;
+                    specChecks().push_back(std::move(chk));
+                }
+            }
+            own = std::move(mine);
             return static_cast<int>(n);
         }
         return -1;
@@ -4759,6 +5170,15 @@ private:
         MemberScopeGuard memberScope{*this, memberScope_};
         tscopes_.emplace_back();
         for (auto& kv : mt.scope) tscopes_.back()[kv.first] = cloneType(*kv.second);
+        {
+            // and the class's nested classes, also those declared after the template ([class.mem]
+            // p7: a member function body is a complete-class context)
+            const std::string pre = mt.tag + "::";
+            for (auto it = memberTypes_.lower_bound(pre); it != memberTypes_.end() && it->first.compare(0, pre.size(), pre) == 0; ++it)
+                if (it->second && it->first.find("::", pre.size()) == std::string::npos &&
+                    !tscopes_.back().count(it->first.substr(pre.size())))
+                    tscopes_.back()[it->first.substr(pre.size())] = cloneType(*it->second);
+        }
         const TDecl& from = mt.hasDef ? mt.def : mt.td;  // the definition after the class, if any
         std::string savedBody = bodyClass_;
         bodyClass_ = mt.tag;
@@ -5127,6 +5547,63 @@ private:
         preStmts_.clear();
     }
 
+    // using B::B; in a class whose base is B: B's constructors are constructors of this class too
+    // ([namespace.udecl] p3, [class.inhctor.init]). Each becomes C(params) : B(params) {}, with B's
+    // default arguments; B's copy and move constructors are not inherited ([over.match.funcs] p8).
+    bool inheritCtors(ClassCtx& cx, Type& T) {
+        if (T.base.empty()) return false;
+        std::size_t j = i_ + 1;
+        std::string q;
+        while (j + 1 < toks_.size() && toks_[j].kind == Tok::Ident && isP(toks_[j + 1], "::")) {
+            q += (q.empty() ? "" : "::") + toks_[j].text;
+            j += 2;
+        }
+        if (q.empty() || j + 1 >= toks_.size() || toks_[j].kind != Tok::Ident || !isP(toks_[j + 1], ";")) return false;
+        if (classPrefix(q) != T.base || toks_[j].text != shortName(T.base)) return false;
+        const Type* B = classOf(T.base);
+        if (!B) return false;
+        i_ = j + 2;
+        Pos p = here();
+        for (const Param& bc : B->params) {
+            if (bc.name != "<ctor>" || !bc.type || bc.type->params.empty() || deletedFns_.count(bc.mangled)) continue;
+            const Type* a0 = bc.type->params[0].type.get();
+            if (bc.type->params.size() == 1 && a0 && a0->kind == Type::Kind::Reference && a0->inner &&
+                a0->inner->tag == T.base)
+                continue;
+            auto fnT = cloneType(*bc.type, true);
+            CtorDef cd;
+            cd.pos = p;
+            MemInit mi;
+            mi.name = shortName(T.base);
+            for (std::size_t k = 0; k < fnT->params.size(); ++k) {
+                Param& prm = fnT->params[k];
+                prm.name = "__ia" + std::to_string(k);
+                std::unique_ptr<Expr> arg = eName(prm.name, p);
+                // (a T&& parameter is passed on as an xvalue, as std::forward would)
+                if (prm.type && prm.type->kind == Type::Kind::Reference && prm.type->rref) arg = eXvalue(std::move(arg), p);
+                mi.args.push_back(std::move(arg));
+                cd.params.push_back(std::move(prm));
+            }
+            cd.inits.push_back(std::move(mi));
+            cd.body = sBlock(p);
+            cd.hasBody = true;
+            Param cp;
+            cp.name = "<ctor>";
+            auto fn = fnTypeOf(cd.params);
+            cp.mangled = mangleSpecial(cx.tag, "C1", *fn);
+            cp.type = std::move(fn);
+            bool dup = false;  // a constructor the class declares itself hides the inherited one
+            for (const Param& q2 : T.params)
+                if (q2.name == "<ctor>" && q2.mangled == cp.mangled) dup = true;
+            if (dup) continue;
+            T.params.push_back(std::move(cp));
+            cx.ctors.push_back(std::move(cd));
+            userCtors_.insert(cx.tag);
+        }
+        cx.cxx = true;
+        return true;
+    }
+
     // "S::S(...) : init { }" and "S::~S() { }" written outside the class.
     bool tryOutOfClassSpecial() {
         // (inline C::C(..) {..}: the word is skipped; a definition in a header is weak anyway)
@@ -5160,6 +5637,7 @@ private:
             CtorDef cd;
             cd.pos = pos;
             parseParams(cd.params);
+            skipNoexcept();  // C::C(C &&) noexcept = default; C::C() noexcept : x(1) {}
             parseInitList(cd);
             auto fn = fnTypeOf(cd.params);
             std::string mangled = mangleSpecial(tag, "C1", *fn);
@@ -5172,6 +5650,7 @@ private:
                 i_ += 3;  // S::S() = default;
                 cd.body = sBlock(pos);
                 cd.hasBody = true;
+                defaultCopyCtor(cd, tag, *T);  // S::S(S &&) = default: memberwise
                 auto decl = buildCtor(tag, cd);
                 if (decl) {
                     decl->isInline = decl->isInline || ooInline_;
@@ -5196,6 +5675,7 @@ private:
         advance();
         expectP("(", "(");
         expectP(")", ")");
+        skipNoexcept();
         if (!special(T, "<dtor>")) err("the class does not declare a destructor");
         auto vt = ty(Type::Kind::Void);
         if (isP("{")) {
@@ -5415,8 +5895,34 @@ private:
         if (type && type->kind == Type::Kind::Function)
             while (isKw("const") || isKw("noexcept")) {
                 if (isKw("const")) defConst = true;
-                advance();
+                if (isKw("noexcept")) skipNoexcept();  // noexcept(expr) too
+                else advance();
             }
+        if (!td && type && type->kind == Type::Kind::Function && isP("=") && i_ + 2 < toks_.size() &&
+            isKwTok(toks_[i_ + 1], "default") && isP(toks_[i_ + 2], ";")) {
+            // C &C::operator=(C &&) noexcept = default; ([dcl.fct.def.default]): the implicit one's
+            // body, memberwise.
+            std::size_t cc = d.name.rfind("::");
+            std::string clsTag = cc == std::string::npos ? "" : classPrefix(d.name.substr(0, cc));
+            if (!clsTag.empty() && d.name.substr(cc + 2) == "operator=") {
+                i_ += 3;
+                std::string mangled;
+                for (const Param& p : classOf(clsTag)->params)
+                    if (p.name == "operator=" && !p.mangled.empty() && p.type && sameParamTypes(*p.type, *type))
+                        mangled = p.mangled;
+                std::unique_ptr<Decl> decl;
+                if (!mangled.empty()) decl = defaultAssign(clsTag, mangled, *type, Pos{d.line, d.col, d.file});
+                if (!decl) err("only a copy or move assignment declared in the class can be defaulted here");
+                else {
+                    decl->isInline = inl;
+                    extras_.push_back(std::move(decl));
+                }
+                flushExtras(tu);
+                return;
+            }
+        }
+        if (!td && type && type->kind == Type::Kind::Function && d.name.find("::") == std::string::npos)
+            fnNames_.insert(d.name);
         if (!td && type && type->kind == Type::Kind::Function && isP("{")) {
             std::size_t cc = d.name.rfind("::");
             std::string prefix = cc == std::string::npos ? "" : d.name.substr(0, cc);
@@ -5513,17 +6019,6 @@ private:
         return s;
     }
 
-    static bool hasCopyCtor(const Type* cls) {
-        if (!cls) return false;
-        for (const Param& p : cls->params) {
-            if (p.name != "<ctor>" || !p.type || p.type->params.size() != 1) continue;
-            const Type* a = p.type->params[0].type.get();
-            if (a && a->kind == Type::Kind::Reference && a->inner && a->inner->kind == Type::Kind::Struct &&
-                a->inner->tag == cls->tag)
-                return true;
-        }
-        return false;
-    }
 
     // A local of class type: run its constructor right after the declaration and remember it so
     // that its destructor runs when the scope ends.
@@ -5599,6 +6094,20 @@ private:
         default: return false;
         }
     }
+    static bool deepConstant(const Expr& e) {
+        if (e.kind != Expr::Kind::Brace) return constantInit(e) || e.kind == Expr::Kind::Name;  // (names as before)
+        for (const auto& k : e.kids)
+            if (k && !deepConstant(*k)) return false;
+        return true;
+    }
+    // An array whose elements are numbers, pointers or classes that need no constructor or destructor.
+    bool plainElements(const Type& t) {
+        const Type* e = &t;
+        while (e->kind == Type::Kind::Array && e->inner) e = e->inner.get();
+        if (e->kind != Type::Kind::Struct && e->kind != Type::Kind::Union) return true;
+        const Type* c = e->tag.empty() ? nullptr : classOf(e->tag);
+        return c && !c->needCtor && !c->needDtor;
+    }
     void addLocal(std::vector<std::unique_ptr<Stmt>>& out, std::unique_ptr<Decl> decl,
                   std::vector<std::unique_ptr<Expr>> ctorArgs, bool haveCtorArgs) {
         std::string name = decl->name;
@@ -5611,6 +6120,10 @@ private:
             long cv = 0;
             if (evalConst(*v, cv)) localConstAt_[localNames_.size()] = {name, cv};
         }
+        // static const T table[] = {{"up", KeyUp}, ..}; in a member function, KeyUp a static constant
+        // of the class: its value, so the table is constant data (Input/Input.hpp).
+        if (decl->isStatic && decl->init && decl->init->kind == Expr::Kind::Brace && bodyDepth_ > 0)
+            boundConsts(*decl->init);
         localNames_.push_back(name);
         Pos p;
         p.line = decl->line;
@@ -5645,6 +6158,23 @@ private:
             }
             out.push_back(guardIf(guard, std::move(thenB), p));
             if (classOf(tag)->needDtor) staticObjs_.push_back(DVar{gname, tag, 0, guard});
+            return;
+        }
+        if (decl->isStatic && decl->init && decl->init->kind == Expr::Kind::Brace && decl->type &&
+            decl->type->kind == Type::Kind::Array && !name.empty() && bodyDepth_ > 0 && !deepConstant(*decl->init) &&
+            plainElements(*decl->type)) {
+            // static const T table[] = {{"f1", KeyF(1)}, ..}; with an element that is not a constant
+            // (a call of a constexpr function): filled element by element the first time control
+            // passes the declaration ([stmt.dcl] p3), as for a scalar below.
+            if (!decl->type->bound) {
+                decl->type->bound = eInt(decl->init->kids.size(), p);
+                decl->type->unsized = false;
+            }
+            std::string gname;
+            std::string guard;
+            auto thenB = staticGuarded(out, name, *decl->type, p, gname, guard);
+            arrayInit(thenB->stmts, *eName(gname, p), decl->type.get(), decl->init.get(), p);
+            out.push_back(guardIf(guard, std::move(thenB), p));
             return;
         }
         if (decl->isStatic && decl->init && decl->type && !name.empty() && bodyDepth_ > 0 &&
@@ -6968,7 +7498,9 @@ private:
     std::unique_ptr<Expr> parseRel() { return parseLeft(&Parser::parseShift, {"<", ">", "<=", ">="}); }
     std::unique_ptr<Expr> parseShift() { return parseLeft(&Parser::parseAdd, {"<<", ">>"}); }
     std::unique_ptr<Expr> parseAdd() { return parseLeft(&Parser::parseMul, {"+", "-"}); }
-    std::unique_ptr<Expr> parseMul() { return parseLeft(&Parser::parseCast, {"*", "/", "%"}); }
+    std::unique_ptr<Expr> parseMul() { return parseLeft(&Parser::parsePm, {"*", "/", "%"}); }
+    // a.*pm and p->*pm ([expr.mptr.oper]): the checker makes them a dereference.
+    std::unique_ptr<Expr> parsePm() { return parseLeft(&Parser::parseCast, {".*", "->*"}); }
 
     // The index just past the type name (N::T, T<args>, N::T<A>::U) at toks_[k]; toks_.size() if
     // a ';' comes inside its template arguments.
@@ -7085,11 +7617,52 @@ private:
         return e;
     }
 
+    // &C::m for a non-static data member m ([expr.unary.op] p3): a pointer to member, T C::*. It is
+    // kept as the member's offset plus one: (T C::*)((long)&((C *)0)->m + 1).
+    std::unique_ptr<Expr> tryMemberPointer() {
+        std::size_t j = i_ + 1;
+        std::string prefix;
+        while (j + 2 < toks_.size() && toks_[j].kind == Tok::Ident && isP(toks_[j + 1], "::") &&
+               toks_[j + 2].kind == Tok::Ident) {
+            prefix += (prefix.empty() ? "" : "::") + toks_[j].text;
+            j += 2;
+        }
+        if (prefix.empty() || j + 1 >= toks_.size() || isP(toks_[j + 1], "(") || isP(toks_[j + 1], "<")) return nullptr;
+        std::string cls = classPrefix(prefix);
+        const Type* T = cls.empty() ? nullptr : classOf(cls);
+        if (!T) return nullptr;
+        const Param* f = nullptr;
+        for (const Param& q : T->params)
+            if (isDataField(q) && q.name == toks_[j].text) f = &q;
+        if (!f || f->bits >= 0 || f->type->kind == Type::Kind::Reference) return nullptr;
+        Pos p = here();
+        std::string field = f->name;
+        auto pmT = ty(Type::Kind::Pointer);
+        pmT->inner = cloneType(*f->type);
+        pmT->memberOf = cls;
+        i_ = j + 1;
+        auto cptr = ty(Type::Kind::Pointer);
+        cptr->inner = ty(Type::Kind::Struct);
+        cptr->inner->tag = cls;
+        auto at = eAddr(eArrow(eCastTo(std::move(cptr), eInt(0, p), p), field, p), p);
+        auto plus = std::make_unique<Expr>();
+        plus->kind = Expr::Kind::Bin;
+        plus->text = "+";
+        plus->line = p.line;
+        plus->col = p.col;
+        plus->file = p.file;
+        plus->kids.push_back(eCastTo(ty(Type::Kind::Long), std::move(at), p));
+        plus->kids.push_back(eInt(1, p));
+        return eCastTo(std::move(pmT), std::move(plus), p);
+    }
+
     std::unique_ptr<Expr> parseUnary() {
         if (atEnd()) {
             err("expected an expression");
             return zeroAt();
         }
+        if (isP("&"))
+            if (auto pm = tryMemberPointer()) return pm;
         if (isP("::") && i_ + 1 < toks_.size() &&
             (toks_[i_ + 1].kind == Tok::Ident || isKwTok(toks_[i_ + 1], "new") || isKwTok(toks_[i_ + 1], "delete")))
             advance();  // ::f(), ::new: the global name (see isTypeKw)
@@ -7788,6 +8361,7 @@ private:
                 // T(args) for a class T: a temporary, constructed in a hidden local declared before
                 // the statement. Its destructor does not run (see the plan: temporaries).
                 const Type* td = instTd ? instTd.get() : findTypedef(cur().text);
+                if (td && !instTd && fnNames_.count(cur().text)) td = nullptr;
                 if (td && td->kind == Type::Kind::Struct && !td->tag.empty()) {
                     Token at = cur();
                     if (!instTd) advance();
@@ -7889,6 +8463,22 @@ private:
                 e->text += cur().decoded;
                 advance();
             }
+            if (!atEnd() && cur().kind == Tok::Ident && !cur().leadSpace && cur().text.size() > 1 &&
+                cur().text[0] == '_') {
+                // "text"_sfx, a user-defined string literal ([lex.ext] p5): operator""_sfx("text", length).
+                auto call = ex(Expr::Kind::Call, cur());
+                auto fn = ex(Expr::Kind::Name, cur());
+                fn->text = "operator\"\"" + cur().text;
+                advance();
+                auto len = ex(Expr::Kind::Int, toks_[i_ - 1]);
+                len->ival = e->text.size();
+                len->litUnsigned = true;
+                len->litRank = 2;
+                call->kids.push_back(std::move(fn));
+                call->kids.push_back(std::move(e));
+                call->kids.push_back(std::move(len));
+                return call;
+            }
             return e;
         }
         if (eatP("(")) {
@@ -7917,6 +8507,70 @@ static bool word(const Token& t, const char* s) { return t.isName() && t.text ==
 // later "fs ::" (a name followed by '::', not after '.', '->' or '::') becomes "std :: filesystem ::".
 // The alias holds from its declaration to the end of the file, wherever it was declared (a
 // simplification: block scope is not kept).
+// inline namespace N { .. } ([namespace.def] p7): its members are members of the enclosing
+// namespace for every lookup, so okay-cc reads them as such. "inline namespace N {" and its '}'
+// are dropped, and so is N where it names the namespace in a qualified name (A::N::f is A::f,
+// using namespace A::N; is using namespace A;, using namespace N; inside A is dropped). Our own
+// choice: the symbols of its members leave N out (g++'s keep it); no other compiler's objects are
+// linked with okay-cc's.
+// Attributes ([dcl.attr.grammar]): [[noreturn]], [[nodiscard]], [[deprecated("..")]],
+// [[fallthrough]] and the rest change no meaning okay-cc gives a program, so the whole
+// specifier is dropped here too. Two '[' in a row only ever start one (p7).
+static std::vector<Token> dropAttributesAndInlineNamespaces(const std::vector<Token>& in) {
+    std::set<std::string> names;
+    std::vector<int> drop;  // for each open '{': 1 if it opens an inline namespace
+    std::vector<Token> out;
+    out.reserve(in.size());
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        if (punct(in[i], "[") && i + 1 < in.size() && punct(in[i + 1], "[")) {
+            std::size_t k = i + 2;
+            int depth = 2;
+            for (; k < in.size() && in[k].kind != Tok::End; ++k) {
+                if (punct(in[k], "[")) ++depth;
+                else if (punct(in[k], "]") && --depth == 0) break;
+            }
+            if (k < in.size() && depth == 0) {
+                i = k;
+                continue;
+            }
+        }
+        if (word(in[i], "inline") && i + 3 < in.size() && word(in[i + 1], "namespace") && in[i + 2].kind == Tok::Ident &&
+            punct(in[i + 3], "{")) {
+            names.insert(in[i + 2].text);
+            drop.push_back(1);
+            i += 3;
+            continue;
+        }
+        if (punct(in[i], "{")) drop.push_back(0);
+        if (punct(in[i], "}") && !drop.empty()) {
+            int d = drop.back();
+            drop.pop_back();
+            if (d) continue;
+        }
+        if (!names.empty() && in[i].kind == Tok::Ident && names.count(in[i].text)) {
+            const bool after = !out.empty() && punct(out.back(), "::");
+            const bool before = i + 1 < in.size() && punct(in[i + 1], "::");
+            if (before && (after || (!out.empty() && !punct(out.back(), ".") && !punct(out.back(), "->")))) {
+                ++i;  // A::N::f, N::f: the N and its '::'
+                continue;
+            }
+            if (after && i + 1 < in.size() && punct(in[i + 1], ";")) {
+                out.pop_back();  // using namespace A::N;
+                continue;
+            }
+            if (!out.empty() && word(out.back(), "namespace") && out.size() >= 2 && word(out[out.size() - 2], "using") &&
+                i + 1 < in.size() && punct(in[i + 1], ";")) {
+                out.pop_back();
+                out.pop_back();
+                ++i;  // using namespace N; (its own enclosing namespace)
+                continue;
+            }
+        }
+        out.push_back(in[i]);
+    }
+    return out;
+}
+
 static std::vector<Token> expandNamespaceAliases(const std::vector<Token>& in) {
     std::map<std::string, std::vector<Token>> alias;
     std::vector<Token> out;
@@ -8105,17 +8759,21 @@ static std::vector<Token> hoistFriends(const std::vector<Token>& in) {
 // are new (at most eight rounds).
 Tu frontEnd(const std::vector<Token>& raw, Diagnostics& diags) {
     instRequests().clear();
-    const std::vector<Token> toks = expandPacks(hoistFriends(threadLocalsAsStatic(expandNamespaceAliases(raw))));
+    const std::vector<Token> toks = expandPacks(hoistFriends(threadLocalsAsStatic(expandNamespaceAliases(dropAttributesAndInlineNamespaces(raw)))));
     Tu result;
     for (int round = 0; round < 8; ++round) {
         Diagnostics local;
         instDirty() = false;
+        specChecks().clear();
+        const std::clock_t t0 = std::clock();
         Parser parser(toks, local);
         Tu tu = parser.parseTu();
+        const std::clock_t t1 = std::clock();
         if (local.ok()) typecheckTu(tu, local);
         if (std::getenv("OKAYCC_ROUNDS"))
-            std::fprintf(stderr, "round %d: %zu requests, dirty %d, %zu diags\n", round, instRequests().size(),
-                         instDirty() ? 1 : 0, local.items().size());
+            std::fprintf(stderr, "round %d: %zu requests, dirty %d, %zu diags, parse %.2f s, check %.2f s\n", round,
+                         instRequests().size(), instDirty() ? 1 : 0, local.items().size(),
+                         double(t1 - t0) / CLOCKS_PER_SEC, double(std::clock() - t1) / CLOCKS_PER_SEC);
         if (instDirty() && round < 7) continue;
         for (const Diag& d : local.items()) {
             if (d.warning) diags.warning(d.file, d.line, d.column, d.message);

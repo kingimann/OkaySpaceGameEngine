@@ -12,6 +12,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <cstdlib>
+#include <ctime>
 
 static int gOk = 0;
 
@@ -29,7 +30,8 @@ static int runCapture(const std::string& bin, const std::string& outPath) {
 
 static std::vector<std::vector<unsigned char>> loadLibc() {
     const char* files[] = {"lib/write.c", "lib/exit.c", "lib/mem.c", "lib/str.c", "lib/printf.c", "lib/extra.c",
-                           "lib/alloc.c", "lib/eh.c", "lib/m.c", "lib/stdio.c", "lib/time.c"};
+                           "lib/alloc.c", "lib/eh.c", "lib/m.c", "lib/stdio.c", "lib/time.c", "lib/signal.c",
+                           "lib/net.c"};
     std::vector<std::string> inc = {"include"};
     std::vector<std::vector<unsigned char>> objs;
     for (const char* path : files) {
@@ -253,6 +255,23 @@ static void expectStaticAssert() {
     ++gOk;
 }
 
+// Round 27: a chain of operators is checked in time that grows with its length, not twice over per
+// link (chain27.cpp took 65 seconds with round 26's okay-cc built with -O2; now well under one).
+static void compileTime() {
+    const char* path = "tests/progs_cpp_std/chain27.cpp";
+    std::string src = readFile(path);
+    okaycc::Diagnostics d;
+    std::clock_t t0 = std::clock();
+    auto obj = okaycc::compileToObject(src, d, path, {"include"});
+    double secs = double(std::clock() - t0) / CLOCKS_PER_SEC;
+    if (!d.ok() || obj.empty() || secs > 10) {
+        std::fprintf(stderr, "FAIL compile time of chain27.cpp: %.1f s\n%s", secs, d.format().c_str());
+        ++okaycc_test::gFail;
+        return;
+    }
+    ++gOk;
+}
+
 int main() {
     DIR* dir = opendir("tests/progs_cpp");
     if (!dir) {
@@ -285,6 +304,7 @@ int main() {
         linkTwo();
         expectNewArrayError();
         expectStaticAssert();
+        compileTime();
         engineDiff("tests/progs_cpp_engine/font_main.cpp", "../../engine/src/Graphics/Font.cpp");
         engineDiff("tests/progs_cpp_engine/focus_main.cpp", "../../engine/src/UI/FocusGraph.cpp");
         // Round 18: Mip.cpp and the Texture.cpp it calls (vector<Surface>, member templates, our libm).

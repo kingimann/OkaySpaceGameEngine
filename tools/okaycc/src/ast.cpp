@@ -8,7 +8,10 @@ Param::Param() = default;
 Param::Param(Param&&) noexcept = default;
 Param& Param::operator=(Param&&) noexcept = default;
 Param::~Param() = default;
-Expr::Expr() = default;
+Expr::Expr() {
+    static std::uint64_t next = 0;
+    serial = ++next;
+}
 Expr::~Expr() = default;
 Type::Type() = default;
 Type::~Type() = default;
@@ -63,6 +66,7 @@ std::unique_ptr<Type> cloneType(const Type& t, bool withDefaults) {
     n->variadic = t.variadic;
     n->rref = t.rref;
     n->cnst = t.cnst;
+    n->memberOf = t.memberOf;
     n->base = t.base;
     n->nonpod = t.nonpod;
     n->hasVptr = t.hasVptr;
@@ -383,6 +387,7 @@ bool isVoidPtr(const Type& t) {
 bool sameType(const Type& a, const Type& b) {
     if (a.kind != b.kind || a.unsign != b.unsign) return false;
     if (a.kind == Type::Kind::Reference && a.rref != b.rref) return false;
+    if (a.kind == Type::Kind::Pointer && a.memberOf != b.memberOf) return false;
     if (a.kind == Type::Kind::Pointer || a.kind == Type::Kind::Array || a.kind == Type::Kind::Reference) {
         return a.inner && b.inner && sameType(*a.inner, *b.inner);
     }
@@ -417,6 +422,18 @@ const Param* findSpecial(const Type* t, const char* name) {
 }
 
 // True when 'd' is the same class as 'b' or is derived from it (single inheritance).
+bool hasCopyCtor(const Type* cls) {
+    if (!cls) return false;
+    for (const Param& p : cls->params) {
+        if (p.name != "<ctor>" || !p.type || p.type->params.size() != 1) continue;
+        const Type* a = p.type->params[0].type.get();
+        if (a && a->kind == Type::Kind::Reference && a->inner && a->inner->kind == Type::Kind::Struct &&
+            a->inner->tag == cls->tag)
+            return true;
+    }
+    return false;
+}
+
 bool derivedFrom(const Type& d, const Type& b) {
     if (d.kind != Type::Kind::Struct || b.kind != Type::Kind::Struct || d.tag.empty() || b.tag.empty()) return false;
     return !basePath(d.tag, b.tag).empty() || d.tag == b.tag;

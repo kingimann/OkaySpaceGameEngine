@@ -6,6 +6,7 @@ typedef unsigned int mode_t;
 typedef int pid_t;
 typedef unsigned int uid_t;
 typedef unsigned int gid_t;
+typedef unsigned int useconds_t;
 #ifndef __okay_size_t_defined
 #define __okay_size_t_defined
 typedef unsigned long size_t;

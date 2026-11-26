@@ -576,6 +576,14 @@ add_test(NAME debug_console COMMAND test_debug_console)
 add_executable(test_diagnostics test_diagnostics.cpp)
 target_link_libraries(test_diagnostics PRIVATE okay::engine)
 add_test(NAME diagnostics COMMAND test_diagnostics)
+# The Problems list's runner (editor/ProjectDiagRunner.*): the project-wide check off the editor's thread, once per change of files.
+# Not built for Windows: the test waits with <thread> (CLAUDE.md 21a).
+if(NOT WIN32)
+    add_executable(test_project_diag_runner test_project_diag_runner.cpp ${CMAKE_SOURCE_DIR}/editor/ProjectDiagRunner.cpp)
+    target_include_directories(test_project_diag_runner PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+    target_link_libraries(test_project_diag_runner PRIVATE okay::engine)
+    add_test(NAME project_diag_runner COMMAND test_project_diag_runner)
+endif()
 
 add_executable(test_debug_overlay test_debug_overlay.cpp)
 target_link_libraries(test_debug_overlay PRIVATE okay::engine)
@@ -2012,6 +2020,18 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
     endif()
     target_include_directories(test_okayui_host_layering PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
     add_test(NAME okayui_host_layering COMMAND test_okayui_host_layering)
+    # Editor modals that block every click while nothing is shown (editor/ModalGuard.hpp): the two recovery questions that
+    # replaced each other every frame after an unclean exit, undrawn and off-screen modals, the clicks-land-nowhere log line.
+    add_executable(test_editor_stale_modal test_editor_stale_modal.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_editor_stale_modal PRIVATE okay_imgui)
+    else()
+        target_sources(test_editor_stale_modal PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_editor_stale_modal SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_include_directories(test_editor_stale_modal PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME editor_stale_modal COMMAND test_editor_stale_modal)
     # The Script Editor's OkayUI code inside a Dear ImGui window, in ImGui's draw order (OkayUI::BeginCapture, shared/OkayUIImGuiEmbed.hpp):
     # an ImGui popup over the code is drawn over it. Dear ImGui and OkayUI headless, one software rasteriser.
     add_executable(test_okayui_codeedit_imgui test_okayui_codeedit_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptEditorCodeEdit.cpp)
@@ -3102,6 +3122,17 @@ if(SDL2_FOUND)
     target_compile_definitions(test_ui_renderer_golden PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     target_compile_definitions(test_ui_renderer_golden PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_renderer_golden COMMAND test_ui_renderer_golden)
+
+    # The start-up splash (shared/Splash.hpp) on the software painter: bar fill per progress, status text, failed state, fade,
+    # the steps and the finish, and one golden picture (tests/golden/splash/loading_50.png).
+    if(TARGET okay_ui_soft)
+        add_executable(test_splash test_splash.cpp)
+        target_include_directories(test_splash PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${SDL2_INCLUDE_DIRS})
+        target_link_libraries(test_splash PRIVATE okay_ui_soft okay::engine ${OKAY_TEST_SDL_LIB})
+        target_compile_definitions(test_splash PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+        target_compile_features(test_splash PRIVATE cxx_std_17)
+        add_test(NAME splash COMMAND test_splash)
+    endif()
 
     # Accessibility settings in rendered pixels (text size, colour filter, high contrast)
     add_executable(test_accessibility_render test_accessibility_render.cpp)
@@ -4331,6 +4362,15 @@ target_compile_features(test_update_view PRIVATE cxx_std_17)
 add_test(NAME update_view COMMAND test_update_view)
 
 # The editor's frame-time maths (editor/EditorPerf.hpp, UI-library free): section breakdown, history numbers, idle throttle, viewport scale, performance mode.
+# The editor's hang watchdog (editor/HangWatchdog.*): the rules on a fake clock, and the real thread reporting a fake main loop that stops.
+# Not built for Windows: the fake main loop sleeps with <thread> (CLAUDE.md 21a); the watchdog itself is checked there by the editor build.
+if(NOT WIN32)
+    add_executable(test_hang_watchdog test_hang_watchdog.cpp ${CMAKE_SOURCE_DIR}/editor/HangWatchdog.cpp)
+    target_include_directories(test_hang_watchdog PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
+    target_link_libraries(test_hang_watchdog PRIVATE okay::engine)
+    add_test(NAME hang_watchdog COMMAND test_hang_watchdog)
+endif()
+
 add_executable(test_editor_perf test_editor_perf.cpp)
 target_include_directories(test_editor_perf PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_perf PRIVATE okay::engine)

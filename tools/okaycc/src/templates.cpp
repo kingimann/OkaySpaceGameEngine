@@ -35,6 +35,11 @@ std::set<std::string>& sfinaeFailed() {
     return s;
 }
 
+std::vector<SpecCheck>& specChecks() {
+    static std::vector<SpecCheck> v;
+    return v;
+}
+
 std::map<std::string, std::string>& instNamespaces() {
     static std::map<std::string, std::string> m;
     return m;

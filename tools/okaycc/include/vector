@@ -85,6 +85,22 @@ public:
         o.size_ = s;
         o.cap_ = c;
     }
+    // ==, != and < ([container.reqmts], [container.opt.reqmts]: element by element, < in
+    // lexicographical order); members here, so a vector of a class with its own == compares too.
+    bool operator==(const vector &o) const {
+        if (size_ != o.size_) return false;
+        for (unsigned long i = 0; i < size_; ++i)
+            if (!(data_[i] == o.data_[i])) return false;
+        return true;
+    }
+    bool operator!=(const vector &o) const { return !(*this == o); }
+    bool operator<(const vector &o) const {
+        for (unsigned long i = 0; i < size_ && i < o.size_; ++i) {
+            if (data_[i] < o.data_[i]) return true;
+            if (o.data_[i] < data_[i]) return false;
+        }
+        return size_ < o.size_;
+    }
     unsigned long size() const { return size_; }
     unsigned long capacity() const { return cap_; }
     bool empty() const { return size_ == 0; }
@@ -127,14 +143,23 @@ public:
         }
         ++size_;
     }
-    // emplace_back with one or two constructor arguments (no variadic templates yet).
-    template <typename A>
-    void emplace_back(A a) {
-        push_back(T(a));
-    }
-    template <typename A, typename B>
-    void emplace_back(A a, B b) {
-        push_back(T(a, b));
+    // emplace_back(args...) ([sequence.reqmts] p71): the element is built from the arguments in
+    // place; when the block must grow, it is built first in a spare cell, as an argument may refer
+    // to an element of this vector.
+    template <typename... A>
+    T &emplace_back(A &&...a) {
+        if (size_ == cap_) {
+            T *spare = (T *)malloc(sizeof(T));
+            new (spare) T(std::forward<A>(a)...);
+            reserve(cap_ == 0 ? 4 : cap_ * 2);
+            new (data_ + size_) T(std::move(*spare));
+            spare->~T();
+            free(spare);
+        } else {
+            new (data_ + size_) T(std::forward<A>(a)...);
+        }
+        ++size_;
+        return data_[size_ - 1];
     }
     void pop_back() {
         --size_;

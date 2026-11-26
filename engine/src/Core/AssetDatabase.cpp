@@ -357,6 +357,25 @@ void AssetDatabase::Clear() {
     m_folders.clear();
 }
 
+void AssetDatabase::TakeIndexFrom(AssetDatabase& other) {
+    if (&other == this) return;
+    m_root = std::move(other.m_root);
+    m_options = other.m_options;
+    m_slots = std::move(other.m_slots);
+    m_pathIndex = std::move(other.m_pathIndex);
+    m_redirects = std::move(other.m_redirects);
+    m_vanished = std::move(other.m_vanished);
+    m_orphans = std::move(other.m_orphans);
+    m_folders = std::move(other.m_folders);
+    for (ReimportEvent& e : other.m_pending) m_pending.push_back(std::move(e));
+    for (ReimportEvent& e : other.m_fresh) m_fresh.push_back(std::move(e));
+    m_revision = std::max(m_revision, other.m_revision) + 1;
+    m_signature = other.m_signature;
+    m_reverse.clear();
+    m_reverseValid = false;
+    other.Clear();
+}
+
 std::string AssetDatabase::KeyOf(const std::string& projectPath) const { return AssetManager::Normalize(projectPath); }
 
 Guid AssetDatabase::NewGuid() const {
@@ -470,6 +489,9 @@ void AssetDatabase::RebuildIndexes() {
 
 // --- Hashing -------------------------------------------------------------------------------
 
+namespace { thread_local std::uint64_t t_bytesHashed = 0; }
+std::uint64_t AssetDatabase::BytesHashedOnThisThread() { return t_bytesHashed; }
+
 std::uint64_t AssetDatabase::HashFile(const std::string& absolutePath, std::int64_t* size, std::size_t fullHashLimit) {
     if (size) *size = 0;
     std::ifstream f(PathFromU8(absolutePath), std::ios::binary);
@@ -488,6 +510,7 @@ std::uint64_t AssetDatabase::HashFile(const std::string& absolutePath, std::int6
             const std::streamsize got = f.gcount();
             if (got <= 0) break;
             h = savefmt::Fnv1a(buf.data(), static_cast<std::size_t>(got), h);
+            t_bytesHashed += static_cast<std::uint64_t>(got);
             count -= got;
         }
     };

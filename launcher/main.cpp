@@ -964,7 +964,29 @@ okayversions::Settings g_upSettings;   // the channel, keep-previous and default
 bool g_upGoBack = false;          // the person asked to leave a test build for the newest normal release; stays set until it worked or the dialog is closed (main thread)
 bool g_upGoBackNow = false;       // g_upGoBack as it was when this update check started (main thread writes, worker reads)
 bool g_upAutomatic = false;       // this check was started by the launcher itself (at launch), not by a click
-bool g_upRepairMissing = false;   // "Get the editor": same-version re-download of MISSING exes only
+bool g_upRepairMissing = false;   // "Get the editor" / "Repair": same-version re-download of missing programs (and of ones that are another version)
+// The editor and the player next to this launcher, as {name, the version the program itself says it is} ("" = not known: a Linux build, no
+// file). VERSION.txt only says what the last update wrote; this asks the programs (okayupdater::ProgramVersion), so a launcher on 115 with an
+// editor still on 114 is seen (owner, 2026-11-25). Cached by size and time, so asking every second costs a stat call.
+static std::vector<std::pair<std::string, std::string>> InstalledProgramVersions() {
+    struct Seen { std::uintmax_t size = 0; fs::file_time_type when{}; std::string version; };
+    thread_local std::map<std::string, Seen> cache;   // (one per thread: the update worker and the main thread both ask)
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const char* name : {"OkayEngine.exe", "OkaySpacePlayer.exe"}) {
+        const std::string path = FindExe({name});
+        std::string v;
+        if (!path.empty()) {
+            std::error_code ec, ec2;
+            const std::uintmax_t size = fs::file_size(path, ec);
+            const fs::file_time_type when = fs::last_write_time(path, ec2);
+            Seen& c = cache[path];
+            if (ec || ec2 || c.size != size || c.when != when || c.version.empty()) { c.size = size; c.when = when; c.version = okayupdater::ProgramVersion(path); }
+            v = c.version;
+        }
+        out.push_back({name, v});
+    }
+    return out;
+}
 // Worker: check the published version and, if newer, install it. Runs on a
 // background thread so the launcher stays responsive while ~35 MB downloads.
 int RunUpdateCheck(void*) {
@@ -1032,7 +1054,12 @@ int RunUpdateCheck(void*) {
     // 2.97" bug). If we're current or ahead, do nothing.
     // Repair: on the SAME version, fetch only executables that are missing
     // (e.g. the editor was never installed). Never downloads anything older.
-    const bool repair = g_upRepairMissing && !newer && !latest.empty() && CompareVersions(local, latest) == 0;
+    // A program that is another version than the launcher (the editor still on 114 under a launcher on 115) is repaired like a missing one:
+    // downloaded again for THIS version, with the same checksum rules. Before, that install was "Up to date" for ever.
+    const auto skewed = okayupdater::MismatchedPrograms(local, InstalledProgramVersions());
+    auto isSkewed = [&](const char* name) { for (const auto& p : skewed) if (p.first == name) return true; return false; };
+    const bool repair = (g_upRepairMissing || !skewed.empty()) && !newer && !latest.empty() && CompareVersions(local, latest) == 0;
+    if (!skewed.empty()) okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", okayupdater::MismatchSentence(local, skewed));
     g_upRepairMissing = false;
     if (!newer && !repair) {
         SetUpMsg("Up to date (v" + local + ").");
@@ -1097,14 +1124,14 @@ int RunUpdateCheck(void*) {
             std::string found = FindExe({name});
             return found.empty() ? (dir / name) : fs::path(found);
         };
-        if (!repair || FindExe({"OkayEngine.exe"}).empty()) {
+        if (!repair || FindExe({"OkayEngine.exe"}).empty() || isSkewed("OkayEngine.exe")) {
             SetUpMsg("Downloading engine v" + latest + "...");
             SetUpStep("Downloading editor (OkayEngine)", 0, kSteps);
             const fs::path d = destOf("OkayEngine.exe");
             if (StageFile("OkayEngine.exe", base + "OkayEngine.exe", d, true, checkFor("OkayEngine.exe"))) items.push_back({"OkayEngine.exe", d, false});
             else ok = false;
         }
-        if (ok && (!repair || FindExe({"OkaySpacePlayer.exe"}).empty())) {
+        if (ok && (!repair || FindExe({"OkaySpacePlayer.exe"}).empty() || isSkewed("OkaySpacePlayer.exe"))) {
             SetUpMsg("Downloading player runtime v" + latest + "...");
             SetUpStep("Downloading game runtime (OkaySpacePlayer)", 1, kSteps);
             const fs::path d = destOf("OkaySpacePlayer.exe");
@@ -1175,12 +1202,19 @@ int RunUpdateCheck(void*) {
             if (!g_upSettings.defaultEditor.empty()) guards.keep.push_back({g_upSettings.defaultEditor, "it is your default editor."});
             okayversions::Prune(dir, g_upSettings.keepPrevious, vindex.ok && !vindex.lts.empty() ? vindex.lts : g_upSettings.ltsLine, guards);
         }
-        SetUpStep(launcherOk ? "Update complete — restart to finish"
-                             : "Update complete", kSteps, kSteps);
+        // Ask the programs which version they are now: an update that left one behind is said plainly, with what fixes it, never "complete".
+        const auto behind = okayupdater::MismatchedPrograms(latest, InstalledProgramVersions());
+        const std::string behindNote = okayupdater::MismatchSentence(latest, behind);
+        if (!behindNote.empty()) okay::restart::AppendLog(dir / "okay_update.log", "after the update: " + behindNote);
+        SetUpStep(!behindNote.empty() ? "Update incomplete: a program is still the old version"
+                  : launcherOk ? "Update complete — restart to finish"
+                               : "Update complete", kSteps, kSteps);
         SetUpMsg((launcherOk
             ? "Updated to v" + latest + okay::testbuild::Suffix(latest) + " — restart the launcher to finish."
             : (newer ? "Updated engine & player to v" + latest + "."
-                     : "Downloaded the missing runtime (v" + local + ").")) + (keepNote.empty() ? std::string() : " " + keepNote));
+                     : !skewed.empty() ? "Replaced the programs that were another version: everything is " + okay::testbuild::DisplayVersion(local) + " now."
+                                       : "Downloaded the missing runtime (v" + local + ").")) +
+                 (behindNote.empty() ? std::string() : " " + behindNote) + (keepNote.empty() ? std::string() : " " + keepNote));
         SetState(Up_Updated);
     } else {
         if (keptNow) okayversions::DiscardKept(dir, local);   // the copy only duplicates what is still running
@@ -1492,7 +1526,7 @@ static bool EditorRunning() {
 #if defined(_WIN32)
         if (WaitForSingleObject(pp.h, 0) == WAIT_TIMEOUT) return true;
 #else
-        if (kill(pp.pid, 0) == 0) return true;   // (reaped by PumpPlaytime once it exits)
+        if (okay::restart::PidAlive((unsigned long)pp.pid)) return true;   // (an ended, not yet reaped editor is not running; PumpPlaytime reaps it)
 #endif
     }
 #if defined(_WIN32)
@@ -1502,7 +1536,9 @@ static bool EditorRunning() {
         PROCESSENTRY32W pe; pe.dwSize = sizeof(pe);
         bool found = false;
         if (Process32FirstW(snap, &pe))
-            do { if (_wcsicmp(pe.szExeFile, L"OkayEngine.exe") == 0) { found = true; break; } } while (Process32NextW(snap, &pe));
+            // An ended editor can stay in the list while anything still holds a handle to it (the owner ended it in Task Manager
+            // and the launcher still said "open", 2026-11-26): only a process that is still running counts (PidAlive).
+            do { if (_wcsicmp(pe.szExeFile, L"OkayEngine.exe") == 0 && okay::restart::PidAlive(pe.th32ProcessID)) { found = true; break; } } while (Process32NextW(snap, &pe));
         CloseHandle(snap);
         if (found) return true;
     }
@@ -12289,6 +12325,17 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
 } // namespace
 using namespace okl;   // main() and the Versions host below use the launcher's names unqualified (as the anonymous namespace allowed before the split)
 
+// "Get test builds" was just switched (Settings > Behavior or the Versions page): save it, look for updates again on the new setting, and say what it means.
+static void TestBuildsSwitched() {
+    const okayversions::Settings& vs = okayversions::GlobalSettings();
+    SavePrefs();
+    g_upAvailable.clear(); g_upAvailableTitle.clear(); g_launcherRefocused = true;   // look again now, on the new setting
+    const bool onTest = okay::testbuild::IsTestVersion(OKAY_ENGINE_VERSION);
+    Toast(vs.testBuilds ? "Test builds are on. They can be broken. Switch this off in Settings > Behavior or on the Versions page to stop getting them."
+          : onTest ? "Test builds are off. You are still on a test build: Settings > Behavior > Go back to the stable version gives you the normal release."
+                   : "Test builds are off. Nothing new will be offered.", vs.testBuilds ? 2 : 1);
+}
+
 // What the Versions page needs from the launcher: where things are, the look, and the launcher's own helpers (toast, folder opener, HTTP).
 // Rebuilt about once a second (it asks the file system and the process list); the colours follow the theme every frame.
 static const okayversionsui::Host& VersionsHost() {
@@ -12303,6 +12350,8 @@ static const okayversionsui::Host& VersionsHost() {
         h.savePrefs = [] { SavePrefs(); };
         h.startUpdate = [] { StartUpdateCheck(true); };
         h.channelChanged = [] { g_upAvailable.clear(); g_launcherRefocused = true; };   // look for updates on the new channel now
+        h.testBuildsChanged = [] { TestBuildsSwitched(); };
+        h.repair = [] { g_upRepairMissing = true; StartUpdateCheck(true); };   // download this version's editor and player again (the editor closes, saved, first)
         h.downloadDone = [](const std::string& v, bool ok, const std::string& msg) {   // a desktop notification, or the toast in front
             okl::notify::Event ev;
             ev.kind = okl::notify::Kind::Download; ev.failure = !ok;
@@ -12322,6 +12371,7 @@ static const okayversionsui::Host& VersionsHost() {
         h.sources = VersionSources();
         h.editorRunning = EditorRunning();
         h.runningEditorVersion = g_editorStartedVersion;
+        h.programsNote = okayupdater::MismatchSentence(h.currentVersion, okayupdater::MismatchedPrograms(h.currentVersion, InstalledProgramVersions()));
     }
     h.accent = kAccent;
     h.accentDim = kAccentDim;
@@ -18211,14 +18261,7 @@ int main(int argc, char** argv) {
                     settingRow("Get test builds", "Also get builds made for testing, before they are released. They can be broken. Switch this off to stop getting them; "
                                                   "the Latest channel only (the long-term-support channel never gets test builds).", 40.0f, 22.0f, [&](float) {
                         okayversions::Settings& vs = okayversions::GlobalSettings();
-                        if (ToggleSwitch("##testbuilds", &vs.testBuilds)) {
-                            SavePrefs();
-                            g_upAvailable.clear(); g_upAvailableTitle.clear(); g_launcherRefocused = true;   // look again now, on the new setting
-                            const bool onTest = okay::testbuild::IsTestVersion(OKAY_ENGINE_VERSION);
-                            Toast(vs.testBuilds ? "Test builds are on. They can be broken. Switch this off here to stop getting them."
-                                  : onTest ? "Test builds are off. You are still on a test build: press Go back to the stable version below when you want the normal release."
-                                           : "Test builds are off. Nothing new will be offered.", vs.testBuilds ? 2 : 1);
-                        }
+                        if (ToggleSwitch("##testbuilds", &vs.testBuilds)) TestBuildsSwitched();
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Test builds are made from a branch before it is released.\nThey can be broken. Switch this off to stop getting them.");
                     });
                     rowDivider();

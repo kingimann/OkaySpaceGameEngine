@@ -10,6 +10,20 @@ struct numeric_limits {
     static constexpr bool is_signed = T(-1) < T(0);
     static constexpr bool is_integer = true;
     static constexpr int digits = (int)sizeof(T) * 8 - (T(-1) < T(0) ? 1 : 0);
+    // floor(digits * log10(2)), log10(2) taken as 0.30103 (exact for these widths)
+    static constexpr int digits10 = ((int)sizeof(T) * 8 - (T(-1) < T(0) ? 1 : 0)) * 30103 / 100000;
+    static constexpr int radix = 2;
+    static constexpr bool is_exact = true;
+    static constexpr bool has_infinity = false;
+    static constexpr bool has_quiet_NaN = false;
+    static constexpr bool has_signaling_NaN = false;
+    static constexpr bool is_iec559 = false;
+    static T epsilon() { return T(0); }
+    static T round_error() { return T(0); }
+    static T infinity() { return T(0); }
+    static T quiet_NaN() { return T(0); }
+    static T signaling_NaN() { return T(0); }
+    static T denorm_min() { return T(0); }
     static T min() { return T(-1) < T(0) ? T(T(1) << (sizeof(T) * 8 - 1)) : T(0); }
     static T max() { return T(~(T(-1) < T(0) ? T(T(1) << (sizeof(T) * 8 - 1)) : T(0))); }
     static T lowest() { return T(-1) < T(0) ? T(T(1) << (sizeof(T) * 8 - 1)) : T(0); }
@@ -29,6 +43,28 @@ struct numeric_limits<float> {
     static float epsilon() { return 1.1920928955078125e-07f; }  // 2^-23
     static float denorm_min() { return 1.40129846432481707092e-45f; }  // 2^-149
     static float infinity() { return 1.0f / 0.0f; }
+    // The NaNs by their bits (IEEE 754 6.2.1: exponent all ones, the top fraction bit set for a
+    // quiet one, sign clear); 0.0f / 0.0f on x86 gives the negative default NaN instead.
+    static float quiet_NaN() {
+        union { unsigned int u; float f; } v;
+        v.u = 0x7fc00000u;
+        return v.f;
+    }
+    static float signaling_NaN() {
+        union { unsigned int u; float f; } v;
+        v.u = 0x7fa00000u;
+        return v.f;
+    }
+    static float round_error() { return 0.5f; }
+    static constexpr bool has_quiet_NaN = true;
+    static constexpr bool has_signaling_NaN = true;
+    static constexpr bool is_iec559 = true;
+    static constexpr bool is_exact = false;
+    static constexpr int radix = 2;
+    static constexpr int min_exponent = -125;
+    static constexpr int max_exponent = 128;
+    static constexpr int min_exponent10 = -37;
+    static constexpr int max_exponent10 = 38;
 };
 template <>
 struct numeric_limits<double> {
@@ -45,5 +81,25 @@ struct numeric_limits<double> {
     static double epsilon() { return 2.220446049250313080847e-16; }  // 2^-52
     static double denorm_min() { return 4.9406564584124654417657e-324; }  // 2^-1074
     static double infinity() { return 1.0 / 0.0; }
+    static double quiet_NaN() {
+        union { unsigned long u; double d; } v;
+        v.u = 0x7ff8000000000000ul;
+        return v.d;
+    }
+    static double signaling_NaN() {
+        union { unsigned long u; double d; } v;
+        v.u = 0x7ff4000000000000ul;
+        return v.d;
+    }
+    static double round_error() { return 0.5; }
+    static constexpr bool has_quiet_NaN = true;
+    static constexpr bool has_signaling_NaN = true;
+    static constexpr bool is_iec559 = true;
+    static constexpr bool is_exact = false;
+    static constexpr int radix = 2;
+    static constexpr int min_exponent = -1021;
+    static constexpr int max_exponent = 1024;
+    static constexpr int min_exponent10 = -307;
+    static constexpr int max_exponent10 = 308;
 };
 }  // namespace std

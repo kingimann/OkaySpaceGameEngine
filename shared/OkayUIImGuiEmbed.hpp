@@ -226,6 +226,33 @@ bool HostPanelWindow(const char* title, bool* open, const char* itemId, Region& 
     return drawn;
 }
 
+/// A rectangle of the current Dear ImGui window drawn by OkayUI, `size` big at the cursor: HostPanelWindow's way for a page that
+/// fills part of a window the host lays out itself (the launcher's What's New and Tips pages, which sit in its "content" child
+/// between the page header and the footer). One placeholder item; the body's shapes go into the window's draw list, clipped to what
+/// the window shows, so Dear ImGui's tooltips, popups and windows in front are drawn over the page and the page never has to
+/// switch to another version of itself while they are open (the launcher's What's New did: an ImGui tooltip over a corner of it
+/// swapped the whole page to its Dear ImGui copy for as long as it showed, 2026-11-26). The mouse wheel is the body's.
+/// `draw(pos, size)` gets OkayUI's pixels (the main window's). Returns true when the body was drawn this frame.
+template <class Region, class Draw>
+bool HostPanelArea(const char* itemId, ImVec2 size, Region& region, ImGuiEmbed& embed, OkayUI::CapturedGeometry& cap, Draw draw) {
+    ImGuiWindow* win = ImGui::GetCurrentWindow();
+    if (!win || win->SkipItems) return false;
+    const ImVec2 sp = ImGui::GetCursorScreenPos();
+    const ImVec2 p = ToMainWindowPixels(sp);                  // OkayUI's pixels, not ImGui's desktop ones
+    const ImVec2 a(std::max(size.x, 8.0f), std::max(size.y, 8.0f));
+    ImGui::InvisibleButton(itemId, a);                        // an ImGui item, so ImGui does not move or scroll the window under it
+    if (HiddenInImGui(win)) return false;
+    ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);             // the wheel scrolls the OkayUI body, not the ImGui window
+    ImRect shown(sp.x, sp.y, sp.x + a.x, sp.y + a.y);         // the part of it the window shows (ImGui's coordinates)
+    shown.ClipWithFull(win->InnerClipRect);
+    if (shown.GetWidth() <= 0.0f || shown.GetHeight() <= 0.0f) return false;
+    const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    detail::EmbedBody(win, shown.Min, shown.Max, ImRect(ToMainWindowPixels(shown.Min), ToMainWindowPixels(shown.Max)), hovered, focused,
+                      region, embed, cap, [&] { draw(p, a); });
+    return true;
+}
+
 /// A part of a Dear ImGui window drawn by OkayUI only, with no Dear ImGui copy (the editor's Project Settings sections Player,
 /// Physics, Rendering and Tags and Layers, editor/OkayPanels.cpp): HostPanelWindow's way for a piece between the window's other
 /// items. Call it inside the window, where the part goes. It places one placeholder item as tall as the body drew on the last frame

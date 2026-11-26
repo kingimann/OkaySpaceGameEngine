@@ -73,13 +73,10 @@
 #ifdef OKAY_HAVE_OKAYUI
 #include "OkayUIFrame.hpp"   // OkayUI end-of-frame on an SDL renderer or an own-backend painter
 #include "OkayUIHost.hpp"
-#include "OkayUIHostImGui.hpp"   // is an ImGui popup in the way of the hosted rectangle?
+#include "OkayUIImGuiEmbed.hpp"  // HostPanelArea: the OkayUI pages drawn in Dear ImGui's draw order (popups and tooltips over them)
 #include "okay/UI/OkayUI.hpp"
 #include "OkayUIScreens.hpp"
 #include "OkayUIPanels.hpp"
-#else
-// Without OkayUI there is never an OkayUI frame (okayFrame stays false), but the page conditions below still name the host helper.
-namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) { return false; } }
 #endif
 
 #include <algorithm>
@@ -12745,18 +12742,18 @@ static void DrawCommunityShowcase(okay::account::AccountService& account, int vi
     }
 }
 
-// Is the page rectangle (w x h at the cursor) under something Dear ImGui draws in front: an open popup, or a window above the
-// launcher's root window (the floating chat window, an incoming call, a toast ...)? An OkayUI-drawn page is
-// flushed after ImGui and would paint over it (owner's screenshot, What's New over the Notifications flyout), so while this is
-// true the page's Dear ImGui version is drawn instead, which ImGui layers correctly. (Notifications is a page now, not a flyout.)
-static bool OkayPageCovered(float w, float h) {
 #ifdef OKAY_HAVE_OKAYUI
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    return okayuihost::CoveredInImGui(ImGui::GetCurrentWindow(), p.x, p.y, w, h);
-#else
-    (void)w; (void)h; return false;
-#endif
+// An OkayUI page (What's New, Tips) in the rectangle `ra` at the cursor of the page area, hosted in Dear ImGui's draw order
+// (okayuihost::HostPanelArea): its shapes go into the page's draw list, so ImGui's popups, tooltips and windows in front (the chat
+// window, an incoming call, a toast) are drawn over it, and the page never swaps to its Dear ImGui copy while they show. It used to:
+// hovering the sidebar's profile row showed a tooltip over a corner of the page, and the whole What's New switched to the other
+// version until the mouse moved away (owner's recording, 2026-11-26). Which surface draws a page: launcher/PageLayout.hpp OkayUIDrawsPage.
+template <class Draw>
+static void HostOkayPage(const char* itemId, ImVec2 ra, Draw draw) {
+    static OkayUI::CapturedGeometry s_cap;
+    okayuihost::HostPanelArea(itemId, ra, g_okayRegion, okayuihost::SharedImGuiEmbed(), s_cap, draw);
 }
+#endif
 
 // ---- The Notifications page (sidebar > Notifications; it replaced the flyout over the current page, owner 2026-11-25) ----------
 // Header actions (Mark all read, Clear), filter chips, pending friend requests with Accept / Decline, then the feed grouped
@@ -15720,8 +15717,7 @@ int main(int argc, char** argv) {
 
         } else if (tab == 14) {                           // ---- Multiplayer ----
             DrawMultiplayerPage(account.IsLoggedIn() || kUiDemoUser);
-        } else if (tab == 12 && okayFrame && !OkayPageCovered(
-                                                                          ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- What's New, drawn by OkayUI (preview backend) ----
+        } else if (tab == 12 && okay::launcherlayout::OkayUIDrawsPage(tab, okayFrame)) {   // ---- What's New, drawn by OkayUI ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same data and same actions as the Dear ImGui page below: your version, the update status with its button,
             // the newest notes, the earlier releases, the link to all releases. Differences are listed in
@@ -15750,14 +15746,9 @@ int main(int argc, char** argv) {
                     "Updates download straight from the OkaySpace update server",
                 }});
             }
-            // The page's rectangle: an invisible item the size of the free space, so ImGui sees an item under the mouse
-            // (it neither drags the window nor scrolls the page) and says whether another window covers it.
-            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            // The page's rectangle: the free space above the footer (the version line stays below, pinned by ImGui).
             ImVec2 ra = ImGui::GetContentRegionAvail();
-            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer (the version line) stays below, pinned by ImGui
-            ImGui::InvisibleButton("##okayui_whatsnew", ra);
-            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);   // the wheel scrolls the OkayUI page, not the ImGui window under it
-            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);
             {   // the two sections, as on the Dear ImGui page
                 std::vector<DevBuildRow> devRows; std::string devNotes; int devState = 0; std::map<std::string, std::string> relDates; bool testsOn = false;
                 WhatsNewData(devRows, devNotes, devState, relDates, testsOn);
@@ -15774,7 +15765,8 @@ int main(int argc, char** argv) {
                     a = e + 1;
                 }
             }
-            const okayuiscreens::WhatsNewResult wr = okayuiscreens::DrawWhatsNew(wn, rp.x, rp.y, ra.x, ra.y);
+            okayuiscreens::WhatsNewResult wr;
+            HostOkayPage("##okayui_whatsnew", ra, [&](ImVec2 p, ImVec2 a) { wr = okayuiscreens::DrawWhatsNew(wn, p.x, p.y, a.x, a.y); });
             if (wr.sectionClicked >= 0) g_wnSection = wr.sectionClicked;
             if (wr.openUpdateSettings) { tab = 4; g_setCatJump = 3; }
             if (wr.checkAgain) StartUpdateCheck();
@@ -15974,8 +15966,7 @@ int main(int argc, char** argv) {
                 }
             }
             ImGui::EndChild();   // ##wnbody
-        } else if (tab == 13 && okayFrame && !OkayPageCovered(
-                                                                          ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Tips, drawn by OkayUI (preview backend) ----
+        } else if (tab == 13 && okay::launcherlayout::OkayUIDrawsPage(tab, okayFrame)) {   // ---- Tips, drawn by OkayUI ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same tips (shared/LauncherTips.hpp), tip of the day, category pills and search as the Dear ImGui page below; the
             // differences are listed in docs/ui/own_ui_toolkit.md section 6.
@@ -15987,13 +15978,9 @@ int main(int argc, char** argv) {
             }
             tm.dayNumber = (long long)(std::time(nullptr) / 86400);
             if (focusSearch) { ts.focusSearch = true; focusSearch = false; }
-            const ImVec2 rp = ImGui::GetCursorScreenPos();
             ImVec2 ra = ImGui::GetContentRegionAvail();
             ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer stays below, pinned by ImGui
-            ImGui::InvisibleButton("##okayui_tips", ra);
-            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
-            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
-            okayuiscreens::DrawTips(tm, ts, rp.x, rp.y, ra.x, ra.y);
+            HostOkayPage("##okayui_tips", ra, [&](ImVec2 p, ImVec2 a) { okayuiscreens::DrawTips(tm, ts, p.x, p.y, a.x, a.y); });
 #endif
         } else if (tab == 13) {                           // ---- Tips ----
             sectionHeader("Tips", "Shortcuts and tricks for the editor, scripting, building and the launcher.");

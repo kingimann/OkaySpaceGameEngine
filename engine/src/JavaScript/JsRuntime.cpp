@@ -1799,6 +1799,7 @@ void Runtime::InitIntrinsics() {
     InstallWeakLib(*this);
     InstallRegExpLib(*this);
     InstallGlobalLib(*this);
+    InstallIntlLib(*this);
 }
 
 // ============================================================ compiling and running

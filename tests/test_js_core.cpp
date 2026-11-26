@@ -510,6 +510,50 @@ void NewerSyntaxAndLibrary() {
     ExpectError("[1].with(5, 0)", "RangeError");
 }
 
+// ECMA-402 (partial, en-US only): NumberFormat, DateTimeFormat, PluralRules, RelativeTimeFormat, ListFormat,
+// Collator, and Number / Date toLocale*String with options. The expected texts are en-US conventions.
+void IntlBasics() {
+    Expect("const nf = new Intl.NumberFormat('en-US'); console.log(nf.format(1234567.891), nf.format(-0), nf.format(0.0005), nf.format(1e21), (1234.5).toLocaleString())",
+           "1,234,567.891 -0 0.001 1,000,000,000,000,000,000,000 1,234.5");
+    Expect("console.log(new Intl.NumberFormat('en-US', {style: 'currency', currency: 'USD'}).format(-1234.5), new Intl.NumberFormat('en', {style: 'currency', currency: 'EUR'}).format(3))",
+           "-$1,234.50 \xE2\x82\xAC" "3.00");
+    Expect("console.log(new Intl.NumberFormat('en', {style: 'percent'}).format(0.256), new Intl.NumberFormat('en', {maximumFractionDigits: 1}).format(2.25), new Intl.NumberFormat('en', {minimumFractionDigits: 2}).format(5))",
+           "26% 2.3 5.00");
+    Expect("const c = new Intl.NumberFormat('en', {notation: 'compact'}); console.log(c.format(1234), c.format(12345), c.format(1500000), c.format(999999), c.format(999))",
+           "1.2K 12K 1.5M 1M 999");
+    Expect("console.log(new Intl.NumberFormat('en', {useGrouping: false}).format(12345.6), new Intl.NumberFormat('en', {minimumIntegerDigits: 3}).format(5), [1, 22].map(new Intl.NumberFormat().format).join('|'), new Intl.NumberFormat('en', {signDisplay: 'always'}).format(3))",
+           "12345.6 005 1|22 +3");
+    const std::string d = "const d = new Date(Date.UTC(2020, 0, 2, 15, 4, 5)); const u = {timeZone: 'UTC'};";
+    Expect(d + "console.log(new Intl.DateTimeFormat('en-US', u).format(d), d.toLocaleDateString('en-US', {timeZone: 'UTC', year: 'numeric', month: 'long', day: 'numeric'}), d.toLocaleDateString('en-US', {timeZone: 'UTC', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'}))",
+           "1/2/2020 January 2, 2020 Thursday, January 2, 2020");
+    Expect(d + "console.log(d.toLocaleString('en-US', u), d.toLocaleTimeString('en-US', u), d.toLocaleTimeString('en-US', {timeZone: 'UTC', hour: '2-digit', minute: '2-digit'}), d.toLocaleDateString('en-US', {timeZone: 'UTC', month: 'short', day: 'numeric'}))",
+           "1/2/2020, 3:04:05 PM 3:04:05 PM 03:04 PM Jan 2");
+    Expect(d + "console.log(d.toLocaleDateString('en-US', {timeZone: 'UTC', month: 'long', year: 'numeric'}), d.toLocaleDateString(undefined, {timeZone: 'UTC', month: '2-digit', day: '2-digit', year: 'numeric'}), d.toLocaleTimeString('en-US', {timeZone: 'UTC', hour12: false}))",
+           "January 2020 01/02/2020 15:04:05");
+    Expect(d + "for (const ds of ['full', 'long', 'medium', 'short']) console.log(new Intl.DateTimeFormat('en-US', {timeZone: 'UTC', dateStyle: ds}).format(d), '|', new Intl.DateTimeFormat('en-US', {timeZone: 'UTC', dateStyle: ds, timeStyle: 'short'}).format(d))",
+           "Thursday, January 2, 2020 | Thursday, January 2, 2020 at 3:04 PM\nJanuary 2, 2020 | January 2, 2020 at 3:04 PM\n"
+           "Jan 2, 2020 | Jan 2, 2020, 3:04 PM\n1/2/20 | 1/2/20, 3:04 PM");
+    Expect(d + "console.log(new Intl.DateTimeFormat('en-US', {timeZone: 'UTC', timeStyle: 'medium'}).format(d), new Intl.DateTimeFormat('en-US', {timeZone: 'UTC', hour: 'numeric'}).format(d), JSON.stringify(new Intl.DateTimeFormat('en-US', {timeZone: 'UTC', month: 'short', day: 'numeric'}).formatToParts(d)))",
+           "3:04:05 PM 3 PM [{\"type\":\"month\",\"value\":\"Jan\"},{\"type\":\"literal\",\"value\":\" \"},{\"type\":\"day\",\"value\":\"2\"}]");
+    Expect("const pr = new Intl.PluralRules('en-US'); const po = new Intl.PluralRules('en-US', {type: 'ordinal'});"
+           "console.log(pr.select(1), pr.select(0), pr.select(2), pr.select(1.5), [1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 101].map(n => po.select(n)).join())",
+           "one other other other one,two,few,other,other,other,other,one,two,few,one");
+    Expect("const rtf = new Intl.RelativeTimeFormat('en', {numeric: 'auto'}); const rtf2 = new Intl.RelativeTimeFormat('en');"
+           "console.log(rtf.format(-1, 'day'), rtf.format(1, 'day'), rtf.format(0, 'day'), rtf.format(-3, 'hours'), rtf.format(2, 'week'), rtf.format(-1, 'year'), rtf2.format(-1, 'day'), rtf2.format(5, 'minutes'), rtf.format(0, 'second'))",
+           "yesterday tomorrow today 3 hours ago in 2 weeks last year 1 day ago in 5 minutes now");
+    Expect("console.log(new Intl.ListFormat('en', {type: 'conjunction'}).format(['a', 'b', 'c']), new Intl.ListFormat('en', {type: 'disjunction'}).format(['a', 'b']), new Intl.ListFormat('en').format(['x']), new Intl.ListFormat('en', {style: 'short', type: 'unit'}).format(['1', '2']))",
+           "a, b, and c a or b x 1, 2");
+    Expect("console.log(['b', 'a', 'B', 'A', 'item10', 'item2'].sort(new Intl.Collator('en', {numeric: true}).compare).join(), new Intl.Collator('en', {sensitivity: 'base'}).compare('a', 'A'), Object.prototype.toString.call(new Intl.NumberFormat()))",
+           "a,A,b,B,item2,item10 0 [object Intl.NumberFormat]");
+    Expect("console.log(new Intl.NumberFormat().resolvedOptions().locale, Intl.DateTimeFormat.supportedLocalesOf(['fr', 'en-GB']).join(), typeof Intl.DateTimeFormat().resolvedOptions().timeZone)",
+           "en-US en-GB string");
+    ExpectError("new Intl.NumberFormat('en', {style: 'currency'})", "TypeError");
+    ExpectError("new Intl.NumberFormat('en', {style: 'bogus'})", "RangeError");
+    ExpectError("new Intl.DateTimeFormat('en', {dateStyle: 'long', year: 'numeric'})", "TypeError");
+    ExpectError("new Intl.DateTimeFormat().format(new Date(NaN))", "RangeError");
+    ExpectError("new Intl.NumberFormat('en', {maximumFractionDigits: 101})", "RangeError");
+}
+
 struct Hostile {
     const char* src;
     const char* want;   ///< part of the error, "" for any error, "OK" when it must finish without one
@@ -753,6 +797,7 @@ int main() {
     BigInts();
     RegexLookbehind();
     NewerSyntaxAndLibrary();
+    IntlBasics();
     ConformanceScript(false);
     ConformanceScript(true);
     HostileOneLiners();

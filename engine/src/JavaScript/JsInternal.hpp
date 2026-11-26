@@ -371,6 +371,7 @@ Value BigBinary(Runtime& rt, int op, const Value& a, const Value& b);   ///< op:
 Value BigUnary(Runtime& rt, int op, const Value& a);                    ///< OP_Neg, OP_BitNot, OP_Inc, OP_Dec
 Value ToBigIntValue(Runtime& rt, const Value& v);                       ///< 7.1.13 ToBigInt
 void InstallBigIntLib(Runtime& rt);
+void InstallIntlLib(Runtime& rt);
 
 struct ForInObj : Object {
     Value obj;

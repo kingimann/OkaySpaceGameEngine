@@ -150,7 +150,8 @@ enum class Cls : std::uint8_t {
     Map, Set, Generator, Promise, ArrayIter, MapIter, SetIter, StringIter, RegExpLike, Host, IterRecord, ForIn,
     DateBox,   ///< a Date (21.4): a BoxObj whose prim is the time value
     WeakMap, WeakSet, WeakRef, FinalizationRegistry,
-    BigIntBox,   ///< Object(1n): a BoxObj around a BigInt   ///< WeakObj (26.1, 26.2, 24.3, 24.4)
+    BigIntBox,   ///< Object(1n): a BoxObj around a BigInt
+    Intl,        ///< an Intl.NumberFormat / DateTimeFormat / ... object (JsLibNumber.cpp)   ///< WeakObj (26.1, 26.2, 24.3, 24.4)
 };
 
 struct Object : GcObj {

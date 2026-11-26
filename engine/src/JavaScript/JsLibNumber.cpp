@@ -10,8 +10,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <unordered_map>
 #include <string>
 
 namespace okay::js {
@@ -193,9 +195,7 @@ void InstallNumberLib(Runtime& rt) {
         if (radix == 10 || !std::isfinite(x)) return Value::Str(rt.NewString(rt.NumberToU16(x)));
         return Value::Str(rt.NewStringAscii(RadixText(x, radix).c_str()));
     }, 1);
-    DefNative(rt, np, "toLocaleString", [](Runtime& rt, CallArgs& a) {
-        return Value::Str(rt.NewString(rt.NumberToU16(ThisNum(rt, a.thisv, "toLocaleString"))));
-    }, 0);
+    // toLocaleString: InstallIntlLib (ECMA-402 15.4.1)
     DefNative(rt, np, "toFixed", [](Runtime& rt, CallArgs& a) {
         double x = ThisNum(rt, a.thisv, "toFixed");
         double f = rt.ToIntegerOrInfinity(a[0]);
@@ -856,14 +856,6 @@ Value DateSet(Runtime& rt, CallArgs& a) {
     return Value::Num(u);
 }
 
-// Plain en-US forms for toLocale*String with no options: "1/2/2020, 3:04:05 PM".
-std::string LocaleDate(const Fields& f) { return Pad(f.month + 1, 1) + "/" + Pad(f.date, 1) + "/" + Pad(f.year, 1); }
-std::string LocaleTime(const Fields& f) {
-    int h12 = (int)f.hour % 12;
-    if (h12 == 0) h12 = 12;
-    return std::to_string(h12) + ":" + Pad(f.minute, 2) + ":" + Pad(f.second, 2) + (f.hour < 12 ? " AM" : " PM");
-}
-
 } // namespace
 
 void InstallDateLib(Runtime& rt) {
@@ -942,23 +934,7 @@ void InstallDateLib(Runtime& rt) {
         if (!rt.IsCallable(f)) rt.ThrowType("toJSON: toISOString is not a function");
         return rt.Call(f, Value::Obj(o), nullptr, 0);
     }, 1);
-    // toLocale*String: Intl.DateTimeFormat's en-US forms when it is there (InstallIntlLib replaces these)
-    DefNative(rt, dp, "toLocaleString", [](Runtime& rt, CallArgs& a) {
-        double tv = ThisTime(rt, a.thisv, "toLocaleString");
-        if (std::isnan(tv)) return Value::Str(rt.NewStringAscii("Invalid Date"));
-        Fields f = Split(LocalTime(tv));
-        return Value::Str(rt.NewStringAscii((LocaleDate(f) + ", " + LocaleTime(f)).c_str()));
-    }, 0);
-    DefNative(rt, dp, "toLocaleDateString", [](Runtime& rt, CallArgs& a) {
-        double tv = ThisTime(rt, a.thisv, "toLocaleDateString");
-        if (std::isnan(tv)) return Value::Str(rt.NewStringAscii("Invalid Date"));
-        return Value::Str(rt.NewStringAscii(LocaleDate(Split(LocalTime(tv))).c_str()));
-    }, 0);
-    DefNative(rt, dp, "toLocaleTimeString", [](Runtime& rt, CallArgs& a) {
-        double tv = ThisTime(rt, a.thisv, "toLocaleTimeString");
-        if (std::isnan(tv)) return Value::Str(rt.NewStringAscii("Invalid Date"));
-        return Value::Str(rt.NewStringAscii(LocaleTime(Split(LocalTime(tv))).c_str()));
-    }, 0);
+    // toLocaleString, toLocaleDateString, toLocaleTimeString: InstallIntlLib (the en-US forms of ECMA-402)
     // 21.4.4.45 Date.prototype[@@toPrimitive]: "default" means "string" for dates
     NativeFunc* toPrim = rt.NewNative([](Runtime& rt, CallArgs& a) {
         if (!a.thisv.IsObj()) rt.ThrowType("Date.prototype[Symbol.toPrimitive] needs an object");
@@ -1517,6 +1493,726 @@ void InstallBigIntLib(Runtime& rt) {
     }, 0);
     DefNative(rt, bp, "valueOf", [](Runtime& rt, CallArgs& a) { return ThisBig(rt, a.thisv, "valueOf"); }, 0);
     bp->AddRaw(rt.symToStringTag, Value::Str(rt.Intern("BigInt")), kConfigurable);
+}
+
+// ============================================================ Intl (ECMA-402), partial: en-US only
+// A small part of ECMA-402 so pages that format numbers and dates run: Intl.NumberFormat, DateTimeFormat,
+// PluralRules, RelativeTimeFormat, ListFormat and Collator, plus Number / Date toLocale*String with options.
+// Every locale argument is accepted and ignored: the results always follow en-US conventions, written by hand
+// here (no CLDR data). Time zones: "UTC" (and "Etc/UTC", "GMT") or the platform's local zone; any other zone
+// name is accepted and formats in the local zone. resolvedOptions().timeZone is the TZ variable when it holds
+// an IANA name, else "UTC" or "Etc/GMT+N" from the local offset.
+namespace {
+
+enum IntlKind : std::uint8_t { IK_Number, IK_DateTime, IK_Plural, IK_Relative, IK_List, IK_Collator };
+
+struct IntlObj : Object {
+    IntlKind kind = IK_Number;
+    std::unordered_map<std::string, std::string> opt;   ///< the resolved options, as text
+    int minFrac = 0, maxFrac = 3, minInt = 1;
+    Value boundFn;                                       ///< the bound format / compare function, made on first use
+    IntlObj() : Object(Cls::Intl) {}
+    void Trace(Runtime& rt) override {
+        Object::Trace(rt);
+        rt.MarkValue(boundFn);
+    }
+};
+
+IntlObj* ThisIntl(Runtime& rt, const Value& v, IntlKind k, const char* what) {
+    if (!v.IsObj() || v.O()->cls != Cls::Intl || static_cast<IntlObj*>(v.O())->kind != k)
+        rt.ThrowType(std::string(what) + " needs an Intl." + what + " object as 'this'");
+    return static_cast<IntlObj*>(v.O());
+}
+
+// 9.2.12 GetOption for a string option with its allowed values (nullptr-terminated; none = any); "" when absent
+std::string GetOpt(Runtime& rt, const Value& options, const char* name, std::initializer_list<const char*> allowed, const char* dflt = "") {
+    if (!options.IsObj()) return dflt;
+    Value v = rt.Get(options, rt.Intern(name));
+    if (v.IsUndef()) return dflt;
+    std::string s = rt.ToUtf8(v);
+    if (allowed.size() == 0) return s;
+    for (const char* a : allowed)
+        if (s == a) return s;
+    rt.ThrowRange(std::string("the '") + name + "' option can not be '" + s + "'");
+}
+int GetNumOpt(Runtime& rt, const Value& options, const char* name, int lo, int hi, int dflt) {
+    if (!options.IsObj()) return dflt;
+    Value v = rt.Get(options, rt.Intern(name));
+    if (v.IsUndef()) return dflt;
+    double d = rt.ToNumber(v);
+    if (std::isnan(d) || d < lo || d > hi) rt.ThrowRange(std::string("the '") + name + "' option is out of range");
+    return (int)std::floor(d);
+}
+Value OptionsArg(Runtime& rt, const Value& v) {
+    if (v.IsUndef()) return Value();
+    return Value::Obj(rt.ToObject(v));
+}
+
+IntlObj* NewIntl(Runtime& rt, CallArgs& a, IntlKind k) {
+    IntlObj* o = rt.Alloc<IntlObj>();
+    o->kind = k;
+    Object* nt = a.newTarget ? a.newTarget : a.callee;
+    Value pr = rt.Get(Value::Obj(nt), rt.atoms->prototype);
+    o->proto = pr.IsObj() ? pr.O() : a.callee->slots[0].O();
+    o->opt["locale"] = "en-US";
+    return o;
+}
+
+std::string Group3(const std::string& digits) {   // "1234567" -> "1,234,567"
+    std::string out;
+    for (std::size_t i = 0; i < digits.size(); ++i) {
+        if (i && (digits.size() - i) % 3 == 0) out += ',';
+        out += digits[i];
+    }
+    return out;
+}
+
+// |x| with between minFrac and maxFrac decimals (half away from zero), grouped if asked
+std::string PlainDigits(double x, int minFrac, int maxFrac, int minInt, bool group) {
+    std::string t = ToFixedText(std::fabs(x), maxFrac);
+    std::size_t dot = t.find('.');
+    std::string ip = dot == std::string::npos ? t : t.substr(0, dot);
+    std::string fp = dot == std::string::npos ? "" : t.substr(dot + 1);
+    while ((int)fp.size() > minFrac && !fp.empty() && fp.back() == '0') fp.pop_back();
+    if ((int)ip.size() < minInt) ip.insert(0, (std::size_t)(minInt - (int)ip.size()), '0');
+    return (group ? Group3(ip) : ip) + (fp.empty() ? "" : "." + fp);
+}
+
+// en-US compact short: 1234 -> 1.2K, 12345 -> 12K, 1500000 -> 1.5M (two significant digits below 100)
+std::string CompactDigits(double x, bool longForm) {
+    static const char* const shortSuffix[] = {"", "K", "M", "B", "T"};
+    static const char* const longSuffix[] = {"", " thousand", " million", " billion", " trillion"};
+    double a = std::fabs(x);
+    int unit = 0;
+    while (unit < 4 && a >= 999.5) {
+        a /= 1000;
+        ++unit;
+    }
+    std::string body;
+    if (a < 100 && a != 0) {
+        std::string d;
+        int e;
+        ExactDigits(a, d, e);
+        RoundDigits(d, e, 2);
+        double r = std::stod(d.substr(0, 1) + "." + d.substr(1) + "e" + std::to_string(e));
+        if (r >= 999.5 && unit < 4) { r /= 1000; ++unit; }
+        body = PlainDigits(r, 0, r < 10 ? 1 : 0, 1, false);
+    } else body = PlainDigits(a, 0, 0, 1, unit == 0);
+    return body + (longForm ? longSuffix[unit] : shortSuffix[unit]);
+}
+
+std::string CurrencySymbol(const std::string& code, int& digits) {
+    digits = 2;
+    if (code == "USD") return "$";
+    if (code == "EUR") return "\xE2\x82\xAC";
+    if (code == "GBP") return "\xC2\xA3";
+    if (code == "JPY") { digits = 0; return "\xC2\xA5"; }
+    if (code == "KRW") { digits = 0; return "\xE2\x82\xA9"; }
+    if (code == "INR") return "\xE2\x82\xB9";
+    if (code == "CAD") return "CA$";
+    if (code == "AUD") return "A$";
+    if (code == "CNY") return "CN\xC2\xA5";
+    return code + "\xC2\xA0";   // other codes: "CHF 12.00" with a no-break space
+}
+
+std::string FormatNumber(Runtime& rt, IntlObj* f, double x) {
+    if (std::isnan(x)) return "NaN";
+    const std::string& style = f->opt["style"];
+    bool neg = std::signbit(x);
+    std::string body;
+    if (std::isinf(x)) body = "\xE2\x88\x9E";
+    else if (f->opt["notation"] == "compact") body = CompactDigits(x, f->opt["compactDisplay"] == "long");
+    else body = PlainDigits(style == "percent" ? x * 100 : x, f->minFrac, f->maxFrac, f->minInt, f->opt["useGrouping"] != "false");
+    (void)rt;
+    if (style == "percent") body += "%";
+    if (style == "currency") {
+        int digits;
+        std::string sym = CurrencySymbol(f->opt["currency"], digits);
+        if (f->opt["currencyDisplay"] == "code") sym = f->opt["currency"] + "\xC2\xA0";
+        body = sym + body;
+    }
+    const std::string& sd = f->opt["signDisplay"];
+    std::string sign;
+    if (sd == "auto") sign = neg ? "-" : "";
+    else if (sd == "always") sign = neg ? "-" : "+";
+    else if (sd == "exceptZero") sign = x == 0 ? "" : neg ? "-" : "+";
+    else if (sd == "negative") sign = neg && x != 0 ? "-" : "";
+    return sign + body;
+}
+
+void SetupNumberFormat(Runtime& rt, IntlObj* f, const Value& optsIn) {
+    Value o = OptionsArg(rt, optsIn);
+    f->opt["numberingSystem"] = "latn";
+    std::string style = GetOpt(rt, o, "style", {"decimal", "percent", "currency", "unit"}, "decimal");
+    f->opt["style"] = style;
+    std::string cur = GetOpt(rt, o, "currency", {});
+    for (char& c : cur) c = (char)std::toupper((unsigned char)c);
+    if (style == "currency" && cur.empty()) rt.ThrowType("Intl.NumberFormat: the currency style needs a 'currency' option");
+    if (!cur.empty()) f->opt["currency"] = cur;
+    f->opt["currencyDisplay"] = GetOpt(rt, o, "currencyDisplay", {"symbol", "narrowSymbol", "code", "name"}, "symbol");
+    f->opt["notation"] = GetOpt(rt, o, "notation", {"standard", "scientific", "engineering", "compact"}, "standard");
+    f->opt["compactDisplay"] = GetOpt(rt, o, "compactDisplay", {"short", "long"}, "short");
+    f->opt["signDisplay"] = GetOpt(rt, o, "signDisplay", {"auto", "never", "always", "exceptZero", "negative"}, "auto");
+    Value g = o.IsObj() ? rt.Get(o, rt.Intern("useGrouping")) : Value();
+    f->opt["useGrouping"] = g.IsUndef() ? "auto" : rt.ToBoolean(g) ? "auto" : "false";
+    if (g.IsStr() && rt.ToUtf8(g) == "false") f->opt["useGrouping"] = "false";
+    int curDigits = 2;
+    if (style == "currency") CurrencySymbol(cur, curDigits);
+    int dMin = style == "currency" ? curDigits : 0;
+    int dMax = style == "currency" ? curDigits : style == "percent" ? 0 : 3;
+    f->minInt = GetNumOpt(rt, o, "minimumIntegerDigits", 1, 21, 1);
+    int mn = GetNumOpt(rt, o, "minimumFractionDigits", 0, 100, -1);
+    int mx = GetNumOpt(rt, o, "maximumFractionDigits", 0, 100, -1);
+    if (mn < 0) mn = mx >= 0 ? std::min(dMin, mx) : dMin;
+    if (mx < 0) mx = std::max(mn, dMax);
+    if (mn > mx) rt.ThrowRange("minimumFractionDigits is more than maximumFractionDigits");
+    f->minFrac = mn;
+    f->maxFrac = mx;
+    // significant digits: approximate with fraction digits after the first significant one (not exact for all inputs)
+    int sigMax = GetNumOpt(rt, o, "maximumSignificantDigits", 1, 21, -1);
+    if (sigMax > 0) {
+        f->opt["maximumSignificantDigits"] = std::to_string(sigMax);
+        f->minFrac = 0;
+        f->maxFrac = -sigMax;   // marker: chosen per value in format
+    }
+}
+
+std::string FormatNumberValue(Runtime& rt, IntlObj* f, double x) {
+    if (f->maxFrac < 0 && std::isfinite(x) && x != 0) {   // maximumSignificantDigits
+        int sig = -f->maxFrac;
+        int mag = (int)std::floor(std::log10(std::fabs(x)));
+        int frac = std::max(0, std::min(100, sig - 1 - mag));
+        double scale = std::pow(10.0, (double)(mag + 1 - sig));
+        double r = mag + 1 - sig > 0 ? std::round(x / scale) * scale : x;
+        IntlObj tmp;
+        tmp.opt = f->opt;
+        tmp.minFrac = 0;
+        tmp.maxFrac = frac;
+        tmp.minInt = f->minInt;
+        return FormatNumber(rt, &tmp, r);
+    }
+    if (f->maxFrac < 0) {
+        IntlObj tmp;
+        tmp.opt = f->opt;
+        tmp.minFrac = 0;
+        tmp.maxFrac = 0;
+        return FormatNumber(rt, &tmp, x);
+    }
+    return FormatNumber(rt, f, x);
+}
+
+// ---- dates
+const char* const kLongMonths[12] = {"January", "February", "March", "April", "May", "June", "July", "August",
+                                     "September", "October", "November", "December"};
+const char* const kLongDays[7] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+
+bool IsUtcZone(const std::string& z) {
+    std::string u;
+    for (char c : z) u += (char)std::toupper((unsigned char)c);
+    return u == "UTC" || u == "ETC/UTC" || u == "GMT" || u == "ETC/GMT" || u == "Z";
+}
+std::string LocalZoneName(double now) {
+    const char* tz = std::getenv("TZ");
+    if (tz && std::strchr(tz, '/') && tz[0] != ':' && std::strlen(tz) < 64) return tz;
+    double off = LocalOffset(now) / 60000.0;
+    if (off == 0) return "UTC";
+    if (std::fmod(off, 60.0) != 0) return "UTC";
+    int h = (int)(off / 60);
+    return "Etc/GMT" + std::string(h > 0 ? "-" : "+") + std::to_string(h > 0 ? h : -h);   // Etc/GMT+5 is UTC-5
+}
+
+void SetupDateTimeFormat(Runtime& rt, IntlObj* f, const Value& optsIn, int defaults /* 0 date, 1 time, 2 both */) {
+    Value o = OptionsArg(rt, optsIn);
+    f->opt["calendar"] = "gregory";
+    f->opt["numberingSystem"] = "latn";
+    static const std::initializer_list<const char*> text = {"long", "short", "narrow"};
+    static const std::initializer_list<const char*> num = {"numeric", "2-digit"};
+    f->opt["weekday"] = GetOpt(rt, o, "weekday", text);
+    f->opt["era"] = GetOpt(rt, o, "era", text);
+    f->opt["year"] = GetOpt(rt, o, "year", num);
+    f->opt["month"] = GetOpt(rt, o, "month", {"numeric", "2-digit", "long", "short", "narrow"});
+    f->opt["day"] = GetOpt(rt, o, "day", num);
+    f->opt["hour"] = GetOpt(rt, o, "hour", num);
+    f->opt["minute"] = GetOpt(rt, o, "minute", num);
+    f->opt["second"] = GetOpt(rt, o, "second", num);
+    f->opt["timeZoneName"] = GetOpt(rt, o, "timeZoneName", {"short", "long", "shortOffset", "longOffset", "shortGeneric", "longGeneric"});
+    f->opt["dateStyle"] = GetOpt(rt, o, "dateStyle", {"full", "long", "medium", "short"});
+    f->opt["timeStyle"] = GetOpt(rt, o, "timeStyle", {"full", "long", "medium", "short"});
+    std::string tz = GetOpt(rt, o, "timeZone", {});
+    f->opt["utc"] = !tz.empty() && IsUtcZone(tz) ? "1" : "";
+    f->opt["timeZone"] = tz.empty() ? LocalZoneName(NowMs()) : IsUtcZone(tz) ? "UTC" : tz;
+    std::string hc = GetOpt(rt, o, "hourCycle", {"h11", "h12", "h23", "h24"});
+    Value h12 = o.IsObj() ? rt.Get(o, rt.Intern("hour12")) : Value();
+    bool twelve = h12.IsUndef() ? !(hc == "h23" || hc == "h24") : rt.ToBoolean(h12);
+    f->opt["hour12"] = twelve ? "1" : "";
+    f->opt["hourCycle"] = twelve ? "h12" : "h23";
+    bool styles = !f->opt["dateStyle"].empty() || !f->opt["timeStyle"].empty();
+    bool any = styles;
+    for (const char* k : {"weekday", "year", "month", "day", "hour", "minute", "second"})
+        if (!f->opt[k].empty()) any = true;
+    if (styles) {
+        for (const char* k : {"weekday", "year", "month", "day", "hour", "minute", "second", "timeZoneName"})
+            if (!f->opt[k].empty()) rt.ThrowType(std::string("dateStyle and timeStyle can not be used with '") + k + "'");
+    }
+    if (!any) {   // 11.1.2 ToDateTimeOptions: the defaults
+        if (defaults != 1) f->opt["year"] = f->opt["month"] = f->opt["day"] = "numeric";
+        if (defaults != 0) f->opt["hour"] = f->opt["minute"] = f->opt["second"] = "numeric";
+    }
+}
+
+using Parts = std::vector<std::pair<const char*, std::string>>;
+
+std::string TwoDigits(double v) { return Pad(std::fmod(v, 100.0), 2); }
+
+void DatePieces(IntlObj* f, const Fields& t, Parts& out) {
+    std::string wd = f->opt["weekday"], y = f->opt["year"], m = f->opt["month"], d = f->opt["day"];
+    auto lit = [&](const char* s) { out.push_back({"literal", s}); };
+    std::string yearText = y == "2-digit" ? TwoDigits(t.year) : Pad(t.year, 1);
+    std::string dayText = d == "2-digit" ? Pad(t.date, 2) : Pad(t.date, 1);
+    if (!wd.empty()) {
+        std::string w = kLongDays[(int)t.weekday];
+        out.push_back({"weekday", wd == "long" ? w : wd == "short" ? w.substr(0, 3) : w.substr(0, 1)});
+        if (!m.empty() || !d.empty() || !y.empty()) lit(", ");
+    }
+    if (m == "long" || m == "short" || m == "narrow") {   // "January 2, 2020", "Jan 2", "January 2020"
+        std::string mt = kLongMonths[(int)t.month];
+        out.push_back({"month", m == "long" ? mt : m == "short" ? mt.substr(0, 3) : mt.substr(0, 1)});
+        if (!d.empty()) {
+            lit(" ");
+            out.push_back({"day", dayText});
+        }
+        if (!y.empty()) {
+            lit(d.empty() ? " " : ", ");
+            out.push_back({"year", yearText});
+        }
+        return;
+    }
+    bool first = true;   // numeric: M/D/Y with the fields asked for
+    auto sep = [&]() { if (!first) lit("/"); first = false; };
+    if (!m.empty()) { sep(); out.push_back({"month", m == "2-digit" ? Pad(t.month + 1, 2) : Pad(t.month + 1, 1)}); }
+    if (!d.empty()) { sep(); out.push_back({"day", dayText}); }
+    if (!y.empty()) { sep(); out.push_back({"year", yearText}); }
+}
+
+std::string ZoneText(IntlObj* f, double tv, bool longName) {
+    if (f->opt["utc"] == "1") return longName ? "Coordinated Universal Time" : "UTC";
+    double off = LocalOffset(tv) / 60000.0;
+    if (off == 0) return longName ? "Coordinated Universal Time" : "UTC";
+    int mins = (int)std::fabs(off);
+    std::string s = std::string("GMT") + (off < 0 ? "-" : "+") + std::to_string(mins / 60);
+    if (mins % 60) s += ":" + Pad(mins % 60, 2);
+    return s;
+}
+
+void TimePieces(IntlObj* f, const Fields& t, double tv, Parts& out) {
+    std::string h = f->opt["hour"], mi = f->opt["minute"], s = f->opt["second"];
+    bool twelve = f->opt["hour12"] == "1";
+    bool first = true;
+    if (!h.empty()) {
+        int hv = (int)t.hour;
+        if (twelve) { hv %= 12; if (hv == 0) hv = 12; }
+        out.push_back({"hour", (h == "2-digit" || (!twelve && (!mi.empty() || !s.empty()))) ? Pad(hv, 2) : std::to_string(hv)});
+        first = false;
+    }
+    if (!mi.empty()) {
+        if (!first) out.push_back({"literal", ":"});
+        out.push_back({"minute", (!first || mi == "2-digit") ? Pad(t.minute, 2) : Pad(t.minute, 1)});
+        first = false;
+    }
+    if (!s.empty()) {
+        if (!first) out.push_back({"literal", ":"});
+        out.push_back({"second", (!first || s == "2-digit") ? Pad(t.second, 2) : Pad(t.second, 1)});
+        first = false;
+    }
+    if (!h.empty() && twelve) {
+        out.push_back({"literal", " "});
+        out.push_back({"dayPeriod", t.hour < 12 ? "AM" : "PM"});
+    }
+    std::string zn = f->opt["timeZoneName"];
+    if (!zn.empty()) {
+        if (!out.empty()) out.push_back({"literal", " "});
+        out.push_back({"timeZoneName", ZoneText(f, tv, zn == "long")});
+    }
+}
+
+Parts FormatDateParts(Runtime& rt, IntlObj* f, double tv) {
+    if (!std::isfinite(tv)) rt.ThrowRange("Intl.DateTimeFormat: invalid date");
+    double local = f->opt["utc"] == "1" ? tv : LocalTime(tv);
+    Fields t = Split(local);
+    Parts date, time;
+    std::string ds = f->opt["dateStyle"], ts = f->opt["timeStyle"];
+    if (!ds.empty() || !ts.empty()) {   // the four en-US styles
+        IntlObj tmp;
+        tmp.opt = f->opt;
+        if (!ds.empty()) {
+            tmp.opt["weekday"] = ds == "full" ? "long" : "";
+            tmp.opt["month"] = ds == "full" || ds == "long" ? "long" : ds == "medium" ? "short" : "numeric";
+            tmp.opt["day"] = "numeric";
+            tmp.opt["year"] = ds == "short" ? "2-digit" : "numeric";
+            DatePieces(&tmp, t, date);
+        }
+        if (!ts.empty()) {
+            tmp.opt["hour"] = tmp.opt["minute"] = "numeric";
+            tmp.opt["second"] = ts == "short" ? "" : "numeric";
+            tmp.opt["timeZoneName"] = ts == "full" ? "long" : ts == "long" ? "short" : "";
+            TimePieces(&tmp, t, tv, time);
+        }
+        Parts out = date;
+        if (!date.empty() && !time.empty()) out.push_back({"literal", ds == "full" || ds == "long" ? " at " : ", "});
+        out.insert(out.end(), time.begin(), time.end());
+        return out;
+    }
+    DatePieces(f, t, date);
+    TimePieces(f, t, tv, time);
+    Parts out = date;
+    if (!date.empty() && !time.empty()) out.push_back({"literal", ", "});
+    out.insert(out.end(), time.begin(), time.end());
+    return out;
+}
+std::string JoinParts(const Parts& p) {
+    std::string s;
+    for (const auto& x : p) s += x.second;
+    return s;
+}
+double DateArg(Runtime& rt, const Value& v) {
+    if (v.IsUndef()) return NowMs();
+    if (v.IsObj() && v.O()->cls == Cls::DateBox) return static_cast<BoxObj*>(v.O())->prim.n;
+    return TimeClip(rt.ToNumber(v));
+}
+Value PartsArray(Runtime& rt, const Parts& parts) {
+    ArrayObj* arr = rt.NewArray(parts.size());
+    for (const auto& p : parts) {
+        Object* o = rt.NewObject();
+        rt.DefineData(o, rt.Intern("type"), Value::Str(rt.Intern(p.first)));
+        rt.DefineData(o, rt.atoms->value, Value::Str(rt.NewStringUtf8(p.second)));
+        rt.DefineIndex(arr, arr->length, Value::Obj(o));
+    }
+    return Value::Obj(arr);
+}
+
+// ---- plural rules, relative time, lists
+std::string PluralOf(IntlObj* f, double n) {
+    if (!std::isfinite(n)) return "other";
+    if (f->opt["type"] == "ordinal") {
+        double a = std::fabs(n);
+        if (a != std::floor(a)) return "other";
+        long long i = (long long)std::fmod(a, 1000.0);
+        if (i % 10 == 1 && i % 100 != 11) return "one";
+        if (i % 10 == 2 && i % 100 != 12) return "two";
+        if (i % 10 == 3 && i % 100 != 13) return "few";
+        return "other";
+    }
+    return std::fabs(n) == 1 && f->maxFrac >= 0 && PlainDigits(n, f->minFrac, f->maxFrac, 1, false) == "1" ? "one" : "other";
+}
+
+std::string RelativeText(Runtime& rt, IntlObj* f, double v, std::string unit) {
+    if (!std::isfinite(v)) rt.ThrowRange("Intl.RelativeTimeFormat needs a finite number");
+    if (unit.size() > 1 && unit.back() == 's') unit.pop_back();
+    static const char* const units[] = {"second", "minute", "hour", "day", "week", "month", "quarter", "year"};
+    bool ok = false;
+    for (const char* u : units) ok |= unit == u;
+    if (!ok) rt.ThrowRange("Intl.RelativeTimeFormat: unknown unit '" + unit + "'");
+    if (f->opt["numeric"] == "auto" && (v == 0 || v == 1 || v == -1)) {
+        if (unit == "day") return v == 0 ? "today" : v > 0 ? "tomorrow" : "yesterday";
+        if (unit == "second" && v == 0) return "now";
+        if (unit == "second" || unit == "minute" || unit == "hour") {
+            if (v == 0) return "this " + unit;
+        } else return (v == 0 ? "this " : v > 0 ? "next " : "last ") + unit;
+    }
+    bool shortForm = f->opt["style"] != "long";
+    std::string name = unit;
+    if (shortForm) {
+        static const std::pair<const char*, const char*> abbr[] = {{"second", "sec."}, {"minute", "min."}, {"hour", "hr."}, {"day", "day"},
+                                                                  {"week", "wk."}, {"month", "mo."}, {"quarter", "qtr."}, {"year", "yr."}};
+        for (const auto& p : abbr)
+            if (unit == p.first) name = p.second;
+    }
+    double a = std::fabs(v);
+    std::string num = PlainDigits(a, 0, 3, 1, true);
+    bool plural = num != "1";
+    if (plural && (!shortForm || name == "day")) name += "s";
+    else if (plural && shortForm && name == "qtr.") name = "qtrs.";
+    bool past = std::signbit(v);
+    return past ? num + " " + name + " ago" : "in " + num + " " + name;
+}
+
+// 7.3.18 (CreateListFromArrayLike of strings) then en-US joining
+std::string ListText(Runtime& rt, IntlObj* f, const Value& list) {
+    std::vector<std::string> items;
+    if (!list.IsUndef()) {
+        IterRec* r = GetIterator(rt, list);
+        Value e;
+        while (IterStep(rt, r, e)) {
+            if (!e.IsStr()) rt.ThrowType("Intl.ListFormat formats strings only");
+            items.push_back(rt.ToUtf8(e));
+            if (items.size() > (1u << 20)) rt.ThrowRange("the list is too long");
+        }
+    }
+    std::string type = f->opt["type"], style = f->opt["style"];
+    std::string word = type == "disjunction" ? "or" : style == "short" && type == "conjunction" ? "&" : "and";
+    bool unit = type == "unit";
+    std::string out;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        rt.Charge(1);
+        if (i) {
+            if (unit) out += style == "narrow" ? " " : ", ";
+            else if (items.size() == 2) out += " " + word + " ";
+            else if (i + 1 == items.size()) out += (style == "narrow" && type == "conjunction") ? ", " : ", " + word + " ";
+            else out += ", ";
+        }
+        out += items[i];
+    }
+    return out;
+}
+
+// numeric-aware, case-folding comparison for Intl.Collator (code unit order otherwise; no locale tables)
+int CollateCompare(IntlObj* f, const std::u16string& a, const std::u16string& b) {
+    bool numeric = f->opt["numeric"] == "true";
+    bool fold = f->opt["sensitivity"] == "base" || f->opt["sensitivity"] == "accent";
+    std::size_t i = 0, j = 0;
+    while (i < a.size() && j < b.size()) {
+        char16_t x = a[i], y = b[j];
+        if (numeric && x >= u'0' && x <= u'9' && y >= u'0' && y <= u'9') {
+            std::size_t i2 = i, j2 = j;
+            while (i2 < a.size() && a[i2] == u'0') ++i2;
+            while (j2 < b.size() && b[j2] == u'0') ++j2;
+            std::size_t ie = i2, je = j2;
+            while (ie < a.size() && a[ie] >= u'0' && a[ie] <= u'9') ++ie;
+            while (je < b.size() && b[je] >= u'0' && b[je] <= u'9') ++je;
+            if (ie - i2 != je - j2) return ie - i2 < je - j2 ? -1 : 1;
+            int c = a.compare(i2, ie - i2, b, j2, je - j2);
+            if (c) return c < 0 ? -1 : 1;
+            i = ie;
+            j = je;
+            continue;
+        }
+        char16_t lx = JsLower(x), ly = JsLower(y);
+        if (lx != ly) return lx < ly ? -1 : 1;
+        if (!fold && x != y) return x > y ? -1 : 1;   // lower case first, as en-US orders "a" before "A"
+        ++i;
+        ++j;
+    }
+    if (i < a.size()) return 1;
+    if (j < b.size()) return -1;
+    return 0;
+}
+
+Value ResolvedOptions(Runtime& rt, IntlObj* f, std::initializer_list<const char*> keys) {
+    Object* o = rt.NewObject();
+    for (const char* k : keys) {
+        auto it = f->opt.find(k);
+        if (it == f->opt.end() || it->second.empty()) continue;
+        std::string v = it->second;
+        if (std::string(k) == "hour12") { rt.DefineData(o, rt.Intern(k), Value::Bool(v == "1")); continue; }
+        if (std::string(k) == "numeric" && f->kind == IK_Collator) { rt.DefineData(o, rt.Intern(k), Value::Bool(v == "true")); continue; }
+        rt.DefineData(o, rt.Intern(k), Value::Str(rt.NewStringUtf8(v)));
+    }
+    if (f->kind == IK_Number || f->kind == IK_Plural) {
+        rt.DefineData(o, rt.Intern("minimumIntegerDigits"), Value::Num(f->minInt));
+        if (f->maxFrac >= 0) {
+            rt.DefineData(o, rt.Intern("minimumFractionDigits"), Value::Num(f->minFrac));
+            rt.DefineData(o, rt.Intern("maximumFractionDigits"), Value::Num(f->maxFrac));
+        }
+    }
+    return Value::Obj(o);
+}
+
+// The bound format / compare function a getter hands out (10.3.3, 11.3.3, 10.? Collator compare)
+Value BoundFn(Runtime& rt, IntlObj* f, NativeFn fn, const char* name, int len) {
+    if (f->boundFn.IsUndef()) f->boundFn = Value::Obj(rt.NewNative(fn, name, len, {Value::Obj(f)}));
+    return f->boundFn;
+}
+
+Object* IntlCtor(Runtime& rt, Object* intl, const char* name, NativeFn ctor, const char* tag) {
+    Object* proto = rt.NewObject();
+    NativeFunc* c = rt.NewNative(ctor, name, 0, {Value::Obj(proto)});
+    c->ctor = true;
+    rt.MakeLazyProps(c);
+    c->AddRaw(rt.atoms->prototype, Value::Obj(proto), 0);
+    proto->AddRaw(rt.atoms->constructor, Value::Obj(c), kHidden);
+    proto->AddRaw(rt.symToStringTag, Value::Str(rt.Intern(tag)), kConfigurable);
+    intl->AddRaw(rt.Intern(name), Value::Obj(c), kHidden);
+    DefNative(rt, c, "supportedLocalesOf", [](Runtime& rt, CallArgs& a) {   // the requested English locales (all we format)
+        ArrayObj* arr = rt.NewArray();
+        auto consider = [&](const Value& v) {
+            std::string s = rt.ToUtf8(v);
+            if (s.size() >= 2 && (s[0] | 0x20) == 'e' && (s[1] | 0x20) == 'n' && (s.size() == 2 || s[2] == '-'))
+                rt.DefineIndex(arr, arr->length, Value::Str(rt.NewStringUtf8(s)));
+        };
+        if (a[0].IsStr()) consider(a[0]);
+        else if (a[0].IsObj()) {
+            std::uint64_t n = std::min<std::uint64_t>(rt.LengthOf(a[0]), 1000);
+            for (std::uint64_t k = 0; k < n; ++k) {
+                Runtime::ScratchScope ss(rt);
+                consider(rt.GetIndex(a[0], (std::uint32_t)k));
+            }
+        }
+        return Value::Obj(arr);
+    }, 1);
+    return proto;
+}
+
+} // namespace
+
+// Number.prototype.toLocaleString and Date.prototype.toLocale*String with options (ECMA-402 15.4.1, 20.4.1-3)
+std::string NumberToLocale(Runtime& rt, double x, const Value& options) {
+    IntlObj f;
+    SetupNumberFormat(rt, &f, options);
+    return FormatNumberValue(rt, &f, x);
+}
+std::string DateToLocale(Runtime& rt, double tv, const Value& options, int defaults) {
+    if (std::isnan(tv)) return "Invalid Date";
+    IntlObj f;
+    SetupDateTimeFormat(rt, &f, options, defaults);
+    return JoinParts(FormatDateParts(rt, &f, tv));
+}
+
+void InstallIntlLib(Runtime& rt) {
+    Object* intl = rt.NewObject();
+    rt.global->AddRaw(rt.Intern("Intl"), Value::Obj(intl), kHidden);
+    intl->AddRaw(rt.symToStringTag, Value::Str(rt.Intern("Intl")), kConfigurable);
+    DefNative(rt, intl, "getCanonicalLocales", [](Runtime& rt, CallArgs& a) {
+        ArrayObj* arr = rt.NewArray(1);
+        if (!a[0].IsUndef()) rt.DefineIndex(arr, 0, Value::Str(rt.Intern("en-US")));
+        return Value::Obj(arr);
+    }, 1);
+
+    Object* nf = IntlCtor(rt, intl, "NumberFormat", [](Runtime& rt, CallArgs& a) {
+        IntlObj* f = NewIntl(rt, a, IK_Number);
+        SetupNumberFormat(rt, f, a[1]);
+        return Value::Obj(f);
+    }, "Intl.NumberFormat");
+    DefGetter(rt, nf, "format", [](Runtime& rt, CallArgs& a) {
+        return BoundFn(rt, ThisIntl(rt, a.thisv, IK_Number, "NumberFormat"), [](Runtime& rt, CallArgs& a) {
+            IntlObj* f = static_cast<IntlObj*>(a.callee->slots[0].O());
+            Value n = rt.ToNumeric(a[0]);
+            if (n.IsBig()) return Value::Str(rt.NewStringUtf8(FormatNumberValue(rt, f, BigToDouble(n))));
+            return Value::Str(rt.NewStringUtf8(FormatNumberValue(rt, f, n.n)));
+        }, "", 1);
+    });
+    DefNative(rt, nf, "resolvedOptions", [](Runtime& rt, CallArgs& a) {
+        return ResolvedOptions(rt, ThisIntl(rt, a.thisv, IK_Number, "NumberFormat"),
+                               {"locale", "numberingSystem", "style", "currency", "currencyDisplay", "notation", "compactDisplay", "signDisplay", "useGrouping"});
+    }, 0);
+
+    Object* df = IntlCtor(rt, intl, "DateTimeFormat", [](Runtime& rt, CallArgs& a) {
+        IntlObj* f = NewIntl(rt, a, IK_DateTime);
+        SetupDateTimeFormat(rt, f, a[1], 0);
+        return Value::Obj(f);
+    }, "Intl.DateTimeFormat");
+    DefGetter(rt, df, "format", [](Runtime& rt, CallArgs& a) {
+        return BoundFn(rt, ThisIntl(rt, a.thisv, IK_DateTime, "DateTimeFormat"), [](Runtime& rt, CallArgs& a) {
+            IntlObj* f = static_cast<IntlObj*>(a.callee->slots[0].O());
+            return Value::Str(rt.NewStringUtf8(JoinParts(FormatDateParts(rt, f, DateArg(rt, a[0])))));
+        }, "", 1);
+    });
+    DefNative(rt, df, "formatToParts", [](Runtime& rt, CallArgs& a) {
+        IntlObj* f = ThisIntl(rt, a.thisv, IK_DateTime, "DateTimeFormat");
+        return PartsArray(rt, FormatDateParts(rt, f, DateArg(rt, a[0])));
+    }, 1);
+    DefNative(rt, df, "resolvedOptions", [](Runtime& rt, CallArgs& a) {
+        return ResolvedOptions(rt, ThisIntl(rt, a.thisv, IK_DateTime, "DateTimeFormat"),
+                               {"locale", "calendar", "numberingSystem", "timeZone", "hourCycle", "hour12", "weekday", "era", "year",
+                                "month", "day", "hour", "minute", "second", "timeZoneName", "dateStyle", "timeStyle"});
+    }, 0);
+
+    Object* pr = IntlCtor(rt, intl, "PluralRules", [](Runtime& rt, CallArgs& a) {
+        if (!a.newTarget) rt.ThrowType("Intl.PluralRules must be called with 'new'");
+        IntlObj* f = NewIntl(rt, a, IK_Plural);
+        Value o = OptionsArg(rt, a[1]);
+        f->opt["type"] = GetOpt(rt, o, "type", {"cardinal", "ordinal"}, "cardinal");
+        f->minFrac = GetNumOpt(rt, o, "minimumFractionDigits", 0, 100, 0);
+        f->maxFrac = std::max(f->minFrac, GetNumOpt(rt, o, "maximumFractionDigits", 0, 100, 3));
+        return Value::Obj(f);
+    }, "Intl.PluralRules");
+    DefNative(rt, pr, "select", [](Runtime& rt, CallArgs& a) {
+        IntlObj* f = ThisIntl(rt, a.thisv, IK_Plural, "PluralRules");
+        return Value::Str(rt.Intern(PluralOf(f, rt.ToNumber(a[0])).c_str()));
+    }, 1);
+    DefNative(rt, pr, "resolvedOptions", [](Runtime& rt, CallArgs& a) {
+        IntlObj* f = ThisIntl(rt, a.thisv, IK_Plural, "PluralRules");
+        Value r = ResolvedOptions(rt, f, {"locale", "type"});
+        rt.Keep(r);
+        ArrayObj* cats = rt.NewArray();
+        for (const char* c : f->opt["type"] == "ordinal" ? std::initializer_list<const char*>{"few", "one", "two", "other"}
+                                                         : std::initializer_list<const char*>{"one", "other"})
+            rt.DefineIndex(cats, cats->length, Value::Str(rt.Intern(c)));
+        rt.DefineData(r.O(), rt.Intern("pluralCategories"), Value::Obj(cats));
+        return r;
+    }, 0);
+
+    Object* rp = IntlCtor(rt, intl, "RelativeTimeFormat", [](Runtime& rt, CallArgs& a) {
+        if (!a.newTarget) rt.ThrowType("Intl.RelativeTimeFormat must be called with 'new'");
+        IntlObj* f = NewIntl(rt, a, IK_Relative);
+        Value o = OptionsArg(rt, a[1]);
+        f->opt["style"] = GetOpt(rt, o, "style", {"long", "short", "narrow"}, "long");
+        f->opt["numeric"] = GetOpt(rt, o, "numeric", {"always", "auto"}, "always");
+        f->opt["numberingSystem"] = "latn";
+        return Value::Obj(f);
+    }, "Intl.RelativeTimeFormat");
+    DefNative(rt, rp, "format", [](Runtime& rt, CallArgs& a) {
+        IntlObj* f = ThisIntl(rt, a.thisv, IK_Relative, "RelativeTimeFormat");
+        double v = rt.ToNumber(a[0]);
+        return Value::Str(rt.NewStringUtf8(RelativeText(rt, f, v, rt.ToUtf8(a[1]))));
+    }, 2);
+    DefNative(rt, rp, "resolvedOptions", [](Runtime& rt, CallArgs& a) {
+        return ResolvedOptions(rt, ThisIntl(rt, a.thisv, IK_Relative, "RelativeTimeFormat"), {"locale", "style", "numeric", "numberingSystem"});
+    }, 0);
+
+    Object* lp = IntlCtor(rt, intl, "ListFormat", [](Runtime& rt, CallArgs& a) {
+        if (!a.newTarget) rt.ThrowType("Intl.ListFormat must be called with 'new'");
+        IntlObj* f = NewIntl(rt, a, IK_List);
+        Value o = OptionsArg(rt, a[1]);
+        f->opt["type"] = GetOpt(rt, o, "type", {"conjunction", "disjunction", "unit"}, "conjunction");
+        f->opt["style"] = GetOpt(rt, o, "style", {"long", "short", "narrow"}, "long");
+        return Value::Obj(f);
+    }, "Intl.ListFormat");
+    DefNative(rt, lp, "format", [](Runtime& rt, CallArgs& a) {
+        IntlObj* f = ThisIntl(rt, a.thisv, IK_List, "ListFormat");
+        return Value::Str(rt.NewStringUtf8(ListText(rt, f, a[0])));
+    }, 1);
+    DefNative(rt, lp, "resolvedOptions", [](Runtime& rt, CallArgs& a) {
+        return ResolvedOptions(rt, ThisIntl(rt, a.thisv, IK_List, "ListFormat"), {"locale", "type", "style"});
+    }, 0);
+
+    Object* cp = IntlCtor(rt, intl, "Collator", [](Runtime& rt, CallArgs& a) {
+        IntlObj* f = NewIntl(rt, a, IK_Collator);
+        Value o = OptionsArg(rt, a[1]);
+        f->opt["usage"] = GetOpt(rt, o, "usage", {"sort", "search"}, "sort");
+        f->opt["sensitivity"] = GetOpt(rt, o, "sensitivity", {"base", "accent", "case", "variant"}, "variant");
+        Value num = o.IsObj() ? rt.Get(o, rt.Intern("numeric")) : Value();
+        f->opt["numeric"] = rt.ToBoolean(num) ? "true" : "false";
+        f->opt["caseFirst"] = "false";
+        f->opt["collation"] = "default";
+        return Value::Obj(f);
+    }, "Intl.Collator");
+    DefGetter(rt, cp, "compare", [](Runtime& rt, CallArgs& a) {
+        return BoundFn(rt, ThisIntl(rt, a.thisv, IK_Collator, "Collator"), [](Runtime& rt, CallArgs& a) {
+            IntlObj* f = static_cast<IntlObj*>(a.callee->slots[0].O());
+            std::u16string x = rt.ToU16(a[0]), y = rt.ToU16(a[1]);
+            rt.Charge(std::min(x.size(), y.size()) / 8 + 1);
+            return Value::Num(CollateCompare(f, x, y));
+        }, "", 2);
+    });
+    DefNative(rt, cp, "resolvedOptions", [](Runtime& rt, CallArgs& a) {
+        return ResolvedOptions(rt, ThisIntl(rt, a.thisv, IK_Collator, "Collator"),
+                               {"locale", "usage", "sensitivity", "collation", "numeric", "caseFirst"});
+    }, 0);
+
+    // the locale-sensitive methods of 402 ch. 15-20 take options now
+    DefNative(rt, rt.numberProto, "toLocaleString", [](Runtime& rt, CallArgs& a) {
+        double x = ThisNum(rt, a.thisv, "toLocaleString");
+        return Value::Str(rt.NewStringUtf8(NumberToLocale(rt, x, a[1])));
+    }, 0);
+    DefNative(rt, rt.dateProto, "toLocaleString", [](Runtime& rt, CallArgs& a) {
+        return Value::Str(rt.NewStringUtf8(DateToLocale(rt, ThisTime(rt, a.thisv, "toLocaleString"), a[1], 2)));
+    }, 0);
+    DefNative(rt, rt.dateProto, "toLocaleDateString", [](Runtime& rt, CallArgs& a) {
+        return Value::Str(rt.NewStringUtf8(DateToLocale(rt, ThisTime(rt, a.thisv, "toLocaleDateString"), a[1], 0)));
+    }, 0);
+    DefNative(rt, rt.dateProto, "toLocaleTimeString", [](Runtime& rt, CallArgs& a) {
+        return Value::Str(rt.NewStringUtf8(DateToLocale(rt, ThisTime(rt, a.thisv, "toLocaleTimeString"), a[1], 1)));
+    }, 0);
 }
 
 } // namespace okay::js

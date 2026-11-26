@@ -11353,34 +11353,7 @@ static bool ScriptTabDirty(okay::ScriptComponent* t) {
 
 // Re-indent OkayScript by brace depth (4 spaces / level), a basic "Format
 // Document". Braces inside strings and // line comments are ignored.
-static std::string FormatOkayScript(const std::string& src) {
-    // Re-indent by brace depth, counting only braces that are code: a '{' in a
-    // comment, a string or around an $"…{x}…" hole doesn't shift the rest.
-    const std::vector<char> code = scripttext::CodeMask(src);
-    std::string out; int depth = 0;
-    for (std::size_t ls = 0; ls <= src.size();) {
-        std::size_t le = src.find('\n', ls);
-        if (le == std::string::npos) le = src.size();
-        std::size_t a = ls, b = le;
-        while (a < b && (src[a] == ' ' || src[a] == '\t')) ++a;
-        while (b > a && (src[b - 1] == ' ' || src[b - 1] == '\t' || src[b - 1] == '\r')) --b;
-        int net = 0, leadClose = 0; bool sawOther = false;
-        for (std::size_t i = a; i < b; ++i) {
-            if (!code[i]) { sawOther = true; continue; }
-            if (src[i] == '{') { ++net; sawOther = true; }
-            else if (src[i] == '}') { --net; if (!sawOther) ++leadClose; }
-            else if (src[i] != ' ' && src[i] != '\t') sawOther = true;
-        }
-        int indent = depth - leadClose; if (indent < 0) indent = 0;
-        if (b > a) out.append((std::size_t)indent * 4, ' ');
-        out.append(src, a, b - a);
-        depth += net; if (depth < 0) depth = 0;
-        if (le == src.size()) break;
-        out += '\n';
-        ls = le + 1;
-    }
-    return out;
-}
+static std::string FormatOkayScript(const std::string& src) { return scriptide::ReindentByBraces(src); }   // editor/ScriptIde.hpp
 
 // Format Document for the script's language: Lua re-indents by its blocks (LuaScriptVM::Format).
 static std::string FormatScriptFor(const okay::ScriptComponent* sc, const std::string& src) {

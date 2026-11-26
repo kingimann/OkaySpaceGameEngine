@@ -206,6 +206,13 @@ struct CaretCall { std::string name; int argIndex = 0; };
 CaretCall CallAtCaret(const std::string& text, std::size_t caretOffset);
 /// Byte offset of a 1-based line and 0-based column.
 std::size_t OffsetOf(const std::string& text, int line, int col);
+/// Format Document for brace languages (OkayScript, C#, the fallback): every line re-indented by its brace depth, 4 spaces a level,
+/// counting only braces that are code (not in strings, comments or $"...{x}..." holes); trailing blanks dropped; a line that starts
+/// with '}' sits at its block's level.
+std::string ReindentByBraces(const std::string& text);
+/// Join lines: line `first` (1-based) and the next `count` lines become one, each joined line's leading blanks replaced by one
+/// space (none before a ')' ']' '}' ',' ';' or after a '(' '[' '{'). Lines past the end are ignored.
+std::string JoinLines(const std::string& text, int first, int count = 1);
 
 // ---- templates ----------------------------------------------------------------------------------------------------------
 struct ScriptTemplate { std::string id, title, body; };

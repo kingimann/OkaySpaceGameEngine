@@ -365,6 +365,11 @@ std::vector<AppCommand> ScriptIdeApp::Impl::commands() {
     add("Find...", "Ctrl+F", [this] { openFindBar(false); });
     add("Replace...", "Ctrl+H", [this] { openFindBar(true); });
     add("Find in Files", "Ctrl+Shift+F", [this] { panel = P_Find; findFocus = true; });
+    add("Format Document", "Ctrl+Alt+L", [this] { formatDocument(); });
+    add("Rename Symbol...", "F2", [this] { openRename(std::string()); });
+    add("Quick Fixes...", "Alt+Enter", [this] { fixes = fixesAtCaret(); fixSel = 0; fixesOpen = !fixes.empty(); fixesFresh = true; });
+    add("Join Lines", "Ctrl+Shift+J", [this] { joinLines(); });
+    add("Expand Selection", "Alt+Shift+Up", [this] { expandSelection(); });
     add("Toggle Comment", "Ctrl+/", [this] { if (Doc* d = activeDoc()) d->code.Edit().ToggleLineComment(LineCommentFor(d->language)); });
     add("Check", "F7", [this] { if (Doc* d = activeDoc()) { check(*d); notice = std::to_string(d->problems.size()) + " problems"; } });
     add(cfg.runLabel.c_str(), "F5", [this] { run(); });

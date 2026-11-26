@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <regex>
@@ -813,6 +814,55 @@ std::vector<ScriptTemplate> TemplatesFor(const std::string& language) {
 std::string FillTemplate(const std::string& body, const std::string& name) {
     std::string out = body;
     for (std::size_t p = out.find("{Name}"); p != std::string::npos; p = out.find("{Name}", p + name.size())) out.replace(p, 6, name);
+    return out;
+}
+
+// ---- formatting and joining ---------------------------------------------------------------------------------------------------
+std::string ReindentByBraces(const std::string& src) {
+    const std::vector<char> code = scripttext::CodeMask(src);
+    std::string out;
+    out.reserve(src.size() + 64);
+    int depth = 0;
+    for (std::size_t ls = 0; ls <= src.size();) {
+        std::size_t le = src.find('\n', ls);
+        if (le == std::string::npos) le = src.size();
+        std::size_t a = ls, b = le;
+        while (a < b && (src[a] == ' ' || src[a] == '\t')) ++a;
+        while (b > a && (src[b - 1] == ' ' || src[b - 1] == '\t' || src[b - 1] == '\r')) --b;
+        int net = 0, leadClose = 0;
+        bool sawOther = false;
+        for (std::size_t i = a; i < b; ++i) {
+            if (!code[i]) { sawOther = true; continue; }
+            if (src[i] == '{') { ++net; sawOther = true; }
+            else if (src[i] == '}') { --net; if (!sawOther) ++leadClose; }
+            else if (src[i] != ' ' && src[i] != '\t') sawOther = true;
+        }
+        const int indent = std::max(0, depth - leadClose);
+        if (b > a) out.append((std::size_t)indent * 4, ' ');
+        out.append(src, a, b - a);
+        depth = std::max(0, depth + net);
+        if (le == src.size()) break;
+        out += '\n';
+        ls = le + 1;
+    }
+    return out;
+}
+
+std::string JoinLines(const std::string& text, int first, int count) {
+    if (first < 1 || count < 1) return text;
+    std::size_t at = OffsetOf(text, first, 0);
+    std::string out = text;
+    for (int k = 0; k < count; ++k) {
+        const std::size_t nl = out.find('\n', at);
+        if (nl == std::string::npos) break;
+        std::size_t end = nl + 1;
+        while (end < out.size() && (out[end] == ' ' || out[end] == '\t')) ++end;
+        std::size_t start = nl;
+        while (start > at && (out[start - 1] == ' ' || out[start - 1] == '\t')) --start;
+        const bool tight = end >= out.size() || out[end] == '\n' || std::strchr(")]},;", out[end]) != nullptr || start == at ||
+                           std::strchr("([{", out[start - 1]) != nullptr;
+        out.replace(start, end - start, tight ? "" : " ");
+    }
     return out;
 }
 

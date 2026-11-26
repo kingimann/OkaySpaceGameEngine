@@ -11,6 +11,12 @@
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Lua/LuaScriptVM.hpp"          // the bound names and members for Lua scripts' completion
+#include "okay/JavaScript/JavaScriptVM.hpp"   // the same for JavaScript
+
+#include <algorithm>
+#include <cctype>
+#include <unordered_set>
 
 #include <filesystem>
 #include <fstream>
@@ -118,6 +124,129 @@ std::vector<scriptide::SceneScript> SceneScripts() {
     return out;
 }
 
+// The completion list from the editor's script assist (ScriptAssist.hpp): after `receiver.` (or Lua's `receiver:`) the members
+// of what the receiver is (C#-aware for OkayScript: GetComponent<T>(), a variable holding a component), else the language's
+// words, the file's own names and the editor plugins' items. Names that start with what was typed first (as typed, then in any
+// case), fuzzy matches only when there are none. Methods and known functions are inserted with "()" and the caret inside when
+// they take arguments. The details pane gets the help card's description and example.
+std::vector<scriptide::CompletionItem> CompleteAt(const std::string& language, const std::string& text, int line, int col,
+                                                  const std::string& prefix) {
+    const std::size_t caret = scriptide::OffsetOf(text, line, col);
+    const std::size_t ws = caret >= prefix.size() ? caret - prefix.size() : 0;
+    auto isWord = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
+    const bool lua = language == okay::LuaScriptVM::kLanguage, js = language == okay::JavaScriptVM::kLanguage;
+    // the receiver: the plain name before the dot and the whole expression (a.b.c, GetComponent<T>(), xs[0])
+    std::string receiver, expr;
+    if (ws > 0 && (text[ws - 1] == '.' || (lua && text[ws - 1] == ':'))) {
+        std::size_t a = ws - 1;
+        while (a > 0 && isWord(text[a - 1])) --a;
+        receiver = text.substr(a, ws - 1 - a);
+        std::size_t e = ws - 1;
+        while (e > 0) {
+            const char c = text[e - 1];
+            if (isWord(c) || c == '.') { --e; continue; }
+            if (c == ')' || c == ']' || c == '>') {   // a balanced (..), [..] or <..>
+                const char open = c == ')' ? '(' : c == ']' ? '[' : '<';
+                int depth = 0;
+                std::size_t k = e;
+                bool found = false;
+                while (k > 0) {
+                    --k;
+                    if (text[k] == c) ++depth;
+                    else if (text[k] == open && --depth == 0) { found = true; break; }
+                }
+                if (!found) break;
+                e = k;
+                continue;
+            }
+            break;
+        }
+        expr = text.substr(e, ws - 1 - e);
+    }
+    std::vector<std::string> members;
+    bool memberMode = false;
+    if (!expr.empty() || !receiver.empty()) {
+        if (lua) members = okay::LuaScriptVM::CompletionMembers(expr);
+        else if (js) members = okay::JavaScriptVM::CompletionMembers(expr);
+        else {
+            members = ScriptMembers(receiver);
+            if (members.empty() || expr.find_first_of(".<") != std::string::npos) {
+                const std::vector<std::string> cs = CsMembersFor(text, expr);
+                if (!cs.empty()) members = cs;
+            }
+        }
+        memberMode = !members.empty();
+    }
+    static const std::unordered_set<std::string> kConstants = {"PI", "Deg2Rad", "Rad2Deg", "Epsilon", "Infinity"};
+    std::vector<std::string> pool;
+    if (!memberMode) {
+        pool = lua ? okay::LuaScriptVM::CompletionNames() : js ? okay::JavaScriptVM::CompletionNames() : ScriptCompletions();
+        AddBufferIdentifiers(text.c_str(), pool);
+        pluginreg::DocContext ctx;
+        ctx.language = language; ctx.text = text; ctx.line = line; ctx.col = col; ctx.word = prefix;
+        for (const auto& it : pluginreg::ScriptEditorPlugins().Complete(ctx)) pool.push_back(it.label);
+    }
+    const std::vector<std::string>& names = memberMode ? members : pool;
+    std::string low = prefix;
+    for (char& c : low) c = (char)std::tolower((unsigned char)c);
+    struct Hit { int tier, score; const std::string* name; };
+    std::vector<Hit> hits;
+    std::unordered_set<std::string> seen;
+    for (const std::string& n : names) {
+        if (n.empty() || n == prefix || !seen.insert(n).second) continue;
+        if (n.compare(0, prefix.size(), prefix) == 0) { hits.push_back({0, 0, &n}); continue; }
+        std::string ln = n.substr(0, prefix.size());
+        for (char& c : ln) c = (char)std::tolower((unsigned char)c);
+        if (ln == low) { hits.push_back({1, 0, &n}); continue; }
+        const int s = scriptide::FuzzyScore(prefix, n);
+        if (s >= 0) hits.push_back({2, -s, &n});
+    }
+    if (std::any_of(hits.begin(), hits.end(), [](const Hit& h) { return h.tier < 2; }))
+        hits.erase(std::remove_if(hits.begin(), hits.end(), [](const Hit& h) { return h.tier == 2; }), hits.end());
+    std::stable_sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) {
+        if (a.tier != b.tier) return a.tier < b.tier;
+        if (a.score != b.score) return a.score < b.score;
+        return a.name->size() < b.name->size();
+    });
+    std::vector<scriptide::CompletionItem> out;
+    for (const Hit& h : hits) {
+        if (out.size() >= 40) break;
+        const std::string& n = *h.name;
+        scriptide::CompletionItem it;
+        it.label = n;
+        it.insert = n;
+        const ScriptHelp* help = (!receiver.empty() ? ScriptHelpFor(receiver + "." + n) : nullptr);
+        if (!help) help = ScriptHelpFor(n);
+        if (memberMode) {
+            const bool method = !lua && !js && std::isupper((unsigned char)n[0]) && !kConstants.count(n);
+            it.kind = method ? 'm' : 'p';
+            if (method) { it.insert = n + "()"; it.caretBack = 1; it.detail = "()"; }
+        } else {
+            switch (ClassifyCompletion(n)) {
+            case AcKind::Keyword: it.kind = 'k'; break;
+            case AcKind::Type: it.kind = 'T'; break;
+            case AcKind::Function: it.kind = 'f'; break;
+            default: it.kind = 'v'; break;
+            }
+            if (const std::string* sg = ScriptSignature(n)) {
+                const std::size_t paren = sg->find('(');
+                it.detail = paren == std::string::npos ? *sg : sg->substr(paren);
+                const bool noArgs = sg->find("()") != std::string::npos;
+                it.insert = n + "()";
+                it.caretBack = noArgs ? 0 : 1;
+                it.example = ScriptExampleFromSignature(*sg);
+            }
+            if (const std::string* dc = ScriptDoc(n)) it.doc = *dc;
+        }
+        if (help && help->doc) it.doc = help->doc;
+        if (help && help->example) it.example = help->example;
+        if (lua) { const std::string d = okay::LuaScriptVM::CompletionDoc(n); if (!d.empty() && it.doc.empty()) it.doc = d; }
+        if (js) { const std::string d = okay::JavaScriptVM::CompletionDoc(n); if (!d.empty() && it.doc.empty()) it.doc = d; }
+        out.push_back(std::move(it));
+    }
+    return out;
+}
+
 scriptide::ScriptIdeApp& App() {
     static std::unique_ptr<scriptide::ScriptIdeApp> app;
     if (!app) {
@@ -146,6 +275,27 @@ scriptide::ScriptIdeApp& App() {
             ConsoleLog("[Script Editor] saved " + path);
         };
         cfg.sceneScripts = [] { return SceneScripts(); };
+        cfg.complete = CompleteAt;
+        cfg.signature = [](const std::string& language, const std::string& name, std::string& doc) {
+            if (language == okay::LuaScriptVM::kLanguage || language == okay::JavaScriptVM::kLanguage) {
+                const std::string d = language == okay::LuaScriptVM::kLanguage ? okay::LuaScriptVM::CompletionDoc(name)
+                                                                              : okay::JavaScriptVM::CompletionDoc(name);
+                const std::size_t nl = d.find('\n');
+                const std::string first = d.substr(0, nl);
+                if (first.find('(') == std::string::npos) return std::string();
+                doc = nl == std::string::npos ? std::string() : d.substr(nl + 1);
+                return first;
+            }
+            const std::string* sg = ScriptSignature(name);
+            if (!sg) return std::string();
+            if (const std::string* dc = ScriptDoc(name)) doc = *dc;
+            return *sg;
+        };
+        cfg.format = [](const std::string& language, const std::string& path, const std::string& text, std::string& out) {
+            pluginreg::DocContext ctx;   // an editor plugin's formatter for the language first; else the app's own
+            ctx.language = language; ctx.path = path; ctx.text = text;
+            return pluginreg::ScriptEditorPlugins().Format(ctx, out);
+        };
         cfg.documentFor = [](const std::string& key, scriptide::DocumentSpec& out) { return DocumentFor(key, out); };
         cfg.languageChanged = [](const std::string& key, const std::string& language) {
             ForEachScript([&](okay::GameObject& go, okay::ScriptComponent& sc, int n) {

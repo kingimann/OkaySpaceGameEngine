@@ -184,7 +184,35 @@ struct ScriptIdeApp::Impl {
     double shiftAt = -10.0;         // Search Everywhere on Shift pressed twice
     int shiftCount = 0;
 
-    bool modalOpen() const { return goOpen || folderOpen || newOpen || promptOpen || picker != K_None; }
+    // ---- edits (ScriptIdeAppEdit.cpp) ----
+    bool renameOpen = false, renameFocus = false, renameAll = true;
+    char renameBuf[128] = "";
+    std::string renameFrom;
+    RenamePlan renamePlan;
+    std::string renamePlanned;          // "<from>\n<to>\n<all>" the preview was made for
+    bool fixesOpen = false, fixesFresh = false;   // fresh: opened this frame (the key that opened it is not a pick)
+    std::vector<QuickFix> fixes;
+    int fixSel = 0;
+    std::map<std::string, int> taken;   // completion items taken this session (taken before: first)
+    std::string sigText, sigDoc;        // the signature help shown this frame
+    bool keysTaken = false;             // a shortcut of the app used this frame's keys: the code widget does not see them
+
+    bool formatDocument();
+    RenamePlan planRename(const std::string& from, const std::string& to, bool all);
+    int applyRename(const std::string& from, const std::string& to, bool all);
+    void openRename(const std::string& word);
+    void drawRename(float X, float Y, float W, float H);
+    std::vector<QuickFix> fixesAtCaret();
+    bool applyFix(const QuickFix& f);
+    void drawQuickFixes();
+    void drawLightBulb(Doc& d);
+    bool joinLines();
+    bool expandSelection();
+    void updateSignature(Doc& d);
+    void drawSignature(Doc& d);
+    void setText(Doc& d, const std::string& text);   // the whole text, one undo step, the caret kept on its line
+
+    bool modalOpen() const { return goOpen || folderOpen || newOpen || promptOpen || picker != K_None || renameOpen; }
     void openFindBar(bool replace);
     const std::vector<TextMatch>& barHits(Doc& d);
     bool findStep(bool forward);
@@ -512,16 +540,30 @@ struct ScriptIdeApp::Impl {
         return line.substr((std::size_t)a, (std::size_t)(std::min(c.col, (int)line.size()) - a));
     }
 
-    // Open (or refresh) the list for the word before the caret. A typed word needs 2 letters; Ctrl+Space asks with any.
+    // Open (or refresh) the list for the word before the caret. A typed word needs 2 letters; Ctrl+Space asks with any. Never
+    // inside a comment or a string.
     void startCompletion(Doc& d, bool asked) {
         int start = 0;
         const std::string prefix = wordBeforeCaret(d, start);
-        if (!asked && prefix.size() < 2) { acOpen = false; return; }
-        if (!prefix.empty() && std::isdigit((unsigned char)prefix[0])) { acOpen = false; return; }
         const UI::CodePos c = d.code.Edit().Caret();
         const std::string text = d.code.Edit().GetText();
+        const std::size_t at = OffsetOf(text, c.line + 1, c.col);
+        // after a '.' or ':' (members) any prefix will do
+        const std::size_t wordStart = OffsetOf(text, c.line + 1, start);
+        const bool member = wordStart > 0 && (text[wordStart - 1] == '.' || text[wordStart - 1] == ':');
+        if (!asked && !member && prefix.size() < 2) { acOpen = false; return; }
+        if (!prefix.empty() && std::isdigit((unsigned char)prefix[0])) { acOpen = false; return; }
+        if (at > 0) {
+            const std::vector<char> mask = CodeMaskFor(d.language, text.substr(0, at));
+            if (!mask.empty() && !mask.back() && text[at - 1] != '\n') { acOpen = false; return; }
+        }
         acItems = cfg.complete ? cfg.complete(d.language, text, c.line + 1, c.col, prefix)
                                : DefaultCompletions(wordsFor(d.language), text, prefix);
+        // items taken before come first, in the order the provider gave
+        std::stable_sort(acItems.begin(), acItems.end(), [this](const CompletionItem& x, const CompletionItem& y) {
+            const auto ix = taken.find(x.label), iy = taken.find(y.label);
+            return (ix == taken.end() ? 0 : ix->second) > (iy == taken.end() ? 0 : iy->second);
+        });
         acPrefix = prefix;
         acSel = 0;
         acOpen = !acItems.empty();
@@ -530,14 +572,20 @@ struct ScriptIdeApp::Impl {
     // Replace the word before the caret with the item's text: one undo step.
     void acceptCompletion(Doc& d, std::size_t i) {
         if (i >= acItems.size()) return;
+        const CompletionItem item = acItems[i];
         UI::CodeEdit& e = d.code.Edit();
         int start = 0;
         wordBeforeCaret(d, start);
         const UI::CodePos c = e.Caret();
         e.BreakUndoGroup();
         e.SetSelection(UI::CodePos{c.line, start}, c);
-        e.InsertText((acItems[i].insert.empty() ? acItems[i].label : acItems[i].insert).c_str());
+        e.InsertText((item.insert.empty() ? item.label : item.insert).c_str());
         e.BreakUndoGroup();
+        if (item.caretBack > 0) {
+            const UI::CodePos p = e.Caret();
+            e.SetCaret(UI::CodePos{p.line, std::max(0, p.col - item.caretBack)});
+        }
+        ++taken[item.label];
         d.seenVersion = e.Version();
         d.editedAt = UI::GetTime();
         acOpen = false;
@@ -554,6 +602,17 @@ struct ScriptIdeApp::Impl {
         return false;
     }
 
+    static UI::Color32 KindColor(char k) {
+        switch (k) {
+        case 'k': return Rgb(204, 120, 50);
+        case 'T': return Rgb(78, 201, 176);
+        case 'f': case 'm': return Rgb(255, 198, 109);
+        case 'p': return Rgb(150, 190, 230);
+        default: return Rgb(160, 160, 170);
+        }
+    }
+
+    // The list under the caret, each row with its kind letter and detail; the selected item's doc and example beside it.
     void drawCompletion(Doc& d) {
         const UI::Vec2 at = d.code.Edit().CaretScreenPosBelow();
         const float lh = UI::GetTextLineHeight(), rowH = lh + 6.0f;
@@ -561,27 +620,73 @@ struct ScriptIdeApp::Impl {
         const int first = std::max(0, std::min(acSel - shown + 1, (int)acItems.size() - shown));
         float w = 220.0f;
         for (int i = first; i < first + shown; ++i)
-            w = std::max(w, UI::CalcTextWidth(acItems[(std::size_t)i].label.c_str()) + UI::CalcTextWidth(acItems[(std::size_t)i].detail.c_str()) + 40.0f);
-        w = std::min(w, 560.0f);
+            w = std::max(w, UI::CalcTextWidth(acItems[(std::size_t)i].label.c_str()) + UI::CalcTextWidth(acItems[(std::size_t)i].detail.c_str()) + 60.0f);
+        w = std::min(w, 520.0f);
         const float h = rowH * (float)shown + 8.0f;
         const auto& fg = UI::GetForegroundDrawList();
         fg->AddRectFilled(UI::Vec2(at.x, at.y), UI::Vec2(at.x + w, at.y + h), kPanel, 4.0f);
         fg->AddRect(UI::Vec2(at.x, at.y), UI::Vec2(at.x + w, at.y + h), kLine, 4.0f, 1.0f);
         const UI::Vec2 m = UI::GetMousePos();
-        int picked = -1;
+        int click = -1;
         for (int i = first; i < first + shown; ++i) {
             const CompletionItem& it = acItems[(std::size_t)i];
             const float ry = at.y + 4.0f + rowH * (float)(i - first);
             const bool hover = m.x >= at.x && m.x < at.x + w && m.y >= ry && m.y < ry + rowH;
             if (i == acSel) fg->AddRectFilled(UI::Vec2(at.x + 3, ry), UI::Vec2(at.x + w - 3, ry + rowH), kHover, 3.0f);
-            fg->AddText(UI::Vec2(at.x + 10, ry + 3), kText, it.label.c_str());
+            float tx = at.x + 10;
+            if (it.kind) {
+                const char letter[2] = {it.kind, 0};
+                fg->AddText(UI::Vec2(tx, ry + 3), KindColor(it.kind), letter);
+                tx += 16;
+            }
+            fg->AddText(UI::Vec2(tx, ry + 3), kText, it.label.c_str());
             if (!it.detail.empty()) {
                 const float lw = UI::CalcTextWidth(it.label.c_str());
-                fg->AddText(UI::Vec2(at.x + 24 + lw, ry + 3), kDim, Fit(it.detail, std::max(20.0f, w - lw - 40)).c_str());
+                fg->AddText(UI::Vec2(tx + 14 + lw, ry + 3), kDim, Fit(it.detail, std::max(20.0f, at.x + w - tx - lw - 24)).c_str());
             }
-            if (hover && UI::IsMouseClicked(0)) picked = i;
+            if (hover && UI::IsMouseClicked(0)) click = i;
         }
-        if (picked >= 0) acceptCompletion(d, (std::size_t)picked);
+        // the details pane
+        if (acSel >= 0 && acSel < (int)acItems.size()) {
+            const CompletionItem& it = acItems[(std::size_t)acSel];
+            if (!it.doc.empty() || !it.example.empty()) {
+                const float pw = 340.0f, dispW = UI::GetFrameInput().displayW;
+                float px = at.x + w + 6;
+                if (dispW > 0 && px + pw > dispW) px = at.x - pw - 6 >= 0 ? at.x - pw - 6 : std::max(0.0f, dispW - pw);   // keep it on screen
+                std::vector<std::string> lines;   // the doc wrapped to the pane, then the example's lines
+                auto wrap = [&](const std::string& text) {
+                    std::istringstream in(text);
+                    std::string para;
+                    while (std::getline(in, para)) {
+                        std::string cur;
+                        std::istringstream words(para);
+                        std::string wd;
+                        while (words >> wd) {
+                            const std::string next = cur.empty() ? wd : cur + " " + wd;
+                            if (!cur.empty() && UI::CalcTextWidth(next.c_str()) > pw - 20) { lines.push_back(cur); cur = wd; }
+                            else cur = next;
+                        }
+                        lines.push_back(cur);
+                    }
+                };
+                wrap(it.doc);
+                const std::size_t docLines = lines.size();
+                std::vector<std::string> ex;
+                if (!it.example.empty()) { std::istringstream in(it.example); std::string l; while (std::getline(in, l)) ex.push_back(l); }
+                const float ph = 12 + rowH * (float)(docLines + (ex.empty() ? 0 : ex.size() + 1));
+                fg->AddRectFilled(UI::Vec2(px, at.y), UI::Vec2(px + pw, at.y + ph), kPanel, 4.0f);
+                fg->AddRect(UI::Vec2(px, at.y), UI::Vec2(px + pw, at.y + ph), kLine, 4.0f, 1.0f);
+                float y = at.y + 6;
+                for (std::size_t i = 0; i < docLines; ++i, y += rowH) fg->AddText(UI::Vec2(px + 10, y), i == 0 ? kText : kDim, lines[i].c_str());
+                if (!ex.empty()) {
+                    fg->AddText(UI::Vec2(px + 10, y), kDim, "Example");
+                    y += rowH;
+                    fg->AddRectFilled(UI::Vec2(px + 8, y - 2), UI::Vec2(px + pw - 8, y + rowH * (float)ex.size()), kBack, 3.0f);
+                    for (const std::string& l : ex) { fg->AddText(UI::Vec2(px + 14, y), Rgb(206, 214, 160), l.c_str()); y += rowH; }
+                }
+            }
+        }
+        if (click >= 0) acceptCompletion(d, (std::size_t)click);
     }
 
     void frame(float X, float Y, float W, float H);

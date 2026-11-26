@@ -173,42 +173,71 @@ const scripteditor::LanguageWords& DefaultWordsFor(const std::string& language) 
         std::sort(w.types.begin(), w.types.end());
     }
     w.known = BuiltinNamesOf(language);
+    // Lua and JavaScript: the engine's bound names too, with their docs (hover, the completion's details, signature help)
+    std::vector<std::string> bound;
+    std::string (*doc)(const std::string&) = nullptr;
+    if (language == "lua") { bound = okay::LuaScriptVM::CompletionNames(); doc = okay::LuaScriptVM::CompletionDoc; }
+    if (language == "javascript") { bound = okay::JavaScriptVM::CompletionNames(); doc = okay::JavaScriptVM::CompletionDoc; }
+    for (const std::string& n : bound) {
+        if (std::find(w.known.begin(), w.known.end(), n) == w.known.end()) w.known.push_back(n);
+        const std::string d = doc ? doc(n) : std::string();
+        if (!d.empty()) w.docs.emplace(n, d);
+    }
     return made.emplace(language, std::move(w)).first->second;
 }
 
 std::vector<CompletionItem> DefaultCompletions(const scripteditor::LanguageWords& words, const std::string& text,
                                                const std::string& prefix, std::size_t maxItems) {
-    struct Scored { int score; CompletionItem item; };
+    // Three tiers: names that start with the prefix as typed, then ones that start with it in any case, then (only when there is
+    // nothing in the first two) fuzzy matches. Shorter names first within a prefix tier, the better fuzzy score first in the last.
+    struct Scored { int tier, score; CompletionItem item; };
     std::vector<Scored> out;
     std::set<std::string> seen{prefix};
-    auto offer = [&](const std::string& name, const std::string& detail) {
-        if (name.empty() || !seen.insert(name).second) return;
-        const int sc = FuzzyScore(prefix, name);
-        if (sc < 0) return;
-        out.push_back({sc, CompletionItem{name, name, detail}});
-    };
-    auto firstLine = [&](const std::string& name) {
+    std::string lowPrefix = prefix;
+    for (char& c : lowPrefix) c = (char)std::tolower((unsigned char)c);
+    auto docOf = [&](const std::string& name) {
         const auto it = words.docs.find(name);
-        if (it == words.docs.end()) return std::string();
-        return it->second.substr(0, it->second.find('\n'));
+        return it == words.docs.end() ? std::string() : it->second;
     };
-    for (const std::string& k : words.keywords) offer(k, "keyword");
-    for (const std::string& t : words.types) offer(t, firstLine(t));
-    for (const std::string& k : words.known) offer(k, firstLine(k));
+    auto offer = [&](const std::string& name, char kind, const std::string& detail) {
+        if (name.empty() || !seen.insert(name).second) return;
+        int tier = 2, score = 0;
+        if (name.compare(0, prefix.size(), prefix) == 0) tier = 0;
+        else {
+            std::string low = name.substr(0, prefix.size());
+            for (char& c : low) c = (char)std::tolower((unsigned char)c);
+            if (low == lowPrefix) tier = 1;
+            else if ((score = FuzzyScore(prefix, name)) < 0) return;
+        }
+        CompletionItem it;
+        it.label = it.insert = name;
+        it.kind = kind;
+        it.doc = docOf(name);
+        it.detail = detail.empty() ? it.doc.substr(0, it.doc.find('\n')) : detail;
+        out.push_back({tier, -score, std::move(it)});
+    };
+    for (const std::string& k : words.keywords) offer(k, 'k', "keyword");
+    for (const std::string& t : words.types) offer(t, 'T', std::string());
+    for (const std::string& k : words.known) offer(k, 'f', std::string());
     // the words of the text (identifiers), one pass
     for (std::size_t i = 0; i < text.size();) {
         const unsigned char c = (unsigned char)text[i];
         if (std::isalpha(c) || c == '_') {
             std::size_t j = i + 1;
             while (j < text.size() && (std::isalnum((unsigned char)text[j]) || text[j] == '_')) ++j;
-            if (j - i <= 64) offer(text.substr(i, j - i), "in this file");
+            if (j - i <= 64) offer(text.substr(i, j - i), 'v', "in this file");
             i = j;
         } else if (std::isdigit(c)) {
             while (i < text.size() && (std::isalnum((unsigned char)text[i]) || text[i] == '_')) ++i;
         } else ++i;
     }
+    const bool anyPrefix = std::any_of(out.begin(), out.end(), [](const Scored& s) { return s.tier < 2; });
+    if (anyPrefix) out.erase(std::remove_if(out.begin(), out.end(), [](const Scored& s) { return s.tier == 2; }), out.end());
     std::stable_sort(out.begin(), out.end(), [](const Scored& a, const Scored& b) {
-        return a.score != b.score ? a.score > b.score : a.item.label < b.item.label;
+        if (a.tier != b.tier) return a.tier < b.tier;
+        if (a.tier == 2 && a.score != b.score) return a.score < b.score;
+        if (a.item.label.size() != b.item.label.size()) return a.item.label.size() < b.item.label.size();
+        return a.item.label < b.item.label;
     });
     std::vector<CompletionItem> items;
     for (std::size_t i = 0; i < out.size() && items.size() < maxItems; ++i) items.push_back(std::move(out[i].item));
@@ -251,6 +280,12 @@ void ScriptIdeApp::Impl::drawMenu(float X, float Y, float W, float h) {
                 if (UI::MenuItem("Duplicate Lines", "Ctrl+Shift+D", false, e != nullptr)) e->DuplicateLines();
                 UI::MenuSeparator();
                 drawLanguageMenu(d);
+                UI::MenuSeparator();
+                if (UI::MenuItem("Format Document", "Ctrl+Alt+L", false, d != nullptr)) formatDocument();
+                if (UI::MenuItem("Rename Symbol...", "F2", false, d != nullptr)) openRename(std::string());
+                if (UI::MenuItem("Quick Fixes...", "Alt+Enter", false, d != nullptr)) { fixes = fixesAtCaret(); fixSel = 0; fixesOpen = !fixes.empty(); fixesFresh = true; if (!fixesOpen) notice = "No quick fixes on this line"; }
+                if (UI::MenuItem("Join Lines", "Ctrl+Shift+J", false, d != nullptr)) joinLines();
+                if (UI::MenuItem("Expand Selection", "Alt+Shift+Up", false, d != nullptr)) expandSelection();
                 UI::MenuSeparator();
                 if (UI::MenuItem("Find...", "Ctrl+F", false, d != nullptr)) openFindBar(false);
                 if (UI::MenuItem("Replace...", "Ctrl+H", false, d != nullptr)) openFindBar(true);
@@ -410,7 +445,7 @@ void ScriptIdeApp::Impl::drawCode(float X, float Y, float W, float H, bool modal
                 }
             }
             e.SetReadOnly(modal);
-            e.SetHandleKeyboardInput(!acKeys);
+            e.SetHandleKeyboardInput(!acKeys && !fixesOpen && !keysTaken);
             UI::SetCursorScreenPos(UI::Vec2(X, Y));
             e.Draw((pre + "_edit").c_str(), W, H);
             e.SetReadOnly(false);
@@ -455,6 +490,12 @@ void ScriptIdeApp::Impl::drawCode(float X, float Y, float W, float H, bool modal
                 }
             } else if (!e.Focused()) acOpen = false;
             if (acOpen) drawCompletion(*d);
+            if (!modal) {
+                drawLightBulb(*d);
+                if (fixesOpen) drawQuickFixes();
+                updateSignature(*d);
+                drawSignature(*d);
+            }
         }
     }
     UI::End();
@@ -677,6 +718,7 @@ void ScriptIdeApp::Impl::frame(float X, float Y, float W, float H) {
     const bool ctrl = in.ctrl, shift = in.shift, alt = UI::IsKeyDown(UI::KeyId_Alt);
     if (ctrl && !alt) UI::GetIO().InputQueueCharacters.resize(0);   // Ctrl+<key> is a shortcut, never typing
     const bool modal = modalOpen();
+    keysTaken = false;
     auto key = [](UI::KeyId k) { return UI::IsKeyPressed(k, false); };
     Doc* d = activeDoc();
     if (!modal) {
@@ -686,6 +728,11 @@ void ScriptIdeApp::Impl::frame(float X, float Y, float W, float H) {
         else if (ctrl && shift && key(UI::KeyId_F)) { panel = P_Find; findFocus = true; }
         else if (ctrl && shift && key(UI::KeyId_T)) reopenClosed();
         else if (ctrl && shift && key(UI::KeyId_O) && d) openPicker(K_Symbol);
+        else if (ctrl && alt && key(UI::KeyId_L) && d) formatDocument();
+        else if (ctrl && shift && key(UI::KeyId_J) && d) joinLines();
+        else if (alt && shift && key(UI::KeyId_Up) && d) { expandSelection(); keysTaken = true; }
+        else if (!ctrl && !shift && key(UI::KeyId_F2) && d) openRename(std::string());
+        else if (alt && key(UI::KeyId_Enter) && d) { keysTaken = true; fixes = fixesAtCaret(); fixSel = 0; fixesOpen = !fixes.empty(); fixesFresh = true; if (!fixesOpen) notice = "No quick fixes on this line"; }
         else if (ctrl && shift && key(UI::KeyId_P)) openPicker(K_Commands);
         else if (ctrl && !shift && key(UI::KeyId_F) && d) openFindBar(false);
         else if (ctrl && !shift && key(UI::KeyId_H) && d) openFindBar(true);
@@ -694,8 +741,8 @@ void ScriptIdeApp::Impl::frame(float X, float Y, float W, float H) {
         else if (!ctrl && key(UI::KeyId_F3) && d) findStep(!shift);
         else if (!ctrl && shift && key(UI::KeyId_F12) && d) findReferences(std::string());
         else if (!ctrl && !shift && key(UI::KeyId_F12) && d) goToDefinition(std::string());
-        else if (alt && key(UI::KeyId_Left)) goBack(false);
-        else if (alt && key(UI::KeyId_Right)) goBack(true);
+        else if (alt && key(UI::KeyId_Left)) { goBack(false); keysTaken = true; }
+        else if (alt && key(UI::KeyId_Right)) { goBack(true); keysTaken = true; }
         else if (shift && key(UI::KeyId_F11)) openPicker(K_Bookmarks);
         else if (key(UI::KeyId_F11) && d) d->code.Edit().ToggleBreakpoint(d->code.Edit().Caret().line);
         else if (ctrl && !shift && key(UI::KeyId_O)) { folderOpen = true; folderFocus = true; std::snprintf(folderBuf, sizeof folderBuf, "%s", folder.c_str()); }
@@ -748,6 +795,7 @@ void ScriptIdeApp::Impl::frame(float X, float Y, float W, float H) {
     if (newOpen) drawNewScript(X, Y, W, H);
     if (promptOpen) drawClosePrompt(X, Y, W, H);
     if (picker != K_None) drawPicker(X, Y, W, H);
+    if (renameOpen) drawRename(X, Y, W, H);
 }
 
 // ---- ScriptIdeApp -----------------------------------------------------------------------------------------------------------

@@ -802,6 +802,153 @@ int main() {
         CHECK(app.DocumentDirty(playKey) && ReadFile(nproj / "Assets/Scripts/Player.lua") == kPlay);   // open: changed in its tab only
     }
 
+    // ---- batch C: Format Document, Rename with a preview, quick fixes, Join Lines, Expand Selection, the completion's details
+    // pane and "()" insert, signature help ----
+    {
+        Reset();
+        UI::UseLauncherLook(true);
+        UI::Style().caretBlink = false;
+        const fs::path cproj = dir / "Batch C";
+        static const char* kMove = "local M = {}\nfunction Move(x)\n    return x + 1\nend\nreturn M\n";
+        static const char* kUse = "local n = Move(2)\nprnt(n)\nreturn {}\n";
+        WriteFile(cproj / "Assets/Scripts/Mover.lua", kMove);
+        WriteFile(cproj / "Assets/Scripts/User.lua", kUse);
+        const float W = 900, H = 560;
+        Sim sim(W, H);
+        si::ScriptIdeApp::Config hc = cfg;
+        hc.settingsPath.clear();
+        hc.idPrefix = "##test_se_batch_c";
+        hc.signature = [](const std::string&, const std::string& name, std::string& doc) {
+            if (name != "Move") return std::string();
+            doc = "Moves x one step on.";
+            return std::string("Move(x)");
+        };
+        hc.complete = [](const std::string& language, const std::string& text, int, int, const std::string& prefix) {
+            std::vector<si::CompletionItem> items = si::DefaultCompletions(si::DefaultWordsFor(language), text, prefix);
+            for (auto& it : items)
+                if (it.label == "Move") { it.insert = "Move()"; it.caretBack = 1; it.kind = 'f'; it.detail = "(x)";
+                                          it.doc = "Move(x)\nMoves x one step on."; it.example = "local y = Move(1)"; }
+            return items;
+        };
+        si::ScriptIdeApp app(hc);
+        auto ui = [&] { app.Frame(0, 0, W, H); };
+        auto chord = [&](UI::KeyId k, bool ctrl, bool shift = false, bool alt = false) {
+            sim.ctrl = ctrl; sim.shift = shift; if (alt) sim.Hold(UI::KeyId_Alt, true);
+            sim.Hold(k, true); sim.Frame(ui); sim.Hold(k, false); sim.Frame(ui);
+            sim.ctrl = false; sim.shift = false; if (alt) sim.Hold(UI::KeyId_Alt, false);
+            sim.Frame(ui);
+        };
+        CHECK(app.OpenFolder(cproj.u8string()));
+        const std::string mover = (cproj / "Assets/Scripts/Mover.lua").u8string(), user = (cproj / "Assets/Scripts/User.lua").u8string();
+        CHECK(app.OpenFile(user));
+        const std::string userKey = app.ActiveKey();
+        sim.Frames(2, ui);
+        UI::CodeEdit* e = app.ActiveEdit();
+        CHECK(e != nullptr);
+        if (!e) { TEST_MAIN_RESULT(); }
+        e->Focus();
+
+        // quick fixes: "prnt" is not defined, the nearest engine name is "print"; Alt+Enter lists the fix, Enter applies it
+        e->SetCaret(UI::CodePos{1, 1});
+        sim.Frame(ui);
+        {
+            const auto fixes = app.FixesAtCaret();
+            bool toPrint = false;
+            for (const auto& f : fixes) if (f.title.find("print") != std::string::npos) toPrint = true;
+            CHECK(toPrint);
+        }
+        chord(UI::KeyId_Enter, false, false, true);   // Alt+Enter
+        CHECK(app.QuickFixesOpen());
+        CHECK(e->LineCount() == 4);   // Alt+Enter did not also break the line
+        sim.Press(Key_Enter); sim.Hold(UI::KeyId_Enter, true); sim.Frame(ui); sim.Hold(UI::KeyId_Enter, false); sim.Frames(2, ui);
+        CHECK(!app.QuickFixesOpen() && e->Line(1) == "print(n)");
+        e->Undo();
+        CHECK(e->Line(1) == "prnt(n)");
+
+        // completion with the host's items: the details pane, "Move()" with the caret inside; then signature help inside the call
+        e->SetCaret(UI::CodePos{2, 0});
+        e->InsertText("local k = \n");
+        e->SetCaret(UI::CodePos{2, 10});
+        sim.Frame(ui);
+        sim.Type("Mo"); sim.Frame(ui);
+        CHECK(app.CompletionOpen() && !app.CompletionList().empty() && app.CompletionList()[0].label == "Move");
+        sim.Move(5, H - 5);
+        sim.Frame(ui);
+        {
+            std::string why;
+            const bool same = MatchesGolden("script_ide_app_completion_details", Picture(sim, 30, 32, 37), &why);
+            if (!same) std::cerr << "  golden script_ide_app_completion_details: " << why << "\n";
+            CHECK(same);
+        }
+        sim.Hold(UI::KeyId_Tab, true); sim.Frame(ui); sim.Hold(UI::KeyId_Tab, false); sim.Frame(ui);
+        CHECK(e->Line(2) == "local k = Move()" && e->Caret().col == 15);
+        sim.Frame(ui);
+        CHECK(app.SignatureShown() == "Move(x)");
+        e->SetCaret(UI::CodePos{0, 0});
+        sim.Frame(ui);
+        CHECK(app.SignatureShown().empty());
+        CHECK(app.ReloadDocument(userKey, kUse));
+
+        // Join Lines (Ctrl+Shift+J): the next line's indent becomes one space
+        CHECK(app.ReloadDocument(userKey, "local s = 1 +\n      2\nreturn s\n"));
+        e->SetCaret(UI::CodePos{0, 3});
+        chord(UI::KeyId_J, true, true);
+        CHECK(app.ActiveText() == "local s = 1 + 2\nreturn s\n");
+        // Expand Selection (Alt+Shift+Up): the word, the line, everything; Ctrl+W still closes tabs (tested above)
+        e->SetCaret(UI::CodePos{0, 6});
+        chord(UI::KeyId_Up, false, true, true);
+        CHECK(e->SelectedText() == "s");
+        chord(UI::KeyId_Up, false, true, true);
+        CHECK(e->SelectedText() == "local s = 1 + 2");
+        chord(UI::KeyId_Up, false, true, true);
+        CHECK(e->SelectedText() == app.ActiveText());
+        CHECK(e->LineCount() == 3);   // Alt+Shift+Up moved no lines
+
+        // Format Document (Ctrl+Alt+L): OkayScript by braces, Lua by its blocks; one undo step; a host's formatter first
+        si::DocumentSpec os;
+        os.key = "fmt"; os.label = "fmt.okay"; os.language = "okayscript";
+        os.text = "void Update() {\nif (a) {\nb = 1\n}\n    }\n";
+        os.save = [](const std::string&, std::string&) { return true; };
+        CHECK(app.OpenDocument(os));
+        sim.Frame(ui);
+        chord(UI::KeyId_L, true, false, true);
+        CHECK(app.ActiveText() == "void Update() {\n    if (a) {\n        b = 1\n    }\n}\n");
+        CHECK(!app.FormatDocument());   // already formatted
+        if (UI::CodeEdit* fe = app.ActiveEdit()) { fe->Undo(); CHECK(app.ActiveText() == os.text); }
+        CHECK(app.ReloadDocument(userKey, "local t = {}\nfunction t.f()\nreturn 1\nend\nreturn t\n"));
+        CHECK(app.OpenFile(user));
+        CHECK(app.FormatDocument() && app.ActiveText().find("\n    return 1\n") != std::string::npos);
+        CHECK(app.ReloadDocument(userKey, kUse));
+        CHECK(si::ReindentByBraces("a {\n// }\n\"{\"\n}\n") == "a {\n    // }\n    \"{\"\n}\n");
+        CHECK(si::JoinLines("f(\n  x\n)\n", 1, 2) == "f(x)\n");
+
+        // Rename (F2 on Move): every script, a preview of each line, then Apply; open tabs change, closed files are written
+        e->SetCaret(UI::CodePos{0, 11});
+        chord(UI::KeyId_F2, false);
+        CHECK(app.RenameOpen());
+        sim.Press(Key_SelectAll); sim.Frame(ui);
+        sim.Type("Walk"); sim.Frames(2, ui);
+        sim.Move(5, H - 5);
+        sim.Frame(ui);
+        {
+            std::string why;
+            const bool same = MatchesGolden("script_ide_app_rename", Picture(sim, 30, 32, 37), &why);
+            if (!same) std::cerr << "  golden script_ide_app_rename: " << why << "\n";
+            CHECK(same);
+        }
+        {
+            const si::RenamePlan plan = app.PlanRenameOf("Move", "Walk", true);
+            CHECK(plan.error.empty() && plan.count == 2 && plan.changes.size() == 2);
+            CHECK(app.PlanRenameOf("Move", "Walk", false).count == 1);   // this file only
+            CHECK(!app.PlanRenameOf("Move", "local", true).error.empty());   // a keyword is refused
+        }
+        sim.Press(Key_Enter); sim.Frames(2, ui);
+        CHECK(!app.RenameOpen());
+        CHECK(app.ActiveText().find("Walk(2)") != std::string::npos && app.DocumentDirty(userKey));
+        CHECK(ReadFile(cproj / "Assets/Scripts/Mover.lua").find("function Walk(x)") != std::string::npos);
+        (void)mover;
+    }
+
     // ---- the new-script helpers of the model ----
     CHECK(si::ScriptStem("Mover Bot!") == "MoverBot" && si::ScriptStem("Player.okay") == "Player" && si::ScriptStem("9lives") == "Script9lives" && si::ScriptStem("") == "Script");
     CHECK(si::DefaultScriptPath("/p/Game/", "Door", "lua") == "/p/Game/Assets/Scripts/Door.lua");

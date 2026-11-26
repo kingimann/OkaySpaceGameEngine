@@ -63,7 +63,12 @@ TestRunResult TestRunScript(const std::string& language, const std::string& text
 const scripteditor::LanguageWords& DefaultWordsFor(const std::string& language);
 
 /// One suggestion of the completion list: what the list shows, what replaces the word before the caret, a short line beside it.
-struct CompletionItem { std::string label, insert, detail; };
+struct CompletionItem {
+    std::string label, insert, detail;
+    char kind = 0;            ///< what the list marks it as: 'k' keyword, 'T' type, 'f' function, 'v' variable, 'm' method, 'p' property
+    std::string doc, example; ///< the details pane beside the list (empty: no pane)
+    int caretBack = 0;        ///< after inserting, the caret goes this many bytes back (inside "()": 1)
+};
 /// The default completions: the language's keywords and known names (with the first line of their hover doc) and the words of the
 /// text, matching `prefix` as a fuzzy subsequence (FuzzyScore), best first, the prefix itself left out; at most `maxItems`.
 std::vector<CompletionItem> DefaultCompletions(const scripteditor::LanguageWords& words, const std::string& text,
@@ -125,6 +130,12 @@ public:
         /// The completion list while typing a word (Ctrl+Space asks at once). Empty: DefaultCompletions with the language's words.
         std::function<std::vector<CompletionItem>(const std::string& language, const std::string& text, int line, int col,
                                                   const std::string& prefix)> complete;
+        /// Signature help: the signature of a function `name` ("move(x, y, z)", "" = unknown) and its doc, shown above the caret
+        /// while it is inside a call to it. Empty: the first line of the language's hover doc when it is a signature.
+        std::function<std::string(const std::string& language, const std::string& name, std::string& doc)> signature;
+        /// Format Document (Ctrl+Alt+L): true and the formatted text, or false for the built-in formatting (Lua and JavaScript by
+        /// their blocks, the rest by braces). The editor: its plugins' formatters.
+        std::function<bool(const std::string& language, const std::string& path, const std::string& text, std::string& out)> format;
         /// A document's breakpoints changed (a click in the gutter or F9): its key and the 1-based lines.
         std::function<void(const std::string& key, const std::vector<int>& lines)> breakpointsChanged;
         /// Run > Continue / Step Over while a document shows an execution line (SetExecutionLine): the host's debugger gets
@@ -202,6 +213,29 @@ public:
     /// becomes the new language's starter (one undo step); the host is told (languageChanged).
     bool SetLanguage(const std::string& key, const std::string& language);
     std::string ActiveLanguage() const;
+
+    // ---- edits: Format Document, Rename, quick fixes, Join Lines, Expand Selection; the completion's details, signature help ----
+    /// Format the shown document (one undo step). False when nothing changed.
+    bool FormatDocument();
+    /// The Rename box for `word` (empty: the word at the caret): a new name, this file or every script, a preview of each changed
+    /// line, then Apply (open tabs change in one undo step each and are not saved; closed files are written after a Local History
+    /// copy).
+    void OpenRename(const std::string& word = "");
+    bool RenameOpen() const;
+    /// What Rename would change (`allScripts` false: the shown document only), and doing it. The count of places.
+    RenamePlan PlanRenameOf(const std::string& from, const std::string& to, bool allScripts);
+    int ApplyRename(const std::string& from, const std::string& to, bool allScripts);
+    /// The quick fixes of the caret's line (Alt+Enter, or the light bulb in the gutter), and applying one (one undo step).
+    std::vector<QuickFix> FixesAtCaret();
+    void OpenQuickFixes();
+    bool QuickFixesOpen() const;
+    bool ApplyFix(std::size_t index);
+    /// Join the caret's line (or the selected lines) with the next (Ctrl+Shift+J).
+    bool JoinLinesAtCaret();
+    /// Grow the selection: the word, then the whole lines, then the whole document (Alt+Shift+Up; Ctrl+W stays Close Tab).
+    bool ExpandSelection();
+    /// The signature help shown now ("" = none).
+    std::string SignatureShown() const;
 
     // ---- find and navigation ----
     /// The find bar over the code (Ctrl+F; with Replace: Ctrl+H): what to find, the replacement, the options.

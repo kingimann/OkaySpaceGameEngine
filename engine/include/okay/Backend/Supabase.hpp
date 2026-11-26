@@ -7,6 +7,9 @@
 // The Database part (OkayBackend round 3) sends PostgREST requests under /rest/v1/ (tables) and /rest/v1/rpc/ (functions);
 // tests/test_okay_backend_golden_db.cpp checks them against texts recorded from the call sites before they moved.
 //
+// The Storage and Functions parts (OkayBackend round 4) send Supabase Storage's object routes and Edge Functions' route
+// (okay/Backend/SupabaseRoutes.hpp); tests/test_okay_backend_golden_storage.cpp checks them the same way.
+//
 // Written from Supabase's publicly documented HTTP routes for its Auth service (GoTrue): POST /auth/v1/signup,
 // POST /auth/v1/token?grant_type=password and ?grant_type=refresh_token, GET and PUT /auth/v1/user, POST /auth/v1/recover,
 // /auth/v1/verify and /auth/v1/resend, with the project's publishable key in the "apikey" header and the access token as
@@ -16,6 +19,9 @@
 
 #include "okay/Backend/Auth.hpp"
 #include "okay/Backend/Database.hpp"
+#include "okay/Backend/Functions.hpp"
+#include "okay/Backend/Storage.hpp"
+#include "okay/Backend/SupabaseRoutes.hpp"
 #include "okay/Backend/Transport.hpp"
 #include "okay/Platform/Account/AccountDetail.hpp"   // detail::JsonEscape / JsonField / PercentEncode / NotReachedMessage, PublicName
 
@@ -232,6 +238,109 @@ public:
     Response Send(const DbRequest& r) override { return send_(r.method, TablePath(r), r.body, r.headers); }
     Response Rpc(const std::string& function, const std::string& json) override {
         return send_("POST", RpcPath(function), json, {});
+    }
+
+private:
+    Sender send_;
+};
+
+/// The Storage calls on Supabase: an object at "/storage/v1/object/<bucket>/<path>", its public read under
+/// "/storage/v1/object/public/", a listing at "/storage/v1/object/list/<bucket>" (POST with a JSON body), several objects removed
+/// at "/storage/v1/object/<bucket>" (DELETE with {"prefixes":[...]}). Like Database, how it is sent is up to the sender:
+/// AccountService passes its Api (requests) and ApiUpload (uploads: the signed-in token, the file as the body); a program
+/// with no account service passes the address, key, token and transport.
+class Storage final : public okay::backend::Storage {
+public:
+    /// (method, path from the project address, body, extra header lines): Database's sender.
+    using Sender = Database::Sender;
+    /// (path from the project address, local file, content type, extra header lines): sends the file as a POST body.
+    using Uploader = std::function<Response(const std::string&, const std::string&, const std::string&, const std::string&)>;
+
+    Storage(std::string projectUrl, Sender send, Uploader upload)
+        : base_(std::move(projectUrl)), send_(std::move(send)), upload_(std::move(upload)) {
+        if (!base_.empty() && base_.back() == '/') base_.pop_back();   // the project address without one trailing "/"
+    }
+    /// Straight to `transport` with MakeRequest's header order. `accessToken` "" sends the publishable key only.
+    Storage(std::string projectUrl, std::string apiKey, Transport& transport, std::string accessToken = {}) {
+        if (!projectUrl.empty() && projectUrl.back() == '/') projectUrl.pop_back();
+        base_ = projectUrl;
+        send_ = [base = projectUrl, key = apiKey, token = accessToken, &transport](
+                    const std::string& method, const std::string& path, const std::string& body, const std::string& extra) {
+            return transport.Send(MakeRequest(key, method, base + path, body, token, extra));
+        };
+        upload_ = [base = std::move(projectUrl), key = std::move(apiKey), token = std::move(accessToken), &transport](
+                      const std::string& path, const std::string& file, const std::string& type, const std::string& extra) {
+            return transport.Send(MakeRequest(key, "POST", base + path, {}, token, extra, file,
+                                              type.empty() ? "application/octet-stream" : type));
+        };
+    }
+
+    /// The extra header lines of an upload (pure, for tests): "x-upsert: true" and "cache-control: max-age=N", one per line.
+    static std::string UploadHeaders(const UploadOptions& o) {
+        std::string h = o.upsert ? "x-upsert: true" : "";
+        if (o.cacheSeconds >= 0) h += (h.empty() ? "" : "\n") + std::string("cache-control: max-age=") + std::to_string(o.cacheSeconds);
+        return h;
+    }
+    /// The body of a listing (pure, for tests): {"prefix":...,"limit":N,"offset":N,"sortBy":{"column":...,"order":"asc"|"desc"}}.
+    static std::string ListBody(const ListOptions& o) {
+        return "{\"prefix\":\"" + okay::account::detail::JsonEscape(o.prefix) + "\",\"limit\":" + std::to_string(o.limit) +
+               ",\"offset\":" + std::to_string(o.offset) + ",\"sortBy\":{\"column\":\"" + okay::account::detail::JsonEscape(o.sortColumn) +
+               "\",\"order\":\"" + (o.descending ? "desc" : "asc") + "\"}}";
+    }
+    /// The body of a removal of several objects (pure, for tests): {"prefixes":["a","b"]}.
+    static std::string RemoveBody(const std::vector<std::string>& paths) {
+        std::string body = "{\"prefixes\":[";
+        for (std::size_t i = 0; i < paths.size(); ++i) body += (i ? ",\"" : "\"") + okay::account::detail::JsonEscape(paths[i]) + "\"";
+        return body + "]}";
+    }
+
+    Response Upload(const std::string& bucket, const std::string& path, const std::string& localFile, const std::string& contentType,
+                    const UploadOptions& options = {}) override {
+        return upload_(routes::StorageObject(bucket, path), localFile, contentType, UploadHeaders(options));
+    }
+    Response ReadPublic(const std::string& bucket, const std::string& path, const std::string& query = {}) override {
+        return send_("GET", routes::StoragePublic(bucket, path) + (query.empty() ? std::string() : "?" + query), {}, {});
+    }
+    Response List(const std::string& bucket, const ListOptions& options) override {
+        return send_("POST", routes::StorageList(bucket), ListBody(options), {});
+    }
+    Response Remove(const std::string& bucket, const std::vector<std::string>& paths) override {
+        return send_("DELETE", routes::StorageBucket(bucket), RemoveBody(paths), {});
+    }
+    Response RemoveObject(const std::string& bucket, const std::string& path) override {
+        return send_("DELETE", routes::StorageObject(bucket, path), {}, {});
+    }
+    std::string PublicUrl(const std::string& bucket, const std::string& path) const override {
+        return base_ + routes::StoragePublic(bucket, path);
+    }
+
+private:
+    std::string base_;
+    Sender send_;
+    Uploader upload_;
+};
+
+/// The Functions calls on Supabase: POST "/functions/v1/<name>" with the JSON body. AccountService passes its ApiTimed (the
+/// signed-in token, the re-read of a newer saved token after a 401, the time limit); a program with no account service passes
+/// the address, key, token and transport.
+class Functions final : public okay::backend::Functions {
+public:
+    /// (method, path from the project address, body, extra header lines, time limit in seconds; 0 = none)
+    using Sender = std::function<Response(const std::string&, const std::string&, const std::string&, const std::string&, int)>;
+
+    explicit Functions(Sender send) : send_(std::move(send)) {}
+    /// Straight to `transport` with MakeRequest's header order.
+    Functions(std::string projectUrl, std::string apiKey, Transport& transport, std::string accessToken = {}) {
+        if (!projectUrl.empty() && projectUrl.back() == '/') projectUrl.pop_back();
+        send_ = [base = std::move(projectUrl), key = std::move(apiKey), token = std::move(accessToken), &transport](
+                    const std::string& method, const std::string& path, const std::string& body, const std::string& extra, int timeoutSec) {
+            return transport.Send(MakeRequest(key, method, base + path, body, token, extra, {}, {}, timeoutSec));
+        };
+    }
+
+    using okay::backend::Functions::Invoke;
+    Response Invoke(const std::string& name, const std::string& json, int timeoutSec = 0) override {
+        return send_("POST", routes::Function(name), json, {}, timeoutSec);
     }
 
 private:

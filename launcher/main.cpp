@@ -9907,7 +9907,7 @@ static int AcctDeleteWorker(void*) {
     okay::thr::LockMutex(g_acctDataMutex); const std::string user = g_acctDataJob.username, pw = g_acctDataJob.password; g_acctDataJob.password.clear(); okay::thr::UnlockMutex(g_acctDataMutex);
     namespace ad = okay::account::data;
     ad::DeleteRequest q = ad::BuildDeleteRequest(user, pw);
-    okay::account::ApiResponse r = a.Api(q.path, q.method, q.body);
+    okay::account::ApiResponse r = ad::SendDelete(a, q);
     ad::DeleteOutcome o = ad::MapDeleteResponse(r);
     if (o.ok) a.Logout();   // the account is gone: drop the saved session
     AcctJobFinish(o.ok, o.message, {}, o.signOut, o.notDeployed);
@@ -20405,7 +20405,7 @@ int main(int argc, char** argv) {
                     okay::filedialog::OpenOne("Choose the new file", "", {}, [](const std::string& pick) { edFile = pick; });
                 }
                 ImGui::SameLine(0, 10);
-                const bool hostedHere = std::string(edUrl).find("/storage/v1/object/public/workshop/") != std::string::npos;
+                const bool hostedHere = std::string(edUrl).find(okay::backend::supabase::routes::StoragePublic("workshop", "")) != std::string::npos;
                 if (!edFile.empty()) ImGui::TextUnformatted(fs::path(edFile).filename().string().c_str());
                 else if (hostedHere) ImGui::TextDisabled("Keeping the current file");
                 else ImGui::TextColored(okaytheme::Current().warning, "This listing uses an outside link \xE2\x80\x94 upload the file to keep it listed");

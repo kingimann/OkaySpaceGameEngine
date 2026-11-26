@@ -25,8 +25,7 @@ int main() {
     // ---- request building: identity is the token, never the body ----
     {
         DeleteRequest q = BuildDeleteRequest("al\"ice", "p\\w");
-        CHECK(q.method == "POST");
-        CHECK(q.path == "/functions/v1/delete-account");
+        CHECK(q.name == "delete-account");   // the server function (OkayBackend Functions: POST /functions/v1/delete-account on Supabase)
         CHECK(q.body == "{\"confirm_username\":\"al\\\"ice\",\"password\":\"p\\\\w\"}");
         CHECK(q.body.find("user_id") == std::string::npos && q.body.find("\"id\"") == std::string::npos);
     }

@@ -390,6 +390,28 @@ public:
                 return ApiAnon(path, method, body, extra);
             });
     }
+    /// The Storage calls (OkayBackend, okay/Backend/Storage.hpp) through this account: requests go through Api and uploads
+    /// through ApiUpload, so they carry the signed-in token and send nothing when offline or signed out. Public addresses
+    /// are built from this account's server address.
+    okay::backend::supabase::Storage Storage() const {
+        return okay::backend::supabase::Storage(
+            serverUrl_,
+            [this](const std::string& method, const std::string& path, const std::string& body, const std::string& extra) {
+                return Api(path, method, body, extra);
+            },
+            [this](const std::string& path, const std::string& file, const std::string& type, const std::string& extra) {
+                return ApiUpload(path, file, type, extra);
+            });
+    }
+    /// The Functions calls (OkayBackend, okay/Backend/Functions.hpp) through this account: through ApiTimed, so a call carries
+    /// the signed-in token, sends nothing when offline or signed out, re-reads a newer saved token after a 401, and keeps its
+    /// time limit.
+    okay::backend::supabase::Functions Functions() const {
+        return okay::backend::supabase::Functions(
+            [this](const std::string& method, const std::string& path, const std::string& body, const std::string& extra, int timeoutSec) {
+                return ApiTimed(path, method, body, extra, timeoutSec);
+            });
+    }
 
     /// Re-read the access token saved by another instance (same account).
     /// True when it changed.

@@ -1,6 +1,8 @@
 // Golden texts for tests/test_okay_backend_golden_storage.cpp, recorded from the Storage and Functions call sites BEFORE they moved
-// onto OkayBackend (round 4). Re-record only from the old code: OKAY_GOLDEN_PRINT=1 ./test_okay_backend_golden_storage > this file.
+// onto OkayBackend (round 4). Re-record only from the old code: OKAY_GOLDEN_PRINT=1 ./test_okay_backend_golden_storage > this file
+// (then put back these header lines and the two duplicate-guard marker lines).
 // Recorded with OKAY_GOLDEN_PRINT=1 (tests/test_okay_backend_golden_storage.cpp).
+// dup-allow-begin: recorded request texts; the same header lines repeat in every request, as in the round 2 and 3 golden texts
 static const char* const kGolden[][2] = {
     {"chat_attachment", R"GOLD(GET https://backend.example.test/rest/v1/profiles?select=id&username=eq.alex
 apikey: test-publishable-key-0000
@@ -467,3 +469,4 @@ Content-Type: application/json
 [] [HTTPS://ABC.SUPABASE.CO] => []
 )GOLD"},
 };
+// dup-allow-end

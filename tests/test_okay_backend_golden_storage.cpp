@@ -125,7 +125,7 @@ static tk::Options FastOptions() {
 /// The launcher's pre-flight transport (launcher/AntiCheatPages.cpp, TicketPreflightWorker), as it sends.
 static tk::Transport LauncherTicketTransport(acc::AccountService& a) {
     return [&a](const okayac::backend::Request& r) {
-        const okay::account::ApiResponse x = a.ApiTimed(r.path, r.method, r.body, r.header, 8);
+        const okay::account::ApiResponse x = okayac::backend::SendTimed(a, r, 8);
         tk::Reply out; out.reached = x.reached; out.status = x.status; out.body = x.body; return out;
     };
 }
@@ -133,7 +133,7 @@ static tk::Transport LauncherTicketTransport(acc::AccountService& a) {
 static std::string DeleteAccount(acc::AccountService& a, const std::string& user, const std::string& pw) {
     namespace ad = okay::account::data;
     ad::DeleteRequest q = ad::BuildDeleteRequest(user, pw);
-    okay::account::ApiResponse r = a.Api(q.path, q.method, q.body);
+    okay::account::ApiResponse r = ad::SendDelete(a, q);
     ad::DeleteOutcome o = ad::MapDeleteResponse(r);
     return "=> ok=" + B(o.ok) + " signOut=" + B(o.signOut) + " notDeployed=" + B(o.notDeployed) + " step=[" + o.failedStep +
            "] message=[" + o.message + "]\n";
@@ -369,6 +369,125 @@ static std::vector<Scenario> Scenarios() {
 
 #include "test_okay_backend_golden_storage.inc"
 
+// ---- Part 2: the same requests through the Supabase provider directly -------------------------------------------------------
+/// The provider over a RecordingTransport; the fake server writes each request down the same way as part 1 (body file bytes,
+/// time limit), so the two can be compared block for block.
+struct Direct {
+    ob::RecordingTransport rec;
+    Fake fake;
+    std::string token = Tok(1);
+    Direct() {
+        fake.rewriteUrl = [](const std::string& u) { return Steady(u); };
+        rec.answer = [this](const ob::Request& r) {
+            return ob::FromHttp(fake.Answer(r.method, r.url, HeadersOf(r), BodyOf(r)));
+        };
+    }
+    ob::supabase::Storage Storage() { return ob::supabase::Storage(kUrl, kKey, rec, token); }
+    ob::supabase::Functions Functions() { return ob::supabase::Functions(kUrl, kKey, rec, token); }
+};
+static bool SameAsGolden(const char* name, Direct& p) {
+    const char* want = golden::Find(kGolden, name);
+    CHECK(want != nullptr);
+    if (!want) return false;
+    // Only the request blocks the provider is asked for: the account lookups (profiles) and the RPC log are Database calls
+    // checked by round 3's test, so they are left out of this comparison.
+    std::string blocks, cur;
+    const std::string all = golden::RequestsOf(want);
+    for (std::size_t i = 0; i < all.size();) {
+        std::size_t e = all.find("\n---\n", i);
+        if (e == std::string::npos) break;
+        cur = all.substr(i, e + 5 - i);
+        if (cur.find("/rest/v1/") == std::string::npos) blocks += cur;
+        i = e + 5;
+    }
+    const bool same = p.fake.log == blocks;
+    if (!same) std::cout << "  PROVIDER MISMATCH in " << name << "\n--- golden requests\n" << blocks << "--- provider\n" << p.fake.log << "\n";
+    CHECK(same);
+    return same;
+}
+static void ProviderFlows(const fs::path& root) {
+    const std::string me = "7f1c2d3e-4b5a-6978-8091-a2b3c4d5e6f7";
+    ob::UploadOptions replace; replace.upsert = true;
+    {   // chat attachment (the random part of the name is written as <RND> either way)
+        Direct p; p.fake.queue = {Http(200, "{}")};
+        WriteBytes(root / "p" / "level plan (v2).png", kBinary);
+        p.Storage().Upload("chat", me + "/0123456789abcdef-level_plan__v2_.png", (root / "p" / "level plan (v2).png").string(), "image/png", replace);
+        CHECK(p.rec.sent.size() == 1 && p.rec.sent[0].bodyFile == (root / "p" / "level plan (v2).png").string() && p.rec.sent[0].body.empty());
+        SameAsGolden("chat_attachment", p);
+        CHECK(p.Storage().PublicUrl("chat", me + "/x.png") == "https://backend.example.test/storage/v1/object/public/chat/" + me + "/x.png");
+    }
+    {   // the media library: two uploads, two listings, two removals
+        Direct p; p.fake.queue = {Http(200, "{}"), Http(200, "{}"), Http(200, "[]"), Http(200, "[]"), Http(200, "[]"), Http(200, "[]")};
+        WriteBytes(root / "p" / "Party.GIF", kBinary);
+        p.Storage().Upload("chat", me + "/emoji/partyparrot.gif", (root / "p" / "Party.GIF").string(), "image/gif", replace);
+        p.Storage().Upload("chat", me + "/stickers/wave.gif", (root / "p" / "Party.GIF").string(), "image/gif", replace);
+        ob::ListOptions page; page.limit = 500;
+        page.prefix = me + "/emoji/"; p.Storage().List("chat", page);
+        page.prefix = me + "/stickers/"; p.Storage().List("chat", page);
+        p.Storage().RemoveObject("chat", me + "/emoji/party.gif");
+        p.Storage().RemoveObject("chat", me + "/emoji/gone.png");
+        SameAsGolden("library", p);
+    }
+    {   // workshop: three uploads
+        Direct p; p.fake.queue = {Http(200, "{}"), Http(200, "{}"), Http(200, "{}")};
+        WriteBytes(root / "p" / "My Map #1.zip", kBinary);
+        for (int i = 0; i < 3; ++i)
+            p.Storage().Upload("workshop", me + "/0123456789abcdef-My_Map__1.zip", (root / "p" / "My Map #1.zip").string(), "application/octet-stream", replace);
+        SameAsGolden("workshop_upload", p);
+    }
+    {   // the official tab: cache-busted reads, an upload with a cache time, the paged listing and the batch removal
+        Direct p; p.fake.queue = std::vector<okay::http::Result>(8, Http(200, "[]"));
+        for (const char* rel : {"VERSION.txt", "VERSION.txt", "VERSION.txt", "v1.2.0/manifest.json", "a%20b/%C3%BC%26%3F.txt"})
+            p.Storage().ReadPublic("releases", std::string("official/") + rel, "cb=1-2");
+        SameAsGolden("official_reads", p);
+        Direct u; u.fake.queue = std::vector<okay::http::Result>(4, Http(200, "{}"));
+        WriteBytes(root / "p" / "data 1.pak", kBinary);
+        ob::UploadOptions cached = replace; cached.cacheSeconds = 31536000;
+        u.Storage().Upload("releases", "official/v1.2.0/data%201.pak", (root / "p" / "data 1.pak").string(), "application/octet-stream", cached);
+        u.Storage().Upload("releases", "official/v1.2.0/data%201.pak", (root / "p" / "data 1.pak").string(), "application/octet-stream", cached);
+        WriteBytes(root / "p" / "notes.txt", "line one\nline \"two\"\n");
+        WriteBytes(root / "p" / "version.txt", "1.2.0\n");
+        cached.cacheSeconds = 30;
+        u.Storage().Upload("releases", "official/NOTES.txt", (root / "p" / "notes.txt").string(), "text/plain; charset=utf-8", cached);
+        u.Storage().Upload("releases", "official/VERSION.txt", (root / "p" / "version.txt").string(), "text/plain", cached);
+        SameAsGolden("official_uploads", u);
+        Direct l; l.fake.queue = std::vector<okay::http::Result>(5, Http(200, "[]"));
+        ob::ListOptions page; page.limit = 1000;
+        page.prefix = "official/v1.2.0/"; l.Storage().List("releases", page);
+        page.offset = 1000; l.Storage().List("releases", page);
+        page.prefix = "official/v1.2.0/sub dir/"; page.offset = 0; l.Storage().List("releases", page);
+        page.prefix = "official/"; l.Storage().List("releases", page);
+        page.prefix = "official/v9/"; l.Storage().List("releases", page);
+        SameAsGolden("official_lists", l);
+        Direct r; r.fake.queue = std::vector<okay::http::Result>(8, Http(200, "[]"));
+        std::vector<std::string> names;
+        for (int i = 0; i < 201; ++i) names.push_back("official/v1.2.0/f" + std::to_string(i));
+        r.Storage().ReadPublic("releases", "official/VERSION.txt", "cb=1-2");
+        r.Storage().List("releases", [] { ob::ListOptions o; o.prefix = "official/v1.2.0/"; o.limit = 1000; return o; }());
+        r.Storage().Remove("releases", std::vector<std::string>(names.begin(), names.begin() + 200));
+        r.Storage().Remove("releases", std::vector<std::string>(names.begin() + 200, names.end()));
+        r.Storage().ReadPublic("releases", "official/VERSION.txt", "cb=1-2");
+        r.Storage().ReadPublic("releases", "official/VERSION.txt", "cb=1-2");
+        r.Storage().List("releases", [] { ob::ListOptions o; o.prefix = "official/v1.1.0/"; o.limit = 1000; return o; }());
+        r.Storage().Remove("releases", {"official/v1.1.0/x\"y.bin"});
+        SameAsGolden("official_delete", r);
+    }
+    {   // Functions: delete-account four times, the session ticket with and without its 8 second limit
+        Direct p; p.fake.queue = std::vector<okay::http::Result>(4, Http(200, "{}"));
+        p.Functions().Invoke(okay::account::data::BuildDeleteRequest("al\"ex", "pa\\ss\x01word"));
+        for (int i = 0; i < 3; ++i) p.Functions().Invoke(okay::account::data::BuildDeleteRequest("alex", "pw"));
+        CHECK(p.rec.sent.size() == 4 && p.rec.sent[0].timeoutSec == 0);
+        SameAsGolden("delete_account", p);
+        Direct t; t.token = Tok(4); t.fake.queue = std::vector<okay::http::Result>(2, Http(200, "{}"));
+        okayac::backend::Request q; std::string err;
+        CHECK(okayac::backend::SessionTicket("arena-1", "", kBind, q, &err));
+        t.Functions().Invoke(q.function, q.body, 8);
+        CHECK(okayac::backend::SessionTicket("arena-1", kHw, kBind, q, &err));
+        t.Functions().Invoke(q.function, q.body, 8);
+        SameAsGolden("session_ticket_launcher", t);
+    }
+}
+
 int main() {
     RUN_SUITE("okay_backend_golden_storage");
     const bool print = std::getenv("OKAY_GOLDEN_PRINT") != nullptr;
@@ -380,6 +499,48 @@ int main() {
     const fs::path root = fs::temp_directory_path() / ("okay_backend_golden_storage_" + acc::detail::RandomHex(8));
     golden::RunScenarios(__FILE__, Scenarios(), kGolden, root, print);
     if (print) { std::error_code ec; fs::remove_all(root, ec); return 0; }
+    ProviderFlows(root / "provider");
+
+    // The updater's address never follows the backend setting (installed launchers have it built in).
+    {
+        const std::string before = okayversions::ReleasesBucketBase("", "https://abc123.supabase.co");
+#if defined(_WIN32)
+        _putenv_s("OKAY_BACKEND", "local");
+#else
+        setenv("OKAY_BACKEND", "local", 1);
+#endif
+        CHECK(okayversions::ReleasesBucketBase("", "https://abc123.supabase.co") == before);
+        CHECK(before == "https://abc123.supabase.co/storage/v1/object/public/releases/");
+#if defined(_WIN32)
+        _putenv_s("OKAY_BACKEND", "");
+#else
+        unsetenv("OKAY_BACKEND");
+#endif
+    }
+    // The route texts the launcher recognises links by are the ones it always looked for.
+    CHECK(std::string(ob::supabase::routes::StorageObjectRoot()) == "/storage/v1/object/");
+    CHECK(ob::supabase::routes::StoragePublic("workshop", "") == "/storage/v1/object/public/workshop/");
+    // The provider's pure helpers.
+    {
+        ob::UploadOptions o;
+        CHECK(ob::supabase::Storage::UploadHeaders(o).empty());
+        o.upsert = true;
+        CHECK(ob::supabase::Storage::UploadHeaders(o) == "x-upsert: true");
+        o.cacheSeconds = 0;
+        CHECK(ob::supabase::Storage::UploadHeaders(o) == "x-upsert: true\ncache-control: max-age=0");
+        o.upsert = false;
+        CHECK(ob::supabase::Storage::UploadHeaders(o) == "cache-control: max-age=0");
+        ob::ListOptions l; l.prefix = "a\"b\x01/"; l.descending = true; l.sortColumn = "updated_at";
+        CHECK(ob::supabase::Storage::ListBody(l) ==
+              "{\"prefix\":\"a\\\"b\\u0001/\",\"limit\":100,\"offset\":0,\"sortBy\":{\"column\":\"updated_at\",\"order\":\"desc\"}}");
+        CHECK(ob::supabase::Storage::RemoveBody({}) == "{\"prefixes\":[]}");
+        // Signed out, the account's Storage and Functions send nothing and answer "not reached".
+        Fake f;
+        acc::AccountService a(root / "signed_out", kUrl, kKey);
+        Hook(a, f);
+        CHECK(!a.Storage().List("chat", l).reached && !a.Functions().Invoke("session-ticket", "{}", 8).reached);
+        CHECK(!a.Storage().Upload("chat", "x", (root / "nofile").string(), "").reached && f.log.empty());
+    }
 
     std::error_code ec;
     fs::remove_all(root, ec);

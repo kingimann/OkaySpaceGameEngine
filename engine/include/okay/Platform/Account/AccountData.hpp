@@ -174,14 +174,17 @@ inline bool DeleteConfirmed(const std::string& typed, const std::string& usernam
     return understood && !u.empty() && lower(t) == lower(u) && !password.empty();
 }
 
-struct DeleteRequest { std::string method, path, body; };
+/// The call to the delete-account server function (OkayBackend Functions).
+using DeleteRequest = okay::backend::FunctionCall;
 
-/// The request sent to the Edge Function. Identity is the bearer token that
-/// AccountService::Api attaches; the body never carries a user id.
+/// The call made to the server function. Identity is the bearer token the
+/// account attaches; the body never carries a user id.
 inline DeleteRequest BuildDeleteRequest(const std::string& username, const std::string& password) {
-    return {"POST", "/functions/v1/delete-account",
+    return okay::backend::FunctionCall{"delete-account",
             "{\"confirm_username\":\"" + detail::JsonEscape(username) + "\",\"password\":\"" + detail::JsonEscape(password) + "\"}"};
 }
+/// Send it through the signed-in account (AccountService::Functions).
+inline ApiResponse SendDelete(const AccountService& acct, const DeleteRequest& q) { return acct.Functions().Invoke(q); }
 
 struct DeleteOutcome {
     bool        ok = false;

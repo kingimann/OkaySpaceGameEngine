@@ -1,7 +1,8 @@
 #pragma once
 // The launcher's Official game admin tab (launcher/main.cpp, OfficialAdminWorker): the requests it sends to the "releases"
-// bucket's official/ folder with the admin's own session (docs/sql/official_game_admin.sql). Moved here unchanged from
-// launcher/main.cpp (OkayBackend round 4) so a test can run them against a fake server (tests/test_okay_backend_golden_storage.cpp).
+// bucket's official/ folder with the admin's own session (docs/sql/official_game_admin.sql), through OkayBackend Storage
+// (AccountService::Storage). Moved here from launcher/main.cpp (OkayBackend round 4) so a test can run them against a fake
+// server: tests/test_okay_backend_golden_storage.cpp checks they send the same bytes as before the move.
 // Header-only; the launcher is its only program.
 #include "OfficialGame.hpp"                           // og:: manifest, storage list, encoding, JSON escape
 #include "okay/Platform/Account/AccountService.hpp"
@@ -23,13 +24,15 @@ inline constexpr const char* kOaNeedSql = "Run docs/sql/official_game_admin.sql 
 // Requests (worker side). Reads go to the public URL with a cache-buster, like
 // the players' launchers; writes and listings use the admin's own session.
 inline okay::account::ApiResponse OaGet(const okay::account::AccountService& a, const std::string& rel) {
-    return a.Api("/storage/v1/object/public/releases/official/" + og::UrlEncodePath(rel) + "?cb=" +
-                 std::to_string((long long)std::time(nullptr)) + "-" + std::to_string(okay::platform::TicksMs32()), "GET");
+    return a.Storage().ReadPublic("releases", "official/" + og::UrlEncodePath(rel), "cb=" +
+                 std::to_string((long long)std::time(nullptr)) + "-" + std::to_string(okay::platform::TicksMs32()));
 }
 inline okay::account::ApiResponse OaUpload(const okay::account::AccountService& a, const std::string& rel, const std::filesystem::path& file,
                                   const char* type, int cacheSec) {
-    return a.ApiUpload("/storage/v1/object/releases/official/" + og::UrlEncodePath(rel), file.string(), type,
-                       "x-upsert: true\ncache-control: max-age=" + std::to_string(cacheSec));
+    okay::backend::UploadOptions o;
+    o.upsert = true;
+    o.cacheSeconds = cacheSec;
+    return a.Storage().Upload("releases", "official/" + og::UrlEncodePath(rel), file.string(), type, o);
 }
 inline bool OaUploadText(const okay::account::AccountService& a, const std::string& rel, const std::string& text,
                          const char* type, int cacheSec, okay::account::ApiResponse* resp) {
@@ -45,9 +48,11 @@ inline bool OaUploadText(const okay::account::AccountService& a, const std::stri
 inline bool OaListAll(const okay::account::AccountService& a, const std::string& prefix, std::vector<std::string>& out, int depth = 0) {
     if (depth > 24) return false;
     for (int offset = 0;; offset += 1000) {
-        const auto r = a.Api("/storage/v1/object/list/releases", "POST",
-                             "{\"prefix\":\"" + og::json::Escape(prefix) + "\",\"limit\":1000,\"offset\":" + std::to_string(offset) +
-                             ",\"sortBy\":{\"column\":\"name\",\"order\":\"asc\"}}");
+        okay::backend::ListOptions page;
+        page.prefix = prefix;
+        page.limit = 1000;
+        page.offset = offset;
+        const auto r = a.Storage().List("releases", page);
         std::vector<og::StorageEntry> list;
         if (!r.ok || !og::ParseStorageList(r.body, list)) return false;
         for (const og::StorageEntry& e : list) {
@@ -95,9 +100,8 @@ inline bool OaDeleteVersion(const okay::account::AccountService& a, const std::s
     if (names.empty()) { why = "v" + ver + " has no files the server lets you see. " + kOaNeedSql; needSql = true; return false; }
     std::size_t gone = 0;
     for (std::size_t i = 0; i < names.size(); i += 200) {
-        std::string body = "{\"prefixes\":[";
-        for (std::size_t k = i; k < std::min(names.size(), i + 200); ++k) body += (k > i ? ",\"" : "\"") + og::json::Escape(names[k]) + "\"";
-        const auto r = a.Api("/storage/v1/object/releases", "DELETE", body + "]}");
+        const std::vector<std::string> batch(names.begin() + (std::ptrdiff_t)i, names.begin() + (std::ptrdiff_t)std::min(names.size(), i + 200));
+        const auto r = a.Storage().Remove("releases", batch);
         if (!r.ok) { why = OaError(r, "Deleting v" + ver, needSql); return false; }
         std::vector<og::StorageEntry> del;
         if (og::ParseStorageList(r.body, del)) gone += del.size();
@@ -109,6 +113,8 @@ inline bool OaDeleteVersion(const okay::account::AccountService& a, const std::s
 
 // The top of official/ (the version folders), one page, as the tab's refresh lists it.
 inline okay::account::ApiResponse OaListTop(const okay::account::AccountService& a) {
-    return a.Api("/storage/v1/object/list/releases", "POST",
-                 "{\"prefix\":\"official/\",\"limit\":1000,\"offset\":0,\"sortBy\":{\"column\":\"name\",\"order\":\"asc\"}}");
+    okay::backend::ListOptions page;
+    page.prefix = "official/";
+    page.limit = 1000;
+    return a.Storage().List("releases", page);
 }

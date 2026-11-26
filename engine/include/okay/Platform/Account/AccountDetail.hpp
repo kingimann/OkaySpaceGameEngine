@@ -180,7 +180,7 @@ inline bool SecureEquals(const std::string& a, const std::string& b) {
 // section 7) without its quotes. '"', '\\', line feed, carriage return and tab as before; every other control character
 // (U+0000 to U+001F) as \u00xx, so a cloud save or a name holding one is still valid JSON (before OkayBackend round 4 they went
 // out raw and the server refused the request). UTF-8 and every other byte go as they are.
-inline std::string JsonEscape(const std::string& s) {
+inline std::string JsonEscape(const std::string& s) {   // dup-allow: not a second escaper, okay::json::Escape without its quotes (the form every caller here needs)
     std::string quoted;
     quoted.reserve(s.size() + 2);
     okay::json::Escape(s, quoted);

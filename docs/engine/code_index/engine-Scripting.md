@@ -2,7 +2,7 @@
 
 # Code index: engine-Scripting
 
-Back to the [code index](../code_index.md). 7 headers, 75 names.
+Back to the [code index](../code_index.md). 7 headers, 89 names.
 
 ## `engine/include/okay/Scripting/NextScriptVM.hpp`
 
@@ -91,10 +91,24 @@ Back to the [code index](../code_index.md). 7 headers, 75 names.
 - `ScriptHost` struct, line 18: The engine-side context a script can see and manipulate. Every script VM
 - `ScriptDiagnostic` struct, line 29: One problem found by ValidateAll — a 1-based source line, a human-readable
 - `IScriptVM` class, line 37: Abstract scripting backend. Load source once, then drive Start/Update.
-- `AvailableScriptLanguages` function, line 112: Names of the script backends in this build: "okayscript" (our own VM) and "lua"
-- `CreateScriptVM` function, line 115: Create a VM for the given language, or nullptr if unsupported in this build.
-- `RemovedScriptLanguageMessage` function, line 121: Old scenes and projects may still name the removed third-party Mono backend
-- `ScriptLanguageForExtension` function, line 126: The language id for a script file's extension (".lua" -> "lua", ".cs" -> "cs",
+- `BuiltinNames` function, line 113
+- `Load` function, line 114
+- `Validate` function, line 115
+- `ValidateAll` function, line 116
+- `Bind` function, line 117
+- `CallStart` function, line 118
+- `CallUpdate` function, line 119
+- `CallEvent` function, line 120
+- `CallEventWith` function, line 121
+- `CallEventArgs` function, line 122
+- `HasEvent` function, line 124
+- `GetGlobal` function, line 125
+- `SetGlobal` function, line 126
+- `GlobalNames` function, line 127
+- `AvailableScriptLanguages` function, line 131: Names of the script backends in this build: "okayscript" (our own VM), "lua"
+- `CreateScriptVM` function, line 134: Create a VM for the given language, or nullptr if unsupported in this build.
+- `RemovedScriptLanguageMessage` function, line 140: Old scenes and projects may still name the removed third-party Mono backend
+- `ScriptLanguageForExtension` function, line 145: The language id for a script file's extension (".lua" -> "lua", ".js" -> "javascript", ".cs" -> "cs",
 
 ## `engine/include/okay/Scripting/StarterScripts.hpp`
 

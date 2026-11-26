@@ -579,6 +579,14 @@ add_test(NAME debug_console COMMAND test_debug_console)
 add_executable(test_diagnostics test_diagnostics.cpp)
 target_link_libraries(test_diagnostics PRIVATE okay::engine)
 add_test(NAME diagnostics COMMAND test_diagnostics)
+# The Problems list's runner (editor/ProjectDiagRunner.*): the project-wide check off the editor's thread, once per change of files.
+# Not built for Windows: the test waits with <thread> (CLAUDE.md 21a).
+if(NOT WIN32)
+    add_executable(test_project_diag_runner test_project_diag_runner.cpp ${CMAKE_SOURCE_DIR}/editor/ProjectDiagRunner.cpp)
+    target_include_directories(test_project_diag_runner PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+    target_link_libraries(test_project_diag_runner PRIVATE okay::engine)
+    add_test(NAME project_diag_runner COMMAND test_project_diag_runner)
+endif()
 
 add_executable(test_debug_overlay test_debug_overlay.cpp)
 target_link_libraries(test_debug_overlay PRIVATE okay::engine)
@@ -4343,6 +4351,15 @@ target_compile_features(test_update_view PRIVATE cxx_std_17)
 add_test(NAME update_view COMMAND test_update_view)
 
 # The editor's frame-time maths (editor/EditorPerf.hpp, UI-library free): section breakdown, history numbers, idle throttle, viewport scale, performance mode.
+# The editor's hang watchdog (editor/HangWatchdog.*): the rules on a fake clock, and the real thread reporting a fake main loop that stops.
+# Not built for Windows: the fake main loop sleeps with <thread> (CLAUDE.md 21a); the watchdog itself is checked there by the editor build.
+if(NOT WIN32)
+    add_executable(test_hang_watchdog test_hang_watchdog.cpp ${CMAKE_SOURCE_DIR}/editor/HangWatchdog.cpp)
+    target_include_directories(test_hang_watchdog PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
+    target_link_libraries(test_hang_watchdog PRIVATE okay::engine)
+    add_test(NAME hang_watchdog COMMAND test_hang_watchdog)
+endif()
+
 add_executable(test_editor_perf test_editor_perf.cpp)
 target_include_directories(test_editor_perf PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_perf PRIVATE okay::engine)

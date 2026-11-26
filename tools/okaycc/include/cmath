@@ -124,6 +124,12 @@ inline bool isnan(float x) { return !(x == x); }
 // significands; nearbyint and rint (C 7.12.9.3) round to nearest even by adding and taking away 2^52.
 inline unsigned long __okay_bits(double x) { return *(unsigned long *)&x; }
 inline double __okay_from_bits(unsigned long u) { return *(double *)&u; }
+// HUGE_VAL, INFINITY and NAN (C 7.12 p3-p5): the bits of +infinity (0x7FF0000000000000) and of a
+// quiet NaN (0x7FF8000000000000). (Values, not constant expressions, in okay-cc.)
+#define HUGE_VAL (::std::__okay_from_bits(9218868437227405312UL))
+#define HUGE_VALF ((float)HUGE_VAL)
+#define INFINITY ((float)HUGE_VAL)
+#define NAN ((float)::std::__okay_from_bits(9221120237041090560UL))
 // x = m * 2^(e - 1075) with 2^52 <= m < 2^53 for a finite x that is not zero.
 inline void __okay_split(double x, unsigned long &m, int &e) {
     unsigned long u = __okay_bits(x);
@@ -179,6 +185,38 @@ inline double frexp(double x, int *exp) {
     return __okay_join(__okay_bits(x) & 9223372036854775808UL, m, 1022);
 }
 inline float frexp(float x, int *exp) { return (float)frexp((double)x, exp); }
+// cbrt (C 7.12.7.1): |x| = m * 2^(3q) with m in [0.5, 4); the cube root of m by Newton's method
+// (y -= (y^3 - m) / 3y^2, from a straight-line first guess; six steps are past double precision),
+// times 2^q, with the sign of x.
+inline double cbrt(double x) {
+    if (x == 0 || !(x == x) || !(x - x == 0)) return x;  // +-0, NaN, +-infinity
+    double a = x < 0 ? -x : x;
+    int e = 0;
+    double m = frexp(a, &e);
+    int r = e % 3;
+    if (r < 0) r += 3;
+    m = ldexp(m, r);
+    int q = (e - r) / 3;
+    double y = 0.7 + 0.3 * m;
+    for (int i = 0; i < 6; ++i) y -= (y * y * y - m) / (3.0 * y * y);
+    // One more step with m - y^3 worked out exactly (Dekker's product of two doubles, Veltkamp's
+    // split; m - t is exact as t is within a factor 2 of m), so the last bit is right.
+    double yh = y * 134217729.0;
+    yh = yh - (yh - y);
+    double yl = y - yh;
+    double s2 = y * y;
+    double s2e = ((yh * yh - s2) + 2.0 * yh * yl) + yl * yl;
+    double sh = s2 * 134217729.0;
+    sh = sh - (sh - s2);
+    double sl = s2 - sh;
+    double t = s2 * y;
+    double te = (((sh * yh - t) + sh * yl) + sl * yh) + sl * yl;
+    double res = ((m - t) - te) - s2e * y;
+    y += res / (3.0 * s2);
+    y = ldexp(y, q);
+    return x < 0 ? -y : y;
+}
+inline float cbrt(float x) { return (float)cbrt((double)x); }
 inline double fmod(double x, double y) {
     if (!(x == x) || !(y == y) || !(x - x == 0) || y == 0) return (x - x) / (y - y);  // NaN
     if (!(y - y == 0) || x == 0) return x;
@@ -202,6 +240,20 @@ inline double fmod(double x, double y) {
     return __okay_join(sign, mx, ex);
 }
 inline float fmod(float x, float y) { return (float)fmod((double)x, (double)y); }
+// remainder (C 7.12.10.2): x - n * y with n the nearest integer to x / y, ties to even. fmod by 2|y|
+// first (exact) leaves the quotient's parity known; each subtraction below is exact.
+inline double remainder(double x, double y) {
+    if (!(x == x) || !(y == y) || !(x - x == 0) || y == 0) return (x - x) / (y - y);  // NaN
+    double ax = x < 0 ? -x : x, ay = y < 0 ? -y : y;
+    bool big = ay > 8.98846567431158e307;  // past half the largest double: 2|y| would overflow
+    if (!big) ax = fmod(ax, ay + ay);
+    if (big ? ax > ay * 0.5 : ax + ax > ay) {
+        ax -= ay;
+        if (big ? ax >= ay * 0.5 : ax + ax >= ay) ax -= ay;
+    }
+    return x < 0 ? -ax : ax;
+}
+inline float remainder(float x, float y) { return (float)remainder((double)x, (double)y); }
 inline double nearbyint(double x) {
     if (!(x - x == 0) || x == 0) return x;
     if (x >= 4503599627370496.0 || x <= -4503599627370496.0) return x;

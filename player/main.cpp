@@ -1958,6 +1958,7 @@ int main(int argc, char** argv) {
     }
     std::uint32_t presenceAt = 0, presenceWritten = 0;
     std::string presenceLast;
+    const std::string presenceGameVersion = okay::buildpipe::ManifestVersionNear(baseDir, scenePath);   // the game's version (build.json), for the join link
     std::map<std::string, std::uint32_t> playedWith;   // who we've logged this run (key -> when)
     auto pumpPresence = [&]() {
         const std::uint32_t now = okay::platform::TicksMs32();
@@ -2001,7 +2002,9 @@ int main(int argc, char** argv) {
             }
             if (!met.empty()) okay::GameIpc::RecordPlayedWith(met);
         }
-        okay::GamePresence g = okay::DescribeSession(nm, gameTitle, lanAddr);
+        // The join link says what this is (an exported game on this engine version) so a friend's launcher picks the right program.
+        okay::SessionTags tags; tags.gameVersion = presenceGameVersion; tags.engineVersion = okay::BuildInfo::Version(); tags.target = "exported";
+        okay::GamePresence g = okay::DescribeSession(nm, gameTitle, lanAddr, nullptr, tags);
         const std::string key = g.status + "|" + g.join + "|" + std::to_string(g.players);
         if (key != presenceLast || now - presenceWritten > 10000) {
             okay::GameIpc::WritePresence(g);

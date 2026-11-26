@@ -16,6 +16,7 @@
 #include <initializer_list>
 #include <limits>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <set>
 #include <string>
@@ -60,6 +61,9 @@ struct Expr {
     std::vector<std::unique_ptr<Expr>> kids;
     std::unique_ptr<Type> ty;
     std::unique_ptr<Type> checked;
+    // A number no other node made in this run has: a node made later at the address of a freed one
+    // is told apart from it (the checker's kept results, Checker::memo_).
+    std::uint64_t serial;
     Expr();
     ~Expr();
 };
@@ -76,6 +80,9 @@ struct Type {
     bool variadic = false;
     bool rref = false;  // a Reference that is an rvalue reference T&& ([dcl.ref])
     bool cnst = false;  // declared const ([dcl.type.cv]); written before the type name only
+    // A Pointer that is a pointer to a data member of this class (T C::*, [dcl.mptr]). Its value is
+    // the member's offset plus one, so a null one is 0 (our own choice; Itanium keeps the offset and -1).
+    std::string memberOf;
     std::vector<Param> params;
     // Class facts (Itanium C++ ABI layout of a single-inheritance class).
     std::string base;                // tag of the one base class, or empty
@@ -223,6 +230,16 @@ std::vector<InstReq>& instRequests();
 // ([temp.deduct] p8, SFINAE), as "<template key>|<instance name>" (the overloads name#k of one
 // template may give one instance name): the parser records them; overload resolution skips them.
 std::set<std::string>& sfinaeFailed();
+// The decltype expressions in the pattern of a class template partial specialization chosen for an
+// instance (template <class T> struct S<T, void_t<decltype(e)>>), with the specialization's
+// parameters replaced: the checker checks each one, and one that has no type ([temp.deduct] p8)
+// puts the key ("<template>|<index>|<arguments>") in sfinaeFailed(), so the next round does not
+// choose that specialization ([temp.spec.partial.match] p2). Made anew each round.
+struct SpecCheck {
+    std::string key;
+    std::vector<std::unique_ptr<Expr>> exprs;
+};
+std::vector<SpecCheck>& specChecks();
 // The argument for a defaulted template parameter that deduction left to the instance.
 const char* const kDefaultArgTag = "__okay_default";
 // The namespace each template instance (a class's tag, a function's name) was declared in: its

@@ -1521,7 +1521,7 @@ Back to the [code index](../code_index.md). 261 headers, 740 names.
 
 ## `engine/include/okay/Components/WorldStreamer.hpp`
 
-- `WorldStreamer` class, line 34: World Partition / level streaming — "only load the map near the
+- `WorldStreamer` class, line 29: World Partition / level streaming — "only load the map near the player" without the 32 GB RAM bill. The world is
 
 ## `engine/include/okay/Components/WorldUI.hpp`
 

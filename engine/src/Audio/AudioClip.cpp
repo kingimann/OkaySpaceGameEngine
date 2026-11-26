@@ -11,12 +11,6 @@
 namespace okay {
 
 namespace {
-std::uint32_t ReadU32(const unsigned char* p) {
-    return p[0] | (p[1] << 8) | (p[2] << 16) | (std::uint32_t(p[3]) << 24);
-}
-std::uint16_t ReadU16(const unsigned char* p) {
-    return static_cast<std::uint16_t>(p[0] | (p[1] << 8));
-}
 void WriteU32(std::ostream& o, std::uint32_t v) {
     unsigned char b[4] = {(unsigned char)(v), (unsigned char)(v >> 8),
                           (unsigned char)(v >> 16), (unsigned char)(v >> 24)};
@@ -30,74 +24,11 @@ void WriteU16(std::ostream& o, std::uint16_t v) {
 
 namespace audio_detail {
 
-const char* ParseWav(AudioByteSource& src, WavInfo& w) {
-    const std::uint64_t size = src.Size();
-    unsigned char hdr[12];
-    if (size < 12 || src.Read(0, hdr, 12) != 12 || std::memcmp(hdr, "RIFF", 4) != 0 ||
-        std::memcmp(hdr + 8, "WAVE", 4) != 0)
-        return "not a RIFF/WAVE file";
-    bool haveData = false;
-    std::uint64_t pos = 12;
-    while (pos + 8 <= size) {
-        unsigned char ch[8];
-        if (src.Read(pos, ch, 8) != 8) break;
-        const std::uint32_t sz = ReadU32(ch + 4);
-        const std::uint64_t body = pos + 8;
-        if (std::memcmp(ch, "fmt ", 4) == 0 && sz >= 16 && body + 16 <= size) {
-            unsigned char f[16];
-            if (src.Read(body, f, 16) == 16) {
-                w.format = ReadU16(f);
-                w.channels = ReadU16(f + 2);
-                w.rate = ReadU32(f + 4);
-                w.bits = ReadU16(f + 14);
-            }
-        } else if (std::memcmp(ch, "data", 4) == 0) {
-            w.dataOffset = body;
-            w.dataLen = (body + sz <= size) ? sz : size - body;   // a chunk longer than the file is cut at the end
-            haveData = true;
-        }
-        pos = body + sz + (sz & 1); // chunks are word-aligned
-    }
-    if (!haveData || w.channels == 0) return "missing data/fmt chunk";
-    w.bytesPerSample = w.bits / 8;
-    if (w.bytesPerSample == 0) return "unsupported bit depth";
-    return nullptr;
-}
-
-void ConvertWavFrames(const WavInfo& w, const unsigned char* raw, std::size_t frames, float* out, int outCh) {
-    const int channels = w.channels;
-    const int bps = w.bytesPerSample;
-    for (std::size_t i = 0; i < frames; ++i) {
-        float acc = 0.0f;
-        for (int c = 0; c < channels; ++c) {
-            const unsigned char* sp = raw + (i * static_cast<std::size_t>(channels) + static_cast<std::size_t>(c)) * static_cast<std::size_t>(bps);
-            float v = 0.0f;
-            if (w.format == 3 && w.bits == 32) {            // IEEE float
-                std::memcpy(&v, sp, 4);
-            } else if (w.bits == 16) {                      // signed 16-bit PCM
-                std::int16_t s = static_cast<std::int16_t>(ReadU16(sp));
-                v = s / 32768.0f;
-            } else if (w.bits == 8) {                       // unsigned 8-bit PCM
-                v = (static_cast<int>(sp[0]) - 128) / 128.0f;
-            } else if (w.bits == 24) {                      // signed 24-bit PCM
-                std::int32_t s = (sp[0]) | (sp[1] << 8) | (sp[2] << 16);
-                if (s & 0x800000) s |= ~0xFFFFFF;           // sign-extend
-                v = s / 8388608.0f;
-            } else if (w.bits == 32) {                      // signed 32-bit PCM
-                std::int32_t s = static_cast<std::int32_t>(ReadU32(sp));
-                v = s / 2147483648.0f;
-            }
-            if (outCh == channels) out[i * static_cast<std::size_t>(outCh) + static_cast<std::size_t>(c)] = v;
-            else acc += v;
-        }
-        if (outCh != channels) out[i] = acc / channels;     // downmixed to mono
-    }
-}
-
 void DownmixToMono(const float* in, std::size_t frames, int channels, float* out) {
     if (channels <= 1) { std::copy(in, in + frames, out); return; }
-    // Sum in channel order, then divide (not multiply by 1/channels): exactly what ConvertWavFrames does, so a clip
-    // loaded whole through the own WAV decoder and the same file streamed (AudioStream) give the same samples.
+    // Sum in channel order, then divide (not multiply by 1/channels). AudioClip::LoadWAV and the streamed path
+    // (AudioStream's mono wrapper) both average through here, so a clip loaded whole and the same file streamed
+    // give the same samples.
     for (std::size_t i = 0; i < frames; ++i) {
         float s = 0.0f;
         for (int c = 0; c < channels; ++c) s += in[i * static_cast<std::size_t>(channels) + static_cast<std::size_t>(c)];

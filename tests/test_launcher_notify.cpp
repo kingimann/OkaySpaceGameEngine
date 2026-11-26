@@ -290,6 +290,50 @@ static void TestTrayBalloonMessages() {
     CHECK(!unsupported.Notify("a", "b", true));
 }
 
+static void TestChatEvents() {
+    using CK = okay::chat::Event::Kind;
+    // A group chat message: pops up as "Maya in Game Jam Team", opens that group, one burst and tab row per group.
+    okay::chat::Event g; g.kind = CK::GroupMessage; g.fromName = "Maya"; g.groupId = 7; g.messageId = 90; g.text = "[File] x";
+    Event ev = FromChatEvent(g, "File: x", "Game Jam Team");
+    CHECK(ev.kind == Kind::Message && ev.title == "Maya in Game Jam Team" && ev.body == "File: x");
+    CHECK(ev.target.place == Place::GroupChat && ev.target.id == "7" && ev.burstKey == "group:7" && ev.tabKey == "group:7");
+    CHECK(FromChatEvent(g).title == "Maya in a group" && FromChatEvent(g).body == "[File] x");
+    {   // three in a row collapse into one pop-up that names the group
+        Centre c;
+        for (int i = 0; i < 3; ++i) c.Post(ev, Away(), 1000 + i);
+        CHECK(c.Queued() == 1);
+        Popup p; CHECK(c.Next(5000, &p) && p.title == "3 new messages from Game Jam Team" && p.target.place == Place::GroupChat);
+    }
+    // A new invite record: shown once, whether the record poll or the chat message's pop-up gets there first.
+    okay::chat::Event inv; inv.kind = CK::Invite; inv.fromUid = "u-maya"; inv.fromName = "Maya"; inv.peerUid = "u-maya";
+    inv.inviteId = 55; inv.text = "Maya invited you to play Star Arena";
+    ev = FromChatEvent(inv);
+    CHECK(ev.kind == Kind::Invite && ev.title == "Maya invited you to play Star Arena" && ev.onceKey == "invite:55");
+    CHECK(ev.tabKey == InviteTabKey(0, 55) && ev.tabKey == "invite:r55" && InviteTabKey(812, 0) == "invite:812");
+    CHECK(ev.target.place == Place::Invite && ev.target.id == "u-maya");
+    {
+        Centre c;
+        CHECK(c.Post(ev, Away(), 1000).route == Route::Desktop);
+        Event fromMessage = ev; fromMessage.title = "Maya invited you to play Star Arena"; fromMessage.tabKey = InviteTabKey(812, 55);
+        CHECK(c.Post(fromMessage, Away(), 2000).route == Route::Drop);   // the same record: not twice
+    }
+    CHECK(InviteOnceKey(0).empty());
+    // Invite answered: says who and what, opens the chat with them, once per invite.
+    okay::chat::Event ans; ans.kind = CK::InviteAnswered; ans.fromUid = "u-jon"; ans.fromName = "Jonas"; ans.peerUid = "u-jon";
+    ans.inviteId = 20; ans.text = "Jonas accepted your invite to play Star Arena.";
+    ev = FromChatEvent(ans);
+    CHECK(ev.kind == Kind::Invite && ev.title == ans.text && ev.target.place == Place::Chat && ev.target.id == "u-jon");
+    CHECK(ev.onceKey == "invite-answer:20" && ev.burstKey != FromChatEvent(inv).burstKey);
+    {   // a blocked person's answer is never shown
+        Context blocked = Away(); blocked.senderBlocked = true;
+        CHECK(Decide(Settings(), ev, blocked) == Route::Drop);
+    }
+    // A direct message keeps the existing row per conversation.
+    okay::chat::Event dm; dm.kind = CK::Message; dm.fromUid = "u-sam"; dm.fromName = "Sam"; dm.text = "hi";
+    ev = FromChatEvent(dm);
+    CHECK(ev.target.place == Place::Chat && ev.target.id == "u-sam" && ev.tabKey == "msg:u-sam" && ev.body == "hi");
+}
+
 int main() {
     TestDecide();
     TestSignalsAndClip();
@@ -297,6 +341,7 @@ int main() {
     TestOnceAndRateLimit();
     TestClickTarget();
     TestTrayBalloonMessages();
+    TestChatEvents();
     std::printf("launcher_notify: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

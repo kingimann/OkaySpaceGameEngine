@@ -2,7 +2,7 @@
 
 # Code index: engine-Platform
 
-Back to the [code index](../code_index.md). 30 headers, 265 names.
+Back to the [code index](../code_index.md). 30 headers, 272 names.
 
 ## `engine/include/okay/Platform/Account/Account.hpp`
 
@@ -25,15 +25,15 @@ Back to the [code index](../code_index.md). 30 headers, 265 names.
 
 ## `engine/include/okay/Platform/Account/AccountService.hpp`
 
-- `PublicName` function, line 64: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
-- `Session` struct, line 465: The currently signed-in player. 'loggedIn' is false when nobody is signed
-- `Result` struct, line 474: Result of a register/login attempt. On failure 'error' carries a short,
-- `ApiResponse` struct, line 484: Result of an authenticated request to the account server (see Api). 'ok' is
-- `ScoreEntry` struct, line 495: One row of a server leaderboard: the player's name, their score, and their
-- `Provider` enum, line 507: Which backend signs players in.
-- `SessionCheck` enum, line 510: How a check of the saved session with the server went (AccountService::CheckSession).
-- `AccountService` class, line 516: A client-side account service. Construct it with a config directory (where a
-- `DefaultConfigDir` function, line 1456: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
+- `PublicName` function, line 67: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
+- `Session` struct, line 478: The currently signed-in player. 'loggedIn' is false when nobody is signed
+- `Result` struct, line 487: Result of a register/login attempt. On failure 'error' carries a short,
+- `ApiResponse` struct, line 497: Result of an authenticated request to the account server (see Api). 'ok' is
+- `ScoreEntry` struct, line 508: One row of a server leaderboard: the player's name, their score, and their
+- `Provider` enum, line 520: Which backend signs players in.
+- `SessionCheck` enum, line 523: How a check of the saved session with the server went (AccountService::CheckSession).
+- `AccountService` class, line 529: A client-side account service. Construct it with a config directory (where a
+- `DefaultConfigDir` function, line 1487: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
 
 ## `engine/include/okay/Platform/Achievements.hpp`
 
@@ -62,26 +62,31 @@ Back to the [code index](../code_index.md). 30 headers, 265 names.
 
 ## `engine/include/okay/Platform/ChatDelivery.hpp`
 
-- `MakeClientId` function, line 50: A random version-4 id: "xxxxxxxx-xxxx-4xxx-Yxxx-xxxxxxxxxxxx" (Y is 8, 9, a or b). Only for telling
-- `IsClientId` function, line 71: True for 8-4-4-4-12 hex digits (any case): the only thing that may go into a URL or JSON as a client id.
-- `IsRetryable` function, line 84: Worth sending again later? A refusal by a server rule is final, except the rate limit.
-- `RetryDelaySeconds` function, line 93: Seconds to wait before attempt number 'attempts' + 1: 2, 4, 8, ... at most 60.
-- `QueuedMessage` struct, line 101
-- `EncodeQueue` function, line 139: The queue as text: a "okaychatq1" header line, then one tab-separated line per message.
-- `DecodeQueue` function, line 150: Reads EncodeQueue's text; damaged lines and lines with a bad client id are skipped.
-- `ShouldGiveUp` function, line 170: A queued message older than a week is dropped rather than posted late.
-- `MergeById` function, line 177: Merge 'incoming' (an older page, a re-poll, a resent copy) into 'log': one row per 'id', the incoming
-- `OldestId` function, line 186: The cursor for "load older messages": the smallest id held, 0 when empty.
-- `UnreadRow` struct, line 194
-- `UnreadSummary` struct, line 195
-- `BadgeText` function, line 215: The badge on an avatar or a tab: "" for none, the number, "99+" above 99.
-- `LinkKind` enum, line 219
-- `LinkHost` function, line 222: The host of an http(s) URL, lowercased, without user info or port ("" when there is none).
-- `ClassifyLink` function, line 237: Web: an http(s) link made only of plain URL characters, with a host; Join: an okay://join link (opened
-- `LooksDeceptive` function, line 254: True when the link may not go where it seems to: a punycode ("xn--") host that can imitate another name,
-- `ConfirmText` function, line 263: What the confirm box says before an outside link opens.
-- `CheckOutgoing` function, line 276: "" when 'body' may be sent now, else a plain sentence. 'recentSends' are the unix times of my own
-- `Event` struct, line 290: Something the person may want to hear about. The chat and invite code only produce these; the one
+- `MakeClientId` function, line 51: A random version-4 id: "xxxxxxxx-xxxx-4xxx-Yxxx-xxxxxxxxxxxx" (Y is 8, 9, a or b). Only for telling
+- `IsClientId` function, line 72: True for 8-4-4-4-12 hex digits (any case): the only thing that may go into a URL or JSON as a client id.
+- `IsRetryable` function, line 85: Worth sending again later? A refusal by a server rule is final, except the rate limit.
+- `RetryDelaySeconds` function, line 94: Seconds to wait before attempt number 'attempts' + 1: 2, 4, 8, ... at most 60.
+- `QueuedMessage` struct, line 102
+- `EncodeQueue` function, line 140: The queue as text: a "okaychatq1" header line, then one tab-separated line per message.
+- `DecodeQueue` function, line 151: Reads EncodeQueue's text; damaged lines and lines with a bad client id are skipped.
+- `ShouldGiveUp` function, line 171: A queued message older than a week is dropped rather than posted late.
+- `ResumeQueue` function, line 175: The queue read back after a restart: what is not too old, once per client id, with the tries counted from 0 again
+- `MergeById` function, line 191: Merge 'incoming' (an older page, a re-poll, a resent copy) into 'log': one row per 'id', the incoming
+- `OldestId` function, line 200: The cursor for "load older messages": the smallest id held, 0 when empty.
+- `KeepScrollAfterPrepend` function, line 209: "Load older messages" adds rows above what is on screen. The scroll offset that keeps the same message under
+- `UnreadRow` struct, line 218
+- `UnreadSummary` struct, line 219
+- `SeenWithFloor` function, line 241: The 'seen' map for CountUnread with a floor: nothing at or below 'floor' counts as unread. The floor is the old
+- `BadgeText` function, line 251: The badge on an avatar or a tab: "" for none, the number, "99+" above 99.
+- `LinkKind` enum, line 255
+- `LinkHost` function, line 258: The host of an http(s) URL, lowercased, without user info or port ("" when there is none).
+- `ClassifyLink` function, line 273: Web: an http(s) link made only of plain URL characters, with a host; Join: an okay://join link (opened
+- `LooksDeceptive` function, line 290: True when the link may not go where it seems to: a punycode ("xn--") host that can imitate another name,
+- `ConfirmText` function, line 299: What the confirm box says before an outside link opens.
+- `LinkClick` struct, line 310: What a click on a link in a message does: Web asks first (Confirm, with 'text' from ConfirmText), Join goes
+- `ClickLink` function, line 315
+- `CheckOutgoing` function, line 333: "" when 'body' may be sent now, else a plain sentence. 'recentSends' are the unix times of my own
+- `Event` struct, line 347: Something the person may want to hear about. The chat and invite code only produce these; the one
 
 ## `engine/include/okay/Platform/Forums.hpp`
 
@@ -123,21 +128,23 @@ Back to the [code index](../code_index.md). 30 headers, 265 names.
 
 ## `engine/include/okay/Platform/Invites.hpp`
 
-- `GameInvite` struct, line 27
-- `InviteState` enum, line 40
-- `PresenceSeen` enum, line 42: Whether the sender's presence was read. Known + an empty link means they are not in a joinable game now.
-- `InviteView` struct, line 44
-- `Left` function, line 52
-- `What` function, line 58
-- `ViewInvite` function, line 68: What the card for 'inv' says at 'now'. For a game invite, 'senderLink' is the sender's current presence
-- `ViewLegacyInvite` function, line 95: A chat invite with no record (an older launcher, or before chat_invites.sql ran): only its age is known.
-- `InviteAnswerOk` function, line 103: respond_invite / cancel_invite answered this: the change was made.
-- `InviteAnswerText` function, line 105: The server's answer (or an okay_rule reason) in a plain sentence.
-- `InviteEventsSince` function, line 119: The notification event for invites that are new since 'seenId' and still worth showing at 'now'
-- `JoinCheck` struct, line 136
-- `CheckJoinFriend` function, line 143: Whether "Join game" on 'f' works now. 'blocked' = either of you blocked the other.
-- `Joinable` function, line 163: For the friend list's Join button: shown enabled only when CheckJoinFriend would pass (not blocked).
-- `Invites` class, line 168: game_invites over Supabase's REST API, through the signed-in AccountService (same pattern as Friends).
+- `GameInvite` struct, line 28
+- `InviteState` enum, line 41
+- `PresenceSeen` enum, line 43: Whether the sender's presence was read. Known + an empty link means they are not in a joinable game now.
+- `InviteView` struct, line 45
+- `Left` function, line 53
+- `What` function, line 59
+- `ViewInvite` function, line 69: What the card for 'inv' says at 'now'. For a game invite, 'senderLink' is the sender's current presence
+- `ViewLegacyInvite` function, line 96: A chat invite with no record (an older launcher, or before chat_invites.sql ran): only its age is known.
+- `ViewSentInvite` function, line 104: The sender's own copy of an invite card: what happened to the invite they sent to 'recipientName'.
+- `InviteCard` struct, line 120: What one invite card in chat shows and which buttons it has. 'rec' is the game_invites record the card's link
+- `InviteAnswerOk` function, line 178: respond_invite / cancel_invite answered this: the change was made.
+- `InviteAnswerText` function, line 180: The server's answer (or an okay_rule reason) in a plain sentence.
+- `InviteEventsSince` function, line 194: The notification event for invites that are new since 'seenId' and still worth showing at 'now'
+- `JoinCheck` struct, line 211
+- `CheckJoinFriend` function, line 218: Whether "Join game" on 'f' works now. 'blocked' = either of you blocked the other.
+- `Joinable` function, line 238: For the friend list's Join button: shown enabled only when CheckJoinFriend would pass (not blocked).
+- `Invites` class, line 243: game_invites over Supabase's REST API, through the signed-in AccountService (same pattern as Friends).
 
 ## `engine/include/okay/Platform/Messages.hpp`
 
@@ -224,8 +231,8 @@ Back to the [code index](../code_index.md). 30 headers, 265 names.
 - `ResolveProxy` function, line 321: Decide the proxy for 'u' from the environment. false = the environment names a
 - `TlsApi` struct, line 346: TLS through the system OpenSSL, loaded at run time
 - `TlsStream` class, line 441
-- `SystemConnector` class, line 589
-- `TlsAvailable` function, line 671: True when https can be used (libssl loads); 'why' says why not.
+- `SystemConnector` class, line 591
+- `TlsAvailable` function, line 673: True when https can be used (libssl loads); 'why' says why not.
 
 ## `engine/include/okay/Platform/Painter.hpp`
 

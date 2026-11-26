@@ -244,6 +244,20 @@ add_library(okay_engine
     src/Lua/LuaLibTable.cpp
     src/Lua/LuaLibUtf8.cpp
     src/Lua/LuaScriptVM.cpp
+    src/JavaScript/JsLexer.cpp
+    src/JavaScript/JsParser.cpp
+    src/JavaScript/JsCompiler.cpp
+    src/JavaScript/JsRuntime.cpp
+    src/JavaScript/JsInterpreter.cpp
+    src/JavaScript/JsLibObject.cpp
+    src/JavaScript/JsLibArray.cpp
+    src/JavaScript/JsLibString.cpp
+    src/JavaScript/JsLibNumber.cpp
+    src/JavaScript/JsLibJson.cpp
+    src/JavaScript/JsLibCollections.cpp
+    src/JavaScript/JsRegExp.cpp
+    src/JavaScript/JavaScriptVM.cpp
+    src/Scripting/ScriptLanguageGlue.cpp
     src/Components/ScriptComponent.cpp
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp

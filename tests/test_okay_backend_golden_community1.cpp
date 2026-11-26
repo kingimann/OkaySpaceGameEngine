@@ -76,13 +76,7 @@ static std::string Steady(const std::string& log) {
     return res + rest;
 }
 
-static std::unique_ptr<acc::AccountService> Make(const fs::path& dir, Fake& f) {
-    auto a = std::make_unique<acc::AccountService>(dir, kUrl, kKey);
-    a->SetTransportForTest([&f](const std::string& m, const std::string& u, const std::vector<std::string>& h, const std::string& b) {
-        return f.Answer(m, u, h, b);
-    });
-    return a;
-}
+static std::unique_ptr<acc::AccountService> Make(const fs::path& dir, Fake& f) { return golden::MakeAccount<acc::AccountService>(dir, f); }
 /// A fresh account signed in as `user` (user id "u1": the token's subject), and the profiles view state back to unknown
 /// (it is one value for the whole process, so each scenario starts from the same place).
 static std::unique_ptr<acc::AccountService> SignedIn(const fs::path& dir, Fake& f, const std::string& user = "alex") {
@@ -737,21 +731,20 @@ static std::vector<std::pair<const char*, ProviderFlow>> ProviderFlows() {
 
 int main() {
     RUN_SUITE("okay_backend_golden_community1");
-    const fs::path root = fs::temp_directory_path() / ("okay_backend_golden_community1_" + acc::detail::RandomHex(8));
-    const bool print = std::getenv("OKAY_GOLDEN_PRINT") != nullptr;
-    const std::vector<Scenario> all = Scenarios();
-
-    // 1. The headers' own functions send exactly the golden requests and make the same of the answers.
-    golden::RunScenarios("tests/test_okay_backend_golden_community1.cpp", all, kGolden, root, print);
-    if (print) return 0;
-    CHECK(g_badSteady == 0);   // the presence time, the invite expiry and the new friend code were what they should be
-
-    // 2. The Supabase provider called directly sends the same bytes.
+#if defined(_WIN32)
+    _putenv_s("OKAY_BACKEND", "");
+#else
+    unsetenv("OKAY_BACKEND");   // the developer's own backend setting must not decide these results
+#endif
+    // 1. The headers' own functions send exactly the golden requests and make the same of the answers; 2. the Supabase
+    // provider called directly sends the same bytes.
     const auto flows = ProviderFlows();
-    golden::RunProviderFlows<ProviderRun>(flows, kGolden, [](const char*, const char*, ProviderRun& p) { CHECK(!p.rec.sent.empty()); });
+    if (golden::RunGolden<ProviderRun>("tests/test_okay_backend_golden_community1.cpp", "okay_backend_golden_community1", Scenarios(),
+                                       flows, kGolden, [] {
+                                           // the presence time, the invite expiry and the new friend code were what they should be
+                                           CHECK(g_badSteady == 0);
+                                       }))
+        return 0;
     CHECK(flows.size() >= 10);
-
-    std::error_code ec;
-    fs::remove_all(root, ec);
     TEST_MAIN_RESULT();
 }

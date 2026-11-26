@@ -2,7 +2,7 @@
 
 # Code index: engine-Render
 
-Back to the [code index](../code_index.md). 49 headers, 467 names.
+Back to the [code index](../code_index.md). 49 headers, 468 names.
 
 ## `engine/include/okay/Render/AmfReader.hpp`
 
@@ -531,6 +531,7 @@ Back to the [code index](../code_index.md). 49 headers, 467 names.
 - `FXAAEnabled` function, line 1474: ---- Anti-aliasing (FXAA-lite) ---------------------------------------------
 - `RenderCullingMask` function, line 1479: Active camera's layer culling mask (Camera.cullingMask). RenderMeshes draws a
 - `ApplyFXAA` function, line 1484: Cheap post-process anti-aliasing: where local contrast is high (a geometry
+- `ReducedRenderScope` class, line 1513: While alive, the software renderer makes a cheaper picture: the process-wide passes that cost the most and add little to a
 
 ## `engine/include/okay/Render/SsaoMath.hpp`
 

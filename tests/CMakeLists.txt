@@ -3551,6 +3551,15 @@ if(TARGET okay_cli_lib)
     add_test(NAME okay_cli COMMAND test_okay_cli)
     set_tests_properties(okay_cli PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 endif()
+# okay run inside another program (tools/okay-cli/CommandJob.hpp): lines and exit codes from words, the project folder as the working
+# folder, a worker-thread job that streams and stops (also inside a program it started), git told to use okay and never the host.
+if(TARGET okay_cli_lib)
+    add_executable(test_okay_cli_run test_okay_cli_run.cpp)
+    target_link_libraries(test_okay_cli_run PRIVATE okay_cli_lib)
+    target_include_directories(test_okay_cli_run PRIVATE ${PROJECT_SOURCE_DIR}/shared)
+    add_test(NAME okay_cli_run COMMAND test_okay_cli_run)
+    set_tests_properties(okay_cli_run PROPERTIES TIMEOUT 120)
+endif()
 
 # Core console: EventBus extras, Cvars, Console, debug overlay lines
 add_executable(test_core_console test_core_console.cpp)
@@ -5651,7 +5660,7 @@ add_test(NAME input_grok COMMAND test_input_grok)
 # The launcher's Command line page rules (launcher/CommandLine.cpp, no ImGui): words and the argument list (no shell), Tab
 # completion from okay's own command table, history, streaming output from a running program, Stop, and the page layout.
 add_executable(test_launcher_cli test_launcher_cli.cpp ${CMAKE_SOURCE_DIR}/launcher/CommandLine.cpp ${CMAKE_SOURCE_DIR}/launcher/Terminal.cpp
-               ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)
+               ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandInput.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)
 target_compile_features(test_launcher_cli PRIVATE cxx_std_17)
 target_include_directories(test_launcher_cli PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/tools/okay-cli
                            ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
@@ -5661,7 +5670,7 @@ set_tests_properties(launcher_cli PROPERTIES TIMEOUT 120)
 # parser against byte streams, resizing, selection and copy, the key-to-sequence mapping, and a real /bin/sh on a pseudo
 # terminal (printf, echo, the folder, Tools first on PATH, resize, Ctrl+C stopping sleep, exit). The pty part is POSIX only.
 add_executable(test_launcher_terminal test_launcher_terminal.cpp ${CMAKE_SOURCE_DIR}/launcher/CommandLine.cpp ${CMAKE_SOURCE_DIR}/launcher/Terminal.cpp
-               ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)
+               ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandInput.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)
 target_compile_features(test_launcher_terminal PRIVATE cxx_std_17)
 target_include_directories(test_launcher_terminal PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/tools/okay-cli
                            ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)

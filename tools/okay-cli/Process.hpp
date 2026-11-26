@@ -6,6 +6,7 @@
 // Windows argument quoting is shared/AppRestart.hpp QuoteWindowsArg). No <thread> or
 // <mutex> (CLAUDE.md rule 21a): the two output pipes are read with poll() on POSIX, and on Windows stderr goes to a
 // temporary file while stdout is read from a pipe.
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,17 @@ struct RunResult {
 /// `capture` true: stdout and stderr are collected into the result and standard input is empty. False: the program
 /// shares this terminal (it can print and ask questions, as git does for a password).
 RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool capture);
+
+/// A program run while okay itself runs inside a window (the editor's Command Line panel, CommandJob.hpp) has no terminal to
+/// share: while an AttachedOutput is set on this thread, Run(..., capture = false) starts the program as a Child instead (no
+/// console window, empty standard input), hands what it writes to `output` as it comes (`problem` true for stderr), and
+/// stops it (and what it started) when `stop` says so. Captured runs (capture = true) are not changed. Null: off (the default).
+struct AttachedOutput {
+    std::function<void(const std::string& bytes, bool problem)> output;
+    std::function<bool()> stop;
+};
+void SetAttachedOutput(const AttachedOutput* attached);
+const AttachedOutput* GetAttachedOutput();
 
 /// Start `argv` and do not wait for it (the editor). True when it started.
 bool StartDetached(const std::vector<std::string>& argv, const std::string& cwd);

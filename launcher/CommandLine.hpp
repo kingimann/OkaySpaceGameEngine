@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "PageLayout.hpp"  // launcher: Rect, Overlaps, ButtonW (pure maths, no ImGui)
+#include "CommandInput.hpp"   // tools/okay-cli: words, Tab completion, history, output lines (shared with the editor's panel)
 #include "Process.hpp"   // tools/okay-cli: the one place that starts a program
 #include "Terminal.hpp"  // launcher: the terminal emulator a shell tab shows
 
@@ -27,64 +28,26 @@ namespace okaylcli {
 
 // ---- words and arguments ------------------------------------------------------------------------------------------
 
-/// Split a typed line into words. Spaces and tabs separate words; "double" or 'single' quotes keep spaces inside one
-/// word; inside double quotes \" is a quote and \\ a backslash; elsewhere a backslash is kept as it is (Windows paths).
-/// False with a plain reason for an unclosed quote.
-bool SplitWords(const std::string& line, std::vector<std::string>& words, std::string& error);
-
-/// What a typed line asks for.
-enum class LineKind { Empty, Clear, Okay };
-/// `clear` or `cls` (the page's own command), nothing, or a command for okay.
-LineKind Classify(const std::string& line);
+// The rules of a typed line, Tab completion, the history and the output lines are okay's own (tools/okay-cli/CommandInput.hpp),
+// shared with the editor's Command Line panel (shared/CommandLinePanel.hpp): one copy.
+using okaycli::SplitWords;
+using okaycli::LineKind;
+using okaycli::Classify;
+using okaycli::Completion;
+using okaycli::Complete;
+using okaycli::History;
+using okaycli::OutLine;
+using okaycli::CleanOutput;
 
 /// The argument list that runs `line` with okay: { okayExe, word, word ... }. A leading "okay" or "okay.exe" the person
 /// typed out of habit is dropped. False with a plain reason (no okay program, an unclosed quote, nothing to run).
 bool BuildArgv(const std::string& okayExe, const std::string& line, std::vector<std::string>& argv, std::string& error);
 
-// ---- Tab completion -----------------------------------------------------------------------------------------------
-
-struct Completion {
-    std::string line;                  ///< the line after Tab (the same line when nothing matched)
-    std::vector<std::string> choices;  ///< every word that fits, when more than one does (shown under the line)
-};
-/// Complete the last word of `line` from okay's command table: the command name, then its sub-command (`vc sa` ->
-/// `vc save `), and command names after `help`. One match is completed with a space after it; several are completed
-/// as far as they agree and listed in `choices`.
-Completion Complete(const std::string& line);
-
-// ---- history ------------------------------------------------------------------------------------------------------
-
-/// The lines run before, for Up and Down. The newest is last; a line equal to the newest is not added twice.
-class History {
-public:
-    explicit History(std::size_t limit = 200) : limit_(limit) {}
-    void Push(const std::string& line);
-    /// Up: the line before the one shown (the newest first). `current` is what is in the box now, kept for Down.
-    /// False when there is nothing older.
-    bool Up(const std::string& current, std::string& line);
-    /// Down: the newer line, or the line that was being typed before Up. False when already there.
-    bool Down(std::string& line);
-    std::size_t Size() const { return lines_.size(); }
-    const std::vector<std::string>& Lines() const { return lines_; }
-
-private:
-    std::vector<std::string> lines_;
-    std::size_t limit_;
-    std::size_t pos_ = 0;      ///< lines_.size() = not browsing
-    std::string draft_;        ///< what was typed before the first Up
-};
-
 // ---- a session: the lines on the page and the command running --------------------------------------------------
-
-struct OutLine {
-    enum Kind { Out, Err, Note };   ///< okay's stdout, its stderr, and the page's own notes (the command, how it ended)
-    std::string text;
-    Kind kind = Out;
-};
 
 class Session {
 public:
-    explicit Session(std::size_t maxLines = 5000) : maxLines_(maxLines) {}
+    explicit Session(std::size_t maxLines = 5000) : log_(maxLines) {}
     void SetProgram(const std::string& okayExe) { okay_ = okayExe; }
     void SetFolder(const std::string& folder) { folder_ = folder; }
     const std::string& Folder() const { return folder_; }
@@ -98,33 +61,24 @@ public:
     /// End the running command (and what it started).
     void Stop();
     bool Running() const { return child_.Running(); }
-    void Clear();
-    void Note(const std::string& text) { AddLine(text, OutLine::Note); }
+    void Clear() { log_.Clear(); }
+    void Note(const std::string& text) { log_.Add(text, OutLine::Note); }
 
-    const std::vector<OutLine>& Lines() const { return lines_; }
+    const std::vector<OutLine>& Lines() const { return log_.Lines(); }
     /// Every line joined with newlines (what the output box shows and Copy all copies).
-    const std::string& Text() const { return text_; }
+    const std::string& Text() const { return log_.Text(); }
     /// Goes up whenever the lines change (the page scrolls to the end when it moves).
-    unsigned Revision() const { return revision_; }
+    unsigned Revision() const { return log_.Revision(); }
     History& GetHistory() { return history_; }
 
 private:
-    void AddLine(const std::string& text, OutLine::Kind kind);
-    void Feed(std::string& partial, const std::string& bytes, OutLine::Kind kind, bool flush);
-    void RebuildText();
-
     okaycli::Child child_;
     History history_;
-    std::vector<OutLine> lines_;
-    std::string text_, outPartial_, errPartial_;
+    okaycli::OutputLog log_;   ///< the lines (tools/okay-cli/CommandInput.hpp, shared with the editor's panel)
+    std::string outPartial_, errPartial_;
     std::string okay_, folder_;
-    std::size_t maxLines_;
-    unsigned revision_ = 0;
     bool running_ = false;   ///< Poll's view, to say once that the command ended
 };
-
-/// Drop terminal colour codes (ESC [ ... letter) and carriage returns from okay's output.
-std::string CleanOutput(const std::string& text);
 
 // ---- shells -------------------------------------------------------------------------------------------------------
 

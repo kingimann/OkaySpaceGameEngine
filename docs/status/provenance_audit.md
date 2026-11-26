@@ -152,8 +152,8 @@ layouts are facts), CSS named colours (CSS Color 4, `engine/src/Browser/Css.cpp`
 different), Mersenne Twister parameters (`tools/okaycc/include/random:55`, ISO C++), CRC polynomials, and the hash
 mixing primes of xxHash / MurmurHash / splitmix used as constants in `Noise.hpp`, `WindField.hpp`, `VoxelEdit.cpp`,
 `Terrain.cpp`, `Destructible.hpp:250`, `launcher/main.cpp:4404` (published constants of public algorithms; a note
-would help, nothing to rewrite). `tests/ttf_refs.inc` holds FreeType's rendering of DejaVu Sans (program output,
-stated in `tests/test_ttf_rasterizer.cpp:5`).
+would help, nothing to rewrite). (`tests/ttf_refs.inc`, FreeType's rendering of DejaVu Sans, was deleted on 2026-11-26:
+`tests/test_ttf_rasterizer.cpp` now works its reference out itself.)
 
 ### Checked and clean (no sign of copied code in this scan)
 

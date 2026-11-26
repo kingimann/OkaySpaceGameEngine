@@ -56,15 +56,19 @@ using okay::str::Trim;
 const char* EngineVersion() { return OKAY_ENGINE_VERSION; }
 
 void Io::Say(const std::string& text) const {
+    if (cancel && cancel->load()) throw Cancelled();
     std::string t = text;
     if (t.empty() || t.back() != '\n') t += '\n';
-    if (out) *out += t;
+    if (sink) sink(t, false);
+    else if (out) *out += t;
     else { std::fputs(t.c_str(), stdout); std::fflush(stdout); }
 }
 void Io::Warn(const std::string& text) const {
+    if (cancel && cancel->load()) throw Cancelled();
     std::string t = text;
     if (t.empty() || t.back() != '\n') t += '\n';
-    if (err) *err += t;
+    if (sink) sink(t, true);
+    else if (err) *err += t;
     else { std::fputs(t.c_str(), stderr); std::fflush(stderr); }
 }
 
@@ -157,8 +161,16 @@ std::string StableOkayPath() {
     // okay on PATH is where a person (and the installer) puts it; it does not move when a version is removed.
     const std::string onPath = FindOnPath("okay");
     if (!onPath.empty()) return onPath;
-    const std::string self = SelfPath();
+    std::string self = SelfPath();
     if (self.empty()) return "";
+    // Run inside another program (the editor's Command Line panel, CommandJob.hpp): git must be told to run the okay
+    // program beside it, never the editor itself.
+    if (RunningInsideHost()) {
+        std::error_code ec0;
+        const fs::path beside = fs::path(self).parent_path() / (std::string("okay") + fs::path(self).extension().string());
+        if (!fs::is_regular_file(beside, ec0)) return "";
+        self = beside.string();
+    }
     // A kept copy of an older version (<L>/Versions/<v>/Tools/okay) is removed when the launcher prunes versions:
     // use the launcher-level <L>/Tools/okay when there is one.
     std::error_code ec;

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "imgui.h"
+#include "CommandLine.hpp"   // FoundProgram
 
 namespace okaylcli {
 
@@ -22,6 +23,7 @@ struct Host {
     std::string okayExe;                    ///< the okay program the launcher ships in Tools ("" = not found)
     std::string toolsDir;                   ///< put first on PATH in a terminal opened from here
     std::vector<ProjectRef> projects;       ///< the Create page's projects, for the picker
+    std::vector<FoundProgram> programs;     ///< the programs of their own found beside the launcher (FindPrograms)
     ImFont* mono = nullptr;                 ///< the output's font (the launcher's JetBrains Mono); null = the default font
     ImVec4 accent{0.26f, 0.59f, 0.98f, 1.0f};
     ImVec4 cardBg{0.15f, 0.163f, 0.2f, 1.0f};
@@ -35,6 +37,9 @@ void SetProject(const std::string& root, const std::string& name);
 void OpenTerminalFor(const Host& host, const std::string& root, const std::string& name);
 /// Once a frame, whichever page shows: reads every tab's output (shells and okay commands keep running in the background).
 void Tick();
+/// One row above the page: a button for each program of its own that is installed (host.programs; none: nothing is drawn).
+/// The program starts in the page's project folder.
+void DrawProgramsRow(const Host& host);
 /// The page body, under the launcher's section header.
 void DrawPage(const Host& host);
 /// Ends every tab's shell and running command. Call before the launcher closes.

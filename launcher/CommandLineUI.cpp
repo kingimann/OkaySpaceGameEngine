@@ -518,6 +518,23 @@ void Shutdown() {
     g_active = -1;
 }
 
+void DrawProgramsRow(const Host& host) {
+    if (host.programs.empty()) return;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Open in its own window:");
+    for (const FoundProgram& p : host.programs) {
+        ImGui::SameLine();
+        ImGui::PushID(p.path.c_str());
+        if (ImGui::Button(p.label.c_str())) {
+            // Only programs found beside the launcher by their file name (FindPrograms); started without a shell.
+            const bool ok = okaycli::StartDetached({p.path}, g_projectRoot);
+            if (host.toast) host.toast(ok ? p.label + " opened." : "Could not start " + p.path + ".", ok ? 1 : 2);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.tip.c_str());
+        ImGui::PopID();
+    }
+}
+
 void DrawPage(const Host& host) {
     // A project from the list, until the person picks one (or the card's button set it).
     if (g_projectRoot.empty() && !host.projects.empty()) { g_projectRoot = host.projects[0].root; g_projectName = host.projects[0].name; }

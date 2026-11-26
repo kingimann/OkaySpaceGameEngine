@@ -1,0 +1,28 @@
+section: Fixes and new things
+pr: 1297, 1298, 1301, 1302, 1303, 1304, 1305, 1306, 1307
+roadmap: Editor sign-in and frozen-input fixes, hang watchdog, faster editor (Visual Script panel, thumbnails), new loading screen, Versions page with test builds, asset streaming round 1
+---
+- The editor signs in again on Windows and opens your project. Before,
+  it could not reach the OkaySpace server at all.
+- The editor no longer ignores every click after an unclean exit: the
+  recovery questions now show one at a time in the middle of the screen.
+- Quit in the editor's sign-in window works.
+- If the editor ever stops responding, it now writes okay_hang.txt and
+  offers Wait or Close after a few seconds, so you no longer need Task
+  Manager.
+- Opening a project and the Problems list are much faster: the project
+  files are read in the background.
+- The Visual Script panel is three to six times faster on big graphs,
+  Project panel pictures no longer stall the editor, and update checks
+  run in the background.
+- Big worlds load around the player in the background, a little each
+  frame, instead of all at once (asset streaming, first part).
+- The editor's loading screen shows real progress, what is loading, the
+  project name and the version.
+- The launcher sees a closed editor as closed, even after Task Manager.
+- Versions page: install the newest three releases and, with Get test
+  builds on, the newest three test builds. It also shows when the editor
+  was left on another version and offers Repair.
+- Test-build updates now follow the main build only, in order.
+- Game invites keep their id on Windows, Run in browser sends whole
+  files, and Move With Keys reacts only to the keys you chose.

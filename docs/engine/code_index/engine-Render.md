@@ -2,7 +2,7 @@
 
 # Code index: engine-Render
 
-Back to the [code index](../code_index.md). 49 headers, 468 names.
+Back to the [code index](../code_index.md). 49 headers, 470 names.
 
 ## `engine/include/okay/Render/AmfReader.hpp`
 
@@ -570,24 +570,26 @@ Back to the [code index](../code_index.md). 49 headers, 468 names.
 - `ForRender` function, line 173: What the renderers draw with: the asset for a texture name, loaded on first use and held by the library, or null
 - `ReadOnly` function, line 176: While a ReadOnlyScope is alive (the software renderer's parallel band render), ForRender only looks names up: it
 - `ReadOnlyScope` struct, line 177
-- `Drop` function, line 184: Let go of the library's own reference to a name (the asset lives on while other handles exist).
-- `InvalidateAll` function, line 187: Drop every file texture the library holds for the renderers, re-decode the ones still alive elsewhere, and keep
-- `Generation` function, line 190: Bumped whenever the library lets go of names (Drop, InvalidateAll, a budget trim): renderers that cache by name
-- `Pump` function, line 194: Once a frame on the main thread: hot reload (when on), the frame counter for idle tracking, the budget check and
-- `SetHotReload` function, line 197: Watch loaded picture files for changes (checked at most every 'intervalSeconds'). Off by default; the editor turns
-- `HotReload` function, line 198
-- `SetAsyncLoading` function, line 203: Background loading: ForRender starts the decode on AssetManager's worker and returns null (the renderers draw the
-- `AsyncLoading` function, line 204
-- `Stats` struct, line 206
-- `GetStats` function, line 216
-- `Row` struct, line 217
-- `Report` function, line 226: Every live texture, largest first.
-- `OverlayLine` function, line 228: One line for the F3 overlay: "textures 12  38.4 MB / 1024 MB" (+ "  OVER BUDGET").
-- `SetBudgetBytes` function, line 231: Budget in bytes (0 = no budget). Default from OKAY_TEXTURE_BUDGET_MB, else 1024 MB.
-- `BudgetBytes` function, line 232
-- `SetIdleFrames` function, line 234: While over budget, Pump lets go of textures the renderers have not drawn for this many Pump calls (default 300).
-- `IsHeld` function, line 238: Whether the renderers' cache holds this name now. A GPU renderer that sees Generation() change frees its own copies
-- `ResetForTests` function, line 241: For tests: forget everything the library holds (registered pictures too) and reset the counters.
+- `Prefetch` function, line 186: Start decoding a texture on a job thread through the asset streamer (AssetManager::Stream, at 'priority') so it is
+- `Loading` function, line 188: True while a prefetched or background load of this name is still decoding.
+- `Drop` function, line 190: Let go of the library's own reference to a name (the asset lives on while other handles exist).
+- `InvalidateAll` function, line 193: Drop every file texture the library holds for the renderers, re-decode the ones still alive elsewhere, and keep
+- `Generation` function, line 196: Bumped whenever the library lets go of names (Drop, InvalidateAll, a budget trim): renderers that cache by name
+- `Pump` function, line 200: Once a frame on the main thread: hot reload (when on), the frame counter for idle tracking, the budget check and
+- `SetHotReload` function, line 203: Watch loaded picture files for changes (checked at most every 'intervalSeconds'). Off by default; the editor turns
+- `HotReload` function, line 204
+- `SetAsyncLoading` function, line 209: Background loading: ForRender starts the decode on AssetManager's worker and returns null (the renderers draw the
+- `AsyncLoading` function, line 210
+- `Stats` struct, line 212
+- `GetStats` function, line 222
+- `Row` struct, line 223
+- `Report` function, line 232: Every live texture, largest first.
+- `OverlayLine` function, line 234: One line for the F3 overlay: "textures 12  38.4 MB / 1024 MB" (+ "  OVER BUDGET").
+- `SetBudgetBytes` function, line 237: Budget in bytes (0 = no budget). Default from OKAY_TEXTURE_BUDGET_MB, else 1024 MB.
+- `BudgetBytes` function, line 238
+- `SetIdleFrames` function, line 240: While over budget, Pump lets go of textures the renderers have not drawn for this many Pump calls (default 300).
+- `IsHeld` function, line 244: Whether the renderers' cache holds this name now. A GPU renderer that sees Generation() change frees its own copies
+- `ResetForTests` function, line 247: For tests: forget everything the library holds (registered pictures too) and reset the counters.
 
 ## `engine/include/okay/Render/TextureCacheFiles.hpp`
 

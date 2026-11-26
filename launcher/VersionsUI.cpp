@@ -103,7 +103,6 @@ struct State {
     std::unique_ptr<InstallJob> job;
     std::map<std::string, std::pair<std::string, int>> notes;   // per version: the last message and its kind (2 = error)
     std::string removeAsk;                              // a Remove confirmation is open for this version
-    bool showAllAvailable = false;
     bool staleCleaned = false;
 };
 State& S() {
@@ -201,8 +200,14 @@ void ResolveHighlight() {
     st.highlight.clear();
     if (st.requested.empty()) return;
     if (okayver::SameLine(okayver::NormalizeVersion(st.running), st.requested)) return;   // the running editor is of that line: no row to point at
-    if (st.haveIndex && okay::testbuild::IsTestVersion(st.requested) && st.testBuilds.ok && st.testBuilds.Find(st.requested)) st.highlight = st.requested;
-    if (st.highlight.empty() && st.haveIndex && st.index.ok) st.highlight = PickHighlight(st.index, st.requested);
+    if (st.haveIndex && okay::testbuild::IsTestVersion(st.requested))
+        for (const Entry* e : InstallableWindow(st.testBuilds, true)) if (e->version == st.requested) st.highlight = st.requested;
+    if (st.highlight.empty() && st.haveIndex && st.index.ok) {
+        st.highlight = PickHighlight(st.index, st.requested);
+        bool offered = false;   // only a version that is offered (the newest 3 releases) can be pointed at in the list
+        for (const Entry* e : InstallableWindow(st.index, false)) if (e->version == st.highlight) offered = true;
+        if (!offered) st.highlight.clear();
+    }
     for (const Installed& i : st.installed)                                      // an installed one of that line counts too
         if (st.highlight.empty() && okayver::SameLine(i.version, st.requested)) st.highlight = i.version;
     st.scrollToHighlight = !st.highlight.empty();
@@ -395,7 +400,7 @@ void DrawChannel(const Host& h) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Get test builds");
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("Test builds are made for testing before a release and can be broken. Only the newest %d are kept on the download server.", okay::testbuild::kKept);
+    ImGui::TextDisabled("Test builds are made for testing before a release and can be broken. Only the newest %d are kept and can be installed.", okay::testbuild::kKept);
     ImGui::PopTextWrapPos();
 
     if (set.channel == Channel::Lts && st.haveIndex) {
@@ -507,7 +512,7 @@ void DrawInstalled(const Host& h) {
     if (st.installed.empty()) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("Nothing else is installed yet. When the launcher updates, it keeps the version it replaces here, so projects made with it can "
-                            "still be opened. You can also install older versions from the list below.");
+                            "still be opened. You can also install one of the newest releases from the list below.");
         ImGui::PopTextWrapPos();
         ImGui::Dummy(ImVec2(0, 4));
     }
@@ -600,7 +605,7 @@ void DrawAvailable(const Host& h) {
             ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kAmber), "Test builds: %s", st.testBuilds.error.c_str());
             ImGui::PopTextWrapPos();
         }
-        const std::size_t limit = st.showAllAvailable ? rows.size() : std::min<std::size_t>(rows.size(), 8);
+        const std::size_t limit = rows.size();   // at most 3 releases and 3 test builds (InstallableWindow): no "show older"
         for (std::size_t i = 0; i < limit; ++i) {
             const Entry& e = *rows[i].entry;
             ImGui::PushID(e.version.c_str());
@@ -652,10 +657,10 @@ void DrawAvailable(const Host& h) {
             RowEnd(r, i + 1 < limit);
             ImGui::PopID();
         }
-        if (rows.size() > limit || st.showAllAvailable) {
-            ImGui::Dummy(ImVec2(0, 4));
-            if (ImGui::SmallButton(st.showAllAvailable ? "Show fewer" : ("Show " + std::to_string(rows.size() - limit) + " older versions").c_str())) st.showAllAvailable = !st.showAllAvailable;
-        }
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::TextDisabled(set.testBuilds ? "Only the newest %d releases and the newest %d test builds can be installed. Versions you installed stay installed."
+                                           : "Only the newest %d releases can be installed. Versions you installed stay installed.",
+                            (int)kInstallableReleases, okay::testbuild::kKept);
     }
     (void)set;
     CardEnd();

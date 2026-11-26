@@ -496,9 +496,23 @@ RequestBanner DescribeRequest(const std::string& requestedIn, const std::string&
         b.text = line + " isn't installed, and the version list can't be read right now, so it can't be installed from here.";
     } else {
         b.kind = RequestBanner::NotListed;
-        b.text = line + " isn't installed and isn't in the version list, so it can't be installed from here.";
+        b.text = line + " isn't installed, and it isn't one of the newest " + std::to_string(kInstallableReleases) +
+                 " releases that can be installed here, so it can't be installed from here.";
     }
     return b;
+}
+
+std::vector<const Entry*> InstallableWindow(const Index& list, bool testBuilds) {
+    std::vector<const Entry*> out;
+    if (!list.ok) return out;
+    const std::size_t n = testBuilds ? (std::size_t)okay::testbuild::kKept : kInstallableReleases;
+    for (const Entry& e : list.versions) {   // newest first (ParseIndex sorts); each list holds only its own kind, checked again here
+        if (testBuilds ? !okay::testbuild::IsTestVersion(e.version) : !okay::testbuild::IsReleaseShaped(e.version)) continue;
+        out.push_back(&e);
+    }
+    std::stable_sort(out.begin(), out.end(), [](const Entry* a, const Entry* b) { return okayver::CompareVersions(a->version, b->version) > 0; });
+    if (out.size() > n) out.resize(n);
+    return out;
 }
 
 std::vector<AvailableRow> AvailableRows(const Index& releases, const Index& testBuilds, const std::string& running,
@@ -508,10 +522,8 @@ std::vector<AvailableRow> AvailableRows(const Index& releases, const Index& test
     for (const std::string& v : installed) have.insert(okayver::NormalizeVersion(v));
     std::vector<AvailableRow> rows;
     auto add = [&](const Index& idx, bool test) {
-        if (!idx.ok) return;
-        for (const Entry& e : idx.versions) {
-            // Each list holds only its own kind of version (ParseIndex), checked again here so neither can stand in for the other.
-            if (test ? !okay::testbuild::IsTestVersion(e.version) : !okay::testbuild::IsReleaseShaped(e.version)) continue;
+        for (const Entry* ep : InstallableWindow(idx, test)) {
+            const Entry& e = *ep;
             if (e.version == cur || have.count(e.version)) continue;
             AvailableRow r;
             r.entry = &e;
@@ -536,11 +548,8 @@ std::vector<AvailableRow> AvailableRows(const Index& releases, const Index& test
             rows.push_back(std::move(r));
         }
     };
-    add(releases, false);
+    add(releases, false);   // two groups, each newest first: the releases, then the test builds
     add(testBuilds, true);
-    std::stable_sort(rows.begin(), rows.end(), [](const AvailableRow& a, const AvailableRow& b) {
-        return okayver::CompareVersions(a.entry->version, b.entry->version) > 0;
-    });
     return rows;
 }
 
@@ -610,7 +619,22 @@ InstallPlan PlanInstall(const Index& index, const std::string& versionIn, const 
 
 InstallPlan PlanInstall(const Index& releases, const Index& testBuilds, const std::string& version, const std::string& bucketBase,
                         const fs::path& localSdl, bool requireSdl) {
-    if (!okay::testbuild::IsTestVersion(version)) return PlanInstall(releases, version, bucketBase, localSdl, requireSdl);
+    const bool test = okay::testbuild::IsTestVersion(version);
+    const Index& list = test ? testBuilds : releases;
+    // Listed but older than the newest 3 of its kind: not offered, not installed. (The long-term-support head is the exception: the Update channel
+    // card installs it next to a newer launcher, whatever its age.)
+    if (list.ok && list.Find(okayver::NormalizeVersion(version)) && !(!test && okayver::NormalizeVersion(version) == releases.lts)) {
+        bool inWindow = false;
+        for (const Entry* e : InstallableWindow(list, test)) if (e->version == okayver::NormalizeVersion(version)) inWindow = true;
+        if (!inWindow) {
+            InstallPlan p;
+            p.version = okayver::NormalizeVersion(version);
+            p.error = "Only the newest " + std::to_string(test ? (std::size_t)okay::testbuild::kKept : kInstallableReleases) + (test ? " test builds" : " releases") +
+                      " can be installed here, and v" + p.version + " is older than those.";
+            return p;
+        }
+    }
+    if (!test) return PlanInstall(releases, version, bucketBase, localSdl, requireSdl);
     if (!testBuilds.ok) {
         InstallPlan p;
         p.version = okayver::NormalizeVersion(version);

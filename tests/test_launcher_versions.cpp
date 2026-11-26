@@ -1322,13 +1322,13 @@ int main() {
         CHECK(rows.size() == 2 && rows[0].downloadable && !rows[1].downloadable && Has(rows[1].detail, "can't be downloaded any more"));
         CHECK(rows.size() == 2 && Has(rows[0].detail, "2026-11-23") && Has(rows[0].detail, "about ") && rows[0].checkable);
 
-        rows = AvailableRows(rel, dev, "2.903.7", {"2.903.5"});                             // on: merged, newest first, running and installed left out
+        rows = AvailableRows(rel, dev, "2.903.7", {"2.903.5"});                             // on: releases, then test builds, running and installed left out
         std::vector<std::string> order;
         for (const AvailableRow& r : rows) order.push_back(r.entry->version + (r.testBuild ? "t" : ""));
-        CHECK((order == std::vector<std::string>{"2.903.8.114t", "2.903.8.113t", "2.903.8.112t", "2.903.8"}));
-        CHECK(rows.size() == 4 && rows[0].downloadable && rows[0].checkable && Has(rows[0].detail, "Test build of launcher-fix (abcdef1)") && Has(rows[0].detail, "2026-11-25"));
-        CHECK(rows.size() == 4 && !rows[1].downloadable && Has(rows[1].detail, "can't be downloaded any more"));   // pruned from the bucket
-        CHECK(rows.size() == 4 && !rows[2].checkable && Has(rows[2].detail, "no checksum"));
+        CHECK((order == std::vector<std::string>{"2.903.8", "2.903.8.114t", "2.903.8.113t", "2.903.8.112t"}));
+        CHECK(rows.size() == 4 && rows[1].downloadable && rows[1].checkable && Has(rows[1].detail, "Test build of launcher-fix (abcdef1)") && Has(rows[1].detail, "2026-11-25"));
+        CHECK(rows.size() == 4 && !rows[2].downloadable && Has(rows[2].detail, "can't be downloaded any more"));   // pruned from the bucket
+        CHECK(rows.size() == 4 && !rows[3].checkable && Has(rows[3].detail, "no checksum"));
         rows = AvailableRows(rel, dev, "2.903.8.114", {});                                  // the running test build is not offered again
         for (const AvailableRow& r : rows) CHECK(r.entry->version != "2.903.8.114");
 
@@ -1346,6 +1346,35 @@ int main() {
         pl = PlanInstall(rel, dev, "2.903.7", bucket, fs::path(), false);                  // a release still comes from the releases list
         CHECK(pl.ok && pl.files[0].urls[0] == bucket + "v2.903.7/OkayEngine.exe");
         CHECK(!PlanInstall(dev, dev, "2.903.7", bucket, fs::path(), false).ok);           // the test builds' list can never plan a release
+
+        // Only the newest 3 releases and the newest 3 test builds are offered and installed (owner, 2026-11-26); installed ones stay installed.
+        {
+            std::vector<std::string> re, te;
+            for (int i = 1; i <= 5; ++i) re.push_back(ListEntry("2.90" + std::to_string(i) + ".0", "2026-11-2" + std::to_string(i), true, Files(e1)));
+            for (int i = 1; i <= 5; ++i) te.push_back(ListEntry("2.905.0." + std::to_string(i), "2026-11-26", true, Files(e1)));
+            const Index r5 = ParseIndex(List(re, "2.905.0")), t5 = ParseIndex(List(te), IndexKind::TestBuilds);
+            CHECK(r5.ok && r5.versions.size() == 5 && t5.ok && t5.versions.size() == 5);
+            CHECK(InstallableWindow(r5, false).size() == 3 && InstallableWindow(t5, true).size() == (std::size_t)okay::testbuild::kKept && okay::testbuild::kKept == 3);
+            std::vector<std::string> got;
+            for (const AvailableRow& r : AvailableRows(r5, t5, "", {})) got.push_back(r.entry->version);
+            CHECK((got == std::vector<std::string>{"2.905.0", "2.904.0", "2.903.0", "2.905.0.5", "2.905.0.4", "2.905.0.3"}));
+            got.clear();                                                                       // running the newest and having one installed: fewer rows, never older ones
+            for (const AvailableRow& r : AvailableRows(r5, t5, "2.905.0.5", {"2.904.0"})) got.push_back(r.entry->version);
+            CHECK((got == std::vector<std::string>{"2.905.0", "2.903.0", "2.905.0.4", "2.905.0.3"}));
+            got.clear();
+            for (const AvailableRow& r : AvailableRows(r5, Index{}, "", {})) got.push_back(r.entry->version);   // test builds off: the 3 releases only
+            CHECK((got == std::vector<std::string>{"2.905.0", "2.904.0", "2.903.0"}));
+            CHECK(PlanInstall(r5, t5, "2.903.0", bucket, fs::path(), false).ok);
+            InstallPlan old = PlanInstall(r5, t5, "2.902.0", bucket, fs::path(), false);        // the 4th newest release
+            CHECK(!old.ok && Has(old.error, "newest 3 releases"));
+            old = PlanInstall(r5, t5, "2.905.0.2", bucket, fs::path(), false);                 // the 4th newest test build
+            CHECK(!old.ok && Has(old.error, "newest 3 test builds"));
+            Index lts5 = r5;                                                                    // the LTS head is installed by the channel card whatever its age
+            lts5.lts = "2.901.0";
+            CHECK(PlanInstall(lts5, t5, "2.901.0", bucket, fs::path(), false).ok);
+            // A request for an old line: it is not offered, and the banner says so instead of "Install ... below".
+            CHECK(Has(DescribeRequest("2.901.0", "2.905.0", {}, true, true, "").text, "newest 3 releases"));
+        }
     }
 
     // ---- which version a program really is (owner, 2026-11-25: "the launcher is on 115 but the editor is on 114") ------------------------

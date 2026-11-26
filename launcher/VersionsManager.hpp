@@ -163,9 +163,16 @@ struct AvailableRow {
     bool checkable = false;              ///< the editor has a SHA-256 in the list
     std::string detail;                  ///< the grey line under the version: date, size, where from, what is missing
 };
-/// The versions that can be installed, newest first: every release of `releases` and every test build of `testBuilds` (an empty Index when
-/// "Get test builds" is off), without the running version and those already installed. A test build sorts just above the release it was
-/// made on (2.903.8 < 2.903.8.114 < 2.903.9).
+/// How many of each list can be installed side by side (owner, 2026-11-26: "only allow 3 versions of release and 3 versions of test builds to
+/// install"): the newest 3 releases and the newest 3 test builds (okay::testbuild::kKept, also how many the bucket keeps). Versions already
+/// installed stay installed and listed under "Installed next to this version" whatever their age.
+constexpr std::size_t kInstallableReleases = 3;
+/// The newest `kInstallableReleases` releases of `releases`, or the newest okay::testbuild::kKept test builds of a test builds' list: the only
+/// versions offered and planned. Newest first.
+std::vector<const Entry*> InstallableWindow(const Index& list, bool testBuilds);
+/// The versions that can be installed, in two groups: the releases of InstallableWindow(releases), then the test builds of
+/// InstallableWindow(testBuilds) (an empty Index when "Get test builds" is off), each newest first, without the running version and those
+/// already installed.
 std::vector<AvailableRow> AvailableRows(const Index& releases, const Index& testBuilds, const std::string& running,
                                         const std::vector<std::string>& installed);
 
@@ -214,8 +221,8 @@ struct InstallPlan {
 InstallPlan PlanInstall(const Index& index, const std::string& version, const std::string& bucketBase, const fs::path& localSdl,
                         bool requireSdl = kRequireSdl);
 /// The same for the Versions page, which lists releases and (with "Get test builds" on) test builds: a test version (four numbers) is planned
-/// only from `testBuilds` (LoadDevIndex) with its files under <bucket>/dev/, any other version only from `releases`. The checksum rules are
-/// PlanInstall's. Pass an empty Index for `testBuilds` when test builds are off: a test version is then refused.
+/// only from `testBuilds` (LoadDevIndex) with its files under <bucket>/dev/, any other version only from `releases`, and only one of the
+/// InstallableWindow (the newest 3 of its list). The checksum rules are PlanInstall's. Pass an empty Index for `testBuilds` when test builds are off: a test version is then refused.
 InstallPlan PlanInstall(const Index& releases, const Index& testBuilds, const std::string& version, const std::string& bucketBase,
                         const fs::path& localSdl, bool requireSdl = kRequireSdl);
 

@@ -18,7 +18,7 @@
 #   dev/NOTES-DEV.txt        "Test build of <branch> (<sha>)", the note, and the base release: the launcher's "what's new" lines
 #   dev/DEV.txt              the newest test version, uploaded LAST (for people and scripts; the launcher trusts only the signed list)
 # It NEVER writes VERSION.txt, NOTES.txt, LTS.txt, NOTES-LTS.txt, versions.json, versions.json.sig or anything in v<ver>/ at the bucket root,
-# and it never creates, changes or deletes the bucket. Only the newest DEV_KEEP (6) test builds stay in the bucket; older dev/v<ver>/ folders
+# and it never creates, changes or deletes the bucket. Only the newest DEV_KEEP (3) test builds stay in the bucket; older dev/v<ver>/ folders
 # are deleted (and listed as not in the bucket); leftovers of a publish that stopped half way go with them.
 #
 # The version of a test build has FOUR numbers (2.876.0.17 = the 17th test build on top of release 2.876.0, shared/TestBuild.hpp). It must be
@@ -34,7 +34,7 @@
 #   DEV_SHA      the commit that was built (required; 7 to 40 hex digits)
 #   DEV_NOTE     one line from whoever started the build (optional; plain ASCII, 140 characters)
 #   DIST_DIR     build output to publish (default build-win-dist): OkaySpace.exe, Tools/OkayEngine.exe, Tools/OkaySpacePlayer.exe, VERSION.txt
-#   DEV_KEEP     how many test builds to keep in the bucket (default 6, at most 10)
+#   DEV_KEEP     how many test builds to keep in the bucket (default 3, at most 10)
 #   SUPABASE_URL project URL (default: the one baked into CMakeLists.txt)
 #   BUCKET       the bucket (default releases)
 #   SUPABASE_SERVICE_KEY (or SUPABASE_ACCESS_TOKEN, a management token the service key is fetched with): needed unless DRY_RUN=1
@@ -64,7 +64,7 @@ fi
 
 DIST_DIR="${DIST_DIR:-build-win-dist}"
 BUCKET="${BUCKET:-releases}"
-KEEP="${DEV_KEEP:-6}"
+KEEP="${DEV_KEEP:-3}"
 [[ "$KEEP" =~ ^[0-9]+$ ]] && [ "$KEEP" -ge 1 ] && [ "$KEEP" -le 10 ] || die "DEV_KEEP must be a number from 1 to 10 (got '$KEEP')"
 # The project URL: SUPABASE_URL, else OKAY_DEFAULT_ACCOUNT_URL, else config/public-account.json (the value the build bakes in).
 . "$(dirname "$0")/public-account.sh"

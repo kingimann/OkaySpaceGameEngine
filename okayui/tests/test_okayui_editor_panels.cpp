@@ -1,5 +1,5 @@
 // The editor's Problems, Stats, History, Tags and Layers, Physics, Profiler, Import settings, Post-processing, Player and Rendering
-// panels, and the small tool windows (Keyboard Shortcuts, Net, Find in Files, Data Asset, Plugin Manager), drawn with OkayUI (okayui/screens/OkayUIEditorPanels), and the toolkit pieces they needed (docs/own_ui_toolkit.md sections 9
+// panels, and the small tool windows (Keyboard Shortcuts, Net, Find in Files, Data Asset, Plugin Manager, Timers, Input Actions), drawn with OkayUI (okayui/screens/OkayUIEditorPanels), and the toolkit pieces they needed (docs/own_ui_toolkit.md sections 9
 // to 11). Driven headless the way
 // the editor drives them: every control is found by its rectangle in the result and used with synthetic input (clicks, typing,
 // the wheel, right-click menus); golden images (launcher look) pin what is drawn. The Dear ImGui versions are compared against
@@ -1282,6 +1282,14 @@ int main() {
         CHECK(P::FindHitLabel(f.hits[0]) == "Player.okay:12" && P::FindHitLabel(f.hits[2]) == "Hud.cs:7");
         P::FindHit longHit{"a.okay", 1, std::string(300, 'q')};
         CHECK(P::FindHitPreview(longHit).size() == 120 && P::FindHitLabel(longHit) == "a.okay:1");
+        // a bad regex: its error replaces the status line; Replace in All Files needs a term and hits
+        P::FindInFilesModel e = panelfix::FindHits();
+        e.error = "regex: missing )";
+        CHECK(P::FindInFilesStatus(e, "(a") == "regex: missing )");
+        P::FindInFilesState fs;
+        CHECK(!P::FindInFilesCanReplace(f, fs));
+        std::strcpy(fs.query, "health");
+        CHECK(P::FindInFilesCanReplace(f, fs) && !P::FindInFilesCanReplace(P::FindInFilesModel(), fs));
     }
     {   // the window, golden; Enter or Search asks for a search only with a term; a click on a hit opens it
         P::FindInFilesModel m = panelfix::FindHits();
@@ -1309,6 +1317,36 @@ int main() {
         CHECK(std::strcmp(st.query, "die") == 0 && !seen.search);   // typing alone does not search
         r.sim.Press(Key_Enter); r.Frame();
         CHECK(seen.search);
+    }
+    {   // Match case, Whole word and Regex: each change searches again (with a term); Replace in All Files only with hits
+        P::FindInFilesModel m = panelfix::FindHits();
+        P::FindInFilesState st;
+        std::strcpy(st.query, "health");
+        S::FindInFilesResult res;
+        P::FindInFilesIntent seen;
+        auto r = MakeRig(600, 420, [&](float x, float y, float w, float h) {
+            res = S::DrawFindInFiles(m, st, x, y, w, h);
+            seen.search |= res.intent.search; seen.replaceAll |= res.intent.replaceAll;
+        });
+        r.Frames(3);
+        CHECK(res.matchCase.w > 0 && res.wholeWord.x > res.matchCase.x && res.regex.x > res.wholeWord.x);
+        CHECK(res.matchCase.y > res.query.y && res.replaceField.y > res.matchCase.y && res.replace.x > res.replaceField.x);
+        CHECK(res.replace.w == 160.0f && res.status.y > res.replace.y);
+        r.Click(res.matchCase); CHECK(st.matchCase && seen.search);
+        seen = P::FindInFilesIntent();
+        r.Click(res.wholeWord); CHECK(st.wholeWord && seen.search);
+        seen = P::FindInFilesIntent();
+        r.Click(res.regex); CHECK(st.regex && seen.search && !seen.replaceAll);
+        r.Click(res.replaceField); r.sim.Type("hp"); r.Frame();
+        CHECK(std::strcmp(st.replaceWith, "hp") == 0);
+        r.Click(res.replace); CHECK(seen.replaceAll);
+        seen = P::FindInFilesIntent();
+        m.hits.clear(); r.Frames(1);
+        r.Click(res.replace); CHECK(!seen.replaceAll);              // nothing found: the button does nothing
+        st.query[0] = '\0'; seen = P::FindInFilesIntent(); r.Frames(1);
+        r.Click(res.regex); CHECK(!st.regex && !seen.search);       // no term: an option change does not search
+        m.error = "regex: missing )"; r.Frames(2);
+        Check("editorpanels_findinfiles_error", r.Draw());
     }
     {   // before the first search: the hint; focusQuery puts the keyboard in the field
         P::FindInFilesModel m;
@@ -1639,6 +1677,133 @@ int main() {
         CHECK(res.headers[4].w > 0);
         r.Click(res.headers[4]);
         CHECK(st.action == 0); CHECK(res.deadzone.w == 0); CHECK(res.action.w > 0);
+    }
+
+    // ================= Timers =================
+    {   // the shared rule: the dump split into lines
+        CHECK(P::TextLines("").empty());
+        CHECK(P::TextLines("a\nb\n") == std::vector<std::string>({"a", "b"}));
+        CHECK(P::TextLines("a\r\n\nb") == std::vector<std::string>({"a", "", "b"}));
+        CHECK(P::TextLines(panelfix::kTimersText).size() == 6);
+    }
+    {   // the window, golden: a line each, top to bottom; a long dump scrolls inside the body
+        S::TimersResult res;
+        auto r = MakeRig(560, 260, [&](float x, float y, float w, float h) { res = S::DrawTimers(panelfix::kTimersText, x, y, w, h); });
+        r.Frames(3);
+        CHECK(res.lines.size() == 6 && res.lines[1].y > res.lines[0].y && res.lines[5].y > res.lines[4].y);
+        CHECK(res.body.w > 400.0f && res.lines[0].y >= res.body.y);
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("editorpanels_timers", r.Draw());
+        std::string many;
+        for (int i = 0; i < 60; ++i) many += "  #" + std::to_string(i) + " invoke 0.1s / 1s\n";
+        auto r2 = MakeRig(560, 260, [&](float x, float y, float w, float h) { res = S::DrawTimers(many, x, y, w, h); });
+        r2.Frames(2);
+        CHECK(res.lines.size() == 60);
+        const float before = res.lines[0].y;
+        r2.sim.Move(CX(res.body), CY(res.body)); r2.sim.wheel = -3.0f; r2.Frame(); r2.sim.wheel = 0.0f; r2.Frames(2);
+        CHECK(res.lines[0].y < before);                                 // the wheel scrolls the body
+    }
+
+    // ================= Input Actions =================
+    {   // the shared rules: a map's title, an action's row, where each binding's fields start
+        const P::InputActionsModel m = panelfix::InputActions();
+        CHECK(P::InputMapTitle(m.maps[0]) == "Gameplay  (priority 0)");
+        CHECK(P::InputMapTitle(m.maps[1]) == "UI  (priority 10, consumes, off)");
+        CHECK(P::InputActionLabel(m.maps[0].actions[0]) == "    Move  [vector2]");
+        CHECK(P::InputPartOffsets(m) == std::vector<std::size_t>({0, 4, 5}));
+        CHECK(P::InputPartOffsets(P::InputActionsModel()) == std::vector<std::size_t>({0}));
+    }
+    {   // the window, golden; every button and the action rows answer with their intent
+        P::InputActionsModel m = panelfix::InputActions();
+        P::InputActionsState st;
+        std::strcpy(st.file, "Assets/input.okayinput");
+        st.selected = "Move";
+        st.status = "Loaded.";
+        S::InputActionsResult res;
+        P::InputActionsIntent seen;
+        auto r = MakeRig(960, 680, [&](float x, float y, float w, float h) {   // tall enough for Delete action without scrolling
+            res = S::DrawInputActions(m, st, x, y, w, h);
+            const P::InputActionsIntent& i = res.intent;
+            seen.load |= i.load; seen.save |= i.save; seen.newDefault |= i.newDefault; seen.migrate |= i.migrate; seen.useInGame |= i.useInGame;
+            seen.addMap |= i.addMap; seen.addScheme |= i.addScheme; seen.addAction |= i.addAction; seen.deleteAction |= i.deleteAction;
+            if (i.select) { seen.select = true; seen.selectName = i.selectName; }
+            if (i.partBinding >= 0) { seen.partBinding = i.partBinding; seen.partIndex = i.partIndex; seen.partText = i.partText; }
+            if (i.procBinding >= 0) { seen.procBinding = i.procBinding; seen.procText = i.procText; }
+            if (i.removeBinding >= 0) seen.removeBinding = i.removeBinding;
+            if (i.addBinding >= 0) seen.addBinding = i.addBinding;
+            if (i.addInteraction) { seen.addInteraction = true; seen.interactionText = i.interactionText; }
+            if (i.removeInteraction >= 0) seen.removeInteraction = i.removeInteraction;
+        });
+        r.Frames(3);
+        CHECK(res.file.w > 800.0f && res.load.y > res.file.y && res.save.x > res.load.x && res.useInGame.x > res.migrate.x);
+        CHECK(res.unsaved.x > res.useInGame.x && res.status.y > res.load.y);
+        CHECK(res.left.y > res.status.y && res.right.x > res.left.x + res.left.w && res.right.y == res.left.y);
+        CHECK(res.mapTitles.size() == 2 && res.actions.size() == 4 && res.actions[3].y > res.mapTitles[1].y);
+        CHECK(res.tabs[0].w > 0 && res.tabs[1].x > res.tabs[0].x && res.tabs[2].x > res.tabs[1].x);
+        CHECK(res.parts.size() == 5 && res.processors.size() == 2 && res.removeBindings.size() == 2);
+        CHECK(res.parts[1].x > res.parts[0].x && res.parts[4].y > res.parts[0].y && res.processors[0].y > res.parts[0].y);
+        CHECK(res.interactions.size() == 1 && res.removeInteractions.size() == 1 && res.deleteAction.y > res.interactions[0].y);
+        CHECK(st.partBufs.size() == 5 && std::strcmp(st.partBufs[3].data(), "key:d") == 0);
+        CHECK(std::strcmp(st.procBufs[1].data(), "deadzone(0.2,0.9)") == 0);
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("editorpanels_inputactions", r.Draw());
+        r.Click(res.load); CHECK(seen.load);
+        r.Click(res.save); CHECK(seen.save);
+        r.Click(res.newDefault); CHECK(seen.newDefault);
+        r.Click(res.migrate); CHECK(seen.migrate);
+        r.Click(res.useInGame); CHECK(seen.useInGame);
+        r.Click(res.addMap); CHECK(seen.addMap);
+        r.Click(res.addScheme); CHECK(seen.addScheme);
+        r.Click(res.addAction); CHECK(seen.addAction);
+        r.Click(res.actions[1]); CHECK(seen.select && seen.selectName == "Jump");
+        r.Click(res.removeBindings[1]); CHECK(seen.removeBinding == 1);
+        r.Click(res.addBinding[4]); CHECK(seen.addBinding == 4);
+        r.Click(res.removeInteractions[0]); CHECK(seen.removeInteraction == 0);
+        r.Click(res.deleteAction); CHECK(seen.deleteAction);
+        CHECK(!seen.addInteraction && seen.partBinding < 0);
+        // the name field and the file field edit the state; the type list picks + Action's type
+        r.Click(res.name); r.sim.Type("Dash"); r.Frame();
+        CHECK(std::strcmp(st.name, "Dash") == 0);
+        r.Click(res.file); r.sim.Press(Key_End); r.Frame(); r.sim.Type("2"); r.Frame();
+        CHECK(std::strcmp(st.file, "Assets/input.okayinput2") == 0);
+        // a binding field: typing keeps the text while the field has the keyboard, Enter hands it on
+        r.Click(res.parts[2]); r.sim.Press(Key_End); r.Frame();
+        for (int k = 0; k < 8; ++k) { r.sim.Press(Key_Backspace); r.Frame(); }
+        r.sim.Type("key:left"); r.Frame();
+        CHECK(std::strcmp(st.partBufs[2].data(), "key:left") == 0 && seen.partBinding < 0);
+        r.sim.Press(Key_Enter); r.Frame();
+        CHECK(seen.partBinding == 0 && seen.partIndex == 2 && seen.partText == "key:left");
+        // leaving the field without the host taking the text: it shows the model's text again
+        r.Click(res.interaction); r.Frame();
+        CHECK(std::strcmp(st.partBufs[2].data(), "key:a") == 0);
+        r.sim.Type("tap(0.2)"); r.Frame(); r.sim.Press(Key_Enter); r.Frame();
+        CHECK(seen.addInteraction && seen.interactionText == "tap(0.2)");
+        r.Click(res.processors[0]); r.sim.Type("invert(y)"); r.Frame(); r.sim.Press(Key_Enter); r.Frame();
+        CHECK(seen.procBinding == 0 && seen.procText == "invert(y)");
+        // the Check and Live tabs
+        r.Click(res.tabs[1]); r.Frames(1);
+        CHECK(res.problems.size() == 1 && res.parts.empty() && res.deleteAction.w == 0);
+        Check("editorpanels_inputactions_check", r.Draw());
+        r.Click(res.tabs[2]); r.Frames(1);
+        CHECK(res.liveLines.size() == 3 && res.problems.empty());   // the controller, "Player 1" and its line
+        Check("editorpanels_inputactions_live", r.Draw());
+        st.forceTab = 0; r.Frames(2);                                   // a tool can choose the tab
+        CHECK(res.parts.size() == 5 && st.forceTab == -1);
+    }
+    {   // nothing selected, no problems, no player: the hints
+        P::InputActionsModel m = panelfix::InputActions();
+        m.hasAction = false; m.problems.clear(); m.players.clear(); m.dirty = false;
+        P::InputActionsState st;
+        S::InputActionsResult res;
+        auto r = MakeRig(960, 600, [&](float x, float y, float w, float h) { res = S::DrawInputActions(m, st, x, y, w, h); });
+        r.Frames(2);
+        CHECK(res.parts.empty() && res.deleteAction.w == 0 && res.unsaved.w == 0 && res.status.w == 0);
+        st.forceTab = 1; r.Frames(2);
+        CHECK(res.problems.size() == 1);                                // "No problems found."
+        st.forceTab = 2; r.Frames(2);
+        CHECK(res.liveLines.size() == 2);                               // the controller line and the no-player hint
+        st.newType = 9; r.Frames(1);
+        CHECK(st.newType == 0);                                         // a type out of range is put back
     }
 
     TEST_MAIN_RESULT();

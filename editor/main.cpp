@@ -55701,16 +55701,12 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.MaterialEditor"); DrawMaterialEditor(ed); }
         { OKAY_PROFILE("UI.GameView"); if (g_showGame)      DrawGameView(ed); }
         { OKAY_PROFILE("UI.Profiler"); if (g_showProfiler)  DrawProfiler(ed); }
-        if (g_showTimers) {
+        if (g_showTimers) {   // OkayUI draws the window (no Dear ImGui version; docs/ui/own_ui_toolkit.md section 30)
             if (std::getenv("OKAY_UI_TIMERS")) {
                 ImGui::SetNextWindowPos(ImVec2(280, 80), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(ImVec2(720, 420), ImGuiCond_Always);
+                ImGui::SetWindowSize("Timers", ImVec2(720, 420), ImGuiCond_Always);   // (the host sets the first-use size itself, so by name)
             }
-            if (ImGui::Begin("Timers", &g_showTimers)) {
-                const std::string text = okay::editor::TimerDebugText(ed.scene());
-                ImGui::TextUnformatted(text.c_str());
-            }
-            ImGui::End();
+            DrawTimersOkayUI(&g_showTimers, [&] { return okay::editor::TimerDebugText(ed.scene()); });
         }
         { OKAY_PROFILE("UI.PerfOverlay"); if (g_showPerfOverlay) DrawPerfOverlay(ed); }
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }

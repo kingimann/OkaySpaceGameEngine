@@ -1,10 +1,10 @@
-// Headless pictures of the input windows (written outside the repository, see tools/input_shots.sh): the REAL drawing code of editor/InputActionsWindow.hpp
-// drawn by Dear ImGui's SDL renderer backend onto a software SDL surface, and the Input panel (editor/InputDebugger.hpp) drawn by the REAL OkayUI
-// screen (okayui/screens/OkayUIEditorPanels.cpp, the editor draws it with OkayUI only) from the real model (FillInputPanel) with OkayUI's software
-// renderer (no window, no editor, no GPU). The Dear ImGui pictures use ImGui's default dark style, NOT the editor's own skin; the rows, order and
-// texts are the real ones. Also the controller screens (button names, Controls screen, Controller station), the phase timeline and the
-// local-players screen, drawn with ImGui from the same engine data. Not part of the CMake build; see tools/input_shots.sh.
-// Written for this repository (Dear ImGui's public API and OkayUI only).
+// Headless pictures of the input windows (written outside the repository, see tools/input_shots.sh): the Input Actions window
+// (editor/InputActionsWindow.hpp) and the Input panel (editor/InputDebugger.hpp), both drawn by the REAL OkayUI screens
+// (okayui/screens/OkayUIEditorPanels.cpp, the editor draws them with OkayUI only) from the real models (FillInputActions, FillInputPanel)
+// with OkayUI's software renderer (no window, no editor, no GPU). Also the controller screens (button names, Controls screen,
+// Controller station), the phase timeline and the local-players screen, drawn with Dear ImGui's default dark style (NOT the editor's
+// skin) by its SDL renderer backend onto a software SDL surface from the same engine data. Not part of the CMake build; see
+// tools/input_shots.sh. Written for this repository (Dear ImGui's public API and OkayUI only).
 #include <SDL.h>
 #include "okay/Platform/BmpWriter.hpp"
 #include <imgui.h>
@@ -101,20 +101,17 @@ static void Capture(const std::string& name, const std::function<void()>& body, 
     std::printf("wrote %s\n", png.c_str());
 }
 
-// The Input panel as the editor draws it: OkayUI's screen over the real model, a few frames, then OkayUI's software renderer into
-// <name>.png (the panel's area is the editor's panel colour).
-static void OkayShot(const std::string& name, float w, float h) {
-    okaypanels::InputPanelState state;
+// A window as the editor draws it: an OkayUI screen over the real model (`draw` fills the model and draws it into the area it is
+// given), a few frames, then OkayUI's software renderer into <name>.png (the panel's area is the editor's panel colour).
+static void OkayShot(const std::string& name, float w, float h, const std::function<void(float, float, float, float)>& draw) {
     OkayUI::UseLauncherLook(true);
     for (int f = 0; f < 4; ++f) {
         InputActions::Tick(0.016f);
-        okaypanels::InputPanelModel model;
-        okay::editor::FillInputPanel(model, state, true);
         OkayUI::Input in;
         in.mouseX = -10000.0f; in.mouseY = -10000.0f; in.displayW = (float)W; in.displayH = (float)H;
         OkayUI::BeginFrame(in);
         OkayUI::PushTextScale(S * okayuiscreens::kEditorTextScale);
-        okayuiscreens::DrawInputPanel(model, state, 10 * S + 16 * S, 10 * S + 12 * S, w * S - 32 * S, h - 24 * S);
+        draw(10 * S + 16 * S, 10 * S + 12 * S, w * S - 32 * S, h - 24 * S);
         OkayUI::PopTextScale();
         OkayUI::EndFrameData();
     }
@@ -168,23 +165,31 @@ static void Shots() {
     Input::FeedGamepadRaw(0, {-0.55f, 0.35f}, {}, 0, 0.8f, 1u << Input::PadA, true);
     InputActions::Tick(0.1f); InputActions::Tick(0.1f); InputActions::Tick(0.1f);
 
-    // ---- 1. Input Actions window: the real window code
-    okay::editor::detail::IaSelected() = "Move";
-    for (int tab = 0; tab < 3; ++tab) {
-        okay::editor::detail::IaForceTab() = tab;
+    // ---- 1. Input Actions window: the real model and the real OkayUI screen, each tab
+    {
+        okay::editor::InputActionsWindowData& d = okay::editor::InputActionsData();
+        okay::editor::StartInputActions(d, "");
+        d.state.selected = "Move";
         const char* tabName[] = {"action", "check", "live"};
-        Capture("input-actions-window-" + std::string(tabName[tab]) + "-" + res, [&] {
-            ImGui::SetNextWindowPos(ImVec2(10 * S, 10 * S), ImGuiCond_Always);
-            static bool open = true;
-            ImGui::SetNextWindowSize(ImVec2((float)W - 20 * S, (float)H - 20 * S), ImGuiCond_Always);
-            okay::editor::DrawInputActionsWindow(&open, "");
-            ImGui::SetWindowSize("Input Actions", ImVec2((float)W - 20 * S, (float)H - 20 * S));   // the window sizes itself on first use; show it large
-        }, 10);
+        for (int tab = 0; tab < 3; ++tab) {
+            d.state.forceTab = tab;
+            OkayShot("input-actions-window-" + std::string(tabName[tab]) + "-" + res, (float)W / S - 20.0f, (float)H - 20 * S, [&](float x, float y, float w, float h) {
+                okaypanels::InputActionsModel model;
+                okay::editor::FillInputActions(model, d.ed, d.state);
+                okayuiscreens::DrawInputActions(model, d.state, x, y, w, h);
+            });
+        }
     }
-    okay::editor::detail::IaForceTab() = -1;
 
     // ---- 2. the Input panel: the real model and the real OkayUI screen (the editor draws it with OkayUI only)
-    OkayShot("input-panel-" + res, 620.0f, (float)H - 20 * S);
+    {
+        okaypanels::InputPanelState state;
+        OkayShot("input-panel-" + res, 620.0f, (float)H - 20 * S, [&](float x, float y, float w, float h) {
+            okaypanels::InputPanelModel model;
+            okay::editor::FillInputPanel(model, state, true);
+            okayuiscreens::DrawInputPanel(model, state, x, y, w, h);
+        });
+    }
 
     // ---- 3. the phase timeline (drawn with ImGui from a real ActionSet per interaction)
     Capture("action-phases-" + res, [&] {

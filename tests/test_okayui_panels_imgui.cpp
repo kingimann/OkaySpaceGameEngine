@@ -364,6 +364,15 @@ struct InputPanelData {
     P::InputPanelState state;
     std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawInputPanel(model, state, p.x, p.y, a.x, a.y); }; }
 };
+struct TimersData {
+    std::function<void(ImVec2, ImVec2)> Body() { return [](ImVec2 p, ImVec2 a) { okayuiscreens::DrawTimers(panelfix::kTimersText, p.x, p.y, a.x, a.y); }; }
+};
+struct InputActionsData {
+    P::InputActionsModel model = panelfix::InputActions();
+    P::InputActionsState state;
+    InputActionsData() { state.selected = "Move"; }
+    std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawInputActions(model, state, p.x, p.y, a.x, a.y); }; }
+};
 
 // The hosted picture `e` drew against the old way's: saved, printed, and nothing of the body left in OkayUI's frame (it is in ImGui's
 // draw list).
@@ -412,6 +421,8 @@ void SamePictureAsBefore() {
     CHECK(HostedAgainstOldWay<MaterialPanelData>("material", "Material").clearly < 0.5);
     CHECK(HostedAgainstOldWay<PerfPanelData>("perfoverlay", "Frame time###PerfOverlay").clearly < 0.5);
     CHECK(HostedAgainstOldWay<InputPanelData>("input", "Input").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<TimersData>("timers", "Timers").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<InputActionsData>("inputactions", "Input Actions").clearly < 0.5);
 }
 
 // The Frame time window sizes itself around its body (AlwaysAutoResize, HostPanelWindow's `bodySize`): the body says how big it is,
@@ -555,6 +566,32 @@ void MoreClicksReachThePanels() {
         e.Click(b.x + 8.0f, b.y + b.h * 0.5f);
         e.Frames(1);
         CHECK(d.d.paused && d.pauseChanged && d.d.selected == 239);
+    }
+    {   // Input Actions: clicks on an action row and on + Map through the Dear ImGui window (a taller window: the rows are below the file
+        // row, the buttons and the schemes; the test window is 520 wide, so only the left half of the 900-wide window shows)
+        kH = 700;
+        P::InputActionsModel model = panelfix::InputActions();
+        P::InputActionsState state;
+        okayuiscreens::InputActionsResult res;
+        std::string picked;
+        bool addMap = false;
+        Editor e;
+        e.winH = 660.0f;
+        e.title = "Input Actions";
+        e.body = [&](ImVec2 p, ImVec2 a) {
+            res = okayuiscreens::DrawInputActions(model, state, p.x, p.y, a.x, a.y);
+            if (res.intent.select) picked = res.intent.selectName;
+            addMap |= res.intent.addMap;
+        };
+        e.Frames(3);
+        CHECK(res.actions.size() == 4);
+        const OkayUI::Rect r = res.actions[2];
+        e.Click(r.x + r.w * 0.5f, r.y + r.h * 0.5f);
+        CHECK(picked == "Fire");
+        const OkayUI::Rect b = res.addMap;
+        e.Click(b.x + b.w * 0.5f, b.y + b.h * 0.5f);
+        CHECK(addMap);
+        kH = 420;
     }
 }
 
@@ -1322,7 +1359,7 @@ void LauncherBrowserShortcutsReachThePage() {
 } // namespace
 
 int main() {
-    RUN_SUITE("okayui panels in Dear ImGui windows (Crash Log, Audio Mixer, History, Problems, Stats, Profiler, Keyboard Shortcuts, Net, Find in Files, Data Asset, Plugin Manager, Map Humanoid Bones, Save Manager, Material, Frame time, Input; Project Settings' Player, Physics, Rendering, Tags and Layers; Post-processing; import settings)");
+    RUN_SUITE("okayui panels in Dear ImGui windows (Crash Log, Audio Mixer, History, Problems, Stats, Profiler, Keyboard Shortcuts, Net, Find in Files, Data Asset, Plugin Manager, Map Humanoid Bones, Save Manager, Material, Frame time, Input, Timers, Input Actions; Project Settings' Player, Physics, Rendering, Tags and Layers; Post-processing; import settings)");
     kH = 420;
     SamePictureAsBefore();
     WindowFitsItsBody();

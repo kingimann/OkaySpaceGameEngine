@@ -366,4 +366,33 @@ struct InputPanelResult {
 /// The five sections of the Input panel (the first three open at first); the body scrolls.
 InputPanelResult DrawInputPanel(okaypanels::InputPanelModel& model, okaypanels::InputPanelState& state, float x, float y, float w, float h);
 
+struct TimersResult {
+    OkayUI::Rect body;                               // the scrolling text area
+    std::vector<OkayUI::Rect> lines;                 // one per line of the text
+};
+/// The Timers window: the scheduler and tween dump (okay::editor::TimerDebugText), a line each, in a scrolling body.
+TimersResult DrawTimers(const std::string& text, float x, float y, float w, float h);
+
+struct InputActionsResult {
+    okaypanels::InputActionsIntent intent;
+    OkayUI::Rect file, load, save, newDefault, migrate, useInGame, unsaved, status;
+    OkayUI::Rect left, right;                        // the two framed halves
+    OkayUI::Rect name, addMap, addScheme, newType, addAction;
+    std::vector<OkayUI::Rect> mapTitles;             // one per map
+    std::vector<OkayUI::Rect> actions;               // one per action row, the maps' actions in order
+    OkayUI::Rect tabs[3];                            // Action, Check, Live
+    // the Action tab (zero size or empty on another tab)
+    std::vector<OkayUI::Rect> parts;                 // every binding's input fields one after the other (InputPartOffsets)
+    std::vector<OkayUI::Rect> processors, removeBindings;   // one per binding
+    OkayUI::Rect addBinding[5], interaction, deleteAction;
+    std::vector<OkayUI::Rect> interactions, removeInteractions;
+    std::vector<OkayUI::Rect> problems;              // the Check tab's rows
+    std::vector<OkayUI::Rect> liveLines;             // the Live tab's lines (controllers, then each player's title and lines)
+};
+/// The Input Actions window: the file row (path, Load, Save, New from default, Migrate Input Actions, Use in game), the status, then
+/// on the left the schemes, the name field with + Map and + Scheme, the maps with their actions (a click selects one) and + Action;
+/// on the right the Action, Check and Live tabs. The binding fields keep their text in `state` while they are edited; Enter asks
+/// the host to set it.
+InputActionsResult DrawInputActions(const okaypanels::InputActionsModel& model, okaypanels::InputActionsState& state, float x, float y, float w, float h);
+
 } // namespace okayuiscreens

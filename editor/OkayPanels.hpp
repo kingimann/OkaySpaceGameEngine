@@ -1,7 +1,7 @@
 #pragma once
 // Editor windows hosted by OkayUI (docs/ui/own_ui_toolkit.md sections 6, 9, 10, 11, 24, 25, 26 and 27; the Crash Log, the Audio Mixer, History, Problems, Stats,
 // the Profiler, Project Settings' Player, Physics, Rendering, Tags and Layers and Loading screen sections, the Project panel's import settings and
-// Lighting's Post-processing section, Keyboard Shortcuts, Net, Find in Files, Data Asset, the Plugin Manager, Map Humanoid Bones, the Save Manager, Material, Frame time and Input are drawn by OkayUI only, the others with the "OkayUI screens" backend or not wired yet). Each keeps its Dear
+// Lighting's Post-processing section, Keyboard Shortcuts, Net, Find in Files, Data Asset, the Plugin Manager, Map Humanoid Bones, the Save Manager, Material, Frame time, Input, Timers and Input Actions are drawn by OkayUI only, the others with the "OkayUI screens" backend or not wired yet). Each keeps its Dear
 // ImGui window (the dock tab, title and close box) and hands the free area, or its part of it, to the OkayUI screen in okayui/screens/OkayUIPanels
 // and OkayUIEditorPanels. Only compiled into the editor when OkayUI is (OKAY_HAVE_OKAYUI); without it the functions draw nothing.
 #include "EditorPanelModels.hpp"
@@ -86,6 +86,13 @@ bool DrawPerfOverlayOkayUI(bool* open, okaypanels::PerfOverlayModel& model, cons
                            okaypanels::PerfOverlayIntent& intent);
 bool DrawInputPanelOkayUI(bool* open, okaypanels::InputPanelModel& model, const std::function<void(okaypanels::InputPanelModel&)>& fill,
                           okaypanels::InputPanelState& state, okaypanels::InputPanelIntent& intent);
+
+/// Timers and Input Actions, OkayUI only (docs/ui/own_ui_toolkit.md section 30). Timers asks for its text through `text` only while the
+/// window shows. Input Actions fills its model through `fill` only while it shows (the check and the players' lines cost time); the
+/// state keeps the file path, the fields' text, the selected action and the status line; the host carries out the intent.
+bool DrawTimersOkayUI(bool* open, const std::function<std::string()>& text);
+bool DrawInputActionsOkayUI(bool* open, okaypanels::InputActionsModel& model, const std::function<void(okaypanels::InputActionsModel&)>& fill,
+                            okaypanels::InputActionsState& state, okaypanels::InputActionsIntent& intent);
 
 /// The Hierarchy panel with OkayUI (docs/own_ui_toolkit.md section 12). The window keeps the keyboard focus flag (`model.focused` is
 /// set here from the ImGui window). A file dragged in from a Dear ImGui panel arrives through model.externalDrag*, which the caller

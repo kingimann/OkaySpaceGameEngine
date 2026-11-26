@@ -4411,4 +4411,216 @@ InputPanelResult DrawInputPanel(InputPanelModel& m, InputPanelState& st, float x
     return res;
 }
 
+// ---- Timers --------------------------------------------------------------------------------------------------------------------
+
+TimersResult DrawTimers(const std::string& text, float x, float y, float w, float h) {
+    TimersResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("Timers##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        UI::BeginChild("##timersbody", UI::Vec2{0.0f, 0.0f}, UI::Child_None);
+        res.body = UI::Rect{UI::GetCursorScreenPos().x, UI::GetCursorScreenPos().y, UI::GetContentRegionAvail().x, UI::GetContentRegionAvail().y};
+        for (const std::string& l : TextLines(text)) {
+            UI::TextUnformatted(l.c_str());
+            res.lines.push_back(UI::GetItemRect());
+        }
+        UI::EndChild();
+    }
+    UI::End();
+    return res;
+}
+
+// ---- Input Actions -------------------------------------------------------------------------------------------------------------
+
+namespace {
+// Dear ImGui's BulletText in a text row: a small round dot in the first font-size column, the text after it, one text line tall
+// (OkayUI's BulletText is a frame row tall).
+void TextBullet(const char* s) {
+    const UI::Vec2 p = UI::GetCursorScreenPos();
+    const float fs = UI::GetFontSize();
+    UI::Indent(fs);
+    UI::TextUnformatted(s);
+    UI::Unindent(fs);
+    UI::GetWindowDrawList().AddCircleFilled(UI::Vec2{p.x + fs * 0.5f, p.y + fs * 0.5f}, fs * 0.15f, UI::GetColorU32(UI::Col_Text));
+}
+// A binding field's text while it is edited: the state's copy, which takes the model's text whenever the field is not being typed in.
+// Enter hands the typed text to the host (it checks it; the field shows the model's text again once it lets the keyboard go).
+bool IaField(const char* id, std::vector<char>& buf, const std::string& value, float width, std::string& entered) {
+    if (buf.size() != kIaPartSize) buf.assign(kIaPartSize, '\0');
+    buf.back() = '\0';
+    UI::SetNextItemWidth(width);
+    const bool enter = UI::InputText(id, buf.data(), (int)buf.size(), UI::InputText_EnterReturnsTrue);
+    if (enter) entered = buf.data();
+    else if (!UI::IsItemFocused()) std::snprintf(buf.data(), buf.size(), "%s", value.c_str());
+    return enter;
+}
+} // namespace
+
+InputActionsResult DrawInputActions(const InputActionsModel& m, InputActionsState& st, float x, float y, float w, float h) {
+    InputActionsResult res;
+    st.file[sizeof(st.file) - 1] = '\0';
+    st.name[sizeof(st.name) - 1] = '\0';
+    st.interaction[sizeof(st.interaction) - 1] = '\0';
+    if (st.newType < 0 || st.newType > 3) st.newType = 0;
+    UI::BareNextWindow();
+    if (UI::Begin("InputActions##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        MenuLook look_(0.0f);   // the header colours of the selected and hovered action rows
+        InputActionsIntent& in = res.intent;
+        // ---- the file row ----
+        UI::SetNextItemWidth(UI::GetContentRegionAvail().x);
+        UI::InputText("##inputfile", st.file, (int)sizeof(st.file));
+        res.file = UI::GetItemRect();
+        if (UI::Button("Load")) in.load = true;
+        res.load = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("Save")) in.save = true;
+        res.save = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("New from default")) in.newDefault = true;
+        res.newDefault = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("Migrate Input Actions")) in.migrate = true;
+        res.migrate = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("Use in game")) in.useInGame = true;
+        res.useInGame = UI::GetItemRect();
+        if (m.dirty) { UI::SameLine(); UI::TextDisabled("(unsaved changes)"); res.unsaved = UI::GetItemRect(); }
+        if (!st.status.empty()) { UI::TextDisabled(st.status.c_str()); res.status = UI::GetItemRect(); }
+        Divider();
+
+        // ---- left: schemes, maps and actions ----
+        UI::BeginChild("##ia_left", UI::Vec2{UI::GetFontSize() * 21.0f, 0.0f}, UI::Child_Borders);
+        res.left = UI::Rect{UI::GetCursorScreenPos().x, UI::GetCursorScreenPos().y, UI::GetContentRegionAvail().x, UI::GetContentRegionAvail().y};
+        UI::TextDisabled("Schemes");
+        for (const std::string& c : m.schemes) TextBullet(c.c_str());
+        UI::SetNextItemWidth(UI::GetContentRegionAvail().x);
+        UI::InputTextWithHint("##newname", "name (no spaces)", st.name, (int)sizeof(st.name));
+        res.name = UI::GetItemRect();
+        if (LineButton("+ Map")) in.addMap = true;
+        res.addMap = UI::GetItemRect();
+        UI::SameLine();
+        if (LineButton("+ Scheme")) in.addScheme = true;
+        res.addScheme = UI::GetItemRect();
+        Divider();
+        for (const InputActionMapRow& map : m.maps) {
+            UI::Text(InputMapTitle(map).c_str());
+            res.mapTitles.push_back(UI::GetItemRect());
+            for (const InputActionRow& a : map.actions) {
+                UI::PushID((map.name + "/" + a.name).c_str());
+                if (UI::Selectable(InputActionLabel(a).c_str(), st.selected == a.name, UI::Selectable_Header, UI::Vec2{0.0f, UI::GetFontSize()})) {
+                    in.select = true; in.selectName = a.name;
+                }
+                res.actions.push_back(UI::GetItemRect());
+                UI::PopID();
+            }
+        }
+        Divider();
+        UI::SetNextItemWidth(110.0f);
+        UI::Combo("##newtype", kIaNewTypes, 4, &st.newType);
+        res.newType = UI::GetItemRect();
+        UI::SameLine();
+        if (LineButton("+ Action")) in.addAction = true;
+        res.addAction = UI::GetItemRect();
+        UI::EndChild();
+        UI::SameLine();
+
+        // ---- right: the Action, Check and Live tabs ----
+        UI::BeginChild("##ia_right", UI::Vec2{0.0f, 0.0f}, UI::Child_Borders);
+        res.right = UI::Rect{UI::GetCursorScreenPos().x, UI::GetCursorScreenPos().y, UI::GetContentRegionAvail().x, UI::GetContentRegionAvail().y};
+        if (UI::BeginTabBar("##iatabs")) {
+            const int want = st.forceTab;
+            st.forceTab = -1;
+            const bool actionTab = UI::BeginTabItem("Action", nullptr, want == 0 ? UI::TabItem_SetSelected : 0);
+            res.tabs[0] = UI::GetItemRect();
+            if (actionTab) {
+                if (!m.hasAction) UI::TextDisabled(kIaPickAction);
+                else {
+                    for (const std::string& l : m.describe) UI::TextWrapped(l.c_str());
+                    Divider();
+                    const std::vector<std::size_t> off = InputPartOffsets(m);
+                    if (st.partBufs.size() != off.back()) st.partBufs.resize(off.back());
+                    if (st.procBufs.size() != m.bindings.size()) st.procBufs.resize(m.bindings.size());
+                    for (std::size_t b = 0; b < m.bindings.size(); ++b) {
+                        const InputBindingRow& bs = m.bindings[b];
+                        UI::PushID((int)b);
+                        UI::Text(("Binding " + std::to_string(b + 1)).c_str());
+                        const float n = (float)std::max<std::size_t>(1, bs.parts.size());
+                        for (std::size_t p = 0; p < bs.parts.size(); ++p) {
+                            UI::PushID((int)p);
+                            const float pw = std::max(70.0f, (UI::GetContentRegionAvail().x - g_metrics.itemSpacing.x * n) / n - 4.0f);
+                            std::string typed;
+                            if (IaField("##part", st.partBufs[off[b] + p], bs.parts[p], pw, typed) && in.partBinding < 0) {
+                                in.partBinding = (int)b; in.partIndex = (int)p; in.partText = typed;
+                            }
+                            res.parts.push_back(UI::GetItemRect());
+                            UI::PopID();
+                            if (p + 1 < bs.parts.size()) UI::SameLine();
+                        }
+                        std::string typed;
+                        if (IaField("##proc", st.procBufs[b], bs.processors, UI::GetContentRegionAvail().x * 0.5f, typed) && in.procBinding < 0) {
+                            in.procBinding = (int)b; in.procText = typed;
+                        }
+                        res.processors.push_back(UI::GetItemRect());
+                        UI::SameLine(0.0f, g_metrics.innerSpacing.x);
+                        UI::TextUnformatted("processors");
+                        UI::SameLine();
+                        if (LineButton("Remove binding") && in.removeBinding < 0) in.removeBinding = (int)b;
+                        res.removeBindings.push_back(UI::GetItemRect());
+                        UI::PopID();
+                    }
+                    for (int i = 0; i < 5; ++i) {
+                        if (i) UI::SameLine();
+                        if (LineButton(kIaBindingKinds[i])) in.addBinding = i;
+                        res.addBinding[i] = UI::GetItemRect();
+                    }
+                    Divider();
+                    UI::SetNextItemWidth(UI::GetContentRegionAvail().x);
+                    if (UI::InputTextWithHint("##inter", kIaInteractionHint, st.interaction, (int)sizeof(st.interaction), UI::InputText_EnterReturnsTrue)) {
+                        in.addInteraction = true; in.interactionText = st.interaction;
+                    }
+                    res.interaction = UI::GetItemRect();
+                    for (std::size_t i = 0; i < m.interactions.size(); ++i) {
+                        UI::PushID(1000 + (int)i);
+                        TextBullet(m.interactions[i].c_str());
+                        res.interactions.push_back(UI::GetItemRect());
+                        UI::SameLine();
+                        if (LineButton("x") && in.removeInteraction < 0) in.removeInteraction = (int)i;
+                        res.removeInteractions.push_back(UI::GetItemRect());
+                        UI::PopID();
+                    }
+                    if (LineButton("Delete action")) in.deleteAction = true;
+                    res.deleteAction = UI::GetItemRect();
+                }
+                UI::EndTabItem();
+            }
+            const bool checkTab = UI::BeginTabItem("Check", nullptr, want == 1 ? UI::TabItem_SetSelected : 0);
+            res.tabs[1] = UI::GetItemRect();
+            if (checkTab) {
+                if (m.problems.empty()) { UI::TextDisabled(kIaNoProblems); res.problems.push_back(UI::GetItemRect()); }
+                for (const std::string& p : m.problems) { TextBullet(p.c_str()); res.problems.push_back(UI::GetItemRect()); }
+                UI::EndTabItem();
+            }
+            const bool liveTab = UI::BeginTabItem("Live", nullptr, want == 2 ? UI::TabItem_SetSelected : 0);
+            res.tabs[2] = UI::GetItemRect();
+            if (liveTab) {
+                for (const std::string& l : m.controllers) { UI::TextWrapped(l.c_str()); res.liveLines.push_back(UI::GetItemRect()); }
+                Divider();
+                if (m.players.empty()) { UI::TextDisabled(kIaNoPlayer); res.liveLines.push_back(UI::GetItemRect()); }
+                for (const InputActionsModel::Player& p : m.players) {
+                    UI::Text(("Player " + std::to_string(p.number)).c_str());
+                    res.liveLines.push_back(UI::GetItemRect());
+                    for (const std::string& l : p.lines) { UI::TextWrapped(l.c_str()); res.liveLines.push_back(UI::GetItemRect()); }
+                }
+                UI::EndTabItem();
+            }
+            UI::EndTabBar();
+        }
+        UI::EndChild();
+    }
+    UI::End();
+    return res;
+}
+
 } // namespace okayuiscreens

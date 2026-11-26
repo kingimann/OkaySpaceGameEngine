@@ -43,7 +43,7 @@ std::map<std::string, std::string> ReadProjectScripts(const EditorState& ed) {
     return texts;
 }
 
-scriptide::FindOptions OptionsOf(const okaypanels::FindInFilesState& st) {
+scriptide::FindOptions ScriptFindOptions(const okaypanels::FindInFilesState& st) {
     scriptide::FindOptions opt;
     opt.matchCase = st.matchCase; opt.wholeWord = st.wholeWord; opt.regex = st.regex;
     return opt;
@@ -51,11 +51,12 @@ scriptide::FindOptions OptionsOf(const okaypanels::FindInFilesState& st) {
 
 void SearchScripts(const EditorState& ed, const okaypanels::FindInFilesState& st, okaypanels::FindInFilesModel& m) {
     m.hits.clear(); m.error.clear(); m.ran = true;
-    for (const auto& fm : scriptide::FindInTexts(ReadProjectScripts(ed), st.query, OptionsOf(st), okaypanels::kFindInFilesCap, &m.error)) {
+    for (const auto& fm : scriptide::FindInTexts(ReadProjectScripts(ed), st.query, ScriptFindOptions(st), okaypanels::kFindInFilesCap, &m.error)) {
         std::string line = fm.lineText;
         if (!line.empty() && line.back() == '\r') line.pop_back();
-        std::size_t a = line.find_first_not_of(" \t");
-        m.hits.push_back({fm.file, fm.match.line, a == std::string::npos ? line : line.substr(a)});
+        const std::size_t a = line.find_first_not_of(" \t");
+        if (a != std::string::npos) line.erase(0, a);   // the leading blanks go (a blank line stays as it is)
+        m.hits.push_back({fm.file, fm.match.line, std::move(line)});
     }
 }
 
@@ -66,7 +67,7 @@ void ReplaceInScripts(const EditorState& ed, const okaypanels::FindInFilesState&
     m.error.clear();
     for (const auto& kv : ReadProjectScripts(ed)) {
         int n = 0;
-        const std::string out = scriptide::ReplaceAll(kv.second, st.query, st.replaceWith, OptionsOf(st), &n, &m.error);
+        const std::string out = scriptide::ReplaceAll(kv.second, st.query, st.replaceWith, ScriptFindOptions(st), &n, &m.error);
         if (n <= 0) continue;
         std::ofstream f(kv.first, std::ios::binary);
         if (f << out) { total += n; ++files; }

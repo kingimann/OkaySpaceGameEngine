@@ -388,6 +388,9 @@ bool DrawPerfOverlayOkayUI(bool*, okaypanels::PerfOverlayModel&, const std::func
                            okaypanels::PerfOverlayIntent& intent) { intent = okaypanels::PerfOverlayIntent(); return false; }
 bool DrawInputPanelOkayUI(bool*, okaypanels::InputPanelModel&, const std::function<void(okaypanels::InputPanelModel&)>&,
                           okaypanels::InputPanelState&, okaypanels::InputPanelIntent& intent) { intent = okaypanels::InputPanelIntent(); return false; }
+bool DrawTimersOkayUI(bool*, const std::function<std::string()>&) { return false; }
+bool DrawInputActionsOkayUI(bool*, okaypanels::InputActionsModel&, const std::function<void(okaypanels::InputActionsModel&)>&,
+                            okaypanels::InputActionsState&, okaypanels::InputActionsIntent& intent) { intent = okaypanels::InputActionsIntent(); return false; }
 #endif
 bool DrawHierarchyOkayUI(bool*, okaypanels::HierarchyModel&, okaypanels::HierarchyState&, okaypanels::HierarchyIntent&) { return false; }
 bool DrawInspectorHeaderOkayUI(okaypanels::InspectorHeaderModel&, okaypanels::InspectorHeaderState&, okaypanels::InspectorHeaderIntent&) { return false; }
@@ -660,6 +663,27 @@ bool DrawInputPanelOkayUI(bool* open, okaypanels::InputPanelModel& model, const 
         intent = okayuiscreens::DrawInputPanel(model, state, p.x, p.y, a.x, a.y).intent;
         OkayUI::PopTextScale();
     }, 520.0f, 560.0f);
+}
+
+// Timers and Input Actions (docs/ui/own_ui_toolkit.md section 30): OkayUI only, each a whole window, titled as before.
+bool DrawTimersOkayUI(bool* open, const std::function<std::string()>& text) {
+    return PanelWindow("Timers", open, "##okayui_timers", [&](ImVec2 p, ImVec2 a) {
+        const std::string t = text ? text() : std::string();
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        okayuiscreens::DrawTimers(t, p.x, p.y, a.x, a.y);
+        OkayUI::PopTextScale();
+    }, 560.0f, 360.0f);
+}
+
+bool DrawInputActionsOkayUI(bool* open, okaypanels::InputActionsModel& model, const std::function<void(okaypanels::InputActionsModel&)>& fill,
+                            okaypanels::InputActionsState& state, okaypanels::InputActionsIntent& intent) {
+    intent = okaypanels::InputActionsIntent();
+    return PanelWindow("Input Actions", open, "##okayui_inputactions", [&](ImVec2 p, ImVec2 a) {
+        fill(model);
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawInputActions(model, state, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+    }, 900.0f, 600.0f);
 }
 
 } // namespace oked

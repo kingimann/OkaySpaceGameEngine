@@ -304,4 +304,34 @@ inline InputPanelModel InputPanel() {
     return m;
 }
 
+// The Timers window: two scheduler tasks and one tween, as the engine dumps them (made up, in the dump's shape).
+inline const char* kTimersText =
+    "Scheduler: 2 tasks (1 repeating)\n"
+    "  #1 invoke   0.42s / 0.5s   tag=hello\n"
+    "  #2 repeat   0.10s / 0.25s  left 3  owner=Spawner\n"
+    "\n"
+    "Tweens: 1\n"
+    "  fade  DelayedCall  0.30s / 1s  running\n";
+
+// The Input Actions window on the default asset: two schemes, two maps, the Move action selected with two bindings and one
+// interaction, one problem, a controller and one player.
+inline InputActionsModel InputActions() {
+    InputActionsModel m;
+    m.dirty = true;
+    m.schemes = {"Keyboard+Mouse keyboard mouse", "Gamepad gamepad"};
+    InputActionMapRow game; game.name = "Gameplay"; game.priority = 0;
+    game.actions = {{"Move", "vector2"}, {"Jump", "button"}, {"Fire", "button"}};
+    InputActionMapRow ui; ui.name = "UI"; ui.priority = 10; ui.consume = true; ui.enabled = false;
+    ui.actions = {{"Submit", "button"}};
+    m.maps = {game, ui};
+    m.hasAction = true;
+    m.describe = {"Move (vector2) in map Gameplay", "2 bindings, 1 interaction"};
+    m.bindings = {{{"key:w", "key:s", "key:a", "key:d"}, ""}, {{"stick:left"}, "deadzone(0.2,0.9)"}};
+    m.interactions = {"hold(0.5)"};
+    m.problems = {"Fire has no binding for the Gamepad scheme"};
+    m.controllers = {"Controller 1: DualSense (054c:0ce6), mapped"};
+    m.players = {{1, {"Move  Vector2  -0.55, 0.35  performed  stick:left"}}};
+    return m;
+}
+
 } // namespace panelfix

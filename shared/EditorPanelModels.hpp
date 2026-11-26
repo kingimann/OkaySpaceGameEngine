@@ -15,6 +15,7 @@
 //   Keyboard Shortcuts, Net, Find in Files, Data Asset, Plugin Manager  the small tool windows (editor/main.cpp, NetSimPanel.cpp,
 //                   FindInFiles.cpp, PluginsWindow.cpp)
 //   Map Humanoid Bones, Save Manager, Material, Frame time, Input  more tool windows (editor/main.cpp, InputDebugger.hpp)
+//   Timers, Input Actions  the scheduler and tween dump (editor/main.cpp) and the input asset editor (InputActionsWindow.hpp)
 //
 // Standard C++ only: no ImGui, no OkayUI, no engine types. The editor fills a model from its own state each frame, a panel
 // version draws it and answers with an intent (what the person asked for), and the editor carries the intent out. The rules
@@ -1214,6 +1215,104 @@ inline const char* kInputNoPlayer = "No local player yet (ia_join or the first i
 inline const char* kInputRecordNote = "Record what you press while the game plays, then replay it to reproduce a bug. While it replays, "
                                       "the keyboard and mouse are ignored.";
 inline const char* kInputCurveCaption = "how far you push (left to right) -> what the game gets";
+
+// ============================================================================================================================
+// Timers (View > Panels > Timers): the scene scheduler's tasks, then the tweens, as the engine dumps them
+// ============================================================================================================================
+
+/// The text split into its lines (a trailing newline makes no empty last line; "\r" before a newline is dropped).
+inline std::vector<std::string> TextLines(const std::string& text) {
+    std::vector<std::string> out;
+    std::size_t a = 0;
+    while (a < text.size()) {
+        std::size_t e = text.find('\n', a);
+        if (e == std::string::npos) e = text.size();
+        std::size_t end = e;
+        if (end > a && text[end - 1] == '\r') --end;
+        out.push_back(text.substr(a, end - a));
+        a = e + 1;
+    }
+    return out;
+}
+
+// ============================================================================================================================
+// Input Actions (View > Editors & Tools > Input Actions): an input asset (.okayinput) - control schemes, action maps, actions
+// with their bindings, processors and interactions - with a validation list and a live view of the players' actions
+// ============================================================================================================================
+
+constexpr std::size_t kIaFileSize = 512, kIaNameSize = 64, kIaPartSize = 160, kIaInteractionSize = 96;
+
+struct InputActionRow { std::string name, type; };          // an action of a map and its value type ("button", "vector2" ...)
+struct InputActionMapRow {
+    std::string name;
+    int priority = 0;
+    bool consume = false, enabled = true;
+    std::vector<InputActionRow> actions;
+};
+struct InputBindingRow { std::vector<std::string> parts; std::string processors; };   // one input per part ("key:w"); processors as text
+
+struct InputActionsModel {
+    bool dirty = false;                     // the asset has changes that are not saved
+    std::vector<std::string> schemes;       // "Keyboard+Mouse keyboard mouse"
+    std::vector<InputActionMapRow> maps;
+    // the Action tab (the selected action; hasAction false: none or it is gone)
+    bool hasAction = false;
+    std::vector<std::string> describe;      // what the action is and does, a line each
+    std::vector<InputBindingRow> bindings;
+    std::vector<std::string> interactions;  // "hold(0.5)"
+    // the Check tab
+    std::vector<std::string> problems;
+    // the Live tab
+    std::vector<std::string> controllers;
+    struct Player { int number = 1; std::vector<std::string> lines; };
+    std::vector<Player> players;
+};
+
+struct InputActionsState {
+    char file[kIaFileSize] = "";            // the asset's path: Load and Save use it
+    char name[kIaNameSize] = "";            // the name field (+ Map, + Scheme, + Action)
+    char interaction[kIaInteractionSize] = "";   // the "add interaction" field
+    int newType = 0;                        // + Action's value type (index into kIaNewTypes)
+    std::string selected;                   // the action shown in the Action tab
+    std::string status;                     // the last answer ("Saved.", "Map name taken ...")
+    int forceTab = -1;                      // 0 Action, 1 Check, 2 Live: chosen on the next frame (-1 leaves it)
+    // the binding fields' text while they are edited: parts of every binding one after the other, then one processors field each
+    std::vector<std::vector<char>> partBufs, procBufs;
+};
+
+struct InputActionsIntent {
+    bool load = false, save = false, newDefault = false, migrate = false, useInGame = false;
+    bool addMap = false, addScheme = false, addAction = false, deleteAction = false;
+    bool select = false; std::string selectName;            // an action row was clicked
+    int partBinding = -1, partIndex = -1; std::string partText;   // Enter in a binding's input field
+    int procBinding = -1; std::string procText;                    // Enter in a binding's processors field
+    int removeBinding = -1;
+    int addBinding = -1;                                           // index into kIaBindingKinds
+    bool addInteraction = false; std::string interactionText;      // Enter in the interaction field
+    int removeInteraction = -1;
+};
+
+inline const char* const kIaNewTypes[] = {"button", "axis", "vector2", "vector3"};
+inline const char* const kIaBindingKinds[] = {"+ single", "+ 2D vector", "+ 3D vector", "+ 1D axis", "+ chord"};
+inline const char* kIaPickAction = "Pick an action on the left.";
+inline const char* kIaNoProblems = "No problems found.";
+inline const char* kIaNoPlayer = "No local player yet: a script that reads an action (ia_x, ia_down ...) joins one, or call ia_join().";
+inline const char* kIaInteractionHint = "add interaction (Enter): hold(0.5)  tap(0.2)  multitap(2)  repeat(0.1)  press  release";
+
+/// A map's title line: "Gameplay  (priority 0, consumes, off)".
+inline std::string InputMapTitle(const InputActionMapRow& m) {
+    return m.name + "  (priority " + std::to_string(m.priority) + (m.consume ? ", consumes" : "") + (m.enabled ? "" : ", off") + ")";
+}
+/// An action's row in the list: "    Jump  [button]".
+inline std::string InputActionLabel(const InputActionRow& a) { return "    " + a.name + "  [" + a.type + "]"; }
+/// The first part field of each binding in InputActionsState::partBufs (the parts of every binding one after the other).
+inline std::vector<std::size_t> InputPartOffsets(const InputActionsModel& m) {
+    std::vector<std::size_t> off;
+    std::size_t n = 0;
+    for (const InputBindingRow& b : m.bindings) { off.push_back(n); n += b.parts.size(); }
+    off.push_back(n);
+    return off;
+}
 
 } // namespace okaypanels
 

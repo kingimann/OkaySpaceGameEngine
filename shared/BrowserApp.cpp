@@ -726,7 +726,7 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
                 S::DrawBrowserIcon(ic, icx, icy, 15.0f, sg.kind == Suggestion::Bookmark ? lk::kAccent : lk::kTextDim, true);
                 std::string mainText, sideText;
                 switch (sg.kind) {
-                case Suggestion::Search: mainText = sg.title; sideText = std::string(" - ") + (AddressPlaceholder(profile().settings.searchUrl).find("Google") != std::string::npos ? "Search Google" : "Search"); break;
+                case Suggestion::Search: mainText = sg.title; sideText = " - Search"; break;
                 case Suggestion::Go: mainText = sg.url; break;
                 case Suggestion::OpenTab: mainText = sg.title.empty() ? sg.url : sg.title; sideText = " - Switch to this tab"; break;
                 default: mainText = sg.title.empty() ? sg.url : sg.title; sideText = " - " + sg.url; break;

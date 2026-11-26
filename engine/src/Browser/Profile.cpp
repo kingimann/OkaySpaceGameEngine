@@ -782,9 +782,8 @@ std::string SearchForm(const std::string& tmpl) {
         hidden += "<input type=hidden name=\"" + HtmlEscape(name) + "\" value=\"" + HtmlEscape(value) + "\">";
     }
     if (field.empty()) return std::string();
-    const bool google = HostOf(tmpl) == "www.google.com" || HostOf(tmpl) == "google.com";
     return "<form class=search method=get action=\"" + HtmlEscape(action) + "\">" + hidden + "<input class=q type=text name=\"" +
-           HtmlEscape(field) + "\" placeholder=\"" + (google ? "Search Google" : "Search the web") + "\"></form>";
+           HtmlEscape(field) + "\" placeholder=\"" + "Search the web" + "\"></form>";
 }
 
 // A shortcut tile: a round badge with the site's first letter (a colour of its own per host) and the page's title.

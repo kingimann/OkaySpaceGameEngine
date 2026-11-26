@@ -64,7 +64,7 @@ void TestModel(const fs::path& tmp) {
     CHECK(WaitIdle(p, pump));
     CHECK(p.LastExitCode() == 0);
     CHECK(CountKind(p, OutLine::Note, "> okay help vc"));
-    CHECK(CountKind(p, OutLine::Out, "vc save"));
+    CHECK(CountKind(p, OutLine::Out, "okay vc <init|clone"));
     CHECK(CountKind(p, OutLine::Note, "Done."));
 
     CHECK(p.Submit("frobnicate"));                   // a problem: its own kind (drawn red), and the exit code
@@ -81,10 +81,11 @@ void TestModel(const fs::path& tmp) {
     p.SetInput("half typed");
     CHECK(p.HistoryUp() && p.Input() == "help \"vc");
     CHECK(p.HistoryUp() && p.Input() == "frobnicate");
+    CHECK(p.HistoryUp() && p.Input() == "help");             // refused while a command ran, still kept to type again
     CHECK(p.HistoryUp() && p.Input() == "okay help vc");
     CHECK(!p.HistoryUp());
-    CHECK(p.HistoryDown() && p.Input() == "frobnicate");
-    CHECK(p.HistoryDown() && p.HistoryDown() && p.Input() == "half typed");
+    CHECK(p.HistoryDown() && p.Input() == "help");
+    CHECK(p.HistoryDown() && p.HistoryDown() && p.HistoryDown() && p.Input() == "half typed");
 
     // Tab: command names, then sub-commands, from okay's command table.
     p.SetInput("he");
@@ -100,7 +101,7 @@ void TestModel(const fs::path& tmp) {
 
     // Copy: every line, to the host's clipboard.
     p.Copy();
-    CHECK(copied == p.Log().Text() && Has(copied, "vc save"));
+    CHECK(copied == p.Log().Text() && Has(copied, "okay vc <init|clone"));
 
     // The project folder is the working folder.
     const fs::path proj = tmp / "PanelGame";
@@ -140,14 +141,15 @@ void TestDrawn(const fs::path& tmp) {
     CHECK(WaitIdle(p, [&] { sim.Frame(ui); }));
     CHECK(CountKind(p, OutLine::Out, "okay new"));
 
-    sim.Type("frobnicate");
+    sim.Type("open --bogus");                          // a problem (short and the same on every version: no version line)
     sim.Tap(Key_Enter, ui);
     CHECK(WaitIdle(p, [&] { sim.Frame(ui); }));
-    CHECK(CountKind(p, OutLine::Err, "frobnicate"));
+    CHECK(p.LastExitCode() == 2);
+    CHECK(CountKind(p, OutLine::Err, "bogus"));
 
     sim.Press(Key_Up);                                 // Up brings back the last line
     sim.Frame(ui);
-    CHECK(p.Input() == "frobnicate");
+    CHECK(p.Input() == "open --bogus");
     sim.Press(Key_SelectAll);
     sim.Frame(ui);
     sim.Press(Key_Backspace);

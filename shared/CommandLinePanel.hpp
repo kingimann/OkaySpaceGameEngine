@@ -81,6 +81,7 @@ private:
     char buf_[1024] = {};
     unsigned seenRevision_ = 0;
     int follow_ = 0;           ///< frames left to keep the output scrolled to the end
+    float lastOutH_ = 0.0f;    ///< the output box's height last frame (when it changes, the end stays in view)
     bool focusInput_ = true;   ///< give the input line the keyboard next frame
     int lastExit_ = -1;
 };

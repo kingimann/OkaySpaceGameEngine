@@ -163,8 +163,9 @@ void CommandLinePanel::Frame(float x, float y, float w, float h) {
 
         // ---- the output: every line, scrolled to the end while new lines come ----
         const float rowH = UI::GetFrameHeightWithSpacing();
-        const float below = rowH + (choices_.empty() ? 0.0f : UI::GetFontSize() + 4.0f);
+        const float below = rowH * (choices_.empty() ? 1.0f : 2.0f) + 4.0f;   // the input row, and the choices row (a frame tall) when shown
         const float outH = std::max(UI::GetContentRegionAvail().y - below, 20.0f);
+        if (outH != lastOutH_) { lastOutH_ = outH; follow_ = std::max(follow_, 2); }   // the choices row came or went
         if (UI::BeginChild("##out", UI::Vec2{0.0f, outH}, UI::Child_Borders)) {
             // Text rows one font line tall, as a terminal; only the rows in view are laid out (5,000 lines stay cheap).
             UI::PushStyleVar(UI::StyleVar_TextRowHeight, UI::GetFontSize());

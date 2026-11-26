@@ -81,7 +81,7 @@ void TestRunInProcess(const fs::path& tmp) {
         CHECK(r.exitCode == 0);
         CHECK(!r.stopped);
         CHECK(!r.lines.empty());
-        CHECK(Has(Joined(r.lines, OutLine::Out), "vc save"));
+        CHECK(Has(Joined(r.lines, OutLine::Out), "okay vc <init|clone"));
         CHECK(Joined(r.lines, OutLine::Err).empty());
     }
     {   // an unknown command: a problem line and exit code 2, and the program goes on

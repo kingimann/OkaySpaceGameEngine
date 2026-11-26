@@ -40,7 +40,7 @@ static void ClearStackEnvironment() {
 static bool Has(const std::string& s, const char* part) { return s.find(part) != std::string::npos; }
 // The one HTTP client this build has (NativeHttp.hpp): no curl and no run-time switch any more.
 static const char* ExpectedHttp() {
-#if defined(OKAY_HTTP_WINHTTP)
+#if defined(_WIN32)   // as OwnStack.hpp's Gather (NativeHttp.hpp, which defines OKAY_HTTP_WINHTTP, is not included there on Windows)
     return "winhttp";
 #elif defined(OKAY_OWN_HTTP_ACTIVE)
     return "own";

@@ -440,8 +440,19 @@ inline bool PidAlive(unsigned long pid) {
     CloseHandle(h);
     return w == WAIT_TIMEOUT;
 #else
-    if (::kill(static_cast<pid_t>(pid), 0) == 0) return true;
-    return errno == EPERM;
+    if (::kill(static_cast<pid_t>(pid), 0) != 0) return errno == EPERM;
+    // kill(pid, 0) also answers for a process that has ended but was not yet waited for (a zombie): it is not running.
+    // /proc/<pid>/stat is "pid (name) S ...": the state letter follows the last ')'. No /proc (macOS): trust kill().
+    std::ifstream st("/proc/" + std::to_string(pid) + "/stat");
+    std::string line;
+    if (st && std::getline(st, line)) {
+        const std::size_t close = line.rfind(')');
+        if (close != std::string::npos && close + 2 < line.size()) {
+            const char state = line[close + 2];
+            if (state == 'Z' || state == 'X') return false;
+        }
+    }
+    return true;
 #endif
 }
 

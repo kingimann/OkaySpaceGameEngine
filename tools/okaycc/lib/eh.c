@@ -212,14 +212,46 @@ void __okay_eh_rethrow_ptr(long *b) {
     unwind();
 }
 
-/* dynamic_cast<T *>(p) for single inheritance ([expr.dynamic.cast] p5-p8): the object's type_info
- * (from its vtable) is T's, or one of its base links leads to T's. A type_info object is three
- * words (src/mangle.cpp makeTypeInfo): 0 unused, 1 the name, 2 the base class's type_info or 0.
- * Types are compared by name, as each file may hold its own weak copy. Returns 1 or 0. */
-int __okay_dyncast(long *ti, long *target) {
-    while (ti) {
-        if (ti == target || strcmp((char *)ti[1], (char *)target[1]) == 0) return 1;
-        ti = (long *)ti[2];
+/* Types are compared by name, as each file may hold its own weak copy of a type_info. */
+/* dynamic_cast<T *>(p) and dynamic_cast<void *>(p) with multiple inheritance ([expr.dynamic.cast]
+ * p7-p8; Itanium C++ ABI 2.5.2: the word before a vtable part's type_info word is its
+ * offset-to-top). The whole object starts at p plus that offset; its type_info (words 3 on: how
+ * many bases after the primary one, then each one's type_info and offset, src/mangle.cpp) leads to
+ * a T subobject and its offset. Returns its address, the whole object's for a null target, or 0. */
+static long __okay_base_at(long *ti, long *target, long at) {
+    long r;
+    long i;
+    if (!ti) return -1;
+    if (ti == target || strcmp((char *)ti[1], (char *)target[1]) == 0) return at;
+    r = __okay_base_at((long *)ti[2], target, at);
+    if (r >= 0) return r;
+    for (i = 0; i < ti[3]; i = i + 1) {
+        r = __okay_base_at((long *)ti[4 + 2 * i], target, at + ti[5 + 2 * i]);
+        if (r >= 0) return r;
     }
-    return 0;
+    return -1;
+}
+char *__okay_dyncast_ptr(char *p, long *target) {
+    long *vptr;
+    char *whole;
+    long off;
+    if (!p) return 0;
+    vptr = *(long **)p;
+    whole = p + vptr[-2];
+    if (!target) return whole;
+    off = __okay_base_at((long *)vptr[-1], target, 0);
+    if (off < 0) return 0;
+    return whole + off;
+}
+/* dynamic_cast<T &>(x): a failed cast throws std::bad_cast ([expr.dynamic.cast] p9); here it ends
+ * the program as an uncaught one does (no std::bad_cast object is made yet). */
+char *__okay_dyncast_ref(char *p, long *target) {
+    char *r = __okay_dyncast_ptr(p, target);
+    if (!r) {
+        write(2, "terminate called after throwing an instance of 'std::bad_cast'\n", 63);
+        write(2, "  what():  std::bad_cast\n", 25);
+        syscall(62, syscall(39, 0, 0, 0), 6, 0);
+        syscall(60, 134, 0, 0);
+    }
+    return r;
 }

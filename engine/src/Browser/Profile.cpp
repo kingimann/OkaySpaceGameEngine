@@ -11,9 +11,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
+#include <utility>
 
 namespace okay::browser {
 
@@ -348,7 +352,14 @@ bool SaveProfile(const Profile& p, const std::string& path, std::string* why) {
     const fs::path target = fs::u8path(path);
     std::error_code ec;
     if (target.has_parent_path()) fs::create_directories(target.parent_path(), ec);
-    const fs::path tmp = fs::u8path(path + ".part");
+    // a temporary name of this writer's own (this process, this call): two programs saving the same profile at once never
+    // write into one temporary file
+    static unsigned s_count = 0;
+    char unique[64];
+    std::snprintf(unique, sizeof unique, ".%llx-%x.part",
+                  (unsigned long long)std::chrono::steady_clock::now().time_since_epoch().count() ^ (unsigned long long)(std::uintptr_t)&s_count,
+                  ++s_count);
+    const fs::path tmp = fs::u8path(path + unique);
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f) { if (why) *why = "cannot write " + path; return false; }
@@ -366,6 +377,71 @@ bool LoadProfile(Profile& p, const std::string& path, std::string* why) {
     if (!f) { if (why) *why = "no profile yet"; return false; }
     const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     return p.FromJson(text, why);
+}
+
+// ---- one profile file, more than one program ----------------------------------------------------------------------------
+
+ProfileStore::Stamp ProfileStore::FileStamp() const {
+    namespace fs = std::filesystem;
+    Stamp s;
+    if (m_path.empty()) return s;
+    std::error_code ec;
+    const fs::path p = fs::u8path(m_path);
+    const std::uintmax_t size = fs::file_size(p, ec);
+    if (ec) return s;
+    const fs::file_time_type t = fs::last_write_time(p, ec);
+    if (ec) return s;
+    s.size = (std::int64_t)size;
+    s.time = (std::int64_t)t.time_since_epoch().count();
+    return s;
+}
+
+bool ProfileStore::Load(std::string* why) {
+    m_seen = FileStamp();
+    std::ifstream f(std::filesystem::u8path(m_path), std::ios::binary);
+    if (m_path.empty() || !f) { if (why) *why = "no profile yet"; return false; }
+    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    m_seenHash = std::hash<std::string>()(text);
+    Profile p;
+    if (!p.FromJson(text, why)) return false;
+    m_profile = std::move(p);
+    for (const ChangeFn& c : m_pending) c(m_profile);   // what this program changed and has not saved yet stays
+    return true;
+}
+
+void ProfileStore::Change(ChangeFn change) {
+    if (!change) return;
+    change(m_profile);
+    m_pending.push_back(std::move(change));
+}
+
+bool ProfileStore::Refresh() {
+    if (m_path.empty()) return false;
+    const Stamp now = FileStamp();
+    if (now == m_seen || now.size < 0) return false;
+    std::ifstream f(std::filesystem::u8path(m_path), std::ios::binary);
+    if (!f) return false;
+    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    m_seen = now;
+    const std::uint64_t h = std::hash<std::string>()(text);
+    if (h == m_seenHash) return false;   // touched, not changed
+    m_seenHash = h;
+    Profile p;
+    if (!p.FromJson(text)) return false;   // damaged: keep ours (the next Save writes a good file over it)
+    m_profile = std::move(p);
+    for (const ChangeFn& c : m_pending) c(m_profile);
+    return true;
+}
+
+bool ProfileStore::Save(std::string* why) {
+    if (m_path.empty()) { m_pending.clear(); return true; }
+    Refresh();
+    const std::string text = m_profile.ToJson();
+    if (!SaveProfile(m_profile, m_path, why)) return false;
+    m_pending.clear();
+    m_seen = FileStamp();
+    m_seenHash = std::hash<std::string>()(text);
+    return true;
 }
 
 // ---- downloads ---------------------------------------------------------------------------------------------------------

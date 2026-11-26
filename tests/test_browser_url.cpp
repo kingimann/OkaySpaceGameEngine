@@ -180,19 +180,38 @@ int main() {
         CHECK(t.GetState() == BrowserTab::State::Ready && t.Document() && t.Document()->Body()->TextContent() == "<b>not bold</b>\nline 2");
     }
 
-    RUN_SUITE("launcher: our own pages");
+    RUN_SUITE("launcher: the Browser page and where links open");
     {
-        const std::string server = "https://abcd.supabase.co";
-        CHECK(okl::IsServerPage("https://abcd.supabase.co/storage/v1/object/public/pages/news.html", server));
-        CHECK(okl::IsServerPage("https://ABCD.supabase.co:443/storage/v1/object/public/pages/help", server));
-        CHECK(okl::IsServerPage("https://abcd.supabase.co/notes.TXT#top", server));
-        CHECK(!okl::IsServerPage("https://abcd.supabase.co/storage/v1/object/public/workshop/game.zip", server));   // a download
-        CHECK(!okl::IsServerPage("https://abcd.supabase.co/x.exe", server));
-        CHECK(!okl::IsServerPage("http://abcd.supabase.co/news.html", server));      // another origin (http)
-        CHECK(!okl::IsServerPage("https://evil.test/news.html", server));
-        CHECK(!okl::IsServerPage("https://abcd.supabase.co.evil.test/news.html", server));
-        CHECK(!okl::IsServerPage("https://abcd.supabase.co/news.html", ""));          // no server configured
-        CHECK(!okl::IsServerPage("javascript:alert(1)", server));
+        using okl::LinkTarget;
+        // the "Browser" switch on (Settings > Experimental, OKAY_BROWSER=1, on by default) and OkayUI drawing: every web link
+        // from chat opens in the launcher's Browser page, our own server's pages and other sites alike (a new tab there)
+        CHECK(okl::RouteLink("https://abcd.supabase.co/storage/v1/object/public/pages/news.html", true, true) == LinkTarget::BrowserPage);
+        CHECK(okl::RouteLink("https://example.com/a?b=c#d", true, true) == LinkTarget::BrowserPage);
+        CHECK(okl::RouteLink("HTTP://Example.com/", true, true) == LinkTarget::BrowserPage);
+        CHECK(okl::RouteLink("https://abcd.supabase.co/workshop/game.zip", true, true) == LinkTarget::BrowserPage);   // the browser asks to save it
+        // the switch off, or no OkayUI frame to draw the page with: the system browser, as before
+        CHECK(okl::RouteLink("https://example.com/", false, true) == LinkTarget::SystemBrowser);
+        CHECK(okl::RouteLink("https://abcd.supabase.co/news.html", false, true) == LinkTarget::SystemBrowser);
+        CHECK(okl::RouteLink("https://example.com/", true, false) == LinkTarget::SystemBrowser);
+        // only http and https are ever shown in the page; anything else is left to the system (chat refuses those before)
+        CHECK(okl::RouteLink("mailto:a@example.com", true, true) == LinkTarget::SystemBrowser);
+        CHECK(okl::RouteLink("javascript:alert(1)", true, true) == LinkTarget::SystemBrowser);
+        CHECK(okl::RouteLink("file:///etc/passwd", true, true) == LinkTarget::SystemBrowser);
+        CHECK(okl::RouteLink("", true, true) == LinkTarget::SystemBrowser);
+
+        // the sidebar entry: MENU > Browser, a page id of its own; what the page shows
+        CHECK(okl::kBrowserTab == 18);
+        CHECK(okl::PageMode(true, true) == okl::BrowserPageMode::Browser);
+        CHECK(okl::PageMode(false, true) == okl::BrowserPageMode::SwitchedOff);
+        CHECK(okl::PageMode(true, false) == okl::BrowserPageMode::NeedsOkayUi);
+        CHECK(okl::PageMode(false, false) == okl::BrowserPageMode::SwitchedOff);
+        // the page the launcher opens on: the Browser page is remembered like the others; Admin and unknown ids are not
+        CHECK(okl::RestoreTab(okl::kBrowserTab) == okl::kBrowserTab);
+        CHECK(okl::RestoreTab(17) == 17 && okl::RestoreTab(0) == 0 && okl::RestoreTab(11) == 0);
+        CHECK(okl::RestoreTab(19) == 0 && okl::RestoreTab(-1) == 0);
+        // the "Browser" switch's own rule in the launcher (shared/OwnSwitches.hpp sets OKAY_BROWSER=1 when on, unsets it when off)
+        CHECK(okl::BrowserSwitchValueOn("1") && !okl::BrowserSwitchValueOn("0") && !okl::BrowserSwitchValueOn(nullptr) &&
+              !okl::BrowserSwitchValueOn(""));
     }
 
     TEST_MAIN_RESULT();

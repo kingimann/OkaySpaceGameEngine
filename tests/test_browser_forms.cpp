@@ -29,7 +29,7 @@ static const char* kForm =
     "<input id=off name=off value=x disabled>"
     "<fieldset disabled><input name=infs value=1><legend><input id=leg name=leg value=2></legend></fieldset>"
     "<input name='' value=noname>"
-    "<label id=lab for=news>News</label><label id=lab2>Size M <input id=inl type=checkbox name=inl></label>"
+    "<label id=lab for=news>News</label><label id=lab2>Shirt M <input id=inl type=checkbox name=inl></label>"
     "<input id=go type=submit name=act value=Go><button id=b2 name=act value=other>Other</button><button id=rs type=reset>R</button>"
     "</form>"
     "<input id=outside form=f name=outside value=o>"

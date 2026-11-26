@@ -24,6 +24,8 @@ The owner asked for our own browser (2026-11-25): an installable program for pla
    (the release packaging is the coordinator's and the owner's decision).
 3a. **A regular browser, round 1 (owner, 2026-11-25: "i want the browser to be like a regular browser"; branch
    `claude/browser-full-1`).** Browser basics in the program, real layout, forms. See "Round 1" below.
+3b. **The browser in the launcher (owner, 2026-11-26: "can you allow user to launch browser in the launcher"; branch
+   `claude/browser-full-1`).** See "The launcher's Browser page" below.
 4. **Next round.** Our own JavaScript engine (it lives on `claude/javascript-1`, `engine/include/okay/JavaScript/`; the browser will
    use that one, not a second one), then WebAssembly and WebGL, so other engines' web games and normal sites work.
 
@@ -145,4 +147,31 @@ under a virtual display (Xvfb) against a local Python test server: several tabs,
 with highlights, the bookmarks bar, the menu and the context menu, a download asked for and saved to the Downloads folder, a
 form typed into (text, password, select, radio, checkbox, textarea) and sent with POST (the server echoed the urlencoded body),
 the new-tab and history pages, zoom. Not checked: real web sites, the launcher's page (compiled only), Windows.
+
+## The launcher's Browser page (2026-11-26)
+
+- **One browser, two hosts.** Everything the program drew (tabs, toolbar and address bar, bookmarks bar, menus, find, zoom, the
+  download prompt and shelf, settings, our own pages, Play for games, the shortcuts) moved out of `browser/main.cpp` into
+  `shared/BrowserApp.cpp` (`BrowserApp::Frame(x, y, w, h)`), unchanged apart from drawing inside a rectangle. The program
+  draws it over its window (Quit and Ctrl+Q only there); the launcher draws it in the page area of a new sidebar entry,
+  MENU > Browser (after Downloads, the globe icon, page id 18, remembered like the other pages). Nothing is copied.
+- **One profile.** The launcher uses the program's folder (`PrefPath("OkaySpace", "Browser")`) and its `profile.json`, so history,
+  bookmarks, zoom and settings are the same in both, also with both open at once: `ProfileStore` keeps each change until it is
+  saved, looks at the file once a second and reads it again when the other program replaced it (size or time changed, and the
+  text differs), then applies its own unsaved changes on top; Save does the same before it writes. Each writer writes its own
+  temporary file and renames it over the old one. Two saves within the same few milliseconds can still race (the later rename
+  wins; both see the result at their next look). Zoom and the bookmark star are kept as the value they lead to, so they apply
+  the same on a re-read profile.
+- **Links from chat.** With Settings > Experimental > Browser on (the default; it needs the OkayUI screens), a web link's "Open"
+  opens a new tab of the Browser page and shows the page, for our own server's pages and other sites alike (step 1's overlay
+  for our own pages is gone). Off, without OkayUI, or for an address that is not http(s): the system browser, as before.
+  `okl::RouteLink` is the rule (tested in `browser_url`).
+- **Responsive.** Pages, images, downloads and game packs are fetched and unpacked on worker threads (`TabHost`, `DownloadHost`,
+  okay::thr); the launcher's frame only hands results over and draws. The browser is pumped every frame, whichever launcher page
+  is shown, so a download or a game keeps going on another page.
+- **Keys.** On the Browser page the launcher's own 1..9 page keys are off (the browser has Ctrl+1..9 for its tabs) and Ctrl+Shift+B
+  is the bookmarks bar, not the sidebar fold.
+- **Checked (2026-11-26):** `okayui_browser_app` (the whole browser at the launcher page's offset, golden picture, keys, the
+  profile seen by a second browser, the download prompt, the switch off), `browser_url` (where links open), `browser_profile`
+  (two programs on one profile file), on Linux. Not run on Windows.
 

@@ -1,14 +1,13 @@
-// Browser: the launcher's page for our own web pages (see BrowserPage.hpp). Fetching, images and the tab's state are the
-// Browser's shared host (shared/BrowserHost.hpp, also used by the browser program); this file is only the launcher's rule for
-// which links open here, its SDL textures and its toolbar actions.
+// Browser: the launcher's Browser page (see BrowserPage.hpp). The browser itself is shared/BrowserApp.hpp, the same one the
+// browser program draws; this file is only the launcher's side: its textures (SDL renderer), where the profile and the games
+// live (the browser program's own settings folder, so both use one profile.json), the player beside the launcher, and the rule
+// for which links open here.
 #include "LauncherShared.hpp"
 #include "BrowserPage.hpp"
-#include "BrowserHost.hpp"
 #include "PainterBridge.hpp"
-#include "okay/Browser/Browser.hpp"
-#include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/Platform.hpp"
 #ifdef OKAY_HAVE_OKAYUI
-#include "BrowserView.hpp"
+#include "BrowserApp.hpp"
 #endif
 
 #include <cstdlib>
@@ -19,77 +18,82 @@ namespace okl {
 
 namespace {
 
+bool g_hostAvailable = false;
+bool g_showRequest = false;
+
+#ifdef OKAY_HAVE_OKAYUI
 namespace br = okay::browser;
 
-bool g_open = false;
-bool g_hostAvailable = false;
+std::unique_ptr<br::BrowserApp> g_app;
 
-bool SwitchOn() {
-    const char* e = std::getenv("OKAY_BROWSER");   // Settings > Experimental > "Browser" sets it (shared/OwnSwitches.hpp)
-    return e && e[0] == '1';
-}
-
-// The tab and its fetches; images become textures on the launcher's renderer. Made on first use (the renderer exists then).
-br::TabHost& Host() {
-    static std::unique_ptr<br::TabHost> host;
-    if (!host) {
-        br::TabHost::TextureFns fns;
-        fns.make = [](const std::uint8_t* rgba, int w, int h) -> void* { return TextureFromRgba(g_renderer, rgba, w, h); };
-        fns.destroy = [](void* t) { okay::pb::DestroyTexture(g_renderer, (SDL_Texture*)t); };
-        host.reset(new br::TabHost(fns, "OkaySpace Browser"));
+// The browser, made on first use (the renderer exists then). Its data folder and profile are the browser program's
+// (PrefPath("OkaySpace", "Browser")), so history, bookmarks, zoom and settings are the same in both.
+br::BrowserApp& App() {
+    if (!g_app) {
+        br::BrowserApp::Config cfg;
+        cfg.textures.make = [](const std::uint8_t* rgba, int w, int h) -> void* { return TextureFromRgba(g_renderer, rgba, w, h); };
+        cfg.textures.destroy = [](void* t) { okay::pb::DestroyTexture(g_renderer, (SDL_Texture*)t); };
+        okay::platform::Backend* be = okay::platform::Default();
+        cfg.runner.dataRoot = be ? be->PrefPath("OkaySpace", "Browser") : std::string();
+        cfg.runner.playerExe = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});   // games run in the player, as in the program
+        cfg.profilePath = cfg.runner.dataRoot.empty() ? std::string() : cfg.runner.dataRoot + "profile.json";
+        cfg.idPrefix = "##launcher_browser";
+        g_app.reset(new br::BrowserApp(cfg));
+        if (const char* demo = std::getenv("OKAY_UI_DEMO_BROWSER")) {   // dev screenshot hook: addresses to open, one tab each
+            std::string list = demo, one;
+            for (std::size_t i = 0; i <= list.size(); ++i) {
+                if (i < list.size() && list[i] != ' ') { one += list[i]; continue; }
+                if (!one.empty()) g_app->OpenTyped(one, g_app->TabCount() == 0);
+                one.clear();
+            }
+        }
     }
-    return *host;
+    return *g_app;
 }
+#endif
 
 } // namespace
 
+bool BrowserSwitchOn() { return BrowserSwitchValueOn(std::getenv("OKAY_BROWSER")); }
+
 bool OpenPageLink(const std::string& url) {
-    const std::string server = g_presenceAccount ? g_presenceAccount->ServerUrl() : std::string();
-    if (!SwitchOn() || !g_hostAvailable || !IsServerPage(url, server)) { OpenExternal(url); return false; }
-    if (!Host().Open(url)) { OpenExternal(url); return false; }
-    g_open = true;
-    return true;
+#ifdef OKAY_HAVE_OKAYUI
+    if (RouteLink(url, BrowserSwitchOn(), g_hostAvailable) == LinkTarget::BrowserPage) {
+        if (App().OpenUrl(url, true) >= 0) { g_showRequest = true; return true; }
+    }
+#endif
+    OpenExternal(url);   // OpenExternal checks the address is shell-safe
+    return false;
 }
 
-bool BrowserPageOpen() { return g_open; }
-
-void CloseBrowserPage() {
-    if (!g_open) return;
-    g_open = false;
-    Host().Reset();
+bool TakeShowRequest() {
+    const bool r = g_showRequest;
+    g_showRequest = false;
+    return r;
 }
 
-void SetBrowserHostAvailable(bool okayFrame) {
-    g_hostAvailable = okayFrame;
-    if (!okayFrame && g_open) CloseBrowserPage();   // the OkayUI screens were switched off: nothing can draw the page
+void SetBrowserHostAvailable(bool okayFrame) { g_hostAvailable = okayFrame; }
+
+void PumpBrowser() {
+#ifdef OKAY_HAVE_OKAYUI
+    if (g_app) g_app->Pump();
+#endif
 }
 
 void DrawBrowserPage(float x, float y, float w, float h) {
 #ifdef OKAY_HAVE_OKAYUI
-    if (!g_open) return;
-    br::TabHost& host = Host();
-    br::BrowserTab& tab = host.Tab();
-    host.Pump();
-    const okayuiscreens::BrowserViewResult r = okayuiscreens::DrawBrowserView(tab, x, y, w, h, [&host](const std::string& src) {
-        return (SDL_Texture*)host.ImageFor(src);
-    });
-    if (r.back) tab.GoBack();
-    if (r.forward) tab.GoForward();
-    if (r.reload) tab.Reload();
-    if (r.openInSystemBrowser && !tab.Url().empty()) OpenExternal(tab.Url());
-    if (r.linkClicked >= 0) {
-        const br::LayoutResult& page = tab.Layout(r.page.w, okayuiscreens::OkayUIMeasure());
-        if (r.linkClicked < (int)page.links.size()) {
-            const std::string href = page.links[(std::size_t)r.linkClicked];
-            const br::BrowserTab::Action a = tab.Activate(href);
-            if (a.kind == br::BrowserTab::Action::External) OpenExternal(a.url);   // OpenExternal checks the address is shell-safe
-            else if (a.kind == br::BrowserTab::Action::Refused) Toast("That link can't be opened", 2);
-        }
-    }
-    if (r.close) { CloseBrowserPage(); return; }
-    host.Pump();
+    if (!g_hostAvailable || !BrowserSwitchOn()) return;
+    br::BrowserApp& app = App();
+    if (app.TabCount() == 0) app.OpenTyped(std::string());   // the home page (the new-tab page unless the settings name one)
+    app.Frame(x, y, w, h);
 #else
     (void)x; (void)y; (void)w; (void)h;
+#endif
+}
+
+void ShutdownBrowser() {
+#ifdef OKAY_HAVE_OKAYUI
+    g_app.reset();   // saves the profile, stops running games and frees the textures while the renderer still exists
 #endif
 }
 

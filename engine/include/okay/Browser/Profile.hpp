@@ -9,6 +9,7 @@
 // Profile keeps the lasting parts and turns them into JSON and back (okay/Core/Json.hpp), so the program saves them in the
 // person's own settings folder. No network, no drawing, no files except SaveProfile / LoadProfile. Standard library only.
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -156,10 +157,45 @@ struct Profile {
     /// Read what ToJson wrote. Unknown keys are skipped; a damaged file gives false and leaves the profile as it was.
     bool FromJson(const std::string& text, std::string* why = nullptr);
 };
-/// Write the profile to `path` (a temporary file first, renamed over the old one, so a crash never leaves half a file).
+/// Write the profile to `path` (a temporary file of this writer's own first, renamed over the old one, so a crash never leaves
+/// half a file and two programs writing at once never write into the same temporary file).
 bool SaveProfile(const Profile& p, const std::string& path, std::string* why = nullptr);
 /// Read it. False (and `p` unchanged) when there is no file or it cannot be read.
 bool LoadProfile(Profile& p, const std::string& path, std::string* why = nullptr);
+
+/// The profile file as one program sees it, when more than one program uses the same file: the browser program and the
+/// launcher's Browser page (owner, 2026-11-26) keep one profile.json in the browser's settings folder. Every change goes through
+/// Change(), which applies it at once and keeps it until it is saved. Refresh() reads the file again when another program
+/// replaced it (its size or time changed and its text differs) and applies this program's unsaved changes on top, so a change
+/// made in one program is never lost to the other's write; Save() does that first, then writes (SaveProfile). Two saves in the
+/// same few milliseconds can still race (the later rename wins); the next Refresh shows the result to both.
+class ProfileStore {
+public:
+    using ChangeFn = std::function<void(Profile&)>;
+    explicit ProfileStore(std::string path) : m_path(std::move(path)) {}
+    /// Read the file now. False (the profile unchanged) when there is none or it is damaged.
+    bool Load(std::string* why = nullptr);
+    const Profile& Get() const { return m_profile; }
+    /// Apply `change` now and remember it until the next Save.
+    void Change(ChangeFn change);
+    /// Unsaved changes are waiting.
+    bool Dirty() const { return !m_pending.empty(); }
+    /// The file was replaced by another program since this one last read or wrote it: read it and apply the unsaved changes on
+    /// top. True when the profile was replaced by the file's.
+    bool Refresh();
+    /// Refresh, then write the profile. With no path (a program that keeps nothing) it only forgets the changes.
+    bool Save(std::string* why = nullptr);
+    const std::string& Path() const { return m_path; }
+
+private:
+    struct Stamp { std::int64_t size = -1; std::int64_t time = 0; bool operator==(const Stamp& o) const { return size == o.size && time == o.time; } };
+    Stamp FileStamp() const;
+    std::string m_path;
+    Profile m_profile;
+    std::vector<ChangeFn> m_pending;
+    Stamp m_seen;              // the file as this program last read or wrote it
+    std::uint64_t m_seenHash = 0;
+};
 
 // ---- downloads ---------------------------------------------------------------------------------------------------------
 

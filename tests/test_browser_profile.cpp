@@ -177,6 +177,51 @@ int main() {
         std::filesystem::remove_all(std::filesystem::u8path(dir));
     }
 
+    // ---- one profile file, two programs (the browser program and the launcher's Browser page): ProfileStore ----
+    {
+        namespace fs = std::filesystem;
+        const std::string dir = (fs::temp_directory_path() / "okay_browser_profile_store_test").u8string();
+        fs::remove_all(fs::u8path(dir));
+        const std::string path = dir + "/profile.json";
+        ProfileStore a(path), b(path);
+        CHECK(!a.Load() && !b.Load());   // no file yet: both start fresh
+        a.Change([](Profile& p) { p.bookmarks.Add("https://a.example/", "A"); });
+        CHECK(a.Dirty() && a.Get().bookmarks.Has("https://a.example/"));
+        CHECK(a.Save());
+        CHECK(!a.Dirty());
+        // b has not changed anything: it reads a's file when it looks again
+        CHECK(b.Refresh() && b.Get().bookmarks.Has("https://a.example/"));
+        CHECK(!b.Refresh());   // nothing new since
+        // both change something before either saves: neither change is lost
+        a.Change([](Profile& p) { p.history.Add("https://ha.example/", "HA", 100); });
+        b.Change([](Profile& p) { p.bookmarks.Add("https://b.example/", "B"); });
+        b.Change([](Profile& p) { p.zoom.Set("https://b.example", 1.25f); });
+        CHECK(a.Save());
+        CHECK(b.Save());   // reads a's newer file first, then applies its own two changes on top
+        CHECK(b.Get().bookmarks.Has("https://a.example/") && b.Get().bookmarks.Has("https://b.example/"));
+        CHECK(b.Get().history.Items().size() == 1 && b.Get().history.Items()[0].url == "https://ha.example/");
+        CHECK(b.Get().zoom.Get("https://b.example") == 1.25f);
+        CHECK(a.Refresh() && a.Get().bookmarks.Has("https://b.example/") && a.Get().zoom.Get("https://b.example") == 1.25f);
+        // a change that is not saved yet stays on top of a newer file read by Refresh
+        a.Change([](Profile& p) { p.settings.homePage = "https://home.example/"; });
+        b.Change([](Profile& p) { p.bookmarks.Remove("https://a.example/"); });
+        CHECK(b.Save());
+        CHECK(a.Refresh());
+        CHECK(a.Dirty() && a.Get().settings.homePage == "https://home.example/" && !a.Get().bookmarks.Has("https://a.example/"));
+        CHECK(a.Save());
+        Profile disk;
+        CHECK(LoadProfile(disk, path) && disk.settings.homePage == "https://home.example/" && !disk.bookmarks.Has("https://a.example/") &&
+              disk.bookmarks.Has("https://b.example/"));
+        // writes never leave a temporary file behind, and each writer uses its own temporary name
+        int others = 0;
+        for (const auto& e : fs::directory_iterator(fs::u8path(dir))) if (e.path().filename() != "profile.json") ++others;
+        CHECK(others == 0);
+        // a damaged file (half written by an old program) is not read over a good profile
+        { std::FILE* f = std::fopen(path.c_str(), "wb"); if (f) { std::fputs("{\"bookmarks\": [", f); std::fclose(f); } }
+        CHECK(!b.Refresh() && b.Get().bookmarks.Has("https://b.example/"));
+        fs::remove_all(fs::u8path(dir));
+    }
+
     // ---- downloads ----
     {
         const std::string head = "HTTP/1.1 302 Found\r\nLocation: /b\r\nContent-Type: text/html\r\n\r\n"

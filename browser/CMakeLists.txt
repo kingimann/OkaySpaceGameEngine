@@ -1,6 +1,6 @@
 # OkaySpace Browser: the browser program (system "Browser", docs/feature_map/17-launcher-platform.md 17.18; plan:
 # docs/platform/browser_plan.md). A window of its own on the Browser's page engine (okay_browser), the OkayUI view
-# (okay_ui_screens) and the shared tab host (shared/BrowserHost.cpp), drawn in OkayUI's window mode through okay::platform
+# (okay_ui_screens), the shared browser (shared/BrowserApp.cpp: the launcher's Browser page draws the same one) and tab host (shared/BrowserHost.cpp), drawn in OkayUI's window mode through okay::platform
 # (okay_ui_soft's painter frame drawer). Games on a page run with the player (okay-player), found beside this program.
 # Built whenever OkayUI is (on by default, CLAUDE.md rule 17). Not in the release packaging yet: that is the coordinator's
 # and the owner's decision.
@@ -10,6 +10,7 @@ endif()
 
 add_executable(okay-browser
     main.cpp
+    ${CMAKE_SOURCE_DIR}/shared/BrowserApp.cpp        # the browser itself: tabs, menus, find, downloads (shared with the launcher's Browser page)
     ${CMAKE_SOURCE_DIR}/shared/BrowserHost.cpp       # the tab's fetches, images and games (shared with the launcher's page)
     ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)  # okay's one place that starts a program (the player; no shell)
 target_include_directories(okay-browser PRIVATE

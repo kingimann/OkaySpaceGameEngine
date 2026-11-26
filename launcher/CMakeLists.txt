@@ -106,6 +106,8 @@ if(TARGET okay_ui_screens)
         target_link_libraries(okayspace-launcher PRIVATE okay_ui_render)
     endif()
     target_compile_definitions(okayspace-launcher PRIVATE OKAY_HAVE_OKAYUI=1)
+    # the Browser page (sidebar > Browser): the same browser as the browser program (tabs, menus, find, downloads, games)
+    target_sources(okayspace-launcher PRIVATE ${CMAKE_SOURCE_DIR}/shared/BrowserApp.cpp)
 endif()
 if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui" OR OKAY_OWN_STACK)   # OKAY_OWN_STACK: the dogfood build starts on OkayUI
     target_compile_definitions(okayspace-launcher PRIVATE OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)

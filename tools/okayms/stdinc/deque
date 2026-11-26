@@ -187,5 +187,14 @@ public:
         size_t s = size_; size_ = other.size_; other.size_ = s;
         size_t c = cap_; cap_ = other.cap_; other.cap_ = c;
     }
+    // [container.reqmts] == and != (Round 31): before, there were none and okay-ms compared the objects' bytes
+    // (SaveFramework.hpp's `m_values == o.m_values` on a std::map).
+    bool operator==(const deque& o) const {
+        if (size() != o.size()) return false;
+        for (size_t i = 0; i < size(); ++i)
+            if (!((*this)[i] == o[i])) return false;
+        return true;
+    }
+    bool operator!=(const deque& o) const { return !(*this == o); }
 };
 }

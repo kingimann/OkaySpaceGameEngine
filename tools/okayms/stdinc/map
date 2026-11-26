@@ -122,5 +122,9 @@ public:
         if (found_at(at, key)) ++at;
         return items_.begin() + at;
     }
+    // [container.reqmts] == and != (Round 31): before, there were none and okay-ms compared the objects' bytes
+    // (SaveFramework.hpp's `m_values == o.m_values` on a std::map).
+    bool operator==(const map& o) const { return items_ == o.items_; }
+    bool operator!=(const map& o) const { return !(*this == o); }
 };
 }

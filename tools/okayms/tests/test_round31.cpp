@@ -632,7 +632,8 @@ int entry(void) {
 }
 
 // Operators that used to compare bytes: std::pair's and std::array's comparisons ([pairs.spec], [array.syn]; Mesh.hpp
-// sorts pair<float, int>, SkinnedMesh.hpp compares array<float, 4>), and a
+// sorts pair<float, int>, SkinnedMesh.hpp compares array<float, 4>), the containers' == ([container.reqmts],
+// [unord.req]; SaveFramework.hpp compares two std::map), and a
 // hidden friend operator!= that calls the operator== defined before it in the class ([class.friend] 6: the friends
 // were moved out of the class in the wrong order, so the call found no operator== and compared the bytes).
 static void r31_pair_friend(Tally& tally) {
@@ -640,7 +641,11 @@ static void r31_pair_friend(Tally& tally) {
     okayms_test::run_both(kRun, tally, "pair_friend", std::string(kAlloc) + R"OKMS(
 #include <algorithm>
 #include <array>
+#include <deque>
+#include <map>
+#include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 namespace n {
@@ -668,6 +673,27 @@ int entry(void) {
   std::wstring w = L"ab" + std::wstring(L"cd");
   w = w + L"e";
   CK(5, w.size() == 5 && w == std::wstring(L"abcde"));
+  std::map<std::string, std::string> m1, m2;
+  m1["a"] = "x";
+  m1["b"] = "y";
+  m2["b"] = "y";
+  m2["a"] = "x";
+  CK(6, m1 == m2 && !(m1 != m2));
+  m2["a"] = "z";
+  CK(7, m1 != m2);
+  std::unordered_map<int, int> u1, u2;
+  u1[1] = 10;
+  u1[2] = 20;
+  u2[2] = 20;
+  u2[1] = 10;
+  std::set<int> s1, s2;
+  s1.insert(3);
+  s2.insert(3);
+  std::deque<int> d1, d2;
+  d1.push_back(1);
+  d2.push_back(1);
+  d2.push_back(2);
+  CK(8, u1 == u2 && s1 == s2 && d1 != d2);
   return 0;
 }
 )OKMS", 0);

@@ -81,5 +81,9 @@ public:
         return items_.begin() + at;
     }
     const T* lower_bound(const T& value) const { return items_.begin() + lower(value); }
+    // [container.reqmts] == and != (Round 31): before, there were none and okay-ms compared the objects' bytes
+    // (SaveFramework.hpp's `m_values == o.m_values` on a std::map).
+    bool operator==(const set& o) const { return items_ == o.items_; }
+    bool operator!=(const set& o) const { return !(*this == o); }
 };
 }

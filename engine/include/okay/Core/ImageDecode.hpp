@@ -12,6 +12,8 @@
 //   GIF   first frame via DecodeImage, all frames (disposal, transparency) via DecodeGifFrames
 //   HDR   Radiance RGBE, tone-mapped to 8-bit with gamma 1/2.2 (scale 1)
 //   PSD   flattened composite of 8/16-bit RGB files, raw or RLE
+//   WEBP  lossless (VP8L) and lossy (VP8) with alpha (ALPH); an animation gives its first frame on the canvas
+//         (ImageDecodeWebp.cpp, from RFC 9649 and RFC 6386)
 // Decoding never reads or writes out of bounds on malformed input: it fails with an error
 // string instead. Dimensions are capped at 16384 on either side.
 #include <cstddef>
@@ -21,7 +23,7 @@
 
 namespace okay {
 
-enum class ImageFormat { Unknown, PNG, JPEG, BMP, TGA, GIF, HDR, PSD, PNM };
+enum class ImageFormat { Unknown, PNG, JPEG, BMP, TGA, GIF, HDR, PSD, PNM, WEBP };
 
 struct DecodedImage {
     int width = 0;

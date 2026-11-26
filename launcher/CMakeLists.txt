@@ -80,7 +80,7 @@ endif()
 # compiled straight into the launcher rather than linking the engine.
 list(APPEND OKAY_LAUNCHER_SOURCES
     ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp)
 add_executable(okayspace-launcher ${OKAY_LAUNCHER_SOURCES})
 okay_win_version(okayspace-launcher "OkaySpace Launcher" "OkaySpace.exe")
 target_compile_definitions(okayspace-launcher PRIVATE ${OKAY_VERSION_DEFINE} ${OKAY_MAIN_DEFINE})

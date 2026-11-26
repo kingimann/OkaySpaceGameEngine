@@ -3971,18 +3971,26 @@ set_tests_properties(image_decoder PROPERTIES TIMEOUT 300)
 
 # Our own PNM decoder (P1 to P6; Core/ImageDecode): hand-computed fixtures, rejections, truncations, routing off by default (OKAY_OWN_PNM=1).
 add_executable(test_image_pnm test_image_pnm.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageWrite.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageWrite.cpp)
 target_include_directories(test_image_pnm PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
 add_test(NAME image_pnm COMMAND test_image_pnm)
 
 # Hostile-input + mutation fuzz of the image decoders (lying header fields, PNG with valid CRCs, decompression bombs, memory and time budgets).
 # Standalone: only the decoder sources, so it also builds under -fsanitize=address,undefined.
 add_executable(test_image_hostile test_image_hostile.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageWrite.cpp)
-target_include_directories(test_image_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageWrite.cpp)
+target_include_directories(test_image_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_image_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME image_hostile COMMAND test_image_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(image_hostile PROPERTIES TIMEOUT 600)
+
+# Our own WebP decoder (Core/ImageDecodeWebp, RFC 9649 + RFC 6386): lossless and lossy files made by the test-only
+# encoders in webp_test_encoder.hpp, alpha, the extended format, animation, malformed files. Standalone: decoder sources only.
+add_executable(test_image_webp test_image_webp.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp)
+target_include_directories(test_image_webp PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+add_test(NAME image_webp COMMAND test_image_webp)
+set_tests_properties(image_webp PROPERTIES TIMEOUT 300)
 
 # shared/FileDialog: our own open / save / folder dialogs (replaced the vendored tinyfiledialogs): path and glob helpers,
 # argument lists for zenity / kdialog / osascript (no injection), result parsing, extension enforcing, the built-in browser's
@@ -4659,7 +4667,7 @@ add_executable(test_blend_hostile test_blend_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReaderBuild.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendModifiers.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp)
 target_include_directories(test_blend_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_blend_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME blend_hostile COMMAND test_blend_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -4672,7 +4680,7 @@ add_executable(test_blend_modifiers test_blend_modifiers.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReaderBuild.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp)
 target_include_directories(test_blend_modifiers PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core ${PROJECT_SOURCE_DIR}/engine/src/Render)
 target_compile_definitions(test_blend_modifiers PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME blend_modifiers COMMAND test_blend_modifiers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -4703,7 +4711,7 @@ add_executable(test_batchb_hostile test_batchb_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/DxfReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/LwoReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp)
 target_include_directories(test_batchb_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_batchb_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME batchb_hostile COMMAND test_batchb_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -4724,7 +4732,7 @@ okay_batchc_reader_test(md3 Md3Reader.cpp)
 okay_batchc_reader_test(irrmesh IrrMeshReader.cpp)
 okay_batchc_reader_test(b3d B3dReader.cpp)
 # the .x reader unpacks MSZIP with the engine's own inflate
-okay_batchc_reader_test(x XFileReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+okay_batchc_reader_test(x XFileReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp)
 add_executable(test_batchc_hostile test_batchc_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/Md2Reader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/Md3Reader.cpp
@@ -4732,7 +4740,7 @@ add_executable(test_batchc_hostile test_batchc_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/B3dReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/XFileReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp)
 target_include_directories(test_batchc_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_batchc_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME batchc_hostile COMMAND test_batchc_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -4757,7 +4765,7 @@ okay_batchd_reader_test(ogre_skinbin OgreXmlReader.cpp)
 # Binary OGRE skeletons (.skeleton): hand-built binary fixtures compared with the XML form; real files with OKAY_MODEL_CORPUS
 okay_batchd_reader_test(ogre_skelbin OgreXmlReader.cpp)
 # the XGL reader unpacks ZGL with the engine's own inflate
-okay_batchd_reader_test(xgl XglReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+okay_batchd_reader_test(xgl XglReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp)
 okay_batchd_reader_test(irr IrrSceneReader.cpp)
 okay_batchd_reader_test(nff NffReader.cpp)
 add_executable(test_batchd_hostile test_batchd_hostile.cpp
@@ -4767,7 +4775,7 @@ add_executable(test_batchd_hostile test_batchd_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/IrrSceneReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/NffReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp)
 target_include_directories(test_batchd_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_batchd_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME batchd_hostile COMMAND test_batchd_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -4781,7 +4789,7 @@ add_executable(test_batchd_budget test_batchd_budget.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/IrrSceneReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/NffReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp)
 target_include_directories(test_batchd_budget PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_batchd_budget PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME batchd_budget COMMAND test_batchd_budget WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -4929,7 +4937,7 @@ add_executable(test_gap_readers test_gap_readers.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/ZaeReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/ColladaReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp)
 target_include_directories(test_gap_readers PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_gap_readers PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME gap_readers COMMAND test_gap_readers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -4996,7 +5004,7 @@ set_tests_properties(inflate_differential PROPERTIES TIMEOUT 600)
 # measured with a counting operator new). Standalone: the image decoder sources only.
 add_executable(test_png_hint test_png_hint.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp)
 target_include_directories(test_png_hint PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 add_test(NAME png_hint COMMAND test_png_hint)
 if(UNIX AND NOT APPLE)

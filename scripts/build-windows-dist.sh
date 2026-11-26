@@ -261,7 +261,7 @@ cp -r engine/src "$XBOX_SRC/engine/" && cp engine/CMakeLists.txt "$XBOX_SRC/engi
 # engine/third_party any more (ufbx was deleted; our own FBX reader is the only one).
 cp CMakeLists.txt "$XBOX_SRC/"
 cp engine/src/Graphics/Image.cpp "$XBOX_SRC/engine/src/Graphics/"
-cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/src/Core/ImageWrite.cpp engine/src/Core/ImageDecodeInternal.hpp "$XBOX_SRC/engine/src/Core/"
+cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/src/Core/ImageDecodeWebp.cpp engine/src/Core/ImageDecodeWebpTables.hpp engine/src/Core/ImageWrite.cpp engine/src/Core/ImageDecodeInternal.hpp "$XBOX_SRC/engine/src/Core/"
 [ -f "$XBOX_SRC/CMakeLists.txt" ] && [ -f "$XBOX_SRC/platform/xbox_uwp/engine/uwp_own_readers.cmake" ] || { echo "error: xbox-src is missing the root CMakeLists.txt or uwp_own_readers.cmake (the UWP engine reads them)" >&2; exit 1; }
 [ ! -e "$XBOX_SRC/engine/third_party" ] || { echo "error: xbox-src must not carry engine/third_party (no third-party code in the Xbox build)" >&2; exit 1; }
 [ -f "$XBOX_SRC/platform/xbox_uwp/app/CMakeLists.txt" ] || { echo "error: xbox-src did not get the UWP app" >&2; exit 1; }

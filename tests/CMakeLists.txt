@@ -798,6 +798,18 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     set_tests_properties(okayshader_gl PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 endif()
 
+# The RHI (docs/rendering/rhi.md): its Software backend headless, and OpenGL against Software under Xvfb.
+add_executable(test_rhi test_rhi.cpp)
+target_link_libraries(test_rhi PRIVATE okay::engine)
+target_compile_definitions(test_rhi PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME rhi COMMAND test_rhi)
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_rhi_gl test_rhi_gl.cpp)
+    target_link_libraries(test_rhi_gl PRIVATE okay::engine okay::platform)
+    add_test(NAME rhi_gl COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_rhi_gl>)
+    set_tests_properties(rhi_gl PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+endif()
+
 add_executable(test_uishape test_uishape.cpp)
 target_link_libraries(test_uishape PRIVATE okay::engine)
 add_test(NAME uishape COMMAND test_uishape)

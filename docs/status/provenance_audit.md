@@ -51,6 +51,13 @@ copied code in this scan; see "Clean" and "Limits".
 | P3 | Patent risk (possible, unverified) | Anti-cheat (`engine/src/Net/AntiCheat.cpp`, `engine/include/okay/Net/CheatDetect.hpp`, `shared/AntiCheat*.hpp`), server lag compensation and rollback netcode (`engine/src/Net/`), SSAO (`GLRendererShaders.cpp:432`) | Fields with many patents; **no specific patent was identified** | Unverified | Owner decision whether a patent search is wanted before shipping the anti-cheat and netcode commercially |
 | N1 | Not IP, found on the way (rule 18 / 19c) | `launcher/VoiceChat.hpp:55-84`: a second, own ChaCha20 outside `okay::crypto` (which has `engine/src/Crypto/ChaCha20.cpp`), and a second IMA ADPCM table (`:89`, also `WavDecoder.cpp:22`) | ours | Certain | Use `okay::crypto` / libsodium and the one IMA table (Claude 2's lane: duplicates and crypto rules) |
 
+### Fixes (branch `claude/ip-fixes-1`, 2026-11-26)
+
+`python3 scripts/provenance_scan.py check` (run by `scripts/precheck.sh`) fails if a fixed finding comes back.
+
+- **A4 fixed.** `cmake/okay_version.rc.in` now says "Copyright (c) 2026 OkaySpaceGameEngine. All rights reserved. See
+  LICENSE." Guard: `check` refuses another licence name in `LegalCopyright`.
+
 Counts: **1 clear copy of data (A1)**, **2 probable ports (A2, A3)**, **1 own-licence error (A4)**, **3 third-party
 runtime / notice gaps (A5-A7)**, **2 trademark groups (A8, A9)**, **1 data-note group (A10)**, **1 asset-record group
 (A11)**, **1 weak naming group (A12)**, **3 patent groups (P1-P3)**, **1 non-IP note (N1)**.

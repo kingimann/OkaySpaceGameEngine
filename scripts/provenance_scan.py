@@ -23,6 +23,9 @@ Every mode is read only and prints file:line leads, never another project's text
       cloned yourself into a scratch folder). It reports runs of consecutive lines that match after whitespace
       and comments are removed. A match of several lines in a row is a lead, not proof; a clean result is not
       proof of originality. It prints file names and line numbers only, never the other code.
+  python3 scripts/provenance_scan.py check
+      The guard for findings that were fixed (provenance audit 2026-11-26): exits 1 when one comes back, for
+      example a shipped file that states a licence other than ours. Quick; scripts/precheck.sh runs it.
 
 A text scan cannot prove that nothing was copied: a port that renames and reorders passes every mode here.
 """
@@ -200,6 +203,36 @@ def assets():
         print("%-48s %4d files  %s" % (d, len(fs), state))
 
 
+# Fixed findings that must not come back: (id, what went wrong, test(top) -> list of "file:line" problems).
+def _grep(t, rel, rx):
+    try: ls = open(os.path.join(t, rel), errors="replace").read().splitlines()
+    except OSError: return ["%s: missing" % rel]
+    return ["%s:%d" % (rel, i) for i, l in enumerate(ls, 1) if re.search(rx, l)]
+
+
+def _own_licence(t):
+    """A4: every Windows program's version information names our licence (LICENSE), not another one."""
+    rel = "cmake/okay_version.rc.in"
+    bad = _grep(t, rel, r"LegalCopyright.*(MIT|GPL|BSD|Apache|zlib)")
+    if not _grep(t, rel, r"LegalCopyright.*All rights reserved\. See LICENSE\."): bad.append(rel + ": LegalCopyright does not say 'All rights reserved. See LICENSE.'")
+    return bad
+
+
+GUARDS = [
+    ("A4", "shipped version information states a licence other than ours", _own_licence),
+]
+
+
+def check():
+    t = top()
+    n = 0
+    for gid, what, fn in GUARDS:
+        for hit in fn(t):
+            n += 1; print("%s: %s: %s" % (hit, gid, what))
+    print("# provenance check: %d problem(s) in %d guards" % (n, len(GUARDS)), file=sys.stderr)
+    return 1 if n else 0
+
+
 def norm(text):
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
     out = []
@@ -246,6 +279,7 @@ if __name__ == "__main__":
     elif a[:1] == ["tables"]: tables(int(a[2]) if a[1:2] == ["--min"] else 64)
     elif a[:1] == ["marks"]: marks()
     elif a[:1] == ["assets"]: assets()
+    elif a[:1] == ["check"]: sys.exit(check())
     elif a[:1] == ["overlap"] and len(a) > 1:
         mn, mr, refs, k = 12, 3, [], 1
         while k < len(a):

@@ -1,6 +1,6 @@
 #pragma once
 #include "okay/Platform/Account/Account.hpp"
-#include "okay/Platform/Account/AccountService.hpp"   // detail JSON helpers
+#include "okay/Platform/Account/AccountService.hpp"   // detail JSON helpers, Db() (OkayBackend Database)
 #include <cctype>
 #include <cstdlib>
 #include <ctime>
@@ -36,8 +36,9 @@ struct GameSession {
 ///
 /// All calls go through the signed-in player's authenticated REST session, so a
 /// player must be logged in (okay::Account) and the project must have the
-/// game_sessions table + RLS (see docs/online/supabase-backend.md). Everything no-ops
-/// gracefully (returns "" / false / empty) offline or signed out.
+/// game_sessions table + RLS (docs/sql/game_servers.sql). Everything no-ops
+/// gracefully (returns "" / false / empty) offline or signed out. Requests go through
+/// OkayBackend's Database (okay/Backend/Database.hpp) with the signed-in account.
 class Matchmaking {
 public:
     /// Advertise a hosted session. Returns its row id ("" on failure). Keep the id
@@ -52,8 +53,7 @@ public:
             ",\"max_players\":" + std::to_string(maxPlayers) +
             ",\"players\":0,\"room\":\"" + d::JsonEscape(room) +
             "\",\"region\":\"" + d::JsonEscape(region) + "\"}]";
-        account::ApiResponse r = Account::Api("/rest/v1/game_sessions", "POST", body,
-                                              "Prefer: return=representation");
+        account::ApiResponse r = Account::Get().Db().From("game_sessions").Returning(backend::Return::Representation).Insert(body);
         return r.ok ? d::JsonField(r.body, "id") : std::string{};
     }
 
@@ -72,10 +72,10 @@ public:
             "\",\"map\":\"" + d::JsonEscape(s.map) +
             "\",\"has_password\":" + (s.hasPassword ? "true" : "false") +
             ",\"dedicated\":" + (s.dedicated ? "true" : "false");
-        account::ApiResponse r = Account::Api("/rest/v1/game_sessions", "POST", "[{" + full + "}]",
-                                              "Prefer: return=representation");
+        auto db = Account::Get().Db();
+        account::ApiResponse r = db.From("game_sessions").Returning(backend::Return::Representation).Insert("[{" + full + "}]");
         if (!r.ok && r.reached && r.status == 400)   // columns not there yet: basic listing
-            r = Account::Api("/rest/v1/game_sessions", "POST", "[{" + basic + "}]", "Prefer: return=representation");
+            r = db.From("game_sessions").Returning(backend::Return::Representation).Insert("[{" + basic + "}]");
         return r.ok ? d::JsonField(r.body, "id") : std::string{};
     }
 
@@ -91,12 +91,20 @@ public:
         char iso[32] = {0};
         std::time_t t = std::time(nullptr) - freshSeconds;
         if (std::tm* g = std::gmtime(&t)) std::strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%SZ", g);
-        const std::string fresh = std::string("&updated_at=gt.") + iso + "&order=players.desc,updated_at.desc&limit=200";
-        std::string path = "/rest/v1/game_sessions?select=id,name,room,host_addr,port,players,max_players,region,game,map,has_password,dedicated" + fresh;
-        if (!game.empty()) path += "&game=eq." + UrlEnc(game);
-        account::ApiResponse r = svc.Api(path, "GET");
-        if (!r.ok && r.reached && r.status == 400)   // older table: basic columns
-            r = svc.Api("/rest/v1/game_sessions?select=id,name,room,host_addr,port,players,max_players,region" + fresh, "GET");
+        // Live rows (heartbeated after `iso`; our own clock text, sent as it is), busiest first, at most 200.
+        auto fresh = [&iso](backend::Query& q) {
+            q.Gt("updated_at", iso, backend::ValueText::AsIs).Order("players", true).Order("updated_at", true).Limit(200);
+        };
+        auto db = svc.Db();
+        backend::Query q = db.From("game_sessions").Select(kBasicColumns + std::string(",game,map,has_password,dedicated"));
+        fresh(q);
+        if (!game.empty()) q.Eq("game", game);   // percent-encoded
+        account::ApiResponse r = q.Get();
+        if (!r.ok && r.reached && r.status == 400) {   // older table: basic columns
+            backend::Query basic = db.From("game_sessions").Select(kBasicColumns);
+            fresh(basic);
+            r = basic.Get();
+        }
         std::vector<GameSession> out;
         if (!r.ok) return out;
         for (const std::string& o : SplitObjects(r.body)) {
@@ -118,14 +126,14 @@ public:
     /// it stays "live" in listings. Call periodically while hosting.
     static bool Heartbeat(const std::string& id, int players) {
         if (id.empty()) return false;
-        return Account::Api("/rest/v1/game_sessions?id=eq." + id, "PATCH",
-                            "{\"players\":" + std::to_string(players) + "}").ok;
+        return Account::Get().Db().From("game_sessions").Eq("id", id, backend::ValueText::AsIs)   // (sent as it always was)
+            .Update("{\"players\":" + std::to_string(players) + "}").ok;
     }
 
     /// Remove the advertised session (call when the host stops).
     static bool Unregister(const std::string& id) {
         if (id.empty()) return false;
-        return Account::Api("/rest/v1/game_sessions?id=eq." + id, "DELETE").ok;
+        return Account::Get().Db().From("game_sessions").Eq("id", id, backend::ValueText::AsIs).Delete().ok;
     }
 
     /// List open sessions, newest first. Optionally filter by room. (Stale sessions
@@ -133,11 +141,10 @@ public:
     /// docs/online/supabase-backend.md.)
     static std::vector<GameSession> List(const std::string& room = {}) {
         namespace d = okay::account::detail;
-        std::string path = "/rest/v1/game_sessions"
-            "?select=id,name,room,host_addr,port,players,max_players,region"
-            "&order=updated_at.desc";
-        if (!room.empty()) path += "&room=eq." + room;
-        account::ApiResponse r = Account::Api(path, "GET");
+        auto db = Account::Get().Db();
+        backend::Query q = db.From("game_sessions").Select(kBasicColumns).Order("updated_at", true);
+        if (!room.empty()) q.Eq("room", room, backend::ValueText::AsIs);   // (sent as it always was)
+        account::ApiResponse r = q.Get();
         std::vector<GameSession> out;
         if (!r.ok) return out;
         // PostgREST returns an array of objects; every column is NOT NULL (see the
@@ -167,6 +174,8 @@ public:
     }
 
 private:
+    static constexpr const char* kBasicColumns = "id,name,room,host_addr,port,players,max_players,region";
+
     static std::vector<std::string> SplitObjects(const std::string& json) {
         std::vector<std::string> out; int depth = 0; std::size_t start = 0; bool inStr = false;
         for (std::size_t i = 0; i < json.size(); ++i) {
@@ -197,15 +206,6 @@ private:
         while (p < obj.size() && obj[p] != ',' && obj[p] != '}') v += obj[p++];
         while (!v.empty() && v.back() == ' ') v.pop_back();
         return v == "null" ? std::string() : v;
-    }
-    static std::string UrlEnc(const std::string& s) {
-        static const char* hex = "0123456789ABCDEF";
-        std::string o;
-        for (unsigned char c : s) {
-            if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') o += (char)c;
-            else { o += '%'; o += hex[c >> 4]; o += hex[c & 15]; }
-        }
-        return o;
     }
 };
 

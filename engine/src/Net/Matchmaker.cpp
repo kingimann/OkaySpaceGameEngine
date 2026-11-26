@@ -48,7 +48,7 @@ std::string JStr(const std::string& s) {
     return o + "\"";
 }
 
-// The Supabase queue (docs/sql/matchmaking.sql), with the signed-in account.
+// The Supabase queue (docs/sql/matchmaking.sql), with the signed-in account, through OkayBackend's Database (Rpc).
 struct SupabaseQueue : Matchmaker::Backend {
     static std::string Why(const account::ApiResponse& r) {
         if (r.reached && r.status == 404) return "Matchmaking isn't set up on the server yet (docs/sql/matchmaking.sql).";
@@ -57,7 +57,7 @@ struct SupabaseQueue : Matchmaker::Backend {
     }
     bool Join(const MatchRequest& q, std::string& ticket, std::string& err) override {
         if (!Account::Exists() || !Account::IsLoggedIn()) { err = "Sign in to find a match."; return false; }
-        auto r = Account::Get().Api("/rest/v1/rpc/queue_join", "POST",
+        auto r = Account::Get().Db().Rpc("queue_join",
             "{\"p_game\":" + JStr(q.game) + ",\"p_mode\":" + JStr(q.mode) + ",\"p_region\":" + JStr(q.region) +
             ",\"p_players\":" + std::to_string(q.players) + ",\"p_min_players\":" + std::to_string(q.minPlayers) +
             ",\"p_party\":" + (q.withParty ? "true" : "false") + "}");
@@ -69,7 +69,7 @@ struct SupabaseQueue : Matchmaker::Backend {
         return true;
     }
     bool Poll(const std::string& ticket, Matchmaker::PollResult& out, std::string& err) override {
-        auto r = Account::Get().Api("/rest/v1/rpc/queue_poll", "POST", "{\"p_ticket\":" + JStr(ticket) + "}");
+        auto r = Account::Get().Db().Rpc("queue_poll", "{\"p_ticket\":" + JStr(ticket) + "}");
         if (!r.ok) { err = Why(r); return false; }
         auto rows = MatchResults::SplitObjects(r.body);
         if (rows.empty()) { err = "The matchmaking server sent an empty answer."; return false; }
@@ -88,11 +88,11 @@ struct SupabaseQueue : Matchmaker::Backend {
     }
     void Leave(const std::string& ticket) override {
         if (Account::Exists() && Account::IsLoggedIn())
-            Account::Get().Api("/rest/v1/rpc/queue_leave", "POST", "{\"p_ticket\":" + JStr(ticket) + "}");
+            Account::Get().Db().Rpc("queue_leave", "{\"p_ticket\":" + JStr(ticket) + "}");
     }
     bool HostReady(const std::string& assignment, const std::string& link) override {
-        return Account::Get().Api("/rest/v1/rpc/queue_host_ready", "POST",
-                                  "{\"p_assignment\":" + JStr(assignment) + ",\"p_link\":" + JStr(link) + "}").ok;
+        return Account::Get().Db().Rpc("queue_host_ready",
+                                       "{\"p_assignment\":" + JStr(assignment) + ",\"p_link\":" + JStr(link) + "}").ok;
     }
 };
 

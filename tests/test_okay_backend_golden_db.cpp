@@ -39,7 +39,7 @@
 namespace fs = std::filesystem;
 namespace acc = okay::account;
 using golden::kUrl; using golden::kKey; using golden::Tok; using golden::Fake; using golden::Http; using golden::NoAnswer;
-using golden::SaveSession; using golden::RequestsOf;
+using golden::SaveSession;
 
 // ---- Helpers -------------------------------------------------------------------------------------------------------------
 static const int kFresh = 150;      // Matchmaking::Browse's default window
@@ -107,7 +107,7 @@ static std::string MatchState(const okay::Matchmaker& mm) {
 static const char* kTicket = "\"7f1c2d3e-4b5a-6978-8091-a2b3c4d5e6f7\"";
 
 // ---- The scenarios, run through the programs' public functions --------------------------------------------------------------
-struct Scenario { const char* name; std::function<std::string(const fs::path& dir)> run; };
+using golden::Scenario;
 
 static std::vector<Scenario> Scenarios() {
     std::vector<Scenario> v;
@@ -379,16 +379,9 @@ static std::vector<Scenario> Scenarios() {
 }
 
 // ---- The same requests through the Supabase provider directly (okay::backend::supabase::Database, RecordingTransport) ------
-struct ProviderRun {
-    okay::backend::RecordingTransport rec;
-    Fake fake;
+struct ProviderRun : golden::Recorder {
     std::string token = Tok(1);
     okay::backend::supabase::Database Db() { return okay::backend::supabase::Database(kUrl, kKey, rec, token); }
-    ProviderRun() {
-        rec.answer = [this](const okay::backend::Request& r) {
-            return okay::backend::FromHttp(fake.Answer(r.method, r.url, r.headers, r.bodyFile.empty() ? r.body : std::string()));
-        };
-    }
 };
 using ProviderFlow = std::function<void(ProviderRun&)>;
 static std::vector<std::pair<const char*, ProviderFlow>> ProviderFlows() {
@@ -449,43 +442,13 @@ int main() {
     const std::vector<Scenario> all = Scenarios();
 
     // 1. The programs' own functions send exactly the golden requests and make the same of the answers.
-    if (print) std::cout << "// Recorded with OKAY_GOLDEN_PRINT=1 (tests/test_okay_backend_golden_db.cpp).\n"
-                            "static const char* const kGolden[][2] = {\n";
-    std::size_t matched = 0;
-    for (const Scenario& s : all) {
-        const std::string got = s.run(root / s.name);
-        if (print) { std::cout << "    {\"" << s.name << "\", R\"GOLD(" << got << ")GOLD\"},\n"; continue; }
-        const char* want = nullptr;
-        for (const auto& g : kGolden) if (std::string(g[0]) == s.name) want = g[1];
-        CHECK(want != nullptr);
-        if (!want) continue;
-        const bool same = got == want;
-        if (!same) std::cout << "  MISMATCH in " << s.name << "\n--- golden\n" << want << "--- now\n" << got << "\n";
-        CHECK(same);
-        matched += same;
-    }
-    if (print) { std::cout << "};\n"; return 0; }
-    CHECK(matched == all.size());
-    CHECK(all.size() == sizeof(kGolden) / sizeof(kGolden[0]));
+    golden::RunScenarios("tests/test_okay_backend_golden_db.cpp", all, kGolden, root, print);
+    if (print) return 0;
     CHECK(g_badFresh == 0);   // every browse asked for rows newer than now - its window
 
     // 2. The Supabase provider called directly sends the same bytes.
-    std::size_t sameRequests = 0;
     const auto flows = ProviderFlows();
-    for (const auto& flow : flows) {
-        const char* want = nullptr;
-        for (const auto& g : kGolden) if (std::string(g[0]) == flow.first) want = g[1];
-        CHECK(want != nullptr);
-        if (!want) continue;
-        ProviderRun p;
-        flow.second(p);
-        const bool same = p.fake.log == RequestsOf(want);
-        if (!same) std::cout << "  PROVIDER MISMATCH in " << flow.first << "\n--- golden requests\n" << RequestsOf(want) << "--- provider\n" << p.fake.log << "\n";
-        CHECK(same);
-        sameRequests += same;
-        CHECK(!p.rec.sent.empty());
-    }
-    CHECK(sameRequests == flows.size());
+    golden::RunProviderFlows<ProviderRun>(flows, kGolden, [](const char*, const char*, ProviderRun& p) { CHECK(!p.rec.sent.empty()); });
     CHECK(flows.size() >= 7);
 
     std::error_code ec;

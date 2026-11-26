@@ -31,50 +31,8 @@ Row-Level Security, and adds policies so each player can only touch their own ro
 (leaderboards are world-readable). A trigger keeps each player's *best* score.
 
 ```sql
--- Per-account cloud saves: progress that follows the player across devices.
-create table if not exists public.cloud_saves (
-  user_id    uuid        not null default auth.uid() references auth.users on delete cascade,
-  key        text        not null,
-  data       text        not null,
-  updated_at timestamptz not null default now(),
-  primary key (user_id, key)
-);
-alter table public.cloud_saves enable row level security;
-
-create policy "own cloud saves - read"   on public.cloud_saves for select using (auth.uid() = user_id);
-create policy "own cloud saves - write"  on public.cloud_saves for insert with check (auth.uid() = user_id);
-create policy "own cloud saves - update" on public.cloud_saves for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
-create policy "own cloud saves - delete" on public.cloud_saves for delete using (auth.uid() = user_id);
-
--- Global leaderboards: one best row per (board, player). Anyone may read the
--- ranking; a player may only write their own row.
-create table if not exists public.leaderboards (
-  user_id    uuid        not null default auth.uid() references auth.users on delete cascade,
-  board      text        not null,
-  name       text        not null,
-  score      bigint      not null default 0,
-  updated_at timestamptz not null default now(),
-  primary key (board, user_id)
-);
-alter table public.leaderboards enable row level security;
-
-create policy "leaderboards - read all"  on public.leaderboards for select using (true);
-create policy "leaderboards - write own" on public.leaderboards for insert with check (auth.uid() = user_id);
-create policy "leaderboards - update own" on public.leaderboards for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
-
--- Keep only the player's highest score: on an upsert that would lower it, keep the
--- old value. So the client can always just submit; the table never regresses.
-create or replace function public.leaderboards_keep_best() returns trigger as $$
-begin
-  if new.score < old.score then new.score := old.score; end if;
-  new.updated_at := now();
-  return new;
-end;
-$$ language plpgsql;
-
-drop trigger if exists keep_best on public.leaderboards;
-create trigger keep_best before update on public.leaderboards
-  for each row execute function public.leaderboards_keep_best();
+-- Moved (OkayBackend round 3, 2026-11-26): the definitions now live in docs/sql/cloud_saves.sql and
+-- docs/sql/leaderboards.sql, unchanged. Run those two files.
 ```
 
 ## 3. Use it

@@ -4,13 +4,17 @@
 // golden text. No request ever leaves the process. The address, key and tokens are made up.
 #pragma once
 
+#include "test_framework.hpp"
+#include "okay/Backend/Transport.hpp"   // RecordingTransport, FromHttp
 #include "okay/Core/Base64.hpp"
 #include "okay/Platform/NativeFetch.hpp"   // okay::http::Result
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iostream>
 #include <string>
 #include <vector>
 
@@ -80,6 +84,89 @@ inline std::string RequestsOf(const std::string& golden) {
         i = e + 1;
     }
     return out;
+}
+
+/// A scenario: a name and a run that returns, as text, the requests it sent and what the program made of the answers.
+struct Scenario {
+    const char* name;
+    std::function<std::string(const std::filesystem::path& dir)> run;
+};
+
+/// The golden text called `name`, or null.
+template <std::size_t N>
+const char* Find(const char* const (&golden)[N][2], const std::string& name) {
+    for (const auto& g : golden) if (name == g[0]) return g[1];
+    return nullptr;
+}
+
+/// Part 1 of a golden test: runs every scenario (each in its own folder under `root`). With `print` it writes the texts in
+/// the .inc form to stdout and checks nothing (that is how the texts are recorded); otherwise every text must equal its
+/// golden one, and each scenario must have exactly one.
+template <std::size_t N>
+void RunScenarios(const char* testFile, const std::vector<Scenario>& all, const char* const (&golden)[N][2],
+                  const std::filesystem::path& root, bool print) {
+    if (print) std::cout << "// Recorded with OKAY_GOLDEN_PRINT=1 (" << testFile << ").\n"
+                            "static const char* const kGolden[][2] = {\n";
+    std::size_t matched = 0;
+    for (const Scenario& s : all) {
+        const std::string got = s.run(root / s.name);
+        if (print) { std::cout << "    {\"" << s.name << "\", R\"GOLD(" << got << ")GOLD\"},\n"; continue; }
+        const char* want = Find(golden, s.name);
+        CHECK(want != nullptr);
+        if (!want) continue;
+        const bool same = got == want;
+        if (!same) std::cout << "  MISMATCH in " << s.name << "\n--- golden\n" << want << "--- now\n" << got << "\n";
+        CHECK(same);
+        matched += same;
+    }
+    if (print) { std::cout << "};\n"; return; }
+    CHECK(matched == all.size());
+    CHECK(all.size() == N);
+}
+
+/// Part 2's fake server behind a RecordingTransport: a provider called directly sends through `rec`, the fake answers.
+struct Recorder {
+    okay::backend::RecordingTransport rec;
+    Fake fake;
+    Recorder() {
+        rec.answer = [this](const okay::backend::Request& r) {
+            return okay::backend::FromHttp(fake.Answer(r.method, r.url, r.headers, r.bodyFile.empty() ? r.body : std::string()));
+        };
+    }
+    Recorder(const Recorder&) = delete;
+    Recorder& operator=(const Recorder&) = delete;
+};
+
+/// Part 2: the requests a provider sent through `r` must be exactly the request blocks of the golden text `want`, and the
+/// recorder must have kept one request per block. True when they are; prints both when not.
+inline bool SameRequests(const char* name, const char* want, const Recorder& r) {
+    const std::string blocks = RequestsOf(want);
+    const bool same = r.fake.log == blocks;
+    if (!same) std::cout << "  PROVIDER MISMATCH in " << name << "\n--- golden requests\n" << blocks << "--- provider\n" << r.fake.log << "\n";
+    CHECK(same);
+    std::size_t n = 0;
+    for (std::size_t k = r.fake.log.find("\n---\n"); k != std::string::npos; k = r.fake.log.find("\n---\n", k + 1)) ++n;
+    CHECK(r.rec.sent.size() == n);
+    return same;
+}
+
+/// Part 2: runs each named flow on a fresh `Run` (a Recorder with the provider to call) and checks its requests against
+/// the golden text of the same name (SameRequests); `also` adds the test's own checks for a flow. Every flow must match.
+template <class Run, std::size_t N>
+void RunProviderFlows(const std::vector<std::pair<const char*, std::function<void(Run&)>>>& flows,
+                      const char* const (&golden)[N][2],
+                      const std::function<void(const char* name, const char* want, Run&)>& also = {}) {
+    std::size_t same = 0;
+    for (const auto& flow : flows) {
+        const char* want = Find(golden, flow.first);
+        CHECK(want != nullptr);
+        if (!want) continue;
+        Run p;
+        flow.second(p);
+        same += SameRequests(flow.first, want, p);
+        if (also) also(flow.first, want, p);
+    }
+    CHECK(same == flows.size());
 }
 
 } // namespace golden

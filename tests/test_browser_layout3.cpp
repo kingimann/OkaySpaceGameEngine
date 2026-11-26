@@ -401,5 +401,21 @@ int main() {
         CHECK(s1 && Near(s1->font.size, 32) && Near(s1->x, 134));
         CHECK(q1 && Near(q1->font.size, 16) && Near(q1->x, 0));
     }
+    {
+        // <center> and align="right" move narrower block boxes inside them (HTML 15.3.3 "align descendants"): a 50% table in a
+        // 400 px <center> starts at 100; a 100 px <p> at 150; a 100 px <div> in <div align=right> at 300. In quirks mode (no
+        // DOCTYPE) the table's cell text starts at the left again; with <!DOCTYPE html> it is centred too (100 + (200 - 8) / 2).
+        const std::string body = "<body style='margin:0'><center><table id=t width='50%' cellspacing=0 cellpadding=0><tr><td>x</td></tr>"
+                                 "</table><p id=p style='width:100px;margin:0'>y</p></center><div align=right><div id=d style='width:100px'>z</div></div>";
+        const LayoutResult q = Lay(body, 400);
+        const LayoutResult d = Lay("<!DOCTYPE html>" + body, 400);
+        const BoxInfo* t = ById(q, "t"); const BoxInfo* pp = ById(q, "p"); const BoxInfo* dd = ById(q, "d");
+        CHECK(t && Near(t->x, 100) && Near(t->w, 200));
+        CHECK(pp && Near(pp->x, 150));
+        CHECK(dd && Near(dd->x, 300));
+        const DrawCmd* xq = TextCmd(q, "x"); const DrawCmd* xd = TextCmd(d, "x");
+        CHECK(xq && Near(xq->x, 100));
+        CHECK(xd && Near(xd->x, 196));
+    }
     TEST_MAIN_RESULT();
 }

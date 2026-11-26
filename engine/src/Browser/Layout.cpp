@@ -1769,6 +1769,12 @@ struct Layouter {
             const float rest = avail - w - edgesH;
             if (autoL && autoR) ml = mr = std::max(0.0f, rest * 0.5f);
             else if (autoL) ml = std::max(0.0f, rest - mr);
+            else if (!autoR && !cell && st.alignedByParent != 0 && st.alignedByParent != 3 && !(n.node && n.node->Attr("align"))) {
+                // HTML 15.3.3 "align descendants": inside <center> (or an align="center" / "right" parent) a box narrower than
+                // its container moves to the middle (or the right); the margins it has stay around it
+                const float spare = std::max(0.0f, rest - ml - mr);
+                ml += st.alignedByParent == 1 ? spare * 0.5f : spare;
+            }
         }
         const float bx = Finite(bx0 + ml);
         const float bwid = w + edgesH;

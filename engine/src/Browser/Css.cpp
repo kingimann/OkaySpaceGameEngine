@@ -1293,7 +1293,7 @@ const StyleSheet& DefaultStyleSheet() {
         "small, sub, sup { font-size: smaller }\n"
         "sub { vertical-align: sub } sup { vertical-align: super }\n"
         "big { font-size: larger }\n"
-        "center { text-align: center }\n"
+        "center { text-align: -webkit-center }\n"
         "hr { margin: 0.5em auto; border-width: 1px; border-style: inset; border-color: gray }\n"
         "img { max-width: 100% }\n"
         "mark { background-color: yellow; color: black }\n"
@@ -1893,10 +1893,13 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
         }
         if (seenSize) { s.mono = IsMonoFamily(family); s.family = Trim(family); }
     } else if (p == "text-align") {
-        if (v == "left" || v == "start") s.textAlign = TextAlign::Left;
+        if (v == "left" || v == "start" || v == "-webkit-left" || v == "-moz-left") s.textAlign = TextAlign::Left;
         else if (v == "justify") s.textAlign = TextAlign::Justify;
-        else if (v == "right" || v == "end") s.textAlign = TextAlign::Right;
-        else if (v == "center" || v == "-webkit-center") s.textAlign = TextAlign::Center;
+        else if (v == "right" || v == "end" || v == "-webkit-right" || v == "-moz-right") s.textAlign = TextAlign::Right;
+        else if (v == "center" || v == "-webkit-center" || v == "-moz-center") s.textAlign = TextAlign::Center;
+        // the legacy values also align the block boxes inside (HTML 15.3.3 "align descendants")
+        s.legacyAlign = (v == "-webkit-center" || v == "-moz-center") ? 1 : (v == "-webkit-right" || v == "-moz-right") ? 2
+                      : (v == "-webkit-left" || v == "-moz-left") ? 3 : 0;
     } else if (p == "text-transform") {
         s.textTransform = v == "uppercase" ? TextTransform::Upper : v == "lowercase" ? TextTransform::Lower : v == "capitalize" ? TextTransform::Capitalize : TextTransform::None;
     } else if (p == "text-indent") {
@@ -2251,6 +2254,14 @@ std::string SafeFaceList(const std::string& v) {
     return v;
 }
 
+// An align attribute (lower-cased) on a block or a table cell as CSS: left / right / center / middle are the legacy
+// text-align values, which also align the blocks inside (HTML 15.3.3 / 15.3.8); justify is plain text-align.
+std::string AlignHint(const std::string& la) {
+    if (la == "left" || la == "right" || la == "center" || la == "middle") return "text-align:-webkit-" + std::string(la == "middle" ? "center" : la) + ";";
+    if (la == "justify") return "text-align:justify;";
+    return std::string();
+}
+
 // The CSS that an element's presentational attributes stand for (the HTML standard, 15.3.2 - 15.3.10, the parts the pages we
 // meet still use: table border / cellspacing / cellpadding / width / bgcolor / align, cell width / height / nowrap / align /
 // valign, body bgcolor / text / margins, <font> color / face / size, align on blocks, <img> align / hspace / vspace / border,
@@ -2268,16 +2279,14 @@ std::string PresentationalHints(const Node& el) {
         if (const std::string* sz = el.Attr("size")) { const std::string k = LegacyFontSize(*sz); if (!k.empty()) css += "font-size:" + k + ";"; }
     }
     if (n == "div" || n == "p" || n == "h1" || n == "h2" || n == "h3" || n == "h4" || n == "h5" || n == "h6" || n == "caption") {   // 15.3.3
-        const std::string la = lowerAttr("align");
-        if (la == "left" || la == "right" || la == "center" || la == "middle")
-            css += "text-align:-webkit-" + std::string(la == "middle" ? "center" : la) + ";";
-        else if (la == "justify") css += "text-align:justify;";
+        css += AlignHint(lowerAttr("align"));
     }
-    if (n == "body") {   // 15.3.2: the body's margins
-        const std::string top = !DimensionAttr(el, "marginheight").empty() ? DimensionAttr(el, "marginheight") : DimensionAttr(el, "topmargin");
-        const std::string bottom = !DimensionAttr(el, "marginheight").empty() ? DimensionAttr(el, "marginheight") : DimensionAttr(el, "bottommargin");
-        const std::string left = !DimensionAttr(el, "marginwidth").empty() ? DimensionAttr(el, "marginwidth") : DimensionAttr(el, "leftmargin");
-        const std::string right = !DimensionAttr(el, "marginwidth").empty() ? DimensionAttr(el, "marginwidth") : DimensionAttr(el, "rightmargin");
+    if (n == "body") {   // 15.3.2: the body's margins (marginheight / marginwidth first, then the per-side ones)
+        const std::string mh = DimensionAttr(el, "marginheight"), mw = DimensionAttr(el, "marginwidth");
+        const std::string top = !mh.empty() ? mh : DimensionAttr(el, "topmargin");
+        const std::string bottom = !mh.empty() ? mh : DimensionAttr(el, "bottommargin");
+        const std::string left = !mw.empty() ? mw : DimensionAttr(el, "leftmargin");
+        const std::string right = !mw.empty() ? mw : DimensionAttr(el, "rightmargin");
         if (!top.empty()) css += "margin-top:" + top + ";";
         if (!bottom.empty()) css += "margin-bottom:" + bottom + ";";
         if (!left.empty()) css += "margin-left:" + left + ";";
@@ -2343,10 +2352,7 @@ std::string PresentationalHints(const Node& el) {
         }
     }
     if (n == "td" || n == "th" || n == "tr") {
-        if (const std::string* a = el.Attr("align")) {
-            const std::string la = LowerAscii(Trim(*a));
-            if (la == "left" || la == "right" || la == "center" || la == "justify") css += "text-align:" + la + ";";
-        }
+        css += AlignHint(lowerAttr("align"));   // 15.3.8: aligns descendants too
         if (const std::string* a = el.Attr("valign")) {
             const std::string la = LowerAscii(Trim(*a));
             if (la == "top" || la == "middle" || la == "bottom" || la == "baseline") css += "vertical-align:" + la + ";";
@@ -2414,7 +2420,7 @@ void CopyProperty(ComputedStyle& s, Work& wk, const std::string& p, const Comput
     if (p == "max-height") { s.maxHeight = from.maxHeight; return; }
     if (p == "min-width") { s.minWidth = from.minWidth; s.minWidthAuto = from.minWidthAuto; return; }
     if (p == "min-height") { s.minHeight = from.minHeight; s.minHeightAuto = from.minHeightAuto; return; }
-    if (p == "text-align") { s.textAlign = from.textAlign; return; }
+    if (p == "text-align") { s.textAlign = from.textAlign; s.legacyAlign = from.legacyAlign; return; }
     if (p == "text-indent") { s.textIndent = from.textIndent; return; }
     if (p == "text-transform") { s.textTransform = from.textTransform; return; }
     if (p.compare(0, 15, "text-decoration") == 0) { s.underline = from.underline; s.strike = from.strike; s.overline = from.overline; s.decoStyle = from.decoStyle; s.decoColor = from.decoColor; return; }
@@ -2515,6 +2521,8 @@ ComputedStyle InheritedStyle(const ComputedStyle& parent) {
     s.bold = parent.bold; s.italic = parent.italic; s.mono = parent.mono; s.weight = parent.weight;
     s.family = parent.family;
     s.textAlign = parent.textAlign;
+    s.legacyAlign = parent.legacyAlign;
+    s.alignedByParent = parent.legacyAlign;
     s.textTransform = parent.textTransform;
     s.textIndent = parent.textIndent;
     s.lineHeight = parent.lineHeight; s.lineHeightFactor = parent.lineHeightFactor;

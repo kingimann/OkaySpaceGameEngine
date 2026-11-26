@@ -54,6 +54,10 @@ struct HtmlDocument {
     std::vector<std::string> styleSheets;  ///< the text of each <style> element, in order
     std::string baseHref;                  ///< the first <base href>, as written
     bool truncated = false;                ///< a limit dropped or cut something
+    /// Quirks mode (HTML 13.2.6.4.1, "the initial insertion mode"): the page has no <!DOCTYPE html> before its first tag, or an
+    /// old one (a DOCTYPE other than "html", or a legacy HTML 2 / 3.2 / 4.0 / 4.01-transitional-without-system-id public id).
+    /// The style reads it (Css.hpp StyleContext::quirks): tables do not inherit fonts and alignment from outside, as in old browsers.
+    bool quirks = false;
 
     const Node* Html() const;   ///< the <html> element (always present after ParseHtml)
     const Node* Body() const;   ///< the <body> element (always present after ParseHtml)

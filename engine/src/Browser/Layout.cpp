@@ -554,7 +554,13 @@ struct Layouter {
     }
     void Fade(const Mark& m, float opacity) {
         if (opacity >= 1.0f) return;
-        for (std::size_t i = m.cmds; i < r.cmds.size(); ++i) r.cmds[i].color.a = (std::uint8_t)std::lround(r.cmds[i].color.a * std::max(0.0f, opacity));
+        for (std::size_t i = m.cmds; i < r.cmds.size(); ++i) {
+            r.cmds[i].color.a = (std::uint8_t)std::lround(r.cmds[i].color.a * std::max(0.0f, opacity));
+            // A form control is drawn by the host from its ControlBox, not from this colour: a fully transparent one (a page's
+            // own button laid over a native checkbox it hides with opacity: 0) is not drawn at all. Its box stays, so a click
+            // on it still reaches it, as in other browsers.
+            if (opacity <= 0.0f && r.cmds[i].kind == DrawCmd::Control) { r.cmds[i].kind = DrawCmd::Fill; r.cmds[i].color = Color{0, 0, 0, 0}; }
+        }
     }
 
     // ---- intrinsic widths (CSS Box Sizing 3, 5: min-content and max-content), border boxes without margins ----
@@ -1237,7 +1243,7 @@ struct Layouter {
         metrics(container, maxA, maxD);   // the strut
         for (const Placed& p : line) {
             float a = 0, d = 0;
-            if (p.f->kind == Frag::Word || p.f->kind == Frag::Space) metrics(*p.f->st, a, d);
+            if (p.f->kind == Frag::Word || p.f->kind == Frag::Space) { metrics(*p.f->st, a, d); a += p.f->st->baselineShift; d -= p.f->st->baselineShift; }
             else if (p.f->kind == Frag::Image || p.f->kind == Frag::Embed || p.f->kind == Frag::Atomic) boxMetrics(*p.f, a, d);
             else continue;
             maxA = std::max(maxA, a);
@@ -1319,7 +1325,7 @@ struct Layouter {
                 if (sh.color.a == 0) continue;
                 DrawCmd sc;
                 sc.kind = DrawCmd::Text;
-                sc.x = Finite(x + sh.x); sc.y = Finite(base - f.st->fontSize * 0.8f + sh.y); sc.w = p.w; sc.h = f.st->fontSize;
+                sc.x = Finite(x + sh.x); sc.y = Finite(base - f.st->baselineShift - f.st->fontSize * 0.8f + sh.y); sc.w = p.w; sc.h = f.st->fontSize;
                 sc.text = f.text;
                 sc.font = FontOf(*f.st);
                 sc.color = sh.color;
@@ -1329,7 +1335,7 @@ struct Layouter {
             }
             DrawCmd c;
             c.kind = DrawCmd::Text;
-            c.x = x; c.y = Finite(base - f.st->fontSize * 0.8f); c.w = p.w; c.h = f.st->fontSize;
+            c.x = x; c.y = Finite(base - f.st->baselineShift - f.st->fontSize * 0.8f); c.w = p.w; c.h = f.st->fontSize;
             c.text = f.text;
             c.font = FontOf(*f.st);
             c.color = f.st->color;
@@ -1763,6 +1769,12 @@ struct Layouter {
             const float rest = avail - w - edgesH;
             if (autoL && autoR) ml = mr = std::max(0.0f, rest * 0.5f);
             else if (autoL) ml = std::max(0.0f, rest - mr);
+            else if (!autoR && !cell && st.alignedByParent != 0 && st.alignedByParent != 3 && !(n.node && n.node->Attr("align"))) {
+                // HTML 15.3.3 "align descendants": inside <center> (or an align="center" / "right" parent) a box narrower than
+                // its container moves to the middle (or the right); the margins it has stay around it
+                const float spare = std::max(0.0f, rest - ml - mr);
+                ml += st.alignedByParent == 1 ? spare * 0.5f : spare;
+            }
         }
         const float bx = Finite(bx0 + ml);
         const float bwid = w + edgesH;
@@ -1978,7 +1990,7 @@ struct Layouter {
                 BorderSide(ox + oW - ow, oy + ow, ow, oH - 2 * ow, false, st.outlineLine, st.outlineColor);
             }
         }
-        Fade(boxMark, st.opacity);
+        Fade(boxMark, st.maskUrl ? 0.0f : st.opacity);
         if (st.filterGray > 0.0f || st.filterBright != 1.0f) Filter(boxMark, st.filterGray, st.filterBright);
         if (!st.transform.empty()) ApplyTransform(boxMark, st, bx, y, bwid, h);
         if (st.position == Position::Relative || st.position == Position::Sticky) {
@@ -2395,6 +2407,20 @@ struct Layouter {
             const float gaps = hs * (float)(t.cols + 1);
             mn = gaps; mx = gaps;
             for (int c = 0; c < t.cols; ++c) { mn += cmin[(std::size_t)c]; mx += cmax[(std::size_t)c]; }
+            // Percentage columns (CSS Tables 3, the table's max-content width): the table is as wide as it must be for every
+            // percentage to hold with the other columns at their maximum widths - the rest of the columns' maximum over the
+            // percentage left for them, and each percentage column's maximum over its own percentage. A page's
+            // "25% | content | 25%" row then spreads out like in other browsers instead of squeezing the middle column.
+            float pctSum = 0, restMax = 0, need = 0;
+            for (int c = 0; c < t.cols; ++c) {
+                const std::size_t k = (std::size_t)c;
+                if (cpct[k] > 0) { pctSum += cpct[k]; need = std::max(need, cmax[k] * 100.0f / cpct[k]); }
+                else restMax += cmax[k];
+            }
+            if (pctSum > 0) {
+                if (pctSum < 100.0f) need = std::max(need, restMax * 100.0f / (100.0f - pctSum));
+                mx = std::max(mx, std::min(need, 1e6f) + gaps);
+            }
         }
         for (const SNode* cap : t.captions) { const auto ci = Intrinsic(*cap); mn = std::max(mn, ci.first + MarginsH(cap->st, 0)); }
         mx = std::max(mx, mn);
@@ -2458,6 +2484,16 @@ struct Layouter {
                 if (pct[c] >= 0) { colW[c] = std::max(mn[c], pct[c] * avail / 100.0f); left -= colW[c]; done[c] = true; }
             float sMin = 0, sMax = 0;
             for (std::size_t c = 0; c < nc; ++c) if (!done[c]) { sMin += mn[c]; sMax += mx[c]; }
+            if (left < sMin) {
+                // The percentage columns would push the others below their minimum widths (their content would overlap the
+                // next column): the percentage columns give back what they have above their own minimum, in proportion.
+                float spare = 0;
+                for (std::size_t c = 0; c < nc; ++c) if (done[c]) spare += colW[c] - mn[c];
+                const float give = std::min(spare, sMin - left);
+                if (spare > 0 && give > 0)
+                    for (std::size_t c = 0; c < nc; ++c) if (done[c]) colW[c] -= give * (colW[c] - mn[c]) / spare;
+                left += give;
+            }
             left = std::max(0.0f, left);
             for (std::size_t c = 0; c < nc; ++c) {
                 if (done[c]) continue;
@@ -3233,6 +3269,7 @@ LayoutResult LayoutPage(const HtmlDocument& doc, float widthIn, const TextMeasur
     LayoutContext localCtx;
     if (context) { localCtx.style = context->style; localCtx.controlText = context->controlText; localCtx.viewportHeight = context->viewportHeight; }
     const float viewH = localCtx.viewportHeight > 0 ? localCtx.viewportHeight : width * 0.75f;
+    localCtx.style.quirks = doc.quirks;
     localCtx.style.media.width = width;
     localCtx.style.media.height = viewH;
     localCtx.style.rootFontSize = ComputeStyle(*html, ComputedStyle(), sheets, &localCtx.style).fontSize;   // rem

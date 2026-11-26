@@ -87,7 +87,7 @@ stated in `tests/test_ttf_rasterizer.cpp:5`).
 - **Lua** (`engine/src/Lua/`, 8,125 lines): written from the Lua 5.4 manual; no PUC-Rio identifiers (`luaV_`, `luaH_`,
   `TValue`, `lua_State`, `OP_` names); `%.14g` number printing is Lua's documented behaviour.
 - **Browser** (`engine/src/Browser/`, 8,978 lines): WHATWG HTML / DOM / URL and CSS specs cited per file; own user agent
-  "OkaySpace Browser"; `-webkit-` names are CSS property names pages use, not WebKit code.
+  token "OkaySpaceBrowser/1.0" after the common "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" compatibility prefix (no other browser named); `-webkit-` names are CSS property names pages use, not WebKit code.
 - **RHI** (`engine/src/Render/RHI/`), **physics** (`engine/src/Physics/Core/`, Catto's papers cited; Box2D-like default
   iteration counts 8 / 3 are numbers, not code), **okay-build**, **okay-cc** runtime (`tools/okaycc/lib/`, Linux system
   calls and ISO C), **okay-ms** runtime, **Xbox UWP** (own APPX writer from Microsoft's documentation and ECMA-376; no
@@ -96,7 +96,8 @@ stated in `tests/test_ttf_rasterizer.cpp:5`).
   **TrueType** rasteriser (no `stbtt` names), the **image decoders** (no `stbi` / libjpeg names or constants), **OkayUI**
   (no Dear ImGui internals such as `IM_NORMALIZE2F`, `FringeScale`, `stb_textedit`).
 - No other project's copyright line in our code (only the JetBrains Mono font header). No .NET runtime or hostfxr
-  code on main yet. No video or AAC codec, no Brotli dictionary, no public suffix list, no SDL controller database.
+  code on main yet. No video or AAC codec, no Brotli dictionary (since added on `claude/woff2-1`, 2026-11-26, owner-approved data from
+  RFC 7932: see `THIRD_PARTY.md`), no public suffix list, no SDL controller database.
 - Brand names used to describe a device or a service (DualShock, DualSense, Joy-Con, Xbox, Steam, PlayFab, Mixamo in
   import hints, Blender in import notes) are text only; no logo or controller button art was found (PlayStation
   buttons are the words "Cross", "Circle", ... in `engine/src/Input/GamepadInfo.cpp:225`).

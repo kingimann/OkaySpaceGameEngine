@@ -1,5 +1,6 @@
 // Browser (page engine): one tab's navigation, history and cache (see Browser.hpp).
 #include "okay/Browser/Browser.hpp"
+#include "okay/Browser/Encoding.hpp"
 
 #include "okay/Browser/Profile.hpp"
 #include "okay/Core/StringUtil.hpp"
@@ -278,7 +279,8 @@ std::vector<std::string> BrowserTab::TakeFetches() {
     return out;
 }
 
-void BrowserTab::DeliverPage(const std::string& url, bool ok, int status, const std::string& body, const std::string& error) {
+void BrowserTab::DeliverPage(const std::string& url, bool ok, int status, const std::string& body, const std::string& error,
+                             const std::string& contentType) {
     const std::string page = WithoutFragment(url);
     if (m_state != State::Loading || page != m_loading) return;   // an old answer
     m_loading.clear();
@@ -294,7 +296,8 @@ void BrowserTab::DeliverPage(const std::string& url, bool ok, int status, const 
         m_layoutDirty = true;
         return;
     }
-    const std::string text = body.size() > kMaxPageBytes ? body.substr(0, kMaxPageBytes) : body;
+    // The bytes as UTF-8 (Encoding.hpp: BOM, then the Content-Type charset, then <meta charset>, then UTF-8 or windows-1252).
+    const std::string text = DecodePage(body.size() > kMaxPageBytes ? body.substr(0, kMaxPageBytes) : body, contentType).text;
     if (!m_history[m_index].post && !IsInternalPage(page)) {   // our own pages are made again each time (they change)
         m_cache[page] = text;
         m_cacheOrder.erase(std::remove(m_cacheOrder.begin(), m_cacheOrder.end(), page), m_cacheOrder.end());

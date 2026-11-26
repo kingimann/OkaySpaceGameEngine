@@ -10,7 +10,9 @@
 # No compiler is built when one is given; otherwise the src/ and cmd/okay-cl.cpp files are built into $SURVEY_OUT.
 # The default run is the Windows survey: from Round 28 okay-cl predefines _WIN32, _WIN64, _M_X64, _M_AMD64 and _MSC_VER
 # like the compiler it stands in for. SURVEY_PLAIN=1 is the plain survey (the engine's non-Windows paths): those macros
-# are left out with /U. SURVEY_FLAGS adds flags to every compile.
+# are left out with /U. SURVEY_FLAGS adds flags to every compile. SURVEY_FILES names a file that lists the sources to
+# compile (one path per line, relative to the repository root), to run the survey in parts (Round 30); the total is
+# then the number of listed files.
 set -eu
 HERE=$(CDPATH= cd "$(dirname "$0")" && pwd)
 ROOT=$(CDPATH= cd "$HERE/../.." && pwd)
@@ -40,7 +42,10 @@ if [ "${SURVEY_PLAIN:-0}" = "1" ]; then
   FLAGS="/U_WIN32 /U_WIN64 /U_M_X64 /U_M_AMD64 /U_MSC_VER /U_MSC_FULL_VER /U_MSVC_LANG $FLAGS"
 fi
 export CL OUT LIMIT FLAGS
-find engine/src -name '*.cpp' | sort | xargs -P "$JOBS" -I{} sh -c '
+list_files() {
+  if [ -n "${SURVEY_FILES:-}" ]; then cat "$SURVEY_FILES"; else find engine/src -name '*.cpp' | sort; fi
+}
+list_files | xargs -P "$JOBS" -I{} sh -c '
   f="$1"
   obj="$OUT/obj/$(echo "$f" | tr / _).obj"
   rm -f "$obj"
@@ -57,7 +62,7 @@ find engine/src -name '*.cpp' | sort | xargs -P "$JOBS" -I{} sh -c '
   rm -f "$obj"
 ' _ {}
 
-total=$(find engine/src -name '*.cpp' | wc -l)
+total=$(list_files | wc -l)
 ok=$(wc -l < "$OUT/ok.txt")
 sort -o "$OUT/ok.txt" "$OUT/ok.txt"
 echo "compiled: $ok of $total"

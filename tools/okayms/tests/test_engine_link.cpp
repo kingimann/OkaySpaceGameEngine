@@ -13,6 +13,7 @@
 #include <iterator>
 #include <string>
 #include <sys/wait.h>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -36,7 +37,10 @@ bool write_bytes(const std::string& path, const std::vector<uint8_t>& bytes) {
     return static_cast<bool>(out);
 }
 
-const char* kDir = "/tmp/okayms-el";
+// The folder for this run: its own per process (Round 31). A fixed /tmp/okayms-el was shared by every run on the machine,
+// and a second run started at the same time truncated this run's output files while they were read ("output differs
+// from g++" with exit code 0, found in the Round 30 full suite and reproduced with two runs started 5 seconds apart).
+const std::string kDir = "/tmp/okayms-el-" + std::to_string(static_cast<long>(getpid()));
 
 // The C runtime as a static library, and the kernel32 imports it and the programs use.
 bool build_runtime(Tally& tally, const std::string& cl, const std::string& root) {
@@ -177,5 +181,8 @@ int main(int argc, char** argv) {
                                      "engine/src/Crypto/ChaCha20.cpp", "engine/src/Crypto/Util.cpp"}});
         check_program(tally, root, {"link_math", {}});
     }
+    // The folder goes when every check passed; a failed run keeps its files for a look.
+    if (tally.fail == 0) std::system(("rm -rf " + kDir).c_str());
+    else std::fprintf(stderr, "files kept in %s\n", kDir.c_str());
     return tally.finish(2);
 }

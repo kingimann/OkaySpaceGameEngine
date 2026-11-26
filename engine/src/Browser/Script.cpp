@@ -3,10 +3,17 @@
 // pre-insert / remove steps and their hierarchy checks; 4.9 DOMTokenList for classList) and the HTML standard (8.6 timers,
 // 8.1.8.1 event handler attributes and properties, 13.3 fragment serialization, 4.12.1.1 script types), on our own
 // JavaScript engine's public API (okay/JavaScript/JavaScript.hpp) and its library helpers (JsInternal.hpp).
+// Round 3 adds, from the same standards and the ones Script.hpp names: HTMLCollection (DOM 4.2.10) for children /
+// childNodes / getElementsBy*, DOMStringMap (HTML 3.2.6.6) for dataset, Storage (HTML 12.2), History (HTML 7.4.2),
+// document.write for parser scripts (HTML 8.4.3), "prepare the script element" for scripts a script adds (HTML 4.12.1.1),
+// key / mouse / focus event attributes (UI Events 5.2-5.6), getComputedStyle (CSSOM 9), simple dialogs (HTML 8.8.1), and
+// fetch() / Headers / Response (Fetch 5.2-5.5) and XMLHttpRequest, written in JavaScript below (kPrelude) on one native
+// request function the tab answers.
 #include "okay/Browser/Script.hpp"
 
 #include "okay/Browser/Css.hpp"
 #include "okay/Browser/Forms.hpp"
+#include "okay/Browser/Storage.hpp"
 #include "okay/Browser/Url.hpp"
 #include "okay/Core/StringUtil.hpp"
 #include "../JavaScript/JsInternal.hpp"
@@ -14,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace okay::browser {
 
@@ -150,7 +158,7 @@ struct PageScripts::Impl {
     Hooks hooks;
     std::uint64_t budget = kBudgetPerCall;
     int depth = 0;   // host entries in progress (nested: an event a script fired with click())
-    bool loaded = false;
+    bool loaded = false, contentLoaded = false;
 
     // nodes the scripts have seen: slot -> node, its generation (a freed slot's old wrappers no longer match) and wrapper
     std::vector<Node*> nodes;
@@ -180,9 +188,28 @@ struct PageScripts::Impl {
     std::uint64_t consoleCount = 0;
     ConsoleLine::Level level = ConsoleLine::Log;
 
-    std::uint32_t kNode = 0, kStyle = 0, kClassList = 0, kLocation = 0;
+    std::uint32_t kNode = 0, kStyle = 0, kClassList = 0, kLocation = 0, kCollection = 0, kStorage = 0, kDataset = 0;
     js::Object *nodeProto = nullptr, *documentProto = nullptr, *styleProto = nullptr, *classListProto = nullptr,
-               *eventProto = nullptr, *locationProto = nullptr;
+               *eventProto = nullptr, *locationProto = nullptr, *collectionProto = nullptr, *storageProto = nullptr,
+               *datasetProto = nullptr, *computedProto = nullptr, *historyProto = nullptr;
+    js::Symbol* filterKey = nullptr;   // a collection's tag or class names
+
+    // ---- round 3
+    std::unordered_map<int, int> requests;   // fetch / XMLHttpRequest id -> its callback (a host ref)
+    int nextRequest = 1;
+    const Node* currentScript = nullptr;
+    bool parserScript = false;               // the running script may document.write
+    std::string writeBuffer;
+    std::vector<const Node*> written;        // <script> elements document.write put in, not taken by the tab yet
+    std::unordered_set<const Node*> started; // scripts that ran or are on their way ("already started", HTML 4.12.1)
+    const Node* focused = nullptr;
+    std::string historyState;                // JSON ("" = null)
+    int historyStateRef = -1;                // its parsed value (history.state is the same object each time)
+    int storageRef[2] = {-1, -1};            // the Storage objects (session, local)
+    int dialogs = 0;                         // opened in this host entry
+    std::uint64_t treeVersion = 0;           // goes up with every change (live collections cache their list per version)
+    struct CollectionCache { std::uint64_t version = ~0ull; std::vector<Node*> list; };
+    std::unordered_map<const js::HostObj*, CollectionCache> collections;
     js::Symbol* ownerKey = nullptr;   // style / classList objects keep their element's wrapper alive through it
     int locationRef = -1;
     int inlineCount = 0;
@@ -206,7 +233,7 @@ struct PageScripts::Impl {
     struct Entry {
         Impl& I;
         explicit Entry(Impl& i) : I(i) {
-            if (I.depth++ == 0) { I.rt.SetBudget(I.budget); I.level = ConsoleLine::Log; }
+            if (I.depth++ == 0) { I.rt.SetBudget(I.budget); I.level = ConsoleLine::Log; I.dialogs = 0; }
         }
         ~Entry() { --I.depth; }
     };
@@ -262,7 +289,23 @@ struct PageScripts::Impl {
         for (std::size_t i = 0; i < list.size(); ++i) rt.DefineIndex(a, (std::uint32_t)i, Wrap(list[i]));
         return js::Value::Obj(a);
     }
-    void Changed() { if (hooks.changed) hooks.changed(); }
+    void Changed() { ++treeVersion; if (hooks.changed) hooks.changed(); }
+    void StylesChanged() { if (hooks.styles) hooks.styles(); }
+    static bool IsStyleNode(const Node* n) {
+        if (!n || n->kind != NodeKind::Element) return false;
+        if (n->name == "style") return true;
+        if (n->name != "link") return false;
+        const std::string* rel = n->Attr("rel");
+        return rel && LowerAscii(*rel).find("stylesheet") != std::string::npos;
+    }
+    // Does the tree at `n` hold a <style> or a style sheet link? (charged: one step per node)
+    bool HasStyleNode(js::Runtime& r, Node* n) {
+        bool found = false;
+        std::size_t seen = 0;
+        Walk(n, true, [&](Node* x) { ++seen; if (IsStyleNode(x)) { found = true; return true; } return false; });
+        r.Charge(seen);
+        return found;
+    }
     bool InPage(const Node* n) const {
         while (n->parent) n = n->parent;
         return n == doc.root.get();
@@ -321,9 +364,11 @@ struct PageScripts::Impl {
     // Remove `n` from its parent; it goes to the removed list (freed later, FreeRemoved).
     void Remove(Node* n) {
         if (!n->parent) return;
+        const bool styles = InPage(n) && HasStyleNode(rt, n);
         std::unique_ptr<Node> t = Take(n);
         if (t) removed.push_back(std::move(t));
         Changed();
+        if (styles) StylesChanged();
     }
     // The DOM standard's pre-insert validity checks (4.2.3) and insert: `child` goes into `parent` before `before` (null: last).
     void Insert(js::Runtime& r, Node* parent, Node* child, Node* before) {
@@ -346,6 +391,46 @@ struct PageScripts::Impl {
         if (before) for (std::size_t i = 0; i < parent->children.size(); ++i) if (parent->children[i].get() == before) { at = i; break; }
         parent->children.insert(parent->children.begin() + (std::ptrdiff_t)at, std::move(t));
         Changed();
+        AfterInsert(r, child);
+    }
+    // HTML 4.12.1.1 "prepare the script element" for scripts a script put into the page: an inline one runs now, a src one
+    // is fetched by the tab and runs when it arrives. A <style> or style sheet link tells the tab to read the sheets again.
+    void AfterInsert(js::Runtime& r, Node* child) {
+        if (!InPage(child)) return;
+        std::vector<Node*> scripts;
+        bool styles = false;
+        std::size_t seen = 0;
+        Walk(child, true, [&](Node* n) {
+            ++seen;
+            if (n->kind == NodeKind::Element) {
+                if (n->name == "script" && !started.count(n)) scripts.push_back(n);
+                else if (IsStyleNode(n)) styles = true;
+            }
+            return false;
+        });
+        r.Charge(seen);
+        if (styles) StylesChanged();
+        for (Node* sc : scripts) {
+            if (started.count(sc) || !InPage(sc)) continue;
+            const std::string* type = sc->Attr("type");
+            if (!IsJavaScriptType(type ? *type : std::string())) continue;
+            if (const std::string* src = sc->Attr("src")) {
+                started.insert(sc);
+                if (hooks.loadScript && !src->empty()) hooks.loadScript(*sc, WithoutFragment(ResolveUrl(url, *src)));
+                continue;
+            }
+            const std::string text = sc->TextContent();
+            if (text.empty()) continue;   // an empty inline script is not started: text added later runs it (not done yet)
+            started.insert(sc);
+            const Node* prev = currentScript;
+            const bool prevParser = parserScript;
+            currentScript = sc;
+            parserScript = false;
+            std::string err;
+            if (!rt.Run(text, "inline script " + std::to_string(++inlineCount), &err)) Log(ConsoleLine::Error, err);
+            currentScript = prev;
+            parserScript = prevParser;
+        }
     }
     void RemoveChildren(Node* el) {
         rt.Charge(el->children.size());
@@ -357,6 +442,7 @@ struct PageScripts::Impl {
         }
     }
     void SetText(js::Runtime& r, Node* el, const std::string& text) {
+        if (IsStyleNode(el) || (el->parent && IsStyleNode(el->parent))) StylesChanged();
         if (el->kind == NodeKind::Text || el->kind == NodeKind::Comment) { SetData(r, *el, text); Changed(); return; }
         if (el->kind != NodeKind::Element) return;
         if (text.size() > HtmlLimits().maxTextBytes) r.ThrowRange("the text is too long");
@@ -382,13 +468,104 @@ struct PageScripts::Impl {
         CheckRoom(r, count);
         Account(r, bytes, 0);
         RemoveChildren(el);
+        bool styles = IsStyleNode(el);
         if (body)
             for (auto& c : body->children) {
+                // scripts put in by innerHTML never run (HTML 8.4.3: they are marked "already started")
+                Walk(c.get(), true, [&](Node* n) { if (n->IsElement("script")) started.insert(n); else if (IsStyleNode(n)) styles = true; return false; });
                 c->parent = el;
                 el->children.push_back(std::move(c));
             }
         nodeCount += count;
         Changed();
+        if (styles && InPage(el)) StylesChanged();
+    }
+
+    // ---- document.write (HTML 8.4.3, for the page's own scripts): the text is read when the script ends and its nodes go
+    // right after the script element; <script> elements in it are handed to the tab to run next.
+    void FlushWrite(const Node* element) {
+        std::string text;
+        text.swap(writeBuffer);
+        if (text.empty() || !element) return;
+        Node* el = const_cast<Node*>(element);
+        Node* parent = el->parent;
+        if (!parent || !InPage(el)) return;
+        HtmlLimits lim;
+        lim.maxDepth = std::max(1, lim.maxDepth - DepthOf(parent) - 3);
+        HtmlDocument frag = ParseHtml("<!DOCTYPE html><body>" + text, lim);
+        Node* body = const_cast<Node*>(frag.Body());
+        if (!body) return;
+        std::size_t count = 0, bytes = 0;
+        for (auto& c : body->children) { count += CountNodes(c.get()); bytes += TreeBytes(c.get()); }
+        if (nodeCount + count > kMaxNodes || textBytes + bytes > kMaxPageTextBytes) {
+            Log(ConsoleLine::Error, "document.write: the page would be too big; the text was not added");
+            return;
+        }
+        std::size_t at = 0;
+        while (at < parent->children.size() && parent->children[at].get() != el) ++at;
+        ++at;
+        bool styles = false;
+        for (auto& c : body->children) {
+            Walk(c.get(), true, [&](Node* n) {
+                if (n->IsElement("script") && !started.count(n)) {
+                    const std::string* type = n->Attr("type");
+                    started.insert(n);
+                    if (IsJavaScriptType(type ? *type : std::string())) written.push_back(n);
+                } else if (IsStyleNode(n)) styles = true;
+                return false;
+            });
+            c->parent = parent;
+            parent->children.insert(parent->children.begin() + (std::ptrdiff_t)at++, std::move(c));
+        }
+        nodeCount += count;
+        textBytes += bytes;
+        Changed();
+        if (styles) StylesChanged();
+    }
+
+    // ---- live collections (DOM 4.2.10): kind 0 children, 1 childNodes, 2 by tag name, 3 by class names
+    std::vector<Node*>& CollectionList(js::Runtime& r, js::HostObj* h) {
+        static std::vector<Node*> none;
+        none.clear();
+        Node* root = NodeOf(h);
+        if (!root) return none;
+        if (collections.size() > 64 && !collections.count(h)) collections.clear();   // a small cache: loops use one or two
+        CollectionCache& c = collections[h];
+        if (c.version == treeVersion) return c.list;
+        c.list.clear();
+        c.version = treeVersion;
+        const int kind = h->i32;
+        if (kind <= 1) {
+            r.Charge(root->children.size() / 4 + 1);
+            for (auto& ch : root->children) if (kind == 1 || ch->kind == NodeKind::Element) c.list.push_back(ch.get());
+            return c.list;
+        }
+        std::string filter;
+        if (const js::Prop* pr = h->FindRaw(filterKey)) if (pr->v.IsStr()) filter = js::Utf16To8(pr->v.S()->s);
+        const std::vector<std::string> want = kind == 3 ? Tokens(filter) : std::vector<std::string>();
+        if (kind == 3 && want.empty()) return c.list;
+        std::size_t seen = 0;
+        Walk(root, false, [&](Node* n) {
+            ++seen;
+            if (n->kind != NodeKind::Element) return false;
+            if (kind == 2) { if (filter == "*" || n->name == filter) c.list.push_back(n); return false; }
+            const std::vector<std::string> has = Tokens(AttrOr(*n, "class"));
+            for (const std::string& w : want) if (std::find(has.begin(), has.end(), w) == has.end()) return false;
+            c.list.push_back(n);
+            return false;
+        });
+        r.Charge(seen);
+        return c.list;
+    }
+    js::Value Collection(Node* root, int kind, const std::string& filter) {
+        const js::Value owner = Wrap(root);
+        js::HostObj* h = rt.NewHost(kCollection, collectionProto);
+        h->id = slotOf[root];
+        h->u32 = gens[h->id];
+        h->i32 = kind;
+        rt.DefineData(h, ownerKey, owner, 0);
+        if (kind >= 2) rt.DefineData(h, filterKey, js::Value::Str(rt.NewStringUtf8(filter)), 0);
+        return js::Value::Obj(h);
     }
     std::string ValueOf(const Node& el) const {
         if (KindOf(el) == ControlKind::Select) {
@@ -485,7 +662,12 @@ struct PageScripts::Impl {
     }
 
     // DOM 2.9 "dispatch": the path is the target, its ancestors, then window when the target is in the page.
-    bool DispatchEvent(Node* target, const std::string& type, bool bubbles, bool cancelable) {
+    bool DispatchEvent(Node* target, const std::string& type, bool bubbles, bool cancelable,
+                       const std::function<void(js::Object*)>& extra = nullptr) {
+        if ((int)dispatching.size() >= kMaxEventDepth) {
+            Log(ConsoleLine::Warn, "the event '" + type + "' was not sent: too many events inside each other");
+            return false;
+        }
         Entry entry(*this);
         std::vector<Node*> path;
         for (Node* p = target; p; p = p->parent) path.push_back(p);
@@ -500,6 +682,11 @@ struct PageScripts::Impl {
         put("isTrusted", js::Value::Bool(true));
         put("timeStamp", js::Value::Num(now));
         put("target", target ? Wrap(target) : js::Value::Obj(rt.global));
+        if (extra) {
+            try { extra(ev); }
+            catch (const js::JsThrow&) { rt.exception = js::Value(); rt.Unref(evRef); return false; }
+            catch (const js::JsTerminate& t) { Log(ConsoleLine::Error, t.why); rt.Unref(evRef); return false; }
+        }
         Dispatching d;
         d.ev = ev;
         d.cancelable = cancelable;
@@ -619,6 +806,22 @@ struct PageScripts::Impl {
         if (o != onProps.end()) { for (auto& x : o->second) rt.Unref(x.second); onProps.erase(o); }
         auto h = attrHandlers.find(slot);
         if (h != attrHandlers.end()) { for (auto& x : h->second) if (x.second.fn >= 0) rt.Unref(x.second.fn); attrHandlers.erase(h); }
+    }
+
+    // ---- focus (UI Events 5.2.4: blur, focusout at the old element; focus, focusin at the new one)
+    void FocusMoved(const Node* from, const Node* to) {
+        focused = to;
+        auto related = [this](const Node* other) {
+            return [this, other](js::Object* ev) { rt.DefineData(ev, rt.Intern("relatedTarget"), Wrap(const_cast<Node*>(other))); };
+        };
+        if (from && InPage(from)) {
+            DispatchEvent(const_cast<Node*>(from), "blur", false, false, related(to));
+            DispatchEvent(const_cast<Node*>(from), "focusout", true, false, related(to));
+        }
+        if (to && InPage(to) && focused == to) {
+            DispatchEvent(const_cast<Node*>(to), "focus", false, false, related(from));
+            DispatchEvent(const_cast<Node*>(to), "focusin", true, false, related(from));
+        }
     }
 
     // ---- timers (HTML 8.6)
@@ -758,12 +961,7 @@ bool NodeGet(js::Runtime& rt, js::HostObj* self, js::String* keyS, js::Value& ou
         else { for (std::size_t j = i; j-- > 0;) if (!elOnly || sib[j]->kind == NodeKind::Element) { out = I.Wrap(sib[j].get()); break; } }
         return true;
     }
-    if (k == "childNodes" || k == "children") {
-        std::vector<Node*> list;
-        for (auto& c : n->children) if (k == "childNodes" || c->kind == NodeKind::Element) list.push_back(c.get());
-        out = I.Array(list);
-        return true;
-    }
+    if (k == "childNodes" || k == "children") { out = I.Collection(n, k == "children" ? 0 : 1, std::string()); return true; }
     if (k == "firstElementChild" || k == "lastElementChild") {
         out = js::Value::Null();
         if (k[0] == 'f') { for (auto& c : n->children) if (c->kind == NodeKind::Element) { out = I.Wrap(c.get()); break; } }
@@ -803,7 +1001,12 @@ bool NodeGet(js::Runtime& rt, js::HostObj* self, js::String* keyS, js::Value& ou
         if (k == "URL" || k == "documentURI") { out = Str(rt, I.url); return true; }
         if (k == "location") { out = rt.GetRef(I.locationRef); return true; }
         if (k == "defaultView") { out = js::Value::Obj(rt.global); return true; }
-        if (k == "activeElement") { out = I.Wrap(child("body")); return true; }
+        if (k == "activeElement") {
+            out = I.focused && I.InPage(I.focused) ? I.Wrap(const_cast<Node*>(I.focused)) : I.Wrap(child("body"));
+            return true;
+        }
+        if (k == "cookie") { out = Str(rt, I.hooks.getCookie ? I.hooks.getCookie() : std::string()); return true; }
+        if (k == "currentScript") { out = I.Wrap(const_cast<Node*>(I.currentScript)); return true; }
         return false;
     }
     if (!el) return false;
@@ -834,20 +1037,7 @@ bool NodeGet(js::Runtime& rt, js::HostObj* self, js::String* keyS, js::Value& ou
         if (op != I.onProps.end()) for (auto& p : op->second) if (p.first == k.substr(2)) { out = rt.GetRef(p.second); break; }
         return true;
     }
-    if (k == "dataset") {   // a snapshot of the data-* attributes (writing to it does not change them yet)
-        js::Object* o = rt.NewObject();
-        for (const auto& a : n->attrs)
-            if (a.first.compare(0, 5, "data-") == 0) {
-                std::string camel;
-                for (std::size_t i = 5; i < a.first.size(); ++i) {
-                    if (a.first[i] == '-' && i + 1 < a.first.size() && a.first[i + 1] >= 'a' && a.first[i + 1] <= 'z') { camel += (char)(a.first[++i] - 32); continue; }
-                    camel += a.first[i];
-                }
-                rt.DefineData(o, rt.Intern(js::Utf8To16(camel)), Str(rt, a.second));
-            }
-        out = js::Value::Obj(o);
-        return true;
-    }
+    if (k == "dataset") { out = I.Part(I.kDataset, I.datasetProto, n); return true; }
     for (const char* const* r = kReflected; *r; ++r)
         if (k == *r) {
             std::string v = AttrOr(*n, *r);
@@ -871,6 +1061,12 @@ bool NodeSet(js::Runtime& rt, js::HostObj* self, js::String* keyS, const js::Val
     }
     if (n->kind == NodeKind::Document) {
         if (k == "title") { I.SetTitle(rt, rt.ToUtf8(v)); return true; }
+        if (k == "cookie") {
+            const std::string text = rt.ToUtf8(v);
+            rt.Charge(text.size() / 16);
+            if (I.hooks.setCookie && text.size() <= 8192) I.hooks.setCookie(text);
+            return true;
+        }
         return false;
     }
     if (!el) return false;
@@ -992,9 +1188,398 @@ bool LocationSet(js::Runtime& rt, js::HostObj*, js::String* keyS, const js::Valu
     return true;   // the other parts are not written (one change at a time: href)
 }
 
+// ---- element.dataset (HTML 3.2.6.6 DOMStringMap): fooBar <-> the data-foo-bar attribute
+std::string DataAttrName(const std::string& camel) {
+    std::string out = "data-";
+    for (char c : camel) {
+        if (c >= 'A' && c <= 'Z') { out += '-'; out += (char)(c + 32); }
+        else out += c;
+    }
+    return out;
+}
+std::string DataPropName(const std::string& attr) {   // "data-foo-bar" -> "fooBar"
+    std::string camel;
+    for (std::size_t i = 5; i < attr.size(); ++i) {
+        if (attr[i] == '-' && i + 1 < attr.size() && attr[i + 1] >= 'a' && attr[i + 1] <= 'z') { camel += (char)(attr[++i] - 32); continue; }
+        camel += attr[i];
+    }
+    return camel;
+}
+bool DatasetGet(js::Runtime& rt, js::HostObj* self, js::String* keyS, js::Value& out) {
+    Node* n = PartNode(rt, self);
+    if (!n) return false;
+    const std::string* v = n->Attr(DataAttrName(js::Utf16To8(keyS->s)).c_str());
+    if (!v) return false;
+    out = Str(rt, *v);
+    return true;
+}
+bool DatasetSet(js::Runtime& rt, js::HostObj* self, js::String* keyS, const js::Value& v) {
+    Node* n = PartNode(rt, self);
+    if (!n) return false;
+    const std::string k = js::Utf16To8(keyS->s);
+    for (std::size_t i = 0; i + 1 < k.size(); ++i)   // HTML 3.2.6.6: "-" followed by a lower-case letter is a SyntaxError
+        if (k[i] == '-' && k[i + 1] >= 'a' && k[i + 1] <= 'z') rt.ThrowError(js::ErrorType::SyntaxError, "'" + k + "' is not a dataset name");
+    const std::string name = DataAttrName(k);
+    if (name.size() > HtmlLimits().maxNameBytes || name.find_first_of(" \t\n\f\r/>=\"'") != std::string::npos)
+        rt.ThrowError(js::ErrorType::Error, "InvalidCharacterError: '" + name + "' is not an attribute name");
+    std::string value = rt.ToUtf8(v);
+    if (value.size() > HtmlLimits().maxAttrValueBytes) value.resize(HtmlLimits().maxAttrValueBytes);
+    Of(rt).SetAttrC(rt, *n, name, value);
+    Of(rt).Changed();
+    return true;
+}
+std::vector<std::string> DatasetKeys(js::Runtime& rt, js::HostObj* self) {
+    std::vector<std::string> out;
+    if (Node* n = PartNode(rt, self))
+        for (const auto& a : n->attrs) if (a.first.compare(0, 5, "data-") == 0) out.push_back(DataPropName(a.first));
+    return out;
+}
+
+// ---- HTMLCollection / NodeList (live)
+bool IsIndexKey(const std::string& k, std::size_t& out) {
+    if (k.empty() || k.size() > 9 || (k.size() > 1 && k[0] == '0')) return false;
+    std::size_t v = 0;
+    for (char c : k) { if (c < '0' || c > '9') return false; v = v * 10 + (std::size_t)(c - '0'); }
+    out = v;
+    return true;
+}
+bool CollectionGet(js::Runtime& rt, js::HostObj* self, js::String* keyS, js::Value& out) {
+    const std::string k = js::Utf16To8(keyS->s);
+    std::size_t i = 0;
+    if (k == "length") { out = js::Value::Num((double)Of(rt).CollectionList(rt, self).size()); return true; }
+    if (IsIndexKey(k, i)) {
+        std::vector<Node*>& list = Of(rt).CollectionList(rt, self);
+        if (i >= list.size()) return false;
+        out = Of(rt).Wrap(list[i]);
+        return true;
+    }
+    return false;
+}
+std::vector<std::string> CollectionKeys(js::Runtime& rt, js::HostObj* self) {
+    std::vector<std::string> out;
+    const std::size_t n = Of(rt).CollectionList(rt, self).size();
+    for (std::size_t i = 0; i < n; ++i) out.push_back(std::to_string(i));
+    return out;
+}
+js::HostObj* ThisCollection(js::Runtime& rt, js::CallArgs& a) {
+    if (!a.thisv.IsObj() || a.thisv.O()->cls != js::Cls::Host || static_cast<js::HostObj*>(a.thisv.O())->hostClass != Of(rt).kCollection)
+        rt.ThrowType("Illegal invocation: 'this' is not a collection");
+    return static_cast<js::HostObj*>(a.thisv.O());
+}
+
+// ---- localStorage / sessionStorage (HTML 12.2.1): i32 1 = local, 0 = session
+const char* const kStorageMethods[] = {"getItem", "setItem", "removeItem", "clear", "key", nullptr};
+bool IsStorageMethod(const std::string& k) {
+    for (const char* const* m = kStorageMethods; *m; ++m) if (k == *m) return true;
+    return false;
+}
+StorageArea* AreaOf(js::Runtime& rt, const js::HostObj* self) {
+    Impl& I = Of(rt);
+    return I.hooks.storage ? I.hooks.storage(self->i32 == 1) : nullptr;
+}
+void ThrowDom(js::Runtime& rt, const char* name, const std::string& msg) {
+    js::Object* e = rt.NewError(js::ErrorType::Error, msg);
+    rt.DefineData(e, rt.Intern("name"), Str(rt, name), js::kHidden);
+    rt.Throw(js::Value::Obj(e));
+}
+void StorageWrite(js::Runtime& rt, const js::HostObj* self, const std::string& key, const std::string& value) {
+    StorageArea* area = AreaOf(rt, self);
+    if (!area) ThrowDom(rt, "SecurityError", "storage is not available in this page");
+    rt.Charge((key.size() + value.size()) / 64);
+    std::string old;
+    if (area->Get(key, old) && old == value) return;
+    if (!area->Set(key, value, Of(rt).hooks.storageQuota))
+        ThrowDom(rt, "QuotaExceededError", "the site's storage is full (" + std::to_string(Of(rt).hooks.storageQuota >> 20) + " MB)");
+    if (self->i32 == 1 && Of(rt).hooks.storageChanged) Of(rt).hooks.storageChanged();
+}
+bool StorageGet(js::Runtime& rt, js::HostObj* self, js::String* keyS, js::Value& out) {
+    const std::string k = js::Utf16To8(keyS->s);
+    StorageArea* area = AreaOf(rt, self);
+    if (!area) return false;
+    if (k == "length") { out = js::Value::Num((double)area->Length()); return true; }
+    if (IsStorageMethod(k)) return false;
+    std::string v;
+    if (!area->Get(k, v)) return false;
+    out = Str(rt, v);
+    return true;
+}
+bool StorageSet(js::Runtime& rt, js::HostObj* self, js::String* keyS, const js::Value& v) {
+    const std::string k = js::Utf16To8(keyS->s);
+    if (IsStorageMethod(k) || k == "length") return false;
+    StorageWrite(rt, self, k, rt.ToUtf8(v));
+    return true;
+}
+std::vector<std::string> StorageKeys(js::Runtime& rt, js::HostObj* self) {
+    StorageArea* area = AreaOf(rt, self);
+    return area ? area->Keys() : std::vector<std::string>();
+}
+js::HostObj* ThisStorage(js::Runtime& rt, js::CallArgs& a) {
+    if (!a.thisv.IsObj() || a.thisv.O()->cls != js::Cls::Host || static_cast<js::HostObj*>(a.thisv.O())->hostClass != Of(rt).kStorage)
+        rt.ThrowType("Illegal invocation: 'this' is not a Storage");
+    return static_cast<js::HostObj*>(a.thisv.O());
+}
+
+// ---- getComputedStyle (CSSOM 9): the values of a ComputedStyle as CSS text
+std::string ColorText(const Color& c) {
+    if (c.a == 255) return "rgb(" + std::to_string(c.r) + ", " + std::to_string(c.g) + ", " + std::to_string(c.b) + ")";
+    char a[16];
+    std::snprintf(a, sizeof a, "%g", std::round(c.a / 255.0 * 1000.0) / 1000.0);
+    return "rgba(" + std::to_string(c.r) + ", " + std::to_string(c.g) + ", " + std::to_string(c.b) + ", " + a + ")";
+}
+std::string PxText(float v) {
+    char b[32];
+    std::snprintf(b, sizeof b, "%gpx", std::round(v * 100.0f) / 100.0f);
+    return b;
+}
+std::string LengthText(const Length& l) {
+    switch (l.unit) {
+    case Length::Px: return PxText(l.value);
+    case Length::Percent: { char b[32]; std::snprintf(b, sizeof b, "%g%%", l.value); return b; }
+    case Length::None: return "none";
+    case Length::Calc: { char b[64]; std::snprintf(b, sizeof b, "calc(%g%% + %gpx)", l.pct, l.value); return b; }
+    default: return "auto";
+    }
+}
+std::vector<std::pair<std::string, std::string>> StyleTexts(const ComputedStyle& st) {
+    static const char* const kDisplay[] = {"inline", "block", "list-item", "none", "table", "table-row", "table-cell", "table-row-group",
+                                           "inline-block", "flow-root", "flex", "inline-flex", "grid", "inline-grid"};
+    static const char* const kAlign[] = {"left", "right", "center", "justify"};
+    static const char* const kWhite[] = {"normal", "pre", "nowrap", "pre-wrap", "pre-line"};
+    static const char* const kPos[] = {"static", "relative", "absolute", "fixed", "sticky"};
+    static const char* const kOverflow[] = {"visible", "hidden", "clip", "scroll", "auto"};
+    static const char* const kFloat[] = {"none", "left", "right"};
+    static const char* const kSides[] = {"top", "right", "bottom", "left"};
+    std::vector<std::pair<std::string, std::string>> o;
+    o.emplace_back("display", kDisplay[(int)st.display]);
+    o.emplace_back("color", ColorText(st.color));
+    o.emplace_back("background-color", ColorText(st.background));
+    o.emplace_back("font-size", PxText(st.fontSize));
+    o.emplace_back("font-weight", std::to_string(st.weight));
+    o.emplace_back("font-style", st.italic ? "italic" : "normal");
+    o.emplace_back("font-family", st.family);
+    o.emplace_back("visibility", st.visible ? "visible" : "hidden");
+    { char b[32]; std::snprintf(b, sizeof b, "%g", std::round(st.opacity * 1000.0f) / 1000.0f); o.emplace_back("opacity", b); }
+    o.emplace_back("position", kPos[(int)st.position]);
+    o.emplace_back("float", kFloat[(int)st.floating]);
+    o.emplace_back("text-align", kAlign[(int)st.textAlign]);
+    o.emplace_back("white-space", kWhite[(int)st.whiteSpace]);
+    o.emplace_back("overflow-x", kOverflow[(int)st.overflowX]);
+    o.emplace_back("overflow-y", kOverflow[(int)st.overflowY]);
+    o.emplace_back("width", LengthText(st.width));
+    o.emplace_back("height", LengthText(st.height));
+    o.emplace_back("line-height", st.lineHeight < 0 ? std::string("normal") : PxText(st.lineHeight));
+    o.emplace_back("z-index", st.zAuto ? std::string("auto") : std::to_string(st.zIndex));
+    for (int i = 0; i < 4; ++i) {
+        o.emplace_back(std::string("margin-") + kSides[i], LengthText(st.margin[i]));
+        o.emplace_back(std::string("padding-") + kSides[i], LengthText(st.padding[i]));
+        o.emplace_back(std::string("border-") + kSides[i] + "-width", PxText(st.border[i]));
+        o.emplace_back(std::string("border-") + kSides[i] + "-color", ColorText(st.borderColor[i]));
+        o.emplace_back(kSides[i], LengthText(st.inset[i]));
+    }
+    return o;
+}
+std::string CamelName(const std::string& css) {   // "background-color" -> "backgroundColor"
+    std::string out;
+    for (std::size_t i = 0; i < css.size(); ++i) {
+        if (css[i] == '-' && i + 1 < css.size()) { out += (char)(css[i + 1] >= 'a' && css[i + 1] <= 'z' ? css[i + 1] - 32 : css[i + 1]); ++i; }
+        else out += css[i];
+    }
+    return out;
+}
+
+// ---- history (HTML 7.4.2)
+std::string JsonOf(js::Runtime& rt, const js::Value& v) {
+    const js::Value json = rt.GetGlobal("JSON");
+    const js::Value fn = json.IsObj() ? rt.GetStr(json, "stringify") : js::Value();
+    if (!rt.IsCallable(fn)) return "null";
+    const js::Value r = rt.Call(fn, json, {v});
+    return r.IsStr() ? rt.ToUtf8(r) : std::string("null");
+}
+js::Value ParseJson(js::Runtime& rt, const std::string& text) {
+    if (text.empty()) return js::Value::Null();
+    const js::Value json = rt.GetGlobal("JSON");
+    const js::Value fn = json.IsObj() ? rt.GetStr(json, "parse") : js::Value();
+    if (!rt.IsCallable(fn)) return js::Value::Null();
+    return rt.Call(fn, json, {Str(rt, text)});
+}
+void PushState(js::Runtime& rt, js::CallArgs& a, bool replace) {
+    Impl& I = Of(rt);
+    const std::string state = JsonOf(rt, a[0]);
+    if (state.size() > PageScripts::kMaxStateBytes) ThrowDom(rt, "DataCloneError", "the state is too big");
+    std::string to = I.url;
+    if (a.argc > 2 && !a[2].IsNullish()) to = ResolveUrl(I.url, rt.ToUtf8(a[2]));
+    if (!SameOrigin(to, I.url)) ThrowDom(rt, "SecurityError", "a history entry can not be made for " + to + " from this page");
+    if (!I.hooks.pushState || !I.hooks.pushState(to, state == "null" ? std::string() : state, replace))
+        ThrowDom(rt, "SecurityError", "history entries can not be made here");
+    I.url = to;
+    I.historyState = state == "null" ? std::string() : state;
+    if (I.historyStateRef >= 0) { rt.Unref(I.historyStateRef); I.historyStateRef = -1; }
+}
+
 using js::Value;
 using js::CallArgs;
 using js::Runtime;
+
+// fetch(), Headers, Response and XMLHttpRequest on the one native request function (Fetch standard 5.2-5.5; XMLHttpRequest
+// living standard 3.5-3.6). Run once per page before its own scripts; it removes its helper from the global object.
+const char* const kPrelude = R"JS(
+(function (ok) {
+  const request = ok.request, cancel = ok.abort, domError = ok.domError;
+  delete globalThis.__okay;
+  const LIST = Symbol('list'), BODY = Symbol('body'), TAKE = Symbol('take');
+  class Headers {
+    constructor(init) {
+      this[LIST] = [];
+      if (init == null) return;
+      if (init instanceof Headers) init = init[LIST];
+      if (typeof init[Symbol.iterator] === 'function') { for (const p of init) this.append(p[0], p[1]); }
+      else for (const k of Object.keys(init)) this.append(k, init[k]);
+    }
+    append(n, v) { this[LIST].push([String(n).toLowerCase(), String(v)]); }
+    set(n, v) { n = String(n).toLowerCase(); this.delete(n); this[LIST].push([n, String(v)]); }
+    get(n) { n = String(n).toLowerCase(); const f = this[LIST].filter(p => p[0] === n); return f.length ? f.map(p => p[1]).join(', ') : null; }
+    has(n) { n = String(n).toLowerCase(); return this[LIST].some(p => p[0] === n); }
+    delete(n) { n = String(n).toLowerCase(); this[LIST] = this[LIST].filter(p => p[0] !== n); }
+    forEach(cb, self) { for (const p of this[LIST]) cb.call(self, p[1], p[0], this); }
+    entries() { return this[LIST].map(p => [p[0], p[1]])[Symbol.iterator](); }
+    keys() { return this[LIST].map(p => p[0])[Symbol.iterator](); }
+    values() { return this[LIST].map(p => p[1])[Symbol.iterator](); }
+    [Symbol.iterator]() { return this.entries(); }
+  }
+  class Response {
+    constructor(body, init) {
+      init = init || {};
+      this.status = init.status === undefined ? 200 : init.status | 0;
+      this.statusText = init.statusText === undefined ? '' : String(init.statusText);
+      this.ok = this.status >= 200 && this.status < 300;
+      this.headers = new Headers(init.headers);
+      this.url = '';
+      this.type = 'basic';
+      this.redirected = false;
+      this.bodyUsed = false;
+      this[BODY] = body == null ? '' : String(body);
+    }
+    [TAKE]() {
+      if (this.bodyUsed) return Promise.reject(new TypeError('the body was already read'));
+      this.bodyUsed = true;
+      return Promise.resolve(this[BODY]);
+    }
+    text() { return this[TAKE](); }
+    json() { return this[TAKE]().then(t => JSON.parse(t)); }
+    clone() {
+      if (this.bodyUsed) throw new TypeError('the body was already read');
+      const r = new Response(this[BODY], { status: this.status, statusText: this.statusText, headers: this.headers });
+      r.url = this.url; r.redirected = this.redirected;
+      return r;
+    }
+  }
+  function fetch(input, init) {
+    return new Promise((resolve, reject) => {
+      init = init || {};
+      const isReq = input !== null && typeof input === 'object' && 'url' in input;
+      const url = isReq ? String(input.url) : String(input);
+      const method = String(init.method || (isReq && input.method) || 'GET').toUpperCase();
+      const headers = new Headers(init.headers || (isReq ? input.headers : undefined));
+      const body = init.body == null ? '' : String(init.body);
+      if (body && (method === 'GET' || method === 'HEAD')) throw new TypeError('a GET or HEAD request has no body');
+      if (init.body != null && typeof init.body === 'string' && !headers.has('content-type')) headers.set('content-type', 'text/plain;charset=UTF-8');
+      request(method, url, headers[LIST], body, (good, status, statusText, list, text, finalUrl, why) => {
+        if (!good) { reject(new TypeError('Failed to fetch: ' + why)); return; }
+        const r = new Response(text, { status: status, statusText: statusText, headers: list });
+        r.url = finalUrl;
+        resolve(r);
+      });
+    });
+  }
+  const EV = Symbol('ev'), SEND = Symbol('send');
+  function fire(x, type) {
+    const ev = { type: type, target: x, currentTarget: x, lengthComputable: false, loaded: 0, total: 0,
+                 preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {} };
+    const run = f => { try { f.call(x, ev); } catch (e) { console.error(e && e.stack ? e.stack : String(e)); } };
+    if (typeof x['on' + type] === 'function') run(x['on' + type]);
+    for (const f of (x[EV][type] || []).slice()) run(f);
+  }
+  class XMLHttpRequest {
+    constructor() {
+      this[EV] = {}; this[SEND] = null;
+      this.readyState = 0; this.status = 0; this.statusText = ''; this.responseText = ''; this.response = '';
+      this.responseType = ''; this.responseURL = ''; this.timeout = 0; this.withCredentials = false;
+      this.onreadystatechange = null; this.onload = null; this.onerror = null; this.onloadend = null; this.onloadstart = null;
+      this.onabort = null; this.onprogress = null; this.ontimeout = null;
+      this.upload = { addEventListener() {}, removeEventListener() {} };
+    }
+    addEventListener(type, f) { if (typeof f !== 'function') return; const l = this[EV][type] || (this[EV][type] = []); if (l.indexOf(f) < 0) l.push(f); }
+    removeEventListener(type, f) { const l = this[EV][type]; if (l) { const i = l.indexOf(f); if (i >= 0) l.splice(i, 1); } }
+    open(method, url, async) {
+      if (arguments.length > 2 && !async) throw domError('InvalidAccessError', 'synchronous requests are not supported');
+      if (this[SEND] && this[SEND].id) cancel(this[SEND].id);
+      this[SEND] = { method: String(method).toUpperCase(), url: String(url), headers: [], sent: false, id: 0, answer: [] };
+      this.readyState = 1; this.status = 0; this.statusText = ''; this.responseText = '';
+      this.response = this.responseType === 'json' ? null : '';
+      fire(this, 'readystatechange');
+    }
+    setRequestHeader(n, v) {
+      if (this.readyState !== 1 || this[SEND].sent) throw domError('InvalidStateError', 'open() first, and before send()');
+      this[SEND].headers.push([String(n), String(v)]);
+    }
+    send(body) {
+      const s = this[SEND];
+      if (this.readyState !== 1 || s.sent) throw domError('InvalidStateError', 'open() first, and send() once');
+      s.sent = true;
+      body = (body == null || s.method === 'GET' || s.method === 'HEAD') ? '' : String(body);
+      fire(this, 'loadstart');
+      const fail = () => {
+        if (this[SEND] !== s) return;
+        this.readyState = 4; this.status = 0; s.id = 0;
+        fire(this, 'readystatechange'); fire(this, 'error'); fire(this, 'loadend');
+      };
+      try {
+        s.id = request(s.method, s.url, s.headers, body, (good, status, statusText, list, text, finalUrl) => {
+          if (this[SEND] !== s) return;
+          s.id = 0;
+          if (!good) { fail(); return; }
+          s.answer = list;
+          this.status = status; this.statusText = statusText; this.responseURL = finalUrl;
+          this.readyState = 2; fire(this, 'readystatechange');
+          this.readyState = 3; fire(this, 'readystatechange');
+          this.responseText = text;
+          if (this.responseType === 'json') { try { this.response = JSON.parse(text); } catch (e) { this.response = null; } }
+          else this.response = text;
+          this.readyState = 4; fire(this, 'readystatechange');
+          fire(this, 'load'); fire(this, 'loadend');
+        });
+      } catch (e) { Promise.resolve().then(fail); }
+    }
+    abort() {
+      const s = this[SEND];
+      if (!s || !s.sent || this.readyState === 4) { this.readyState = 0; return; }
+      if (s.id) cancel(s.id);
+      this[SEND] = null;
+      this.readyState = 4; this.status = 0;
+      fire(this, 'readystatechange'); fire(this, 'abort'); fire(this, 'loadend');
+      this.readyState = 0;
+    }
+    getResponseHeader(n) {
+      const s = this[SEND];
+      if (!s || this.readyState < 2) return null;
+      n = String(n).toLowerCase();
+      const f = s.answer.filter(p => p[0].toLowerCase() === n);
+      return f.length ? f.map(p => p[1]).join(', ') : null;
+    }
+    getAllResponseHeaders() {
+      const s = this[SEND];
+      if (!s || this.readyState < 2) return '';
+      return s.answer.map(p => p[0].toLowerCase() + ': ' + p[1] + '\r\n').join('');
+    }
+    overrideMimeType() {}
+  }
+  XMLHttpRequest.UNSENT = 0; XMLHttpRequest.OPENED = 1; XMLHttpRequest.HEADERS_RECEIVED = 2; XMLHttpRequest.LOADING = 3; XMLHttpRequest.DONE = 4;
+  globalThis.Headers = Headers;
+  globalThis.Response = Response;
+  globalThis.fetch = fetch;
+  globalThis.XMLHttpRequest = XMLHttpRequest;
+})(globalThis.__okay);
+)JS";
 
 } // namespace
 
@@ -1004,14 +1589,20 @@ void Install(PageScripts::Impl& I) {
     r.memoryLimit = PageScripts::kMemoryLimit;
     r.onHostFree = [&I](js::HostObj* h) {
         if (h->hostClass == I.kNode && h->id < I.wraps.size() && I.wraps[(std::size_t)h->id] == h) I.wraps[(std::size_t)h->id] = nullptr;
+        if (h->hostClass == I.kCollection) I.collections.erase(h);
     };
     r.printSink = [&I](const std::string& s) { I.Log(I.level, s); };
     I.kNode = r.AddHostClass({"Node", NodeGet, NodeSet, NodeText, nullptr});
     I.kStyle = r.AddHostClass({"CSSStyleDeclaration", StyleGet, StyleSet, nullptr, nullptr});
     I.kClassList = r.AddHostClass({"DOMTokenList", ClassListGet, nullptr, ClassListText, nullptr});
     I.kLocation = r.AddHostClass({"Location", LocationGet, LocationSet, LocationText, nullptr});
+    I.kCollection = r.AddHostClass({"HTMLCollection", CollectionGet, nullptr, nullptr, CollectionKeys});
+    I.kStorage = r.AddHostClass({"Storage", StorageGet, StorageSet, nullptr, StorageKeys});
+    I.kDataset = r.AddHostClass({"DOMStringMap", DatasetGet, DatasetSet, nullptr, DatasetKeys});
     I.ownerKey = r.NewSymbol(r.Intern("owner"));
     r.Ref(Value::Sym(I.ownerKey));
+    I.filterKey = r.NewSymbol(r.Intern("filter"));
+    r.Ref(Value::Sym(I.filterKey));
     auto proto = [&](js::Object* parent) { js::Object* o = r.NewObject(parent); r.Ref(Value::Obj(o)); return o; };
     I.nodeProto = proto(r.objectProto);
     I.documentProto = proto(I.nodeProto);
@@ -1019,6 +1610,11 @@ void Install(PageScripts::Impl& I) {
     I.classListProto = proto(r.objectProto);
     I.eventProto = proto(r.objectProto);
     I.locationProto = proto(r.objectProto);
+    I.collectionProto = proto(r.objectProto);
+    I.storageProto = proto(r.objectProto);
+    I.datasetProto = proto(r.objectProto);
+    I.computedProto = proto(r.objectProto);
+    I.historyProto = proto(r.objectProto);
 
     // ---- Node, Element and ParentNode methods (DOM 4.4, 4.5, 4.9)
     js::DefNative(r, I.nodeProto, "appendChild", [](Runtime& rt, CallArgs& a) -> Value {
@@ -1096,24 +1692,10 @@ void Install(PageScripts::Impl& I) {
         return Of(rt).Array(Of(rt).Query(rt, ThisNode(rt, a), rt.ToUtf8(a[0]), true));
     }, 1);
     js::DefNative(r, I.nodeProto, "getElementsByTagName", [](Runtime& rt, CallArgs& a) -> Value {
-        const std::string tag = LowerAscii(rt.ToUtf8(a[0]));
-        std::vector<Node*> out;
-        Walk(ThisNode(rt, a), false, [&](Node* n) { rt.Charge(1); if (n->kind == NodeKind::Element && (tag == "*" || n->name == tag)) out.push_back(n); return false; });
-        return Of(rt).Array(out);
+        return Of(rt).Collection(ThisNode(rt, a), 2, LowerAscii(rt.ToUtf8(a[0])));
     }, 1);
     js::DefNative(r, I.nodeProto, "getElementsByClassName", [](Runtime& rt, CallArgs& a) -> Value {
-        const std::vector<std::string> want = Tokens(rt.ToUtf8(a[0]));
-        std::vector<Node*> out;
-        if (!want.empty())
-            Walk(ThisNode(rt, a), false, [&](Node* n) {
-                rt.Charge(1);
-                if (n->kind != NodeKind::Element) return false;
-                const std::vector<std::string> has = Tokens(AttrOr(*n, "class"));
-                for (const std::string& w : want) if (std::find(has.begin(), has.end(), w) == has.end()) return false;
-                out.push_back(n);
-                return false;
-            });
-        return Of(rt).Array(out);
+        return Of(rt).Collection(ThisNode(rt, a), 3, rt.ToUtf8(a[0]));
     }, 1);
     js::DefNative(r, I.nodeProto, "matches", [](Runtime& rt, CallArgs& a) -> Value {
         Node* n = ThisElement(rt, a);
@@ -1146,8 +1728,23 @@ void Install(PageScripts::Impl& I) {
         Of(rt).DispatchEvent(ThisNode(rt, a), "click", true, true);
         return Value();
     }, 0);
-    js::DefNative(r, I.nodeProto, "focus", [](Runtime&, CallArgs&) -> Value { return Value(); }, 0);
-    js::DefNative(r, I.nodeProto, "blur", [](Runtime&, CallArgs&) -> Value { return Value(); }, 0);
+    // focus() / blur() (HTML 6.6.6): the tab moves its focus (and fires the focus events back here)
+    js::DefNative(r, I.nodeProto, "focus", [](Runtime& rt, CallArgs& a) -> Value {
+        Node* n = ThisNode(rt, a);
+        Impl& P = Of(rt);
+        if (n->kind != NodeKind::Element || !P.InPage(n) || n == P.focused) return Value();
+        if (P.hooks.focus) P.hooks.focus(n);
+        else P.FocusMoved(P.focused, n);
+        return Value();
+    }, 0);
+    js::DefNative(r, I.nodeProto, "blur", [](Runtime& rt, CallArgs& a) -> Value {
+        Node* n = ThisNode(rt, a);
+        Impl& P = Of(rt);
+        if (n != P.focused) return Value();
+        if (P.hooks.focus) P.hooks.focus(nullptr);
+        else P.FocusMoved(P.focused, nullptr);
+        return Value();
+    }, 0);
     js::DefNative(r, I.nodeProto, "cloneNode", [](Runtime& rt, CallArgs& a) -> Value {   // DOM 4.4 "clone a node"
         Node* src = ThisNode(rt, a);
         if (src->kind == NodeKind::Document) rt.ThrowError(js::ErrorType::Error, "NotSupportedError: a document is not cloned");
@@ -1206,6 +1803,111 @@ void Install(PageScripts::Impl& I) {
         Of(rt).SetData(rt, *n, rt.ToUtf8(a[0]));
         return Of(rt).Wrap(n);
     }, 1);
+    // document.write / writeln (HTML 8.4.3): only the page's own scripts while it is read; slots[0]: 1 for writeln
+    for (int ln = 0; ln < 2; ++ln) {
+        js::NativeFunc* f = js::DefNative(r, I.documentProto, ln ? "writeln" : "write", [](Runtime& rt, CallArgs& a) -> Value {
+            Impl& P = Of(rt);
+            std::string text;
+            for (int i = 0; i < a.argc; ++i) text += rt.ToUtf8(a.argv[i]);
+            if (a.callee->slots[0].n != 0) text += '\n';
+            if (!P.parserScript || !P.currentScript || P.loaded) {
+                P.Log(ConsoleLine::Warn, "document.write was ignored: it only works while the page is read (it would replace the page)");
+                return Value();
+            }
+            if (P.writeBuffer.size() + text.size() + P.textBytes > PageScripts::kMaxPageTextBytes)
+                rt.ThrowRange("document.write: the page's text would be too big (" + std::to_string(PageScripts::kMaxPageTextBytes >> 20) + " MB)");
+            rt.Charge(text.size() / 64 + 1);
+            P.writeBuffer += text;
+            return Value();
+        }, 1);
+        f->slots.push_back(Value::Num(ln));
+    }
+
+    // ---- live collections: item, namedItem, forEach and iteration (Array.prototype's own iterators work on them)
+    js::DefNative(r, I.collectionProto, "item", [](Runtime& rt, CallArgs& a) -> Value {
+        std::vector<Node*>& list = Of(rt).CollectionList(rt, ThisCollection(rt, a));
+        const double i = rt.ToIntegerOrInfinity(a[0]);
+        return i >= 0 && i < (double)list.size() ? Of(rt).Wrap(list[(std::size_t)i]) : Value::Null();
+    }, 1);
+    js::DefNative(r, I.collectionProto, "namedItem", [](Runtime& rt, CallArgs& a) -> Value {
+        const std::string name = rt.ToUtf8(a[0]);
+        for (Node* n : Of(rt).CollectionList(rt, ThisCollection(rt, a)))
+            if (n->kind == NodeKind::Element && (AttrOr(*n, "id") == name || AttrOr(*n, "name") == name)) return Of(rt).Wrap(n);
+        return Value::Null();
+    }, 1);
+    {
+        const Value arrayProto = Value::Obj(r.arrayProto);
+        for (const char* m : {"forEach", "keys", "values", "entries"}) {
+            const Value fn = r.GetStr(arrayProto, m);
+            if (r.IsCallable(fn)) js::DefValue(r, I.collectionProto, m, fn);
+        }
+        const Value it = r.Get(arrayProto, I.rt.symIterator);
+        if (r.IsCallable(it)) r.DefineData(I.collectionProto, r.symIterator, it, js::kHidden);
+    }
+
+    // ---- Storage methods
+    js::DefNative(r, I.storageProto, "getItem", [](Runtime& rt, CallArgs& a) -> Value {
+        StorageArea* area = AreaOf(rt, ThisStorage(rt, a));
+        std::string v;
+        return area && area->Get(rt.ToUtf8(a[0]), v) ? Str(rt, v) : Value::Null();
+    }, 1);
+    js::DefNative(r, I.storageProto, "setItem", [](Runtime& rt, CallArgs& a) -> Value {
+        StorageWrite(rt, ThisStorage(rt, a), rt.ToUtf8(a[0]), rt.ToUtf8(a[1]));
+        return Value();
+    }, 2);
+    js::DefNative(r, I.storageProto, "removeItem", [](Runtime& rt, CallArgs& a) -> Value {
+        js::HostObj* self = ThisStorage(rt, a);
+        StorageArea* area = AreaOf(rt, self);
+        if (area && area->Remove(rt.ToUtf8(a[0])) && self->i32 == 1 && Of(rt).hooks.storageChanged) Of(rt).hooks.storageChanged();
+        return Value();
+    }, 1);
+    js::DefNative(r, I.storageProto, "clear", [](Runtime& rt, CallArgs& a) -> Value {
+        js::HostObj* self = ThisStorage(rt, a);
+        StorageArea* area = AreaOf(rt, self);
+        if (area && area->Length()) { area->Clear(); if (self->i32 == 1 && Of(rt).hooks.storageChanged) Of(rt).hooks.storageChanged(); }
+        return Value();
+    }, 0);
+    js::DefNative(r, I.storageProto, "key", [](Runtime& rt, CallArgs& a) -> Value {
+        StorageArea* area = AreaOf(rt, ThisStorage(rt, a));
+        const double i = rt.ToIntegerOrInfinity(a[0]);
+        std::string k;
+        return area && i >= 0 && i < 4e9 && area->Key((std::size_t)i, k) ? Str(rt, k) : Value::Null();
+    }, 1);
+
+    // ---- getComputedStyle's answer: getPropertyValue reads the property of that name
+    js::DefNative(r, I.computedProto, "getPropertyValue", [](Runtime& rt, CallArgs& a) -> Value {
+        if (!a.thisv.IsObj()) rt.ThrowType("Illegal invocation");
+        const Value v = rt.Get(a.thisv, rt.Intern(js::Utf8To16(LowerAscii(rt.ToUtf8(a[0])))));
+        return v.IsStr() ? v : Str(rt, std::string());
+    }, 1);
+
+    // ---- history (HTML 7.4.2)
+    js::DefNative(r, I.historyProto, "pushState", [](Runtime& rt, CallArgs& a) -> Value { PushState(rt, a, false); return Value(); }, 2);
+    js::DefNative(r, I.historyProto, "replaceState", [](Runtime& rt, CallArgs& a) -> Value { PushState(rt, a, true); return Value(); }, 2);
+    struct Step { const char* name; int delta; };
+    for (const Step& st : {Step{"back", -1}, Step{"forward", 1}, Step{"go", 0}}) {
+        js::NativeFunc* f = js::DefNative(r, I.historyProto, st.name, [](Runtime& rt, CallArgs& a) -> Value {
+            int delta = (int)a.callee->slots[0].n;
+            if (delta == 0) {
+                const double d = rt.ToIntegerOrInfinity(a[0]);
+                delta = d > 1000 ? 1000 : d < -1000 ? -1000 : (int)d;
+                if (delta == 0) { Impl& P = Of(rt); if (P.hooks.navigate) P.hooks.navigate(P.url); return Value(); }   // go(0): reload
+            }
+            if (Of(rt).hooks.traverse) Of(rt).hooks.traverse(delta);
+            return Value();
+        }, st.delta == 0 ? 1 : 0);
+        f->slots.push_back(Value::Num(st.delta));
+    }
+    js::DefGetter(r, I.historyProto, "length", [](Runtime& rt, CallArgs&) -> Value {
+        return Value::Num(Of(rt).hooks.historyLength ? std::max(1, Of(rt).hooks.historyLength()) : 1);
+    });
+    js::DefGetter(r, I.historyProto, "state", [](Runtime& rt, CallArgs&) -> Value {
+        Impl& P = Of(rt);
+        if (P.historyState.empty()) return Value::Null();
+        if (P.historyStateRef < 0) P.historyStateRef = rt.Ref(ParseJson(rt, P.historyState));
+        return rt.GetRef(P.historyStateRef);
+    });
+    js::DefValue(r, I.historyProto, "scrollRestoration", Str(r, "auto"), js::kDefault);
 
     // ---- events (DOM 2.2): preventDefault, stopPropagation, stopImmediatePropagation
     js::DefNative(r, I.eventProto, "preventDefault", [](Runtime& rt, CallArgs& a) -> Value {
@@ -1310,10 +2012,115 @@ void Install(PageScripts::Impl& I) {
         }, 1);
     js::DefNative(r, g, "addEventListener", [](Runtime& rt, CallArgs& a) -> Value { Of(rt).AddListener(rt, kWindowSlot, a); return Value(); }, 2);
     js::DefNative(r, g, "removeEventListener", [](Runtime& rt, CallArgs& a) -> Value { Of(rt).RemoveListener(rt, kWindowSlot, a); return Value(); }, 2);
-    js::DefNative(r, g, "alert", [](Runtime& rt, CallArgs& a) -> Value {   // no dialogs yet: the message goes to the console
-        Of(rt).Log(ConsoleLine::Warn, "alert: " + rt.ToUtf8(a[0]));
+    // alert / confirm / prompt (HTML 8.8.1): the tab shows the dialog; the script does not wait for it, so confirm answers
+    // false and prompt null (what the standard has them return when the browser does not show the dialog). Past
+    // kMaxDialogs in one host entry, or with no tab to show them, the message goes to the console.
+    struct DialogFn { const char* name; int kind; };
+    for (const DialogFn& df : {DialogFn{"alert", PageDialog::Alert}, DialogFn{"confirm", PageDialog::Confirm}, DialogFn{"prompt", PageDialog::Prompt}}) {
+        js::NativeFunc* f = js::DefNative(r, g, df.name, [](Runtime& rt, CallArgs& a) -> Value {
+            Impl& P = Of(rt);
+            PageDialog d;
+            d.kind = (PageDialog::Kind)(int)a.callee->slots[0].n;
+            d.message = a.argc > 0 ? rt.ToUtf8(a[0]) : std::string();
+            if (d.message.size() > 4096) d.message.resize(4096);
+            if (d.kind == PageDialog::Prompt && a.argc > 1) { d.defaultText = rt.ToUtf8(a[1]); if (d.defaultText.size() > 4096) d.defaultText.resize(4096); }
+            static const char* const kNames[] = {"alert", "confirm", "prompt"};
+            if (P.hooks.dialog && P.dialogs < (int)PageScripts::kMaxDialogs) { ++P.dialogs; P.hooks.dialog(d); }
+            else P.Log(ConsoleLine::Warn, std::string(kNames[(int)d.kind]) + ": " + d.message);
+            return d.kind == PageDialog::Alert ? Value() : d.kind == PageDialog::Confirm ? Value::Bool(false) : Value::Null();
+        }, 1);
+        f->slots.push_back(Value::Num(df.kind));
+    }
+
+    // history, localStorage / sessionStorage (null when the tab keeps none), getComputedStyle
+    js::Object* hist = r.NewObject(I.historyProto);
+    js::DefValue(r, g, "history", Value::Obj(hist), js::kEnumerable);
+    for (int local = 0; local < 2; ++local) {
+        js::HostObj* st = r.NewHost(I.kStorage, I.storageProto);
+        st->i32 = local;
+        I.storageRef[local] = r.Ref(Value::Obj(st));
+    }
+    js::DefGetter(r, g, "localStorage", [](Runtime& rt, CallArgs&) -> Value {
+        Impl& P = Of(rt);
+        return P.hooks.storage && P.hooks.storage(true) ? rt.GetRef(P.storageRef[1]) : Value::Null();
+    });
+    js::DefGetter(r, g, "sessionStorage", [](Runtime& rt, CallArgs&) -> Value {
+        Impl& P = Of(rt);
+        return P.hooks.storage && P.hooks.storage(false) ? rt.GetRef(P.storageRef[0]) : Value::Null();
+    });
+    js::DefNative(r, g, "getComputedStyle", [](Runtime& rt, CallArgs& a) -> Value {
+        Impl& P = Of(rt);
+        Node* n = ArgNode(rt, a[0]);
+        if (n->kind != NodeKind::Element) rt.ThrowType("getComputedStyle needs an element");
+        rt.Charge(2000);
+        js::Object* o = rt.NewObject(P.computedProto);
+        rt.Keep(Value::Obj(o));
+        ComputedStyle st;
+        if (P.InPage(n) && P.hooks.computedStyle && P.hooks.computedStyle(*n, st))
+            for (const auto& kv : StyleTexts(st)) {
+                const Value v = Str(rt, kv.second);
+                rt.DefineData(o, rt.Intern(js::Utf8To16(kv.first)), v);
+                if (kv.first.find('-') != std::string::npos) rt.DefineData(o, rt.Intern(js::Utf8To16(CamelName(kv.first))), v);
+            }
+        return Value::Obj(o);
+    }, 1);
+
+    // the native side of fetch / XMLHttpRequest (kPrelude): request(method, url, [[name, value]...], body, callback) -> id
+    js::Object* ok = r.NewObject();
+    js::DefValue(r, g, "__okay", Value::Obj(ok), js::kDefault);
+    js::DefNative(r, ok, "request", [](Runtime& rt, CallArgs& a) -> Value {
+        Impl& P = Of(rt);
+        if (!rt.IsCallable(a[4])) rt.ThrowType("request: no callback");
+        if (P.requests.size() >= PageScripts::kMaxRequests)
+            rt.ThrowType("too many requests at once (" + std::to_string(PageScripts::kMaxRequests) + ")");
+        ScriptRequest req;
+        req.method = UpperAscii(rt.ToUtf8(a[0]));
+        if (req.method.empty() || req.method.size() > 16 || req.method.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZ-") != std::string::npos ||
+            req.method == "CONNECT" || req.method == "TRACE" || req.method == "TRACK")
+            rt.ThrowType("'" + req.method + "' is not a method a page may use");
+        const std::string target = rt.ToUtf8(a[1]);
+        req.url = WithoutFragment(ResolveUrl(P.url, target));
+        req.body = a[3].IsNullish() ? std::string() : rt.ToUtf8(a[3]);
+        if (req.body.size() > PageScripts::kMaxRequestBodyBytes) rt.ThrowType("the request body is too big");
+        rt.Charge(req.body.size() / 64);
+        // the page's headers, without the ones only the browser sets (Fetch 2.2.2 "forbidden request-header")
+        if (a[2].IsObj()) {
+            const std::uint64_t n = std::min<std::uint64_t>(rt.LengthOf(a[2]), 100);
+            for (std::uint32_t i = 0; i < n; ++i) {
+                const Value pair = rt.GetIndex(a[2], i);
+                if (!pair.IsObj()) continue;
+                const std::string name = rt.ToUtf8(rt.GetIndex(pair, 0)), value = rt.ToUtf8(rt.GetIndex(pair, 1));
+                const std::string low = LowerAscii(name);
+                static const char* const kForbidden[] = {"accept-charset", "accept-encoding", "access-control-request-headers",
+                    "access-control-request-method", "connection", "content-length", "cookie", "cookie2", "date", "dnt", "expect",
+                    "host", "keep-alive", "origin", "referer", "set-cookie", "te", "trailer", "transfer-encoding", "upgrade", "via"};
+                bool bad = low.compare(0, 6, "proxy-") == 0 || low.compare(0, 4, "sec-") == 0 || name.empty() || name.size() > 256 ||
+                           value.size() > 8192 || name.find_first_of(" \t\r\n:") != std::string::npos ||
+                           value.find_first_of("\r\n") != std::string::npos;
+                for (const char* f : kForbidden) if (low == f) bad = true;
+                if (!bad) req.headers.emplace_back(name, value);
+            }
+        }
+        req.id = P.nextRequest++;
+        if (P.nextRequest > 2000000000) P.nextRequest = 1;
+        std::string why;
+        if (!P.hooks.request || !P.hooks.request(req, why))
+            rt.ThrowType(why.empty() ? "network requests are off in this page" : why);
+        P.requests[req.id] = rt.Ref(a[4]);
+        return Value::Num(req.id);
+    }, 5);
+    js::DefNative(r, ok, "abort", [](Runtime& rt, CallArgs& a) -> Value {
+        Impl& P = Of(rt);
+        const double id = rt.ToNumber(a[0]);
+        auto it = id >= 1 && id <= 2e9 ? P.requests.find((int)id) : P.requests.end();
+        if (it != P.requests.end()) { rt.Unref(it->second); P.requests.erase(it); }
         return Value();
     }, 1);
+    js::DefNative(r, ok, "domError", [](Runtime& rt, CallArgs& a) -> Value {
+        js::Object* e = rt.NewError(js::ErrorType::Error, rt.ToUtf8(a[1]));
+        rt.DefineData(e, rt.Intern("name"), Str(rt, rt.ToUtf8(a[0])), js::kHidden);
+        return Value::Obj(e);
+    }, 2);
     // console.warn / error: the engine's console (its formatting) with the I.level of the line
     const Value con = r.GetGlobal("console");
     if (con.IsObj()) {
@@ -1342,23 +2149,197 @@ PageScripts::PageScripts(HtmlDocument& doc, FormState& forms, const std::string&
     : m(new Impl(doc, forms, pageUrl, std::move(hooks))) {
     if (doc.root) { m->nodeCount = CountNodes(doc.root.get()); m->textBytes = TreeBytes(doc.root.get()); }
     Install(*m);
+    Impl::Entry entry(*m);
+    std::string err;
+    if (!m->rt.Run(kPrelude, "browser prelude", &err)) m->Log(ConsoleLine::Error, err);
 }
 
 PageScripts::~PageScripts() = default;
 
-bool PageScripts::RunScript(const std::string& source, const std::string& chunk) {
-    Impl::Entry entry(*m);
+bool PageScripts::RunScript(const std::string& source, const std::string& chunk, const Node* element, bool parser) {
+    Impl& I = *m;
+    Impl::Entry entry(I);
+    const Node* prevScript = I.currentScript;
+    const bool prevParser = I.parserScript;
+    std::string prevBuffer;
+    prevBuffer.swap(I.writeBuffer);
+    I.currentScript = element;
+    I.parserScript = parser && element != nullptr;
+    if (element) I.started.insert(element);
     std::string err;
-    if (m->rt.Run(source, chunk.empty() ? "inline script " + std::to_string(++m->inlineCount) : chunk, &err)) return true;
-    m->Log(ConsoleLine::Error, err);
-    return false;
+    const bool ok = I.rt.Run(source, chunk.empty() ? "inline script " + std::to_string(++I.inlineCount) : chunk, &err);
+    if (!ok) { I.Log(ConsoleLine::Error, err); I.writeBuffer.clear(); }
+    else if (I.parserScript) I.FlushWrite(element);
+    I.writeBuffer.swap(prevBuffer);
+    I.currentScript = prevScript;
+    I.parserScript = prevParser;
+    return ok;
 }
 
+std::vector<const Node*> PageScripts::TakeWrittenScripts() {
+    std::vector<const Node*> out;
+    out.swap(m->written);
+    return out;
+}
+
+void PageScripts::MarkStarted(const Node& script) { m->started.insert(&script); }
+bool PageScripts::Started(const Node& script) const { return m->started.count(&script) != 0; }
+
 void PageScripts::PageLoaded() {
-    if (m->loaded) return;
+    ContentLoaded();
+    Loaded();
+}
+
+void PageScripts::ContentLoaded() {
+    if (m->loaded || m->contentLoaded) return;
+    m->contentLoaded = true;
     m->DispatchEvent(m->doc.root.get(), "DOMContentLoaded", true, false);
+}
+
+void PageScripts::Loaded() {
+    if (m->loaded) return;
+    ContentLoaded();
     m->loaded = true;
     m->DispatchEvent(nullptr, "load", false, false);
+}
+
+void PageScripts::ElementEvent(const Node& el, const std::string& type) {
+    m->DispatchEvent(const_cast<Node*>(&el), type, false, false);
+}
+
+void PageScripts::DeliverResponse(int id, const ScriptResponse& r) {
+    Impl& I = *m;
+    auto it = I.requests.find(id);
+    if (it == I.requests.end()) return;   // aborted, or not ours
+    const int cbRef = it->second;
+    I.requests.erase(it);
+    Impl::Entry entry(I);
+    js::Runtime& rt = I.rt;
+    try {
+        const bool tooBig = r.body.size() > kMaxResponseBytes;
+        const bool good = r.ok && !tooBig;
+        js::ArrayObj* headers = rt.NewArray();
+        rt.Keep(js::Value::Obj(headers));
+        std::uint32_t n = 0;
+        if (good)
+            for (const auto& h : r.headers) {
+                const std::string low = LowerAscii(h.first);
+                if (low == "set-cookie" || low == "set-cookie2") continue;   // Fetch 2.2.2: never shown to the page
+                if (n >= 200) break;
+                js::ArrayObj* pair = rt.NewArray(2);
+                rt.Keep(js::Value::Obj(pair));
+                rt.DefineIndex(pair, 0, js::Value::Str(rt.NewStringUtf8(h.first)));
+                rt.DefineIndex(pair, 1, js::Value::Str(rt.NewStringUtf8(h.second)));
+                rt.DefineIndex(headers, n++, js::Value::Obj(pair));
+            }
+        rt.Charge(good ? r.body.size() / 64 : 0);
+        std::vector<js::Value> args;
+        args.push_back(js::Value::Bool(good));
+        args.push_back(js::Value::Num(good ? std::max(0, std::min(r.status, 999)) : 0));
+        args.push_back(js::Value::Str(rt.NewStringUtf8(good ? r.statusText.substr(0, 256) : std::string())));
+        args.push_back(js::Value::Obj(headers));
+        args.push_back(js::Value::Str(rt.NewStringUtf8(good ? r.body : std::string())));
+        args.push_back(js::Value::Str(rt.NewStringUtf8(r.url)));
+        args.push_back(js::Value::Str(rt.NewStringUtf8(tooBig ? "the answer is too big" : r.error.empty() ? "the request failed" : r.error)));
+        for (const js::Value& v : args) rt.Keep(v);
+        const js::Value cb = rt.GetRef(cbRef);
+        I.CallFn(cb, js::Value(), args);
+    } catch (const js::JsTerminate& t) {
+        I.Log(ConsoleLine::Error, t.why);
+    } catch (const js::JsThrow&) {
+        I.Log(ConsoleLine::Error, rt.ExceptionText(rt.exception));
+        rt.exception = js::Value();
+    }
+    rt.Unref(cbRef);
+}
+
+std::size_t PageScripts::PendingRequests() const { return m->requests.size(); }
+
+namespace {
+// UI Events KeyboardEvent.keyCode for the keys that have a well-known one (letters and digits: their upper-case code).
+int LegacyKeyCode(const std::string& key) {
+    if (key.size() == 1) {
+        const char c = key[0];
+        if (c >= 'a' && c <= 'z') return c - 32;
+        if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ') return c;
+        return 0;
+    }
+    static const std::pair<const char*, int> kCodes[] = {{"Enter", 13}, {"Tab", 9}, {"Escape", 27}, {"Backspace", 8}, {"Delete", 46},
+        {"ArrowLeft", 37}, {"ArrowUp", 38}, {"ArrowRight", 39}, {"ArrowDown", 40}, {"Home", 36}, {"End", 35}, {"PageUp", 33},
+        {"PageDown", 34}, {"Shift", 16}, {"Control", 17}, {"Alt", 18}, {"Insert", 45}, {"F1", 112}, {"F5", 116}, {"F12", 123}};
+    for (const auto& k : kCodes) if (key == k.first) return k.second;
+    return 0;
+}
+} // namespace
+
+bool PageScripts::DispatchKey(const Node* target, const std::string& type, const KeyInfo& k) {
+    Impl& I = *m;
+    Node* t = const_cast<Node*>(target);
+    if (!t || !I.InPage(t)) t = const_cast<Node*>(I.doc.Body());
+    if (!t) return false;
+    return I.DispatchEvent(t, type, true, true, [&I, &k, &type](js::Object* ev) {
+        js::Runtime& rt = I.rt;
+        auto put = [&](const char* name, const js::Value& v) { rt.DefineData(ev, rt.Intern(name), v); };
+        const int code = k.keyCode ? k.keyCode : LegacyKeyCode(k.key);
+        int charCode = 0;
+        if (type == "keypress" && !k.key.empty()) { const std::u16string u = js::Utf8To16(k.key); if (u.size() == 1) charCode = u[0]; }
+        put("key", js::Value::Str(rt.NewStringUtf8(k.key)));
+        put("code", js::Value::Str(rt.NewStringUtf8(k.code)));
+        put("keyCode", js::Value::Num(type == "keypress" ? charCode : code));
+        put("which", js::Value::Num(type == "keypress" ? charCode : code));
+        put("charCode", js::Value::Num(charCode));
+        put("shiftKey", js::Value::Bool(k.shift));
+        put("ctrlKey", js::Value::Bool(k.ctrl));
+        put("altKey", js::Value::Bool(k.alt));
+        put("metaKey", js::Value::Bool(k.meta));
+        put("repeat", js::Value::Bool(k.repeat));
+        put("isComposing", js::Value::Bool(false));
+        put("location", js::Value::Num(0));
+    });
+}
+
+bool PageScripts::DispatchMouse(const Node& target, const std::string& type, const MouseInfo& mi) {
+    Impl& I = *m;
+    Node* t = const_cast<Node*>(&target);
+    if (!I.InPage(t)) return false;
+    const bool bubbles = type != "mouseenter" && type != "mouseleave";   // UI Events 5.3.3: those two neither bubble nor cancel
+    const bool prevented = I.DispatchEvent(t, type, bubbles, bubbles, [&I, &mi](js::Object* ev) {
+        js::Runtime& rt = I.rt;
+        auto put = [&](const char* name, const js::Value& v) { rt.DefineData(ev, rt.Intern(name), v); };
+        for (const char* n : {"clientX", "pageX", "screenX", "x", "offsetX"}) put(n, js::Value::Num(mi.x));
+        for (const char* n : {"clientY", "pageY", "screenY", "y", "offsetY"}) put(n, js::Value::Num(mi.y));
+        put("button", js::Value::Num(mi.button));
+        put("buttons", js::Value::Num(mi.buttons));
+        put("detail", js::Value::Num(mi.detail));
+        put("shiftKey", js::Value::Bool(mi.shift));
+        put("ctrlKey", js::Value::Bool(mi.ctrl));
+        put("altKey", js::Value::Bool(mi.alt));
+        put("metaKey", js::Value::Bool(mi.meta));
+        put("relatedTarget", mi.related && I.InPage(mi.related) ? I.Wrap(const_cast<Node*>(mi.related)) : js::Value::Null());
+    });
+    return prevented;
+}
+
+void PageScripts::FocusChanged(const Node* from, const Node* to) { m->FocusMoved(from, to); }
+
+void PageScripts::SetUrl(const std::string& url) { m->url = url; }
+
+void PageScripts::SetHistoryState(const std::string& stateJson) {
+    m->historyState = stateJson;
+    if (m->historyStateRef >= 0) { m->rt.Unref(m->historyStateRef); m->historyStateRef = -1; }
+}
+
+void PageScripts::PopState(const std::string& stateJson) {
+    SetHistoryState(stateJson);
+    Impl& I = *m;
+    I.DispatchEvent(nullptr, "popstate", false, false, [&I](js::Object* ev) {
+        js::Value st = js::Value::Null();
+        if (!I.historyState.empty()) {
+            if (I.historyStateRef < 0) I.historyStateRef = I.rt.Ref(ParseJson(I.rt, I.historyState));
+            st = I.rt.GetRef(I.historyStateRef);
+        }
+        I.rt.DefineData(ev, I.rt.Intern("state"), st);
+    });
 }
 
 bool PageScripts::Dispatch(const Node& target, const std::string& type) {
@@ -1413,6 +2394,10 @@ void PageScripts::FreeRemoved(const std::function<void(const Node&)>& forget, bo
         if (held) continue;
         Walk(root, true, [&](Node* n) {
             if (forget) forget(*n);
+            I.started.erase(n);
+            I.written.erase(std::remove(I.written.begin(), I.written.end(), n), I.written.end());
+            if (I.focused == n) I.focused = nullptr;
+            if (I.currentScript == n) I.currentScript = nullptr;
             auto it = I.slotOf.find(n);
             if (it != I.slotOf.end()) {
                 const std::uint32_t s = it->second;

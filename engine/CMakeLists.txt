@@ -74,6 +74,8 @@ add_library(okay_browser STATIC
     src/Browser/GamePack.cpp     # step 2: the web game pack reader (the native twin of platform/web/okay_web.js)
     src/Browser/GameLaunch.cpp   # step 2: which page elements run a game, per-site folders, the player's command line
     src/Browser/Script.cpp       # round 2: page JavaScript on okay::js (the DOM binding, events, timers, the console)
+    src/Browser/Cookies.cpp      # round 3: the profile's cookies (RFC 6265 with SameSite)
+    src/Browser/Storage.cpp      # round 3: localStorage and sessionStorage areas per origin
 )
 target_include_directories(okay_browser PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(okay_browser PUBLIC cxx_std_17)

@@ -7,6 +7,11 @@
 // Run with --selftest to exercise the (headless) editor logic without opening a
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
+// Before any header that may pull in SDL.h: SDL must not #define main to SDL_main (shared/Splash.hpp used to do this
+// first; it no longer includes SDL).
+#ifndef SDL_MAIN_HANDLED
+#define SDL_MAIN_HANDLED
+#endif
 #include "EditorState.hpp"
 #include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
@@ -124,7 +129,7 @@
 #include "okay/Core/GameSaves.hpp"
 #include "okay/UI/TooltipPlace.hpp"
 #include "okay/Core/DisplaySettings.hpp"
-#include "SdlDisplays.hpp"             // monitor list and display modes, shared with the player (SDL, not the platform seam)
+#include "PlatformDisplays.hpp"        // monitor list and display modes through okay::platform, shared with the player
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
@@ -163,6 +168,7 @@
 #endif
 #include "ImGuiPainterRenderer.hpp"   // our own Dear ImGui renderer over okay::platform::Painter (OKAY_IMGUI_RENDER=own; default stays imgui_impl_sdlrenderer2)
 #include "PainterBridge.hpp"   // the 2D renderer calls, through okay::platform::Painter
+#include "OwnPainter.hpp"      // which painter draws an own-backend window (OpenGL, else software)
 #include "ImGuiPlatformFeed.hpp"          // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
 
 #include <numeric>
@@ -775,8 +781,10 @@ int main(int argc, char** argv) {
 #else
 
 // Take control of the program entry point ourselves so SDL doesn't #define
-// `main` to SDL_main (which would also rewrite identifiers like `cam->main`).
+// `main` to SDL_main (which would also rewrite identifiers like `cam->main`). (Also defined at the top of this file.)
+#ifndef SDL_MAIN_HANDLED
 #define SDL_MAIN_HANDLED
+#endif
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "okay/Platform/WindowLogic.hpp" // first-run UI scale, focus hand-back decision
@@ -6294,13 +6302,13 @@ static void DrawCameraBookmarkMenuItems(EditorState& ed) {
     }
 }
 
-// What this PC offers, for the Auto choices (AutoPerf.hpp). Read from SDL (cores, RAM), the platform layer (refresh rate)
+// What this PC offers, for the Auto choices (AutoPerf.hpp). Read from the platform layer (cores, RAM, refresh rate)
 // and the renderer that was created.
 static oked::autoperf::Hardware ReadHardware() {
     oked::autoperf::Hardware h;
     if (g_sdlRenderer) h.gpuRenderer = okay::pb::IsAccelerated(g_sdlRenderer);
-    h.cpuCores = SDL_GetCPUCount();
-    h.ramMB = SDL_GetSystemRAM();
+    h.cpuCores = okay::platform::CpuCount();
+    h.ramMB = okay::platform::SystemRamMB();
     okay::platform::DisplayInfo di;   // the first (primary) display's refresh rate, through the platform layer
     if (okay::platform::Backend* pb = okay::platform::Default(); pb && pb->DisplayAt(0, di)) h.displayHz = di.refreshHz;
     return h;
@@ -6434,7 +6442,7 @@ static void DrawRenderingMenuItems(EditorState& ed) {
         ImGui::EndMenu();
     }
     if (ImGui::MenuItem("Performance mode (Scene view)", nullptr, &g_perfMode)) SaveSettings();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cheaper Scene view only (the Game view and your builds keep the scene's own look):\nno ambient occlusion, bloom, FXAA or supersampling, render scale at most 75%%,\nand one small shadow cascade while the Game panel is closed.");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cheaper Scene view only (the Game view and your builds keep the scene's own look):\nno ambient occlusion, bloom, edge smoothing or supersampling, render scale at most 75%%,\nand one small shadow cascade while the Game panel is closed.");
 }
 
 // ---- Creators shared by GameObject > Create, the Hierarchy menus and the Scene view's right-click menu (and its search box). ----
@@ -11173,12 +11181,12 @@ void DrawSceneSettings(EditorState& ed) {
             ImGui::SliderFloat("Bloom intensity", &BloomIntensity(), 0.0f, 2.0f, "%.2f");
         }
 
-        ImGui::Checkbox("Tone mapping (ACES)", &ToneMapEnabled());
+        ImGui::Checkbox("Tone mapping (punchy filmic)", &ToneMapEnabled());
         DrawRendererNote(okay::RenderFeature::SoftwareToneMap);
         if (ToneMapEnabled())
             ImGui::SliderFloat("Exposure", &Exposure(), 0.1f, 4.0f, "%.2f");
 
-        ImGui::Checkbox("Anti-aliasing (FXAA)", &FXAAEnabled());
+        ImGui::Checkbox("Anti-aliasing (edge smoothing)", &FXAAEnabled());
         DrawRendererNote(okay::RenderFeature::BuildFxaa);
 
         ImGui::Checkbox("Color grading", &ColorGradeEnabled());
@@ -15455,7 +15463,7 @@ void DrawFileDialogs(EditorState& ed) {
                 DrawRendererNote(okay::RenderFeature::BuildBloom);
                 ImGui::Checkbox("Ambient occlusion", &g_build.ssao);
                 DrawRendererNote(okay::RenderFeature::BuildSsao);
-                ImGui::Checkbox("FXAA", &g_build.fxaa);
+                ImGui::Checkbox("Edge smoothing", &g_build.fxaa);
                 DrawRendererNote(okay::RenderFeature::BuildFxaa);
                 DrawRendererNote(okay::RenderFeature::PerPixelLighting);
                 const char* aaOpts[] = {"Off", "2x", "4x"};
@@ -29753,10 +29761,10 @@ static bool DrawFirstPersonHandWithOkayUI(EditorState& ed, FirstPersonHand* fh, 
     L.rows.reserve(16);
     L.Note("Shows your character's OWN arm in first person. Your body is hidden from your camera only (others see all of it) and never duplicated. Click to punch.", false, true);
     L.SliderInt("Attack Button##fh", &fh->attackButton, 0, 2); L.Tip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
-    L.Check("Swing while held##fh", &fh->holdToSwing); L.Tip("Keep swinging while the button is held (Minecraft mining).");
+    L.Check("Swing while held##fh", &fh->holdToSwing); L.Tip("Keep swinging while the button is held (hold to keep mining).");
     int si = fh->showLeftArm ? 1 : 0;
     const int kSide = L.Combo("Arm side##fh", &si, kSides, 2); L.TipLookup();
-    L.Check("Follow camera look##fh", &fh->followPitch); L.Tip("The arm tilts up/down with your view (Minecraft-style).");
+    L.Check("Follow camera look##fh", &fh->followPitch); L.Tip("The arm tilts up/down with your view.");
     L.Check("Bobbing##fh", &fh->bobbing); L.Tip("A small up-and-down bob on the viewmodel arm. It does not roll, and it does not move the shared body.");
     L.Check("Steady arm (ignore lean/crouch/prone)##fh", &fh->steadyArm); L.TipLookup();
     L.Check("Show While Running##fh", &fh->showWhileRunning);
@@ -30043,7 +30051,7 @@ static bool DrawInventoryWithOkayUI(EditorState& ed, Inventory* inv, okay::Compo
     if (ed.isPlaying()) L.Note("Live bag \xE2\x80\x94 Stop puts these slots back.", false, true);
     L.DragInt("Capacity##inv", &inv->capacity, 0.2f, 1, 999);
     L.DragInt("Max Stack##inv", &inv->maxStack, 0.2f, 0, 9999);
-    L.Tip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this, like Minecraft's 64.");
+    L.Tip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this (64 is a common size).");
     L.Drag("Weight Limit##inv", &inv->weightLimit, 1, 0.5f, 0.0f, 100000.0f);
     L.Tip("Carry limit from the item definitions' weights (0 = none). Scripts get on_encumbered(true/false).");
     if (inv->weightLimit > 0.0f) {
@@ -30711,7 +30719,7 @@ static bool DrawBlockBuilderWithOkayUI(EditorState& ed, BlockBuilder* bb, okay::
     L.Check("Crosshair##bb", &bb->showCrosshair);
     L.Tip("Add an aim reticle at screen center on Play (if the scene has none).");
     L.Check("Place in mid-air##bb", &bb->placeInAir);
-    L.Tip("Off (Minecraft-style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
+    L.Tip("Off (block-game style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
     const int kRemove = L.SmallButton("Remove##bb");
     if (!DrawRowsOkayUI(bb, "##okayui_blockbuilder", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -34748,13 +34756,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SliderInt("Attack Button##fh", &fh->attackButton, 0, 2)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
             if (ImGui::Checkbox("Swing while held##fh", &fh->holdToSwing)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep swinging while the button is held (Minecraft mining).");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep swinging while the button is held (hold to keep mining).");
             const char* sides[] = {"Right arm", "Left arm"};
             int si = fh->showLeftArm ? 1 : 0;
             if (ImGui::Combo("Arm side##fh", &si, sides, 2)) { fh->showLeftArm = (si == 1); ed.dirty = true; }
             oked::FieldTip("Arm side##fh");
             if (ImGui::Checkbox("Follow camera look##fh", &fh->followPitch)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The arm tilts up/down with your view (Minecraft-style).");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The arm tilts up/down with your view.");
             if (ImGui::Checkbox("Bobbing##fh", &fh->bobbing)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small up-and-down bob on the viewmodel arm. It does not roll, and it does not move the shared body.");
             if (ImGui::Checkbox("Steady arm (ignore lean/crouch/prone)##fh", &fh->steadyArm)) ed.dirty = true;
@@ -37607,7 +37615,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Crosshair##bb", &bb->showCrosshair)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an aim reticle at screen center on Play (if the scene has none).");
             if (ImGui::Checkbox("Place in mid-air##bb", &bb->placeInAir)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off (Minecraft-style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off (block-game style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
             if (ImGui::SmallButton("Remove##bb")) toRemove = bb;
         }
     }
@@ -38204,7 +38212,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ui = dynamic_cast<InventoryUI*>(curComp)) {
-        if (CompHeader("Inventory UI (Minecraft-style)", ui, &toRemove)) {
+        if (CompHeader("Inventory UI (hotbar + backpack)", ui, &toRemove)) {
             ImGui::TextDisabled("Hotbar + backpack drawn from a sibling/owner Inventory.");
             if (!ui->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add an Inventory component to show items.");
             if (ImGui::SliderInt("Hotbar Slots##iu", &ui->hotbarSlots, 1, 9)) ed.dirty = true;
@@ -38269,7 +38277,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("Background panel##iu", &ui->showPanel)) ed.dirty = true; ImGui::SameLine();
                 oked::FieldTip("Background panel##iu");
                 if (ImGui::Checkbox("Held item name##iu", &ui->showSelectedName)) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the selected item's name above the hotbar (Minecraft-style).");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the selected item's name above the hotbar.");
                 if (ui->showPanel && ImGui::DragFloat("Panel Padding##iu", &ui->panelPad, 0.25f, 0.0f, 40.0f)) ed.dirty = true;
                 float pc[4] = {ui->panelColor.r, ui->panelColor.g, ui->panelColor.b, ui->panelColor.a};
                 if (ImGui::ColorEdit4("Panel Color##iu", pc)) { ui->panelColor = {pc[0], pc[1], pc[2], pc[3]}; ed.dirty = true; }
@@ -41549,7 +41557,7 @@ void DrawInspector(EditorState& ed) {
             };
             edited(ImGui::DragInt("Capacity##inv", &inv->capacity, 0.2f, 1, 999));
             edited(ImGui::DragInt("Max Stack##inv", &inv->maxStack, 0.2f, 0, 9999));
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this, like Minecraft's 64.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this (64 is a common size).");
             edited(ImGui::DragFloat("Weight Limit##inv", &inv->weightLimit, 0.5f, 0.0f, 100000.0f));
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carry limit from the item definitions' weights (0 = none). Scripts get on_encumbered(true/false).");
             if (inv->weightLimit > 0.0f) {
@@ -53569,7 +53577,7 @@ static bool StartSplashLateStep() {
     return false;
 }
 // Drawn over the main loop's frame, just before it is presented.
-static void DrawStartSplashOverlay(SDL_Renderer* renderer) {
+static void DrawStartSplashOverlay(okay::platform::Painter* painter) {
     EditorStartSplash& s = StartSplash();
     if (s.finish.Done()) return;
     const bool hold = StartSplashLateStep();
@@ -53578,8 +53586,9 @@ static void DrawStartSplashOverlay(SDL_Renderer* renderer) {
     okay::SplashProgress st = StartSplashProgress();
     st.opacity = op;
     st.present = false;
-    int sw = 1280, sh = 800; okay::pb::OutputSize(renderer, &sw, &sh);
-    okay::DrawSplashStyled(renderer, sw, sh, s.style, &st);
+    if (!painter) return;
+    int sw = 1280, sh = 800; painter->OutputSize(&sw, &sh);
+    okay::DrawSplashStyled(painter, sw, sh, s.style, &st);
 }
 
 int RunVsGraphShot(int argc, char** argv);
@@ -53654,7 +53663,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    SDL_SetMainReady(); // we manage the entry point (SDL_MAIN_HANDLED)
+    // (SDL_MAIN_HANDLED: the sdl2 backend's Init calls SDL_SetMainReady before SDL_Init, so the app does not.)
     // Windows 11 / high-DPI: declare the process per-monitor-DPI-aware BEFORE init so
     // Windows renders the window at native resolution (crisp) instead of bitmap-
     // stretching a 96-DPI surface (the blurry look on 125%/150% scaled displays).
@@ -53698,6 +53707,7 @@ int main(int argc, char** argv) {
     okay::platform::WindowDesc mainDesc;
     mainDesc.title = "OkayEngine"; mainDesc.width = 1280; mainDesc.height = 800;
     mainDesc.resizable = true; mainDesc.highDpi = true; mainDesc.hidden = true;
+    mainDesc.opengl = okay::pb::OwnWindowsWantGL(sdlSeam);   // own backend: a GL pixel format for the OpenGL painter (sdl2: unchanged)
     // The seam's window (it owns the window and destroys it); the SDL_Window* inside is what the ImGui backends and SDL_Renderer take.
     std::unique_ptr<okay::platform::Window> winSeam = sdlSeam->MakeWindow(mainDesc);
     if (!winSeam) { std::cerr << "CreateWindow failed: " << sdlSeam->LastError() << "\n"; return 1; }
@@ -53713,14 +53723,12 @@ int main(int argc, char** argv) {
     if (const char* rd = std::getenv("OKAY_RENDER_DRIVER")) SDL_SetHint(SDL_HINT_RENDER_DRIVER, rd);
     else SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d11");
 #endif
-#ifdef OKAY_HAVE_OKAYUI
-    okay::pb::SetOwnPainterFactory([](okay::platform::Window& w, const okay::platform::PainterDesc& d) { return OkayUI::soft::CreateWindowPainter(w, d); });   // the software painter, for own-backend windows
-#endif
+    okay::pb::SetOwnPainterFactory(okay::pb::MakeOwnPainter);   // own-backend windows: the OpenGL painter, else the software one (shared/OwnPainter.hpp)
     // An accelerated renderer (the driver the hint chose), else one with the default driver, else any (software). The painter owns it.
     SDL_Renderer* renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true);
     if (!renderer) { SDL_SetHint(SDL_HINT_RENDER_DRIVER, ""); renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true); }
     if (!renderer) renderer = okay::pb::CreateRenderer(*winSeam);
-    if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
+    if (!renderer) { std::cerr << "CreateRenderer failed: " << sdlSeam->LastError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
     ResolveAutoRendering();   // VSync and 3D anti-aliasing: Auto picks for this PC (re-run after the saved settings load)
     // Load the project's settings early (<project>/project.okayproj) so the loading screen can show
@@ -53766,9 +53774,9 @@ int main(int argc, char** argv) {
         ImVec4 acc = AccentCol(1.0f);
         if (g_project.splashAccentOverride) { st.ar = g_project.splashAccent[0]; st.ag = g_project.splashAccent[1]; st.ab = g_project.splashAccent[2]; }
         else { st.ar = acc.x; st.ag = acc.y; st.ab = acc.z; }
-        auto C = [](const float* c) -> SDL_Color {
+        auto C = [](const float* c) -> okay::ui2d::RGBA {
             auto u = [](float v){ return (Uint8)((!(v > 0) ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };   // nan counts as 0 (a nan cast is undefined)
-            return SDL_Color{u(c[0]), u(c[1]), u(c[2]), 255}; };
+            return okay::ui2d::RGBA{u(c[0]), u(c[1]), u(c[2]), 255}; };
         st.bgTop = C(g_project.splashBgTop); st.bgBottom = C(g_project.splashBgBot);
         st.logo = g_editorSplashLogo; st.showProgress = g_project.splashShowBar;
         return st;
@@ -54005,7 +54013,7 @@ int main(int argc, char** argv) {
     if (g_multiWindow) {
         if (ViewportsSupported()) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
         else {
-            const char* drv = sdlSeam->Kind() == okay::platform::BackendKind::Sdl2 ? SDL_GetCurrentVideoDriver() : "own";
+            const char* drv = sdlSeam->Name();   // the platform backend ("sdl2" or "own")
             const std::string msg = std::string("Multi-window panels are off: the video driver '") + (drv ? drv : "?") +
                                     "' cannot open extra windows here, so panels stay inside the editor window.";
             std::printf("[okay] %s\n", msg.c_str());
@@ -54320,8 +54328,8 @@ int main(int argc, char** argv) {
         {   // seconds since the last event of any kind (the idle throttle reads this; the first frame counts as just now)
             static Uint64 s_lastInput = okay::platform::PerfCounter();
             g_secSinceInput = (double)(okay::platform::PerfCounter() - s_lastInput) / (double)okay::platform::PerfFrequency();
-            SDL_PumpEvents();
-            if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT)) { s_lastInput = okay::platform::PerfCounter(); g_secSinceInput = 0.0; }
+            sdlSeam->PumpEvents();
+            if (sdlSeam->HasPendingEvents()) { s_lastInput = okay::platform::PerfCounter(); g_secSinceInput = 0.0; }
         }
         okay::Prof().Begin("Editor.Events");   // reading the window system's events (closed after the loop; nothing leaves it early)
         okay::platform::Event e;
@@ -54634,9 +54642,9 @@ int main(int argc, char** argv) {
                     s_gameVMouse.y += (float)dyp;
                 }
                 unsigned mask = 0;
-                if (rmb & SDL_BUTTON(SDL_BUTTON_LEFT))   mask |= 1u << 0;
-                if (rmb & SDL_BUTTON(SDL_BUTTON_RIGHT))  mask |= 1u << 1;
-                if (rmb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
+                if (rmb & okay::platform::MouseMask(okay::platform::MouseLeft))   mask |= 1u << 0;
+                if (rmb & okay::platform::MouseMask(okay::platform::MouseRight))  mask |= 1u << 1;
+                if (rmb & okay::platform::MouseMask(okay::platform::MouseMiddle)) mask |= 1u << 2;
                 Input::FeedMouse(s_gameVMouse, mask);
             } else {
                 if (s_playLookLocked) {
@@ -54768,7 +54776,7 @@ int main(int argc, char** argv) {
                 // No field (ImGui's or OkayUI's) is typing: the held keys still go to OkayUI, so a hosted panel sees Ctrl/Shift on a
                 // click and its own keys (the Hierarchy's arrows, F2, Ctrl+A act only while its window has the focus).
                 const bool held = OkayUIInputOn() && !keys && !io.WantTextInput;
-                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys || held);
+                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & okay::platform::MouseMask(okay::platform::MouseRight)) != 0, blocked, keys || held);
                 if (OkayUIInputOn()) {
                     uin.blocked = blocked; uin.mouseDown = h.mouseDown; uin.rightDown = h.rightDown; uin.wheel = h.wheel;   // (mouseDown also counts a click that came and went within one frame)
                     if (keys) uin = h;
@@ -54808,14 +54816,14 @@ int main(int argc, char** argv) {
                 static bool s_monitors = false;
                 if (!s_monitors && window) {
                     s_monitors = true;
-                    okay::DisplaySettings::SetMonitors(okay::sdldisplay::ListMonitors());
+                    okay::DisplaySettings::SetMonitors(okay::platformdisplay::ListMonitors(sdlSeam));
                 }
                 okay::DisplaySettings::TickTrial(dt);
                 static int s_dispGen = 0;
                 const int gen = okay::DisplaySettings::Generation();
                 if (gen != s_dispGen) {
                     s_dispGen = gen;
-                    if (window) okay::sdldisplay::Apply(window, okay::DisplaySettings::CurrentApply());
+                    if (window) okay::platformdisplay::Apply(winSeam.get(), okay::DisplaySettings::CurrentApply());
                     g_vsync = okay::DisplaySettings::VSync();
                     if (renderer) okay::pb::SetVSync(renderer, g_vsync);
                     okay::DisplaySettings::ApplyQuality();
@@ -55936,7 +55944,7 @@ int main(int argc, char** argv) {
         for (const std::string& shot : testHooks.TakeShots())
             if (!okay::testhooks::SavePicture(*okay::pb::For(renderer), shot)) std::fprintf(stderr, "[test-hook] could not save %s\n", shot.c_str());
 #endif
-        DrawStartSplashOverlay(renderer);   // the loading screen over the first frames, then its fade (after the pictures above: they show the editor)
+        DrawStartSplashOverlay(okay::pb::For(renderer));   // the loading screen over the first frames, then its fade (after the pictures above: they show the editor)
         { OKAY_PROFILE("Present"); okay::pb::Present(renderer); }
 
         // Multi-window panels: create/size/paint the extra OS windows (tabs

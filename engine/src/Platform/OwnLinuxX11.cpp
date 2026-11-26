@@ -5,6 +5,7 @@
 #include "OwnLinux.hpp"
 #include "UriList.hpp"
 #include "CursorMap.hpp"
+#include "DisplayModeMath.hpp"
 
 #ifndef OKAY_PLATFORM_X11_HEADERS
 namespace okay::platform::own {
@@ -19,9 +20,14 @@ std::unique_ptr<X11System> X11System::Open(std::string& err) {
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 #include <X11/keysym.h>
+#if __has_include(<X11/extensions/Xrandr.h>)
+#include <X11/extensions/Xrandr.h>   // types and constants only: libXrandr is opened with dlopen like libX11
+#define OKAY_X11_HAVE_RANDR_H 1
+#endif
 #include <GL/glx.h>
 #undef CursorShape   // Xlib defines it as a number (XQueryBestSize class); ours is okay::platform::CursorShape
 #include <dlfcn.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -104,7 +110,8 @@ namespace {
     F(void, XUnsetICFocus, (XIC)) \
     F(int, Xutf8LookupString, (XIC, XKeyPressedEvent*, char*, int, KeySym*, Status*)) \
     F(Status, XIconifyWindow, (Display*, ::Window, int)) \
-    F(int, XRefreshKeyboardMapping, (XMappingEvent*))
+    F(int, XRefreshKeyboardMapping, (XMappingEvent*)) \
+    F(char*, XGetAtomName, (Display*, Atom))
 
 #define OKAY_GLX_FUNCS(F) \
     F(GLXFBConfig*, glXChooseFBConfig, (Display*, int, const int*, int*)) \
@@ -114,6 +121,7 @@ namespace {
     F(Bool, glXMakeCurrent, (Display*, GLXDrawable, GLXContext)) \
     F(void, glXSwapBuffers, (Display*, GLXDrawable)) \
     F(GLXContext, glXGetCurrentContext, (void)) \
+    F(GLXDrawable, glXGetCurrentDrawable, (void)) \
     F(__GLXextFuncPtr, glXGetProcAddressARB, (const GLubyte*)) \
     F(Bool, glXQueryExtension, (Display*, int*, int*))
 
@@ -156,6 +164,44 @@ bool LoadGlx(GlxTable& g) {
 #undef OKAY_LOAD
     return true;
 }
+
+#ifdef OKAY_X11_HAVE_RANDR_H
+// The X Resize and Rotate extension (monitors, outputs, video modes), from libXrandr.so.2 with dlopen. Optional: without
+// it (or on a server without RandR 1.5 monitors) the display list is the one X screen.
+#define OKAY_XRANDR_FUNCS(F) \
+    F(Bool, XRRQueryExtension, (Display*, int*, int*)) \
+    F(Status, XRRQueryVersion, (Display*, int*, int*)) \
+    F(XRRMonitorInfo*, XRRGetMonitors, (Display*, ::Window, Bool, int*)) \
+    F(void, XRRFreeMonitors, (XRRMonitorInfo*)) \
+    F(XRRScreenResources*, XRRGetScreenResourcesCurrent, (Display*, ::Window)) \
+    F(void, XRRFreeScreenResources, (XRRScreenResources*)) \
+    F(XRROutputInfo*, XRRGetOutputInfo, (Display*, XRRScreenResources*, RROutput)) \
+    F(void, XRRFreeOutputInfo, (XRROutputInfo*)) \
+    F(XRRCrtcInfo*, XRRGetCrtcInfo, (Display*, XRRScreenResources*, RRCrtc)) \
+    F(void, XRRFreeCrtcInfo, (XRRCrtcInfo*))
+
+struct RandrTable {
+    void* lib = nullptr;
+#define OKAY_DECL(ret, name, args) ret (*name) args = nullptr;
+    OKAY_XRANDR_FUNCS(OKAY_DECL)
+#undef OKAY_DECL
+};
+
+bool LoadRandr(RandrTable& r) {
+    r.lib = dlopen("libXrandr.so.2", RTLD_NOW | RTLD_GLOBAL);
+    if (!r.lib) r.lib = dlopen("libXrandr.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!r.lib) return false;
+#define OKAY_LOAD(ret, name, args) \
+    r.name = reinterpret_cast<ret (*) args>(dlsym(r.lib, #name)); \
+    if (!r.name) return false;
+    OKAY_XRANDR_FUNCS(OKAY_LOAD)
+#undef OKAY_LOAD
+    return true;
+}
+#else
+struct RandrTable {};
+inline bool LoadRandr(RandrTable&) { return false; }   // built without the RandR header: the X screen is the one display
+#endif
 
 uint64_t NowMs() {
     timespec ts;
@@ -230,6 +276,7 @@ public:
     void Minimize() override;
     void Restore() override;
     void SetFullscreen(bool on) override;
+    bool SetBordered(bool on) override;
     bool IsFocused() const override;
     bool HasMouseFocus() const override { return m_mouseIn; }
     bool IsMinimized() const override;
@@ -563,6 +610,19 @@ public:
         return (void*)m_glx.glXGetProcAddressARB((const GLubyte*)name);
     }
     void ReleaseCurrent() override { if (m_hasGlx) m_glx.glXMakeCurrent(m_dpy, None, nullptr); }
+    // GLX 1.3: the current context and drawable of this thread, and glXMakeCurrent to put them back (None + null releases).
+    GLCurrent CurrentGL() override {
+        GLCurrent c;
+        if (!m_hasGlx) return c;
+        c.context = (void*)m_glx.glXGetCurrentContext();
+        c.window = c.context ? (void*)(uintptr_t)m_glx.glXGetCurrentDrawable() : nullptr;
+        return c;
+    }
+    bool RestoreGL(const GLCurrent& s) override {
+        if (!m_hasGlx) return false;
+        if (!s.context) return m_glx.glXMakeCurrent(m_dpy, None, nullptr) != False;
+        return m_glx.glXMakeCurrent(m_dpy, (GLXDrawable)(uintptr_t)s.window, (GLXContext)s.context) != False;
+    }
     void StartTextInput() override { m_textInput = true; }
     void StopTextInput() override { m_textInput = false; }
     bool IsKeyDown(Key k) override {
@@ -831,6 +891,91 @@ public:
         return m_wins.empty() ? 0 : m_wins.begin()->first;
     }
 
+    // ---- displays (RandR 1.5 monitors; the X screen when RandR is missing) ----
+    bool Randr() {
+        if (m_randrTried) return m_randrOk;
+        m_randrTried = true;
+        int ev = 0, er = 0, maj = 0, min = 0;
+        m_randrOk = LoadRandr(m_rr) && m_rr.XRRQueryExtension(m_dpy, &ev, &er) && m_rr.XRRQueryVersion(m_dpy, &maj, &min) &&
+                    (maj > 1 || (maj == 1 && min >= 5));
+        return m_randrOk;
+    }
+#ifdef OKAY_X11_HAVE_RANDR_H
+    static DisplayMode ModeOf(const XRRScreenResources* res, RRMode id) {
+        DisplayMode m;
+        for (int i = 0; res && i < res->nmode; ++i) {
+            const XRRModeInfo& mi = res->modes[i];
+            if (mi.id != id) continue;
+            m.width = (int)mi.width; m.height = (int)mi.height;
+            m.refreshHz = modemath::RefreshFromModeLine(mi.dotClock, mi.hTotal, mi.vTotal,
+                                                        (mi.modeFlags & RR_DoubleScan) != 0, (mi.modeFlags & RR_Interlace) != 0);
+        }
+        return m;
+    }
+#endif
+    // One entry per monitor, primary first and then left to right (as Backend::DisplayAt promises), each with the
+    // modes of its first output (current first).
+    struct Mon { DisplayInfo info; std::vector<DisplayMode> modes; };
+    std::vector<Mon> Monitors() {
+        std::vector<Mon> out;
+#ifdef OKAY_X11_HAVE_RANDR_H
+        if (Randr()) {
+            int n = 0;
+            XRRMonitorInfo* mons = m_rr.XRRGetMonitors(m_dpy, m_root, True, &n);
+            XRRScreenResources* res = m_rr.XRRGetScreenResourcesCurrent(m_dpy, m_root);
+            for (int i = 0; mons && i < n; ++i) {
+                Mon m;
+                m.info.x = mons[i].x; m.info.y = mons[i].y; m.info.w = mons[i].width; m.info.h = mons[i].height;
+                m.info.ux = m.info.x; m.info.uy = m.info.y; m.info.uw = m.info.w; m.info.uh = m.info.h;
+                m.info.primary = mons[i].primary != 0;
+                if (char* nm = mons[i].name ? m_x.XGetAtomName(m_dpy, mons[i].name) : nullptr) { m.info.name = nm; m_x.XFree(nm); }
+                if (res && mons[i].noutput > 0) {
+                    if (XRROutputInfo* oi = m_rr.XRRGetOutputInfo(m_dpy, res, mons[i].outputs[0])) {
+                        DisplayMode cur;
+                        if (oi->crtc) {
+                            if (XRRCrtcInfo* ci = m_rr.XRRGetCrtcInfo(m_dpy, res, oi->crtc)) { cur = ModeOf(res, ci->mode); m_rr.XRRFreeCrtcInfo(ci); }
+                        }
+                        std::vector<DisplayMode> all;
+                        for (int k = 0; k < oi->nmode; ++k) all.push_back(ModeOf(res, oi->modes[k]));
+                        m.modes = modemath::CurrentFirst(cur, all);
+                        m.info.refreshHz = cur.refreshHz;
+                        m_rr.XRRFreeOutputInfo(oi);
+                    }
+                }
+                out.push_back(std::move(m));
+            }
+            if (res) m_rr.XRRFreeScreenResources(res);
+            if (mons) m_rr.XRRFreeMonitors(mons);
+        }
+#endif
+        if (out.empty() && m_dpy) {   // no RandR: the X screen is the one display
+            Mon m;
+            m.info.name = "Screen " + std::to_string(m_screen);
+            m.info.w = m.info.uw = DisplayWidth(m_dpy, m_screen);
+            m.info.h = m.info.uh = DisplayHeight(m_dpy, m_screen);
+            m.info.primary = true;
+            out.push_back(std::move(m));
+        }
+        std::stable_sort(out.begin(), out.end(), [](const Mon& a, const Mon& b) {
+            if (a.info.primary != b.info.primary) return a.info.primary;
+            return a.info.x < b.info.x || (a.info.x == b.info.x && a.info.y < b.info.y);
+        });
+        if (!out.empty() && std::none_of(out.begin(), out.end(), [](const Mon& m) { return m.info.primary; })) out[0].info.primary = true;
+        for (Mon& m : out)
+            if (m.modes.empty()) m.modes.push_back({m.info.w, m.info.h, m.info.refreshHz});
+        return out;
+    }
+    std::vector<DisplayInfo> Displays() override {
+        std::vector<DisplayInfo> v;
+        for (Mon& m : Monitors()) v.push_back(std::move(m.info));
+        return v;
+    }
+    std::vector<DisplayMode> DisplayModes(int index) override {
+        std::vector<Mon> m = Monitors();
+        if (index < 0 || index >= (int)m.size()) return {};
+        return m[(size_t)index].modes;
+    }
+
     bool GrabWindow(Window& w, std::vector<uint8_t>& rgba, int& width, int& height) override {
         auto* xw = static_cast<X11Win*>(&w);
         XWindowAttributes at;
@@ -856,6 +1001,8 @@ public:
     XTable m_x;
     GlxTable m_glx;
     bool m_hasGlx = false;
+    RandrTable m_rr;
+    bool m_randrTried = false, m_randrOk = false;
     Display* m_dpy = nullptr;
     int m_screen = 0;
     ::Window m_root = 0;
@@ -1012,6 +1159,14 @@ void X11Win::SetFullscreen(bool on) {
     e.xclient.data.l[3] = 1;
     XF.XSendEvent(XD, m_sys->m_root, False, SubstructureNotifyMask | SubstructureRedirectMask, &e);
     XF.XFlush(XD);
+}
+// Frame on or off through the Motif window manager hints (the same property MakeWindow sets for WindowDesc::borderless).
+bool X11Win::SetBordered(bool on) {
+    struct { unsigned long flags, functions, decorations; long input_mode; unsigned long status; } mwm = {2, 0, on ? 1ul : 0ul, 0, 0};
+    Atom a = XF.XInternAtom(XD, "_MOTIF_WM_HINTS", False);
+    XF.XChangeProperty(XD, m_win, a, a, 32, PropModeReplace, (const unsigned char*)&mwm, 5);
+    XF.XFlush(XD);
+    return true;
 }
 bool X11Win::IsFocused() const { return m_focused; }
 // Minimized = the window manager put _NET_WM_STATE_HIDDEN in the window's state list (EWMH).

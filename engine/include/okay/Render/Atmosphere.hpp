@@ -111,15 +111,17 @@ inline float FogFactor(const Scene::RenderSettings& rs, float dist, float eyeY, 
 }
 
 // ---- Post-processing ---------------------------------------------------------
-/// Filmic ACES curve (Narkowicz): linear light in, display value 0..1 out.
+/// Filmic ACES curve: linear light in, display value 0..1 out. Source: K. Narkowicz, "ACES Filmic Tone Mapping Curve"
+/// (blog, 2016), his published fit.
 inline float TonemapACES(float x) {
     const float n = x * (2.51f * x + 0.03f), d = x * (2.43f * x + 0.59f) + 0.14f;
     return Mathf::Clamp01(d > 1e-6f ? n / d : 0.0f);
 }
-/// Filmic curve (Hable): a softer shoulder with more room for highlights.
+/// Filmic curve (Hable): a softer shoulder with more room for highlights. Source: J. Hable, "Uncharted 2: HDR Lighting"
+/// (GDC 2010): A-F and the white point 11.2 are his published numbers.
 inline float TonemapFilmic(float x) {
     auto hable = [](float v) {
-        const float A = 0.15f, B = 0.50f, C = 0.10f, D = 0.20f, E = 0.02f, F = 0.30f;
+        const float A = 0.15f, B = 0.50f, C = 0.10f, D = 0.20f, E = 0.02f, F = 0.30f;   // Hable's published numbers (GDC 2010)
         return ((v * (A * v + C * B) + D * E) / (v * (A * v + B) + D * F)) - E / F;
     };
     return Mathf::Clamp01(hable(x * 2.0f) / hable(11.2f));

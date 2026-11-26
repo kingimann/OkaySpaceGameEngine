@@ -2,6 +2,7 @@
 #include "okay/Browser/Forms.hpp"
 
 #include "okay/Browser/Url.hpp"
+#include "okay/Core/StringUtil.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -10,16 +11,8 @@ namespace okay::browser {
 
 namespace {
 
-std::string Lower(std::string s) {
-    for (char& c : s) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
-    return s;
-}
-std::string Trim(const std::string& s) {
-    std::size_t a = 0, b = s.size();
-    while (a < b && (s[a] == ' ' || s[a] == '\t' || s[a] == '\n' || s[a] == '\r' || s[a] == '\f')) ++a;
-    while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t' || s[b - 1] == '\n' || s[b - 1] == '\r' || s[b - 1] == '\f')) --b;
-    return s.substr(a, b - a);
-}
+using okay::str::Trim;
+std::string Lower(const std::string& s) { return okay::str::LowerAscii(s); }
 std::string AttrOr(const Node& el, const char* name, const std::string& fallback = std::string()) {
     const std::string* v = el.Attr(name);
     return v ? *v : fallback;

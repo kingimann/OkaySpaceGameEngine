@@ -31,6 +31,18 @@ int main() {
 
     CHECK(okayproj::IsProjectFolder(projects / "Game"));
     CHECK(okayproj::IsProjectFolder(projects / "Shell"));      // just made, scene not saved yet
+
+    // The project layout (docs/engine/project_layout.md): scenes live in Assets/Scenes (or deeper). The root is the folder
+    // that holds Assets, never Assets or Assets/Scenes, so "Delete project" takes the project and not one of its folders.
+    fs::create_directories(projects / "Laid" / "Assets" / "Scenes" / "Levels");
+    { std::ofstream(projects / "Laid" / "Assets" / "Scenes" / "Levels" / "One.okayscene") << "name \"One\"\n"; }
+    CHECK(okayproj::RootOfScene(projects / "Laid" / "Assets" / "Scenes" / "Main.okayscene") == projects / "Laid");
+    CHECK(okayproj::RootOfScene(projects / "Laid" / "Assets" / "Scenes" / "Levels" / "One.okayscene") == projects / "Laid");
+    CHECK(okayproj::IsProjectFolder(projects / "Laid"));         // its only scene is two folders down
+    fs::create_directories(projects / "Skel" / "Assets" / "Scenes");
+    fs::create_directories(projects / "Skel" / "Assets" / "Scripts");
+    CHECK(okayproj::IsProjectFolder(projects / "Skel"));         // a new project's empty standard folders, no scene saved yet
+    CHECK(DeleteRefusal(projects / "Laid", keep).empty());
     CHECK(!okayproj::IsProjectFolder(projects / "Plain"));
     CHECK(!okayproj::IsProjectFolder(projects / "Loose"));
     CHECK(!okayproj::IsProjectFolder(projects / "Missing"));

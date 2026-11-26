@@ -381,6 +381,69 @@ int main() {
         CHECK(CheckProjectVersion(" 1.0.0 ").empty());
     }
 
+    // ---- the project layout (docs/engine/project_layout.md) ---------------------------------------------------------
+    {
+        TempDir t;
+        const fs::path root = t.path / "Game";
+        Made made;
+        std::string err;
+        CHECK(MakeSkeleton(root, made, err));
+        CHECK(fs::is_directory(root / "ProjectSettings"));                        // a new project has the settings folder
+        CHECK(!fs::exists(root / "Library") && !fs::exists(root / "Logs") && !fs::exists(root / "Temp") && !fs::exists(root / "Builds"));   // made when needed
+        // the settings file of a new project is in ProjectSettings
+        CHECK(fs::path(SettingsPath(root.string())) == root / "ProjectSettings" / "project.okayproj");
+        CHECK(layout::SettingsFile(root, "scene_build.txt", ".okay/scene_build.txt") == root / "ProjectSettings" / "scene_build.txt");
+        CHECK(!HasSettingsFile(root));
+        Write(root / "ProjectSettings" / "project.okayproj", "version 1\n");
+        CHECK(HasSettingsFile(root));
+        // the first scene goes into Assets/Scenes
+        CHECK(layout::FirstScenePath(root, "Main") == root / "Assets" / "Scenes" / "Main.okayscene");
+        CHECK(layout::ScenesDir(root) == root / "Assets" / "Scenes");
+        CHECK(layout::LogsDir(root) == root / "Logs" && layout::LibraryDir(root) == root / "Library" && layout::TempDir(root) == root / "Temp");
+        CHECK(layout::BuildsDir(root) == root / "Builds" && layout::SettingsDir(root) == root / "ProjectSettings");
+
+        // An old project (no ProjectSettings folder) keeps reading AND writing its settings where they are.
+        const fs::path old = t.path / "Old";
+        fs::create_directories(old / "Assets");
+        Write(old / "project.okayproj", "version 1\n");
+        CHECK(fs::path(SettingsPath(old.string())) == old / "project.okayproj");
+        CHECK(HasSettingsFile(old));
+        CHECK(layout::SettingsFile(old, "scene_build.txt", ".okay/scene_build.txt") == old / ".okay" / "scene_build.txt");
+        // An old file is read from where it is even when ProjectSettings exists but does not have it yet.
+        fs::create_directories(old / "ProjectSettings");
+        CHECK(fs::path(SettingsPath(old.string())) == old / "project.okayproj");
+        // Once the new one exists, it wins.
+        Write(old / "ProjectSettings" / "project.okayproj", "version 2\n");
+        CHECK(fs::path(SettingsPath(old.string())) == old / "ProjectSettings" / "project.okayproj");
+        CHECK(SettingsPath("") == "project.okayproj");                             // no project: as before
+
+        // Where a save lands: inside Assets, elsewhere in the project, outside it, or no project at all.
+        using layout::SaveTarget;
+        CHECK(layout::CheckSaveTarget(root.string(), (root / "Assets" / "Scenes" / "A.okayscene").string()) == SaveTarget::InAssets);
+        CHECK(layout::CheckSaveTarget(root.string(), (root / "Assets" / "A.okayscene").string()) == SaveTarget::InAssets);
+        CHECK(layout::CheckSaveTarget(root.string(), (root / "A.okayscene").string()) == SaveTarget::InProject);
+        CHECK(layout::CheckSaveTarget(root.string(), (root / "Library" / "A.okayscene").string()) == SaveTarget::InProject);
+        CHECK(layout::CheckSaveTarget(root.string(), (t.path / "A.okayscene").string()) == SaveTarget::Outside);
+        CHECK(layout::CheckSaveTarget(root.string(), (t.path / "GameX" / "Assets" / "A.okayscene").string()) == SaveTarget::Outside);   // a sibling whose name starts the same
+        CHECK(layout::CheckSaveTarget(root.string(), (root / "Assets" / ".." / ".." / "A.okayscene").string()) == SaveTarget::Outside);   // ".." is followed
+        CHECK(layout::CheckSaveTarget("", (t.path / "A.okayscene").string()) == SaveTarget::NoProject);
+        // The copy offered for a save outside Assets keeps the file name and goes to Assets/Scenes.
+        CHECK(layout::InsideCopyPath(root, (t.path / "Far" / "Level 2.okayscene").string()) == root / "Assets" / "Scenes" / "Level 2.okayscene");
+        Write(root / "Assets" / "Scenes" / "Taken.okayscene", "x");
+        CHECK(layout::InsideCopyPath(root, (t.path / "Taken.okayscene").string()) == root / "Assets" / "Scenes" / "Taken 2.okayscene");   // never over a file
+
+        // A relative build folder is inside the project; an absolute one is left as it is.
+        CHECK(fs::path(layout::ResolveInProject(root.string(), "Builds/MyGame")) == root / "Builds" / "MyGame");
+        CHECK(fs::path(layout::ResolveInProject(root.string(), "build/MyGame")) == root / "build" / "MyGame");
+        CHECK(fs::path(layout::ResolveInProject(root.string(), (t.path / "Out").string())) == t.path / "Out");
+        CHECK(layout::ResolveInProject("", "Builds/MyGame") == "Builds/MyGame");   // no project: unchanged
+        CHECK(layout::DefaultBuildDir("My Game") == "Builds/My Game");
+
+        // Logs: the project's Logs folder, or the person's log folder with no project open.
+        CHECK(layout::LogFile(root.string(), (t.path / "userlogs").string(), "console_log.txt") == root / "Logs" / "console_log.txt");
+        CHECK(layout::LogFile("", (t.path / "userlogs").string(), "console_log.txt") == t.path / "userlogs" / "console_log.txt");
+    }
+
     // ---- a template card opens the wizard; it never creates ---------------------------------------------------------
     {
         NewProjectWizard w;

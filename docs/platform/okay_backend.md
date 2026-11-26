@@ -5,10 +5,12 @@
 > applications should communicate through OkayBackend rather than directly with Supabase-specific APIs", keep Supabase as
 > production, no extra hosting costs, audit first. The audit is [okay_backend_audit.md](okay_backend_audit.md).
 >
-> **Status:** Design only (round 1). No program code exists for it yet. Every "will" below is a plan; nothing here is built.
-> Owner decisions that change the plan are in section 13, each with the default this plan uses until the owner says otherwise.
+> **Status:** Rounds 1 (audit and design), 2 (core types and Auth) and 3 (Database) are done; sections 15 and 16 say what
+> rounds 2 and 3 built. Every
+> "will" below for later rounds is still a plan. Owner decisions that change the plan are in section 13, each with the
+> default this plan uses until the owner says otherwise.
 >
-> **Last checked:** 2026-11-26 (branch `claude/okay-backend-1`).
+> **Last checked:** 2026-11-26 (branch `claude/okay-backend-3`).
 
 ## Contents
 
@@ -26,6 +28,8 @@
 - [12. Risks](#12-risks)
 - [13. Owner decisions](#13-owner-decisions)
 - [14. Implementation rounds](#14-implementation-rounds)
+- [15. Round 2: what was built](#15-round-2-what-was-built)
+- [16. Round 3: what was built](#16-round-3-what-was-built)
 
 ## 1. The short version
 
@@ -50,10 +54,10 @@ Rule 19e: one system, one name, one home. Registered in the feature map (17.19).
 
 | Thing | Name | Home (all planned) |
 |---|---|---|
-| The system | **OkayBackend** | `engine/include/okay/Backend/`, `engine/src/Backend/`, `backend/` |
-| Entry header | `okay/Backend/Backend.hpp` | `engine/include/okay/Backend/Backend.hpp` |
+| The system | **OkayBackend** | `engine/include/okay/Backend/` (built, header-only), `backend/` (planned) |
+| Entry header | `okay/Backend/Backend.hpp` | `engine/include/okay/Backend/Backend.hpp` (built) |
 | C++ namespace | `okay::backend` | |
-| The two providers | `supabase`, `local` | `engine/src/Backend/Supabase*.cpp`, `engine/src/Backend/Local*.cpp` |
+| The two providers | `supabase`, `local` | `engine/include/okay/Backend/Supabase.hpp` (built: Auth), `engine/include/okay/Backend/Local*.hpp` (planned) |
 | The Local server program | `okay-backend` (`OkayBackend.exe` on Windows) | `backend/main.cpp` (like `relay/`) |
 | The migration commands | `okay backend export`, `okay backend import` | `tools/okay-cli/` (the existing `okay` command) |
 | Old names kept as aliases | `AccountService`, `okay::Account`, `OKAY_ACCOUNT_SERVER`, `OKAY_ACCOUNT_API_KEY`, `account_server.txt` | frozen names stay working |
@@ -94,8 +98,9 @@ can run in the program (that is what on-device accounts become) or as `okay-back
 
 ## 4. The C++ interfaces
 
-Sketch (C++17, header-only where it is small; no `<mutex>` or `<thread>` in anything the launcher, editor or player can
-include, rule 21a). Final names are settled in round 2; the shape is what matters.
+Sketch (C++17, header-only; no `<mutex>` or `<thread>` in anything the launcher, editor or player can include, rule 21a).
+Round 2 settled the transport and Auth parts and round 3 the Database part; what was built differs from this sketch in small
+ways, listed in sections 15 and 16. The rest of the sketch (Storage, Functions, Realtime, Backend, Get) is still the plan.
 
 ```cpp
 namespace okay::backend {
@@ -438,11 +443,11 @@ the claim format of rule 26.
 1. **Audit and design (this round).** Exists: `AccountService`, `INetBackend`, the HTTP seam, the reference server, SQL tests.
    Gap: no inventory, no design. Files: `docs/platform/okay_backend_audit.md`, `docs/platform/okay_backend.md`, the feature map
    entry 17.19, a roadmap row, `scripts/provenance_scan.py backend`. Tests: none (docs and a read-only scan).
-2. **Core and Auth.** Exists: `AccountService::HttpRequest`, `SetTransportForTest`, `ApiResponse`. Gap: no `okay::backend`
+2. **Core and Auth (done 2026-11-26, section 15).** Exists: `AccountService::HttpRequest`, `SetTransportForTest`, `ApiResponse`. Gap: no `okay::backend`
    types. Files: `engine/include/okay/Backend/Backend.hpp`, `Transport.hpp`, `Auth.hpp`, `engine/src/Backend/Supabase*.cpp`,
    `AccountService.hpp` (delegates; public API unchanged), `tests/test_crash_scrub.cpp` (made-up key). Tests:
    `okay_backend_golden_auth` (every auth flow: same requests before and after), `account`, `editor_signin_gate` unchanged.
-3. **Database builder and the game-facing tables.** Exists: hand-written PostgREST strings. Gap: no builder. Files:
+3. **Database builder and the game-facing tables (done 2026-11-26, section 16).** Exists: hand-written PostgREST strings. Gap: no builder. Files:
    `Backend/Database.hpp`, `Query`, `AccountService` cloud saves and leaderboards, `Matchmaking.hpp`, `MatchResults.hpp`,
    `Matchmaker.cpp`, `docs/sql/cloud_saves.sql` and `docs/sql/leaderboards.sql` (moved from the doc). Tests:
    `okay_backend_query` (every operator, encoding, hostile values), golden tests for each moved file, `matchmaking`,
@@ -487,3 +492,131 @@ the claim format of rule 26.
 
 After round 14 the owner can run every program against Local with one setting, and Supabase is optional rather than
 required, while it stays the production backend for as long as the owner wants.
+
+## 15. Round 2: what was built
+
+Branch `claude/okay-backend-2` (on top of round 1). Nothing was sent to the live Supabase project; every test uses a fake
+server with made-up addresses, keys and tokens.
+
+**Where.** All of OkayBackend is header-only in `engine/include/okay/Backend/`, not in `engine/src/Backend/`: the account
+service and every community header are header-only, and the launcher does not always link the engine library (17.1.8), so a
+`.cpp` there would not reach it. One home folder (rule 19e); `engine/src/Backend/` is not used.
+
+| File | What it holds |
+|---|---|
+| `Backend.hpp` | The entry header. Provider choice: `OKAY_BACKEND` (environment) wins, then `"provider"` in `backend.json` in the config folder (64 KiB cap), then `auto`. Words: `supabase`, `local`, `auto`; anything else is `auto`, so a typo never takes a program off production. |
+| `Transport.hpp` | `Request` (method, full address, header lines in order, body or body file, time limit), `Response` (today's `ApiResponse`: `okay::account::ApiResponse` is now this type), `FromHttp`, and three transports: `HttpTransport` (over `okay::http::Send`), `HookTransport` (what `SetTransportForTest` sets), `RecordingTransport` (tests). |
+| `Auth.hpp` | `Auth` with `SignUp`, `SignIn`, `Refresh`, `SignOut`, `User`, `UpdateUser`, `Recover`, `VerifyRecovery`, `Resend`; `Result<T>` (ok, error, value, and the last answer); `Session` (name to show, access token, refresh token); `TokenClaim` (moved from `AccountService::JwtClaim`). |
+| `Supabase.hpp` | The Supabase provider's `Auth`, and `MakeRequest`, the one request builder: `apikey`, `Authorization: Bearer`, the caller's extra lines, then `Content-Type`. Every `AccountService` request (all 330 call sites, through `Api`, `ApiAnon`, `ApiUpload`, `ApiTimed`) now goes through it and a `Transport`. |
+
+`engine/include/okay/Platform/Account/AccountDetail.hpp` holds `PublicName` and the `detail::` helpers, moved unchanged out of
+`AccountService.hpp` so the backend can use them without including the account service.
+
+**Differences from the section 4 sketch.** Tokens are passed in (`User(token)`, `UpdateUser(token, json)`): the provider keeps
+no session, because `AccountService` owns it (the launcher and the editor share `session.txt`, and only the launcher
+refreshes). `Request` carries the full address and the header lines instead of a path and a `Key`. `SignOut` exists and
+sends nothing, as the programs never sent anything on sign-out. `Backend`, `Get()` and `Capabilities` were not built: nothing
+needs them until a second provider exists.
+
+**What moved.** In `AccountService`: `Register`/`Login` (sign-up and the password grant, with the retry once on no answer),
+`RefreshSupabaseToken` (the request; the session-file hand-off stays in `AccountService`), `CheckSession` and `VerifyToken`
+(`GET /auth/v1/user`), `ChangePassword`, `ChangeEmail`, `ChangeUsername` (`PUT /auth/v1/user`, still with the "re-read the
+saved token after a 401 and try once more" rule, now `WithFreshToken`), `ResendConfirmation`, `RequestPasswordReset`,
+`ResetPasswordWithCode`, `RecoverUrl`, `RecoveryVerifyBody`, `Logout` (`Auth::SignOut`, nothing sent), and `HttpRequest`
+(now `MakeRequest` plus the transport). No `/auth/v1` route or `email_for_login` is written in `AccountService` any more.
+Its public functions and their messages are unchanged. `UsernameAvailable` (a `profiles` read) moved in round 3 (section 16).
+
+**Configuration in the programs.** When a program passes no provider (`Provider::Auto`, which is what the launcher, editor
+and player do), `AccountService` now follows `OKAY_BACKEND` / `backend.json`: `local` gives today's on-device accounts,
+`supabase` the Supabase provider. With nothing set, nothing changes. Not done: switching does not sign the person out yet
+(section 5 says it should), and `backend.json` does not yet carry the address or key (`"url"`, `"key"`).
+
+**Proof that nothing changed for Supabase.** `tests/test_okay_backend_golden_auth.cpp` runs 27 scenarios through
+`AccountService`'s public API against a fake server (sign-up with and without a name, refused, needs confirmation; sign-in by
+email, refused, no answer then retried, no answer twice, answer without a token; resend; reset request with and without a
+redirect; reset with a code; password, email and name changes; a 401 that picks up the newer saved token; session check
+valid, renewed, rejected, unreachable, server error; refresh when expiring; checking another player's token; sign-out; and the
+transport under `Api`, `ApiAnon`, `ApiUpload`, `ApiTimed`, `UsernameAvailable`). The exact requests and what the program
+made of each answer must equal texts recorded from `AccountService.hpp` at commit `b9f097c46`, before the move
+(`tests/test_okay_backend_golden_auth.inc`; the file says how to record them again from the old header). The same flows
+called on `okay::backend::supabase::Auth` directly over a `RecordingTransport` must send the same bytes. The test was run
+failing first (the provider as an empty skeleton: 34 failures), then passing; breaking one route on purpose turns it red.
+`tests/test_okay_backend.cpp` covers the provider choice (with the option on: `backend.json` and `OKAY_BACKEND` change what
+`AccountService` uses), the header order, the transports and token claims.
+
+**Found on the way (not changed, behaviour kept).** Sign-in with a username (the `email_for_login` lookup) cannot be reached
+from `AccountService::Login` on Supabase: `Validate` refuses anything that is not an email first. The provider keeps the
+path (its requests are checked against the old code's text); whether the launcher should offer username sign-in is a
+product question for later.
+
+**Security clean-ups (13.6).** The real publishable key copied into `tests/test_crash_scrub.cpp` and the three
+`sb_secret_`-shaped test values (the owner confirmed on 2026-11-26 they no longer work) are replaced with made-up values of
+the same shape and length (audit section 9).
+
+**Not built in round 2:** the Local provider (round 9), Database / Storage / Functions / Realtime (rounds 3 to 7, 16), a
+process-wide `Backend` and `Get()`, signing out on a provider switch, `url` / `key` in `backend.json`. Unverified: nothing ran
+on Windows (MinGW `-fsyntax-only` only) or against a real Supabase project.
+
+
+## 16. Round 3: what was built
+
+Branch `claude/okay-backend-3` (on top of round 2). Nothing was sent to the live Supabase project; every test uses a fake
+server with made-up addresses, keys and tokens.
+
+| File | What it holds |
+|---|---|
+| `Database.hpp` (new) | `Database` (`From(table)`, `Send`, `Rpc(function, json)`), `Query` and `DbRequest`. `Query` writes PostgREST's URL syntax in call order: `Select`, `Eq`, `Neq`, `Gt`, `Gte`, `Lt`, `Lte`, `Like`, `Ilike`, `In`, `Is`, `Order` (a second one adds a tie-breaker to the same `order=` part), `Limit`, `Offset`, `Range`, `Single` (`Accept: application/vnd.pgrst.object+json`), `OnConflict`, `Returning` (`Prefer: return=minimal / representation`), `Prefer` (any other option); then `Get`, `Insert`, `Upsert` (`resolution=merge-duplicates`), `Update` (PATCH), `Delete`. `Build` gives the exact text without sending. |
+| `Supabase.hpp` | `supabase::Database`: a table request goes to `/rest/v1/<table>?<query>`, a function to `POST /rest/v1/rpc/<name>`. It sends through a sender function: `AccountService::Db()` passes its `Api` (token, offline and signed-out checks, the re-read of a newer saved token after a 401), `DbAnon()` its `ApiAnon`; or it is given the address, key, token and a `Transport` directly. |
+| `Backend.hpp` | Includes `Database.hpp`. |
+
+**Encoding.** Filter values are percent-encoded by default (RFC 3986's unreserved characters kept), so a value can never add
+a part to the query. Table, column and function names keep what PostgREST uses in select and order lists and encode the
+rest. `ValueText::AsIs` writes a value unchanged; it is used only where the old code sent the value unchanged and encoding
+could change the bytes (see "Kept as it was" below), and for Matchmaking's own clock text.
+
+**What moved (every request byte-identical, checked by the golden test).**
+- `AccountService`: `UsernameAvailable` (profiles, publishable key only; its own encoder loop is gone, `Eq` encodes the same
+  byte set), `CloudSave`, `CloudLoad`, `CloudHas`, `CloudDelete`, `CloudList` (cloud_saves), `LeaderboardSubmit`,
+  `LeaderboardTop` (leaderboards). No `/rest/v1` route is written in `AccountService` any more.
+- `Matchmaking.hpp` (game_sessions): `Host`, `Advertise` (with its fallback to the basic columns on a 400), `Browse` /
+  `BrowseWith` (with the same fallback), `Heartbeat`, `Unregister`, `List`. Its own `UrlEnc` copy is gone.
+- `MatchResults.hpp`: `report_match`, `game_leaderboard`, `my_game_stats`, `recent_players` through `Rpc`.
+- `Matchmaker.cpp` (the Supabase queue): `queue_join`, `queue_poll`, `queue_leave`, `queue_host_ready` through `Rpc`.
+The answers are read exactly as before (the same helpers on the same bodies).
+
+**Kept as it was (behaviour preserved, flagged for a later round).** `Matchmaking::List(room)` sends the room name unencoded
+and `Heartbeat` / `Unregister` send the row id unencoded, as they always did: a room name with "&" or a space reaches the
+server as written. These three use `ValueText::AsIs` so the bytes stay the same; encoding them is a behaviour change for the
+owner to allow (it changes nothing for a normal room name or a row id). `LeaderboardTop` with a negative count still sends
+`limit=-1`. Found on the way, not changed: `detail::JsonEscape` escapes only `"`, `\`, line feed, carriage return and tab, so
+a save whose text holds another control character (below 0x20) is sent as invalid JSON and the server refuses it. A fix belongs in the JSON helpers' dedup (`Core/Json.hpp`), as a bug with its own test.
+
+**Schema in one place.** `cloud_saves` and `leaderboards` were only written down in `docs/online/supabase-backend.md`. They
+are now `docs/sql/cloud_saves.sql` and `docs/sql/leaderboards.sql`, copied unchanged (the test of that was a `diff` of the
+old block against the two files); the doc points there. Each file says it is **not yet checked against the live project**
+and that it is not safe to run twice as written (its policy statements fail when the policy exists). Nothing was run on
+any database.
+
+**The scan.** `scripts/provenance_scan.py backend` now also counts calls through OkayBackend (`.From("table")`,
+`.Rpc("function")`, HTTP client `okay::backend`), so a moved site stays in the inventory. Before round 3: 230 Database and 28
+RPC sites wrote their route by hand. After: 215 and 21 still do (each includes one new line, the Supabase provider's own
+`/rest/v1/` and `/rest/v1/rpc/` route), and 16 Database and 8 RPC sites go through OkayBackend (AccountService 8,
+Matchmaking 8, MatchResults 4, Matchmaker 4). The schema count in `docs/sql/` went from 52 tables, 189 policies, 117
+functions and 44 triggers to 54, 196, 118 and 45 (the two moved files).
+
+**Proof that nothing changed for Supabase.** `tests/test_okay_backend_golden_db.cpp` runs 16 scenarios through the
+programs' public functions against a fake server and compares the requests (method, URL with its query in order, header
+lines in order, body) and what the program made of each answer with texts recorded from the code before the move
+(`tests/test_okay_backend_golden_db.inc`, recorded from the call sites as they were at commit `3ec33606e`; the texts went in
+first, in their own commit, before any call site changed). One part changes with the clock (Matchmaking's "updated at after
+now - 150 s"); the fake server writes it as `<FRESH>` and the test checks the time itself. Run failing first: with the call
+sites moved and `supabase::Database` as a skeleton that sends nothing, 31 of 58 checks failed (every scenario and every
+direct-provider flow); with the real provider, all pass. The same
+requests sent through `supabase::Database` directly over a `RecordingTransport` must be the same bytes. The shared fake
+server and token helpers are in `tests/okay_backend_golden.hpp` (round 2's test uses it too). `tests/test_okay_backend.cpp`
+covers the builder itself: every operator, the order of parts, ranges, headers, encoding of hostile values and names, the
+wire form, and `AccountService::Db()` sending nothing when signed out.
+
+**Not built in round 3:** the other Database sites (rounds 4 to 7), the Local provider's query parser (round 10), `Or` and
+`Not` filters (no program uses them yet). Unverified: nothing ran on Windows (MinGW `-fsyntax-only` only) or against a real
+Supabase project.

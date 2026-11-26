@@ -301,7 +301,7 @@ int main() {
             CHECK(b.Thumb(p.td.at("Art/rock.png")).ready);
             b.ForgetThumb(p.td.at("Art/rock.png"));
             CHECK(!b.Thumbs().InMemory(g1, 1));                           // (an unrelated key is simply absent)
-            CHECK(Exists(p.td.path.generic_u8string() + "/.okay/thumbs"));
+            CHECK(Exists(p.td.path.generic_u8string() + "/Library/Thumbnails"));   // the project's cache folder (docs/engine/project_layout.md)
             b.ThumbFrame(1000.0);   // a new frame: one prefab, scene or model picture is made per frame
             CHECK(b.Thumb(p.td.at("Art/hero.png")).ready && b.Thumb(p.td.at("Prefabs/hero.okayprefab")).ready);   // the pictures of the final state are on disk
         }

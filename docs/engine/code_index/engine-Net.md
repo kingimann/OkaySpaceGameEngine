@@ -85,16 +85,16 @@ Back to the [code index](../code_index.md). 34 headers, 167 names.
 
 ## `engine/include/okay/Net/MatchResults.hpp`
 
-- `MatchPlayer` struct, line 24
-- `MatchReport` struct, line 34
-- `PlayerStats` struct, line 94: One row of a game's stats (a leaderboard line, or my own stats).
-- `RecentPlayer` struct, line 103: Someone I shared a match with.
-- `MatchResults` class, line 110
-- `SubmitMatchAsync` function, line 263: Games: send a match report on a background thread with the signed-in account
-- `PendingMatchReports` function, line 265: Reports still being sent / finished so far (either way).
-- `FinishedMatchReports` function, line 266
-- `WaitForMatchReports` function, line 268: Wait (up to 'timeoutMs') for queued reports to finish — call before exiting.
-- `LastMatchReportStatus` function, line 270: The last report's outcome ("" until one finished): "ok" or an error message.
+- `MatchPlayer` struct, line 25
+- `MatchReport` struct, line 35
+- `PlayerStats` struct, line 95: One row of a game's stats (a leaderboard line, or my own stats).
+- `RecentPlayer` struct, line 104: Someone I shared a match with.
+- `MatchResults` class, line 111
+- `SubmitMatchAsync` function, line 264: Games: send a match report on a background thread with the signed-in account
+- `PendingMatchReports` function, line 266: Reports still being sent / finished so far (either way).
+- `FinishedMatchReports` function, line 267
+- `WaitForMatchReports` function, line 269: Wait (up to 'timeoutMs') for queued reports to finish — call before exiting.
+- `LastMatchReportStatus` function, line 271: The last report's outcome ("" until one finished): "ok" or an error message.
 
 ## `engine/include/okay/Net/Matchmaker.hpp`
 
@@ -105,7 +105,7 @@ Back to the [code index](../code_index.md). 34 headers, 167 names.
 ## `engine/include/okay/Net/Matchmaking.hpp`
 
 - `GameSession` struct, line 14: One advertised multiplayer session in the Supabase 'game_sessions' table — the
-- `Matchmaking` class, line 41: Supabase-backed matchmaking / server browser. A host advertises its session in
+- `Matchmaking` class, line 42: Supabase-backed matchmaking / server browser. A host advertises its session in
 
 ## `engine/include/okay/Net/Net.hpp`
 

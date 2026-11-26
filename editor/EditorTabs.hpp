@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdlib>
+#include <filesystem>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -252,6 +253,25 @@ inline std::string EditorConfigDir(const std::string& platformConfigDir, const c
 inline std::string EditorConfigFile(const std::string& dir, const std::string& name) {
     if (dir.empty()) return name;
     return (dir.back() == '/' || dir.back() == '\\') ? dir + name : dir + "/" + name;
+}
+
+/// The editor's per-user folder for UserFile. main.cpp sets it at startup (EditorConfigDir); "" (tests, tools) means the
+/// working folder, as before.
+inline std::string& UserFilesDir() { static std::string d; return d; }
+/// `name` in the editor's per-user folder (UserFilesDir), made on first use. A file an older editor left in `oldDir` (the
+/// working folder by default; beside the program for some) is copied over once, when the per-user one does not exist
+/// yet; the old one is never deleted. Main thread only.
+inline std::string UserFile(const std::string& name, const std::string& oldDir = std::string()) {
+    const std::string& dir = UserFilesDir();
+    if (dir.empty()) return name;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::create_directories(fs::u8path(dir), ec);
+    const std::string p = EditorConfigFile(dir, name);
+    const fs::path old = oldDir.empty() ? fs::u8path(name) : fs::u8path(oldDir) / fs::u8path(name);
+    if (!fs::exists(fs::u8path(p), ec) && fs::is_regular_file(old, ec))
+        fs::copy_file(old, fs::u8path(p), ec);   // best effort: a failed copy only means the old settings are not carried over
+    return p;
 }
 
 /// The okay_settings.txt key that remembers whether the panel called `label` is open: "panel_" and the

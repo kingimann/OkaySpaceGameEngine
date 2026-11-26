@@ -8,7 +8,8 @@
 //   - net_stats_* in scripts.
 // Reporting and reading go through SECURITY DEFINER / read-only functions, so a
 // client can't write stats rows directly. Drives an okay::account::AccountService
-// (the launcher passes its own; games use Account::Get()).
+// (the launcher passes its own; games use Account::Get()); the calls go through
+// OkayBackend's Database (okay/Backend/Database.hpp, Rpc).
 #include "okay/Platform/Account/AccountService.hpp"
 
 #include <algorithm>
@@ -121,7 +122,7 @@ public:
     /// Record a finished match (the host / dedicated server calls this).
     bool Report(const MatchReport& m, std::string* matchId = nullptr, std::string* err = nullptr) {
         if (!acct_.IsLoggedIn()) { if (err) *err = "Sign in first."; return false; }
-        auto r = acct_.Api("/rest/v1/rpc/report_match", "POST", "{\"p\":" + m.ToJson() + "}");
+        auto r = acct_.Db().Rpc("report_match", "{\"p\":" + m.ToJson() + "}");
         if (r.ok) {
             if (matchId) { *matchId = r.body; Unquote(*matchId); }
             return true;
@@ -140,8 +141,8 @@ public:
         std::vector<PlayerStats> out;
         if (supported) *supported = true;
         if (!acct_.IsLoggedIn()) return out;
-        auto r = acct_.Api("/rest/v1/rpc/game_leaderboard", "POST",
-                           "{\"p_game\":" + JStr(game) + ",\"p_stat\":" + JStr(stat) + ",\"p_limit\":" + std::to_string(limit) + "}");
+        auto r = acct_.Db().Rpc("game_leaderboard",
+                                "{\"p_game\":" + JStr(game) + ",\"p_stat\":" + JStr(stat) + ",\"p_limit\":" + std::to_string(limit) + "}");
         if (!r.ok) { if (supported && r.reached && r.status == 404) *supported = false; return out; }
         int rank = 0;
         for (const auto& o : SplitObjects(r.body)) {
@@ -156,7 +157,7 @@ public:
     bool MyStats(const std::string& game, PlayerStats& out) {
         out = PlayerStats{};
         if (!acct_.IsLoggedIn()) return false;
-        auto r = acct_.Api("/rest/v1/rpc/my_game_stats", "POST", "{\"p_game\":" + JStr(game) + "}");
+        auto r = acct_.Db().Rpc("my_game_stats", "{\"p_game\":" + JStr(game) + "}");
         if (!r.ok) return false;
         auto rows = SplitObjects(r.body);
         if (rows.empty()) return false;
@@ -170,7 +171,7 @@ public:
         std::vector<RecentPlayer> out;
         if (supported) *supported = true;
         if (!acct_.IsLoggedIn()) return out;
-        auto r = acct_.Api("/rest/v1/rpc/recent_players", "POST", "{\"p_limit\":" + std::to_string(limit) + "}");
+        auto r = acct_.Db().Rpc("recent_players", "{\"p_limit\":" + std::to_string(limit) + "}");
         if (!r.ok) { if (supported && r.reached && r.status == 404) *supported = false; return out; }
         for (const auto& o : SplitObjects(r.body)) {
             RecentPlayer p;

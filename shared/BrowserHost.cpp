@@ -44,6 +44,7 @@ namespace {
 struct FetchDone {
     TabFetch job;
     bool reached = false;   // an answer came (any status)
+    std::string netError;   // the HTTP client's own reason when no answer came (for the site check's report only)
     bool ok = false; long status = 0; std::string body, error;
     std::string rawHead;                              // the answer's head (Set-Cookie, Location, Content-Type ...)
     std::int64_t size = -1;                           // pages: Content-Length when the server said it
@@ -125,6 +126,7 @@ int FetchWorker(void* p) {
             r = okay::http::RequestEx(job.method, job.url, okay::http::CleanHeaderLines(hdrs), job.body, std::string(), std::string(), ro);
         else r.error = okay::http::NoClientReason();
         d.reached = r.reached;
+        d.netError = r.error;
         d.status = r.status;
         d.rawHead = std::move(r.rawHead);
         const std::string len = HeaderValue(d.rawHead, "Content-Length");
@@ -344,12 +346,22 @@ void TabHost::Pump() {
             else if (okay::str::EqualsNoCaseAscii(h.first, "Location")) location = h.second;
         }
         // a redirect: this hop's cookies are stored, and the next hop is sent with the cookies of its own address
+        std::string note;   // for the site check's reporter
         if (d.reached && IsRedirectStatus(d.status) && !location.empty()) {
             if (FollowRedirect(job, d.status, location, setCookies, next)) continue;
             d.ok = false;
             d.error = "The site sent the page somewhere it cannot be opened from here.";
+            note = "redirect refused";
         }
+        auto report = [&](const char* kind) {
+            if (!m_reporter) return;
+            FetchReport f;
+            f.url = job.firstUrl; f.finalUrl = job.url; f.kind = kind; f.reached = d.reached; f.status = d.status;
+            f.netError = d.netError; f.rawHead = d.rawHead; f.body = &d.body; f.note = note;
+            m_reporter(f);
+        };
         if (job.kind == TabFetch::Script) {
+            report("request");
             ScriptResponse a;
             a.ok = d.reached;
             a.status = (int)d.status;
@@ -364,19 +376,22 @@ void TabHost::Pump() {
         }
         if (d.reached) m_tab.ReceiveCookies(job.url, setCookies);
         if (job.kind == TabFetch::Page) {
+            report("page");
             DeliverPageAnswerImpl(job.url, d.ok, d.status, d.body, d.error, HeaderValue(d.rawHead, "Content-Type"),
                                   HeaderValue(d.rawHead, "Content-Disposition"), std::string(), d.size, d.tooBig);
             continue;
         }
         const std::string& at = job.firstUrl;   // the tab knows a subresource by the address it asked for
         const BrowserTab::FetchKind kind = m_tab.KindOfFetch(at);
-        if (kind == BrowserTab::FetchKind::Style) { m_tab.DeliverStyle(at, d.ok, d.body); continue; }
-        if (kind == BrowserTab::FetchKind::Script) { m_tab.DeliverScript(at, d.ok, d.body); continue; }
+        if (kind == BrowserTab::FetchKind::Style) { report("style"); m_tab.DeliverStyle(at, d.ok, d.body); continue; }
+        if (kind == BrowserTab::FetchKind::Script) { report("script"); m_tab.DeliverScript(at, d.ok, d.body); continue; }
         if (kind == BrowserTab::FetchKind::Font) {
             // only TrueType (0x00010000, "true") and OpenType ("OTTO") files: our rasterizer reads those (not WOFF)
             const std::string& b = d.body;
             const bool sfnt = b.size() > 12 && (b.compare(0, 4, std::string("\0\1\0\0", 4)) == 0 || b.compare(0, 4, "true") == 0 || b.compare(0, 4, "OTTO") == 0);
             if (d.ok && sfnt && m_fontLoader) if (const FontFace* f = m_tab.FontFor(at)) m_fontLoader(*f, std::vector<std::uint8_t>(b.begin(), b.end()));
+            if (d.ok && !sfnt && note.empty()) note = "font not TrueType or OpenType";
+            report("font");
             continue;
         }
         int w = 0, h = 0;
@@ -392,6 +407,8 @@ void TabHost::Pump() {
                 }
             }
         }
+        if (d.ok && w == 0 && note.empty()) note = "image not decoded";
+        report("image");
         m_tab.DeliverImage(at, w, h);
     }
     Send(std::move(next));

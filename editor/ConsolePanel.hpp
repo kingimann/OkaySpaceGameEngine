@@ -32,5 +32,8 @@ std::unique_ptr<okay::LoopConsole> ConsoleAttachHost(okay::GameLoop& loop, int a
 void ConsoleRunLine(const std::string& line);
 // Demo / tests: the category dropdown starts on this name ("All" clears it).
 void ConsolePreferCategory(const std::string& category);
+/// The open project (main.cpp, on every project change): Console > Save writes <project>/Logs/console_log.txt, or the
+/// person's log folder with no project open (docs/engine/project_layout.md).
+void ConsoleSetProjectDir(const std::string& dir);
 
 } // namespace oked

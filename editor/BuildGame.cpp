@@ -123,8 +123,9 @@ inline fs::path SafeRelative(const fs::path& rel) {
 // is non-null it is filled with the full build report (files by size and type, what was left out and why,
 // warnings, time). With opt.dryRun nothing is written to outDir: the build runs in a scratch folder that is
 // deleted again, so the report is exact without leaving files behind.
-std::string Build(EditorState& ed, const std::string& outDir,
+std::string Build(EditorState& ed, const std::string& outDirAsTyped,
                   const std::string& gameName, const Options& opt, BuildReport* report) {
+    const std::string outDir = okayproj::layout::ResolveInProject(ed.projectDir(), outDirAsTyped);   // "Builds/MyGame" is inside the project, not the editor's folder
     namespace bp = okay::buildpipe;
     const auto t0 = std::chrono::steady_clock::now();
     BuildReport localRep;
@@ -618,12 +619,12 @@ std::string Build(EditorState& ed, const std::string& outDir,
     }
     if (zipOnly && !opt.dryRun) { std::error_code se; fs::remove_all(root, se); }
 
-    // The same report as a file beside the project's other editor state (never inside the game).
+    // The same report as a file in the project's Logs folder (never inside the game; replaced by each build).
     if (!ed.projectDir().empty()) {
         std::error_code we;
-        fs::create_directories(fs::path(ed.projectDir()) / ".okay", we);
-        std::ofstream rf((fs::path(ed.projectDir()) / ".okay" / "build_report.txt").string(), std::ios::binary);
-        rf << rp.ToText();
+        const fs::path rf = okayproj::layout::LogsDir(fs::path(ed.projectDir())) / "build_report.txt";
+        fs::create_directories(rf.parent_path(), we);
+        okayproj::WriteTextAtomic(rf.string(), rp.ToText());
     }
 
     // The older size table (and the server export) read these.
@@ -712,8 +713,9 @@ Options OptionsFromSettings(const BuildSettings& g, const ProjectSettings& pr) {
 // (web) or the Android NDK itself, so it lays down everything those toolchains need
 // and a build script / README with the exact commands. `target`: 1 = Web (WASM +
 // WebGL via Emscripten), 2 = Android (SDL2 + NDK).
-std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
+std::string ExportForPlatform(EditorState& ed, const std::string& outDirAsTyped,
                               const std::string& gameName, const Options& opt, int target) {
+    const std::string outDir = okayproj::layout::ResolveInProject(ed.projectDir(), outDirAsTyped);   // relative: inside the project
     if (ed.isPlaying()) { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }   // export the edited scene, not the running copy
     std::error_code ec;
     fs::path dir = fs::path(outDir);
@@ -838,8 +840,9 @@ inline std::string CfgQuote(const std::string& v) {
     return o + "\"";
 }
 
-std::string BuildServer(EditorState& ed, const std::string& outDir, const std::string& gameName,
+std::string BuildServer(EditorState& ed, const std::string& outDirAsTyped, const std::string& gameName,
                         Options opt, const ServerOptions& so, BuildReport* report) {
+    const std::string outDir = okayproj::layout::ResolveInProject(ed.projectDir(), outDirAsTyped);   // relative: inside the project
     // A server draws nothing: skip the presentation extras.
     opt.gpuRenderer = false; opt.iconPath.clear(); opt.splashImage.clear(); opt.bootLogo.clear();
     opt.layout = 1; opt.zipAlso = false; opt.dryRun = false;   // the start scripts and Dockerfile expect the exe with a Data/ folder

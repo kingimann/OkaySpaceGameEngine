@@ -10,6 +10,7 @@
 
 #include <unordered_set>
 #include "../shared/ProjectCreate.hpp"
+#include "ProjectState.hpp"   // SceneBuildFile
 
 namespace oked {
 
@@ -79,7 +80,7 @@ bool SameList(const std::vector<SceneBuildEntry>& a, const std::vector<SceneBuil
 
 std::string BuildFile(EditorState& ed) {
     if (ed.projectDir().empty()) return {};
-    return (fs::path(ed.projectDir()) / ".okay" / "scene_build.txt").string();
+    return oked::SceneBuildFile(ed.projectDir());   // ProjectSettings/scene_build.txt, or .okay/ in an older project
 }
 
 std::vector<SceneBuildEntry> LoadFile(EditorState& ed) {

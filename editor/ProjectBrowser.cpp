@@ -1064,7 +1064,7 @@ okay::ThumbnailCache& Browser::Thumbs() {
     if (!m_thumbs) {
         okay::ThumbnailCache::Options o;
         o.size = 128;
-        o.diskDir = ProjectDir() + "/.okay/thumbs";   // hidden, so the database never lists it
+        o.diskDir = ProjectDir() + "/Library/Thumbnails";   // the project's cache folder: outside Assets, so the database never lists it
         m_thumbs = std::make_unique<okay::ThumbnailCache>(o);
         for (auto& g : m_thumbGens) m_thumbs->AddGenerator(g.first, g.second);
     }
@@ -1131,7 +1131,7 @@ void Browser::ForgetThumb(const std::string& path) {
 
 int Browser::PruneThumbs() {
     if (!m_indexed) return 0;
-    const std::string dir = ProjectDir() + "/.okay/thumbs";
+    const std::string dir = ProjectDir() + "/Library/Thumbnails";
     std::error_code ec;
     if (!fs::is_directory(P(dir), ec)) return 0;
     std::set<std::string> live;

@@ -90,7 +90,7 @@ std::string CleanRefusal(const std::string& buildDir, const std::string& source,
     const fs::path b(buildDir);
     if (!IsFile(b / "CMakeCache.txt")) return buildDir + " is not a CMake build folder (no CMakeCache.txt), so --clean did not delete it.";
     // A folder that holds a project or sources is never a build folder, whatever cache file is in it.
-    for (const char* f : {"CMakeLists.txt", "project.okayproj"})
+    for (const char* f : {"CMakeLists.txt", "project.okayproj", "ProjectSettings/project.okayproj"})
         if (fs::exists(b / f)) return buildDir + " holds " + f + ", so it is not only a build folder; --clean did not delete it.";
     if (IsDir(b / "Assets")) return buildDir + " holds an Assets folder (a game project?), so --clean did not delete it.";
     // The cache must be one this engine checkout made: CMake writes the source folder as CMAKE_HOME_DIRECTORY.

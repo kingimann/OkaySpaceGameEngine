@@ -1,0 +1,83 @@
+# Site check (okay-sitecheck): public home pages loaded through our own browser. Addresses only; no logins, nothing is sent.
+# "# name" starts a category. Keep about 60, spread over the kinds of sites people open.
+
+# search
+https://www.google.com/
+https://www.bing.com/
+https://duckduckgo.com/
+https://search.yahoo.com/
+https://www.ecosia.org/
+
+# news
+https://www.bbc.com/news
+https://www.reuters.com/
+https://www.theguardian.com/international
+https://www.nytimes.com/
+https://apnews.com/
+https://www.aljazeera.com/
+https://www.npr.org/
+https://news.ycombinator.com/
+
+# reference
+https://en.wikipedia.org/wiki/Main_Page
+https://www.wikipedia.org/
+https://www.britannica.com/
+https://www.merriam-webster.com/
+https://archive.org/
+https://www.wolframalpha.com/
+
+# shopping
+https://www.amazon.com/
+https://www.ebay.com/
+https://www.etsy.com/
+https://www.walmart.com/
+https://www.ikea.com/us/en/
+https://www.bestbuy.com/
+
+# video
+https://www.youtube.com/
+https://vimeo.com/
+https://www.twitch.tv/
+https://www.dailymotion.com/
+
+# social
+https://www.reddit.com/
+https://x.com/
+https://www.instagram.com/
+https://www.facebook.com/
+https://www.linkedin.com/
+https://www.pinterest.com/
+https://bsky.app/
+https://mastodon.social/explore
+
+# docs
+https://developer.mozilla.org/en-US/
+https://docs.python.org/3/
+https://en.cppreference.com/w/
+https://learn.microsoft.com/en-us/
+https://www.w3.org/
+https://doc.rust-lang.org/book/
+https://stackoverflow.com/questions
+
+# blogs
+https://medium.com/
+https://wordpress.com/
+https://www.blogger.com/about/
+https://substack.com/
+https://www.tumblr.com/
+
+# government
+https://www.usa.gov/
+https://www.gov.uk/
+https://www.canada.ca/en.html
+https://europa.eu/
+https://www.nasa.gov/
+https://www.who.int/
+
+# games
+https://store.steampowered.com/
+https://store.epicgames.com/
+https://www.gog.com/
+https://itch.io/
+https://www.humblebundle.com/
+https://www.nintendo.com/

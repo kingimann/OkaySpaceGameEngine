@@ -307,13 +307,15 @@ key means Supabase; an address and no key means a "custom" server (the Python re
 
 1. **The publishable key is committed** in `config/public-account.json:3` and built into every program. It is a
    `sb_publishable_` key, which Supabase designs to be public; the data is protected by row-level security. Not a leak.
-2. **The same real publishable key is copied into a test**, `tests/test_crash_scrub.cpp:79` (a fixture for the crash-report
+2. **The same real publishable key was copied into a test**, `tests/test_crash_scrub.cpp:79` (a fixture for the crash-report
    scrubber). Low risk because the key is public, but a test should use a made-up value so a key change does not touch
-   tests and so the real key is in one file only. Not changed here (docs-only round).
-3. **Values shaped like secret keys (`sb_secret_...`) are in three tests:** `tests/scripts/test_crash_to_issue.py:701`,
-   `tests/test_crash_handler.cpp:67`, `tests/scripts/test_crash_to_issue_http.py:31`. They sit in test setup and look made up,
-   but this audit cannot prove that without the real key, which it did not read. **Owner: please confirm none of them is the
-   project's real service key; if one is, rotate the key.** Values were not printed.
+   tests and so the real key is in one file only. **Fixed in round 2 (2026-11-26):** the test now uses a made-up value of the
+   same shape and length (`sb_publishable_TESTONLY000...`); the real key is only in `config/public-account.json`.
+3. **Values shaped like secret keys (`sb_secret_...`) were in three tests:** `tests/scripts/test_crash_to_issue.py:701`,
+   `tests/test_crash_handler.cpp:67`, `tests/scripts/test_crash_to_issue_http.py:31`. **The owner confirmed on 2026-11-26 that
+   these keys no longer work** ("no those keys dont work anymore"). **Replaced in round 2** with made-up values of the same
+   shape and length (`sb_secret_TESTONLY000...`), so the tests still check the same scrubbing. The old values were never
+   printed. They remain in git history; since they do not work, nothing needs rotating for them.
 4. **The service role key does release uploads.** CI uses `SUPABASE_SERVICE_KEY`, which skips every row rule in the whole
    database, just to upload files to two buckets. A leak of that one secret is a full-database leak.
 5. **Four publish scripts can fetch the service key** with a management token (`api-keys?reveal=true`). A management token

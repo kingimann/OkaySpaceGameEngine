@@ -2,21 +2,22 @@
 
 # Code index: engine-Browser
 
-Back to the [code index](../code_index.md). 15 headers, 191 names.
+Back to the [code index](../code_index.md). 15 headers, 196 names.
 
 ## `engine/include/okay/Browser/Browser.hpp`
 
 - `BrowserTab` class, line 50
-- `PlainTextPage` function, line 314: The page shown for a plain-text address (".txt"): the text in a <pre>, with < and & escaped.
+- `IsBrowserShortcut` function, line 329: Keys the browser keeps for itself (Ctrl+T, Ctrl+W, Ctrl+L, Ctrl+Tab, Alt+Left ...: the program's shortcuts): the host does not
+- `PlainTextPage` function, line 332: The page shown for a plain-text address (".txt"): the text in a <pre>, with < and & escaped.
 
 ## `engine/include/okay/Browser/Cookies.hpp`
 
 - `Cookie` struct, line 24
 - `CookieContext` struct, line 39: Who is asking (RFC 6265bis 5.2 "same-site" and "top-level navigation"; RFC 6265 5.2 "non-HTTP API").
 - `CookieStore` class, line 46
-- `ParseCookieDate` function, line 85: RFC 6265 5.1.1: a cookie date ("Wed, 21 Oct 2015 07:28:00 GMT" and the older forms) as seconds since 1970; false when
-- `DomainMatches` function, line 87: RFC 6265 5.1.3: does 'host' domain-match 'domain'?
-- `SiteOf` function, line 90: The "site" of a host for SameSite and for the Domain check: its last two labels (three under a shared suffix such as
+- `ParseCookieDate` function, line 90: RFC 6265 5.1.1: a cookie date ("Wed, 21 Oct 2015 07:28:00 GMT" and the older forms) as seconds since 1970; false when
+- `DomainMatches` function, line 92: RFC 6265 5.1.3: does 'host' domain-match 'domain'?
+- `SiteOf` function, line 95: The "site" of a host for SameSite and for the Domain check: its last two labels (three under a shared suffix such as
 
 ## `engine/include/okay/Browser/Css.hpp`
 
@@ -166,41 +167,45 @@ Back to the [code index](../code_index.md). 15 headers, 191 names.
 
 ## `engine/include/okay/Browser/Profile.hpp`
 
-- `AddressDecision` struct, line 26
-- `DecideAddress` function, line 39: What the address bar does with 'typed': an address when it has a scheme ("https://...", "about:..."), is "localhost" or an IP
-- `SearchUrl` function, line 42: The search address for 'terms': "%s" in 'searchTemplate' replaced by FormUrlEncode(terms), or the encoded terms added at
-- `AddressPlaceholder` function, line 45: The placeholder shown in an empty address bar: "Search the web or type an address" for the default search address, "Search or
-- `TabOrder` class, line 52: The order of the tabs and the active one, by id (the program keeps each tab's page under its id). Like common browsers: a
-- `HistoryEntry` struct, line 85
-- `History` class, line 91: Every page visited, oldest first. A visit to the same address as the newest entry only refreshes it.
-- `Bookmark` struct, line 106
-- `Bookmarks` class, line 110
-- `SiteZoom` class, line 127: The zoom of each site (by origin, as common browsers keep it), in the steps they use.
-- `BrowserSettings` struct, line 141
-- `Profile` struct, line 150: Everything that lasts between runs.
-- `SaveProfile` function, line 162: Write the profile to 'path' (a temporary file of this writer's own first, renamed over the old one, so a crash never leaves
-- `LoadProfile` function, line 164: Read it. False (and 'p' unchanged) when there is no file or it cannot be read.
-- `ProfileStore` class, line 172: The profile file as one program sees it, when more than one program uses the same file: the browser program and the
-- `HeaderValue` function, line 204: A header's value from a raw HTTP head ("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n..."), "" when it is missing. The
-- `MediaType` function, line 206: The media type of a Content-Type value, lower-cased, without its parameters ("text/html; charset=utf-8" -> "text/html").
-- `AnswerUse` enum, line 209: What the browser does with an answer.
-- `UseOfAnswer` function, line 213: From the answer's Content-Type and Content-Disposition (and the address when the type is missing): HTML and XHTML are pages,
-- `DownloadFileName` function, line 219: The file name to save a download under: the filename (RFC 6266, also the filename*=UTF-8'' form) of Content-Disposition, else
-- `SizeText` function, line 225: "1.5 MB", "12 KB", "300 bytes" ("unknown size" for a negative size).
-- `DownloadItem` struct, line 228: One download, as the downloads page shows it.
-- `IsInternalPage` function, line 238: True for the addresses of our own pages ("about:newtab", "about:history", "about:bookmarks", "about:downloads",
-- `InternalPage` function, line 240: The HTML of one of our own pages (text escaped; every link is an http(s) address or another of our pages).
-- `HtmlEscape` function, line 242: Text with <, >, & and " escaped for HTML.
-- `OpenTabInfo` struct, line 247: An open tab, for the address bar's "switch to this tab" rows.
-- `Suggestion` struct, line 253: One row under the address bar while the person types.
-- `SiteMark` struct, line 279: The badge in front of the address: https is Secure (a lock), http is NotSecure (spelled out, as common browsers do),
-- `SiteMarkOf` function, line 284
-- `SiteBadge` enum, line 286
-- `BadgeOf` function, line 287
-- `AddressShown` struct, line 292: The address as the bar shows it while the person is not typing in it: the host stands out, the rest is quieter. "https://"
-- `ShowAddress` function, line 295
-- `LoadErrorInfo` struct, line 298: What the error page says for a tab that could not load 'url' (BrowserTab::Error() is 'error').
-- `DescribeLoadError` function, line 304
+- `AddressDecision` struct, line 31
+- `DecideAddress` function, line 44: What the address bar does with 'typed': an address when it has a scheme ("https://...", "about:..."), is "localhost" or an IP
+- `SearchUrl` function, line 47: The search address for 'terms': "%s" in 'searchTemplate' replaced by FormUrlEncode(terms), or the encoded terms added at
+- `AddressPlaceholder` function, line 50: The placeholder shown in an empty address bar: "Search the web or type an address" for the default search address, "Search or
+- `TabOrder` class, line 57: The order of the tabs and the active one, by id (the program keeps each tab's page under its id). Like common browsers: a
+- `HistoryEntry` struct, line 90
+- `History` class, line 96: Every page visited, oldest first. A visit to the same address as the newest entry only refreshes it.
+- `Bookmark` struct, line 111
+- `Bookmarks` class, line 115
+- `SiteZoom` class, line 132: The zoom of each site (by origin, as common browsers keep it), in the steps they use.
+- `BrowserSettings` struct, line 146
+- `Profile` struct, line 155: Everything that lasts between runs.
+- `WriteFileReplacing` function, line 167: Write 'text' to 'path': a temporary file of this writer's own first (this process, this call), renamed over the old one, so a
+- `SaveProfile` function, line 169: Write the profile to 'path' (WriteFileReplacing).
+- `LoadProfile` function, line 171: Read it. False (and 'p' unchanged) when there is no file or it cannot be read.
+- `SharedFile` class, line 176: A file that more than one program replaces (the browser program and the launcher's Browser page share the browser's settings
+- `ProfileStore` class, line 203: The profile file as one program sees it, when more than one program uses the same file: the browser program and the
+- `SiteData` class, line 236: The site data of a browser profile (round 3 of the page engine, done by the hosts): ONE CookieStore and ONE localStorage
+- `HeaderValue` function, line 262: A header's value from a raw HTTP head ("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n..."), "" when it is missing. The
+- `HeaderLines` function, line 265: Every header of the last answer in a raw head, in order, with its name as the server wrote it (Set-Cookie comes once per
+- `MediaType` function, line 267: The media type of a Content-Type value, lower-cased, without its parameters ("text/html; charset=utf-8" -> "text/html").
+- `AnswerUse` enum, line 270: What the browser does with an answer.
+- `UseOfAnswer` function, line 274: From the answer's Content-Type and Content-Disposition (and the address when the type is missing): HTML and XHTML are pages,
+- `DownloadFileName` function, line 280: The file name to save a download under: the filename (RFC 6266, also the filename*=UTF-8'' form) of Content-Disposition, else
+- `SizeText` function, line 286: "1.5 MB", "12 KB", "300 bytes" ("unknown size" for a negative size).
+- `DownloadItem` struct, line 289: One download, as the downloads page shows it.
+- `IsInternalPage` function, line 299: True for the addresses of our own pages ("about:newtab", "about:history", "about:bookmarks", "about:downloads",
+- `InternalPage` function, line 301: The HTML of one of our own pages (text escaped; every link is an http(s) address or another of our pages).
+- `HtmlEscape` function, line 303: Text with <, >, & and " escaped for HTML.
+- `OpenTabInfo` struct, line 308: An open tab, for the address bar's "switch to this tab" rows.
+- `Suggestion` struct, line 314: One row under the address bar while the person types.
+- `SiteMark` struct, line 340: The badge in front of the address: https is Secure (a lock), http is NotSecure (spelled out, as common browsers do),
+- `SiteMarkOf` function, line 345
+- `SiteBadge` enum, line 347
+- `BadgeOf` function, line 348
+- `AddressShown` struct, line 353: The address as the bar shows it while the person is not typing in it: the host stands out, the rest is quieter. "https://"
+- `ShowAddress` function, line 356
+- `LoadErrorInfo` struct, line 359: What the error page says for a tab that could not load 'url' (BrowserTab::Error() is 'error').
+- `DescribeLoadError` function, line 365
 
 ## `engine/include/okay/Browser/Script.hpp`
 

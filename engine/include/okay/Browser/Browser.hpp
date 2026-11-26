@@ -99,8 +99,11 @@ public:
     /// The addresses the host should fetch now (each is returned once): the page being loaded, then the images it uses.
     std::vector<std::string> TakeFetches();
     /// The answer for a page fetch. `ok` = the server answered 2xx and `body` is the page; otherwise `error` (or the status)
-    /// says what went wrong. An answer for an address that is no longer being loaded is ignored.
-    void DeliverPage(const std::string& url, bool ok, int status, const std::string& body, const std::string& error = std::string());
+    /// says what went wrong. An answer for an address that is no longer being loaded is ignored. `body` is the bytes as they
+    /// came; `contentType` is the answer's Content-Type header, whose charset (with a BOM and the page's <meta charset>,
+    /// Encoding.hpp DecodePage) says how the bytes are turned into the UTF-8 the rest of the tab reads.
+    void DeliverPage(const std::string& url, bool ok, int status, const std::string& body, const std::string& error = std::string(),
+                     const std::string& contentType = std::string());
     /// The page being loaded at `from` answered from `to` after redirects: the history entry takes the new address (so the page's
     /// links resolve against it), and a POST that was redirected became a GET. Ignored for any other address, or when `to` may
     /// not be shown in this tab.
@@ -219,9 +222,22 @@ public:
     /// The site of the page that started the current load ("" = the person: typed, bookmark, back). For SameSite cookies.
     const std::string& Initiator() const { return m_initiator; }
 
+    // ---- the host's round 3: the Back / Forward history list ----
+    /// One entry of the tab's history (the pages visited in this tab, and the entries a page made with history.pushState).
+    struct HistoryItem {
+        std::string url;
+        std::string title;   ///< the page's title when it was last shown ("" when it was never shown in this tab)
+    };
+    /// Every entry, oldest first (at most kMaxHistory); HistoryIndex() is the current one.
+    std::vector<HistoryItem> HistoryEntries() const;
+    std::size_t HistoryIndex() const { return m_index; }
+    /// Go to entry `index` as Back / Forward would (several steps at once): an entry of the shown page's own (pushState) gets
+    /// popstate and loads nothing; any other is loaded. False (nothing happens) for the current entry or one that is not there.
+    bool GoTo(std::size_t index);
+
 private:
     // doc: the page (ShowPage count) the entry belongs to; entries made by pushState share their page's number
-    struct Entry { std::string url; float scrollY = 0.0f; bool post = false; std::string body; std::uint64_t doc = 0; std::string state; };
+    struct Entry { std::string url; float scrollY = 0.0f; bool post = false; std::string body; std::uint64_t doc = 0; std::string state; std::string title; };
     void StartLoad();
     void ShowPage(const std::string& url, const std::string& body);
     std::vector<Entry> m_history;
@@ -300,12 +316,17 @@ private:
     std::map<std::string, std::string> m_linkedCss;   // linked sheets that arrived (address -> text), for CollectSheets
     bool SameDocument(std::size_t index) const;
     void PushEntry(Entry e);                      // a new last entry after the current one (forward entries go)
-    void GoTo(std::size_t index);                 // back / forward: within the page's own entries, or a load
+    void Traverse(std::size_t index);             // back / forward: within the page's own entries, or a load
+    int m_nextRequestId = 0;                      // fetch / XMLHttpRequest ids are the tab's own, so an old page's answer never reaches a new page
     void FocusTo(const Node* el, bool fromScript);
     void ForgetScriptNode(const Node& n);         // a freed node: no queued script points at it any more
     void FillArrived();                           // linked sheets that already arrived go in their places
     StorageArea* StorageFor(bool local);
 };
+
+/// Keys the browser keeps for itself (Ctrl+T, Ctrl+W, Ctrl+L, Ctrl+Tab, Alt+Left ...: the program's shortcuts): the host does not
+/// pass them to the page, so a page can never cancel them.
+bool IsBrowserShortcut(const KeyInfo& k);
 
 /// The page shown for a plain-text address (".txt"): the text in a <pre>, with < and & escaped.
 std::string PlainTextPage(const std::string& text);

@@ -40,9 +40,9 @@ int main() {
 
     {   // ---- registering ----
         Reset();
-        UI::Font* small = UI::AddFontTtf(roboto.data(), roboto.size(), 16.0f, "Roboto");
+        UI::Font* smallFont = UI::AddFontTtf(roboto.data(), roboto.size(), 16.0f, "Roboto");
         UI::Font* big = UI::AddFontTtf(roboto.data(), roboto.size(), 32.0f);
-        CHECK(small && big && small != big && small->ttf && small->ttf == big->ttf && small->px == 16.0f && big->px == 32.0f);
+        CHECK(smallFont && big && smallFont != big && smallFont->ttf && smallFont->ttf == big->ttf && smallFont->px == 16.0f && big->px == 32.0f);
         const unsigned char junk[64] = {1, 2, 3};
         CHECK(UI::AddFontTtf(nullptr, 100, 16.0f) == nullptr && UI::AddFontTtf(roboto.data(), 4, 16.0f) == nullptr && UI::AddFontTtf(junk, sizeof junk, 16.0f) == nullptr);
         CHECK(UI::AddFontTtf(roboto.data(), roboto.size(), 0.0f) == nullptr && UI::AddFontTtf(roboto.data(), roboto.size(), NAN) == nullptr && UI::AddFontTtf(roboto.data(), roboto.size(), 5000.0f) == nullptr);
@@ -51,14 +51,14 @@ int main() {
 
     {   // ---- measuring and PushFont ----
         Reset(); Sim s(400, 300);
-        UI::Font* small = UI::AddFontTtf(roboto.data(), roboto.size(), 16.0f);
+        UI::Font* smallFont = UI::AddFontTtf(roboto.data(), roboto.size(), 16.0f);
         UI::Font* big = UI::AddFontTtf(roboto.data(), roboto.size(), 32.0f);
         const float scale0 = UI::Style().textScale;
         float wSmall = 0, wBig = 0, hSmall = 0, hBig = 0, hAfter = 0, wAfter = 0, rowBig = 0, rowSmall = 0; float scaleIn = 0, scaleAfter = 0; const UI::Font* fontAfter = nullptr;
         s.Frame([&] {
             UI::SetNextWindowPos(UI::Vec2{0, 0}, UI::Cond_Always); UI::SetNextWindowSize(UI::Vec2{390, 290}, UI::Cond_Always);
             UI::Begin("f", nullptr, 0);
-            UI::PushFont(small); wSmall = UI::CalcTextSize("Heading text").x; hSmall = UI::GetTextLineHeight(); rowSmall = UI::GetFrameHeight(); UI::PopFont();
+            UI::PushFont(smallFont); wSmall = UI::CalcTextSize("Heading text").x; hSmall = UI::GetTextLineHeight(); rowSmall = UI::GetFrameHeight(); UI::PopFont();
             UI::PushFont(big);   wBig = UI::CalcTextSize("Heading text").x;   hBig = UI::GetTextLineHeight(); rowBig = UI::GetFrameHeight(); scaleIn = UI::Style().textScale; UI::PopFont();
             wAfter = UI::CalcTextSize("Heading text").x; hAfter = UI::GetTextLineHeight(); fontAfter = UI::GetFont(); scaleAfter = UI::Style().textScale;
             UI::End();

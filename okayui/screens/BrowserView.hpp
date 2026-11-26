@@ -42,6 +42,11 @@ struct BrowserViewResult {
     OkayUI::Rect address;               // the rounded address bar (the program draws its suggestions under it)
     bool addressFocused = false;        // the address field has the keyboard
     bool tabFocused = false;            // Tab / Shift+Tab moved the keyboard focus on the page this frame
+    // ---- the host's round 3 ----
+    int historyMenu = 0;                // a right click on Back (-1) or Forward (+1), or a press held there: show the tab's history list
+    OkayUI::Vec2 historyAt;             // ... under this point (screen)
+    bool keyCancelled = false;          // the page cancelled this frame's key (preventDefault on keydown / keypress): it was not used
+    bool mouseDownCancelled = false;    // the page cancelled this frame's mousedown: no text selection, no field took the keyboard
 };
 
 /// Web fonts (@font-face) the host loaded: a TrueType face made by OkayUI::AddFontTtf, under its family name (lower-case), weight
@@ -111,7 +116,7 @@ struct BrowserViewOptions {
     // ---- the browser program (round 1 of "a regular browser") ----
     bool programButtons = false;       ///< Reload becomes Stop while loading; Home, a bookmark star and a menu button
     bool bookmarked = false;           ///< the star shows the page is bookmarked
-    std::string placeholder;           ///< shown in an empty address field ("Search Google or type an address")
+    std::string placeholder;           ///< shown in an empty address field ("Search the web or type an address")
     bool focusAddress = false;         ///< put the keyboard in the address field and select it (Ctrl+L, a new tab)
     bool blockInput = false;           ///< a menu or dialog of the program is open over the page: the page takes no clicks
     float zoom = 1.0f;                 ///< the site's zoom: the page is laid out at width / zoom and drawn zoom times larger
@@ -124,7 +129,7 @@ struct BrowserViewOptions {
     std::function<void(float x, float y, float w)> belowToolbar;
     float belowToolbarH = 0.0f;
     PageKeys* keys = nullptr;          ///< set: the page scrolls and moves its focus with the keyboard (see PageKeys)
-    bool smoothScroll = true;          ///< key scrolls glide over a few frames (off: they jump; tests)
+    bool smoothScroll = true;          ///< key and wheel scrolls glide over a few frames (off: they jump; tests)
 };
 
 /// The toolbar's look in the browser program (round 2): shared by the tab strip, the toolbar and the bookmarks bar, so the
@@ -155,9 +160,15 @@ void DrawBrowserIcon(BrowserIcon icon, float cx, float cy, float size, OkayUI::C
 
 /// A round toolbar button with an icon: a circle while the pointer is over it, darker while held; `tip` is shown after the
 /// pointer rests on it. Returns true when it was clicked (never while `enabled` is false). `rightClicked` (when set) is true
-/// after a right click on it.
+/// after a right click on it. `held` (when set) is true once when the left button has been held on it for kHoldSeconds; that
+/// press is then not a click when it is let go (Back and Forward show their history list that way).
 bool BrowserIconButton(const char* id, BrowserIcon icon, float x, float y, float size, bool enabled, const char* tip,
-                       bool* rightClicked = nullptr);
+                       bool* rightClicked = nullptr, bool* held = nullptr);
+inline constexpr double kHoldSeconds = 0.5;
+
+/// The page's key event for an OkayUI key (UI Events KeyboardEvent: key, code, keyCode and the modifiers held now); false for a
+/// key the page is not told about.
+bool PageKeyInfo(OkayUI::KeyId key, okay::browser::KeyInfo& out);
 /// A tooltip that shows once the pointer has rested on the last item for half a second (`id` names what it is for).
 void BrowserDelayedTooltip(unsigned id, const std::string& text);
 

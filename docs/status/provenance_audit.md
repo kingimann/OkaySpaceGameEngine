@@ -51,6 +51,81 @@ copied code in this scan; see "Clean" and "Limits".
 | P3 | Patent risk (possible, unverified) | Anti-cheat (`engine/src/Net/AntiCheat.cpp`, `engine/include/okay/Net/CheatDetect.hpp`, `shared/AntiCheat*.hpp`), server lag compensation and rollback netcode (`engine/src/Net/`), SSAO (`GLRendererShaders.cpp:432`) | Fields with many patents; **no specific patent was identified** | Unverified | Owner decision whether a patent search is wanted before shipping the anti-cheat and netcode commercially |
 | N1 | Not IP, found on the way (rule 18 / 19c) | `launcher/VoiceChat.hpp:55-84`: a second, own ChaCha20 outside `okay::crypto` (which has `engine/src/Crypto/ChaCha20.cpp`), and a second IMA ADPCM table (`:89`, also `WavDecoder.cpp:22`) | ours | Certain | Use `okay::crypto` / libsodium and the one IMA table (Claude 2's lane: duplicates and crypto rules) |
 
+### Fixes (branch `claude/ip-fixes-1`, 2026-11-26)
+
+`python3 scripts/provenance_scan.py check` (run by `scripts/precheck.sh`) fails if a fixed finding comes back.
+
+- **A1 fixed (tables now worked out by our code).** `engine/src/Components/VoxelTerrain.cpp` no longer holds the
+  published 256-entry edge table and 256 x 16 triangle table, nor the corner order and loop that went with them.
+  `CubeCases()` builds all 256 cases once at start-up from the idea of the method (Lorensen and Cline 1987): our own
+  corner numbering (bit 0 = x, bit 1 = y, bit 2 = z), crossings joined by walking each cube face (air corners on a
+  face diagonal are cut off one by one, so neighbouring cubes always agree), loops split into triangles with no
+  inner edge lying in a cube face. Both mesh loops (`AppendCubes`, `AppendCubesReference`) read it. Checked: every one
+  of the 256 single-cube patterns and six random fields mesh into closed, consistently wound surfaces
+  (`tests/test_voxel.cpp`); a stand-alone run of both tables on the same random fields gave the same triangle count
+  (10,788) and no open edge for either. The first version of our split (a plain fan) failed that test on 4 of the
+  256 patterns (triangles lying in a shared face), which is why `SplitLoop` exists. The source line asked for by the
+  audit is the comment above `CubeCases()`. Guard: `check`.
+- **A2 fixed (rewritten from the idea).** `Simplex2` / `Simplex3` in `engine/include/okay/Math/Noise.hpp` are one
+  D-dimensional routine of our own: skew to the simplex lattice, rank the fractional parts to find the simplex's
+  corners, sum a radial kernel times a gradient per corner. Our numbers, worked out and tested: kernel (r^2 - d^2)^3
+  with r^2 = 1/2 (the smallest distance^2 to a lattice corner outside the point's own simplex, measured as 0.5000 in
+  2D and 3D, so the noise is continuous: the old 3D radius 0.6 jumped at simplex borders); 16 gradient directions
+  in 2D, the 12 icosahedron directions in 3D; output scales 33 and 41 from a search for the largest possible corner
+  sum (0.030176 and 0.024307). Values changed; nothing in the engine, the goldens or a saved scene reads
+  `NoiseField` (only `tests/test_math_geometry.cpp`). Test: continuity (steepest slope at a 1e-4 step 33.7 before,
+  5.8 after, vs 6.5 / 5.9 at 1e-3), range without the clamp, centring, per-seed determinism, no grid direction.
+  P1 (the patent question) is unchanged. Guard: `check`.
+- **A3 fixed (our own pass).** `kFxaaFrag` / `PSFxaa` are replaced by `kEdgeSmoothFrag` (GL) and `PSEdgeSmooth`
+  (Direct3D, `D3DPostHLSL.hpp`; the shader bundle entry is renamed too). Written from the general idea only (find a
+  brightness edge, blend along it): Rec. 709 brightness of the pixel and its four side neighbours, an edge when their
+  spread passes 0.02 + 0.06 x the brightest, taps at 1 and 2.5 texels along the edge (across the brightness slope),
+  weights 1 : 2 : 1, mixed in premultiplied alpha, blended in by 8 x the spread. Constants chosen on Mesa with the
+  test below: a turned 64 x 64 cube, 160 pixels changed, part-covered silhouette pixels 71 -> 151, total variation
+  -2.7%, nothing outside its 5 x 5 range (the old FXAA pass, measured the same way: 185, 71 -> 171, -2.4%). None of FXAA's names, taps or
+  constants. UI text says "Anti-aliasing (edge smoothing)" / "Edge smoothing"; saved keys stay `fxaa` (scene post,
+  project settings, game.okayconfig) and code names such as `FXAAEnabled()` stay (frozen). `tests/test_gl_post_alpha.cpp`
+  renders a turned cube on Mesa with the switch off and on. The Direct3D text is only text-checked
+  (`tests/test_d3d_post_hlsl.cpp`): UNVERIFIED on a GPU. Not changed: `editor/BuildSettingsModel.hpp` still labels the
+  build setting "FXAA" (Claude 3's file; needs their Agree). Goldens changed: `okayui/tests/golden/editorpanels_post.png`
+  and `editorpanels_post_presets.png` (only the "Anti-aliasing (edge smoothing)" label and A9's "Punchy filmic"
+  tone-map entry differ, checked by eye side by side). Guard: `check`.
+- **A4 fixed.** `cmake/okay_version.rc.in` now says "Copyright (c) 2026 OkaySpaceGameEngine. All rights reserved. See
+  LICENSE." Guard: `check` refuses another licence name in `LegalCopyright`.
+- **A5-A7 fixed (notices; texts partly unverified).** `dist/THIRD_PARTY_NOTICES.txt` lists the GCC runtime (with the
+  GCC Runtime Library Exception text), the MinGW-w64 C runtime and winpthreads, libsodium 1.0.20, SDL2 2.30.9, Dear
+  ImGui, `steam_api64.dll`, the Emscripten runtime, Roboto, JetBrains Mono and DejaVu, with the licence texts taken
+  from the build machine's package copyright files, Dear ImGui's LICENSE.txt and the font licence files. The
+  Emscripten and Steamworks lines and the LLVM exception text are from memory and say UNVERIFIED; the libsodium
+  statement is Debian's for 1.0.18. Shipped by `scripts/build-windows-dist.sh` (root and `Tools\`, so the installer
+  too; the uninstaller removes both), `editor/BuildGame.cpp` (every exported desktop game) and `scripts/web_package.py`
+  (every web build and its zip; `tests/scripts/test_web_package.py`). `assets/fonts/Roboto-LICENSE.txt` (Apache 2.0)
+  added. Not opened: a real release archive or exported game. Guard: `check`.
+- **N1 fixed.** `launcher/VoiceChat.hpp` has no ChaCha20 or IMA table of its own. Its frames go through the network
+  layer's crypto seam, `okay::net::netcrypto::StreamXor` (new in `engine/include/okay/Net/NetCrypto.hpp`): libsodium's
+  `crypto_stream_chacha20_ietf_xor_ic` in every release build, `okay::crypto::ChaCha20Xor` only in a build that has
+  no libsodium (as the rest of such a build); `okay::crypto` itself is unchanged and still off by default (rule 18).
+  Same keystream (RFC 8439, block counter 1), so old and new launchers still understand each other: a stand-alone
+  run compared libsodium 1.0.18 through `StreamXor` with `okay::crypto::ChaCha20Xor` (lengths 0 to 1000, counters
+  0 / 1 / 7, and the counter-wrap refusal): identical. The IMA step and index tables are the WAV reader's
+  (`okay::wav::ImaAdpcmSteps` / `ImaAdpcmIndexAdjust`), so A10's IMA row is covered by its existing source note.
+  `tests/test_voice_races.cpp` checks the shared table, an ADPCM round trip and the cipher. Guard: `check`.
+  Not changed: the voice cipher has no authentication tag (ChaCha20 alone); worth a separate look.
+- **A8 fixed (wording).** The empty address bar says "Search the web or type an address" (was "Search Google or
+  type an address", close to Chrome's own words). Google stays the default search, as the owner chose; the
+  "Use Google" button in the browser settings stays (it names the service it picks). Guard: `check`.
+- **A9 fixed (UI text).** "Minecraft-style" and "Minecraft mining" are gone from editor tooltips, the Inventory UI
+  header and two property tooltips (plain words instead: "hotbar + backpack", "block-game style", "a modest dip").
+  The tone-map list shows "Punchy filmic" (the Narkowicz ACES fit) and "Soft filmic" (Hable's curve) instead of
+  "ACES" / "Filmic": "Filmic (ACES fit)" is not the published name of that fit (Narkowicz calls it "ACES Filmic Tone
+  Mapping Curve"), so plain words were used. Saved values stay 0 / 1 / 2. Kept: code comments that say what a
+  feature resembles, and the old-menu record in `editor/UIMenuModel.hpp` (never shown). Guard: `check`.
+- **A10 fixed.** One source line at each place: the Narkowicz ACES fit and Hable's curve (GL, D3D, CPU), Jimenez's
+  interleaved gradient noise (GL, D3D), and the 9-tap gaussian in 5 linear taps, now derived in `SsaoMath.hpp` from the
+  binomial row n = 12 and checked against it by `tests/test_post_quality_math.cpp`; the GL / D3D / DoF / bloom blurs
+  point there. Guard: `check` refuses one of those constants with no source note within three lines. (The IMA ADPCM
+  table is handled with N1.)
+
 Counts: **1 clear copy of data (A1)**, **2 probable ports (A2, A3)**, **1 own-licence error (A4)**, **3 third-party
 runtime / notice gaps (A5-A7)**, **2 trademark groups (A8, A9)**, **1 data-note group (A10)**, **1 asset-record group
 (A11)**, **1 weak naming group (A12)**, **3 patent groups (P1-P3)**, **1 non-IP note (N1)**.
@@ -87,7 +162,7 @@ stated in `tests/test_ttf_rasterizer.cpp:5`).
 - **Lua** (`engine/src/Lua/`, 8,125 lines): written from the Lua 5.4 manual; no PUC-Rio identifiers (`luaV_`, `luaH_`,
   `TValue`, `lua_State`, `OP_` names); `%.14g` number printing is Lua's documented behaviour.
 - **Browser** (`engine/src/Browser/`, 8,978 lines): WHATWG HTML / DOM / URL and CSS specs cited per file; own user agent
-  "OkaySpace Browser"; `-webkit-` names are CSS property names pages use, not WebKit code.
+  token "OkaySpaceBrowser/1.0" after the common "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" compatibility prefix (no other browser named); `-webkit-` names are CSS property names pages use, not WebKit code.
 - **RHI** (`engine/src/Render/RHI/`), **physics** (`engine/src/Physics/Core/`, Catto's papers cited; Box2D-like default
   iteration counts 8 / 3 are numbers, not code), **okay-build**, **okay-cc** runtime (`tools/okaycc/lib/`, Linux system
   calls and ISO C), **okay-ms** runtime, **Xbox UWP** (own APPX writer from Microsoft's documentation and ECMA-376; no
@@ -96,7 +171,8 @@ stated in `tests/test_ttf_rasterizer.cpp:5`).
   **TrueType** rasteriser (no `stbtt` names), the **image decoders** (no `stbi` / libjpeg names or constants), **OkayUI**
   (no Dear ImGui internals such as `IM_NORMALIZE2F`, `FringeScale`, `stb_textedit`).
 - No other project's copyright line in our code (only the JetBrains Mono font header). No .NET runtime or hostfxr
-  code on main yet. No video or AAC codec, no Brotli dictionary, no public suffix list, no SDL controller database.
+  code on main yet. No video or AAC codec, no Brotli dictionary (since added on `claude/woff2-1`, 2026-11-26, owner-approved data from
+  RFC 7932: see `THIRD_PARTY.md`), no public suffix list, no SDL controller database.
 - Brand names used to describe a device or a service (DualShock, DualSense, Joy-Con, Xbox, Steam, PlayFab, Mixamo in
   import hints, Blender in import notes) are text only; no logo or controller button art was found (PlayStation
   buttons are the words "Cross", "Circle", ... in `engine/src/Input/GamepadInfo.cpp:225`).

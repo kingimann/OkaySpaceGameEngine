@@ -23,6 +23,16 @@ Every mode is read only and prints file:line leads, never another project's text
       cloned yourself into a scratch folder). It reports runs of consecutive lines that match after whitespace
       and comments are removed. A match of several lines in a row is a lead, not proof; a clean result is not
       proof of originality. It prints file names and line numbers only, never the other code.
+  python3 scripts/provenance_scan.py backend [--summary] [--tests]
+      Every place the code talks to the hosted backend (Supabase today): one row per call site with the program(s)
+      that reach it, the service (Auth, Database, RPC, Storage, Functions, Realtime, Management API), the table /
+      bucket / function name, the key it needs and the HTTP client. Then the configuration and secret NAMES the
+      code reads (never a value) and the schema in docs/sql. --summary prints only the counts per service and per
+      program; --tests also lists the call sites inside tests. It never prints a source line, so a key that sits
+      on the same line cannot leak. This is the re-runnable part of docs/platform/okay_backend_audit.md (OkayBackend).
+  python3 scripts/provenance_scan.py check
+      The guard for findings that were fixed (provenance audit 2026-11-26): exits 1 when one comes back, for
+      example a shipped file that states a licence other than ours. Quick; scripts/precheck.sh runs it.
 
 A text scan cannot prove that nothing was copied: a port that renames and reorders passes every mode here.
 """
@@ -200,6 +210,134 @@ def assets():
         print("%-48s %4d files  %s" % (d, len(fs), state))
 
 
+# Fixed findings that must not come back: (id, what went wrong, test(top) -> list of "file:line" problems).
+def _grep(t, rel, rx):
+    try: ls = open(os.path.join(t, rel), errors="replace").read().splitlines()
+    except OSError: return ["%s: missing" % rel]
+    return ["%s:%d" % (rel, i) for i, l in enumerate(ls, 1) if re.search(rx, l)]
+
+
+def _licence_statement(t):
+    """A4: every Windows program's version information names our licence (LICENSE), not another one."""
+    rel = "cmake/okay_version.rc.in"
+    bad = _grep(t, rel, r"LegalCopyright.*(MIT|GPL|BSD|Apache|zlib)")
+    if not _grep(t, rel, r"LegalCopyright.*All rights reserved\. See LICENSE\."): bad.append(rel + ": LegalCopyright does not say 'All rights reserved. See LICENSE.'")
+    return bad
+
+
+# A10: published shader constants keep a one-line source note (on the line or within the 3 lines above).
+A10_PLACES = [
+    ("engine/src/Render/GLRendererShaders.cpp", r"2\.51\*x|A = 0\.15|52\.9829189|\* 0\.227027"),
+    ("engine/include/okay/Render/D3DPostHLSL.hpp", r"A = 0\.15|\* 0\.227027"),
+    ("engine/include/okay/Render/D3D11Hlsl.hpp", r"2\.51\*x|52\.9829189"),
+    ("engine/include/okay/Render/DofMath.hpp", r"\* 0\.227027"),
+    ("engine/include/okay/Render/SsaoMath.hpp", r"OKAY_SSAO_BLUR_W0 0\.227027"),
+    ("engine/include/okay/Render/Atmosphere.hpp", r"2\.51f \* x|A = 0\.15f"),
+]
+A10_NOTE = re.compile(r"[Ss]ource|derived in|Narkowicz|Hable|Jimenez|binomial")
+
+
+def _source_notes(t):
+    bad = []
+    for rel, rx in A10_PLACES:
+        try: ls = open(os.path.join(t, rel), errors="replace").read().splitlines()
+        except OSError: bad.append(rel + ": missing"); continue
+        for i, l in enumerate(ls):
+            if re.search(rx, l) and not any(A10_NOTE.search(x) for x in ls[max(0, i - 3):i + 1]):
+                bad.append("%s:%d" % (rel, i + 1))
+    return bad
+
+
+def _cube_cases(t):
+    """A1: the voxel mesher works out its marching-cubes cases itself; the published 256 / 4096-entry tables are gone."""
+    rel = "engine/src/Components/VoxelTerrain.cpp"
+    return _grep(t, rel, r"0x0\s*,\s*0x109\s*,\s*0x203|kTri\s*\[\s*256\s*\]|cubeindex|Bourke")
+
+
+def _simplex(t):
+    """A2: simplex noise is our own structure and numbers (no reference-code skew literals, corner cascade or scales)."""
+    rel = "engine/include/okay/Math/Noise.hpp"
+    return _grep(t, rel, r"0\.3660254|0\.2113248|x0 >= y0|70\.0f \* n|32\.0f \* n|0\.6f - x")
+
+
+def _edge_smoothing(t):
+    """A3: the GPU edge-smoothing pass is our own (no FXAA 2 / 3.x names or constants), and the UI calls it "edge
+    smoothing" (FXAA is NVIDIA's name). Saved keys stay "fxaa" (frozen). editor/BuildSettingsModel.hpp belongs to
+    Claude 3's lane and still says "FXAA" until that lane agrees to the change."""
+    bad = []
+    for rel in ("engine/src/Render/GLRendererShaders.cpp", "engine/include/okay/Render/D3DPostHLSL.hpp"):
+        bad += _grep(t, rel, r"dirReduce|rcpDirMin|rgbA|rgbB|FXAA_|1\.0 / 128\.0|0\.0312")
+    for p, rel in files(("editor", "okayui", "shared", "player", "launcher")):
+        if not rel.endswith((".cpp", ".hpp", ".h")) or rel == "editor/BuildSettingsModel.hpp" or rel.endswith("FontOwn.h"): continue   # font data is base64
+        for i, l in enumerate(lines_of(p), 1):
+            if l.strip().startswith(("//", "*", "/*")): continue
+            if any("FXAA" in lit for lit in STRLIT.findall(l)): bad.append("%s:%d" % (rel, i))
+    return bad
+
+
+def _notices(t):
+    """A5-A7: one notice file names every runtime, library and font we ship, and every package carries it."""
+    bad = []
+    rel = "dist/THIRD_PARTY_NOTICES.txt"
+    try: txt = open(os.path.join(t, rel), errors="replace").read()
+    except OSError: return [rel + ": missing"]
+    for name in ("GCC Runtime Library Exception", "winpthreads", "libsodium", "SDL2", "Dear ImGui", "steam_api64.dll",
+                 "Emscripten", "musl", "Roboto", "JetBrains Mono", "DejaVu", "Apache License"):
+        if name not in txt: bad.append("%s: does not name %s" % (rel, name))
+    if not os.path.isfile(os.path.join(t, "assets/fonts/Roboto-LICENSE.txt")): bad.append("assets/fonts/Roboto-LICENSE.txt: missing")
+    for shipper in ("scripts/build-windows-dist.sh", "scripts/okayspace-installer.nsi", "editor/BuildGame.cpp", "scripts/web_package.py"):
+        if not _grep(t, shipper, r"THIRD_PARTY_NOTICES\.txt"): bad.append("%s: does not ship THIRD_PARTY_NOTICES.txt" % shipper)
+    return bad
+
+
+def _voice_shared(t):
+    """N1: voice chat has no cipher or IMA table of its own (it uses the crypto seam and the WAV reader's table)."""
+    return _grep(t, "launcher/VoiceChat.hpp", r"0x61707865|29794")
+
+
+def _browser_words(t):
+    """A8: the address bar's placeholder uses neutral words, not a look-alike of another browser's."""
+    return _grep(t, "engine/src/Browser/Profile.cpp", r'"Search Google or type')
+
+
+def _ui_brands(t):
+    """A9: UI text describes features in plain words, not by another game or a trademark ("Minecraft-style",
+    "ACES" as a menu entry). Comments may still name what a feature resembles. The old GameObject > UI menu record
+    (editor/UIMenuModel.hpp LegacyItems, never shown) keeps the old labels as history."""
+    bad = []
+    for p, rel in files(("editor", "engine", "shared", "player", "okayui", "launcher", "browser")):
+        if not rel.endswith((".cpp", ".hpp", ".h", ".inl")) or rel == "editor/UIMenuModel.hpp": continue
+        for i, l in enumerate(lines_of(p), 1):
+            if l.strip().startswith(("//", "*", "/*")): continue
+            for lit in STRLIT.findall(l):
+                if re.search(r"Minecraft", lit): bad.append("%s:%d" % (rel, i)); break
+    bad += _grep(t, "shared/EditorPanelModels.hpp", r'kTonemapNames.*"ACES"')
+    return bad
+
+
+GUARDS = [
+    ("A4", "shipped version information states a licence other than ours", _licence_statement),
+    ("A1", "the published marching-cubes tables or their loop came back", _cube_cases),
+    ("A2", "simplex noise follows the reference code again", _simplex),
+    ("A3", "FXAA shader text or the FXAA name in UI text", _edge_smoothing),
+    ("A5-A7", "a package ships without the third-party notices", _notices),
+    ("N1", "voice chat carries its own cipher or IMA table", _voice_shared),
+    ("A8", "the browser placeholder copies another browser's wording", _browser_words),
+    ("A9", "UI text names another game or uses a trademark as a feature name", _ui_brands),
+    ("A10", "a published shader constant has no source note near it", _source_notes),
+]
+
+
+def check():
+    t = top()
+    n = 0
+    for gid, what, fn in GUARDS:
+        for hit in fn(t):
+            n += 1; print("%s: %s: %s" % (hit, gid, what))
+    print("# provenance check: %d problem(s) in %d guards" % (n, len(GUARDS)), file=sys.stderr)
+    return 1 if n else 0
+
+
 def norm(text):
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
     out = []
@@ -239,13 +377,172 @@ def overlap(refs, min_len, min_run):
         if run >= min_run: print("%s:%d-: %d matching lines, in %s" % (rel, start, run, ", ".join(sorted(hit)[:3])))
 
 
+# ---- backend: the Supabase touchpoints (docs/platform/okay_backend_audit.md) ----------------------------------------------
+# Paths are the documented Supabase HTTP API routes (PostgREST under /rest/v1, GoTrue under /auth/v1, Storage under
+# /storage/v1, Edge Functions under /functions/v1, Realtime under /realtime/v1, the management API at api.supabase.com).
+BACKEND_ROOTS = ROOTS + [".github", "config"]
+BACKEND_EXT = EXT + (".yml", ".yaml", ".json", ".txt")
+BACKEND_SKIP = ("scripts/provenance_scan.py", "docs/")
+BACKEND_PATTERNS = [
+    (re.compile(r"/rest/v1/rpc/([A-Za-z_]\w*)?"), "RPC"),
+    (re.compile(r"/rest/v1/(?!rpc/)([A-Za-z_]\w*)?"), "Database"),
+    (re.compile(r"/auth/v1/(admin/users|[a-z_]+)?"), "Auth"),
+    (re.compile(r"/storage/v1/(?:object/(?:list/|public/|sign/|info/|authenticated/)?|bucket/?)([A-Za-z$][\w${}-]*)?"),
+     "Storage"),
+    (re.compile(r"/functions/v1/([a-z0-9_-]+)?"), "Functions"),
+    (re.compile(r"/realtime/v1|postgres_changes|phx_join"), "Realtime"),
+    (re.compile(r"api\.supabase\.com/v1/projects/[^/\s\"]*/([a-z-]*)"), "Management API"),
+    # Helpers that build a Supabase address with no route text on the calling line: count each call.
+    (re.compile(r"(?<![\w:])okayversions::ReleasesBucketBase\(()"), "Storage"),
+]
+CONFIG_NAME = re.compile(r"\b(SUPABASE_[A-Z_]+|OKAY_(?:ACCOUNT|DEFAULT_ACCOUNT|UPDATE_SERVER|PUBLIC_ACCOUNT|TICKET|RESET)"
+                         r"[A-Z_]*)\b|secrets\.([A-Z][A-Z0-9_]+)")
+PROGRAM_DIRS = {"launcher": "launcher", "editor": "editor", "player": "player", "relay": "relay", "web": "web",
+                "browser": "browser", "sandbox": "sandbox", "platform": "platform", "okayscript": "okayscript",
+                "deploy": "deploy", "steam": "steam", "tools": "tools", "examples": "examples", "cmake": "build",
+                "config": "config", ".github": "CI", "scripts": "script", "tests": "test"}
+LIB_DIRS = ("engine/", "shared/", "okayui/")
+SAMPLE_HOST = re.compile(r"https://(?:example\.(?:com|invalid|org)|demo\.supabase\.co)/")
+
+
+def _is_comment(rel, s):
+    if rel.endswith((".sh", ".py", ".yml", ".yaml", ".cmake", ".txt")):
+        return s.startswith("#")
+    return s.startswith(("//", "*", "/*", "<!--"))
+
+
+def _include_graph(paths):
+    """header suffix -> set of files that #include it (one level; walked transitively by _programs)."""
+    inc = re.compile(r'#\s*include\s*[<"]([^">]+)[">]')
+    by = {}
+    for p, rel in paths:
+        if not rel.endswith((".cpp", ".hpp", ".h", ".inl", ".inc", ".c", ".mm")): continue
+        for l in lines_of(p):
+            m = inc.search(l)
+            if m: by.setdefault(m.group(1), set()).add(rel)
+    return by
+
+
+def _programs(rel, by, memo):
+    """Which programs reach `rel`: its own top folder, or for a library header everyone who includes it (transitively)."""
+    if rel in memo: return memo[rel]
+    if rel.startswith(("tests/", "okayui/tests/")) or rel.endswith("_test.ts"): return {"test"}
+    if rel.startswith("supabase/functions/"): return {"server function"}
+    if rel.startswith("supabase/auth-pages/"): return {"web page"}
+    if rel.startswith("engine/src/"): return {"engine"}
+    if not rel.startswith(LIB_DIRS):
+        top_dir = rel.split("/")[0] if "/" in rel else "build"
+        return {PROGRAM_DIRS.get(top_dir, top_dir)}
+    memo[rel] = set()                      # cycle guard
+    out, seen, todo = set(), {rel}, [rel]
+    while todo:
+        h = todo.pop()
+        keys = [k for k in by if h.endswith("/" + k) or h == k or (k.count("/") and h.endswith(k))]
+        for k in keys:
+            for f in by[k]:
+                if f in seen: continue
+                seen.add(f)
+                if f.startswith(("engine/src/",)): out.add("engine")
+                elif f.startswith(LIB_DIRS): todo.append(f)
+                elif f.startswith(("tests/", "okayui/tests/")): continue
+                else: out |= _programs(f, by, memo)
+    memo[rel] = out or {"library (no program includes it)"}
+    return memo[rel]
+
+
+def _auth(rel, service, resource, programs):
+    if service == "Management API": return "management token (sbp_)"
+    if service == "Storage" and resource == "public": return "none (public URL)"
+    if programs & {"script", "CI"}: return "service role"
+    if rel.startswith("supabase/functions/"):
+        return "anon + user JWT" if service == "Auth" and resource in ("user", "token") else "service role"
+    if rel.startswith("supabase/auth-pages/"): return "anon + recovery JWT"
+    if service == "Storage" and resource == "public": return "none (public URL)"
+    if service == "Auth" and resource in ("signup", "token", "recover", "resend", "verify"): return "anon"
+    return "user JWT"
+
+
+def _client(rel):
+    if rel.endswith(".sh") or rel.endswith((".yml", ".yaml")): return "curl"
+    if rel.endswith(".py"): return "urllib"
+    if rel.endswith((".ts", ".js", ".html", ".mjs")): return "fetch"
+    if rel.endswith((".cpp", ".hpp", ".h", ".inl")): return "okay::http::Send"
+    return "-"
+
+
+def backend(summary, with_tests):
+    t, out = tracked()
+    paths = [(os.path.join(t, f), f) for f in out
+             if f.split("/")[0] in BACKEND_ROOTS and f.endswith(BACKEND_EXT) and not f.startswith(SKIP)
+             and not f.startswith(BACKEND_SKIP)]
+    paths.append((os.path.join(t, "CMakeLists.txt"), "CMakeLists.txt"))
+    by, memo = _include_graph(paths), {}
+    rows, config = [], {}
+    for p, rel in paths:
+        bucket_var = None
+        text = lines_of(p)
+        for l in text:
+            m = re.match(r'\s*BUCKET="\$\{BUCKET:-([\w-]+)\}"', l)
+            if m: bucket_var = m.group(1)
+        is_test = _programs(rel, by, memo) == {"test"}
+        for i, l in enumerate(text, 1):
+            for m in CONFIG_NAME.finditer(l):
+                config.setdefault(m.group(1) or m.group(2), set()).add(rel)
+            s = l.strip()
+            if _is_comment(rel, s) or (is_test and not with_tests): continue
+            if SAMPLE_HOST.search(l): continue          # made-up addresses in UI previews and demo data, not a call
+            for rx, service in BACKEND_PATTERNS:
+                for m in rx.finditer(l):
+                    res = (m.group(1) if m.groups() else "") or ""
+                    if "ReleasesBucketBase" in m.group(0): res = "public:releases"
+                    elif service == "Storage":
+                        if "/object/public/" in m.group(0): res = "public"
+                        if res in ("$BUCKET", "${BUCKET}") and bucket_var: res = bucket_var
+                        if "/object/public/" in m.group(0):
+                            after = l[m.end(0) - len(m.group(1) or ""):]
+                            b = re.match(r"([A-Za-z][\w-]*)", after)
+                            res = "public:" + (b.group(1) if b else (bucket_var or "(dynamic)"))
+                    res = res.rstrip("/-") or "(dynamic)"
+                    progs = _programs(rel, by, memo)
+                    rows.append((rel, i, ", ".join(sorted(progs)), service, res,
+                                 _auth(rel, service, res.split(":")[0], progs), _client(rel)))
+    if not summary:
+        print("# file:line | program(s) | service | table / bucket / function | key | HTTP client")
+        for r in rows: print("%s:%d | %s | %s | %s | %s | %s" % r)
+    per_service, per_program, names = {}, {}, {}
+    for r in rows:
+        per_service[r[3]] = per_service.get(r[3], 0) + 1
+        names.setdefault(r[3], set()).add(r[4])
+        for prog in r[2].split(", "): per_program[prog] = per_program.get(prog, 0) + 1
+    print("\n# Call sites per service (unique names)")
+    for k in sorted(per_service, key=lambda k: -per_service[k]):
+        print("%-16s %4d  %s" % (k, per_service[k], ", ".join(sorted(names[k]))))
+    print("\n# Call sites per program (a site in a shared header counts once for every program that includes it)")
+    for k in sorted(per_program, key=lambda k: -per_program[k]): print("%-34s %4d" % (k, per_program[k]))
+    if summary: return
+    print("\n# Configuration and secret names the code reads (names only, never values): name -> files")
+    for k in sorted(config): print("%-34s %s" % (k, ", ".join(sorted(config[k])[:6]) + (" ..." if len(config[k]) > 6 else "")))
+    print("\n# Schema in docs/sql (tables / row-level security / policies / functions / triggers / buckets)")
+    tot = [0] * 6
+    for f in sorted(x for x in out if x.startswith("docs/sql/") and x.endswith(".sql")):
+        sql = open(os.path.join(t, f), errors="replace").read().lower()
+        c = [len(re.findall(r"create table", sql)), len(re.findall(r"enable row level security", sql)),
+             len(re.findall(r"create policy", sql)), len(re.findall(r"create (?:or replace )?function", sql)),
+             len(re.findall(r"create (?:or replace )?trigger", sql)), len(re.findall(r"storage\.buckets", sql))]
+        tot = [a + b for a, b in zip(tot, c)]
+        print("%-36s %3d %3d %3d %3d %3d %3d" % ((f,) + tuple(c)))
+    print("%-36s %3d %3d %3d %3d %3d %3d" % (("total",) + tuple(tot)))
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
+    if a[:1] == ["backend"]: backend("--summary" in a, "--tests" in a); sys.exit(0)
     if a[:1] == ["markers"]: markers()
     elif a[:1] == ["constants"]: constants()
     elif a[:1] == ["tables"]: tables(int(a[2]) if a[1:2] == ["--min"] else 64)
     elif a[:1] == ["marks"]: marks()
     elif a[:1] == ["assets"]: assets()
+    elif a[:1] == ["check"]: sys.exit(check())
     elif a[:1] == ["overlap"] and len(a) > 1:
         mn, mr, refs, k = 12, 3, [], 1
         while k < len(a):

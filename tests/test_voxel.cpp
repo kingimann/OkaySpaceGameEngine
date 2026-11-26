@@ -1,13 +1,109 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include <cmath>
+#include <map>
+#include <tuple>
 
 using namespace okay;
+
+// A mesh is watertight when, after joining vertices at the same place, every edge is used by exactly two
+// triangles, once in each direction (a closed surface wound one way). Returns the number of bad edges and
+// counts the degenerate triangles (two corners at the same place).
+static int OpenEdges(const Mesh& m, int& degenerate, int& misWound) {
+    std::map<std::tuple<long, long, long>, int> ids;
+    auto id = [&](const Vec3& p) {
+        auto k = std::make_tuple(std::lround(p.x * 4096.0f), std::lround(p.y * 4096.0f), std::lround(p.z * 4096.0f));
+        auto it = ids.find(k);
+        if (it != ids.end()) return it->second;
+        const int n = (int)ids.size(); ids.emplace(k, n); return n;
+    };
+    std::map<std::pair<int, int>, int> directed;
+    degenerate = 0; misWound = 0;
+    for (std::size_t t = 0; t + 2 < m.triangles.size(); t += 3) {
+        const int a = id(m.vertices[m.triangles[t]]), b = id(m.vertices[m.triangles[t + 1]]), c = id(m.vertices[m.triangles[t + 2]]);
+        if (a == b || b == c || c == a) { ++degenerate; continue; }
+        ++directed[{a, b}]; ++directed[{b, c}]; ++directed[{c, a}];
+    }
+    int bad = 0;
+    for (const auto& kv : directed) {
+        auto rev = directed.find({kv.first.second, kv.first.first});
+        const int back = rev == directed.end() ? 0 : rev->second;
+        if (kv.second + back != 2) ++bad;            // used once (a hole) or three or more times
+        else if (kv.second != 1) ++misWound;         // used twice the same way: neighbours wound against each other
+    }
+    return bad;
+}
 
 // Voxel (marching-cubes) terrain: a 3D density field you can dig caves/tunnels
 // into, meshed smoothly and round-tripping through the scene serializer.
 int main() {
     RUN_SUITE("voxel");
+
+    // --- Every one of the 256 corner patterns meshes into a closed surface ------------------------------------
+    // One cube's corners are solid or air in every combination, inside a field of air, so the solid bit is a
+    // closed blob and its mesh must be closed too: no hole on any cube face (provenance audit A1).
+    {
+        int openCases = 0, emptyWrong = 0, degenerate = 0, misWound = 0;
+        for (int pattern = 0; pattern < 256; ++pattern) {
+            VoxelTerrain v;
+            v.Resize(4, 4, 4); v.voxelSize = 1.0f; v.iso = 0.0f;
+            for (int c = 0; c < 8; ++c)
+                if (pattern & (1 << c))      // uneven values, so the crossings are not all at the middle of an edge
+                    v.Set(1 + (c & 1), 1 + ((c >> 1) & 1), 1 + ((c >> 2) & 1), 0.3f + 0.1f * c);
+            Mesh m = v.BuildMesh();
+            if (pattern == 0) { if (m.TriangleCount() != 0) ++emptyWrong; continue; }
+            if (m.TriangleCount() == 0) { ++emptyWrong; continue; }
+            int d = 0, w = 0;
+            if (OpenEdges(m, d, w) != 0) ++openCases;
+            degenerate += d; misWound += w;
+        }
+        CHECK(emptyWrong == 0);
+        CHECK(openCases == 0);
+        CHECK(degenerate == 0);
+        CHECK(misWound == 0);
+        if (openCases || misWound) std::cout << "  open cases " << openCases << ", mis-wound edges " << misWound << "\n";
+    }
+
+    // --- A random field (air at the border) is closed everywhere: ambiguous faces agree between neighbours -----
+    {
+        int open = 0, degenerate = 0, misWound = 0, tris = 0;
+        for (unsigned seed = 1; seed <= 6; ++seed) {
+            VoxelTerrain v;
+            v.Resize(10, 10, 10); v.voxelSize = 1.0f; v.iso = 0.0f;
+            unsigned s = seed * 2654435761u;
+            for (int z = 1; z < 9; ++z)
+                for (int y = 1; y < 9; ++y)
+                    for (int x = 1; x < 9; ++x) {
+                        s = s * 1664525u + 1013904223u;
+                        v.Set(x, y, z, ((s >> 8) & 0xFFFF) / 32767.5f - 1.0f);
+                    }
+            Mesh m = v.BuildMesh();
+            tris += (int)m.TriangleCount();
+            int d = 0, w = 0;
+            open += OpenEdges(m, d, w);
+            degenerate += d; misWound += w;
+            Mesh r = v.BuildMeshReference();        // the reference loop uses the same cases
+            CHECK(r.TriangleCount() == m.TriangleCount());
+        }
+        CHECK(tris > 1000);
+        CHECK(open == 0);
+        CHECK(degenerate == 0);
+        // Winding is not checked here: the mesher turns each triangle to face down its density gradient, and on
+        // white noise the gradient disagrees with the case winding now and then (the cases' own winding is checked
+        // by the 256 patterns above).
+        std::cout << "  random fields: " << tris << " triangles, open edges " << open << ", turned by the gradient " << misWound << "\n";
+    }
+
+    // --- The generated landscape still looks the same: about as many triangles as before the case rewrite -------
+    {
+        VoxelTerrain v;
+        v.Resize(32, 24, 32); v.voxelSize = 1.0f;
+        v.Generate(0.5f, 6.0f, 0.6f, 7u);
+        Mesh m = v.BuildMesh();
+        std::cout << "  generated terrain: " << m.TriangleCount() << " triangles\n";
+        // 14,386 with the published tables this replaced (measured 2026-11-26); the same surface gives about the same count.
+        CHECK(std::fabs((double)m.TriangleCount() - 14386.0) < 14386.0 * 0.01);
+    }
 
     // --- FillSlab: solid below the fill line, air above; surface in between -----
     {

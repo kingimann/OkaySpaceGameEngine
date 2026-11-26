@@ -10,7 +10,7 @@
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "okay/Platform/WindowLogic.hpp" // frame-rate / flash / background decisions
 
-#include "WavPlayback.hpp"   // the one WAV loading seam: our own decoder (okay::wav) into an SDL_AudioSpec
+#include "WavPlayback.hpp"   // the one WAV loading seam: our own decoder (okay::wav) into an okay::platform::AudioSpec
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "AppIcon.hpp"
 #include "OwnSwitches.hpp"   // Settings > Experimental: the table of own replacements that can be switched on
@@ -709,15 +709,15 @@ bool DownloadProgress(const std::string& url, const fs::path& out) {
     auto d = std::make_shared<DlMonitor>(); d->url = url; d->out = out;
     okay::thr::AtomicSet(&d->done, 0); okay::thr::AtomicSet(&d->ok, 0); okay::thr::AtomicSet(&d->bytes, 0); okay::thr::AtomicSet(&d->cancel, 0);
     okay::thr::Thread* th = okay::thr::CreateThread(DlMonitorThread, "okay-dlp", new std::shared_ptr<DlMonitor>(d));
-    const Uint32 t0 = okay::platform::TicksMs32();
-    Uint32 lastGrow = t0; long long lastSize = -1;
+    const std::uint32_t t0 = okay::platform::TicksMs32();
+    std::uint32_t lastGrow = t0; long long lastSize = -1;
     while (okay::thr::AtomicGet(&d->done) == 0) {
         std::error_code ec; auto sz = fs::file_size(out, ec);   // (the PowerShell / wget last resort writes the file directly)
         const long long cur = std::max<long long>(ec ? 0 : (long long)sz, (long long)okay::thr::AtomicGet(&d->bytes));
         okay::thr::AtomicSet(&g_upBytesNow, (int)cur);
-        const Uint32 now = okay::platform::TicksMs32();
+        const std::uint32_t now = okay::platform::TicksMs32();
         if (cur != lastSize) { lastSize = cur; lastGrow = now; }
-        if (okay::startupupdate::DownloadShouldAbort((long long)(Uint32)(now - lastGrow), (long long)(Uint32)(now - t0), total)) {
+        if (okay::startupupdate::DownloadShouldAbort((long long)(std::uint32_t)(now - lastGrow), (long long)(std::uint32_t)(now - t0), total)) {
             okay::thr::AtomicSet(&g_dlStalled, 1);
             okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "download stalled, giving up: " + url);
             // Cancel the transfer so it can never rename a late file over `out` (Finish checks the cancel right before the
@@ -1321,7 +1321,7 @@ void StartGoBackToStable() {
 // ("Checking for updates", then "Downloading 2 of 3", "Installing", "Restarting") instead of the launcher. The install and its checksum /
 // signature checks are RunUpdateCheck's; this only starts it and draws its progress. It runs before any sign-in screen and needs no account.
 static bool g_suActive = false, g_suSkipped = false, g_suTimedOutShown = false, g_suFailHandled = false, g_suGaveUpRestart = false;
-static Uint32 g_suStartTicks = 0, g_suUpdatedTicks = 0;
+static std::uint32_t g_suStartTicks = 0, g_suUpdatedTicks = 0;
 static bool g_suToastedFail = false;   // the offline notice was already given: the generic "Update check failed" toast stays quiet
 
 extern bool g_updateOnLaunch;   // (defined with the other preferences below)
@@ -1422,10 +1422,10 @@ static void StartupUpdateFrame() {
     ScreenInputs si;
     si.phase = us == Up_Checking ? Phase::Checking : us == Up_Downloading ? Phase::Downloading : us == Up_Updated ? Phase::Updated
              : us == Up_Failed ? Phase::Failed : us == Up_UpToDate ? Phase::UpToDate : Phase::Idle;
-    si.elapsedMs = (long long)(Uint32)(okay::platform::TicksMs32() - g_suStartTicks);
+    si.elapsedMs = (long long)(std::uint32_t)(okay::platform::TicksMs32() - g_suStartTicks);
     si.skipped = g_suSkipped; si.timedOutShown = g_suTimedOutShown; si.relaunchNeeded = g_upRelaunchNeeded; si.restartFailed = g_suRestartFailed || (us == Up_Updated && EditorRunning());
     if (us == Up_Updated && g_suUpdatedTicks == 0) g_suUpdatedTicks = okay::platform::TicksMs32();
-    si.sinceUpdatedMs = (us == Up_Updated && g_suUpdatedTicks) ? (long long)(Uint32)(okay::platform::TicksMs32() - g_suUpdatedTicks) : 0;
+    si.sinceUpdatedMs = (us == Up_Updated && g_suUpdatedTicks) ? (long long)(std::uint32_t)(okay::platform::TicksMs32() - g_suUpdatedTicks) : 0;
     si.step = okay::thr::AtomicGet(&g_upStepIdx); si.steps = okay::thr::AtomicGet(&g_upStepTotal);
     si.installing = GetUpMsg().rfind("Installing", 0) == 0;
     const ScreenView v = EvaluateScreen(si);
@@ -1593,7 +1593,7 @@ bool SpawnTracked(const std::string& exe, const std::string& args, const std::st
 }
 // Once a second or so: credit running games, close out the ones that ended.
 static void PumpPlaytime() {
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     for (std::size_t i = 0; i < g_playProcs.size(); ) {
         PlayProc& pp = g_playProcs[i];
 #if defined(_WIN32)
@@ -1677,7 +1677,7 @@ std::string GameTitleFromPath(const std::string& path) {
 // built game's files are checked against its Data/manifest.json before it
 // starts: report flags a mismatch and starts it anyway, enforce refuses.
 int g_antiCheatMode = 0;   // okayac::Mode (persisted)
-Uint32 g_toastHoldUntil = 0;   // an anti-cheat toast isn't replaced by the caller's "Playing ..."
+std::uint32_t g_toastHoldUntil = 0;   // an anti-cheat toast isn't replaced by the caller's "Playing ..."
 // "Report cheating" in a chat's menu asks for this; DrawAcBanBanner shows the dialog.
 std::string g_acReportUid, g_acReportName; bool g_acReportOpen = false;
 // "Report ..." (abuse, spam, scams...): every Report control calls OpenReport; the dialog is
@@ -2030,9 +2030,9 @@ bool IsBuiltGame(const fs::path& scene) {
 int g_webGameCount = -1;   // set by the Play tab's web-game scan (-1 = not scanned yet)
 std::vector<fs::path> FindWebGames();
 int LibraryGameCount(const std::vector<fs::path>& scenes) {
-    static int cached = 0; static std::size_t lastN = (std::size_t)-1; static Uint32 lastAt = 0;
+    static int cached = 0; static std::size_t lastN = (std::size_t)-1; static std::uint32_t lastAt = 0;
     if (g_webGameCount < 0) g_webGameCount = (int)FindWebGames().size();
-    Uint32 now = okay::platform::TicksMs32();
+    std::uint32_t now = okay::platform::TicksMs32();
     if (scenes.size() != lastN || now - lastAt > 2000) {
         cached = (int)std::count_if(scenes.begin(), scenes.end(), IsBuiltGame);
         lastN = scenes.size(); lastAt = now;
@@ -2186,13 +2186,13 @@ const char* kThemeNames[] = {"Slate", "Midnight", "Light"};
 // Transient toast notification (bottom-right of the window).
 // kind: 0 = info (accent), 1 = success (green), 2 = error (red).
 std::string g_toastMsg;
-Uint32 g_toastUntil = 0;
+std::uint32_t g_toastUntil = 0;
 int g_toastKind = 0;
 void Toast(const std::string& m, int kind = 0) {
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (kind < 2 && now < g_toastHoldUntil) return;   // keep an anti-cheat warning readable
     g_toastMsg = m; g_toastKind = kind;
-    g_toastUntil = now + std::max<Uint32>(2600, now < g_toastHoldUntil ? g_toastHoldUntil - now : 0);
+    g_toastUntil = now + std::max<std::uint32_t>(2600, now < g_toastHoldUntil ? g_toastHoldUntil - now : 0);
 }
 std::vector<std::string> g_favorites;   // favorited game paths (persisted)
 std::vector<std::string> g_recent;       // recently played, most-recent first (persisted)
@@ -2237,7 +2237,7 @@ static long ChatSeenSum() {
 // Called once a frame from the main loop (cheap: a checksum every ~2 s).
 void SyncChatSeen(const std::string& user) {
     static long savedSum = 0;
-    static Uint32 nextCheck = 0;
+    static std::uint32_t nextCheck = 0;
     if (user != g_chatSeenUser) {
         g_chatSeenDm.clear(); g_chatSeenGroup.clear();
         g_chatSeenUser = user;
@@ -2286,8 +2286,8 @@ static bool g_unreadKnown = false;                        // rows have been read
 // The counts now (worked out at most every 100 ms; the UI thread only).
 const okay::chat::UnreadSummary& ChatUnread() {
     static okay::chat::UnreadSummary sum;
-    static Uint32 at = 0;
-    const Uint32 now = okay::platform::TicksMs32();
+    static std::uint32_t at = 0;
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (at != 0 && now - at < 100) return sum;
     at = now;
     if (g_unreadMutex) {
@@ -2338,7 +2338,7 @@ struct Notif {
     std::string title;
     std::string body;
     int    kind = 0;      // 0 system, 1 friend, 2 message, 3 update
-    Uint32 time = 0;
+    std::uint32_t time = 0;
     bool   read = false;
     int    gotoTab = -1;  // clicking jumps here (-1 = none)
     long   wall = 0;      // unix time it arrived (so ages survive a restart)
@@ -2388,7 +2388,7 @@ void LoadNotifs() {
     std::ifstream f(fs::path(g_exeDir) / "notifications.cfg");
     if (!f) return;
     const long nowW = (long)std::time(nullptr);
-    const Uint32 t0 = okay::platform::TicksMs32();
+    const std::uint32_t t0 = okay::platform::TicksMs32();
     std::string line;
     while (std::getline(f, line)) {
         std::vector<std::string> c;
@@ -2402,7 +2402,7 @@ void LoadNotifs() {
             n.read = c[4] == "1"; n.wall = std::atol(c[5].c_str()); n.title = NotifUnesc(c[6]); n.body = NotifUnesc(c[7]);
             if (n.title.rfind("What's new in vv", 0) == 0) n.title.erase(14, 1);   // saved by an older launcher with a doubled "v"
             const long age = std::clamp(nowW - n.wall, 0L, 40L * 86400L);   // ticks wrap after ~49 days
-            n.time = t0 - (Uint32)age * 1000u;                              // ages are (now - time) mod 2^32
+            n.time = t0 - (std::uint32_t)age * 1000u;                              // ages are (now - time) mod 2^32
             g_notifs.push_back(n);
         }
     }
@@ -2455,9 +2455,9 @@ static fs::path CrashDir() {
 }
 // Re-read the reports when the files change (cheap stat every couple of seconds).
 static void RefreshCrashes(bool force = false) {
-    static Uint32 nextCheck = 0;
+    static std::uint32_t nextCheck = 0;
     static std::string lastSig;
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (!force && now < nextCheck) return;
     nextCheck = now + 2000;
     const fs::path dir = CrashDir();
@@ -3023,7 +3023,7 @@ SDL_Texture* ChatImageTexture(const std::string& url, int* w, int* h) {
     if (w) *w = a.w;
     if (h) *h = a.h;
     if (a.frames.size() == 1 || a.total <= 0) return a.frames[0];
-    int t = (int)(okay::platform::TicksMs32() % (Uint32)a.total);
+    int t = (int)(okay::platform::TicksMs32() % (std::uint32_t)a.total);
     for (std::size_t i = 0; i < a.ends.size(); ++i) if (t < a.ends[i]) return a.frames[i];
     return a.frames.back();
 }
@@ -3485,14 +3485,14 @@ static void OkayUIFrameBegin() {
     ImGuiIO& io = ImGui::GetIO();
     g_okayRegion.NextFrame();
     int mx = 0, my = 0;
-    const Uint32 mb = okay::platform::Default() ? okay::platform::Default()->MouseState(&mx, &my) : 0;   // MouseMask bits (button 1 = bit 0, as SDL_BUTTON)
+    const std::uint32_t mb = okay::platform::Default() ? okay::platform::Default()->MouseState(&mx, &my) : 0;   // MouseMask bits (button 1 = bit 0, as SDL_BUTTON)
     const bool blocked = io.WantCaptureMouse && !g_okayRegion.Owns((float)mx, (float)my);
     // An OkayUI field types: all the keys (an ImGui field being pressed or typed in keeps them). No field types but a hosted page is
     // shown and focused (the Browser page): its shortcuts' keys, Ctrl+F, Ctrl+L, Ctrl+T ... (okayuihost::HostedKeys).
     const okayuihost::HostKeys keys = okayuihost::HostedKeys(OkayUI::WantsTextInput(), ImGui::GetActiveID() != 0, io.WantTextInput,
                                                              g_okayRegion.Active());
-    OkayUI::BeginFrame(g_okayInput.Build((float)mx, (float)my, (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0,
-                                         (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys));
+    OkayUI::BeginFrame(g_okayInput.Build((float)mx, (float)my, (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0,
+                                         (mb & okay::platform::MouseMask(okay::platform::MouseRight)) != 0, blocked, keys));
 }
 // ImGui must not treat typing in a hosted OkayUI field as shortcuts or text for something else.
 static void OkayUIClaimKeyboard() {
@@ -3938,7 +3938,7 @@ float ChatInviteWidth(float maxW) { return std::min(maxW, 270.0f); }
 // ---- Invite records behind the chat cards (okay::Invites, docs/sql/chat_invites.sql; feature map 17.15.7) ------------
 // A card whose link carries inv=<id> shows that record's state. The chat poll thread (ChatPollWorker -> InviteWork) looks
 // the records up and answers them (Accept / Decline / Withdraw); the UI thread only reads and queues, under g_invMutex.
-struct InviteRecSlot { okay::GameInvite rec; bool loaded = false; Uint32 at = 0; };
+struct InviteRecSlot { okay::GameInvite rec; bool loaded = false; std::uint32_t at = 0; };
 struct InviteAct { long id = 0; int what = 0; okay::JoinLink link; std::string from; std::string answer; };   // what: 1 accept, 2 decline, 3 withdraw
 static okay::thr::Mutex* g_invMutex = nullptr;
 static std::map<long, InviteRecSlot> g_invRecs;     // (guarded) id -> the record (rec.id 0 = not found / not mine)
@@ -4219,9 +4219,9 @@ static bool EnsureAudio() {
 static constexpr int kVoiceRate = 16000, kVoiceMaxSecs = 120, kVoiceLevelHop = kVoiceRate / 20;
 static std::unique_ptr<okay::platform::AudioDevice> g_recDev;
 static bool                g_recFake = false;     // dev demo: a recording without a device
-static std::vector<Sint16> g_recPcm;
+static std::vector<std::int16_t> g_recPcm;
 static std::vector<float>  g_recLevels;           // loudness per 50 ms (live meter)
-static Uint32              g_recStart = 0;
+static std::uint32_t              g_recStart = 0;
 static std::string         g_recToUid;            // which chat the recording is for
 static long                g_recToGroup = 0;
 static long                g_recToChannel = 0;    // a server channel (0 = a DM / group)
@@ -4247,33 +4247,33 @@ static bool StartVoiceRecord(const std::string& toUid, long toGroup, long toChan
 }
 static void PumpVoiceRecord() {   // once per frame: move captured audio into g_recPcm
     if (!g_recDev) return;
-    Sint16 buf[2048];
-    while (Uint32 got = g_recDev->Dequeue(buf, sizeof(buf)))
-        g_recPcm.insert(g_recPcm.end(), buf, buf + got / sizeof(Sint16));
+    std::int16_t buf[2048];
+    while (std::uint32_t got = g_recDev->Dequeue(buf, sizeof(buf)))
+        g_recPcm.insert(g_recPcm.end(), buf, buf + got / sizeof(std::int16_t));
     while ((g_recLevels.size() + 1) * kVoiceLevelHop <= g_recPcm.size()) {
-        const Sint16* w = g_recPcm.data() + g_recLevels.size() * kVoiceLevelHop;
+        const std::int16_t* w = g_recPcm.data() + g_recLevels.size() * kVoiceLevelHop;
         int peak = 0;
         for (int i = 0; i < kVoiceLevelHop; ++i) peak = std::max(peak, std::abs((int)w[i]));
         g_recLevels.push_back(std::min(1.0f, std::sqrt(peak / 32768.0f) * 1.3f));
     }
 }
-static bool WriteWav16(const std::string& path, const std::vector<Sint16>& pcm, int rate) {
+static bool WriteWav16(const std::string& path, const std::vector<std::int16_t>& pcm, int rate) {
     std::ofstream f(path, std::ios::binary);
     if (!f) return false;
-    auto u32 = [&](Uint32 v) { char b[4] = {(char)v, (char)(v >> 8), (char)(v >> 16), (char)(v >> 24)}; f.write(b, 4); };
-    auto u16 = [&](Uint16 v) { char b[2] = {(char)v, (char)(v >> 8)}; f.write(b, 2); };
-    Uint32 data = (Uint32)pcm.size() * 2;
+    auto u32 = [&](std::uint32_t v) { char b[4] = {(char)v, (char)(v >> 8), (char)(v >> 16), (char)(v >> 24)}; f.write(b, 4); };
+    auto u16 = [&](std::uint16_t v) { char b[2] = {(char)v, (char)(v >> 8)}; f.write(b, 2); };
+    std::uint32_t data = (std::uint32_t)pcm.size() * 2;
     f.write("RIFF", 4); u32(36 + data); f.write("WAVE", 4);
     f.write("fmt ", 4); u32(16); u16(1); u16(1); u32(rate); u32(rate * 2); u16(2); u16(16);
     f.write("data", 4); u32(data);
-    for (Sint16 s : pcm) u16((Uint16)s);
+    for (std::int16_t s : pcm) u16((std::uint16_t)s);
     return (bool)f;
 }
 // Stop recording; send=true writes the WAV and hands it to the upload worker.
 void FinishVoiceRecord(bool send) {
     if (g_recDev) { PumpVoiceRecord(); g_recDev.reset(); }
     const bool fake = g_recFake; g_recFake = false;
-    std::vector<Sint16> pcm; pcm.swap(g_recPcm); g_recLevels.clear();
+    std::vector<std::int16_t> pcm; pcm.swap(g_recPcm); g_recLevels.clear();
     if (!send || fake) return;
     if (pcm.size() < (std::size_t)kVoiceRate / 2) { Toast("Too short to send — hold on a little longer", 2); return; }
     std::error_code ec;
@@ -4289,14 +4289,14 @@ void FinishVoiceRecord(bool send) {
 static constexpr int kVoiceBars = 30;
 struct VoiceClip {
     bool ok = false;                 // decoded (false = unplayable; don't retry)
-    Uint8* pcm = nullptr; Uint32 len = 0;   // points into `owned` (never into an SDL buffer)
-    SDL_AudioSpec spec{};
+    std::uint8_t* pcm = nullptr; std::uint32_t len = 0;   // points into `owned`
+    okay::platform::AudioSpec spec;  // rate, channels, S16 or F32 (native-endian), as okay::wav::LoadWavClip gave them
     float secs = 0, bytesPerSec = 1;
     float bars[kVoiceBars] = {};
-    std::vector<Uint8> owned;        // the clip's samples (converted to 16-bit when the file was not native 16-bit / float)
-    std::map<int, std::vector<Uint8>> fast;   // time-stretched copies by speed index (built on first use)
+    std::vector<std::uint8_t> owned;        // the clip's samples (converted to 16-bit when the file was not native 16-bit / float)
+    std::map<int, std::vector<std::uint8_t>> fast;   // time-stretched copies by speed index (built on first use)
     VoiceClip() = default;
-    // `owned` holds the samples our own decoder gave (okay::wav::LoadWavForSdl); there is
+    // `owned` holds the samples our own decoder gave (okay::wav::LoadWavClip); there is
     // no SDL buffer for this destructor to free (#718).
     ~VoiceClip() = default;
     VoiceClip(const VoiceClip&) = delete;             // pcm ownership is exclusive: no shallow copies
@@ -4315,53 +4315,18 @@ struct VoiceClip {
     }
 };
 static std::map<std::string, VoiceClip> g_voiceClips;
-// The platform audio layer plays native-endian 16-bit or float samples. A clip in any other
-// PCM layout (8-bit, 32-bit integer, big-endian) is converted to 16-bit once, at load.
-static void VoiceClipToPlayable(VoiceClip& c) {
-    const SDL_AudioFormat f = c.spec.format;
-    if (f == AUDIO_S16SYS || f == AUDIO_F32SYS || !c.pcm || !c.len) return;
-    const int width = SDL_AUDIO_BITSIZE(f) / 8;
-    if (width < 1 || width > 4) { c.len = 0; return; }
-    // Samples already live in c.owned (our own decoder's output), so the bytes are
-    // read from `owned` and the old vector storage is released when it is replaced.
-    // Nothing here may free them a second time (#718).
-    const std::size_t n = c.len / (std::size_t)width;
-    std::vector<Uint8> out(n * 2);
-    for (std::size_t i = 0; i < n; ++i) {
-        const Uint8* p = c.pcm + i * (std::size_t)width;
-        float v = 0.0f;   // -1..1
-        if (SDL_AUDIO_ISFLOAT(f)) {
-            Uint32 u = 0;
-            for (int b = 0; b < 4; ++b) u |= (Uint32)p[SDL_AUDIO_ISBIGENDIAN(f) ? 3 - b : b] << (8 * b);
-            std::memcpy(&v, &u, 4);
-        } else if (width == 1) {
-            v = SDL_AUDIO_ISSIGNED(f) ? (float)(Sint8)p[0] / 128.0f : ((float)p[0] - 128.0f) / 128.0f;
-        } else {
-            Uint32 u = 0;
-            for (int b = 0; b < width; ++b) u |= (Uint32)p[SDL_AUDIO_ISBIGENDIAN(f) ? width - 1 - b : b] << (8 * b);
-            const long long top = 1ll << (8 * width - 1);
-            long long sv = SDL_AUDIO_ISSIGNED(f) ? (long long)(Sint32)(u << (32 - 8 * width)) >> (32 - 8 * width) : (long long)u - top;
-            v = (float)sv / (float)top;
-        }
-        const Sint16 s16 = (Sint16)std::clamp(v * 32767.0f, -32768.0f, 32767.0f);
-        std::memcpy(out.data() + i * 2, &s16, 2);
-    }
-    c.owned = std::move(out);
-    c.pcm = c.owned.data(); c.len = (Uint32)c.owned.size();
-    c.spec.format = AUDIO_S16SYS;
-}
 static std::unique_ptr<okay::platform::AudioDevice> g_playDev;
 static std::string       g_playUrl;          // clip loaded on g_playDev
 static bool              g_playPaused = false;
-static Uint32            g_playFrom = 0;     // byte offset the current queue started at
-static Uint32            g_playLen = 0;      // length of the buffer playing (the clip, or a sped-up copy)
+static std::uint32_t            g_playFrom = 0;     // byte offset the current queue started at
+static std::uint32_t            g_playLen = 0;      // length of the buffer playing (the clip, or a sped-up copy)
 static const float kVoiceSpeeds[3] = {1.0f, 1.5f, 2.0f};
 static const char* const kVoiceSpeedLabels[3] = {"1x", "1.5x", "2x"};
 
 // Speed a voice note up without the chipmunk effect: WSOLA time-stretch
 // (overlap-add of 30 ms Hann windows; each window is nudged within +-10 ms to
 // the spot that best continues the previous one, so pitch is unchanged).
-static std::vector<Sint16> VoiceTimeStretch(const Sint16* in, std::size_t n, int rate, float speed) {
+static std::vector<std::int16_t> VoiceTimeStretch(const std::int16_t* in, std::size_t n, int rate, float speed) {
     const int N = std::max(64, rate * 30 / 1000), hopS = N / 2, tol = rate / 100;
     const float hopA = hopS * speed;
     std::vector<float> win((std::size_t)N);
@@ -4391,9 +4356,9 @@ static std::vector<Sint16> VoiceTimeStretch(const Sint16* in, std::size_t n, int
     }
     std::size_t used = outN;
     while (used > 0 && norm[used - 1] < 1e-3f) --used;
-    std::vector<Sint16> out(used);
+    std::vector<std::int16_t> out(used);
     for (std::size_t i = 0; i < used; ++i)
-        out[i] = (Sint16)std::clamp(norm[i] > 1e-3f ? acc[i] / norm[i] : 0.0f, -32768.0f, 32767.0f);
+        out[i] = (std::int16_t)std::clamp(norm[i] > 1e-3f ? acc[i] / norm[i] : 0.0f, -32768.0f, 32767.0f);
     return out;
 }
 static std::string       g_voiceWant;        // tapped play before the clip arrived
@@ -4423,30 +4388,28 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
     std::error_code ec;
     if (failed || fs::exists(cache, ec)) {
         VoiceClip& c = g_voiceClips[url];
-        // Our own decoder (okay::wav::PlaybackClip through LoadWavForSdl) writes the samples
-        // straight into the clip's own storage, so no path (a converted clip, an unsupported
-        // width, a replaced entry) has a foreign buffer to leave behind (#718).
-        SDL_AudioSpec wavSpec{};
-        if (!failed && okay::wav::LoadWavForSdl(cache.string(), wavSpec, c.owned)) {
+        // Our own decoder (okay::wav::PlaybackClip through LoadWavClip) writes the samples
+        // straight into the clip's own storage, so no path (a replaced entry) has a foreign
+        // buffer to leave behind (#718). It gives native-endian 16-bit or float32 only.
+        okay::platform::AudioSpec wavSpec;
+        if (!failed && okay::wav::LoadWavClip(cache.string(), wavSpec, c.owned)) {
             c.spec = wavSpec;
             c.pcm = c.owned.empty() ? nullptr : c.owned.data();
-            c.len = (Uint32)c.owned.size();
-            VoiceClipToPlayable(c);
-            const int bps = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
+            c.len = (std::uint32_t)c.owned.size();
+            const int bps = okay::platform::BytesPerSample(c.spec.format) * std::max<int>(1, c.spec.channels);
             c.bytesPerSec = (float)c.spec.freq * bps;
             c.secs = c.len / c.bytesPerSec;
             c.ok = c.len > 0;
             // Real waveform: peak per slice (16-bit clips; anything else keeps the stub).
-            const Uint32 frames = bps ? c.len / bps : 0;
-            const bool s16 = c.spec.format == AUDIO_S16LSB || c.spec.format == AUDIO_S16MSB;
+            const std::uint32_t frames = bps ? c.len / bps : 0;
+            const bool s16 = c.spec.format == okay::platform::SampleFormat::S16;
             float top = 0.0001f;
             for (int b = 0; b < kVoiceBars; ++b) {
                 float peak = 0;
                 if (s16 && frames) {
-                    Uint32 a = frames * b / kVoiceBars, e = frames * (b + 1) / kVoiceBars;
-                    for (Uint32 f = a; f < e; ++f) {
-                        Sint16 v; std::memcpy(&v, c.pcm + (std::size_t)f * bps, 2);
-                        if (c.spec.format == AUDIO_S16MSB) v = (Sint16)SDL_Swap16((Uint16)v);
+                    std::uint32_t a = frames * b / kVoiceBars, e = frames * (b + 1) / kVoiceBars;
+                    for (std::uint32_t f = a; f < e; ++f) {
+                        std::int16_t v; std::memcpy(&v, c.pcm + (std::size_t)f * bps, 2);   // native-endian
                         peak = std::max(peak, std::abs((float)v) / 32768.0f);
                     }
                 } else peak = VoiceBarStub(url, b);
@@ -4468,19 +4431,19 @@ static void StopVoice() {
 }
 // The samples to play at the chosen speed: the clip itself at 1x, otherwise a
 // time-stretched copy (16-bit mono clips, i.e. our own recordings).
-static const Uint8* VoiceBuffer(VoiceClip& c, Uint32& len) {
+static const std::uint8_t* VoiceBuffer(VoiceClip& c, std::uint32_t& len) {
     const int si = std::clamp(g_voiceSpeed, 0, 2);
-    const bool s16mono = c.spec.format == AUDIO_S16SYS && c.spec.channels == 1;
+    const bool s16mono = c.spec.format == okay::platform::SampleFormat::S16 && c.spec.channels == 1;
     if (si == 0 || !s16mono || c.len < 4) { len = c.len; return c.pcm; }
     auto it = c.fast.find(si);
     if (it == c.fast.end()) {
-        auto st = VoiceTimeStretch(reinterpret_cast<const Sint16*>(c.pcm), c.len / 2, c.spec.freq, kVoiceSpeeds[si]);
-        std::vector<Uint8> bytes(st.size() * 2);
+        auto st = VoiceTimeStretch(reinterpret_cast<const std::int16_t*>(c.pcm), c.len / 2, c.spec.freq, kVoiceSpeeds[si]);
+        std::vector<std::uint8_t> bytes(st.size() * 2);
         if (!st.empty()) std::memcpy(bytes.data(), st.data(), bytes.size());
         it = c.fast.emplace(si, std::move(bytes)).first;
     }
     if (it->second.empty()) { len = c.len; return c.pcm; }
-    len = (Uint32)it->second.size();
+    len = (std::uint32_t)it->second.size();
     return it->second.data();
 }
 // Start (or restart) a clip at a fraction 0..1 of its length.
@@ -4490,19 +4453,19 @@ static void PlayVoiceAt(const std::string& url, VoiceClip& c, float frac) {
     if (g_playUrl != url || !g_playDev) {
         StopVoice();
         okay::platform::AudioSpec want;
-        want.freq = c.spec.freq; want.channels = std::max<int>(1, c.spec.channels); want.frames = std::max<int>(256, c.spec.samples);
-        want.format = c.spec.format == AUDIO_F32SYS ? okay::platform::SampleFormat::F32 : okay::platform::SampleFormat::S16;   // other formats were converted to s16 at load
+        want.freq = c.spec.freq; want.channels = std::max<int>(1, c.spec.channels); want.frames = 256;   // (SDL_AudioSpec's samples field was 0 here: max(256, 0))
+        want.format = c.spec.format;
         okay::platform::Backend* pb = okay::platform::Default();
         g_playDev = pb ? pb->OpenAudio(want, false, nullptr, nullptr) : nullptr;
         if (!g_playDev) { Toast("No audio output device", 2); return; }
         g_playUrl = url;
     }
     g_playDev->ClearQueued();
-    Uint32 len = 0;
-    const Uint8* buf = VoiceBuffer(c, len);
-    const Uint32 frame = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
-    Uint32 off = (Uint32)(std::clamp(frac, 0.0f, 1.0f) * len);
-    off -= off % std::max<Uint32>(1, frame);
+    std::uint32_t len = 0;
+    const std::uint8_t* buf = VoiceBuffer(c, len);
+    const std::uint32_t frame = (std::uint32_t)(okay::platform::BytesPerSample(c.spec.format) * std::max<int>(1, c.spec.channels));
+    std::uint32_t off = (std::uint32_t)(std::clamp(frac, 0.0f, 1.0f) * len);
+    off -= off % std::max<std::uint32_t>(1, frame);
     if (off >= len) off = 0;
     g_playFrom = off; g_playLen = len;
     g_playDev->Queue(buf + off, len - off);
@@ -4511,8 +4474,8 @@ static void PlayVoiceAt(const std::string& url, VoiceClip& c, float frac) {
 }
 static float VoicePlayFrac(const std::string& url, const VoiceClip& c) {   // -1 = not this clip
     if (!g_playDev || g_playUrl != url || !c.len) return -1.0f;
-    const Uint32 len = g_playLen ? g_playLen : c.len;
-    Uint32 left = g_playDev->QueuedBytes();
+    const std::uint32_t len = g_playLen ? g_playLen : c.len;
+    std::uint32_t left = g_playDev->QueuedBytes();
     return std::min(1.0f, (float)(len - std::min(left, len)) / len);
 }
 static void PumpVoicePlayback() {   // once per frame: finish clips, start "wanted" ones
@@ -4683,8 +4646,8 @@ void PlayChatChime() {
     if (okayfriends::QuietAlerts(g_onlineStatus)) return;   // Do not disturb: no chat sounds
     if (!g_chatSounds || !EnsureAudio()) return;
     static std::unique_ptr<okay::platform::AudioDevice> dev;
-    static std::vector<Sint16> pcm;
-    static Uint32 lastAt = 0;
+    static std::vector<std::int16_t> pcm;
+    static std::uint32_t lastAt = 0;
     if (okay::platform::TicksMs32() - lastAt < 1200 && lastAt) return;   // a burst of messages = one chime
     lastAt = okay::platform::TicksMs32();
     const int rate = 22050;
@@ -4696,7 +4659,7 @@ void PlayChatChime() {
                 float t = (float)i / rate;
                 float env = std::min(1.0f, t * 400.0f) * std::exp(-t * (n ? 14.0f : 22.0f));
                 float v = std::sin(6.2831853f * notes[n] * t) + 0.25f * std::sin(6.2831853f * notes[n] * 2.0f * t);
-                pcm.push_back((Sint16)(v * env * 5200.0f));
+                pcm.push_back((std::int16_t)(v * env * 5200.0f));
             }
         }
     }
@@ -4709,7 +4672,7 @@ void PlayChatChime() {
         dev->Pause(false);
     }
     dev->ClearQueued();
-    dev->Queue(pcm.data(), (uint32_t)(pcm.size() * sizeof(Sint16)));
+    dev->Queue(pcm.data(), (uint32_t)(pcm.size() * sizeof(std::int16_t)));
 }
 
 // Drag & drop target: DrawChatWindow publishes its rectangle and the open
@@ -4836,7 +4799,7 @@ static void PumpBlocks(okay::account::AccountService& account) {
         }
         SavePrefs();
     }
-    static std::string lastUser; static Uint32 next = 0;
+    static std::string lastUser; static std::uint32_t next = 0;
     if (user.empty() || !account.IsOnline() || g_pollCfgDir.empty()) {
         lastUser.clear();
         return;
@@ -4847,7 +4810,7 @@ static void PumpBlocks(okay::account::AccountService& account) {
             g_blockedUsers.clear(); g_blockedNames.clear(); g_blockPending.clear(); g_blocksSyncedFor = user; SavePrefs();   // that list was another account's
         }
     }
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (g_blkBusy || (!g_blkWant && now < next)) return;
     g_blkWant = false;
     next = now + (g_blockPending.empty() ? 600000u : 60000u);
@@ -4902,7 +4865,7 @@ static void PumpPrivacy(okay::account::AccountService& account) {
     if (g_privRes.ready) { res = std::move(g_privRes); g_privRes = PrivResult(); have = true; }
     okay::thr::UnlockMutex(g_privMutex);
     const std::string user = account.IsLoggedIn() ? account.CurrentSession().username : std::string();
-    static std::string syncedUser; static Uint32 retryAt = 0;
+    static std::string syncedUser; static std::uint32_t retryAt = 0;
     if (have && res.user == user) {
         if (res.support) g_privSupport = res.support;
         if (res.fetched && !g_privDirty) {   // (a change made meanwhile is newer than the fetched row)
@@ -4980,8 +4943,8 @@ static void PumpCrashUpload() {
         g_crashUpRes = CrashUpResult();
     }
     okay::thr::UnlockMutex(g_crashUpMutex);
-    static Uint32 next = 0;
-    const Uint32 now = okay::platform::TicksMs32();
+    static std::uint32_t next = 0;
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (g_crashUpBusy || (now < next && !g_crashUpResetSince)) return;
     next = now + 20000;   // a look every 20 seconds is plenty
     const fs::path dir = CrashDir();
@@ -5037,10 +5000,10 @@ struct OutMsg {
     long localId = 0; std::string toUid; long toGroup = 0; long toChannel = 0; std::string body; long replyTo = 0;
     int state = 0;            // 0 queued/sending, 1 sent (waiting for the log), -1 failed
     std::string err;          // why it failed, when the server said (e.g. a privacy rule: "This person does not accept messages from you.")
-    long when = 0; Uint32 sentAt = 0;
+    long when = 0; std::uint32_t sentAt = 0;
     std::string clientId;     // okay::chat::MakeClientId, kept across retries so a resend is stored once (docs/sql/chat_invites.sql)
     int attempts = 0;         // failed tries that were worth retrying (no connection, 5xx, the rate limit)
-    Uint32 nextTry = 0;       // ...and when the next one may start (TicksMs32)
+    std::uint32_t nextTry = 0;       // ...and when the next one may start (TicksMs32)
     std::string inviteKind;   // "game": also record a game_invites row first (expiry, accept / decline), then send the card
 };
 static okay::thr::Mutex* g_outMutex = nullptr;
@@ -5073,7 +5036,7 @@ static fs::path OutboxFile(const std::string& user) {
 static void SyncOutboxFile(const std::string& user) {
     static std::string loadedFor;
     static std::string savedText;
-    static Uint32 nextCheck = 0;
+    static std::uint32_t nextCheck = 0;
     if (!g_outMutex) g_outMutex = okay::thr::CreateMutex();
     if (user != loadedFor) {
         loadedFor = user; savedText.clear();
@@ -5151,7 +5114,7 @@ static std::string SvTag(int kind, long ref) { return kind == 0 || ref <= 0 ? st
 bool ChatDemo() { static const bool d = std::getenv("OKAY_CHAT_DEMO") != nullptr; return d; }
 
 // ---- Pinned messages -----------------------------------------------------------
-static Uint32 g_pinsTouchedMs = 0;   // a local pin change: polled pins wait a moment (no flicker)
+static std::uint32_t g_pinsTouchedMs = 0;   // a local pin change: polled pins wait a moment (no flicker)
 struct ChatPinJob { bool group = false; long id = 0; bool on = false; };
 static int ChatPinWorker(void* p) {
     std::unique_ptr<ChatPinJob> j(static_cast<ChatPinJob*>(p));
@@ -5577,7 +5540,7 @@ static void SetMyStatus(const std::string& text, long until) {
 static void PumpStatus(bool signedIn) {
     if (!signedIn) return;
     if (!g_myStatusKnown && !g_statusBusy && !ChatDemo() && !g_pollCfgDir.empty()) {
-        static Uint32 nextTry = 0;
+        static std::uint32_t nextTry = 0;
         if (okay::platform::TicksMs32() >= nextTry) {
             nextTry = okay::platform::TicksMs32() + 30000;
             g_statusBusy = true;
@@ -5803,7 +5766,7 @@ static std::vector<OutMsg> OutboxForChannel(long channelId, const std::function<
     std::vector<OutMsg> pend;
     if (!g_outMutex || channelId <= 0) return pend;
     okay::thr::LockMutex(g_outMutex);
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     g_outbox.erase(std::remove_if(g_outbox.begin(), g_outbox.end(), [&](const OutMsg& o) {
         return o.toChannel == channelId && o.state == 1 && (inLog(o.body, o.when) || now - o.sentAt > 15000);
     }), g_outbox.end());
@@ -5832,7 +5795,7 @@ int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, ImVec4 
     if (!g_outMutex) return 0;
     std::vector<OutMsg> pend;
     okay::thr::LockMutex(g_outMutex);
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     g_outbox.erase(std::remove_if(g_outbox.begin(), g_outbox.end(), [&](const OutMsg& o) {
         return o.toChannel == 0 && o.state == 1 && (inLog(o.body, o.when) || now - o.sentAt > 15000);
     }), g_outbox.end());
@@ -5912,7 +5875,7 @@ static long g_chatPeerRead = 0;                                         // (guar
 static bool g_chatPeerHere = false;        // (guarded) the peer has our chat open right now
 static long g_chatPeerLastSeen = 0;        // (guarded) peer's last online heartbeat (unix)
 static std::string g_chatPeerStateUid;     // (guarded) which conversation the three above describe
-static volatile Uint32 g_chatViewMs = 0;   // last frame an open DM was on screen with the app focused
+static volatile std::uint32_t g_chatViewMs = 0;   // last frame an open DM was on screen with the app focused
 static std::vector<okay::Messages::ConversationPreview> g_chatConvs;    // (guarded)
 static std::vector<okay::Friend> g_chatFriends;                        // (guarded)
 // ---- Group chats (multi-person DMs) ----------------------------------------
@@ -5969,7 +5932,7 @@ void DrawStar(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
 float ChatPollWidth(float maxW) { return std::min(maxW, 300.0f); }
 static void ChatReactAsync(bool group, long id, const std::string& removeKey, const std::string& addKey);   // defined with the chat workers
 // My vote as just tapped, shown until the poller's data agrees (or 15 s pass).
-struct PollLocalVote { int choice = -1; Uint32 at = 0; };
+struct PollLocalVote { int choice = -1; std::uint32_t at = 0; };
 static std::map<std::pair<int, long>, PollLocalVote> g_pollLocal;
 static void PollTally(bool group, long id, std::size_t n, const std::map<std::string, long>* counts,
                       const std::set<std::string>* mine, std::vector<long>& out, int& myChoice) {
@@ -6307,10 +6270,10 @@ struct VoiceCall {
     std::string peerUid, peerName, peerAvatar, code, title;
     long serverId = 0;
     bool outgoing = false, answered = false;
-    Uint32 started = 0, emptySince = 0;
+    std::uint32_t started = 0, emptySince = 0;
 };
 static VoiceCall g_call;
-struct IncomingCall { std::string fromUid, fromName, fromAvatar, code, key; long msgId = 0; Uint32 ringStart = 0; };
+struct IncomingCall { std::string fromUid, fromName, fromAvatar, code, key; long msgId = 0; std::uint32_t ringStart = 0; };
 static IncomingCall g_incoming;
 static std::set<long> g_callSeen;   // call messages already rung/handled
 
@@ -6392,7 +6355,7 @@ static void VoicePump() {
         return;
     }
     if (g_call.kind != 1) return;
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     const bool anyone = !g_voice.Peers().empty();
     if (anyone && !g_call.answered) g_call.answered = true;
     if (g_call.outgoing && !g_call.answered && now - g_call.started > 45000) { VoiceHangup(); Toast("No answer", 0); return; }
@@ -7083,10 +7046,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
     PumpVoicePlayback();
     InvitePumpAnswers();   // invite cards answered (accept joins)
     if (!g_chatWinOpen && !kChatDemo) { if (VoiceRecording()) FinishVoiceRecord(false); return; }
-    static std::vector<okay::Friend> friends; static Uint32 friendsNext = 0;
-    static std::vector<okay::Messages::ConversationPreview> convs; static Uint32 convsNext = 0;
+    static std::vector<okay::Friend> friends; static std::uint32_t friendsNext = 0;
+    static std::vector<okay::Messages::ConversationPreview> convs; static std::uint32_t convsNext = 0;
     static std::string selUid, selName, selAvatar; static bool selOnline = false;
-    static std::vector<okay::DirectMessage> log; static Uint32 logNext = 0;
+    static std::vector<okay::DirectMessage> log; static std::uint32_t logNext = 0;
     static std::map<long, std::map<std::string,long>> reacts;   // id -> emoji -> count
     static std::map<long, std::set<std::string>> myReacts;      // id -> emojis I used
     static long peerRead = 0;                        // peer's last-read id (Seen marker)
@@ -7097,15 +7060,15 @@ void DrawChatWindow(okay::account::AccountService& account) {
     static char convFilter[96] = ""; static char msgSearch[96] = ""; static bool showSearch = false;
     static bool wantScrollBottom = false;            // Jump-to-latest request
     static bool focusComposer = false;               // focus the input on open
-    static Uint32 typingSentAt = 0, typingPollNext = 0;  // typing indicator timers
+    static std::uint32_t typingSentAt = 0, typingPollNext = 0;  // typing indicator timers
     static bool peerTyping = false;                  // the other person is typing
     static bool peerHere = false;                    // they have this chat open right now (Snapchat-style)
     static long peerLastSeen = 0;                    // their last online heartbeat (for "Delivered")
     static long scrollToId = 0, flashId = 0;         // jump to a replied-to message
-    static Uint32 flashUntil = 0;
+    static std::uint32_t flashUntil = 0;
     static int scrollHits = 0;                       // frames spent aiming at scrollToId
     {   // a jump target that never shows up (deleted message) stops blocking auto-scroll
-        static long target = 0; static Uint32 since = 0;
+        static long target = 0; static std::uint32_t since = 0;
         if (scrollToId != target) { target = scrollToId; since = okay::platform::TicksMs32(); scrollHits = 0; }
         if (scrollToId != 0 && okay::platform::TicksMs32() - since > 4000) { scrollToId = 0; target = 0; }
     }
@@ -7217,13 +7180,13 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 const std::string u1 = "https://example.com/storage/v1/object/public/chat/demo/voice-a.wav";
                 const std::string u2 = "https://example.com/storage/v1/object/public/chat/demo/voice-b.wav";
                 for (const auto& u : {u1, u2}) {
-                    std::vector<Sint16> pcm((std::size_t)kVoiceRate * (u == u1 ? 7 : 4));
+                    std::vector<std::int16_t> pcm((std::size_t)kVoiceRate * (u == u1 ? 7 : 4));
                     unsigned rng = (unsigned)std::hash<std::string>{}(u);
                     for (std::size_t i = 0; i < pcm.size(); ++i) {
                         float t = (float)i / kVoiceRate;
                         float env = std::max(0.0f, std::sin(t * 2.3f) * std::sin(t * 7.1f + 1.0f));   // syllables
                         rng = rng * 1664525u + 1013904223u;
-                        pcm[i] = (Sint16)(env * 20000.0f * (((rng >> 9) & 0xFFFF) / 32768.0f - 1.0f));
+                        pcm[i] = (std::int16_t)(env * 20000.0f * (((rng >> 9) & 0xFFFF) / 32768.0f - 1.0f));
                     }
                     WriteWav16(VoiceCachePath(u).string(), pcm, kVoiceRate);
                 }
@@ -7439,7 +7402,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             ImGui::End(); return;
         }
         okay::Messages dm(account);
-        Uint32 now = okay::platform::TicksMs32();
+        std::uint32_t now = okay::platform::TicksMs32();
         const std::string myName = kChatDemo ? std::string(std::getenv("OKAY_UI_DEMO_USER") ? std::getenv("OKAY_UI_DEMO_USER") : "You") : account.CurrentSession().username;
         // Friends + conversations come from the background chat poller (no UI block).
         (void)friendsNext; (void)convsNext;
@@ -7953,7 +7916,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
         // chat at that message.
         if (!folded && std::strlen(convFilter) >= 2) {
             static std::string lastQ, requested, resultsFor;
-            static Uint32 typedAt = 0;
+            static std::uint32_t typedAt = 0;
             static std::vector<okay::Messages::SearchHit> hits;
             const std::string q = convFilter;
             if (q != lastQ) { lastQ = q; typedAt = now; }
@@ -9526,7 +9489,7 @@ static std::vector<PolledChatEvent> PollChatEvents(okay::account::AccountService
     static long invSeen = -1;
     static std::map<long, std::string> sentKnown;
     static std::map<long, long> groupSeen;
-    static Uint32 invOffUntil = 0;
+    static std::uint32_t invOffUntil = 0;
     const std::string who = poller.CurrentSession().username;
     if (who != evFor) { evFor = who; invSeen = -1; sentKnown.clear(); groupSeen.clear(); invOffUntil = 0; }
     std::map<std::string, std::string> names; bool namesRead = false;
@@ -9538,7 +9501,7 @@ static std::vector<PolledChatEvent> PollChatEvents(okay::account::AccountService
         auto it = names.find(uid);
         return it != names.end() ? it->second : std::string();
     };
-    const Uint32 nowMs = okay::platform::TicksMs32();
+    const std::uint32_t nowMs = okay::platform::TicksMs32();
     if (invOffUntil == 0 || (std::int32_t)(nowMs - invOffUntil) >= 0) {
         invOffUntil = 0;
         okay::Invites invs(poller);
@@ -10238,8 +10201,8 @@ static int TokenRefreshWorker(void*) {
     return 0;
 }
 static void PumpTokenRefresh(okay::account::AccountService& account) {
-    static Uint32 next = 0;
-    const Uint32 now = okay::platform::TicksMs32();
+    static std::uint32_t next = 0;
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (now < next || g_tokRefreshBusy || !account.IsLoggedIn() || !account.UsesEmail() || g_pollCfgDir.empty()) return;
     next = now + 30000;
     account.ReloadSessionToken();   // a finished refresh (ours or the editor's) lands here
@@ -10251,11 +10214,11 @@ static void PumpTokenRefresh(okay::account::AccountService& account) {
 }
 
 static void PumpRoleCheck(bool signedIn) {
-    static Uint32 next = 0; static bool wasIn = false;
+    static std::uint32_t next = 0; static bool wasIn = false;
     if (std::getenv("OKAY_UI_DEMO_USER")) { g_myRank = 3; return; }
     if (!g_roleMutex) g_roleMutex = okay::thr::CreateMutex();
     if (!signedIn) { g_myRank = -1; g_myBan = okay::MyBanInfo(); wasIn = false; return; }
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (!wasIn) { wasIn = true; next = 0; }
     if (now >= next && !g_roleCheckBusy && !g_pollCfgDir.empty()) {
         next = now + (g_roleLastFailed ? 60000u : 300000u);   // a failed check is retried after a minute
@@ -10466,7 +10429,7 @@ static int OutboxWorker(void*) {
     std::unique_ptr<okay::account::AccountService> acct;
     while (true) {
         OutMsg job; bool have = false, waiting = false;
-        const Uint32 nowMs = okay::platform::TicksMs32();
+        const std::uint32_t nowMs = okay::platform::TicksMs32();
         okay::thr::LockMutex(g_outMutex);
         for (auto& o : g_outbox) {
             if (o.state != 0) continue;
@@ -10492,7 +10455,7 @@ static int OutboxWorker(void*) {
         for (auto& o : g_outbox) if (o.localId == job.localId) {
             o.body = job.body;   // an invite card now carries its record's id
             if (!ok && retry && o.attempts < 8) {
-                o.nextTry = okay::platform::TicksMs32() + 1000u * (Uint32)okay::chat::RetryDelaySeconds(o.attempts++);
+                o.nextTry = okay::platform::TicksMs32() + 1000u * (std::uint32_t)okay::chat::RetryDelaySeconds(o.attempts++);
                 o.err = why;
                 continue;   // still "Sending"
             }
@@ -10549,12 +10512,12 @@ static void PickAndSendAttachment(const std::string& toUid, long toGroup, long t
 static int ChatPollWorker(void*) {
     okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
     okay::Messages dm(a); okay::Friends fr(a);
-    Uint32 nextLog = 0, nextTyping = 0, nextConv = 0, nextFri = 0, nextGroups = 0, nextGLog = 0;
-    Uint32 nextHere = 0, nextSeen = 0, nextPins = 0, nextGMem = 0;
+    std::uint32_t nextLog = 0, nextTyping = 0, nextConv = 0, nextFri = 0, nextGroups = 0, nextGLog = 0;
+    std::uint32_t nextHere = 0, nextSeen = 0, nextPins = 0, nextGMem = 0;
     std::string lastUid; long lastGid = 0, lastMark = 0, peerLastSeen = 0;
     while (g_chatPollRun) {
         if (!g_chatWinOpen) { okay::platform::DelayMs(200); continue; }
-        Uint32 now = okay::platform::TicksMs32();
+        std::uint32_t now = okay::platform::TicksMs32();
         std::string uid; long gid = 0;
         if (g_chatMutex) { okay::thr::LockMutex(g_chatMutex); uid = g_chatSelUid; gid = g_chatSelGroup; okay::thr::UnlockMutex(g_chatMutex); }
         if (uid != lastUid) { lastUid = uid; nextLog = 0; nextTyping = 0; nextHere = 0; nextSeen = 0; lastMark = 0; peerLastSeen = 0; }   // conversation changed → poll now
@@ -10685,7 +10648,7 @@ static okay::thr::Mutex*  g_srvMutex = nullptr;
 static okay::thr::Thread* g_srvThread = nullptr;
 static volatile bool g_srvPollRun = true;
 static volatile long g_srvSel = 0, g_srvChan = 0;    // inputs set by the main thread
-static volatile Uint32 g_srvActiveMs = 0;            // last frame the Servers tab rendered
+static volatile std::uint32_t g_srvActiveMs = 0;            // last frame the Servers tab rendered
 static bool g_srvChanReady = false, g_srvMemReady = false, g_srvMsgReady = false;  // (guarded)
 static std::vector<okay::Channel> g_srvChannels;      // (guarded)
 static std::vector<okay::ServerMember> g_srvMembers;  // (guarded)
@@ -10695,10 +10658,10 @@ static std::map<long,bool> g_srvMyLikes;              // (guarded)
 static int ServerPollWorker(void*) {
     okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
     okay::Servers sv(a);
-    Uint32 nextChan = 0, nextMem = 0, nextMsg = 0;
+    std::uint32_t nextChan = 0, nextMem = 0, nextMsg = 0;
     long lastSel = 0, lastChan = 0;
     while (g_srvPollRun) {
-        Uint32 now = okay::platform::TicksMs32();
+        std::uint32_t now = okay::platform::TicksMs32();
         if (now - g_srvActiveMs > 2500) { okay::platform::DelayMs(200); continue; }   // only while viewing Servers
         long sel = g_srvSel, chan = g_srvChan;
         if (sel != lastSel)  { lastSel = sel;  nextChan = 0; nextMem = 0; }
@@ -10804,7 +10767,7 @@ static void DrawToastOverlay() {
 // Created on first open; closing it just hides it.
 struct ChatWindowHost {
     SDL_Window* win = nullptr; SDL_Renderer* ren = nullptr; ImGuiContext* ctx = nullptr;
-    ImFont* mono = nullptr; Uint32 id = 0; bool shown = false;
+    ImFont* mono = nullptr; std::uint32_t id = 0; bool shown = false;
 };
 static ChatWindowHost g_chatHost;
 // Dear ImGui input: imgui_impl_sdl2 by default, or our own okay::platform feed with OKAY_PLATFORM_EVENTS=own
@@ -11106,7 +11069,7 @@ static void ChatHostRaise() { if (g_chatHost.shown) { lw::Restore(g_chatHost.win
 static bool ChatHostEvent(const okay::platform::Event& e) {
     if (!g_chatHost.win) return false;
     using EvT = okay::platform::EventType;
-    Uint32 wid = 0;
+    std::uint32_t wid = 0;
     switch (e.type) {
         case EvT::WindowClose: case EvT::WindowResized: case EvT::WindowFocusGained: case EvT::WindowFocusLost: case EvT::WindowExposed:
         case EvT::KeyDown: case EvT::KeyUp: case EvT::TextInput: case EvT::TextEditing:
@@ -11159,8 +11122,8 @@ static int PlaytimeSyncWorker(void*) {
     return 0;
 }
 static void PlaytimeTick(bool loggedIn) {
-    static Uint32 nextPump = 0, nextSync = 0;
-    const Uint32 now = okay::platform::TicksMs32();
+    static std::uint32_t nextPump = 0, nextSync = 0;
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (now >= nextPump) { nextPump = now + 1000; PumpPlaytime(); }
     if (g_playtimeDirty && g_sharePlaytime && loggedIn && !g_playtimeSyncing && now >= nextSync && !g_pollCfgDir.empty()) {
         g_playtimeDirty = false; nextSync = now + 120000;   // at most every 2 minutes
@@ -11235,7 +11198,7 @@ static okay::thr::Thread* g_offThread = nullptr;
 // Main thread only.
 static og::Manifest g_offInstalled;
 static bool g_offIsInstalled = false;
-static Uint32 g_offLastCheck = 0;
+static std::uint32_t g_offLastCheck = 0;
 static bool g_offConfirmUninstall = false;
 
 template <class F> static void OffLocked(F fn) { okay::thr::LockMutex(g_offMutex); fn(); okay::thr::UnlockMutex(g_offMutex); }
@@ -11513,8 +11476,8 @@ static void UninstallOfficial() {
 // look for a newer version.
 static void OfficialTick(bool onPlayPage) {
     static bool started = false, wasOnPlay = false;
-    static Uint32 startCheckAt = 0, nextRunCheck = 0;
-    const Uint32 now = okay::platform::TicksMs32();
+    static std::uint32_t startCheckAt = 0, nextRunCheck = 0;
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (!started) {
         started = true;
         g_offMutex = okay::thr::CreateMutex();
@@ -12438,9 +12401,9 @@ static void TestBuildsSwitched() {
 // Rebuilt about once a second (it asks the file system and the process list); the colours follow the theme every frame.
 static const okayversionsui::Host& VersionsHost() {
     static okayversionsui::Host h;
-    static Uint32 builtAt = 0;
+    static std::uint32_t builtAt = 0;
     static bool wired = false;
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (!wired) {
         wired = true;
         h.toast = [](const std::string& m, int kind) { Toast(m, kind); };
@@ -12483,13 +12446,14 @@ static const okayversionsui::Host& VersionsHost() {
 // What the Command line page needs: the okay program in Tools, the projects for its picker, the mono font and the look.
 static const okaylcli::Host& CommandLineHost() {
     static okaylcli::Host h;
-    static Uint32 builtAt = 0;
-    const Uint32 now = okay::platform::TicksMs32();
+    static std::uint32_t builtAt = 0;
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (!h.toast) h.toast = [](const std::string& m, int kind) { Toast(m, kind); };
     if (builtAt == 0 || now - builtAt > 2000) {
         builtAt = now;
         h.okayExe = FindExe({"okay.exe", "okay"});
         h.toolsDir = h.okayExe.empty() ? std::string() : fs::path(h.okayExe).parent_path().string();
+        h.programs = okaylcli::FindPrograms({g_exeDir, (fs::path(g_exeDir) / "Tools").string()});   // browser, Script Editor, Visual Script
         h.projects.clear();
         const fs::path dir = g_projectsDir.empty() ? fs::path(g_exeDir) / "Projects" : fs::path(g_projectsDir);
         for (const auto& lp : okayproj::ScanProjects(dir, g_hiddenProjects, g_extraProjects))
@@ -12599,11 +12563,11 @@ static void SkeletonGrid(const okay::launcherlayout::Grid& grid, float cardH, fl
 long g_mktOpenItem = 0;   // a creation to open on the Marketplace item page (set by the Community showcase)
 static void DrawCommunityShowcase(okay::account::AccountService& account, int view, int& tab, const char* demoUser, const std::vector<fs::path>& scenes) {
     namespace PL = okay::launcherlayout;
-    static Uint32 s_nextFetch = 0;
+    static std::uint32_t s_nextFetch = 0;
     static std::vector<okay::WorkshopItem> items;
     static std::map<long, std::pair<long, long>> ratings;
     static bool loaded = false, failed = false;
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (!g_wsMutex) g_wsMutex = okay::thr::CreateMutex();
     if (now >= s_nextFetch && !g_wsFetching) {   // the marketplace list, the same worker the Marketplace uses
         g_wsFetching = true; s_nextFetch = now + 30000;
@@ -12928,8 +12892,8 @@ static int DrawNotificationsPage(okay::account::AccountService& account) {
         std::vector<Req> reqs;
         if (demo) reqs = {{"alexr", 0}, {"nova_builds", 0}};
         else if (account.IsLoggedIn()) {
-            static Uint32 s_next = 0;
-            const Uint32 now = okay::platform::TicksMs32();
+            static std::uint32_t s_next = 0;
+            const std::uint32_t now = okay::platform::TicksMs32();
             if (!g_frMutex) g_frMutex = okay::thr::CreateMutex();
             if (g_friendRequests > 0 && now >= s_next && !g_frFetching) {   // the same worker the Friends page uses
                 g_frFetching = true; s_next = now + 15000;
@@ -12978,7 +12942,7 @@ static int DrawNotificationsPage(okay::account::AccountService& account) {
     }
 
     // ---- The feed, newest first, grouped Today / Yesterday / Earlier ----
-    const Uint32 nowT = okay::platform::TicksMs32();
+    const std::uint32_t nowT = okay::platform::TicksMs32();
     const long nowUnix = (long)std::time(nullptr);
     const long today = DayKey(nowUnix), yday = DayKey(nowUnix - 86400);
     std::vector<int> order;
@@ -12989,7 +12953,7 @@ static int DrawNotificationsPage(okay::account::AccountService& account) {
         order.push_back(i);
     }
     std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
-        return (Uint32)(nowT - g_notifs[(std::size_t)a].time) < (Uint32)(nowT - g_notifs[(std::size_t)b].time);
+        return (std::uint32_t)(nowT - g_notifs[(std::size_t)a].time) < (std::uint32_t)(nowT - g_notifs[(std::size_t)b].time);
     });
     const float timeW = ImGui::CalcTextSize("00m").x + UiPx(28.0f);
     int lastGroup = -1, dismissIdx = -1;
@@ -12997,7 +12961,7 @@ static int DrawNotificationsPage(okay::account::AccountService& account) {
         Notif& n = g_notifs[(std::size_t)idx];
         const int kind = kindOf(n);
         const bool un = isUnread(n);
-        const Uint32 ageS = (Uint32)(nowT - n.time) / 1000u;
+        const std::uint32_t ageS = (std::uint32_t)(nowT - n.time) / 1000u;
         const long dk = DayKey(nowUnix - (long)ageS);
         const int grp = dk == today ? 0 : dk == yday ? 1 : 2;
         if (grp != lastGroup) {
@@ -13490,7 +13454,7 @@ int main(int argc, char** argv) {
     okay::restart::RememberArguments(argc, argv);
     okay::ownswitches::Startup();   // Settings > Experimental: set the chosen own-code variables BEFORE anything reads them (the editor started from here inherits them)
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
-    SDL_SetMainReady();
+    // (SDL_SetMainReady is called by the sdl2 backend's Init, the first SDL call; nothing here needs it.)
     {
         std::error_code ec;
         fs::path self = okay::restart::CurrentExecutable();
@@ -13601,9 +13565,9 @@ int main(int argc, char** argv) {
         if (ai < 0 || ai >= an) ai = 0;
         if (g_splashAccentOverride) { st.ar = g_splashAccent[0]; st.ag = g_splashAccent[1]; st.ab = g_splashAccent[2]; }
         else { st.ar = kAccentPresets[ai].col.x; st.ag = kAccentPresets[ai].col.y; st.ab = kAccentPresets[ai].col.z; }
-        auto C = [](const float* c) -> SDL_Color {
-            auto u = [](float v){ return (Uint8)((v < 0 ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };
-            return SDL_Color{u(c[0]), u(c[1]), u(c[2]), 255}; };
+        auto C = [](const float* c) -> okay::ui2d::RGBA {
+            auto u = [](float v){ return (std::uint8_t)((v < 0 ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };
+            return okay::ui2d::RGBA{u(c[0]), u(c[1]), u(c[2]), 255}; };
         st.bgTop = C(g_splashBgTop); st.bgBottom = C(g_splashBgBot);
         st.logo = g_splashLogoTex; st.showProgress = g_splashShowBar;
         return st;
@@ -13635,10 +13599,11 @@ int main(int argc, char** argv) {
             JetBrainsMono_compressed_data_base85, 16.0f, &fc);
     }
     ApplyAccent(g_accentIndex);  // applies the saved accent/theme (calls DarkTheme)
-    // Which Dear ImGui input path runs: imgui_impl_sdl2 (default) or our own okay::platform feed (OKAY_PLATFORM_EVENTS=own).
-    // The own feed has no gamepad navigation; keys, text, mouse, wheel, focus, clipboard and the cursor shape work.
+    // Which Dear ImGui input path runs: our own okay::platform feed (the default on every backend, rule 17) or imgui_impl_sdl2
+    // (OKAY_PLATFORM_EVENTS=sdl2, the way back while SDL2 is linked; only on the sdl2 backend). The own feed has no gamepad
+    // navigation; keys, text, mouse, wheel, focus, clipboard and the cursor shape work.
     const bool ownBackend = sdlSeam->Kind() == okay::platform::BackendKind::Own;
-    g_imguiOwnFeed = ownBackend || okay::imguifeed::OwnRequested(std::getenv("OKAY_PLATFORM_EVENTS"));
+    g_imguiOwnFeed = ownBackend || okay::imguifeed::OwnRequested(std::getenv("OKAY_PLATFORM_EVENTS"), true);
     std::fprintf(stderr, "platform backend: %s\n", sdlSeam->Name());
     std::fprintf(stderr, "%s\n", okay::imguifeed::ActiveLine(g_imguiOwnFeed));
     sdlSeam->ReportUnmappedEvents(!g_imguiOwnFeed);   // imgui_impl_sdl2 wants every SDL event (pointer enter / leave, display changes ...)
@@ -13647,7 +13612,7 @@ int main(int argc, char** argv) {
         if (!ownBackend) { g_imguiMainWrap = okay::platform::WrapSdl2Window(window); feedWin = g_imguiMainWrap.get(); }
         g_imguiFeed.Init(ImGui::GetIO(), feedWin->Id(), okay::imguifeed::FeedHost::FromPlatform(okay::platform::Default(), feedWin));
     } else ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
-    g_imguiOwnRender = ownBackend || okay::imguirender::OwnRequested(std::getenv("OKAY_IMGUI_RENDER"));
+    g_imguiOwnRender = ownBackend || okay::imguirender::OwnRequested(std::getenv("OKAY_IMGUI_RENDER"), true);   // own by default; =sdl2 goes back
     std::fprintf(stderr, "%s\n", okay::imguirender::ActiveLine(g_imguiOwnRender));
     if (g_imguiOwnRender) okay::imguirender::Init(ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Init(renderer);
 
@@ -13820,7 +13785,7 @@ int main(int argc, char** argv) {
     while (running) {
         okay::thr::AtomicSet(&g_programsRunning, AnyProgramRunning() ? 1 : 0);   // every frame, minimized or not (the update worker reads it before swapping files)
         bool okayFrame = false;   // this frame has an OkayUI frame open (the OkayUI backend is on): closed after ImGui's draw data
-        Uint64 frameStart = okay::platform::PerfCounter();   // for the frame-rate cap below
+        std::uint64_t frameStart = okay::platform::PerfCounter();   // for the frame-rate cap below
         // Current account service for this frame. Held by reference so existing
         // code reads naturally; the Settings tab may rebuild accountPtr (which
         // is why the Settings tab uses accountPtr-> directly, not this alias).
@@ -13933,7 +13898,7 @@ int main(int argc, char** argv) {
             if (clicked.place != okl::notify::Place::None) { RestoreLauncher(window); NotifyOpenTarget(clicked, tab); }
         }
         {
-            static Uint32 nextWatch = 0;
+            static std::uint32_t nextWatch = 0;
             if (!g_tray->Hidden()) nextWatch = 0;
             else if (okay::platform::TicksMs32() >= nextWatch) {
                 nextWatch = okay::platform::TicksMs32() + okaytray::kWatchdogMs;
@@ -14043,7 +14008,7 @@ int main(int argc, char** argv) {
         // Auto-restart the launcher after it updates itself (the new exe is already
         // swapped in). Give the toast a moment, then relaunch and quit.
         if (g_upRelaunchNeeded && GetState() == Up_Updated) {
-            static Uint32 relaunchAt = 0;
+            static std::uint32_t relaunchAt = 0;
             if (relaunchAt == 0) relaunchAt = okay::platform::TicksMs32() + 1600;
             else if (okay::platform::TicksMs32() >= relaunchAt) {
                 relaunchAt = 0xFFFFFFFFu;   // one attempt; a failure must not spawn a helper every frame
@@ -14055,7 +14020,7 @@ int main(int argc, char** argv) {
 
         // `--versions` from a second launcher (the editor's "Open launcher"): bring this window forward and open the Versions page.
         {
-            static Uint32 nextHandoff = 0;
+            static std::uint32_t nextHandoff = 0;
             if (okay::platform::TicksMs32() >= nextHandoff) {
                 nextHandoff = okay::platform::TicksMs32() + 400;
                 okayversions::LauncherArgs ha;
@@ -14075,7 +14040,7 @@ int main(int argc, char** argv) {
             // Look for a newer version shortly after start, then every 5 min, and again
             // whenever the launcher window comes back into focus (at most once a minute).
             // Each look only fetches the tiny VERSION.txt.
-            static Uint32 nextPoll = okay::platform::TicksMs32() + 10u * 1000u;
+            static std::uint32_t nextPoll = okay::platform::TicksMs32() + 10u * 1000u;
             if (static bool demoUp = false; !demoUp) {   // dev screenshot hook: pretend a newer version was found
                 demoUp = true;
                 if (const char* v = std::getenv("OKAY_UI_DEMO_UPDATE")) {
@@ -14085,7 +14050,7 @@ int main(int argc, char** argv) {
                 }
             }
             const UpState us = GetState();
-            static Uint32 lastPoll = 0;
+            static std::uint32_t lastPoll = 0;
             if (g_launcherRefocused) {
                 g_launcherRefocused = false;
                 if (lastPoll == 0 || okay::platform::TicksMs32() - lastPoll > 60u * 1000u) nextPoll = okay::platform::TicksMs32();
@@ -14166,7 +14131,7 @@ int main(int argc, char** argv) {
         PlaytimeTick(account.IsLoggedIn());
         OfficialTick(tab == 1);                // the official game: results, update checks, is it running
         if (!g_incoming.code.empty()) {   // ring (and get the user's attention) while a call waits
-            static Uint32 nextRing = 0;
+            static std::uint32_t nextRing = 0;
             if (okay::platform::TicksMs32() >= nextRing) {
                 PlayChatChime(); nextRing = okay::platform::TicksMs32() + 2200;
                 lw::Flash(g_chatHost.shown ? g_chatHost.win : window, okay::platform::FlashMode::Briefly);
@@ -14187,7 +14152,7 @@ int main(int argc, char** argv) {
         if (g_tray->Hidden() || okay::platform::IsBackgroundWindow(lw::IsVisible(window), lw::IsMinimized(window))) {
             const bool chatShown = g_chatHost.shown && !lw::IsMinimized(g_chatHost.win);
             if (chatShown) ChatHostFrame(account);   // the chat window keeps going on its own
-            okay::platform::DelayMs((Uint32)okaytray::IdleDelayMs(g_tray->Hidden(), chatShown, ChatHostFocused(), g_voice.Active()));
+            okay::platform::DelayMs((std::uint32_t)okaytray::IdleDelayMs(g_tray->Hidden(), chatShown, ChatHostFocused(), g_voice.Active()));
             continue;
         }
 
@@ -14261,7 +14226,7 @@ int main(int argc, char** argv) {
         // asks the editor to save everything and close, waits, then carries on.
         {
             static bool s_closing = false;
-            static Uint32 s_sentAt = 0;
+            static std::uint32_t s_sentAt = 0;
             if (g_afterEditor && !ImGui::IsPopupOpen("Close the editor first")) ImGui::OpenPopup("Close the editor first");
             ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
             if (ImGui::BeginPopupModal("Close the editor first", nullptr,
@@ -14325,7 +14290,7 @@ int main(int argc, char** argv) {
             namespace UV = okay::updateview;
             const UpState us = GetState();
             std::string fromV, toV; GetUpVers(fromV, toV);
-            static Uint32 s_stepTicks = 0; static int s_stepWas = -1; static long long s_lastChecked = 0;
+            static std::uint32_t s_stepTicks = 0; static int s_stepWas = -1; static long long s_lastChecked = 0;
             const int stepIdx = okay::thr::AtomicGet(&g_upStepIdx), stepTot = okay::thr::AtomicGet(&g_upStepTotal);
             if (stepIdx != s_stepWas || us != Up_Downloading) { s_stepWas = stepIdx; s_stepTicks = okay::platform::TicksMs32(); }
             if (us == Up_UpToDate && s_lastChecked == 0) s_lastChecked = (long long)std::time(nullptr);
@@ -14338,7 +14303,7 @@ int main(int argc, char** argv) {
             ui.step = GetUpStep(); ui.stepIndex = stepIdx; ui.stepCount = stepTot;
             ui.bytesNow = (long long)(unsigned)okay::thr::AtomicGet(&g_upBytesNow);
             ui.bytesTotal = (long long)(unsigned)okay::thr::AtomicGet(&g_upBytesTotal);
-            ui.secondsInStep = (double)(Uint32)(okay::platform::TicksMs32() - s_stepTicks) / 1000.0;
+            ui.secondsInStep = (double)(std::uint32_t)(okay::platform::TicksMs32() - s_stepTicks) / 1000.0;
             ui.error = GetUpMsg();
             ui.lastCheckedUnix = s_lastChecked; ui.nowUnix = (long long)std::time(nullptr);
             ui.restartNeeded = g_upRelaunchNeeded;
@@ -14515,7 +14480,7 @@ int main(int argc, char** argv) {
             if (!ntSeeded && kNtDemoState) tab = 16;   // (opens the Notifications page)
             const std::string ntDemo = kNtDemoState ? kNtDemoState : "";
             if (kNtDemo && !ntSeeded && ntDemo != "empty") {   // seed a realistic feed once (ages relative to now)
-                struct Seed { const char* key; const char* title; const char* body; int kind; Uint32 agoMin; bool unread; int go; };
+                struct Seed { const char* key; const char* title; const char* body; int kind; std::uint32_t agoMin; bool unread; int go; };
                 const Seed seed[] = {
                     {"demo:dm", "maya sent you a message", "Perfect. First playable by tonight? I can share the build link as soon as it's up.", 2, 2, true, 6},
                     {"demo:fr", "New friend request", "alexr wants to be your friend.", 1, 14, true, 6},
@@ -14526,8 +14491,8 @@ int main(int argc, char** argv) {
                     {"demo:news", "What's new in v2.776", "Servers get channel tabs, faster chat and a refreshed notifications panel.", 0, 3 * 1440, false, 0},
                     {"demo:dl", "Download finished", "Orbit Hopper (42 MB) is ready to play in your Library.", 3, 5 * 1440, false, 1},
                 };
-                const Uint32 t0 = okay::platform::TicksMs32();
-                auto add = [&](const std::string& key, const std::string& title, const std::string& body, int kind, Uint32 agoMin, bool unread, int go) {
+                const std::uint32_t t0 = okay::platform::TicksMs32();
+                auto add = [&](const std::string& key, const std::string& title, const std::string& body, int kind, std::uint32_t agoMin, bool unread, int go) {
                     Notif n; n.key = key; n.title = title; n.body = body; n.kind = kind;
                     n.time = t0 - agoMin * 60000u;   // may wrap: ages are always computed as (now - time) mod 2^32
                     n.read = !unread; n.gotoTab = go;
@@ -14536,7 +14501,7 @@ int main(int argc, char** argv) {
                 for (const Seed& s : seed) add(s.key, s.title, s.body, s.kind, s.agoMin, s.unread, s.go);
                 if (ntDemo == "many")
                     for (int i = 0; i < 30; ++i)
-                        add("demo:many" + std::to_string(i), "Friend " + std::to_string(i) + " is now playing", "Orbit Hopper  \xC2\xB7  join from their profile", i % 4, 300u + (Uint32)i * 400u, i < 4, 6);
+                        add("demo:many" + std::to_string(i), "Friend " + std::to_string(i) + " is now playing", "Orbit Hopper  \xC2\xB7  join from their profile", i % 4, 300u + (std::uint32_t)i * 400u, i < 4, 6);
                 if (ntDemo == "long") {
                     add("demo:long1", "averyveryverylongusername_2026 sent you a message with a really long title that will not fit",
                         "This body text is long on purpose: it keeps going past the end of the first line, past the second line too, and should be cut "
@@ -15128,11 +15093,11 @@ int main(int argc, char** argv) {
             }
             // Keep polling briefly after a create so the new project appears once the
             // editor saves its first scene, and highlight it during that window.
-            static Uint32 s_watchUntil = 0;
+            static std::uint32_t s_watchUntil = 0;
             static std::string s_highlight;
             if (!g_projectJustMade.empty()) { s_watchUntil = okay::platform::TicksMs32() + 8000; s_highlight = g_projectJustMade; g_projectJustMade.clear(); }
             if (s_watchUntil && okay::platform::TicksMs32() < s_watchUntil) {
-                static Uint32 t = 0;
+                static std::uint32_t t = 0;
                 if (okay::platform::TicksMs32() - t > 1000) { t = okay::platform::TicksMs32(); s_projScanned = "\x01"; }
             } else { s_watchUntil = 0; s_highlight.clear(); }
 
@@ -15223,15 +15188,15 @@ int main(int argc, char** argv) {
             static char s_ver[32] = "1.0.0";
             static char s_tplQ[64] = "";
             static std::string s_planKey;
-            static Uint32 s_planAt = 0;
-            static Uint32 s_createAt = 0;
+            static std::uint32_t s_planAt = 0;
+            static std::uint32_t s_createAt = 0;
             static okayproj::Plan s_plan;
-            static std::map<std::string, Uint32> s_openedAt;
+            static std::map<std::string, std::uint32_t> s_openedAt;
             const auto& s_tpls = okayproj::Templates();
             if (s_tpl < 0 || s_tpl >= (int)s_tpls.size()) s_tpl = 0;
             auto refreshPlan = [&]() {
                 const std::string key = std::string(npName) + "\n" + npLoc;
-                const Uint32 now = okay::platform::TicksMs32();
+                const std::uint32_t now = okay::platform::TicksMs32();
                 if (key != s_planKey || now - s_planAt > 1200) {
                     s_plan = okayproj::PlanProject(npLoc[0] ? npLoc : ".", npName);
                     s_planKey = key;
@@ -15360,8 +15325,8 @@ int main(int argc, char** argv) {
             std::vector<const CrProj*> projList;
             {
                 // A project is upgraded by the editor, a different program: keep the version on each card in step with the file.
-                static Uint32 s_stampAt = 0;
-                const Uint32 nowMs = okay::platform::TicksMs32();
+                static std::uint32_t s_stampAt = 0;
+                const std::uint32_t nowMs = okay::platform::TicksMs32();
                 if (nowMs - s_stampAt > 1000) {
                     s_stampAt = nowMs;
                     for (auto& pr : s_projects) if (pr.ready && !pr.root.empty()) okayver::RefreshStamp(pr.root, pr.ver);
@@ -17304,14 +17269,14 @@ int main(int argc, char** argv) {
                         const int games = LibraryGameCount(scenes);
                         float cx = o.x + UiPx(24.0f), cy = o.y + heroH - UiPx(46.0f);
                         const float chipH = UiPx(34.0f);
-                        auto chip = [&](const char* big, const char* small, float extraW) -> ImVec2 {
-                            const float bw = ImGui::CalcTextSize(big).x, sw = ImGui::CalcTextSize(small).x;
+                        auto chip = [&](const char* big, const char* subText, float extraW) -> ImVec2 {
+                            const float bw = ImGui::CalcTextSize(big).x, sw = ImGui::CalcTextSize(subText).x;
                             const float w = std::max(bw * 1.15f, sw) + UiPx(26.0f) + extraW;
                             d->AddRectFilled(ImVec2(cx, cy), ImVec2(cx + w, cy + chipH), okaytheme::Ink(10), 9.0f);
                             const float bigH = ImGui::GetFontSize() * 1.1f, smallH = ImGui::GetFontSize() * 0.80f;
                             const float ty0 = cy + (chipH - bigH - smallH) * 0.5f;
                             d->AddText(ImGui::GetFont(), bigH, ImVec2(cx + UiPx(12.0f), ty0), cText, big);
-                            d->AddText(ImGui::GetFont(), smallH, ImVec2(cx + UiPx(12.0f), ty0 + bigH), cDim, small);
+                            d->AddText(ImGui::GetFont(), smallH, ImVec2(cx + UiPx(12.0f), ty0 + bigH), cDim, subText);
                             const ImVec2 at(cx, cy);
                             cx += w + UiPx(8.0f);
                             return at;
@@ -18571,7 +18536,7 @@ int main(int argc, char** argv) {
                     static int crashOpen = -1;          // expanded report (index), -1 = none
                     const fs::path crashDir = CrashDir();
                     static int crashView = 0;           // what an expanded report shows: 0 = the report, 1 = what would be sent (scrubbed)
-                    static okaycrash::upload::Ledger crashLedger; static Uint32 crashLedgerAt = 0;
+                    static okaycrash::upload::Ledger crashLedger; static std::uint32_t crashLedgerAt = 0;
                     if (ImGui::IsWindowAppearing() || okay::platform::TicksMs32() - crashLedgerAt > 2000) {   // what was already sent (a small file beside the reports)
                         if (!crashDir.empty()) okaycrash::upload::LoadLedger((crashDir / okaycrash::upload::kLedgerName).string(), crashLedger);
                         crashLedgerAt = okay::platform::TicksMs32();
@@ -18873,7 +18838,7 @@ int main(int argc, char** argv) {
             // Achievements live on this device (okay::Achievements). Re-read the
             // small file a few times a second at most, not every frame.
             static std::vector<okay::Achievement> achs;
-            static Uint32 achNext = 0;
+            static std::uint32_t achNext = 0;
             static PfLocalShowcase achShow;
             if (okay::platform::TicksMs32() >= achNext) {
                 achNext = okay::platform::TicksMs32() + 1500;
@@ -18978,14 +18943,14 @@ int main(int argc, char** argv) {
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Level %d  \xC2\xB7  %d%% to level %d\nEvery achievement earns points; games can make hard ones worth more.", lvl, (int)(prog * 100), lvl + 1);
                     x += 2 * ringR + statGap;
                 }
-                auto stat = [&](float sx, float sw, const char* big, const char* small) {
+                auto stat = [&](float sx, float sw, const char* big, const char* subText) {
                     (void)sw;
                     ImGui::SetWindowFontScale(1.2f);
                     const ImVec2 bs = ImGui::CalcTextSize(big);
                     const float sh = bs.y + UiPx(2.0f) + lh * 0.8f;
                     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(sx, rcy - sh * 0.5f), cText, big);
                     ImGui::SetWindowFontScale(1.0f);
-                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.8f, ImVec2(sx, rcy - sh * 0.5f + bs.y + UiPx(2.0f)), cDim, small);
+                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.8f, ImVec2(sx, rcy - sh * 0.5f + bs.y + UiPx(2.0f)), cDim, subText);
                 };
                 stat(x, statW1, ps, "POINTS");     x += statW1 + statGap;
                 stat(x, statW2, m, "THIS MONTH");  x += statW2 + statGap;
@@ -19169,10 +19134,10 @@ int main(int argc, char** argv) {
                 // Follows (one-way): lists refreshed on a worker (QueueFollowJob).
                 static std::vector<okay::FollowEntry> flFollowing, flFollowers;
                 static bool flSupported = true;
-                static Uint32 flNext = 0;
+                static std::uint32_t flNext = 0;
                 static char flAddBuf[48] = "";
                 {
-                    const Uint32 tnow = okay::platform::TicksMs32();
+                    const std::uint32_t tnow = okay::platform::TicksMs32();
                     if (kFrDemo) {
                         static bool flSeeded = false;
                         if (!flSeeded) {
@@ -19204,9 +19169,9 @@ int main(int argc, char** argv) {
                 // Direct messages live in the floating Chat window (DrawChatWindow);
                 // the "Message" buttons call OpenChatWith(). Clicking a row opens
                 // the full public profile page (OpenPublicProfile).
-                static Uint32 fNextRefresh = 0;
+                static std::uint32_t fNextRefresh = 0;
                 static int fView = std::getenv("OKAY_UI_DEMO_FRVIEW") ? std::atoi(std::getenv("OKAY_UI_DEMO_FRVIEW")) : 0;   // 0 Online, 1 All, 2 Pending, 3 Add friend, 4 Following, 5 Followers (env: dev screenshot hook)
-                Uint32 now = okay::platform::TicksMs32();
+                std::uint32_t now = okay::platform::TicksMs32();
                 if (kFrDemo) {
                     static bool seeded = false;
                     if (!seeded) {
@@ -19781,7 +19746,7 @@ int main(int argc, char** argv) {
             okay::Workshop ws(account);
             static std::vector<okay::WorkshopItem> wCache;
             static std::map<long, std::pair<long, long>> wRatings;  // itemId -> (starSum, count)
-            static Uint32 wNextRefresh = 0;
+            static std::uint32_t wNextRefresh = 0;
             static bool wShowPublish = false;
             // Reviews popup (one item at a time).
             static bool rvOpen = false;        // request to open the reviews popup
@@ -19826,7 +19791,7 @@ int main(int argc, char** argv) {
             if (g_openPublishForm) { wShowPublish = true; g_openPublishForm = false; }
             if (std::getenv("OKAY_UI_DEMO_PUBLISH")) { static bool once = true; if (once) { once = false; wShowPublish = true; wKind = 2;
                 std::snprintf(wTitle, sizeof(wTitle), "Low-poly space props pack"); } }
-            Uint32 now = okay::platform::TicksMs32();
+            std::uint32_t now = okay::platform::TicksMs32();
             // Refresh the marketplace list/ratings in the background (no hitch).
             if (!g_wsMutex) g_wsMutex = okay::thr::CreateMutex();
             if (now >= wNextRefresh && !g_wsFetching) {
@@ -20687,7 +20652,7 @@ int main(int argc, char** argv) {
                 static long svSel = 0, svChan = 0;
                 static std::string svSelName, svErr;
                 static char svNew[64] = "", svJoin[24] = "", svMsg[800] = "", svNewChan[40] = "";
-                static Uint32 svNextList = 0, svNextChan = 0, svNextMsg = 0, svNextMem = 0;
+                static std::uint32_t svNextList = 0, svNextChan = 0, svNextMsg = 0, svNextMem = 0;
                 // Owner-management state.
                 static long svRenChanId = 0;             // channel being renamed (0 = none)
                 static char svRenChanBuf[64] = "", svRenSrvBuf[64] = "";
@@ -20701,7 +20666,7 @@ int main(int argc, char** argv) {
                 struct SvTab { long sel = 0, chan = 0; std::string chanName, srvName; };
                 static std::vector<SvTab> svTabs;
                 static long svTabSkipSel = 0, svTabSkipChan = 0;   // last tab was closed: don't re-add this view
-                Uint32 now = okay::platform::TicksMs32();
+                std::uint32_t now = okay::platform::TicksMs32();
                 if (kSvDemo) {
                     static bool seeded = false;
                     if (!seeded) {
@@ -21769,7 +21734,7 @@ int main(int argc, char** argv) {
             static int  foSort = 0;      // 0 Hot, 1 New, 2 Top
             static bool foShowNew = false, foReplyFocus = false;
             static std::string foCat;    // selected category chip ("" = all)
-            static Uint32 foNext = 0, fpNext = 0;
+            static std::uint32_t foNext = 0, fpNext = 0;
             static std::vector<okay::ForumSection> foSections;   // o/slug communities
             static bool foSecSup = false, foStaff = false;
             static long foSection = 0;                // open section (0 = everything)
@@ -21777,7 +21742,7 @@ int main(int argc, char** argv) {
             static long foNewSection = -1;            // section picked in the composer (-1 = follow foSection)
             static bool foCreateOpen = false, foAdminOpen = false, foStaffOpen = false;
             static std::vector<okay::ForumMember> foAdmMembers; static std::vector<okay::ForumBan> foAdmBans;
-            Uint32 tnow = okay::platform::TicksMs32();
+            std::uint32_t tnow = okay::platform::TicksMs32();
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
             const ImVec4 accLt = okaytheme::AccentText(kAccent);
             const bool canAct = fo.Available() || kFoDemo;
@@ -22912,6 +22877,7 @@ int main(int argc, char** argv) {
             okayversionsui::DrawPage(VersionsHost());
         } else if (tab == 17) {                           // ---- Command line ----
             sectionHeader("Command line", "Run okay, the engine's command line, on a project: check scenes, build, save versions and more.");
+            okaylcli::DrawProgramsRow(CommandLineHost());   // the programs of their own that are installed (hidden when missing)
             okaylcli::DrawPage(CommandLineHost());
         } else if (tab == 11) {                           // ---- Admin ----
             DrawAdminPage(account);
@@ -22966,7 +22932,7 @@ int main(int argc, char** argv) {
             double targetMs = focused ? (1000.0 / 60.0) : (1000.0 / 20.0);
             double elapsed = (double)(okay::platform::PerfCounter() - frameStart) * 1000.0
                            / (double)okay::platform::PerfFrequency();
-            if (elapsed < targetMs) okay::platform::DelayMs((Uint32)(targetMs - elapsed));
+            if (elapsed < targetMs) okay::platform::DelayMs((std::uint32_t)(targetMs - elapsed));
         }
     }
 

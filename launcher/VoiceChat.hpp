@@ -18,6 +18,9 @@
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "../shared/OkayThreads.hpp"   // our own threads, recursive mutexes, atomics (replaces SDL's)
 #include "okay/Crypto/Sha256.hpp"     // SHA-256 for the room key (the engine's one copy)
+#include "okay/Crypto/Crypto.hpp"     // okay::crypto::ChaCha20Xor: only in builds without libsodium
+#include "okay/Net/NetCrypto.hpp"     // the crypto seam: ChaCha20 through libsodium (rule 18)
+#include "okay/Audio/WavDecoder.hpp"  // the one IMA ADPCM step table
 #include "okay/Net/RelayHello.hpp"      // the shared relay hello (version 4: cookie + nonce) and welcome check
 #include <algorithm>
 #include <array>
@@ -52,48 +55,25 @@ inline std::array<std::uint8_t, 32> Sha256(const std::string& msg) {
     return out;
 }
 
-// ---- ChaCha20 (RFC 8439) stream cipher ----------------------------------------
+// ---- ChaCha20 (RFC 8439, 96-bit nonce, block counter 1) with the room key -----------------------------------
+// No cipher of its own (provenance audit N1, rules 18 and 19c): the network layer's crypto seam, libsodium in every
+// release build. A development build without libsodium uses the engine's one ChaCha20 (okay::crypto), as the rest of
+// that build does. The keystream is the same either way, so peers on either build understand each other.
 inline void ChaCha20Xor(const std::array<std::uint8_t, 32>& key, const std::uint8_t nonce[12],
                         std::uint8_t* data, std::size_t len) {
-    auto rd = [](const std::uint8_t* p) { return (std::uint32_t)p[0] | (std::uint32_t)p[1] << 8 | (std::uint32_t)p[2] << 16 | (std::uint32_t)p[3] << 24; };
-    std::uint32_t st[16] = {0x61707865, 0x3320646e, 0x79622d32, 0x6b206574};
-    for (int i = 0; i < 8; ++i) st[4 + i] = rd(key.data() + i * 4);
-    st[12] = 1;
-    for (int i = 0; i < 3; ++i) st[13 + i] = rd(nonce + i * 4);
-    auto rotl = [](std::uint32_t x, int n) { return (x << n) | (x >> (32 - n)); };
-    for (std::size_t off = 0; off < len; off += 64, ++st[12]) {
-        std::uint32_t x[16]; std::memcpy(x, st, sizeof(x));
-        auto qr = [&](int a, int b, int c, int d) {
-            x[a] += x[b]; x[d] ^= x[a]; x[d] = rotl(x[d], 16);
-            x[c] += x[d]; x[b] ^= x[c]; x[b] = rotl(x[b], 12);
-            x[a] += x[b]; x[d] ^= x[a]; x[d] = rotl(x[d], 8);
-            x[c] += x[d]; x[b] ^= x[c]; x[b] = rotl(x[b], 7);
-        };
-        for (int r = 0; r < 10; ++r) {
-            qr(0, 4, 8, 12); qr(1, 5, 9, 13); qr(2, 6, 10, 14); qr(3, 7, 11, 15);
-            qr(0, 5, 10, 15); qr(1, 6, 11, 12); qr(2, 7, 8, 13); qr(3, 4, 9, 14);
-        }
-        std::uint8_t ks[64];
-        for (int i = 0; i < 16; ++i) {
-            const std::uint32_t v = x[i] + st[i];
-            ks[i * 4] = (std::uint8_t)v; ks[i * 4 + 1] = (std::uint8_t)(v >> 8);
-            ks[i * 4 + 2] = (std::uint8_t)(v >> 16); ks[i * 4 + 3] = (std::uint8_t)(v >> 24);
-        }
-        for (std::size_t i = 0; i < 64 && off + i < len; ++i) data[off + i] ^= ks[i];
-    }
+#ifdef OKAY_NET_CRYPTO
+    okay::net::netcrypto::StreamXor(data, data, len, key.data(), nonce, 1);
+#else
+    okay::crypto::ChaCha20Xor(data, data, len, key.data(), nonce, 1);
+#endif
 }
 
 // ---- IMA ADPCM (16-bit PCM <-> 4-bit codes, 4:1) ------------------------------
 static constexpr int kFrame = 320;   // 20 ms at 16 kHz
 static constexpr int kRate = 16000;
-inline const int* AdpcmSteps() {
-    static const int s[89] = {7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,50,55,60,66,73,80,88,97,107,118,
-        130,143,157,173,190,209,230,253,279,307,337,371,408,449,494,544,598,658,724,796,876,963,1060,1166,1282,1411,
-        1552,1707,1878,2066,2272,2499,2749,3024,3327,3660,4026,4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,
-        11487,12635,13899,15289,16818,18500,20350,22385,24623,27086,29794,32767};
-    return s;
-}
-inline int AdpcmIndexAdj(int code) { static const int t[8] = {-1,-1,-1,-1,2,4,6,8}; return t[code & 7]; }
+// The IMA step tables are the engine's one copy (okay::wav, from the IMA recommended practice).
+inline const int* AdpcmSteps() { return okay::wav::ImaAdpcmSteps(); }
+inline int AdpcmIndexAdj(int code) { return okay::wav::ImaAdpcmIndexAdjust()[code & 7]; }
 struct AdpcmState { int pred = 0; int index = 0; };
 inline int AdpcmStep(AdpcmState& s, int code) {
     const int step = AdpcmSteps()[s.index];

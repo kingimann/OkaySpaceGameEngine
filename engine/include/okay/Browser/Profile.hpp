@@ -7,11 +7,16 @@
 //   * the rules for downloads: which answers are shown as a page and which are saved, and the saved file's name;
 //   * our own pages ("about:newtab", "about:history", "about:bookmarks", "about:downloads"), made here as HTML.
 // Profile keeps the lasting parts and turns them into JSON and back (okay/Core/Json.hpp), so the program saves them in the
-// person's own settings folder. No network, no drawing, no files except SaveProfile / LoadProfile. Standard library only.
+// person's own settings folder. No network, no drawing, no files except SaveProfile / LoadProfile, SharedFile and SiteData
+// (the cookies and localStorage of the profile). Standard library only.
+#include "okay/Browser/Cookies.hpp"
+#include "okay/Browser/Storage.hpp"
+
 #include <cstdint>
 #include <functional>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace okay::browser {
@@ -40,7 +45,7 @@ AddressDecision DecideAddress(const std::string& typed, const std::string& searc
 /// The search address for `terms`: "%s" in `searchTemplate` replaced by FormUrlEncode(terms), or the encoded terms added at
 /// the end when the template has no "%s". "" when the template is empty.
 std::string SearchUrl(const std::string& searchTemplate, const std::string& terms);
-/// The placeholder shown in an empty address bar: "Search Google or type an address" for Google's search address, "Search or
+/// The placeholder shown in an empty address bar: "Search the web or type an address" for the default search address, "Search or
 /// type an address" for another one, "Type an address" when there is no search.
 std::string AddressPlaceholder(const std::string& searchTemplate);
 
@@ -157,22 +162,48 @@ struct Profile {
     /// Read what ToJson wrote. Unknown keys are skipped; a damaged file gives false and leaves the profile as it was.
     bool FromJson(const std::string& text, std::string* why = nullptr);
 };
-/// Write the profile to `path` (a temporary file of this writer's own first, renamed over the old one, so a crash never leaves
-/// half a file and two programs writing at once never write into the same temporary file).
+/// Write `text` to `path`: a temporary file of this writer's own first (this process, this call), renamed over the old one, so a
+/// crash never leaves half a file and two programs writing at once never write into the same temporary file.
+bool WriteFileReplacing(const std::string& path, const std::string& text, std::string* why = nullptr);
+/// Write the profile to `path` (WriteFileReplacing).
 bool SaveProfile(const Profile& p, const std::string& path, std::string* why = nullptr);
 /// Read it. False (and `p` unchanged) when there is no file or it cannot be read.
 bool LoadProfile(Profile& p, const std::string& path, std::string* why = nullptr);
 
+/// A file that more than one program replaces (the browser program and the launcher's Browser page share the browser's settings
+/// folder): it remembers the file as this program last read or wrote it (size, time and the text's hash), so Replaced() can say
+/// when another program wrote it since.
+class SharedFile {
+public:
+    explicit SharedFile(std::string path) : m_path(std::move(path)) {}
+    const std::string& Path() const { return m_path; }
+    /// Read the whole file and remember it as seen. False when there is no path or the file cannot be read (it is still marked
+    /// seen as it is, so a file that appears later counts as replaced).
+    bool Read(std::string& text);
+    /// True with the file's text when another program replaced it since this one last read or wrote it (its size or time changed
+    /// and its text differs). A file that was only touched is marked seen and gives false.
+    bool Replaced(std::string& text);
+    /// Write `text` (WriteFileReplacing) and remember it as seen.
+    bool Write(const std::string& text, std::string* why = nullptr);
+
+private:
+    struct Stamp { std::int64_t size = -1; std::int64_t time = 0; bool operator==(const Stamp& o) const { return size == o.size && time == o.time; } };
+    Stamp FileStamp() const;
+    std::string m_path;
+    Stamp m_seen;              // the file as this program last read or wrote it
+    std::uint64_t m_seenHash = 0;
+};
+
 /// The profile file as one program sees it, when more than one program uses the same file: the browser program and the
 /// launcher's Browser page (owner, 2026-11-26) keep one profile.json in the browser's settings folder. Every change goes through
 /// Change(), which applies it at once and keeps it until it is saved. Refresh() reads the file again when another program
-/// replaced it (its size or time changed and its text differs) and applies this program's unsaved changes on top, so a change
-/// made in one program is never lost to the other's write; Save() does that first, then writes (SaveProfile). Two saves in the
-/// same few milliseconds can still race (the later rename wins); the next Refresh shows the result to both.
+/// replaced it (SharedFile) and applies this program's unsaved changes on top, so a change made in one program is never lost
+/// to the other's write; Save() does that first, then writes. Two saves in the same few milliseconds can still race (the later
+/// rename wins); the next Refresh shows the result to both.
 class ProfileStore {
 public:
     using ChangeFn = std::function<void(Profile&)>;
-    explicit ProfileStore(std::string path) : m_path(std::move(path)) {}
+    explicit ProfileStore(std::string path) : m_file(std::move(path)) {}
     /// Read the file now. False (the profile unchanged) when there is none or it is damaged.
     bool Load(std::string* why = nullptr);
     const Profile& Get() const { return m_profile; }
@@ -185,16 +216,43 @@ public:
     bool Refresh();
     /// Refresh, then write the profile. With no path (a program that keeps nothing) it only forgets the changes.
     bool Save(std::string* why = nullptr);
-    const std::string& Path() const { return m_path; }
+    const std::string& Path() const { return m_file.Path(); }
 
 private:
-    struct Stamp { std::int64_t size = -1; std::int64_t time = 0; bool operator==(const Stamp& o) const { return size == o.size && time == o.time; } };
-    Stamp FileStamp() const;
-    std::string m_path;
+    SharedFile m_file;
     Profile m_profile;
     std::vector<ChangeFn> m_pending;
-    Stamp m_seen;              // the file as this program last read or wrote it
-    std::uint64_t m_seenHash = 0;
+};
+
+/// The site data of a browser profile (round 3 of the page engine, done by the hosts): ONE CookieStore and ONE localStorage
+/// (WebStorage) that every tab of the program uses (BrowserTab::SetCookieStore / SetLocalStorage), kept as "cookies.json" and
+/// "local_storage.json" in the profile's folder (CookieStore::ToJson keeps only the persistent cookies that are still valid).
+/// The browser program and the launcher's Browser page may run at once on the same folder, so the files are shared the way
+/// profile.json is (SharedFile), with this safe default: Pump() first reads a file another program replaced. When this program
+/// has nothing unsaved in it, the file's data replaces its own (its session cookies stay); when it has unsaved changes, it keeps
+/// its own and adds what only the file has (CookieStore / WebStorage::MergeSaved), then writes the result. So nothing one
+/// program set is lost to the other's write; a cookie or key removed in one program at the same moment as the other program
+/// saved can come back. Never logs a cookie's value or a stored value.
+class SiteData {
+public:
+    /// `folder` ends with a separator ("" = nothing is kept: tests, a switched-off browser).
+    explicit SiteData(const std::string& folder);
+    /// Read both files (`now`: seconds since 1970, for the cookies' expiry). Missing files are an empty store.
+    void Load(std::int64_t now);
+    CookieStore& Cookies() { return m_cookies; }
+    WebStorage& LocalStorage() { return m_local; }
+    /// Once a second or so: drop expired cookies, take in what the other program saved, write what changed here.
+    void Pump(std::int64_t now);
+    /// Write what changed now (at exit).
+    void Save(std::int64_t now) { Pump(now); }
+    const std::string& CookiesPath() const { return m_cookieFile.Path(); }
+    const std::string& LocalStoragePath() const { return m_localFile.Path(); }
+
+private:
+    CookieStore m_cookies;
+    WebStorage m_local;
+    SharedFile m_cookieFile, m_localFile;
+    bool m_cookiesDirty = false, m_localDirty = false;   // changed here and not written yet
 };
 
 // ---- downloads ---------------------------------------------------------------------------------------------------------
@@ -202,6 +260,9 @@ private:
 /// A header's value from a raw HTTP head ("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n..."), "" when it is missing. The
 /// name is matched without regard to case; the last answer's headers count when the head holds several (redirects).
 std::string HeaderValue(const std::string& rawHead, const std::string& name);
+/// Every header of the last answer in a raw head, in order, with its name as the server wrote it (Set-Cookie comes once per
+/// cookie); `reason` gets the status line's reason phrase ("Not Found").
+std::vector<std::pair<std::string, std::string>> HeaderLines(const std::string& rawHead, std::string* reason = nullptr);
 /// The media type of a Content-Type value, lower-cased, without its parameters ("text/html; charset=utf-8" -> "text/html").
 std::string MediaType(const std::string& contentType);
 

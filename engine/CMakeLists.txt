@@ -59,6 +59,14 @@ target_include_directories(okay_js PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(okay_js PUBLIC cxx_std_17)
 add_library(okay::js ALIAS okay_js)
 
+# Brotli (RFC 7932): the engine's Brotli decoder, its own small library because of the 120 KB static dictionary it carries
+# (engine/src/Core/BrotliDictionary.inc, generated from the RFC by scripts/gen_brotli_dictionary.py). Standard library only.
+# Used by WOFF2 fonts (okay_browser).
+add_library(okay_brotli STATIC src/Core/Brotli.cpp)
+target_include_directories(okay_brotli PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(okay_brotli PUBLIC cxx_std_17)
+add_library(okay::brotli ALIAS okay_brotli)
+
 # Browser: our own web browser's page engine (HTML reader, CSS, layout, addresses, one tab's navigation, web game packs).
 # Standard library, header-only engine helpers (Core/Inflate, Core/Json, Core/PathSafety) and okay_js only, so the launcher, the
 # browser program (browser/) and the tests link it without the rest of the engine
@@ -66,7 +74,10 @@ add_library(okay::js ALIAS okay_js)
 add_library(okay_browser STATIC
     src/Browser/Url.cpp
     src/Browser/Html.cpp
+    src/Browser/Encoding.cpp     # character encodings of pages (WHATWG Encoding: BOM, Content-Type, <meta> prescan, decoders)
     src/Browser/Css.cpp
+    src/Browser/Plugins.cpp      # round 3: browser plugins (toolbar buttons, page actions, block rules, styles, new-tab sections)
+    src/Browser/WebFont.cpp      # round 3: WOFF 1.0 (through Core/Inflate) and WOFF2 (through okay_brotli) fonts rebuilt into TrueType / OpenType
     src/Browser/Layout.cpp
     src/Browser/Browser.cpp
     src/Browser/Forms.cpp        # the browser program: form controls' values, the entry list, GET and POST submission
@@ -79,7 +90,7 @@ add_library(okay_browser STATIC
 )
 target_include_directories(okay_browser PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(okay_browser PUBLIC cxx_std_17)
-target_link_libraries(okay_browser PUBLIC okay_js)
+target_link_libraries(okay_browser PUBLIC okay_js okay_brotli)
 add_library(okay::browser ALIAS okay_browser)
 
 # OkaySpace engine library

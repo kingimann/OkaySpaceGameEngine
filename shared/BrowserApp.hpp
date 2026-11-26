@@ -27,7 +27,10 @@ public:
         TabHost::TextureFns textures;   ///< how the host makes image textures (an SDL renderer or a Painter)
         TabHost::GameRunner runner;     ///< dataRoot: the browser's settings folder (sites/, the Downloads fallback); no player = no games
         std::string profilePath;        ///< the shared profile.json ("" = nothing is kept: tests)
-        std::string userAgent = "OkaySpace Browser";
+        /// The User-Agent sent with every request. The "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" start is the common
+        /// compatibility prefix (sites read it as "a current desktop browser"); the product token after it is our own. It does
+        /// not name any other browser. With the bare "OkaySpace Browser" Google answered ISO-8859-1 pages for UTF-8 ones.
+        std::string userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) OkaySpaceBrowser/1.0";
         bool switchedOff = false;       ///< Settings > Experimental > Browser is off: nothing is loaded, a line says why
         bool quitItem = false;          ///< the menu has Quit (Ctrl+Q): the program's own window
         std::string idPrefix = "##browser";   ///< prefix of the OkayUI window names (unique in the host's frame)
@@ -72,6 +75,9 @@ public:
     const std::string& Notice() const;
     /// The download prompt is open (an answer that is a file, waiting for Save or Cancel).
     bool DownloadPromptOpen() const;
+    /// A dialog a page opened (alert / confirm / prompt) is shown over the page; its text ("" when none).
+    bool PageDialogOpen() const;
+    std::string PageDialogText() const;
     const std::vector<DownloadItem>& Downloads() const;
 
     struct Impl;

@@ -91,6 +91,9 @@ bool DrawInputPanelOkayUI(bool* open, okaypanels::InputPanelModel& model, const 
 /// window shows. Input Actions fills its model through `fill` only while it shows (the check and the players' lines cost time); the
 /// state keeps the file path, the fields' text, the selected action and the status line; the host carries out the intent.
 bool DrawTimersOkayUI(bool* open, const std::function<std::string()>& text);
+/// View > Panels > Command Line: okay commands typed into the editor and run inside it (shared/CommandLinePanel.hpp, one panel class
+/// for every host), in `projectDir`. OkayUI only. Nothing is drawn in a build without the okay command line (OKAY_HAVE_CLI_PANEL).
+bool DrawCommandLineOkayUI(bool* open, const std::string& projectDir);
 bool DrawInputActionsOkayUI(bool* open, okaypanels::InputActionsModel& model, const std::function<void(okaypanels::InputActionsModel&)>& fill,
                             okaypanels::InputActionsState& state, okaypanels::InputActionsIntent& intent);
 

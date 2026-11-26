@@ -227,7 +227,7 @@ extern const char* kMulFrag;
 extern const char* kSkyFrag;
 extern const char* kDownFrag;
 extern const char* kUberFrag;
-extern const char* kFxaaFrag;
+extern const char* kEdgeSmoothFrag;
 extern const char* kDofFrag;
 extern const char* kDofCopyFrag;
 extern const char* kDofBlurFrag;

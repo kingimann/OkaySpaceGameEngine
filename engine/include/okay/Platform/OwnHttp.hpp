@@ -672,6 +672,9 @@ struct FetchRequest {
     /// that turns out to be stale (closed before ZERO bytes of the answer arrived) is replaced once by a fresh one.
     bool keepAlive = false;
     std::shared_ptr<CookieJar> jar;         ///< null = cookies off (the default)
+    /// false: a 3xx answer is the final answer (its head and body come back as they are); the caller follows it itself (the
+    /// browser does, so each hop gets its own cookies).
+    bool followRedirects = true;
 };
 
 struct FetchHooks {
@@ -857,17 +860,17 @@ inline FetchResult Fetch(Connector& conn, const FetchRequest& req, const Limits&
         if (req.jar) for (const Header& h : head.headers) if (detail::IEq(h.name, "set-cookie")) req.jar->Store(url, h.value);
         const std::string* loc = head.Get("location");
         const int s = head.status;
-        const bool redirect = (s == 301 || s == 302 || s == 303 || s == 307 || s == 308) && loc;
+        const bool redirect = (s == 301 || s == 302 || s == 303 || s == 307 || s == 308) && loc && req.followRedirects;
         if (redirect) {
             if (hop >= lim.maxRedirects) return bad(Err::TooManyRedirects, "too many redirects");
             Url next;
             if (!ResolveLocation(url, *loc, next, &why)) return bad(Err::BadUrl, why);
             if (url.Https() && !next.Https()) return bad(Err::DowngradeRefused, "refusing https to http redirect");
             // The redirect's own body is not wanted; a broken one does not matter.
-            Limits small = lim; small.maxBodyBytes = std::min<uint64_t>(lim.maxBodyBytes, 1 << 20);
+            Limits smallLim = lim; smallLim.maxBodyBytes = std::min<uint64_t>(lim.maxBodyBytes, 1 << 20);
             uint64_t tot = 0; Err e2 = Err::None;
-            const bool bodyRead = ReadBody(rd, head, method, small, DataFn(), tot, e2, nullptr);
-            if (bodyRead && req.keepAlive && ConnectionReusable(head, method, small, rd)) conn.GiveIdle(url, std::move(st));
+            const bool bodyRead = ReadBody(rd, head, method, smallLim, DataFn(), tot, e2, nullptr);
+            if (bodyRead && req.keepAlive && ConnectionReusable(head, method, smallLim, rd)) conn.GiveIdle(url, std::move(st));
             else st.reset();
             if (!(url.SameOrigin(next))) {
                 std::vector<Header> keep;

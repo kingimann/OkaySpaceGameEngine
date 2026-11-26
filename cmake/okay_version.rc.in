@@ -20,7 +20,7 @@ BEGIN
             VALUE "FileDescription", "@OKAY_RC_DESCRIPTION@\0"
             VALUE "FileVersion", "@OKAY_RC_VERSION@\0"
             VALUE "InternalName", "@OKAY_RC_INTERNAL@\0"
-            VALUE "LegalCopyright", "Copyright (c) 2026 OkaySpaceGameEngine contributors. MIT License.\0"
+            VALUE "LegalCopyright", "Copyright (c) 2026 OkaySpaceGameEngine. All rights reserved. See LICENSE.\0"
             VALUE "OriginalFilename", "@OKAY_RC_FILENAME@\0"
             VALUE "ProductName", "OkaySpace Game Engine\0"
             VALUE "ProductVersion", "@OKAY_RC_VERSION@\0"

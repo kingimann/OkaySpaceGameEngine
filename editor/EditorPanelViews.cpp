@@ -558,7 +558,7 @@ PostProcessIntent DrawPostProcessBodyImGui(PostProcessModel& m, const PanelViewH
         if (ImGui::SliderFloat("Vignette Smoothness", &p.vignetteSmooth, 0.05f, 1.0f, "%.2f")) ch = true;
         note(m.vignetteNote);
     }
-    if (ImGui::Checkbox("Anti-aliasing (FXAA)", &p.fxaa)) ch = true;
+    if (ImGui::Checkbox("Anti-aliasing (edge smoothing)", &p.fxaa)) ch = true;
     if (ImGui::Checkbox("Ambient Occlusion (SSAO)", &p.ssao)) ch = true;
     note(m.ssaoNote);
     if (p.ssao) {

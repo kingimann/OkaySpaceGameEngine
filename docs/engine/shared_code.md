@@ -37,6 +37,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | SHA-512 | `Crypto/Crypto.hpp` | `okay::crypto::Sha512Hash`, `Sha512` | `std::uint8_t d[64]; crypto::Sha512Hash(d, data, n);` |
 | CRC-32, Adler-32 | `Core/ImageWrite.hpp` | `okay::ImageWrite::Crc32`, `ImageWrite::Adler32` | `auto c = ImageWrite::Crc32(p, n);  // pass c back in to continue` |
 | Inflate (zlib, gzip, raw DEFLATE) | `Core/Inflate.hpp` | `okay::inflate::Zlib`, `inflate::Gzip`, `inflate::Raw` | `inflate::Zlib(in, n, out, {}, why);` |
+| Brotli decoder (RFC 7932; library `okay_brotli`) | `Core/Brotli.hpp` | `okay::brotli::Decode` | `brotli::Decode(in, n, out, opts, why);` |
 | Deflate (compress) | `Core/ImageWrite.hpp` | `ImageWrite::Deflate`, `ImageWrite::ZlibCompress` | `auto z = ImageWrite::ZlibCompress(p, n);` |
 | Zip writing and listing | `Core/BuildPipeline.hpp` | `okay::buildpipe::WriteZip`, `buildpipe::ReadZipDirectory` | `buildpipe::WriteZip("out.zip", folder, true);` |
 | Zip reading (inside the engine) | `engine/src/Render/ZipLite.hpp` | `Archive::Open`, `Archive::Extract` | `Archive a; a.Open(bytes); a.Extract(0, text);` |
@@ -46,6 +47,8 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | One slow call off the editor's frame (network, a whole-project read), its result taken in a later frame | `editor/WorkerCall.hpp` (threads through `shared/OkayThreads.hpp`, CLAUDE.md 21a) | `oked::WorkerCall` (`Start`, `Collect`, `Busy`, `Drop`) | `call.Start([out]{ *out = updater::CheckLatest(); }, "okay-update-check"); ... if (call.Collect()) Use(*out);` |
 | A program that is one OkayUI app over its whole window (backend, window, painter, frame loop, title, the end order) | `shared/OkayUIFrameLoop.hpp` | `okayuihost::platform::RunProgram`, `ProgramDesc`, `ProgramHooks` | `hooks.frame = [&](float w, float h) { app->Frame(0, 0, w, h); }; return RunProgram(desc, hooks);  // browser/, scripteditor/` |
 | A whole OkayUI app in an editor window of its own | `editor/OkayPanels.hpp` | `oked::DrawAppWindowOkayUI` | `DrawAppWindowOkayUI("Script Editor (Files)", &open, "##id", [&](float x, float y, float w, float h) { app.Frame(x, y, w, h); });` |
+| A typed okay command line: split into words (no shell), Tab completion, Up/Down history, output lines with their kinds | `tools/okay-cli/CommandInput.hpp` (the launcher's Command line page and the editor's Command Line panel) | `okaycli::SplitWords`, `Classify`, `Complete`, `History`, `OutputLog` | `okaycli::Completion c = okaycli::Complete("vc sa"); // "vc save "` |
+| Run okay commands inside another program (no console, no exit), or on a worker thread with Stop | `tools/okay-cli/CommandJob.hpp` | `okaycli::RunInProcess`, `okaycli::CommandJob` (`Start`, `Poll`, `Stop`) | `auto r = okaycli::RunInProcess({"scene", "list"}, projectDir); // r.lines, r.exitCode` |
 | Random numbers | `Core/Random.hpp` | `okay::Random` (`Seed`, `Value`, `Range`) | `Random r(seed); float x = r.Range(-1.0f, 1.0f);` |
 | Noise (Perlin, simplex, value, Worley, fBm) | `Math/Noise.hpp` | `okay::NoiseField` (`Perlin2`, `Perlin3`, `Simplex2`, `Fbm2`) | `NoiseField n(7); float h = n.Fbm2(NoiseType::Perlin, x, z);` |
 | Easing curves | `Math/Easing.hpp` | `okay::Ease`, `Easing::Evaluate`, `Easing::QuadIn` ... | `float k = Easing::Evaluate(Ease::CubicOut, t);` |

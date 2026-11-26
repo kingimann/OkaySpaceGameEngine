@@ -67,7 +67,7 @@ std::string SearchUrl(const std::string& tmpl, const std::string& terms) {
 
 std::string AddressPlaceholder(const std::string& tmpl) {
     if (Trim(tmpl).empty()) return "Type an address";
-    if (HostOf(tmpl) == "www.google.com" || HostOf(tmpl) == "google.com") return "Search Google or type an address";
+    if (HostOf(tmpl) == "www.google.com" || HostOf(tmpl) == "google.com") return "Search the web or type an address";
     return "Search or type an address";
 }
 
@@ -350,12 +350,12 @@ bool Profile::FromJson(const std::string& text, std::string* why) {
     return true;
 }
 
-bool SaveProfile(const Profile& p, const std::string& path, std::string* why) {
+bool WriteFileReplacing(const std::string& path, const std::string& text, std::string* why) {
     namespace fs = std::filesystem;
     const fs::path target = fs::u8path(path);
     std::error_code ec;
     if (target.has_parent_path()) fs::create_directories(target.parent_path(), ec);
-    // a temporary name of this writer's own (this process, this call): two programs saving the same profile at once never
+    // a temporary name of this writer's own (this process, this call): two programs saving the same file at once never
     // write into one temporary file
     static unsigned s_count = 0;
     char unique[64];
@@ -366,7 +366,6 @@ bool SaveProfile(const Profile& p, const std::string& path, std::string* why) {
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f) { if (why) *why = "cannot write " + path; return false; }
-        const std::string text = p.ToJson();
         f.write(text.data(), (std::streamsize)text.size());
         if (!f) { if (why) *why = "cannot write " + path; return false; }
     }
@@ -374,6 +373,8 @@ bool SaveProfile(const Profile& p, const std::string& path, std::string* why) {
     if (ec) { fs::remove(tmp, ec); if (why) *why = "cannot replace " + path; return false; }
     return true;
 }
+
+bool SaveProfile(const Profile& p, const std::string& path, std::string* why) { return WriteFileReplacing(path, p.ToJson(), why); }
 
 bool LoadProfile(Profile& p, const std::string& path, std::string* why) {
     std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
@@ -384,7 +385,9 @@ bool LoadProfile(Profile& p, const std::string& path, std::string* why) {
 
 // ---- one profile file, more than one program ----------------------------------------------------------------------------
 
-ProfileStore::Stamp ProfileStore::FileStamp() const {
+// ---- files two programs share ---------------------------------------------------------------------------------------------
+
+SharedFile::Stamp SharedFile::FileStamp() const {
     namespace fs = std::filesystem;
     Stamp s;
     if (m_path.empty()) return s;
@@ -399,12 +402,41 @@ ProfileStore::Stamp ProfileStore::FileStamp() const {
     return s;
 }
 
-bool ProfileStore::Load(std::string* why) {
+bool SharedFile::Read(std::string& text) {
     m_seen = FileStamp();
+    text.clear();
+    if (m_path.empty()) return false;
     std::ifstream f(std::filesystem::u8path(m_path), std::ios::binary);
-    if (m_path.empty() || !f) { if (why) *why = "no profile yet"; return false; }
-    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (!f) return false;
+    text.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
     m_seenHash = std::hash<std::string>()(text);
+    return true;
+}
+
+bool SharedFile::Replaced(std::string& text) {
+    if (m_path.empty()) return false;
+    const Stamp now = FileStamp();
+    if (now == m_seen || now.size < 0) return false;
+    std::ifstream f(std::filesystem::u8path(m_path), std::ios::binary);
+    if (!f) return false;
+    text.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    m_seen = now;
+    const std::uint64_t h = std::hash<std::string>()(text);
+    if (h == m_seenHash) return false;   // touched, not changed
+    m_seenHash = h;
+    return true;
+}
+
+bool SharedFile::Write(const std::string& text, std::string* why) {
+    if (!WriteFileReplacing(m_path, text, why)) return false;
+    m_seen = FileStamp();
+    m_seenHash = std::hash<std::string>()(text);
+    return true;
+}
+
+bool ProfileStore::Load(std::string* why) {
+    std::string text;
+    if (!m_file.Read(text)) { if (why) *why = "no profile yet"; return false; }
     Profile p;
     if (!p.FromJson(text, why)) return false;
     m_profile = std::move(p);
@@ -419,16 +451,8 @@ void ProfileStore::Change(ChangeFn change) {
 }
 
 bool ProfileStore::Refresh() {
-    if (m_path.empty()) return false;
-    const Stamp now = FileStamp();
-    if (now == m_seen || now.size < 0) return false;
-    std::ifstream f(std::filesystem::u8path(m_path), std::ios::binary);
-    if (!f) return false;
-    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    m_seen = now;
-    const std::uint64_t h = std::hash<std::string>()(text);
-    if (h == m_seenHash) return false;   // touched, not changed
-    m_seenHash = h;
+    std::string text;
+    if (!m_file.Replaced(text)) return false;
     Profile p;
     if (!p.FromJson(text)) return false;   // damaged: keep ours (the next Save writes a good file over it)
     m_profile = std::move(p);
@@ -437,36 +461,90 @@ bool ProfileStore::Refresh() {
 }
 
 bool ProfileStore::Save(std::string* why) {
-    if (m_path.empty()) { m_pending.clear(); return true; }
+    if (m_file.Path().empty()) { m_pending.clear(); return true; }
     Refresh();
-    const std::string text = m_profile.ToJson();
-    if (!SaveProfile(m_profile, m_path, why)) return false;
+    if (!m_file.Write(m_profile.ToJson(), why)) return false;
     m_pending.clear();
-    m_seen = FileStamp();
-    m_seenHash = std::hash<std::string>()(text);
     return true;
+}
+
+// ---- the profile's cookies and localStorage ------------------------------------------------------------------------------
+
+SiteData::SiteData(const std::string& folder)
+    : m_cookieFile(folder.empty() ? std::string() : folder + "cookies.json"),
+      m_localFile(folder.empty() ? std::string() : folder + "local_storage.json") {}
+
+void SiteData::Load(std::int64_t now) {
+    std::string text;
+    if (m_cookieFile.Read(text) && !m_cookies.FromJson(text, now))
+        std::fprintf(stderr, "[browser] %s is damaged: starting with no saved cookies\n", m_cookieFile.Path().c_str());
+    if (m_localFile.Read(text) && !m_local.FromJson(text))
+        std::fprintf(stderr, "[browser] %s is damaged: starting with no saved site storage\n", m_localFile.Path().c_str());
+    m_cookies.TakeChanged();
+    m_local.TakeChanged();
+    m_cookiesDirty = m_localDirty = false;
+}
+
+void SiteData::Pump(std::int64_t now) {
+    m_cookies.Expire(now);
+    if (m_cookies.TakeChanged()) m_cookiesDirty = true;
+    if (m_local.TakeChanged()) m_localDirty = true;
+    std::string text;
+    if (m_cookieFile.Replaced(text)) {   // the other program saved: take its cookies in (see SiteData in Profile.hpp)
+        CookieStore saved;
+        if (saved.FromJson(text, now)) m_cookies.MergeSaved(saved, !m_cookiesDirty);
+    }
+    if (m_localFile.Replaced(text)) {
+        WebStorage saved;
+        if (saved.FromJson(text)) m_local.MergeSaved(saved, !m_localDirty);
+    }
+    if (m_cookieFile.Path().empty()) { m_cookiesDirty = m_localDirty = false; return; }
+    std::string why;
+    if (m_cookiesDirty) {
+        if (m_cookieFile.Write(m_cookies.ToJson(now), &why)) m_cookiesDirty = false;
+        else std::fprintf(stderr, "[browser] cookies not saved: %s\n", why.c_str());
+    }
+    if (m_localDirty) {
+        if (m_localFile.Write(m_local.ToJson(), &why)) m_localDirty = false;
+        else std::fprintf(stderr, "[browser] site storage not saved: %s\n", why.c_str());
+    }
 }
 
 // ---- downloads ---------------------------------------------------------------------------------------------------------
 
-std::string HeaderValue(const std::string& head, const std::string& nameIn) {
-    const std::string name = LowerAscii(nameIn);
+std::vector<std::pair<std::string, std::string>> HeaderLines(const std::string& head, std::string* reason) {
     // the last answer in the head (after redirects the head may hold several, each starting with "HTTP/")
     std::size_t start = 0;
     for (std::size_t p = head.find("HTTP/"); p != std::string::npos; p = head.find("HTTP/", p + 5))
         if (p == 0 || head[p - 1] == '\n') start = p;
-    std::string value;
+    std::vector<std::pair<std::string, std::string>> out;
+    if (reason) reason->clear();
     std::size_t i = start;
+    bool first = true;
     while (i < head.size()) {
         std::size_t e = head.find('\n', i);
         if (e == std::string::npos) e = head.size();
         std::string line = head.substr(i, e - i);
         if (!line.empty() && line.back() == '\r') line.pop_back();
         i = e + 1;
+        if (first && line.compare(0, 5, "HTTP/") == 0) {   // the status line: "HTTP/1.1 404 Not Found"
+            first = false;
+            const std::size_t sp = line.find(' '), sp2 = sp == std::string::npos ? sp : line.find(' ', sp + 1);
+            if (reason && sp2 != std::string::npos) *reason = Trim(line.substr(sp2 + 1));
+            continue;
+        }
+        first = false;
         const std::size_t colon = line.find(':');
         if (colon == std::string::npos) continue;
-        if (LowerAscii(Trim(line.substr(0, colon))) == name) value = Trim(line.substr(colon + 1));
+        out.emplace_back(Trim(line.substr(0, colon)), Trim(line.substr(colon + 1)));
     }
+    return out;
+}
+
+std::string HeaderValue(const std::string& head, const std::string& nameIn) {
+    const std::string name = LowerAscii(nameIn);
+    std::string value;
+    for (const auto& h : HeaderLines(head)) if (LowerAscii(h.first) == name) value = h.second;
     return value;
 }
 
@@ -704,9 +782,8 @@ std::string SearchForm(const std::string& tmpl) {
         hidden += "<input type=hidden name=\"" + HtmlEscape(name) + "\" value=\"" + HtmlEscape(value) + "\">";
     }
     if (field.empty()) return std::string();
-    const bool google = HostOf(tmpl) == "www.google.com" || HostOf(tmpl) == "google.com";
     return "<form class=search method=get action=\"" + HtmlEscape(action) + "\">" + hidden + "<input class=q type=text name=\"" +
-           HtmlEscape(field) + "\" placeholder=\"" + (google ? "Search Google" : "Search the web") + "\"></form>";
+           HtmlEscape(field) + "\" placeholder=\"" + "Search the web" + "\"></form>";
 }
 
 // A shortcut tile: a round badge with the site's first letter (a colour of its own per host) and the page's title.

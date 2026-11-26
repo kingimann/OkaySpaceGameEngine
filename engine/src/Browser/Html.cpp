@@ -3,6 +3,7 @@
 #include "okay/Browser/Html.hpp"
 
 #include "okay/Core/StringUtil.hpp"
+#include "okay/Browser/Encoding.hpp"
 #include "okay/Core/Utf8.hpp"
 
 #include <cstdint>
@@ -45,13 +46,34 @@ const NamedRef kNamed[] = {
     {"ne", 0x2260, false}, {"le", 0x2264, false}, {"ge", 0x2265, false}, {"minus", 0x2212, false}, {"star", 0x2606, false},
 };
 
+// HTML 13.2.6.4.1 (the initial insertion mode): does this DOCTYPE put the page in quirks mode? `rest` is what follows the name,
+// lower-cased. A reduced form of the standard's list: a name other than "html", the legacy public identifiers that start with
+// the HTML 2.0 / 3.x / 4.0 / IETF / Netscape / Microsoft prefixes, and HTML 4.01 Transitional or Frameset with no system id.
+bool QuirksDoctype(const std::string& name, const std::string& rest) {
+    if (name != "html") return true;
+    const std::size_t pub = rest.find("public");
+    if (pub == std::string::npos) return rest.find("http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd") != std::string::npos;
+    std::size_t q = rest.find_first_of("\"'", pub);
+    if (q == std::string::npos) return false;
+    const char quote = rest[q];
+    const std::size_t qe = rest.find(quote, q + 1);
+    const std::string id = rest.substr(q + 1, qe == std::string::npos ? std::string::npos : qe - q - 1);
+    const bool systemId = qe != std::string::npos && rest.find_first_of("\"'", qe + 1) != std::string::npos;
+    static const char* const kPrefixes[] = {"-//ietf//dtd html", "-//w3c//dtd html 3", "-//w3c//dtd html 4.0 transitional//",
+                                            "-//w3c//dtd html 4.0 frameset//", "-//w3o//dtd w3 html", "-//netscape comm. corp.//",
+                                            "-//microsoft//dtd internet explorer", "-//webtechs//dtd mozilla html", "-//w3c//dtd w3 html//",
+                                            "-//w3c//dtd html experimental", "-//sq//dtd html 2.0", "-//softquad"};
+    for (const char* p : kPrefixes) if (id.compare(0, std::strlen(p), p) == 0) return true;
+    if (id == "-/w3c/dtd html 4.0 transitional/en" || id == "html") return true;
+    if (!systemId && (id.compare(0, 36, "-//w3c//dtd html 4.01 transitional//") == 0 || id.compare(0, 32, "-//w3c//dtd html 4.01 frameset//") == 0))
+        return true;
+    return false;
+}
+
 // The numeric character reference end step (13.2.5.80): code points 0x80-0x9F are read as windows-1252.
 std::uint32_t FixNumeric(std::uint64_t v) {
-    static const std::uint32_t c1[32] = {
-        0x20AC, 0x81, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x8D, 0x017D, 0x8F,
-        0x90, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x9D, 0x017E, 0x0178};
     if (v == 0 || v > 0x10FFFF || (v >= 0xD800 && v <= 0xDFFF)) return 0xFFFD;
-    if (v >= 0x80 && v <= 0x9F) return c1[v - 0x80];
+    if (v >= 0x80 && v <= 0x9F) return SingleByteCodePoint(TextEncoding::Windows1252, (unsigned char)v);   // Encoding.hpp
     return (std::uint32_t)v;
 }
 
@@ -279,8 +301,9 @@ struct Builder {
         Node* parent = (mode == Initial) ? doc.root.get() : (mode == AfterHead ? html : Current());
         Append(parent, std::move(n));
     }
-    void Doctype(const std::string& name) {
+    void Doctype(const std::string& name, const std::string& rest) {
         if (mode != Initial || html) return;
+        doc.quirks = QuirksDoctype(name, rest);
         if (!Budget()) return;
         auto n = std::make_unique<Node>();
         n->kind = NodeKind::Doctype;
@@ -685,8 +708,10 @@ struct Tokenizer {
             std::string name;
             while (j < n && !IsSpace(s[j]) && s[j] != '>') { if (name.size() < lim.maxNameBytes) name += LowerAsciiChar(s[j]); ++j; }
             const std::size_t e = s.find('>', j);
+            std::string rest;   // the public and system identifiers, lower-cased (only the start is read)
+            for (std::size_t k = j; k < (e == std::string::npos ? n : e) && rest.size() < 256; ++k) rest += LowerAsciiChar(s[k]);
             i = e == std::string::npos ? n : e + 1;
-            b.Doctype(name);
+            b.Doctype(name, rest);
             return;
         }
         if (s.compare(i + 2, 7, "[CDATA[") == 0) { Bogus(i + 2); return; }   // CDATA only in foreign content: a comment here
@@ -761,6 +786,7 @@ HtmlDocument ParseHtml(const std::string& textIn, const HtmlLimits& limits) {
     HtmlDocument doc;
     doc.root = std::make_unique<Node>();
     doc.root->kind = NodeKind::Document;
+    doc.quirks = true;   // until a DOCTYPE before the first tag says otherwise (Builder::Doctype)
     std::string cut;
     const std::string* text = &textIn;
     if (textIn.size() > limits.maxInputBytes) {

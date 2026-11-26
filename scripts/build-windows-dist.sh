@@ -154,6 +154,8 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
 # okay: the engine's command line (tools/okay-cli): new, open, play, build, test, and version control with git (okay vc).
 # It sits beside the editor and the player so it finds them.
 [ -f "$BUILD_DIR/bin/okay.exe" ] && cp "$BUILD_DIR/bin/okay.exe" "$OUT_DIR/Tools/"
+# OkaySpaceBrowser.exe: the browser in a window of its own (browser/; the launcher's Command line page has a button for it when it is here).
+[ -f "$BUILD_DIR/bin/OkaySpaceBrowser.exe" ] && cp "$BUILD_DIR/bin/OkaySpaceBrowser.exe" "$OUT_DIR/Tools/"
 # okay-texture.exe: our texture tool (mips, atlas, compress to DDS); examples\texture shows how to use it.
 [ -f "$BUILD_DIR/bin/okay-texture.exe" ] && cp "$BUILD_DIR/bin/okay-texture.exe" "$OUT_DIR/Tools/"
 # OkayUI's standalone Direct3D 11 demo (no SDL): a raw DX11 app rendering OkayUI.
@@ -170,6 +172,10 @@ OKAY_VER="$(grep -m1 -oE 'VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.
 : "${OKAY_VER:=0.0.0}"
 printf '%s\n' "$OKAY_VER" > "$OUT_DIR/VERSION.txt"
 printf '%s\n' "$OKAY_VER" > "$OUT_DIR/Tools/VERSION.txt"
+# The licences of the parts written by others (GCC and MinGW-w64 runtimes, libsodium, SDL2, Dear ImGui, fonts):
+# beside the launcher and beside the editor, whose Build exports copy it into every game (editor/BuildGame.cpp).
+cp dist/THIRD_PARTY_NOTICES.txt "$OUT_DIR/"
+cp dist/THIRD_PARTY_NOTICES.txt "$OUT_DIR/Tools/"
 # (docs/online/accounts.md is no longer copied in: docs are internal, and it names the GitHub repository settings.)
 
 # Starter texture pack (grass/dirt/stone/grid). Drop these into a project's Assets/
@@ -283,6 +289,7 @@ OkaySpace
 
 Double-click  OkaySpace.exe  to start (the launcher: sign in, create/play games).
 Keep SDL2.dll next to it.
+THIRD_PARTY_NOTICES.txt lists the parts written by others and their licences.
 
 Everything else lives in  Tools/:
   OkayEngine.exe        the editor (make games)

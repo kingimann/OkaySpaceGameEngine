@@ -23,6 +23,21 @@ int main() {
     RUN_SUITE("post_quality_math");
     using namespace okay::postq;
 
+    // The 9-tap gaussian's 5 linear taps (OKAY_SSAO_BLUR_*, also typed into the blur shaders) are the binomial row
+    // n = 12 without its two outer pairs, neighbours merged in pairs (the derivation is in SsaoMath.hpp).
+    {
+        double row[13]; row[0] = 1;
+        for (int k = 1; k <= 12; ++k) row[k] = row[k - 1] * (12 - k + 1) / k;
+        const double total = 4096.0 - 2.0 * (row[0] + row[1]);
+        const double c = row[6] / total, n1 = row[7] / total, n2 = row[8] / total, n3 = row[9] / total, n4 = row[10] / total;
+        CHECK_NEAR(OKAY_SSAO_BLUR_W0, c, 5e-7);
+        CHECK_NEAR(OKAY_SSAO_BLUR_W1, n1 + n2, 5e-7);
+        CHECK_NEAR(OKAY_SSAO_BLUR_W2, n3 + n4, 5e-7);
+        CHECK_NEAR(OKAY_SSAO_BLUR_OFF1, (1 * n1 + 2 * n2) / (n1 + n2), 5e-7);
+        CHECK_NEAR(OKAY_SSAO_BLUR_OFF2, (3 * n3 + 4 * n4) / (n3 + n4), 5e-7);
+        CHECK_NEAR(OKAY_SSAO_BLUR_W0 + 2 * (OKAY_SSAO_BLUR_W1 + OKAY_SSAO_BLUR_W2), 1.0, 1e-5);
+    }
+
     // Softness 0 is exactly the old hard threshold, for any luma and threshold.
     for (float t : {0.0f, 0.3f, 0.7f, 1.0f, 2.5f})
         for (float l = 0.0f; l <= 4.0f; l += 0.05f)

@@ -824,5 +824,64 @@ int main() {
         CHECK(w.js->Console().size() == 1 && w.js->Console()[0].level == ConsoleLine::Error);
     }
 
+    // ---- the host's round 3: the Back / Forward history list (HistoryEntries, HistoryIndex, GoTo) ----
+    {
+        BrowserTab t;
+        auto load = [&](const std::string& html) { for (const std::string& u : t.TakeFetches()) t.DeliverPage(u, true, 200, html); };
+        t.Open("https://site.test/a");
+        load("<title>Page A</title>");
+        t.Navigate("https://site.test/b");
+        load("<title>Page B</title>");
+        t.Navigate("https://site.test/c");
+        load("<title>Page C</title><script>history.pushState({k: 1}, '', '/c2'); addEventListener('popstate', e => console.log('pop ' + JSON.stringify(e.state) + ' ' + location.pathname));</script>");
+        std::vector<BrowserTab::HistoryItem> h = t.HistoryEntries();
+        CHECK(h.size() == 4 && t.HistoryIndex() == 3);
+        CHECK(h.size() == 4 && h[0].url == "https://site.test/a" && h[0].title == "Page A" && h[1].title == "Page B");
+        CHECK(h.size() == 4 && h[2].url == "https://site.test/c" && h[3].url == "https://site.test/c2" && h[3].title == "Page C");
+        CHECK(!t.GoTo(3) && !t.GoTo(4));          // the current entry and one that is not there: nothing happens
+        CHECK(t.GoTo(2));                         // the page's own entry: popstate, no load
+        CHECK(t.TakeFetches().empty() && t.Url() == "https://site.test/c" && t.HistoryIndex() == 2);
+        CHECK(ConsoleHas(t.ConsoleLines(), "pop null /c"));
+        CHECK(t.GoTo(0));                         // two pages back at once: shown again (from the tab's cache here)
+        CHECK(t.Url() == "https://site.test/a" && t.HistoryIndex() == 0);
+        load("<title>Page A</title>");
+        CHECK(t.GetState() == BrowserTab::State::Ready && t.Title() == "Page A" && t.HistoryEntries().size() == 4);
+        CHECK(t.CanGoForward() && t.GoTo(3) && t.Url() == "https://site.test/c2");
+    }
+
+    // ---- a fetch() answer meant for the page that is gone never reaches the next page (request ids are the tab's own)
+    {
+        BrowserTab t;
+        t.Open("https://site.test/one");
+        t.TakeFetches();
+        t.DeliverPage("https://site.test/one", true, 200, "<script>fetch('/x').then(r => r.text()).then(x => console.log('one got ' + x));</script>");
+        std::vector<ScriptRequest> first = t.TakeScriptRequests();
+        t.Navigate("https://site.test/two");
+        t.TakeFetches();
+        t.DeliverPage("https://site.test/two", true, 200, "<script>fetch('/y').then(r => r.text()).then(x => console.log('two got ' + x));</script>");
+        std::vector<ScriptRequest> second = t.TakeScriptRequests();
+        CHECK(first.size() == 1 && second.size() == 1 && first[0].id != second[0].id);
+        ScriptResponse late;
+        late.ok = true; late.status = 200; late.body = "for page one";
+        if (!first.empty()) t.DeliverScriptResponse(first[0].id, late);   // the old page's answer arrives late
+        CHECK(!ConsoleHas(t.ConsoleLines(), "two got"));
+        ScriptResponse mine;
+        mine.ok = true; mine.status = 200; mine.body = "for page two";
+        if (!second.empty()) t.DeliverScriptResponse(second[0].id, mine);
+        CHECK(ConsoleHas(t.ConsoleLines(), "two got for page two"));
+    }
+
+    // ---- the browser's own keys never reach the page (it could cancel them)
+    {
+        auto key = [](const char* k, bool ctrl, bool shift = false, bool alt = false) {
+            KeyInfo i; i.key = k; i.ctrl = ctrl; i.shift = shift; i.alt = alt; return i;
+        };
+        CHECK(IsBrowserShortcut(key("t", true)) && IsBrowserShortcut(key("T", true, true)) && IsBrowserShortcut(key("w", true)));
+        CHECK(IsBrowserShortcut(key("l", true)) && IsBrowserShortcut(key("Tab", true)) && IsBrowserShortcut(key("1", true)));
+        CHECK(IsBrowserShortcut(key("ArrowLeft", false, false, true)) && IsBrowserShortcut(key("F5", false)));
+        CHECK(!IsBrowserShortcut(key("a", false)) && !IsBrowserShortcut(key("c", true)) && !IsBrowserShortcut(key("v", true)));
+        CHECK(!IsBrowserShortcut(key("ArrowLeft", false)) && !IsBrowserShortcut(key("Enter", false)) && !IsBrowserShortcut(key("z", true)));
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -162,16 +162,16 @@ bool GameObject::IsSelfOrDescendantOf(const GameObject* other) const {
 // chain, and every other object below that point finds its parent answered: the whole hierarchy is
 // re-answered in linear time, however deep it is.
 bool GameObject::ComputeActiveInHierarchy(std::uint64_t epoch) const {
-    const GameObject* small[32];
+    const GameObject* inlineBuf[32];
     std::vector<const GameObject*> big;
     std::size_t n = 0;
     auto push = [&](const GameObject* g) {
-        if (big.empty() && n < 32) { small[n++] = g; return; }
-        if (big.empty()) big.assign(small, small + n);
+        if (big.empty() && n < 32) { inlineBuf[n++] = g; return; }
+        if (big.empty()) big.assign(inlineBuf, inlineBuf + n);
         big.push_back(g);
         n = big.size();
     };
-    auto at = [&](std::size_t i) { return big.empty() ? small[i] : big[i]; };
+    auto at = [&](std::size_t i) { return big.empty() ? inlineBuf[i] : big[i]; };
     auto store = [epoch](const GameObject* g, bool answer) {
         g->m_activeCache.store((epoch << 1) | (answer ? 1u : 0u), std::memory_order_relaxed);
     };

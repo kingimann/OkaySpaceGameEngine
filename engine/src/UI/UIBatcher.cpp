@@ -138,15 +138,15 @@ Tex BatchPainter::LoadTextureSized(const std::string& path, int w, int h) {
     if (it != m_byPath.end()) return it->second ? (Tex)it->second : LoadTexture(path);
     Image img;
     if (!m_load || !m_load(path, img) || img.Width() <= 0 || img.Height() <= 0) return LoadTexture(path);
-    const Image small = UIDownscaleImage(img, w, h, false);
+    const Image scaled = UIDownscaleImage(img, w, h, false);
     int x = 0, y = 0;
-    if (small.Width() > kMaxAtlasImage || small.Height() > kMaxAtlasImage || !EnsurePage(1) ||
-        !Place(1, small.Width(), small.Height(), x, y))
+    if (scaled.Width() > kMaxAtlasImage || scaled.Height() > kMaxAtlasImage || !EnsurePage(1) ||
+        !Place(1, scaled.Width(), scaled.Height(), x, y))
         return LoadTexture(path);   // does not fit the page: the full-size picture
     m_entries.push_back(Entry{});
     Entry* e = &m_entries.back();
-    e->page = 1; e->x = x; e->y = y; e->w = small.Width(); e->h = small.Height();
-    Blit(m_pages[1], small, x, y);
+    e->page = 1; e->x = x; e->y = y; e->w = scaled.Width(); e->h = scaled.Height();
+    Blit(m_pages[1], scaled, x, y);
     m_byPath.emplace(key, e);
     return e;
 }

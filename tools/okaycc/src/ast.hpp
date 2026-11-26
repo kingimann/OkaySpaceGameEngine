@@ -340,6 +340,16 @@ const char* const kDefaultArgTag = "__okay_default";
 // The namespace each template instance (a class's tag, a function's name) was declared in: its
 // tag or name is not qualified, but unqualified names in it are looked up there ([temp.res] p10).
 std::map<std::string, std::string>& instNamespaces();
+// The default member initializers of the classes of the file ([class.mem]), by class tag and member
+// name, as the parser read them in the current round: the checker builds an aggregate from a
+// braced list member by member and gives the members the list leaves out these values.
+std::map<std::string, std::map<std::string, std::unique_ptr<Expr>>>& memberDefaults();
+// A value made of literals only (numbers, characters, strings, braced lists and casts of them):
+// one that means the same wherever it is copied to.
+bool plainConstant(const Expr& e);
+// The symbols of the constructors declared explicit ([class.conv.ctor] p1) in the current round:
+// they make no implicit conversion.
+std::set<std::string>& explicitCtors();
 bool& ehActive();
 bool& forceExceptions();
 bool& instDirty();

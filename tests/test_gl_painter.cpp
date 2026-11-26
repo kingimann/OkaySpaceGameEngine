@@ -262,6 +262,44 @@ int main() {
         win2.reset();
     }
 
+    // another GL user (the editor's 3D view, the player's GL path) makes its own context current between two frames of the
+    // painter, not through a painter: the painter must notice and make its own context current again before it draws.
+    // CurrentGL / RestoreGL of the own backend tell whose context is current and put it back.
+    {
+        WindowDesc d3 = d; d3.title = "other GL user"; d3.x = 600; d3.width = 64; d3.height = 48;
+        std::unique_ptr<Window> win3 = b->MakeWindow(d3);
+        CHECK(win3 != nullptr);
+        if (win3) {
+            Pump(*b, 100);
+            p->SetDrawColor(1, 1, 1, 255); p->Clear();          // the painter's context is current now
+            const GLCurrent mine = b->CurrentGL();
+            CHECK(mine.context != nullptr);
+            GLAttributes ga; ga.major = 3; ga.minor = 0; ga.compatibility = true; ga.depthBits = 0;
+            CHECK(win3->CreateGLContext(ga));
+            CHECK(win3->MakeCurrent());
+            const GLCurrent other = b->CurrentGL();
+            CHECK(other.context != nullptr && other.context != mine.context);
+            p->SetBlendMode(BlendMode::None);
+            p->SetDrawColor(0, 0, 250, 255); p->Clear();
+            ui2d::Rect r{300, 200, 30, 30};
+            p->SetDrawColor(250, 0, 0, 255); p->FillRect(&r);
+            CHECK(b->CurrentGL().context == mine.context);       // the painter took its context back
+            std::vector<std::uint8_t> a; int aw = 0, ah = 0;
+            CHECK(p->ReadPixels(a, aw, ah) && aw == W && ah == H);
+            if (aw == W && ah == H) {
+                CHECK(At(a, W, 310, 210)[0] == 250 && At(a, W, 310, 210)[2] == 0);   // outside the 64x48 window: only the painter's window has it
+                CHECK(At(a, W, 5, 5)[2] == 250 && At(a, W, 5, 5)[0] == 0);
+            }
+            CHECK(b->RestoreGL(other));                          // put the other user's context back, as it would expect
+            CHECK(b->CurrentGL().context == other.context);
+            CHECK(b->RestoreGL(GLCurrent()));                    // a null state releases
+            CHECK(b->CurrentGL().context == nullptr);
+            p->Present();
+            win3->DestroyGLContext();
+        }
+        win3.reset();
+    }
+
     // the output follows the window's size
     win->SetSize(400, 300);
     Pump(*b, 300);

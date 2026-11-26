@@ -20,8 +20,8 @@ The owner asked for our own browser (2026-11-25): an installable program for pla
    (`player/main.cpp`), which already reads a game folder. Open questions: where saves go (per site), and what a game from
    another site may do (a permission prompt).
 3. **Standalone program (first version done).** `okay-browser` (`browser/`, `OkaySpaceBrowser.exe` on Windows): a browser
-   window of its own on the same library. Still to do: installing it like the launcher and updating it from our own server
-   (the release packaging is the coordinator's and the owner's decision).
+   window of its own on the same library. The Windows package carries it in `Tools/` (2026-11-26, a launcher button starts
+   it). Still to do: installing it like the launcher and updating it from our own server on its own.
 3a. **A regular browser, round 1 (owner, 2026-11-25: "i want the browser to be like a regular browser"; branch
    `claude/browser-full-1`).** Browser basics in the program, real layout, forms. See "Round 1" below.
 3b. **The browser in the launcher (owner, 2026-11-26: "can you allow user to launch browser in the launcher"; branch
@@ -130,7 +130,8 @@ again for every layout.
 
 - **Web fonts.** @font-face TrueType / OpenType files are fetched and given to OkayUI's TrueType store (our own rasterizer);
   text whose font-family names them uses them, with the closest weight and style (a real bold face when the page has one).
-  WOFF / WOFF2 are not read yet (they need their own decoders); OkayUI keeps only a few font files, so a page with many faces
+  WOFF and WOFF2 files are decoded by `Browser/WebFont` (WOFF2 through our Brotli decoder `Core/Brotli`, 2026-11-26, owner:
+  "Yes use WOFF2"), but the host does not call it yet (below); OkayUI keeps only a few font files, so a page with many faces
   gets the first ones. Italic without an italic face is drawn upright (OkayUI cannot slant text yet).
 - **Work caps for hostile pages.** Every block layout counts against a budget; flex and grid measure their items through a
   cache, so nested flex / grid boxes are not exponential; var() expansion is capped in size and depth; selector matching has a
@@ -145,7 +146,8 @@ submission), reset. multipart/form-data (files) is not done: such a form is sent
 
 **Not done in round 1:** JavaScript (next round, with the engine on `claude/javascript-1`), cookies (so sites that need a login
 session do not keep it), tables with real column widths, margin collapsing through parents, `:has()`, counters, gradients
-(drawn as their first colour), WOFF fonts, synthetic italics, text selection (Copy text copies the run under the pointer),
+(drawn as their first colour), WOFF fonts, synthetic italics (round 3 did tables, margins, `:has()`, counters, gradients and
+WOFF 1.0; see below), text selection (Copy text copies the run under the pointer),
 dragging tabs, a downloads folder picker, file inputs. Nothing of round 1 was built or run on Windows.
 
 ## Round 2: JavaScript in pages
@@ -172,6 +174,7 @@ dragging tabs, a downloads folder picker, file inputs. Nothing of round 1 was bu
 
 **Not done in round 2:** XMLHttpRequest / fetch, `document.write`, running scripts while the page is parsed, scripts a script
 adds, `<style>` added or changed by a script, keyboard / mouse-move / focus events, live NodeLists, getComputedStyle, canvas,
+storage, the history API, cookies. A node whose own listener's closure holds it stays until the page goes (the listener is a
 storage, the history API, cookies (all but canvas came in round 3, below). A node whose own listener's closure holds it stays until the page goes (the listener is a
 root). The Console strip and the view's click / input wiring were compiled but not run in a window; nothing on Windows.
 
@@ -181,6 +184,64 @@ with highlights, the bookmarks bar, the menu and the context menu, a download as
 form typed into (text, password, select, radio, checkbox, textarea) and sent with POST (the server echoed the urlencoded body),
 the new-tab and history pages, zoom. Not checked: real web sites, the launcher's page (compiled only), Windows.
 
+## Round 3: rendering from the CSS specs, and browser plugins (2026-11-26, branch `claude/browser-render-3`)
+Written from CSS 2.1 (chapter 17 tables, 8.3.1 margins, 12.4 counters, 12.6.2 list styles), CSS Images 3, CSS Text Decoration 3,
+CSS Overflow 3, CSS Transforms 1, Selectors 4 (`:has()`), the HTML standard (table presentational attributes, 15.3.8), the W3C
+WOFF 1.0 recommendation and the OpenType table directory, RFC 8259 (plugin manifests). No browser or library code.
+
+- **Tables** (`Layout.cpp` `BuildTable` / `ColumnWidths` / `Table`): anonymous rows and cells, thead first and tfoot last,
+  captions (top / bottom, inside the table's border: simplified), colspan (1-1000) and rowspan (0 = to the end of the group),
+  automatic and fixed column widths, `<col>` / `<colgroup>` widths, percentage columns, auto-width tables shrink to their columns,
+  row heights, vertical-align top / middle / bottom / baseline, row and row-group backgrounds, border-spacing, border-collapse
+  (simplified: a cell's left / top border gives way to its neighbour's; no width or style contest), `border` / `cellspacing` /
+  `cellpadding` / `bgcolor` / `width` / `align` / `valign` / `nowrap` attributes. At most 1000 columns and 1 000 000 slots.
+- **Margins** collapse through a parent's top and bottom and through empty boxes (8.3.1); clearance is still simplified.
+- **Gradients**: linear (angles, `to` sides and corners), radial (circle / ellipse, the four size keywords, explicit sizes, `at`),
+  repeating, colour stops with one or two positions; drawn as bands of Fill commands (any host draws them); at most 60 000 such
+  commands per page, a gradient past that is one Fill. Not done: border-radius on gradient bands, colour hints, conic gradients,
+  several background layers.
+- **Counters** (`counter-reset / -increment / -set`, `counter()`, `counters()`) and list styles decimal-leading-zero, lower-greek.
+- **`:has()`** with `>`, `+`, `~` and descendant relative selectors (at most 4096 elements looked at per test).
+- **Text**: text-decoration line / style (solid, double, dotted, dashed, wavy) / colour and overline, drawn as Fill commands when
+  not a plain line; `text-overflow: ellipsis` in boxes that clip; white-space nowrap / pre-wrap checked by tests.
+- **Images**: object-fit (contain, cover, none, scale-down) and object-position; an image that overflows its box becomes a
+  BgImage command clipped to the box.
+- **Transforms**: translate and positive scale are folded into the draw commands; rotate, skew and mirrors stay in
+  `DrawCmd::xform` for the host. Transitions show their final value at once (the property is read and ignored).
+- **WOFF 1.0** (`Browser/WebFont`): rebuilt into the sfnt file through `Core/Inflate`; @font-face takes a WOFF file only when there
+  is no TrueType / OpenType file.
+- **Browser plugins** (`Browser/Plugins`, `shared/BrowserPluginCommands.hpp`): see feature map 17.18.19. (Dropped from this round by
+  the owner on 2026-11-26 after the model and its tests were written; another agent takes it on from here, not wired into the program.)
+- **Pages styled properly** (owner, 2026-11-26): CSS Nesting 1; inherit / initial / unset / revert (revert as unset); logical
+  properties (inline-size, margin- / padding- / inset- / border-inline and -block); border line styles dashed, dotted, double;
+  letter-spacing, word-spacing, text-align: justify, text-shadow (blur as a lighter copy), font-variant: small-caps (capitals at
+  0.7 size), ::first-letter (drop caps), ::marker (colour and size); outline and outline-offset; inset box shadows (bands);
+  aspect-ratio (a minimum height); filter grayscale() / brightness() on the box's colours (images and blur not done);
+  `<img srcset>` (x and w descriptors; sizes taken as 100vw) and `<picture>` sources (media, type); the default sheet's
+  details / summary (closed details hide their content), quotes on `<q>`, monospace text at 13 px, h1 in sectioning elements.
+- **Page corpus**: twelve pages of our own in `tests/data/browser_pages/`, each with a golden picture
+  (`okayui/tests/golden/page_*.png`, test `okayui_browser_pages`).
+
+**Not done in the styling round:** position: sticky that sticks (the layout does not know the scroll), @container queries,
+clip-path, blur(), ::first-line, unlayered-over-layered order in @layer (layers are read as plain blocks), conic gradients,
+generic font families mapped to our shipped fonts (the view picks fonts; serif / monospace only switch `mono`), glyphs the
+shipped font lacks (the summary triangle, a check mark, Greek letters are not drawn: the font has no such glyphs), outer box
+shadows under a transparent box (the view fills the shadow's whole rectangle).
+
+**Not done in round 3:** synthetic italics (the slant is
+drawn by the view: OkayUI has no sheared text call yet); the host calls below. Nothing of round 3 was built or run on Windows.
+
+**Calls the browser program still has to make** (files of another agent, so not changed here):
+- `shared/BrowserHost.cpp`, font fetches: call `okay::browser::DecodeWebFont(bytes, size, sfnt, why)` and hand `sfnt` to the font
+  loader instead of the TrueType / OpenType check (WOFF and WOFF2 fonts then load).
+- `okayui/screens/BrowserView.cpp` `DrawBrowserPage`: draw a command whose `xform` is not the identity through it (page
+  coordinates before scroll and zoom); slant text when `font.italic` and the web font has no italic face.
+- `shared/BrowserApp`: keep one `okay::browser::BrowserPlugins`; load manifests from `<data>/plugins/*.json`; ask the person to grant
+  `PermissionNames(requested)`, keep the answer in the profile and call `Grant`; before each fetch `Blocked(url)` (skip it);
+  `StylesFor(pageUrl)` parsed and appended to the tab's sheets (and lay out again after `Press` returns `StyleOn` / `StyleOff`);
+  draw `ToolbarButtons()` and `PageActionsFor(pageUrl)` and call `Press`, opening `PluginEffect::url` for `OpenUrl`;
+  append `NewTabHtml()` to the new-tab page; `browserplugins::SyncCommands(plugins, registry, ...)` after every load, grant or
+  switch, so the buttons are commands of the browser's `pluginreg::PluginRegistry`.
 ## Round 3: fetch, cookies, storage, history, input events
 
 What a page's scripts can do now that they could not in round 2 (all in `okay/Browser/Script.hpp`, `Browser.hpp`, and two new
@@ -228,12 +289,41 @@ stores, `Cookies.hpp` and `Storage.hpp`):
   answers false and prompt null at once (what the standard returns when the browser does not show a modal dialog). At most 3
   dialogs per script run and 8 waiting; the rest go to the console.
 
-**What the host must call (okayui BrowserView / shared BrowserApp, not in this change):** `SetCookieStore` and
-`SetLocalStorage` on every tab (one store each per profile, loaded from and saved to the profile folder with
-`ToJson` / `FromJson` when `TakeChanged()` says so); `CookieHeader` on each fetch of `TakeFetches()` and `ReceiveCookies` with
-its Set-Cookie headers; `TakeScriptRequests` each frame, send each (method, headers, body as given) and answer with
-`DeliverScriptResponse` (status, headers, body, final address); `KeyEvent` before typing a key into a control (skip it when it
-returns true); `PointerEvent` for mouse buttons and moves; `TakeDialog` each frame to show alerts.
+**What the host calls (done in round 3 of the host, `claude/browser-host-3`):** written from RFC 6265 (5.4: each request carries
+the cookies of its own address, so the host follows redirects itself, one hop at a time; RFC 9110 15.4 for the method a redirect
+keeps), the Fetch standard (a request is sent with the method, headers and body the page gave), UI Events (keyboard and mouse
+events, their key / code values, keyCode and buttons) and the HTML standard (8.4 "simple dialogs"). No code from any browser.
+- **One cookie store and one localStorage per profile** (`SiteData` in `Browser/Profile.hpp`): `cookies.json` and
+  `local_storage.json` in the profile's folder (`PrefPath("OkaySpace", "Browser")`), written to a temporary file and renamed
+  (`WriteFileReplacing`, shared with profile.json). Every tab, new tabs included, gets both (`TabHost::SetSiteData`, set again
+  when the tab is made anew). They are saved about once a second after `TakeChanged()`. **The program and the launcher at once:**
+  like profile.json (`SharedFile` remembers size, time and hash), a file the other program replaced is read first; with nothing
+  unsaved here it replaces this program's data (its session cookies stay), with unsaved changes this program keeps its own and
+  adds what only the file has, then writes. Nothing one program set is lost; a cookie or key removed in one program at the same
+  moment as the other saved can come back (the safe default, written down here).
+- **Cookies on every load:** each page, image, style, script and font request gets `Cookie: <tab.CookieHeader(url)>`; the
+  answer's Set-Cookie headers (also those of each redirect hop) go to `tab.ReceiveCookies(url, values)`. Both HTTP clients give
+  the raw head (`ExResult::rawHead`); `followRedirects = false` now works on our own client too (it was WinHTTP only), and
+  `callerCookies` turns WinHTTP's own per-session cookies off for these requests, so only our store decides. Cookie values and
+  bodies are never logged. A subresource or fetch of an https page is never redirected to plain http.
+- **The page's fetch() / XMLHttpRequest:** `TakeScriptRequests()` each frame; each is sent as given on the tab host's worker
+  threads (now up to 4 per tab, so a slow fetch does not hold up the page) and answered with `DeliverScriptResponse` (status,
+  reason, every header, body, final address). A redirect hop to another site carries no cookies. Request ids are now the tab's
+  own (they were the page's, so an old page's late answer could reach the next page's request with the same number).
+- **Keys and mouse:** the view (`BrowserView.cpp`) sends keydown (and keypress for a key that makes a character), keyup,
+  mousedown / mouseup for each button and mousemove to the page before it uses them. A cancelled key is not typed into the
+  field (the typed text is dropped and the field is read-only for that frame) and does not scroll or move the focus; a
+  cancelled mousedown starts no text selection and gives no field the keyboard. The browser's own shortcuts
+  (`IsBrowserShortcut`: Ctrl+T, W, L, Tab, 1-9, Alt+Left ...) are never sent to the page, and they are handled before the
+  page sees anything, so a page cannot stop them.
+- **Dialogs:** `TakeDialog` each frame for the shown tab; shown over the page in the browser's dialog style as "<site> says",
+  with OK (Enter / Esc). A confirm / prompt says the page went on without the answer (the script never waits, see above).
+- **Back / Forward history list:** a right click on Back or Forward, or a press held half a second, lists that side's entries
+  (nearest first, at most 16; the page's title, else the history's title, else the address); a click goes there with
+  `BrowserTab::GoTo(index)` (`HistoryEntries`, `HistoryIndex`): a pushState entry of the shown page gets popstate, any other
+  is loaded.
+- **The wheel glides** like the key scrolls (100 px a notch, over a few frames; a scrolling area under the pointer still
+  takes the wheel first).
 
 **Checked (2026-11-26):** `browser_script` (279 checks) and the other browser tests pass on Linux. Nothing was run in the
 program or the launcher (the host wiring is not done) or on Windows.
@@ -318,3 +408,34 @@ second link; the error page; dragging a tab to the front; goldens `browser_app`,
 give its history entries: `BrowserTab` has no call for that yet), smooth scrolling for the mouse wheel (only keys glide), a
 page-wide UI scale setting (the browser draws at OkayUI's text size; 150% was not checked), double-click to select a word,
 selecting text in scrolling areas, drag a tab out into a new window. Nothing was run on Windows.
+
+## Real pages, round 1 (2026-11-26, branch `claude/browser-real-1`)
+
+Checked against saved copies of real pages (Google, three Wikipedia articles, Hacker News, BBC, W3C, Python docs, MDN,
+craigslist and others), rendered headless before and after; the copies stay outside the repository. What changed:
+
+- **Character encodings** (`Encoding.hpp`, from the WHATWG Encoding standard and HTML 13.2.3): a BOM, then the server's
+  Content-Type charset, then `<meta charset>` / `http-equiv` in the first 1024 bytes, then well-formed UTF-8, else windows-1252.
+  Decoders: UTF-8, UTF-16LE/BE, x-user-defined, "replacement" and 27 single-byte encodings (ISO-8859-x, windows-125x, KOI8,
+  IBM866, macintosh, windows-874, x-mac-cyrillic). Not yet: Shift_JIS, EUC-JP, ISO-2022-JP, GBK, gb18030, Big5, EUC-KR.
+  `BrowserTab::DeliverPage` takes the Content-Type; the tab host does not pass it yet (follow-up in `BrowserHost.cpp`).
+- **User-Agent**: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) OkaySpaceBrowser/1.0" (`BrowserApp.hpp`). With the old
+  "OkaySpace Browser" Google answered `charset=ISO-8859-1`; now it answers UTF-8. No other browser is named.
+- **Tables with percentage columns** (a "25% | content | 25%" row): the table's max-content width lets the percentages hold,
+  and percentage columns give way so no column drops below its minimum (Google's "Advanced search" no longer overlaps).
+- **Presentational hints**: `<font size color face>`, `align` on div / p / headings, `<body marginwidth ...>`, `<img align
+  hspace vspace border>`, `<hr width size color noshade align>`; `<center>` and `align` move narrower blocks inside them
+  (HTML 15.3.3 "align descendants").
+- **sub / sup** move the text's baseline (vertical-align sub / super / length), through links inside them.
+- **Quirks mode** (no or legacy DOCTYPE): tables start their fonts and text-align afresh (HTML 15.3.8).
+- **Hidden things stay hidden**: a form control with opacity 0 is not drawn (its box still takes clicks); an element with a
+  `mask-image: url()` is not drawn (mask images are not loaded, which CSS Masking treats as transparent).
+
+**Tests:** `browser_html` (labels, decoders, the prescan, the sniffing order, a tab given ISO-8859-1 bytes, quirks from the
+DOCTYPE), `browser_layout3` (the cases above, worked out by hand), `okayui_browser_pages` (four new pages and goldens:
+`legacy_charset` stored in windows-1252, `search_home`, `encyclopedia_article`, `quirks_board`).
+
+**Seen on the real pages, not fixed here (other lanes):** text is drawn about 15% smaller than its CSS size (`BrowserView`
+scales by the font's ascent-to-descent height, not its em size); a text run with one glyph the launcher font lacks (≠, €, ™,
+IPA) is not drawn at all in headless renders; icon fonts (Material Icons ligatures) show their names; images were not
+loaded in these renders. Nothing was run on Windows.

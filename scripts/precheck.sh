@@ -108,6 +108,11 @@ if python3 scripts/branch_lint.py all --base "$base" --head "$head" >/tmp/preche
 else fail "branch_lint all:"; grep -E '::error|ERROR|FAIL' /tmp/precheck_lint.$$ | head -15 | sed 's/^/        /'; fi
 rm -f /tmp/precheck_lint.$$
 
+# 3b. fixed IP-audit findings stay fixed (docs/status/provenance_audit.md, "Fixes")
+if python3 scripts/provenance_scan.py check >/tmp/precheck_prov.$$ 2>&1; then ok "provenance guards"
+else fail "provenance_scan.py check:"; grep -v '^#' /tmp/precheck_prov.$$ | head -10 | sed 's/^/        /'; fi
+rm -f /tmp/precheck_prov.$$
+
 # 4. the hand-written sources of the generated docs are valid (the generated docs themselves are rebuilt on main)
 if python3 scripts/gen_feature_map.py --validate >/tmp/precheck_fm.$$ 2>&1; then ok "feature map pages valid"
 else fail "feature map pages (docs/feature_map/*.md):"; grep -E '^error:' /tmp/precheck_fm.$$ | head -10 | sed 's/^/        /'; fi
@@ -119,6 +124,11 @@ if [ -n "$gen_changed" ]; then
   warn "this branch changes generated docs: $(echo $gen_changed | tr '\n' ' ')"
   warn "  they are rebuilt on main (regen-docs.yml); committing them makes other PRs conflict. Use main's copy: $gen_hint"
 fi
+
+# 4b. SDL use only goes down (tests/data/sdl_ratchet.json; a branch without the baseline passes)
+if python3 scripts/sdl_inventory.py --ratchet --ref "$head" >/tmp/precheck_sdl.$$ 2>&1; then ok "SDL use not above the baseline (sdl ratchet)"
+else fail "SDL use went up (python3 scripts/sdl_inventory.py --ratchet):"; grep -E '^  ' /tmp/precheck_sdl.$$ | head -10 | sed 's/^/      /'; fi
+rm -f /tmp/precheck_sdl.$$
 
 # 5. copies between open branches (offline: the local remote refs, no GitHub call)
 br=$(git rev-parse --abbrev-ref "$head" 2>/dev/null); br="${br#origin/}"

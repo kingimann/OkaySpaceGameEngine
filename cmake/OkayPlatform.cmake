@@ -1,14 +1,19 @@
 # okay_platform: the seam between the engine and SDL2 / the OS (engine/include/okay/Platform).
 #
-#   -DOKAY_PLATFORM_BACKEND=sdl2   (default) okay::platform::Default() is the SDL2 backend.
-#   -DOKAY_PLATFORM_BACKEND=own    Default() is our own backend (Linux X11/ALSA/evdev through
-#                                  dlopen, Windows Win32). SDL2 is NOT removed: the editor,
-#                                  launcher and player still draw through SDL_Renderer and
-#                                  ImGui's SDL backends, and the sdl2 backend stays compiled in
-#                                  beside it so both can be tested side by side.
+#   -DOKAY_PLATFORM_BACKEND=own    okay::platform::Default() is our own backend (Linux X11/ALSA/evdev
+#                                  through dlopen, Windows Win32). The default on Linux (rule 17: own
+#                                  code on by default; tested under Xvfb).
+#   -DOKAY_PLATFORM_BACKEND=sdl2   Default() is the SDL2 backend. Still the default on Windows (the Win32
+#                                  backend has never run on real Windows) and on the web (no own backend).
 #
-# Both backends are always built when they can be; the option only picks the default.
-set(OKAY_PLATFORM_BACKEND "sdl2" CACHE STRING "Default okay::platform backend: sdl2 or own")
+# Both backends are always built when they can be; the option only picks the default, and
+# OKAY_PLATFORM_BACKEND=sdl2|own in the environment overrides it at run time (the way back).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT EMSCRIPTEN)
+    set(_okay_platform_default "own")
+else()
+    set(_okay_platform_default "sdl2")
+endif()
+set(OKAY_PLATFORM_BACKEND "${_okay_platform_default}" CACHE STRING "Default okay::platform backend: sdl2 or own (own on Linux, sdl2 elsewhere)")
 set_property(CACHE OKAY_PLATFORM_BACKEND PROPERTY STRINGS sdl2 own)
 if(NOT OKAY_PLATFORM_BACKEND STREQUAL "sdl2" AND NOT OKAY_PLATFORM_BACKEND STREQUAL "own")
     message(FATAL_ERROR "OKAY_PLATFORM_BACKEND must be sdl2 or own (got '${OKAY_PLATFORM_BACKEND}')")

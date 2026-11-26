@@ -33,7 +33,7 @@ inline const std::vector<EntryReq>& Entries() {
         {"VSMain", "vs_4_0", true},      {"PSMain", "ps_4_0", true},
         {"VSDepth", "vs_4_0", false},    {"VSSkin", "vs_4_0", false},   {"VSDepthSkin", "vs_4_0", false},
         {"VSQuad", "vs_4_0", false},     {"PSSky", "ps_4_0", false},    {"PSDown", "ps_4_0", false},
-        {"PSBlur", "ps_4_0", false},     {"PSUber", "ps_4_0", false},   {"PSFxaa", "ps_4_0", false},
+        {"PSBlur", "ps_4_0", false},     {"PSUber", "ps_4_0", false},   {"PSEdgeSmooth", "ps_4_0", false},
         {"PSAoDepth", "ps_4_0", false},  {"PSAo", "ps_4_0", false},     {"PSAoMul", "ps_4_0", false},
         {"PSDof", "ps_4_0", false},
         {"VSOverlay", "vs_4_0", false}, {"PSOverlay", "ps_4_0", false},   // the Xbox UI overlay (D3D11OverlayHlsl.hpp); not used by the desktop renderer

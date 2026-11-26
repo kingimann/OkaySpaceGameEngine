@@ -1024,7 +1024,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "ProjectTabs.hpp"        // the Project panel's tab strip (Assets / Favourites / Recent / Search) and the remembered tab
 #include "ProjectLayout.hpp"      // the Project panel's One column / Two columns layouts: divider clamp, open-in-place rows, keys
 #include "ProjectNewAssets.hpp"   // the text of a new dialogue, quest file, behavior tree and cutscene (Project > Create)
-#include "ProjectDelete.hpp"      // okayproj::Normalized / IsSameOrInside: the launcher's "is this path inside that folder" test
+#include "ProjectList.hpp"        // okayproj::Normalized / IsSameOrInside / RootOfScene / SceneIn: the launcher's project rules (includes ProjectDelete.hpp)
 #include "WebRun.hpp"             // Build Settings > Web: the web build's size and the local Run in browser server
 #include "LaunchFile.hpp"         // open a file with the system's program, in a text editor, or show it in the file manager (no shell)
 #include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
@@ -1631,7 +1631,7 @@ static SDL_Texture* RenderFramedThumb(okay::Scene& sc, const Vec3& center, float
 
 // Pictures of prefabs, scenes, materials and models for the Project panel. Each one draws a throwaway scene into an
 // Image; the asset database's ThumbnailCache (through okaypb::Browser::AddThumbGenerator) keeps them by GUID and
-// content hash, on disk under <project>/.okay/thumbs, and asks for a few per frame. They are registered by
+// content hash, on disk under <project>/Library/Thumbnails, and asks for a few per frame. They are registered by
 // DrawProject. An empty Image means "cannot draw this": the panel shows the type icon.
 static okay::Image RenderPrefabImage(const std::string& path) {
     okay::Scene sc;
@@ -2080,6 +2080,8 @@ bool UseOkayUIInspector() {   // okayuibackend::InspectorOn; the variables are r
 // SlowFrameLog). The first few lines go to the Console too. For freezes someone reports from a release: send that file.
 int OkayUIRegionOverflow();
 static std::filesystem::path PerfLogPath() {
+    static const std::string logs = [] { std::string d = okay::Paths::LogDir(); return (!d.empty() && okay::Paths::EnsureDir(d)) ? d : std::string(); }();
+    if (!logs.empty()) return std::filesystem::u8path(logs) / "okay_editor_perf.log";   // the person's log folder, not beside the program
     std::filesystem::path self = okay::restart::CurrentExecutable();
     if (self.empty()) { const std::string narrow = updater::SelfPath(); if (!narrow.empty()) self = std::filesystem::path(narrow); }
     return self.empty() ? std::filesystem::path("okay_editor_perf.log") : self.parent_path() / "okay_editor_perf.log";
@@ -2572,14 +2574,8 @@ static const std::string& EditorConfigDirPath() {
     return dir;
 }
 std::string EditorFile(const char* name) {
-    const std::string& dir = EditorConfigDirPath();
-    std::string p = okay::edtabs::EditorConfigFile(dir, name);
-    if (!dir.empty()) {
-        std::error_code ec;
-        if (!std::filesystem::exists(p, ec) && std::filesystem::is_regular_file(name, ec))
-            std::filesystem::copy_file(name, p, ec);   // one-time move from the working folder (best effort)
-    }
-    return p;
+    okay::edtabs::UserFilesDir() = EditorConfigDirPath();   // the same folder for the headers that call UserFile themselves
+    return okay::edtabs::UserFile(name);                    // one-time copy from the working folder (best effort)
 }
 
 // Recently-used scenes, persisted to a small file in the editor's per-user folder.
@@ -2971,7 +2967,7 @@ float g_arrOffset[3]   = {2.0f, 0.0f, 0.0f};   // per-step translation
 float g_arrRot[3]      = {0.0f, 0.0f, 0.0f};    // per-step rotation (euler degrees)
 char  g_prefabBuf[256] = "Prefab.okayprefab";
 bool  g_showBuildGame = false;
-char  g_buildDirBuf[256] = "build/MyGame";
+char  g_buildDirBuf[256] = "Builds/MyGame";   // relative: inside the project (okayproj::layout::ResolveInProject)
 char  g_buildNameBuf[128] = "MyGame";
 std::string g_buildStatus;
 #if defined(OKAY_XBOX_UWP_EXPORT)
@@ -3038,7 +3034,7 @@ static void LoadBuildProfilesFrom(const std::string& dir) {
     g_buildProfiles.clear(); g_buildProfileSel = -1;
     g_build = BuildSettings{};
     std::snprintf(g_buildNameBuf, sizeof(g_buildNameBuf), "%s", "MyGame");
-    std::snprintf(g_buildDirBuf, sizeof(g_buildDirBuf), "%s", "build/MyGame");
+    std::snprintf(g_buildDirBuf, sizeof(g_buildDirBuf), "%s", okayproj::layout::DefaultBuildDir("MyGame").c_str());
     g_buildPlatform = 0;
     g_buildProfilesLoaded = true;
     if (dir.empty()) return;
@@ -8492,7 +8488,7 @@ static void SetAssetLabel(const std::string& proj, const std::string& full, int 
     for (const auto& kv : g_assetLabels) f << kv.second << "\t" << kv.first << "\n";
 }
 // Pictures for the Project panel come from the asset database's ThumbnailCache, through okaypb::Browser::Thumb: keyed by
-// the asset's GUID and content hash, kept on disk in <project>/.okay/thumbs, made lazily (a few milliseconds per frame,
+// the asset's GUID and content hash, kept on disk in <project>/Library/Thumbnails, made lazily (a few milliseconds per frame,
 // see Browser::ThumbFrame) and shown as the type icon until their turn. Textures are decoded and shrunk, audio is drawn
 // as a waveform, and prefabs, scenes, materials, models and mesh files are rendered by the functions above. This file
 // only turns the cache's Image into an SDL texture, kept while it is used.
@@ -15093,7 +15089,7 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::Spacing();
         if (g_buildPlatform == 1) {   // ---- Web: the last web build's download size and Run in browser (editor/WebRun.hpp) ----
             namespace wr = oked::webrun;
-            const std::string webDir = (std::filesystem::u8path(g_buildDirBuf) / "web").u8string();
+            const std::string webDir = (std::filesystem::u8path(okayproj::layout::ResolveInProject(ed.projectDir(), g_buildDirBuf)) / "web").u8string();
             static std::string s_webSizeFor;
             static wr::Sizes s_webSizes;
             static double s_webSizeAt = -10.0;
@@ -15678,7 +15674,7 @@ void DrawFileDialogs(EditorState& ed) {
                 p.settings = g_build; p.productName = g_buildNameBuf; p.outputDir = g_buildDirBuf; p.platform = g_buildPlatform;
                 SaveBuildProfiles(ed);
             }
-            if (g_buildReport.valid && g_build.openFolderAfter) extide::RevealInFiles(g_buildDirBuf);
+            if (g_buildReport.valid && g_build.openFolderAfter) extide::RevealInFiles(okayproj::layout::ResolveInProject(ed.projectDir(), g_buildDirBuf));
             ImGui::CloseCurrentPopup();
           } else if (g_buildPlatform != 0) {
             builder::Options wo;
@@ -15744,7 +15740,7 @@ void DrawFileDialogs(EditorState& ed) {
             if (g_buildReport.ok && !wasDry) {
                 namespace fs = std::filesystem;
                 std::error_code pec;
-                fs::path outDir(g_buildDirBuf);
+                fs::path outDir(okayproj::layout::ResolveInProject(ed.projectDir(), g_buildDirBuf));   // a relative folder is inside the project
                 if (g_buildReport.r.archiveBytes) ConsoleLog("Archive -> " + g_buildReport.r.archivePath);
                 for (const std::string& w : g_buildReport.r.warnings) ConsoleLog("Build warning: " + w, 1);
                 if (doRun && g_build.layout != 2) {
@@ -15756,9 +15752,9 @@ void DrawFileDialogs(EditorState& ed) {
                     else ConsoleLog("Build & Run: couldn't find the built executable to launch.");
                 } else if (doRun) {
                     ConsoleLog("Build & Run: the Zip layout has no exe to run; unpack the archive, or pick the Folder layout.", 1);
-                    if (g_build.openFolderAfter) extide::RevealInFiles(g_buildDirBuf);
+                    if (g_build.openFolderAfter) extide::RevealInFiles(okayproj::layout::ResolveInProject(ed.projectDir(), g_buildDirBuf));
                 } else if (g_build.openFolderAfter) {
-                    extide::RevealInFiles(g_buildDirBuf);
+                    extide::RevealInFiles(okayproj::layout::ResolveInProject(ed.projectDir(), g_buildDirBuf));
                 }
             }
             ImGui::CloseCurrentPopup();
@@ -15875,7 +15871,7 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::EndTabBar();
             }
             if (ImGui::SmallButton("Copy report")) ImGui::SetClipboardText(RP.ToText().c_str());
-            ImGui::SameLine(); ImGui::TextDisabled("also saved to .okay/build_report.txt in the project");
+            ImGui::SameLine(); ImGui::TextDisabled("also saved to Logs/build_report.txt in the project");
         } else if (R.valid && !R.files.empty()) {
             ImGui::Spacing(); SectionHeader("Size breakdown");
             // Category summary bars (share of the total build size).
@@ -15923,7 +15919,7 @@ void DrawFileDialogs(EditorState& ed) {
         if (ImGui::Button("OK", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::SameLine();
         if (ImGui::Button("Show in Explorer", ImVec2(150, 0)) && g_buildDirBuf[0])
-            extide::RevealInFiles(g_buildDirBuf);
+            extide::RevealInFiles(okayproj::layout::ResolveInProject(ed.projectDir(), g_buildDirBuf));
         ImGui::EndPopup();
     }
 }
@@ -16041,11 +16037,7 @@ static void DrawSavePrompt(EditorState& ed) {
 }
 
 // ---- Recent projects and locations ----
-static std::filesystem::path ProjectRootOfScene(const std::string& scene) {
-    std::filesystem::path root = std::filesystem::path(scene).parent_path();
-    if (root.filename() == "Assets") root = root.parent_path();
-    return root;
-}
+static std::filesystem::path ProjectRootOfScene(const std::string& scene) { return okayproj::RootOfScene(std::filesystem::path(scene)); }   // Assets/Scenes/... too
 // The folders recent projects live in (newest first, each once, only ones that still exist).
 static std::vector<std::string> RecentLocations() {
     std::vector<std::string> out;
@@ -16074,12 +16066,9 @@ static void OpenProjectFolderDialog(EditorState& ed, const std::string& startDir
         EditorState& ed = *edp;
         fs::path root(picked);
         if (root.filename() == "Assets") root = root.parent_path();
-        std::string scene;
+        std::string scene = okayproj::SceneIn(root, true);   // Assets/Scenes, anywhere in Assets, or an old flat project's scene
         std::error_code ec;
-        for (const fs::path& dir : {root / "Assets", root})
-            if (scene.empty() && fs::is_directory(dir, ec))
-                for (auto& f : fs::directory_iterator(dir, ec))
-                    if (f.path().extension() == ".okayscene") { scene = f.path().string(); break; }
+        if (!scene.empty() && !fs::is_regular_file(scene, ec)) scene.clear();   // a new project's scene that was never saved
         if (scene.empty()) {
             ShowErrorPopup("That isn't an OkaySpace project", "There is no .okayscene file in \"" + root.string() + "\". Pick the project's folder (the one that holds Assets).");
             return;
@@ -16345,7 +16334,8 @@ void DrawNewProjectPopup(EditorState& ed) {
         // The project's version is asked about first (File > Open, the chooser, the launcher: they all arrive here); nothing in the
         // project is read for writing until that is answered.
         OKAY_BREADCRUMB("Project open: version check");
-        RunAfterProjectCheck(ed, p, [&ed, p] {
+        RunAfterProjectCheck(ed, p, [&ed, asked = p] {
+            const std::string p = ScenePathAfterTidy(asked);   // a tidy may have moved it into Assets/Scenes
             std::string err;
             OKAY_BREADCRUMB("Project open: loading the scene");
             if (ed.Load(p, &err)) {
@@ -52335,13 +52325,15 @@ void DrawGameView(EditorState& ed) {
 }
 
 // ---- Saving ------------------------------------------------------------------
-// Where a never-saved scene goes: <project>/Assets/Scenes/<scene name>.okayscene.
+// Where a never-saved scene goes: <project>/Assets/Scenes/<scene name>.okayscene (<user data>/Scenes with no project open).
 static std::string DefaultScenePath(EditorState& ed) {
     namespace fs = std::filesystem;
     std::string name = ed.scene().Name();
     for (char& c : name) if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-' || c == ' ')) c = '_';
     if (name.empty() || name == "Scene") name = "Main";
-    const fs::path dir = ed.projectDir().empty() ? fs::path("Scenes") : fs::path(ed.projectDir()) / "Assets" / "Scenes";
+    // No project open: the person's own folder, never the working folder (the editor's folder on Windows).
+    const fs::path dir = ed.projectDir().empty() ? fs::u8path(okay::Paths::Join(okay::Paths::UserDataDir(), "Scenes"))
+                                                 : okayproj::layout::ScenesDir(fs::path(ed.projectDir()));
     return (dir / (name + ".okayscene")).string();
 }
 static bool SaveSceneTo(EditorState& ed, std::string p) {
@@ -52374,7 +52366,10 @@ static void SaveSceneAsCmd(EditorState& ed) {
     std::filesystem::create_directories(std::filesystem::path(def).parent_path(), ec);   // so the dialog opens there
     EditorState* edp = &ed;
     okay::filedialog::SaveOne("Save Scene As", def, okay::filedialog::Filters("OkaySpace scene", {"*.okayscene"}), [edp](const std::string& p) {
-        if (!SaveSceneTo(*edp, p)) ShowErrorPopup("Couldn't save the scene", g_lastSaveError + "\n\nNothing was lost: your changes are still open in the editor.");
+        // outside the project's Assets folder: ask first, offering Assets/Scenes (ProjectUpgradeUI.cpp)
+        SaveInsideProjectOrAsk(edp->projectDir(), p, [edp](const std::string& q) {
+            if (!SaveSceneTo(*edp, q)) ShowErrorPopup("Couldn't save the scene", g_lastSaveError + "\n\nNothing was lost: your changes are still open in the editor.");
+        });
     });
 }
 static void SaveSceneCmd(EditorState& ed) {
@@ -52383,11 +52378,23 @@ static void SaveSceneCmd(EditorState& ed) {
     if (ed.path().empty()) { SaveSceneAsCmd(ed); return; }   // first save: choose where
     if (!SaveSceneTo(ed, ed.path())) ShowErrorPopup("Couldn't save the scene", g_lastSaveError + "\n\nNothing was lost: your changes are still open in the editor. Fix the problem (or use Save Scene As) and try again.");
 }
+// Recovery copies and save backups belong to the person, not to the folder the editor was started in (on Windows the
+// editor's own version folder): <user data>/Recovery and <user data>/Backups (docs/engine/project_layout.md). An older
+// editor's folder in the working folder is copied over once and left where it is.
+static std::string EditorDataDir(const char* name, const char* oldName) {
+    namespace fs = std::filesystem;
+    const std::string base = okay::Paths::UserDataDir();
+    if (base.empty()) return oldName;
+    const fs::path dir = fs::u8path(okay::Paths::Join(base, name));
+    std::error_code ec;
+    if (!fs::exists(dir, ec) && fs::is_directory(oldName, ec)) fs::copy(oldName, dir, fs::copy_options::recursive, ec);
+    return dir.u8string();
+}
 static okay::RecoveryManager& DocRecovery() {
     static okay::RecoveryManager* r = nullptr;
     if (!r) {
         okay::RecoveryManager::Config cfg;
-        cfg.directory = "okay_recovery";
+        cfg.directory = EditorDataDir("Recovery", "okay_recovery");
         cfg.baseName = "editor";
         cfg.intervalSeconds = 30.0f;
         cfg.slots = 3;
@@ -52403,7 +52410,7 @@ static okay::BackupManager& EditorBackups() {
     static okay::BackupManager* m = nullptr;
     if (!m) {
         okay::BackupManager::Config cfg;
-        cfg.directory = "okay_backups";
+        cfg.directory = EditorDataDir("Backups", "okay_backups");
         cfg.policy = okay::editor::docrec::LastSavesPolicy(5);
         m = new okay::BackupManager(cfg);
     }
@@ -52607,7 +52614,8 @@ static void StopPlayNow(EditorState& ed) {
     ed.Stop(); g_paused = false; ConsoleLog("Stop");
 }
 static void LoadSceneNow(EditorState& ed, const std::string& path) {
-    RunAfterProjectCheck(ed, path, [&ed, path] {
+    RunAfterProjectCheck(ed, path, [&ed, asked = path] {
+        const std::string path = ScenePathAfterTidy(asked);   // a tidy may have moved it into Assets/Scenes
         std::string err;
         if (ed.Load(path, &err)) { ConsoleLog("Opened " + path); AddRecent(path); }
         else ShowErrorPopup("Couldn't open the scene", "\"" + path + "\": " + err + "\n\nThe scene you had open is still open.");
@@ -54119,6 +54127,7 @@ int main(int argc, char** argv) {
     // The project's own files follow the project: leaving one saves its settings and build settings,
     // entering one reads that project's (or the defaults), so nothing leaks from one project into the next.
     EditorState::onProjectChanged = [&ed](const std::string& oldDir, const std::string& newDir) {
+        ConsoleSetProjectDir(newDir);   // Console > Save goes to the project's Logs folder
         std::error_code ec;
         if (!oldDir.empty() && g_settingsProjectDir == oldDir && std::filesystem::is_directory(oldDir, ec)) {
             SaveProjectSettingsTo(oldDir); SaveBuildProfilesTo(oldDir); SaveBuildLiveTo(oldDir);
@@ -54137,11 +54146,17 @@ int main(int argc, char** argv) {
         LoadBuildProfilesFrom(ed.projectDir());
         NoteProjectFilesSaved();
     };
+    g_upgradeHooks.pathMoved = [](const std::string& from, const std::string& to) {   // a tidy moved a scene: the recent list follows it
+        bool hit = false;
+        for (std::string& r : g_recent) if (okayup::RootKey(r) == okayup::RootKey(from)) { r = to; hit = true; }
+        if (hit) SaveRecent();
+    };
     {   // a request left over from an earlier session must not close this one
         std::error_code ec;
         std::filesystem::remove(LauncherIpcPath("okay_ipc_request.txt"), ec);
     }
     LoadRecent();
+    okay::edtabs::UserFilesDir() = EditorConfigDirPath();   // UserFile: the per-user folder for the editor's other files
     LoadSettings();
     oked::scriptui::g_scriptDensity = oked::scriptui::ClampDensity(g_view.scriptDensity);   // the saved Density of the script windows
     ResolveAutoRendering();   // the saved Auto / Off / On modes are known now

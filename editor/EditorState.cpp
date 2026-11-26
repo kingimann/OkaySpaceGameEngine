@@ -1089,7 +1089,7 @@ EditorState::NewProjectResult EditorState::CreateProject(const std::string& root
     m_stack->SetMaxCommands(kMaxUndo);
     m_stack->SetMergeWindow(1.0f);
     m_pending = Pending{};
-    const std::string scenePath = (fs::path(root) / "Assets" / (sceneName + ".okayscene")).string();
+    const std::string scenePath = okayproj::layout::FirstScenePath(fs::path(root), sceneName).string();   // <root>/Assets/Scenes
     (this->*tpl)();
     m_scene.SetName(sceneName);
     setProjectDir(root);

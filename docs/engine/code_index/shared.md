@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 73 headers, 1093 names.
+Back to the [code index](../code_index.md). 73 headers, 1111 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -157,20 +157,20 @@ Back to the [code index](../code_index.md). 73 headers, 1093 names.
 - `Request` struct, line 228
 - `SwapResult` struct, line 249
 - `Stamp` function, line 254
-- `AppendLog` function, line 269
-- `Escape` function, line 280
-- `Unescape` function, line 292
-- `WriteRequest` function, line 306
-- `LoadRequest` function, line 337
-- `PidAlive` function, line 434
-- `WaitForExit` function, line 459
-- `LaunchOnce` function, line 477
-- `EnvironmentBlock` function, line 529
-- `RunAndWait` function, line 590
-- `RunHelper` function, line 592
-- `SpawnHelperProcess` function, line 679
-- `StartHelper` function, line 755: Starts the helper and returns. The caller must exit so the wait can finish.
-- `DispatchHelper` function, line 774: Run as the first thing in main. Returns -1 when this is a normal launch.
+- `AppendLog` function, line 273
+- `Escape` function, line 293
+- `Unescape` function, line 305
+- `WriteRequest` function, line 319
+- `LoadRequest` function, line 350
+- `PidAlive` function, line 447
+- `WaitForExit` function, line 472
+- `LaunchOnce` function, line 490
+- `EnvironmentBlock` function, line 542
+- `RunAndWait` function, line 603
+- `RunHelper` function, line 605
+- `SpawnHelperProcess` function, line 692
+- `StartHelper` function, line 768: Starts the helper and returns. The caller must exit so the wait can finish.
+- `DispatchHelper` function, line 787: Run as the first thing in main. Returns -1 when this is a normal launch.
 
 ## `shared/BrowserApp.hpp`
 
@@ -1044,54 +1044,72 @@ Back to the [code index](../code_index.md). 73 headers, 1093 names.
 
 ## `shared/ProjectCreate.hpp`
 
-- `StandardFolders` function, line 32: The folders a new project starts with inside Assets (the Project panel's "Create >
-- `SettingsFileName` function, line 38: The project settings file, in the project folder.
-- `NameCheck` struct, line 49
-- `Utf8Length` function, line 55
-- `IsReservedDeviceName` function, line 61
-- `CheckName` function, line 72: Check what the person typed in the Name box. The result's 'folder' is the name with the spaces
-- `SanitizeName` function, line 100: Turn any text into a name CheckName accepts: illegal characters become '-', the ends are
-- `TemplateInfo` struct, line 120: One starting scene a new project can begin from. 'title' is what the launcher passes as --template and
-- `Templates` function, line 122
-- `TemplateGroups` function, line 145: Group names; index 0 is "All".
-- `FindTemplate` function, line 150: The template called 'title', or null.
-- `Absolute` function, line 157
-- `NearestExisting` function, line 164: The nearest folder at or above 'p' that exists ("" when none does).
-- `CanWriteIn` function, line 177: True when a file can be made in 'dir' (tries it; permission bits alone lie on network
-- `CheckLocation` function, line 192: Why 'location' can't hold a new project, or "" when it can (it may not exist yet: it is made).
-- `LooksUsed` function, line 217: A folder counts as used when it holds a project that has files, or clutter that isn't a project.
-- `Plan` struct, line 229
-- `Made` struct, line 272: What a creation step made, so a failure can take back exactly that and nothing else.
-- `MakeDirs` function, line 278: Make 'dir' and any missing parents, recording each one that did not exist before.
-- `Undo` function, line 298: Remove what 'made' lists, newest first. A folder that still holds something (the person's files)
-- `MakeSkeleton` function, line 309: <root>, <root>/Assets and the standard folders. On failure everything this call made is removed
-- `IsEmptyShell` function, line 321: A folder a launcher (or a failed Create) left behind: only an empty Assets folder and nothing else.
-- `RemoveEmptyShell` function, line 332: Remove 'root' when it is an empty shell (see IsEmptyShell). True if it was removed.
-- `WriteTextAtomic` function, line 345: Replace 'path' with 'text' all at once: write 'path.tmp', check it, rename it over. The old file stays
-- `ReadText` function, line 384: Read a whole file; false if it can't be opened.
-- `SettingsPath` function, line 392: Where the settings of the project in 'root' live.
-- `IsStarterTemplate` function, line 401: True for the few templates the Create page shows before "All templates" is opened.
-- `TemplateFeatureLines` function, line 404: Three short, true points about a template, shown on its card when it is selected.
-- `CheckProjectVersion` function, line 431: A project version the editor can store in project.okayproj (its field holds 31 characters).
-- `WizardMove` enum, line 452: The New Project popup. It is a three-step wizard (template, details, review). Creating is
-- `NewProjectWizard` struct, line 454
-- `WizardCanAdvance` function, line 464
-- `WizardOpen` function, line 471
-- `WizardOpenOnTemplate` function, line 483: A starter-template card is only a shortcut into the wizard: it opens the Details step with that
-- `WizardClose` function, line 491
-- `WizardNext` function, line 498
-- `WizardBack` function, line 505
-- `WizardBeginCreate` function, line 511
-- `ApplyWizardInput` function, line 520: Enter moves forward when the step is valid (and starts creation on the review step).
+- `StandardFolders` function, line 33: The folders a new project starts with inside Assets (the Project panel's "Create >
+- `SettingsFileName` function, line 39: The project settings file's name (in <project>/ProjectSettings, or at the top of an older project).
+- `AssetsDir` function, line 60
+- `SettingsDir` function, line 61
+- `LibraryDir` function, line 62
+- `LogsDir` function, line 63
+- `TempDir` function, line 64
+- `BuildsDir` function, line 65
+- `ScenesDir` function, line 66
+- `SettingsFile` function, line 72: A settings file 'name' of the project in 'root'. 'legacyRel' is where an older project keeps it ("project.okayproj",
+- `FirstScenePath` function, line 83: Where a new project's first scene goes: <root>/Assets/Scenes/<name>.okayscene.
+- `SaveTarget` enum, line 87
+- `CheckSaveTarget` function, line 94: Where saving 'path' would put the file, for the project in 'root' ("" = none open).
+- `InsideCopyPath` function, line 103: The place inside the project offered instead of 'path': <root>/Assets/<folder>/<the same file name>, or "<name> 2", "<name> 3"...
+- `DefaultBuildDir` function, line 113: The build folder a new project starts with (relative: inside the project, see ResolveInProject).
+- `ResolveInProject` function, line 116: A folder the person typed: a relative one is inside the project in 'root' (not the working folder, which is the
+- `LogFile` function, line 125: A log or report called 'name': in the project's Logs folder, or in 'userLogDir' (the person's log folder,
+- `NameCheck` struct, line 141
+- `Utf8Length` function, line 147
+- `IsReservedDeviceName` function, line 153
+- `CheckName` function, line 164: Check what the person typed in the Name box. The result's 'folder' is the name with the spaces
+- `SanitizeName` function, line 192: Turn any text into a name CheckName accepts: illegal characters become '-', the ends are
+- `TemplateInfo` struct, line 212: One starting scene a new project can begin from. 'title' is what the launcher passes as --template and
+- `Templates` function, line 214
+- `TemplateGroups` function, line 237: Group names; index 0 is "All".
+- `FindTemplate` function, line 242: The template called 'title', or null.
+- `Absolute` function, line 249
+- `NearestExisting` function, line 256: The nearest folder at or above 'p' that exists ("" when none does).
+- `CanWriteIn` function, line 269: True when a file can be made in 'dir' (tries it; permission bits alone lie on network
+- `CheckLocation` function, line 284: Why 'location' can't hold a new project, or "" when it can (it may not exist yet: it is made).
+- `LooksUsed` function, line 309: A folder counts as used when it holds a project that has files, or clutter that isn't a project.
+- `Plan` struct, line 321
+- `Made` struct, line 364: What a creation step made, so a failure can take back exactly that and nothing else.
+- `MakeDirs` function, line 370: Make 'dir' and any missing parents, recording each one that did not exist before.
+- `Undo` function, line 390: Remove what 'made' lists, newest first. A folder that still holds something (the person's files)
+- `MakeSkeleton` function, line 401: <root>, <root>/Assets and the standard folders. On failure everything this call made is removed
+- `IsEmptyShell` function, line 414: A folder a launcher (or a failed Create) left behind: only an empty Assets folder and nothing else.
+- `RemoveEmptyShell` function, line 425: Remove 'root' when it is an empty shell (see IsEmptyShell). True if it was removed.
+- `WriteTextAtomic` function, line 438: Replace 'path' with 'text' all at once: write 'path.tmp', check it, rename it over. The old file stays
+- `ReadText` function, line 477: Read a whole file; false if it can't be opened.
+- `SettingsPath` function, line 486: Where the settings of the project in 'root' live: <root>/ProjectSettings/project.okayproj, or <root>/project.okayproj
+- `HasSettingsFile` function, line 490: True when the project in 'root' has a project.okayproj (in either place).
+- `IsStarterTemplate` function, line 500: True for the few templates the Create page shows before "All templates" is opened.
+- `TemplateFeatureLines` function, line 503: Three short, true points about a template, shown on its card when it is selected.
+- `CheckProjectVersion` function, line 530: A project version the editor can store in project.okayproj (its field holds 31 characters).
+- `WizardMove` enum, line 551: The New Project popup. It is a three-step wizard (template, details, review). Creating is
+- `NewProjectWizard` struct, line 553
+- `WizardCanAdvance` function, line 563
+- `WizardOpen` function, line 570
+- `WizardOpenOnTemplate` function, line 582: A starter-template card is only a shortcut into the wizard: it opens the Details step with that
+- `WizardClose` function, line 590
+- `WizardNext` function, line 597
+- `WizardBack` function, line 604
+- `WizardBeginCreate` function, line 610
+- `ApplyWizardInput` function, line 619: Enter moves forward when the step is valid (and starts creation on the review step).
 
 ## `shared/ProjectDelete.hpp`
 
-- `RootOfScene` function, line 16: <root>/Assets/<scene>.okayscene (or a loose <root>/<scene>.okayscene) -> <root>.
-- `IsProjectFolder` function, line 24: A project as the Create page lists one: <root>/Assets holding a .okayscene, or
-- `Normalized` function, line 35: Absolute, links resolved, no trailing separator.
-- `IsSameOrInside` function, line 44: 'p' is 'dir' or somewhere inside it (both Normalized).
-- `Kept` struct, line 58
-- `DeleteRefusal` function, line 61: Why 'root' can't be deleted as a project folder, or "" when it can.
+- `RootOfScene` function, line 19: The project a scene belongs to: the folder that holds the nearest "Assets" folder above the scene
+- `ScenesUnderAssets` function, line 31: The scenes under <root>/Assets, shallowest first, then by path; at most 'limit' (0 = all). Hidden folders (".okay")
+- `AssetsHasNoFiles` function, line 54: True when <root>/Assets holds no file at all (only folders, or nothing): a project just made, before its first save.
+- `IsProjectFolder` function, line 68: A project as the Create page lists one: <root>/Assets holding a .okayscene somewhere inside it, or no file yet (just
+- `Normalized` function, line 77: Absolute, links resolved, no trailing separator.
+- `IsSameOrInside` function, line 86: 'p' is 'dir' or somewhere inside it (both Normalized).
+- `Kept` struct, line 100
+- `DeleteRefusal` function, line 103: Why 'root' can't be deleted as a project folder, or "" when it can.
 
 ## `shared/ProjectList.hpp`
 
@@ -1104,12 +1122,12 @@ Back to the [code index](../code_index.md). 73 headers, 1093 names.
 - `Unhide` function, line 73: Show it again. true = it was hidden.
 - `AddExtra` function, line 81: Remember a project opened from elsewhere (by scene path), newest first. false = full.
 - `RemoveExtra` function, line 88
-- `SceneIn` function, line 97: The scene a project root lists (the launcher's old sceneIn): <name>.okayscene, any scene in
-- `IsUpgradeBackup` function, line 111: A copy the project upgrade made next to the project ("Name (backup v2.900.0)"). Every finished
-- `ListedProject` struct, line 116
-- `ForgetResult` enum, line 145
-- `ApplyPrefLine` function, line 167: launcher.cfg lines. Loading keeps every line up to the caps; saving writes every entry.
-- `WritePrefLines` function, line 172
+- `SceneIn` function, line 100: The scene a project root lists (the launcher's old sceneIn): Assets/Scenes/<name>.okayscene or Assets/<name>.okayscene,
+- `IsUpgradeBackup` function, line 124: A copy the project upgrade made next to the project ("Name (backup v2.900.0)"). Every finished
+- `ListedProject` struct, line 129
+- `ForgetResult` enum, line 158
+- `ApplyPrefLine` function, line 180: launcher.cfg lines. Loading keeps every line up to the caps; saving writes every entry.
+- `WritePrefLines` function, line 185
 
 ## `shared/ProjectVersion.hpp`
 

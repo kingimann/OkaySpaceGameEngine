@@ -2,6 +2,7 @@
 //
 //   Transport.hpp  Request / Response, and where requests go (the network, a test hook, a recorder)
 //   Auth.hpp       the Auth calls every provider answers, Result / Session, reading a token's claims
+//   Database.hpp   the Database calls: Query (select, filters, order, limit, insert / upsert / update / delete) and Rpc
 //   Supabase.hpp   the Supabase provider: the production backend, sending exactly the requests the programs always sent
 //
 // This file also picks the provider from configuration, so switching needs no change to the programs:
@@ -15,6 +16,7 @@
 
 #include "okay/Backend/Transport.hpp"
 #include "okay/Backend/Auth.hpp"
+#include "okay/Backend/Database.hpp"
 #include "okay/Backend/Supabase.hpp"
 #include "okay/Platform/Account/AccountDetail.hpp"   // detail::JsonField (reading backend.json)
 

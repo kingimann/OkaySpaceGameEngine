@@ -12,7 +12,7 @@
 // tokens are made up.
 #include "test_framework.hpp"
 #include "okay/Platform/Account/AccountService.hpp"
-#include "okay/Core/Base64.hpp"
+#include "okay_backend_golden.hpp"   // the fake server, made-up tokens, RequestsOf
 
 #include <cstdlib>
 #include <filesystem>
@@ -25,44 +25,9 @@
 namespace fs = std::filesystem;
 namespace acc = okay::account;
 
-static const char* kUrl = "https://backend.example.test/";   // trailing slash on purpose: every flow must drop it
-static const char* kKey = "test-publishable-key-0000";
+using golden::kUrl; using golden::kKey; using golden::kFuture; using golden::Jwt; using golden::Tok; using golden::Fake;
+using golden::Http; using golden::NoAnswer; using golden::SaveSession; using golden::RequestsOf;
 
-static std::string B64Url(const std::string& in) {
-    return okay::base64::Encode(reinterpret_cast<const std::uint8_t*>(in.data()), in.size(), okay::base64::Alphabet::Url, false);
-}
-static std::string Jwt(const std::string& sub, long exp) {   // JWT-shaped, unsigned: the client only reads "sub" and "exp"
-    return B64Url("{\"alg\":\"none\"}") + "." + B64Url("{\"sub\":\"" + sub + "\",\"exp\":" + std::to_string(exp) + "}") + ".sig";
-}
-static const long kFuture = 4102444800L;   // 2100-01-01
-static std::string Tok(int n) { return Jwt("u" + std::to_string(n), kFuture); }
-
-/// One request in the text form the golden texts use.
-static std::string Describe(const std::string& method, const std::string& url, const std::vector<std::string>& headers,
-                            const std::string& body) {
-    std::string s = method + " " + url + "\n";
-    for (const std::string& h : headers) s += h + "\n";
-    return s + "\n" + body + "\n---\n";
-}
-
-/// The fake server: answers each request by its route, as the scenario sets it up.
-struct Fake {
-    std::string log;                                   // every request, Describe()d
-    std::vector<okay::http::Result> queue;             // answers in order (the next one is used per request)
-    std::function<void(const std::string& url)> before;   // runs before a request is answered (to change session.txt)
-    okay::http::Result Answer(const std::string& m, const std::string& u, const std::vector<std::string>& h, const std::string& b) {
-        log += Describe(m, u, h, b);
-        if (before) before(u);
-        if (queue.empty()) { okay::http::Result r; r.error = "test: no answer queued"; return r; }
-        okay::http::Result r = queue.front();
-        queue.erase(queue.begin());
-        return r;
-    }
-};
-static okay::http::Result Http(long status, const std::string& body) {
-    okay::http::Result r; r.reached = true; r.status = status; r.body = body; return r;
-}
-static okay::http::Result NoAnswer(const std::string& why) { okay::http::Result r; r.error = why; return r; }
 static std::string TokenAnswer(int n, const std::string& username) {
     return "{\"access_token\":\"" + Tok(n) + "\",\"refresh_token\":\"r" + std::to_string(n) + "\",\"user\":{\"user_metadata\":{\"username\":\"" +
            username + "\"}}}";
@@ -78,13 +43,8 @@ static std::string SessionLine(const acc::AccountService& a) {
 }
 
 // ---- The scenarios, run on AccountService (its public API, as every program calls it) ------------------------------------
-struct Scenario { const char* name; std::function<std::string(const fs::path& dir)> run; };
+using golden::Scenario;
 
-static void SaveSession(const fs::path& dir, const std::string& user, const std::string& token, const std::string& refresh) {
-    fs::create_directories(dir);
-    std::ofstream f(dir / "session.txt", std::ios::trunc | std::ios::binary);
-    f << user << "\n" << token << "\n" << refresh << "\n";
-}
 
 static std::vector<Scenario> Scenarios() {
     std::vector<Scenario> v;
@@ -357,37 +317,13 @@ static std::vector<Scenario> Scenarios() {
 
 #if !defined(OKAY_GOLDEN_OLD_HEADER)   // (recording from the old AccountService.hpp: it has no okay::backend to call)
 // ---- The same flows through the Supabase provider directly (okay::backend::supabase::Auth over a RecordingTransport) -----
-/// Only the request blocks of a golden text, in order.
-static std::string RequestsOf(const std::string& golden) {
-    std::string out;
-    std::size_t i = 0;
-    bool in = false;
-    while (i < golden.size()) {
-        std::size_t e = golden.find('\n', i);
-        if (e == std::string::npos) e = golden.size();
-        const std::string line = golden.substr(i, e - i);
-        if (!in && (line.rfind("GET ", 0) == 0 || line.rfind("POST ", 0) == 0 || line.rfind("PUT ", 0) == 0 ||
-                    line.rfind("DELETE ", 0) == 0 || line.rfind("PATCH ", 0) == 0)) in = true;
-        if (in) out += line + "\n";
-        if (in && line == "---") in = false;
-        i = e + 1;
-    }
-    return out;
-}
 static std::string Outcome(const okay::backend::Result<okay::backend::Session>& r) {
     return "=> ok=" + std::to_string(r.ok) + " error=[" + r.error + "] user=[" + r.value.username + "] token=[" +
            r.value.accessToken + "] refresh=[" + r.value.refreshToken + "]\n";
 }
-struct ProviderRun {
-    okay::backend::RecordingTransport rec;
-    Fake fake;
+struct ProviderRun : golden::Recorder {
     std::string outcomes;   // the Outcome() lines of SignUp / SignIn / Refresh, to compare with the golden's
     okay::backend::supabase::Auth Auth() { return okay::backend::supabase::Auth(kUrl, kKey, rec); }
-    ProviderRun() {
-        rec.answer = [this](const okay::backend::Request& r) {
-            return okay::backend::FromHttp(fake.Answer(r.method, r.url, r.headers, r.bodyFile.empty() ? r.body : std::string()));
-        };
-    }
 };
 using ProviderFlow = std::function<void(ProviderRun&)>;
 static std::vector<std::pair<const char*, ProviderFlow>> ProviderFlows() {
@@ -484,54 +420,23 @@ int main() {
     const std::vector<Scenario> all = Scenarios();
 
     // 1. AccountService (the public API every program calls) sends exactly the golden requests and makes the same of the answers.
-    if (print) std::cout << "// Recorded with OKAY_GOLDEN_PRINT=1 (tests/test_okay_backend_golden_auth.cpp).\n"
-                            "static const char* const kGolden[][2] = {\n";
-    std::size_t matched = 0;
-    for (const Scenario& s : all) {
-        const std::string got = s.run(root / s.name);
-        if (print) { std::cout << "    {\"" << s.name << "\", R\"GOLD(" << got << ")GOLD\"},\n"; continue; }
-        const char* want = nullptr;
-        for (const auto& g : kGolden) if (std::string(g[0]) == s.name) want = g[1];
-        CHECK(want != nullptr);
-        if (!want) continue;
-        const bool same = got == want;
-        if (!same) std::cout << "  MISMATCH in " << s.name << "\n--- golden\n" << want << "--- now\n" << got << "\n";
-        CHECK(same);
-        matched += same;
-    }
-    if (print) { std::cout << "};\n"; return 0; }
-    CHECK(matched == all.size());
-    CHECK(all.size() == sizeof(kGolden) / sizeof(kGolden[0]));
+    golden::RunScenarios("tests/test_okay_backend_golden_auth.cpp", all, kGolden, root, print);
+    if (print) return 0;
 
 #if !defined(OKAY_GOLDEN_OLD_HEADER)
     // 2. The Supabase provider called directly sends the same bytes, and makes the same sessions and messages.
-    std::size_t sameRequests = 0;
     const auto flows = ProviderFlows();
-    for (const auto& flow : flows) {
-        const char* want = nullptr;
-        for (const auto& g : kGolden) if (std::string(g[0]) == flow.first) want = g[1];
-        CHECK(want != nullptr);
-        if (!want) continue;
-        ProviderRun p;
-        flow.second(p);
-        const bool same = p.fake.log == RequestsOf(want);
-        if (!same) std::cout << "  PROVIDER MISMATCH in " << flow.first << "\n--- golden requests\n" << RequestsOf(want) << "--- provider\n" << p.fake.log << "\n";
-        CHECK(same);
-        sameRequests += same;
-        std::size_t blocks = 0;   // the recorder kept exactly the requests the fake answered
-        for (std::size_t k = p.fake.log.find("\n---\n"); k != std::string::npos; k = p.fake.log.find("\n---\n", k + 1)) ++blocks;
-        CHECK(p.rec.sent.size() == blocks);
+    golden::RunProviderFlows<ProviderRun>(flows, kGolden, [](const char* name, const char* want, ProviderRun& p) {
         std::size_t start = 0;   // each SignUp / SignIn outcome line is in the golden as AccountService gave it
         while (start < p.outcomes.size()) {
             const std::size_t e = p.outcomes.find('\n', start);
             const std::string line = p.outcomes.substr(start, e - start + 1);
             const bool found = std::string(want).find(line) != std::string::npos;
-            if (!found) std::cout << "  PROVIDER OUTCOME not in golden " << flow.first << ": " << line;
+            if (!found) std::cout << "  PROVIDER OUTCOME not in golden " << name << ": " << line;
             CHECK(found);
             start = e + 1;
         }
-    }
-    CHECK(sameRequests == flows.size());
+    });
     CHECK(flows.size() >= 19);
 
     // 3. Sign-in with a username. AccountService never sends it (for Supabase, Login refuses anything that is not an email

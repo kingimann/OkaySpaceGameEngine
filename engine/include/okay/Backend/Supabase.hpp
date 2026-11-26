@@ -4,6 +4,9 @@
 // round 2), and tests/test_okay_backend_golden_auth.cpp checks the bytes (method, address, header lines in order, body)
 // against texts recorded from AccountService before the move.
 //
+// The Database part (OkayBackend round 3) sends PostgREST requests under /rest/v1/ (tables) and /rest/v1/rpc/ (functions);
+// tests/test_okay_backend_golden_db.cpp checks them against texts recorded from the call sites before they moved.
+//
 // Written from Supabase's publicly documented HTTP routes for its Auth service (GoTrue): POST /auth/v1/signup,
 // POST /auth/v1/token?grant_type=password and ?grant_type=refresh_token, GET and PUT /auth/v1/user, POST /auth/v1/recover,
 // /auth/v1/verify and /auth/v1/resend, with the project's publishable key in the "apikey" header and the access token as
@@ -12,9 +15,11 @@
 #pragma once
 
 #include "okay/Backend/Auth.hpp"
+#include "okay/Backend/Database.hpp"
 #include "okay/Backend/Transport.hpp"
 #include "okay/Platform/Account/AccountDetail.hpp"   // detail::JsonEscape / JsonField / PercentEncode / NotReachedMessage, PublicName
 
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -198,6 +203,39 @@ private:
         out.ok = true;
         return out;
     }
+};
+
+/// The Database calls on Supabase (PostgREST): a table request goes to "/rest/v1/<table>?<query>", a function to
+/// "/rest/v1/rpc/<name>" as a POST. How it is sent is up to the sender: AccountService passes its own Api (the signed-in
+/// token, the "online and signed in" check, and the re-read of a newer saved token after a 401) or ApiAnon (the publishable
+/// key only); a program with no account service passes the address, key, token and transport.
+class Database final : public okay::backend::Database {
+public:
+    /// (method, path from the project address such as "/rest/v1/cloud_saves?select=key", body, extra header lines)
+    using Sender = std::function<Response(const std::string&, const std::string&, const std::string&, const std::string&)>;
+
+    explicit Database(Sender send) : send_(std::move(send)) {}
+    /// Straight to `transport` with MakeRequest's header order. `accessToken` "" sends the publishable key only.
+    Database(std::string projectUrl, std::string apiKey, Transport& transport, std::string accessToken = {}) {
+        if (!projectUrl.empty() && projectUrl.back() == '/') projectUrl.pop_back();
+        send_ = [base = std::move(projectUrl), key = std::move(apiKey), token = std::move(accessToken), &transport](
+                    const std::string& method, const std::string& path, const std::string& body, const std::string& extra) {
+            return transport.Send(MakeRequest(key, method, base + path, body, token, extra));
+        };
+    }
+
+    /// The path of a table request (pure, for tests).
+    static std::string TablePath(const DbRequest& r) { return "/rest/v1/" + r.path; }
+    /// The path of a function call (pure, for tests). The name is written like a table name (Query::Name).
+    static std::string RpcPath(const std::string& function) { return "/rest/v1/rpc/" + Query::Name(function); }
+
+    Response Send(const DbRequest& r) override { return send_(r.method, TablePath(r), r.body, r.headers); }
+    Response Rpc(const std::string& function, const std::string& json) override {
+        return send_("POST", RpcPath(function), json, {});
+    }
+
+private:
+    Sender send_;
 };
 
 } // namespace okay::backend::supabase

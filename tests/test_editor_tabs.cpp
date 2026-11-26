@@ -1,6 +1,8 @@
 #include "test_framework.hpp"
 #include "EditorTabs.hpp"
 #include "okay/Core/Paths.hpp"
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -145,6 +147,33 @@ int main() {
         CHECK(EditorConfigDir("", nullptr).empty());                        // nothing known: the working folder, as before
         CHECK(EditorConfigFile("", "imgui.ini") == "imgui.ini");
         CHECK(EditorConfigFile("D:\\cfg\\", "a.txt") == "D:\\cfg\\a.txt");
+    }
+
+    {   // UserFile: the visual script editor's files (okay_vs_tabs.txt, okay_vsnodes.txt, ...) and the plugin list go to the
+        // per-user folder too (docs/engine/project_layout.md). A file an older editor left in the working folder (or beside
+        // the program) is copied over once, and the old one is left alone.
+        namespace fs = std::filesystem;
+        const fs::path base = fs::temp_directory_path() / "okay_editor_tabs_userfile";
+        std::error_code ec;
+        fs::remove_all(base, ec);
+        fs::create_directories(base / "old", ec);
+        { std::ofstream(base / "old" / "okay_vs_tabs.txt") << "0\nA.okayvs\n"; }
+        const std::string saved = UserFilesDir();
+        UserFilesDir() = (base / "user").string();
+        const std::string p = UserFile("okay_vs_tabs.txt", (base / "old").string());
+        CHECK(fs::path(p) == base / "user" / "okay_vs_tabs.txt");
+        CHECK(fs::is_regular_file(p));                                        // copied over (the folder is made)
+        CHECK(fs::is_regular_file(base / "old" / "okay_vs_tabs.txt"));        // never deleted
+        { std::ofstream(p) << "1\nB.okayvs\n"; }
+        { std::ofstream(base / "old" / "okay_vs_tabs.txt") << "stale\n"; }
+        UserFile("okay_vs_tabs.txt", (base / "old").string());               // once: a newer file is not overwritten
+        std::ifstream f(p); std::string first; std::getline(f, first);
+        CHECK(first == "1");
+        CHECK(fs::path(UserFile("none.txt", (base / "old").string())) == base / "user" / "none.txt");   // nothing to copy
+        UserFilesDir() = "";
+        CHECK(UserFile("okay_vs_tabs.txt") == "okay_vs_tabs.txt");            // no per-user folder known: the working folder, as before
+        UserFilesDir() = saved;
+        fs::remove_all(base, ec);
     }
 
     {   // Which panels are open: one "panel_<key> 0|1" pair per panel, read back to the same panels.

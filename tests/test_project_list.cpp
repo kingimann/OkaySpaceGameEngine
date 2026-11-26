@@ -179,6 +179,37 @@ int main() {
         std::vector<std::string> e2 = {(bak / "Assets" / "Delta.okayscene").string()};
         CHECK(!listed(ScanProjects(projects, h, e2), "Delta (backup v2.900.0)"));
     }
+    // The project layout (docs/engine/project_layout.md): a project whose scenes are in Assets/Scenes is listed, with
+    // its scene, and a project just made (only empty standard folders) is listed with the scene it will get.
+    {
+        fs::create_directories(projects / "Epsilon" / "Assets" / "Scenes");
+        fs::create_directories(projects / "Epsilon" / "Assets" / "Textures");
+        std::ofstream(projects / "Epsilon" / "Assets" / "Textures" / "a.png") << "png";
+        std::ofstream(projects / "Epsilon" / "Assets" / "Scenes" / "Main.okayscene") << "name \"Main\"\n";
+        fs::create_directories(projects / "Zeta" / "Assets" / "Scenes");
+        fs::create_directories(projects / "Zeta" / "Assets" / "Scripts");
+        std::vector<std::string> h, e;
+        const auto l = ScanProjects(projects, h, e);
+        CHECK(listed(l, "Epsilon") && listed(l, "Zeta"));
+        CHECK(fs::path(SceneIn(projects / "Epsilon")) == projects / "Epsilon" / "Assets" / "Scenes" / "Main.okayscene");
+        CHECK(fs::path(SceneIn(projects / "Zeta")) == projects / "Zeta" / "Assets" / "Scenes" / "Zeta.okayscene");   // not made yet
+        // the scene named after the project wins, then Assets/Scenes, then any scene under Assets (shallowest first)
+        std::ofstream(projects / "Epsilon" / "Assets" / "Scenes" / "Epsilon.okayscene") << "name \"E\"\n";
+        CHECK(fs::path(SceneIn(projects / "Epsilon")) == projects / "Epsilon" / "Assets" / "Scenes" / "Epsilon.okayscene");
+        fs::create_directories(projects / "Eta" / "Assets" / "Levels" / "Deep");
+        std::ofstream(projects / "Eta" / "Assets" / "Levels" / "Deep" / "B.okayscene") << "\n";
+        std::ofstream(projects / "Eta" / "Assets" / "Levels" / "A.okayscene") << "\n";
+        CHECK(fs::path(SceneIn(projects / "Eta")) == projects / "Eta" / "Assets" / "Levels" / "A.okayscene");
+        // an old flat project (scene next to project.okayproj): found only when asked for (the editor's Open Project Folder)
+        fs::create_directories(projects / "Flat");
+        std::ofstream(projects / "Flat" / "project.okayproj") << "\n";
+        std::ofstream(projects / "Flat" / "Flat.okayscene") << "\n";
+        CHECK(SceneIn(projects / "Flat").empty());
+        CHECK(fs::path(SceneIn(projects / "Flat", true)) == projects / "Flat" / "Flat.okayscene");
+        // the root of a scene in Assets/Scenes is the project, for hiding and the extras list
+        const std::string eps = (projects / "Epsilon" / "Assets" / "Scenes" / "Main.okayscene").string();
+        CHECK(RootKey(eps) == FolderKey(projects / "Epsilon"));
+    }
     fs::remove_all(base);
     TEST_MAIN_RESULT();
 }

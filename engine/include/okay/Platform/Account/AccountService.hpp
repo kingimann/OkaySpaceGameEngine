@@ -371,6 +371,23 @@ public:
         });
     }
 
+    /// The Database calls (OkayBackend, okay/Backend/Database.hpp) through this account: every request goes through Api, so
+    /// it carries the signed-in token, sends nothing when offline or signed out, and re-reads a newer saved token after a 401.
+    /// The object it returns must outlive the Query made from it (`auto db = svc.Db(); db.From(...)...`).
+    okay::backend::supabase::Database Db() const {
+        return okay::backend::supabase::Database(
+            [this](const std::string& method, const std::string& path, const std::string& body, const std::string& extra) {
+                return Api(path, method, body, extra);
+            });
+    }
+    /// Db with the publishable key only (ApiAnon): public reads that need no session, such as the username check.
+    okay::backend::supabase::Database DbAnon() const {
+        return okay::backend::supabase::Database(
+            [this](const std::string& method, const std::string& path, const std::string& body, const std::string& extra) {
+                return ApiAnon(path, method, body, extra);
+            });
+    }
+
     /// Re-read the access token saved by another instance (same account).
     /// True when it changed.
     bool ReloadSessionToken() const {
@@ -453,12 +470,7 @@ public:
     /// local backend or when offline it optimistically returns true.
     bool UsernameAvailable(const std::string& username) const {
         if (provider_ != Provider::Supabase || username.empty()) return true;
-        std::string enc; char b[4];
-        for (unsigned char c : username) {
-            if (std::isalnum(c) || c=='-'||c=='_'||c=='.'||c=='~') enc += (char)c;
-            else { std::snprintf(b, sizeof(b), "%%%02X", c); enc += b; }
-        }
-        ApiResponse r = ApiAnon("/rest/v1/profiles?select=id&username=eq." + enc);
+        ApiResponse r = DbAnon().From("profiles").Select("id").Eq("username", username).Get();   // the name percent-encoded
         if (!r.ok) return true;                       // couldn't check -> don't block
         return r.body.find('{') == std::string::npos; // no rows -> available
     }
@@ -541,18 +553,16 @@ public:
     //   GET    /cloud                             -> 200 {"keys": [...]}
     bool CloudSave(const std::string& key, const std::string& data) {
         if (!CloudKeyOk(key)) return false;
-        if (provider_ == Provider::Supabase)   // upsert a row in the cloud_saves table
-            return Api("/rest/v1/cloud_saves", "POST",
-                       "[{\"key\":\"" + detail::JsonEscape(key) + "\",\"data\":\"" +
-                       detail::JsonEscape(data) + "\"}]",
-                       "Prefer: resolution=merge-duplicates,return=minimal").ok;
+        if (provider_ == Provider::Supabase)   // upsert a row in the cloud_saves table (docs/sql/cloud_saves.sql)
+            return Db().From("cloud_saves").Returning(okay::backend::Return::Minimal)
+                       .Upsert("[{\"key\":\"" + detail::JsonEscape(key) + "\",\"data\":\"" + detail::JsonEscape(data) + "\"}]").ok;
         return Api("/cloud/" + key, "POST",
                    "{\"data\":\"" + detail::JsonEscape(data) + "\"}").ok;
     }
     std::string CloudLoad(const std::string& key) {
         if (!CloudKeyOk(key)) return {};
         if (provider_ == Provider::Supabase) {
-            ApiResponse r = Api("/rest/v1/cloud_saves?select=data&key=eq." + key, "GET");
+            ApiResponse r = Db().From("cloud_saves").Select("data").Eq("key", key).Get();   // (CloudKeyOk: encoding changes nothing)
             return r.ok ? detail::JsonField(r.body, "data") : std::string{};  // [{"data":...}]
         }
         ApiResponse r = Api("/cloud/" + key, "GET");
@@ -561,7 +571,7 @@ public:
     bool CloudHas(const std::string& key) {
         if (!CloudKeyOk(key)) return false;
         if (provider_ == Provider::Supabase) {
-            ApiResponse r = Api("/rest/v1/cloud_saves?select=key&key=eq." + key, "GET");
+            ApiResponse r = Db().From("cloud_saves").Select("key").Eq("key", key).Get();
             return r.ok && r.body.find('{') != std::string::npos;  // non-empty result array
         }
         return Api("/cloud/" + key, "GET").ok;
@@ -569,12 +579,12 @@ public:
     bool CloudDelete(const std::string& key) {
         if (!CloudKeyOk(key)) return false;
         if (provider_ == Provider::Supabase)
-            return Api("/rest/v1/cloud_saves?key=eq." + key, "DELETE").ok;
+            return Db().From("cloud_saves").Eq("key", key).Delete().ok;
         return Api("/cloud/" + key, "DELETE").ok;
     }
     std::vector<std::string> CloudList() {
         if (provider_ == Provider::Supabase) {
-            ApiResponse r = Api("/rest/v1/cloud_saves?select=key", "GET");
+            ApiResponse r = Db().From("cloud_saves").Select("key").Get();
             return r.ok ? detail::JsonFieldValues(r.body, "key") : std::vector<std::string>{};
         }
         ApiResponse r = Api("/cloud", "GET");
@@ -592,12 +602,10 @@ public:
     //        {"entries": ["1,alice,500", "2,bob,300", ...]}  (rank,name,score)
     bool LeaderboardSubmit(const std::string& board, long score) {
         if (!CloudKeyOk(board)) return false;
-        if (provider_ == Provider::Supabase)   // upsert (board,user); a DB trigger keeps the best
-            return Api("/rest/v1/leaderboards", "POST",
-                       "[{\"board\":\"" + detail::JsonEscape(board) + "\",\"name\":\"" +
-                       detail::JsonEscape(session_.username) + "\",\"score\":" +
-                       std::to_string(score) + "}]",
-                       "Prefer: resolution=merge-duplicates,return=minimal").ok;
+        if (provider_ == Provider::Supabase)   // upsert (board,user); a DB trigger keeps the best (docs/sql/leaderboards.sql)
+            return Db().From("leaderboards").Returning(okay::backend::Return::Minimal)
+                       .Upsert("[{\"board\":\"" + detail::JsonEscape(board) + "\",\"name\":\"" + detail::JsonEscape(session_.username) +
+                               "\",\"score\":" + std::to_string(score) + "}]").ok;
         return Api("/leaderboard/" + board, "POST",
                    "{\"score\":" + std::to_string(score) + "}").ok;
     }
@@ -605,8 +613,7 @@ public:
         std::vector<ScoreEntry> out;
         if (!CloudKeyOk(board)) return out;
         if (provider_ == Provider::Supabase) {
-            ApiResponse r = Api("/rest/v1/leaderboards?select=name,score&board=eq." + board +
-                                "&order=score.desc&limit=" + std::to_string(count), "GET");
+            ApiResponse r = Db().From("leaderboards").Select("name,score").Eq("board", board).Order("score", true).Limit(count).Get();
             if (!r.ok) return out;
             auto names  = detail::JsonFieldValues(r.body, "name");
             auto scores = detail::JsonNumberValues(r.body, "score");

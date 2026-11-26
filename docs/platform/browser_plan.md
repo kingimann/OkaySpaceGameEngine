@@ -408,3 +408,26 @@ second link; the error page; dragging a tab to the front; goldens `browser_app`,
 give its history entries: `BrowserTab` has no call for that yet), smooth scrolling for the mouse wheel (only keys glide), a
 page-wide UI scale setting (the browser draws at OkayUI's text size; 150% was not checked), double-click to select a word,
 selecting text in scrolling areas, drag a tab out into a new window. Nothing was run on Windows.
+
+## Site check: real sites, failures ranked (2026-11-26, branch `claude/site-check-1`)
+
+Owner: "i want all sites to load properly". `okay-sitecheck` (`tools/sitecheck/`, feature map 17.19) loads the 61 public home
+pages of `tools/sitecheck/sites.txt` through the browser program's own tab host, page engine and view, one at a time, and
+ranks the causes by how many sites each hits. Run on Linux on 2026-11-26 (our own HTTP client with the system OpenSSL, not
+WinHTTP as on Windows); 59 of 61 shown. Reports and screenshots stay outside the repository. The order to fix things in, by
+sites hit:
+
+- JavaScript language: `Date` is not defined (16 sites); `decodeURIComponent` / `encodeURIComponent` (5), `WeakMap` (3),
+  `Intl` (2); syntax we do not read: `__proto__: value` in object literals (18), a construct with `in` that stops the parser
+  ("unexpected 'in'", 18 + 16; the exact construct is not found yet), tagged templates (3), and single sites with BigInt
+  literals, regex lookbehind, `for await`, `static {}`, `import`. Most of the 20 sites with "a global of the page is not
+  defined" follow from an earlier script that failed to parse.
+- DOM API: `navigator` (8), `URL` (4), `performance` (4), `Element`, `Image`, `MutationObserver`, `matchMedia` (2 each).
+- Images: SVG (19), WebP (5). Fonts: WOFF files are not passed to the rasterizer by the tab host (9; the decoder exists).
+- Layout: 18 screenshots are nearly one flat colour and 7 pages drew almost nothing, mostly pages built by their scripts
+  (Twitch, Reddit, Pinterest, Dailymotion) or sites that answered 403 to our user agent.
+- Network: 11 sites answered the home page with 403 (bot checks); one TLS handshake failure (DuckDuckGo, it loaded in the
+  run before), one timeout (Best Buy), two scripts over the 16 MB limit (YouTube, Bluesky).
+- CSS: properties the cascade does not use, on most sites: `cursor` (37), `-webkit-text-size-adjust` (29), `transition` (28),
+  `pointer-events` (27), `-webkit-appearance` (23), `fill` (22), `animation` / `appearance` (19); selectors with
+  `::-webkit-scrollbar` (23) or `::-moz-focus-inner` (19) are dropped. Many of these change nothing visible.

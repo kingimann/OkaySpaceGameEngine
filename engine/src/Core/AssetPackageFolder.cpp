@@ -141,7 +141,17 @@ bool Materialize(const PackageStack& stack, const std::string& dataDir, const st
     std::map<AssetId, ViewRow> now;
     std::set<std::string> packedKeys;   // lower-case names of the visible entries
 
-    for (const PackageStack::Hit& h : stack.Visible()) {
+    const std::vector<PackageStack::Hit> visible = stack.Visible();
+    {   // Files of earlier versions that are gone now are deleted first, so a new file may take a removed one's place.
+        std::set<AssetId> ids;
+        for (const PackageStack::Hit& h : visible) ids.insert(h.entry->id);
+        for (const auto& o : old) {
+            if (ids.count(o.first)) continue;
+            fs::path p;
+            if (pathsafety::StaysInside(view, o.second.name, &p) && fs::is_regular_file(p, ec)) { fs::remove(p, ec); ++st.removed; }
+        }
+    }
+    for (const PackageStack::Hit& h : visible) {
         const std::string name = stack.NameOf(h.entry->id);
         if (name.empty()) { why = "the game's packages have no file names (they were stripped), so they cannot be laid out as files"; return false; }
         fs::path target;
@@ -164,11 +174,6 @@ bool Materialize(const PackageStack& stack, const std::string& dataDir, const st
         r.hash = h.entry->contentHash; r.size = h.entry->size; r.stamp = Stamp(target); r.name = name;
         now[h.entry->id] = r;
         ++st.written;
-    }
-    for (const auto& o : old) {
-        if (now.count(o.first)) continue;
-        fs::path p;
-        if (pathsafety::StaysInside(view, o.second.name, &p) && fs::is_regular_file(p, ec)) { fs::remove(p, ec); ++st.removed; }
     }
     // Loose files beside the packages (a publisher's content.okayconfig, a small config) are seen in the view too.
     const fs::path data = fs::u8path(dataDir);

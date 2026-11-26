@@ -677,17 +677,26 @@ const std::uint32_t* RenderMeshesSS(Raster& work, std::vector<std::uint32_t>& ou
 void FillOcclusionDepth(Raster& work, std::vector<std::uint32_t>& out,
                                const Scene& scene, const Mat4& vp, const Vec3& eye,
                                int w, int h, const GameObject* ignore) {
-    const CullCounters saved = LastCullCounters();
-    const bool vigSaved = PostVignetteHandled();   // this pass is never shown: it must not change who paints the vignette
     // Only the depth is wanted: shadow maps (three 2048 x 2048 cascades) were about 90 percent of this pass and change no depth.
-    const bool shadowsSaved = ShadowsEnabled(), aaSaved = FXAAEnabled(), ssaoSaved = SSAOEnabled(), bloomSaved = BloomEnabled(),
-               toneSaved = ToneMapEnabled(), gradeSaved = ColorGradeEnabled();
-    ShadowsEnabled() = false; FXAAEnabled() = false; SSAOEnabled() = false; BloomEnabled() = false; ToneMapEnabled() = false; ColorGradeEnabled() = false;
+    // This pass is never shown: it must not change who paints the vignette or the counters of the real frame.
+    ReducedRenderScope reduced(/*depthOnly=*/true, /*keepOcclusionDepth=*/false);   // publishing the depth is the point
     RenderMeshesSS(work, out, scene, vp, eye, w, h, 1, ignore);
-    ShadowsEnabled() = shadowsSaved; FXAAEnabled() = aaSaved; SSAOEnabled() = ssaoSaved; BloomEnabled() = bloomSaved;
-    ToneMapEnabled() = toneSaved; ColorGradeEnabled() = gradeSaved;
-    LastCullCounters() = saved;
-    PostVignetteHandled() = vigSaved;
+}
+
+ReducedRenderScope::ReducedRenderScope(bool depthOnly, bool keepOcclusionDepth)
+    : m_shadows(ShadowsEnabled()), m_fxaa(FXAAEnabled()), m_ssao(SSAOEnabled()), m_bloom(BloomEnabled()), m_tone(ToneMapEnabled()),
+      m_grade(ColorGradeEnabled()), m_vignette(PostVignetteHandled()), m_keepDepth(keepOcclusionDepth), m_cull(LastCullCounters()) {
+    if (m_keepDepth) m_depth = SceneOcclusionDepth();
+    ShadowsEnabled() = false; FXAAEnabled() = false; SSAOEnabled() = false; BloomEnabled() = false;
+    if (depthOnly) { ToneMapEnabled() = false; ColorGradeEnabled() = false; }
+}
+
+ReducedRenderScope::~ReducedRenderScope() {
+    ShadowsEnabled() = m_shadows; FXAAEnabled() = m_fxaa; SSAOEnabled() = m_ssao; BloomEnabled() = m_bloom;
+    ToneMapEnabled() = m_tone; ColorGradeEnabled() = m_grade;
+    PostVignetteHandled() = m_vignette;
+    LastCullCounters() = m_cull;
+    if (m_keepDepth) SceneOcclusionDepth() = std::move(m_depth);
 }
 
 } // namespace okay

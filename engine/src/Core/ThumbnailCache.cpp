@@ -304,11 +304,17 @@ bool ThumbnailCache::InMemory(const Guid& guid, std::uint64_t hash) const {
     return m_index.count(MakeKey(guid, hash)) != 0;
 }
 
+std::string ThumbnailCache::FailedMarkerFor(const Guid& guid, std::uint64_t hash) const {
+    const std::string p = DiskPathFor(guid, hash);
+    return p.empty() ? p : p.substr(0, p.size() - 4) + ".failed";   // same name, so RemoveStaleOnDisk and Invalidate take it too
+}
+
 bool ThumbnailCache::OnDisk(const Guid& guid, std::uint64_t hash) const {
     const std::string p = DiskPathFor(guid, hash);
     if (p.empty()) return false;
+    ++m_stats.diskChecks;
     std::error_code ec;
-    return fs::is_regular_file(PathFromU8(p), ec);
+    return fs::is_regular_file(PathFromU8(p), ec) || fs::is_regular_file(PathFromU8(FailedMarkerFor(guid, hash)), ec);
 }
 
 std::shared_ptr<const Image> ThumbnailCache::Placeholder(AssetType kind, const std::string& ext, bool error) {
@@ -391,6 +397,9 @@ ThumbnailCache::Thumb ThumbnailCache::Get(const Guid& guid, std::uint64_t hash, 
                 return Insert(key, std::make_shared<const Image>(std::move(img)), false, false, Source::Disk);
             }
             fs::remove(PathFromU8(dp), ec);   // unreadable: regenerate below
+        } else if (fs::is_regular_file(PathFromU8(FailedMarkerFor(guid, hash)), ec)) {
+            ++m_stats.failuresRemembered;   // drawn before and it failed: the type's tile, without running the generator again
+            return Insert(key, Placeholder(kind, ext, true), true, true, Source::Placeholder);
         }
     }
     // 3. A generator.
@@ -404,6 +413,12 @@ ThumbnailCache::Thumb ThumbnailCache::Get(const Guid& guid, std::uint64_t hash, 
         } catch (...) { img = Image(); }
         if (!img.Valid()) {
             ++m_stats.failures;
+            if (!m_opt.diskDir.empty()) {   // remembered on disk, so the next session does not render it again (a whole scene can take seconds)
+                const std::string mp = FailedMarkerFor(guid, hash);
+                std::error_code ec;
+                fs::create_directories(PathFromU8(mp).parent_path(), ec);
+                if (std::ofstream(PathFromU8(mp), std::ios::binary | std::ios::trunc)) RemoveStaleOnDisk(guid, AssetFileName(mp));
+            }
             return Insert(key, Placeholder(kind, ext, true), true, true, Source::Placeholder);
         }
         Image small = BoxDownscale(img, m_opt.size);

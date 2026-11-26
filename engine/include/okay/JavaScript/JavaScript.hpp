@@ -309,6 +309,9 @@ public:
     std::size_t BytesInUse() const { return bytes_; }
     std::function<void(const std::string&)> printSink;   ///< console.log; nullptr = nowhere
     std::function<void(HostObj*)> onHostFree;            ///< an engine object is about to be freed
+    /// import(specifier): return a promise for the module namespace. Unset (game scripts): the promise is
+    /// rejected with a TypeError, so `try { await import(x) } catch {}` code still runs.
+    std::function<Value(Runtime&, const std::string& specifier)> importHook;
 
     // ---- values
     String* NewString(std::u16string s);

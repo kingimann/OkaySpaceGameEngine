@@ -1195,6 +1195,14 @@ struct Compiler {
                 if (first) EmitStr(u"");
                 return;
             }
+            case NK::ImportCall:
+                Expr(n->a);
+                if (n->b) {
+                    Expr(n->b);
+                    Emit(OP_Pop);
+                }
+                Emit(OP_ImportCall);
+                return;
             case NK::TaggedTemplate: {
                 // [cache, cooked..., raw...] in a row of constants; OP_TemplateObj builds the object once (the
                 // cache slot keeps it), so each evaluation of this site gets the same object (13.2.8.4)

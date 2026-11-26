@@ -517,7 +517,7 @@ struct Parser {
             if (Eq(t.s, "with")) Fail("'with' is not allowed in strict code");
             if (Eq(t.s, "function")) Fail("a function declaration is not allowed here (wrap it in { })");
             if (Eq(t.s, "class") || Eq(t.s, "let") || Eq(t.s, "const")) Fail("a declaration is not allowed here (wrap it in { })");
-            if (Eq(t.s, "import")) Fail("import is not supported");
+            if (Eq(t.s, "import") && !IsPAt(pos + 1, P_LParen)) Fail("import is not supported");
             // a label
             if (IsPAt(pos + 1, P_Colon) && !IsReserved(t.s)) {
                 Node* n = N(NK::Labeled);
@@ -1165,7 +1165,20 @@ struct Parser {
                 return N(NK::Super, t);
             }
             if (Eq(s, "new")) return NewExpr();
-            if (Eq(s, "import")) Fail("import is not supported");
+            if (Eq(s, "import")) {   // 13.3.10 import(specifier [, options]): a promise for a module (see OP_ImportCall)
+                if (!IsPAt(pos + 1, P_LParen)) Fail("import is not supported");
+                Node* n = N(NK::ImportCall, t);
+                Next();   // import
+                Next();   // (
+                NoInGuard ng(*this, false);
+                n->a = Assignment();
+                if (Eat(P_Comma) && !IsP(P_RParen)) {
+                    n->b = Assignment();
+                    Eat(P_Comma);
+                }
+                Expect(P_RParen);
+                return n;
+            }
             if (IsReserved(s) && !Eq(s, "let") && !Eq(s, "static") && !Eq(s, "yield"))
                 Fail("unexpected reserved word '" + Utf16To8(s) + "'");
             if (Eq(s, "yield") || Eq(s, "let") || Eq(s, "static")) Fail("'" + Utf16To8(s) + "' is a reserved word in strict code");

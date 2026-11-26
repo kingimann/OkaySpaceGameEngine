@@ -565,6 +565,23 @@ void NamedFunctionExpressions() {
     ExpectError("(function t() { t; const t = 1; })()", "ReferenceError");   // the body's const shadows the name from the start
 }
 
+// 13.3.10 import(): a promise; with no host loader it is rejected with a TypeError so the rest of the script runs
+void DynamicImport() {
+    Expect("(async () => { try { await import('./x.js'); } catch (e) { console.log(e.name); } })()", "TypeError");
+    Expect("import('a', {with: {}}).catch(e => console.log(e instanceof TypeError)); console.log('parsed')", "parsed\ntrue");
+    ExpectError("import x from 'y';", "SyntaxError");
+    Runtime rt;
+    std::string out, err;
+    rt.printSink = [&](const std::string& line) { out += line + "\n"; };
+    rt.importHook = [](Runtime& r, const std::string& spec) {
+        Object* ns = r.NewObject();
+        r.DefineData(ns, r.Intern("name"), Value::Str(r.NewStringUtf8(spec)));
+        return Value::Obj(ns);
+    };
+    CHECK(rt.Run("import('mod-' + 1).then(m => console.log(m.name));", "i.js", &err));
+    CHECK(out == "mod-1\n");
+}
+
 struct Hostile {
     const char* src;
     const char* want;   ///< part of the error, "" for any error, "OK" when it must finish without one
@@ -810,6 +827,7 @@ int main() {
     NewerSyntaxAndLibrary();
     IntlBasics();
     NamedFunctionExpressions();
+    DynamicImport();
     ConformanceScript(false);
     ConformanceScript(true);
     HostileOneLiners();

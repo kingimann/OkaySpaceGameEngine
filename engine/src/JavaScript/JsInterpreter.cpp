@@ -1425,6 +1425,24 @@ Value Execute(Runtime& rt, int entry) {
                         SP[-1] = Value::Obj(r);
                         break;
                     }
+                    case OP_ImportCall: {   // 13.3.10.1: [specifier] -> [promise]; failures reject the promise
+                        PromiseObj* p = NewPromise(rt);
+                        Value spec = SP[-1];
+                        SP[-1] = Value::Obj(p);
+                        try {
+                            std::string s = rt.ToUtf8(spec);
+                            if (rt.importHook) {
+                                Value r = rt.importHook(rt, s);
+                                ResolvePromise(rt, p, r);
+                            } else
+                                rt.ThrowType("modules can not be loaded here (import('" + s.substr(0, 200) + "'))");
+                        } catch (const JsThrow&) {
+                            Value e = rt.exception;
+                            rt.exception = Value();
+                            RejectPromise(rt, p, e);
+                        }
+                        break;
+                    }
                     case OP_SetHome:   // [fn home]: the static initializer's [[HomeObject]] is the class
                         if (SP[-2].IsObj() && SP[-2].O()->cls == Cls::Closure && SP[-1].IsObj())
                             static_cast<Closure*>(SP[-2].O())->home = SP[-1].O();

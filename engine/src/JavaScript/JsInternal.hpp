@@ -57,7 +57,7 @@ enum class NK : std::uint8_t {
     // expressions
     Num, Str, Template, Ident, This, Super, NewTarget, Null, True, False, Array, Object, Func, Class,
     Unary, Update, Binary, Logical, Assign, Cond, Call, New, Member, Index, OptChain, Seq, Spread,
-    Yield, Await, Hole, TaggedTemplate, Regex, BigInt,
+    Yield, Await, Hole, TaggedTemplate, Regex, BigInt, ImportCall,
     // object literal parts
     PropInit, PropGet, PropSet, PropSpread,
     // patterns
@@ -172,7 +172,7 @@ enum Op : std::uint16_t {
     OP_Throw, OP_TryBegin, OP_TryEnd, OP_ThrowConst,
     OP_GenStart, OP_AsyncStart, OP_Yield, OP_Await, OP_ResumeCheck, OP_IterSend,
     OP_Arguments, OP_RestArgs, OP_CheckCoercible, OP_Debugger, OP_SetName, OP_NewRegExp,
-    OP_SetProtoLit, OP_TemplateObj, OP_GetAsyncIter, OP_AsyncIterNext, OP_AsyncIterValue, OP_SetHome,
+    OP_SetProtoLit, OP_TemplateObj, OP_GetAsyncIter, OP_AsyncIterNext, OP_AsyncIterValue, OP_SetHome, OP_ImportCall,
     OP_Count
 };
 

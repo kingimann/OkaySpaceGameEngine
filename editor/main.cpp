@@ -50,7 +50,10 @@
 #include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/BuildPipeline.hpp"   // the build pipeline: layout, dependency walk, manifest, report, zip
-#if defined(OKAY_XBOX_UWP)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/platform/xbox_uwp.md
+#if defined(OKAY_XBOX_UWP)
+#  error "The desktop editor must not be built with OKAY_XBOX_UWP: it makes the engine headers act as the Xbox app (no WinHTTP, so no sign-in). The editor's Xbox export entry is OKAY_XBOX_UWP_EXPORT."
+#endif
+#if defined(OKAY_XBOX_UWP_EXPORT)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/platform/xbox_uwp.md
 #include "XboxExport.hpp"
 #include "XboxSdkProbe.hpp"
 #include "XboxBuildHost.hpp"   // one-click build: plan, runner, host (pure)
@@ -2506,6 +2509,7 @@ double g_autosaveStamp = 0.0;    // time of the last successful autosave (for UI
 std::string g_recoverPath;       // a newer ".autosave" found on load (recovery prompt)
 Uint64 g_lastSavedAt = 0;        // okay::platform::TicksMs() of the last successful scene save (0 = none this session)
 bool g_quitRequested = false;    // quit pending (may prompt to save first)
+bool g_quitNoPrompt = false;     // quit asked from a window shown before any project is open (sign-in, New Project): nothing to save, so no prompt
 oked::launcherwatch::State g_launcherWatch;   // the launcher from --launcher <pid> is checked once a second (editor/LauncherWatch.hpp)
 std::vector<std::string> g_recent; // recently opened/saved scene paths
 std::string g_clipboard;         // serialized GameObject for copy/paste
@@ -2927,7 +2931,7 @@ bool  g_showBuildGame = false;
 char  g_buildDirBuf[256] = "build/MyGame";
 char  g_buildNameBuf[128] = "MyGame";
 std::string g_buildStatus;
-#if defined(OKAY_XBOX_UWP)
+#if defined(OKAY_XBOX_UWP_EXPORT)
 // One-click Xbox build (platform/xbox_uwp/XboxBuildPlan.hpp). UNVERIFIED on Windows: the steps have never run there.
 bool g_xboxExportOk = false;                       // set by the Xbox export block below
 std::vector<std::string> g_xboxExportWarnings;
@@ -3003,7 +3007,7 @@ static void LoadBuildProfilesFrom(const std::string& dir) {
         std::snprintf(g_buildNameBuf, sizeof(g_buildNameBuf), "%s", live.productName.c_str());
         std::snprintf(g_buildDirBuf, sizeof(g_buildDirBuf), "%s", live.outputDir.c_str());
         g_buildPlatform = live.platform;
-#if !defined(OKAY_XBOX_UWP)
+#if !defined(OKAY_XBOX_UWP_EXPORT)
         if (g_buildPlatform > 3) g_buildPlatform = 0;   // a profile saved by a build with the Xbox target
 #endif
         for (std::size_t i = 0; i < g_buildProfiles.size(); ++i) if (g_buildProfiles[i].name == sel) g_buildProfileSel = (int)i;
@@ -11399,7 +11403,7 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
     const bool showing = ImGui::IsPopupOpen("Unsaved Changes");
     ImGuiWindow* topModal = ImGui::GetTopMostPopupModal();
     const bool otherModal = topModal && !showing;
-    const bool unsaved = g_quitRequested && AnyUnsavedWork(ed);
+    const bool unsaved = g_quitRequested && !g_quitNoPrompt && AnyUnsavedWork(ed);
     switch (oked::StepQuitPrompt(quit, g_quitRequested, unsaved, showing, otherModal)) {
         case oked::QuitStep::QuitNow: running = false; g_quitRequested = false; return;
         case oked::QuitStep::OpenPrompt: ImGui::OpenPopup("Unsaved Changes"); break;
@@ -14983,14 +14987,14 @@ void DrawFileDialogs(EditorState& ed) {
         if (g_build.height < 240) g_build.height = 240;
         if (g_build.fpsCap < 0)   g_build.fpsCap = 0;
 
-#if defined(OKAY_XBOX_UWP)
+#if defined(OKAY_XBOX_UWP_EXPORT)
         if (g_xboxRunner) g_xboxRunner->Tick();   // keep the one-click Xbox build moving whichever page is shown
 #endif
         // ---- Target platform first ----
         // Target platform: Desktop ships a Windows .exe; Web/Android export a
         // ready-to-build project (the editor can't run Emscripten / the Android NDK
         // itself, so it lays down the data + build script + instructions).
-        #if defined(OKAY_XBOX_UWP)
+        #if defined(OKAY_XBOX_UWP_EXPORT)
         const int kPlatCount = 5;
         const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)", "Dedicated Server", "Xbox One (experimental, Developer Mode)"};
 #else
@@ -15160,7 +15164,7 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Without a list: also bundle every .okayscene in Assets (the open scene starts the game).");
             }
         }
-#if defined(OKAY_XBOX_UWP)
+#if defined(OKAY_XBOX_UWP_EXPORT)
         if (s_buildSec == 7) {   // ---- Xbox One Developer Mode (UWP), EXPERIMENTAL ----
             SectionHeader("Xbox One (experimental, Developer Mode)");
             ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "EXPERIMENTAL and UNVERIFIED. Never built on Windows, never run on an Xbox.");
@@ -15551,13 +15555,13 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-#if defined(OKAY_XBOX_UWP)
+#if defined(OKAY_XBOX_UWP_EXPORT)
         const bool xboxChecking = g_buildPlatform == 4 && okay::xbox::CachedSdkReport().checking;   // the probe starts here too if the page was not shown yet; never waits
         const bool xboxBlocked = g_buildPlatform == 4 && (xboxChecking || !okay::xbox::CachedSdkReport().available || (g_xboxRunner && g_xboxRunner->Running()));
         ImGui::BeginDisabled(xboxBlocked);
 #endif
         if (ImGui::Button(buildLabel, ImVec2(bw, 0))) doBuild = true;
-#if defined(OKAY_XBOX_UWP)
+#if defined(OKAY_XBOX_UWP_EXPORT)
         ImGui::EndDisabled();
         if (xboxBlocked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", xboxChecking ? "Checking your PC for the Xbox tools... (a few seconds; the button turns on when it is done)" : (g_xboxRunner && g_xboxRunner->Running()) ? "An Xbox build is already running (see the log on the Xbox page)." : "Xbox export is unavailable: a required Windows tool is missing (see the Xbox page).");
 #endif
@@ -15620,7 +15624,7 @@ void DrawFileDialogs(EditorState& ed) {
             g_buildReport = builder::BuildReport{};
             g_buildStatus = builder::ExportForPlatform(ed, g_buildDirBuf, g_buildNameBuf, wo, g_buildPlatform);
             ConsoleLog("Export (" + std::string(plats[g_buildPlatform]) + "): " + g_buildStatus);
-#if defined(OKAY_XBOX_UWP)
+#if defined(OKAY_XBOX_UWP_EXPORT)
             if (g_buildPlatform == 4) {   // one click: SDK check, export, compile, shaders, pack, sign, (install). The popup stays open and shows the log.
                 namespace xb = okay::xbox;
                 xb::ExportInputs xi; xi.gameName = g_buildNameBuf; xi.company = g_build.company; xi.version = g_build.version; xi.bundleId = g_build.bundleId;
@@ -16263,7 +16267,7 @@ void DrawProjectGate(EditorState& ed) {
         g_newProjectModules = g_npForm.modules;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Quit", ImVec2(100, 32))) g_quitRequested = true;
+    if (ImGui::Button("Quit", ImVec2(100, 32))) { g_quitRequested = true; g_quitNoPrompt = true; }   // no project open yet: nothing to save
     if (!g_openScenePath.empty() || !g_newProjectRoot.empty()) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }
@@ -53000,7 +53004,7 @@ static void DrawSignInGate() {
     }
     ImGui::Dummy(ImVec2(0, 6));
     ImGui::Separator();
-    if (ImGui::Button("Quit", ImVec2(100, 28))) g_quitRequested = true;
+    if (ImGui::Button("Quit", ImVec2(100, 28))) { g_quitRequested = true; g_quitNoPrompt = true; }   // the sign-in window is itself a modal: a save prompt would wait for it forever
     ImGui::EndPopup();
 }
 

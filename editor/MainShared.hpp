@@ -108,7 +108,7 @@ void RevealInFiles(const std::string& path);
 // The open project's settings (main.cpp; the struct is in ProjectState.hpp).
 struct ProjectSettings;
 extern ProjectSettings g_project;
-#if defined(OKAY_XBOX_UWP)
+#if defined(OKAY_XBOX_UWP_EXPORT)
 // The last Xbox export's result (main.cpp), set by Build Game's Xbox export.
 extern bool g_xboxExportOk;
 extern std::vector<std::string> g_xboxExportWarnings;

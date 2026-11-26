@@ -422,6 +422,18 @@ const Param* findSpecial(const Type* t, const char* name) {
 }
 
 // True when 'd' is the same class as 'b' or is derived from it (single inheritance).
+bool hasCopyCtor(const Type* cls) {
+    if (!cls) return false;
+    for (const Param& p : cls->params) {
+        if (p.name != "<ctor>" || !p.type || p.type->params.size() != 1) continue;
+        const Type* a = p.type->params[0].type.get();
+        if (a && a->kind == Type::Kind::Reference && a->inner && a->inner->kind == Type::Kind::Struct &&
+            a->inner->tag == cls->tag)
+            return true;
+    }
+    return false;
+}
+
 bool derivedFrom(const Type& d, const Type& b) {
     if (d.kind != Type::Kind::Struct || b.kind != Type::Kind::Struct || d.tag.empty() || b.tag.empty()) return false;
     return !basePath(d.tag, b.tag).empty() || d.tag == b.tag;

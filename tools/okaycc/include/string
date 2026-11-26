@@ -144,6 +144,14 @@ public:
         if (n > n_ - pos) n = n_ - pos;
         return string(p_ + pos, n);
     }
+    // [string.append] p3: at most n characters of o from pos (pos past the end appends nothing;
+    // the standard throws out_of_range there, which this subset does not do).
+    string &append(const string &o, unsigned long pos, unsigned long n = npos) {
+        if (pos > o.n_) pos = o.n_;
+        if (n > o.n_ - pos) n = o.n_ - pos;
+        string part(o.p_ + pos, n);  // (o may be this string)
+        return append(part.p_, n);
+    }
     string &append(unsigned long n, char c) {  // [string.append] n copies of c
         for (unsigned long i = 0; i < n; ++i) push_back(c);
         return *this;
@@ -198,6 +206,20 @@ public:
         return append(tail);
     }
     string &insert(unsigned long pos, const string &s) { return insert(pos, s.c_str()); }
+    // [string.insert]: n characters from s (which may point into this string), and n copies of c.
+    string &insert(unsigned long pos, const char *s, unsigned long n) {
+        string part(s, n);
+        string tail = substr(pos);
+        n_ = pos < n_ ? pos : n_;
+        p_[n_] = 0;
+        append(part.p_, n);
+        return append(tail);
+    }
+    string &insert(unsigned long pos, unsigned long n, char c) {
+        string part;
+        part.append(n, c);
+        return insert(pos, part.p_, n);
+    }
     // [string.find]: the first (or, for rfind, the last) place at or after (before) pos.
     unsigned long find(char c, unsigned long pos = 0) const {
         for (unsigned long i = pos; i < n_; ++i)

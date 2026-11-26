@@ -208,6 +208,8 @@ bool isVoidPtr(const Type& t);
 bool isSpecialName(const std::string& n);
 const Param* findSpecial(const Type* t, const char* name);
 bool derivedFrom(const Type& d, const Type& b);
+// Whether a class has a constructor taking one reference to its own class (a copy or move one).
+bool hasCopyCtor(const Type* cls);
 std::vector<std::string> basePath(const std::string& from, const std::string& to, int depth = 0);
 bool hasSideEffects(const Expr& e);
 

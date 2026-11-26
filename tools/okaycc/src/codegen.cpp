@@ -431,8 +431,15 @@ void emitInst(std::string& s, const Function& f, const Inst& in, const std::vect
             s += "\n";
         }
         if (in.func.empty()) {
+            // A call through a pointer (a virtual function, a function pointer) passes its float
+            // and double arguments in xmm0-7 too (System V AMD64 ABI 3.2.3); al is their count for
+            // a variadic one. (They were left out: the callee read whatever was there.)
+            for (std::size_t i = 0; i < in.xmm.size() && i < 8; ++i)
+                loadXmm(s, in.xmm[i], static_cast<int>(i), i < in.xmmW.size() ? in.xmmW[i] : 8);
             loadFrom(s, in.a, "%rax", spilled);
-            if (in.va) s += "  movq %rax, %r11\n  xorl %eax, %eax\n  call *%r11\n";
+            if (in.va)
+                s += "  movq %rax, %r11\n  movl $" + std::to_string(in.xmm.size() < 8 ? in.xmm.size() : 8) +
+                     ", %eax\n  call *%r11\n";
             else s += "  call *%rax\n";
         } else if (in.func == "syscall") {
             // Linux syscall. The C arguments are number, a, b, c, d, e in rdi, rsi, rdx, rcx, r8, r9.

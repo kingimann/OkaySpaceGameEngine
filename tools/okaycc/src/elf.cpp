@@ -664,13 +664,17 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
             movReg(im, kArg[i], Rax);
         }
         if (in.func.empty()) {
+            // a call through a pointer: the float and double arguments in xmm0-7 as well (System V
+            // AMD64 ABI 3.2.3), al their count for a variadic one (codegen.cpp does the same)
+            for (std::size_t i = 0; i < in.xmm.size() && i < 8; ++i)
+                loadXmm(im, in.xmm[i], static_cast<int>(i), i < in.xmmW.size() ? in.xmmW[i] : 8);
             loadRaxCall(im, in.a, spilled);
             if (in.va) {
-                u8(im, 0x49);
+                u8(im, 0x49);  // mov r11, rax
                 u8(im, 0x89);
                 u8(im, 0xC3);
-                u8(im, 0x31);
-                u8(im, 0xC0);
+                u8(im, 0xB8);  // mov eax, n
+                u32(im, static_cast<std::uint32_t>(in.xmm.size() < 8 ? in.xmm.size() : 8));
                 u8(im, 0x41);
                 u8(im, 0xFF);
                 u8(im, 0xD3);

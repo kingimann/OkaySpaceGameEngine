@@ -448,6 +448,19 @@ private:
             }
             ET hit = lookup(e.text, e.line, e.col, true);
             if (!hit.bad) return hit;
+            if (method_ && e.text.find("::") != std::string::npos) {
+                // Base::m in a member function ([class.qual], [class.member.lookup]): this->m of the
+                // base's part, also when the class hides it with a member of the same name.
+                std::string field = qualifiedField(e.text);
+                if (!field.empty()) {
+                    e.kind = Expr::Kind::Member;
+                    e.text = "->";
+                    e.kids.clear();
+                    e.kids.push_back(mkName("this", e));
+                    e.kids.push_back(mkName(field, e));
+                    return checkExprBody(e);
+                }
+            }
             if (method_ && e.text.find("::") == std::string::npos) {
                 // A member function of the class hides the namespace's functions of that name
                 // ([basic.lookup.unqual]/8): the call rewrites it as this->f, so leave the name.
@@ -1456,15 +1469,19 @@ private:
         const bool simple = simpleOperand(lhs);
         // A left operand that is a call or another operator expression (a + b + c): check it once,
         // keep the result for the check that follows, and use it only for a class with the operator.
+        // world().fn(args), get()->fn(args): a call of a member object of a call result.
+        const bool callMember = e.kind == Expr::Kind::Call && lhs.kind == Expr::Kind::Member && lhs.kids.size() == 2 &&
+                                lhs.kids[0] && (memberOfCall(lhs) || lhs.kids[0]->kind == Expr::Kind::Call);
         if (!simple && e.kind != Expr::Kind::Bin && e.kind != Expr::Kind::Index && e.kind != Expr::Kind::Unary &&
+            !callMember &&
             !((e.kind == Expr::Kind::Assign || e.kind == Expr::Kind::Pre || e.kind == Expr::Kind::Post) &&
               (lhs.kind == Expr::Kind::Call || lhs.kind == Expr::Kind::Member || lhs.kind == Expr::Kind::Index)))
             return false;  // (*s.begin(), -f(), Name() += x, ++Counter(): operators on a call result)
         if (!simple && lhs.kind != Expr::Kind::Call && lhs.kind != Expr::Kind::Bin && lhs.kind != Expr::Kind::Comma &&
-            lhs.kind != Expr::Kind::Unary && lhs.kind != Expr::Kind::Cond && !memberOfCall(lhs) &&
+            lhs.kind != Expr::Kind::Unary && lhs.kind != Expr::Kind::Cond && !memberOfCall(lhs) && !callMember &&
             !((lhs.kind == Expr::Kind::Member || lhs.kind == Expr::Kind::Index) &&
               (e.kind == Expr::Kind::Index || e.kind == Expr::Kind::Assign || e.kind == Expr::Kind::Pre ||
-               e.kind == Expr::Kind::Post)))
+               e.kind == Expr::Kind::Post || e.kind == Expr::Kind::Bin || e.kind == Expr::Kind::Unary)))
             return false;  // (a member of a call result: St().cats[k] = v, St().flag = true with State &St())
         if (e.kind == Expr::Kind::Call && lhs.text.compare(0, 1, "\x01") == 0) return false;
         ++quiet_;
@@ -1510,7 +1527,15 @@ private:
                              (lhs.kind == Expr::Kind::Unary && lhs.text == "*" && !lhs.kids.empty() && lhs.kids[0] &&
                               (lhs.kids[0]->kind == Expr::Kind::Call || lhs.kids[0]->kind == Expr::Kind::Cast ||
                                lhs.kids[0]->kind == Expr::Kind::Cond));  // *(c ? &x : &y)
-        if (!simple && !(found && probe.lvalue && refCall)) {
+        if (!simple && found && !probe.lvalue && subobjectOfTemp(*e.kids[lhsAt])) {
+            // f().m op x: m is a member of the hidden object of f(), destroyed with it at the end
+            // of the full expression; the operator is called on m in place, *(.., &tmp.m). (A copy
+            // of m's bytes in another hidden local was destroyed too: m's resources twice.)
+            Expr& c = *e.kids[lhsAt];
+            c.kids.back() = eUnary("&", std::move(c.kids.back()), e);
+            e.kids[lhsAt] = eUnary("*", std::move(e.kids[lhsAt]), e);
+            probe.lvalue = true;
+        } else if (!simple && !(found && probe.lvalue && refCall)) {
             // (A call that returns a reference to an object, *f() inside, is an lvalue: the member
             // call below is made on it directly.)
             if (probe.bad) return false;
@@ -1802,7 +1827,11 @@ private:
         const bool opExpr = e.kind == Expr::Kind::Bin && e.kids.size() == 2 && e.text != "&&" && e.text != "||" &&
                             e.text != "==" && e.text != "!=" && e.text != "<" && e.text != ">" && e.text != "<=" &&
                             e.text != ">=";
-        if (!simpleOperand(e) && !isCall(e) && !opExpr) return;
+        // world().fn or get()->fn: a member of a call's result (an lvalue when the call returns a
+        // reference or a pointer), as in "!UIWorld().rectOf" with rectOf a std::function.
+        const bool callMember = e.kind == Expr::Kind::Member && e.kids.size() == 2 && e.kids[0] &&
+                                (memberOfCall(e) || isCall(*e.kids[0]) || subobjectOfTemp(*e.kids[0]));
+        if (!simpleOperand(e) && !isCall(e) && !opExpr && !callMember) return;
         ++quiet_;
         ET probe = checkExpr(e);
         --quiet_;
@@ -1949,6 +1978,23 @@ private:
                         sameType(*a.type->inner, *b.type->inner);
             bool null = (isPtr(*a.type) && b.nullc) || (isPtr(*b.type) && a.nullc);
             if (arith || ptrs || null) return result(truthType(e));
+            if (isPtr(*a.type) && isPtr(*b.type) && a.type->inner && b.type->inner) {
+                // Pointers to a class and to its base ([expr.eq] p3, [expr.rel] p2: the composite
+                // pointer type): the derived one is converted to the base (moved to the base's
+                // subobject when the base is not the primary one), as cs[i].get() != this.
+                const Type& ai = *a.type->inner;
+                const Type& bi = *b.type->inner;
+                if (derivedFrom(ai, bi) || derivedFrom(bi, ai)) {
+                    const bool aDerived = derivedFrom(ai, bi);
+                    const std::size_t k = aDerived ? 0 : 1;
+                    if (toBaseSubobject(e.kids[k], aDerived ? a.type.get() : b.type.get(), aDerived ? b.type.get() : a.type.get()) &&
+                        checkExpr(*e.kids[k]).bad)
+                        return bad(e.line, e.col);
+                    return result(truthType(e));
+                }
+                // with void * ([conv.ptr] p2)
+                if (ai.kind == Type::Kind::Void || bi.kind == Type::Kind::Void) return result(truthType(e));
+            }
         } else if (op == "&&" || op == "||") {
             if (scalar(*a.type) && scalar(*b.type)) return result(truthType(e));
         }
@@ -3594,7 +3640,10 @@ private:
             std::string prefix = c0.text.substr(0, cc);
             std::string fname = c0.text.substr(cc + 2);
             auto it = canonStructs().find(prefix);
-            if (it == canonStructs().end() && !inNs_.empty()) it = canonStructs().find(inNs_ + "::" + prefix);
+            // Base::f() from a class in a namespace: Base is looked up from the class outward
+            // (okay::CraftingStation finds okay::InventoryInteractable).
+            for (std::string sc = inNs_; it == canonStructs().end() && !sc.empty(); sc = outerScope(sc))
+                it = canonStructs().find(sc + "::" + prefix);
             if (it != canonStructs().end() && it->second) {
                 std::vector<const Param*> cands;
                 for (const Param& f : it->second->params)
@@ -3654,6 +3703,13 @@ private:
                         // full expression ([class.temporary]/4); call on it, do not copy its bytes.
                         std::string tname = mem.kids[0]->text;
                         selfArg = eCommaNode(std::move(mem.kids[0]), eUnary("&", mkName(tname, e), e), e);
+                    } else if (!obj.lvalue && subobjectOfTemp(*mem.kids[0])) {
+                        // f().m.g(): m is a member of the hidden object of f(), which lives to the
+                        // end of the full expression and is destroyed with it; call on m itself (a
+                        // copy of its bytes was destroyed as well, a second time).
+                        Expr& c = *mem.kids[0];
+                        c.kids.back() = eUnary("&", std::move(c.kids.back()), e);
+                        selfArg = std::move(mem.kids[0]);
                     } else if (!obj.lvalue && obj.type && obj.type->kind == Type::Kind::Struct && !obj.bad) {
                         // A member call on an object that is a result (f().g()): the object goes into
                         // a hidden local and the call is made on that.
@@ -3841,8 +3897,18 @@ private:
                 sameType(*fn.params[i].type, *arg.type)) {
                 Expr& argExpr = *e.kids[i + 1];
                 if (argExpr.kind == Expr::Kind::Comma && argExpr.ival == 9) {
-                    // A T(args) temporary passed by value initializes the parameter directly.
-                    consumed(argExpr);
+                    // A T(args) temporary passed by value is the parameter object: the callee gets
+                    // its address (lower.cpp byAddress) and it is destroyed after the full
+                    // expression, like a copy made for an lvalue ([expr.call] p7; Itanium C++ ABI
+                    // 3.1.2.3). It used to be taken over and never destroyed.
+                } else if (!arg.lvalue && argExpr.kind == Expr::Kind::Call && needsDtor(*arg.type)) {
+                    // f(g()) with g returning a class with a destructor: the result is the
+                    // parameter object, held in a hidden local destroyed after the full expression.
+                    std::string tmp = newTemp(*arg.type, e, true);
+                    auto made = withFlag(eAssignNode(mkName(tmp, e), std::move(e.kids[i + 1]), e), e);
+                    e.kids[i + 1] = eCommaNode(std::move(made), mkName(tmp, e), e);
+                    arg = decay(checkExpr(*e.kids[i + 1]));
+                    if (arg.bad) return bad(e.line, e.col);
                 } else if (arg.lvalue && (hasUserCopy(*arg.type) || needsDtor(*arg.type))) {
                     // The caller copies the object into a hidden local (by the copy constructor, or
                     // bytewise) and destroys that copy after the statement.
@@ -3867,7 +3933,7 @@ private:
                 }
             }
             if (fn.params[i].type && !canAssign(*fn.params[i].type, arg)) {
-                err(e.line, e.col, "cannot assign argument");
+                err(e.line, e.col, "cannot assign argument" + std::string(getenv("OKDBG") ? " " + typeStr(*fn.params[i].type) + " <- " + (arg.type ? typeStr(*arg.type) : "?") : ""));
                 return bad(e.line, e.col);
             }
             if (fn.params[i].type && toBaseSubobject(e.kids[i + 1], arg.type.get(), fn.params[i].type.get()) &&
@@ -4110,8 +4176,17 @@ private:
                 if (f.name == "b_" && f.type && f.type->kind == Type::Kind::Pointer && f.type->inner) E = f.type->inner.get();
         const Type* EC = E && E->kind == Type::Kind::Struct ? canonOf(E) : nullptr;
         if (!EC) return true;
-        for (const Param& q : EC->params)
-            if (q.name == "<ctor>") return true;
+        // A constructor that takes one value that is not an E makes an E from a number; the
+        // default constructor of an aggregate with default member initializers (Keyframe{float
+        // time = 0; ..}) and the copy and move constructors do not.
+        for (const Param& q : EC->params) {
+            if (q.name != "<ctor>" || !q.type || q.type->params.empty()) continue;
+            const Type* a = q.type->params[0].type.get();
+            if (a && a->kind == Type::Kind::Reference && a->inner && a->inner->kind == Type::Kind::Struct &&
+                a->inner->tag == EC->tag && q.type->params.size() == 1)
+                continue;
+            return true;
+        }
         for (const auto& k : list.kids) {
             if (!k || k->kind == Expr::Kind::Brace) continue;
             ++quiet_;
@@ -4221,10 +4296,6 @@ private:
         }
         const Type* referent = sym.type.get();
         if (referent->kind == Type::Kind::Reference && referent->inner) referent = referent->inner.get();
-        if (how == 0 && needsDtor(*referent)) {
-            err(e.line, e.col, "capturing a class with a destructor by copy is not supported");
-            return false;
-        }
         // An array is held as a pointer to its first element (indexing it is the same); a copy
         // of an array is not made (it is taken by reference: see the plan).
         if (referent->kind == Type::Kind::Array && referent->inner) how = 2;
@@ -4258,6 +4329,253 @@ private:
         return true;
     }
 
+    // The class of a closure member that was captured by copy and is copied by a constructor or
+    // destroyed by a destructor; empty for any other member.
+    std::string copiedClass(const std::string& closure, const std::string& field) {
+        auto it = canonStructs().find(closure);
+        if (it == canonStructs().end() || !it->second) return {};
+        for (const Param& f : it->second->params)
+            if (f.name == field && f.type && f.type->kind == Type::Kind::Struct && !f.type->tag.empty() &&
+                (needsDtor(*f.type) || hasUserCopy(*f.type)))
+                return f.type->tag;
+        return {};
+    }
+    // A closure whose copy captures include a class with a destructor or a copy constructor gets
+    // its implicit copy constructor and destructor ([expr.prim.lambda.closure] p13, p14;
+    // [class.copy.ctor] p14, [class.dtor] p7): the members are copied by their own copy
+    // constructors and destroyed in reverse order. They are written here, as the closure class is
+    // only complete once its body has been checked, and checked at once. True when it has them.
+    bool closureSpecials(const std::string& tag, const Expr& at) {
+        auto it = canonStructs().find(tag);
+        if (it == canonStructs().end() || !it->second) return false;
+        Type& C = *it->second;
+        std::vector<std::pair<std::string, std::string>> parts;  // member, its class ("" = bytes)
+        bool any = false;
+        for (const Param& f : C.params) {
+            std::string cls = copiedClass(tag, f.name);
+            if (!cls.empty()) any = true;
+            parts.emplace_back(f.name, cls);
+        }
+        if (!any) return false;
+        for (const Param& f : C.params)
+            if (f.name == "<dtor>") return true;  // (checked again: already made)
+        auto member = [&](const char* obj, const std::string& name) {
+            auto m = mkE(Expr::Kind::Member, at);
+            m->text = std::string(obj) == "this" ? "->" : ".";
+            m->kids.push_back(mkName(obj, at));
+            m->kids.push_back(mkName(name, at));
+            return m;
+        };
+        auto stmt = [&](std::unique_ptr<Expr> x) {
+            auto s = std::make_unique<Stmt>();
+            s->kind = Stmt::Kind::Expr;
+            s->line = at.line;
+            s->col = at.col;
+            s->file = at.file;
+            s->expr = std::move(x);
+            return s;
+        };
+        auto method = [&](const char* kind, std::vector<Param> ps) {
+            auto ft = prim(Type::Kind::Function);
+            ft->inner = prim(Type::Kind::Void);
+            for (Param& q : ps) ft->params.push_back(std::move(q));
+            Param special;
+            special.name = std::string(kind) == "D1" ? "<dtor>" : "<ctor>";
+            special.mangled = mangleSpecial(tag, kind, *ft);
+            special.type = cloneType(*ft);
+            auto d = std::make_unique<Decl>();
+            d->name = special.mangled;
+            d->function = true;
+            d->isInline = true;
+            d->methodTag = tag;
+            d->line = at.line;
+            d->col = at.col;
+            d->file = at.file;
+            Param self;
+            self.name = "this";
+            auto cls = prim(Type::Kind::Struct);
+            cls->tag = tag;
+            self.type = ptrTo(std::move(cls));
+            ft->params.insert(ft->params.begin(), std::move(self));
+            d->type = std::move(ft);
+            d->body = std::make_unique<Stmt>();
+            d->body->kind = Stmt::Kind::Block;
+            d->body->line = at.line;
+            d->body->col = at.col;
+            d->body->file = at.file;
+            C.params.push_back(std::move(special));
+            return d;
+        };
+        Param from;
+        from.name = "__o";
+        from.type = prim(Type::Kind::Reference);
+        from.type->inner = prim(Type::Kind::Struct);
+        from.type->inner->tag = tag;
+        from.type->inner->cnst = true;
+        std::vector<Param> ps;
+        ps.push_back(std::move(from));
+        auto copy = method("C1", std::move(ps));
+        for (const auto& p : parts) {
+            if (p.second.empty()) {
+                copy->body->stmts.push_back(stmt(eAssignNode(member("this", p.first), member("__o", p.first), at)));
+                continue;
+            }
+            auto call = mkE(Expr::Kind::Call, at);
+            call->kids.push_back(mkName("\x01" "cinit:" + p.second, at));
+            call->kids.push_back(eUnary("&", member("this", p.first), at));
+            call->kids.push_back(member("__o", p.first));
+            copy->body->stmts.push_back(stmt(std::move(call)));
+        }
+        auto dtor = method("D1", {});
+        for (std::size_t k = parts.size(); k-- > 0;) {
+            if (parts[k].second.empty() || !needsDtor(*classType(parts[k].second))) continue;
+            auto call = mkE(Expr::Kind::Call, at);
+            call->kids.push_back(mkName("\x01" "dtorif:" + parts[k].second, at));
+            call->kids.push_back(eUnary("&", member("this", parts[k].first), at));
+            dtor->body->stmts.push_back(stmt(std::move(call)));
+        }
+        C.needDtor = true;
+        C.nonpod = true;
+        checkFunctionNow(*copy);
+        checkFunctionNow(*dtor);
+        lambdaDecls_.push_back(std::move(copy));
+        lambdaDecls_.push_back(std::move(dtor));
+        return true;
+    }
+    // A lambda with no captures converts to a pointer to a function with its parameters and
+    // return type ([expr.prim.lambda.closure] p8): the closure class gets that conversion function,
+    // which gives the address of a function that calls the lambda's own one with no closure
+    // object (it reads none). Used by convertIfNeeded like any conversion function.
+    //   R __lambda_N_fp(A... a) { return __lambda_N((closure *)0, a...); }
+    //   R (*__lambda_N_conv(closure *this))(A...) { return __lambda_N_fp; }
+    void closureToPointer(const std::string& tag, const Decl& fn, const Expr& at) {
+        auto it = canonStructs().find(tag);
+        if (it == canonStructs().end() || !it->second || !fn.type || !fn.type->inner || fn.type->params.empty()) return;
+        auto ret = cloneType(*fn.type->inner);
+        if (isAuto(ret.get())) return;
+        for (const Param& q : fn.type->params) {  // a generic lambda (auto parameters): none
+            const Type* t = q.type.get();
+            while (t && (t->kind == Type::Kind::Reference || t->kind == Type::Kind::Pointer) && t->inner) t = t->inner.get();
+            if (!t || isAuto(t)) return;
+        }
+        auto pos = [&](Decl& d) {
+            d.line = at.line;
+            d.col = at.col;
+            d.file = at.file;
+        };
+        auto block = [&]() {
+            auto b = std::make_unique<Stmt>();
+            b->kind = Stmt::Kind::Block;
+            b->line = at.line;
+            b->col = at.col;
+            b->file = at.file;
+            return b;
+        };
+        auto retStmt = [&](std::unique_ptr<Expr> x, bool isVoid) {
+            auto st = std::make_unique<Stmt>();
+            st->kind = isVoid ? Stmt::Kind::Expr : Stmt::Kind::Return;
+            st->line = at.line;
+            st->col = at.col;
+            st->file = at.file;
+            st->expr = std::move(x);
+            return st;
+        };
+        const bool isVoid = ret->kind == Type::Kind::Void;
+        auto fnT = prim(Type::Kind::Function);
+        fnT->inner = cloneType(*ret);
+        for (std::size_t i = 1; i < fn.type->params.size(); ++i) {
+            Param q;
+            q.name = "__a" + std::to_string(i);
+            if (fn.type->params[i].type) q.type = cloneType(*fn.type->params[i].type);
+            fnT->params.push_back(std::move(q));
+        }
+        auto thunk = std::make_unique<Decl>();
+        thunk->name = fn.name + "_fp";
+        thunk->function = true;
+        thunk->isStatic = true;
+        pos(*thunk);
+        thunk->type = cloneType(*fnT);
+        {
+            auto call = mkE(Expr::Kind::Call, at);
+            call->kids.push_back(mkName(fn.name, at));
+            auto nul = mkE(Expr::Kind::Cast, at);
+            nul->ty = cloneType(*fn.type->params[0].type);
+            nul->kids.push_back(mkE(Expr::Kind::Int, at));
+            call->kids.push_back(std::move(nul));
+            for (std::size_t i = 1; i < fn.type->params.size(); ++i) call->kids.push_back(mkName("__a" + std::to_string(i), at));
+            thunk->body = block();
+            thunk->body->stmts.push_back(retStmt(std::move(call), isVoid));
+        }
+        auto fp = prim(Type::Kind::Pointer);
+        fp->inner = cloneType(*fnT);
+        auto convT = prim(Type::Kind::Function);
+        convT->inner = cloneType(*fp);
+        Param conv;
+        conv.name = "operator " + mangleType(*fp);
+        conv.mangled = fn.name + "_conv";
+        conv.cmethod = true;
+        conv.type = cloneType(*convT);
+        auto cd = std::make_unique<Decl>();
+        cd->name = conv.mangled;
+        cd->function = true;
+        cd->isStatic = true;
+        cd->methodTag = tag;
+        pos(*cd);
+        Param self;
+        self.name = "this";
+        self.type = ptrTo(classType(tag));
+        convT->params.push_back(std::move(self));
+        cd->type = std::move(convT);
+        cd->body = block();
+        cd->body->stmts.push_back(retStmt(mkName(thunk->name, at), false));
+        it->second->params.push_back(std::move(conv));
+        checkFunctionNow(*thunk);
+        checkFunctionNow(*cd);
+        lambdaDecls_.push_back(std::move(thunk));
+        lambdaDecls_.push_back(std::move(cd));
+    }
+    std::unique_ptr<Type> classType(const std::string& tag) {
+        auto t = prim(Type::Kind::Struct);
+        t->tag = tag;
+        return t;
+    }
+
+    // Q::m in a member function of a class T that is Q or derives from it: the name, among T's
+    // members, of Q's data member m (the base members come first, in Q's order; a hidden one was
+    // renamed m\x05<base>). Empty when Q::m is no data member of such a Q.
+    std::string qualifiedField(const std::string& qm) {
+        const std::size_t cut = qm.rfind("::");
+        const std::string q = qm.substr(0, cut), m = qm.substr(cut + 2);
+        const Type* T = canonOf(method_);
+        if (!T) return {};
+        const Type* Q = nullptr;
+        for (const Type* c = T; c;) {
+            if (c->tag == q || (c->tag.size() > q.size() + 2 &&
+                                c->tag.compare(c->tag.size() - q.size() - 2, std::string::npos, "::" + q) == 0)) {
+                Q = c;
+                break;
+            }
+            if (c->base.empty()) break;
+            auto it = canonStructs().find(c->base);
+            c = it == canonStructs().end() ? nullptr : it->second.get();
+        }
+        if (!Q) return {};
+        auto data = [](const Param& p) {
+            return p.mangled.empty() && p.type && p.type->kind != Type::Kind::Function && p.name != "__vptr" &&
+                   p.name != "__basepad";
+        };
+        std::size_t n = 0;
+        for (const Param& p : Q->params)
+            if (data(p)) ++n;
+        std::string found;
+        std::size_t k = 0;
+        for (const Param& p : T->params) {
+            if (!data(p)) continue;
+            if (k++ >= n) break;
+            if (p.name == m || p.name.compare(0, m.size() + 1, m + "\x05") == 0) found = p.name;
+        }
+        return found;
+    }
     // The lambda expression: check its body now, inside the enclosing function, then make the
     // closure object: a hidden local whose fields are set from the captured variables.
     ET checkLambda(Expr& e) {
@@ -4317,20 +4635,45 @@ private:
         switches_ = savedSwitches;
         temps_ = std::move(savedTemps);
         closureFn_[li.tag] = d.name;
+        if (li.mode == 0 && li.caps.empty() && used.empty()) closureToPointer(li.tag, d, e);
         lambdaDecls_.push_back(std::move(li.fn));
+        const bool owning = closureSpecials(li.tag, e);
         auto full = cloneType(*canonStructs()[li.tag]);
-        std::string tmp = newTemp(*full, e, false);
+        // A closure that owns a class object (a copy capture of a class with a destructor or a copy
+        // constructor) is a class temporary like T(args): destroyed after the full expression
+        // unless it initializes an object ([class.temporary] p4), which then takes it over.
+        std::string tmp = owning ? "__ct" + std::to_string(tempN_++) : newTemp(*full, e, false);
         std::unique_ptr<Expr> seq;
         for (const auto& u : used) {
             auto field = mkE(Expr::Kind::Member, e);
             field->text = ".";
             field->kids.push_back(mkName(tmp, e));
             field->kids.push_back(mkName(u.first, e));
-            auto val = u.second == 1 ? eUnary("&", mkName(u.first, e), e) : mkName(u.first, e);
-            auto as = eAssignNode(std::move(field), std::move(val), e);
+            std::unique_ptr<Expr> as;
+            const std::string ftag = owning && u.second == 0 ? copiedClass(li.tag, u.first) : std::string();
+            if (!ftag.empty()) {
+                // the member is made by its copy constructor ([expr.prim.lambda.capture] p15)
+                as = mkE(Expr::Kind::Call, e);
+                as->kids.push_back(mkName("\x01" "cinit:" + ftag, e));
+                as->kids.push_back(eUnary("&", std::move(field), e));
+                as->kids.push_back(mkName(u.first, e));
+            } else {
+                auto val = u.second == 1 ? eUnary("&", mkName(u.first, e), e) : mkName(u.first, e);
+                as = eAssignNode(std::move(field), std::move(val), e);
+            }
             seq = seq ? eCommaNode(std::move(seq), std::move(as), e) : std::move(as);
         }
         e.kids.clear();
+        if (owning) {
+            if (!seq) seq = mkE(Expr::Kind::Int, e);
+            e.kind = Expr::Kind::Comma;
+            e.text = tmp;
+            e.ival = 7;
+            e.ty = std::move(full);
+            e.kids.push_back(std::move(seq));
+            e.kids.push_back(mkName(tmp, e));
+            return checkExprBody(e);
+        }
         if (!seq) {
             e.kind = Expr::Kind::Name;
             e.text = tmp;
@@ -4530,6 +4873,12 @@ private:
         }
         if (d.init && d.init->kind == Expr::Kind::Brace) {
             normalizeBrace(d.type.get(), *d.init);
+            // Fn table[] = {[](int a) { .. }, f}: an element of a scalar array from a class object
+            // goes through the class's conversion function, as in T x = obj;
+            if (d.type->kind == Type::Kind::Array && d.type->inner && d.type->inner->kind != Type::Kind::Struct &&
+                d.type->inner->kind != Type::Kind::Array)
+                for (auto& k : d.init->kids)
+                    if (k && k->kind != Expr::Kind::Brace) convertIfNeeded(*k);
             checkBraceKids(*d.init);
         } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array) {
             checkExpr(*d.init);

@@ -57,6 +57,15 @@ copied code in this scan; see "Clean" and "Limits".
 
 - **A4 fixed.** `cmake/okay_version.rc.in` now says "Copyright (c) 2026 OkaySpaceGameEngine. All rights reserved. See
   LICENSE." Guard: `check` refuses another licence name in `LegalCopyright`.
+- **A5-A7 fixed (notices; texts partly unverified).** `dist/THIRD_PARTY_NOTICES.txt` lists the GCC runtime (with the
+  GCC Runtime Library Exception text), the MinGW-w64 C runtime and winpthreads, libsodium 1.0.20, SDL2 2.30.9, Dear
+  ImGui, `steam_api64.dll`, the Emscripten runtime, Roboto, JetBrains Mono and DejaVu, with the licence texts taken
+  from the build machine's package copyright files, Dear ImGui's LICENSE.txt and the font licence files. The
+  Emscripten and Steamworks lines and the LLVM exception text are from memory and say UNVERIFIED; the libsodium
+  statement is Debian's for 1.0.18. Shipped by `scripts/build-windows-dist.sh` (root and `Tools\`, so the installer
+  too; the uninstaller removes both), `editor/BuildGame.cpp` (every exported desktop game) and `scripts/web_package.py`
+  (every web build and its zip; `tests/scripts/test_web_package.py`). `assets/fonts/Roboto-LICENSE.txt` (Apache 2.0)
+  added. Not opened: a real release archive or exported game. Guard: `check`.
 - **A8 fixed (wording).** The empty address bar says "Search the web or type an address" (was "Search Google or
   type an address", close to Chrome's own words). Google stays the default search, as the owner chose; the
   "Use Google" button in the browser settings stays (it names the service it picks). Guard: `check`.

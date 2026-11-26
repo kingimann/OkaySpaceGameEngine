@@ -241,6 +241,21 @@ def _source_notes(t):
     return bad
 
 
+def _notices(t):
+    """A5-A7: one notice file names every runtime, library and font we ship, and every package carries it."""
+    bad = []
+    rel = "dist/THIRD_PARTY_NOTICES.txt"
+    try: txt = open(os.path.join(t, rel), errors="replace").read()
+    except OSError: return [rel + ": missing"]
+    for name in ("GCC Runtime Library Exception", "winpthreads", "libsodium", "SDL2", "Dear ImGui", "steam_api64.dll",
+                 "Emscripten", "musl", "Roboto", "JetBrains Mono", "DejaVu", "Apache License"):
+        if name not in txt: bad.append("%s: does not name %s" % (rel, name))
+    if not os.path.isfile(os.path.join(t, "assets/fonts/Roboto-LICENSE.txt")): bad.append("assets/fonts/Roboto-LICENSE.txt: missing")
+    for shipper in ("scripts/build-windows-dist.sh", "scripts/okayspace-installer.nsi", "editor/BuildGame.cpp", "scripts/web_package.py"):
+        if not _grep(t, shipper, r"THIRD_PARTY_NOTICES\.txt"): bad.append("%s: does not ship THIRD_PARTY_NOTICES.txt" % shipper)
+    return bad
+
+
 def _browser_words(t):
     """A8: the address bar's placeholder uses neutral words, not a look-alike of another browser's."""
     return _grep(t, "engine/src/Browser/Profile.cpp", r'"Search Google or type')
@@ -263,6 +278,7 @@ def _ui_brands(t):
 
 GUARDS = [
     ("A4", "shipped version information states a licence other than ours", _own_licence),
+    ("A5-A7", "a package ships without the third-party notices", _notices),
     ("A8", "the browser placeholder copies another browser's wording", _browser_words),
     ("A9", "UI text names another game or uses a trademark as a feature name", _ui_brands),
     ("A10", "a published shader constant has no source note near it", _source_notes),

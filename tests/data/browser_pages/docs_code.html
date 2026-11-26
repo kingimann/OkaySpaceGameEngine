@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html><head><title>Config reference - Widget Toolkit</title>
+<style>
+body { margin: 0; font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color: #24292f; line-height: 1.5; }
+.layout { display: grid; grid-template-columns: 180px 1fr; min-height: 400px; }
+.toc { background: #f6f8fa; border-right: 1px solid #d0d7de; padding: 12px; font-size: 14px; }
+.toc a { display: block; color: #0969da; text-decoration: none; padding: 2px 0; }
+.toc a.current { font-weight: 600; border-left: 3px solid #fd8c73; padding-left: 6px; }
+.content { padding: 8px 24px; max-width: 640px; }
+h1 { border-bottom: 1px solid #d8dee4; padding-bottom: 6px; }
+code { font-family: ui-monospace, Consolas, monospace; background: rgba(175,184,193,.2); padding: 1px 4px; border-radius: 4px; font-size: 85%; }
+pre { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: 12px; overflow: auto; }
+pre code { background: none; padding: 0; }
+.note { border-left: 4px solid #0969da; background: #ddf4ff; padding: 8px 12px; margin: 12px 0; }
+.warn { border-left-color: #bf8700; background: #fff8c5; }
+table { border-collapse: collapse; }
+th, td { border: 1px solid #d0d7de; padding: 4px 10px; text-align: left; }
+tr:nth-child(even) td { background: #f6f8fa; }
+kbd { border: 1px solid #aaa; border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; font-size: 12px; }
+</style></head>
+<body>
+<div class="layout">
+<nav class="toc"><a href="#start">Getting started</a><a class="current" href="#config">Configuration</a><a href="#themes">Themes</a><a href="#api">API</a></nav>
+<div class="content">
+<h1 id="config">Configuration</h1>
+<p>The toolkit reads <code>widgets.toml</code> from the project folder. Every key is optional.</p>
+<pre><code>[window]
+title  = "My app"
+width  = 1280
+height = 720
+
+[theme]
+accent = "#0969da"</code></pre>
+<div class="note"><strong>Note:</strong> sizes are in logical pixels.</div>
+<div class="note warn"><strong>Warning:</strong> a missing theme file falls back to the default.</div>
+<table><thead><tr><th>Key</th><th>Type</th><th>Default</th></tr></thead>
+<tbody><tr><td><code>title</code></td><td>string</td><td>"App"</td></tr><tr><td><code>width</code></td><td>integer</td><td>800</td></tr><tr><td><code>height</code></td><td>integer</td><td>600</td></tr></tbody></table>
+<p>Press <kbd>Ctrl</kbd> + <kbd>R</kbd> to reload the file while the app runs.</p>
+</div></div>
+</body></html>

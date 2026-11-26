@@ -45,6 +45,34 @@ std::map<std::string, std::string>& instNamespaces() {
     return m;
 }
 
+std::map<std::string, std::map<std::string, std::unique_ptr<Expr>>>& memberDefaults() {
+    static std::map<std::string, std::map<std::string, std::unique_ptr<Expr>>> m;
+    return m;
+}
+
+std::set<std::string>& explicitCtors() {
+    static std::set<std::string> s;
+    return s;
+}
+
+bool plainConstant(const Expr& e) {
+    switch (e.kind) {
+    case Expr::Kind::Int:
+    case Expr::Kind::Float:
+    case Expr::Kind::Char:
+    case Expr::Kind::String:
+        return true;
+    case Expr::Kind::Unary:
+    case Expr::Kind::Cast:
+    case Expr::Kind::Brace:
+        for (const auto& k : e.kids)
+            if (!k || !plainConstant(*k)) return false;
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool& ehActive() {
     static bool on = false;
     return on;

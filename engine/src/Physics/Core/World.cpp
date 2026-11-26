@@ -490,9 +490,9 @@ bool CanCollide(const World& world, const World::Impl& w, ColliderId ia, Collide
     if (!((a.def.mask >> (b.def.layer & 31)) & 1u) || !((b.def.mask >> (a.def.layer & 31)) & 1u)) return false;
     if (!w.noCollide.empty() && std::binary_search(w.noCollide.begin(), w.noCollide.end(), World::Impl::BodyPairKey(a.body, b.body))) return false;
     // joined bodies that should not collide
-    const BodyData& small = ba.joints.size() <= bb.joints.size() ? ba : bb;
-    const BodyId other = &small == &ba ? b.body : a.body;
-    for (JointId j : small.joints) {
+    const BodyData& fewerJoints = ba.joints.size() <= bb.joints.size() ? ba : bb;
+    const BodyId other = &fewerJoints == &ba ? b.body : a.body;
+    for (JointId j : fewerJoints.joints) {
         const JointData& jd = w.joints[j];
         if (!jd.alive || jd.def.collideConnected) continue;
         if (jd.def.bodyA == other || jd.def.bodyB == other) return false;

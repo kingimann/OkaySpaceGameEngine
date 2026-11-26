@@ -6,6 +6,7 @@
 // and cycle detection). Nesting is limited so a hostile text can not overflow the
 // C++ stack, and both directions charge the run budget per character.
 #include "JsInternal.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 

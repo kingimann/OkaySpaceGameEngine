@@ -36,11 +36,13 @@ std::string Ask(PreviewServer& srv, const std::string& request) {
     if (::connect(s, (const sockaddr*)&a, sizeof a) != 0) { ::close(s); return "connect failed"; }
     ::send(s, request.data(), request.size(), 0);
     std::string out;
-    for (int i = 0; i < 400; ++i) {
+    // Until the server closes the connection, or about 10 s. (400 rounds of 8 KB was only just over the 3 MB file, so a
+    // few empty waits on a busy CI machine cut it short.)
+    for (int i = 0; i < 2000; ++i) {
         srv.Poll();
         pollfd p{s, POLLIN, 0};
         if (::poll(&p, 1, 5) > 0) {
-            char buf[8192];
+            char buf[65536];
             const ssize_t n = ::recv(s, buf, sizeof buf, 0);
             if (n <= 0) break;
             out.append(buf, (std::size_t)n);

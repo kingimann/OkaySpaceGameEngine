@@ -6,6 +6,7 @@
 // radix 2-36 writes the integer part exactly and up to 52 fraction digits.
 // Math.random is our own xorshift64* generator, seeded per runtime.
 #include "JsInternal.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>

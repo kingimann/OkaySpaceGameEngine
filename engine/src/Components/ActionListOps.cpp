@@ -66,7 +66,6 @@ namespace okay {
 using namespace actionlist_ops;
 
 int ActionList::RunMoreOps(const Item& it, const std::string& op, Scene* scene, Transform* t) {
-    const std::vector<Item>& ins = RunList();   // the running handler's instructions (as in Update)
         // ---- Arrays (float lists) ----
         if (op == "array_clear") { Arrays()[Str(it, 0)].clear(); }
         else if (op == "array_push")  { Arrays()[Str(it, 0)].push_back(Num(it, 1)); }
@@ -366,7 +365,13 @@ int ActionList::RunMoreOps(const Item& it, const std::string& op, Scene* scene, 
         else if (op == "set_light") {
             SceneLight::SetDirection({Num(it, 0), Num(it, 1), Num(it, 2)});
         }
-        else if (op == "set_ambient") { SceneLight::SetAmbient(Num(it, 0)); }
+        else return RunMoreOps2(it, op, scene, t);
+    return 1;
+}
+
+// The chain goes on here: MSVC stops at 128 nested blocks (C1061), and every `else if` is one block deeper.
+int ActionList::RunMoreOps2(const Item& it, const std::string& op, Scene* scene, Transform* t) {
+        if (op == "set_ambient") { SceneLight::SetAmbient(Num(it, 0)); }
         else if (op == "set_text") {
             // Interpolate {var}/{pref} tokens so you can show a variable's live value:
             //   Set Text  "Score: {score}"   ->  "Score: 42"
@@ -607,7 +612,14 @@ int ActionList::RunMoreOps(const Item& it, const std::string& op, Scene* scene, 
         else if (op == "log") { Log::Info("[actions] ", Rest(it, 0)); }
         else if (op == "set_rotation")  { if (t) t->localRotation = Quat::Euler({0, 0, Num(it, 0)}); }
         else if (op == "set_rotation3") { if (t) t->localRotation = Quat::Euler({Num(it, 0), Num(it, 1), Num(it, 2)}); }
-        else if (op == "velocity3") {
+        else return RunMoreOps3(it, op, scene, t);
+    return 1;
+}
+
+// The chain goes on here: MSVC stops at 128 nested blocks (C1061), and every `else if` is one block deeper.
+int ActionList::RunMoreOps3(const Item& it, const std::string& op, Scene* scene, Transform* t) {
+    const std::vector<Item>& ins = RunList();   // the running handler's instructions (as in Update)
+        if (op == "velocity3") {
             if (gameObject) if (auto* rb = gameObject->GetComponent<Rigidbody3D>())
                 rb->velocity = {Num(it, 0), Num(it, 1), Num(it, 2)};
         }

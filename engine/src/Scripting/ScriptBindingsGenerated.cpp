@@ -4346,6 +4346,7 @@ void BindWorldStreamer() {
         {"GetCellState", {ArgKind::Int, ArgKind::Int}, 2, ArgKind::Enum, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<WorldStreamer&>(self); return V{static_cast<float>(static_cast<long long>(s.GetCellState(static_cast<int>(sb::ArgIntIn(a[0], 0, std::numeric_limits<int>::min(), std::numeric_limits<int>::max())), static_cast<int>(sb::ArgIntIn(a[1], 1, std::numeric_limits<int>::min(), std::numeric_limits<int>::max())))))}; }, true},
         {"LoadingCount", {}, 0, ArgKind::Int, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<WorldStreamer&>(self); return V{static_cast<float>(s.LoadingCount())}; }, true},
         {"KnownCellCount", {}, 0, ArgKind::Int, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<WorldStreamer&>(self); return V{static_cast<float>(s.KnownCellCount())}; }, true},
+        {"MeasuredVelocity", {}, 0, ArgKind::Vec3, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<WorldStreamer&>(self); return V{s.MeasuredVelocity()}; }, true},
         {"SyncNow", {}, 0, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<WorldStreamer&>(self); s.SyncNow(); return V{}; }, false},
     };
     AddClass(std::move(c));

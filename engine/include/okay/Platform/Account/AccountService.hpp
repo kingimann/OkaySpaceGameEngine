@@ -32,6 +32,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#if !defined(_WIN32)
+#include <time.h>   // nanosleep (detail::NapMs)
+#endif
 #include <filesystem>
 #if defined(OKAY_XBOX_UWP)
 #include "okay/Core/Paths.hpp"
@@ -416,6 +419,16 @@ inline std::string NotReachedMessage(const std::string& base, const std::string&
 /// or the new one, never half of one. Windows refuses the rename while another program has the file open, so it is tried
 /// again for about a quarter of a second before the old file is removed to make room. False = not written (the temp
 /// file is removed). Used by AccountService::SaveSession and GameIpc::WriteAtomic.
+/// A short pause without <thread> (CLAUDE.md rule 21a: this header reaches the Windows programs).
+inline void NapMs(int ms) {
+#if defined(_WIN32)
+    Sleep((DWORD)ms);
+#else
+    timespec ts; ts.tv_sec = ms / 1000; ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+    while (nanosleep(&ts, &ts) != 0) {}
+#endif
+}
+
 inline bool WriteFileAtomic(const fs::path& path, const std::string& body) {
     std::error_code ec;
     if (path.has_parent_path()) fs::create_directories(path.parent_path(), ec);
@@ -1177,6 +1190,12 @@ private:
 
     /// The access token on disk is newer than ours and not about to expire: another program refreshed (Supabase refresh
     /// tokens work once, so ours is spent). Takes it and returns true.
+    static constexpr int kSpentWaitMs = 3000;   // how long a refused refresh waits for the other program's new pair
+    /// Supabase's answer to a refresh token that was used already ("Invalid Refresh Token: Already Used",
+    /// error_code refresh_token_already_used).
+    static bool RefreshTokenSpent(const std::string& body) {
+        return body.find("Already Used") != std::string::npos || body.find("already_used") != std::string::npos;
+    }
     bool AdoptFreshTokenFromDisk() {
         Session disk;
         if (!ReadSessionFile(disk) || disk.token == session_.token) return false;
@@ -1210,7 +1229,19 @@ private:
         ApiResponse r = HttpRequest("POST", base + "/auth/v1/token?grant_type=refresh_token",
                                     "{\"refresh_token\":\"" + detail::JsonEscape(session_.refreshToken) + "\"}",
                                     /*authToken=*/{});
-        if (!r.ok) return AdoptFreshTokenFromDisk();   // the other program won the race a moment ago
+        if (!r.ok) {
+            if (AdoptFreshTokenFromDisk()) return true;   // the other program won the race a moment ago
+            // Refused because the token was already used: the other program's refresh reached the server first and its new
+            // pair is on its way to session.txt. Wait a short, bounded time for it instead of signing out (which showed the
+            // editor's sign-in window while the launcher was signed in; owner bug 2026-11-25).
+            if (r.reached && RefreshTokenSpent(r.body)) {
+                for (int waited = 0; waited < kSpentWaitMs; waited += 50) {
+                    detail::NapMs(50);
+                    if (AdoptFreshTokenFromDisk()) return true;
+                }
+            }
+            return false;
+        }
         std::string tok = detail::JsonField(r.body, "access_token");
         if (tok.empty()) return false;
         session_.token = tok;

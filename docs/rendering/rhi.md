@@ -3,10 +3,11 @@
 > **What this is:** the design record of the RHI, the one set of calls every drawing backend implements, so a
 > rendering feature is written once instead of once per renderer. Internal record, not a guide.
 >
-> **Status:** round 1 (2026-11-26, owner: "yes i want a custom one"). The core, the OpenGL and Software backends,
-> the OkayShader bridge for unlit surfaces and the first moved feature (the OpenGL renderer's Bloom) are in. Direct3D
-> 11 and 12, Vulkan and WebGPU are later rounds. Code: `engine/include/okay/Render/RHI/`, `engine/src/Render/RHI/`.
-> Tests: `rhi` (Software, headless), `rhi_gl` (OpenGL against Software, Xvfb).
+> **Status:** round 2 (2026-11-26, owner: "yes i want a custom one"). The core, the OpenGL, Software and Direct3D 11
+> backends, the OkayShader bridge for unlit surfaces and Bloom without the post chain (OpenGL and Direct3D 11
+> renderers) are in. The Direct3D 11 backend is compile-checked with MinGW only: unverified until it runs on Windows.
+> Direct3D 12, Vulkan and WebGPU are later rounds. Code: `engine/include/okay/Render/RHI/`, `engine/src/Render/RHI/`.
+> Tests: `rhi` (Software, headless; the HLSL rules as text), `rhi_gl` (OpenGL against Software, Xvfb).
 >
 > **Last checked:** 2026-11-26.
 
@@ -22,12 +23,12 @@ at a time, each proved with a picture test, and each backend's own copy of that 
 
 | Object | What it is |
 |---|---|
-| `Device` | Makes and destroys every resource, answers `GetCaps()`, runs command lists (`Submit`), reads textures back. `CreateSoftwareDevice()`, `CreateOpenGLDevice()`. |
+| `Device` | Makes and destroys every resource, answers `GetCaps()`, runs command lists (`Submit`), reads textures back. `CreateSoftwareDevice()`, `CreateOpenGLDevice()`, `CreateD3D11Device(ID3D11Device*)`. |
 | `SwapChain` | The picture shown in a window: `BackBuffer()` is a texture a render pass can draw into, `Present()` shows it. OpenGL: framebuffer 0 and a swap callback. Software: a texture the host reads. |
 | `Buffer` | Vertex or index bytes (`BufferUsage`), optional initial data, `UpdateBuffer`. |
 | `Texture` | 2D, `RGBA8`, `RGBA16F`, `RGBA32F` or `Depth`; sampled and/or a render target. Upload and read-back take rows bottom first. |
 | `Sampler` | Filter (nearest, linear) and wrap (clamp, repeat). No mip levels yet. |
-| `Shader` | One program for every backend: GLSL 1.20 text (OpenGL), the same program as two C++ functions (Software), HLSL later. It declares its vertex attribute names (location i), ONE uniform block (named fields at byte offsets) and named texture slots. |
+| `Shader` | One program for every backend: GLSL 1.20 text (OpenGL), HLSL shader model 4.0 text (Direct3D 11, rules below), the same program as two C++ functions (Software). It declares its vertex attribute names (location i), ONE uniform block (named fields at byte offsets) and named texture slots. |
 | `Pipeline` | Shader + vertex layout (stride, attributes: location, format, offset) + topology + cull mode + blend state (separate colour and alpha factors, add, write mask) + depth state (test, write, compare). |
 | `RenderPassDesc` | Colour and/or depth attachment, load op (load, clear, don't care), clear values. |
 | `CommandList` | Recorded, then submitted: `BeginRenderPass`, `SetViewport`, `SetPipeline`, `SetVertexBuffer`, `SetIndexBuffer`, `SetTexture(slot, texture, sampler)`, `SetUniforms(bytes)`, `Draw`, `DrawIndexed`, `EndRenderPass`. |
@@ -41,6 +42,15 @@ HLSL constant-buffer rule (no field crosses a 16-byte boundary, a `mat4` starts 
 so the same bytes become a D3D11 cbuffer or a Vulkan uniform buffer without change. OpenGL 2.1 has no uniform buffers
 that we can rely on, so its backend calls `glUniform*` per field by name. `SetUniforms` copies the bytes into the command
 list (the frame's uniform memory); explicit backends will copy that arena into a per-frame ring buffer.
+
+**HLSL rules** (Direct3D 11; `ValidateHlslDesc` checks them as text on every platform, and the backend runs it before
+`D3DCompile`): entry points `VSMain` and `PSMain`; vertex attribute location i is the input semantic `TEXCOORDi`; the
+uniform block is a `cbuffer` at `register(b0)` with the same byte layout; texture slot i is `register(ti)` with its
+sampler at `register(si)`; the vertex stage returns `rhiClip(clipPos)` as `SV_Position`. `rhiClip` comes from
+`kHlslPrelude`, which the backend puts before each stage: it flips y and maps z from -w..w to 0..w. Texture rows are
+stored as given (RHI row 0 = Direct3D row 0), so with that one flip texture coordinates, viewports (TopLeftY = the RHI's
+y), `SV_Position` (= the RHI's fragCoord) and read-back need no change, and the RHI's counter-clockwise front faces are
+Direct3D's clockwise ones (`FrontCounterClockwise = FALSE`).
 
 **Validation.** The command list refuses mistakes while recording and `Submit` then refuses the list: a draw outside a
 pass or without a pipeline, nested passes, sampling a texture that is the current pass's own attachment (a feedback
@@ -67,7 +77,7 @@ the tests check it returns to 0. Destroying a swap chain's back buffer alone doe
 |---|---|---|
 | Software | Round 1, done | Runs the lists on the CPU: homogeneous clipping on all six planes, 8 sub-pixel bits, edge functions with a top-left tie rule (two triangles sharing an edge never both draw a pixel: a blended full-screen quad must not add its diagonal twice), perspective-correct varyings, depth, GL-style bilinear sampling (texel centres at (i + 0.5) / size), blending in float with the destination read as 8-bit or rounded to half floats. It is the reference picture for the other backends. The software renderer's own rasterizer (`TriangleSpan.hpp`) was not reused: its float edge test draws shared edges twice, right for its opaque passes, wrong for blending. |
 | OpenGL | Round 1, done | Shares `GLRenderer::LoadGL`'s entry points (no second loader; six optional ones were added). Buffer objects, 2D textures (sampler state applied when bound: GL 2.1 has no sampler objects), one program per shader with attribute locations bound by name, a cached framebuffer object per (colour, depth) pair, back buffer = framebuffer 0. Its own vertex array object when the context has them. `Submit` leaves GL in the state `GLRenderer` expects (no program, framebuffer 0, blend/depth/cull off, masks on, unit 0, the old vertex array object). `WrapGLTexture` lets an RHI pass draw into a texture the renderer made. Not yet: `glDrawElementsBaseVertex`, read-back of depth. |
-| Direct3D 11 | Round 2 | `ID3D11Device` per device; buffers and textures map one to one; the uniform block is a `cbuffer` (same layout); pipeline = input layout + blend, depth-stencil and rasterizer state objects (cached by description); render pass = `OMSetRenderTargets` + clears; the back buffer is the swap chain's. Shaders: the HLSL text from OkayShader / the pass, compiled with `D3DCompile` at load as the D3D11 renderer does today. Must compile with MinGW (rule 21a); unverified until run on Windows. |
+| Direct3D 11 | Round 2, written; unverified | `RHI/D3D11Device.cpp`. Runs on the D3D11 renderer's own `ID3D11Device` and immediate context (it keeps a reference; no second device, no loader: `D3DCompile` from d3dcompiler, already linked). Buffers: default usage, `UpdateSubresource`. Textures: the views their use needs (SRV, RTV, DSV; a sampled depth texture is typeless R24G8); RGBA16F converted to and from halves (`tex::FloatToHalf`). Samplers: state objects. Shaders: VS + PS compiled at `CreateShader` (vs_4_0 / ps_4_0) and one dynamic constant buffer, written with `Map(WRITE_DISCARD)` before a draw when the uniforms changed. Pipeline: input layout + blend, depth-stencil and rasterizer state objects (Direct3D 11 returns the same object for an identical description, so there is no cache of our own). Render pass: `OMSetRenderTargets` + clears; shader inputs of the last pass unbound first. `Submit` saves the context state it touches (input assembler, shaders, b0, t0-t7, s0-s7, targets, blend, depth, rasterizer, viewport) and puts it back. `WrapD3D11Texture` uses a renderer texture. Swap chains are off-screen textures for now (as on Software). Xbox (UWP) has no run-time compiler: `CreateShader` fails there until RHI shaders go into the shader bundle. Compiles with MinGW win32 (rule 21a); not run on Windows yet. |
 | Direct3D 12 | Round 4 | Command allocators per frame in flight (3), descriptor heaps, a per-frame upload ring for the uniform arena, root signature with one root CBV + a descriptor table of textures, PSOs cached by pipeline description, the recorded transitions as resource barriers, deferred destruction. |
 | Vulkan | Round 5 | As Direct3D 12, plus render passes / dynamic rendering, SPIR-V (from our own GLSL-to-SPIR-V or OkayShader emitter, never glslang: rule 19a), memory from our own sub-allocator. Not on the Windows-only plan yet (rule 14). |
 | WebGPU | Later | Close to Vulkan in shape; WGSL from OkayShader. Only if the web player comes back. |
@@ -97,7 +107,7 @@ it), and deletes the replaced per-backend code in the same change.
 | # | Feature | Picture test | State |
 |---|---|---|---|
 | 1 | OpenGL Bloom without the post chain (bright pass, 2 blur rounds, additive composite) | `rhi_gl`: the renderer's frame equals the RHI OpenGL bloom pixel for pixel, and the Software device's bloom within 3/255 | **Done (round 1).** `kBrightFrag`, `kAddFrag`, their programs, uniforms and `EnsureBloomTargets` deleted from `GLRenderer`. Before deleting, the same test run against the old code gave 0 differing pixels. |
-| 2 | Direct3D 11 backend; Bloom on it; the D3D11 renderer's own bloom deleted | compare D3D11 against Software on Windows (CI Windows job) | round 2 |
+| 2 | Direct3D 11 backend; Bloom without the post chain on it | compare D3D11 against Software on Windows (not run yet) | **Written (round 2), unverified.** The D3D11 renderer had no Bloom without the post chain (View > Lighting "Bloom" did nothing there unless the scene's post chain ran), so there was no copy to delete: it now runs `rhi::BloomPass`, the same pass as OpenGL. Its bloom INSIDE the post chain (`PSDown` / `PSBlur`, half and quarter size, added in the uber pass) is shared HLSL with Direct3D 12 and the twin of the OpenGL chain's; it moves with step 3, for all three at once. |
 | 3 | The rest of the full-screen passes: SSAO blur/multiply, the post chain (downsample, uber, DoF, FXAA) on OpenGL and Direct3D 11 | old vs RHI per pass, exact on the same backend | round 2-3 |
 | 4 | Sky pass (procedural) | old vs RHI per backend; Software against OpenGL within a tolerance | round 3 |
 | 5 | Shadow depth passes (depth-only pipelines, viewport per cascade) | depth atlas compare | round 3 |
@@ -120,3 +130,18 @@ one; it stays until step 7, when the owner chooses one look (the RHI pass makes 
   base vertex on OpenGL, depth read-back on OpenGL, texture copies, compute.
 - Unverified: any real GPU (the GL tests run on Mesa's llvmpipe under Xvfb), Windows (the files compile with MinGW
   `-fsyntax-only`), Direct3D.
+
+## Round 2 status
+
+- Done: `ShaderDesc::hlslVertex` / `hlslFragment`, the HLSL rules and `ValidateHlslDesc`; the Direct3D 11 backend
+  (`CreateD3D11Device`, `WrapD3D11Texture`); the bloom pass's HLSL (the GLSL line for line); the D3D11 renderer runs
+  `rhi::BloomPass` for Bloom without the post chain, on its own device (its resolve texture became a render target too,
+  so the glow is drawn onto it). Test `rhi`: the HLSL rules (each one refused when broken), the prelude, a stand-in
+  device that refuses HLSL breaking the rules runs the whole bloom pass, and no D3D11 device or wrap off Windows.
+- Unverified: everything Direct3D 11. It compiles with MinGW (`x86_64-w64-mingw32-g++-win32 -fsyntax-only`, also with
+  `OKAY_XBOX_UWP`); no HLSL was compiled and nothing was drawn. The first Windows run should compare the D3D11 bloom
+  against the Software device's, as `rhi_gl` does for OpenGL.
+- Not done: scissor, mip levels and texture copies (nothing moved so far needs them); OkayShader pass shaders (one
+  source for GLSL, HLSL and the CPU program, so the hand-written twins in `BloomPass.cpp` go); HLSL for OkayShader
+  surfaces (`ShaderFromSurface`: its property cbuffer is at b4 with its own layout, the RHI has one block at b0);
+  a real Direct3D 11 swap chain (DXGI, a window).

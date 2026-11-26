@@ -1,5 +1,5 @@
-// The bloom pass on the RHI: one description of the pass, GLSL for the OpenGL backend and
-// the same maths as C++ functions for the Software backend. Moved here from the OpenGL
+// The bloom pass on the RHI: one description of the pass, GLSL for the OpenGL backend, HLSL for
+// the Direct3D 11 backend and the same maths as C++ functions for the Software backend. Moved here from the OpenGL
 // renderer's own bloom (GLRenderer.cpp, kBrightFrag / kAddFrag, deleted in the same
 // change). The 9-tap gaussian uses 5 linear-filtered taps: offsets 1.384615 and 3.230769
 // texels with weights 0.227027, 0.316216 and 0.070270 (binomial weights merged in pairs).
@@ -43,6 +43,41 @@ const char* const kAddGlsl =
     "uniform sampler2D uSrc; uniform float uStrength; varying vec2 vUV;\n"
     "void main(){ gl_FragColor = vec4(texture2D(uSrc, vUV).rgb * uStrength, 0.0); }\n";
 
+// ---- The same programs in HLSL for the Direct3D 11 backend (RHI rules: TEXCOORDn inputs, cbuffer b0,
+// texture slot i at t i / s i, rhiClip for the position). Each pixel shader is the GLSL above, line for line.
+const char* const kFullscreenVertHlsl =
+    "struct VOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };\n"
+    "VOut VSMain(float2 aPos : TEXCOORD0) {\n"
+    "  VOut o; o.uv = aPos * 0.5 + 0.5; o.pos = rhiClip(float4(aPos, 0.0, 1.0)); return o;\n"
+    "}\n";
+
+const char* const kBrightHlsl =
+    "cbuffer U : register(b0) { float uThresh; };\n"   // dup-allow: an RHI pass shader; its HLSL lives with its GLSL and C++ twins (docs/rendering/rhi.md)
+    "Texture2D uSrc : register(t0); SamplerState uSrcS : register(s0);\n"
+    "float4 PSMain(float4 pos : SV_Position, float2 vUV : TEXCOORD0) : SV_Target {\n"
+    "  float3 c = uSrc.Sample(uSrcS, vUV).rgb;\n"
+    "  float l = dot(c, float3(0.2126, 0.7152, 0.0722));\n"
+    "  float k = max(l - uThresh, 0.0) / max(l, 1e-4);\n"
+    "  return float4(c * k, 1.0);\n"
+    "}\n";
+
+const char* const kBlurHlsl =
+    "cbuffer U : register(b0) { float2 uDir; };\n"   // dup-allow: an RHI pass shader; its HLSL lives with its GLSL and C++ twins (docs/rendering/rhi.md)
+    "Texture2D uSrc : register(t0); SamplerState uSrcS : register(s0);\n"
+    "float4 PSMain(float4 pos : SV_Position, float2 vUV : TEXCOORD0) : SV_Target {\n"
+    "  float3 s = uSrc.Sample(uSrcS, vUV).rgb * 0.227027;\n"
+    "  s += (uSrc.Sample(uSrcS, vUV + uDir * 1.384615).rgb + uSrc.Sample(uSrcS, vUV - uDir * 1.384615).rgb) * 0.316216;\n"
+    "  s += (uSrc.Sample(uSrcS, vUV + uDir * 3.230769).rgb + uSrc.Sample(uSrcS, vUV - uDir * 3.230769).rgb) * 0.070270;\n"
+    "  return float4(s, 1.0);\n"
+    "}\n";
+
+const char* const kAddHlsl =
+    "cbuffer U : register(b0) { float uStrength; };\n"   // dup-allow: an RHI pass shader; its HLSL lives with its GLSL and C++ twins (docs/rendering/rhi.md)
+    "Texture2D uSrc : register(t0); SamplerState uSrcS : register(s0);\n"
+    "float4 PSMain(float4 pos : SV_Position, float2 vUV : TEXCOORD0) : SV_Target {\n"
+    "  return float4(uSrc.Sample(uSrcS, vUV).rgb * uStrength, 0.0);\n"
+    "}\n";
+
 // ---- The same programs for the Software backend ----
 void FullscreenVert(const float (*attr)[4], const void*, const void*, float clip[4], float* var) {
     clip[0] = attr[0][0]; clip[1] = attr[0][1]; clip[2] = 0.0f; clip[3] = 1.0f;
@@ -77,7 +112,7 @@ bool AddFrag(const float* v, const FragmentContext& ctx, float out[4]) {
     return true;
 }
 
-ShaderDesc QuadShader(const char* name, const char* frag, CpuFragmentFn cpu, const char* uniform, UniformType type) {
+ShaderDesc QuadShader(const char* name, const char* frag, const char* hlsl, CpuFragmentFn cpu, const char* uniform, UniformType type) {
     ShaderDesc d;
     d.debugName = name;
     d.attributes = {"aPos"};
@@ -86,6 +121,8 @@ ShaderDesc QuadShader(const char* name, const char* frag, CpuFragmentFn cpu, con
     d.textures = {"uSrc"};
     d.glslVertex = kFullscreenVertGlsl;
     d.glslFragment = frag;
+    d.hlslVertex = kFullscreenVertHlsl;
+    d.hlslFragment = hlsl;
     d.cpuVertex = &FullscreenVert;
     d.cpuFragment = cpu;
     d.cpuVaryings = 2;
@@ -96,9 +133,9 @@ ShaderDesc QuadShader(const char* name, const char* frag, CpuFragmentFn cpu, con
 
 bool BloomPass::Init(Device& dev) {
     Shutdown();
-    m_brightSh = dev.CreateShader(QuadShader("bloom bright", kBrightGlsl, &BrightFrag, "uThresh", UniformType::Float));
-    m_blurSh = dev.CreateShader(QuadShader("bloom blur", kGaussianBlurGlsl, &BlurFrag, "uDir", UniformType::Vec2));
-    m_addSh = dev.CreateShader(QuadShader("bloom add", kAddGlsl, &AddFrag, "uStrength", UniformType::Float));
+    m_brightSh = dev.CreateShader(QuadShader("bloom bright", kBrightGlsl, kBrightHlsl, &BrightFrag, "uThresh", UniformType::Float));
+    m_blurSh = dev.CreateShader(QuadShader("bloom blur", kGaussianBlurGlsl, kBlurHlsl, &BlurFrag, "uDir", UniformType::Vec2));
+    m_addSh = dev.CreateShader(QuadShader("bloom add", kAddGlsl, kAddHlsl, &AddFrag, "uStrength", UniformType::Float));
     static const float quad[12] = {-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1};   // two triangles, counter-clockwise
     BufferDesc bd; bd.size = sizeof(quad); bd.initialData = quad; bd.debugName = "bloom quad";
     m_quad = dev.CreateBuffer(bd);

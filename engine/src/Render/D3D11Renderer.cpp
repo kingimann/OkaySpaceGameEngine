@@ -26,6 +26,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Render/OkayShader.hpp"   // Custom (.okayshader) surfaces
+#include "okay/Render/RHI/BloomPass.hpp"   // Bloom without the post chain, on the RHI (docs/rendering/rhi.md)
 
 #include <d3d11.h>
 #if !defined(OKAY_XBOX_UWP)
@@ -46,6 +47,7 @@
 #include <string>
 #include <chrono>
 #include <unordered_map>
+#include <memory>
 
 namespace okay {
 namespace {
@@ -363,6 +365,24 @@ struct D3D11Renderer::Impl {
     CustomPS* EnsureCustomPS(const std::string& path);
     bool EnsureTargets(int W, int H, int S);
     void DestroyTargets();
+    // Bloom without the post chain (View > Lighting "Bloom"): rhi::BloomPass on an RHI device made on
+    // THIS device and context (no second device), the same pass the OpenGL renderer runs. UNVERIFIED on Windows.
+    std::unique_ptr<rhi::Device> rhiDev;
+    std::unique_ptr<rhi::BloomPass> rhiBloom;
+    bool rhiFailed = false;
+    bool EnsureRhiBloom() {
+        if (rhiBloom) return true;
+        if (rhiFailed || !dev) return false;
+        if (!rhiDev) rhiDev = rhi::CreateD3D11Device(dev);
+        if (rhiDev) {
+            rhiBloom.reset(new rhi::BloomPass());
+            if (rhiBloom->Init(*rhiDev)) return true;
+            Log::Error("[d3d11] RHI bloom pass: ", rhiDev->LastError());
+            rhiBloom.reset();
+        }
+        rhiFailed = true;   // not again every frame
+        return false;
+    }
 };
 
 D3D11Renderer::Impl::CustomPS* D3D11Renderer::Impl::EnsureCustomPS(const std::string& path) {
@@ -778,7 +798,8 @@ bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
     if (FAILED(dev->CreateDepthStencilView(depthTex, nullptr, &dsv))) return false;
 
     D3D11_TEXTURE2D_DESC tr = td;
-    tr.SampleDesc.Count = 1; tr.BindFlags = D3D11_BIND_SHADER_RESOURCE;   // the post chain samples the resolve
+    tr.SampleDesc.Count = 1;
+    tr.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;   // the post chain samples the resolve; the RHI bloom draws onto it
     if (FAILED(dev->CreateTexture2D(&tr, nullptr, &resolveTex))) return false;
     if (FAILED(dev->CreateShaderResourceView(resolveTex, nullptr, &resolveSrv))) return false;
 
@@ -1889,8 +1910,15 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         c->OMSetBlendState(nullptr, abf, 0xffffffff);
         drawCasters(vp, nullptr, /*forView=*/true);
     }
+    // Bloom without the chain (View > Lighting "Bloom"; with the chain the uber pass does bloom).
+    bool rhiBloomOn = !useChain && BloomEnabled();
+    if (rhiBloomOn && p->directDst) {   // the glowing resolve is copied to the host's texture: same format only
+        D3D11_TEXTURE2D_DESC dd; p->directDst->GetDesc(&dd);
+        rhiBloomOn = dd.Format == p->fmt;
+    }
+    rhiBloomOn = rhiBloomOn && p->EnsureRhiBloom();
     // RenderToTexture without the chain: resolve straight into the host's texture and stop here.
-    if (p->directDst && !useChain) {
+    if (p->directDst && !useChain && !rhiBloomOn) {
         if (p->samples > 1) c->ResolveSubresource(p->directDst, 0, p->colorTex, 0, p->fmt);
         else                c->CopyResource(p->directDst, p->colorTex);
         { ID3D11ShaderResourceView* nullsrv[2] = {nullptr, nullptr}; c->PSSetShaderResources(4, 2, nullsrv); }
@@ -1901,6 +1929,22 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     if (p->samples > 1) c->ResolveSubresource(p->resolveTex, 0, p->colorTex, 0, p->fmt);
     else                c->CopyResource(p->resolveTex, p->colorTex);
     ID3D11Texture2D* readTex = p->resolveTex;   // what the staging copy reads
+    if (rhiBloomOn) {
+        // Bright pass at half size, two gaussian rounds, added back onto the resolve (rhi::BloomPass). Alpha
+        // stays: the editor paints the sky behind pixels the 3D pass left clear. A failure only skips the glow.
+        rhi::TextureDesc td;
+        td.width = w; td.height = h; td.renderTarget = true;
+        td.format = p->fmt == DXGI_FORMAT_R16G16B16A16_FLOAT ? rhi::Format::RGBA16F : rhi::Format::RGBA8;
+        const rhi::TextureHandle frame = rhi::WrapD3D11Texture(*p->rhiDev, p->resolveTex, td);
+        if (!frame || !p->rhiBloom->Apply(frame, w, h, BloomThreshold(), BloomIntensity()))
+            Log::Error("[d3d11] RHI bloom: ", p->rhiDev->LastError());
+        p->rhiDev->Destroy(frame);   // the wrap only: the texture stays the renderer's
+        if (p->directDst) {
+            c->CopyResource(p->directDst, p->resolveTex);
+            { ID3D11ShaderResourceView* nullsrv[2] = {nullptr, nullptr}; c->PSSetShaderResources(4, 2, nullsrv); }
+            return reinterpret_cast<const std::uint32_t*>(p->directDst);
+        }
+    }
     if (useChain) {
         const auto& ps = rsTop.post;
         beginQuadPasses();
@@ -2137,6 +2181,8 @@ void D3D11Renderer::Destroy() {
     p->sampCombo.clear();
     for (auto& kv : p->meshVB) if (kv.second.vbuf) kv.second.vbuf->Release();
     p->meshVB.clear();
+    p->rhiBloom.reset();   // frees its shaders, quad and targets on the RHI device
+    p->rhiDev.reset();     // drops its references to dev and ctx (released below)
     p->sunAtlas.Release();
     p->localAtlas.Release();
     if (p->shCB) p->shCB->Release();

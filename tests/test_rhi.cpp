@@ -2,7 +2,8 @@
 // device and capabilities, buffer and texture upload and read-back, shader layout checks, command
 // list recording, validation and state transitions, the rasterization rules (every pixel of a tiled
 // surface drawn exactly once, exact coverage of a triangle), blending, write masks, depth, culling,
-// indexed draws, the OkayShader surface path, the bloom pass, resource lifetime and the test scene
+// indexed draws, the OkayShader surface path, the bloom pass, resource lifetime, the Direct3D 11 HLSL rules
+// (as text: that backend runs only on Windows) and the test scene
 // against its expected picture (tests/golden/rhi/software_scene.png).
 //   OKAY_RHI_WRITE_GOLDEN=1   rewrite the expected picture (then review and commit it)
 //   OKAY_SHOT_DIR=<folder>    also save the scene as rhi_software.png there
@@ -58,6 +59,32 @@ struct Fixture {
 std::vector<float> Quad(float x0, float y0, float x1, float y1, float z = 0.0f) {   // counter-clockwise
     return {x0, y0, z, x1, y0, z, x1, y1, z, x0, y0, z, x1, y1, z, x0, y1, z};
 }
+
+// A device that makes handles and counts them but draws nothing: for the rules every backend shares
+// (deferred destruction when the CPU runs ahead; the HLSL rules the Direct3D 11 backend enforces).
+struct StandInDevice : Device {
+    Caps caps; std::size_t live = 0; bool checkHlsl = false; std::vector<ShaderDesc> shaders;
+    const Caps& GetCaps() const override { return caps; }
+    BufferHandle CreateBuffer(const BufferDesc&) override { ++live; return BufferHandle{NextId()}; }
+    TextureHandle CreateTexture(const TextureDesc&) override { ++live; return TextureHandle{NextId()}; }
+    SamplerHandle CreateSampler(const SamplerDesc&) override { ++live; return SamplerHandle{NextId()}; }
+    ShaderHandle CreateShader(const ShaderDesc& sd) override {
+        if (checkHlsl && !ValidateHlslDesc(sd).empty()) return {};
+        shaders.push_back(sd); ++live; return ShaderHandle{NextId()};
+    }
+    PipelineHandle CreatePipeline(const PipelineDesc&) override { ++live; return PipelineHandle{NextId()}; }
+    SwapChainHandle CreateSwapChain(int, int) override { return {}; }
+    bool UpdateBuffer(BufferHandle, std::size_t, const void*, std::size_t) override { return false; }
+    bool UpdateTexture(TextureHandle, const void*) override { return false; }
+    bool ReadTexture(TextureHandle, std::vector<std::uint8_t>&) override { return false; }
+    bool TextureSize(TextureHandle, int&, int&) const override { return false; }
+    TextureHandle BackBuffer(SwapChainHandle) override { return {}; }
+    bool ResizeSwapChain(SwapChainHandle, int, int) override { return false; }
+    bool Present(SwapChainHandle) override { return false; }
+    bool Submit(const CommandList& l) override { return l.Error().empty(); }
+    std::size_t LiveResources() const override { return live; }
+    void Release(Kind, std::uint32_t) override { --live; }
+};
 
 } // namespace
 
@@ -445,32 +472,62 @@ int main() {
         CHECK(vb2.id != vb.id);   // ids are never reused
 
         // A device that lets the CPU run 3 frames ahead keeps a destroyed resource for 2 more frames.
-        struct AheadDevice : Device {
-            Caps caps; std::size_t live = 0;
-            AheadDevice() { caps.framesInFlight = 3; }
-            const Caps& GetCaps() const override { return caps; }
-            BufferHandle CreateBuffer(const BufferDesc&) override { ++live; return BufferHandle{NextId()}; }
-            TextureHandle CreateTexture(const TextureDesc&) override { return {}; }
-            SamplerHandle CreateSampler(const SamplerDesc&) override { return {}; }
-            ShaderHandle CreateShader(const ShaderDesc&) override { return {}; }
-            PipelineHandle CreatePipeline(const PipelineDesc&) override { return {}; }
-            SwapChainHandle CreateSwapChain(int, int) override { return {}; }
-            bool UpdateBuffer(BufferHandle, std::size_t, const void*, std::size_t) override { return false; }
-            bool UpdateTexture(TextureHandle, const void*) override { return false; }
-            bool ReadTexture(TextureHandle, std::vector<std::uint8_t>&) override { return false; }
-            bool TextureSize(TextureHandle, int&, int&) const override { return false; }
-            TextureHandle BackBuffer(SwapChainHandle) override { return {}; }
-            bool ResizeSwapChain(SwapChainHandle, int, int) override { return false; }
-            bool Present(SwapChainHandle) override { return false; }
-            bool Submit(const CommandList&) override { return true; }
-            std::size_t LiveResources() const override { return live; }
-            void Release(Kind, std::uint32_t) override { --live; }
-        } ahead;
+        StandInDevice ahead;
+        ahead.caps.framesInFlight = 3;
         BufferHandle b = ahead.CreateBuffer(BufferDesc{});
         ahead.Destroy(b);
         CHECK(ahead.LiveResources() == 1);
         ahead.EndFrame(); CHECK(ahead.LiveResources() == 1);
         ahead.EndFrame(); CHECK(ahead.LiveResources() == 0);
+    }
+
+    // ---- Direct3D 11: the HLSL rules, checked as text (the backend itself runs only on Windows) ----
+    {
+        // No D3D11 device without one to share; wrapping a D3D11 texture on another backend gives nothing.
+        CHECK(CreateD3D11Device(nullptr) == nullptr);
+        auto sw = CreateSoftwareDevice();
+        TextureDesc td; td.width = 2; td.height = 2;
+        int fake = 0;
+        CHECK(!WrapD3D11Texture(*sw, &fake, td));
+        // rhiClip flips y (Direct3D puts NDC +1 at row 0) and maps depth -w..w to 0..w.
+        const std::string pre = kHlslPrelude;
+        CHECK(pre.find("float4 rhiClip(float4 p)") != std::string::npos);
+        CHECK(pre.find("-p.y") != std::string::npos && pre.find("(p.z + p.w) * 0.5") != std::string::npos);
+
+        ShaderDesc d = UniformColorShader();
+        CHECK(ValidateHlslDesc(d) == "no HLSL");
+        d.hlslVertex = "float4 VSMain(float3 aPos : TEXCOORD0) : SV_Position { return rhiClip(float4(aPos, 1.0)); }\n";
+        d.hlslFragment = "cbuffer U : register(b0) { float4 uColor; };\nfloat4 PSMain() : SV_Target { return uColor; }\n";   // dup-allow: test input for ValidateHlslDesc
+        CHECK(ValidateHlslDesc(d).empty());
+        ShaderDesc e = d; e.hlslVertex = "float4 VSMain(float3 aPos : TEXCOORD0) : SV_Position { return float4(aPos, 1.0); }\n";
+        CHECK(ValidateHlslDesc(e).find("rhiClip") != std::string::npos);
+        e = d; e.hlslVertex = "float4 VSMain(float3 aPos : POSITION) : SV_Position { return rhiClip(float4(aPos, 1.0)); }\n";
+        CHECK(ValidateHlslDesc(e).find("TEXCOORD0") != std::string::npos);
+        e = d; e.hlslFragment = "cbuffer U : register(b1) { float4 uColor; };\nfloat4 PSMain() : SV_Target { return uColor; }\n";
+        CHECK(ValidateHlslDesc(e).find("b0") != std::string::npos);
+        e = d; e.textures = {"uTex"};
+        CHECK(ValidateHlslDesc(e).find("register(t0)") != std::string::npos);
+        e = d; e.uniforms[0].name = "uTint";
+        CHECK(ValidateHlslDesc(e).find("uTint") != std::string::npos);
+
+        // Every shader the bloom pass makes carries HLSL that keeps the rules (a stand-in device records them).
+        StandInDevice rec;   // refuses a shader whose HLSL breaks the rules, keeps the ones it takes
+        rec.caps.backend = Backend::D3D11;
+        rec.checkHlsl = true;
+        {
+            BloomPass bloom;
+            CHECK(bloom.Init(rec));
+            CHECK(rec.shaders.size() == 3);
+            for (const ShaderDesc& sd : rec.shaders) {
+                CHECK(ValidateHlslDesc(sd).empty());
+                // The pixel stages are the GLSL ones line for line: the same constants in both.
+                for (const char* k : {"0.227027", "0.316216", "1.384615", "0.2126", "uStrength"})
+                    CHECK((sd.glslFragment.find(k) == std::string::npos) == (sd.hlslFragment.find(k) == std::string::npos));
+            }
+            const TextureHandle frame{999};
+            CHECK(bloom.Apply(frame, 64, 32, 0.5f, 1.0f));
+        }
+        CHECK(rec.LiveResources() == 0);
     }
 
     TEST_MAIN_RESULT();

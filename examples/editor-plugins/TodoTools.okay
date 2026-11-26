@@ -1,0 +1,30 @@
+// @name TODO Tools
+// @description Script Editor: a command that inserts a TODO note, and a check that lists every TODO and FIXME as a problem.
+// (No @window and no on_gui: it only adds to the Script Editor. Its command is in the command palette, Ctrl+Shift+P.)
+
+start() {
+    script_command("todo.insert", "Insert TODO Note", "Ctrl+Alt+T", "insert_todo")
+    script_lint("find_todos")
+}
+
+// The command: a TODO comment in the script's own comment style, at the caret.
+insert_todo() {
+    mark = "//"
+    if (script_language() == "lua") mark = "--"
+    script_insert(mark + " TODO: ")
+}
+
+// The check: every line with TODO or FIXME is a note in Problems; FIXME also gets a quick fix that turns it into TODO.
+find_todos(path, text, language) {
+    lines = split(text, "\n")
+    for (i = 0; i < count(lines); i = i + 1) {
+        l = lines[i]
+        at = str_find(l, "TODO")
+        if (at >= 0) script_problem(i + 1, at + 1, "info", trim("TODO" + substr(l, at + 4, 200)))
+        at = str_find(l, "FIXME")
+        if (at >= 0) {
+            script_problem(i + 1, at + 1, "warning", "FIXME left in the script")
+            script_fix("Change FIXME to TODO", i + 1, at, 5, "TODO")
+        }
+    }
+}

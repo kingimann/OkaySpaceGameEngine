@@ -191,14 +191,15 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.8.2 Editor API - `editor/PluginsWindow.cpp` (`RegisterPluginBuiltins`) - about 25 `editor_*` builtins (selection, create, rename, parent, transforms, undo point, log, input, heading, hint)
   - 15.8.3 Plugins menu - `editor/PluginsWindow.cpp` (`DrawPluginsMenu`) - project plugins first, then global ones, error marks, Turned off list, New Plugin
   - 15.8.4 Plugin Manager - `editor/PluginsWindow.cpp` (`DrawPluginManager`) - errors, turn off, open folder
-  - 15.8.5 Examples - `examples/editor-plugins` - `AlignTools.okay` and `CleanupNames.okay`
-- **Code:** `editor/PluginsWindow.*`, `examples/editor-plugins/AlignTools.okay`, `examples/editor-plugins/CleanupNames.okay`, `Scripting/OkayScriptVM`
-- **API:** hooks `start`, `on_gui`, `on_menu`, `on_selection`, `on_tick`; `editor_*` functions; `OkayScriptVM::AddBuiltin`
+  - 15.8.5 Examples - `examples/editor-plugins` - `AlignTools.okay`, `CleanupNames.okay` and `TodoTools.okay` (a Script Editor command and a lint rule with a quick fix)
+  - 15.8.6 Script Editor extensions - `editor/PluginRegistry.*` (commands with shortcuts, completion, lint with quick fixes, formatter, hover, snippets, side panels; every entry owned by its plugin, so turning it off or reloading removes it), `editor/PluginScriptApi.*` (the `script_*` builtins), wired in `PluginsWindow.cpp` `LoadPlugin` - the same plugin files, Plugins menu and Plugin Manager (2026-11-26, `claude/script-ide-1`). The registry has no GUI and no VM, so the Browser can make its own instance for browser plugins
+- **Code:** `editor/PluginsWindow.*`, `editor/PluginRegistry.*`, `editor/PluginScriptApi.*`, `examples/editor-plugins/*.okay`, `Scripting/OkayScriptVM`
+- **API:** hooks `start`, `on_gui`, `on_menu`, `on_selection`, `on_tick`; `editor_*` functions; `script_command`, `script_lint` / `script_problem` / `script_fix`, `script_completion` / `script_suggest`, `script_formatter`, `script_hover`, `script_snippet`, `script_panel`, `script_text`, `script_path`, `script_language`, `script_caret_line`, `script_insert`, `script_set_text`, `script_open`; `OkayScriptVM::AddBuiltin`
 - **Editor:** Plugins menu, Plugins > Plugin Manager..., Plugins > New Plugin...
 - **Docs:** `docs/editor/editor-plugins.md`
-- **Tests:** `editor_plugins`
-- **Status:** Works - plugins load, show panels and commands; the Plugins menu usability item from the earlier map was merged in #479
-- **Open:** `editor_plugins` runs the examples against its own fake editor, so the real `RegisterPluginBuiltins` is not under test (possible drift); the planned C++ plugin ABI, editor extension points and custom nodes are area 24
+- **Tests:** `editor_plugins` (also `TodoTools.okay` through the real `script_*` calls), `script_ide` (the registry)
+- **Status:** Works - plugins load, show panels and commands; the Plugins menu usability item from the earlier map was merged in #479; the Script Editor extensions are tested headless, unverified in the running editor
+- **Open:** `editor_plugins` runs the examples against its own fake editor, so the real `RegisterPluginBuiltins` is not under test (possible drift; the `script_*` calls are the real ones); the Script Editor asks plugins for completion (labels join the autocomplete list), hover (after the built-in docs), Format Document (a plugin formatter first) and snippets (palette commands "Insert Snippet: ..."), not yet run in the real editor; the planned C++ plugin ABI, editor extension points and custom nodes are area 24
 - **Related:** 24, 13.1, 40.4, 14.4
 - **Words:** plugins, Plugins menu, editor plugin, EditorPlugins, Plugin Manager, editor_ API, on_gui, on_menu, AlignTools
 - **Seen as:** a plugin does not load or shows "(error)"; a plugin panel does not draw; two plugins with the same name clash; reload on save does nothing

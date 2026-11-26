@@ -75,6 +75,9 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Logging | `Core/Log.hpp` | `okay::Log` (`Info`, `Warning`, `Error`), `Log::Category` | `Log::Warning("missing texture: ", path);` |
 | Script-side JSON, hashing, Base64 (Python, JS, shell) | the standard library | `json.dumps`, `hashlib`, `base64`, `zlib.crc32`; `JSON.stringify`; `jq` | `json.dumps(obj)` |
 | okay-ms language tests: build a program with okay-cl at /O0 /O1 /O2, run it under Wine, compare with MinGW g++ | `tools/okayms/tests/program_check.hpp` (paths in this row are from the repository root) | `okayms_test::run_both`, `ProgramRun`, `wine_exit`, `bump_alloc` | `okayms_test::run_both(kRun, tally, "name", source, 0);` |
+| Fuzzy match of typed letters (Quick Open, palettes, autocomplete) | `editor/ScriptIde.hpp` (paths in this row are from the repository root) | `scriptide::FuzzyScore` (`oked::FuzzyScore` in `editor/ScriptAssist.cpp` calls it); the visual-script search keeps its own scorer `VsFuzzyScore` (`editor/VisualScriptNodeDocs.hpp`, word-aware, different weights) | `if (scriptide::FuzzyScore("plc", "PlayerController.okay") >= 0) ...` |
+| Script text: find / replace with case, whole word, regex; text edits; line diff | `editor/ScriptIde.hpp` (from the repository root) | `scriptide::FindAll`, `ReplaceAll`, `FindInTexts`, `ApplyEdits`, `TextEdit`, `LineDiff` | `int n; auto t = scriptide::ReplaceAll(src, "(\\w+) = 1", "$1 = 2", {true}, &n);` |
+| Commands and providers editor plugins add to a window | `editor/PluginRegistry.hpp` (from the repository root) | `pluginreg::PluginRegistry`, `Command`, `RankCommands`, `ParseShortcut`, `ScriptEditorPlugins()` | `reg.AddCommand({"id", "Title", "Category", "Ctrl+Alt+T", owner, run});` |
 
 ## Keeping this list true
 

@@ -719,6 +719,10 @@ Value Execute(Runtime& rt, int entry) {
                         }
                         Prop* gp = rt.global->FindRaw(k);
                         if (gp && !(gp->flags & kAccessor) && (gp->flags & kWritable)) { gp->v = TOP; break; }
+                        if (!gp && I.b && !rt.HasProperty(rt.global, k)) {   // sloppy code: PutValue step 5.b
+                            rt.DefineData(rt.global, k, TOP);
+                            break;
+                        }
                         if (!gp && !rt.HasProperty(rt.global, k))
                             rt.ThrowError(ErrorType::ReferenceError, "'" + KeyText(rt, k) + "' is not defined (declare it with let, const or var)");
                         rt.Put(Value::Obj(rt.global), k, TOP);

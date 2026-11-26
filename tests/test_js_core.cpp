@@ -601,6 +601,67 @@ void DynamicImport() {
     CHECK(out == "mod-1\n");
 }
 
+// Classic page scripts are sloppy code where assigning an undeclared name makes a global (ECMA-262 6.2.5.6 PutValue
+// step 5.b; React's streaming markup does `$RB=[]`). Runtime::sloppyScripts turns that on (the browser); game scripts
+// keep the default (everything strict). "use strict" and class bodies stay strict either way.
+void SloppyGlobals() {
+    auto runSloppy = [](const std::string& src) {
+        Runtime rt;
+        rt.sloppyScripts = true;
+        std::string printed, why;
+        rt.printSink = [&printed](const std::string& line) { printed += line + "\n"; };
+        if (!rt.Run(src, "page.js", &why)) printed += "ERROR: " + why + "\n";
+        return printed;
+    };
+    CHECK(runSloppy("$RB = []; $RB.push(1); function f() { made = 2; } f(); console.log($RB.length, made, globalThis.made, typeof $RB)") ==
+          "1 2 2 object\n");
+    CHECK(runSloppy("for (k = 0; k < 2; k++) {} console.log(k)") == "2\n");
+    CHECK(runSloppy("'use strict'; x = 1;").find("ReferenceError") != std::string::npos);
+    CHECK(runSloppy("function g() { 'use strict'; y = 1; } g();").find("ReferenceError") != std::string::npos);
+    CHECK(runSloppy("function g() { 'use strict'; return () => { z = 1; }; } g()();").find("ReferenceError") != std::string::npos);
+    CHECK(runSloppy("class C { m() { w = 1; } } new C().m();").find("ReferenceError") != std::string::npos);
+    CHECK(runSloppy("('use strict'); q = 3; console.log(q)") == "3\n");   // a parenthesized string is not a directive
+    // the default (game scripts): still strict
+    ExpectError("undeclaredGlobal = 1;", "ReferenceError");
+}
+
+// Runtime::Run reports every failure as a false return: a memory stop while compiling (a script run from inside a
+// host function, with the heap full) used to escape as a JsTerminate exception.
+void RunNeverThrows() {
+    Runtime rt;
+    std::string outerErr, innerErr;
+    bool innerOk = true, escaped = false;
+    struct Ctx { std::string* err; bool* ok; bool* escaped; };
+    Ctx ctx{&innerErr, &innerOk, &escaped};
+    rt.userData = &ctx;
+    std::string big = "const a = [";
+    for (int i = 0; i < 40000; ++i) big += "'s" + std::to_string(i) + "',";
+    big += "];";
+    static std::string s_big;
+    s_big = big;
+    rt.SetGlobal("runInner", Value::Obj(rt.NewNative([](Runtime& r, CallArgs&) {
+        Ctx* c = static_cast<Ctx*>(r.userData);
+        try {
+            *c->ok = r.Run(s_big, "inner.js", c->err);
+        } catch (...) {
+            *c->escaped = true;
+        }
+        return Value();
+    }, "runInner", 0)));
+    rt.memoryLimit = rt.BytesInUse() + (256u << 10);
+    bool ok = false;
+    try {
+        ok = rt.Run("runInner();", "outer.js", &outerErr);
+    } catch (...) {
+        escaped = true;
+    }
+    (void)ok;
+    CHECK(!escaped);
+    CHECK(!innerOk);
+    if (innerErr.find("memory") == std::string::npos) std::cerr << "  inner error: " << innerErr << "\n";
+    CHECK(innerErr.find("memory") != std::string::npos);
+}
+
 struct Hostile {
     const char* src;
     const char* want;   ///< part of the error, "" for any error, "OK" when it must finish without one
@@ -873,6 +934,8 @@ int main() {
     IntlBasics();
     NamedFunctionExpressions();
     DynamicImport();
+    SloppyGlobals();
+    RunNeverThrows();
     ConformanceScript(false);
     ConformanceScript(true);
     HostileOneLiners();

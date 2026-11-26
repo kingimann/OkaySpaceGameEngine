@@ -1823,13 +1823,31 @@ bool Runtime::Compile(const std::string& source, const std::string& chunk, Value
         if (err) *err = e;
         return false;
     }
-    Proto* p = CompileScript(*this, ast, chunk, e);
+    Proto* p = nullptr;
+    try {   // the API reports every failure as false: a memory stop here (interning names) must not escape
+        p = CompileScript(*this, ast, chunk, e);
+    } catch (const JsTerminate& t) {
+        e = SyntaxError{};
+        e.line = -1;   // not a syntax error: Run reports the message as it is
+        e.message = t.why;
+    } catch (const JsThrow&) {
+        e = SyntaxError{};
+        e.line = -1;
+        e.message = ExceptionText(exception);
+        exception = Value();
+    }
     if (!p) {
         if (err) *err = e;
         return false;
     }
     vm->scripts.push_back(p);
-    Closure* c = Alloc<Closure>();
+    Closure* c;
+    try {
+        c = Alloc<Closure>();
+    } catch (const JsTerminate& t) {
+        if (err) { *err = SyntaxError{}; err->line = -1; err->message = t.why; }
+        return false;
+    }
     c->code = p;
     c->proto = functionProto;
     fn = Value::Obj(c);
@@ -1844,7 +1862,15 @@ std::vector<SyntaxError> Runtime::CheckSyntax(const std::string& source, const s
     if (!Parse(toks, ast, e)) return {e};
     // the compiler finds the rest (redeclarations, break targets); throw its output away
     Runtime* self = this;
-    Proto* p = CompileScript(*self, ast, chunk, e);
+    Proto* p = nullptr;
+    try {
+        p = CompileScript(*self, ast, chunk, e);
+    } catch (const JsTerminate&) {
+        return {};   // out of memory while checking: no syntax error to report
+    } catch (const JsThrow&) {
+        exception = Value();
+        return {};
+    }
     if (!p) return {e};
     return {};
 }
@@ -1853,7 +1879,7 @@ bool Runtime::Run(const std::string& source, const std::string& chunk, std::stri
     Value fn;
     SyntaxError se;
     if (!Compile(source, chunk, fn, &se)) {
-        if (err) *err = chunk + ":" + std::to_string(se.line) + ": SyntaxError: " + se.message;
+        if (err) *err = se.line < 0 ? se.message : chunk + ":" + std::to_string(se.line) + ": SyntaxError: " + se.message;
         return false;
     }
     Value r;

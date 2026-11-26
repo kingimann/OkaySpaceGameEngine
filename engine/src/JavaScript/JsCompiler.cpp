@@ -82,6 +82,7 @@ struct FS {
     std::vector<FinallyInfo> finals;
     std::vector<UpName> upNames;
     bool isScript = false;
+    bool strict = true;      ///< false only for sloppy page scripts (Runtime::sloppyScripts) outside "use strict" and classes
     int thisCell = -1;       ///< slot of the captured %this cell, if any
     int exportSlot = -1;
     std::vector<std::u16string> pendingLabels;
@@ -289,7 +290,7 @@ struct Compiler {
                 Emit(OP_InitLex, r.index);
                 return;
             }
-            Emit(OP_SetGlobal, r.index);
+            Emit(OP_SetGlobal, r.index, fs->strict ? 0 : 1);   // b = 1: an undeclared name becomes a global (sloppy)
             if (!keep) Emit(OP_Pop);
         }
         (void)at;
@@ -389,6 +390,7 @@ struct Compiler {
         FS f;
         f.parent = fs;
         f.fi = fi;
+        f.strict = !rt.sloppyScripts || (fs && fs->strict) || classDepth > 0 || HasUseStrict(fi->exprBody ? nullptr : fi->body);
         Proto* p = new Proto();
         protos.push_back(p);   // linked into the heap by CompileScript's caller
         f.p = p;
@@ -1720,7 +1722,20 @@ struct Compiler {
         }
     }
 
+    // 11.2.1 directive prologue: the leading expression statements that are bare string literals
+    static bool HasUseStrict(const Node* body) {
+        if (!body) return false;
+        for (const Node* s : body->list) {
+            if (s->k != NK::ExprStmt || !s->a || s->a->k != NK::Str || (s->a->flags & NF_Paren)) return false;
+            if (s->a->str == u"use strict") return true;
+        }
+        return false;
+    }
+    int classDepth = 0;   ///< inside a class body (class code is strict, 11.2.2)
+
     void ClassExpr(Node* n) {
+        ++classDepth;
+        struct Leave { int& d; ~Leave() { --d; } } leave{classDepth};
         ClassInfo* ci = n->ci;
         bool named = !n->str.empty();
         if (named) {
@@ -1815,6 +1830,7 @@ struct Compiler {
         FS f;
         f.fi = ast.script;
         f.isScript = true;
+        f.strict = !rt.sloppyScripts || HasUseStrict(ast.script->body);
         Proto* p = new Proto();
         protos.push_back(p);
         f.p = p;
@@ -1865,6 +1881,9 @@ Proto* CompileScript(Runtime& rt, Ast& ast, const std::string& chunk, SyntaxErro
     } catch (const CompileFail&) {
         for (Proto* x : c.protos) delete x;
         return nullptr;
+    } catch (...) {   // a memory stop while interning names: free what was made, let Runtime::Compile report it
+        for (Proto* x : c.protos) delete x;
+        throw;
     }
     for (Proto* x : c.protos) rt.Adopt(x);
     return p;

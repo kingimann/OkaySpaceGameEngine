@@ -277,7 +277,8 @@ public:
     Runtime& operator=(const Runtime&) = delete;
 
     // ---- running code
-    /// Compile a script. On success `fn` is the script's top-level function.
+    /// Compile a script. On success `fn` is the script's top-level function. Never throws: a memory stop while
+    /// compiling comes back as false with err->line = -1 and the stop's message.
     bool Compile(const std::string& source, const std::string& chunk, Value& fn, SyntaxError* err);
     /// Every syntax error the parser reports (it stops at the first one).
     std::vector<SyntaxError> CheckSyntax(const std::string& source, const std::string& chunk);
@@ -289,6 +290,10 @@ public:
     /// new fn(...args) from the host, with the same error handling as CallHost.
     bool ConstructHost(const Value& fn, const std::vector<Value>& args, Value* result, std::string* err);
     void* userData = nullptr;   ///< for the host (the game-script glue keeps its state here)
+    /// Classic page scripts (the browser): code without "use strict" (and outside classes) is sloppy about one thing,
+    /// assigning an undeclared name creates a global property (6.2.5.6 PutValue step 5.b). Off by default: game
+    /// scripts stay fully strict.
+    bool sloppyScripts = false;
     /// Call from library code: throws JsThrow / JsTerminate. The result is kept for the current native call.
     Value Call(const Value& fn, const Value& thisv, const Value* args, int argc);
     Value Call(const Value& fn, const Value& thisv, std::initializer_list<Value> args) {

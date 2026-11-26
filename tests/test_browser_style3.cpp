@@ -15,6 +15,10 @@ static int CountFill(const LayoutResult& r, Color c) {
     for (const DrawCmd& k : r.cmds) if (k.kind == DrawCmd::Fill && k.color == c) ++n;
     return n;
 }
+static bool FillAtColor(const LayoutResult& r, float x, float y, Color c) {
+    for (const DrawCmd& k : r.cmds) if (k.kind == DrawCmd::Fill && k.color == c && x >= k.x && x < k.x + k.w && y >= k.y && y < k.y + k.h) return true;
+    return false;
+}
 static const DrawCmd* TextColored(const LayoutResult& r, const std::string& t, Color c) {
     for (const DrawCmd& k : r.cmds) if (k.kind == DrawCmd::Text && k.text == t && k.color == c) return &k;
     return nullptr;
@@ -52,5 +56,76 @@ int main() {
         const LayoutResult r2 = Lay(B0 + "<div style='position:relative;height:50px'><i id=a style='position:absolute;inset-inline:5px 7px;inset-block-start:3px;display:block;height:4px'></i></div>", 300);
         CHECK(BoxIs(r2, "a", 5, 3, 288, 4));
     }
+
+    // ---- text ----
+    {
+        // letter-spacing: 2 px after every character (spaces too), one run per character; word-spacing: after spaces
+        const LayoutResult r = Lay(B0 + "<p style='margin:0;letter-spacing:2px'>ab cd</p><p style='margin:0;word-spacing:10px'>ab cd</p>", 300);
+        CHECK(TextAt(r, "a", 0, 1.6f) && TextAt(r, "b", 10, 1.6f) && TextAt(r, "c", 30, 1.6f));
+        CHECK(TextAt(r, "cd", 34, L + 1.6f));
+    }
+    {
+        // small-caps: lower-case letters as capitals at 0.7 of the size, on the same baseline
+        const LayoutResult r = Lay(B0 + "<p style='margin:0;font-variant:small-caps'>Ab</p>", 300);
+        const DrawCmd* b = TextCmd(r, "B");
+        CHECK(TextAt(r, "A", 0, 1.6f) && b && Near(b->x, 8) && Near(b->h, 11.2f) && Near(b->y + b->h * 0.8f, 1.6f + 12.8f));
+    }
+    {
+        // justify: the 12 px left on the first line go into its three spaces; the last line is not stretched
+        const LayoutResult r = Lay(B0 + "<p style='margin:0;width:100px;text-align:justify'>aa bb cc dd ee ff gg</p>", 300);
+        CHECK(TextAt(r, "bb ", 28, 1.6f) && TextAt(r, "cc ", 56, 1.6f) && TextAt(r, "dd", 84, 1.6f));
+        CHECK(TextAt(r, "ee ff gg", 0, L + 1.6f));
+    }
+    {
+        // text-shadow: a copy under the text, moved
+        const LayoutResult r = Lay(B0 + "<p style='margin:0;text-shadow:1px 2px #ff0000'>sh</p>", 300);
+        const DrawCmd* sh = TextColored(r, "sh", red);
+        const DrawCmd* tx = TextColored(r, "sh", black);
+        CHECK(sh && tx && sh < tx && Near(sh->x, 1) && Near(sh->y, 3.6f));
+    }
+    {
+        // ::first-letter as a drop cap and ::marker's colour
+        const LayoutResult r = Lay("<style>p::first-letter{color:#00ff00;font-size:32px} li::marker{color:#ff0000}</style>"
+                                   "<body style='margin:0'><p style='margin:0'>Hello</p><ol style='margin:0'><li>x</ol>", 300);
+        const DrawCmd* h = TextColored(r, "H", lime);
+        CHECK(h && Near(h->h, 32) && TextCmd(r, "ello") != nullptr);
+        CHECK(TextColored(r, "1.", red) != nullptr);
+    }
+
+    // ---- boxes ----
+    {
+        // outline: outside the border box, takes no room
+        const LayoutResult r = Lay(B0 + "<div id=a style='margin:10px;width:50px;height:20px;outline:2px solid #ff0000;outline-offset:1px'></div><div id=b style='height:5px'></div>", 300);
+        CHECK(BoxIs(r, "a", 10, 10, 50, 20));
+        CHECK(BoxIs(r, "b", 0, 40, 300, 5));
+        CHECK(CountFill(r, red) == 4 && FillAtColor(r, 7.5f, 15, red) && FillAtColor(r, 61.5f, 15, red) && !FillAtColor(r, 30, 15, red));
+    }
+    {
+        // dashed and dotted borders are pieces; a double border is two lines
+        const LayoutResult r = Lay(B0 + "<div style='width:60px;height:10px;border-top:2px dashed #ff0000'></div>"
+                                   "<div style='width:60px;height:10px;border-top:2px dotted #0000ff'></div>"
+                                   "<div style='width:60px;height:10px;border-top:6px double #00ff00'></div>", 300);
+        CHECK(CountFill(r, red) == 6);    // 60 / (6 + 4)
+        CHECK(CountFill(r, blue) == 15);  // 60 / (2 + 2)
+        CHECK(CountFill(r, lime) == 2);
+    }
+    {
+        // an inset shadow: bands inside the padding box (here 4 px all round)
+        const LayoutResult r = Lay(B0 + "<div style='width:50px;height:30px;box-shadow:inset 0 0 0 4px #ff0000'></div>", 300);
+        CHECK(FillAtColor(r, 2, 15, red) && FillAtColor(r, 25, 2, red) && !FillAtColor(r, 25, 15, red));
+    }
+    {
+        // aspect-ratio: the height from the width; taller content still makes it taller
+        const LayoutResult r = Lay(B0 + "<div id=a style='width:160px;aspect-ratio:16 / 9'></div><div id=b style='width:16px;aspect-ratio:4'>a b c</div>", 300);
+        CHECK(BoxIs(r, "a", 0, 0, 160, 90));
+        CHECK(BoxIs(r, "b", 0, 90, 16, 3 * L));
+    }
+    {
+        // filter: grayscale(1) and brightness(0.5) change the box's colours
+        const LayoutResult r = Lay(B0 + "<div style='height:10px;background:#ff0000;filter:grayscale(1)'></div><div style='height:10px;background:#ff0000;filter:brightness(50%)'></div>", 300);
+        CHECK(CountFill(r, Color{54, 54, 54, 255}) == 1);
+        CHECK(CountFill(r, Color{128, 0, 0, 255}) == 1);
+    }
+
     TEST_MAIN_RESULT();
 }

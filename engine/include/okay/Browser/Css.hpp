@@ -286,7 +286,7 @@ struct Selector {
     std::vector<Compound> parts;      ///< left to right
     std::vector<char> combinators;    ///< between parts: ' ' (descendant), '>' (child), '+' (next sibling), '~' (later sibling)
     int specificity = 0;              ///< a * 10000 + b * 100 + c (ids, classes / attributes / pseudo-classes, types)
-    int pseudoElement = 0;            ///< 0 = the element itself, 1 = ::before, 2 = ::after, 3 = another (never matches)
+    int pseudoElement = 0;            ///< 0 = the element itself, 1 = ::before, 2 = ::after, 3 = another (never matches), 4 = ::first-letter, 5 = ::marker
     bool dynamic = false;             ///< uses :hover / :focus / :active / :focus-within (the layout is redone when they change)
 };
 

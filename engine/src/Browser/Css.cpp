@@ -757,7 +757,9 @@ bool ParseSelector(const std::string& textIn, Selector& out) {
                     if (out.pseudoElement) return false;
                     if (name == "before") out.pseudoElement = 1;
                     else if (name == "after") out.pseudoElement = 2;
-                    else if (name == "placeholder" || name == "selection" || name == "first-line" || name == "first-letter" || name == "marker" ||
+                    else if (name == "first-letter") out.pseudoElement = 4;
+                    else if (name == "marker") out.pseudoElement = 5;
+                    else if (name == "placeholder" || name == "selection" || name == "first-line" ||
                              name == "backdrop" || name == "file-selector-button") out.pseudoElement = 3;
                     else return false;
                     ++types;

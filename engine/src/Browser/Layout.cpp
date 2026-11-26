@@ -30,6 +30,7 @@ struct SNode {
     bool text = false;
     ComputedStyle st;
     std::vector<SNode> kids;
+    std::shared_ptr<const ComputedStyle> marker;   // a list item's ::marker style (null: the item's own)
 };
 
 bool IsEmbedTag(const std::string& t) {
@@ -67,11 +68,13 @@ void Blockify(ComputedStyle& s) {
 // Table parts (CSS 2.1 17.2): a row group, a row, a cell, a caption.
 bool IsRowGroup(Display d) { return IsTableSection(d); }
 
+std::size_t CpLen(const std::string& s, std::size_t i);   // below
+
 struct Builder {
     const std::vector<const StyleSheet*>& sheets;
     const StyleContext* ctx;
     std::deque<Node> synth;   // the boxes of ::before / ::after and their text
-    bool anyPseudo[3] = {false, false, false};
+    bool anyPseudo[6] = {false, false, false, false, false, false};
     // the counters in scope (CSS 2.1 12.4.1), innermost last: an element's counter-reset adds one that lives until its parent's
     // children end, so it reaches the element, its descendants and its later siblings
     std::vector<std::pair<std::string, int>> counters;
@@ -133,7 +136,7 @@ struct Builder {
     void Prepare() {
         for (const StyleSheet* s : sheets) {
             if (!s) continue;
-            for (const Rule& r : s->rules) for (const Selector& sel : r.selectors) if (sel.pseudoElement == 1 || sel.pseudoElement == 2) anyPseudo[sel.pseudoElement] = true;
+            for (const Rule& r : s->rules) for (const Selector& sel : r.selectors) if (sel.pseudoElement == 1 || sel.pseudoElement == 2 || sel.pseudoElement == 4 || sel.pseudoElement == 5) anyPseudo[sel.pseudoElement] = true;
         }
     }
 
@@ -162,6 +165,9 @@ struct Builder {
             }
         }
         if (anyPseudo[2]) AddPseudo(el, out, 2);
+        if (anyPseudo[4] && !IsInlineLevel(out.st.display) && HasPseudoRule(el, 4)) AddFirstLetter(el, out);
+        if (anyPseudo[5] && out.st.display == Display::ListItem && HasPseudoRule(el, 5))
+            out.marker = std::make_shared<const ComputedStyle>(ComputeStyle(el, out.st, sheets, ctx, 5));
         if (counters.size() > counterMark) counters.resize(counterMark);   // the counters the children started end here
         NormalizeTable(out);
         if (IsFlexDisplay(out.st.display) || IsGridDisplay(out.st.display)) {
@@ -227,6 +233,75 @@ struct Builder {
             anonRow.kids.back().kids.push_back(std::move(k));
         }
         out.kids.swap(kids);
+    }
+
+    bool HasPseudoRule(const Node& el, int which) const {
+        for (const StyleSheet* s : sheets) {
+            if (!s) continue;
+            for (const Rule& r : s->rules) for (const Selector& sel : r.selectors) if (sel.pseudoElement == which && Matches(sel, el, ctx, which)) return true;
+        }
+        return false;
+    }
+    // ::first-letter (CSS Pseudo-Elements 4, 2.2): the first letter of the box's first line of text (with punctuation before
+    // and after it) becomes an inline box of its own with the ::first-letter style (a float makes a drop cap). Looked for
+    // through inline children only.
+    void AddFirstLetter(const Node& el, SNode& out) {
+        std::vector<SNode>* list = &out.kids;
+        for (int depth = 0; depth < 32; ++depth) {
+            std::size_t k = 0;
+            bool descended = false;
+            for (; k < list->size(); ++k) {
+                SNode& c = (*list)[k];
+                if (c.text) {
+                    if (OnlySpaceText(c.node->data)) continue;
+                    // split here
+                    const std::string& data = c.node->data;
+                    std::size_t a = 0;
+                    while (a < data.size() && IsSpace(data[a])) ++a;
+                    auto punct = [](char ch) { return ch == '"' || ch == '\'' || ch == '(' || ch == ')' || ch == '[' || ch == ']' || ch == '.' || ch == ',' || ch == '!' || ch == '?' || ch == ':' || ch == ';' || ch == '-'; };
+                    std::size_t b = a;
+                    while (b < data.size() && punct(data[b])) ++b;
+                    if (b < data.size()) b += CpLen(data, b);
+                    while (b < data.size() && punct(data[b])) ++b;
+                    if (synth.size() > 100000 || b <= a) return;
+                    ComputedStyle ps = ComputeStyle(el, out.st, sheets, ctx, 4);
+                    synth.emplace_back();
+                    Node& pe = synth.back();
+                    pe.kind = NodeKind::Element;
+                    pe.name = "::first-letter";
+                    pe.parent = const_cast<Node*>(&el);
+                    synth.emplace_back();
+                    Node& letter = synth.back();
+                    letter.kind = NodeKind::Text;
+                    letter.data = data.substr(a, b - a);
+                    letter.parent = &pe;
+                    synth.emplace_back();
+                    Node& rest = synth.back();
+                    rest.kind = NodeKind::Text;
+                    rest.data = data.substr(b);
+                    rest.parent = c.node->parent;
+                    SNode sn;
+                    sn.node = &pe;
+                    sn.st = ps;
+                    if (ps.floating == Float::None && ps.display != Display::None) ps.display = Display::Inline;
+                    sn.st = ps;
+                    SNode tn;
+                    tn.node = &letter;
+                    tn.text = true;
+                    tn.st = ps;
+                    sn.kids.push_back(std::move(tn));
+                    c.node = &rest;
+                    list->insert(list->begin() + (std::ptrdiff_t)k, std::move(sn));
+                    return;
+                }
+                if (c.node && c.node->name == "::before") continue;
+                if (IsReplaced(c) || c.st.display != Display::Inline || c.st.floating != Float::None || c.st.OutOfFlow()) return;
+                list = &c.kids;
+                descended = true;
+                break;
+            }
+            if (!descended) return;
+        }
     }
 
     void AddPseudo(const Node& el, SNode& out, int which) {
@@ -457,6 +532,21 @@ struct Layouter {
         fixedPending.erase(std::remove_if(fixedPending.begin(), fixedPending.end(), [&](const Pending& x) { return x.staticIdx >= m.statics; }), fixedPending.end());
         while (!atomicMarks.empty() && atomicMarks.back().first.cmds > m.cmds) atomicMarks.pop_back();
     }
+    // filter: grayscale() and brightness() (Filter Effects 1, 13.2: the luminance weights 0.2126 / 0.7152 / 0.0722) on the colours
+    // of everything the box drew. Images are drawn by the host and are not changed.
+    void Filter(const Mark& m, float gray, float bright) {
+        for (std::size_t i = m.cmds; i < r.cmds.size(); ++i) {
+            Color& c = r.cmds[i].color;
+            float rr = c.r, gg = c.g, bb = c.b;
+            if (gray > 0) {
+                const float lum = 0.2126f * rr + 0.7152f * gg + 0.0722f * bb;
+                rr += (lum - rr) * gray; gg += (lum - gg) * gray; bb += (lum - bb) * gray;
+            }
+            auto clamp = [](float v) { return (std::uint8_t)std::lround(std::max(0.0f, std::min(255.0f, v))); };
+            if (r.cmds[i].kind == DrawCmd::Image || r.cmds[i].kind == DrawCmd::BgImage) continue;
+            c.r = clamp(rr * bright); c.g = clamp(gg * bright); c.b = clamp(bb * bright);
+        }
+    }
     void Fade(const Mark& m, float opacity) {
         if (opacity >= 1.0f) return;
         for (std::size_t i = m.cmds; i < r.cmds.size(); ++i) r.cmds[i].color.a = (std::uint8_t)std::lround(r.cmds[i].color.a * std::max(0.0f, opacity));
@@ -562,7 +652,7 @@ struct Layouter {
         for (const Frag& f : frags) {
             float w = 0;
             const bool box = f.kind == Frag::Image || f.kind == Frag::Embed || f.kind == Frag::Atomic || f.kind == Frag::Float;
-            if (f.kind == Frag::Word || f.kind == Frag::Space) w = Measure(f.text, *f.st);
+            if (f.kind == Frag::Word || f.kind == Frag::Space) w = FragWidth(f);
             else if (box && f.sn) { const auto ki = Intrinsic(*f.sn); w = (f.kind == Frag::Atomic || f.kind == Frag::Float ? ki.second : ki.first) + MarginsH(f.sn->st, 0); }
             if (f.kind == Frag::Break) { mx = std::max(mx, line); mn = std::max(mn, unit); line = 0; unit = 0; lineStart = true; continue; }
             if (f.kind == Frag::Anchor || f.kind == Frag::Abs) continue;
@@ -641,11 +731,31 @@ struct Layouter {
         const bool keepSpaces = ws == WhiteSpace::Pre || ws == WhiteSpace::PreWrap;
         const bool keepNewlines = keepSpaces || ws == WhiteSpace::PreLine;
         const bool wraps = ws != WhiteSpace::Pre && ws != WhiteSpace::NoWrap;
-        auto push = [&](Frag::Kind k, std::string t) {
+        auto pushOne = [&](Frag::Kind k, std::string t, const ComputedStyle* fs) {
             Frag f;
-            f.kind = k; f.text = std::move(t); f.st = &st; f.link = link;
+            f.kind = k; f.text = std::move(t); f.st = fs; f.link = link;
             if (k == Frag::Word) f.breakBefore = wraps && (out.empty() || out.back().kind == Frag::Space);
             out.push_back(std::move(f));
+        };
+        auto push = [&](Frag::Kind k, std::string t) {
+            if (k != Frag::Word || (!st.smallCaps && st.letterSpacing == 0.0f)) { pushOne(k, std::move(t), &st); return; }
+            // small capitals: lower-case letters drawn as capitals in a smaller font; letter-spacing: one fragment per character
+            // (the host draws a run as one string), with no break opportunity between them
+            std::size_t i = 0;
+            bool firstPiece = true;
+            while (i < t.size()) {
+                const bool lower = st.smallCaps && t[i] >= 'a' && t[i] <= 'z';
+                std::size_t j = i;
+                if (st.letterSpacing != 0.0f) j = i + CpLen(t, i);
+                else while (j < t.size() && (st.smallCaps && t[j] >= 'a' && t[j] <= 'z') == lower) j += CpLen(t, j);
+                std::string piece = t.substr(i, j - i);
+                if (lower) for (char& c : piece) if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+                pushOne(Frag::Word, std::move(piece), lower ? SmallCapsStyle(st) : &st);
+                if (!firstPiece) out.back().breakBefore = false;
+                firstPiece = false;
+                i = j;
+                if (out.size() > 2000000) break;
+            }
         };
         std::string word;
         auto flushWord = [&]() { if (!word.empty()) { push(Frag::Word, word); word.clear(); lastSpace = false; } };
@@ -860,7 +970,7 @@ struct Layouter {
         for (const SNode* n : items) Flatten(*n, curLink, frags, lastSpace, wordStart, false);
         // measure; atomic inline boxes are laid out now (at 0, 0) and moved into their line later
         for (Frag& f : frags) {
-            if (f.kind == Frag::Word || f.kind == Frag::Space) f.w = Measure(f.text, *f.st);
+            if (f.kind == Frag::Word || f.kind == Frag::Space) f.w = FragWidth(f);
             else if (f.kind == Frag::Image || f.kind == Frag::Embed) SizeAtomic(f, cw);
             else if (f.kind == Frag::Atomic) LayAtomic(f, cw, depth);
         }
@@ -879,13 +989,13 @@ struct Layouter {
         float x = container.textIndent.Resolve(cw);
         bool lineHasContent = false;
         std::vector<const Frag*> laterFloats;
-        auto finish = [&](bool forced) {
+        auto finish = [&](bool forced, bool last = false) {
             if (!lineHasContent && !forced) { line.clear(); x = 0; return; }
             // drop trailing collapsible spaces
             while (!line.empty() && line.back().f->kind == Frag::Space && line.back().f->st->whiteSpace != WhiteSpace::PreWrap) {
                 x -= line.back().w; line.pop_back();
             }
-            y += FinishLine(line, x, container, lineL, y, lineW, baseline);
+            y += FinishLine(line, x, container, lineL, y, lineW, baseline, container.textAlign == TextAlign::Justify && !forced && !last);
             line.clear(); x = 0; lineHasContent = false;
             for (const Frag* f : laterFloats) LayFloat(*f->sn, cx, y, cw, depth);
             laterFloats.clear();
@@ -961,7 +1071,7 @@ struct Layouter {
             lineHasContent = true;
             i = j;
         }
-        if (lineHasContent) finish(false);
+        if (lineHasContent) finish(false, true);
         else {
             if (!line.empty())   // only anchors (and spaces) left: they still need a position
                 for (const Placed& p : line) if (p.f->kind == Frag::Anchor) r.anchors.push_back({p.f->text, y});
@@ -1004,7 +1114,37 @@ struct Layouter {
     }
 
     // Place one line: vertical alignment on the baseline (CSS 2.1 10.8), text-align, draw commands and link areas.
-    float FinishLine(const std::vector<Placed>& line, float lineW, const ComputedStyle& container, float cx, float top, float cw, float& firstBaseline) {
+    // The width of a word or space: its text, plus letter-spacing after every character and word-spacing after a space (CSS Text 3,
+    // 7.1 / 7.2).
+    float FragWidth(const Frag& f) const {
+        float w = Measure(f.text, *f.st);
+        if (f.st->letterSpacing != 0.0f) {
+            std::size_t n = 0;
+            for (unsigned char c : f.text) if ((c & 0xC0) != 0x80) ++n;
+            w += f.st->letterSpacing * (float)n;
+        }
+        if (f.kind == Frag::Space) w += f.st->wordSpacing;
+        return Finite(w);
+    }
+    // A style with a smaller font for the small capitals of font-variant: small-caps (CSS Fonts 4, 6.4: synthesized as capitals
+    // at about 0.7 of the size), kept for the layout's life.
+    const ComputedStyle* SmallCapsStyle(const ComputedStyle& st) {
+        auto it = smallCapsStyles.find(&st);
+        if (it != smallCapsStyles.end()) return it->second;
+        derivedStyles.push_back(st);
+        derivedStyles.back().fontSize = st.fontSize * 0.7f;
+        derivedStyles.back().lineHeight = st.lineHeight >= 0 ? st.lineHeight : -1.0f;
+        if (st.lineHeightFactor >= 0) { derivedStyles.back().lineHeightFactor = -1.0f; derivedStyles.back().lineHeight = st.LineHeightPx(); }
+        else if (st.lineHeight < 0) derivedStyles.back().lineHeight = st.fontSize * 1.2f;
+        derivedStyles.back().smallCaps = false;
+        smallCapsStyles[&st] = &derivedStyles.back();
+        return &derivedStyles.back();
+    }
+    std::deque<ComputedStyle> derivedStyles;
+    std::map<const ComputedStyle*, const ComputedStyle*> smallCapsStyles;
+
+    float FinishLine(const std::vector<Placed>& line, float lineW, const ComputedStyle& container, float cx, float top, float cw, float& firstBaseline,
+                     bool justify = false) {
         auto metrics = [](const ComputedStyle& st, float& asc, float& desc) {
             const float lh = st.LineHeightPx();
             const float half = (lh - st.fontSize) * 0.5f;
@@ -1039,11 +1179,28 @@ struct Layouter {
         if (container.textAlign == TextAlign::Center) dx = (cw - lineW) * 0.5f;
         else if (container.textAlign == TextAlign::Right) dx = cw - lineW;
         dx = std::max(0.0f, dx);
+        // text-align: justify (CSS Text 3, 7.3): the room left goes into the spaces between words, except on the last line
+        std::vector<float> extra(line.size(), 0.0f);
+        if (justify && cw > lineW + 0.01f) {
+            std::size_t lastContent = 0;
+            for (std::size_t k = 0; k < line.size(); ++k) if (line[k].f->kind != Frag::Space && line[k].f->kind != Frag::Anchor) lastContent = k;
+            std::size_t spaces = 0;
+            for (std::size_t k = 0; k < lastContent; ++k) if (line[k].f->kind == Frag::Space) ++spaces;
+            if (spaces > 0) {
+                const float each = (cw - lineW) / (float)spaces;
+                float add = 0;
+                for (std::size_t k = 0; k < line.size(); ++k) {
+                    extra[k] = add;
+                    if (k < lastContent && line[k].f->kind == Frag::Space) add += each;
+                }
+            }
+        }
         int run = -1;   // the text command being extended
         std::vector<std::pair<int, const ComputedStyle*>> runs;   // this line's text commands and their styles
-        for (const Placed& p : line) {
+        for (std::size_t pi = 0; pi < line.size(); ++pi) {
+            const Placed& p = line[pi];
             const Frag& f = *p.f;
-            const float x = Finite(cx + dx + p.x);
+            const float x = Finite(cx + dx + p.x + extra[pi]);
             if (f.kind == Frag::Anchor) { r.anchors.push_back({f.text, top}); run = -1; continue; }
             if (f.kind == Frag::Pad) { run = -1; if (f.link >= 0) Area(x, top, p.w, 0.0f, f.link); continue; }
             if (f.kind == Frag::Atomic) {
@@ -1075,13 +1232,29 @@ struct Layouter {
             }
             if (!f.st->visible) { run = -1; continue; }
             // Word or Space: extend the run when the style and link are the same
-            if (run >= 0 && r.cmds[(std::size_t)run].link == f.link && runStyle == f.st &&
+            if (run >= 0 && r.cmds[(std::size_t)run].link == f.link && runStyle == f.st && f.st->letterSpacing == 0.0f && f.st->wordSpacing == 0.0f &&
                 std::fabs(r.cmds[(std::size_t)run].x + r.cmds[(std::size_t)run].w - x) < 0.01f) {
                 DrawCmd& rc = r.cmds[(std::size_t)run];
                 rc.text += f.text;
                 rc.w += p.w;
+                for (int sc : runShadows) { r.cmds[(std::size_t)sc].text += f.text; r.cmds[(std::size_t)sc].w += p.w; }
                 if (f.link >= 0 && !r.areas.empty()) r.areas.back().w = rc.w;
                 continue;
+            }
+            runShadows.clear();
+            // text-shadow (CSS Text Decoration 3, 4): copies of the run under it, moved and in the shadow's colour (blur: lighter)
+            for (std::size_t si = f.st->textShadows.size(); si-- > 0;) {
+                const BoxShadow& sh = f.st->textShadows[si];
+                if (sh.color.a == 0) continue;
+                DrawCmd sc;
+                sc.kind = DrawCmd::Text;
+                sc.x = Finite(x + sh.x); sc.y = Finite(base - f.st->fontSize * 0.8f + sh.y); sc.w = p.w; sc.h = f.st->fontSize;
+                sc.text = f.text;
+                sc.font = FontOf(*f.st);
+                sc.color = sh.color;
+                if (sh.blur > 0) sc.color.a = (std::uint8_t)std::lround(sc.color.a * std::max(0.25f, 1.0f - sh.blur / 12.0f));
+                runShadows.push_back((int)r.cmds.size());
+                Emit(sc);
             }
             DrawCmd c;
             c.kind = DrawCmd::Text;
@@ -1103,6 +1276,7 @@ struct Layouter {
         return lineH;
     }
     const ComputedStyle* runStyle = nullptr;
+    std::vector<int> runShadows;   // the text-shadow copies of the run being extended
 
     // ---- transforms (CSS Transforms 1: the box and everything in it drawn through the matrix about transform-origin) ----
 
@@ -1386,13 +1560,36 @@ struct Layouter {
                                    {x, y + hh - bw[2], w, bw[2]}, {x, y + bw[0], bw[3], hh - bw[0] - bw[2]}};
         for (int k = 0; k < 4; ++k) {
             if (bw[k] <= 0 || n.st.borderColor[k].a == 0) continue;
+            d.border[k] = (int)r.cmds.size();
+            BorderSide(rects[k][0], rects[k][1], std::max(0.0f, rects[k][2]), std::max(0.0f, rects[k][3]), k == 0 || k == 2, n.st.borderLine[k], n.st.borderColor[k]);
+        }
+    }
+    // One side of a border, or of an outline, as Fill commands (CSS Backgrounds 3, 4.2): solid, double (two lines with a gap, each a
+    // third of the width), dashed (dashes about 3 x the width), dotted (squares the width's size, as far apart as they are wide).
+    void BorderSide(float x, float y, float w, float h, bool horizontal, int line, Color col) {
+        auto fill = [&](float fx, float fy, float fw, float fh) {
+            if (fw <= 0 || fh <= 0) return;
             DrawCmd c;
             c.kind = DrawCmd::Fill;
-            c.x = rects[k][0]; c.y = rects[k][1]; c.w = std::max(0.0f, rects[k][2]); c.h = std::max(0.0f, rects[k][3]);
-            c.color = n.st.borderColor[k];
-            d.border[k] = (int)r.cmds.size();
+            c.x = fx; c.y = fy; c.w = fw; c.h = fh;
+            c.color = col;
             Emit(c);
+        };
+        const float thick = horizontal ? h : w, len = horizontal ? w : h;
+        if (line == 4 && thick >= 3.0f) {
+            const float t = thick / 3.0f;
+            if (horizontal) { fill(x, y, w, t); fill(x, y + h - t, w, t); } else { fill(x, y, t, h); fill(x + w - t, y, t, h); }
+            return;
         }
+        if ((line == 2 || line == 3) && thick > 0 && len / thick < 400.0f) {
+            const float dash = line == 2 ? thick * 3.0f : thick, gap = line == 2 ? thick * 2.0f : thick;
+            for (float a = 0; a < len; a += dash + gap) {
+                const float l2 = std::min(dash, len - a);
+                if (horizontal) fill(x + a, y, l2, h); else fill(x, y + a, w, l2);
+            }
+            return;
+        }
+        fill(x, y, w, h);
     }
 
     // Make a finished box taller (table cells stretched to their row).
@@ -1558,6 +1755,15 @@ struct Layouter {
             cmdGrad.back() = (int)grads.size();
             grads.push_back(st.bgGradient);
         }
+        // inset box shadows (CSS Backgrounds 3, 7.1): bands inside the padding box, over the background; placed once the height
+        // is known (a soft edge: a second, lighter band twice as wide)
+        std::vector<std::pair<int, const BoxShadow*>> insetShadows;
+        if (st.visible)
+            for (const BoxShadow& sh : st.shadows) {
+                if (!sh.inset || sh.color.a == 0 || insetShadows.size() >= 4) continue;
+                insetShadows.push_back({(int)r.cmds.size(), &sh});
+                for (int k = 0; k < 8; ++k) { DrawCmd c; c.kind = DrawCmd::Fill; c.color = Color{0, 0, 0, 0}; Emit(c); }
+            }
         int bgImageCmd = -1;
         if (paintsBg && !st.backgroundImage.empty()) {   // a place for it now; filled in once the height is known
             DrawCmd c;
@@ -1570,6 +1776,11 @@ struct Layouter {
         float defH = -1.0f;
         if (o.borderH >= 0) defH = std::max(0.0f, o.borderH - edgesV);
         else if (st.height.unit == Length::Px || (st.height.IsSet() && o.cbH >= 0)) defH = std::max(0.0f, st.height.Resolve(o.cbH) - (st.borderBox ? edgesV : 0.0f));
+        bool ratioH = false;
+        if (defH < 0 && o.borderH < 0 && !st.height.IsSet() && st.aspectRatio > 0 && !replaced) {   // aspect-ratio (CSS Box Sizing 4, 5)
+            defH = std::max(0.0f, (st.borderBox ? (w + edgesH) / st.aspectRatio - edgesV : w / st.aspectRatio));
+            ratioH = true;   // a minimum: taller content makes the box taller (min-height: auto)
+        }
         // overflow other than visible: a clip region (and a scroller when it scrolls)
         const int savedClip = curClip;
         int myClip = -1, myScroller = -1;
@@ -1612,7 +1823,7 @@ struct Layouter {
         fc = savedFc;
         if (o.borderH >= 0) ch = std::max(0.0f, o.borderH - edgesV);
         else if (!replaced) {
-            if (defH >= 0) ch = cell ? std::max(ch, defH) : defH;   // a cell's height is a minimum (CSS 2.1 17.5.3)
+            if (defH >= 0) ch = (cell || ratioH) ? std::max(ch, defH) : defH;   // a cell's height is a minimum (CSS 2.1 17.5.3)
             if (st.maxHeight.unit == Length::Px || (st.maxHeight.IsSet() && o.cbH >= 0)) ch = std::min(ch, st.maxHeight.Resolve(o.cbH) - (st.borderBox ? edgesV : 0.0f));
             if (st.minHeight.unit == Length::Px || (st.minHeight.IsSet() && o.cbH >= 0)) ch = std::max(ch, st.minHeight.Resolve(o.cbH) - (st.borderBox ? edgesV : 0.0f));
         }
@@ -1620,7 +1831,7 @@ struct Layouter {
         const float h = edgesV + ch;
         if (st.display == Display::ListItem && st.listStyle != ListStyle::None) {
             const float base = content.baseline >= 0 ? content.baseline : cy + (st.LineHeightPx() - st.fontSize) * 0.5f + st.fontSize * 0.8f;
-            Marker(st, cx, base, ordinal);
+            Marker(n.marker ? *n.marker : st, cx, base, ordinal);
         }
         if (myClip >= 0) {
             ClipRect& cr = r.clips[(std::size_t)myClip];
@@ -1648,6 +1859,26 @@ struct Layouter {
             } else r.cmds[(std::size_t)bgImageCmd].w = 0;   // no image (yet): draws nothing
         }
         for (const auto& s : shadows) { r.cmds[(std::size_t)s.first].h = h + 2 * s.second; r.cmds[(std::size_t)s.first].radius = Radius(st, bwid, h); }
+        for (const auto& is : insetShadows) {
+            const BoxShadow& sh = *is.second;
+            const float px = bx + bl, py = y + bt, pw = std::max(0.0f, bwid - bl - br), ph = std::max(0.0f, h - bt - bb);
+            for (int pass = 0; pass < 2; ++pass) {
+                const float soft = pass == 0 ? sh.blur : sh.blur * 0.5f;
+                if (pass == 0 && sh.blur <= 0) continue;
+                Color col = sh.color;
+                if (pass == 0) col.a = (std::uint8_t)(col.a / 2);
+                const float t = std::max(0.0f, sh.spread + soft), top = std::max(0.0f, sh.y + t), bottom = std::max(0.0f, -sh.y + t);
+                const float left = std::max(0.0f, sh.x + t), right = std::max(0.0f, -sh.x + t);
+                const float bands[4][4] = {{px, py, pw, std::min(top, ph)}, {px, py + ph - std::min(bottom, ph), pw, std::min(bottom, ph)},
+                                           {px, py + std::min(top, ph), std::min(left, pw), std::max(0.0f, ph - top - bottom)},
+                                           {px + pw - std::min(right, pw), py + std::min(top, ph), std::min(right, pw), std::max(0.0f, ph - top - bottom)}};
+                for (int k = 0; k < 4; ++k) {
+                    DrawCmd& c = r.cmds[(std::size_t)(is.first + pass * 4 + k)];
+                    c.x = bands[k][0]; c.y = bands[k][1]; c.w = bands[k][2]; c.h = bands[k][3];
+                    c.color = col;
+                }
+            }
+        }
         FinishBox(bi, n, h, bws);
         if (curLink != savedLink && curLink >= 0) Area(bx, y, bwid, h, curLink);
         curLink = savedLink;
@@ -1665,7 +1896,19 @@ struct Layouter {
             cbStack.pop_back();
             for (const Pending& p : myAbs) LayAbs(p, bx + bl, y + bt, bwid - bl - br, h - bt - bb);
         }
+        // outline (CSS UI 4, 5): around the border box (moved out by outline-offset), on top, taking no room
+        if (st.outlineWidth > 0 && st.outlineLine != 0 && st.outlineColor.a > 0 && st.visible) {
+            const float ow = std::min(st.outlineWidth, 200.0f), off = st.outlineOffset;
+            const float ox = bx - off - ow, oy = y - off - ow, oW = bwid + 2 * (off + ow), oH = h + 2 * (off + ow);
+            if (oW > 0 && oH > 0) {
+                BorderSide(ox, oy, oW, ow, true, st.outlineLine, st.outlineColor);
+                BorderSide(ox, oy + oH - ow, oW, ow, true, st.outlineLine, st.outlineColor);
+                BorderSide(ox, oy + ow, ow, oH - 2 * ow, false, st.outlineLine, st.outlineColor);
+                BorderSide(ox + oW - ow, oy + ow, ow, oH - 2 * ow, false, st.outlineLine, st.outlineColor);
+            }
+        }
         Fade(boxMark, st.opacity);
+        if (st.filterGray > 0.0f || st.filterBright != 1.0f) Filter(boxMark, st.filterGray, st.filterBright);
         if (!st.transform.empty()) ApplyTransform(boxMark, st, bx, y, bwid, h);
         if (st.position == Position::Relative || st.position == Position::Sticky) {
             float dx = 0, dy = 0;
@@ -2922,7 +3165,7 @@ LayoutResult LayoutPage(const HtmlDocument& doc, float widthIn, const TextMeasur
     localCtx.style.media.width = width;
     localCtx.style.media.height = viewH;
     localCtx.style.rootFontSize = ComputeStyle(*html, ComputedStyle(), sheets, &localCtx.style).fontSize;   // rem
-    Builder builder{sheets, &localCtx.style, {}, {false, false, false}, {}};
+    Builder builder{sheets, &localCtx.style, {}, {false, false, false, false, false, false}, {}};
     builder.Prepare();
     SNode root;
     if (!builder.Build(*html, ComputedStyle(), root)) return r;
@@ -2977,6 +3220,7 @@ LayoutResult LayoutPage(const HtmlDocument& doc, float widthIn, const TextMeasur
         const DrawCmd& c = r.cmds[i];
         if (c.kind == DrawCmd::Text && !c.underline && !c.strike && c.text.find_first_not_of(' ') == std::string::npos) continue;
         if (c.kind == DrawCmd::BgImage && c.w <= 0) continue;
+        if (c.kind == DrawCmd::Fill && (c.color.a == 0 || !(c.w > 0) || !(c.h > 0))) continue;   // draws nothing
         remap[i] = (int)kept.size();
         kept.push_back(c);
     }

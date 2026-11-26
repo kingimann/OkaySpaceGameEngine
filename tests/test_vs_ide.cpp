@@ -243,7 +243,7 @@ int main() {
         const int setC = Add(g, "SetVar", "c", 900, 0);            // outside: reads Mul through a return value
         const int addC = Add(g, "Add", "", 750, 150);
         const int one = Add(g, "Const", "1", 600, 250);
-        g.linkExec(start, 0, setA); g.linkExec(setA, 0, setB); g.linkExec(setB, 0, setC);
+        g.linkExec(start, 0, setA); g.linkExec(setA, 0, setB); g.linkExec(setB, 0, setC);   // dup-allow: a test graph wired by hand, not the starter graph
         g.linkData(addN, 0, two, 0); g.linkData(addN, 1, ten, 0); g.linkData(setA, 0, addN, 0);
         g.linkData(mul, 0, getA, 0); g.linkData(mul, 1, four, 0); g.linkData(setB, 0, mul, 0);
         g.linkData(addC, 0, mul, 0); g.linkData(addC, 1, one, 0); g.linkData(setC, 0, addC, 0);

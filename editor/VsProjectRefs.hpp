@@ -118,28 +118,35 @@ inline std::vector<std::string> VsProjectGraphFiles(const std::string& root, std
     return out;
 }
 
+/// Call `fn(path, text)` for every graph file under `root` and every open graph: `openText` (path -> text) is the open
+/// tabs' text, which wins over the file on disk so unsaved edits count; open graphs outside the folder count too.
+template <class Fn>
+inline void VsForEachProjectGraph(const std::string& root, const std::map<std::string, std::string>& openText, Fn fn) {
+    std::set<std::string> done;
+    for (const std::string& f : VsProjectGraphFiles(root)) {
+        done.insert(f);
+        auto it = openText.find(f);
+        if (it != openText.end()) { fn(f, it->second); continue; }
+        std::ifstream in(f, std::ios::binary);
+        if (!in) continue;
+        std::stringstream ss; ss << in.rdbuf();
+        fn(f, ss.str());
+    }
+    for (const auto& kv : openText) if (!done.count(kv.first)) fn(kv.first, kv.second);
+}
+
 /// References to `q` in every graph under `root`. `openText` gives the text of graphs open in the editor (path ->
 /// text), which wins over the file on disk so unsaved edits are found too.
 inline std::vector<VsRefHit> VsFindRefs(const std::string& root, const VsRefQuery& q,
                                         const std::map<std::string, std::string>& openText = {}) {
     std::vector<VsRefHit> out;
-    std::set<std::string> done;
     auto scan = [&](const std::string& path, const std::string& text) {
         VsEditGraph g;
         g.fromText(text);
         auto hits = VsFindRefsInGraph(g, path, q);
         out.insert(out.end(), hits.begin(), hits.end());
     };
-    for (const std::string& f : VsProjectGraphFiles(root)) {
-        done.insert(f);
-        auto it = openText.find(f);
-        if (it != openText.end()) { scan(f, it->second); continue; }
-        std::ifstream in(f, std::ios::binary);
-        if (!in) continue;
-        std::stringstream ss; ss << in.rdbuf();
-        scan(f, ss.str());
-    }
-    for (const auto& kv : openText) if (!done.count(kv.first)) scan(kv.first, kv.second);   // open graphs outside the folder
+    VsForEachProjectGraph(root, openText, scan);
     return out;
 }
 

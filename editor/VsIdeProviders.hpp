@@ -61,17 +61,7 @@ inline std::vector<VsSearchEntry> VsSearchEverywhere(const std::string& projectD
         for (const auto& v : g.vars)
             if (seenVars.insert(v.name).second) consider({v.name, v.type + " variable (" + v.scope + ") in " + file, "Variable", path, -1}, "variable");
     };
-    std::set<std::string> done;
-    for (const std::string& f : VsProjectGraphFiles(projectDir)) {
-        done.insert(f);
-        auto it = open.find(f);
-        if (it != open.end()) { scanGraph(f, it->second); continue; }
-        std::ifstream in(f, std::ios::binary);
-        if (!in) continue;
-        std::stringstream ss; ss << in.rdbuf();
-        scanGraph(f, ss.str());
-    }
-    for (const auto& kv : open) if (!done.count(kv.first)) scanGraph(kv.first, kv.second);
+    VsForEachProjectGraph(projectDir, open, scanGraph);
     std::stable_sort(out.begin(), out.end(), [](const VsSearchEntry& a, const VsSearchEntry& b) { return a.score > b.score; });
     if (out.size() > limit) out.resize(limit);
     return out;

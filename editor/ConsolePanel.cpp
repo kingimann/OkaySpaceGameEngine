@@ -10,6 +10,8 @@
 #include "okay/Core/CommandLine.hpp"
 #include "okay/Core/ConsoleHost.hpp"   // the command line: typed line, history, completion, --cvar, standard cvars
 #include "okay/Core/LoopConsole.hpp"
+#include "okay/Core/Paths.hpp"     // LogDir: Console > Save with no project open
+#include "../shared/ProjectCreate.hpp"   // okayproj::layout::LogFile, WriteTextAtomic
 
 #include <cstdlib>
 #include <ctime>
@@ -117,6 +119,17 @@ void ConsolePreferCategory(const std::string& category) {
 }
 
 static void (*g_consoleMirror)(const std::string&, int) = nullptr;
+static std::string g_consoleProjectDir;   // ConsoleSetProjectDir
+void ConsoleSetProjectDir(const std::string& dir) { g_consoleProjectDir = dir; }
+// Console > Save: the project's Logs folder (the working folder before, which is the editor's own folder on Windows).
+static void SaveConsoleLog(const std::string& text) {
+    const std::filesystem::path f = okayproj::layout::LogFile(g_consoleProjectDir, okay::Paths::LogDir(), "console_log.txt");
+    std::error_code ec;
+    std::filesystem::create_directories(f.parent_path(), ec);
+    std::string err;
+    if (okayproj::WriteTextAtomic(f.string(), text, &err)) ConsoleLog("Console saved to " + f.string());
+    else ConsoleLog("Couldn't save the Console: " + err, 2);
+}
 void ConsoleSetMirror(void (*fn)(const std::string&, int)) { g_consoleMirror = fn; }
 
 void ConsoleLog(const std::string& msg, int level) {
@@ -238,11 +251,7 @@ void DrawConsoleOkayUI(const char* title) {
         host.pauseOnError = &g_errorPause;
         g_okayView.collapse = g_consoleCollapse;   // one shared, remembered setting for both backends
         host.copyText = [](const std::string& s) { ImGui::SetClipboardText(s.c_str()); };
-        host.saveLog = [](const std::string& text) {
-            std::ofstream lf("console_log.txt");
-            lf << text;
-            ConsoleLog("Console saved to console_log.txt");
-        };
+        host.saveLog = [](const std::string& text) { SaveConsoleLog(text); };
         host.activateSource = [](const okay::ConsoleSource& s) { ActivateBoundConsoleSource(s); };
         host.openScript = [](const std::string& path, int line) { OpenScriptFileInEditorAt(path, line); };
         host.cleared = [] { RefreshCounts(); };
@@ -371,11 +380,7 @@ void DrawConsole() {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause Play mode whenever a new error is logged");
             ImGui::Separator();
             if (ImGui::MenuItem("Copy all")) ImGui::SetClipboardText(g_model.CopyAll().c_str());
-            if (ImGui::MenuItem("Save to console_log.txt")) {
-                std::ofstream lf("console_log.txt");
-                lf << g_model.CopyAll(false);
-                ConsoleLog("Console saved to console_log.txt");
-            }
+            if (ImGui::MenuItem("Save to Logs/console_log.txt")) SaveConsoleLog(g_model.CopyAll(false));
             ImGui::EndPopup();
         }
         ImGui::Separator();

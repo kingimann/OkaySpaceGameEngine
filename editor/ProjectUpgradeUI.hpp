@@ -13,6 +13,7 @@ namespace oked {
 struct ProjectUpgradeHooks {
     std::function<void()> openUpdateDialog;       ///< Engine > Check for Updates...: the "Update OkaySpace" button
     std::function<void()> reloadProjectFiles;     ///< read project.okayproj and the build settings again from disk
+    std::function<void(const std::string& from, const std::string& to)> pathMoved;   ///< a tidy moved a file (absolute paths): fix the recent list
 };
 extern ProjectUpgradeHooks g_upgradeHooks;
 
@@ -27,6 +28,11 @@ void ProjectUpgradeInit(int argc, char** argv);
 bool ProjectMayOpenSilently(const std::string& scene);
 /// Ask first when needed: `go` runs when the project may be opened (at once, or after the person's answer), `cancel` when not.
 void RunAfterProjectCheck(okay::editor::EditorState& ed, const std::string& scene, std::function<void()> go, std::function<void()> cancel = {});
+/// Where `scene` is now: tidying an older project may have moved it into Assets/Scenes. `scene` when it did not move.
+std::string ScenePathAfterTidy(const std::string& scene);
+/// Save Scene As picked `path`. Inside the project's Assets folder, or with no project open, `save(path)` runs at once.
+/// Anywhere else the person is asked first: save inside Assets/Scenes instead (offered first), save there anyway, or cancel.
+void SaveInsideProjectOrAsk(const std::string& projectDir, const std::string& path, std::function<void(const std::string&)> save);
 /// A project this session made: it is never asked about.
 void NoteProjectCreated(const std::string& root);
 /// The text of a new project's project.okayproj: `generated` plus the version stamp.

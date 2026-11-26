@@ -16,6 +16,7 @@
 #include "CrashContext.hpp"    // the heartbeat (frame counter), the breadcrumbs, the scene name, PersonWait
 #include "CrashHandler.hpp"    // the report folder and the main thread (handler::g_cfg); Windows: Unwind, ModuleOf
 #include "OkayThreads.hpp"
+#include "okay/Core/Paths.hpp"     // LogDir: where the hang report and the perf log go
 #include "okay/Core/Profiler.hpp"
 
 #include <chrono>
@@ -177,13 +178,16 @@ bool Start(const char* version) {
     s->version = version ? version : "";
     s->mainThread = okaycrash::handler::g_cfg.mainThread;
     fs::path self = okay::restart::CurrentExecutable();
-    s->perfLog = self.empty() ? fs::path("okay_editor_perf.log") : self.parent_path() / "okay_editor_perf.log";
+    // The person's log folder (%LOCALAPPDATA%/OkaySpace/logs on Windows), not beside the program (docs/engine/project_layout.md).
+    const std::string logs = okay::Paths::LogDir();
+    const bool haveLogs = !logs.empty() && okay::Paths::EnsureDir(logs);
+    s->perfLog = haveLogs ? fs::u8path(logs) / "okay_editor_perf.log" : self.empty() ? fs::path("okay_editor_perf.log") : self.parent_path() / "okay_editor_perf.log";
 #if defined(_WIN32)
     const fs::path dir = okaycrash::handler::g_cfg.dirW[0] ? fs::path(okaycrash::handler::g_cfg.dirW) : (self.empty() ? fs::path() : self.parent_path());
 #else
     const fs::path dir = okaycrash::handler::g_cfg.dir[0] ? fs::path(okaycrash::handler::g_cfg.dir) : (self.empty() ? fs::path() : self.parent_path());
 #endif
-    s->report = dir / "okay_hang.txt";
+    s->report = haveLogs ? fs::u8path(logs) / "okay_hang.txt" : dir / "okay_hang.txt";
     g_thread = okay::thr::CreateThread(&Run, "okay-hang-watchdog", s);
     if (!g_thread) { delete s; return false; }
     g_shared = s;

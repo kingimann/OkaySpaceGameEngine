@@ -17,7 +17,9 @@ std::vector<std::string> IgnoreLines(const std::string& buildOutputDir) {
     // fixed place starts with "/": it matches only at the project's top, never an Assets folder of the same name.
     std::vector<std::string> v = oked::bsm::IgnoreLines(buildOutputDir.empty() ? std::string("build") : buildOutputDir);
     for (const char* extra : {
-             "/build/",   // the default build output, also when Build Settings point somewhere else now
+             "/build/",   // the old default build output, also when Build Settings point somewhere else now
+             // the project layout's folders that are made again or are not project data (docs/engine/project_layout.md)
+             "/Library/", "/Logs/", "/Temp/", "/Builds/",
              // what the engine makes again by itself
              "/.okay/backups/", "/.okay/build_report.txt", "/.okay/upgrade_report.txt", "/.okay/upgrade_backup.txt",
              "/.okay/clashes/", ".okaycache/",
@@ -88,7 +90,7 @@ Group GroupOf(const std::string& path) {
     const std::string ext = dot == std::string::npos ? "" : file.substr(dot);
     if (ext == ".okayscene" || ext == ".okayprefab") return Group::Scenes;
     if (ext == ".okay" || ext == ".okayvs" || ext == ".okayscript" || ext == ".cs" || ext == ".lua" || ext == ".okaybt") return Group::Scripts;
-    if (file == "project.okayproj" || file == ".gitignore" || file == ".gitattributes" || lower.rfind(".okay/", 0) == 0 ||
+    if (file == "project.okayproj" || file == ".gitignore" || file == ".gitattributes" || lower.rfind(".okay/", 0) == 0 || lower.rfind("projectsettings/", 0) == 0 ||
         ext == ".okayinput" || ext == ".okaybuild" || ext == ".okayconfig")
         return Group::Settings;
     return Group::Assets;

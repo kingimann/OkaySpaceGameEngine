@@ -92,17 +92,30 @@ inline bool RemoveExtra(std::vector<std::string>& extras, const std::string& roo
     return extras.size() != before;
 }
 
-// The scene a project root lists (the launcher's old sceneIn): <name>.okayscene, any scene in
-// Assets, or - for an empty Assets - the expected path ("setting up..."). "" = not a project.
-inline std::string SceneIn(const fs::path& root) {
+// The scene a project root lists (the launcher's old sceneIn): Assets/Scenes/<name>.okayscene or Assets/<name>.okayscene,
+// else the shallowest scene anywhere under Assets, or - for an Assets folder with no file yet - the scene a new project
+// gets (Assets/Scenes/<name>.okayscene, "setting up..."). "" = not a project. `flatToo`: an old flat project (a scene next
+// to project.okayproj, no scene in Assets) gives that scene too (the editor's Open Project Folder; the launcher's list
+// does not show those).
+inline std::string SceneIn(const fs::path& root, bool flatToo = false) {
     std::error_code e;
     const fs::path assets = root / "Assets";
-    if (!fs::is_directory(assets, e)) return "";
-    const fs::path preferred = assets / (root.filename().string() + ".okayscene");
-    if (fs::exists(preferred, e)) return preferred.string();
-    for (fs::directory_iterator it(assets, e), end; !e && it != end; it.increment(e))
-        if (it->path().extension() == ".okayscene") return it->path().string();
-    return fs::is_empty(assets, e) ? preferred.string() : std::string();
+    const std::string own = root.filename().string() + ".okayscene";
+    if (fs::is_directory(assets, e)) {
+        for (const fs::path& p : {assets / "Scenes" / own, assets / own})
+            if (fs::is_regular_file(p, e)) return p.string();
+        const std::vector<fs::path> any = ScenesUnderAssets(root, 1);
+        if (!any.empty()) return any.front().string();
+        if (AssetsHasNoFiles(root)) return (assets / "Scenes" / own).string();
+    }
+    if (flatToo) {
+        std::vector<fs::path> flat;
+        for (fs::directory_iterator it(root, e), end; !e && it != end; it.increment(e))
+            if (it->path().extension() == ".okayscene") flat.push_back(it->path());
+        std::sort(flat.begin(), flat.end());
+        if (!flat.empty()) return flat.front().string();
+    }
+    return "";
 }
 
 // A copy the project upgrade made next to the project ("Name (backup v2.900.0)"). Every finished

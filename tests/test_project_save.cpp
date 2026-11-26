@@ -277,14 +277,15 @@ int main() {
         CHECK(ed.path() == t.Sub("before.okayscene") && ed.projectDir().empty() && calls == 0);
 
         // 2. The first scene can't be written (a folder is in its way): the previous scene, path and history come back.
-        fs::create_directories(fs::path(root) / "Assets" / "Proj.okayscene");
+        fs::create_directories(fs::path(root) / "Assets" / "Scenes" / "Proj.okayscene");   // where the first scene goes (Assets/Scenes)
         r = ed.CreateProject(root, "Proj", &EditorState::NewScene3D);
         CHECK(!r.ok && Has(r.error, "folder"));
         CHECK(HasObject(ed, "Precious") && HasObject(ed, "Unsaved") && !HasObject(ed, "Ground"));
         CHECK(ed.path() == t.Sub("before.okayscene") && ed.projectDir().empty() && ed.dirty && ed.UndoDepth() == depth);
         CHECK(ed.HasUnsavedChanges());
-        CHECK(fs::is_directory(fs::path(root) / "Assets" / "Proj.okayscene"));            // what was already there is kept
-        CHECK(!fs::exists(fs::path(root) / "Assets" / "Scenes") && !fs::exists(fs::path(root) / ".okay"));   // what it made is gone
+        CHECK(fs::is_directory(fs::path(root) / "Assets" / "Scenes" / "Proj.okayscene"));   // what was already there is kept
+        CHECK(!fs::exists(fs::path(root) / "Assets" / "Scripts") && !fs::exists(fs::path(root) / ".okay") &&
+              !fs::exists(fs::path(root) / "ProjectSettings"));                               // what it made is gone
         fs::remove_all(root);
 
         // 3. Success: folders, the files from the caller, the template scene saved and open.
@@ -295,7 +296,7 @@ int main() {
                                  return okayproj::WriteTextAtomic(okayproj::SettingsPath(rt), "company=Test\n", &e);
                              });
         CHECK(r.ok && r.error.empty() && wrote);
-        CHECK(r.root == root && r.scene == (fs::path(root) / "Assets" / "Proj.okayscene").string());
+        CHECK(r.root == root && r.scene == (fs::path(root) / "Assets" / "Scenes" / "Proj.okayscene").string());
         CHECK(fs::exists(r.scene) && Read(okayproj::SettingsPath(root)) == "company=Test\n");
         for (const std::string& f : okayproj::StandardFolders()) CHECK(fs::is_directory(fs::path(root) / "Assets" / f));
         CHECK(fs::is_directory(fs::path(root) / ".okay"));

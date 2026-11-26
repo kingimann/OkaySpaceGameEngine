@@ -460,7 +460,7 @@ int main() {
         };
         walk(*nt.root);
         CHECK(form && form->Attr("action") && *form->Attr("action") == "https://www.google.com/search");
-        CHECK(q && q->Attr("placeholder") && q->Attr("placeholder")->find("Search Google") != std::string::npos);
+        CHECK(q && q->Attr("placeholder") && q->Attr("placeholder")->find("Search the web") != std::string::npos);
         CHECK(tiles == 2);   // the bookmark and the page from the history
         // a search address with more than the terms keeps its other parts as hidden fields; none: no search box
         p.settings.searchUrl = "https://search.example/find?lang=en&q=%s";

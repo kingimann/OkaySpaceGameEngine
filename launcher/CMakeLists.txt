@@ -80,7 +80,7 @@ list(APPEND OKAY_LAUNCHER_SOURCES
     ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 add_executable(okayspace-launcher ${OKAY_LAUNCHER_SOURCES})
 okay_win_version(okayspace-launcher "OkaySpace Launcher" "OkaySpace.exe")
-target_compile_definitions(okayspace-launcher PRIVATE ${OKAY_VERSION_DEFINE})
+target_compile_definitions(okayspace-launcher PRIVATE ${OKAY_VERSION_DEFINE} ${OKAY_MAIN_DEFINE})
 target_compile_features(okayspace-launcher PRIVATE cxx_std_17)
 # shared/ for the launcher's AppIcon, and the engine's public headers for the
 # (header-only) account service it shares with the engine. The account core needs only
@@ -150,7 +150,7 @@ if(OKAY_LAUNCHER_ON_OKAYUI AND TARGET okay_ui AND TARGET okay_ui_screens)
     endforeach()
     add_executable(okayspace-launcher-okayui ${_ok_src} ${CMAKE_SOURCE_DIR}/shared/OkayUIImGuiBackendShim.cpp)
     okay_win_version(okayspace-launcher-okayui "OkaySpace Launcher (OkayUI)" "OkaySpaceOkayUI.exe")
-    target_compile_definitions(okayspace-launcher-okayui PRIVATE ${OKAY_VERSION_DEFINE} OKAY_ON_OKAYUI=1 OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
+    target_compile_definitions(okayspace-launcher-okayui PRIVATE ${OKAY_VERSION_DEFINE} ${OKAY_MAIN_DEFINE} OKAY_ON_OKAYUI=1 OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
     target_compile_features(okayspace-launcher-okayui PRIVATE cxx_std_17)
     target_include_directories(okayspace-launcher-okayui BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe ${CMAKE_SOURCE_DIR}/okayui/probe/backends)
     target_include_directories(okayspace-launcher-okayui PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/okayui/include ${CMAKE_SOURCE_DIR}/okayui/screens)

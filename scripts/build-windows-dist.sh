@@ -97,6 +97,7 @@ cmake -S . -B "$BUILD_DIR" \
       -DOKAY_BUILD_XBOX_UWP=ON \
       -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
       -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
+      -DOKAY_MAIN_COUNT="${OKAY_MAIN_COUNT:-0}" \
       "${EXTRA[@]}"
 # Every model reader is our own (Assimp was removed on 2026-11-24, ufbx on 2026-11-23). A tree configured before that may still
 # carry OKAY_USE_ASSIMP in its cache; the option no longer exists, so it does nothing, but say so rather than leave it unexplained.

@@ -734,9 +734,9 @@ void InstallGlobalLib(Runtime& rt) {
     DefValue(rt, sc, "toPrimitive", Value::Sym(rt.symToPrimitive), 0);
     DefValue(rt, sc, "toStringTag", Value::Sym(rt.symToStringTag), 0);
     DefValue(rt, sc, "hasInstance", Value::Sym(rt.symHasInstance), 0);
-    // 20.4.2: the other well-known symbols, so code can name them (the library does not consult them yet)
+    // 20.4.2: the other well-known symbols, so code can name them (species is read by the typed arrays; the others are not consulted yet)
     for (const char* name : {"species", "match", "matchAll", "replace", "search", "split", "unscopables", "isConcatSpreadable"}) {
-        Symbol* y = rt.NewSymbol(rt.Intern((std::string("Symbol.") + name).c_str()));
+        Symbol* y = std::string(name) == "species" ? rt.symSpecies : rt.NewSymbol(rt.Intern((std::string("Symbol.") + name).c_str()));
         DefValue(rt, sc, name, Value::Sym(y), 0);
     }
     DefNative(rt, sc, "for", [](Runtime& rt, CallArgs& a) {

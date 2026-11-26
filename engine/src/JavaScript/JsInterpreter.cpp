@@ -808,6 +808,10 @@ Value Execute(Runtime& rt, int entry) {
                                     break;
                                 }
                             }
+                        } else if (o.IsObj() && k.IsNum() && o.O()->cls == Cls::TypedArray) {
+                            o = TypedArrayGet(rt, static_cast<TypedArrayObj*>(o.O()), k.n == 0 ? 0.0 : k.n);
+                            --SP;
+                            break;
                         } else if (o.IsStr() && k.IsNum()) {
                             const std::u16string& s = o.S()->s;
                             double d = k.n;
@@ -845,6 +849,11 @@ Value Execute(Runtime& rt, int entry) {
                                     break;
                                 }
                             }
+                        } else if (o.IsObj() && k.IsNum() && o.O()->cls == Cls::TypedArray) {
+                            TypedArraySet(rt, static_cast<TypedArrayObj*>(o.O()), k.n == 0 ? 0.0 : k.n, v);
+                            SP[-3] = SP[-1];
+                            SP -= 2;
+                            break;
                         }
                         rt.PutV(o, k, v);
                         SP[-3] = SP[-1];

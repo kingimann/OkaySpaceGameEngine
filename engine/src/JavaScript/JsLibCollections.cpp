@@ -21,7 +21,12 @@ bool BuiltinStep(Runtime& rt, IterObj* it, Value& out) {
     if (it->done) return false;
     switch (it->cls) {
         case Cls::ArrayIter: {
-            std::uint64_t len = rt.LengthOf(it->target);
+            std::uint64_t len;
+            if (it->target.IsObj() && it->target.O()->cls == Cls::TypedArray) {   // 23.1.5.1 step 2.b: a detached view throws
+                TypedArrayObj* t = static_cast<TypedArrayObj*>(it->target.O());
+                if (t->OutOfBounds()) rt.ThrowType("the typed array's buffer is detached");
+                len = t->Length();
+            } else len = rt.LengthOf(it->target);
             if (it->pos >= len) {
                 it->done = true;
                 return false;

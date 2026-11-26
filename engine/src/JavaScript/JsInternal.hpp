@@ -382,6 +382,74 @@ Value ToBigIntValue(Runtime& rt, const Value& v);                       ///< 7.1
 void InstallBigIntLib(Runtime& rt);
 void InstallIntlLib(Runtime& rt);
 
+// ---- binary data (25.1 ArrayBuffer, 25.2 SharedArrayBuffer, 23.2 TypedArray, 25.3 DataView; JsLibArray.cpp)
+/// The bytes of an ArrayBuffer or SharedArrayBuffer. Buffers are fixed-length; a detached one has no bytes left.
+struct BufferObj : Object {
+    std::vector<std::uint8_t> data;
+    bool detached = false;
+    bool shared = false;   ///< a SharedArrayBuffer (never detached)
+    BufferObj() : Object(Cls::ArrayBuffer) {}
+    std::size_t Bytes() const override { return Object::Bytes() + data.capacity(); }
+};
+/// The element types of 23.2 Table 71, in that order.
+enum class TAType : std::uint8_t { Int8, Uint8, Uint8C, Int16, Uint16, Int32, Uint32, Float32, Float64, BigInt64, BigUint64, Count };
+constexpr int kTATypes = (int)TAType::Count;
+/// A typed array: a view of `length` elements from byte `offset` of `buf`. Every element access checks the
+/// index against the buffer's bytes as they are now (so a detached buffer is never read).
+struct TypedArrayObj : Object {
+    BufferObj* buf = nullptr;
+    TAType type = TAType::Uint8;
+    std::uint64_t offset = 0;   ///< in bytes
+    std::uint64_t length = 0;   ///< in elements, when made
+    TypedArrayObj() : Object(Cls::TypedArray) {}
+    void Trace(Runtime& rt) override;
+    std::uint32_t ElemSize() const;
+    bool OutOfBounds() const;          ///< 10.4.5.12 IsTypedArrayOutOfBounds (a detached buffer is)
+    std::uint64_t Length() const { return OutOfBounds() ? 0 : length; }   ///< TypedArrayLength, 0 when out of bounds
+    bool IsBigInt() const { return type == TAType::BigInt64 || type == TAType::BigUint64; }
+};
+struct DataViewObj : Object {
+    BufferObj* buf = nullptr;
+    std::uint64_t offset = 0, length = 0;   ///< in bytes
+    DataViewObj() : Object(Cls::DataView) {}
+    void Trace(Runtime& rt) override;
+};
+/// 7.1.21 CanonicalNumericIndexString: true when `key` is a String that names a number (n), like "1", "-0", "1.5".
+bool CanonicalNumericKey(Runtime& rt, GcObj* key, double& n);
+/// 10.4.5.14 IsValidIntegerIndex.
+bool ValidIntegerIndex(const TypedArrayObj* t, double n);
+/// 10.4.5.15 TypedArrayGetElement (undefined for an index that is not valid) and 10.4.5.16 TypedArraySetElement
+/// (the value is converted first, then written only if the index is still valid).
+Value TypedArrayGet(Runtime& rt, TypedArrayObj* t, double n);
+void TypedArraySet(Runtime& rt, TypedArrayObj* t, double n, const Value& v);
+void InstallBinaryLib(Runtime& rt);
+/// A new Uint8Array holding a copy of n bytes (the size is checked against the limits first).
+TypedArrayObj* NewUint8Array(Runtime& rt, const std::uint8_t* bytes, std::size_t n);
+void InstallTextCodingLib(Runtime& rt);
+std::string TypedArrayDisplay(Runtime& rt, Object* o, int depth);
+
+// ---- proxies (10.5, 28.2; JsLibObject.cpp). handler == nullptr: revoked.
+struct ProxyObj : Object {
+    Object* target = nullptr;
+    Object* handler = nullptr;
+    ProxyObj() : Object(Cls::Proxy) {}
+    void Trace(Runtime& rt) override;
+};
+bool ProxyGetOwnProperty(Runtime& rt, ProxyObj* p, GcObj* key, Prop& out);
+bool ProxyDefineOwnProperty(Runtime& rt, ProxyObj* p, GcObj* key, const Runtime::Descriptor& d);
+bool ProxyHas(Runtime& rt, ProxyObj* p, GcObj* key);
+Value ProxyGet(Runtime& rt, ProxyObj* p, GcObj* key, const Value& receiver);
+bool ProxySet(Runtime& rt, ProxyObj* p, GcObj* key, const Value& v, const Value& receiver);
+bool ProxyDelete(Runtime& rt, ProxyObj* p, GcObj* key);
+std::vector<GcObj*> ProxyOwnKeys(Runtime& rt, ProxyObj* p);
+Object* ProxyGetPrototypeOf(Runtime& rt, ProxyObj* p);
+bool ProxySetPrototypeOf(Runtime& rt, ProxyObj* p, Object* proto);
+bool ProxyIsExtensible(Runtime& rt, ProxyObj* p);
+bool ProxyPreventExtensions(Runtime& rt, ProxyObj* p);
+Value ProxyCall(Runtime& rt, ProxyObj* p, const Value& thisv, const Value* args, int argc);
+Value ProxyConstruct(Runtime& rt, ProxyObj* p, const Value* args, int argc, Object* newTarget);
+void InstallProxyLib(Runtime& rt);
+
 struct ForInObj : Object {
     Value obj;
     std::vector<GcObj*> keys;
@@ -438,10 +506,26 @@ struct Runtime::Impl {
     NativeFunc* arrayIterNext = nullptr;
     NativeFunc* stringIterator = nullptr;
     NativeFunc* stringIterNext = nullptr;
+    /// Intrinsics the newer libraries keep (the collector marks them): see the k* slots below.
+    std::vector<Object*> moreIntrinsics;
+    int proxyDepth = 0;   ///< proxy internal methods running inside each other (bounded: see kMaxProxyDepth)
+    static constexpr int kMaxProxyDepth = 200;
     std::vector<Proto*> scripts;   ///< compiled scripts (kept while the runtime lives)
     std::vector<Object*> joinStack;   ///< arrays being joined (a cycle joins as "")
     std::unordered_map<std::u16string, std::shared_ptr<RegexProg>> regexCache;   ///< "flags/pattern" -> compiled
 };
+
+/// Slots of Impl::moreIntrinsics.
+enum IntrinsicSlot : int {
+    kTypedArrayCtor, kTypedArrayProto, kArrayBufferProto, kSharedBufferProto, kDataViewProto,
+    kTypedProtos,                         ///< kTATypes prototypes, then kTATypes constructors
+    kTypedCtors = kTypedProtos + kTATypes,
+    kIntrinsicSlots = kTypedCtors + kTATypes,
+};
+inline Object*& Intrinsic(Runtime& rt, int slot) {
+    if (rt.vm->moreIntrinsics.size() < (std::size_t)kIntrinsicSlots) rt.vm->moreIntrinsics.resize(kIntrinsicSlots, nullptr);
+    return rt.vm->moreIntrinsics[(std::size_t)slot];
+}
 
 // the machine (JsInterpreter.cpp)
 Value Execute(Runtime& rt, int entryFrame);

@@ -705,6 +705,10 @@ bool Runtime::IsConstructor(const Value& v) const {
     return false;
 }
 
+bool Runtime::IsArray(const Value& v) {
+    return v.IsObj() && v.O()->cls == Cls::Array;
+}
+
 const char* Runtime::TypeOf(const Value& v) const {
     switch (v.t) {
         case Tag::Undefined: case Tag::Empty: return "undefined";
@@ -860,6 +864,19 @@ static bool ExoticOwn(Runtime& rt, Object* o, GcObj* key, Prop& out, bool& found
             }
             return false;
         }
+        case Cls::TypedArray: {   // 10.4.5.1 [[GetOwnProperty]]
+            double n;
+            if (!CanonicalNumericKey(rt, key, n)) return false;
+            TypedArrayObj* t = static_cast<TypedArrayObj*>(o);
+            found = ValidIntegerIndex(t, n);
+            if (found) {
+                out.key = key;
+                out.v = TypedArrayGet(rt, t, n);
+                out.get = out.set = nullptr;
+                out.flags = kDefault;
+            }
+            return true;
+        }
         case Cls::Host: {
             HostObj* h = static_cast<HostObj*>(o);
             if (h->hostClass < rt.hostClasses.size() && rt.hostClasses[h->hostClass].get && key->kind == Kind::String) {
@@ -912,6 +929,10 @@ Value Runtime::Get(const Value& base, GcObj* key, const Value& receiver) {
     int guard = 0;
     for (; o; o = o->proto) {
         if (o->cls != Cls::Ordinary) {
+            if (o->cls == Cls::TypedArray) {   // 10.4.5.4: a numeric key never reaches the prototype
+                double n;
+                if (CanonicalNumericKey(*this, key, n)) return TypedArrayGet(*this, static_cast<TypedArrayObj*>(o), n);
+            }
             Prop ex;
             bool found = false;
             if (ExoticOwn(*this, o, key, ex, found)) {
@@ -936,6 +957,7 @@ Value Runtime::GetIndex(const Value& obj, std::uint32_t i) {
         ArrayObj* a = static_cast<ArrayObj*>(obj.O());
         if (i < a->elems.size() && !a->elems[i].IsEmpty()) return a->elems[i];
     }
+    if (obj.IsObj() && obj.O()->cls == Cls::TypedArray) return TypedArrayGet(*this, static_cast<TypedArrayObj*>(obj.O()), (double)i);
     return Get(obj, IndexKey(i));
 }
 
@@ -1067,6 +1089,14 @@ void Runtime::Put(const Value& base, GcObj* key, const Value& v) {
                 if (ExoticOwn(*this, o, key, ex, found) && found) ThrowType("the characters of a String are read-only");
                 break;
             }
+            case Cls::TypedArray: {   // 10.4.5.5 [[Set]] with the typed array as the receiver: no error for a bad index
+                double n;
+                if (CanonicalNumericKey(*this, key, n)) {
+                    TypedArraySet(*this, static_cast<TypedArrayObj*>(o), n, v);
+                    return;
+                }
+                break;
+            }
             default:
                 if (o->lazy && LazyKey(*this, key)) MakeLazyProps(o);
                 break;
@@ -1091,6 +1121,10 @@ void Runtime::Put(const Value& base, GcObj* key, const Value& v) {
     int guard = 0;
     for (; q; q = q->proto) {
         if (q->cls != Cls::Ordinary) {
+            if (q->cls == Cls::TypedArray) {   // 10.4.5.5 step 1.b.ii: an index that is not valid there is a quiet no-op
+                double n;
+                if (CanonicalNumericKey(*this, key, n) && !ValidIntegerIndex(static_cast<TypedArrayObj*>(q), n)) return;
+            }
             Prop ex;
             bool found = false;
             if (ExoticOwn(*this, q, key, ex, found)) {
@@ -1144,6 +1178,10 @@ void Runtime::PutIndex(const Value& obj, std::uint32_t i, const Value& v) {
             return;
         }
     }
+    if (obj.IsObj() && obj.O()->cls == Cls::TypedArray) {
+        TypedArraySet(*this, static_cast<TypedArrayObj*>(obj.O()), (double)i, v);
+        return;
+    }
     Put(obj, IndexKey(i), v);
 }
 
@@ -1169,6 +1207,10 @@ bool Runtime::HasOwn(Object* o, GcObj* key) {
 bool Runtime::HasProperty(Object* o, GcObj* key) {
     int guard = 0;
     for (; o; o = o->proto) {
+        if (o->cls == Cls::TypedArray) {   // 10.4.5.2 [[HasProperty]]
+            double n;
+            if (CanonicalNumericKey(*this, key, n)) return ValidIntegerIndex(static_cast<TypedArrayObj*>(o), n);
+        }
         if (HasOwn(o, key)) return true;
         if (++guard > 100000) ThrowRange("the prototype chain is too long");
     }
@@ -1205,6 +1247,11 @@ bool Runtime::Delete(Object* o, GcObj* key) {
             break;
         }
         case Cls::Host: return true;
+        case Cls::TypedArray: {   // 10.4.5.6 [[Delete]]
+            double n;
+            if (CanonicalNumericKey(*this, key, n)) return !ValidIntegerIndex(static_cast<TypedArrayObj*>(o), n);
+            break;
+        }
         default:
             if (o->lazy && LazyKey(*this, key)) MakeLazyProps(o);
             break;
@@ -1239,6 +1286,19 @@ void Runtime::DefineData(Object* o, GcObj* key, const Value& v, std::uint8_t fla
         Put(Value::Obj(o), key, v);
         return;
     }
+    if (o->cls == Cls::TypedArray) {
+        double n;
+        if (CanonicalNumericKey(*this, key, n)) {
+            Descriptor d;
+            d.hasValue = d.hasWritable = d.hasEnumerable = d.hasConfigurable = true;
+            d.value = v;
+            d.writable = flags & kWritable;
+            d.enumerable = flags & kEnumerable;
+            d.configurable = flags & kConfigurable;
+            if (!DefineOwnProperty(o, key, d)) ThrowType("can not define element '" + KeyText(*this, key) + "' of a typed array");
+            return;
+        }
+    }
     if (o->lazy && LazyKey(*this, key)) MakeLazyProps(o);
     Prop* p = o->FindRaw(key);
     if (p) {
@@ -1270,7 +1330,9 @@ void Runtime::DefineIndex(Object* o, std::uint32_t i, const Value& v) {
 void Runtime::DefineAccessor(Object* o, GcObj* key, Object* getter, Object* setter, std::uint8_t flags) {
     if (o->lazy && LazyKey(*this, key)) MakeLazyProps(o);
     if ((o == arrayProto || o == objectProto) && KeyIndex(key) >= 0) arrayProtoHasIndex_ = true;
-    if ((o->cls == Cls::Array || o->cls == Cls::Arguments) && (KeyIndex(key) >= 0 || key == atoms->length)) {
+    double tn;
+    if (((o->cls == Cls::Array || o->cls == Cls::Arguments) && (KeyIndex(key) >= 0 || key == atoms->length)) ||
+        (o->cls == Cls::TypedArray && CanonicalNumericKey(*this, key, tn))) {
         Descriptor d;
         d.hasEnumerable = d.hasConfigurable = true;
         d.enumerable = flags & kEnumerable;
@@ -1297,6 +1359,19 @@ void Runtime::DefineAccessor(Object* o, GcObj* key, Object* getter, Object* sett
 // 10.1.6.3 ValidateAndApplyPropertyDescriptor (for ordinary objects; arrays turn the element into a property)
 bool Runtime::DefineOwnProperty(Object* o, GcObj* key, const Descriptor& d) {
     if (o->lazy) MakeLazyProps(o);
+    if (o->cls == Cls::TypedArray) {   // 10.4.5.3 [[DefineOwnProperty]]
+        double n;
+        if (CanonicalNumericKey(*this, key, n)) {
+            TypedArrayObj* t = static_cast<TypedArrayObj*>(o);
+            if (!ValidIntegerIndex(t, n)) return false;
+            if (d.hasConfigurable && !d.configurable) return false;
+            if (d.hasEnumerable && !d.enumerable) return false;
+            if (d.hasGet || d.hasSet) return false;
+            if (d.hasWritable && !d.writable) return false;
+            if (d.hasValue) TypedArraySet(*this, t, n, d.value);
+            return true;
+        }
+    }
     if ((o == arrayProto || o == objectProto) && KeyIndex(key) >= 0) arrayProtoHasIndex_ = true;
     bool isArr = o->cls == Cls::Array || o->cls == Cls::Arguments;
     if (isArr) {
@@ -1405,6 +1480,10 @@ std::vector<GcObj*> Runtime::OwnKeys(Object* o, bool strings, bool symbols) {
         } else if (o->cls == Cls::StringBox) {
             const std::u16string& s = static_cast<BoxObj*>(o)->prim.S()->s;
             for (std::uint32_t i = 0; i < s.size(); ++i) out.push_back(IndexKey(i));
+        } else if (o->cls == Cls::TypedArray) {   // 10.4.5.7 [[OwnPropertyKeys]]: the indices first
+            const std::uint64_t n = static_cast<TypedArrayObj*>(o)->Length();
+            Charge(n);
+            for (std::uint64_t i = 0; i < n; ++i) out.push_back(IndexKey((std::uint32_t)i));
         } else if (o->cls == Cls::Host) {
             HostObj* h = static_cast<HostObj*>(o);
             if (h->hostClass < hostClasses.size() && hostClasses[h->hostClass].keys)
@@ -1503,7 +1582,8 @@ void Runtime::Collect() {
                       vm->stringIterator, vm->stringIterNext};
     for (Object* o : intr) if (o) Mark(o);
     for (Object* o : errorProtos) if (o) Mark(o);
-    for (Symbol* s : {symIterator, symAsyncIterator, symToPrimitive, symToStringTag, symHasInstance}) if (s) Mark(s);
+    for (Symbol* s : {symIterator, symAsyncIterator, symToPrimitive, symToStringTag, symHasInstance, symSpecies}) if (s) Mark(s);
+    for (Object* o : vm->moreIntrinsics) if (o) Mark(o);
     for (auto& kv : symbolRegistry) Mark(kv.second);
     String** a = reinterpret_cast<String**>(atoms.get());
     for (std::size_t i = 0; i < sizeof(Atoms) / sizeof(String*); ++i) if (a[i]) Mark(a[i]);
@@ -1643,6 +1723,7 @@ std::string Runtime::Display(const Value& v, int depth) {
         return s;
     }
     if (o->cls == Cls::DateBox) return DateDisplay(o);
+    if (o->cls == Cls::TypedArray) return TypedArrayDisplay(*this, o, depth);
     if (o->cls == Cls::BigIntBox) return "[BigInt: " + Display(static_cast<BoxObj*>(o)->prim, depth + 1) + "]";
     if (o->cls == Cls::BoolBox || o->cls == Cls::NumberBox || o->cls == Cls::StringBox)
         return "[" + std::string(o->cls == Cls::BoolBox ? "Boolean" : o->cls == Cls::NumberBox ? "Number" : "String") + ": " +
@@ -1793,6 +1874,7 @@ void Runtime::InitIntrinsics() {
     symToPrimitive = wk("Symbol.toPrimitive");
     symToStringTag = wk("Symbol.toStringTag");
     symHasInstance = wk("Symbol.hasInstance");
+    symSpecies = wk("Symbol.species");
     InstallObjectLib(*this);
     InstallFunctionLib(*this);
     InstallErrorLib(*this);
@@ -1805,6 +1887,8 @@ void Runtime::InitIntrinsics() {
     InstallJsonLib(*this);
     InstallCollectionsLib(*this);
     InstallWeakLib(*this);
+    InstallBinaryLib(*this);
+    InstallTextCodingLib(*this);
     InstallRegExpLib(*this);
     InstallGlobalLib(*this);
     InstallIntlLib(*this);

@@ -425,4 +425,239 @@ void InstallStringLib(Runtime& rt) {
     DefNative(rt, sp, "normalize", [](Runtime& rt, CallArgs& a) { return Value::Str(rt.NewString(ThisStr(rt, a, "normalize"))); }, 0);
 }
 
+
+// ============================================================ TextEncoder / TextDecoder
+// Written from the WHATWG Encoding Standard (encoding.spec.whatwg.org): 8.1 TextDecoder, 8.2 TextEncoder, 9.1.1
+// the UTF-8 decoder (bytes needed, lower and upper boundary) and 9.1.2 the UTF-8 encoder. Only UTF-8 is supported
+// (the label "utf-8" and its aliases); any other label is a RangeError as the standard says for an unknown one.
+namespace {
+
+struct TextCodec : Object {
+    bool decoder = false;
+    bool fatal = false, ignoreBOM = false, bomSeen = false, streaming = false;
+    std::uint32_t cp = 0;
+    int seen = 0, needed = 0;
+    std::uint8_t lower = 0x80, upper = 0xBF;
+    TextCodec() : Object(Cls::Opaque) {}
+};
+
+TextCodec* ThisCodec(Runtime& rt, const Value& v, bool decoder, const char* what) {
+    TextCodec* c = v.IsObj() && v.O()->cls == Cls::Opaque ? dynamic_cast<TextCodec*>(v.O()) : nullptr;
+    if (!c || c->decoder != decoder) rt.ThrowType(std::string(what) + " called on the wrong kind of object");
+    return c;
+}
+
+void AppendCodePoint(std::u16string& out, std::uint32_t cp) {
+    if (cp < 0x10000) out += (char16_t)cp;
+    else {
+        cp -= 0x10000;
+        out += (char16_t)(0xD800 + (cp >> 10));
+        out += (char16_t)(0xDC00 + (cp & 0x3FF));
+    }
+}
+
+// The bytes of a BufferSource (an ArrayBuffer or a view); nullptr data for undefined.
+void BufferSourceBytes(Runtime& rt, const Value& v, const std::uint8_t*& data, std::size_t& n) {
+    data = nullptr;
+    n = 0;
+    if (v.IsUndef()) return;
+    if (v.IsObj()) {
+        Object* o = v.O();
+        if (o->cls == Cls::ArrayBuffer) {
+            BufferObj* b = static_cast<BufferObj*>(o);
+            data = b->data.data();
+            n = b->data.size();
+            return;
+        }
+        if (o->cls == Cls::TypedArray) {
+            TypedArrayObj* t = static_cast<TypedArrayObj*>(o);
+            if (t->OutOfBounds()) return;
+            data = t->buf->data.data() + t->offset;
+            n = (std::size_t)(t->Length() * t->ElemSize());
+            return;
+        }
+        if (o->cls == Cls::DataView) {
+            DataViewObj* d = static_cast<DataViewObj*>(o);
+            if (d->buf->detached || d->offset + d->length > d->buf->data.size()) return;
+            data = d->buf->data.data() + d->offset;
+            n = (std::size_t)d->length;
+            return;
+        }
+    }
+    rt.ThrowType("TextDecoder.decode needs an ArrayBuffer, a typed array or a DataView");
+}
+
+} // namespace
+
+void InstallTextCodingLib(Runtime& rt) {
+    // 8.2 TextEncoder
+    Object* tep = rt.NewObject();
+    NativeFunc* te = DefCtor(rt, "TextEncoder", [](Runtime& rt, CallArgs& a) {
+        if (!a.newTarget) rt.ThrowType("TextEncoder must be called with 'new'");
+        TextCodec* c = rt.Alloc<TextCodec>();
+        Value pr = rt.Get(Value::Obj(a.newTarget), rt.atoms->prototype);
+        c->proto = pr.IsObj() ? pr.O() : a.callee->slots[0].O();
+        return Value::Obj(c);
+    }, 0, tep);
+    te->slots = {Value::Obj(tep)};
+    DefGetter(rt, tep, "encoding", [](Runtime& rt, CallArgs& a) {
+        ThisCodec(rt, a.thisv, false, "TextEncoder.prototype.encoding");
+        return Value::Str(rt.Intern("utf-8"));
+    });
+    DefNative(rt, tep, "encode", [](Runtime& rt, CallArgs& a) {
+        ThisCodec(rt, a.thisv, false, "TextEncoder.prototype.encode");
+        std::u16string s = a[0].IsUndef() ? std::u16string() : rt.ToU16(a[0]);
+        rt.Charge(s.size() / 16 + 1);
+        std::string bytes = Utf16To8(s);   // lone surrogates become U+FFFD (the USVString conversion)
+        return Value::Obj(NewUint8Array(rt, reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()));
+    }, 0);
+    DefNative(rt, tep, "encodeInto", [](Runtime& rt, CallArgs& a) {   // 8.2.3 encodeInto(source, destination)
+        ThisCodec(rt, a.thisv, false, "TextEncoder.prototype.encodeInto");
+        std::u16string s = rt.ToU16(a[0]);
+        if (!a[1].IsObj() || a[1].O()->cls != Cls::TypedArray || static_cast<TypedArrayObj*>(a[1].O())->type != TAType::Uint8)
+            rt.ThrowType("TextEncoder.prototype.encodeInto needs a Uint8Array");
+        TypedArrayObj* t = static_cast<TypedArrayObj*>(a[1].O());
+        const std::size_t room = t->OutOfBounds() ? 0 : (std::size_t)t->Length();
+        std::uint8_t* dst = room ? t->buf->data.data() + t->offset : nullptr;
+        std::size_t read = 0, written = 0;
+        rt.Charge(s.size() / 16 + 1);
+        while (read < s.size()) {
+            std::uint32_t cp = s[read];
+            std::size_t units = 1;
+            if (cp >= 0xD800 && cp <= 0xDBFF && read + 1 < s.size() && s[read + 1] >= 0xDC00 && s[read + 1] <= 0xDFFF) {
+                cp = 0x10000 + ((cp - 0xD800) << 10) + (s[read + 1] - 0xDC00);
+                units = 2;
+            } else if (cp >= 0xD800 && cp <= 0xDFFF) cp = 0xFFFD;
+            std::uint8_t buf[4];
+            int n;
+            if (cp < 0x80) { buf[0] = (std::uint8_t)cp; n = 1; }
+            else if (cp < 0x800) { buf[0] = (std::uint8_t)(0xC0 | (cp >> 6)); buf[1] = (std::uint8_t)(0x80 | (cp & 0x3F)); n = 2; }
+            else if (cp < 0x10000) { buf[0] = (std::uint8_t)(0xE0 | (cp >> 12)); buf[1] = (std::uint8_t)(0x80 | ((cp >> 6) & 0x3F)); buf[2] = (std::uint8_t)(0x80 | (cp & 0x3F)); n = 3; }
+            else { buf[0] = (std::uint8_t)(0xF0 | (cp >> 18)); buf[1] = (std::uint8_t)(0x80 | ((cp >> 12) & 0x3F)); buf[2] = (std::uint8_t)(0x80 | ((cp >> 6) & 0x3F)); buf[3] = (std::uint8_t)(0x80 | (cp & 0x3F)); n = 4; }
+            if (written + (std::size_t)n > room) break;
+            for (int i = 0; i < n; ++i) dst[written++] = buf[i];
+            read += units;
+        }
+        Object* r = rt.NewObject();
+        rt.DefineData(r, rt.Intern("read"), Value::Num((double)read));
+        rt.DefineData(r, rt.Intern("written"), Value::Num((double)written));
+        return Value::Obj(r);
+    }, 2);
+    tep->AddRaw(rt.symToStringTag, Value::Str(rt.Intern("TextEncoder")), kConfigurable);
+
+    // 8.1 TextDecoder
+    Object* tdp = rt.NewObject();
+    NativeFunc* td = DefCtor(rt, "TextDecoder", [](Runtime& rt, CallArgs& a) {
+        if (!a.newTarget) rt.ThrowType("TextDecoder must be called with 'new'");
+        std::u16string label = a[0].IsUndef() ? u"utf-8" : rt.ToU16(a[0]);
+        std::size_t b = 0, e = label.size();
+        while (b < e && IsJsSpace(label[b])) ++b;
+        while (e > b && IsJsSpace(label[e - 1])) --e;
+        std::u16string l = label.substr(b, e - b);
+        for (char16_t& c : l) c = (c >= u'A' && c <= u'Z') ? (char16_t)(c + 32) : c;
+        if (l != u"utf-8" && l != u"utf8" && l != u"unicode-1-1-utf-8" && l != u"unicode11utf8" && l != u"unicode20utf8" &&
+            l != u"x-unicode20utf8")
+            rt.ThrowRange("TextDecoder: only the utf-8 encoding is supported, not '" + Utf16To8(label.substr(0, 40)) + "'");
+        TextCodec* c = rt.Alloc<TextCodec>();
+        c->decoder = true;
+        Value pr = rt.Get(Value::Obj(a.newTarget), rt.atoms->prototype);
+        c->proto = pr.IsObj() ? pr.O() : a.callee->slots[0].O();
+        if (a[1].IsObj()) {
+            c->fatal = rt.ToBoolean(rt.Get(a[1], rt.Intern("fatal")));
+            c->ignoreBOM = rt.ToBoolean(rt.Get(a[1], rt.Intern("ignoreBOM")));
+        } else if (!a[1].IsNullish()) rt.ThrowType("TextDecoder's options must be an object");
+        return Value::Obj(c);
+    }, 0, tdp);
+    td->slots = {Value::Obj(tdp)};
+    DefGetter(rt, tdp, "encoding", [](Runtime& rt, CallArgs& a) {
+        ThisCodec(rt, a.thisv, true, "TextDecoder.prototype.encoding");
+        return Value::Str(rt.Intern("utf-8"));
+    });
+    DefGetter(rt, tdp, "fatal", [](Runtime& rt, CallArgs& a) { return Value::Bool(ThisCodec(rt, a.thisv, true, "TextDecoder.prototype.fatal")->fatal); });
+    DefGetter(rt, tdp, "ignoreBOM", [](Runtime& rt, CallArgs& a) { return Value::Bool(ThisCodec(rt, a.thisv, true, "TextDecoder.prototype.ignoreBOM")->ignoreBOM); });
+    DefNative(rt, tdp, "decode", [](Runtime& rt, CallArgs& a) {   // 8.1.3 decode(input, options)
+        TextCodec* c = ThisCodec(rt, a.thisv, true, "TextDecoder.prototype.decode");
+        if (!c->streaming) {   // a new stream: the decoder starts again
+            c->cp = 0;
+            c->seen = c->needed = 0;
+            c->lower = 0x80;
+            c->upper = 0xBF;
+            c->bomSeen = false;
+        }
+        bool stream = false;
+        if (a[1].IsObj()) stream = rt.ToBoolean(rt.Get(a[1], rt.Intern("stream")));
+        const std::uint8_t* data;
+        std::size_t n;
+        BufferSourceBytes(rt, a[0], data, n);
+        std::vector<std::uint8_t> bytes(data, data + n);   // a copy: nothing below runs script code, but keep it plain
+        rt.Charge(n / 16 + 1);
+        std::u16string out;
+        auto error = [&]() {
+            if (c->fatal) {
+                c->streaming = false;
+                rt.ThrowType("TextDecoder: the data is not valid UTF-8");
+            }
+            out += u'�';
+        };
+        auto emit = [&](std::uint32_t cp) {
+            if (!c->bomSeen) {
+                c->bomSeen = true;
+                if (cp == 0xFEFF && !c->ignoreBOM) return;
+            }
+            AppendCodePoint(out, cp);
+        };
+        for (std::size_t i = 0; i < bytes.size(); ++i) {
+            const std::uint8_t b = bytes[i];
+            if (c->needed == 0) {
+                if (b <= 0x7F) emit(b);
+                else if (b >= 0xC2 && b <= 0xDF) { c->needed = 1; c->cp = b & 0x1F; }
+                else if (b >= 0xE0 && b <= 0xEF) {
+                    if (b == 0xE0) c->lower = 0xA0;
+                    if (b == 0xED) c->upper = 0x9F;
+                    c->needed = 2;
+                    c->cp = b & 0xF;
+                } else if (b >= 0xF0 && b <= 0xF4) {
+                    if (b == 0xF0) c->lower = 0x90;
+                    if (b == 0xF4) c->upper = 0x8F;
+                    c->needed = 3;
+                    c->cp = b & 0x7;
+                } else {
+                    c->bomSeen = true;
+                    error();
+                }
+                continue;
+            }
+            if (b < c->lower || b > c->upper) {   // the byte is read again as the start of something new
+                c->cp = 0;
+                c->needed = c->seen = 0;
+                c->lower = 0x80;
+                c->upper = 0xBF;
+                c->bomSeen = true;
+                error();
+                --i;
+                continue;
+            }
+            c->lower = 0x80;
+            c->upper = 0xBF;
+            c->cp = (c->cp << 6) | (b & 0x3F);
+            if (++c->seen == c->needed) {
+                const std::uint32_t cp = c->cp;
+                c->cp = 0;
+                c->needed = c->seen = 0;
+                emit(cp);
+            }
+        }
+        if (!stream && c->needed != 0) {   // the end of the stream inside a sequence
+            c->cp = 0;
+            c->needed = c->seen = 0;
+            c->lower = 0x80;
+            c->upper = 0xBF;
+            error();
+        }
+        c->streaming = stream;
+        return Value::Str(rt.NewString(std::move(out)));
+    }, 0);
+    tdp->AddRaw(rt.symToStringTag, Value::Str(rt.Intern("TextDecoder")), kConfigurable);
+}
+
 } // namespace okay::js

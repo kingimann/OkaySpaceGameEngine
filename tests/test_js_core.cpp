@@ -601,6 +601,86 @@ void DynamicImport() {
     CHECK(out == "mod-1\n");
 }
 
+// 25.1 ArrayBuffer, 25.2 SharedArrayBuffer, 23.2 TypedArray objects with 10.4.5 the integer-indexed exotic
+// object rules, 25.3 DataView, 25.4 Atomics (no waiting), and the WHATWG Encoding standard's TextEncoder / TextDecoder.
+void TypedArrays() {
+    Expect("const b = new ArrayBuffer(8); const u = new Uint8Array(b); u[0] = 257; u[1] = -1; u[9] = 5;"
+           "console.log(b.byteLength, u.length, u[0], u[1], u[9], u['9'], 9 in u, '1' in u, Object.keys(u).length)",
+           "8 8 1 255 undefined undefined false true 8");
+    Expect("const i = new Int8Array([127, 128, -129, 1.9, -1.9, NaN]); console.log(i.join())", "127,-128,127,1,-1,0");
+    Expect("const c = new Uint8ClampedArray([300, -5, 1.5, 2.5, 0.5, NaN, 254.5]); console.log(c.join())", "255,0,2,2,0,0,254");
+    Expect("const f = new Float32Array([1.1, 1e40, -1e40]); console.log(f[0] === Math.fround(1.1), f[1], f[2])",
+           "true Infinity -Infinity");
+    Expect("const a = new Int16Array(4); a.set([1, 2], 1); console.log(a.join(), a.byteLength, Int16Array.BYTES_PER_ELEMENT, a.BYTES_PER_ELEMENT)",
+           "0,1,2,0 8 2 2");
+    Expect("const u = new Uint32Array([1, 2, 3, 4]); const s = u.subarray(1, 3); s[0] = 9; console.log(u.join(), s.length, s.byteOffset, s.buffer === u.buffer)",
+           "1,9,3,4 2 4 true");
+    Expect("const u = Uint8Array.from([3, 1, 2]); console.log(u.slice(1).join(), u.map(x => x * 2).join(), u.filter(x => x > 1).join(),"
+           "[...u.sort()].join(), u.reverse().join(), u.indexOf(2), u.includes(3), u.at(-1), u.fill(7, 1).join(), Uint8Array.of(1, 2).join())",
+           "1,2 6,2,4 3,2 1,2,3 3,2,1 1 true 1 3,7,7 1,2");
+    Expect("const u = new Uint8Array([5, 1, 4]); console.log(u.toSorted().join(), u.join(), u.with(0, 9).join(), u.toReversed().join(),"
+           "u.reduce((a, b) => a + b), u.findLast(x => x < 5), Object.prototype.toString.call(u), u[Symbol.toStringTag], String(u))",
+           "1,4,5 5,1,4 9,1,4 4,1,5 10 4 [object Uint8Array] Uint8Array 5,1,4");
+    Expect("const b = new BigInt64Array(2); b[0] = -1n; b[1] = 2n ** 64n + 5n; const u = new BigUint64Array(b.buffer); console.log(b[0], b[1], u[0], typeof u[1])",
+           "-1n 5n 18446744073709551615n bigint");
+    ExpectError("new BigInt64Array(1)[0] = 1", "TypeError");
+    ExpectError("new Uint8Array(1)[0] = 1n", "TypeError");
+    Expect("const d = new DataView(new ArrayBuffer(24), 2); d.setUint16(0, 0x1234); d.setUint16(2, 0x1234, true); d.setFloat64(4, Math.PI);"
+           "d.setBigInt64(12, -2n, true); const u = new Uint8Array(d.buffer);"
+           "console.log(u[2], u[3], u[4], u[5], d.getUint16(0, true).toString(16), d.getFloat64(4) === Math.PI, d.getBigInt64(12, true), d.getInt8(0), d.byteOffset, d.byteLength)",
+           "18 52 52 18 3412 true -2n 18 2 22");
+    ExpectError("new DataView(new ArrayBuffer(4)).getUint32(1)", "RangeError");
+    ExpectError("new DataView(new ArrayBuffer(4), 5)", "RangeError");
+    ExpectError("new Uint32Array(new ArrayBuffer(6))", "RangeError");    // not a multiple of the element size
+    ExpectError("new Uint32Array(new ArrayBuffer(8), 2)", "RangeError"); // offset not aligned
+    ExpectError("new Uint8Array(-1)", "RangeError");
+    ExpectError("new ArrayBuffer(1e12)", "RangeError");                  // over our allocation limit, checked before allocating
+    ExpectError("Uint8Array(2)", "TypeError");
+    // detach: transfer moves the bytes; the old buffer and its views have length 0 and reads give undefined, writes do nothing
+    Expect("const b = new ArrayBuffer(4); const u = new Uint8Array(b); u[0] = 7; const c = b.transfer(); console.log(b.detached, b.byteLength, u.length, u[0],"
+           "new Uint8Array(c)[0], c.byteLength); u[0] = 1; console.log(u[0], 0 in u, u.byteOffset, Object.keys(u).length)",
+           "true 0 0 undefined 7 4\nundefined false 0 0");
+    ExpectError("const b = new ArrayBuffer(4); b.transfer(); new Uint8Array(b)", "TypeError");
+    ExpectError("const b = new ArrayBuffer(4); const u = new Uint8Array(b); b.transfer(); u.fill(1)", "TypeError");
+    ExpectError("const b = new ArrayBuffer(4); const d = new DataView(b); b.transfer(); d.getInt8(0)", "TypeError");
+    ExpectError("const b = new ArrayBuffer(4); b.transfer(); b.slice(0)", "TypeError");
+    // a comparator or a valueOf that detaches the buffer in the middle of a method must not touch freed memory
+    Expect("const b = new ArrayBuffer(8); const u = new Uint8Array(b); u.set([5, 4, 3, 2, 1]); u.sort((x, y) => { if (!b.detached) b.transfer(); return x - y; });"
+           "console.log(u.length)", "0");
+    ExpectError("const b = new ArrayBuffer(8); const u = new Uint8Array(b); u.fill({valueOf() { b.transfer(); return 3; }})", "TypeError");
+    Expect("const b = new ArrayBuffer(8); const u = new Uint8Array(b); u.set([1, 2, 3]); const r = u.map((x, i) => { if (i === 1) b.transfer(); return x; });"
+           "console.log(r.join())", "1,2,0,0,0,0,0,0");
+    Expect("const b = new ArrayBuffer(4), u = new Uint8Array(b); u[0] = 9; console.log(b.slice(0, 2).byteLength, new Uint8Array(b.slice(0, 1))[0], ArrayBuffer.isView(u), ArrayBuffer.isView(b))",
+           "2 9 true false");
+    Expect("const s = new SharedArrayBuffer(4); const i = new Int32Array(s); i[0] = 5; console.log(Atomics.add(i, 0, 2), Atomics.load(i, 0), Atomics.compareExchange(i, 0, 7, 1), i[0],"
+           "Object.prototype.toString.call(s), s.growable, Atomics.notify(i, 0))",
+           "5 7 7 1 [object SharedArrayBuffer] false 0");
+    Expect("const e = new TextEncoder().encode('h\\u00e9\\u20ac\\u{1F600}'); console.log(e.length, e.join(), new TextDecoder().decode(e) === 'h\\u00e9\\u20ac\\u{1F600}', new TextEncoder().encoding)",
+           "10 104,195,169,226,130,172,240,159,152,128 true utf-8");
+    Expect("console.log(new TextDecoder().decode(new Uint8Array([0xEF, 0xBB, 0xBF, 0x41, 0xC3, 0x28, 0xF0, 0x9F])) === 'A\\uFFFD(\\uFFFD', new TextDecoder().decode())",
+           "true ");
+    ExpectError("new TextDecoder('utf-8', {fatal: true}).decode(new Uint8Array([0xFF]))", "TypeError");
+    Expect("const r = new TextEncoder().encodeInto('ab\\u20ac', new Uint8Array(4)); console.log(r.read, r.written)", "2 2");
+    Expect("const u = new Uint8Array([1, 2, 3]); let s = 0; for (const x of u) s += x; const [a, ...rest] = u; console.log(s, a, rest.join(), Array.from(u.entries()).join('|'), JSON.stringify(u))",
+           "6 1 2,3 0,1|1,2|2,3 {\"0\":1,\"1\":2,\"2\":3}");
+    Expect("class MyU8 extends Uint8Array { sum() { return this.reduce((a, b) => a + b, 0); } } const m = new MyU8([1, 2]); console.log(m.sum(), m instanceof Uint8Array, m.map(x => x).constructor === MyU8)",
+           "3 true true");
+    Expect("const u = new Uint8Array(4); console.log(Object.getOwnPropertyDescriptor(u, '0').writable, Reflect.defineProperty(u, '0', {value: 3}), u[0],"
+           "Reflect.defineProperty(u, '0', {value: 1, writable: false}), Reflect.defineProperty(u, '9', {value: 1}), Reflect.deleteProperty(u, 0), Reflect.deleteProperty(u, 9), u['-0'], u['1.5'])",
+           "true true 3 false false false true undefined undefined");
+    Expect("const u = new Uint8Array(2); u.foo = 1; console.log(Reflect.ownKeys(u).join(), Object.getPrototypeOf(Uint8Array) === Object.getPrototypeOf(Int8Array))",
+           "0,1,foo true");
+    // hostile sizes: huge lengths are refused before any allocation; the budget stops long loops
+    ExpectError("new Float64Array(2 ** 31)", "RangeError");
+    ExpectError("new Uint8Array({length: 2 ** 40})", "RangeError");
+    CHECK(Run("const u = new Uint8Array(1 << 20); for (;;) u.fill(1);", false, 2'000'000).find("budget") != std::string::npos);
+    CHECK(Run("const b = new ArrayBuffer(1 << 20); for (let i = 0; i < 100; i++) b.slice(0); console.log('ok')", false, 50'000'000, 16u << 20)
+              .find("ERROR") == std::string::npos);
+    // collected and rooted
+    CHECK(Run("let t = 0; for (let i = 0; i < 300; i++) { const u = new Uint16Array([i, i + 1]); const d = new DataView(u.buffer); t += d.getUint16(0, true) + u.subarray(1)[0]; } console.log(t)", true) ==
+          "90000\n");
+}
+
 // Classic page scripts are sloppy code where assigning an undeclared name makes a global (ECMA-262 6.2.5.6 PutValue
 // step 5.b; React's streaming markup does `$RB=[]`). Runtime::sloppyScripts turns that on (the browser); game scripts
 // keep the default (everything strict). "use strict" and class bodies stay strict either way.
@@ -927,6 +1007,7 @@ int main() {
     Dates();
     UriFunctions();
     WeakCollections();
+    TypedArrays();
     TaggedTemplates();
     BigInts();
     RegexLookbehind();

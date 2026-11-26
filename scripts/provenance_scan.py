@@ -246,9 +246,25 @@ def _browser_words(t):
     return _grep(t, "engine/src/Browser/Profile.cpp", r'"Search Google or type')
 
 
+def _ui_brands(t):
+    """A9: UI text describes features in plain words, not by another game or a trademark ("Minecraft-style",
+    "ACES" as a menu entry). Comments may still name what a feature resembles. The old GameObject > UI menu record
+    (editor/UIMenuModel.hpp LegacyItems, never shown) keeps the old labels as history."""
+    bad = []
+    for p, rel in files(("editor", "engine", "shared", "player", "okayui", "launcher", "browser")):
+        if not rel.endswith((".cpp", ".hpp", ".h", ".inl")) or rel == "editor/UIMenuModel.hpp": continue
+        for i, l in enumerate(lines_of(p), 1):
+            if l.strip().startswith(("//", "*", "/*")): continue
+            for lit in STRLIT.findall(l):
+                if re.search(r"Minecraft", lit): bad.append("%s:%d" % (rel, i)); break
+    bad += _grep(t, "shared/EditorPanelModels.hpp", r'kTonemapNames.*"ACES"')
+    return bad
+
+
 GUARDS = [
     ("A4", "shipped version information states a licence other than ours", _own_licence),
     ("A8", "the browser placeholder copies another browser's wording", _browser_words),
+    ("A9", "UI text names another game or uses a trademark as a feature name", _ui_brands),
     ("A10", "a published shader constant has no source note near it", _source_notes),
 ]
 

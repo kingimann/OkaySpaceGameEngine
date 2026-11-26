@@ -673,8 +673,8 @@ struct PostProcessIntent {
 inline const char* kLookPresetTip = "Ready-made looks: fills the post-processing, sky, fog and weather settings\n(Sunset / Night / Foggy morning / Storm also aim the sun light).";
 inline const char* kLookResetTip = "Post-processing off, Colour sky, no fog, no weather. The sky gradient colours are kept.";
 inline const char* kFilmicTip = "Gamma-correct pipeline: lighting in linear space, a tonemap roll-off and sRGB output.\nOn by default; off gives the legacy flat response (and no tonemap curve).";
-inline const char* const kTonemapNames[3] = {"None", "ACES", "Filmic"};
-inline const char* kTonemapTip = "How highlights above white roll off (needs Filmic Rendering).\nACES = punchy, Filmic = a softer shoulder, None = clip.";
+inline const char* const kTonemapNames[3] = {"None", "Punchy filmic", "Soft filmic"};   // saved as 0 / 1 / 2 (frozen); 1 is the ACES fit, 2 Hable's curve
+inline const char* kTonemapTip = "How highlights above white roll off (needs Filmic Rendering).\nPunchy filmic = more contrast, Soft filmic = a softer shoulder, None = clip.";
 inline const char* kBloomThresholdTip = "Brightness a pixel must exceed to glow (with Filmic Rendering, 1 = white).";
 inline const char* kBloomSoftnessTip = "Softens the edge of the Threshold, so glow fades in instead of popping on.\n0 = the hard cut (the old look). OpenGL and Direct3D 11.";
 inline const char* kTemperatureTip = "Cool (blue) to warm (orange).";

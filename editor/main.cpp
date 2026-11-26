@@ -11331,7 +11331,7 @@ void DrawSceneSettings(EditorState& ed) {
             ImGui::SliderFloat("Bloom intensity", &BloomIntensity(), 0.0f, 2.0f, "%.2f");
         }
 
-        ImGui::Checkbox("Tone mapping (ACES)", &ToneMapEnabled());
+        ImGui::Checkbox("Tone mapping (punchy filmic)", &ToneMapEnabled());
         DrawRendererNote(okay::RenderFeature::SoftwareToneMap);
         if (ToneMapEnabled())
             ImGui::SliderFloat("Exposure", &Exposure(), 0.1f, 4.0f, "%.2f");
@@ -30009,10 +30009,10 @@ static bool DrawFirstPersonHandWithOkayUI(EditorState& ed, FirstPersonHand* fh, 
     L.rows.reserve(16);
     L.Note("Shows your character's OWN arm in first person. Your body is hidden from your camera only (others see all of it) and never duplicated. Click to punch.", false, true);
     L.SliderInt("Attack Button##fh", &fh->attackButton, 0, 2); L.Tip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
-    L.Check("Swing while held##fh", &fh->holdToSwing); L.Tip("Keep swinging while the button is held (Minecraft mining).");
+    L.Check("Swing while held##fh", &fh->holdToSwing); L.Tip("Keep swinging while the button is held (hold to keep mining).");
     int si = fh->showLeftArm ? 1 : 0;
     const int kSide = L.Combo("Arm side##fh", &si, kSides, 2); L.TipLookup();
-    L.Check("Follow camera look##fh", &fh->followPitch); L.Tip("The arm tilts up/down with your view (Minecraft-style).");
+    L.Check("Follow camera look##fh", &fh->followPitch); L.Tip("The arm tilts up/down with your view.");
     L.Check("Bobbing##fh", &fh->bobbing); L.Tip("A small up-and-down bob on the viewmodel arm. It does not roll, and it does not move the shared body.");
     L.Check("Steady arm (ignore lean/crouch/prone)##fh", &fh->steadyArm); L.TipLookup();
     L.Check("Show While Running##fh", &fh->showWhileRunning);
@@ -30299,7 +30299,7 @@ static bool DrawInventoryWithOkayUI(EditorState& ed, Inventory* inv, okay::Compo
     if (ed.isPlaying()) L.Note("Live bag \xE2\x80\x94 Stop puts these slots back.", false, true);
     L.DragInt("Capacity##inv", &inv->capacity, 0.2f, 1, 999);
     L.DragInt("Max Stack##inv", &inv->maxStack, 0.2f, 0, 9999);
-    L.Tip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this, like Minecraft's 64.");
+    L.Tip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this (64 is a common size).");
     L.Drag("Weight Limit##inv", &inv->weightLimit, 1, 0.5f, 0.0f, 100000.0f);
     L.Tip("Carry limit from the item definitions' weights (0 = none). Scripts get on_encumbered(true/false).");
     if (inv->weightLimit > 0.0f) {
@@ -30967,7 +30967,7 @@ static bool DrawBlockBuilderWithOkayUI(EditorState& ed, BlockBuilder* bb, okay::
     L.Check("Crosshair##bb", &bb->showCrosshair);
     L.Tip("Add an aim reticle at screen center on Play (if the scene has none).");
     L.Check("Place in mid-air##bb", &bb->placeInAir);
-    L.Tip("Off (Minecraft-style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
+    L.Tip("Off (block-game style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
     const int kRemove = L.SmallButton("Remove##bb");
     if (!DrawRowsOkayUI(bb, "##okayui_blockbuilder", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35004,13 +35004,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SliderInt("Attack Button##fh", &fh->attackButton, 0, 2)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
             if (ImGui::Checkbox("Swing while held##fh", &fh->holdToSwing)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep swinging while the button is held (Minecraft mining).");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep swinging while the button is held (hold to keep mining).");
             const char* sides[] = {"Right arm", "Left arm"};
             int si = fh->showLeftArm ? 1 : 0;
             if (ImGui::Combo("Arm side##fh", &si, sides, 2)) { fh->showLeftArm = (si == 1); ed.dirty = true; }
             oked::FieldTip("Arm side##fh");
             if (ImGui::Checkbox("Follow camera look##fh", &fh->followPitch)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The arm tilts up/down with your view (Minecraft-style).");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The arm tilts up/down with your view.");
             if (ImGui::Checkbox("Bobbing##fh", &fh->bobbing)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small up-and-down bob on the viewmodel arm. It does not roll, and it does not move the shared body.");
             if (ImGui::Checkbox("Steady arm (ignore lean/crouch/prone)##fh", &fh->steadyArm)) ed.dirty = true;
@@ -37863,7 +37863,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Crosshair##bb", &bb->showCrosshair)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an aim reticle at screen center on Play (if the scene has none).");
             if (ImGui::Checkbox("Place in mid-air##bb", &bb->placeInAir)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off (Minecraft-style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off (block-game style): you must aim at the ground or another block to place.\nOn: drop a block at arm's length even when aiming at empty space.");
             if (ImGui::SmallButton("Remove##bb")) toRemove = bb;
         }
     }
@@ -38460,7 +38460,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ui = dynamic_cast<InventoryUI*>(curComp)) {
-        if (CompHeader("Inventory UI (Minecraft-style)", ui, &toRemove)) {
+        if (CompHeader("Inventory UI (hotbar + backpack)", ui, &toRemove)) {
             ImGui::TextDisabled("Hotbar + backpack drawn from a sibling/owner Inventory.");
             if (!ui->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add an Inventory component to show items.");
             if (ImGui::SliderInt("Hotbar Slots##iu", &ui->hotbarSlots, 1, 9)) ed.dirty = true;
@@ -38525,7 +38525,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("Background panel##iu", &ui->showPanel)) ed.dirty = true; ImGui::SameLine();
                 oked::FieldTip("Background panel##iu");
                 if (ImGui::Checkbox("Held item name##iu", &ui->showSelectedName)) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the selected item's name above the hotbar (Minecraft-style).");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the selected item's name above the hotbar.");
                 if (ui->showPanel && ImGui::DragFloat("Panel Padding##iu", &ui->panelPad, 0.25f, 0.0f, 40.0f)) ed.dirty = true;
                 float pc[4] = {ui->panelColor.r, ui->panelColor.g, ui->panelColor.b, ui->panelColor.a};
                 if (ImGui::ColorEdit4("Panel Color##iu", pc)) { ui->panelColor = {pc[0], pc[1], pc[2], pc[3]}; ed.dirty = true; }
@@ -41805,7 +41805,7 @@ void DrawInspector(EditorState& ed) {
             };
             edited(ImGui::DragInt("Capacity##inv", &inv->capacity, 0.2f, 1, 999));
             edited(ImGui::DragInt("Max Stack##inv", &inv->maxStack, 0.2f, 0, 9999));
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this, like Minecraft's 64.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this (64 is a common size).");
             edited(ImGui::DragFloat("Weight Limit##inv", &inv->weightLimit, 0.5f, 0.0f, 100000.0f));
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carry limit from the item definitions' weights (0 = none). Scripts get on_encumbered(true/false).");
             if (inv->weightLimit > 0.0f) {

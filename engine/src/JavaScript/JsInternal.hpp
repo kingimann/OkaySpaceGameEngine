@@ -48,6 +48,13 @@ bool Tokenize(const std::string& src, std::vector<Token>& out, SyntaxError& err)
 extern const int kReservedCount;
 /// WhiteSpace and LineTerminator code units (12.2, 12.3): what trim and the number readers skip.
 bool IsJsSpace(char16_t c);
+/// The value of a hex digit (0-9, a-f, A-F), or -1: the lexer, the RegExp pattern reader and the URI functions share it.
+inline int HexDigitValue(char32_t c) {
+    if (c >= U'0' && c <= U'9') return (int)(c - U'0');
+    if (c >= U'a' && c <= U'f') return (int)(c - U'a') + 10;
+    if (c >= U'A' && c <= U'F') return (int)(c - U'A') + 10;
+    return -1;
+}
 /// Simple one-to-one case mapping (ASCII, Latin-1, Latin Extended-A, Greek, Cyrillic).
 char16_t JsLower(char16_t c);
 char16_t JsUpper(char16_t c);
@@ -356,7 +363,7 @@ struct BigIntV : GcObj {
     BigIntV() : GcObj(Kind::BigInt) {}
     std::size_t Bytes() const override { return sizeof(BigIntV) + v.mag.capacity() * 4; }
 };
-void TrimLimbs(Limbs& m);
+void DropTopZeros(Limbs& m);
 Value NewBigValue(Runtime& rt, bool neg, Limbs mag);
 bool BigIsZero(const Value& v);
 bool BigEquals(const Value& a, const Value& b);

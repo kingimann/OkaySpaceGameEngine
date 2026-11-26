@@ -246,12 +246,7 @@ struct PatternParser {
         return r;
     }
 
-    int Hex(char16_t c) const {
-        if (c >= u'0' && c <= u'9') return c - u'0';
-        if (c >= u'a' && c <= u'f') return c - u'a' + 10;
-        if (c >= u'A' && c <= u'F') return c - u'A' + 10;
-        return -1;
-    }
+    int Hex(char16_t c) const { return HexDigitValue(c); }
 
     // \d \D \s \S \w \W as ranges (into `cls`); false when c is not one of them.
     bool ClassEscape(char16_t c, RxClass& cls) {

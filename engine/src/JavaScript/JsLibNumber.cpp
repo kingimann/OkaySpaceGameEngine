@@ -975,11 +975,11 @@ namespace {
 constexpr std::size_t kMaxBigBits = 1u << 20;
 constexpr std::size_t kMaxBigLimbs = kMaxBigBits / 32;
 
-int CmpMag(const Limbs& a, const Limbs& b) {
+int CmpMag(const Limbs& a, const Limbs& b) {   // no zero top limbs, so a longer magnitude is the larger one
     if (a.size() != b.size()) return a.size() < b.size() ? -1 : 1;
-    for (std::size_t i = a.size(); i-- > 0;)
-        if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
-    return 0;
+    auto diff = std::mismatch(a.rbegin(), a.rend(), b.rbegin());
+    if (diff.first == a.rend()) return 0;
+    return *diff.first < *diff.second ? -1 : 1;
 }
 Limbs AddMag(const Limbs& a, const Limbs& b) {
     const Limbs& x = a.size() >= b.size() ? a : b;
@@ -992,7 +992,7 @@ Limbs AddMag(const Limbs& a, const Limbs& b) {
         c >>= 32;
     }
     r[x.size()] = (std::uint32_t)c;
-    TrimLimbs(r);
+    DropTopZeros(r);
     return r;
 }
 Limbs SubMag(const Limbs& a, const Limbs& b) {   // |a| >= |b|
@@ -1003,7 +1003,7 @@ Limbs SubMag(const Limbs& a, const Limbs& b) {   // |a| >= |b|
         br = d < 0;
         r[i] = (std::uint32_t)(d + (br << 32));
     }
-    TrimLimbs(r);
+    DropTopZeros(r);
     return r;
 }
 std::size_t BitLength(const Limbs& m) {
@@ -1029,7 +1029,7 @@ Limbs MulMag(Runtime& rt, const Limbs& a, const Limbs& b) {
         }
         r[i + b.size()] = (std::uint32_t)c;
     }
-    TrimLimbs(r);
+    DropTopZeros(r);
     CheckSize(rt, r.size());
     return r;
 }
@@ -1047,7 +1047,7 @@ void DivMag(Runtime& rt, const Limbs& a, const Limbs& b, Limbs& q, Limbs& r) {
             q[i] = (std::uint32_t)(cur / b[0]);
             rem = cur % b[0];
         }
-        TrimLimbs(q);
+        DropTopZeros(q);
         if (rem) r.push_back((std::uint32_t)rem);
         return;
     }
@@ -1093,10 +1093,10 @@ void DivMag(Runtime& rt, const Limbs& a, const Limbs& b, Limbs& q, Limbs& r) {
         }
         q[j] = (std::uint32_t)qh;
     }
-    TrimLimbs(q);
+    DropTopZeros(q);
     r.assign(n, 0);
     for (std::size_t i = 0; i < n; ++i) r[i] = (u[i] >> s) | (s ? u[i + 1] << (32 - s) : 0);
-    TrimLimbs(r);
+    DropTopZeros(r);
 }
 Limbs ShlMag(Runtime& rt, const Limbs& a, std::uint64_t k) {
     if (a.empty()) return {};
@@ -1108,7 +1108,7 @@ Limbs ShlMag(Runtime& rt, const Limbs& a, std::uint64_t k) {
         r[i + w] |= a[i] << s;
         if (s) r[i + w + 1] |= a[i] >> (32 - s);
     }
-    TrimLimbs(r);
+    DropTopZeros(r);
     CheckSize(rt, r.size());
     return r;
 }
@@ -1121,7 +1121,7 @@ Limbs ShrMag(const Limbs& a, std::uint64_t k, bool& lostBits) {
     Limbs r(a.size() - w);
     for (std::size_t i = 0; i < r.size(); ++i)
         r[i] = (a[i + w] >> s) | (s && i + w + 1 < a.size() ? a[i + w + 1] << (32 - s) : 0);
-    TrimLimbs(r);
+    DropTopZeros(r);
     return r;
 }
 Limbs SmallMag(std::uint64_t v) {
@@ -1132,7 +1132,7 @@ Limbs SmallMag(std::uint64_t v) {
 
 using Big = BigNum;
 Big Norm(Big b) {
-    TrimLimbs(b.mag);
+    DropTopZeros(b.mag);
     if (b.mag.empty()) b.neg = false;
     return b;
 }
@@ -1210,12 +1210,12 @@ const Big& BigOf(const Value& v) { return static_cast<BigIntV*>(v.p)->v; }
 
 } // namespace
 
-void TrimLimbs(Limbs& m) {
+void DropTopZeros(Limbs& m) {
     while (!m.empty() && m.back() == 0) m.pop_back();
 }
 
 Value NewBigValue(Runtime& rt, bool neg, Limbs mag) {
-    TrimLimbs(mag);
+    DropTopZeros(mag);
     CheckSize(rt, mag.size());
     BigIntV* b = rt.Alloc<BigIntV>(mag.size() * 4);
     b->v.neg = neg && !mag.empty();
@@ -1255,7 +1255,7 @@ std::u16string BigToString(Runtime& rt, const Value& v, int radix) {
             cur[i] = (std::uint32_t)(c / chunk);
             rem = c % chunk;
         }
-        TrimLimbs(cur);
+        DropTopZeros(cur);
         for (int k = 0; k < per && (rem || !cur.empty()); ++k) {
             digits += "0123456789abcdefghijklmnopqrstuvwxyz"[rem % (std::uint32_t)radix];
             rem /= (std::uint32_t)radix;

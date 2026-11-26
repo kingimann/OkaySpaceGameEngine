@@ -429,7 +429,7 @@ void BigInts() {
     Expect("console.log((10n ** 50n + 12345n) / (10n ** 20n + 7n), (10n ** 50n + 12345n) % (10n ** 20n + 7n), (2n ** 128n - 1n) % (2n ** 64n + 7n))",
            "999999999999999999930000000000n 490000012345n 48n");
     // identities over pseudo-random values exercise long division (Knuth's Algorithm D) and the two's complement forms
-    Expect("let s = 7; const r = () => (s = (s * 1103515245 + 12345) % 2147483648);"
+    Expect("let s = 7; const r = () => Math.floor(Math.abs(Math.sin(++s * 12.9898)) * 2147483648);"
            "const rb = () => { let x = 0n; for (let i = r() % 12; i > 0; i--) x = (x << 31n) + BigInt(r()); if (r() % 5 === 0) x = (x << 64n) - 1n; return r() % 2 ? -x : x; };"
            "let bad = 0; for (let i = 0; i < 300; i++) { const a = rb(), b = rb(), k = BigInt(r() % 90);"
            "if (b !== 0n && (a / b) * b + a % b !== a) bad++; if (b !== 0n && (a * b) / b !== a) bad++; if (((a << k) >> k) !== a) bad++;"
@@ -684,6 +684,17 @@ void NearFullHeap() {
     CHECK(ok);
     if (rt.Collections() >= 200) std::cerr << "  near full: " << rt.Collections() << " collections\n";
     CHECK(rt.Collections() < 200);
+    // over the limit, the host can still make values between calls (no exception escapes); the next call stops
+    bool threw = false;
+    try {
+        for (int i = 0; i < 200; ++i) rt.NewStringUtf8(std::string(20000, 'h'));
+        rt.NewObject();
+    } catch (...) {
+        threw = true;
+    }
+    CHECK(!threw);
+    CHECK(!rt.Run("const more = 'y'.repeat(100000) + 'z';", "after.js", &err));
+    CHECK(err.find("more memory than allowed") != std::string::npos);
 }
 
 void Rooting() {

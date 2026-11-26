@@ -353,6 +353,9 @@ static std::string WithWhere(Runtime& rt, const std::string& why) {
 }
 void Runtime::Terminate(const std::string& why) { throw JsTerminate{WithWhere(*this, why)}; }
 void Runtime::MemoryFull() {
+    // the host (a browser dispatching an event, the engine setting a global) allocates outside any call: a throw
+    // there would escape into code that does not expect one, so the stop waits for the next script call
+    if (vm && vm->nframes == 0 && vm->nativeDepth == 0) return;
     bytes_ = memoryLimit;   // stays over the limit until a collection measures again
     throw JsTerminate{WithWhere(*this, "the script used more memory than allowed (" + std::to_string(memoryLimit >> 20) + " MB)")};
 }

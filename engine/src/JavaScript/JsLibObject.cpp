@@ -532,16 +532,10 @@ Value UriEncode(Runtime& rt, const Value& v, bool keepReserved) {
     }
     return Value::Str(rt.NewString(std::move(out)));
 }
-int HexVal(char16_t c) {
-    if (c >= u'0' && c <= u'9') return c - u'0';
-    if (c >= u'a' && c <= u'f') return c - u'a' + 10;
-    if (c >= u'A' && c <= u'F') return c - u'A' + 10;
-    return -1;
-}
 // "%XX" at s[k]: the byte, or -1.
 int EscapedByte(const std::u16string& s, std::size_t k) {
     if (k + 2 >= s.size() || s[k] != u'%') return -1;
-    int h = HexVal(s[k + 1]), l = HexVal(s[k + 2]);
+    int h = HexDigitValue(s[k + 1]), l = HexDigitValue(s[k + 2]);
     return h < 0 || l < 0 ? -1 : h * 16 + l;
 }
 Value UriDecode(Runtime& rt, const Value& v, bool keepReserved) {
@@ -657,7 +651,7 @@ void InstallGlobalLib(Runtime& rt) {
         for (std::size_t k = 0; k < s.size(); ++k) {
             char16_t c = s[k];
             if (c == u'%' && k + 5 < s.size() && s[k + 1] == u'u') {
-                int h[4] = {HexVal(s[k + 2]), HexVal(s[k + 3]), HexVal(s[k + 4]), HexVal(s[k + 5])};
+                int h[4] = {HexDigitValue(s[k + 2]), HexDigitValue(s[k + 3]), HexDigitValue(s[k + 4]), HexDigitValue(s[k + 5])};
                 if (h[0] >= 0 && h[1] >= 0 && h[2] >= 0 && h[3] >= 0) {
                     out += (char16_t)((h[0] << 12) | (h[1] << 8) | (h[2] << 4) | h[3]);
                     k += 5;

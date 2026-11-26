@@ -494,7 +494,9 @@ public:
     std::vector<Value>& Scratch() { return scratch_; }
     bool GcDue() const { return gcStress || bytes_ > gcThreshold_; }
     void CountBytes(std::ptrdiff_t n) { bytes_ = (std::size_t)((std::ptrdiff_t)bytes_ + n); if (bytes_ > memoryLimit) MemoryFull(); }
-    [[noreturn]] void MemoryFull();
+    /// Over the memory limit: stops the running script (JsTerminate). When no script is running (the host making
+    /// values between calls) it returns, and the next call stops at its first allocation instead.
+    void MemoryFull();
     std::uint64_t& BudgetLeft() { return left_; }
     [[noreturn]] void BudgetOut();
 };

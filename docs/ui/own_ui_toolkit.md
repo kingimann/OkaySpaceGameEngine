@@ -3309,3 +3309,134 @@ menus and drag and drop straight from the scene) and the editor host that filled
 own. Project Settings > Modules is shared with the New Project form (`editor/ModulesPanelUI.hpp`) and stays Dear ImGui.
 
 **Not verified.** Windows, the editor program in a real window, the `okay-editor-okayui` build.
+
+## 28. Five small tool windows on OkayUI only: Keyboard Shortcuts, Net, Find in Files, Data Asset, Plugin Manager
+
+The move of sections 24 and 25 (a whole window through `okayuihost::HostPanelWindow`, `PanelWindow` in `editor/OkayPanels.cpp`) for
+five self-contained windows. Their Dear ImGui bodies are deleted; the editor side keeps the work (the search, opening a hit, erasing,
+adding and saving a field, creating, reloading, switching and opening a plugin) and answers the intent:
+
+| Window | Editor side | Model (`shared/EditorPanelModels.hpp`) | Screen (`okayui/screens/OkayUIEditorPanels.cpp`) |
+|---|---|---|---|
+| Keyboard Shortcuts | `DrawShortcutsWindow` (`editor/main.cpp`) | `KeyboardShortcuts()` (the list moved out of main.cpp), `FilterShortcuts`, `ShortcutsState` | `DrawShortcuts` |
+| Net | `DrawNetPanel` (`editor/NetSimPanel.cpp`) | `NetSimModel` (the simulator's values by pointer), `ClampNetSim`, `NetWireText` | `DrawNetSim` |
+| Find in Files | `DrawFindInFiles` (`editor/FindInFiles.cpp`) | `FindInFilesModel` / `State` / `Intent`, `FindInFilesStatus`, `FindHitLabel`, `FindHitPreview` | `DrawFindInFiles` |
+| Data Asset | `DrawDataAssetEditor` (`editor/main.cpp`) | `DataAssetModel` (the fields by pointer), `DataAssetIntent` | `DrawDataAsset` |
+| Plugin Manager | `DrawPluginManager` (`editor/PluginsWindow.cpp`) | `PluginManagerModel` (`PluginRow`), `PluginManagerIntent`, `PluginScopeText` | `DrawPluginManager` |
+
+The window titles are the Dear ImGui ones ("Net###Net" included), so saved layouts keep their place. `PanelWindow` / `HostWindow` take
+the size a new window opens at (Keyboard Shortcuts 520 x 560, Find in Files 600 x 420, Plugin Manager 560 x 360, as before; the others
+440 x 340). Find in Files still takes the keyboard when Ctrl+Shift+F opens it (`FindInFilesModel::focusQuery`, `SetKeyboardFocusHere`).
+
+**Small differences from the Dear ImGui bodies.** The Net sliders keep the values in range on the frame they are drawn (the clamp is
+`ClampNetSim`, which also turns a NaN into the lower bound); the Data Asset's Add Field and Save follow the last field as before (no
+fixed footer). No toolkit gap had to be closed for these five.
+
+**Tests.** `okayui_editor_panels`: the shortcut filter (any case, keys or description, empty sections dropped), typing in the filter;
+Net's Simulate switch and sliders writing through the pointers (percentages stored as fractions), the clamp; Find in Files' status line,
+labels and previews, Enter and Search asking for a search only with a term, a click opening a hit, the focus request; Data Asset's typing
+in place, X, Add Field and Save; the Plugin Manager's switch, Edit, Open / Close and the three buttons; goldens `editorpanels_shortcuts`,
+`editorpanels_shortcuts_filtered`, `editorpanels_net`, `editorpanels_findinfiles`, `editorpanels_dataasset`, `editorpanels_plugins`.
+`okayui_panels_imgui` hosts all five in a Dear ImGui window (the picture against the old hosting).
+
+Results (Release, headless): `okayui_editor_panels` 363 checks; the new goldens failed first (no picture yet), were written and
+looked at, then pass. Breaking the Find in Files rule on purpose (a search with nothing typed) turned two checks red.
+`okayui_panels_imgui` 155 checks, the five hosted pictures 0.000% different from the old hosting. The Dear ImGui `ImGui::Begin` calls in
+`editor/` went from 49 to 44 (about 40 real windows; the rest are the dock host, popups and the OkayUI-layer host).
+
+**Left (not this step).** The Input panel moved in section 29 together with `tools/input_shots.cpp`; the Hierarchy, the Inspector, the Scene view and Project Settings > Modules stay as section 27 says.
+
+**Not verified.** Windows, the editor in a real window, the `okay-editor-okayui` build.
+
+## 29. Five more tool windows on OkayUI only: Map Humanoid Bones, Save Manager, Material, Frame time, Input
+
+Section 28's move (`PanelWindow` / `okayuihost::HostPanelWindow`) for five more windows; their Dear ImGui bodies are deleted and the
+editor keeps the work:
+
+| Window | Editor side | Model (`shared/EditorPanelModels.hpp`) | Screen (`okayui/screens/OkayUIEditorPanels.cpp`) |
+|---|---|---|---|
+| Map Humanoid Bones | `DrawBoneMap` (`editor/main.cpp`): applies the map to the Humanoid Retarget or turns on the built-in animations | `BoneMapModel` (the picks by pointer), `kBoneSlotNames`, `BonePickText`, `BoneMapStatus` | `DrawBoneMap` |
+| Save Manager | `DrawSaveManager` (`editor/main.cpp`): finds the files, loads, sets, deletes, clears and saves keys | `SaveManagerModel` / `State` / `Intent`, `SaveKeyRows`, `SaveKeyMatches`, `SaveTypeName`, `SaveRawValue` | `DrawSaveManager` |
+| Material | `DrawMaterialEditor` (`editor/main.cpp`): copies the values back, file dialog, Save, Apply to Selection | `MaterialModel`, `MaterialPreviewColor`, `MaterialBallIn` (the Project panel's material ball uses it too) | `DrawMaterial` |
+| Frame time | `DrawPerfOverlay` (`editor/main.cpp`): the profiler's numbers, Copy report, Open Profiler | `PerfOverlayModel`, `PerfSections`, `PerfTimesText`, `PerfSleepText`, `PerfPlotCaption` ... | `DrawPerfOverlay` |
+| Input | `DrawInputDebugger` (`editor/InputDebugger.hpp`): `FillInputPanel`, `ApplyInputPanelIntent` | `InputPanelModel` / `State` / `Intent`, `InputResponse` | `DrawInputPanel` |
+
+The titles are the Dear ImGui ones ("Frame time###PerfOverlay" included), so saved layouts keep their place. The Save Manager, Frame
+time and Input fill their model only while the window shows (a `fill` callback, as Stats does), as their Dear ImGui bodies did.
+
+**Toolkit and host changes.** `HostPanelWindow` takes window flags and an optional body size: with `ImGuiWindowFlags_AlwaysAutoResize`
+the window fits itself around a body of that size (the Frame time window; its screen reports `contentW` / `contentH` and the host passes
+them on the next frame). `FramedPlot` and `FramedBar` take an optional width. A shared `PickList` (a list box over `ListWindow`) is used
+by the bone slots, the save file and type lists and the action list. The Material texture field takes an image dragged from the Project
+panel (a Dear ImGui drop target over the OkayUI field, as the Inspector's rows do).
+
+**Small differences from the Dear ImGui bodies.** The Save Manager's Reload sits beside the file list (before, the full-width list
+pushed it off the window's edge) and the bodies scroll in a child. The Map Humanoid Bones verdict is worked out before the window is
+drawn, so after a pick it is one frame late; the action button checks the picks again before it does anything. The Input panel's player
+lines keep the player's number; `tools/input_shots.cpp` draws the Input panel with the OkayUI screen and OkayUI's software renderer
+(the "controllers-typed-actions" picture, which was the same section on its own, is gone).
+
+**Tests.** `okayui_editor_panels`: each window's shared rules, golden pictures (`editorpanels_bonemap`, `_bonemap_list`,
+`_savemanager`, `_savemanager_clear`, `_material`, `_perfoverlay`, `_input`, `_input_curves`) and clicks and typing for every control.
+`okayui_panels_imgui` hosts all five in a Dear ImGui window (the picture against the old hosting) and checks that the Frame time window
+fits itself around its body.
+
+Results (Release, headless): `okayui_editor_panels` 479 checks; the eight new goldens failed first (no picture yet), were written and
+looked at, then pass. `okayui_panels_imgui` 174 checks, the five hosted pictures 0.000% different from the old hosting, the Frame time
+window's content 446 x 414 for a 446 x 414 body. The editor (`okay-editor`) builds. `tools/input_shots.sh` was run against that build
+and wrote the Input panel picture from the engine's real input state (outside the repository). The Dear ImGui `ImGui::Begin` calls in
+`editor/` went from 44 to 39.
+
+**Left (not this step).** Navigation: its Bake Settings, Areas and Stats parts are shared with the Inspector's Nav Mesh Surface body, so
+it moves together with the Inspector's navigation bodies (alone it would need a second copy of them). Timeline: its body is a 1,500-line
+custom track grid, key dragging and inspector, a step of its own.
+
+**Not verified.** Windows, the editor in a real window, the `okay-editor-okayui` build.
+
+## 30. Timers and Input Actions on OkayUI only; Find in Files gets main's search options
+
+Section 28's move for two more windows; their Dear ImGui bodies are deleted and the editor keeps the work:
+
+| Window | Editor side | Model (`shared/EditorPanelModels.hpp`) | Screen (`okayui/screens/OkayUIEditorPanels.cpp`) |
+|---|---|---|---|
+| Timers | `editor/main.cpp` (the frame's panel list): `okay::editor::TimerDebugText`, asked for only while the window shows | `TextLines` | `DrawTimers` |
+| Input Actions | `editor/InputActionsWindow.hpp`: `FillInputActions`, `ApplyInputActionsIntent` over `okay::ActionEditor` | `InputActionsModel` / `State` / `Intent`, `InputMapTitle`, `InputActionLabel`, `InputPartOffsets`, `kIaNewTypes`, `kIaBindingKinds` | `DrawInputActions` |
+
+The titles are the Dear ImGui ones ("Timers", "Input Actions"), so saved layouts keep their place. A new Input Actions window opens at
+900 x 600 as before; Timers, which had no first-use size, opens at 560 x 360 (`OKAY_UI_TIMERS` still forces 720 x 420 at 280, 80; the
+size now from the second frame on, set by the window's name).
+Input Actions fills its model only while it shows (the check and the players' lines cost time).
+
+**Find in Files.** Main (2026-11-26) gave the Dear ImGui Find in Files window Match case, Whole word, Regex and Replace in All Files
+(`scriptide::FindInTexts` / `ReplaceAll`) while this branch had moved the window to OkayUI. The merge keeps both: the OkayUI screen has
+the three check boxes (a change searches again when a term is typed), the Replace with field and Replace in All Files (off until a search
+found something), and a bad regex shows in red in place of the status line (`FindInFilesModel::error`, `FindInFilesCanReplace`); the
+search and the replace run in `editor/FindInFiles.cpp` as on main.
+
+**Small differences from the Dear ImGui bodies.** The binding fields of Input Actions keep their own text in the state while they are
+typed in (OkayUI's fields edit the caller's buffer; Dear ImGui kept a copy inside); Enter hands it to `ActionEditor`, and once the field
+lets the keyboard go it shows the asset's text again, as before. The "add interaction" field is emptied after an interaction is added
+(the Dear ImGui one emptied itself every frame and only kept its text while it had the keyboard). The tool that chooses a tab
+(`InputActionsState::forceTab`) replaces `detail::IaForceTab`; `tools/input_shots.cpp` draws the Input Actions window with the OkayUI
+screen and OkayUI's software renderer, as it does the Input panel.
+
+**Tests.** `okayui_editor_panels`: the shared rules (`TextLines`, `InputMapTitle`, `InputActionLabel`, `InputPartOffsets`,
+`FindInFilesStatus` with an error, `FindInFilesCanReplace`), golden pictures (`editorpanels_timers`, `_inputactions`,
+`_inputactions_check`, `_inputactions_live`, `_findinfiles_error`; `_findinfiles` redrawn with the new rows) and clicks and typing for
+every control (the wheel scrolls a long Timers list; every Input Actions button, the action rows, the binding, processors and interaction
+fields with Enter, the tabs; the Find in Files options and Replace in All Files). `okayui_panels_imgui` hosts both in a Dear ImGui window
+(the picture against the old hosting) and clicks an action row and + Map through it.
+
+Results (Release, headless, 2026-11-26): `okayui_editor_panels` 550 checks; the six new or changed goldens failed first (five missing,
+`_findinfiles` 31,414 pixels different), were written and looked at, then pass; every other golden matched unchanged. Breaking the
+binding fields on purpose (Enter handing on the wrong text) turned two checks red. `okayui_panels_imgui` 223 checks, Timers and Input
+Actions hosted 0.000% different from the old hosting. These two runs were linked against the five engine sources the tests use
+(fonts, PNG writer, console model) and two scratch stubs (`platform::TicksMs`, `Localization::Language` / `LanguageFont` with no
+table loaded), because the full engine build could not finish on the shared machine; the CMake-built tests and the editor
+(`okay-editor`, whose `main.cpp` change is the Timers call) were not built for this step.
+
+**Left (not this step).** The other Dear ImGui windows in `editor/` (39 `ImGui::Begin` calls after this step, 41 after the merge with
+main): among the small ones the Graph Navigator and Compare windows of the visual script editor (`editor/VsIdeCanvas.hpp`) and the
+Asset Manager (thumbnails, icon buttons and context menus); the launcher's windows.
+
+**Not verified.** Windows, the editor in a real window, the `okay-editor-okayui` build.

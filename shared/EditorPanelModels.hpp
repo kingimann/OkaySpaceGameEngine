@@ -12,6 +12,10 @@
 //   Post-processing Lighting: the look preset, tonemapping, bloom, colour grading, vignette, FXAA, SSAO, depth of field (editor/main.cpp)
 //   Player, Rendering  Project Settings: company, version and window size; ambient light and the skybox (editor/main.cpp)
 //   Loading screen  Project Settings: the editor's startup splash for the project (logo, accent, background, progress bar)
+//   Keyboard Shortcuts, Net, Find in Files, Data Asset, Plugin Manager  the small tool windows (editor/main.cpp, NetSimPanel.cpp,
+//                   FindInFiles.cpp, PluginsWindow.cpp)
+//   Map Humanoid Bones, Save Manager, Material, Frame time, Input  more tool windows (editor/main.cpp, InputDebugger.hpp)
+//   Timers, Input Actions  the scheduler and tween dump (editor/main.cpp) and the input asset editor (InputActionsWindow.hpp)
 //
 // Standard C++ only: no ImGui, no OkayUI, no engine types. The editor fills a model from its own state each frame, a panel
 // version draws it and answers with an intent (what the person asked for), and the editor carries the intent out. The rules
@@ -25,6 +29,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace okaypanels {
@@ -735,6 +740,579 @@ struct LoadingScreenIntent {
 
 inline const char* kLoadingScreenNote = "Customize the editor's startup splash for this project.\nChanges apply the next time the editor opens the project.";
 inline const char* kSplashLogoHint = "Logo image (PNG) \xE2\x80\x94 blank = built-in cube";
+
+// ============================================================================================================================
+// Keyboard Shortcuts (Help > Keyboard Shortcuts): every binding in one searchable place, grouped by the panel it applies to
+// ============================================================================================================================
+
+struct ShortcutRow { const char* keys; const char* what; };
+struct ShortcutSection { const char* title; std::vector<ShortcutRow> rows; };
+
+/// The editor's bindings, in the order the window lists them.
+inline const std::vector<ShortcutSection>& KeyboardShortcuts() {
+    static const std::vector<ShortcutSection> s = {
+        {"General", {
+            {"Ctrl+P",        "Play / Stop"},
+            {"Ctrl+S",        "Save scene"},
+            {"Ctrl+Alt+S",    "Save project (everything)"},
+            {"Ctrl+Shift+S",  "Save scene as..."},
+            {"Ctrl+O",        "Open scene"},
+            {"Ctrl+Z / Ctrl+Y","Undo / Redo"},
+            {"Ctrl+B",        "Build Settings (in mesh edit mode: bevel)"},
+            {"Ctrl+C / Ctrl+V","Copy / paste object"},
+            {"Ctrl+D",        "Duplicate selection"},
+            {"Ctrl+Shift+G",  "Group selection"},
+            {"Delete",        "Delete selection"},
+        }},
+        {"Scene view", {
+            {"W / E / R",     "Move / Rotate / Scale tool"},
+            {"X",             "Local / world gizmo space"},
+            {"F",             "Frame (focus) the selection"},
+            {"Shift+I",       "Isolate selection (Esc exits)"},
+            {"Shift+Space",   "Maximize the Scene view / bring the panels back"},
+            {"Ctrl+Alt+1..3", "Save camera bookmark"},
+            {"Ctrl+1..3",     "Recall camera bookmark"},
+            {"Arrows",        "Nudge selected UI widget (Shift = grid step)"},
+            {"Ctrl+Wheel",    "Zoom UI authoring view"},
+        }},
+        {"Mesh edit mode", {
+            {"Tab",           "Object / Edit mode"},
+            {"1 / 2 / 3",     "Vertex / Edge / Face select"},
+            {"G / R / S",     "Move / Rotate / Scale the selection"},
+            {"G G",           "Edge slide"},
+            {"Ctrl+R",        "Loop cut (scroll for more cuts)"},
+            {"Ctrl+B",        "Bevel the selected edges"},
+            {"K",             "Knife (Enter cuts)"},
+            {"Alt+Click",     "Select an edge loop"},
+            {"Ctrl+Alt+Click","Select an edge ring"},
+        }},
+        {"Panels & tabs", {
+            {"Ctrl+Tab",      "Switch to the previous panel (hold Ctrl, Tab again to go further)"},
+            {"Ctrl+Shift+Tab","Switch panels, going backwards"},
+            {"Middle-click",  "Close a panel tab"},
+            {"Drag a tab",    "Reorder it, dock it elsewhere, or drag it out to float"},
+            {"Right-click tab","Tab menu: add a tab, close, float, layouts, side tabs"},
+        }},
+        {"Hierarchy", {
+            {"F2",            "Rename object"},
+            {"Ctrl+Click",    "Add/remove from selection"},
+            {"Shift+Click",   "Range select"},
+            {"Ctrl+Up/Down",  "Reorder among siblings"},
+            {"Double-click",  "Frame object (in search results)"},
+        }},
+        {"Script Editor", {
+            {"Ctrl+F",        "Find in this file"},
+            {"Ctrl+Shift+F",  "Find in Files (project-wide)"},
+            {"Ctrl+Click",    "Go to definition"},
+            {"Ctrl+E",        "Command palette"},
+            {"Ctrl+G",        "Go to line"},
+            {"Ctrl+Alt+L",    "Format document"},
+            {"F2",            "Next warning"},
+        }},
+        {"Visual Script graph", {
+            {"Right-click / Space", "Add a node or an action step"},
+            {"Right- / middle-drag", "Pan"},
+            {"Scroll",        "Zoom"},
+            {"Home / F",      "Show all / frame selection"},
+            {"Ctrl+C / Ctrl+V / Ctrl+D","Copy / paste / duplicate"},
+            {"Delete",        "Delete selection"},
+            {"C",             "Comment around selection"},
+        }},
+        {"Sprite Editor", {
+            {"P / E / F / I", "Pencil / Eraser / Fill / Pick tool"},
+            {"Ctrl+Z",        "Undo stroke"},
+        }},
+    };
+    return s;
+}
+
+/// The sections and rows whose keys or description contain `filter` (any case); a section with no match is left out. Empty: all.
+inline std::vector<ShortcutSection> FilterShortcuts(const std::vector<ShortcutSection>& all, const char* filter) {
+    auto lower = [](const char* s) { std::string r(s ? s : ""); for (char& c : r) c = (char)std::tolower((unsigned char)c); return r; };
+    const std::string q = lower(filter);
+    std::vector<ShortcutSection> out;
+    for (const ShortcutSection& sec : all) {
+        ShortcutSection kept{sec.title, {}};
+        for (const ShortcutRow& r : sec.rows)
+            if (q.empty() || lower(r.keys).find(q) != std::string::npos || lower(r.what).find(q) != std::string::npos) kept.rows.push_back(r);
+        if (!kept.rows.empty()) out.push_back(std::move(kept));
+    }
+    return out;
+}
+
+struct ShortcutsState { char filter[48] = ""; };
+
+// ============================================================================================================================
+// Net (View > Panels > Net): the network simulator's switches and the last second's traffic per object
+// ============================================================================================================================
+
+struct NetTrafficRow { std::string name; float messagesPerSec = 0.0f, bytesPerSec = 0.0f; };
+
+struct NetSimModel {
+    bool* enabled = nullptr;                // the simulator's values, edited in place (null: not shown)
+    float* latencyMs = nullptr;
+    float* jitterMs = nullptr;
+    float* loss = nullptr;                  // 0..1 (shown as a percentage)
+    float* duplicate = nullptr;             // 0..1
+    float wireInPerSec = 0.0f, wireOutPerSec = 0.0f;   // bytes
+    std::vector<NetTrafficRow> rows;        // highest bytes/s first
+};
+
+struct NetSimIntent { bool changed = false; };   // a value changed (already written through its pointer, and kept in range)
+
+/// The ranges the simulator accepts: no negative delay, loss and duplicate between 0 and 1. A NaN becomes the lower bound.
+inline void ClampNetSim(NetSimModel& m) {
+    auto clamp = [](float* v, float lo, float hi) { if (v) *v = !(*v >= lo) ? lo : (*v > hi ? hi : *v); };
+    clamp(m.latencyMs, 0.0f, 1e9f); clamp(m.jitterMs, 0.0f, 1e9f);
+    clamp(m.loss, 0.0f, 1.0f); clamp(m.duplicate, 0.0f, 1.0f);
+}
+inline std::string NetWireText(const NetSimModel& m) {
+    char b[96];
+    std::snprintf(b, sizeof b, "Wire  in %.1f KB/s    out %.1f KB/s", m.wireInPerSec / 1024.0f, m.wireOutPerSec / 1024.0f);
+    return b;
+}
+inline const char* kNetSimOffNote = "off = packets go straight to the socket";
+inline const char* kNetTrafficNote = "Last full second. Objects are synced ids, RPC names, or channels.";
+
+// ============================================================================================================================
+// Find in Files (Ctrl+Shift+F in the Script Editor): every project script searched for a term; a hit opens the Script Editor there
+// ============================================================================================================================
+
+struct FindHit { std::string path; int line = 0; std::string preview; };
+
+constexpr std::size_t kFindInFilesCap = 200;   // the search stops at this many hits
+
+struct FindInFilesModel {
+    std::vector<FindHit> hits;
+    bool ran = false;                       // a search has run (the status line says how many it found)
+    bool focusQuery = false;                // put the keyboard in the field this frame (the window was just opened)
+    std::string error;                      // a bad regex: shown in red instead of the status line
+};
+
+struct FindInFilesState {
+    char query[128] = "";
+    char replaceWith[128] = "";             // Replace in All Files writes this over every match (a regex can use $1, $2 and $&)
+    bool matchCase = false, wholeWord = false, regex = false;   // the Script Editor's find bar has the same three
+};
+
+struct FindInFilesIntent {
+    bool search = false;                    // Enter in the field, Search, or an option changed, with a term typed: the host runs the search
+    bool replaceAll = false;                // Replace in All Files (only with a term and hits): the host rewrites every changed script
+    int open = -1;                          // a hit was clicked (index into hits): the host opens the script at that line
+};
+
+/// Replace in All Files is offered only once a search with a term has found something.
+inline bool FindInFilesCanReplace(const FindInFilesModel& m, const FindInFilesState& st) { return st.query[0] && !m.hits.empty(); }
+
+/// The line under the field: a hint before the first search, else how many hits (and whether the cap was reached).
+inline std::string FindInFilesStatus(const FindInFilesModel& m, const char* query) {
+    if (!m.error.empty()) return m.error;
+    if (!m.ran) return "Type a term and press Enter. Searches .okay / .lua / .cs scripts under Assets.";
+    if (m.hits.empty()) return std::string("No matches for \"") + (query ? query : "") + "\".";
+    char b[64];
+    std::snprintf(b, sizeof b, "%d match%s%s", (int)m.hits.size(), m.hits.size() == 1 ? "" : "es",
+                  m.hits.size() >= kFindInFilesCap ? " (capped at 200)" : "");
+    return b;
+}
+/// A hit's label: the file's name (no folders) and the line, "Player.okay:12".
+inline std::string FindHitLabel(const FindHit& h) {
+    const std::size_t slash = h.path.find_last_of("/\\");
+    return (slash == std::string::npos ? h.path : h.path.substr(slash + 1)) + ":" + std::to_string(h.line);
+}
+/// A hit's preview, at most 120 bytes (the line as it was found, leading blanks dropped by the search).
+inline std::string FindHitPreview(const FindHit& h) { return h.preview.size() > 120 ? h.preview.substr(0, 120) : h.preview; }
+
+// ============================================================================================================================
+// Data Asset: a .okaydata file's key / value fields (the Scriptable Object editor)
+// ============================================================================================================================
+
+struct DataAssetModel {
+    std::string path;
+    std::vector<std::pair<std::string, std::string>>* fields = nullptr;   // edited in place (the keys and values)
+};
+
+struct DataAssetIntent {
+    bool changed = false;                   // a key or value was typed in (already written)
+    int remove = -1;                        // X on a row: the host erases that field
+    bool add = false;                       // Add Field
+    bool save = false;                      // Save
+};
+
+inline const char* kDataAssetScriptNote = "Read from script: data_num(\"file.okaydata\", \"key\") / data_str(...)";
+constexpr std::size_t kDataKeySize = 64, kDataValueSize = 192;   // the longest key and value the fields take (bytes, with the end)
+
+// ============================================================================================================================
+// Plugin Manager (Plugins > Plugin Manager): the editor plugins found, each with its switch, scope and Edit / Open buttons
+// ============================================================================================================================
+
+struct PluginRow {
+    std::string name, description, error;  // the error (red) is shown instead of the description
+    bool enabled = false;
+    bool user = false;                      // in the editor's plugins/ folder (all projects), else this project's EditorPlugins/
+    bool hasWindow = false;                 // the plugin draws a window (Open / Close shown)
+    bool windowOpen = false;
+};
+
+struct PluginManagerModel { std::vector<PluginRow> rows; };
+
+struct PluginManagerIntent {
+    bool newPlugin = false, reloadAll = false, openFolder = false;   // the three buttons at the top
+    int toggle = -1;                        // a row's switch was clicked: the host turns that plugin to !enabled
+    int edit = -1;                          // Edit: the host opens the plugin's script
+    int openClose = -1;                     // Open / Close: the host shows or hides the plugin's window
+};
+
+inline const char* kPluginManagerNote = "Plugins are OkayScript files in EditorPlugins/ (this project) or the editor's plugins/ folder "
+                                        "(all projects). Saving a plugin reloads it. See docs/editor/editor-plugins.md.";
+inline const char* kPluginManagerEmpty = "No plugins found. Click + New Plugin to start one.";
+inline const char* PluginScopeText(const PluginRow& r) { return r.user ? "All projects" : "This project"; }
+
+// ============================================================================================================================
+// Map Humanoid Bones: the 15 body bones picked by hand for a rig whose bone names say nothing ("Bone.001"); the shared mapper's
+// shape checks run live, so a wrong pick (a leg under an arm, sides swapped) says why
+// ============================================================================================================================
+
+constexpr int kBoneSlotCount = 15;   // okay::humanoid::BoneCount, in its order
+inline const char* const kBoneSlotNames[kBoneSlotCount] = {"Hips", "Spine / chest", "Head",
+    "Left upper arm", "Left forearm", "Left hand", "Right upper arm", "Right forearm", "Right hand",
+    "Left thigh", "Left shin", "Left foot", "Right thigh", "Right shin", "Right foot"};
+
+struct BoneMapModel {
+    bool hasModel = false;                  // false: only the "Select an imported model" line
+    std::string modelName;
+    std::vector<std::string> bones;         // the model's bones (every object under it with a transform), in scene order
+    std::string autoName[kBoneSlotCount];   // the bone the name rules found per slot ("none")
+    std::string* picks = nullptr;           // kBoneSlotCount picks, edited in place: "" Auto, "-" None, else a bone's name
+    bool humanoid = false;                  // the mapper's verdict on the picks
+    int found = 0;
+    std::string why;                        // why it is not a humanoid yet
+    bool forRetarget = false;               // opened from a Humanoid Retarget: "Apply to Humanoid Retarget", else "Use Built-in Animations"
+};
+
+struct BoneMapIntent {
+    bool changed = false;                   // a pick changed (already written), or Clear set them all to Auto
+    bool apply = false;                     // the action button (only while the picks make a humanoid)
+};
+
+inline const char* kBoneMapNoModel = "Select an imported model and choose Map Humanoid Bones.";
+inline const char* kBoneMapNote = "Pick each body bone. Auto keeps the bone found by its name.";
+/// What a slot's list shows closed: "Auto (<found>)", "None", or the bone picked.
+inline std::string BonePickText(const std::string& pick, const std::string& autoName) {
+    if (pick.empty()) return "Auto (" + autoName + ")";
+    return pick == "-" ? std::string("None") : pick;
+}
+inline std::string BoneMapStatus(const BoneMapModel& m) {
+    return m.humanoid ? "Humanoid: " + std::to_string(m.found) + "/15 bones mapped" : "Not a humanoid yet: " + m.why;
+}
+
+// ============================================================================================================================
+// Save Manager: the .okaysave files of a project and their keys (type:payload), viewed, edited, added, removed or wiped
+// ============================================================================================================================
+
+struct SaveKeyRow { std::string key; char type = 's'; std::string payload; };
+
+constexpr int kSaveTypeCount = 5;
+inline const char kSaveTypeCodes[kSaveTypeCount] = {'f', 'i', 'b', 's', 'v'};
+inline const char* const kSaveTypeNames[kSaveTypeCount] = {"float", "int", "bool", "string", "Vector3"};
+inline const char* SaveTypeName(char t) {
+    for (int i = 0; i < kSaveTypeCount; ++i) if (kSaveTypeCodes[i] == t) return kSaveTypeNames[i];
+    return "string";
+}
+/// A stored value: the type's letter, a colon, the payload.
+inline std::string SaveRawValue(char type, const std::string& payload) { return std::string(1, type) + ":" + payload; }
+/// The file's keys as rows, sorted by key (an empty value is a string; a value shorter than "t:" has no payload).
+template <class Map>
+std::vector<SaveKeyRow> SaveKeyRows(const Map& raw) {
+    std::vector<SaveKeyRow> rows;
+    rows.reserve(raw.size());
+    for (const auto& kv : raw) rows.push_back({kv.first, kv.second.empty() ? 's' : kv.second[0], kv.second.size() > 2 ? kv.second.substr(2) : std::string()});
+    std::sort(rows.begin(), rows.end(), [](const SaveKeyRow& a, const SaveKeyRow& b) { return a.key < b.key; });
+    return rows;
+}
+/// The key filter: any case, part of the key. Empty: every key.
+inline bool SaveKeyMatches(const std::string& key, const char* filter) {
+    if (!filter || !filter[0]) return true;
+    std::string k = key, f = filter;
+    for (char& c : k) c = (char)std::tolower((unsigned char)c);
+    for (char& c : f) c = (char)std::tolower((unsigned char)c);
+    return k.find(f) != std::string::npos;
+}
+
+struct SaveManagerModel {
+    std::vector<std::string> files;         // the default save file, then every .okaysave in the project
+    std::string selected;                   // "" : none chosen yet
+    std::vector<SaveKeyRow> rows;           // the selected file's keys (SaveKeyRows)
+    bool dirty = false;                     // edits not written to disk yet
+};
+
+struct SaveManagerState {
+    char filter[64] = "";
+    char newKey[64] = "";
+    int newType = 0;                        // index into kSaveTypeCodes
+    char newValue[128] = "0";
+};
+
+struct SaveManagerIntent {
+    int choose = -1;                        // a file was picked from the list (index into files)
+    bool reload = false;
+    int edit = -1;                          // a value was typed in (index into rows): set rows[edit].key to editRaw
+    std::string editRaw;
+    int remove = -1;                        // X on a row (index into rows)
+    bool add = false;                       // Add with a key typed: set addKey to addRaw (the fields are emptied here)
+    std::string addKey, addRaw;
+    bool save = false;                      // Save to disk
+    bool clearAll = false;                  // Clear in the "Clear save keys?" box
+};
+
+inline const char* kSaveManagerNote = "Runtime save files (Easy-Save-style key/value data)";
+inline const char* kSaveManagerNoFile = "No file selected.";
+inline const char* kSaveClearNote = "Nothing is written to disk until you press Save to disk.";
+
+// ============================================================================================================================
+// Material: a .okaymat asset's surface look, its preview ball, Save and Apply to Selection
+// ============================================================================================================================
+
+struct MaterialModel {
+    std::string path;
+    float color[4] = {1, 1, 1, 1};          // the values, edited in place (the host copies them back on intent.changed)
+    float emissive[3] = {0, 0, 0};
+    float specular = 0.0f, shininess = 32.0f;
+    bool unlit = false, doubleSided = false;
+    std::string texture;
+    float tiling[2] = {1, 1};
+    bool canApply = false;                  // a mesh is selected
+};
+
+struct MaterialIntent {
+    bool changed = false;
+    bool browse = false;                    // "..." next to the texture: the host opens its file dialog
+    bool save = false, apply = false;
+};
+
+/// The preview ball's colour: the albedo brightened by the emissive (at 60%), each channel at most 1.
+inline void MaterialPreviewColor(const MaterialModel& m, float out[3]) {
+    for (int i = 0; i < 3; ++i) out[i] = std::min(1.0f, m.color[i] + m.emissive[i] * 0.6f);
+}
+/// Where a material ball goes in a rectangle: the ball, the soft light spot at its upper left, and the specular glint (the Project
+/// panel's tiles draw the first two, the Material window all three).
+struct MaterialBall { float cx = 0, cy = 0, r = 0, spotX = 0, spotY = 0, spotR = 0, glintX = 0, glintY = 0, glintR = 0; };
+inline MaterialBall MaterialBallIn(float x0, float y0, float x1, float y1) {
+    MaterialBall b;
+    b.cx = (x0 + x1) * 0.5f; b.cy = (y0 + y1) * 0.5f;
+    b.r = std::min(x1 - x0, y1 - y0) * 0.32f;
+    b.spotX = b.cx - b.r * 0.35f; b.spotY = b.cy - b.r * 0.38f; b.spotR = b.r * 0.28f;
+    b.glintX = b.cx - b.r * 0.30f; b.glintY = b.cy - b.r * 0.34f; b.glintR = b.r * 0.12f;
+    return b;
+}
+inline const char* kMaterialApplyNote = "(select a mesh to apply)";
+
+// ============================================================================================================================
+// Frame time (View > Rendering > Frame-time overlay): FPS and frame time over the last frames, a graph, and where the newest
+// frames went (the editor's okay::editor::perf numbers), in a small window that sizes itself
+// ============================================================================================================================
+
+struct PerfSection { std::string name; double ms = 0.0; float share = 0.0f; };
+
+struct PerfOverlayModel {
+    double fps = 0.0, avgMs = 0.0, p95Ms = 0.0, worstMs = 0.0, lowFps = 0.0;   // over the last 120 frames
+    double workMs = 0.0, sleepMs = 0.0;     // the newest frames' average without and of the limiter's sleep
+    bool collecting = false;                // the profiler is off or has fewer than two frames
+    std::vector<float> plot;                // frame times (ms), oldest first
+    int breakFrames = 0;                    // how many frames the sections are averaged over
+    std::vector<PerfSection> sections;      // biggest first (PerfSections)
+    std::string renderer;
+    int sceneW = 0, sceneH = 0;
+    float scale = 1.0f;
+    bool perfMode = false;
+};
+
+struct PerfOverlayIntent { bool copyReport = false, openProfiler = false; };
+
+/// The FPS colour: green from 100, amber from 60, red below.
+inline void PerfFpsColor(double fps, float rgb[3]) {
+    if (fps >= 100.0)     { rgb[0] = 0.45f; rgb[1] = 0.85f; rgb[2] = 0.55f; }
+    else if (fps >= 60.0) { rgb[0] = 0.95f; rgb[1] = 0.80f; rgb[2] = 0.35f; }
+    else                  { rgb[0] = 0.95f; rgb[1] = 0.45f; rgb[2] = 0.40f; }
+}
+inline std::string PerfTimesText(const PerfOverlayModel& m) {
+    char b[128];
+    std::snprintf(b, sizeof b, "%.2f ms avg   95%%: %.2f   worst: %.2f   1%% low: %.0f FPS", m.avgMs, m.p95Ms, m.worstMs, m.lowFps);
+    return b;
+}
+/// "Without the limiter's sleep ..." when the limiter slept a noticeable part of the frame; empty otherwise.
+inline std::string PerfSleepText(const PerfOverlayModel& m) {
+    if (!(m.sleepMs > 0.05 && m.workMs > 0.0)) return std::string();
+    char b[96];
+    std::snprintf(b, sizeof b, "Without the limiter's sleep: %.2f ms = %.0f FPS possible", m.workMs, 1000.0 / m.workMs);
+    return b;
+}
+/// The graph's top (at least a 60 FPS frame, else 10% over the worst) and its caption.
+inline float PerfPlotTop(const PerfOverlayModel& m) { return (float)std::max(16.7, m.worstMs * 1.1); }
+inline std::string PerfPlotCaption(const PerfOverlayModel& m) {
+    char b[48];
+    std::snprintf(b, sizeof b, "last %d frames, top %.0f ms", (int)m.plot.size(), (double)PerfPlotTop(m));
+    return b;
+}
+inline std::string PerfSectionBar(const PerfSection& s) {
+    char b[40];
+    std::snprintf(b, sizeof b, "%.2f ms  %.0f%%", s.ms, (double)s.share * 100.0);
+    return b;
+}
+inline std::string PerfViewText(const PerfOverlayModel& m) {
+    char b[96];
+    std::snprintf(b, sizeof b, "Scene view %dx%d, scale %.2f%s", m.sceneW, m.sceneH, (double)m.scale, m.perfMode ? ", performance mode" : "");
+    return b;
+}
+/// The sections biggest first, the ones under 0.005 ms left out (except `keep`, the Scene view, which is always listed); each
+/// with its share of `total`.
+inline std::vector<PerfSection> PerfSections(const std::vector<std::string>& names, const std::vector<double>& ms, double total, int keep) {
+    std::vector<int> order;
+    for (int k = 0; k < (int)ms.size() && k < (int)names.size(); ++k) order.push_back(k);
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return ms[(std::size_t)a] > ms[(std::size_t)b]; });
+    std::vector<PerfSection> out;
+    for (int k : order) {
+        if (ms[(std::size_t)k] < 0.005 && k != keep) continue;
+        out.push_back({names[(std::size_t)k], ms[(std::size_t)k], total > 0.0 ? (float)(ms[(std::size_t)k] / total) : 0.0f});
+    }
+    return out;
+}
+
+// ============================================================================================================================
+// Input (View > Panels > Input): what the engine sees right now (keys, mouse, controllers, actions), the last events, record
+// and replay, and each action's response curve
+// ============================================================================================================================
+
+struct InputResponse { float deadzone = 0.0f, curve = 1.0f, sensitivity = 1.0f; bool invertX = false, invertY = false; };
+
+struct InputPanelModel {
+    bool playing = false;
+    std::vector<std::string> snapshot;      // "Right now"
+    std::vector<std::string> controllers;   // which controller is plugged in
+    struct Player { int number = 1; std::vector<std::string> lines; };
+    std::vector<Player> players;            // each local player's number and action lines
+    std::vector<std::string> events;        // the last events, newest first
+    std::string recordStatus;               // "Kept: 12 frames"
+    std::vector<std::string> actions;       // the actions' names (the Response curves list)
+    bool direction = false;                 // the chosen action is 2D (Invert X / Y shown)
+    float value = 0.0f;                     // the chosen action's value now
+    InputResponse response;                 // the chosen action's response, edited in place
+    std::function<float(float, const InputResponse&)> shape;   // the curve: how far pushed (0..1) to what the game gets
+};
+
+struct InputPanelState {
+    int action = 0;                         // the chosen action (index into actions)
+};
+
+struct InputPanelIntent {
+    bool clearEvents = false;
+    bool record = false, stop = false, replay = false, copyText = false;
+    bool responseChanged = false;           // a slider or box moved (model.response holds the new values)
+    bool resetCurve = false;
+};
+
+inline const char* kInputNotPlaying = "Press Play, then click the Game view: the game only receives input while it plays.";
+inline const char* kInputNoPlayer = "No local player yet (ia_join or the first ia_ read creates one).";
+inline const char* kInputRecordNote = "Record what you press while the game plays, then replay it to reproduce a bug. While it replays, "
+                                      "the keyboard and mouse are ignored.";
+inline const char* kInputCurveCaption = "how far you push (left to right) -> what the game gets";
+
+// ============================================================================================================================
+// Timers (View > Panels > Timers): the scene scheduler's tasks, then the tweens, as the engine dumps them
+// ============================================================================================================================
+
+/// The text split into its lines (a trailing newline makes no empty last line; "\r" before a newline is dropped).
+inline std::vector<std::string> TextLines(const std::string& text) {
+    std::vector<std::string> out;
+    std::size_t a = 0;
+    while (a < text.size()) {
+        std::size_t e = text.find('\n', a);
+        if (e == std::string::npos) e = text.size();
+        std::size_t end = e;
+        if (end > a && text[end - 1] == '\r') --end;
+        out.push_back(text.substr(a, end - a));
+        a = e + 1;
+    }
+    return out;
+}
+
+// ============================================================================================================================
+// Input Actions (View > Editors & Tools > Input Actions): an input asset (.okayinput) - control schemes, action maps, actions
+// with their bindings, processors and interactions - with a validation list and a live view of the players' actions
+// ============================================================================================================================
+
+constexpr std::size_t kIaFileSize = 512, kIaNameSize = 64, kIaPartSize = 160, kIaInteractionSize = 96;
+
+struct InputActionRow { std::string name, type; };          // an action of a map and its value type ("button", "vector2" ...)
+struct InputActionMapRow {
+    std::string name;
+    int priority = 0;
+    bool consume = false, enabled = true;
+    std::vector<InputActionRow> actions;
+};
+struct InputBindingRow { std::vector<std::string> parts; std::string processors; };   // one input per part ("key:w"); processors as text
+
+struct InputActionsModel {
+    bool dirty = false;                     // the asset has changes that are not saved
+    std::vector<std::string> schemes;       // "Keyboard+Mouse keyboard mouse"
+    std::vector<InputActionMapRow> maps;
+    // the Action tab (the selected action; hasAction false: none or it is gone)
+    bool hasAction = false;
+    std::vector<std::string> describe;      // what the action is and does, a line each
+    std::vector<InputBindingRow> bindings;
+    std::vector<std::string> interactions;  // "hold(0.5)"
+    // the Check tab
+    std::vector<std::string> problems;
+    // the Live tab
+    std::vector<std::string> controllers;
+    struct Player { int number = 1; std::vector<std::string> lines; };
+    std::vector<Player> players;
+};
+
+struct InputActionsState {
+    char file[kIaFileSize] = "";            // the asset's path: Load and Save use it
+    char name[kIaNameSize] = "";            // the name field (+ Map, + Scheme, + Action)
+    char interaction[kIaInteractionSize] = "";   // the "add interaction" field
+    int newType = 0;                        // + Action's value type (index into kIaNewTypes)
+    std::string selected;                   // the action shown in the Action tab
+    std::string status;                     // the last answer ("Saved.", "Map name taken ...")
+    int forceTab = -1;                      // 0 Action, 1 Check, 2 Live: chosen on the next frame (-1 leaves it)
+    // the binding fields' text while they are edited: parts of every binding one after the other, then one processors field each
+    std::vector<std::vector<char>> partBufs, procBufs;
+};
+
+struct InputActionsIntent {
+    bool load = false, save = false, newDefault = false, migrate = false, useInGame = false;
+    bool addMap = false, addScheme = false, addAction = false, deleteAction = false;
+    bool select = false; std::string selectName;            // an action row was clicked
+    int partBinding = -1, partIndex = -1; std::string partText;   // Enter in a binding's input field
+    int procBinding = -1; std::string procText;                    // Enter in a binding's processors field
+    int removeBinding = -1;
+    int addBinding = -1;                                           // index into kIaBindingKinds
+    bool addInteraction = false; std::string interactionText;      // Enter in the interaction field
+    int removeInteraction = -1;
+};
+
+inline const char* const kIaNewTypes[] = {"button", "axis", "vector2", "vector3"};
+inline const char* const kIaBindingKinds[] = {"+ single", "+ 2D vector", "+ 3D vector", "+ 1D axis", "+ chord"};
+inline const char* kIaPickAction = "Pick an action on the left.";
+inline const char* kIaNoProblems = "No problems found.";
+inline const char* kIaNoPlayer = "No local player yet: a script that reads an action (ia_x, ia_down ...) joins one, or call ia_join().";
+inline const char* kIaInteractionHint = "add interaction (Enter): hold(0.5)  tap(0.2)  multitap(2)  repeat(0.1)  press  release";
+
+/// A map's title line: "Gameplay  (priority 0, consumes, off)".
+inline std::string InputMapTitle(const InputActionMapRow& m) {
+    return m.name + "  (priority " + std::to_string(m.priority) + (m.consume ? ", consumes" : "") + (m.enabled ? "" : ", off") + ")";
+}
+/// An action's row in the list: "    Jump  [button]".
+inline std::string InputActionLabel(const InputActionRow& a) { return "    " + a.name + "  [" + a.type + "]"; }
+/// The first part field of each binding in InputActionsState::partBufs (the parts of every binding one after the other).
+inline std::vector<std::size_t> InputPartOffsets(const InputActionsModel& m) {
+    std::vector<std::size_t> off;
+    std::size_t n = 0;
+    for (const InputBindingRow& b : m.bindings) { off.push_back(n); n += b.parts.size(); }
+    off.push_back(n);
+    return off;
+}
 
 } // namespace okaypanels
 

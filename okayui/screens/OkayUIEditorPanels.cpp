@@ -643,10 +643,11 @@ PhysicsSettingsResult DrawPhysicsSettings(PhysicsSettingsModel& m, float x, floa
 // ---- Profiler -----------------------------------------------------------------------------------------------------------------
 
 namespace {
-// Dear ImGui's line plot: a rounded field, the line inside the frame padding, the overlay text centred at the top.
-UI::Rect FramedPlot(const char* id, const std::vector<float>& v, int n, const char* overlay, float top, float height) {
+// Dear ImGui's line plot: a rounded field, the line inside the frame padding, the overlay text centred at the top. `width` > 0: that
+// wide (else the region's width).
+UI::Rect FramedPlot(const char* id, const std::vector<float>& v, int n, const char* overlay, float top, float height, float width = 0.0f) {
     const UI::Vec2 p = UI::GetCursorScreenPos();
-    const float pw = UI::GetContentRegionAvail().x;
+    const float pw = width > 0.0f ? width : UI::GetContentRegionAvail().x;
     UI::GetWindowDrawList().AddRectFilled(p, UI::Vec2{p.x + pw, p.y + height}, kFieldBg, 6.0f);
     if (n > 0 && !v.empty()) {
         UI::SetCursorScreenPos(UI::Vec2{p.x + 10.0f, p.y + 6.0f});
@@ -666,9 +667,10 @@ UI::Rect FramedPlot(const char* id, const std::vector<float>& v, int n, const ch
     return UI::Rect{p.x, p.y, pw, height};
 }
 // Dear ImGui's progress bar: a frame-tall field, the fill from the left in `fill`, the text just right of the fill (kept inside).
-UI::Rect FramedBar(float frac, const char* text, UI::Color32 fill) {
+// `width` > 0: that wide (else the region's width).
+UI::Rect FramedBar(float frac, const char* text, UI::Color32 fill, float width = 0.0f) {
     const UI::Vec2 p = UI::GetCursorScreenPos();
-    const float bw = UI::GetContentRegionAvail().x, bh = UI::GetFontSize() + 16.0f;
+    const float bw = width > 0.0f ? width : UI::GetContentRegionAvail().x, bh = UI::GetFontSize() + 16.0f;
     const UI::DrawList& dl = UI::GetWindowDrawList();
     dl.AddRectFilled(p, UI::Vec2{p.x + bw, p.y + bh}, kFieldBg, 6.0f);
     const float f = std::isfinite(frac) ? std::clamp(frac, 0.0f, 1.0f) : 0.0f;
@@ -3692,6 +3694,930 @@ LoadingScreenResult DrawLoadingScreen(LoadingScreenModel& m, float x, float y, f
         }
         res.contentHeight = ContentHeight(top);
         UI::PopStyleVar();
+    }
+    UI::End();
+    return res;
+}
+
+// ---- the small tool windows (docs/ui/own_ui_toolkit.md section 28) ---------------------------------------------------------------
+
+namespace {
+const UI::Color32 kShortcutTitle = UI::RGBA(140, 204, 255);       // ImVec4(0.55, 0.80, 1.00): a section's title
+const unsigned char kShortcutKeys[3] = {217, 230, 184};            // ImVec4(0.85, 0.90, 0.72): the keys
+// The text of a hit or a row a fixed distance from the left of the list (Dear ImGui's SameLine(offset)).
+void AtColumn(float offset) { UI::SameLine(); UI::SetCursorPosX(offset); }
+} // namespace
+
+ShortcutsResult DrawShortcuts(const std::vector<ShortcutSection>& all, ShortcutsState& st, float x, float y, float w, float h) {
+    ShortcutsResult res;
+    st.filter[sizeof(st.filter) - 1] = '\0';
+    UI::BareNextWindow();
+    if (UI::Begin("Shortcuts##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::SetNextItemWidth(UI::GetContentRegionAvail().x);
+        UI::InputTextWithHint("##scfilter", "filter...", st.filter, (int)sizeof(st.filter));
+        res.filter = UI::GetItemRect();
+        Divider();
+        UI::BeginChild("##shortcutlist", UI::Vec2{0.0f, 0.0f}, UI::Child_None);
+        for (const ShortcutSection& sec : FilterShortcuts(all, st.filter)) {
+            UI::PushStyleColor(UI::Col_Text, kShortcutTitle);
+            UI::SeparatorText(sec.title);
+            UI::PopStyleColor();
+            res.titles.push_back(UI::GetItemRect());
+            for (const ShortcutRow& r : sec.rows) {
+                UI::TextColored(kShortcutKeys[0], kShortcutKeys[1], kShortcutKeys[2], r.keys);
+                res.keys.push_back(UI::GetItemRect());
+                AtColumn(150.0f);
+                UI::TextDisabled(r.what);
+                res.whats.push_back(UI::GetItemRect());
+            }
+        }
+        UI::EndChild();
+    }
+    UI::End();
+    return res;
+}
+
+NetSimResult DrawNetSim(NetSimModel& m, float x, float y, float w, float h) {
+    NetSimResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("Net##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
+        const float itemW = ItemWidthFor(w);
+        bool& ch = res.intent.changed;
+        if (m.enabled) {
+            if (FrameCheckbox("Simulate", m.enabled)) ch = true;
+            res.simulate = UI::GetItemRect();
+            UI::SameLine();
+            UI::TextDisabled(kNetSimOffNote);
+        }
+        auto slider = [&](const char* label, float* v, float scale, float hi, const char* fmt, UI::Rect& rect) {
+            if (!v) return;
+            float shown = *v * scale;   // loss and duplicate are fractions, shown as percentages
+            UI::SetNextItemWidth(WithLabel(itemW, label));
+            if (UI::SliderFloat(label, &shown, 0.0f, hi, fmt)) { *v = shown / scale; ch = true; }
+            rect = UI::GetItemRect();
+        };
+        slider("Latency (ms)", m.latencyMs, 1.0f, 500.0f, "%.0f", res.latency);
+        slider("Jitter (ms)", m.jitterMs, 1.0f, 200.0f, "%.0f", res.jitter);
+        slider("Loss (%)", m.loss, 100.0f, 50.0f, "%.1f", res.loss);
+        slider("Duplicate (%)", m.duplicate, 100.0f, 50.0f, "%.1f", res.duplicate);
+        ClampNetSim(m);
+        Divider();
+        UI::Text(NetWireText(m).c_str());
+        res.wire = UI::GetItemRect();
+        UI::TextDisabled(kNetTrafficNote);
+        if (UI::BeginTable("nettraffic", 3, UI::Table_RowBg | UI::Table_NoResize | UI::Table_ScrollY, UI::Vec2{0.0f, 220.0f})) {
+            UI::TableSetupColumn("Object");
+            UI::TableSetupColumn("Msg/s", UI::Col_WidthFixed, 70.0f);
+            UI::TableSetupColumn("B/s", UI::Col_WidthFixed, 80.0f);
+            UI::TableHeadersRow();
+            char b[32];
+            for (const NetTrafficRow& r : m.rows) {
+                UI::TableNextRow();
+                UI::TableSetColumnIndex(0);
+                UI::TextUnformatted(r.name.c_str());
+                res.rows.push_back(UI::GetItemRect());
+                UI::TableSetColumnIndex(1);
+                std::snprintf(b, sizeof b, "%.1f", r.messagesPerSec);
+                UI::TextUnformatted(b);
+                UI::TableSetColumnIndex(2);
+                std::snprintf(b, sizeof b, "%.0f", r.bytesPerSec);
+                UI::TextUnformatted(b);
+            }
+            UI::EndTable();
+        }
+        res.table = UI::GetItemRect();
+        UI::PopStyleVar();
+    }
+    UI::End();
+    return res;
+}
+
+FindInFilesResult DrawFindInFiles(const FindInFilesModel& m, FindInFilesState& st, float x, float y, float w, float h) {
+    FindInFilesResult res;
+    st.query[sizeof(st.query) - 1] = '\0';
+    UI::BareNextWindow();
+    if (UI::Begin("FindInFiles##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        if (m.focusQuery) UI::SetKeyboardFocusHere();
+        const float buttonW = 80.0f;
+        UI::SetNextItemWidth(std::max(UI::GetContentRegionAvail().x - buttonW - g_metrics.itemSpacing.x, 40.0f));
+        bool go = UI::InputTextWithHint("##fifq", "Search every project script...", st.query, (int)sizeof(st.query), UI::InputText_EnterReturnsTrue);
+        res.query = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("Search", UI::Vec2{buttonW, 0.0f})) go = true;
+        res.search = UI::GetItemRect();
+        go |= UI::Checkbox("Match case", &st.matchCase);
+        res.matchCase = UI::GetItemRect();
+        UI::SameLine();
+        go |= UI::Checkbox("Whole word", &st.wholeWord);
+        res.wholeWord = UI::GetItemRect();
+        UI::SameLine();
+        go |= UI::Checkbox("Regex", &st.regex);
+        res.regex = UI::GetItemRect();
+        if (UI::IsItemHovered()) UI::SetTooltip("A regular expression (ECMAScript); the replacement can use $1, $2 and $&.");
+        if (go && st.query[0]) res.intent.search = true;
+        const float replaceW = 160.0f;
+        UI::SetNextItemWidth(std::max(UI::GetContentRegionAvail().x - replaceW - g_metrics.itemSpacing.x, 40.0f));
+        UI::InputTextWithHint("##fifr", "Replace with...", st.replaceWith, (int)sizeof(st.replaceWith));
+        res.replaceField = UI::GetItemRect();
+        UI::SameLine();
+        UI::BeginDisabled(!FindInFilesCanReplace(m, st));
+        if (UI::Button("Replace in All Files", UI::Vec2{replaceW, 0.0f}) && FindInFilesCanReplace(m, st)) res.intent.replaceAll = true;
+        res.replace = UI::GetItemRect();
+        UI::EndDisabled();
+        Divider();
+        if (!m.error.empty()) {
+            UI::TextColored(kBad[0], kBad[1], kBad[2], m.error.c_str());
+        } else {
+            UI::TextDisabled(FindInFilesStatus(m, st.query).c_str());
+        }
+        res.status = UI::GetItemRect();
+        UI::BeginChild("##fifres", UI::Vec2{0.0f, 0.0f}, UI::Child_None);
+        res.list = UI::Rect{UI::GetCursorScreenPos().x, UI::GetCursorScreenPos().y, UI::GetContentRegionAvail().x, UI::GetContentRegionAvail().y};
+        MenuLook look_(0.0f);   // the header colours of a hovered row
+        for (std::size_t i = 0; i < m.hits.size(); ++i) {
+            const FindHit& hit = m.hits[i];
+            UI::PushID((int)i);
+            if (UI::Selectable(FindHitLabel(hit).c_str(), false, UI::Selectable_Header, UI::Vec2{0.0f, UI::GetFontSize()})) res.intent.open = (int)i;   // one text line, as Dear ImGui's
+            res.hits.push_back(UI::GetItemRect());
+            if (UI::IsItemHovered()) UI::SetTooltip("%s", hit.path.c_str());
+            AtColumn(180.0f);
+            UI::TextDisabled(FindHitPreview(hit).c_str());
+            UI::PopID();
+        }
+        UI::EndChild();
+    }
+    UI::End();
+    return res;
+}
+
+DataAssetResult DrawDataAsset(DataAssetModel& m, float x, float y, float w, float h) {
+    DataAssetResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("DataAsset##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::TextDisabled(m.path.c_str());
+        UI::TextDisabled(kDataAssetScriptNote);
+        Divider();
+        if (m.fields) {
+            for (std::size_t i = 0; i < m.fields->size(); ++i) {
+                std::pair<std::string, std::string>& f = (*m.fields)[i];
+                UI::PushID((int)i);
+                char k[kDataKeySize]; std::snprintf(k, sizeof k, "%s", f.first.c_str());
+                UI::SetNextItemWidth(140.0f);
+                if (UI::InputText("##k", k, (int)sizeof k)) { f.first = k; res.intent.changed = true; }
+                res.keys.push_back(UI::GetItemRect());
+                UI::SameLine();
+                char v[kDataValueSize]; std::snprintf(v, sizeof v, "%s", f.second.c_str());
+                UI::SetNextItemWidth(200.0f);
+                if (UI::InputText("##v", v, (int)sizeof v)) { f.second = v; res.intent.changed = true; }
+                res.values.push_back(UI::GetItemRect());
+                UI::SameLine();
+                if (LineButton("X")) res.intent.remove = (int)i;
+                res.removes.push_back(UI::GetItemRect());
+                UI::PopID();
+            }
+        }
+        if (UI::Button("Add Field")) res.intent.add = true;
+        res.add = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("Save")) res.intent.save = true;
+        res.save = UI::GetItemRect();
+    }
+    UI::End();
+    return res;
+}
+
+PluginManagerResult DrawPluginManager(const PluginManagerModel& m, float x, float y, float w, float h) {
+    PluginManagerResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("PluginManager##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        if (UI::Button("+ New Plugin")) res.intent.newPlugin = true;
+        res.newPlugin = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("Reload All")) res.intent.reloadAll = true;
+        res.reloadAll = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("Open Folder")) res.intent.openFolder = true;
+        res.openFolder = UI::GetItemRect();
+        UI::PushTextWrapPos(0.0f);
+        UI::TextDisabled(kPluginManagerNote);
+        UI::PopTextWrapPos();
+        Divider();
+        if (m.rows.empty()) { UI::TextDisabled(kPluginManagerEmpty); res.empty = true; }
+        if (UI::BeginTable("##plugins", 4, UI::Table_RowBg | UI::Table_NoResize)) {
+            UI::TableSetupColumn("On", UI::Col_WidthFixed, 34.0f);
+            UI::TableSetupColumn("Plugin", 0, 3.0f);
+            UI::TableSetupColumn("Scope", 0, 0.9f);
+            UI::TableSetupColumn("", 0, 1.4f);
+            UI::TableHeadersRow();
+            for (std::size_t i = 0; i < m.rows.size(); ++i) {
+                const PluginRow& p = m.rows[i];
+                UI::PushID((int)i);
+                UI::TableNextRow();
+                UI::TableNextColumn();
+                bool on = p.enabled;
+                if (UI::Checkbox("##en", &on)) res.intent.toggle = (int)i;
+                res.switches.push_back(UI::GetItemRect());
+                UI::TableNextColumn();
+                UI::TextUnformatted(p.name.c_str());
+                res.names.push_back(UI::GetItemRect());
+                if (!p.error.empty()) UI::TextColored(242, 115, 107, p.error.c_str());   // ImVec4(0.95, 0.45, 0.42)
+                else if (!p.description.empty()) UI::TextDisabled(p.description.c_str());
+                UI::TableNextColumn();
+                UI::TextDisabled(PluginScopeText(p));
+                UI::TableNextColumn();
+                if (LineButton("Edit")) res.intent.edit = (int)i;
+                res.edits.push_back(UI::GetItemRect());
+                UI::Rect oc;
+                if (p.hasWindow) {
+                    UI::SameLine();
+                    if (LineButton(p.windowOpen ? "Close" : "Open")) res.intent.openClose = (int)i;
+                    oc = UI::GetItemRect();
+                }
+                res.openCloses.push_back(oc);
+                UI::PopID();
+            }
+            UI::EndTable();
+        }
+        res.table = UI::GetItemRect();
+    }
+    UI::End();
+    return res;
+}
+
+// ---- more tool windows: Map Humanoid Bones, Save Manager, Material, Frame time, Input (docs/ui/own_ui_toolkit.md section 29) -------
+
+namespace {
+// A list box `boxW` wide with `count` rows (`label(k)` names row k), `current` marked; at most 8 rows show at a time (ListWindow).
+// Returns the row picked this frame (-1: none); `box` gets the box, `rows` the open list's row rectangles, `popup` the list.
+template <class Label>
+int PickList(const char* id, const char* preview, float boxW, int count, int current, Label label, UI::Rect& box, std::vector<UI::Rect>& rows,
+             UI::Rect& popup) {
+    MenuLook look_(0.0f);
+    UI::PushStyleVar(UI::StyleVar_PopupWidth, boxW);
+    UI::SetNextItemWidth(boxW);
+    int picked = -1;
+    const bool open = UI::BeginCombo(id, preview);
+    box = UI::GetItemRect();
+    if (open) {
+        rows.assign((std::size_t)count, UI::Rect{});
+        ListWindow(id, count, current, [&](int k) {
+            UI::PushID(k);
+            if (ListRow(label(k), k == current)) picked = k;
+            rows[(std::size_t)k] = UI::GetItemRect();
+            UI::PopID();
+        });
+        UI::EndCombo();
+        float y0 = 1e30f, y1 = -1e30f, x0 = 0.0f;   // the rows in view (out of view they are zero size)
+        for (const UI::Rect& r : rows) if (r.h > 0.0f) { x0 = r.x; y0 = std::min(y0, r.y); y1 = std::max(y1, r.y + r.h); }
+        if (y1 > y0) popup = UI::Rect{x0, y0, boxW, y1 - y0};
+    }
+    UI::PopStyleVar();
+    return picked;
+}
+const unsigned char kGood[3] = {115, 217, 140};                  // ImVec4(0.45, 0.85, 0.55)
+const unsigned char kAmber[3] = {242, 153, 89};                  // ImVec4(0.95, 0.60, 0.35)
+const unsigned char kUnsaved[3] = {242, 204, 89};                // ImVec4(0.95, 0.80, 0.35)
+const UI::Color32 kDanger = UI::RGBA(166, 56, 56), kDangerHovered = UI::RGBA(204, 71, 71);   // (0.65, 0.22, 0.22) and (0.80, 0.28, 0.28)
+// The right edge of the last item, for a body that measures how wide it is.
+void Widest(float& right) { right = std::max(right, UI::GetItemRectMax().x); }
+} // namespace
+
+BoneMapResult DrawBoneMap(BoneMapModel& m, float x, float y, float w, float h) {
+    BoneMapResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("BoneMap##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        if (!m.hasModel || !m.picks) {
+            UI::TextDisabled(kBoneMapNoModel);
+            res.empty = true;
+        } else {
+            UI::BeginChild("##bonemapbody", UI::Vec2{0.0f, 0.0f}, UI::Child_None);
+            UI::Text(("Model: " + m.modelName).c_str());
+            UI::TextDisabled(kBoneMapNote);
+            // the slot names in the first column (as wide as the longest), the list boxes filling the rest
+            float nameW = 0.0f;
+            for (const char* n : kBoneSlotNames) nameW = std::max(nameW, UI::CalcTextWidth(n));
+            const float boxW = std::max(UI::GetContentRegionAvail().x - nameW - 2.0f * g_metrics.itemSpacing.x, 60.0f);
+            if (UI::BeginTable("##bonemap", 2, UI::Table_RowBg | UI::Table_NoResize)) {
+                UI::TableSetupColumn("slot", UI::Col_WidthFixed, nameW + g_metrics.itemSpacing.x);
+                UI::TableSetupColumn("bone");
+                for (int b = 0; b < kBoneSlotCount; ++b) {
+                    UI::PushID(b);
+                    UI::TableNextRow();
+                    UI::TableNextColumn();
+                    UI::AlignTextToFramePadding();
+                    UI::TextUnformatted(kBoneSlotNames[b]);
+                    UI::TableNextColumn();
+                    std::string& pick = m.picks[b];
+                    const std::string autoText = "Auto (" + m.autoName[b] + ")";
+                    int current = pick.empty() ? 0 : pick == "-" ? 1 : -1;
+                    for (std::size_t k = 0; current < 0 && k < m.bones.size(); ++k) if (m.bones[k] == pick) current = (int)k + 2;
+                    UI::Rect slot;
+                    const int picked = PickList("##bm", BonePickText(pick, m.autoName[b]).c_str(), boxW, (int)m.bones.size() + 2, current,
+                        [&](int k) { return k == 0 ? autoText.c_str() : k == 1 ? "None" : m.bones[(std::size_t)k - 2].c_str(); },
+                        slot, res.listRows, res.popup);
+                    res.slots.push_back(slot);
+                    if (picked >= 0 && picked != current) {
+                        pick = picked == 0 ? std::string() : picked == 1 ? std::string("-") : m.bones[(std::size_t)picked - 2];
+                        res.intent.changed = true;
+                    }
+                    UI::PopID();
+                }
+                UI::EndTable();
+            }
+            const std::string status = BoneMapStatus(m);
+            if (m.humanoid) UI::TextColored(kGood[0], kGood[1], kGood[2], status.c_str());
+            else UI::TextColored(kAmber[0], kAmber[1], kAmber[2], status.c_str());
+            res.status = UI::GetItemRect();
+            if (UI::Button("Clear (all Auto)")) {
+                for (int b = 0; b < kBoneSlotCount; ++b) m.picks[b].clear();
+                res.intent.changed = true;
+            }
+            res.clear = UI::GetItemRect();
+            UI::SameLine();
+            UI::BeginDisabled(!m.humanoid);
+            if (UI::Button(m.forRetarget ? "Apply to Humanoid Retarget" : "Use Built-in Animations") && m.humanoid) res.intent.apply = true;
+            res.apply = UI::GetItemRect();
+            UI::EndDisabled();
+            UI::EndChild();
+        }
+    }
+    UI::End();
+    return res;
+}
+
+SaveManagerResult DrawSaveManager(const SaveManagerModel& m, SaveManagerState& st, float x, float y, float w, float h) {
+    SaveManagerResult res;
+    st.filter[sizeof(st.filter) - 1] = '\0';
+    st.newKey[sizeof(st.newKey) - 1] = '\0';
+    st.newValue[sizeof(st.newValue) - 1] = '\0';
+    if (st.newType < 0 || st.newType >= kSaveTypeCount) st.newType = 0;
+    UI::BareNextWindow();
+    if (UI::Begin("SaveManager##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::BeginChild("##savebody", UI::Vec2{0.0f, 0.0f}, UI::Child_None);
+        UI::TextDisabled(kSaveManagerNote);
+        // the file list, with Reload beside it once a file is chosen
+        const bool chosen = !m.selected.empty();
+        const float reloadW = UI::CalcTextWidth("Reload") + 24.0f;
+        const float boxW = std::max(UI::GetContentRegionAvail().x - (chosen ? reloadW + g_metrics.itemSpacing.x : 0.0f), 60.0f);
+        int current = -1;
+        for (std::size_t i = 0; i < m.files.size(); ++i) if (m.files[i] == m.selected) current = (int)i;
+        const int picked = PickList("##savefile", chosen ? m.selected.c_str() : "(choose a save file)", boxW, (int)m.files.size(), current,
+                                    [&](int k) { return m.files[(std::size_t)k].c_str(); }, res.fileCombo, res.listRows, res.popup);
+        if (picked >= 0) res.intent.choose = picked;
+        if (!chosen) {
+            UI::TextDisabled(kSaveManagerNoFile);
+            res.noFile = true;
+        } else {
+            UI::SameLine();
+            if (LineButton("Reload")) res.intent.reload = true;
+            res.reload = UI::GetItemRect();
+            UI::SetNextItemWidth(UI::GetContentRegionAvail().x);
+            UI::InputTextWithHint("##savefilter", "filter keys...", st.filter, (int)sizeof(st.filter));
+            res.filter = UI::GetItemRect();
+            Divider();
+            // the keys: name, type, the value as typed text (stored again with its type on a change) and X
+            if (UI::BeginTable("savekeys", 3, UI::Table_RowBg | UI::Table_BordersInnerH | UI::Table_BordersOuter | UI::Table_NoResize)) {
+                UI::TableSetupColumn("Key", UI::Col_WidthStretch, 0.4f);
+                UI::TableSetupColumn("Type", UI::Col_WidthFixed, 70.0f);
+                UI::TableSetupColumn("Value", UI::Col_WidthStretch, 0.6f);
+                UI::TableHeadersRow();
+                for (std::size_t i = 0; i < m.rows.size(); ++i) {
+                    const SaveKeyRow& r = m.rows[i];
+                    if (!SaveKeyMatches(r.key, st.filter)) continue;
+                    UI::PushID(r.key.c_str());
+                    UI::TableNextRow();
+                    UI::TableNextColumn();
+                    UI::AlignTextToFramePadding();
+                    UI::TextUnformatted(r.key.c_str());
+                    UI::TableNextColumn();
+                    UI::AlignTextToFramePadding();
+                    UI::TextDisabled(SaveTypeName(r.type));
+                    UI::TableNextColumn();
+                    char v[256];
+                    std::snprintf(v, sizeof v, "%s", r.payload.c_str());
+                    UI::SetNextItemWidth(std::max(UI::GetContentRegionAvail().x - 44.0f, 20.0f));
+                    if (UI::InputText("##v", v, (int)sizeof v)) { res.intent.edit = (int)i; res.intent.editRaw = SaveRawValue(r.type, v); }
+                    res.rowIndex.push_back((int)i);
+                    res.values.push_back(UI::GetItemRect());
+                    UI::SameLine();
+                    if (LineButton("X")) res.intent.remove = (int)i;
+                    res.removes.push_back(UI::GetItemRect());
+                    UI::PopID();
+                }
+                UI::EndTable();
+            }
+            res.table = UI::GetItemRect();
+            // a new key: its name, its type and its value
+            UI::Spacing(0.0f);
+            UI::SetNextItemWidth(140.0f);
+            UI::InputTextWithHint("##nk", "new key", st.newKey, (int)sizeof(st.newKey));
+            res.newKey = UI::GetItemRect();
+            UI::SameLine();
+            std::vector<UI::Rect> typeRows;
+            UI::Rect typePopup;
+            const int t = PickList("##nt", kSaveTypeNames[st.newType], 90.0f, kSaveTypeCount, st.newType,
+                                   [&](int k) { return kSaveTypeNames[k]; }, res.newType, typeRows, typePopup);
+            if (!typeRows.empty()) { res.listRows = typeRows; res.popup = typePopup; }
+            if (t >= 0) st.newType = t;
+            UI::SameLine();
+            UI::SetNextItemWidth(140.0f);
+            UI::InputText("##nv", st.newValue, (int)sizeof(st.newValue));
+            res.newValue = UI::GetItemRect();
+            UI::SameLine();
+            if (LineButton("Add") && st.newKey[0]) {
+                res.intent.add = true;
+                res.intent.addKey = st.newKey;
+                res.intent.addRaw = SaveRawValue(kSaveTypeCodes[st.newType], st.newValue);
+                st.newKey[0] = '\0';
+            }
+            res.add = UI::GetItemRect();
+            Divider();
+            if (UI::Button("Save to disk")) res.intent.save = true;
+            res.save = UI::GetItemRect();
+            UI::SameLine();
+            if (UI::Button("Clear all keys")) UI::OpenPopup("Clear save keys?");
+            res.clearAll = UI::GetItemRect();
+            {
+                MenuLook look_(0.0f);
+                if (UI::BeginPopupModal("Clear save keys?")) {
+                    char q[64];
+                    std::snprintf(q, sizeof q, "Remove all %d keys from this save?", (int)m.rows.size());
+                    UI::Text(q);
+                    UI::TextDisabled(kSaveClearNote);
+                    UI::Dummy(0.0f, 4.0f);
+                    UI::PushStyleColor(UI::Col_Button, kDanger);
+                    UI::PushStyleColor(UI::Col_ButtonHovered, kDangerHovered);
+                    if (UI::Button("Clear", UI::Vec2{110.0f, 0.0f})) { res.intent.clearAll = true; UI::CloseCurrentPopup(); }
+                    res.confirmClear = UI::GetItemRect();
+                    UI::PopStyleColor(2);
+                    UI::SameLine();
+                    if (UI::Button("Cancel", UI::Vec2{110.0f, 0.0f})) UI::CloseCurrentPopup();
+                    res.cancelClear = UI::GetItemRect();
+                    UI::EndPopup();
+                }
+            }
+            UI::SameLine();
+            char n[32];
+            std::snprintf(n, sizeof n, "%d keys", (int)m.rows.size());
+            UI::TextDisabled(n);
+            res.count = UI::GetItemRect();
+            if (m.dirty) { UI::SameLine(); UI::TextColored(kUnsaved[0], kUnsaved[1], kUnsaved[2], "unsaved edits"); }
+        }
+        UI::EndChild();
+    }
+    UI::End();
+    return res;
+}
+
+MaterialResult DrawMaterial(MaterialModel& m, float x, float y, float w, float h) {
+    MaterialResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("Material##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
+        UI::BeginChild("##matbody", UI::Vec2{0.0f, 0.0f}, UI::Child_None);
+        const float itemW = ItemWidthFor(w);
+        bool& ch = res.intent.changed;
+        UI::TextDisabled(m.path.c_str());
+        Divider();
+        {   // the preview ball: the albedo brightened by the emissive, a soft light spot, the specular glint
+            const UI::Vec2 p = UI::GetCursorScreenPos();
+            const float pw = UI::GetContentRegionAvail().x, ph = 74.0f;
+            const UI::DrawList& dl = UI::GetWindowDrawList();
+            dl.AddRectFilled(p, UI::Vec2{p.x + pw, p.y + ph}, UI::RGBA(28, 29, 34), 5.0f);
+            float c[3]; MaterialPreviewColor(m, c);
+            const MaterialBall b = MaterialBallIn(p.x, p.y, p.x + pw, p.y + ph);
+            dl.AddCircleFilled(UI::Vec2{b.cx, b.cy}, b.r, C32(c));
+            dl.AddCircleFilled(UI::Vec2{b.spotX, b.spotY}, b.spotR, UI::RGBA(255, 255, 255, 70));
+            dl.AddCircle(UI::Vec2{b.cx, b.cy}, b.r, UI::RGBA(0, 0, 0, 90), 0, 1.5f);
+            if (m.specular > 0.0f)
+                dl.AddCircleFilled(UI::Vec2{b.glintX, b.glintY}, b.glintR, UI::RGBA(255, 255, 255, (unsigned char)std::clamp(120.0f + 130.0f * m.specular, 0.0f, 255.0f)));
+            res.preview = UI::Rect{p.x, p.y, pw, ph};
+            UI::Dummy(pw, ph + 6.0f);
+        }
+        if (InspColorEdit("Albedo", m.color, 4, &res.albedo)) ch = true;
+        if (InspColorEdit("Emissive", m.emissive, 3, &res.emissive)) ch = true;
+        UI::SetNextItemWidth(WithLabel(itemW, "Specular"));
+        if (UI::SliderFloat("Specular", &m.specular, 0.0f, 1.0f, "%.3f")) ch = true;
+        res.specular = UI::GetItemRect();
+        if (m.specular > 0.0f) {
+            UI::SetNextItemWidth(WithLabel(itemW, "Shininess"));
+            if (UI::SliderFloat("Shininess", &m.shininess, 1.0f, 128.0f, "%.3f")) ch = true;
+            res.shininess = UI::GetItemRect();
+        }
+        if (FrameCheckbox("Unlit", &m.unlit)) ch = true;
+        res.unlit = UI::GetItemRect();
+        UI::SameLine();
+        if (FrameCheckbox("Double-sided", &m.doubleSided)) ch = true;
+        res.doubleSided = UI::GetItemRect();
+        char tex[256];
+        std::snprintf(tex, sizeof tex, "%s", m.texture.c_str());
+        UI::SetNextItemWidth(210.0f);
+        if (UI::InputText("##mattex", tex, (int)sizeof tex)) { m.texture = tex; ch = true; }
+        res.texture = UI::GetItemRect();
+        UI::SameLine(0.0f, 4.0f);
+        if (UI::Button("...##mattexbrowse")) res.intent.browse = true;
+        res.browse = UI::GetItemRect();
+        if (UI::IsItemHovered()) UI::SetTooltip("%s", "Browse...");
+        UI::SameLine(0.0f, 4.0f);
+        UI::AlignTextToFramePadding();
+        UI::TextUnformatted("Texture");
+        UI::SetNextItemWidth(WithLabel(itemW, "Tiling"));
+        if (UI::DragFloat2("Tiling", m.tiling, 0.05f, 0.01f, 64.0f, "%.3f")) ch = true;
+        res.tiling = UI::GetItemRect();
+        Divider();
+        if (UI::Button("Save")) res.intent.save = true;
+        res.save = UI::GetItemRect();
+        UI::SameLine();
+        UI::BeginDisabled(!m.canApply);
+        if (UI::Button("Apply to Selection") && m.canApply) res.intent.apply = true;
+        res.apply = UI::GetItemRect();
+        UI::EndDisabled();
+        if (!m.canApply) { UI::SameLine(); UI::TextDisabled(kMaterialApplyNote); }
+        UI::EndChild();
+        UI::PopStyleVar();
+    }
+    UI::End();
+    return res;
+}
+
+PerfOverlayResult DrawPerfOverlay(const PerfOverlayModel& m, float x, float y, float w, float h) {
+    PerfOverlayResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("PerfOverlay##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        float right = x;
+        float c[3]; PerfFpsColor(m.fps, c);
+        char fps[32]; std::snprintf(fps, sizeof fps, "%.0f FPS", m.fps);
+        UI::TextColored(B(c[0]), B(c[1]), B(c[2]), fps);
+        res.fps = UI::GetItemRect();
+        UI::SameLine();
+        UI::TextDisabled(PerfTimesText(m).c_str());
+        Widest(right);
+        const std::string sleep = PerfSleepText(m);
+        if (!sleep.empty()) { UI::TextDisabled(sleep.c_str()); Widest(right); }
+        if (m.collecting) { UI::TextDisabled("Collecting frames ..."); Widest(right); }
+        if (!m.plot.empty()) {
+            res.plot = FramedPlot("##perfms", m.plot, (int)m.plot.size(), PerfPlotCaption(m).c_str(), PerfPlotTop(m), 56.0f, 360.0f);
+            right = std::max(right, res.plot.x + res.plot.w);
+        }
+        Divider();
+        char where[96];
+        std::snprintf(where, sizeof where, "Where the frame goes (average of the last %d frames)", m.breakFrames);
+        UI::TextDisabled(where);
+        Widest(right);
+        for (const PerfSection& s : m.sections) {
+            res.bars.push_back(FramedBar(s.share, PerfSectionBar(s).c_str(), UI::RGBA(230, 179, 0), 150.0f));   // Dear ImGui's histogram colour
+            UI::SameLine();
+            UI::AlignTextToFramePadding();
+            UI::TextUnformatted(s.name.c_str());
+            Widest(right);
+        }
+        Divider();
+        UI::TextDisabled(("Renderer: " + m.renderer).c_str());
+        Widest(right);
+        UI::TextDisabled(PerfViewText(m).c_str());
+        Widest(right);
+        if (UI::Button("Copy report")) res.intent.copyReport = true;
+        res.copyReport = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("Open Profiler")) res.intent.openProfiler = true;
+        res.openProfiler = UI::GetItemRect();
+        Widest(right);
+        res.contentW = std::ceil(right - x);
+        res.contentH = std::ceil(ContentHeight(y));
+    }
+    UI::End();
+    return res;
+}
+
+InputPanelResult DrawInputPanel(InputPanelModel& m, InputPanelState& st, float x, float y, float w, float h) {
+    InputPanelResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("Input##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        MenuLook look_(0.0f);   // the header colours of the section bars
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
+        UI::BeginChild("##inputbody", UI::Vec2{0.0f, 0.0f}, UI::Child_None);
+        const float top = UI::GetCursorScreenPos().y;
+        const float itemW = ItemWidthFor(w);
+        auto lines = [](const std::vector<std::string>& v) { for (const std::string& l : v) UI::TextWrapped(l.c_str()); };
+        if (!m.playing) UI::TextDisabled(kInputNotPlaying);
+        bool open = UI::CollapsingHeader("Right now", true);
+        res.headers[0] = UI::GetItemRect();
+        if (open) lines(m.snapshot);
+        open = UI::CollapsingHeader("Controllers and typed actions", true);
+        res.headers[1] = UI::GetItemRect();
+        if (open) {
+            lines(m.controllers);
+            for (const InputPanelModel::Player& p : m.players) {
+                Divider();
+                UI::Text(("Player " + std::to_string(p.number)).c_str());
+                lines(p.lines);
+            }
+            if (m.players.empty()) UI::TextDisabled(kInputNoPlayer);
+        }
+        open = UI::CollapsingHeader("Last events", true);
+        res.headers[2] = UI::GetItemRect();
+        if (open) {
+            if (LineButton("Clear")) res.intent.clearEvents = true;
+            res.clear = UI::GetItemRect();
+            UI::BeginChild("##inputevents", UI::Vec2{0.0f, 130.0f}, UI::Child_Borders);
+            res.events = UI::Rect{UI::GetCursorScreenPos().x, UI::GetCursorScreenPos().y, UI::GetContentRegionAvail().x, UI::GetContentRegionAvail().y};
+            for (const std::string& e : m.events) UI::TextUnformatted(e.c_str());
+            UI::EndChild();
+        }
+        open = UI::CollapsingHeader("Record and replay", false);
+        res.headers[3] = UI::GetItemRect();
+        if (open) {
+            UI::TextWrapped(kInputRecordNote);
+            if (UI::Button("Record")) res.intent.record = true;
+            res.record = UI::GetItemRect();
+            UI::SameLine();
+            if (UI::Button("Stop")) res.intent.stop = true;
+            res.stop = UI::GetItemRect();
+            UI::SameLine();
+            if (UI::Button("Replay")) res.intent.replay = true;
+            res.replay = UI::GetItemRect();
+            UI::SameLine();
+            if (UI::Button("Copy text")) res.intent.copyText = true;
+            res.copyText = UI::GetItemRect();
+            UI::Text(m.recordStatus.c_str());
+        }
+        open = UI::CollapsingHeader("Response curves", false);
+        res.headers[4] = UI::GetItemRect();
+        if (open) {
+            if (st.action < 0 || st.action >= (int)m.actions.size()) st.action = 0;
+            const char* name = m.actions.empty() ? "" : m.actions[(std::size_t)st.action].c_str();
+            const float labelGap = g_metrics.innerSpacing.x;
+            UI::Rect listRect;
+            const int picked = PickList("##iaaction", name, itemW, (int)m.actions.size(), st.action,
+                                        [&](int k) { return m.actions[(std::size_t)k].c_str(); }, res.action, res.listRows, listRect);
+            UI::SameLine(0.0f, labelGap);
+            UI::AlignTextToFramePadding();
+            UI::TextUnformatted("Action");
+            if (picked >= 0) st.action = picked;
+            if (!m.actions.empty()) {
+                InputResponse& r = m.response;
+                bool& ch = res.intent.responseChanged;
+                UI::SetNextItemWidth(WithLabel(itemW, "Dead zone"));
+                if (UI::SliderFloat("Dead zone", &r.deadzone, 0.0f, 0.9f, "%.3f")) ch = true;
+                res.deadzone = UI::GetItemRect();
+                UI::SetNextItemWidth(WithLabel(itemW, "Curve"));
+                if (UI::SliderFloat("Curve", &r.curve, 0.3f, 4.0f, "%.2f (1 = straight, 2 = gentle near centre)")) ch = true;
+                res.curve = UI::GetItemRect();
+                UI::SetNextItemWidth(WithLabel(itemW, "Sensitivity"));
+                if (UI::SliderFloat("Sensitivity", &r.sensitivity, 0.1f, 5.0f, "%.3f")) ch = true;
+                res.sensitivity = UI::GetItemRect();
+                if (m.direction) {
+                    if (FrameCheckbox("Invert X", &r.invertX)) ch = true;
+                    res.invertX = UI::GetItemRect();
+                    UI::SameLine();
+                    if (FrameCheckbox("Invert Y", &r.invertY)) ch = true;
+                    res.invertY = UI::GetItemRect();
+                }
+                if (LineButton("Reset curve")) res.intent.resetCurve = true;
+                res.reset = UI::GetItemRect();
+                std::vector<float> pts(64, 0.0f);
+                if (m.shape) for (int i = 0; i < 64; ++i) pts[(std::size_t)i] = m.shape((float)i / 63.0f, r);
+                res.plot = FramedPlot("##curve", pts, 64, kInputCurveCaption, std::max(1.0f, r.sensitivity), 90.0f);
+                char now[48];
+                std::snprintf(now, sizeof now, "Reads now: %.2f", m.value);
+                UI::Text(now);
+            }
+        }
+        res.contentHeight = ContentHeight(top);
+        UI::EndChild();
+        UI::PopStyleVar();
+    }
+    UI::End();
+    return res;
+}
+
+// ---- Timers --------------------------------------------------------------------------------------------------------------------
+
+TimersResult DrawTimers(const std::string& text, float x, float y, float w, float h) {
+    TimersResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("Timers##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        UI::BeginChild("##timersbody", UI::Vec2{0.0f, 0.0f}, UI::Child_None);
+        res.body = UI::Rect{UI::GetCursorScreenPos().x, UI::GetCursorScreenPos().y, UI::GetContentRegionAvail().x, UI::GetContentRegionAvail().y};
+        for (const std::string& l : TextLines(text)) {
+            UI::TextUnformatted(l.c_str());
+            res.lines.push_back(UI::GetItemRect());
+        }
+        UI::EndChild();
+    }
+    UI::End();
+    return res;
+}
+
+// ---- Input Actions -------------------------------------------------------------------------------------------------------------
+
+namespace {
+// Dear ImGui's BulletText in a text row: a small round dot in the first font-size column, the text after it, one text line tall
+// (OkayUI's BulletText is a frame row tall).
+void TextBullet(const char* s) {
+    const UI::Vec2 p = UI::GetCursorScreenPos();
+    const float fs = UI::GetFontSize();
+    UI::Indent(fs);
+    UI::TextUnformatted(s);
+    UI::Unindent(fs);
+    UI::GetWindowDrawList().AddCircleFilled(UI::Vec2{p.x + fs * 0.5f, p.y + fs * 0.5f}, fs * 0.15f, UI::GetColorU32(UI::Col_Text));
+}
+// A binding field's text while it is edited: the state's copy, which takes the model's text whenever the field is not being typed in.
+// Enter hands the typed text to the host (it checks it; the field shows the model's text again once it lets the keyboard go).
+bool IaField(const char* id, std::vector<char>& buf, const std::string& value, float width, std::string& entered) {
+    if (buf.size() != kIaPartSize) buf.assign(kIaPartSize, '\0');
+    buf.back() = '\0';
+    UI::SetNextItemWidth(width);
+    const bool enter = UI::InputText(id, buf.data(), (int)buf.size(), UI::InputText_EnterReturnsTrue);
+    if (enter) entered = buf.data();
+    else if (!UI::IsItemFocused()) std::snprintf(buf.data(), buf.size(), "%s", value.c_str());
+    return enter;
+}
+} // namespace
+
+InputActionsResult DrawInputActions(const InputActionsModel& m, InputActionsState& st, float x, float y, float w, float h) {
+    InputActionsResult res;
+    st.file[sizeof(st.file) - 1] = '\0';
+    st.name[sizeof(st.name) - 1] = '\0';
+    st.interaction[sizeof(st.interaction) - 1] = '\0';
+    if (st.newType < 0 || st.newType > 3) st.newType = 0;
+    UI::BareNextWindow();
+    if (UI::Begin("InputActions##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        MenuLook look_(0.0f);   // the header colours of the selected and hovered action rows
+        InputActionsIntent& in = res.intent;
+        // ---- the file row ----
+        UI::SetNextItemWidth(UI::GetContentRegionAvail().x);
+        UI::InputText("##inputfile", st.file, (int)sizeof(st.file));
+        res.file = UI::GetItemRect();
+        if (UI::Button("Load")) in.load = true;
+        res.load = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("Save")) in.save = true;
+        res.save = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("New from default")) in.newDefault = true;
+        res.newDefault = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("Migrate Input Actions")) in.migrate = true;
+        res.migrate = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("Use in game")) in.useInGame = true;
+        res.useInGame = UI::GetItemRect();
+        if (m.dirty) { UI::SameLine(); UI::TextDisabled("(unsaved changes)"); res.unsaved = UI::GetItemRect(); }
+        if (!st.status.empty()) { UI::TextDisabled(st.status.c_str()); res.status = UI::GetItemRect(); }
+        Divider();
+
+        // ---- left: schemes, maps and actions ----
+        UI::BeginChild("##ia_left", UI::Vec2{UI::GetFontSize() * 21.0f, 0.0f}, UI::Child_Borders);
+        res.left = UI::Rect{UI::GetCursorScreenPos().x, UI::GetCursorScreenPos().y, UI::GetContentRegionAvail().x, UI::GetContentRegionAvail().y};
+        UI::TextDisabled("Schemes");
+        for (const std::string& c : m.schemes) TextBullet(c.c_str());
+        UI::SetNextItemWidth(UI::GetContentRegionAvail().x);
+        UI::InputTextWithHint("##newname", "name (no spaces)", st.name, (int)sizeof(st.name));
+        res.name = UI::GetItemRect();
+        if (LineButton("+ Map")) in.addMap = true;
+        res.addMap = UI::GetItemRect();
+        UI::SameLine();
+        if (LineButton("+ Scheme")) in.addScheme = true;
+        res.addScheme = UI::GetItemRect();
+        Divider();
+        for (const InputActionMapRow& map : m.maps) {
+            UI::Text(InputMapTitle(map).c_str());
+            res.mapTitles.push_back(UI::GetItemRect());
+            for (const InputActionRow& a : map.actions) {
+                UI::PushID((map.name + "/" + a.name).c_str());
+                if (UI::Selectable(InputActionLabel(a).c_str(), st.selected == a.name, UI::Selectable_Header, UI::Vec2{0.0f, UI::GetFontSize()})) {
+                    in.select = true; in.selectName = a.name;
+                }
+                res.actions.push_back(UI::GetItemRect());
+                UI::PopID();
+            }
+        }
+        Divider();
+        UI::SetNextItemWidth(110.0f);
+        UI::Combo("##newtype", kIaNewTypes, 4, &st.newType);
+        res.newType = UI::GetItemRect();
+        UI::SameLine();
+        if (LineButton("+ Action")) in.addAction = true;
+        res.addAction = UI::GetItemRect();
+        UI::EndChild();
+        UI::SameLine();
+
+        // ---- right: the Action, Check and Live tabs ----
+        UI::BeginChild("##ia_right", UI::Vec2{0.0f, 0.0f}, UI::Child_Borders);
+        res.right = UI::Rect{UI::GetCursorScreenPos().x, UI::GetCursorScreenPos().y, UI::GetContentRegionAvail().x, UI::GetContentRegionAvail().y};
+        if (UI::BeginTabBar("##iatabs")) {
+            const int want = st.forceTab;
+            st.forceTab = -1;
+            const bool actionTab = UI::BeginTabItem("Action", nullptr, want == 0 ? UI::TabItem_SetSelected : 0);
+            res.tabs[0] = UI::GetItemRect();
+            if (actionTab) {
+                if (!m.hasAction) UI::TextDisabled(kIaPickAction);
+                else {
+                    for (const std::string& l : m.describe) UI::TextWrapped(l.c_str());
+                    Divider();
+                    const std::vector<std::size_t> off = InputPartOffsets(m);
+                    if (st.partBufs.size() != off.back()) st.partBufs.resize(off.back());
+                    if (st.procBufs.size() != m.bindings.size()) st.procBufs.resize(m.bindings.size());
+                    for (std::size_t b = 0; b < m.bindings.size(); ++b) {
+                        const InputBindingRow& bs = m.bindings[b];
+                        UI::PushID((int)b);
+                        UI::Text(("Binding " + std::to_string(b + 1)).c_str());
+                        const float n = (float)std::max<std::size_t>(1, bs.parts.size());
+                        for (std::size_t p = 0; p < bs.parts.size(); ++p) {
+                            UI::PushID((int)p);
+                            const float pw = std::max(70.0f, (UI::GetContentRegionAvail().x - g_metrics.itemSpacing.x * n) / n - 4.0f);
+                            std::string typed;
+                            if (IaField("##part", st.partBufs[off[b] + p], bs.parts[p], pw, typed) && in.partBinding < 0) {
+                                in.partBinding = (int)b; in.partIndex = (int)p; in.partText = typed;
+                            }
+                            res.parts.push_back(UI::GetItemRect());
+                            UI::PopID();
+                            if (p + 1 < bs.parts.size()) UI::SameLine();
+                        }
+                        std::string typed;
+                        if (IaField("##proc", st.procBufs[b], bs.processors, UI::GetContentRegionAvail().x * 0.5f, typed) && in.procBinding < 0) {
+                            in.procBinding = (int)b; in.procText = typed;
+                        }
+                        res.processors.push_back(UI::GetItemRect());
+                        UI::SameLine(0.0f, g_metrics.innerSpacing.x);
+                        UI::TextUnformatted("processors");
+                        UI::SameLine();
+                        if (LineButton("Remove binding") && in.removeBinding < 0) in.removeBinding = (int)b;
+                        res.removeBindings.push_back(UI::GetItemRect());
+                        UI::PopID();
+                    }
+                    for (int i = 0; i < 5; ++i) {
+                        if (i) UI::SameLine();
+                        if (LineButton(kIaBindingKinds[i])) in.addBinding = i;
+                        res.addBinding[i] = UI::GetItemRect();
+                    }
+                    Divider();
+                    UI::SetNextItemWidth(UI::GetContentRegionAvail().x);
+                    if (UI::InputTextWithHint("##inter", kIaInteractionHint, st.interaction, (int)sizeof(st.interaction), UI::InputText_EnterReturnsTrue)) {
+                        in.addInteraction = true; in.interactionText = st.interaction;
+                    }
+                    res.interaction = UI::GetItemRect();
+                    for (std::size_t i = 0; i < m.interactions.size(); ++i) {
+                        UI::PushID(1000 + (int)i);
+                        TextBullet(m.interactions[i].c_str());
+                        res.interactions.push_back(UI::GetItemRect());
+                        UI::SameLine();
+                        if (LineButton("x") && in.removeInteraction < 0) in.removeInteraction = (int)i;
+                        res.removeInteractions.push_back(UI::GetItemRect());
+                        UI::PopID();
+                    }
+                    if (LineButton("Delete action")) in.deleteAction = true;
+                    res.deleteAction = UI::GetItemRect();
+                }
+                UI::EndTabItem();
+            }
+            const bool checkTab = UI::BeginTabItem("Check", nullptr, want == 1 ? UI::TabItem_SetSelected : 0);
+            res.tabs[1] = UI::GetItemRect();
+            if (checkTab) {
+                if (m.problems.empty()) { UI::TextDisabled(kIaNoProblems); res.problems.push_back(UI::GetItemRect()); }
+                for (const std::string& p : m.problems) { TextBullet(p.c_str()); res.problems.push_back(UI::GetItemRect()); }
+                UI::EndTabItem();
+            }
+            const bool liveTab = UI::BeginTabItem("Live", nullptr, want == 2 ? UI::TabItem_SetSelected : 0);
+            res.tabs[2] = UI::GetItemRect();
+            if (liveTab) {
+                for (const std::string& l : m.controllers) { UI::TextWrapped(l.c_str()); res.liveLines.push_back(UI::GetItemRect()); }
+                Divider();
+                if (m.players.empty()) { UI::TextDisabled(kIaNoPlayer); res.liveLines.push_back(UI::GetItemRect()); }
+                for (const InputActionsModel::Player& p : m.players) {
+                    UI::Text(("Player " + std::to_string(p.number)).c_str());
+                    res.liveLines.push_back(UI::GetItemRect());
+                    for (const std::string& l : p.lines) { UI::TextWrapped(l.c_str()); res.liveLines.push_back(UI::GetItemRect()); }
+                }
+                UI::EndTabItem();
+            }
+            UI::EndTabBar();
+        }
+        UI::EndChild();
     }
     UI::End();
     return res;

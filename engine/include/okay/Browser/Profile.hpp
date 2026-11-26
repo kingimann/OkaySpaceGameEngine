@@ -241,4 +241,66 @@ std::string InternalPage(const std::string& url, const Profile& p, const std::ve
 /// Text with <, >, & and " escaped for HTML.
 std::string HtmlEscape(const std::string& text);
 
+// ---- round 2 of the look: the address bar's suggestions and site badge, friendly error pages ------------------------------
+
+/// An open tab, for the address bar's "switch to this tab" rows.
+struct OpenTabInfo {
+    int id = -1;
+    std::string url, title;
+};
+
+/// One row under the address bar while the person types.
+struct Suggestion {
+    enum Kind {
+        Go,         ///< the typed address itself (what Enter does)
+        Search,     ///< a search for the typed words (what Enter does)
+        OpenTab,    ///< an open tab whose title or address matches: switch to it
+        Bookmark,   ///< a bookmark that matches
+        History     ///< a page visited before that matches
+    } kind = Go;
+    std::string url;     ///< the address the row opens (OpenTab: the tab's address)
+    std::string title;   ///< the row's text: the page title, or the typed words (Go / Search)
+    int tabId = -1;      ///< OpenTab: the tab
+};
+
+/// The rows to show under the address bar for `typed` (at most `max`; none for an empty bar). The first row is what Enter
+/// does (DecideAddress: Go to the address or Search with the profile's search address; no row for words when no search
+/// address is set). Then open tabs, bookmarks and history entries whose title or address holds every typed word (ASCII
+/// letters without regard to case); each address once, the open tab first. A match at the start of the host (after "www.")
+/// ranks above one at the start of a word, which ranks above one anywhere; then bookmarks before history, then pages visited
+/// more often, then more recently.
+std::vector<Suggestion> SuggestAddresses(const std::string& typed, const Profile& p, const std::vector<OpenTabInfo>& tabs,
+                                         std::size_t max = 8);
+
+/// The badge in front of the address: https is Secure (a lock), http is NotSecure (spelled out, as common browsers do),
+/// our own pages are Internal; None for an empty address.
+/// A site's round badge (the tab strip and the new-tab page): its host without "www.", the letter shown (the host's first letter,
+/// upper-case; '?' when there is none) and which of 8 colours it gets (the same site always gets the same one).
+struct SiteMark {
+    std::string host;
+    char letter = '?';
+    int color = 0;   ///< 0..7
+};
+SiteMark SiteMarkOf(const std::string& url);
+
+enum class SiteBadge { None, Secure, NotSecure, Internal };
+SiteBadge BadgeOf(const std::string& url);
+
+/// The address as the bar shows it while the person is not typing in it: the host stands out, the rest is quieter. "https://"
+/// is left out (the lock says it), "http://" stays in `lead`; a path that is only "/" is left out; userinfo is never shown.
+/// Our own pages are all `host`.
+struct AddressShown {
+    std::string lead, host, rest;
+};
+AddressShown ShowAddress(const std::string& url);
+
+/// What the error page says for a tab that could not load `url` (BrowserTab::Error() is `error`).
+struct LoadErrorInfo {
+    enum Kind { NoConnection, NotFound, ServerError, Blocked, TooLarge, Stopped, Other } kind = Other;
+    std::string title;    ///< one line in large type ("This site cannot be reached")
+    std::string advice;   ///< what the person can do, in plain words
+    std::string code;     ///< the small print: the status number, else the error as the tab gave it
+};
+LoadErrorInfo DescribeLoadError(const std::string& url, const std::string& error);
+
 } // namespace okay::browser

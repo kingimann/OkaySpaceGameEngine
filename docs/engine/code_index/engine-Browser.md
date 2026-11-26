@@ -2,7 +2,7 @@
 
 # Code index: engine-Browser
 
-Back to the [code index](../code_index.md). 12 headers, 142 names.
+Back to the [code index](../code_index.md). 14 headers, 180 names.
 
 ## `engine/include/okay/Browser/Browser.hpp`
 
@@ -20,49 +20,60 @@ Back to the [code index](../code_index.md). 12 headers, 142 names.
 
 ## `engine/include/okay/Browser/Css.hpp`
 
-- `Color` struct, line 38
-- `ParseColor` function, line 44: A CSS colour value. False (and 'out' unchanged) for anything that is not one. "currentColor" is not handled here.
-- `Length` struct, line 48: A length after the cascade: em, rem, vw ... are already px; % stays a fraction of the containing block; a calc() that mixes
-- `Display` enum, line 61
-- `IsInlineLevel` function, line 66: Laid out inside a line like a word (inline, and the inline-* boxes that are atomic in a line).
-- `TextAlign` enum, line 67
-- `WhiteSpace` enum, line 68
-- `ListStyle` enum, line 69
-- `Float` enum, line 70
-- `Clear` enum, line 71
-- `Position` enum, line 72
-- `Overflow` enum, line 73
-- `TextTransform` enum, line 74
-- `VAlign` enum, line 75
-- `FlexDir` enum, line 76
-- `FlexWrap` enum, line 77
-- `Align` enum, line 79: Box alignment values used by justify-content / align-* / justify-* (CSS Box Alignment 3), reduced to what layout does.
-- `GridTrack` struct, line 83: One grid track size (CSS Grid 1, 7.2): a min and a max sizing function. "100px" is {Fixed 100, Fixed 100}; "1fr" is
-- `GridTemplate` struct, line 88: A track list: the tracks, and an auto-fill / auto-fit repeat (its tracks repeated as often as they fit) at 'repeatAt'.
-- `GridLine` struct, line 97: grid-column / grid-row: start and end lines (CSS Grid 1, 8.3). line 0 = auto; negative counts from the end; span > 0.
-- `BoxShadow` struct, line 103
-- `ComputedStyle` struct, line 112
-- `Declaration` struct, line 182
-- `AttrSel` struct, line 189: One attribute selector: [name], [name=value], [name~=value] ... (op is 0 for presence, else '=', '~', '/', '^', '$', '*').
-- `PseudoSel` struct, line 196: A pseudo-class with its argument.
-- `Compound` struct, line 207: One compound selector: [type or *][#id][.class ...][attribute ...][:pseudo-class ...].
-- `Selector` struct, line 214
-- `MediaQuery` struct, line 223: A media query list (Media Queries 4), read once and checked against the view's size each time styles are computed.
-- `MediaEnv` struct, line 228
-- `MediaMatches` function, line 232
-- `ParseMediaQuery` function, line 233
-- `Rule` struct, line 235
-- `FontFace` struct, line 241: An @font-face rule: a family name and where its font file is.
-- `StyleSheet` struct, line 247
-- `CssLimits` struct, line 255
-- `ParseStyleSheet` function, line 263
-- `ParseDeclarations` function, line 265: The declarations of a style="" attribute (or of the inside of one rule's braces).
-- `ParseSelector` function, line 267: Read one selector ("ul li.note > a"); false when it uses anything outside the supported subset.
-- `ParseSelectorList` function, line 270: Read a comma-separated selector list ("h1, .note a"); false when any part is outside the subset. 'maxSpec': the highest
-- `StyleContext` struct, line 274: What matching and the cascade need to know beyond the tree: the element under the pointer and the one with the keyboard
-- `Matches` function, line 286: Does 'el' (an element) match 'sel' (for its pseudo-element 'pseudo': 0 the element, 1 ::before, 2 ::after)?
-- `DefaultStyleSheet` function, line 291: The built-in sheet every page starts from (the "user agent" style sheet: block elements, heading sizes, list indents,
-- `InheritedStyle` function, line 295: A style that has 'parent''s inherited properties (colour, font, text, white-space, list style, visibility, custom
+- `Color` struct, line 42
+- `ParseColor` function, line 48: A CSS colour value. False (and 'out' unchanged) for anything that is not one. "currentColor" is not handled here.
+- `Length` struct, line 52: A length after the cascade: em, rem, vw ... are already px; % stays a fraction of the containing block; a calc() that mixes
+- `Display` enum, line 65
+- `IsTableSection` function, line 70
+- `IsInlineLevel` function, line 72: Laid out inside a line like a word (inline, and the inline-* boxes that are atomic in a line).
+- `TextAlign` enum, line 73
+- `WhiteSpace` enum, line 74
+- `ListStyle` enum, line 75
+- `CounterText` function, line 78: A counter value written in a list style (CSS Counter Styles 3 / CSS 2.1 12.6.2): "4", "04", "d", "D", "iv", "IV", "δ"; a
+- `ListStyleFromName` function, line 80: A list-style-type name ("lower-roman" ...): true and the style, false for a name we do not know.
+- `Float` enum, line 81
+- `Clear` enum, line 82
+- `Position` enum, line 83
+- `Overflow` enum, line 84
+- `TextTransform` enum, line 85
+- `VAlign` enum, line 86
+- `FlexDir` enum, line 87
+- `FlexWrap` enum, line 88
+- `Align` enum, line 90: Box alignment values used by justify-content / align-* / justify-* (CSS Box Alignment 3), reduced to what layout does.
+- `GridTrack` struct, line 94: One grid track size (CSS Grid 1, 7.2): a min and a max sizing function. "100px" is {Fixed 100, Fixed 100}; "1fr" is
+- `GridTemplate` struct, line 99: A track list: the tracks, and an auto-fill / auto-fit repeat (its tracks repeated as often as they fit) at 'repeatAt'.
+- `GridLine` struct, line 108: grid-column / grid-row: start and end lines (CSS Grid 1, 8.3). line 0 = auto; negative counts from the end; span > 0.
+- `GradientStop` struct, line 115: A CSS gradient (CSS Images 3, section 3): linear-gradient(), radial-gradient() and their repeating- forms.
+- `Gradient` struct, line 119
+- `ParseGradient` function, line 132: Read a gradient function ("linear-gradient(to right, red, blue 80%)"); false for anything else or a broken one.
+- `GradientColorAt` function, line 134: The colour of 'g' drawn in a w x h box at (px, py) (box coordinates), premultiplied interpolation in sRGB.
+- `Transform2D` struct, line 137: A 2D affine transform (CSS Transforms 1): x' = a x + c y + e, y' = b x + d y + f.
+- `ParseTransform` function, line 144: Read a transform list (translate(), translateX/Y(), scale(), scaleX/Y(), rotate(), skew(), skewX/Y(), matrix(); % of a
+- `DecoStyle` enum, line 146
+- `ObjectFit` enum, line 147
+- `BoxShadow` struct, line 149
+- `ComputedStyle` struct, line 158
+- `Declaration` struct, line 253
+- `AttrSel` struct, line 260: One attribute selector: [name], [name=value], [name~=value] ... (op is 0 for presence, else '=', '~', '/', '^', '$', '*').
+- `PseudoSel` struct, line 267: A pseudo-class with its argument.
+- `Compound` struct, line 279: One compound selector: [type or *][#id][.class ...][attribute ...][:pseudo-class ...].
+- `Selector` struct, line 286
+- `MediaQuery` struct, line 295: A media query list (Media Queries 4), read once and checked against the view's size each time styles are computed.
+- `MediaEnv` struct, line 300
+- `MediaMatches` function, line 304
+- `ParseMediaQuery` function, line 305
+- `Rule` struct, line 307
+- `FontFace` struct, line 313: An @font-face rule: a family name and where its font file is.
+- `StyleSheet` struct, line 319
+- `CssLimits` struct, line 327
+- `ParseStyleSheet` function, line 335
+- `ParseDeclarations` function, line 337: The declarations of a style="" attribute (or of the inside of one rule's braces).
+- `ParseSelector` function, line 339: Read one selector ("ul li.note > a"); false when it uses anything outside the supported subset.
+- `ParseSelectorList` function, line 342: Read a comma-separated selector list ("h1, .note a"); false when any part is outside the subset. 'maxSpec': the highest
+- `StyleContext` struct, line 346: What matching and the cascade need to know beyond the tree: the element under the pointer and the one with the keyboard
+- `Matches` function, line 358: Does 'el' (an element) match 'sel' (for its pseudo-element 'pseudo': 0 the element, 1 ::before, 2 ::after)?
+- `DefaultStyleSheet` function, line 363: The built-in sheet every page starts from (the "user agent" style sheet: block elements, heading sizes, list indents,
+- `InheritedStyle` function, line 367: A style that has 'parent''s inherited properties (colour, font, text, white-space, list style, visibility, custom
 
 ## `engine/include/okay/Browser/Forms.hpp`
 
@@ -104,23 +115,40 @@ Back to the [code index](../code_index.md). 12 headers, 142 names.
 
 ## `engine/include/okay/Browser/Layout.hpp`
 
-- `FontSpec` struct, line 36
-- `TextMeasure` class, line 44: Width of UTF-8 text in px.
-- `FixedMeasure` class, line 51: A fixed measure for tests and tools: every code point is 'factor' x the font size wide (0.5 by default).
-- `DrawCmd` struct, line 62
-- `LinkArea` struct, line 89
-- `ClipRect` struct, line 98: A clip region: a box whose overflow is not visible (its padding box). Things inside are clipped to it and to its parents.
-- `Scroller` struct, line 105: A scroll container (overflow: scroll / auto): its view (the padding box) and how big its content is.
-- `ControlBox` struct, line 112: A form control on the page (Forms.hpp keeps its value), or a <button>: the element and where its box is.
-- `BoxInfo` struct, line 122: One block-level box, for tests and tools.
-- `LayoutResult` struct, line 130
-- `LayoutContext` struct, line 149: What the layout needs beyond the document: the view's height (vh, fixed boxes), the parsed style sheets (a tab keeps them,
-- `DumpLayout` function, line 162: The block boxes and text runs as text, one per line: "block <tag> x,y wxh" and "text x,y 'run'" (whole pixels).
-- `LinkAt` function, line 173: The link under (x, y) in page coordinates: its index into links, or -1. With scrolling areas, 'offsets' are theirs and
-- `ScrollerAt` function, line 175: The innermost scroll container under (x, y) (page coordinates), or -1.
-- `ControlAt` function, line 177: The form control under (x, y), or -1.
-- `FindHit` struct, line 180: One place where find-on-page found the text: the text run (index into cmds) and the found part's box in page coordinates.
-- `FindInPage` function, line 186: Every place 'query' is in the page's text, in painting order, without regard to the case of ASCII letters (Ctrl+F). Found
+- `FontSpec` struct, line 44
+- `TextMeasure` class, line 52: Width of UTF-8 text in px.
+- `FixedMeasure` class, line 59: A fixed measure for tests and tools: every code point is 'factor' x the font size wide (0.5 by default).
+- `DrawCmd` struct, line 70
+- `LinkArea` struct, line 101
+- `ClipRect` struct, line 110: A clip region: a box whose overflow is not visible (its padding box). Things inside are clipped to it and to its parents.
+- `Scroller` struct, line 117: A scroll container (overflow: scroll / auto): its view (the padding box) and how big its content is.
+- `ControlBox` struct, line 124: A form control on the page (Forms.hpp keeps its value), or a <button>: the element and where its box is.
+- `BoxInfo` struct, line 134: One block-level box, for tests and tools.
+- `LayoutResult` struct, line 142
+- `LayoutContext` struct, line 161: What the layout needs beyond the document: the view's height (vh, fixed boxes), the parsed style sheets (a tab keeps them,
+- `DumpLayout` function, line 174: The block boxes and text runs as text, one per line: "block <tag> x,y wxh" and "text x,y 'run'" (whole pixels).
+- `LinkAt` function, line 185: The link under (x, y) in page coordinates: its index into links, or -1. With scrolling areas, 'offsets' are theirs and
+- `ScrollerAt` function, line 187: The innermost scroll container under (x, y) (page coordinates), or -1.
+- `ControlAt` function, line 189: The form control under (x, y), or -1.
+- `FindHit` struct, line 192: One place where find-on-page found the text: the text run (index into cmds) and the found part's box in page coordinates.
+- `FindInPage` function, line 198: Every place 'query' is in the page's text, in painting order, without regard to the case of ASCII letters (Ctrl+F). Found
+
+## `engine/include/okay/Browser/Plugins.hpp`
+
+- `PluginPermission` enum, line 20: What a plugin may do (bits). A manifest asks for some; the browser grants some; only both count.
+- `PermissionFromName` function, line 28: "toolbar" ... to its bit (0 for a name we do not know).
+- `PermissionNames` function, line 29
+- `PluginButton` struct, line 33: A button: on the toolbar, or a page action. Pressing it opens 'open' (an http / https address), or turns the style sheet
+- `PluginLink` struct, line 40
+- `NewTabSection` struct, line 41
+- `PluginStyle` struct, line 43: A style sheet a plugin adds to the sites it names.
+- `BrowserPlugin` struct, line 45
+- `PluginEffect` struct, line 58: What pressing a button did.
+- `PluginLimits` struct, line 63
+- `BrowserPlugins` class, line 71
+- `UrlMatchesPattern` function, line 106: Does 'url' match an address pattern (a glob where '*' matches any run of characters; "//example.com^..." style is
+- `SiteMatches` function, line 108: Does the host of 'url' match a site ("example.com" or "*.example.com": the host and its subdomains)?
+- `InertCss` function, line 110: CSS with everything that could load something taken out: @import rules and url(...) values (replaced by "none").
 
 ## `engine/include/okay/Browser/Profile.hpp`
 
@@ -149,6 +177,16 @@ Back to the [code index](../code_index.md). 12 headers, 142 names.
 - `IsInternalPage` function, line 238: True for the addresses of our own pages ("about:newtab", "about:history", "about:bookmarks", "about:downloads",
 - `InternalPage` function, line 240: The HTML of one of our own pages (text escaped; every link is an http(s) address or another of our pages).
 - `HtmlEscape` function, line 242: Text with <, >, & and " escaped for HTML.
+- `OpenTabInfo` struct, line 247: An open tab, for the address bar's "switch to this tab" rows.
+- `Suggestion` struct, line 253: One row under the address bar while the person types.
+- `SiteMark` struct, line 279: The badge in front of the address: https is Secure (a lock), http is NotSecure (spelled out, as common browsers do),
+- `SiteMarkOf` function, line 284
+- `SiteBadge` enum, line 286
+- `BadgeOf` function, line 287
+- `AddressShown` struct, line 292: The address as the bar shows it while the person is not typing in it: the host stands out, the rest is quieter. "https://"
+- `ShowAddress` function, line 295
+- `LoadErrorInfo` struct, line 298: What the error page says for a tab that could not load 'url' (BrowserTab::Error() is 'error').
+- `DescribeLoadError` function, line 304
 
 ## `engine/include/okay/Browser/Script.hpp`
 
@@ -181,3 +219,9 @@ Back to the [code index](../code_index.md). 12 headers, 142 names.
 - `HostOf` function, line 43: The host part (no userinfo, no port), lower-cased.
 - `FormUrlEncode` function, line 47: The application/x-www-form-urlencoded byte serializer of the WHATWG URL standard (section 5.2): ASCII letters, digits and
 - `FormUrlEncodePairs` function, line 49: name=value pairs, each encoded with FormUrlEncode, joined with '&' (the standard's urlencoded serializer).
+
+## `engine/include/okay/Browser/WebFont.hpp`
+
+- `FontFileKind` enum, line 14
+- `FontFileKindOf` function, line 16: What the first bytes say the file is: TrueType (0x00010000, "true"), OpenType ("OTTO"), WOFF ("wOFF"), WOFF2 ("wOF2").
+- `WebFontLimits` struct, line 18

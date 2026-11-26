@@ -6,8 +6,10 @@
 #include "okay/Browser/Browser.hpp"
 #include "okay/Browser/Profile.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <set>
 #include <string>
 
@@ -363,6 +365,110 @@ int main() {
         t.Activate("https://a.example/next");
         CHECK(t.GetState() == BrowserTab::State::Loading && t.HasPage());
         CHECK(!t.Layout(800, kMeasure).cmds.empty());   // still the last page
+    }
+
+    // ---- round 2 of the look: address-bar suggestions while typing ----
+    {
+        Profile p;
+        p.history.Add("https://news.example.com/today", "Today's news", 100);
+        p.history.Add("https://www.example.org/", "Example org", 200);
+        p.history.Add("https://other.test/example-page", "Other", 300);
+        p.history.Add("https://www.example.org/", "Example org", 400);   // the same address again: refreshed, not doubled
+        p.history.Add("https://news.example.com/today", "Today's news", 500);
+        p.history.Add("https://cats.test/", "All about cats", 600);
+        p.bookmarks.Add("https://example.net/docs", "Example docs");
+        const std::vector<OpenTabInfo> open = {{7, "https://shop.example.io/", "Example shop"}};
+
+        // the first row is what Enter does: an address for an address-like text ...
+        std::vector<Suggestion> s = SuggestAddresses("exa", p, open, 8);
+        CHECK(!s.empty() && s[0].kind == Suggestion::Search && s[0].url == "https://www.google.com/search?q=exa");
+        s = SuggestAddresses("example.org", p, open, 8);
+        CHECK(!s.empty() && s[0].kind == Suggestion::Go && s[0].url == "https://example.org");
+        // ... then the matches: the open tab, the bookmark and the history, each address once, a host that starts with the
+        // text before one that only has it inside
+        s = SuggestAddresses("exa", p, open, 8);
+        std::vector<std::string> urls;
+        for (const Suggestion& x : s) urls.push_back(x.url);
+        CHECK(s.size() == 6);   // the search, the tab, the bookmark, www.example.org, other.test, news.example.com
+        bool tabRow = false, bookRow = false;
+        for (const Suggestion& x : s) {
+            if (x.kind == Suggestion::OpenTab) tabRow = x.tabId == 7 && x.url == "https://shop.example.io/";
+            if (x.kind == Suggestion::Bookmark) bookRow = x.url == "https://example.net/docs" && x.title == "Example docs";
+        }
+        CHECK(tabRow && bookRow);
+        CHECK(std::count(urls.begin(), urls.end(), "https://www.example.org/") == 1);
+        CHECK(std::find(urls.begin(), urls.end(), "https://cats.test/") == urls.end());
+        const auto at = [&](const std::string& u) { return std::find(urls.begin(), urls.end(), u) - urls.begin(); };
+        CHECK(at("https://www.example.org/") < at("https://other.test/example-page"));   // "www." is skipped: example.org starts with it
+        CHECK(at("https://news.example.com/today") > at("https://www.example.org/"));
+        // several words: every one must be in the title or the address; the case does not matter
+        s = SuggestAddresses("TODAY news", p, {}, 8);
+        CHECK(s.size() == 2 && s[1].url == "https://news.example.com/today");
+        // at most `max`, and nothing for an empty bar
+        CHECK(SuggestAddresses("e", p, open, 3).size() == 3);
+        CHECK(SuggestAddresses("   ", p, open, 8).empty());
+        // no search address set: words give no first row, matches still show
+        p.settings.searchUrl.clear();
+        s = SuggestAddresses("cats", p, {}, 8);
+        CHECK(s.size() == 1 && s[0].kind == Suggestion::History && s[0].url == "https://cats.test/");
+    }
+
+    // ---- round 2 of the look: the site badge, the address shown with its host first, friendly error pages ----
+    {
+        CHECK(BadgeOf("https://a.example/x") == SiteBadge::Secure);
+        CHECK(BadgeOf("http://a.example/x") == SiteBadge::NotSecure);
+        CHECK(BadgeOf("about:history") == SiteBadge::Internal);
+        CHECK(BadgeOf("") == SiteBadge::None);
+        AddressShown a = ShowAddress("https://www.example.com/path/page.html?x=1#top");
+        CHECK(a.host == "www.example.com" && a.rest == "/path/page.html?x=1#top" && a.lead.empty());
+        a = ShowAddress("https://example.com/");
+        CHECK(a.host == "example.com" && a.rest.empty());   // the lone "/" is left out
+        a = ShowAddress("http://user@example.com:8080/a");
+        CHECK(a.lead == "http://" && a.host == "example.com:8080" && a.rest == "/a");   // http is spelled out (not secure)
+        a = ShowAddress("about:history");
+        CHECK(a.host == "about:history" && a.rest.empty());
+
+        LoadErrorInfo e = DescribeLoadError("https://a.example/", "Could not reach the server. Check your connection and try again.");
+        CHECK(e.kind == LoadErrorInfo::NoConnection && e.title.find("reached") != std::string::npos && !e.advice.empty());
+        e = DescribeLoadError("https://a.example/x", "The server answered 404.");
+        CHECK(e.kind == LoadErrorInfo::NotFound && e.code == "404");
+        e = DescribeLoadError("https://a.example/x", "The server answered 503.");
+        CHECK(e.kind == LoadErrorInfo::ServerError && e.code == "503");
+        e = DescribeLoadError("ftp://a.example/", "Only http and https addresses can be opened here.");
+        CHECK(e.kind == LoadErrorInfo::Blocked);
+        e = DescribeLoadError("about:config", "This page is not available here.");
+        CHECK(e.kind == LoadErrorInfo::Blocked);
+        CHECK(DescribeLoadError("https://a/", "The page is too large.").kind == LoadErrorInfo::TooLarge);
+        CHECK(DescribeLoadError("https://a/", "Loading was stopped.").kind == LoadErrorInfo::Stopped);
+        e = DescribeLoadError("https://a/", "something odd");
+        CHECK(e.kind == LoadErrorInfo::Other && !e.title.empty() && e.code == "something odd");
+    }
+
+    // ---- round 2 of the look: the new-tab page has a search box that sends to the search address, and shortcut tiles ----
+    {
+        Profile p;
+        p.bookmarks.Add("https://a.example/", "A site");
+        p.history.Add("https://h.example/page", "H page", 10);
+        HtmlDocument nt = ParseHtml(InternalPage("about:newtab", p, {}));
+        const Node* form = nullptr; const Node* q = nullptr;
+        int tiles = 0;
+        std::function<void(const Node&)> walk = [&](const Node& n) {
+            if (n.name == "form") form = &n;
+            if (n.name == "input" && n.Attr("name") && *n.Attr("name") == "q") q = &n;
+            if (const std::string* c = n.Attr("class"); c && *c == "tile") ++tiles;
+            for (const auto& k : n.children) walk(*k);
+        };
+        walk(*nt.root);
+        CHECK(form && form->Attr("action") && *form->Attr("action") == "https://www.google.com/search");
+        CHECK(q && q->Attr("placeholder") && q->Attr("placeholder")->find("Search Google") != std::string::npos);
+        CHECK(tiles == 2);   // the bookmark and the page from the history
+        // a search address with more than the terms keeps its other parts as hidden fields; none: no search box
+        p.settings.searchUrl = "https://search.example/find?lang=en&q=%s";
+        const std::string other = InternalPage("about:newtab", p, {});
+        CHECK(other.find("action=\"https://search.example/find\"") != std::string::npos &&
+              other.find("type=hidden name=\"lang\" value=\"en\"") != std::string::npos);
+        p.settings.searchUrl.clear();
+        CHECK(InternalPage("about:newtab", p, {}).find("<form") == std::string::npos);
     }
     TEST_MAIN_RESULT();
 }

@@ -23,5 +23,11 @@ bool DecodeWebp(const std::uint8_t* data, std::size_t size, int* width, int* hei
 bool DecodeVp8Planes(const std::uint8_t* data, std::size_t size, int& width, int& height, std::vector<std::uint8_t>& y,
                      std::vector<std::uint8_t>& u, std::vector<std::uint8_t>& v, std::string& err);
 
+/// SVG (ImageDecodeSvg.cpp). LooksLikeSvg: XML whose root is <svg> (checked on the first 4 KiB). DecodeSvg renders at
+/// reqW x reqH pixels (0: from the picture's own size, keeping its shape); with `rgba` null only the size is worked out.
+bool LooksLikeSvg(const std::uint8_t* data, std::size_t size);
+bool DecodeSvg(const std::uint8_t* data, std::size_t size, int reqW, int reqH, int* width, int* height, std::vector<std::uint8_t>* rgba,
+               std::string& err);
+
 } // namespace imgdec
 } // namespace okay

@@ -808,7 +808,7 @@ struct Layouter {
                 if (const std::string* type = sib->Attr("type")) {
                     std::string t = *type;
                     for (char& c : t) if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
-                    if (t != "image/png" && t != "image/jpeg" && t != "image/gif" && t != "image/bmp") continue;
+                    if (t != "image/png" && t != "image/jpeg" && t != "image/gif" && t != "image/bmp" && t != "image/webp" && t != "image/svg+xml") continue;   // what Core/ImageDecode reads
                 }
                 if (const std::string* m = sib->Attr("media")) if (!MediaMatches(ParseMediaQuery(*m), ctx ? ctx->style.media : MediaEnv())) continue;
                 set = ss;

@@ -14,6 +14,9 @@
 //   PSD   flattened composite of 8/16-bit RGB files, raw or RLE
 //   WEBP  lossless (VP8L) and lossy (VP8) with alpha (ALPH); an animation gives its first frame on the canvas
 //         (ImageDecodeWebp.cpp, from RFC 9649 and RFC 6386)
+//   SVG   rendered at its own size (width / height, else the viewBox, else 300 x 150; at most 4096 a side): shapes,
+//         paths, strokes, gradients, transforms, use / symbol, clip paths, <style> sheets (ImageDecodeSvg.cpp, from
+//         the W3C SVG 1.1 / SVG 2 specifications). Text, images, filters, masks and patterns are not drawn.
 // Decoding never reads or writes out of bounds on malformed input: it fails with an error
 // string instead. Dimensions are capped at 16384 on either side.
 #include <cstddef>
@@ -23,7 +26,7 @@
 
 namespace okay {
 
-enum class ImageFormat { Unknown, PNG, JPEG, BMP, TGA, GIF, HDR, PSD, PNM, WEBP };
+enum class ImageFormat { Unknown, PNG, JPEG, BMP, TGA, GIF, HDR, PSD, PNM, WEBP, SVG };
 
 struct DecodedImage {
     int width = 0;
@@ -59,6 +62,9 @@ bool GetImageFileInfo(const std::string& path, int* width, int* height, ImageFor
 /// PNM (Netpbm P1 to P6, maxval up to 65535) to RGBA8. DecodeImage and DetectImageFormat route to it only when the
 /// environment variable OKAY_OWN_PNM=1 is set (off by default); calling this directly always works.
 bool DecodePnm(const std::uint8_t* data, std::size_t size, DecodedImage& out, std::string* error = nullptr);
+/// Render an SVG document at width x height pixels (0 for either: from the picture's own size, keeping its shape;
+/// at most 4096 a side). DecodeImage renders SVG at its own size.
+bool RasterizeSvg(const std::uint8_t* data, std::size_t size, int width, int height, DecodedImage& out, std::string* error = nullptr);
 /// Decode every frame of a GIF.
 bool DecodeGifFrames(const std::uint8_t* data, std::size_t size, DecodedAnimation& out, std::string* error = nullptr);
 

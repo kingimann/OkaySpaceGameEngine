@@ -1129,6 +1129,7 @@ ImageFormat DetectImageFormat(const std::uint8_t* d, std::size_t n) {
     if (n >= 2 && d[0] == 'B' && d[1] == 'M') return ImageFormat::BMP;
     if (n >= 4 && std::memcmp(d, "8BPS", 4) == 0) return ImageFormat::PSD;
     if (n >= 12 && std::memcmp(d, "RIFF", 4) == 0 && std::memcmp(d + 8, "WEBP", 4) == 0) return ImageFormat::WEBP;
+    if (imgdec::LooksLikeSvg(d, n)) return ImageFormat::SVG;
     if ((n >= 10 && std::memcmp(d, "#?RADIANCE", 10) == 0) || (n >= 6 && std::memcmp(d, "#?RGBE", 6) == 0)) return ImageFormat::HDR;
     if (TgaHeaderOk(d, n, nullptr, nullptr)) return ImageFormat::TGA;
     if (n >= 3 && d[0] == 'P' && d[1] >= '1' && d[1] <= '6' && PnmIsSpace(d[2]) && PnmOptedIn()) return ImageFormat::PNM;
@@ -1147,6 +1148,7 @@ bool Dispatch(const std::uint8_t* data, std::size_t size, ImageFormat fmt, int& 
         case ImageFormat::PSD: return DecodePsd(data, size, w, h, rgba, err);
         case ImageFormat::PNM: return DecodePnm(data, size, w, h, rgba, err);
         case ImageFormat::WEBP: return imgdec::DecodeWebp(data, size, &w, &h, rgba, err);
+        case ImageFormat::SVG: return imgdec::DecodeSvg(data, size, 0, 0, &w, &h, rgba, err);
         default: break;
     }
     return Fail(err, "unrecognised image format");
@@ -1178,6 +1180,19 @@ bool DecodeImage(const std::uint8_t* data, std::size_t size, DecodedImage& out, 
     err.clear();
     if (!Dispatch(data, size, fmt, w, h, &rgba, err)) {
         if (error) *error = err.empty() ? "image decode failed" : err;
+        return false;
+    }
+    out.width = w; out.height = h; out.rgba = std::move(rgba);
+    return true;
+}
+
+bool RasterizeSvg(const std::uint8_t* data, std::size_t size, int width, int height, DecodedImage& out, std::string* error) {
+    out = DecodedImage();
+    std::string err;
+    std::vector<std::uint8_t> rgba;
+    int w = 0, h = 0;
+    if (!data || !imgdec::LooksLikeSvg(data, size) || !imgdec::DecodeSvg(data, size, width, height, &w, &h, &rgba, err)) {
+        if (error) *error = err.empty() ? "not an SVG document" : err;
         return false;
     }
     out.width = w; out.height = h; out.rgba = std::move(rgba);

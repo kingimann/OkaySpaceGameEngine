@@ -136,6 +136,21 @@ It unique(It first, It last) {
         }
     return out + 1;
 }
+// The same with a predicate for "equal" ([alg.unique] p2; pred is an equivalence relation, so the
+// element kept from the run is the one compared).
+template <typename It, typename Pred>
+It unique(It first, It last, Pred pred) {
+    if (first == last) return last;
+    It out = first;
+    It p = first;
+    for (++p; p != last; ++p)
+        if (!pred(*out, *p)) {
+            ++out;
+            if (out != p) *out = std::move(*p);
+        }
+    ++out;
+    return out;
+}
 template <typename In, typename Out>
 Out copy(In first, In last, Out out) {
     for (; first != last; ++first, ++out) *out = *first;

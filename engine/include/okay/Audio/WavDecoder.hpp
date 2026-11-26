@@ -101,5 +101,11 @@ private:
     std::unique_ptr<Impl> m_;
 };
 
+/// The IMA / DVI ADPCM tables from the IMA recommended practice (the public format description): the 89-entry step
+/// table and the step-index change for each 3-bit code magnitude. The engine's one copy: the WAV reader and the
+/// launcher's voice chat (launcher/VoiceChat.hpp) both read these.
+const int* ImaAdpcmSteps();         // 89 entries, 7 .. 32767
+const int* ImaAdpcmIndexAdjust();   // 8 entries, indexed by (code & 7)
+
 } // namespace wav
 } // namespace okay

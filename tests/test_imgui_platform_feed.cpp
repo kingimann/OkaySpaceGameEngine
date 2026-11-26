@@ -2,6 +2,7 @@
 // context fed through a fake host (no window, no SDL). Expected values come from the USB HID usage table (the seam's key
 // numbers) and Dear ImGui's public header.
 #include "ImGuiPlatformFeed.hpp"
+#include "ImGuiPainterRenderer.hpp"   // its OwnRequested has the same rule
 #include <cstdio>
 #include <set>
 
@@ -44,6 +45,10 @@ static void KeyTable() {
     CHECK(f::CursorToSeam(ImGuiMouseCursor_ResizeNWSE, s) && s == CursorShape::ResizeNWSE);
     CHECK(!f::CursorToSeam(ImGuiMouseCursor_None, s));
     CHECK(f::OwnRequested("own") && !f::OwnRequested("sdl2") && !f::OwnRequested("") && !f::OwnRequested(nullptr) && !f::OwnRequested("OWN"));
+    // With the own path as the default (the launcher, rule 17): unset or anything else is own; only "sdl2" goes back.
+    CHECK(f::OwnRequested(nullptr, true) && f::OwnRequested("", true) && f::OwnRequested("own", true) && !f::OwnRequested("sdl2", true));
+    CHECK(okay::imguirender::OwnRequested(nullptr, true) && !okay::imguirender::OwnRequested("sdl2", true));
+    CHECK(!okay::imguirender::OwnRequested(nullptr) && okay::imguirender::OwnRequested("own"));
 }
 
 static void Translation() {

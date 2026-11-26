@@ -259,8 +259,8 @@ struct Reader {
         geo.creaseDeg = std::max(0.0, std::min(180.0, crease * 180.0 / kPi));
         geo.ccw = d.AttrOr(g, "ccw", "true") != "false";
         const bool beginCap = d.AttrOr(g, "beginCap", "true") != "false", endCap = d.AttrOr(g, "endCap", "true") != "false";
-        auto near = [](const double* a, const double* b) { return std::fabs(a[0] - b[0]) < 1e-9 && std::fabs(a[1] - b[1]) < 1e-9 && std::fabs(a[2] - b[2]) < 1e-9; };
-        const bool closedSpine = ns > 2 && near(&sp[0], &sp[(ns - 1) * 3]);
+        auto almostEqual = [](const double* a, const double* b) { return std::fabs(a[0] - b[0]) < 1e-9 && std::fabs(a[1] - b[1]) < 1e-9 && std::fabs(a[2] - b[2]) < 1e-9; };
+        const bool closedSpine = ns > 2 && almostEqual(&sp[0], &sp[(ns - 1) * 3]);
         const bool closedCs = nc > 2 && std::fabs(cs[0] - cs[(nc - 1) * 2]) < 1e-9 && std::fabs(cs[1] - cs[(nc - 1) * 2 + 1]) < 1e-9;
         using V = std::array<double, 3>;
         auto sub = [](const V& a, const V& b) { return V{a[0] - b[0], a[1] - b[1], a[2] - b[2]}; };

@@ -4,9 +4,12 @@
 #include "gl_test_context.hpp"
 #include "okay/Render/GLRenderer.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <vector>
 
 using namespace okay;
 
@@ -64,6 +67,54 @@ int main() {
     CHECK(A(dof[32 * W + 32]) == 255);                   // the cube in focus stays solid ...
     for (int k = 0; k < 3; ++k)                          // ... and keeps its colour
         CHECK(std::abs(Ch(dof[32 * W + 32], k) - Ch(plain[32 * W + 32], k)) <= 3);
+
+    // Edge smoothing (the scene's "fxaa" switch; our own pass, kEdgeSmoothFrag, provenance audit A3). A turned cube
+    // has slanted, stair-stepped silhouette edges: the pass changes pixels along them, leaves flat areas and the
+    // empty background alone, adds no ringing (every value stays inside its neighbourhood's range) and makes the
+    // edges less stepped (less total variation).
+    {
+        s.renderSettings.post.dof = false;
+        cube->transform->localRotation = Quat::Euler(25.0f, 35.0f, 10.0f);
+        s.Update(0.0f);
+        std::vector<std::uint32_t> off, on;
+        s.renderSettings.post.fxaa = false; render(off);
+        s.renderSettings.post.fxaa = true;  render(on);
+        auto lum = [](std::uint32_t v) { return (0.2126 * Ch(v, 0) + 0.7152 * Ch(v, 1) + 0.0722 * Ch(v, 2)) * A(v) / 255.0; };
+        int changed = 0, ringing = 0;
+        double tvOff = 0, tvOn = 0;
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x) {
+                const std::uint32_t a = off[y * W + x], b = on[y * W + x];
+                bool diff = false;
+                for (int k = 0; k < 4; ++k) diff = diff || std::abs((int)((a >> (k * 8)) & 0xFF) - (int)((b >> (k * 8)) & 0xFF)) > 6;
+                changed += diff;
+                for (int k = 0; k < 4; ++k) {          // inside the 5 x 5 range of the unsmoothed frame
+                    int lo = 255, hi = 0;
+                    for (int dy = -2; dy <= 2; ++dy)
+                        for (int dx = -2; dx <= 2; ++dx) {
+                            const int xx = x + dx, yy = y + dy;
+                            if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+                            const int c = (int)((off[yy * W + xx] >> (k * 8)) & 0xFF);
+                            lo = std::min(lo, c); hi = std::max(hi, c);
+                        }
+                    const int c = (int)((b >> (k * 8)) & 0xFF);
+                    if (c < lo - 2 || c > hi + 2) ++ringing;
+                }
+                if (x + 1 < W) { tvOff += std::fabs(lum(a) - lum(off[y * W + x + 1])); tvOn += std::fabs(lum(b) - lum(on[y * W + x + 1])); }
+                if (y + 1 < H) { tvOff += std::fabs(lum(a) - lum(off[(y + 1) * W + x])); tvOn += std::fabs(lum(b) - lum(on[(y + 1) * W + x])); }
+            }
+        int partialOff = 0, partialOn = 0;                    // pixels part-covered at the silhouette (soft edge)
+        for (int i = 0; i < W * H; ++i) { partialOff += A(off[i]) > 10 && A(off[i]) < 245; partialOn += A(on[i]) > 10 && A(on[i]) < 245; }
+        std::printf("  edge smoothing: %d pixels changed, %d out of range, total variation %.0f -> %.0f, part-covered %d -> %d\n",
+                    changed, ringing, tvOff, tvOn, partialOff, partialOn);
+        CHECK(changed > 20);                                  // the silhouette was smoothed
+        CHECK(changed < W * H / 4);                           // ... and only there
+        CHECK(ringing == 0);
+        CHECK(tvOn < tvOff * 0.98);
+        CHECK(partialOn > partialOff + 40);                  // softer silhouette (measured 71 -> 151 on Mesa)
+        CHECK(A(on[0]) == 0 && A(on[W - 1]) == 0);            // the empty background stays empty
+        for (int k = 0; k < 3; ++k) CHECK(std::abs(Ch(on[32 * W + 32], k) - Ch(off[32 * W + 32], k)) <= 2);   // flat face untouched
+    }
 
     gl->Destroy();
     gl.reset();

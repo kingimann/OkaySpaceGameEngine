@@ -15,6 +15,9 @@ line with `lint-allow: <id>` in a comment on it.
   alloc-before-check  resize/reserve/vector(n)/new T[n]/assign(n) with n read from a file or packet within the last 10 lines and no
                  comparison of n against a limit in between (allocate only after the budget check)
   test-cannot-fail    CHECK(true), CHECK(1), or a timing check such as CHECK(ms < 2000) in a test (a 2 s limit never fails)
+  win-macro-name      a variable, parameter or lambda named near, far, small, hyper, interface or ERROR: Windows headers
+                 define these as macros, so the code breaks once <windows.h> / <rpcndr.h> is included first (it happened
+                 with near in ScriptIde.cpp and VoxelDebris.hpp, and with small in UIScenePass.cpp for MSVC)
   own-table-test      ModelImport.cpp own-reader table (kOwnSlots / a {"OKAY_OWN_..."} row) edited with no test in the diff that
                  selects ImportBackend::Own (the option-ON case)
 Written for this repo from the review log; standard library and git only.
@@ -57,11 +60,15 @@ def scan_file(path, lines, only, tests_added=False):
         if f"lint-allow: {rid}" in lines[i]: return
         out.append((path, i + 1, rid, msg))
     is_test = path.startswith("tests/")
+    win_name = re.compile(r"(?:\b(?:bool|int|float|double|auto|char|unsigned|size_t|[A-Z]\w*[*&]?)|[*&>])\s+(near|far|small|hyper|interface|ERROR)\s*(?:=|;|,|\)|\[|\{)")
     strto_vars = {}
     for i, line in enumerate(lines):
         code = line.split("//")[0]
         m = ASSIGN_STRTO_RE.search(code)
         if m: strto_vars[m.group(1)] = i
+        mw = win_name.search(re.sub(r'"(?:\\.|[^"\\])*"', '""', code))
+        if mw:
+            add(i, "win-macro-name", f"`{mw.group(1)}` is a macro in the Windows headers; pick another name (e.g. nearest, farthest, smaller)")
         if not is_test:
             if INT_CAST_RE.search(code) and not GUARD_RE.search(code):
                 add(i, "int-cast", "(int) of a strto*/stod result: a big or hostile value overflows; clamp against INT_MAX/limits first")

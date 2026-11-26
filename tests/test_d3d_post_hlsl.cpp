@@ -18,7 +18,7 @@ int main() {
     const std::string hlsl = OKAY_POST_HLSL;
     CHECK(!hlsl.empty());
     // Every post entry point is there, once.
-    for (const char* e : {"float4 PSDown(PSQuad", "float4 PSBlur(PSQuad", "float4 PSUber(PSQuad", "float4 PSFxaa(PSQuad"})
+    for (const char* e : {"float4 PSDown(PSQuad", "float4 PSBlur(PSQuad", "float4 PSUber(PSQuad", "float4 PSEdgeSmooth(PSQuad"})
         CHECK(Has(hlsl, e) && hlsl.find(e) == hlsl.rfind(e));
     // Braces and parentheses balance (a dropped line would show here).
     CHECK(Count(hlsl, '{') == Count(hlsl, '}'));
@@ -37,8 +37,8 @@ int main() {
     CHECK(!d11.empty());
     // Direct3D 11 takes the text from the header and no longer carries its own copy.
     CHECK(Has(d11, "OKAY_POST_HLSL") && Has(d11, "D3DPostHLSL.hpp"));
-    CHECK(!Has(d11, "float4 PSUber(PSQuad") && !Has(d11, "float4 PSFxaa(PSQuad"));
+    CHECK(!Has(d11, "float4 PSUber(PSQuad") && !Has(d11, "float4 PSEdgeSmooth(PSQuad"));
     // Entry points that D3D11 compiles by name exist in the shared text.
-    CHECK(Has(d11, "ps(\"PSDown\"") && Has(d11, "ps(\"PSUber\"") && Has(d11, "ps(\"PSFxaa\""));
+    CHECK(Has(d11, "ps(\"PSDown\"") && Has(d11, "ps(\"PSUber\"") && Has(d11, "ps(\"PSEdgeSmooth\""));
     TEST_MAIN_RESULT();
 }

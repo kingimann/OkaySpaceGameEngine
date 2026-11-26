@@ -37,6 +37,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | SHA-512 | `Crypto/Crypto.hpp` | `okay::crypto::Sha512Hash`, `Sha512` | `std::uint8_t d[64]; crypto::Sha512Hash(d, data, n);` |
 | CRC-32, Adler-32 | `Core/ImageWrite.hpp` | `okay::ImageWrite::Crc32`, `ImageWrite::Adler32` | `auto c = ImageWrite::Crc32(p, n);  // pass c back in to continue` |
 | Inflate (zlib, gzip, raw DEFLATE) | `Core/Inflate.hpp` | `okay::inflate::Zlib`, `inflate::Gzip`, `inflate::Raw` | `inflate::Zlib(in, n, out, {}, why);` |
+| Brotli decoder (RFC 7932; library `okay_brotli`) | `Core/Brotli.hpp` | `okay::brotli::Decode` | `brotli::Decode(in, n, out, opts, why);` |
 | Deflate (compress) | `Core/ImageWrite.hpp` | `ImageWrite::Deflate`, `ImageWrite::ZlibCompress` | `auto z = ImageWrite::ZlibCompress(p, n);` |
 | Zip writing and listing | `Core/BuildPipeline.hpp` | `okay::buildpipe::WriteZip`, `buildpipe::ReadZipDirectory` | `buildpipe::WriteZip("out.zip", folder, true);` |
 | Zip reading (inside the engine) | `engine/src/Render/ZipLite.hpp` | `Archive::Open`, `Archive::Extract` | `Archive a; a.Open(bytes); a.Extract(0, text);` |

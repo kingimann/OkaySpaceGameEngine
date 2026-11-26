@@ -2,7 +2,7 @@
 
 # Code index: engine-Audio
 
-Back to the [code index](../code_index.md). 11 headers, 33 names.
+Back to the [code index](../code_index.md). 11 headers, 35 names.
 
 ## `engine/include/okay/Audio/AudioByteSource.hpp`
 
@@ -63,6 +63,8 @@ Back to the [code index](../code_index.md). 11 headers, 33 names.
 - `WavAudio` struct, line 40
 - `ToS16` function, line 59: Interleaved signed 16-bit samples (the launcher's playback format): rounds to the
 - `WavStream` class, line 71: Reads a WAV file a piece at a time from a byte source (a file read on demand, or memory), for long
+- `ImaAdpcmSteps` function, line 107: The IMA / DVI ADPCM tables from the IMA recommended practice (the public format description): the 89-entry step
+- `ImaAdpcmIndexAdjust` function, line 108
 
 ## `engine/include/okay/Audio/WavPlayback.hpp`
 

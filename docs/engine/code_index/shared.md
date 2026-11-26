@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 71 headers, 1091 names.
+Back to the [code index](../code_index.md). 72 headers, 1092 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -97,13 +97,13 @@ Back to the [code index](../code_index.md). 71 headers, 1091 names.
 
 ## `shared/AntiCheatHardware.hpp`
 
-- `HardwareInfo` struct, line 51
-- `DeploymentSalt` function, line 55
-- `CanonicalHardware` function, line 58: The text that's hashed (documented above; tests pin it).
-- `UsableMachineId` function, line 73: A machine id that names one machine: present, long enough, and not a
-- `HardwareHash` function, line 85: "" (no hash at all) unless there's a real machine GUID / machine-id. The
-- `CollectHardware` function, line 135: This machine's parts (raw: they're hashed by HardwareHash and go nowhere else).
-- `MachineHash` function, line 169: This machine's hash for this deployment ("" if the platform offers nothing).
+- `HardwareInfo` struct, line 56
+- `DeploymentSalt` function, line 60
+- `CanonicalHardware` function, line 63: The text that's hashed (documented above; tests pin it).
+- `UsableMachineId` function, line 78: A machine id that names one machine: present, long enough, and not a
+- `HardwareHash` function, line 90: "" (no hash at all) unless there's a real machine GUID / machine-id. The
+- `CollectHardware` function, line 140: This machine's parts (raw: they're hashed by HardwareHash and go nowhere else).
+- `MachineHash` function, line 174: This machine's hash for this deployment ("" if the platform offers nothing).
 
 ## `shared/AntiCheatIntegrity.hpp`
 
@@ -180,6 +180,10 @@ Back to the [code index](../code_index.md). 71 headers, 1091 names.
 
 - `TabHost` class, line 29
 - `DownloadHost` class, line 104: The browser program's downloads: each file is fetched into its place (NativeFetch's FetchToFile: a temporary file renamed
+
+## `shared/BrowserPluginCommands.hpp`
+
+- `OwnerOf` function, line 15
 
 ## `shared/ConsoleScriptLink.hpp`
 
@@ -649,27 +653,27 @@ Back to the [code index](../code_index.md). 71 headers, 1091 names.
 
 ## `shared/ImGuiPainterRenderer.hpp`
 
-- `OwnRequested` function, line 30: True when OKAY_IMGUI_RENDER is "own" (anything else, or unset, keeps imgui_impl_sdlrenderer2).
-- `ActiveLine` function, line 32: The line the apps log at start-up so you can tell which renderer runs.
-- `Init` function, line 39: Mark the ImGui context as served by this renderer (call once after CreateContext). Textures are requested through ImTextureData and
-- `UpdateTexture` function, line 60: Answer one texture request. Safe to call for any status.
-- `Render` function, line 112: Draw one frame's draw data. 'p' is the painter of the window the data is for.
-- `Shutdown` function, line 162: Free every texture this renderer made (call before the painter or the ImGui context goes away).
+- `OwnRequested` function, line 31: Whether our own renderer runs, from OKAY_IMGUI_RENDER: "own" = yes, "sdl2" = no (imgui_impl_sdlrenderer2), unset or
+- `ActiveLine` function, line 37: The line the apps log at start-up so you can tell which renderer runs.
+- `Init` function, line 44: Mark the ImGui context as served by this renderer (call once after CreateContext). Textures are requested through ImTextureData and
+- `UpdateTexture` function, line 65: Answer one texture request. Safe to call for any status.
+- `Render` function, line 117: Draw one frame's draw data. 'p' is the painter of the window the data is for.
+- `Shutdown` function, line 167: Free every texture this renderer made (call before the painter or the ImGui context goes away).
 
 ## `shared/ImGuiPlatformFeed.hpp`
 
-- `OwnRequested` function, line 30
-- `ActiveLine` function, line 35: The line the apps log at start-up so you can tell which one runs.
-- `KeyToImGui` function, line 42: A seam key to an ImGuiKey (ImGuiKey_None for a key Dear ImGui has no name for). The seam numbers keys with USB HID
-- `ModBitOfKey` function, line 108: Dear ImGui wants the modifier state as its own key events (ImGuiMod_Ctrl ...) besides the left / right key events.
-- `ModKeyOfPair` function, line 118: The ImGuiMod_ key for a pair of bits (bit / 2).
-- `MouseButtonToImGui` function, line 129: A seam mouse button (MouseLeft = 1 ...) to Dear ImGui's button number (0 left, 1 right, 2 middle, 3 and 4 the side
-- `CursorToSeam` function, line 141: A seam cursor shape for an ImGuiMouseCursor (ImGuiMouseCursor_None has none: the caller hides the pointer).
-- `Action` struct, line 160: One thing to tell Dear ImGui's IO.
-- `Translate` function, line 172: Pure: what one platform event means for Dear ImGui. 'windowId' filters: an event for another window gives nothing
-- `Apply` function, line 207: Apply Actions to an ImGuiIO.
-- `FeedHost` struct, line 221: What the feed needs from a window and the backend. Empty members are skipped (a missing one is "not supported").
-- `Feed` class, line 254: One Dear ImGui context's feed (the launcher has two: the main window and the chat window). Use it with that context
+- `OwnRequested` function, line 32
+- `ActiveLine` function, line 41: The line the apps log at start-up so you can tell which one runs.
+- `KeyToImGui` function, line 48: A seam key to an ImGuiKey (ImGuiKey_None for a key Dear ImGui has no name for). The seam numbers keys with USB HID
+- `ModBitOfKey` function, line 114: Dear ImGui wants the modifier state as its own key events (ImGuiMod_Ctrl ...) besides the left / right key events.
+- `ModKeyOfPair` function, line 124: The ImGuiMod_ key for a pair of bits (bit / 2).
+- `MouseButtonToImGui` function, line 135: A seam mouse button (MouseLeft = 1 ...) to Dear ImGui's button number (0 left, 1 right, 2 middle, 3 and 4 the side
+- `CursorToSeam` function, line 147: A seam cursor shape for an ImGuiMouseCursor (ImGuiMouseCursor_None has none: the caller hides the pointer).
+- `Action` struct, line 166: One thing to tell Dear ImGui's IO.
+- `Translate` function, line 178: Pure: what one platform event means for Dear ImGui. 'windowId' filters: an event for another window gives nothing
+- `Apply` function, line 213: Apply Actions to an ImGuiIO.
+- `FeedHost` struct, line 227: What the feed needs from a window and the backend. Empty members are skipped (a missing one is "not supported").
+- `Feed` class, line 260: One Dear ImGui context's feed (the launcher has two: the main window and the chat window). Use it with that context
 
 ## `shared/InspectorFieldsModel.hpp`
 
@@ -873,13 +877,13 @@ Back to the [code index](../code_index.md). 71 headers, 1091 names.
 
 - `HostKeys` enum, line 31: Which keys the host hands OkayUI this frame (HostedKeys, below Region, says which).
 - `InputCollector` class, line 34: Collects what OkayUI needs from SDL events between two frames.
-- `Region` class, line 314: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
-- `HostedInputWanted` function, line 369: Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
-- `HostedKeys` function, line 380: Which keys a host that draws Dear ImGui and hosted OkayUI pages hands OkayUI this frame (InputCollector::Build).
-- `WantsKeyboard` function, line 387: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
-- `KeyIdOf` function, line 411: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
-- `EventCollector` class, line 438: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
-- `Host` class, line 518: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
+- `Region` class, line 315: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
+- `HostedInputWanted` function, line 370: Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
+- `HostedKeys` function, line 381: Which keys a host that draws Dear ImGui and hosted OkayUI pages hands OkayUI this frame (InputCollector::Build).
+- `WantsKeyboard` function, line 388: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
+- `KeyIdOf` function, line 412: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
+- `EventCollector` class, line 439: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
+- `Host` class, line 519: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
 
 ## `shared/OkayUIHostImGui.hpp`
 
@@ -1029,6 +1033,11 @@ Back to the [code index](../code_index.md). 71 headers, 1091 names.
 
 - `PlatformClipboard` class, line 9
 
+## `shared/PlatformDisplays.hpp`
+
+- `ListMonitors` function, line 12: Every connected monitor of 'b' (the default backend when null) and the video modes it lists. Empty when the
+- `Apply` function, line 16: Put 'want' on a window: windowed size, borderless desktop fullscreen, or exclusive fullscreen at a listed mode on the
+
 ## `shared/ProjectCreate.hpp`
 
 - `StandardFolders` function, line 32: The folders a new project starts with inside Assets (the Project panel's "Create >
@@ -1137,11 +1146,6 @@ Back to the [code index](../code_index.md). 71 headers, 1091 names.
 - `InstalledVersions` function, line 429: The versions that have an editor under <launcher dir>/Versions, newest first (a folder whose name is not a version,
 - `KeepVersionArgs` function, line 445: The command line (after the program) that opens 'scene' and says the version was chosen on purpose:
 
-## `shared/SdlDisplays.hpp`
-
-- `ListMonitors` function, line 13: Every connected monitor and the modes SDL lists for it. Empty when video is not up.
-- `Apply` function, line 17: Put 'want' on an SDL window: windowed size, borderless desktop, or exclusive fullscreen
-
 ## `shared/SelfUpdate.hpp`
 
 - `Phase` enum, line 37
@@ -1169,15 +1173,15 @@ Back to the [code index](../code_index.md). 71 headers, 1091 names.
 
 ## `shared/Splash.hpp`
 
-- `SplashStyle` struct, line 40: How the splash looks — lets a host customize the loading screen: the accent
-- `SplashProgress` struct, line 52: What the splash says and how far start-up is. Every field is optional.
-- `SplashLayout` struct, line 66: Where the parts of the splash go on a w x h output (the drawing and the tests use the same numbers).
-- `SplashClamp01` function, line 77
-- `ComputeSplashLayout` function, line 79
-- `DrawSplashStyled` function, line 115: Draw one animated splash frame (into 'style') and present it:
-- `DrawSplash` function, line 318: Backward-compatible helper: draw the splash with just an accent colour.
-- `SplashSteps` class, line 327: A host's start-up as named steps with weights (how long each roughly takes), turned into the progress value
-- `SplashFinish` class, line 370: The end of the splash, drawn over the host's first frames: fully up while the host still holds it (a start-up
+- `SplashStyle` struct, line 35: How the splash looks — lets a host customize the loading screen: the accent
+- `SplashProgress` struct, line 47: What the splash says and how far start-up is. Every field is optional.
+- `SplashLayout` struct, line 61: Where the parts of the splash go on a w x h output (the drawing and the tests use the same numbers).
+- `SplashClamp01` function, line 72
+- `ComputeSplashLayout` function, line 74
+- `DrawSplashStyled` function, line 110: Draw one animated splash frame (into 'style') and present it:
+- `DrawSplash` function, line 313: Backward-compatible helper: draw the splash with just an accent colour.
+- `SplashSteps` class, line 322: A host's start-up as named steps with weights (how long each roughly takes), turned into the progress value
+- `SplashFinish` class, line 365: The end of the splash, drawn over the host's first frames: fully up while the host still holds it (a start-up
 
 ## `shared/StartupUpdate.hpp`
 

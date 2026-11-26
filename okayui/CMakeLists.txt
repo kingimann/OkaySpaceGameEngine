@@ -92,6 +92,14 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
         # No window, no GPU: make sure SDL never tries to open a display.
         set_tests_properties(${t} PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     endforeach()
+    # Browser round 3: the page corpus (tests/data/browser_pages) drawn through the browser view and compared with goldens.
+    add_executable(test_okayui_browser_pages tests/test_okayui_browser_pages.cpp)
+    target_link_libraries(test_okayui_browser_pages PRIVATE okay_ui_render)
+    target_include_directories(test_okayui_browser_pages PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
+    target_compile_definitions(test_okayui_browser_pages PRIVATE OKAYUI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden"
+                               OKAY_BROWSER_PAGES_DIR="${CMAKE_SOURCE_DIR}/tests/data/browser_pages")
+    add_test(NAME okayui_browser_pages COMMAND test_okayui_browser_pages)
+    set_tests_properties(okayui_browser_pages PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     # The whole browser (shared/BrowserApp.cpp), shared by the browser program and the launcher's Browser page, with its tab host
     # (fetches, images, games: the engine's HTTP seam, decoders and threads) and okay's one place that starts a program.
     if(TARGET okay::engine)

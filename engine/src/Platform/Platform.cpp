@@ -120,6 +120,39 @@ char Backend::CharForKey(Key k) {
     return 0;
 }
 
+// Written from the Win32 documentation (GetSystemInfo, GlobalMemoryStatusEx) and POSIX sysconf (_SC_NPROCESSORS_ONLN,
+// _SC_PHYS_PAGES, _SC_PAGE_SIZE; the last two are common extensions on Linux and macOS).
+int CpuCount() {
+#if defined(_WIN32)
+    SYSTEM_INFO si; GetSystemInfo(&si);
+    return (int)si.dwNumberOfProcessors;
+#elif defined(__unix__) || defined(__APPLE__)
+    const long n = sysconf(_SC_NPROCESSORS_ONLN);
+    return n > 0 ? (int)n : 0;
+#else
+    return 0;
+#endif
+}
+
+int SystemRamMB() {
+#if defined(_WIN32)
+    MEMORYSTATUSEX ms; ms.dwLength = sizeof(ms);
+    return GlobalMemoryStatusEx(&ms) ? (int)(ms.ullTotalPhys / (1024ull * 1024ull)) : 0;
+#elif defined(__unix__) || defined(__APPLE__)
+    const long pages = sysconf(_SC_PHYS_PAGES), size = sysconf(_SC_PAGE_SIZE);
+    return pages > 0 && size > 0 ? (int)((unsigned long long)pages * (unsigned long long)size / (1024ull * 1024ull)) : 0;
+#else
+    return 0;
+#endif
+}
+
+std::vector<DisplayMode> Backend::DisplayModes(int index) {
+    std::vector<DisplayMode> out;
+    DisplayInfo d;
+    if (DisplayAt(index, d) && d.w > 0 && d.h > 0) out.push_back({d.w, d.h, d.refreshHz});
+    return out;
+}
+
 bool Backend::ShowErrorBox(const std::string& title, const std::string& text, Window*) {
     std::fprintf(stderr, "ERROR: %s: %s\n", title.c_str(), text.c_str());
     return false;

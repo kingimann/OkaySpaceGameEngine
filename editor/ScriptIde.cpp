@@ -688,12 +688,12 @@ std::vector<Diagnostic> BasicLint(const std::string& language, const std::string
         if (call) {
             if (!lua || declared.count(k.text) || (i > 0 && t[i - 1].text == "function")) continue;
             // Lua: a call to a name that is defined nowhere and that the engine does not have.
-            const std::string near = NearestName(k.text, known);
+            const std::string nearest = NearestName(k.text, known);
             if (!reported.insert("c:" + k.text).second) continue;
             Diagnostic d;
             d.line = k.line; d.col = k.col + 1; d.severity = 1; d.source = "lint";
-            d.message = "'" + k.text + "' is not defined" + (near.empty() ? std::string(".") : ". Did you mean " + near + "?");
-            if (!near.empty()) d.fixes.push_back({"Change to '" + near + "'", {{k.line, k.col, (int)k.text.size(), near}}});
+            d.message = "'" + k.text + "' is not defined" + (nearest.empty() ? std::string(".") : ". Did you mean " + nearest + "?");
+            if (!nearest.empty()) d.fixes.push_back({"Change to '" + nearest + "'", {{k.line, k.col, (int)k.text.size(), nearest}}});
             out.push_back(std::move(d));
             continue;
         }
@@ -706,8 +706,8 @@ std::vector<Diagnostic> BasicLint(const std::string& language, const std::string
         const std::string indent = lineText.substr(0, lineText.find_first_not_of(" \t") == std::string::npos ? 0 : lineText.find_first_not_of(" \t"));
         d.fixes.push_back({"Declare '" + k.text + "'",
                            {{k.line, 0, 0, indent + (lua ? "local " + k.text + " = nil\n" : "var " + k.text + " = 0;\n")}}});
-        const std::string near = NearestName(k.text, std::vector<std::string>(declared.begin(), declared.end()));
-        if (!near.empty()) d.fixes.push_back({"Change to '" + near + "'", {{k.line, k.col, (int)k.text.size(), near}}});
+        const std::string nearest = NearestName(k.text, std::vector<std::string>(declared.begin(), declared.end()));
+        if (!nearest.empty()) d.fixes.push_back({"Change to '" + nearest + "'", {{k.line, k.col, (int)k.text.size(), nearest}}});
         out.push_back(std::move(d));
     }
     // Unused locals: `local x = ...` (Lua) or `var x = ...` inside a function (OkayScript), the name used nowhere else.

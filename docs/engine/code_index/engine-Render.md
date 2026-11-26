@@ -2,7 +2,7 @@
 
 # Code index: engine-Render
 
-Back to the [code index](../code_index.md). 49 headers, 467 names.
+Back to the [code index](../code_index.md). 52 headers, 515 names.
 
 ## `engine/include/okay/Render/AmfReader.hpp`
 
@@ -140,7 +140,7 @@ Back to the [code index](../code_index.md). 49 headers, 467 names.
 
 ## `engine/include/okay/Render/GLRenderer.hpp`
 
-- `GLRenderer` class, line 42
+- `GLRenderer` class, line 44
 
 ## `engine/include/okay/Render/Gltf.hpp`
 
@@ -402,6 +402,60 @@ Back to the [code index](../code_index.md). 49 headers, 467 names.
 - `ProcTextureNames` function, line 88: Names of every built-in procedural texture (for editor pickers), "proc:"-less.
 - `GenerateProcTexture` function, line 98: Generate a built-in procedural texture by its "proc:<name>" id (or bare
 
+## `engine/include/okay/Render/RHI/BloomPass.hpp`
+
+- `BloomPass` class, line 24
+
+## `engine/include/okay/Render/RHI/RHI.hpp`
+
+- `Backend` enum, line 45
+- `BackendName` function, line 46
+- `Handle` struct, line 50: ---- Handles --------------------------------------------------------------------
+- `BufferTag` struct, line 56
+- `Format` enum, line 65: ---- Resource descriptions --------------------------------------------------------
+- `IsDepth` function, line 66
+- `BytesPerPixel` function, line 67
+- `BufferUsage` enum, line 69
+- `BufferDesc` struct, line 70
+- `TextureDesc` struct, line 78
+- `Filter` enum, line 87
+- `Wrap` enum, line 88
+- `SamplerDesc` struct, line 91: No mip levels yet, so minification and magnification read the same level; the Software
+- `UniformType` enum, line 97: ---- Shaders ----------------------------------------------------------------------
+- `UniformTypeSize` function, line 98
+- `UniformField` struct, line 102: One field of a shader's uniform block. Offsets follow the 16-byte rule of HLSL
+- `FragmentContext` struct, line 109: What a CPU (Software backend) fragment function sees.
+- `ShaderDesc` struct, line 130
+- `ValidateShaderDesc` function, line 147: Checks a description for mistakes every backend would make (layout overlaps,
+- `VertexFormat` enum, line 150: ---- Pipelines --------------------------------------------------------------------
+- `VertexAttribute` struct, line 151
+- `VertexLayout` struct, line 156
+- `BlendFactor` enum, line 161
+- `BlendState` struct, line 165
+- `CompareOp` enum, line 177
+- `DepthState` struct, line 178
+- `CullMode` enum, line 182
+- `Topology` enum, line 183
+- `PipelineDesc` struct, line 185
+- `ValidatePipelineDesc` function, line 196: Checks a pipeline's vertex layout (locations in range and not repeated, each attribute inside
+- `LoadOp` enum, line 199: ---- Render passes ------------------------------------------------------------------
+- `RenderPassDesc` struct, line 200
+- `ResourceState` enum, line 210: The state a texture is in, for the backends that need barriers between uses
+- `IndexType` enum, line 213: ---- Command lists ------------------------------------------------------------------
+- `CommandList` class, line 215
+- `Caps` struct, line 263: ---- Capabilities -------------------------------------------------------------------
+- `Stats` struct, line 276
+- `Device` class, line 282: ---- Device ------------------------------------------------------------------------
+- `CreateSoftwareDevice` function, line 347: A CPU device: rasterizes the command lists itself. Always available; the reference
+- `GLDeviceOptions` struct, line 349
+- `CreateOpenGLDevice` function, line 356: An OpenGL device on the CURRENT context. Needs GLRenderer::LoadGL() to have
+- `WrapGLTexture` function, line 359: OpenGL only: use an existing GL texture (made by other code) as an RHI texture. The
+- `AbandonGLDevice` function, line 362: OpenGL only: the context is gone (or not current) and the device is being thrown away;
+
+## `engine/include/okay/Render/RHI/SurfaceShader.hpp`
+
+- `ShaderFromSurface` function, line 31: Build the RHI shader description of an unlit surface. False (and 'error' set) when the
+
 ## `engine/include/okay/Render/RenderContributions.hpp`
 
 - `RenderContribution` struct, line 14
@@ -531,6 +585,7 @@ Back to the [code index](../code_index.md). 49 headers, 467 names.
 - `FXAAEnabled` function, line 1474: ---- Anti-aliasing (FXAA-lite) ---------------------------------------------
 - `RenderCullingMask` function, line 1479: Active camera's layer culling mask (Camera.cullingMask). RenderMeshes draws a
 - `ApplyFXAA` function, line 1484: Cheap post-process anti-aliasing: where local contrast is high (a geometry
+- `ReducedRenderScope` class, line 1513: While alive, the software renderer makes a cheaper picture: the process-wide passes that cost the most and add little to a
 
 ## `engine/include/okay/Render/SsaoMath.hpp`
 
@@ -569,24 +624,26 @@ Back to the [code index](../code_index.md). 49 headers, 467 names.
 - `ForRender` function, line 173: What the renderers draw with: the asset for a texture name, loaded on first use and held by the library, or null
 - `ReadOnly` function, line 176: While a ReadOnlyScope is alive (the software renderer's parallel band render), ForRender only looks names up: it
 - `ReadOnlyScope` struct, line 177
-- `Drop` function, line 184: Let go of the library's own reference to a name (the asset lives on while other handles exist).
-- `InvalidateAll` function, line 187: Drop every file texture the library holds for the renderers, re-decode the ones still alive elsewhere, and keep
-- `Generation` function, line 190: Bumped whenever the library lets go of names (Drop, InvalidateAll, a budget trim): renderers that cache by name
-- `Pump` function, line 194: Once a frame on the main thread: hot reload (when on), the frame counter for idle tracking, the budget check and
-- `SetHotReload` function, line 197: Watch loaded picture files for changes (checked at most every 'intervalSeconds'). Off by default; the editor turns
-- `HotReload` function, line 198
-- `SetAsyncLoading` function, line 203: Background loading: ForRender starts the decode on AssetManager's worker and returns null (the renderers draw the
-- `AsyncLoading` function, line 204
-- `Stats` struct, line 206
-- `GetStats` function, line 216
-- `Row` struct, line 217
-- `Report` function, line 226: Every live texture, largest first.
-- `OverlayLine` function, line 228: One line for the F3 overlay: "textures 12  38.4 MB / 1024 MB" (+ "  OVER BUDGET").
-- `SetBudgetBytes` function, line 231: Budget in bytes (0 = no budget). Default from OKAY_TEXTURE_BUDGET_MB, else 1024 MB.
-- `BudgetBytes` function, line 232
-- `SetIdleFrames` function, line 234: While over budget, Pump lets go of textures the renderers have not drawn for this many Pump calls (default 300).
-- `IsHeld` function, line 238: Whether the renderers' cache holds this name now. A GPU renderer that sees Generation() change frees its own copies
-- `ResetForTests` function, line 241: For tests: forget everything the library holds (registered pictures too) and reset the counters.
+- `Prefetch` function, line 186: Start decoding a texture on a job thread through the asset streamer (AssetManager::Stream, at 'priority') so it is
+- `Loading` function, line 188: True while a prefetched or background load of this name is still decoding.
+- `Drop` function, line 190: Let go of the library's own reference to a name (the asset lives on while other handles exist).
+- `InvalidateAll` function, line 193: Drop every file texture the library holds for the renderers, re-decode the ones still alive elsewhere, and keep
+- `Generation` function, line 196: Bumped whenever the library lets go of names (Drop, InvalidateAll, a budget trim): renderers that cache by name
+- `Pump` function, line 200: Once a frame on the main thread: hot reload (when on), the frame counter for idle tracking, the budget check and
+- `SetHotReload` function, line 203: Watch loaded picture files for changes (checked at most every 'intervalSeconds'). Off by default; the editor turns
+- `HotReload` function, line 204
+- `SetAsyncLoading` function, line 209: Background loading: ForRender starts the decode on AssetManager's worker and returns null (the renderers draw the
+- `AsyncLoading` function, line 210
+- `Stats` struct, line 212
+- `GetStats` function, line 222
+- `Row` struct, line 223
+- `Report` function, line 232: Every live texture, largest first.
+- `OverlayLine` function, line 234: One line for the F3 overlay: "textures 12  38.4 MB / 1024 MB" (+ "  OVER BUDGET").
+- `SetBudgetBytes` function, line 237: Budget in bytes (0 = no budget). Default from OKAY_TEXTURE_BUDGET_MB, else 1024 MB.
+- `BudgetBytes` function, line 238
+- `SetIdleFrames` function, line 240: While over budget, Pump lets go of textures the renderers have not drawn for this many Pump calls (default 300).
+- `IsHeld` function, line 244: Whether the renderers' cache holds this name now. A GPU renderer that sees Generation() change frees its own copies
+- `ResetForTests` function, line 247: For tests: forget everything the library holds (registered pictures too) and reset the counters.
 
 ## `engine/include/okay/Render/TextureCacheFiles.hpp`
 

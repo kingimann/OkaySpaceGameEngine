@@ -1,5 +1,6 @@
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Modeling/PolyMesh.hpp"
+#include "okay/Core/AssetManager.hpp"
 
 #include <cstring>
 #include <fstream>
@@ -25,19 +26,36 @@ bool LoadOne(const std::string& path, Mesh& out, std::string* texture, std::stri
 }
 } // namespace
 
-bool LoadMeshAsset(const std::string& path, Mesh& out, std::string* texture, std::string* error, const std::string& fallbackDir) {
-    if (path.empty()) { if (error) *error = "no mesh file"; return false; }
-    if (Exists(path)) return LoadOne(path, out, texture, error);
+std::string ResolveMeshAssetPath(const std::string& path, const std::string& fallbackDir) {
+    if (path.empty()) return std::string();
+    if (Exists(path)) return path;
     if (!fallbackDir.empty()) {
         const std::size_t slash = path.find_last_of("/\\");
         const std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
         std::string dir = fallbackDir;
         if (dir.back() != '/' && dir.back() != '\\') dir += '/';
-        if (Exists(dir + name)) return LoadOne(dir + name, out, texture, error);
-        if (Exists(dir + path)) return LoadOne(dir + path, out, texture, error);
+        if (Exists(dir + name)) return dir + name;
+        if (Exists(dir + path)) return dir + path;
     }
-    if (error) *error = "can't find " + path;
-    return false;
+    return std::string();
+}
+
+bool DecodeMeshFile(const std::string& file, MeshFile& out, std::string* error) {
+    out.texture.clear();
+    return LoadOne(file, out.mesh, &out.texture, error);
+}
+
+bool LoadMeshAsset(const std::string& path, Mesh& out, std::string* texture, std::string* error, const std::string& fallbackDir) {
+    if (path.empty()) { if (error) *error = "no mesh file"; return false; }
+    const std::string file = ResolveMeshAssetPath(path, fallbackDir);
+    if (file.empty()) { if (error) *error = "can't find " + path; return false; }
+    // Streamed already (decoded on a job thread, file unchanged since): copy it, no second read.
+    if (AssetHandle<MeshFile> h = AssetManager::Instance().FindFresh<MeshFile>(file)) {
+        out = h->mesh;
+        if (texture) *texture = h->texture;
+        return true;
+    }
+    return LoadOne(file, out, texture, error);
 }
 
 bool SaveMeshAsset(const std::string& path, const Mesh& mesh, std::string* error) {

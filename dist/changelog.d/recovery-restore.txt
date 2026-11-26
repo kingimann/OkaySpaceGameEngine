@@ -1,0 +1,7 @@
+section: Fixes and new things
+roadmap: Recovery after an unclean exit: Restore works, one question per crashed session, failures shown and the copy kept
+---
+- Restoring work after the editor closed unexpectedly works: one question
+  per lost session, scripts come back as scripts, and if something cannot
+  be restored the window says why and keeps the copy. A new Keep for later
+  button leaves the copy for another time.

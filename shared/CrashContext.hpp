@@ -59,6 +59,17 @@ struct State {
 
 inline State g_state;   // C++17 inline variable: one block for the whole program, zero-initialised
 
+// The main thread is waiting on the person on purpose (a native file dialog runs its own loop and our frames stop): the hang
+// watchdog (editor/HangWatchdog.hpp) does not count that time. Nested waits count up and down.
+inline std::atomic<int> g_waitingOnPerson{0};
+inline bool WaitingOnPerson() { return g_waitingOnPerson.load(std::memory_order_relaxed) > 0; }
+struct PersonWait {
+    PersonWait() { g_waitingOnPerson.fetch_add(1, std::memory_order_relaxed); }
+    ~PersonWait() { g_waitingOnPerson.fetch_sub(1, std::memory_order_relaxed); }
+    PersonWait(const PersonWait&) = delete;
+    PersonWait& operator=(const PersonWait&) = delete;
+};
+
 // ---- Writers (the editor calls these; all bounded, none allocate) ---------------------------------------------------------------
 // A single-line text field: control characters become spaces, the copy is cut to fit and always ends in a NUL.
 inline void SetText(char* dst, std::size_t cap, const char* src) {

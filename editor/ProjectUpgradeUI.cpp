@@ -2,6 +2,7 @@
 // (re-run and restore from a backup). The decisions are okayup::ProjectGate's and the work okayup::UpgradeJob's
 // (ProjectUpgrade.hpp, no ImGui); this file only draws them and wires them into the editor. See docs/editor/project_upgrade.md.
 #include "ProjectUpgradeUI.hpp"
+#include "ModalGuard.hpp"   // OpenModalWhenFree: one question at a time
 #include "EditorCommon.hpp"
 #include "EditorWidgets.hpp"
 #include "ConsolePanel.hpp"
@@ -169,7 +170,7 @@ void DrawGatePrompt() {
     using okayup::Choice;
     const okayup::Prompt& pr = g_gate.prompt();
     const bool wanted = pr.kind != PromptKind::None;
-    if (wanted && !ImGui::IsPopupOpen("Project version")) ImGui::OpenPopup("Project version");
+    if (wanted) okayed::modalguard::OpenModalWhenFree("Project version");   // one question at a time (editor/ModalGuard.hpp)
     if (!wanted && !ImGui::IsPopupOpen("Project version")) return;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(620, 0), ImGuiCond_Always);
@@ -434,7 +435,7 @@ void DrawUpgradeWindow(okay::editor::EditorState& ed) {
 
 void DrawRestored() {
     if (g_restoreSummary.empty()) return;
-    if (!ImGui::IsPopupOpen("Backup restored")) ImGui::OpenPopup("Backup restored");
+    if (!okayed::modalguard::OpenModalWhenFree("Backup restored")) return;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(580, 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("Backup restored", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) return;

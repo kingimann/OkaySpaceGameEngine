@@ -188,14 +188,14 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   Home: `engine/include/okay/Components/WorldStreamer.hpp`, `engine/include/okay/Optimize/StreamingGrid.hpp`, `engine/include/okay/Texture/Stream.hpp`, `engine/include/okay/Audio/AudioStream.hpp`. Entry: `engine/include/okay/Components/WorldStreamer.hpp`. Also called: WorldStreamer, World Partition, level streaming, chunk streaming, StreamingGrid. Fix: One okay/World folder (architecture.md): WorldStreamer, StreamingGrid, Texture/Stream, Audio/AudioStream.
 - **What:** Split one big scene into streaming cells and manage them, so open worlds can be edited as one map.
 - **Parts:**
-  - 45.1.1 Streamer component - `Components/WorldStreamer` - loads cells named `<prefix>_<x>_<z>.okayprefab` within a radius of the camera; hysteresis between load and unload radius
+  - 45.1.1 Streamer component - `Components/WorldStreamer` - streams cells named `<prefix>_<x>_<z>.okayprefab` within a radius of the camera (on `Optimize/StreamingGrid`, through the asset streamer: no hitches, see 27.4); hysteresis between load and unload radius
   - 45.1.2 Additive scene merge - `Scene/SceneSerializer` - `MergeFromText` with an offset places scene "chunks" side by side
   - 45.1.3 Cell editor - `-` - not built (cells are written by hand today)
 - **Code:** `Components/WorldStreamer`, `Scene/SceneSerializer`
-- **API:** `WorldStreamer` (`cellSize`, `loadRadius`, `unloadRadius`, `folder`, `prefix`), `SyncNow`, `LoadedCells`
+- **API:** `WorldStreamer` (`cellSize`, `loadRadius`, `unloadRadius`, `folder`, `prefix`), `SyncNow`, `LoadedCells`, `GetCellState`
 - **Editor:** WorldStreamer Inspector section
-- **Docs:** `docs/engine/scene_management.md`
-- **Tests:** `worldstreamer`
+- **Docs:** `docs/engine/scene_management.md`, `docs/engine/asset_streaming.md`
+- **Tests:** `worldstreamer`, `asset_streaming`
 - **Status:** Partial - runtime streaming works; authoring is manual.
 - **Exists today:** The streamer, as above. It assumes each cell prefab already holds objects at final world positions.
 - **Suggested priority:** Medium - open worlds are a stated goal of the terrain tools; this is the missing workflow.

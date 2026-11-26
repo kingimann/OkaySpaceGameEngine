@@ -302,6 +302,7 @@ int main() {
             b.ForgetThumb(p.td.at("Art/rock.png"));
             CHECK(!b.Thumbs().InMemory(g1, 1));                           // (an unrelated key is simply absent)
             CHECK(Exists(p.td.path.generic_u8string() + "/.okay/thumbs"));
+            b.ThumbFrame(1000.0);   // a new frame: one prefab, scene or model picture is made per frame
             CHECK(b.Thumb(p.td.at("Art/hero.png")).ready && b.Thumb(p.td.at("Prefabs/hero.okayprefab")).ready);   // the pictures of the final state are on disk
         }
         {   // a new session (a new Browser): the pictures come from disk, nothing is rendered again
@@ -333,6 +334,74 @@ int main() {
             fs::remove(fs::u8path(p.td.at("Many/p0.png")));
             b.Sync();
             CHECK(b.PruneThumbs() >= 1);
+        }
+    }
+
+    // The owner's okay_editor_perf.log (2026-11-25): scene, prefab and model pictures are made by loading the asset into a scene of
+    // its own and rendering it, which can take far longer than the 10 ms budget, and a picture that could not be made was tried
+    // again every session. Work counts, not times, so the bounds hold on a loaded machine.
+    RUN_SUITE("thumbnails: one whole-scene picture a frame, none during a drag, one disk look per key, failures remembered");
+    {
+        TempDir td;
+        const int n = 8;
+        for (int i = 0; i < n; ++i)
+            WriteFile(td.at("Scenes/s" + std::to_string(i) + ".okayscene"), "scene \"S" + std::to_string(i) + "\"\ngameobject \"A\"\n");
+        for (int i = 0; i < n; ++i) WriteFile(td.at("Prefabs/p" + std::to_string(i) + ".okayprefab"), "gameobject \"P\"\n");
+        auto scene = [&](int i) { return td.at("Scenes/s" + std::to_string(i) + ".okayscene"); };
+        auto prefab = [&](int i) { return td.at("Prefabs/p" + std::to_string(i) + ".okayprefab"); };
+        int rendered = 0, failedRenders = 0;
+        {
+            Browser b(td.assets());
+            b.AddThumbGenerator({"okayscene"}, [&](const std::string&) { ++rendered; okay::Image im(16, 16); im.Fill(okay::Color(0, 1, 0, 1)); return im; });
+            b.AddThumbGenerator({"okayprefab"}, [&](const std::string&) { ++failedRenders; return okay::Image(); });   // "cannot draw this"
+            // A frame that asks for every tile (the panel does), with all the time in the world: still one whole-scene render.
+            b.ThumbFrame(100000.0);
+            int ready = 0;
+            for (int i = 0; i < n; ++i) ready += b.Thumb(scene(i)).ready ? 1 : 0;
+            for (int i = 0; i < n; ++i) b.Thumb(prefab(i));
+            CHECK(rendered == 1 && ready == 1 && failedRenders == 0 && b.ThumbHeavyThisFrame() == 1);
+            const std::size_t looks = b.Thumbs().GetStats().diskChecks;
+            CHECK(looks == (std::size_t)(2 * n));   // the first frame looks once per key
+            // A mouse button held (a drag): no whole-scene render at all, and the waiting tiles cost no file-system call.
+            for (int frame = 0; frame < 5; ++frame) {
+                b.ThumbFrame(100000.0, /*allowHeavy=*/false);
+                for (int i = 0; i < n; ++i) b.Thumb(scene(i));
+                for (int i = 0; i < n; ++i) b.Thumb(prefab(i));
+            }
+            CHECK(rendered == 1 && failedRenders == 0);
+            CHECK(b.Thumbs().GetStats().diskChecks == looks);
+            // Released: one a frame until all are made.
+            for (int frame = 0; frame < 4 * n; ++frame) {
+                b.ThumbFrame(100000.0);
+                for (int i = 0; i < n; ++i) b.Thumb(scene(i));
+                for (int i = 0; i < n; ++i) b.Thumb(prefab(i));
+                CHECK(b.ThumbHeavyThisFrame() <= 1);
+            }
+            ready = 0;
+            for (int i = 0; i < n; ++i) ready += b.Thumb(scene(i)).ready ? 1 : 0;
+            CHECK(ready == n && rendered == n && failedRenders == n);
+            CHECK(b.Thumbs().GetStats().diskChecks == looks);
+        }
+        {   // The next session: the pictures come from disk and the failed renders are not tried again.
+            Browser b(td.assets());
+            int again = 0;
+            b.AddThumbGenerator({"okayscene", "okayprefab"}, [&](const std::string&) { ++again; return okay::Image(); });
+            for (int frame = 0; frame < 4; ++frame) {
+                b.ThumbFrame(100000.0);
+                for (int i = 0; i < n; ++i) b.Thumb(scene(i));
+                for (int i = 0; i < n; ++i) b.Thumb(prefab(i));
+            }
+            int ready = 0, failed = 0;
+            for (int i = 0; i < n; ++i) ready += b.Thumb(scene(i)).ready ? 1 : 0;
+            for (int i = 0; i < n; ++i) failed += b.Thumb(prefab(i)).failed ? 1 : 0;
+            CHECK(again == 0 && ready == n && failed == n);
+            CHECK(b.Thumbs().GetStats().failuresRemembered == (std::size_t)n);
+            // A changed prefab has a new key: it is tried again.
+            WriteFile(prefab(0), "gameobject \"P2\"\n");
+            b.Reimport(prefab(0));
+            b.ThumbFrame(100000.0);
+            b.Thumb(prefab(0));
+            CHECK(again == 1);
         }
     }
 
@@ -465,6 +534,47 @@ int main() {
         CHECK(!b.Poll(1001));                // inside the gap: the watch must not force a scan
         CHECK(b.Poll(1000 + 100000) && b.AssetCount() >= 2);
         CHECK(b.Revision() > rev);
+    }
+
+    // Opening a project must not read the assets on the editor's main thread (owner bug 2026-11-25: the editor froze while
+    // opening a project and had to be ended in Task Manager). The first index hashes every asset file and reads every text
+    // asset for its references: on a big project, a cold disk or a cloud-synced folder that is minutes. The Project panel's
+    // per-frame call (Browser::Update) starts it on a worker and takes the finished index in a later frame.
+    {
+        RUN_SUITE("project_open_index_off_main_thread");
+        TempDir td;
+        WriteFile(td.at("Art/big.raw"), std::string(3u << 20, 'x'));     // 3 MB: hashed in full by the first index
+        WriteFile(td.at("Art/small.okaydata"), "name = S\n");
+        WriteFile(td.at("Scenes/main.okayscene"), "# scene\n");
+        Browser b(td.assets());
+        const std::uint64_t before = okay::AssetDatabase::BytesHashedOnThisThread();
+        const auto t0 = std::chrono::steady_clock::now();
+        bool first = true, firstAlreadyIndexed = false;
+        while (!b.Indexed() && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(20)) {
+            b.Update(1000);
+            if (first) { firstAlreadyIndexed = b.Indexed(); first = false; }
+            if (!b.Indexed()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        CHECK(okay::AssetDatabase::BytesHashedOnThisThread() == before);   // before the fix: 3 MB and more read right here
+        CHECK(!firstAlreadyIndexed);                                         // the first frame came back without waiting for the scan
+        CHECK(b.Indexed());
+        CHECK(b.AssetCount() == 3);
+        CHECK(Contains(b.List(td.at("Art"), ListOptions()), "big.raw"));
+        CHECK(okay::SceneAssetIndex() == &b.Db());
+        CHECK(b.Db().Find(b.Db().PathToGuid("Art/big.raw")) && b.Db().Find(b.Db().PathToGuid("Art/big.raw"))->hash != 0);   // the worker hashed it
+        // After that, refreshes are incremental on the main thread as before (nothing changed: nothing is read again).
+        const std::uint64_t mid = okay::AssetDatabase::BytesHashedOnThisThread();
+        CHECK(b.Sync());
+        CHECK(okay::AssetDatabase::BytesHashedOnThisThread() == mid);
+    }
+    {
+        RUN_SUITE("project_open_index_closed_early");   // the project is closed (another opened) while its first index runs
+        TempDir td;
+        for (int i = 0; i < 50; ++i) WriteFile(td.at("f" + std::to_string(i) + ".raw"), std::string(64u << 10, 'y'));
+        { Browser b(td.assets()); b.Update(1000); }   // destroyed at once: the worker finishes on its own and frees what it made
+        Browser c(td.assets());
+        CHECK(c.Sync() && c.AssetCount() == 50);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
     TEST_MAIN_RESULT();

@@ -431,12 +431,23 @@ void emitInst(std::string& s, const Function& f, const Inst& in, const std::vect
             s += "\n";
         }
         if (in.func.empty()) {
+            // A call through a pointer (a virtual function, a function pointer) passes its float
+            // and double arguments in xmm0-7 too (System V AMD64 ABI 3.2.3); al is their count for
+            // a variadic one. (They were left out: the callee read whatever was there.)
+            for (std::size_t i = 0; i < in.xmm.size() && i < 8; ++i)
+                loadXmm(s, in.xmm[i], static_cast<int>(i), i < in.xmmW.size() ? in.xmmW[i] : 8);
             loadFrom(s, in.a, "%rax", spilled);
-            if (in.va) s += "  movq %rax, %r11\n  xorl %eax, %eax\n  call *%r11\n";
+            if (in.va)
+                s += "  movq %rax, %r11\n  movl $" + std::to_string(in.xmm.size() < 8 ? in.xmm.size() : 8) +
+                     ", %eax\n  call *%r11\n";
             else s += "  call *%rax\n";
         } else if (in.func == "syscall") {
-            // Linux syscall. The C arguments are number, a, b, c in rdi, rsi, rdx, rcx.
-            s += "  movq %rdi, %rax\n  movq %rsi, %rdi\n  movq %rdx, %rsi\n  movq %rcx, %rdx\n  syscall\n";
+            // Linux syscall. The C arguments are number, a, b, c, d, e in rdi, rsi, rdx, rcx, r8, r9.
+            s += "  movq %rdi, %rax\n  movq %rsi, %rdi\n  movq %rdx, %rsi\n  movq %rcx, %rdx\n  movq %r8, %r10\n"
+                 "  movq %r9, %r8\n  syscall\n";
+        } else if (in.func == "__okay_sigreturn") {
+            // the restorer of a signal handler (see elf.cpp)
+            s += "  leave\n  movl $15, %eax\n  syscall\n";
         } else if (const char* seq = atomicAsm(in.func)) {
             s += seq;
         } else {

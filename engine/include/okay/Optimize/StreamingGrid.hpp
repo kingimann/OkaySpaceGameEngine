@@ -64,6 +64,10 @@ struct StreamingConfig {
                                           ///< farther loaded cells are unloaded for nearer wanted ones
     float viewDirectionWeight = 0.5f;     ///< 0 = pure distance; cells directly behind count (1 + 2w) times farther
     int   retryDelayFrames = 60;          ///< wait this many updates before retrying a failed load
+    /// Measure the radii in whole cells (Chebyshev rings around the viewer's cell, times cellSize) instead of the
+    /// distance to the cell's box: loadRadius 2 * cellSize then means "the 5 x 5 block around the viewer". What
+    /// WorldStreamer's loadRadius / unloadRadius (in cells) mean. Priorities still use the real distance.
+    bool  ringDistance = false;
 };
 
 /// What the world plugs in. Each one is optional.
@@ -73,6 +77,8 @@ struct StreamingHooks {
     std::function<void(const CellCoord&, const std::string& asset)> requestUnload;
     /// A load that had started is no longer wanted.
     std::function<void(const CellCoord&, const std::string& asset)> cancelLoad;
+    /// Asked before a loaded cell is unloaded: true keeps it loaded (the player changed it, e.g. dug its terrain).
+    std::function<bool(const CellCoord&, const std::string& asset)> keepLoaded;
 };
 
 struct StreamingFrame {
@@ -108,8 +114,18 @@ public:
     /// Distance from `p` to the cell's box (0 inside), measured in the grid's active axes.
     float DistanceToCell(const Vec3& p, const CellCoord& c) const;
 
+    /// How far the cell counts as for the radii: DistanceToCell, or whole rings times cellSize (ringDistance).
+    float Reach(const Vec3& p, const CellCoord& c) const;
+    /// Load order key for a viewer at `pos` looking along `dir` (lower loads first): the distance to the cell,
+    /// stretched up to (1 + 2 * viewDirectionWeight) times for cells behind the viewer.
+    float Priority(const Vec3& pos, const Vec3& dir, const CellCoord& c) const;
+
     /// Advance one frame for a viewer at `pos` looking along `dir` (any length; zero = no direction bonus).
-    StreamingFrame Update(const Vec3& pos, const Vec3& dir);
+    /// `lookAhead` (predictive loading): where the viewer is expected to be soon, as an offset from `pos` (its
+    /// velocity times a few seconds). A cell counts as near when it is near `pos` OR near `pos + lookAhead`, so the
+    /// cells ahead are asked for before the viewer gets there and the ones it is leaving are not dropped early.
+    StreamingFrame Update(const Vec3& pos, const Vec3& dir, const Vec3& lookAhead);
+    StreamingFrame Update(const Vec3& pos, const Vec3& dir) { return Update(pos, dir, Vec3{0, 0, 0}); }
 
     /// The asset manager finished loading a cell. False when the cell was not loading
     /// (it was cancelled or unregistered): the caller should drop what it loaded.

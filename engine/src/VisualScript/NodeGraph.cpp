@@ -592,7 +592,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "VecY") return std::make_unique<BreakVec3Node>(1);
     if (type == "VecZ") return std::make_unique<BreakVec3Node>(2);
     // Input.
-    if (type == "Key")     { if (!need(1)) return nullptr; return std::make_unique<KeyNode>(args[0].empty() ? ' ' : Input::KeyFromName(args[0])); }
+    if (type == "Key")     { if (!need(1)) return nullptr; return std::make_unique<KeyNode>(args[0].empty() ? ' ' : Input::KeyFromName(args[0]), args.size() > 1 && args[1] == "exact"); }
     if (type == "KeyDown") { if (!need(1)) return nullptr; return std::make_unique<KeyDownNode>(args[0].empty() ? ' ' : Input::KeyFromName(args[0])); }
     if (type == "MouseX") return std::make_unique<MouseXNode>();
     if (type == "MouseY") return std::make_unique<MouseYNode>();
@@ -1188,7 +1188,7 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& savedText, std::s
                 if (other.d.name == name && other.d.scope == d.scope) return fail("variable '" + name + "' is declared twice");
             if (pendingDecls.size() >= 2000) return fail("a graph can declare at most 2000 variables");
             pendingDecls.push_back({lineNo, d, type, lit, tok.size() > 4 && !lit.empty()});   // a blank default = the type's default
-        } else if (kind == "pos" || kind == "comment") {
+        } else if (kind == "pos" || kind == "comment" || kind == "knot") {   // editor layout only
             // Editor layout (node positions, comment frames): nothing to run.
         } else {
             // A directive from a newer editor: skip it rather than refusing the

@@ -8,7 +8,10 @@ Param::Param() = default;
 Param::Param(Param&&) noexcept = default;
 Param& Param::operator=(Param&&) noexcept = default;
 Param::~Param() = default;
-Expr::Expr() = default;
+Expr::Expr() {
+    static std::uint64_t next = 0;
+    serial = ++next;
+}
 Expr::~Expr() = default;
 Type::Type() = default;
 Type::~Type() = default;
@@ -30,7 +33,46 @@ std::unique_ptr<Expr> cloneExpr(const Expr& e) {
     for (const auto& k : e.kids)
         if (k) n->kids.push_back(cloneExpr(*k));
     if (e.ty) n->ty = cloneType(*e.ty);
-    if (e.checked) n->checked = cloneType(*e.checked);
+    n->checked = e.checked;  // shared (SharedType)
+    return n;
+}
+
+std::unique_ptr<Decl> cloneDecl(const Decl& d) {
+    auto n = std::make_unique<Decl>();
+    n->name = d.name;
+    if (d.type) n->type = cloneType(*d.type);
+    if (d.init) n->init = cloneExpr(*d.init);
+    if (d.body) n->body = cloneStmt(*d.body);
+    n->function = d.function;
+    n->isExtern = d.isExtern;
+    n->isStatic = d.isStatic;
+    n->staticMember = d.staticMember;
+    n->isInline = d.isInline;
+    n->fromInstance = d.fromInstance;
+    n->asmName = d.asmName;
+    n->methodTag = d.methodTag;
+    n->vt = d.vt;
+    n->line = d.line;
+    n->col = d.col;
+    n->file = d.file;
+    return n;
+}
+
+std::unique_ptr<Stmt> cloneStmt(const Stmt& s) {
+    auto n = std::make_unique<Stmt>();
+    n->kind = s.kind;
+    n->line = s.line;
+    n->col = s.col;
+    n->file = s.file;
+    for (const auto& k : s.stmts) n->stmts.push_back(k ? cloneStmt(*k) : nullptr);
+    if (s.expr) n->expr = cloneExpr(*s.expr);
+    if (s.expr2) n->expr2 = cloneExpr(*s.expr2);
+    if (s.expr3) n->expr3 = cloneExpr(*s.expr3);
+    if (s.thenS) n->thenS = cloneStmt(*s.thenS);
+    if (s.elseS) n->elseS = cloneStmt(*s.elseS);
+    if (s.body) n->body = cloneStmt(*s.body);
+    if (s.init) n->init = cloneStmt(*s.init);
+    if (s.decl) n->decl = cloneDecl(*s.decl);
     return n;
 }
 
@@ -63,6 +105,7 @@ std::unique_ptr<Type> cloneType(const Type& t, bool withDefaults) {
     n->variadic = t.variadic;
     n->rref = t.rref;
     n->cnst = t.cnst;
+    n->memberOf = t.memberOf;
     n->base = t.base;
     n->nonpod = t.nonpod;
     n->hasVptr = t.hasVptr;
@@ -383,6 +426,7 @@ bool isVoidPtr(const Type& t) {
 bool sameType(const Type& a, const Type& b) {
     if (a.kind != b.kind || a.unsign != b.unsign) return false;
     if (a.kind == Type::Kind::Reference && a.rref != b.rref) return false;
+    if (a.kind == Type::Kind::Pointer && a.memberOf != b.memberOf) return false;
     if (a.kind == Type::Kind::Pointer || a.kind == Type::Kind::Array || a.kind == Type::Kind::Reference) {
         return a.inner && b.inner && sameType(*a.inner, *b.inner);
     }
@@ -417,6 +461,18 @@ const Param* findSpecial(const Type* t, const char* name) {
 }
 
 // True when 'd' is the same class as 'b' or is derived from it (single inheritance).
+bool hasCopyCtor(const Type* cls) {
+    if (!cls) return false;
+    for (const Param& p : cls->params) {
+        if (p.name != "<ctor>" || !p.type || p.type->params.size() != 1) continue;
+        const Type* a = p.type->params[0].type.get();
+        if (a && a->kind == Type::Kind::Reference && a->inner && a->inner->kind == Type::Kind::Struct &&
+            a->inner->tag == cls->tag)
+            return true;
+    }
+    return false;
+}
+
 bool derivedFrom(const Type& d, const Type& b) {
     if (d.kind != Type::Kind::Struct || b.kind != Type::Kind::Struct || d.tag.empty() || b.tag.empty()) return false;
     return !basePath(d.tag, b.tag).empty() || d.tag == b.tag;

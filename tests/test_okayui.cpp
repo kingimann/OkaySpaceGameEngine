@@ -857,13 +857,15 @@ int main(int argc, char** argv) {
         frame(none, nullptr, nullptr);
         frame(none, nullptr, nullptr);   // the card sizes itself from the previous frame
         int aa = 0, accent = 0, raised = 0;
+        unsigned char card[4]; OkayUI::CardFillColor(card);   // the card colour of the current (Slate) theme
+        CHECK(card[0] == 38 && card[1] == 41 && card[2] == 49);
         SDL_LockSurface(ls);
         for (int y = 0; y < LH; ++y)
             for (int x = 0; x < LW; ++x) {
                 Uint8 cr, cg, cb, ca; SDL_GetRGBA(pixelAt(ls, x, y), ls->format, &cr, &cg, &cb, &ca);
                 if (cr > 60 && cr < 200 && cg > 60 && cg < 200 && cb > 60 && cb < 220 && cr > 30 + 20) ++aa;   // anti-aliased text edges
                 if (cr < 90 && cg > 130 && cg < 170 && cb > 235) ++accent;                                     // accent (heading underline, primary button)
-                if (cr == 38 && cg == 42 && cb == 51) ++raised;                                                // the card
+                if (cr == card[0] && cg == card[1] && cb == card[2]) ++raised;                                 // the card
             }
         SDL_UnlockSurface(ls);
         CHECK(aa > 40);

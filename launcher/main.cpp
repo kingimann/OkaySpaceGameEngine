@@ -34,6 +34,7 @@
 #include "ProjectList.hpp"    // Create page: the project list, "Remove from list", prefs lines
 #include "LibraryScan.hpp"    // Play / Community: the library scan, each scene once
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
+#include "BrowserPage.hpp"   // the Browser page (sidebar > Browser): the browser program's browser inside the launcher
 #include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: WinHTTP / our own client (downloads, size probes)
@@ -73,13 +74,10 @@
 #ifdef OKAY_HAVE_OKAYUI
 #include "OkayUIFrame.hpp"   // OkayUI end-of-frame on an SDL renderer or an own-backend painter
 #include "OkayUIHost.hpp"
-#include "OkayUIHostImGui.hpp"   // is an ImGui popup in the way of the hosted rectangle?
+#include "OkayUIImGuiEmbed.hpp"  // HostPanelArea: the OkayUI pages drawn in Dear ImGui's draw order (popups and tooltips over them)
 #include "okay/UI/OkayUI.hpp"
 #include "OkayUIScreens.hpp"
 #include "OkayUIPanels.hpp"
-#else
-// Without OkayUI there is never an OkayUI frame (okayFrame stays false), but the page conditions below still name the host helper.
-namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) { return false; } }
 #endif
 
 #include <algorithm>
@@ -173,6 +171,9 @@ namespace fs = std::filesystem;
 
 #ifndef OKAY_ENGINE_VERSION
 #  define OKAY_ENGINE_VERSION "dev"
+#endif
+#ifndef OKAY_MAIN_COUNT
+#  define OKAY_MAIN_COUNT 0ULL   // this build's place on main (CMakeLists.txt OKAY_MAIN_COUNT, scripts/main_position.sh); 0 = not known (a local build)
 #endif
 
 // Optional account server compiled into the build (set at configure time with
@@ -872,11 +873,12 @@ struct UpdateTarget {
     bool test = false;               // the target is a test build (from the dev area of the bucket)
     bool goBack = false;             // the target is the newest normal release, installed over a newer test build on purpose
     okayversions::Index devIndex;    // when `test`: the checksum list of the test builds (the normal list does not have them)
+    okayversions::Index index;       // the releases' list, when it was read to compare places on main ("ok" false = not read)
     std::string title;               // when `test`: "Test build of walk-vs-run (abc1234)"
 };
 // Test builds (docs/release/release_channels.md "Test builds"): reached only when the person switched "Get test builds" on or asked to go back. With both off
 // ResolveTarget never calls this, so nothing under dev/ is fetched and the answer is exactly what it always was. The newer of "the newest normal
-// release" and "the newest test build" wins (okay::testbuild::ChooseTarget); a test build is downloaded from <bucket>/dev/v<version>/ and its checksums
+// release" and "the newest main test build" wins (okay::testbuild::ChooseTarget, okayversions::TestBuildHead: main only, never lower); a test build is downloaded from <bucket>/dev/v<version>/ and its checksums
 // come from the signed dev/versions.json, with the same rules as any update.
 static void ApplyTestBuilds(const okayversions::Settings& st, bool goBack, UpdateTarget& t, std::string& base, bool& fromSupabase) {
     const std::string stableHead = t.version;             // the newest normal release, as the normal path found it
@@ -886,10 +888,20 @@ static void ApplyTestBuilds(const okayversions::Settings& st, bool goBack, Updat
         okayversions::Sources src;
         src.bucketBase = sb;
         t.devIndex = okayversions::LoadDevIndex(src, FetchTextFile);
-        if (t.devIndex.ok) testHead = t.devIndex.latest;
+        if (t.devIndex.ok) testHead = okayversions::TestBuildHead(t.devIndex, LocalVersion());   // main builds only, never a lower number
+    }
+    // Both heads' places on main, when there are two to choose from: a main test build numbered on an older release can hold more of main than
+    // the newer-numbered release (owner, 2026-11-26). Not known (an old list) = the number decides, as before.
+    std::uint64_t stableMain = 0, testMain = 0;
+    if (!testHead.empty() && !stableHead.empty()) {
+        if (const okayversions::Entry* e = t.devIndex.Find(testHead)) testMain = e->mainCount;
+        if (testMain) {
+            t.index = okayversions::LoadIndex(VersionSources(), FetchTextFile);
+            if (const okayversions::Entry* e = t.index.ok ? t.index.Find(stableHead) : nullptr) stableMain = e->mainCount;
+        }
     }
     const okay::testbuild::Choice c = okay::testbuild::ChooseTarget(LocalVersion(), stableHead, testHead, st.testBuilds,
-                                                                    st.channel == okayversions::Channel::Lts, goBack);
+                                                                    st.channel == okayversions::Channel::Lts, goBack, stableMain, testMain);
     t.test = false;
     t.goBack = false;
     t.version = c.version;
@@ -925,6 +937,42 @@ static UpdateTarget ResolveTarget(const okayversions::Settings& st, std::string&
         ? "This launcher is newer than the long-term-support version (v" + d.version + "), so it is not changed. Open Versions to install that editor next to it."
         : d.note;
     return t;
+}
+
+// This build's place on main: built in (OKAY_MAIN_COUNT), else what the test builds' list says about the running version; 0 = not known.
+static std::uint64_t RunningMainCount(const okayversions::Index& devIndex) {
+    if ((std::uint64_t)OKAY_MAIN_COUNT > 0) return (std::uint64_t)OKAY_MAIN_COUNT;
+    if (const okayversions::Entry* e = devIndex.ok ? devIndex.Find(LocalVersion()) : nullptr) return e->mainCount;
+    return 0;
+}
+// Whether the check installs `t` (okayupdater::DecideOffer, tests/test_launcher_versions.cpp): not when the person skipped it, not when a running
+// test build already has everything in that release, and only on the person's Install now when that is not known. `confirmed`: the version the
+// person pressed Install now on ("" = an automatic check or "Check for updates"). Reads the releases' list only for a release offered to a test build.
+static okayupdater::Offer OfferFor(UpdateTarget& t, const okayversions::Settings& st, const std::string& confirmed, bool goBack) {
+    okayupdater::OfferInputs in;
+    in.local = LocalVersion(); in.target = t.version; in.skipped = st.skippedVersion; in.confirmed = confirmed; in.goBack = goBack || t.goBack;
+    in.localMainCount = RunningMainCount(t.devIndex);
+    if (!in.goBack && okay::testbuild::IsTestVersion(in.local) && okay::testbuild::IsReleaseShaped(t.version) && CompareVersions(in.local, t.version) < 0) {
+        if (!t.index.ok) t.index = okayversions::LoadIndex(VersionSources(), FetchTextFile);
+        if (const okayversions::Entry* e = t.index.ok ? t.index.Find(t.version) : nullptr) in.targetMainCount = e->mainCount;
+    }
+    return okayupdater::DecideOffer(in);
+}
+
+// What an update check found, for the main thread (the periodic look below, or RunUpdateCheck when it does not install): the version, a test
+// build's title, and what DecideOffer said. Guarded by g_upPollMutex (made by the main thread before any worker starts).
+static okay::thr::Mutex* g_upPollMutex = nullptr;
+static std::string g_upPollResult;         // (guarded)
+static std::string g_upPollTitle;          // (guarded) the test build's title, when the poll found one
+static std::string g_upPollNote;           // (guarded) DecideOffer's sentence (Ask, Skipped, AlreadyHave)
+static int g_upPollKind = okayupdater::Offer::Install;   // (guarded) okayupdater::Offer::Kind
+static bool g_upPollManual = false;        // (guarded) the person started that check ("Check for updates"): a skipped version is shown again
+static bool g_upPollDone = false;          // (guarded)
+static void PostFound(const std::string& version, const std::string& title, const okayupdater::Offer& offer, bool manual) {
+    if (!g_upPollMutex) return;
+    okay::thr::LockMutex(g_upPollMutex);
+    g_upPollResult = version; g_upPollTitle = title; g_upPollKind = offer.kind; g_upPollNote = offer.note; g_upPollManual = manual; g_upPollDone = true;
+    okay::thr::UnlockMutex(g_upPollMutex);
 }
 
 // The note lines of a notes file in the releases bucket (NOTES.txt, dev/NOTES-DEV.txt), one per line; "" when it can't be read.
@@ -963,7 +1011,31 @@ okayversions::Settings g_upSettings;   // the channel, keep-previous and default
 bool g_upGoBack = false;          // the person asked to leave a test build for the newest normal release; stays set until it worked or the dialog is closed (main thread)
 bool g_upGoBackNow = false;       // g_upGoBack as it was when this update check started (main thread writes, worker reads)
 bool g_upAutomatic = false;       // this check was started by the launcher itself (at launch), not by a click
-bool g_upRepairMissing = false;   // "Get the editor": same-version re-download of MISSING exes only
+bool g_upRepairMissing = false;   // "Get the editor" / "Repair": same-version re-download of missing programs (and of ones that are another version)
+std::string g_upConfirm;          // the version the person pressed Install now on, for the next check (main thread; InstallOffered)
+std::string g_upConfirmNow;       // g_upConfirm as it was when this update check started (main thread writes, worker reads)
+// The editor and the player next to this launcher, as {name, the version the program itself says it is} ("" = not known: a Linux build, no
+// file). VERSION.txt only says what the last update wrote; this asks the programs (okayupdater::ProgramVersion), so a launcher on 115 with an
+// editor still on 114 is seen (owner, 2026-11-25). Cached by size and time, so asking every second costs a stat call.
+static std::vector<std::pair<std::string, std::string>> InstalledProgramVersions() {
+    struct Seen { std::uintmax_t size = 0; fs::file_time_type when{}; std::string version; };
+    thread_local std::map<std::string, Seen> cache;   // (one per thread: the update worker and the main thread both ask)
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const char* name : {"OkayEngine.exe", "OkaySpacePlayer.exe"}) {
+        const std::string path = FindExe({name});
+        std::string v;
+        if (!path.empty()) {
+            std::error_code ec, ec2;
+            const std::uintmax_t size = fs::file_size(path, ec);
+            const fs::file_time_type when = fs::last_write_time(path, ec2);
+            Seen& c = cache[path];
+            if (ec || ec2 || c.size != size || c.when != when || c.version.empty()) { c.size = size; c.when = when; c.version = okayupdater::ProgramVersion(path); }
+            v = c.version;
+        }
+        out.push_back({name, v});
+    }
+    return out;
+}
 // Worker: check the published version and, if newer, install it. Runs on a
 // background thread so the launcher stays responsive while ~35 MB downloads.
 int RunUpdateCheck(void*) {
@@ -976,7 +1048,7 @@ int RunUpdateCheck(void*) {
     SetUpMsg("Checking for updates...");
     g_upFailReason.clear();
     std::string base; bool fromSupabase = false;
-    const UpdateTarget target = ResolveTarget(g_upSettings, base, fromSupabase, g_upGoBackNow);   // by channel (Latest unless the person chose LTS); test builds only when asked
+    UpdateTarget target = ResolveTarget(g_upSettings, base, fromSupabase, g_upGoBackNow);   // by channel (Latest unless the person chose LTS); test builds only when asked
     if (g_upSettings.testBuilds && target.devIndex.signatureRefused)   // (said once per check, not by the poll: the normal update goes on)
         okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "test builds: " + target.devIndex.error);
     SetUpTag(target.test ? (target.title.empty() ? std::string("Test build") : target.title)
@@ -1031,7 +1103,12 @@ int RunUpdateCheck(void*) {
     // 2.97" bug). If we're current or ahead, do nothing.
     // Repair: on the SAME version, fetch only executables that are missing
     // (e.g. the editor was never installed). Never downloads anything older.
-    const bool repair = g_upRepairMissing && !newer && !latest.empty() && CompareVersions(local, latest) == 0;
+    // A program that is another version than the launcher (the editor still on 114 under a launcher on 115) is repaired like a missing one:
+    // downloaded again for THIS version, with the same checksum rules. Before, that install was "Up to date" for ever.
+    const auto skewed = okayupdater::MismatchedPrograms(local, InstalledProgramVersions());
+    auto isSkewed = [&](const char* name) { for (const auto& p : skewed) if (p.first == name) return true; return false; };
+    const bool repair = (g_upRepairMissing || !skewed.empty()) && !newer && !latest.empty() && CompareVersions(local, latest) == 0;
+    if (!skewed.empty()) okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", okayupdater::MismatchSentence(local, skewed));
     g_upRepairMissing = false;
     if (!newer && !repair) {
         SetUpMsg("Up to date (v" + local + ").");
@@ -1040,6 +1117,18 @@ int RunUpdateCheck(void*) {
         return 0;
     }
 
+    if (newer) {   // skipped, a release this test build already has, or one whose order is not known without the person's Install now: not installed
+        const okayupdater::Offer offer = OfferFor(target, g_upSettings, g_upConfirmNow, g_upGoBackNow);
+        if (offer.kind != okayupdater::Offer::Install) {
+            PostFound(latest, target.test ? target.title : std::string(), offer, !g_upAutomatic);
+            okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "not installed: " + (offer.note.empty() ? latest : offer.note));
+            SetUpMsg(offer.note.empty() ? "Up to date (v" + local + ")." : offer.note);
+            SetUpStep(offer.kind == okayupdater::Offer::AlreadyHave ? "You already have everything in it"
+                      : offer.kind == okayupdater::Offer::Skipped ? "You skipped this version" : "Waiting for you to choose Install now", 1, 1);
+            SetState(Up_UpToDate);
+            return 0;
+        }
+    }
     if (newer && g_upAutomatic) {   // the check at launch must not retry a release that already failed twice (a click on Retry always may)
         std::string why;
         if (!okay::selfupdate::AutoRetryAllowed(okay::selfupdate::Read(SelfUpdateStateFile()), latest, why)) {
@@ -1096,14 +1185,14 @@ int RunUpdateCheck(void*) {
             std::string found = FindExe({name});
             return found.empty() ? (dir / name) : fs::path(found);
         };
-        if (!repair || FindExe({"OkayEngine.exe"}).empty()) {
+        if (!repair || FindExe({"OkayEngine.exe"}).empty() || isSkewed("OkayEngine.exe")) {
             SetUpMsg("Downloading engine v" + latest + "...");
             SetUpStep("Downloading editor (OkayEngine)", 0, kSteps);
             const fs::path d = destOf("OkayEngine.exe");
             if (StageFile("OkayEngine.exe", base + "OkayEngine.exe", d, true, checkFor("OkayEngine.exe"))) items.push_back({"OkayEngine.exe", d, false});
             else ok = false;
         }
-        if (ok && (!repair || FindExe({"OkaySpacePlayer.exe"}).empty())) {
+        if (ok && (!repair || FindExe({"OkaySpacePlayer.exe"}).empty() || isSkewed("OkaySpacePlayer.exe"))) {
             SetUpMsg("Downloading player runtime v" + latest + "...");
             SetUpStep("Downloading game runtime (OkaySpacePlayer)", 1, kSteps);
             const fs::path d = destOf("OkaySpacePlayer.exe");
@@ -1174,12 +1263,19 @@ int RunUpdateCheck(void*) {
             if (!g_upSettings.defaultEditor.empty()) guards.keep.push_back({g_upSettings.defaultEditor, "it is your default editor."});
             okayversions::Prune(dir, g_upSettings.keepPrevious, vindex.ok && !vindex.lts.empty() ? vindex.lts : g_upSettings.ltsLine, guards);
         }
-        SetUpStep(launcherOk ? "Update complete — restart to finish"
-                             : "Update complete", kSteps, kSteps);
+        // Ask the programs which version they are now: an update that left one behind is said plainly, with what fixes it, never "complete".
+        const auto behind = okayupdater::MismatchedPrograms(latest, InstalledProgramVersions());
+        const std::string behindNote = okayupdater::MismatchSentence(latest, behind);
+        if (!behindNote.empty()) okay::restart::AppendLog(dir / "okay_update.log", "after the update: " + behindNote);
+        SetUpStep(!behindNote.empty() ? "Update incomplete: a program is still the old version"
+                  : launcherOk ? "Update complete — restart to finish"
+                               : "Update complete", kSteps, kSteps);
         SetUpMsg((launcherOk
             ? "Updated to v" + latest + okay::testbuild::Suffix(latest) + " — restart the launcher to finish."
             : (newer ? "Updated engine & player to v" + latest + "."
-                     : "Downloaded the missing runtime (v" + local + ").")) + (keepNote.empty() ? std::string() : " " + keepNote));
+                     : !skewed.empty() ? "Replaced the programs that were another version: everything is " + okay::testbuild::DisplayVersion(local) + " now."
+                                       : "Downloaded the missing runtime (v" + local + ").")) +
+                 (behindNote.empty() ? std::string() : " " + behindNote) + (keepNote.empty() ? std::string() : " " + keepNote));
         SetState(Up_Updated);
     } else {
         if (keptNow) okayversions::DiscardKept(dir, local);   // the copy only duplicates what is still running
@@ -1204,6 +1300,8 @@ void StartUpdateCheck(bool showDialog = true) {
     if (g_upThread) { okay::thr::WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     g_upSettings = okayversions::GlobalSettings();   // (a snapshot: the worker never reads what the Settings page can change)
     g_upGoBackNow = g_upGoBack;
+    g_upConfirmNow = g_upConfirm; g_upConfirm.clear();   // (one check: the next automatic one asks again)
+    if (!g_upPollMutex) g_upPollMutex = okay::thr::CreateMutex();   // (before the worker: it may post what it found)
     g_upThread = okay::thr::CreateThread(RunUpdateCheck, "okay-update", nullptr);
 }
 
@@ -1355,20 +1453,18 @@ static void StartupUpdateFrame() {
 // version raises a toast + notification and the sidebar offers "Install now".
 std::string g_upAvailable;                 // newer published version ("" = none known)
 std::string g_upAvailableTitle;            // "Test build of walk-vs-run (abc1234)" when g_upAvailable is a test build ("" = a normal release)
+bool g_upAvailableSkipped = false;         // g_upAvailable is the version the person skipped, shown again because they checked
+std::string g_upAvailableNote;             // why g_upAvailable is not installed by itself (okayupdater::Offer::Ask), "" = nothing to add
+std::string g_upSkippedFound;              // the newer version found that the person skipped: What's New and Versions offer it ("" = none)
+std::string g_upAheadNote;                 // "You already have everything in v2.904.0 (your test build is newer)." ("" = nothing to say)
 static bool g_launcherRefocused = false;   // window came back into focus: look for updates
-static okay::thr::Mutex* g_upPollMutex = nullptr;
-static std::string g_upPollResult;         // (guarded)
-static std::string g_upPollTitle;          // (guarded) the test build's title, when the poll found one
-static bool g_upPollDone = false;          // (guarded)
 static volatile bool g_upPollBusy = false;
 static okayversions::Settings g_pollSettings;   // (copied when the poll starts)
 static int UpdatePollWorker(void*) {
     std::string base; bool fromSupabase = false;
-    const UpdateTarget target = ResolveTarget(g_pollSettings, base, fromSupabase);   // by channel; "" = nothing to offer in place
-    const std::string& latest = target.version;
-    okay::thr::LockMutex(g_upPollMutex);
-    g_upPollResult = latest; g_upPollTitle = target.test ? target.title : std::string(); g_upPollDone = true;
-    okay::thr::UnlockMutex(g_upPollMutex);
+    UpdateTarget target = ResolveTarget(g_pollSettings, base, fromSupabase);   // by channel; "" = nothing to offer in place
+    const okayupdater::Offer offer = OfferFor(target, g_pollSettings, "", false);   // skipped / already had / ask: the main thread shows it accordingly
+    PostFound(target.version, target.test ? target.title : std::string(), offer, false);
     g_upPollBusy = false;
     return 0;
 }
@@ -1379,6 +1475,40 @@ static void StartUpdatePoll() {
     g_upPollBusy = true;
     if (okay::thr::Thread* t = okay::thr::CreateThread(UpdatePollWorker, "okay-uppoll", nullptr)) okay::thr::DetachThread(t);
     else g_upPollBusy = false;
+}
+
+// "Install now" on an offered version (the update dialog, the sidebar, What's New, the Versions page): the person chose it, so a skip of that
+// version is undone and the check installs it even where it would only have asked (okayupdater::DecideOffer `confirmed`). The checksum and
+// signature rules are RunUpdateCheck's, unchanged.
+static void InstallOffered(const std::string& version) {
+    okayversions::Settings& vs = okayversions::GlobalSettings();
+    if (!version.empty() && !vs.skippedVersion.empty() && okayver::NormalizeVersion(vs.skippedVersion) == okayver::NormalizeVersion(version)) {
+        vs.skippedVersion.clear();
+        SavePrefs();
+    }
+    if (g_upSkippedFound == version) g_upSkippedFound.clear();
+    g_upAvailableSkipped = false;
+    g_upConfirm = version;
+    StartUpdateCheck(true);
+}
+// "Skip this version" (owner, 2026-11-26): launcher.cfg remembers it (skipped_version); it is never shown or installed by itself again, a newer
+// version is offered as usual, and What's New / Versions keep an Install button for it (the way back).
+static void SkipOffered(const std::string& version) {
+    if (version.empty()) return;
+    okayversions::GlobalSettings().skippedVersion = okayver::NormalizeVersion(version);
+    SavePrefs();
+    g_upSkippedFound = version;
+    g_upAvailable.clear(); g_upAvailableTitle.clear(); g_upAvailableSkipped = false; g_upAvailableNote.clear();
+    Toast(okay::testbuild::DisplayVersion(version) + " skipped. You won't be asked about it again; a newer version is offered as usual. "
+          "What's New and Versions can still install it.", 1);
+}
+
+// The skipped version that is still newer than this one, for the What's New card and the Versions page ("v2.904.0 is available (skipped)",
+// with Install); "" when nothing skipped was found or a check showed it again (then it is the ordinary offer, marked skipped).
+static std::string SkippedOfferVersion() {
+    const std::string& k = okayversions::GlobalSettings().skippedVersion;
+    if (g_upSkippedFound.empty() || k.empty() || okayver::NormalizeVersion(g_upSkippedFound) != k || !g_upAvailable.empty()) return {};
+    return CompareVersions(LocalVersion(), g_upSkippedFound) < 0 ? g_upSkippedFound : std::string();
 }
 
 // Find the first of `names` that exists next to the launcher.
@@ -1491,7 +1621,7 @@ static bool EditorRunning() {
 #if defined(_WIN32)
         if (WaitForSingleObject(pp.h, 0) == WAIT_TIMEOUT) return true;
 #else
-        if (kill(pp.pid, 0) == 0) return true;   // (reaped by PumpPlaytime once it exits)
+        if (okay::restart::PidAlive((unsigned long)pp.pid)) return true;   // (an ended, not yet reaped editor is not running; PumpPlaytime reaps it)
 #endif
     }
 #if defined(_WIN32)
@@ -1501,7 +1631,9 @@ static bool EditorRunning() {
         PROCESSENTRY32W pe; pe.dwSize = sizeof(pe);
         bool found = false;
         if (Process32FirstW(snap, &pe))
-            do { if (_wcsicmp(pe.szExeFile, L"OkayEngine.exe") == 0) { found = true; break; } } while (Process32NextW(snap, &pe));
+            // An ended editor can stay in the list while anything still holds a handle to it (the owner ended it in Task Manager
+            // and the launcher still said "open", 2026-11-26): only a process that is still running counts (PidAlive).
+            do { if (_wcsicmp(pe.szExeFile, L"OkayEngine.exe") == 0 && okay::restart::PidAlive(pe.th32ProcessID)) { found = true; break; } } while (Process32NextW(snap, &pe));
         CloseHandle(snap);
         if (found) return true;
     }
@@ -3983,7 +4115,7 @@ void DrawChatLinkConfirm() {
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, 6));
     const ImVec2 bs(okl::FitButtonW("Open", okl::UiPx(110.0f)), okl::UiPx(30.0f));
-    if (PrimaryButton("Open", bs)) { OpenExternal(g_linkAskUrl); g_linkAskUrl.clear(); ImGui::CloseCurrentPopup(); }
+    if (PrimaryButton("Open", bs)) { OpenPageLink(g_linkAskUrl); g_linkAskUrl.clear(); ImGui::CloseCurrentPopup(); }   // a new tab of the Browser page (switch on), else the system browser
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f))) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         g_linkAskUrl.clear(); ImGui::CloseCurrentPopup();
@@ -12288,6 +12420,17 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
 } // namespace
 using namespace okl;   // main() and the Versions host below use the launcher's names unqualified (as the anonymous namespace allowed before the split)
 
+// "Get test builds" was just switched (Settings > Behavior or the Versions page): save it, look for updates again on the new setting, and say what it means.
+static void TestBuildsSwitched() {
+    const okayversions::Settings& vs = okayversions::GlobalSettings();
+    SavePrefs();
+    g_upAvailable.clear(); g_upAvailableTitle.clear(); g_launcherRefocused = true;   // look again now, on the new setting
+    const bool onTest = okay::testbuild::IsTestVersion(OKAY_ENGINE_VERSION);
+    Toast(vs.testBuilds ? "Test builds are on. They can be broken. Switch this off in Settings > Behavior or on the Versions page to stop getting them."
+          : onTest ? "Test builds are off. You are still on a test build: Settings > Behavior > Go back to the stable version gives you the normal release."
+                   : "Test builds are off. Nothing new will be offered.", vs.testBuilds ? 2 : 1);
+}
+
 // What the Versions page needs from the launcher: where things are, the look, and the launcher's own helpers (toast, folder opener, HTTP).
 // Rebuilt about once a second (it asks the file system and the process list); the colours follow the theme every frame.
 static const okayversionsui::Host& VersionsHost() {
@@ -12301,7 +12444,11 @@ static const okayversionsui::Host& VersionsHost() {
         h.openFolder = [](const std::string& path) { OpenExternal(path); };
         h.savePrefs = [] { SavePrefs(); };
         h.startUpdate = [] { StartUpdateCheck(true); };
+        h.installSkipped = [](const std::string& v) { InstallOffered(v); };   // the skip is undone, then the normal update with its checks
+        h.runningMainCount = RunningMainCount(okayversions::Index{});
         h.channelChanged = [] { g_upAvailable.clear(); g_launcherRefocused = true; };   // look for updates on the new channel now
+        h.testBuildsChanged = [] { TestBuildsSwitched(); };
+        h.repair = [] { g_upRepairMissing = true; StartUpdateCheck(true); };   // download this version's editor and player again (the editor closes, saved, first)
         h.downloadDone = [](const std::string& v, bool ok, const std::string& msg) {   // a desktop notification, or the toast in front
             okl::notify::Event ev;
             ev.kind = okl::notify::Kind::Download; ev.failure = !ok;
@@ -12321,7 +12468,9 @@ static const okayversionsui::Host& VersionsHost() {
         h.sources = VersionSources();
         h.editorRunning = EditorRunning();
         h.runningEditorVersion = g_editorStartedVersion;
+        h.programsNote = okayupdater::MismatchSentence(h.currentVersion, okayupdater::MismatchedPrograms(h.currentVersion, InstalledProgramVersions()));
     }
+    h.skippedUpdate = SkippedOfferVersion();   // (every frame: a skip or an install changes it at once)
     h.accent = kAccent;
     h.accentDim = kAccentDim;
     h.cardBg = okaytheme::kRaised;
@@ -12695,18 +12844,18 @@ static void DrawCommunityShowcase(okay::account::AccountService& account, int vi
     }
 }
 
-// Is the page rectangle (w x h at the cursor) under something Dear ImGui draws in front: an open popup, or a window above the
-// launcher's root window (the floating chat window, an incoming call, a toast ...)? An OkayUI-drawn page is
-// flushed after ImGui and would paint over it (owner's screenshot, What's New over the Notifications flyout), so while this is
-// true the page's Dear ImGui version is drawn instead, which ImGui layers correctly. (Notifications is a page now, not a flyout.)
-static bool OkayPageCovered(float w, float h) {
 #ifdef OKAY_HAVE_OKAYUI
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    return okayuihost::CoveredInImGui(ImGui::GetCurrentWindow(), p.x, p.y, w, h);
-#else
-    (void)w; (void)h; return false;
-#endif
+// An OkayUI page (What's New, Tips) in the rectangle `ra` at the cursor of the page area, hosted in Dear ImGui's draw order
+// (okayuihost::HostPanelArea): its shapes go into the page's draw list, so ImGui's popups, tooltips and windows in front (the chat
+// window, an incoming call, a toast) are drawn over it, and the page never swaps to its Dear ImGui copy while they show. It used to:
+// hovering the sidebar's profile row showed a tooltip over a corner of the page, and the whole What's New switched to the other
+// version until the mouse moved away (owner's recording, 2026-11-26). Which surface draws a page: launcher/PageLayout.hpp OkayUIDrawsPage.
+template <class Draw>
+static void HostOkayPage(const char* itemId, ImVec2 ra, Draw draw) {
+    static OkayUI::CapturedGeometry s_cap;
+    okayuihost::HostPanelArea(itemId, ra, g_okayRegion, okayuihost::SharedImGuiEmbed(), s_cap, draw);
 }
+#endif
 
 // ---- The Notifications page (sidebar > Notifications; it replaced the flyout over the current page, owner 2026-11-25) ----------
 // Header actions (Mark all read, Clear), filter chips, pending friend requests with Accept / Decline, then the feed grouped
@@ -13099,7 +13248,7 @@ static void DrawWelcomeScreen(okay::account::AccountService& account, okay::sign
         const ImVec2 bp(o.x + avail.x - pad - bw, o.y + UiPx(16.0f));
         dl->AddText(ImVec2(bp.x - UiPx(12.0f) - ImGui::CalcTextSize(t.c_str()).x, bp.y + (ImGui::GetFrameHeight() - lh) * 0.5f), ImGui::GetColorU32(okaytheme::Current().success), t.c_str());
         ImGui::SetCursorScreenPos(bp);
-        if (PrimaryButton("Install now", ImVec2(bw, 0))) StartUpdateCheck(true);
+        if (PrimaryButton("Install now", ImVec2(bw, 0))) InstallOffered(g_upAvailable);
     }
 
     // ---- The card ----
@@ -13609,7 +13758,7 @@ int main(int argc, char** argv) {
     std::string commRemovePath;   // community item pending delete-confirmation
     std::string commRemoveName;
     // Reopen on the section the launcher was last closed on.
-    int tab = (g_lastTab >= 0 && g_lastTab <= 17 && g_lastTab != 11) ? g_lastTab : 0;
+    int tab = RestoreTab(g_lastTab);   // any sidebar page up to the Browser page, never Admin
     if (const char* dt = std::getenv("OKAY_UI_DEMO_TAB")) tab = std::atoi(dt);   // dev screenshot hook
     if (launchArgs.versions) { okayversionsui::RequestPage(launchArgs.version); tab = 15; }
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
@@ -13939,16 +14088,40 @@ int main(int argc, char** argv) {
                 lastPoll = okay::platform::TicksMs32();
                 if (us != Up_Checking && us != Up_Downloading && us != Up_Updated) StartUpdatePoll();
             }
-            std::string latest, latestTitle; bool done = false;
+            std::string latest, latestTitle, foundNote; bool done = false, foundManual = false; int foundKind = okayupdater::Offer::Install;
             if (g_upPollMutex) {
                 okay::thr::LockMutex(g_upPollMutex);
-                if (g_upPollDone) { done = true; latest = g_upPollResult; latestTitle = g_upPollTitle; g_upPollDone = false; }
+                if (g_upPollDone) {
+                    done = true; latest = g_upPollResult; latestTitle = g_upPollTitle; foundNote = g_upPollNote; foundKind = g_upPollKind; foundManual = g_upPollManual;
+                    g_upPollDone = false;
+                }
                 okay::thr::UnlockMutex(g_upPollMutex);
             }
-            if (done && !latest.empty() && CompareVersions(LocalVersion(), latest) < 0 && latest != g_upAvailable) {
+            // What was found, and whether it is shown (okayupdater::DecideOffer, okay::updateview::AvailablePhaseFor): a version the person skipped
+            // gives no dialog, badge or notification unless they checked themselves; a release a test build already has gives only the line.
+            namespace UVf = okay::updateview;
+            const bool foundNewer = done && !latest.empty() && CompareVersions(LocalVersion(), latest) < 0;
+            if (foundNewer) {
+                g_upAheadNote = foundKind == okayupdater::Offer::AlreadyHave ? foundNote : std::string();
+                if (foundKind != okayupdater::Offer::Install && foundKind != okayupdater::Offer::Ask && foundKind != okayupdater::Offer::Skipped) {
+                    if (g_upAvailable == latest) { g_upAvailable.clear(); g_upAvailableTitle.clear(); g_upAvailableSkipped = false; g_upAvailableNote.clear(); }
+                }
+            }
+            const UVf::Shown shown = foundNewer && foundKind != okayupdater::Offer::AlreadyHave
+                ? UVf::AvailablePhaseFor(latest, okayversions::GlobalSettings().skippedVersion, foundManual) : UVf::Shown::No;
+            if (foundNewer && foundKind == okayupdater::Offer::Skipped && shown == UVf::Shown::No) {
+                g_upSkippedFound = latest;   // What's New and Versions say it is there (skipped), with Install
+                if (g_upAvailable == latest) { g_upAvailable.clear(); g_upAvailableTitle.clear(); g_upAvailableSkipped = false; g_upAvailableNote.clear(); }
+            }
+            if (shown != UVf::Shown::No) {   // (the note and the skipped mark follow the newest answer, the notification only a new version)
+                g_upAvailableSkipped = shown == UVf::Shown::Skipped;
+                g_upAvailableNote = foundKind == okayupdater::Offer::Ask ? foundNote : std::string();
+                if (g_upAvailableSkipped) g_upSkippedFound = latest;
+            }
+            if (shown != UVf::Shown::No && latest != g_upAvailable) {
                 g_upAvailable = latest;
                 g_upAvailableTitle = okay::testbuild::IsTestVersion(latest) ? (latestTitle.empty() ? std::string("Test build") : latestTitle) : std::string();
-                {   // once per version: a desktop pop-up (or the toast, when the launcher is in front) and the tab's row
+                if (shown == UVf::Shown::Yes) {   // once per version: a desktop pop-up (or the toast, when the launcher is in front) and the tab's row
                     okl::notify::Event ev;
                     ev.kind = okl::notify::Kind::Update;
                     ev.target.place = okl::notify::Place::Update; ev.target.id = latest;
@@ -13962,12 +14135,13 @@ int main(int argc, char** argv) {
                     }
                     if (okl::notify::Post(ev).route == okl::notify::Route::Drop)   // already told about this version: the row as before
                         UpsertNotif(ev.tabKey, ev.title, ev.body, 3, -1);
+                    if (okay::platform::NeedsAttentionFlash(lw::IsMinimized(window), lw::HasInputFocus(window)))
+                        lw::Flash(window, okay::platform::FlashMode::UntilFocused);   // taskbar attention while minimized/unfocused
                 }
-                if (okay::platform::NeedsAttentionFlash(lw::IsMinimized(window), lw::HasInputFocus(window)))
-                    lw::Flash(window, okay::platform::FlashMode::UntilFocused);   // taskbar attention while minimized/unfocused
             }
             if (us == Up_Updated || us == Up_UpToDate) {   // a real check/install supersedes the hint
-                if (!g_upAvailable.empty() && (us == Up_Updated || CompareVersions(LocalVersion(), g_upAvailable) >= 0)) { g_upAvailable.clear(); g_upAvailableTitle.clear(); }
+                if (!g_upAvailable.empty() && (us == Up_Updated || CompareVersions(LocalVersion(), g_upAvailable) >= 0)) { g_upAvailable.clear(); g_upAvailableTitle.clear(); g_upAvailableSkipped = false; g_upAvailableNote.clear(); }
+                if (us == Up_Updated) { g_upSkippedFound.clear(); g_upAheadNote.clear(); }
                 g_upGoBack = false;   // the way back is done (or there was nothing to go back from)
             }
         }
@@ -14017,6 +14191,9 @@ int main(int argc, char** argv) {
 #ifdef OKAY_HAVE_OKAYUI
         if (g_uiBackend == okayuibackend::Backend::OkayUI) { OkayUIFrameBegin(); okayFrame = true; }
 #endif
+        SetBrowserHostAvailable(okayFrame);   // the Browser page draws with OkayUI: without a frame, links open in the system browser
+        PumpBrowser();                        // its pages, downloads and games move along whichever page is shown
+        if (TakeShowRequest()) { tab = kBrowserTab; ClosePublicProfile(); }   // a chat link opened in a new tab of the Browser page
 
         // ---- Exit / Minimize confirmation (raised by the window [X] or Alt+F4) ----
         // Closing the launcher asks first, so an accidental [X] doesn't quit mid-task;
@@ -14164,6 +14341,8 @@ int main(int argc, char** argv) {
                      : us == Up_Failed ? UV::Phase::Failed
                      : !g_upAvailable.empty() ? UV::Phase::Available
                      : us == Up_UpToDate ? UV::Phase::UpToDate : UV::Phase::Idle;
+            ui.skipped = ui.phase == UV::Phase::Available && g_upAvailableSkipped;
+            ui.note = ui.phase == UV::Phase::Available ? g_upAvailableNote : ui.phase == UV::Phase::UpToDate ? g_upAheadNote : std::string();
             if (const char* d = std::getenv("OKAY_UI_DEMO_UPDATE_VIEW")) {   // dev screenshot hook: available downloading verifying ready failed uptodate checking
                 const std::string s = d;
                 ui.fromVersion = "2.903.9"; ui.toVersion = "2.904.0";
@@ -14183,9 +14362,10 @@ int main(int argc, char** argv) {
             const float lh = ImGui::GetTextLineHeight(), padX = UiPx(24.0f), btnH = ImGui::GetFrameHeight() + UiPx(12.0f);
             const float b1 = v.primary != UV::Button::None ? FitButtonW(UV::ButtonLabel(v.primary), UiPx(110.0f)) : 0.0f;
             const float b2 = v.secondary != UV::Button::None ? FitButtonW(UV::ButtonLabel(v.secondary), UiPx(90.0f)) : 0.0f;
+            const float b3 = v.tertiary != UV::Button::None ? FitButtonW(UV::ButtonLabel(v.tertiary), UiPx(120.0f)) : 0.0f;
             const float fixedH = UiPx(260.0f) + (v.error.empty() ? 0.0f : lh * 3);
             const UV::DialogBox box = UV::LayoutDialog(vpU->WorkSize.x, vpU->WorkSize.y, UiPx(560.0f), UiPx(20.0f), fixedH, showNotes,
-                                                       UiPx(80.0f), UiPx(320.0f), b1, b2, UiPx(8.0f), padX);
+                                                       UiPx(80.0f), UiPx(320.0f), b1, b2, UiPx(8.0f), padX, b3);
             ImGui::SetNextWindowPos(vpU->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
             ImGui::SetNextWindowSize(ImVec2(box.w, 0), ImGuiCond_Always);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, UiPx(22.0f)));
@@ -14280,7 +14460,10 @@ int main(int argc, char** argv) {
                 ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
                 auto act = [&](UV::Button b) {
                     switch (b) {
-                    case UV::Button::InstallNow: StartUpdateCheck(true); break;
+                    case UV::Button::InstallNow: InstallOffered(ui.toVersion); break;
+                    case UV::Button::Skip:   // never offered by itself again; a newer version is (launcher.cfg skipped_version)
+                        SkipOffered(ui.toVersion);
+                        g_upModalOpen = false; ImGui::CloseCurrentPopup(); break;
                     case UV::Button::TryAgain: case UV::Button::CheckAgain: StartUpdateCheck(); break;
                     case UV::Button::RestartNow:
                         if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; }
@@ -14292,6 +14475,11 @@ int main(int argc, char** argv) {
                     }
                 };
                 const float rowX = ImGui::GetCursorPosX();
+                if (v.tertiary != UV::Button::None) {   // "Skip this version": on the left, away from Install now
+                    if (ImGui::Button(UV::ButtonLabel(v.tertiary), ImVec2(box.stackButtons ? cw : b3, btnH))) act(v.tertiary);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Don't offer this version again. A newer version is still offered.\nWhat's New and Versions can still install it.");
+                    if (!box.stackButtons) ImGui::SameLine(0, UiPx(8.0f));
+                }
                 if (!box.stackButtons) ImGui::SetCursorPosX(rowX + cw - b1 - (b2 > 0 ? b2 + UiPx(8.0f) : 0.0f));
                 if (v.secondary != UV::Button::None) {
                     if (ImGui::Button(UV::ButtonLabel(v.secondary), ImVec2(box.stackButtons ? cw : b2, btnH))) act(v.secondary);
@@ -14356,14 +14544,15 @@ int main(int argc, char** argv) {
         // Keyboard shortcuts: 1-5 switch tabs (when not typing in a field);
         // Ctrl+F focuses the current tab's search box; Esc clears every search.
         if (!closeConfirm && !ImGui::GetIO().WantTextInput) {
-            for (int i = 0; i < 9; ++i)
+            for (int i = 0; i < 9 && tab != kBrowserTab; ++i)   // (the Browser page has its own Ctrl+1..9 for its tabs)
                 if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i), false)) tab = i;
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
                 playFilter[0] = commFilter[0] = marketFilter[0] = '\0';
         }
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false))
             focusSearch = true;
-        g_panelShortcut = ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B, false) && !ImGui::GetIO().WantTextInput;   // Ctrl+B: fold a side panel
+        g_panelShortcut = ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B, false) && !ImGui::GetIO().WantTextInput &&   // Ctrl+B: fold a side panel
+                          !(tab == kBrowserTab && ImGui::GetIO().KeyShift);   // (Ctrl+Shift+B is the Browser page's bookmarks bar)
         g_lastTab = tab == 11 ? 0 : tab;   // persisted on exit (and every SavePrefs)
         if (gateOpen) PumpRoleCheck(account.IsLoggedIn() && account.IsOnline());
         if (gateOpen) PumpBlocks(account);
@@ -14600,6 +14789,7 @@ int main(int argc, char** argv) {
         tabRow(2);
         tabRow(7);
         tabRow(10, ActiveDownloads(), navAccent);         // in-flight downloads
+        if (navRow("##navbrowser", "Browser", kIcoGlobe, tab == kBrowserTab && !g_pfOpen, 0, 0)) { tab = kBrowserTab; ClosePublicProfile(); }
         if (navRow("##navver", "Versions", kIcoRefresh, tab == 15 && !g_pfOpen, okayversionsui::InstallRunning() ? 1 : 0, navAccent)) { tab = 15; ClosePublicProfile(); }
         if (navRow("##navcli", "Command line", kIcoTerminal, tab == 17 && !g_pfOpen, 0, 0)) { tab = 17; ClosePublicProfile(); }
         navSection("SOCIAL");
@@ -14672,7 +14862,7 @@ int main(int argc, char** argv) {
                     dl->PathStroke(tone, 0, 2.2f);
                 } else DrawNavIcon(dl, kIcoRefresh, uc, tone);
                 if (click) {
-                    if (upAvail) StartUpdateCheck(true);
+                    if (upAvail) InstallOffered(g_upAvailable);
                     else if (st == Up_Failed) StartUpdateCheck();
                     else if (g_upRelaunchNeeded && st == Up_Updated) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
                 }
@@ -14697,7 +14887,7 @@ int main(int argc, char** argv) {
                 if (ImGui::IsItemHovered() && !upMsg.empty()) ImGui::SetTooltip("%s", upMsg.c_str());
                 if (upAvail) {
                     ImGui::SetCursorScreenPos(ImVec2(mn.x + 36, mn.y + 50));
-                    if (PrimaryButton("Install now", ImVec2(w - 48, upBtnH))) StartUpdateCheck(true);
+                    if (PrimaryButton("Install now", ImVec2(w - 48, upBtnH))) InstallOffered(g_upAvailable);
                 } else if (st == Up_Failed) {
                     ImGui::SameLine(0, 0);
                     ImGui::SetCursorScreenPos(ImVec2(mn.x + w - 50, mn.y + 7));
@@ -14878,6 +15068,25 @@ int main(int argc, char** argv) {
             if (po.gotoTab >= 0) {
                 tab = po.gotoTab;
                 if (!po.marketSearch.empty()) std::snprintf(marketFilter, sizeof(marketFilter), "%s", po.marketSearch.c_str());
+            }
+        } else if (tab == kBrowserTab) {                  // ---- Browser: the browser program's browser, drawn by OkayUI ----
+            const BrowserPageMode mode = PageMode(BrowserSwitchOn(), okayFrame);
+            if (mode == BrowserPageMode::Browser && !OkayPageCovered(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {
+                const ImVec2 rp = ImGui::GetCursorScreenPos();
+                ImVec2 ra = ImGui::GetContentRegionAvail();
+                ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - PageFooterH(), 8.0f);
+                ImGui::InvisibleButton("##okayui_browser", ra);
+                ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);   // the wheel scrolls the page, not the ImGui window under it
+#ifdef OKAY_HAVE_OKAYUI
+                g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+#endif
+                DrawBrowserPage(rp.x, rp.y, ra.x, ra.y);
+            } else if (mode == BrowserPageMode::SwitchedOff) {
+                sectionHeader("Browser", nullptr);
+                EmptyState(kIcoGlobe, "The browser is switched off", "Turn on Settings > Experimental > Browser and restart the launcher to browse the web here. Links open in your system browser meanwhile.", UiPx(40.0f));
+            } else if (mode == BrowserPageMode::NeedsOkayUi) {
+                sectionHeader("Browser", nullptr);
+                EmptyState(kIcoGlobe, "The browser needs OkayUI screens", "The browser is drawn with our own UI toolkit. Turn on Settings > Experimental > OkayUI screens and restart the launcher. Links open in your system browser meanwhile.", UiPx(40.0f));
             }
         } else if (tab == 0) {                            // ---- Create ----
             sectionHeader("Create", nullptr);
@@ -15670,8 +15879,7 @@ int main(int argc, char** argv) {
 
         } else if (tab == 14) {                           // ---- Multiplayer ----
             DrawMultiplayerPage(account.IsLoggedIn() || kUiDemoUser);
-        } else if (tab == 12 && okayFrame && !OkayPageCovered(
-                                                                          ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- What's New, drawn by OkayUI (preview backend) ----
+        } else if (tab == 12 && okay::launcherlayout::OkayUIDrawsPage(tab, okayFrame)) {   // ---- What's New, drawn by OkayUI ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same data and same actions as the Dear ImGui page below: your version, the update status with its button,
             // the newest notes, the earlier releases, the link to all releases. Differences are listed in
@@ -15684,10 +15892,15 @@ int main(int argc, char** argv) {
             wn.currentVersion = OKAY_ENGINE_VERSION;
             wn.availableVersion = g_upAvailable;
             wn.restartNeeded = g_upRelaunchNeeded;
+            wn.availableSkipped = avail && g_upAvailableSkipped;
+            wn.message = avail ? g_upAvailableNote : std::string();
+            const std::string skippedV = busy || us == Up_Updated ? std::string() : SkippedOfferVersion();   // the way back from "Skip this version"
             if (avail) wn.state = okayuiscreens::UpdateState::Available;
+            else if (!skippedV.empty()) { wn.state = okayuiscreens::UpdateState::Available; wn.availableVersion = skippedV; wn.availableSkipped = true; }
             else if (busy) { wn.state = okayuiscreens::UpdateState::Checking; wn.message = GetUpMsg(); }
             else if (us == Up_Updated) wn.state = okayuiscreens::UpdateState::Installed;
             else if (us == Up_Failed) { wn.state = okayuiscreens::UpdateState::Failed; wn.message = GetUpMsg(); }
+            else if (!g_upAheadNote.empty()) { wn.state = okayuiscreens::UpdateState::UpToDate; wn.message = g_upAheadNote; }   // a test build ahead of the release
             else if (!g_upLatest.empty() && CompareVersions(OKAY_ENGINE_VERSION, g_upLatest) >= 0) wn.state = okayuiscreens::UpdateState::UpToDate;
             for (const NewsRelease& r : g_newsHistory) wn.releases.push_back({r.ver, r.lines});
             if (wn.releases.empty()) {
@@ -15700,14 +15913,9 @@ int main(int argc, char** argv) {
                     "Updates download straight from the OkaySpace update server",
                 }});
             }
-            // The page's rectangle: an invisible item the size of the free space, so ImGui sees an item under the mouse
-            // (it neither drags the window nor scrolls the page) and says whether another window covers it.
-            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            // The page's rectangle: the free space above the footer (the version line stays below, pinned by ImGui).
             ImVec2 ra = ImGui::GetContentRegionAvail();
-            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer (the version line) stays below, pinned by ImGui
-            ImGui::InvisibleButton("##okayui_whatsnew", ra);
-            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);   // the wheel scrolls the OkayUI page, not the ImGui window under it
-            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);
             {   // the two sections, as on the Dear ImGui page
                 std::vector<DevBuildRow> devRows; std::string devNotes; int devState = 0; std::map<std::string, std::string> relDates; bool testsOn = false;
                 WhatsNewData(devRows, devNotes, devState, relDates, testsOn);
@@ -15724,11 +15932,12 @@ int main(int argc, char** argv) {
                     a = e + 1;
                 }
             }
-            const okayuiscreens::WhatsNewResult wr = okayuiscreens::DrawWhatsNew(wn, rp.x, rp.y, ra.x, ra.y);
+            okayuiscreens::WhatsNewResult wr;
+            HostOkayPage("##okayui_whatsnew", ra, [&](ImVec2 p, ImVec2 a) { wr = okayuiscreens::DrawWhatsNew(wn, p.x, p.y, a.x, a.y); });
             if (wr.sectionClicked >= 0) g_wnSection = wr.sectionClicked;
             if (wr.openUpdateSettings) { tab = 4; g_setCatJump = 3; }
             if (wr.checkAgain) StartUpdateCheck();
-            if (wr.installNow) StartUpdateCheck(true);
+            if (wr.installNow) InstallOffered(wn.availableVersion);
             if (wr.restartNow) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
             if (wr.checkForUpdates) StartUpdateCheck();
 #endif
@@ -15749,16 +15958,22 @@ int main(int argc, char** argv) {
                 ImGui::SetWindowFontScale(1.12f);
                 ImGui::Text("You're on v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());
                 ImGui::SetWindowFontScale(1.0f);
-                if (avail) ImGui::TextColored(okaytheme::Current().success, "%s is ready to install.",
+                const std::string skippedV = busy || us == Up_Updated ? std::string() : SkippedOfferVersion();   // the way back from "Skip this version"
+                if (avail && g_upAvailableSkipped) ImGui::TextColored(okaytheme::Current().success, "%s", okay::updateview::SkippedLine(g_upAvailable).c_str());
+                else if (avail) ImGui::TextColored(okaytheme::Current().success, "%s is ready to install.",
                                               (g_upAvailableTitle.empty() ? "v" + g_upAvailable : g_upAvailableTitle + " (v" + g_upAvailable + ")").c_str());
+                else if (!skippedV.empty()) ImGui::TextDisabled("%s", okay::updateview::SkippedLine(skippedV).c_str());
                 else if (busy) ImGui::TextDisabled("%s", GetUpMsg().empty() ? "Checking for updates\xE2\x80\xA6" : GetUpMsg().c_str());
                 else if (us == Up_Updated) ImGui::TextColored(okaytheme::Current().success, "Update installed.");
                 else if (us == Up_Failed) ImGui::TextColored(okaytheme::Current().danger, "%s", GetUpMsg().c_str());
+                else if (!g_upAheadNote.empty()) ImGui::TextDisabled("%s", g_upAheadNote.c_str());   // a test build ahead of the release
                 else if (!g_upLatest.empty() && CompareVersions(OKAY_ENGINE_VERSION, g_upLatest) >= 0) ImGui::TextDisabled("You're up to date.");
                 else ImGui::TextDisabled("Updates are checked automatically while the launcher is open.");
+                if (avail && !g_upAvailableNote.empty()) { ImGui::PushTextWrapPos(ImGui::GetContentRegionMax().x - bw - 12.0f); ImGui::TextDisabled("%s", g_upAvailableNote.c_str()); ImGui::PopTextWrapPos(); }
                 const float below = ImGui::GetCursorPosY();
                 ImGui::SetCursorPos(ImVec2(top.x + ImGui::GetContentRegionMax().x - top.x - bw, top.y + (below - top.y - 32.0f) * 0.5f));
-                if (avail) { if (PrimaryButton("Install now", ImVec2(bw, 32))) StartUpdateCheck(true); }
+                if (avail) { if (PrimaryButton("Install now", ImVec2(bw, 32))) InstallOffered(g_upAvailable); }
+                else if (!skippedV.empty()) { if (ImGui::Button("Install", ImVec2(bw, 32))) InstallOffered(skippedV); }
                 else if (us == Up_Updated && g_upRelaunchNeeded) {
                     if (PrimaryButton("Restart now", ImVec2(bw, 32))) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
                 }
@@ -15924,8 +16139,7 @@ int main(int argc, char** argv) {
                 }
             }
             ImGui::EndChild();   // ##wnbody
-        } else if (tab == 13 && okayFrame && !OkayPageCovered(
-                                                                          ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Tips, drawn by OkayUI (preview backend) ----
+        } else if (tab == 13 && okay::launcherlayout::OkayUIDrawsPage(tab, okayFrame)) {   // ---- Tips, drawn by OkayUI ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same tips (shared/LauncherTips.hpp), tip of the day, category pills and search as the Dear ImGui page below; the
             // differences are listed in docs/ui/own_ui_toolkit.md section 6.
@@ -15937,13 +16151,9 @@ int main(int argc, char** argv) {
             }
             tm.dayNumber = (long long)(std::time(nullptr) / 86400);
             if (focusSearch) { ts.focusSearch = true; focusSearch = false; }
-            const ImVec2 rp = ImGui::GetCursorScreenPos();
             ImVec2 ra = ImGui::GetContentRegionAvail();
             ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer stays below, pinned by ImGui
-            ImGui::InvisibleButton("##okayui_tips", ra);
-            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
-            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
-            okayuiscreens::DrawTips(tm, ts, rp.x, rp.y, ra.x, ra.y);
+            HostOkayPage("##okayui_tips", ra, [&](ImVec2 p, ImVec2 a) { okayuiscreens::DrawTips(tm, ts, p.x, p.y, a.x, a.y); });
 #endif
         } else if (tab == 13) {                           // ---- Tips ----
             sectionHeader("Tips", "Shortcuts and tricks for the editor, scripting, building and the launcher.");
@@ -18170,10 +18380,20 @@ int main(int argc, char** argv) {
                     }
                     cardEnd();
                     cardBegin("##sc_start", "STARTUP & UPDATES");
-                    settingRow("Check for updates when the launcher starts", "Looks for a new version each time you open OkaySpace and installs it before you start (on by default).", 40.0f, 22.0f, [&](float) {
+                    settingRow("Automatic updates", "On: each time you open OkaySpace it looks for a new version and installs it before you start (on by default). "
+                                                    "Off: it only tells you a new version is out. A version you skipped is never installed by itself.", 40.0f, 22.0f, [&](float) {
                         if (ToggleSwitch("##uponlaunch", &g_updateOnLaunch)) SavePrefs();
                     });
                     rowDivider();
+                    if (const std::string skippedNow = okayversions::GlobalSettings().skippedVersion; !skippedNow.empty()) {   // "Skip this version": the way back
+                        settingRow(("Skipped: " + okay::testbuild::DisplayVersion(skippedNow)).c_str(), "This version is not offered or installed by itself. Newer versions are.", 150.0f, 30.0f, [&](float) {
+                            if (ImGui::Button("Stop skipping", ImVec2(okl::FitButtonW("Stop skipping", okl::UiPx(150.0f)), okl::UiPx(30.0f)))) {
+                                okayversions::GlobalSettings().skippedVersion.clear(); SavePrefs();
+                                g_upSkippedFound.clear(); g_launcherRefocused = true;   // look again now: it is offered as usual
+                            }
+                        });
+                        rowDivider();
+                    }
                     settingRow("Keep the official game up to date", "Downloads new versions of the official game in the background. They install once the game is closed.", 40.0f, 22.0f, [&](float) {
                         if (ToggleSwitch("##offauto", &g_officialAutoUpdate)) SavePrefs();
                     });
@@ -18186,14 +18406,7 @@ int main(int argc, char** argv) {
                     settingRow("Get test builds", "Also get builds made for testing, before they are released. They can be broken. Switch this off to stop getting them; "
                                                   "the Latest channel only (the long-term-support channel never gets test builds).", 40.0f, 22.0f, [&](float) {
                         okayversions::Settings& vs = okayversions::GlobalSettings();
-                        if (ToggleSwitch("##testbuilds", &vs.testBuilds)) {
-                            SavePrefs();
-                            g_upAvailable.clear(); g_upAvailableTitle.clear(); g_launcherRefocused = true;   // look again now, on the new setting
-                            const bool onTest = okay::testbuild::IsTestVersion(OKAY_ENGINE_VERSION);
-                            Toast(vs.testBuilds ? "Test builds are on. They can be broken. Switch this off here to stop getting them."
-                                  : onTest ? "Test builds are off. You are still on a test build: press Go back to the stable version below when you want the normal release."
-                                           : "Test builds are off. Nothing new will be offered.", vs.testBuilds ? 2 : 1);
-                        }
+                        if (ToggleSwitch("##testbuilds", &vs.testBuilds)) TestBuildsSwitched();
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Test builds are made from a branch before it is released.\nThey can be broken. Switch this off to stop getting them.");
                     });
                     rowDivider();
@@ -18637,7 +18850,7 @@ int main(int argc, char** argv) {
                     g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
                     g_minimizeToTray = false; g_closeToTray = true; TrayApplySettings();
     g_updateOnLaunch = true; g_officialAutoUpdate = true; g_playSort = 0; g_antiCheatMode = 0;
-                    { okayversions::Settings& vs = okayversions::GlobalSettings(); vs.channel = okayversions::Channel::Latest; vs.keepPrevious = okayversions::kDefaultKeepPrevious; vs.defaultEditor.clear(); vs.testBuilds = false; }   // update settings (the versions themselves stay)
+                    { okayversions::Settings& vs = okayversions::GlobalSettings(); vs.channel = okayversions::Channel::Latest; vs.keepPrevious = okayversions::kDefaultKeepPrevious; vs.defaultEditor.clear(); vs.testBuilds = false; vs.skippedVersion.clear(); }   // update settings (the versions themselves stay)
                     ImGui::GetIO().FontGlobalScale = g_uiScale;
                     ApplyAccent(g_accentIndex);   // re-applies theme + accent
                     SavePrefs();
@@ -22771,6 +22984,7 @@ int main(int argc, char** argv) {
     if (g_upMutex) { okay::thr::DestroyMutex(g_upMutex); g_upMutex = nullptr; }
     okayversionsui::Shutdown();   // cancels a running version download and joins its thread
     okaylcli::Shutdown();         // ends a command still running on the Command line page
+    ShutdownBrowser();            // saves the browser's profile, stops its games, frees its textures (the renderer still exists)
     // Stop any in-flight downloads and join their worker threads before teardown.
     if (g_dlMutex) {
         okay::thr::LockMutex(g_dlMutex);

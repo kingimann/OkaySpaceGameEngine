@@ -16,7 +16,8 @@
 //
 // WHAT THE LAUNCHER DOES (launcher/main.cpp): nothing at all unless the person switched "Get test builds" on (launcher.cfg: test_builds=1, off by
 // default). When it is on, the update check also reads <bucket>/dev/versions.json (signed like the real one) and ChooseTarget picks the newer of
-// "the newest normal release" and "the newest test build". Going back (ChooseTarget with goBack) installs the newest normal release over a test
+// "the newest normal release" and "the newest main test build" (okayversions::TestBuildHead: branch `main` only, and only above the running version;
+// builds of other branches are installed by hand, owner 2026-11-26). Going back (ChooseTarget with goBack) installs the newest normal release over a test
 // build, the one deliberate downgrade; it uses the same checksum, stage, swap, self-check and rollback rules as every other update.
 #include <algorithm>
 #include <cctype>
@@ -39,6 +40,8 @@ inline constexpr const char* kIndexName = "versions.json";        ///< dev/versi
 inline constexpr const char* kHeadName = "DEV.txt";               ///< dev/DEV.txt: the newest test version, uploaded last (for people and scripts)
 inline constexpr const char* kNotesName = "NOTES-DEV.txt";        ///< dev/NOTES-DEV.txt: the newest test build's notes (the launcher's "what's new")
 inline constexpr const char* kMarkerName = "okay_testbuild.txt";  ///< next to the launcher: which test build is installed
+inline constexpr int kKept = 3;                                   ///< test builds kept in the bucket: DEV_KEEP in scripts/publish-supabase-dev.sh, DEFAULT_KEEP in scripts/dev_index.py; the Versions page offers this many (owner 2026-11-26)
+inline constexpr const char* kMainBranch = "main";                ///< the only branch the automatic test-build update follows (owner 2026-11-26); scripts/dev_index.py MAIN_BRANCH
 inline constexpr std::size_t kMaxBranchChars = 80;
 inline constexpr std::size_t kMaxNoteChars = 140;
 
@@ -131,6 +134,8 @@ inline std::string DisplayBranch(std::string_view branch) {
         if (branch.size() > prefix.size() && branch.compare(0, prefix.size(), prefix) == 0) return std::string(branch.substr(prefix.size()));
     return std::string(branch);
 }
+/// A build of `main` (exactly that name): the only test builds the automatic update installs. Builds of other branches are installed by hand.
+inline bool IsMainBranch(std::string_view branch) { return branch == kMainBranch; }
 /// "Test build of walk-vs-run (abc1234)". Missing parts are left out: no commit gives "Test build of walk-vs-run", neither gives "Test build".
 inline std::string Title(std::string_view branch, std::string_view sha) {
     const std::string b = DisplayBranch(CleanBranch(branch)), s = ShortSha(sha);
@@ -155,17 +160,35 @@ struct Choice {
     bool failed = false;    ///< `None` because something could not be found out (offline, no answer), not because there is nothing to do
 };
 
+// ---- what is IN a build: its place on main -------------------------------------------------------------------------------------
+// Version numbers do not order content (owner, 2026-11-26: "maybe they're on a test build that's ahead and the release is not"): test build
+// 2.903.8.140 is numbered on release 2.903.8, but if it was built from main after release 2.904.0 was cut, it holds everything in 2.904.0 and
+// more. Every published build records its place on main ("mainCount" in versions.json and dev/versions.json: `git rev-list --count` of the main
+// commit it was built from, or for a branch build the main commit it was built on top of), and the launcher knows its own (OKAY_MAIN_COUNT, built
+// in by the release and test-build workflows). 0 means not known: lists from before the field, and local builds.
+
+enum class Ahead { Yes, No, Unknown };
+/// Is a build at place `a` on main ahead of one at place `b` (it holds commits `b` does not)? Unknown when either place is not known (0).
+inline Ahead ContentAhead(std::uint64_t a, std::uint64_t b) {
+    if (a == 0 || b == 0) return Ahead::Unknown;
+    return a > b ? Ahead::Yes : Ahead::No;
+}
+
 /// Which version the update check should work towards.
 ///   local          the installed version
 ///   stableHead     the newest normal release the server announces ("" = not known); a version with four numbers is not one
-///   testHead       the newest installable test build ("" = none or not asked for); a version without four numbers is not one
+///   testHead       the newest installable MAIN test build above `local` (okayversions::TestBuildHead; "" = none or not asked for); a version
+///                  without four numbers is not one
 ///   testBuildsOn   "Get test builds" is on
 ///   onLts          the long-term-support channel is chosen: test builds are not offered there
 ///   goBack         the person asked to leave a test build
 /// With the switch off and no go-back, the answer is the stable head and nothing else, exactly as before test builds existed. With it on, the
-/// newer of the two heads wins. The caller still installs only what is newer than `local` (a go-back is the exception it makes itself).
+///   stableMain, testMain  the two heads' places on main (0 = not known): when both are known they decide which of the two heads is newer,
+///                  because a test build numbered on an older release can hold more of main than the newer-numbered release
+/// newer of the two heads wins. The caller still installs only what is newer than `local` (a go-back is the exception it makes itself), and
+/// okayupdater::DecideOffer decides whether a release is really news to a running test build.
 inline Choice ChooseTarget(std::string_view local, std::string_view stableHead, std::string_view testHead, bool testBuildsOn, bool onLts,
-                           bool goBack) {
+                           bool goBack, std::uint64_t stableMain = 0, std::uint64_t testMain = 0) {
     Choice c;
     const std::string stable = IsReleaseShaped(stableHead) ? okayver::NormalizeVersion(stableHead) : std::string();
     const std::string test = (testBuildsOn && !onLts && IsTestVersion(testHead)) ? okayver::NormalizeVersion(testHead) : std::string();
@@ -177,7 +200,9 @@ inline Choice ChooseTarget(std::string_view local, std::string_view stableHead, 
         return c;
     }
     if (stable.empty() && test.empty()) { c.note = "Couldn't find out which version is the newest."; c.failed = true; return c; }
-    if (!test.empty() && (stable.empty() || okayver::CompareVersions(test, stable) > 0)) { c.kind = Choice::TestBuild; c.version = test; return c; }
+    const Ahead byContent = ContentAhead(testMain, stableMain);
+    const bool testNewer = byContent == Ahead::Unknown ? okayver::CompareVersions(test, stable) > 0 : byContent == Ahead::Yes;
+    if (!test.empty() && (stable.empty() || testNewer)) { c.kind = Choice::TestBuild; c.version = test; return c; }
     c.kind = Choice::Stable;
     c.version = stable;
     return c;

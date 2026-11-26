@@ -466,12 +466,10 @@ struct Tx {
 // ---- Browser -------------------------------------------------------------------------------------
 
 Browser::Browser(std::string assetsRoot) : m_root(Norm(assetsRoot)) {
-    // Scripts can name assets too ("hero.png" in code): they count as references, so Unused Assets stays honest.
-    m_db.RegisterExtractor("script", {"okay", "lua", "cs"}, [](const std::string&, const std::string& text, std::vector<okay::FoundRef>& out) {
-        for (okay::FoundRef& r : okay::ExtractTextRefs(text)) out.push_back(std::move(r));
-    });
+    Configure(m_db);
 }
 Browser::~Browser() {
+    DropIndexJob();
     if (okay::SceneAssetIndex() == &m_db) okay::SetSceneAssetIndex(nullptr);
 }
 
@@ -513,9 +511,7 @@ bool TypeWordMatches(const std::string& word, const std::string& ext, okay::Asse
 bool ContainsCI(const std::string& hay, const std::string& needleLower) { return Lower(hay).find(needleLower) != std::string::npos; }
 } // namespace
 
-bool Browser::DoScan() {
-    std::error_code ec;
-    if (!fs::is_directory(P(m_root), ec)) return false;
+okay::ScanOptions Browser::ScanOpts() {
     okay::ScanOptions o;
     o.logWarnings = false;
     o.createMetas = false;        // opening a project writes nothing: a meta is made only when an asset is given labels or settings
@@ -523,20 +519,102 @@ bool Browser::DoScan() {
     o.verifyHashes = false;
     o.fullHashLimit = 32u << 20;
     o.ignoreExtensions.push_back("autosave");   // the editor's own recovery copies are not assets
-    const auto t0 = std::chrono::steady_clock::now();
-    const std::uint64_t dbBefore = m_db.Revision();
-    const okay::ScanReport rep = m_db.Scan(m_root, o);
-    m_scanMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    return o;
+}
+
+void Browser::Configure(okay::AssetDatabase& db) {
+    // Scripts can name assets too ("hero.png" in code): they count as references, so Unused Assets stays honest.
+    db.RegisterExtractor("script", {"okay", "lua", "cs"}, [](const std::string&, const std::string& text, std::vector<okay::FoundRef>& out) {
+        for (okay::FoundRef& r : okay::ExtractTextRefs(text)) out.push_back(std::move(r));
+    });
+}
+
+void Browser::NoteScan(const okay::ScanReport& rep, std::uint64_t dbBefore, double ms) {
+    m_scanMs = ms;
     const bool changed = !m_indexed || m_db.Revision() != dbBefore || !rep.reimports.empty();
     if (changed) ++m_revision;
     if (!rep.removed.empty() || !rep.moved.empty()) m_prunePending = true;
     m_indexed = true;
     m_scanChanged = changed;
     okay::SetSceneAssetIndex(&m_db);   // scene saves can write a sprite's asset id
+}
+
+bool Browser::DoScan() {
+    std::error_code ec;
+    if (!fs::is_directory(P(m_root), ec)) return false;
+    const auto t0 = std::chrono::steady_clock::now();
+    const std::uint64_t dbBefore = m_db.Revision();
+    const okay::ScanReport rep = m_db.Scan(m_root, ScanOpts());
+    NoteScan(rep, dbBefore, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
     return true;
 }
 
 bool Browser::Sync() { return DoScan(); }
+
+// ---- the first index, off the main thread ----
+// The first scan of a project hashes every asset file and reads every text asset for its references: on a big project, a cold
+// disk or a cloud-synced folder (files that are downloaded when read) that took the editor's main thread for minutes while a
+// project opened (owner bug 2026-11-25). It runs on a worker into a scratch database set up like m_db; the frame that sees it
+// finished takes the index over (AssetDatabase::TakeIndexFrom). Until then the panel is empty and Indexed() is false, as before
+// the first Sync. Threads through okay::thr (CLAUDE.md rule 21a). A Sync that runs meanwhile (an operation, Refresh) indexes on
+// the spot as before, and the worker's older result is then dropped.
+struct Browser::IndexJob {
+    okay::AssetDatabase db;
+    okay::ScanReport rep;
+    std::string root;
+    okay::ScanOptions opt;
+    double ms = 0;
+    bool ok = false;
+    std::atomic<int> state{0};   // 0 running, 1 finished, 2 the Browser is gone (the worker frees the job)
+};
+
+int Browser::IndexWorker(void* p) {
+    IndexJob* j = static_cast<IndexJob*>(p);
+    const auto t0 = std::chrono::steady_clock::now();
+    std::error_code ec;
+    j->ok = fs::is_directory(P(j->root), ec);
+    if (j->ok) j->rep = j->db.Scan(j->root, j->opt);
+    j->ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    if (j->state.exchange(1) == 2) delete j;   // nobody will take it
+    return 0;
+}
+
+void Browser::DropIndexJob() {
+    if (!m_indexJob) return;
+    if (m_indexJob->state.exchange(2) == 1) delete m_indexJob;   // already finished: ours to free; otherwise the worker frees it
+    okay::thr::DetachThread(m_indexThread);
+    m_indexJob = nullptr;
+    m_indexThread = nullptr;
+}
+
+bool Browser::Indexing() const { return m_indexJob != nullptr; }
+
+bool Browser::Update(std::uint64_t nowMs) {
+    if (!m_indexed && !m_indexJob) {
+        IndexJob* j = new IndexJob();
+        Configure(j->db);
+        j->root = m_root;
+        j->opt = ScanOpts();
+        okay::thr::Thread* t = okay::thr::CreateThread(&Browser::IndexWorker, "okay-asset-index", j);
+        if (t) { m_indexJob = j; m_indexThread = t; }
+        else { delete j; Sync(); }   // no thread: index here, as before
+    }
+    if (m_indexJob && m_indexJob->state.load() == 1) {
+        IndexJob* j = m_indexJob;
+        okay::thr::WaitThread(m_indexThread, nullptr);   // it has finished its work: this only collects it
+        m_indexJob = nullptr;
+        m_indexThread = nullptr;
+        if (!m_indexed && j->ok) {
+            const std::uint64_t dbBefore = m_db.Revision();
+            m_db.TakeIndexFrom(j->db);
+            NoteScan(j->rep, dbBefore, j->ms);
+            m_lastScanMs = nowMs;
+            m_nextPoll = nowMs + std::max<std::uint64_t>(2000, static_cast<std::uint64_t>(30.0 * m_scanMs));
+        }
+        delete j;
+    }
+    return Poll(nowMs);
+}
 
 bool Browser::Poll(std::uint64_t nowMs) {
     if (!m_indexed) return false;
@@ -998,9 +1076,11 @@ void Browser::AddThumbGenerator(const std::vector<std::string>& extensions, std:
     if (m_thumbs) m_thumbs->AddGenerator(extensions, std::move(render));
 }
 
-void Browser::ThumbFrame(double budgetMs) {
+void Browser::ThumbFrame(double budgetMs, bool allowHeavy) {
     m_thumbBudgetMs = budgetMs;
     m_thumbSpentMs = 0;
+    m_thumbHeavyAllowed = allowHeavy;
+    m_thumbHeavyCount = 0;
     if (m_prunePending && m_thumbs) { m_prunePending = false; PruneThumbs(); }
 }
 
@@ -1010,11 +1090,29 @@ Browser::ThumbResult Browser::Thumb(const std::string& path) {
     ThumbKey(path, g, h);
     r.key = g.ToString() + ":" + std::to_string(h);
     okay::ThumbnailCache& cache = Thumbs();
-    const bool have = cache.InMemory(g, h) || cache.OnDisk(g, h);
-    if (!have && m_thumbSpentMs > m_thumbBudgetMs) return r;   // out of time this frame: the icon shows, the picture comes later
+    const std::string p = Norm(path);
+    const okay::AssetType kind = okay::AssetTypeFromPath(path);
+    const bool inMemory = cache.InMemory(g, h);
+    auto ke = m_thumbKeys.find(p);   // ThumbKey just filled it; it also remembers whether the picture is on disk
+    if (!inMemory) {
+        if (m_thumbSpentMs > m_thumbBudgetMs) return r;   // out of time this frame: the icon shows, the picture comes later
+        // One look at the disk per key, not one per waiting tile per frame (hundreds of file-system calls a frame on Windows).
+        bool onDisk;
+        if (ke != m_thumbKeys.end() && ke->second.disk >= 0) onDisk = ke->second.disk == 1;
+        else { onDisk = cache.OnDisk(g, h); if (ke != m_thumbKeys.end()) ke->second.disk = onDisk ? 1 : 0; }
+        if (!onDisk) {
+            using T = okay::AssetType;
+            const bool heavy = kind == T::Scene || kind == T::Prefab || kind == T::Model;
+            if (heavy && (!m_thumbHeavyAllowed || m_thumbHeavyCount >= 1)) return r;   // one whole-scene render a frame at most
+            if (heavy) ++m_thumbHeavyCount;
+        }
+    }
     const auto t0 = std::chrono::steady_clock::now();
-    const okay::ThumbnailCache::Thumb t = cache.Get(g, h, Norm(path), okay::AssetTypeFromPath(path));
-    if (!have) m_thumbSpentMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    const okay::ThumbnailCache::Thumb t = cache.Get(g, h, p, kind);
+    if (!inMemory) {
+        m_thumbSpentMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (ke != m_thumbKeys.end()) ke->second.disk = 1;   // made now: the cache wrote its picture (or its failure marker)
+    }
     r.placeholder = t.placeholder;
     r.failed = t.failed;
     r.ready = !t.placeholder && t.image && t.image->Valid();

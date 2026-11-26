@@ -96,9 +96,10 @@ std::string FileJson(const std::string& ver, const char* file, bool withSha = tr
     const std::string b = Body(ver, file);
     return std::string("\"") + file + "\": {\"size\": " + std::to_string(b.size()) + (withSha ? ", \"sha256\": \"" + Sha(b) + "\"" : std::string()) + "}";
 }
-std::string TestEntry(const std::string& ver, bool inBucket = true, const std::string& extra = "", bool withSha = true, const std::string& channel = "dev") {
+std::string TestEntry(const std::string& ver, bool inBucket = true, const std::string& extra = "", bool withSha = true, const std::string& channel = "dev",
+                      const std::string& branch = "main") {
     return "{\"version\": \"" + ver + "\", \"channel\": \"" + channel + "\", \"date\": \"2026-11-16\", \"inBucket\": " + (inBucket ? "true" : "false") +
-           ", \"branch\": \"claude/walk-vs-run\", \"sha\": \"0123456789abcdef0123456789abcdef01234567\", \"note\": \"try the new run speed\"" + extra +
+           ", \"branch\": \"" + branch + "\", \"sha\": \"0123456789abcdef0123456789abcdef01234567\", \"note\": \"try the new run speed\"" + extra +
            ", \"files\": {" + FileJson(ver, "OkayEngine.exe", withSha) + ", " + FileJson(ver, "OkaySpacePlayer.exe") + ", " + FileJson(ver, "OkaySpace.exe") + "}}";
 }
 std::string StableEntry(const std::string& ver, const char* channel = "latest") {
@@ -214,6 +215,18 @@ int main() {
         on = tb::ChooseTarget("2.876.0", "2.876.0", "", true, false, false);            // nothing published in dev/: stable
         CHECK(on.kind == K::Stable && on.version == "2.876.0");
         CHECK(tb::ChooseTarget("2.876.0", "", "", true, false, false).kind == K::None);
+        // The number does not order what is IN a build (owner, 2026-11-26): a main test build made after release 2.877.0 was cut, but numbered on
+        // the release before it, holds more of main than 2.877.0. When both places on main are known they decide; unknown keeps the number.
+        on = tb::ChooseTarget("2.876.0.5", "2.877.0", "2.876.0.9", true, false, false, 1490, 1500);
+        CHECK(on.kind == K::TestBuild && on.version == "2.876.0.9");
+        on = tb::ChooseTarget("2.876.0.5", "2.877.0", "2.876.0.9", true, false, false, 1500, 1490);   // the release is ahead: the release
+        CHECK(on.kind == K::Stable && on.version == "2.877.0");
+        on = tb::ChooseTarget("2.876.0.5", "2.877.0", "2.876.0.9", true, false, false, 0, 1500);      // one not known: the number, as before
+        CHECK(on.kind == K::Stable && on.version == "2.877.0");
+        on = tb::ChooseTarget("2.876.0.5", "2.877.0", "2.876.0.9", false, false, false, 1490, 1500);  // test builds off: never a test build
+        CHECK(on.kind == K::Stable);
+        CHECK(tb::ContentAhead(1500, 1490) == tb::Ahead::Yes && tb::ContentAhead(1490, 1500) == tb::Ahead::No && tb::ContentAhead(1500, 1500) == tb::Ahead::No);
+        CHECK(tb::ContentAhead(0, 1500) == tb::Ahead::Unknown && tb::ContentAhead(1500, 0) == tb::Ahead::Unknown);
         // Things that are not what they claim are ignored: a test version as the stable head, a release as a test build.
         CHECK(tb::ChooseTarget("2.876.0", "2.877.0.1", "", true, false, false).kind == K::None);
         CHECK(tb::ChooseTarget("2.876.0", "2.876.0", "2.999.0", true, false, false).version == "2.876.0");
@@ -345,12 +358,14 @@ int main() {
 
     // ---- the dev reader ---------------------------------------------------------------------------------------------------------
     {
-        const std::string body = DevIndex({TestEntry("2.876.0.18"), TestEntry("2.876.0.17"), TestEntry("2.876.0.16", false)}, "2.876.0.18");
+        const std::string body = DevIndex({TestEntry("2.876.0.18", true, "", true, "dev", "claude/walk-vs-run"), TestEntry("2.876.0.17"), TestEntry("2.876.0.16", false)}, "2.876.0.18");
         Server s;
         s.files[kDev + "versions.json"] = body;
         okayversions::Index idx = okayversions::LoadDevIndex(Src(), s.Fn());
         CHECK(idx.ok && !idx.fallback && !idx.signatureRefused && idx.versions.size() == 3);
-        CHECK(idx.latest == "2.876.0.18" && idx.lts.empty());
+        // The head is the newest installable MAIN build: branch build .18 finished later but is never the automatic update (owner, 2026-11-26).
+        CHECK(idx.latest == "2.876.0.17" && idx.lts.empty());
+        CHECK(okayversions::TestBuildHead(idx, "2.876.0.18").empty());                // a person on the branch build is not moved back
         CHECK(s.AskedOnlyUnderDev() && s.asked.front() == kDev + "versions.json");   // only the dev area, and the list first
         const okayversions::Entry* e = idx.Find("2.876.0.18");
         CHECK(e && e->inBucket && e->channel.empty() && e->branch == "claude/walk-vs-run" && e->sha == "0123456789abcdef0123456789abcdef01234567" &&
@@ -378,7 +393,7 @@ int main() {
         // Text from the server is cleaned before anyone shows it.
         idx = [&] {
             Server t;
-            std::string evil = TestEntry("2.876.0.17");
+            std::string evil = TestEntry("2.876.0.17", true, "", true, "dev", "claude/walk-vs-run");
             const std::string key = "\"branch\": \"claude/walk-vs-run\"";
             evil.replace(evil.find(key), key.size(), "\"branch\": \"a b;rm -rf /\"");
             t.files[kDev + "versions.json"] = DevIndex({evil, TestEntry("2.876.0.18", true, ", \"note2\": \"x\"")});
@@ -512,7 +527,8 @@ int main() {
             Server s;
             s.files[kDev + "versions.json"] = text;
             const okayversions::Index loaded = okayversions::LoadDevIndex(Src(), s.Fn());
-            CHECK(loaded.ok && loaded.latest == ver && okayversions::PlanInstall(loaded, ver, kDev, fs::path(), false).ok);
+            // A branch build: installable by hand, never the automatic update (only main builds are: owner, 2026-11-26).
+            CHECK(loaded.ok && loaded.latest.empty() && okayversions::PlanInstall(loaded, ver, kDev, fs::path(), false).ok);
             // The notes' first line is the title the launcher builds itself.
             const std::string nrun = "python3 -I '" + script + "' notes --version " + ver + " --base 2.876.0 --branch claude/walk-vs-run --sha 0123456789abcdef0123456789abcdef01234567 "
                                      "--note 'try the new run speed' --out '" + notes.string() + "' >/dev/null 2>&1";

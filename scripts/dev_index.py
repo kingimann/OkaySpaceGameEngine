@@ -9,7 +9,7 @@ nothing here can write, read or change the list of real releases, and a real rel
       [--existing OLD.json] [--bucket-versions "2.876.0.17 2.876.0.16"] [--keep 3] [--max-entries 50]
   dev_index.py notes --version 2.876.0.17 --base 2.876.0 --branch ... --sha ... --note ... --out NOTES-DEV.txt
   dev_index.py summary --version 2.876.0.17 --base 2.876.0 --branch ... --sha ... --note ...        (Markdown for the job summary, on stdout)
-  dev_index.py prune-list --existing OLD.json --listing "v2.876.0.15 v2.876.0.16 versions.json DEV.txt" --version 2.876.0.17 --keep 3
+  dev_index.py prune-list --existing OLD.json --listing "v2.876.0.15 v2.876.0.16 versions.json DEV.txt" --version 2.876.0.17 --keep 3 [--branch main]
   dev_index.py check --index BACK.json --version 2.876.0.17 --file OkayEngine.exe=PATH ...
   dev_index.py --self-test
 
@@ -22,9 +22,10 @@ checksum somebody has already seen cannot change (CLAUDE.md rule 12).
 Schema (version 1, the same envelope as the real list so the launcher's reader can parse it; it has no "latest", "lts" or "archive"):
   { "schema": 1, "dev": "2.876.0.17", "bucketPath": "v{version}/{file}",
     "versions": [ { "version": "2.876.0.17", "channel": "dev", "date": "2026-11-16", "inBucket": true,
-                    "branch": "claude/walk-vs-run", "sha": "<commit>", "note": "...",
+                    "branch": "claude/walk-vs-run", "sha": "<commit>", "note": "...", "mainCount": 1500, "mainSha": "<main commit>",
                     "files": { "OkayEngine.exe": { "size": 123, "sha256": "..." } } } ] }
-The files live at <bucket>/dev/v<version>/<file>. Versions that were pruned from the bucket stay in the list with inBucket false (their number
+"mainCount" / "mainSha" (optional, --main-count / --main-sha): the build's place on main (git rev-list --count of the main commit it was
+built from or on top of); missing = not known. The files live at <bucket>/dev/v<version>/<file>. Versions that were pruned from the bucket stay in the list with inBucket false (their number
 is never used again) and are never offered. Written from the plain description above; standard library only.
 """
 import argparse
@@ -38,6 +39,7 @@ SCHEMA = 1
 BUCKET_PATH = "v{version}/{file}"
 REQUIRED_FILES = ("OkayEngine.exe", "OkaySpacePlayer.exe", "OkaySpace.exe")
 DEFAULT_KEEP = 3
+MAIN_BRANCH = "main"        # the only branch the launcher's automatic test-build update follows (okay::testbuild::kMainBranch)
 MAX_KEEP = 10
 DEFAULT_MAX_ENTRIES = 50
 MAX_BRANCH_CHARS = 80
@@ -217,6 +219,24 @@ def missing_checksums(files):
     return bad
 
 
+def position_fields(count, sha):
+    """The test build's place on main as entry fields ({"mainCount": N, "mainSha": "..."}): git rev-list --count of the main commit it was built
+    from (a branch build: the main commit it was built on top of) and that commit. The launcher compares it with a release's (scripts/versions_index.py
+    writes the same two fields for releases; launcher/UpdaterCore.hpp DecideOffer). None / "" = not given. Refused: a count that is not a whole
+    number above 0, a commit that is not a commit id."""
+    fields = {}
+    if count is not None:
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise Refused("the place on main %r is not a whole number above 0" % (count,))
+        fields["mainCount"] = count
+    if sha:
+        c = clean_sha(sha)
+        if c is None:
+            raise Refused("the main commit %r is not 7 to 40 hex digits" % (sha,))
+        fields["mainSha"] = c
+    return fields
+
+
 def _clean_entry(e):
     """An entry of an existing list, or None when it is unusable (anything that is not a well-formed test build)."""
     if not isinstance(e, dict) or parse_test_version(e.get("version")) is None:
@@ -231,9 +251,14 @@ def _clean_entry(e):
             if isinstance(size, int) and not isinstance(size, bool) and size >= 0 and isinstance(sha, str) and _SHA256_RE.match(sha):
                 files[name] = {"size": size, "sha256": sha}
     date = e.get("date") if isinstance(e.get("date"), str) and _DATE_RE.match(e.get("date")) else ""
-    return {"version": e["version"], "channel": "dev", "date": date, "inBucket": bool(e.get("inBucket", False)),
-            "branch": clean_branch(e.get("branch")) or "", "sha": clean_sha(e.get("sha")) or "",
-            "note": clean_line(e.get("note")), "files": files}
+    out = {"version": e["version"], "channel": "dev", "date": date, "inBucket": bool(e.get("inBucket", False)),
+           "branch": clean_branch(e.get("branch")) or "", "sha": clean_sha(e.get("sha")) or "",
+           "note": clean_line(e.get("note")), "files": files}
+    try:   # an old list's place on main: kept when usable, dropped (never refused) when not
+        out.update(position_fields(e.get("mainCount"), e.get("mainSha")))
+    except Refused:
+        pass
+    return out
 
 
 def _entries_of(existing):
@@ -247,7 +272,34 @@ def _entries_of(existing):
     return out
 
 
-def merge(existing, version, files, date, branch, sha, note, bucket_versions=None, keep=DEFAULT_KEEP, max_entries=DEFAULT_MAX_ENTRIES):
+def kept_versions(branch_of, candidates, keep, must=None):
+    """Which of `candidates` (test versions) stay in the bucket: `keep` of them, main builds first (owner, 2026-11-26: "updates are installed in
+    order"). The launcher's automatic update follows main builds only, so branch builds must never push every main build out of the bucket: the
+    newest `keep - 1` main builds and the newest 1 build of any other branch stay (keep 1: the newest main build), and when there are fewer of
+    either the rest is filled with the newest of what is left. `must` (the build being published) always stays and uses up its own kind's share.
+    `branch_of` maps a version to its branch (missing = not main)."""
+    ordered = sorted(set(candidates), key=parse_test_version, reverse=True)
+    is_main = lambda v: branch_of.get(v) == MAIN_BRANCH
+    other_share = 1 if keep >= 2 else 0
+    share = {True: keep - other_share, False: other_share}
+    chosen = []
+    if must is not None and must in ordered:
+        chosen.append(must)
+        share[is_main(must)] -= 1
+    for v in ordered:
+        if v not in chosen and share[is_main(v)] > 0 and len(chosen) < keep:
+            chosen.append(v)
+            share[is_main(v)] -= 1
+    for v in ordered:                       # fewer of one kind than its share: fill with the newest of the rest
+        if len(chosen) >= keep:
+            break
+        if v not in chosen:
+            chosen.append(v)
+    return set(chosen)
+
+
+def merge(existing, version, files, date, branch, sha, note, bucket_versions=None, keep=DEFAULT_KEEP, max_entries=DEFAULT_MAX_ENTRIES,
+          main_count=None, main_sha=None):
     """Return the new list (a dict). Raises Refused for input that must not be published and Exists when the version is already listed."""
     if parse_test_version(version) is None:
         raise Refused("%r is not a test version: it needs four numbers, the fourth at least 1 (for example 2.876.0.17). Real releases "
@@ -272,6 +324,7 @@ def merge(existing, version, files, date, branch, sha, note, bucket_versions=Non
     lacking = missing_checksums(files)
     if lacking:
         raise Refused("no checksum for %s: the updater refuses files without one, so this test build cannot be published" % ", ".join(lacking))
+    position = position_fields(main_count, main_sha)
 
     entries = _entries_of(existing)
     if version in entries:
@@ -279,6 +332,7 @@ def merge(existing, version, files, date, branch, sha, note, bucket_versions=Non
                      "Start a new test build instead" % version)
     entries[version] = {"version": version, "channel": "dev", "date": date, "inBucket": True, "branch": b, "sha": s,
                         "note": clean_line(note), "files": dict(sorted(files.items()))}
+    entries[version].update(position)
 
     if bucket_versions is not None:
         present = set(v for v in bucket_versions if parse_test_version(v) is not None)
@@ -286,30 +340,31 @@ def merge(existing, version, files, date, branch, sha, note, bucket_versions=Non
         for v, e in entries.items():
             e["inBucket"] = v in present
     ordered = sorted(entries, key=parse_test_version, reverse=True)
-    kept = 0
-    for v in ordered:                       # never claim more than `keep` installable builds, newest first
-        if entries[v]["inBucket"]:
-            kept += 1
-            if kept > keep:
-                entries[v]["inBucket"] = False
+    in_bucket = [v for v in ordered if entries[v]["inBucket"]]
+    stay = kept_versions({v: entries[v]["branch"] for v in in_bucket}, in_bucket, keep, version)
+    for v in in_bucket:                     # never claim more than `keep` installable builds, main builds first (kept_versions)
+        if v not in stay:
+            entries[v]["inBucket"] = False
     ordered = ordered[:max_entries]
     versions = [entries[v] for v in ordered]
     newest = next((e["version"] for e in versions if e["inBucket"]), ordered[0])
     return {"schema": SCHEMA, "dev": newest, "bucketPath": BUCKET_PATH, "versions": versions}
 
 
-def prune_list(existing, listing, version, keep=DEFAULT_KEEP):
-    """The versions to delete from the bucket's dev/ folder after publishing `version`: everything listed that is not among the newest `keep`
-    indexed builds (the new one counts). A folder that is not in the list at all (the leftovers of a publish that stopped half way) goes too.
+def prune_list(existing, listing, version, keep=DEFAULT_KEEP, branch=None):
+    """The versions to delete from the bucket's dev/ folder after publishing `version` (a build of `branch`): everything listed that is not among
+    the `keep` indexed builds that stay, main builds first (kept_versions; the new one counts). A folder that is not in the list at all (the leftovers of a publish that stopped half way) goes too.
     Only well-formed test versions are ever returned, never `version` itself."""
     listed = set()
     for name in listing:
         n = name[1:] if isinstance(name, str) and name.startswith("v") else None
         if n is not None and parse_test_version(n) is not None:
             listed.add(n)
-    indexed = set(_entries_of(existing))
-    candidates = (indexed & listed) | {version}
-    keep_set = set(sorted(candidates, key=parse_test_version, reverse=True)[:keep])
+    entries = _entries_of(existing)
+    candidates = (set(entries) & listed) | {version}
+    branch_of = {v: e["branch"] for v, e in entries.items()}
+    branch_of[version] = clean_branch(branch) or ""
+    keep_set = kept_versions(branch_of, candidates, keep, version)
     return sorted((v for v in listed if v not in keep_set and v != version), key=parse_test_version)
 
 
@@ -374,7 +429,11 @@ def _cmd_merge(a):
         if err:
             raise Refused("the existing test build list is damaged and was left alone: " + err)
         bucket = a.bucket_versions.split() if a.bucket_versions is not None else None
-        out = merge(existing, a.version, files, a.date, a.branch, a.sha, a.note, bucket, a.keep, a.max_entries)
+        mc = getattr(a, "main_count", "") or ""
+        if mc not in ("", "0") and not re.match(r"^[0-9]{1,12}$", mc):
+            raise Refused("--main-count %r is not a number" % (mc,))
+        count = int(mc) if mc not in ("", "0") else None
+        out = merge(existing, a.version, files, a.date, a.branch, a.sha, a.note, bucket, a.keep, a.max_entries, count, getattr(a, "main_sha", "") or None)
     except Refused as e:
         return _die(2, str(e))
     except Exists as e:
@@ -407,7 +466,7 @@ def _cmd_prune_list(a):
         return _die(2, "the existing test build list is damaged, so nothing is pruned: " + err)
     if parse_test_version(a.version) is None or not 1 <= a.keep <= MAX_KEEP:
         return _die(2, "bad --version or --keep")
-    for v in prune_list(existing, a.listing.split(), a.version, a.keep):
+    for v in prune_list(existing, a.listing.split(), a.version, a.keep, a.branch):
         print(v)
     return 0
 
@@ -482,6 +541,18 @@ def _self_test():
     idx4 = merge(idx3, "2.877.0.1", f1, "2026-11-17", "main", "abc1234", "")
     ok(idx4["versions"][0]["version"] == "2.877.0.1" and idx4["dev"] == "2.877.0.1", "a newer base sorts first")
 
+    # The build's place on main (mainCount = git rev-list --count of the main commit it was built from or on top of, mainSha = that commit):
+    # written when given, kept by later merges; a list without it stays valid (the launcher reads a missing count as "not known").
+    m40 = "d" * 40
+    mi = merge(idx4, "2.877.0.2", f1, "2026-11-17", "main", "abc1234", "", main_count=1500, main_sha=m40)
+    ok(mi["versions"][0]["mainCount"] == 1500 and mi["versions"][0]["mainSha"] == m40, "mainCount and mainSha written")
+    ok("mainCount" not in mi["versions"][1], "an old entry has no mainCount")
+    mj = merge(mi, "2.877.0.3", f1, "2026-11-17", "main", "abc1234", "")
+    ok(next(v for v in mj["versions"] if v["version"] == "2.877.0.2")["mainCount"] == 1500, "mainCount kept by the next merge")
+    ok("mainCount" not in mj["versions"][0], "no count given: none written")
+    for badc in (-1, 0, True, "12", 1.5):
+        raises(Refused, lambda b=badc: merge(idx4, "2.877.0.2", f1, "2026-11-17", "main", "abc1234", "", main_count=b), "bad mainCount %r" % (badc,))
+    raises(Refused, lambda: merge(idx4, "2.877.0.2", f1, "2026-11-17", "main", "abc1234", "", main_count=5, main_sha="nope"), "bad mainSha")
     raises(Exists, lambda: merge(idx, "2.876.0.17", f1, "2026-11-16", "main", "abc1234", ""), "an existing version")
     pruned = merge(idx2, "2.876.0.19", f1, "2026-11-16", "main", "abc1234", "", ["2.876.0.19", "2.876.0.18"])   # .17 was pruned
     raises(Exists, lambda: merge(pruned, "2.876.0.17", f1, "2026-11-16", "main", "abc1234", ""), "a pruned version is never reused")
@@ -522,6 +593,28 @@ def _self_test():
     ok("2.876.0.4" not in prune_list(ex, ["v2.876.0.4", "v2.876.0.1"], "2.876.0.4", 1), "the new version is never pruned")
     ok(prune_list(ex, ["v2.876.0", "v2.876", "vdev", "v2.876.0.0", "x2.876.0.1", "dev", "v../x", "v2.876.0.1/../x"], "2.876.0.4", 3) == [], "only well-formed test versions are ever returned")
     ok(prune_list(ex, [], "2.876.0.4", 3) == [], "empty listing")
+    # main builds first (owner, 2026-11-26): branch builds never push every main build out of the bucket
+    mb = merge(None, "2.903.8.126", f1, "2026-11-26", "main", "abc1234", "")
+    for n, br in ((127, "claude/okaycc-29"), (128, "claude2/x"), (129, "claude3/y")):
+        mb = merge(mb, "2.903.8.%d" % n, f1, "2026-11-26", br, "abc1234", "")
+    listing = ["v2.903.8.126", "v2.903.8.127", "v2.903.8.128"]
+    ok(prune_list(mb, listing, "2.903.8.129", 3, "claude3/y") == ["2.903.8.127"], "3 branch builds after a main build: the main build stays")
+    ok([(v["version"], v["inBucket"]) for v in mb["versions"]] == [("2.903.8.129", True), ("2.903.8.128", True), ("2.903.8.127", False), ("2.903.8.126", True)],
+       "merge keeps the main build installable (only 1 main build: the newest other builds fill the rest)")
+    ok(prune_list(mb, listing, "2.903.8.129", 2, "claude3/y") == ["2.903.8.127", "2.903.8.128"], "keep 2: the new branch build and the main build")
+    two = merge(merge(None, "2.903.8.1", f1, "2026-11-26", "main", "abc1234", ""), "2.903.8.2", f1, "2026-11-26", "main", "abc1234", "")
+    for n in (3, 4, 5):
+        two = merge(two, "2.903.8.%d" % n, f1, "2026-11-26", "claude/b", "abc1234", "")
+    ok([v["version"] for v in two["versions"] if v["inBucket"]] == ["2.903.8.5", "2.903.8.2", "2.903.8.1"], "the newest 2 main builds and the newest 1 other")
+    ok(prune_list(two, ["v2.903.8.1", "v2.903.8.2", "v2.903.8.5"], "2.903.8.6", 3, "main") == ["2.903.8.1"], "a new main build: 2 main + the newest other")
+    ok(prune_list(two, ["v2.903.8.1", "v2.903.8.2", "v2.903.8.5"], "2.903.8.6", 3, "claude/c") == ["2.903.8.5"], "a new branch build replaces the older branch build")
+    allm = None
+    for n in range(1, 6):
+        allm = merge(allm, "2.903.8.%d" % n, f1, "2026-11-26", "main", "abc1234", "")
+    ok([v["version"] for v in allm["versions"] if v["inBucket"]] == ["2.903.8.5", "2.903.8.4", "2.903.8.3"], "only main builds: the newest 3")
+    ok(kept_versions({"2.903.8.1": "main"}, ["2.903.8.1", "2.903.8.2"], 1) == {"2.903.8.1"}, "keep 1: the newest main build")
+    ok(kept_versions({"2.903.8.1": "main"}, ["2.903.8.1", "2.903.8.2"], 1, "2.903.8.2") == {"2.903.8.2"}, "keep 1: the build being published always stays")
+    ok(kept_versions({}, ["2.903.8.1", "2.903.8.2", "2.903.8.3"], 2) == {"2.903.8.3", "2.903.8.2"}, "no main builds: the newest ones")
 
     # ---- notes
     nt = notes_text("2.876.0.17", "2.876.0", "claude/walk-vs-run", c, "try the new run speed")
@@ -562,6 +655,11 @@ def _self_test():
         ok(_cmd_merge(a4) == 2 and not os.path.exists(a4.out), "cli: a missing file (no checksum) is exit 2 and writes nothing")
         with open(os.path.join(d, "damaged.json"), "w", encoding="utf-8") as fh:
             fh.write("{ not json")
+        a6 = argparse.Namespace(**vars(a))
+        a6.version, a6.out, a6.main_count, a6.main_sha = "2.876.0.18", os.path.join(d, "pos.json"), "1500", "d" * 40
+        ok(_cmd_merge(a6) == 0 and _read_json(a6.out)[0]["versions"][0]["mainCount"] == 1500, "cli: --main-count is written")
+        a6.main_count, a6.out = "12x", os.path.join(d, "pos2.json")
+        ok(_cmd_merge(a6) == 2 and not os.path.exists(a6.out), "cli: a --main-count that is not a number is exit 2")
         a5 = argparse.Namespace(**vars(a))
         a5.existing = os.path.join(d, "damaged.json")
         a5.out = os.path.join(d, "fresh.json")
@@ -605,6 +703,8 @@ def main(argv):
     m.add_argument("--bucket-versions", default=None)
     m.add_argument("--keep", type=int, default=DEFAULT_KEEP)
     m.add_argument("--max-entries", type=int, default=DEFAULT_MAX_ENTRIES)
+    m.add_argument("--main-count", default="")   # the build's place on main (git rev-list --count); "" or 0 = not known
+    m.add_argument("--main-sha", default="")     # the main commit it was built from (or on top of)
     m.add_argument("--out", required=True)
     n = sub.add_parser("notes")
     n.add_argument("--version", required=True)
@@ -624,6 +724,7 @@ def main(argv):
     pl.add_argument("--listing", default="")
     pl.add_argument("--version", required=True)
     pl.add_argument("--keep", type=int, default=DEFAULT_KEEP)
+    pl.add_argument("--branch", default="")       # the branch of --version (main builds are kept first)
     c = sub.add_parser("check")
     c.add_argument("--index", required=True)
     c.add_argument("--version", required=True)

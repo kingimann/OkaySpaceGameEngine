@@ -14,9 +14,23 @@
 #include "okay/Platform/Platform.hpp"
 
 #include <functional>
+#include <memory>
+#include <string>
 
 namespace okayuihost {
 namespace platform {
+
+/// The window and painter of a window that OkayUI owns (the editor's window mode, the browser program). False with `error` (and
+/// nothing kept) when the backend cannot make either.
+inline bool OpenWindow(okay::platform::Backend& backend, const okay::platform::WindowDesc& desc, std::unique_ptr<okay::platform::Window>& window,
+                       std::unique_ptr<okay::platform::Painter>& painter, std::string& error) {
+    window = backend.MakeWindow(desc);
+    if (!window) { error = "no window: " + backend.LastError(); return false; }
+    std::string why;
+    painter = okay::platform::CreateSdl2Painter(*window, okay::platform::PainterDesc(), &why);
+    if (!painter) { window.reset(); error = "no painter: " + why; return false; }
+    return true;
+}
 
 class FrameLoop {
 public:

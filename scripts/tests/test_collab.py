@@ -2,7 +2,7 @@
 """Unit tests for the collaboration scripts (collab_lib, find_existing, collision_check, branch_lint, bug_patterns,
 check_pr_body). They build tiny throw-away git repositories, so they do not depend on the real repo's branches or on
 the feature map. Run: python3 scripts/tests/test_collab.py"""
-import json, os, shutil, subprocess, sys, tempfile, unittest, datetime
+import json, os, re, shutil, subprocess, sys, tempfile, unittest, datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(HERE)
@@ -378,6 +378,16 @@ class ThreeLanes(unittest.TestCase):
         for lane, prefix in L.lane_prefixes(self.lanes).items():
             self.assertEqual(DI.display_branch(prefix + "walk"), "walk", lane)
             self.assertIn(f'std::string_view("{prefix}")', hpp, f"shared/TestBuild.hpp DisplayBranch must drop {prefix} like dev_index.py")
+
+    def test_test_builds_kept_is_one_number(self):
+        # The Versions page says how many test builds stay on the server (okay::testbuild::kKept); the publisher keeps that many.
+        import dev_index as DI
+        hpp = open(os.path.join(ROOT, "shared", "TestBuild.hpp"), encoding="utf-8").read()
+        sh = open(os.path.join(ROOT, "scripts", "publish-supabase-dev.sh"), encoding="utf-8").read()
+        m = re.search(r"inline constexpr int kKept = (\d+);", hpp)
+        self.assertIsNotNone(m, "shared/TestBuild.hpp must define kKept")
+        self.assertEqual(int(m.group(1)), DI.DEFAULT_KEEP)
+        self.assertIn('KEEP="${DEV_KEEP:-%d}"' % DI.DEFAULT_KEEP, sh)
 
 
 class Lint(unittest.TestCase):

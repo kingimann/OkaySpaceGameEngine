@@ -26,7 +26,7 @@ inline std::string ValidateContentFile(const Entry& e, const std::string& path) 
     if (ext == ".okayvs") {
         // The graph loader quietly ignores lines it does not know, so garbage parses as an empty graph. A downloaded graph must be a graph:
         // every line is blank, a '#' comment, or starts with a directive NodeGraph::Parse knows, and there is at least one node.
-        static const char* kDirectives[] = {"node", "exec", "data", "entry", "default", "var", "struct", "decl", "pos", "comment"};
+        static const char* kDirectives[] = {"node", "exec", "data", "entry", "default", "var", "struct", "decl", "pos", "comment", "knot"};
         int nodes = 0, lineNo = 0;
         std::size_t at = 0;
         while (at <= text.size()) {

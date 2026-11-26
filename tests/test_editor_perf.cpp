@@ -32,6 +32,7 @@ int main() {
     CHECK(perf::Classify("ImGui.Draw") == perf::Section::ImGuiDraw);
     CHECK(perf::Classify("ImGui.Render") == perf::Section::ImGuiDraw);
     CHECK(perf::Classify("Present") == perf::Section::Present);
+    CHECK(perf::Classify("Present.Windows") == perf::Section::Present);   // the multi-window panels' presents (were "Not timed")
     CHECK(perf::Classify("Pacing.Sleep") == perf::Section::Sleep);
     CHECK(perf::Classify("Physics3D.Step") == perf::Section::Play);
     CHECK(perf::Classify("Scripts") == perf::Section::Play);
@@ -93,6 +94,16 @@ int main() {
         CHECK_NEAR(perf::TargetFps(p, false, false, 5.0), 30.0, 1e-9);
         p.idleFps = 1;                                                    // out-of-range idle rate is held to 5
         CHECK_NEAR(perf::TargetFps(p, false, false, 5.0), 5.0, 1e-9);
+        // A minimized editor (nothing playing) holds 10 FPS whatever the settings: its present no longer waits for the display.
+        perf::PacingSettings off;
+        CHECK_NEAR(perf::TargetFps(off, false, false, 0.0, true), perf::kMinimizedFps, 1e-9);
+        CHECK(perf::TargetFps(off, true, false, 0.0, true) == 0.0);       // a running game is left alone
+        off.fpsCap = 5;
+        CHECK_NEAR(perf::TargetFps(off, false, false, 0.0, true), 5.0, 1e-9);   // a lower cap still wins
+        // 100 loop turns of 1 ms each while minimized: the pacing sleeps the rest of every 100 ms frame (was: no sleep at all).
+        double slept = 0.0;
+        for (int i = 0; i < 100; ++i) slept += perf::SleepSeconds(perf::TargetFps(perf::PacingSettings{}, false, false, 0.0, true), 0.001);
+        CHECK(slept > 9.8);
         CHECK_NEAR(perf::SleepSeconds(100.0, 0.004), 0.006, 1e-12);
         CHECK(perf::SleepSeconds(100.0, 0.02) == 0.0);                    // a late frame is not paid back
         CHECK(perf::SleepSeconds(0.0, 0.001) == 0.0);
@@ -159,6 +170,31 @@ int main() {
         CHECK(!full.Line(slow, 900.0, 1, "").empty());
         CHECK(full.Line(slow, 900.0, 2, "").find("the log is full") != std::string::npos);
         CHECK(full.Line(slow, 900.0, 3, "").empty() && full.written == 2);
+    }
+    RUN_SUITE("the once-a-minute FPS summary (a steady low frame rate shows up, not only frames over 250 ms)");
+    {
+        CHECK_NEAR(perf::FpsSummary::PeriodFrom(nullptr), 60.0, 1e-9);
+        CHECK_NEAR(perf::FpsSummary::PeriodFrom("0"), 0.0, 1e-9);
+        CHECK_NEAR(perf::FpsSummary::PeriodFrom("1"), 5.0, 1e-9);
+        CHECK_NEAR(perf::FpsSummary::PeriodFrom("x"), 60.0, 1e-9);
+        perf::FpsSummary sum;
+        Profiler::Frame f = MakeFrame(100.0);
+        Add(f, "UI.Diagnostics", 60.0); Add(f, "Render3D", 20.0); Add(f, "Present", 5.0); Add(f, "UI.Hierarchy", 1.0);
+        std::string line;
+        int lines = 0;
+        for (int i = 0; i < 1200; ++i) {   // 100 ms frames (10 FPS) for 120 s: two lines
+            const std::string l = sum.Add(f, 100.0);
+            if (!l.empty()) { ++lines; line = l; }
+        }
+        CHECK(lines == 2);
+        CHECK(line.find("600 frames in 60 s") != std::string::npos);
+        CHECK(line.find("average 10.0 FPS") != std::string::npos);
+        CHECK(line.find("top scopes per frame: UI.Diagnostics 60.0 ms, Render3D 20.0 ms, Present 5.0 ms") != std::string::npos);
+        CHECK(line.find("UI.Hierarchy") == std::string::npos);
+        perf::FpsSummary off; off.periodSeconds = 0.0;
+        bool any = false;
+        for (int i = 0; i < 2000; ++i) any = any || !off.Add(f, 100.0).empty();
+        CHECK(!any);
     }
     TEST_MAIN_RESULT();
 }

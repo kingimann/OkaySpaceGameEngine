@@ -20,6 +20,8 @@
 #include "OkayUIImGuiEmbed.hpp"
 #include "OkayUIPanels.hpp"
 #include "EditorPanelFixtures.hpp"
+#include "OkayUIScreens.hpp"        // DrawWhatsNew: the launcher's What's New page
+#include "PageLayout.hpp"          // launcher/: OkayUIDrawsPage, the launcher's rule for which surface draws a page
 #include "okay/UI/OkayUICapture.hpp"
 
 #include <cstdio>
@@ -873,6 +875,143 @@ void SectionsHiddenDrawNothing() {
     kH = 420;
 }
 
+// ---- The launcher's What's New page (launcher/main.cpp tab 12), as the launcher hosts it ---------------------------------------
+// The launcher's window: one root window that is never brought to the front, the sidebar (a child) with the What's New and
+// Notifications rows and the profile row, whose hover shows an ImGui tooltip that reaches into the page, and the page area (a child).
+// Which surface draws the page is the launcher's own rule (okay::launcherlayout::OkayUIDrawsPage, launcher/PageLayout.hpp) and the
+// OkayUI page is hosted with okayuihost::HostPanelArea, as launcher/main.cpp does. Owner's recording (2026-11-26, v2.903.8.140): with the
+// mouse on the profile row, and on the frame of a click on Notifications, the OkayUI What's New was replaced by its Dear ImGui copy.
+struct LauncherWin {
+    ImGuiRig im;
+    Raster ras;
+    okayuihost::ImGuiEmbed embed;
+    OkayUI::CapturedGeometry cap;
+    Offers offers, lastOffers;                 // this frame's and last frame's rectangles (the launcher's Region keeps last frame's)
+    okayuitest::Sim sim{(float)kW, (float)kH};
+    okayuiscreens::WhatsNewModel model;
+    int tab = 12;
+    bool okayFrame = true;                     // the OkayUI backend is on (the launcher's default)
+    int okayDrew = 0, imguiDrew = 0;           // which surface drew the What's New page this frame
+    int notifDrew = 0;                         // the Notifications page was drawn this frame
+    bool tooltipShown = false;
+    static constexpr float kNavW = 150.0f, kRowH = 36.0f;
+    LauncherWin() {
+        okayuitest::Reset();
+        OkayUI::UseLauncherLook(true);
+        OkayUI::Style().caretBlink = false;
+        ImGui::SetCurrentContext(im.ctx);
+        ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
+        model.currentVersion = "2.903.8.140";
+        model.state = okayuiscreens::UpdateState::UpToDate;
+        model.releases.push_back({"v2.903.8", {"Editor fixes", "Faster loading", "Versions page", "Asset streaming"}});
+        model.releases.push_back({"v2.903.7", {"Chat invites"}});
+    }
+    ~LauncherWin() { ImGui::SetCurrentContext(im.ctx); embed.Release(); OkayUI::UseLauncherLook(false); }
+    LauncherWin(const LauncherWin&) = delete;
+    LauncherWin& operator=(const LauncherWin&) = delete;
+    // The sidebar rows' places (the root window has no padding in the launcher; here the rig's root keeps its own).
+    ImVec2 whatsNewRow, notificationsRow, profileRow;
+    bool NavRow(const char* id, ImVec2& at) {
+        at = ImGui::GetCursorScreenPos();
+        const bool click = ImGui::InvisibleButton(id, ImVec2(ImGui::GetContentRegionAvail().x, kRowH));
+        return click;
+    }
+    void Body() {
+        okayDrew = imguiDrew = notifDrew = 0; tooltipShown = false;
+        ImGui::BeginChild("nav", ImVec2(kNavW, 0));
+        if (NavRow("##navnews", whatsNewRow)) tab = 12;
+        ImGui::Dummy(ImVec2(0, (float)kH - 6 * kRowH));
+        if (NavRow("##navbell", notificationsRow)) tab = 16;
+        {   // the profile row: its tooltip, as launcher/main.cpp's ("Account  (right-click to set a status)")
+            profileRow = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##navprofile", ImVec2(ImGui::GetContentRegionAvail().x, kRowH));
+            if (ImGui::IsItemHovered()) { ImGui::SetTooltip("Account  (right-click to set a status)"); tooltipShown = true; }
+        }
+        ImGui::EndChild();
+        ImGui::SameLine(0, 0);
+        ImGui::BeginChild("content", ImVec2(0, 0));
+        if (tab == 12 && okay::launcherlayout::OkayUIDrawsPage(tab, okayFrame)) {   // ---- What's New, drawn by OkayUI
+            ++okayDrew;
+            okayuihost::HostPanelArea("##okayui_whatsnew", ImGui::GetContentRegionAvail(), offers, embed, cap,
+                                      [&](ImVec2 p, ImVec2 a) { okayuiscreens::DrawWhatsNew(model, p.x, p.y, a.x, a.y); });
+        } else if (tab == 12) {                                                     // ---- What's New, its Dear ImGui copy
+            ++imguiDrew;
+            ImGui::TextUnformatted("You're on v2.903.8.140");
+            ImGui::Button("Check for updates");
+        } else if (tab == 16) {
+            ++notifDrew;
+            ImGui::TextUnformatted("Notifications");
+        }
+        ImGui::EndChild();
+    }
+    bool Owns(float x, float y) const {
+        for (const Offers::O& o : lastOffers.list) if (o.hovered && x >= o.x && y >= o.y && x < o.x + o.w && y < o.y + o.h) return true;
+        return false;
+    }
+    void Frame() {
+        lastOffers = offers;
+        offers.list.clear(); offers.active = false;
+        im.mx = sim.mx; im.my = sim.my; im.down = sim.down; im.rdown = sim.rdown;
+        sim.blocked = !Owns(sim.mx, sim.my);   // launcher/main.cpp OkayUIFrameBegin: ImGui has the mouse unless a hosted page owns it
+        sim.Frame([&] { im.Frame([&] { Body(); }); });
+        ras.DrawImGui();
+        ras.renderer.Render(OkayUI::GetDrawData(), ras.fi);
+    }
+    void Frames(int n) { for (int i = 0; i < n; ++i) Frame(); }
+};
+
+void LauncherPageOneSurfaceWhileTheProfileTooltipShows() {
+    kH = 600;
+    LauncherWin w;
+    w.sim.Move(400, 300); w.Frames(4);   // the mouse over the page
+    CHECK(w.okayDrew == 1 && w.imguiDrew == 0);
+    const Bitmap before = w.ras.bmp;
+    // the mouse on the profile row: its tooltip shows and reaches into the page, frame after frame
+    w.sim.Move(w.profileRow.x + 100.0f, w.profileRow.y + 10.0f);
+    int swaps = 0, tips = 0;
+    for (int i = 0; i < 12; ++i) { w.Frame(); swaps += w.imguiDrew; tips += w.tooltipShown ? 1 : 0; CHECK(w.okayDrew + w.imguiDrew == 1); }
+    std::printf("  profile row hovered: tooltip on %d of 12 frames; the Dear ImGui copy drew the page on %d of 12\n", tips, swaps);
+    CHECK(tips >= 10);
+    CHECK(swaps == 0);                                                    // one surface, unchanged by the hover
+    CHECK(w.okayDrew == 1 && w.tab == 12);
+    // the page looks the same away from the tooltip (its top half: the tooltip is by the sidebar's bottom)
+    int diff = 0;
+    for (int y = 10; y < 300; ++y) for (int x = (int)LauncherWin::kNavW + 20; x < kW - 10; ++x) {
+        const std::uint8_t* a = &before.rgba[((std::size_t)y * (std::size_t)kW + (std::size_t)x) * 4];
+        const std::uint8_t* b = &w.ras.bmp.rgba[((std::size_t)y * (std::size_t)kW + (std::size_t)x) * 4];
+        if (std::abs(a[0] - b[0]) > 8 || std::abs(a[1] - b[1]) > 8 || std::abs(a[2] - b[2]) > 8) ++diff;
+    }
+    std::printf("  page pixels changed by the hover (top half): %d\n", diff);
+    CHECK(diff == 0);
+    Save("launcher_whatsnew", "profilehover", w.ras.bmp);
+    kH = 420;
+}
+
+void LauncherPageClickOnNotificationsLandsAndStays() {
+    kH = 600;
+    LauncherWin w;
+    w.sim.Move(400, 300); w.Frames(4);
+    // from the profile row (tooltip showing) up to Notifications, then a press and a release a few frames apart, as a person clicks
+    w.sim.Move(w.profileRow.x + 100.0f, w.profileRow.y + 10.0f); w.Frames(3);
+    w.sim.Move(w.notificationsRow.x + 60.0f, w.notificationsRow.y + 12.0f); w.Frames(2);
+    int imguiCopy = 0;
+    w.sim.Down(); for (int i = 0; i < 4; ++i) { w.Frame(); imguiCopy += w.imguiDrew; }
+    w.sim.Up(); w.Frame(); imguiCopy += w.imguiDrew;
+    CHECK(imguiCopy == 0);
+    CHECK(w.tab == 16);
+    Save("launcher_whatsnew", "notifications", w.ras.bmp);
+    int stayed = 0;
+    for (int i = 0; i < 20; ++i) { w.Frame(); stayed += (w.tab == 16 && w.notifDrew == 1 && w.okayDrew == 0 && w.imguiDrew == 0) ? 1 : 0; }
+    std::printf("  after the click: Notifications shown on %d of 20 frames, nothing of What's New offered: %s\n", stayed, w.offers.list.empty() ? "yes" : "no");
+    CHECK(stayed == 20);
+    CHECK(w.offers.list.empty() && OkayUI::GetDrawData().indexCount == 0);
+    // and back: What's New again, by OkayUI
+    w.sim.Move(w.whatsNewRow.x + 60.0f, w.whatsNewRow.y + 12.0f); w.Frame();
+    w.sim.Down(); w.Frames(2); w.sim.Up(); w.Frames(2);
+    CHECK(w.tab == 12 && w.okayDrew == 1 && w.imguiDrew == 0);
+    kH = 420;
+}
+
 } // namespace
 
 int main() {
@@ -894,5 +1033,7 @@ int main() {
     SectionsHiddenDrawNothing();
     LookSectionsCoveredByImGui();
     LookSectionsTakeClicks();
+    LauncherPageOneSurfaceWhileTheProfileTooltipShows();
+    LauncherPageClickOnNotificationsLandsAndStays();
     TEST_MAIN_RESULT();
 }

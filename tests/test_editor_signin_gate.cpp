@@ -6,7 +6,11 @@
 #include "SignInGate.hpp"
 #include "okay/Core/Base64.hpp"
 
+#include <chrono>
 #include <ctime>
+#if !defined(_WIN32)
+#include <thread>
+#endif
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -221,6 +225,53 @@ int main() {
         acc::AccountService later(d, url, key);
         CHECK(later.IsLoggedIn());   // a new start (the launcher's pollers read the file) is still signed in
     }
+#if !defined(_WIN32)   // (a thread plays the other program; rule 21a keeps <thread> out of Windows builds)
+    {   // The refresh race, a hair later (owner, 2026-11-25: "it also sometimes still asks me to sign in when i open editor up",
+        // with the launcher signed in): the other program's refresh has reached the server (the single-use refresh token is
+        // spent) but its new pair is not in session.txt yet when the editor's own refresh is refused. Before the fix the editor
+        // found the OLD sign-in on disk, signed out, deleted session.txt and showed the sign-in window; the launcher's save a
+        // moment later put the file back, but the editor had already asked. Now a refusal that says the token was already
+        // used waits a short, bounded time for the other program's new pair and takes it.
+        FakeAuthServer srv;
+        const fs::path d = dir / "race_late";
+        acc::AccountService launcher(d, url, key); srv.Attach(launcher, "launcher");
+        CHECK(launcher.Login("tester@example.com", "secret123").ok);
+        acc::AccountService editor(d, url, key); srv.Attach(editor, "editor");
+        srv.access.clear();   // the access token expired
+        std::thread saver;
+        std::string newTok, newRef;
+        srv.before = [&](const std::string& who, const std::string& u) {
+            if (who != "editor" || u.find("grant_type=refresh_token") == std::string::npos || saver.joinable()) return;
+            // The launcher's refresh gets to the server first; its answer (and its save) arrives 300 ms later.
+            std::string rt;
+            srv.refresh.erase(launcher.CurrentSession().refreshToken);
+            const std::string body = srv.Issue(rt);
+            newTok = acc::detail::JsonField(body, "access_token"); newRef = rt;
+            saver = std::thread([&, d] {
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                acc::detail::WriteFileAtomic(d / "session.txt", "tester\n" + newTok + "\n" + newRef + "\n");
+            });
+        };
+        const auto t0 = std::chrono::steady_clock::now();
+        const acc::SessionCheck c = editor.CheckSession();
+        const double waited = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        if (saver.joinable()) saver.join();
+        CHECK(c == acc::SessionCheck::Valid);                         // before the fix: Rejected (the sign-in window)
+        CHECK(editor.IsLoggedIn() && editor.CurrentSession().token == newTok);
+        CHECK(fs::exists(d / "session.txt"));                          // before the fix: deleted
+        CHECK(waited < 4.0);                                           // the wait is bounded
+    }
+    {   // The same refusal with nobody saving anything (the sign-in really was ended elsewhere): it gives up within the bound.
+        FakeAuthServer srv;
+        const fs::path d = dir / "race_nobody";
+        acc::AccountService a(d, url, key); srv.Attach(a, "editor");
+        CHECK(a.Login("tester@example.com", "secret123").ok);
+        srv.access.clear(); srv.refresh.clear();
+        const auto t0 = std::chrono::steady_clock::now();
+        CHECK(a.CheckSession() == acc::SessionCheck::Rejected);
+        CHECK(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 4.0);
+    }
+#endif
     {   // A sign-in that really was rejected (expired, and the refresh token is gone) still signs out and clears the file.
         FakeAuthServer srv;
         const fs::path d = dir / "rejected";

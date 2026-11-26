@@ -112,7 +112,10 @@ int main() {
         table->AddComponent<BoxCollider3D>()->size = {1.6f, 0.8f, 0.8f};
         r.Run(1.0f / 60.0f);
         r.rag->Activate();
-        r.rag->PushAt(r.B(Torso).position, Vec3{0, 0, 15.0f});
+        // A push of 7 to 10 always leaves the hips on the table with the head over its far edge (49 runs with the body
+        // moved 1 to 10 mm). From 11 up the body may go over the edge or stay, decided by rounding: 15 rested at
+        // 0.873 m with GCC 13 and slid off (0.633 m) in CI's Ubuntu (GCC 15) and Windows builds, and moving the body 1 mm flipped it too.
+        r.rag->PushAt(r.B(Torso).position, Vec3{0, 0, 8.0f});
         float deepest = 0.0f, lowest = 1e9f;
         const Vec3 lo{-0.8f, 0.0f, -0.1f}, hi{0.8f, 0.8f, 0.7f};
         for (int i = 0; i < 300; ++i) {

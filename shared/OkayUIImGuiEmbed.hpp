@@ -11,7 +11,9 @@
 // Textures: a shape samples either nothing (a flat colour: ImGui's white texel is used) or an OkayUI texture whose pixels OkayUI
 // gives (OkayUI::GetTexturePixels: the launcher look's atlas, a TrueType font's glyph atlas). Each becomes a Dear ImGui user
 // texture (ImTextureData, RegisterUserTexture) that the ImGui renderer uploads like its own font atlas; it is refreshed when the
-// font bakes new characters and replaced when it grows. Shapes on a texture only a backend knows (an OkayUI Image) are skipped.
+// font bakes new characters and replaced when it grows. A texture the host itself made (an OkayUI Image: the launcher's Browser page
+// images) has no pixels OkayUI could give: the host says how Dear ImGui names it (SetHostTextures; the launcher's ImGui renderers take
+// its SDL textures as ImTextureIDs). Without that, such shapes are skipped (Skipped() counts them).
 //
 // HostPanelWindow (below) uses the same path for a whole panel: an ImGui window whose body is OkayUI only; HostPanelSection for a
 // part of an ImGui window (a section between its other items).
@@ -46,7 +48,12 @@ public:
             const OkayUI::DrawCmd& c = g.cmds[(size_t)ci];
             if (c.idxCount <= 0 || c.idxOffset < 0 || c.idxOffset + c.idxCount > (int)g.indices.size()) continue;
             ImTextureData* td = nullptr;
-            if (c.texture) { td = textureFor(c.texture); if (!td) { ++skipped_; continue; } }
+            ImTextureID hostTex = ImTextureID_Invalid;   // a texture the host made (an Image), handed to ImGui as it is
+            if (c.texture) {
+                td = textureFor(c.texture);
+                if (!td && hostTex_ && OkayUI::IsHostTexture(c.texture)) hostTex = hostTex_(c.texture);
+                if (!td && hostTex == ImTextureID_Invalid) { ++skipped_; continue; }
+            }
             ImVec2 cmin = clipMin, cmax = clipMax;
             if (c.clipOn) {
                 cmin.x = std::max(cmin.x, (float)c.clipX + offset.x); cmin.y = std::max(cmin.y, (float)c.clipY + offset.y);
@@ -55,6 +62,8 @@ public:
             if (cmax.x <= cmin.x || cmax.y <= cmin.y) continue;
             dl->PushClipRect(cmin, cmax, true);
             if (td) dl->PushTexture(td->GetTexRef());
+            else if (hostTex != ImTextureID_Invalid) dl->PushTexture(ImTextureRef(hostTex));
+            const bool textured = td || hostTex != ImTextureID_Invalid;
             // In chunks well under 65536 vertices: with 16-bit indices one PrimReserve must stay below that (ImGui starts a new
             // vertex offset between reserves when the renderer supports it). Each corner is its own vertex: simple, and the code
             // view is a few thousand quads.
@@ -67,13 +76,19 @@ public:
                     const int vi = g.indices[(size_t)(c.idxOffset + i + k)];
                     const OkayUI::DrawVertex& v = g.vertices[(size_t)(vi >= 0 && vi < (int)g.vertices.size() ? vi : 0)];
                     dl->PrimWriteIdx((ImDrawIdx)dl->_VtxCurrentIdx);
-                    dl->PrimWriteVtx(ImVec2(v.x + offset.x, v.y + offset.y), td ? ImVec2(v.u, v.v) : white, IM_COL32(v.r, v.g, v.b, v.a));
+                    dl->PrimWriteVtx(ImVec2(v.x + offset.x, v.y + offset.y), textured ? ImVec2(v.u, v.v) : white, IM_COL32(v.r, v.g, v.b, v.a));
                 }
             }
-            if (td) dl->PopTexture();
+            if (textured) dl->PopTexture();
             dl->PopClipRect();
         }
     }
+
+    /// How the host names a texture it made itself (OkayUI::IsHostTexture: an Image's SDL texture) to Dear ImGui, so those shapes are
+    /// drawn too. The launcher: its ImGui renderers (SDL renderer and the painter one) take that texture as the ImTextureID, as its
+    /// own ImGui::Image calls do. Null (the default): such shapes are skipped. ImTextureID_Invalid from `fn`: that one is skipped.
+    using HostTextureFn = ImTextureID (*)(const void* okayTexture);
+    void SetHostTextures(HostTextureFn fn) { hostTex_ = fn; }
 
     /// How many OkayUI textures are live as ImGui textures, and how many draw commands were skipped (a texture with no pixels).
     int TextureCount() const { return (int)tex_.size(); }
@@ -132,6 +147,7 @@ private:
     std::unordered_map<const void*, Tex> tex_;
     std::vector<ImTextureData*> retired_;
     int skipped_ = 0;
+    HostTextureFn hostTex_ = nullptr;
 };
 
 /// The one embed the editor's hosted OkayUI widgets share (one set of textures).
@@ -232,6 +248,7 @@ bool HostPanelWindow(const char* title, bool* open, const char* itemId, Region& 
 /// the window shows, so Dear ImGui's tooltips, popups and windows in front are drawn over the page and the page never has to
 /// switch to another version of itself while they are open (the launcher's What's New did: an ImGui tooltip over a corner of it
 /// swapped the whole page to its Dear ImGui copy for as long as it showed, 2026-11-26). The mouse wheel is the body's.
+/// The launcher's Browser page is hosted this way too: its page images are textures the launcher made (ImGuiEmbed::SetHostTextures).
 /// `draw(pos, size)` gets OkayUI's pixels (the main window's). Returns true when the body was drawn this frame.
 template <class Region, class Draw>
 bool HostPanelArea(const char* itemId, ImVec2 size, Region& region, ImGuiEmbed& embed, OkayUI::CapturedGeometry& cap, Draw draw) {

@@ -38,10 +38,10 @@ Back to the [code index](../code_index.md). 80 headers, 505 names.
 - `AssetQuery` struct, line 143: Search query for an asset browser. Every filter that is set must match.
 - `AssetPage` struct, line 167
 - `AssetDatabase` class, line 173
-- `SetSceneAssetIndex` function, line 372: The asset database scene save/load uses to turn a path into a GUID and a GUID back into
-- `SceneAssetIndex` function, line 373
-- `SceneAssetGuid` function, line 375: The GUID text of 'path' in the bound index, or empty when there is no index or no such file.
-- `ResolveSceneAssetPath` function, line 377: 'storedPath', or the index's current path for 'guidText' when that file is still known.
+- `SetSceneAssetIndex` function, line 379: The asset database scene save/load uses to turn a path into a GUID and a GUID back into
+- `SceneAssetIndex` function, line 380
+- `SceneAssetGuid` function, line 382: The GUID text of 'path' in the bound index, or empty when there is no index or no such file.
+- `ResolveSceneAssetPath` function, line 384: 'storedPath', or the index's current path for 'guidText' when that file is still known.
 
 ## `engine/include/okay/Core/AssetManager.hpp`
 
@@ -462,8 +462,8 @@ Back to the [code index](../code_index.md). 80 headers, 505 names.
 ## `engine/include/okay/Core/Profiler.hpp`
 
 - `Profiler` class, line 31: An advanced, frame profiler. Scoped CPU timers group into named
-- `Prof` function, line 343
-- `ProfScope` struct, line 345
+- `Prof` function, line 361
+- `ProfScope` struct, line 363
 
 ## `engine/include/okay/Core/Random.hpp`
 

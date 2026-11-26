@@ -39,6 +39,7 @@ inline constexpr const char* kIndexName = "versions.json";        ///< dev/versi
 inline constexpr const char* kHeadName = "DEV.txt";               ///< dev/DEV.txt: the newest test version, uploaded last (for people and scripts)
 inline constexpr const char* kNotesName = "NOTES-DEV.txt";        ///< dev/NOTES-DEV.txt: the newest test build's notes (the launcher's "what's new")
 inline constexpr const char* kMarkerName = "okay_testbuild.txt";  ///< next to the launcher: which test build is installed
+inline constexpr int kKept = 3;                                   ///< test builds kept in the bucket: DEV_KEEP in scripts/publish-supabase-dev.sh, DEFAULT_KEEP in scripts/dev_index.py; the Versions page offers this many (owner 2026-11-26)
 inline constexpr std::size_t kMaxBranchChars = 80;
 inline constexpr std::size_t kMaxNoteChars = 140;
 

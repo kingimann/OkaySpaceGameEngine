@@ -25,15 +25,15 @@ Back to the [code index](../code_index.md). 30 headers, 272 names.
 
 ## `engine/include/okay/Platform/Account/AccountService.hpp`
 
-- `PublicName` function, line 64: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
-- `Session` struct, line 465: The currently signed-in player. 'loggedIn' is false when nobody is signed
-- `Result` struct, line 474: Result of a register/login attempt. On failure 'error' carries a short,
-- `ApiResponse` struct, line 484: Result of an authenticated request to the account server (see Api). 'ok' is
-- `ScoreEntry` struct, line 495: One row of a server leaderboard: the player's name, their score, and their
-- `Provider` enum, line 507: Which backend signs players in.
-- `SessionCheck` enum, line 510: How a check of the saved session with the server went (AccountService::CheckSession).
-- `AccountService` class, line 516: A client-side account service. Construct it with a config directory (where a
-- `DefaultConfigDir` function, line 1456: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
+- `PublicName` function, line 67: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
+- `Session` struct, line 478: The currently signed-in player. 'loggedIn' is false when nobody is signed
+- `Result` struct, line 487: Result of a register/login attempt. On failure 'error' carries a short,
+- `ApiResponse` struct, line 497: Result of an authenticated request to the account server (see Api). 'ok' is
+- `ScoreEntry` struct, line 508: One row of a server leaderboard: the player's name, their score, and their
+- `Provider` enum, line 520: Which backend signs players in.
+- `SessionCheck` enum, line 523: How a check of the saved session with the server went (AccountService::CheckSession).
+- `AccountService` class, line 529: A client-side account service. Construct it with a config directory (where a
+- `DefaultConfigDir` function, line 1487: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
 
 ## `engine/include/okay/Platform/Achievements.hpp`
 

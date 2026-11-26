@@ -50,6 +50,7 @@ target_link_libraries(okay_imgui PUBLIC ${OKAY_SDL_LIB})
 target_compile_options(okay_imgui PRIVATE -w) # silence third-party warnings
 
 add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
+    HangWatchdog.cpp                                                   # the hang watchdog: a stuck main loop is reported (okay_hang.txt) and, on Windows, Wait / Close is offered
     BuildStamp.cpp                                                     # __DATE__ " " __TIME__ for the crash handler, out of main.cpp so ccache can reuse main.cpp
     UIGalleryWindow.cpp                                                # the UI Gallery window (search every UI part, preview it, add it)
     AnimatorWindow.cpp                                                 # the Animator window (state-machine graph)
@@ -78,6 +79,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     OkayUIHostViews.cpp                                                # window mode: the Scene and Game views (SceneViewCore.hpp, the engine software renderer, no Dear ImGui)
     ScriptEditorCodeEdit.cpp                                           # the script editor's adapter over OkayUI::CodeEdit (no ImGui)
     ProblemsPanel.cpp                                                  # Problems panel + project diagnostics
+    ProjectDiagRunner.cpp                                              # when the Problems checks run: the project-wide one on a worker
     SceneManagerPanel.cpp                                              # Scene Manager window
     NetSimPanel.cpp                                                    # net simulator + traffic panel
     AntiCheatSetupUi.cpp                                               # easy anti-cheat setup: presets, Add Anti-Cheat, checklist
@@ -164,7 +166,7 @@ endif()
 # EXPERIMENTAL Xbox One Developer Mode (UWP) export entry in File > Build Settings. OFF unless -DOKAY_BUILD_XBOX_UWP=ON
 # (docs/platform/xbox_uwp.md). Header-only: nothing to link.
 if(OKAY_BUILD_XBOX_UWP)
-    target_compile_definitions(okay-editor PRIVATE OKAY_XBOX_UWP=1)
+    target_compile_definitions(okay-editor PRIVATE OKAY_XBOX_UWP_EXPORT=1)   # only the File > Build Settings export entry: NEVER OKAY_XBOX_UWP, which makes the engine headers act as the Xbox app (no WinHTTP, Xbox IPC and sign-in)
     target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/platform/xbox_uwp)
 endif()
 

@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 69 headers, 1008 names.
+Back to the [code index](../code_index.md). 69 headers, 1016 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -163,14 +163,14 @@ Back to the [code index](../code_index.md). 69 headers, 1008 names.
 - `WriteRequest` function, line 306
 - `LoadRequest` function, line 337
 - `PidAlive` function, line 434
-- `WaitForExit` function, line 448
-- `LaunchOnce` function, line 466
-- `EnvironmentBlock` function, line 518
-- `RunAndWait` function, line 579
-- `RunHelper` function, line 581
-- `SpawnHelperProcess` function, line 668
-- `StartHelper` function, line 744: Starts the helper and returns. The caller must exit so the wait can finish.
-- `DispatchHelper` function, line 763: Run as the first thing in main. Returns -1 when this is a normal launch.
+- `WaitForExit` function, line 459
+- `LaunchOnce` function, line 477
+- `EnvironmentBlock` function, line 529
+- `RunAndWait` function, line 590
+- `RunHelper` function, line 592
+- `SpawnHelperProcess` function, line 679
+- `StartHelper` function, line 755: Starts the helper and returns. The caller must exit so the wait can finish.
+- `DispatchHelper` function, line 774: Run as the first thing in main. Returns -1 when this is a normal launch.
 
 ## `shared/ConsoleScriptLink.hpp`
 
@@ -241,34 +241,36 @@ Back to the [code index](../code_index.md). 69 headers, 1008 names.
 - `Crumb` struct, line 34
 - `ConsoleEntry` struct, line 35
 - `State` struct, line 37
-- `SetText` function, line 64: ---- Writers (the editor calls these; all bounded, none allocate) ---------------------------------------------------------------
-- `SetVersion` function, line 73
-- `SetBuild` function, line 74
-- `SetOs` function, line 75
-- `SetCpu` function, line 76
-- `SetGpu` function, line 77
-- `SetUiBackend` function, line 78
-- `SetOwnCode` function, line 79
-- `SetRamTotalMb` function, line 80
-- `StartClock` function, line 81
-- `NextFrame` function, line 82
-- `Frame` function, line 83
-- `SetMode` function, line 84
-- `SetAutosave` function, line 85
-- `SetSceneStats` function, line 86
-- `SetSceneName` function, line 89: The open scene: the file name only. A full path would carry the user's folders (and name).
-- `Breadcrumb` function, line 98: One step of what the editor is doing ("UI.Inspector", "Render3D:gl"). The same step twice in a row only raises a counter,
-- `LastStep` function, line 116: The newest step ("startup" before the first one); the pointer is into the static block.
-- `ConsoleLine` function, line 124: One Console line: 0 = info, 1 = warning, 2 = error. Kept as it was logged (cut at 231 bytes; a cut is marked with "...").
-- `Reset` function, line 136: Tests only: back to the empty block.
-- `SwitchNameAllowed` function, line 151: ---- Which OKAY_* switches are on ---------------------------------------------------------------------------------------------------
-- `SwitchValueAllowed` function, line 160
-- `FormatSwitches` function, line 169
-- `Out` class, line 191: ---- A bounded text writer (no stdio, no heap) -------------------------------------------------------------------------------------
-- `FormatWhen` function, line 230: ---- Dates without localtime (it can take a lock) ------------------------------------------------------------------------------------
-- `Fault` struct, line 248: ---- The report text -------------------------------------------------------------------------------------------------------------------
-- `ComposeHead` function, line 266: Everything up to and including the "Backtrace:" line. The platform code then writes one line per frame (FrameLine).
-- `ComposeTail` function, line 317: The step trail, the Console lines and the end marker.
+- `WaitingOnPerson` function, line 65
+- `PersonWait` struct, line 66
+- `SetText` function, line 75: ---- Writers (the editor calls these; all bounded, none allocate) ---------------------------------------------------------------
+- `SetVersion` function, line 84
+- `SetBuild` function, line 85
+- `SetOs` function, line 86
+- `SetCpu` function, line 87
+- `SetGpu` function, line 88
+- `SetUiBackend` function, line 89
+- `SetOwnCode` function, line 90
+- `SetRamTotalMb` function, line 91
+- `StartClock` function, line 92
+- `NextFrame` function, line 93
+- `Frame` function, line 94
+- `SetMode` function, line 95
+- `SetAutosave` function, line 96
+- `SetSceneStats` function, line 97
+- `SetSceneName` function, line 100: The open scene: the file name only. A full path would carry the user's folders (and name).
+- `Breadcrumb` function, line 109: One step of what the editor is doing ("UI.Inspector", "Render3D:gl"). The same step twice in a row only raises a counter,
+- `LastStep` function, line 127: The newest step ("startup" before the first one); the pointer is into the static block.
+- `ConsoleLine` function, line 135: One Console line: 0 = info, 1 = warning, 2 = error. Kept as it was logged (cut at 231 bytes; a cut is marked with "...").
+- `Reset` function, line 147: Tests only: back to the empty block.
+- `SwitchNameAllowed` function, line 162: ---- Which OKAY_* switches are on ---------------------------------------------------------------------------------------------------
+- `SwitchValueAllowed` function, line 171
+- `FormatSwitches` function, line 180
+- `Out` class, line 202: ---- A bounded text writer (no stdio, no heap) -------------------------------------------------------------------------------------
+- `FormatWhen` function, line 241: ---- Dates without localtime (it can take a lock) ------------------------------------------------------------------------------------
+- `Fault` struct, line 259: ---- The report text -------------------------------------------------------------------------------------------------------------------
+- `ComposeHead` function, line 277: Everything up to and including the "Backtrace:" line. The platform code then writes one line per frame (FrameLine).
+- `ComposeTail` function, line 328: The step trail, the Console lines and the end marker.
 
 ## `shared/CrashHandler.hpp`
 
@@ -1089,9 +1091,15 @@ Back to the [code index](../code_index.md). 69 headers, 1008 names.
 
 ## `shared/Splash.hpp`
 
-- `SplashStyle` struct, line 27: How the splash looks — lets a host customize the loading screen: the accent
-- `DrawSplashStyled` function, line 43: Draw one animated splash frame (into 'style') and present it:
-- `DrawSplash` function, line 170: Backward-compatible helper: draw the splash with just an accent colour.
+- `SplashStyle` struct, line 40: How the splash looks — lets a host customize the loading screen: the accent
+- `SplashProgress` struct, line 52: What the splash says and how far start-up is. Every field is optional.
+- `SplashLayout` struct, line 66: Where the parts of the splash go on a w x h output (the drawing and the tests use the same numbers).
+- `SplashClamp01` function, line 77
+- `ComputeSplashLayout` function, line 79
+- `DrawSplashStyled` function, line 115: Draw one animated splash frame (into 'style') and present it:
+- `DrawSplash` function, line 318: Backward-compatible helper: draw the splash with just an accent colour.
+- `SplashSteps` class, line 327: A host's start-up as named steps with weights (how long each roughly takes), turned into the progress value
+- `SplashFinish` class, line 370: The end of the splash, drawn over the host's first frames: fully up while the host still holds it (a start-up
 
 ## `shared/StartupUpdate.hpp`
 
@@ -1110,29 +1118,29 @@ Back to the [code index](../code_index.md). 69 headers, 1008 names.
 
 ## `shared/TestBuild.hpp`
 
-- `NumberCount` function, line 48: How many numbers a version has ("2.876.0" -> 3, "2.876.0.17" -> 4); 0 when 'text' is not a version.
-- `IsReleaseShaped` function, line 53: A normal release: one to three numbers (2.876.0). Text that is not a version is not one.
-- `IsTestVersion` function, line 58: A test build: exactly four numbers, the fourth at least 1 (2.876.0.17).
-- `BaseRelease` function, line 63: The release a test build was made on: "2.876.0.17" -> "2.876.0"; "" when 'text' is not a test version.
-- `Serial` function, line 69: The fourth number ("2.876.0.17" -> 17); 0 when 'text' is not a test version.
-- `MakeVersion` function, line 73: "2.876.0" + 17 -> "2.876.0.17". "" unless 'base' is exactly three numbers and 'serial' is at least 1.
-- `Suffix` function, line 79: " (test build)" for a test version, "" for anything else: what follows a version where it is shown ("v2.876.0.17 (test build)").
-- `DisplayVersion` function, line 81: "v2.876.0.17 (test build)", or "v2.876.0" for a release; the text itself when it is not a version.
-- `CleanLine` function, line 89: One line of plain printable ASCII: other characters are dropped, runs of spaces become one, the ends are trimmed, at most 'maxChars' long.
-- `CleanBranch` function, line 103: A git branch (or tag) name as a label: letters, digits and . _ / + - only, at most 80 characters, no "..", no leading '/', '-' or '.', no
-- `CleanSha` function, line 112: A commit id: lowercase hex, 7 to 40 digits (upper case is folded). "" when it is not.
-- `ShortSha` function, line 123: The seven digits people say ("abc1234"); "" when 'sha' is not a commit id.
-- `DisplayBranch` function, line 129: The branch as people say it: the lane folders "claude/", "claude2/", "claude3/" and "grok/" are dropped ("claude/walk-vs-run" -> "walk-vs-run").
-- `Title` function, line 135: "Test build of walk-vs-run (abc1234)". Missing parts are left out: no commit gives "Test build of walk-vs-run", neither gives "Test build".
-- `Choice` struct, line 146: What the update check should install. 'version' is normalized; 'note' says in one plain sentence why there is nothing to do.
-- `Marker` struct, line 192
-- `MarkerText` function, line 197
-- `ParseMarker` function, line 206
-- `MarkerPath` function, line 229
-- `WriteMarker` function, line 232: Write the marker (through a temp file and a rename). False when it could not be written; the update that asked for it does not depend on it.
-- `ReadMarker` function, line 249
-- `RemoveMarker` function, line 258
-- `RunningTitle` function, line 268: What About says about the running program: "" for a normal release (nothing to add), otherwise "Test build of walk-vs-run (abc1234)" when the
+- `NumberCount` function, line 49: How many numbers a version has ("2.876.0" -> 3, "2.876.0.17" -> 4); 0 when 'text' is not a version.
+- `IsReleaseShaped` function, line 54: A normal release: one to three numbers (2.876.0). Text that is not a version is not one.
+- `IsTestVersion` function, line 59: A test build: exactly four numbers, the fourth at least 1 (2.876.0.17).
+- `BaseRelease` function, line 64: The release a test build was made on: "2.876.0.17" -> "2.876.0"; "" when 'text' is not a test version.
+- `Serial` function, line 70: The fourth number ("2.876.0.17" -> 17); 0 when 'text' is not a test version.
+- `MakeVersion` function, line 74: "2.876.0" + 17 -> "2.876.0.17". "" unless 'base' is exactly three numbers and 'serial' is at least 1.
+- `Suffix` function, line 80: " (test build)" for a test version, "" for anything else: what follows a version where it is shown ("v2.876.0.17 (test build)").
+- `DisplayVersion` function, line 82: "v2.876.0.17 (test build)", or "v2.876.0" for a release; the text itself when it is not a version.
+- `CleanLine` function, line 90: One line of plain printable ASCII: other characters are dropped, runs of spaces become one, the ends are trimmed, at most 'maxChars' long.
+- `CleanBranch` function, line 104: A git branch (or tag) name as a label: letters, digits and . _ / + - only, at most 80 characters, no "..", no leading '/', '-' or '.', no
+- `CleanSha` function, line 113: A commit id: lowercase hex, 7 to 40 digits (upper case is folded). "" when it is not.
+- `ShortSha` function, line 124: The seven digits people say ("abc1234"); "" when 'sha' is not a commit id.
+- `DisplayBranch` function, line 130: The branch as people say it: the lane folders "claude/", "claude2/", "claude3/" and "grok/" are dropped ("claude/walk-vs-run" -> "walk-vs-run").
+- `Title` function, line 136: "Test build of walk-vs-run (abc1234)". Missing parts are left out: no commit gives "Test build of walk-vs-run", neither gives "Test build".
+- `Choice` struct, line 147: What the update check should install. 'version' is normalized; 'note' says in one plain sentence why there is nothing to do.
+- `Marker` struct, line 193
+- `MarkerText` function, line 198
+- `ParseMarker` function, line 207
+- `MarkerPath` function, line 230
+- `WriteMarker` function, line 233: Write the marker (through a temp file and a rename). False when it could not be written; the update that asked for it does not depend on it.
+- `ReadMarker` function, line 250
+- `RemoveMarker` function, line 259
+- `RunningTitle` function, line 269: What About says about the running program: "" for a normal release (nothing to add), otherwise "Test build of walk-vs-run (abc1234)" when the
 
 ## `shared/TestHooks.hpp`
 

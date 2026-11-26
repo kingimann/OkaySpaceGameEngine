@@ -2,7 +2,7 @@
 
 # Code index: engine-Platform
 
-Back to the [code index](../code_index.md). 30 headers, 274 names.
+Back to the [code index](../code_index.md). 31 headers, 273 names.
 
 ## `engine/include/okay/Platform/Account/Account.hpp`
 
@@ -23,17 +23,19 @@ Back to the [code index](../code_index.md). 30 headers, 274 names.
 - `DeleteOutcome` struct, line 186
 - `MapDeleteResponse` function, line 196: Turn the function's response into a user message. Never claims success unless
 
+## `engine/include/okay/Platform/Account/AccountDetail.hpp`
+
+- `PublicName` function, line 40: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
+
 ## `engine/include/okay/Platform/Account/AccountService.hpp`
 
-- `PublicName` function, line 67: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
-- `Session` struct, line 478: The currently signed-in player. 'loggedIn' is false when nobody is signed
-- `Result` struct, line 487: Result of a register/login attempt. On failure 'error' carries a short,
-- `ApiResponse` struct, line 497: Result of an authenticated request to the account server (see Api). 'ok' is
-- `ScoreEntry` struct, line 508: One row of a server leaderboard: the player's name, their score, and their
-- `Provider` enum, line 520: Which backend signs players in.
-- `SessionCheck` enum, line 523: How a check of the saved session with the server went (AccountService::CheckSession).
-- `AccountService` class, line 529: A client-side account service. Construct it with a config directory (where a
-- `DefaultConfigDir` function, line 1487: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
+- `Session` struct, line 72: The currently signed-in player. 'loggedIn' is false when nobody is signed
+- `Result` struct, line 81: Result of a register/login attempt. On failure 'error' carries a short,
+- `ScoreEntry` struct, line 97: One row of a server leaderboard: the player's name, their score, and their
+- `Provider` enum, line 109: Which backend signs players in.
+- `SessionCheck` enum, line 112: How a check of the saved session with the server went (AccountService::CheckSession).
+- `AccountService` class, line 118: A client-side account service. Construct it with a config directory (where a
+- `DefaultConfigDir` function, line 978: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
 
 ## `engine/include/okay/Platform/Achievements.hpp`
 

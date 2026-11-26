@@ -10,6 +10,8 @@ namespace oked {
 
 /// The window's visibility (View > Editors & Tools > "Script Editor (Files)").
 extern bool g_showScriptEditorApp;
+/// The Script Editor's Float / Dock request (g_scriptDockReq), applied for one frame before its window begins.
+void ApplyScriptDockRequest();
 /// Draw the window while g_showScriptEditorApp (every frame, from main).
 void DrawScriptEditorApp(okay::editor::EditorState& ed);
 

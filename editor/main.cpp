@@ -11560,16 +11560,7 @@ void DrawScriptEditor(EditorState& ed) {
     struct ClosePromptGuard { ~ClosePromptGuard() { DrawScriptClosePrompt(); } } closePromptGuard;
     // Float/Dock request from the toolbar (applied for one frame before Begin):
     // 1 = undock into a floating window, 2 = dock back into the main area as a tab.
-    if (g_scriptDockReq == 1) {
-        ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
-        const ImVec2 vs = ImGui::GetMainViewport()->Size;
-        ImGui::SetNextWindowSize(ImVec2(std::max(760.0f, vs.x * 0.62f), std::max(560.0f, vs.y * 0.78f)), ImGuiCond_Always);
-        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-        g_scriptDockReq = 0;
-    } else if (g_scriptDockReq == 2 && g_dockspaceId) {
-        ImGui::SetNextWindowDockID(g_dockspaceId, ImGuiCond_Always);
-        g_scriptDockReq = 0;
-    }
+    ApplyScriptDockRequest();   // ScriptEditorAppHost.cpp
     // The menu bar (File / Edit / View / Go / Insert / Help) holds every tool, so the
     // toolbar row stays at Run / Save / Format. Shown once a script is open.
     const ImGuiWindowFlags sewFlags = g_scriptTabs.empty() ? 0 : ImGuiWindowFlags_MenuBar;

@@ -363,6 +363,19 @@ scriptide::ScriptIdeApp& App() {
 }
 } // namespace
 
+void ApplyScriptDockRequest() {
+    if (g_scriptDockReq == 1) {   // float: a large window in the middle of the editor
+        ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
+        const ImVec2 screen = ImGui::GetIO().DisplaySize;
+        ImGui::SetNextWindowSize(ImVec2(std::max(760.0f, screen.x * 0.62f), std::max(560.0f, screen.y * 0.78f)), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        g_scriptDockReq = 0;
+    } else if (g_scriptDockReq == 2 && g_dockspaceId) {   // dock: a tab of the main area
+        ImGui::SetNextWindowDockID(g_dockspaceId, ImGuiCond_Always);
+        g_scriptDockReq = 0;
+    }
+}
+
 void DrawScriptEditorApp(okay::editor::EditorState& ed) {
     if (!g_showScriptEditorApp) return;
     g_ed = &ed;
@@ -389,17 +402,7 @@ void DrawScriptEditorApp(okay::editor::EditorState& ed) {
         followed = ed.projectDir();
         if (!followed.empty()) app.OpenFolder(followed);
     }
-    // Float / Dock (View > Window): applied for one frame before the window begins
-    if (g_scriptDockReq == 1) {
-        ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
-        const ImVec2 vs = ImGui::GetMainViewport()->Size;
-        ImGui::SetNextWindowSize(ImVec2(std::max(760.0f, vs.x * 0.62f), std::max(560.0f, vs.y * 0.78f)), ImGuiCond_Always);
-        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-        g_scriptDockReq = 0;
-    } else if (g_scriptDockReq == 2 && g_dockspaceId) {
-        ImGui::SetNextWindowDockID(g_dockspaceId, ImGuiCond_Always);
-        g_scriptDockReq = 0;
-    }
+    ApplyScriptDockRequest();
     // what plugins' script_* calls reach while the window is drawn
     ScriptEditorHost& host = ScriptEditorHostApi();
     host.text = [&app] { return app.ActiveText(); };

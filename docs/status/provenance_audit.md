@@ -173,6 +173,19 @@ stated in `tests/test_ttf_rasterizer.cpp:5`).
 - No other project's copyright line in our code (only the JetBrains Mono font header). No .NET runtime or hostfxr
   code on main yet. No video or AAC codec, no Brotli dictionary (since added on `claude/woff2-1`, 2026-11-26, owner-approved data from
   RFC 7932: see `THIRD_PARTY.md`), no public suffix list, no SDL controller database.
+- **WebP decoder** (`engine/src/Core/ImageDecodeWebp.cpp`, `claude/images-svg-webp-1`, 2026-11-26): written from the text of
+  RFC 9649 and RFC 6386 only; no libwebp / libvpx / ffmpeg code read. RFC 6386 also contains a reference decoder in C (its
+  section 20); it was not used as a model, but its tables are data we kept (`ImageDecodeWebpTables.hpp`, see
+  `THIRD_PARTY.md`). The inverse DCT / WHT and the loop filter must compute exactly what the RFC's printed code computes
+  (the RFC says so), so their arithmetic matches it by necessity; the structure and names are ours. **VP8 patents: not
+  checked.** Google's grant in RFC 6386 section 20.27 is worded for Google's own implementation; whether it covers ours is
+  for the owner to decide (an IP flag, not a finding).
+- **SVG renderer** (`engine/src/Core/ImageDecodeSvg.cpp`, same branch): written from the W3C SVG 1.1 (Second Edition) and
+  SVG 2 texts (path grammar, the arc conversion of appendix F.6, painting, gradients, clipping) and XML 1.0 (the entity
+  pre-pass); no librsvg / resvg / nanosvg / Skia / browser code read. Its fill rasterizer is the TrueType rasterizer's
+  own, moved into `engine/include/okay/Graphics/CoverageRaster.hpp` (glyph output checked byte-identical on 29,590
+  renders). The CSS colour parser moved from the browser into `engine/include/okay/Core/CssColor.hpp` (same behaviour,
+  41 inputs compared).
 - Brand names used to describe a device or a service (DualShock, DualSense, Joy-Con, Xbox, Steam, PlayFab, Mixamo in
   import hints, Blender in import notes) are text only; no logo or controller button art was found (PlayStation
   buttons are the words "Cross", "Circle", ... in `engine/src/Input/GamepadInfo.cpp:225`).

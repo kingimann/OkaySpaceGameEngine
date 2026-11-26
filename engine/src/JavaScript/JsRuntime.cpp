@@ -13,6 +13,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <iterator>
+#include <unordered_map>
 
 namespace okay::js {
 
@@ -24,6 +26,7 @@ bool SameValueZero(const Value& a, const Value& b) {
         case Tag::Bool: return a.b == b.b;
         case Tag::Number: return a.n == b.n || (std::isnan(a.n) && std::isnan(b.n));
         case Tag::String: return a.p == b.p || a.S()->s == b.S()->s;
+        case Tag::BigInt: return a.p == b.p || BigEquals(a, b);
         default: return a.p == b.p;
     }
 }
@@ -73,6 +76,7 @@ std::size_t KeyHash::operator()(const Value& v) const {
             }
             return s->hash;
         }
+        case Tag::BigInt: return BigHash(v);
         case Tag::Bool: return v.b ? 3 : 5;
         case Tag::Undefined: return 7;
         case Tag::Null: return 11;
@@ -140,6 +144,11 @@ void PromiseObj::Trace(Runtime& rt) {
             if (r.derived) rt.Mark(r.derived);
             if (r.awaiter) rt.Mark(r.awaiter);
         }
+}
+void WeakObj::Trace(Runtime& rt) {
+    Object::Trace(rt);   // keys and targets are weak; WeakMap values are marked by Collect's ephemeron pass
+    for (const Cell& c : cells) rt.MarkValue(c.held);
+    rt.MarkValue(cleanup);
 }
 void MapObj::Trace(Runtime& rt) {
     Object::Trace(rt);
@@ -344,6 +353,9 @@ static std::string WithWhere(Runtime& rt, const std::string& why) {
 }
 void Runtime::Terminate(const std::string& why) { throw JsTerminate{WithWhere(*this, why)}; }
 void Runtime::MemoryFull() {
+    // the host (a browser dispatching an event, the engine setting a global) allocates outside any call: a throw
+    // there would escape into code that does not expect one, so the stop waits for the next script call
+    if (vm && vm->nframes == 0 && vm->nativeDepth == 0) return;
     bytes_ = memoryLimit;   // stays over the limit until a collection measures again
     throw JsTerminate{WithWhere(*this, "the script used more memory than allowed (" + std::to_string(memoryLimit >> 20) + " MB)")};
 }
@@ -415,6 +427,7 @@ bool Runtime::ToBoolean(const Value& v) const {
         case Tag::Bool: return v.b;
         case Tag::Number: return !(v.n == 0 || std::isnan(v.n));
         case Tag::String: return !v.S()->s.empty();
+        case Tag::BigInt: return !BigIsZero(v);
         default: return true;
     }
 }
@@ -557,12 +570,24 @@ double Runtime::ToNumber(const Value& v) {
         case Tag::Bool: return v.b ? 1 : 0;
         case Tag::String: return StringToNumber(v.S()->s);
         case Tag::Symbol: ThrowType("a Symbol can not be turned into a number");
+        case Tag::BigInt: ThrowType("a BigInt can not be mixed with Numbers here; use Number(x) or BigInt(x)");
         case Tag::Object: {
             Value p = ToPrimitive(v, 1);
             return ToNumber(p);
         }
         default: return NAN;
     }
+}
+
+// 7.1.3 ToNumeric: a primitive's Number, or the BigInt itself
+Value Runtime::ToNumeric(const Value& v) {
+    if (v.IsBig()) return v;
+    if (v.IsObj()) {
+        Value p = ToPrimitive(v, 1);
+        if (p.IsBig()) return p;
+        return Value::Num(ToNumber(p));
+    }
+    return Value::Num(ToNumber(v));
 }
 
 double Runtime::ToIntegerOrInfinity(const Value& v) {
@@ -596,6 +621,7 @@ String* Runtime::ToString(const Value& v) {
         case Tag::Null: return atoms->null_;
         case Tag::Bool: return v.b ? atoms->true_ : atoms->false_;
         case Tag::Symbol: ThrowType("a Symbol can not be turned into a string automatically (use String(sym))");
+        case Tag::BigInt: return NewString(BigToString(*this, v, 10));
         case Tag::Object: {
             Value p = ToPrimitive(v, 2);
             Keep(p);
@@ -636,11 +662,11 @@ Object* Runtime::ToObject(const Value& v) {
             ThrowType(std::string("can not turn ") + (v.IsNull() ? "null" : "undefined") + " into an object");
         default: break;
     }
-    Cls c = v.IsBool() ? Cls::BoolBox : v.IsNum() ? Cls::NumberBox : v.IsStr() ? Cls::StringBox : Cls::SymbolBox;
+    Cls c = v.IsBool() ? Cls::BoolBox : v.IsNum() ? Cls::NumberBox : v.IsStr() ? Cls::StringBox : v.IsBig() ? Cls::BigIntBox : Cls::SymbolBox;
     BoxObj* b = Alloc<BoxObj>();
     b->cls = c;
     b->prim = v;
-    b->proto = v.IsBool() ? booleanProto : v.IsNum() ? numberProto : v.IsStr() ? stringProto : symbolProto;
+    b->proto = v.IsBool() ? booleanProto : v.IsNum() ? numberProto : v.IsStr() ? stringProto : v.IsBig() ? bigintProto : symbolProto;
     return b;
 }
 
@@ -687,6 +713,7 @@ const char* Runtime::TypeOf(const Value& v) const {
         case Tag::Number: return "number";
         case Tag::String: return "string";
         case Tag::Symbol: return "symbol";
+        case Tag::BigInt: return "bigint";
         case Tag::Object: return v.O()->IsCallable() ? "function" : "object";
         default: return "undefined";
     }
@@ -698,14 +725,21 @@ bool Runtime::LooseEquals(const Value& a, const Value& b) {
     if (a.IsNullish() && b.IsNullish()) return true;
     if (a.IsNum() && b.IsStr()) return a.n == StringToNumber(b.S()->s);
     if (a.IsStr() && b.IsNum()) return StringToNumber(a.S()->s) == b.n;
+    if (a.IsBig() && b.IsStr()) {   // 7.2.14 steps 6-7: the string read as a BigInt
+        Value n;
+        return StringToBigInt(*this, b.S()->s, n) && BigEquals(a, n);
+    }
+    if (a.IsStr() && b.IsBig()) return LooseEquals(b, a);
     if (a.IsBool()) return LooseEquals(Value::Num(a.b ? 1 : 0), b);
     if (b.IsBool()) return LooseEquals(a, Value::Num(b.b ? 1 : 0));
-    if ((a.IsNum() || a.IsStr() || a.IsSym()) && b.IsObj()) {
+    if (a.IsBig() && b.IsNum()) return BigCompareNum(a, b.n) == 0;
+    if (a.IsNum() && b.IsBig()) return BigCompareNum(b, a.n) == 0;
+    if ((a.IsNum() || a.IsStr() || a.IsSym() || a.IsBig()) && b.IsObj()) {
         Value p = ToPrimitive(b, 0);
         Keep(p);
         return LooseEquals(a, p);
     }
-    if (a.IsObj() && (b.IsNum() || b.IsStr() || b.IsSym())) {
+    if (a.IsObj() && (b.IsNum() || b.IsStr() || b.IsSym() || b.IsBig())) {
         Value p = ToPrimitive(a, 0);
         Keep(p);
         return LooseEquals(p, b);
@@ -871,6 +905,7 @@ Value Runtime::Get(const Value& base, GcObj* key, const Value& receiver) {
         case Tag::Number: o = numberProto; break;
         case Tag::Bool: o = booleanProto; break;
         case Tag::Symbol: o = symbolProto; break;
+        case Tag::BigInt: o = bigintProto; break;
         default:
             ThrowType("can not read '" + KeyText(*this, key) + "' of " + (base.IsNull() ? "null" : "undefined"));
     }
@@ -1051,7 +1086,8 @@ void Runtime::Put(const Value& base, GcObj* key, const Value& v) {
     }
     // the prototype chain: setters and read-only properties (10.1.9.2 OrdinarySetWithOwnDescriptor)
     Object* q = o ? o->proto
-                  : base.IsStr() ? stringProto : base.IsNum() ? numberProto : base.IsBool() ? booleanProto : symbolProto;
+                  : base.IsStr() ? stringProto : base.IsNum() ? numberProto : base.IsBool() ? booleanProto
+                  : base.IsBig() ? bigintProto : symbolProto;
     int guard = 0;
     for (; q; q = q->proto) {
         if (q->cls != Cls::Ordinary) {
@@ -1441,6 +1477,7 @@ void Runtime::Mark(GcObj* o) {
 }
 
 void Runtime::Collect() {
+    ++collections_;
     gray_.clear();
     for (Value* v = vm->stack; v < vm->sp; ++v) MarkValue(*v);
     for (int i = 0; i < vm->nframes; ++i) {
@@ -1462,7 +1499,7 @@ void Runtime::Collect() {
     Object* intr[] = {objectProto, functionProto, arrayProto, stringProto, numberProto, booleanProto, symbolProto,
                       errorProto, iteratorProto, arrayIterProto, mapIterProto, setIterProto, stringIterProto,
                       generatorProto, generatorFnProto, asyncFnProto, mapProto, setProto, promiseProto, promiseCtor,
-                      arrayCtor, objectCtor, throwTypeErrorFn, regexpProto, vm->arrayValues, vm->arrayIterNext,
+                      arrayCtor, objectCtor, throwTypeErrorFn, regexpProto, dateProto, bigintProto, vm->arrayValues, vm->arrayIterNext,
                       vm->stringIterator, vm->stringIterNext};
     for (Object* o : intr) if (o) Mark(o);
     for (Object* o : errorProtos) if (o) Mark(o);
@@ -1471,11 +1508,57 @@ void Runtime::Collect() {
     String** a = reinterpret_cast<String**>(atoms.get());
     for (std::size_t i = 0; i < sizeof(Atoms) / sizeof(String*); ++i) if (a[i]) Mark(a[i]);
     for (String* s : indexAtoms_) if (s) Mark(s);
-    while (!gray_.empty()) {
-        GcObj* o = gray_.back();
-        gray_.pop_back();
-        o->Trace(*this);
+    // WeakMap entries are ephemerons: a value is reachable when its map and its key are. Entries whose key is not
+    // marked yet wait in `pending` under the key; when the key is traced, its values are marked. Each live
+    // WeakMap is scanned once, so the pass is linear in the number of entries.
+    std::unordered_multimap<GcObj*, Value> pending;
+    std::vector<char> scanned(weakObjs.size(), 0);
+    auto drain = [&]() {
+        while (!gray_.empty()) {
+            GcObj* o = gray_.back();
+            gray_.pop_back();
+            o->Trace(*this);
+            if (!pending.empty()) {
+                auto range = pending.equal_range(o);
+                for (auto it = range.first; it != range.second; ++it) MarkValue(it->second);
+                pending.erase(range.first, range.second);
+            }
+        }
+    };
+    drain();
+    for (bool more = true; more;) {
+        more = false;
+        for (std::size_t i = 0; i < weakObjs.size(); ++i) {
+            Object* w = weakObjs[i];
+            if (scanned[i] || !w->marked || w->cls != Cls::WeakMap) continue;
+            scanned[i] = 1;
+            more = true;
+            for (const auto& e : static_cast<WeakObj*>(w)->entries) {
+                if (!e.second.IsGc()) continue;
+                if (e.first->marked) MarkValue(e.second);
+                else pending.emplace(e.first, e.second);
+            }
+            drain();
+        }
     }
+    // clear what died: dead weak objects leave the list, dead keys and targets leave the live ones
+    std::size_t keep = 0;
+    for (Object* w : weakObjs) {
+        if (!w->marked) continue;
+        WeakObj* wo = static_cast<WeakObj*>(w);
+        for (auto it = wo->entries.begin(); it != wo->entries.end();)
+            it = it->first->marked ? std::next(it) : wo->entries.erase(it);
+        if (wo->target && !wo->target->marked) wo->target = nullptr;
+        std::size_t c = 0;
+        for (WeakObj::Cell& cell : wo->cells) {
+            if (!cell.target->marked) continue;   // its target died: the cleanup callback is not run (9.10 allows that)
+            if (cell.token && !cell.token->marked) cell.token = nullptr;
+            wo->cells[c++] = cell;
+        }
+        wo->cells.resize(c);
+        weakObjs[keep++] = w;
+    }
+    weakObjs.resize(keep);
     Sweep();
 }
 
@@ -1510,8 +1593,12 @@ void Runtime::Sweep() {
         }
     }
     bytes_ = live;
-    gcThreshold_ = std::max<std::size_t>(4u << 20, live * 2);
-    if (gcThreshold_ > memoryLimit) gcThreshold_ = memoryLimit - memoryLimit / 8;
+    // The next run comes after the heap doubles, but never later than halfway into the room that is left, and never
+    // sooner than 1/64 of the limit more: a heap close to its limit used to sit above a fixed threshold and collect at
+    // every safe point (each run walks the whole heap), which looked like a hang on big pages.
+    const std::size_t room = memoryLimit > live ? memoryLimit - live : 0;
+    const std::size_t latest = live + std::max(room / 2, memoryLimit / 64);
+    gcThreshold_ = std::min(std::max<std::size_t>(4u << 20, live * 2), latest);
 }
 
 // ============================================================ console.log formatting
@@ -1535,6 +1622,7 @@ std::string Runtime::Display(const Value& v, int depth) {
             return "Symbol(" + (s->desc ? Utf16To8(s->desc->s) : std::string()) + ")";
         }
         case Tag::Object: break;
+        case Tag::BigInt: return Utf16To8(BigToString(*this, v, 10)) + "n";
         default: return ToUtf8(v);
     }
     Object* o = v.O();
@@ -1554,6 +1642,8 @@ std::string Runtime::Display(const Value& v, int depth) {
         if (m.IsStr() && !m.S()->s.empty()) s += ": " + Utf16To8(m.S()->s);
         return s;
     }
+    if (o->cls == Cls::DateBox) return DateDisplay(o);
+    if (o->cls == Cls::BigIntBox) return "[BigInt: " + Display(static_cast<BoxObj*>(o)->prim, depth + 1) + "]";
     if (o->cls == Cls::BoolBox || o->cls == Cls::NumberBox || o->cls == Cls::StringBox)
         return "[" + std::string(o->cls == Cls::BoolBox ? "Boolean" : o->cls == Cls::NumberBox ? "Number" : "String") + ": " +
                inner(static_cast<BoxObj*>(o)->prim) + "]";
@@ -1710,10 +1800,14 @@ void Runtime::InitIntrinsics() {
     InstallStringLib(*this);
     InstallNumberLib(*this);
     InstallMathLib(*this);
+    InstallBigIntLib(*this);
+    InstallDateLib(*this);
     InstallJsonLib(*this);
     InstallCollectionsLib(*this);
+    InstallWeakLib(*this);
     InstallRegExpLib(*this);
     InstallGlobalLib(*this);
+    InstallIntlLib(*this);
 }
 
 // ============================================================ compiling and running
@@ -1729,13 +1823,31 @@ bool Runtime::Compile(const std::string& source, const std::string& chunk, Value
         if (err) *err = e;
         return false;
     }
-    Proto* p = CompileScript(*this, ast, chunk, e);
+    Proto* p = nullptr;
+    try {   // the API reports every failure as false: a memory stop here (interning names) must not escape
+        p = CompileScript(*this, ast, chunk, e);
+    } catch (const JsTerminate& t) {
+        e = SyntaxError{};
+        e.line = -1;   // not a syntax error: Run reports the message as it is
+        e.message = t.why;
+    } catch (const JsThrow&) {
+        e = SyntaxError{};
+        e.line = -1;
+        e.message = ExceptionText(exception);
+        exception = Value();
+    }
     if (!p) {
         if (err) *err = e;
         return false;
     }
     vm->scripts.push_back(p);
-    Closure* c = Alloc<Closure>();
+    Closure* c;
+    try {
+        c = Alloc<Closure>();
+    } catch (const JsTerminate& t) {
+        if (err) { *err = SyntaxError{}; err->line = -1; err->message = t.why; }
+        return false;
+    }
     c->code = p;
     c->proto = functionProto;
     fn = Value::Obj(c);
@@ -1750,7 +1862,15 @@ std::vector<SyntaxError> Runtime::CheckSyntax(const std::string& source, const s
     if (!Parse(toks, ast, e)) return {e};
     // the compiler finds the rest (redeclarations, break targets); throw its output away
     Runtime* self = this;
-    Proto* p = CompileScript(*self, ast, chunk, e);
+    Proto* p = nullptr;
+    try {
+        p = CompileScript(*self, ast, chunk, e);
+    } catch (const JsTerminate&) {
+        return {};   // out of memory while checking: no syntax error to report
+    } catch (const JsThrow&) {
+        exception = Value();
+        return {};
+    }
     if (!p) return {e};
     return {};
 }
@@ -1759,7 +1879,7 @@ bool Runtime::Run(const std::string& source, const std::string& chunk, std::stri
     Value fn;
     SyntaxError se;
     if (!Compile(source, chunk, fn, &se)) {
-        if (err) *err = chunk + ":" + std::to_string(se.line) + ": SyntaxError: " + se.message;
+        if (err) *err = se.line < 0 ? se.message : chunk + ":" + std::to_string(se.line) + ": SyntaxError: " + se.message;
         return false;
     }
     Value r;

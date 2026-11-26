@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 82 headers, 520 names.
+Back to the [code index](../code_index.md). 83 headers, 524 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -178,6 +178,12 @@ Back to the [code index](../code_index.md). 82 headers, 520 names.
 - `Countdown` class, line 40: Counts down from a duration to 0 and reports once when it gets there.
 - `Cooldown` class, line 159: "May I use this again yet?": an ability, a weapon, a dodge. Ready at the start; Trigger (or TryUse)
 
+## `engine/include/okay/Core/CssColor.hpp`
+
+- `Rgba` struct, line 20
+- `Named` struct, line 22
+- `Parse` function, line 106: A colour value; false (and 'out' unchanged) when 'text' is not one.
+
 ## `engine/include/okay/Core/Cvar.hpp`
 
 - `Cvar` class, line 25: A console variable: a named int / float / bool / string setting with a default,
@@ -284,15 +290,16 @@ Back to the [code index](../code_index.md). 82 headers, 520 names.
 
 ## `engine/include/okay/Core/ImageDecode.hpp`
 
-- `ImageFormat` enum, line 24
-- `DecodedImage` struct, line 26
-- `DecodedAnimation` struct, line 33: All frames of a GIF, each a full-canvas RGBA8 composite (as a viewer would show it).
-- `DetectImageFormat` function, line 46: Identify a format from its leading bytes (TGA, which has no signature, is recognised by
-- `DecodeImage` function, line 52: Decode any supported format to RGBA8. On failure returns false, leaves 'out' empty and
-- `DecodeImageFile` function, line 54: Read a whole file and decode it.
-- `GetImageFileInfo` function, line 56: Header-only dimensions of a file.
-- `DecodePnm` function, line 59: PNM (Netpbm P1 to P6, maxval up to 65535) to RGBA8. DecodeImage and DetectImageFormat route to it only when the
-- `DecodeGifFrames` function, line 61: Decode every frame of a GIF.
+- `ImageFormat` enum, line 29
+- `DecodedImage` struct, line 31
+- `DecodedAnimation` struct, line 38: All frames of a GIF, each a full-canvas RGBA8 composite (as a viewer would show it).
+- `DetectImageFormat` function, line 51: Identify a format from its leading bytes (TGA, which has no signature, is recognised by
+- `DecodeImage` function, line 57: Decode any supported format to RGBA8. On failure returns false, leaves 'out' empty and
+- `DecodeImageFile` function, line 59: Read a whole file and decode it.
+- `GetImageFileInfo` function, line 61: Header-only dimensions of a file.
+- `DecodePnm` function, line 64: PNM (Netpbm P1 to P6, maxval up to 65535) to RGBA8. DecodeImage and DetectImageFormat route to it only when the
+- `RasterizeSvg` function, line 67: Render an SVG document at width x height pixels (0 for either: from the picture's own size, keeping its shape;
+- `DecodeGifFrames` function, line 69: Decode every frame of a GIF.
 
 ## `engine/include/okay/Core/ImageWrite.hpp`
 

@@ -4072,6 +4072,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - progressive JPEG (2.9)
 - Project content (41.14.8)
 - project defaults (25.2)
+- Project folder layout (25.2.5)
 - Project history (28.3)
 - Project list and New Project (17.12.1)
 - Project management (25)

@@ -16,7 +16,7 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Browser | 15 | 199 | [code_index/engine-Browser.md](code_index/engine-Browser.md) |
 | engine-Combat | 1 | 6 | [code_index/engine-Combat.md](code_index/engine-Combat.md) |
 | engine-Components | 261 | 740 | [code_index/engine-Components.md](code_index/engine-Components.md) |
-| engine-Core | 82 | 517 | [code_index/engine-Core.md](code_index/engine-Core.md) |
+| engine-Core | 82 | 520 | [code_index/engine-Core.md](code_index/engine-Core.md) |
 | engine-Crypto | 2 | 21 | [code_index/engine-Crypto.md](code_index/engine-Crypto.md) |
 | engine-Debug | 11 | 83 | [code_index/engine-Debug.md](code_index/engine-Debug.md) |
 | engine-Environment | 5 | 51 | [code_index/engine-Environment.md](code_index/engine-Environment.md) |
@@ -41,4 +41,4 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-UI | 16 | 78 | [code_index/engine-UI.md](code_index/engine-UI.md) |
 | engine-VisualScript | 32 | 630 | [code_index/engine-VisualScript.md](code_index/engine-VisualScript.md) |
 | okayui | 12 | 644 | [code_index/okayui.md](code_index/okayui.md) |
-| shared | 73 | 1093 | [code_index/shared.md](code_index/shared.md) |
+| shared | 73 | 1111 | [code_index/shared.md](code_index/shared.md) |

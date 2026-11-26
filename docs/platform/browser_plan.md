@@ -205,7 +205,23 @@ WOFF 1.0 recommendation and the OpenType table directory, RFC 8259 (plugin manif
   `DrawCmd::xform` for the host. Transitions show their final value at once (the property is read and ignored).
 - **WOFF 1.0** (`Browser/WebFont`): rebuilt into the sfnt file through `Core/Inflate`; @font-face takes a WOFF file only when there
   is no TrueType / OpenType file.
-- **Browser plugins** (`Browser/Plugins`, `shared/BrowserPluginCommands.hpp`): see feature map 17.18.19.
+- **Browser plugins** (`Browser/Plugins`, `shared/BrowserPluginCommands.hpp`): see feature map 17.18.19. (Dropped from this round by
+  the owner on 2026-11-26 after the model and its tests were written; another agent takes it on from here, not wired into the program.)
+- **Pages styled properly** (owner, 2026-11-26): CSS Nesting 1; inherit / initial / unset / revert (revert as unset); logical
+  properties (inline-size, margin- / padding- / inset- / border-inline and -block); border line styles dashed, dotted, double;
+  letter-spacing, word-spacing, text-align: justify, text-shadow (blur as a lighter copy), font-variant: small-caps (capitals at
+  0.7 size), ::first-letter (drop caps), ::marker (colour and size); outline and outline-offset; inset box shadows (bands);
+  aspect-ratio (a minimum height); filter grayscale() / brightness() on the box's colours (images and blur not done);
+  `<img srcset>` (x and w descriptors; sizes taken as 100vw) and `<picture>` sources (media, type); the default sheet's
+  details / summary (closed details hide their content), quotes on `<q>`, monospace text at 13 px, h1 in sectioning elements.
+- **Page corpus**: twelve pages of our own in `tests/data/browser_pages/`, each with a golden picture
+  (`okayui/tests/golden/page_*.png`, test `okayui_browser_pages`).
+
+**Not done in the styling round:** position: sticky that sticks (the layout does not know the scroll), @container queries,
+clip-path, blur(), ::first-line, unlayered-over-layered order in @layer (layers are read as plain blocks), conic gradients,
+generic font families mapped to our shipped fonts (the view picks fonts; serif / monospace only switch `mono`), glyphs the
+shipped font lacks (the summary triangle, a check mark, Greek letters are not drawn: the font has no such glyphs), outer box
+shadows under a transparent box (the view fills the shadow's whole rectangle).
 
 **Not done in round 3:** WOFF2 (Brotli needs the RFC 7932 static dictionary, about 122 KB of data published in the RFC; its
 licence under the IETF Trust Legal Provisions is not clear for that table, so it was not added); synthetic italics (the slant is

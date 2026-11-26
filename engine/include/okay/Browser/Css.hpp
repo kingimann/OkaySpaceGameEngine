@@ -26,7 +26,8 @@
 // justify-items, justify-self, place-items, place-self, place-content; round 3: border-spacing, border-collapse, table-layout,
 // caption-side, text-decoration-line / -style / -color, text-overflow, object-fit, object-position, transform, transform-origin,
 // counter-reset / -increment / -set and counter() / counters() in content, the HTML presentational attributes of tables and cells,
-// and :has() (Selectors 4). Everything else (transition, animation ...) is read and ignored.
+// and :has() (Selectors 4); CSS Nesting 1, the CSS-wide keywords (inherit, initial, unset, revert), logical properties,
+// letter-spacing, word-spacing, text-shadow, font-variant, outline, aspect-ratio, filter, ::first-letter, ::marker. Everything else (transition, animation ...) is read and ignored.
 // Standard library only.
 #include "okay/Browser/Html.hpp"
 

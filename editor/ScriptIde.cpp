@@ -20,7 +20,6 @@ namespace scriptide {
 
 namespace fs = std::filesystem;
 
-static std::string Lower(const std::string& s) { return okay::str::LowerAscii(s); }
 static bool IsIdent(char c) { return std::isalnum((unsigned char)c) || c == '_'; }
 static bool IsIdentStart(char c) { return std::isalpha((unsigned char)c) || c == '_'; }
 
@@ -52,7 +51,7 @@ int FuzzyScore(const std::string& pat, const std::string& cand) {
 
 // ---- languages ------------------------------------------------------------------------------------------------------------
 std::string LanguageForPath(const std::string& path) {
-    const std::string ext = Lower(fs::path(path).extension().string());
+    const std::string ext = okay::str::LowerAscii(fs::path(path).extension().string());
     if (ext == ".okay") return "okayscript";
     if (ext == ".lua") return "lua";
     if (ext == ".cs") return "csharp";
@@ -220,10 +219,10 @@ std::vector<std::string> ListProjectScripts(const std::string& root, std::size_t
 std::vector<TreeRow> BuildFileTree(const std::vector<std::string>& files, const std::string& root, const std::string& filter) {
     struct Node { std::map<std::string, Node> folders; std::vector<std::pair<std::string, std::string>> files; };
     Node top;
-    const std::string f = Lower(filter);
+    const std::string f = okay::str::LowerAscii(filter);
     for (const auto& path : files) {
         const std::string rel = Relative(path, root);
-        if (!f.empty() && Lower(rel).find(f) == std::string::npos) continue;
+        if (!f.empty() && okay::str::LowerAscii(rel).find(f) == std::string::npos) continue;
         Node* n = &top;
         std::size_t start = 0;
         for (std::size_t slash; (slash = rel.find('/', start)) != std::string::npos; start = slash + 1)
@@ -467,7 +466,7 @@ bool Matches(const std::string& text, const std::string& needle, const FindOptio
              std::vector<std::smatch>* groups, std::string* error) {
     if (needle.empty()) return true;
     if (!opt.regex) {
-        const std::string hay = opt.matchCase ? text : Lower(text), nd = opt.matchCase ? needle : Lower(needle);
+        const std::string hay = opt.matchCase ? text : okay::str::LowerAscii(text), nd = opt.matchCase ? needle : okay::str::LowerAscii(needle);
         for (std::size_t p = hay.find(nd); p != std::string::npos; p = hay.find(nd, p + 1)) {
             if (opt.wholeWord && !WholeWordAt(text, p, nd.size())) continue;
             out.push_back({p, nd.size(), 0, 0});
@@ -565,10 +564,10 @@ std::string ApplyEdits(const std::string& text, std::vector<TextEdit> edits) {
 std::string NearestName(const std::string& word, const std::vector<std::string>& known) {
     std::string best;
     int bestD = std::max(1, (int)word.size() / 3) + 1;
-    const std::string lw = Lower(word);
+    const std::string lw = okay::str::LowerAscii(word);
     for (const auto& k : known) {
         if (k == word) return "";                                   // it is known: nothing to suggest
-        const int d = okay::editor::vsed::searchnav::EditDistance(lw, Lower(k));   // a case slip counts as 0
+        const int d = okay::editor::vsed::searchnav::EditDistance(lw, okay::str::LowerAscii(k));   // a case slip counts as 0
         if (d < bestD) { bestD = d; best = k; }
     }
     return best;
@@ -889,7 +888,7 @@ void LocalHistory::Trim(const std::string& folder) {
 }
 
 std::vector<DiffLine> LineDiff(const std::string& a, const std::string& b) {
-    auto split = [](const std::string& s) {
+    auto linesOf = [](const std::string& s) {
         std::vector<std::string> v;
         std::size_t p = 0;
         while (p <= s.size()) {
@@ -899,7 +898,7 @@ std::vector<DiffLine> LineDiff(const std::string& a, const std::string& b) {
         }
         return v;
     };
-    const std::vector<std::string> x = split(a), y = split(b);
+    const std::vector<std::string> x = linesOf(a), y = linesOf(b);
     // Same lines at both ends are kept out of the table, so a small change in a big file stays cheap.
     std::size_t pre = 0;
     while (pre < x.size() && pre < y.size() && x[pre] == y[pre]) ++pre;

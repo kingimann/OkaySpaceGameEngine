@@ -67,7 +67,7 @@ int main() {
     {
         Folder f;
         { CompileCache c; Start(f, "hlsl", c); }
-        f.files[FileNameFor("PSFxaa")].back() ^= 0x5a;   // an optional entry: only it is compiled again
+        f.files[FileNameFor("PSEdgeSmooth")].back() ^= 0x5a;   // an optional entry: only it is compiled again
         { CompileCache c; CHECK(Start(f, "hlsl", c) == 1 + 2); }
         { CompileCache c; CHECK(Start(f, "hlsl", c) == 2); }   // and stored right again
         f.files.erase(FileNameFor("VSMain"));               // a required entry gone: the folder is not trusted, all compiled

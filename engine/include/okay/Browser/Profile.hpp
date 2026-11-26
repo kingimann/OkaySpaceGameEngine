@@ -45,7 +45,7 @@ AddressDecision DecideAddress(const std::string& typed, const std::string& searc
 /// The search address for `terms`: "%s" in `searchTemplate` replaced by FormUrlEncode(terms), or the encoded terms added at
 /// the end when the template has no "%s". "" when the template is empty.
 std::string SearchUrl(const std::string& searchTemplate, const std::string& terms);
-/// The placeholder shown in an empty address bar: "Search Google or type an address" for Google's search address, "Search or
+/// The placeholder shown in an empty address bar: "Search the web or type an address" for the default search address, "Search or
 /// type an address" for another one, "Type an address" when there is no search.
 std::string AddressPlaceholder(const std::string& searchTemplate);
 

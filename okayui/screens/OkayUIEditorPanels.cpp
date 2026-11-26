@@ -1078,7 +1078,7 @@ PostProcessResult DrawPostProcess(PostProcessModel& m, float x, float y, float w
             slider("Vignette Smoothness", &p.vignetteSmooth, 0.05f, 1.0f, "%.2f");
             note(m.vignetteNote);
         }
-        box("Anti-aliasing (FXAA)", &p.fxaa, &res.fxaa);
+        box("Anti-aliasing (edge smoothing)", &p.fxaa, &res.fxaa);
         box("Ambient Occlusion (SSAO)", &p.ssao, &res.ssao);
         note(m.ssaoNote);
         if (p.ssao) {

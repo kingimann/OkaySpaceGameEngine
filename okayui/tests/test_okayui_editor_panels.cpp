@@ -701,8 +701,8 @@ int main() {
         r.Frames(2);
         CHECK(st.newTag[sizeof(st.newTag) - 1] == '\0' && res.layerFields.empty() && UI::DroppedGeometry() == 0);
         CHECK(P::UnlistedTagsText(m.unlisted).find("a, b, c, d, ...") != std::string::npos);
-        char small[4]; P::CopyToBuf(small, sizeof(small), "\xC3\xA9\xC3\xA9");   // two two-byte characters into 3 bytes: one whole one
-        CHECK(std::strcmp(small, "\xC3\xA9") == 0);
+        char tinyBuf[4]; P::CopyToBuf(tinyBuf, sizeof(tinyBuf), "\xC3\xA9\xC3\xA9");   // two two-byte characters into 3 bytes: one whole one
+        CHECK(std::strcmp(tinyBuf, "\xC3\xA9") == 0);
     }
 
     // ================= Physics =================

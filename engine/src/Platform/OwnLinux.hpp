@@ -22,6 +22,8 @@ public:
     virtual bool PollEvent(Event& out) = 0;
     virtual void* GLProcAddress(const char* name) = 0;
     virtual void ReleaseCurrent() = 0;
+    virtual GLCurrent CurrentGL() = 0;                  // glXGetCurrentContext / glXGetCurrentDrawable
+    virtual bool RestoreGL(const GLCurrent& s) = 0;     // glXMakeCurrent with them (a null context releases)
     virtual void StartTextInput() = 0;
     virtual void StopTextInput() = 0;
     virtual bool IsKeyDown(Key k) = 0;
@@ -40,6 +42,9 @@ public:
     virtual bool SetCursorShape(CursorShape shape) = 0;
     virtual bool SetClipboardText(const std::string& t) = 0;
     virtual std::string GetClipboardText() = 0;
+    /// Monitors (RandR 1.5; the X screen without it), primary first, and the video modes of one, current first.
+    virtual std::vector<DisplayInfo> Displays() = 0;
+    virtual std::vector<DisplayMode> DisplayModes(int index) = 0;
     /// Test hook: the window's current pixels as RGBA8 (XGetImage), top row first.
     virtual bool GrabWindow(Window& w, std::vector<uint8_t>& rgba, int& width, int& height) = 0;
 };

@@ -455,11 +455,11 @@ void PlayerView::ApplyHead() {
     Character* ch = gameObject->GetComponent<Character>();
     Camera* cam = ViewCamera(gameObject);
     const float into = Driving() ? FirstAmount() : 0.0f;
-    const bool near = Driving() && CameraNearEyes(cam);
+    const bool nearEyes = Driving() && CameraNearEyes(cam);
     // Build the rig on the way in, and pose it this frame. Waiting until the
     // lens arrives, or leaving the new parts at the bind pose, is the frame
     // where the body vanishes or stands in a T.
-    if (ch && Driving() && (TargetFirst() || near) && !ch->driveExternal && !ch->PartsBuilt()) {
+    if (ch && Driving() && (TargetFirst() || nearEyes) && !ch->driveExternal && !ch->PartsBuilt()) {
         ch->separateParts = true;
         ch->BuildParts();
         ch->PoseBuiltParts();
@@ -487,7 +487,7 @@ void PlayerView::ApplyHead() {
     // the skull, and come back the moment it pulls away. The mesh stays active
     // and keeps casting shadows, so every other camera still sees the head.
     // The target view does not matter: a reverse mid-blend follows the camera.
-    if (near) {
+    if (nearEyes) {
         if (rig) {
             ch->hideOwnHead = false;
             ch->ApplyOwnerVisibility(true);

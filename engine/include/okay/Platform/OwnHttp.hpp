@@ -867,10 +867,10 @@ inline FetchResult Fetch(Connector& conn, const FetchRequest& req, const Limits&
             if (!ResolveLocation(url, *loc, next, &why)) return bad(Err::BadUrl, why);
             if (url.Https() && !next.Https()) return bad(Err::DowngradeRefused, "refusing https to http redirect");
             // The redirect's own body is not wanted; a broken one does not matter.
-            Limits small = lim; small.maxBodyBytes = std::min<uint64_t>(lim.maxBodyBytes, 1 << 20);
+            Limits smallLim = lim; smallLim.maxBodyBytes = std::min<uint64_t>(lim.maxBodyBytes, 1 << 20);
             uint64_t tot = 0; Err e2 = Err::None;
-            const bool bodyRead = ReadBody(rd, head, method, small, DataFn(), tot, e2, nullptr);
-            if (bodyRead && req.keepAlive && ConnectionReusable(head, method, small, rd)) conn.GiveIdle(url, std::move(st));
+            const bool bodyRead = ReadBody(rd, head, method, smallLim, DataFn(), tot, e2, nullptr);
+            if (bodyRead && req.keepAlive && ConnectionReusable(head, method, smallLim, rd)) conn.GiveIdle(url, std::move(st));
             else st.reset();
             if (!(url.SameOrigin(next))) {
                 std::vector<Header> keep;

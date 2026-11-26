@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 81 headers, 515 names.
+Back to the [code index](../code_index.md). 82 headers, 517 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -65,6 +65,11 @@ Back to the [code index](../code_index.md). 81 headers, 515 names.
 - `DecodeLenient` function, line 69: Decode, skipping every character that is not in the alphabet; the bytes are APPENDED to 'out'. Whole groups of four
 - `DecodePadded` function, line 109: Strict decode of padded text (see the top of this file). 'out' is replaced. False on any broken rule.
 - `DecodeUnpadded` function, line 138: Strict decode of unpadded text (see the top of this file). 'out' is replaced. False on any broken rule.
+
+## `engine/include/okay/Core/Brotli.hpp`
+
+- `Options` struct, line 33
+- `Decode` function, line 42
 
 ## `engine/include/okay/Core/BuildConfigExtra.hpp`
 

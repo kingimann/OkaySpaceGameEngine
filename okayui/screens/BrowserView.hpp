@@ -116,7 +116,7 @@ struct BrowserViewOptions {
     // ---- the browser program (round 1 of "a regular browser") ----
     bool programButtons = false;       ///< Reload becomes Stop while loading; Home, a bookmark star and a menu button
     bool bookmarked = false;           ///< the star shows the page is bookmarked
-    std::string placeholder;           ///< shown in an empty address field ("Search Google or type an address")
+    std::string placeholder;           ///< shown in an empty address field ("Search the web or type an address")
     bool focusAddress = false;         ///< put the keyboard in the address field and select it (Ctrl+L, a new tab)
     bool blockInput = false;           ///< a menu or dialog of the program is open over the page: the page takes no clicks
     float zoom = 1.0f;                 ///< the site's zoom: the page is laid out at width / zoom and drawn zoom times larger

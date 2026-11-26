@@ -16,6 +16,7 @@
 //
 // Header rules (MinGW): no <mutex>/<thread> here, and no names that clash with
 // Windows or X11 macros (CreateWindow, None, Status, Bool, ...).
+#include "okay/Core/DisplayModes.hpp"
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -169,6 +170,10 @@ struct GLCurrent {
     void* context = nullptr;
 };
 
+/// One video mode of a display: the engine's plain DisplayMode (width, height, refreshHz; okay/Core/DisplayModes.hpp),
+/// so the seam and the display settings share one type.
+using DisplayMode = okay::DisplayMode;
+
 class Window {
 public:
     virtual ~Window() = default;
@@ -205,6 +210,13 @@ public:
     virtual void* Win32Handle() const { return nullptr; }
     /// True while in desktop fullscreen (set by WindowDesc::fullscreen or SetFullscreen).
     virtual bool IsFullscreen() const { return false; }
+    /// Window frame and title bar on (true) or off (false), after creation (WindowDesc::borderless at creation).
+    /// False = not supported here (nothing changes).
+    virtual bool SetBordered(bool on) { (void)on; return false; }
+    /// Exclusive fullscreen on display `displayIndex` with the video mode changed to `mode` (the closest the display
+    /// offers). False = this backend cannot change the video mode; the caller then uses SetFullscreen(true), which
+    /// covers the display at its desktop mode. SetFullscreen(false) leaves either kind of fullscreen.
+    virtual bool SetFullscreenMode(const DisplayMode& mode, int displayIndex) { (void)mode; (void)displayIndex; return false; }
     /// Window / task-bar icon from tightly packed RGBA8 pixels. False = not supported here.
     virtual bool SetIcon(const uint8_t* rgba, int w, int h) { (void)rgba; (void)w; (void)h; return false; }
     /// DPI of the display the window is on (96 = 100 percent); 96 when the backend cannot tell.
@@ -355,6 +367,9 @@ public:
     /// wait loop). sdl2: SDL_PumpEvents. own: reads what is waiting into the backend's queue, so the next PollEvent
     /// still returns it, in order. Never loses an event.
     virtual void PumpEvents() {}
+    /// True when events are waiting (call PumpEvents first so the system's input has been read). For an idle throttle that
+    /// only wants to know "did anything happen"; nothing is taken from the queue.
+    virtual bool HasPendingEvents() { return false; }
     /// Put an event into the queue; PollEvent returns it after the events already waiting. Used to inject input (tests,
     /// the editor's OKAY_UI_DROP hook). False when this backend cannot make that kind of event (sdl2 makes Quit,
     /// WindowClose, WindowFocusGained/Lost, KeyDown/Up, TextInput, MouseMove, MouseButtonDown/Up, MouseWheel and DropFile).
@@ -426,6 +441,9 @@ public:
     /// The base versions know none (0 displays); the own Windows backend and the sdl2 backend list them.
     virtual int DisplayCount() { return 0; }
     virtual bool DisplayAt(int index, DisplayInfo& out) { (void)index; (void)out; return false; }
+    /// The video modes display `index` offers, the current one first. The base version gives only the current mode
+    /// (from DisplayAt); empty for an index out of range.
+    virtual std::vector<DisplayMode> DisplayModes(int index);
     /// Where the input method should put its candidate list: the caret rectangle in window client pixels
     /// (own Windows only; elsewhere nothing happens).
     virtual void SetTextInputRect(int x, int y, int w, int h) { (void)x; (void)y; (void)w; (void)h; }
@@ -474,6 +492,10 @@ std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow);
 /// touches nothing in the SDL event (a drop's string is not read). False for any other kind, or when sdl2 is not
 /// compiled in. Temporary: it goes away with SDL2.
 bool TranslateSdl2Event(const void* sdlEvent, Event& out);
+
+/// Logical processors and physical memory (megabytes) of this machine; 0 when unknown. No backend needed.
+int CpuCount();
+int SystemRamMB();
 
 // ---- Free functions on the default backend ------------------------------------
 // Timers work with no backend at all (they fall back to std::chrono), so call

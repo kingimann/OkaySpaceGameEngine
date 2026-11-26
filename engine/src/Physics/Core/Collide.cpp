@@ -101,8 +101,8 @@ bool ClosestOnSimplex(SPt* s, int& n, float* lam, V3& v) {
 // micrometres), but never below what float rounding on the bigger one allows.
 float TolScale(const Shape& a, const Shape& b) {
     const float ra = a.OuterRadius(), rb = b.OuterRadius();
-    const float small = std::min(ra, rb), big = std::max(ra, rb);
-    return std::max(std::max(small, 0.05f * big), 1e-3f);
+    const float smaller = std::min(ra, rb), big = std::max(ra, rb);
+    return std::max(std::max(smaller, 0.05f * big), 1e-3f);
 }
 
 // GJK in a frame where A sits at the origin (better float precision far from the world origin).

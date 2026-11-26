@@ -99,8 +99,11 @@ public:
     /// The addresses the host should fetch now (each is returned once): the page being loaded, then the images it uses.
     std::vector<std::string> TakeFetches();
     /// The answer for a page fetch. `ok` = the server answered 2xx and `body` is the page; otherwise `error` (or the status)
-    /// says what went wrong. An answer for an address that is no longer being loaded is ignored.
-    void DeliverPage(const std::string& url, bool ok, int status, const std::string& body, const std::string& error = std::string());
+    /// says what went wrong. An answer for an address that is no longer being loaded is ignored. `body` is the bytes as they
+    /// came; `contentType` is the answer's Content-Type header, whose charset (with a BOM and the page's <meta charset>,
+    /// Encoding.hpp DecodePage) says how the bytes are turned into the UTF-8 the rest of the tab reads.
+    void DeliverPage(const std::string& url, bool ok, int status, const std::string& body, const std::string& error = std::string(),
+                     const std::string& contentType = std::string());
     /// The page being loaded at `from` answered from `to` after redirects: the history entry takes the new address (so the page's
     /// links resolve against it), and a POST that was redirected became a GET. Ignored for any other address, or when `to` may
     /// not be shown in this tab.

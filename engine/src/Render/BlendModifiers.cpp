@@ -141,14 +141,14 @@ void GatherSharp(const Topo& t, const std::vector<int>& fs, const std::vector<in
         // is the half of this edge at each end still creased on the next level?
         for (int end = 0; end < 2; ++end) {
             const std::size_t v = end == 0 ? ia : ib;
-            const float* far = end == 0 ? b : a;
+            const float* farEnd = end == 0 ? b : a;
             float child = s;
             if (!std::isinf(s)) {
                 float nb = s;
                 if (creases && cCnt[v] == 2) nb = (*edgeSharp)[(std::size_t)(cFirst[v] == (int)e ? cSecond[v] : cFirst[v])];
                 child = ChildSharp(s, nb);
             }
-            if (child > 0.0f) { ++vs.sharp1[v]; for (int d = 0; d < D; ++d) vs.other1[v * D + d] += far[d]; }
+            if (child > 0.0f) { ++vs.sharp1[v]; for (int d = 0; d < D; ++d) vs.other1[v * D + d] += farEnd[d]; }
         }
         if (std::isinf(s)) { vs.anyInf[ia] = vs.anyInf[ib] = 1; }
         else { vs.finSum[ia] += s; vs.finSum[ib] += s; ++vs.finCnt[ia]; ++vs.finCnt[ib]; }

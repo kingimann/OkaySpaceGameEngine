@@ -2,7 +2,7 @@
 // the Direct3D 11 backend and the same maths as C++ functions for the Software backend. Moved here from the OpenGL
 // renderer's own bloom (GLRenderer.cpp, kBrightFrag / kAddFrag, deleted in the same
 // change). The 9-tap gaussian uses 5 linear-filtered taps: offsets 1.384615 and 3.230769
-// texels with weights 0.227027, 0.316216 and 0.070270 (binomial weights merged in pairs).
+// texels with weights 0.227027, 0.316216 and 0.070270 (binomial weights merged in pairs; derived in SsaoMath.hpp).
 // Written by us; see BloomPass.hpp.
 #include "okay/Render/RHI/BloomPass.hpp"
 

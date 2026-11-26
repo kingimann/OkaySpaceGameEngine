@@ -172,6 +172,7 @@ struct ComputedStyle {
     Length bgPosX, bgPosY;            ///< background-position (default 0% 0%)
     std::vector<BoxShadow> shadows;
     float opacity = 1.0f;
+    bool maskUrl = false;             ///< mask-image (or -webkit-, or the mask shorthand) names an image file: not loaded, see Layout
     bool visible = true;              ///< visibility (inherited)
     float fontSize = 16.0f;
     bool bold = false, italic = false, mono = false;
@@ -211,6 +212,15 @@ struct ComputedStyle {
     WhiteSpace whiteSpace = WhiteSpace::Normal;
     ListStyle listStyle = ListStyle::Disc;
     VAlign verticalAlign = VAlign::Baseline;
+    /// How far inline text is raised (+) or lowered (-) from its line's baseline, in px: vertical-align sub / super / <length> /
+    /// <percentage> of this inline element and of the inline elements around it added up (CSS 2.1 10.8.1). 0 in a block.
+    float baselineShift = 0.0f;
+    /// HTML 15.3.3 "align descendants" (<center>, align="center" / "right" / "left", text-align: -webkit-center ...): 0 none,
+    /// 1 centre, 2 right, 3 left. Inherited with text-align; any other text-align value clears it.
+    std::uint8_t legacyAlign = 0;
+    /// The parent's legacyAlign: a block box with a width narrower than its container (and no auto margins) is centred or
+    /// moved right in it, as old pages expect from <center><table width=85%>.
+    std::uint8_t alignedByParent = 0;
     // positioning (CSS 2.1 chapter 9, CSS Positioned Layout 3)
     Float floating = Float::None;
     Clear clear = Clear::None;
@@ -352,6 +362,7 @@ struct StyleContext {
     const void* checkedUser = nullptr;
     MediaEnv media;
     float rootFontSize = 16.0f;
+    bool quirks = false;   ///< the document is in quirks mode (HtmlDocument::quirks): the quirks rules of the default sheet apply
 };
 
 /// Does `el` (an element) match `sel` (for its pseudo-element `pseudo`: 0 the element, 1 ::before, 2 ::after)?

@@ -130,7 +130,8 @@ again for every layout.
 
 - **Web fonts.** @font-face TrueType / OpenType files are fetched and given to OkayUI's TrueType store (our own rasterizer);
   text whose font-family names them uses them, with the closest weight and style (a real bold face when the page has one).
-  WOFF / WOFF2 are not read yet (they need their own decoders); OkayUI keeps only a few font files, so a page with many faces
+  WOFF and WOFF2 files are decoded by `Browser/WebFont` (WOFF2 through our Brotli decoder `Core/Brotli`, 2026-11-26, owner:
+  "Yes use WOFF2"), but the host does not call it yet (below); OkayUI keeps only a few font files, so a page with many faces
   gets the first ones. Italic without an italic face is drawn upright (OkayUI cannot slant text yet).
 - **Work caps for hostile pages.** Every block layout counts against a budget; flex and grid measure their items through a
   cache, so nested flex / grid boxes are not exponential; var() expansion is capped in size and depth; selector matching has a
@@ -227,13 +228,12 @@ generic font families mapped to our shipped fonts (the view picks fonts; serif /
 shipped font lacks (the summary triangle, a check mark, Greek letters are not drawn: the font has no such glyphs), outer box
 shadows under a transparent box (the view fills the shadow's whole rectangle).
 
-**Not done in round 3:** WOFF2 (Brotli needs the RFC 7932 static dictionary, about 122 KB of data published in the RFC; its
-licence under the IETF Trust Legal Provisions is not clear for that table, so it was not added); synthetic italics (the slant is
+**Not done in round 3:** synthetic italics (the slant is
 drawn by the view: OkayUI has no sheared text call yet); the host calls below. Nothing of round 3 was built or run on Windows.
 
 **Calls the browser program still has to make** (files of another agent, so not changed here):
 - `shared/BrowserHost.cpp`, font fetches: call `okay::browser::DecodeWebFont(bytes, size, sfnt, why)` and hand `sfnt` to the font
-  loader instead of the TrueType / OpenType check (WOFF fonts then load).
+  loader instead of the TrueType / OpenType check (WOFF and WOFF2 fonts then load).
 - `okayui/screens/BrowserView.cpp` `DrawBrowserPage`: draw a command whose `xform` is not the identity through it (page
   coordinates before scroll and zoom); slant text when `font.italic` and the web font has no italic face.
 - `shared/BrowserApp`: keep one `okay::browser::BrowserPlugins`; load manifests from `<data>/plugins/*.json`; ask the person to grant
@@ -408,6 +408,37 @@ second link; the error page; dragging a tab to the front; goldens `browser_app`,
 give its history entries: `BrowserTab` has no call for that yet), smooth scrolling for the mouse wheel (only keys glide), a
 page-wide UI scale setting (the browser draws at OkayUI's text size; 150% was not checked), double-click to select a word,
 selecting text in scrolling areas, drag a tab out into a new window. Nothing was run on Windows.
+
+## Real pages, round 1 (2026-11-26, branch `claude/browser-real-1`)
+
+Checked against saved copies of real pages (Google, three Wikipedia articles, Hacker News, BBC, W3C, Python docs, MDN,
+craigslist and others), rendered headless before and after; the copies stay outside the repository. What changed:
+
+- **Character encodings** (`Encoding.hpp`, from the WHATWG Encoding standard and HTML 13.2.3): a BOM, then the server's
+  Content-Type charset, then `<meta charset>` / `http-equiv` in the first 1024 bytes, then well-formed UTF-8, else windows-1252.
+  Decoders: UTF-8, UTF-16LE/BE, x-user-defined, "replacement" and 27 single-byte encodings (ISO-8859-x, windows-125x, KOI8,
+  IBM866, macintosh, windows-874, x-mac-cyrillic). Not yet: Shift_JIS, EUC-JP, ISO-2022-JP, GBK, gb18030, Big5, EUC-KR.
+  `BrowserTab::DeliverPage` takes the Content-Type; the tab host does not pass it yet (follow-up in `BrowserHost.cpp`).
+- **User-Agent**: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) OkaySpaceBrowser/1.0" (`BrowserApp.hpp`). With the old
+  "OkaySpace Browser" Google answered `charset=ISO-8859-1`; now it answers UTF-8. No other browser is named.
+- **Tables with percentage columns** (a "25% | content | 25%" row): the table's max-content width lets the percentages hold,
+  and percentage columns give way so no column drops below its minimum (Google's "Advanced search" no longer overlaps).
+- **Presentational hints**: `<font size color face>`, `align` on div / p / headings, `<body marginwidth ...>`, `<img align
+  hspace vspace border>`, `<hr width size color noshade align>`; `<center>` and `align` move narrower blocks inside them
+  (HTML 15.3.3 "align descendants").
+- **sub / sup** move the text's baseline (vertical-align sub / super / length), through links inside them.
+- **Quirks mode** (no or legacy DOCTYPE): tables start their fonts and text-align afresh (HTML 15.3.8).
+- **Hidden things stay hidden**: a form control with opacity 0 is not drawn (its box still takes clicks); an element with a
+  `mask-image: url()` is not drawn (mask images are not loaded, which CSS Masking treats as transparent).
+
+**Tests:** `browser_html` (labels, decoders, the prescan, the sniffing order, a tab given ISO-8859-1 bytes, quirks from the
+DOCTYPE), `browser_layout3` (the cases above, worked out by hand), `okayui_browser_pages` (four new pages and goldens:
+`legacy_charset` stored in windows-1252, `search_home`, `encyclopedia_article`, `quirks_board`).
+
+**Seen on the real pages, not fixed here (other lanes):** text is drawn about 15% smaller than its CSS size (`BrowserView`
+scales by the font's ascent-to-descent height, not its em size); a text run with one glyph the launcher font lacks (≠, €, ™,
+IPA) is not drawn at all in headless renders; icon fonts (Material Icons ligatures) show their names; images were not
+loaded in these renders. Nothing was run on Windows.
 
 ## Site check: real sites, failures ranked (2026-11-26, branch `claude/site-check-1`)
 

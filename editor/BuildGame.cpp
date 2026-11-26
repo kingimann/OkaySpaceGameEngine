@@ -493,6 +493,14 @@ std::string Build(EditorState& ed, const std::string& outDir,
                 if (fs::exists(src, fe)) { std::error_code ce; putRuntime(src, lib, "runtime library the player needs", ce); break; }
             }
         }
+        // The licences of the parts written by others that the game carries (runtimes, SDL2, the built-in font):
+        // the release package has the file beside the launcher and beside the editor (scripts/build-windows-dist.sh).
+        for (const fs::path& r2 : roots2) {
+            if (r2.empty()) continue;
+            std::error_code fe;
+            const fs::path src = r2 / "THIRD_PARTY_NOTICES.txt";
+            if (fs::exists(src, fe)) { std::error_code ce; putRuntime(src, "THIRD_PARTY_NOTICES.txt", "licences of the parts written by others", ce); break; }
+        }
     }
 
     // Window icon, startup splash and boot logo: beside the config in the data folder.

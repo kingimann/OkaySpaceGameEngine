@@ -106,10 +106,10 @@ public:
         if (it != m_cache->end()) return it->second ? (Tex)it->second : LoadTexture(path);
         Image img;
         if (!img.Load(path) && !img.Load(m_baseDir + path)) return LoadTexture(path);
-        const Image small = UIDownscaleImage(img, w, h, false);
-        SDL_Texture* tex = SDL_CreateTexture(m_r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, small.Width(), small.Height());
+        const Image scaled = UIDownscaleImage(img, w, h, false);
+        SDL_Texture* tex = SDL_CreateTexture(m_r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, scaled.Width(), scaled.Height());
         if (!tex) return LoadTexture(path);
-        SDL_UpdateTexture(tex, nullptr, small.Data(), small.Width() * 4);
+        SDL_UpdateTexture(tex, nullptr, scaled.Data(), scaled.Width() * 4);
         SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
         SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
         (*m_cache)[key] = tex;

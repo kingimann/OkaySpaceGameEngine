@@ -16,8 +16,8 @@ Vec3 AnimClip::BlendEuler(const Vec3& a, const Vec3& b, float u) {
     if (u >= 1.0f) return b;
     Vec3 e = Quat::Slerp(Quat::Euler(a), Quat::Euler(b), u).ToEuler();
     const Vec3 ref = a + (b - a) * u;
-    auto near = [](float v, float r) { return v + 360.0f * std::round((r - v) / 360.0f); };
-    return Vec3{near(e.x, ref.x), near(e.y, ref.y), near(e.z, ref.z)};
+    auto nearestAngle = [](float v, float r) { return v + 360.0f * std::round((r - v) / 360.0f); };
+    return Vec3{nearestAngle(e.x, ref.x), nearestAngle(e.y, ref.y), nearestAngle(e.z, ref.z)};
 }
 
 namespace {
@@ -106,11 +106,11 @@ std::vector<Vec3> AnimClip::Sample(float t) const {
             std::vector<Vec3> out(n, Vec3{0, 0, 0});
             // Angles are unwrapped toward the segment's start, so a bone near
             // +-180 doesn't swing the long way round.
-            auto near = [](float v, float r) { return v + 360.0f * std::round((r - v) / 360.0f); };
+            auto nearestAngle = [](float v, float r) { return v + 360.0f * std::round((r - v) / 360.0f); };
             for (std::size_t b = 0; b < n; ++b) {
                 Vec3 p[4];
                 for (int q = 0; q < 4; ++q) p[q] = b < s.k[q]->pose.size() ? s.k[q]->pose[b] : Vec3{0, 0, 0};
-                for (int q : {0, 2, 3}) p[q] = Vec3{near(p[q].x, p[1].x), near(p[q].y, p[1].y), near(p[q].z, p[1].z)};
+                for (int q : {0, 2, 3}) p[q] = Vec3{nearestAngle(p[q].x, p[1].x), nearestAngle(p[q].y, p[1].y), nearestAngle(p[q].z, p[1].z)};
                 out[b] = Vec3{Cubic(p[0].x, p[1].x, p[2].x, p[3].x, s), Cubic(p[0].y, p[1].y, p[2].y, p[3].y, s),
                               Cubic(p[0].z, p[1].z, p[2].z, p[3].z, s)};
             }

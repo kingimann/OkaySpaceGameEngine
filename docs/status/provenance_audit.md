@@ -1,10 +1,151 @@
 # Provenance audit: code that may have been copied or ported
 
-> **What this is:** Date: 2026-11-14. Branch `claude/provenance-audit`, cut from main at `ff89d98a`.
+> **What this is:** The record of what in the repository may have been copied, ported or taken from others (code, data,
+> assets, names, patents). Audits: 2026-11-26 (whole repository, branch `claude/ip-audit-1`) and 2026-11-14 (branch
+> `claude/provenance-audit`, main at `ff89d98a`).
 >
 > **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
 >
-> **Last checked:** 2026-11-20 (moved into `status/`, paths and links checked; the text itself was not re-checked against the code).
+> **Last checked:** 2026-11-26 (whole-repository re-audit on main `d18e4027`, section "2026-11-26" below; the 2026-11-14
+> text after it is kept as the earlier record).
+
+## 2026-11-26: whole-repository re-audit (main at `d18e4027`)
+
+Asked by the owner on 2026-11-26: "Implement systems independently using publicly documented standards, mathematical
+principles and technical specifications. Do not copy proprietary source code or incorporate third-party code without
+identifying its source and license. Flag potential intellectual property conflicts", "make sure to look engine wide".
+Branch `claude/ip-audit-1`. Read only on source code: nothing outside this page, `docs/status/THIRD_PARTY.md` and
+`scripts/provenance_scan.py` was changed. Every fix below is a recommendation for a later, separate change.
+
+**Not legal advice.** Licences and patents below are what the files say plus what the auditor remembers; the network
+proxy refused the licence pages tried (for example www.unicode.org), so **no licence or patent was checked online**.
+"From memory" means exactly that.
+
+**Short answer.** Three pieces of code or data clearly or probably follow another author's published code: the
+marching-cubes tables (copied, with the source named), the simplex noise (follows Gustavson's public-domain reference
+code line for line in structure) and the FXAA shader (follows the widely reposted FXAA 2 shader by Timothy Lottes /
+NVIDIA). Our own Windows programs say "MIT License" in their version information while `LICENSE` is proprietary.
+Several third-party runtimes are compiled into what we ship and are not listed or noticed (the MinGW C and C++
+runtime and winpthreads, static libsodium, the whole Emscripten runtime in web builds). The new big systems
+(JavaScript engine, browser, Lua, RHI, physics, okay-cc, okay-ms, okay-build, Xbox UWP, okay.js) show no sign of
+copied code in this scan; see "Clean" and "Limits".
+
+### Summary, most serious first
+
+| # | Severity | Where (file:line) | Likely source and licence | How sure | Recommended fix |
+|---|---|---|---|---|---|
+| A1 | **Clear copy (data) + probable port (structure)** | `engine/src/Components/VoxelTerrain.cpp:59-334` (`kEdge[256]`, `kTri[256][16]`), `:336-338` (corner and edge order, "Bourke order"), the polygonise loop `:877-905` (`cubeindex`, `val[i] < iso`) | Paul Bourke, "Polygonising a scalar field" (1994), tables credited there to Cory Gene Bloyd. Licence: from memory, offered freely / public domain; **unverified**. The file names Bourke but records no licence | High: same 256 + 4096 values, same lower-case hex in rows of 16 with no spaces, same `cubeindex` loop | Owner decision (rule 19a: public-domain needs approval). If not approved: build the tables at start-up from our own case analysis of the 256 corner patterns (or switch to our own surface-nets / marching-tetrahedra mesher), with a watertightness test. Either way add the source line |
+| A2 | **Probable close port of public-domain code** | `engine/include/okay/Math/Noise.hpp:86-126` (`Simplex2`, `Simplex3`) | Stefan Gustavson, "Simplex noise demystified" (2005), its Java reference code; public domain by the author's statement (from memory, unverified) | High on structure: same names (`x0 y0 i1 j1 i2 j2 k2 x1..x3 t0..t3`), the same six-way `if (x0 >= y0)` ordering, the same 0.5 / 0.6 radii and the 70 / 32 output scales. The hash and gradients are our own. No source is named in the file | Owner decision (rule 19a). If not approved: rewrite from the idea (skewed simplex lattice, rank the coordinates, sum the corner kernels) in our own structure, choose and test our own kernel radius and normalisation. See also P1 |
+| A3 | **Probable close port** | `engine/src/Render/GLRendererShaders.cpp:602-623` (`kFxaaFrag`), `engine/include/okay/Render/D3DPostHLSL.hpp:69-88` (`PSFxaa`) | The FXAA 2 / "FXAA PC console" shader by Timothy Lottes (NVIDIA, 2009-2011) as reposted in many GLSL versions. NVIDIA's FXAA 3.11 header carries an NVIDIA copyright and its own licence; reposts carry various or no licence (from memory, **unverified**) | High: `rgbA` / `rgbB`, `dirReduce`, `rcpDirMin`, reduce-min 1/128, reduce-mul 1/8, span 8, taps at 1/3 - 0.5 and 2/3 - 0.5, the `lB < lMin \|\| lB > lMax` choice, and the 0.0312 / 0.125 edge thresholds of FXAA 3.11. The comment says "the classic 3.x formulation" | Rewrite an edge anti-aliasing pass from the idea (local luma contrast, edge direction from the luma gradient, blend along the edge) with our own taps and constants chosen by tests; or reuse the software renderer's own "FXAA-lite" idea (`SoftwareRenderer.hpp:1484`). Rename the UI label "FXAA" (an NVIDIA name) to "Edge smoothing" |
+| A4 | **Our own licence stated wrongly in shipped files** | `cmake/okay_version.rc.in:23` (`LegalCopyright ... MIT License.`), used for every Windows `.exe` | `LICENSE` is the proprietary OkaySpace licence (README.md:410 and CHANGELOG say so) | Certain | Change the string to "Copyright (c) 2026 OkaySpaceGameEngine. All rights reserved. See LICENSE." (source change) |
+| A5 | **Third-party code shipped, not listed, no notice** | `cmake/mingw-w64-x86_64.toolchain.cmake:45-54`: libgcc, libstdc++ and libwinpthread linked statically into every Windows program; `:20-43` removes winpthreads' own version resource | GCC runtime libraries: GPLv3 with the GCC Runtime Library Exception; winpthreads: MIT-style licence that asks for its notice in copies (both from memory, **unverified**) | Certain that they are linked; licence terms unverified | Add the notices to the release notice file (F6) once the owner confirms the terms. Now listed in `THIRD_PARTY.md` |
+| A6 | **Third-party code shipped, not listed, no notice** | Web export: `player/CMakeLists.txt:8-23` (`-sUSE_SDL=2`), `.github/workflows/ci.yml:868-880` (Emscripten 3.1.51) | Emscripten's JavaScript runtime and system libraries (its C library, libc++ / libc++abi, compiler-rt, malloc) and its SDL2 port go into `okay-player.js` / `.wasm` (licences: Emscripten MIT / NCSA, musl MIT, LLVM Apache-2.0 with LLVM exception, SDL zlib; from memory, **unverified**) | Certain that they are built in; licences unverified | Same as A5; also a replacement plan line in `docs/status/own_code_roadmap.md`. Now listed in `THIRD_PARTY.md` |
+| A7 | Notice gap (known, F6, still open) | libsodium is linked **statically** into release builds (`engine/CMakeLists.txt:660-668`, `SODIUM_STATIC`, `OKAY_REQUIRE_SODIUM`); Dear ImGui (MIT) in the editor and launcher; SDL2 (zlib) DLL bundled; `steam_api64.dll` bundled when `STEAMWORKS_SDK_PATH` is set (`scripts/build-windows-dist.sh:272-275`); Roboto Medium (Apache-2.0 per its name table) embedded in the engine (`shared/RobotoFontOwn.h`) and so in every exported game, still with no licence file | ISC, MIT, zlib, Valve SDK terms, Apache-2.0 | Certain about what is built in; no step writes a notice file. **Improved since 11-14:** `scripts/build-windows-dist.sh:180-183` copies `assets/fonts/*`, so the DejaVu licence and the JetBrains Mono OFL now travel with the Windows package | One `THIRD_PARTY_NOTICES.txt` in every release archive, installer, exported game and web build; Roboto licence text from the owner (question 7 of 11-14) |
+| A8 | Trademark / look-alike | `engine/include/okay/Browser/Profile.hpp:24` (`kDefaultSearchUrl` = Google), `engine/src/Browser/Profile.cpp:67` and `okayui/screens/BrowserView.hpp:85` ("Search Google or type an address", close to Chrome's own "Search Google or type a URL"), `shared/BrowserApp.cpp:801` ("Use Google") | Google's name and Chrome's wording; Google's terms for a default search engine (unverified) | Certain that the name and the near-identical wording are there | Neutral placeholder ("Search or type an address"), let the person pick a search address on first run, or ask the owner whether to keep Google as the default. (Browser files are being changed in other worktrees today; this audits main) |
+| A9 | Trademark (low; naming other products in UI text) | "Minecraft-style" in UI strings: `editor/main.cpp:30012, 30015, 30302, 30970, 35007, 35013, 37866, 38463, 38528, 41808`, `editor/UIMenuModel.hpp:283`, `engine/src/Scene/BuiltinPropertiesGameplay.cpp:160, 247`. "ACES" as a tone-map name (`editor/main.cpp:11334`, `shared/EditorPanelModels.hpp:676`; the curve is Narkowicz's fit, not the Academy's ACES transform). "FXAA" (NVIDIA's name) in many UI labels | Mojang / Microsoft, the Academy (A.M.P.A.S.), NVIDIA | Certain they are there; whether any is a problem is unverified | Use plain words: "block-game style", "Filmic (ACES fit)" or "Filmic A / B", "Edge smoothing" |
+| A10 | Data needing a source note | Hable filmic curve A-F and W = 11.2: `GLRendererShaders.cpp:567-569`, `D3DPostHLSL.hpp:34-36` (named only in `Atmosphere.hpp:119`); ACES fit: `GLRendererShaders.cpp:91, 566`, `D3D11Hlsl.hpp:194` (named in `SoftwareRenderer.hpp:1339`); interleaved gradient noise 52.9829189 / 0.06711056 / 0.00583715: `GLRendererShaders.cpp:292`, `D3D11Hlsl.hpp:300` (no note); 9-tap gaussian in 5 linear taps 1.384615 / 3.230769 / 0.227027 / 0.316216 / 0.070270: `DofMath.hpp:92-94`, `SsaoMath.hpp:44-48`, `GLRendererShaders.cpp:655-657`, `D3DPostHLSL.hpp:29-31` (derived in a note only in `RHI/BloomPass.cpp:4-5`); IMA ADPCM step table `launcher/VoiceChat.hpp:89` (no note; `WavDecoder.cpp:22` has one) | John Hable (GDC 2010), Krzysztof Narkowicz (2016), Jorge Jimenez (SIGGRAPH 2014), Daniel Rákos (2010; derivable from binomial weights), IMA / DVI recommended practice | Certain they match those publications; each is a short published formula, low risk | One comment line naming the paper or talk at each place (and show the gaussian derivation once) |
+| A11 | Asset or fixture with no recorded origin (likely ours or tool output) | `launcher/okayspace.ico` = `editor/okayspace.ico` (a planet icon, 7 sizes); `platform/xbox_uwp/app/Assets/*.png` (plain dark-blue squares, no artwork); `tests/data/audio/ogg`, `mp3`, `flac` (encoder strings in the files: ffmpeg `Lavf60.16.100`, LAME 3.100, libvorbis; the signal and the script that made them are not recorded); `examples/own_wav/mulaw_tone.wav`, `examples/spatial_audio/tone.wav`, `examples/ui_quality/ui_quality_icon.png`, `examples/obj_texture_paths/*`, `okayui/tests/golden/*`, `tests/golden/*`, `tests/export/*` | Unknown | The encoder facts are certain; who made the icon is unknown | Owner or author to record the origin (the icon especially: it ships). The test audio and its encoders are now in `THIRD_PARTY.md` |
+| A12 | Possible, weak (names only) | `tools/okayms/src/gen.hpp:181-193` (`gen_expr`, `gen_stmt`, `gen_addr`, the names chibicc uses, Rui Ueyama, MIT); `tools/okaycc/include/__tree`, `__hash_table`, `__reverse_iterator` (libc++'s internal file names, LLVM licence); `okayui/include/okay/UI/OkayUIImGuiNames.hpp` (Dear ImGui API names such as `ImHashStr`, `ImGuiStorage` as aliases); `tools/okayms/stdinc/windows.h`, `winhttp.h`, `bcrypt.h`, `intrin.h` (Win32 declarations retyped from Microsoft's documentation) | as named | Low: the bodies differ (okay-ms emits machine bytes from C++ classes; `__tree` is an AVL tree, libc++'s is red-black; OkayUI's `HashStr` is FNV-1a, Dear ImGui's is CRC-32; the Windows headers say "own words") | None needed; keep the "written from" lines. An overlap run against chibicc and libc++ would settle it (not available here) |
+| P1 | Patent risk (possible, unverified) | Simplex noise `Noise.hpp:86-126` | Ken Perlin, US 6,867,776 (simplex noise for texture synthesis in 3D and up); believed expired in 2022 (from memory) | Unverified | Owner / counsel to confirm expiry; the A2 rewrite does not change this |
+| P2 | Patent risk (possible, unverified) | BC1-BC3 (S3TC / DXT) encoder and decoder `engine/include/okay/Texture/Bc.hpp`, `engine/src/Texture/`; MP3 decoder `engine/src/Audio/Mp3Decoder.cpp`; marching cubes (A1) | S3 Graphics S3TC patents, MPEG audio layer III patents, US 4,710,876: all believed expired (2017-2018, about 2017, 2005; from memory) | Unverified | Confirm once; no code change expected |
+| P3 | Patent risk (possible, unverified) | Anti-cheat (`engine/src/Net/AntiCheat.cpp`, `engine/include/okay/Net/CheatDetect.hpp`, `shared/AntiCheat*.hpp`), server lag compensation and rollback netcode (`engine/src/Net/`), SSAO (`GLRendererShaders.cpp:432`) | Fields with many patents; **no specific patent was identified** | Unverified | Owner decision whether a patent search is wanted before shipping the anti-cheat and netcode commercially |
+| N1 | Not IP, found on the way (rule 18 / 19c) | `launcher/VoiceChat.hpp:55-84`: a second, own ChaCha20 outside `okay::crypto` (which has `engine/src/Crypto/ChaCha20.cpp`), and a second IMA ADPCM table (`:89`, also `WavDecoder.cpp:22`) | ours | Certain | Use `okay::crypto` / libsodium and the one IMA table (Claude 2's lane: duplicates and crypto rules) |
+
+Counts: **1 clear copy of data (A1)**, **2 probable ports (A2, A3)**, **1 own-licence error (A4)**, **3 third-party
+runtime / notice gaps (A5-A7)**, **2 trademark groups (A8, A9)**, **1 data-note group (A10)**, **1 asset-record group
+(A11)**, **1 weak naming group (A12)**, **3 patent groups (P1-P3)**, **1 non-IP note (N1)**.
+
+### State of the 2026-11-14 findings
+
+F1 (LWO UVs): done, reimplemented. F2 (TweetNaCl): closed, deleted. F3 (Freeverb): closed, rewritten. F4
+(`engine/src/Crypto/Fe25519_16.hpp`): **still open**, unchanged. F5: moot (no vendored code is left: `git ls-files`
+has no `third_party`, `vendor` or `external` folder). F6 (notices): **still open**, partly better (A7). F7 (behaviour
+matched to Assimp): stands; Assimp is no longer built. F9 (`tests/wycheproof/*.json`, Apache-2.0 test data): still in
+the repository, owner question 6 still open. F11 (inflate): stands.
+
+### Data tables with a source note (checked, fine)
+
+MP3 tables (ISO/IEC 11172-3, `Mp3Tables.hpp`, `Mp3Decoder.cpp`), JPEG (ITU T.81), SHA-2, BLAKE2b, Ed25519 (FIPS / RFC,
+constants derived or cited), Unicode bidi class L ranges and Arabic joining forms (`engine/src/Core/Localization.cpp:1247`,
+"worked out from the Unicode Character Database 14.0"; whether the Unicode licence asks for a notice for derived
+tables is unverified), Machado et al. 2009 colour-vision matrices (`engine/src/Graphics/ColorVision.cpp:18`), the
+evdev-to-HID key table (`engine/src/Platform/OwnLinuxX11.cpp:172`), keyboard layouts (`platform/xbox_uwp/XboxKeyLayout.hpp`,
+layouts are facts), CSS named colours (CSS Color 4, `engine/src/Browser/Css.cpp`), the HTML named-reference subset
+(`engine/src/Browser/Html.cpp:28`), the 5^q table (`engine/src/Render/Pow5Table.inc`, generated by
+`scripts/gen_pow5_table.py` from exact integers; the idea is Lemire 2021, cited), the built-in 8x8 font
+(`engine/src/Graphics/Font.cpp`, "hand-drawn"; a few glyphs compared from memory with the public-domain font8x8 set:
+different), Mersenne Twister parameters (`tools/okaycc/include/random:55`, ISO C++), CRC polynomials, and the hash
+mixing primes of xxHash / MurmurHash / splitmix used as constants in `Noise.hpp`, `WindField.hpp`, `VoxelEdit.cpp`,
+`Terrain.cpp`, `Destructible.hpp:250`, `launcher/main.cpp:4404` (published constants of public algorithms; a note
+would help, nothing to rewrite). `tests/ttf_refs.inc` holds FreeType's rendering of DejaVu Sans (program output,
+stated in `tests/test_ttf_rasterizer.cpp:5`).
+
+### Checked and clean (no sign of copied code in this scan)
+
+- **JavaScript engine** (`engine/src/JavaScript/`, 13,334 lines): every file names its ECMA-262 sections; no QuickJS,
+  Duktape, JerryScript or V8 identifiers (`JS_ATOM`, `JSContext`, `JSValue`, `duk_`...).
+- **Lua** (`engine/src/Lua/`, 8,125 lines): written from the Lua 5.4 manual; no PUC-Rio identifiers (`luaV_`, `luaH_`,
+  `TValue`, `lua_State`, `OP_` names); `%.14g` number printing is Lua's documented behaviour.
+- **Browser** (`engine/src/Browser/`, 8,978 lines): WHATWG HTML / DOM / URL and CSS specs cited per file; own user agent
+  "OkaySpace Browser"; `-webkit-` names are CSS property names pages use, not WebKit code.
+- **RHI** (`engine/src/Render/RHI/`), **physics** (`engine/src/Physics/Core/`, Catto's papers cited; Box2D-like default
+  iteration counts 8 / 3 are numbers, not code), **okay-build**, **okay-cc** runtime (`tools/okaycc/lib/`, Linux system
+  calls and ISO C), **okay-ms** runtime, **Xbox UWP** (own APPX writer from Microsoft's documentation and ECMA-376; no
+  Visual Studio template names such as `DeviceResources` / `StepTimer`), **okay.js** (`web/okayjs/`), the web shell,
+  **Supabase functions** (no imported libraries), the **Vorbis, FLAC and WAV** decoders (no stb / dr_libs names), the
+  **TrueType** rasteriser (no `stbtt` names), the **image decoders** (no `stbi` / libjpeg names or constants), **OkayUI**
+  (no Dear ImGui internals such as `IM_NORMALIZE2F`, `FringeScale`, `stb_textedit`).
+- No other project's copyright line in our code (only the JetBrains Mono font header). No .NET runtime or hostfxr
+  code on main yet. No video or AAC codec, no Brotli dictionary, no public suffix list, no SDL controller database.
+- Brand names used to describe a device or a service (DualShock, DualSense, Joy-Con, Xbox, Steam, PlayFab, Mixamo in
+  import hints, Blender in import notes) are text only; no logo or controller button art was found (PlayStation
+  buttons are the words "Cross", "Circle", ... in `engine/src/Input/GamepadInfo.cpp:225`).
+
+### Method (2026-11-26)
+
+1. `scripts/provenance_scan.py` was extended (one scanner, no second copy): it now reads every code folder
+   (`okayscript`, `browser`, `platform`, `web`, `supabase`, `examples`, the extension-less okay-cc / okay-ms headers
+   and more file types), knows many more project names (QuickJS, Duktape, WebKit, Lua's C files, LLVM, libc++,
+   chibicc, CoreCLR, Jolt, Gustavson, Bourke, Lottes, ...), and has four new modes: `constants` (magic numbers of
+   other projects and published shaders), `tables` (number tables of 64+ entries and whether a source note is near),
+   `marks` (other brands inside string literals of shipped code) and `assets` (every font, picture, sound and model
+   folder and whether `THIRD_PARTY.md` or a generator accounts for it). Results on this commit: 736 marker lines,
+   82 constant hits, 45 tables, 423 brand literals (most are "Steam", "Xbox", "Edge" as in mesh edges), 31 asset
+   folders (13 unaccounted, A11).
+2. Hits were read by eye; every row above was confirmed by reading the code, not only by the match.
+3. Headers of every file in the areas added since 11-14 were read for a stated source. `git grep` for other
+   projects' identifiers, copyright lines, licence texts, controller-database strings and codec names.
+4. Build and packaging files (`cmake/`, `scripts/build-windows-dist.sh`, `player/CMakeLists.txt`, the CI workflow)
+   were read for what is linked or bundled into shipped programs.
+
+### Limits (2026-11-26)
+
+- **A text scan cannot prove that nothing was copied.** A port that renames and reorders passes every mode.
+- No reference source tree was available and none could be fetched (the proxy refused outside hosts), so the
+  `overlap` mode was **not** run against QuickJS, Lua, chibicc, libc++, Box2D, stb, FXAA 3.11, Gustavson's code or
+  Bourke's page. A2 and A3 rest on reading our code against the remembered reference, not on a side-by-side diff.
+- Licences, patents and trademark status are from memory and marked unverified; no built release archive, web build
+  or exported game was opened to see what notices it carries.
+- Not read in full: the large hand-written files (`editor/main.cpp`, `launcher/main.cpp`, the renderers, the okay-cc
+  parser and checker, the okay-ms compiler, `okayui/src/`), and every shader string. Shaders were only searched for
+  known constants.
+- Files under `engine/src/Browser/**`, `shared/Browser*`, `okayui/screens/BrowserView.cpp` and `browser/main.cpp` are
+  being changed in other worktrees today; A8 describes main at `d18e4027`.
+
+### Questions for the owner (2026-11-26)
+
+1. A1 and A2: approve keeping public-domain data and code (marching-cubes tables, Gustavson's simplex structure), or
+   rewrite both? Recommendation: rewrite (both are small and testable).
+2. A3: rewrite the FXAA pass and rename it "Edge smoothing"?
+3. A4: fix the "MIT License" line in the Windows version information now?
+4. A5-A7: one notice file in every release, installer, exported game and web build, covering the runtimes listed?
+5. A8: keep Google as the browser's default search, or ship with no default / the person's choice?
+6. A11: who made the OkaySpace planet icon, and may we record that?
+7. P1-P3: is a professional patent check wanted for the anti-cheat and netcode before selling games commercially?
+
+---
+
+## 2026-11-14 audit (earlier record, kept as written)
 
 Date: 2026-11-14. Branch `claude/provenance-audit`, cut from main at `ff89d98a`. Read-only on source code: nothing
 in `engine/`, `shared/`, `editor/` and so on was changed. Only this page and `scripts/provenance_scan.py` were added.

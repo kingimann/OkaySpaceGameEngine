@@ -163,14 +163,14 @@ Back to the [code index](../code_index.md). 69 headers, 1010 names.
 - `WriteRequest` function, line 306
 - `LoadRequest` function, line 337
 - `PidAlive` function, line 434
-- `WaitForExit` function, line 448
-- `LaunchOnce` function, line 466
-- `EnvironmentBlock` function, line 518
-- `RunAndWait` function, line 579
-- `RunHelper` function, line 581
-- `SpawnHelperProcess` function, line 668
-- `StartHelper` function, line 744: Starts the helper and returns. The caller must exit so the wait can finish.
-- `DispatchHelper` function, line 763: Run as the first thing in main. Returns -1 when this is a normal launch.
+- `WaitForExit` function, line 459
+- `LaunchOnce` function, line 477
+- `EnvironmentBlock` function, line 529
+- `RunAndWait` function, line 590
+- `RunHelper` function, line 592
+- `SpawnHelperProcess` function, line 679
+- `StartHelper` function, line 755: Starts the helper and returns. The caller must exit so the wait can finish.
+- `DispatchHelper` function, line 774: Run as the first thing in main. Returns -1 when this is a normal launch.
 
 ## `shared/ConsoleScriptLink.hpp`
 

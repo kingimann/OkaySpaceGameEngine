@@ -53,6 +53,7 @@ int main() {
         CHECK(FuzzyScore("plc", "PlayerController.okay") > 0);
         CHECK(FuzzyScore("xyz", "PlayerController.okay") < 0);
         CHECK(FuzzyScore("pc", "PlayerController.okay") > FuzzyScore("pc", "SpaceCraft.okay"));   // word starts score more
+        CHECK(FuzzyScore("todo", "Insert TODO Note") > FuzzyScore("todo", "Go to Definition"));     // letters in one piece first
         const std::vector<std::string> files = {"/p/Assets/Scripts/Enemy.okay", "/p/Assets/Scripts/Player.okay",
                                                 "/p/Assets/Scripts/PlayerCamera.lua", "/p/Assets/UI/Pause.okay"};
         // Empty query: recent first (in order), then the rest alphabetically.

@@ -42,6 +42,7 @@ struct State {
     scriptide::RenamePlan plan;
     // quick fixes
     bool qfOpen = false;
+    float qfX = -1.0f, qfY = -1.0f;
     std::vector<scriptide::QuickFix> fixes;
     // local history
     bool lhOpen = false;
@@ -277,14 +278,19 @@ void DrawRenamePreview(const std::function<bool(const std::string&, const std::s
 }
 
 // ---- quick fixes --------------------------------------------------------------------------------------------------------
-void OpenQuickFixes(const std::vector<scriptide::QuickFix>& fixes) {
+void OpenQuickFixes(const std::vector<scriptide::QuickFix>& fixes, float x, float y) {
     if (fixes.empty()) return;
     S().fixes = fixes;
     S().qfOpen = true;
+    S().qfX = x; S().qfY = y;
 }
 void DrawQuickFixes(const std::function<void(const scriptide::QuickFix&)>& apply) {
     State& s = S();
-    if (s.qfOpen) { s.qfOpen = false; ImGui::OpenPopup("##quickfixes"); }
+    if (s.qfOpen) {
+        s.qfOpen = false;
+        if (s.qfX >= 0.0f) ImGui::SetNextWindowPos(ImVec2(s.qfX, s.qfY));
+        ImGui::OpenPopup("##quickfixes");
+    }
     if (!ImGui::BeginPopup("##quickfixes")) return;
     ImGui::TextDisabled("Quick fixes");
     ImGui::Separator();

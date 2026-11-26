@@ -11708,6 +11708,8 @@ static std::vector<std::pair<int, std::string>> ScriptOutline(const std::string&
 static bool g_seNewReq = false;
 // Requests from Search Everywhere to the editor's own tools (consumed next frame).
 static bool g_seSearchReq = false, g_seGotoReq = false, g_seFindReq = false, g_sePaletteReq = false;
+static bool g_seSideOpen = true;
+static bool g_seQuickFixReq = false;   // the quick fixes of the caret's line, as Alt+Enter (the screenshot hook asks for it)   // the Script Editor's side list (Alt+1): the project's scripts as a tree, this file's structure, plugin panels
 static bool g_sePaletteRename = false, g_sePaletteRefs = false, g_sePaletteDef = false;   // the command palette's Rename / References / Definition
 static void ScriptEditorNewScriptPopup(EditorState& ed) {
     static char name[96] = "NewScript";
@@ -12205,7 +12207,6 @@ void DrawScriptEditor(EditorState& ed) {
 
         // Statics that outlive the toolbar (used by the editor body further below).
         static bool  s_minimap = true;
-        static bool  s_showTree = true;                      // View > Script Tree: the project's scripts, this file's structure, plugin panels
         static bool  s_wordWrap = false, s_showWs = false;   // View > Word Wrap / Show Whitespace (the code widget's own)
         static int   s_foldReq = 0;                          // View > Fold All (1) / Unfold All (2), applied to the code widget
         static float s_zoom = 1.25f;
@@ -12247,7 +12248,7 @@ void DrawScriptEditor(EditorState& ed) {
             if (ImGui::BeginMenu("View")) {
                 ImGui::MenuItem("Syntax Colors", nullptr, &s_highlight);
                 ImGui::MenuItem("Minimap", nullptr, &s_minimap);
-                ImGui::MenuItem("Script Tree and Structure", nullptr, &s_showTree);
+                ImGui::MenuItem("Scripts and Structure", "Alt+1", &g_seSideOpen);
                 ImGui::MenuItem("Auto-close Brackets", nullptr, &g_scriptAutoPair);
                 if (ImGui::BeginMenu("Tab Width")) {
                     for (int tw : {2, 4, 8}) if (ImGui::MenuItem(std::to_string(tw).c_str(), nullptr, g_scriptTabWidth == tw)) g_scriptTabWidth = tw;
@@ -13031,6 +13032,9 @@ void DrawScriptEditor(EditorState& ed) {
         // --- Command Palette (Ctrl+Shift+P): searchable editor actions + go-to ---
         static char s_palQuery[64] = "";
         static bool s_palFocus = false;
+        // Centred near the top of the Script Editor (a popup otherwise opens at the mouse, which may be anywhere).
+        ImGui::SetNextWindowPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth() * 0.5f, ImGui::GetWindowPos().y + 60.0f),
+                                ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
         if (s_palReq ||
             (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
              ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_P, false))) {
@@ -13056,7 +13060,7 @@ void DrawScriptEditor(EditorState& ed) {
                 {"gotoline", "Go to Line...", "Go", "Ctrl+G", "", [&]{ g_seGotoReq = true; }},
                 {"search", "Search Everywhere", "Go", "Double Shift", "", [&]{ g_seSearchReq = true; }},
                 {"def", "Go to Definition", "Go", "F12", "", [&]{ g_sePaletteDef = true; }},
-                {"tree", "Toggle Script Tree and Structure", "View", "", "", [&]{ s_showTree = !s_showTree; }},
+                {"tree", "Toggle Scripts and Structure", "View", "", "", [&]{ g_seSideOpen = !g_seSideOpen; }},
                 {"highlight", "Toggle Syntax Colors", "View", "", "", [&]{ s_highlight = !s_highlight; }},
                 {"minimap", "Toggle Minimap", "View", "", "", [&]{ s_minimap = !s_minimap; }},
                 {"wrap", "Toggle Word Wrap", "View", "", "", [&]{ s_wordWrap = !s_wordWrap; }},
@@ -13307,6 +13311,13 @@ void DrawScriptEditor(EditorState& ed) {
                             if (!dup) extra.push_back(std::move(d));
                         }
                     }
+                    // A call the file-only lint calls unknown that another project script defines is not a problem (the
+                    // symbol index): drop it.
+                    s_warns.erase(std::remove_if(s_warns.begin(), s_warns.end(), [](const ScriptLint& w) {
+                        if (w.msg.rfind("Unknown function '", 0) != 0) return false;
+                        const std::size_t e = w.msg.find('\'', 18);
+                        return e != std::string::npos && !oked::ide::Index().Definitions(w.msg.substr(18, e - 18)).empty();
+                    }), s_warns.end());
                     pluginreg::DocContext pctx;
                     pctx.language = sc->Language(); pctx.path = sc->Path(); pctx.text = src; pctx.line = caret.line;
                     for (auto& d : pluginreg::ScriptProblems(pluginreg::ScriptEditorPlugins(), pctx, std::move(extra))) {
@@ -13408,15 +13419,11 @@ void DrawScriptEditor(EditorState& ed) {
         te.okay().SetShowWhitespace(s_showWs);
         if (s_foldReq == 1) te.okay().Edit().FoldAll(); else if (s_foldReq == 2) te.okay().Edit().UnfoldAll();
         s_foldReq = 0;
-        // ---- Scripts sidebar on the left: only the project's scripts (plus the
-        // ones that live in the scene), with a filter. It folds away to a thin
-        // strip with the chevron or Alt+1. (Classes and methods: double Shift.)
+        // ---- Scripts sidebar on the left: the project's scripts as a folder tree with a filter (editor/ScriptIdeUi.cpp
+        // DrawScriptTree), the scripts that live only in the scene, this file's Structure (the symbol around the caret
+        // marked) and the side panels editor plugins add. It folds away to a thin strip with the chevron or Alt+1.
         {
-            static bool s_sideOpen = false;
-            static char s_sideFilter[64] = "";
-            static std::vector<std::string> s_sideFiles;
-            static double s_sideScan = -10.0;
-            static std::string s_sideRoot;
+            bool& s_sideOpen = g_seSideOpen;
             const bool seFocus = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
             ImGuiIO& tio = ImGui::GetIO();
             if (seFocus && tio.KeyAlt && !tio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_1, false)) { s_sideOpen = !s_sideOpen; tio.InputQueueCharacters.resize(0); }   // (don't also type the digit)
@@ -13432,25 +13439,6 @@ void DrawScriptEditor(EditorState& ed) {
                 ImGui::EndChild();
                 ImGui::SameLine(0, 2);
             } else {
-                namespace fs = std::filesystem;
-                const fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
-                if (ImGui::GetTime() - s_sideScan > 2.0 || s_sideRoot != assets.string()) {   // rescan every couple of seconds
-                    s_sideScan = ImGui::GetTime(); s_sideRoot = assets.string(); s_sideFiles.clear();
-                    std::error_code ec;
-                    if (fs::is_directory(assets, ec))
-                        for (auto it = fs::recursive_directory_iterator(assets, fs::directory_options::skip_permission_denied, ec);
-                             it != fs::recursive_directory_iterator() && !ec; it.increment(ec)) {
-                            const std::string ext = it->path().extension().string();
-                            if (it->is_regular_file(ec) && (ext == ".okay" || ext == ".cs" || ext == ".lua")) s_sideFiles.push_back(it->path().string());
-                            if (s_sideFiles.size() > 2000) break;
-                        }
-                    std::sort(s_sideFiles.begin(), s_sideFiles.end(), [](const std::string& x, const std::string& y) {
-                        std::string a = fs::path(x).filename().string(), b = fs::path(y).filename().string();
-                        for (auto& c : a) c = (char)std::tolower((unsigned char)c);
-                        for (auto& c : b) c = (char)std::tolower((unsigned char)c);
-                        return a < b;
-                    });
-                }
                 ImGui::BeginChild("##setool", ImVec2(sdm.sideListW, av.y), ImGuiChildFlags_Borders);
                 {   // header: "Scripts" + count, fold chevron on the right
                     const ImVec2 hp = ImGui::GetCursorScreenPos();
@@ -13458,7 +13446,7 @@ void DrawScriptEditor(EditorState& ed) {
                     ImGui::AlignTextToFramePadding();
                     ImGui::TextUnformatted("Scripts");
                     ImGui::SameLine(0, 6);
-                    ImGui::TextDisabled("%d", (int)s_sideFiles.size());
+                    ImGui::TextDisabled("%d", (int)oked::ide::ProjectScripts().size());
                     ImGui::SetCursorScreenPos(ImVec2(hp.x + hw - sdm.smallHit, hp.y));
                     if (ImGui::InvisibleButton("##sefold", ImVec2(sdm.smallHit, std::max(sdm.smallHit, ImGui::GetFrameHeight())))) s_sideOpen = false;
                     const bool h = ImGui::IsItemHovered();
@@ -13467,55 +13455,43 @@ void DrawScriptEditor(EditorState& ed) {
                     if (h) { d->AddRectFilled(bmin, bmax, IM_COL32(255, 255, 255, 22), 5.0f); ImGui::SetTooltip("Hide scripts  (Alt+1)"); }
                     chevron(d, ImVec2((bmin.x + bmax.x) * 0.5f, (bmin.y + bmax.y) * 0.5f), true, h ? IM_COL32(240, 244, 250, 255) : IM_COL32(170, 176, 188, 255));
                 }
-                ImGui::SetNextItemWidth(-1);
-                ImGui::InputTextWithHint("##sefilter", "Filter scripts", s_sideFilter, sizeof s_sideFilter);
-                std::string fl = s_sideFilter; for (auto& c : fl) c = (char)std::tolower((unsigned char)c);
-                ImGui::Spacing();
-                ImGui::BeginChild("##sesidelist", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 4));
-                std::error_code ec;
-                int shown = 0;
-                for (const auto& f : s_sideFiles) {
-                    const fs::path fp(f);
-                    const std::string nm = fp.filename().string();
-                    if (!fl.empty()) { std::string l = nm; for (auto& c : l) c = (char)std::tolower((unsigned char)c); if (l.find(fl) == std::string::npos) continue; }
-                    const bool cur = !sc->Path().empty() && fs::equivalent(fp, sc->Path(), ec);
-                    // Folder (relative to Assets) shown dim after the name when it isn't Scripts/.
-                    std::string rel = fp.parent_path().lexically_relative(assets).generic_string();
-                    if (rel == "." || rel == "Scripts") rel.clear();
-                    ImGui::PushID(f.c_str());
-                    const ImVec2 rp = ImGui::GetCursorScreenPos();
-                    const float rowAvailW = ImGui::GetContentRegionAvail().x;
-                    if (ImGui::Selectable("##sefile", cur, 0, ImVec2(0, sdm.sideRowH(ImGui::GetTextLineHeight()))) && !cur) OpenScriptFileInEditor(f);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", fp.lexically_relative(assets.parent_path()).generic_string().c_str());
-                    ImDrawList* d = ImGui::GetWindowDrawList();
-                    const float ty = rp.y + sdm.sideRowPad;   // centred in the row
-                    auto measure = [](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x; };
-                    // A long name is cut with "..." instead of running past the list; the folder shows only if there is room.
-                    const std::string shownNm = oked::scriptui::ElideToWidth(nm, rowAvailW - 12.0f, measure);
-                    d->AddText(ImVec2(rp.x + 6, ty), ImGui::GetColorU32(ImGuiCol_Text), shownNm.c_str());
-                    if (!rel.empty() && shownNm == nm) {
-                        const float nw = ImGui::CalcTextSize(nm.c_str()).x;
-                        const std::string shownRel = oked::scriptui::ElideToWidth(rel, rowAvailW - 12.0f - nw - 10.0f, measure);
-                        if (!shownRel.empty()) d->AddText(ImVec2(rp.x + 6 + nw + 10, ty), ImGui::GetColorU32(ImGuiCol_TextDisabled), shownRel.c_str());
-                    }
-                    ImGui::PopID();
-                    ++shown;
-                }
+                const float listH = std::max(80.0f, (av.y - ImGui::GetFrameHeightWithSpacing() * 3.0f) * 0.55f);
+                oked::ide::DrawScriptTree(0.0f, listH, sc->Path());
                 // Scripts that live only inside the scene (no file).
                 bool header = false;
                 for (ScriptComponent* t : g_scriptTabs) {
                     if (!t->Path().empty()) continue;
                     GameObject* og = owner.count(t) ? owner[t] : nullptr;
                     std::string nm = (og ? og->name : std::string("script")) + ".okay";
-                    if (!fl.empty()) { std::string l = nm; for (auto& c : l) c = (char)std::tolower((unsigned char)c); if (l.find(fl) == std::string::npos) continue; }
                     if (!header) { ImGui::Spacing(); ImGui::TextDisabled("In the scene"); header = true; }
                     ImGui::PushID(t);
                     if (ImGui::Selectable(nm.c_str(), t == sc)) { g_activeScriptTab = t; g_focusScriptTab = t; }
                     ImGui::PopID();
-                    ++shown;
                 }
-                if (!shown) ImGui::TextDisabled(fl.empty() ? "No scripts yet." : "No scripts match.");
+                // Structure: this file's functions, classes and tables (OkayScript and Lua), the one around the caret marked.
+                ImGui::Spacing();
+                ImGui::TextDisabled("Structure");
+                ImGui::BeginChild("##structure", ImVec2(0, pluginreg::ScriptEditorPlugins().Panels().empty()
+                                                          ? -ImGui::GetFrameHeightWithSpacing() - 4.0f : 120.0f), ImGuiChildFlags_Borders);
+                {
+                    const auto syms = scriptide::OutlineOf(sc->Language(), buf.data());
+                    int here = -1;
+                    for (int i = 0; i < (int)syms.size(); ++i) if (syms[(std::size_t)i].line <= caret.line) here = i;
+                    for (int i = 0; i < (int)syms.size(); ++i) {
+                        const auto& sy = syms[(std::size_t)i];
+                        const char* tag = sy.kind == 'C' ? "C " : sy.kind == 'E' ? "E " : sy.kind == 'v' ? "v " : "f ";
+                        const std::string lbl = std::string(tag) + sy.display + "##st" + std::to_string(i);
+                        if (ImGui::Selectable(lbl.c_str(), i == here)) jumpTo(sy.line);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("line %d", sy.line);
+                    }
+                    if (syms.empty()) ImGui::TextDisabled("No functions or classes yet.");
+                }
                 ImGui::EndChild();
+                if (!pluginreg::ScriptEditorPlugins().Panels().empty()) {   // plugin side panels
+                    ImGui::BeginChild("##pluginpanels", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 4.0f));
+                    oked::ide::DrawPluginPanels();
+                    ImGui::EndChild();
+                }
                 if (ImGui::Button("+ New Script", ImVec2(-1, 0))) g_seNewReq = true;
                 ImGui::EndChild();
                 ImGui::SameLine();
@@ -13585,7 +13561,7 @@ void DrawScriptEditor(EditorState& ed) {
                                                 {"Run Script", "Action", 7}, {"Toggle Comment", "Action", 8}, {"Go to File", "Action", 9},
                                                 {"Word Wrap", "Setting", 10}, {"Minimap", "Setting", 11}, {"Syntax Colors", "Setting", 12},
                                                 {"Auto-close Brackets", "Setting", 13}, {"Show Whitespace", "Setting", 14},
-                                                {"Script Tree and Structure", "Setting", 15}, {"Zoom In", "Setting", 16}, {"Zoom Out", "Setting", 17}};
+                                                {"Scripts and Structure", "Setting", 15}, {"Zoom In", "Setting", 16}, {"Zoom Out", "Setting", 17}};
                     for (const auto& ac : kActs) {
                         const int sc2 = scriptide::FuzzyScore(query, ac.name);
                         if (sc2 < 0) continue;
@@ -13606,7 +13582,7 @@ void DrawScriptEditor(EditorState& ed) {
                                 case 12: s_highlight = !s_highlight; break;
                                 case 13: g_scriptAutoPair = !g_scriptAutoPair; break;
                                 case 14: s_showWs = !s_showWs; break;
-                                case 15: s_showTree = !s_showTree; break;
+                                case 15: g_seSideOpen = !g_seSideOpen; break;
                                 case 16: s_zoom = Mathf::Clamp(s_zoom + 0.1f, 0.7f, 3.0f); break;
                                 case 17: s_zoom = Mathf::Clamp(s_zoom - 0.1f, 0.7f, 3.0f); break;
                             }
@@ -13645,33 +13621,6 @@ void DrawScriptEditor(EditorState& ed) {
             const ImGuiID codeKeys = ImGui::GetID("##codeKeys");
             ImGui::SetKeyOwner(ImGuiKey_Escape, codeKeys);
             ImGui::SetKeyOwner(ImGuiKey_Tab, codeKeys);
-        }
-        // The side pane (View > Script Tree and Structure): every project script with a filter, this file's structure
-        // (functions, classes, tables; the one around the caret marked) and the side panels editor plugins add.
-        if (s_showTree && av.x > 560.0f) {
-            const float sideW = std::min(240.0f, av.x * 0.26f);
-            ImGui::BeginChild("##ideside", ImVec2(sideW, av.y), ImGuiChildFlags_None);
-            const float treeH = std::max(80.0f, av.y * 0.5f);
-            oked::ide::DrawScriptTree(0.0f, treeH, sc->Path());
-            ImGui::TextDisabled("Structure");
-            ImGui::BeginChild("##structure", ImVec2(0, pluginreg::ScriptEditorPlugins().Panels().empty() ? 0.0f : av.y * 0.25f), ImGuiChildFlags_Borders);
-            {
-                const auto syms = scriptide::OutlineOf(sc->Language(), buf.data());
-                int here = -1;
-                for (int i = 0; i < (int)syms.size(); ++i) if (syms[(std::size_t)i].line <= caret.line) here = i;
-                for (int i = 0; i < (int)syms.size(); ++i) {
-                    const auto& sy = syms[(std::size_t)i];
-                    const char* tag = sy.kind == 'C' ? "C " : sy.kind == 'E' ? "E " : sy.kind == 'v' ? "v " : "f ";
-                    const std::string lbl = std::string(tag) + sy.display + "##st" + std::to_string(i);
-                    if (ImGui::Selectable(lbl.c_str(), i == here)) jumpTo(sy.line);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("line %d", sy.line);
-                }
-                if (syms.empty()) ImGui::TextDisabled("No functions or classes yet.");
-            }
-            ImGui::EndChild();
-            oked::ide::DrawPluginPanels();
-            ImGui::EndChild();
-            ImGui::SameLine();
         }
         if (g_codeFont) ImGui::PushFont(g_codeFont, kCodeFontDispPx * s_zoom);
         te.Render("##code", ImVec2(showMap ? -(mmW + 6.0f) : 0.0f, av.y), true);
@@ -14563,8 +14512,11 @@ void DrawScriptEditor(EditorState& ed) {
             }
             // Alt+Enter: the quick fixes of the caret's line (the lint's "did you mean", the built-in checks' and plugins'
             // fixes), in a menu; the light bulb beside the line opens the same menu.
-            if (chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter, false))
-                oked::ide::OpenQuickFixes(lineFixes(caret.line));
+            if ((chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter, false)) || g_seQuickFixReq) {
+                g_seQuickFixReq = false;
+                const ImVec2 below = te.CaretScreenPosBelow();
+                oked::ide::OpenQuickFixes(lineFixes(caret.line), below.x, below.y);
+            }
             // Ctrl+W — expand selection: word -> whole line(s) -> whole file.
             if (chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
                 ImGui::IsKeyPressed(ImGuiKey_W, false)) {
@@ -55476,10 +55428,11 @@ int main(int argc, char** argv) {
                 g_showScriptEditor = true; g_scriptDockReq = 1;
                 if (sn[0] == '2') g_seNewReq = true;
             }
-            // OKAY_UI_IDE=<script file>: open it in the Script Editor's own window; OKAY_UI_IDE_POPUP=quickopen|palette|search|
-            // rename a few frames later (Script Editor IDE screenshots; text for the popups comes from OKAY_UI_TYPE).
+            // OKAY_UI_IDE=<script file> (OKAY_UI_IDE_LINE: the caret's line): open it in the Script Editor's own window; OKAY_UI_IDE_POPUP=quickopen|palette|search|
+            // rename|quickfix a few frames later (Script Editor IDE screenshots; text for the popups comes from OKAY_UI_TYPE).
             if (const char* ide = std::getenv("OKAY_UI_IDE"); ide && s_focusFrames == 42) {
-                OpenScriptFileInEditorAt(ide, 5);
+                const char* ln = std::getenv("OKAY_UI_IDE_LINE");
+                OpenScriptFileInEditorAt(ide, ln ? std::atoi(ln) : 5);
                 g_scriptDockReq = 1;
             }
             if (const char* pop = std::getenv("OKAY_UI_IDE_POPUP"); pop && s_focusFrames == 75) {
@@ -55489,6 +55442,7 @@ int main(int argc, char** argv) {
                 else if (p == "palette") g_sePaletteReq = true;
                 else if (p == "search") g_seSearchReq = true;
                 else if (p == "rename") oked::ide::OpenRenamePreview("Fire", "Shoot");
+                else if (p == "quickfix") g_seQuickFixReq = true;
             }
             // OKAY_UI_SCRIPT=open: the selection's own script; =lua: a Lua starter script; =luaerr: a Lua
             // script with a syntax error and a misspelled engine name (the checks, in screenshots).

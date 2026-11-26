@@ -46,6 +46,18 @@ int FuzzyScore(const std::string& pat, const std::string& cand) {
     }
     if (firstAt == 0) score += 6;
     score -= firstAt > 0 ? firstAt : 0;   // a match that starts late and scatters can fall below 0: not a match
+    // The letters typed in one piece ("todo" in "Insert TODO Note") beat the same letters picked up one by one, which the
+    // first-come walk above can find instead.
+    std::string p;
+    for (char c : pat) if (c != ' ') p += (char)std::tolower((unsigned char)c);
+    const std::size_t at = p.empty() ? std::string::npos : okay::str::LowerAscii(cand).find(p);
+    if (at != std::string::npos) {
+        const char prev = at ? cand[at - 1] : ' ';
+        const bool wordStart = at == 0 || prev == '_' || prev == '.' || prev == '/' || prev == '\\' || prev == ' ' || prev == '-' ||
+                               (std::islower((unsigned char)prev) && std::isupper((unsigned char)cand[at]));
+        const int whole = (int)p.size() * 4 + (wordStart ? 6 : 0) + (at == 0 ? 6 : 0);
+        if (whole > score) score = whole;
+    }
     return score;
 }
 

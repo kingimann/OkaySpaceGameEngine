@@ -53,8 +53,8 @@ void OpenRenamePreview(const std::string& from, const std::string& to);
 void DrawRenamePreview(const std::function<bool(const std::string&, const std::string&)>& applyOpen);
 
 // ---- quick fixes ----
-/// Show the quick-fix menu at the mouse (Alt+Enter or the light bulb).
-void OpenQuickFixes(const std::vector<scriptide::QuickFix>& fixes);
+/// Show the quick-fix menu (Alt+Enter or the light bulb) at a screen point (below the caret); x < 0: at the mouse.
+void OpenQuickFixes(const std::vector<scriptide::QuickFix>& fixes, float x = -1.0f, float y = -1.0f);
 void DrawQuickFixes(const std::function<void(const scriptide::QuickFix&)>& apply);
 
 // ---- local history ----

@@ -552,6 +552,8 @@ bool Decode(const std::uint8_t* in, std::size_t n, std::vector<std::uint8_t>& ou
         const std::uint32_t distTrees = ReadCount256(bits);
         if (!ReadContextMap(distTrees, distMap, std::size_t(4) * blk[2].types, pools, bits, why)) { out.clear(); return false; }
         if (bits.Overrun()) return fail("brotli: stream cut off");
+        // (the format cannot say more than 256 trees: ReadCount256; checked again before the arrays are sized from them)
+        if (litTrees > 256 || distTrees > 256) return fail("brotli: tree count out of range");
         const int distAlphabet = 16 + int(ndirect) + (48 << npostfix);
         litCodes.assign(litTrees, Code());
         insCodes.assign(blk[1].types, Code());

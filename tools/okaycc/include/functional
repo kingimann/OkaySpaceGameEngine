@@ -119,5 +119,16 @@ public:
     bool operator==(nullptr_t) const { return __p == nullptr; }
     bool operator!=(nullptr_t) const { return __p != nullptr; }
     R operator()(A... a) const { return __p->__call(a...); }
+    // [func.wrap.func.targ]: the stored callable when it is a T, else null (by the holder's class).
+    template <typename T>
+    T *target() {
+        __fn_holder<T, R(A...)> *h = dynamic_cast<__fn_holder<T, R(A...)> *>(__p);
+        return h ? &h->__f : nullptr;
+    }
+    template <typename T>
+    const T *target() const {
+        const __fn_holder<T, R(A...)> *h = dynamic_cast<const __fn_holder<T, R(A...)> *>(__p);
+        return h ? &h->__f : nullptr;
+    }
 };
 }  // namespace std

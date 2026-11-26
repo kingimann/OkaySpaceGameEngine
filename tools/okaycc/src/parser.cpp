@@ -1885,6 +1885,15 @@ private:
         }
         return !any;
     }
+    // this->field initialized from v (cinit: the copy constructor for an object of the class, a
+    // converting constructor or aggregate initialization for anything else).
+    std::unique_ptr<Stmt> memberCinit(const std::string& tag, const std::string& field, std::unique_ptr<Expr> v,
+                                      const Pos& p) {
+        std::vector<std::unique_ptr<Expr>> a;
+        a.push_back(eAddr(eArrow(eName("this", p), field, p), p));
+        a.push_back(std::move(v));
+        return sExpr(eCall(eName("\x01" "cinit:" + tag, p), std::move(a), p), p);
+    }
     std::unique_ptr<Decl> buildCtor(const std::string& tag, CtorDef& d, const std::string& symbol = "") {
         Type* T = classOf(tag);
         if (!T) return nullptr;
@@ -1949,10 +1958,7 @@ private:
                                   f.second->kind == Type::Kind::Struct && !f.second->tag.empty() &&
                                   classOf(f.second->tag) && !userCtors_.count(f.second->tag);
             if (braceOne && !(ft && ft->needCtor)) {
-                std::vector<std::unique_ptr<Expr>> a;
-                a.push_back(eAddr(eArrow(eName("this", p), f.first, p), p));
-                a.push_back(std::move(mi->args[0]));
-                body->stmts.push_back(sExpr(eCall(eName("\x01" "cinit:" + f.second->tag, p), std::move(a), p), p));
+                body->stmts.push_back(memberCinit(f.second->tag, f.first, std::move(mi->args[0]), p));
                 continue;
             }
             if (ft && ft->needCtor) {
@@ -1988,10 +1994,7 @@ private:
                 }
                 if (args.size() == 1 && !listArg) {
                     // One argument: an object of the class is copied, anything else goes to a constructor.
-                    std::vector<std::unique_ptr<Expr>> a;
-                    a.push_back(eAddr(eArrow(eName("this", p), f.first, p), p));
-                    a.push_back(std::move(args[0]));
-                    body->stmts.push_back(sExpr(eCall(eName("\x01" "cinit:" + f.second->tag, p), std::move(a), p), p));
+                    body->stmts.push_back(memberCinit(f.second->tag, f.first, std::move(args[0]), p));
                     if (eh_ && ft->needDtor) {
                         ehPushObject(body->stmts, eAddr(eArrow(eName("this", p), f.first, p), p), f.second->tag, 0, p);
                         ++ehHeld;
@@ -2012,10 +2015,7 @@ private:
                     return ctorCall(et, std::move(at), {}, p);
                 }));
             } else if (mi && mi->args.size() == 1 && closureField(f.second)) {
-                std::vector<std::unique_ptr<Expr>> a;
-                a.push_back(eAddr(eArrow(eName("this", p), f.first, p), p));
-                a.push_back(std::move(mi->args[0]));
-                body->stmts.push_back(sExpr(eCall(eName("\x01" "cinit:" + f.second->tag, p), std::move(a), p), p));
+                body->stmts.push_back(memberCinit(f.second->tag, f.first, std::move(mi->args[0]), p));
             } else if (mi && mi->args.size() == 1 && f.second && f.second->kind == Type::Kind::Reference) {
                 // A reference member is bound, not assigned ([class.base.init] p8, [dcl.init.ref]):
                 // it holds the address of its referent. ival 11 names the reference itself.
@@ -7173,6 +7173,17 @@ private:
         return block;
     }
 
+    // The `T x = e` of a condition (if, while), read into a block opened by beginIfBlock: the block,
+    // and x's name in var.
+    std::unique_ptr<Stmt> conditionDecl(const Stmt& s, std::size_t localMark, std::string& var) {
+        auto block = beginIfBlock(s);
+        std::size_t at0 = 0;
+        parseDeclInto(block->stmts, false, true);
+        flushPre(block->stmts, at0);
+        var = localNames_.size() > localMark ? localNames_.back() : std::string();
+        expectP(")", ")");
+        return block;
+    }
     std::unique_ptr<Stmt> parseIf() {
         auto s = std::make_unique<Stmt>();
         s->kind = Stmt::Kind::If;
@@ -7209,12 +7220,8 @@ private:
             // branches and is destroyed after the whole statement.
             Pos at = here();
             std::size_t localMark = localNames_.size();
-            auto block = beginIfBlock(*s);
-            std::size_t at0 = 0;
-            parseDeclInto(block->stmts, false, true);
-            flushPre(block->stmts, at0);
-            std::string var = localNames_.size() > localMark ? localNames_.back() : std::string();
-            expectP(")", ")");
+            std::string var;
+            auto block = conditionDecl(*s, localMark, var);
             s->expr = eName(var, at);
             return endIfBlock(std::move(block), std::move(s), localMark);
         }
@@ -7246,12 +7253,8 @@ private:
             loopBases_.push_back(dscopes_.size());
             brkBases_.push_back(dscopes_.size());
             std::size_t localMark = localNames_.size();
-            auto block = beginIfBlock(*s);
-            std::size_t at0 = 0;
-            parseDeclInto(block->stmts, false, true);
-            flushPre(block->stmts, at0);
-            std::string var = localNames_.size() > localMark ? localNames_.back() : std::string();
-            expectP(")", ")");
+            std::string var;
+            auto block = conditionDecl(*s, localMark, var);
             auto stop = std::make_unique<Stmt>();
             stop->kind = Stmt::Kind::If;
             stop->line = at.line;

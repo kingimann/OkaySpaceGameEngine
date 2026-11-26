@@ -98,8 +98,7 @@ int main() {
         CHECK(r.headers.empty());
         r = ob::supabase::MakeRequest("k", "POST", "u", "ignored", "t", "", "/tmp/f.png", "image/png", 7);
         CHECK(r.headers.back() == "Content-Type: image/png" && r.bodyFile == "/tmp/f.png" && r.timeoutSec == 7);
-        CHECK(ob::supabase::TrimBase("https://h.example.test/") == "https://h.example.test");
-        CHECK(ob::supabase::TrimBase("https://h.example.test//") == "https://h.example.test/");   // one slash, as before
+        CHECK(ob::supabase::Auth::RecoverUrl("https://h.example.test//", "") == "https://h.example.test//auth/v1/recover");   // one slash dropped, as before
         CHECK(ob::supabase::SplitHeaders("\n\n").empty());
     }
 
@@ -146,6 +145,14 @@ int main() {
         CHECK(ob::TokenClaim("not-a-token", "sub").empty());
         CHECK(ob::TokenClaim("a.b", "sub").empty());
         CHECK(ob::TokenClaim("", "sub").empty());
+        std::string std64 = jwt;   // the standard alphabet's '+' and '/' read as '-' and '_' (as AccountService::JwtClaim did)
+        const std::string mixed = b64("{\"sub\":\"\xfb\xff\xbf?>\"}");
+        std::string mixedStd = mixed;
+        for (char& c : mixedStd) { if (c == '-') c = '+'; else if (c == '_') c = '/'; }
+        CHECK(mixed != mixedStd);   // the payload really has those characters
+        CHECK(ob::TokenClaim("h." + mixed + ".s", "sub") == ob::TokenClaim("h." + mixedStd + ".s", "sub"));
+        CHECK(ob::TokenClaim("h." + mixed + ".s", "sub") == "\xfb\xff\xbf?>");
+        CHECK(ob::TokenClaim("h.e30=.s", "x").empty());   // "{}" with padding: skipped characters are fine
         acc::AccountService a(root / "tok", "https://p.example.test", "key-1");
         CHECK(a.UserId().empty() && a.TokenExpiresAt() == 0);   // nobody signed in
     }

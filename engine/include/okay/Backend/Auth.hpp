@@ -8,9 +8,12 @@
 #pragma once
 
 #include "okay/Backend/Transport.hpp"
+#include "okay/Core/Base64.hpp"   // the engine's one Base64 (RFC 4648)
 
 #include <cctype>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace okay::backend {
 
@@ -38,15 +41,13 @@ struct Session {
 inline std::string TokenClaim(const std::string& jwt, const std::string& key) {
     const std::size_t a = jwt.find('.'), b = a == std::string::npos ? a : jwt.find('.', a + 1);
     if (b == std::string::npos) return "";
-    const std::string part = jwt.substr(a + 1, b - a - 1);
-    std::string json; unsigned acc = 0; int bits = 0;
-    for (char c : part) {
-        int v = c >= 'A' && c <= 'Z' ? c - 'A' : c >= 'a' && c <= 'z' ? c - 'a' + 26 : c >= '0' && c <= '9' ? c - '0' + 52
-              : (c == '-' || c == '+') ? 62 : (c == '_' || c == '/') ? 63 : -1;
-        if (v < 0) continue;
-        acc = (acc << 6) | (unsigned)v; bits += 6;
-        if (bits >= 8) { bits -= 8; json += (char)((acc >> bits) & 0xFF); }
-    }
+    // The payload is base64url (RFC 7515); '+' and '/' (the standard alphabet) are read as '-' and '_' as they always were,
+    // and anything else outside the alphabet is skipped (the engine's one Base64, lenient decoder).
+    std::string part = jwt.substr(a + 1, b - a - 1);
+    for (char& c : part) { if (c == '+') c = '-'; else if (c == '/') c = '_'; }
+    std::vector<std::uint8_t> bytes;
+    okay::base64::DecodeLenient(part, bytes, okay::base64::Alphabet::Url);
+    const std::string json(bytes.begin(), bytes.end());
     const std::string k = "\"" + key + "\"";
     std::size_t p = json.find(k); if (p == std::string::npos) return "";
     p = json.find(':', p + k.size()); if (p == std::string::npos) return "";

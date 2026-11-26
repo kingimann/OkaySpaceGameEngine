@@ -53,22 +53,19 @@ inline Request MakeRequest(const std::string& apiKey, const std::string& method,
     return r;
 }
 
-/// The project address without one trailing "/".
-inline std::string TrimBase(std::string url) {
-    if (!url.empty() && url.back() == '/') url.pop_back();
-    return url;
-}
-
 /// The Auth calls on Supabase. Holds the address, the publishable key and the transport it sends through (the transport
 /// must outlive it); cheap to make per call.
 class Auth final : public okay::backend::Auth {
 public:
     Auth(std::string projectUrl, std::string apiKey, Transport& transport)
-        : url_(std::move(projectUrl)), base_(TrimBase(url_)), key_(std::move(apiKey)), t_(transport) {}
+        : url_(std::move(projectUrl)), base_(url_), key_(std::move(apiKey)), t_(transport) {
+        if (!base_.empty() && base_.back() == '/') base_.pop_back();   // the project address without one trailing "/"
+    }
 
     /// The recover address for `base` (+ the redirect, only when it is an http(s) address). Pure, so it is unit tested.
     static std::string RecoverUrl(std::string base, const std::string& redirect) {
-        std::string u = TrimBase(std::move(base)) + "/auth/v1/recover";
+        if (!base.empty() && base.back() == '/') base.pop_back();
+        std::string u = base + "/auth/v1/recover";
         if (redirect.rfind("http", 0) == 0) u += "?redirect_to=" + okay::account::detail::PercentEncode(redirect);
         return u;
     }

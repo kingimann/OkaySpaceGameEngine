@@ -9,7 +9,10 @@
 #include <utility>
 #include <__reverse_iterator>
 namespace std {
-template <typename T>
+// The allocator argument (vector<T, A>, [vector.overview]) is accepted and not used: the elements
+// always live in malloc'd memory (okay-cc leaves out a template argument for a parameter named
+// __okay_drop..).
+template <typename T, typename __okay_drop_alloc = void>
 class vector {
 public:
     // the member types ([vector.overview]); the iterators are pointers

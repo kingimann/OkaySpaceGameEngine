@@ -125,6 +125,7 @@ add_library(okay_engine
     src/Render/RHI/RHI.cpp
     src/Render/RHI/SoftwareDevice.cpp
     src/Render/RHI/GLDevice.cpp
+    src/Render/RHI/D3D11Device.cpp
     src/Render/RHI/SurfaceShader.cpp
     src/Render/RHI/BloomPass.cpp
     src/Render/D3D11Renderer.cpp

@@ -2701,9 +2701,12 @@ private:
         if (!d.type) return;
         inferBound(d);  // char a[] = "text", int a[] = {1, 2}: the length comes from the initializer
         if (d.isStatic) {
-            std::string gname = ".Ls" + std::to_string(strN_++) + "_" + d.name;
+            // (asmName: the name the parser gave it for a local class's member functions, which
+            // use it, [class.local] p1)
+            std::string gname = d.asmName.empty() ? ".Ls" + std::to_string(strN_++) + "_" + d.name : d.asmName;
             Global g;
             g.name = gname;
+            if (!d.asmName.empty()) g.localSym = true;
             int sz = sizeOf(d.type.get());
             if (sz < 1) sz = 1;
             g.size = sz;

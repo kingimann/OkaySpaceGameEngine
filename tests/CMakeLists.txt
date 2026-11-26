@@ -1925,10 +1925,27 @@ add_executable(test_anim_playback test_anim_playback.cpp)
 target_link_libraries(test_anim_playback PRIVATE okay::engine)
 add_test(NAME anim_playback COMMAND test_anim_playback)
 
-add_executable(test_editor_plugins test_editor_plugins.cpp)
+add_executable(test_editor_plugins test_editor_plugins.cpp ${CMAKE_SOURCE_DIR}/editor/PluginScriptApi.cpp
+               ${CMAKE_SOURCE_DIR}/editor/PluginRegistry.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptIde.cpp)
+target_include_directories(test_editor_plugins PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_plugins PRIVATE okay::engine)
+find_package(Threads)
+if(TARGET Threads::Threads)
+    target_link_libraries(test_editor_plugins PRIVATE Threads::Threads)
+endif()
 target_compile_definitions(test_editor_plugins PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME editor_plugins COMMAND test_editor_plugins)
+
+# The Script Editor's workspace model and the plugin registry (editor/ScriptIde.hpp, editor/PluginRegistry.hpp): Quick Open
+# ranking, the symbol index (definitions, references, rename across OkayScript and Lua files), find/replace with regex, comment
+# toggle, quick fixes, templates, local history and plugin commands / providers. Headless; the engine headers only.
+add_executable(test_script_ide test_script_ide.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptIde.cpp ${CMAKE_SOURCE_DIR}/editor/PluginRegistry.cpp)
+target_include_directories(test_script_ide PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_features(test_script_ide PRIVATE cxx_std_17)
+if(TARGET Threads::Threads)
+    target_link_libraries(test_script_ide PRIVATE Threads::Threads)
+endif()
+add_test(NAME script_ide COMMAND test_script_ide)
 
 add_executable(test_anim_state_machine test_anim_state_machine.cpp)
 target_link_libraries(test_anim_state_machine PRIVATE okay::engine)

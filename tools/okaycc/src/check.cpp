@@ -29,73 +29,47 @@ public:
         tu_ = &tu;
         scopes_.emplace_back();
         // Declare every function first, so a call may come before the definition (class members).
-        for (auto& d : tu.decls) {
-            if (d && d->function && d->type) addFunction(*d);
-            else if (d && !d->vt.empty() && d->type) add(d->name, cloneType(*d->type), false, d->line, d->col);
-        }
+        for (auto& d : tu.decls)
+            if (d) declareTop(*d);
         // The decltype expressions of the partial specializations chosen ([temp.spec.partial.match]
         // p2): one that has no type is a substitution failure, and the next round chooses again.
-        for (SpecCheck& c : specChecks()) {
-            bool failed = false;
-            for (auto& x : c.exprs) {
-                if (!x) continue;
-                ++quiet_;
-                ET r = checkExpr(*x);
-                --quiet_;
-                memo_.clear();
-                if (r.bad) failed = true;
-            }
-            if (failed && sfinaeFailed().insert(c.key).second) instDirty() = true;
-        }
-        for (auto& d : tu.decls)
-            if (d && !d->vt.empty())
-                for (const std::string& sym : d->vt) usedFns_.insert(sym);  // a vtable uses its slots
-        for (auto& d : tu.decls)
-            if (d && (d->name.compare(0, 4, "_ZTI") == 0 || d->name.compare(0, 4, "_ZTS") == 0))
-                tiDone_.insert(d->name);  // the parser's (for vtables)
+        runSpecChecks(0);
         // Inline functions with a deduced return type (auto, decltype(auto); template instances are
         // inline) are checked first, so their callers see the type (std::visit(f, v).c_str()).
-        std::set<Decl*> early;
-        for (auto& d : tu.decls)
-            if (d && d->function && !d->fromInstance && d->body && d->type && isAuto(d->type->inner.get()) &&
-                d->isInline) {
-                early.insert(d.get());
-                // One that takes a lambda (a closure parameter, F &&f) is checked when its first
-                // call is, after the lambda: f() needs the lambda's own function.
-                if (takesClosure(*d->type)) deferredAuto_[d->name] = d.get();
-                else checkFunction(*d);
-            } else if (d && d->function && d->body && d->type && hasDecltype(d->type->inner.get()) &&
-                       takesClosure(*d->type)) {
-                early.insert(d.get());  // -> decltype(f()) with f a lambda: the same
-                deferredAuto_[d->name] = d.get();
-            }
+        for (std::size_t k = 0; k < tu.decls.size(); ++k)
+            if (tu.decls[k]) checkEarly(*tu.decls[k]);
+        // (by index: an instance made on demand, makeInstanceNow, is added at the end while this runs)
         std::vector<Decl*> waiting;
-        for (auto& d : tu.decls) {
-            if (!d) continue;
-            if (early.count(d.get())) continue;
-            if (d->function && d->fromInstance) {
-                waiting.push_back(d.get());
-                continue;
-            }
-            if (d->function) checkFunction(*d);
-            else checkVar(*d);
-        }
-        while (!deferredAuto_.empty()) {  // (not called in this file)
-            Decl* d = deferredAuto_.begin()->second;
-            deferredAuto_.erase(deferredAuto_.begin());
-            checkFunction(*d);
-        }
-        // Members of class template instances: checked once something refers to them (their own
-        // bodies may refer to more), the others are dropped ([temp.inst] p4).
         std::set<Decl*> done;
-        for (bool more = true; more;) {
-            more = false;
-            for (Decl* d : waiting) {
-                if (done.count(d)) continue;
-                if (!usedFns_.count(d->name) && !(d->asmName.size() && usedFns_.count(d->asmName))) continue;
-                done.insert(d);
+        for (std::size_t next = 0; next < tu.decls.size();) {
+            for (; next < tu.decls.size(); ++next) {
+                Decl* d = tu.decls[next].get();
+                if (!d) continue;
+                if (early_.count(d)) continue;
+                if (d->function && d->fromInstance) {
+                    waiting.push_back(d);
+                    continue;
+                }
+                if (d->function) checkFunction(*d);
+                else checkVar(*d);
+            }
+            while (!deferredAuto_.empty()) {  // (not called in this file)
+                Decl* d = deferredAuto_.begin()->second;
+                deferredAuto_.erase(deferredAuto_.begin());
                 checkFunction(*d);
-                more = true;
+            }
+            // Members of class template instances: checked once something refers to them (their own
+            // bodies may refer to more), the others are dropped ([temp.inst] p4).
+            for (bool more = true; more;) {
+                more = false;
+                for (std::size_t w = 0; w < waiting.size(); ++w) {
+                    Decl* d = waiting[w];
+                    if (done.count(d)) continue;
+                    if (!usedFns_.count(d->name) && !(d->asmName.size() && usedFns_.count(d->asmName))) continue;
+                    done.insert(d);
+                    checkFunction(*d);
+                    more = true;
+                }
             }
         }
         std::vector<std::unique_ptr<Decl>> kept;
@@ -110,6 +84,85 @@ public:
     }
 
 private:
+    // Declared before anything is checked (check), or when made on demand (makeInstanceNow).
+    void declareTop(Decl& d) {
+        if (d.function && d.type) addFunction(d);
+        else if (!d.vt.empty() && d.type) add(d.name, cloneType(*d.type), false, d.line, d.col);
+        for (const std::string& sym : d.vt) usedFns_.insert(sym);  // a vtable uses its slots
+        if (d.name.compare(0, 4, "_ZTI") == 0 || d.name.compare(0, 4, "_ZTS") == 0)
+            tiDone_.insert(d.name);  // the parser's (for vtables)
+    }
+    // An inline function with a deduced return type is checked before the others (check); one that
+    // takes a lambda is checked at its first call (deferredAuto_).
+    void checkEarly(Decl& d) {
+        if (early_.count(&d)) return;
+        if (d.function && !d.fromInstance && d.body && d.type && isAuto(d.type->inner.get()) && d.isInline) {
+            early_.insert(&d);
+            // One that takes a lambda (a closure parameter, F &&f) is checked when its first
+            // call is, after the lambda: f() needs the lambda's own function.
+            if (takesClosure(*d.type)) deferredAuto_[d.name] = &d;
+            else checkFunction(d);
+        } else if (d.function && d.body && d.type && hasDecltype(d.type->inner.get()) && takesClosure(*d.type)) {
+            early_.insert(&d);  // -> decltype(f()) with f a lambda: the same
+            deferredAuto_[d.name] = &d;
+        }
+    }
+    std::set<Decl*> early_;  // checked by checkEarly, not again in order
+    // The decltype checks of partial specializations from 'from' on; false when one has no type
+    // (a new round is asked for).
+    bool runSpecChecks(std::size_t from) {
+        bool ok = true;
+        for (std::size_t i = from; i < specChecks().size(); ++i) {
+            std::vector<Expr*> xs;
+            for (auto& x : specChecks()[i].exprs)
+                if (x) xs.push_back(x.get());
+            const std::string key = specChecks()[i].key;
+            bool failed = false;
+            for (Expr* x : xs) {
+                ++quiet_;
+                ET r = checkExpr(*x);
+                --quiet_;
+                memo_.clear();
+                if (r.bad) failed = true;
+            }
+            if (failed && sfinaeFailed().insert(key).second) {
+                instDirty() = true;
+                ok = false;
+            }
+        }
+        return ok;
+    }
+    // A function template instance asked for while the file is checked: made now (instantiateNow),
+    // declared, and checked at once when its return type is deduced, as check does with the ones
+    // a round begins with. False: it is left to a new round (the caller sets instDirty).
+    bool makeInstanceNow(const std::string& tmpl, const std::string& name, const std::vector<TArg>& args) {
+        if (!instantiateNow() || !tu_) return false;
+        InstReq r;
+        r.tmpl = tmpl;
+        r.name = name;
+        r.args = cloneArgs(args);
+        const std::size_t mark = tu_->decls.size();
+        const std::size_t specMark = specChecks().size();
+        if (!instantiateNow()(*tu_, r)) return false;
+        bool ok = true;
+        auto savedMemo = std::move(memo_);
+        memo_.clear();
+        const std::string savedFile = file_;
+        inFileScope([&] {
+            for (std::size_t k = mark; k < tu_->decls.size(); ++k)
+                if (tu_->decls[k]) declareTop(*tu_->decls[k]);
+            if (!runSpecChecks(specMark)) {
+                ok = false;
+                return;
+            }
+            for (std::size_t k = mark; k < tu_->decls.size(); ++k)
+                if (tu_->decls[k]) checkEarly(*tu_->decls[k]);
+        });
+        file_ = savedFile;
+        memo_ = std::move(savedMemo);
+        return ok;
+    }
+
     struct Sym {
         SharedType type;  // shared with the results that name it (lookup)
         bool func = false;
@@ -430,10 +483,13 @@ private:
                     }
                 }
             }
-            if (e.text.find("::") == std::string::npos && !inNs_.empty() && scopeOf(e.text) == 0) {
+            if (!inNs_.empty() && e.text.compare(0, 2, "::") != 0 &&
+                (e.text.find("::") == std::string::npos ? scopeOf(e.text) == 0 : !e.text.empty())) {
                 // Found only at file scope: a name of an enclosing namespace hides it
                 // ([basic.lookup.unqual] p2: remove inside std::filesystem is filesystem::remove,
-                // not the C library's ::remove).
+                // not the C library's ::remove). The same for the first name of a qualified one
+                // ([basic.lookup.qual] p1: V::One inside namespace eng is eng::V::One when eng
+                // has a V, also beside a global V).
                 for (std::string sc = inNs_; !sc.empty();) {
                     std::string q = sc + "::" + e.text;
                     if (scopes_.front().count(q) || overloads_.count(q)) {
@@ -673,6 +729,27 @@ private:
             if (!c.type || !scalar(*c.type)) {
                 err(e.line, e.col, "condition is not a scalar");
                 return bad(e.line, e.col);
+            }
+            if (a.lvalue && b.lvalue && a.type && b.type && a.type->kind == Type::Kind::Struct &&
+                b.type->kind == Type::Kind::Struct && !sameType(*a.type, *b.type)) {
+                // c ? derived : base with two lvalues: the derived one binds to its base part, so
+                // both are lvalues of the base class ([expr.cond] p4.1; tag.empty() ? name : tag
+                // with a TagString derived from std::string).
+                const bool aToB = derivedFrom(*a.type, *b.type), bToA = !aToB && derivedFrom(*b.type, *a.type);
+                auto asBase = [&](std::unique_ptr<Expr>& k, const Type& from, const Type& to) {
+                    if (!toBaseSubobject(k, &from, &to)) {
+                        // the base at the start of the object: *(Base *)&x
+                        Expr& at = *k;
+                        auto cast = mkE(Expr::Kind::Cast, at);
+                        cast->ty = ptrTo(cloneType(to));
+                        cast->kids.push_back(eUnary("&", std::move(k), at));
+                        k = eUnary("*", std::move(cast), at);
+                    }
+                    return decay(checkExpr(*k));
+                };
+                if (aToB) a = asBase(e.kids[1], *a.type, *b.type);
+                if (bToA) b = asBase(e.kids[2], *b.type, *a.type);
+                if (a.bad || b.bad) return bad(e.line, e.col);
             }
             if (a.lvalue && b.lvalue && a.type && b.type && a.type->kind == Type::Kind::Struct &&
                 sameType(*a.type, *b.type)) {
@@ -972,7 +1049,7 @@ private:
             }
             // (int)obj for a class with a conversion function: obj.operator int() first
             // ([expr.cast], [class.conv.fct]).
-            if (e.ty->kind != Type::Kind::Struct && e.ty->kind != Type::Kind::Void) convertIfNeeded(*e.kids[0]);
+            if (e.ty->kind != Type::Kind::Struct && e.ty->kind != Type::Kind::Void) convertTo(*e.kids[0], e.ty.get());
             ET inner = decay(checkExpr(*e.kids[0]));
             if (inner.bad) return bad(e.line, e.col);
             // (B *)d and (D *)b with B a base after the primary one: the address moves
@@ -1846,6 +1923,58 @@ private:
     // An object of a class with a conversion function used where a number or pointer is needed:
     // e becomes e.operator T() (the first conversion function the class has). Only an lvalue
     // object is converted (a call result is not), and the result is not converted again.
+    // A generic lambda with no captures where a pointer to a function is wanted ([expr.prim.lambda.closure]
+    // p8: its conversion function template deduces the auto parameters from the pointer's parameter
+    // types): the instance for those types, called through a function that passes no closure
+    // object, like closureToPointer's. e becomes that function's name.
+    bool genericToPointer(Expr& e, const Type* want) {
+        if (!want) return false;
+        if (want->kind == Type::Kind::Reference && want->inner) want = want->inner.get();
+        if (want->kind != Type::Kind::Pointer || !want->inner || want->inner->kind != Type::Kind::Function) return false;
+        ++quiet_;
+        ET probe = checkExpr(e);
+        --quiet_;
+        if (probe.bad || !probe.type || probe.type->kind != Type::Kind::Struct) return false;
+        auto git = generic_.find(probe.type->tag);
+        if (git == generic_.end() || !git->second.caps.empty() || !tu_) return false;
+        const Decl& proto = *tu_->lambdas[git->second.idx].fn;
+        const Type& fnT = *want->inner;
+        if (!proto.type || fnT.params.size() + 1 != proto.type->params.size()) return false;
+        std::vector<std::unique_ptr<Type>> types;
+        for (std::size_t i = 0; i < fnT.params.size(); ++i) {
+            if (!fnT.params[i].type || !proto.type->params[i + 1].type) return false;
+            ET a;
+            a.type = cloneType(*fnT.params[i].type);
+            a.lvalue = fnT.params[i].type->kind == Type::Kind::Reference;
+            auto t = autoParam(*proto.type->params[i + 1].type, a);
+            if (!t) return false;
+            types.push_back(std::move(t));
+        }
+        const std::string tag = probe.type->tag;
+        const std::string inst = genericInstanceOf(tag, std::move(types), e);
+        if (inst.empty()) return false;
+        const std::string thunkName = inst + "_fp";
+        if (!scopes_.front().count(thunkName)) {
+            Decl* fn = nullptr;
+            for (auto& d : lambdaDecls_)
+                if (d && d->name == inst) fn = d.get();
+            if (!fn || !fn->type || fn->type->params.empty() || !fn->type->params[0].type) return false;
+            auto thunk = noClosureThunk(thunkName, *fn, fnT, e);
+            checkFunctionNow(*thunk);
+            lambdaDecls_.push_back(std::move(thunk));
+        }
+        e.kind = Expr::Kind::Name;
+        e.text = thunkName;
+        e.ival = 0;
+        e.kids.clear();
+        e.ty.reset();
+        e.checked.reset();
+        return true;
+    }
+    // convertIfNeeded, or genericToPointer when the wanted type is a pointer to a function.
+    void convertTo(Expr& e, const Type* want) {
+        if (!genericToPointer(e, want)) convertIfNeeded(e);
+    }
     void convertIfNeeded(Expr& e) {
         auto isCall = [](const Expr& x) {
             return x.kind == Expr::Kind::Call || (x.kind == Expr::Kind::Unary && x.text == "*" && !x.kids.empty() &&
@@ -2056,7 +2185,7 @@ private:
     ET checkAssign(Expr& e) {
         if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return bad(e.line, e.col);
         ET lhs = checkExpr(*e.kids[0]);
-        if (!lhs.bad && lhs.type && lhs.type->kind != Type::Kind::Struct) convertIfNeeded(*e.kids[1]);
+        if (!lhs.bad && lhs.type && lhs.type->kind != Type::Kind::Struct) convertTo(*e.kids[1], lhs.type.get());
         ET rhs = decay(checkExpr(*e.kids[1]));
         if (lhs.bad || rhs.bad || !lhs.type) return bad(e.line, e.col);
         if (!lhs.mod) {
@@ -2352,6 +2481,21 @@ private:
             for (std::size_t i = 0; i < nargs && i < c->type->params.size(); ++i) {
                 if (!c->type->params[i].type) continue;
                 if (tsig && hasPlaceholder(*c->type->params[i].type)) {
+                    const Expr* ak0 = call.kids[firstArg + i].get();
+                    if (ak0 && ak0->kind == Expr::Kind::Brace) {
+                        // {..} for a parameter that is a template parameter itself (It first): not
+                        // deduced from the list ([temp.deduct.call] p1). Our library's templates of
+                        // that shape take iterators or forward values, which the standard library
+                        // constrains to non-lists, so the candidate is dropped (v.assign(n, {})
+                        // takes the count and the value, as with g++).
+                        const Type* q = c->type->params[i].type.get();
+                        if (q->kind == Type::Kind::Reference && q->inner) q = q->inner.get();
+                        if (q->kind == Type::Kind::Struct && q->tag.find('<') == std::string::npos &&
+                            q->tag.find('\x02') != std::string::npos) {
+                            ok = false;
+                            break;
+                        }
+                    }
                     if (ets[i].bad || !ets[i].type) continue;
                     ET full = checkExpr(*call.kids[firstArg + i]);
                     if (!deduceArg(*c->type->params[i].type, full, *tsig, tb)) {
@@ -2643,7 +2787,7 @@ private:
             r.name = inst;
             r.args = std::move(args);
             instRequests().push_back(std::move(r));
-            instDirty() = true;
+            if (!makeInstanceNow(key, inst, instRequests().back().args)) instDirty() = true;
         }
         return inst;
     }
@@ -3398,7 +3542,7 @@ private:
                 r.name = inst;
                 r.args = std::move(args);
                 instRequests().push_back(std::move(r));
-                instDirty() = true;
+                if (!makeInstanceNow(name, inst, instRequests().back().args)) instDirty() = true;
                 if (!scopes_.front().count(inst) && !overloads_.count(inst)) {
                     // Asked for in this round: its return type is known only once the file is read
                     // again with the instance. Until then the call has no type, so nothing is
@@ -3481,6 +3625,33 @@ private:
             if (cands.empty()) {
                 err(e.line, e.col, "'" + tag + "' has no constructor");
                 return bad(e.line, e.col);
+            }
+            bool ctorTemplate = false;
+            for (const Param* c : cands)
+                if (c->mangled.compare(0, 7, "\x01" "mtmpl:") == 0) ctorTemplate = true;
+            if (e.kids.size() == 3 && e.kids[1] && e.kids[2] && e.kids[2]->kind != Expr::Kind::Brace &&
+                !ctorTemplate && !hasCopyCtor(it->second.get())) {
+                // T(obj) for a class whose only constructors are others (a default one for its
+                // default member initializers): the implicit copy (or move) constructor, which copies
+                // the bytes when no member needs more ([class.copy.ctor] p10, p14). It took the
+                // default constructor, so new (p) T(std::move(x)) left p's members at their defaults.
+                ET src = decay(checkExpr(*e.kids[2]));
+                if (src.bad) return bad(e.line, e.col);
+                if (src.type && src.type->kind == Type::Kind::Struct && src.type->tag == tag) {
+                    std::unique_ptr<Expr> target;
+                    if (e.kids[1]->kind == Expr::Kind::Unary && e.kids[1]->text == "&" && e.kids[1]->kids.size() == 1)
+                        target = std::move(e.kids[1]->kids[0]);
+                    else
+                        target = eUnary("*", std::move(e.kids[1]), e);
+                    auto rhs = std::move(e.kids[2]);
+                    e.kind = Expr::Kind::Assign;
+                    e.text = "=";
+                    e.ival = 3;  // an initialization: operator= must not be used
+                    e.kids.clear();
+                    e.kids.push_back(std::move(target));
+                    e.kids.push_back(std::move(rhs));
+                    return checkExpr(e);
+                }
             }
             if (e.kids.size() == 3 && e.kids[2] && e.kids[2]->kind == Expr::Kind::Brace && e.kids[2]->ival == 5) {
                 // T{a, b, ...} for a class with an initializer-list constructor ([over.match.list]):
@@ -3838,6 +4009,21 @@ private:
                 } else {
                     braceToTemp(*a, *pt);
                 }
+            } else if (a && a->kind == Expr::Kind::Brace && a->ival == 0 && pt && a->kids.size() <= 1 &&
+                       (isIntish(*pt) || isFp(*pt) || pt->kind == Type::Kind::Pointer)) {
+                // f({}) and f({x}) for a scalar parameter ([dcl.init.list] p3.10-p3.11): the value
+                // x, or a value-initialized one (zero).
+                auto cast = mkE(Expr::Kind::Cast, *a);
+                cast->ty = cloneType(*pt);
+                cast->ty->cnst = false;
+                if (a->kids.empty() || !a->kids[0]) {
+                    auto zero = mkE(Expr::Kind::Int, *a);
+                    zero->ival = 0;
+                    cast->kids.push_back(std::move(zero));
+                } else {
+                    cast->kids.push_back(std::move(a->kids[0]));
+                }
+                e.kids[i + 1] = std::move(cast);
             }
         }
         std::size_t nargs = e.kids.size() - 1;
@@ -3945,16 +4131,19 @@ private:
                 continue;
             }
             if (fn.params[i].type && fn.params[i].type->kind == Type::Kind::Struct && e.kids[i + 1] &&
-                !(e.kids[i + 1]->kind == Expr::Kind::Comma && (e.kids[i + 1]->ival == 7 || e.kids[i + 1]->ival == 9))) {
-                // A class parameter given a value of another type (f(std::string) called with "abc"):
-                // a temporary made by the converting constructor initializes it ([over.ics.user],
+                !(e.kids[i + 1]->kind == Expr::Kind::Comma && (e.kids[i + 1]->ival == 7 || e.kids[i + 1]->ival == 9) &&
+                  e.kids[i + 1]->ty && sameType(*fn.params[i].type, *e.kids[i + 1]->ty))) {
+                // A class parameter given a value of another type (f(std::string) called with "abc",
+                // T(std::function<..>) with a lambda that owns a copy, itself a class temporary): a
+                // temporary made by the converting constructor initializes it ([over.ics.user],
                 // [class.conv.ctor], [dcl.init] p17.6).
                 ET pre = checkExpr(*e.kids[i + 1]);
                 if (pre.bad) return bad(e.line, e.col);
                 if (pre.type && !sameType(*fn.params[i].type, *pre.type) && !derivedFrom(*pre.type, *fn.params[i].type))
                     convertingTemp(*e.kids[i + 1], *pre.type, *fn.params[i].type);
             }
-            if (fn.params[i].type && fn.params[i].type->kind != Type::Kind::Struct) convertIfNeeded(*e.kids[i + 1]);
+            if (fn.params[i].type && fn.params[i].type->kind != Type::Kind::Struct)
+                convertTo(*e.kids[i + 1], fn.params[i].type.get());
             ET arg = decay(checkExpr(*e.kids[i + 1]));
             if (arg.bad) return bad(e.line, e.col);
             if (fn.params[i].type && fn.params[i].type->kind == Type::Kind::Struct && arg.type &&
@@ -4538,9 +4727,19 @@ private:
             if (a.bad || !a.type) return {};
             auto t = autoParam(*params[i].type, a);
             if (!t) return {};
-            key += mangleType(*t) + ";";
             types.push_back(std::move(t));
         }
+        return genericInstanceOf(tag, std::move(types), call);
+    }
+    // The function of generic lambda 'tag' for these parameter types (made and checked once).
+    std::string genericInstanceOf(const std::string& tag, std::vector<std::unique_ptr<Type>> types, const Expr& call) {
+        auto git = generic_.find(tag);
+        if (git == generic_.end() || !tu_) return {};
+        const Decl& proto = *tu_->lambdas[git->second.idx].fn;
+        const std::vector<Param>& params = proto.type->params;
+        if (types.size() + 1 != params.size()) return {};
+        std::string key;
+        for (const auto& t : types) key += mangleType(*t) + ";";
         GenericLambda& g = git->second;
         auto have = g.instances.find(key);
         if (have != g.instances.end()) return have->second;
@@ -4786,6 +4985,44 @@ private:
         lambdaDecls_.push_back(std::move(dtor));
         return true;
     }
+    // R name(A.. a) { return fn((closure *)0, a..); }: a function of type fnT (R(A..)) that calls the
+    // lambda function fn (its first parameter the closure, which it does not read) with no closure
+    // object. For closureToPointer and genericToPointer.
+    std::unique_ptr<Decl> noClosureThunk(const std::string& name, const Decl& fn, const Type& fnT, const Expr& at) {
+        auto thunk = std::make_unique<Decl>();
+        thunk->name = name;
+        thunk->function = true;
+        thunk->isStatic = true;
+        thunk->line = at.line;
+        thunk->col = at.col;
+        thunk->file = at.file;
+        auto ft = cloneType(fnT);
+        auto call = mkE(Expr::Kind::Call, at);
+        call->kids.push_back(mkName(fn.name, at));
+        auto nul = mkE(Expr::Kind::Cast, at);
+        nul->ty = cloneType(*fn.type->params[0].type);
+        nul->kids.push_back(mkE(Expr::Kind::Int, at));
+        call->kids.push_back(std::move(nul));
+        for (std::size_t i = 0; i < ft->params.size(); ++i) {
+            ft->params[i].name = "__a" + std::to_string(i);
+            call->kids.push_back(mkName(ft->params[i].name, at));
+        }
+        thunk->type = std::move(ft);
+        auto body = std::make_unique<Stmt>();
+        body->kind = Stmt::Kind::Block;
+        body->line = at.line;
+        body->col = at.col;
+        body->file = at.file;
+        auto st = std::make_unique<Stmt>();
+        st->kind = fnT.inner && fnT.inner->kind == Type::Kind::Void ? Stmt::Kind::Expr : Stmt::Kind::Return;
+        st->line = at.line;
+        st->col = at.col;
+        st->file = at.file;
+        st->expr = std::move(call);
+        body->stmts.push_back(std::move(st));
+        thunk->body = std::move(body);
+        return thunk;
+    }
     // A lambda with no captures converts to a pointer to a function with its parameters and
     // return type ([expr.prim.lambda.closure] p8): the closure class gets that conversion function,
     // which gives the address of a function that calls the lambda's own one with no closure
@@ -4824,32 +5061,14 @@ private:
             st->expr = std::move(x);
             return st;
         };
-        const bool isVoid = ret->kind == Type::Kind::Void;
         auto fnT = prim(Type::Kind::Function);
         fnT->inner = cloneType(*ret);
         for (std::size_t i = 1; i < fn.type->params.size(); ++i) {
             Param q;
-            q.name = "__a" + std::to_string(i);
             if (fn.type->params[i].type) q.type = cloneType(*fn.type->params[i].type);
             fnT->params.push_back(std::move(q));
         }
-        auto thunk = std::make_unique<Decl>();
-        thunk->name = fn.name + "_fp";
-        thunk->function = true;
-        thunk->isStatic = true;
-        pos(*thunk);
-        thunk->type = cloneType(*fnT);
-        {
-            auto call = mkE(Expr::Kind::Call, at);
-            call->kids.push_back(mkName(fn.name, at));
-            auto nul = mkE(Expr::Kind::Cast, at);
-            nul->ty = cloneType(*fn.type->params[0].type);
-            nul->kids.push_back(mkE(Expr::Kind::Int, at));
-            call->kids.push_back(std::move(nul));
-            for (std::size_t i = 1; i < fn.type->params.size(); ++i) call->kids.push_back(mkName("__a" + std::to_string(i), at));
-            thunk->body = block();
-            thunk->body->stmts.push_back(retStmt(std::move(call), isVoid));
-        }
+        auto thunk = noClosureThunk(fn.name + "_fp", fn, *fnT, at);
         auto fp = prim(Type::Kind::Pointer);
         fp->inner = cloneType(*fnT);
         auto convT = prim(Type::Kind::Function);
@@ -5192,6 +5411,20 @@ private:
             if (!d.init || !d.type->inner) {
                 err(d.line, d.col, "a reference must be initialized");
             } else {
+                if (d.init->kind == Expr::Kind::Cond && d.init->kids.size() == 3 && d.init->kids[1] &&
+                    d.init->kids[2] && d.type->inner->kind != Type::Kind::Struct) {
+                    // T &r = c ? x : v[i]; with two lvalues of one type: the conditional is an lvalue
+                    // ([expr.cond] p4), *(c ? &x : &v[i]) (a class's is made so in checkExpr).
+                    ++quiet_;
+                    ET a = checkExpr(*d.init->kids[1]);
+                    ET b = checkExpr(*d.init->kids[2]);
+                    --quiet_;
+                    if (!a.bad && !b.bad && a.lvalue && b.lvalue && a.type && b.type && sameType(*a.type, *b.type) &&
+                        a.type->kind != Type::Kind::Array && a.type->kind != Type::Kind::Function) {
+                        Expr& at = *d.init;
+                        d.init = eUnary("*", condAddress(std::move(d.init)), at);
+                    }
+                }
                 ET src = checkExpr(*d.init);
                 if (!src.bad && !src.lvalue) err(d.line, d.col, "a reference must bind to an lvalue");
                 if (!src.bad && src.type && !sameType(*d.type->inner, *src.type) && !derivedFrom(*src.type, *d.type->inner))
@@ -5225,12 +5458,12 @@ private:
             if (d.type->kind == Type::Kind::Array && d.type->inner && d.type->inner->kind != Type::Kind::Struct &&
                 d.type->inner->kind != Type::Kind::Array)
                 for (auto& k : d.init->kids)
-                    if (k && k->kind != Expr::Kind::Brace) convertIfNeeded(*k);
+                    if (k && k->kind != Expr::Kind::Brace) convertTo(*k, d.type->inner.get());
             checkBraceKids(*d.init);
         } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array) {
             checkExpr(*d.init);
         } else if (d.init) {
-            if (d.type->kind != Type::Kind::Struct) convertIfNeeded(*d.init);
+            if (d.type->kind != Type::Kind::Struct) convertTo(*d.init, d.type.get());
             ET src = decay(checkExpr(*d.init));
             if (d.init->kind == Expr::Kind::Comma && d.init->ival == 9) {
                 consumed(*d.init);  // T x = T(args): built in place, the temporary is not destroyed
@@ -5691,7 +5924,7 @@ private:
                 else if (!v.bad && toBaseSubobject(s.expr, v.type.get(), ret_->inner.get()))
                     checkExpr(*s.expr);
             } else {
-                if (ret_->kind != Type::Kind::Struct) convertIfNeeded(*s.expr);
+                if (ret_->kind != Type::Kind::Struct) convertTo(*s.expr, ret_);
                 ET v = decay(checkExpr(*s.expr));
                 classReturn(s, v);
                 if (!v.bad && !canAssign(*ret_, v)) err(s.line, s.col, "return type does not match");

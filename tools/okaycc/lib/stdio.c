@@ -1,4 +1,4 @@
-/* Files for <cstdio> (ISO C 7.21: fopen, fclose, fread, fwrite, fgetc, fgets, fputc, fputs, fseek,
+/* Files and sscanf for <cstdio> (ISO C 7.21: fopen, fclose, fread, fwrite, fgetc, fgets, fputc, fputs, fseek,
  * ftell, rewind, feof, ferror, clearerr, fflush, fprintf, remove, rename, putchar; puts is in extra.c), on the
  * Linux system calls read 0, write 1, open 2, close 3, lseek 8, rename 82 and unlink 87 (the x86-64
  * system call table). Our own code. Reads go through a 4096-byte buffer per file; writes are not
@@ -299,4 +299,227 @@ unsigned int sleep(unsigned int s) {
     t.nsec = 0;
     nanosleep(&t, 0);
     return 0;
+}
+
+/* sscanf and vsscanf (ISO C 7.21.6.2, 7.21.6.7, 7.21.6.14), our own code. A white-space directive
+ * skips any white space; an ordinary character must match; a conversion is %, an optional '*' (read,
+ * not stored), an optional width, an optional size (hh h l ll j z t L) and one of d i u o x X p (an
+ * integer, strtol's rules, with the base the letter gives; i takes the base from the 0x or 0 prefix),
+ * a e f g A E F G (a number, strtod's rules), s (characters up to white space), c (exactly width
+ * characters, one by default, no white space skipped), [set] or [^set] (characters in the set) and n
+ * (the characters read so far). The result is the number of objects stored, or EOF when the input
+ * ends before the first conversion. */
+double strtod(char *s, char **end);
+static int scanSpace(int c) { return c == ' ' || (c >= 9 && c <= 13); }
+static int scanDigit(int c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
+    return 99;
+}
+int vsscanf(char *s, char *fmt, va_list ap) {
+    char *p;
+    int stored;
+    int done;
+    p = s;
+    stored = 0;
+    done = 0;
+    while (*fmt) {
+        int skip;
+        int width;
+        int size;
+        int conv;
+        if (scanSpace((unsigned char)*fmt)) {
+            while (scanSpace((unsigned char)*fmt)) ++fmt;
+            while (scanSpace((unsigned char)*p)) ++p;
+            continue;
+        }
+        if (*fmt != '%' || fmt[1] == '%') {
+            if (*fmt == '%') {
+                ++fmt;
+                while (scanSpace((unsigned char)*p)) ++p;
+            }
+            if (*p == 0) return done ? stored : -1;
+            if (*p != *fmt) return stored;
+            ++p;
+            ++fmt;
+            continue;
+        }
+        ++fmt;
+        skip = 0;
+        if (*fmt == '*') {
+            skip = 1;
+            ++fmt;
+        }
+        width = 0;
+        while (*fmt >= '0' && *fmt <= '9') width = width * 10 + (*fmt++ - '0');
+        size = 0; /* 1 char, 2 short, 3 long (also ll j z t), 4 long double */
+        if (*fmt == 'h') {
+            size = 2;
+            if (*++fmt == 'h') {
+                size = 1;
+                ++fmt;
+            }
+        } else if (*fmt == 'l') {
+            size = 3;
+            if (*++fmt == 'l') ++fmt;
+        } else if (*fmt == 'j' || *fmt == 'z' || *fmt == 't') {
+            size = 3;
+            ++fmt;
+        } else if (*fmt == 'L') {
+            size = 4;
+            ++fmt;
+        }
+        conv = *fmt;
+        if (conv == 0) return stored;
+        ++fmt;
+        if (conv == 'n') {
+            if (!skip) {
+                long n = (long)(p - s);
+                if (size == 1) *va_arg(ap, char *) = (char)n;
+                else if (size == 2) *va_arg(ap, short *) = (short)n;
+                else if (size == 3) *va_arg(ap, long *) = n;
+                else *va_arg(ap, int *) = (int)n;
+            }
+            continue;
+        }
+        if (conv != 'c' && conv != '[')
+            while (scanSpace((unsigned char)*p)) ++p;
+        if (*p == 0) return done ? stored : -1;
+        if (width == 0) width = conv == 'c' ? 1 : 1 << 30;
+        if (conv == 'd' || conv == 'i' || conv == 'u' || conv == 'o' || conv == 'x' || conv == 'X' || conv == 'p') {
+            int base;
+            int neg;
+            int any;
+            int left;
+            unsigned long v;
+            char *q;
+            base = conv == 'o' ? 8 : (conv == 'x' || conv == 'X' || conv == 'p') ? 16 : conv == 'i' ? 0 : 10;
+            q = p;
+            left = width;
+            neg = 0;
+            if (left > 0 && (*q == '-' || *q == '+')) {
+                neg = *q == '-';
+                ++q;
+                --left;
+            }
+            if (left >= 2 && q[0] == '0' && (q[1] == 'x' || q[1] == 'X') && (base == 16 || base == 0) &&
+                scanDigit((unsigned char)q[2]) < 16) {
+                q += 2;
+                left -= 2;
+                base = 16;
+            } else if (base == 0) {
+                base = left > 0 && q[0] == '0' ? 8 : 10;
+            }
+            v = 0;
+            any = 0;
+            while (left > 0 && scanDigit((unsigned char)*q) < base) {
+                v = v * (unsigned long)base + (unsigned long)scanDigit((unsigned char)*q);
+                ++q;
+                --left;
+                any = 1;
+            }
+            if (!any) return stored;
+            p = q;
+            if (neg) v = (unsigned long)0 - v;
+            if (!skip) {
+                if (conv == 'p') *va_arg(ap, char **) = (char *)v;
+                else if (size == 1) *va_arg(ap, char *) = (char)v;
+                else if (size == 2) *va_arg(ap, short *) = (short)v;
+                else if (size == 3) *va_arg(ap, long *) = (long)v;
+                else *va_arg(ap, int *) = (int)v;
+                ++stored;
+            }
+        } else if (conv == 'a' || conv == 'e' || conv == 'f' || conv == 'g' || conv == 'A' || conv == 'E' ||
+                   conv == 'F' || conv == 'G') {
+            char buf[128];
+            char *end;
+            int k;
+            double d;
+            for (k = 0; k < width && k < 127 && p[k] && !scanSpace((unsigned char)p[k]); ++k) buf[k] = p[k];
+            buf[k] = 0;
+            d = strtod(buf, &end);
+            if (end == buf) return stored;
+            p += end - buf;
+            if (!skip) {
+                if (size == 3 || size == 4) *va_arg(ap, double *) = d;
+                else *va_arg(ap, float *) = (float)d;
+                ++stored;
+            }
+        } else if (conv == 's') {
+            char *out;
+            out = skip ? 0 : va_arg(ap, char *);
+            while (*p && !scanSpace((unsigned char)*p) && width > 0) {
+                if (out) *out++ = *p;
+                ++p;
+                --width;
+            }
+            if (out) {
+                *out = 0;
+                ++stored;
+            }
+        } else if (conv == 'c') {
+            char *out;
+            int k;
+            out = skip ? 0 : va_arg(ap, char *);
+            for (k = 0; k < width; ++k)
+                if (p[k] == 0) return stored;
+            for (k = 0; k < width; ++k)
+                if (out) out[k] = p[k];
+            p += width;
+            if (out) ++stored;
+        } else if (conv == '[') {
+            char *set;
+            char *out;
+            int negate;
+            int any;
+            negate = 0;
+            if (*fmt == '^') {
+                negate = 1;
+                ++fmt;
+            }
+            set = fmt;
+            if (*fmt == ']') ++fmt; /* a ']' first is in the set */
+            while (*fmt && *fmt != ']') ++fmt;
+            if (*fmt == 0) return stored;
+            out = skip ? 0 : va_arg(ap, char *);
+            any = 0;
+            while (*p && width > 0) {
+                char *c;
+                int in;
+                in = 0;
+                for (c = set; c < fmt; ++c) {
+                    if (c + 2 < fmt && c[1] == '-') { /* a range a-z (a '-' first or last is itself) */
+                        if ((unsigned char)*p >= (unsigned char)c[0] && (unsigned char)*p <= (unsigned char)c[2]) in = 1;
+                        c += 2;
+                    } else if (*c == *p) {
+                        in = 1;
+                    }
+                }
+                if (in == negate) break;
+                if (out) *out++ = *p;
+                ++p;
+                --width;
+                any = 1;
+            }
+            ++fmt; /* the ']' */
+            if (!any) return stored;
+            if (out) {
+                *out = 0;
+                ++stored;
+            }
+        } else {
+            return stored;
+        }
+        done = 1;
+    }
+    return stored;
+}
+int sscanf(char *s, char *fmt, ...) {
+    va_list ap;
+    int n;
+    va_start(ap, fmt);
+    n = vsscanf(s, fmt, ap);
+    va_end(ap);
+    return n;
 }

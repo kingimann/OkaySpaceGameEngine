@@ -26,6 +26,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a bevel leaves a hole at a corner | [3.2](03-modeling-import.md#32-edge-and-loop-tools) Edge and loop tools |
 | a big message never arrives | [16.1](16-networking.md#161-transport-sealed-channels-packets) Transport, sealed channels, packets |
 | a big message takes seconds on a bad connection | [16.15](16-networking.md#1615-the-easy-layer-one-call-or-one-node-per-action) The easy layer: one call or one node per action |
+| a black or empty canvas | [18.12](18-build-export-release.md#1812-okayjs-web-library-the-engines-script-api-in-a-plain-web-page) okay.js web library (the engine's script API in a plain web page) |
 | a black window on start | [15.15](15-editor.md#1515-editor-shell-startup-and-lifecycle) Editor shell, startup and lifecycle |
 | a body spins when it should stay upright | [6.1](06-physics.md#61-2d-bodies-and-colliders) 2D bodies and colliders |
 | a bone stretches or turns NaN | [36.5](36-math-geometry.md#365-ik-math) IK math |
@@ -268,6 +269,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a script is rejected with "isn't supported yet | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |
 | A script needs a class | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |
 | a script reads or writes files outside the game folder (should be refused with a Console line) | [17.11](17-launcher-platform.md#1711-security-plan-sec1) Security plan SEC1 |
+| a script that works in the engine fails in a web page | [18.12](18-build-export-release.md#1812-okayjs-web-library-the-engines-script-api-in-a-plain-web-page) okay.js web library (the engine's script API in a plain web page) |
 | a script UI window and a scene HUD overlap | [40.5](40-okayui-library.md#405-how-okayui-relates-to-scene-ui) How OkayUI relates to scene UI |
 | a script's file call returns false or does nothing for an absolute path | [39.9](39-security-anticheat.md#399-script-and-file-path-safety) Script and file path safety |
 | a scroll list shows items outside its box | [12.1](12-ingame-ui.md#121-canvas-anchors-flex-layout-safe-area) Canvas, anchors, flex layout, safe area |
@@ -674,6 +676,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | jump feels floaty | [4.3](04-characters-cameras.md#43-2d-and-25d-controllers) 2D and 2.5D controllers |
 | jump plays when stepping off a curb | [5.3](05-animation-ik.md#53-model-clip-player-and-locomotion) Model clip player and locomotion |
 | jump pressed just before landing is ignored | [8.7](08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel) Input upgrade: timing, curves, per-player actions, recording, the Input panel |
+| keys do nothing in the page | [18.12](18-build-export-release.md#1812-okayjs-web-library-the-engines-script-api-in-a-plain-web-page) okay.js web library (the engine's script API in a plain web page) |
 | knockback is too weak or too strong | [6.8](06-physics.md#68-forces-explosions-and-body-push-out) Forces, explosions and body push-out |
 | labels or favourites vanish | [20.1](20-35-planned.md#201-asset-browser) Asset browser |
 | lathe shape is inside out | [3.9](03-modeling-import.md#39-generate-and-whole-mesh-operations) Generate and whole-mesh operations |
@@ -994,6 +997,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the camera shakes forever | [2.10](02-rendering-world.md#210-cameras-and-the-camera-stack) Cameras and the camera stack |
 | the camera sits inside the roof | [4.5](04-characters-cameras.md#45-vehicles) Vehicles |
 | the camera view is mirrored | [36.2](36-math-geometry.md#362-quaternions-and-matrices) Quaternions and matrices |
+| the canvas does not follow the window | [18.12](18-build-export-release.md#1812-okayjs-web-library-the-engines-script-api-in-a-plain-web-page) okay.js web library (the engine's script API in a plain web page) |
 | the canvas is slow with many nodes | [14.1](14-visual-scripting.md#141-graph-editor) Graph editor |
 | the car skates sideways | [4.5](04-characters-cameras.md#45-vehicles) Vehicles |
 | the chair pose floats above the seat | [4.11](04-characters-cameras.md#411-seats-and-sitting) Seats and sitting |
@@ -1013,6 +1017,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the context menu lacks an entry | [15.1](15-editor.md#151-hierarchy) Hierarchy |
 | the controller does not shake on a hit or explosion | [8.6](08-input.md#86-rumble-and-haptics) Rumble and haptics |
 | the conversation does not end | [10.2](10-story-cinematics.md#102-dialogue-graphs-and-dialogue-runner) Dialogue graphs and Dialogue Runner |
+| the cube is not lit | [18.12](18-build-export-release.md#1812-okayjs-web-library-the-engines-script-api-in-a-plain-web-page) okay.js web library (the engine's script API in a plain web page) |
 | the cursor does not come back after Esc | [8.4](08-input.md#84-cursor-and-touch) Cursor and touch |
 | the cursor stays visible during mouse-look or escapes the window | [8.4](08-input.md#84-cursor-and-touch) Cursor and touch |
 | the curve flips or twists | [2.11](02-rendering-world.md#211-splines-and-spline-tools) Splines and spline tools |

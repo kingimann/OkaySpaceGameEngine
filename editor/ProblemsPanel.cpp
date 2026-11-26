@@ -6,6 +6,7 @@
 #include "MainShared.hpp"
 #include "VisualScriptEditor.hpp"
 #include "okay/Testing/ObjectPath.hpp"
+#include "ProjectDiagRunner.hpp"   // the project-wide check on a worker
 
 #include <chrono>
 #include <cstdlib>
@@ -221,20 +222,12 @@ DiagTotals ProjectDiagTotals() {
 void TickProjectDiagnostics(okay::editor::EditorState& ed) {
     BindProblemsEditor(&ed);
     if (ed.isPlaying()) return;
-    static std::uint64_t lastHash = 0;
-    static double lastRun = -1000.0;
-    static bool have = false;
-    const std::uint64_t hash = SceneFingerprint(ed.scene());
+    // The scene's checks when it changed; the project-wide check (every text asset of the project) on a worker
+    // (editor/ProjectDiagRunner.hpp): it took the frame for a second on every scene change.
+    static ProjectDiagRunner s_run;
     const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    if (have && hash == lastHash) return;
-    if (have && now - lastRun < 0.25) return;
-    ProjectDiagOptions opt;
-    opt.assetRoot = ed.projectDir();
-    ProjectDiagResult result = CollectProjectDiagnostics(ed.scene(), opt);
-    EditorDiagnostics().ReplaceOwner("project", std::move(result.items));
-    lastHash = hash;
-    lastRun = now;
-    have = true;
+    if (s_run.Tick(ed.scene(), SceneFingerprint(ed.scene()), ed.projectDir(), now))
+        EditorDiagnostics().ReplaceOwner("project", s_run.Items());
 }
 
 BuildDiagGate DiagnoseSceneForBuild(const Scene& scene, const std::string& assetRoot, const std::string& label) {

@@ -2,7 +2,7 @@
 
 # Code index: engine-Debug
 
-Back to the [code index](../code_index.md). 11 headers, 80 names.
+Back to the [code index](../code_index.md). 11 headers, 83 names.
 
 ## `engine/include/okay/Debug/ConsoleModel.hpp`
 
@@ -111,6 +111,9 @@ Back to the [code index](../code_index.md). 11 headers, 80 names.
 - `ProjectDiagOptions` struct, line 15
 - `ProjectDiagResult` struct, line 31
 - `CollectProjectDiagnostics` function, line 37: Every current problem in 'scene', in scene order. Does not log and does not
+- `CollectProjectAssetDiagnostics` function, line 42: The project-wide part alone (checkAssetIndex): every text asset under 'options.assetRoot' is read and each file it names
+- `MergeProjectAssetDiagnostics` function, line 44: Add the project-wide results to a scene's, leaving out a missing file the scene's own checks already report.
+- `ProjectAssetFilesReadOnThisThread` function, line 46: How many text assets the project-wide part has read on the calling thread since the program started (tests).
 
 ## `engine/include/okay/Debug/RenderStats.hpp`
 

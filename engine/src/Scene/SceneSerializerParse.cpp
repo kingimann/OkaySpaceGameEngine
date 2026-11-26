@@ -4201,6 +4201,13 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     ws->prefix = ReadQuoted(in);
                     ws->ext    = ReadQuoted(in);
                     ws->target = ReadQuoted(in);
+                    // Optional on the same line (files before predictive loading keep the default).
+                    while (in.peek() == ' ' || in.peek() == '\t') in.get();
+                    if (std::isdigit(in.peek()) || in.peek() == '.') {
+                        float predict = 1.0f;
+                        if (in >> predict && std::isfinite(predict) && predict >= 0.0f) ws->predictSeconds = predict;
+                        in.clear();
+                    }
                 } else if (field == "destructible") {
                     auto* de = go->AddComponent<Destructible>();
                     int collapse = 1;

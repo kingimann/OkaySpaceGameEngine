@@ -1518,6 +1518,7 @@ void BindJoint2D() {
 void BindJoint3D() {
     ClassBinding c = MakeClass<Joint3D>("Joint3D", nullptr, 0);
     c.methods = {
+        {"NoteLinkedName", {}, 0, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<Joint3D&>(self); s.NoteLinkedName(); return V{}; }, false},
         {"Linked", {}, 0, ArgKind::Object, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<Joint3D&>(self); return sb::RetObject(s.Linked()); }, true},
     };
     AddClass(std::move(c));
@@ -4341,6 +4342,10 @@ void BindWorldStreamer() {
     c.methods = {
         {"LoadedCount", {}, 0, ArgKind::Int, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<WorldStreamer&>(self); return V{static_cast<float>(s.LoadedCount())}; }, true},
         {"IsCellLoaded", {ArgKind::Int, ArgKind::Int}, 2, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<WorldStreamer&>(self); return V{s.IsCellLoaded(static_cast<int>(sb::ArgIntIn(a[0], 0, std::numeric_limits<int>::min(), std::numeric_limits<int>::max())), static_cast<int>(sb::ArgIntIn(a[1], 1, std::numeric_limits<int>::min(), std::numeric_limits<int>::max())))}; }, true},
+        {"IsCellWanted", {ArgKind::Int, ArgKind::Int}, 2, ArgKind::Bool, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<WorldStreamer&>(self); return V{s.IsCellWanted(static_cast<int>(sb::ArgIntIn(a[0], 0, std::numeric_limits<int>::min(), std::numeric_limits<int>::max())), static_cast<int>(sb::ArgIntIn(a[1], 1, std::numeric_limits<int>::min(), std::numeric_limits<int>::max())))}; }, true},
+        {"GetCellState", {ArgKind::Int, ArgKind::Int}, 2, ArgKind::Enum, [](Component& self, const V* a, int n) -> V { (void)n; auto& s = static_cast<WorldStreamer&>(self); return V{static_cast<float>(static_cast<long long>(s.GetCellState(static_cast<int>(sb::ArgIntIn(a[0], 0, std::numeric_limits<int>::min(), std::numeric_limits<int>::max())), static_cast<int>(sb::ArgIntIn(a[1], 1, std::numeric_limits<int>::min(), std::numeric_limits<int>::max())))))}; }, true},
+        {"LoadingCount", {}, 0, ArgKind::Int, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<WorldStreamer&>(self); return V{static_cast<float>(s.LoadingCount())}; }, true},
+        {"KnownCellCount", {}, 0, ArgKind::Int, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<WorldStreamer&>(self); return V{static_cast<float>(s.KnownCellCount())}; }, true},
         {"SyncNow", {}, 0, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<WorldStreamer&>(self); s.SyncNow(); return V{}; }, false},
     };
     AddClass(std::move(c));

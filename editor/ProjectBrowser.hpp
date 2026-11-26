@@ -15,6 +15,7 @@
 #include "ProjectContextModel.hpp"
 #include "okay/Core/AssetDatabase.hpp"
 #include "okay/Core/ThumbnailCache.hpp"
+#include "../shared/OkayThreads.hpp"   // okay::thr: the first index's worker (CLAUDE.md rule 21a)
 
 #include <cstdint>
 #include <functional>
@@ -149,6 +150,11 @@ public:
     /// nothing until the first Sync (the first scan can take a while on a big project and runs only when an
     /// operation or the info pane needs the database). Returns true when the scan found changes.
     bool Poll(std::uint64_t nowMs);
+    /// The Project panel's call every frame: the first index of the project runs on a worker (the frame never waits for it; the
+    /// finished index is taken in a later call), then Poll. Returns Poll's answer.
+    bool Update(std::uint64_t nowMs);
+    /// The first index is running on its worker.
+    bool Indexing() const;
     bool Indexed() const { return m_indexed; }
     /// How many assets use this one (0 when none), straight from the database's graph. Cheap: no scan.
     int UsersOf(const std::string& path);
@@ -244,9 +250,14 @@ public:
         bool failed = false;
         std::string key;                            ///< "<guid>:<hash>": changes with the content
     };
-    /// Start a frame: up to `budgetMs` of thumbnail making is allowed until the next call (the first one of a frame is
-    /// always allowed, so progress never stalls). Pictures already in memory or on disk are free.
-    void ThumbFrame(double budgetMs);
+    /// Start a frame: up to `budgetMs` of thumbnail work is allowed until the next call (the first one of a frame is
+    /// always allowed, so progress never stalls). Pictures already in memory are free; reading one from disk counts.
+    /// A scene, prefab or model is drawn by loading it into a scene of its own, which can take far longer than the budget
+    /// (the owner's log, 2026-11-25): at most one of those is made per frame, and none while `allowHeavy` is false (the
+    /// editor passes false while the person is clicking, dragging or typing, so the work waits for a quiet moment).
+    void ThumbFrame(double budgetMs, bool allowHeavy = true);
+    /// Scene, prefab and model pictures made since the last ThumbFrame (0 or 1).
+    int ThumbHeavyThisFrame() const { return m_thumbHeavyCount; }
     /// The picture for an asset. A missing one is made now when the frame budget allows, else `ready` is false and
     /// the caller shows an icon and asks again next frame.
     ThumbResult Thumb(const std::string& path);
@@ -321,16 +332,26 @@ private:
     std::vector<okay::Guid> GuidsUnder(const std::string& abs);   // the asset at a path, or every asset inside a folder
     double m_scanMs = 0;
     bool DoScan();                                                  // one incremental database scan (false: the folder cannot be read); raises m_revision on a change
+    static okay::ScanOptions ScanOpts();                            // the options every scan of the panel uses
+    static void Configure(okay::AssetDatabase& db);                 // the extractors the panel adds (m_db and the first index's scratch db)
+    void NoteScan(const okay::ScanReport& rep, std::uint64_t dbBefore, double ms);   // after a scan: revision, prune, Indexed
+    struct IndexJob;                                                // the first index on a worker (ProjectBrowser.cpp)
+    IndexJob* m_indexJob = nullptr;
+    okay::thr::Thread* m_indexThread = nullptr;
+    static int IndexWorker(void* job);
+    void DropIndexJob();
     bool m_scanChanged = false;                                     // the last scan found a change
     std::map<okay::Guid, std::vector<std::string>> m_missing;       // asset -> references that point at nothing (rebuilt per revision)
     std::uint64_t m_missingRev = ~0ull;
     void EnsureMissing();
     Counts m_counts; std::uint64_t m_countsRev = ~0ull; std::int64_t m_countsNow = -1;
-    struct ThumbKeyEntry { std::uint64_t rev = ~0ull; okay::Guid guid; std::uint64_t hash = 0; };
+    struct ThumbKeyEntry { std::uint64_t rev = ~0ull; okay::Guid guid; std::uint64_t hash = 0; signed char disk = -1; };   // disk: on disk? -1 not looked yet
     std::map<std::string, ThumbKeyEntry> m_thumbKeys;               // path -> key at a revision
     std::unique_ptr<okay::ThumbnailCache> m_thumbs;
     std::vector<std::pair<std::vector<std::string>, std::function<okay::Image(const std::string&)>>> m_thumbGens;
     double m_thumbBudgetMs = 0, m_thumbSpentMs = 0;
+    bool m_thumbHeavyAllowed = true;
+    int m_thumbHeavyCount = 0;
     std::string AbsOf(const std::string& projectPath) const { return m_root + "/" + projectPath; }
     okay::Guid ThumbGuidOf(const okay::AssetRecord& rec) const;
     std::function<bool(const char*, const std::string&)> m_fail;

@@ -295,7 +295,7 @@ void DrawGroupConversation(
         for (std::size_t k = 0; k < links.size(); ++k) {
             ImGui::PushID((int)(1000 + k));
             ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().info);
-            if (ImGui::Selectable(ChatPreview(links[k], 52).c_str())) { OpenExternal(links[k]); ImGui::CloseCurrentPopup(); }
+            if (ImGui::Selectable(ChatPreview(links[k], 52).c_str())) { OpenChatLink(links[k]); ImGui::CloseCurrentPopup(); }
             ImGui::PopStyleColor();
             ImGui::PopID();
         }

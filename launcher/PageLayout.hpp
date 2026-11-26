@@ -405,4 +405,36 @@ inline BuildRow LayoutBuildRow(float width, float pad, float lineH, float versio
     return b;
 }
 
+/// The top of a direct-message conversation (DrawChatWindow in launcher/main.cpp): the header (avatar, name, presence,
+/// icon buttons) and, when the friend is in a game, the "Playing ..." bar under it (gamepad icon, two text lines, the
+/// Join / Ask to join button on the right). Everything grows with the text: `lineH` is the text line height and `nameH`
+/// the name's (it is drawn a little larger), both at the current UI scale; `buttonW` is the widest button label plus its
+/// padding. `listTop` is where what follows (search, pinned bar, the message list) may start. Rects from the header's
+/// top-left. Owner bug 2026-11-25: at UI scale 1.5 the bar's fixed 40 px height left its second line over the first
+/// messages.
+struct ChatHeaderLayout { float headerH = 0; bool bar = false; Rect barRect, icon, title, detail, button; float listTop = 0; };
+inline ChatHeaderLayout LayoutChatTop(float width, float lineH, float nameH, float buttonW, bool hasBar) {
+    ChatHeaderLayout t;
+    t.headerH = std::max(34.0f, std::ceil(std::max(28.0f, nameH) + 6.0f));   // 34 at scale 1 (the 28 px avatar + room)
+    const float gap = 6.0f;
+    const float barY = t.headerH + gap;
+    t.bar = hasBar;
+    if (!hasBar) { t.listTop = barY; return t; }
+    const float pad = 4.0f;
+    const float iconD = std::max(22.0f, std::round(lineH * 1.3f));
+    const float textX = iconD + 20.0f;
+    const float btnH = std::max(28.0f, std::ceil(lineH + 8.0f));
+    const float h = std::max({40.0f, std::ceil(2.0f * pad + 2.0f * lineH), btnH + 12.0f});
+    const float bw = std::min(buttonW, std::max(0.0f, width * 0.5f));
+    t.barRect = Rect{0, barY, width, h};
+    t.icon = Rect{22.0f - iconD * 0.5f, barY + (h - iconD) * 0.5f, iconD, iconD};
+    t.button = Rect{width - bw - 6.0f, barY + (h - btnH) * 0.5f, bw, btnH};
+    const float textW = std::max(0.0f, t.button.x - 10.0f - textX);
+    const float textTop = barY + (h - 2.0f * lineH) * 0.5f;
+    t.title = Rect{textX, textTop, textW, lineH};
+    t.detail = Rect{textX, textTop + lineH, textW, lineH};
+    t.listTop = t.barRect.B() + gap;
+    return t;
+}
+
 }  // namespace okay::launcherlayout

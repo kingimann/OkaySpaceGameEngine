@@ -1,0 +1,11 @@
+// <csignal> for okay-cc (ISO/IEC 14882 [csignal.syn], ISO C 7.14): <signal.h>, with sig_atomic_t,
+// signal and raise also in std (the same C functions, lib/signal.c). Our own header.
+#pragma once
+#include <signal.h>
+namespace std {
+typedef ::sig_atomic_t sig_atomic_t;
+extern "C" {
+__okay_sighandler_t signal(int sig, __okay_sighandler_t handler);
+int raise(int sig);
+}
+}  // namespace std

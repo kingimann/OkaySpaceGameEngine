@@ -2,14 +2,7 @@
 -- "FAIL <name>: <why>" as a WARNING. alice = the player with the rules,
 -- bob = the person she blocks / restricts, carol = a friend of alice and a
 -- bystander of the alice/bob block, dave = another stranger.
-\set QUIET on
-set client_min_messages = warning;
-reset role;
-
-insert into auth.users (id, email) values
-  ('00000000-0000-0000-0000-0000000000a1', 'alice@x'), ('00000000-0000-0000-0000-0000000000b2', 'bob@x'),
-  ('00000000-0000-0000-0000-0000000000c3', 'carol@x'), ('00000000-0000-0000-0000-0000000000d4', 'dave@x');
-update public.profiles set username = split_part((select email from auth.users u where u.id = profiles.id), '@', 1);
+\ir four_players.sql
 -- alice and carol are friends.
 insert into public.friendships (requester, addressee, status)
   values ('00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000c3', 'accepted');
@@ -17,12 +10,6 @@ update public.profiles set last_seen = now(), playing = 'Space Game', session_co
   status = 'busy', favorite_game = 'Chess', location = 'Mars'
   where username = 'alice';
 
-\ir test_helpers.sql
-
-\set A '00000000-0000-0000-0000-0000000000a1'
-\set B '00000000-0000-0000-0000-0000000000b2'
-\set C '00000000-0000-0000-0000-0000000000c3'
-\set D '00000000-0000-0000-0000-0000000000d4'
 
 -- ======================= defaults: nothing is restricted =====================
 select t.as_user(:'B'); set role authenticated;

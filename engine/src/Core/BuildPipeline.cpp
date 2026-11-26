@@ -577,6 +577,22 @@ bool ParseManifestJson(const std::string& text, BuildManifest& out, std::string*
     return true;
 }
 
+std::string ManifestVersionNear(const std::string& dataDir, const std::string& scenePath) {
+    std::vector<fs::path> dirs;
+    if (!dataDir.empty()) dirs.push_back(fs::path(dataDir));
+    if (!scenePath.empty()) {
+        fs::path d = fs::path(scenePath).parent_path();
+        for (int i = 0; i < 3 && !d.empty(); ++i, d = d.parent_path()) dirs.push_back(d);
+    }
+    for (const fs::path& d : dirs) {
+        std::ifstream f(d / "build.json", std::ios::binary);
+        if (!f) continue;
+        std::stringstream ss; ss << f.rdbuf();
+        BuildManifest m;
+        if (ParseManifestJson(ss.str(), m)) return m.version;
+    }
+    return std::string();
+}
 std::string ManifestSummary(const BuildManifest& m) {
     std::ostringstream o;
     o << m.game << " " << m.version << " (build " << m.buildNumber << "), engine " << m.engineVersion << ", " << m.dateUtc

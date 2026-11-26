@@ -182,6 +182,9 @@ struct atomic_flag {
     bool test(memory_order = memory_order_seq_cst) const { return *(volatile unsigned char *)&__v != 0; }
 };
 
+// [atomics.flag] p4: a flag set up clear; written as an empty list for the default constructor.
+#define ATOMIC_FLAG_INIT {}
+
 typedef atomic<bool> atomic_bool;
 typedef atomic<char> atomic_char;
 typedef atomic<int> atomic_int;

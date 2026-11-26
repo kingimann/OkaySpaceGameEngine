@@ -20,6 +20,10 @@ public:
     unordered_map(initializer_list<value_type> il) {
         for (const value_type *p = il.begin(); p != il.end(); ++p) __t.insertValue(*p);
     }
+    template <typename It>
+    unordered_map(It first, It last) {  // ([associative.reqmts], [unord.req]) a range
+        for (; first != last; ++first) insert(*first);
+    }
     unordered_map<K, V, H, E> &operator=(const unordered_map<K, V, H, E> &o) {
         if (this != &o) {
             __t.clear();

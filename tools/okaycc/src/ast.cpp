@@ -8,7 +8,10 @@ Param::Param() = default;
 Param::Param(Param&&) noexcept = default;
 Param& Param::operator=(Param&&) noexcept = default;
 Param::~Param() = default;
-Expr::Expr() = default;
+Expr::Expr() {
+    static std::uint64_t next = 0;
+    serial = ++next;
+}
 Expr::~Expr() = default;
 Type::Type() = default;
 Type::~Type() = default;
@@ -45,7 +48,8 @@ std::unique_ptr<Type> classByName(const Type& in) {
     sh->hasVptr = in.hasVptr;
     sh->needCtor = in.needCtor;
     sh->needDtor = in.needDtor;
-    sh->vslots = in.vslots;
+    // (not the vtable slot names: they are read from the finished class, and copying them with
+    // every named class type was a large part of compile time)
     return sh;
 }
 bool finishedClassCopy(const Type& t) {
@@ -53,7 +57,7 @@ bool finishedClassCopy(const Type& t) {
            canonOf(&t) != &t;
 }
 
-std::unique_ptr<Type> cloneType(const Type& t) {
+std::unique_ptr<Type> cloneType(const Type& t, bool withDefaults) {
     auto n = std::make_unique<Type>();
     n->kind = t.kind;
     n->tag = t.tag;
@@ -62,6 +66,7 @@ std::unique_ptr<Type> cloneType(const Type& t) {
     n->variadic = t.variadic;
     n->rref = t.rref;
     n->cnst = t.cnst;
+    n->memberOf = t.memberOf;
     n->base = t.base;
     n->nonpod = t.nonpod;
     n->hasVptr = t.hasVptr;
@@ -81,10 +86,11 @@ std::unique_ptr<Type> cloneType(const Type& t) {
             // whose member functions take other classes by reference, each copying the next).
             n->inner = classByName(in);
         } else {
-            n->inner = cloneType(in);
+            n->inner = cloneType(in, withDefaults);
         }
     }
     if (t.bound) n->bound = cloneExpr(*t.bound);
+    n->params.reserve(t.params.size());
     for (const Param& p : t.params) {
         Param c;
         c.name = p.name;
@@ -99,10 +105,10 @@ std::unique_ptr<Type> cloneType(const Type& t) {
                 // A by-value class parameter of a function type: its name and facts only.
                 c.type = classByName(pt);
             } else {
-                c.type = cloneType(pt);
+                c.type = cloneType(pt, withDefaults);
             }
         }
-        if (p.defArg) c.defArg = cloneExpr(*p.defArg);
+        if (p.defArg && withDefaults) c.defArg = cloneExpr(*p.defArg);
         n->params.push_back(std::move(c));
     }
     return n;
@@ -381,6 +387,7 @@ bool isVoidPtr(const Type& t) {
 bool sameType(const Type& a, const Type& b) {
     if (a.kind != b.kind || a.unsign != b.unsign) return false;
     if (a.kind == Type::Kind::Reference && a.rref != b.rref) return false;
+    if (a.kind == Type::Kind::Pointer && a.memberOf != b.memberOf) return false;
     if (a.kind == Type::Kind::Pointer || a.kind == Type::Kind::Array || a.kind == Type::Kind::Reference) {
         return a.inner && b.inner && sameType(*a.inner, *b.inner);
     }
@@ -415,16 +422,46 @@ const Param* findSpecial(const Type* t, const char* name) {
 }
 
 // True when 'd' is the same class as 'b' or is derived from it (single inheritance).
-bool derivedFrom(const Type& d, const Type& b) {
-    if (d.kind != Type::Kind::Struct || b.kind != Type::Kind::Struct || d.tag.empty() || b.tag.empty()) return false;
-    std::string cur = d.tag;
-    for (int guard = 0; guard < 64 && !cur.empty(); ++guard) {
-        if (cur == b.tag) return true;
-        auto it = canonStructs().find(cur);
-        if (it == canonStructs().end() || !it->second) return false;
-        cur = it->second->base;
+bool hasCopyCtor(const Type* cls) {
+    if (!cls) return false;
+    for (const Param& p : cls->params) {
+        if (p.name != "<ctor>" || !p.type || p.type->params.size() != 1) continue;
+        const Type* a = p.type->params[0].type.get();
+        if (a && a->kind == Type::Kind::Reference && a->inner && a->inner->kind == Type::Kind::Struct &&
+            a->inner->tag == cls->tag)
+            return true;
     }
     return false;
+}
+
+bool derivedFrom(const Type& d, const Type& b) {
+    if (d.kind != Type::Kind::Struct || b.kind != Type::Kind::Struct || d.tag.empty() || b.tag.empty()) return false;
+    return !basePath(d.tag, b.tag).empty() || d.tag == b.tag;
+}
+
+// The members to go through from class 'from' to its base class 'to' ([class.derived]): one
+// "__mb:<tag>" member per base after a primary one (parser.cpp, multiple inheritance), nothing
+// for a primary base, which is at the start of the object. {""} when 'to' is reached through
+// primary bases only; empty when it is not a base. Depth-first, bases in declaration order.
+std::vector<std::string> basePath(const std::string& from, const std::string& to, int depth) {
+    if (from == to) return {""};
+    if (depth > 32 || from.empty()) return {};
+    auto it = canonStructs().find(from);
+    if (it == canonStructs().end() || !it->second) return {};
+    const Type& c = *it->second;
+    if (!c.base.empty()) {
+        std::vector<std::string> p = basePath(c.base, to, depth + 1);
+        if (!p.empty()) return p;
+    }
+    for (const Param& m : c.params) {
+        if (m.name.compare(0, 5, "__mb:") != 0 || !m.type) continue;
+        std::vector<std::string> p = basePath(m.type->tag, to, depth + 1);
+        if (p.empty()) continue;
+        if (p.size() == 1 && p[0].empty()) return {m.name};
+        p.insert(p.begin(), m.name);
+        return p;
+    }
+    return {};
 }
 
 bool hasSideEffects(const Expr& e) {

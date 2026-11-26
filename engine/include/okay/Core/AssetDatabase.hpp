@@ -191,6 +191,10 @@ public:
     const std::string& Root() const { return m_root; }
     /// Forget everything (records, redirects, vanished assets, graph). Metas are untouched.
     void Clear();
+    /// Take the whole index `other` built (records, redirects, vanished assets, folders, graph, pending reimport events) and
+    /// leave `other` empty. This database keeps its own extractors, reimport callback, GUID generator and folder watch. For a
+    /// first scan made off the main thread on a scratch database set up like this one (editor/ProjectBrowser.cpp).
+    void TakeIndexFrom(AssetDatabase& other);
 
     // --- Lookup -----------------------------------------------------------------
     std::size_t Count() const { return m_slots.size(); }
@@ -305,6 +309,9 @@ public:
     /// 0 when the file can not be read. `size` receives the byte count.
     static std::uint64_t HashFile(const std::string& absolutePath, std::int64_t* size = nullptr,
                                   std::size_t fullHashLimit = 512u << 20);
+    /// Bytes HashFile has read on the calling thread since the program started (a per-thread count: the editor's tests check
+    /// that opening a project reads no asset contents on the main thread).
+    static std::uint64_t BytesHashedOnThisThread();
     /// Replace how new GUIDs are made (tests; the default is random).
     void SetGuidGenerator(std::function<Guid()> generator) { m_guidGen = std::move(generator); }
 

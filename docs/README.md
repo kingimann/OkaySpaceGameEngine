@@ -106,11 +106,12 @@ How the code is built, how the work is shared, and the replacement work.
 - [Architecture](engine/architecture.md): layers, the nine subsystems, which folders belong where.
 - [Modularization plan](engine/modularization_plan.md): splitting big files, starting with `editor/main.cpp`.
 - [Core runtime](engine/core_runtime.md), [Loop and time](engine/loop_and_time.md), [Core tools](engine/core_tools.md), [Logging and profiling](engine/core_logging_profiling.md).
-- [Properties (reflection)](engine/properties.md), [Asset database](engine/asset_database.md), [Asset manager](engine/asset_manager.md), [Scene serializer](engine/scene_serializer.md), [Scene diff and merge](engine/scene_diff_merge.md), [Scene hierarchy and validation](engine/scene_hierarchy_search.md).
+- [Properties (reflection)](engine/properties.md), [Asset database](engine/asset_database.md), [Asset manager](engine/asset_manager.md), [Asset streaming (design note)](engine/asset_streaming.md), [Scene serializer](engine/scene_serializer.md), [Scene diff and merge](engine/scene_diff_merge.md), [Scene hierarchy and validation](engine/scene_hierarchy_search.md).
 - [Input](engine/input.md), [Math and geometry](engine/math_geometry.md), [Debug tools](engine/debug_tools.md), [Optimization tools](engine/optimization_tools.md), [Performance log](engine/perf_log.md), [Editor speed](editor/editor_performance.md).
 - [Our own physics core](physics/physics_core.md): `okay::phys`, what each file was written from.
 - [Script API registry](scripting/script_api_registry.md): one table of engine functions for every script language.
 - [Script bindings](scripting/script_bindings.md): every component class, method and property reachable from scripts (generated), and the gap audit.
+- [okay.js](scripting/okayjs.md): our own browser library (WebGL, scene graph, input, game loop) with the engine's script API.
 - [engine/code_index.md](engine/code_index.md): every source file with one line (generated).
 
 **Our own replacements for outside code**

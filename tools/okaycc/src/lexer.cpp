@@ -28,8 +28,8 @@ int hexVal(unsigned char c) {
 
 // Longest match first (C17 6.4: the longest punctuator wins).
 const char* const kPunct[] = {
-    "%:%:", "<<=", ">>=", "...", "<<", ">>", "<=", ">=", "==", "!=", "&&", "||", "::",
-    "++",   "--",  "->",  "+=",  "-=", "*=", "/=", "%=", "&=", "^=", "|=", "##",
+    "%:%:", "<<=", ">>=", "...", "->*", "<<", ">>", "<=", ">=", "==", "!=", "&&", "||", "::",
+    "++",   "--",  "->",  "+=",  "-=", "*=", "/=", "%=", "&=", "^=", "|=", "##", ".*",
     "<:",   ":>",  "<%",  "%>",  "%:", "[",  "]",  "(",  ")",  "{",  "}",  ".",
     "&",    "*",   "+",   "-",   "~",  "!",  "/",  "%",  "<",  ">",  "^",  "|",
     "?",    ":",   ";",   "=",   ",",  "#",
@@ -520,9 +520,23 @@ void Lexer::finishFloat(Token& t) {
     t.fval = v;
 }
 
+// A digit separator ' between two digits of a number (ISO/IEC 14882 [lex.icon], [lex.fcon];
+// C23 6.4.4.1): skipped. True if one was skipped.
+bool Lexer::digitSep(bool hex) {
+    if (peekPhys() != '\'' || i_ + 1 >= src_.size() || i_ == 0) return false;
+    unsigned char before = static_cast<unsigned char>(src_[i_ - 1]);
+    unsigned char after = static_cast<unsigned char>(src_[i_ + 1]);
+    bool okBefore = hex ? isHex(before) : isDigit(before);
+    bool okAfter = hex ? isHex(after) : isDigit(after);
+    if (!okBefore || !okAfter) return false;
+    getPhys();
+    return true;
+}
+
 void Lexer::lexHex(std::string& spelling, Token& t) {
     bool any = false;
-    while (isHex(static_cast<unsigned char>(peekLogical()))) {
+    while (isHex(static_cast<unsigned char>(peekLogical())) || (any && digitSep(true))) {
+        if (!isHex(static_cast<unsigned char>(peekLogical()))) continue;
         spelling.push_back(get());
         any = true;
     }
@@ -590,12 +604,14 @@ void Lexer::lexNumber(Token& t) {
             return;
         }
     }
-    while (isDigit(static_cast<unsigned char>(peekLogical()))) s.push_back(get());
+    while (isDigit(static_cast<unsigned char>(peekLogical())) || digitSep(false))
+        if (isDigit(static_cast<unsigned char>(peekLogical()))) s.push_back(get());
     bool isFloat = false;
     if (peekLogical() == '.') {
         isFloat = true;
         s.push_back(get());
-        while (isDigit(static_cast<unsigned char>(peekLogical()))) s.push_back(get());
+        while (isDigit(static_cast<unsigned char>(peekLogical())) || digitSep(false))
+            if (isDigit(static_cast<unsigned char>(peekLogical()))) s.push_back(get());
     }
     if (peekLogical() == 'e' || peekLogical() == 'E') {
         isFloat = true;

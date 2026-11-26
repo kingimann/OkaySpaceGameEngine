@@ -4,7 +4,7 @@
 #include "ChatText.hpp"
 #include "NetGuard.hpp"                 // okay::netguard: size and host checks for link previews
 #include "okay/Core/ImageDecode.hpp"   // LoadRgbaFile
-#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam for link previews: WinHTTP / our own client first, curl only as its last fallback
+#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam for link previews: WinHTTP / our own client
 #include "OkayTheme.hpp"   // the theme palette's colours
 
 namespace okl {
@@ -378,7 +378,7 @@ static float ChatLayoutTokens(const std::vector<ChatTok>& toks, float avail, boo
                 ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
                 dl->AddLine(ImVec2(mn.x, mx.y - 1), ImVec2(mx.x, mx.y - 1), linkCol, 1.0f);
                 if (ImGui::IsItemHovered()) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", t.text.c_str()); }
-                if (ImGui::IsItemClicked()) OpenExternal(t.text);
+                if (ImGui::IsItemClicked()) OpenChatLink(t.text);   // asks first (okay::chat::ClickLink)
             } else {
                 ImU32 col = mention ? okaytheme::U32(kAccent) : textCol;
                 if (code) {
@@ -436,7 +436,7 @@ static float ChatCodeBlock(const std::string& code, float avail, bool draw) {
 // ---- Link previews ----------------------------------------------------------
 // The first web-page link in a message gets a card (site, title, description,
 // thumbnail) like Messenger/Telegram. Pages are fetched once in the background
-// (curl, 8 s cap, first 256 KB) and their Open Graph / <title> tags parsed.
+// (the HTTP seam, 8 s cap, first 256 KB) and their Open Graph / <title> tags parsed.
 struct LinkPreview { int state = 0; std::string site, title, desc, image; };   // 0 loading, 1 ready, 2 nothing to show
 static okay::thr::Mutex* g_lpMutex = nullptr;
 static std::map<std::string, LinkPreview> g_linkPrev;   // (guarded) by URL
@@ -551,7 +551,7 @@ static int LinkPreviewWorker(void*) {
         // loopback or link-local address (chat links come from other people).
         if (ShellSafeUrl(url) &&
             okay::netguard::HostIsPubliclyRoutable(okay::netguard::UrlHostForResolve(url))) {
-            // The HTTP seam: WinHTTP / our own client first, curl only as its last fallback. A clear refusal
+            // The HTTP seam: WinHTTP / our own client. A clear refusal
             // (404, too big) means no preview, as with curl -f.
             std::string html;
             if (okay::http::FetchPrefix(url, "Mozilla/5.0 (compatible; OkaySpace link preview)", 3000000, 262143, 8000, html) ==
@@ -632,7 +632,7 @@ static void DrawLinkPreviewCard(const std::string& url, const LinkPreview& lp, f
         d->PopClipRect();
     }
     ImGui::SetCursorScreenPos(p);
-    if (ImGui::InvisibleButton("##lpcard", ImVec2(w, h))) OpenExternal(url);
+    if (ImGui::InvisibleButton("##lpcard", ImVec2(w, h))) OpenChatLink(url);
     if (ImGui::IsItemHovered()) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", url.c_str()); }
     ImGui::PopID();
 }

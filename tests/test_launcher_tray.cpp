@@ -81,7 +81,7 @@ static void TestMenu() {
     const MenuItem* rec = TrayItemByLabel(m, "Recent projects");
     CHECK(rec && !rec->enabled && rec->sub.size() == 1 && !rec->sub[0].enabled);
     const MenuItem* stat = TrayItemByLabel(m, "Status");
-    CHECK(stat && !stat->enabled && stat->separatorBefore && stat->sub.size() == 3);   // signed out: greyed out
+    CHECK(stat && !stat->enabled && stat->separatorBefore && stat->sub.size() == (size_t)kStatusCount);   // signed out: greyed out
     CHECK(TrayItemById(m, kIdNotifications)->label == "Notifications");
     CHECK(TrayItemById(m, kIdDownloads)->label == "Downloads");
     CHECK(TrayItemById(m, kIdCheckUpdates) && TrayItemById(m, kIdSettings)->separatorBefore);
@@ -327,6 +327,66 @@ static void TestFrameRate() {
     CHECK(IdleFramesPerSecond(0) == 0);
 }
 
+// The Friends item and the status choices (owner, 2026-11-25: "i dont see it in right click icon tray").
+static void TestTrayFriends() {
+    MenuState st;   // signed out
+    std::vector<MenuItem> m = BuildMenu(st);
+    const MenuItem* fr = TrayItemById(m, kIdFriends);
+    CHECK(fr && !fr->enabled && fr->label == "Friends" && fr->separatorBefore);   // greyed out signed out
+    CHECK(!TrayItemById(m, kIdFriendsWindow));
+    CHECK(!HasEnabledId(m, kIdFriends));
+    // Signed in, last used inside the launcher, 3 friends online.
+    st.signedIn = true; st.friendsOnline = 3;
+    m = BuildMenu(st);
+    fr = TrayItemById(m, kIdFriends);
+    CHECK(fr && fr->enabled && fr->label == "Friends (3 online)" && HasEnabledId(m, kIdFriends));
+    // Unread chats win over the online count; last used popped out: the window item.
+    st.unreadChats = 2; st.friendsInOwnWindow = true;
+    m = BuildMenu(st);
+    CHECK(!TrayItemById(m, kIdFriends));
+    fr = TrayItemById(m, kIdFriendsWindow);
+    CHECK(fr && fr->enabled && fr->label == "Friends (2 unread)");
+    // It sits after Recent projects and before Status.
+    int iRecent = -1, iFriends = -1, iStatus = -1;
+    for (int i = 0; i < (int)m.size(); ++i) {
+        if (m[i].label == "Recent projects") iRecent = i;
+        if (m[i].id == kIdFriendsWindow) iFriends = i;
+        if (m[i].label.rfind("Status", 0) == 0) iStatus = i;
+    }
+    CHECK(iRecent >= 0 && iRecent < iFriends && iFriends < iStatus);
+    CheckIds(m);
+    // What it does: inside = the launcher comes back on the Friends list; popped out = only the friends window.
+    Effect e = EffectOf(kIdFriends);        CHECK(e.show && e.openFriends && !e.friendsOwnWindow && !e.quit);
+    e = EffectOf(kIdFriendsWindow);         CHECK(!e.show && e.openFriends && e.friendsOwnWindow && !e.quit);
+    e = EffectOf(kIdOpen);                  CHECK(!e.openFriends);
+    // The status choices: four radio items, the current one checked, Do not disturb included.
+    st.onlineStatus = 3;
+    m = BuildMenu(st);
+    const MenuItem* stat = TrayItemByLabel(m, "Status: Do not disturb");
+    CHECK(stat && stat->enabled && stat->sub.size() == 4);
+    int checked = 0;
+    for (const MenuItem& it : stat->sub) { CHECK(it.radio && it.enabled); if (it.checked) ++checked; }
+    CHECK(checked == 1 && stat->sub[3].checked && stat->sub[3].label == "Do not disturb" && stat->sub[3].id == kStatusBase + 3);
+    e = EffectOf(kStatusBase + 3);          CHECK(e.setStatus == 3 && !e.show);
+    e = EffectOf(kStatusBase + 4);          CHECK(e.setStatus < 0);   // out of range: nothing
+    // Picking Friends through the controller, while hidden in the tray, does not bring the launcher back when popped out.
+    FakeShell sh; TrayController t(&sh, true);
+    CHECK(t.HideToTray() && t.Hidden());
+    sh.next = kIdFriendsWindow;
+    e = t.OnIconEvent(IconEvent::ShowMenu, st);
+    CHECK(e.openFriends && e.friendsOwnWindow && t.Hidden() && sh.hidden);
+    sh.next = kIdFriends;
+    st.friendsInOwnWindow = false;
+    e = t.OnIconEvent(IconEvent::ShowMenu, st);
+    CHECK(e.openFriends && !t.Hidden() && !sh.hidden);   // inside the launcher: the launcher comes back
+    // The Win32 menu draws radio bullets for them (a structural check: TrayWin32.cpp only compiles on Windows).
+    std::ifstream f(OKAY_LAUNCHER_MAIN);
+    std::stringstream ss; ss << f.rdbuf();
+    const std::string src = ss.str();
+    CHECK(src.find("st.friendsInOwnWindow = g_chatSeparate;") != std::string::npos);
+    CHECK(src.find("if (fx.openFriends)") != std::string::npos);
+}
+
 static void TestChatPlacement() {
     using namespace okaychat;
     Place p;                                   // closed, inside
@@ -375,8 +435,33 @@ static void TestOneChatView() {
     CHECK(src.find("if (!g_chatSeparate) DrawChatWindow(account);") != std::string::npos);
 }
 
+// Owner bug 2026-11-25 ("if i quit the launcher from the tray, the editor doesnt close"): Exit OkaySpace in the tray
+// menu with the editor open raised "Close the editor first" in a launcher hidden in the tray, which draws nothing, so
+// the dialog never showed and the launcher kept running. Now the window comes back once when such a dialog starts.
+static void TestTrayExitWithEditor() {
+    Settings on;
+    FakeShell sh; TrayController t(&sh, true); t.settings = on; t.Sync();
+    CHECK(t.OnClose(CloseSource::WindowX) == CloseAction::HideToTray && t.Hidden());
+    sh.next = kIdExit;
+    MenuState st;
+    const Effect fx = t.OnIconEvent(IconEvent::ShowMenu, st);
+    CHECK(fx.quit && !fx.show);   // Exit itself does not show the window...
+    // ...so the launcher's quit (editor open: g_afterEditor = 1) must bring it back for the dialog.
+    CHECK(ShowForPendingDialog(true, false, t.Hidden()));
+    t.Restore();
+    CHECK(Drawing(t, sh));
+    CHECK(!ShowForPendingDialog(true, true, true));     // only on the edge: minimizing it again while it waits is allowed
+    CHECK(!ShowForPendingDialog(true, false, false));   // already on screen: nothing to do
+    CHECK(!ShowForPendingDialog(false, false, true));   // nothing waiting: the tray stays as it is
+    CHECK(!ShowForPendingDialog(false, true, true));
+    const std::string src = [] { std::ifstream f(OKAY_LAUNCHER_MAIN); std::stringstream ss; ss << f.rdbuf(); return ss.str(); }();
+    CHECK(src.find("auto quitLauncher = [&]() { if (EditorRunning()) g_afterEditor = 1; else running = false; };") != std::string::npos);
+    CHECK(src.find("okaytray::ShowForPendingDialog(") != std::string::npos);
+}
+
 int main() {
     TestDecisions();
+    TestTrayExitWithEditor();
     TestMenu();
     TestIconMessages();
     TestController();
@@ -385,6 +470,7 @@ int main() {
     TestOneRestorePath();
     TestFrameRate();
     TestChatPlacement();
+    TestTrayFriends();
     TestOneChatView();
     std::printf("launcher_tray: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

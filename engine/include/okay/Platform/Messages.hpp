@@ -6,6 +6,7 @@
 // isn't the friend is me, so we never need our own uuid.
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Privacy.hpp"
+#include "okay/Platform/ChatDelivery.hpp"
 #include <string>
 #include <vector>
 #include <map>
@@ -38,18 +39,81 @@ public:
 
     // Send a message to a friend (their profile/user uuid). Optionally a reply
     // to an earlier message (Messenger/Telegram-style quoting), by its id.
-    bool Send(const std::string& friendUid, const std::string& body, long replyTo = 0) {
+    // `clientId` (okay::chat::MakeClientId, picked once per message and kept across retries) makes a resend
+    // safe: the server stores (sender, client_id) once (docs/sql/chat_invites.sql). Until that SQL has run
+    // the column is missing and the message is sent without it (remembered for the session).
+    bool Send(const std::string& friendUid, const std::string& body, long replyTo = 0, const std::string& clientId = {}) {
         if (!acct_.IsLoggedIn() || friendUid.empty() || body.empty()) return false;
         std::string j = "{\"recipient\":" + JStr(friendUid) + ",\"body\":" + JStr(body);
         if (replyTo > 0) j += ",\"reply_to\":" + std::to_string(replyTo);
-        j += "}";
-        auto r = acct_.Api("/rest/v1/messages", "POST", j);
+        auto r = PostWithClientId("messages", j, clientId);
         // Why it failed, in words (a server privacy rule, or no connection); empty
         // when the cause is unknown or it worked. See docs/sql/blocks.sql.
         lastSendError_ = r.ok ? std::string() : privacy::FailureText(r, "");
+        lastSend_ = r;
         return r.ok;
     }
     const std::string& LastSendError() const { return lastSendError_; }
+    /// The whole answer to the last Send / SendGroup (for okay::chat::IsRetryable).
+    const okay::account::ApiResponse& LastSendResponse() const { return lastSend_; }
+
+    // ---- delivery helpers (pure; tests/test_chat_invites.cpp) ----
+    static std::string SendPath(const std::string& table, const std::string& clientId) {
+        return "/rest/v1/" + table + (chat::IsClientId(clientId) ? "?on_conflict=sender,client_id" : "");
+    }
+    static std::string ClientIdField(const std::string& clientId) {
+        return chat::IsClientId(clientId) ? ",\"client_id\":\"" + clientId + "\"" : std::string();
+    }
+    /// The server has no client_id column yet (chat_invites.sql not run): PGRST204 or 42703 naming it.
+    static bool ClientIdColumnMissing(long status, const std::string& body) {
+        if (status != 400) return false;
+        return body.find("client_id") != std::string::npos &&
+               (body.find("PGRST204") != std::string::npos || body.find("42703") != std::string::npos);
+    }
+    /// The query for one page of the conversation with `friendUid`: the newest `limit` messages below
+    /// `beforeId` (0 = the newest), newest first, plus one extra row that says whether there is more.
+    static std::string PageQuery(const std::string& friendUid, long beforeId, int limit) {
+        if (limit < 1) limit = 1;
+        if (limit > 200) limit = 200;
+        std::string u;
+        for (unsigned char c : friendUid) {
+            if (std::isalnum(c) || c == '-' || c == '_' || c == '.') u += (char)c;
+            else { char b[4]; std::snprintf(b, sizeof(b), "%%%02X", c); u += b; }
+        }
+        return "/rest/v1/messages?select=id,sender,body,created_at,edited,reply_to"
+               "&or=(sender.eq." + u + ",recipient.eq." + u + ")" +
+               (beforeId > 0 ? "&id=lt." + std::to_string(beforeId) : std::string()) +
+               "&order=id.desc&limit=" + std::to_string(limit + 1);
+    }
+
+    /// One page of history (oldest first) for "load older messages": up to `limit` messages older than
+    /// `beforeId` (0 = the newest page). `hasMore` says whether an older page exists. Merge into the log
+    /// with okay::chat::MergeById; the next cursor is okay::chat::OldestId.
+    std::vector<DirectMessage> WithPage(const std::string& friendUid, long beforeId, int limit, bool* hasMore = nullptr) {
+        std::vector<DirectMessage> out;
+        if (hasMore) *hasMore = false;
+        if (!acct_.IsLoggedIn() || friendUid.empty()) return out;
+        auto r = acct_.Api(PageQuery(friendUid, beforeId, limit), "GET");
+        if (!r.ok) return out;
+        for (const auto& obj : SplitObjects(r.body)) out.push_back(DmFromRow(obj, friendUid));
+        const int cap = limit < 1 ? 1 : limit > 200 ? 200 : limit;
+        if ((int)out.size() > cap) { out.resize(cap); if (hasMore) *hasMore = true; }
+        std::reverse(out.begin(), out.end());
+        return out;
+    }
+    /// The recent rows (id, sender, recipient) for okay::chat::CountUnread: unread counts per conversation
+    /// and in total from one query (the newest `limit` messages I can see).
+    std::vector<chat::UnreadRow> UnreadRows(int limit = 300) {
+        std::vector<chat::UnreadRow> out;
+        if (!acct_.IsLoggedIn()) return out;
+        auto r = acct_.Api("/rest/v1/messages?select=id,sender,recipient&order=id.desc&limit=" + std::to_string(limit), "GET");
+        if (!r.ok) return out;
+        for (const auto& o : SplitObjects(r.body))
+            out.push_back({std::atol(Field(o, "id").c_str()), Field(o, "sender"), Field(o, "recipient")});
+        return out;
+    }
+    /// My own account id (looked up once), for CountUnread.
+    std::string MyUserId() { return MyId(); }
 
     // Delete one of my own sent messages (RLS blocks deleting others').
     bool Delete(long messageId) {
@@ -100,20 +164,30 @@ public:
         return out;
     }
 
-    int UnreadSince(long sinceId, long& newestOut) {
+    // One incoming message, for the launcher's desktop notifications (UnreadSince with `incoming`).
+    struct IncomingMessage { long id = 0; std::string from, body; };
+    // `incoming` (optional): the unread incoming messages themselves (sender and text), oldest first, so a new one can
+    // pop up as "Sam: are you there?". The same query, with the sender and body columns added.
+    int UnreadSince(long sinceId, long& newestOut, std::vector<IncomingMessage>* incoming = nullptr) {
         newestOut = sinceId;
+        if (incoming) incoming->clear();
         if (!acct_.IsLoggedIn()) return 0;
         std::string mine = MyId();
         if (mine.empty()) return 0;
-        auto r = acct_.Api("/rest/v1/messages?select=id,recipient&order=id.desc&limit=60", "GET");
+        auto r = acct_.Api(incoming ? "/rest/v1/messages?select=id,recipient,sender,body&order=id.desc&limit=60"
+                                    : "/rest/v1/messages?select=id,recipient&order=id.desc&limit=60", "GET");
         if (!r.ok) return 0;
         int n = 0;
         for (const auto& obj : SplitObjects(r.body)) {
             if (Field(obj, "recipient") != mine) continue;   // only messages sent TO me
             long id = std::atol(Field(obj, "id").c_str());
             if (id > newestOut) newestOut = id;
-            if (id > sinceId) ++n;
+            if (id > sinceId) {
+                ++n;
+                if (incoming) incoming->push_back({id, Field(obj, "sender"), Field(obj, "body")});
+            }
         }
+        if (incoming) std::reverse(incoming->begin(), incoming->end());   // newest-first from the server: oldest first
         return n;
     }
 
@@ -160,17 +234,19 @@ public:
                            "&or=(sender.eq." + friendUid + ",recipient.eq." + friendUid + ")"
                            "&order=created_at.asc", "GET");
         if (!r.ok) return out;
-        for (const auto& obj : SplitObjects(r.body)) {
-            DirectMessage m;
-            m.id   = std::atol(Field(obj, "id").c_str());
-            m.body = Field(obj, "body");
-            m.when = ParseIso(Field(obj, "created_at"));
-            m.mine = Field(obj, "sender") != friendUid;   // the other party is the friend
-            m.edited = Field(obj, "edited") == "true";
-            m.replyTo = std::atol(Field(obj, "reply_to").c_str());
-            out.push_back(m);
-        }
+        for (const auto& obj : SplitObjects(r.body)) out.push_back(DmFromRow(obj, friendUid));
         return out;
+    }
+    /// One messages row as a DirectMessage; the other party is `friendUid`, so any other sender is me.
+    static DirectMessage DmFromRow(const std::string& obj, const std::string& friendUid) {
+        DirectMessage m;
+        m.id   = std::atol(Field(obj, "id").c_str());
+        m.body = Field(obj, "body");
+        m.when = ParseIso(Field(obj, "created_at"));
+        m.mine = Field(obj, "sender") != friendUid;
+        m.edited = Field(obj, "edited") == "true";
+        m.replyTo = std::atol(Field(obj, "reply_to").c_str());
+        return m;
     }
 
     // Edit one of my own sent messages (RLS blocks editing others').
@@ -481,13 +557,15 @@ public:
 
     // Send a message to a group (optionally a reply). sender_name is denormalized
     // so the UI can show the author without a profiles join per row.
-    bool SendGroup(long convoId, const std::string& body, long replyTo = 0) {
+    bool SendGroup(long convoId, const std::string& body, long replyTo = 0, const std::string& clientId = {}) {
         if (!acct_.IsLoggedIn() || convoId <= 0 || body.empty()) return false;
         std::string j = "{\"convo_id\":" + std::to_string(convoId) + ",\"body\":" + JStr(body) +
                         ",\"sender_name\":" + JStr(acct_.CurrentSession().username);
         if (replyTo > 0) j += ",\"reply_to\":" + std::to_string(replyTo);
-        j += "}";
-        return acct_.Api("/rest/v1/group_messages", "POST", j).ok;
+        auto r = PostWithClientId("group_messages", j, clientId);
+        lastSendError_ = r.ok ? std::string() : privacy::FailureText(r, "");
+        lastSend_ = r;
+        return r.ok;
     }
     bool EditGroup(long messageId, const std::string& body) {
         if (!acct_.IsLoggedIn() || messageId <= 0 || body.empty()) return false;
@@ -780,6 +858,20 @@ public:
 private:
     okay::account::AccountService& acct_;
     std::string lastSendError_;
+    okay::account::ApiResponse lastSend_;
+    bool clientIdMissing_ = false;   // the server has no client_id column (chat_invites.sql not run)
+    // POST `jsonOpen` (an object without its closing brace) with the client id when the server knows the
+    // column; a resend of the same id is ignored by the server, not stored twice.
+    okay::account::ApiResponse PostWithClientId(const std::string& table, const std::string& jsonOpen, const std::string& clientId) {
+        const bool withId = !clientIdMissing_ && chat::IsClientId(clientId);
+        if (withId) {
+            auto r = acct_.Api(SendPath(table, clientId), "POST", jsonOpen + ClientIdField(clientId) + "}",
+                               "Prefer: resolution=ignore-duplicates");
+            if (!(r.reached && ClientIdColumnMissing(r.status, r.body))) return r;
+            clientIdMissing_ = true;
+        }
+        return acct_.Api("/rest/v1/" + table, "POST", jsonOpen + "}");
+    }
     Support typingState_ = Support::Unknown, messageReads_ = Support::Unknown;
     static void NoteTable(Support& s, const okay::account::ApiResponse& r) {
         if (r.ok) s = Support::Yes;
@@ -868,5 +960,28 @@ public:
         } o += "\""; return o;
     }
 };
+
+/// New group chat messages since the last look, for desktop notifications (okay::chat::Event::Kind::GroupMessage).
+/// `lastSeen` (group id -> newest message id seen) is updated; a group seen for the first time only sets its mark, so
+/// the first look after a start is not a burst. Messages I sent (`myName`, my public name), messages already read
+/// (last_read) and muted groups (`mutedKeys` holds "g:<id>") give no event.
+inline std::vector<chat::Event> GroupMessageEvents(const std::vector<Messages::GroupConvo>& groups, std::map<long, long>& lastSeen,
+                                                   const std::string& myName, const std::set<std::string>& mutedKeys = {}) {
+    std::vector<chat::Event> out;
+    for (const Messages::GroupConvo& g : groups) {
+        auto it = lastSeen.find(g.id);
+        const bool first = it == lastSeen.end();
+        const long prev = first ? 0 : it->second;
+        lastSeen[g.id] = std::max(prev, g.lastId);
+        if (first || g.lastId <= prev || g.lastId <= g.lastRead) continue;
+        const std::string who = okay::account::PublicName(g.lastSender);
+        if (!myName.empty() && who == myName) continue;
+        if (mutedKeys.count("g:" + std::to_string(g.id))) continue;
+        chat::Event e; e.kind = chat::Event::Kind::GroupMessage;
+        e.fromName = who; e.groupId = g.id; e.messageId = g.lastId; e.text = g.lastBody;
+        out.push_back(e);
+    }
+    return out;
+}
 
 } // namespace okay

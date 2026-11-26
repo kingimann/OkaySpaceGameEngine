@@ -576,6 +576,19 @@ add_test(NAME debug_console COMMAND test_debug_console)
 add_executable(test_diagnostics test_diagnostics.cpp)
 target_link_libraries(test_diagnostics PRIVATE okay::engine)
 add_test(NAME diagnostics COMMAND test_diagnostics)
+# The Problems list's runner (editor/ProjectDiagRunner.*): the project-wide check off the editor's thread, once per change of files.
+# Not built for Windows: the test waits with <thread> (CLAUDE.md 21a).
+if(NOT WIN32)
+    add_executable(test_project_diag_runner test_project_diag_runner.cpp ${CMAKE_SOURCE_DIR}/editor/ProjectDiagRunner.cpp ${CMAKE_SOURCE_DIR}/editor/WorkerCall.cpp)
+    target_include_directories(test_project_diag_runner PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+    target_link_libraries(test_project_diag_runner PRIVATE okay::engine)
+    add_test(NAME project_diag_runner COMMAND test_project_diag_runner)
+    # editor/WorkerCall: the update check and download run on their own thread, collected on a later frame (editor perf, 2026-11-25).
+    add_executable(test_worker_call test_worker_call.cpp ${CMAKE_SOURCE_DIR}/editor/WorkerCall.cpp)
+    target_include_directories(test_worker_call PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+    target_link_libraries(test_worker_call PRIVATE okay::engine)
+    add_test(NAME worker_call COMMAND test_worker_call)
+endif()
 
 add_executable(test_debug_overlay test_debug_overlay.cpp)
 target_link_libraries(test_debug_overlay PRIVATE okay::engine)
@@ -873,6 +886,16 @@ add_test(NAME pausemenu COMMAND test_pausemenu)
 add_executable(test_worldstreamer test_worldstreamer.cpp)
 target_link_libraries(test_worldstreamer PRIVATE okay::engine)
 add_test(NAME worldstreamer COMMAND test_worldstreamer)
+
+# Asset streaming core: AssetManager::Stream priorities / cancel / RAM budget, streamed scene loads under the frame
+# budget, spread unloads, WorldStreamer cells (docs/engine/asset_streaming.md).
+add_executable(test_asset_streaming test_asset_streaming.cpp)
+target_link_libraries(test_asset_streaming PRIVATE okay::engine)
+add_test(NAME asset_streaming COMMAND test_asset_streaming)
+# Large-world stress test: streamed vs. everything up front (frame time, memory, pop-in).
+add_executable(test_asset_streaming_stress test_asset_streaming_stress.cpp)
+target_link_libraries(test_asset_streaming_stress PRIVATE okay::engine)
+add_test(NAME asset_streaming_stress COMMAND test_asset_streaming_stress)
 
 add_executable(test_destructible test_destructible.cpp)
 target_link_libraries(test_destructible PRIVATE okay::engine)
@@ -1307,6 +1330,16 @@ target_include_directories(test_project_panel_db PRIVATE ${PROJECT_SOURCE_DIR}/e
 target_link_libraries(test_project_panel_db PRIVATE okay::engine)
 add_test(NAME project_panel_db COMMAND test_project_panel_db)
 
+# A Project panel thumbnail renders without shadow maps or post passes and leaves the Scene view's state (editor perf, 2026-11-25).
+add_executable(test_thumbnail_render_cost test_thumbnail_render_cost.cpp)
+target_link_libraries(test_thumbnail_render_cost PRIVATE okay::engine)
+add_test(NAME thumbnail_render_cost COMMAND test_thumbnail_render_cost)
+
+# The Direct3D 11 renderer's compiled shaders kept between runs (ShaderBundle.hpp CompileCache): compile counts per start (editor perf, 2026-11-25).
+add_executable(test_shader_compile_cache test_shader_compile_cache.cpp)
+target_link_libraries(test_shader_compile_cache PRIVATE okay::engine)
+add_test(NAME shader_compile_cache COMMAND test_shader_compile_cache)
+
 # A picture changed on disk or reimported is shown changed in the Scene view: InvalidateTextureCacheForFile drops every cache key that names the file (relative, ./, absolute), and Browser::TakeChangedFiles hands out the files a scan found changed plus every hand reimport, once each.
 add_executable(test_texture_reimport test_texture_reimport.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp)
 target_include_directories(test_texture_reimport PRIVATE ${PROJECT_SOURCE_DIR}/editor)
@@ -1422,6 +1455,14 @@ target_compile_features(test_editor_signin_gate PRIVATE cxx_std_17)
 target_include_directories(test_editor_signin_gate PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_editor_signin_gate PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME editor_signin_gate COMMAND test_editor_signin_gate)
+
+# The editor closes when the launcher that started it has gone (editor/LauncherWatch.hpp): once a second, one close
+# request through the quit prompt, not repeated after Cancel; plus source checks of the editor and launcher wiring.
+add_executable(test_editor_launcher_watch test_editor_launcher_watch.cpp)
+target_compile_features(test_editor_launcher_watch PRIVATE cxx_std_17)
+target_include_directories(test_editor_launcher_watch PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_editor_launcher_watch PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME editor_launcher_watch COMMAND test_editor_launcher_watch)
 
 # The ONE SHA-256 (engine/include/okay/Crypto/Sha256.hpp) against the three old copies kept as references, RFC 4231 HMAC and
 # RFC 7914 PBKDF2 vectors, and password records written by the old code (docs/platform/sha256_comparison.md). Header-only: no link needed.
@@ -2004,6 +2045,18 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
     endif()
     target_include_directories(test_okayui_host_layering PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
     add_test(NAME okayui_host_layering COMMAND test_okayui_host_layering)
+    # Editor modals that block every click while nothing is shown (editor/ModalGuard.hpp): the two recovery questions that
+    # replaced each other every frame after an unclean exit, undrawn and off-screen modals, the clicks-land-nowhere log line.
+    add_executable(test_editor_stale_modal test_editor_stale_modal.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_editor_stale_modal PRIVATE okay_imgui)
+    else()
+        target_sources(test_editor_stale_modal PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_editor_stale_modal SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_include_directories(test_editor_stale_modal PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME editor_stale_modal COMMAND test_editor_stale_modal)
     # The Script Editor's OkayUI code inside a Dear ImGui window, in ImGui's draw order (OkayUI::BeginCapture, shared/OkayUIImGuiEmbed.hpp):
     # an ImGui popup over the code is drawn over it. Dear ImGui and OkayUI headless, one software rasteriser.
     add_executable(test_okayui_codeedit_imgui test_okayui_codeedit_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptEditorCodeEdit.cpp)
@@ -2741,6 +2794,12 @@ endif()
 find_program(OKAY_NODE node)
 if(OKAY_NODE)
     add_test(NAME password_reset_page COMMAND ${OKAY_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_password_reset_page.js)
+    # okay.js (web/okayjs/, docs/scripting/okayjs.md): maths, meshes, scene graph, input, game loop and the engine's game
+    # scripts in plain node; then the examples in headless Chromium (skipped, 77, when playwright cannot be loaded).
+    add_test(NAME okayjs_unit COMMAND ${OKAY_NODE} --test ${CMAKE_CURRENT_SOURCE_DIR}/okayjs/test_okayjs_math.mjs
+             ${CMAKE_CURRENT_SOURCE_DIR}/okayjs/test_okayjs_script.mjs ${CMAKE_CURRENT_SOURCE_DIR}/okayjs/test_okayjs_renderer.mjs)
+    add_test(NAME okayjs_browser COMMAND ${OKAY_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/okayjs/test_okayjs_browser.js)
+    set_tests_properties(okayjs_browser PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 endif()
 
 # The launcher's chat JSON (Messages / Servers): header-only, no engine link.
@@ -2768,6 +2827,11 @@ add_executable(test_friends_json test_friends_json.cpp)
 target_compile_features(test_friends_json PRIVATE cxx_std_17)
 target_include_directories(test_friends_json PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME friends_json COMMAND test_friends_json)
+# ...chat delivery, limits, safe links, game invites and which program a join starts (ChatDelivery.hpp, Invites.hpp, JoinPlan.hpp).
+add_executable(test_chat_invites test_chat_invites.cpp)
+target_compile_features(test_chat_invites PRIVATE cxx_std_17)
+target_include_directories(test_chat_invites PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME chat_invites COMMAND test_chat_invites)
 
 # Anti-cheat (opt-in): the build's integrity manifest + ed25519, and the runtime
 # checks' logic. Linked to the engine so a libsodium build tests that backend too.
@@ -2857,6 +2921,9 @@ if(UNIX)
     set_tests_properties(member_moderation_sql PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME chat_receipts_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_chat_receipts_sql.sh)
     set_tests_properties(chat_receipts_sql PROPERTIES SKIP_RETURN_CODE 77)
+    # docs/sql/chat_invites.sql (client ids, chat limits, friends-only invites, game_invites) on a LOCAL Postgres, same opt-in.
+    add_test(NAME chat_invites_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_chat_invites_sql.sh)
+    set_tests_properties(chat_invites_sql PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 add_executable(test_tween test_tween.cpp)
@@ -3080,6 +3147,17 @@ if(SDL2_FOUND)
     target_compile_definitions(test_ui_renderer_golden PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     target_compile_definitions(test_ui_renderer_golden PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_renderer_golden COMMAND test_ui_renderer_golden)
+
+    # The start-up splash (shared/Splash.hpp) on the software painter: bar fill per progress, status text, failed state, fade,
+    # the steps and the finish, and one golden picture (tests/golden/splash/loading_50.png).
+    if(TARGET okay_ui_soft)
+        add_executable(test_splash test_splash.cpp)
+        target_include_directories(test_splash PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${SDL2_INCLUDE_DIRS})
+        target_link_libraries(test_splash PRIVATE okay_ui_soft okay::engine ${OKAY_TEST_SDL_LIB})
+        target_compile_definitions(test_splash PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+        target_compile_features(test_splash PRIVATE cxx_std_17)
+        add_test(NAME splash COMMAND test_splash)
+    endif()
 
     # Accessibility settings in rendered pixels (text size, colour filter, high contrast)
     add_executable(test_accessibility_render test_accessibility_render.cpp)
@@ -4309,6 +4387,15 @@ target_compile_features(test_update_view PRIVATE cxx_std_17)
 add_test(NAME update_view COMMAND test_update_view)
 
 # The editor's frame-time maths (editor/EditorPerf.hpp, UI-library free): section breakdown, history numbers, idle throttle, viewport scale, performance mode.
+# The editor's hang watchdog (editor/HangWatchdog.*): the rules on a fake clock, and the real thread reporting a fake main loop that stops.
+# Not built for Windows: the fake main loop sleeps with <thread> (CLAUDE.md 21a); the watchdog itself is checked there by the editor build.
+if(NOT WIN32)
+    add_executable(test_hang_watchdog test_hang_watchdog.cpp ${CMAKE_SOURCE_DIR}/editor/HangWatchdog.cpp)
+    target_include_directories(test_hang_watchdog PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
+    target_link_libraries(test_hang_watchdog PRIVATE okay::engine)
+    add_test(NAME hang_watchdog COMMAND test_hang_watchdog)
+endif()
+
 add_executable(test_editor_perf test_editor_perf.cpp)
 target_include_directories(test_editor_perf PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_perf PRIVATE okay::engine)
@@ -4631,9 +4718,9 @@ if(SDL2_FOUND)
 endif()
 add_test(NAME wav_playback COMMAND test_wav_playback WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_test(NAME wav_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_wav_seam_wiring.cmake)
-# HTTP seam (okay/Platform/NativeFetch.hpp): the shipped programs start curl only inside CurlFallback.hpp, the seam's last
-# fallback after WinHTTP (Windows) or our own client (Linux). Fails and names the file for a curl spawn anywhere else.
-add_test(NAME curl_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_curl_seam_wiring.cmake)
+# HTTP seam (okay/Platform/NativeFetch.hpp): no shipped program starts the external curl program; WinHTTP on Windows,
+# our own client elsewhere. Fails and names the file for any curl spawn in engine/launcher/editor/player/server/shared/platform.
+add_test(NAME no_curl_spawn COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_no_curl.cmake)
 
 add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
     -DROOT_CMAKE=${PROJECT_SOURCE_DIR}/CMakeLists.txt
@@ -5104,6 +5191,12 @@ target_link_libraries(test_vs_recipes PRIVATE okay::engine)
 target_compile_definitions(test_vs_recipes PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_recipes COMMAND test_vs_recipes)
 
+# The Visual Script panel's per-frame work: the graph checker is not run in every frame of a node drag (editor perf, 2026-11-25).
+add_executable(test_vs_check_cost test_vs_check_cost.cpp)
+target_include_directories(test_vs_check_cost PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_check_cost PRIVATE okay::engine)
+add_test(NAME vs_check_cost COMMAND test_vs_check_cost)
+
 add_executable(test_vs_saved_graphs test_vs_saved_graphs.cpp)
 target_include_directories(test_vs_saved_graphs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_saved_graphs PRIVATE okay::engine)
@@ -5515,7 +5608,23 @@ set_tests_properties(launcher_terminal PROPERTIES TIMEOUT 120)
 # closed means in, remembered geometry, one chat view drawn in both places). Headless; no SDL or ImGui.
 add_executable(test_launcher_tray test_launcher_tray.cpp)
 target_compile_features(test_launcher_tray PRIVATE cxx_std_17)
-target_include_directories(test_launcher_tray PRIVATE ${CMAKE_SOURCE_DIR}/launcher)
+target_include_directories(test_launcher_tray PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_launcher_tray PRIVATE OKAY_LAUNCHER_MAIN="${CMAKE_SOURCE_DIR}/launcher/main.cpp")
 add_test(NAME launcher_tray COMMAND test_launcher_tray)
 set_tests_properties(launcher_tray PROPERTIES TIMEOUT 60)
+
+# The launcher's desktop notifications (launcher/DesktopNotify.hpp): pop-up, in-app or tab only (focus, the switches,
+# Do not disturb, presence, blocked and muted senders), bursts, rate limits, the one-at-a-time queue, once per version,
+# where a click goes, and the tray balloon's messages (launcher/TrayLogic.hpp). Headless; no SDL, ImGui or Win32.
+add_executable(test_launcher_notify test_launcher_notify.cpp)
+target_compile_features(test_launcher_notify PRIVATE cxx_std_17)
+target_include_directories(test_launcher_notify PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME launcher_notify COMMAND test_launcher_notify)
+set_tests_properties(launcher_notify PROPERTIES TIMEOUT 60)
+# The chat window's Friends list (launcher/FriendsList.hpp): grouping, the friend menu, status, layout. Headless.
+add_executable(test_launcher_friends test_launcher_friends.cpp)
+target_compile_features(test_launcher_friends PRIVATE cxx_std_17)
+target_include_directories(test_launcher_friends PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_launcher_friends PRIVATE OKAY_LAUNCHER_MAIN="${CMAKE_SOURCE_DIR}/launcher/main.cpp")
+add_test(NAME launcher_friends COMMAND test_launcher_friends)
+set_tests_properties(launcher_friends PROPERTIES TIMEOUT 60)

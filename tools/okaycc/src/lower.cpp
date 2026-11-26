@@ -19,6 +19,24 @@ public:
             if (d && d->function && d->body) lowerFunc(*d);
         return std::move(mod_);
     }
+    // The size of a type for the parser's constant expressions: 0 when it is not known yet (a class
+    // not finished, a template parameter).
+    static int typeSizeFor(const Type& t) {
+        const Type* c = &t;
+        if (c->kind == Type::Kind::Struct || c->kind == Type::Kind::Union) {
+            if (c->tag.empty() || c->tag.find('\x02') != std::string::npos || !canonStructs().count(c->tag)) return 0;
+        }
+        if (c->kind == Type::Kind::Function || c->kind == Type::Kind::Void) return 0;
+        return sizeOf(c);
+    }
+    // The offset of member 'field' in class 'tag' (-1 if none), for the parser's vtable groups.
+    static int memberOffset(const std::string& tag, const std::string& field) {
+        auto it = canonStructs().find(tag);
+        if (it == canonStructs().end() || !it->second) return -1;
+        for (const FieldOff& f : layoutOf(it->second.get(), false))
+            if (f.name == field) return f.offset;
+        return -1;
+    }
 
 private:
     struct FieldOff {
@@ -164,20 +182,36 @@ private:
         case Type::Kind::Pointer:
         case Type::Kind::Reference: return 8;
         case Type::Kind::Array: {
-            int n = 0;
-            if (t->bound && t->bound->kind == Expr::Kind::Int) n = static_cast<int>(t->bound->ival);
-            return n * sizeOf(t->inner.get());
+            // The length is a constant expression ([dcl.array] p1): double s[sizeof(P) / 8 + 1] in a
+            // class was taken as no elements when it was not a literal.
+            std::int64_t n = 0;
+            if (t->bound && !constInt(*t->bound, n)) n = 0;
+            return static_cast<int>(n) * sizeOf(t->inner.get());
         }
         case Type::Kind::Struct: {
-            auto fields = layoutOf(t);
+            // The size needs only the members held by value (a pointer is 8 bytes whatever it points
+            // to), so the layout taken here does not follow pointers. A finished class's size is
+            // kept: each pointer member asks for the size of the class it points to (its step), and
+            // asked again at every level, a web of classes that point to each other cost time
+            // exponential in its depth.
+            const Type* c = t->params.empty() ? canonOf(t) : t;
+            const bool keep = c == canonOf(c) && !c->tag.empty() && c->tag.find('\x02') == std::string::npos &&
+                              !c->params.empty();
+            if (keep) {
+                auto hit = sizeMemo().find(c->tag);
+                if (hit != sizeMemo().end() && hit->second.cls == c && hit->second.members == c->params.size())
+                    return hit->second.size;
+            }
+            auto fields = layoutOf(t, false);
             int end = 0;
             for (const FieldOff& f : fields) {
                 int span = f.bitWidth > 0 ? 4 : f.width;
                 int e = f.offset + span;
                 if (e > end) end = e;
             }
-            if (end == 0) return t->tag.empty() ? 0 : 1;
-            return alignUp(end, alignOf(t));
+            int size = end == 0 ? (t->tag.empty() ? 0 : 1) : alignUp(end, alignOf(t));
+            if (keep) sizeMemo()[c->tag] = SizeMemo{c, c->params.size(), size};
+            return size;
         }
         case Type::Kind::Union: {
             int sz = 0;
@@ -202,19 +236,37 @@ private:
         return 0;
     }
 
-    static std::vector<FieldOff> layoutOf(const Type* t) {
+    struct SizeMemo {
+        const Type* cls = nullptr;
+        std::size_t members = 0;
+        int size = 0;
+    };
+    static std::map<std::string, SizeMemo>& sizeMemo() {
+        static std::map<std::string, SizeMemo> memo;
+        return memo;
+    }
+
+    // The members of a class with their offsets. deep: also each member's step (the size of what a
+    // pointer member points to) and the members of a member held by value; the members of a class
+    // a pointer member points to are not laid out here but found by its tag when they are needed
+    // (fieldsFor), so a class that points to many others is not laid out with all of them inside.
+    // Not deep (for a size or an offset): the offsets and sizes only.
+    static std::vector<FieldOff> layoutOf(const Type* t, bool deep = true) {
         std::vector<FieldOff> out;
         if (!t || (t->kind != Type::Kind::Struct && t->kind != Type::Kind::Union)) return out;
         // A use made before the class was complete has no fields of its own; take the finished
         // type, unless this tag is being laid out right now (a pointer to itself).
-        static std::set<std::string> inProgress;
+        static std::set<std::string> inProgressDeep, inProgressFlat;
+        std::set<std::string>& inProgress = deep ? inProgressDeep : inProgressFlat;
         struct Mark {
+            std::set<std::string>* in = nullptr;
             std::string tag;
             bool set = false;
             ~Mark() {
-                if (set) inProgress.erase(tag);
+                if (set) in->erase(tag);
             }
         } mark;
+        mark.in = &inProgress;
         if (t->params.empty() && !t->tag.empty() && !inProgress.count(t->tag)) t = canonOf(t);
         if (!t->tag.empty() && inProgress.insert(t->tag).second) {
             mark.tag = t->tag;
@@ -226,12 +278,14 @@ private:
                 f.name = p.name;
                 f.offset = 0;
                 f.width = sizeOf(p.type.get());
-                f.step = valueStep(p.type.get());
-                f.inner = innerOf(p.type.get());
+                if (deep) {
+                    f.step = valueStep(p.type.get());
+                    f.inner = innerOf(p.type.get());
+                }
                 f.agg = p.type && (p.type->kind == Type::Kind::Struct || p.type->kind == Type::Kind::Union ||
                                    p.type->kind == Type::Kind::Array);
                 if (p.type && (p.type->kind == Type::Kind::Struct || p.type->kind == Type::Kind::Union))
-                    f.fields = layoutOf(p.type.get());
+                    f.fields = layoutOf(p.type.get(), deep);
                 out.push_back(std::move(f));
             }
             return out;
@@ -275,26 +329,41 @@ private:
             off = alignUp(off, alignOf(p.type.get()));
             f.offset = off;
             f.width = sizeOf(p.type.get());
-            f.step = valueStep(p.type.get());
-            f.inner = innerOf(p.type.get());
+            if (deep) {
+                f.step = valueStep(p.type.get());
+                f.inner = innerOf(p.type.get());
+            }
             bool nested = p.type && p.type->kind == Type::Kind::Struct;
             bool arr = p.type && p.type->kind == Type::Kind::Array;
             bool pstruct = p.type && p.type->kind == Type::Kind::Pointer && p.type->inner &&
                            p.type->inner->kind == Type::Kind::Struct;
             f.agg = nested || arr;
             if (nested) {
-                f.fields = layoutOf(p.type.get());
+                f.fields = layoutOf(p.type.get(), deep);
                 f.tag = p.type->tag;
             } else if (pstruct) {
+                // (by its tag, fieldsFor; a class with no tag is laid out here)
                 f.tag = p.type->inner->tag;
-                if (p.type->inner->tag.empty() || p.type->inner->tag != t->tag)
-                    f.fields = layoutOf(p.type->inner.get());
+                if (deep && p.type->inner->tag.empty()) f.fields = layoutOf(p.type->inner.get());
+            }
+            if (p.name.compare(0, 5, "__mb:") == 0 && p.type) {
+                // The subobject of a base after the primary one (Itanium C++ ABI 2.4 II.3): the
+                // next member may go in its tail padding unless it is POD for the purpose of layout,
+                // so the offset moves on by its data size, not its size.
+                const Type* bc = canonOf(p.type.get());
+                if (bc && bc->nonpod) {
+                    int dsize = 0;
+                    for (const FieldOff& g : f.fields) dsize = std::max(dsize, g.offset + (g.bitWidth > 0 ? 4 : g.width));
+                    out.push_back(std::move(f));
+                    off += dsize;
+                    continue;
+                }
             }
             out.push_back(std::move(f));
             off += f.width;
         }
         if (bitCursor >= 0) off += 4;
-        if (!t->tag.empty() && (!out.empty() || !structLayouts().count(t->tag))) structLayouts()[t->tag] = out;
+        if (deep && !t->tag.empty() && (!out.empty() || !structLayouts().count(t->tag))) structLayouts()[t->tag] = out;
         return out;
     }
 
@@ -464,7 +533,7 @@ private:
 
     // An integer constant expression of a global initializer (ISO C 6.6, C++ [expr.const]):
     // literals, unary and binary operators and casts to an integer type.
-    bool constInt(const Expr& e, std::int64_t& out) {
+    static bool constInt(const Expr& e, std::int64_t& out) {
         switch (e.kind) {
         case Expr::Kind::Int:
         case Expr::Kind::Char:
@@ -582,7 +651,27 @@ private:
         init = std::move(lit);
     }
 
-    bool fold(const std::string& op, std::int64_t x, std::int64_t y, std::int64_t& out) {
+    // uns: compare, divide and take the remainder as unsigned values ([expr.arith.conv]).
+    // arith: >> of a signed value keeps the sign (as the code emitted for it does).
+    static bool fold(const std::string& op, std::int64_t x, std::int64_t y, std::int64_t& out, bool uns = false,
+                     bool arith = false) {
+        if (arith && op == ">>") {
+            if (y < 0 || y >= 63) return false;
+            out = x >> y;
+            return true;
+        }
+        if (uns) {
+            const auto ux = static_cast<std::uint64_t>(x), uy = static_cast<std::uint64_t>(y);
+            if (op == "<") { out = ux < uy; return true; }
+            if (op == "<=") { out = ux <= uy; return true; }
+            if (op == ">") { out = ux > uy; return true; }
+            if (op == ">=") { out = ux >= uy; return true; }
+            if (op == "/" || op == "%") {
+                if (uy == 0) return false;
+                out = static_cast<std::int64_t>(op == "/" ? ux / uy : ux % uy);
+                return true;
+            }
+        }
         if (op == "+") {
             out = static_cast<std::int64_t>(static_cast<std::uint64_t>(x) + static_cast<std::uint64_t>(y));
             return true;
@@ -674,6 +763,7 @@ private:
         auto u = static_cast<std::uint64_t>(v);
         for (int i = 0; i < n; ++i) b[static_cast<std::size_t>(off + i)] = static_cast<unsigned char>((u >> (8 * i)) & 0xffu);
     }
+    std::vector<std::pair<int, std::string>>* fillRelocs_ = nullptr;  // the relocations of the global being filled
     void fillInit(const Type* t, const Expr* init, std::vector<unsigned char>& b, int off) {
         if (!t || !init) return;
         if (t->kind == Type::Kind::Array && init->kind == Expr::Kind::Brace && t->inner) {
@@ -684,9 +774,9 @@ private:
         }
         if ((t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union) && init->kind == Expr::Kind::Brace) {
             auto fields = layoutOf(t);
-            for (std::size_t i = 0; i < init->kids.size() && i < fields.size() && i < t->params.size(); ++i)
-                if (init->kids[i] && t->params[i].type)
-                    fillInit(t->params[i].type.get(), init->kids[i].get(), b, off + fields[i].offset);
+            for (std::size_t i = 0; i < init->kids.size() && i < fields.size(); ++i)
+                if (const Type* ft = init->kids[i] ? fieldTypeOf(t, fields[i].name) : nullptr)
+                    fillInit(ft, init->kids[i].get(), b, off + fields[i].offset);
             return;
         }
         if (t->kind == Type::Kind::Array && t->inner && t->inner->kind == Type::Kind::Char &&
@@ -715,12 +805,31 @@ private:
             }
             return;
         }
+        if (t->kind == Type::Kind::Pointer && fillRelocs_) {
+            // An address constant inside constant data (ISO C 6.6 p9): a string literal, &global or
+            // a function's name; 8 bytes the linker fills in.
+            const Expr* x = init;
+            while (x->kind == Expr::Kind::Cast && !x->kids.empty() && x->kids[0]) x = x->kids[0].get();
+            std::string target;
+            if (x->kind == Expr::Kind::String) target = addString(x->text);
+            else if (x->kind == Expr::Kind::Unary && x->text == "&" && !x->kids.empty() && x->kids[0] &&
+                     x->kids[0]->kind == Expr::Kind::Name) {
+                if (Sym* g = find(x->kids[0]->text); g && g->global) target = g->gname.empty() ? x->kids[0]->text : g->gname;
+            } else if (x->kind == Expr::Kind::Name) {
+                if (Sym* g = find(x->text); g && g->global && g->func) target = g->gname.empty() ? x->text : g->gname;
+            }
+            if (!target.empty()) {
+                putAt(b, off, 0, 8);
+                fillRelocs_->emplace_back(off, target);
+                return;
+            }
+        }
         std::int64_t val = 0;
         if (init->kind == Expr::Kind::Int || init->kind == Expr::Kind::Char) val = static_cast<std::int64_t>(init->ival);
         else if (init->kind == Expr::Kind::Unary && init->text == "-" && !init->kids.empty() && init->kids[0] &&
                  init->kids[0]->kind == Expr::Kind::Int)
             val = -static_cast<std::int64_t>(init->kids[0]->ival);
-        else {
+        else if (!constInt(*init, val)) {  // (char)27, static_cast<char>('A' + 2): integer constant expressions
             err(init->line, init->col, "global initializer is not supported");
             return;
         }
@@ -785,7 +894,9 @@ private:
             g.size = sizeOf(d.type.get());
             if (g.size < 0) g.size = 0;
             g.bytes.assign(static_cast<std::size_t>(g.size), 0);
+            fillRelocs_ = &g.relocs;
             fillInit(d.type.get(), d.init.get(), g.bytes, 0);
+            fillRelocs_ = nullptr;
             if (static_cast<int>(g.bytes.size()) < g.size) g.bytes.resize(static_cast<std::size_t>(g.size));
         } else if (s.array || s.agg) {
             g.size = sizeOf(d.type.get());
@@ -820,8 +931,15 @@ private:
         if (!d.vt.empty()) {
             g.size = static_cast<int>(d.vt.size()) * 8;
             g.bytes.assign(static_cast<std::size_t>(g.size), 0);
-            for (std::size_t k = 0; k < d.vt.size(); ++k)
-                if (!d.vt[k].empty()) g.relocs.emplace_back(static_cast<int>(k) * 8, d.vt[k]);
+            for (std::size_t k = 0; k < d.vt.size(); ++k) {
+                if (d.vt[k].compare(0, 2, "\x01#") == 0) {  // a number: an offset-to-top
+                    std::int64_t n = std::stoll(d.vt[k].substr(2));
+                    for (int b = 0; b < 8; ++b)
+                        g.bytes[k * 8 + static_cast<std::size_t>(b)] = static_cast<std::uint8_t>(static_cast<std::uint64_t>(n) >> (8 * b));
+                } else if (!d.vt[k].empty()) {
+                    g.relocs.emplace_back(static_cast<int>(k) * 8, d.vt[k]);
+                }
+            }
             g.rodata = true;
             g.weakSym = d.isInline;
         }
@@ -1181,7 +1299,7 @@ private:
                     initLocalBrace(base, t->inner.get(), *init.kids[i], at);
                     continue;
                 }
-                Val v = lowerExpr(*init.kids[i]);
+                Val v = toScalar(lowerExpr(*init.kids[i]), t->inner.get());
                 int w = es > 8 ? 8 : es;
                 Operand bits = w < 8 ? narrow(v.op, w, t->inner->unsign) : v.op;
                 storeBits(addAddr(base, at), bits, w);
@@ -1190,12 +1308,12 @@ private:
             auto fields = layoutOf(t);
             for (std::size_t i = 0; i < init.kids.size() && i < fields.size(); ++i) {
                 if (!init.kids[i]) continue;
+                const Type* ft = fieldTypeOf(t, fields[i].name);
                 if (init.kids[i]->kind == Expr::Kind::Brace) {
-                    const Type* ft = i < t->params.size() ? t->params[i].type.get() : nullptr;
                     initLocalBrace(base, ft, *init.kids[i], off + fields[i].offset);
                     continue;
                 }
-                Val v = lowerExpr(*init.kids[i]);
+                Val v = toScalar(lowerExpr(*init.kids[i]), ft);
                 int w = fields[i].width > 8 ? 8 : fields[i].width;
                 storeBits(addAddr(base, off + fields[i].offset), v.op, w);
             }
@@ -1229,6 +1347,17 @@ private:
         in.a = Operand::number(disp);
         emit(in);
         return Operand::vreg(dst);
+    }
+    // A class that is not trivial for the purposes of calls (it has a destructor, or a copy or
+    // move constructor that runs code) is passed by an invisible reference (Itanium C++ ABI 3.1.2.3):
+    // the caller makes the parameter object, passes its address and destroys it after the call; the
+    // callee works on that object in place. A copy of its bytes would leave two owners of the same
+    // resources (the callee's changes lost, a buffer freed twice).
+    static bool byAddress(const Type* t) {
+        if (!t || t->kind != Type::Kind::Struct || t->tag.empty()) return false;
+        const Type* c = canonOf(t);
+        if (!c) return false;
+        return c->needDtor || hasCopyCtor(c);
     }
     static int structPieces(const Type* t, int& sz, bool& memClass) {
         sz = t ? sizeOf(t) : 8;
@@ -1307,7 +1436,13 @@ private:
                 return cvtFp(v, srcW, -iw);
             }
             int w = sizeOf(e.ty.get());
-            if (w >= 8 && !e.ty->unsign) return v;
+            if (w >= 8 && !e.ty->unsign) {
+                // (long)p is a number: p's pointer step goes ((long)p + 1 added the size of *p).
+                v.step = 0;
+                v.inner = 0;
+                v.fields.clear();
+                return v;
+            }
             return Val{narrow(v.op, w, e.ty->unsign), 0, 0};
         }
         case Expr::Kind::Comma: {
@@ -1698,6 +1833,31 @@ private:
         return o;
     }
 
+    // The type of data member 'name' of class t (t may be named only: its members are the
+    // finished class's).
+    static const Type* fieldTypeOf(const Type* t, const std::string& name) {
+        const Type* ct = t && t->params.empty() && !t->tag.empty() ? canonOf(t) : t;
+        if (!ct) return nullptr;
+        for (const Param& p : ct->params)
+            if (p.name == name && p.mangled.empty() && p.type && p.type->kind != Type::Kind::Function) return p.type.get();
+        return nullptr;
+    }
+    // A value converted to the arithmetic type of the object it initializes ([conv.fpint],
+    // [conv.double], [conv.bool]): float x[2] = {1, 2} stores 1.0f and 2.0f, not the int bits.
+    Val toScalar(Val v, const Type* to) {
+        if (!to || v.pair) return v;
+        if (to->kind == Type::Kind::Bool) return Val{asBool(v.op, v.fpw), 0, 0};
+        const int dst = fpWidthOf(to);
+        if (dst) return v.fpw == dst ? v : cvtFp(v, v.fpw, dst);
+        if (!v.fpw || !isIntish(*to)) return v;
+        const int iw = sizeOf(to);
+        if (iw < 4) {
+            Val n = cvtFp(v, v.fpw, -4);
+            return Val{narrow(n.op, iw, to->unsign), 0, 0};
+        }
+        return cvtFp(v, v.fpw, -(iw > 8 ? 8 : iw));
+    }
+
     Val lowerBin(Expr& e) {
         if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return {};
         Val a = lowerExpr(*e.kids[0]);
@@ -1734,10 +1894,6 @@ private:
             if (!cmp) r.fpw = dw;
             return r;
         }
-        std::int64_t folded = 0;
-        if (a.step == 0 && b.step == 0 && a.op.kind == Operand::Kind::Imm && b.op.kind == Operand::Kind::Imm &&
-            fold(e.text, a.op.imm, b.op.imm, folded))
-            return Val{Operand::number(folded), 0, 0};
         if ((e.text == "+" || e.text == "-") && a.step != 0 && b.step == 0) {
             Val off = scale(b, a.step);
             int dst = fresh();
@@ -1786,6 +1942,13 @@ private:
                 arith = true;
             }
         }
+        // Two constants: the operation done here, with the signedness worked out above
+        // ((unsigned long)-1 < 0ul was folded as signed: true; numeric_limits<unsigned
+        // long>::digits was 63).
+        std::int64_t folded = 0;
+        if (a.step == 0 && b.step == 0 && a.op.kind == Operand::Kind::Imm && b.op.kind == Operand::Kind::Imm &&
+            fold(e.text, a.op.imm, b.op.imm, folded, uns, arith))
+            return Val{Operand::number(folded), 0, 0};
         int dst = fresh();
         emitBin(binOp(e.text), dst, a.op, b.op, uns);
         if (arith) fn_.blocks[static_cast<std::size_t>(cur_)].code.back().arith = true;
@@ -2249,6 +2412,26 @@ private:
             // A struct of up to 16 bytes that is a call's result arrives in registers (rax, or
             // rax:rdx), not as an address: pass those eightbytes on as they are.
             const bool inRegs = !memClass && sz <= 16 && e.kids[i]->kind == Expr::Kind::Call;
+            if (!varExtra && byAddress(declared ? declared : t)) {
+                Operand at = v.op;
+                if (inRegs && (v.pair || nreg == 1)) {  // a call's result: into memory first
+                    int slot = fresh();
+                    Inst loc;
+                    loc.op = Inst::Op::Local;
+                    loc.dst = slot;
+                    loc.a = Operand::number(sz < 1 ? 1 : sz);
+                    emit(loc);
+                    storeBits(Operand::vreg(slot), v.op, sz >= 8 ? 8 : sz);
+                    if (v.pair) storeBits(addAddr(Operand::vreg(slot), 8), v.hi, sz - 8);
+                    at = Operand::vreg(slot);
+                }
+                if (reg >= 6) stack.push_back(at);
+                else {
+                    regs.push_back(at);
+                    ++reg;
+                }
+                continue;
+            }
             if (inRegs && (v.pair || nreg == 1)) {
                 Operand lo = v.op;
                 Operand hi = v.pair ? v.hi : Operand::number(0);
@@ -2487,12 +2670,17 @@ private:
                 // once in the image like a global's ([basic.start.static]). A value that is not a
                 // constant is reported by fillInit (dynamic initialization of a static local is not
                 // supported); it was silently zero before.
+                fillRelocs_ = &g.relocs;
                 fillInit(d.type.get(), d.init.get(), g.bytes, 0);
+                fillRelocs_ = nullptr;
                 g.bytes.resize(static_cast<std::size_t>(sz));
             } else if (d.init) {
-                // static const float k = 0.5f, static double s = -1.0: the constant's bits; any
-                // other value is reported by fillInit.
+                // static const float k = 0.5f, static double s = -1.0: the constant's bits;
+                // static const char *hx = "0123": the address of the literal; any other value is
+                // reported by fillInit.
+                fillRelocs_ = &g.relocs;
                 fillInit(d.type.get(), d.init.get(), g.bytes, 0);
+                fillRelocs_ = nullptr;
                 g.bytes.resize(static_cast<std::size_t>(sz));
             }
             mod_.globals.push_back(std::move(g));
@@ -2785,6 +2973,7 @@ private:
             int size = 8;
             bool isStruct = false;
             bool isFp = false;
+            bool byAddr = false;  // its address (byAddress)
             int xmmAt = -1;
         };
         std::vector<PPlan> plans;
@@ -2815,12 +3004,17 @@ private:
                 }
                 plan.nreg = structPieces(p.type.get(), plan.size, memClass);
                 plan.isStruct = p.type && (p.type->kind == Type::Kind::Struct || p.type->kind == Type::Kind::Union);
+                if (plan.isStruct && byAddress(p.type.get())) {  // its address, in one eightbyte
+                    plan.byAddr = true;
+                    plan.nreg = 1;
+                    memClass = false;
+                }
                 if (memClass || reg + plan.nreg > 6) {
                     plan.memory = true;
                     plan.nreg = 0;
                     stack = alignUp(stack, 8);
                     plan.stackOff = stack;
-                    stack += (plan.size + 7) & ~7;
+                    stack += plan.byAddr ? 8 : (plan.size + 7) & ~7;
                 } else {
                     plan.regAt = reg;
                     reg += plan.nreg;
@@ -2848,7 +3042,13 @@ private:
                 const PPlan& plan = plans[i];
                 Sym s;
                 if (p.type) describe(s, p.type.get());
-                if (plan.isStruct) {
+                if (plan.isStruct && plan.byAddr) {
+                    int addr = fresh();
+                    if (plan.memory) emitMov(addr, loadBits(frameAddr(16 + plan.stackOff), 8), 8, true);
+                    else emitMov(addr, Operand::vreg(plan.regAt), 8, true);
+                    s.reg = addr;
+                    s.agg = true;
+                } else if (plan.isStruct) {
                     int addr = fresh();
                     if (plan.memory) {
                         Inst lea;
@@ -2968,6 +3168,11 @@ Module lowerSource(const std::string& source, Diagnostics& diags, const std::str
 }
 
 void setForceExceptions(bool on) { forceExceptions() = on; }
+
+namespace compiler {
+int memberOffset(const std::string& tag, const std::string& field) { return Lowerer::memberOffset(tag, field); }
+int typeSize(const Type& t) { return Lowerer::typeSizeFor(t); }
+}  // namespace compiler
 
 }  // namespace okaycc
 

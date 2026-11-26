@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <unordered_set>
@@ -677,6 +678,7 @@ bool Package::Load(std::string& why, const Limits& limits) {
                 return bad(which + " lies outside the data region");
             if (e.offset % H.alignment != 0) return bad(which + " is not aligned");
             if (e.size > limits.maxEntryBytes) return bad(which + " is bigger than allowed (" + std::to_string(e.size) + " bytes)");
+            if (e.size > (std::uint64_t)SIZE_MAX) return bad(which + " is too big for this machine");
             if (e.method == Method::Stored && e.storedBytes != e.size) return bad(which + " is stored with the wrong size");
             if (e.method == Method::Deflate) {
                 if (e.storedBytes >= e.size) return bad(which + " is compressed but not smaller");
@@ -730,7 +732,9 @@ bool Package::Read(const Entry& e, std::vector<std::uint8_t>& out, std::string& 
         if (!ReadAt(e.offset, in.data(), in.size(), why)) return false;
         inflate::Options op;
         op.maxOutput = (std::size_t)e.size;
-        op.hint = (std::size_t)e.size;
+        // The first allocation follows the bytes really present, not the size the table claims: a damaged entry that
+        // claims far more than it holds fails while unpacking, before memory grows that far.
+        op.hint = (std::size_t)std::min<std::uint64_t>(e.size, e.storedBytes * 8 + 4096);
         std::size_t used = 0;
         std::string w;
         if (!inflate::Raw(in.data(), in.size(), out, op, used, w) || out.size() != e.size || used != in.size()) {

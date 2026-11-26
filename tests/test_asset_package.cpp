@@ -773,6 +773,11 @@ void TestPackFolder() {
     CHECK(fs::exists(data / "game.okaypkg") && fs::exists(data / "packages.manifest"));
     CHECK(!fs::exists(data / "Assets") && !fs::exists(data / "game.okayscene"));   // packed files are gone from the folder
     CHECK(fs::exists(data / "StreamingAssets" / "level.txt") && fs::exists(data / "build.json"));
+    {   // nothing else is left or made in the folder (the dependency scan writes no meta files)
+        std::set<std::string> left;
+        for (auto& e : fs::recursive_directory_iterator(data)) if (e.is_regular_file()) left.insert(fs::relative(e.path(), data).generic_string());
+        CHECK(left == (std::set<std::string>{"build.json", "game.okaypkg", "packages.manifest", "StreamingAssets/level.txt"}));
+    }
     const std::vector<std::uint8_t> first = ReadFile(data / "game.okaypkg");
 
     PackageStack s;

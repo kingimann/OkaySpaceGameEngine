@@ -15,6 +15,7 @@
 // Call Pump() once a frame on the thread that draws.
 #include "okay/Browser/Browser.hpp"
 #include "okay/Browser/GameLaunch.hpp"
+#include "okay/Browser/Profile.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -60,6 +61,10 @@ public:
     /// The texture for an image of the page (`src` as written), or null while there is none.
     void* ImageFor(const std::string& src) const;
 
+    /// The browser program's own pages ("about:newtab" ..., okay/Browser/Profile.hpp): the host makes their HTML with this
+    /// instead of fetching them. Unset (the launcher): such an address is never fetched.
+    void SetInternalPages(std::function<std::string(const std::string& url)> make) { m_internal = std::move(make); }
+
     void SetGameRunner(const GameRunner& runner) { m_runner = runner; }
     bool CanRunGames() const { return !m_runner.dataRoot.empty() && !m_runner.playerExe.empty(); }
     /// The pack address an embedded box (`tag`, `src` as written) runs, or "" when it cannot run a game.
@@ -75,6 +80,9 @@ public:
 private:
     struct Impl;
     void RefreshPageInfo();
+    void DeliverPageAnswerImpl(const std::string& url, bool ok, long status, std::string& body, const std::string& error,
+                               const std::string& contentType, const std::string& disposition, const std::string& finalUrl,
+                               std::int64_t size, bool tooBig);
     BrowserTab m_tab;
     TextureFns m_textures;
     std::string m_userAgent;
@@ -82,7 +90,35 @@ private:
     WebExportConfig m_webConfig;
     const HtmlDocument* m_configFor = nullptr;   // the document m_webConfig was read from
     std::map<std::string, void*> m_images;       // resolved image address -> texture
+    std::function<std::string(const std::string&)> m_internal;
     std::unique_ptr<Impl> m_impl;
+};
+
+/// The browser program's downloads: each file is fetched into its place (NativeFetch's FetchToFile: a temporary file renamed
+/// when complete, size-capped, cancellable) on a worker thread of its own. Call Pump() once a frame.
+class DownloadHost {
+public:
+    static constexpr std::uint64_t kMaxBytes = 16ull << 30;   ///< a single download is refused beyond 16 GiB
+    explicit DownloadHost(std::string userAgent);
+    ~DownloadHost();
+    DownloadHost(const DownloadHost&) = delete;
+    DownloadHost& operator=(const DownloadHost&) = delete;
+    /// Start saving `url` to `path` (a full file path that is not taken; UniqueDownloadPath). Returns its index in Items().
+    int Start(const std::string& url, const std::string& path, const std::string& contentType, std::int64_t total);
+    void Cancel(int index);
+    /// Take the workers' progress into Items().
+    void Pump();
+    const std::vector<DownloadItem>& Items() const { return m_items; }
+    /// True once after a download finished (done, failed or cancelled), so the downloads page can be refreshed.
+    bool TakeChanged() { const bool c = m_changed; m_changed = false; return c; }
+
+    struct Shared;   // what the workers share (BrowserHost.cpp)
+
+private:
+    std::string m_userAgent;
+    std::vector<DownloadItem> m_items;
+    std::shared_ptr<Shared> m_shared;
+    bool m_changed = false;
 };
 
 } // namespace okay::browser

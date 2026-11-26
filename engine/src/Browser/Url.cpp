@@ -190,4 +190,30 @@ std::string FragmentOf(const std::string& url) {
     return h == std::string::npos ? std::string() : url.substr(h + 1);
 }
 
+std::string FormUrlEncode(const std::string& text) {
+    static const char* const hex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(text.size() * 3 / 2);
+    for (const char ch : text) {
+        const unsigned char c = (unsigned char)ch;
+        const bool keep = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '*' || c == '-' ||
+                          c == '.' || c == '_';
+        if (keep) out += ch;
+        else if (c == ' ') out += '+';
+        else { out += '%'; out += hex[c >> 4]; out += hex[c & 15]; }
+    }
+    return out;
+}
+
+std::string FormUrlEncodePairs(const std::vector<std::pair<std::string, std::string>>& pairs) {
+    std::string out;
+    for (const auto& p : pairs) {
+        if (!out.empty()) out += '&';
+        out += FormUrlEncode(p.first);
+        out += '=';
+        out += FormUrlEncode(p.second);
+    }
+    return out;
+}
+
 } // namespace okay::browser

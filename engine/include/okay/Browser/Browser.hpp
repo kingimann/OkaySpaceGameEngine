@@ -12,7 +12,9 @@
 //   * the host draws Layout() (okayui/screens/BrowserView.hpp draws it with OkayUI) and passes link clicks to Activate().
 // Only pages of the origin the tab was opened on are shown in it (`Activate` answers External for any other http(s)
 // address, which the host opens in the system browser); images come from that origin too. Every other scheme
-// (javascript:, file:, data: ...) is refused.
+// (javascript:, file:, data: ...) is refused. The browser program (browser/) switches that off with SetAnyOrigin(true): a
+// tab there goes to any http(s) site like a regular browser's, and also shows our own pages ("about:newtab" ...,
+// Profile.hpp), whose HTML the host hands back like any other page.
 // Standard library only.
 #include "okay/Browser/Css.hpp"
 #include "okay/Browser/Html.hpp"
@@ -20,6 +22,7 @@
 #include "okay/Browser/Url.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -41,6 +44,16 @@ public:
     static constexpr std::size_t kMaxHistory = 64;
     static constexpr std::size_t kMaxCachedPages = 8;
 
+    /// A page answer that is not a page (a zip, a program ...): the host offers to save it instead (see DeliverDownload).
+    struct DownloadOffer {
+        std::string url, contentType, fileName;
+        std::int64_t size = -1;   ///< -1 = unknown
+    };
+
+    /// The browser program: any http(s) site and our own "about:" pages may be shown (default: the origin of Open only).
+    void SetAnyOrigin(bool any) { m_anyOrigin = any; }
+    bool AnyOrigin() const { return m_anyOrigin; }
+
     /// Start a new visit at `url` (an absolute http or https address): the history is cleared and the origin is fixed to
     /// this address's. Refused (false, state Error) for any other kind of address.
     bool Open(const std::string& url);
@@ -52,6 +65,13 @@ public:
     bool GoForward();
     /// Fetch the current page again (also drops it from the cache).
     void Reload();
+    /// Stop loading: the page that was shown before stays (its address becomes the current one again).
+    void Stop();
+    /// A form was sent (Forms.hpp): "GET" goes to `url` (the query already in it), "POST" goes to `url` with `body`
+    /// (application/x-www-form-urlencoded) as a new history entry. A POST answer is never cached; Back to it sends it again.
+    void Submit(const std::string& url, const std::string& method, const std::string& body);
+    /// The host is about to fetch `url`: true and the body when it is the page being loaded by a POST.
+    bool PostBody(const std::string& url, std::string& body) const;
 
     /// A link in the page was clicked: `href` as written in the page. Resolves it against the page's address (and its
     /// <base href>), then: same page with a #fragment -> Scrolled; same origin -> Navigated (the load starts); another
@@ -63,6 +83,16 @@ public:
     /// The answer for a page fetch. `ok` = the server answered 2xx and `body` is the page; otherwise `error` (or the status)
     /// says what went wrong. An answer for an address that is no longer being loaded is ignored.
     void DeliverPage(const std::string& url, bool ok, int status, const std::string& body, const std::string& error = std::string());
+    /// The page being loaded at `from` answered from `to` after redirects: the history entry takes the new address (so the page's
+    /// links resolve against it), and a POST that was redirected became a GET. Ignored for any other address, or when `to` may
+    /// not be shown in this tab.
+    void Redirected(const std::string& from, const std::string& to);
+    /// The answer for the page being loaded is not a page but a file: the tab goes back to the page shown before (or is empty)
+    /// and keeps the offer for the host (TakeDownloadOffer), which asks the person and saves it.
+    void DeliverDownload(const std::string& url, const std::string& contentType, const std::string& fileName, std::int64_t size);
+    bool TakeDownloadOffer(DownloadOffer& out) { if (m_offer.url.empty()) return false; out = m_offer; m_offer = DownloadOffer(); return true; }
+    /// True once after a page was loaded from the network or our own pages (not from the cache): the host adds it to the history.
+    bool TakeVisited() { const bool v = m_visited; m_visited = false; return v; }
     /// The size of an image the host has decoded (0 x 0 = it could not be read). The layout is redone at the next Layout().
     void DeliverImage(const std::string& url, int w, int h);
     /// The size the host gave for `src` (as written in the page), for the layout.
@@ -71,7 +101,10 @@ public:
     std::string ResolveImage(const std::string& src) const;
 
     /// The layout of the current page for a view `width` px wide (cached until the width, the page or an image changes).
+    /// While another page loads, the last page's layout stays (the view keeps showing it, like other browsers).
     const LayoutResult& Layout(float width, const TextMeasure& measure);
+    /// A page is there to draw (shown, or the last one while the next loads).
+    bool HasPage() const { return m_state == State::Ready || (m_state == State::Loading && m_doc.root != nullptr && m_shownValid); }
 
     State GetState() const { return m_state; }
     const std::string& Url() const;           ///< the current address ("" before Open)
@@ -89,7 +122,7 @@ public:
     bool InScope(const std::string& url) const;
 
 private:
-    struct Entry { std::string url; float scrollY = 0.0f; };
+    struct Entry { std::string url; float scrollY = 0.0f; bool post = false; std::string body; };
     void StartLoad();
     void ShowPage(const std::string& url, const std::string& body);
     std::vector<Entry> m_history;
@@ -110,6 +143,11 @@ private:
     std::string m_pendingFragment;
     bool m_justShown = false;   // the #fragment of the address being shown, until the layout knows where it is
     float m_noScroll = 0.0f;
+    bool m_anyOrigin = false;
+    bool m_visited = false;
+    std::size_t m_shownIndex = 0;   // the history entry whose page m_doc holds
+    bool m_shownValid = false;
+    DownloadOffer m_offer;
 };
 
 /// The page shown for a plain-text address (".txt"): the text in a <pre>, with < and & escaped.

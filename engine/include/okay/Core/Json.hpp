@@ -207,4 +207,28 @@ inline bool Parse(std::string_view text, Value& out, std::string* error = nullpt
     return true;
 }
 
+/// Append `s` (UTF-8) to `out` as a JSON string, with its quotes: '"' and '\\' escaped, control characters as \n, \t ... or
+/// \u00XX (RFC 8259 section 7). Bytes at or above 0x80 are copied as they are (JSON text is UTF-8). The "JSON escape and
+/// write" row of docs/engine/shared_code.md; first user: the Browser's profile (okay/Browser/Profile.hpp).
+inline void Escape(std::string_view s, std::string& out) {
+    static const char* const hex = "0123456789abcdef";
+    out += '"';
+    for (const char ch : s) {
+        const unsigned char c = (unsigned char)ch;
+        switch (c) {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        case '\b': out += "\\b"; break;
+        case '\f': out += "\\f"; break;
+        default:
+            if (c < 0x20) { out += "\\u00"; out += hex[c >> 4]; out += hex[c & 15]; }
+            else out += ch;
+        }
+    }
+    out += '"';
+}
+
 } // namespace okay::json

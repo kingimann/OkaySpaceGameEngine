@@ -12,16 +12,24 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace okayuiscreens {
 
 struct BrowserViewResult {
     bool back = false, forward = false, reload = false;
+    bool stop = false, home = false, bookmark = false, menu = false;   // the program's buttons (BrowserViewOptions::programButtons)
+    OkayUI::Rect menuButton;            // where the menu button is (the program opens its menu under it)
     std::string navigate;               // the address field: the address the person typed and confirmed (Enter or Go)
     int playEmbed = -1;                 // the Play button of an embedded game: its index into the layout's cmds
     bool openInSystemBrowser = false;   // "Open in browser": the host opens tab.Url() with the system browser
     bool close = false;
     int linkClicked = -1;               // index into the layout's links (pass the href to BrowserTab::Activate)
+    bool linkInNewTab = false;          // the click was a middle click or a Ctrl+click (open the link in a new tab)
+    bool contextMenu = false;           // a right click on the page (the program shows its context menu)
+    int contextLink = -1;               // ... on this link (index into links), or -1
+    std::string contextText;            // ... the text run under the pointer ("" when none)
+    OkayUI::Vec2 contextAt;             // ... where (screen)
     std::string hoverHref;              // the link under the pointer, as written ("" when none)
     OkayUI::Rect page;                  // where the page area is on the screen
     float pageTop = 0.0f;               // the screen y of the page's own top (the page area's top minus the scroll)
@@ -55,6 +63,20 @@ struct BrowserViewOptions {
     AddressField* address = nullptr;   ///< set: an address field and a Go button; null: the address as text (the launcher)
     bool hostButtons = true;           ///< "Open in browser" and "Close" (the launcher's page has them; the program does not)
     EmbedStateFn embedState;           ///< set: embedded boxes ask it for a Play button and a state line
+    // ---- the browser program (round 1 of "a regular browser") ----
+    bool programButtons = false;       ///< Reload becomes Stop while loading; Home, a bookmark star and a menu button
+    bool bookmarked = false;           ///< the star shows the page is bookmarked
+    std::string placeholder;           ///< shown in an empty address field ("Search Google or type an address")
+    bool focusAddress = false;         ///< put the keyboard in the address field and select it (Ctrl+L, a new tab)
+    bool blockInput = false;           ///< a menu or dialog of the program is open over the page: the page takes no clicks
+    float zoom = 1.0f;                 ///< the site's zoom: the page is laid out at width / zoom and drawn zoom times larger
+    const std::vector<okay::browser::FindHit>* findHits = nullptr;   ///< find on the page: highlight these
+    int findCurrent = -1;              ///< ... and this one more strongly
+    float scrollToPageY = -1.0f;       ///< scroll so this page y (unzoomed) is in view (the current find hit); < 0 = no
+    /// A row the program draws between the toolbar and the page (the bookmarks bar): called inside the view's window with the
+    /// row's screen position and width; `belowToolbarH` px are kept for it.
+    std::function<void(float x, float y, float w)> belowToolbar;
+    float belowToolbarH = 0.0f;
 };
 
 /// Where the Play button of an embedded box `c` is, relative to the page's top-left (c's own coordinates).
@@ -67,8 +89,10 @@ BrowserViewResult DrawBrowserView(okay::browser::BrowserTab& tab, float x, float
 
 /// Only the page (no toolbar), at (x, y) with the page's own top-left at scroll offset `scrollY`: what DrawBrowserView
 /// draws inside its scrolling area, also used by the golden test.
+/// `zoom` scales the page (its coordinates and text); find hits are drawn over the text.
 void DrawBrowserPage(const okay::browser::LayoutResult& page, float x, float y, float w, float h, float scrollY,
                      const BrowserImageFn& image = BrowserImageFn(), const EmbedStateFn& embedState = EmbedStateFn(),
-                     int hoveredPlay = -1);
+                     int hoveredPlay = -1, float zoom = 1.0f, const std::vector<okay::browser::FindHit>* findHits = nullptr,
+                     int findCurrent = -1);
 
 } // namespace okayuiscreens

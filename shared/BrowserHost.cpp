@@ -22,8 +22,13 @@ namespace fs = std::filesystem;
 
 namespace {
 
-struct FetchJob { std::string url; bool image = false; int generation = 0; };
-struct FetchDone { std::string url; bool image = false; int generation = 0; bool ok = false; long status = 0; std::string body, error; };
+struct FetchJob { std::string url; bool image = false; int generation = 0; bool post = false; std::string body; };
+struct FetchDone {
+    std::string url; bool image = false; int generation = 0; bool ok = false; long status = 0; std::string body, error;
+    std::string contentType, disposition, finalUrl;   // pages: from the answer's head
+    std::int64_t size = -1;                           // pages: Content-Length when the server said it
+    bool tooBig = false;                              // pages: more than a page may be (then it is offered as a download)
+};
 
 constexpr std::size_t kMaxGameLog = 4096;   // the tail of what a game wrote to stderr, for the message when it fails
 
@@ -73,13 +78,44 @@ int FetchWorker(void* p) {
         s.Unlock();
         FetchDone d;
         d.url = job.url; d.image = job.image; d.generation = job.generation;
-        const std::uint64_t cap = job.image ? TabHost::kMaxImageBytes : (std::uint64_t)BrowserTab::kMaxPageBytes;
-        const okay::http::OwnOutcome o = okay::http::FetchPrefix(job.url, args->userAgent, cap, cap - 1, 15000, d.body, &d.status);
-        d.ok = o == okay::http::OwnOutcome::Ok;
-        if (!d.ok) {
-            d.body.clear();
-            if (o == okay::http::OwnOutcome::TooBig) d.error = "The page is too large.";
-            else if (o == okay::http::OwnOutcome::NotHandled) d.error = "Could not reach the server. Check your connection and try again.";
+        if (job.image) {
+            const std::uint64_t cap = TabHost::kMaxImageBytes;
+            const okay::http::OwnOutcome o = okay::http::FetchPrefix(job.url, args->userAgent, cap, cap - 1, 15000, d.body, &d.status);
+            d.ok = o == okay::http::OwnOutcome::Ok;
+            if (!d.ok) d.body.clear();
+        } else {
+            // A page: one request (GET, or POST with the form's body) whose head says what the answer is (Profile.hpp
+            // UseOfAnswer: a page, text, an image, or a file to save).
+            okay::http::RequestOptions ro;
+            ro.maxBytes = BrowserTab::kMaxPageBytes;
+            ro.maxRedirects = 10;
+            ro.connectMs = 8000; ro.ioMs = 15000; ro.totalMs = 30000;
+            ro.acceptGzip = true;
+            std::vector<std::string> hdrs;
+            if (!args->userAgent.empty()) hdrs.push_back("User-Agent: " + args->userAgent);
+            hdrs.push_back("Accept: text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8");
+            if (job.post) hdrs.push_back("Content-Type: application/x-www-form-urlencoded");
+            okay::http::ExResult r;
+            if (okay::http::NativeAvailable())
+                r = okay::http::RequestEx(job.post ? "POST" : "GET", job.url, okay::http::CleanHeaderLines(hdrs), job.body, std::string(),
+                                          std::string(), ro);
+            else r.error = okay::http::NoClientReason();
+            d.status = r.status;
+            d.contentType = HeaderValue(r.rawHead, "Content-Type");
+            d.disposition = HeaderValue(r.rawHead, "Content-Disposition");
+            d.finalUrl = r.finalUrl;
+            const std::string len = HeaderValue(r.rawHead, "Content-Length");
+            if (!len.empty() && len.find_first_not_of("0123456789") == std::string::npos && len.size() < 19) d.size = std::stoll(len);
+            if (!r.reached) {
+                d.tooBig = r.error.rfind("too-large", 0) == 0;
+                d.error = d.tooBig ? "The page is too large." : "Could not reach the server. Check your connection and try again.";
+            } else if (r.status >= 200 && r.status < 300) {
+                d.ok = true;
+                d.body = std::move(r.body);
+            } else if (r.status >= 400 && !r.body.empty() && MediaType(d.contentType) == "text/html") {
+                d.ok = true;   // the server's own error page is shown, like other browsers do
+                d.body = std::move(r.body);
+            }
         }
         s.Lock();
         s.done.push_back(std::move(d));
@@ -161,7 +197,9 @@ void TabHost::Reset() {
     ++m_impl->generation;
     if (m_textures.destroy) for (auto& t : m_images) if (t.second) m_textures.destroy(t.second);
     m_images.clear();
+    const bool any = m_tab.AnyOrigin();
     m_tab = BrowserTab();
+    m_tab.SetAnyOrigin(any);
     m_webConfig = WebExportConfig();
     m_configFor = nullptr;
 }
@@ -188,13 +226,55 @@ std::string TabHost::GameUrlFor(const std::string& tag, const std::string& src) 
     return GamePackUrl(m_tab.Url(), tag, src, m_webConfig);
 }
 
+void TabHost::DeliverPageAnswerImpl(const std::string& url, bool ok, long status, std::string& body, const std::string& error,
+                                    const std::string& contentType, const std::string& disposition, const std::string& finalUrl,
+                                    std::int64_t size, bool tooBig) {
+    std::string at = url;
+    if (!finalUrl.empty() && WithoutFragment(finalUrl) != WithoutFragment(url)) {
+        m_tab.Redirected(url, finalUrl);
+        if (WithoutFragment(m_tab.Url()) == WithoutFragment(finalUrl)) at = finalUrl;
+    }
+    const AnswerUse use = UseOfAnswer(contentType, disposition, at);
+    if (tooBig || (ok && use == AnswerUse::Download && m_tab.AnyOrigin())) {
+        m_tab.DeliverDownload(at, MediaType(contentType), DownloadFileName(at, disposition, contentType), size);
+        return;
+    }
+    if (ok && use == AnswerUse::PlainText) {
+        const std::string ext = ExtensionOf(at);
+        if (ext != "txt" && ext != "md") body = PlainTextPage(body);   // the tab wraps .txt and .md itself
+    } else if (ok && use == AnswerUse::Image) {
+        const Url u = ParseUrl(at);
+        const std::size_t slash = u.path.rfind('/');
+        const std::string name = u.path.substr(slash == std::string::npos ? 0 : slash + 1);
+        body = "<!DOCTYPE html><html><head><title>" + HtmlEscape(name.empty() ? at : name) +
+               "</title></head><body style=\"margin:0;background:#0e0e0e\"><img src=\"" + HtmlEscape(at) +
+               "\" style=\"display:block;margin:0 auto\"></body></html>";
+    }
+    m_tab.DeliverPage(at, ok, (int)status, body, error);
+}
+
 void TabHost::Pump() {
     TabHostShared& s = *m_impl->sh;
     // pages and images
-    const std::vector<std::string> urls = m_tab.TakeFetches();
+    std::vector<std::string> urls = m_tab.TakeFetches();
+    // our own pages are made here, not fetched
+    for (std::size_t i = 0; i < urls.size();) {
+        if (!IsInternalPage(urls[i])) { ++i; continue; }
+        const std::string u = urls[i];
+        urls.erase(urls.begin() + (std::ptrdiff_t)i);
+        if (m_internal) m_tab.DeliverPage(u, true, 200, m_internal(u));
+        else m_tab.DeliverPage(u, false, 0, std::string(), "This page is not available here.");
+    }
     if (!urls.empty()) {
         s.Lock();
-        for (const std::string& u : urls) s.jobs.push_back({u, u != WithoutFragment(m_tab.Url()), m_impl->generation});
+        for (const std::string& u : urls) {
+            FetchJob j;
+            j.url = u;
+            j.image = u != WithoutFragment(m_tab.Url());
+            j.generation = m_impl->generation;
+            j.post = !j.image && m_tab.PostBody(u, j.body);
+            s.jobs.push_back(std::move(j));
+        }
         const bool start = !s.fetchRunning;
         if (start) s.fetchRunning = true;
         s.Unlock();
@@ -209,7 +289,10 @@ void TabHost::Pump() {
     s.Unlock();
     for (FetchDone& d : done) {
         if (d.generation != m_impl->generation) continue;
-        if (!d.image) { m_tab.DeliverPage(d.url, d.ok, (int)d.status, d.body, d.error); continue; }
+        if (!d.image) {
+            DeliverPageAnswerImpl(d.url, d.ok, d.status, d.body, d.error, d.contentType, d.disposition, d.finalUrl, d.size, d.tooBig);
+            continue;
+        }
         int w = 0, h = 0;
         if (d.ok && m_textures.make) {
             okay::DecodedImage img;
@@ -300,6 +383,107 @@ bool TabHost::Play(const std::string& packUrl, std::string& why) {
 
 void TabHost::StopGame() {
     if (!m_impl->runningUrl.empty()) m_impl->child.Stop();
+}
+
+// ---- downloads -----------------------------------------------------------------------------------------------------------
+
+struct DownloadHost::Shared {
+    okay::thr::Mutex* mutex = okay::thr::CreateMutex();
+    struct Job { std::int64_t bytes = 0; bool finished = false; DownloadItem::State state = DownloadItem::Active; std::string message; bool cancel = false; };
+    std::vector<Job> jobs;
+    okay::thr::AtomicInt quit;
+    ~Shared() { okay::thr::DestroyMutex(mutex); }
+    void Lock() { okay::thr::LockMutex(mutex); }
+    void Unlock() { okay::thr::UnlockMutex(mutex); }
+};
+
+namespace {
+
+struct DownloadArgs { std::shared_ptr<DownloadHost::Shared> sh; std::size_t index; std::string url, path, userAgent; };
+
+int DownloadWorker(void* p) {
+    std::unique_ptr<DownloadArgs> a(static_cast<DownloadArgs*>(p));
+    DownloadHost::Shared& s = *a->sh;
+    okay::http::OwnDownloadSpec sp;
+    sp.userAgent = a->userAgent;
+    sp.maxBytes = DownloadHost::kMaxBytes;
+    sp.retries = 2;
+    sp.onBytes = [&s, i = a->index](std::uint64_t n) { s.Lock(); s.jobs[i].bytes = (std::int64_t)n; s.Unlock(); };
+    sp.cancelled = [&s, i = a->index] {
+        s.Lock();
+        const bool c = s.jobs[i].cancel;
+        s.Unlock();
+        return c || okay::thr::AtomicGet(&s.quit) != 0;
+    };
+    std::error_code ec;
+    const fs::path target = fs::u8path(a->path);
+    if (target.has_parent_path()) fs::create_directories(target.parent_path(), ec);
+    const okay::http::OwnDownloadResult r = okay::http::FetchToFile(a->url, target, sp);
+    s.Lock();
+    DownloadHost::Shared::Job& j = s.jobs[a->index];
+    j.finished = true;
+    if (r.outcome == okay::http::OwnOutcome::Ok) { j.state = DownloadItem::Done; j.bytes = (std::int64_t)r.bytes; }
+    else if (r.outcome == okay::http::OwnOutcome::Cancelled) j.state = DownloadItem::Cancelled;
+    else {
+        j.state = DownloadItem::Failed;
+        j.message = r.outcome == okay::http::OwnOutcome::TooBig ? "the file is too large"
+                  : r.outcome == okay::http::OwnOutcome::HttpError ? "the server answered " + std::to_string(r.status)
+                  : r.outcome == okay::http::OwnOutcome::DiskFull ? "the file could not be written (is the disk full?)"
+                  : "the server could not be reached";
+    }
+    s.Unlock();
+    return 0;
+}
+
+} // namespace
+
+DownloadHost::DownloadHost(std::string userAgent) : m_userAgent(std::move(userAgent)), m_shared(std::make_shared<Shared>()) {}
+
+DownloadHost::~DownloadHost() { okay::thr::AtomicSet(&m_shared->quit, 1); }
+
+int DownloadHost::Start(const std::string& url, const std::string& path, const std::string& contentType, std::int64_t total) {
+    DownloadItem it;
+    it.url = url;
+    it.path = path;
+    it.fileName = fs::u8path(path).filename().u8string();
+    it.contentType = contentType;
+    it.total = total;
+    const std::size_t index = m_items.size();
+    m_items.push_back(it);
+    m_shared->Lock();
+    m_shared->jobs.emplace_back();   // the worker only touches its own job, under the mutex; the vector grows only here
+    m_shared->Unlock();
+    DownloadArgs* a = new DownloadArgs{m_shared, index, url, path, m_userAgent};
+    if (okay::thr::Thread* t = okay::thr::CreateThread(DownloadWorker, "okay-browser-download", a)) okay::thr::DetachThread(t);
+    else {
+        delete a;
+        m_items[index].state = DownloadItem::Failed;
+        m_items[index].message = "could not start the download";
+        m_shared->Lock();
+        m_shared->jobs[index].finished = true;
+        m_shared->Unlock();
+    }
+    m_changed = true;
+    return (int)index;
+}
+
+void DownloadHost::Cancel(int index) {
+    if (index < 0 || (std::size_t)index >= m_items.size()) return;
+    m_shared->Lock();
+    m_shared->jobs[(std::size_t)index].cancel = true;
+    m_shared->Unlock();
+}
+
+void DownloadHost::Pump() {
+    m_shared->Lock();
+    for (std::size_t i = 0; i < m_items.size() && i < m_shared->jobs.size(); ++i) {
+        DownloadItem& it = m_items[i];
+        const Shared::Job& j = m_shared->jobs[i];
+        if (it.state != DownloadItem::Active) continue;
+        it.bytes = j.bytes;
+        if (j.finished) { it.state = j.state; it.message = j.message; m_changed = true; }
+    }
+    m_shared->Unlock();
 }
 
 } // namespace okay::browser

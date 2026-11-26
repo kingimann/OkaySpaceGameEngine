@@ -48,12 +48,16 @@ UI::Rect EmbedPlayButton(const br::DrawCmd& c) {
 }
 
 void DrawBrowserPage(const br::LayoutResult& page, float x, float y, float w, float h, float scrollY, const BrowserImageFn& image,
-                     const EmbedStateFn& embedState, int hoveredPlay) {
+                     const EmbedStateFn& embedState, int hoveredPlay, float zoomIn, const std::vector<br::FindHit>* findHits,
+                     int findCurrent) {
     const auto& dl = UI::GetWindowDrawList();
     UI::PushClipRect(x, y, w, h);
     dl->AddRectFilled(UI::Vec2(x, y), UI::Vec2(x + w, y + h), Pack(page.canvas));
     const float top = y - scrollY;
-    for (const br::DrawCmd& c : page.cmds) {
+    const float z = zoomIn > 0.0f ? zoomIn : 1.0f;
+    for (const br::DrawCmd& src : page.cmds) {
+        br::DrawCmd c = src;   // in screen pixels: the zoom applied
+        if (z != 1.0f) { c.x *= z; c.y *= z; c.w *= z; c.h *= z; c.font.size *= z; }
         const float cx = x + c.x, cy = top + c.y;
         if (cy > y + h || cy + std::max(c.h, 1.0f) < y) continue;   // outside the view
         switch (c.kind) {
@@ -82,7 +86,7 @@ void DrawBrowserPage(const br::LayoutResult& page, float x, float y, float w, fl
             // A box with its kind; when the host says it can run an OkaySpace game (step 2), a Play button and the game's state.
             dl->AddRectFilled(UI::Vec2(cx, cy), UI::Vec2(cx + c.w, cy + c.h), Pack(br::Color{24, 28, 38, 255}));
             dl->AddRect(UI::Vec2(cx, cy), UI::Vec2(cx + c.w, cy + c.h), Pack(br::Color{90, 100, 120, 255}), 0.0f, 0, 1.0f);
-            const EmbedState st = embedState ? embedState(c) : EmbedState();
+            const EmbedState st = embedState ? embedState(src) : EmbedState();
             const std::string label = !st.title.empty() ? st.title : c.tag == "okay-game" || st.playable ? std::string("OkaySpace game") : c.tag;
             const UI::Vec2 ts = UI::CalcTextSize(label.c_str());
             if (!st.playable) {
@@ -97,7 +101,7 @@ void DrawBrowserPage(const br::LayoutResult& page, float x, float y, float w, fl
             const float bx = x + b.x, by = top + b.y;
             if (b.y - ts.y - 6.0f >= c.y)
                 dl->AddText(UI::Vec2(cx + (c.w - ts.x) * 0.5f, by - ts.y - 6.0f), Pack(br::Color{200, 205, 215, 255}), label.c_str());
-            const bool hot = !st.busy && hoveredPlay == (int)(&c - page.cmds.data());
+            const bool hot = !st.busy && hoveredPlay == (int)(&src - page.cmds.data());
             const br::Color fill = st.busy ? br::Color{70, 78, 92, 255} : hot ? br::Color{72, 140, 235, 255} : br::Color{58, 123, 213, 255};
             dl->AddRectFilled(UI::Vec2(bx, by), UI::Vec2(bx + b.w, by + b.h), Pack(fill), 4.0f);
             const char* play = st.busy ? "Please wait" : "Play";
@@ -120,6 +124,16 @@ void DrawBrowserPage(const br::LayoutResult& page, float x, float y, float w, fl
             break;
         }
     }
+    if (findHits) {   // find on the page: every hit in yellow, the current one in orange (drawn over the text, half see-through)
+        for (std::size_t i = 0; i < findHits->size(); ++i) {
+            const br::FindHit& f = (*findHits)[i];
+            const float fx = x + f.x * z, fy = top + f.y * z;
+            if (fy > y + h || fy + f.h * z < y) continue;
+            const bool cur = (int)i == findCurrent;
+            dl->AddRectFilled(UI::Vec2(fx - 1, fy - 1), UI::Vec2(fx + f.w * z + 1, fy + f.h * z + 2),
+                              Pack(cur ? br::Color{255, 150, 30, 140} : br::Color{255, 235, 60, 120}), 2.0f);
+        }
+    }
     UI::PopClipRect();
 }
 
@@ -137,7 +151,12 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
         if (UI::Button("Forward")) res.forward = true;
         UI::EndDisabled();
         UI::SameLine();
-        if (UI::Button(tab.GetState() == br::BrowserTab::State::Loading ? "Loading..." : "Reload")) res.reload = true;
+        if (options.programButtons) {
+            if (tab.GetState() == br::BrowserTab::State::Loading) { if (UI::Button("Stop")) res.stop = true; }
+            else if (UI::Button("Reload")) res.reload = true;
+            UI::SameLine();
+            if (UI::Button("Home")) res.home = true;
+        } else if (UI::Button(tab.GetState() == br::BrowserTab::State::Loading ? "Loading..." : "Reload")) res.reload = true;
         UI::SameLine();
         if (options.hostButtons) {
             if (UI::Button("Open in browser")) res.openInSystemBrowser = true;
@@ -151,11 +170,24 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                 std::snprintf(af->text, sizeof af->text, "%s", tab.Url().c_str());
                 af->shownFor = tab.Url();
             }
-            UI::SetNextItemWidth(std::max(60.0f, UI::GetContentRegionAvail().x - UI::CalcTextWidth("Go") - 28.0f));
-            bool go = UI::InputText("##address", af->text, (int)sizeof af->text, UI::InputText_EnterReturnsTrue);
+            const char* star = options.bookmarked ? "Bookmarked" : "Bookmark";
+            const float extra = options.programButtons ? UI::CalcTextWidth(star) + UI::CalcTextWidth("Menu") + 56.0f : 0.0f;
+            UI::SetNextItemWidth(std::max(60.0f, UI::GetContentRegionAvail().x - UI::CalcTextWidth("Go") - 28.0f - extra));
+            if (options.focusAddress) UI::SetKeyboardFocusHere();
+            bool go = options.placeholder.empty()
+                          ? UI::InputText("##address", af->text, (int)sizeof af->text, UI::InputText_EnterReturnsTrue)
+                          : UI::InputTextWithHint("##address", options.placeholder.c_str(), af->text, (int)sizeof af->text,
+                                                  UI::InputText_EnterReturnsTrue | UI::InputText_AutoSelectAll);
             UI::SameLine();
             if (UI::Button("Go")) go = true;
             if (go && af->text[0]) { res.navigate = af->text; af->shownFor.clear(); }
+            if (options.programButtons) {
+                UI::SameLine();
+                if (UI::Button(star)) res.bookmark = true;
+                UI::SameLine();
+                if (UI::Button("Menu")) res.menu = true;
+                res.menuButton = UI::GetItemRect();
+            }
         } else {
             // the address last, cut in the middle to the room that is left
             const float room = std::max(40.0f, UI::GetContentRegionAvail().x - 8.0f);
@@ -164,6 +196,13 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
             UI::TextDisabled(ShortUrl(tab.Url(), chars).c_str());
         }
         UI::Spacing(4.0f);
+        if (options.belowToolbar && options.belowToolbarH > 0.0f) {
+            const UI::Vec2 at = UI::GetCursorScreenPos();
+            const float rowW = UI::GetContentRegionAvail().x;
+            options.belowToolbar(at.x, at.y, rowW);
+            UI::SetCursorScreenPos(at);
+            UI::Dummy(rowW, options.belowToolbarH);
+        }
 
         // ---- the page ----
         const UI::Vec2 avail = UI::GetContentRegionAvail();
@@ -175,43 +214,70 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
         const float viewH = std::max(20.0f, avail.y);
         res.page.x = origin.x; res.page.y = viewTop; res.page.w = viewW; res.page.h = viewH;
         res.pageTop = origin.y;
-        if (tab.GetState() == br::BrowserTab::State::Ready) {
+        const float zoom = options.zoom > 0.0f ? options.zoom : 1.0f;
+        if (tab.GetState() == br::BrowserTab::State::Ready || (options.programButtons && tab.HasPage())) {
             static const OkayUIMeasure measure;
-            const br::LayoutResult& page = tab.Layout(viewW, measure);
-            const float pending = tab.PendingScroll();
-            const bool shown = tab.TakeJustShown();
-            if (pending >= 0.0f) { UI::SetScrollY(pending); tab.ScrollY() = pending; }
-            else if (shown) UI::SetScrollY(tab.ScrollY());   // back where the person was on this page (0 for a new one)
-            else tab.ScrollY() = scroll;                       // follow the wheel and the bar
+            const bool loading = tab.GetState() == br::BrowserTab::State::Loading;   // the last page, while the next one loads
+            const br::LayoutResult& page = tab.Layout(viewW / zoom, measure);
+            if (!loading) {
+                const float pending = tab.PendingScroll();
+                const bool shown = tab.TakeJustShown();
+                if (pending >= 0.0f) { UI::SetScrollY(pending * zoom); tab.ScrollY() = pending * zoom; }
+                else if (shown) UI::SetScrollY(tab.ScrollY());   // back where the person was on this page (0 for a new one)
+                else if (options.scrollToPageY >= 0.0f) {
+                    const float want = options.scrollToPageY * zoom;
+                    if (want < scroll + 20.0f || want > scroll + viewH - 40.0f) { UI::SetScrollY(std::max(0.0f, want - viewH * 0.4f)); }
+                    tab.ScrollY() = scroll;
+                } else tab.ScrollY() = scroll;                     // follow the wheel and the bar
+            }
             // the Play button of an embedded game under the pointer (index into cmds), checked before drawing so it lights up
             const UI::Vec2 m = UI::GetMousePos();
-            const bool inView = UI::IsMouseHoveringRect(UI::Vec2(origin.x, viewTop), UI::Vec2(origin.x + viewW, viewTop + viewH));
+            const bool inView = !options.blockInput &&
+                                UI::IsMouseHoveringRect(UI::Vec2(origin.x, viewTop), UI::Vec2(origin.x + viewW, viewTop + viewH));
+            const float pmx = (m.x - origin.x) / zoom, pmy = (m.y - origin.y) / zoom;   // the pointer in page coordinates
             int hotPlay = -1;
             if (inView && options.embedState)
                 for (int ei : page.embeds) {
                     if (ei < 0 || ei >= (int)page.cmds.size()) continue;
                     const br::DrawCmd& c = page.cmds[(std::size_t)ei];
                     const UI::Rect b = EmbedPlayButton(c);
-                    const float px = m.x - origin.x, py = m.y - origin.y;
+                    const float px = pmx, py = pmy;
                     if (px < b.x || py < b.y || px >= b.x + b.w || py >= b.y + b.h) continue;
                     const EmbedState st = options.embedState(c);
                     if (st.playable && !st.busy) hotPlay = ei;
                 }
-            DrawBrowserPage(page, origin.x, viewTop, viewW, viewH, scroll, image, options.embedState, hotPlay);
+            DrawBrowserPage(page, origin.x, viewTop, viewW, viewH, scroll, image, options.embedState, hotPlay, zoom, options.findHits,
+                            options.findCurrent);
+            if (loading) {   // the loading bar: a block sliding along the top of the page
+                static int frame = 0;
+                ++frame;
+                const float bw = viewW * 0.25f, bx = std::fmod((float)frame * 6.0f, viewW + bw) - bw;
+                const auto& dl = UI::GetWindowDrawList();
+                dl->AddRectFilled(UI::Vec2(origin.x, viewTop), UI::Vec2(origin.x + viewW, viewTop + 3.0f), 0x40D57B3Au);
+                dl->AddRectFilled(UI::Vec2(origin.x + std::max(0.0f, bx), viewTop), UI::Vec2(origin.x + std::min(viewW, bx + bw), viewTop + 3.0f), 0xFFD57B3Au);
+            }
             if (hotPlay >= 0) {
                 UI::SetMouseCursor(UI::MouseCursor_Hand);
                 if (UI::IsMouseClicked(0)) res.playEmbed = hotPlay;
             }
             // links: the pointer over a link shows a hand; a click reports it
             if (inView && hotPlay < 0) {
-                const int link = br::LinkAt(page, m.x - origin.x, m.y - origin.y);
+                const int link = br::LinkAt(page, pmx, pmy);
                 if (link >= 0 && link < (int)page.links.size()) {
                     UI::SetMouseCursor(UI::MouseCursor_Hand);
                     res.hoverHref = page.links[(std::size_t)link];
-                    if (UI::IsMouseClicked(0)) res.linkClicked = link;
+                    if (UI::IsMouseClicked(0)) { res.linkClicked = link; res.linkInNewTab = UI::GetFrameInput().ctrl; }
+                    else if (UI::IsMouseClicked(2)) { res.linkClicked = link; res.linkInNewTab = true; }
+                }
+                if (UI::IsMouseClicked(1)) {   // the context menu: what is under the pointer
+                    res.contextMenu = true;
+                    res.contextAt = m;
+                    res.contextLink = link >= 0 && link < (int)page.links.size() ? link : -1;
+                    for (const br::DrawCmd& c : page.cmds)
+                        if (c.kind == br::DrawCmd::Text && pmx >= c.x && pmx < c.x + c.w && pmy >= c.y - 2 && pmy < c.y + c.h + 2) res.contextText = c.text;
                 }
             }
-            UI::Dummy(viewW, std::max(page.height, 1.0f));
+            UI::Dummy(viewW, std::max(page.height * zoom, 1.0f));
         } else if (tab.GetState() == br::BrowserTab::State::Loading) {
             UI::Spacing(24.0f);
             UI::TextDisabled("Loading the page...");

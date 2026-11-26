@@ -119,6 +119,53 @@ int main() {
         CHECK(t.GetState() == BrowserTab::State::Ready);
     }
 
+    // Round 1 of the browser program's layout: nested flex and grid boxes (each measures its items, so a naive engine is
+    // exponential in the depth), floats by the thousand, a grid with absurd spans and lines, var() that doubles at every step,
+    // nested @media, selectors that backtrack, and absolutely positioned boxes everywhere.
+    {
+        auto lay = [&](const std::string& page, double maxSecs) {
+            const auto s0 = std::chrono::steady_clock::now();
+            const HtmlDocument d = ParseHtml(page);
+            const LayoutResult r = LayoutPage(d, 800, measure);
+            const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - s0).count();
+            if (s > maxSecs) std::cerr << "  slow: " << s << " s for a page of " << page.size() << " bytes\n";
+            return s <= maxSecs && r.height >= 0.0f;
+        };
+        std::string nest;
+        for (int i = 0; i < 40; ++i) nest += i % 2 ? "<div style='display:flex;flex-direction:column'><div style='flex:1'>x</div>" : "<div style='display:flex'><div style='flex:1'>x</div>";
+        CHECK(lay(nest, 20.0));
+        std::string gnest;
+        for (int i = 0; i < 40; ++i) gnest += "<div style='display:grid;grid-template-columns:auto 1fr'><span>a</span>";
+        CHECK(lay(gnest, 20.0));
+        std::string floats;
+        for (int i = 0; i < 3000; ++i) floats += i % 3 ? "<div style='float:left;width:7px;height:3px'></div>" : "<div style='float:right'>w</div> text ";
+        CHECK(lay(floats, 20.0));
+        CHECK(lay("<div style='display:grid;grid-template-columns:repeat(100000,1px);grid-auto-flow:column dense'>"
+                  "<i style='grid-column:-99999 / span 99999;grid-row:span 99999'>a</i><i style='grid-area:x'>b</i>"
+                  "<i style='grid-row:2147483647'>c</i>" + std::string(2000, 'q') + "</div>", 20.0));
+        std::string grid;
+        for (int i = 0; i < 2000; ++i) grid += "<i style='grid-column:span " + std::to_string(i % 7 + 1) + "'>x</i>";
+        CHECK(lay("<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(1px,1fr));grid-auto-flow:dense'>" + grid + "</div>", 20.0));
+        std::string vars = "<style>:root{--a0:x;";
+        for (int i = 1; i < 40; ++i) vars += "--a" + std::to_string(i) + ":var(--a" + std::to_string(i - 1) + ") var(--a" + std::to_string(i - 1) + ");";
+        vars += "} p{width:var(--a39);margin:calc(((((((1px+2px)*3)/4)-5px)*6)+7px))}</style><p>v</p>";
+        CHECK(lay(vars, 20.0));
+        std::string media = "<style>";
+        for (int i = 0; i < 50; ++i) media += "@media (min-width:" + std::to_string(i) + "px) { @supports (display:grid) { ";
+        media += "p{color:red}" + std::string(100, '}') + "</style><p>m</p>";
+        CHECK(lay(media, 20.0));
+        std::string sel = "<style>" + std::string(".a ~ .a ~ .a ~ .a ~ .a ~ .a ~ .a ~ .a ~ .a ~ .a ~ .a ~ .a ~ .a ~ .b") + "{color:red} "
+                          "div div div div div div div div div div div div div div div div p{color:blue} :not(:not(:not(:nth-child(2n+1)))){width:1px}</style>";
+        std::string many;
+        for (int i = 0; i < 400; ++i) many += "<span class=a>a</span>";
+        std::string deep;
+        for (int i = 0; i < 60; ++i) deep += "<div>";
+        CHECK(lay(sel + many + deep + "<p>z</p>", 30.0));
+        std::string abs;
+        for (int i = 0; i < 2000; ++i) abs += "<div style='position:" + std::string(i % 2 ? "absolute" : "relative") + ";left:" + std::to_string(i) + "px;z-index:" + std::to_string(i % 13 - 6) + ";overflow:auto'>a";
+        CHECK(lay(abs, 30.0));
+    }
+
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     std::cout << "  hostile input took " << secs << " s\n";
     CHECK(secs < 120.0);

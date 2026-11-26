@@ -4,6 +4,8 @@
 // "remove_dot_segments", section 6.2.3 for the default ports when two addresses are compared by origin).
 // Standard library only.
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace okay::browser {
 
@@ -39,5 +41,11 @@ std::string FragmentOf(const std::string& url);
 std::string ExtensionOf(const std::string& url);
 /// The host part (no userinfo, no port), lower-cased.
 std::string HostOf(const std::string& url);
+/// The application/x-www-form-urlencoded byte serializer of the WHATWG URL standard (section 5.2): ASCII letters, digits and
+/// "*-._" stay, a space becomes '+', every other byte of the UTF-8 text becomes %XX (upper-case hex). Used for searches from
+/// the address bar and for form submission (Forms.hpp).
+std::string FormUrlEncode(const std::string& text);
+/// name=value pairs, each encoded with FormUrlEncode, joined with '&' (the standard's urlencoded serializer).
+std::string FormUrlEncodePairs(const std::vector<std::pair<std::string, std::string>>& pairs);
 
 } // namespace okay::browser

@@ -64,26 +64,32 @@ int main() {
         CHECK(ParseSelector("#main .a.b", s) && s.specificity == 10200);
         CHECK(ParseSelector("*", s) && s.specificity == 0);
         CHECK(ParseSelector("div>p", s) && s.parts.size() == 2 && s.combinators[0] == '>');
-        CHECK(!ParseSelector("a:hover", s));
-        CHECK(!ParseSelector("input[type=text]", s));
-        CHECK(!ParseSelector("a + b", s));
+        // round 1 of the browser program reads these (more in test_browser_layout2.cpp); still refused: unknown pseudo-classes
+        // and pseudo-elements, and two combinators in a row
+        CHECK(ParseSelector("a:hover", s) && s.dynamic && s.specificity == 101);
+        CHECK(ParseSelector("input[type=text]", s) && s.parts[0].attrs.size() == 1 && s.specificity == 101);
+        CHECK(ParseSelector("a + b", s) && s.combinators[0] == '+');
+        CHECK(!ParseSelector("a:frobnicate", s));
+        CHECK(!ParseSelector("p::frob", s));
+        CHECK(!ParseSelector("a + + b", s));
         CHECK(!ParseSelector("", s));
         CHECK(!ParseSelector("p >", s));
     }
 
-    // Sheets: comments, at-rules skipped with their blocks, an invalid selector list drops the whole rule, bad
+    // Sheets: comments, @media kept with its condition, @import listed, an invalid selector list drops the whole rule, bad
     // declarations are skipped, !important, strings with braces.
     {
         const StyleSheet sh = ParseStyleSheet(
             "/* c { } */ @media screen { p { color: red } } @import 'x.css';\n"
             "h1, h2 { color: blue; margin: 0 }\n"
-            "a, a:hover { color: green }\n"
+            "a, a:frobnicate { color: green }\n"
             "p { color: red !important; ; bogus ; content: \"}\"; font-size: 12px }\n"
             "div { color: \n");
-        CHECK(sh.rules.size() == 2);
-        if (sh.rules.size() == 2) {
-            CHECK(sh.rules[0].selectors.size() == 2 && sh.rules[0].declarations.size() == 2);
-            const auto& d = sh.rules[1].declarations;
+        CHECK(sh.rules.size() == 3 && sh.imports.size() == 1 && sh.imports[0] == "x.css");
+        if (sh.rules.size() == 3) {
+            CHECK(sh.rules[0].media.size() == 1 && sh.media.size() == 1);   // p inside @media screen
+            CHECK(sh.rules[1].selectors.size() == 2 && sh.rules[1].declarations.size() == 2 && sh.rules[1].media.empty());
+            const auto& d = sh.rules[2].declarations;
             CHECK(d.size() == 3);
             if (d.size() == 3) {
                 CHECK(d[0].property == "color" && d[0].value == "red" && d[0].important);

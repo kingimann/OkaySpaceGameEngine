@@ -2,6 +2,10 @@ The Brotli static dictionary and the word transform list in BrotliDictionary.inc
 RFC 7932, "Brotli Compressed Data Format", Appendix A and Appendix B (J. Alakuijala and Z. Szabadka, July 2016,
 https://www.rfc-editor.org/info/rfc7932). The RFC states that Code Components extracted from it must include the
 Simplified BSD License text described in Section 4.e of the IETF Trust Legal Provisions. That text follows.
+Checked on 2026-11-26 against the IETF Trust Legal Provisions version 5.0 (effective March 25, 2015, the version in
+effect when RFC 7932 was published; the licence is its Section 4.c, which the RFC calls 4.e after an older version),
+and against the Trust's "Code Components 3.0" list, which names "tables of values" as Code Components.
+This data was derived from IETF RFC 7932.
 
 Copyright (c) 2016 IETF Trust and the persons identified as authors of the code. All rights reserved.
 

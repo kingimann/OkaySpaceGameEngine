@@ -169,7 +169,7 @@ Back to the [code index](../code_index.md). 15 headers, 191 names.
 - `AddressDecision` struct, line 26
 - `DecideAddress` function, line 39: What the address bar does with 'typed': an address when it has a scheme ("https://...", "about:..."), is "localhost" or an IP
 - `SearchUrl` function, line 42: The search address for 'terms': "%s" in 'searchTemplate' replaced by FormUrlEncode(terms), or the encoded terms added at
-- `AddressPlaceholder` function, line 45: The placeholder shown in an empty address bar: "Search Google or type an address" for Google's search address, "Search or
+- `AddressPlaceholder` function, line 45: The placeholder shown in an empty address bar: "Search the web or type an address" for the default search address, "Search or
 - `TabOrder` class, line 52: The order of the tabs and the active one, by id (the program keeps each tab's page under its id). Like common browsers: a
 - `HistoryEntry` struct, line 85
 - `History` class, line 91: Every page visited, oldest first. A visit to the same address as the newest entry only refreshes it.

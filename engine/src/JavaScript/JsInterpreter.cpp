@@ -32,6 +32,7 @@ std::string Describe(const Value& v) {
         case Tag::Number: return "a number";
         case Tag::Bool: return "a boolean";
         case Tag::Symbol: return "a symbol";
+        case Tag::BigInt: return "a BigInt";
         case Tag::Object: return v.O()->IsCallable() ? "a function" : "an object";
         default: return "a value";
     }
@@ -80,9 +81,54 @@ int LessThan(Runtime& rt, Value* x, Value* y, bool leftFirst) {
         *x = rt.ToPrimitive(*x, 1);
     }
     if (x->IsStr() && y->IsStr()) return x->S()->s < y->S()->s ? 1 : 0;
-    double a = rt.ToNumber(*x), b = rt.ToNumber(*y);
+    // 7.2.13 steps 3-4: a BigInt against a string reads the string as a BigInt (not one: undefined)
+    if (x->IsBig() && y->IsStr()) {
+        Value n;
+        if (!StringToBigInt(rt, y->S()->s, n)) return 2;
+        return BigCompare(*x, n) < 0 ? 1 : 0;
+    }
+    if (x->IsStr() && y->IsBig()) {
+        Value n;
+        if (!StringToBigInt(rt, x->S()->s, n)) return 2;
+        return BigCompare(n, *y) < 0 ? 1 : 0;
+    }
+    *x = rt.ToNumeric(*x);
+    *y = rt.ToNumeric(*y);
+    if (x->IsBig() && y->IsBig()) return BigCompare(*x, *y) < 0 ? 1 : 0;
+    if (x->IsBig()) { int c = BigCompareNum(*x, y->n); return c == 2 ? 2 : c < 0 ? 1 : 0; }
+    if (y->IsBig()) { int c = BigCompareNum(*y, x->n); return c == 2 ? 2 : c > 0 ? 1 : 0; }
+    double a = x->n, b = y->n;
     if (std::isnan(a) || std::isnan(b)) return 2;
     return a < b ? 1 : 0;
+}
+
+// 13.15.3 ApplyStringOrNumericBinaryOperator for everything but string +: ToNumeric both, then Number or
+// BigInt arithmetic (mixing the two is a TypeError). The operands stay on the stack while they convert.
+double JsMod(double a, double b);
+double JsPow(double b, double e);
+Value NumericBinary(Runtime& rt, int op, Value* a, Value* b) {
+    *a = rt.ToNumeric(*a);
+    *b = rt.ToNumeric(*b);
+    if (a->IsBig() || b->IsBig()) {
+        if (!(a->IsBig() && b->IsBig())) rt.ThrowType("can not mix BigInt and other types; use BigInt(x) or Number(x)");
+        return BigBinary(rt, op, *a, *b);
+    }
+    double x = a->n, y = b->n;
+    auto i32 = [&rt](double d) { return rt.ToInt32(Value::Num(d)); };
+    switch (op) {
+        case OP_Add: return Value::Num(x + y);
+        case OP_Sub: return Value::Num(x - y);
+        case OP_Mul: return Value::Num(x * y);
+        case OP_Div: return Value::Num(x / y);
+        case OP_Mod: return Value::Num(JsMod(x, y));
+        case OP_Pow: return Value::Num(JsPow(x, y));
+        case OP_BitAnd: return Value::Num((double)(i32(x) & i32(y)));
+        case OP_BitOr: return Value::Num((double)(i32(x) | i32(y)));
+        case OP_BitXor: return Value::Num((double)(i32(x) ^ i32(y)));
+        case OP_Shl: return Value::Num((double)(std::int32_t)((std::uint32_t)i32(x) << ((std::uint32_t)i32(y) & 31)));
+        case OP_Sar: return Value::Num((double)(i32(x) >> ((std::uint32_t)i32(y) & 31)));
+        default: return Value::Num((double)((std::uint32_t)i32(x) >> ((std::uint32_t)i32(y) & 31)));
+    }
 }
 
 // 13.15.3 for +: the operands stay on the stack while they are converted.
@@ -106,6 +152,7 @@ Value AddValues(Runtime& rt, Value* a, Value* b) {
         *b = Value::Str(rt.ToString(*b));
         return AddValues(rt, a, b);
     }
+    if (a->IsBig() || b->IsBig()) return NumericBinary(rt, OP_Add, a, b);
     return Value::Num(rt.ToNumber(*a) + rt.ToNumber(*b));
 }
 
@@ -603,8 +650,11 @@ Value Execute(Runtime& rt, int entry) {
                     case OP_PutLoc: base[I.a] = *--SP; break;
                     case OP_IncLoc: case OP_DecLoc: {
                         Value& v = base[I.a];
-                        double d = v.IsNum() ? v.n : rt.ToNumber(v);
-                        v = Value::Num(I.op == OP_IncLoc ? d + 1 : d - 1);
+                        if (v.IsNum()) v = Value::Num(I.op == OP_IncLoc ? v.n + 1 : v.n - 1);
+                        else {
+                            Value n = rt.ToNumeric(v);
+                            v = n.IsBig() ? BigUnary(rt, I.op == OP_IncLoc ? OP_Inc : OP_Dec, n) : Value::Num(I.op == OP_IncLoc ? n.n + 1 : n.n - 1);
+                        }
                         break;
                     }
                     case OP_GetCell: *SP++ = static_cast<Cell*>(base[I.a].p)->v; break;
@@ -669,6 +719,10 @@ Value Execute(Runtime& rt, int entry) {
                         }
                         Prop* gp = rt.global->FindRaw(k);
                         if (gp && !(gp->flags & kAccessor) && (gp->flags & kWritable)) { gp->v = TOP; break; }
+                        if (!gp && I.b && !rt.HasProperty(rt.global, k)) {   // sloppy code: PutValue step 5.b
+                            rt.DefineData(rt.global, k, TOP);
+                            break;
+                        }
                         if (!gp && !rt.HasProperty(rt.global, k))
                             rt.ThrowError(ErrorType::ReferenceError, "'" + KeyText(rt, k) + "' is not defined (declare it with let, const or var)");
                         rt.Put(Value::Obj(rt.global), k, TOP);
@@ -855,7 +909,7 @@ Value Execute(Runtime& rt, int entry) {
         Value& b = SP[-1];                                                         \
         double x, y;                                                               \
         if (a.IsNum() && b.IsNum()) { x = a.n; y = b.n; }                         \
-        else { x = rt.ToNumber(a); a = Value::Num(x); y = rt.ToNumber(b); }       \
+        else { a = NumericBinary(rt, OPC, &a, &b); --SP; break; }                 \
         a = Value::Num(EXPR);                                                      \
         --SP;                                                                      \
         break;                                                                     \
@@ -870,6 +924,11 @@ Value Execute(Runtime& rt, int entry) {
     case OPC: {                                                                    \
         Value& a = SP[-2];                                                         \
         Value& b = SP[-1];                                                         \
+        if (!(a.IsNum() && b.IsNum()) && (a.IsObj() || b.IsObj() || a.IsBig() || b.IsBig())) { \
+            a = NumericBinary(rt, OPC, &a, &b);                                    \
+            --SP;                                                                  \
+            break;                                                                 \
+        }                                                                          \
         std::int32_t x = rt.ToInt32(a);                                            \
         a = Value::Num((double)x);                                                 \
         std::int32_t y = rt.ToInt32(b);                                            \
@@ -886,22 +945,42 @@ Value Execute(Runtime& rt, int entry) {
 #undef INTOP
                     case OP_Neg: {
                         Value& a = SP[-1];
-                        a = Value::Num(-(a.IsNum() ? a.n : rt.ToNumber(a)));
+                        if (a.IsNum()) a = Value::Num(-a.n);
+                        else {
+                            a = rt.ToNumeric(a);
+                            a = a.IsBig() ? BigUnary(rt, OP_Neg, a) : Value::Num(-a.n);
+                        }
                         break;
                     }
-                    case OP_Pos: case OP_ToNum: {
+                    case OP_Pos: {   // unary + is ToNumber: a BigInt is a TypeError (13.5.4)
                         Value& a = SP[-1];
                         if (!a.IsNum()) a = Value::Num(rt.ToNumber(a));
                         break;
                     }
+                    case OP_ToNum: {   // the old value of x++ / x--: ToNumeric (13.4.2.1)
+                        Value& a = SP[-1];
+                        if (!a.IsNum()) a = rt.ToNumeric(a);
+                        break;
+                    }
                     case OP_Inc: case OP_Dec: {
                         Value& a = SP[-1];
-                        double d = a.IsNum() ? a.n : rt.ToNumber(a);
-                        a = Value::Num(I.op == OP_Inc ? d + 1 : d - 1);
+                        if (a.IsNum()) a = Value::Num(I.op == OP_Inc ? a.n + 1 : a.n - 1);
+                        else {
+                            a = rt.ToNumeric(a);
+                            a = a.IsBig() ? BigUnary(rt, I.op, a) : Value::Num(I.op == OP_Inc ? a.n + 1 : a.n - 1);
+                        }
                         break;
                     }
                     case OP_Not: SP[-1] = Value::Bool(!rt.ToBoolean(SP[-1])); break;
-                    case OP_BitNot: SP[-1] = Value::Num((double)~rt.ToInt32(SP[-1])); break;
+                    case OP_BitNot: {
+                        Value& a = SP[-1];
+                        if (a.IsNum()) a = Value::Num((double)~rt.ToInt32(a));
+                        else {
+                            a = rt.ToNumeric(a);
+                            a = a.IsBig() ? BigUnary(rt, OP_BitNot, a) : Value::Num((double)~rt.ToInt32(a));
+                        }
+                        break;
+                    }
                     case OP_Typeof: SP[-1] = Value::Str(rt.Intern(rt.TypeOf(SP[-1]))); break;
                     case OP_Void: SP[-1] = Value(); break;
                     case OP_ToStr: {
@@ -1208,6 +1287,36 @@ Value Execute(Runtime& rt, int entry) {
                         SP -= 2;
                         break;
                     }
+                    case OP_TemplateObj: {
+                        // 13.2.8.4 GetTemplateObject: consts [a] cache, [a+1 ..] cooked strings, then the raw strings
+                        std::vector<Value>& kc = cl->code->consts;
+                        if (!kc[(std::size_t)I.a].IsObj()) {
+                            const std::size_t n = I.b, at = (std::size_t)I.a + 1;
+                            ArrayObj* raw = rt.NewArray(n);
+                            ArrayObj* tpl = rt.NewArray(n);
+                            for (std::size_t k = 0; k < n; ++k) {
+                                tpl->elems.push_back(kc[at + k]);
+                                raw->elems.push_back(kc[at + n + k]);
+                            }
+                            for (ArrayObj* arr : {raw, tpl}) {
+                                arr->length = (std::uint32_t)n;
+                                arr->frozenElems = arr->sealedElems = true;
+                                arr->lengthWritable = false;
+                            }
+                            tpl->AddRaw(rt.atoms->raw, Value::Obj(raw), 0);
+                            raw->extensible = tpl->extensible = false;
+                            kc[(std::size_t)I.a] = Value::Obj(tpl);
+                        }
+                        *SP++ = kc[(std::size_t)I.a];
+                        break;
+                    }
+                    case OP_SetProtoLit: {
+                        // [obj value]: B.3.1 PropertyDefinitionEvaluation for `__proto__: value`
+                        if (SP[-1].IsObj()) rt.SetPrototype(SP[-2].O(), SP[-1].O());
+                        else if (SP[-1].IsNull()) rt.SetPrototype(SP[-2].O(), nullptr);
+                        --SP;
+                        break;
+                    }
                     case OP_CopyProps: {
                         CopyDataProperties(rt, SP[-2].O(), SP[-1], nullptr);
                         --SP;
@@ -1318,6 +1427,76 @@ Value Execute(Runtime& rt, int entry) {
                     case OP_GetIter: {
                         IterRec* r = GetIterator(rt, SP[-1]);
                         SP[-1] = Value::Obj(r);
+                        break;
+                    }
+                    case OP_ImportCall: {   // 13.3.10.1: [specifier] -> [promise]; failures reject the promise
+                        PromiseObj* p = NewPromise(rt);
+                        Value spec = SP[-1];
+                        SP[-1] = Value::Obj(p);
+                        try {
+                            std::string s = rt.ToUtf8(spec);
+                            if (rt.importHook) {
+                                Value r = rt.importHook(rt, s);
+                                ResolvePromise(rt, p, r);
+                            } else
+                                rt.ThrowType("modules can not be loaded here (import('" + s.substr(0, 200) + "'))");
+                        } catch (const JsThrow&) {
+                            Value e = rt.exception;
+                            rt.exception = Value();
+                            RejectPromise(rt, p, e);
+                        }
+                        break;
+                    }
+                    case OP_SetHome:   // [fn home]: the static initializer's [[HomeObject]] is the class
+                        if (SP[-2].IsObj() && SP[-2].O()->cls == Cls::Closure && SP[-1].IsObj())
+                            static_cast<Closure*>(SP[-2].O())->home = SP[-1].O();
+                        break;
+                    case OP_GetAsyncIter: {   // 7.4.3 GetIterator(obj, async)
+                        Value v = SP[-1];
+                        if (v.IsNullish()) rt.ThrowType(std::string(v.IsNull() ? "null" : "undefined") + " is not iterable");
+                        Value m = rt.Get(v, rt.symAsyncIterator);
+                        IterRec* r;
+                        if (!m.IsNullish()) {
+                            if (!rt.IsCallable(m)) rt.ThrowType("[Symbol.asyncIterator] is not a function");
+                            Value it = rt.Call(m, v, nullptr, 0);
+                            if (!it.IsObj()) rt.ThrowType("[Symbol.asyncIterator]() must return an object");
+                            rt.Keep(it);
+                            r = rt.Alloc<IterRec>();
+                            r->proto = nullptr;
+                            r->iter = it;
+                            r->next = rt.Get(it, rt.atoms->next);
+                            r->async = 1;
+                        } else {
+                            r = GetIterator(rt, v);
+                            r->async = 2;
+                        }
+                        SP[-1] = Value::Obj(r);
+                        break;
+                    }
+                    case OP_AsyncIterNext: {   // [rec] -> [what next() gave: a promise, or a sync step's result object]
+                        IterRec* r = static_cast<IterRec*>(SP[-1].O());
+                        if (r->async == 1) {
+                            if (!rt.IsCallable(r->next)) rt.ThrowType("the async iterator's next is not a function");
+                            SP[-1] = rt.Call(r->next, r->iter, nullptr, 0);
+                        } else {
+                            Value v;
+                            bool more = IterStep(rt, r, v);
+                            SP[-1] = MakeIterResult(rt, more ? v : Value(), !more);
+                        }
+                        break;
+                    }
+                    case OP_AsyncIterValue: {   // [result rec] -> [value fromSync], or jump to a when done
+                        IterRec* r = static_cast<IterRec*>(SP[-1].O());
+                        Value res = SP[-2];
+                        if (!res.IsObj()) rt.ThrowType("an async iterator's next() must give an object");
+                        if (rt.ToBoolean(rt.Get(res, rt.atoms->done))) {
+                            r->done = true;
+                            SP -= 2;
+                            pc = cl->code->code.data() + I.a;
+                            break;
+                        }
+                        SP[-2] = rt.Get(res, rt.atoms->value);
+                        SP[-1] = Value::Bool(r->async == 2);
                         break;
                     }
                     case OP_IterNext: {

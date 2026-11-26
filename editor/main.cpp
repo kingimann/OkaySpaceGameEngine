@@ -55476,6 +55476,20 @@ int main(int argc, char** argv) {
                 g_showScriptEditor = true; g_scriptDockReq = 1;
                 if (sn[0] == '2') g_seNewReq = true;
             }
+            // OKAY_UI_IDE=<script file>: open it in the Script Editor's own window; OKAY_UI_IDE_POPUP=quickopen|palette|search|
+            // rename a few frames later (Script Editor IDE screenshots; text for the popups comes from OKAY_UI_TYPE).
+            if (const char* ide = std::getenv("OKAY_UI_IDE"); ide && s_focusFrames == 42) {
+                OpenScriptFileInEditorAt(ide, 5);
+                g_scriptDockReq = 1;
+            }
+            if (const char* pop = std::getenv("OKAY_UI_IDE_POPUP"); pop && s_focusFrames == 75) {
+                ImGui::SetWindowFocus("Script Editor");
+                const std::string p = pop;
+                if (p == "quickopen") oked::ide::OpenQuickOpen();
+                else if (p == "palette") g_sePaletteReq = true;
+                else if (p == "search") g_seSearchReq = true;
+                else if (p == "rename") oked::ide::OpenRenamePreview("Fire", "Shoot");
+            }
             // OKAY_UI_SCRIPT=open: the selection's own script; =lua: a Lua starter script; =luaerr: a Lua
             // script with a syntax error and a misspelled engine name (the checks, in screenshots).
             if (const char* us = std::getenv("OKAY_UI_SCRIPT"); us && s_focusFrames == 42)

@@ -4,7 +4,7 @@
 //
 // These are the full-screen passes of the post chain: bright-pass + downsample (PSDown), the 5-tap
 // linear-sampled gaussian blur (PSBlur), the "uber" pass (exposure, bloom composite, tonemap, colour
-// grading, vignette: PSUber) and FXAA (PSFxaa). They were the text inside D3D11Renderer.cpp; they are
+// grading, vignette: PSUber) and edge smoothing (PSEdgeSmooth, the scene's "fxaa" switch). They were the text inside D3D11Renderer.cpp; they are
 // here so Direct3D 12 can compile the very same source instead of a second copy.
 //
 // The host shader source must declare, before this text:
@@ -67,24 +67,26 @@
     "  float oa = 1.0 - (1.0 - v) * (1.0 - cov);\n" \
     "  return float4(oa > 1e-4 ? pc / oa : float3(0, 0, 0), oa);\n" \
     "}\n" \
-    "float lumaF(float3 c){ return dot(c, float3(0.299, 0.587, 0.114)); }\n" \
-    "float4 PSFxaa(PSQuad i) : SV_TARGET {\n" \
+    /* Edge smoothing: the same pass and constants as kEdgeSmoothFrag (GLRendererShaders.cpp, which says what it is written from). */ \
+    "float brightnessE(float3 c){ return dot(c, float3(0.2126, 0.7152, 0.0722)); }\n" \
+    "float4 premulE(float2 at){ float4 t = uTex.Sample(uSampClamp, at); return float4(t.rgb * t.a, t.a); }\n" \
+    "float4 PSEdgeSmooth(PSQuad i) : SV_TARGET {\n" \
     "  float2 px = uTexelDir.xy;\n" \
     "  float4 c = uTex.Sample(uSampClamp, i.uv);\n" \
-    "  float lM = lumaF(c.rgb);\n" \
-    "  float lNW = lumaF(uTex.Sample(uSampClamp, i.uv + float2(-1.0, -1.0) * px).rgb);\n" \
-    "  float lNE = lumaF(uTex.Sample(uSampClamp, i.uv + float2( 1.0, -1.0) * px).rgb);\n" \
-    "  float lSW = lumaF(uTex.Sample(uSampClamp, i.uv + float2(-1.0,  1.0) * px).rgb);\n" \
-    "  float lSE = lumaF(uTex.Sample(uSampClamp, i.uv + float2( 1.0,  1.0) * px).rgb);\n" \
-    "  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));\n" \
-    "  float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));\n" \
-    "  if (lMax - lMin < max(0.0312, lMax * 0.125)) return c;\n" \
-    "  float2 dir = float2(-((lNW + lNE) - (lSW + lSE)), ((lNW + lSW) - (lNE + lSE)));\n" \
-    "  float dirReduce = max((lNW + lNE + lSW + lSE) * (0.25 * 0.125), 1.0 / 128.0);\n" \
-    "  float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);\n" \
-    "  dir = clamp(dir * rcpDirMin, -8.0, 8.0) * px;\n" \
-    "  float4 rgbA = 0.5 * (uTex.Sample(uSampClamp, i.uv + dir * (1.0 / 3.0 - 0.5)) + uTex.Sample(uSampClamp, i.uv + dir * (2.0 / 3.0 - 0.5)));\n" \
-    "  float4 rgbB = rgbA * 0.5 + 0.25 * (uTex.Sample(uSampClamp, i.uv + dir * -0.5) + uTex.Sample(uSampClamp, i.uv + dir * 0.5));\n" \
-    "  float lB = lumaF(rgbB.rgb);\n" \
-    "  return (lB < lMin || lB > lMax) ? rgbA : rgbB;\n" \
+    "  float m = brightnessE(c.rgb);\n" \
+    "  float up = brightnessE(uTex.Sample(uSampClamp, i.uv - float2(0.0, px.y)).rgb);\n" \
+    "  float down = brightnessE(uTex.Sample(uSampClamp, i.uv + float2(0.0, px.y)).rgb);\n" \
+    "  float left = brightnessE(uTex.Sample(uSampClamp, i.uv - float2(px.x, 0.0)).rgb);\n" \
+    "  float right = brightnessE(uTex.Sample(uSampClamp, i.uv + float2(px.x, 0.0)).rgb);\n" \
+    "  float top = max(m, max(max(up, down), max(left, right)));\n" \
+    "  float spread = top - min(m, min(min(up, down), min(left, right)));\n" \
+    "  float2 slope = float2(right - left, down - up);\n" \
+    "  float steep = length(slope);\n" \
+    "  if (spread < 0.02 + 0.06 * top || steep < 1e-4) return c;\n" \
+    "  float2 along = float2(-slope.y, slope.x) * (px / steep);\n" \
+    "  float4 own = float4(c.rgb * c.a, c.a);\n" \
+    "  float4 sum = own + (premulE(i.uv + along) + premulE(i.uv - along)) * 2.0\n" \
+    "             + premulE(i.uv + along * 2.5) + premulE(i.uv - along * 2.5);\n" \
+    "  float4 o = lerp(own, sum * (1.0 / 7.0), saturate(spread * 8.0));\n" \
+    "  return o.a > 1e-4 ? float4(o.rgb / o.a, o.a) : c;\n" \
     "}\n"

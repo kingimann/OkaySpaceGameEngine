@@ -76,6 +76,20 @@ copied code in this scan; see "Clean" and "Limits".
   `NoiseField` (only `tests/test_math_geometry.cpp`). Test: continuity (steepest slope at a 1e-4 step 33.7 before,
   5.8 after, vs 6.5 / 5.9 at 1e-3), range without the clamp, centring, per-seed determinism, no grid direction.
   P1 (the patent question) is unchanged. Guard: `check`.
+- **A3 fixed (our own pass).** `kFxaaFrag` / `PSFxaa` are replaced by `kEdgeSmoothFrag` (GL) and `PSEdgeSmooth`
+  (Direct3D, `D3DPostHLSL.hpp`; the shader bundle entry is renamed too). Written from the general idea only (find a
+  brightness edge, blend along it): Rec. 709 brightness of the pixel and its four side neighbours, an edge when their
+  spread passes 0.02 + 0.06 x the brightest, taps at 1 and 2.5 texels along the edge (across the brightness slope),
+  weights 1 : 2 : 1, mixed in premultiplied alpha, blended in by 8 x the spread. Constants chosen on Mesa with the
+  test below: a turned 64 x 64 cube, 160 pixels changed, part-covered silhouette pixels 71 -> 151, total variation
+  -2.7%, nothing outside its 5 x 5 range (the old FXAA pass, measured the same way: 185, 71 -> 171, -2.4%). None of FXAA's names, taps or
+  constants. UI text says "Anti-aliasing (edge smoothing)" / "Edge smoothing"; saved keys stay `fxaa` (scene post,
+  project settings, game.okayconfig) and code names such as `FXAAEnabled()` stay (frozen). `tests/test_gl_post_alpha.cpp`
+  renders a turned cube on Mesa with the switch off and on. The Direct3D text is only text-checked
+  (`tests/test_d3d_post_hlsl.cpp`): UNVERIFIED on a GPU. Not changed: `editor/BuildSettingsModel.hpp` still labels the
+  build setting "FXAA" (Claude 3's file; needs their Agree). Goldens changed: `okayui/tests/golden/editorpanels_post.png`
+  and `editorpanels_post_presets.png` (only the "Anti-aliasing (edge smoothing)" label and A9's "Punchy filmic"
+  tone-map entry differ, checked by eye side by side). Guard: `check`.
 - **A4 fixed.** `cmake/okay_version.rc.in` now says "Copyright (c) 2026 OkaySpaceGameEngine. All rights reserved. See
   LICENSE." Guard: `check` refuses another licence name in `LegalCopyright`.
 - **A5-A7 fixed (notices; texts partly unverified).** `dist/THIRD_PARTY_NOTICES.txt` lists the GCC runtime (with the

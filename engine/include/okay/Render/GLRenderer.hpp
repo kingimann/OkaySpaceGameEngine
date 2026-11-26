@@ -106,11 +106,11 @@ private:
     void DestroyTargets();   // free ONLY the size-dependent FBO/renderbuffers/resolve
     // Procedural sky (a fullscreen pass behind the meshes) and the scene's post
     // chain (HDR resolve -> SSAO -> bloom -> exposure/tonemap/grading/vignette ->
-    // depth of field -> FXAA -> an RGBA8 output), see Atmosphere.hpp.
+    // depth of field -> edge smoothing -> an RGBA8 output), see Atmosphere.hpp.
     bool EnsureQuad();
     void DrawQuad();                      // the fullscreen quad with attribute 0 bound
     bool EnsureSkyProgram();
-    bool EnsurePostChain();               // uber / FXAA / DoF / downsample programs
+    bool EnsurePostChain();               // uber / edge smoothing / DoF / downsample programs
     bool EnsurePostTargets(int w, int h, bool hdr);
     void DestroyPostTargets();
     void DrawLinearDepth(const Scene& scene, const Mat4& vp, const Vec3& eye, const GameObject* ignore,
@@ -166,12 +166,12 @@ private:
         m_uskCloudScale = -1, m_uskCloudOffset = -1, m_uskTime = -1, m_uskLin = -1,
         m_uskMode = -1, m_uskTop = -1, m_uskHor = -1, m_uskBot = -1, m_uskHorizonPos = -1,
         m_uskSunOn = -1, m_uskSunPos = -1, m_uskSunRad = -1, m_uskStarsOn = -1, m_uskViewSize = -1;
-    unsigned int m_uberProg = 0, m_fxaaProg = 0, m_dofProg = 0, m_downProg = 0;
+    unsigned int m_uberProg = 0, m_edgeSmoothProg = 0, m_dofProg = 0, m_downProg = 0;
     int m_uuSrc = -1, m_uuBloomA = -1, m_uuBloomC = -1, m_uuExposure = -1, m_uuLinearIn = -1, m_uuTonemap = -1,
         m_uuBloomOn = -1, m_uuBloomIntensity = -1, m_uuGradeOn = -1, m_uuTemperature = -1, m_uuTint = -1,
         m_uuSaturation = -1, m_uuContrast = -1, m_uuLift = -1, m_uuGamma = -1, m_uuGain = -1,
         m_uuVignette = -1, m_uuVignetteSmooth = -1, m_uuAspect = -1;
-    int m_ufSrc = -1, m_ufTexel = -1;                                   // FXAA
+    int m_ufSrc = -1, m_ufTexel = -1;                                   // edge smoothing
     int m_udfSrc = -1, m_udfBlur = -1, m_udfDepth = -1, m_udfFocus = -1, m_udfRange = -1, m_udfFar = -1;   // DoF
     unsigned int m_dofCopyProg = 0, m_dofBlurProg = 0;                 // DoF: premultiplied copy + blur (alpha kept)
     int m_udcSrc = -1, m_udbSrc = -1, m_udbDir = -1;

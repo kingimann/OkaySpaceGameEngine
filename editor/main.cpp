@@ -6436,7 +6436,7 @@ static void DrawRenderingMenuItems(EditorState& ed) {
         ImGui::EndMenu();
     }
     if (ImGui::MenuItem("Performance mode (Scene view)", nullptr, &g_perfMode)) SaveSettings();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cheaper Scene view only (the Game view and your builds keep the scene's own look):\nno ambient occlusion, bloom, FXAA or supersampling, render scale at most 75%%,\nand one small shadow cascade while the Game panel is closed.");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cheaper Scene view only (the Game view and your builds keep the scene's own look):\nno ambient occlusion, bloom, edge smoothing or supersampling, render scale at most 75%%,\nand one small shadow cascade while the Game panel is closed.");
 }
 
 // ---- Creators shared by GameObject > Create, the Hierarchy menus and the Scene view's right-click menu (and its search box). ----
@@ -11336,7 +11336,7 @@ void DrawSceneSettings(EditorState& ed) {
         if (ToneMapEnabled())
             ImGui::SliderFloat("Exposure", &Exposure(), 0.1f, 4.0f, "%.2f");
 
-        ImGui::Checkbox("Anti-aliasing (FXAA)", &FXAAEnabled());
+        ImGui::Checkbox("Anti-aliasing (edge smoothing)", &FXAAEnabled());
         DrawRendererNote(okay::RenderFeature::BuildFxaa);
 
         ImGui::Checkbox("Color grading", &ColorGradeEnabled());
@@ -15711,7 +15711,7 @@ void DrawFileDialogs(EditorState& ed) {
                 DrawRendererNote(okay::RenderFeature::BuildBloom);
                 ImGui::Checkbox("Ambient occlusion", &g_build.ssao);
                 DrawRendererNote(okay::RenderFeature::BuildSsao);
-                ImGui::Checkbox("FXAA", &g_build.fxaa);
+                ImGui::Checkbox("Edge smoothing", &g_build.fxaa);
                 DrawRendererNote(okay::RenderFeature::BuildFxaa);
                 DrawRendererNote(okay::RenderFeature::PerPixelLighting);
                 const char* aaOpts[] = {"Off", "2x", "4x"};

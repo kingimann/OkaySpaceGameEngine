@@ -602,29 +602,39 @@ const char* kUberFrag =
     "  gl_FragColor = vec4(oa > 1e-4 ? pc / oa : vec3(0.0), oa);\n"
     "}\n";
 
-// FXAA: luma-driven edge blur along the gradient (the classic 3.x formulation).
-const char* kFxaaFrag =
+// Edge smoothing (the scene's "fxaa" switch; provenance audit A3). Our own pass, written from the general idea of
+// image-space anti-aliasing only (find a brightness edge, blend along it), no published shader followed:
+//   - brightness with the Rec. 709 luma weights (ITU-R BT.709) at the pixel and its four side neighbours;
+//   - a pixel is an edge when the spread of those five is above 0.02 + 0.06 x the brightest;
+//   - the edge runs across the brightness slope (right - left, down - up); taps at 1 and 2.5 texels along it on
+//     both sides, weights pixel 1 : near pair 2 : far pair 1, mixed in premultiplied alpha so a silhouette against
+//     an empty background keeps its colour, and blended in by 8 x the spread (all of it from a spread of 0.125).
+// The constants were chosen with tests/test_gl_post_alpha.cpp on Mesa (a turned cube: more part-covered silhouette
+// pixels, less total variation, no value outside its 5 x 5 neighbourhood, flat faces and empty background unchanged;
+// taps further than 2.5 texels started to overshoot that neighbourhood).
+const char* kEdgeSmoothFrag =
     "#version 120\n"
     "uniform sampler2D uSrc; uniform vec2 uTexel; varying vec2 vUV;\n"
-    "float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
+    "float brightness(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }\n"
+    "vec4 premul(vec2 at){ vec4 t = texture2D(uSrc, at); return vec4(t.rgb * t.a, t.a); }\n"
     "void main(){\n"
     "  vec4 c = texture2D(uSrc, vUV);\n"
-    "  float lM = luma(c.rgb);\n"
-    "  float lNW = luma(texture2D(uSrc, vUV + vec2(-1.0, -1.0) * uTexel).rgb);\n"
-    "  float lNE = luma(texture2D(uSrc, vUV + vec2( 1.0, -1.0) * uTexel).rgb);\n"
-    "  float lSW = luma(texture2D(uSrc, vUV + vec2(-1.0,  1.0) * uTexel).rgb);\n"
-    "  float lSE = luma(texture2D(uSrc, vUV + vec2( 1.0,  1.0) * uTexel).rgb);\n"
-    "  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));\n"
-    "  float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));\n"
-    "  if (lMax - lMin < max(0.0312, lMax * 0.125)) { gl_FragColor = c; return; }\n"
-    "  vec2 dir = vec2(-((lNW + lNE) - (lSW + lSE)), ((lNW + lSW) - (lNE + lSE)));\n"
-    "  float dirReduce = max((lNW + lNE + lSW + lSE) * (0.25 * 0.125), 1.0 / 128.0);\n"
-    "  float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);\n"
-    "  dir = clamp(dir * rcpDirMin, vec2(-8.0), vec2(8.0)) * uTexel;\n"
-    "  vec4 rgbA = 0.5 * (texture2D(uSrc, vUV + dir * (1.0 / 3.0 - 0.5)) + texture2D(uSrc, vUV + dir * (2.0 / 3.0 - 0.5)));\n"
-    "  vec4 rgbB = rgbA * 0.5 + 0.25 * (texture2D(uSrc, vUV + dir * -0.5) + texture2D(uSrc, vUV + dir * 0.5));\n"
-    "  float lB = luma(rgbB.rgb);\n"
-    "  gl_FragColor = (lB < lMin || lB > lMax) ? rgbA : rgbB;\n"
+    "  float m = brightness(c.rgb);\n"
+    "  float up = brightness(texture2D(uSrc, vUV - vec2(0.0, uTexel.y)).rgb);\n"
+    "  float down = brightness(texture2D(uSrc, vUV + vec2(0.0, uTexel.y)).rgb);\n"
+    "  float left = brightness(texture2D(uSrc, vUV - vec2(uTexel.x, 0.0)).rgb);\n"
+    "  float right = brightness(texture2D(uSrc, vUV + vec2(uTexel.x, 0.0)).rgb);\n"
+    "  float top = max(m, max(max(up, down), max(left, right)));\n"
+    "  float spread = top - min(m, min(min(up, down), min(left, right)));\n"
+    "  vec2 slope = vec2(right - left, down - up);\n"
+    "  float steep = length(slope);\n"
+    "  if (spread < 0.02 + 0.06 * top || steep < 1e-4) { gl_FragColor = c; return; }\n"
+    "  vec2 along = vec2(-slope.y, slope.x) * (uTexel / steep);\n"
+    "  vec4 own = vec4(c.rgb * c.a, c.a);\n"
+    "  vec4 sum = own + (premul(vUV + along) + premul(vUV - along)) * 2.0\n"
+    "           + premul(vUV + along * 2.5) + premul(vUV - along * 2.5);\n"
+    "  vec4 o = mix(own, sum * (1.0 / 7.0), clamp(spread * 8.0, 0.0, 1.0));\n"
+    "  gl_FragColor = o.a > 1e-4 ? vec4(o.rgb / o.a, o.a) : c;\n"
     "}\n";
 
 // Depth of field: blend toward the blurred frame by how far the pixel's linear

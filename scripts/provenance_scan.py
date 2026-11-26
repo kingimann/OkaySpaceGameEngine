@@ -253,6 +253,21 @@ def _simplex(t):
     return _grep(t, rel, r"0\.3660254|0\.2113248|x0 >= y0|70\.0f \* n|32\.0f \* n|0\.6f - x")
 
 
+def _edge_smoothing(t):
+    """A3: the GPU edge-smoothing pass is our own (no FXAA 2 / 3.x names or constants), and the UI calls it "edge
+    smoothing" (FXAA is NVIDIA's name). Saved keys stay "fxaa" (frozen). editor/BuildSettingsModel.hpp belongs to
+    Claude 3's lane and still says "FXAA" until that lane agrees to the change."""
+    bad = []
+    for rel in ("engine/src/Render/GLRendererShaders.cpp", "engine/include/okay/Render/D3DPostHLSL.hpp"):
+        bad += _grep(t, rel, r"dirReduce|rcpDirMin|rgbA|rgbB|FXAA_|1\.0 / 128\.0|0\.0312")
+    for p, rel in files(("editor", "okayui", "shared", "player", "launcher")):
+        if not rel.endswith((".cpp", ".hpp", ".h")) or rel == "editor/BuildSettingsModel.hpp" or rel.endswith("FontOwn.h"): continue   # font data is base64
+        for i, l in enumerate(lines_of(p), 1):
+            if l.strip().startswith(("//", "*", "/*")): continue
+            if any("FXAA" in lit for lit in STRLIT.findall(l)): bad.append("%s:%d" % (rel, i))
+    return bad
+
+
 def _notices(t):
     """A5-A7: one notice file names every runtime, library and font we ship, and every package carries it."""
     bad = []
@@ -297,6 +312,7 @@ GUARDS = [
     ("A4", "shipped version information states a licence other than ours", _licence_statement),
     ("A1", "the published marching-cubes tables or their loop came back", _cube_cases),
     ("A2", "simplex noise follows the reference code again", _simplex),
+    ("A3", "FXAA shader text or the FXAA name in UI text", _edge_smoothing),
     ("A5-A7", "a package ships without the third-party notices", _notices),
     ("N1", "voice chat carries its own cipher or IMA table", _voice_shared),
     ("A8", "the browser placeholder copies another browser's wording", _browser_words),

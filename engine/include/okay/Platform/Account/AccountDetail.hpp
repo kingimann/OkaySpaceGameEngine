@@ -175,7 +175,7 @@ inline bool SecureEquals(const std::string& a, const std::string& b) {
 }
 
 // Minimal JSON helpers — just enough to send credentials and read a token back.
-inline std::string JsonEscape(const std::string& s) {
+inline std::string JsonEscape(const std::string& s) {   // dup-allow: moved unchanged from AccountService.hpp (OkayBackend round 2); the planned Core/Json.hpp replaces it
     std::string out;
     for (char c : s) {
         switch (c) {

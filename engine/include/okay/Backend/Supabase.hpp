@@ -22,7 +22,7 @@
 namespace okay::backend::supabase {
 
 /// Extra header lines, one per line ("x-upsert: true\ncache-control: max-age=30"). Blank lines and stray quotes are dropped.
-inline std::vector<std::string> SplitHeaders(const std::string& extra) {
+inline std::vector<std::string> SplitHeaders(const std::string& extra) {   // dup-allow: moved unchanged from AccountService.hpp; header lines, not a general split
     std::vector<std::string> out;
     std::string cur;
     for (std::size_t i = 0; i <= extra.size(); ++i) {

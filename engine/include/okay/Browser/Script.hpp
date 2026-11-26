@@ -212,4 +212,15 @@ private:
 /// MIME type essences, ignoring case and parameters.) "module", JSON and template types are not run.
 bool IsJavaScriptType(const std::string& type);
 
+/// The web API a console error line of a page's script says is missing, or "" (Site check, tools/sitecheck). Read from our
+/// JavaScript engine's own wording: a standard web or JavaScript global that is not defined ("'IntersectionObserver' is not
+/// defined"), or a call of something that is undefined ("'document.fonts.load' is undefined, not a function") on one of the
+/// page's host objects (window, document, navigator ...), a built-in (Object, Array ...) or a DOM method name ("*.closest": the object's type is not known). A name the page
+/// itself was meant to define (a script that did not load) is not counted. PageScripts adds "not implemented: X" to the console
+/// (a warning) after such an error line, so the page's console and the site check say what to build.
+std::string MissingWebApi(const std::string& errorLine);
+/// Is `name` one of the JavaScript language's own globals (Object, Date, Map, decodeURIComponent, typed arrays ...; ECMA-262
+/// section 19)? A missing one is a gap in our JavaScript engine rather than in the DOM binding.
+bool IsJavaScriptGlobal(const std::string& name);
+
 } // namespace okay::browser

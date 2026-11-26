@@ -59,6 +59,7 @@ struct NetOptions {
     /// entry points turn it on. See FetchRequest::keepAlive for the safety rules.
     bool keepAlive = false;
     std::shared_ptr<CookieJar> cookieJar;   ///< null = no cookies (default). The jar sees every hop of the call.
+    bool followRedirects = true;            ///< false: a 3xx answer is returned as it is (FetchRequest::followRedirects)
     Limits limits;
     // Test and embedding overrides; empty means "decide from the environment".
     std::string caFile, caDir;
@@ -677,7 +678,7 @@ inline FetchResult Perform(const std::string& method, const std::string& url,
                            const std::vector<std::string>& headerLines, const std::string& body,
                            const NetOptions& o, const FetchHooks& hooks = FetchHooks()) {
     SystemConnector c(o);
-    FetchRequest rq; rq.method = method; rq.url = url; rq.headerLines = headerLines; rq.body = body; rq.acceptGzip = o.acceptGzip; rq.keepAlive = o.keepAlive; rq.jar = o.cookieJar;
+    FetchRequest rq; rq.method = method; rq.url = url; rq.headerLines = headerLines; rq.body = body; rq.acceptGzip = o.acceptGzip; rq.keepAlive = o.keepAlive; rq.jar = o.cookieJar; rq.followRedirects = o.followRedirects;
     return Fetch(c, rq, o.limits, o.totalMs, hooks);
 }
 

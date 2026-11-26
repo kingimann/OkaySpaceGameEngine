@@ -70,6 +70,10 @@ struct TabView {
     int suggSel = 0;                          // the highlighted row (Enter opens it)
     bool suggHidden = false;                  // Esc closed them (until the text changes)
     UI::Rect suggRect;                        // where they were drawn last frame (clicks there are not the page's)
+    // round 3: a dialog the page opened (alert / confirm / prompt), shown over the page while this tab is shown
+    PageDialog dialog;
+    bool dialogOpen = false;
+    std::string dialogSite;                   // the page's host when it opened it ("<site> says")
 };
 
 // A small menu drawn over everything (the main menu, the context menu, a bookmark's menu).
@@ -82,7 +86,8 @@ struct MenuItem {
 enum Action {
     A_None = 0, A_NewTab, A_CloseTab, A_ReopenTab, A_History, A_Bookmarks, A_Downloads, A_ZoomIn, A_ZoomOut, A_ZoomReset, A_Find,
     A_Settings, A_ToggleBar, A_OpenLinkNewTab, A_CopyLink, A_CopyText, A_CopyPage, A_Back, A_Forward, A_Reload, A_Bookmark,
-    A_RemoveBookmark, A_OpenBookmarkNewTab, A_Quit, A_Console
+    A_RemoveBookmark, A_OpenBookmarkNewTab, A_Quit, A_Console,
+    A_HistoryEntry = 1000   // + the entry's index: the Back / Forward history list
 };
 
 struct Menu {
@@ -96,12 +101,23 @@ struct Menu {
 
 constexpr double kSaveDelay = 2.0;      // seconds after a change before the profile is written
 constexpr double kRefreshEvery = 1.0;   // seconds between looks at the profile file (the other program may have written it)
+constexpr double kSiteDataEvery = 1.0;  // seconds between saves of the cookies and localStorage (and looks at the other program's)
+constexpr std::size_t kMaxDialogChars = 2000;   // a page's dialog text shown at most (the rest is cut)
+
+// The profile's folder, from the profile's file ("" = nothing is kept).
+std::string FolderOf(const std::string& profilePath) {
+    if (profilePath.empty()) return std::string();
+    const fs::path p = fs::u8path(profilePath);
+    return p.has_parent_path() ? (p.parent_path() / "").u8string() : std::string();
+}
 
 } // namespace
 
 struct BrowserApp::Impl {
     Config cfg;
     ProfileStore store;
+    SiteData site;   // the cookies and localStorage every tab uses (declared before the tabs: they point at it)
+    double lastSiteSave = 0.0;
     DownloadHost downloads;
     TabOrder order;
     std::map<int, TabView> tabs;
@@ -127,9 +143,10 @@ struct BrowserApp::Impl {
     float dragFromX = 0.0f;
     bool dragging = false;
 
-    explicit Impl(Config c) : cfg(std::move(c)), store(cfg.profilePath), downloads(cfg.userAgent) {
+    explicit Impl(Config c) : cfg(std::move(c)), store(cfg.profilePath), site(FolderOf(cfg.profilePath)), downloads(cfg.userAgent) {
         std::string why;
         if (!cfg.profilePath.empty() && !store.Load(&why)) std::fprintf(stderr, "[browser] profile: %s (starting fresh)\n", why.c_str());
+        site.Load((std::int64_t)std::time(nullptr));
         if (cfg.switchedOff) notice = "Our own browser is switched off (Settings > Experimental > Browser). Nothing is loaded.";
     }
 
@@ -165,6 +182,7 @@ struct BrowserApp::Impl {
         TabView& tv = tabs[id];
         tv.host.reset(new TabHost(cfg.textures, cfg.userAgent));
         tv.host->Tab().SetAnyOrigin(true);
+        tv.host->SetSiteData(&site.Cookies(), &site.LocalStorage());   // one cookie store and one localStorage for every tab
         tv.host->SetGameRunner(cfg.runner);
         tv.host->SetInternalPages([this](const std::string& u) { return InternalPage(u, profile(), downloads.Items()); });
         tv.host->SetFontLoader([](const FontFace& face, const std::vector<std::uint8_t>& in) {
@@ -249,7 +267,9 @@ struct BrowserApp::Impl {
             break;
         case A_RemoveBookmark: { const std::string url = menu.link; change([url](Profile& p) { p.bookmarks.Remove(url); }); break; }
         case A_Quit: if (cfg.quitItem) quit = true; break;
-        default: break;
+        default:
+            if (a >= A_HistoryEntry) { t.GoTo((std::size_t)(a - A_HistoryEntry)); notice.clear(); }
+            break;
         }
     }
 
@@ -285,11 +305,29 @@ struct BrowserApp::Impl {
         const double now = UI::GetTime();
         if (store.Dirty() && now - dirtyAt > kSaveDelay) save();
         else if (now - lastRefresh > kRefreshEvery) { lastRefresh = now; store.Refresh(); }
+        // the cookies and localStorage: saved a little after they change, and what the other program saved is taken in
+        if (now - lastSiteSave > kSiteDataEvery || now < lastSiteSave) { lastSiteSave = now; site.Pump((std::int64_t)std::time(nullptr)); }
     }
 
     void save() {
         std::string why;
         if (!store.Save(&why)) std::fprintf(stderr, "[browser] %s\n", why.c_str());
+    }
+
+    // The Back (-1) or Forward (+1) history list of the shown tab, as a menu under `at`: the nearest entry first.
+    void openHistoryMenu(int dir, UI::Vec2 at) {
+        const BrowserTab& t = active().host->Tab();
+        const std::vector<BrowserTab::HistoryItem> entries = t.HistoryEntries();
+        const long cur = (long)t.HistoryIndex();
+        std::vector<MenuItem> items;
+        for (long i = cur + dir; i >= 0 && i < (long)entries.size() && items.size() < 16; i += dir) {
+            const BrowserTab::HistoryItem& e = entries[(std::size_t)i];
+            std::string title = e.title;
+            if (title.empty())   // a page shown before this tab was opened: its title from the history of visits, else its address
+                for (const auto& v : profile().history.Items()) if (v.url == e.url && !v.title.empty()) { title = v.title; break; }
+            items.push_back({Fit(title.empty() ? e.url : title, 230.0f), "", A_HistoryEntry + (int)i});
+        }
+        if (!items.empty()) openMenu(at, std::move(items));
     }
 
     void frameIn(float X, float Y, float W, float H);
@@ -300,6 +338,7 @@ BrowserApp::BrowserApp(Config config) : m(new Impl(std::move(config))) {}
 BrowserApp::~BrowserApp() {
     if (m->store.Dirty()) m->save();
     m->tabs.clear();   // stops running games and frees the textures
+    m->site.Save((std::int64_t)std::time(nullptr));
 }
 
 int BrowserApp::OpenTyped(const std::string& typed, bool activate) {
@@ -317,7 +356,7 @@ void BrowserApp::Pump() { m->pump(); }
 void BrowserApp::Frame(float x, float y, float w, float h) { m->frameIn(x, y, w, h); }
 bool BrowserApp::WantsQuit() const { return m->quit; }
 void BrowserApp::SetAutoplay(bool on) { m->autoplay = on; }
-void BrowserApp::Save() { if (m->store.Dirty()) m->save(); }
+void BrowserApp::Save() { if (m->store.Dirty()) m->save(); m->site.Save((std::int64_t)std::time(nullptr)); }
 void BrowserApp::CloseAll() { m->tabs.clear(); m->order = TabOrder(); }
 std::size_t BrowserApp::TabCount() const { return m->order.Count(); }
 int BrowserApp::ActiveId() const { return m->order.Active(); }
@@ -327,6 +366,11 @@ BrowserTab& BrowserApp::ActiveTab() { if (m->tabs.find(m->order.Active()) == m->
 const Profile& BrowserApp::GetProfile() const { return m->profile(); }
 const std::string& BrowserApp::Notice() const { return m->notice; }
 bool BrowserApp::DownloadPromptOpen() const { return m->offer.open; }
+bool BrowserApp::PageDialogOpen() const {
+    auto it = m->tabs.find(m->order.Active());
+    return it != m->tabs.end() && it->second.dialogOpen;
+}
+std::string BrowserApp::PageDialogText() const { return PageDialogOpen() ? m->tabs.find(m->order.Active())->second.dialog.message : std::string(); }
 const std::vector<DownloadItem>& BrowserApp::Downloads() const { return m->downloads.Items(); }
 
 std::string BrowserApp::WindowTitle() const {
@@ -345,10 +389,14 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
     const bool ctrl = in.ctrl, shift = in.shift, alt = UI::IsKeyDown(UI::KeyId_Alt);
     // Ctrl+<key> is a shortcut, never typing (a field would otherwise get the "1" of Ctrl+1)
     if (ctrl && !alt) UI::GetIO().InputQueueCharacters.resize(0);
-    const bool modal = menu.open || offer.open || settingsOpen;
-
     if (order.Count() == 0) newTab(std::string(), false, true);
     pump();
+    if (tabs.find(order.Active()) != tabs.end()) {   // a dialog the shown page opened (round 3): shown over the page
+        TabView& dv = active();
+        if (!dv.dialogOpen && !off && dv.host->Tab().TakeDialog(dv.dialog)) { dv.dialogOpen = true; dv.dialogSite = HostOf(dv.host->Tab().Url()); }
+    }
+    const bool pageDialog = tabs.find(order.Active()) != tabs.end() && active().dialogOpen;
+    const bool modal = menu.open || offer.open || settingsOpen || pageDialog;
 
     // ---- shortcuts, as in common browsers ----
     auto key = [](UI::KeyId k) { return UI::IsKeyPressed(k, false); };
@@ -634,6 +682,7 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
         }
         if (r.formSent) notice = r.formNote;
         else if (!r.formNote.empty()) notice = r.formNote;
+        if (r.historyMenu != 0) openHistoryMenu(r.historyMenu, r.historyAt);
         if (r.back) { t.GoBack(); notice.clear(); }
         if (r.forward) { t.GoForward(); notice.clear(); }
         if (r.reload) t.Reload();
@@ -977,6 +1026,39 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
             }
             UI::SameLine();
             if (UI::Button("Cancel") || UI::IsKeyPressed(UI::KeyId_Escape, false)) settingsOpen = false;
+        });
+    }
+    // a page's alert / confirm / prompt (round 3). The page did not wait for it (Script.hpp): confirm already counted as
+    // Cancel and prompt as no text, so the dialog only shows the message, and OK (Enter or Esc) closes it.
+    if (pageDialog && !offer.open && !settingsOpen) {
+        TabView& dv = active();
+        std::string text = dv.dialog.message.size() > kMaxDialogChars ? dv.dialog.message.substr(0, kMaxDialogChars) + "..." : dv.dialog.message;
+        const float dw = std::min(520.0f, std::max(260.0f, W - 40.0f));
+        const float lineW = dw - 36.0f;
+        int lines = 1;
+        for (std::size_t i = 0, e; i <= text.size(); i = e + 1) {   // a rough height: each paragraph, wrapped
+            e = std::min(text.find('\n', i), text.size());
+            lines += 1 + (int)(UI::CalcTextWidth(text.substr(i, e - i).c_str()) / std::max(40.0f, lineW));
+            if (lines > 16) break;
+        }
+        const bool asked = dv.dialog.kind != PageDialog::Alert;
+        const float dh = std::min(H - 60.0f, 110.0f + 18.0f * (float)std::min(lines, 16) + (asked ? 24.0f : 0.0f));
+        dialog(pre + "_pagedialog", dw, dh, [&](float dx, float dy) {
+            UI::SetCursorScreenPos(UI::Vec2(dx, dy));
+            UI::Heading(((dv.dialogSite.empty() ? std::string("This page") : dv.dialogSite) + " says").c_str());
+            UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y + 2.0f));
+            UI::PushTextWrapPos(dx + lineW);
+            UI::PushClipRect(dx, dy, lineW + 4.0f, dh - 70.0f);
+            UI::TextWrapped(text.c_str());
+            UI::PopClipRect();
+            UI::PopTextWrapPos();
+            if (asked) {
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y + 2.0f));
+                UI::TextDisabled(dv.dialog.kind == PageDialog::Confirm ? "The page went on without your answer (it counted as Cancel)."
+                                                                     : "The page went on without your answer (it got no text).");
+            }
+            UI::SetCursorScreenPos(UI::Vec2(dx + dw - 36.0f - 70.0f, dy + dh - 14.0f - 44.0f));
+            if (UI::PrimaryButton("OK") || UI::IsKeyPressed(UI::KeyId_Enter, false) || UI::IsKeyPressed(UI::KeyId_Escape, false)) dv.dialogOpen = false;
         });
     }
 }

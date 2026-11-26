@@ -168,6 +168,7 @@
 #endif
 #include "ImGuiPainterRenderer.hpp"   // our own Dear ImGui renderer over okay::platform::Painter (OKAY_IMGUI_RENDER=own; default stays imgui_impl_sdlrenderer2)
 #include "PainterBridge.hpp"   // the 2D renderer calls, through okay::platform::Painter
+#include "OwnPainter.hpp"      // which painter draws an own-backend window (OpenGL, else software)
 #include "ImGuiPlatformFeed.hpp"          // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
 
 #include <numeric>
@@ -53978,6 +53979,7 @@ int main(int argc, char** argv) {
     okay::platform::WindowDesc mainDesc;
     mainDesc.title = "OkayEngine"; mainDesc.width = 1280; mainDesc.height = 800;
     mainDesc.resizable = true; mainDesc.highDpi = true; mainDesc.hidden = true;
+    mainDesc.opengl = okay::pb::OwnWindowsWantGL(sdlSeam);   // own backend: a GL pixel format for the OpenGL painter (sdl2: unchanged)
     // The seam's window (it owns the window and destroys it); the SDL_Window* inside is what the ImGui backends and SDL_Renderer take.
     std::unique_ptr<okay::platform::Window> winSeam = sdlSeam->MakeWindow(mainDesc);
     if (!winSeam) { std::cerr << "CreateWindow failed: " << sdlSeam->LastError() << "\n"; return 1; }
@@ -53993,9 +53995,7 @@ int main(int argc, char** argv) {
     if (const char* rd = std::getenv("OKAY_RENDER_DRIVER")) SDL_SetHint(SDL_HINT_RENDER_DRIVER, rd);
     else SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d11");
 #endif
-#ifdef OKAY_HAVE_OKAYUI
-    okay::pb::SetOwnPainterFactory([](okay::platform::Window& w, const okay::platform::PainterDesc& d) { return OkayUI::soft::CreateWindowPainter(w, d); });   // the software painter, for own-backend windows
-#endif
+    okay::pb::SetOwnPainterFactory(okay::pb::MakeOwnPainter);   // own-backend windows: the OpenGL painter, else the software one (shared/OwnPainter.hpp)
     // An accelerated renderer (the driver the hint chose), else one with the default driver, else any (software). The painter owns it.
     SDL_Renderer* renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true);
     if (!renderer) { SDL_SetHint(SDL_HINT_RENDER_DRIVER, ""); renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true); }

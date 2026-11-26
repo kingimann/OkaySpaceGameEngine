@@ -29,6 +29,9 @@ The owner asked for our own browser (2026-11-25): an installable program for pla
 4. **Round 2: JavaScript in pages (branch `claude/browser-js-1`).** The page's scripts run on our own JavaScript engine
    (`engine/include/okay/JavaScript/`, merged in #1322; the browser uses that one, not a second one: its core became the
    library `okay_js`, linked by both the engine and `okay_browser`). See "Round 2" below.
+4a. **Round 3: the web platform scripts need (branch `claude/browser-js-2`, on top of round 2).** fetch / XMLHttpRequest,
+   cookies, storage, history, key / mouse / focus events, document.write, async / defer, live collections,
+   getComputedStyle, dialogs. See "Round 3" below.
 5. **Next.** More of the DOM and the web platform (below), then WebAssembly and WebGL, so other engines' web games and normal
    sites work.
 
@@ -169,7 +172,7 @@ dragging tabs, a downloads folder picker, file inputs. Nothing of round 1 was bu
 
 **Not done in round 2:** XMLHttpRequest / fetch, `document.write`, running scripts while the page is parsed, scripts a script
 adds, `<style>` added or changed by a script, keyboard / mouse-move / focus events, live NodeLists, getComputedStyle, canvas,
-storage, the history API, cookies. A node whose own listener's closure holds it stays until the page goes (the listener is a
+storage, the history API, cookies (all but canvas came in round 3, below). A node whose own listener's closure holds it stays until the page goes (the listener is a
 root). The Console strip and the view's click / input wiring were compiled but not run in a window; nothing on Windows.
 
 **Checked so far (2026-11-26):** the browser tests above and `okayui_browser` pass on Linux (ctest); the program was run on Linux
@@ -177,6 +180,63 @@ under a virtual display (Xvfb) against a local Python test server: several tabs,
 with highlights, the bookmarks bar, the menu and the context menu, a download asked for and saved to the Downloads folder, a
 form typed into (text, password, select, radio, checkbox, textarea) and sent with POST (the server echoed the urlencoded body),
 the new-tab and history pages, zoom. Not checked: real web sites, the launcher's page (compiled only), Windows.
+
+## Round 3: fetch, cookies, storage, history, input events
+
+What a page's scripts can do now that they could not in round 2 (all in `okay/Browser/Script.hpp`, `Browser.hpp`, and two new
+stores, `Cookies.hpp` and `Storage.hpp`):
+
+- **fetch() and XMLHttpRequest** go through the tab: `BrowserTab::TakeScriptRequests` / `DeliverScriptResponse`, same rules
+  as a `<script src>` (in the launcher only the page's own site). fetch is Promise-based (`Response` with status, ok, headers,
+  text(), json(), clone(); `Headers`); XMLHttpRequest has readyState 1-4, onload / onerror / onreadystatechange and
+  addEventListener, getResponseHeader, responseType "json". Both are written in JavaScript (`kPrelude` in Script.cpp) on one
+  native request function. In the browser program a request to another site carries no cookies and an `Origin` header; its
+  answer is read only when the site allows it (`Access-Control-Allow-Origin`); a same-site request redirected to another site
+  is checked the same way. Only "simple" requests go to another site (a CORS preflight is not done yet: those are refused).
+  Set-Cookie headers are stored and never shown to the page. Limits: 64 waiting requests, 16 MB request body, 16 MB answer.
+  Synchronous XMLHttpRequest is refused (InvalidAccessError).
+- **Cookies** (`CookieStore`, one per profile, `BrowserTab::SetCookieStore`): RFC 6265 dates, Domain (no public suffix
+  list yet: a short built-in list of shared suffixes like co.uk is refused), Path, Expires / Max-Age (at most 400 days),
+  Secure, HttpOnly, SameSite (no attribute = Lax; None needs Secure; a cross-site top-level GET gets Lax ones), `__Secure-` /
+  `__Host-` names. Sent on the page's fetches by the tab; for the host's own fetches it asks `CookieHeader(url)` and hands back
+  `ReceiveCookies(url, setCookieValues)`. `document.cookie` reads and writes the same store without HttpOnly ones. Saved as
+  JSON (`ToJson` / `FromJson`, persistent cookies only). Caps: 4096 bytes a cookie, 50 per domain, 3000 in all.
+  The engine's other cookie jar (`ownhttp::CookieJar` in `Platform/OwnHttp.hpp`) is a strict per-call jar for one request
+  and its redirects, with no disk and no Domain cookies; it was left as it is (a different job, another system's file).
+- **localStorage and sessionStorage** (`WebStorage`, per origin; localStorage per profile via `SetLocalStorage`, saved with
+  `ToJson`; sessionStorage per tab). 5 MB per origin (QuotaExceededError past it), at most 1000 origins. Property access
+  (`localStorage.x = 1`) works; `delete localStorage.x` does not (use removeItem). No `storage` event to other tabs yet.
+- **History**: pushState / replaceState (same origin only, state as JSON, 640 KB), back / forward / go, length, state.
+  Back and forward between one page's own entries do not load anything; the page gets popstate. Leaving the page and coming
+  back loads the entry's address again (no page cache), with its state.
+- **Input events**: `BrowserTab::KeyEvent` (keydown / keyup / keypress with key, code, keyCode, modifiers; cancelling one
+  tells the host not to type it), `PointerEvent` (mousedown / mouseup / mousemove ... with clientX / Y, button), `SetHover`
+  fires mouseover / mouseout, `SetFocus` fires blur, focusout, focus, focusin; `el.focus()` / `el.blur()` move the tab's
+  focus and `document.activeElement` follows. No mouseenter / mouseleave, no wheel, no pointer events yet.
+- **Scripts while the page is read**: the page is still read in one go, then its scripts run in order, but
+  `document.write` from a page script puts its text right after that script (so it shows where it would), and scripts in it
+  run next. `defer` scripts run after the others and before DOMContentLoaded; `async` ones when they arrive (load waits for
+  them). A script added by a script runs (inline at once, src when it arrives, with load / error on the element); a
+  `<style>` or style link a script adds, removes or changes is applied at the next layout. `document.currentScript` works.
+  Difference from a browser: a script sees the whole page, also the part after it. `document.write` after the page was read
+  is ignored with a console line (a browser would wipe the page).
+- **Live collections**: children, childNodes, getElementsByTagName / ClassName follow the tree (item, namedItem, length,
+  index, for...of, forEach); querySelectorAll stays a fixed list, as in the standard. **dataset** writes set data-*
+  attributes. **getComputedStyle** gives the cascade's values (display, colours, font, sizes, margins, padding, position ...;
+  widths are the computed ones, not the laid-out pixels).
+- **alert / confirm / prompt** become dialogs the host shows (`TakeDialog`). The script does not stop for them: confirm
+  answers false and prompt null at once (what the standard returns when the browser does not show a modal dialog). At most 3
+  dialogs per script run and 8 waiting; the rest go to the console.
+
+**What the host must call (okayui BrowserView / shared BrowserApp, not in this change):** `SetCookieStore` and
+`SetLocalStorage` on every tab (one store each per profile, loaded from and saved to the profile folder with
+`ToJson` / `FromJson` when `TakeChanged()` says so); `CookieHeader` on each fetch of `TakeFetches()` and `ReceiveCookies` with
+its Set-Cookie headers; `TakeScriptRequests` each frame, send each (method, headers, body as given) and answer with
+`DeliverScriptResponse` (status, headers, body, final address); `KeyEvent` before typing a key into a control (skip it when it
+returns true); `PointerEvent` for mouse buttons and moves; `TakeDialog` each frame to show alerts.
+
+**Checked (2026-11-26):** `browser_script` (279 checks) and the other browser tests pass on Linux. Nothing was run in the
+program or the launcher (the host wiring is not done) or on Windows.
 
 ## The launcher's Browser page (2026-11-26)
 

@@ -12,14 +12,19 @@
 //   - an ImGui tooltip and an ImGui window in front cover the panel, and the panel offers no mouse while covered;
 //   - the panel's own modal ("Clear crash reports?") stays on OkayUI's top layer, over everything;
 //   - clicks reach the panel: Refresh, Reset, a History row;
-//   - a collapsed window draws nothing and offers nothing.
+//   - a collapsed window draws nothing and offers nothing;
+//   - the launcher's What's New and Browser pages (okayuihost::HostPanelArea): the profile row's ImGui tooltip lies over them, the
+//     page does not change, the Browser page's images (textures the launcher made) are drawn, and typing reaches its fields.
 #include "test_framework.hpp"
 #include "imgui.h"            // first: OkayUI.hpp keeps Dear ImGui's ImTextureID_Invalid when imgui.h came before it
 #include "imgui_internal.h"
 #include "okayui_compare_rig.hpp"
 #include "OkayUIImGuiEmbed.hpp"
+#include "OkayUIHost.hpp"           // InputCollector and HostedKeys: the keys the launcher hands its hosted pages
 #include "OkayUIPanels.hpp"
 #include "EditorPanelFixtures.hpp"
+#include "OkayUIScreens.hpp"        // DrawWhatsNew: the launcher's What's New page
+#include "PageLayout.hpp"          // launcher/: OkayUIDrawsPage, the launcher's rule for which surface draws a page
 #include "okay/UI/OkayUICapture.hpp"
 
 #include <cstdio>
@@ -873,6 +878,358 @@ void SectionsHiddenDrawNothing() {
     kH = 420;
 }
 
+// ---- The launcher's What's New page (launcher/main.cpp tab 12), as the launcher hosts it ---------------------------------------
+// The launcher's window: one root window that is never brought to the front, the sidebar (a child) with the What's New and
+// Notifications rows and the profile row, whose hover shows an ImGui tooltip that reaches into the page, and the page area (a child).
+// Which surface draws the page is the launcher's own rule (okay::launcherlayout::OkayUIDrawsPage, launcher/PageLayout.hpp) and the
+// OkayUI page is hosted with okayuihost::HostPanelArea, as launcher/main.cpp does. Owner's recording (2026-11-26, v2.903.8.140): with the
+// mouse on the profile row, and on the frame of a click on Notifications, the OkayUI What's New was replaced by its Dear ImGui copy.
+struct LauncherWin {
+    ImGuiRig im;
+    Raster ras;
+    okayuihost::ImGuiEmbed embed;
+    OkayUI::CapturedGeometry cap;
+    Offers offers, lastOffers;                 // this frame's and last frame's rectangles (the launcher's Region keeps last frame's)
+    okayuitest::Sim sim{(float)kW, (float)kH};
+    okayuiscreens::WhatsNewModel model;
+    int tab = 12;
+    static constexpr int kBrowserTab = 30;     // the Browser page (launcher/main.cpp kBrowserTab)
+    bool browserHosted = true;                 // false: the Browser page as #1314 drew it (left in OkayUI's frame, drawn after ImGui)
+    ImU32 tipBg = 0;                           // != 0: the profile row's tooltip in this colour (to find its pixels)
+    char address[128] = "okay://news";         // the Browser page's address field
+    bool okayFrame = true;                     // the OkayUI backend is on (the launcher's default)
+    int okayDrew = 0, imguiDrew = 0;           // which surface drew the What's New page this frame
+    int notifDrew = 0;                         // the Notifications page was drawn this frame
+    bool tooltipShown = false;
+    static constexpr float kNavW = 150.0f, kRowH = 36.0f;
+    LauncherWin() {
+        okayuitest::Reset();
+        OkayUI::UseLauncherLook(true);
+        OkayUI::Style().caretBlink = false;
+        ImGui::SetCurrentContext(im.ctx);
+        ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
+        model.currentVersion = "2.903.8.140";
+        model.state = okayuiscreens::UpdateState::UpToDate;
+        model.releases.push_back({"v2.903.8", {"Editor fixes", "Faster loading", "Versions page", "Asset streaming"}});
+        model.releases.push_back({"v2.903.7", {"Chat invites"}});
+    }
+    ~LauncherWin() { ImGui::SetCurrentContext(im.ctx); embed.Release(); OkayUI::UseLauncherLook(false); }
+    LauncherWin(const LauncherWin&) = delete;
+    LauncherWin& operator=(const LauncherWin&) = delete;
+    // The sidebar rows' places (the root window has no padding in the launcher; here the rig's root keeps its own).
+    ImVec2 whatsNewRow, notificationsRow, profileRow;
+    bool NavRow(const char* id, ImVec2& at) {
+        at = ImGui::GetCursorScreenPos();
+        const bool click = ImGui::InvisibleButton(id, ImVec2(ImGui::GetContentRegionAvail().x, kRowH));
+        return click;
+    }
+    void Body() {
+        okayDrew = imguiDrew = notifDrew = 0; tooltipShown = false;
+        ImGui::BeginChild("nav", ImVec2(kNavW, 0));
+        if (NavRow("##navnews", whatsNewRow)) tab = 12;
+        ImGui::Dummy(ImVec2(0, (float)kH - 6 * kRowH));
+        if (NavRow("##navbell", notificationsRow)) tab = 16;
+        {   // the profile row: its tooltip, as launcher/main.cpp's ("Account  (right-click to set a status)")
+            profileRow = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##navprofile", ImVec2(ImGui::GetContentRegionAvail().x, kRowH));
+            if (ImGui::IsItemHovered()) {
+                if (tipBg) ImGui::PushStyleColor(ImGuiCol_PopupBg, tipBg);
+                ImGui::SetTooltip("Account  (right-click to set a status)");
+                if (tipBg) ImGui::PopStyleColor();
+                tooltipShown = true;
+            }
+        }
+        ImGui::EndChild();
+        ImGui::SameLine(0, 0);
+        ImGui::BeginChild("content", ImVec2(0, 0));
+        if (tab == 12 && okay::launcherlayout::OkayUIDrawsPage(tab, okayFrame)) {   // ---- What's New, drawn by OkayUI
+            ++okayDrew;
+            okayuihost::HostPanelArea("##okayui_whatsnew", ImGui::GetContentRegionAvail(), offers, embed, cap,
+                                      [&](ImVec2 p, ImVec2 a) { okayuiscreens::DrawWhatsNew(model, p.x, p.y, a.x, a.y); });
+        } else if (tab == 12) {                                                     // ---- What's New, its Dear ImGui copy
+            ++imguiDrew;
+            ImGui::TextUnformatted("You're on v2.903.8.140");
+            ImGui::Button("Check for updates");
+        } else if (tab == 16) {
+            ++notifDrew;
+            ImGui::TextUnformatted("Notifications");
+        } else if (tab == kBrowserTab) {                                            // ---- Browser (launcher/main.cpp, HostOkayPage)
+            ++okayDrew;
+            const ImVec2 ra = ImGui::GetContentRegionAvail();
+            if (browserHosted) {
+                embed.SetHostTextures([](const void* t) { return (ImTextureID)(std::uintptr_t)t; });   // as the launcher's HostOkayPage
+                okayuihost::HostPanelArea("##okayui_browser", ra, offers, embed, cap, [&](ImVec2 p, ImVec2 a) { BrowserBody(p, a); });
+            } else {                                                                // #1314's way: a placeholder, the page in OkayUI's frame
+                const ImVec2 rp = ImGui::GetCursorScreenPos();
+                ImGui::InvisibleButton("##okayui_browser", ra);
+                ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+                offers.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+                BrowserBody(rp, ra);
+            }
+        }
+        ImGui::EndChild();
+    }
+    // A page of the launcher's Browser (shared/BrowserApp.cpp Frame draws it this way): one bare OkayUI window over the area, the
+    // address field, and the page under it in a clip (the view), with a picture whose texture the launcher made (TabHost::ImageFor:
+    // an SDL texture from TextureFromRgba), wider than the view so the clip cuts it.
+    static constexpr std::uint8_t kImg[3] = {30, 200, 90};
+    std::uint8_t imgKey = 0;                                      // the "SDL texture" of the page's picture (a key the rasteriser knows)
+    SDL_Texture* PageImage() { return (SDL_Texture*)(void*)&imgKey; }
+    ImVec2 imgMin, imgMax;                                        // where the picture is (its visible part ends at viewMax.x)
+    float viewMaxX = 0.0f;
+    ImVec2 pageMin, pageMax;                                      // the page's rectangle
+    void BrowserBody(ImVec2 p, ImVec2 a) {
+        pageMin = p; pageMax = ImVec2(p.x + a.x, p.y + a.y);
+        OkayUI::BareNextWindow();
+        if (OkayUI::Begin("##launcher_browser", p.x, p.y, a.x, a.y)) {
+            OkayUI::GetWindowDrawList()->AddRectFilled(OkayUI::Vec2(p.x, p.y), OkayUI::Vec2(p.x + a.x, p.y + a.y), OkayUI::RGBA(244, 244, 244));   // the page
+            OkayUI::SetCursorScreenPos(OkayUI::Vec2(p.x + 10.0f, p.y + 8.0f));
+            OkayUI::SetNextItemWidth(a.x - 20.0f);
+            OkayUI::InputText("##address", address, (int)sizeof address);
+            if (shortcuts) ReadShortcuts();
+            viewMaxX = p.x + a.x - 40.0f;
+            const float vy = p.y + 50.0f;
+            OkayUI::PushClipRect(p.x, vy, viewMaxX - p.x, a.y - 50.0f);
+            imgMin = ImVec2(p.x + 14.0f, p.y + a.y - 130.0f);
+            imgMax = ImVec2(viewMaxX + 30.0f, p.y + a.y - 20.0f);
+            OkayUI::GetWindowDrawList()->AddImage(PageImage(), OkayUI::Vec2(imgMin.x, imgMin.y), OkayUI::Vec2(imgMax.x, imgMax.y));
+            OkayUI::PopClipRect();
+        }
+        OkayUI::End();
+    }
+    // The Browser page's shortcuts, read the way shared/BrowserApp.cpp frameIn reads them (Input::ctrl, the Alt key, IsKeyPressed).
+    bool shortcuts = false;
+    std::string fired;                                            // one letter per shortcut that fired
+    void ReadShortcuts() {
+        const OkayUI::Input& in = OkayUI::GetFrameInput();
+        const bool ctrl = in.ctrl, alt = OkayUI::IsKeyDown(OkayUI::KeyId_Alt);
+        if (ctrl && !alt) OkayUI::GetIO().InputQueueCharacters.resize(0);   // as BrowserApp: Ctrl+<key> never types
+        auto key = [](OkayUI::KeyId k) { return OkayUI::IsKeyPressed(k, false); };
+        if (ctrl && key(OkayUI::KeyId_T)) fired += 'T';
+        else if (ctrl && key(OkayUI::KeyId_W)) fired += 'W';
+        else if (ctrl && key(OkayUI::KeyId_Tab)) fired += 'N';
+        else if (ctrl && key(OkayUI::KeyId_L)) fired += 'L';
+        else if (key(OkayUI::KeyId_F5)) fired += 'R';
+        else if (alt && key(OkayUI::KeyId_Left)) fired += '<';
+        else if (alt && key(OkayUI::KeyId_Right)) fired += '>';
+        else if (ctrl && key(OkayUI::KeyId_D)) fired += 'D';
+        else if (ctrl && key(OkayUI::KeyId_F)) fired += 'F';
+    }
+    // The launcher's own key path (launcher/main.cpp: every platform event into its okayuihost::InputCollector, and at the start of
+    // OkayUI's frame HostedKeys decides which keys the hosted page gets). Off: the Sim's input, as the tests above use.
+    bool launcherKeys = false;
+    okayuihost::InputCollector collector;
+    void Key(SDL_Keycode k, bool down, Uint16 mods) {
+        SDL_Event e{};
+        e.type = down ? SDL_KEYDOWN : SDL_KEYUP;
+        e.key.keysym.sym = k; e.key.keysym.mod = mods;
+        collector.Feed(e);
+    }
+    /// One shortcut as a person presses it: the modifier, the key, a frame; both released, a frame.
+    void Chord(SDL_Keycode mod, SDL_Keycode k) {
+        const Uint16 m = mod == SDLK_LCTRL ? KMOD_LCTRL : mod == SDLK_LALT ? KMOD_LALT : 0;
+        if (mod) Key(mod, true, m);
+        Key(k, true, m); Frame();
+        Key(k, false, m);
+        if (mod) Key(mod, false, 0);
+        Frame();
+    }
+    /// The same chord arriving whole between two frames (a quick press at the launcher's idle frame rate, or xdotool's "key ctrl+f").
+    void QuickChord(SDL_Keycode mod, SDL_Keycode k) {
+        const Uint16 m = mod == SDLK_LCTRL ? KMOD_LCTRL : mod == SDLK_LALT ? KMOD_LALT : 0;
+        if (mod) Key(mod, true, m);
+        Key(k, true, m); Key(k, false, m);
+        if (mod) Key(mod, false, 0);
+        Frame(); Frame();
+    }
+    bool Owns(float x, float y) const {
+        for (const Offers::O& o : lastOffers.list) if (o.hovered && x >= o.x && y >= o.y && x < o.x + o.w && y < o.y + o.h) return true;
+        return false;
+    }
+    void Frame() {
+        lastOffers = offers;
+        offers.list.clear(); offers.active = false;
+        im.mx = sim.mx; im.my = sim.my; im.down = sim.down; im.rdown = sim.rdown;
+        sim.blocked = !Owns(sim.mx, sim.my);   // launcher/main.cpp OkayUIFrameBegin: ImGui has the mouse unless a hosted page owns it
+        const okayuihost::HostKeys keys = okayuihost::HostedKeys(OkayUI::WantsTextInput(), ImGui::GetActiveID() != 0,
+                                                                 ImGui::GetIO().WantTextInput, lastOffers.active);
+        if (launcherKeys) {                    // the launcher's path: the collector's input, with HostedKeys' answer
+            OkayUI::Input in = collector.Build(sim.mx, sim.my, sim.down, sim.rdown, sim.blocked, keys);
+            in.displayW = sim.W; in.displayH = sim.H;
+            if (keys == okayuihost::HostKeys::All && !sim.text.empty()) in.text = sim.text.c_str();
+            OkayUI::BeginFrame(in);
+            im.Frame([&] { Body(); });
+            OkayUI::EndFrameData();
+            sim.text.clear();
+        } else {
+            if (keys != okayuihost::HostKeys::All) sim.text.clear();   // the text only while an OkayUI field types
+            sim.Frame([&] { im.Frame([&] { Body(); }); });
+        }
+        ras.DrawImGui();
+        ras.renderer.Render(OkayUI::GetDrawData(), ras.fi);
+    }
+    void Frames(int n) { for (int i = 0; i < n; ++i) Frame(); }
+};
+
+// How many pixels of the launcher's page area (right of the sidebar, rows 10 to `yEnd`) differ by more than 8 levels between two pictures.
+int PagePixelsChanged(const Bitmap& a, const Bitmap& b, int yEnd) {
+    int diff = 0;
+    for (int y = 10; y < yEnd; ++y) for (int x = (int)LauncherWin::kNavW + 20; x < kW - 10; ++x) {
+        const std::uint8_t* pa = &a.rgba[((std::size_t)y * (std::size_t)kW + (std::size_t)x) * 4];
+        const std::uint8_t* pb = &b.rgba[((std::size_t)y * (std::size_t)kW + (std::size_t)x) * 4];
+        if (std::abs(pa[0] - pb[0]) > 8 || std::abs(pa[1] - pb[1]) > 8 || std::abs(pa[2] - pb[2]) > 8) ++diff;
+    }
+    return diff;
+}
+
+void LauncherPageOneSurfaceWhileTheProfileTooltipShows() {
+    kH = 600;
+    LauncherWin w;
+    w.sim.Move(400, 300); w.Frames(4);   // the mouse over the page
+    CHECK(w.okayDrew == 1 && w.imguiDrew == 0);
+    const Bitmap before = w.ras.bmp;
+    // the mouse on the profile row: its tooltip shows and reaches into the page, frame after frame
+    w.sim.Move(w.profileRow.x + 100.0f, w.profileRow.y + 10.0f);
+    int swaps = 0, tips = 0;
+    for (int i = 0; i < 12; ++i) { w.Frame(); swaps += w.imguiDrew; tips += w.tooltipShown ? 1 : 0; CHECK(w.okayDrew + w.imguiDrew == 1); }
+    std::printf("  profile row hovered: tooltip on %d of 12 frames; the Dear ImGui copy drew the page on %d of 12\n", tips, swaps);
+    CHECK(tips >= 10);
+    CHECK(swaps == 0);                                                    // one surface, unchanged by the hover
+    CHECK(w.okayDrew == 1 && w.tab == 12);
+    // the page looks the same away from the tooltip (its top half: the tooltip is by the sidebar's bottom)
+    const int diff = PagePixelsChanged(before, w.ras.bmp, 300);
+    std::printf("  page pixels changed by the hover (top half): %d\n", diff);
+    CHECK(diff == 0);
+    Save("launcher_whatsnew", "profilehover", w.ras.bmp);
+    kH = 420;
+}
+
+void LauncherPageClickOnNotificationsLandsAndStays() {
+    kH = 600;
+    LauncherWin w;
+    w.sim.Move(400, 300); w.Frames(4);
+    // from the profile row (tooltip showing) up to Notifications, then a press and a release a few frames apart, as a person clicks
+    w.sim.Move(w.profileRow.x + 100.0f, w.profileRow.y + 10.0f); w.Frames(3);
+    w.sim.Move(w.notificationsRow.x + 60.0f, w.notificationsRow.y + 12.0f); w.Frames(2);
+    int imguiCopy = 0;
+    w.sim.Down(); for (int i = 0; i < 4; ++i) { w.Frame(); imguiCopy += w.imguiDrew; }
+    w.sim.Up(); w.Frame(); imguiCopy += w.imguiDrew;
+    CHECK(imguiCopy == 0);
+    CHECK(w.tab == 16);
+    Save("launcher_whatsnew", "notifications", w.ras.bmp);
+    int stayed = 0;
+    for (int i = 0; i < 20; ++i) { w.Frame(); stayed += (w.tab == 16 && w.notifDrew == 1 && w.okayDrew == 0 && w.imguiDrew == 0) ? 1 : 0; }
+    std::printf("  after the click: Notifications shown on %d of 20 frames, nothing of What's New offered: %s\n", stayed, w.offers.list.empty() ? "yes" : "no");
+    CHECK(stayed == 20);
+    CHECK(w.offers.list.empty() && OkayUI::GetDrawData().indexCount == 0);
+    // and back: What's New again, by OkayUI
+    w.sim.Move(w.whatsNewRow.x + 60.0f, w.whatsNewRow.y + 12.0f); w.Frame();
+    w.sim.Down(); w.Frames(2); w.sim.Up(); w.Frames(2);
+    CHECK(w.tab == 12 && w.okayDrew == 1 && w.imguiDrew == 0);
+    kH = 420;
+}
+
+// The Browser page (launcher/main.cpp, tab kBrowserTab) hosted like What's New (HostOkayPage). #1314 drew it in OkayUI's frame, after
+// Dear ImGui, and #1321 removed the check that hid tooltips there: the profile row's tooltip went UNDER the page. Hosted, the tooltip
+// lies over it; the page is the same picture as before (its picture, a texture the launcher made, included: the embed skipped such
+// shapes until the launcher named its textures to ImGui, SetHostTextures), and typing still reaches its address field.
+void LauncherBrowserPageUnderImGuiTooltips() {
+    kH = 600;
+    struct Shot { Bitmap page, tip; int tipOverPage = 0, img = 0, imgPastClip = 0, skipped = 0; std::string typed; };
+    auto run = [](bool hosted) {
+        Shot r;
+        LauncherWin w;
+        w.tab = LauncherWin::kBrowserTab;
+        w.browserHosted = hosted;
+        w.tipBg = IM_COL32(kFront[0], kFront[1], kFront[2], 255);
+        const std::uint8_t px[4 * 4 * 4] = {
+            30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255,
+            30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255, 30, 200, 90, 255};
+        w.ras.renderer.SetImage(w.PageImage(), 4, 4, px, false);
+        w.sim.Move(500, 300); w.Frames(4);   // the mouse over the page
+        r.page = w.ras.bmp;
+        r.skipped = w.embed.Skipped();
+        const int ix0 = (int)w.imgMin.x + 2, iy0 = (int)w.imgMin.y + 2, ix1 = (int)w.viewMaxX - 2, iy1 = (int)w.imgMax.y - 2;
+        r.img = Count(r.page, ix0, iy0, ix1, iy1, LauncherWin::kImg);
+        r.imgPastClip = Count(r.page, (int)w.viewMaxX + 2, iy0, (int)w.imgMax.x - 2, iy1, LauncherWin::kImg);
+        // the profile row's tooltip reaches into the page (over its picture)
+        w.sim.Move(w.profileRow.x + 100.0f, w.profileRow.y + 10.0f); w.Frames(3);
+        CHECK(w.tooltipShown && w.okayDrew == 1);
+        r.tip = w.ras.bmp;
+        r.tipOverPage = Count(r.tip, (int)w.pageMin.x + 1, (int)w.pageMin.y + 1, (int)w.pageMax.x - 1, (int)w.pageMax.y - 1, kFront);
+        // typing reaches the address field: click it, select all, type
+        w.sim.Move(500, 30); w.Frame(); w.sim.Down(); w.Frames(2); w.sim.Up(); w.Frames(2);
+        w.sim.Press(okayuitest::Key_SelectAll); w.Frame();
+        w.sim.Type("okay://store"); w.Frames(2);
+        r.typed = w.address;
+        Save(hosted ? "launcher_browser_hosted" : "launcher_browser_oldway", "profilehover", r.tip);
+        return r;
+    };
+    const Shot oldWay = run(false), hosted = run(true);
+    std::printf("  tooltip pixels over the page: old way %d, hosted %d\n", oldWay.tipOverPage, hosted.tipOverPage);
+    std::printf("  page picture pixels: old way %d, hosted %d (past the view's clip: %d, %d); shapes the embed skipped: %d\n",
+                oldWay.img, hosted.img, oldWay.imgPastClip, hosted.imgPastClip, hosted.skipped);
+    std::printf("  typed into the address field: old way \"%s\", hosted \"%s\"\n", oldWay.typed.c_str(), hosted.typed.c_str());
+    CHECK(oldWay.tipOverPage == 0);          // the bug: the page lay over ImGui's tooltip
+    CHECK(hosted.tipOverPage > 500);         // hosted: the tooltip is over the page
+    CHECK(oldWay.img > 1000 && hosted.img == oldWay.img);   // the page's picture is drawn, the same
+    CHECK(oldWay.imgPastClip == 0 && hosted.imgPastClip == 0);   // and clipped to the view
+    CHECK(hosted.skipped == 0);
+    const Diff d = Compare(oldWay.page, hosted.page);
+    std::printf("  page hosted against the old way: average difference %.3f, clearly different %.3f%%\n", d.avg, d.clearly);
+    CHECK(d.clearly < 0.05);                 // the page does not change
+    // away from the tooltip, the page does not change while it shows
+    const int diff = PagePixelsChanged(hosted.page, hosted.tip, 400);
+    std::printf("  page pixels changed by the hover (above the tooltip): %d\n", diff);
+    CHECK(diff == 0);
+    CHECK(oldWay.typed == "okay://store" && hosted.typed == "okay://store");
+    kH = 420;
+}
+
+// The Browser page's shortcuts in the launcher (2026-11-26 report): Ctrl+F did nothing until the address field was clicked, because
+// the launcher handed its hosted pages keys only while an OkayUI field typed (the standalone okay-browser gives them every key).
+// Driven through the launcher's own key path (InputCollector + HostedKeys); the page reads the keys as shared/BrowserApp.cpp does.
+void LauncherBrowserShortcutsReachThePage() {
+    kH = 600;
+    LauncherWin w;
+    w.tab = LauncherWin::kBrowserTab;
+    w.launcherKeys = true;
+    w.shortcuts = true;
+    w.sim.Move(500, 300); w.Frames(3);   // the page is shown, the mouse over it, no field focused
+    CHECK(!OkayUI::WantsTextInput());
+    w.Chord(SDLK_LCTRL, SDLK_f); w.Chord(SDLK_LCTRL, SDLK_l); w.Chord(SDLK_LCTRL, SDLK_t); w.Chord(SDLK_LCTRL, SDLK_w);
+    w.Chord(SDLK_LCTRL, SDLK_d); w.Chord(0, SDLK_F5); w.Chord(SDLK_LALT, SDLK_LEFT); w.Chord(SDLK_LALT, SDLK_RIGHT);
+    w.Chord(SDLK_LCTRL, SDLK_TAB);
+    std::printf("  shortcuts that fired with no field focused: \"%s\" (want \"FLTWDR<>N\")\n", w.fired.c_str());
+    CHECK(w.fired == "FLTWDR<>N");
+    // a quick chord, whole between two frames: the Ctrl it was pressed with is kept (it reached OkayUI as a plain F)
+    w.fired.clear();
+    w.QuickChord(SDLK_LCTRL, SDLK_f); w.QuickChord(SDLK_LCTRL, SDLK_t); w.QuickChord(SDLK_LALT, SDLK_LEFT);
+    std::printf("  quick chords (all four key events between two frames): \"%s\" (want \"FT<\")\n", w.fired.c_str());
+    CHECK(w.fired == "FT<");
+    // the mouse away from the page (over the sidebar): the page still has them while the launcher window has the focus
+    w.fired.clear();
+    w.sim.Move(40, 100); w.Frames(2);
+    w.Chord(SDLK_LCTRL, SDLK_f);
+    std::printf("  Ctrl+F with the mouse on the sidebar: \"%s\"\n", w.fired.c_str());
+    CHECK(w.fired == "F");
+    // the address field focused: Ctrl+F is Find, nothing is typed into the field
+    w.fired.clear();
+    w.sim.Move(500, 30); w.Frame(); w.sim.Down(); w.Frames(2); w.sim.Up(); w.Frames(2);
+    CHECK(OkayUI::WantsTextInput());
+    const std::string before = w.address;
+    w.Chord(SDLK_LCTRL, SDLK_f);
+    w.Chord(SDLK_LCTRL, SDLK_l);
+    w.QuickChord(SDLK_LCTRL, SDLK_f);
+    std::printf("  with the address field focused: fired \"%s\", field \"%s\" (was \"%s\")\n", w.fired.c_str(), w.address, before.c_str());
+    CHECK(w.fired == "FLF");
+    CHECK(before == w.address);
+    // and typing still types (the text only goes to a focused OkayUI field)
+    w.sim.Type("x"); w.Frames(2);
+    CHECK(std::string(w.address) == before + "x");
+    kH = 420;
+}
+
 } // namespace
 
 int main() {
@@ -894,5 +1251,9 @@ int main() {
     SectionsHiddenDrawNothing();
     LookSectionsCoveredByImGui();
     LookSectionsTakeClicks();
+    LauncherPageOneSurfaceWhileTheProfileTooltipShows();
+    LauncherPageClickOnNotificationsLandsAndStays();
+    LauncherBrowserPageUnderImGuiTooltips();
+    LauncherBrowserShortcutsReachThePage();
     TEST_MAIN_RESULT();
 }

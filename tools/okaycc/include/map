@@ -2,6 +2,7 @@
 // Keys are unique and ordered by C (std::less<K> by default). multimap is not done.
 #pragma once
 #include <__tree>
+#include <__reverse_iterator>
 namespace std {
 template <typename K, typename V, typename C = less<K>>
 class map {
@@ -44,6 +45,10 @@ public:
     void clear() { __t.clear(); }
     iterator begin() const { return iterator(__t.first(), &__t.__root); }
     iterator end() const { return iterator(nullptr, &__t.__root); }
+    reverse_iterator<iterator> rbegin() const { return reverse_iterator<iterator>(end()); }
+    reverse_iterator<iterator> rend() const { return reverse_iterator<iterator>(begin()); }
+    reverse_iterator<iterator> crbegin() const { return rbegin(); }
+    reverse_iterator<iterator> crend() const { return rend(); }
     iterator find(const K &k) const { return iterator(__t.findNode(k), &__t.__root); }
     unsigned long count(const K &k) const { return __t.findNode(k) ? 1 : 0; }
     bool contains(const K &k) const { return __t.findNode(k) != nullptr; }
@@ -87,6 +92,17 @@ public:
         __t.eraseNode(it.n);
         return next;
     }
+    // [container.reqmts] p13, [tab:container.req]: equal when the sizes are equal and the elements,
+    // in order, are equal (key and value).
+    bool operator==(const map<K, V, C> &o) const {
+        if (size() != o.size()) return false;
+        iterator a = begin();
+        iterator b = o.begin();
+        for (; a != end(); ++a, ++b)
+            if (!(a->first == b->first) || !(a->second == b->second)) return false;
+        return true;
+    }
+    bool operator!=(const map<K, V, C> &o) const { return !(*this == o); }
     void swap(map<K, V, C> &o) {
         __tree_node<K, V> *r = __t.__root;
         unsigned long n = __t.__n;

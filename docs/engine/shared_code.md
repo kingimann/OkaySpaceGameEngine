@@ -43,6 +43,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | PNG writing | `Core/ImageWrite.hpp` | `ImageWrite::WritePNG`, `ImageWrite::EncodePNG` | `ImageWrite::WritePNG("shot.png", w, h, 4, rgba);` |
 | BMP writing | `Platform/BmpWriter.hpp` | `okay::platform::WriteBmp32`, `WriteBmp32Bgra` | `platform::WriteBmp32("shot.bmp", rgba, w, h);` |
 | Network tests: a script's or graph's variable, an overlay line | `tests/net_test_util.hpp` | `nettest::ScriptVar`, `nettest::GraphVar`, `nettest::HasLine` | `CHECK(nettest::ScriptVar(go, "code") == "K7Q29X");` |
+| One slow call off the editor's frame (network, a whole-project read), its result taken in a later frame | `editor/WorkerCall.hpp` (threads through `shared/OkayThreads.hpp`, CLAUDE.md 21a) | `oked::WorkerCall` (`Start`, `Collect`, `Busy`, `Drop`) | `call.Start([out]{ *out = updater::CheckLatest(); }, "okay-update-check"); ... if (call.Collect()) Use(*out);` |
 | Random numbers | `Core/Random.hpp` | `okay::Random` (`Seed`, `Value`, `Range`) | `Random r(seed); float x = r.Range(-1.0f, 1.0f);` |
 | Noise (Perlin, simplex, value, Worley, fBm) | `Math/Noise.hpp` | `okay::NoiseField` (`Perlin2`, `Perlin3`, `Simplex2`, `Fbm2`) | `NoiseField n(7); float h = n.Fbm2(NoiseType::Perlin, x, z);` |
 | Easing curves | `Math/Easing.hpp` | `okay::Ease`, `Easing::Evaluate`, `Easing::QuadIn` ... | `float k = Easing::Evaluate(Ease::CubicOut, t);` |
@@ -62,6 +63,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Ray against a triangle mesh | `Physics/TriMesh.hpp` | `okay::TriMesh::Raycast`, `TriMesh::RayLocal` | `mesh.Raycast(origin, dir, 100.0f, t, normal);` |
 | Quaternion to rotation matrix (any precision) | `Math/Mat4.hpp` | `okay::SetRotationFromUnitQuat`, `Mat4::Rotate` | `rc::M4 r; SetRotationFromUnitQuat(r, x, y, z, w);` |
 | Model readers: affine inverse, cofactors, Quake frame vertices, triangle corners | `engine/src/Render/AffineInverse.hpp`, `engine/src/Render/ReaderCommon.hpp` | `rc::InvAffine`, `rc::Cofactors3`, `rc::ReadQuakeFrameVerts`, `rc::TriCorner` | `double c[9]; rc::Cofactors3(m, c);` |
+| RHI backends: resource maps (size, back buffer, count, erase, pipeline + shader lookup) | `engine/src/Render/RHI/BackendTables.hpp` | `table::Count`, `table::TextureSize`, `table::BackBuffer`, `table::Erase`, `table::FindPipeline` | `return table::Count(m_buffers, m_textures);` |
 | Tests: memory and time budget of a read (counting operator new) | `tests/alloc_budget.hpp` (one source file per test program) | `budget::Measure`, `budget::PeakReset`, `budget::PeakSince`, `g_live`, `g_peak` | `Run r = budget::Measure("big", read, kCap, kMaxSeconds);` |
 | Tests: hostile-input helpers for readers | `tests/reader_hostile_common.hpp` | `hostile::Sane`, `hostile::MutateBinary`, `hostile::HasNote`, `hostile::AddCorpusSeeds` | `hostile::AddCorpusSeeds(seeds, {"TER/a.ter"});` |
 | Tests: own-reader routing through the import seam | `tests/own_seam_checks.hpp` | `seam::CheckSeamMatchesDirect`, `seam::CheckFlattened`, `seam::CheckEnvSwitch`, `seam::CheckDefaultBackend`, `seam::SetEnv` | `seam::CheckFlattened(path, 2);` |
@@ -75,6 +77,9 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Logging | `Core/Log.hpp` | `okay::Log` (`Info`, `Warning`, `Error`), `Log::Category` | `Log::Warning("missing texture: ", path);` |
 | Script-side JSON, hashing, Base64 (Python, JS, shell) | the standard library | `json.dumps`, `hashlib`, `base64`, `zlib.crc32`; `JSON.stringify`; `jq` | `json.dumps(obj)` |
 | okay-ms language tests: build a program with okay-cl at /O0 /O1 /O2, run it under Wine, compare with MinGW g++ | `tools/okayms/tests/program_check.hpp` (paths in this row are from the repository root) | `okayms_test::run_both`, `ProgramRun`, `wine_exit`, `bump_alloc` | `okayms_test::run_both(kRun, tally, "name", source, 0);` |
+| Fuzzy match of typed letters (Quick Open, palettes, autocomplete) | `editor/ScriptIde.hpp` (paths in this row are from the repository root) | `scriptide::FuzzyScore` (`oked::FuzzyScore` in `editor/ScriptAssist.cpp` calls it); the visual-script search keeps its own scorer `VsFuzzyScore` (`editor/VisualScriptNodeDocs.hpp`, word-aware, different weights) | `if (scriptide::FuzzyScore("plc", "PlayerController.okay") >= 0) ...` |
+| Script text: find / replace with case, whole word, regex; text edits; line diff | `editor/ScriptIde.hpp` (from the repository root) | `scriptide::FindAll`, `ReplaceAll`, `FindInTexts`, `ApplyEdits`, `TextEdit`, `LineDiff` | `int n; auto t = scriptide::ReplaceAll(src, "(\\w+) = 1", "$1 = 2", {true}, &n);` |
+| Commands and providers editor plugins add to a window | `editor/PluginRegistry.hpp` (from the repository root) | `pluginreg::PluginRegistry`, `Command`, `RankCommands`, `ParseShortcut`, `ScriptEditorPlugins()` | `reg.AddCommand({"id", "Title", "Category", "Ctrl+Alt+T", owner, run});` |
 
 ## Keeping this list true
 

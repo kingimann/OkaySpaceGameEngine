@@ -27,6 +27,9 @@
 
 namespace okayuihost {
 
+/// Which keys the host hands OkayUI this frame (HostedKeys, below Region, says which).
+enum class HostKeys { None, Held, All };
+
 /// Collects what OkayUI needs from SDL events between two frames.
 class InputCollector {
 public:
@@ -54,17 +57,19 @@ public:
         }
         case SDL_KEYDOWN:
         case SDL_KEYUP: {
+            const bool down = e.type != SDL_KEYUP;
             m_shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
             const bool ctrl = (e.key.keysym.mod & (KMOD_CTRL | KMOD_GUI)) != 0;
             m_ctrl = ctrl;
+            if (down) { m_ctrlAtPress |= ctrl; m_shiftAtPress |= m_shift; }   // (see m_ctrlAtPress)
             {   // held state of the named keys (Input::keyDown); a press and release between two frames still shows for one frame
                 const int id = KeyIdOf(e.key.keysym.sym);
                 if (id != OkayUI::KeyId_None) {
-                    m_keyHeld[id] = (e.type == SDL_KEYDOWN);
-                    if (e.type == SDL_KEYDOWN) m_keyTap[id] = true;
+                    m_keyHeld[id] = down;
+                    if (down) m_keyTap[id] = true;
                 }
             }
-            if (e.type != SDL_KEYDOWN) break;                 // key repeat arrives as more KEYDOWN events: each one is an edge
+            if (!down) break;                 // key repeat arrives as more KEYDOWN events: each one is an edge
             switch (e.key.keysym.sym) {
             case SDLK_BACKSPACE: m_back = true; break;
             case SDLK_DELETE:    m_del = true; break;
@@ -120,6 +125,7 @@ public:
             m_shift = (e.mods & okay::platform::ModShift) != 0;
             const bool ctrl = (e.mods & (okay::platform::ModCtrl | okay::platform::ModGui)) != 0;
             m_ctrl = ctrl;
+            if (down) { m_ctrlAtPress |= ctrl; m_shiftAtPress |= m_shift; }   // (see m_ctrlAtPress)
             if (!layoutChar) layoutChar = UsCharOf(e.key);
             {
                 const int id = KeyIdOf(e.key, layoutChar);
@@ -166,16 +172,30 @@ public:
             in.text = m_out[0] ? m_out : nullptr;
             in.backspace = m_back; in.del = m_del; in.left = m_left; in.right = m_right;
             in.home = m_home; in.end = m_end; in.enter = m_enter; in.escape = m_escape; in.selectAll = m_selectAll;
-            in.shift = m_shift; in.ctrl = m_ctrl;
+            in.shift = m_shift || m_shiftAtPress; in.ctrl = m_ctrl || m_ctrlAtPress;
             in.up = m_up; in.down = m_down; in.copy = m_copy; in.cut = m_cut; in.paste = m_paste;
             for (int k = 0; k < OkayUI::KeyId_COUNT; ++k) in.keyDown[k] = m_keyHeld[k] || m_keyTap[k];
             if (m_composing) { std::memcpy(m_compOut, m_comp, sizeof(m_compOut)); in.composition = m_compOut; in.compositionCaret = m_compCaret; }
         }
         for (int k = 0; k < OkayUI::KeyId_COUNT; ++k) m_keyTap[k] = false;
+        m_ctrlAtPress = m_shiftAtPress = false;
         m_up = m_down = m_copy = m_cut = m_paste = false;
         m_text[0] = 0;
         m_wheel = 0.0f;
         m_back = m_del = m_left = m_right = m_home = m_end = m_enter = m_escape = m_selectAll = false;
+        return in;
+    }
+    /// Build with a HostKeys answer (HostedKeys, after the Region class below): All is Build(..., true); Held keeps only the named
+    /// keys and Ctrl / Shift (a hosted page's shortcuts) and drops the text and the edit keys; None is Build(..., false).
+    OkayUI::Input Build(float mouseX, float mouseY, bool leftDown, bool rightDown, bool blocked, HostKeys keys) {
+        OkayUI::Input in = Build(mouseX, mouseY, leftDown, rightDown, blocked, keys != HostKeys::None);
+        if (keys == HostKeys::Held) {
+            OkayUI::Input held;
+            held.mouseX = in.mouseX; held.mouseY = in.mouseY; held.mouseDown = in.mouseDown; held.rightDown = in.rightDown;
+            held.blocked = in.blocked; held.wheel = in.wheel; held.ctrl = in.ctrl; held.shift = in.shift;
+            std::memcpy(held.keyDown, in.keyDown, sizeof held.keyDown);
+            return held;
+        }
         return in;
     }
 
@@ -278,6 +298,10 @@ private:
     }
     bool  m_back = false, m_del = false, m_left = false, m_right = false, m_home = false, m_end = false;
     bool  m_enter = false, m_escape = false, m_selectAll = false, m_shift = false;
+    // Ctrl / Shift were held when a key went down since the last frame. A quick chord (Ctrl down, F down, F up, Ctrl up) can arrive
+    // whole between two frames (a slow or idle frame, a key-sending tool): the key's press is kept for the frame (m_keyTap), and so
+    // must the Ctrl it was pressed with, or Ctrl+F reaches OkayUI as a plain F and the shortcut never fires (2026-11-26).
+    bool  m_ctrlAtPress = false, m_shiftAtPress = false;
 };
 
 /// The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
@@ -344,6 +368,21 @@ private:
 /// section's), or an OkayUI code field has the keyboard (`codeFieldFocused`, the script editor's CodeEdit). Otherwise no: a game's own
 /// `ui_*` widgets in the Game view get only what they got before (text and Backspace).
 inline bool HostedInputWanted(const Region& r, bool codeFieldFocused) { return r.Active() || r.AnyHovered() || codeFieldFocused; }
+
+/// Which keys a host that draws Dear ImGui and hosted OkayUI pages hands OkayUI this frame (InputCollector::Build).
+///   All:  an OkayUI text field types (`okayFieldTypes`, OkayUI::WantsTextInput) and no Dear ImGui item is active: text, edit keys,
+///         the named keys and Ctrl / Shift.
+///   Held: no field of either kind types, but a hosted page is hovered or its window has the focus (`hostedActive`, Region::Active):
+///         only the named keys and Ctrl / Shift, so the page's shortcuts work (the launcher's Browser page: Ctrl+F, Ctrl+L, Ctrl+T,
+///         Ctrl+W, Ctrl+D, F5, Alt+Left / Right, Ctrl+Tab). No text and no edit keys: nothing is typed anywhere.
+///   None: otherwise (a Dear ImGui field types, or no hosted page is there).
+/// Before this the launcher gave OkayUI keys only while one of its fields typed, so the Browser page's shortcuts did nothing until
+/// its address field was clicked (2026-11-26). The editor's hosted panels follow the same rule (its `keys` / `held`).
+inline HostKeys HostedKeys(bool okayFieldTypes, bool imguiItemActive, bool imguiWantsText, bool hostedActive) {
+    if (okayFieldTypes && !imguiItemActive) return HostKeys::All;
+    if (!imguiWantsText && hostedActive) return HostKeys::Held;   // (a click on the page makes its placeholder the active item: Ctrl+click still counts)
+    return HostKeys::None;
+}
 
 /// Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
 inline bool WantsKeyboard() { return OkayUI::WantsTextInput(); }
@@ -421,6 +460,7 @@ public:
             const bool down = e.type == EventType::KeyDown;
             m_shift = (e.mods & okay::platform::ModShift) != 0;
             m_ctrl = (e.mods & (okay::platform::ModCtrl | okay::platform::ModGui)) != 0;
+            if (down) { m_ctrlAtPress |= m_ctrl; m_shiftAtPress |= m_shift; }   // a quick chord between two frames keeps its Ctrl (InputCollector)
             const int id = KeyIdOf(e.key);
             if (id != OkayUI::KeyId_None) { m_keyHeld[id] = down; if (down) m_keyTap[id] = true; }
             if (!down) break;
@@ -457,17 +497,18 @@ public:
             std::memcpy(m_textBuf, m_text.c_str(), m_text.size() < sizeof(m_textBuf) - 1 ? m_text.size() : sizeof(m_textBuf) - 1);
             in.text = m_textBuf[0] ? m_textBuf : nullptr;
             in.backspace = m_back; in.del = m_del; in.left = m_l; in.right = m_r; in.home = m_home; in.end = m_end; in.enter = m_enter; in.escape = m_escape;
-            in.selectAll = m_selectAll; in.shift = m_shift; in.ctrl = m_ctrl; in.up = m_up; in.down = m_down; in.copy = m_copy; in.cut = m_cut; in.paste = m_paste;
+            in.selectAll = m_selectAll; in.shift = m_shift || m_shiftAtPress; in.ctrl = m_ctrl || m_ctrlAtPress; in.up = m_up; in.down = m_down; in.copy = m_copy; in.cut = m_cut; in.paste = m_paste;
             for (int k = 0; k < OkayUI::KeyId_COUNT; ++k) in.keyDown[k] = m_keyHeld[k] || m_keyTap[k];
             if (m_composing) { in.composition = m_composition.c_str(); in.compositionCaret = m_compCaret; }
         }
         for (int k = 0; k < OkayUI::KeyId_COUNT; ++k) m_keyTap[k] = false;
-        m_text.clear(); m_wheel = 0.0f; m_leftTap = m_rightTap = false;
+        m_text.clear(); m_wheel = 0.0f; m_leftTap = m_rightTap = false; m_ctrlAtPress = m_shiftAtPress = false;
         m_back = m_del = m_l = m_r = m_home = m_end = m_enter = m_escape = m_selectAll = m_up = m_down = m_copy = m_cut = m_paste = false;
         return in;
     }
 private:
     float m_x = 0, m_y = 0, m_wheel = 0; bool m_havePos = false, m_left = false, m_right = false, m_leftTap = false, m_rightTap = false;
+    bool m_ctrlAtPress = false, m_shiftAtPress = false;
     bool m_shift = false, m_ctrl = false, m_back = false, m_del = false, m_l = false, m_r = false, m_home = false, m_end = false, m_enter = false, m_escape = false;
     bool m_selectAll = false, m_up = false, m_down = false, m_copy = false, m_cut = false, m_paste = false, m_resized = false, m_quit = false, m_composing = false;
     bool m_keyHeld[OkayUI::KeyId_COUNT] = {}, m_keyTap[OkayUI::KeyId_COUNT] = {};

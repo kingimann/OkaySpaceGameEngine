@@ -3,6 +3,8 @@
 // Plugin Manager window. Moved out of main.cpp unchanged (docs/editor/main_split_plan.md, move 5).
 #include "EditorState.hpp"
 
+#include <functional>
+
 namespace oked {
 
 // Save which plugins are turned off in the Plugin Manager (plugins_disabled.txt next to the editor).
@@ -15,5 +17,7 @@ void TickPlugins(okay::editor::EditorState& ed);
 void DrawPluginsMenu(okay::editor::EditorState& ed);
 // The Plugin Manager window, drawn while g_showPluginManager (MainShared.hpp) is set.
 void DrawPluginManager(okay::editor::EditorState& ed);
+// Run a plugin's drawing function (a Script Editor side panel, script_panel) with the ui_* widgets drawing into the current window.
+void DrawPluginPanelBody(const std::function<void()>& draw);
 
 } // namespace oked

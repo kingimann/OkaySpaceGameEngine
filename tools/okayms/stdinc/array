@@ -33,5 +33,24 @@ struct array {
     size_t max_size() const { return N; }
     bool empty() const { return N == 0; }
     void fill(const T& value) { for (size_t i = 0; i < N; ++i) elems_[i] = value; }
+    // [array.syn] comparisons (Round 31): elementwise ==, and < in lexicographic order. Before, there were none, and
+    // okay-ms compared two arrays' bytes (SkinnedMesh.hpp's `!=` of array<float, 4>; a std::map keyed by array<double, 3>
+    // in FbxReader.cpp ordered by bytes).
+    bool operator==(const array& o) const {
+        for (size_t i = 0; i < N; ++i)
+            if (!(elems_[i] == o.elems_[i])) return false;
+        return true;
+    }
+    bool operator!=(const array& o) const { return !(*this == o); }
+    bool operator<(const array& o) const {
+        for (size_t i = 0; i < N; ++i) {
+            if (elems_[i] < o.elems_[i]) return true;
+            if (o.elems_[i] < elems_[i]) return false;
+        }
+        return false;
+    }
+    bool operator>(const array& o) const { return o < *this; }
+    bool operator<=(const array& o) const { return !(o < *this); }
+    bool operator>=(const array& o) const { return !(*this < o); }
 };
 }

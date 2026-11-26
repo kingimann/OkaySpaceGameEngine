@@ -135,15 +135,22 @@ void ScriptEditorCodeEdit::SetLanguage(const LanguageWords& w) {
         l.foldByIndent = true;
     }
     language_ = l;
-    if (w.docs.empty()) ed_.SetHoverInfo(nullptr);
-    else {
-        auto docs = std::make_shared<const std::map<std::string, std::string>>(w.docs);
-        ed_.SetHoverInfo([docs](const std::string& word) {
-            const auto it = docs->find(word);
-            return it == docs->end() ? std::string() : it->second;
-        });
-    }
+    auto docs = std::make_shared<const std::map<std::string, std::string>>(w.docs);
+    ed_.SetHoverInfo([docs](const std::string& word) {
+        const auto it = docs->find(word);
+        std::string out = it == docs->end() ? std::string() : it->second;
+        if (const auto& extra = ExtraHoverInfo()) {
+            const std::string more = extra(word);
+            if (!more.empty()) out += (out.empty() ? "" : "\n\n") + more;
+        }
+        return out;
+    });
     if (colorize_) { ed_.SetLanguage(language_); if (!userTypes_.empty()) ed_.SetUserTypes(userTypes_); }
+}
+
+std::function<std::string(const std::string&)>& ExtraHoverInfo() {
+    static std::function<std::string(const std::string&)> f;
+    return f;
 }
 
 LanguageWords LuaBlockWords() {

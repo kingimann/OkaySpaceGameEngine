@@ -39,6 +39,49 @@ target_include_directories(okay_physcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/incl
 target_compile_features(okay_physcore PUBLIC cxx_std_17)
 add_library(okay::physcore ALIAS okay_physcore)
 
+# okay::js: our own JavaScript engine (ECMA-262; docs/scripting/javascript.md). Standard library only, so the Browser's page
+# scripts (okay_browser) and the engine's game scripts (src/JavaScript/JavaScriptVM.cpp in okay_engine) share one copy.
+add_library(okay_js STATIC
+    src/JavaScript/JsLexer.cpp
+    src/JavaScript/JsParser.cpp
+    src/JavaScript/JsCompiler.cpp
+    src/JavaScript/JsRuntime.cpp
+    src/JavaScript/JsInterpreter.cpp
+    src/JavaScript/JsLibObject.cpp
+    src/JavaScript/JsLibArray.cpp
+    src/JavaScript/JsLibString.cpp
+    src/JavaScript/JsLibNumber.cpp
+    src/JavaScript/JsLibJson.cpp
+    src/JavaScript/JsLibCollections.cpp
+    src/JavaScript/JsRegExp.cpp
+)
+target_include_directories(okay_js PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(okay_js PUBLIC cxx_std_17)
+add_library(okay::js ALIAS okay_js)
+
+# Browser: our own web browser's page engine (HTML reader, CSS, layout, addresses, one tab's navigation, web game packs).
+# Standard library, header-only engine helpers (Core/Inflate, Core/Json, Core/PathSafety) and okay_js only, so the launcher, the
+# browser program (browser/) and the tests link it without the rest of the engine
+# (docs/feature_map/17-launcher-platform.md 17.18).
+add_library(okay_browser STATIC
+    src/Browser/Url.cpp
+    src/Browser/Html.cpp
+    src/Browser/Css.cpp
+    src/Browser/Layout.cpp
+    src/Browser/Browser.cpp
+    src/Browser/Forms.cpp        # the browser program: form controls' values, the entry list, GET and POST submission
+    src/Browser/Profile.cpp      # the browser program: address bar, tabs, history, bookmarks, zoom, downloads, our own pages
+    src/Browser/GamePack.cpp     # step 2: the web game pack reader (the native twin of platform/web/okay_web.js)
+    src/Browser/GameLaunch.cpp   # step 2: which page elements run a game, per-site folders, the player's command line
+    src/Browser/Script.cpp       # round 2: page JavaScript on okay::js (the DOM binding, events, timers, the console)
+    src/Browser/Cookies.cpp      # round 3: the profile's cookies (RFC 6265 with SameSite)
+    src/Browser/Storage.cpp      # round 3: localStorage and sessionStorage areas per origin
+)
+target_include_directories(okay_browser PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(okay_browser PUBLIC cxx_std_17)
+target_link_libraries(okay_browser PUBLIC okay_js)
+add_library(okay::browser ALIAS okay_browser)
+
 # OkaySpace engine library
 add_library(okay_engine
     src/Core/Application.cpp
@@ -102,6 +145,13 @@ add_library(okay_engine
     src/Render/GLRendererPasses.cpp
     src/Render/GLRendererResources.cpp
     src/Render/OkayShader.cpp
+    # RHI: the rendering hardware interface (docs/rendering/rhi.md)
+    src/Render/RHI/RHI.cpp
+    src/Render/RHI/SoftwareDevice.cpp
+    src/Render/RHI/GLDevice.cpp
+    src/Render/RHI/D3D11Device.cpp
+    src/Render/RHI/SurfaceShader.cpp
+    src/Render/RHI/BloomPass.cpp
     src/Render/D3D11Renderer.cpp
     src/Render/D3D12Renderer.cpp
     src/Scene/Component.cpp
@@ -119,6 +169,7 @@ add_library(okay_engine
     src/Scene/ComponentSerializer.cpp
     src/Scene/SceneLocalization.cpp
     src/Components/Camera.cpp
+    src/Components/WorldStreamer.cpp
     src/Components/LookAtIK.cpp
     src/Components/SpriteRenderer.cpp
     src/Net/UdpSocket.cpp
@@ -217,6 +268,8 @@ add_library(okay_engine
     src/Lua/LuaLibTable.cpp
     src/Lua/LuaLibUtf8.cpp
     src/Lua/LuaScriptVM.cpp
+    src/JavaScript/JavaScriptVM.cpp
+    src/Scripting/ScriptLanguageGlue.cpp
     src/Components/ScriptComponent.cpp
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp
@@ -491,8 +544,11 @@ target_include_directories(okay_engine PUBLIC
 # Image.cpp keeps the warning settings it had while it compiled the vendored stb tables (`-Wno-narrowing`:
 # Clang for Emscripten/WASM treats a `char` table initialised with 0xFF as a narrowing ERROR that `-w` does
 # not downgrade). Not checked yet whether our own code there still needs them.
-set_source_files_properties(src/Graphics/Image.cpp
-    PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
+# GCC / Clang flags only: MSVC's cl reads `-Wno-narrowing` as a bad /W level (D8021).
+if(NOT MSVC)
+    set_source_files_properties(src/Graphics/Image.cpp
+        PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
+endif()
 # The built-in UI font (the launcher's Roboto) lives in shared/RobotoFontOwn.h, in our own OKF1 container (shared/OkfDecode.hpp).
 set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
@@ -574,7 +630,7 @@ endif()
 # decides whether the network layer uses them instead of libsodium. UNREVIEWED by an
 # outside cryptographer: it must not become the default, and libsodium must not be
 # removed, before that review (docs/status/own_code_roadmap.md, docs/platform/crypto.md).
-target_link_libraries(okay_engine PUBLIC okay_crypto okay_physcore)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
+target_link_libraries(okay_engine PUBLIC okay_crypto okay_physcore okay_browser)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
 target_link_libraries(okay_engine PRIVATE okayscript_lang)   # the OkayScript lexer (okayscript/, engine-independent)
 set(OKAY_SODIUM_IN_BUILD OFF CACHE INTERNAL "libsodium was found and linked into okay_engine")   # reset on every configure; set ON below
 if(OKAY_REQUIRE_SODIUM)

@@ -1,12 +1,14 @@
 // <string> for okay-cc (ISO/IEC 14882 [basic.string]). Our own header, minimal: a std::string of
 // char that owns a zero-terminated buffer. No templates (basic_string) yet; iterators are pointers.
 #pragma once
+#include <cctype>  // (std::tolower and the others, as g++'s <string> gives them)
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <__string_view>
+#include <__reverse_iterator>
 namespace std {
 class string {
 public:
@@ -29,6 +31,11 @@ public:
         p_[n_] = 0;
     }
     string(const char *s, unsigned long n) : p_(nullptr), n_(0), cap_(0) { assignChars(s, n); }
+    // at most n characters of o from pos ([string.cons] p3)
+    string(const string &o, unsigned long pos, unsigned long n = (unsigned long)-1) : p_(nullptr), n_(0), cap_(0) {
+        if (pos > o.n_) pos = o.n_;
+        assignChars(o.p_ + pos, o.n_ - pos < n ? o.n_ - pos : n);
+    }
     // from a string_view ([string.cons] p8, explicit as there)
     explicit string(string_view v) : p_(nullptr), n_(0), cap_(0) { assignChars(v.data(), v.size()); }
     // n characters of v from pos ([string.cons] p6: the template taking a T that converts to a view)
@@ -128,6 +135,10 @@ public:
     char &back() { return p_[n_ - 1]; }
     char *begin() { return p_; }
     char *end() { return p_ + n_; }
+    reverse_iterator<char *> rbegin() const { return reverse_iterator<char *>(p_ + n_); }
+    reverse_iterator<char *> rend() const { return reverse_iterator<char *>(p_); }
+    reverse_iterator<char *> crbegin() const { return rbegin(); }
+    reverse_iterator<char *> crend() const { return rend(); }
     char &at(unsigned long i) { return p_[i]; }
     void pop_back() { p_[--n_] = 0; }
     void reserve(unsigned long n) { release(grow(n)); }
@@ -143,6 +154,14 @@ public:
         if (pos > n_) pos = n_;
         if (n > n_ - pos) n = n_ - pos;
         return string(p_ + pos, n);
+    }
+    // [string.append] p3: at most n characters of o from pos (pos past the end appends nothing;
+    // the standard throws out_of_range there, which this subset does not do).
+    string &append(const string &o, unsigned long pos, unsigned long n = npos) {
+        if (pos > o.n_) pos = o.n_;
+        if (n > o.n_ - pos) n = o.n_ - pos;
+        string part(o.p_ + pos, n);  // (o may be this string)
+        return append(part.p_, n);
     }
     string &append(unsigned long n, char c) {  // [string.append] n copies of c
         for (unsigned long i = 0; i < n; ++i) push_back(c);
@@ -184,6 +203,12 @@ public:
         n_ -= n;
         return *this;
     }
+    // [string.erase] erase(p): the character at p; returns where it was.
+    char *erase(char *p) {
+        unsigned long pos = (unsigned long)(p - p_);
+        erase(pos, 1);
+        return p_ + pos;
+    }
     // [string.erase] erase(first, last): the characters in [first, last); returns where they were.
     char *erase(char *first, char *last) {
         unsigned long pos = (unsigned long)(first - p_);
@@ -198,6 +223,37 @@ public:
         return append(tail);
     }
     string &insert(unsigned long pos, const string &s) { return insert(pos, s.c_str()); }
+    // [string.insert]: n characters from s (which may point into this string), and n copies of c.
+    string &insert(unsigned long pos, const char *s, unsigned long n) {
+        string part(s, n);
+        string tail = substr(pos);
+        n_ = pos < n_ ? pos : n_;
+        p_[n_] = 0;
+        append(part.p_, n);
+        return append(tail);
+    }
+    string &insert(unsigned long pos, unsigned long n, char c) {
+        string part;
+        part.append(n, c);
+        return insert(pos, part.p_, n);
+    }
+    // [string.replace]: the n1 characters at pos (fewer at the end) become the given ones (s may
+    // point into this string).
+    string &replace(unsigned long pos, unsigned long n1, const char *s, unsigned long n2) {
+        if (pos > n_) pos = n_;
+        if (n1 > n_ - pos) n1 = n_ - pos;
+        string r(p_, pos);
+        r.append(s, n2);
+        r.append(p_ + pos + n1, n_ - pos - n1);
+        swap(r);
+        return *this;
+    }
+    string &replace(unsigned long pos, unsigned long n1, const char *s) { return replace(pos, n1, s, strlen(s)); }
+    string &replace(unsigned long pos, unsigned long n1, const string &s) { return replace(pos, n1, s.p_, s.n_); }
+    string &replace(unsigned long pos, unsigned long n1, unsigned long n2, char c) {
+        string t(n2, c);
+        return replace(pos, n1, t.p_, n2);
+    }
     // [string.find]: the first (or, for rfind, the last) place at or after (before) pos.
     unsigned long find(char c, unsigned long pos = 0) const {
         for (unsigned long i = pos; i < n_; ++i)

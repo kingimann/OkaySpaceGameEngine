@@ -82,6 +82,7 @@ std::string operatorCode(const std::string& op) {
 
 std::string manglePart(const std::string& part) {
     if (part.compare(0, 9, "operator ") == 0) return "cv" + part.substr(9);  // conversion function
+    if (part.compare(0, 10, "operator\"\"") == 0) return "li" + std::to_string(part.size() - 10) + part.substr(10);
     if (part.compare(0, 8, "operator") == 0 && part.size() > 8) return operatorCode(part.substr(8));
     std::size_t lt = part.find('<');
     if (lt == std::string::npos || part.back() != '>') return std::to_string(part.size()) + part;

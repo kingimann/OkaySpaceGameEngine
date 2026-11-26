@@ -365,61 +365,16 @@ void GLRenderer::DestroyShadow() {
     if (m_localFbo) { g.DeleteFramebuffers(1, &m_localFbo); m_localFbo = 0; }
     m_shadowW = m_shadowH = m_localW = m_localH = 0;
 }
-// ---- Bloom post chain -------------------------------------------------------
-// Bright pixels glow: threshold the finished frame at half resolution, blur the
-// result with two separable gaussian passes, then add it back over the frame.
-// Uses the same BloomEnabled()/BloomThreshold()/BloomIntensity() globals as the
-// software renderer, so the editor's existing Bloom controls drive both paths.
+// ---- Full-screen blur (SSAO and the post chain's bloom) ---------------------------
+// Bloom WITHOUT the post chain runs on the RHI (rhi::BloomPass, GLRenderer.cpp).
 bool GLRenderer::EnsurePostProgs() {
-    if (m_brightProg && m_blurProg && m_addProg) return true;
-    auto build = [&](const char* fragSrc, unsigned int& prog) -> bool {
-        if (prog) return true;
-        GLuint vs = compile(GL_VERTEX_SHADER, kQuadVert), fs = compile(GL_FRAGMENT_SHADER, fragSrc);
-        if (!vs || !fs) return false;
-        prog = g.CreateProgram();
-        g.AttachShader(prog, vs); g.AttachShader(prog, fs);
-        g.BindAttribLocation(prog, 0, "aPos");
-        g.LinkProgram(prog);
-        GLint ok = 0; g.GetProgramiv(prog, GL_LINK_STATUS, &ok);
-        g.DeleteShader(vs); g.DeleteShader(fs);
-        if (!ok) { g.DeleteProgram(prog); prog = 0; return false; }
-        return true;
-    };
-    if (!build(kBrightFrag, m_brightProg) || !build(kBlurFrag, m_blurProg) || !build(kAddFrag, m_addProg))
-        return false;
-    m_ubSrc = g.GetUniformLocation(m_brightProg, "uSrc");
-    m_ubThresh = g.GetUniformLocation(m_brightProg, "uThresh");
-    m_ublSrc = g.GetUniformLocation(m_blurProg, "uSrc");
-    m_ublDir = g.GetUniformLocation(m_blurProg, "uDir");
-    m_uaSrc = g.GetUniformLocation(m_addProg, "uSrc");
-    m_uaStrength = g.GetUniformLocation(m_addProg, "uStrength");
-    return EnsureQuad();
-}
-
-bool GLRenderer::EnsureBloomTargets(int w, int h) {
-    if (m_bloomFboA && m_bloomW == w && m_bloomH == h) return true;
-    DestroyBloom();
-    m_bloomW = w; m_bloomH = h;
-    auto makeTarget = [&](unsigned int& fbo, unsigned int& tex) -> bool {
-        g.GenTextures(1, &tex);
-        g.BindTexture(GL_TEXTURE_2D, tex);
-        g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        g.GenFramebuffers(1, &fbo);
-        g.BindFramebuffer(GL_FRAMEBUFFER, fbo);
-        g.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
-        bool ok = g.CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-        g.BindFramebuffer(GL_FRAMEBUFFER, 0);
-        return ok;
-    };
-    if (!makeTarget(m_bloomFboA, m_bloomTexA) || !makeTarget(m_bloomFboB, m_bloomTexB)) {
-        DestroyBloom();
-        return false;
+    if (!m_blurProg) {
+        m_blurProg = buildQuadProgram(kBlurFrag);
+        if (!m_blurProg) return false;
+        m_ublSrc = g.GetUniformLocation(m_blurProg, "uSrc");
+        m_ublDir = g.GetUniformLocation(m_blurProg, "uDir");
     }
-    return true;
+    return EnsureQuad();
 }
 
 void GLRenderer::DestroyBloom() {
@@ -560,7 +515,7 @@ bool GLRenderer::EnsureSkyProgram() {
 
 bool GLRenderer::EnsurePostChain() {
     if (m_uberProg && m_fxaaProg && m_dofProg && m_dofCopyProg && m_dofBlurProg && m_downProg) return true;
-    if (!EnsurePostProgs()) return false;   // the shared blur / add programs + the quad
+    if (!EnsurePostProgs()) return false;   // the shared blur program + the quad
     if (!m_uberProg) {
         m_uberProg = buildQuadProgram(kUberFrag);
         if (!m_uberProg) return false;

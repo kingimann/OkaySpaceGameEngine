@@ -1504,4 +1504,23 @@ void FillOcclusionDepth(Raster& work, std::vector<std::uint32_t>& out,
                                const Scene& scene, const Mat4& vp, const Vec3& eye,
                                int w, int h, const GameObject* ignore = nullptr);
 
+/// While alive, the software renderer makes a cheaper picture: the process-wide passes that cost the most and add little to a
+/// small or never-shown picture are off (the sun and local shadow maps, three 2048 x 2048 cascades by default; ambient
+/// occlusion; bloom; FXAA; with `depthOnly` also the tone map and colour grade). When it ends the switches are put back, and so
+/// is what the Scene view reads after its own render: the cull counters, the vignette flag and, with `keepOcclusionDepth`, the
+/// occlusion depth its particles are tested against. Used by FillOcclusionDepth (depth only) and the editor's asset thumbnails
+/// (editor/main.cpp RenderFramedImage). Not thread-safe: the switches are process-wide, like the renderer.
+class ReducedRenderScope {
+public:
+    explicit ReducedRenderScope(bool depthOnly, bool keepOcclusionDepth);
+    ~ReducedRenderScope();
+    ReducedRenderScope(const ReducedRenderScope&) = delete;
+    ReducedRenderScope& operator=(const ReducedRenderScope&) = delete;
+
+private:
+    bool m_shadows, m_fxaa, m_ssao, m_bloom, m_tone, m_grade, m_vignette, m_keepDepth;
+    CullCounters m_cull;
+    OcclusionDepth m_depth;
+};
+
 } // namespace okay

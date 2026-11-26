@@ -1,9 +1,11 @@
 // <iterator> for okay-cc (ISO/IEC 14882 [iterator.synopsis]). Our own header: the iterator tags,
 // next, prev, advance, distance (one step at a time, for every kind of iterator), back_inserter and
-// istreambuf_iterator (<__stream>). Not done: iterator_traits, reverse_iterator, move_iterator, the
+// istreambuf_iterator (<__stream>), reverse_iterator (<__reverse_iterator>). Not done: iterator_traits,
+// the
 // non-member begin/end/size/data.
 #pragma once
 #include <__stream>
+#include <__reverse_iterator>
 namespace std {
 struct input_iterator_tag {};
 struct output_iterator_tag {};

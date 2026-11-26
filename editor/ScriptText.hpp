@@ -143,15 +143,25 @@ inline std::vector<char> CodeMask(const std::string& src) {
 
 inline bool IsIdentChar(char c) { return std::isalnum((unsigned char)c) || c == '_'; }
 
+// The words of OkayScript (and its C# style) that are never a symbol's name: statements, declarations, modifiers and the
+// built-in type names. The Script Editor's symbol index (editor/ScriptIde.cpp IsKeyword) uses the same list.
+inline bool IsKeywordWord(const std::string& s) {
+    static const char* kw[] = {"var", "if", "else", "while", "for", "foreach", "in", "function", "return", "true",
+                               "false", "null", "break", "continue", "class", "struct", "enum", "new", "this",
+                               "public", "private", "protected", "static", "void", "do", "switch", "case",
+                               "default", "const", "readonly", "override", "virtual", "abstract", "using", "namespace",
+                               "try", "catch", "finally", "throw", "yield", "int", "float", "double", "bool", "string",
+                               "char", "long", "interface", "record", "is", "as", "out", "ref", "params", "base",
+                               "typeof", "not", "and", "or", "let", "object", "get", "set", "import"};
+    for (const char* k : kw) if (s == k) return true;
+    return false;
+}
+
 // A name Rename may give a symbol: an identifier that isn't a keyword.
 inline bool IsValidNewName(const std::string& s) {
     if (s.empty() || std::isdigit((unsigned char)s[0])) return false;
     for (char c : s) if (!IsIdentChar(c)) return false;
-    static const char* kw[] = {"var", "if", "else", "while", "for", "foreach", "in", "function", "return", "true",
-                               "false", "null", "break", "continue", "class", "struct", "enum", "new", "this",
-                               "public", "private", "protected", "static", "void", "do", "switch", "case"};
-    for (const char* k : kw) if (s == k) return false;
-    return true;
+    return !IsKeywordWord(s);
 }
 
 // Whole-word uses of identifier `sym` in code (not in comments or strings,

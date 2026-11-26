@@ -62,6 +62,10 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     ScriptAssist.cpp                                                   # Scripting Reference window; the Script Editor's completion, signatures, docs, C# members, palette
     ScriptAssistBindings.cpp                                           # Script assist from the engine's binding table: component members, argument hints, docs
     FindInFiles.cpp                                                    # Find in Files: search every project script, open a hit in the Script Editor
+    ScriptIde.cpp                                                      # the Script Editor's workspace model: Quick Open, symbol index, rename, find/replace, quick fixes, local history
+    ScriptIdeUi.cpp                                                    # the Script Editor's IDE panels: Quick Open, script tree, rename preview, quick fixes, local history, plugin panels
+    PluginRegistry.cpp                                                 # editor plugins: the commands and providers they add to the Script Editor
+    PluginScriptApi.cpp                                                # editor plugins: the script_* builtins (commands, lint, completion, formatter, hover, snippets, panels)
     AssetManagerWindow.cpp                                             # the Asset Manager window: Marketplace downloads listed by type, imported into the project
     PluginsWindow.cpp                                                  # editor plugins (OkayScript): editor_* builtins, Plugins menu, Plugin Manager
     DialogueWindow.cpp                                                 # the Dialogue window (dialogue graphs + quests)
@@ -80,6 +84,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     ScriptEditorCodeEdit.cpp                                           # the script editor's adapter over OkayUI::CodeEdit (no ImGui)
     ProblemsPanel.cpp                                                  # Problems panel + project diagnostics
     ProjectDiagRunner.cpp                                              # when the Problems checks run: the project-wide one on a worker
+    WorkerCall.cpp                                                     # one call on its own thread, collected on a later frame (update check, Problems pass)
     SceneManagerPanel.cpp                                              # Scene Manager window
     NetSimPanel.cpp                                                    # net simulator + traffic panel
     AntiCheatSetupUi.cpp                                               # easy anti-cheat setup: presets, Add Anti-Cheat, checklist
@@ -166,7 +171,7 @@ endif()
 # EXPERIMENTAL Xbox One Developer Mode (UWP) export entry in File > Build Settings. OFF unless -DOKAY_BUILD_XBOX_UWP=ON
 # (docs/platform/xbox_uwp.md). Header-only: nothing to link.
 if(OKAY_BUILD_XBOX_UWP)
-    target_compile_definitions(okay-editor PRIVATE OKAY_XBOX_UWP=1)
+    target_compile_definitions(okay-editor PRIVATE OKAY_XBOX_UWP_EXPORT=1)   # only the File > Build Settings export entry: NEVER OKAY_XBOX_UWP, which makes the engine headers act as the Xbox app (no WinHTTP, Xbox IPC and sign-in)
     target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/platform/xbox_uwp)
 endif()
 

@@ -115,6 +115,11 @@ if(OKAY_PYTHON)
     # SDL use may only go down: fails and lists the words when a file uses more SDL than tests/data/sdl_ratchet.json
     # (docs/platform/platform_layer.md). Reads the working tree, so it sees an uncommitted new SDL call too.
     add_test(NAME sdl_ratchet COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/sdl_inventory.py --ratchet)
+    # scripts/main_position.sh: a build's place on main (mainCount in both lists, OKAY_MAIN_COUNT in the launcher), on a throw-away git repository.
+    find_program(OKAY_GIT_FOR_TESTS git)
+    if(OKAY_GIT_FOR_TESTS AND NOT WIN32)
+        add_test(NAME main_position COMMAND bash ${CMAKE_SOURCE_DIR}/scripts/main_position.sh --self-test)
+    endif()
     # The systems list (docs/SYSTEMS.md) made by scripts/gen_feature_map.py: temp folders only.
     add_test(NAME gen_feature_map_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_gen_feature_map.py)
     # The collaboration scripts (docs/process/collaboration.md): throw-away git repos only, no GitHub, no feature map.
@@ -582,10 +587,15 @@ add_test(NAME diagnostics COMMAND test_diagnostics)
 # The Problems list's runner (editor/ProjectDiagRunner.*): the project-wide check off the editor's thread, once per change of files.
 # Not built for Windows: the test waits with <thread> (CLAUDE.md 21a).
 if(NOT WIN32)
-    add_executable(test_project_diag_runner test_project_diag_runner.cpp ${CMAKE_SOURCE_DIR}/editor/ProjectDiagRunner.cpp)
+    add_executable(test_project_diag_runner test_project_diag_runner.cpp ${CMAKE_SOURCE_DIR}/editor/ProjectDiagRunner.cpp ${CMAKE_SOURCE_DIR}/editor/WorkerCall.cpp)
     target_include_directories(test_project_diag_runner PRIVATE ${CMAKE_SOURCE_DIR}/editor)
     target_link_libraries(test_project_diag_runner PRIVATE okay::engine)
     add_test(NAME project_diag_runner COMMAND test_project_diag_runner)
+    # editor/WorkerCall: the update check and download run on their own thread, collected on a later frame (editor perf, 2026-11-25).
+    add_executable(test_worker_call test_worker_call.cpp ${CMAKE_SOURCE_DIR}/editor/WorkerCall.cpp)
+    target_include_directories(test_worker_call PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+    target_link_libraries(test_worker_call PRIVATE okay::engine)
+    add_test(NAME worker_call COMMAND test_worker_call)
 endif()
 
 add_executable(test_debug_overlay test_debug_overlay.cpp)
@@ -758,6 +768,28 @@ set_tests_properties(lua_core PROPERTIES TIMEOUT 600)
 add_executable(test_lua_script test_lua_script.cpp)
 target_link_libraries(test_lua_script PRIVATE okay::engine)
 add_test(NAME lua_script COMMAND test_lua_script)
+# okay::js, our own JavaScript engine (ECMA-262): parser and machine on spec behaviours, the conformance
+# script tests/javascript/conformance.js, hostile one-liners against the run budget and memory limit, a
+# collection at every safe point and a mutation fuzz. Standalone (only engine/src/JavaScript/Js*.cpp), so it
+# also builds under sanitizers.
+set(OKAY_JS_CORE_SOURCES
+    ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLexer.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsParser.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsCompiler.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsRuntime.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsInterpreter.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibObject.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibArray.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibString.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibNumber.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibJson.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsLibCollections.cpp ${PROJECT_SOURCE_DIR}/engine/src/JavaScript/JsRegExp.cpp)
+add_executable(test_js_core test_js_core.cpp ${OKAY_JS_CORE_SOURCES})
+target_compile_features(test_js_core PRIVATE cxx_std_17)
+target_include_directories(test_js_core PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_js_core PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME js_core COMMAND test_js_core)
+set_tests_properties(js_core PROPERTIES TIMEOUT 600)
+# JavaScript game scripts (language "javascript") on okay::js driving GameObjects through the shared binding table.
+add_executable(test_js_script test_js_script.cpp)
+target_link_libraries(test_js_script PRIVATE okay::engine)
+target_compile_definitions(test_js_script PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")   # tests/javascript/game_scripts
+add_test(NAME js_script COMMAND test_js_script)
 
 add_executable(test_follow test_follow.cpp)
 target_link_libraries(test_follow PRIVATE okay::engine)
@@ -789,6 +821,18 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     target_compile_definitions(test_okayshader_gl PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     add_test(NAME okayshader_gl COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_okayshader_gl>)
     set_tests_properties(okayshader_gl PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+endif()
+
+# The RHI (docs/rendering/rhi.md): its Software backend headless, and OpenGL against Software under Xvfb.
+add_executable(test_rhi test_rhi.cpp)
+target_link_libraries(test_rhi PRIVATE okay::engine)
+target_compile_definitions(test_rhi PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME rhi COMMAND test_rhi)
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_rhi_gl test_rhi_gl.cpp)
+    target_link_libraries(test_rhi_gl PRIVATE okay::engine okay::platform)
+    add_test(NAME rhi_gl COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_rhi_gl>)
+    set_tests_properties(rhi_gl PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 endif()
 
 add_executable(test_uishape test_uishape.cpp)
@@ -884,6 +928,16 @@ add_test(NAME pausemenu COMMAND test_pausemenu)
 add_executable(test_worldstreamer test_worldstreamer.cpp)
 target_link_libraries(test_worldstreamer PRIVATE okay::engine)
 add_test(NAME worldstreamer COMMAND test_worldstreamer)
+
+# Asset streaming core: AssetManager::Stream priorities / cancel / RAM budget, streamed scene loads under the frame
+# budget, spread unloads, WorldStreamer cells (docs/engine/asset_streaming.md).
+add_executable(test_asset_streaming test_asset_streaming.cpp)
+target_link_libraries(test_asset_streaming PRIVATE okay::engine)
+add_test(NAME asset_streaming COMMAND test_asset_streaming)
+# Large-world stress test: streamed vs. everything up front (frame time, memory, pop-in).
+add_executable(test_asset_streaming_stress test_asset_streaming_stress.cpp)
+target_link_libraries(test_asset_streaming_stress PRIVATE okay::engine)
+add_test(NAME asset_streaming_stress COMMAND test_asset_streaming_stress)
 
 add_executable(test_destructible test_destructible.cpp)
 target_link_libraries(test_destructible PRIVATE okay::engine)
@@ -1317,6 +1371,16 @@ add_executable(test_project_panel_db test_project_panel_db.cpp ${PROJECT_SOURCE_
 target_include_directories(test_project_panel_db PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_project_panel_db PRIVATE okay::engine)
 add_test(NAME project_panel_db COMMAND test_project_panel_db)
+
+# A Project panel thumbnail renders without shadow maps or post passes and leaves the Scene view's state (editor perf, 2026-11-25).
+add_executable(test_thumbnail_render_cost test_thumbnail_render_cost.cpp)
+target_link_libraries(test_thumbnail_render_cost PRIVATE okay::engine)
+add_test(NAME thumbnail_render_cost COMMAND test_thumbnail_render_cost)
+
+# The Direct3D 11 renderer's compiled shaders kept between runs (ShaderBundle.hpp CompileCache): compile counts per start (editor perf, 2026-11-25).
+add_executable(test_shader_compile_cache test_shader_compile_cache.cpp)
+target_link_libraries(test_shader_compile_cache PRIVATE okay::engine)
+add_test(NAME shader_compile_cache COMMAND test_shader_compile_cache)
 
 # A picture changed on disk or reimported is shown changed in the Scene view: InvalidateTextureCacheForFile drops every cache key that names the file (relative, ./, absolute), and Browser::TakeChangedFiles hands out the files a scan found changed plus every hand reimport, once each.
 add_executable(test_texture_reimport test_texture_reimport.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp)
@@ -1864,10 +1928,27 @@ add_executable(test_anim_playback test_anim_playback.cpp)
 target_link_libraries(test_anim_playback PRIVATE okay::engine)
 add_test(NAME anim_playback COMMAND test_anim_playback)
 
-add_executable(test_editor_plugins test_editor_plugins.cpp)
+add_executable(test_editor_plugins test_editor_plugins.cpp ${CMAKE_SOURCE_DIR}/editor/PluginScriptApi.cpp
+               ${CMAKE_SOURCE_DIR}/editor/PluginRegistry.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptIde.cpp)
+target_include_directories(test_editor_plugins PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_plugins PRIVATE okay::engine)
+find_package(Threads)
+if(TARGET Threads::Threads)
+    target_link_libraries(test_editor_plugins PRIVATE Threads::Threads)
+endif()
 target_compile_definitions(test_editor_plugins PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME editor_plugins COMMAND test_editor_plugins)
+
+# The Script Editor's workspace model and the plugin registry (editor/ScriptIde.hpp, editor/PluginRegistry.hpp): Quick Open
+# ranking, the symbol index (definitions, references, rename across OkayScript and Lua files), find/replace with regex, comment
+# toggle, quick fixes, templates, local history and plugin commands / providers. Headless; the engine headers only.
+add_executable(test_script_ide test_script_ide.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptIde.cpp ${CMAKE_SOURCE_DIR}/editor/PluginRegistry.cpp)
+target_include_directories(test_script_ide PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_features(test_script_ide PRIVATE cxx_std_17)
+if(TARGET Threads::Threads)
+    target_link_libraries(test_script_ide PRIVATE Threads::Threads)
+endif()
+add_test(NAME script_ide COMMAND test_script_ide)
 
 add_executable(test_anim_state_machine test_anim_state_machine.cpp)
 target_link_libraries(test_anim_state_machine PRIVATE okay::engine)
@@ -2023,6 +2104,18 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
     endif()
     target_include_directories(test_okayui_host_layering PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
     add_test(NAME okayui_host_layering COMMAND test_okayui_host_layering)
+    # Editor modals that block every click while nothing is shown (editor/ModalGuard.hpp): the two recovery questions that
+    # replaced each other every frame after an unclean exit, undrawn and off-screen modals, the clicks-land-nowhere log line.
+    add_executable(test_editor_stale_modal test_editor_stale_modal.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_editor_stale_modal PRIVATE okay_imgui)
+    else()
+        target_sources(test_editor_stale_modal PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_editor_stale_modal SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_include_directories(test_editor_stale_modal PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME editor_stale_modal COMMAND test_editor_stale_modal)
     # The Script Editor's OkayUI code inside a Dear ImGui window, in ImGui's draw order (OkayUI::BeginCapture, shared/OkayUIImGuiEmbed.hpp):
     # an ImGui popup over the code is drawn over it. Dear ImGui and OkayUI headless, one software rasteriser.
     add_executable(test_okayui_codeedit_imgui test_okayui_codeedit_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptEditorCodeEdit.cpp)
@@ -2054,7 +2147,7 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
     endif()
     target_link_libraries(test_okayui_panels_imgui PRIVATE okay_ui_render okay_ui_screens)
     target_include_directories(test_okayui_panels_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
-                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/launcher)
     add_test(NAME okayui_panels_imgui COMMAND test_okayui_panels_imgui)
     set_tests_properties(okayui_panels_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()
@@ -2064,6 +2157,15 @@ target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/edit
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
 target_compile_definitions(test_vs_editor_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
+
+# The Visual Script editor's IDE tools (model level): pin-aware search, watches and the lit path while stepping in a
+# GameFiber, collapse to function (same results before and after), layout, references across graph files, bookmarks,
+# checker fixes, graph diff, and the providers for the script IDE's shared layers.
+add_executable(test_vs_ide test_vs_ide.cpp)
+target_include_directories(test_vs_ide PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_ide PRIVATE okay::engine)
+target_compile_definitions(test_vs_ide PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_ide COMMAND test_vs_ide)
 
 # Our own Dear ImGui platform feed (shared/ImGuiPlatformFeed.hpp): key table, event translation, and a real ImGui context
 # fed through a fake host (no window, no SDL). Links the editor's okay_imgui when it is in the build, else compiles the
@@ -3113,6 +3215,17 @@ if(SDL2_FOUND)
     target_compile_definitions(test_ui_renderer_golden PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     target_compile_definitions(test_ui_renderer_golden PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_renderer_golden COMMAND test_ui_renderer_golden)
+
+    # The start-up splash (shared/Splash.hpp) on the software painter: bar fill per progress, status text, failed state, fade,
+    # the steps and the finish, and one golden picture (tests/golden/splash/loading_50.png).
+    if(TARGET okay_ui_soft)
+        add_executable(test_splash test_splash.cpp)
+        target_include_directories(test_splash PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${SDL2_INCLUDE_DIRS})
+        target_link_libraries(test_splash PRIVATE okay_ui_soft okay::engine ${OKAY_TEST_SDL_LIB})
+        target_compile_definitions(test_splash PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+        target_compile_features(test_splash PRIVATE cxx_std_17)
+        add_test(NAME splash COMMAND test_splash)
+    endif()
 
     # Accessibility settings in rendered pixels (text size, colour filter, high contrast)
     add_executable(test_accessibility_render test_accessibility_render.cpp)
@@ -5146,6 +5259,12 @@ target_link_libraries(test_vs_recipes PRIVATE okay::engine)
 target_compile_definitions(test_vs_recipes PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_recipes COMMAND test_vs_recipes)
 
+# The Visual Script panel's per-frame work: the graph checker is not run in every frame of a node drag (editor perf, 2026-11-25).
+add_executable(test_vs_check_cost test_vs_check_cost.cpp)
+target_include_directories(test_vs_check_cost PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_check_cost PRIVATE okay::engine)
+add_test(NAME vs_check_cost COMMAND test_vs_check_cost)
+
 add_executable(test_vs_saved_graphs test_vs_saved_graphs.cpp)
 target_include_directories(test_vs_saved_graphs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_saved_graphs PRIVATE okay::engine)
@@ -5577,3 +5696,14 @@ target_include_directories(test_launcher_friends PRIVATE ${CMAKE_SOURCE_DIR}/lau
 target_compile_definitions(test_launcher_friends PRIVATE OKAY_LAUNCHER_MAIN="${CMAKE_SOURCE_DIR}/launcher/main.cpp")
 add_test(NAME launcher_friends COMMAND test_launcher_friends)
 set_tests_properties(launcher_friends PROPERTIES TIMEOUT 60)
+
+# Browser (page engine, engine/include/okay/Browser/): the HTML reader's trees, the CSS cascade, layout positions and line
+# breaks, addresses and a tab's navigation, hostile input, step 2's game packs and launch rules (browser_game), and round 2's
+# page JavaScript (browser_script: the DOM binding, events, timers, budget). They link only okay_browser (standard library
+# and okay_js).
+foreach(_bt browser_html browser_css browser_layout browser_layout2 browser_url browser_hostile browser_game browser_profile browser_forms browser_script)
+    add_executable(test_${_bt} test_${_bt}.cpp)
+    target_include_directories(test_${_bt} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/launcher)   # launcher/BrowserPage.hpp: the link rule
+    target_link_libraries(test_${_bt} PRIVATE okay::browser)
+    add_test(NAME ${_bt} COMMAND test_${_bt})
+endforeach()

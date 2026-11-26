@@ -3,7 +3,7 @@
  "totals": {
   "launcher": {
    "calls": 14,
-   "words": 296
+   "words": 141
   },
   "editor": {
    "calls": 23,
@@ -15,7 +15,7 @@
   },
   "shared": {
    "calls": 10,
-   "words": 136
+   "words": 135
   },
   "engine": {
    "calls": 0,
@@ -23,7 +23,7 @@
   },
   "okayui": {
    "calls": 122,
-   "words": 337
+   "words": 340
   }
  },
  "files": {
@@ -180,6 +180,13 @@
     "Uint32": 2
    }
   },
+  "launcher/BrowserPage.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "SDL_Texture": 1
+   }
+  },
   "launcher/ChatText.cpp": {
    "calls": 0,
    "words": 1,
@@ -268,7 +275,7 @@
   },
   "launcher/main.cpp": {
    "calls": 14,
-   "words": 221,
+   "words": 65,
    "by_word": {
     "#include<SDL.h>": 1,
     "#include<imgui_impl_sdl2.h>": 1,
@@ -293,12 +300,7 @@
     "SDL_Texture": 22,
     "SDL_WINDOWEVENT": 1,
     "SDL_WINDOWPOS_CENTERED": 2,
-    "SDL_Window": 7,
-    "Sint16": 18,
-    "Uint16": 2,
-    "Uint32": 128,
-    "Uint64": 1,
-    "Uint8": 7
+    "SDL_Window": 7
    }
   },
   "okayui/include/okay/UI/OkayUI.hpp": {
@@ -410,6 +412,20 @@
     "SDL_bool": 1,
     "Uint32": 2,
     "Uint8": 2
+   }
+  },
+  "okayui/screens/BrowserView.cpp": {
+   "calls": 0,
+   "words": 2,
+   "by_word": {
+    "SDL_Texture": 2
+   }
+  },
+  "okayui/screens/BrowserView.hpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "SDL_Texture": 1
    }
   },
   "okayui/screens/OkayUIEditorPanels.cpp": {
@@ -572,6 +588,13 @@
     "SDL_Renderer": 1
    }
   },
+  "shared/BrowserApp.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "SDL_Texture": 1
+   }
+  },
   "shared/OkayScriptUIBridge.hpp": {
    "calls": 0,
    "words": 3,
@@ -590,7 +613,7 @@
   },
   "shared/OkayUIHost.hpp": {
    "calls": 0,
-   "words": 69,
+   "words": 67,
    "by_word": {
     "#include<SDL.h>": 1,
     "KMOD_CTRL": 1,
@@ -633,8 +656,8 @@
     "SDL_BUTTON_LEFT": 1,
     "SDL_BUTTON_RIGHT": 1,
     "SDL_Event": 1,
-    "SDL_KEYDOWN": 4,
-    "SDL_KEYUP": 1,
+    "SDL_KEYDOWN": 1,
+    "SDL_KEYUP": 2,
     "SDL_Keycode": 1,
     "SDL_MAIN_HANDLED": 2,
     "SDL_MOUSEBUTTONDOWN": 1,

@@ -1,4 +1,9 @@
 #include "okay/Scene/Scene.hpp"
+#include <chrono>
+#include "okay/Render/TextureAsset.hpp"
+#include "okay/Modeling/MeshAsset.hpp"
+#include "okay/Core/ImportSettings.hpp"
+#include "okay/Core/AssetManager.hpp"
 #include "okay/Scene/ComponentCache.hpp"
 #include "okay/Inventory/InventoryPersistence.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
@@ -201,6 +206,7 @@ void Scene::Clear() {
     std::vector<std::function<void(bool)>> abandoned;   // callbacks of loads this Clear cancels
     for (auto& r : m_loads) if (!r.finished && r.opts.onDone) abandoned.push_back(std::move(r.opts.onDone));
     m_loads.clear();
+    m_unloads.clear();   // the objects they were removing go with the rest
     m_pending.clear();
     m_active.clear();
     m_destroyQueue.clear();
@@ -1553,14 +1559,66 @@ void Scene::ReorderSibling(GameObject* go, GameObject* anchor, bool after) {
 
 // ---- Incremental (multi-frame) scene loads ----------------------------------
 
+// A streamed load's file read and asset decodes. The job thread writes `job`, `error` and `refs` and is done with
+// them before its JobHandle reads as done; the main thread reads them only after that.
+struct SceneStreamRead {
+    JobHandle read;
+    std::unique_ptr<SceneLoadJob> job;
+    std::string error;
+    std::vector<std::string> refs;                         // asset paths the file names
+    std::vector<AssetHandle<modeling::MeshFile>> meshes;   // their decodes (job thread asks, main thread waits)
+    std::vector<std::string> meshFiles;                    // the files those are, for CancelStream
+    std::vector<std::string> textures;                     // prefetched on the main thread once the read is done
+    bool prefetched = false;
+};
+
+double Scene::StreamNow() const {
+    if (m_streamClock) return m_streamClock();
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 int Scene::BeginAsyncLoad(const std::string& path, AsyncLoadOptions opts) {
     std::string err;
-    auto job = SceneLoadJob::OpenFile(path, opts.additive, opts.offset, &err);
-    Log::Info("[scene] loading '", path, "'", opts.additive ? " (additive)" : "");
-    if (!job) {
-        Log::Error("[scene] cannot open scene '", path, "': ", err);
-        if (opts.onDone) opts.onDone(false);
-        return 0;
+    std::unique_ptr<SceneLoadJob> job;
+    std::shared_ptr<SceneStreamRead> read;
+    if (opts.stream) {
+        // The read, the reference scan and the mesh decodes run on a job thread (inline with 0 workers).
+        read = std::make_shared<SceneStreamRead>();
+        const float priority = opts.priority;
+        const bool additive = opts.additive;
+        const Vec3 offset = opts.offset;
+        std::weak_ptr<SceneStreamRead> weak = read;
+        JobOptions jo;
+        jo.name = "scene stream read";
+        jo.priority = JobPriority::Low;
+        read->read = EngineJobs().Submit([weak, path, priority, additive, offset] {
+            std::shared_ptr<SceneStreamRead> r = weak.lock();
+            if (!r) return;   // the load was dropped before the read began
+            std::vector<std::string> refs;
+            r->job = SceneLoadJob::OpenFile(path, additive, offset, &r->error, &refs);
+            if (!r->job) return;
+            for (const std::string& ref : refs) {
+                const AssetType kind = AssetTypeFromExtension(AssetExtension(ref));
+                if (kind == AssetType::Mesh || (kind == AssetType::Model && AssetExtension(ref) == "obj")) {
+                    const std::string file = modeling::ResolveMeshAssetPath(ref, r->job->Folder());
+                    if (file.empty()) continue;
+                    r->meshes.push_back(AssetManager::Instance().Stream<modeling::MeshFile>(file, priority));
+                    r->meshFiles.push_back(file);
+                } else if (kind == AssetType::Texture) {
+                    r->textures.push_back(ref);
+                }
+            }
+            r->refs = std::move(refs);
+        }, jo);
+        Log::Info("[scene] streaming '", path, "'");
+    } else {
+        job = SceneLoadJob::OpenFile(path, opts.additive, opts.offset, &err);
+        Log::Info("[scene] loading '", path, "'", opts.additive ? " (additive)" : "");
+        if (!job) {
+            Log::Error("[scene] cannot open scene '", path, "': ", err);
+            if (opts.onDone) opts.onDone(false);
+            return 0;
+        }
     }
     if (!opts.additive) {
         // The last replacing request wins. A deferred load or text load still waiting is told it never ran, and a
@@ -1579,6 +1637,8 @@ int Scene::BeginAsyncLoad(const std::string& path, AsyncLoadOptions opts) {
     LoadRecord r;
     r.handle = m_nextLoadHandle++;
     r.job = std::move(job);
+    r.read = std::move(read);
+    r.path = path;
     r.opts = std::move(opts);
     if (r.opts.objectsPerFrame < 1) r.opts.objectsPerFrame = 1;
     m_loads.push_back(std::move(r));
@@ -1610,7 +1670,24 @@ float Scene::LoadProgress(int handle) const {
     const LoadRecord* r = FindLoad(handle);
     if (!r) return 0.0f;
     if (r->finished) return r->ok ? 1.0f : 0.0f;
-    return r->job->Progress();
+    return r->job ? r->job->Progress() : 0.0f;
+}
+
+Scene::LoadPhase Scene::GetLoadPhase(int handle) const {
+    for (const auto& u : m_unloads) if (u.handle == handle) return LoadPhase::Unloading;
+    const LoadRecord* r = FindLoad(handle);
+    if (!r) return LoadPhase::None;
+    if (r->finished) return r->ok ? LoadPhase::Loaded : LoadPhase::Failed;
+    if (!r->job || (r->job && !r->job->Started() && r->read)) return LoadPhase::Reading;
+    return LoadPhase::Creating;
+}
+
+void Scene::SetLoadPriority(int handle, float priority) {
+    LoadRecord* r = FindLoad(handle);
+    if (!r || r->finished || !r->opts.stream) return;
+    r->opts.priority = priority;
+    if (r->read && r->read->read.IsDone())
+        for (const std::string& f : r->read->meshFiles) AssetManager::Instance().Stream<modeling::MeshFile>(f, priority);
 }
 
 void Scene::DestroyLoadedObjects(const std::vector<std::uint64_t>& ids) {
@@ -1620,6 +1697,17 @@ void Scene::DestroyLoadedObjects(const std::vector<std::uint64_t>& ids) {
     }
 }
 
+namespace {
+// A streamed load that is dropped: a read not started is cancelled, and the asset decodes it asked for that have
+// not begun are dropped (an asset another load also wants stays queued for it).
+void CancelStreamRead(SceneStreamRead& r) {
+    if (!r.read.IsDone()) EngineJobs().Cancel(r.read);   // false once it started: it then finds nothing to do
+    if (!r.read.IsDone()) return;                          // running on a job thread: it owns its fields until done
+    r.meshes.clear();
+    for (const std::string& f : r.meshFiles) AssetManager::Instance().CancelStream<modeling::MeshFile>(f);
+}
+} // namespace
+
 bool Scene::UnloadAdditive(int handle) {
     LoadRecord* r = FindLoad(handle);
     if (!r) return false;
@@ -1627,9 +1715,120 @@ bool Scene::UnloadAdditive(int handle) {
     m_loads.erase(m_loads.begin() + (r - m_loads.data()));
     // Components still held back never started: drop them before their objects go.
     rec.held.clear();
-    DestroyLoadedObjects(rec.finished ? rec.job->RootIds() : rec.job->AllIds());
+    if (rec.read) CancelStreamRead(*rec.read);
+    if (rec.job) DestroyLoadedObjects(rec.finished ? rec.job->RootIds() : rec.job->AllIds());
     if (!rec.finished && rec.opts.onDone) rec.opts.onDone(false);
     return true;
+}
+
+std::vector<std::uint64_t> Scene::ChildrenFirst(const std::vector<std::uint64_t>& ids) const {
+    // Every object under the given ones, in reverse depth-first order: a child always comes before its parent, so
+    // removing them in this order never takes a still-listed child along with its parent.
+    std::vector<std::uint64_t> order;
+    std::unordered_set<std::uint64_t> seen;
+    for (std::uint64_t id : ids) {
+        GameObject* top = GameObject::FromInstanceId(id);
+        if (!top || top->scene() != this) continue;
+        std::vector<GameObject*> stack{top};
+        while (!stack.empty()) {
+            GameObject* g = stack.back(); stack.pop_back();
+            if (!g || !seen.insert(g->InstanceId()).second) continue;
+            order.push_back(g->InstanceId());
+            if (g->transform)
+                for (const Transform* c : g->transform->Children())
+                    if (c && c->gameObject) stack.push_back(c->gameObject);
+        }
+    }
+    std::reverse(order.begin(), order.end());
+    return order;
+}
+
+bool Scene::UnloadAdditiveSpread(int handle) {
+    LoadRecord* r = FindLoad(handle);
+    if (!r) return false;
+    LoadRecord rec = std::move(*r);
+    m_loads.erase(m_loads.begin() + (r - m_loads.data()));
+    rec.held.clear();   // never started: their objects go without OnDestroy (as UnloadAdditive)
+    if (rec.read) CancelStreamRead(*rec.read);
+    UnloadRecord u;
+    u.handle = handle;
+    if (rec.job) u.ids = ChildrenFirst(rec.finished ? rec.job->RootIds() : rec.job->AllIds());
+    if (!u.ids.empty()) m_unloads.push_back(std::move(u));
+    if (!rec.finished && rec.opts.onDone) rec.opts.onDone(false);
+    return true;
+}
+
+bool Scene::StreamReady(LoadRecord& rec) {
+    SceneStreamRead& r = *rec.read;
+    if (rec.rush && !r.read.IsDone()) {
+        try { EngineJobs().Wait(r.read); } catch (...) {}   // a read that threw has no job: reported as a failed read
+    }
+    if (!r.read.IsDone()) return false;
+    if (!r.prefetched) {
+        r.prefetched = true;
+        if (!r.job) return true;   // the read failed: the caller reports it
+        rec.job = std::move(r.job);
+        // Textures are decoded on a job thread too, before anything draws them (the texture library is main-thread).
+        for (const std::string& t : r.textures) textures::Prefetch(t, rec.opts.priority);
+    }
+    if (rec.rush) {
+        // Finishing now (CompleteLoad): wait for the meshes (a sync Get waits for the decode in flight); textures
+        // keep decoding in the background and appear when ready.
+        for (const std::string& f : r.meshFiles) AssetManager::Instance().Get<modeling::MeshFile>(f);
+        return true;
+    }
+    for (const auto& m : r.meshes) if (m.Loading()) return false;
+    for (const std::string& t : r.textures) if (textures::Loading(t)) return false;
+    return true;
+}
+
+bool Scene::CompleteLoad(int handle) {
+    LoadRecord* r = FindLoad(handle);
+    if (!r) return false;
+    if (r->finished) return r->ok;
+    if (m_busy > 0 && !r->opts.additive) return false;   // replacing the scene during a component walk: the frame does it
+    r->rush = true;
+    for (int guard = 0; guard < 4; ++guard) {   // one pass normally does it; a replacing load may need its first step
+        StepAsyncLoads();
+        r = FindLoad(handle);
+        if (!r || r->finished) break;
+    }
+    return r && r->finished && r->ok;
+}
+
+std::vector<std::uint64_t> Scene::LoadedRoots(int handle) const {
+    const LoadRecord* r = FindLoad(handle);
+    if (!r || !r->finished || !r->ok || !r->job) return {};
+    return r->job->RootIds();
+}
+
+void Scene::StepUnloads(double start, double budgetMs) {
+    // Remove objects of spread unloads in batches, children first, until the frame budget is spent. Each batch is
+    // flushed at once (this runs after the frame's own flush, outside every component walk).
+    std::size_t batch = 8;
+    while (!m_unloads.empty()) {
+        const double used = StreamNow() - start;
+        if (used >= budgetMs && (m_streamFrame.created + m_streamFrame.destroyed) > 0) break;
+        UnloadRecord& u = m_unloads.front();
+        const double t0 = StreamNow();
+        std::size_t n = 0;
+        while (u.next < u.ids.size() && n < batch) {
+            GameObject* go = GameObject::FromInstanceId(u.ids[u.next++]);
+            if (go && go->scene() == this && !go->IsDestroyed()) { Destroy(go); ++n; }
+        }
+        if (n) FlushDestroyedNow();
+        m_streamFrame.destroyed += static_cast<int>(n);
+        if (u.next >= u.ids.size()) m_unloads.erase(m_unloads.begin());
+        // Size the next batch from what this one cost, so it fits in what is left.
+        const double cost = StreamNow() - t0;
+        const double left = budgetMs - (StreamNow() - start);
+        if (n && cost > 0.0 && left > 0.0) {
+            const double per = cost / static_cast<double>(n);
+            batch = static_cast<std::size_t>(std::max(1.0, std::min(256.0, left / per * 0.5)));
+        } else {
+            batch = 1;
+        }
+    }
 }
 
 void Scene::StepAsyncLoads() {
@@ -1637,11 +1836,24 @@ void Scene::StepAsyncLoads() {
     // unload or finish other loads, and the first step of a replacing load clears the scene and with it every other
     // load in flight, so no position in the list can be trusted from one step to the next. A load started by a
     // callback in this pass takes its first step in this pass too.
+    // Streamed loads come after the others, highest priority first, and share the streaming frame budget: objects
+    // are made one at a time until it is spent (at least one per frame, so a load always moves on).
+    m_streamFrame = StreamFrameStats();
+    const bool anyStream = !m_unloads.empty() ||
+        std::any_of(m_loads.begin(), m_loads.end(), [](const LoadRecord& r) { return !r.finished && r.opts.stream; });
+    const double frameStart = anyStream ? StreamNow() : 0.0;
+    const double budgetMs = anyStream ? AssetManager::Instance().FrameBudgetMs() : 0.0;
     std::unordered_set<int> stepped;
     const std::size_t limit = m_loads.size() * 4 + 64;   // a callback that begins a load as each one ends must not spin for ever
     while (stepped.size() < limit) {
-        std::size_t i = 0;
-        for (; i < m_loads.size(); ++i) if (!m_loads[i].finished && !stepped.count(m_loads[i].handle)) break;
+        std::size_t i = m_loads.size();
+        for (std::size_t k = 0; k < m_loads.size(); ++k) {
+            const LoadRecord& c = m_loads[k];
+            if (c.finished || stepped.count(c.handle)) continue;
+            if (m_busy > 0 && !c.rush) continue;    // CompleteLoad from inside a component walk: only that load moves
+            if (!c.opts.stream) { i = k; break; }   // plain loads first, in order
+            if (i == m_loads.size() || c.opts.priority > m_loads[i].opts.priority) i = k;
+        }
         if (i >= m_loads.size()) break;
         stepped.insert(m_loads[i].handle);
         LoadRecord rec = std::move(m_loads[i]);   // out of the list: callbacks and Clear() can't invalidate it
@@ -1649,22 +1861,64 @@ void Scene::StepAsyncLoads() {
         // Back in the list at its old place (clamped: the list may have shrunk meanwhile).
         auto putBack = [&](LoadRecord&& r) { m_loads.insert(m_loads.begin() + (long)std::min(i, m_loads.size()), std::move(r)); };
 
-        const bool first = !rec.job->Started();
-        KeptState kept;
-        if (first && !rec.opts.additive) {
-            m_pendingMerges.clear();
-            InventoryPersistence::BeforeSceneLoad(*this);
-            DetachKept(kept);
+        if (rec.opts.stream) {
+            if (!StreamReady(rec)) { putBack(std::move(rec)); continue; }
+            if (!rec.job) {   // the read failed
+                Log::Error("[scene] cannot open scene '", rec.path, "': ", rec.read->error);
+                rec.finished = true; rec.ok = false;
+                auto done = std::move(rec.opts.onDone);
+                putBack(std::move(rec));
+                if (done) done(false);
+                continue;
+            }
+            // Out of time this frame (something was already made): wait for the next one.
+            if (!rec.rush && m_streamFrame.created > 0 && StreamNow() - frameStart >= budgetMs) { putBack(std::move(rec)); continue; }
+            if (rec.job->UsesPrefabStructure() && !rec.job->Started()) {
+                // Nested prefabs / a variant: PrefabTools makes it, in one go (it cannot be spread yet).
+                std::string perr;
+                const std::size_t before = m_pending.size();
+                GameObject* root = SceneSerializer::InstantiateFromFile(*this, rec.path, &perr);
+                for (std::size_t k = before; k < m_pending.size(); ++k) if (m_pending[k]) rec.held.push_back(m_pending[k]);
+                m_pending.resize(std::min(before, m_pending.size()));
+                if (root) {
+                    std::vector<std::uint64_t> roots{root->InstanceId()};
+                    rec.job->FinishWith(std::move(roots));
+                    ++m_streamFrame.created;
+                } else {
+                    Log::Error("[scene] cannot instantiate '", rec.path, "': ", perr);
+                    rec.finished = true; rec.ok = false;
+                    auto done = std::move(rec.opts.onDone);
+                    putBack(std::move(rec));
+                    if (done) done(false);
+                    continue;
+                }
+            }
         }
-        const std::size_t before = (first && !rec.opts.additive) ? 0 : m_pending.size();
+
+        bool ok = true;
         std::string err;
-        const bool ok = rec.job->Step(*this, rec.opts.objectsPerFrame, &err);
-        // Hold what this step made until the whole scene is in: nothing Awakes against a
-        // half-built hierarchy.
-        const std::size_t from = std::min(before, m_pending.size());
-        for (std::size_t k = from; k < m_pending.size(); ++k) if (m_pending[k]) rec.held.push_back(m_pending[k]);
-        m_pending.resize(from);
-        if (first && !rec.opts.additive) ReattachKept(kept, /*undo=*/!ok);   // a load that failed before it began leaves the scene as it was
+        while (!rec.job->Finished()) {
+            const bool first = !rec.job->Started();
+            KeptState kept;
+            if (first && !rec.opts.additive) {
+                m_pendingMerges.clear();
+                InventoryPersistence::BeforeSceneLoad(*this);
+                DetachKept(kept);
+            }
+            const std::size_t before = (first && !rec.opts.additive) ? 0 : m_pending.size();
+            const int made = rec.job->ObjectsCreated();
+            ok = rec.job->Step(*this, rec.rush ? 0 : (rec.opts.stream ? 1 : rec.opts.objectsPerFrame), &err);
+            // Hold what this step made until the whole scene is in: nothing Awakes against a
+            // half-built hierarchy.
+            const std::size_t from = std::min(before, m_pending.size());
+            for (std::size_t k = from; k < m_pending.size(); ++k) if (m_pending[k]) rec.held.push_back(m_pending[k]);
+            m_pending.resize(from);
+            if (first && !rec.opts.additive) ReattachKept(kept, /*undo=*/!ok);   // a load that failed before it began leaves the scene as it was
+            if (!rec.opts.stream) break;
+            m_streamFrame.created += std::max(0, rec.job->ObjectsCreated() - made);
+            if (!ok || rec.job->Finished()) break;
+            if (!rec.rush && StreamNow() - frameStart >= budgetMs) break;
+        }
 
         if (!ok) {
             rec.held.clear();
@@ -1686,14 +1940,19 @@ void Scene::StepAsyncLoads() {
             rec.held.clear();
             if (!rec.opts.additive) InventoryPersistence::AfterSceneLoad(*this);
             if (!rec.opts.additive && !m_dontDestroy.empty()) MoveKeptToEnd();   // the order a one-go load gives
-            Start();   // Awake / Start for everything that came in
+            // Awake / Start for everything that came in. Inside a component walk (CompleteLoad from an Update) the
+            // next frame's FlushPending does it: the update list must not grow while it is walked.
+            if (m_busy == 0) Start();
             if (!rec.opts.additive && !m_dontDestroy.empty()) ResolveMainCamera();
+            if (rec.read) { rec.read->meshes.clear(); ++m_streamFrame.started; }   // decoded meshes stay in the streamer's cache
         }
         auto done = finished ? std::move(rec.opts.onDone) : std::function<void(bool)>{};
         putBack(std::move(rec));
         if (progress) progress(p);
         if (done) done(true);
     }
+    if (!m_unloads.empty() && m_busy == 0) StepUnloads(frameStart, budgetMs);
+    if (anyStream) m_streamFrame.ms = StreamNow() - frameStart;
 }
 
 } // namespace okay

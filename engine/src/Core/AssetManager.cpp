@@ -11,6 +11,18 @@
 #include <cstdio>
 #include <filesystem>
 #include <sstream>
+#include <cstdlib>
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 #include "CoreThreads.hpp"   // our own Mutex/CondVar (no <mutex> under MinGW win32 threads)
 
 namespace okay {
@@ -159,6 +171,13 @@ bool AssetManager::LoaderFor(std::type_index t, LoaderRec& out) const {
     return true;
 }
 
+namespace {
+std::size_t MeshBytes(const Mesh& m) {
+    return m.vertices.size() * sizeof(m.vertices[0]) + m.triangles.size() * sizeof(int) +
+           m.uvs.size() * sizeof(m.uvs[0]) + m.normals.size() * sizeof(m.normals[0]);
+}
+} // namespace
+
 void AssetManager::RegisterDefaultLoaders() {
     RegisterLoader<Image>("Image",
         [](const std::string& p, std::string& e) -> std::shared_ptr<Image> {
@@ -177,10 +196,14 @@ void AssetManager::RegisterDefaultLoaders() {
             auto a = std::make_shared<Mesh>();
             return modeling::LoadMeshAsset(p, *a, nullptr, &e) ? a : nullptr;
         },
-        [](const Mesh& m) {
-            return sizeof(Mesh) + m.vertices.size() * sizeof(m.vertices[0]) + m.triangles.size() * sizeof(int) +
-                   m.uvs.size() * sizeof(m.uvs[0]) + m.normals.size() * sizeof(m.normals[0]);
-        });
+        [](const Mesh& m) { return sizeof(Mesh) + MeshBytes(m); });
+    // Mesh files as the streamer keeps them (geometry + an OBJ's texture); LoadMeshAsset copies from here.
+    RegisterLoader<modeling::MeshFile>("MeshFile",
+        [](const std::string& p, std::string& e) -> std::shared_ptr<modeling::MeshFile> {
+            auto a = std::make_shared<modeling::MeshFile>();
+            return modeling::DecodeMeshFile(p, *a, &e) ? a : nullptr;
+        },
+        [](const modeling::MeshFile& f) { return sizeof(modeling::MeshFile) + MeshBytes(f.mesh) + f.texture.size(); });
     RegisterLoader<DataAsset>("DataAsset",
         [](const std::string& p, std::string& e) -> std::shared_ptr<DataAsset> {
             auto a = std::make_shared<DataAsset>();
@@ -241,8 +264,20 @@ void AssetManager::DrainQueue() {
     Lock lk(m_sync->mutex);
     for (;;) {
         if (m_stop || m_jobs.empty()) { m_draining = false; return; }
-        Job job = std::move(m_jobs.front());
-        m_jobs.pop_front();
+        // Highest priority first; equal priorities in the order they were asked for.
+        std::size_t pick = 0;
+        for (std::size_t i = 1; i < m_jobs.size(); ++i) if (m_jobs[i].priority > m_jobs[pick].priority) pick = i;
+        Job job = std::move(m_jobs[pick]);
+        m_jobs.erase(m_jobs.begin() + static_cast<std::ptrdiff_t>(pick));
+        if (job.streamed && !job.reload && job.entry.use_count() == 1 && job.entry->state.load() == S(State::Pending)) {
+            // Streamed, and nobody holds it any more (CancelStream took it out of the cache): skip the decode.
+            ++m_cancelled;
+            job.entry->error = "cancelled";
+            FinishFailedLocked(job.entry);
+            Done d; d.entry = job.entry; d.counted = true;
+            m_done.push_back(std::move(d));
+            continue;
+        }
         Done d;
         d.entry = job.entry;
         d.reload = job.reload;
@@ -349,6 +384,17 @@ AssetManager::EntryPtr AssetManager::AcquireSync(std::type_index t, const std::s
 
 AssetManager::EntryPtr AssetManager::AcquireAsync(std::type_index t, const std::string& path,
                                                   std::function<void(const EntryPtr&, const std::string&)> cb) {
+    return AcquireAsyncImpl(t, path, std::move(cb), false, 0.0f);
+}
+
+AssetManager::EntryPtr AssetManager::AcquireStreamed(std::type_index t, const std::string& path, float priority,
+                                                     std::function<void(const EntryPtr&, const std::string&)> cb) {
+    return AcquireAsyncImpl(t, path, std::move(cb), true, priority);
+}
+
+AssetManager::EntryPtr AssetManager::AcquireAsyncImpl(std::type_index t, const std::string& path,
+                                                      std::function<void(const EntryPtr&, const std::string&)> cb,
+                                                      bool streamed, float priority) {
     LoaderRec rec;
     if (!LoaderFor(t, rec)) {
         // Report through Pump like any other failure.
@@ -374,12 +420,21 @@ AssetManager::EntryPtr AssetManager::AcquireAsync(std::type_index t, const std::
             e = std::make_shared<Entry>(t, key, open);
             slot = e;
             if (cb) e->waiters.push_back(std::move(cb));
-            m_jobs.push_back(Job{e, false});
+            m_jobs.push_back(Job{e, false, streamed, priority});
             ++m_batchSubmitted;
             kick = true;
             break;
         }
         break;
+    }
+    if (streamed) {
+        // Kept in the streaming cache at this priority; a queued decode moves to the new priority.
+        Resident& r = m_resident[Key(t, key)];
+        r.entry = e;
+        r.priority = priority;
+        r.lastWanted = m_streamFrame;
+        if (!kick)
+            for (Job& j : m_jobs) if (j.entry == e && !j.reload) { j.priority = priority; j.streamed = true; }
     }
     if (!kick) {
         if (cb) e->waiters.push_back(std::move(cb));
@@ -469,6 +524,13 @@ int AssetManager::Pump() {
         for (Done& d : deferred) m_done.push_back(std::move(d));
         if (m_jobs.empty() && m_done.empty() && m_batchFinished >= m_batchSubmitted) m_batchSubmitted = m_batchFinished = 0;
     }
+    std::vector<EntryPtr> freed;   // let go of after the lock: an asset's destructor may do real work
+    {
+        corethreads::LockGuard lk(m_sync->mutex);
+        ++m_streamFrame;
+        TrimLocked(freed);
+    }
+    freed.clear();
     m_sync->entryCv.NotifyAll();
     KickDrain();   // decode the changed files found by the hot reload scan (no-op when nothing is queued)
     for (Fire& f : fires)
@@ -514,6 +576,188 @@ std::size_t AssetManager::CachedCount() const {
     std::size_t n = 0;
     for (const auto& kv : m_cache) if (!kv.second.expired()) ++n;
     return n;
+}
+
+// --- Streaming -----------------------------------------------------------------------
+
+bool AssetManager::CancelStreamed(std::type_index t, const std::string& path) {
+    EntryPtr dropped;   // freed after the lock
+    corethreads::LockGuard lk(m_sync->mutex);
+    auto it = m_resident.find(Key(t, Normalize(path)));
+    if (it == m_resident.end()) return false;
+    if (it->second.entry->state.load() != S(State::Pending)) return false;   // decoding or done: keep it cached
+    dropped = std::move(it->second.entry);
+    m_resident.erase(it);
+    return true;
+}
+
+AssetManager::EntryPtr AssetManager::FindFreshEntry(std::type_index t, const std::string& path) {
+    EntryPtr e = FindEntry(t, path);
+    if (!e) return nullptr;
+    std::int64_t st = 0, sz = -1;
+    if (!StatFile(e->path, st, sz)) return nullptr;
+    corethreads::LockGuard lk(m_sync->mutex);
+    if (e->stamp == 0 || st != e->stamp || sz != e->fileSize) return nullptr;
+    auto it = m_resident.find(Key(t, e->key));
+    if (it != m_resident.end()) it->second.lastWanted = m_streamFrame;   // used again: the last to be let go of
+    return e;
+}
+
+std::uint64_t AssetManager::SystemMemoryBytes() {
+#if defined(_WIN32)
+    MEMORYSTATUSEX m;
+    m.dwLength = sizeof(m);
+    if (GlobalMemoryStatusEx(&m)) return static_cast<std::uint64_t>(m.ullTotalPhys);
+    return 0;
+#elif defined(_SC_PHYS_PAGES) && defined(_SC_PAGESIZE)
+    const long pages = sysconf(_SC_PHYS_PAGES), page = sysconf(_SC_PAGESIZE);
+    if (pages <= 0 || page <= 0) return 0;
+    return static_cast<std::uint64_t>(pages) * static_cast<std::uint64_t>(page);
+#else
+    return 0;
+#endif
+}
+
+namespace {
+std::size_t EnvMB(const char* name) {
+    const char* v = std::getenv(name);
+    if (!v || !*v) return 0;
+    const long long mb = std::atoll(v);
+    return mb > 0 ? static_cast<std::size_t>(mb) * 1024u * 1024u : 0;
+}
+std::size_t Clamp(std::uint64_t v, std::uint64_t lo, std::uint64_t hi) {
+    return static_cast<std::size_t>(v < lo ? lo : (v > hi ? hi : v));
+}
+constexpr std::uint64_t kMB = 1024ull * 1024ull;
+} // namespace
+
+void AssetManager::SetStreamSettings(const StreamSettings& st) {
+    std::vector<EntryPtr> freed;
+    {
+        corethreads::LockGuard lk(m_sync->mutex);
+        m_stream = st;
+        if (!(m_stream.frameBudgetMs >= 0.0)) m_stream.frameBudgetMs = 0.0;
+        TrimLocked(freed);
+    }
+}
+
+StreamSettings AssetManager::GetStreamSettings() const {
+    corethreads::LockGuard lk(m_sync->mutex);
+    return m_stream;
+}
+
+std::size_t AssetManager::RamBudget() const {
+    std::size_t custom = 0;
+    {
+        corethreads::LockGuard lk(m_sync->mutex);
+        if (!m_stream.automatic) custom = m_stream.ramBudgetBytes;
+    }
+    if (custom) return custom;
+    if (const std::size_t env = EnvMB("OKAY_STREAM_RAM_MB")) return env;
+    const std::uint64_t sys = SystemMemoryBytes();
+    if (sys == 0) return static_cast<std::size_t>(1024 * kMB);
+    return Clamp(sys / 4, 256 * kMB, 8192 * kMB);
+}
+
+std::size_t AssetManager::VramBudget() const {
+    std::size_t custom = 0;
+    std::uint64_t reported = 0;
+    {
+        corethreads::LockGuard lk(m_sync->mutex);
+        if (!m_stream.automatic) custom = m_stream.vramBudgetBytes;
+        reported = m_videoMemory;
+    }
+    if (custom) return custom;
+    if (const std::size_t env = EnvMB("OKAY_STREAM_VRAM_MB")) return env;
+    if (reported) return static_cast<std::size_t>(reported / 5 * 4);
+    const std::uint64_t sys = SystemMemoryBytes();
+    if (sys == 0) return static_cast<std::size_t>(1024 * kMB);
+    return Clamp(sys / 8, 512 * kMB, 2048 * kMB);
+}
+
+double AssetManager::FrameBudgetMs() const {
+    corethreads::LockGuard lk(m_sync->mutex);
+    return m_stream.frameBudgetMs;
+}
+
+void AssetManager::ReportVideoMemory(std::uint64_t bytes) {
+    corethreads::LockGuard lk(m_sync->mutex);
+    m_videoMemory = bytes;
+}
+
+StreamStats AssetManager::GetStreamStats() const {
+    StreamStats st;
+    st.ramBudget = RamBudget();
+    st.vramBudget = VramBudget();
+    st.systemMemory = static_cast<std::size_t>(SystemMemoryBytes());
+    corethreads::LockGuard lk(m_sync->mutex);
+    for (const auto& kv : m_resident) {
+        st.residentBytes += kv.second.entry->bytes.load();
+        ++st.resident;
+    }
+    st.queued = static_cast<int>(m_jobs.size());
+    st.evicted = m_evicted;
+    st.cancelled = m_cancelled;
+    st.frame = m_streamFrame;
+    return st;
+}
+
+int AssetManager::TrimToBudget() {
+    std::vector<EntryPtr> freed;
+    int n = 0;
+    {
+        corethreads::LockGuard lk(m_sync->mutex);
+        n = TrimLocked(freed);
+    }
+    return n;
+}
+
+int AssetManager::TrimLocked(std::vector<EntryPtr>& freed) {
+    // A streamed decode that failed (or was cancelled) is not kept: asking again tries again.
+    for (auto it = m_resident.begin(); it != m_resident.end();)
+        if (it->second.entry->state.load() == S(State::Failed)) { freed.push_back(std::move(it->second.entry)); it = m_resident.erase(it); }
+        else ++it;
+    if (m_resident.empty()) return 0;
+    // The budget is read without the lock held by RamBudget(); work it out here from the same rules.
+    std::size_t budget = (!m_stream.automatic && m_stream.ramBudgetBytes) ? m_stream.ramBudgetBytes : 0;
+    if (!budget) budget = EnvMB("OKAY_STREAM_RAM_MB");
+    if (!budget) {
+        const std::uint64_t sys = SystemMemoryBytes();
+        budget = sys ? Clamp(sys / 4, 256 * kMB, 8192 * kMB) : static_cast<std::size_t>(1024 * kMB);
+    }
+    std::size_t total = 0;
+    for (const auto& kv : m_resident) total += kv.second.entry->bytes.load();
+    if (total <= budget) return 0;
+    // Only assets no one else holds can go (use_count 1: the cache's own reference); a decode in flight stays.
+    std::vector<std::map<Key, Resident>::iterator> cands;
+    for (auto it = m_resident.begin(); it != m_resident.end(); ++it)
+        if (it->second.entry.use_count() == 1 && it->second.entry->state.load() != S(State::Loading) &&
+            it->second.entry->state.load() != S(State::Pending))
+            cands.push_back(it);
+    std::stable_sort(cands.begin(), cands.end(), [](const auto& a, const auto& b) {
+        if (a->second.priority != b->second.priority) return a->second.priority < b->second.priority;
+        return a->second.lastWanted < b->second.lastWanted;
+    });
+    int n = 0;
+    for (auto it : cands) {
+        if (total <= budget) break;
+        total -= std::min(total, it->second.entry->bytes.load());
+        freed.push_back(std::move(it->second.entry));
+        m_resident.erase(it);
+        ++m_evicted;
+        ++n;
+    }
+    return n;
+}
+
+void AssetManager::ResetStreamingForTests() {
+    std::vector<EntryPtr> freed;
+    corethreads::LockGuard lk(m_sync->mutex);
+    for (auto& kv : m_resident) freed.push_back(std::move(kv.second.entry));
+    m_resident.clear();
+    m_stream = StreamSettings();
+    m_videoMemory = 0;
+    m_evicted = m_cancelled = 0;
 }
 
 AssetReport AssetManager::Report() const {

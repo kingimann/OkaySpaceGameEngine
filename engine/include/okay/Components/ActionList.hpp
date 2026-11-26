@@ -198,6 +198,9 @@ private:
     // The op families after the control-flow ones (ActionListOps.cpp). 0 = not one of them, 1 = ran, 2 = ran and
     // this Update must end now (scene change, self destroyed).
     int  RunMoreOps(const Item& it, const std::string& op, Scene* scene, Transform* t);
+    // Its second and third parts (one chain of 220 ops is too deep for MSVC); same results.
+    int  RunMoreOps2(const Item& it, const std::string& op, Scene* scene, Transform* t);
+    int  RunMoreOps3(const Item& it, const std::string& op, Scene* scene, Transform* t);
 
     bool m_running = false;
     std::size_t m_ip = 0;

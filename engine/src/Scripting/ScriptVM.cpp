@@ -2,6 +2,7 @@
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Scripting/NextScriptVM.hpp"
 #include "okay/Lua/LuaScriptVM.hpp"
+#include "okay/JavaScript/JavaScriptVM.hpp"
 #include <cctype>
 
 namespace okay {
@@ -9,7 +10,8 @@ namespace okay {
 std::vector<std::string> AvailableScriptLanguages() {
     return {
         "okayscript",
-        "lua",   // our own Lua 5.4 interpreter (okay::lua), not the removed third-party one
+        "lua",          // our own Lua 5.4 interpreter (okay::lua), not the removed third-party one
+        "javascript",   // our own JavaScript engine (okay::js, ECMA-262)
     };
 }
 
@@ -18,6 +20,7 @@ std::unique_ptr<IScriptVM> CreateScriptVM(const std::string& language) {
         return std::make_unique<OkayScriptVM>();
     if (language == NextScriptVM::kLanguage) return std::make_unique<NextScriptVM>();
     if (language == LuaScriptVM::kLanguage) return std::make_unique<LuaScriptVM>();
+    if (language == JavaScriptVM::kLanguage || language == "js") return std::make_unique<JavaScriptVM>();
     return nullptr;
 }
 
@@ -33,6 +36,7 @@ const char* ScriptLanguageForExtension(const std::string& ext) {
     for (char c : ext) e += (char)std::tolower((unsigned char)c);
     if (!e.empty() && e[0] != '.') e = "." + e;
     if (e == ".lua") return LuaScriptVM::kLanguage;
+    if (e == ".js" || e == ".mjs") return JavaScriptVM::kLanguage;
     if (e == ".cs") return "cs";
     return "okayscript";
 }

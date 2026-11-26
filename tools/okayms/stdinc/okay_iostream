@@ -14,6 +14,7 @@
 // - The console objects are a separate object in each file that includes <iostream> (no shared state is needed).
 #pragma once
 #include <cstddef>
+#include <cstdio>  // EOF, which peek() and get() return at the end (Round 30: StoryKv.hpp names it after <sstream>)
 #include <string>
 namespace std {
 typedef long long streamsize;

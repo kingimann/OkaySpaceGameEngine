@@ -9,6 +9,7 @@
 #include "VersionsNet.hpp"
 #include "UpdaterCore.hpp"   // the self-updater rules: checksum required, stage then swap, reasons
 #include "OfficialGame.hpp"   // the bundled SHA-256 (the same one the launcher checks downloads with)
+#include "versions_list_fixture.hpp"   // version lists for the Versions page tests (shared with okayui/tests/test_okayui_port_versions.cpp)
 
 #include <algorithm>
 #include <chrono>
@@ -46,6 +47,17 @@ struct TempDir {
         fs::remove_all(path, ec);
     }
 };
+
+// launcher.cfg: `s` written by WriteSettings and read back line by line with ApplySettingLine (every line must be one of ours).
+Settings RoundTrip(const Settings& s) {
+    std::ostringstream out;
+    WriteSettings(s, out);
+    Settings back;
+    std::istringstream in(out.str());
+    std::string line;
+    while (std::getline(in, line)) { const auto eq = line.find('='); CHECK(eq != std::string::npos && ApplySettingLine(back, line.substr(0, eq), line.substr(eq + 1))); }
+    return back;
+}
 
 void Put(const fs::path& p, const std::string& text) {
     std::error_code ec;
@@ -779,6 +791,16 @@ int main() {
         fs::create_directories(okayver::VersionsDir(launcher) / "notes");
         CHECK(CleanStale(launcher) == 1 && NoScratch(launcher) && fs::exists(okayver::VersionsDir(launcher) / "notes") && Complete(launcher, "2.850.1"));
         CHECK(CleanStale(t.path / "no such launcher") == 0);
+        // A scratch folder something is still being written into (the update's KeepCurrent on its own thread, an install) is not "stale": the
+        // page's start-up clean-up must leave it (owner, 2026-11-26: the installed list was empty after updates). One untouched for an hour goes.
+        {
+            const fs::path busyDir = okayver::VersionsDir(launcher) / ".partial-2.9.9-2";
+            Put(busyDir / "Tools" / "OkayEngine.exe.part", "being copied");
+            CHECK(CleanStale(launcher, std::chrono::minutes(15)) == 0 && fs::exists(busyDir));
+            const auto old = fs::file_time_type::clock::now() - std::chrono::hours(1);
+            for (const fs::path& p : {busyDir / "Tools" / "OkayEngine.exe.part", busyDir / "Tools", busyDir}) fs::last_write_time(p, old);
+            CHECK(CleanStale(launcher, std::chrono::minutes(15)) == 1 && !fs::exists(busyDir) && Complete(launcher, "2.850.1"));
+        }
         // Paths with spaces and unicode all the way (the launcher folder has both).
         CHECK(launcher.string().find(' ') != std::string::npos && launcher.string().find("\xC3\xA4") != std::string::npos);
     }
@@ -971,12 +993,7 @@ int main() {
         CHECK(ApplySettingLine(s, "lts_line", "2.850.1") && s.ltsLine == "2.850" && ApplySettingLine(s, "lts_line", "x") && s.ltsLine.empty());
         CHECK(!ApplySettingLine(s, "accent", "3") && !ApplySettingLine(s, "update_on_launch", "1") && !ApplySettingLine(s, "", ""));   // other keys are not ours
         s.channel = Channel::Lts; s.keepPrevious = 4; s.defaultEditor = "2.850.1"; s.ltsLine = "2.850";
-        std::ostringstream out;
-        WriteSettings(s, out);
-        Settings back;
-        std::istringstream in(out.str());
-        std::string line;
-        while (std::getline(in, line)) { const auto eq = line.find('='); CHECK(eq != std::string::npos && ApplySettingLine(back, line.substr(0, eq), line.substr(eq + 1))); }
+        const Settings back = RoundTrip(s);
         CHECK(back.channel == Channel::Lts && back.keepPrevious == 4 && back.defaultEditor == "2.850.1" && back.ltsLine == "2.850");
         std::ostringstream dflt;
         WriteSettings(Settings{}, dflt);
@@ -1282,6 +1299,309 @@ int main() {
         CHECK(!fb.ok || !fe || !okayupdater::RequireChecksum("OkayEngine.exe", fe->files.count("OkayEngine.exe") ? &fe->files.at("OkayEngine.exe") : nullptr).empty());
     }
 
+    // ---- the Versions page: the request banner and test builds in "Available to install" ----------------------------------------------
+    {
+        // The banner (owner, 2026-11-25): a test build v2.903.8.114 was running and a request for a v2.903.x project said "The editor needs
+        // v2.903.x ... Install v2.903.8 below." The running editor IS of that line, so it opens those projects: nothing to install.
+        CHECK(okayver::SameLine("2.903.8.114", "2.903.6") && okayver::LineOf("2.903.8.114") == "2.903");
+        RequestBanner b = DescribeRequest("2.903.8.114", "2.903.8.114", {}, true, true, "2.903.8");
+        CHECK(b.kind == RequestBanner::Running && b.Satisfied());
+        CHECK(!Has(b.text, "The editor needs") && !Has(b.text, "Install ") && Has(b.text, "v2.903.8.114 (test build)") && Has(b.text, "v2.903.x"));
+        b = DescribeRequest("2.903.6", "2.903.8.114", {}, true, true, "2.903.6");           // an older patch of the running line
+        CHECK(b.kind == RequestBanner::Running && !Has(b.text, "Install"));
+        b = DescribeRequest("2.903.6", "2.903.8", {}, false, false, "");                    // a release of the line, list not read yet: still nothing to wait for
+        CHECK(b.kind == RequestBanner::Running);
+        b = DescribeRequest("2.903.6", "2.904.0", {}, true, true, "2.903.8");               // another line: install it
+        CHECK(b.kind == RequestBanner::Install && !b.Satisfied() && Has(b.text, "needs v2.903.x") && Has(b.text, "Install v2.903.8 below"));
+        b = DescribeRequest("2.903.6", "2.904.0", {"2.903.7"}, true, true, "2.903.8");      // installed next to it
+        CHECK(b.kind == RequestBanner::Installed && b.Satisfied() && Has(b.text, "v2.903.7"));
+        b = DescribeRequest("2.903.6", "", {}, true, true, "2.903.8");                      // a development build is no line
+        CHECK(b.kind == RequestBanner::Install);
+        CHECK(DescribeRequest("2.903.6", "2.904.0", {}, false, false, "").kind == RequestBanner::Looking);
+        CHECK(DescribeRequest("2.903.6", "2.904.0", {}, true, false, "").kind == RequestBanner::Unreadable);
+        CHECK(DescribeRequest("2.903.6", "2.904.0", {}, true, true, "").kind == RequestBanner::NotListed);
+        CHECK(DescribeRequest("", "2.904.0", {}, true, true, "").kind == RequestBanner::None);
+
+        // Test builds next to releases.
+        using namespace okaytestlists;
+        const std::string e1 = std::string(64, 'a');
+        const Index rel = ParseIndex(List({ListEntry("2.903.8", "2026-11-24", true, Files(e1), ",\"channel\":\"latest\""),
+                                           ListEntry("2.903.7", "2026-11-23", true, Files(e1)),
+                                           ListEntry("2.903.5", "2026-11-21", false, Files(e1))}, "2.903.8"));
+        const Index dev = ParseIndex(List({ListEntry("2.903.8.112", "2026-11-25", true, Files(e1, false), ",\"branch\":\"claude/x\""),
+                                           ListEntry("2.903.8.114", "2026-11-25", true, Files(e1), ",\"branch\":\"claude/launcher-fix\",\"sha\":\"abcdef1234\""),
+                                           ListEntry("2.903.8.113", "2026-11-25", false, Files(e1))}), IndexKind::TestBuilds);
+        CHECK(rel.ok && rel.versions.size() == 3 && dev.ok && dev.versions.size() == 3);
+
+        std::vector<AvailableRow> rows = AvailableRows(rel, Index{}, "2.903.8", {});        // test builds off: releases only, as before
+        CHECK(rows.size() == 2 && rows[0].entry->version == "2.903.7" && rows[1].entry->version == "2.903.5" && !rows[0].testBuild);
+        CHECK(rows.size() == 2 && rows[0].downloadable && !rows[1].downloadable && Has(rows[1].detail, "can't be downloaded any more"));
+        CHECK(rows.size() == 2 && Has(rows[0].detail, "2026-11-23") && Has(rows[0].detail, "about ") && rows[0].checkable);
+
+        rows = AvailableRows(rel, dev, "2.903.7", {"2.903.5"});                             // on: releases, then test builds, running and installed left out
+        std::vector<std::string> order;
+        for (const AvailableRow& r : rows) order.push_back(r.entry->version + (r.testBuild ? "t" : ""));
+        CHECK((order == std::vector<std::string>{"2.903.8", "2.903.8.114t", "2.903.8.113t", "2.903.8.112t"}));
+        CHECK(rows.size() == 4 && rows[1].downloadable && rows[1].checkable && Has(rows[1].detail, "Test build of launcher-fix (abcdef1)") && Has(rows[1].detail, "2026-11-25"));
+        CHECK(rows.size() == 4 && !rows[2].downloadable && Has(rows[2].detail, "can't be downloaded any more"));   // pruned from the bucket
+        CHECK(rows.size() == 4 && !rows[3].checkable && Has(rows[3].detail, "no checksum"));
+        rows = AvailableRows(rel, dev, "2.903.8.114", {});                                  // the running test build is not offered again
+        for (const AvailableRow& r : rows) CHECK(r.entry->version != "2.903.8.114");
+
+        // Installing one: from <bucket>/dev/, the same checksum rules as a release.
+        const std::string bucket = "https://example.invalid/storage/v1/object/public/releases/";
+        InstallPlan pl = PlanInstall(rel, dev, "2.903.8.114", bucket, fs::path(), false);
+        CHECK(pl.ok && pl.version == "2.903.8.114" && pl.files.size() == 2);
+        CHECK(pl.ok && pl.files[0].urls.size() == 1 && pl.files[0].urls[0] == bucket + "dev/v2.903.8.114/OkayEngine.exe" && pl.files[0].sha256 == e1 && pl.files[0].verified);
+        pl = PlanInstall(rel, dev, "2.903.8.113", bucket, fs::path(), false);              // not in the bucket any more
+        CHECK(!pl.ok && Has(pl.error, "can't be downloaded any more"));
+        pl = PlanInstall(rel, dev, "2.903.8.112", bucket, fs::path(), false);              // no checksum: REQUIRED
+        CHECK(!pl.ok && Has(pl.error, "no checksum"));
+        pl = PlanInstall(rel, Index{}, "2.903.8.114", bucket, fs::path(), false);          // test builds off: never planned
+        CHECK(!pl.ok && Has(pl.error, "test build"));
+        pl = PlanInstall(rel, dev, "2.903.7", bucket, fs::path(), false);                  // a release still comes from the releases list
+        CHECK(pl.ok && pl.files[0].urls[0] == bucket + "v2.903.7/OkayEngine.exe");
+        CHECK(!PlanInstall(dev, dev, "2.903.7", bucket, fs::path(), false).ok);           // the test builds' list can never plan a release
+
+        // The whole store with test builds, on a temp launcher folder (owner, 2026-11-26: "glitched where you manage what you have installed and
+        // uninstall"): install one from dev/, it is listed with its size and "installed"; keeping the running test build on an update; pruning
+        // removes only kept copies; Remove takes exactly that folder, refuses the running one and one in use, and the list follows.
+        {
+            TempDir tt;
+            const fs::path launcher = MakeLauncher(tt.path, "2.903.8.115");
+            Server srv;
+            for (const std::string v : {"2.903.8.114", "2.903.8.113"})
+                for (const char* f : {"OkayEngine.exe", "OkaySpacePlayer.exe"}) srv.files[kBucket + std::string("dev/v") + v + "/" + f] = Body(v, f);
+            const Index devList = ParseIndex(IndexJson({EntryJson("2.903.8.115", "", true), EntryJson("2.903.8.114", "", true), EntryJson("2.903.8.113", "", true)}, "", ""), IndexKind::TestBuilds);
+            const Index noReleases = ParseIndex(IndexJson({EntryJson("2.903.8", "latest", true)}, "2.903.8", ""));
+            CHECK(devList.ok && devList.versions.size() == 3 && noReleases.ok);
+            const InstallPlan tp = PlanInstall(noReleases, devList, "2.903.8.114", kBucket, launcher / "Tools" / "SDL2.dll", true);
+            CHECK(tp.ok && tp.files.size() == 3 && tp.files[0].urls.size() == 1 && tp.files[0].urls[0] == kBucket + std::string("dev/v2.903.8.114/OkayEngine.exe"));
+            Result ir = Install(launcher, tp, {}, MakeIO(srv));
+            CHECK(ir.outcome == Outcome::Installed && Complete(launcher, "2.903.8.114") && NoScratch(launcher) && NoPartFiles(launcher));
+            std::vector<Installed> li = ListInstalled(launcher);
+            CHECK(li.size() == 1 && li[0].version == "2.903.8.114" && li[0].source == "installed" && li[0].bytes > 0 && DiskUsage(launcher) >= li[0].bytes);
+            // A failed test-build install (the player is not on the server) leaves no folder and nothing listed.
+            srv.files.erase(kBucket + std::string("dev/v2.903.8.113/OkaySpacePlayer.exe"));
+            ir = Install(launcher, PlanInstall(noReleases, devList, "2.903.8.113", kBucket, launcher / "Tools" / "SDL2.dll", true), {}, MakeIO(srv));
+            CHECK(ir.outcome == Outcome::Failed && !fs::exists(okayver::VersionsDir(launcher) / "2.903.8.113") && NoScratch(launcher) && ListInstalled(launcher).size() == 1);
+            // The update from 115 keeps 115 (a test build has a version to keep), and pruning with "keep 1" never takes what the person installed.
+            const Result kr = KeepCurrent(launcher, "2.903.8.115", FindCurrentInstall(launcher), 1, true);
+            CHECK(kr.outcome == Outcome::Installed && okayver::IsInstalled(launcher, "2.903.8.115"));
+            li = ListInstalled(launcher);
+            CHECK(li.size() == 2 && li[0].version == "2.903.8.115" && li[0].source == "kept" && li[1].source == "installed");
+            CHECK(PlanPrune(li, 0, "", {}) == std::vector<std::string>{"2.903.8.115"});            // keep 0: only the kept copy is a candidate
+            CHECK(PlanPrune(li, 1, "", {}).empty());
+            // Remove: refused for the running version and one in use; otherwise exactly that folder goes and the list follows.
+            RemoveGuards g;
+            g.running = "2.903.8.115";
+            CHECK(Remove(launcher, "2.903.8.115", g).outcome == Outcome::Refused && okayver::IsInstalled(launcher, "2.903.8.115"));
+            g.inUse = [](const std::string& v) { return v == "2.903.8.114"; };
+            CHECK(Remove(launcher, "2.903.8.114", g).outcome == Outcome::Refused && okayver::IsInstalled(launcher, "2.903.8.114"));
+            g.inUse = nullptr;
+            const auto toolsSnap = Snapshot(launcher / "Tools");
+            const Result rr = Remove(launcher, "2.903.8.114", g);
+            CHECK(rr.outcome == Outcome::Removed && !fs::exists(okayver::VersionsDir(launcher) / "2.903.8.114") && NoScratch(launcher));
+            CHECK(Snapshot(launcher / "Tools") == toolsSnap && okayver::IsInstalled(launcher, "2.903.8.115") && ListInstalled(launcher).size() == 1);
+            // "Open with" that version: the kept editor's path and the arguments.
+            CHECK(okayver::InstalledEditorPath(launcher, "2.903.8.115") == okayver::VersionsDir(launcher) / "2.903.8.115" / "Tools" / okayver::EditorExeName());
+            const auto choices = OpenWithChoices("2.903.8.114", okayver::InstalledVersions(launcher), "2.903.8.116");
+            CHECK(choices.size() == 1 && choices[0].version == "2.903.8.115" && choices[0].sameLine);
+        }
+
+        // Only the newest 3 releases and the newest 3 test builds are offered and installed (owner, 2026-11-26); installed ones stay installed.
+        {
+            std::vector<std::string> re, te;
+            for (int i = 1; i <= 5; ++i) re.push_back(ListEntry("2.90" + std::to_string(i) + ".0", "2026-11-2" + std::to_string(i), true, Files(e1)));
+            for (int i = 1; i <= 5; ++i) te.push_back(ListEntry("2.905.0." + std::to_string(i), "2026-11-26", true, Files(e1)));
+            const Index r5 = ParseIndex(List(re, "2.905.0")), t5 = ParseIndex(List(te), IndexKind::TestBuilds);
+            CHECK(r5.ok && r5.versions.size() == 5 && t5.ok && t5.versions.size() == 5);
+            CHECK(InstallableWindow(r5, false).size() == 3 && InstallableWindow(t5, true).size() == (std::size_t)okay::testbuild::kKept && okay::testbuild::kKept == 3);
+            std::vector<std::string> got;
+            for (const AvailableRow& r : AvailableRows(r5, t5, "", {})) got.push_back(r.entry->version);
+            CHECK((got == std::vector<std::string>{"2.905.0", "2.904.0", "2.903.0", "2.905.0.5", "2.905.0.4", "2.905.0.3"}));
+            got.clear();                                                                       // running the newest and having one installed: fewer rows, never older ones
+            for (const AvailableRow& r : AvailableRows(r5, t5, "2.905.0.5", {"2.904.0"})) got.push_back(r.entry->version);
+            CHECK((got == std::vector<std::string>{"2.905.0", "2.903.0", "2.905.0.4", "2.905.0.3"}));
+            got.clear();
+            for (const AvailableRow& r : AvailableRows(r5, Index{}, "", {})) got.push_back(r.entry->version);   // test builds off: the 3 releases only
+            CHECK((got == std::vector<std::string>{"2.905.0", "2.904.0", "2.903.0"}));
+            CHECK(PlanInstall(r5, t5, "2.903.0", bucket, fs::path(), false).ok);
+            InstallPlan old = PlanInstall(r5, t5, "2.902.0", bucket, fs::path(), false);        // the 4th newest release
+            CHECK(!old.ok && Has(old.error, "newest 3 releases"));
+            old = PlanInstall(r5, t5, "2.905.0.2", bucket, fs::path(), false);                 // the 4th newest test build
+            CHECK(!old.ok && Has(old.error, "newest 3 test builds"));
+            Index lts5 = r5;                                                                    // the LTS head is installed by the channel card whatever its age
+            lts5.lts = "2.901.0";
+            CHECK(PlanInstall(lts5, t5, "2.901.0", bucket, fs::path(), false).ok);
+            // A request for an old line: it is not offered, and the banner says so instead of "Install ... below".
+            CHECK(Has(DescribeRequest("2.901.0", "2.905.0", {}, true, true, "").text, "newest 3 releases"));
+        }
+
+        // The automatic test-build update follows main only (owner, 2026-11-26: "fix that so updates are installed in order or together"). Branch build 127
+        // (claude/okaycc-29) finished after main build 126 and replaced it; it must stay installable by hand, but never be the automatic update.
+        {
+            const std::string m = ",\"branch\":\"main\"", b = ",\"branch\":\"claude/okaycc-29\"";
+            const Index d = ParseIndex(List({ListEntry("2.903.8.127", "2026-11-26", true, Files(e1), b),
+                                             ListEntry("2.903.8.126", "2026-11-26", true, Files(e1), m)}), IndexKind::TestBuilds);
+            CHECK(d.ok && d.versions.size() == 2);
+            CHECK(TestBuildHead(d, "2.903.8.125") == "2.903.8.126");       // on 125: the newest main build, not the newer branch build
+            CHECK(TestBuildHead(d, "2.903.8") == "2.903.8.126");           // on the release: the same
+            CHECK(TestBuildHead(d, "") == "2.903.8.126");
+            CHECK(TestBuildHead(d, "2.903.8.126").empty());                // already on it
+            CHECK(TestBuildHead(d, "2.903.8.127").empty());                // on the branch build: nothing until a newer main build exists (never lower)
+            std::vector<std::string> got;                                  // the branch build stays listed and installable by hand
+            for (const Entry* e : InstallableWindow(d, true)) got.push_back(e->version);
+            CHECK((got == std::vector<std::string>{"2.903.8.127", "2.903.8.126"}));
+            CHECK(PlanInstall(Index{}, d, "2.903.8.127", bucket, fs::path(), false).ok);
+            const Index d2 = ParseIndex(List({ListEntry("2.903.8.128", "2026-11-26", true, Files(e1), m), ListEntry("2.903.8.127", "2026-11-26", true, Files(e1), b),
+                                              ListEntry("2.903.8.126", "2026-11-26", true, Files(e1), m)}), IndexKind::TestBuilds);
+            CHECK(TestBuildHead(d2, "2.903.8.127") == "2.903.8.128" && TestBuildHead(d2, "2.903.8.125") == "2.903.8.128");
+            // Branch builds only: no automatic update at all (never a fall back to a branch build).
+            const Index br = ParseIndex(List({ListEntry("2.903.8.127", "2026-11-26", true, Files(e1), b), ListEntry("2.903.8.120", "2026-11-26", true, Files(e1))}),
+                                        IndexKind::TestBuilds);
+            CHECK(br.ok && br.versions.size() == 2 && TestBuildHead(br, "2.903.8.100").empty());
+            // Only an installable main build counts: pruned (not in the bucket) or missing a checksum is skipped, the next main build is offered.
+            const Index gone = ParseIndex(List({ListEntry("2.903.8.130", "2026-11-26", false, Files(e1), m), ListEntry("2.903.8.129", "2026-11-26", true, Files(e1, false), m),
+                                                ListEntry("2.903.8.128", "2026-11-26", true, Files(e1), m)}), IndexKind::TestBuilds);
+            CHECK(TestBuildHead(gone, "2.903.8.127") == "2.903.8.128" && TestBuildHead(gone, "2.903.8.128").empty());
+            CHECK(TestBuildHead(Index{}, "").empty());
+            // "main" exactly: a branch called main-fix or claude/main is a branch build.
+            const Index lookalike = ParseIndex(List({ListEntry("2.903.8.131", "2026-11-26", true, Files(e1), ",\"branch\":\"main-fix\""),
+                                                     ListEntry("2.903.8.130", "2026-11-26", true, Files(e1), ",\"branch\":\"claude/main\"")}), IndexKind::TestBuilds);
+            CHECK(TestBuildHead(lookalike, "").empty());
+        }
+    }
+
+    // ---- which version a program really is (owner, 2026-11-25: "the launcher is on 115 but the editor is on 114") ------------------------
+    {
+        // A version resource's String block as cmake/okay_version.rc.in makes it: wLength, wValueLength, wType = 1, "ProductVersion" + 0 in UTF-16LE,
+        // padding to 4 bytes, the value + 0 in UTF-16LE.
+        auto u16 = [](const std::string& t) { std::string o; for (char c : t) { o += c; o += '\0'; } return o; };
+        auto block = [&](const std::string& value, unsigned type = 1) {
+            std::string key = u16("ProductVersion") + std::string(2, '\0');
+            std::string val = u16(value) + std::string(2, '\0');
+            std::string b(6, '\0');
+            b += key;
+            while (b.size() % 4) b += '\0';
+            b += val;
+            while (b.size() % 4) b += '\0';
+            const unsigned len = (unsigned)b.size(), vlen = (unsigned)value.size() + 1;
+            b[0] = (char)(len & 0xFF); b[1] = (char)(len >> 8); b[2] = (char)(vlen & 0xFF); b[3] = (char)(vlen >> 8); b[4] = (char)type;
+            return b;
+        };
+        const std::string junk(1000, 'x');
+        CHECK(okayupdater::ProgramVersionInBytes(junk + block("2.903.8.115") + junk) == "2.903.8.115");
+        CHECK(okayupdater::ProgramVersionInBytes(junk + block("2.903.8") + junk + block("2.903.8.115")) == "2.903.8.115");   // the last one wins
+        CHECK(okayupdater::ProgramVersionInBytes(junk).empty());
+        CHECK(okayupdater::ProgramVersionInBytes(junk + block("2.903.8.115", 0)).empty());     // not a text value
+        CHECK(okayupdater::ProgramVersionInBytes(junk + block("not a version")).empty());
+        CHECK(okayupdater::ProgramVersionInBytes(block("2.903.8.115").substr(0, 40)).empty());  // cut off before the value ends
+        TempDir td;
+        const fs::path exe = td.path / "OkayEngine.exe";
+        // The block straddles the first two 4 MiB pieces the file reader takes (they overlap by 512 bytes, the second starts at 4 MiB - 512).
+        std::string body((4u << 20) - 40, 'M');
+        body += block("2.903.8.114");
+        body += std::string(3u << 20, 'Z');
+        Put(exe, body);
+        CHECK(okayupdater::ProgramVersion(exe) == "2.903.8.114");
+        CHECK(okayupdater::ProgramVersion(td.path / "missing.exe").empty());
+        Put(exe, std::string(5000, 'L'));                                                      // a program without a version resource (a Linux build)
+        CHECK(okayupdater::ProgramVersion(exe).empty());
+
+        // The launcher says 115; the editor really is 114: it is found, said plainly, and what fixes it is named. Unknown never counts as wrong.
+        const auto mm = okayupdater::MismatchedPrograms("2.903.8.115", {{"OkayEngine.exe", "2.903.8.114"}, {"OkaySpacePlayer.exe", "2.903.8.115"}, {"OkaySpace.exe", ""}});
+        CHECK(mm.size() == 1 && mm[0].first == "OkayEngine.exe" && mm[0].second == "2.903.8.114");
+        CHECK(okayupdater::MismatchedPrograms("2.903.8.115", {{"OkayEngine.exe", ""}, {"OkaySpacePlayer.exe", "2.903.8.115"}}).empty());
+        CHECK(okayupdater::MismatchedPrograms("", {{"OkayEngine.exe", "2.903.8.114"}}).empty());          // a development build: nothing to compare
+        const std::string why = okayupdater::MismatchSentence("2.903.8.115", mm);
+        CHECK(Has(why, "v2.903.8.115 (test build)") && Has(why, "the editor is still v2.903.8.114 (test build)") && Has(why, "Repair"));
+        CHECK(okayupdater::MismatchSentence("2.903.8.115", {}).empty());
+    }
+
+    // ---- "Skip this version" and "a test build can be ahead of a release" (owner, 2026-11-26) ----------------------------------------------
+    RUN_SUITE("skip a version, and a release behind a test build");
+    {
+        // launcher.cfg: the skipped version goes round, normalized; a default launcher.cfg is unchanged; junk is not a version.
+        Settings s;
+        CHECK(s.skippedVersion.empty());
+        CHECK(ApplySettingLine(s, "skipped_version", "v2.904.0") && s.skippedVersion == "2.904.0");
+        CHECK(ApplySettingLine(s, "skipped_version", "junk") && s.skippedVersion.empty());
+        CHECK(ApplySettingLine(s, "skipped_version", "2.904.0.7") && s.skippedVersion == "2.904.0.7");   // a test build is skipped by its version too
+        std::ostringstream out;
+        WriteSettings(s, out);
+        CHECK(Has(out.str(), "skipped_version=2.904.0.7\n"));
+        CHECK(RoundTrip(s).skippedVersion == "2.904.0.7");
+        std::ostringstream dflt;
+        WriteSettings(Settings{}, dflt);
+        CHECK(!Has(dflt.str(), "skipped_version"));
+
+        // versions.json and dev/versions.json: "mainCount" (the build's place on main, git rev-list --count) and "mainSha"; old lists have neither.
+        using namespace okaytestlists;
+        const std::string e1 = std::string(64, 'a'), sha40 = std::string(40, 'c');
+        const Index rel = ParseIndex(List({ListEntry("2.904.0", "2026-11-26", true, Files(e1), ",\"mainCount\":1490,\"mainSha\":\"" + sha40 + "\""),
+                                           ListEntry("2.903.8", "2026-11-25", true, Files(e1)),
+                                           ListEntry("2.903.7", "2026-11-24", true, Files(e1), ",\"mainCount\":\"12\""),
+                                           ListEntry("2.903.6", "2026-11-23", true, Files(e1), ",\"mainCount\":-5")}, "2.904.0"));
+        CHECK(rel.ok && rel.versions.size() == 4);
+        CHECK(rel.Find("2.904.0") && rel.Find("2.904.0")->mainCount == 1490 && rel.Find("2.904.0")->mainSha == sha40);
+        CHECK(rel.Find("2.903.8") && rel.Find("2.903.8")->mainCount == 0 && rel.Find("2.903.8")->mainSha.empty());   // old entry: not known
+        CHECK(rel.Find("2.903.7") && rel.Find("2.903.7")->mainCount == 0);                                            // not a number: not known
+        CHECK(rel.Find("2.903.6") && rel.Find("2.903.6")->mainCount == 0);
+        const Index dev = ParseIndex(List({ListEntry("2.903.8.140", "2026-11-26", true, Files(e1), ",\"branch\":\"main\",\"mainCount\":1500"),
+                                           ListEntry("2.903.8.139", "2026-11-26", true, Files(e1), ",\"branch\":\"main\"")}), IndexKind::TestBuilds);
+        CHECK(dev.ok && dev.Find("2.903.8.140") && dev.Find("2.903.8.140")->mainCount == 1500 && dev.Find("2.903.8.139")->mainCount == 0);
+
+        // The decision: what the update check does with the version it found.
+        using okayupdater::Offer;
+        using okayupdater::OfferInputs;
+        auto decide = [](const std::string& local, const std::string& target, std::uint64_t lm, std::uint64_t tm, const std::string& skipped = "",
+                         const std::string& confirmed = "", bool goBack = false) {
+            OfferInputs i; i.local = local; i.target = target; i.localMainCount = lm; i.targetMainCount = tm; i.skipped = skipped; i.confirmed = confirmed; i.goBack = goBack;
+            return okayupdater::DecideOffer(i);
+        };
+        CHECK(decide("2.903.8", "2.904.0", 0, 0).kind == Offer::Install);                     // a release over a release: by number, as always
+        CHECK(decide("2.904.0", "2.904.0", 0, 0).kind == Offer::Nothing);
+        CHECK(decide("2.904.1", "2.904.0", 0, 0).kind == Offer::Nothing);
+        CHECK(decide("2.904.0", "", 0, 0).kind == Offer::Nothing);
+        // Skipped: never installed by itself, a NEWER one is offered as usual, and pressing Install on it installs it.
+        CHECK(decide("2.903.8", "2.904.0", 0, 0, "2.904.0").kind == Offer::Skipped);
+        CHECK(Has(decide("2.903.8", "2.904.0", 0, 0, "2.904.0").note, "v2.904.0 is available (skipped)"));
+        CHECK(decide("2.903.8", "2.904.1", 0, 0, "2.904.0").kind == Offer::Install);
+        CHECK(decide("2.903.8", "2.904.0", 0, 0, "2.904.0", "2.904.0").kind == Offer::Install);
+        CHECK(decide("2.904.0.5", "2.904.0.7", 0, 0, "2.904.0.7").kind == Offer::Skipped);     // a test build is skipped the same way
+        CHECK(decide("2.904.0.5", "2.904.0.8", 0, 0, "2.904.0.7").kind == Offer::Install);
+        // A test build that is AHEAD of the release (more of main in it): no offer, and the plain line instead.
+        const Offer behind = decide("2.903.8.140", "2.904.0", 1500, 1490);
+        CHECK(behind.kind == Offer::AlreadyHave);
+        CHECK(behind.note == "You already have everything in v2.904.0 (your test build is newer).");
+        CHECK(decide("2.903.8.140", "2.904.0", 1500, 1500).kind == Offer::AlreadyHave);       // the same commit: nothing new
+        CHECK(decide("2.903.8.140", "2.904.0", 1500, 1490, "", "2.904.0").kind == Offer::AlreadyHave);   // not even on a click (the Versions page installs it side by side)
+        // The release is ahead: offered and installed as usual.
+        CHECK(decide("2.903.8.140", "2.904.0", 1490, 1500).kind == Offer::Install);
+        // Either count unknown: today's rule (the number) but never installed by itself: the person is asked.
+        for (const auto& lt : {std::pair<std::uint64_t, std::uint64_t>{0, 1490}, {1500, 0}, {0, 0}}) {
+            const Offer o = decide("2.903.8.140", "2.904.0", lt.first, lt.second);
+            CHECK(o.kind == Offer::Ask);
+            CHECK(!o.note.empty());
+            CHECK(decide("2.903.8.140", "2.904.0", lt.first, lt.second, "", "2.904.0").kind == Offer::Install);   // they chose Install now
+            CHECK(decide("2.903.8.140", "2.904.0", lt.first, lt.second, "2.904.0").kind == Offer::Skipped);      // skipped wins over asking
+        }
+        CHECK(decide("2.903.8.140", "2.903.8.139", 1500, 1499).kind == Offer::Nothing);
+        // The deliberate way back from a test build is never held back (Settings > Go back to the stable version).
+        CHECK(decide("2.903.8.140", "2.904.0", 1500, 1490, "2.904.0", "", true).kind == Offer::Install);
+        CHECK(decide("2.904.0.3", "2.904.0", 1500, 1490, "", "", true).kind == Offer::Install);
+
+        // The Versions page: a release that is behind the running test build says so; the skipped version says so.
+        const std::vector<AvailableRow> rows = AvailableRows(rel, Index{}, "2.903.8.140", {}, 1500, "2.903.8");
+        auto rowOf = [&](const std::string& v) -> const AvailableRow* { for (const AvailableRow& r : rows) if (r.entry->version == v) return &r; return nullptr; };
+        CHECK(rowOf("2.904.0") && Has(rowOf("2.904.0")->detail, "older than your test build"));
+        CHECK(rowOf("2.903.8") && Has(rowOf("2.903.8")->detail, "skipped") && !Has(rowOf("2.903.8")->detail, "older than your test build"));   // count not known: no claim
+        const std::vector<AvailableRow> ahead = AvailableRows(rel, Index{}, "2.903.8.140", {}, 1480, "");
+        for (const AvailableRow& r : ahead) CHECK(!Has(r.detail, "older than your test build") && !Has(r.detail, "skipped"));
+        const std::vector<AvailableRow> onRelease = AvailableRows(rel, Index{}, "2.903.5", {}, 1500, "");   // a release is running: no test-build words
+        for (const AvailableRow& r : onRelease) CHECK(!Has(r.detail, "older than your test build"));
+    }
 
     TEST_MAIN_RESULT();
 }

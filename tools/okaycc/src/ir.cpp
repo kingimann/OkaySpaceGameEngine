@@ -338,10 +338,12 @@ void transfer(const Inst& in, std::vector<Cell>& st) {
         return;
     }
     if (in.op == Inst::Op::Mov && in.a.kind == Operand::Kind::Imm) {
-        defReg(st, in.dst, Cell{1, in.a.imm, -1});
+        defReg(st, in.dst, Cell{1, fitWidth(in.a.imm, in.extra, in.uns), -1});
         return;
     }
-    if (in.op == Inst::Op::Mov && in.a.kind == Operand::Kind::Reg) {
+    // A narrowing move (extra below 8: the low bytes, sign- or zero-extended) is not a copy: (unsigned
+    // char)c of a char parameter c kept c's sign bits, (int)v of a long v all of v.
+    if (in.op == Inst::Op::Mov && in.a.kind == Operand::Kind::Reg && in.extra >= 8) {
         Cell now{2, 0, in.a.reg};
         if (in.a.reg >= 0 && in.a.reg < static_cast<int>(st.size())) {
             const Cell& s = st[static_cast<std::size_t>(in.a.reg)];

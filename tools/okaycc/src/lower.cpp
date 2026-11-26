@@ -1288,6 +1288,25 @@ private:
     }
     // A brace initializer of a local array or struct; a nested brace initializes a nested
     // array or struct (ISO C 6.7.9).
+    // A place named without side effects (a, a.b, p->b, a[2], a.b[i]): reading its address twice is
+    // the same as once.
+    static bool plainPlace(const Expr& e) {
+        switch (e.kind) {
+        case Expr::Kind::Name: return true;
+        case Expr::Kind::Int: return true;
+        case Expr::Kind::Member: return e.kids.size() == 2 && e.kids[0] && plainPlace(*e.kids[0]);
+        case Expr::Kind::Index:
+            return e.kids.size() == 2 && e.kids[0] && e.kids[1] && plainPlace(*e.kids[0]) && plainPlace(*e.kids[1]);
+        case Expr::Kind::Unary: return e.text == "*" && e.kids.size() == 1 && e.kids[0] && plainPlace(*e.kids[0]);
+        default: return false;
+        }
+    }
+    // An element or member of class type initialized by a value of class type (not by a nested
+    // braced list): its bytes are copied ([dcl.init.aggr] p4, copy-initialization).
+    static bool aggregateValue(const Type* slot, const Expr& init) {
+        auto isAgg = [](const Type* t) { return t && (t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union); };
+        return isAgg(slot) && isAgg(init.checked.get());
+    }
     void initLocalBrace(Operand base, const Type* t, const Expr& init, int off) {
         if (!t) return;
         if (t->kind == Type::Kind::Array && t->inner) {
@@ -1297,6 +1316,12 @@ private:
                 int at = off + static_cast<int>(i) * es;
                 if (init.kids[i]->kind == Expr::Kind::Brace) {
                     initLocalBrace(base, t->inner.get(), *init.kids[i], at);
+                    continue;
+                }
+                if (aggregateValue(t->inner.get(), *init.kids[i])) {
+                    // S a[2] = {S{1}, make()}: the element's bytes, not the address of the value
+                    Val v = lowerExpr(*init.kids[i]);
+                    storeAggregate(addAddr(base, at), es, v, init.kids[i]->kind == Expr::Kind::Call);
                     continue;
                 }
                 Val v = toScalar(lowerExpr(*init.kids[i]), t->inner.get());
@@ -1311,6 +1336,12 @@ private:
                 const Type* ft = fieldTypeOf(t, fields[i].name);
                 if (init.kids[i]->kind == Expr::Kind::Brace) {
                     initLocalBrace(base, ft, *init.kids[i], off + fields[i].offset);
+                    continue;
+                }
+                if (aggregateValue(ft, *init.kids[i])) {
+                    Val v = lowerExpr(*init.kids[i]);
+                    storeAggregate(addAddr(base, off + fields[i].offset), sizeOf(ft), v,
+                                   init.kids[i]->kind == Expr::Kind::Call);
                     continue;
                 }
                 Val v = toScalar(lowerExpr(*init.kids[i]), ft);
@@ -1347,6 +1378,17 @@ private:
         in.a = Operand::number(disp);
         emit(in);
         return Operand::vreg(dst);
+    }
+    // A class that is not trivial for the purposes of calls (it has a destructor, or a copy or
+    // move constructor that runs code) is passed by an invisible reference (Itanium C++ ABI 3.1.2.3):
+    // the caller makes the parameter object, passes its address and destroys it after the call; the
+    // callee works on that object in place. A copy of its bytes would leave two owners of the same
+    // resources (the callee's changes lost, a buffer freed twice).
+    static bool byAddress(const Type* t) {
+        if (!t || t->kind != Type::Kind::Struct || t->tag.empty()) return false;
+        const Type* c = canonOf(t);
+        if (!c) return false;
+        return c->needDtor || hasCopyCtor(c);
     }
     static int structPieces(const Type* t, int& sz, bool& memClass) {
         sz = t ? sizeOf(t) : 8;
@@ -2068,6 +2110,17 @@ private:
         if (lhs.kind != Expr::Kind::Name && lhs.checked && lhs.checked->kind == Type::Kind::Struct &&
             e.kids[1]->kind != Expr::Kind::Call) {
             // struct = struct through a pointer, a field or an index: copy the bytes.
+            Expr& r = *e.kids[1];
+            if (r.kind == Expr::Kind::Assign && r.kids.size() == 2 && r.kids[0] && plainPlace(*r.kids[0])) {
+                // p.color = p.color0 = c ([expr.ass] p1: the inner assignment is an lvalue, its left
+                // operand): the inner one first, then copy from its left operand.
+                lowerExpr(r);
+                Addr from = lowerAddr(*r.kids[0]);
+                Addr to = lowerAddr(lhs);
+                if (!from.ok || !to.ok) return {};
+                copyMem(to.op, from.op, sizeOf(lhs.checked.get()));
+                return Val{to.op, 0, 0};
+            }
             Addr src = lowerAddr(*e.kids[1]);
             Addr dst = lowerAddr(lhs);
             if (!src.ok || !dst.ok) return {};
@@ -2147,7 +2200,13 @@ private:
                 }
                 return Val{val, 0, 0};
             }
-            emitMov(s->reg, rhs.op, s->width, s->zext);
+            // (an int read from an int variable is a plain copy: the value already has the width;
+            // the optimizer takes only a full-width move for a copy. The result of x + y is not:
+            // it may need wrapping.)
+            const Type* rt = e.kids[1]->checked.get();
+            const bool sameInt = s->width == 4 && !s->zext && e.kids[1]->kind == Expr::Kind::Name && rt &&
+                                 rt->kind == Type::Kind::Int && !rt->unsign;
+            emitMov(s->reg, rhs.op, sameInt ? 8 : s->width, s->zext);
             return Val{Operand::vreg(s->reg), s->step, s->inner};
         }
         Addr a = lowerAddr(lhs);
@@ -2401,6 +2460,26 @@ private:
             // A struct of up to 16 bytes that is a call's result arrives in registers (rax, or
             // rax:rdx), not as an address: pass those eightbytes on as they are.
             const bool inRegs = !memClass && sz <= 16 && e.kids[i]->kind == Expr::Kind::Call;
+            if (!varExtra && byAddress(declared ? declared : t)) {
+                Operand at = v.op;
+                if (inRegs && (v.pair || nreg == 1)) {  // a call's result: into memory first
+                    int slot = fresh();
+                    Inst loc;
+                    loc.op = Inst::Op::Local;
+                    loc.dst = slot;
+                    loc.a = Operand::number(sz < 1 ? 1 : sz);
+                    emit(loc);
+                    storeBits(Operand::vreg(slot), v.op, sz >= 8 ? 8 : sz);
+                    if (v.pair) storeBits(addAddr(Operand::vreg(slot), 8), v.hi, sz - 8);
+                    at = Operand::vreg(slot);
+                }
+                if (reg >= 6) stack.push_back(at);
+                else {
+                    regs.push_back(at);
+                    ++reg;
+                }
+                continue;
+            }
             if (inRegs && (v.pair || nreg == 1)) {
                 Operand lo = v.op;
                 Operand hi = v.pair ? v.hi : Operand::number(0);
@@ -2622,9 +2701,12 @@ private:
         if (!d.type) return;
         inferBound(d);  // char a[] = "text", int a[] = {1, 2}: the length comes from the initializer
         if (d.isStatic) {
-            std::string gname = ".Ls" + std::to_string(strN_++) + "_" + d.name;
+            // (asmName: the name the parser gave it for a local class's member functions, which
+            // use it, [class.local] p1)
+            std::string gname = d.asmName.empty() ? ".Ls" + std::to_string(strN_++) + "_" + d.name : d.asmName;
             Global g;
             g.name = gname;
+            if (!d.asmName.empty()) g.localSym = true;
             int sz = sizeOf(d.type.get());
             if (sz < 1) sz = 1;
             g.size = sz;
@@ -2942,6 +3024,7 @@ private:
             int size = 8;
             bool isStruct = false;
             bool isFp = false;
+            bool byAddr = false;  // its address (byAddress)
             int xmmAt = -1;
         };
         std::vector<PPlan> plans;
@@ -2972,12 +3055,17 @@ private:
                 }
                 plan.nreg = structPieces(p.type.get(), plan.size, memClass);
                 plan.isStruct = p.type && (p.type->kind == Type::Kind::Struct || p.type->kind == Type::Kind::Union);
+                if (plan.isStruct && byAddress(p.type.get())) {  // its address, in one eightbyte
+                    plan.byAddr = true;
+                    plan.nreg = 1;
+                    memClass = false;
+                }
                 if (memClass || reg + plan.nreg > 6) {
                     plan.memory = true;
                     plan.nreg = 0;
                     stack = alignUp(stack, 8);
                     plan.stackOff = stack;
-                    stack += (plan.size + 7) & ~7;
+                    stack += plan.byAddr ? 8 : (plan.size + 7) & ~7;
                 } else {
                     plan.regAt = reg;
                     reg += plan.nreg;
@@ -3005,7 +3093,13 @@ private:
                 const PPlan& plan = plans[i];
                 Sym s;
                 if (p.type) describe(s, p.type.get());
-                if (plan.isStruct) {
+                if (plan.isStruct && plan.byAddr) {
+                    int addr = fresh();
+                    if (plan.memory) emitMov(addr, loadBits(frameAddr(16 + plan.stackOff), 8), 8, true);
+                    else emitMov(addr, Operand::vreg(plan.regAt), 8, true);
+                    s.reg = addr;
+                    s.agg = true;
+                } else if (plan.isStruct) {
                     int addr = fresh();
                     if (plan.memory) {
                         Inst lea;

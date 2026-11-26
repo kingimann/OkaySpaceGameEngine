@@ -7,8 +7,12 @@
 #include <initializer_list>
 #include <new>
 #include <utility>
+#include <__reverse_iterator>
 namespace std {
-template <typename T>
+// The allocator argument (vector<T, A>, [vector.overview]) is accepted and not used: the elements
+// always live in malloc'd memory (okay-cc leaves out a template argument for a parameter named
+// __okay_drop..).
+template <typename T, typename __okay_drop_alloc = void>
 class vector {
 public:
     // the member types ([vector.overview]); the iterators are pointers
@@ -25,6 +29,16 @@ public:
         for (const T *p = first; p != last; ++p) {
             new (data_ + size_) T(*p);
             ++size_;
+        }
+    }
+    // From any input iterators ([sequence.reqmts] p14): a reverse_iterator, a set's iterator; two
+    // integers are a count and a value.
+    template <class It>
+    vector(It first, It last) : data_(nullptr), size_(0), cap_(0) {
+        if constexpr (__okay_is_integral(It)) {
+            assign((unsigned long)first, (T)last);
+        } else {
+            for (; first != last; ++first) push_back(*first);
         }
     }
     vector(unsigned long n, const T &v) : data_(nullptr), size_(0), cap_(0) {
@@ -107,6 +121,10 @@ public:
     T *data() { return data_; }
     T *begin() { return data_; }
     T *end() { return data_ + size_; }
+    reverse_iterator<T *> rbegin() const { return reverse_iterator<T *>(data_ + size_); }
+    reverse_iterator<T *> rend() const { return reverse_iterator<T *>(data_); }
+    reverse_iterator<T *> crbegin() const { return rbegin(); }
+    reverse_iterator<T *> crend() const { return rend(); }
     T &operator[](unsigned long i) { return data_[i]; }
     T &at(unsigned long i) { return data_[i]; }
     T &front() { return data_[0]; }

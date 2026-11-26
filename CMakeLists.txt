@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.903.9
+    VERSION 2.904.1
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for any C sources in the build
 
@@ -10,6 +10,14 @@ project(OkaySpaceGameEngine
 # flags and the release build's compiler cache keeps hitting.
 include(${CMAKE_SOURCE_DIR}/cmake/OkayWinVersion.cmake)   # okay_win_version(): Windows exe name / version / manifest
 set(OKAY_VERSION_DEFINE OKAY_ENGINE_VERSION="${PROJECT_VERSION}")
+# The build's place on main (scripts/main_position.sh: git rev-list --count of the main commit it was built from), so the launcher can tell
+# whether a release holds anything a running test build does not (launcher/UpdaterCore.hpp DecideOffer). release.yml and dev-build.yml set
+# the OKAY_MAIN_COUNT environment variable; anything else (a local build) is 0 = not known. Only the launcher gets it.
+set(OKAY_MAIN_COUNT "$ENV{OKAY_MAIN_COUNT}" CACHE STRING "This build's place on main (git rev-list --count); 0 = not known")
+if(NOT OKAY_MAIN_COUNT MATCHES "^[0-9]+$")
+    set(OKAY_MAIN_COUNT 0 CACHE STRING "This build's place on main (git rev-list --count); 0 = not known" FORCE)
+endif()
+set(OKAY_MAIN_DEFINE OKAY_MAIN_COUNT=${OKAY_MAIN_COUNT}ULL)
 
 # ---- Global settings --------------------------------------------------
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -310,6 +318,13 @@ if(OKAY_BUILD_EDITOR)
     if(OKAY_UPDATE_TRUSTED_KEYS AND TARGET okay-editor)
         target_compile_definitions(okay-editor PRIVATE OKAY_UPDATE_TRUSTED_KEYS="${OKAY_UPDATE_TRUSTED_KEYS}")
     endif()
+endif()
+
+# ---- Browser program --------------------------------------------------
+# Our own browser (system "Browser", docs/platform/browser_plan.md): pages with our page engine and OkaySpace web games
+# run natively by the player. On whenever OkayUI is built (it returns quietly otherwise).
+if(NOT EMSCRIPTEN)
+    add_subdirectory(browser)
 endif()
 
 # ---- Standalone game player ------------------------------------------

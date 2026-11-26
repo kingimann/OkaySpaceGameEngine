@@ -2,6 +2,7 @@
 // The self-updater and runtime fetcher (Updater.cpp, namespace updater): check the releases bucket for a newer editor,
 // download it (checked against the published checksum list) and hand the swap to a detached helper; Build Game fetches
 // the player runtime with the same download helpers. Moved out of main.cpp unchanged (docs/editor/main_split_plan.md, move 2).
+#include <atomic>
 #include <filesystem>
 #include <string>
 
@@ -17,8 +18,9 @@ struct UpdateInfo {
     std::string ref = "main";   // commit the check resolved to (install uses the same)
 };
 
-// Set true after a successful self-update relaunch: the editor's main loop then quits.
-extern bool pendingQuit;
+// Set true after a successful self-update relaunch: the editor's main loop then quits. Atomic: InstallUpdate runs on its own
+// thread (editor/WorkerCall.hpp) while the main loop reads this every frame.
+extern std::atomic<bool> pendingQuit;
 // Absolute path of the running executable.
 std::string SelfPath();
 // Download a URL to a file through the HTTP seam (WinHTTP / our own client); no-cache, cache-busting query.

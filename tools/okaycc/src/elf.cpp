@@ -1,4 +1,5 @@
 #include "elf.hpp"
+#include "link.hpp"
 
 #include "ir.hpp"
 
@@ -664,13 +665,17 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
             movReg(im, kArg[i], Rax);
         }
         if (in.func.empty()) {
+            // a call through a pointer: the float and double arguments in xmm0-7 as well (System V
+            // AMD64 ABI 3.2.3), al their count for a variadic one (codegen.cpp does the same)
+            for (std::size_t i = 0; i < in.xmm.size() && i < 8; ++i)
+                loadXmm(im, in.xmm[i], static_cast<int>(i), i < in.xmmW.size() ? in.xmmW[i] : 8);
             loadRaxCall(im, in.a, spilled);
             if (in.va) {
-                u8(im, 0x49);
+                u8(im, 0x49);  // mov r11, rax
                 u8(im, 0x89);
                 u8(im, 0xC3);
-                u8(im, 0x31);
-                u8(im, 0xC0);
+                u8(im, 0xB8);  // mov eax, n
+                u32(im, static_cast<std::uint32_t>(in.xmm.size() < 8 ? in.xmm.size() : 8));
                 u8(im, 0x41);
                 u8(im, 0xFF);
                 u8(im, 0xD3);
@@ -1299,12 +1304,15 @@ std::vector<unsigned char> compileToElf(const std::string& source, Diagnostics& 
     }
     std::size_t entry = im.bytes.size();
     im.labels["_start"] = entry;
+    // main(argc, argv, envp), as linkObjects's start code passes them (link.hpp).
+    for (unsigned char b : kStartArgs) u8(im, b);
     // Global objects: __okay_init_* before main, __okay_fini_* after it.
     std::vector<std::string> finis;
     for (const auto& kv : im.labels) {
         if (kv.first.compare(0, 12, "__okay_init_") == 0) callRel(im, kv.first);
         if (kv.first.compare(0, 12, "__okay_fini_") == 0) finis.insert(finis.begin(), kv.first);
     }
+    for (unsigned char b : kMainArgs) u8(im, b);
     callRel(im, "main");
     u8(im, 0x50);  // push rax twice: keeps the stack aligned
     u8(im, 0x50);

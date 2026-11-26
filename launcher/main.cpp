@@ -34,6 +34,7 @@
 #include "ProjectList.hpp"    // Create page: the project list, "Remove from list", prefs lines
 #include "LibraryScan.hpp"    // Play / Community: the library scan, each scene once
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
+#include "BrowserPage.hpp"   // the Browser page (sidebar > Browser): the browser program's browser inside the launcher
 #include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: WinHTTP / our own client (downloads, size probes)
@@ -73,13 +74,10 @@
 #ifdef OKAY_HAVE_OKAYUI
 #include "OkayUIFrame.hpp"   // OkayUI end-of-frame on an SDL renderer or an own-backend painter
 #include "OkayUIHost.hpp"
-#include "OkayUIHostImGui.hpp"   // is an ImGui popup in the way of the hosted rectangle?
+#include "OkayUIImGuiEmbed.hpp"  // HostPanelArea: the OkayUI pages drawn in Dear ImGui's draw order (popups and tooltips over them)
 #include "okay/UI/OkayUI.hpp"
 #include "OkayUIScreens.hpp"
 #include "OkayUIPanels.hpp"
-#else
-// Without OkayUI there is never an OkayUI frame (okayFrame stays false), but the page conditions below still name the host helper.
-namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) { return false; } }
 #endif
 
 #include <algorithm>
@@ -173,6 +171,9 @@ namespace fs = std::filesystem;
 
 #ifndef OKAY_ENGINE_VERSION
 #  define OKAY_ENGINE_VERSION "dev"
+#endif
+#ifndef OKAY_MAIN_COUNT
+#  define OKAY_MAIN_COUNT 0ULL   // this build's place on main (CMakeLists.txt OKAY_MAIN_COUNT, scripts/main_position.sh); 0 = not known (a local build)
 #endif
 
 // Optional account server compiled into the build (set at configure time with
@@ -708,15 +709,15 @@ bool DownloadProgress(const std::string& url, const fs::path& out) {
     auto d = std::make_shared<DlMonitor>(); d->url = url; d->out = out;
     okay::thr::AtomicSet(&d->done, 0); okay::thr::AtomicSet(&d->ok, 0); okay::thr::AtomicSet(&d->bytes, 0); okay::thr::AtomicSet(&d->cancel, 0);
     okay::thr::Thread* th = okay::thr::CreateThread(DlMonitorThread, "okay-dlp", new std::shared_ptr<DlMonitor>(d));
-    const Uint32 t0 = okay::platform::TicksMs32();
-    Uint32 lastGrow = t0; long long lastSize = -1;
+    const std::uint32_t t0 = okay::platform::TicksMs32();
+    std::uint32_t lastGrow = t0; long long lastSize = -1;
     while (okay::thr::AtomicGet(&d->done) == 0) {
         std::error_code ec; auto sz = fs::file_size(out, ec);   // (the PowerShell / wget last resort writes the file directly)
         const long long cur = std::max<long long>(ec ? 0 : (long long)sz, (long long)okay::thr::AtomicGet(&d->bytes));
         okay::thr::AtomicSet(&g_upBytesNow, (int)cur);
-        const Uint32 now = okay::platform::TicksMs32();
+        const std::uint32_t now = okay::platform::TicksMs32();
         if (cur != lastSize) { lastSize = cur; lastGrow = now; }
-        if (okay::startupupdate::DownloadShouldAbort((long long)(Uint32)(now - lastGrow), (long long)(Uint32)(now - t0), total)) {
+        if (okay::startupupdate::DownloadShouldAbort((long long)(std::uint32_t)(now - lastGrow), (long long)(std::uint32_t)(now - t0), total)) {
             okay::thr::AtomicSet(&g_dlStalled, 1);
             okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "download stalled, giving up: " + url);
             // Cancel the transfer so it can never rename a late file over `out` (Finish checks the cancel right before the
@@ -872,11 +873,12 @@ struct UpdateTarget {
     bool test = false;               // the target is a test build (from the dev area of the bucket)
     bool goBack = false;             // the target is the newest normal release, installed over a newer test build on purpose
     okayversions::Index devIndex;    // when `test`: the checksum list of the test builds (the normal list does not have them)
+    okayversions::Index index;       // the releases' list, when it was read to compare places on main ("ok" false = not read)
     std::string title;               // when `test`: "Test build of walk-vs-run (abc1234)"
 };
 // Test builds (docs/release/release_channels.md "Test builds"): reached only when the person switched "Get test builds" on or asked to go back. With both off
 // ResolveTarget never calls this, so nothing under dev/ is fetched and the answer is exactly what it always was. The newer of "the newest normal
-// release" and "the newest test build" wins (okay::testbuild::ChooseTarget); a test build is downloaded from <bucket>/dev/v<version>/ and its checksums
+// release" and "the newest main test build" wins (okay::testbuild::ChooseTarget, okayversions::TestBuildHead: main only, never lower); a test build is downloaded from <bucket>/dev/v<version>/ and its checksums
 // come from the signed dev/versions.json, with the same rules as any update.
 static void ApplyTestBuilds(const okayversions::Settings& st, bool goBack, UpdateTarget& t, std::string& base, bool& fromSupabase) {
     const std::string stableHead = t.version;             // the newest normal release, as the normal path found it
@@ -886,10 +888,20 @@ static void ApplyTestBuilds(const okayversions::Settings& st, bool goBack, Updat
         okayversions::Sources src;
         src.bucketBase = sb;
         t.devIndex = okayversions::LoadDevIndex(src, FetchTextFile);
-        if (t.devIndex.ok) testHead = t.devIndex.latest;
+        if (t.devIndex.ok) testHead = okayversions::TestBuildHead(t.devIndex, LocalVersion());   // main builds only, never a lower number
+    }
+    // Both heads' places on main, when there are two to choose from: a main test build numbered on an older release can hold more of main than
+    // the newer-numbered release (owner, 2026-11-26). Not known (an old list) = the number decides, as before.
+    std::uint64_t stableMain = 0, testMain = 0;
+    if (!testHead.empty() && !stableHead.empty()) {
+        if (const okayversions::Entry* e = t.devIndex.Find(testHead)) testMain = e->mainCount;
+        if (testMain) {
+            t.index = okayversions::LoadIndex(VersionSources(), FetchTextFile);
+            if (const okayversions::Entry* e = t.index.ok ? t.index.Find(stableHead) : nullptr) stableMain = e->mainCount;
+        }
     }
     const okay::testbuild::Choice c = okay::testbuild::ChooseTarget(LocalVersion(), stableHead, testHead, st.testBuilds,
-                                                                    st.channel == okayversions::Channel::Lts, goBack);
+                                                                    st.channel == okayversions::Channel::Lts, goBack, stableMain, testMain);
     t.test = false;
     t.goBack = false;
     t.version = c.version;
@@ -925,6 +937,42 @@ static UpdateTarget ResolveTarget(const okayversions::Settings& st, std::string&
         ? "This launcher is newer than the long-term-support version (v" + d.version + "), so it is not changed. Open Versions to install that editor next to it."
         : d.note;
     return t;
+}
+
+// This build's place on main: built in (OKAY_MAIN_COUNT), else what the test builds' list says about the running version; 0 = not known.
+static std::uint64_t RunningMainCount(const okayversions::Index& devIndex) {
+    if ((std::uint64_t)OKAY_MAIN_COUNT > 0) return (std::uint64_t)OKAY_MAIN_COUNT;
+    if (const okayversions::Entry* e = devIndex.ok ? devIndex.Find(LocalVersion()) : nullptr) return e->mainCount;
+    return 0;
+}
+// Whether the check installs `t` (okayupdater::DecideOffer, tests/test_launcher_versions.cpp): not when the person skipped it, not when a running
+// test build already has everything in that release, and only on the person's Install now when that is not known. `confirmed`: the version the
+// person pressed Install now on ("" = an automatic check or "Check for updates"). Reads the releases' list only for a release offered to a test build.
+static okayupdater::Offer OfferFor(UpdateTarget& t, const okayversions::Settings& st, const std::string& confirmed, bool goBack) {
+    okayupdater::OfferInputs in;
+    in.local = LocalVersion(); in.target = t.version; in.skipped = st.skippedVersion; in.confirmed = confirmed; in.goBack = goBack || t.goBack;
+    in.localMainCount = RunningMainCount(t.devIndex);
+    if (!in.goBack && okay::testbuild::IsTestVersion(in.local) && okay::testbuild::IsReleaseShaped(t.version) && CompareVersions(in.local, t.version) < 0) {
+        if (!t.index.ok) t.index = okayversions::LoadIndex(VersionSources(), FetchTextFile);
+        if (const okayversions::Entry* e = t.index.ok ? t.index.Find(t.version) : nullptr) in.targetMainCount = e->mainCount;
+    }
+    return okayupdater::DecideOffer(in);
+}
+
+// What an update check found, for the main thread (the periodic look below, or RunUpdateCheck when it does not install): the version, a test
+// build's title, and what DecideOffer said. Guarded by g_upPollMutex (made by the main thread before any worker starts).
+static okay::thr::Mutex* g_upPollMutex = nullptr;
+static std::string g_upPollResult;         // (guarded)
+static std::string g_upPollTitle;          // (guarded) the test build's title, when the poll found one
+static std::string g_upPollNote;           // (guarded) DecideOffer's sentence (Ask, Skipped, AlreadyHave)
+static int g_upPollKind = okayupdater::Offer::Install;   // (guarded) okayupdater::Offer::Kind
+static bool g_upPollManual = false;        // (guarded) the person started that check ("Check for updates"): a skipped version is shown again
+static bool g_upPollDone = false;          // (guarded)
+static void PostFound(const std::string& version, const std::string& title, const okayupdater::Offer& offer, bool manual) {
+    if (!g_upPollMutex) return;
+    okay::thr::LockMutex(g_upPollMutex);
+    g_upPollResult = version; g_upPollTitle = title; g_upPollKind = offer.kind; g_upPollNote = offer.note; g_upPollManual = manual; g_upPollDone = true;
+    okay::thr::UnlockMutex(g_upPollMutex);
 }
 
 // The note lines of a notes file in the releases bucket (NOTES.txt, dev/NOTES-DEV.txt), one per line; "" when it can't be read.
@@ -963,7 +1011,31 @@ okayversions::Settings g_upSettings;   // the channel, keep-previous and default
 bool g_upGoBack = false;          // the person asked to leave a test build for the newest normal release; stays set until it worked or the dialog is closed (main thread)
 bool g_upGoBackNow = false;       // g_upGoBack as it was when this update check started (main thread writes, worker reads)
 bool g_upAutomatic = false;       // this check was started by the launcher itself (at launch), not by a click
-bool g_upRepairMissing = false;   // "Get the editor": same-version re-download of MISSING exes only
+bool g_upRepairMissing = false;   // "Get the editor" / "Repair": same-version re-download of missing programs (and of ones that are another version)
+std::string g_upConfirm;          // the version the person pressed Install now on, for the next check (main thread; InstallOffered)
+std::string g_upConfirmNow;       // g_upConfirm as it was when this update check started (main thread writes, worker reads)
+// The editor and the player next to this launcher, as {name, the version the program itself says it is} ("" = not known: a Linux build, no
+// file). VERSION.txt only says what the last update wrote; this asks the programs (okayupdater::ProgramVersion), so a launcher on 115 with an
+// editor still on 114 is seen (owner, 2026-11-25). Cached by size and time, so asking every second costs a stat call.
+static std::vector<std::pair<std::string, std::string>> InstalledProgramVersions() {
+    struct Seen { std::uintmax_t size = 0; fs::file_time_type when{}; std::string version; };
+    thread_local std::map<std::string, Seen> cache;   // (one per thread: the update worker and the main thread both ask)
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const char* name : {"OkayEngine.exe", "OkaySpacePlayer.exe"}) {
+        const std::string path = FindExe({name});
+        std::string v;
+        if (!path.empty()) {
+            std::error_code ec, ec2;
+            const std::uintmax_t size = fs::file_size(path, ec);
+            const fs::file_time_type when = fs::last_write_time(path, ec2);
+            Seen& c = cache[path];
+            if (ec || ec2 || c.size != size || c.when != when || c.version.empty()) { c.size = size; c.when = when; c.version = okayupdater::ProgramVersion(path); }
+            v = c.version;
+        }
+        out.push_back({name, v});
+    }
+    return out;
+}
 // Worker: check the published version and, if newer, install it. Runs on a
 // background thread so the launcher stays responsive while ~35 MB downloads.
 int RunUpdateCheck(void*) {
@@ -976,7 +1048,7 @@ int RunUpdateCheck(void*) {
     SetUpMsg("Checking for updates...");
     g_upFailReason.clear();
     std::string base; bool fromSupabase = false;
-    const UpdateTarget target = ResolveTarget(g_upSettings, base, fromSupabase, g_upGoBackNow);   // by channel (Latest unless the person chose LTS); test builds only when asked
+    UpdateTarget target = ResolveTarget(g_upSettings, base, fromSupabase, g_upGoBackNow);   // by channel (Latest unless the person chose LTS); test builds only when asked
     if (g_upSettings.testBuilds && target.devIndex.signatureRefused)   // (said once per check, not by the poll: the normal update goes on)
         okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "test builds: " + target.devIndex.error);
     SetUpTag(target.test ? (target.title.empty() ? std::string("Test build") : target.title)
@@ -1031,7 +1103,12 @@ int RunUpdateCheck(void*) {
     // 2.97" bug). If we're current or ahead, do nothing.
     // Repair: on the SAME version, fetch only executables that are missing
     // (e.g. the editor was never installed). Never downloads anything older.
-    const bool repair = g_upRepairMissing && !newer && !latest.empty() && CompareVersions(local, latest) == 0;
+    // A program that is another version than the launcher (the editor still on 114 under a launcher on 115) is repaired like a missing one:
+    // downloaded again for THIS version, with the same checksum rules. Before, that install was "Up to date" for ever.
+    const auto skewed = okayupdater::MismatchedPrograms(local, InstalledProgramVersions());
+    auto isSkewed = [&](const char* name) { for (const auto& p : skewed) if (p.first == name) return true; return false; };
+    const bool repair = (g_upRepairMissing || !skewed.empty()) && !newer && !latest.empty() && CompareVersions(local, latest) == 0;
+    if (!skewed.empty()) okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", okayupdater::MismatchSentence(local, skewed));
     g_upRepairMissing = false;
     if (!newer && !repair) {
         SetUpMsg("Up to date (v" + local + ").");
@@ -1040,6 +1117,18 @@ int RunUpdateCheck(void*) {
         return 0;
     }
 
+    if (newer) {   // skipped, a release this test build already has, or one whose order is not known without the person's Install now: not installed
+        const okayupdater::Offer offer = OfferFor(target, g_upSettings, g_upConfirmNow, g_upGoBackNow);
+        if (offer.kind != okayupdater::Offer::Install) {
+            PostFound(latest, target.test ? target.title : std::string(), offer, !g_upAutomatic);
+            okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "not installed: " + (offer.note.empty() ? latest : offer.note));
+            SetUpMsg(offer.note.empty() ? "Up to date (v" + local + ")." : offer.note);
+            SetUpStep(offer.kind == okayupdater::Offer::AlreadyHave ? "You already have everything in it"
+                      : offer.kind == okayupdater::Offer::Skipped ? "You skipped this version" : "Waiting for you to choose Install now", 1, 1);
+            SetState(Up_UpToDate);
+            return 0;
+        }
+    }
     if (newer && g_upAutomatic) {   // the check at launch must not retry a release that already failed twice (a click on Retry always may)
         std::string why;
         if (!okay::selfupdate::AutoRetryAllowed(okay::selfupdate::Read(SelfUpdateStateFile()), latest, why)) {
@@ -1096,14 +1185,14 @@ int RunUpdateCheck(void*) {
             std::string found = FindExe({name});
             return found.empty() ? (dir / name) : fs::path(found);
         };
-        if (!repair || FindExe({"OkayEngine.exe"}).empty()) {
+        if (!repair || FindExe({"OkayEngine.exe"}).empty() || isSkewed("OkayEngine.exe")) {
             SetUpMsg("Downloading engine v" + latest + "...");
             SetUpStep("Downloading editor (OkayEngine)", 0, kSteps);
             const fs::path d = destOf("OkayEngine.exe");
             if (StageFile("OkayEngine.exe", base + "OkayEngine.exe", d, true, checkFor("OkayEngine.exe"))) items.push_back({"OkayEngine.exe", d, false});
             else ok = false;
         }
-        if (ok && (!repair || FindExe({"OkaySpacePlayer.exe"}).empty())) {
+        if (ok && (!repair || FindExe({"OkaySpacePlayer.exe"}).empty() || isSkewed("OkaySpacePlayer.exe"))) {
             SetUpMsg("Downloading player runtime v" + latest + "...");
             SetUpStep("Downloading game runtime (OkaySpacePlayer)", 1, kSteps);
             const fs::path d = destOf("OkaySpacePlayer.exe");
@@ -1174,12 +1263,19 @@ int RunUpdateCheck(void*) {
             if (!g_upSettings.defaultEditor.empty()) guards.keep.push_back({g_upSettings.defaultEditor, "it is your default editor."});
             okayversions::Prune(dir, g_upSettings.keepPrevious, vindex.ok && !vindex.lts.empty() ? vindex.lts : g_upSettings.ltsLine, guards);
         }
-        SetUpStep(launcherOk ? "Update complete — restart to finish"
-                             : "Update complete", kSteps, kSteps);
+        // Ask the programs which version they are now: an update that left one behind is said plainly, with what fixes it, never "complete".
+        const auto behind = okayupdater::MismatchedPrograms(latest, InstalledProgramVersions());
+        const std::string behindNote = okayupdater::MismatchSentence(latest, behind);
+        if (!behindNote.empty()) okay::restart::AppendLog(dir / "okay_update.log", "after the update: " + behindNote);
+        SetUpStep(!behindNote.empty() ? "Update incomplete: a program is still the old version"
+                  : launcherOk ? "Update complete — restart to finish"
+                               : "Update complete", kSteps, kSteps);
         SetUpMsg((launcherOk
             ? "Updated to v" + latest + okay::testbuild::Suffix(latest) + " — restart the launcher to finish."
             : (newer ? "Updated engine & player to v" + latest + "."
-                     : "Downloaded the missing runtime (v" + local + ").")) + (keepNote.empty() ? std::string() : " " + keepNote));
+                     : !skewed.empty() ? "Replaced the programs that were another version: everything is " + okay::testbuild::DisplayVersion(local) + " now."
+                                       : "Downloaded the missing runtime (v" + local + ").")) +
+                 (behindNote.empty() ? std::string() : " " + behindNote) + (keepNote.empty() ? std::string() : " " + keepNote));
         SetState(Up_Updated);
     } else {
         if (keptNow) okayversions::DiscardKept(dir, local);   // the copy only duplicates what is still running
@@ -1204,6 +1300,8 @@ void StartUpdateCheck(bool showDialog = true) {
     if (g_upThread) { okay::thr::WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     g_upSettings = okayversions::GlobalSettings();   // (a snapshot: the worker never reads what the Settings page can change)
     g_upGoBackNow = g_upGoBack;
+    g_upConfirmNow = g_upConfirm; g_upConfirm.clear();   // (one check: the next automatic one asks again)
+    if (!g_upPollMutex) g_upPollMutex = okay::thr::CreateMutex();   // (before the worker: it may post what it found)
     g_upThread = okay::thr::CreateThread(RunUpdateCheck, "okay-update", nullptr);
 }
 
@@ -1223,7 +1321,7 @@ void StartGoBackToStable() {
 // ("Checking for updates", then "Downloading 2 of 3", "Installing", "Restarting") instead of the launcher. The install and its checksum /
 // signature checks are RunUpdateCheck's; this only starts it and draws its progress. It runs before any sign-in screen and needs no account.
 static bool g_suActive = false, g_suSkipped = false, g_suTimedOutShown = false, g_suFailHandled = false, g_suGaveUpRestart = false;
-static Uint32 g_suStartTicks = 0, g_suUpdatedTicks = 0;
+static std::uint32_t g_suStartTicks = 0, g_suUpdatedTicks = 0;
 static bool g_suToastedFail = false;   // the offline notice was already given: the generic "Update check failed" toast stays quiet
 
 extern bool g_updateOnLaunch;   // (defined with the other preferences below)
@@ -1324,10 +1422,10 @@ static void StartupUpdateFrame() {
     ScreenInputs si;
     si.phase = us == Up_Checking ? Phase::Checking : us == Up_Downloading ? Phase::Downloading : us == Up_Updated ? Phase::Updated
              : us == Up_Failed ? Phase::Failed : us == Up_UpToDate ? Phase::UpToDate : Phase::Idle;
-    si.elapsedMs = (long long)(Uint32)(okay::platform::TicksMs32() - g_suStartTicks);
+    si.elapsedMs = (long long)(std::uint32_t)(okay::platform::TicksMs32() - g_suStartTicks);
     si.skipped = g_suSkipped; si.timedOutShown = g_suTimedOutShown; si.relaunchNeeded = g_upRelaunchNeeded; si.restartFailed = g_suRestartFailed || (us == Up_Updated && EditorRunning());
     if (us == Up_Updated && g_suUpdatedTicks == 0) g_suUpdatedTicks = okay::platform::TicksMs32();
-    si.sinceUpdatedMs = (us == Up_Updated && g_suUpdatedTicks) ? (long long)(Uint32)(okay::platform::TicksMs32() - g_suUpdatedTicks) : 0;
+    si.sinceUpdatedMs = (us == Up_Updated && g_suUpdatedTicks) ? (long long)(std::uint32_t)(okay::platform::TicksMs32() - g_suUpdatedTicks) : 0;
     si.step = okay::thr::AtomicGet(&g_upStepIdx); si.steps = okay::thr::AtomicGet(&g_upStepTotal);
     si.installing = GetUpMsg().rfind("Installing", 0) == 0;
     const ScreenView v = EvaluateScreen(si);
@@ -1355,20 +1453,18 @@ static void StartupUpdateFrame() {
 // version raises a toast + notification and the sidebar offers "Install now".
 std::string g_upAvailable;                 // newer published version ("" = none known)
 std::string g_upAvailableTitle;            // "Test build of walk-vs-run (abc1234)" when g_upAvailable is a test build ("" = a normal release)
+bool g_upAvailableSkipped = false;         // g_upAvailable is the version the person skipped, shown again because they checked
+std::string g_upAvailableNote;             // why g_upAvailable is not installed by itself (okayupdater::Offer::Ask), "" = nothing to add
+std::string g_upSkippedFound;              // the newer version found that the person skipped: What's New and Versions offer it ("" = none)
+std::string g_upAheadNote;                 // "You already have everything in v2.904.0 (your test build is newer)." ("" = nothing to say)
 static bool g_launcherRefocused = false;   // window came back into focus: look for updates
-static okay::thr::Mutex* g_upPollMutex = nullptr;
-static std::string g_upPollResult;         // (guarded)
-static std::string g_upPollTitle;          // (guarded) the test build's title, when the poll found one
-static bool g_upPollDone = false;          // (guarded)
 static volatile bool g_upPollBusy = false;
 static okayversions::Settings g_pollSettings;   // (copied when the poll starts)
 static int UpdatePollWorker(void*) {
     std::string base; bool fromSupabase = false;
-    const UpdateTarget target = ResolveTarget(g_pollSettings, base, fromSupabase);   // by channel; "" = nothing to offer in place
-    const std::string& latest = target.version;
-    okay::thr::LockMutex(g_upPollMutex);
-    g_upPollResult = latest; g_upPollTitle = target.test ? target.title : std::string(); g_upPollDone = true;
-    okay::thr::UnlockMutex(g_upPollMutex);
+    UpdateTarget target = ResolveTarget(g_pollSettings, base, fromSupabase);   // by channel; "" = nothing to offer in place
+    const okayupdater::Offer offer = OfferFor(target, g_pollSettings, "", false);   // skipped / already had / ask: the main thread shows it accordingly
+    PostFound(target.version, target.test ? target.title : std::string(), offer, false);
     g_upPollBusy = false;
     return 0;
 }
@@ -1379,6 +1475,40 @@ static void StartUpdatePoll() {
     g_upPollBusy = true;
     if (okay::thr::Thread* t = okay::thr::CreateThread(UpdatePollWorker, "okay-uppoll", nullptr)) okay::thr::DetachThread(t);
     else g_upPollBusy = false;
+}
+
+// "Install now" on an offered version (the update dialog, the sidebar, What's New, the Versions page): the person chose it, so a skip of that
+// version is undone and the check installs it even where it would only have asked (okayupdater::DecideOffer `confirmed`). The checksum and
+// signature rules are RunUpdateCheck's, unchanged.
+static void InstallOffered(const std::string& version) {
+    okayversions::Settings& vs = okayversions::GlobalSettings();
+    if (!version.empty() && !vs.skippedVersion.empty() && okayver::NormalizeVersion(vs.skippedVersion) == okayver::NormalizeVersion(version)) {
+        vs.skippedVersion.clear();
+        SavePrefs();
+    }
+    if (g_upSkippedFound == version) g_upSkippedFound.clear();
+    g_upAvailableSkipped = false;
+    g_upConfirm = version;
+    StartUpdateCheck(true);
+}
+// "Skip this version" (owner, 2026-11-26): launcher.cfg remembers it (skipped_version); it is never shown or installed by itself again, a newer
+// version is offered as usual, and What's New / Versions keep an Install button for it (the way back).
+static void SkipOffered(const std::string& version) {
+    if (version.empty()) return;
+    okayversions::GlobalSettings().skippedVersion = okayver::NormalizeVersion(version);
+    SavePrefs();
+    g_upSkippedFound = version;
+    g_upAvailable.clear(); g_upAvailableTitle.clear(); g_upAvailableSkipped = false; g_upAvailableNote.clear();
+    Toast(okay::testbuild::DisplayVersion(version) + " skipped. You won't be asked about it again; a newer version is offered as usual. "
+          "What's New and Versions can still install it.", 1);
+}
+
+// The skipped version that is still newer than this one, for the What's New card and the Versions page ("v2.904.0 is available (skipped)",
+// with Install); "" when nothing skipped was found or a check showed it again (then it is the ordinary offer, marked skipped).
+static std::string SkippedOfferVersion() {
+    const std::string& k = okayversions::GlobalSettings().skippedVersion;
+    if (g_upSkippedFound.empty() || k.empty() || okayver::NormalizeVersion(g_upSkippedFound) != k || !g_upAvailable.empty()) return {};
+    return CompareVersions(LocalVersion(), g_upSkippedFound) < 0 ? g_upSkippedFound : std::string();
 }
 
 // Find the first of `names` that exists next to the launcher.
@@ -1463,7 +1593,7 @@ bool SpawnTracked(const std::string& exe, const std::string& args, const std::st
 }
 // Once a second or so: credit running games, close out the ones that ended.
 static void PumpPlaytime() {
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     for (std::size_t i = 0; i < g_playProcs.size(); ) {
         PlayProc& pp = g_playProcs[i];
 #if defined(_WIN32)
@@ -1491,7 +1621,7 @@ static bool EditorRunning() {
 #if defined(_WIN32)
         if (WaitForSingleObject(pp.h, 0) == WAIT_TIMEOUT) return true;
 #else
-        if (kill(pp.pid, 0) == 0) return true;   // (reaped by PumpPlaytime once it exits)
+        if (okay::restart::PidAlive((unsigned long)pp.pid)) return true;   // (an ended, not yet reaped editor is not running; PumpPlaytime reaps it)
 #endif
     }
 #if defined(_WIN32)
@@ -1501,7 +1631,9 @@ static bool EditorRunning() {
         PROCESSENTRY32W pe; pe.dwSize = sizeof(pe);
         bool found = false;
         if (Process32FirstW(snap, &pe))
-            do { if (_wcsicmp(pe.szExeFile, L"OkayEngine.exe") == 0) { found = true; break; } } while (Process32NextW(snap, &pe));
+            // An ended editor can stay in the list while anything still holds a handle to it (the owner ended it in Task Manager
+            // and the launcher still said "open", 2026-11-26): only a process that is still running counts (PidAlive).
+            do { if (_wcsicmp(pe.szExeFile, L"OkayEngine.exe") == 0 && okay::restart::PidAlive(pe.th32ProcessID)) { found = true; break; } } while (Process32NextW(snap, &pe));
         CloseHandle(snap);
         if (found) return true;
     }
@@ -1545,7 +1677,7 @@ std::string GameTitleFromPath(const std::string& path) {
 // built game's files are checked against its Data/manifest.json before it
 // starts: report flags a mismatch and starts it anyway, enforce refuses.
 int g_antiCheatMode = 0;   // okayac::Mode (persisted)
-Uint32 g_toastHoldUntil = 0;   // an anti-cheat toast isn't replaced by the caller's "Playing ..."
+std::uint32_t g_toastHoldUntil = 0;   // an anti-cheat toast isn't replaced by the caller's "Playing ..."
 // "Report cheating" in a chat's menu asks for this; DrawAcBanBanner shows the dialog.
 std::string g_acReportUid, g_acReportName; bool g_acReportOpen = false;
 // "Report ..." (abuse, spam, scams...): every Report control calls OpenReport; the dialog is
@@ -1898,9 +2030,9 @@ bool IsBuiltGame(const fs::path& scene) {
 int g_webGameCount = -1;   // set by the Play tab's web-game scan (-1 = not scanned yet)
 std::vector<fs::path> FindWebGames();
 int LibraryGameCount(const std::vector<fs::path>& scenes) {
-    static int cached = 0; static std::size_t lastN = (std::size_t)-1; static Uint32 lastAt = 0;
+    static int cached = 0; static std::size_t lastN = (std::size_t)-1; static std::uint32_t lastAt = 0;
     if (g_webGameCount < 0) g_webGameCount = (int)FindWebGames().size();
-    Uint32 now = okay::platform::TicksMs32();
+    std::uint32_t now = okay::platform::TicksMs32();
     if (scenes.size() != lastN || now - lastAt > 2000) {
         cached = (int)std::count_if(scenes.begin(), scenes.end(), IsBuiltGame);
         lastN = scenes.size(); lastAt = now;
@@ -2054,13 +2186,13 @@ const char* kThemeNames[] = {"Slate", "Midnight", "Light"};
 // Transient toast notification (bottom-right of the window).
 // kind: 0 = info (accent), 1 = success (green), 2 = error (red).
 std::string g_toastMsg;
-Uint32 g_toastUntil = 0;
+std::uint32_t g_toastUntil = 0;
 int g_toastKind = 0;
 void Toast(const std::string& m, int kind = 0) {
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (kind < 2 && now < g_toastHoldUntil) return;   // keep an anti-cheat warning readable
     g_toastMsg = m; g_toastKind = kind;
-    g_toastUntil = now + std::max<Uint32>(2600, now < g_toastHoldUntil ? g_toastHoldUntil - now : 0);
+    g_toastUntil = now + std::max<std::uint32_t>(2600, now < g_toastHoldUntil ? g_toastHoldUntil - now : 0);
 }
 std::vector<std::string> g_favorites;   // favorited game paths (persisted)
 std::vector<std::string> g_recent;       // recently played, most-recent first (persisted)
@@ -2105,7 +2237,7 @@ static long ChatSeenSum() {
 // Called once a frame from the main loop (cheap: a checksum every ~2 s).
 void SyncChatSeen(const std::string& user) {
     static long savedSum = 0;
-    static Uint32 nextCheck = 0;
+    static std::uint32_t nextCheck = 0;
     if (user != g_chatSeenUser) {
         g_chatSeenDm.clear(); g_chatSeenGroup.clear();
         g_chatSeenUser = user;
@@ -2154,8 +2286,8 @@ static bool g_unreadKnown = false;                        // rows have been read
 // The counts now (worked out at most every 100 ms; the UI thread only).
 const okay::chat::UnreadSummary& ChatUnread() {
     static okay::chat::UnreadSummary sum;
-    static Uint32 at = 0;
-    const Uint32 now = okay::platform::TicksMs32();
+    static std::uint32_t at = 0;
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (at != 0 && now - at < 100) return sum;
     at = now;
     if (g_unreadMutex) {
@@ -2206,7 +2338,7 @@ struct Notif {
     std::string title;
     std::string body;
     int    kind = 0;      // 0 system, 1 friend, 2 message, 3 update
-    Uint32 time = 0;
+    std::uint32_t time = 0;
     bool   read = false;
     int    gotoTab = -1;  // clicking jumps here (-1 = none)
     long   wall = 0;      // unix time it arrived (so ages survive a restart)
@@ -2256,7 +2388,7 @@ void LoadNotifs() {
     std::ifstream f(fs::path(g_exeDir) / "notifications.cfg");
     if (!f) return;
     const long nowW = (long)std::time(nullptr);
-    const Uint32 t0 = okay::platform::TicksMs32();
+    const std::uint32_t t0 = okay::platform::TicksMs32();
     std::string line;
     while (std::getline(f, line)) {
         std::vector<std::string> c;
@@ -2270,7 +2402,7 @@ void LoadNotifs() {
             n.read = c[4] == "1"; n.wall = std::atol(c[5].c_str()); n.title = NotifUnesc(c[6]); n.body = NotifUnesc(c[7]);
             if (n.title.rfind("What's new in vv", 0) == 0) n.title.erase(14, 1);   // saved by an older launcher with a doubled "v"
             const long age = std::clamp(nowW - n.wall, 0L, 40L * 86400L);   // ticks wrap after ~49 days
-            n.time = t0 - (Uint32)age * 1000u;                              // ages are (now - time) mod 2^32
+            n.time = t0 - (std::uint32_t)age * 1000u;                              // ages are (now - time) mod 2^32
             g_notifs.push_back(n);
         }
     }
@@ -2323,9 +2455,9 @@ static fs::path CrashDir() {
 }
 // Re-read the reports when the files change (cheap stat every couple of seconds).
 static void RefreshCrashes(bool force = false) {
-    static Uint32 nextCheck = 0;
+    static std::uint32_t nextCheck = 0;
     static std::string lastSig;
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (!force && now < nextCheck) return;
     nextCheck = now + 2000;
     const fs::path dir = CrashDir();
@@ -2891,7 +3023,7 @@ SDL_Texture* ChatImageTexture(const std::string& url, int* w, int* h) {
     if (w) *w = a.w;
     if (h) *h = a.h;
     if (a.frames.size() == 1 || a.total <= 0) return a.frames[0];
-    int t = (int)(okay::platform::TicksMs32() % (Uint32)a.total);
+    int t = (int)(okay::platform::TicksMs32() % (std::uint32_t)a.total);
     for (std::size_t i = 0; i < a.ends.size(); ++i) if (t < a.ends[i]) return a.frames[i];
     return a.frames.back();
 }
@@ -3353,9 +3485,12 @@ static void OkayUIFrameBegin() {
     ImGuiIO& io = ImGui::GetIO();
     g_okayRegion.NextFrame();
     int mx = 0, my = 0;
-    const Uint32 mb = okay::platform::Default() ? okay::platform::Default()->MouseState(&mx, &my) : 0;   // MouseMask bits (button 1 = bit 0, as SDL_BUTTON)
+    const std::uint32_t mb = okay::platform::Default() ? okay::platform::Default()->MouseState(&mx, &my) : 0;   // MouseMask bits (button 1 = bit 0, as SDL_BUTTON)
     const bool blocked = io.WantCaptureMouse && !g_okayRegion.Owns((float)mx, (float)my);
-    const bool keys = OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;   // an ImGui field being pressed or typed in keeps the keys
+    // An OkayUI field types: all the keys (an ImGui field being pressed or typed in keeps them). No field types but a hosted page is
+    // shown and focused (the Browser page): its shortcuts' keys, Ctrl+F, Ctrl+L, Ctrl+T ... (okayuihost::HostedKeys).
+    const okayuihost::HostKeys keys = okayuihost::HostedKeys(OkayUI::WantsTextInput(), ImGui::GetActiveID() != 0, io.WantTextInput,
+                                                             g_okayRegion.Active());
     OkayUI::BeginFrame(g_okayInput.Build((float)mx, (float)my, (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0,
                                          (mb & okay::platform::MouseMask(okay::platform::MouseRight)) != 0, blocked, keys));
 }
@@ -3803,7 +3938,7 @@ float ChatInviteWidth(float maxW) { return std::min(maxW, 270.0f); }
 // ---- Invite records behind the chat cards (okay::Invites, docs/sql/chat_invites.sql; feature map 17.15.7) ------------
 // A card whose link carries inv=<id> shows that record's state. The chat poll thread (ChatPollWorker -> InviteWork) looks
 // the records up and answers them (Accept / Decline / Withdraw); the UI thread only reads and queues, under g_invMutex.
-struct InviteRecSlot { okay::GameInvite rec; bool loaded = false; Uint32 at = 0; };
+struct InviteRecSlot { okay::GameInvite rec; bool loaded = false; std::uint32_t at = 0; };
 struct InviteAct { long id = 0; int what = 0; okay::JoinLink link; std::string from; std::string answer; };   // what: 1 accept, 2 decline, 3 withdraw
 static okay::thr::Mutex* g_invMutex = nullptr;
 static std::map<long, InviteRecSlot> g_invRecs;     // (guarded) id -> the record (rec.id 0 = not found / not mine)
@@ -3983,7 +4118,7 @@ void DrawChatLinkConfirm() {
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, 6));
     const ImVec2 bs(okl::FitButtonW("Open", okl::UiPx(110.0f)), okl::UiPx(30.0f));
-    if (PrimaryButton("Open", bs)) { OpenExternal(g_linkAskUrl); g_linkAskUrl.clear(); ImGui::CloseCurrentPopup(); }
+    if (PrimaryButton("Open", bs)) { OpenPageLink(g_linkAskUrl); g_linkAskUrl.clear(); ImGui::CloseCurrentPopup(); }   // a new tab of the Browser page (switch on), else the system browser
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f))) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         g_linkAskUrl.clear(); ImGui::CloseCurrentPopup();
@@ -4084,9 +4219,9 @@ static bool EnsureAudio() {
 static constexpr int kVoiceRate = 16000, kVoiceMaxSecs = 120, kVoiceLevelHop = kVoiceRate / 20;
 static std::unique_ptr<okay::platform::AudioDevice> g_recDev;
 static bool                g_recFake = false;     // dev demo: a recording without a device
-static std::vector<Sint16> g_recPcm;
+static std::vector<std::int16_t> g_recPcm;
 static std::vector<float>  g_recLevels;           // loudness per 50 ms (live meter)
-static Uint32              g_recStart = 0;
+static std::uint32_t              g_recStart = 0;
 static std::string         g_recToUid;            // which chat the recording is for
 static long                g_recToGroup = 0;
 static long                g_recToChannel = 0;    // a server channel (0 = a DM / group)
@@ -4112,33 +4247,33 @@ static bool StartVoiceRecord(const std::string& toUid, long toGroup, long toChan
 }
 static void PumpVoiceRecord() {   // once per frame: move captured audio into g_recPcm
     if (!g_recDev) return;
-    Sint16 buf[2048];
-    while (Uint32 got = g_recDev->Dequeue(buf, sizeof(buf)))
-        g_recPcm.insert(g_recPcm.end(), buf, buf + got / sizeof(Sint16));
+    std::int16_t buf[2048];
+    while (std::uint32_t got = g_recDev->Dequeue(buf, sizeof(buf)))
+        g_recPcm.insert(g_recPcm.end(), buf, buf + got / sizeof(std::int16_t));
     while ((g_recLevels.size() + 1) * kVoiceLevelHop <= g_recPcm.size()) {
-        const Sint16* w = g_recPcm.data() + g_recLevels.size() * kVoiceLevelHop;
+        const std::int16_t* w = g_recPcm.data() + g_recLevels.size() * kVoiceLevelHop;
         int peak = 0;
         for (int i = 0; i < kVoiceLevelHop; ++i) peak = std::max(peak, std::abs((int)w[i]));
         g_recLevels.push_back(std::min(1.0f, std::sqrt(peak / 32768.0f) * 1.3f));
     }
 }
-static bool WriteWav16(const std::string& path, const std::vector<Sint16>& pcm, int rate) {
+static bool WriteWav16(const std::string& path, const std::vector<std::int16_t>& pcm, int rate) {
     std::ofstream f(path, std::ios::binary);
     if (!f) return false;
-    auto u32 = [&](Uint32 v) { char b[4] = {(char)v, (char)(v >> 8), (char)(v >> 16), (char)(v >> 24)}; f.write(b, 4); };
-    auto u16 = [&](Uint16 v) { char b[2] = {(char)v, (char)(v >> 8)}; f.write(b, 2); };
-    Uint32 data = (Uint32)pcm.size() * 2;
+    auto u32 = [&](std::uint32_t v) { char b[4] = {(char)v, (char)(v >> 8), (char)(v >> 16), (char)(v >> 24)}; f.write(b, 4); };
+    auto u16 = [&](std::uint16_t v) { char b[2] = {(char)v, (char)(v >> 8)}; f.write(b, 2); };
+    std::uint32_t data = (std::uint32_t)pcm.size() * 2;
     f.write("RIFF", 4); u32(36 + data); f.write("WAVE", 4);
     f.write("fmt ", 4); u32(16); u16(1); u16(1); u32(rate); u32(rate * 2); u16(2); u16(16);
     f.write("data", 4); u32(data);
-    for (Sint16 s : pcm) u16((Uint16)s);
+    for (std::int16_t s : pcm) u16((std::uint16_t)s);
     return (bool)f;
 }
 // Stop recording; send=true writes the WAV and hands it to the upload worker.
 void FinishVoiceRecord(bool send) {
     if (g_recDev) { PumpVoiceRecord(); g_recDev.reset(); }
     const bool fake = g_recFake; g_recFake = false;
-    std::vector<Sint16> pcm; pcm.swap(g_recPcm); g_recLevels.clear();
+    std::vector<std::int16_t> pcm; pcm.swap(g_recPcm); g_recLevels.clear();
     if (!send || fake) return;
     if (pcm.size() < (std::size_t)kVoiceRate / 2) { Toast("Too short to send — hold on a little longer", 2); return; }
     std::error_code ec;
@@ -4154,12 +4289,12 @@ void FinishVoiceRecord(bool send) {
 static constexpr int kVoiceBars = 30;
 struct VoiceClip {
     bool ok = false;                 // decoded (false = unplayable; don't retry)
-    Uint8* pcm = nullptr; Uint32 len = 0;   // points into `owned`
+    std::uint8_t* pcm = nullptr; std::uint32_t len = 0;   // points into `owned`
     okay::platform::AudioSpec spec;  // rate, channels, S16 or F32 (native-endian), as okay::wav::LoadWavClip gave them
     float secs = 0, bytesPerSec = 1;
     float bars[kVoiceBars] = {};
-    std::vector<Uint8> owned;        // the clip's samples (converted to 16-bit when the file was not native 16-bit / float)
-    std::map<int, std::vector<Uint8>> fast;   // time-stretched copies by speed index (built on first use)
+    std::vector<std::uint8_t> owned;        // the clip's samples (converted to 16-bit when the file was not native 16-bit / float)
+    std::map<int, std::vector<std::uint8_t>> fast;   // time-stretched copies by speed index (built on first use)
     VoiceClip() = default;
     // `owned` holds the samples our own decoder gave (okay::wav::LoadWavClip); there is
     // no SDL buffer for this destructor to free (#718).
@@ -4183,15 +4318,15 @@ static std::map<std::string, VoiceClip> g_voiceClips;
 static std::unique_ptr<okay::platform::AudioDevice> g_playDev;
 static std::string       g_playUrl;          // clip loaded on g_playDev
 static bool              g_playPaused = false;
-static Uint32            g_playFrom = 0;     // byte offset the current queue started at
-static Uint32            g_playLen = 0;      // length of the buffer playing (the clip, or a sped-up copy)
+static std::uint32_t            g_playFrom = 0;     // byte offset the current queue started at
+static std::uint32_t            g_playLen = 0;      // length of the buffer playing (the clip, or a sped-up copy)
 static const float kVoiceSpeeds[3] = {1.0f, 1.5f, 2.0f};
 static const char* const kVoiceSpeedLabels[3] = {"1x", "1.5x", "2x"};
 
 // Speed a voice note up without the chipmunk effect: WSOLA time-stretch
 // (overlap-add of 30 ms Hann windows; each window is nudged within +-10 ms to
 // the spot that best continues the previous one, so pitch is unchanged).
-static std::vector<Sint16> VoiceTimeStretch(const Sint16* in, std::size_t n, int rate, float speed) {
+static std::vector<std::int16_t> VoiceTimeStretch(const std::int16_t* in, std::size_t n, int rate, float speed) {
     const int N = std::max(64, rate * 30 / 1000), hopS = N / 2, tol = rate / 100;
     const float hopA = hopS * speed;
     std::vector<float> win((std::size_t)N);
@@ -4221,9 +4356,9 @@ static std::vector<Sint16> VoiceTimeStretch(const Sint16* in, std::size_t n, int
     }
     std::size_t used = outN;
     while (used > 0 && norm[used - 1] < 1e-3f) --used;
-    std::vector<Sint16> out(used);
+    std::vector<std::int16_t> out(used);
     for (std::size_t i = 0; i < used; ++i)
-        out[i] = (Sint16)std::clamp(norm[i] > 1e-3f ? acc[i] / norm[i] : 0.0f, -32768.0f, 32767.0f);
+        out[i] = (std::int16_t)std::clamp(norm[i] > 1e-3f ? acc[i] / norm[i] : 0.0f, -32768.0f, 32767.0f);
     return out;
 }
 static std::string       g_voiceWant;        // tapped play before the clip arrived
@@ -4260,21 +4395,21 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
         if (!failed && okay::wav::LoadWavClip(cache.string(), wavSpec, c.owned)) {
             c.spec = wavSpec;
             c.pcm = c.owned.empty() ? nullptr : c.owned.data();
-            c.len = (Uint32)c.owned.size();
+            c.len = (std::uint32_t)c.owned.size();
             const int bps = okay::platform::BytesPerSample(c.spec.format) * std::max<int>(1, c.spec.channels);
             c.bytesPerSec = (float)c.spec.freq * bps;
             c.secs = c.len / c.bytesPerSec;
             c.ok = c.len > 0;
             // Real waveform: peak per slice (16-bit clips; anything else keeps the stub).
-            const Uint32 frames = bps ? c.len / bps : 0;
+            const std::uint32_t frames = bps ? c.len / bps : 0;
             const bool s16 = c.spec.format == okay::platform::SampleFormat::S16;
             float top = 0.0001f;
             for (int b = 0; b < kVoiceBars; ++b) {
                 float peak = 0;
                 if (s16 && frames) {
-                    Uint32 a = frames * b / kVoiceBars, e = frames * (b + 1) / kVoiceBars;
-                    for (Uint32 f = a; f < e; ++f) {
-                        Sint16 v; std::memcpy(&v, c.pcm + (std::size_t)f * bps, 2);   // native-endian
+                    std::uint32_t a = frames * b / kVoiceBars, e = frames * (b + 1) / kVoiceBars;
+                    for (std::uint32_t f = a; f < e; ++f) {
+                        std::int16_t v; std::memcpy(&v, c.pcm + (std::size_t)f * bps, 2);   // native-endian
                         peak = std::max(peak, std::abs((float)v) / 32768.0f);
                     }
                 } else peak = VoiceBarStub(url, b);
@@ -4296,19 +4431,19 @@ static void StopVoice() {
 }
 // The samples to play at the chosen speed: the clip itself at 1x, otherwise a
 // time-stretched copy (16-bit mono clips, i.e. our own recordings).
-static const Uint8* VoiceBuffer(VoiceClip& c, Uint32& len) {
+static const std::uint8_t* VoiceBuffer(VoiceClip& c, std::uint32_t& len) {
     const int si = std::clamp(g_voiceSpeed, 0, 2);
     const bool s16mono = c.spec.format == okay::platform::SampleFormat::S16 && c.spec.channels == 1;
     if (si == 0 || !s16mono || c.len < 4) { len = c.len; return c.pcm; }
     auto it = c.fast.find(si);
     if (it == c.fast.end()) {
-        auto st = VoiceTimeStretch(reinterpret_cast<const Sint16*>(c.pcm), c.len / 2, c.spec.freq, kVoiceSpeeds[si]);
-        std::vector<Uint8> bytes(st.size() * 2);
+        auto st = VoiceTimeStretch(reinterpret_cast<const std::int16_t*>(c.pcm), c.len / 2, c.spec.freq, kVoiceSpeeds[si]);
+        std::vector<std::uint8_t> bytes(st.size() * 2);
         if (!st.empty()) std::memcpy(bytes.data(), st.data(), bytes.size());
         it = c.fast.emplace(si, std::move(bytes)).first;
     }
     if (it->second.empty()) { len = c.len; return c.pcm; }
-    len = (Uint32)it->second.size();
+    len = (std::uint32_t)it->second.size();
     return it->second.data();
 }
 // Start (or restart) a clip at a fraction 0..1 of its length.
@@ -4326,11 +4461,11 @@ static void PlayVoiceAt(const std::string& url, VoiceClip& c, float frac) {
         g_playUrl = url;
     }
     g_playDev->ClearQueued();
-    Uint32 len = 0;
-    const Uint8* buf = VoiceBuffer(c, len);
-    const Uint32 frame = (Uint32)(okay::platform::BytesPerSample(c.spec.format) * std::max<int>(1, c.spec.channels));
-    Uint32 off = (Uint32)(std::clamp(frac, 0.0f, 1.0f) * len);
-    off -= off % std::max<Uint32>(1, frame);
+    std::uint32_t len = 0;
+    const std::uint8_t* buf = VoiceBuffer(c, len);
+    const std::uint32_t frame = (std::uint32_t)(okay::platform::BytesPerSample(c.spec.format) * std::max<int>(1, c.spec.channels));
+    std::uint32_t off = (std::uint32_t)(std::clamp(frac, 0.0f, 1.0f) * len);
+    off -= off % std::max<std::uint32_t>(1, frame);
     if (off >= len) off = 0;
     g_playFrom = off; g_playLen = len;
     g_playDev->Queue(buf + off, len - off);
@@ -4339,8 +4474,8 @@ static void PlayVoiceAt(const std::string& url, VoiceClip& c, float frac) {
 }
 static float VoicePlayFrac(const std::string& url, const VoiceClip& c) {   // -1 = not this clip
     if (!g_playDev || g_playUrl != url || !c.len) return -1.0f;
-    const Uint32 len = g_playLen ? g_playLen : c.len;
-    Uint32 left = g_playDev->QueuedBytes();
+    const std::uint32_t len = g_playLen ? g_playLen : c.len;
+    std::uint32_t left = g_playDev->QueuedBytes();
     return std::min(1.0f, (float)(len - std::min(left, len)) / len);
 }
 static void PumpVoicePlayback() {   // once per frame: finish clips, start "wanted" ones
@@ -4511,8 +4646,8 @@ void PlayChatChime() {
     if (okayfriends::QuietAlerts(g_onlineStatus)) return;   // Do not disturb: no chat sounds
     if (!g_chatSounds || !EnsureAudio()) return;
     static std::unique_ptr<okay::platform::AudioDevice> dev;
-    static std::vector<Sint16> pcm;
-    static Uint32 lastAt = 0;
+    static std::vector<std::int16_t> pcm;
+    static std::uint32_t lastAt = 0;
     if (okay::platform::TicksMs32() - lastAt < 1200 && lastAt) return;   // a burst of messages = one chime
     lastAt = okay::platform::TicksMs32();
     const int rate = 22050;
@@ -4524,7 +4659,7 @@ void PlayChatChime() {
                 float t = (float)i / rate;
                 float env = std::min(1.0f, t * 400.0f) * std::exp(-t * (n ? 14.0f : 22.0f));
                 float v = std::sin(6.2831853f * notes[n] * t) + 0.25f * std::sin(6.2831853f * notes[n] * 2.0f * t);
-                pcm.push_back((Sint16)(v * env * 5200.0f));
+                pcm.push_back((std::int16_t)(v * env * 5200.0f));
             }
         }
     }
@@ -4537,7 +4672,7 @@ void PlayChatChime() {
         dev->Pause(false);
     }
     dev->ClearQueued();
-    dev->Queue(pcm.data(), (uint32_t)(pcm.size() * sizeof(Sint16)));
+    dev->Queue(pcm.data(), (uint32_t)(pcm.size() * sizeof(std::int16_t)));
 }
 
 // Drag & drop target: DrawChatWindow publishes its rectangle and the open
@@ -4664,7 +4799,7 @@ static void PumpBlocks(okay::account::AccountService& account) {
         }
         SavePrefs();
     }
-    static std::string lastUser; static Uint32 next = 0;
+    static std::string lastUser; static std::uint32_t next = 0;
     if (user.empty() || !account.IsOnline() || g_pollCfgDir.empty()) {
         lastUser.clear();
         return;
@@ -4675,7 +4810,7 @@ static void PumpBlocks(okay::account::AccountService& account) {
             g_blockedUsers.clear(); g_blockedNames.clear(); g_blockPending.clear(); g_blocksSyncedFor = user; SavePrefs();   // that list was another account's
         }
     }
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (g_blkBusy || (!g_blkWant && now < next)) return;
     g_blkWant = false;
     next = now + (g_blockPending.empty() ? 600000u : 60000u);
@@ -4730,7 +4865,7 @@ static void PumpPrivacy(okay::account::AccountService& account) {
     if (g_privRes.ready) { res = std::move(g_privRes); g_privRes = PrivResult(); have = true; }
     okay::thr::UnlockMutex(g_privMutex);
     const std::string user = account.IsLoggedIn() ? account.CurrentSession().username : std::string();
-    static std::string syncedUser; static Uint32 retryAt = 0;
+    static std::string syncedUser; static std::uint32_t retryAt = 0;
     if (have && res.user == user) {
         if (res.support) g_privSupport = res.support;
         if (res.fetched && !g_privDirty) {   // (a change made meanwhile is newer than the fetched row)
@@ -4808,8 +4943,8 @@ static void PumpCrashUpload() {
         g_crashUpRes = CrashUpResult();
     }
     okay::thr::UnlockMutex(g_crashUpMutex);
-    static Uint32 next = 0;
-    const Uint32 now = okay::platform::TicksMs32();
+    static std::uint32_t next = 0;
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (g_crashUpBusy || (now < next && !g_crashUpResetSince)) return;
     next = now + 20000;   // a look every 20 seconds is plenty
     const fs::path dir = CrashDir();
@@ -4865,10 +5000,10 @@ struct OutMsg {
     long localId = 0; std::string toUid; long toGroup = 0; long toChannel = 0; std::string body; long replyTo = 0;
     int state = 0;            // 0 queued/sending, 1 sent (waiting for the log), -1 failed
     std::string err;          // why it failed, when the server said (e.g. a privacy rule: "This person does not accept messages from you.")
-    long when = 0; Uint32 sentAt = 0;
+    long when = 0; std::uint32_t sentAt = 0;
     std::string clientId;     // okay::chat::MakeClientId, kept across retries so a resend is stored once (docs/sql/chat_invites.sql)
     int attempts = 0;         // failed tries that were worth retrying (no connection, 5xx, the rate limit)
-    Uint32 nextTry = 0;       // ...and when the next one may start (TicksMs32)
+    std::uint32_t nextTry = 0;       // ...and when the next one may start (TicksMs32)
     std::string inviteKind;   // "game": also record a game_invites row first (expiry, accept / decline), then send the card
 };
 static okay::thr::Mutex* g_outMutex = nullptr;
@@ -4901,7 +5036,7 @@ static fs::path OutboxFile(const std::string& user) {
 static void SyncOutboxFile(const std::string& user) {
     static std::string loadedFor;
     static std::string savedText;
-    static Uint32 nextCheck = 0;
+    static std::uint32_t nextCheck = 0;
     if (!g_outMutex) g_outMutex = okay::thr::CreateMutex();
     if (user != loadedFor) {
         loadedFor = user; savedText.clear();
@@ -4979,7 +5114,7 @@ static std::string SvTag(int kind, long ref) { return kind == 0 || ref <= 0 ? st
 bool ChatDemo() { static const bool d = std::getenv("OKAY_CHAT_DEMO") != nullptr; return d; }
 
 // ---- Pinned messages -----------------------------------------------------------
-static Uint32 g_pinsTouchedMs = 0;   // a local pin change: polled pins wait a moment (no flicker)
+static std::uint32_t g_pinsTouchedMs = 0;   // a local pin change: polled pins wait a moment (no flicker)
 struct ChatPinJob { bool group = false; long id = 0; bool on = false; };
 static int ChatPinWorker(void* p) {
     std::unique_ptr<ChatPinJob> j(static_cast<ChatPinJob*>(p));
@@ -5405,7 +5540,7 @@ static void SetMyStatus(const std::string& text, long until) {
 static void PumpStatus(bool signedIn) {
     if (!signedIn) return;
     if (!g_myStatusKnown && !g_statusBusy && !ChatDemo() && !g_pollCfgDir.empty()) {
-        static Uint32 nextTry = 0;
+        static std::uint32_t nextTry = 0;
         if (okay::platform::TicksMs32() >= nextTry) {
             nextTry = okay::platform::TicksMs32() + 30000;
             g_statusBusy = true;
@@ -5631,7 +5766,7 @@ static std::vector<OutMsg> OutboxForChannel(long channelId, const std::function<
     std::vector<OutMsg> pend;
     if (!g_outMutex || channelId <= 0) return pend;
     okay::thr::LockMutex(g_outMutex);
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     g_outbox.erase(std::remove_if(g_outbox.begin(), g_outbox.end(), [&](const OutMsg& o) {
         return o.toChannel == channelId && o.state == 1 && (inLog(o.body, o.when) || now - o.sentAt > 15000);
     }), g_outbox.end());
@@ -5660,7 +5795,7 @@ int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, ImVec4 
     if (!g_outMutex) return 0;
     std::vector<OutMsg> pend;
     okay::thr::LockMutex(g_outMutex);
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     g_outbox.erase(std::remove_if(g_outbox.begin(), g_outbox.end(), [&](const OutMsg& o) {
         return o.toChannel == 0 && o.state == 1 && (inLog(o.body, o.when) || now - o.sentAt > 15000);
     }), g_outbox.end());
@@ -5740,7 +5875,7 @@ static long g_chatPeerRead = 0;                                         // (guar
 static bool g_chatPeerHere = false;        // (guarded) the peer has our chat open right now
 static long g_chatPeerLastSeen = 0;        // (guarded) peer's last online heartbeat (unix)
 static std::string g_chatPeerStateUid;     // (guarded) which conversation the three above describe
-static volatile Uint32 g_chatViewMs = 0;   // last frame an open DM was on screen with the app focused
+static volatile std::uint32_t g_chatViewMs = 0;   // last frame an open DM was on screen with the app focused
 static std::vector<okay::Messages::ConversationPreview> g_chatConvs;    // (guarded)
 static std::vector<okay::Friend> g_chatFriends;                        // (guarded)
 // ---- Group chats (multi-person DMs) ----------------------------------------
@@ -5797,7 +5932,7 @@ void DrawStar(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
 float ChatPollWidth(float maxW) { return std::min(maxW, 300.0f); }
 static void ChatReactAsync(bool group, long id, const std::string& removeKey, const std::string& addKey);   // defined with the chat workers
 // My vote as just tapped, shown until the poller's data agrees (or 15 s pass).
-struct PollLocalVote { int choice = -1; Uint32 at = 0; };
+struct PollLocalVote { int choice = -1; std::uint32_t at = 0; };
 static std::map<std::pair<int, long>, PollLocalVote> g_pollLocal;
 static void PollTally(bool group, long id, std::size_t n, const std::map<std::string, long>* counts,
                       const std::set<std::string>* mine, std::vector<long>& out, int& myChoice) {
@@ -6135,10 +6270,10 @@ struct VoiceCall {
     std::string peerUid, peerName, peerAvatar, code, title;
     long serverId = 0;
     bool outgoing = false, answered = false;
-    Uint32 started = 0, emptySince = 0;
+    std::uint32_t started = 0, emptySince = 0;
 };
 static VoiceCall g_call;
-struct IncomingCall { std::string fromUid, fromName, fromAvatar, code, key; long msgId = 0; Uint32 ringStart = 0; };
+struct IncomingCall { std::string fromUid, fromName, fromAvatar, code, key; long msgId = 0; std::uint32_t ringStart = 0; };
 static IncomingCall g_incoming;
 static std::set<long> g_callSeen;   // call messages already rung/handled
 
@@ -6220,7 +6355,7 @@ static void VoicePump() {
         return;
     }
     if (g_call.kind != 1) return;
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     const bool anyone = !g_voice.Peers().empty();
     if (anyone && !g_call.answered) g_call.answered = true;
     if (g_call.outgoing && !g_call.answered && now - g_call.started > 45000) { VoiceHangup(); Toast("No answer", 0); return; }
@@ -6911,10 +7046,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
     PumpVoicePlayback();
     InvitePumpAnswers();   // invite cards answered (accept joins)
     if (!g_chatWinOpen && !kChatDemo) { if (VoiceRecording()) FinishVoiceRecord(false); return; }
-    static std::vector<okay::Friend> friends; static Uint32 friendsNext = 0;
-    static std::vector<okay::Messages::ConversationPreview> convs; static Uint32 convsNext = 0;
+    static std::vector<okay::Friend> friends; static std::uint32_t friendsNext = 0;
+    static std::vector<okay::Messages::ConversationPreview> convs; static std::uint32_t convsNext = 0;
     static std::string selUid, selName, selAvatar; static bool selOnline = false;
-    static std::vector<okay::DirectMessage> log; static Uint32 logNext = 0;
+    static std::vector<okay::DirectMessage> log; static std::uint32_t logNext = 0;
     static std::map<long, std::map<std::string,long>> reacts;   // id -> emoji -> count
     static std::map<long, std::set<std::string>> myReacts;      // id -> emojis I used
     static long peerRead = 0;                        // peer's last-read id (Seen marker)
@@ -6925,15 +7060,15 @@ void DrawChatWindow(okay::account::AccountService& account) {
     static char convFilter[96] = ""; static char msgSearch[96] = ""; static bool showSearch = false;
     static bool wantScrollBottom = false;            // Jump-to-latest request
     static bool focusComposer = false;               // focus the input on open
-    static Uint32 typingSentAt = 0, typingPollNext = 0;  // typing indicator timers
+    static std::uint32_t typingSentAt = 0, typingPollNext = 0;  // typing indicator timers
     static bool peerTyping = false;                  // the other person is typing
     static bool peerHere = false;                    // they have this chat open right now (Snapchat-style)
     static long peerLastSeen = 0;                    // their last online heartbeat (for "Delivered")
     static long scrollToId = 0, flashId = 0;         // jump to a replied-to message
-    static Uint32 flashUntil = 0;
+    static std::uint32_t flashUntil = 0;
     static int scrollHits = 0;                       // frames spent aiming at scrollToId
     {   // a jump target that never shows up (deleted message) stops blocking auto-scroll
-        static long target = 0; static Uint32 since = 0;
+        static long target = 0; static std::uint32_t since = 0;
         if (scrollToId != target) { target = scrollToId; since = okay::platform::TicksMs32(); scrollHits = 0; }
         if (scrollToId != 0 && okay::platform::TicksMs32() - since > 4000) { scrollToId = 0; target = 0; }
     }
@@ -7045,13 +7180,13 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 const std::string u1 = "https://example.com/storage/v1/object/public/chat/demo/voice-a.wav";
                 const std::string u2 = "https://example.com/storage/v1/object/public/chat/demo/voice-b.wav";
                 for (const auto& u : {u1, u2}) {
-                    std::vector<Sint16> pcm((std::size_t)kVoiceRate * (u == u1 ? 7 : 4));
+                    std::vector<std::int16_t> pcm((std::size_t)kVoiceRate * (u == u1 ? 7 : 4));
                     unsigned rng = (unsigned)std::hash<std::string>{}(u);
                     for (std::size_t i = 0; i < pcm.size(); ++i) {
                         float t = (float)i / kVoiceRate;
                         float env = std::max(0.0f, std::sin(t * 2.3f) * std::sin(t * 7.1f + 1.0f));   // syllables
                         rng = rng * 1664525u + 1013904223u;
-                        pcm[i] = (Sint16)(env * 20000.0f * (((rng >> 9) & 0xFFFF) / 32768.0f - 1.0f));
+                        pcm[i] = (std::int16_t)(env * 20000.0f * (((rng >> 9) & 0xFFFF) / 32768.0f - 1.0f));
                     }
                     WriteWav16(VoiceCachePath(u).string(), pcm, kVoiceRate);
                 }
@@ -7267,7 +7402,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             ImGui::End(); return;
         }
         okay::Messages dm(account);
-        Uint32 now = okay::platform::TicksMs32();
+        std::uint32_t now = okay::platform::TicksMs32();
         const std::string myName = kChatDemo ? std::string(std::getenv("OKAY_UI_DEMO_USER") ? std::getenv("OKAY_UI_DEMO_USER") : "You") : account.CurrentSession().username;
         // Friends + conversations come from the background chat poller (no UI block).
         (void)friendsNext; (void)convsNext;
@@ -7781,7 +7916,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
         // chat at that message.
         if (!folded && std::strlen(convFilter) >= 2) {
             static std::string lastQ, requested, resultsFor;
-            static Uint32 typedAt = 0;
+            static std::uint32_t typedAt = 0;
             static std::vector<okay::Messages::SearchHit> hits;
             const std::string q = convFilter;
             if (q != lastQ) { lastQ = q; typedAt = now; }
@@ -9354,7 +9489,7 @@ static std::vector<PolledChatEvent> PollChatEvents(okay::account::AccountService
     static long invSeen = -1;
     static std::map<long, std::string> sentKnown;
     static std::map<long, long> groupSeen;
-    static Uint32 invOffUntil = 0;
+    static std::uint32_t invOffUntil = 0;
     const std::string who = poller.CurrentSession().username;
     if (who != evFor) { evFor = who; invSeen = -1; sentKnown.clear(); groupSeen.clear(); invOffUntil = 0; }
     std::map<std::string, std::string> names; bool namesRead = false;
@@ -9366,7 +9501,7 @@ static std::vector<PolledChatEvent> PollChatEvents(okay::account::AccountService
         auto it = names.find(uid);
         return it != names.end() ? it->second : std::string();
     };
-    const Uint32 nowMs = okay::platform::TicksMs32();
+    const std::uint32_t nowMs = okay::platform::TicksMs32();
     if (invOffUntil == 0 || (std::int32_t)(nowMs - invOffUntil) >= 0) {
         invOffUntil = 0;
         okay::Invites invs(poller);
@@ -10066,8 +10201,8 @@ static int TokenRefreshWorker(void*) {
     return 0;
 }
 static void PumpTokenRefresh(okay::account::AccountService& account) {
-    static Uint32 next = 0;
-    const Uint32 now = okay::platform::TicksMs32();
+    static std::uint32_t next = 0;
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (now < next || g_tokRefreshBusy || !account.IsLoggedIn() || !account.UsesEmail() || g_pollCfgDir.empty()) return;
     next = now + 30000;
     account.ReloadSessionToken();   // a finished refresh (ours or the editor's) lands here
@@ -10079,11 +10214,11 @@ static void PumpTokenRefresh(okay::account::AccountService& account) {
 }
 
 static void PumpRoleCheck(bool signedIn) {
-    static Uint32 next = 0; static bool wasIn = false;
+    static std::uint32_t next = 0; static bool wasIn = false;
     if (std::getenv("OKAY_UI_DEMO_USER")) { g_myRank = 3; return; }
     if (!g_roleMutex) g_roleMutex = okay::thr::CreateMutex();
     if (!signedIn) { g_myRank = -1; g_myBan = okay::MyBanInfo(); wasIn = false; return; }
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (!wasIn) { wasIn = true; next = 0; }
     if (now >= next && !g_roleCheckBusy && !g_pollCfgDir.empty()) {
         next = now + (g_roleLastFailed ? 60000u : 300000u);   // a failed check is retried after a minute
@@ -10294,7 +10429,7 @@ static int OutboxWorker(void*) {
     std::unique_ptr<okay::account::AccountService> acct;
     while (true) {
         OutMsg job; bool have = false, waiting = false;
-        const Uint32 nowMs = okay::platform::TicksMs32();
+        const std::uint32_t nowMs = okay::platform::TicksMs32();
         okay::thr::LockMutex(g_outMutex);
         for (auto& o : g_outbox) {
             if (o.state != 0) continue;
@@ -10320,7 +10455,7 @@ static int OutboxWorker(void*) {
         for (auto& o : g_outbox) if (o.localId == job.localId) {
             o.body = job.body;   // an invite card now carries its record's id
             if (!ok && retry && o.attempts < 8) {
-                o.nextTry = okay::platform::TicksMs32() + 1000u * (Uint32)okay::chat::RetryDelaySeconds(o.attempts++);
+                o.nextTry = okay::platform::TicksMs32() + 1000u * (std::uint32_t)okay::chat::RetryDelaySeconds(o.attempts++);
                 o.err = why;
                 continue;   // still "Sending"
             }
@@ -10377,12 +10512,12 @@ static void PickAndSendAttachment(const std::string& toUid, long toGroup, long t
 static int ChatPollWorker(void*) {
     okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
     okay::Messages dm(a); okay::Friends fr(a);
-    Uint32 nextLog = 0, nextTyping = 0, nextConv = 0, nextFri = 0, nextGroups = 0, nextGLog = 0;
-    Uint32 nextHere = 0, nextSeen = 0, nextPins = 0, nextGMem = 0;
+    std::uint32_t nextLog = 0, nextTyping = 0, nextConv = 0, nextFri = 0, nextGroups = 0, nextGLog = 0;
+    std::uint32_t nextHere = 0, nextSeen = 0, nextPins = 0, nextGMem = 0;
     std::string lastUid; long lastGid = 0, lastMark = 0, peerLastSeen = 0;
     while (g_chatPollRun) {
         if (!g_chatWinOpen) { okay::platform::DelayMs(200); continue; }
-        Uint32 now = okay::platform::TicksMs32();
+        std::uint32_t now = okay::platform::TicksMs32();
         std::string uid; long gid = 0;
         if (g_chatMutex) { okay::thr::LockMutex(g_chatMutex); uid = g_chatSelUid; gid = g_chatSelGroup; okay::thr::UnlockMutex(g_chatMutex); }
         if (uid != lastUid) { lastUid = uid; nextLog = 0; nextTyping = 0; nextHere = 0; nextSeen = 0; lastMark = 0; peerLastSeen = 0; }   // conversation changed → poll now
@@ -10513,7 +10648,7 @@ static okay::thr::Mutex*  g_srvMutex = nullptr;
 static okay::thr::Thread* g_srvThread = nullptr;
 static volatile bool g_srvPollRun = true;
 static volatile long g_srvSel = 0, g_srvChan = 0;    // inputs set by the main thread
-static volatile Uint32 g_srvActiveMs = 0;            // last frame the Servers tab rendered
+static volatile std::uint32_t g_srvActiveMs = 0;            // last frame the Servers tab rendered
 static bool g_srvChanReady = false, g_srvMemReady = false, g_srvMsgReady = false;  // (guarded)
 static std::vector<okay::Channel> g_srvChannels;      // (guarded)
 static std::vector<okay::ServerMember> g_srvMembers;  // (guarded)
@@ -10523,10 +10658,10 @@ static std::map<long,bool> g_srvMyLikes;              // (guarded)
 static int ServerPollWorker(void*) {
     okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
     okay::Servers sv(a);
-    Uint32 nextChan = 0, nextMem = 0, nextMsg = 0;
+    std::uint32_t nextChan = 0, nextMem = 0, nextMsg = 0;
     long lastSel = 0, lastChan = 0;
     while (g_srvPollRun) {
-        Uint32 now = okay::platform::TicksMs32();
+        std::uint32_t now = okay::platform::TicksMs32();
         if (now - g_srvActiveMs > 2500) { okay::platform::DelayMs(200); continue; }   // only while viewing Servers
         long sel = g_srvSel, chan = g_srvChan;
         if (sel != lastSel)  { lastSel = sel;  nextChan = 0; nextMem = 0; }
@@ -10632,7 +10767,7 @@ static void DrawToastOverlay() {
 // Created on first open; closing it just hides it.
 struct ChatWindowHost {
     SDL_Window* win = nullptr; SDL_Renderer* ren = nullptr; ImGuiContext* ctx = nullptr;
-    ImFont* mono = nullptr; Uint32 id = 0; bool shown = false;
+    ImFont* mono = nullptr; std::uint32_t id = 0; bool shown = false;
 };
 static ChatWindowHost g_chatHost;
 // Dear ImGui input: imgui_impl_sdl2 by default, or our own okay::platform feed with OKAY_PLATFORM_EVENTS=own
@@ -10934,7 +11069,7 @@ static void ChatHostRaise() { if (g_chatHost.shown) { lw::Restore(g_chatHost.win
 static bool ChatHostEvent(const okay::platform::Event& e) {
     if (!g_chatHost.win) return false;
     using EvT = okay::platform::EventType;
-    Uint32 wid = 0;
+    std::uint32_t wid = 0;
     switch (e.type) {
         case EvT::WindowClose: case EvT::WindowResized: case EvT::WindowFocusGained: case EvT::WindowFocusLost: case EvT::WindowExposed:
         case EvT::KeyDown: case EvT::KeyUp: case EvT::TextInput: case EvT::TextEditing:
@@ -10987,8 +11122,8 @@ static int PlaytimeSyncWorker(void*) {
     return 0;
 }
 static void PlaytimeTick(bool loggedIn) {
-    static Uint32 nextPump = 0, nextSync = 0;
-    const Uint32 now = okay::platform::TicksMs32();
+    static std::uint32_t nextPump = 0, nextSync = 0;
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (now >= nextPump) { nextPump = now + 1000; PumpPlaytime(); }
     if (g_playtimeDirty && g_sharePlaytime && loggedIn && !g_playtimeSyncing && now >= nextSync && !g_pollCfgDir.empty()) {
         g_playtimeDirty = false; nextSync = now + 120000;   // at most every 2 minutes
@@ -11063,7 +11198,7 @@ static okay::thr::Thread* g_offThread = nullptr;
 // Main thread only.
 static og::Manifest g_offInstalled;
 static bool g_offIsInstalled = false;
-static Uint32 g_offLastCheck = 0;
+static std::uint32_t g_offLastCheck = 0;
 static bool g_offConfirmUninstall = false;
 
 template <class F> static void OffLocked(F fn) { okay::thr::LockMutex(g_offMutex); fn(); okay::thr::UnlockMutex(g_offMutex); }
@@ -11341,8 +11476,8 @@ static void UninstallOfficial() {
 // look for a newer version.
 static void OfficialTick(bool onPlayPage) {
     static bool started = false, wasOnPlay = false;
-    static Uint32 startCheckAt = 0, nextRunCheck = 0;
-    const Uint32 now = okay::platform::TicksMs32();
+    static std::uint32_t startCheckAt = 0, nextRunCheck = 0;
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (!started) {
         started = true;
         g_offMutex = okay::thr::CreateMutex();
@@ -12251,20 +12386,35 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
 } // namespace
 using namespace okl;   // main() and the Versions host below use the launcher's names unqualified (as the anonymous namespace allowed before the split)
 
+// "Get test builds" was just switched (Settings > Behavior or the Versions page): save it, look for updates again on the new setting, and say what it means.
+static void TestBuildsSwitched() {
+    const okayversions::Settings& vs = okayversions::GlobalSettings();
+    SavePrefs();
+    g_upAvailable.clear(); g_upAvailableTitle.clear(); g_launcherRefocused = true;   // look again now, on the new setting
+    const bool onTest = okay::testbuild::IsTestVersion(OKAY_ENGINE_VERSION);
+    Toast(vs.testBuilds ? "Test builds are on. They can be broken. Switch this off in Settings > Behavior or on the Versions page to stop getting them."
+          : onTest ? "Test builds are off. You are still on a test build: Settings > Behavior > Go back to the stable version gives you the normal release."
+                   : "Test builds are off. Nothing new will be offered.", vs.testBuilds ? 2 : 1);
+}
+
 // What the Versions page needs from the launcher: where things are, the look, and the launcher's own helpers (toast, folder opener, HTTP).
 // Rebuilt about once a second (it asks the file system and the process list); the colours follow the theme every frame.
 static const okayversionsui::Host& VersionsHost() {
     static okayversionsui::Host h;
-    static Uint32 builtAt = 0;
+    static std::uint32_t builtAt = 0;
     static bool wired = false;
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (!wired) {
         wired = true;
         h.toast = [](const std::string& m, int kind) { Toast(m, kind); };
         h.openFolder = [](const std::string& path) { OpenExternal(path); };
         h.savePrefs = [] { SavePrefs(); };
         h.startUpdate = [] { StartUpdateCheck(true); };
+        h.installSkipped = [](const std::string& v) { InstallOffered(v); };   // the skip is undone, then the normal update with its checks
+        h.runningMainCount = RunningMainCount(okayversions::Index{});
         h.channelChanged = [] { g_upAvailable.clear(); g_launcherRefocused = true; };   // look for updates on the new channel now
+        h.testBuildsChanged = [] { TestBuildsSwitched(); };
+        h.repair = [] { g_upRepairMissing = true; StartUpdateCheck(true); };   // download this version's editor and player again (the editor closes, saved, first)
         h.downloadDone = [](const std::string& v, bool ok, const std::string& msg) {   // a desktop notification, or the toast in front
             okl::notify::Event ev;
             ev.kind = okl::notify::Kind::Download; ev.failure = !ok;
@@ -12284,7 +12434,9 @@ static const okayversionsui::Host& VersionsHost() {
         h.sources = VersionSources();
         h.editorRunning = EditorRunning();
         h.runningEditorVersion = g_editorStartedVersion;
+        h.programsNote = okayupdater::MismatchSentence(h.currentVersion, okayupdater::MismatchedPrograms(h.currentVersion, InstalledProgramVersions()));
     }
+    h.skippedUpdate = SkippedOfferVersion();   // (every frame: a skip or an install changes it at once)
     h.accent = kAccent;
     h.accentDim = kAccentDim;
     h.cardBg = okaytheme::kRaised;
@@ -12294,8 +12446,8 @@ static const okayversionsui::Host& VersionsHost() {
 // What the Command line page needs: the okay program in Tools, the projects for its picker, the mono font and the look.
 static const okaylcli::Host& CommandLineHost() {
     static okaylcli::Host h;
-    static Uint32 builtAt = 0;
-    const Uint32 now = okay::platform::TicksMs32();
+    static std::uint32_t builtAt = 0;
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (!h.toast) h.toast = [](const std::string& m, int kind) { Toast(m, kind); };
     if (builtAt == 0 || now - builtAt > 2000) {
         builtAt = now;
@@ -12410,11 +12562,11 @@ static void SkeletonGrid(const okay::launcherlayout::Grid& grid, float cardH, fl
 long g_mktOpenItem = 0;   // a creation to open on the Marketplace item page (set by the Community showcase)
 static void DrawCommunityShowcase(okay::account::AccountService& account, int view, int& tab, const char* demoUser, const std::vector<fs::path>& scenes) {
     namespace PL = okay::launcherlayout;
-    static Uint32 s_nextFetch = 0;
+    static std::uint32_t s_nextFetch = 0;
     static std::vector<okay::WorkshopItem> items;
     static std::map<long, std::pair<long, long>> ratings;
     static bool loaded = false, failed = false;
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (!g_wsMutex) g_wsMutex = okay::thr::CreateMutex();
     if (now >= s_nextFetch && !g_wsFetching) {   // the marketplace list, the same worker the Marketplace uses
         g_wsFetching = true; s_nextFetch = now + 30000;
@@ -12658,18 +12810,22 @@ static void DrawCommunityShowcase(okay::account::AccountService& account, int vi
     }
 }
 
-// Is the page rectangle (w x h at the cursor) under something Dear ImGui draws in front: an open popup, or a window above the
-// launcher's root window (the floating chat window, an incoming call, a toast ...)? An OkayUI-drawn page is
-// flushed after ImGui and would paint over it (owner's screenshot, What's New over the Notifications flyout), so while this is
-// true the page's Dear ImGui version is drawn instead, which ImGui layers correctly. (Notifications is a page now, not a flyout.)
-static bool OkayPageCovered(float w, float h) {
 #ifdef OKAY_HAVE_OKAYUI
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    return okayuihost::CoveredInImGui(ImGui::GetCurrentWindow(), p.x, p.y, w, h);
-#else
-    (void)w; (void)h; return false;
-#endif
+// An OkayUI page (What's New, Tips) in the rectangle `ra` at the cursor of the page area, hosted in Dear ImGui's draw order
+// (okayuihost::HostPanelArea): its shapes go into the page's draw list, so ImGui's popups, tooltips and windows in front (the chat
+// window, an incoming call, a toast) are drawn over it, and the page never swaps to its Dear ImGui copy while they show. It used to:
+// hovering the sidebar's profile row showed a tooltip over a corner of the page, and the whole What's New switched to the other
+// version until the mouse moved away (owner's recording, 2026-11-26). Which surface draws a page: launcher/PageLayout.hpp OkayUIDrawsPage.
+// The Browser page is hosted the same way; its page images are textures the launcher made (TextureFromRgba), which both of its
+// ImGui renderers take as an ImTextureID, as its own ImGui::Image calls do (okayuihost::ImGuiEmbed::SetHostTextures).
+template <class Draw>
+static void HostOkayPage(const char* itemId, ImVec2 ra, Draw draw) {
+    static OkayUI::CapturedGeometry s_cap;
+    okayuihost::ImGuiEmbed& embed = okayuihost::SharedImGuiEmbed();
+    embed.SetHostTextures([](const void* t) { return (ImTextureID)(intptr_t)t; });
+    okayuihost::HostPanelArea(itemId, ra, g_okayRegion, embed, s_cap, draw);
 }
+#endif
 
 // ---- The Notifications page (sidebar > Notifications; it replaced the flyout over the current page, owner 2026-11-25) ----------
 // Header actions (Mark all read, Clear), filter chips, pending friend requests with Accept / Decline, then the feed grouped
@@ -13062,7 +13218,7 @@ static void DrawWelcomeScreen(okay::account::AccountService& account, okay::sign
         const ImVec2 bp(o.x + avail.x - pad - bw, o.y + UiPx(16.0f));
         dl->AddText(ImVec2(bp.x - UiPx(12.0f) - ImGui::CalcTextSize(t.c_str()).x, bp.y + (ImGui::GetFrameHeight() - lh) * 0.5f), ImGui::GetColorU32(okaytheme::Current().success), t.c_str());
         ImGui::SetCursorScreenPos(bp);
-        if (PrimaryButton("Install now", ImVec2(bw, 0))) StartUpdateCheck(true);
+        if (PrimaryButton("Install now", ImVec2(bw, 0))) InstallOffered(g_upAvailable);
     }
 
     // ---- The card ----
@@ -13409,7 +13565,7 @@ int main(int argc, char** argv) {
         if (g_splashAccentOverride) { st.ar = g_splashAccent[0]; st.ag = g_splashAccent[1]; st.ab = g_splashAccent[2]; }
         else { st.ar = kAccentPresets[ai].col.x; st.ag = kAccentPresets[ai].col.y; st.ab = kAccentPresets[ai].col.z; }
         auto C = [](const float* c) -> okay::ui2d::RGBA {
-            auto u = [](float v){ return (Uint8)((v < 0 ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };
+            auto u = [](float v){ return (std::uint8_t)((v < 0 ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };
             return okay::ui2d::RGBA{u(c[0]), u(c[1]), u(c[2]), 255}; };
         st.bgTop = C(g_splashBgTop); st.bgBottom = C(g_splashBgBot);
         st.logo = g_splashLogoTex; st.showProgress = g_splashShowBar;
@@ -13573,7 +13729,7 @@ int main(int argc, char** argv) {
     std::string commRemovePath;   // community item pending delete-confirmation
     std::string commRemoveName;
     // Reopen on the section the launcher was last closed on.
-    int tab = (g_lastTab >= 0 && g_lastTab <= 17 && g_lastTab != 11) ? g_lastTab : 0;
+    int tab = RestoreTab(g_lastTab);   // any sidebar page up to the Browser page, never Admin
     if (const char* dt = std::getenv("OKAY_UI_DEMO_TAB")) tab = std::atoi(dt);   // dev screenshot hook
     if (launchArgs.versions) { okayversionsui::RequestPage(launchArgs.version); tab = 15; }
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
@@ -13628,7 +13784,7 @@ int main(int argc, char** argv) {
     while (running) {
         okay::thr::AtomicSet(&g_programsRunning, AnyProgramRunning() ? 1 : 0);   // every frame, minimized or not (the update worker reads it before swapping files)
         bool okayFrame = false;   // this frame has an OkayUI frame open (the OkayUI backend is on): closed after ImGui's draw data
-        Uint64 frameStart = okay::platform::PerfCounter();   // for the frame-rate cap below
+        std::uint64_t frameStart = okay::platform::PerfCounter();   // for the frame-rate cap below
         // Current account service for this frame. Held by reference so existing
         // code reads naturally; the Settings tab may rebuild accountPtr (which
         // is why the Settings tab uses accountPtr-> directly, not this alias).
@@ -13741,7 +13897,7 @@ int main(int argc, char** argv) {
             if (clicked.place != okl::notify::Place::None) { RestoreLauncher(window); NotifyOpenTarget(clicked, tab); }
         }
         {
-            static Uint32 nextWatch = 0;
+            static std::uint32_t nextWatch = 0;
             if (!g_tray->Hidden()) nextWatch = 0;
             else if (okay::platform::TicksMs32() >= nextWatch) {
                 nextWatch = okay::platform::TicksMs32() + okaytray::kWatchdogMs;
@@ -13851,7 +14007,7 @@ int main(int argc, char** argv) {
         // Auto-restart the launcher after it updates itself (the new exe is already
         // swapped in). Give the toast a moment, then relaunch and quit.
         if (g_upRelaunchNeeded && GetState() == Up_Updated) {
-            static Uint32 relaunchAt = 0;
+            static std::uint32_t relaunchAt = 0;
             if (relaunchAt == 0) relaunchAt = okay::platform::TicksMs32() + 1600;
             else if (okay::platform::TicksMs32() >= relaunchAt) {
                 relaunchAt = 0xFFFFFFFFu;   // one attempt; a failure must not spawn a helper every frame
@@ -13863,7 +14019,7 @@ int main(int argc, char** argv) {
 
         // `--versions` from a second launcher (the editor's "Open launcher"): bring this window forward and open the Versions page.
         {
-            static Uint32 nextHandoff = 0;
+            static std::uint32_t nextHandoff = 0;
             if (okay::platform::TicksMs32() >= nextHandoff) {
                 nextHandoff = okay::platform::TicksMs32() + 400;
                 okayversions::LauncherArgs ha;
@@ -13883,7 +14039,7 @@ int main(int argc, char** argv) {
             // Look for a newer version shortly after start, then every 5 min, and again
             // whenever the launcher window comes back into focus (at most once a minute).
             // Each look only fetches the tiny VERSION.txt.
-            static Uint32 nextPoll = okay::platform::TicksMs32() + 10u * 1000u;
+            static std::uint32_t nextPoll = okay::platform::TicksMs32() + 10u * 1000u;
             if (static bool demoUp = false; !demoUp) {   // dev screenshot hook: pretend a newer version was found
                 demoUp = true;
                 if (const char* v = std::getenv("OKAY_UI_DEMO_UPDATE")) {
@@ -13893,7 +14049,7 @@ int main(int argc, char** argv) {
                 }
             }
             const UpState us = GetState();
-            static Uint32 lastPoll = 0;
+            static std::uint32_t lastPoll = 0;
             if (g_launcherRefocused) {
                 g_launcherRefocused = false;
                 if (lastPoll == 0 || okay::platform::TicksMs32() - lastPoll > 60u * 1000u) nextPoll = okay::platform::TicksMs32();
@@ -13903,16 +14059,40 @@ int main(int argc, char** argv) {
                 lastPoll = okay::platform::TicksMs32();
                 if (us != Up_Checking && us != Up_Downloading && us != Up_Updated) StartUpdatePoll();
             }
-            std::string latest, latestTitle; bool done = false;
+            std::string latest, latestTitle, foundNote; bool done = false, foundManual = false; int foundKind = okayupdater::Offer::Install;
             if (g_upPollMutex) {
                 okay::thr::LockMutex(g_upPollMutex);
-                if (g_upPollDone) { done = true; latest = g_upPollResult; latestTitle = g_upPollTitle; g_upPollDone = false; }
+                if (g_upPollDone) {
+                    done = true; latest = g_upPollResult; latestTitle = g_upPollTitle; foundNote = g_upPollNote; foundKind = g_upPollKind; foundManual = g_upPollManual;
+                    g_upPollDone = false;
+                }
                 okay::thr::UnlockMutex(g_upPollMutex);
             }
-            if (done && !latest.empty() && CompareVersions(LocalVersion(), latest) < 0 && latest != g_upAvailable) {
+            // What was found, and whether it is shown (okayupdater::DecideOffer, okay::updateview::AvailablePhaseFor): a version the person skipped
+            // gives no dialog, badge or notification unless they checked themselves; a release a test build already has gives only the line.
+            namespace UVf = okay::updateview;
+            const bool foundNewer = done && !latest.empty() && CompareVersions(LocalVersion(), latest) < 0;
+            if (foundNewer) {
+                g_upAheadNote = foundKind == okayupdater::Offer::AlreadyHave ? foundNote : std::string();
+                if (foundKind != okayupdater::Offer::Install && foundKind != okayupdater::Offer::Ask && foundKind != okayupdater::Offer::Skipped) {
+                    if (g_upAvailable == latest) { g_upAvailable.clear(); g_upAvailableTitle.clear(); g_upAvailableSkipped = false; g_upAvailableNote.clear(); }
+                }
+            }
+            const UVf::Shown shown = foundNewer && foundKind != okayupdater::Offer::AlreadyHave
+                ? UVf::AvailablePhaseFor(latest, okayversions::GlobalSettings().skippedVersion, foundManual) : UVf::Shown::No;
+            if (foundNewer && foundKind == okayupdater::Offer::Skipped && shown == UVf::Shown::No) {
+                g_upSkippedFound = latest;   // What's New and Versions say it is there (skipped), with Install
+                if (g_upAvailable == latest) { g_upAvailable.clear(); g_upAvailableTitle.clear(); g_upAvailableSkipped = false; g_upAvailableNote.clear(); }
+            }
+            if (shown != UVf::Shown::No) {   // (the note and the skipped mark follow the newest answer, the notification only a new version)
+                g_upAvailableSkipped = shown == UVf::Shown::Skipped;
+                g_upAvailableNote = foundKind == okayupdater::Offer::Ask ? foundNote : std::string();
+                if (g_upAvailableSkipped) g_upSkippedFound = latest;
+            }
+            if (shown != UVf::Shown::No && latest != g_upAvailable) {
                 g_upAvailable = latest;
                 g_upAvailableTitle = okay::testbuild::IsTestVersion(latest) ? (latestTitle.empty() ? std::string("Test build") : latestTitle) : std::string();
-                {   // once per version: a desktop pop-up (or the toast, when the launcher is in front) and the tab's row
+                if (shown == UVf::Shown::Yes) {   // once per version: a desktop pop-up (or the toast, when the launcher is in front) and the tab's row
                     okl::notify::Event ev;
                     ev.kind = okl::notify::Kind::Update;
                     ev.target.place = okl::notify::Place::Update; ev.target.id = latest;
@@ -13926,12 +14106,13 @@ int main(int argc, char** argv) {
                     }
                     if (okl::notify::Post(ev).route == okl::notify::Route::Drop)   // already told about this version: the row as before
                         UpsertNotif(ev.tabKey, ev.title, ev.body, 3, -1);
+                    if (okay::platform::NeedsAttentionFlash(lw::IsMinimized(window), lw::HasInputFocus(window)))
+                        lw::Flash(window, okay::platform::FlashMode::UntilFocused);   // taskbar attention while minimized/unfocused
                 }
-                if (okay::platform::NeedsAttentionFlash(lw::IsMinimized(window), lw::HasInputFocus(window)))
-                    lw::Flash(window, okay::platform::FlashMode::UntilFocused);   // taskbar attention while minimized/unfocused
             }
             if (us == Up_Updated || us == Up_UpToDate) {   // a real check/install supersedes the hint
-                if (!g_upAvailable.empty() && (us == Up_Updated || CompareVersions(LocalVersion(), g_upAvailable) >= 0)) { g_upAvailable.clear(); g_upAvailableTitle.clear(); }
+                if (!g_upAvailable.empty() && (us == Up_Updated || CompareVersions(LocalVersion(), g_upAvailable) >= 0)) { g_upAvailable.clear(); g_upAvailableTitle.clear(); g_upAvailableSkipped = false; g_upAvailableNote.clear(); }
+                if (us == Up_Updated) { g_upSkippedFound.clear(); g_upAheadNote.clear(); }
                 g_upGoBack = false;   // the way back is done (or there was nothing to go back from)
             }
         }
@@ -13949,7 +14130,7 @@ int main(int argc, char** argv) {
         PlaytimeTick(account.IsLoggedIn());
         OfficialTick(tab == 1);                // the official game: results, update checks, is it running
         if (!g_incoming.code.empty()) {   // ring (and get the user's attention) while a call waits
-            static Uint32 nextRing = 0;
+            static std::uint32_t nextRing = 0;
             if (okay::platform::TicksMs32() >= nextRing) {
                 PlayChatChime(); nextRing = okay::platform::TicksMs32() + 2200;
                 lw::Flash(g_chatHost.shown ? g_chatHost.win : window, okay::platform::FlashMode::Briefly);
@@ -13970,7 +14151,7 @@ int main(int argc, char** argv) {
         if (g_tray->Hidden() || okay::platform::IsBackgroundWindow(lw::IsVisible(window), lw::IsMinimized(window))) {
             const bool chatShown = g_chatHost.shown && !lw::IsMinimized(g_chatHost.win);
             if (chatShown) ChatHostFrame(account);   // the chat window keeps going on its own
-            okay::platform::DelayMs((Uint32)okaytray::IdleDelayMs(g_tray->Hidden(), chatShown, ChatHostFocused(), g_voice.Active()));
+            okay::platform::DelayMs((std::uint32_t)okaytray::IdleDelayMs(g_tray->Hidden(), chatShown, ChatHostFocused(), g_voice.Active()));
             continue;
         }
 
@@ -13981,6 +14162,9 @@ int main(int argc, char** argv) {
 #ifdef OKAY_HAVE_OKAYUI
         if (g_uiBackend == okayuibackend::Backend::OkayUI) { OkayUIFrameBegin(); okayFrame = true; }
 #endif
+        SetBrowserHostAvailable(okayFrame);   // the Browser page draws with OkayUI: without a frame, links open in the system browser
+        PumpBrowser();                        // its pages, downloads and games move along whichever page is shown
+        if (TakeShowRequest()) { tab = kBrowserTab; ClosePublicProfile(); }   // a chat link opened in a new tab of the Browser page
 
         // ---- Exit / Minimize confirmation (raised by the window [X] or Alt+F4) ----
         // Closing the launcher asks first, so an accidental [X] doesn't quit mid-task;
@@ -14041,7 +14225,7 @@ int main(int argc, char** argv) {
         // asks the editor to save everything and close, waits, then carries on.
         {
             static bool s_closing = false;
-            static Uint32 s_sentAt = 0;
+            static std::uint32_t s_sentAt = 0;
             if (g_afterEditor && !ImGui::IsPopupOpen("Close the editor first")) ImGui::OpenPopup("Close the editor first");
             ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
             if (ImGui::BeginPopupModal("Close the editor first", nullptr,
@@ -14105,7 +14289,7 @@ int main(int argc, char** argv) {
             namespace UV = okay::updateview;
             const UpState us = GetState();
             std::string fromV, toV; GetUpVers(fromV, toV);
-            static Uint32 s_stepTicks = 0; static int s_stepWas = -1; static long long s_lastChecked = 0;
+            static std::uint32_t s_stepTicks = 0; static int s_stepWas = -1; static long long s_lastChecked = 0;
             const int stepIdx = okay::thr::AtomicGet(&g_upStepIdx), stepTot = okay::thr::AtomicGet(&g_upStepTotal);
             if (stepIdx != s_stepWas || us != Up_Downloading) { s_stepWas = stepIdx; s_stepTicks = okay::platform::TicksMs32(); }
             if (us == Up_UpToDate && s_lastChecked == 0) s_lastChecked = (long long)std::time(nullptr);
@@ -14118,7 +14302,7 @@ int main(int argc, char** argv) {
             ui.step = GetUpStep(); ui.stepIndex = stepIdx; ui.stepCount = stepTot;
             ui.bytesNow = (long long)(unsigned)okay::thr::AtomicGet(&g_upBytesNow);
             ui.bytesTotal = (long long)(unsigned)okay::thr::AtomicGet(&g_upBytesTotal);
-            ui.secondsInStep = (double)(Uint32)(okay::platform::TicksMs32() - s_stepTicks) / 1000.0;
+            ui.secondsInStep = (double)(std::uint32_t)(okay::platform::TicksMs32() - s_stepTicks) / 1000.0;
             ui.error = GetUpMsg();
             ui.lastCheckedUnix = s_lastChecked; ui.nowUnix = (long long)std::time(nullptr);
             ui.restartNeeded = g_upRelaunchNeeded;
@@ -14128,6 +14312,8 @@ int main(int argc, char** argv) {
                      : us == Up_Failed ? UV::Phase::Failed
                      : !g_upAvailable.empty() ? UV::Phase::Available
                      : us == Up_UpToDate ? UV::Phase::UpToDate : UV::Phase::Idle;
+            ui.skipped = ui.phase == UV::Phase::Available && g_upAvailableSkipped;
+            ui.note = ui.phase == UV::Phase::Available ? g_upAvailableNote : ui.phase == UV::Phase::UpToDate ? g_upAheadNote : std::string();
             if (const char* d = std::getenv("OKAY_UI_DEMO_UPDATE_VIEW")) {   // dev screenshot hook: available downloading verifying ready failed uptodate checking
                 const std::string s = d;
                 ui.fromVersion = "2.903.9"; ui.toVersion = "2.904.0";
@@ -14147,9 +14333,10 @@ int main(int argc, char** argv) {
             const float lh = ImGui::GetTextLineHeight(), padX = UiPx(24.0f), btnH = ImGui::GetFrameHeight() + UiPx(12.0f);
             const float b1 = v.primary != UV::Button::None ? FitButtonW(UV::ButtonLabel(v.primary), UiPx(110.0f)) : 0.0f;
             const float b2 = v.secondary != UV::Button::None ? FitButtonW(UV::ButtonLabel(v.secondary), UiPx(90.0f)) : 0.0f;
+            const float b3 = v.tertiary != UV::Button::None ? FitButtonW(UV::ButtonLabel(v.tertiary), UiPx(120.0f)) : 0.0f;
             const float fixedH = UiPx(260.0f) + (v.error.empty() ? 0.0f : lh * 3);
             const UV::DialogBox box = UV::LayoutDialog(vpU->WorkSize.x, vpU->WorkSize.y, UiPx(560.0f), UiPx(20.0f), fixedH, showNotes,
-                                                       UiPx(80.0f), UiPx(320.0f), b1, b2, UiPx(8.0f), padX);
+                                                       UiPx(80.0f), UiPx(320.0f), b1, b2, UiPx(8.0f), padX, b3);
             ImGui::SetNextWindowPos(vpU->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
             ImGui::SetNextWindowSize(ImVec2(box.w, 0), ImGuiCond_Always);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, UiPx(22.0f)));
@@ -14244,7 +14431,10 @@ int main(int argc, char** argv) {
                 ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
                 auto act = [&](UV::Button b) {
                     switch (b) {
-                    case UV::Button::InstallNow: StartUpdateCheck(true); break;
+                    case UV::Button::InstallNow: InstallOffered(ui.toVersion); break;
+                    case UV::Button::Skip:   // never offered by itself again; a newer version is (launcher.cfg skipped_version)
+                        SkipOffered(ui.toVersion);
+                        g_upModalOpen = false; ImGui::CloseCurrentPopup(); break;
                     case UV::Button::TryAgain: case UV::Button::CheckAgain: StartUpdateCheck(); break;
                     case UV::Button::RestartNow:
                         if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; }
@@ -14256,6 +14446,11 @@ int main(int argc, char** argv) {
                     }
                 };
                 const float rowX = ImGui::GetCursorPosX();
+                if (v.tertiary != UV::Button::None) {   // "Skip this version": on the left, away from Install now
+                    if (ImGui::Button(UV::ButtonLabel(v.tertiary), ImVec2(box.stackButtons ? cw : b3, btnH))) act(v.tertiary);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Don't offer this version again. A newer version is still offered.\nWhat's New and Versions can still install it.");
+                    if (!box.stackButtons) ImGui::SameLine(0, UiPx(8.0f));
+                }
                 if (!box.stackButtons) ImGui::SetCursorPosX(rowX + cw - b1 - (b2 > 0 ? b2 + UiPx(8.0f) : 0.0f));
                 if (v.secondary != UV::Button::None) {
                     if (ImGui::Button(UV::ButtonLabel(v.secondary), ImVec2(box.stackButtons ? cw : b2, btnH))) act(v.secondary);
@@ -14284,7 +14479,7 @@ int main(int argc, char** argv) {
             if (!ntSeeded && kNtDemoState) tab = 16;   // (opens the Notifications page)
             const std::string ntDemo = kNtDemoState ? kNtDemoState : "";
             if (kNtDemo && !ntSeeded && ntDemo != "empty") {   // seed a realistic feed once (ages relative to now)
-                struct Seed { const char* key; const char* title; const char* body; int kind; Uint32 agoMin; bool unread; int go; };
+                struct Seed { const char* key; const char* title; const char* body; int kind; std::uint32_t agoMin; bool unread; int go; };
                 const Seed seed[] = {
                     {"demo:dm", "maya sent you a message", "Perfect. First playable by tonight? I can share the build link as soon as it's up.", 2, 2, true, 6},
                     {"demo:fr", "New friend request", "alexr wants to be your friend.", 1, 14, true, 6},
@@ -14295,7 +14490,7 @@ int main(int argc, char** argv) {
                     {"demo:news", "What's new in v2.776", "Servers get channel tabs, faster chat and a refreshed notifications panel.", 0, 3 * 1440, false, 0},
                     {"demo:dl", "Download finished", "Orbit Hopper (42 MB) is ready to play in your Library.", 3, 5 * 1440, false, 1},
                 };
-                const Uint32 t0 = okay::platform::TicksMs32();
+                const std::uint32_t t0 = okay::platform::TicksMs32();
                 auto add = [&](const std::string& key, const std::string& title, const std::string& body, int kind, std::uint32_t agoMin, bool unread, int go) {
                     Notif n; n.key = key; n.title = title; n.body = body; n.kind = kind;
                     n.time = t0 - agoMin * 60000u;   // may wrap: ages are always computed as (now - time) mod 2^32
@@ -14320,14 +14515,15 @@ int main(int argc, char** argv) {
         // Keyboard shortcuts: 1-5 switch tabs (when not typing in a field);
         // Ctrl+F focuses the current tab's search box; Esc clears every search.
         if (!closeConfirm && !ImGui::GetIO().WantTextInput) {
-            for (int i = 0; i < 9; ++i)
+            for (int i = 0; i < 9 && tab != kBrowserTab; ++i)   // (the Browser page has its own Ctrl+1..9 for its tabs)
                 if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i), false)) tab = i;
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
                 playFilter[0] = commFilter[0] = marketFilter[0] = '\0';
         }
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false))
             focusSearch = true;
-        g_panelShortcut = ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B, false) && !ImGui::GetIO().WantTextInput;   // Ctrl+B: fold a side panel
+        g_panelShortcut = ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B, false) && !ImGui::GetIO().WantTextInput &&   // Ctrl+B: fold a side panel
+                          !(tab == kBrowserTab && ImGui::GetIO().KeyShift);   // (Ctrl+Shift+B is the Browser page's bookmarks bar)
         g_lastTab = tab == 11 ? 0 : tab;   // persisted on exit (and every SavePrefs)
         if (gateOpen) PumpRoleCheck(account.IsLoggedIn() && account.IsOnline());
         if (gateOpen) PumpBlocks(account);
@@ -14564,6 +14760,7 @@ int main(int argc, char** argv) {
         tabRow(2);
         tabRow(7);
         tabRow(10, ActiveDownloads(), navAccent);         // in-flight downloads
+        if (navRow("##navbrowser", "Browser", kIcoGlobe, tab == kBrowserTab && !g_pfOpen, 0, 0)) { tab = kBrowserTab; ClosePublicProfile(); }
         if (navRow("##navver", "Versions", kIcoRefresh, tab == 15 && !g_pfOpen, okayversionsui::InstallRunning() ? 1 : 0, navAccent)) { tab = 15; ClosePublicProfile(); }
         if (navRow("##navcli", "Command line", kIcoTerminal, tab == 17 && !g_pfOpen, 0, 0)) { tab = 17; ClosePublicProfile(); }
         navSection("SOCIAL");
@@ -14636,7 +14833,7 @@ int main(int argc, char** argv) {
                     dl->PathStroke(tone, 0, 2.2f);
                 } else DrawNavIcon(dl, kIcoRefresh, uc, tone);
                 if (click) {
-                    if (upAvail) StartUpdateCheck(true);
+                    if (upAvail) InstallOffered(g_upAvailable);
                     else if (st == Up_Failed) StartUpdateCheck();
                     else if (g_upRelaunchNeeded && st == Up_Updated) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
                 }
@@ -14661,7 +14858,7 @@ int main(int argc, char** argv) {
                 if (ImGui::IsItemHovered() && !upMsg.empty()) ImGui::SetTooltip("%s", upMsg.c_str());
                 if (upAvail) {
                     ImGui::SetCursorScreenPos(ImVec2(mn.x + 36, mn.y + 50));
-                    if (PrimaryButton("Install now", ImVec2(w - 48, upBtnH))) StartUpdateCheck(true);
+                    if (PrimaryButton("Install now", ImVec2(w - 48, upBtnH))) InstallOffered(g_upAvailable);
                 } else if (st == Up_Failed) {
                     ImGui::SameLine(0, 0);
                     ImGui::SetCursorScreenPos(ImVec2(mn.x + w - 50, mn.y + 7));
@@ -14843,6 +15040,23 @@ int main(int argc, char** argv) {
                 tab = po.gotoTab;
                 if (!po.marketSearch.empty()) std::snprintf(marketFilter, sizeof(marketFilter), "%s", po.marketSearch.c_str());
             }
+        } else if (tab == kBrowserTab) {                  // ---- Browser: the browser program's browser, drawn by OkayUI ----
+            const BrowserPageMode mode = PageMode(BrowserSwitchOn(), okayFrame);
+            if (mode == BrowserPageMode::Browser) {   // hosted in Dear ImGui's draw order, like What's New: ImGui's tooltips and popups lie over it
+                ImVec2 ra = ImGui::GetContentRegionAvail();
+                ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - PageFooterH(), 8.0f);
+#ifdef OKAY_HAVE_OKAYUI
+                HostOkayPage("##okayui_browser", ra, [&](ImVec2 p, ImVec2 a) { DrawBrowserPage(p.x, p.y, a.x, a.y); });
+#else
+                ImGui::Dummy(ra);
+#endif
+            } else if (mode == BrowserPageMode::SwitchedOff) {
+                sectionHeader("Browser", nullptr);
+                EmptyState(kIcoGlobe, "The browser is switched off", "Turn on Settings > Experimental > Browser and restart the launcher to browse the web here. Links open in your system browser meanwhile.", UiPx(40.0f));
+            } else if (mode == BrowserPageMode::NeedsOkayUi) {
+                sectionHeader("Browser", nullptr);
+                EmptyState(kIcoGlobe, "The browser needs OkayUI screens", "The browser is drawn with our own UI toolkit. Turn on Settings > Experimental > OkayUI screens and restart the launcher. Links open in your system browser meanwhile.", UiPx(40.0f));
+            }
         } else if (tab == 0) {                            // ---- Create ----
             sectionHeader("Create", nullptr);
             const ImVec4 crCardBg = okaytheme::kRaised;
@@ -14878,11 +15092,11 @@ int main(int argc, char** argv) {
             }
             // Keep polling briefly after a create so the new project appears once the
             // editor saves its first scene, and highlight it during that window.
-            static Uint32 s_watchUntil = 0;
+            static std::uint32_t s_watchUntil = 0;
             static std::string s_highlight;
             if (!g_projectJustMade.empty()) { s_watchUntil = okay::platform::TicksMs32() + 8000; s_highlight = g_projectJustMade; g_projectJustMade.clear(); }
             if (s_watchUntil && okay::platform::TicksMs32() < s_watchUntil) {
-                static Uint32 t = 0;
+                static std::uint32_t t = 0;
                 if (okay::platform::TicksMs32() - t > 1000) { t = okay::platform::TicksMs32(); s_projScanned = "\x01"; }
             } else { s_watchUntil = 0; s_highlight.clear(); }
 
@@ -14973,15 +15187,15 @@ int main(int argc, char** argv) {
             static char s_ver[32] = "1.0.0";
             static char s_tplQ[64] = "";
             static std::string s_planKey;
-            static Uint32 s_planAt = 0;
-            static Uint32 s_createAt = 0;
+            static std::uint32_t s_planAt = 0;
+            static std::uint32_t s_createAt = 0;
             static okayproj::Plan s_plan;
-            static std::map<std::string, Uint32> s_openedAt;
+            static std::map<std::string, std::uint32_t> s_openedAt;
             const auto& s_tpls = okayproj::Templates();
             if (s_tpl < 0 || s_tpl >= (int)s_tpls.size()) s_tpl = 0;
             auto refreshPlan = [&]() {
                 const std::string key = std::string(npName) + "\n" + npLoc;
-                const Uint32 now = okay::platform::TicksMs32();
+                const std::uint32_t now = okay::platform::TicksMs32();
                 if (key != s_planKey || now - s_planAt > 1200) {
                     s_plan = okayproj::PlanProject(npLoc[0] ? npLoc : ".", npName);
                     s_planKey = key;
@@ -15110,8 +15324,8 @@ int main(int argc, char** argv) {
             std::vector<const CrProj*> projList;
             {
                 // A project is upgraded by the editor, a different program: keep the version on each card in step with the file.
-                static Uint32 s_stampAt = 0;
-                const Uint32 nowMs = okay::platform::TicksMs32();
+                static std::uint32_t s_stampAt = 0;
+                const std::uint32_t nowMs = okay::platform::TicksMs32();
                 if (nowMs - s_stampAt > 1000) {
                     s_stampAt = nowMs;
                     for (auto& pr : s_projects) if (pr.ready && !pr.root.empty()) okayver::RefreshStamp(pr.root, pr.ver);
@@ -15634,8 +15848,7 @@ int main(int argc, char** argv) {
 
         } else if (tab == 14) {                           // ---- Multiplayer ----
             DrawMultiplayerPage(account.IsLoggedIn() || kUiDemoUser);
-        } else if (tab == 12 && okayFrame && !OkayPageCovered(
-                                                                          ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- What's New, drawn by OkayUI (preview backend) ----
+        } else if (tab == 12 && okay::launcherlayout::OkayUIDrawsPage(tab, okayFrame)) {   // ---- What's New, drawn by OkayUI ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same data and same actions as the Dear ImGui page below: your version, the update status with its button,
             // the newest notes, the earlier releases, the link to all releases. Differences are listed in
@@ -15648,10 +15861,15 @@ int main(int argc, char** argv) {
             wn.currentVersion = OKAY_ENGINE_VERSION;
             wn.availableVersion = g_upAvailable;
             wn.restartNeeded = g_upRelaunchNeeded;
+            wn.availableSkipped = avail && g_upAvailableSkipped;
+            wn.message = avail ? g_upAvailableNote : std::string();
+            const std::string skippedV = busy || us == Up_Updated ? std::string() : SkippedOfferVersion();   // the way back from "Skip this version"
             if (avail) wn.state = okayuiscreens::UpdateState::Available;
+            else if (!skippedV.empty()) { wn.state = okayuiscreens::UpdateState::Available; wn.availableVersion = skippedV; wn.availableSkipped = true; }
             else if (busy) { wn.state = okayuiscreens::UpdateState::Checking; wn.message = GetUpMsg(); }
             else if (us == Up_Updated) wn.state = okayuiscreens::UpdateState::Installed;
             else if (us == Up_Failed) { wn.state = okayuiscreens::UpdateState::Failed; wn.message = GetUpMsg(); }
+            else if (!g_upAheadNote.empty()) { wn.state = okayuiscreens::UpdateState::UpToDate; wn.message = g_upAheadNote; }   // a test build ahead of the release
             else if (!g_upLatest.empty() && CompareVersions(OKAY_ENGINE_VERSION, g_upLatest) >= 0) wn.state = okayuiscreens::UpdateState::UpToDate;
             for (const NewsRelease& r : g_newsHistory) wn.releases.push_back({r.ver, r.lines});
             if (wn.releases.empty()) {
@@ -15664,14 +15882,9 @@ int main(int argc, char** argv) {
                     "Updates download straight from the OkaySpace update server",
                 }});
             }
-            // The page's rectangle: an invisible item the size of the free space, so ImGui sees an item under the mouse
-            // (it neither drags the window nor scrolls the page) and says whether another window covers it.
-            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            // The page's rectangle: the free space above the footer (the version line stays below, pinned by ImGui).
             ImVec2 ra = ImGui::GetContentRegionAvail();
-            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer (the version line) stays below, pinned by ImGui
-            ImGui::InvisibleButton("##okayui_whatsnew", ra);
-            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);   // the wheel scrolls the OkayUI page, not the ImGui window under it
-            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);
             {   // the two sections, as on the Dear ImGui page
                 std::vector<DevBuildRow> devRows; std::string devNotes; int devState = 0; std::map<std::string, std::string> relDates; bool testsOn = false;
                 WhatsNewData(devRows, devNotes, devState, relDates, testsOn);
@@ -15688,11 +15901,12 @@ int main(int argc, char** argv) {
                     a = e + 1;
                 }
             }
-            const okayuiscreens::WhatsNewResult wr = okayuiscreens::DrawWhatsNew(wn, rp.x, rp.y, ra.x, ra.y);
+            okayuiscreens::WhatsNewResult wr;
+            HostOkayPage("##okayui_whatsnew", ra, [&](ImVec2 p, ImVec2 a) { wr = okayuiscreens::DrawWhatsNew(wn, p.x, p.y, a.x, a.y); });
             if (wr.sectionClicked >= 0) g_wnSection = wr.sectionClicked;
             if (wr.openUpdateSettings) { tab = 4; g_setCatJump = 3; }
             if (wr.checkAgain) StartUpdateCheck();
-            if (wr.installNow) StartUpdateCheck(true);
+            if (wr.installNow) InstallOffered(wn.availableVersion);
             if (wr.restartNow) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
             if (wr.checkForUpdates) StartUpdateCheck();
 #endif
@@ -15713,16 +15927,22 @@ int main(int argc, char** argv) {
                 ImGui::SetWindowFontScale(1.12f);
                 ImGui::Text("You're on v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());
                 ImGui::SetWindowFontScale(1.0f);
-                if (avail) ImGui::TextColored(okaytheme::Current().success, "%s is ready to install.",
+                const std::string skippedV = busy || us == Up_Updated ? std::string() : SkippedOfferVersion();   // the way back from "Skip this version"
+                if (avail && g_upAvailableSkipped) ImGui::TextColored(okaytheme::Current().success, "%s", okay::updateview::SkippedLine(g_upAvailable).c_str());
+                else if (avail) ImGui::TextColored(okaytheme::Current().success, "%s is ready to install.",
                                               (g_upAvailableTitle.empty() ? "v" + g_upAvailable : g_upAvailableTitle + " (v" + g_upAvailable + ")").c_str());
+                else if (!skippedV.empty()) ImGui::TextDisabled("%s", okay::updateview::SkippedLine(skippedV).c_str());
                 else if (busy) ImGui::TextDisabled("%s", GetUpMsg().empty() ? "Checking for updates\xE2\x80\xA6" : GetUpMsg().c_str());
                 else if (us == Up_Updated) ImGui::TextColored(okaytheme::Current().success, "Update installed.");
                 else if (us == Up_Failed) ImGui::TextColored(okaytheme::Current().danger, "%s", GetUpMsg().c_str());
+                else if (!g_upAheadNote.empty()) ImGui::TextDisabled("%s", g_upAheadNote.c_str());   // a test build ahead of the release
                 else if (!g_upLatest.empty() && CompareVersions(OKAY_ENGINE_VERSION, g_upLatest) >= 0) ImGui::TextDisabled("You're up to date.");
                 else ImGui::TextDisabled("Updates are checked automatically while the launcher is open.");
+                if (avail && !g_upAvailableNote.empty()) { ImGui::PushTextWrapPos(ImGui::GetContentRegionMax().x - bw - 12.0f); ImGui::TextDisabled("%s", g_upAvailableNote.c_str()); ImGui::PopTextWrapPos(); }
                 const float below = ImGui::GetCursorPosY();
                 ImGui::SetCursorPos(ImVec2(top.x + ImGui::GetContentRegionMax().x - top.x - bw, top.y + (below - top.y - 32.0f) * 0.5f));
-                if (avail) { if (PrimaryButton("Install now", ImVec2(bw, 32))) StartUpdateCheck(true); }
+                if (avail) { if (PrimaryButton("Install now", ImVec2(bw, 32))) InstallOffered(g_upAvailable); }
+                else if (!skippedV.empty()) { if (ImGui::Button("Install", ImVec2(bw, 32))) InstallOffered(skippedV); }
                 else if (us == Up_Updated && g_upRelaunchNeeded) {
                     if (PrimaryButton("Restart now", ImVec2(bw, 32))) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
                 }
@@ -15888,8 +16108,7 @@ int main(int argc, char** argv) {
                 }
             }
             ImGui::EndChild();   // ##wnbody
-        } else if (tab == 13 && okayFrame && !OkayPageCovered(
-                                                                          ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Tips, drawn by OkayUI (preview backend) ----
+        } else if (tab == 13 && okay::launcherlayout::OkayUIDrawsPage(tab, okayFrame)) {   // ---- Tips, drawn by OkayUI ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same tips (shared/LauncherTips.hpp), tip of the day, category pills and search as the Dear ImGui page below; the
             // differences are listed in docs/ui/own_ui_toolkit.md section 6.
@@ -15901,13 +16120,9 @@ int main(int argc, char** argv) {
             }
             tm.dayNumber = (long long)(std::time(nullptr) / 86400);
             if (focusSearch) { ts.focusSearch = true; focusSearch = false; }
-            const ImVec2 rp = ImGui::GetCursorScreenPos();
             ImVec2 ra = ImGui::GetContentRegionAvail();
             ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer stays below, pinned by ImGui
-            ImGui::InvisibleButton("##okayui_tips", ra);
-            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
-            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
-            okayuiscreens::DrawTips(tm, ts, rp.x, rp.y, ra.x, ra.y);
+            HostOkayPage("##okayui_tips", ra, [&](ImVec2 p, ImVec2 a) { okayuiscreens::DrawTips(tm, ts, p.x, p.y, a.x, a.y); });
 #endif
         } else if (tab == 13) {                           // ---- Tips ----
             sectionHeader("Tips", "Shortcuts and tricks for the editor, scripting, building and the launcher.");
@@ -18134,10 +18349,20 @@ int main(int argc, char** argv) {
                     }
                     cardEnd();
                     cardBegin("##sc_start", "STARTUP & UPDATES");
-                    settingRow("Check for updates when the launcher starts", "Looks for a new version each time you open OkaySpace and installs it before you start (on by default).", 40.0f, 22.0f, [&](float) {
+                    settingRow("Automatic updates", "On: each time you open OkaySpace it looks for a new version and installs it before you start (on by default). "
+                                                    "Off: it only tells you a new version is out. A version you skipped is never installed by itself.", 40.0f, 22.0f, [&](float) {
                         if (ToggleSwitch("##uponlaunch", &g_updateOnLaunch)) SavePrefs();
                     });
                     rowDivider();
+                    if (const std::string skippedNow = okayversions::GlobalSettings().skippedVersion; !skippedNow.empty()) {   // "Skip this version": the way back
+                        settingRow(("Skipped: " + okay::testbuild::DisplayVersion(skippedNow)).c_str(), "This version is not offered or installed by itself. Newer versions are.", 150.0f, 30.0f, [&](float) {
+                            if (ImGui::Button("Stop skipping", ImVec2(okl::FitButtonW("Stop skipping", okl::UiPx(150.0f)), okl::UiPx(30.0f)))) {
+                                okayversions::GlobalSettings().skippedVersion.clear(); SavePrefs();
+                                g_upSkippedFound.clear(); g_launcherRefocused = true;   // look again now: it is offered as usual
+                            }
+                        });
+                        rowDivider();
+                    }
                     settingRow("Keep the official game up to date", "Downloads new versions of the official game in the background. They install once the game is closed.", 40.0f, 22.0f, [&](float) {
                         if (ToggleSwitch("##offauto", &g_officialAutoUpdate)) SavePrefs();
                     });
@@ -18150,14 +18375,7 @@ int main(int argc, char** argv) {
                     settingRow("Get test builds", "Also get builds made for testing, before they are released. They can be broken. Switch this off to stop getting them; "
                                                   "the Latest channel only (the long-term-support channel never gets test builds).", 40.0f, 22.0f, [&](float) {
                         okayversions::Settings& vs = okayversions::GlobalSettings();
-                        if (ToggleSwitch("##testbuilds", &vs.testBuilds)) {
-                            SavePrefs();
-                            g_upAvailable.clear(); g_upAvailableTitle.clear(); g_launcherRefocused = true;   // look again now, on the new setting
-                            const bool onTest = okay::testbuild::IsTestVersion(OKAY_ENGINE_VERSION);
-                            Toast(vs.testBuilds ? "Test builds are on. They can be broken. Switch this off here to stop getting them."
-                                  : onTest ? "Test builds are off. You are still on a test build: press Go back to the stable version below when you want the normal release."
-                                           : "Test builds are off. Nothing new will be offered.", vs.testBuilds ? 2 : 1);
-                        }
+                        if (ToggleSwitch("##testbuilds", &vs.testBuilds)) TestBuildsSwitched();
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Test builds are made from a branch before it is released.\nThey can be broken. Switch this off to stop getting them.");
                     });
                     rowDivider();
@@ -18317,7 +18535,7 @@ int main(int argc, char** argv) {
                     static int crashOpen = -1;          // expanded report (index), -1 = none
                     const fs::path crashDir = CrashDir();
                     static int crashView = 0;           // what an expanded report shows: 0 = the report, 1 = what would be sent (scrubbed)
-                    static okaycrash::upload::Ledger crashLedger; static Uint32 crashLedgerAt = 0;
+                    static okaycrash::upload::Ledger crashLedger; static std::uint32_t crashLedgerAt = 0;
                     if (ImGui::IsWindowAppearing() || okay::platform::TicksMs32() - crashLedgerAt > 2000) {   // what was already sent (a small file beside the reports)
                         if (!crashDir.empty()) okaycrash::upload::LoadLedger((crashDir / okaycrash::upload::kLedgerName).string(), crashLedger);
                         crashLedgerAt = okay::platform::TicksMs32();
@@ -18601,7 +18819,7 @@ int main(int argc, char** argv) {
                     g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
                     g_minimizeToTray = false; g_closeToTray = true; TrayApplySettings();
     g_updateOnLaunch = true; g_officialAutoUpdate = true; g_playSort = 0; g_antiCheatMode = 0;
-                    { okayversions::Settings& vs = okayversions::GlobalSettings(); vs.channel = okayversions::Channel::Latest; vs.keepPrevious = okayversions::kDefaultKeepPrevious; vs.defaultEditor.clear(); vs.testBuilds = false; }   // update settings (the versions themselves stay)
+                    { okayversions::Settings& vs = okayversions::GlobalSettings(); vs.channel = okayversions::Channel::Latest; vs.keepPrevious = okayversions::kDefaultKeepPrevious; vs.defaultEditor.clear(); vs.testBuilds = false; vs.skippedVersion.clear(); }   // update settings (the versions themselves stay)
                     ImGui::GetIO().FontGlobalScale = g_uiScale;
                     ApplyAccent(g_accentIndex);   // re-applies theme + accent
                     SavePrefs();
@@ -18619,7 +18837,7 @@ int main(int argc, char** argv) {
             // Achievements live on this device (okay::Achievements). Re-read the
             // small file a few times a second at most, not every frame.
             static std::vector<okay::Achievement> achs;
-            static Uint32 achNext = 0;
+            static std::uint32_t achNext = 0;
             static PfLocalShowcase achShow;
             if (okay::platform::TicksMs32() >= achNext) {
                 achNext = okay::platform::TicksMs32() + 1500;
@@ -18915,10 +19133,10 @@ int main(int argc, char** argv) {
                 // Follows (one-way): lists refreshed on a worker (QueueFollowJob).
                 static std::vector<okay::FollowEntry> flFollowing, flFollowers;
                 static bool flSupported = true;
-                static Uint32 flNext = 0;
+                static std::uint32_t flNext = 0;
                 static char flAddBuf[48] = "";
                 {
-                    const Uint32 tnow = okay::platform::TicksMs32();
+                    const std::uint32_t tnow = okay::platform::TicksMs32();
                     if (kFrDemo) {
                         static bool flSeeded = false;
                         if (!flSeeded) {
@@ -18950,9 +19168,9 @@ int main(int argc, char** argv) {
                 // Direct messages live in the floating Chat window (DrawChatWindow);
                 // the "Message" buttons call OpenChatWith(). Clicking a row opens
                 // the full public profile page (OpenPublicProfile).
-                static Uint32 fNextRefresh = 0;
+                static std::uint32_t fNextRefresh = 0;
                 static int fView = std::getenv("OKAY_UI_DEMO_FRVIEW") ? std::atoi(std::getenv("OKAY_UI_DEMO_FRVIEW")) : 0;   // 0 Online, 1 All, 2 Pending, 3 Add friend, 4 Following, 5 Followers (env: dev screenshot hook)
-                Uint32 now = okay::platform::TicksMs32();
+                std::uint32_t now = okay::platform::TicksMs32();
                 if (kFrDemo) {
                     static bool seeded = false;
                     if (!seeded) {
@@ -19527,7 +19745,7 @@ int main(int argc, char** argv) {
             okay::Workshop ws(account);
             static std::vector<okay::WorkshopItem> wCache;
             static std::map<long, std::pair<long, long>> wRatings;  // itemId -> (starSum, count)
-            static Uint32 wNextRefresh = 0;
+            static std::uint32_t wNextRefresh = 0;
             static bool wShowPublish = false;
             // Reviews popup (one item at a time).
             static bool rvOpen = false;        // request to open the reviews popup
@@ -19572,7 +19790,7 @@ int main(int argc, char** argv) {
             if (g_openPublishForm) { wShowPublish = true; g_openPublishForm = false; }
             if (std::getenv("OKAY_UI_DEMO_PUBLISH")) { static bool once = true; if (once) { once = false; wShowPublish = true; wKind = 2;
                 std::snprintf(wTitle, sizeof(wTitle), "Low-poly space props pack"); } }
-            Uint32 now = okay::platform::TicksMs32();
+            std::uint32_t now = okay::platform::TicksMs32();
             // Refresh the marketplace list/ratings in the background (no hitch).
             if (!g_wsMutex) g_wsMutex = okay::thr::CreateMutex();
             if (now >= wNextRefresh && !g_wsFetching) {
@@ -20433,7 +20651,7 @@ int main(int argc, char** argv) {
                 static long svSel = 0, svChan = 0;
                 static std::string svSelName, svErr;
                 static char svNew[64] = "", svJoin[24] = "", svMsg[800] = "", svNewChan[40] = "";
-                static Uint32 svNextList = 0, svNextChan = 0, svNextMsg = 0, svNextMem = 0;
+                static std::uint32_t svNextList = 0, svNextChan = 0, svNextMsg = 0, svNextMem = 0;
                 // Owner-management state.
                 static long svRenChanId = 0;             // channel being renamed (0 = none)
                 static char svRenChanBuf[64] = "", svRenSrvBuf[64] = "";
@@ -20447,7 +20665,7 @@ int main(int argc, char** argv) {
                 struct SvTab { long sel = 0, chan = 0; std::string chanName, srvName; };
                 static std::vector<SvTab> svTabs;
                 static long svTabSkipSel = 0, svTabSkipChan = 0;   // last tab was closed: don't re-add this view
-                Uint32 now = okay::platform::TicksMs32();
+                std::uint32_t now = okay::platform::TicksMs32();
                 if (kSvDemo) {
                     static bool seeded = false;
                     if (!seeded) {
@@ -21515,7 +21733,7 @@ int main(int argc, char** argv) {
             static int  foSort = 0;      // 0 Hot, 1 New, 2 Top
             static bool foShowNew = false, foReplyFocus = false;
             static std::string foCat;    // selected category chip ("" = all)
-            static Uint32 foNext = 0, fpNext = 0;
+            static std::uint32_t foNext = 0, fpNext = 0;
             static std::vector<okay::ForumSection> foSections;   // o/slug communities
             static bool foSecSup = false, foStaff = false;
             static long foSection = 0;                // open section (0 = everything)
@@ -21523,7 +21741,7 @@ int main(int argc, char** argv) {
             static long foNewSection = -1;            // section picked in the composer (-1 = follow foSection)
             static bool foCreateOpen = false, foAdminOpen = false, foStaffOpen = false;
             static std::vector<okay::ForumMember> foAdmMembers; static std::vector<okay::ForumBan> foAdmBans;
-            Uint32 tnow = okay::platform::TicksMs32();
+            std::uint32_t tnow = okay::platform::TicksMs32();
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
             const ImVec4 accLt = okaytheme::AccentText(kAccent);
             const bool canAct = fo.Available() || kFoDemo;
@@ -22712,7 +22930,7 @@ int main(int argc, char** argv) {
             double targetMs = focused ? (1000.0 / 60.0) : (1000.0 / 20.0);
             double elapsed = (double)(okay::platform::PerfCounter() - frameStart) * 1000.0
                            / (double)okay::platform::PerfFrequency();
-            if (elapsed < targetMs) okay::platform::DelayMs((Uint32)(targetMs - elapsed));
+            if (elapsed < targetMs) okay::platform::DelayMs((std::uint32_t)(targetMs - elapsed));
         }
     }
 
@@ -22735,6 +22953,7 @@ int main(int argc, char** argv) {
     if (g_upMutex) { okay::thr::DestroyMutex(g_upMutex); g_upMutex = nullptr; }
     okayversionsui::Shutdown();   // cancels a running version download and joins its thread
     okaylcli::Shutdown();         // ends a command still running on the Command line page
+    ShutdownBrowser();            // saves the browser's profile, stops its games, frees its textures (the renderer still exists)
     // Stop any in-flight downloads and join their worker threads before teardown.
     if (g_dlMutex) {
         okay::thr::LockMutex(g_dlMutex);

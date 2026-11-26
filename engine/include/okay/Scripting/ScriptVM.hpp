@@ -107,8 +107,27 @@ public:
     virtual std::vector<std::string> GlobalNames() const { return {}; }
 };
 
-/// Names of the script backends in this build: "okayscript" (our own VM) and "lua"
-/// (our own Lua interpreter, okay::lua).
+/// The IScriptVM overrides a full script backend declares (all of them except Language()), written once so each
+/// backend's header says `OKAY_SCRIPT_VM_OVERRIDES` instead of repeating the list. Define them in the backend's .cpp.
+#define OKAY_SCRIPT_VM_OVERRIDES                                                                                       \
+    std::vector<std::string> BuiltinNames() const override;                                                           \
+    bool Load(const std::string& source, std::string* error = nullptr) override;                                      \
+    bool Validate(const std::string& source, std::string* error = nullptr) override;                                  \
+    std::vector<ScriptDiagnostic> ValidateAll(const std::string& source) override;                                    \
+    void Bind(ScriptHost* host) override;                                                                             \
+    void CallStart() override;                                                                                        \
+    void CallUpdate(float deltaTime) override;                                                                        \
+    void CallEvent(const std::string& function) override;                                                             \
+    void CallEventWith(const std::string& function, const vs::VsValue& arg) override;                                 \
+    vs::VsValue CallEventArgs(const std::string& function, const std::vector<vs::VsValue>& args,                       \
+                              std::string* error = nullptr) override;                                                 \
+    bool HasEvent(const std::string& function) const override;                                                        \
+    vs::VsValue GetGlobal(const std::string& name) const override;                                                    \
+    void SetGlobal(const std::string& name, const vs::VsValue& v) override;                                           \
+    std::vector<std::string> GlobalNames() const override;
+
+/// Names of the script backends in this build: "okayscript" (our own VM), "lua"
+/// (our own Lua interpreter, okay::lua) and "javascript" (our own JavaScript engine, okay::js).
 std::vector<std::string> AvailableScriptLanguages();
 
 /// Create a VM for the given language, or nullptr if unsupported in this build.
@@ -120,7 +139,7 @@ std::unique_ptr<IScriptVM> CreateScriptVM(const std::string& language);
 /// fails with this message instead of failing silently.
 std::string RemovedScriptLanguageMessage(const std::string& language);
 
-/// The language id for a script file's extension (".lua" -> "lua", ".cs" -> "cs",
+/// The language id for a script file's extension (".lua" -> "lua", ".js" -> "javascript", ".cs" -> "cs",
 /// ".okay" and anything else -> "okayscript"; case is ignored, the dot is optional).
 /// The one place the editor and the engine pick a script language from a file name.
 const char* ScriptLanguageForExtension(const std::string& ext);

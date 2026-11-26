@@ -1,4 +1,5 @@
 #include "okay/Core/LocTable.hpp"
+#include "okay/Core/Json.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/Utf8.hpp"
 
@@ -209,22 +210,10 @@ struct JsonReader {
     }
 };
 
-std::string JsonQuote(const std::string& v) {
-    std::string out = "\"";
-    for (char ch : v) {
-        const unsigned char c = (unsigned char)ch;
-        switch (c) {
-            case '"': out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:
-                if (c < 0x20) { char buf[8]; std::snprintf(buf, sizeof buf, "\\u%04x", c); out += buf; }
-                else out += ch;
-        }
-    }
-    return out + "\"";
+std::string JsonQuote(const std::string& v) {   // the engine's one JSON string writer (okay/Core/Json.hpp)
+    std::string out;
+    okay::json::Escape(v, out);
+    return out;
 }
 
 // The text a JSON scalar stands for in a table.

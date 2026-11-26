@@ -33,6 +33,7 @@
 #include "BuildSettingsWindow.hpp"     // the Build Settings window: pages, search, summary, checks, history (own files)
 #include "BuildGame.hpp"               // Build Game: the game, Web / Android / Xbox data and dedicated server exports (builder::)
 #include "Updater.hpp"                 // the self-updater and runtime fetcher (updater::)
+#include "WorkerCall.hpp"              // one call on its own thread: the update check and download (never inside a frame)
 #include "FindInFiles.hpp"             // Find in Files: the project-wide script search window
 #include "AssetManagerWindow.hpp"      // the Asset Manager window: Marketplace downloads into the project
 #include "PluginsWindow.hpp"           // editor plugins: the Plugins menu, the Plugin Manager, the per-frame tick
@@ -55,7 +56,10 @@
 #include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/BuildPipeline.hpp"   // the build pipeline: layout, dependency walk, manifest, report, zip
-#if defined(OKAY_XBOX_UWP)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/platform/xbox_uwp.md
+#if defined(OKAY_XBOX_UWP)
+#  error "The desktop editor must not be built with OKAY_XBOX_UWP: it makes the engine headers act as the Xbox app (no WinHTTP, so no sign-in). The editor's Xbox export entry is OKAY_XBOX_UWP_EXPORT."
+#endif
+#if defined(OKAY_XBOX_UWP_EXPORT)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/platform/xbox_uwp.md
 #include "XboxExport.hpp"
 #include "XboxSdkProbe.hpp"
 #include "XboxBuildHost.hpp"   // one-click build: plan, runner, host (pure)
@@ -175,7 +179,6 @@
 #include <cstdarg>
 #include <map>
 #include <memory>
-#include <future>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -192,6 +195,8 @@
 #include <cctype>
 #include <vector>
 #include "ScriptText.hpp"   // the Script Editor's token view of a script: outline / go-to-definition
+#include "PluginScriptApi.hpp"   // what editor plugins add to the Script Editor (commands, lint, completion, panels...)
+#include "ScriptIdeUi.hpp"  // the Script Editor's IDE panels: Go to File, script tree, project rename, quick fixes, local history, plugin panels
 #include "VsCanvasTools.hpp"   // visual-script snap, align, variable list (no GUI)
 #include "VisualScriptEditor.hpp"   // graph text the editor saves (round-trip in --selftest)
 #include "ScriptingDensityUi.hpp"    // Density (Compact / Comfortable / Spacious) for the Script and Visual Script windows
@@ -210,6 +215,7 @@ struct ScriptLint {
     // `fix` on `line` — powers the editor's click-to-fix gutter action.
     std::string bad, fix;
     int column = 0;   ///< 1-based, 0 = the whole line
+    std::vector<scriptide::QuickFix> fixes;   ///< more fixes (the built-in checks' and plugins'), shown by Alt+Enter
 };
 
 static std::vector<ScriptLint> AnalyzeScriptWarnings(
@@ -788,6 +794,7 @@ int main(int argc, char** argv) {
 #include "imgui_internal.h" // DockBuilder for the default layout
 #include "EditorTabs.hpp"   // panel tabs: saved layouts, presets, Ctrl+Tab order
 #include "SignInGate.hpp"   // the OkaySpace sign-in the editor needs before a project opens
+#include "ModalGuard.hpp"   // one question at a time; undrawn or hidden modals closed or named; clicks that land nowhere logged
 #include "OkayThreads.hpp"  // okay::thr: the sign-in check runs on a worker (rule 21a)
 #include "okay/Platform/Account/Account.hpp"   // okay::Account: the shared account service (the launcher's saved session)
 #include "EditorLayoutMath.hpp"   // overlay anchoring, label placement, density, toolbar plan, maximize, view prefs (tested)
@@ -797,6 +804,7 @@ int main(int argc, char** argv) {
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scripting/StarterScripts.hpp"
 #include "okay/Lua/LuaScriptVM.hpp"          // Lua scripts: colours, checks and autocomplete (our own interpreter)
+#include "okay/JavaScript/JavaScriptVM.hpp"   // JavaScript scripts: the same (our own engine, okay::js)
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
@@ -1595,6 +1603,11 @@ static okay::Image RenderFramedImage(okay::Scene& sc, const Vec3& center, float 
     const int W = 128, H = 128;
     Mat4 vp = Mat4::Perspective(40.0f, 1.0f, 0.05f, 4000.0f) *
               Mat4::LookAt(eye, center, Vec3::Up);
+    // A 128 px tile does not need shadow maps (three 2048 x 2048 cascades), ambient occlusion, bloom, FXAA or depth of field: with
+    // them a thumbnail cost about as much as a full Scene view frame (tests/test_thumbnail_render_cost.cpp). The scope also keeps
+    // the Scene view's occlusion depth and counters, which a thumbnail used to overwrite.
+    sc.renderSettings.post.ssao = sc.renderSettings.post.bloom = sc.renderSettings.post.fxaa = sc.renderSettings.post.dof = false;
+    okay::ReducedRenderScope reduced(/*depthOnly=*/false, /*keepOcclusionDepth=*/true);
     Raster work; std::vector<std::uint32_t> out;
     const std::uint32_t* px = RenderMeshesSS(work, out, sc, vp, eye, W, H, 2);
     if (!px) return okay::Image();
@@ -1876,9 +1889,28 @@ static GameObject* CreateShapeSprite(EditorState& ed, int shape) {
 std::string g_updateStatus;
 bool g_openUpdatePopup = false;
 updater::UpdateInfo g_update;     // last update check result
-bool g_installingUpdate = false;  // set while InstallUpdate runs
-std::future<updater::UpdateInfo> g_updateCheck;  // async startup check (non-blocking)
-bool g_autoCheckDone = false;     // consumed the async result yet?
+bool g_installingUpdate = false;  // set while InstallUpdate runs (on g_updateInstall's thread)
+bool g_autoCheckDone = false;     // consumed the startup check's result yet?
+// The update check and the download run on their own threads (editor/WorkerCall.hpp) and are picked up by the main loop
+// (top of each frame, after Prof().BeginFrame): CheckLatest waits up to 20 s to connect and 60 s per read, three tries, and the Engine > Check for Updates
+// item and the version question's "Update OkaySpace" button used to run it inside the frame (owner's log, 2026-11-25).
+oked::WorkerCall g_updateCheck, g_updateInstall;
+std::shared_ptr<updater::UpdateInfo> g_updateCheckOut = std::make_shared<updater::UpdateInfo>();
+std::shared_ptr<std::string> g_updateInstallOut = std::make_shared<std::string>();
+bool g_updateCheckShow = false;   // a person asked: open the Engine Update window with the result
+static void StartUpdateCheck(bool show) {
+    if (show) g_updateCheckShow = true;
+    if (g_updateCheck.Busy()) return;   // one already running (the startup check): its result is shown
+    auto out = g_updateCheckOut;
+    g_updateCheck.Start([out] { *out = updater::CheckLatest(); }, "okay-update-check");
+}
+static void StartUpdateInstall(const std::string& latest, const std::string& ref) {
+    if (g_updateInstall.Busy()) return;
+    g_installingUpdate = true;
+    g_updateStatus = "Downloading v" + latest + "...";
+    auto out = g_updateInstallOut;
+    g_updateInstall.Start([out, latest, ref] { *out = updater::InstallUpdate(latest, ref); }, "okay-update-install");
+}
 bool g_openAbout = false;
 std::string g_newProjectTemplate; // template title requested via --template
 std::string g_newProjectRoot;     // project folder requested via --new-project (launcher)
@@ -1985,6 +2017,7 @@ int  g_sideTabs = 0;             // vertical side tabs: 0 off, 1 down the left e
 ImGuiID g_dockspaceId = 0;       // the main dockspace (so panels can dock into it)
 ImGuiID g_sceneDockId = 0;        // the Scene dock node (the demo opens the graph here)
 bool g_scriptAutoPair = true;      // Script Editor: auto-close ( [ { " '
+int  g_scriptTabWidth = 4;         // Script Editor: View > Tab Width (the spaces Tab inserts and a tab character's width)
 int  g_scriptDockReq = 0;        // 0 none, 1 float (undock), 2 dock into center as a tab
 bool g_paused = false;           // pause the simulation while staying in Play
 // Visual-script debugger: while a breakpoint is set (or a step is pending) the game
@@ -2058,8 +2091,31 @@ static void NoteFpsSummary(double frameMs) {
         okay::editor::perf::FpsSummary f; f.periodSeconds = okay::editor::perf::FpsSummary::PeriodFrom(std::getenv("OKAY_FPS_SUMMARY_S")); return f; }();
     const okay::Profiler& pr = okay::Prof();
     const okay::Profiler::Frame& f = pr.paused || pr.Count() == 0 ? okay::Profiler::Frame() : pr.FrameAt(pr.Count() - 1);
-    const std::string line = s_sum.Add(f, frameMs);
-    if (!line.empty()) okay::restart::AppendLog(PerfLogPath(), line);
+    std::string line = s_sum.Add(f, frameMs);
+    if (line.empty()) return;
+    // Which modal (if any) holds the editor right now: a modal that stays open minute after minute is what blocks every click.
+#if !defined(OKAY_ON_OKAYUI)   // (the OkayUI compatibility build has no Dear ImGui window internals)
+    const ImGuiWindow* modal = ImGui::GetCurrentContext() ? ImGui::GetTopMostPopupModal() : nullptr;
+    line += std::string("; modal open: ") + (modal ? (modal->Hidden ? std::string(modal->Name) + " (hidden)" : std::string(modal->Name)) : std::string("none"));
+#endif
+    okay::restart::AppendLog(PerfLogPath(), line);
+}
+// Modals and clicks that go nowhere (editor/ModalGuard.hpp; owner, v2.903.8.118: nothing could be clicked while frames kept coming).
+// Every modal opening and closing is a breadcrumb (okay_hang.txt, okay_crash.txt); a modal closed because it was no longer drawn,
+// one moved back on screen and one drawn yet never shown ("blocking popup") get a line in okay_editor_perf.log; and while clicks
+// arrive and none lands on a window, a line every 5 seconds says what Dear ImGui thinks (hovered, focused, active, the top modal).
+static okayed::modalguard::InputProbe g_inputProbe;
+static void ModalGuardFrame() {
+    static okayed::modalguard::ModalTrail s_trail;
+    auto note = [](const std::string& line) { OkayTrace(line.c_str()); okay::restart::AppendLog(PerfLogPath(), line); ConsoleLog(line, 1); };
+    okayed::modalguard::Sweep([&](const char* n) { note(std::string("blocking popup closed (open but no longer drawn): ") + n); },
+                              [&](const char* n) { note(std::string("blocking popup moved back on screen: ") + n); },
+                              [&](const char* n) { note(std::string("blocking popup: ") + n + " (open, never shown; brought to the front)"); });
+    for (const std::string& l : s_trail.Update()) OkayTrace(l.c_str());
+}
+static void InputProbeEndFrame() {
+    const std::string line = g_inputProbe.EndFrame(ImGui::GetTime());
+    if (!line.empty()) { OkayTrace("Clicks land nowhere"); okay::restart::AppendLog(PerfLogPath(), line); }
 }
 static void WriteSlowFrame(okay::editor::perf::SlowFrameLog& log, double frameMs, bool playing) {
     std::string ctx = playing ? "play" : "edit";
@@ -2495,6 +2551,7 @@ double g_autosaveStamp = 0.0;    // time of the last successful autosave (for UI
 std::string g_recoverPath;       // a newer ".autosave" found on load (recovery prompt)
 Uint64 g_lastSavedAt = 0;        // okay::platform::TicksMs() of the last successful scene save (0 = none this session)
 bool g_quitRequested = false;    // quit pending (may prompt to save first)
+bool g_quitNoPrompt = false;     // quit asked from a window shown before any project is open (sign-in, New Project): nothing to save, so no prompt
 oked::launcherwatch::State g_launcherWatch;   // the launcher from --launcher <pid> is checked once a second (editor/LauncherWatch.hpp)
 std::vector<std::string> g_recent; // recently opened/saved scene paths
 std::string g_clipboard;         // serialized GameObject for copy/paste
@@ -2876,6 +2933,7 @@ static bool IsLooseScript(okay::ScriptComponent* s) {
 // Open a Project script file in the in-app Script Editor as a standalone,
 // file-backed tab (focuses an existing tab if it's already open).
 static void OpenScriptFileInEditor(const std::string& path) {
+    oked::ide::NoteOpened(path);                        // the recent list (Go to File shows recent scripts first)
     for (auto& up : g_looseScripts)
         if (up->Path() == path) {                       // already open -> focus it
             if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), up.get()) == g_scriptTabs.end())
@@ -2916,7 +2974,7 @@ bool  g_showBuildGame = false;
 char  g_buildDirBuf[256] = "build/MyGame";
 char  g_buildNameBuf[128] = "MyGame";
 std::string g_buildStatus;
-#if defined(OKAY_XBOX_UWP)
+#if defined(OKAY_XBOX_UWP_EXPORT)
 // One-click Xbox build (platform/xbox_uwp/XboxBuildPlan.hpp). UNVERIFIED on Windows: the steps have never run there.
 bool g_xboxExportOk = false;                       // set by the Xbox export block below
 std::vector<std::string> g_xboxExportWarnings;
@@ -2992,7 +3050,7 @@ static void LoadBuildProfilesFrom(const std::string& dir) {
         std::snprintf(g_buildNameBuf, sizeof(g_buildNameBuf), "%s", live.productName.c_str());
         std::snprintf(g_buildDirBuf, sizeof(g_buildDirBuf), "%s", live.outputDir.c_str());
         g_buildPlatform = live.platform;
-#if !defined(OKAY_XBOX_UWP)
+#if !defined(OKAY_XBOX_UWP_EXPORT)
         if (g_buildPlatform > 3) g_buildPlatform = 0;   // a profile saved by a build with the Xbox target
 #endif
         for (std::size_t i = 0; i < g_buildProfiles.size(); ++i) if (g_buildProfiles[i].name == sel) g_buildProfileSel = (int)i;
@@ -4189,7 +4247,7 @@ static bool AttachScriptAsset(okay::editor::EditorState& ed, okay::GameObject* g
     std::string ext;
     if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    if (ext == ".okay" || ext == ".lua") {
+    if (ext == ".okay" || ext == ".lua" || ext == ".js") {
         ed.PushUndo();
         // Always a new component (objects can hold several, even the same script twice).
         auto* nsc = go->AddComponent<okay::ScriptComponent>(okay::ScriptLanguageForExtension(ext));
@@ -4272,7 +4330,7 @@ void OpenExternal(const std::string& path) {
     if (!r.ok) ConsoleLog("Couldn't open " + path + " in an editor: " + r.error, 1);
 }
 std::string ExtFor(const std::string& lang) {
-    return lang == "lua" ? "lua" : lang == "csharp" ? "cs" : "okay";
+    return lang == "lua" ? "lua" : lang == "javascript" ? "js" : lang == "csharp" ? "cs" : "okay";
 }
 // The script a new script file starts with (Scripting/StarterScripts.hpp): an
 // empty Start and Update in the selected language's syntax.
@@ -6849,12 +6907,8 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
     else if (id == "help.scripting") g_showScriptDocs = true;
     else if (id == "help.shortcuts") g_showShortcuts = true;
     else if (id == "help.updates") {
-        g_update = updater::CheckLatest();
-        g_openUpdatePopup = true;
-        ConsoleLog(g_update.error.empty()
-            ? (g_update.available ? "Update available: v" + g_update.latest
-                                  : "Up to date (v" + g_update.current + ").")
-            : "Update check failed: " + g_update.error);
+        ConsoleLog("Checking for updates...");
+        StartUpdateCheck(true);   // on its own thread; the Engine Update window opens with the answer (main loop)
     }
     else if (id == "help.bug") {
         ImGui::SetClipboardText((std::string("OkaySpace v") + OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION)).c_str());   // so the report can say which version (and that it is a test build)
@@ -7445,7 +7499,7 @@ static AssetKind KindOf(const std::string& extLower, bool isDir) {
         extLower == ".bmp" || extLower == ".tga") return {IM_COL32(110, 200, 120, 255), "IMG", AssetIcon::Image};
     if (extLower == ".wav")        return {IM_COL32(230, 160, 70, 255), "WAV", AssetIcon::Audio};
     if (extLower == ".okay")       return {IM_COL32(120, 180, 255, 255), "OKS", AssetIcon::Script};
-    if (extLower == ".lua" || extLower == ".cs") return {IM_COL32(150, 140, 235, 255), "SCR", AssetIcon::Script};
+    if (extLower == ".lua" || extLower == ".js" || extLower == ".cs") return {IM_COL32(150, 140, 235, 255), "SCR", AssetIcon::Script};
     if (extLower == ".okaymat")    return {IM_COL32(235, 110, 170, 255), "MAT", AssetIcon::Material};
     if (extLower == ".okaydata")   return {IM_COL32(110, 205, 190, 255), "DAT", AssetIcon::Data};
     if (extLower == ".obj")        return {IM_COL32(150, 175, 210, 255), "OBJ", AssetIcon::Mesh};
@@ -7699,7 +7753,7 @@ static const char* ImportKindLabel(const std::string& extLower) {
     if (extLower==".ttf"||extLower==".otf"||extLower==".fnt") return "font";
     if (extLower==".wav"||extLower==".ogg"||extLower==".mp3"||extLower==".flac") return "audio";
     if (!extLower.empty() && IsModelExt(extLower)) return "model";
-    if (extLower==".okay"||extLower==".lua"||extLower==".cs"||extLower==".okayvs") return "script";
+    if (extLower==".okay"||extLower==".lua"||extLower==".js"||extLower==".cs"||extLower==".okayvs") return "script";
     return nullptr;
 }
 
@@ -8506,7 +8560,9 @@ static SDL_Texture* ProjectThumb(const std::string& abs) {
 // old picture is never drawn again, and here it is freed).
 static void ProjectThumbFrame() {
     ++g_thumbFrame;
-    if (g_pb) g_pb->ThumbFrame(10.0);
+    // Whole-scene pictures (scenes, prefabs, models) wait while a mouse button is held: one of them can take longer than a frame,
+    // and a stall is felt most in the middle of a drag. (Not "since the last event": any mouse move is an event.)
+    if (g_pb) g_pb->ThumbFrame(10.0, !ImGui::IsAnyMouseDown());
     if (g_thumbTex.size() < 64 || (g_thumbFrame & 31) != 0) return;
     for (auto it = g_thumbTex.begin(); it != g_thumbTex.end();) {
         if (g_thumbFrame - it->second.lastUse > 120) { if (it->second.tex) okay::pb::DestroyTexture(g_sdlRenderer, it->second.tex); it = g_thumbTex.erase(it); }
@@ -8594,7 +8650,7 @@ static bool IsStartSceneFile(const std::string& scenePath) {
 // Open for the types that have no editor window and points to Open with Default App).
 static bool ProjectOpensInEditor(const std::string& extLower, bool isDir) {
     if (isDir) return true;
-    for (const char* e : {".okayscene", ".okayprefab", ".okayweapon", ".okaydata", ".okaymat", ".okay", ".lua", ".cs", ".okayvs", ".okayseq",
+    for (const char* e : {".okayscene", ".okayprefab", ".okayweapon", ".okaydata", ".okaymat", ".okay", ".lua", ".js", ".cs", ".okayvs", ".okayseq",
                           ".okaydialog", ".okayquest", ".okayitems", ".okayloot", ".okayrecipes", ".okaybt", ".okayclip"})
         if (extLower == e) return true;
     return IsModelExt(extLower);   // a model is imported into the scene
@@ -9636,7 +9692,7 @@ void DrawProject(EditorState& ed) {
             g_dataAssetPath = full; g_dataAssetOpen = true;
         } else if (ext == ".okaymat") {
             g_matAssetPath = full; g_matAssetOpen = true;
-        } else if (ext == ".okay" || ext == ".lua" || ext == ".cs") {
+        } else if (ext == ".okay" || ext == ".lua" || ext == ".js" || ext == ".cs") {
             OpenScriptFileInEditor(full);    // edit in the in-app Script Editor
         } else if (ext == ".okayvs") {
             okay::editor::vsed::OpenFile(full);   // open in the in-app node editor
@@ -11388,7 +11444,7 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
     const bool showing = ImGui::IsPopupOpen("Unsaved Changes");
     ImGuiWindow* topModal = ImGui::GetTopMostPopupModal();
     const bool otherModal = topModal && !showing;
-    const bool unsaved = g_quitRequested && AnyUnsavedWork(ed);
+    const bool unsaved = g_quitRequested && !g_quitNoPrompt && AnyUnsavedWork(ed);
     switch (oked::StepQuitPrompt(quit, g_quitRequested, unsaved, showing, otherModal)) {
         case oked::QuitStep::QuitNow: running = false; g_quitRequested = false; return;
         case oked::QuitStep::OpenPrompt: ImGui::OpenPopup("Unsaved Changes"); break;
@@ -11548,12 +11604,12 @@ static ScriptEditorWidget& CodeEditorFor(okay::ScriptComponent* sc) {
     auto it = g_codeEditors.find(sc);
     if (it != g_codeEditors.end() && g_codeEditorLang[sc] != sc->Language()) {
         g_codeEditorLang[sc] = sc->Language();
-        it->second->SetLanguage(sc->Language() == okay::LuaScriptVM::kLanguage ? LuaLanguageWords() : OkayScriptLanguageWords());
+        it->second->SetLanguage(LanguageWordsFor(sc->Language()));
     }
     if (it == g_codeEditors.end()) {
         auto te = std::make_unique<ScriptEditorWidget>();
         g_codeEditorLang[sc] = sc->Language();
-        te->SetLanguage(sc->Language() == okay::LuaScriptVM::kLanguage ? LuaLanguageWords() : OkayScriptLanguageWords());
+        te->SetLanguage(LanguageWordsFor(sc->Language()));
         te->SetPalette(OkayScriptPalette());
         te->SetTabSize(4);
         te->SetLineSpacing(1.55f);
@@ -11607,7 +11663,14 @@ static std::string FormatOkayScript(const std::string& src) {
 
 // Format Document for the script's language: Lua re-indents by its blocks (LuaScriptVM::Format).
 static std::string FormatScriptFor(const okay::ScriptComponent* sc, const std::string& src) {
+    if (sc) {   // an editor plugin's formatter for the language comes first (editor/PluginRegistry.hpp)
+        pluginreg::DocContext ctx;
+        ctx.language = sc->Language(); ctx.path = sc->Path(); ctx.text = src;
+        std::string out;
+        if (pluginreg::ScriptEditorPlugins().Format(ctx, out)) return out;
+    }
     if (sc && sc->Language() == okay::LuaScriptVM::kLanguage) return okay::LuaScriptVM::Format(src);
+    if (sc && sc->Language() == okay::JavaScriptVM::kLanguage) return okay::JavaScriptVM::Format(src);   // by brackets
     return FormatOkayScript(src);
 }
 
@@ -11654,6 +11717,9 @@ static std::vector<std::pair<int, std::string>> ScriptOutline(const std::string&
 static bool g_seNewReq = false;
 // Requests from Search Everywhere to the editor's own tools (consumed next frame).
 static bool g_seSearchReq = false, g_seGotoReq = false, g_seFindReq = false, g_sePaletteReq = false;
+static bool g_seSideOpen = true;
+static bool g_seQuickFixReq = false;   // the quick fixes of the caret's line, as Alt+Enter (the screenshot hook asks for it)   // the Script Editor's side list (Alt+1): the project's scripts as a tree, this file's structure, plugin panels
+static bool g_sePaletteRename = false, g_sePaletteRefs = false, g_sePaletteDef = false;   // the command palette's Rename / References / Definition
 static void ScriptEditorNewScriptPopup(EditorState& ed) {
     static char name[96] = "NewScript";
     static bool attach = false;
@@ -11680,11 +11746,22 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
     bool enter = ImGui::InputText("Name", name, sizeof(name), ImGuiInputTextFlags_EnterReturnsTrue);
     if (langs.size() > 1) {
         std::vector<std::string> labels;
-        for (const auto& l : langs) labels.push_back(l == "okayscript" ? "OkayScript (.okay)" : l == "lua" ? "Lua (.lua)" : l);
+        for (const auto& l : langs) labels.push_back(l == "okayscript" ? "OkayScript (.okay)" : l == "lua" ? "Lua (.lua)" : l == "javascript" ? "JavaScript (.js)" : l);
         std::vector<const char*> items;
         for (const auto& l : labels) items.push_back(l.c_str());
         ImGui::SetNextItemWidth(320);
         ImGui::Combo("Language", &langIdx, items.data(), (int)items.size());
+    }
+    // What the new script starts as (editor/ScriptIde.hpp TemplatesFor): the language's Start / Update starter, empty, a trigger
+    // zone or a mover.
+    static int tplIdx = 0;
+    const std::vector<scriptide::ScriptTemplate> tpls = scriptide::TemplatesFor(lang);
+    if (tplIdx < 0 || tplIdx >= (int)tpls.size()) tplIdx = 0;
+    {
+        std::vector<const char*> titles;
+        for (const auto& t : tpls) titles.push_back(t.title.c_str());
+        ImGui::SetNextItemWidth(320);
+        ImGui::Combo("Template", &tplIdx, titles.data(), (int)titles.size());
     }
     ImGui::TextDisabled("Assets/Scripts/%s%s", stem.c_str(), ext.c_str());
     std::error_code ec;
@@ -11698,7 +11775,8 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
     if (ImGui::Button("Cancel", ImVec2(100, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
     if (create) {
         fs::create_directories(dir, ec);
-        if (!exists) std::ofstream(p) << extide::StarterScriptNamed(lang, stem);
+        if (!exists) std::ofstream(p) << (tplIdx == 0 ? extide::StarterScriptNamed(lang, stem)
+                                                      : scriptide::FillTemplate(tpls[(std::size_t)tplIdx].body, extide::ClassIdent(stem)));
         if (attach && sel) AttachScriptAsset(ed, sel, p.string());   // its tab opens with the selection
         else OpenScriptFileInEditor(p.string());
         ConsoleLog((exists ? "Opened " : "Created ") + p.string());
@@ -11804,6 +11882,15 @@ void DrawScriptEditor(EditorState& ed) {
     if (!ImGui::Begin("Script Editor", &g_showScriptEditor, sewFlags)) { ImGui::End(); return; }
     bool s_isDocked = ImGui::IsWindowDocked();
     const oked::scriptui::Metrics sdm = oked::scriptui::Current();   // Density: sizes and paddings of this window (editor/ScriptingDensity.hpp)
+    oked::ide::Tick(ed.projectDir());   // the project's script list and symbol index (built on a worker thread)
+    // Go to File (Ctrl+Shift+N, JetBrains' key; Ctrl+P stays Play / Stop) works with or without a script open.
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift &&
+#ifndef OKAY_ON_OKAYUI
+        ImGui::IsKeyPressed(ImGuiKey_N, false))
+#else
+        false)
+#endif
+        oked::ide::OpenQuickOpen();
 
     // Gather every live ScriptComponent (an object can have several), and prune
     // tabs whose component was deleted. `owner` maps a component to its object.
@@ -11850,12 +11937,28 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::Spacing();
         if (ImGui::Button("New Script", ImVec2(200, 36))) g_seNewReq = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create a script and open it in a tab");
+        ImGui::SameLine();
+        if (ImGui::Button("Go to File...", ImVec2(200, 36))) oked::ide::OpenQuickOpen();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find any script in the project by part of its name (Ctrl+Shift+N)");
         ImGui::Spacing();
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + colW);
         ImGui::TextWrapped("Start a new script, or open one from the list. Selecting an object that has a Script opens it here too.");
         ImGui::PopTextWrapPos();
         ImGui::PopStyleVar();
         ImGui::Spacing();
+        if (!oked::ide::RecentScripts().empty()) {
+            ImGui::TextDisabled("Recent scripts");
+            int shownRecent = 0;
+            for (const std::string& rp : oked::ide::RecentScripts()) {
+                if (++shownRecent > 6) break;
+                std::error_code rec;
+                if (!std::filesystem::exists(rp, rec)) continue;
+                if (ImGui::Selectable((std::filesystem::path(rp).filename().string() + "##recent" + std::to_string(shownRecent)).c_str()))
+                    OpenScriptFileInEditor(rp);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", rp.c_str());
+            }
+            ImGui::Spacing();
+        }
         ImGui::TextDisabled("Scripts in this project");
         {
             namespace fs = std::filesystem;
@@ -11866,7 +11969,7 @@ void DrawScriptEditor(EditorState& ed) {
                 for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
                     if (!e.is_regular_file()) continue;
                     std::string ext = e.path().extension().string();
-                    if (ext != ".okay" && ext != ".lua" && ext != ".cs") continue;
+                    if (ext != ".okay" && ext != ".lua" && ext != ".js" && ext != ".cs") continue;
                     if (ImGui::Selectable(fs::relative(e.path(), assets, ec).string().c_str()))
                         OpenScriptFileInEditor(e.path().string());
                     if (++shown >= 200) break;
@@ -11879,6 +11982,7 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::EndGroup();
         ImGui::EndChild();
         ScriptEditorNewScriptPopup(ed);
+        oked::ide::DrawQuickOpen();
         ImGui::End();
         return;
     }
@@ -11979,6 +12083,28 @@ void DrawScriptEditor(EditorState& ed) {
         // departure line that belongs to a different file. (line 0 fails the >=1 guards.)
         static ScriptComponent* s_caretOwner = nullptr;
         if (s_caretOwner != sc) { s_caretOwner = sc; caret.line = 0; caret.pos = 0; caret.col = 1; }
+        oked::ide::NoteEdited(sc->Path(), buf.data());   // the symbol index sees unsaved text; Local History copies every 5 minutes
+        {   // editor plugins' hover text for words in this script (asked by the code widget's hover, ScriptEditorCodeEdit.hpp)
+            static std::string s_hoverLang;
+            s_hoverLang = sc->Language();
+            if (!scripteditor::ExtraHoverInfo()) scripteditor::ExtraHoverInfo() = [](const std::string& word) {
+                pluginreg::DocContext hctx; hctx.language = s_hoverLang; hctx.word = word;
+                return pluginreg::ScriptEditorPlugins().Hover(hctx);
+            };
+        }
+        // What editor plugins' script_* calls reach (editor/PluginScriptApi.hpp): this script, only while this window is drawn.
+        struct PluginHostReset { ~PluginHostReset() { oked::ScriptEditorHostApi() = oked::ScriptEditorHost{}; } } pluginHostReset;
+        {
+            oked::ScriptEditorHost& host = oked::ScriptEditorHostApi();
+            ScriptCaret* cp = &caret;
+            host.text = [sc] { const char* t = PeekCodeBuffer(sc); return std::string(t ? t : sc->Source().c_str()); };
+            host.path = [sc] { return sc->Path(); };
+            host.language = [sc] { return sc->Language(); };
+            host.caretLine = [cp] { return cp->line; };
+            host.insert = [cp](const std::string& t) { cp->insert += t; };
+            host.setText = [cp](const std::string& t) { cp->replaceAll = t; };
+            host.open = [](const std::string& p, int l) { OpenScriptFileInEditorAt(p, l); };
+        }
 
         // Navigation history (Rider's Back/Forward, Alt+Left / Alt+Right): every jump
         // (go-to-def, outline, find, Problems...) records the departure line so you can
@@ -12068,6 +12194,7 @@ void DrawScriptEditor(EditorState& ed) {
                 sc->SetSource(buf.data());        // persist edits so a scene save keeps them
                 ConsoleLog("Saved " + p);
                 g_scriptSaved[sc] = buf.data();    // clears the modified marker
+                oked::ide::NoteSaved(p, buf.data());   // a Local History copy; the symbol index takes the saved text
                 std::error_code mec;               // remember our own write so live-sync
                 s_extMtime[sc] = std::filesystem::last_write_time(p, mec);  // won't self-trigger
                 s_extConflict[sc] = false;
@@ -12100,12 +12227,15 @@ void DrawScriptEditor(EditorState& ed) {
         // ---- Menu bar: every tool, grouped the way IDEs do -------------------------
         bool rqReload = false, rqIde = false, rqOutline = false, rqMarks = false, rqTemplates = false,
              rqInsert = false, rqRename = false, rqRefs = false, rqGoto = false, rqSwitch = false,
-             rqDef = false, rqCheat = false;
+             rqDef = false, rqCheat = false, rqHistory = false;
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("File")) {
                 if (ImGui::MenuItem("New Script...")) g_seNewReq = true;
+                if (ImGui::MenuItem("Go to File...", "Ctrl+Shift+N")) oked::ide::OpenQuickOpen();
+                if (ImGui::BeginMenu("Open Recent")) { oked::ide::DrawRecentMenu(); ImGui::EndMenu(); }
                 if (ImGui::MenuItem("Save", "Ctrl+S")) doSave();
                 if (ImGui::MenuItem("Reload from Disk", nullptr, false, !sc->Path().empty())) rqReload = true;
+                if (ImGui::MenuItem("Local History...", nullptr, false, !sc->Path().empty())) rqHistory = true;
                 if (ImGui::MenuItem("Open in External IDE")) rqIde = true;
                 ImGui::MenuItem("Live Sync External Edits", nullptr, &s_liveSync);
                 ImGui::Separator();
@@ -12127,7 +12257,12 @@ void DrawScriptEditor(EditorState& ed) {
             if (ImGui::BeginMenu("View")) {
                 ImGui::MenuItem("Syntax Colors", nullptr, &s_highlight);
                 ImGui::MenuItem("Minimap", nullptr, &s_minimap);
+                ImGui::MenuItem("Scripts and Structure", "Alt+1", &g_seSideOpen);
                 ImGui::MenuItem("Auto-close Brackets", nullptr, &g_scriptAutoPair);
+                if (ImGui::BeginMenu("Tab Width")) {
+                    for (int tw : {2, 4, 8}) if (ImGui::MenuItem(std::to_string(tw).c_str(), nullptr, g_scriptTabWidth == tw)) g_scriptTabWidth = tw;
+                    ImGui::EndMenu();
+                }
                 ImGui::MenuItem("Word Wrap", nullptr, &s_wordWrap);
                 ImGui::MenuItem("Show Whitespace", nullptr, &s_showWs);
                 if (ImGui::MenuItem("Fold All", "Ctrl+Alt+[")) s_foldReq = 1;
@@ -12142,8 +12277,9 @@ void DrawScriptEditor(EditorState& ed) {
             }
             if (ImGui::BeginMenu("Go")) {
                 if (ImGui::MenuItem("Search Everywhere", "Double Shift")) g_seSearchReq = true;
+                if (ImGui::MenuItem("Go to File...", "Ctrl+Shift+N")) oked::ide::OpenQuickOpen();
                 if (ImGui::MenuItem("Go to Line...", "Ctrl+G")) rqGoto = true;
-                if (ImGui::MenuItem("Go to Symbol...")) rqOutline = true;
+                if (ImGui::MenuItem("Go to Symbol...", "Ctrl+Shift+O")) rqOutline = true;
                 if (ImGui::MenuItem("Go to Definition", "F12")) rqDef = true;
                 if (ImGui::MenuItem("Bookmarks...", "F11", false, !bookmarks.empty())) rqMarks = true;
                 ImGui::EndMenu();
@@ -12194,8 +12330,18 @@ void DrawScriptEditor(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save (Ctrl+S)");
             ImGui::EndMenuBar();
         }
+        // A plugin command's shortcut (editor/PluginRegistry.hpp), while this window has the focus.
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+            if (ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift && !ImGui::GetIO().KeyAlt && ImGui::IsKeyPressed(ImGuiKey_O, false))
+                rqOutline = true;                                  // Go to Symbol in this file (Ctrl+Shift+O)
+            else oked::ide::RunPluginShortcut();
+        }
+        if (rqHistory) oked::ide::OpenLocalHistory(sc->Path(), buf.data());
         // Search Everywhere's actions reuse the menu's own tools.
         if (g_seGotoReq)    { g_seGotoReq = false; rqGoto = true; }
+        if (g_sePaletteRename) { g_sePaletteRename = false; rqRename = true; }
+        if (g_sePaletteRefs)   { g_sePaletteRefs = false; rqRefs = true; }
+        if (g_sePaletteDef)    { g_sePaletteDef = false; rqDef = true; }
         if (g_seFindReq)    { g_seFindReq = false; s_showFind = true; }
         if (g_sePaletteReq) { g_sePaletteReq = false; s_palReq = true; }
         if (rqReload) {
@@ -12262,12 +12408,19 @@ void DrawScriptEditor(EditorState& ed) {
             }
             ImGui::EndPopup();
         }
-        if (ImGui::BeginPopup("##outline")) {
-            auto syms = ScriptOutline(buf.data());
+        if (ImGui::BeginPopup("##outline")) {   // Go to Symbol in this file (OkayScript and Lua: editor/ScriptIde.hpp OutlineOf)
+            static char s_symQ[64] = "";
+            if (ImGui::IsWindowAppearing()) { s_symQ[0] = '\0'; ImGui::SetKeyboardFocusHere(); }
+            ImGui::SetNextItemWidth(320);
+            const bool symEnter = ImGui::InputTextWithHint("##symq", "Symbol name...", s_symQ, sizeof s_symQ, ImGuiInputTextFlags_EnterReturnsTrue);
+            auto syms = scriptide::OutlineOf(sc->Language(), buf.data());
             if (syms.empty()) ImGui::TextDisabled("No functions or classes found.");
-            for (const auto& s : syms) {
-                char lbl[160]; std::snprintf(lbl, sizeof(lbl), "%-28s :%d", s.second.c_str(), s.first);
-                if (ImGui::MenuItem(lbl)) { jumpTo(s.first); }
+            bool first = true;
+            for (const auto& sy : syms) {
+                if (s_symQ[0] && scriptide::FuzzyScore(s_symQ, sy.display) < 0) continue;
+                char lbl[200]; std::snprintf(lbl, sizeof(lbl), "%c  %-28s :%d", sy.kind, sy.display.c_str(), sy.line);
+                if (ImGui::MenuItem(lbl) || (symEnter && first)) { jumpTo(sy.line); ImGui::CloseCurrentPopup(); }
+                first = false;
             }
             ImGui::EndPopup();
         }
@@ -12368,11 +12521,14 @@ void DrawScriptEditor(EditorState& ed) {
             int we = cp; while (we < len && isW(t[we])) ++we;
             std::string word(t + ws, t + we);
             if (!word.empty()) {
-                for (const auto& s : ScriptOutline(buf.data())) {
-                    std::string nm = s.second.size() > 3 ? s.second.substr(3) : s.second;  // strip "f  "/"C  "
-                    if (nm == word) { jumpTo(s.first);
-                                      ConsoleLog("Go to " + nm + " (line " + std::to_string(s.first) + ")"); break; }
+                bool found = false;
+                for (const auto& s : scriptide::OutlineOf(sc->Language(), buf.data())) {
+                    if (s.name == word) { jumpTo(s.line); found = true;
+                                          ConsoleLog("Go to " + s.display + " (line " + std::to_string(s.line) + ")"); break; }
                 }
+                // Not in this file: another project script's (the symbol index).
+                if (!found && !oked::ide::GoToDefinitionInProject(word, sc->Path()))
+                    ConsoleLog("No definition of '" + word + "' found in the project's scripts", 1);
             }
         }
         // Templates: insert a ready-made, plain-English behaviour at the caret — the
@@ -12654,6 +12810,21 @@ void DrawScriptEditor(EditorState& ed) {
                 ConsoleLog("Renamed " + s_renameFrom + " -> " + std::string(s_renameTo));
                 ImGui::CloseCurrentPopup();
             }
+            // Used in other project scripts too: rename it everywhere, after a preview of every changed line.
+            const auto elsewhere = oked::ide::ReferencesElsewhere(s_renameFrom, sc->Path());
+            if (!elsewhere.empty()) {
+                std::set<std::string> otherFiles;
+                for (const auto& o : elsewhere) otherFiles.insert(o.file);
+                ImGui::TextDisabled("Also used %d time%s in %d other script%s.", (int)elsewhere.size(), elsewhere.size() == 1 ? "" : "s",
+                                    (int)otherFiles.size(), otherFiles.size() == 1 ? "" : "s");
+                ImGui::BeginDisabled(!nameOk || s_renameFrom == s_renameTo);
+                if (ImGui::Button("Rename in All Scripts (Preview)...")) {
+                    oked::ide::NoteEdited(sc->Path(), buf.data());
+                    oked::ide::OpenRenamePreview(s_renameFrom, s_renameTo);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndDisabled();
+            }
             ImGui::EndPopup();
         }
 
@@ -12688,6 +12859,27 @@ void DrawScriptEditor(EditorState& ed) {
                         jumpTo(r.first);
                         ImGui::CloseCurrentPopup();
                     }
+                }
+            }
+            // The other project scripts' uses (the symbol index): a click opens that script at the line.
+            const auto elsewhere = oked::ide::ReferencesElsewhere(s_refsSym, sc->Path());
+            if (!elsewhere.empty()) {
+                ImGui::Separator();
+                ImGui::TextDisabled("In other scripts (%d)", (int)elsewhere.size());
+                int shown = 0;
+                for (const auto& o : elsewhere) {
+                    if (++shown > 200) break;
+                    const std::string* txt = oked::ide::Index().Text(o.file);
+                    std::string lineText;
+                    if (txt) {
+                        const std::size_t a = scriptide::OffsetOf(*txt, o.line, 0), b = txt->find('\n', a);
+                        lineText = txt->substr(a, b == std::string::npos ? std::string::npos : b - a);
+                        const std::size_t nb = lineText.find_first_not_of(" \t");
+                        lineText = nb == std::string::npos ? std::string() : lineText.substr(nb);
+                    }
+                    const std::string lbl = std::filesystem::path(o.file).filename().string() + ":" + std::to_string(o.line) + "  " +
+                                            lineText + "##xr" + std::to_string(shown);
+                    if (ImGui::MenuItem(lbl.c_str())) { OpenScriptFileInEditorAt(o.file, o.line); ImGui::CloseCurrentPopup(); }
                 }
             }
             ImGui::EndPopup();
@@ -12726,18 +12918,19 @@ void DrawScriptEditor(EditorState& ed) {
         }
         // All case-insensitive match positions (shared by jump, the n/m indicator,
         // and the highlight pass below).
+        // Match case / Whole word / Regex (the find bar's toggles; editor/ScriptIde.hpp FindAll).
+        static scriptide::FindOptions s_findOpt;
+        static std::string s_findError;
+        auto findAllMatches = [&]() { return scriptide::FindAll(buf.data(), s_find, s_findOpt, &s_findError); };
         auto findMatches = [&]() {
             std::vector<int> at;
-            if (!s_find[0]) return at;
-            std::string hay = buf.data(), needle = s_find;
-            for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
-            for (auto& c : needle) c = (char)std::tolower((unsigned char)c);
-            for (std::size_t p = hay.find(needle); p != std::string::npos; p = hay.find(needle, p + needle.size()))
-                at.push_back((int)p);
+            for (const auto& m : findAllMatches()) at.push_back((int)m.offset);
             return at;
         };
         auto jumpMatch = [&](bool fwd) {
-            std::vector<int> at = findMatches();
+            const std::vector<scriptide::TextMatch> ms = findAllMatches();
+            std::vector<int> at;
+            for (const auto& m : ms) at.push_back((int)m.offset);
             if (at.empty()) return;
             // Search from s_findCursor, NOT caret.pos: the editor's caret only updates
             // while its InputText is active, so with focus in the find field repeated
@@ -12746,7 +12939,9 @@ void DrawScriptEditor(EditorState& ed) {
             if (fwd) { for (int p : at) if (p > cur) { target = p; break; } if (target < 0) target = at.front(); }
             else     { for (int p : at) if (p < cur) target = p; if (target < 0) target = at.back(); }
             s_findCursor = target;
-            caret.gotoPos = target; caret.gotoSelLen = (int)std::strlen(s_find);
+            int selLen = (int)std::strlen(s_find);
+            for (const auto& m : ms) if ((int)m.offset == target) { selLen = (int)m.length; break; }
+            caret.gotoPos = target; caret.gotoSelLen = selLen;
             const char* tb = buf.data();
             int ln = 1; for (int k = 0; k < target && tb[k]; ++k) if (tb[k] == '\n') ++ln;
             s_scrollToLine = ln;
@@ -12781,6 +12976,7 @@ void DrawScriptEditor(EditorState& ed) {
             {
                 std::vector<int> at = findMatches();
                 if (!s_find[0])          ImGui::TextDisabled(" ");
+                else if (!s_findError.empty()) ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.5f, 1.0f), "Bad regex");
                 else if (at.empty())     ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.5f, 1.0f), "No matches");
                 else {
                     int ref = s_findCursor >= 0 ? s_findCursor : caret.pos;
@@ -12796,6 +12992,15 @@ void DrawScriptEditor(EditorState& ed) {
             if (ImGui::Button("Next")) jumpMatch(true);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find next (F3 / Enter)");
             ImGui::SameLine();
+            ImGui::Checkbox("Aa##fcase", &s_findOpt.matchCase);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Match case");
+            ImGui::SameLine();
+            ImGui::Checkbox("W##fword", &s_findOpt.wholeWord);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Whole words only");
+            ImGui::SameLine();
+            ImGui::Checkbox(".*##fregex", &s_findOpt.regex);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(s_findError.empty() ? "Regular expression (the replacement can use $1, $2 and $&)" : s_findError.c_str());
+            ImGui::SameLine();
             if (ImGui::Button("Close")) s_showFind = false;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close (Esc)");
             ImGui::AlignTextToFramePadding();
@@ -12805,24 +13010,26 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::InputTextWithHint("##replace", "Replacement", s_replace, sizeof(s_replace));
             ImGui::SameLine();
             if (ImGui::Button("Replace") && s_find[0]) {
-                std::string text = buf.data(), from = s_find, to = s_replace;
+                // The next match at or after the search position (wrapping round), replaced with the options of the bar.
+                std::string text = buf.data();
+                const auto ms = findAllMatches();
                 std::size_t start = s_findCursor >= 0 ? (std::size_t)s_findCursor : 0;
                 if (start > text.size()) start = 0;
-                std::size_t p = text.find(from, start);
-                if (p == std::string::npos) p = text.find(from);
-                if (p != std::string::npos) {
-                    text.replace(p, from.size(), to);
+                const scriptide::TextMatch* m = nullptr;
+                for (const auto& x : ms) if (x.offset >= start) { m = &x; break; }
+                if (!m && !ms.empty()) m = &ms.front();
+                if (m) {
+                    const std::string with = scriptide::ReplaceAll(text.substr(m->offset, m->length), s_find, s_replace, s_findOpt);
+                    text.replace(m->offset, m->length, with);
                     caret.replaceAll = text;
-                    s_findCursor = (int)(p + to.size());
+                    s_findCursor = (int)(m->offset + with.size());
                 }
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Replace the next match");
             ImGui::SameLine();
             if (ImGui::Button("Replace All") && s_find[0]) {
-                std::string text = buf.data(), from = s_find, to = s_replace;
                 int n = 0;
-                for (std::size_t p = text.find(from); p != std::string::npos && !from.empty();
-                     p = text.find(from, p + to.size())) { text.replace(p, from.size(), to); ++n; }
+                const std::string text = scriptide::ReplaceAll(buf.data(), s_find, s_replace, s_findOpt, &n, &s_findError);
                 if (n > 0) caret.replaceAll = text;
                 ConsoleLog("Replaced " + std::to_string(n) + " occurrence" + (n == 1 ? "" : "s"));
             }
@@ -12834,52 +13041,83 @@ void DrawScriptEditor(EditorState& ed) {
         // --- Command Palette (Ctrl+Shift+P): searchable editor actions + go-to ---
         static char s_palQuery[64] = "";
         static bool s_palFocus = false;
+        // Centred near the top of the Script Editor (a popup otherwise opens at the mouse, which may be anywhere).
+        ImGui::SetNextWindowPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth() * 0.5f, ImGui::GetWindowPos().y + 60.0f),
+                                ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
         if (s_palReq ||
             (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
              ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_P, false))) {
             s_palReq = false; s_palQuery[0] = '\0'; s_palFocus = true; ImGui::OpenPopup("##cmdpalette");
         }
         if (ImGui::BeginPopup("##cmdpalette")) {
-            struct Cmd { const char* name; std::function<void()> run; };
-            std::vector<Cmd> cmds = {
-                {"Run (compile & execute)", [&]{ bool ok = sc->LoadSource(buf.data(), &s_error); if (ok) s_error.clear(); ed.dirty = true; }},
-                {"Save", [&]{ std::string p = filePath(); if (extide::WriteFile(p, buf.data())) { sc->SetPath(p); g_scriptSaved[sc] = buf.data(); } ed.dirty = true; }},
-                {"Format Document", [&]{ caret.replaceAll = FormatScriptFor(sc, buf.data()); ed.dirty = true; }},
-                {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); if (s.empty()) SetCodeBuffer(sc, s); else caret.replaceAll = s; std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},
-                {"Toggle Syntax Highlight", [&]{ s_highlight = !s_highlight; }},
-                {"Toggle Minimap", [&]{ s_minimap = !s_minimap; }},
-                {"Toggle Word Wrap", [&]{ s_wordWrap = !s_wordWrap; }},
-                {"Toggle Whitespace", [&]{ s_showWs = !s_showWs; }},
-                {"Fold All", [&]{ s_foldReq = 1; }},
-                {"Unfold All", [&]{ s_foldReq = 2; }},
-                {"Find in Files (Ctrl+Shift+F)", [&]{ g_showFindInFiles = true; g_fifFocus = true; }},
-                {"Toggle Comment Line", [&]{ caret.toggleComment = true; }},
-                {"Open Scripting Docs", [&]{ g_showScriptDocs = true; }},
-                {"Open in External IDE", [&]{ std::string p = filePath(); extide::WriteFile(p, buf.data()); sc->SetPath(p); extide::OpenExternal(p); }},
-                {"Zoom In", [&]{ s_zoom = Mathf::Clamp(s_zoom + 0.1f, 0.7f, 3.0f); }},
-                {"Zoom Out", [&]{ s_zoom = Mathf::Clamp(s_zoom - 0.1f, 0.7f, 3.0f); }},
+            // Every Script Editor command with its shortcut, then the commands editor plugins added (editor/PluginRegistry.hpp),
+            // ranked by a fuzzy match of the title; Enter runs the first. Symbols of this file follow ("Go to ...").
+            using PCmd = pluginreg::Command;
+            std::vector<PCmd> own = {
+                {"run", "Run (compile and test-run)", "Script", "", "", [&]{ s_tbRun = true; }},
+                {"save", "Save", "File", "Ctrl+S", "", [&]{ s_tbSave = true; }},
+                {"new", "New Script...", "File", "", "", [&]{ g_seNewReq = true; }},
+                {"gotofile", "Go to File...", "Go", "Ctrl+Shift+N", "", [&]{ oked::ide::OpenQuickOpen(); }},
+                {"history", "Local History...", "File", "", "", [&]{ if (!sc->Path().empty()) oked::ide::OpenLocalHistory(sc->Path(), buf.data()); }},
+                {"format", "Format Document", "Edit", "Ctrl+Alt+L", "", [&]{ s_tbFormat = true; }},
+                {"reload", "Reload from Disk", "File", "", "", [&]{ if (!sc->Path().empty()) { std::string s2 = extide::ReadFile(sc->Path()); if (s2.empty()) SetCodeBuffer(sc, s2); else caret.replaceAll = s2; std::string e; sc->LoadSource(s2, &e); g_scriptSaved[sc] = s2; } }},
+                {"comment", "Toggle Comment", "Edit", "Ctrl+/", "", [&]{ caret.toggleComment = true; }},
+                {"find", "Find / Replace", "Edit", "Ctrl+F", "", [&]{ s_showFind = true; }},
+                {"findfiles", "Find in Files", "Edit", "Ctrl+Shift+F", "", [&]{ g_showFindInFiles = true; g_fifFocus = true; }},
+                {"rename", "Rename Symbol...", "Refactor", "", "", [&]{ g_sePaletteRename = true; }},
+                {"refs", "Find All References", "Go", "", "", [&]{ g_sePaletteRefs = true; }},
+                {"gotoline", "Go to Line...", "Go", "Ctrl+G", "", [&]{ g_seGotoReq = true; }},
+                {"search", "Search Everywhere", "Go", "Double Shift", "", [&]{ g_seSearchReq = true; }},
+                {"def", "Go to Definition", "Go", "F12", "", [&]{ g_sePaletteDef = true; }},
+                {"tree", "Toggle Scripts and Structure", "View", "", "", [&]{ g_seSideOpen = !g_seSideOpen; }},
+                {"highlight", "Toggle Syntax Colors", "View", "", "", [&]{ s_highlight = !s_highlight; }},
+                {"minimap", "Toggle Minimap", "View", "", "", [&]{ s_minimap = !s_minimap; }},
+                {"wrap", "Toggle Word Wrap", "View", "", "", [&]{ s_wordWrap = !s_wordWrap; }},
+                {"ws", "Toggle Whitespace", "View", "", "", [&]{ s_showWs = !s_showWs; }},
+                {"foldall", "Fold All", "View", "Ctrl+Alt+[", "", [&]{ s_foldReq = 1; }},
+                {"unfoldall", "Unfold All", "View", "Ctrl+Alt+]", "", [&]{ s_foldReq = 2; }},
+                {"problems", "Toggle Problems Panel", "View", "", "", [&]{ s_showProblems = !s_showProblems; }},
+                {"docs", "Open Scripting Docs", "Help", "", "", [&]{ g_showScriptDocs = true; }},
+                {"external", "Open in External IDE", "File", "", "", [&]{ std::string p = filePath(); extide::WriteFile(p, buf.data()); sc->SetPath(p); extide::OpenExternal(p); }},
+                {"zoomin", "Zoom In", "View", "Ctrl+Wheel", "", [&]{ s_zoom = Mathf::Clamp(s_zoom + 0.1f, 0.7f, 3.0f); }},
+                {"zoomout", "Zoom Out", "View", "", "", [&]{ s_zoom = Mathf::Clamp(s_zoom - 0.1f, 0.7f, 3.0f); }},
+                {"plugins", "Plugin Manager", "Plugins", "", "", [&]{ g_showPluginManager = true; }},
             };
+            for (const auto& sn : pluginreg::ScriptEditorPlugins().Snippets(sc->Language())) {   // plugins' snippets
+                const std::string body = sn.body;
+                own.push_back({"snippet:" + sn.prefix, "Insert Snippet: " + sn.title, "Snippets", "", "", [body] { caret.insert += body; }});
+            }
+            std::vector<const PCmd*> all;
+            for (const auto& c : own) all.push_back(&c);
+            for (const PCmd* c : pluginreg::ScriptEditorPlugins().Commands()) all.push_back(c);
             if (s_palFocus) { ImGui::SetKeyboardFocusHere(); s_palFocus = false; }
-            ImGui::SetNextItemWidth(340);
-            ImGui::InputTextWithHint("##palq", "Type a command or symbol...", s_palQuery, sizeof(s_palQuery));
-            std::string q = s_palQuery; for (auto& c : q) c = (char)std::tolower((unsigned char)c);
-            auto matches = [&](const std::string& label) {
-                if (q.empty()) return true;
-                std::string l = label; for (auto& c : l) c = (char)std::tolower((unsigned char)c);
-                return l.find(q) != std::string::npos;
-            };
-            ImGui::BeginChild("##palscroll", ImVec2(340, 220));
-            for (auto& cm : cmds)
-                if (matches(cm.name) && ImGui::Selectable(cm.name)) { cm.run(); ImGui::CloseCurrentPopup(); }
-            // Go to any function/class in the file (symbol search).
-            for (const auto& s : ScriptOutline(buf.data())) {
-                std::string label = "Go to  " + s.second;
-                if (matches(label) && ImGui::Selectable(label.c_str())) {
-                    jumpTo(s.first); ImGui::CloseCurrentPopup();
+            ImGui::SetNextItemWidth(420);
+            const bool palEnter = ImGui::InputTextWithHint("##palq", "Type a command or symbol...", s_palQuery, sizeof(s_palQuery),
+                                                           ImGuiInputTextFlags_EnterReturnsTrue);
+            const auto ranked = pluginreg::RankCommands(s_palQuery, all);
+            std::function<void()> toRun;
+            ImGui::BeginChild("##palscroll", ImVec2(420, 260));
+            for (std::size_t i = 0; i < ranked.size(); ++i) {
+                const PCmd* cm = ranked[i];
+                ImGui::PushID((int)i);
+                const std::string lbl = cm->owner.empty() ? cm->title : cm->title + "   (" + cm->category + ")";
+                if (ImGui::Selectable(lbl.c_str(), i == 0 && s_palQuery[0]) || (palEnter && i == 0)) { toRun = cm->run; ImGui::CloseCurrentPopup(); }
+                if (!cm->shortcut.empty()) {
+                    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(cm->shortcut.c_str()).x - 4.0f);
+                    ImGui::TextDisabled("%s", cm->shortcut.c_str());
                 }
+                ImGui::PopID();
+            }
+            // Go to any function / class in the file (symbol search).
+            for (const auto& sy : scriptide::OutlineOf(sc->Language(), buf.data())) {
+                const std::string label = "Go to  " + sy.display;
+                if (s_palQuery[0] && scriptide::FuzzyScore(s_palQuery, label) < 0) continue;
+                if (ImGui::Selectable(label.c_str())) { jumpTo(sy.line); ImGui::CloseCurrentPopup(); }
             }
             ImGui::EndChild();
+            ImGui::TextDisabled("Enter runs the first   %d commands", (int)all.size());
             ImGui::EndPopup();
+            if (toRun) toRun();   // after the popup: a command may open another popup
         }
 
         // External-edit conflict: the file changed on disk while you have unsaved edits
@@ -12919,6 +13157,7 @@ void DrawScriptEditor(EditorState& ed) {
         ScriptEditorWidget& te = CodeEditorFor(sc);
         te.SetColorizerEnable(s_highlight);   // toolbar "Syntax" checkbox
         te.SetLineSpacing(sdm.codeLineSpacing);   // Density (the setters just store a number, so every frame is fine)
+        te.SetTabSize(g_scriptTabWidth);
         te.SetLeftMargin(sdm.codeLeftMargin);
 
         // Sync widget <-> CodeBuffer. g_teHash is the text both sides last agreed on:
@@ -12989,14 +13228,17 @@ void DrawScriptEditor(EditorState& ed) {
                         }
                     }
                 }
-                if (sc->Language() == okay::NextScriptVM::kLanguage || sc->Language() == okay::LuaScriptVM::kLanguage) {
+                if (sc->Language() == okay::NextScriptVM::kLanguage || sc->Language() == okay::LuaScriptVM::kLanguage ||
+                    sc->Language() == okay::JavaScriptVM::kLanguage) {
                     // The language's own checker: every error and warning comes from the compiler that runs
                     // the script (the new language: "does nothing" warnings; Lua: syntax errors with line and
                     // column, engine names that do not exist and misspelled handlers).
                     static okay::NextScriptVM s_nextCheck;
                     static okay::LuaScriptVM s_luaCheck;
-                    okay::IScriptVM& checker = sc->Language() == okay::LuaScriptVM::kLanguage
-                        ? static_cast<okay::IScriptVM&>(s_luaCheck) : static_cast<okay::IScriptVM&>(s_nextCheck);
+                    static okay::JavaScriptVM s_jsCheck;
+                    okay::IScriptVM& checker = sc->Language() == okay::LuaScriptVM::kLanguage ? static_cast<okay::IScriptVM&>(s_luaCheck)
+                        : sc->Language() == okay::JavaScriptVM::kLanguage ? static_cast<okay::IScriptVM&>(s_jsCheck)
+                        : static_cast<okay::IScriptVM&>(s_nextCheck);
                     for (auto& d : checker.ValidateAll(buf.data())) {
                         if (d.severity == 0) s_diags.push_back(d);
                         else s_warns.push_back({d.line, d.message, {}, {}, d.column});
@@ -13050,6 +13292,53 @@ void DrawScriptEditor(EditorState& ed) {
                                          [](const ScriptLint& x, const ScriptLint& y) { return x.line < y.line; });
                     }
                 }
+                // Quick fixes (Alt+Enter, the light bulb; editor/ScriptIde.hpp): a checker's "Did you mean X?" becomes a fix;
+                // the built-in checks (Lua: an unknown name, an undeclared or unused variable; OkayScript: undeclared and
+                // unused variables) and every plugin lint (editor/PluginRegistry.hpp) add findings with their own fixes.
+                {
+                    const std::string src = buf.data();
+                    for (auto& w : s_warns) {
+                        scriptide::Diagnostic d; d.line = w.line; d.col = w.column; d.message = w.msg;
+                        scriptide::QuickFix f = scriptide::FixFromSuggestion(d, src);
+                        if (!f.title.empty() && w.fix.empty()) w.fixes.push_back(std::move(f));
+                    }
+                    std::vector<scriptide::Diagnostic> extra;
+                    if (s_diags.empty() && (sc->Language() == "lua" || sc->Language() == "okayscript")) {
+                        static std::vector<std::string> s_luaKnown, s_okKnown;
+                        if (s_luaKnown.empty()) {
+                            s_luaKnown = okay::LuaScriptVM::CompletionNames();
+                            for (const char* w : {"_G", "_ENV", "_VERSION", "arg"}) s_luaKnown.push_back(w);
+                        }
+                        if (s_okKnown.empty()) {   // every name a script may use without declaring it
+                            s_okKnown = ScriptCompletions();
+                            for (const auto& kv : ScriptSignatureMap()) s_okKnown.push_back(kv.first);
+                            for (const auto& b : okay::OkayScriptVM().BuiltinNames()) s_okKnown.push_back(b);
+                            for (const char* w : {"gameObject", "transform", "collider", "self", "this", "dt", "time", "deltaTime", "score"}) s_okKnown.push_back(w);
+                        }
+                        std::vector<std::string> known = sc->Language() == "lua" ? s_luaKnown : s_okKnown;
+                        known.insert(known.end(), s_userTypes.begin(), s_userTypes.end());
+                        for (auto& d : scriptide::BasicLint(sc->Language(), src, known)) {
+                            bool dup = false;   // the language's own checker said it already
+                            for (const auto& w : s_warns) if (w.line == d.line && w.msg.find("'" + d.message.substr(1, d.message.find('\'', 1) - 1) + "'") != std::string::npos) dup = true;
+                            if (!dup) extra.push_back(std::move(d));
+                        }
+                    }
+                    // A call the file-only lint calls unknown that another project script defines is not a problem (the
+                    // symbol index): drop it.
+                    s_warns.erase(std::remove_if(s_warns.begin(), s_warns.end(), [](const ScriptLint& w) {
+                        if (w.msg.rfind("Unknown function '", 0) != 0) return false;
+                        const std::size_t e = w.msg.find('\'', 18);
+                        return e != std::string::npos && !oked::ide::Index().Definitions(w.msg.substr(18, e - 18)).empty();
+                    }), s_warns.end());
+                    pluginreg::DocContext pctx;
+                    pctx.language = sc->Language(); pctx.path = sc->Path(); pctx.text = src; pctx.line = caret.line;
+                    for (auto& d : pluginreg::ScriptProblems(pluginreg::ScriptEditorPlugins(), pctx, std::move(extra))) {
+                        ScriptLint w{d.line, (d.source.empty() || d.source == "lint" ? std::string() : "[" + d.source + "] ") + d.message, {}, {}, d.col};
+                        w.fixes = std::move(d.fixes);
+                        s_warns.push_back(std::move(w));
+                    }
+                    std::stable_sort(s_warns.begin(), s_warns.end(), [](const ScriptLint& x, const ScriptLint& y) { return x.line < y.line; });
+                }
             }
         }
 
@@ -13063,6 +13352,27 @@ void DrawScriptEditor(EditorState& ed) {
             te.SetUserTypes(s_userTypes);
             te.SetBreakpoints(ScriptEditorWidget::Breakpoints(bookmarks.begin(), bookmarks.end()));
         }
+        // The quick fixes of one line (Alt+Enter, the light bulb): the lint's "did you mean" word swap, then every other fix.
+        auto lineFixes = [&](int line) {
+            std::vector<scriptide::QuickFix> out;
+            if (line < 1) return out;
+            const std::string src = buf.data();
+            const std::size_t ls = scriptide::OffsetOf(src, line, 0);
+            std::size_t le = src.find('\n', ls);
+            if (le == std::string::npos) le = src.size();
+            auto isWc = [](char ch) { return std::isalnum((unsigned char)ch) || ch == '_'; };
+            for (const auto& w : s_warns) {
+                if (w.line != line) continue;
+                if (!w.fix.empty() && !w.bad.empty())
+                    for (std::size_t pp = src.find(w.bad, ls); pp != std::string::npos && pp + w.bad.size() <= le; pp = src.find(w.bad, pp + 1)) {
+                        if ((pp > ls && isWc(src[pp - 1])) || (pp + w.bad.size() < le && isWc(src[pp + w.bad.size()]))) continue;
+                        out.push_back({"Change '" + w.bad + "' to '" + w.fix + "'", {{line, (int)(pp - ls), (int)w.bad.size(), w.fix}}});
+                        break;
+                    }
+                out.insert(out.end(), w.fixes.begin(), w.fixes.end());
+            }
+            return out;
+        };
 
         // Apply a pending jump (go-to-line box / Outline / F12 / find / nav / Marks).
         if (caret.gotoLine > 0) {
@@ -13121,15 +13431,11 @@ void DrawScriptEditor(EditorState& ed) {
         te.okay().SetShowWhitespace(s_showWs);
         if (s_foldReq == 1) te.okay().Edit().FoldAll(); else if (s_foldReq == 2) te.okay().Edit().UnfoldAll();
         s_foldReq = 0;
-        // ---- Scripts sidebar on the left: only the project's scripts (plus the
-        // ones that live in the scene), with a filter. It folds away to a thin
-        // strip with the chevron or Alt+1. (Classes and methods: double Shift.)
+        // ---- Scripts sidebar on the left: the project's scripts as a folder tree with a filter (editor/ScriptIdeUi.cpp
+        // DrawScriptTree), the scripts that live only in the scene, this file's Structure (the symbol around the caret
+        // marked) and the side panels editor plugins add. It folds away to a thin strip with the chevron or Alt+1.
         {
-            static bool s_sideOpen = false;
-            static char s_sideFilter[64] = "";
-            static std::vector<std::string> s_sideFiles;
-            static double s_sideScan = -10.0;
-            static std::string s_sideRoot;
+            bool& s_sideOpen = g_seSideOpen;
             const bool seFocus = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
             ImGuiIO& tio = ImGui::GetIO();
             if (seFocus && tio.KeyAlt && !tio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_1, false)) { s_sideOpen = !s_sideOpen; tio.InputQueueCharacters.resize(0); }   // (don't also type the digit)
@@ -13145,25 +13451,6 @@ void DrawScriptEditor(EditorState& ed) {
                 ImGui::EndChild();
                 ImGui::SameLine(0, 2);
             } else {
-                namespace fs = std::filesystem;
-                const fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
-                if (ImGui::GetTime() - s_sideScan > 2.0 || s_sideRoot != assets.string()) {   // rescan every couple of seconds
-                    s_sideScan = ImGui::GetTime(); s_sideRoot = assets.string(); s_sideFiles.clear();
-                    std::error_code ec;
-                    if (fs::is_directory(assets, ec))
-                        for (auto it = fs::recursive_directory_iterator(assets, fs::directory_options::skip_permission_denied, ec);
-                             it != fs::recursive_directory_iterator() && !ec; it.increment(ec)) {
-                            const std::string ext = it->path().extension().string();
-                            if (it->is_regular_file(ec) && (ext == ".okay" || ext == ".cs" || ext == ".lua")) s_sideFiles.push_back(it->path().string());
-                            if (s_sideFiles.size() > 2000) break;
-                        }
-                    std::sort(s_sideFiles.begin(), s_sideFiles.end(), [](const std::string& x, const std::string& y) {
-                        std::string a = fs::path(x).filename().string(), b = fs::path(y).filename().string();
-                        for (auto& c : a) c = (char)std::tolower((unsigned char)c);
-                        for (auto& c : b) c = (char)std::tolower((unsigned char)c);
-                        return a < b;
-                    });
-                }
                 ImGui::BeginChild("##setool", ImVec2(sdm.sideListW, av.y), ImGuiChildFlags_Borders);
                 {   // header: "Scripts" + count, fold chevron on the right
                     const ImVec2 hp = ImGui::GetCursorScreenPos();
@@ -13171,7 +13458,7 @@ void DrawScriptEditor(EditorState& ed) {
                     ImGui::AlignTextToFramePadding();
                     ImGui::TextUnformatted("Scripts");
                     ImGui::SameLine(0, 6);
-                    ImGui::TextDisabled("%d", (int)s_sideFiles.size());
+                    ImGui::TextDisabled("%d", (int)oked::ide::ProjectScripts().size());
                     ImGui::SetCursorScreenPos(ImVec2(hp.x + hw - sdm.smallHit, hp.y));
                     if (ImGui::InvisibleButton("##sefold", ImVec2(sdm.smallHit, std::max(sdm.smallHit, ImGui::GetFrameHeight())))) s_sideOpen = false;
                     const bool h = ImGui::IsItemHovered();
@@ -13180,55 +13467,43 @@ void DrawScriptEditor(EditorState& ed) {
                     if (h) { d->AddRectFilled(bmin, bmax, IM_COL32(255, 255, 255, 22), 5.0f); ImGui::SetTooltip("Hide scripts  (Alt+1)"); }
                     chevron(d, ImVec2((bmin.x + bmax.x) * 0.5f, (bmin.y + bmax.y) * 0.5f), true, h ? IM_COL32(240, 244, 250, 255) : IM_COL32(170, 176, 188, 255));
                 }
-                ImGui::SetNextItemWidth(-1);
-                ImGui::InputTextWithHint("##sefilter", "Filter scripts", s_sideFilter, sizeof s_sideFilter);
-                std::string fl = s_sideFilter; for (auto& c : fl) c = (char)std::tolower((unsigned char)c);
-                ImGui::Spacing();
-                ImGui::BeginChild("##sesidelist", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 4));
-                std::error_code ec;
-                int shown = 0;
-                for (const auto& f : s_sideFiles) {
-                    const fs::path fp(f);
-                    const std::string nm = fp.filename().string();
-                    if (!fl.empty()) { std::string l = nm; for (auto& c : l) c = (char)std::tolower((unsigned char)c); if (l.find(fl) == std::string::npos) continue; }
-                    const bool cur = !sc->Path().empty() && fs::equivalent(fp, sc->Path(), ec);
-                    // Folder (relative to Assets) shown dim after the name when it isn't Scripts/.
-                    std::string rel = fp.parent_path().lexically_relative(assets).generic_string();
-                    if (rel == "." || rel == "Scripts") rel.clear();
-                    ImGui::PushID(f.c_str());
-                    const ImVec2 rp = ImGui::GetCursorScreenPos();
-                    const float rowAvailW = ImGui::GetContentRegionAvail().x;
-                    if (ImGui::Selectable("##sefile", cur, 0, ImVec2(0, sdm.sideRowH(ImGui::GetTextLineHeight()))) && !cur) OpenScriptFileInEditor(f);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", fp.lexically_relative(assets.parent_path()).generic_string().c_str());
-                    ImDrawList* d = ImGui::GetWindowDrawList();
-                    const float ty = rp.y + sdm.sideRowPad;   // centred in the row
-                    auto measure = [](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x; };
-                    // A long name is cut with "..." instead of running past the list; the folder shows only if there is room.
-                    const std::string shownNm = oked::scriptui::ElideToWidth(nm, rowAvailW - 12.0f, measure);
-                    d->AddText(ImVec2(rp.x + 6, ty), ImGui::GetColorU32(ImGuiCol_Text), shownNm.c_str());
-                    if (!rel.empty() && shownNm == nm) {
-                        const float nw = ImGui::CalcTextSize(nm.c_str()).x;
-                        const std::string shownRel = oked::scriptui::ElideToWidth(rel, rowAvailW - 12.0f - nw - 10.0f, measure);
-                        if (!shownRel.empty()) d->AddText(ImVec2(rp.x + 6 + nw + 10, ty), ImGui::GetColorU32(ImGuiCol_TextDisabled), shownRel.c_str());
-                    }
-                    ImGui::PopID();
-                    ++shown;
-                }
+                const float listH = std::max(80.0f, (av.y - ImGui::GetFrameHeightWithSpacing() * 3.0f) * 0.55f);
+                oked::ide::DrawScriptTree(0.0f, listH, sc->Path());
                 // Scripts that live only inside the scene (no file).
                 bool header = false;
                 for (ScriptComponent* t : g_scriptTabs) {
                     if (!t->Path().empty()) continue;
                     GameObject* og = owner.count(t) ? owner[t] : nullptr;
                     std::string nm = (og ? og->name : std::string("script")) + ".okay";
-                    if (!fl.empty()) { std::string l = nm; for (auto& c : l) c = (char)std::tolower((unsigned char)c); if (l.find(fl) == std::string::npos) continue; }
                     if (!header) { ImGui::Spacing(); ImGui::TextDisabled("In the scene"); header = true; }
                     ImGui::PushID(t);
                     if (ImGui::Selectable(nm.c_str(), t == sc)) { g_activeScriptTab = t; g_focusScriptTab = t; }
                     ImGui::PopID();
-                    ++shown;
                 }
-                if (!shown) ImGui::TextDisabled(fl.empty() ? "No scripts yet." : "No scripts match.");
+                // Structure: this file's functions, classes and tables (OkayScript and Lua), the one around the caret marked.
+                ImGui::Spacing();
+                ImGui::TextDisabled("Structure");
+                ImGui::BeginChild("##structure", ImVec2(0, pluginreg::ScriptEditorPlugins().Panels().empty()
+                                                          ? -ImGui::GetFrameHeightWithSpacing() - 4.0f : 120.0f), ImGuiChildFlags_Borders);
+                {
+                    const auto syms = scriptide::OutlineOf(sc->Language(), buf.data());
+                    int here = -1;
+                    for (int i = 0; i < (int)syms.size(); ++i) if (syms[(std::size_t)i].line <= caret.line) here = i;
+                    for (int i = 0; i < (int)syms.size(); ++i) {
+                        const auto& sy = syms[(std::size_t)i];
+                        const char* tag = sy.kind == 'C' ? "C " : sy.kind == 'E' ? "E " : sy.kind == 'v' ? "v " : "f ";
+                        const std::string lbl = std::string(tag) + sy.display + "##st" + std::to_string(i);
+                        if (ImGui::Selectable(lbl.c_str(), i == here)) jumpTo(sy.line);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("line %d", sy.line);
+                    }
+                    if (syms.empty()) ImGui::TextDisabled("No functions or classes yet.");
+                }
                 ImGui::EndChild();
+                if (!pluginreg::ScriptEditorPlugins().Panels().empty()) {   // plugin side panels
+                    ImGui::BeginChild("##pluginpanels", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 4.0f));
+                    oked::ide::DrawPluginPanels();
+                    ImGui::EndChild();
+                }
                 if (ImGui::Button("+ New Script", ImVec2(-1, 0))) g_seNewReq = true;
                 ImGui::EndChild();
                 ImGui::SameLine();
@@ -13250,74 +13525,103 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::SetNextWindowPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth() * 0.5f, ImGui::GetWindowPos().y + 70), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
             ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Appearing);
             if (ImGui::BeginPopup("##searchall")) {
+                // One box over files, symbols (every project script's, from the symbol index), actions (the command palette's,
+                // plugins' included) and settings, with a tab per kind. Ranked by a fuzzy match (editor/ScriptIde.hpp).
                 static char q[96] = "";
-                static std::vector<std::string> s_files;
-                if (ImGui::IsWindowAppearing()) {
-                    q[0] = '\0'; ImGui::SetKeyboardFocusHere();
-                    s_files.clear();
-                    namespace fs = std::filesystem;
-                    fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
-                    std::error_code ec;
-                    if (fs::is_directory(assets, ec))
-                        for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
-                            const std::string ext = e.path().extension().string();
-                            if (e.is_regular_file(ec) && (ext == ".okay" || ext == ".cs" || ext == ".lua")) s_files.push_back(e.path().string());
-                            if (s_files.size() > 2000) break;
-                        }
-                }
+                static int tab = 0;   // 0 All, 1 Files, 2 Symbols, 3 Actions
+                if (ImGui::IsWindowAppearing()) { q[0] = '\0'; ImGui::SetKeyboardFocusHere(); }
                 ImGui::TextDisabled("Search Everywhere");
+                static const char* kTabs[] = {"All", "Files", "Symbols", "Actions"};
+                for (int ti = 0; ti < 4; ++ti) {
+                    ImGui::SameLine(ti == 0 ? 160.0f : 0.0f);
+                    if (ImGui::RadioButton(kTabs[ti], tab == ti)) tab = ti;
+                }
+                if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Tab, false)) tab = (tab + 1) % 4;
                 ImGui::SetNextItemWidth(-1);
-                const bool go = ImGui::InputTextWithHint("##saq", "Files, classes, methods, actions...", q, sizeof q, ImGuiInputTextFlags_EnterReturnsTrue);
-                std::string ql = q; for (auto& c : ql) c = (char)std::tolower((unsigned char)c);
-                auto hit = [&](const std::string& x) { std::string l = x; for (auto& c : l) c = (char)std::tolower((unsigned char)c); return ql.empty() || l.find(ql) != std::string::npos; };
-                bool first = true; int shown = 0;
-                auto row = [&](const std::string& lbl, const char* kind) {
-                    ImGui::TextDisabled("%-8s", kind); ImGui::SameLine(80);
-                    const bool pick = ImGui::Selectable(lbl.c_str()) || (go && first);
-                    first = false; ++shown;
-                    return pick;
-                };
-                ImGui::BeginChild("##sares", ImVec2(0, 300));
-                for (const auto& f : s_files) {
-                    const std::string nm = std::filesystem::path(f).filename().string();
-                    if (!hit(nm) || shown >= 12) continue;
-                    ImGui::PushID(f.c_str());
-                    if (row(nm, "File")) { OpenScriptFileInEditor(f); ImGui::CloseCurrentPopup(); }
-                    ImGui::PopID();
-                }
-                const auto syms = ScriptOutline(buf.data());
-                for (int i = 0; i < (int)syms.size(); ++i) {
-                    const std::string nm = syms[i].second.size() > 3 ? syms[i].second.substr(3) : syms[i].second;
-                    if (!hit(nm) || shown >= 24) continue;
-                    ImGui::PushID(i);
-                    if (row(nm + (syms[i].second[0] == 'C' ? "" : "()"), syms[i].second[0] == 'C' ? "Class" : "Method")) { jumpTo(syms[i].first); ImGui::CloseCurrentPopup(); }
-                    ImGui::PopID();
-                }
-                struct Act { const char* name; int id; };
-                static const Act kActs[] = {{"New Script", 1}, {"Save", 2}, {"Format Document", 3}, {"Go to Line", 4},
-                                            {"Find / Replace", 5}, {"Command Palette", 6}, {"Run Script", 7}, {"Toggle Comment", 8}};
-                for (const auto& a : kActs) {
-                    if (!hit(a.name) || shown >= 32) continue;
-                    ImGui::PushID(a.id);
-                    if (row(a.name, "Action")) {
-                        switch (a.id) {
-                            case 1: g_seNewReq = true; break;
-                            case 2: s_tbSave = true; break;
-                            case 3: s_tbFormat = true; break;
-                            case 4: g_seGotoReq = true; break;
-                            case 5: g_seFindReq = true; break;
-                            case 6: g_sePaletteReq = true; break;
-                            case 7: s_tbRun = true; break;
-                            case 8: caret.toggleComment = true; break;
-                        }
-                        ImGui::CloseCurrentPopup();
+                if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+                const bool go = ImGui::InputTextWithHint("##saq", "Files, classes, methods, actions, settings...", q, sizeof q, ImGuiInputTextFlags_EnterReturnsTrue);
+                const std::string query = q;
+                struct Hit { int score; const char* kind; std::string label, detail; std::function<void()> pick; };
+                std::vector<Hit> hits;
+                if (tab == 0 || tab == 1) {
+                    for (const auto& it : scriptide::RankQuickOpen(query, oked::ide::ProjectScripts(), oked::ide::RecentScripts(), ed.projectDir(), 12)) {
+                        const std::string path = it.path;
+                        hits.push_back({it.score + 5, "File", std::filesystem::path(path).filename().string(), it.label, [path] { OpenScriptFileInEditor(path); }});
                     }
+                }
+                if (tab == 0 || tab == 2) {
+                    const std::string cur = std::filesystem::path(sc->Path()).generic_string();
+                    std::vector<scriptide::Symbol> syms = scriptide::OutlineOf(sc->Language(), buf.data(), cur);
+                    for (auto& sy : oked::ide::Index().AllSymbols()) if (sy.file != cur) syms.push_back(std::move(sy));
+                    int n = 0;
+                    for (const auto& sy : syms) {
+                        const int sc2 = query.empty() ? 0 : scriptide::FuzzyScore(query, sy.display);
+                        if (sc2 < 0 || (query.empty() && sy.file != cur)) continue;
+                        if (++n > 400) break;
+                        const std::string file = sy.file; const int line = sy.line;
+                        const bool here = file == cur || file.empty();
+                        hits.push_back({sc2 + (here ? 3 : 0), sy.kind == 'C' ? "Class" : sy.kind == 'v' ? "Variable" : "Method",
+                                        sy.display + (sy.kind == 'f' ? "()" : ""),
+                                        (here ? std::string("this file") : std::filesystem::path(file).filename().string()) + ":" + std::to_string(line),
+                                        [&, file, line, here] { if (here) jumpTo(line); else OpenScriptFileInEditorAt(file, line); }});
+                    }
+                }
+                if (tab == 0 || tab == 3) {
+                    struct Act { const char* name; const char* cat; int id; };
+                    static const Act kActs[] = {{"New Script", "Action", 1}, {"Save", "Action", 2}, {"Format Document", "Action", 3},
+                                                {"Go to Line", "Action", 4}, {"Find / Replace", "Action", 5}, {"Command Palette", "Action", 6},
+                                                {"Run Script", "Action", 7}, {"Toggle Comment", "Action", 8}, {"Go to File", "Action", 9},
+                                                {"Word Wrap", "Setting", 10}, {"Minimap", "Setting", 11}, {"Syntax Colors", "Setting", 12},
+                                                {"Auto-close Brackets", "Setting", 13}, {"Show Whitespace", "Setting", 14},
+                                                {"Scripts and Structure", "Setting", 15}, {"Zoom In", "Setting", 16}, {"Zoom Out", "Setting", 17}};
+                    for (const auto& ac : kActs) {
+                        const int sc2 = scriptide::FuzzyScore(query, ac.name);
+                        if (sc2 < 0) continue;
+                        const int id = ac.id;
+                        hits.push_back({sc2, ac.cat, ac.name, "", [&, id] {
+                            switch (id) {
+                                case 1: g_seNewReq = true; break;
+                                case 2: s_tbSave = true; break;
+                                case 3: s_tbFormat = true; break;
+                                case 4: g_seGotoReq = true; break;
+                                case 5: g_seFindReq = true; break;
+                                case 6: g_sePaletteReq = true; break;
+                                case 7: s_tbRun = true; break;
+                                case 8: caret.toggleComment = true; break;
+                                case 9: oked::ide::OpenQuickOpen(); break;
+                                case 10: s_wordWrap = !s_wordWrap; break;
+                                case 11: s_minimap = !s_minimap; break;
+                                case 12: s_highlight = !s_highlight; break;
+                                case 13: g_scriptAutoPair = !g_scriptAutoPair; break;
+                                case 14: s_showWs = !s_showWs; break;
+                                case 15: g_seSideOpen = !g_seSideOpen; break;
+                                case 16: s_zoom = Mathf::Clamp(s_zoom + 0.1f, 0.7f, 3.0f); break;
+                                case 17: s_zoom = Mathf::Clamp(s_zoom - 0.1f, 0.7f, 3.0f); break;
+                            }
+                        }});
+                    }
+                    for (const pluginreg::Command* c : pluginreg::RankCommands(query, pluginreg::ScriptEditorPlugins().Commands())) {
+                        const std::string id = c->id;
+                        hits.push_back({query.empty() ? 0 : scriptide::FuzzyScore(query, c->title) + 20, "Plugin", c->title, c->shortcut,
+                                        [id] { pluginreg::ScriptEditorPlugins().Run(id); }});
+                    }
+                }
+                std::stable_sort(hits.begin(), hits.end(), [](const Hit& x, const Hit& y) { return x.score > y.score; });
+                if (hits.size() > 40) hits.resize(40);
+                std::function<void()> toPick;
+                ImGui::BeginChild("##sares", ImVec2(0, 320));
+                for (std::size_t i = 0; i < hits.size(); ++i) {
+                    ImGui::PushID((int)i);
+                    ImGui::TextDisabled("%-8s", hits[i].kind); ImGui::SameLine(80);
+                    if (ImGui::Selectable(hits[i].label.c_str(), i == 0 && !query.empty()) || (go && i == 0)) { toPick = hits[i].pick; ImGui::CloseCurrentPopup(); }
+                    if (!hits[i].detail.empty()) { ImGui::SameLine(330); ImGui::TextDisabled("%s", hits[i].detail.c_str()); }
                     ImGui::PopID();
                 }
-                if (!shown) ImGui::TextDisabled("Nothing matches \"%s\".", q);
+                if (hits.empty()) ImGui::TextDisabled("Nothing matches \"%s\".", q);
                 ImGui::EndChild();
-                ImGui::TextDisabled("Enter opens the first   Double Shift opens this");
+                ImGui::TextDisabled("Enter opens the first   Tab switches the kind   Double Shift opens this");
                 ImGui::EndPopup();
+                if (toPick) toPick();
             }
         }
 
@@ -13336,10 +13640,18 @@ void DrawScriptEditor(EditorState& ed) {
         te.SetHandleKeyboardInputs(true);
         if (tabSpaces) {
             const int col = te.GetCursorPosition().mColumn;
-            te.InsertTextUndoable(std::string(4 - (col % 4), ' '));
+            te.InsertTextUndoable(std::string((std::size_t)(g_scriptTabWidth - (col % g_scriptTabWidth)), ' '));
         }
         s_codeFocus = te.OkayHasKeyboard();
         ImVec2 teMin = ImGui::GetItemRectMin(), teMax = ImGui::GetItemRectMax();
+        // A script dragged from the Project panel onto the code opens in its own tab.
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+                const std::string dropped(static_cast<const char*>(pl->Data));
+                if (!scriptide::LanguageForPath(dropped).empty()) OpenScriptFileInEditor(dropped);
+            }
+            ImGui::EndDragDropTarget();
+        }
         if (ImGui::IsItemHovered() && ImGui::GetIO().KeyCtrl && ImGui::GetIO().MouseWheel != 0.0f)
             s_zoom = Mathf::Clamp(s_zoom + ImGui::GetIO().MouseWheel * 0.1f, 0.7f, 3.0f);
 
@@ -13471,23 +13783,14 @@ void DrawScriptEditor(EditorState& ed) {
             }
             // Highlight every find match while the bar is open (translucent tint over
             // the glyphs; the current selection is drawn by the widget itself).
-            if (s_showFind && s_find[0]) {
-                std::string needle = s_find;
-                std::size_t nlen = needle.size();
-                auto lower = [](char c2) { return (char)std::tolower((unsigned char)c2); };
-                const char* t = buf.data();
-                int ln = 0, col = 0;
-                for (int i = 0; t[i]; ) {
-                    if (t[i] == '\n') { ++ln; col = 0; ++i; continue; }
-                    bool match = true;
-                    for (std::size_t k = 0; k < nlen; ++k)
-                        if (!t[i + k] || lower(t[i + k]) != lower(needle[k])) { match = false; break; }
-                    if (match) {
-                        ImVec2 a(textX + col * chW, corg.y + ln * rowH);
-                        fdl->AddRectFilled(a, ImVec2(a.x + nlen * chW, a.y + rowH), IM_COL32(180, 160, 60, 55));
-                        fdl->AddRect(a, ImVec2(a.x + nlen * chW, a.y + rowH), IM_COL32(200, 180, 80, 120));
-                    }
-                    ++i; ++col;
+            if (s_showFind && s_find[0]) {   // the bar's own matches (case, whole word, regex), single-line parts
+                for (const auto& m : findAllMatches()) {
+                    int len = (int)m.length;
+                    const char* t = buf.data();
+                    for (int k = 0; k < len; ++k) if (t[m.offset + (std::size_t)k] == '\n') { len = k; break; }
+                    ImVec2 a(textX + m.col * chW, corg.y + (m.line - 1) * rowH);
+                    fdl->AddRectFilled(a, ImVec2(a.x + len * chW, a.y + rowH), IM_COL32(180, 160, 60, 55));
+                    fdl->AddRect(a, ImVec2(a.x + len * chW, a.y + rowH), IM_COL32(200, 180, 80, 120));
                 }
             }
             // Highlight every whole-word occurrence of the identifier under the caret
@@ -13568,7 +13871,22 @@ void DrawScriptEditor(EditorState& ed) {
                     fdl->AddText(ImVec2(x, corg.y + (probLine - 1) * rowH), col, txt.c_str());
                 };
                 for (const auto& d : s_diags) inlineMsg(d.line, d.message, IM_COL32(240, 110, 110, 165), false);
-                for (const auto& w : s_warns) inlineMsg(w.line, w.msg, IM_COL32(230, 195, 90, 150), !w.fix.empty());
+                for (const auto& w : s_warns) inlineMsg(w.line, w.msg, IM_COL32(230, 195, 90, 150), !w.fix.empty() || !w.fixes.empty());
+            }
+            // The light bulb in the gutter beside the caret's line when that line has quick fixes; a click opens them.
+            if (caret.line >= 1 && caret.line <= lines) {
+                const auto fixesHere = lineFixes(caret.line);
+                if (!fixesHere.empty()) {
+                    const float r = rowH * 0.26f;
+                    const ImVec2 c(te.TextStartX() - te.CharWidth() * 1.4f, corg.y + (caret.line - 1) * rowH + rowH * 0.42f);
+                    fdl->AddCircleFilled(c, r, IM_COL32(245, 200, 70, 235));
+                    fdl->AddRectFilled(ImVec2(c.x - r * 0.45f, c.y + r * 0.8f), ImVec2(c.x + r * 0.45f, c.y + r * 1.5f), IM_COL32(200, 200, 200, 220));
+                    const ImVec2 b0(c.x - r * 1.6f, c.y - r * 1.6f), b1(c.x + r * 1.6f, c.y + r * 2.0f);
+                    if (ImGui::IsMouseHoveringRect(b0, b1)) {
+                        ImGui::SetTooltip("%d quick fix%s (Alt+Enter)", (int)fixesHere.size(), fixesHere.size() == 1 ? "" : "es");
+                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) oked::ide::OpenQuickFixes(fixesHere);
+                    }
+                }
             }
             // Squiggle under the token the diagnostic names, when it has a column.
             {
@@ -13738,15 +14056,17 @@ void DrawScriptEditor(EditorState& ed) {
             }
             std::vector<std::string> csMembers;
             const bool luaScript = sc->Language() == okay::LuaScriptVM::kLanguage;
+            const bool jsScript = sc->Language() == okay::JavaScriptVM::kLanguage;
             if (luaScript && ws > 0 && t[ws - 1] == ':') {   // obj:Method in Lua
                 int rs = ws - 1; while (rs > 0 && (isWord(t[rs - 1]) || t[rs - 1] == '.')) --rs;
                 receiver.assign(t + rs, t + (ws - 1));
                 recvExpr = receiver;
             }
             static const std::vector<std::string> s_noMembers;
-            const std::vector<std::string>* membersP = luaScript ? &s_noMembers : &ScriptMembers(receiver);
-            if (luaScript) {
-                if (!recvExpr.empty()) csMembers = okay::LuaScriptVM::CompletionMembers(recvExpr);
+            const std::vector<std::string>* membersP = (luaScript || jsScript) ? &s_noMembers : &ScriptMembers(receiver);
+            if (luaScript || jsScript) {
+                if (!recvExpr.empty())
+                    csMembers = luaScript ? okay::LuaScriptVM::CompletionMembers(recvExpr) : okay::JavaScriptVM::CompletionMembers(recvExpr);
                 membersP = &csMembers;
             } else if (membersP->empty() || recvExpr.find('.') != std::string::npos || recvExpr.find('<') != std::string::npos) {
                 csMembers = CsMembersFor(std::string(t), recvExpr);
@@ -13837,8 +14157,13 @@ void DrawScriptEditor(EditorState& ed) {
                 std::vector<std::string> combined;
                 if (!memberMode) {
                     static const std::vector<std::string> s_luaWords = okay::LuaScriptVM::CompletionNames();
-                    combined = sc->Language() == okay::LuaScriptVM::kLanguage ? s_luaWords : ScriptCompletions();
+                    static const std::vector<std::string> s_jsWords = okay::JavaScriptVM::CompletionNames();
+                    combined = sc->Language() == okay::LuaScriptVM::kLanguage ? s_luaWords
+                             : sc->Language() == okay::JavaScriptVM::kLanguage ? s_jsWords : ScriptCompletions();
                     AddBufferIdentifiers(buf.data(), combined);
+                    pluginreg::DocContext cctx;   // editor plugins' completion providers (editor/PluginRegistry.hpp)
+                    cctx.language = sc->Language(); cctx.path = sc->Path(); cctx.word = prefix; cctx.line = caret.line;
+                    for (const auto& it : pluginreg::ScriptEditorPlugins().Complete(cctx)) combined.push_back(it.label);
                 }
                 const std::vector<std::string>& pool = memberMode ? members : combined;
                 for (const auto& w : pool) {
@@ -14201,27 +14526,12 @@ void DrawScriptEditor(EditorState& ed) {
             if (chordOK && ImGui::IsKeyPressed(ImGuiKey_F11, false) && caret.line >= 1) {
                 if (!bookmarks.erase(caret.line)) bookmarks.insert(caret.line);
             }
-            // Alt+Enter — apply the caret line's quick-fix (Rider's intention action):
-            // replaces the misspelled call with the lint's "did you mean" suggestion.
-            if (chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
-                for (const auto& w : s_warns) {
-                    if (w.line != caret.line || w.fix.empty() || w.bad.empty()) continue;
-                    std::vector<std::string> ls = linesText(caret.line - 1, caret.line - 1);
-                    if (ls.empty()) break;
-                    std::string l = ls[0];
-                    auto isWc = [](char ch){ return std::isalnum((unsigned char)ch) || ch == '_'; };
-                    for (std::size_t pp = 0; pp + w.bad.size() <= l.size(); ++pp) {
-                        if (l.compare(pp, w.bad.size(), w.bad) != 0) continue;
-                        if (pp > 0 && isWc(l[pp - 1])) continue;
-                        std::size_t pe = pp + w.bad.size();
-                        if (pe < l.size() && isWc(l[pe])) continue;
-                        l.replace(pp, w.bad.size(), w.fix);
-                        replaceLines(caret.line - 1, caret.line - 1, l, caret.line - 1, (int)(pp + w.fix.size()));
-                        ConsoleLog("Quick-fix: '" + w.bad + "' -> '" + w.fix + "'");
-                        break;
-                    }
-                    break;
-                }
+            // Alt+Enter: the quick fixes of the caret's line (the lint's "did you mean", the built-in checks' and plugins'
+            // fixes), in a menu; the light bulb beside the line opens the same menu.
+            if ((chordOK && cio.KeyAlt && !cio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter, false)) || g_seQuickFixReq) {
+                g_seQuickFixReq = false;
+                const ImVec2 below = te.CaretScreenPosBelow();
+                oked::ide::OpenQuickFixes(lineFixes(caret.line), below.x, below.y);
             }
             // Ctrl+W — expand selection: word -> whole line(s) -> whole file.
             if (chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
@@ -14240,8 +14550,8 @@ void DrawScriptEditor(EditorState& ed) {
         const char* langLbl = sc->Language() == "okayscript" ? "C# (OkayScript)" : sc->Language().c_str();
         char selInfo[32] = "";
         if (caret.selLen > 0) std::snprintf(selInfo, sizeof(selInfo), " (%d sel)", caret.selLen);
-        ImGui::TextDisabled("%s    Ln %d, Col %d%s    %d lines    Spaces    %d%%", langLbl,
-                            caret.line, caret.col, selInfo, lines, (int)std::lround(s_zoom * 100.0f));
+        ImGui::TextDisabled("%s    Ln %d, Col %d%s    %d lines    Spaces: %d    %d%%", langLbl,
+                            caret.line, caret.col, selInfo, lines, g_scriptTabWidth, (int)std::lround(s_zoom * 100.0f));
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ctrl+scroll over the code changes the font size. View > Reset Zoom puts it back.");
         // Breadcrumb: the function enclosing the caret (Rider's location bar). Scan back
         // for the nearest `function name(` / `void Name(` at a shallower brace depth.
@@ -14376,11 +14686,32 @@ void DrawScriptEditor(EditorState& ed) {
                     bool clicked = ImGui::Selectable(row, false, 0, ImVec2(0, ImGui::GetTextLineHeight() + 2.0f * sdm.problemsRowPad));
                     ImGui::PopStyleColor();
                     if (clicked && w.line > 0) { jumpTo(w.line, w.column > 0 ? w.column : 1); }
+                    if (!w.fix.empty() || !w.fixes.empty()) {   // a finding with fixes: right-click (or Alt+Enter on its line) lists them
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Right-click for quick fixes");
+                        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { jumpTo(w.line, w.column > 0 ? w.column : 1); oked::ide::OpenQuickFixes(lineFixes(w.line)); }
+                    }
                 }
             }
             ImGui::EndChild();
         }
+        // The IDE's dialogs (editor/ScriptIdeUi.hpp). Their edits go through the code widget as one undo step (replaceAll).
+        oked::ide::DrawQuickFixes([&](const scriptide::QuickFix& f) {
+            caret.replaceAll = scriptide::ApplyEdits(buf.data(), f.edits);
+            if (caret.replaceAll.empty()) caret.replaceAll = " ";   // (an empty replaceAll means "nothing to do")
+            ConsoleLog("Quick fix: " + f.title);
+        });
+        oked::ide::DrawLocalHistory([&](const std::string& text) { caret.replaceAll = text.empty() ? std::string(" ") : text; ed.dirty = true; });
+        oked::ide::DrawRenamePreview([&](const std::string& path, const std::string& text) {
+            // A script open in a tab takes the new text into its buffer (saved with the tab); the others are written.
+            for (ScriptComponent* t : g_scriptTabs) {
+                if (t->Path().empty() || std::filesystem::path(t->Path()).generic_string() != std::filesystem::path(path).generic_string()) continue;
+                if (t == sc) caret.replaceAll = text; else SetCodeBuffer(t, text);
+                return true;
+            }
+            return false;
+        });
     }
+    oked::ide::DrawQuickOpen();
     ImGui::End();
 }
 
@@ -14972,14 +15303,14 @@ void DrawFileDialogs(EditorState& ed) {
         if (g_build.height < 240) g_build.height = 240;
         if (g_build.fpsCap < 0)   g_build.fpsCap = 0;
 
-#if defined(OKAY_XBOX_UWP)
+#if defined(OKAY_XBOX_UWP_EXPORT)
         if (g_xboxRunner) g_xboxRunner->Tick();   // keep the one-click Xbox build moving whichever page is shown
 #endif
         // ---- Target platform first ----
         // Target platform: Desktop ships a Windows .exe; Web/Android export a
         // ready-to-build project (the editor can't run Emscripten / the Android NDK
         // itself, so it lays down the data + build script + instructions).
-        #if defined(OKAY_XBOX_UWP)
+        #if defined(OKAY_XBOX_UWP_EXPORT)
         const int kPlatCount = 5;
         const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)", "Dedicated Server", "Xbox One (experimental, Developer Mode)"};
 #else
@@ -15149,7 +15480,7 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Without a list: also bundle every .okayscene in Assets (the open scene starts the game).");
             }
         }
-#if defined(OKAY_XBOX_UWP)
+#if defined(OKAY_XBOX_UWP_EXPORT)
         if (s_buildSec == 7) {   // ---- Xbox One Developer Mode (UWP), EXPERIMENTAL ----
             SectionHeader("Xbox One (experimental, Developer Mode)");
             ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "EXPERIMENTAL and UNVERIFIED. Never built on Windows, never run on an Xbox.");
@@ -15540,13 +15871,13 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-#if defined(OKAY_XBOX_UWP)
+#if defined(OKAY_XBOX_UWP_EXPORT)
         const bool xboxChecking = g_buildPlatform == 4 && okay::xbox::CachedSdkReport().checking;   // the probe starts here too if the page was not shown yet; never waits
         const bool xboxBlocked = g_buildPlatform == 4 && (xboxChecking || !okay::xbox::CachedSdkReport().available || (g_xboxRunner && g_xboxRunner->Running()));
         ImGui::BeginDisabled(xboxBlocked);
 #endif
         if (ImGui::Button(buildLabel, ImVec2(bw, 0))) doBuild = true;
-#if defined(OKAY_XBOX_UWP)
+#if defined(OKAY_XBOX_UWP_EXPORT)
         ImGui::EndDisabled();
         if (xboxBlocked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", xboxChecking ? "Checking your PC for the Xbox tools... (a few seconds; the button turns on when it is done)" : (g_xboxRunner && g_xboxRunner->Running()) ? "An Xbox build is already running (see the log on the Xbox page)." : "Xbox export is unavailable: a required Windows tool is missing (see the Xbox page).");
 #endif
@@ -15609,7 +15940,7 @@ void DrawFileDialogs(EditorState& ed) {
             g_buildReport = builder::BuildReport{};
             g_buildStatus = builder::ExportForPlatform(ed, g_buildDirBuf, g_buildNameBuf, wo, g_buildPlatform);
             ConsoleLog("Export (" + std::string(plats[g_buildPlatform]) + "): " + g_buildStatus);
-#if defined(OKAY_XBOX_UWP)
+#if defined(OKAY_XBOX_UWP_EXPORT)
             if (g_buildPlatform == 4) {   // one click: SDK check, export, compile, shaders, pack, sign, (install). The popup stays open and shows the log.
                 namespace xb = okay::xbox;
                 xb::ExportInputs xi; xi.gameName = g_buildNameBuf; xi.company = g_build.company; xi.version = g_build.version; xi.bundleId = g_build.bundleId;
@@ -15875,7 +16206,7 @@ void ShowErrorPopup(const std::string& title, const std::string& text) {
     ConsoleLog(title + ": " + text, 2);
 }
 static void DrawErrorPopup() {
-    if (g_errOpen && !ImGui::IsPopupOpen("Something went wrong")) { ImGui::OpenPopup("Something went wrong"); }
+    if (g_errOpen) okayed::modalguard::OpenModalWhenFree("Something went wrong");   // (waits for a question already on screen)
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Always);
     if (ImGui::BeginPopupModal("Something went wrong", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
@@ -15921,7 +16252,7 @@ struct ImGuiDialogs : DialogService {
 }
 static void DrawSavePrompt(EditorState& ed) {
     g_imguiDialogs.ed = &ed; if (!CurrentDialogs()) SetDialogs(&g_imguiDialogs);
-    if (g_savePromptOpen && !ImGui::IsPopupOpen("Save changes?")) ImGui::OpenPopup("Save changes?");
+    if (g_savePromptOpen) okayed::modalguard::OpenModalWhenFree("Save changes?");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(480, 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("Save changes?", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) return;
@@ -16187,10 +16518,12 @@ static void DrawNewProjectDialog(EditorState& ed) {
 void DrawProjectGate(EditorState& ed) {
     static const bool allow = std::getenv("OKAY_ALLOW_NO_PROJECT") != nullptr;
     if (allow || !ed.projectDir().empty() || !g_openScenePath.empty() || !g_newProjectRoot.empty() ||   // (g_savePromptOpen: the "Save changes?" question is on screen; two modals each re-opening every frame would fight)
-        !g_newProjectTemplate.empty() || ed.isPlaying() || ProjectGateBusy() || okay::filedialog::BuiltinOpen() || g_savePromptOpen || g_openUpdatePopup || ImGui::IsPopupOpen("Engine Update"))
+        !g_newProjectTemplate.empty() || ed.isPlaying() || ProjectGateBusy() || okay::filedialog::BuiltinOpen() || g_savePromptOpen || g_errOpen || g_openUpdatePopup || ImGui::IsPopupOpen("Engine Update")) {
+        okayed::modalguard::CloseIfOpen("Open a project");   // not drawn now: not left open (an open modal blocks every click even undrawn)
         return;   // (a question, or the update window the question's "Update OkaySpace" opened, is on screen: the chooser waits)
+    }
     namespace fs = std::filesystem;
-    ImGui::OpenPopup("Open a project");
+    if (!okayed::modalguard::OpenModalWhenFree("Open a project")) return;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(680, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSizeConstraints(ImVec2(680, 0), ImVec2(680, ImGui::GetMainViewport()->Size.y - 24.0f));
@@ -16250,7 +16583,7 @@ void DrawProjectGate(EditorState& ed) {
         g_newProjectModules = g_npForm.modules;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Quit", ImVec2(100, 32))) g_quitRequested = true;
+    if (ImGui::Button("Quit", ImVec2(100, 32))) { g_quitRequested = true; g_quitNoPrompt = true; }   // no project open yet: nothing to save
     if (!g_openScenePath.empty() || !g_newProjectRoot.empty()) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }
@@ -16338,31 +16671,54 @@ void DrawNewProjectPopup(EditorState& ed) {
     ConsoleLog("Created project \"" + plan.folder + "\" at " + r.root);
 }
 
-// Offer to restore a newer "<scene>.autosave" recovery copy after a crash or
-// unclean exit. Recover loads it (and overwrites the scene); Discard removes it.
+// Offer to restore a newer "<scene>.autosave" recovery copy after a crash or unclean exit. Recover loads its text as the
+// open scene's unsaved changes (the scene file itself changes only when you save); Discard deletes it. A Recover that
+// fails says why here and keeps the file (it used to copy the file over the scene first, so a copy that would not load
+// replaced the scene on disk, and the reason only reached the Console).
 void DrawRecoveryPopup(EditorState& ed) {
-    if (!g_recoverPath.empty() && !ImGui::IsPopupOpen("Recover Autosave"))
-        ImGui::OpenPopup("Recover Autosave");
+    static std::string s_recoverError;
+    // One question at a time: this one and "Restore recovered work?" both wait after an unclean exit, and each re-opening itself every
+    // frame closed the other, so neither was ever shown while every click was blocked (v2.903.8.118). The scene's question comes first.
+    if (!g_recoverPath.empty()) okayed::modalguard::OpenModalWhenFree("Recover Autosave");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Recover Autosave", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (g_recoverPath.empty()) { s_recoverError.clear(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }   // nothing to ask: never left open
         ImGui::TextWrapped("A newer autosave was found for this scene:");
         ImGui::TextDisabled("%s", g_recoverPath.c_str());
         ImGui::TextWrapped("It looks like the editor didn't close cleanly. Recover it?");
-        ImGui::Separator();
-        if (ImGui::Button("Recover", ImVec2(130, 0))) {
-            std::error_code rc;
-            std::string scene = ed.path();
-            okay::CopyFileOver(g_recoverPath, scene, rc);   // the scene file always exists here
-            std::string err;
-            if (!rc && ed.Load(scene, &err)) { ed.dirty = true; ConsoleLog("Recovered autosave"); }
-            else ConsoleLog("Recover failed: " + (rc ? rc.message() : err));
-            std::filesystem::remove(g_recoverPath, rc);
-            g_recoverPath.clear(); ImGui::CloseCurrentPopup();
+        if (!s_recoverError.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.5f, 0.45f, 1));
+            ImGui::TextWrapped("Recover failed: %s\nThe autosave file was kept; your scene file was not changed.", s_recoverError.c_str());
+            ImGui::PopStyleColor();
         }
+        ImGui::Separator();
+        bool close = false;
+        ImGui::BeginDisabled(!s_recoverError.empty());
+        if (ImGui::Button("Recover", ImVec2(130, 0))) {
+            std::string text, err;
+            std::ifstream f(g_recoverPath, std::ios::binary);
+            std::stringstream ss; if (f) ss << f.rdbuf();
+            text = ss.str();
+            if (!f) s_recoverError = "can't open " + g_recoverPath;
+            else if (!ed.LoadRecoveredText(text, ed.path(), &err)) s_recoverError = err.empty() ? std::string("the autosave could not be loaded") : err;
+            else {
+                ConsoleLog("Recovered autosave: the scene has its changes; save to keep them.");
+                std::error_code rc; std::filesystem::remove(g_recoverPath, rc);
+                close = true;
+            }
+            if (!s_recoverError.empty()) ConsoleLog("Recover failed: " + s_recoverError, 2);
+        }
+        ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Discard", ImVec2(130, 0))) {
             std::error_code rc; std::filesystem::remove(g_recoverPath, rc);
-            g_recoverPath.clear(); ImGui::CloseCurrentPopup();
+            close = true;
         }
+        if (!s_recoverError.empty()) {
+            ImGui::SameLine();
+            if (ImGui::Button("Keep for later", ImVec2(130, 0))) close = true;   // leaves the file; offered again when the scene is opened
+        }
+        if (close) { g_recoverPath.clear(); s_recoverError.clear(); ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
 }
@@ -16605,13 +16961,9 @@ void DrawUpdatePopup(EditorState& ed) {
             ImGui::BeginDisabled(g_installingUpdate);
             if (ImGui::Button(g_installingUpdate ? "Installing..." : "Download & Install",
                               ImVec2(180, 0))) {
-                g_installingUpdate = true;
-                g_updateStatus = "Downloading v" + u.latest + "...";
-                // Save first so nothing is lost when the new build relaunches.
+                // Save first so nothing is lost when the new build relaunches. The download runs on its own thread.
                 SaveAllBeforeExit(ed);
-                g_updateStatus = updater::InstallUpdate(u.latest, u.ref);
-                ConsoleLog(g_updateStatus);
-                g_installingUpdate = false;
+                StartUpdateInstall(u.latest, u.ref);
             }
             ImGui::EndDisabled();
             ImGui::SameLine();
@@ -27254,16 +27606,24 @@ static bool DrawMeshCollider3DWithOkayUI(EditorState& ed, GameObject* go, MeshCo
 }
 
 // The Inspector settings of a script: `public` fields for OkayScript; the fields of the
-// returned table for Lua (LuaScriptVM::Settings runs the chunk once per source text).
+// returned table for Lua (LuaScriptVM::Settings runs the chunk once per source text); the exported class's
+// fields for JavaScript (JavaScriptVM::Settings, the same way).
 static std::vector<ScriptField> ScriptFieldsFor(ScriptComponent* sc, const std::string& src) {
-    if (sc->Language() != okay::LuaScriptVM::kLanguage) return ParseScriptFields(src);
+    const bool js = sc->Language() == okay::JavaScriptVM::kLanguage;
+    if (sc->Language() != okay::LuaScriptVM::kLanguage && !js) return ParseScriptFields(src);
     static std::unordered_map<std::size_t, std::vector<ScriptField>> s_cache;
     const std::size_t h = std::hash<std::string>{}(src);
     auto it = s_cache.find(h);
     if (it != s_cache.end()) return it->second;
     if (s_cache.size() > 64) s_cache.clear();
     std::vector<ScriptField> out;
-    for (const auto& st : okay::LuaScriptVM::Settings(src)) {
+    auto settings = [&]() {
+        std::vector<okay::LuaScriptVM::Setting> v;
+        if (!js) return okay::LuaScriptVM::Settings(src);
+        for (const auto& s : okay::JavaScriptVM::Settings(src)) v.push_back({s.name, s.type, s.defaultText});
+        return v;
+    };
+    for (const auto& st : settings()) {
         ScriptField f;
         f.name = st.name;
         f.type = st.type;
@@ -52304,8 +52664,10 @@ static okay::RecoveryManager& DocRecovery() {
     }
     return *r;
 }
-static std::vector<okay::RecoveryManager::Candidate> g_docRecover;
-static int g_docCompare = -1;
+static std::vector<okay::editor::docrec::Offer> g_docRecover;   // read once at start (MakeOffers), one per crashed session
+static bool g_docCompare = false;
+static std::vector<std::string> g_docCompareRows;              // read when Compare is pressed, not every frame
+static std::string g_docRestoreError;                          // why the last Restore did not finish (the copy is kept)
 static okay::BackupManager& EditorBackups() {
     static okay::BackupManager* m = nullptr;
     if (!m) {
@@ -52420,7 +52782,7 @@ static void ApplyPrefabModeQueue(EditorState& ed) {
 }
 static void DrawPrefabLeavePrompt(EditorState& ed) {
     if (g_prefabLeaveDepth >= 0 && !ed.InPrefabMode()) g_prefabLeaveDepth = -1;
-    if (g_prefabLeaveDepth >= 0 && !ImGui::IsPopupOpen("Save prefab changes?")) ImGui::OpenPopup("Save prefab changes?");
+    if (g_prefabLeaveDepth >= 0) okayed::modalguard::OpenModalWhenFree("Save prefab changes?");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(480, 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("Save prefab changes?", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) return;
@@ -52542,7 +52904,7 @@ static void RequestLoad(EditorState& ed, const std::string& path) {
 }
 static void DrawActionPrompt(EditorState& ed) {
     if (!g_pendingAction) return;
-    if (!ImGui::IsPopupOpen("Save before continuing?")) ImGui::OpenPopup("Save before continuing?");
+    if (!okayed::modalguard::OpenModalWhenFree("Save before continuing?")) return;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (!ImGui::BeginPopupModal("Save before continuing?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     const char* what = g_pendingAction == 1 ? "playing" : g_pendingAction == 2 ? "stopping" : "opening another scene";
@@ -52579,87 +52941,121 @@ static void DrawActionPrompt(EditorState& ed) {
     }
     ImGui::EndPopup();
 }
-static void ApplyRecoveredBundle(EditorState& ed, const std::vector<okay::editor::docrec::Buffer>& docs) {
-    for (const auto& b : docs) {
-        if (b.kind == "graph" || b.kind == "closed") okay::editor::vsed::VsRestoreBuffer(b);
-        else if (b.kind == "script") {
-            if (b.key.rfind("untitled", 0) == 0) {
-                auto sc = std::make_unique<okay::ScriptComponent>("okayscript");
-                okay::ScriptComponent* raw = sc.get();
-                g_looseScripts.push_back(std::move(sc));
-                g_scriptTabs.push_back(raw);
-                g_activeScriptTab = raw; g_focusScriptTab = raw;
-                SetCodeBuffer(raw, b.text);
-                g_scriptSaved[raw] = "";
-            } else {
-                OpenScriptFileInEditor(b.key);
-                if (g_activeScriptTab) {
-                    SetCodeBuffer(g_activeScriptTab, b.text);
-                    std::ifstream f(b.key, std::ios::binary);
-                    std::stringstream ss; if (f) ss << f.rdbuf();
-                    g_scriptSaved[g_activeScriptTab] = ss.str();
-                }
+// Restore puts each recovered buffer back where it belongs (editor/DocRecovery.hpp routes them and collects failures).
+static okay::editor::docrec::RestoreOutcome ApplyRecoveredBundle(EditorState& ed, const std::vector<okay::editor::docrec::Buffer>& docs) {
+    okay::editor::docrec::RestoreSinks to;
+    bool graphs = false;
+    to.graph = [&graphs](const okay::editor::docrec::Buffer& b, std::string&) {
+        okay::editor::docrec::Buffer g = b;
+        g.kind = "graph";   // VsRestoreBuffer takes "graph" and "closed"; a closed script never reaches it now
+        okay::editor::vsed::VsRestoreBuffer(g);
+        graphs = true;
+        return true;
+    };
+    to.script = [](const okay::editor::docrec::Buffer& b, std::string&) {
+        if (b.key.rfind("untitled", 0) == 0) {
+            auto sc = std::make_unique<okay::ScriptComponent>("okayscript");
+            okay::ScriptComponent* raw = sc.get();
+            g_looseScripts.push_back(std::move(sc));
+            g_scriptTabs.push_back(raw);
+            g_activeScriptTab = raw; g_focusScriptTab = raw;
+            SetCodeBuffer(raw, b.text);
+            g_scriptSaved[raw] = "";
+        } else {
+            OpenScriptFileInEditor(b.key);
+            if (g_activeScriptTab) {
+                SetCodeBuffer(g_activeScriptTab, b.text);
+                std::ifstream f(b.key, std::ios::binary);
+                std::stringstream ss; if (f) ss << f.rdbuf();
+                g_scriptSaved[g_activeScriptTab] = ss.str();
             }
-            g_showScriptEditor = true;
-        } else if (b.kind == "scene") {
-            const std::string keep = (b.key == "untitled-scene") ? std::string() : b.key;
-            std::string err;
-            if (!ed.LoadRecoveredText(b.text, keep, &err)) ConsoleLog("Couldn't restore the scene: " + err, 2);
         }
-    }
-    g_showVisualScript = true;
+        g_showScriptEditor = true;
+        return true;
+    };
+    to.scene = [&ed](const okay::editor::docrec::Buffer& b, std::string& err) {
+        const std::string keep = (b.key == "untitled-scene") ? std::string() : b.key;
+        return ed.LoadRecoveredText(b.text, keep, &err);
+    };
+    const okay::editor::docrec::RestoreOutcome r = okay::editor::docrec::ApplyBundle(docs, to);
+    if (graphs) g_showVisualScript = true;
+    if (!r.Ok()) ConsoleLog("Some recovered work could not be restored (the recovery copy was kept):\n" + r.Describe(), 2);
+    return r;
 }
-static void DrawDocRecoveryPopup(EditorState& ed) {
-    if (g_docRecover.empty()) return;
-    if (!ImGui::IsPopupOpen("Restore recovered work?")) ImGui::OpenPopup("Restore recovered work?");
+// The question waits until the start-up project open is finished (the sign-in check, the project's version question and its
+// upgrade): a scene restored before that was replaced by the project's own scene a moment later, or refused by the version gate.
+static bool DocRecoveryMayAsk(EditorState& ed, bool projectsAllowed) {
+    return projectsAllowed && g_openScenePath.empty() && g_newProjectRoot.empty() && g_newProjectTemplate.empty() &&
+           !ProjectGateBusy() && !ed.isPlaying();
+}
+static void DrawDocRecoveryPopup(EditorState& ed, bool projectsAllowed) {
+    if (g_docRecover.empty() || !DocRecoveryMayAsk(ed, projectsAllowed)) return;
+    if (!okayed::modalguard::OpenModalWhenFree("Restore recovered work?")) return;   // after "Recover Autosave" is answered (DrawRecoveryPopup)
     ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_Appearing);
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (!ImGui::BeginPopupModal("Restore recovered work?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    const auto& c = g_docRecover.front();
+    const okay::editor::docrec::Offer& o = g_docRecover.front();
+    const ImVec4 red(1, 0.5f, 0.45f, 1);
     ImGui::TextWrapped("The editor closed without a clean exit. A recovery copy from that session is still here.");
-    ImGui::TextDisabled("%s", c.label.c_str());
+    ImGui::TextDisabled("%s", o.label.c_str());
     ImGui::Spacing();
-    std::string payload, err;
-    std::vector<okay::editor::docrec::Buffer> docs;
-    const bool ok = DocRecovery().Restore(c, payload, &err) && okay::editor::docrec::DecodeBundle(payload, docs, &err);
-    if (!ok) ImGui::TextColored(ImVec4(1, 0.5f, 0.45f, 1), "The copy could not be read: %s", err.c_str());
-    else for (const auto& b : docs) ImGui::BulletText("%s  %s", b.kind.c_str(), b.key.c_str());
+    if (!o.readable) {
+        ImGui::PushStyleColor(ImGuiCol_Text, red);
+        ImGui::TextWrapped("This recovery copy can't be read: %s", o.error.c_str());
+        ImGui::PopStyleColor();
+        ImGui::TextWrapped("It can't be restored. Discard deletes it; Keep for later leaves the file where it is.");
+    } else {
+        if (!o.note.empty()) ImGui::TextWrapped("%s", o.note.c_str());
+        for (const auto& b : o.docs) ImGui::BulletText("%s  %s", b.kind.c_str(), b.key.c_str());
+    }
+    if (!g_docRestoreError.empty()) {
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, red);
+        ImGui::TextWrapped("Restore did not finish. The recovery copy was kept.\n%s", g_docRestoreError.c_str());
+        ImGui::PopStyleColor();
+    }
     ImGui::Spacing();
-    if (ImGui::Button("Restore", ImVec2(120, 0)) && ok) {
-        ApplyRecoveredBundle(ed, docs);
-        DocRecovery().Discard(c);
+    auto finish = [](bool discard) {
+        if (discard && okay::editor::docrec::DiscardOffer(DocRecovery(), g_docRecover.front()) > 0)
+            ConsoleLog("Couldn't delete every recovery file of that session (in the okay_recovery folder).", 1);
         g_docRecover.erase(g_docRecover.begin());
-        g_docCompare = -1;
+        g_docCompare = false; g_docCompareRows.clear(); g_docRestoreError.clear();
         ImGui::CloseCurrentPopup();
+    };
+    const bool tried = !g_docRestoreError.empty();   // a second Restore would open the parts that did come back twice
+    bool restored = false;
+    ImGui::BeginDisabled(!o.readable || tried);
+    if (ImGui::Button("Restore", ImVec2(120, 0))) {
+        const okay::editor::docrec::RestoreOutcome r = ApplyRecoveredBundle(ed, o.docs);
+        if (r.Ok()) restored = true;   // the copy is deleted below, once nothing here reads `o` any more
+        else g_docRestoreError = r.Describe();
     }
-    ImGui::SetItemDefaultFocus();
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && (!o.readable || tried))
+        ImGui::SetTooltip("%s", !o.readable ? "This copy can't be read, so there is nothing to restore." : "Restore already ran; what failed is listed above.");
+    if (o.readable && !tried) ImGui::SetItemDefaultFocus();
     ImGui::SameLine();
-    if (ImGui::Button("Compare", ImVec2(120, 0))) g_docCompare = g_docCompare < 0 ? 0 : -1;
-    ImGui::SameLine();
-    if (ImGui::Button("Discard", ImVec2(120, 0))) {
-        DocRecovery().Discard(c);
-        g_docRecover.erase(g_docRecover.begin());
-        g_docCompare = -1;
-        ImGui::CloseCurrentPopup();
+    ImGui::BeginDisabled(!o.readable);
+    if (ImGui::Button(g_docCompare ? "Hide compare" : "Compare", ImVec2(120, 0))) {
+        g_docCompare = !g_docCompare;
+        if (g_docCompare) g_docCompareRows = okay::editor::docrec::CompareRows(o.docs);
     }
-    if (g_docCompare >= 0 && ok) {
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !o.readable) ImGui::SetTooltip("This copy can't be read, so there is nothing to compare.");
+    ImGui::SameLine();
+    const bool keep = ImGui::Button("Keep for later", ImVec2(120, 0));
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close this question and leave the recovery copy in the okay_recovery folder.\nIt is offered again the next time the editor starts.");
+    ImGui::SameLine();
+    const bool discard = ImGui::Button("Discard", ImVec2(120, 0));
+    if (g_docCompare && o.readable) {
         ImGui::Separator();
         ImGui::BeginChild("##reccompare", ImVec2(600, 220), ImGuiChildFlags_Borders);
-        for (const auto& b : docs) {
-            std::string disk;
-            bool exists = false;
-            if (!b.key.empty() && b.key.rfind("untitled", 0) != 0) {
-                std::ifstream f(b.key, std::ios::binary);
-                exists = (bool)f;
-                if (f) { std::stringstream ss; ss << f.rdbuf(); disk = ss.str(); }
-            }
-            if (!okay::editor::docrec::BufferWorthRestoring(b.text, disk, exists)) continue;
-            ImGui::Text("%s  %s", b.kind.c_str(), b.key.c_str());
-            ImGui::TextDisabled("Recovered (%d characters). On disk: %s.", (int)b.text.size(), exists ? "different" : "no file yet");
-            ImGui::Spacing();
-        }
+        if (g_docCompareRows.empty()) ImGui::TextDisabled("Every recovered document is the same as its file on disk.");
+        for (const auto& row : g_docCompareRows) { ImGui::TextUnformatted(row.c_str()); ImGui::Spacing(); }
         ImGui::EndChild();
     }
+    if (keep) finish(false);
+    else if (restored || discard) finish(true);
     ImGui::EndPopup();
 }
 // Save everything: the scene (an unsaved one goes to Assets/Scenes), every edited
@@ -52919,7 +53315,7 @@ static void DrawSignInGate() {
         if (j->kind != SignInJob::Reset && g_signin == Phase::Open) ConsoleLog("Signed in as " + okay::Account::Get().CurrentSession().username + ".");
         delete j;
     }
-    if (oked::signin::ProjectsAllowed(g_signin)) return;
+    if (oked::signin::ProjectsAllowed(g_signin)) { okayed::modalguard::CloseIfOpen("Sign in to OkaySpace###SignInGate"); return; }   // not left open undrawn
     {   // A sign-in (or sign-out) in the launcher rewrites session.txt: look once a second, and check the new sign-in.
         static double s_nextPoll = 0.0;
         const double now = ImGui::GetTime();
@@ -52936,7 +53332,7 @@ static void DrawSignInGate() {
     }
     static char email[256] = "", pass[256] = "";
     const char* title = "Sign in to OkaySpace###SignInGate";
-    if (!ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+    if (!okayed::modalguard::OpenModalWhenFree(title)) return;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize)) return;
@@ -52985,7 +53381,7 @@ static void DrawSignInGate() {
     }
     ImGui::Dummy(ImVec2(0, 6));
     ImGui::Separator();
-    if (ImGui::Button("Quit", ImVec2(100, 28))) g_quitRequested = true;
+    if (ImGui::Button("Quit", ImVec2(100, 28))) { g_quitRequested = true; g_quitNoPrompt = true; }   // the sign-in window is itself a modal: a save prompt would wait for it forever
     ImGui::EndPopup();
 }
 
@@ -53420,6 +53816,52 @@ static void UpdateCrashContext(EditorState& ed, bool slow) {
     okaycrash::ctx::SetAutosave(recovered ? 1 : 0);
 }
 
+// The start-up splash (shared/Splash.hpp): the editor's start-up as named steps, the status line, and the fade
+// over the first frames. main() begins each step before its work runs; the main loop draws the splash over its
+// frames until the sign-in check and the project open are done (or a step failed), then fades it out.
+struct EditorStartSplash {
+    okay::SplashSteps steps;
+    okay::SplashFinish finish;
+    okay::SplashStyle style;   // the project's look, kept from the last start-up frame
+    std::string project;       // the project being opened or created ("" = none)
+};
+static EditorStartSplash& StartSplash() { static EditorStartSplash s; return s; }
+static okay::SplashProgress StartSplashProgress() {
+    okay::SplashProgress st;
+    st.title = StartSplash().project.empty() ? std::string("OkaySpace") : StartSplash().project;
+    st.footer = std::string("OkaySpace Editor  v") + OKAY_ENGINE_VERSION;
+    StartSplash().steps.Apply(st);
+    return st;
+}
+// After main()'s own steps: the sign-in check, then the project the launcher asked for. True while one still runs.
+static bool StartSplashLateStep() {
+    EditorStartSplash& s = StartSplash();
+    if (s.steps.Failed()) return false;
+    if (g_errOpen) { s.steps.Fail(g_errTitle.empty() ? std::string("Something went wrong") : g_errTitle); return false; }
+    const bool opening = !g_openScenePath.empty() || !g_newProjectRoot.empty();
+    if (g_signin == oked::signin::Phase::Checking) { s.steps.Begin("Checking your sign-in"); return true; }
+    if (opening && oked::signin::ProjectsAllowed(g_signin)) {
+        s.steps.Begin("Opening the project", (g_openScenePath.empty() ? "Creating project " : "Opening project ") + s.project);
+        return true;
+    }
+    s.steps.Finish();   // nothing left, or the sign-in window needs the person: the editor shows
+    return false;
+}
+// Drawn over the main loop's frame, just before it is presented.
+static void DrawStartSplashOverlay(okay::platform::Painter* painter) {
+    EditorStartSplash& s = StartSplash();
+    if (s.finish.Done()) return;
+    const bool hold = StartSplashLateStep();
+    const float op = s.finish.Update((double)okay::platform::TicksMs(), hold, s.steps.Failed());
+    if (op <= 0.0f) return;
+    okay::SplashProgress st = StartSplashProgress();
+    st.opacity = op;
+    st.present = false;
+    if (!painter) return;
+    int sw = 1280, sh = 800; painter->OutputSize(&sw, &sh);
+    okay::DrawSplashStyled(painter, sw, sh, s.style, &st);
+}
+
 int RunVsGraphShot(int argc, char** argv);
 
 const char* OkayEditorBuildStamp();   // editor/BuildStamp.cpp: __DATE__ " " __TIME__ kept out of this file so ccache can reuse it
@@ -53576,6 +54018,20 @@ int main(int argc, char** argv) {
         }
         LoadProjectSettingsFrom(startDir);
         NoteProjectFilesSaved();
+        // The loading screen's steps (weights: roughly how long each takes) and the project's name for its title.
+        okay::SplashSteps& steps = StartSplash().steps;
+        steps.Add("Opening the window", 1); steps.Add("Reading project settings", 1); steps.Add("Loading fonts", 2);
+        steps.Add("Setting up the editor", 2); steps.Add("Starting the GPU renderer", 3);
+#if defined(_WIN32)
+        steps.Add("Starting Direct3D 11", 2);
+#endif
+        steps.Add("Loading your settings and layouts", 1); steps.Add("Checking your sign-in", 2); steps.Add("Opening the project", 4);
+        if (!g_openScenePath.empty()) StartSplash().project = ProjectRootOfScene(g_openScenePath).filename().string();
+        else if (!g_newProjectRoot.empty()) {
+            std::filesystem::path p(g_newProjectRoot);
+            if (p.filename().empty()) p = p.parent_path();   // "<root>/" names the same folder
+            StartSplash().project = p.filename().string();
+        }
     }
     // Decode the custom splash logo (if set) into an SDL texture for the splash.
     if (g_project.splashLogo[0]) {
@@ -53597,16 +54053,23 @@ int main(int argc, char** argv) {
         st.logo = g_editorSplashLogo; st.showProgress = g_project.splashShowBar;
         return st;
     };
+    // One loading frame: begin start-up step `step` (the steps before it count as done) and show it.
+    auto splashFrame = [&](const char* step) {
+        if (step) StartSplash().steps.Begin(step);
+        StartSplash().style = splashStyle();
+        const okay::SplashProgress st = StartSplashProgress();
+        int sw = 1280, sh = 800; okay::pb::OutputSize(renderer, &sw, &sh);
+        okay::DrawSplashStyled(renderer, sw, sh, StartSplash().style, &st);
+    };
     // Branded loading frame right away, so the editor isn't a black rectangle
     // while fonts, GPU renderers and the project set-up run below. Draw it while
     // hidden, reveal the window, then draw once more so the shown frame is the
     // splash (not a black frame), whatever the platform's show/present ordering.
     {
-        int sw = 1280, sh = 800; okay::pb::OutputSize(renderer, &sw, &sh);
-        okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
+        splashFrame("Loading fonts");
         winSeam->Show();
         winSeam->Raise();
-        okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
+        splashFrame(nullptr);
     }
     // (File drops are accepted by the sdl2 backend's Init.)
 
@@ -53657,12 +54120,11 @@ int main(int argc, char** argv) {
     }
     // Re-present the (animated) splash between heavy init steps so the loading
     // frame keeps moving instead of sitting frozen until the first real frame.
-    auto splashTick = [&]() {
-        int sw = 1280, sh = 800; okay::pb::OutputSize(renderer, &sw, &sh);
-        okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
+    auto splashTick = [&](const char* step) {
+        splashFrame(step);
         sdlSeam->PumpEvents();
     };
-    splashTick();
+    splashTick("Setting up the editor");
     // (Project settings were already loaded above, before the first splash, so
     // the loading screen could use the project's custom splash.)
     // Route the node editor's log messages to the editor console.
@@ -53686,6 +54148,17 @@ int main(int argc, char** argv) {
                 okay::editor::vsed::VsRefreshDirty(st);
                 ConsoleLog("Restored a previous version. Save if you want to keep it.");
             }
+        }
+        // Compare one of them with the graph on screen, block by block (VsGraphDiff.hpp).
+        if (ImGui::BeginMenu("Compare with")) {
+            int cmp = 0;
+            for (const auto& b : list) {
+                if (cmp++ >= 5) break;
+                const std::string label = okay::BackupManager::FormatStamp(b.timestamp);
+                std::string text;
+                if (ImGui::MenuItem(label.c_str()) && EditorBackups().Read(b, text)) okay::editor::vsed::VsShowDiff(path, label, text);
+            }
+            ImGui::EndMenu();
         }
     };
     okay::editor::vsed::VsHasComponent = [](GameObject* go, const char* id) -> bool {
@@ -53833,6 +54306,7 @@ int main(int argc, char** argv) {
     // Optional GPU (OpenGL) 3D renderer on an ISOLATED hidden context, so the GPU
     // can rasterize the Scene view (hardware MSAA + depth) without touching the
     // editor's SDL_Renderer. If any step fails we silently keep the software path.
+    splashTick("Starting the GPU renderer");
     {
         // Ask for a 3.2 *compatibility* context: it guarantees core framebuffer
         // objects, multisample renderbuffers + blit, and VAOs, while still accepting
@@ -53881,7 +54355,11 @@ int main(int argc, char** argv) {
 #if defined(_WIN32)
     // Optional Direct3D 11 3D renderer on its own isolated device (offscreen → readback),
     // selectable alongside the OpenGL path. Falls back to software if unavailable.
+    splashTick("Starting Direct3D 11");
     {
+        // Compiled shaders are kept in the per-user folder: D3DCompile of the whole set runs once per renderer version, not at every
+        // start (the owner's log, 2026-11-25: the first 3D frame took 7-9 s). UNVERIFIED on Windows.
+        if (!EditorConfigDirPath().empty()) okay::D3D11Renderer::SetShaderCacheDir((EditorConfigDirPath() + "/d3d11_shaders").c_str());
         g_d3dRenderer = new okay::D3D11Renderer();
         // Prefer SDL's own device (zero-copy viewports); else an isolated device.
         bool ok = false;
@@ -53902,6 +54380,7 @@ int main(int argc, char** argv) {
     }
 #endif
 
+    splashTick("Loading your settings and layouts");
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
     g_previewEd = &ed;
@@ -53921,8 +54400,7 @@ int main(int argc, char** argv) {
     };
     EditorState::onSceneLoaded = [] { g_lastSaveError.clear(); };   // a scene opened from disk starts without a failed-save note
     g_upgradeHooks.openUpdateDialog = [] {   // the version question's "Update OkaySpace": the same window as Engine > Check for Updates
-        g_update = updater::CheckLatest();
-        g_openUpdatePopup = true;
+        StartUpdateCheck(true);   // the window opens when the answer is in (main loop), the frame does not wait
     };
     g_upgradeHooks.reloadProjectFiles = [&ed] {   // after a backup was restored: what is in memory must not be written over the restored files
         LoadProjectSettingsFrom(g_settingsProjectDir);
@@ -53949,7 +54427,8 @@ int main(int argc, char** argv) {
     }
     LoadCustomActions();   // reusable custom instruction/condition library
     ApplyTheme();   // re-apply now that the saved theme/accent/UI-scale are loaded
-    splashTick();   // keep the loading frame moving right up to the first real frame
+    StartSplashLateStep();   // the sign-in check or the project open is next (or nothing: ready)
+    splashTick(nullptr);     // keep the loading frame moving right up to the first real frame (DrawStartSplashOverlay takes over)
 
     // Route engine logs (and script print/log/debug output) into the Console
     // with the matching severity.
@@ -53964,7 +54443,7 @@ int main(int argc, char** argv) {
     // Automatically check for a newer build at startup, in the background so it
     // never blocks the editor. The result is picked up in the main loop and, if
     // an update is available, the Update window pops up on its own.
-    g_updateCheck = std::async(std::launch::async, updater::CheckLatest);
+    StartUpdateCheck(false);
 
     // The one shut-down of ImGui's two sides, the views' GL window and renderer, controllers, audio, the main window's renderer and
     // window, and the platform backend, in the safe order. The end of main() runs it, and so does every early exit before std::exit
@@ -54026,7 +54505,7 @@ int main(int argc, char** argv) {
         }
         for (const auto& c : okay::editor::docrec::ClosedStack()) {
             if (c.kind != "script") continue;
-            docs.push_back({"closed", c.key, c.text});
+            docs.push_back({"closed-script", c.key, c.text});   // "closed" alone is a closed graph (VsCollectUnsaved)
         }
         if (ed.dirty && !ed.isPlaying() && !ed.InPrefabMode()) {   // (a prefab being edited has no recovery copy; its Save is explicit)
             okay::editor::docrec::Buffer b;
@@ -54040,7 +54519,7 @@ int main(int argc, char** argv) {
         label = std::to_string(docs.size()) + " unsaved";
         return true;
     });
-    if (DocRecovery().StartSession()) g_docRecover = DocRecovery().FindRecoverable();
+    if (DocRecovery().StartSession()) g_docRecover = okay::editor::docrec::MakeOffers(DocRecovery(), DocRecovery().FindRecoverable());
 #ifdef OKAY_ENABLE_TEST_HOOKS
     okay::testhooks::Runner testHooks;
     testHooks.Start(sdlSeam, winSeam->Id());
@@ -54074,9 +54553,21 @@ int main(int argc, char** argv) {
         okay::Prof().enabled = g_showProfiler || g_showPerfOverlay || kPerfDump || (g_gameStatsOverlay && ed.isPlaying()) || s_slowLog.thresholdMs > 0.0;   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
         // Pick up the background update check when it finishes (once).
-        if (!g_autoCheckDone && g_updateCheck.valid() &&
-            g_updateCheck.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-            g_update = g_updateCheck.get();
+        if (g_updateInstall.Collect()) {   // the download finished (a relaunch sets updater::pendingQuit)
+            g_updateStatus = *g_updateInstallOut;
+            ConsoleLog(g_updateStatus);
+            g_installingUpdate = false;
+        }
+        if (g_updateCheck.Collect()) {
+          g_update = *g_updateCheckOut;
+          if (g_updateCheckShow) {   // a person asked: show the answer
+            g_updateCheckShow = false;
+            g_openUpdatePopup = true;
+            ConsoleLog(g_update.error.empty()
+                ? (g_update.available ? "Update available: v" + g_update.latest : "Up to date (v" + g_update.current + ").")
+                : "Update check failed: " + g_update.error);
+          }
+          if (!g_autoCheckDone) {
             g_autoCheckDone = true;
             if (g_update.available) {
                 ConsoleLog("Update available: v" + g_update.latest +
@@ -54086,12 +54577,12 @@ int main(int argc, char** argv) {
                     // and relaunch automatically (no prompt).
                     SaveAllBeforeExit(ed);
                     ConsoleLog("Auto-updating to v" + g_update.latest + "...");
-                    g_updateStatus = updater::InstallUpdate(g_update.latest, g_update.ref);
-                    ConsoleLog(g_updateStatus);
+                    StartUpdateInstall(g_update.latest, g_update.ref);   // on its own thread; collected above
                 } else {
                     g_openUpdatePopup = true;   // surface it for a manual choice
                 }
             }
+          }
         }
         Input::ClearTypedText();   // collect this frame's typed characters
         g_okayUITyped[0] = '\0'; g_okayUIBack = false;   // OkayUI demo's per-frame keys
@@ -54136,6 +54627,7 @@ int main(int argc, char** argv) {
             // A pop-out menu or dialog can be its own OS window. When it closes and the window system does not hand the
             // keyboard back (no window manager, or one that does not), Esc, F2 and the other keys would go nowhere and a
             // dialog could only be closed with the mouse. A click in the editor window takes the keyboard focus back.
+            if (e.type == EvT::MouseButtonDown && !g_playPointerGrabbed) g_inputProbe.NoteClick(e.windowId, e.windowId == winSeam->Id());
             if (e.type == EvT::MouseButtonDown && e.windowId == winSeam->Id() &&
                 !winSeam->HasInputFocus())
                 winSeam->SetInputFocus();
@@ -54820,6 +55312,7 @@ int main(int argc, char** argv) {
             TabPaddingScope tabPad;   // floating panel groups lay their tabs out in NewFrame()
             ImGui::NewFrame();
         }
+        ModalGuardFrame();   // undrawn modals closed, lost ones brought back, every modal opening and closing in the breadcrumbs
 
         // Clear editor globals still pointing at an object deleted last frame (hierarchy
         // delete, Del key, script destroy). Dereferencing a freed GameObject in the
@@ -55027,6 +55520,22 @@ int main(int argc, char** argv) {
                 ed.Select(nullptr);
                 g_showScriptEditor = true; g_scriptDockReq = 1;
                 if (sn[0] == '2') g_seNewReq = true;
+            }
+            // OKAY_UI_IDE=<script file> (OKAY_UI_IDE_LINE: the caret's line): open it in the Script Editor's own window; OKAY_UI_IDE_POPUP=quickopen|palette|search|
+            // rename|quickfix a few frames later (Script Editor IDE screenshots; text for the popups comes from OKAY_UI_TYPE).
+            if (const char* ide = std::getenv("OKAY_UI_IDE"); ide && s_focusFrames == 42) {
+                const char* ln = std::getenv("OKAY_UI_IDE_LINE");
+                OpenScriptFileInEditorAt(ide, ln ? std::atoi(ln) : 5);
+                g_scriptDockReq = 1;
+            }
+            if (const char* pop = std::getenv("OKAY_UI_IDE_POPUP"); pop && s_focusFrames == 75) {
+                ImGui::SetWindowFocus("Script Editor");
+                const std::string p = pop;
+                if (p == "quickopen") oked::ide::OpenQuickOpen();
+                else if (p == "palette") g_sePaletteReq = true;
+                else if (p == "search") g_seSearchReq = true;
+                else if (p == "rename") oked::ide::OpenRenamePreview("Fire", "Shoot");
+                else if (p == "quickfix") g_seQuickFixReq = true;
             }
             // OKAY_UI_SCRIPT=open: the selection's own script; =lua: a Lua starter script; =luaerr: a Lua
             // script with a syntax error and a misspelled engine name (the checks, in screenshots).
@@ -55449,7 +55958,7 @@ int main(int argc, char** argv) {
         PollLauncherAlive();                // the launcher that started us has gone: close (the save prompt first)
         { OKAY_PROFILE("UI.UpdatePopup"); DrawUpdatePopup(ed); }
         { OKAY_PROFILE("UI.AboutPopup"); DrawAboutPopup(); }
-        { OKAY_PROFILE("UI.RecoveryPopup"); DrawRecoveryPopup(ed); DrawDocRecoveryPopup(ed); }
+        { OKAY_PROFILE("UI.RecoveryPopup"); DrawRecoveryPopup(ed); DrawDocRecoveryPopup(ed, SignInAllowsProjects()); }
         { OKAY_PROFILE("UI.ProjectSettings"); DrawProjectSettings(ed); }
         oked::WatchEditUndo(ed);   // one undo step for every Inspector / Hierarchy field edit
         { OKAY_PROFILE("UI.Diagnostics"); if (!ed.isPlaying()) TickProjectDiagnostics(ed); }
@@ -55595,6 +56104,7 @@ int main(int argc, char** argv) {
             if (okay::platform::Backend* pb = okay::platform::Default()) pb->StartTextInput();
         }
 #endif
+        InputProbeEndFrame();   // clicks arriving and landing nowhere: what Dear ImGui thinks, to okay_editor_perf.log
         { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
         SaveDockLayout(false); SavePanelStateIfChanged();   // the layout and the open panels survive a restart (and a forced close)
         okay::pb::SetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
@@ -55710,6 +56220,7 @@ int main(int argc, char** argv) {
         for (const std::string& shot : testHooks.TakeShots())
             if (!okay::testhooks::SavePicture(*okay::pb::For(renderer), shot)) std::fprintf(stderr, "[test-hook] could not save %s\n", shot.c_str());
 #endif
+        DrawStartSplashOverlay(okay::pb::For(renderer));   // the loading screen over the first frames, then its fade (after the pictures above: they show the editor)
         { OKAY_PROFILE("Present"); okay::pb::Present(renderer); }
 
         // Multi-window panels: create/size/paint the extra OS windows (tabs
@@ -55729,7 +56240,7 @@ int main(int argc, char** argv) {
 
         {   // Frame limiter and idle throttle (View > Rendering; both off by default): sleep out the rest of the frame budget.
             const okay::editor::perf::PacingSettings ps{g_fpsCapEditor, g_idleThrottle, g_idleFps, 0.75};
-            const double target = okay::editor::perf::TargetFps(ps, ed.isPlaying(), ImGui::IsAnyMouseDown(), g_secSinceInput);
+            const double target = okay::editor::perf::TargetFps(ps, ed.isPlaying(), ImGui::IsAnyMouseDown(), g_secSinceInput, winSeam->IsMinimized());
             if (target > 0.0) {
                 const double elapsed = (double)(okay::platform::PerfCounter() - g_frameT0) / (double)okay::platform::PerfFrequency();
                 const double wait = okay::editor::perf::SleepSeconds(target, elapsed);

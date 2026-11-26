@@ -46,5 +46,10 @@ bool Capturing();
 /// baked new characters), so a copy can be refreshed. False for null and for textures only a backend can resolve (images).
 struct TexturePixels { const unsigned char* rgba = nullptr; int w = 0, h = 0; unsigned generation = 0; };
 bool GetTexturePixels(const void* texture, TexturePixels& out);
+/// True for a texture the host itself gave OkayUI (Image, ImageButton, DrawList::AddImage, PushTexture: an SDL texture or whatever
+/// the host's renderer uses), which a host can hand on to its other toolkit as it is (the launcher's Browser page images, drawn in
+/// Dear ImGui's order: okayuihost::ImGuiEmbed::SetHostTextures). False for null, the launcher look's atlas and fallback-font atlases
+/// (OkayUI's own placeholders: GetTexturePixels gives their pixels).
+bool IsHostTexture(const void* texture);
 
 } // namespace OkayUI

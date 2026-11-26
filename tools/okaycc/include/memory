@@ -10,10 +10,24 @@
 // shared_ptr is made from the object.
 #pragma once
 #include <cstddef>
+#include <cstdlib>
 #include <new>
 #include <type_traits>
 #include <utility>
 namespace std {
+
+// [default.allocator]: raw memory for n objects of T (from malloc here). Our containers do not take
+// an allocator (std::vector<T, A> leaves A out), so this is for classes derived from it.
+template <typename T>
+struct allocator {
+    typedef T value_type;
+    typedef unsigned long size_type;
+    allocator() {}
+    template <typename U>
+    allocator(const allocator<U> &) {}
+    T *allocate(unsigned long n) { return (T *)malloc(n * sizeof(T)); }
+    void deallocate(T *p, unsigned long) { free(p); }
+};
 
 template <typename T>
 struct default_delete {

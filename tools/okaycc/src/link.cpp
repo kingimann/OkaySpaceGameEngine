@@ -7,6 +7,19 @@
 #include <vector>
 
 namespace okaycc {
+
+// Encoded from the Intel SDM vol. 2 (MOV 8B/89, LEA 8D, REX, ModRM and SIB bytes).
+const unsigned char kStartArgs[14] = {
+    0x48, 0x8B, 0x1C, 0x24,        // mov rbx, [rsp]
+    0x4C, 0x8D, 0x64, 0x24, 0x08,  // lea r12, [rsp + 8]
+    0x4D, 0x8D, 0x6C, 0xDC, 0x08,  // lea r13, [r12 + rbx * 8 + 8]
+};
+const unsigned char kMainArgs[8] = {
+    0x89, 0xDF,        // mov edi, ebx
+    0x4C, 0x89, 0xE6,  // mov rsi, r12
+    0x4C, 0x89, 0xEA,  // mov rdx, r13
+};
+
 namespace {
 
 constexpr std::uint64_t kBase = 0x400000;
@@ -199,7 +212,7 @@ std::vector<unsigned char> linkObjects(const std::vector<std::vector<unsigned ch
             if (s.name.compare(0, 12, "__okay_init_") == 0) inits.push_back(s.name);
             if (s.name.compare(0, 12, "__okay_fini_") == 0) finis.insert(finis.begin(), s.name);
         }
-    const int kStart = 21 + 5 * static_cast<int>(inits.size() + finis.size());
+    const int kStart = 21 + 22 + 5 * static_cast<int>(inits.size() + finis.size());
     if (needStart) {
         startVa = va;
         va = align16(va + kStart);
@@ -312,7 +325,13 @@ std::vector<unsigned char> linkObjects(const std::vector<std::vector<unsigned ch
             at += 4;
             pc += 4;
         };
+        // main(argc, argv, envp): at the entry rsp points to argc, then argv[0..argc-1], a null,
+        // then the environment (System V AMD64 ABI 3.4.1, figure 3.9). They are kept in rbx, r12
+        // and r13, which the constructors called first preserve (3.2.1), and passed in edi, rsi
+        // and rdx.
+        for (unsigned char b : kStartArgs) emit(b);
         for (const std::string& n : inits) callTo(n);
+        for (unsigned char b : kMainArgs) emit(b);
         callTo("main");
         emit(0x50);  // push rax twice: keeps the stack aligned for the calls below
         emit(0x50);

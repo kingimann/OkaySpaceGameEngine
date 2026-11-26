@@ -123,6 +123,7 @@ long strtol(char *s, char **end, int base) {
 long long strtoll(char *s, char **end, int base) { return strtol(s, end, base); }
 unsigned long long strtoull(char *s, char **end, int base) { return strtoul(s, end, base); }
 long atol(char *s) { return strtol(s, 0, 10); }
+long long atoll(char *s) { return strtol(s, 0, 10); }
 /* strtod, strtof and atof (ISO C 7.22.1.3, 7.22.1.2): leading white space, a sign, then decimal digits
  * with an optional point and exponent, or "inf", "infinity" or "nan" (any case). Our own code. The
  * first 19 significant digits are kept as an integer m and the rest only move the decimal exponent e;

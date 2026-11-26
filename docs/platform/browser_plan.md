@@ -270,3 +270,51 @@ program or the launcher (the host wiring is not done) or on Windows.
   Not run: a chat link clicked in the launcher (the routing rule is tested, the click path was not driven), a download or a
   game from the launcher's page, two programs writing the profile at the same moment. Nothing was run on Windows.
 
+
+## Round 2 of the look: like a regular browser (2026-11-26)
+
+Chrome and Edge were the reference for how it looks and behaves (watched, not copied: no code, no pictures). The icons are
+drawn with lines by our own code. What changed (`shared/BrowserApp.cpp`, `okayui/screens/BrowserView.cpp`, the model in
+`okay/Browser/Profile.hpp`):
+
+- **Tab strip.** Rounded tabs; the shown tab and the toolbar are one surface; a
+  site badge on each tab (a round badge with the site's first letter in a colour of its own, a globe for our own pages, a
+  warning sign for a page that failed, a turning arc while loading); the close button on the shown tab, the tab under the
+  pointer, and every tab wide enough; thin lines between tabs; a round + button; tabs shrink as more open (a narrow tab shows
+  only its badge); a tooltip with the whole title and the host after the pointer rests half a second; dragging a tab moves it
+  (`TabOrder::Move`).
+- **Toolbar.** Round icon buttons (Back, Forward, Reload / Stop, Home, the menu) with hover and pressed circles and tooltips; a
+  rounded address bar with a lock for https, "Not secure" for http and a sign for our own pages (`BadgeOf`); while the person is
+  not typing in it, the address is shown with the host bright and the rest dim, without "https://" (`ShowAddress`); the
+  bookmark star inside the bar's right end.
+- **Suggestions while typing** (`SuggestAddresses`): the first row is what Enter does (go to the address, or search Google),
+  then open tabs ("Switch to this tab"), bookmarks and history whose title or address holds every typed word; a match at the
+  start of the host ranks first, then the start of a word, then anywhere; pages visited more often first. Up / Down move the
+  highlight, Enter opens it, Esc closes the list, a click picks a row.
+- **Status bubble.** The pointer over a link (or the link Tab focused) shows its full address, resolved against the page, in a
+  rounded bubble at the bottom-left.
+- **Keyboard on the page** (`PageKeys`, while no field has the keyboard): Space / Shift+Space and Page Down / Page Up scroll by
+  7/8 of the view, the arrow keys by 40 px, Home / End to the top and the bottom; these glide over a few frames. Tab /
+  Shift+Tab move the focus over the links and form fields in reading order, with a blue ring, and bring it into view; Enter
+  follows the focused link; Space or Enter works a focused checkbox, radio button, list or button; Tab out of a text field
+  goes on to the next.
+- **Text selection.** Dragging over the page's text selects it (drawn under a see-through blue); Ctrl+C copies it, Ctrl+A
+  selects all the page's text, the context menu's Copy copies it. Lines are joined with a new line. Text inside scrolling areas
+  and fixed boxes is not selectable yet.
+- **Error pages** (`DescribeLoadError`): "This site cannot be reached", "This page was not found" (404 / 410), "The site has a
+  problem" (5xx), "This page is not open to you" (401 / 403), "This address cannot be opened here", "too large", "Loading was
+  stopped", each with what to do, the host and the code in small print, a Try again button and Go back.
+- **New-tab page.** A search box in the middle that sends to the search address (a GET form; a search address with other
+  query parts keeps them as hidden fields; none when no search is set), and up to 8 shortcut tiles (bookmarks first, then the
+  pages visited most often), and small links to History, Bookmarks and Downloads.
+
+**Tests:** `browser_profile` (suggestions, badge, address shown, error texts, the new-tab search box and tiles),
+`okayui_browser` (text selection by dragging, Ctrl+C, Ctrl+A, a link press selects nothing; golden `browser_select`),
+`okayui_browser_app` (suggestions picked with Down + Enter switch tabs; End / Home / Space glide; Tab, Tab, Enter follows the
+second link; the error page; dragging a tab to the front; goldens `browser_app`, `browser_app_suggest`, `browser_app_focus`,
+`browser_app_error`).
+
+**Not done in this round:** the list of earlier pages on a right click or long press on Back / Forward (it needs the tab to
+give its history entries: `BrowserTab` has no call for that yet), smooth scrolling for the mouse wheel (only keys glide), a
+page-wide UI scale setting (the browser draws at OkayUI's text size; 150% was not checked), double-click to select a word,
+selecting text in scrolling areas, drag a tab out into a new window. Nothing was run on Windows.

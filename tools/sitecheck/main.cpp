@@ -15,6 +15,7 @@
 // the engine and OkayUI only.
 #include "SiteReport.hpp"
 
+#include "BrowserApp.hpp"   // only its Config: the user agent the browser program sends
 #include "BrowserHost.hpp"
 #include "BrowserView.hpp"
 #include "OkayUI_SoftPainter.hpp"
@@ -142,7 +143,7 @@ public:
             return p->CreateTexture(d, rgba);
         };
         tex.destroy = [p](void* t) { p->DestroyTexture(t); };
-        std::unique_ptr<br::TabHost> host(new br::TabHost(tex, "OkaySpace Browser"));   // the browser program's user agent
+        std::unique_ptr<br::TabHost> host(new br::TabHost(tex, br::BrowserApp::Config().userAgent));   // the browser program's user agent
         host->Tab().SetAnyOrigin(true);
         host->SetSiteData(&data.Cookies(), &data.LocalStorage());
         Clock::time_point lastAnswer = Clock::now();

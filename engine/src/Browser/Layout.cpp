@@ -554,7 +554,13 @@ struct Layouter {
     }
     void Fade(const Mark& m, float opacity) {
         if (opacity >= 1.0f) return;
-        for (std::size_t i = m.cmds; i < r.cmds.size(); ++i) r.cmds[i].color.a = (std::uint8_t)std::lround(r.cmds[i].color.a * std::max(0.0f, opacity));
+        for (std::size_t i = m.cmds; i < r.cmds.size(); ++i) {
+            r.cmds[i].color.a = (std::uint8_t)std::lround(r.cmds[i].color.a * std::max(0.0f, opacity));
+            // A form control is drawn by the host from its ControlBox, not from this colour: a fully transparent one (a page's
+            // own button laid over a native checkbox it hides with opacity: 0) is not drawn at all. Its box stays, so a click
+            // on it still reaches it, as in other browsers.
+            if (opacity <= 0.0f && r.cmds[i].kind == DrawCmd::Control) { r.cmds[i].kind = DrawCmd::Fill; r.cmds[i].color = Color{0, 0, 0, 0}; }
+        }
     }
 
     // ---- intrinsic widths (CSS Box Sizing 3, 5: min-content and max-content), border boxes without margins ----
@@ -1978,7 +1984,7 @@ struct Layouter {
                 BorderSide(ox + oW - ow, oy + ow, ow, oH - 2 * ow, false, st.outlineLine, st.outlineColor);
             }
         }
-        Fade(boxMark, st.opacity);
+        Fade(boxMark, st.maskUrl ? 0.0f : st.opacity);
         if (st.filterGray > 0.0f || st.filterBright != 1.0f) Filter(boxMark, st.filterGray, st.filterBright);
         if (!st.transform.empty()) ApplyTransform(boxMark, st, bx, y, bwid, h);
         if (st.position == Position::Relative || st.position == Position::Sticky) {

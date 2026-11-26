@@ -172,6 +172,7 @@ struct ComputedStyle {
     Length bgPosX, bgPosY;            ///< background-position (default 0% 0%)
     std::vector<BoxShadow> shadows;
     float opacity = 1.0f;
+    bool maskUrl = false;             ///< mask-image (or -webkit-, or the mask shorthand) names an image file: not loaded, see Layout
     bool visible = true;              ///< visibility (inherited)
     float fontSize = 16.0f;
     bool bold = false, italic = false, mono = false;

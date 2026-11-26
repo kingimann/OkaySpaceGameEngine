@@ -1846,6 +1846,11 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
     } else if (p == "box-shadow") {
         std::vector<BoxShadow> sh;
         if (ShadowList(d.value, em, sh)) s.shadows = sh;
+    } else if (p == "mask-image" || p == "-webkit-mask-image" || p == "mask" || p == "-webkit-mask") {
+        // CSS Masking 1, 6.1: a mask image that is not (yet) loaded counts as a transparent black layer, so the element is not
+        // shown. We do not load mask images: an url() mask (an icon drawn as a coloured box through a picture's shape) hides the
+        // element instead of painting a solid box; a gradient mask is not applied (the content is drawn unmasked).
+        s.maskUrl = LowerAscii(v).find("url(") != std::string::npos;
     } else if (p == "opacity") {
         float n; std::string u;
         if (ParseNumber(v, n, u)) s.opacity = std::max(0.0f, std::min(1.0f, u == "%" ? n / 100.0f : n));
@@ -2415,6 +2420,7 @@ void CopyProperty(ComputedStyle& s, Work& wk, const std::string& p, const Comput
     if (p == "list-style" || p == "list-style-type") { s.listStyle = from.listStyle; return; }
     if (p == "visibility") { s.visible = from.visible; return; }
     if (p == "opacity") { s.opacity = from.opacity; return; }
+    if (p == "mask-image" || p == "-webkit-mask-image" || p == "mask" || p == "-webkit-mask") { s.maskUrl = from.maskUrl; return; }
     if (p == "position") { s.position = from.position; return; }
     if (p == "float") { s.floating = from.floating; return; }
     if (p == "clear") { s.clear = from.clear; return; }

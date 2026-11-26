@@ -377,5 +377,17 @@ int main() {
             CHECK(Near(three->y - x->y, 16.0f + 4.0f - 20.0f / 1.2f * 0.8f));
         }
     }
+    {
+        // A control a page hides with opacity: 0 (its own button is drawn over it) is not drawn, but keeps its box for clicks; an
+        // element masked by an image (mask-image: url(), an icon) is hidden - the mask image is not loaded, so it counts as
+        // transparent (CSS Masking 1, 6.1) - while a gradient mask is not applied (the box is drawn as it is).
+        const LayoutResult r = Lay(B0 + "<div style='opacity:0'><input type=checkbox></div><input type=text>"
+                                   "<span style='display:inline-block;width:20px;height:20px;background-color:#ff0000;mask-image:url(i.svg)'></span>"
+                                   "<div style='width:20px;height:20px;background:#00ff00;-webkit-mask-image:linear-gradient(black,transparent)'></div>", 400);
+        CHECK(CountKind(r, DrawCmd::Control) == 1);
+        CHECK(r.controls.size() == 2);
+        CHECK(CountFill(r, Color{255, 0, 0, 255}) == 0);
+        CHECK(CountFill(r, Color{0, 255, 0, 255}) >= 1);
+    }
     TEST_MAIN_RESULT();
 }

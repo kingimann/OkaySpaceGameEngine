@@ -144,6 +144,7 @@ struct Prop {
 enum class Cls : std::uint8_t {
     Ordinary, Array, Arguments, Closure, Native, Bound, Error, BoolBox, NumberBox, StringBox, SymbolBox,
     Map, Set, Generator, Promise, ArrayIter, MapIter, SetIter, StringIter, RegExpLike, Host, IterRecord, ForIn,
+    DateBox,   ///< a Date (21.4): a BoxObj whose prim is the time value
 };
 
 struct Object : GcObj {
@@ -436,7 +437,8 @@ public:
            *iteratorProto = nullptr, *arrayIterProto = nullptr, *mapIterProto = nullptr, *setIterProto = nullptr,
            *stringIterProto = nullptr, *generatorProto = nullptr, *generatorFnProto = nullptr, *asyncFnProto = nullptr,
            *mapProto = nullptr, *setProto = nullptr, *promiseProto = nullptr, *promiseCtor = nullptr,
-           *arrayCtor = nullptr, *objectCtor = nullptr, *throwTypeErrorFn = nullptr, *regexpProto = nullptr;
+           *arrayCtor = nullptr, *objectCtor = nullptr, *throwTypeErrorFn = nullptr, *regexpProto = nullptr,
+           *dateProto = nullptr;
     Object* errorProtos[8] = {};
     Symbol *symIterator = nullptr, *symAsyncIterator = nullptr, *symToPrimitive = nullptr, *symToStringTag = nullptr,
            *symHasInstance = nullptr;

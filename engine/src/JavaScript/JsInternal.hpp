@@ -418,6 +418,9 @@ void InstallJsonLib(Runtime& rt);
 void InstallCollectionsLib(Runtime& rt);
 void InstallGlobalLib(Runtime& rt);
 void InstallRegExpLib(Runtime& rt);
+void InstallDateLib(Runtime& rt);
+/// console.log's text for a Date (JsLibNumber.cpp).
+std::string DateDisplay(Object* o);
 
 // small helpers for library code
 NativeFunc* DefNative(Runtime& rt, Object* on, const char* name, NativeFn fn, int length, std::uint8_t flags = kHidden);

@@ -8,6 +8,7 @@
 #include "test_framework.hpp"
 #include "okay/JavaScript/JavaScript.hpp"
 #include <chrono>
+#include <ctime>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
@@ -268,6 +269,64 @@ void ProtoLiteral() {
     ExpectError("const a = {}; const b = {__proto__: a}; a.__proto__ = b;", "TypeError");
 }
 
+// 21.4 Date: time values, the spec's day / year / month arithmetic, UTC and local time, parse and the strings.
+void Dates() {
+    Expect("const d = new Date(Date.UTC(2020, 1, 29, 13, 45, 30, 250)); console.log(d.toISOString(), d.getTime(), d.getUTCDay(), d.getUTCMonth(), d.getUTCDate())",
+           "2020-02-29T13:45:30.250Z 1582983930250 6 1 29");
+    Expect("console.log(new Date(0).toISOString(), new Date(-1).toISOString(), new Date(-62198755200000).toISOString())",
+           "1970-01-01T00:00:00.000Z 1969-12-31T23:59:59.999Z -000001-01-01T00:00:00.000Z");
+    Expect("console.log(new Date(8.64e15).toISOString(), new Date(8.64e15 + 1).getTime(), String(new Date(NaN)), new Date(253402300800000).toISOString())",
+           "+275760-09-13T00:00:00.000Z NaN Invalid Date +010000-01-01T00:00:00.000Z");
+    Expect("console.log(Date.UTC(99, 11, 31), Date.UTC(2000, 12, 1) === Date.UTC(2001, 0, 1), Date.UTC(2021, 0, 0) === Date.UTC(2020, 11, 31), Date.UTC(2020))",
+           "946598400000 true true 1577836800000");
+    Expect("console.log(Date.parse('2020-01-02'), Date.parse('2020-01-02T03:04:05.678Z'), Date.parse('2020-01-02T03:04:05+01:30'), Date.parse('+002020-01'), Date.parse('2020'))",
+           "1577923200000 1577934245678 1577928845000 1577836800000 1577836800000");
+    Expect("console.log(Date.parse('2021-02-30'), Date.parse('2020-13-01'), Date.parse('-000000-01-01'), Date.parse('junk'), Date.parse('2020-01-02T25:00Z'))",
+           "NaN NaN NaN NaN NaN");
+    Expect("console.log(Date.parse('Thu, 01 Jan 1970 00:00:00 GMT'), Date.parse('Jan 2, 2020 10:00:00 GMT+0100'), Date.parse('Wed Jan 01 2020 00:00:00 GMT+0000 (Coordinated Universal Time)'))",
+           "0 1577955600000 1577836800000");
+    Expect("const d = new Date(2020, 0, 15, 10, 30, 5, 7); console.log(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds(), d.getDay(),"
+           "d.getTime() - Date.UTC(2020, 0, 15, 10, 30, 5, 7) === d.getTimezoneOffset() * 60000)", "2020 0 15 10 30 5 7 3 true");
+    Expect("const d = new Date(2020, 0, 31); d.setMonth(1); console.log(d.getMonth(), d.getDate()); d.setDate(0); console.log(d.getMonth(), d.getDate());"
+           "d.setHours(25); console.log(d.getDate(), d.getHours()); console.log(d.setFullYear(2021, 5, 6) === d.getTime(), d.getFullYear(), d.getMonth(), d.getDate())",
+           "2 2\n1 29\n1 1\ntrue 2021 5 6");
+    Expect("const d = new Date(NaN); console.log(d.setHours(1), d.setFullYear(2000) === new Date(2000, 0, 1).getTime(), new Date(NaN).getDay())",
+           "NaN true NaN");
+    Expect("const d = new Date(Date.UTC(2020, 5, 1)); d.setUTCHours(48, 30); console.log(d.toISOString(), d.setUTCMilliseconds(5), d.getUTCMilliseconds())",
+           "2020-06-03T00:30:00.000Z 1591144200005 5");
+    Expect("const d = new Date(2000, 0, 1); console.log(d.getYear(), new Date(d.getTime()) - d, typeof (d + 1), typeof (d - 1), d.valueOf() === +d, new Date(d).getTime() === d.getTime())",
+           "100 0 string number true true");
+    Expect("console.log(new Date(Date.UTC(2020, 0, 1)).toUTCString(), Date.prototype.toGMTString === Date.prototype.toUTCString)",
+           "Wed, 01 Jan 2020 00:00:00 GMT true");
+    Expect("const s = new Date(2020, 0, 2, 3, 4, 5).toString(); console.log(/^Thu Jan 02 2020 03:04:05 GMT[+-]\\d{4}/.test(s), Date.parse(s) === new Date(2020, 0, 2, 3, 4, 5).getTime())",
+           "true true");
+    Expect("console.log(JSON.stringify({d: new Date(0), n: new Date(NaN)}), new Date(0).toJSON(), Object.prototype.toString.call(new Date()))",
+           "{\"d\":\"1970-01-01T00:00:00.000Z\",\"n\":null} 1970-01-01T00:00:00.000Z [object Date]");
+    Expect("const t0 = Date.now(); const t1 = new Date().getTime(); console.log(typeof Date(), t1 >= t0, t0 > 1.6e12, Number.isInteger(t0))",
+           "string true true true");
+    Expect("class D extends Date { year() { return this.getUTCFullYear(); } } const d = new D(0); console.log(d.year(), d instanceof Date)", "1970 true");
+    Expect("const d = new Date(2020, 0, 2, 15, 4, 5); console.log(d.toLocaleDateString(), d.toLocaleTimeString(), d.toLocaleString())",
+           "1/2/2020 3:04:05 PM 1/2/2020, 3:04:05 PM");
+    ExpectError("new Date(NaN).toISOString()", "RangeError");
+    ExpectError("Date.prototype.getTime.call({})", "TypeError");
+    Expect("console.log(new Date(Date.parse('2020-01-02T03:04')).getHours(), new Date('2020/03/04').getDate(), new Date('3/4/2020').getMonth(), new Date('March 7, 2021').getDate())",
+           "3 4 2 7");
+#ifndef _WIN32
+    // the local time zone through the C runtime, with a POSIX rule (no time zone database): US Eastern with DST
+    const char* oldTz = std::getenv("TZ");
+    std::string saved = oldTz ? oldTz : "";
+    setenv("TZ", "EST5EDT,M3.2.0,M11.1.0", 1);
+    tzset();
+    Expect("const w = new Date(2021, 0, 15, 12), s = new Date(2021, 6, 15, 12); console.log(w.getTimezoneOffset(), s.getTimezoneOffset(), w.toISOString(), s.toISOString())",
+           "300 240 2021-01-15T17:00:00.000Z 2021-07-15T16:00:00.000Z");
+    Expect("console.log(new Date(2021, 2, 14, 3, 30).getHours(), new Date(Date.parse('2021-07-01T00:00')).toISOString(), String(new Date(Date.UTC(2021, 6, 1))))",
+           "3 2021-07-01T04:00:00.000Z Wed Jun 30 2021 20:00:00 GMT-0400");
+    if (oldTz) setenv("TZ", saved.c_str(), 1);
+    else unsetenv("TZ");
+    tzset();
+#endif
+}
+
 struct Hostile {
     const char* src;
     const char* want;   ///< part of the error, "" for any error, "OK" when it must finish without one
@@ -504,6 +563,7 @@ int main() {
     SyntaxErrors();
     ForInHeads();
     ProtoLiteral();
+    Dates();
     ConformanceScript(false);
     ConformanceScript(true);
     HostileOneLiners();

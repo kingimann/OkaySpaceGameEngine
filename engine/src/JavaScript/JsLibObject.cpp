@@ -130,6 +130,7 @@ const char* BuiltinTag(Object* o) {
         case Cls::BoolBox: return "Boolean";
         case Cls::NumberBox: return "Number";
         case Cls::StringBox: return "String";
+        case Cls::DateBox: return "Date";
         default: return "Object";
     }
 }

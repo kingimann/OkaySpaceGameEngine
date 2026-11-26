@@ -1462,7 +1462,7 @@ void Runtime::Collect() {
     Object* intr[] = {objectProto, functionProto, arrayProto, stringProto, numberProto, booleanProto, symbolProto,
                       errorProto, iteratorProto, arrayIterProto, mapIterProto, setIterProto, stringIterProto,
                       generatorProto, generatorFnProto, asyncFnProto, mapProto, setProto, promiseProto, promiseCtor,
-                      arrayCtor, objectCtor, throwTypeErrorFn, regexpProto, vm->arrayValues, vm->arrayIterNext,
+                      arrayCtor, objectCtor, throwTypeErrorFn, regexpProto, dateProto, vm->arrayValues, vm->arrayIterNext,
                       vm->stringIterator, vm->stringIterNext};
     for (Object* o : intr) if (o) Mark(o);
     for (Object* o : errorProtos) if (o) Mark(o);
@@ -1554,6 +1554,7 @@ std::string Runtime::Display(const Value& v, int depth) {
         if (m.IsStr() && !m.S()->s.empty()) s += ": " + Utf16To8(m.S()->s);
         return s;
     }
+    if (o->cls == Cls::DateBox) return DateDisplay(o);
     if (o->cls == Cls::BoolBox || o->cls == Cls::NumberBox || o->cls == Cls::StringBox)
         return "[" + std::string(o->cls == Cls::BoolBox ? "Boolean" : o->cls == Cls::NumberBox ? "Number" : "String") + ": " +
                inner(static_cast<BoxObj*>(o)->prim) + "]";
@@ -1710,6 +1711,7 @@ void Runtime::InitIntrinsics() {
     InstallStringLib(*this);
     InstallNumberLib(*this);
     InstallMathLib(*this);
+    InstallDateLib(*this);
     InstallJsonLib(*this);
     InstallCollectionsLib(*this);
     InstallRegExpLib(*this);

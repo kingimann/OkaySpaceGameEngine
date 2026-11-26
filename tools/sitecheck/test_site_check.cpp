@@ -107,7 +107,9 @@ int main() {
 
     // ---- the engine's "not implemented: X" hook (Script.hpp MissingWebApi and the console line after the error)
     CHECK(br::MissingWebApi("x.js:1:1: ReferenceError: 'IntersectionObserver' is not defined") == "IntersectionObserver");
-    CHECK(br::MissingWebApi("x.js:1:1: ReferenceError: 'myOwnLib' is not defined").empty());   // the page's own name: not ours to build
+    CHECK(br::MissingWebApi("x.js:1:1: ReferenceError: 'myOwnLib' is not defined").empty());
+    CHECK(br::MissingWebApi("x.js:1:1: ReferenceError: 'Date' is not defined") == "Date");   // seen on 16 of 61 real sites
+    CHECK(br::MissingWebApi("x.js:1:1: ReferenceError: 'decodeURIComponent' is not defined") == "decodeURIComponent");   // the page's own name: not ours to build
     CHECK(br::MissingWebApi("x.js:1:1: TypeError: 'document.fonts.load' is undefined, not a function") == "document.fonts.load");
     CHECK(br::MissingWebApi("x.js:1:1: TypeError: 'window.matchMedia' is undefined, not a function") == "matchMedia");
     CHECK(br::MissingWebApi("x.js:1:1: TypeError: 'el.closest' is undefined, not a function") == "*.closest");
@@ -158,7 +160,7 @@ int main() {
         Fetch gone; gone.kind = "image"; gone.reached = true; gone.status = 404; r.fetches.push_back(gone);
         Fetch br2; br2.kind = "style"; br2.reached = true; br2.status = 200; br2.contentEncoding = "br"; r.fetches.push_back(br2);
         r.console = {"a.js:1:1: ReferenceError: 'IntersectionObserver' is not defined", "not implemented: IntersectionObserver",
-                     "b.js:2:2: SyntaxError: unexpected token '#'", "not implemented: Object.hasOwn"};
+                     "b.js:2:2: SyntaxError: unexpected token '#'", "not implemented: Object.hasOwn", "not implemented: Date"};
         r.cssProperties["container-type"] = 3;
         r.cssSelectors[".a:focus-visible"] = 1;
         const std::vector<Cause> cs = CausesOf(r);
@@ -170,6 +172,7 @@ int main() {
         CHECK(HasKey(cs, "Content-Encoding 'br' not read"));
         CHECK(HasKey(cs, "not implemented: IntersectionObserver", &a) && a == Area::DomApi);
         CHECK(HasKey(cs, "not implemented: Object.hasOwn", &a) && a == Area::JavaScript);
+        CHECK(HasKey(cs, "not implemented: Date", &a) && a == Area::JavaScript);
         CHECK(HasKey(cs, "CSS property not used: container-type", &a) && a == Area::Css);
         CHECK(HasKey(cs, "CSS selector not read: :focus-visible"));
         CHECK(HasKey(cs, "page charset windows-1252", &a) && a == Area::Encoding);

@@ -47,7 +47,12 @@ std::string Num(double v) {
 bool IsLanguageName(const std::string& api) {
     static const char* const kRoots[] = {"Object", "Array", "String", "Number", "Math", "JSON", "Promise", "Reflect", "Symbol",
                                          "Date", "RegExp", "Intl", "Proxy", "BigInt", "WeakRef", "FinalizationRegistry", "Map",
-                                         "Set", "WeakMap", "WeakSet", "globalThis", "structuredClone", "queueMicrotask"};
+                                         "Set", "WeakMap", "WeakSet", "globalThis", "decodeURIComponent", "encodeURIComponent",
+                                         "decodeURI", "encodeURI", "escape", "unescape", "parseInt", "parseFloat", "isNaN",
+                                         "isFinite", "ArrayBuffer", "SharedArrayBuffer", "DataView", "Atomics", "Uint8Array",
+                                         "Uint8ClampedArray", "Int8Array", "Uint16Array", "Int16Array", "Uint32Array",
+                                         "Int32Array", "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array",
+                                         "AggregateError", "Iterator"};
     const std::string root = api.substr(0, api.find('.'));
     for (const char* r : kRoots) if (root == r) return true;
     return false;

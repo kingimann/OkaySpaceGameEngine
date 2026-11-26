@@ -151,7 +151,10 @@ std::string MissingWebApi(const std::string& line) {
         "DOMMatrix", "DOMException", "ImageData", "Path2D", "OffscreenCanvas", "CanvasRenderingContext2D", "WebGLRenderingContext",
         "CSSStyleSheet", "Request", "Notification", "AudioContext", "MediaSource", "ClipboardItem", "HTMLIFrameElement",
         "HTMLImageElement", "HTMLScriptElement", "HTMLAnchorElement", "SVGElement", "Symbol", "WeakMap", "WeakSet", "Map", "Set",
-        "Promise", "globalThis"};
+        "Promise", "globalThis", "Date", "decodeURIComponent", "encodeURIComponent", "decodeURI", "encodeURI", "escape",
+        "unescape", "parseInt", "parseFloat", "isNaN", "isFinite", "ArrayBuffer", "SharedArrayBuffer", "DataView", "Atomics",
+        "Uint8Array", "Uint8ClampedArray", "Int8Array", "Uint16Array", "Int16Array", "Uint32Array", "Int32Array",
+        "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array", "AggregateError", "Iterator"};
     static const std::unordered_set<std::string> kRoots = {
         "window", "self", "globalThis", "document", "navigator", "location", "history", "screen", "performance", "console",
         "localStorage", "sessionStorage", "Object", "Array", "String", "Number", "Math", "JSON", "Promise", "Reflect", "Symbol",

@@ -346,6 +346,48 @@ void UriFunctions() {
     Expect("console.log(escape('a b+é\\u0100'), unescape('%u0100%E9%zz%'))", "a%20b+%E9%u0100 \xc4\x80" "é%zz%");
 }
 
+// 24.3 WeakMap, 24.4 WeakSet, 26.1 WeakRef, 26.2 FinalizationRegistry: the API, and that the collector drops
+// what only weak references hold while it keeps WeakMap values whose keys live (ephemerons).
+void WeakCollections() {
+    Expect("const k = {}, s = Symbol('s'), wm = new WeakMap([[k, 1]]); wm.set(s, 2); console.log(wm.get(k), wm.get(s), wm.has({}), wm.delete(k), wm.has(k), wm.get(1))",
+           "1 2 false true false undefined");
+    Expect("const o = {}, ws = new WeakSet([o]); console.log(ws.has(o), ws.add(o) === ws, ws.delete(o), ws.has(o), String(ws), Object.prototype.toString.call(new WeakMap()))",
+           "true true true false [object WeakSet] [object WeakMap]");
+    Expect("const o = {a: 1}; const r = new WeakRef(o); console.log(r.deref() === o, r.deref().a)", "true 1");
+    Expect("const f = new FinalizationRegistry(() => {}); const t = {}, tok = {}; f.register(t, 'held', tok); console.log(f.unregister(tok), f.unregister(tok))",
+           "true false");
+    Expect("class M extends WeakMap { set(k, v) { return super.set(k, v * 2); } } const k = {}; const m = new M([[k, 2]]); console.log(m.get(k), m instanceof WeakMap)",
+           "4 true");
+    ExpectError("new WeakMap().set(1, 2)", "TypeError");
+    ExpectError("new WeakSet().add(Symbol.for('r'))", "TypeError");
+    ExpectError("WeakMap()", "TypeError");
+    ExpectError("new WeakRef(1)", "TypeError");
+    ExpectError("WeakMap.prototype.get.call(new Map(), {})", "TypeError");
+    // weakness, with a collection between two scripts
+    Runtime rt;
+    std::string out, err;
+    rt.printSink = [&](const std::string& line) { out += line + "\n"; };
+    bool ran = rt.Run("globalThis.wm = new WeakMap(); globalThis.k1 = {};\n"
+                      "{ const k2 = {name: 'k2'}; wm.set(k1, k2); wm.set(k2, {v: 42}); }\n"   // a chain: k1 -> k2 -> value
+                      "{ const dead = {}, val = {}; wm.set(dead, val); globalThis.deadRef = new WeakRef(dead); globalThis.valRef = new WeakRef(val); }\n"
+                      "{ const s = {}; globalThis.ws = new WeakSet([s]); globalThis.sRef = new WeakRef(s); }\n"
+                      "globalThis.liveRef = new WeakRef(k1);", "w1.js", &err);
+    if (!ran) std::cerr << "  weak: " << err << "\n";
+    CHECK(ran);
+    rt.Collect();
+    ran = rt.Run("console.log(wm.get(wm.get(k1)).v, deadRef.deref(), valRef.deref(), sRef.deref(), liveRef.deref() === k1)", "w2.js", &err);
+    if (!ran) std::cerr << "  weak: " << err << "\n";
+    CHECK(out == "42 undefined undefined undefined true\n");
+    if (out != "42 undefined undefined undefined true\n") std::cerr << "  weak printed: " << out;
+    // a long ephemeron chain is marked in one pass (no quadratic rescans) and survives a collection at every safe point
+    const char* chain = "const wm = new WeakMap(); const head = {}; let k = head; const keys = [];"
+                        "for (let i = 0; i < 20000; i++) keys.push({i}); for (let i = keys.length - 1; i >= 0; i--) wm.set(i ? keys[i - 1] : head, keys[i]);"
+                        "keys.length = 0; let n = 0; for (let x = wm.get(head); x; x = wm.get(x)) n++; console.log(n)";
+    Expect(chain, "20000");
+    CHECK(Run("const m = new WeakMap(); const ks = []; for (let i = 0; i < 300; i++) { const k = {i}; ks.push(k); m.set(k, {v: i}); }"
+              "let s = 0; for (const k of ks) s += m.get(k).v; console.log(s)", true) == "44850\n");
+}
+
 struct Hostile {
     const char* src;
     const char* want;   ///< part of the error, "" for any error, "OK" when it must finish without one
@@ -584,6 +626,7 @@ int main() {
     ProtoLiteral();
     Dates();
     UriFunctions();
+    WeakCollections();
     ConformanceScript(false);
     ConformanceScript(true);
     HostileOneLiners();

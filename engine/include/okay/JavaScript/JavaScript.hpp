@@ -145,6 +145,7 @@ enum class Cls : std::uint8_t {
     Ordinary, Array, Arguments, Closure, Native, Bound, Error, BoolBox, NumberBox, StringBox, SymbolBox,
     Map, Set, Generator, Promise, ArrayIter, MapIter, SetIter, StringIter, RegExpLike, Host, IterRecord, ForIn,
     DateBox,   ///< a Date (21.4): a BoxObj whose prim is the time value
+    WeakMap, WeakSet, WeakRef, FinalizationRegistry,   ///< WeakObj (26.1, 26.2, 24.3, 24.4)
 };
 
 struct Object : GcObj {
@@ -445,6 +446,8 @@ public:
     struct Atoms;
     std::unique_ptr<Atoms> atoms;   ///< common keys ("length", "prototype", ...)
     std::unordered_map<std::u16string, Symbol*> symbolRegistry;
+    /// WeakMap / WeakSet / WeakRef / FinalizationRegistry objects: the collector clears their dead keys.
+    std::vector<Object*> weakObjs;
 
     struct Impl;   ///< the bytecode machine's state (JsInterpreter.cpp)
     std::unique_ptr<Impl> vm;

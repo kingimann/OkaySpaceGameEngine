@@ -13,6 +13,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <iterator>
+#include <unordered_map>
 
 namespace okay::js {
 
@@ -140,6 +142,11 @@ void PromiseObj::Trace(Runtime& rt) {
             if (r.derived) rt.Mark(r.derived);
             if (r.awaiter) rt.Mark(r.awaiter);
         }
+}
+void WeakObj::Trace(Runtime& rt) {
+    Object::Trace(rt);   // keys and targets are weak; WeakMap values are marked by Collect's ephemeron pass
+    for (const Cell& c : cells) rt.MarkValue(c.held);
+    rt.MarkValue(cleanup);
 }
 void MapObj::Trace(Runtime& rt) {
     Object::Trace(rt);
@@ -1471,11 +1478,57 @@ void Runtime::Collect() {
     String** a = reinterpret_cast<String**>(atoms.get());
     for (std::size_t i = 0; i < sizeof(Atoms) / sizeof(String*); ++i) if (a[i]) Mark(a[i]);
     for (String* s : indexAtoms_) if (s) Mark(s);
-    while (!gray_.empty()) {
-        GcObj* o = gray_.back();
-        gray_.pop_back();
-        o->Trace(*this);
+    // WeakMap entries are ephemerons: a value is reachable when its map and its key are. Entries whose key is not
+    // marked yet wait in `pending` under the key; when the key is traced, its values are marked. Each live
+    // WeakMap is scanned once, so the pass is linear in the number of entries.
+    std::unordered_multimap<GcObj*, Value> pending;
+    std::vector<char> scanned(weakObjs.size(), 0);
+    auto drain = [&]() {
+        while (!gray_.empty()) {
+            GcObj* o = gray_.back();
+            gray_.pop_back();
+            o->Trace(*this);
+            if (!pending.empty()) {
+                auto range = pending.equal_range(o);
+                for (auto it = range.first; it != range.second; ++it) MarkValue(it->second);
+                pending.erase(range.first, range.second);
+            }
+        }
+    };
+    drain();
+    for (bool more = true; more;) {
+        more = false;
+        for (std::size_t i = 0; i < weakObjs.size(); ++i) {
+            Object* w = weakObjs[i];
+            if (scanned[i] || !w->marked || w->cls != Cls::WeakMap) continue;
+            scanned[i] = 1;
+            more = true;
+            for (const auto& e : static_cast<WeakObj*>(w)->entries) {
+                if (!e.second.IsGc()) continue;
+                if (e.first->marked) MarkValue(e.second);
+                else pending.emplace(e.first, e.second);
+            }
+            drain();
+        }
     }
+    // clear what died: dead weak objects leave the list, dead keys and targets leave the live ones
+    std::size_t keep = 0;
+    for (Object* w : weakObjs) {
+        if (!w->marked) continue;
+        WeakObj* wo = static_cast<WeakObj*>(w);
+        for (auto it = wo->entries.begin(); it != wo->entries.end();)
+            it = it->first->marked ? std::next(it) : wo->entries.erase(it);
+        if (wo->target && !wo->target->marked) wo->target = nullptr;
+        std::size_t c = 0;
+        for (WeakObj::Cell& cell : wo->cells) {
+            if (!cell.target->marked) continue;   // its target died: the cleanup callback is not run (9.10 allows that)
+            if (cell.token && !cell.token->marked) cell.token = nullptr;
+            wo->cells[c++] = cell;
+        }
+        wo->cells.resize(c);
+        weakObjs[keep++] = w;
+    }
+    weakObjs.resize(keep);
     Sweep();
 }
 
@@ -1714,6 +1767,7 @@ void Runtime::InitIntrinsics() {
     InstallDateLib(*this);
     InstallJsonLib(*this);
     InstallCollectionsLib(*this);
+    InstallWeakLib(*this);
     InstallRegExpLib(*this);
     InstallGlobalLib(*this);
 }

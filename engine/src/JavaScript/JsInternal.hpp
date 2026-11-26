@@ -322,6 +322,26 @@ Value RegExpReplace(Runtime& rt, const Value& rx, String* str, const Value& repl
 Value RegExpSplit(Runtime& rt, const Value& rx, String* str, std::uint32_t limit);
 Value RegExpMatch(Runtime& rt, const Value& rx, String* str, int mode);   ///< 0 match, 1 matchAll, 2 search
 
+/// WeakMap, WeakSet, WeakRef and FinalizationRegistry (26.1, 26.2, 24.3, 24.4). Keys (objects and
+/// symbols that are not registered: CanBeHeldWeakly) are not traced: the collector drops entries whose
+/// key died, and a WeakMap value is kept only while its key is (an ephemeron), see Runtime::Collect.
+struct WeakObj : Object {
+    std::unordered_map<GcObj*, Value> entries;   ///< WeakMap: key -> value; WeakSet: key -> undefined
+    GcObj* target = nullptr;                      ///< WeakRef: the referent (nullptr once it died)
+    struct Cell {
+        GcObj* target;   ///< weak
+        Value held;      ///< strong
+        GcObj* token;    ///< weak, may be nullptr
+    };
+    std::vector<Cell> cells;                      ///< FinalizationRegistry
+    Value cleanup;                                ///< FinalizationRegistry: the callback (kept, never called: 9.10 allows that)
+    explicit WeakObj(Cls c) : Object(c) {}
+    WeakObj() : Object(Cls::WeakMap) {}
+    void Trace(Runtime& rt) override;
+    std::size_t Bytes() const override { return Object::Bytes() + entries.size() * 48 + cells.capacity() * sizeof(Cell); }
+};
+bool CanBeHeldWeakly(const Value& v);
+
 struct ForInObj : Object {
     Value obj;
     std::vector<GcObj*> keys;
@@ -419,6 +439,7 @@ void InstallCollectionsLib(Runtime& rt);
 void InstallGlobalLib(Runtime& rt);
 void InstallRegExpLib(Runtime& rt);
 void InstallDateLib(Runtime& rt);
+void InstallWeakLib(Runtime& rt);
 /// console.log's text for a Date (JsLibNumber.cpp).
 std::string DateDisplay(Object* o);
 

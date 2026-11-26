@@ -20,6 +20,7 @@
 #include "imgui_internal.h"
 #include "okayui_compare_rig.hpp"
 #include "OkayUIImGuiEmbed.hpp"
+#include "OkayUIHost.hpp"           // InputCollector and HostedKeys: the keys the launcher hands its hosted pages
 #include "OkayUIPanels.hpp"
 #include "EditorPanelFixtures.hpp"
 #include "OkayUIScreens.hpp"        // DrawWhatsNew: the launcher's What's New page
@@ -985,6 +986,7 @@ struct LauncherWin {
             OkayUI::SetCursorScreenPos(OkayUI::Vec2(p.x + 10.0f, p.y + 8.0f));
             OkayUI::SetNextItemWidth(a.x - 20.0f);
             OkayUI::InputText("##address", address, (int)sizeof address);
+            if (shortcuts) ReadShortcuts();
             viewMaxX = p.x + a.x - 40.0f;
             const float vy = p.y + 50.0f;
             OkayUI::PushClipRect(p.x, vy, viewMaxX - p.x, a.y - 50.0f);
@@ -995,6 +997,51 @@ struct LauncherWin {
         }
         OkayUI::End();
     }
+    // The Browser page's shortcuts, read the way shared/BrowserApp.cpp frameIn reads them (Input::ctrl, the Alt key, IsKeyPressed).
+    bool shortcuts = false;
+    std::string fired;                                            // one letter per shortcut that fired
+    void ReadShortcuts() {
+        const OkayUI::Input& in = OkayUI::GetFrameInput();
+        const bool ctrl = in.ctrl, alt = OkayUI::IsKeyDown(OkayUI::KeyId_Alt);
+        if (ctrl && !alt) OkayUI::GetIO().InputQueueCharacters.resize(0);   // as BrowserApp: Ctrl+<key> never types
+        auto key = [](OkayUI::KeyId k) { return OkayUI::IsKeyPressed(k, false); };
+        if (ctrl && key(OkayUI::KeyId_T)) fired += 'T';
+        else if (ctrl && key(OkayUI::KeyId_W)) fired += 'W';
+        else if (ctrl && key(OkayUI::KeyId_Tab)) fired += 'N';
+        else if (ctrl && key(OkayUI::KeyId_L)) fired += 'L';
+        else if (key(OkayUI::KeyId_F5)) fired += 'R';
+        else if (alt && key(OkayUI::KeyId_Left)) fired += '<';
+        else if (alt && key(OkayUI::KeyId_Right)) fired += '>';
+        else if (ctrl && key(OkayUI::KeyId_D)) fired += 'D';
+        else if (ctrl && key(OkayUI::KeyId_F)) fired += 'F';
+    }
+    // The launcher's own key path (launcher/main.cpp: every platform event into its okayuihost::InputCollector, and at the start of
+    // OkayUI's frame HostedKeys decides which keys the hosted page gets). Off: the Sim's input, as the tests above use.
+    bool launcherKeys = false;
+    okayuihost::InputCollector collector;
+    void Key(SDL_Keycode k, bool down, Uint16 mods) {
+        SDL_Event e{};
+        e.type = down ? SDL_KEYDOWN : SDL_KEYUP;
+        e.key.keysym.sym = k; e.key.keysym.mod = mods;
+        collector.Feed(e);
+    }
+    /// One shortcut as a person presses it: the modifier, the key, a frame; both released, a frame.
+    void Chord(SDL_Keycode mod, SDL_Keycode k) {
+        const Uint16 m = mod == SDLK_LCTRL ? KMOD_LCTRL : mod == SDLK_LALT ? KMOD_LALT : 0;
+        if (mod) Key(mod, true, m);
+        Key(k, true, m); Frame();
+        Key(k, false, m);
+        if (mod) Key(mod, false, 0);
+        Frame();
+    }
+    /// The same chord arriving whole between two frames (a quick press at the launcher's idle frame rate, or xdotool's "key ctrl+f").
+    void QuickChord(SDL_Keycode mod, SDL_Keycode k) {
+        const Uint16 m = mod == SDLK_LCTRL ? KMOD_LCTRL : mod == SDLK_LALT ? KMOD_LALT : 0;
+        if (mod) Key(mod, true, m);
+        Key(k, true, m); Key(k, false, m);
+        if (mod) Key(mod, false, 0);
+        Frame(); Frame();
+    }
     bool Owns(float x, float y) const {
         for (const Offers::O& o : lastOffers.list) if (o.hovered && x >= o.x && y >= o.y && x < o.x + o.w && y < o.y + o.h) return true;
         return false;
@@ -1004,8 +1051,20 @@ struct LauncherWin {
         offers.list.clear(); offers.active = false;
         im.mx = sim.mx; im.my = sim.my; im.down = sim.down; im.rdown = sim.rdown;
         sim.blocked = !Owns(sim.mx, sim.my);   // launcher/main.cpp OkayUIFrameBegin: ImGui has the mouse unless a hosted page owns it
-        if (!(OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0)) sim.text.clear();   // and the keys only while an OkayUI field types
-        sim.Frame([&] { im.Frame([&] { Body(); }); });
+        const okayuihost::HostKeys keys = okayuihost::HostedKeys(OkayUI::WantsTextInput(), ImGui::GetActiveID() != 0,
+                                                                 ImGui::GetIO().WantTextInput, lastOffers.active);
+        if (launcherKeys) {                    // the launcher's path: the collector's input, with HostedKeys' answer
+            OkayUI::Input in = collector.Build(sim.mx, sim.my, sim.down, sim.rdown, sim.blocked, keys);
+            in.displayW = sim.W; in.displayH = sim.H;
+            if (keys == okayuihost::HostKeys::All && !sim.text.empty()) in.text = sim.text.c_str();
+            OkayUI::BeginFrame(in);
+            im.Frame([&] { Body(); });
+            OkayUI::EndFrameData();
+            sim.text.clear();
+        } else {
+            if (keys != okayuihost::HostKeys::All) sim.text.clear();   // the text only while an OkayUI field types
+            sim.Frame([&] { im.Frame([&] { Body(); }); });
+        }
         ras.DrawImGui();
         ras.renderer.Render(OkayUI::GetDrawData(), ras.fi);
     }
@@ -1127,6 +1186,50 @@ void LauncherBrowserPageUnderImGuiTooltips() {
     kH = 420;
 }
 
+// The Browser page's shortcuts in the launcher (2026-11-26 report): Ctrl+F did nothing until the address field was clicked, because
+// the launcher handed its hosted pages keys only while an OkayUI field typed (the standalone okay-browser gives them every key).
+// Driven through the launcher's own key path (InputCollector + HostedKeys); the page reads the keys as shared/BrowserApp.cpp does.
+void LauncherBrowserShortcutsReachThePage() {
+    kH = 600;
+    LauncherWin w;
+    w.tab = LauncherWin::kBrowserTab;
+    w.launcherKeys = true;
+    w.shortcuts = true;
+    w.sim.Move(500, 300); w.Frames(3);   // the page is shown, the mouse over it, no field focused
+    CHECK(!OkayUI::WantsTextInput());
+    w.Chord(SDLK_LCTRL, SDLK_f); w.Chord(SDLK_LCTRL, SDLK_l); w.Chord(SDLK_LCTRL, SDLK_t); w.Chord(SDLK_LCTRL, SDLK_w);
+    w.Chord(SDLK_LCTRL, SDLK_d); w.Chord(0, SDLK_F5); w.Chord(SDLK_LALT, SDLK_LEFT); w.Chord(SDLK_LALT, SDLK_RIGHT);
+    w.Chord(SDLK_LCTRL, SDLK_TAB);
+    std::printf("  shortcuts that fired with no field focused: \"%s\" (want \"FLTWDR<>N\")\n", w.fired.c_str());
+    CHECK(w.fired == "FLTWDR<>N");
+    // a quick chord, whole between two frames: the Ctrl it was pressed with is kept (it reached OkayUI as a plain F)
+    w.fired.clear();
+    w.QuickChord(SDLK_LCTRL, SDLK_f); w.QuickChord(SDLK_LCTRL, SDLK_t); w.QuickChord(SDLK_LALT, SDLK_LEFT);
+    std::printf("  quick chords (all four key events between two frames): \"%s\" (want \"FT<\")\n", w.fired.c_str());
+    CHECK(w.fired == "FT<");
+    // the mouse away from the page (over the sidebar): the page still has them while the launcher window has the focus
+    w.fired.clear();
+    w.sim.Move(40, 100); w.Frames(2);
+    w.Chord(SDLK_LCTRL, SDLK_f);
+    std::printf("  Ctrl+F with the mouse on the sidebar: \"%s\"\n", w.fired.c_str());
+    CHECK(w.fired == "F");
+    // the address field focused: Ctrl+F is Find, nothing is typed into the field
+    w.fired.clear();
+    w.sim.Move(500, 30); w.Frame(); w.sim.Down(); w.Frames(2); w.sim.Up(); w.Frames(2);
+    CHECK(OkayUI::WantsTextInput());
+    const std::string before = w.address;
+    w.Chord(SDLK_LCTRL, SDLK_f);
+    w.Chord(SDLK_LCTRL, SDLK_l);
+    w.QuickChord(SDLK_LCTRL, SDLK_f);
+    std::printf("  with the address field focused: fired \"%s\", field \"%s\" (was \"%s\")\n", w.fired.c_str(), w.address, before.c_str());
+    CHECK(w.fired == "FLF");
+    CHECK(before == w.address);
+    // and typing still types (the text only goes to a focused OkayUI field)
+    w.sim.Type("x"); w.Frames(2);
+    CHECK(std::string(w.address) == before + "x");
+    kH = 420;
+}
+
 } // namespace
 
 int main() {
@@ -1151,5 +1254,6 @@ int main() {
     LauncherPageOneSurfaceWhileTheProfileTooltipShows();
     LauncherPageClickOnNotificationsLandsAndStays();
     LauncherBrowserPageUnderImGuiTooltips();
+    LauncherBrowserShortcutsReachThePage();
     TEST_MAIN_RESULT();
 }

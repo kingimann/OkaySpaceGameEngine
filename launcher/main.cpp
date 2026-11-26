@@ -3487,7 +3487,10 @@ static void OkayUIFrameBegin() {
     int mx = 0, my = 0;
     const Uint32 mb = okay::platform::Default() ? okay::platform::Default()->MouseState(&mx, &my) : 0;   // MouseMask bits (button 1 = bit 0, as SDL_BUTTON)
     const bool blocked = io.WantCaptureMouse && !g_okayRegion.Owns((float)mx, (float)my);
-    const bool keys = OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;   // an ImGui field being pressed or typed in keeps the keys
+    // An OkayUI field types: all the keys (an ImGui field being pressed or typed in keeps them). No field types but a hosted page is
+    // shown and focused (the Browser page): its shortcuts' keys, Ctrl+F, Ctrl+L, Ctrl+T ... (okayuihost::HostedKeys).
+    const okayuihost::HostKeys keys = okayuihost::HostedKeys(OkayUI::WantsTextInput(), ImGui::GetActiveID() != 0, io.WantTextInput,
+                                                             g_okayRegion.Active());
     OkayUI::BeginFrame(g_okayInput.Build((float)mx, (float)my, (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0,
                                          (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys));
 }

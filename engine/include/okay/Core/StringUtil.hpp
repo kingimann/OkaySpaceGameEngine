@@ -14,6 +14,13 @@ inline std::string LowerAscii(std::string s) {
     return s;
 }
 
+// ASCII-only uppercase: bytes 'a'..'z' become 'A'..'Z', every other byte is left as it is (the DOM's tagName).
+inline std::string UpperAscii(std::string s) {
+    for (char& c : s)
+        if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+    return s;
+}
+
 // One byte of LowerAscii (for readers that fold as they scan).
 inline char LowerAsciiChar(char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; }
 

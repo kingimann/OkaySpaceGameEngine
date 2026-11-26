@@ -19,11 +19,8 @@ namespace {
 
 const FixedMeasure kMeasure(0.5f);
 
-const Node* ById(const Node& n, const std::string& id) {
-    if (const std::string* v = n.Attr("id")) if (*v == id) return &n;
-    for (const auto& c : n.children) if (const Node* f = ById(*c, id)) return f;
-    return nullptr;
-}
+// The element with id `id` (HtmlDocument::FindAnchor: the first element with that id), or null.
+const Node* ById(const HtmlDocument& doc, const std::string& id) { return doc.FindAnchor(id); }
 
 bool ConsoleHas(const std::vector<ConsoleLine>& lines, const std::string& part, ConsoleLine::Level level = ConsoleLine::Log) {
     for (const ConsoleLine& l : lines) if (l.level == level && l.text.find(part) != std::string::npos) return true;
@@ -55,7 +52,7 @@ struct Page {
     }
     bool Run(const std::string& src) { return js->RunScript(src, "test.js"); }
     const Node& El(const char* id) const {
-        const Node* n = ById(*doc.root, id);
+        const Node* n = ById(doc, id);
         if (!n) { std::cerr << "no #" << id << "\n"; std::abort(); }
         return *n;
     }
@@ -73,9 +70,9 @@ int main() {
     RUN_SUITE("browser script");
 
     // ---- script types (HTML 4.12.1.1)
-    CHECK(IsClassicScriptType("") && IsClassicScriptType("text/javascript") && IsClassicScriptType(" Text/JavaScript; charset=utf-8"));
-    CHECK(IsClassicScriptType("application/ecmascript"));
-    CHECK(!IsClassicScriptType("module") && !IsClassicScriptType("application/json") && !IsClassicScriptType("text/template"));
+    CHECK(IsJavaScriptType("") && IsJavaScriptType("text/javascript") && IsJavaScriptType(" Text/JavaScript; charset=utf-8"));
+    CHECK(IsJavaScriptType("application/ecmascript"));
+    CHECK(!IsJavaScriptType("module") && !IsJavaScriptType("application/json") && !IsJavaScriptType("text/template"));
 
     // ---- finding and changing elements, with the collector run at every safe point
     {
@@ -115,7 +112,7 @@ int main() {
         CHECK(p.forms.Value(p.El("f")) == "typed");
         // removing, inserting before, contains, closest, matches
         CHECK(p.Run("const t = document.getElementById('t'); t.remove();"));
-        CHECK(ById(*p.doc.root, "t") == nullptr);
+        CHECK(ById(p.doc, "t") == nullptr);
         CHECK(p.Run("const n = document.createElement('em'); n.id = 'first'; const box = document.getElementById('box');"
                     "box.insertBefore(n, box.firstChild);"));
         CHECK(p.El("box").children.front()->name == "em");
@@ -285,7 +282,7 @@ int main() {
                       "</script>");
         CHECK(t.GetState() == BrowserTab::State::Ready);
         const HtmlDocument* doc = t.Document();
-        CHECK(doc && ById(*doc->root, "out")->TextContent() == "ran");
+        CHECK(doc && ById(*doc, "out")->TextContent() == "ran");
         CHECK(doc->root->TextContent().find("Turn on JavaScript") == std::string::npos);   // <noscript> is not shown
         // the src file is fetched like an image (same origin only); the scripts after it wait for it
         const std::vector<std::string> f = t.TakeFetches();
@@ -304,24 +301,24 @@ int main() {
         // a click runs the listener and the page is laid out again with the new text
         const LayoutResult& before = t.Layout(500, kMeasure);
         CHECK(DumpLayout(before).find("'ran'") != std::string::npos);
-        CHECK(!t.Click(*ById(*doc->root, "btn")));
-        CHECK(!t.Click(*ById(*doc->root, "btn")));
+        CHECK(!t.Click(*ById(*doc, "btn")));
+        CHECK(!t.Click(*ById(*doc, "btn")));
         const LayoutResult& after = t.Layout(500, kMeasure);
         CHECK(DumpLayout(after).find("clicked 2") != std::string::npos);
         // the page cancels the link's click: the host does not follow it
-        CHECK(t.Click(*ById(*doc->root, "lnk")));
+        CHECK(t.Click(*ById(*doc, "lnk")));
         // typing fires input
-        const Node& q = *ById(*doc->root, "q");
+        const Node& q = *ById(*doc, "q");
         t.Forms().SetValue(q, "abc");
         t.ControlInput(q);
         CHECK(t.Title() == "typing abc");
         // a cancelled submit sends nothing; an allowed one loads the answer
         std::string note;
         t.Forms().SetValue(q, "stop");
-        CHECK(!t.SubmitForm(*ById(*doc->root, "f"), nullptr, note));
+        CHECK(!t.SubmitForm(*ById(*doc, "f"), nullptr, note));
         CHECK(t.GetState() == BrowserTab::State::Ready);
         t.Forms().SetValue(q, "go");
-        CHECK(t.SubmitForm(*ById(*doc->root, "f"), nullptr, note));
+        CHECK(t.SubmitForm(*ById(*doc, "f"), nullptr, note));
         CHECK(t.GetState() == BrowserTab::State::Loading);
         CHECK(t.Url() == "https://site.test/send?q=go");
     }
@@ -367,7 +364,7 @@ int main() {
         t.TakeFetches();
         t.DeliverPage("https://site.test/a.html", true, 200, "<p id=p>static</p><noscript>no js</noscript><script>document.getElementById('p').textContent='js'</script>");
         CHECK(t.Scripts() == nullptr);
-        CHECK(ById(*t.Document()->root, "p")->TextContent() == "static");
+        CHECK(ById(*t.Document(), "p")->TextContent() == "static");
         CHECK(t.Document()->root->TextContent().find("no js") != std::string::npos);
         BrowserTab plain;
         plain.Open("https://site.test/plain.html");
@@ -384,7 +381,7 @@ int main() {
         t.DeliverPage("https://site.test/clock.html", true, 200,
                       "<p id=c>0</p><script>let n = 0; setInterval(() => { document.getElementById('c').innerHTML = '<b>' + (++n) + '</b>'; }, 10);</script>");
         for (int i = 0; i < 300; ++i) { t.Tick(10); t.Layout(400, kMeasure); }
-        CHECK(ById(*t.Document()->root, "c")->TextContent() == "300");
+        CHECK(ById(*t.Document(), "c")->TextContent() == "300");
         CHECK(t.Scripts()->RemovedCount() < 2 * PageScripts::kFreeAfter * 2);
     }
 

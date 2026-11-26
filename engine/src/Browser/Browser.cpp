@@ -553,7 +553,7 @@ void BrowserTab::StartScripts(const std::string& baseUrl) {
             for (const auto& a : n->attrs) if (a.first.size() > 2 && a.first[0] == 'o' && a.first[1] == 'n') handlers = true;
             if (n->name == "script" && m_scriptQueue.size() < 256) {
                 const std::string* type = n->Attr("type");
-                if (IsClassicScriptType(type ? *type : std::string())) {
+                if (IsJavaScriptType(type ? *type : std::string())) {
                     ScriptSource src;
                     if (const std::string* s = n->Attr("src")) {
                         src.url = WithoutFragment(ResolveUrl(baseUrl, *s));

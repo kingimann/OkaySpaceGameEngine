@@ -104,6 +104,6 @@ private:
 
 /// Is `type` (a <script type="..."> value, "" when there is none) a classic script we run? (HTML 4.12.1.1: the JavaScript
 /// MIME type essences, ignoring case and parameters.) "module", JSON and template types are not run.
-bool IsClassicScriptType(const std::string& type);
+bool IsJavaScriptType(const std::string& type);
 
 } // namespace okay::browser

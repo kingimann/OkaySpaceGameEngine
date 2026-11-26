@@ -23,15 +23,8 @@ namespace {
 
 constexpr std::uint32_t kWindowSlot = 0xFFFFFFFFu;   // the listeners of window
 
-std::string Lower(std::string s) {
-    for (char& c : s) c = okay::str::LowerAsciiChar(c);
-    return s;
-}
-
-std::string Upper(std::string s) {
-    for (char& c : s) if (c >= 'a' && c <= 'z') c = (char)(c - 32);
-    return s;
-}
+using okay::str::LowerAscii;
+using okay::str::UpperAscii;
 
 bool IsSpaceChar(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r'; }
 
@@ -133,8 +126,8 @@ int HeightOf(Node* n, std::size_t& visited) {   // levels below n (0: no childre
 
 } // namespace
 
-bool IsClassicScriptType(const std::string& typeIn) {
-    std::string t = Lower(typeIn);
+bool IsJavaScriptType(const std::string& typeIn) {
+    std::string t = LowerAscii(typeIn);
     const std::size_t semi = t.find(';');
     if (semi != std::string::npos) t.resize(semi);
     while (!t.empty() && IsSpaceChar(t.back())) t.pop_back();
@@ -746,7 +739,7 @@ bool NodeGet(js::Runtime& rt, js::HostObj* self, js::String* keyS, js::Value& ou
         return true;
     }
     if (k == "nodeName") {
-        out = Str(rt, el ? Upper(n->name) : n->kind == NodeKind::Text ? "#text" : n->kind == NodeKind::Comment ? "#comment" : isDoc ? "#document" : n->name);
+        out = Str(rt, el ? UpperAscii(n->name) : n->kind == NodeKind::Text ? "#text" : n->kind == NodeKind::Comment ? "#comment" : isDoc ? "#document" : n->name);
         return true;
     }
     if (k == "parentNode") { out = I.Wrap(n->parent); return true; }
@@ -814,7 +807,7 @@ bool NodeGet(js::Runtime& rt, js::HostObj* self, js::String* keyS, js::Value& ou
         return false;
     }
     if (!el) return false;
-    if (k == "tagName") { out = Str(rt, Upper(n->name)); return true; }
+    if (k == "tagName") { out = Str(rt, UpperAscii(n->name)); return true; }
     if (k == "localName") { out = Str(rt, n->name); return true; }
     if (k == "id") { out = Str(rt, AttrOr(*n, "id")); return true; }
     if (k == "className") { out = Str(rt, AttrOr(*n, "class")); return true; }
@@ -829,7 +822,7 @@ bool NodeGet(js::Runtime& rt, js::HostObj* self, js::String* keyS, js::Value& ou
     if (k == "value") { out = Str(rt, I.ValueOf(*n)); return true; }
     if (k == "checked") { out = js::Value::Bool(I.forms.Checked(*n)); return true; }
     if (k == "disabled" || k == "hidden" || k == "required" || k == "readOnly" || k == "multiple" || k == "selected") {
-        out = js::Value::Bool(n->Attr(Lower(k).c_str()) != nullptr);
+        out = js::Value::Bool(n->Attr(LowerAscii(k).c_str()) != nullptr);
         return true;
     }
     if (k == "selectedIndex") { out = js::Value::Num(I.forms.SelectedIndex(*n)); return true; }
@@ -891,8 +884,8 @@ bool NodeSet(js::Runtime& rt, js::HostObj* self, js::String* keyS, const js::Val
     if (k == "checked") { I.forms.SetChecked(*n, rt.ToBoolean(v)); I.Changed(); return true; }
     if (k == "selectedIndex") { I.forms.Select(*n, (int)std::max(-1.0, std::min(1e6, rt.ToIntegerOrInfinity(v)))); I.Changed(); return true; }
     if (k == "disabled" || k == "hidden" || k == "required" || k == "readOnly" || k == "multiple" || k == "selected") {
-        if (rt.ToBoolean(v)) I.SetAttrC(rt, *n, Lower(k), std::string());
-        else RemoveAttr(*n, Lower(k));
+        if (rt.ToBoolean(v)) I.SetAttrC(rt, *n, LowerAscii(k), std::string());
+        else RemoveAttr(*n, LowerAscii(k));
         I.Changed();
         return true;
     }
@@ -909,7 +902,7 @@ std::string NodeText(js::Runtime& rt, js::HostObj* self) {
     if (!n) return "[object Node]";
     if (n->kind == NodeKind::Document) return "[object HTMLDocument]";
     if (n->kind == NodeKind::Text) return "[object Text]";
-    return "[object HTML" + Upper(n->name) + "Element]";
+    return "[object HTML" + UpperAscii(n->name) + "Element]";
 }
 
 // ---- element.style: the declarations of the style attribute (CSSOM 6.7, reduced to reading and writing them)
@@ -988,14 +981,14 @@ bool LocationGet(js::Runtime& rt, js::HostObj*, js::String* keyS, js::Value& out
     else return false;
     return true;
 }
-void GoTo(js::Runtime& rt, const std::string& where) {
+void AskToGo(js::Runtime& rt, const std::string& where) {
     Impl& I = Of(rt);
     if (I.hooks.navigate) I.hooks.navigate(where);
 }
 bool LocationSet(js::Runtime& rt, js::HostObj*, js::String* keyS, const js::Value& v) {
     const std::string k = js::Utf16To8(keyS->s);
-    if (k == "href") { GoTo(rt, rt.ToUtf8(v)); return true; }
-    if (k == "hash") { GoTo(rt, "#" + rt.ToUtf8(v)); return true; }
+    if (k == "href") { AskToGo(rt, rt.ToUtf8(v)); return true; }
+    if (k == "hash") { AskToGo(rt, "#" + rt.ToUtf8(v)); return true; }
     return true;   // the other parts are not written (one change at a time: href)
 }
 
@@ -1074,15 +1067,15 @@ void Install(PageScripts::Impl& I) {
         return Value::Bool(false);
     }, 1);
     js::DefNative(r, I.nodeProto, "getAttribute", [](Runtime& rt, CallArgs& a) -> Value {
-        const std::string* v = ThisElement(rt, a)->Attr(Lower(rt.ToUtf8(a[0])).c_str());
+        const std::string* v = ThisElement(rt, a)->Attr(LowerAscii(rt.ToUtf8(a[0])).c_str());
         return v ? Str(rt, *v) : Value::Null();
     }, 1);
     js::DefNative(r, I.nodeProto, "hasAttribute", [](Runtime& rt, CallArgs& a) -> Value {
-        return Value::Bool(ThisElement(rt, a)->Attr(Lower(rt.ToUtf8(a[0])).c_str()) != nullptr);
+        return Value::Bool(ThisElement(rt, a)->Attr(LowerAscii(rt.ToUtf8(a[0])).c_str()) != nullptr);
     }, 1);
     js::DefNative(r, I.nodeProto, "setAttribute", [](Runtime& rt, CallArgs& a) -> Value {
         Node* n = ThisElement(rt, a);
-        const std::string name = Lower(rt.ToUtf8(a[0]));
+        const std::string name = LowerAscii(rt.ToUtf8(a[0]));
         if (name.empty() || name.size() > HtmlLimits().maxNameBytes || name.find_first_of(" \t\n\f\r/>=\"'") != std::string::npos)
             rt.ThrowError(js::ErrorType::Error, "InvalidCharacterError: '" + name + "' is not an attribute name");
         std::string value = rt.ToUtf8(a[1]);
@@ -1092,7 +1085,7 @@ void Install(PageScripts::Impl& I) {
         return Value();
     }, 2);
     js::DefNative(r, I.nodeProto, "removeAttribute", [](Runtime& rt, CallArgs& a) -> Value {
-        if (RemoveAttr(*ThisElement(rt, a), Lower(rt.ToUtf8(a[0])))) Of(rt).Changed();
+        if (RemoveAttr(*ThisElement(rt, a), LowerAscii(rt.ToUtf8(a[0])))) Of(rt).Changed();
         return Value();
     }, 1);
     js::DefNative(r, I.nodeProto, "querySelector", [](Runtime& rt, CallArgs& a) -> Value {
@@ -1103,7 +1096,7 @@ void Install(PageScripts::Impl& I) {
         return Of(rt).Array(Of(rt).Query(rt, ThisNode(rt, a), rt.ToUtf8(a[0]), true));
     }, 1);
     js::DefNative(r, I.nodeProto, "getElementsByTagName", [](Runtime& rt, CallArgs& a) -> Value {
-        const std::string tag = Lower(rt.ToUtf8(a[0]));
+        const std::string tag = LowerAscii(rt.ToUtf8(a[0]));
         std::vector<Node*> out;
         Walk(ThisNode(rt, a), false, [&](Node* n) { rt.Charge(1); if (n->kind == NodeKind::Element && (tag == "*" || n->name == tag)) out.push_back(n); return false; });
         return Of(rt).Array(out);
@@ -1196,7 +1189,7 @@ void Install(PageScripts::Impl& I) {
         return Of(rt).Wrap(found);
     }, 1);
     js::DefNative(r, I.documentProto, "createElement", [](Runtime& rt, CallArgs& a) -> Value {
-        const std::string tag = Lower(rt.ToUtf8(a[0]));
+        const std::string tag = LowerAscii(rt.ToUtf8(a[0]));
         if (tag.empty() || tag.size() > HtmlLimits().maxNameBytes || tag.find_first_of(" \t\n\f\r/<>=\"'") != std::string::npos)
             rt.ThrowError(js::ErrorType::Error, "InvalidCharacterError: '" + tag + "' is not an element name");
         Node* n = Of(rt).NewNode(rt, NodeKind::Element);
@@ -1233,7 +1226,7 @@ void Install(PageScripts::Impl& I) {
     js::DefNative(r, I.styleProto, "getPropertyValue", [](Runtime& rt, CallArgs& a) -> Value {
         Node* n = a.thisv.IsObj() && a.thisv.O()->cls == js::Cls::Host ? PartNode(rt, static_cast<js::HostObj*>(a.thisv.O())) : nullptr;
         if (!n) rt.ThrowType("Illegal invocation");
-        const std::string prop = Lower(rt.ToUtf8(a[0]));
+        const std::string prop = LowerAscii(rt.ToUtf8(a[0]));
         for (const Declaration& d : ParseDeclarations(AttrOr(*n, "style"))) if (d.property == prop) return Str(rt, d.value);
         return Str(rt, std::string());
     }, 1);
@@ -1241,13 +1234,13 @@ void Install(PageScripts::Impl& I) {
         Node* n = a.thisv.IsObj() && a.thisv.O()->cls == js::Cls::Host ? PartNode(rt, static_cast<js::HostObj*>(a.thisv.O())) : nullptr;
         if (!n) rt.ThrowType("Illegal invocation");
         const std::string value = a[1].IsNullish() ? std::string() : rt.ToUtf8(a[1]);
-        if (value.find_first_of(";{}") == std::string::npos) WriteStyle(rt, n, Lower(rt.ToUtf8(a[0])), value);
+        if (value.find_first_of(";{}") == std::string::npos) WriteStyle(rt, n, LowerAscii(rt.ToUtf8(a[0])), value);
         return Value();
     }, 2);
     js::DefNative(r, I.styleProto, "removeProperty", [](Runtime& rt, CallArgs& a) -> Value {
         Node* n = a.thisv.IsObj() && a.thisv.O()->cls == js::Cls::Host ? PartNode(rt, static_cast<js::HostObj*>(a.thisv.O())) : nullptr;
         if (!n) rt.ThrowType("Illegal invocation");
-        WriteStyle(rt, n, Lower(rt.ToUtf8(a[0])), std::string());
+        WriteStyle(rt, n, LowerAscii(rt.ToUtf8(a[0])), std::string());
         return Value();
     }, 1);
     // add / remove / toggle / contains / replace: slots[0] says which
@@ -1294,8 +1287,8 @@ void Install(PageScripts::Impl& I) {
 
     // ---- location
     for (const char* m : {"assign", "replace"})
-        js::DefNative(r, I.locationProto, m, [](Runtime& rt, CallArgs& a) -> Value { GoTo(rt, rt.ToUtf8(a[0])); return Value(); }, 1);
-    js::DefNative(r, I.locationProto, "reload", [](Runtime& rt, CallArgs&) -> Value { GoTo(rt, Of(rt).url); return Value(); }, 0);
+        js::DefNative(r, I.locationProto, m, [](Runtime& rt, CallArgs& a) -> Value { AskToGo(rt, rt.ToUtf8(a[0])); return Value(); }, 1);
+    js::DefNative(r, I.locationProto, "reload", [](Runtime& rt, CallArgs&) -> Value { AskToGo(rt, Of(rt).url); return Value(); }, 0);
     js::DefNative(r, I.locationProto, "toString", [](Runtime& rt, CallArgs&) -> Value { return Str(rt, Of(rt).url); }, 0);
     js::HostObj* loc = r.NewHost(I.kLocation, I.locationProto);
     I.locationRef = r.Ref(Value::Obj(loc));

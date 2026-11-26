@@ -2,13 +2,16 @@
 // UI.VisualScript at 263-352 ms in single frames, again and again. The graph checker (a full parse of the graph text, a look on disk
 // for every prefab a node names, then the whole OkayScript export) ran whenever the graph's text changed, and dragging a node changes
 // its position line in every frame of the drag. Here a 600-node graph is dragged for 120 frames: the checker must run once (for the
-// first frame), not 120 times; editing a value still re-checks. Work counts are the bounds; the times are printed for the report.
+// first frame), not 120 times; editing a value still re-checks. A Play Clip / Load Scene / Play Music node's dropdown walked the whole
+// Assets folder every frame; now one walk per 2 s. Work counts are the bounds; the times are printed for the report.
 #include "test_framework.hpp"
 #include "VisualScriptEditor.hpp"
 #include <Okay.hpp>
 
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 using namespace okay;
@@ -92,6 +95,42 @@ int main() {
         for (int i = 0; i < 100000; ++i) hits += FindDef(Registry()[(std::size_t)(i % Registry().size())].type) ? 1 : 0;
         std::printf("  FindDef: %zu types, %.1f ns per lookup\n", Registry().size(), Ms(t0) * 1e6 / 100000.0);
         CHECK(hits == 100000);
+    }
+    RUN_SUITE("dropdown lists of project files: one Assets walk per 2 s, not one per node per frame");
+    {
+        namespace fs = std::filesystem;
+        const fs::path assets = fs::temp_directory_path() / ("okay_vschoices_" + std::to_string((long long)std::chrono::steady_clock::now().time_since_epoch().count())) / "Assets";
+        fs::create_directories(assets / "Anim");
+        for (int i = 0; i < 40; ++i) std::ofstream(assets / "Anim" / ("clip" + std::to_string(i) + (i % 4 ? ".okayanim" : ".png"))) << "x";
+        VsChoiceScans() = 0;
+        std::size_t n = 0;
+        for (int frame = 0; frame < 60; ++frame)          // 60 frames at 60 FPS ...
+            for (int node = 0; node < 20; ++node)         // ... of a graph with 20 Play Clip nodes
+                n = VsAssetStems(assets, ".okayanim", 10.0 + frame / 60.0).size();
+        CHECK(n == 30);
+        CHECK(VsChoiceScans() == 1);                      // was 1200 walks of the folder
+        std::ofstream(assets / "Anim" / "late.okayanim") << "x";
+        CHECK(VsAssetStems(assets, ".okayanim", 12.5).size() == 31);   // a new file shows within 2 s
+        CHECK(VsChoiceScans() == 2);
+        std::error_code ec;
+        fs::remove_all(assets.parent_path(), ec);
+    }
+
+    RUN_SUITE("VsFind: the id index follows added and removed nodes");
+    {
+        VsEditGraph g;
+        Build(g);
+        for (const auto& n : g.nodes) CHECK(VsFind(g, n.id) == &n);
+        const int gone = g.nodes[10].id;
+        g.nodes.erase(g.nodes.begin() + 10);
+        CHECK(VsFind(g, gone) == nullptr);
+        for (const auto& n : g.nodes) CHECK(VsFind(g, n.id) == &n);
+        const int added = g.add("Branch", 0, 0);
+        CHECK(VsFind(g, added) && VsFind(g, added)->type == "Branch");
+        VsEditGraph other;
+        const int o = other.add("OnStart", 0, 0);
+        CHECK(VsFind(other, o) == &other.nodes[0]);       // another graph (another tab) is looked up in its own nodes
+        CHECK(VsFind(g, added) && VsFind(g, added)->id == added);
     }
     Log::sink = sink;
     TEST_MAIN_RESULT();

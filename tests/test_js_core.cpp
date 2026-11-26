@@ -455,6 +455,18 @@ void BigInts() {
     ExpectError("const x = 3n ** 600000n; for (;;) x * x;", "");
     Runtime rt;
     CHECK(!rt.CheckSyntax(std::string("x = 1") + std::string(20001, '0') + "n;", "s").empty());
+    // compiling a long literal does not charge the budget: a runtime whose budget ran out still compiles (and the
+    // run then stops cleanly) instead of a budget stop escaping from Compile
+    rt.SetBudget(1000);
+    std::string err;
+    CHECK(!rt.Run("for (;;) {}", "spin.js", &err));
+    bool threw = false;
+    try {
+        rt.Run(std::string("const big = 1") + std::string(19000, '7') + "n;", "lit.js", &err);
+    } catch (...) {
+        threw = true;
+    }
+    CHECK(!threw);
 }
 
 // 22.2.2.4 lookbehind (?<= ) / (?<! ): the body matches right to left, ending where the assertion stands

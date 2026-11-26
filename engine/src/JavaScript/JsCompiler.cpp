@@ -1159,7 +1159,7 @@ struct Compiler {
             case NK::Str: EmitStr(n->str); return;
             case NK::BigInt: {   // a constant BigInt (immutable, so one value serves every evaluation)
                 Value b;
-                if (!StringToBigInt(rt, n->str, b)) Fail(n, "bad BigInt literal");
+                if (!StringToBigInt(rt, n->str, b, false)) Fail(n, "bad BigInt literal");
                 fs->p->consts.push_back(b);
                 Emit(OP_Const, (int)fs->p->consts.size() - 1);
                 return;

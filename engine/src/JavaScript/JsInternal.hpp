@@ -369,7 +369,9 @@ bool BigIsZero(const Value& v);
 bool BigEquals(const Value& a, const Value& b);
 std::size_t BigHash(const Value& v);
 std::u16string BigToString(Runtime& rt, const Value& v, int radix);
-bool StringToBigInt(Runtime& rt, const std::u16string& s, Value& out);   ///< false: not an integer text
+/// false: not an integer text. `charge`: count the work against the budget (not while compiling a literal, which
+/// the lexer already limits to 20000 digits: a budget stop must not escape from Compile).
+bool StringToBigInt(Runtime& rt, const std::u16string& s, Value& out, bool charge = true);
 Value BigFromDouble(Runtime& rt, double d);
 double BigToDouble(const Value& v);
 int BigCompareNum(const Value& a, double d);   ///< -1, 0, 1; 2 when d is NaN

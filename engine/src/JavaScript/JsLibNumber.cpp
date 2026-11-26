@@ -1268,7 +1268,7 @@ std::u16string BigToString(Runtime& rt, const Value& v, int radix) {
 }
 
 // 7.1.14 StringToBigInt: false when the text is not a StringIntegerLiteral (RangeError when it is too long)
-bool StringToBigInt(Runtime& rt, const std::u16string& s0, Value& out) {
+bool StringToBigInt(Runtime& rt, const std::u16string& s0, Value& out, bool charge) {
     std::size_t b = 0, e = s0.size();
     while (b < e && IsJsSpace(s0[b])) ++b;
     while (e > b && IsJsSpace(s0[e - 1])) --e;
@@ -1287,7 +1287,7 @@ bool StringToBigInt(Runtime& rt, const std::u16string& s0, Value& out) {
         if (b == e) return false;
     }
     if (e - b > kMaxBigBits) rt.ThrowRange("the BigInt is too big (over 1048576 bits)");
-    rt.Charge((std::uint64_t)(e - b) * (e - b) / 512 + 1);
+    if (charge) rt.Charge((std::uint64_t)(e - b) * (e - b) / 512 + 1);
     Limbs mag;
     for (std::size_t i = b; i < e; ++i) {
         char16_t c = s0[i];

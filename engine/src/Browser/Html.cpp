@@ -796,6 +796,62 @@ void DumpNode(const Node& n, int depth, std::string& out) {
 }
 } // namespace
 
+namespace {
+void Escape(const std::string& in, bool attr, std::string& out) {
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        const char ch = in[i];
+        if (ch == '&') out += "&amp;";
+        else if (ch == '\xC2' && i + 1 < in.size() && in[i + 1] == '\xA0') { out += "&nbsp;"; ++i; }
+        else if (attr && ch == '"') out += "&quot;";
+        else if (!attr && ch == '<') out += "&lt;";
+        else if (!attr && ch == '>') out += "&gt;";
+        else out += ch;
+    }
+}
+bool RawTextParent(const Node& n) {
+    static const char* const kRaw[] = {"style", "script", "xmp", "iframe", "noembed", "noframes", "plaintext", nullptr};
+    return n.kind == NodeKind::Element && In(n.name, kRaw);
+}
+void SerializeInto(const Node& parent, std::string& out);
+void SerializeOne(const Node* parent, const Node& c, std::string& out) {
+    switch (c.kind) {
+    case NodeKind::Element:
+        out += '<';
+        out += c.name;
+        for (const auto& a : c.attrs) { out += ' '; out += a.first; out += "=\""; Escape(a.second, true, out); out += '"'; }
+        out += '>';
+        if (IsVoidElement(c.name)) break;
+        SerializeInto(c, out);   // depth: the tree is at most HtmlLimits::maxDepth deep (scripts are held to it too)
+        out += "</";
+        out += c.name;
+        out += '>';
+        break;
+    case NodeKind::Text:
+        if (parent && RawTextParent(*parent)) out += c.data;
+        else Escape(c.data, false, out);
+        break;
+    case NodeKind::Comment: out += "<!--" + c.data + "-->"; break;
+    case NodeKind::Doctype: out += "<!DOCTYPE " + c.name + ">"; break;
+    case NodeKind::Document: SerializeInto(c, out); break;
+    }
+}
+void SerializeInto(const Node& parent, std::string& out) {
+    for (const auto& cp : parent.children) SerializeOne(&parent, *cp, out);
+}
+} // namespace
+
+std::string SerializeNode(const Node& node) {
+    std::string out;
+    SerializeOne(node.parent, node, out);
+    return out;
+}
+
+std::string SerializeChildren(const Node& node) {
+    std::string out;
+    SerializeInto(node, out);
+    return out;
+}
+
 std::string DumpTree(const Node& node) {
     std::string out;
     DumpNode(node, 0, out);

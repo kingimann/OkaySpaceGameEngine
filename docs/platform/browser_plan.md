@@ -26,8 +26,11 @@ The owner asked for our own browser (2026-11-25): an installable program for pla
    `claude/browser-full-1`).** Browser basics in the program, real layout, forms. See "Round 1" below.
 3b. **The browser in the launcher (owner, 2026-11-26: "can you allow user to launch browser in the launcher"; branch
    `claude/browser-full-1`).** See "The launcher's Browser page" below.
-4. **Next round.** Our own JavaScript engine (it lives on `claude/javascript-1`, `engine/include/okay/JavaScript/`; the browser will
-   use that one, not a second one), then WebAssembly and WebGL, so other engines' web games and normal sites work.
+4. **Round 2: JavaScript in pages (branch `claude/browser-js-1`).** The page's scripts run on our own JavaScript engine
+   (`engine/include/okay/JavaScript/`, merged in #1322; the browser uses that one, not a second one: its core became the
+   library `okay_js`, linked by both the engine and `okay_browser`). See "Round 2" below.
+5. **Next.** More of the DOM and the web platform (below), then WebAssembly and WebGL, so other engines' web games and normal
+   sites work.
 
 ## Decisions in step 1
 
@@ -141,6 +144,33 @@ submission), reset. multipart/form-data (files) is not done: such a form is sent
 session do not keep it), tables with real column widths, margin collapsing through parents, `:has()`, counters, gradients
 (drawn as their first colour), WOFF fonts, synthetic italics, text selection (Copy text copies the run under the pointer),
 dragging tabs, a downloads folder picker, file inputs. Nothing of round 1 was built or run on Windows.
+
+## Round 2: JavaScript in pages
+
+`okay/Browser/Script.hpp` (`PageScripts`, one per shown page, made only when the page has a script or an on...="" attribute):
+
+- **When scripts run.** After the page is read, in page order (like `defer`); a `<script src>` is fetched by the tab's loader
+  (`FetchKind::Script`, same origin in the launcher, any http(s) site in the program) and the scripts after it wait for it.
+  Then DOMContentLoaded and load. Module scripts and data types (`application/json` ...) are not run. Scripting is on by
+  default (`BrowserTab::SetScripting`); `<noscript>` is hidden while it is on.
+- **The DOM.** Written from the WHATWG DOM standard (events 2.x, nodes 4.x, DOMTokenList) and the HTML standard (timers 8.6,
+  event handler attributes 8.1.8, fragment serialization 13.3); the list of what is bound is in the header and the feature
+  map (17.18.17). Our engine runs all code in strict mode, so sloppy-mode pages that assign to undeclared names fail.
+- **The host.** `BrowserTab::Tick(ms)` once a frame (TabHost::Pump does it with the real time) runs the timers and follows a
+  `location` change by the link rules; the view hands clicks (`Click`: a cancelled click does not follow the link or work the
+  control) and typing (`ControlInput`: input, and change for checkboxes, radios and selects) to the page; `SubmitForm` fires
+  submit first. The layout is redone after any change. The browser shows the page's console in a strip (F12).
+- **Safety.** No file, network, eval or code-string timers are bound (the engine has none of its own). Each host entry (one
+  script, one event, one frame's timers) has an instruction budget, and the binding charges its own work (walking the tree,
+  building lists, parsing innerHTML) to it, so `for (;;) document.body.childNodes` is stopped too. Caps: 64 MB heap, 200000
+  nodes, 64 MB of page text, depth 256, 1000 timers, 1000 listeners per node. A script that runs past them stops with a
+  console line; the page stays up. Nodes a script removes are kept until the next layout no longer points at them and are
+  freed only when no script holds them (wrappers are weak; a freed slot's old wrappers no longer match).
+
+**Not done in round 2:** XMLHttpRequest / fetch, `document.write`, running scripts while the page is parsed, scripts a script
+adds, `<style>` added or changed by a script, keyboard / mouse-move / focus events, live NodeLists, getComputedStyle, canvas,
+storage, the history API, cookies. A node whose own listener's closure holds it stays until the page goes (the listener is a
+root). The Console strip and the view's click / input wiring were compiled but not run in a window; nothing on Windows.
 
 **Checked so far (2026-11-26):** the browser tests above and `okayui_browser` pass on Linux (ctest); the program was run on Linux
 under a virtual display (Xvfb) against a local Python test server: several tabs, the Flexbox / Grid / Floats test pages, find

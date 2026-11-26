@@ -265,6 +265,9 @@ StyleSheet ParseStyleSheet(const std::string& css, const CssLimits& limits = Css
 std::vector<Declaration> ParseDeclarations(const std::string& text, const CssLimits& limits = CssLimits());
 /// Read one selector ("ul li.note > a"); false when it uses anything outside the supported subset.
 bool ParseSelector(const std::string& text, Selector& out);
+/// Read a comma-separated selector list ("h1, .note a"); false when any part is outside the subset. `maxSpec`: the highest
+/// specificity in it.
+bool ParseSelectorList(const std::string& text, std::vector<Selector>& out, int& maxSpec);
 
 /// What matching and the cascade need to know beyond the tree: the element under the pointer and the one with the keyboard
 /// (their ancestors match :hover / :focus-within), which form controls are checked (Forms.hpp), and the view's size.

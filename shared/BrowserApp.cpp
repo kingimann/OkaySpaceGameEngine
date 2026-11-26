@@ -74,7 +74,7 @@ struct MenuItem {
 enum Action {
     A_None = 0, A_NewTab, A_CloseTab, A_ReopenTab, A_History, A_Bookmarks, A_Downloads, A_ZoomIn, A_ZoomOut, A_ZoomReset, A_Find,
     A_Settings, A_ToggleBar, A_OpenLinkNewTab, A_CopyLink, A_CopyText, A_CopyPage, A_Back, A_Forward, A_Reload, A_Bookmark,
-    A_RemoveBookmark, A_OpenBookmarkNewTab, A_Quit
+    A_RemoveBookmark, A_OpenBookmarkNewTab, A_Quit, A_Console
 };
 
 struct Menu {
@@ -102,6 +102,7 @@ struct BrowserApp::Impl {
 
     Menu menu;
     bool findOpen = false, findFocus = false;
+    bool consoleOpen = false;   // the page's JavaScript console (F12): its newest lines at the bottom
     char findText[256] = {0};
     int findCurrent = 0;
     float findScrollTo = -1.0f;
@@ -217,6 +218,7 @@ struct BrowserApp::Impl {
         case A_ZoomOut: { SiteZoom z = profile().zoom; const float v = z.Out(zk); change([zk, v](Profile& p) { p.zoom.Set(zk, v); }); break; }
         case A_ZoomReset: change([zk](Profile& p) { p.zoom.Reset(zk); }); break;
         case A_Find: findOpen = true; findFocus = true; break;
+        case A_Console: consoleOpen = !consoleOpen; break;
         case A_Settings: openSettings(); break;
         case A_ToggleBar: { const bool on = !profile().settings.showBookmarksBar; change([on](Profile& p) { p.settings.showBookmarksBar = on; }); break; }
         case A_OpenLinkNewTab: if (!menu.link.empty()) newTab(menu.link, true, false); break;
@@ -359,6 +361,7 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
         else if (ctrl && (key(UI::KeyId_Minus) || key(UI::KeyId_KeypadSubtract))) doAction(A_ZoomOut);
         else if (ctrl && (key(UI::KeyId_0) || key(UI::KeyId_Keypad0))) doAction(A_ZoomReset);
         else if (ctrl && key(UI::KeyId_F)) doAction(A_Find);
+        else if (key(UI::KeyId_F12) || (ctrl && shift && key(UI::KeyId_J))) doAction(A_Console);
         else if (key(UI::KeyId_F3) && findOpen) findCurrent += shift ? -1 : 1, findScrollTo = 0.0f;
         else if (ctrl && key(UI::KeyId_G) && findOpen) findCurrent += shift ? -1 : 1, findScrollTo = 0.0f;
         else if (ctrl && key(UI::KeyId_Q) && cfg.quitItem) doAction(A_Quit);
@@ -430,7 +433,8 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
     const float findH = findOpen ? 36.0f : 0.0f;
     const float shelfH = shelfOpen && !downloads.Items().empty() ? 30.0f : 0.0f;
     const float noticeH = notice.empty() ? 0.0f : 24.0f;
-    const float viewTop = Y + tabBarH, viewH = std::max(40.0f, H - tabBarH - findH - shelfH - noticeH);
+    const float consoleH = consoleOpen ? std::min(160.0f, std::max(0.0f, H * 0.3f)) : 0.0f;
+    const float viewTop = Y + tabBarH, viewH = std::max(40.0f, H - tabBarH - findH - shelfH - noticeH - consoleH);
 
     // find hits for the page as it is laid out now
     const float zoom = profile().zoom.Get(zoomKey(t.Url()));
@@ -544,7 +548,7 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
                   {bar ? "Hide bookmarks bar" : "Show bookmarks bar", "Ctrl+Shift+B", A_ToggleBar}, {"", "", 0},
                   {"Zoom in", "Ctrl +", A_ZoomIn}, {"Zoom out", "Ctrl -", A_ZoomOut},
                   {"Actual size (" + std::to_string((int)std::lround(zoom * 100)) + "%)", "Ctrl+0", A_ZoomReset}, {"", "", 0},
-                  {"Find on page", "Ctrl+F", A_Find}, {"Settings", "", A_Settings}};
+                  {"Find on page", "Ctrl+F", A_Find}, {consoleOpen ? "Hide console" : "Console", "F12", A_Console}, {"Settings", "", A_Settings}};
             if (cfg.quitItem) { items.push_back({"", "", 0}); items.push_back({"Quit", "Ctrl+Q", A_Quit}); }
             openMenu(UI::Vec2(std::max(X, r.menuButton.x + r.menuButton.w - 260.0f), r.menuButton.y + r.menuButton.h + 4.0f), std::move(items));
         }
@@ -636,6 +640,34 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
         }
         UI::End();
         y += findH;
+    }
+    // ---- the page's console: what its scripts wrote (console.log / warn / error) and their errors ----
+    if (consoleH > 0.0f) {
+        UI::BareNextWindow();
+        if (UI::Begin((pre + "_console").c_str(), X, y, W, consoleH)) {
+            const auto& dl = UI::GetWindowDrawList();
+            dl->AddRectFilled(UI::Vec2(X, y), UI::Vec2(X + W, y + consoleH), Rgba(24, 26, 32));
+            const std::vector<ConsoleLine>& lines = t.ConsoleLines();
+            UI::SetCursorScreenPos(UI::Vec2(X + 8, y + 4));
+            const std::string head = t.Scripts() ? "Console - " + std::to_string((unsigned long long)t.ConsoleCount()) + " lines from this page"
+                                                 : std::string(t.Scripting() ? "Console - this page has no scripts" : "Console - scripts are off");
+            UI::TextDisabled(head.c_str());
+            UI::SameLine();
+            if (UI::Button("Clear") && t.Scripts()) t.Scripts()->ClearConsole();
+            UI::SameLine();
+            if (UI::Button("Close")) consoleOpen = false;
+            const float rowH = 16.0f, top = y + 30.0f;
+            const std::size_t fit = (std::size_t)std::max(0.0f, (consoleH - 34.0f) / rowH);
+            const std::size_t first = lines.size() > fit ? lines.size() - fit : 0;
+            float ly = top;
+            for (std::size_t i = first; i < lines.size(); ++i, ly += rowH) {
+                const ConsoleLine& l = lines[i];
+                const UI::Color32 c = l.level == ConsoleLine::Error ? Rgba(240, 110, 100) : l.level == ConsoleLine::Warn ? Rgba(235, 200, 90) : Rgba(210, 215, 225);
+                dl->AddText(UI::Vec2(X + 8, ly), c, Fit(l.text, W - 16.0f).c_str());
+            }
+        }
+        UI::End();
+        y += consoleH;
     }
     // ---- download shelf: the newest download and its progress ----
     if (shelfH > 0.0f) {

@@ -39,8 +39,28 @@ target_include_directories(okay_physcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/incl
 target_compile_features(okay_physcore PUBLIC cxx_std_17)
 add_library(okay::physcore ALIAS okay_physcore)
 
+# okay::js: our own JavaScript engine (ECMA-262; docs/scripting/javascript.md). Standard library only, so the Browser's page
+# scripts (okay_browser) and the engine's game scripts (src/JavaScript/JavaScriptVM.cpp in okay_engine) share one copy.
+add_library(okay_js STATIC
+    src/JavaScript/JsLexer.cpp
+    src/JavaScript/JsParser.cpp
+    src/JavaScript/JsCompiler.cpp
+    src/JavaScript/JsRuntime.cpp
+    src/JavaScript/JsInterpreter.cpp
+    src/JavaScript/JsLibObject.cpp
+    src/JavaScript/JsLibArray.cpp
+    src/JavaScript/JsLibString.cpp
+    src/JavaScript/JsLibNumber.cpp
+    src/JavaScript/JsLibJson.cpp
+    src/JavaScript/JsLibCollections.cpp
+    src/JavaScript/JsRegExp.cpp
+)
+target_include_directories(okay_js PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(okay_js PUBLIC cxx_std_17)
+add_library(okay::js ALIAS okay_js)
+
 # Browser: our own web browser's page engine (HTML reader, CSS, layout, addresses, one tab's navigation, web game packs).
-# Standard library and header-only engine helpers (Core/Inflate, Core/Json, Core/PathSafety) only, so the launcher, the
+# Standard library, header-only engine helpers (Core/Inflate, Core/Json, Core/PathSafety) and okay_js only, so the launcher, the
 # browser program (browser/) and the tests link it without the rest of the engine
 # (docs/feature_map/17-launcher-platform.md 17.18).
 add_library(okay_browser STATIC
@@ -53,9 +73,11 @@ add_library(okay_browser STATIC
     src/Browser/Profile.cpp      # the browser program: address bar, tabs, history, bookmarks, zoom, downloads, our own pages
     src/Browser/GamePack.cpp     # step 2: the web game pack reader (the native twin of platform/web/okay_web.js)
     src/Browser/GameLaunch.cpp   # step 2: which page elements run a game, per-site folders, the player's command line
+    src/Browser/Script.cpp       # round 2: page JavaScript on okay::js (the DOM binding, events, timers, the console)
 )
 target_include_directories(okay_browser PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(okay_browser PUBLIC cxx_std_17)
+target_link_libraries(okay_browser PUBLIC okay_js)
 add_library(okay::browser ALIAS okay_browser)
 
 # OkaySpace engine library
@@ -244,18 +266,6 @@ add_library(okay_engine
     src/Lua/LuaLibTable.cpp
     src/Lua/LuaLibUtf8.cpp
     src/Lua/LuaScriptVM.cpp
-    src/JavaScript/JsLexer.cpp
-    src/JavaScript/JsParser.cpp
-    src/JavaScript/JsCompiler.cpp
-    src/JavaScript/JsRuntime.cpp
-    src/JavaScript/JsInterpreter.cpp
-    src/JavaScript/JsLibObject.cpp
-    src/JavaScript/JsLibArray.cpp
-    src/JavaScript/JsLibString.cpp
-    src/JavaScript/JsLibNumber.cpp
-    src/JavaScript/JsLibJson.cpp
-    src/JavaScript/JsLibCollections.cpp
-    src/JavaScript/JsRegExp.cpp
     src/JavaScript/JavaScriptVM.cpp
     src/Scripting/ScriptLanguageGlue.cpp
     src/Components/ScriptComponent.cpp

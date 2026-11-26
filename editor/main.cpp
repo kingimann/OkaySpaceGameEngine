@@ -30,6 +30,7 @@
 #include "Updater.hpp"                 // the self-updater and runtime fetcher (updater::)
 #include "WorkerCall.hpp"              // one call on its own thread: the update check and download (never inside a frame)
 #include "FindInFiles.hpp"             // Find in Files: the project-wide script search window
+#include "ScriptEditorAppHost.hpp"     // the Script Editor app (shared/ScriptIdeApp) in a window: the same one as the Script Editor program
 #include "AssetManagerWindow.hpp"      // the Asset Manager window: Marketplace downloads into the project
 #include "PluginsWindow.hpp"           // editor plugins: the Plugins menu, the Plugin Manager, the per-frame tick
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
@@ -4451,6 +4452,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Audio Mixer",   "Audio Mixer",               &g_showAudioMixer,    "Panels", PI_Stats},
         {"Input",         "Input",                     &g_showInputDebug,    "Panels", PI_Stats},
         {"Script Editor", "Script Editor",             &g_showScriptEditor,  "Editors & Tools", PI_Script},
+        {"Script Editor (Files)", "Script Editor (Files)", &g_showScriptEditorApp, "Editors & Tools", PI_Script},
         {"Visual Script", "Visual Script",             &g_showVisualScript,  "Editors & Tools", PI_Nodes},
         {"Animation",     "Animation###AnimationDock", &g_showAnimation,     "Editors & Tools", PI_Animation},
         {"Animator",      "Animator",                  &g_showAnimatorGraph, "Editors & Tools", PI_Animator},
@@ -55765,6 +55767,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.Modeling"); if (g_showModeling)  DrawModeling(ed); }
         { OKAY_PROFILE("UI.UVEditor"); if (g_showUVEditor)  DrawUVEditor(ed); }
         { OKAY_PROFILE("UI.FindInFiles"); DrawFindInFiles(ed); }
+        { OKAY_PROFILE("UI.ScriptEditorApp"); DrawScriptEditorApp(ed); }
         { OKAY_PROFILE("UI.ScriptDocs"); DrawScriptDocs(); }
         { OKAY_PROFILE("UI.ShortcutsWindow"); DrawShortcutsWindow(); }
         { OKAY_PROFILE("UI.AnimationEditor"); DrawAnimationEditor(ed); }

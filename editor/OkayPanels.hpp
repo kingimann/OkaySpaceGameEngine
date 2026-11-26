@@ -119,4 +119,10 @@ bool DrawAddComponentOkayUI(std::uint32_t accent, bool& clicked);
 /// A hosted OkayUI field has the keyboard (the Inspector's undo watcher keeps its step open while one is typed in).
 bool OkayUIHasKeyboard();
 
+/// A whole OkayUI app in an editor window of its own (the Script Editor's shared app, shared/ScriptIdeApp.hpp; the Visual Script
+/// editor next): the window's free area goes to `frame(x, y, w, h)` every frame it shows. `firstW` x `firstH`: the size a window with
+/// no saved place opens at. Same return value as the Crash Log.
+bool DrawAppWindowOkayUI(const char* title, bool* open, const char* itemId, const std::function<void(float x, float y, float w, float h)>& frame,
+                         float firstW = 900.0f, float firstH = 600.0f);
+
 } // namespace oked

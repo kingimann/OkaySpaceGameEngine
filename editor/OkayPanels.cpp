@@ -391,6 +391,7 @@ bool DrawInputPanelOkayUI(bool*, okaypanels::InputPanelModel&, const std::functi
 bool DrawTimersOkayUI(bool*, const std::function<std::string()>&) { return false; }
 bool DrawInputActionsOkayUI(bool*, okaypanels::InputActionsModel&, const std::function<void(okaypanels::InputActionsModel&)>&,
                             okaypanels::InputActionsState&, okaypanels::InputActionsIntent& intent) { intent = okaypanels::InputActionsIntent(); return false; }
+bool DrawAppWindowOkayUI(const char*, bool*, const char*, const std::function<void(float, float, float, float)>&, float, float) { return false; }
 #endif
 bool DrawHierarchyOkayUI(bool*, okaypanels::HierarchyModel&, okaypanels::HierarchyState&, okaypanels::HierarchyIntent&) { return false; }
 bool DrawInspectorHeaderOkayUI(okaypanels::InspectorHeaderModel&, okaypanels::InspectorHeaderState&, okaypanels::InspectorHeaderIntent&) { return false; }
@@ -684,6 +685,12 @@ bool DrawInputActionsOkayUI(bool* open, okaypanels::InputActionsModel& model, co
         intent = okayuiscreens::DrawInputActions(model, state, p.x, p.y, a.x, a.y).intent;
         OkayUI::PopTextScale();
     }, 900.0f, 600.0f);
+}
+
+// A whole OkayUI app in a window (the Script Editor's shared app): the free area is the app's.
+bool DrawAppWindowOkayUI(const char* title, bool* open, const char* itemId, const std::function<void(float x, float y, float w, float h)>& frame,
+                         float firstW, float firstH) {
+    return PanelWindow(title, open, itemId, [&](ImVec2 p, ImVec2 a) { if (frame) frame(p.x, p.y, a.x, a.y); }, firstW, firstH);
 }
 
 } // namespace oked

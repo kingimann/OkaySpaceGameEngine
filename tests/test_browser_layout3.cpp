@@ -3,7 +3,7 @@
 // captions, row groups, vertical-align in cells, border-spacing and border-collapse), 8.3.1 (margins collapsing through
 // parents and through empty boxes), 12.4 (counters) and 12.6.2 (list styles); CSS Images 3 (gradients, object-fit); Selectors 4
 // (:has()); CSS Overflow 3 (text-overflow); CSS Text Decoration 3; CSS Transforms 1; the HTML standard's presentational hints
-// for tables. The fixed text measure: every character is half the font size wide (8 px at 16 px), a normal line is
+// for tables, <font>, align, body margins; sub / sup; opacity on controls; mask images; quirks-mode tables. The fixed text measure: every character is half the font size wide (8 px at 16 px), a normal line is
 // 1.2 x 16 = 19.2 px and the text's em box starts 1.6 px below the line top.
 // Only the layout API that existed before round 3 is used here, so this file also builds against the old library (and fails).
 #include "BrowserLayoutTestKit.hpp"
@@ -319,6 +319,103 @@ int main() {
         int cells = 0;
         for (const BoxInfo& b : r2.boxes) if (b.tag == "td") ++cells;
         CHECK(cells == 1000);   // at most 1000 columns
+    }
+    // ---- real pages, round 1 (the owner's Google screenshot and the pages checked next to it) ----
+    {
+        // A "25% | content | 25%" row in a table with no width (a search page's form): the table is made wide enough for the
+        // percentages to hold with the middle column at its maximum width (200 / 50% = 400 px), so the right column starts after
+        // the middle one instead of over it. Before: the table was 272 wide and the right column started at 268, inside the
+        // 200 px box of the middle column (100 + 200 = 300 is where it ends now).
+        const std::string page = B0 + "<table cellspacing=0 cellpadding=0><tr><td id=a width='25%'>x</td><td id=b nowrap>"
+                                 "<div style='display:inline-block;width:200px;height:10px'></div></td><td id=c width='25%'>"
+                                 "<a style='display:block'>Advanced</a></td></tr></table>";
+        auto xw = [](const LayoutResult& r, const char* id, float x, float w) {
+            const BoxInfo* b = ById(r, id);
+            if (b && Near(b->x, x) && Near(b->w, w)) return true;
+            std::cerr << "  #" << id << ": got " << (b ? b->x : -1) << " w " << (b ? b->w : -1) << "  want " << x << " w " << w << "\n";
+            return false;
+        };
+        const LayoutResult r = Lay(page, 600);
+        CHECK(xw(r, "a", 0, 100));
+        CHECK(xw(r, "b", 100, 200));
+        CHECK(xw(r, "c", 300, 100));
+        // Too narrow for 25% + 200 + 25% (300 px): the percentage columns give back what they have above their minimum
+        // (75 - 8 and 75 - 64, in that proportion), so the middle column keeps its 200 px and nothing overlaps.
+        const LayoutResult n = Lay(page, 300);
+        CHECK(xw(n, "a", 0, 75.0f - 50.0f * 67.0f / 78.0f));
+        CHECK(xw(n, "b", 75.0f - 50.0f * 67.0f / 78.0f, 200));
+        CHECK(xw(n, "c", 75.0f - 50.0f * 67.0f / 78.0f + 200.0f, 75.0f - 50.0f * 11.0f / 78.0f));
+    }
+    {
+        // <font size color face> (HTML 15.3.4, the legacy font sizes 1-7 and +n / -n from 3): x-small 10, x-large 24, xxx-large
+        // 48, small 13; <p align> (15.3.3); <body marginwidth / marginheight> (15.3.2).
+        const LayoutResult r = Lay("<body marginwidth=0 marginheight=0><p style='margin:0'><font size=1>aa</font> <font size='+2'>bb</font> "
+                                   "<font size=7>cc</font> <font size=-1>dd</font> <font color=red face='Courier New'>ee</font></p>"
+                                   "<p align=center style='margin:0;width:100px'>ab</p>", 400);
+        const DrawCmd* aa = TextCmd(r, "aa"); const DrawCmd* bb = TextCmd(r, "bb"); const DrawCmd* cc = TextCmd(r, "cc");
+        const DrawCmd* dd = TextCmd(r, "dd"); const DrawCmd* ee = TextCmd(r, "ee");
+        CHECK(aa && Near(aa->font.size, 10) && Near(aa->x, 0));
+        CHECK(bb && Near(bb->font.size, 24));
+        CHECK(cc && Near(cc->font.size, 48));
+        CHECK(dd && Near(dd->font.size, 13));
+        CHECK(ee && ee->color == (Color{255, 0, 0, 255}) && ee->font.family.find("courier new") != std::string::npos);
+        const DrawCmd* ab = TextCmd(r, "ab");
+        CHECK(ab && Near(ab->x, (100 - 16) * 0.5f));
+    }
+    {
+        // sub / sup (HTML 15.3.4: vertical-align sub / super, font-size smaller): the superscript's baseline is a third of the
+        // parent's 20 px font above the line's (6.67 px), the subscript's a fifth below (4 px); a link inside the <sup> moves
+        // with it. Text is drawn from its em box top, 0.8 of its font size above its baseline: "x" at base - 16, "2" (16.67 px)
+        // at base - 6.67 - 13.33 = base - 20, "3" at base + 4 - 13.33.
+        const LayoutResult r = Lay(B0 + "<p style='font-size:20px;line-height:30px'>x<sup>2<a href='#n'>[1]</a></sup>y<sub>3</sub></p>", 400);
+        const DrawCmd* x = TextCmd(r, "x"); const DrawCmd* two = TextCmd(r, "2"); const DrawCmd* one = TextCmd(r, "[1]");
+        const DrawCmd* three = TextCmd(r, "3");
+        CHECK(x && two && one && three);
+        if (x && two && one && three) {
+            CHECK(Near(two->y - x->y, -4.0f));
+            CHECK(Near(one->y, two->y));
+            CHECK(Near(three->y - x->y, 16.0f + 4.0f - 20.0f / 1.2f * 0.8f));
+        }
+    }
+    {
+        // A control a page hides with opacity: 0 (its own button is drawn over it) is not drawn, but keeps its box for clicks; an
+        // element masked by an image (mask-image: url(), an icon) is hidden - the mask image is not loaded, so it counts as
+        // transparent (CSS Masking 1, 6.1) - while a gradient mask is not applied (the box is drawn as it is).
+        const LayoutResult r = Lay(B0 + "<div style='opacity:0'><input type=checkbox></div><input type=text>"
+                                   "<span style='display:inline-block;width:20px;height:20px;background-color:#ff0000;mask-image:url(i.svg)'></span>"
+                                   "<div style='width:20px;height:20px;background:#00ff00;-webkit-mask-image:linear-gradient(black,transparent)'></div>", 400);
+        CHECK(CountKind(r, DrawCmd::Control) == 1);
+        CHECK(r.controls.size() == 2);
+        CHECK(CountFill(r, Color{255, 0, 0, 255}) == 0);
+        CHECK(CountFill(r, Color{0, 255, 0, 255}) >= 1);
+    }
+    {
+        // Quirks mode (no DOCTYPE, HTML 15.3.8): a table does not inherit the text-align and font-size around it. With
+        // <!DOCTYPE html> the cell's "ab" is centred in the 300 px table at 32 px (32 wide: x = 134); without it, it is at the
+        // left at 16 px.
+        const std::string body = "<body style='margin:0'><div style='text-align:center;font-size:32px'><table style='width:300px' "
+                                 "cellspacing=0 cellpadding=0><tr><td>ab</td></tr></table></div>";
+        const LayoutResult std_ = Lay("<!DOCTYPE html>" + body, 400);
+        const LayoutResult q = Lay(body, 400);
+        const DrawCmd* s1 = TextCmd(std_, "ab"); const DrawCmd* q1 = TextCmd(q, "ab");
+        CHECK(s1 && Near(s1->font.size, 32) && Near(s1->x, 134));
+        CHECK(q1 && Near(q1->font.size, 16) && Near(q1->x, 0));
+    }
+    {
+        // <center> and align="right" move narrower block boxes inside them (HTML 15.3.3 "align descendants"): a 50% table in a
+        // 400 px <center> starts at 100; a 100 px <p> at 150; a 100 px <div> in <div align=right> at 300. In quirks mode (no
+        // DOCTYPE) the table's cell text starts at the left again; with <!DOCTYPE html> it is centred too (100 + (200 - 8) / 2).
+        const std::string body = "<body style='margin:0'><center><table id=t width='50%' cellspacing=0 cellpadding=0><tr><td>x</td></tr>"
+                                 "</table><p id=p style='width:100px;margin:0'>y</p></center><div align=right><div id=d style='width:100px'>z</div></div>";
+        const LayoutResult q = Lay(body, 400);
+        const LayoutResult d = Lay("<!DOCTYPE html>" + body, 400);
+        const BoxInfo* t = ById(q, "t"); const BoxInfo* pp = ById(q, "p"); const BoxInfo* dd = ById(q, "d");
+        CHECK(t && Near(t->x, 100) && Near(t->w, 200));
+        CHECK(pp && Near(pp->x, 150));
+        CHECK(dd && Near(dd->x, 300));
+        const DrawCmd* xq = TextCmd(q, "x"); const DrawCmd* xd = TextCmd(d, "x");
+        CHECK(xq && Near(xq->x, 100));
+        CHECK(xd && Near(xd->x, 196));
     }
     TEST_MAIN_RESULT();
 }

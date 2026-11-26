@@ -1293,8 +1293,9 @@ const StyleSheet& DefaultStyleSheet() {
         "u, ins { text-decoration: underline }\n"
         "s, strike, del { text-decoration: line-through }\n"
         "small, sub, sup { font-size: smaller }\n"
+        "sub { vertical-align: sub } sup { vertical-align: super }\n"
         "big { font-size: larger }\n"
-        "center { text-align: center }\n"
+        "center { text-align: -webkit-center }\n"
         "hr { margin: 0.5em auto; border-width: 1px; border-style: inset; border-color: gray }\n"
         "img { max-width: 100% }\n"
         "mark { background-color: yellow; color: black }\n"
@@ -1569,7 +1570,9 @@ bool ShadowList(const std::string& v, float em, std::vector<BoxShadow>& out) {
 void ApplyFontSize(ComputedStyle& s, const Declaration& d, const ComputedStyle& parent) {
     if (d.property == "font-size") {
         float px;
-        if (LowerAscii(d.value) == "inherit") s.fontSize = parent.fontSize;
+        const std::string lv = LowerAscii(Trim(d.value));
+        if (lv == "inherit" || lv == "unset" || lv == "revert") s.fontSize = parent.fontSize;   // font-size is inherited
+        else if (lv == "initial") s.fontSize = 16.0f;   // medium
         else if (FontSizeValue(d.value, parent.fontSize, px)) s.fontSize = px;
     } else if (d.property == "font") {
         for (const std::string& wIn : Words(d.value)) {
@@ -1847,6 +1850,11 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
     } else if (p == "box-shadow") {
         std::vector<BoxShadow> sh;
         if (ShadowList(d.value, em, sh)) s.shadows = sh;
+    } else if (p == "mask-image" || p == "-webkit-mask-image" || p == "mask" || p == "-webkit-mask") {
+        // CSS Masking 1, 6.1: a mask image that is not (yet) loaded counts as a transparent black layer, so the element is not
+        // shown. We do not load mask images: an url() mask (an icon drawn as a coloured box through a picture's shape) hides the
+        // element instead of painting a solid box; a gradient mask is not applied (the content is drawn unmasked).
+        s.maskUrl = LowerAscii(v).find("url(") != std::string::npos;
     } else if (p == "opacity") {
         float n; std::string u;
         if (ParseNumber(v, n, u)) s.opacity = std::max(0.0f, std::min(1.0f, u == "%" ? n / 100.0f : n));
@@ -1887,10 +1895,13 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
         }
         if (seenSize) { s.mono = IsMonoFamily(family); s.family = Trim(family); }
     } else if (p == "text-align") {
-        if (v == "left" || v == "start") s.textAlign = TextAlign::Left;
+        if (v == "left" || v == "start" || v == "-webkit-left" || v == "-moz-left") s.textAlign = TextAlign::Left;
         else if (v == "justify") s.textAlign = TextAlign::Justify;
-        else if (v == "right" || v == "end") s.textAlign = TextAlign::Right;
-        else if (v == "center" || v == "-webkit-center") s.textAlign = TextAlign::Center;
+        else if (v == "right" || v == "end" || v == "-webkit-right" || v == "-moz-right") s.textAlign = TextAlign::Right;
+        else if (v == "center" || v == "-webkit-center" || v == "-moz-center") s.textAlign = TextAlign::Center;
+        // the legacy values also align the block boxes inside (HTML 15.3.3 "align descendants")
+        s.legacyAlign = (v == "-webkit-center" || v == "-moz-center") ? 1 : (v == "-webkit-right" || v == "-moz-right") ? 2
+                      : (v == "-webkit-left" || v == "-moz-left") ? 3 : 0;
     } else if (p == "text-transform") {
         s.textTransform = v == "uppercase" ? TextTransform::Upper : v == "lowercase" ? TextTransform::Lower : v == "capitalize" ? TextTransform::Capitalize : TextTransform::None;
     } else if (p == "text-indent") {
@@ -2003,6 +2014,16 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
         if (v == "inherit") { s.verticalAlign = parent.verticalAlign; return; }
         s.verticalAlign = v == "middle" ? VAlign::Middle : v == "top" ? VAlign::Top : v == "bottom" ? VAlign::Bottom
                         : v == "text-top" ? VAlign::TextTop : v == "text-bottom" ? VAlign::TextBottom : VAlign::Baseline;
+        // sub / super / a length / a percentage of the line height move the baseline of the text inside (CSS 2.1 10.8.1). The
+        // parent's font has no subscript metrics here: a subscript goes down a fifth of the parent's font size, a superscript up
+        // a third (what common browsers draw when the font gives none).
+        s.baselineShift = parent.baselineShift;
+        if (v == "sub") s.baselineShift -= parent.fontSize * 0.2f;
+        else if (v == "super") s.baselineShift += parent.fontSize * (1.0f / 3.0f);
+        else if (!v.empty() && ((v[0] >= '0' && v[0] <= '9') || v[0] == '-' || v[0] == '.' || v[0] == '+')) {
+            Length l;
+            if (ParseLength(v, s.fontSize, true, l)) s.baselineShift += std::max(-1000.0f, std::min(1000.0f, l.Resolve(s.LineHeightPx())));
+        }
     } else if (p == "float") {
         s.floating = v == "left" || v == "inline-start" ? Float::Left : v == "right" || v == "inline-end" ? Float::Right : Float::None;
     } else if (p == "clear") {
@@ -2208,15 +2229,101 @@ bool SafeHintWord(const std::string& v) {
     for (char c : v) if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '#')) return false;
     return true;
 }
-// The CSS that an element's presentational attributes stand for (the HTML standard, 15.3.3 / 15.3.8 / 15.3.10, the parts the
-// pages we meet still use: table border / cellspacing / cellpadding / width / bgcolor / align, cell width / height / nowrap /
-// align / valign, body bgcolor / text).
+// The HTML standard's "rules for parsing a legacy font size" (15.3.4, the <font size> attribute): "3", "+1", "-2" ... -> the font-size
+// keyword it stands for, or "" when the value has no digits.
+std::string LegacyFontSize(const std::string& v) {
+    std::size_t i = 0;
+    while (i < v.size() && IsWs(v[i])) ++i;
+    int mode = 0;   // 0 absolute, 1 relative-plus, -1 relative-minus
+    if (i < v.size() && (v[i] == '+' || v[i] == '-')) { mode = v[i] == '+' ? 1 : -1; ++i; }
+    std::size_t j = i;
+    int value = 0;
+    while (j < v.size() && v[j] >= '0' && v[j] <= '9') { if (value < 100) value = value * 10 + (v[j] - '0'); ++j; }
+    if (j == i) return std::string();
+    if (mode != 0) value = 3 + mode * value;
+    if (value < 1) value = 1;
+    if (value > 7) value = 7;
+    static const char* const kSizes[] = {"x-small", "small", "medium", "large", "x-large", "xx-large", "xxx-large"};
+    return kSizes[value - 1];
+}
+// A <font face> list kept to the characters a family list needs (letters, digits, space, comma, hyphen, underscore), so the
+// attribute cannot add other declarations.
+std::string SafeFaceList(const std::string& v) {
+    if (v.empty() || v.size() > 200) return std::string();
+    for (char c : v)
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ' || c == ',' || c == '-' || c == '_'))
+            return std::string();
+    return v;
+}
+
+// An align attribute (lower-cased) on a block or a table cell as CSS: left / right / center / middle are the legacy
+// text-align values, which also align the blocks inside (HTML 15.3.3 / 15.3.8); justify is plain text-align.
+std::string AlignHint(const std::string& la) {
+    if (la == "left" || la == "right" || la == "center" || la == "middle") return "text-align:-webkit-" + std::string(la == "middle" ? "center" : la) + ";";
+    if (la == "justify") return "text-align:justify;";
+    return std::string();
+}
+
+// The CSS that an element's presentational attributes stand for (the HTML standard, 15.3.2 - 15.3.10, the parts the pages we
+// meet still use: table border / cellspacing / cellpadding / width / bgcolor / align, cell width / height / nowrap / align /
+// valign, body bgcolor / text / margins, <font> color / face / size, align on blocks, <img> align / hspace / vspace / border,
+// <hr> width / size / color / noshade / align).
 std::string PresentationalHints(const Node& el) {
     const std::string& n = el.name;
     std::string css;
     auto colorAttr = [&](const char* attr, const char* prop) {
         if (const std::string* v = el.Attr(attr)) { Color c; if (SafeHintWord(*v) && ParseColor(*v, c)) css += std::string(prop) + ":" + *v + ";"; }
     };
+    auto lowerAttr = [&](const char* attr) { const std::string* a = el.Attr(attr); return a ? LowerAscii(Trim(*a)) : std::string(); };
+    if (n == "font") {   // 15.3.4
+        colorAttr("color", "color");
+        if (const std::string* f = el.Attr("face")) { const std::string safe = SafeFaceList(*f); if (!safe.empty()) css += "font-family:" + safe + ";"; }
+        if (const std::string* sz = el.Attr("size")) { const std::string k = LegacyFontSize(*sz); if (!k.empty()) css += "font-size:" + k + ";"; }
+    }
+    if (n == "div" || n == "p" || n == "h1" || n == "h2" || n == "h3" || n == "h4" || n == "h5" || n == "h6" || n == "caption") {   // 15.3.3
+        css += AlignHint(lowerAttr("align"));
+    }
+    if (n == "body") {   // 15.3.2: the body's margins (marginheight / marginwidth first, then the per-side ones)
+        const std::string mh = DimensionAttr(el, "marginheight"), mw = DimensionAttr(el, "marginwidth");
+        const std::string top = !mh.empty() ? mh : DimensionAttr(el, "topmargin");
+        const std::string bottom = !mh.empty() ? mh : DimensionAttr(el, "bottommargin");
+        const std::string left = !mw.empty() ? mw : DimensionAttr(el, "leftmargin");
+        const std::string right = !mw.empty() ? mw : DimensionAttr(el, "rightmargin");
+        if (!top.empty()) css += "margin-top:" + top + ";";
+        if (!bottom.empty()) css += "margin-bottom:" + bottom + ";";
+        if (!left.empty()) css += "margin-left:" + left + ";";
+        if (!right.empty()) css += "margin-right:" + right + ";";
+    }
+    if (n == "img" || n == "object" || n == "embed" || n == "iframe") {   // 15.4.3 (align) and 15.4.2 (hspace / vspace), 15.4.4 (border)
+        const std::string la = lowerAttr("align");
+        if (la == "left" || la == "right") css += "float:" + la + ";";
+        else if (la == "top" || la == "middle" || la == "bottom") css += std::string("vertical-align:") + (la == "bottom" ? "baseline" : la) + ";";
+        const std::string hs = DimensionAttr(el, "hspace"), vs = DimensionAttr(el, "vspace");
+        if (!hs.empty()) css += "margin-left:" + hs + ";margin-right:" + hs + ";";
+        if (!vs.empty()) css += "margin-top:" + vs + ";margin-bottom:" + vs + ";";
+        if (n == "img" || n == "object") {
+            const std::string b = DimensionAttr(el, "border");
+            if (!b.empty() && b.back() != '%') css += "border:" + b + " solid;";
+        }
+    }
+    if (n == "hr") {   // 15.3.10
+        const std::string w = DimensionAttr(el, "width");
+        if (!w.empty()) css += "width:" + w + ";";
+        const std::string la = lowerAttr("align");
+        if (la == "left") css += "margin-left:0;margin-right:auto;";
+        else if (la == "right") css += "margin-left:auto;margin-right:0;";
+        const std::string* cv = el.Attr("color");
+        Color c;
+        const bool colored = cv && SafeHintWord(*cv) && ParseColor(*cv, c);
+        if (colored) css += "border-style:solid;border-color:" + *cv + ";background-color:" + *cv + ";";
+        if (el.Attr("noshade")) css += std::string("border-style:solid;") + (colored ? "" : "border-color:gray;background-color:gray;");
+        const std::string sz = DimensionAttr(el, "size");
+        if (!sz.empty() && sz.back() != '%') {
+            const float px = std::strtof(sz.c_str(), nullptr);
+            if (px <= 1.0f) css += "border-bottom-width:0;";
+            else css += "height:" + std::to_string((int)std::min(px - 2.0f, 1000.0f)) + "px;";
+        }
+    }
     if (n == "table" || n == "td" || n == "th" || n == "tr" || n == "body" || n == "thead" || n == "tbody" || n == "tfoot") colorAttr("bgcolor", "background-color");
     if (n == "body") colorAttr("text", "color");
     if (n == "table") {
@@ -2247,10 +2354,7 @@ std::string PresentationalHints(const Node& el) {
         }
     }
     if (n == "td" || n == "th" || n == "tr") {
-        if (const std::string* a = el.Attr("align")) {
-            const std::string la = LowerAscii(Trim(*a));
-            if (la == "left" || la == "right" || la == "center" || la == "justify") css += "text-align:" + la + ";";
-        }
+        css += AlignHint(lowerAttr("align"));   // 15.3.8: aligns descendants too
         if (const std::string* a = el.Attr("valign")) {
             const std::string la = LowerAscii(Trim(*a));
             if (la == "top" || la == "middle" || la == "bottom" || la == "baseline") css += "vertical-align:" + la + ";";
@@ -2318,7 +2422,7 @@ void CopyProperty(ComputedStyle& s, Work& wk, const std::string& p, const Comput
     if (p == "max-height") { s.maxHeight = from.maxHeight; return; }
     if (p == "min-width") { s.minWidth = from.minWidth; s.minWidthAuto = from.minWidthAuto; return; }
     if (p == "min-height") { s.minHeight = from.minHeight; s.minHeightAuto = from.minHeightAuto; return; }
-    if (p == "text-align") { s.textAlign = from.textAlign; return; }
+    if (p == "text-align") { s.textAlign = from.textAlign; s.legacyAlign = from.legacyAlign; return; }
     if (p == "text-indent") { s.textIndent = from.textIndent; return; }
     if (p == "text-transform") { s.textTransform = from.textTransform; return; }
     if (p.compare(0, 15, "text-decoration") == 0) { s.underline = from.underline; s.strike = from.strike; s.overline = from.overline; s.decoStyle = from.decoStyle; s.decoColor = from.decoColor; return; }
@@ -2326,6 +2430,7 @@ void CopyProperty(ComputedStyle& s, Work& wk, const std::string& p, const Comput
     if (p == "list-style" || p == "list-style-type") { s.listStyle = from.listStyle; return; }
     if (p == "visibility") { s.visible = from.visible; return; }
     if (p == "opacity") { s.opacity = from.opacity; return; }
+    if (p == "mask-image" || p == "-webkit-mask-image" || p == "mask" || p == "-webkit-mask") { s.maskUrl = from.maskUrl; return; }
     if (p == "position") { s.position = from.position; return; }
     if (p == "float") { s.floating = from.floating; return; }
     if (p == "clear") { s.clear = from.clear; return; }
@@ -2418,6 +2523,8 @@ ComputedStyle InheritedStyle(const ComputedStyle& parent) {
     s.bold = parent.bold; s.italic = parent.italic; s.mono = parent.mono; s.weight = parent.weight;
     s.family = parent.family;
     s.textAlign = parent.textAlign;
+    s.legacyAlign = parent.legacyAlign;
+    s.alignedByParent = parent.legacyAlign;
     s.textTransform = parent.textTransform;
     s.textIndent = parent.textIndent;
     s.lineHeight = parent.lineHeight; s.lineHeightFactor = parent.lineHeightFactor;
@@ -2432,6 +2539,7 @@ ComputedStyle InheritedStyle(const ComputedStyle& parent) {
     s.borderSpacingH = parent.borderSpacingH; s.borderSpacingV = parent.borderSpacingV;
     s.borderCollapse = parent.borderCollapse;
     s.captionBottom = parent.captionBottom;
+    s.baselineShift = parent.baselineShift;   // reset below for anything that is not inline (ComputeStyle)
     s.vars = parent.vars;
     // the rest start at their initial values
     for (int k = 0; k < 4; ++k) { s.margin[k] = Length::Px_(0); s.padding[k] = Length::Px_(0); }
@@ -2474,6 +2582,16 @@ ComputedStyle ComputeStyle(const Node& el, const ComputedStyle& parent, const st
         }
     };
     collect(DefaultStyleSheet(), 0, 0);
+    if (ctx && ctx->quirks) {
+        // The HTML standard's rendering rules for quirks mode (15.3.3 and 15.3.8): a table starts its fonts, line height,
+        // white-space and alignment afresh instead of inheriting them (an old page's <center> or <font> around a table does not
+        // reach its cells); a form keeps a 1em gap below it.
+        static const StyleSheet quirks = ParseStyleSheet(
+            "table { font-weight: initial; font-style: initial; font-variant: initial; font-size: initial; line-height: initial;"
+            " white-space: initial; text-align: initial }\n"
+            "form { margin-bottom: 1em }\n");
+        collect(quirks, 0, 0);
+    }
     // Rules the default sheet does not say with selectors: the link look a[href] (pseudo-elements excepted).
     static const std::vector<Declaration> linkDecls = ParseDeclarations("color: #0000ee; text-decoration: underline");
     if (pseudo == 0 && el.name == "a" && el.Attr("href")) for (const Declaration& d : linkDecls) list.push_back({0, 11, order++, &d});
@@ -2559,6 +2677,7 @@ ComputedStyle ComputeStyle(const Node& el, const ComputedStyle& parent, const st
         else if (s.display == Display::TableRow || s.display == Display::TableCell || IsTableSection(s.display) || s.display == Display::TableCaption) s.display = Display::Block;
     }
     if (s.OutOfFlow()) s.floating = Float::None;
+    if (s.display != Display::Inline) s.baselineShift = 0.0f;   // a new line box: the text inside starts on its own baseline
     // generated content: attr() filled in from the element
     if (pseudo != 0 && s.hasContent) {
         std::string out;

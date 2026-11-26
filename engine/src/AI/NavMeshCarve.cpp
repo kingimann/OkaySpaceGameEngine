@@ -152,11 +152,11 @@ int NavMesh::Carve(const std::vector<NavCarveVolume>& volumes, NavMesh& out) con
     std::vector<NavCarveRect> rects;
     for (const NavCarveVolume& v : volumes) NavCarveRects(v, settings.agentRadius, settings.cellSize, rects);
     std::vector<std::vector<int>> cuts(np);   // polygon -> indices into `rects`
-    std::vector<int> near;
+    std::vector<int> nearby;
     for (std::size_t r = 0; r < rects.size(); ++r) {
         const NavCarveRect& c = rects[r];
-        PolysNear(c.minX, c.minZ, c.maxX, c.maxZ, near);
-        for (int pi : near) {
+        PolysNear(c.minX, c.minZ, c.maxX, c.maxZ, nearby);
+        for (int pi : nearby) {
             const Poly& p = polys[(std::size_t)pi];
             if (c.maxX - p.minX <= kTouch || p.maxX - c.minX <= kTouch || c.maxZ - p.minZ <= kTouch || p.maxZ - c.minZ <= kTouch) continue;
             // The volume must stand on this floor: reach above it and start below head room.

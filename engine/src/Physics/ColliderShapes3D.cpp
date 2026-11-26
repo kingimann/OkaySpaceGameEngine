@@ -35,13 +35,13 @@ std::vector<Vec3> ThinHullPoints(const std::vector<Vec3>& p, int maxPoints) {
     std::vector<Vec3> keep; keep.push_back(p[0]);
     std::vector<float> dist(p.size(), 1e30f);
     while ((int)keep.size() < maxPoints) {
-        int far = 0; float fd = -1.0f;
+        int farthest = 0; float fd = -1.0f;
         for (std::size_t i = 0; i < p.size(); ++i) {
             dist[i] = std::min(dist[i], (p[i] - keep.back()).SqrMagnitude());
-            if (dist[i] > fd) { fd = dist[i]; far = (int)i; }
+            if (dist[i] > fd) { fd = dist[i]; farthest = (int)i; }
         }
         if (fd <= 0.0f) break;
-        keep.push_back(p[(std::size_t)far]);
+        keep.push_back(p[(std::size_t)farthest]);
     }
     return keep;
 }

@@ -167,15 +167,15 @@ void EditTransformSession::Begin(Mesh& mesh, EditXform kind, const std::vector<i
     if (opt.softRadius > 1e-6f && !anchors.empty()) {
         for (int v = 0; v < n; ++v) {
             if (isSel[v]) continue;
-            float best = 1e30f; int near = anchorIds[0];
+            float best = 1e30f; int nearestAnchor = anchorIds[0];
             for (std::size_t k = 0; k < anchors.size(); ++k) {
                 const float d2 = (mesh.vertices[v] - anchors[k]).SqrMagnitude();
-                if (d2 < best) { best = d2; near = anchorIds[k]; }
+                if (d2 < best) { best = d2; nearestAnchor = anchorIds[k]; }
             }
             const float d = std::sqrt(best);
             if (d >= opt.softRadius) continue;
             const float t = 1.0f - d / opt.softRadius;
-            add(v, t * t * (3.0f - 2.0f * t), 0, near);
+            add(v, t * t * (3.0f - 2.0f * t), 0, nearestAnchor);
         }
     }
     // Symmetry: each moved vertex's partner across the enabled planes (and across combinations of them) gets the

@@ -12,6 +12,9 @@
 
 namespace okay::browser {
 
+static CssNotUsedFn g_cssNotUsed = nullptr;   // the site check's reporter (SetCssNotUsedReporter)
+void SetCssNotUsedReporter(CssNotUsedFn report) { g_cssNotUsed = report; }
+
 namespace {
 
 bool IsWs(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f'; }
@@ -1198,7 +1201,7 @@ void ParseRules(const std::string& css, std::size_t from, std::size_t to, StyleS
         Rule rule;
         rule.media = media;
         int spec = 0;
-        if (!ParseSelectorList(prelude, rule.selectors, spec)) continue;
+        if (!ParseSelectorList(prelude, rule.selectors, spec)) { if (g_cssNotUsed) g_cssNotUsed("selector", prelude); continue; }
         bool tooLong = false;
         for (const Selector& s : rule.selectors) { if (s.parts.size() > limits.maxSelectorParts) tooLong = true; if (s.dynamic) sheet.hasDynamic = true; }
         if (tooLong) continue;
@@ -2184,7 +2187,7 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
         }
         s.hasContent = true;
         s.content = out;
-    }
+    } else if (g_cssNotUsed) g_cssNotUsed("property", p);
 }
 
 // A dimension attribute ("120", "50%", "120px") as CSS text, or "" (the HTML standard, 2.3.4.4 "rules for parsing dimension values").

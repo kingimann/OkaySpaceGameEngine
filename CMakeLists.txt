@@ -325,6 +325,7 @@ endif()
 # run natively by the player. On whenever OkayUI is built (it returns quietly otherwise).
 if(NOT EMSCRIPTEN)
     add_subdirectory(browser)
+    add_subdirectory(tools/sitecheck)   # Site check (okay-sitecheck): real sites through our own browser, failures ranked
 endif()
 
 # ---- Standalone game player ------------------------------------------

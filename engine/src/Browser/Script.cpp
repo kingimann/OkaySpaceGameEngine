@@ -134,6 +134,64 @@ int HeightOf(Node* n, std::size_t& visited) {   // levels below n (0: no childre
 
 } // namespace
 
+std::string MissingWebApi(const std::string& line) {
+    // Names from the HTML, DOM, CSSOM, Fetch, URL, Encoding, Web IDL and ECMAScript standards' global interfaces and functions.
+    static const std::unordered_set<std::string> kGlobals = {
+        "navigator", "screen", "performance", "crypto", "indexedDB", "caches", "visualViewport", "speechSynthesis", "trustedTypes",
+        "devicePixelRatio", "innerWidth", "innerHeight", "outerWidth", "outerHeight", "scrollX", "scrollY", "pageXOffset",
+        "pageYOffset", "scrollTo", "scrollBy", "scroll", "open", "postMessage", "atob", "btoa", "matchMedia", "getSelection",
+        "requestIdleCallback", "cancelIdleCallback", "queueMicrotask", "structuredClone", "customElements", "createImageBitmap",
+        "isSecureContext", "origin", "self", "top", "parent", "frames", "opener", "CSS", "Intl", "WeakRef", "FinalizationRegistry",
+        "Proxy", "Reflect", "BigInt", "IntersectionObserver", "ResizeObserver", "MutationObserver", "PerformanceObserver",
+        "ReportingObserver", "CustomEvent", "Event", "EventTarget", "KeyboardEvent", "MouseEvent", "PointerEvent", "FocusEvent",
+        "InputEvent", "UIEvent", "MessageChannel", "MessagePort", "BroadcastChannel", "Worker", "SharedWorker", "WebSocket",
+        "EventSource", "URL", "URLSearchParams", "TextEncoder", "TextDecoder", "AbortController", "AbortSignal", "Blob", "File",
+        "FileReader", "FormData", "DOMParser", "XMLSerializer", "Image", "Audio", "Option", "Node", "Element", "HTMLElement",
+        "Document", "DocumentFragment", "ShadowRoot", "Range", "Selection", "NodeFilter", "NodeList", "HTMLCollection", "DOMRect",
+        "DOMMatrix", "DOMException", "ImageData", "Path2D", "OffscreenCanvas", "CanvasRenderingContext2D", "WebGLRenderingContext",
+        "CSSStyleSheet", "Request", "Notification", "AudioContext", "MediaSource", "ClipboardItem", "HTMLIFrameElement",
+        "HTMLImageElement", "HTMLScriptElement", "HTMLAnchorElement", "SVGElement", "Symbol", "WeakMap", "WeakSet", "Map", "Set",
+        "Promise", "globalThis"};
+    static const std::unordered_set<std::string> kRoots = {
+        "window", "self", "globalThis", "document", "navigator", "location", "history", "screen", "performance", "console",
+        "localStorage", "sessionStorage", "Object", "Array", "String", "Number", "Math", "JSON", "Promise", "Reflect", "Symbol",
+        "Date", "RegExp", "Intl", "crypto", "customElements", "CSS"};
+    // DOM and CSSOM members that are called on elements, documents and events.
+    static const std::unordered_set<std::string> kMembers = {
+        "closest", "matches", "getBoundingClientRect", "getClientRects", "insertAdjacentHTML", "insertAdjacentElement",
+        "insertAdjacentText", "replaceWith", "replaceChildren", "before", "after", "prepend", "toggleAttribute", "attachShadow",
+        "animate", "scrollIntoView", "scrollTo", "scrollBy", "requestFullscreen", "dispatchEvent", "contains", "getRootNode",
+        "compareDocumentPosition", "hasAttribute", "getAttributeNames", "setAttributeNS", "getAttributeNS", "cloneNode",
+        "isEqualNode", "normalize", "createDocumentFragment", "createElementNS", "createComment", "createEvent", "createRange",
+        "createTreeWalker", "importNode", "adoptNode", "elementFromPoint", "elementsFromPoint", "hasFocus", "getElementsByName",
+        "querySelectorAll", "querySelector", "setPointerCapture", "releasePointerCapture", "checkVisibility", "showModal",
+        "showPopover", "hidePopover", "togglePopover", "reportValidity", "checkValidity", "setCustomValidity", "select",
+        "setSelectionRange", "getContext", "toDataURL", "toBlob", "canPlayType", "getPropertyValue", "setProperty",
+        "removeProperty", "composedPath", "initEvent", "initCustomEvent", "namedItem", "sendBeacon"};
+    auto quoted = [&](const char* tail, std::string& name) {
+        const std::size_t at = line.find(tail);
+        if (at == std::string::npos || at == 0 || line[at - 1] != '\'') return false;
+        const std::size_t open = line.rfind('\'', at - 2);
+        if (open == std::string::npos) return false;
+        name = line.substr(open + 1, at - 1 - open - 1);
+        return !name.empty() && name.size() < 200;
+    };
+    std::string name;
+    if (quoted(" is not defined", name)) return kGlobals.count(name) ? name : std::string();
+    if (quoted(" is undefined, not a function", name) || quoted(" is undefined, not a constructor", name)) {
+        const std::size_t dot = name.find('.'), last = name.rfind('.');
+        if (dot == std::string::npos) return kGlobals.count(name) ? name : std::string();
+        std::string root = name.substr(0, dot);
+        if (root == "window" || root == "self" || root == "globalThis") {   // window.X is the global X
+            const std::string rest = name.substr(dot + 1);
+            if (rest.find('.') == std::string::npos) return kGlobals.count(rest) ? rest : std::string();
+        }
+        if (kRoots.count(root)) return name;
+        if (kMembers.count(name.substr(last + 1))) return "*." + name.substr(last + 1);   // "*": the object's type is not known here
+    }
+    return std::string();
+}
+
 bool IsJavaScriptType(const std::string& typeIn) {
     std::string t = LowerAscii(typeIn);
     const std::size_t semi = t.find(';');
@@ -227,6 +285,10 @@ struct PageScripts::Impl {
         l.text = text.size() > 4096 ? text.substr(0, 4096) + "..." : text;
         console.push_back(std::move(l));
         ++consoleCount;
+        if (lv == ConsoleLine::Error) {   // name what our engine lacks (MissingWebApi), for the console and the site check
+            const std::string api = MissingWebApi(text);
+            if (!api.empty()) Log(ConsoleLine::Warn, "not implemented: " + api);
+        }
     }
 
     // ---- host entries: one budget each

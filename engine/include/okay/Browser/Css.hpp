@@ -372,4 +372,10 @@ ComputedStyle InheritedStyle(const ComputedStyle& parent);
 ComputedStyle ComputeStyle(const Node& el, const ComputedStyle& parent, const std::vector<const StyleSheet*>& author,
                            const StyleContext* ctx = nullptr, int pseudo = 0);
 
+/// Site check (tools/sitecheck) reporting hook: called with `what` "property" and the name of each property ComputeStyle meets
+/// and does not use (custom properties aside), and with "selector" and each rule's selector text ParseStyleSheet drops because
+/// it is outside our subset. Null (the default): nothing is reported. Set it before pages are styled (one pointer, no lock).
+using CssNotUsedFn = void (*)(const char* what, const std::string& text);
+void SetCssNotUsedReporter(CssNotUsedFn report);
+
 } // namespace okay::browser

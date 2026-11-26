@@ -11,7 +11,7 @@
   },
   "player": {
    "calls": 0,
-   "words": 1
+   "words": 2
   },
   "shared": {
    "calls": 10,
@@ -583,8 +583,9 @@
   },
   "player/main.cpp": {
    "calls": 0,
-   "words": 1,
+   "words": 2,
    "by_word": {
+    "SDL_MAIN_HANDLED": 1,
     "SDL_Renderer": 1
    }
   },

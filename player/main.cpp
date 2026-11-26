@@ -5,6 +5,9 @@
 // With no argument it loads "game.okayscene" next to the executable. The editor's
 // "Build Game" writes that file and copies this player beside it, so a shipped
 // game is just <Game>.exe + game.okayscene (+ any assets).
+// Some headers still pull in SDL.h (OkayScriptUIBridge.hpp). Without this, SDL renames main() to SDL_main and the
+// Windows build has no entry point (MinGW 13: "undefined reference to WinMain"). Remove once no header includes SDL.h.
+#define SDL_MAIN_HANDLED
 #include <cstdint>
 #include "OwnStack.hpp"            // the OKAY_OWN_STACK=1 dogfood switch and the one-line startup stack report
 #include "okay/Platform/Platform.hpp"   // okay::platform: window, GL context, events, input, timers, audio, controllers

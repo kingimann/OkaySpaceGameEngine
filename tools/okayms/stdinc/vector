@@ -1,5 +1,7 @@
 // okay-ms own standard header: std::vector, written from ISO/IEC 14882 [vector] (a contiguous sequence that grows
-// by doubling). Own minimal version: no allocator argument, no exceptions (an allocation failure is not checked),
+// by doubling). Own minimal version: an allocator argument is accepted (Round 32: FbxReader.hpp's
+// vector<uint8_t, UninitAllocator<uint8_t>>) but not used: storage always comes from malloc, and resize() value-initializes
+// the new elements whatever the allocator's construct() does. No exceptions (an allocation failure is not checked),
 // iterators are pointers, initializer_list and move construction are supported, emplace_back (no emplace). Storage comes from the global malloc and free
 // (see <cstdlib>); elements are made with placement new and destroyed with an explicit destructor call.
 #pragma once
@@ -11,7 +13,7 @@
 #include <utility>
 #include <iterator>
 namespace std {
-template <typename T>
+template <typename T, typename Alloc = allocator<T> >
 class vector {
     T* data_;
     size_t size_;
@@ -33,6 +35,8 @@ class vector {
 
 public:
     typedef T value_type;
+    typedef Alloc allocator_type;
+    Alloc get_allocator() const { return Alloc(); }
     typedef size_t size_type;
     typedef T* iterator;
     typedef const T* const_iterator;
@@ -123,6 +127,19 @@ public:
     std::reverse_iterator<const T*> rend() const { return std::reverse_iterator<const T*>(data_); }
 
     void reserve(size_t n) { grow_to(n); }
+    // shrink_to_fit ([vector.capacity] 8; Round 32, FbxReader.cpp): the storage is made exactly size() long (the
+    // standard makes it a non-binding request; here it is always done). An empty vector frees its storage.
+    void shrink_to_fit() {
+        if (cap_ == size_) return;
+        T* fresh = size_ == 0 ? (T*)0 : (T*)malloc(size_ * sizeof(T));
+        for (size_t i = 0; i < size_; ++i) {
+            new (fresh + i) T(std::move(data_[i]));
+            data_[i].~T();
+        }
+        if (data_) free(data_);
+        data_ = fresh;
+        cap_ = size_;
+    }
     void push_back(const T& value) {
         if (size_ == cap_) {
             // `value` may live inside this vector: copy it before the storage moves.

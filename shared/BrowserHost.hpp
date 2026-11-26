@@ -26,6 +26,8 @@
 
 namespace okay::browser {
 
+struct TabFetch;   // one request of a tab on the wire (BrowserHost.cpp)
+
 class TabHost {
 public:
     /// How the host makes and frees a texture from RGBA pixels (null = it could not).
@@ -81,9 +83,33 @@ public:
     /// End the running game.
     void StopGame();
 
+    /// The profile's cookies and localStorage (okay/Browser/Profile.hpp SiteData, one each per profile; not owned, they must
+    /// outlive this host). Set on the tab now and again whenever the tab is made anew (Open, Reset). Null: none (the default).
+    void SetSiteData(CookieStore* cookies, WebStorage* local);
+
+    /// Site check (tools/sitecheck): one answer the host handed to the tab (after its redirects), for a tool that reports what
+    /// failed and why. `body` is valid only during the call. Unset (the default): nothing is reported.
+    struct FetchReport {
+        std::string url, finalUrl;   ///< what the tab asked for; the last hop's address
+        const char* kind = "";       ///< "page", "image", "style", "script", "font", "request" (a page's fetch / XMLHttpRequest)
+        bool reached = false;        ///< an answer came (any status)
+        long status = 0;
+        std::string netError;        ///< the HTTP client's reason when no answer came (DNS, TLS, timeout ...)
+        std::string rawHead;         ///< the answer's head
+        const std::string* body = nullptr;
+        std::string note;            ///< what the host did not use: "redirect refused", "image not decoded", "font not TrueType or OpenType"
+    };
+    void SetFetchReporter(std::function<void(const FetchReport&)> report) { m_reporter = std::move(report); }
+
 private:
+    std::function<void(const FetchReport&)> m_reporter;
     struct Impl;
     void RefreshPageInfo();
+    void Send(std::vector<TabFetch> jobs);
+    bool FollowRedirect(TabFetch& job, long status, const std::string& location, const std::vector<std::string>& setCookies,
+                        std::vector<TabFetch>& next);
+    CookieStore* m_cookies = nullptr;
+    WebStorage* m_local = nullptr;
     void DeliverPageAnswerImpl(const std::string& url, bool ok, long status, std::string& body, const std::string& error,
                                const std::string& contentType, const std::string& disposition, const std::string& finalUrl,
                                std::int64_t size, bool tooBig);

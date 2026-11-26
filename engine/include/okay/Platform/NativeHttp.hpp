@@ -169,9 +169,12 @@ struct RequestOptions {
     bool cookies = false;
     /// Reuse a kept-alive connection to the same host and keep this one for the next call (own client, same thread).
     bool keepAlive = true;
-    /// false: a 3xx answer is returned as it is (curl without -L). WinHTTP only; the own client always follows and drops
-    /// credential headers when the origin changes.
+    /// false: a 3xx answer is returned as it is (curl without -L), on both clients (the browser follows redirects itself, so
+    /// each hop gets its own cookies). true: followed; the own client drops credential headers when the origin changes.
     bool followRedirects = true;
+    /// The caller keeps its own cookies (the browser's CookieStore): the client neither stores nor sends any of its own. WinHTTP
+    /// otherwise keeps cookies per session (WINHTTP_DISABLE_COOKIES turns that off); the own client keeps none unless `cookies`.
+    bool callerCookies = false;
 };
 
 /// Result of RequestEx: Result plus what a resumable download needs.
@@ -352,6 +355,10 @@ inline ExResult WinRequestEx(const std::string& method, const std::string& url, 
         WinHttpSetOption(req, WINHTTP_OPTION_REDIRECT_POLICY, &never, sizeof(never));
         DWORD off = WINHTTP_DISABLE_REDIRECTS;
         WinHttpSetOption(req, WINHTTP_OPTION_DISABLE_FEATURE, &off, sizeof(off));
+    }
+    if (ro.callerCookies) {   // the caller's own cookie store decides what is sent; WinHTTP's session cookies stay out
+        DWORD noCookies = WINHTTP_DISABLE_COOKIES;
+        WinHttpSetOption(req, WINHTTP_OPTION_DISABLE_FEATURE, &noCookies, sizeof(noCookies));
     }
     std::wstring hdrs;
     for (const std::string& h : CleanHeaderLines(headers)) { hdrs += Widen(h); hdrs += L"\r\n"; }
@@ -577,6 +584,7 @@ inline ExResult RequestEx(const std::string& method, const std::string& url,
     if (ro.maxRedirects > 0) opt.limits.maxRedirects = ro.maxRedirects;
     opt.acceptGzip = ro.acceptGzip && outFile.empty();
     opt.keepAlive = ro.keepAlive;
+    opt.followRedirects = ro.followRedirects;
     std::shared_ptr<okay::ownhttp::CookieJar> jar;
     if (ro.cookies) { jar = std::make_shared<okay::ownhttp::CookieJar>(); opt.cookieJar = jar; }
     std::vector<std::string> hdrs = headers;

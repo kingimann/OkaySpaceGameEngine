@@ -158,14 +158,40 @@ def title(branch, sha):
     return out
 
 
-def notes_text(version, base, branch, sha, note):
-    """The newest test build's notes: the launcher's "what's new" card shows the first lines."""
+MAX_CHANGE_LINES = 50        # the launcher keeps 60 lines per build (launcher/PageLayout.hpp kNotesMaxLines); title, note and footer use the rest
+MAX_CHANGE_CHARS = 400       # one line at most (kNotesMaxLineBytes)
+
+
+def change_lines(changelog_text, base):
+    """The detailed "what's in this build" list: the bullets of dist/CHANGELOG.txt's block for the base version (the version the
+    test builds are on), read by fast_release.changelog_entry (one reader for both). Control characters are dropped, each line is
+    cut to MAX_CHANGE_CHARS and the list to MAX_CHANGE_LINES. Owner, 2026-11-26: "makes the whats new more detailed with all the
+    updates you added listed"."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from fast_release import changelog_entry
+    out = []
+    for e in changelog_entry(changelog_text or "", base):
+        for b in e["bullets"]:
+            t = re.sub(r"[\x00-\x1f\x7f]", " ", b).strip()
+            if not t:
+                continue
+            if len(t) > MAX_CHANGE_CHARS:
+                t = t[:MAX_CHANGE_CHARS - 3].rstrip() + "..."
+            out.append(t)
+    return out[:MAX_CHANGE_LINES]
+
+
+def notes_text(version, base, branch, sha, note, changes=None):
+    """The newest test build's notes: the launcher's "what's new" card shows the first lines, then "Show all"."""
     lines = [title(branch, sha)]
     n = clean_line(note)
     if n:
         lines.append(n)
     s = clean_sha(sha)
     lines.append("Built on release %s%s." % (base, " from commit " + s if s else ""))
+    if changes:
+        lines.append("What's in this build:")
+        lines += ["- " + c for c in changes]
     lines.append("A test build for trying out unfinished work. It may be broken. Turn 'Get test builds' off in the launcher's Settings to stop getting these.")
     return "\n".join(lines) + "\n"
 
@@ -449,7 +475,14 @@ def _cmd_notes(a):
         return _die(2, "the base release %r is not the first three numbers of %s" % (a.base, a.version))
     if clean_branch(a.branch) is None or clean_sha(a.sha) is None:
         return _die(2, "the branch or the commit id is not allowed")
-    _write_atomic(a.out, notes_text(a.version, a.base, a.branch, a.sha, a.note))
+    changes = None
+    if a.changelog:
+        try:
+            with open(a.changelog, encoding="utf-8") as f:
+                changes = change_lines(f.read(), a.base)
+        except OSError as e:
+            return _die(2, "cannot read the changelog: %s" % e)
+    _write_atomic(a.out, notes_text(a.version, a.base, a.branch, a.sha, a.note, changes))
     return 0
 
 
@@ -621,6 +654,15 @@ def _self_test():
     ok(nt.splitlines()[0] == "Test build of walk-vs-run (0123456)" and "try the new run speed" in nt and "release 2.876.0" in nt and nt.endswith("\n"), "notes text")
     ok("\x01" not in notes_text("2.876.0.17", "2.876.0", "main", c, "a\x01b") and notes_text("2.876.0.17", "2.876.0", "main", c, "").count("\n") == 3, "notes with no note")
 
+    cl = "Changelog\n\nv2.876.0\n  Title line\n  - First change\n    continued here\n  - Second\x01 change\n\nv2.875.9\n  - Older\n"
+    ch = change_lines(cl, "2.876.0")
+    ok(ch == ["First change continued here", "Second  change"], "changes: the base version's bullets, joined, no control characters")
+    ok(change_lines(cl, "2.877.0") == [] and change_lines("", "2.876.0") == [], "changes: no block, no lines")
+    ok(len(change_lines("v1.0.0\n" + "".join("  - item %d\n" % i for i in range(80)), "1.0.0")) == MAX_CHANGE_LINES, "changes: capped")
+    ok(len(change_lines("v1.0.0\n  - " + "x" * 900 + "\n", "1.0.0")[0]) == MAX_CHANGE_CHARS, "changes: long line cut")
+    nt2 = notes_text("2.876.0.17", "2.876.0", "main", c, "", ch).splitlines()
+    ok(nt2[2] == "What's in this build:" and nt2[3] == "- First change continued here" and nt2[-1].startswith("A test build"), "notes list the changes before the footer")
+
     # ---- summary
     sm = summary_text("2.876.0.17", "2.876.0", "claude/walk-vs-run", c, "see [this](http://x.invalid) <b>bold</b> *now*")
     ok("Get test builds" in sm and "v2.876.0.17" in sm and "walk-vs-run" in sm and "Go back to the stable version" in sm and "release 2.876.0" in sm, "summary says what to do")
@@ -712,6 +754,7 @@ def main(argv):
     n.add_argument("--branch", required=True)
     n.add_argument("--sha", required=True)
     n.add_argument("--note", default="")
+    n.add_argument("--changelog", default="", help="dist/CHANGELOG.txt: list its block for --base as \"What's in this build\"")
     n.add_argument("--out", required=True)
     sm = sub.add_parser("summary")
     sm.add_argument("--version", required=True)

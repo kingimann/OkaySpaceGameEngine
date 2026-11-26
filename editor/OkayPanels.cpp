@@ -8,6 +8,9 @@
 #include "OkayUIPanels.hpp"
 #include "OkayUIEditorPanels.hpp"
 #include "AudioMixerModel.hpp"   // FillAudioMixerModel
+#ifdef OKAY_HAVE_CLI_PANEL
+#include "CommandLinePanel.hpp"   // shared/: the Command Line panel (okay commands run inside the editor)
+#endif
 
 #include <algorithm>
 #include <functional>
@@ -389,6 +392,7 @@ bool DrawPerfOverlayOkayUI(bool*, okaypanels::PerfOverlayModel&, const std::func
 bool DrawInputPanelOkayUI(bool*, okaypanels::InputPanelModel&, const std::function<void(okaypanels::InputPanelModel&)>&,
                           okaypanels::InputPanelState&, okaypanels::InputPanelIntent& intent) { intent = okaypanels::InputPanelIntent(); return false; }
 bool DrawTimersOkayUI(bool*, const std::function<std::string()>&) { return false; }
+bool DrawCommandLineOkayUI(bool*, const std::string&) { return false; }
 bool DrawInputActionsOkayUI(bool*, okaypanels::InputActionsModel&, const std::function<void(okaypanels::InputActionsModel&)>&,
                             okaypanels::InputActionsState&, okaypanels::InputActionsIntent& intent) { intent = okaypanels::InputActionsIntent(); return false; }
 #endif
@@ -673,6 +677,27 @@ bool DrawTimersOkayUI(bool* open, const std::function<std::string()>& text) {
         okayuiscreens::DrawTimers(t, p.x, p.y, a.x, a.y);
         OkayUI::PopTextScale();
     }, 560.0f, 360.0f);
+}
+
+// View > Panels > Command Line: the one Command Line panel (shared/CommandLinePanel.hpp), commands run inside the editor.
+bool DrawCommandLineOkayUI(bool* open, const std::string& projectDir) {
+#ifdef OKAY_HAVE_CLI_PANEL
+    static okaycli::CommandLinePanel panel([] {
+        okaycli::CommandLinePanel::Config c;
+        c.idPrefix = "##okayui_cmdline";
+        c.copy = [](const std::string& t) { ImGui::SetClipboardText(t.c_str()); };   // the whole text (OkayUI's clipboard keeps 4 KB)
+        return c;
+    }());
+    panel.SetFolder(projectDir);
+    return PanelWindow("Command Line", open, "##okayui_cmdline", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        panel.Frame(p.x, p.y, a.x, a.y);
+        OkayUI::PopTextScale();
+    }, 640.0f, 320.0f);
+#else
+    (void)open; (void)projectDir;
+    return false;
+#endif
 }
 
 bool DrawInputActionsOkayUI(bool* open, okaypanels::InputActionsModel& model, const std::function<void(okaypanels::InputActionsModel&)>& fill,

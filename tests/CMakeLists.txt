@@ -1490,6 +1490,20 @@ target_compile_features(test_account PRIVATE cxx_std_17)
 target_include_directories(test_account PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME account COMMAND test_account)
 
+# OkayBackend round 2 (docs/platform/okay_backend.md): every auth flow AccountService sends (sign-up, sign-in, refresh, session
+# check, password reset, account changes, sign-out) must send byte-identical requests to the golden texts recorded before the
+# move, and the Supabase provider called directly must send the same. Fake server only: no request leaves the process.
+add_executable(test_okay_backend_golden_auth test_okay_backend_golden_auth.cpp)
+target_compile_features(test_okay_backend_golden_auth PRIVATE cxx_std_17)
+target_include_directories(test_okay_backend_golden_auth PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME okay_backend_golden_auth COMMAND test_okay_backend_golden_auth)
+# OkayBackend core: provider choice (OKAY_BACKEND, backend.json) and AccountService following it, the request builder's
+# header order, the transports, reading token claims. Header-only, no network.
+add_executable(test_okay_backend test_okay_backend.cpp)
+target_compile_features(test_okay_backend PRIVATE cxx_std_17)
+target_include_directories(test_okay_backend PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME okay_backend COMMAND test_okay_backend)
+
 # The editor's sign-in gate (editor/SignInGate.hpp): no session blocked, a confirmed session opens, an unconfirmed one is
 # blocked (no offline grace), the test switch, and the player / exported games never gated. Header-only like test_account.
 add_executable(test_editor_signin_gate test_editor_signin_gate.cpp)
@@ -3553,6 +3567,25 @@ if(TARGET okay_cli_lib)
     target_compile_definitions(test_okay_cli PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     add_test(NAME okay_cli COMMAND test_okay_cli)
     set_tests_properties(okay_cli PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+endif()
+# okay run inside another program (tools/okay-cli/CommandJob.hpp): lines and exit codes from words, the project folder as the working
+# folder, a worker-thread job that streams and stops (also inside a program it started), git told to use okay and never the host.
+if(TARGET okay_cli_lib)
+    add_executable(test_okay_cli_run test_okay_cli_run.cpp)
+    target_link_libraries(test_okay_cli_run PRIVATE okay_cli_lib)
+    target_include_directories(test_okay_cli_run PRIVATE ${PROJECT_SOURCE_DIR}/shared)
+    add_test(NAME okay_cli_run COMMAND test_okay_cli_run)
+    set_tests_properties(okay_cli_run PROPERTIES TIMEOUT 120)
+endif()
+# The Command Line panel (shared/CommandLinePanel.hpp, View > Panels > Command Line in the editor): its model (history, Tab completion,
+# problems apart, Copy, the folder) and, drawn headless with OkayUI, keys and the golden picture (okayui/tests/golden).
+if(TARGET okay_cli_panel AND TARGET okay_ui_soft)
+    add_executable(test_command_line_panel test_command_line_panel.cpp)
+    target_link_libraries(test_command_line_panel PRIVATE okay_cli_panel okay_ui_soft)
+    target_include_directories(test_command_line_panel PRIVATE ${PROJECT_SOURCE_DIR}/okayui/tests ${PROJECT_SOURCE_DIR}/okayui/soft)
+    target_compile_definitions(test_command_line_panel PRIVATE OKAYUI_GOLDEN_DIR="${PROJECT_SOURCE_DIR}/okayui/tests/golden")
+    add_test(NAME command_line_panel COMMAND test_command_line_panel)
+    set_tests_properties(command_line_panel PROPERTIES TIMEOUT 120 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()
 
 # Core console: EventBus extras, Cvars, Console, debug overlay lines
@@ -5654,7 +5687,7 @@ add_test(NAME input_grok COMMAND test_input_grok)
 # The launcher's Command line page rules (launcher/CommandLine.cpp, no ImGui): words and the argument list (no shell), Tab
 # completion from okay's own command table, history, streaming output from a running program, Stop, and the page layout.
 add_executable(test_launcher_cli test_launcher_cli.cpp ${CMAKE_SOURCE_DIR}/launcher/CommandLine.cpp ${CMAKE_SOURCE_DIR}/launcher/Terminal.cpp
-               ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)
+               ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandInput.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)
 target_compile_features(test_launcher_cli PRIVATE cxx_std_17)
 target_include_directories(test_launcher_cli PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/tools/okay-cli
                            ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
@@ -5664,7 +5697,7 @@ set_tests_properties(launcher_cli PROPERTIES TIMEOUT 120)
 # parser against byte streams, resizing, selection and copy, the key-to-sequence mapping, and a real /bin/sh on a pseudo
 # terminal (printf, echo, the folder, Tools first on PATH, resize, Ctrl+C stopping sleep, exit). The pty part is POSIX only.
 add_executable(test_launcher_terminal test_launcher_terminal.cpp ${CMAKE_SOURCE_DIR}/launcher/CommandLine.cpp ${CMAKE_SOURCE_DIR}/launcher/Terminal.cpp
-               ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)
+               ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandInput.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)
 target_compile_features(test_launcher_terminal PRIVATE cxx_std_17)
 target_include_directories(test_launcher_terminal PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/tools/okay-cli
                            ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)

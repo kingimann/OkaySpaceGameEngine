@@ -53394,6 +53394,51 @@ static void UpdateCrashContext(EditorState& ed, bool slow) {
     okaycrash::ctx::SetAutosave(recovered ? 1 : 0);
 }
 
+// The start-up splash (shared/Splash.hpp): the editor's start-up as named steps, the status line, and the fade
+// over the first frames. main() begins each step before its work runs; the main loop draws the splash over its
+// frames until the sign-in check and the project open are done (or a step failed), then fades it out.
+struct EditorStartSplash {
+    okay::SplashSteps steps;
+    okay::SplashFinish finish;
+    okay::SplashStyle style;   // the project's look, kept from the last start-up frame
+    std::string project;       // the project being opened or created ("" = none)
+};
+static EditorStartSplash& StartSplash() { static EditorStartSplash s; return s; }
+static okay::SplashProgress StartSplashProgress() {
+    okay::SplashProgress st;
+    st.title = StartSplash().project.empty() ? std::string("OkaySpace") : StartSplash().project;
+    st.footer = std::string("OkaySpace Editor  v") + OKAY_ENGINE_VERSION;
+    StartSplash().steps.Apply(st);
+    return st;
+}
+// After main()'s own steps: the sign-in check, then the project the launcher asked for. True while one still runs.
+static bool StartSplashLateStep() {
+    EditorStartSplash& s = StartSplash();
+    if (s.steps.Failed()) return false;
+    if (g_errOpen) { s.steps.Fail(g_errTitle.empty() ? std::string("Something went wrong") : g_errTitle); return false; }
+    const bool opening = !g_openScenePath.empty() || !g_newProjectRoot.empty();
+    if (g_signin == oked::signin::Phase::Checking) { s.steps.Begin("Checking your sign-in"); return true; }
+    if (opening && oked::signin::ProjectsAllowed(g_signin)) {
+        s.steps.Begin("Opening the project", (g_openScenePath.empty() ? "Creating project " : "Opening project ") + s.project);
+        return true;
+    }
+    s.steps.Finish();   // nothing left, or the sign-in window needs the person: the editor shows
+    return false;
+}
+// Drawn over the main loop's frame, just before it is presented.
+static void DrawStartSplashOverlay(SDL_Renderer* renderer) {
+    EditorStartSplash& s = StartSplash();
+    if (s.finish.Done()) return;
+    const bool hold = StartSplashLateStep();
+    const float op = s.finish.Update((double)okay::platform::TicksMs(), hold, s.steps.Failed());
+    if (op <= 0.0f) return;
+    okay::SplashProgress st = StartSplashProgress();
+    st.opacity = op;
+    st.present = false;
+    int sw = 1280, sh = 800; okay::pb::OutputSize(renderer, &sw, &sh);
+    okay::DrawSplashStyled(renderer, sw, sh, s.style, &st);
+}
+
 int RunVsGraphShot(int argc, char** argv);
 
 const char* OkayEditorBuildStamp();   // editor/BuildStamp.cpp: __DATE__ " " __TIME__ kept out of this file so ccache can reuse it
@@ -53550,6 +53595,20 @@ int main(int argc, char** argv) {
         }
         LoadProjectSettingsFrom(startDir);
         NoteProjectFilesSaved();
+        // The loading screen's steps (weights: roughly how long each takes) and the project's name for its title.
+        okay::SplashSteps& steps = StartSplash().steps;
+        steps.Add("Opening the window", 1); steps.Add("Reading project settings", 1); steps.Add("Loading fonts", 2);
+        steps.Add("Setting up the editor", 2); steps.Add("Starting the GPU renderer", 3);
+#if defined(_WIN32)
+        steps.Add("Starting Direct3D 11", 2);
+#endif
+        steps.Add("Loading your settings and layouts", 1); steps.Add("Checking your sign-in", 2); steps.Add("Opening the project", 4);
+        if (!g_openScenePath.empty()) StartSplash().project = ProjectRootOfScene(g_openScenePath).filename().string();
+        else if (!g_newProjectRoot.empty()) {
+            std::filesystem::path p(g_newProjectRoot);
+            if (p.filename().empty()) p = p.parent_path();   // "<root>/" names the same folder
+            StartSplash().project = p.filename().string();
+        }
     }
     // Decode the custom splash logo (if set) into an SDL texture for the splash.
     if (g_project.splashLogo[0]) {
@@ -53571,16 +53630,23 @@ int main(int argc, char** argv) {
         st.logo = g_editorSplashLogo; st.showProgress = g_project.splashShowBar;
         return st;
     };
+    // One loading frame: begin start-up step `step` (the steps before it count as done) and show it.
+    auto splashFrame = [&](const char* step) {
+        if (step) StartSplash().steps.Begin(step);
+        StartSplash().style = splashStyle();
+        const okay::SplashProgress st = StartSplashProgress();
+        int sw = 1280, sh = 800; okay::pb::OutputSize(renderer, &sw, &sh);
+        okay::DrawSplashStyled(renderer, sw, sh, StartSplash().style, &st);
+    };
     // Branded loading frame right away, so the editor isn't a black rectangle
     // while fonts, GPU renderers and the project set-up run below. Draw it while
     // hidden, reveal the window, then draw once more so the shown frame is the
     // splash (not a black frame), whatever the platform's show/present ordering.
     {
-        int sw = 1280, sh = 800; okay::pb::OutputSize(renderer, &sw, &sh);
-        okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
+        splashFrame("Loading fonts");
         winSeam->Show();
         winSeam->Raise();
-        okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
+        splashFrame(nullptr);
     }
     // (File drops are accepted by the sdl2 backend's Init.)
 
@@ -53631,12 +53697,11 @@ int main(int argc, char** argv) {
     }
     // Re-present the (animated) splash between heavy init steps so the loading
     // frame keeps moving instead of sitting frozen until the first real frame.
-    auto splashTick = [&]() {
-        int sw = 1280, sh = 800; okay::pb::OutputSize(renderer, &sw, &sh);
-        okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
+    auto splashTick = [&](const char* step) {
+        splashFrame(step);
         sdlSeam->PumpEvents();
     };
-    splashTick();
+    splashTick("Setting up the editor");
     // (Project settings were already loaded above, before the first splash, so
     // the loading screen could use the project's custom splash.)
     // Route the node editor's log messages to the editor console.
@@ -53807,6 +53872,7 @@ int main(int argc, char** argv) {
     // Optional GPU (OpenGL) 3D renderer on an ISOLATED hidden context, so the GPU
     // can rasterize the Scene view (hardware MSAA + depth) without touching the
     // editor's SDL_Renderer. If any step fails we silently keep the software path.
+    splashTick("Starting the GPU renderer");
     {
         // Ask for a 3.2 *compatibility* context: it guarantees core framebuffer
         // objects, multisample renderbuffers + blit, and VAOs, while still accepting
@@ -53855,6 +53921,7 @@ int main(int argc, char** argv) {
 #if defined(_WIN32)
     // Optional Direct3D 11 3D renderer on its own isolated device (offscreen → readback),
     // selectable alongside the OpenGL path. Falls back to software if unavailable.
+    splashTick("Starting Direct3D 11");
     {
         g_d3dRenderer = new okay::D3D11Renderer();
         // Prefer SDL's own device (zero-copy viewports); else an isolated device.
@@ -53876,6 +53943,7 @@ int main(int argc, char** argv) {
     }
 #endif
 
+    splashTick("Loading your settings and layouts");
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
     g_previewEd = &ed;
@@ -53923,7 +53991,8 @@ int main(int argc, char** argv) {
     }
     LoadCustomActions();   // reusable custom instruction/condition library
     ApplyTheme();   // re-apply now that the saved theme/accent/UI-scale are loaded
-    splashTick();   // keep the loading frame moving right up to the first real frame
+    StartSplashLateStep();   // the sign-in check or the project open is next (or nothing: ready)
+    splashTick(nullptr);     // keep the loading frame moving right up to the first real frame (DrawStartSplashOverlay takes over)
 
     // Route engine logs (and script print/log/debug output) into the Console
     // with the matching severity.
@@ -55680,6 +55749,7 @@ int main(int argc, char** argv) {
         for (const std::string& shot : testHooks.TakeShots())
             if (!okay::testhooks::SavePicture(*okay::pb::For(renderer), shot)) std::fprintf(stderr, "[test-hook] could not save %s\n", shot.c_str());
 #endif
+        DrawStartSplashOverlay(renderer);   // the loading screen over the first frames, then its fade (after the pictures above: they show the editor)
         { OKAY_PROFILE("Present"); okay::pb::Present(renderer); }
 
         // Multi-window panels: create/size/paint the extra OS windows (tabs

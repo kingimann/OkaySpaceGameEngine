@@ -3103,6 +3103,17 @@ if(SDL2_FOUND)
     target_compile_definitions(test_ui_renderer_golden PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_renderer_golden COMMAND test_ui_renderer_golden)
 
+    # The start-up splash (shared/Splash.hpp) on the software painter: bar fill per progress, status text, failed state, fade,
+    # the steps and the finish, and one golden picture (tests/golden/splash/loading_50.png).
+    if(TARGET okay_ui_soft)
+        add_executable(test_splash test_splash.cpp)
+        target_include_directories(test_splash PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${SDL2_INCLUDE_DIRS})
+        target_link_libraries(test_splash PRIVATE okay_ui_soft okay::engine ${OKAY_TEST_SDL_LIB})
+        target_compile_definitions(test_splash PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+        target_compile_features(test_splash PRIVATE cxx_std_17)
+        add_test(NAME splash COMMAND test_splash)
+    endif()
+
     # Accessibility settings in rendered pixels (text size, colour filter, high contrast)
     add_executable(test_accessibility_render test_accessibility_render.cpp)
     target_link_libraries(test_accessibility_render PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})

@@ -1,5 +1,6 @@
-// GOLDEN request texts for tests/test_okay_backend_golden_auth.cpp, recorded from AccountService at commit b9f097c46
-// (before its auth calls moved onto okay::backend). Never edit by hand: a change here means the programs send something new.
+// GOLDEN request texts for tests/test_okay_backend_golden_auth.cpp, recorded from AccountService.hpp at commit b9f097c46
+// (before its auth calls moved onto okay::backend; built with -DOKAY_GOLDEN_OLD_HEADER against that file). Never edit by hand:
+// a change here means the programs send something new.
 // Recorded with OKAY_GOLDEN_PRINT=1 (tests/test_okay_backend_golden_auth.cpp).
 static const char* const kGolden[][2] = {
     {"signup_with_username", R"GOLD(POST https://backend.example.test/auth/v1/signup
@@ -319,6 +320,66 @@ Authorization: Bearer bad.token.y
 
 
 ---
+)GOLD"},
+    {"transport_api_calls", R"GOLD(get=200
+post=201
+anon=200
+upload=200
+upload_default_type=200
+timed=200
+available=1
+GET https://backend.example.test/rest/v1/cloud_saves?select=key
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MjEiLCJleHAiOjQxMDI0NDQ4MDB9.sig
+
+
+---
+POST https://backend.example.test/rest/v1/leaderboards
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MjEiLCJleHAiOjQxMDI0NDQ4MDB9.sig
+Prefer: resolution=merge-duplicates,return=minimal
+Content-Type: application/json
+
+[{"board":"b"}]
+---
+GET https://backend.example.test/rest/v1/profiles?select=id&username=eq.x
+apikey: test-publishable-key-0000
+Accept: application/json
+Range: 0-9
+
+
+---
+POST https://backend.example.test/storage/v1/object/chat/u21/a.png
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MjEiLCJleHAiOjQxMDI0NDQ4MDB9.sig
+x-upsert: true
+cache-control: max-age=30
+Content-Type: image/png
+
+
+---
+POST https://backend.example.test/storage/v1/object/chat/u21/b.bin
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MjEiLCJleHAiOjQxMDI0NDQ4MDB9.sig
+Content-Type: application/octet-stream
+
+
+---
+POST https://backend.example.test/functions/v1/session-ticket
+apikey: test-publishable-key-0000
+Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MjEiLCJleHAiOjQxMDI0NDQ4MDB9.sig
+Content-Type: application/json
+
+{}
+---
+GET https://backend.example.test/rest/v1/profiles?select=id&username=eq.al%20ex
+apikey: test-publishable-key-0000
+
+
+---
+)GOLD"},
+    {"transport_signed_out_sends_nothing", R"GOLD(api_reached=0
+cloud=0
 )GOLD"},
     {"sign_out_sends_nothing", R"GOLD(session: in=0 user=[] token=[] refresh=[]
 file=0

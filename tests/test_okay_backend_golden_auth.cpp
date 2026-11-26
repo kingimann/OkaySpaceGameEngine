@@ -5,6 +5,8 @@
 // the answer are compared with the GOLDEN texts below. The golden texts were recorded from AccountService BEFORE its auth
 // calls moved onto okay::backend (run with OKAY_GOLDEN_PRINT=1 to print them again). Then the same flows are run through
 // the Supabase provider directly (okay::backend::supabase::Auth over a RecordingTransport) and must send the same bytes.
+// To record them again from the old header: put AccountService.hpp of commit b9f097c46 in <dir>/okay/Platform/Account/,
+// build this file with -DOKAY_GOLDEN_OLD_HEADER -I<dir> -Iengine/include -Itests, and run it with OKAY_GOLDEN_PRINT=1.
 //
 // No request ever leaves the process: every call goes to the test transport. The address, key, emails, passwords and
 // tokens are made up.
@@ -311,6 +313,32 @@ static std::vector<Scenario> Scenarios() {
         out += f.log;
         return out;
     }});
+    // The transport under every other call site (Api, ApiAnon, ApiUpload, ApiTimed): the same header builder.
+    v.push_back({"transport_api_calls", [=](const fs::path& d) {
+        SaveSession(d, "alex", Tok(21), "r21");
+        Fake f; f.queue = {Http(200, "[]"), Http(201, ""), Http(200, "[]"), Http(200, "{}"), Http(200, "{}"), Http(200, "[]")};
+        auto a = make(d, f);
+        std::string out;
+        out += "get=" + std::to_string(a->Api("/rest/v1/cloud_saves?select=key").status) + "\n";
+        out += "post=" + std::to_string(a->Api("rest/v1/leaderboards", "POST", "[{\"board\":\"b\"}]",
+                                               "Prefer: resolution=merge-duplicates,return=minimal").status) + "\n";
+        out += "anon=" + std::to_string(a->ApiAnon("/rest/v1/profiles?select=id&username=eq.x", "GET", {}, "Accept: \"application/json\"\n\nRange: 0-9").status) + "\n";
+        out += "upload=" + std::to_string(a->ApiUpload("/storage/v1/object/chat/u21/a.png", (d / "missing.png").string(), "image/png",
+                                                       "x-upsert: true\ncache-control: max-age=30").status) + "\n";
+        out += "upload_default_type=" + std::to_string(a->ApiUpload("/storage/v1/object/chat/u21/b.bin", (d / "b.bin").string(), "").status) + "\n";
+        out += "timed=" + std::to_string(a->ApiTimed("/functions/v1/session-ticket", "POST", "{}", {}, 5).status) + "\n";
+        out += "available=" + std::to_string(a->UsernameAvailable("al ex")) + "\n";
+        out += f.log;
+        return out;
+    }});
+    v.push_back({"transport_signed_out_sends_nothing", [=](const fs::path& d) {
+        Fake f; f.queue = {Http(200, "[]")};
+        auto a = make(d, f);
+        std::string out = "api_reached=" + std::to_string(a->Api("/rest/v1/cloud_saves").reached) + "\n";
+        out += "cloud=" + std::to_string(a->CloudSave("slot1", "x")) + "\n";
+        out += f.log;
+        return out;
+    }});
     v.push_back({"sign_out_sends_nothing", [=](const fs::path& d) {
         SaveSession(d, "alex", Tok(20), "r20");
         Fake f;
@@ -325,6 +353,127 @@ static std::vector<Scenario> Scenarios() {
     }});
     return v;
 }
+
+
+#if !defined(OKAY_GOLDEN_OLD_HEADER)   // (recording from the old AccountService.hpp: it has no okay::backend to call)
+// ---- The same flows through the Supabase provider directly (okay::backend::supabase::Auth over a RecordingTransport) -----
+/// Only the request blocks of a golden text, in order.
+static std::string RequestsOf(const std::string& golden) {
+    std::string out;
+    std::size_t i = 0;
+    bool in = false;
+    while (i < golden.size()) {
+        std::size_t e = golden.find('\n', i);
+        if (e == std::string::npos) e = golden.size();
+        const std::string line = golden.substr(i, e - i);
+        if (!in && (line.rfind("GET ", 0) == 0 || line.rfind("POST ", 0) == 0 || line.rfind("PUT ", 0) == 0 ||
+                    line.rfind("DELETE ", 0) == 0 || line.rfind("PATCH ", 0) == 0)) in = true;
+        if (in) out += line + "\n";
+        if (in && line == "---") in = false;
+        i = e + 1;
+    }
+    return out;
+}
+static std::string Outcome(const okay::backend::Result<okay::backend::Session>& r) {
+    return "=> ok=" + std::to_string(r.ok) + " error=[" + r.error + "] user=[" + r.value.username + "] token=[" +
+           r.value.accessToken + "] refresh=[" + r.value.refreshToken + "]\n";
+}
+struct ProviderRun {
+    okay::backend::RecordingTransport rec;
+    Fake fake;
+    std::string outcomes;   // the Outcome() lines of SignUp / SignIn / Refresh, to compare with the golden's
+    okay::backend::supabase::Auth Auth() { return okay::backend::supabase::Auth(kUrl, kKey, rec); }
+    ProviderRun() {
+        rec.answer = [this](const okay::backend::Request& r) {
+            return okay::backend::FromHttp(fake.Answer(r.method, r.url, r.headers, r.bodyFile.empty() ? r.body : std::string()));
+        };
+    }
+};
+using ProviderFlow = std::function<void(ProviderRun&)>;
+static std::vector<std::pair<const char*, ProviderFlow>> ProviderFlows() {
+    namespace ob = okay::backend;
+    std::vector<std::pair<const char*, ProviderFlow>> v;
+    auto signIn = [](ProviderRun& p, const char* id, const char* pw) { p.outcomes += Outcome(p.Auth().SignIn(id, pw)); };
+    v.push_back({"signup_with_username", [](ProviderRun& p) {
+        p.fake.queue = {Http(200, TokenAnswer(1, "alex"))};
+        p.outcomes += Outcome(p.Auth().SignUp("alex@example.test", "pw-123456", "alex"));
+    }});
+    v.push_back({"signup_needs_confirmation", [](ProviderRun& p) {
+        p.fake.queue = {Http(200, "{\"id\":\"u2\",\"email\":\"sam@example.test\"}")};
+        p.outcomes += Outcome(p.Auth().SignUp("sam@example.test", "pw \"quoted\" \\ 1", ""));
+    }});
+    v.push_back({"signup_refused", [](ProviderRun& p) {
+        p.fake.queue = {Http(422, "{\"code\":422,\"msg\":\"User already registered\"}")};
+        p.outcomes += Outcome(p.Auth().SignUp("alex@example.test", "pw-123456", ""));
+    }});
+    v.push_back({"signin_email", [=](ProviderRun& p) { p.fake.queue = {Http(200, TokenAnswer(3, "alex"))}; signIn(p, "alex@example.test", "pw-123456"); }});
+    v.push_back({"signin_email_no_username_in_answer", [=](ProviderRun& p) {
+        p.fake.queue = {Http(200, "{\"access_token\":\"" + Tok(4) + "\",\"refresh_token\":\"r4\"}")};
+        signIn(p, "alex.doe@example.test", "pw-123456");
+    }});
+    v.push_back({"signin_retry_once_then_ok", [=](ProviderRun& p) {
+        p.fake.queue = {NoAnswer("send: winhttp error 12030"), Http(200, TokenAnswer(6, "alex"))};
+        signIn(p, "alex@example.test", "pw-123456");
+    }});
+    v.push_back({"signin_unreachable", [=](ProviderRun& p) {
+        p.fake.queue = {NoAnswer("connect: winhttp error 12029"), NoAnswer("curl exit code 6")};
+        signIn(p, "alex@example.test", "pw-123456");
+    }});
+    v.push_back({"signin_refused", [=](ProviderRun& p) {
+        p.fake.queue = {Http(400, "{\"error\":\"invalid_grant\",\"error_description\":\"Invalid login credentials\"}")};
+        signIn(p, "alex@example.test", "wrong-pass");
+    }});
+    v.push_back({"signin_refused_no_text", [=](ProviderRun& p) { p.fake.queue = {Http(500, "oops")}; signIn(p, "alex@example.test", "pw-123456"); }});
+    v.push_back({"signin_answer_without_token", [=](ProviderRun& p) { p.fake.queue = {Http(200, "{}")}; signIn(p, "alex@example.test", "pw-123456"); }});
+    v.push_back({"resend_confirmation", [](ProviderRun& p) {
+        p.fake.queue = {Http(200, "{}"), Http(429, "{}"), NoAnswer("x")};
+        for (int i = 0; i < 3; ++i) p.Auth().Resend("sam@example.test");   // (the 4th, a bad address, is refused before sending)
+    }});
+    v.push_back({"password_reset_request", [](ProviderRun& p) {
+        p.fake.queue = {Http(200, "{}"), Http(200, "{}"), Http(500, "{}")};
+        p.Auth().Recover("sam@example.test", "");
+        p.Auth().Recover("sam@example.test", "https://reset.example.test/page?x=1&y=a b");
+        p.Auth().Recover("sam@example.test", "not-a-web-address");
+    }});
+    v.push_back({"password_reset_with_code", [](ProviderRun& p) {
+        p.fake.queue = {Http(200, "{\"access_token\":\"" + Tok(7) + "\"}"), Http(200, "{}"),
+                        Http(403, "{\"msg\":\"Token has expired or is invalid\"}"),
+                        Http(200, "{\"access_token\":\"" + Tok(8) + "\"}"), Http(422, "{}")};
+        const ob::Response v1 = p.Auth().VerifyRecovery("sam@example.test", "123456");
+        p.Auth().UpdateUser(okay::account::detail::JsonField(v1.body, "access_token"), "{\"password\":\"new-pass-1\"}");
+        p.Auth().VerifyRecovery("sam@example.test", "654321");   // refused: no password change follows
+        const ob::Response v3 = p.Auth().VerifyRecovery("sam@example.test", "1234567");
+        p.Auth().UpdateUser(okay::account::detail::JsonField(v3.body, "access_token"), "{\"password\":\"new-pass-1\"}");
+    }});
+    v.push_back({"change_password_email_username", [](ProviderRun& p) {
+        p.fake.queue = {Http(200, "{}"), Http(422, "{}"), Http(200, "{}"), Http(400, "{}")};
+        p.Auth().UpdateUser(Tok(10), "{\"password\":\"new-pass-2\"}");
+        p.Auth().UpdateUser(Tok(10), "{\"email\":\"alex2@example.test\"}");
+        p.Auth().UpdateUser(Tok(10), "{\"data\":{\"username\":\"alex_2\"}}");
+        p.Auth().UpdateUser(Tok(10), "{\"password\":\"new-pass-3\"}");
+    }});
+    v.push_back({"check_session_valid", [](ProviderRun& p) { p.fake.queue = {Http(200, "{}")}; p.Auth().User(Tok(13)); }});
+    v.push_back({"check_session_refreshes", [](ProviderRun& p) {
+        p.fake.queue = {Http(401, "{}"), Http(200, TokenAnswer(15, "alex"))};
+        p.Auth().User(Jwt("u14", 1000));
+        const auto r = p.Auth().Refresh("r14");
+        CHECK(r.ok && r.value.accessToken == Tok(15) && r.value.refreshToken == "r15");
+    }});
+    v.push_back({"refresh_if_expiring", [](ProviderRun& p) {
+        p.fake.queue = {Http(200, "{\"access_token\":\"" + Tok(19) + "\"}")};
+        const auto r = p.Auth().Refresh("r18");
+        CHECK(r.ok && r.value.accessToken == Tok(19) && r.value.refreshToken.empty());   // no new refresh token: the caller keeps its own
+    }});
+    v.push_back({"verify_token", [](ProviderRun& p) {
+        p.fake.queue = {Http(200, "{\"id\":\"u-9\"}"), Http(401, "{}")};
+        p.Auth().User("other.token.x");
+        p.Auth().User("bad.token.y");
+    }});
+    v.push_back({"sign_out_sends_nothing", [](ProviderRun& p) { p.Auth().SignOut(Tok(20)); }});
+    return v;
+}
+
+#endif
 
 #include "test_okay_backend_golden_auth.inc"   // GOLDEN: the texts recorded from the code before the move
 
@@ -353,6 +502,65 @@ int main() {
     if (print) { std::cout << "};\n"; return 0; }
     CHECK(matched == all.size());
     CHECK(all.size() == sizeof(kGolden) / sizeof(kGolden[0]));
+
+#if !defined(OKAY_GOLDEN_OLD_HEADER)
+    // 2. The Supabase provider called directly sends the same bytes, and makes the same sessions and messages.
+    std::size_t sameRequests = 0;
+    const auto flows = ProviderFlows();
+    for (const auto& flow : flows) {
+        const char* want = nullptr;
+        for (const auto& g : kGolden) if (std::string(g[0]) == flow.first) want = g[1];
+        CHECK(want != nullptr);
+        if (!want) continue;
+        ProviderRun p;
+        flow.second(p);
+        const bool same = p.fake.log == RequestsOf(want);
+        if (!same) std::cout << "  PROVIDER MISMATCH in " << flow.first << "\n--- golden requests\n" << RequestsOf(want) << "--- provider\n" << p.fake.log << "\n";
+        CHECK(same);
+        sameRequests += same;
+        std::size_t blocks = 0;   // the recorder kept exactly the requests the fake answered
+        for (std::size_t k = p.fake.log.find("\n---\n"); k != std::string::npos; k = p.fake.log.find("\n---\n", k + 1)) ++blocks;
+        CHECK(p.rec.sent.size() == blocks);
+        std::size_t start = 0;   // each SignUp / SignIn outcome line is in the golden as AccountService gave it
+        while (start < p.outcomes.size()) {
+            const std::size_t e = p.outcomes.find('\n', start);
+            const std::string line = p.outcomes.substr(start, e - start + 1);
+            const bool found = std::string(want).find(line) != std::string::npos;
+            if (!found) std::cout << "  PROVIDER OUTCOME not in golden " << flow.first << ": " << line;
+            CHECK(found);
+            start = e + 1;
+        }
+    }
+    CHECK(sameRequests == flows.size());
+    CHECK(flows.size() >= 19);
+
+    // 3. Sign-in with a username. AccountService never sends it (for Supabase, Login refuses anything that is not an email
+    //    before any request: the golden "signin_username*" texts above show that), so there is no recorded text. The provider
+    //    keeps the path that was in AccountService; these texts are written from that code (AccountService.hpp at b9f097c46,
+    //    SupabaseAuth): the email_for_login lookup, asked again once when it gets no answer, then the password grant.
+    {
+        const std::string rpc = "POST https://backend.example.test/rest/v1/rpc/email_for_login\napikey: test-publishable-key-0000\n"
+                                "Content-Type: application/json\n\n{\"p_username\":\"alex\",\"p_password\":\"pw-123456\"}\n---\n";
+        const std::string grant = "POST https://backend.example.test/auth/v1/token?grant_type=password\napikey: test-publishable-key-0000\n"
+                                  "Content-Type: application/json\n\n{\"email\":\"alex@example.test\",\"password\":\"pw-123456\"}\n---\n";
+        ProviderRun ok;
+        ok.fake.queue = {Http(200, "\"alex@example.test\""), Http(200, TokenAnswer(5, "alex"))};
+        const auto r = ok.Auth().SignIn("alex", "pw-123456");
+        CHECK(ok.fake.log == rpc + grant);
+        CHECK(r.ok && r.value.username == "alex" && r.value.accessToken == Tok(5) && r.value.refreshToken == "r5");
+        ProviderRun wrong;
+        wrong.fake.queue = {Http(200, "null")};
+        const auto w = wrong.Auth().SignIn("alex", "pw-123456");
+        CHECK(wrong.fake.log == rpc && !w.ok && w.error == "Invalid username/email or password.");
+        ProviderRun down;
+        down.fake.queue = {NoAnswer("connect: winhttp error 12029"), NoAnswer("")};
+        const auto d = down.Auth().SignIn("alex", "pw-123456");
+        CHECK(down.fake.log == rpc + rpc && !d.ok);
+        // The second try's reason is shown; a try with no reason reads "no answer" (the transport fills it in, as before).
+        CHECK(d.error == "Couldn't reach the account server (offline or unreachable).\nDetails: [no answer]");
+    }
+
+#endif
 
     std::error_code ec;
     fs::remove_all(root, ec);

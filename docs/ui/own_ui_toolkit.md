@@ -3392,3 +3392,51 @@ it moves together with the Inspector's navigation bodies (alone it would need a 
 custom track grid, key dragging and inspector, a step of its own.
 
 **Not verified.** Windows, the editor in a real window, the `okay-editor-okayui` build.
+
+## 30. Timers and Input Actions on OkayUI only; Find in Files gets main's search options
+
+Section 28's move for two more windows; their Dear ImGui bodies are deleted and the editor keeps the work:
+
+| Window | Editor side | Model (`shared/EditorPanelModels.hpp`) | Screen (`okayui/screens/OkayUIEditorPanels.cpp`) |
+|---|---|---|---|
+| Timers | `editor/main.cpp` (the frame's panel list): `okay::editor::TimerDebugText`, asked for only while the window shows | `TextLines` | `DrawTimers` |
+| Input Actions | `editor/InputActionsWindow.hpp`: `FillInputActions`, `ApplyInputActionsIntent` over `okay::ActionEditor` | `InputActionsModel` / `State` / `Intent`, `InputMapTitle`, `InputActionLabel`, `InputPartOffsets`, `kIaNewTypes`, `kIaBindingKinds` | `DrawInputActions` |
+
+The titles are the Dear ImGui ones ("Timers", "Input Actions"), so saved layouts keep their place. A new Input Actions window opens at
+900 x 600 as before; Timers, which had no first-use size, opens at 560 x 360 (`OKAY_UI_TIMERS` still forces 720 x 420 at 280, 80; the
+size now from the second frame on, set by the window's name).
+Input Actions fills its model only while it shows (the check and the players' lines cost time).
+
+**Find in Files.** Main (2026-11-26) gave the Dear ImGui Find in Files window Match case, Whole word, Regex and Replace in All Files
+(`scriptide::FindInTexts` / `ReplaceAll`) while this branch had moved the window to OkayUI. The merge keeps both: the OkayUI screen has
+the three check boxes (a change searches again when a term is typed), the Replace with field and Replace in All Files (off until a search
+found something), and a bad regex shows in red in place of the status line (`FindInFilesModel::error`, `FindInFilesCanReplace`); the
+search and the replace run in `editor/FindInFiles.cpp` as on main.
+
+**Small differences from the Dear ImGui bodies.** The binding fields of Input Actions keep their own text in the state while they are
+typed in (OkayUI's fields edit the caller's buffer; Dear ImGui kept a copy inside); Enter hands it to `ActionEditor`, and once the field
+lets the keyboard go it shows the asset's text again, as before. The "add interaction" field is emptied after an interaction is added
+(the Dear ImGui one emptied itself every frame and only kept its text while it had the keyboard). The tool that chooses a tab
+(`InputActionsState::forceTab`) replaces `detail::IaForceTab`; `tools/input_shots.cpp` draws the Input Actions window with the OkayUI
+screen and OkayUI's software renderer, as it does the Input panel.
+
+**Tests.** `okayui_editor_panels`: the shared rules (`TextLines`, `InputMapTitle`, `InputActionLabel`, `InputPartOffsets`,
+`FindInFilesStatus` with an error, `FindInFilesCanReplace`), golden pictures (`editorpanels_timers`, `_inputactions`,
+`_inputactions_check`, `_inputactions_live`, `_findinfiles_error`; `_findinfiles` redrawn with the new rows) and clicks and typing for
+every control (the wheel scrolls a long Timers list; every Input Actions button, the action rows, the binding, processors and interaction
+fields with Enter, the tabs; the Find in Files options and Replace in All Files). `okayui_panels_imgui` hosts both in a Dear ImGui window
+(the picture against the old hosting) and clicks an action row and + Map through it.
+
+Results (Release, headless, 2026-11-26): `okayui_editor_panels` 550 checks; the six new or changed goldens failed first (five missing,
+`_findinfiles` 31,414 pixels different), were written and looked at, then pass; every other golden matched unchanged. Breaking the
+binding fields on purpose (Enter handing on the wrong text) turned two checks red. `okayui_panels_imgui` 223 checks, Timers and Input
+Actions hosted 0.000% different from the old hosting. These two runs were linked against the five engine sources the tests use
+(fonts, PNG writer, console model) and two scratch stubs (`platform::TicksMs`, `Localization::Language` / `LanguageFont` with no
+table loaded), because the full engine build could not finish on the shared machine; the CMake-built tests and the editor
+(`okay-editor`, whose `main.cpp` change is the Timers call) were not built for this step.
+
+**Left (not this step).** The other Dear ImGui windows in `editor/` (39 `ImGui::Begin` calls after this step, 41 after the merge with
+main): among the small ones the Graph Navigator and Compare windows of the visual script editor (`editor/VsIdeCanvas.hpp`) and the
+Asset Manager (thumbnails, icon buttons and context menus); the launcher's windows.
+
+**Not verified.** Windows, the editor in a real window, the `okay-editor-okayui` build.

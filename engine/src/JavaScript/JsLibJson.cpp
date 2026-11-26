@@ -230,7 +230,7 @@ struct Writer {
     // 25.5.2.2 SerializeJSONProperty: false when the value is not serializable (undefined, a function, a symbol)
     bool Prop(const Value& holder, GcObj* key, Value value) {
         rt.Charge(1);
-        if (value.IsObj()) {
+        if (value.IsObj() || value.IsBig()) {   // 25.5.2.2 step 2: objects and BigInts may have toJSON
             Value toJSON = rt.Get(value, rt.atoms->toJSON);
             if (rt.IsCallable(toJSON)) {
                 Value k = key->kind == Kind::String ? Value::Str(static_cast<String*>(key)) : Value();
@@ -246,8 +246,9 @@ struct Writer {
             Object* o = value.O();
             if (o->cls == Cls::NumberBox) value = Value::Num(rt.ToNumber(value));
             else if (o->cls == Cls::StringBox) value = Value::Str(rt.ToString(value));
-            else if (o->cls == Cls::BoolBox) value = static_cast<BoxObj*>(o)->prim;
+            else if (o->cls == Cls::BoolBox || o->cls == Cls::BigIntBox) value = static_cast<BoxObj*>(o)->prim;
         }
+        if (value.IsBig()) rt.ThrowType("a BigInt can not be written as JSON (give it a toJSON method)");
         switch (value.t) {
             case Tag::Null: out += u"null"; return true;
             case Tag::Bool: out += value.b ? u"true" : u"false"; return true;

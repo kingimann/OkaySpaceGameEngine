@@ -405,6 +405,58 @@ void TaggedTemplates() {
     ExpectError("String.raw()", "TypeError");
 }
 
+// 6.1.6.2 the BigInt type, 12.9.3 BigInt literals, 7.1.13-7.1.15 conversions, 7.2.13-7.2.14 comparisons, 21.2 BigInt
+void BigInts() {
+    Expect("console.log(typeof 1n, 0x1fn, 0o17n, 0b101n, 1_000n, String(-0n), 12345678901234567890123n * 98765432109876543210n)",
+           "bigint 31n 15n 5n 1000n 0 1219326311370217952249611949260778341714830n");
+    Expect("console.log(2n ** 100n, (2n ** 64n) / 3n, -(2n ** 64n) / 3n, -7n % 3n, 7n % -3n, -7n / 2n)",
+           "1267650600228229401496703205376n 6148914691236517205n -6148914691236517205n -1n 1n -3n");
+    Expect("console.log(5n & 3n, -5n & 3n, -5n | 3n, -5n ^ 3n, ~5n, ~-1n, 1n << 70n, -1n >> 3n, -9n >> 2n, 9n >> -2n, 255n >> 4n)",
+           "1n 3n -5n -8n -6n 0n 1180591620717411303424n -1n -3n 36n 15n");
+    Expect("console.log(1n < 2, 2n > 1.5, 1n == 1, 1n === 1, 1n == '1', 0n == '', 10n > '9', 2n ** 64n > 1.8446744073709552e19, 3n < NaN, 3n > -Infinity)",
+           "true true true false true true true false false true");
+    Expect("console.log(BigInt(42), BigInt('0x10'), BigInt(' -12 '), BigInt(true), BigInt(Number.MAX_SAFE_INTEGER) + 2n, BigInt(1e21), BigInt(''))",
+           "42n 16n -12n 1n 9007199254740993n 1000000000000000000000n 0n");
+    Expect("console.log(Number(2n ** 64n), Number(-(2n ** 53n) - 1n), Number(2n ** 1100n), (255n).toString(16), (-255n).toString(2), (2n ** 70n).toString(36))",
+           "18446744073709552000 -9007199254740992 Infinity ff -11111111 6x5kxtvuwilukg");
+    Expect("console.log(BigInt.asIntN(8, 255n), BigInt.asUintN(8, -1n), BigInt.asIntN(64, 2n ** 63n), BigInt.asUintN(64, -1n), BigInt.asIntN(3, 4n), BigInt.asUintN(0, 5n))",
+           "-1n 255n -9223372036854775808n 18446744073709551615n -4n 0n");
+    Expect("console.log(`${10n}`, 10n + 'x', [1n, 2n].join(), Object(3n) + 1n, typeof Object(3n), new Map([[1n, 'a']]).get(1n), [0n].includes(0n), Object.is(0n, -0n))",
+           "10 10x 1,2 4n object a true true");
+    Expect("let x = 5n; x++; x += 2n; console.log(x, x--, x, -x, !!0n, !!1n, 0n ? 'y' : 'n')", "8n 8n 7n -7n false true n");
+    Expect("console.log((1234567n).toLocaleString(), BigInt.prototype.toString.call(Object(7n)), 10n ** 0n, 0n ** 0n, (-2n) ** 3n)",
+           "1,234,567 7 1n 1n -8n");
+    Expect("console.log((10n ** 50n + 12345n) / (10n ** 20n + 7n), (10n ** 50n + 12345n) % (10n ** 20n + 7n), (2n ** 128n - 1n) % (2n ** 64n + 7n))",
+           "999999999999999999930000000000n 490000012345n 48n");
+    // identities over pseudo-random values exercise long division (Knuth's Algorithm D) and the two's complement forms
+    Expect("let s = 7; const r = () => (s = (s * 1103515245 + 12345) % 2147483648);"
+           "const rb = () => { let x = 0n; for (let i = r() % 12; i > 0; i--) x = (x << 31n) + BigInt(r()); if (r() % 5 === 0) x = (x << 64n) - 1n; return r() % 2 ? -x : x; };"
+           "let bad = 0; for (let i = 0; i < 300; i++) { const a = rb(), b = rb(), k = BigInt(r() % 90);"
+           "if (b !== 0n && (a / b) * b + a % b !== a) bad++; if (b !== 0n && (a * b) / b !== a) bad++; if (((a << k) >> k) !== a) bad++;"
+           "if ((a ^ b ^ b) !== a || (a & b) + (a | b) !== a + b || ~~a !== a) bad++; if (BigInt('0x' + (a < 0n ? -a : a).toString(16)) !== (a < 0n ? -a : a)) bad++;"
+           "if (b !== 0n && a % b === 0n && a / b * b !== a) bad++; } console.log('bad', bad)", "bad 0");
+    ExpectError("1n + 1", "TypeError");
+    ExpectError("+1n", "TypeError");
+    ExpectError("1n >>> 0n", "TypeError");
+    ExpectError("1n / 0n", "RangeError");
+    ExpectError("BigInt(1.5)", "RangeError");
+    ExpectError("BigInt('1.5')", "SyntaxError");
+    ExpectError("new BigInt(1)", "TypeError");
+    ExpectError("Math.max(1n)", "TypeError");
+    ExpectError("JSON.stringify({a: 1n})", "TypeError");
+    ExpectError("2n ** -1n", "RangeError");
+    ExpectError("1.5n", "SyntaxError");
+    Expect("BigInt.prototype.toJSON = function () { return this.toString(); }; console.log(JSON.stringify({a: 12n}))", "{\"a\":\"12\"}");
+    // hostile sizes stop with a RangeError or the budget, never hang or eat the memory
+    ExpectError("10n ** 10n ** 10n", "RangeError");
+    ExpectError("1n << 100000000n", "RangeError");
+    ExpectError("let x = 3n; for (;;) x *= x;", "RangeError");
+    ExpectError("const x = 7n ** 300000n; for (;;) x.toString();", "budget");
+    ExpectError("const x = 3n ** 600000n; for (;;) x * x;", "");
+    Runtime rt;
+    CHECK(!rt.CheckSyntax(std::string("x = 1") + std::string(20001, '0') + "n;", "s").empty());
+}
+
 struct Hostile {
     const char* src;
     const char* want;   ///< part of the error, "" for any error, "OK" when it must finish without one
@@ -645,6 +697,7 @@ int main() {
     UriFunctions();
     WeakCollections();
     TaggedTemplates();
+    BigInts();
     ConformanceScript(false);
     ConformanceScript(true);
     HostileOneLiners();

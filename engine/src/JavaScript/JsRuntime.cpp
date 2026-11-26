@@ -26,6 +26,7 @@ bool SameValueZero(const Value& a, const Value& b) {
         case Tag::Bool: return a.b == b.b;
         case Tag::Number: return a.n == b.n || (std::isnan(a.n) && std::isnan(b.n));
         case Tag::String: return a.p == b.p || a.S()->s == b.S()->s;
+        case Tag::BigInt: return a.p == b.p || BigEquals(a, b);
         default: return a.p == b.p;
     }
 }
@@ -75,6 +76,7 @@ std::size_t KeyHash::operator()(const Value& v) const {
             }
             return s->hash;
         }
+        case Tag::BigInt: return BigHash(v);
         case Tag::Bool: return v.b ? 3 : 5;
         case Tag::Undefined: return 7;
         case Tag::Null: return 11;
@@ -422,6 +424,7 @@ bool Runtime::ToBoolean(const Value& v) const {
         case Tag::Bool: return v.b;
         case Tag::Number: return !(v.n == 0 || std::isnan(v.n));
         case Tag::String: return !v.S()->s.empty();
+        case Tag::BigInt: return !BigIsZero(v);
         default: return true;
     }
 }
@@ -564,12 +567,24 @@ double Runtime::ToNumber(const Value& v) {
         case Tag::Bool: return v.b ? 1 : 0;
         case Tag::String: return StringToNumber(v.S()->s);
         case Tag::Symbol: ThrowType("a Symbol can not be turned into a number");
+        case Tag::BigInt: ThrowType("a BigInt can not be mixed with Numbers here; use Number(x) or BigInt(x)");
         case Tag::Object: {
             Value p = ToPrimitive(v, 1);
             return ToNumber(p);
         }
         default: return NAN;
     }
+}
+
+// 7.1.3 ToNumeric: a primitive's Number, or the BigInt itself
+Value Runtime::ToNumeric(const Value& v) {
+    if (v.IsBig()) return v;
+    if (v.IsObj()) {
+        Value p = ToPrimitive(v, 1);
+        if (p.IsBig()) return p;
+        return Value::Num(ToNumber(p));
+    }
+    return Value::Num(ToNumber(v));
 }
 
 double Runtime::ToIntegerOrInfinity(const Value& v) {
@@ -603,6 +618,7 @@ String* Runtime::ToString(const Value& v) {
         case Tag::Null: return atoms->null_;
         case Tag::Bool: return v.b ? atoms->true_ : atoms->false_;
         case Tag::Symbol: ThrowType("a Symbol can not be turned into a string automatically (use String(sym))");
+        case Tag::BigInt: return NewString(BigToString(*this, v, 10));
         case Tag::Object: {
             Value p = ToPrimitive(v, 2);
             Keep(p);
@@ -643,11 +659,11 @@ Object* Runtime::ToObject(const Value& v) {
             ThrowType(std::string("can not turn ") + (v.IsNull() ? "null" : "undefined") + " into an object");
         default: break;
     }
-    Cls c = v.IsBool() ? Cls::BoolBox : v.IsNum() ? Cls::NumberBox : v.IsStr() ? Cls::StringBox : Cls::SymbolBox;
+    Cls c = v.IsBool() ? Cls::BoolBox : v.IsNum() ? Cls::NumberBox : v.IsStr() ? Cls::StringBox : v.IsBig() ? Cls::BigIntBox : Cls::SymbolBox;
     BoxObj* b = Alloc<BoxObj>();
     b->cls = c;
     b->prim = v;
-    b->proto = v.IsBool() ? booleanProto : v.IsNum() ? numberProto : v.IsStr() ? stringProto : symbolProto;
+    b->proto = v.IsBool() ? booleanProto : v.IsNum() ? numberProto : v.IsStr() ? stringProto : v.IsBig() ? bigintProto : symbolProto;
     return b;
 }
 
@@ -694,6 +710,7 @@ const char* Runtime::TypeOf(const Value& v) const {
         case Tag::Number: return "number";
         case Tag::String: return "string";
         case Tag::Symbol: return "symbol";
+        case Tag::BigInt: return "bigint";
         case Tag::Object: return v.O()->IsCallable() ? "function" : "object";
         default: return "undefined";
     }
@@ -705,14 +722,21 @@ bool Runtime::LooseEquals(const Value& a, const Value& b) {
     if (a.IsNullish() && b.IsNullish()) return true;
     if (a.IsNum() && b.IsStr()) return a.n == StringToNumber(b.S()->s);
     if (a.IsStr() && b.IsNum()) return StringToNumber(a.S()->s) == b.n;
+    if (a.IsBig() && b.IsStr()) {   // 7.2.14 steps 6-7: the string read as a BigInt
+        Value n;
+        return StringToBigInt(*this, b.S()->s, n) && BigEquals(a, n);
+    }
+    if (a.IsStr() && b.IsBig()) return LooseEquals(b, a);
     if (a.IsBool()) return LooseEquals(Value::Num(a.b ? 1 : 0), b);
     if (b.IsBool()) return LooseEquals(a, Value::Num(b.b ? 1 : 0));
-    if ((a.IsNum() || a.IsStr() || a.IsSym()) && b.IsObj()) {
+    if (a.IsBig() && b.IsNum()) return BigCompareNum(a, b.n) == 0;
+    if (a.IsNum() && b.IsBig()) return BigCompareNum(b, a.n) == 0;
+    if ((a.IsNum() || a.IsStr() || a.IsSym() || a.IsBig()) && b.IsObj()) {
         Value p = ToPrimitive(b, 0);
         Keep(p);
         return LooseEquals(a, p);
     }
-    if (a.IsObj() && (b.IsNum() || b.IsStr() || b.IsSym())) {
+    if (a.IsObj() && (b.IsNum() || b.IsStr() || b.IsSym() || b.IsBig())) {
         Value p = ToPrimitive(a, 0);
         Keep(p);
         return LooseEquals(p, b);
@@ -878,6 +902,7 @@ Value Runtime::Get(const Value& base, GcObj* key, const Value& receiver) {
         case Tag::Number: o = numberProto; break;
         case Tag::Bool: o = booleanProto; break;
         case Tag::Symbol: o = symbolProto; break;
+        case Tag::BigInt: o = bigintProto; break;
         default:
             ThrowType("can not read '" + KeyText(*this, key) + "' of " + (base.IsNull() ? "null" : "undefined"));
     }
@@ -1058,7 +1083,8 @@ void Runtime::Put(const Value& base, GcObj* key, const Value& v) {
     }
     // the prototype chain: setters and read-only properties (10.1.9.2 OrdinarySetWithOwnDescriptor)
     Object* q = o ? o->proto
-                  : base.IsStr() ? stringProto : base.IsNum() ? numberProto : base.IsBool() ? booleanProto : symbolProto;
+                  : base.IsStr() ? stringProto : base.IsNum() ? numberProto : base.IsBool() ? booleanProto
+                  : base.IsBig() ? bigintProto : symbolProto;
     int guard = 0;
     for (; q; q = q->proto) {
         if (q->cls != Cls::Ordinary) {
@@ -1469,7 +1495,7 @@ void Runtime::Collect() {
     Object* intr[] = {objectProto, functionProto, arrayProto, stringProto, numberProto, booleanProto, symbolProto,
                       errorProto, iteratorProto, arrayIterProto, mapIterProto, setIterProto, stringIterProto,
                       generatorProto, generatorFnProto, asyncFnProto, mapProto, setProto, promiseProto, promiseCtor,
-                      arrayCtor, objectCtor, throwTypeErrorFn, regexpProto, dateProto, vm->arrayValues, vm->arrayIterNext,
+                      arrayCtor, objectCtor, throwTypeErrorFn, regexpProto, dateProto, bigintProto, vm->arrayValues, vm->arrayIterNext,
                       vm->stringIterator, vm->stringIterNext};
     for (Object* o : intr) if (o) Mark(o);
     for (Object* o : errorProtos) if (o) Mark(o);
@@ -1588,6 +1614,7 @@ std::string Runtime::Display(const Value& v, int depth) {
             return "Symbol(" + (s->desc ? Utf16To8(s->desc->s) : std::string()) + ")";
         }
         case Tag::Object: break;
+        case Tag::BigInt: return Utf16To8(BigToString(*this, v, 10)) + "n";
         default: return ToUtf8(v);
     }
     Object* o = v.O();
@@ -1608,6 +1635,7 @@ std::string Runtime::Display(const Value& v, int depth) {
         return s;
     }
     if (o->cls == Cls::DateBox) return DateDisplay(o);
+    if (o->cls == Cls::BigIntBox) return "[BigInt: " + Display(static_cast<BoxObj*>(o)->prim, depth + 1) + "]";
     if (o->cls == Cls::BoolBox || o->cls == Cls::NumberBox || o->cls == Cls::StringBox)
         return "[" + std::string(o->cls == Cls::BoolBox ? "Boolean" : o->cls == Cls::NumberBox ? "Number" : "String") + ": " +
                inner(static_cast<BoxObj*>(o)->prim) + "]";
@@ -1764,6 +1792,7 @@ void Runtime::InitIntrinsics() {
     InstallStringLib(*this);
     InstallNumberLib(*this);
     InstallMathLib(*this);
+    InstallBigIntLib(*this);
     InstallDateLib(*this);
     InstallJsonLib(*this);
     InstallCollectionsLib(*this);

@@ -13,7 +13,7 @@ namespace okay::js {
 struct RegexProg;
 
 // ============================================================ tokens (ECMA-262 ch. 12)
-enum class TT : std::uint8_t { End, Name, Num, Str, Template, Punct, PrivateName, Regex };
+enum class TT : std::uint8_t { End, Name, Num, Str, Template, Punct, PrivateName, Regex, BigInt };
 
 // Punctuators, longest first within each starting character is handled by the lexer.
 enum P : std::uint16_t {
@@ -57,7 +57,7 @@ enum class NK : std::uint8_t {
     // expressions
     Num, Str, Template, Ident, This, Super, NewTarget, Null, True, False, Array, Object, Func, Class,
     Unary, Update, Binary, Logical, Assign, Cond, Call, New, Member, Index, OptChain, Seq, Spread,
-    Yield, Await, Hole, TaggedTemplate, Regex,
+    Yield, Await, Hole, TaggedTemplate, Regex, BigInt,
     // object literal parts
     PropInit, PropGet, PropSet, PropSpread,
     // patterns
@@ -342,6 +342,33 @@ struct WeakObj : Object {
     std::size_t Bytes() const override { return Object::Bytes() + entries.size() * 48 + cells.capacity() * sizeof(Cell); }
 };
 bool CanBeHeldWeakly(const Value& v);
+
+// ---- BigInt (6.1.6.2; JsLibNumber.cpp): sign and magnitude in 32-bit limbs, least significant first
+using Limbs = std::vector<std::uint32_t>;
+struct BigNum {
+    bool neg = false;   ///< never set on zero
+    Limbs mag;          ///< no zero top limb; zero is empty
+};
+struct BigIntV : GcObj {
+    BigNum v;
+    BigIntV() : GcObj(Kind::BigInt) {}
+    std::size_t Bytes() const override { return sizeof(BigIntV) + v.mag.capacity() * 4; }
+};
+void TrimLimbs(Limbs& m);
+Value NewBigValue(Runtime& rt, bool neg, Limbs mag);
+bool BigIsZero(const Value& v);
+bool BigEquals(const Value& a, const Value& b);
+std::size_t BigHash(const Value& v);
+std::u16string BigToString(Runtime& rt, const Value& v, int radix);
+bool StringToBigInt(Runtime& rt, const std::u16string& s, Value& out);   ///< false: not an integer text
+Value BigFromDouble(Runtime& rt, double d);
+double BigToDouble(const Value& v);
+int BigCompareNum(const Value& a, double d);   ///< -1, 0, 1; 2 when d is NaN
+int BigCompare(const Value& a, const Value& b);
+Value BigBinary(Runtime& rt, int op, const Value& a, const Value& b);   ///< op: OP_Add ... OP_Shr
+Value BigUnary(Runtime& rt, int op, const Value& a);                    ///< OP_Neg, OP_BitNot, OP_Inc, OP_Dec
+Value ToBigIntValue(Runtime& rt, const Value& v);                       ///< 7.1.13 ToBigInt
+void InstallBigIntLib(Runtime& rt);
 
 struct ForInObj : Object {
     Value obj;

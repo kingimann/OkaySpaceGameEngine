@@ -1127,6 +1127,13 @@ struct Compiler {
         switch (n->k) {
             case NK::Num: EmitNum(n->num); return;
             case NK::Str: EmitStr(n->str); return;
+            case NK::BigInt: {   // a constant BigInt (immutable, so one value serves every evaluation)
+                Value b;
+                if (!StringToBigInt(rt, n->str, b)) Fail(n, "bad BigInt literal");
+                fs->p->consts.push_back(b);
+                Emit(OP_Const, (int)fs->p->consts.size() - 1);
+                return;
+            }
             case NK::Regex:   // 13.2.7.3: a new RegExp object each time the literal is evaluated
                 EmitStr(n->str);
                 EmitStr(n->a->str);

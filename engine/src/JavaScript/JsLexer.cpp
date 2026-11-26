@@ -5,6 +5,7 @@
 // whole source is tokenized first (the parser looks ahead to find arrow functions);
 // template substitutions are tracked with a stack of open braces.
 #include "JsInternal.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 
@@ -285,6 +286,20 @@ struct Lexer {
         return k;
     }
 
+    // the digits (with their 0x / 0o / 0b prefix, separators removed) of a BigInt literal, after its 'n'
+    bool BigIntLiteral(int ln, int col, const std::string& digits) {
+        if (digits.size() > 20000) return Fail("this BigInt literal is too long (over 20000 digits)");
+        ++i;   // n
+        if (i < s.size()) {
+            int len;
+            std::uint32_t c = PeekCp(i, &len);
+            if (IsIdStart(c) || (c >= '0' && c <= '9')) return Fail("a name can not start right after a number");
+        }
+        Token& t = Push(TT::BigInt, ln, col);
+        t.s = AsciiTo16(digits.c_str());
+        return true;
+    }
+
     bool Number(int ln, int col) {
         std::size_t start = i;
         double v = 0;
@@ -317,6 +332,7 @@ struct Lexer {
             if (!digitsWithSep(base, txt)) return false;
             if (txt.empty()) return Fail("a number needs digits after 0" + std::string(1, k));
             for (char c : txt) v = v * base + Hex(c);
+            if (i < s.size() && s[i] == 'n') return BigIntLiteral(ln, col, std::string("0") + k + txt);
         } else {
             std::string txt;
             if (s[i] == '0' && i + 1 < s.size() && s[i + 1] >= '0' && s[i + 1] <= '9')
@@ -340,7 +356,12 @@ struct Lexer {
             }
             v = std::strtod(txt.c_str(), nullptr);
         }
-        if (i < s.size() && s[i] == 'n') return Fail("BigInt literals (123n) are not supported");
+        if (i < s.size() && s[i] == 'n') {   // 12.9.3: a BigInt literal is an integer with no fraction or exponent
+            std::string txt(s, start, i - start);
+            txt.erase(std::remove(txt.begin(), txt.end(), '_'), txt.end());
+            if (txt.find_first_of(".eE") != std::string::npos) return Fail("a BigInt literal (123n) must be an integer");
+            return BigIntLiteral(ln, col, txt);
+        }
         if (i < s.size()) {
             int len;
             std::uint32_t c = PeekCp(i, &len);
@@ -445,7 +466,7 @@ struct Lexer {
         if (out.empty()) return true;
         const Token& t = out.back();
         switch (t.t) {
-            case TT::Num: case TT::Str: case TT::PrivateName: case TT::Regex: return false;
+            case TT::Num: case TT::BigInt: case TT::Str: case TT::PrivateName: case TT::Regex: return false;
             case TT::Template: return t.tpl == 1 || t.tpl == 2;   // after `...${ an expression starts
             case TT::Punct: return !(t.p == P_RParen || t.p == P_RBrack || t.p == P_RBrace || t.p == P_Inc || t.p == P_Dec);
             case TT::Name: {

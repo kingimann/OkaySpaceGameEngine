@@ -133,7 +133,7 @@ struct Parser {
         switch (t.t) {
             case TT::End: return "the end of the script";
             case TT::Name: return "'" + Utf16To8(t.s) + "'";
-            case TT::Num: return "a number";
+            case TT::Num: case TT::BigInt: return "a number";
             case TT::Str: return "a string";
             case TT::Template: return "a template";
             case TT::PrivateName: return "a #private name";
@@ -1100,6 +1100,7 @@ struct Parser {
         const Token& t = Cur();
         switch (t.t) {
             case TT::Num: { Node* n = N(NK::Num); n->num = t.n; Next(); return n; }
+            case TT::BigInt: { Node* n = N(NK::BigInt); n->str = t.s; Next(); return n; }
             case TT::Str: { Node* n = N(NK::Str); n->str = t.s; Next(); return n; }
             case TT::Template: return TemplateLit();
             case TT::Regex: {

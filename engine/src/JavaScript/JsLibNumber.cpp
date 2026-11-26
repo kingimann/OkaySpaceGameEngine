@@ -157,7 +157,11 @@ void InstallNumberLib(Runtime& rt) {
     np->proto = rt.objectProto;
     rt.numberProto = np;
     NativeFunc* ctor = DefCtor(rt, "Number", [](Runtime& rt, CallArgs& a) {
-        double d = a.argc ? rt.ToNumber(a[0]) : 0;
+        double d = 0;
+        if (a.argc) {   // 21.1.1.1: ToNumeric, so Number(10n) is 10
+            Value p = rt.ToNumeric(a[0]);
+            d = p.IsBig() ? BigToDouble(p) : p.n;
+        }
         if (!a.newTarget) return Value::Num(d);
         Object* o = rt.ToObject(Value::Num(d));
         Value pr = rt.Get(Value::Obj(a.newTarget), rt.atoms->prototype);
@@ -981,6 +985,538 @@ void InstallDateLib(Runtime& rt) {
 std::string DateDisplay(Object* o) {
     double tv = static_cast<BoxObj*>(o)->prim.n;
     return std::isnan(tv) ? "Invalid Date" : IsoText(tv);
+}
+
+// ============================================================ BigInt (ECMA-262 6.1.6.2, 7.1.13-7.1.15, 21.2)
+// Sign and magnitude, the magnitude in 32-bit limbs, least significant first, never with a zero top limb (zero
+// is the empty magnitude and is never negative). The arithmetic is the schoolbook kind (Knuth, The Art of
+// Computer Programming vol. 2, 4.3.1: addition, subtraction, multiplication and Algorithm D for division);
+// bitwise operators work on the infinite two's complement form 6.1.6.2 describes. Values are capped at
+// kMaxBigBits bits (a RangeError past that) and every operation charges the budget for its work before doing
+// it, so `10n ** 10n ** 10n` or a huge multiplication stops instead of hanging.
+namespace {
+
+constexpr std::size_t kMaxBigBits = 1u << 20;
+constexpr std::size_t kMaxBigLimbs = kMaxBigBits / 32;
+
+int CmpMag(const Limbs& a, const Limbs& b) {
+    if (a.size() != b.size()) return a.size() < b.size() ? -1 : 1;
+    for (std::size_t i = a.size(); i-- > 0;)
+        if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
+    return 0;
+}
+Limbs AddMag(const Limbs& a, const Limbs& b) {
+    const Limbs& x = a.size() >= b.size() ? a : b;
+    const Limbs& y = a.size() >= b.size() ? b : a;
+    Limbs r(x.size() + 1);
+    std::uint64_t c = 0;
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        c += (std::uint64_t)x[i] + (i < y.size() ? y[i] : 0);
+        r[i] = (std::uint32_t)c;
+        c >>= 32;
+    }
+    r[x.size()] = (std::uint32_t)c;
+    TrimLimbs(r);
+    return r;
+}
+Limbs SubMag(const Limbs& a, const Limbs& b) {   // |a| >= |b|
+    Limbs r(a.size());
+    std::int64_t br = 0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        std::int64_t d = (std::int64_t)a[i] - (i < b.size() ? b[i] : 0) - br;
+        br = d < 0;
+        r[i] = (std::uint32_t)(d + (br << 32));
+    }
+    TrimLimbs(r);
+    return r;
+}
+std::size_t BitLength(const Limbs& m) {
+    if (m.empty()) return 0;
+    std::size_t n = (m.size() - 1) * 32;
+    for (std::uint32_t top = m.back(); top; top >>= 1) ++n;
+    return n;
+}
+void CheckSize(Runtime& rt, std::size_t limbs) {
+    if (limbs > kMaxBigLimbs + 1) rt.ThrowRange("the BigInt is too big (over 1048576 bits)");
+}
+Limbs MulMag(Runtime& rt, const Limbs& a, const Limbs& b) {
+    if (a.empty() || b.empty()) return {};
+    CheckSize(rt, a.size() + b.size() - 1);
+    rt.Charge((std::uint64_t)a.size() * b.size() / 16 + 1);
+    Limbs r(a.size() + b.size());
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        std::uint64_t c = 0;
+        for (std::size_t j = 0; j < b.size(); ++j) {
+            c += (std::uint64_t)a[i] * b[j] + r[i + j];
+            r[i + j] = (std::uint32_t)c;
+            c >>= 32;
+        }
+        r[i + b.size()] = (std::uint32_t)c;
+    }
+    TrimLimbs(r);
+    CheckSize(rt, r.size());
+    return r;
+}
+// q = a / b, r = a % b on magnitudes (b not zero): Knuth's Algorithm D with a normalized divisor.
+void DivMag(Runtime& rt, const Limbs& a, const Limbs& b, Limbs& q, Limbs& r) {
+    q.clear();
+    r.clear();
+    if (CmpMag(a, b) < 0) { r = a; return; }
+    rt.Charge((std::uint64_t)(a.size() - b.size() + 1) * b.size() / 16 + 1);
+    if (b.size() == 1) {
+        q.assign(a.size(), 0);
+        std::uint64_t rem = 0;
+        for (std::size_t i = a.size(); i-- > 0;) {
+            std::uint64_t cur = (rem << 32) | a[i];
+            q[i] = (std::uint32_t)(cur / b[0]);
+            rem = cur % b[0];
+        }
+        TrimLimbs(q);
+        if (rem) r.push_back((std::uint32_t)rem);
+        return;
+    }
+    int s = 0;   // shift so the divisor's top bit is set
+    for (std::uint32_t top = b.back(); !(top & 0x80000000u); top <<= 1) ++s;
+    const std::size_t n = b.size(), m = a.size() - n;
+    Limbs v(n), u(a.size() + 1);
+    for (std::size_t i = n; i-- > 0;) v[i] = (b[i] << s) | (s && i ? b[i - 1] >> (32 - s) : 0);
+    u[a.size()] = s ? a.back() >> (32 - s) : 0;
+    for (std::size_t i = a.size(); i-- > 0;) u[i] = (a[i] << s) | (s && i ? a[i - 1] >> (32 - s) : 0);
+    q.assign(m + 1, 0);
+    const std::uint64_t B = 1ull << 32;
+    for (std::size_t j = m + 1; j-- > 0;) {
+        // estimate the quotient digit from the top two limbs, then correct it at most twice (step D3)
+        std::uint64_t num = ((std::uint64_t)u[j + n] << 32) | u[j + n - 1];
+        std::uint64_t qh = num / v[n - 1], rh = num % v[n - 1];
+        while (qh >= B || qh * v[n - 2] > ((rh << 32) | u[j + n - 2])) {
+            --qh;
+            rh += v[n - 1];
+            if (rh >= B) break;
+        }
+        // multiply and subtract (D4); if that went below zero, add back once (D6)
+        std::int64_t borrow = 0;
+        std::uint64_t carry = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            std::uint64_t p = qh * v[i] + carry;
+            carry = p >> 32;
+            std::int64_t d = (std::int64_t)u[i + j] - (std::int64_t)(p & 0xFFFFFFFFu) - borrow;
+            borrow = d < 0;
+            u[i + j] = (std::uint32_t)(d + (borrow << 32));
+        }
+        std::int64_t d = (std::int64_t)u[j + n] - (std::int64_t)carry - borrow;
+        u[j + n] = (std::uint32_t)d;
+        if (d < 0) {
+            --qh;
+            std::uint64_t c = 0;
+            for (std::size_t i = 0; i < n; ++i) {
+                c += (std::uint64_t)u[i + j] + v[i];
+                u[i + j] = (std::uint32_t)c;
+                c >>= 32;
+            }
+            u[j + n] += (std::uint32_t)c;
+        }
+        q[j] = (std::uint32_t)qh;
+    }
+    TrimLimbs(q);
+    r.assign(n, 0);
+    for (std::size_t i = 0; i < n; ++i) r[i] = (u[i] >> s) | (s ? u[i + 1] << (32 - s) : 0);
+    TrimLimbs(r);
+}
+Limbs ShlMag(Runtime& rt, const Limbs& a, std::uint64_t k) {
+    if (a.empty()) return {};
+    if (k > kMaxBigBits) rt.ThrowRange("the BigInt is too big (over 1048576 bits)");
+    CheckSize(rt, a.size() + (std::size_t)(k / 32));
+    std::size_t w = (std::size_t)(k / 32), s = (std::size_t)(k % 32);
+    Limbs r(a.size() + w + 1, 0);
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        r[i + w] |= a[i] << s;
+        if (s) r[i + w + 1] |= a[i] >> (32 - s);
+    }
+    TrimLimbs(r);
+    CheckSize(rt, r.size());
+    return r;
+}
+Limbs ShrMag(const Limbs& a, std::uint64_t k, bool& lostBits) {
+    lostBits = false;
+    if (k >= (std::uint64_t)a.size() * 32) { lostBits = !a.empty(); return {}; }
+    std::size_t w = (std::size_t)(k / 32), s = (std::size_t)(k % 32);
+    for (std::size_t i = 0; i < w; ++i) lostBits |= a[i] != 0;
+    if (s && (a[w] & ((1u << s) - 1))) lostBits = true;
+    Limbs r(a.size() - w);
+    for (std::size_t i = 0; i < r.size(); ++i)
+        r[i] = (a[i + w] >> s) | (s && i + w + 1 < a.size() ? a[i + w + 1] << (32 - s) : 0);
+    TrimLimbs(r);
+    return r;
+}
+Limbs SmallMag(std::uint64_t v) {
+    Limbs r;
+    while (v) { r.push_back((std::uint32_t)v); v >>= 32; }
+    return r;
+}
+
+using Big = BigNum;
+Big Norm(Big b) {
+    TrimLimbs(b.mag);
+    if (b.mag.empty()) b.neg = false;
+    return b;
+}
+Big AddBig(const Big& a, const Big& b) {
+    if (a.neg == b.neg) return Norm({a.neg, AddMag(a.mag, b.mag)});
+    int c = CmpMag(a.mag, b.mag);
+    if (c == 0) return {};
+    return c > 0 ? Norm({a.neg, SubMag(a.mag, b.mag)}) : Norm({b.neg, SubMag(b.mag, a.mag)});
+}
+Big NegBig(Big a) {
+    if (!a.mag.empty()) a.neg = !a.neg;
+    return a;
+}
+// the infinite two's complement form, `len` limbs long (len covers the sign)
+Limbs ToTwos(const Big& a, std::size_t len) {
+    Limbs r(len, 0);
+    for (std::size_t i = 0; i < a.mag.size() && i < len; ++i) r[i] = a.mag[i];
+    if (a.neg) {
+        std::uint64_t c = 1;
+        for (std::size_t i = 0; i < len; ++i) {
+            c += (std::uint32_t)~r[i];
+            r[i] = (std::uint32_t)c;
+            c >>= 32;
+        }
+    }
+    return r;
+}
+Big FromTwos(Limbs r) {
+    Big b;
+    b.neg = !r.empty() && (r.back() & 0x80000000u);
+    if (b.neg) {
+        std::uint64_t c = 1;
+        for (std::size_t i = 0; i < r.size(); ++i) {
+            c += (std::uint32_t)~r[i];
+            r[i] = (std::uint32_t)c;
+            c >>= 32;
+        }
+    }
+    b.mag = std::move(r);
+    return Norm(std::move(b));
+}
+Big ShiftBig(Runtime& rt, const Big& a, const Big& by, bool left) {
+    // 6.1.6.2.9 / .10: a << k is a * 2^k; a >> k is floor(a / 2^k); a negative k shifts the other way
+    bool goLeft = left != by.neg;
+    std::uint64_t k;
+    if (by.mag.size() > 2) {
+        if (goLeft && !a.mag.empty()) rt.ThrowRange("the BigInt is too big (over 1048576 bits)");
+        k = ~0ull;
+    } else k = by.mag.empty() ? 0 : by.mag.size() == 1 ? by.mag[0] : ((std::uint64_t)by.mag[1] << 32) | by.mag[0];
+    if (goLeft) return Norm({a.neg, ShlMag(rt, a.mag, k)});
+    bool lost;
+    Big r = Norm({a.neg, ShrMag(a.mag, k, lost)});
+    if (a.neg && lost) r = AddBig(r, Big{true, {1}});   // floor for negative numbers
+    return r;
+}
+Big PowBig(Runtime& rt, const Big& base, const Big& e) {
+    if (e.neg) rt.ThrowRange("a BigInt exponent can not be negative");
+    if (e.mag.empty()) return Big{false, {1}};
+    if (base.mag.empty()) return {};
+    if (base.mag.size() == 1 && base.mag[0] == 1) return Norm({base.neg && (e.mag[0] & 1), {1}});
+    std::size_t bits = BitLength(base.mag);
+    if (e.mag.size() > 1 || (double)(bits - 1) * e.mag[0] > (double)kMaxBigBits) rt.ThrowRange("the BigInt is too big (over 1048576 bits)");
+    std::uint32_t n = e.mag[0];
+    Big r{false, {1}}, b = base;
+    while (true) {   // square and multiply
+        if (n & 1) r = Norm({r.neg != b.neg, MulMag(rt, r.mag, b.mag)});
+        n >>= 1;
+        if (!n) break;
+        b = Norm({false, MulMag(rt, b.mag, b.mag)});
+    }
+    return r;
+}
+
+const Big& BigOf(const Value& v) { return static_cast<BigIntV*>(v.p)->v; }
+
+} // namespace
+
+void TrimLimbs(Limbs& m) {
+    while (!m.empty() && m.back() == 0) m.pop_back();
+}
+
+Value NewBigValue(Runtime& rt, bool neg, Limbs mag) {
+    TrimLimbs(mag);
+    CheckSize(rt, mag.size());
+    BigIntV* b = rt.Alloc<BigIntV>(mag.size() * 4);
+    b->v.neg = neg && !mag.empty();
+    b->v.mag = std::move(mag);
+    return Value::Big(b);
+}
+static Value Wrap(Runtime& rt, Big b) { return NewBigValue(rt, b.neg, std::move(b.mag)); }
+
+bool BigIsZero(const Value& v) { return static_cast<BigIntV*>(v.p)->v.mag.empty(); }
+
+bool BigEquals(const Value& a, const Value& b) {
+    const BigIntV* x = static_cast<BigIntV*>(a.p);
+    const BigIntV* y = static_cast<BigIntV*>(b.p);
+    return x->v.neg == y->v.neg && x->v.mag == y->v.mag;
+}
+std::size_t BigHash(const Value& v) {
+    const BigIntV* x = static_cast<BigIntV*>(v.p);
+    std::uint64_t h = x->v.neg ? 0x51 : 0x17;
+    for (std::uint32_t l : x->v.mag) h = (h ^ l) * 0x100000001B3ull;
+    return (std::size_t)(h ^ (h >> 31));
+}
+
+// 6.1.6.2.21 BigInt::toString (radix 2-36): digits come from dividing by the biggest power of the radix that fits a limb
+std::u16string BigToString(Runtime& rt, const Value& v, int radix) {
+    const BigIntV* x = static_cast<BigIntV*>(v.p);
+    if (x->v.mag.empty()) return u"0";
+    rt.Charge((std::uint64_t)x->v.mag.size() * x->v.mag.size() / 4 + 1);
+    std::uint32_t chunk = (std::uint32_t)radix;
+    int per = 1;
+    while ((std::uint64_t)chunk * radix <= 0xFFFFFFFFull) { chunk *= (std::uint32_t)radix; ++per; }
+    Limbs cur = x->v.mag;
+    std::string digits;   // least significant first
+    while (!cur.empty()) {
+        std::uint64_t rem = 0;
+        for (std::size_t i = cur.size(); i-- > 0;) {
+            std::uint64_t c = (rem << 32) | cur[i];
+            cur[i] = (std::uint32_t)(c / chunk);
+            rem = c % chunk;
+        }
+        TrimLimbs(cur);
+        for (int k = 0; k < per && (rem || !cur.empty()); ++k) {
+            digits += "0123456789abcdefghijklmnopqrstuvwxyz"[rem % (std::uint32_t)radix];
+            rem /= (std::uint32_t)radix;
+        }
+    }
+    std::u16string out;
+    if (x->v.neg) out += u'-';
+    for (std::size_t i = digits.size(); i-- > 0;) out += (char16_t)digits[i];
+    return out;
+}
+
+// 7.1.14 StringToBigInt: false when the text is not a StringIntegerLiteral (RangeError when it is too long)
+bool StringToBigInt(Runtime& rt, const std::u16string& s0, Value& out) {
+    std::size_t b = 0, e = s0.size();
+    while (b < e && IsJsSpace(s0[b])) ++b;
+    while (e > b && IsJsSpace(s0[e - 1])) --e;
+    int radix = 10;
+    bool neg = false;
+    if (e - b > 2 && s0[b] == u'0') {
+        char16_t k = s0[b + 1] | 0x20;
+        if (k == u'x') radix = 16;
+        else if (k == u'o') radix = 8;
+        else if (k == u'b') radix = 2;
+        if (radix != 10) b += 2;
+    }
+    if (radix == 10 && b < e && (s0[b] == u'+' || s0[b] == u'-')) {
+        neg = s0[b] == u'-';
+        ++b;
+        if (b == e) return false;
+    }
+    if (e - b > kMaxBigBits) rt.ThrowRange("the BigInt is too big (over 1048576 bits)");
+    rt.Charge((std::uint64_t)(e - b) * (e - b) / 512 + 1);
+    Limbs mag;
+    for (std::size_t i = b; i < e; ++i) {
+        char16_t c = s0[i];
+        int d = c >= u'0' && c <= u'9' ? c - u'0' : (c | 0x20) >= u'a' && (c | 0x20) <= u'z' ? (c | 0x20) - u'a' + 10 : 99;
+        if (d >= radix) return false;
+        std::uint64_t carry = (std::uint64_t)d;
+        for (std::uint32_t& l : mag) {
+            carry += (std::uint64_t)l * (std::uint64_t)radix;
+            l = (std::uint32_t)carry;
+            carry >>= 32;
+        }
+        if (carry) mag.push_back((std::uint32_t)carry);
+    }
+    out = NewBigValue(rt, neg, std::move(mag));
+    return true;
+}
+
+// 21.2.1.1.1 NumberToBigInt (the number is an integer)
+Value BigFromDouble(Runtime& rt, double d) {
+    if (!std::isfinite(d) || std::trunc(d) != d) rt.ThrowRange("only an integer Number can become a BigInt");
+    bool neg = d < 0;
+    d = std::fabs(d);
+    if (d < 18446744073709551616.0) return NewBigValue(rt, neg, SmallMag((std::uint64_t)d));
+    int ex;
+    double m = std::frexp(d, &ex);   // d = m * 2^ex, m in [0.5, 1)
+    std::uint64_t mant = (std::uint64_t)std::ldexp(m, 53);
+    return NewBigValue(rt, neg, ShlMag(rt, SmallMag(mant), (std::uint64_t)(ex - 53)));
+}
+
+// 6.1.6.2 to Number: the nearest double, ties to even (the top 64 bits with a sticky bit for the rest)
+double BigToDouble(const Value& v) {
+    const BigIntV* x = static_cast<BigIntV*>(v.p);
+    std::size_t bits = BitLength(x->v.mag);
+    double r;
+    if (bits <= 64) {
+        std::uint64_t u = 0;
+        for (std::size_t i = x->v.mag.size(); i-- > 0;) u = (u << 32) | x->v.mag[i];
+        r = (double)u;
+    } else {
+        if (bits > 1100) return x->v.neg ? -INFINITY : INFINITY;
+        bool lost;
+        Limbs top = ShrMag(x->v.mag, bits - 64, lost);
+        std::uint64_t u = ((std::uint64_t)top[1] << 32) | top[0];
+        if (lost) u |= 1;
+        r = std::ldexp((double)u, (int)(bits - 64));
+    }
+    return x->v.neg ? -r : r;
+}
+
+// Compare a BigInt with a Number (7.2.13 IsLessThan, 7.2.14): -1, 0, 1, or 2 for NaN
+int BigCompareNum(const Value& a, double d) {
+    if (std::isnan(d)) return 2;
+    if (std::isinf(d)) return d > 0 ? -1 : 1;
+    const BigIntV* x = static_cast<BigIntV*>(a.p);
+    double fl = std::floor(d);
+    Big y;
+    y.neg = fl < 0;
+    double m = std::fabs(fl);
+    if (m < 18446744073709551616.0) y.mag = SmallMag((std::uint64_t)m);
+    else {
+        int ex;
+        double fr = std::frexp(m, &ex);
+        Limbs base = SmallMag((std::uint64_t)std::ldexp(fr, 53));
+        std::size_t k = (std::size_t)(ex - 53);
+        y.mag.assign(k / 32, 0);
+        Limbs shifted(base.size() + 1, 0);
+        for (std::size_t i = 0; i < base.size(); ++i) {
+            shifted[i] |= base[i] << (k % 32);
+            if (k % 32) shifted[i + 1] |= base[i] >> (32 - k % 32);
+        }
+        y.mag.insert(y.mag.end(), shifted.begin(), shifted.end());
+    }
+    y = Norm(std::move(y));
+    int c;
+    if (x->v.neg != y.neg) c = x->v.neg ? -1 : 1;
+    else {
+        c = CmpMag(x->v.mag, y.mag);
+        if (x->v.neg) c = -c;
+    }
+    if (c == 0 && fl != d) return -1;   // x == floor(d) < d
+    return c;
+}
+int BigCompare(const Value& a, const Value& b) {
+    const BigIntV* x = static_cast<BigIntV*>(a.p);
+    const BigIntV* y = static_cast<BigIntV*>(b.p);
+    if (x->v.neg != y->v.neg) return x->v.neg ? -1 : 1;
+    int c = CmpMag(x->v.mag, y->v.mag);
+    return x->v.neg ? -c : c;
+}
+
+// The binary operators on two BigInts (6.1.6.2); op is the bytecode (OP_Add ... OP_Shr)
+Value BigBinary(Runtime& rt, int op, const Value& av, const Value& bv) {
+    const Big& a = BigOf(av);
+    const Big& b = BigOf(bv);
+    switch (op) {
+        case OP_Add: return Wrap(rt, AddBig(a, b));
+        case OP_Sub: return Wrap(rt, AddBig(a, NegBig(b)));
+        case OP_Mul: return Wrap(rt, Big{a.neg != b.neg, MulMag(rt, a.mag, b.mag)});
+        case OP_Div: case OP_Mod: {
+            if (b.mag.empty()) rt.ThrowRange("division by zero");
+            Limbs q, r;
+            DivMag(rt, a.mag, b.mag, q, r);
+            return op == OP_Div ? Wrap(rt, Big{a.neg != b.neg, std::move(q)}) : Wrap(rt, Big{a.neg, std::move(r)});
+        }
+        case OP_Pow: return Wrap(rt, PowBig(rt, a, b));
+        case OP_Shl: return Wrap(rt, ShiftBig(rt, a, b, true));
+        case OP_Sar: return Wrap(rt, ShiftBig(rt, a, b, false));
+        case OP_Shr: rt.ThrowType("BigInts have no unsigned right shift (>>>); use >>");
+        case OP_BitAnd: case OP_BitOr: case OP_BitXor: {
+            std::size_t len = std::max(a.mag.size(), b.mag.size()) + 1;
+            rt.Charge(len / 16 + 1);
+            Limbs x = ToTwos(a, len), y = ToTwos(b, len);
+            for (std::size_t i = 0; i < len; ++i) x[i] = op == OP_BitAnd ? x[i] & y[i] : op == OP_BitOr ? x[i] | y[i] : x[i] ^ y[i];
+            return Wrap(rt, FromTwos(std::move(x)));
+        }
+        default: rt.ThrowType("this operator does not take BigInts");
+    }
+}
+// -x, ~x, x + 1, x - 1
+Value BigUnary(Runtime& rt, int op, const Value& av) {
+    const Big& a = BigOf(av);
+    switch (op) {
+        case OP_Neg: return Wrap(rt, NegBig(a));
+        case OP_BitNot: return Wrap(rt, AddBig(NegBig(a), Big{true, {1}}));
+        case OP_Inc: case OP_IncLoc: return Wrap(rt, AddBig(a, Big{false, {1}}));
+        default: return Wrap(rt, AddBig(a, Big{true, {1}}));
+    }
+}
+
+// 7.1.13 ToBigInt
+Value ToBigIntValue(Runtime& rt, const Value& v) {
+    Value p = rt.ToPrimitive(v, 1);
+    switch (p.t) {
+        case Tag::BigInt: return p;
+        case Tag::Bool: return NewBigValue(rt, false, p.b ? Limbs{1} : Limbs{});
+        case Tag::String: {
+            Value out;
+            if (!StringToBigInt(rt, p.S()->s, out)) rt.ThrowError(ErrorType::SyntaxError, "can not turn '" + rt.ToUtf8(p) + "' into a BigInt");
+            return out;
+        }
+        case Tag::Number: rt.ThrowType("can not turn a Number into a BigInt implicitly; use BigInt(n)");
+        case Tag::Symbol: rt.ThrowType("can not turn a Symbol into a BigInt");
+        default: rt.ThrowType(std::string("can not turn ") + (p.IsNull() ? "null" : "undefined") + " into a BigInt");
+    }
+}
+
+namespace {
+Value ThisBig(Runtime& rt, const Value& v, const char* m) {
+    if (v.t == Tag::BigInt) return v;
+    if (v.IsObj() && v.O()->cls == Cls::BigIntBox) return static_cast<BoxObj*>(v.O())->prim;
+    rt.ThrowType(std::string("BigInt.prototype.") + m + " needs a BigInt");
+}
+// BigInt.asIntN / asUintN (21.2.2.1, 21.2.2.2): the value modulo 2^bits, read as signed or unsigned
+Value AsBits(Runtime& rt, CallArgs& a, bool isSigned) {
+    double bd = rt.ToIntegerOrInfinity(a[0]);
+    if (bd < 0 || bd > 9007199254740991.0) rt.ThrowRange("the bit count must be between 0 and 2^53 - 1");
+    Value x = ToBigIntValue(rt, a[1]);
+    rt.Keep(x);
+    std::uint64_t bits = (std::uint64_t)bd;
+    if (bits == 0) return NewBigValue(rt, false, {});
+    const Big& v = BigOf(x);
+    std::size_t len = BitLength(v.mag);
+    if (isSigned ? len < bits : (!v.neg && len <= bits)) return x;   // already in range (len + 1 <= bits covers the sign)
+    if (bits > kMaxBigBits) rt.ThrowRange("the BigInt is too big (over 1048576 bits)");
+    std::size_t limbs = (std::size_t)((bits + 31) / 32);
+    Limbs t = ToTwos(v, limbs);
+    std::uint32_t rem = (std::uint32_t)(bits % 32);
+    if (rem) t.back() &= (1u << rem) - 1;
+    Big r{false, std::move(t)};
+    r = Norm(std::move(r));
+    if (isSigned && BitLength(r.mag) == bits) {   // the sign bit is set: subtract 2^bits
+        Limbs pow2((std::size_t)(bits / 32) + 1, 0);
+        pow2[(std::size_t)(bits / 32)] = 1u << (bits % 32);
+        r = Norm({true, SubMag(pow2, r.mag)});
+    }
+    return Wrap(rt, std::move(r));
+}
+} // namespace
+
+void InstallBigIntLib(Runtime& rt) {
+    Object* bp = rt.NewObject();
+    rt.bigintProto = bp;
+    NativeFunc* ctor = DefCtor(rt, "BigInt", [](Runtime& rt, CallArgs& a) {
+        if (a.newTarget) rt.ThrowType("BigInt is not a constructor (call BigInt(x) without new)");
+        Value p = rt.ToPrimitive(a[0], 1);
+        if (p.IsNum()) return BigFromDouble(rt, p.n);
+        return ToBigIntValue(rt, p);
+    }, 1, bp);
+    ctor->ctor = false;
+    DefNative(rt, ctor, "asIntN", [](Runtime& rt, CallArgs& a) { return AsBits(rt, a, true); }, 2);
+    DefNative(rt, ctor, "asUintN", [](Runtime& rt, CallArgs& a) { return AsBits(rt, a, false); }, 2);
+    DefNative(rt, bp, "toString", [](Runtime& rt, CallArgs& a) {
+        Value x = ThisBig(rt, a.thisv, "toString");
+        int radix = a[0].IsUndef() ? 10 : (int)rt.ToIntegerOrInfinity(a[0]);
+        if (radix < 2 || radix > 36) rt.ThrowRange("toString's radix must be between 2 and 36");
+        return Value::Str(rt.NewString(BigToString(rt, x, radix)));
+    }, 0);
+    DefNative(rt, bp, "toLocaleString", [](Runtime& rt, CallArgs& a) {   // en-US: groups of three digits
+        std::u16string s = BigToString(rt, ThisBig(rt, a.thisv, "toLocaleString"), 10);
+        std::size_t first = s[0] == u'-' ? 1 : 0;
+        for (std::size_t i = s.size(); i > first + 3; i -= 3) s.insert(i - 3, 1, u',');
+        return Value::Str(rt.NewString(std::move(s)));
+    }, 0);
+    DefNative(rt, bp, "valueOf", [](Runtime& rt, CallArgs& a) { return ThisBig(rt, a.thisv, "valueOf"); }, 0);
+    bp->AddRaw(rt.symToStringTag, Value::Str(rt.Intern("BigInt")), kConfigurable);
 }
 
 } // namespace okay::js

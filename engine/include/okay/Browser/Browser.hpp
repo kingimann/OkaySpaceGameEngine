@@ -235,6 +235,14 @@ public:
     /// popstate and loads nothing; any other is loaded. False (nothing happens) for the current entry or one that is not there.
     bool GoTo(std::size_t index);
 
+    // ---- round 4: what the page's scripts learn about the view (Script.hpp PageView, PageRect) ----
+    /// navigator.userAgent of the pages' scripts (the host sends the same in its requests). Takes effect at the next page.
+    void SetUserAgent(const std::string& ua) { m_userAgent = ua; }
+    /// Element `el`'s box in the last layout (the union of its runs for an inline element); false when it has none.
+    bool BoxOf(const Node& el, PageRect& out);
+    /// The view's size and the page's scroll, as the page's scripts see them.
+    PageView View();
+
 private:
     // doc: the page (ShowPage count) the entry belongs to; entries made by pushState share their page's number
     struct Entry { std::string url; float scrollY = 0.0f; bool post = false; std::string body; std::uint64_t doc = 0; std::string state; std::string title; };
@@ -322,6 +330,13 @@ private:
     void ForgetScriptNode(const Node& n);         // a freed node: no queued script points at it any more
     void FillArrived();                           // linked sheets that already arrived go in their places
     StorageArea* StorageFor(bool local);
+    // round 4
+    std::string m_userAgent;
+    std::uint64_t m_layoutSerial = 0;              // goes up with every new layout
+    std::uint64_t m_boxIndexFor = ~0ull;           // the layout m_boxIndex was made from
+    std::map<const Node*, PageRect> m_boxIndex;    // element -> its box (BoxOf)
+    std::uint64_t m_viewSentSerial = 0;            // the layout and view the page's scripts last heard of (ViewChanged)
+    PageView m_viewSent;
 };
 
 /// Keys the browser keeps for itself (Ctrl+T, Ctrl+W, Ctrl+L, Ctrl+Tab, Alt+Left ...: the program's shortcuts): the host does not

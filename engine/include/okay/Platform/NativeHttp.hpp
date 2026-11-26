@@ -159,6 +159,8 @@ struct RequestOptions {
     int connectMs = 0, ioMs = 0, totalMs = 0;   ///< 0 = the defaults (8 s, 30 s, 15 min)
     int maxRedirects = 0;        ///< 0 = the default (10)
     bool acceptGzip = false;     ///< in-memory bodies only; ignored with outFile
+    /// With acceptGzip, own client only: a Brotli decoder (okay::ownhttp::BrotliFn), so "br" is asked for and decoded too.
+    bool (*brotli)(const std::string& in, size_t maxOut, std::string& out, std::string& why) = nullptr;
     /// With outFile: write the file only for a 200 or 206 answer (like curl -f); other statuses leave it alone.
     bool fileOnSuccessOnly = true;
     /// Conditional request: sends If-None-Match / If-Modified-Since. A 304 answer comes back as status 304,
@@ -583,6 +585,7 @@ inline ExResult RequestEx(const std::string& method, const std::string& url,
     opt.cancel = ro.cancel;
     if (ro.maxRedirects > 0) opt.limits.maxRedirects = ro.maxRedirects;
     opt.acceptGzip = ro.acceptGzip && outFile.empty();
+    opt.limits.brotli = ro.brotli;
     opt.keepAlive = ro.keepAlive;
     opt.followRedirects = ro.followRedirects;
     std::shared_ptr<okay::ownhttp::CookieJar> jar;

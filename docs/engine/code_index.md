@@ -13,7 +13,7 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Animation | 13 | 118 | [code_index/engine-Animation.md](code_index/engine-Animation.md) |
 | engine-Audio | 11 | 35 | [code_index/engine-Audio.md](code_index/engine-Audio.md) |
 | engine-Backend | 5 | 25 | [code_index/engine-Backend.md](code_index/engine-Backend.md) |
-| engine-Browser | 15 | 199 | [code_index/engine-Browser.md](code_index/engine-Browser.md) |
+| engine-Browser | 15 | 206 | [code_index/engine-Browser.md](code_index/engine-Browser.md) |
 | engine-Combat | 1 | 6 | [code_index/engine-Combat.md](code_index/engine-Combat.md) |
 | engine-Components | 261 | 740 | [code_index/engine-Components.md](code_index/engine-Components.md) |
 | engine-Core | 82 | 520 | [code_index/engine-Core.md](code_index/engine-Core.md) |

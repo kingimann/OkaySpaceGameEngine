@@ -375,7 +375,8 @@ struct Layouter {
     std::vector<int> cmdKey;      // per entry of r.cmds: its paint-order key (index into keys)
     std::vector<int> cmdGrad;     // per entry of r.cmds: a gradient placeholder's index into grads, or -1
     std::vector<std::shared_ptr<const Gradient>> grads;
-    long gradientCells = 60000;   // the Fill commands every gradient of a page may make together (a hostile page's budget)
+    long gradientCells = 60000;
+    long decoFills = 200000;      // the dotted / dashed / wavy pieces every text decoration of a page may make together   // the Fill commands every gradient of a page may make together (a hostile page's budget)
     std::vector<std::vector<std::pair<int, int>>> keys{{{0, 0}}};
     int curKey = 0;
     int curClip = -1;
@@ -1255,7 +1256,9 @@ struct Layouter {
             };
             DecoStyle ds = st.decoStyle;
             const float period = ds == DecoStyle::Dotted ? thick * 2.0f : ds == DecoStyle::Dashed ? thick * 5.0f : thick;
-            if ((ds == DecoStyle::Dotted || ds == DecoStyle::Dashed || ds == DecoStyle::Wavy) && t.w / period > 600.0f) ds = DecoStyle::Solid;
+            // a long run, or a page that has used up its budget for these: a plain line
+            if ((ds == DecoStyle::Dotted || ds == DecoStyle::Dashed || ds == DecoStyle::Wavy) && (t.w / period > 600.0f || decoFills <= 0)) ds = DecoStyle::Solid;
+            if (ds == DecoStyle::Dotted || ds == DecoStyle::Dashed || ds == DecoStyle::Wavy) decoFills -= (long)(t.w / period) + 1;
             switch (ds) {
             case DecoStyle::Solid: fill(t.x, ly, t.w, thick); break;
             case DecoStyle::Double: fill(t.x, ly, t.w, thick); fill(t.x, ly + thick * 2.0f, t.w, thick); break;

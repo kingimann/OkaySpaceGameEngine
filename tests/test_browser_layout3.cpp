@@ -266,6 +266,12 @@ int main() {
         CHECK(t3 && t3->underline && CountKind(r3, DrawCmd::Fill) == 0);   // a plain underline stays the host's
         const LayoutResult r4 = Lay(B0 + "<p style='margin:0;text-decoration:underline double #0000ff'>ab</p>", 400);
         CHECK(CountFill(r4, Color{0, 0, 255, 255}) == 2);
+        // hostile: thousands of wavy runs stay inside the page's budget (then they are plain lines)
+        std::string many = B0;
+        for (int i = 0; i < 10000; ++i) many += "<p style='margin:0;text-decoration:underline wavy #ff0000'>abcd</p>";
+        const LayoutResult r5 = Lay(many, 400);
+        const int fills = CountFill(r5, Color{255, 0, 0, 255});
+        CHECK(fills <= 200000 + 40 + 10000 && fills >= 10000);
     }
 
     // ---- object-fit (CSS Images 3, 5.5) ----

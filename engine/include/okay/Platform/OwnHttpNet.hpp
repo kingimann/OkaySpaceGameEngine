@@ -534,7 +534,9 @@ namespace detail {
 /// One SSL_CTX per (library, CA configuration), kept for the life of the process.
 inline void* TlsContext(const TlsApi* a, const NetOptions& o, std::string& why) {
     static std::mutex mu;
-    static std::map<std::string, void*> cache;
+    // Never destroyed: a request on another thread may still use a context while the process exits, and a map torn down
+    // by the static destructors would leave every context unreachable (LeakSanitizer reported each one as a leak).
+    static std::map<std::string, void*>& cache = *new std::map<std::string, void*>();
     std::vector<std::string> files; std::string dir;
     if (!o.caFile.empty() || !o.caDir.empty()) { if (!o.caFile.empty()) files.push_back(o.caFile); dir = o.caDir; }
     else {

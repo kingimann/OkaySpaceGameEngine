@@ -2,7 +2,7 @@
 
 # Code index: engine-Modeling
 
-Back to the [code index](../code_index.md). 21 headers, 196 names.
+Back to the [code index](../code_index.md). 21 headers, 199 names.
 
 ## `engine/include/okay/Modeling/Arrange.hpp`
 
@@ -139,8 +139,11 @@ Back to the [code index](../code_index.md). 21 headers, 196 names.
 
 ## `engine/include/okay/Modeling/MeshAsset.hpp`
 
-- `SaveMeshAsset` function, line 17: Save 'mesh' as a .okaymesh file (quads recovered from triangle pairs).
-- `GeometryHash` function, line 21: A fingerprint of the geometry (positions, triangles, UVs, face colours), to
+- `ResolveMeshAssetPath` function, line 17: The file LoadMeshAsset would open for 'path' (the same fallback rule), or "" when none exists.
+- `MeshFile` struct, line 22: A decoded mesh file as the asset streamer keeps it (AssetManager type "MeshFile"): the geometry and an OBJ's
+- `DecodeMeshFile` function, line 27: Decode a mesh file without looking in the streamer's cache (the "MeshFile" loader).
+- `SaveMeshAsset` function, line 30: Save 'mesh' as a .okaymesh file (quads recovered from triangle pairs).
+- `GeometryHash` function, line 34: A fingerprint of the geometry (positions, triangles, UVs, face colours), to
 
 ## `engine/include/okay/Modeling/MeshExport.hpp`
 

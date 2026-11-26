@@ -28,6 +28,7 @@
 #include "BuildSettingsWindow.hpp"     // the Build Settings window: pages, search, summary, checks, history (own files)
 #include "BuildGame.hpp"               // Build Game: the game, Web / Android / Xbox data and dedicated server exports (builder::)
 #include "Updater.hpp"                 // the self-updater and runtime fetcher (updater::)
+#include "WorkerCall.hpp"              // one call on its own thread: the update check and download (never inside a frame)
 #include "FindInFiles.hpp"             // Find in Files: the project-wide script search window
 #include "AssetManagerWindow.hpp"      // the Asset Manager window: Marketplace downloads into the project
 #include "PluginsWindow.hpp"           // editor plugins: the Plugins menu, the Plugin Manager, the per-frame tick
@@ -173,7 +174,6 @@
 #include <cstdarg>
 #include <map>
 #include <memory>
-#include <future>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -1592,6 +1592,11 @@ static okay::Image RenderFramedImage(okay::Scene& sc, const Vec3& center, float 
     const int W = 128, H = 128;
     Mat4 vp = Mat4::Perspective(40.0f, 1.0f, 0.05f, 4000.0f) *
               Mat4::LookAt(eye, center, Vec3::Up);
+    // A 128 px tile does not need shadow maps (three 2048 x 2048 cascades), ambient occlusion, bloom, FXAA or depth of field: with
+    // them a thumbnail cost about as much as a full Scene view frame (tests/test_thumbnail_render_cost.cpp). The scope also keeps
+    // the Scene view's occlusion depth and counters, which a thumbnail used to overwrite.
+    sc.renderSettings.post.ssao = sc.renderSettings.post.bloom = sc.renderSettings.post.fxaa = sc.renderSettings.post.dof = false;
+    okay::ReducedRenderScope reduced(/*depthOnly=*/false, /*keepOcclusionDepth=*/true);
     Raster work; std::vector<std::uint32_t> out;
     const std::uint32_t* px = RenderMeshesSS(work, out, sc, vp, eye, W, H, 2);
     if (!px) return okay::Image();
@@ -1873,9 +1878,28 @@ static GameObject* CreateShapeSprite(EditorState& ed, int shape) {
 std::string g_updateStatus;
 bool g_openUpdatePopup = false;
 updater::UpdateInfo g_update;     // last update check result
-bool g_installingUpdate = false;  // set while InstallUpdate runs
-std::future<updater::UpdateInfo> g_updateCheck;  // async startup check (non-blocking)
-bool g_autoCheckDone = false;     // consumed the async result yet?
+bool g_installingUpdate = false;  // set while InstallUpdate runs (on g_updateInstall's thread)
+bool g_autoCheckDone = false;     // consumed the startup check's result yet?
+// The update check and the download run on their own threads (editor/WorkerCall.hpp) and are picked up by the main loop
+// (top of each frame, after Prof().BeginFrame): CheckLatest waits up to 20 s to connect and 60 s per read, three tries, and the Engine > Check for Updates
+// item and the version question's "Update OkaySpace" button used to run it inside the frame (owner's log, 2026-11-25).
+oked::WorkerCall g_updateCheck, g_updateInstall;
+std::shared_ptr<updater::UpdateInfo> g_updateCheckOut = std::make_shared<updater::UpdateInfo>();
+std::shared_ptr<std::string> g_updateInstallOut = std::make_shared<std::string>();
+bool g_updateCheckShow = false;   // a person asked: open the Engine Update window with the result
+static void StartUpdateCheck(bool show) {
+    if (show) g_updateCheckShow = true;
+    if (g_updateCheck.Busy()) return;   // one already running (the startup check): its result is shown
+    auto out = g_updateCheckOut;
+    g_updateCheck.Start([out] { *out = updater::CheckLatest(); }, "okay-update-check");
+}
+static void StartUpdateInstall(const std::string& latest, const std::string& ref) {
+    if (g_updateInstall.Busy()) return;
+    g_installingUpdate = true;
+    g_updateStatus = "Downloading v" + latest + "...";
+    auto out = g_updateInstallOut;
+    g_updateInstall.Start([out, latest, ref] { *out = updater::InstallUpdate(latest, ref); }, "okay-update-install");
+}
 bool g_openAbout = false;
 std::string g_newProjectTemplate; // template title requested via --template
 std::string g_newProjectRoot;     // project folder requested via --new-project (launcher)
@@ -2055,8 +2079,14 @@ static void NoteFpsSummary(double frameMs) {
         okay::editor::perf::FpsSummary f; f.periodSeconds = okay::editor::perf::FpsSummary::PeriodFrom(std::getenv("OKAY_FPS_SUMMARY_S")); return f; }();
     const okay::Profiler& pr = okay::Prof();
     const okay::Profiler::Frame& f = pr.paused || pr.Count() == 0 ? okay::Profiler::Frame() : pr.FrameAt(pr.Count() - 1);
-    const std::string line = s_sum.Add(f, frameMs);
-    if (!line.empty()) okay::restart::AppendLog(PerfLogPath(), line);
+    std::string line = s_sum.Add(f, frameMs);
+    if (line.empty()) return;
+    // Which modal (if any) holds the editor right now: a modal that stays open minute after minute is what blocks every click.
+#if !defined(OKAY_ON_OKAYUI)   // (the OkayUI compatibility build has no Dear ImGui window internals)
+    const ImGuiWindow* modal = ImGui::GetCurrentContext() ? ImGui::GetTopMostPopupModal() : nullptr;
+    line += std::string("; modal open: ") + (modal ? (modal->Hidden ? std::string(modal->Name) + " (hidden)" : std::string(modal->Name)) : std::string("none"));
+#endif
+    okay::restart::AppendLog(PerfLogPath(), line);
 }
 // Modals and clicks that go nowhere (editor/ModalGuard.hpp; owner, v2.903.8.118: nothing could be clicked while frames kept coming).
 // Every modal opening and closing is a breadcrumb (okay_hang.txt, okay_crash.txt); a modal closed because it was no longer drawn,
@@ -6864,12 +6894,8 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
     else if (id == "help.scripting") g_showScriptDocs = true;
     else if (id == "help.shortcuts") g_showShortcuts = true;
     else if (id == "help.updates") {
-        g_update = updater::CheckLatest();
-        g_openUpdatePopup = true;
-        ConsoleLog(g_update.error.empty()
-            ? (g_update.available ? "Update available: v" + g_update.latest
-                                  : "Up to date (v" + g_update.current + ").")
-            : "Update check failed: " + g_update.error);
+        ConsoleLog("Checking for updates...");
+        StartUpdateCheck(true);   // on its own thread; the Engine Update window opens with the answer (main loop)
     }
     else if (id == "help.bug") {
         ImGui::SetClipboardText((std::string("OkaySpace v") + OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION)).c_str());   // so the report can say which version (and that it is a test build)
@@ -8521,7 +8547,9 @@ static SDL_Texture* ProjectThumb(const std::string& abs) {
 // old picture is never drawn again, and here it is freed).
 static void ProjectThumbFrame() {
     ++g_thumbFrame;
-    if (g_pb) g_pb->ThumbFrame(10.0);
+    // Whole-scene pictures (scenes, prefabs, models) wait while a mouse button is held: one of them can take longer than a frame,
+    // and a stall is felt most in the middle of a drag. (Not "since the last event": any mouse move is an event.)
+    if (g_pb) g_pb->ThumbFrame(10.0, !ImGui::IsAnyMouseDown());
     if (g_thumbTex.size() < 64 || (g_thumbFrame & 31) != 0) return;
     for (auto it = g_thumbTex.begin(); it != g_thumbTex.end();) {
         if (g_thumbFrame - it->second.lastUse > 120) { if (it->second.tex) okay::pb::DestroyTexture(g_sdlRenderer, it->second.tex); it = g_thumbTex.erase(it); }
@@ -16355,33 +16383,54 @@ void DrawNewProjectPopup(EditorState& ed) {
     ConsoleLog("Created project \"" + plan.folder + "\" at " + r.root);
 }
 
-// Offer to restore a newer "<scene>.autosave" recovery copy after a crash or
-// unclean exit. Recover loads it (and overwrites the scene); Discard removes it.
+// Offer to restore a newer "<scene>.autosave" recovery copy after a crash or unclean exit. Recover loads its text as the
+// open scene's unsaved changes (the scene file itself changes only when you save); Discard deletes it. A Recover that
+// fails says why here and keeps the file (it used to copy the file over the scene first, so a copy that would not load
+// replaced the scene on disk, and the reason only reached the Console).
 void DrawRecoveryPopup(EditorState& ed) {
+    static std::string s_recoverError;
     // One question at a time: this one and "Restore recovered work?" both wait after an unclean exit, and each re-opening itself every
     // frame closed the other, so neither was ever shown while every click was blocked (v2.903.8.118). The scene's question comes first.
     if (!g_recoverPath.empty()) okayed::modalguard::OpenModalWhenFree("Recover Autosave");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Recover Autosave", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (g_recoverPath.empty()) { s_recoverError.clear(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }   // nothing to ask: never left open
         ImGui::TextWrapped("A newer autosave was found for this scene:");
         ImGui::TextDisabled("%s", g_recoverPath.c_str());
         ImGui::TextWrapped("It looks like the editor didn't close cleanly. Recover it?");
-        ImGui::Separator();
-        if (ImGui::Button("Recover", ImVec2(130, 0))) {
-            std::error_code rc;
-            std::string scene = ed.path();
-            okay::CopyFileOver(g_recoverPath, scene, rc);   // the scene file always exists here
-            std::string err;
-            if (!rc && ed.Load(scene, &err)) { ed.dirty = true; ConsoleLog("Recovered autosave"); }
-            else ConsoleLog("Recover failed: " + (rc ? rc.message() : err));
-            std::filesystem::remove(g_recoverPath, rc);
-            g_recoverPath.clear(); ImGui::CloseCurrentPopup();
+        if (!s_recoverError.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.5f, 0.45f, 1));
+            ImGui::TextWrapped("Recover failed: %s\nThe autosave file was kept; your scene file was not changed.", s_recoverError.c_str());
+            ImGui::PopStyleColor();
         }
+        ImGui::Separator();
+        bool close = false;
+        ImGui::BeginDisabled(!s_recoverError.empty());
+        if (ImGui::Button("Recover", ImVec2(130, 0))) {
+            std::string text, err;
+            std::ifstream f(g_recoverPath, std::ios::binary);
+            std::stringstream ss; if (f) ss << f.rdbuf();
+            text = ss.str();
+            if (!f) s_recoverError = "can't open " + g_recoverPath;
+            else if (!ed.LoadRecoveredText(text, ed.path(), &err)) s_recoverError = err.empty() ? std::string("the autosave could not be loaded") : err;
+            else {
+                ConsoleLog("Recovered autosave: the scene has its changes; save to keep them.");
+                std::error_code rc; std::filesystem::remove(g_recoverPath, rc);
+                close = true;
+            }
+            if (!s_recoverError.empty()) ConsoleLog("Recover failed: " + s_recoverError, 2);
+        }
+        ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Discard", ImVec2(130, 0))) {
             std::error_code rc; std::filesystem::remove(g_recoverPath, rc);
-            g_recoverPath.clear(); ImGui::CloseCurrentPopup();
+            close = true;
         }
+        if (!s_recoverError.empty()) {
+            ImGui::SameLine();
+            if (ImGui::Button("Keep for later", ImVec2(130, 0))) close = true;   // leaves the file; offered again when the scene is opened
+        }
+        if (close) { g_recoverPath.clear(); s_recoverError.clear(); ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
 }
@@ -16624,13 +16673,9 @@ void DrawUpdatePopup(EditorState& ed) {
             ImGui::BeginDisabled(g_installingUpdate);
             if (ImGui::Button(g_installingUpdate ? "Installing..." : "Download & Install",
                               ImVec2(180, 0))) {
-                g_installingUpdate = true;
-                g_updateStatus = "Downloading v" + u.latest + "...";
-                // Save first so nothing is lost when the new build relaunches.
+                // Save first so nothing is lost when the new build relaunches. The download runs on its own thread.
                 SaveAllBeforeExit(ed);
-                g_updateStatus = updater::InstallUpdate(u.latest, u.ref);
-                ConsoleLog(g_updateStatus);
-                g_installingUpdate = false;
+                StartUpdateInstall(u.latest, u.ref);
             }
             ImGui::EndDisabled();
             ImGui::SameLine();
@@ -52323,8 +52368,10 @@ static okay::RecoveryManager& DocRecovery() {
     }
     return *r;
 }
-static std::vector<okay::RecoveryManager::Candidate> g_docRecover;
-static int g_docCompare = -1;
+static std::vector<okay::editor::docrec::Offer> g_docRecover;   // read once at start (MakeOffers), one per crashed session
+static bool g_docCompare = false;
+static std::vector<std::string> g_docCompareRows;              // read when Compare is pressed, not every frame
+static std::string g_docRestoreError;                          // why the last Restore did not finish (the copy is kept)
 static okay::BackupManager& EditorBackups() {
     static okay::BackupManager* m = nullptr;
     if (!m) {
@@ -52598,87 +52645,121 @@ static void DrawActionPrompt(EditorState& ed) {
     }
     ImGui::EndPopup();
 }
-static void ApplyRecoveredBundle(EditorState& ed, const std::vector<okay::editor::docrec::Buffer>& docs) {
-    for (const auto& b : docs) {
-        if (b.kind == "graph" || b.kind == "closed") okay::editor::vsed::VsRestoreBuffer(b);
-        else if (b.kind == "script") {
-            if (b.key.rfind("untitled", 0) == 0) {
-                auto sc = std::make_unique<okay::ScriptComponent>("okayscript");
-                okay::ScriptComponent* raw = sc.get();
-                g_looseScripts.push_back(std::move(sc));
-                g_scriptTabs.push_back(raw);
-                g_activeScriptTab = raw; g_focusScriptTab = raw;
-                SetCodeBuffer(raw, b.text);
-                g_scriptSaved[raw] = "";
-            } else {
-                OpenScriptFileInEditor(b.key);
-                if (g_activeScriptTab) {
-                    SetCodeBuffer(g_activeScriptTab, b.text);
-                    std::ifstream f(b.key, std::ios::binary);
-                    std::stringstream ss; if (f) ss << f.rdbuf();
-                    g_scriptSaved[g_activeScriptTab] = ss.str();
-                }
+// Restore puts each recovered buffer back where it belongs (editor/DocRecovery.hpp routes them and collects failures).
+static okay::editor::docrec::RestoreOutcome ApplyRecoveredBundle(EditorState& ed, const std::vector<okay::editor::docrec::Buffer>& docs) {
+    okay::editor::docrec::RestoreSinks to;
+    bool graphs = false;
+    to.graph = [&graphs](const okay::editor::docrec::Buffer& b, std::string&) {
+        okay::editor::docrec::Buffer g = b;
+        g.kind = "graph";   // VsRestoreBuffer takes "graph" and "closed"; a closed script never reaches it now
+        okay::editor::vsed::VsRestoreBuffer(g);
+        graphs = true;
+        return true;
+    };
+    to.script = [](const okay::editor::docrec::Buffer& b, std::string&) {
+        if (b.key.rfind("untitled", 0) == 0) {
+            auto sc = std::make_unique<okay::ScriptComponent>("okayscript");
+            okay::ScriptComponent* raw = sc.get();
+            g_looseScripts.push_back(std::move(sc));
+            g_scriptTabs.push_back(raw);
+            g_activeScriptTab = raw; g_focusScriptTab = raw;
+            SetCodeBuffer(raw, b.text);
+            g_scriptSaved[raw] = "";
+        } else {
+            OpenScriptFileInEditor(b.key);
+            if (g_activeScriptTab) {
+                SetCodeBuffer(g_activeScriptTab, b.text);
+                std::ifstream f(b.key, std::ios::binary);
+                std::stringstream ss; if (f) ss << f.rdbuf();
+                g_scriptSaved[g_activeScriptTab] = ss.str();
             }
-            g_showScriptEditor = true;
-        } else if (b.kind == "scene") {
-            const std::string keep = (b.key == "untitled-scene") ? std::string() : b.key;
-            std::string err;
-            if (!ed.LoadRecoveredText(b.text, keep, &err)) ConsoleLog("Couldn't restore the scene: " + err, 2);
         }
-    }
-    g_showVisualScript = true;
+        g_showScriptEditor = true;
+        return true;
+    };
+    to.scene = [&ed](const okay::editor::docrec::Buffer& b, std::string& err) {
+        const std::string keep = (b.key == "untitled-scene") ? std::string() : b.key;
+        return ed.LoadRecoveredText(b.text, keep, &err);
+    };
+    const okay::editor::docrec::RestoreOutcome r = okay::editor::docrec::ApplyBundle(docs, to);
+    if (graphs) g_showVisualScript = true;
+    if (!r.Ok()) ConsoleLog("Some recovered work could not be restored (the recovery copy was kept):\n" + r.Describe(), 2);
+    return r;
 }
-static void DrawDocRecoveryPopup(EditorState& ed) {
-    if (g_docRecover.empty()) return;
+// The question waits until the start-up project open is finished (the sign-in check, the project's version question and its
+// upgrade): a scene restored before that was replaced by the project's own scene a moment later, or refused by the version gate.
+static bool DocRecoveryMayAsk(EditorState& ed, bool projectsAllowed) {
+    return projectsAllowed && g_openScenePath.empty() && g_newProjectRoot.empty() && g_newProjectTemplate.empty() &&
+           !ProjectGateBusy() && !ed.isPlaying();
+}
+static void DrawDocRecoveryPopup(EditorState& ed, bool projectsAllowed) {
+    if (g_docRecover.empty() || !DocRecoveryMayAsk(ed, projectsAllowed)) return;
     if (!okayed::modalguard::OpenModalWhenFree("Restore recovered work?")) return;   // after "Recover Autosave" is answered (DrawRecoveryPopup)
     ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_Appearing);
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (!ImGui::BeginPopupModal("Restore recovered work?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    const auto& c = g_docRecover.front();
+    const okay::editor::docrec::Offer& o = g_docRecover.front();
+    const ImVec4 red(1, 0.5f, 0.45f, 1);
     ImGui::TextWrapped("The editor closed without a clean exit. A recovery copy from that session is still here.");
-    ImGui::TextDisabled("%s", c.label.c_str());
+    ImGui::TextDisabled("%s", o.label.c_str());
     ImGui::Spacing();
-    std::string payload, err;
-    std::vector<okay::editor::docrec::Buffer> docs;
-    const bool ok = DocRecovery().Restore(c, payload, &err) && okay::editor::docrec::DecodeBundle(payload, docs, &err);
-    if (!ok) ImGui::TextColored(ImVec4(1, 0.5f, 0.45f, 1), "The copy could not be read: %s", err.c_str());
-    else for (const auto& b : docs) ImGui::BulletText("%s  %s", b.kind.c_str(), b.key.c_str());
+    if (!o.readable) {
+        ImGui::PushStyleColor(ImGuiCol_Text, red);
+        ImGui::TextWrapped("This recovery copy can't be read: %s", o.error.c_str());
+        ImGui::PopStyleColor();
+        ImGui::TextWrapped("It can't be restored. Discard deletes it; Keep for later leaves the file where it is.");
+    } else {
+        if (!o.note.empty()) ImGui::TextWrapped("%s", o.note.c_str());
+        for (const auto& b : o.docs) ImGui::BulletText("%s  %s", b.kind.c_str(), b.key.c_str());
+    }
+    if (!g_docRestoreError.empty()) {
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, red);
+        ImGui::TextWrapped("Restore did not finish. The recovery copy was kept.\n%s", g_docRestoreError.c_str());
+        ImGui::PopStyleColor();
+    }
     ImGui::Spacing();
-    if (ImGui::Button("Restore", ImVec2(120, 0)) && ok) {
-        ApplyRecoveredBundle(ed, docs);
-        DocRecovery().Discard(c);
+    auto finish = [](bool discard) {
+        if (discard && okay::editor::docrec::DiscardOffer(DocRecovery(), g_docRecover.front()) > 0)
+            ConsoleLog("Couldn't delete every recovery file of that session (in the okay_recovery folder).", 1);
         g_docRecover.erase(g_docRecover.begin());
-        g_docCompare = -1;
+        g_docCompare = false; g_docCompareRows.clear(); g_docRestoreError.clear();
         ImGui::CloseCurrentPopup();
+    };
+    const bool tried = !g_docRestoreError.empty();   // a second Restore would open the parts that did come back twice
+    bool restored = false;
+    ImGui::BeginDisabled(!o.readable || tried);
+    if (ImGui::Button("Restore", ImVec2(120, 0))) {
+        const okay::editor::docrec::RestoreOutcome r = ApplyRecoveredBundle(ed, o.docs);
+        if (r.Ok()) restored = true;   // the copy is deleted below, once nothing here reads `o` any more
+        else g_docRestoreError = r.Describe();
     }
-    ImGui::SetItemDefaultFocus();
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && (!o.readable || tried))
+        ImGui::SetTooltip("%s", !o.readable ? "This copy can't be read, so there is nothing to restore." : "Restore already ran; what failed is listed above.");
+    if (o.readable && !tried) ImGui::SetItemDefaultFocus();
     ImGui::SameLine();
-    if (ImGui::Button("Compare", ImVec2(120, 0))) g_docCompare = g_docCompare < 0 ? 0 : -1;
-    ImGui::SameLine();
-    if (ImGui::Button("Discard", ImVec2(120, 0))) {
-        DocRecovery().Discard(c);
-        g_docRecover.erase(g_docRecover.begin());
-        g_docCompare = -1;
-        ImGui::CloseCurrentPopup();
+    ImGui::BeginDisabled(!o.readable);
+    if (ImGui::Button(g_docCompare ? "Hide compare" : "Compare", ImVec2(120, 0))) {
+        g_docCompare = !g_docCompare;
+        if (g_docCompare) g_docCompareRows = okay::editor::docrec::CompareRows(o.docs);
     }
-    if (g_docCompare >= 0 && ok) {
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !o.readable) ImGui::SetTooltip("This copy can't be read, so there is nothing to compare.");
+    ImGui::SameLine();
+    const bool keep = ImGui::Button("Keep for later", ImVec2(120, 0));
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close this question and leave the recovery copy in the okay_recovery folder.\nIt is offered again the next time the editor starts.");
+    ImGui::SameLine();
+    const bool discard = ImGui::Button("Discard", ImVec2(120, 0));
+    if (g_docCompare && o.readable) {
         ImGui::Separator();
         ImGui::BeginChild("##reccompare", ImVec2(600, 220), ImGuiChildFlags_Borders);
-        for (const auto& b : docs) {
-            std::string disk;
-            bool exists = false;
-            if (!b.key.empty() && b.key.rfind("untitled", 0) != 0) {
-                std::ifstream f(b.key, std::ios::binary);
-                exists = (bool)f;
-                if (f) { std::stringstream ss; ss << f.rdbuf(); disk = ss.str(); }
-            }
-            if (!okay::editor::docrec::BufferWorthRestoring(b.text, disk, exists)) continue;
-            ImGui::Text("%s  %s", b.kind.c_str(), b.key.c_str());
-            ImGui::TextDisabled("Recovered (%d characters). On disk: %s.", (int)b.text.size(), exists ? "different" : "no file yet");
-            ImGui::Spacing();
-        }
+        if (g_docCompareRows.empty()) ImGui::TextDisabled("Every recovered document is the same as its file on disk.");
+        for (const auto& row : g_docCompareRows) { ImGui::TextUnformatted(row.c_str()); ImGui::Spacing(); }
         ImGui::EndChild();
     }
+    if (keep) finish(false);
+    else if (restored || discard) finish(true);
     ImGui::EndPopup();
 }
 // Save everything: the scene (an unsaved one goes to Assets/Scenes), every edited
@@ -53968,6 +54049,9 @@ int main(int argc, char** argv) {
     // selectable alongside the OpenGL path. Falls back to software if unavailable.
     splashTick("Starting Direct3D 11");
     {
+        // Compiled shaders are kept in the per-user folder: D3DCompile of the whole set runs once per renderer version, not at every
+        // start (the owner's log, 2026-11-25: the first 3D frame took 7-9 s). UNVERIFIED on Windows.
+        if (!EditorConfigDirPath().empty()) okay::D3D11Renderer::SetShaderCacheDir((EditorConfigDirPath() + "/d3d11_shaders").c_str());
         g_d3dRenderer = new okay::D3D11Renderer();
         // Prefer SDL's own device (zero-copy viewports); else an isolated device.
         bool ok = false;
@@ -54008,8 +54092,7 @@ int main(int argc, char** argv) {
     };
     EditorState::onSceneLoaded = [] { g_lastSaveError.clear(); };   // a scene opened from disk starts without a failed-save note
     g_upgradeHooks.openUpdateDialog = [] {   // the version question's "Update OkaySpace": the same window as Engine > Check for Updates
-        g_update = updater::CheckLatest();
-        g_openUpdatePopup = true;
+        StartUpdateCheck(true);   // the window opens when the answer is in (main loop), the frame does not wait
     };
     g_upgradeHooks.reloadProjectFiles = [&ed] {   // after a backup was restored: what is in memory must not be written over the restored files
         LoadProjectSettingsFrom(g_settingsProjectDir);
@@ -54052,7 +54135,7 @@ int main(int argc, char** argv) {
     // Automatically check for a newer build at startup, in the background so it
     // never blocks the editor. The result is picked up in the main loop and, if
     // an update is available, the Update window pops up on its own.
-    g_updateCheck = std::async(std::launch::async, updater::CheckLatest);
+    StartUpdateCheck(false);
 
     // The one shut-down of ImGui's two sides, the views' GL window and renderer, controllers, audio, the main window's renderer and
     // window, and the platform backend, in the safe order. The end of main() runs it, and so does every early exit before std::exit
@@ -54114,7 +54197,7 @@ int main(int argc, char** argv) {
         }
         for (const auto& c : okay::editor::docrec::ClosedStack()) {
             if (c.kind != "script") continue;
-            docs.push_back({"closed", c.key, c.text});
+            docs.push_back({"closed-script", c.key, c.text});   // "closed" alone is a closed graph (VsCollectUnsaved)
         }
         if (ed.dirty && !ed.isPlaying() && !ed.InPrefabMode()) {   // (a prefab being edited has no recovery copy; its Save is explicit)
             okay::editor::docrec::Buffer b;
@@ -54128,7 +54211,7 @@ int main(int argc, char** argv) {
         label = std::to_string(docs.size()) + " unsaved";
         return true;
     });
-    if (DocRecovery().StartSession()) g_docRecover = DocRecovery().FindRecoverable();
+    if (DocRecovery().StartSession()) g_docRecover = okay::editor::docrec::MakeOffers(DocRecovery(), DocRecovery().FindRecoverable());
 #ifdef OKAY_ENABLE_TEST_HOOKS
     okay::testhooks::Runner testHooks;
     testHooks.Start(sdlSeam, winSeam->Id());
@@ -54162,9 +54245,21 @@ int main(int argc, char** argv) {
         okay::Prof().enabled = g_showProfiler || g_showPerfOverlay || kPerfDump || (g_gameStatsOverlay && ed.isPlaying()) || s_slowLog.thresholdMs > 0.0;   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
         // Pick up the background update check when it finishes (once).
-        if (!g_autoCheckDone && g_updateCheck.valid() &&
-            g_updateCheck.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-            g_update = g_updateCheck.get();
+        if (g_updateInstall.Collect()) {   // the download finished (a relaunch sets updater::pendingQuit)
+            g_updateStatus = *g_updateInstallOut;
+            ConsoleLog(g_updateStatus);
+            g_installingUpdate = false;
+        }
+        if (g_updateCheck.Collect()) {
+          g_update = *g_updateCheckOut;
+          if (g_updateCheckShow) {   // a person asked: show the answer
+            g_updateCheckShow = false;
+            g_openUpdatePopup = true;
+            ConsoleLog(g_update.error.empty()
+                ? (g_update.available ? "Update available: v" + g_update.latest : "Up to date (v" + g_update.current + ").")
+                : "Update check failed: " + g_update.error);
+          }
+          if (!g_autoCheckDone) {
             g_autoCheckDone = true;
             if (g_update.available) {
                 ConsoleLog("Update available: v" + g_update.latest +
@@ -54174,12 +54269,12 @@ int main(int argc, char** argv) {
                     // and relaunch automatically (no prompt).
                     SaveAllBeforeExit(ed);
                     ConsoleLog("Auto-updating to v" + g_update.latest + "...");
-                    g_updateStatus = updater::InstallUpdate(g_update.latest, g_update.ref);
-                    ConsoleLog(g_updateStatus);
+                    StartUpdateInstall(g_update.latest, g_update.ref);   // on its own thread; collected above
                 } else {
                     g_openUpdatePopup = true;   // surface it for a manual choice
                 }
             }
+          }
         }
         Input::ClearTypedText();   // collect this frame's typed characters
         g_okayUITyped[0] = '\0'; g_okayUIBack = false;   // OkayUI demo's per-frame keys
@@ -55539,7 +55634,7 @@ int main(int argc, char** argv) {
         PollLauncherAlive();                // the launcher that started us has gone: close (the save prompt first)
         { OKAY_PROFILE("UI.UpdatePopup"); DrawUpdatePopup(ed); }
         { OKAY_PROFILE("UI.AboutPopup"); DrawAboutPopup(); }
-        { OKAY_PROFILE("UI.RecoveryPopup"); DrawRecoveryPopup(ed); DrawDocRecoveryPopup(ed); }
+        { OKAY_PROFILE("UI.RecoveryPopup"); DrawRecoveryPopup(ed); DrawDocRecoveryPopup(ed, SignInAllowsProjects()); }
         { OKAY_PROFILE("UI.ProjectSettings"); DrawProjectSettings(ed); }
         oked::WatchEditUndo(ed);   // one undo step for every Inspector / Hierarchy field edit
         { OKAY_PROFILE("UI.Diagnostics"); if (!ed.isPlaying()) TickProjectDiagnostics(ed); }
@@ -55821,7 +55916,7 @@ int main(int argc, char** argv) {
 
         {   // Frame limiter and idle throttle (View > Rendering; both off by default): sleep out the rest of the frame budget.
             const okay::editor::perf::PacingSettings ps{g_fpsCapEditor, g_idleThrottle, g_idleFps, 0.75};
-            const double target = okay::editor::perf::TargetFps(ps, ed.isPlaying(), ImGui::IsAnyMouseDown(), g_secSinceInput);
+            const double target = okay::editor::perf::TargetFps(ps, ed.isPlaying(), ImGui::IsAnyMouseDown(), g_secSinceInput, winSeam->IsMinimized());
             if (target > 0.0) {
                 const double elapsed = (double)(okay::platform::PerfCounter() - g_frameT0) / (double)okay::platform::PerfFrequency();
                 const double wait = okay::editor::perf::SleepSeconds(target, elapsed);

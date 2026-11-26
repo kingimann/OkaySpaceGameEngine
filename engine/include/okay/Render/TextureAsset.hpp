@@ -180,6 +180,12 @@ struct ReadOnlyScope {
     ReadOnlyScope(const ReadOnlyScope&) = delete;
     ReadOnlyScope& operator=(const ReadOnlyScope&) = delete;
 };
+/// Start decoding a texture on a job thread through the asset streamer (AssetManager::Stream, at `priority`) so it is
+/// ready before anything draws it; ForRender then finds it. False when the name is already held or cannot be
+/// prefetched ("@" and "proc:" names). Main thread only. Used by streamed scene loads (docs/engine/asset_streaming.md).
+bool Prefetch(const std::string& name, float priority = 0.0f);
+/// True while a prefetched or background load of this name is still decoding.
+bool Loading(const std::string& name);
 /// Let go of the library's own reference to a name (the asset lives on while other handles exist).
 void Drop(const std::string& name);
 /// Drop every file texture the library holds for the renderers, re-decode the ones still alive elsewhere, and keep

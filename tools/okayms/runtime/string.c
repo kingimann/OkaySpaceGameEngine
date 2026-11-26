@@ -34,6 +34,15 @@ unsigned int strlen(char *s) {
     return n;
 }
 
+/* wcslen (ISO/IEC 9899 7.29.4.6.1): the number of wide characters before the terminating zero; 16-bit units, as
+   wchar_t is on Windows (Round 32). */
+unsigned long long wcslen(unsigned short *s) {
+    unsigned long long n;
+    n = 0;
+    while (s[n] != 0) n = n + 1;
+    return n;
+}
+
 char *strcpy(char *dst, char *src) {
     unsigned int i;
     i = 0;

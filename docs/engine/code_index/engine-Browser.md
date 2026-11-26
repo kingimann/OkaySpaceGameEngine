@@ -2,7 +2,7 @@
 
 # Code index: engine-Browser
 
-Back to the [code index](../code_index.md). 15 headers, 196 names.
+Back to the [code index](../code_index.md). 15 headers, 199 names.
 
 ## `engine/include/okay/Browser/Browser.hpp`
 
@@ -75,6 +75,7 @@ Back to the [code index](../code_index.md). 15 headers, 196 names.
 - `Matches` function, line 369: Does 'el' (an element) match 'sel' (for its pseudo-element 'pseudo': 0 the element, 1 ::before, 2 ::after)?
 - `DefaultStyleSheet` function, line 374: The built-in sheet every page starts from (the "user agent" style sheet: block elements, heading sizes, list indents,
 - `InheritedStyle` function, line 378: A style that has 'parent''s inherited properties (colour, font, text, white-space, list style, visibility, custom
+- `SetCssNotUsedReporter` function, line 390
 
 ## `engine/include/okay/Browser/Encoding.hpp`
 
@@ -217,6 +218,8 @@ Back to the [code index](../code_index.md). 15 headers, 196 names.
 - `ConsoleLine` struct, line 85: One line of a page's console.
 - `PageScripts` class, line 90
 - `IsJavaScriptType` function, line 213: Is 'type' (a <script type="..."> value, "" when there is none) a classic script we run? (HTML 4.12.1.1: the JavaScript
+- `MissingWebApi` function, line 221: The web API a console error line of a page's script says is missing, or "" (Site check, tools/sitecheck). Read from our
+- `IsJavaScriptGlobal` function, line 224: Is 'name' one of the JavaScript language's own globals (Object, Date, Map, decodeURIComponent, typed arrays ...; ECMA-262
 
 ## `engine/include/okay/Browser/Storage.hpp`
 

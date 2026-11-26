@@ -284,6 +284,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a shader mode looks different between OpenGL and Direct3D | [38.8](38-render-backends.md#388-shader-pipeline) Shader pipeline |
 | a shared ball is owned by nobody | [16.3](16-networking.md#163-snapshots-and-sync-interest) Snapshots and sync, interest |
 | a shared ball kicks players | [16.6](16-networking.md#166-anti-cheat-server-side) Anti-cheat (server side) |
+| a site does not load or looks broken in our browser and nobody knows which fix helps most sites | [17.20](17-launcher-platform.md#1720-site-check-real-sites-through-our-own-browser-failures-ranked) Site check: real sites through our own browser, failures ranked |
 | a skinned character is slow | [2.8](02-rendering-world.md#28-culling-and-skinning) Culling and skinning |
 | a slid loop stretches the texture | [3.2](03-modeling-import.md#32-edge-and-loop-tools) Edge and loop tools |
 | a slider will not drag or jumps | [12.3](12-ingame-ui.md#123-input-widgets-slider-toggle-input-field-dropdown-stepper-keybind) Input widgets: slider, toggle, input field, dropdown, stepper, keybind |

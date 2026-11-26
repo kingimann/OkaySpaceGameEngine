@@ -2,13 +2,13 @@
 
 # Code index: engine-Browser
 
-Back to the [code index](../code_index.md). 15 headers, 199 names.
+Back to the [code index](../code_index.md). 15 headers, 206 names.
 
 ## `engine/include/okay/Browser/Browser.hpp`
 
 - `BrowserTab` class, line 50
-- `IsBrowserShortcut` function, line 329: Keys the browser keeps for itself (Ctrl+T, Ctrl+W, Ctrl+L, Ctrl+Tab, Alt+Left ...: the program's shortcuts): the host does not
-- `PlainTextPage` function, line 332: The page shown for a plain-text address (".txt"): the text in a <pre>, with < and & escaped.
+- `IsBrowserShortcut` function, line 344: Keys the browser keeps for itself (Ctrl+T, Ctrl+W, Ctrl+L, Ctrl+Tab, Alt+Left ...: the program's shortcuts): the host does not
+- `PlainTextPage` function, line 347: The page shown for a plain-text address (".txt"): the text in a <pre>, with < and & escaped.
 
 ## `engine/include/okay/Browser/Cookies.hpp`
 
@@ -51,31 +51,33 @@ Back to the [code index](../code_index.md). 15 headers, 199 names.
 - `Transform2D` struct, line 137: A 2D affine transform (CSS Transforms 1): x' = a x + c y + e, y' = b x + d y + f.
 - `ParseTransform` function, line 144: Read a transform list (translate(), translateX/Y(), scale(), scaleX/Y(), rotate(), skew(), skewX/Y(), matrix(); % of a
 - `DecoStyle` enum, line 146
-- `ObjectFit` enum, line 147
-- `BoxShadow` struct, line 149
-- `ComputedStyle` struct, line 158
-- `Declaration` struct, line 263
-- `AttrSel` struct, line 270: One attribute selector: [name], [name=value], [name~=value] ... (op is 0 for presence, else '=', '~', '/', '^', '$', '*').
-- `PseudoSel` struct, line 277: A pseudo-class with its argument.
-- `Compound` struct, line 289: One compound selector: [type or *][#id][.class ...][attribute ...][:pseudo-class ...].
-- `Selector` struct, line 296
-- `MediaQuery` struct, line 305: A media query list (Media Queries 4), read once and checked against the view's size each time styles are computed.
-- `MediaEnv` struct, line 310
-- `MediaMatches` function, line 314
-- `ParseMediaQuery` function, line 315
-- `Rule` struct, line 317
-- `FontFace` struct, line 323: An @font-face rule: a family name and where its font file is.
-- `StyleSheet` struct, line 329
-- `CssLimits` struct, line 337
-- `ParseStyleSheet` function, line 345
-- `ParseDeclarations` function, line 347: The declarations of a style="" attribute (or of the inside of one rule's braces).
-- `ParseSelector` function, line 349: Read one selector ("ul li.note > a"); false when it uses anything outside the supported subset.
-- `ParseSelectorList` function, line 352: Read a comma-separated selector list ("h1, .note a"); false when any part is outside the subset. 'maxSpec': the highest
-- `StyleContext` struct, line 356: What matching and the cascade need to know beyond the tree: the element under the pointer and the one with the keyboard
-- `Matches` function, line 369: Does 'el' (an element) match 'sel' (for its pseudo-element 'pseudo': 0 the element, 1 ::before, 2 ::after)?
-- `DefaultStyleSheet` function, line 374: The built-in sheet every page starts from (the "user agent" style sheet: block elements, heading sizes, list indents,
-- `InheritedStyle` function, line 378: A style that has 'parent''s inherited properties (colour, font, text, white-space, list style, visibility, custom
-- `SetCssNotUsedReporter` function, line 390
+- `Cursor` enum, line 149: The mouse pointer's shape over an element (CSS UI 4, 5.1 cursor): the shapes a host can show; the other keywords (help, cell,
+- `ObjectFit` enum, line 150
+- `BoxShadow` struct, line 152
+- `ComputedStyle` struct, line 161
+- `Declaration` struct, line 275
+- `AttrSel` struct, line 282: One attribute selector: [name], [name=value], [name~=value] ... (op is 0 for presence, else '=', '~', '/', '^', '$', '*').
+- `PseudoSel` struct, line 289: A pseudo-class with its argument.
+- `Compound` struct, line 301: One compound selector: [type or *][#id][.class ...][attribute ...][:pseudo-class ...].
+- `Selector` struct, line 308
+- `MediaQuery` struct, line 317: A media query list (Media Queries 4), read once and checked against the view's size each time styles are computed.
+- `MediaEnv` struct, line 322
+- `MediaMatches` function, line 326
+- `ParseMediaQuery` function, line 327
+- `Rule` struct, line 329
+- `FontFace` struct, line 335: An @font-face rule: a family name and where its font file is.
+- `Keyframes` struct, line 342: An @keyframes rule (CSS Animations 1, 3), kept for its ends: the declarations of its "from" / 0% and "to" / 100% keyframes.
+- `StyleSheet` struct, line 346
+- `CssLimits` struct, line 355
+- `ParseStyleSheet` function, line 363
+- `ParseDeclarations` function, line 365: The declarations of a style="" attribute (or of the inside of one rule's braces).
+- `ParseSelector` function, line 367: Read one selector ("ul li.note > a"); false when it uses anything outside the supported subset.
+- `ParseSelectorList` function, line 370: Read a comma-separated selector list ("h1, .note a"); false when any part is outside the subset. 'maxSpec': the highest
+- `StyleContext` struct, line 374: What matching and the cascade need to know beyond the tree: the element under the pointer and the one with the keyboard
+- `Matches` function, line 387: Does 'el' (an element) match 'sel' (for its pseudo-element 'pseudo': 0 the element, 1 ::before, 2 ::after)?
+- `DefaultStyleSheet` function, line 392: The built-in sheet every page starts from (the "user agent" style sheet: block elements, heading sizes, list indents,
+- `InheritedStyle` function, line 396: A style that has 'parent''s inherited properties (colour, font, text, white-space, list style, visibility, custom
+- `SetCssNotUsedReporter` function, line 408
 
 ## `engine/include/okay/Browser/Encoding.hpp`
 
@@ -135,19 +137,19 @@ Back to the [code index](../code_index.md). 15 headers, 199 names.
 - `TextMeasure` class, line 52: Width of UTF-8 text in px.
 - `FixedMeasure` class, line 59: A fixed measure for tests and tools: every code point is 'factor' x the font size wide (0.5 by default).
 - `DrawCmd` struct, line 70
-- `LinkArea` struct, line 101
-- `ClipRect` struct, line 110: A clip region: a box whose overflow is not visible (its padding box). Things inside are clipped to it and to its parents.
-- `Scroller` struct, line 117: A scroll container (overflow: scroll / auto): its view (the padding box) and how big its content is.
-- `ControlBox` struct, line 124: A form control on the page (Forms.hpp keeps its value), or a <button>: the element and where its box is.
-- `BoxInfo` struct, line 134: One block-level box, for tests and tools.
-- `LayoutResult` struct, line 142
-- `LayoutContext` struct, line 161: What the layout needs beyond the document: the view's height (vh, fixed boxes), the parsed style sheets (a tab keeps them,
-- `DumpLayout` function, line 174: The block boxes and text runs as text, one per line: "block <tag> x,y wxh" and "text x,y 'run'" (whole pixels).
-- `LinkAt` function, line 185: The link under (x, y) in page coordinates: its index into links, or -1. With scrolling areas, 'offsets' are theirs and
-- `ScrollerAt` function, line 187: The innermost scroll container under (x, y) (page coordinates), or -1.
-- `ControlAt` function, line 189: The form control under (x, y), or -1.
-- `FindHit` struct, line 192: One place where find-on-page found the text: the text run (index into cmds) and the found part's box in page coordinates.
-- `FindInPage` function, line 198: Every place 'query' is in the page's text, in painting order, without regard to the case of ASCII letters (Ctrl+F). Found
+- `LinkArea` struct, line 105
+- `ClipRect` struct, line 115: A clip region: a box whose overflow is not visible (its padding box). Things inside are clipped to it and to its parents.
+- `Scroller` struct, line 122: A scroll container (overflow: scroll / auto): its view (the padding box) and how big its content is.
+- `ControlBox` struct, line 129: A form control on the page (Forms.hpp keeps its value), or a <button>: the element and where its box is.
+- `BoxInfo` struct, line 142: One block-level box, for tests and tools.
+- `LayoutResult` struct, line 154
+- `LayoutContext` struct, line 173: What the layout needs beyond the document: the view's height (vh, fixed boxes), the parsed style sheets (a tab keeps them,
+- `DumpLayout` function, line 186: The block boxes and text runs as text, one per line: "block <tag> x,y wxh" and "text x,y 'run'" (whole pixels).
+- `LinkAt` function, line 197: The link under (x, y) in page coordinates: its index into links, or -1. With scrolling areas, 'offsets' are theirs and
+- `ScrollerAt` function, line 199: The innermost scroll container under (x, y) (page coordinates), or -1.
+- `ControlAt` function, line 201: The form control under (x, y), or -1.
+- `FindHit` struct, line 204: One place where find-on-page found the text: the text run (index into cmds) and the found part's box in page coordinates.
+- `FindInPage` function, line 210: Every place 'query' is in the page's text, in painting order, without regard to the case of ASCII letters (Ctrl+F). Found
 
 ## `engine/include/okay/Browser/Plugins.hpp`
 
@@ -215,11 +217,13 @@ Back to the [code index](../code_index.md). 15 headers, 199 names.
 - `KeyInfo` struct, line 66: A key event (UI Events KeyboardEvent): key is "a", "Enter", "ArrowLeft" ...; code is the physical key ("KeyA").
 - `MouseInfo` struct, line 72: A mouse event (UI Events MouseEvent): page view coordinates in CSS px, button 0 left / 1 middle / 2 right.
 - `PageDialog` struct, line 79: alert / confirm / prompt: the tab shows it; the script did not wait for it.
-- `ConsoleLine` struct, line 85: One line of a page's console.
-- `PageScripts` class, line 90
-- `IsJavaScriptType` function, line 213: Is 'type' (a <script type="..."> value, "" when there is none) a classic script we run? (HTML 4.12.1.1: the JavaScript
-- `MissingWebApi` function, line 221: The web API a console error line of a page's script says is missing, or "" (Site check, tools/sitecheck). Read from our
-- `IsJavaScriptGlobal` function, line 224: Is 'name' one of the JavaScript language's own globals (Object, Date, Map, decodeURIComponent, typed arrays ...; ECMA-262
+- `PageRect` struct, line 86: A box of the page's last layout (CSSOM View 6, getBoundingClientRect): the border box in page coordinates, or in view
+- `PageView` struct, line 92: The view the page is shown in: its size in CSS px and how far the page is scrolled (window.innerWidth, scrollY ...).
+- `ConsoleLine` struct, line 102: One line of a page's console.
+- `PageScripts` class, line 107
+- `IsJavaScriptType` function, line 246: Is 'type' (a <script type="..."> value, "" when there is none) a classic script we run? (HTML 4.12.1.1: the JavaScript
+- `MissingWebApi` function, line 254: The web API a console error line of a page's script says is missing, or "" (Site check, tools/sitecheck). Read from our
+- `IsJavaScriptGlobal` function, line 257: Is 'name' one of the JavaScript language's own globals (Object, Date, Map, decodeURIComponent, typed arrays ...; ECMA-262
 
 ## `engine/include/okay/Browser/Storage.hpp`
 
@@ -241,6 +245,9 @@ Back to the [code index](../code_index.md). 15 headers, 199 names.
 - `HostOf` function, line 43: The host part (no userinfo, no port), lower-cased.
 - `FormUrlEncode` function, line 47: The application/x-www-form-urlencoded byte serializer of the WHATWG URL standard (section 5.2): ASCII letters, digits and
 - `FormUrlEncodePairs` function, line 49: name=value pairs, each encoded with FormUrlEncode, joined with '&' (the standard's urlencoded serializer).
+- `FormUrlDecode` function, line 53: The application/x-www-form-urlencoded byte decoding of the WHATWG URL standard (section 5.1, one name or value): '+' becomes a
+- `WebUrl` struct, line 57: An address split the way the WHATWG URL standard's URL object shows it (section 6.1: protocol "https:", hostname, port without
+- `ParseWebUrl` function, line 71: The WHATWG URL standard's basic URL parser (section 4.4), reduced to what pages use, on top of the RFC 3986 split and resolution
 
 ## `engine/include/okay/Browser/WebFont.hpp`
 

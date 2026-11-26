@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html><head><title>Settings</title>
+<style>
+body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: #f3f4f6; color: #111827; font-size: 14px; }
+.shell { display: grid; grid-template-columns: 170px 1fr; }
+.side { background: #111827; color: #d1d5db; min-height: 560px; padding: 14px 0; }
+.side a { display: block; padding: 7px 18px; color: #d1d5db; text-decoration: none; }
+.side a.on { background: #374151; color: #fff; border-left: 3px solid #10b981; }
+.main { padding: 18px 26px; }
+h1 { font-size: 20px; margin: 0 0 14px; }
+.panel { background: #fff; border-radius: 8px; border: 1px solid #e5e7eb; margin-bottom: 16px; }
+.panel h2 { font-size: 15px; margin: 0; padding: 10px 14px; border-bottom: 1px solid #e5e7eb; }
+.item { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #f3f4f6; }
+.item:last-child { border-bottom: 0; }
+.item small { display: block; color: #6b7280; }
+.switch { width: 36px; height: 20px; border-radius: 10px; background: #d1d5db; position: relative; }
+.switch.on { background: #10b981; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
+.switch.on::after { left: 18px; }
+select, input[type=text] { padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 6px; }
+details { padding: 10px 14px; }
+summary { font-weight: 600; }
+.danger { color: #b91c1c; border: 1px solid #fca5a5; background: #fef2f2; padding: 6px 12px; border-radius: 6px; }
+</style></head>
+<body>
+<div class="shell">
+<nav class="side"><a href="#p">Profile</a><a class="on" href="#g">General</a><a href="#n">Notifications</a><a href="#s">Security</a></nav>
+<div class="main">
+<h1>General</h1>
+<div class="panel"><h2>Appearance</h2>
+<div class="item"><div>Dark mode<small>Use a dark background everywhere</small></div><div class="switch on"></div></div>
+<div class="item"><div>Compact lists<small>Show more rows on a screen</small></div><div class="switch"></div></div>
+<div class="item"><div>Language</div><select><option>English</option><option selected>Deutsch</option></select></div>
+</div>
+<div class="panel"><h2>Account</h2>
+<div class="item"><div>Display name</div><input type="text" value="Sam Rivera"></div>
+<details><summary>Advanced</summary><p>Export your data or change where it is stored.</p></details>
+<div class="item"><div>Delete account<small>This cannot be undone</small></div><button class="danger">Delete</button></div>
+</div>
+</div></div>
+</body></html>

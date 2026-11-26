@@ -421,18 +421,18 @@ ThumbnailCache::Thumb ThumbnailCache::Get(const Guid& guid, std::uint64_t hash, 
             }
             return Insert(key, Placeholder(kind, ext, true), true, true, Source::Placeholder);
         }
-        Image small = BoxDownscale(img, m_opt.size);
+        Image scaled = BoxDownscale(img, m_opt.size);
         ++m_stats.generated;
         if (!m_opt.diskDir.empty()) {
             const std::string dp = DiskPathFor(guid, hash);
             std::error_code ec;
             fs::create_directories(PathFromU8(dp).parent_path(), ec);
-            if (small.SavePNG(dp)) {
+            if (scaled.SavePNG(dp)) {
                 ++m_stats.diskWrites;
                 RemoveStaleOnDisk(guid, AssetFileName(dp));
             }
         }
-        return Insert(key, std::make_shared<const Image>(std::move(small)), false, false, Source::Generated);
+        return Insert(key, std::make_shared<const Image>(std::move(scaled)), false, false, Source::Generated);
     }
     // 4. Nothing renders this type: a placeholder tile (cheap, shared per type).
     ++m_stats.placeholders;

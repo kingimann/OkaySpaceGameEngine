@@ -106,6 +106,8 @@ struct Editor {
     ImVec2 winPos{kWinX, kWinY};
     bool imguiModal = false;     // a Dear ImGui modal opened over everything
     bool viewports = false;      // multi-viewports on (EnableFakeViewports)
+    ImGuiWindowFlags flags = 0;  // added to the hosted window's (the Frame time window: AlwaysAutoResize)
+    const ImVec2* fit = nullptr; // the hosted body's size (a window that fits itself around its body)
     // Sections mode (Project Settings): the window holds collapsing headers, each with an OkayUI-only section under it
     // (okayuihost::HostPanelSection), instead of one panel body.
     struct Section { const char* header; const char* id; std::function<float(float, float, float, float)> body; bool shown = false; bool fold = false; };
@@ -172,7 +174,7 @@ struct Editor {
                 OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
                 body(p, a);
                 OkayUI::PopTextScale();
-            });
+            }, flags, fit);
         } else {   // the old hosting: the same window and placeholder, the body left in OkayUI's frame
             ImGui::SetNextWindowSize(ImVec2(kWinW, winH), ImGuiCond_FirstUseEver);
             if (ImGui::Begin(title, &open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
@@ -313,6 +315,65 @@ struct ProfilerPanelData {
     }
 };
 
+// The small tool windows (docs/ui/own_ui_toolkit.md section 28).
+struct ShortcutsData {
+    P::ShortcutsState state;
+    std::function<void(ImVec2, ImVec2)> Body() {
+        return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawShortcuts(P::KeyboardShortcuts(), state, p.x, p.y, a.x, a.y); };
+    }
+};
+struct NetPanelData {
+    panelfix::NetData d;
+    std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawNetSim(d.model, p.x, p.y, a.x, a.y); }; }
+};
+struct FindData {
+    P::FindInFilesModel model = panelfix::FindHits();
+    P::FindInFilesState state;
+    std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawFindInFiles(model, state, p.x, p.y, a.x, a.y); }; }
+};
+struct DataAssetPanelData {
+    panelfix::DataAssetData d;
+    std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawDataAsset(d.model, p.x, p.y, a.x, a.y); }; }
+};
+struct PluginsData {
+    P::PluginManagerModel model = panelfix::Plugins();
+    std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawPluginManager(model, p.x, p.y, a.x, a.y); }; }
+};
+
+// More tool windows (docs/ui/own_ui_toolkit.md section 29).
+struct BoneMapPanelData {
+    panelfix::BoneMapData d;
+    std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawBoneMap(d.model, p.x, p.y, a.x, a.y); }; }
+};
+struct SaveManagerPanelData {
+    P::SaveManagerModel model = panelfix::Saves();
+    P::SaveManagerState state;
+    std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawSaveManager(model, state, p.x, p.y, a.x, a.y); }; }
+};
+struct MaterialPanelData {
+    P::MaterialModel model = panelfix::Material();
+    std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawMaterial(model, p.x, p.y, a.x, a.y); }; }
+};
+struct PerfPanelData {
+    P::PerfOverlayModel model = panelfix::Perf();
+    okayuiscreens::PerfOverlayResult last;
+    std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { last = okayuiscreens::DrawPerfOverlay(model, p.x, p.y, a.x, a.y); }; }
+};
+struct InputPanelData {
+    P::InputPanelModel model = panelfix::InputPanel();
+    P::InputPanelState state;
+    std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawInputPanel(model, state, p.x, p.y, a.x, a.y); }; }
+};
+struct TimersData {
+    std::function<void(ImVec2, ImVec2)> Body() { return [](ImVec2 p, ImVec2 a) { okayuiscreens::DrawTimers(panelfix::kTimersText, p.x, p.y, a.x, a.y); }; }
+};
+struct InputActionsData {
+    P::InputActionsModel model = panelfix::InputActions();
+    P::InputActionsState state;
+    InputActionsData() { state.selected = "Move"; }
+    std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawInputActions(model, state, p.x, p.y, a.x, a.y); }; }
+};
+
 // The hosted picture `e` drew against the old way's: saved, printed, and nothing of the body left in OkayUI's frame (it is in ImGui's
 // draw list).
 Diff HostedDiff(const char* name, const Bitmap& oldWay, Editor& e) {
@@ -350,6 +411,45 @@ void SamePictureAsBefore() {
     CHECK(HostedAgainstOldWay<ProblemsData>("problems", "Problems###Problems").clearly < 0.5);
     CHECK(HostedAgainstOldWay<StatsPanelData>("stats", "Stats").clearly < 0.5);
     CHECK(HostedAgainstOldWay<ProfilerPanelData>("profiler", "Profiler").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<ShortcutsData>("shortcuts", "Keyboard Shortcuts").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<NetPanelData>("net", "Net###Net").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<FindData>("findinfiles", "Find in Files").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<DataAssetPanelData>("dataasset", "Data Asset").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<PluginsData>("plugins", "Plugin Manager").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<BoneMapPanelData>("bonemap", "Map Humanoid Bones").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<SaveManagerPanelData>("savemanager", "Save Manager").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<MaterialPanelData>("material", "Material").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<PerfPanelData>("perfoverlay", "Frame time###PerfOverlay").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<InputPanelData>("input", "Input").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<TimersData>("timers", "Timers").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<InputActionsData>("inputactions", "Input Actions").clearly < 0.5);
+}
+
+// The Frame time window sizes itself around its body (AlwaysAutoResize, HostPanelWindow's `bodySize`): the body says how big it is,
+// the host passes that size on the next frame, and the window's inner area is that size.
+void WindowFitsItsBody() {
+    kH = 700;                                    // room for the whole window (Dear ImGui keeps a self-sizing window inside the display)
+    PerfPanelData d;
+    ImVec2 fit(200.0f, 120.0f);   // a first guess, too small
+    Editor e;
+    e.title = "Frame time###PerfOverlay";
+    e.flags = ImGuiWindowFlags_AlwaysAutoResize;
+    e.fit = &fit;
+    e.body = [&](ImVec2 p, ImVec2 a) {
+        d.last = okayuiscreens::DrawPerfOverlay(d.model, p.x, p.y, a.x, a.y);
+        if (d.last.contentW > 1.0f && d.last.contentH > 1.0f) fit = ImVec2(d.last.contentW, d.last.contentH);
+    };
+    e.Frames(6);
+    ImGuiWindow* win = ImGui::FindWindowByName("Frame time###PerfOverlay");
+    CHECK(win != nullptr && e.drawn);
+    if (!win) { kH = 420; return; }
+    const ImVec2 inner(win->ContentRegionRect.GetWidth(), win->ContentRegionRect.GetHeight());
+    std::printf("  Frame time: body %.0f x %.0f, window content %.0f x %.0f\n", fit.x, fit.y, inner.x, inner.y);
+    CHECK(fit.x >= 360.0f && fit.y > 200.0f);
+    CHECK(std::abs(inner.x - fit.x) < 1.5f && std::abs(inner.y - fit.y) < 1.5f);
+    const float bx = d.last.openProfiler.x + d.last.openProfiler.w, by = d.last.openProfiler.y + d.last.openProfiler.h;
+    CHECK(bx <= win->InnerClipRect.Max.x + 0.5f && by <= win->InnerClipRect.Max.y + 0.5f);   // the last button is inside the window
+    kH = 420;
 }
 
 void ImGuiInFrontCoversThePanel() {
@@ -466,6 +566,32 @@ void MoreClicksReachThePanels() {
         e.Click(b.x + 8.0f, b.y + b.h * 0.5f);
         e.Frames(1);
         CHECK(d.d.paused && d.pauseChanged && d.d.selected == 239);
+    }
+    {   // Input Actions: clicks on an action row and on + Map through the Dear ImGui window (a taller window: the rows are below the file
+        // row, the buttons and the schemes; the test window is 520 wide, so only the left half of the 900-wide window shows)
+        kH = 700;
+        P::InputActionsModel model = panelfix::InputActions();
+        P::InputActionsState state;
+        okayuiscreens::InputActionsResult res;
+        std::string picked;
+        bool addMap = false;
+        Editor e;
+        e.winH = 660.0f;
+        e.title = "Input Actions";
+        e.body = [&](ImVec2 p, ImVec2 a) {
+            res = okayuiscreens::DrawInputActions(model, state, p.x, p.y, a.x, a.y);
+            if (res.intent.select) picked = res.intent.selectName;
+            addMap |= res.intent.addMap;
+        };
+        e.Frames(3);
+        CHECK(res.actions.size() == 4);
+        const OkayUI::Rect r = res.actions[2];
+        e.Click(r.x + r.w * 0.5f, r.y + r.h * 0.5f);
+        CHECK(picked == "Fire");
+        const OkayUI::Rect b = res.addMap;
+        e.Click(b.x + b.w * 0.5f, b.y + b.h * 0.5f);
+        CHECK(addMap);
+        kH = 420;
     }
 }
 
@@ -1233,9 +1359,10 @@ void LauncherBrowserShortcutsReachThePage() {
 } // namespace
 
 int main() {
-    RUN_SUITE("okayui panels in Dear ImGui windows (Crash Log, Audio Mixer, History, Problems, Stats, Profiler; Project Settings' Player, Physics, Rendering, Tags and Layers; Post-processing; import settings)");
+    RUN_SUITE("okayui panels in Dear ImGui windows (Crash Log, Audio Mixer, History, Problems, Stats, Profiler, Keyboard Shortcuts, Net, Find in Files, Data Asset, Plugin Manager, Map Humanoid Bones, Save Manager, Material, Frame time, Input, Timers, Input Actions; Project Settings' Player, Physics, Rendering, Tags and Layers; Post-processing; import settings)");
     kH = 420;
     SamePictureAsBefore();
+    WindowFitsItsBody();
     ImGuiInFrontCoversThePanel();
     ClicksReachThePanel();
     MoreClicksReachThePanels();

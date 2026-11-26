@@ -5698,12 +5698,19 @@ add_test(NAME launcher_friends COMMAND test_launcher_friends)
 set_tests_properties(launcher_friends PROPERTIES TIMEOUT 60)
 
 # Browser (page engine, engine/include/okay/Browser/): the HTML reader's trees, the CSS cascade, layout positions and line
-# breaks, addresses and a tab's navigation, hostile input, step 2's game packs and launch rules (browser_game), and round 2's
+# breaks, addresses and a tab's navigation, hostile input, round 3's tables / gradients / margins / counters (browser_layout3),
+# WOFF fonts (browser_webfont) and browser plugins (browser_plugins), step 2's game packs and launch rules (browser_game), and round 2's
 # page JavaScript (browser_script: the DOM binding, events, timers, budget). They link only okay_browser (standard library
 # and okay_js).
-foreach(_bt browser_html browser_css browser_layout browser_layout2 browser_url browser_hostile browser_game browser_profile browser_forms browser_script)
+foreach(_bt browser_html browser_css browser_layout browser_layout2 browser_layout3 browser_style3 browser_webfont browser_plugins browser_url browser_hostile browser_game browser_profile browser_forms browser_script)
     add_executable(test_${_bt} test_${_bt}.cpp)
     target_include_directories(test_${_bt} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/launcher)   # launcher/BrowserPage.hpp: the link rule
     target_link_libraries(test_${_bt} PRIVATE okay::browser)
     add_test(NAME ${_bt} COMMAND test_${_bt})
 endforeach()
+# Round 3: browser plugins also go through the shared plugin registry (editor/PluginRegistry.hpp; shared/BrowserPluginCommands.hpp).
+target_sources(test_browser_plugins PRIVATE ${CMAKE_SOURCE_DIR}/editor/PluginRegistry.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptIde.cpp)
+target_include_directories(test_browser_plugins PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
+if(TARGET Threads::Threads)
+    target_link_libraries(test_browser_plugins PRIVATE Threads::Threads)
+endif()

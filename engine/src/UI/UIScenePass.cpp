@@ -548,11 +548,11 @@ void ui_pass::RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, con
                     const float Sd = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
                     int mw = 0, mh = 0;
                     if (UIImageMipSize(tw, th, (int)std::lround(dst.w * Sd), (int)std::lround(dst.h * Sd), mw, mh)) {
-                        if (Tex small = p.LoadTextureSized(im->texture, mw, mh)) {
-                            if (small != tex) {
-                                p.SetTextureColorMod(small, (std::uint8_t)(im->color.r * 255), (std::uint8_t)(im->color.g * 255), (std::uint8_t)(im->color.b * 255));
-                                p.SetTextureAlphaMod(small, (std::uint8_t)(im->color.a * 255 * op));
-                                dtex = small;
+                        if (Tex mipTex = p.LoadTextureSized(im->texture, mw, mh)) {
+                            if (mipTex != tex) {
+                                p.SetTextureColorMod(mipTex, (std::uint8_t)(im->color.r * 255), (std::uint8_t)(im->color.g * 255), (std::uint8_t)(im->color.b * 255));
+                                p.SetTextureAlphaMod(mipTex, (std::uint8_t)(im->color.a * 255 * op));
+                                dtex = mipTex;
                             }
                         }
                     }

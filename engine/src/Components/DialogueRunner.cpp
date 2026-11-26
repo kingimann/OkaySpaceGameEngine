@@ -403,8 +403,8 @@ void DialogueRunner::Update(float dt) {
     }
     if (m_wasActive) Ended();
     // Not talking: the prompt and the interact key.
-    const bool near = startMode == 0 && interactKey && enabled && InRange();
-    if (near) {
+    const bool inReach = startMode == 0 && interactKey && enabled && InRange();
+    if (inReach) {
         SetPrompt(promptText.empty() ? UiText("dialogue.talk", UseKeyName(interactKey)) : promptText);
         if (UseKeyDown(interactKey) && !Input::UICaptured()) {
             ItemPickup::BlockInteract();

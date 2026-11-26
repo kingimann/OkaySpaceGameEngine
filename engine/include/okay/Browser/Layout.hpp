@@ -15,12 +15,20 @@
 //     (sparse and dense, row and column flow), the track sizing algorithm for fixed, percentage, auto, min-content,
 //     max-content, minmax() and fr tracks (simplified, 11.3-11.8), gaps, justify / align items and self);
 //   * CSS Backgrounds 3 (background images with size, position and repeat, border-radius, box-shadow).
-// Tables keep their simple layout (equal columns, rows as tall as their tallest cell, border-spacing 2px).
+//   * CSS 2.1 chapter 17 (tables: anonymous table parts, row groups with thead first and tfoot last, captions on top or bottom,
+//     colspan and rowspan, the automatic (17.5.2.2) and fixed (17.5.2.1) column widths, row heights, vertical-align in cells,
+//     row and row-group backgrounds, border-spacing, border-collapse) and 8.3.1 (margins collapsing between siblings, through a
+//     parent's top and bottom, and through empty boxes);
+//   * CSS Images 3 (linear, radial and repeating gradients, drawn as bands of Fill commands; object-fit and object-position),
+//     CSS Text Decoration 3 (underline / overline / line-through in solid, double, dotted, dashed and wavy, in their own colour),
+//     CSS Overflow 3 (text-overflow: ellipsis), CSS Transforms 1 (translate and scale folded into the commands; rotate and skew
+//     kept in DrawCmd::xform for the host), CSS 2.1 12.4 (counters in generated content).
 //
-// What is simplified (said here so nobody is surprised): vertical margins collapse between siblings only (not parent with
-// first or last child); inline boxes draw no borders, padding or backgrounds of their own; a float inside a line starts at the
-// line's top and lines wrap around the floats' bands; z-index orders whole positioned boxes (every positioned box is its own
-// layer); justified text is laid out as left-aligned; sticky is relative.
+// What is simplified (said here so nobody is surprised): inline boxes draw no borders, padding or backgrounds of their own; a float
+// inside a line starts at the line's top and lines wrap around the floats' bands; z-index orders whole positioned boxes (every
+// positioned box is its own layer); justified text is laid out as left-aligned; sticky is relative; a table's caption is inside
+// the table's border; in the collapsing border model a cell's left and top borders give way to its neighbour's (no width / style
+// contest); gradient bands ignore border-radius; transitions and animations show their final state at once.
 //
 // The text is measured through TextMeasure, so the same layout runs against the real font in the app and against a fixed
 // measure in the tests. Standard library only; no drawing.
@@ -84,6 +92,10 @@ struct DrawCmd {
     int control = -1;    ///< Control
     int clip = -1;       ///< index into LayoutResult::clips: drawn only inside it (and its parents), moved by their scrolling
     bool fixed = false;  ///< position: fixed: drawn at its place in the view, not moved by the page's scroll
+    /// A CSS transform the layout could not fold into the position and size (rotate, skew, a mirror): the host draws the command
+    /// through it (page coordinates, before scrolling and zoom: a point p of the command is drawn at xform(p)). Identity for
+    /// everything else (translate and positive scale are applied to x, y, w, h and the font size already).
+    Transform2D xform;
 };
 
 struct LinkArea {

@@ -17268,14 +17268,14 @@ int main(int argc, char** argv) {
                         const int games = LibraryGameCount(scenes);
                         float cx = o.x + UiPx(24.0f), cy = o.y + heroH - UiPx(46.0f);
                         const float chipH = UiPx(34.0f);
-                        auto chip = [&](const char* big, const char* small, float extraW) -> ImVec2 {
-                            const float bw = ImGui::CalcTextSize(big).x, sw = ImGui::CalcTextSize(small).x;
+                        auto chip = [&](const char* big, const char* subText, float extraW) -> ImVec2 {
+                            const float bw = ImGui::CalcTextSize(big).x, sw = ImGui::CalcTextSize(subText).x;
                             const float w = std::max(bw * 1.15f, sw) + UiPx(26.0f) + extraW;
                             d->AddRectFilled(ImVec2(cx, cy), ImVec2(cx + w, cy + chipH), okaytheme::Ink(10), 9.0f);
                             const float bigH = ImGui::GetFontSize() * 1.1f, smallH = ImGui::GetFontSize() * 0.80f;
                             const float ty0 = cy + (chipH - bigH - smallH) * 0.5f;
                             d->AddText(ImGui::GetFont(), bigH, ImVec2(cx + UiPx(12.0f), ty0), cText, big);
-                            d->AddText(ImGui::GetFont(), smallH, ImVec2(cx + UiPx(12.0f), ty0 + bigH), cDim, small);
+                            d->AddText(ImGui::GetFont(), smallH, ImVec2(cx + UiPx(12.0f), ty0 + bigH), cDim, subText);
                             const ImVec2 at(cx, cy);
                             cx += w + UiPx(8.0f);
                             return at;
@@ -18942,14 +18942,14 @@ int main(int argc, char** argv) {
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Level %d  \xC2\xB7  %d%% to level %d\nEvery achievement earns points; games can make hard ones worth more.", lvl, (int)(prog * 100), lvl + 1);
                     x += 2 * ringR + statGap;
                 }
-                auto stat = [&](float sx, float sw, const char* big, const char* small) {
+                auto stat = [&](float sx, float sw, const char* big, const char* subText) {
                     (void)sw;
                     ImGui::SetWindowFontScale(1.2f);
                     const ImVec2 bs = ImGui::CalcTextSize(big);
                     const float sh = bs.y + UiPx(2.0f) + lh * 0.8f;
                     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(sx, rcy - sh * 0.5f), cText, big);
                     ImGui::SetWindowFontScale(1.0f);
-                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.8f, ImVec2(sx, rcy - sh * 0.5f + bs.y + UiPx(2.0f)), cDim, small);
+                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.8f, ImVec2(sx, rcy - sh * 0.5f + bs.y + UiPx(2.0f)), cDim, subText);
                 };
                 stat(x, statW1, ps, "POINTS");     x += statW1 + statGap;
                 stat(x, statW2, m, "THIS MONTH");  x += statW2 + statGap;

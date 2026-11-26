@@ -1,0 +1,46 @@
+// advance, next, prev and distance for okay-cc (ISO/IEC 14882 [iterator.operations]), one step at a
+// time for every kind of iterator. Our own header, split out of <iterator> in round 32: our
+// containers include it (through <__reverse_iterator>), so std::next(it) works with only <map>
+// included, as code written for g++ expects.
+#pragma once
+namespace std {
+template <typename It>
+void advance(It &it, long n) {
+    while (n > 0) {
+        ++it;
+        --n;
+    }
+    while (n < 0) {
+        --it;
+        ++n;
+    }
+}
+// (Two overloads each rather than a default argument: okay-cc matches function templates by
+// argument count.)
+template <typename It>
+It next(It it, long n) {
+    advance(it, n);
+    return it;
+}
+template <typename It>
+It next(It it) {
+    ++it;
+    return it;
+}
+template <typename It>
+It prev(It it, long n) {
+    advance(it, -n);
+    return it;
+}
+template <typename It>
+It prev(It it) {
+    --it;
+    return it;
+}
+template <typename It>
+long distance(It first, It last) {
+    long n = 0;
+    for (; first != last; ++first) ++n;
+    return n;
+}
+}  // namespace std

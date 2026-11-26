@@ -446,7 +446,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Editor:** none
 - **Docs:** `docs/platform/browser_plan.md` ("Site check")
 - **Tests:** `site_check` (the causes and the ranking from made-up visits, file signatures, the "not implemented: X" line from a real page script, the CSS reporter on and off, the tab host's reporter against a closed local port)
-- **Status:** Basic - built and run on Linux against the 61 sites (2026-11-26, 59 shown; our own HTTP client with the system's OpenSSL, not WinHTTP as on Windows); the ranked causes are in `docs/platform/browser_plan.md` ("Site check"); not built or run on Windows (the files were syntax-checked with MinGW)
+- **Status:** Basic - built and run on Linux against the 61 sites (2026-11-26, 58 shown; our own HTTP client with the system's OpenSSL, not WinHTTP as on Windows); the ranked causes are in `docs/platform/browser_plan.md` ("Site check"); not built or run on Windows (the files were syntax-checked with MinGW)
 - **Open:** web fonts are fetched and checked but not drawn in the screenshots; only the home page of each site; one width (1280 x 900); silent feature tests (`if (window.X)`) are not counted as missing APIs; a site's own errors that follow from an earlier gap are counted as script errors of their own; the screenshots and reports stay out of the repository (owner rule 4b)
 - **Related:** 17.18
 - **Words:** site check, sitecheck, okay-sitecheck, real sites, compatibility, not implemented, missing API, ranking, failure causes, screenshot, headless browser

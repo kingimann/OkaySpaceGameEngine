@@ -67,7 +67,7 @@ Content-Type: application/json
 ---
 )GOLD"},
     {"signin_unreachable", R"GOLD(=> ok=0 error=[Couldn't reach the account server (offline or unreachable).
-Details: The server's name could not be looked up (no internet, or DNS is blocked). [curl exit code 6]] user=[] token=[] refresh=[]
+Details: The server's name could not be looked up (no internet, or DNS is blocked). [connect: cannot resolve host: Name or service not known]] user=[] token=[] refresh=[]
 POST https://backend.example.test/auth/v1/token?grant_type=password
 apikey: test-publishable-key-0000
 Content-Type: application/json

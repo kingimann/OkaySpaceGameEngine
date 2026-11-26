@@ -58,7 +58,7 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     GroupConversation.cpp    # the open group conversation (moved out of main.cpp)
     Multiplayer.cpp       # joining, inviting, presence, server browser, parties, the Multiplayer page (moved out of main.cpp)
     VersionsManager.cpp   # the Versions page: installed editors, install / remove / prune, Latest / LTS (no SDL or ImGui; tested by launcher_versions)
-    VersionsNet.cpp       # the cancellable curl download behind it
+    VersionsNet.cpp       # the cancellable download behind it (NativeFetch: WinHTTP / our own client)
     VersionsUI.cpp        # the page itself
     CommandLine.cpp       # the Command line page's rules: words, Tab completion, history, running okay (no ImGui; tested by launcher_cli)
     CommandLineUI.cpp     # the Command line page and the "Open command line" action

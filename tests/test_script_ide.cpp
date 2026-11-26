@@ -213,6 +213,10 @@ int main() {
         if (undecl) CHECK(ApplyEdits(lua, undecl->fixes[0].edits).find("    local total = nil\n    print(total)") != std::string::npos);
         if (unused) CHECK(ApplyEdits(lua, unused->fixes[0].edits).find("unused") == std::string::npos);
         CHECK(BasicLint("lua", kLua, known).empty());   // a clean script has no findings
+        // Lua forms that declare a name: goto labels, local attributes, a \z string escape over a line break.
+        CHECK(BasicLint("lua", "for i = 1, 3 do\n  if i == 2 then goto skip end\n  ::skip::\nend\n"
+                               "local f <close> = nil\nlocal s = \"a\\z\n   b\"\nprint(f, s)\n", known).empty());
+        CHECK(BasicLint("okayscript", "import \"m.okay\" as mod\ntry { mod.go() } catch (e) { print(e) }\n", {"print"}).empty());
         const std::string okay =
             "public float speed = 5;\n"
             "void Update()\n"

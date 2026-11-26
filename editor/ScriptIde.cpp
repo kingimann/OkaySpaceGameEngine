@@ -96,7 +96,13 @@ static std::vector<char> LuaCodeMask(const std::string& s) {
         if (s[i] == '"' || s[i] == '\'') {
             const char q = s[i];
             std::size_t k = i + 1;
-            while (k < n && s[k] != q && s[k] != '\n') { if (s[k] == '\\') ++k; ++k; }
+            while (k < n && s[k] != q && s[k] != '\n') {
+                if (s[k] == '\\' && k + 1 < n) {
+                    ++k;                                             // the escaped character (a newline too: "\<newline>")
+                    if (s[k] == 'z') while (k + 1 < n && std::isspace((unsigned char)s[k + 1])) ++k;   // \z skips white space
+                }
+                ++k;
+            }
             const std::size_t e = k < n && s[k] == q ? k + 1 : k;
             for (std::size_t j = i; j < e && j < n; ++j) m[j] = 0;
             i = e; continue;
@@ -623,12 +629,19 @@ std::vector<Diagnostic> BasicLint(const std::string& language, const std::string
             for (std::size_t k = i + 1; k < t.size() && (t[k].ident || isPunct(k, ",")); ++k)
                 if (t[k].ident && t[k].text != "function" && t[k].text != "in") declared.insert(t[k].text); else if (!isPunct(k, ",")) break;
         }
+        if (lua && (t[i].text == "goto" || (isPunct(i - 1, ":") && isPunct(i - 2, ":")))) {   // goto label / ::label::
+            if (t[i].text == "goto" && i + 1 < t.size()) declared.insert(t[i + 1].text); else declared.insert(t[i].text);
+        }
         if (lua && t[i].text == "function") {   // parameters
             std::size_t k = i + 1;
             while (k < t.size() && !isPunct(k, "(")) ++k;
             for (++k; k < t.size() && !isPunct(k, ")"); ++k) if (t[k].ident) declared.insert(t[k].text);
         }
         if (!lua) {
+            // `import "file" as name`, `catch (e)`
+            if (t[i].text == "as" && i + 1 < t.size() && t[i + 1].ident) declared.insert(t[i + 1].text);
+            if (t[i].text == "catch" && isPunct(i + 1, "(") && i + 2 < t.size() && t[i + 2].ident && isPunct(i + 3, ")"))
+                declared.insert(t[i + 2].text);
             // `Type name` (a declaration, a parameter, foreach (var x in), catch (E e)), and a lambda's `x =>`.
             if (i + 1 < t.size() && t[i + 1].ident && t[i + 1].line == t[i].line && !IsKeyword(language, t[i + 1].text) &&
                 typeWord(t[i].text))
@@ -654,6 +667,7 @@ std::vector<Diagnostic> BasicLint(const std::string& language, const std::string
     for (std::size_t i = 0; i < t.size(); ++i) {
         const Tk& k = t[i];
         if (!k.ident || member(i) || IsKeyword(language, k.text) || knownSet.count(k.text)) continue;
+        if (lua && isPunct(i - 1, "<") && isPunct(i + 1, ">")) continue;           // a local's attribute: <const>, <close>
         if (isPunct(i + 1, ".") || isPunct(i + 1, ":")) continue;                // a receiver: a module, a type or a table
         if (!lua && std::isupper((unsigned char)k.text[0])) continue;            // C#-style types, enums and engine classes
         if (!lua && i > 0 && t[i - 1].ident && t[i - 1].line == k.line && typeWord(t[i - 1].text)) continue;   // a declaration

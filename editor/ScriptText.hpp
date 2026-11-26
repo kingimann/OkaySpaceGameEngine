@@ -152,7 +152,7 @@ inline bool IsKeywordWord(const std::string& s) {
                                "default", "const", "readonly", "override", "virtual", "abstract", "using", "namespace",
                                "try", "catch", "finally", "throw", "yield", "int", "float", "double", "bool", "string",
                                "char", "long", "interface", "record", "is", "as", "out", "ref", "params", "base",
-                               "typeof", "not", "and", "or", "let", "object", "get", "set"};
+                               "typeof", "not", "and", "or", "let", "object", "get", "set", "import"};
     for (const char* k : kw) if (s == k) return true;
     return false;
 }

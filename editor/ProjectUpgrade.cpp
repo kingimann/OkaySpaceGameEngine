@@ -1040,9 +1040,9 @@ struct RefEdit {
 // Every reference to change when `moves` are made. A reference is read the way the loaders read it: relative to the folder of
 // the file that holds it first, then relative to the project. It is written back in the same style; an absolute path inside the
 // project stays absolute.
-std::vector<RefEdit> ComputeRefEdits(const fs::path& root, const ProjectFiles& files, const std::vector<LayoutMove>& moves) {
+std::vector<RefEdit> ComputeRefEdits(const fs::path& root, const ProjectFiles& files, const std::vector<TidyMove>& moves) {
     std::map<std::string, std::string> to;   // RelKey(from) -> to
-    for (const LayoutMove& m : moves) to[RelKey(m.from)] = m.to;
+    for (const TidyMove& m : moves) to[RelKey(m.from)] = m.to;
     auto movedTo = [&](const std::string& rel) -> std::string {
         auto it = to.find(RelKey(rel));
         return it == to.end() ? rel : it->second;
@@ -1108,10 +1108,10 @@ std::vector<RefEdit> ComputeRefEdits(const fs::path& root, const ProjectFiles& f
     return out;
 }
 
-void AddMove(LayoutPlan& p, const fs::path& root, const ProjectFiles& files, const std::string& from, const std::string& to) {
+void AddMove(TidyPlan& p, const fs::path& root, const ProjectFiles& files, const std::string& from, const std::string& to) {
     std::error_code ec;
     if (fs::exists(root / fs::path(to), ec) || files.keys.count(RelKey(to))) { p.kept.push_back(from + ": " + to + " is already there"); return; }
-    for (const LayoutMove& m : p.moves) if (RelKey(m.to) == RelKey(to)) { p.kept.push_back(from + ": " + to + " is taken by " + m.from); return; }
+    for (const TidyMove& m : p.moves) if (RelKey(m.to) == RelKey(to)) { p.kept.push_back(from + ": " + to + " is taken by " + m.from); return; }
     if (ReadOnly(root / fs::path(from))) { p.kept.push_back(from + ": read-only"); return; }
     p.moves.push_back({from, to});
     for (const char* side : {".okaymeta", ".autosave"}) {   // a file's sidecars go with it
@@ -1131,8 +1131,8 @@ std::string ContentHash(const fs::path& p, std::uint64_t& size, bool& ok) {
 
 }  // namespace
 
-LayoutPlan PlanLayout(const std::string& projectDir) {
-    LayoutPlan p;
+TidyPlan PlanTidy(const std::string& projectDir) {
+    TidyPlan p;
     p.projectDir = projectDir;
     std::error_code ec;
     const fs::path root = okayproj::Absolute(fs::path(projectDir));
@@ -1188,8 +1188,8 @@ LayoutPlan PlanLayout(const std::string& projectDir) {
     for (const RefEdit& e : edits)
         if (e.readOnly) for (const std::string& k : e.targets) if (blocked.insert(k).second) p.kept.push_back(k + ": " + e.rel + " names it and is read-only");
     if (!blocked.empty()) {
-        std::vector<LayoutMove> keep;
-        for (const LayoutMove& m : p.moves) {
+        std::vector<TidyMove> keep;
+        for (const TidyMove& m : p.moves) {
             const bool sidecarOfBlocked = (HasExt(m.from, ".okaymeta") || HasExt(m.from, ".autosave")) &&
                                           blocked.count(RelKey(m.from.substr(0, m.from.rfind('.'))));
             if (!blocked.count(RelKey(m.from)) && !sidecarOfBlocked) keep.push_back(m);
@@ -1201,8 +1201,8 @@ LayoutPlan PlanLayout(const std::string& projectDir) {
     return p;
 }
 
-LayoutResult ApplyLayout(const LayoutPlan& plan, const LayoutOptions& opt) {
-    LayoutResult r;
+TidyResult ApplyTidy(const TidyPlan& plan, const TidyOptions& opt) {
+    TidyResult r;
     r.kept = plan.kept;
     auto hook = [&](const char* stage, const std::string& what) { return opt.fail && opt.fail(stage, what); };
     auto fail = [&](const std::string& why, const std::string& note) { r.ok = false; r.error = why; r.note = note; return r; };
@@ -1212,7 +1212,7 @@ LayoutResult ApplyLayout(const LayoutPlan& plan, const LayoutOptions& opt) {
     if (plan.moves.empty()) { r.ok = true; return r; }
 
     // 1. the plan must still hold, and every file that changes must be writable
-    for (const LayoutMove& m : plan.moves) {
+    for (const TidyMove& m : plan.moves) {
         if (!fs::is_regular_file(root / fs::path(m.from), ec)) return fail("\"" + m.from + "\" is gone since the list was made.", "Nothing was changed.");
         if (fs::exists(root / fs::path(m.to), ec)) return fail("\"" + m.to + "\" appeared since the list was made.", "Nothing was changed.");
     }
@@ -1224,7 +1224,7 @@ LayoutResult ApplyLayout(const LayoutPlan& plan, const LayoutOptions& opt) {
     // 2. the backup: every file that moves or is rewritten, checked, with a manifest RestoreBackup reads
     std::vector<std::string> backupRels;
     std::set<std::string> inBackup;
-    for (const LayoutMove& m : plan.moves) if (inBackup.insert(RelKey(m.from)).second) backupRels.push_back(m.from);
+    for (const TidyMove& m : plan.moves) if (inBackup.insert(RelKey(m.from)).second) backupRels.push_back(m.from);
     for (const RefEdit& e : edits) if (inBackup.insert(RelKey(e.rel)).second) backupRels.push_back(e.rel);
     std::string parentText = opt.backupParent;
     const fs::path parent = parentText.empty() ? root.parent_path() : fs::path(parentText);
@@ -1246,7 +1246,7 @@ LayoutResult ApplyLayout(const LayoutPlan& plan, const LayoutOptions& opt) {
         bytes += s1;
         manifest += "changed=" + std::to_string(s1) + " " + h1 + " " + Esc(rel) + "\n";
     }
-    for (const LayoutMove& m : plan.moves) manifest += "created=" + Esc(m.to) + "\n";
+    for (const TidyMove& m : plan.moves) manifest += "created=" + Esc(m.to) + "\n";
     manifest += "files=" + std::to_string(backupRels.size()) + "\nbytes=" + std::to_string(bytes) + "\n";
     {
         std::string err;
@@ -1272,7 +1272,7 @@ LayoutResult ApplyLayout(const LayoutPlan& plan, const LayoutOptions& opt) {
         }
     };
     const std::string kept = "Nothing was changed: the files are where they were.";
-    for (const LayoutMove& m : plan.moves) {
+    for (const TidyMove& m : plan.moves) {
         const fs::path src = root / fs::path(m.from), dst = root / fs::path(m.to);
         std::vector<fs::path> dirs;
         for (fs::path d = dst.parent_path(); !d.empty() && d != root && !fs::exists(d, ec); d = d.parent_path()) dirs.push_back(d);
@@ -1302,7 +1302,7 @@ LayoutResult ApplyLayout(const LayoutPlan& plan, const LayoutOptions& opt) {
     }
 
     // 5. only now the old files go (each one's copy was checked above). One that can't be removed stays: nothing is lost.
-    for (const LayoutMove& m : plan.moves) {
+    for (const TidyMove& m : plan.moves) {
         std::error_code e2;
         if (hook("tidy-remove", m.from) || !fs::remove(root / fs::path(m.from), e2) || e2) {
             r.kept.push_back(m.from + ": copied to " + m.to + ", but the old file could not be removed" + (e2 ? " (" + e2.message() + ")" : std::string()));
@@ -1325,14 +1325,14 @@ LayoutResult ApplyLayout(const LayoutPlan& plan, const LayoutOptions& opt) {
     return r;
 }
 
-std::string MovedPath(const LayoutResult& r, const std::string& projectDir, const std::string& path) {
+std::string MovedPath(const TidyResult& r, const std::string& projectDir, const std::string& path) {
     if (path.empty()) return path;
     const fs::path root = okayproj::Absolute(fs::path(projectDir));
     const fs::path p(path);
     const bool abs = p.is_absolute();
     const std::string rel = abs ? okayproj::Absolute(p).lexically_relative(root).generic_string() : p.lexically_normal().generic_string();
     if (rel.empty() || rel.rfind("..", 0) == 0) return path;
-    for (const LayoutMove& m : r.done)
+    for (const TidyMove& m : r.done)
         if (RelKey(m.from) == RelKey(rel)) return abs ? (root / fs::path(m.to)).string() : m.to;
     return path;
 }
@@ -1518,7 +1518,7 @@ void ProjectGate::Answer(Choice c) {
 
 void ProjectGate::ProceedOrTidy(const std::string& root, const std::string& scene) {
     if (env_.askTidy && !root.empty() && tidyAsked_.insert(RootKey(root)).second) {
-        LayoutPlan plan = PlanLayout(root);
+        TidyPlan plan = PlanTidy(root);
         if (!plan.Empty()) {
             prompt_ = Prompt{};
             prompt_.kind = PromptKind::Tidy;
@@ -1526,7 +1526,7 @@ void ProjectGate::ProceedOrTidy(const std::string& root, const std::string& scen
             prompt_.scene = scene;
             prompt_.projectName = fs::path(root).filename().string();
             prompt_.runningVersion = okayver::NormalizeVersion(env_.running);
-            prompt_.layout = std::move(plan);
+            prompt_.tidy = std::move(plan);
             return;
         }
     }
@@ -1534,18 +1534,18 @@ void ProjectGate::ProceedOrTidy(const std::string& root, const std::string& scen
 }
 
 void ProjectGate::RunTidy() {
-    LayoutOptions o;
+    TidyOptions o;
     o.fail = env_.fail;
-    LayoutResult r = ApplyLayout(prompt_.layout, o);
+    TidyResult r = ApplyTidy(prompt_.tidy, o);
     if (r.ok) {
         const std::string sceneNow = MovedPath(r, prompt_.root, prompt_.scene);
         if (sceneNow != prompt_.scene) movedScenes_.push_back({RootKey(prompt_.scene), sceneNow});
         if (env_.moved) {
             const fs::path root = okayproj::Absolute(fs::path(prompt_.root));
-            for (const LayoutMove& m : r.done) env_.moved((root / fs::path(m.from)).string(), (root / fs::path(m.to)).string());
+            for (const TidyMove& m : r.done) env_.moved((root / fs::path(m.from)).string(), (root / fs::path(m.to)).string());
         }
     }
-    prompt_.layoutResult = std::move(r);
+    prompt_.tidyResult = std::move(r);
     prompt_.kind = PromptKind::TidyDone;
 }
 

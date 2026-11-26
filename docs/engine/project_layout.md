@@ -142,9 +142,9 @@ Already in the person's settings folder (`%APPDATA%/OkaySpace/config/editor`): `
 ## 4. Tidying an existing project
 
 When a project is opened and some of its files are not where the layout puts them, the editor lists the moves and asks
-(once a session). "Not now" moves nothing; "Cancel" does not open the project. "Move the files" (`okayup::ApplyLayout`):
+(once a session). "Not now" moves nothing; "Cancel" does not open the project. "Move the files" (`okayup::ApplyTidy`):
 
-1. plans every move (`okayup::PlanLayout`): scenes, prefabs, materials, models, textures, sounds, scripts, graphs,
+1. plans every move (`okayup::PlanTidy`): scenes, prefabs, materials, models, textures, sounds, scripts, graphs,
    dialogue, quests, behaviour trees, cutscenes and fonts next to `project.okayproj` go into the matching `Assets/<folder>`;
    `project.okayproj`, `.okay/build_profiles.cfg` and `.okay/scene_build.txt` go to `ProjectSettings/`; the old build report
    to `Logs/`; the old thumbnails to `Library/Thumbnails`. Sidecars (`.okaymeta` with the asset id, `.autosave`) move with

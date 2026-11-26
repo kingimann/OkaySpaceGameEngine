@@ -304,7 +304,7 @@ void DrawGatePrompt() {
             break;
         }
         case PromptKind::Tidy: {
-            const okayup::LayoutPlan& lp = pr.layout;
+            const okayup::TidyPlan& lp = pr.tidy;
             ImGui::TextDisabled("PROJECT FOLDERS");
             Heading(("Some of " + pr.projectName + "'s files are not in the project's standard folders.").c_str(), ImVec4(1, 1, 1, 1));
             ImGui::TextDisabled("%s", FitEnd(pr.root, textW).c_str());
@@ -314,7 +314,7 @@ void DrawGatePrompt() {
                                Plural((int)lp.moves.size(), "file", "files").c_str(), Plural(lp.referrers, "file", "files").c_str());
             if (ImGui::CollapsingHeader(("What moves (" + Plural((int)lp.moves.size(), "file", "files") + ")").c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::BeginChild("##tidymoves", ImVec2(0, 150), true);
-                for (const okayup::LayoutMove& m : lp.moves) ImGui::TextUnformatted((m.from + "  ->  " + m.to).c_str());
+                for (const okayup::TidyMove& m : lp.moves) ImGui::TextUnformatted((m.from + "  ->  " + m.to).c_str());
                 ImGui::EndChild();
             }
             if (!lp.kept.empty() && ImGui::CollapsingHeader(("What stays (" + Plural((int)lp.kept.size(), "file", "files") + ")").c_str())) {
@@ -330,7 +330,7 @@ void DrawGatePrompt() {
             break;
         }
         case PromptKind::TidyDone: {
-            const okayup::LayoutResult& r = pr.layoutResult;
+            const okayup::TidyResult& r = pr.tidyResult;
             ImGui::TextDisabled(r.ok ? "PROJECT FOLDERS TIDIED" : "NOTHING WAS MOVED");
             if (r.ok) Heading(("Moved " + Plural(r.moved, "file", "files") + " and updated " + Plural(r.refsUpdated, "reference", "references") + ".").c_str(), kGreen);
             else {

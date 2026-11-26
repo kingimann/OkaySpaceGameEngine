@@ -22,6 +22,7 @@
 #include <string>
 #include <system_error>
 #include <vector>
+#include "ProjectDelete.hpp"         // Normalized, IsSameOrInside: "is this path inside that folder"
 #include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
 namespace okayproj {
@@ -83,25 +84,6 @@ inline fs::path FirstScenePath(const fs::path& root, const std::string& sceneNam
     return ScenesDir(root) / (sceneName + ".okayscene");
 }
 
-/// Text to compare two paths with: absolute, lexically normal, '/' separators, no trailing '/', lower case on Windows.
-inline std::string CompareKey(const fs::path& p) {
-    std::error_code ec;
-    fs::path a = fs::absolute(p, ec);
-    if (ec) a = p;
-    std::string s = a.lexically_normal().generic_string();
-    while (s.size() > 1 && s.back() == '/') s.pop_back();
-#if defined(_WIN32)
-    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-#endif
-    return s;
-}
-/// `child` is `parent` or below it (text only; ".." is followed).
-inline bool IsSameOrInside(const fs::path& parent, const fs::path& child) {
-    const std::string a = CompareKey(parent), b = CompareKey(child);
-    if (a == b) return true;
-    return b.size() > a.size() && b.compare(0, a.size(), a) == 0 && (a.back() == '/' || b[a.size()] == '/');
-}
-
 enum class SaveTarget {
     InAssets,    ///< inside <project>/Assets: where the person's files belong
     InProject,   ///< in the project folder but not in Assets (the Project panel does not show it, a build may miss it)
@@ -111,8 +93,9 @@ enum class SaveTarget {
 /// Where saving `path` would put the file, for the project in `root` ("" = none open).
 inline SaveTarget CheckSaveTarget(const std::string& root, const std::string& path) {
     if (root.empty()) return SaveTarget::NoProject;
-    if (IsSameOrInside(AssetsDir(fs::path(root)), fs::path(path))) return SaveTarget::InAssets;
-    if (IsSameOrInside(fs::path(root), fs::path(path))) return SaveTarget::InProject;
+    const fs::path p = Normalized(fs::path(path)), r = Normalized(fs::path(root));   // ProjectDelete.hpp: the launcher's same test
+    if (okayproj::IsSameOrInside(p, r / kAssets)) return SaveTarget::InAssets;
+    if (okayproj::IsSameOrInside(p, r)) return SaveTarget::InProject;
     return SaveTarget::Outside;
 }
 /// The place inside the project offered instead of `path`: <root>/Assets/<folder>/<the same file name>, or "<name> 2", "<name> 3"...

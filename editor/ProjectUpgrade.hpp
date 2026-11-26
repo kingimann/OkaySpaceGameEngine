@@ -172,31 +172,31 @@ RestoreResult RestoreBackup(const BackupInfo& backup, const std::string& project
 // the layout (Assets/<folder>, ProjectSettings/, Library/, Logs/), after a backup, and updates every reference to them.
 
 /// One file the tidy moves; both paths are project-relative with '/' separators.
-struct LayoutMove { std::string from, to; };
+struct TidyMove { std::string from, to; };
 
-struct LayoutPlan {
+struct TidyPlan {
     std::string projectDir;
-    std::vector<LayoutMove> moves;        ///< in order; a sidecar (.okaymeta, .autosave) is its own move, after its file
+    std::vector<TidyMove> moves;        ///< in order; a sidecar (.okaymeta, .autosave) is its own move, after its file
     std::vector<std::string> kept;        ///< "<file>: why it stays where it is" (read-only, the new place is taken, ...)
     int referrers = 0;                    ///< files whose references to moved files will be updated
     bool Empty() const { return moves.empty(); }
 };
 /// What tidying the project in `projectDir` would do. Reads only; writes nothing.
-LayoutPlan PlanLayout(const std::string& projectDir);
+TidyPlan PlanTidy(const std::string& projectDir);
 
-struct LayoutOptions {
+struct TidyOptions {
     std::string backupParent;             ///< where the backup folder goes (default: the folder the project is in)
     FailHook fail;                        ///< tests: stages tidy-backup, tidy-copy, tidy-verify, tidy-refs, tidy-remove
 };
 
-struct LayoutResult {
+struct TidyResult {
     bool ok = false;
     std::string error;                    ///< the first thing that went wrong, in plain words
     std::string note;                     ///< what was done about it ("Nothing was changed.")
     std::string backupDir;                ///< the backup of every file moved or rewritten ("" if none was made)
     int moved = 0;                        ///< files moved
     int refsUpdated = 0;                  ///< references rewritten
-    std::vector<LayoutMove> done;         ///< the moves made
+    std::vector<TidyMove> done;         ///< the moves made
     std::vector<std::string> rewritten;   ///< files whose references were updated (their paths after the tidy)
     std::vector<std::string> kept;        ///< the plan's kept list, and old files that could not be removed after the copy
     std::vector<std::string> log;
@@ -207,9 +207,9 @@ struct LayoutResult {
 /// copy; (4) write the updated references; (5) only then remove the old files. A failure before (5) takes back everything
 /// it made, so the project is as it was. A file is never removed unless its copy was checked. Running it on a tidied project
 /// does nothing (the plan is empty).
-LayoutResult ApplyLayout(const LayoutPlan& plan, const LayoutOptions& opt = {});
+TidyResult ApplyTidy(const TidyPlan& plan, const TidyOptions& opt = {});
 /// Where `path` (absolute or project-relative) is after the tidy `r` of the project in `projectDir`; `path` when it did not move.
-std::string MovedPath(const LayoutResult& r, const std::string& projectDir, const std::string& path);
+std::string MovedPath(const TidyResult& r, const std::string& projectDir, const std::string& path);
 
 // ---- the question ---------------------------------------------------------------------------------------------------------
 
@@ -227,8 +227,8 @@ struct Prompt {
     Progress progress;                ///< Working
     Result result;                    ///< Done / Failed
     std::string message;              ///< NotInstalled: the sentence to show
-    LayoutPlan layout;                ///< Tidy: what would move
-    LayoutResult layoutResult;        ///< TidyDone
+    TidyPlan tidy;                    ///< Tidy: what would move
+    TidyResult tidyResult;            ///< TidyDone
 };
 
 /// What the gate needs from the outside; tests fill in their own.

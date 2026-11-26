@@ -2,12 +2,12 @@
 
 # Code index: engine-Browser
 
-Back to the [code index](../code_index.md). 14 headers, 180 names.
+Back to the [code index](../code_index.md). 15 headers, 191 names.
 
 ## `engine/include/okay/Browser/Browser.hpp`
 
 - `BrowserTab` class, line 50
-- `PlainTextPage` function, line 311: The page shown for a plain-text address (".txt"): the text in a <pre>, with < and & escaped.
+- `PlainTextPage` function, line 314: The page shown for a plain-text address (".txt"): the text in a <pre>, with < and & escaped.
 
 ## `engine/include/okay/Browser/Cookies.hpp`
 
@@ -53,27 +53,41 @@ Back to the [code index](../code_index.md). 14 headers, 180 names.
 - `ObjectFit` enum, line 147
 - `BoxShadow` struct, line 149
 - `ComputedStyle` struct, line 158
-- `Declaration` struct, line 253
-- `AttrSel` struct, line 260: One attribute selector: [name], [name=value], [name~=value] ... (op is 0 for presence, else '=', '~', '/', '^', '$', '*').
-- `PseudoSel` struct, line 267: A pseudo-class with its argument.
-- `Compound` struct, line 279: One compound selector: [type or *][#id][.class ...][attribute ...][:pseudo-class ...].
-- `Selector` struct, line 286
-- `MediaQuery` struct, line 295: A media query list (Media Queries 4), read once and checked against the view's size each time styles are computed.
-- `MediaEnv` struct, line 300
-- `MediaMatches` function, line 304
-- `ParseMediaQuery` function, line 305
-- `Rule` struct, line 307
-- `FontFace` struct, line 313: An @font-face rule: a family name and where its font file is.
-- `StyleSheet` struct, line 319
-- `CssLimits` struct, line 327
-- `ParseStyleSheet` function, line 335
-- `ParseDeclarations` function, line 337: The declarations of a style="" attribute (or of the inside of one rule's braces).
-- `ParseSelector` function, line 339: Read one selector ("ul li.note > a"); false when it uses anything outside the supported subset.
-- `ParseSelectorList` function, line 342: Read a comma-separated selector list ("h1, .note a"); false when any part is outside the subset. 'maxSpec': the highest
-- `StyleContext` struct, line 346: What matching and the cascade need to know beyond the tree: the element under the pointer and the one with the keyboard
-- `Matches` function, line 358: Does 'el' (an element) match 'sel' (for its pseudo-element 'pseudo': 0 the element, 1 ::before, 2 ::after)?
-- `DefaultStyleSheet` function, line 363: The built-in sheet every page starts from (the "user agent" style sheet: block elements, heading sizes, list indents,
-- `InheritedStyle` function, line 367: A style that has 'parent''s inherited properties (colour, font, text, white-space, list style, visibility, custom
+- `Declaration` struct, line 263
+- `AttrSel` struct, line 270: One attribute selector: [name], [name=value], [name~=value] ... (op is 0 for presence, else '=', '~', '/', '^', '$', '*').
+- `PseudoSel` struct, line 277: A pseudo-class with its argument.
+- `Compound` struct, line 289: One compound selector: [type or *][#id][.class ...][attribute ...][:pseudo-class ...].
+- `Selector` struct, line 296
+- `MediaQuery` struct, line 305: A media query list (Media Queries 4), read once and checked against the view's size each time styles are computed.
+- `MediaEnv` struct, line 310
+- `MediaMatches` function, line 314
+- `ParseMediaQuery` function, line 315
+- `Rule` struct, line 317
+- `FontFace` struct, line 323: An @font-face rule: a family name and where its font file is.
+- `StyleSheet` struct, line 329
+- `CssLimits` struct, line 337
+- `ParseStyleSheet` function, line 345
+- `ParseDeclarations` function, line 347: The declarations of a style="" attribute (or of the inside of one rule's braces).
+- `ParseSelector` function, line 349: Read one selector ("ul li.note > a"); false when it uses anything outside the supported subset.
+- `ParseSelectorList` function, line 352: Read a comma-separated selector list ("h1, .note a"); false when any part is outside the subset. 'maxSpec': the highest
+- `StyleContext` struct, line 356: What matching and the cascade need to know beyond the tree: the element under the pointer and the one with the keyboard
+- `Matches` function, line 369: Does 'el' (an element) match 'sel' (for its pseudo-element 'pseudo': 0 the element, 1 ::before, 2 ::after)?
+- `DefaultStyleSheet` function, line 374: The built-in sheet every page starts from (the "user agent" style sheet: block elements, heading sizes, list indents,
+- `InheritedStyle` function, line 378: A style that has 'parent''s inherited properties (colour, font, text, white-space, list style, visibility, custom
+
+## `engine/include/okay/Browser/Encoding.hpp`
+
+- `TextEncoding` enum, line 23
+- `EncodingName` function, line 33: The standard's name of 'e' ("UTF-8", "windows-1252" ...; "" for Unknown).
+- `EncodingForLabel` function, line 37: "Get an encoding": the encoding a label names ("latin1", " UTF8 ", "iso-8859-1" ...). Leading and trailing ASCII
+- `SniffBom` function, line 41: The encoding a byte order mark at the start of 'bytes' names (UTF-8 EF BB BF, UTF-16BE FE FF, UTF-16LE FF FE), and its
+- `CharsetFromContentType` function, line 45: The value of the charset parameter of a Content-Type header ("text/html; charset=ISO-8859-1" -> "ISO-8859-1"; quotes
+- `EncodingFromMetaContent` function, line 49: HTML "extract a character encoding from a meta element": the encoding named by charset= in a <meta http-equiv> content
+- `PrescanMetaCharset` function, line 54: HTML "prescan a byte stream to determine its encoding" over the first 1024 bytes: the encoding a <meta charset> or a
+- `SingleByteCodePoint` function, line 58: The code point byte 'b' stands for in single-byte encoding 'e' (bytes below 0x80 are ASCII); U+FFFD when the byte has
+- `DecodeToUtf8` function, line 62: Decode 'bytes' from 'e' to UTF-8 (a BOM at the start is dropped). Unknown and Utf8 read as UTF-8; malformed input gives
+- `DecodedPage` struct, line 65: A page's bytes decoded by the HTML encoding sniffing algorithm (see the top of this file).
+- `DecodePage` function, line 70
 
 ## `engine/include/okay/Browser/Forms.hpp`
 
@@ -106,12 +120,12 @@ Back to the [code index](../code_index.md). 14 headers, 180 names.
 - `Node` struct, line 26
 - `HtmlLimits` struct, line 41
 - `HtmlDocument` struct, line 51
-- `ParseHtml` function, line 65: Read a page. Never fails: any text gives a tree with <html>, <head> and <body>.
-- `DumpTree` function, line 69: The tree as text, one node per line, two spaces per level (the shape of the html5lib tree-construction test format):
-- `SerializeChildren` function, line 74: The children of 'node' as HTML text (the standard's "HTML fragment serialization algorithm", 13.3: what innerHTML reads):
-- `SerializeNode` function, line 76: 'node' itself and its children as HTML text (what outerHTML reads).
-- `DecodeCharRefs` function, line 80: Decode the character references in 'text' ("&amp;", "&#169;", "&#x1F600;" ...). In an attribute value a named reference
-- `IsVoidElement` function, line 83: Elements that never have content (13.1.2): area base br col embed hr img input link meta source track wbr.
+- `ParseHtml` function, line 69: Read a page. Never fails: any text gives a tree with <html>, <head> and <body>.
+- `DumpTree` function, line 73: The tree as text, one node per line, two spaces per level (the shape of the html5lib tree-construction test format):
+- `SerializeChildren` function, line 78: The children of 'node' as HTML text (the standard's "HTML fragment serialization algorithm", 13.3: what innerHTML reads):
+- `SerializeNode` function, line 80: 'node' itself and its children as HTML text (what outerHTML reads).
+- `DecodeCharRefs` function, line 84: Decode the character references in 'text' ("&amp;", "&#169;", "&#x1F600;" ...). In an attribute value a named reference
+- `IsVoidElement` function, line 87: Elements that never have content (13.1.2): area base br col embed hr img input link meta source track wbr.
 
 ## `engine/include/okay/Browser/Layout.hpp`
 

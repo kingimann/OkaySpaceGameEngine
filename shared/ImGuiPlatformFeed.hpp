@@ -25,16 +25,22 @@
 
 namespace okay::imguifeed {
 
-/// True when OKAY_PLATFORM_EVENTS is "own" (anything else, or unset, keeps imgui_impl_sdl2).
+/// Whether our own feed runs, from OKAY_PLATFORM_EVENTS: "own" = yes, "sdl2" = no (imgui_impl_sdl2), unset or anything
+/// else = `defaultOwn`. The launcher passes true (rule 17: our own code on by default); the editor false (its multi-window
+/// panels still need imgui_impl_sdl2's platform windows).
 #ifdef OKAY_ON_OKAYUI
-inline bool OwnRequested(const char*) { return true; }   // the OkayUI build has no imgui_impl_sdl2: this feed is the only input path
+inline bool OwnRequested(const char*, bool = false) { return true; }   // the OkayUI build has no imgui_impl_sdl2: this feed is the only input path
 #else
-inline bool OwnRequested(const char* envValue) { return envValue && std::string(envValue) == "own"; }
+inline bool OwnRequested(const char* envValue, bool defaultOwn = false) {
+    if (envValue && std::string(envValue) == "own") return true;
+    if (envValue && std::string(envValue) == "sdl2") return false;
+    return defaultOwn;
+}
 #endif
 /// The line the apps log at start-up so you can tell which one runs.
 inline const char* ActiveLine(bool own) {
-    return own ? "ImGui input: own okay::platform feed (OKAY_PLATFORM_EVENTS=own)"
-               : "ImGui input: imgui_impl_sdl2 (default; set OKAY_PLATFORM_EVENTS=own for the own feed)";
+    return own ? "ImGui input: own okay::platform feed (OKAY_PLATFORM_EVENTS=sdl2 for imgui_impl_sdl2 where it is linked)"
+               : "ImGui input: imgui_impl_sdl2 (OKAY_PLATFORM_EVENTS=own for the own feed)";
 }
 
 /// A seam key to an ImGuiKey (ImGuiKey_None for a key Dear ImGui has no name for). The seam numbers keys with USB HID

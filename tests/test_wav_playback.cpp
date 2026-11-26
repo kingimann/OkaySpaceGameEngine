@@ -1,13 +1,10 @@
-// The WAV playback seam: okay/Audio/WavPlayback.hpp (own decoder, no SDL) and, when SDL2 is present,
-// shared/WavPlayback.hpp (the launcher's seam: our own decoder into an SDL_AudioSpec; SDL_LoadWAV was deleted). The WAV files are built in
+// The WAV playback seam: okay/Audio/WavPlayback.hpp (own decoder, no SDL) and shared/WavPlayback.hpp (the launcher's seam:
+// our own decoder into an okay::platform::AudioSpec; SDL_LoadWAV was deleted). The WAV files are built in
 // memory here (no WAV fixtures are checked in) and written to a temp file where a path is needed.
 #include "test_framework.hpp"
 #include "okay/Audio/WavPlayback.hpp"
 #include "okay/Audio/WavDecoder.hpp"
-#ifdef OKAY_TEST_HAVE_SDL
-#include <SDL.h>
-#include "WavPlayback.hpp"
-#endif
+#include "WavPlayback.hpp"   // shared/: the launcher's seam (okay::platform::AudioSpec, no SDL)
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -113,21 +110,20 @@ static void TestErrors() {
     CHECK(!wav::LoadForPlayback(kPath, c, &err));
 }
 
-#ifdef OKAY_TEST_HAVE_SDL
 // The launcher's seam: PCM16 mono and stereo come back bit for bit as the file's data chunk (what SDL_LoadWAV gave when
 // the two were still compared here), and damaged files fail without a crash and leave nothing behind.
-static void TestSdlSeam() {
+static void TestLauncherSeam() {
     const Bytes files[] = {Pcm16(1, 22050, 300), Pcm16(2, 44100, 300)};
-    const unsigned chans[] = {1, 2};
+    const int chans[] = {1, 2};
     const int rates[] = {22050, 44100};
     for (int k = 0; k < 2; ++k) {
         const Bytes& w = files[k];
         Put(w);
-        SDL_AudioSpec sn{}; std::vector<Uint8> bn; std::string err;
+        okay::platform::AudioSpec sn; std::vector<std::uint8_t> bn; std::string err;
         setenv("OKAY_OWN_WAV", "0", 1);   // left over from the deleted switch: must change nothing
-        CHECK(wav::LoadWavForSdl(kPath, sn, bn, &err));
+        CHECK(wav::LoadWavClip(kPath, sn, bn, &err));
         unsetenv("OKAY_OWN_WAV");
-        CHECK(sn.format == AUDIO_S16SYS && sn.channels == chans[k] && sn.freq == rates[k]);
+        CHECK(sn.format == okay::platform::SampleFormat::S16 && sn.channels == chans[k] && sn.freq == rates[k]);
         CHECK(bn.size() == w.size() - 44 && std::memcmp(bn.data(), w.data() + 44, bn.size()) == 0);
     }
     Bytes cut = Pcm16(2, 44100, 64); cut.resize(30);
@@ -135,19 +131,16 @@ static void TestSdlSeam() {
                          Bytes{'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E'}};
     for (const Bytes& b : bad) {
         Put(b);
-        SDL_AudioSpec s{}; std::vector<Uint8> out; std::string err;
-        CHECK(!wav::LoadWavForSdl(kPath, s, out, &err));   // the own decoder refuses all three
+        okay::platform::AudioSpec s; std::vector<std::uint8_t> out; std::string err;
+        CHECK(!wav::LoadWavClip(kPath, s, out, &err));   // the own decoder refuses all three
         CHECK(out.empty() && !err.empty());
     }
 }
-#endif
 
 int main() {
     TestOwnPath();
     TestErrors();
-#ifdef OKAY_TEST_HAVE_SDL
-    TestSdlSeam();
-#endif
+    TestLauncherSeam();
     std::remove(kPath);
     TEST_MAIN_RESULT();
 }

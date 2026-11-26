@@ -15,6 +15,7 @@
 #include "Win32Ime.hpp"
 #include "Win32XInput.hpp"
 #include "Win32Messages.hpp"
+#include "DisplayModeMath.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -156,6 +157,16 @@ public:
         }
         m_full = on;
     }
+    // Frame on or off after creation. Not while fullscreen: SetFullscreen(false) puts back the style it saved.
+    bool SetBordered(bool on) override {
+        if (m_full) return false;
+        const LONG st = GetWindowLongW(m_hwnd, GWL_STYLE);
+        const LONG want = on ? (LONG)((st & ~WS_POPUP) | m_frameStyle) : (LONG)((st & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
+        if (want == st) return true;
+        SetWindowLongW(m_hwnd, GWL_STYLE, want);
+        SetWindowPos(m_hwnd, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        return true;
+    }
     bool IsFocused() const override { return GetFocus() == m_hwnd; }
     // The pointer is over this window (or one of its child windows): the top-level window under the cursor is ours.
     bool HasMouseFocus() const override {
@@ -289,6 +300,7 @@ public:
     int m_minW = 0, m_minH = 0;
     bool m_full = false;
     LONG m_style = 0;
+    LONG m_frameStyle = WS_OVERLAPPEDWINDOW;   // the bordered style (MakeWindow: resizable or not), for SetBordered(true)
     RECT m_rect = {0, 0, 0, 0};
     wchar_t m_highSurrogate = 0;
     std::vector<uint8_t> m_present;   // PresentPixels: the frame as BGRX
@@ -368,6 +380,7 @@ public:
         if (!h) { m_err = "CreateWindowEx failed"; return nullptr; }
         DragAcceptFiles(h, TRUE);
         auto* w = new WinWindow(this, h);
+        w->m_frameStyle = (LONG)(d.resizable ? WS_OVERLAPPEDWINDOW : (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX));
         m_wins[h] = w;
         if (!d.hidden) ShowWindow(h, d.maximized && d.resizable && !d.fullscreen ? SW_SHOWMAXIMIZED : SW_SHOW);
         if (d.fullscreen) w->SetFullscreen(true);
@@ -376,6 +389,7 @@ public:
     void Unregister(HWND h) { m_wins.erase(h); }
 
     void PumpEvents() override { PumpMessages(); }
+    bool HasPendingEvents() override { return !m_pending.empty(); }   // the window procedures put what PumpMessages read there
     bool PushEvent(const Event& e) override {
         if (e.type == EventType::NoEvent || e.type == EventType::Other) return false;
         m_pending.push_back(e);
@@ -413,6 +427,17 @@ public:
         return p;
     }
     void ReleaseCurrent() override { wglMakeCurrent(nullptr, nullptr); }
+    // WGL: wglGetCurrentContext / wglGetCurrentDC on this thread, and wglMakeCurrent to put them back (null releases).
+    GLCurrent CurrentGL() override {
+        GLCurrent c;
+        c.context = (void*)wglGetCurrentContext();
+        c.window = c.context ? (void*)wglGetCurrentDC() : nullptr;
+        return c;
+    }
+    bool RestoreGL(const GLCurrent& s) override {
+        if (!s.context) return wglMakeCurrent(nullptr, nullptr) != FALSE;
+        return wglMakeCurrent((HDC)s.window, (HGLRC)s.context) != FALSE;
+    }
 
     void StartTextInput() override { m_text = true; }
     void StopTextInput() override { m_text = false; }
@@ -492,6 +517,22 @@ public:
         if (i < 0 || i >= (int)v.size()) return false;
         o = v[(size_t)i];
         return true;
+    }
+    // Every mode EnumDisplaySettingsW lists for the display's device (24 or 32 bits per pixel), the current one first.
+    // Listing only: SetFullscreenMode is not implemented here (a fullscreen choice covers the display at its desktop mode).
+    std::vector<DisplayMode> DisplayModes(int i) override {
+        const std::vector<DisplayInfo> v = ListDisplays();
+        if (i < 0 || i >= (int)v.size()) return {};
+        const std::wstring dev = Wide(v[(size_t)i].name);
+        DEVMODEW dm; std::memset(&dm, 0, sizeof(dm)); dm.dmSize = sizeof(dm);
+        DisplayMode cur{v[(size_t)i].w, v[(size_t)i].h, v[(size_t)i].refreshHz};
+        std::vector<DisplayMode> all;
+        for (DWORD k = 0; EnumDisplaySettingsW(dev.c_str(), k, &dm); ++k) {
+            if (dm.dmBitsPerPel != 0 && dm.dmBitsPerPel < 24) continue;
+            all.push_back({(int)dm.dmPelsWidth, (int)dm.dmPelsHeight, win32disp::RefreshFromDevMode((int)dm.dmDisplayFrequency)});
+            std::memset(&dm, 0, sizeof(dm)); dm.dmSize = sizeof(dm);
+        }
+        return modemath::CurrentFirst(cur, all);
     }
     void SetTextInputRect(int x, int y, int w, int h) override {
         m_imeRect = {x, y, x + (w > 0 ? w : 0), y + (h > 0 ? h : 0)};

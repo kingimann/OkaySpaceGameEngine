@@ -16,8 +16,10 @@ Writes docs/sdl_inventory.md:
   python3 scripts/sdl_inventory.py --ref <sha> --check docs/sdl_inventory.md         exit 1 if the page differs
   python3 scripts/sdl_inventory.py --ref HEAD                                        print to stdout
 
-What is counted (and what is not) is written at the top of the page. This script is not run by CI: a page that is
-checked in CI would break whenever anyone adds or removes one SDL call. Re-run it when you move call sites.
+What is counted (and what is not) is written at the top of the page. Re-run it when you move call sites.
+The page is not checked by CI (it would break whenever anyone moves one SDL call). The ratchet is:
+  python3 scripts/sdl_inventory.py --ratchet           exit 1 if any file uses more SDL than tests/data/sdl_ratchet.json
+  python3 scripts/sdl_inventory.py --update-ratchet    shrink the baseline after moving SDL uses (it refuses a rise)
 Written from the repository's own sources and the public SDL2 API names only (CLAUDE.md rule 19a).
 """
 import argparse
@@ -369,8 +371,16 @@ class FileInfo:
         return calls, refs
 
 
+def read_source(ref, path):
+    """The file at `ref`, or the working tree copy when ref is None (the ratchet before a commit)."""
+    if ref is None:
+        with open(os.path.join(ROOT, path), encoding="utf-8", errors="replace") as f:
+            return f.read()
+    return git("show", "%s:%s" % (ref, path)).decode("utf-8", "replace")
+
+
 def scan_file(ref, path):
-    src = git("show", "%s:%s" % (ref, path)).decode("utf-8", "replace")
+    src = read_source(ref, path)
     nocomment, code = split_code(src)
     code = re.sub(r"^[ \t]*#[ \t]*include[^\n]*", "", code, flags=re.M)
     fi = FileInfo(path)
@@ -425,13 +435,14 @@ def hint_capability(code, pos):
 
 
 def list_sdl_files(ref):
-    out = git("grep", "-l", "-I", "-E", GREP_PATTERN, ref, "--", ".", *[":!%s" % d for d in SKIP_TOP], ":!*.md",
+    opts, where = ([], [ref]) if ref is not None else (["--untracked"], [])   # None: the working tree, new files included
+    out = git("grep", *opts, "-l", "-I", "-E", GREP_PATTERN, *where, "--", ".", *[":!%s" % d for d in SKIP_TOP], ":!*.md",
               ":!*.txt", ":!*.cmake", ":!*.yml", ":!*.sh", ":!*.py", ":!*.json", check=False).decode()
     files = []
     for line in out.split("\n"):
         if not line:
             continue
-        p = line.split(":", 1)[1] if ":" in line else line
+        p = line.split(":", 1)[1] if (ref is not None and ":" in line) else line
         if p.endswith(CODE_EXT):
             files.append(p)
     return sorted(set(files))
@@ -920,12 +931,127 @@ def build_file_counts(ref):
     return sorted(set(res), key=lambda t: (-t[1], t[0]))
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# The ratchet: SDL use may only go down (tests/data/sdl_ratchet.json)
+# ---------------------------------------------------------------------------------------------------------------
+RATCHET_DEFAULT = "tests/data/sdl_ratchet.json"
+# Counted by the ratchet: the programs, their shared code, the engine and OkayUI. Not counted: tests (they compare against
+# SDL on purpose), the sdl2 backend (SDL on purpose, deleted with SDL2) and tools/.
+RATCHET_GROUPS = ("launcher", "editor", "player", "shared", "engine", "okayui")
+
+
+def ratchet_counts(ref):
+    """{path: {"calls": n, "words": n, "by_word": {word: n}}} for every counted file with an SDL word in code."""
+    out = {}
+    for p in list_sdl_files(ref):
+        if group_of(p) not in RATCHET_GROUPS:
+            continue
+        fi = scan_file(ref, p)
+        if fi.refs > 0:
+            words = collections.Counter()
+            for syms in fi.syms.values():
+                words.update(syms)
+            out[p] = {"calls": fi.calls, "words": fi.refs, "by_word": dict(sorted(words.items()))}
+    return out
+
+
+def ratchet_totals(counts):
+    tot = collections.OrderedDict((g, {"calls": 0, "words": 0}) for g in RATCHET_GROUPS)
+    for p, e in counts.items():
+        if group_of(p) in tot:
+            tot[group_of(p)]["calls"] += e["calls"]
+            tot[group_of(p)]["words"] += e["words"]
+    return tot
+
+
+def ratchet_load(path):
+    import json
+    full = os.path.join(ROOT, path)
+    if not os.path.exists(full):
+        return None
+    with open(full, encoding="utf-8") as f:
+        return json.load(f)["files"]
+
+
+def ratchet_rises(base, now):
+    """[(path, base entry, now entry, [(word, before, after)])] for the files whose calls or words rose."""
+    empty = {"calls": 0, "words": 0, "by_word": {}}
+    res = []
+    for p, e in sorted(now.items()):
+        b = base.get(p, empty)
+        if e["calls"] > b["calls"] or e["words"] > b["words"]:
+            up = [(w, b["by_word"].get(w, 0), n) for w, n in sorted(e["by_word"].items()) if n > b["by_word"].get(w, 0)]
+            res.append((p, b, e, up))
+    return res
+
+
+def ratchet_check(ref, path):
+    """Exit status 1 when any file has more SDL calls or words than the baseline, or a file not in it has any."""
+    base = ratchet_load(path)
+    if base is None:
+        print("sdl ratchet: no baseline %s (nothing to compare; write one with --update-ratchet)" % path)
+        return 0
+    now = ratchet_counts(ref)
+    worse = ratchet_rises(base, now)
+    better = [p for p, e in now.items() if p in base and (e["calls"] < base[p]["calls"] or e["words"] < base[p]["words"])]
+    better += [p for p in base if p not in now]
+    tot, btot = ratchet_totals(now), ratchet_totals(base)
+    print("sdl ratchet: SDL calls / words now (baseline): " +
+          ", ".join("%s %d/%d (%d/%d)" % (g, tot[g]["calls"], tot[g]["words"], btot[g]["calls"], btot[g]["words"]) for g in RATCHET_GROUPS))
+    if worse:
+        print("sdl ratchet: FAILED, SDL use went up in %d file(s). Use okay::platform instead "
+              "(docs/platform/platform_layer.md):" % len(worse))
+        for p, b, e, up in worse:
+            print("  %s: calls %d -> %d, words %d -> %d; more of: %s" % (
+                p, b["calls"], e["calls"], b["words"], e["words"], ", ".join("%s %d -> %d" % u for u in up)))
+        return 1
+    if better:
+        print("sdl ratchet: OK; %d file(s) use less SDL than the baseline: shrink it in the same change with "
+              "python3 scripts/sdl_inventory.py --update-ratchet" % len(better))
+    else:
+        print("sdl ratchet: OK")
+    return 0
+
+
+def ratchet_update(ref, path, allow_rise):
+    import json
+    now = ratchet_counts(ref)
+    base = ratchet_load(path)
+    if base is not None and not allow_rise:
+        up = ratchet_rises(base, now)
+        if up:
+            sys.stderr.write("refusing: the baseline may only go down; these files rose: %s\n" % ", ".join(p for p, _, _, _ in up))
+            return 1
+    data = collections.OrderedDict()
+    data["about"] = ("SDL calls and SDL words per file (scripts/sdl_inventory.py; tests, tools and the sdl2 backend not counted). "
+                     "--ratchet fails when a file rises above its numbers; the baseline may only go down (--update-ratchet).")
+    data["totals"] = ratchet_totals(now)
+    data["files"] = collections.OrderedDict(sorted(now.items()))
+    with open(os.path.join(ROOT, path), "w", encoding="utf-8", newline="\n") as f:
+        json.dump(data, f, indent=1, sort_keys=False)
+        f.write("\n")
+    print("wrote %s (%d files)" % (path, len(now)))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ref", default="HEAD", help="git ref to read (a commit sha is best: it keeps the page reproducible)")
     ap.add_argument("--out", help="write the page here")
     ap.add_argument("--check", help="compare the result with this file; exit 1 when it differs")
+    ap.add_argument("--ratchet", nargs="?", const=RATCHET_DEFAULT, metavar="JSON",
+                    help="fail when SDL use rose above the baseline (default %s); reads the working tree unless --ref is given" % RATCHET_DEFAULT)
+    ap.add_argument("--update-ratchet", nargs="?", const=RATCHET_DEFAULT, metavar="JSON",
+                    help="write the baseline from the working tree (or --ref); refuses a rise unless --allow-rise")
+    ap.add_argument("--allow-rise", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
+    if args.ratchet or args.update_ratchet:
+        ref = None
+        if "--ref" in sys.argv:
+            ref = git("rev-parse", "--verify", args.ref + "^{commit}").decode().strip()
+        if args.update_ratchet:
+            return ratchet_update(ref, args.update_ratchet, args.allow_rise)
+        return ratchet_check(ref, args.ratchet)
     sha = git("rev-parse", "--verify", args.ref + "^{commit}").decode().strip()
     files = list_sdl_files(sha)
     scanned = {p: scan_file(sha, p) for p in files}

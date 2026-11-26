@@ -26,12 +26,17 @@
 
 namespace okay::imguirender {
 
-/// True when OKAY_IMGUI_RENDER is "own" (anything else, or unset, keeps imgui_impl_sdlrenderer2).
-inline bool OwnRequested(const char* envValue) { return envValue && std::string(envValue) == "own"; }
+/// Whether our own renderer runs, from OKAY_IMGUI_RENDER: "own" = yes, "sdl2" = no (imgui_impl_sdlrenderer2), unset or
+/// anything else = `defaultOwn` (the launcher passes true, rule 17; the editor false, see ImGuiPlatformFeed.hpp).
+inline bool OwnRequested(const char* envValue, bool defaultOwn = false) {
+    if (envValue && std::string(envValue) == "own") return true;
+    if (envValue && std::string(envValue) == "sdl2") return false;
+    return defaultOwn;
+}
 /// The line the apps log at start-up so you can tell which renderer runs.
 inline const char* ActiveLine(bool own) {
-    return own ? "ImGui drawing: own okay::platform::Painter renderer (OKAY_IMGUI_RENDER=own)"
-               : "ImGui drawing: imgui_impl_sdlrenderer2 (default; set OKAY_IMGUI_RENDER=own for the own renderer)";
+    return own ? "ImGui drawing: own okay::platform::Painter renderer (OKAY_IMGUI_RENDER=sdl2 for imgui_impl_sdlrenderer2)"
+               : "ImGui drawing: imgui_impl_sdlrenderer2 (OKAY_IMGUI_RENDER=own for the own renderer)";
 }
 
 /// Mark the ImGui context as served by this renderer (call once after CreateContext). Textures are requested through ImTextureData and

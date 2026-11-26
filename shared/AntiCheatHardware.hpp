@@ -38,6 +38,11 @@
 #endif
 #endif
 #if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
+#if defined(_WIN32)
+// MinGW's <intrin.h> declares a __cpuid function and GCC's <cpuid.h> defines a __cpuid macro: once the macro exists,
+// a later <intrin.h> (SDL.h and other headers pull it in) fails to parse. Include it first, so the order is always safe.
+#include <intrin.h>
+#endif
 #include <cpuid.h>
 #define OKAY_AC_HAVE_CPUID 1
 #endif

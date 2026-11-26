@@ -120,6 +120,11 @@ if [ -n "$gen_changed" ]; then
   warn "  they are rebuilt on main (regen-docs.yml); committing them makes other PRs conflict. Use main's copy: $gen_hint"
 fi
 
+# 4b. SDL use only goes down (tests/data/sdl_ratchet.json; a branch without the baseline passes)
+if python3 scripts/sdl_inventory.py --ratchet --ref "$head" >/tmp/precheck_sdl.$$ 2>&1; then ok "SDL use not above the baseline (sdl ratchet)"
+else fail "SDL use went up (python3 scripts/sdl_inventory.py --ratchet):"; grep -E '^  ' /tmp/precheck_sdl.$$ | head -10 | sed 's/^/      /'; fi
+rm -f /tmp/precheck_sdl.$$
+
 # 5. copies between open branches (offline: the local remote refs, no GitHub call)
 br=$(git rev-parse --abbrev-ref "$head" 2>/dev/null); br="${br#origin/}"
 if [ -n "$br" ] && [ "$br" != "HEAD" ] && [ -f scripts/collision_check.py ]; then

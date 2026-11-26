@@ -26,9 +26,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <atomic>
-#include <chrono>
-#include <mutex>
-#include <thread>
+#include "OkayThreads.hpp"   // okay::thr: the engine's threads and locks (CLAUDE.md rule 21a)
 #endif
 
 using namespace okayuitest;
@@ -66,9 +64,25 @@ struct FakeSite {
     int port = 0;
     int listener = -1;
     std::atomic<bool> quit{false};
-    std::thread loop;
-    std::mutex lock;
+    okay::thr::Thread* loop = nullptr;
+    okay::thr::Mutex* lock = okay::thr::CreateMutex();
     std::vector<Request> seen;
+    ~FakeSite() { okay::thr::DestroyMutex(lock); }
+    struct Held {   // the lock, held for one scope
+        okay::thr::Mutex* m;
+        explicit Held(okay::thr::Mutex* x) : m(x) { okay::thr::LockMutex(m); }
+        ~Held() { okay::thr::UnlockMutex(m); }
+    };
+    static int Loop(void* self) {
+        FakeSite& f = *static_cast<FakeSite*>(self);
+        while (!f.quit) {
+            const int c = ::accept(f.listener, nullptr, nullptr);
+            if (c < 0) continue;
+            if (!f.quit) f.Answer(c);
+            ::close(c);
+        }
+        return 0;
+    }
 
     bool Start() {
         listener = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -79,15 +93,8 @@ struct FakeSite {
         socklen_t n = sizeof a;
         if (::bind(listener, (sockaddr*)&a, sizeof a) != 0 || ::listen(listener, 16) != 0 || ::getsockname(listener, (sockaddr*)&a, &n) != 0) return false;
         port = ntohs(a.sin_port);
-        loop = std::thread([this] {
-            while (!quit) {
-                const int c = ::accept(listener, nullptr, nullptr);
-                if (c < 0) continue;
-                if (!quit) Answer(c);
-                ::close(c);
-            }
-        });
-        return true;
+        loop = okay::thr::CreateThread(Loop, "fake-site", this);
+        return loop != nullptr;
     }
     void Answer(int c) {
         std::string in;
@@ -115,7 +122,7 @@ struct FakeSite {
             r.body.append(buf, (std::size_t)got);
         }
         const std::string out = route(r);
-        { std::lock_guard<std::mutex> g(lock); seen.push_back(r); }
+        { Held g(lock); seen.push_back(r); }
         for (std::size_t sent = 0; sent < out.size();) {
             const ssize_t k = ::send(c, out.data() + sent, out.size() - sent, MSG_NOSIGNAL);
             if (k <= 0) break;
@@ -124,7 +131,7 @@ struct FakeSite {
     }
     // The Cookie header of the last request for `path` ("<none>" when it had none, "<not asked>" when there was none).
     std::string CookieOf(const std::string& path) {
-        std::lock_guard<std::mutex> g(lock);
+        Held g(lock);
         for (std::size_t i = seen.size(); i-- > 0;) {
             if (seen[i].path != path) continue;
             const std::string lower = okay::str::LowerAscii(seen[i].head);
@@ -136,7 +143,7 @@ struct FakeSite {
         return "<not asked>";
     }
     bool Saw(const std::function<bool(const Request&)>& match) {
-        std::lock_guard<std::mutex> g(lock);
+        Held g(lock);
         for (const Request& r : seen) if (match(r)) return true;
         return false;
     }
@@ -152,7 +159,8 @@ struct FakeSite {
         a.sin_port = htons((unsigned short)port);
         ::connect(w, (sockaddr*)&a, sizeof a);
         ::close(w);
-        if (loop.joinable()) loop.join();
+        if (loop) okay::thr::WaitThread(loop, nullptr);
+        loop = nullptr;
     }
 };
 
@@ -375,7 +383,7 @@ int main() {
         auto ui = [&] { app->Frame(X, Y, W, H); };
         // frames until `done` (the fetches run on the host's worker threads), at most about five seconds
         auto until = [&](const std::function<bool()>& done) {
-            for (int i = 0; i < 1000 && !done(); ++i) { hs.Frame(ui); std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
+            for (int i = 0; i < 1000 && !done(); ++i) { hs.Frame(ui); ::usleep(5000); }
             return done();
         };
         auto ready = [&](const std::string& title) {
@@ -407,7 +415,7 @@ int main() {
         for (const br::ConsoleLine& l : app->ActiveTab().ConsoleLines()) if (l.text == "echo POST hello") echoed = true;
         CHECK(echoed);
         CHECK(site.Saw([](const FakeSite::Request& r) {
-            return r.method == "POST" && r.path == "/api/echo" && r.body == "hello" && r.head.find("X-Mode: test") != std::string::npos;
+            return r.method == "POST" && r.path == "/api/echo" && r.body == "hello" && okay::str::LowerAscii(r.head).find("x-mode: test") != std::string::npos;
         }));
         CHECK(site.CookieOf("/api/n") == "sid=s123; hop=1");
 
@@ -420,7 +428,7 @@ int main() {
         hs.rdown = true; hs.Frame(ui); hs.rdown = false; hs.Frame(ui);
         hs.Move(X + 300, Y + 300); hs.Frames(2, ui);
         if (const char* shots = std::getenv("OKAY_SHOT_DIR"); shots && *shots)
-            std::cerr << "  picture: " << WritePng(std::string(shots) + "/host_history_list.png", hs.Draw(18, 20, 26)) << "\n";
+            { const std::string path = std::string(shots) + "/host_history_list.png"; std::cerr << "  picture: " << path << (WritePng(path, hs.Draw(18, 20, 26)) ? "" : " (not written)") << "\n"; }
         // the menu's rows: Page 2, Page 1, Fetch ... (24 px each, from 4 px under the menu's top, which is 4 px under Back)
         const float rowsTop = Y + 40 + 8 + 30 + 4 + 4;
         hs.Click(X + 60, rowsTop + 24 + 12, ui);
@@ -443,7 +451,7 @@ int main() {
         CHECK(app->PageDialogText() == "Your game was saved.");
         hs.Frames(2, ui);
         if (const char* shots = std::getenv("OKAY_SHOT_DIR"); shots && *shots)
-            std::cerr << "  picture: " << WritePng(std::string(shots) + "/host_alert_dialog.png", hs.Draw(18, 20, 26)) << "\n";
+            { const std::string path = std::string(shots) + "/host_alert_dialog.png"; std::cerr << "  picture: " << path << (WritePng(path, hs.Draw(18, 20, 26)) ? "" : " (not written)") << "\n"; }
         hs.Hold(UI::KeyId_Enter, true); hs.Frame(ui); hs.Hold(UI::KeyId_Enter, false); hs.Frame(ui);
         CHECK(!app->PageDialogOpen());
 

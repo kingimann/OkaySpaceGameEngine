@@ -2,7 +2,7 @@
 
 # Code index: engine-Platform
 
-Back to the [code index](../code_index.md). 30 headers, 274 names.
+Back to the [code index](../code_index.md). 31 headers, 273 names.
 
 ## `engine/include/okay/Platform/Account/Account.hpp`
 
@@ -23,17 +23,19 @@ Back to the [code index](../code_index.md). 30 headers, 274 names.
 - `DeleteOutcome` struct, line 186
 - `MapDeleteResponse` function, line 196: Turn the function's response into a user message. Never claims success unless
 
+## `engine/include/okay/Platform/Account/AccountDetail.hpp`
+
+- `PublicName` function, line 40: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
+
 ## `engine/include/okay/Platform/Account/AccountService.hpp`
 
-- `PublicName` function, line 67: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
-- `Session` struct, line 478: The currently signed-in player. 'loggedIn' is false when nobody is signed
-- `Result` struct, line 487: Result of a register/login attempt. On failure 'error' carries a short,
-- `ApiResponse` struct, line 497: Result of an authenticated request to the account server (see Api). 'ok' is
-- `ScoreEntry` struct, line 508: One row of a server leaderboard: the player's name, their score, and their
-- `Provider` enum, line 520: Which backend signs players in.
-- `SessionCheck` enum, line 523: How a check of the saved session with the server went (AccountService::CheckSession).
-- `AccountService` class, line 529: A client-side account service. Construct it with a config directory (where a
-- `DefaultConfigDir` function, line 1487: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
+- `Session` struct, line 72: The currently signed-in player. 'loggedIn' is false when nobody is signed
+- `Result` struct, line 81: Result of a register/login attempt. On failure 'error' carries a short,
+- `ScoreEntry` struct, line 97: One row of a server leaderboard: the player's name, their score, and their
+- `Provider` enum, line 109: Which backend signs players in.
+- `SessionCheck` enum, line 112: How a check of the saved session with the server went (AccountService::CheckSession).
+- `AccountService` class, line 118: A client-side account service. Construct it with a config directory (where a
+- `DefaultConfigDir` function, line 978: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
 
 ## `engine/include/okay/Platform/Achievements.hpp`
 
@@ -170,7 +172,7 @@ Back to the [code index](../code_index.md). 30 headers, 274 names.
 - `NativeAvailable` function, line 123: True where the native client exists: Windows (WinHTTP), or POSIX built with OKAY_OWN_HTTP (our own client, always on;
 - `NoClientReason` function, line 134: Why a call failed on a build with no native client (the error text of Request, RequestEx and the seam).
 - `RequestOptions` struct, line 144: Extra controls for downloads (the own client on Linux, WinHTTP on Windows; elsewhere RequestEx returns
-- `ExResult` struct, line 178: Result of RequestEx: Result plus what a resumable download needs.
+- `ExResult` struct, line 181: Result of RequestEx: Result plus what a resumable download needs.
 
 ## `engine/include/okay/Platform/OwnHttp.hpp`
 
@@ -192,14 +194,14 @@ Back to the [code index](../code_index.md). 30 headers, 274 names.
 - `CookieJar` class, line 554: Cookies (opt-in, per call)
 - `Connector` struct, line 652: Fetch with redirects
 - `FetchRequest` struct, line 664
-- `FetchHooks` struct, line 677
-- `FetchResult` struct, line 687
-- `ParseContentRange` function, line 705: "bytes first-last/total" (total may be "*"). Strict: digits only, first <= last < total.
-- `RequestedRangeStart` function, line 724: First byte of a "Range: bytes=N-" or "bytes=N-M" request header; false when there is none or it is another shape.
-- `RangeSpec` struct, line 741: What a "Range" request header asks for, so a 206 can be checked against it.
-- `ParseRangeRequest` function, line 746
-- `SensitiveHeader` function, line 773
-- `ConnectionReusable` function, line 782: True when the connection that carried 'head' (its body already read) can serve another request: HTTP/1.1, no
+- `FetchHooks` struct, line 680
+- `FetchResult` struct, line 690
+- `ParseContentRange` function, line 708: "bytes first-last/total" (total may be "*"). Strict: digits only, first <= last < total.
+- `RequestedRangeStart` function, line 727: First byte of a "Range: bytes=N-" or "bytes=N-M" request header; false when there is none or it is another shape.
+- `RangeSpec` struct, line 744: What a "Range" request header asks for, so a 206 can be checked against it.
+- `ParseRangeRequest` function, line 749
+- `SensitiveHeader` function, line 776
+- `ConnectionReusable` function, line 785: True when the connection that carried 'head' (its body already read) can serve another request: HTTP/1.1, no
 
 ## `engine/include/okay/Platform/OwnHttpDownload.hpp`
 
@@ -224,15 +226,15 @@ Back to the [code index](../code_index.md). 30 headers, 274 names.
 ## `engine/include/okay/Platform/OwnHttpNet.hpp`
 
 - `NetOptions` struct, line 51
-- `TcpStream` struct, line 145: TCP
-- `addrinfo` struct, line 190
-- `Proxy` struct, line 280: Proxy settings
-- `HostBypassesProxy` function, line 284: NO_PROXY: comma separated host names (suffix match, optional leading '.' or "*."),
-- `ResolveProxy` function, line 321: Decide the proxy for 'u' from the environment. false = the environment names a
-- `TlsApi` struct, line 346: TLS through the system OpenSSL, loaded at run time
-- `TlsStream` class, line 441
-- `SystemConnector` class, line 591
-- `TlsAvailable` function, line 673: True when https can be used (libssl loads); 'why' says why not.
+- `TcpStream` struct, line 146: TCP
+- `addrinfo` struct, line 191
+- `Proxy` struct, line 281: Proxy settings
+- `HostBypassesProxy` function, line 285: NO_PROXY: comma separated host names (suffix match, optional leading '.' or "*."),
+- `ResolveProxy` function, line 322: Decide the proxy for 'u' from the environment. false = the environment names a
+- `TlsApi` struct, line 347: TLS through the system OpenSSL, loaded at run time
+- `TlsStream` class, line 442
+- `SystemConnector` class, line 592
+- `TlsAvailable` function, line 674: True when https can be used (libssl loads); 'why' says why not.
 
 ## `engine/include/okay/Platform/Painter.hpp`
 

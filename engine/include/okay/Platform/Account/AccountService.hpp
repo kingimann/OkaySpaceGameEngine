@@ -54,419 +54,13 @@
 #endif
 #include "okay/Crypto/Sha256.hpp"   // the engine's one SHA-256 / HMAC / PBKDF2
 #include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: okay::http::Send (WinHTTP / our own client)
+#include "okay/Platform/Account/AccountDetail.hpp"   // PublicName and the detail:: helpers
+#include "okay/Backend/Backend.hpp"                  // OkayBackend: transport, Auth, the Supabase provider, provider choice
 
 namespace okay::account {
 
 namespace fs = std::filesystem;
 
-/// The name shown to OTHER people for an account: never an email address. Names come from the server as free text
-/// (author_name, sender_name, display_name, username...) and old clients stored the email there; an email is cut to the
-/// part before the "@" ("alex.doe@x.com" -> "alex.doe"), and when nothing is left the name is "Player" plus the first
-/// characters of the account id (or just "Player"). Empty stays empty (callers have their own "unknown"). Every place the
-/// launcher and the editor read a person's name from the server goes through this (tests/test_public_name.cpp).
-inline std::string PublicName(const std::string& name, const std::string& userId = {}) {
-    if (name.find('@') == std::string::npos) return name;
-    std::string local = name.substr(0, name.find('@'));
-    while (!local.empty() && std::isspace((unsigned char)local.back())) local.pop_back();
-    while (!local.empty() && std::isspace((unsigned char)local.front())) local.erase(local.begin());
-    if (!local.empty()) return local;
-    std::string tag;
-    for (char c : userId) { if (std::isalnum((unsigned char)c)) tag += c; if (tag.size() == 4) break; }
-    return tag.empty() ? std::string("Player") : "Player-" + tag;
-}
-
-// ===========================================================================
-// SHA-256 / PBKDF2. These are thin wrappers over the engine's one implementation, okay/Crypto/Sha256.hpp (docs/platform/sha256_comparison.md).
-// The wrapper keeps the interface the account service, the updater and the anti-cheat code already use.
-// ===========================================================================
-namespace detail {
-
-class Sha256 {
-public:
-    void Update(const std::uint8_t* data, std::size_t len) { impl_.Update(data, len); }
-    void Update(const std::string& s) { impl_.Update(reinterpret_cast<const std::uint8_t*>(s.data()), s.size()); }
-
-    /// The digest; the object starts a fresh message afterwards (as it always did).
-    std::array<std::uint8_t, 32> Digest() {
-        std::array<std::uint8_t, 32> out{};
-        impl_.Final(out.data());
-        impl_ = okay::crypto::Sha256();
-        return out;
-    }
-
-private:
-    okay::crypto::Sha256 impl_;
-};
-
-inline std::string ToHex(const std::uint8_t* data, std::size_t len) {
-    static const char* hx = "0123456789abcdef";
-    std::string out;
-    out.reserve(len * 2);
-    for (std::size_t i = 0; i < len; ++i) {
-        out.push_back(hx[data[i] >> 4]);
-        out.push_back(hx[data[i] & 0xf]);
-    }
-    return out;
-}
-
-inline std::string Sha256Hex(const std::string& s) {
-    Sha256 h;
-    h.Update(s);
-    auto d = h.Digest();
-    return ToHex(d.data(), d.size());
-}
-
-// Salt + iterate so a leaked database can't be reversed with a quick lookup.
-inline std::string HashPassword(const std::string& password, const std::string& saltHex) {
-    std::string acc = saltHex + ":" + password;
-    for (int i = 0; i < 50000; ++i) acc = Sha256Hex(acc);
-    return acc;
-}
-
-// Random bytes from the operating system's CSPRNG (never a seeded Mersenne Twister): getrandom-style /dev/urandom on POSIX,
-// RtlGenRandom (SystemFunction036) on Windows, found at run time so nothing extra is linked. False when the system has none.
-inline bool OsRandom(std::uint8_t* out, std::size_t n) {
-#if defined(OKAY_XBOX_UWP)
-    // UWP: no LoadLibrary. BCryptGenRandom with the system-preferred RNG needs no algorithm handle (Microsoft's BCryptGenRandom page).
-    return BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(out), (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) >= 0;
-#elif defined(_WIN32)
-    typedef unsigned char (__stdcall *RtlGenRandomFn)(void*, unsigned long);
-    static RtlGenRandomFn fn = [] {
-        HMODULE m = LoadLibraryA("advapi32.dll");
-        return m ? reinterpret_cast<RtlGenRandomFn>(reinterpret_cast<void*>(GetProcAddress(m, "SystemFunction036"))) : nullptr;
-    }();
-    return fn && fn(out, (unsigned long)n) != 0;
-#else
-    std::ifstream f("/dev/urandom", std::ios::binary);
-    if (!f) return false;
-    f.read(reinterpret_cast<char*>(out), (std::streamsize)n);
-    return (std::size_t)f.gcount() == n;
-#endif
-}
-
-inline std::string RandomHex(std::size_t bytes) {
-    std::vector<std::uint8_t> buf(bytes);
-    if (!OsRandom(buf.data(), buf.size())) {      // no OS source: std::random_device per byte (still not a seeded generator)
-        std::random_device rd;
-        for (auto& b : buf) b = std::uint8_t(rd() & 0xff);
-    }
-    return ToHex(buf.data(), buf.size());
-}
-
-// ---- PBKDF2-HMAC-SHA256 (RFC 8018 / RFC 2898), one 32-byte block ----------------------------------------------------------------
-inline std::vector<std::uint8_t> HexBytes(const std::string& hex) {
-    std::vector<std::uint8_t> out;
-    auto nib = [](char c) -> int { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; };
-    if (hex.size() % 2) return {};
-    for (std::size_t i = 0; i < hex.size(); i += 2) {
-        const int a = nib(hex[i]), b = nib(hex[i + 1]);
-        if (a < 0 || b < 0) return {};
-        out.push_back(std::uint8_t(a * 16 + b));
-    }
-    return out;
-}
-inline std::array<std::uint8_t, 32> Pbkdf2Sha256(const std::string& password, const std::vector<std::uint8_t>& salt, std::uint32_t iterations) {
-    std::array<std::uint8_t, 32> out{};
-    okay::crypto::Pbkdf2HmacSha256(out.data(), out.size(), reinterpret_cast<const std::uint8_t*>(password.data()), password.size(),
-                                   salt.data(), salt.size(), iterations);
-    return out;
-}
-
-// The stored form: "$pbkdf2-sha256$<iterations>$<hash hex>" (the salt sits in its own column). A bare 64-hex string is the old
-// SHA-256 chain (HashPassword). Raising kPasswordRounds later makes every sign-in with a weaker record re-hash it.
-inline constexpr std::uint32_t kPasswordRounds = 600000;
-inline constexpr std::uint32_t kMinRounds = 1000, kMaxRounds = 20000000;   // what a stored record may claim (a damaged file can't stall a login)
-inline std::string HashPasswordV2(const std::string& password, const std::string& saltHex, std::uint32_t rounds = kPasswordRounds) {
-    const std::vector<std::uint8_t> salt = HexBytes(saltHex);
-    const auto d = Pbkdf2Sha256(password, salt, rounds);
-    return "$pbkdf2-sha256$" + std::to_string(rounds) + "$" + ToHex(d.data(), d.size());
-}
-inline bool IsHashV2(const std::string& stored) { return stored.rfind("$pbkdf2-sha256$", 0) == 0; }
-inline bool StoredRounds(const std::string& stored, std::uint32_t& rounds) {
-    if (!IsHashV2(stored)) return false;
-    const std::size_t a = 15, b = stored.find('$', a);
-    if (b == std::string::npos || b == a || b - a > 9) return false;
-    std::uint64_t n = 0;
-    for (std::size_t i = a; i < b; ++i) { if (stored[i] < '0' || stored[i] > '9') return false; n = n * 10 + (std::uint64_t)(stored[i] - '0'); }
-    if (n < kMinRounds || n > kMaxRounds) return false;
-    rounds = (std::uint32_t)n;
-    return true;
-}
-// Constant-time string compare so a local login can't be timed.
-inline bool SecureEquals(const std::string& a, const std::string& b) {
-    if (a.size() != b.size()) return false;
-    unsigned diff = 0;
-    for (std::size_t i = 0; i < a.size(); ++i)
-        diff |= (unsigned)(a[i] ^ b[i]);
-    return diff == 0;
-}
-
-// Minimal JSON helpers — just enough to send credentials and read a token back.
-inline std::string JsonEscape(const std::string& s) {
-    std::string out;
-    for (char c : s) {
-        switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n";  break;
-            case '\r': out += "\\r";  break;
-            case '\t': out += "\\t";  break;
-            default:   out += c;       break;
-        }
-    }
-    return out;
-}
-
-// The JSON string literal whose opening quote is at json[q], with its escapes
-// decoded (\n, \t, ... and \uXXXX as UTF-8: Supabase's auth server writes "&",
-// "<" and ">" as &, <, >). Returns the index just past the
-// closing quote (json.size() if there is none).
-inline std::size_t JsonReadString(const std::string& json, std::size_t q, std::string& out) {
-    auto hex4 = [&](std::size_t at, unsigned& v) {
-        if (at + 4 > json.size()) return false;
-        v = 0;
-        for (std::size_t k = at; k < at + 4; ++k) {
-            const char h = json[k];
-            v <<= 4;
-            if (h >= '0' && h <= '9') v |= (unsigned)(h - '0');
-            else if (h >= 'a' && h <= 'f') v |= (unsigned)(h - 'a' + 10);
-            else if (h >= 'A' && h <= 'F') v |= (unsigned)(h - 'A' + 10);
-            else return false;
-        }
-        return true;
-    };
-    std::size_t i = q + 1;
-    for (; i < json.size(); ++i) {
-        char c = json[i];
-        if (c == '"') return i + 1;
-        if (c != '\\' || i + 1 >= json.size()) { out += c; continue; }
-        c = json[++i];
-        switch (c) {
-            case 'n': out += '\n'; break;
-            case 't': out += '\t'; break;
-            case 'r': out += '\r'; break;
-            case 'b': out += '\b'; break;
-            case 'f': out += '\f'; break;
-            case 'u': {
-                unsigned cp = 0, lo = 0;
-                if (!hex4(i + 1, cp)) { out += 'u'; break; }
-                i += 4;
-                if (cp >= 0xD800 && cp < 0xDC00 && i + 2 < json.size() && json[i + 1] == '\\' && json[i + 2] == 'u' &&
-                    hex4(i + 3, lo) && lo >= 0xDC00 && lo < 0xE000) {
-                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                    i += 6;
-                }
-                if (cp < 0x80) out += (char)cp;
-                else if (cp < 0x800) { out += (char)(0xC0 | (cp >> 6)); out += (char)(0x80 | (cp & 0x3F)); }
-                else if (cp < 0x10000) { out += (char)(0xE0 | (cp >> 12)); out += (char)(0x80 | ((cp >> 6) & 0x3F)); out += (char)(0x80 | (cp & 0x3F)); }
-                else { out += (char)(0xF0 | (cp >> 18)); out += (char)(0x80 | ((cp >> 12) & 0x3F));
-                       out += (char)(0x80 | ((cp >> 6) & 0x3F)); out += (char)(0x80 | (cp & 0x3F)); }
-                break;
-            }
-            default: out += c; break;   // \" \\ \/
-        }
-    }
-    return i;
-}
-
-// Pull the string value of a top-level "key" out of a flat JSON object.
-inline std::string JsonField(const std::string& json, const std::string& key) {
-    std::string needle = "\"" + key + "\"";
-    std::size_t k = json.find(needle);
-    if (k == std::string::npos) return {};
-    std::size_t colon = json.find(':', k + needle.size());
-    if (colon == std::string::npos) return {};
-    std::size_t q1 = json.find('"', colon + 1);
-    if (q1 == std::string::npos) return {};
-    std::string out;
-    JsonReadString(json, q1, out);
-    return out;
-}
-
-// Pull an array of strings for a top-level "key" (e.g. {"keys":["a","b"]}).
-inline std::vector<std::string> JsonStringArray(const std::string& json,
-                                                const std::string& key) {
-    std::vector<std::string> out;
-    std::string needle = "\"" + key + "\"";
-    std::size_t k = json.find(needle);
-    if (k == std::string::npos) return out;
-    std::size_t lb = json.find('[', k + needle.size());
-    if (lb == std::string::npos) return out;
-    std::size_t rb = json.find(']', lb);
-    if (rb == std::string::npos) rb = json.size();
-    std::size_t i = lb + 1;
-    while (i < rb) {
-        std::size_t q1 = json.find('"', i);
-        if (q1 == std::string::npos || q1 >= rb) break;
-        std::string s;
-        i = JsonReadString(json, q1, s);
-        out.push_back(s);
-    }
-    return out;
-}
-
-// Collect the string value of EVERY occurrence of "key":"value" — handy for a
-// PostgREST array of objects like [{"key":"a"},{"key":"b"}] -> ["a","b"].
-inline std::vector<std::string> JsonFieldValues(const std::string& json, const std::string& key) {
-    std::vector<std::string> out;
-    std::string needle = "\"" + key + "\"";
-    std::size_t pos = 0;
-    while ((pos = json.find(needle, pos)) != std::string::npos) {
-        std::size_t colon = json.find(':', pos + needle.size());
-        pos += needle.size();
-        if (colon == std::string::npos) break;
-        std::size_t q1 = json.find('"', colon + 1);
-        if (q1 == std::string::npos) break;
-        std::string s;
-        pos = JsonReadString(json, q1, s);
-        out.push_back(s);
-    }
-    return out;
-}
-
-// Collect the numeric value of every "key":<number> occurrence (unquoted), for a
-// PostgREST array like [{"score":500},{"score":300}] -> [500, 300].
-inline std::vector<long> JsonNumberValues(const std::string& json, const std::string& key) {
-    std::vector<long> out;
-    std::string needle = "\"" + key + "\"";
-    std::size_t pos = 0;
-    while ((pos = json.find(needle, pos)) != std::string::npos) {
-        std::size_t colon = json.find(':', pos + needle.size());
-        pos += needle.size();
-        if (colon == std::string::npos) break;
-        std::size_t i = colon + 1;
-        while (i < json.size() && (json[i] == ' ' || json[i] == '\t')) ++i;
-        std::size_t start = i;
-        if (i < json.size() && (json[i] == '-' || json[i] == '+')) ++i;
-        while (i < json.size() && std::isdigit((unsigned char)json[i])) ++i;
-        if (i > start) { try { out.push_back(std::stol(json.substr(start, i - start))); } catch (...) {} }
-        pos = i;
-    }
-    return out;
-}
-
-/// RFC 3986 percent-encoding of everything but unreserved characters (for a query value).
-inline std::string PercentEncode(const std::string& in) {
-    static const char* hex = "0123456789ABCDEF";
-    std::string o;
-    for (unsigned char c : in) {
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-            c == '-' || c == '_' || c == '.' || c == '~') o += (char)c;
-        else { o += '%'; o += hex[c >> 4]; o += hex[c & 15]; }
-    }
-    return o;
-}
-
-/// Why a request got no HTTP answer, in plain words, from the HTTP seam's low-level reason (okay::http::Result::error:
-/// "connect: winhttp error 12029", "curl exit code 6", the own client's "ErrName: message"). The code stays at the end in
-/// brackets so a report can be looked up. Never holds a secret: the seam's reasons carry no header, body or query string,
-/// and any "?..." part is cut anyway. Empty in, empty out. Written from the WinHTTP error-code list (winhttp.h) and
-/// curl's exit-code list.
-inline std::string PlainNetReason(std::string raw) {
-    if (raw.empty()) return {};
-    for (std::size_t q = raw.find('?'); q != std::string::npos; q = raw.find('?')) {   // no query strings in what we show
-        std::size_t e = raw.find_first_of(" \t\r\n", q);
-        raw.erase(q, e == std::string::npos ? std::string::npos : e - q);
-    }
-    for (char& c : raw) if (c == '\r' || c == '\n') c = ' ';
-    if (raw.size() > 160) raw.resize(160);
-    auto code = [&](const char* tag) -> long {   // the number after `tag`, -1 when absent
-        const std::size_t p = raw.find(tag);
-        if (p == std::string::npos) return -1;
-        long v = 0; bool any = false;
-        for (std::size_t i = p + std::strlen(tag); i < raw.size() && raw[i] >= '0' && raw[i] <= '9'; ++i) { v = v * 10 + (raw[i] - '0'); any = true; if (v > 99999) break; }
-        return any ? v : -1;
-    };
-    const char* words = nullptr;
-    const long w = code("winhttp error "), c = code("curl exit code ");
-    switch (w) {
-        case 12002: words = "The server took too long to answer."; break;
-        case 12007: words = "The server's name could not be looked up (no internet, or DNS is blocked)."; break;
-        case 12029: words = "Could not connect to the server (no internet, or a firewall blocks it)."; break;
-        case 12030: case 12031: words = "The connection was cut off before the server answered."; break;
-        case 12152: words = "The server sent an answer that could not be read."; break;
-        case 12037: case 12038: case 12044: case 12045: case 12057: case 12157: case 12169: case 12170: case 12175: case 12179:
-            words = "The secure connection failed (a certificate or security setting on this PC, or a program that inspects HTTPS)."; break;
-        case 12166: case 12167: case 12180: words = "Windows' proxy settings could not be used."; break;
-        default: break;
-    }
-    if (!words) switch (c) {
-        case 6: words = "The server's name could not be looked up (no internet, or DNS is blocked)."; break;
-        case 7: words = "Could not connect to the server (no internet, or a firewall blocks it)."; break;
-        case 28: words = "The server took too long to answer."; break;
-        case 35: case 51: case 58: case 60: words = "The secure connection failed (a certificate or security setting on this PC, or a program that inspects HTTPS)."; break;
-        case 52: case 56: words = "The connection was cut off before the server answered."; break;
-        default: break;
-    }
-    if (!words) {
-        if (raw.find("timeout") != std::string::npos) words = "The server took too long to answer.";
-        else if (raw.find("proxy-auth") != std::string::npos) words = "A proxy on this network wants a password.";
-        else if (raw.find("curl could not be started") != std::string::npos) words = "The backup connection (curl) could not be started.";
-        else if (raw.find("bad-url") != std::string::npos) words = "The account server address is not a valid web address.";
-    }
-    return words ? std::string(words) + " [" + raw + "]" : "[" + raw + "]";
-}
-
-/// The sign-in's "not reached" message: the fixed first line (the launcher's FriendlyError keys on it) plus the reason
-/// in plain words on a second line when the seam gave one.
-inline std::string NotReachedMessage(const std::string& base, const std::string& rawReason) {
-    const std::string why = PlainNetReason(rawReason);
-    return why.empty() ? base : base + "\nDetails: " + why;
-}
-
-/// Write `body` to `path` whole: a temp file beside it (a random name, so two programs writing the same file at once never
-/// share one), then a rename over `path`, so a reader (the launcher and the editor share session.txt) sees the old file
-/// or the new one, never half of one. Windows refuses the rename while another program has the file open, so it is tried
-/// again for about a quarter of a second before the old file is removed to make room. False = not written (the temp
-/// file is removed). Used by AccountService::SaveSession and GameIpc::WriteAtomic.
-/// A short pause without <thread> (CLAUDE.md rule 21a: this header reaches the Windows programs).
-inline void NapMs(int ms) {
-#if defined(_WIN32)
-    Sleep((DWORD)ms);
-#else
-    timespec ts; ts.tv_sec = ms / 1000; ts.tv_nsec = (long)(ms % 1000) * 1000000L;
-    while (nanosleep(&ts, &ts) != 0) {}
-#endif
-}
-
-inline bool WriteFileAtomic(const fs::path& path, const std::string& body) {
-    std::error_code ec;
-    if (path.has_parent_path()) fs::create_directories(path.parent_path(), ec);
-    const fs::path tmp = path.string() + "." + RandomHex(4) + ".tmp";
-    {
-        std::ofstream f(tmp, std::ios::trunc | std::ios::binary);
-        if (!f) return false;
-        f << body;
-        f.flush();
-        if (!f) { f.close(); fs::remove(tmp, ec); return false; }
-    }
-    for (int i = 0; i < 50; ++i) {
-        ec.clear();
-        fs::rename(tmp, path, ec);
-        if (!ec) return true;
-#if defined(_WIN32)
-        Sleep(5);
-#else
-        break;   // POSIX rename replaces an open file: a failure will not go away
-#endif
-    }
-    fs::remove(path, ec); ec.clear();
-    fs::rename(tmp, path, ec);
-    if (ec) { std::error_code e2; fs::remove(tmp, e2); }
-    return !ec;
-}
-
-/// Pick the account server address the way the launcher always has: a configured value (env var or file) counts only
-/// when it is an http(s) address, so an empty or junk value (a stale "Use local (clear)" leftover) falls back to the one
-/// built in instead of knocking the program offline. Trailing spaces and line ends are dropped. Used by the launcher and by
-/// okay::Account::Get (the editor, the player), so both programs talk to the same server.
-inline std::string ChooseServerUrl(std::string configured, const std::string& builtIn) {
-    while (!configured.empty() && (configured.back() == '\r' || configured.back() == '\n' || configured.back() == ' ')) configured.pop_back();
-    while (!configured.empty() && configured.front() == ' ') configured.erase(configured.begin());
-    return configured.rfind("http", 0) == 0 ? configured : builtIn;
-}
-
-} // namespace detail
 
 // ===========================================================================
 // Public types
@@ -494,14 +88,9 @@ struct Result {
 /// true for a 2xx response; `reached` is false when the server couldn't be
 /// contacted at all (offline / DNS / TLS). `status` is the HTTP status code
 /// (0 when not reached) and `body` is the raw response body.
-struct ApiResponse {
-    bool        ok      = false;
-    bool        reached = false;
-    long        status  = 0;
-    std::string body;
-    std::string error;   ///< when not reached: the HTTP seam's low-level reason (okay::http::Result::error; no secrets), for logs and detail::PlainNetReason
-    bool        maybeSent = false;   ///< when not reached: the request may have reached the server (okay::http::Result::maybeSent)
-};
+/// (OkayBackend's Response, okay/Backend/Transport.hpp: ok, reached, status, body, error = the seam's reason when not
+/// reached, maybeSent.)
+using ApiResponse = okay::backend::Response;
 
 /// One row of a server leaderboard: the player's name, their score, and their
 /// rank (1 = top).
@@ -531,7 +120,7 @@ public:
     explicit AccountService(fs::path configDir, std::string serverUrl = {},
                             std::string apiKey = {}, Provider provider = Provider::Auto)
         : configDir_(std::move(configDir)), serverUrl_(std::move(serverUrl)),
-          apiKey_(std::move(apiKey)), provider_(Resolve(provider, serverUrl_, apiKey_)) {
+          apiKey_(std::move(apiKey)), provider_(Resolve(FromBackendConfig(provider, configDir_), serverUrl_, apiKey_)) {
         std::error_code ec;
         fs::create_directories(configDir_, ec);
         LoadSession();
@@ -541,7 +130,7 @@ public:
     /// session code can be run against a fake server. Empty = the network again.
     void SetTransportForTest(std::function<okay::http::Result(const std::string&, const std::string&,
                                                               const std::vector<std::string>&, const std::string&)> t) {
-        transport_ = std::move(t);
+        transport_.SetHook(std::move(t));
     }
 
     /// True when configured to talk to a real (non-local) backend.
@@ -596,6 +185,7 @@ public:
 
     /// Sign out and forget the saved session.
     void Logout() {
+        if (provider_ == Provider::Supabase) Sb().SignOut(session_.token);   // sends nothing (OkayBackend Auth::SignOut)
         session_ = {};
         std::error_code ec;
         fs::remove(SessionPath(), ec);
@@ -611,20 +201,14 @@ public:
 
     /// The recover endpoint for `base` (+ optional redirect). Pure, so it is unit tested.
     static std::string RecoverUrl(std::string base, const std::string& redirect) {
-        if (!base.empty() && base.back() == '/') base.pop_back();
-        std::string u = base + "/auth/v1/recover";
-        if (redirect.rfind("http", 0) == 0) u += "?redirect_to=" + detail::PercentEncode(redirect);
-        return u;
+        return okay::backend::supabase::Auth::RecoverUrl(std::move(base), redirect);
     }
 
     /// Send the sign-up confirmation email again (Supabase only), for "Check your email" after creating an account.
     Result ResendConfirmation(const std::string& email) {
         if (provider_ != Provider::Supabase) return Fail("Confirmation emails need the online (Supabase) account server.");
         if (!LooksLikeEmail(email)) return Fail("Enter a valid email address.");
-        std::string base = serverUrl_;
-        if (!base.empty() && base.back() == '/') base.pop_back();
-        ApiResponse r = HttpRequest("POST", base + "/auth/v1/resend",
-                                    "{\"type\":\"signup\",\"email\":\"" + detail::JsonEscape(email) + "\"}", /*authToken=*/{});
+        ApiResponse r = Sb().Resend(email);
         if (!r.reached) return Fail("Couldn't reach the account server.");
         if (!r.ok) return Fail("Couldn't send the email again (HTTP " + std::to_string(r.status) + ").");
         Result ok; ok.ok = true; return ok;
@@ -636,8 +220,7 @@ public:
         if (provider_ != Provider::Supabase)
             return Fail("Password reset needs the online (Supabase) account server.");
         if (!LooksLikeEmail(email)) return Fail("Enter a valid email address.");
-        ApiResponse r = HttpRequest("POST", RecoverUrl(serverUrl_, resetRedirect_),
-                                    "{\"email\":\"" + detail::JsonEscape(email) + "\"}", {});
+        ApiResponse r = Sb().Recover(email, resetRedirect_);
         if (!r.reached) return Fail("Couldn't reach the account server.");
         if (!r.ok) return Fail("Couldn't start password reset (HTTP " + std::to_string(r.status) + ").");
         Result ok; ok.ok = true; return ok;
@@ -651,7 +234,7 @@ public:
     }
     /// The body of POST auth/v1/verify that trades an emailed reset code for a session. Pure, so it is unit tested.
     static std::string RecoveryVerifyBody(const std::string& email, const std::string& code) {
-        return "{\"type\":\"recovery\",\"email\":\"" + detail::JsonEscape(email) + "\",\"token\":\"" + detail::JsonEscape(code) + "\"}";
+        return okay::backend::supabase::Auth::RecoveryVerifyBody(email, code);
     }
 
     /// Choose a new password with the code from the reset email, all inside the program: no web page (and no GitHub Pages) is
@@ -662,13 +245,11 @@ public:
         if (!LooksLikeEmail(email)) return Fail("Enter a valid email address.");
         if (!LooksLikeRecoveryCode(code)) return Fail("Enter the code from the reset email (digits only).");
         if (newPassword.size() < 6) return Fail("Password must be at least 6 characters.");
-        std::string base = serverUrl_;
-        if (!base.empty() && base.back() == '/') base.pop_back();
-        ApiResponse v = HttpRequest("POST", base + "/auth/v1/verify", RecoveryVerifyBody(email, code), {});
+        ApiResponse v = Sb().VerifyRecovery(email, code);
         if (!v.reached) return Fail("Couldn't reach the account server.");
         const std::string token = detail::JsonField(v.body, "access_token");
         if (!v.ok || token.empty()) return Fail("That code is wrong or has expired. Ask for a new reset email.");
-        ApiResponse u = HttpRequest("PUT", base + "/auth/v1/user", "{\"password\":\"" + detail::JsonEscape(newPassword) + "\"}", token);
+        ApiResponse u = Sb().UpdateUser(token, "{\"password\":\"" + detail::JsonEscape(newPassword) + "\"}");
         if (!u.reached) return Fail("Couldn't reach the account server.");
         if (!u.ok) {
             std::string e = detail::JsonField(u.body, "msg");
@@ -684,8 +265,7 @@ public:
         if (!session_.loggedIn) return Fail("Sign in first.");
         if (newPassword.size() < 6) return Fail("Password must be at least 6 characters.");
         if (provider_ == Provider::Supabase) {
-            ApiResponse r = Api("/auth/v1/user", "PUT",
-                "{\"password\":\"" + detail::JsonEscape(newPassword) + "\"}");
+            ApiResponse r = UpdateUserWithFreshToken("{\"password\":\"" + detail::JsonEscape(newPassword) + "\"}");
             if (!r.reached) return Fail("Couldn't reach the account server.");
             if (!r.ok) {
                 std::string e = detail::JsonField(r.body, "msg");
@@ -716,8 +296,7 @@ public:
         if (!LooksLikeEmail(newEmail)) return Fail("Enter a valid email address.");
         if (provider_ != Provider::Supabase)
             return Fail("Email change needs the online (Supabase) account server.");
-        ApiResponse r = Api("/auth/v1/user", "PUT",
-            "{\"email\":\"" + detail::JsonEscape(newEmail) + "\"}");
+        ApiResponse r = UpdateUserWithFreshToken("{\"email\":\"" + detail::JsonEscape(newEmail) + "\"}");
         if (!r.reached) return Fail("Couldn't reach the account server.");
         if (!r.ok) {
             std::string e = detail::JsonField(r.body, "msg");
@@ -734,8 +313,7 @@ public:
         if (newUsername.size() < 2 || newUsername.size() > 32)
             return Fail("Username must be 2–32 characters.");
         if (provider_ == Provider::Supabase) {
-            ApiResponse r = Api("/auth/v1/user", "PUT",
-                "{\"data\":{\"username\":\"" + detail::JsonEscape(newUsername) + "\"}}");
+            ApiResponse r = UpdateUserWithFreshToken("{\"data\":{\"username\":\"" + detail::JsonEscape(newUsername) + "\"}}");
             if (!r.reached) return Fail("Couldn't reach the account server.");
             if (!r.ok) {
                 std::string e = detail::JsonField(r.body, "msg");
@@ -788,14 +366,9 @@ public:
         std::string url = serverUrl_;
         if (!url.empty() && url.back() == '/') url.pop_back();
         url += path.empty() || path.front() == '/' ? path : ("/" + path);
-        ApiResponse r = HttpRequest(method, url, jsonBody, /*authToken=*/session_.token, extraHeader, {}, {}, timeoutSec);
-        // Expired access token: the launcher refreshes it (RefreshIfExpiring) and
-        // saves it; workers built from the saved session pick that up and retry
-        // once. (Workers never refresh themselves: Supabase rotates refresh
-        // tokens, and racing refreshes can revoke the whole session.)
-        if (r.status == 401 && provider_ == Provider::Supabase && ReloadSessionToken())
-            r = HttpRequest(method, url, jsonBody, /*authToken=*/session_.token, extraHeader, {}, {}, timeoutSec);
-        return r;
+        return WithFreshToken([&](const std::string& token) {
+            return HttpRequest(method, url, jsonBody, token, extraHeader, {}, {}, timeoutSec);
+        });
     }
 
     /// Re-read the access token saved by another instance (same account).
@@ -919,7 +492,9 @@ public:
         if (!IsOnline()) return SessionCheck::Valid;
         for (int attempt = 0; attempt < 2; ++attempt) {
             // Supabase exposes the signed-in user at auth/v1/user; our custom server uses /verify.
-            ApiResponse r = Api(provider_ == Provider::Supabase ? "/auth/v1/user" : "/verify");
+            ApiResponse r = provider_ == Provider::Supabase
+                ? WithFreshToken([this](const std::string& token) { return Sb().User(token); })
+                : Api("/verify");
             if (!r.reached) return SessionCheck::Unreachable;
             if (r.status != 401 && r.status != 403)
                 return r.ok ? SessionCheck::Valid : SessionCheck::ServerError;   // any other failure: kept, nothing confirmed it
@@ -941,14 +516,14 @@ public:
     bool VerifyToken(const std::string& token, std::string& outUserId) const {
         outUserId.clear();
         if (token.empty() || !IsOnline()) return false;
-        std::string base = serverUrl_;
-        if (!base.empty() && base.back() == '/') base.pop_back();
         if (provider_ == Provider::Supabase) {
-            ApiResponse r = HttpRequest("GET", base + "/auth/v1/user", {}, token);
+            ApiResponse r = Sb().User(token);
             if (!r.ok) return false;
             outUserId = detail::JsonField(r.body, "id");
             return !outUserId.empty();
         }
+        std::string base = serverUrl_;
+        if (!base.empty() && base.back() == '/') base.pop_back();
         return HttpRequest("GET", base + "/verify", {}, token).ok;   // custom server
     }
 
@@ -1067,8 +642,9 @@ private:
         return true;
     }
 
-    /// Tests only (SetTransportForTest): answers requests instead of the network.
-    std::function<okay::http::Result(const std::string&, const std::string&, const std::vector<std::string>&, const std::string&)> transport_;
+    /// Where requests go: the network, or the test function set by SetTransportForTest. Mutable: sending is not a change
+    /// to the account service.
+    mutable okay::backend::HookTransport transport_;
 
     fs::path    configDir_;
     std::string serverUrl_;
@@ -1081,25 +657,35 @@ private:
 
     // A claim from a JWT's payload (base64url JSON), without verifying it — we
     // only read our own token's id / expiry.
-    static std::string JwtClaim(const std::string& jwt, const std::string& key) {
-        const std::size_t a = jwt.find('.'), b = a == std::string::npos ? a : jwt.find('.', a + 1);
-        if (b == std::string::npos) return "";
-        const std::string part = jwt.substr(a + 1, b - a - 1);
-        std::string json; unsigned acc = 0; int bits = 0;
-        for (char c : part) {
-            int v = c >= 'A' && c <= 'Z' ? c - 'A' : c >= 'a' && c <= 'z' ? c - 'a' + 26 : c >= '0' && c <= '9' ? c - '0' + 52
-                  : (c == '-' || c == '+') ? 62 : (c == '_' || c == '/') ? 63 : -1;
-            if (v < 0) continue;
-            acc = (acc << 6) | (unsigned)v; bits += 6;
-            if (bits >= 8) { bits -= 8; json += (char)((acc >> bits) & 0xFF); }
+    static std::string JwtClaim(const std::string& jwt, const std::string& key) { return okay::backend::TokenClaim(jwt, key); }
+
+    /// The Supabase provider's Auth calls (OkayBackend), on this service's address, key and transport. Made per call, so
+    /// copying an AccountService never leaves it pointing at another one's transport.
+    okay::backend::supabase::Auth Sb() const { return okay::backend::supabase::Auth(serverUrl_, apiKey_, transport_); }
+
+    /// A call with the session's access token. Expired token (401): the launcher refreshes it (RefreshIfExpiring) and
+    /// saves it; workers built from the saved session pick that up and try once more. (Workers never refresh themselves:
+    /// Supabase rotates refresh tokens, and racing refreshes can revoke the whole session.)
+    template <class Call>
+    ApiResponse WithFreshToken(Call call) const {
+        ApiResponse r = call(session_.token);
+        if (r.status == 401 && provider_ == Provider::Supabase && ReloadSessionToken()) r = call(session_.token);
+        return r;
+    }
+    /// PUT auth/v1/user (password, email or username change) for the signed-in account, as Api() sent it.
+    ApiResponse UpdateUserWithFreshToken(const std::string& json) const {
+        return WithFreshToken([&](const std::string& token) { return Sb().UpdateUser(token, json); });
+    }
+
+    /// Provider::Auto follows the backend configuration (OKAY_BACKEND, or "provider" in backend.json in the config folder;
+    /// okay/Backend/Backend.hpp): "supabase" or "local" picks that one, anything else keeps Auto. An explicit provider wins.
+    static Provider FromBackendConfig(Provider p, const fs::path& configDir) {
+        if (p != Provider::Auto) return p;
+        switch (okay::backend::LoadConfig(configDir).provider) {
+            case okay::backend::ProviderKind::Supabase: return Provider::Supabase;
+            case okay::backend::ProviderKind::Local:    return Provider::Local;
+            default:                                    return Provider::Auto;
         }
-        const std::string k = "\"" + key + "\"";
-        std::size_t p = json.find(k); if (p == std::string::npos) return "";
-        p = json.find(':', p + k.size()); if (p == std::string::npos) return "";
-        ++p; while (p < json.size() && json[p] == ' ') ++p;
-        if (p < json.size() && json[p] == '"') { const std::size_t e = json.find('"', p + 1); return e == std::string::npos ? "" : json.substr(p + 1, e - p - 1); }
-        std::size_t e = p; while (e < json.size() && (std::isdigit((unsigned char)json[e]) || json[e] == '-')) ++e;
-        return json.substr(p, e - p);
     }
     fs::path DbPath() const { return configDir_ / "accounts.db"; }
 
@@ -1224,11 +810,8 @@ private:
         // Another program (the launcher or the editor) may have refreshed already: then our refresh token is spent, and
         // using it again fails (or, with Supabase's reuse detection, ends the whole sign-in). Take theirs instead.
         if (AdoptFreshTokenFromDisk()) return true;
-        std::string base = serverUrl_;
-        if (!base.empty() && base.back() == '/') base.pop_back();
-        ApiResponse r = HttpRequest("POST", base + "/auth/v1/token?grant_type=refresh_token",
-                                    "{\"refresh_token\":\"" + detail::JsonEscape(session_.refreshToken) + "\"}",
-                                    /*authToken=*/{});
+        const okay::backend::Result<okay::backend::Session> renewed = Sb().Refresh(session_.refreshToken);
+        const ApiResponse& r = renewed.response;
         if (!r.ok) {
             if (AdoptFreshTokenFromDisk()) return true;   // the other program won the race a moment ago
             // Refused because the token was already used: the other program's refresh reached the server first and its new
@@ -1242,11 +825,9 @@ private:
             }
             return false;
         }
-        std::string tok = detail::JsonField(r.body, "access_token");
-        if (tok.empty()) return false;
-        session_.token = tok;
-        std::string nr = detail::JsonField(r.body, "refresh_token");
-        if (!nr.empty()) session_.refreshToken = nr;   // Supabase rotates refresh tokens
+        if (!renewed.ok) return false;   // (an answer with no access token)
+        session_.token = renewed.value.accessToken;
+        if (!renewed.value.refreshToken.empty()) session_.refreshToken = renewed.value.refreshToken;   // Supabase rotates refresh tokens
         SaveSession();
         return true;
     }
@@ -1351,80 +932,19 @@ private:
         return Succeed(username, token);
     }
 
-    // ---- managed backend: Supabase (auth/v1 REST) ----------------------
-    // Sign up:  POST <url>/auth/v1/signup            {"email","password"}
-    // Sign in:  POST <url>/auth/v1/token?grant_type=password {"email","password"}
-    // Both take the project's anon key as the `apikey` header (added by
-    // HttpRequest) and return {"access_token": "...", "user": {...}} on success,
-    // or an error object on failure.
+    // ---- managed backend: Supabase (OkayBackend's Supabase provider, okay/Backend/Supabase.hpp) ----------
+    // Sign up, or sign in with the email; the provider sends the requests and reads the answer (the name to show, the
+    // access and refresh tokens, or the message for the person).
     Result SupabaseAuth(bool signUp, const std::string& email, const std::string& password,
                         const std::string& username = {}) {
-        std::string base = serverUrl_;
-        if (!base.empty() && base.back() == '/') base.pop_back();
-        // Sign in with a username OR an email: if the identifier isn't an email,
-        // resolve it to the account's email via a SECURITY DEFINER RPC that only
-        // returns the email when the password is correct (no email enumeration).
-        std::string loginId = email;
-        if (!signUp && loginId.find('@') == std::string::npos) {
-            const std::string rpcUrl = base + "/rest/v1/rpc/email_for_login";
-            const std::string rpcBody = "{\"p_username\":\"" + detail::JsonEscape(loginId) +
-                "\",\"p_password\":\"" + detail::JsonEscape(password) + "\"}";
-            ApiResponse rr = HttpRequest("POST", rpcUrl, rpcBody, /*authToken=*/{});
-            if (!rr.reached) rr = RetrySignIn("POST", rpcUrl, rpcBody, rr);   // a read: safe to ask again
-            if (!rr.reached)
-                return Fail(detail::NotReachedMessage("Couldn't reach the account server (offline or unreachable).", rr.error));
-            std::string resolved;   // the RPC returns a JSON string (the email) or null
-            if (rr.ok) { std::string b = rr.body;
-                std::size_t q = b.find('"');
-                if (q != std::string::npos) { std::size_t e2 = b.find('"', q + 1);
-                    if (e2 != std::string::npos) resolved = b.substr(q + 1, e2 - q - 1); } }
-            if (resolved.empty())
-                return Fail("Invalid username/email or password.");
-            loginId = resolved;
-        }
-        std::string url = base + (signUp ? "/auth/v1/signup"
-                                         : "/auth/v1/token?grant_type=password");
-        std::string body = "{\"email\":\"" + detail::JsonEscape(loginId) +
-                           "\",\"password\":\"" + detail::JsonEscape(password) + "\"";
-        if (signUp && !username.empty())   // store the display name in user metadata
-            body += ",\"data\":{\"username\":\"" + detail::JsonEscape(username) + "\"}";
-        body += "}";
-        ApiResponse r = HttpRequest("POST", url, body, /*authToken=*/{});
-        if (!r.reached && !signUp) r = RetrySignIn("POST", url, body, r);
-
-        if (!r.reached)
-            return Fail(detail::NotReachedMessage("Couldn't reach the account server (offline or unreachable).", r.error));
-        if (!r.ok) {
-            // Supabase reports errors as error_description / msg / message / error.
-            std::string e = detail::JsonField(r.body, "error_description");
-            if (e.empty()) e = detail::JsonField(r.body, "msg");
-            if (e.empty()) e = detail::JsonField(r.body, "message");
-            if (e.empty()) e = detail::JsonField(r.body, "error");
-            return Fail(e.empty()
-                ? ("Account server rejected the request (HTTP " + std::to_string(r.status) + ").")
-                : e);
-        }
-        std::string token = detail::JsonField(r.body, "access_token");
-        if (token.empty()) {
-            // Sign-up with email confirmation enabled returns no session yet.
-            if (signUp)
-                return Fail("Account created — check your email to confirm, then sign in. "
-                            "(Turn off email confirmation in Supabase for instant sign-in.)");
-            return Fail("Server response was missing an access token.");
-        }
-        // Prefer the username from user metadata; never surface the raw email as
-        // the display name. When no handle was stored (e.g. an account made
-        // before usernames, or a bare email sign-up), derive a friendly handle
-        // from the email's local-part ("alex.doe@x.com" -> "alex.doe").
-        std::string display = detail::JsonField(r.body, "username");
-        if (display.empty()) display = loginId;
-        display = PublicName(display);
-        std::string refresh = detail::JsonField(r.body, "refresh_token");
-        return Succeed(display, token, refresh);
+        const okay::backend::Result<okay::backend::Session> r =
+            signUp ? Sb().SignUp(email, password, username) : Sb().SignIn(email, password);
+        if (!r.ok) return Fail(r.error);
+        return Succeed(r.value.username, r.value.accessToken, r.value.refreshToken);
     }
 
-    // A sign-in (password grant, or the username lookup) that got no answer is sent once more. Unlike most POSTs that is
-    // safe: signing in twice only makes a second sign-in, nothing happens twice to the account. It covers a kept-alive
+    // A sign-in to the custom server that got no answer is sent once more (the Supabase provider does the same for its
+    // own sign-in). Unlike most POSTs that is safe: signing in twice only makes a second sign-in, nothing happens twice to the account. It covers a kept-alive
     // connection the server closed while the sign-in window sat idle (WinHTTP then fails the send or the receive and,
     // because the request may have gone out, the seam does not hand a POST to curl). `first` is the failed answer; when
     // the second try also fails, the first reason is kept unless the second one says more.
@@ -1433,19 +953,6 @@ private:
         ApiResponse again = HttpRequest(method, url, body, /*authToken=*/{});
         if (!again.reached && again.error.empty()) again.error = first.error;
         return again;
-    }
-
-    // `extraHeader` may hold several headers, one per line ("x-upsert: true\n
-    // cache-control: max-age=30"). Blank lines and stray quotes are dropped.
-    static std::vector<std::string> SplitHeaders(const std::string& extra) {
-        std::vector<std::string> out;
-        std::string cur;
-        for (std::size_t i = 0; i <= extra.size(); ++i) {
-            const char c = i < extra.size() ? extra[i] : '\n';
-            if (c == '\n' || c == '\r') { if (!cur.empty()) out.push_back(cur); cur.clear(); }
-            else if (c != '"') cur += c;
-        }
-        return out;
     }
 
     // Perform one HTTP request through the HTTP seam (okay::http::Send, NativeFetch.hpp): WinHTTP on Windows, our own
@@ -1458,26 +965,10 @@ private:
                             const std::string& bodyFile = {},     // raw file body (uploads)
                             const std::string& bodyType = {},
                             int timeoutSec = 0) const {
-        std::vector<std::string> hdrs;
-        if (!apiKey_.empty())      hdrs.push_back("apikey: " + apiKey_);   // managed backends (Supabase)
-        if (!authToken.empty())    hdrs.push_back("Authorization: Bearer " + authToken);
-        for (const std::string& h : SplitHeaders(extraHeader)) hdrs.push_back(h);   // e.g. PostgREST "Prefer: ..."
-        if (!bodyFile.empty())     hdrs.push_back("Content-Type: " + bodyType);
-        else if (!jsonBody.empty()) hdrs.push_back("Content-Type: application/json");
-        okay::http::Result nr = transport_
-            ? transport_(method, url, hdrs, bodyFile.empty() ? jsonBody : std::string())
-            : okay::http::Send(method, url, hdrs, bodyFile.empty() ? jsonBody : std::string(), bodyFile,
-                               timeoutSec > 0 ? timeoutSec * 1000 : 0);
-        ApiResponse out;
-        if (!nr.reached) {   // keep the seam's reason (no secrets in it): the sign-in windows show it in plain words
-            out.error = nr.error.empty() ? std::string("no answer") : nr.error;
-            out.maybeSent = nr.maybeSent;
-            return out;
-        }
-        out.status = nr.status; out.body = std::move(nr.body);
-        out.reached = true;
-        out.ok = out.status >= 200 && out.status < 300;
-        return out;
+        // The header lines (apikey, bearer token, `extraHeader` split one per line, Content-Type) are built by the backend's
+        // one request builder; the transport keeps the seam's reason when there is no answer (no secrets in it).
+        return transport_.Send(okay::backend::supabase::MakeRequest(apiKey_, method, url, jsonBody, authToken, extraHeader,
+                                                                    bodyFile, bodyType, timeoutSec));
     }
 };
 

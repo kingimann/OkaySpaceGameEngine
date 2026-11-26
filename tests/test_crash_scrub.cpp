@@ -76,7 +76,7 @@ int main() {
     // ---- Secrets ----------------------------------------------------------------------------------------------------------------------   // lint-allow: secret (a made-up value the scrubber must catch)
     CHECK(S("token ghp_abcdefghijklmnopqrstuvwxyz0123456789 end") == "token <token> end");   // lint-allow: secret (a made-up value the scrubber must catch)
     CHECK(S("github_pat_11ABCDEFG0abcdefghijkl_mnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV") == "<token>");   // lint-allow: secret (a made-up value the scrubber must catch)
-    CHECK(S("key=sb_publishable_VYrh0rGNcTNTJRe1CovsoA_sP9ia4yn") == "key=<token>");
+    CHECK(S("key=sb_publishable_TESTONLY00000000000000000000000") == "key=<token>");
     CHECK(S("sb_secret_abcdefghijklmnop") == "<token>" && S("AKIAIOSFODNN7EXAMPLE") == "<token>" && S("xoxb-123456789012-abcdef") == "<token>");   // lint-allow: secret (a made-up value the scrubber must catch)
     CHECK(S("sk-ant-api03-abcdefghijklmnopqrstuvwxyz and sk-abcdefghijklmnopqrstuvwxyz0123") == "<token> and <token>");   // lint-allow: secret (a made-up value the scrubber must catch)
     CHECK(S("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcDEF_ghi-123") == "<token>");     // a JSON web token

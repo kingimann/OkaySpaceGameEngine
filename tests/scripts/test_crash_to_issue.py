@@ -698,7 +698,7 @@ class Main(unittest.TestCase):
         self.assertIn("SUPABASE_SERVICE_KEY", out.getvalue())
 
     def test_bad_configuration_fails_loudly_and_never_prints_the_key(self):
-        key = "sb_secret_TOPSECRETVALUE0123456789"
+        key = "sb_secret_TESTONLY0000000000000000"
         for env, needle in (({"SUPABASE_SERVICE_KEY": key, "SUPABASE_URL": "http://evil.example.com", "GITHUB_TOKEN": "t", "GITHUB_REPOSITORY": "o/r"}, "SUPABASE_URL"),
                             ({"SUPABASE_SERVICE_KEY": key, "SUPABASE_URL": "https://abc.supabase.co", "GITHUB_REPOSITORY": "o/r"}, "GITHUB_TOKEN"),
                             ({"SUPABASE_SERVICE_KEY": key, "SUPABASE_URL": "https://abc.supabase.co", "GITHUB_TOKEN": "t", "GITHUB_REPOSITORY": "not a repo"}, "GITHUB_REPOSITORY")):

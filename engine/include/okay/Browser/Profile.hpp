@@ -274,6 +274,15 @@ std::vector<Suggestion> SuggestAddresses(const std::string& typed, const Profile
 
 /// The badge in front of the address: https is Secure (a lock), http is NotSecure (spelled out, as common browsers do),
 /// our own pages are Internal; None for an empty address.
+/// A site's round badge (the tab strip and the new-tab page): its host without "www.", the letter shown (the host's first letter,
+/// upper-case; '?' when there is none) and which of 8 colours it gets (the same site always gets the same one).
+struct SiteMark {
+    std::string host;
+    char letter = '?';
+    int color = 0;   ///< 0..7
+};
+SiteMark SiteMarkOf(const std::string& url);
+
 enum class SiteBadge { None, Secure, NotSecure, Internal };
 SiteBadge BadgeOf(const std::string& url);
 

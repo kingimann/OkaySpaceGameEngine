@@ -455,12 +455,9 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
             } else {
                 static const UI::Color32 kBadge[8] = {lk::Rgb(58, 123, 213), lk::Rgb(213, 87, 58), lk::Rgb(47, 158, 110), lk::Rgb(138, 91, 214),
                                                       lk::Rgb(201, 138, 30), lk::Rgb(30, 155, 176), lk::Rgb(194, 71, 126), lk::Rgb(93, 111, 138)};
-                std::string host = HostOf(t.Url());
-                if (host.rfind("www.", 0) == 0) host = host.substr(4);
-                unsigned hh = 2166136261u;   // the same colour for the same site as on the new-tab page
-                for (unsigned char ch : host) hh = (hh ^ ch) * 16777619u;
-                dl->AddCircleFilled(UI::Vec2(badgeX + ir, iy), ir, kBadge[hh % 8]);
-                const char letter[2] = {host.empty() ? '?' : (char)std::toupper((unsigned char)host[0]), 0};
+                const SiteMark mark = SiteMarkOf(t.Url());   // the same colour and letter as on the new-tab page
+                dl->AddCircleFilled(UI::Vec2(badgeX + ir, iy), ir, kBadge[mark.color]);
+                const char letter[2] = {mark.letter, 0};
                 const float ls = 1.5f, lw = UI::CalcTextWidth(letter) * ls / UI::Style().textScale;
                 dl->AddText(UI::Vec2(badgeX + ir - lw * 0.5f, iy - 6.0f), lk::Rgb(255, 255, 255), letter, ls);
             }

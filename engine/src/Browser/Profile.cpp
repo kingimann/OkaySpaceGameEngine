@@ -6,6 +6,7 @@
 #include "okay/Browser/Url.hpp"
 #include "okay/Core/Json.hpp"
 #include "okay/Core/PathSafety.hpp"
+#include "okay/Core/StringId.hpp"
 #include "okay/Core/StringUtil.hpp"
 
 #include <algorithm>
@@ -711,13 +712,9 @@ std::string SearchForm(const std::string& tmpl) {
 // A shortcut tile: a round badge with the site's first letter (a colour of its own per host) and the page's title.
 std::string Tile(const std::string& url, const std::string& title) {
     static const char* const kColors[] = {"#3a7bd5", "#d5573a", "#2f9e6e", "#8a5bd6", "#c98a1e", "#1e9bb0", "#c2477e", "#5d6f8a"};
-    std::string host = HostOf(url);
-    if (host.rfind("www.", 0) == 0) host = host.substr(4);
-    unsigned h = 2166136261u;   // FNV-1a over the host: the same site always gets the same colour
-    for (unsigned char c : host) h = (h ^ c) * 16777619u;
-    const char letter = host.empty() ? '?' : (char)std::toupper((unsigned char)host[0]);
-    return "<div class=tile><a href=\"" + HtmlEscape(url) + "\"><div class=icon style=\"background:" + kColors[h % 8] + "\">" +
-           std::string(1, letter) + "</div><div class=name>" + HtmlEscape(title.empty() ? host : title) + "</div></a></div>";
+    const SiteMark m = SiteMarkOf(url);
+    return "<div class=tile><a href=\"" + HtmlEscape(url) + "\"><div class=icon style=\"background:" + kColors[m.color] + "\">" +
+           std::string(1, m.letter) + "</div><div class=name>" + HtmlEscape(title.empty() ? m.host : title) + "</div></a></div>";
 }
 
 // about:newtab: a search box in the middle, then up to 8 shortcuts (the bookmarks first, then the pages visited most often).
@@ -889,6 +886,15 @@ std::vector<Suggestion> SuggestAddresses(const std::string& typedIn, const Profi
         out.push_back(c.s);
     }
     return out;
+}
+
+SiteMark SiteMarkOf(const std::string& url) {
+    SiteMark m;
+    m.host = HostOf(url);
+    if (m.host.rfind("www.", 0) == 0) m.host = m.host.substr(4);
+    if (!m.host.empty()) m.letter = (char)std::toupper((unsigned char)m.host[0]);
+    m.color = (int)(okay::StringId::HashOf(m.host) % 8u);
+    return m;
 }
 
 SiteBadge BadgeOf(const std::string& url) {

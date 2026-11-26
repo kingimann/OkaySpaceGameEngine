@@ -22,15 +22,18 @@ struct Inputs {
     std::string error;                             // the updater's message when it failed
     long long lastCheckedUnix = 0, nowUnix = 0;    // "Checked 5 min ago"
     bool restartNeeded = false;
+    bool skipped = false;                          // toVersion is the version the person skipped (shown again because they checked)
+    std::string note;                              // one plain sentence from the update check (why it asks, "you already have everything in ...")
 };
 
-enum class Button { None, InstallNow, Later, Hide, Cancel, RestartNow, RestartLater, TryAgain, Close, CheckAgain };
+enum class Button { None, InstallNow, Later, Hide, Cancel, RestartNow, RestartLater, TryAgain, Close, CheckAgain, Skip };
 
 struct View {
     std::string title, sub, stepLine, bytesLine, speedLine, etaLine, error, details, checked;
     float overall = -1.0f;    // 0..1, -1 = no bar
     float file = -1.0f;       // 0..1 for the current file, -2 = moving bar (size not known), -1 = no bar
     Button primary = Button::None, secondary = Button::None;
+    Button tertiary = Button::None;   // drawn left of the other two ("Skip this version")
 };
 
 inline std::string MB(long long b) { char t[32]; std::snprintf(t, sizeof(t), "%.1f MB", (double)b / (1024.0 * 1024.0)); return t; }
@@ -80,7 +83,10 @@ inline View Evaluate(const Inputs& in) {
     case Phase::Available:
         v.title = in.testTag.empty() ? "An update is ready" : "A test build is ready";
         v.sub = to + (in.testTag.empty() ? "" : "  \xC2\xB7  " + in.testTag) + (in.fromVersion.empty() ? "" : "  (you have v" + in.fromVersion + ")");
+        if (in.skipped) v.sub += "  \xC2\xB7  you skipped this version";
+        if (!in.note.empty()) v.sub += ". " + in.note;
         v.primary = Button::InstallNow; v.secondary = Button::Later;
+        v.tertiary = in.skipped ? Button::None : Button::Skip;   // Later = ask again next time; Skip = never again for this version
         break;
     case Phase::Downloading: {
         v.title = "Downloading " + (to.empty() ? std::string("the update") : to);
@@ -120,7 +126,7 @@ inline View Evaluate(const Inputs& in) {
         break;
     case Phase::UpToDate:
         v.title = "You're up to date";
-        v.sub = in.fromVersion.empty() ? "" : "OkaySpace v" + in.fromVersion + " is the newest version.";
+        v.sub = !in.note.empty() ? in.note : in.fromVersion.empty() ? "" : "OkaySpace v" + in.fromVersion + " is the newest version.";
         v.checked = Ago(in.lastCheckedUnix, in.nowUnix);
         v.primary = Button::Close; v.secondary = Button::CheckAgain;
         break;
@@ -145,6 +151,7 @@ inline const char* ButtonLabel(Button b) {
     case Button::TryAgain: return "Try again";
     case Button::Close: return "Close";
     case Button::CheckAgain: return "Check again";
+    case Button::Skip: return "Skip this version";
     default: return "";
     }
 }
@@ -153,15 +160,36 @@ inline const char* ButtonLabel(Button b) {
 /// release notes get what is left of the height (at least `minNotesH`, at most `maxNotesH`; 0 = no notes), and the two buttons
 /// sit side by side when they fit, else one above the other.
 struct DialogBox { float w = 0, notesH = 0; bool stackButtons = false; float h = 0; };
+/// `button3W` is "Skip this version", left of the other two (0 = not shown).
 inline DialogBox LayoutDialog(float winW, float winH, float prefW, float margin, float fixedH, bool hasNotes, float minNotesH, float maxNotesH,
-                              float button1W, float button2W, float gap, float padX) {
+                              float button1W, float button2W, float gap, float padX, float button3W = 0.0f) {
     DialogBox d;
     d.w = std::min(prefW, std::max(0.0f, winW - 2 * margin));
     const float spare = winH - 2 * margin - fixedH;
     d.notesH = hasNotes ? std::clamp(spare, std::min(minNotesH, std::max(0.0f, spare)), maxNotesH) : 0.0f;
-    d.stackButtons = button1W + (button2W > 0 ? gap + button2W : 0.0f) > d.w - 2 * padX;
+    d.stackButtons = button1W + (button2W > 0 ? gap + button2W : 0.0f) + (button3W > 0 ? gap + button3W : 0.0f) > d.w - 2 * padX;
     d.h = fixedH + d.notesH;
     return d;
+}
+
+// ---- "Skip this version" (owner, 2026-11-26) -----------------------------------------------------------------------------------
+// The skipped version lives in launcher.cfg (skipped_version, okayversions::Settings::skippedVersion). The update check never installs it by
+// itself (okayupdater::DecideOffer); here is what the dialog, the sidebar and What's New show for a version the update check found.
+
+enum class Shown { No, Yes, Skipped };
+/// `found`: the newer version the check found. `skipped`: launcher.cfg's skipped version. `personAsked`: the person started this check ("Check
+/// for updates"). A skipped version is never shown by itself (no dialog, no badge, no notification); when the person checks it is shown again,
+/// marked skipped, so it can still be installed. Any other version, a newer one included, is shown as usual.
+inline Shown AvailablePhaseFor(const std::string& found, const std::string& skipped, bool personAsked) {
+    if (found.empty()) return Shown::No;
+    const std::string f = found[0] == 'v' ? found.substr(1) : found, k = !skipped.empty() && skipped[0] == 'v' ? skipped.substr(1) : skipped;
+    if (k.empty() || f != k) return Shown::Yes;
+    return personAsked ? Shown::Skipped : Shown::No;
+}
+/// "v2.904.0 is available (skipped)": the What's New card and the Versions page, with an Install button (the way back). "" for no version.
+inline std::string SkippedLine(const std::string& version) {
+    if (version.empty()) return {};
+    return (version[0] == 'v' ? version : "v" + version) + " is available (skipped)";
 }
 
 }  // namespace okay::updateview

@@ -215,6 +215,18 @@ int main() {
         on = tb::ChooseTarget("2.876.0", "2.876.0", "", true, false, false);            // nothing published in dev/: stable
         CHECK(on.kind == K::Stable && on.version == "2.876.0");
         CHECK(tb::ChooseTarget("2.876.0", "", "", true, false, false).kind == K::None);
+        // The number does not order what is IN a build (owner, 2026-11-26): a main test build made after release 2.877.0 was cut, but numbered on
+        // the release before it, holds more of main than 2.877.0. When both places on main are known they decide; unknown keeps the number.
+        on = tb::ChooseTarget("2.876.0.5", "2.877.0", "2.876.0.9", true, false, false, 1490, 1500);
+        CHECK(on.kind == K::TestBuild && on.version == "2.876.0.9");
+        on = tb::ChooseTarget("2.876.0.5", "2.877.0", "2.876.0.9", true, false, false, 1500, 1490);   // the release is ahead: the release
+        CHECK(on.kind == K::Stable && on.version == "2.877.0");
+        on = tb::ChooseTarget("2.876.0.5", "2.877.0", "2.876.0.9", true, false, false, 0, 1500);      // one not known: the number, as before
+        CHECK(on.kind == K::Stable && on.version == "2.877.0");
+        on = tb::ChooseTarget("2.876.0.5", "2.877.0", "2.876.0.9", false, false, false, 1490, 1500);  // test builds off: never a test build
+        CHECK(on.kind == K::Stable);
+        CHECK(tb::ContentAhead(1500, 1490) == tb::Ahead::Yes && tb::ContentAhead(1490, 1500) == tb::Ahead::No && tb::ContentAhead(1500, 1500) == tb::Ahead::No);
+        CHECK(tb::ContentAhead(0, 1500) == tb::Ahead::Unknown && tb::ContentAhead(1500, 0) == tb::Ahead::Unknown);
         // Things that are not what they claim are ignored: a test version as the stable head, a release as a test build.
         CHECK(tb::ChooseTarget("2.876.0", "2.877.0.1", "", true, false, false).kind == K::None);
         CHECK(tb::ChooseTarget("2.876.0", "2.876.0", "2.999.0", true, false, false).version == "2.876.0");

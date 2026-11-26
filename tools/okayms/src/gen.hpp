@@ -43,6 +43,8 @@ struct Gen {
     // function being generated, when line records are wanted.
     bool debug_lines = false;
     std::vector<std::pair<uint32_t, int>> lines;
+    // The line (of the preprocessed text) of the statement being generated, for error messages (Round 30).
+    int stmt_line = 0;
     std::vector<uint8_t> extra_pops;
     std::map<std::string, size_t> labels;
     std::vector<std::pair<std::string, size_t>> gotos;
@@ -94,21 +96,27 @@ struct Gen {
     // The local a name means here: of the visible locals of that name, the one of the innermost block (Round 29: a
     // local of an enclosing block declared later in the text no longer hides the inner block's own one; before, the
     // last declared visible local was taken). Within one block the last declared.
-    Local* find_local(const std::string& name) {
+    // vis (Node::vis, Round 30): only locals with seq below it were declared when the name was read; one of those is
+    // taken when there is one, so `int d; { use(d); int d; }` reads the outer d before the inner one is declared.
+    Local* find_local(const std::string& name, int vis = -1) {
         Local* best = nullptr;
         int best_steps = -1;
-        for (int i = static_cast<int>(locals.size()) - 1; i >= 0; --i) {
-            Local& local = locals[static_cast<size_t>(i)];
-            if (local.name != name) continue;
-            const int steps = scope_distance(local.scope);
-            if (steps < 0) continue;
-            if (best == nullptr || steps < best_steps) {
-                best = &local;
-                best_steps = steps;
+        for (int pass = vis >= 0 ? 0 : 1; pass < 2 && best == nullptr; ++pass) {
+            for (int i = static_cast<int>(locals.size()) - 1; i >= 0; --i) {
+                Local& local = locals[static_cast<size_t>(i)];
+                if (local.name != name) continue;
+                if (pass == 0 && local.seq >= vis) continue;
+                const int steps = scope_distance(local.scope);
+                if (steps < 0) continue;
+                if (best == nullptr || steps < best_steps) {
+                    best = &local;
+                    best_steps = steps;
+                }
             }
         }
         return best;
     }
+    Local* find_local(const Node& name) { return find_local(name.text, name.vis); }
 
     void load_slot(int32_t offset, bool pointer) {
         if (pointer) {
@@ -130,8 +138,11 @@ struct Gen {
         b(0xB8);
         u32(value);
     }
+    // Room for spilled values below the locals (Round 30: 16 before; a call with 35 arguments, ThirdPersonController's
+    // PlaceThirdPersonOrbit, needed more). emit.cpp sizes the frame with it.
+    static constexpr int kTempSlots = 48;
     int spill() {
-        if (temp_depth >= 16) {
+        if (temp_depth >= kTempSlots) {
             error = "expression is too deep";
             return 0;
         }

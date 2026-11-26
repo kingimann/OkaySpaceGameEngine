@@ -41,6 +41,14 @@ if [ -d cmd ]; then
   done
 fi
 
+# The tests write their programs to fixed folders under /tmp (/tmp/okayms-el, /tmp/okayms-r30, ...). Two suites run at
+# once on one machine (two worktrees) overwrote each other's files there: test_engine_link then read a half-written
+# output file and reported "output differs from g++" (Round 31). One suite at a time: the others wait for this lock.
+if command -v flock >/dev/null 2>&1; then
+  exec 9>/tmp/okayms-tests.lock
+  flock 9
+fi
+
 fail=0
 ran=0
 for t in tests/test_*.cpp; do

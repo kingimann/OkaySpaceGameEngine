@@ -21,6 +21,27 @@ bool Parser::parse_init(Node* out) {
     return parse_expr(1, out);
 }
 
+// The bytes of an object left out of a constant initializer are zero, except a pointer to a data member, whose null
+// value is -1 ([dcl.init] 6, zero-initialization of a member pointer gives its null value; Round 31): those are set
+// here, in members and elements of any depth.
+void Parser::memptr_null_bytes(const Type& type, std::vector<uint8_t>* bytes, int at) const {
+    if (type.is_ref || type.pointers > 0) return;
+    if (type.is_array()) {
+        const Type elem = peel_array(type);
+        const int step = std::max(1, size_of(elem));
+        for (int i = 0; i < type.array_len; ++i) memptr_null_bytes(elem, bytes, at + i * step);
+        return;
+    }
+    if (type.memptr >= 0) {
+        if (static_cast<int>(bytes->size()) < at + 4) bytes->resize(static_cast<size_t>(at + 4), 0);
+        for (int i = 0; i < 4; ++i) (*bytes)[static_cast<size_t>(at + i)] = 0xFF;
+        return;
+    }
+    if (type.base == 3 && type.struct_id >= 0 && type.struct_id < static_cast<int>(structs.size()))
+        for (const Field& f : structs[static_cast<size_t>(type.struct_id)].fields)
+            if (f.type.bits < 0) memptr_null_bytes(f.type, bytes, at + f.offset);
+}
+
 bool Parser::flatten_init(const Type& type, const Node& node_given, std::vector<uint8_t>* bytes, int at) {
     auto ensure = [&](int n) {
         if (static_cast<int>(bytes->size()) < n) bytes->resize(static_cast<size_t>(n), 0);
@@ -37,6 +58,7 @@ bool Parser::flatten_init(const Type& type, const Node& node_given, std::vector<
                 if (!flatten_init(elem, node.kids[i], bytes, at + static_cast<int>(i) * step)) return false;
             }
             ensure(at + type.array_len * step);
+            for (int i = static_cast<int>(node.kids.size()); i < type.array_len; ++i) memptr_null_bytes(elem, bytes, at + i * step);
             return true;
         }
         if (type.base == 3 && type.pointers == 0 && type.struct_id >= 0 &&
@@ -47,6 +69,8 @@ bool Parser::flatten_init(const Type& type, const Node& node_given, std::vector<
                 if (!flatten_init(field.type, node.kids[i], bytes, at + field.offset)) return false;
             }
             ensure(at + def.size);
+            for (size_t i = node.kids.size(); i < def.fields.size(); ++i)
+                memptr_null_bytes(def.fields[i].type, bytes, at + def.fields[i].offset);
             return true;
         }
         error = "initializer does not match the type";
@@ -90,6 +114,10 @@ bool Parser::flatten_init(const Type& type, const Node& node_given, std::vector<
     }
     const int width = std::max(1, size_of(type));
     ensure(at + width);
+    if (type.memptr >= 0 && type.pointers == 0 && memptr_null_constant(node)) {
+        memptr_null_bytes(type, bytes, at);  // `nullptr` for a pointer to a data member: -1 (Round 31)
+        return true;
+    }
     uint64_t value = type.is_bool && type.pointers == 0 ? (node.number != 0 ? 1u : 0u) : node.number;
     if (!(type.is_bool && type.pointers == 0)) const_convert(node, type, &value);
     for (int i = 0; i < width && i < 8; ++i)
@@ -352,6 +380,29 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
     if (is(TIdent) && cur().text == "try" && at + 1 < tokens.size() && tokens[at + 1].kind == TLBrace)
         return parse_try(out, locals, stmt_line);
     if (is(TIdent) && cur().text == "throw") return parse_throw(out, locals);
+    if (is(TIdent) && cur().text == "__okay_throw_if_eh") {
+        // __okay_throw_if_eh(e); in okay-ms's own headers (Round 31, std::stoi): `throw e;` in a file that uses
+        // exceptions (try or throw written in it), and nothing in one that does not, where a throw could only end the
+        // program. The word is not `throw`, so a header that has it does not turn on the exception frames of every
+        // file that includes it. In a file without exceptions the operand is skipped, not evaluated.
+        next();
+        if (!expect(TLParen, "'('")) return false;
+        if (!eh_) {
+            int depth = 1;
+            while (!is(TEnd) && depth > 0) {
+                if (is(TLParen)) ++depth;
+                else if (is(TRParen)) --depth;
+                if (depth > 0) next();
+            }
+            if (!expect(TRParen, "')'") || !expect(TSemi, "';'")) return false;
+            out->kind = Node::Block;
+            return true;
+        }
+        Node value;
+        if (!parse_expr(0, &value)) return false;
+        if (!expect(TRParen, "')'") || !expect(TSemi, "';'")) return false;
+        return build_throw(std::move(value), locals, out);
+    }
     if (is(TGoto)) {
         next();
         if (!is(TIdent)) {
@@ -785,15 +836,28 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
                 return false;
             if (!braced_ret && !cur_ret_ref) class_ptr_convert(&value, cur_ret);  // return derived; as a Base* (Round 29)
             Type value_type;
-            if (!braced_ret && !cur_ret_ref && cur_ret.base == 3 && cur_ret.pointers == 0 && !cur_ret.is_ref &&
+            // return 0; or return nullptr; or return p; for a class result: copy-initialization of the result from a
+            // value that is not an object, by the converting constructor ([stmt.return] 2, [dcl.init] 17.6.3).
+            const bool by_conversion =
+                !braced_ret && !cur_ret_ref && cur_ret.base == 3 && cur_ret.pointers == 0 && !cur_ret.is_ref &&
                 !cur_ret.is_array() && cur_ret.struct_id >= 0 && obj_needs_ctor(cur_ret) && static_type(value, &value_type) &&
-                !(value_type.base == 3 && value_type.pointers == 0 && !value_type.is_array())) {
-                // return 0; or return nullptr; or return p; for a class result: copy-initialization of the result from a
-                // value that is not an object, by the converting constructor ([stmt.return] 2, [dcl.init] 17.6.3). The
-                // object is made in a hidden local that becomes the result (as for return {a, b}).
+                !(value_type.base == 3 && value_type.pointers == 0 && !value_type.is_array());
+            // return s; of an object that is not this function's own local and not a temporary (a reference parameter,
+            // a member, a global, *p, a[i]): the result is copy-initialized from it ([stmt.return] 2,
+            // [class.copy.ctor]) by the copy constructor. Before Round 31 its bytes were copied: the result shared the
+            // source's heap memory (std::string's buffer), and the result's destructor freed it under the source
+            // ("return text_;" in path::string()).
+            const bool by_copy =
+                !by_conversion && !braced_ret && !cur_ret_ref && cur_ret.base == 3 && cur_ret.pointers == 0 &&
+                !cur_ret.is_ref && !cur_ret.is_array() && cur_ret.struct_id >= 0 && copy_ctor(cur_ret.struct_id) != nullptr &&
+                static_type(value, &value_type) && value_type.base == 3 && value_type.pointers == 0 &&
+                !value_type.is_array() && value_type.struct_id >= 0 && return_needs_copy(value, value_type);
+            if (by_conversion || by_copy) {
+                // The object is made in a hidden local that becomes the result (as for return {a, b}).
                 Local hidden;
                 hidden.name = "__br" + std::to_string(rv_count++);
                 hidden.type = cur_ret;
+                if (by_copy) hidden.type.is_const = false;
                 place_local(locals, hidden);
                 std::vector<Node> cargs;
                 cargs.push_back(std::move(value));
@@ -1092,6 +1156,20 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
     bool has_init = false;
     const bool preset = has_preset && (is(TAssign) || is(TColon));
     Type list_type_local;
+    // The point of declaration is after the declarator and before the initializer ([basic.scope.pdecl] 1): in
+    // `long k = sizeof(k);` k is the new variable even when an outer k exists, `void* p = &p;` points at itself, and
+    // `std::function<void(T*)> walk = [&](T* t) { ... walk(c); ... }` captures itself (Round 30 did this only for a
+    // lambda initializer; Round 31 for every local whose type is known before the initializer is read). Not for a
+    // static local (its storage is named after the initializer is read), an array without a length or `auto` (their
+    // types come from the initializer).
+    bool placed_early = false;
+    size_t placed_at = 0;
+    if (!preset && !is_static && !is_typedef && (is(TAssign) || (is(TLBrace) && !have_ctor_args)) &&
+        decl.type.array_len != 0) {
+        place_local(locals, local);
+        placed_early = true;
+        placed_at = locals->size() - 1;
+    }
     if (preset || have_paren_init || accept(TAssign) || (is(TLBrace) && !have_ctor_args)) {
         if (preset) {
             init = std::move(preset_init);
@@ -1134,6 +1212,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             }
         }
         if (init.kind == Node::Block && init.text == "init" && decl.type.array_len != 0) init = elide_braces(decl.type, init);
+        if (init.kind == Node::Block && init.text == "init" && !is_static) memptr_fix_list(decl.type, &init);
         if (!fix_unsized(&decl.type, init)) return false;
         if (init.kind == Node::StringLit && decl.type.is_array() && decl.type.more.empty() && decl.type.pointers == 0 &&
             decl.type.base == 2) {
@@ -1203,7 +1282,15 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         local.symbol = global.name;
         globals.push_back(global);
     }
-    place_local(locals, local);
+    if (!placed_early) {
+        place_local(locals, local);
+    } else {
+        // What the initializer taught: a constant's value (`const int k = 8;`).
+        Local& placed = (*locals)[placed_at];
+        placed.has_cval = local.has_cval;
+        placed.cval = local.cval;
+        placed.is_const = local.is_const;
+    }
     out->kind = Node::Block;
     Node static_prvalue;  // static C x = f(); with f returning a C: f writes x itself ([dcl.init], [class.copy.elision])
     if (static_dyn && obj_needs_ctor(decl.type) && !decl.type.is_array() && !(init.kind == Node::Block && init.text == "init")) {
@@ -1620,18 +1707,35 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
          (range.kind == Node::Unary && range.op == TStar))) {
         const Method* mb = find_method(range_type.struct_id, "begin", 0);
         const Method* me = find_method(range_type.struct_id, "end", 0);
+        if (mb == nullptr && me == nullptr) {
+            // No member begin or end ([stmt.ranged] 1.3): begin(range) and end(range) are free functions
+            // (std::filesystem::directory_iterator); both must return the same iterator class.
+            bool fb = false;
+            bool fe = false;
+            if (!free_call("begin", {range}, &begin_call, &fb)) return false;
+            if (!free_call("end", {range}, &end_call, &fe)) return false;
+            Type tb;
+            Type te;
+            if (fb && fe && static_type(begin_call, &tb) && static_type(end_call, &te) && tb.base == 3 &&
+                tb.pointers == 0 && !tb.is_array() && tb.struct_id >= 0 && te.base == 3 && te.pointers == 0 &&
+                te.struct_id == tb.struct_id) {
+                tb.is_ref = false;
+                tb.rref = false;
+                tb.is_const = false;
+                class_range = true;
+                iter_class = true;
+                iter_type = tb;
+            }
+        }
         const bool class_iters = mb != nullptr && me != nullptr && mb->ret.pointers == 0 && !mb->ret.is_ref &&
                                  mb->ret.base == 3 && mb->ret.struct_id >= 0 && me->ret.pointers == 0 &&
                                  me->ret.base == 3 && me->ret.struct_id == mb->ret.struct_id;
-        if (mb == nullptr || me == nullptr ||
-            (!class_iters && (mb->ret.pointers < 1 || me->ret.pointers != mb->ret.pointers))) {
+        if (!class_range && (mb == nullptr || me == nullptr ||
+                             (!class_iters && (mb->ret.pointers < 1 || me->ret.pointers != mb->ret.pointers)))) {
             error = "a range for over a class needs begin() and end() that return pointers or iterator objects";
             return false;
         }
-        class_range = true;
-        iter_class = class_iters;
-        iter_type = mb->ret;
-        for (int w = 0; w < 2; ++w) {
+        for (int w = 0; w < 2 && !class_range; ++w) {
             const Method* m = w == 0 ? mb : me;
             Node call;
             call.kind = Node::Call;
@@ -1640,6 +1744,11 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
             call.type = m->ret;
             call.kids.push_back(node_addr(range));
             (w == 0 ? begin_call : end_call) = std::move(call);
+        }
+        if (!class_range) {
+            class_range = true;
+            iter_class = class_iters;
+            iter_type = mb->ret;
         }
     } else if (!range_type.is_array() || range_type.array_len < 0) {
         error = "a range for needs an array of known length";
@@ -1651,6 +1760,7 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     // With iterator objects ([stmt.ranged] 1): the element is *__ri, the test __ri != __re and the step ++__ri, each by
     // the iterator class's operators. The iterators are destroyed after the loop.
     Node iter_deref;
+    bool elem_prvalue = false;  // *it gives a value, not a reference
     Node iter_cond;
     Node iter_step;
     const std::string iter_name = "__ri" + std::to_string(range_count);
@@ -1690,6 +1800,7 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
             error = "cannot work out the type of the range elements";
             return false;
         }
+        elem_prvalue = !elem.is_ref;
         elem.is_ref = false;
         elem.rref = false;
     }
@@ -1702,6 +1813,9 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
         next();
         declared = elem;
         if (is(TStar) && declared.pointers > 0) declared.pointers -= 1;
+        // `const auto& v` over an iterator whose operator* gives a value: v is bound to that temporary, whose life
+        // is extended to v's ([class.temporary] 6); here v is a copy of it, which reads the same.
+        if (elem_prvalue && (is(TAmp) || is(TAndAnd)) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent) next();
     } else {
         bool imp = false;
         bool exp = false;
@@ -1859,7 +1973,7 @@ bool Parser::binding_ahead() const {
 // A structured binding ([dcl.struct.bind]), Round 29: `auto [a, b] = e;`, `const auto& [k, v] = e;` and the same in a
 // range for. A hidden variable __sbN is declared as `auto __sbN = e` (with the & or && written), from the initializer
 // read before (has_preset); then each name is a reference to the next non-static data member of its class (or the next
-// element of an array) ([dcl.struct.bind] 3, 5). Own limits: no tuple-like types (get<i>), and a name is always a
+// element of an array) ([dcl.struct.bind] 3, 5). Own limits: of the tuple-like types only std::tuple (Round 31), and a name is always a
 // reference to the member of the hidden variable (as the standard says for the class case).
 bool Parser::parse_binding_decl(const Type& declared, bool is_const, Node* out, std::vector<Local>* locals,
                                 int stmt_line) {
@@ -1911,6 +2025,34 @@ bool Parser::parse_binding_decl(const Type& declared, bool is_const, Node* out, 
             elem.kids.push_back(node_name(hidden));
             elem.kids.push_back(int_node(static_cast<long long>(i)));
             parts.push_back({peel_array(whole), std::move(elem)});
+        }
+    } else if (whole.base == 3 && whole.pointers == 0 && whole.struct_id >= 0 &&
+               structs[static_cast<size_t>(whole.struct_id)].tmpl == "tuple" &&
+               find_field_named(structs[static_cast<size_t>(whole.struct_id)], "head__") >= 0) {
+        // A tuple-like type ([dcl.struct.bind] 4; Round 31): std::tuple, whose get<i> is the head of the i-th tail in
+        // <tuple>'s own layout, so the i-th name refers to that member.
+        Node at_node = node_name(hidden);
+        int sid = whole.struct_id;
+        while (sid >= 0) {
+            const StructDef& td = structs[static_cast<size_t>(sid)];
+            const int hi = find_field_named(td, "head__");
+            const int ti = find_field_named(td, "tail__");
+            if (hi < 0) break;
+            Node head;
+            head.kind = Node::Field;
+            head.op = TDot;
+            head.text = "head__";
+            head.kids.push_back(at_node);
+            parts.push_back({td.fields[static_cast<size_t>(hi)].type, std::move(head)});
+            if (ti < 0) break;
+            Node tail;
+            tail.kind = Node::Field;
+            tail.op = TDot;
+            tail.text = "tail__";
+            tail.kids.push_back(std::move(at_node));
+            at_node = std::move(tail);
+            const Type& tt = td.fields[static_cast<size_t>(ti)].type;
+            sid = tt.base == 3 && tt.pointers == 0 ? tt.struct_id : -1;
         }
     } else if (whole.base == 3 && whole.pointers == 0 && whole.struct_id >= 0) {
         for (const Field& f : structs[static_cast<size_t>(whole.struct_id)].fields) {

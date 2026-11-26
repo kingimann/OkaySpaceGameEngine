@@ -60,6 +60,13 @@ inline std::vector<std::string>& enum_names() {
     return names;
 }
 
+struct Type;
+// The pointer-to-member types read so far (Type::memptr indexes it): the class, then the member's type.
+std::vector<std::pair<Type, Type>>& memptr_types();
+// The pointer-to-member-function types read so far (Type::memfn indexes it; Round 31), for their decorated names.
+struct MemFnType;
+std::vector<MemFnType>& memfn_types();
+
 struct Type {
     int pointers = 0;
     // 0 void, 1 int, 2 char, 3 struct or union, 4 short
@@ -96,6 +103,15 @@ struct Type {
     // A placeholder return type ([dcl.spec.auto]): 1 `auto`, 2 `decltype(auto)`; 0 a written type. The function's
     // body is read once to learn the type of its first return (parse_function_body), then the type is replaced.
     int deduce = 0;
+    // A pointer to a data member ([dcl.mptr], `T C::*`; Round 30): its index in memptr_types(), or -1. The value is an
+    // int: the member's offset in C, and -1 for a null member pointer (Microsoft's representation for a class without
+    // virtual bases, from Round 31; Round 30 kept the offset plus one and 0 for null).
+    int memptr = -1;
+    // A pointer to a member function ([dcl.mptr], `R (C::*)(P...)`; Round 31): its index in memfn_types(), or -1. The
+    // type is also a function pointer (pointers 1, func_id) whose first parameter is `C*`: the value is the address of
+    // the function, or of a thunk that makes the virtual call (Microsoft's representation for a class with one base or
+    // none), and 0 for null.
+    int memfn = -1;
     bool pointer() const { return pointers > 0; }
     bool is_array() const { return array_len >= 0; }
     bool is_func() const { return func_id >= 0; }
@@ -120,6 +136,13 @@ struct FuncType {
     Type ret{};
     std::vector<Type> params;
     bool vararg = false;
+};
+
+struct MemFnType {
+    Type cls{};
+    Type ret{};
+    std::vector<Type> params;  // without the object parameter
+    bool is_const = false;     // R (C::*)(P...) const
 };
 
 struct Field {
@@ -269,6 +292,8 @@ struct StructDef {
     // A local class written in a member function of a class: that class, whose static members its member functions
     // name by their plain names ([class.local], [basic.lookup.unqual] 8). -1 otherwise.
     int local_in = -1;
+    // A class defined in a function body (Round 30): its member functions name the function's static locals.
+    bool local_fn = false;
     // A lambda's closure class that captured `this` ([expr.prim.lambda.capture] 10): the class of the member function the
     // lambda was written in. The pointer is the closure's field "__this"; names of that class's members used in the
     // body are read through it.
@@ -336,6 +361,9 @@ struct Node {
     bool imported = false;
     // Line of the preprocessed text where a statement starts. 0 is unknown.
     int line = 0;
+    // A name read by the parser: the parser's count of declared locals (Local::seq) at that point, or -1. Of two locals
+    // of one name the code generator takes one declared before the name was read ([basic.scope.pdecl], Round 30).
+    int vis = -1;
     std::vector<Node> kids;
 };
 
@@ -360,6 +388,9 @@ struct Local {
     // length or template argument; cval is its value in the type's width.
     bool has_cval = false;
     uint64_t cval = 0;
+    // When it was declared: the parser's running count of declared locals (place_local), 0 for one made otherwise.
+    // A name read before it (Node::vis) does not mean it (Round 30).
+    int seq = 0;
 };
 
 struct FuncDecl {
@@ -396,6 +427,10 @@ struct FuncDecl {
     std::string thunk_target;
     int thunk_adj = 0;
     bool thunk_rdx = false;
+    // A virtual call thunk (Round 31, the value of &C::f for a virtual f): the code reads the table pointer at
+    // thunk_vptr in the object (rcx, or rdx as above) and jumps to the function in slot thunk_vslot. -1: not one.
+    int thunk_vslot = -1;
+    int thunk_vptr = 0;
 };
 
 // Where the lines of the preprocessed text came from, for the line table.

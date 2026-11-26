@@ -14,10 +14,42 @@ int main() {
     in.phase = U::Phase::Checking;
     { const U::View v = U::Evaluate(in); CHECK(v.title == "Checking for updates"); CHECK(v.file == -2.0f); CHECK(v.primary == U::Button::Hide); }
     in.phase = U::Phase::Available;
-    { const U::View v = U::Evaluate(in); CHECK(v.primary == U::Button::InstallNow && v.secondary == U::Button::Later); CHECK(v.sub.find("v2.904.0") == 0); }
+    { const U::View v = U::Evaluate(in); CHECK(v.primary == U::Button::InstallNow && v.secondary == U::Button::Later); CHECK(v.sub.find("v2.904.0") == 0); CHECK(v.tertiary == U::Button::Skip); }
     in.testTag = "Test build of walk-vs-run (abc1234)";
     { const U::View v = U::Evaluate(in); CHECK(v.title == "A test build is ready"); CHECK(v.sub.find("walk-vs-run") != std::string::npos); }
     in.testTag.clear();
+    // "Skip this version" (owner, 2026-11-26): the third choice next to Install now / Later, a test build too; a version already skipped is not
+    // offered for skipping again and says so; Ask and "you already have everything" notes are shown in the line under the title.
+    in.phase = U::Phase::Available;
+    { const U::View v = U::Evaluate(in); CHECK(v.tertiary == U::Button::Skip); CHECK(std::string(U::ButtonLabel(U::Button::Skip)) == "Skip this version"); }
+    in.testTag = "Test build of main (abc1234)";
+    { const U::View v = U::Evaluate(in); CHECK(v.tertiary == U::Button::Skip); }
+    in.testTag.clear();
+    in.skipped = true;
+    { const U::View v = U::Evaluate(in); CHECK(v.tertiary == U::Button::None); CHECK(v.primary == U::Button::InstallNow); CHECK(v.sub.find("skipped") != std::string::npos); }
+    in.skipped = false;
+    in.note = "Your test build may already have some of it.";
+    { const U::View v = U::Evaluate(in); CHECK(v.sub.find("may already have") != std::string::npos); }
+    in.phase = U::Phase::UpToDate; in.note = "You already have everything in v2.904.0 (your test build is newer).";
+    { const U::View v = U::Evaluate(in); CHECK(v.sub == in.note); CHECK(v.tertiary == U::Button::None); }
+    in.note.clear();
+    // The phase the dialog shows: a version that was skipped gives no Available phase on its own (no dialog, no badge), a newer one does,
+    // and a check the person started shows the skipped version again (marked skipped), so it can be installed after all.
+    CHECK(U::AvailablePhaseFor("2.904.0", "2.904.0", false) == U::Shown::No);
+    CHECK(U::AvailablePhaseFor("2.904.1", "2.904.0", false) == U::Shown::Yes);
+    CHECK(U::AvailablePhaseFor("2.904.0", "", false) == U::Shown::Yes);
+    CHECK(U::AvailablePhaseFor("2.904.0", "v2.904.0", true) == U::Shown::Skipped);
+    CHECK(U::AvailablePhaseFor("2.904.0.7", "2.904.0.7", false) == U::Shown::No);          // a test build is skipped by its version the same way
+    CHECK(U::AvailablePhaseFor("2.904.0.8", "2.904.0.7", false) == U::Shown::Yes);
+    CHECK(U::AvailablePhaseFor("", "2.904.0", true) == U::Shown::No);
+    // The What's New card and the Versions page say the skipped version is there (the way back).
+    CHECK(U::SkippedLine("2.904.0") == "v2.904.0 is available (skipped)");
+    CHECK(U::SkippedLine("").empty());
+    // The three buttons fit side by side in the normal dialog, and stack when it is narrow.
+    { const U::DialogBox d = U::LayoutDialog(1280, 800, 560, 20, 260, true, 80, 320, 110, 90, 8, 24, 140);
+      CHECK(!d.stackButtons); }
+    { const U::DialogBox d = U::LayoutDialog(360, 800, 560, 20, 260, true, 80, 320, 110, 90, 8, 24, 140);
+      CHECK(d.stackButtons); }
     in.phase = U::Phase::Downloading; in.step = "Downloading editor (OkayEngine)"; in.stepIndex = 1; in.stepCount = 3;
     in.bytesNow = 13002342; in.bytesTotal = 36700160; in.secondsInStep = 4.0;
     {

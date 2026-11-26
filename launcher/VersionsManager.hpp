@@ -70,6 +70,11 @@ struct Entry {
     std::map<std::string, FileInfo> files;   ///< by index name
     // Test builds only (dev/versions.json, never in a real list): where the build came from. Cleaned text, only ever drawn, never used in a path or command.
     std::string branch, sha, note;       ///< the branch, its commit (7 to 40 hex digits) and the one-line note of whoever started the build ("" = not given)
+    // Both lists: the build's place on main (owner, 2026-11-26: a test build can hold more of main than a newer-numbered release). `mainCount` is
+    // `git rev-list --count` of the main commit it was built from (a branch build: the main commit it was built on top of); 0 = not known (lists
+    // published before the field existed). `mainSha` is that commit ("" = not given). Compared by okay::testbuild::ContentAhead.
+    std::uint64_t mainCount = 0;
+    std::string mainSha;
 };
 struct Index {
     bool ok = false;                     ///< a usable list (schema known, versions read)
@@ -178,9 +183,11 @@ constexpr std::size_t kInstallableReleases = 3;
 std::vector<const Entry*> InstallableWindow(const Index& list, bool testBuilds);
 /// The versions that can be installed, in two groups: the releases of InstallableWindow(releases), then the test builds of
 /// InstallableWindow(testBuilds) (an empty Index when "Get test builds" is off), each newest first, without the running version and those
-/// already installed.
+/// already installed. `runningMainCount` is the running build's place on main (0 = not known): while a test build runs, a release whose place is
+/// known and not after it is marked "older than your test build". `skipped` (launcher.cfg's skipped version) is marked "skipped".
 std::vector<AvailableRow> AvailableRows(const Index& releases, const Index& testBuilds, const std::string& running,
-                                        const std::vector<std::string>& installed);
+                                        const std::vector<std::string>& installed, std::uint64_t runningMainCount = 0,
+                                        const std::string& skipped = "");
 
 // ---- the one place updates come from ---------------------------------------------------------------------------------------
 // Owner decision 2026-11-20: the shipped programs never need GitHub at run time. Updates, the version list, old versions and
@@ -362,9 +369,10 @@ struct Settings {
     std::string defaultEditor;           ///< a version under Versions/ used for projects with no stamp ("" = this launcher's editor)
     std::string ltsLine;                 ///< the LTS line last seen ("2.850"): lets pruning protect it while offline
     bool testBuilds = false;             ///< "Get test builds": also offer builds made for testing (off by default: the dev area is never read while this is off)
+    std::string skippedVersion;          ///< "Skip this version": never offered or installed by itself again; a newer one is ("" = none; a release or a test build)
 };
 Settings& GlobalSettings();
-/// launcher.cfg lines: update_channel, keep_previous, default_editor, lts_line, test_builds. True when the key was one of ours.
+/// launcher.cfg lines: update_channel, keep_previous, default_editor, lts_line, test_builds, skipped_version. True when the key was one of ours.
 bool ApplySettingLine(Settings& s, const std::string& key, const std::string& value);
 void WriteSettings(const Settings& s, std::ostream& out);
 

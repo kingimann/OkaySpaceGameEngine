@@ -2,9 +2,12 @@
 // (each node's value is an unused char); iterators show the key only. multiset is not done.
 #pragma once
 #include <__tree>
+#include <__reverse_iterator>
 namespace std {
 template <typename K>
 struct __set_it {
+    typedef const K &reference;  // (reverse_iterator)
+    typedef const K *pointer;
     __tree_it<K, char> it;
     __set_it() {}
     __set_it(const __tree_it<K, char> &i) : it(i) {}
@@ -65,6 +68,10 @@ public:
     void clear() { __t.clear(); }
     iterator begin() const { return iterator(__tree_it<K, char>(__t.first(), &__t.__root)); }
     iterator end() const { return iterator(__tree_it<K, char>(nullptr, &__t.__root)); }
+    reverse_iterator<iterator> rbegin() const { return reverse_iterator<iterator>(end()); }
+    reverse_iterator<iterator> rend() const { return reverse_iterator<iterator>(begin()); }
+    reverse_iterator<iterator> crbegin() const { return rbegin(); }
+    reverse_iterator<iterator> crend() const { return rend(); }
     iterator find(const K &k) const { return iterator(__tree_it<K, char>(__t.findNode(k), &__t.__root)); }
     unsigned long count(const K &k) const { return __t.findNode(k) ? 1 : 0; }
     bool contains(const K &k) const { return __t.findNode(k) != nullptr; }

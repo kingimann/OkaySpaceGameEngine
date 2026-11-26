@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <initializer_list>
 #include <utility>
+#include <__reverse_iterator>
 namespace std {
 template <typename T>
 struct __list_node {
@@ -16,6 +17,8 @@ struct __list_node {
 };
 template <typename T>
 struct __list_it {
+    typedef T &reference;  // (reverse_iterator)
+    typedef T *pointer;
     __list_node<T> *n;
     T &operator*() const { return *n->val; }
     T *operator->() const { return n->val; }
@@ -93,6 +96,10 @@ public:
 
     iterator begin() const { return iterator{__end->next}; }
     iterator end() const { return iterator{__end}; }
+    reverse_iterator<iterator> rbegin() const { return reverse_iterator<iterator>(end()); }
+    reverse_iterator<iterator> rend() const { return reverse_iterator<iterator>(begin()); }
+    reverse_iterator<iterator> crbegin() const { return rbegin(); }
+    reverse_iterator<iterator> crend() const { return rend(); }
     iterator cbegin() const { return begin(); }
     iterator cend() const { return end(); }
     unsigned long size() const { return __n; }

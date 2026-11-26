@@ -124,6 +124,18 @@ public:
         erase(items_.data() + idx);
         return 1;
     }
+    // [container.reqmts] == and != (Round 31): before, there were none and okay-ms compared the objects' bytes
+    // (SaveFramework.hpp's `m_values == o.m_values` on a std::map).
+    // Equal when they hold the same keys with equal values, in any order ([unord.req] 12).
+    bool operator==(const unordered_map& o) const {
+        if (size() != o.size()) return false;
+        for (const pair<K, V>* p = begin(); p != end(); ++p) {
+            const pair<K, V>* q = o.find(p->first);
+            if (q == o.end() || !(q->second == p->second)) return false;
+        }
+        return true;
+    }
+    bool operator!=(const unordered_map& o) const { return !(*this == o); }
 };
 
 template <typename K, typename V>
@@ -160,5 +172,9 @@ public:
     pair<pair<K, V>*, bool> insert_or_assign(const K& key, const V& value) { return items_.insert_or_assign(key, value); }
     size_t erase(const K& key) { return items_.erase(key); }
     pair<K, V>* erase(pair<K, V>* pos) { return items_.erase(pos); }
+    // [container.reqmts] == and != (Round 31): before, there were none and okay-ms compared the objects' bytes
+    // (SaveFramework.hpp's `m_values == o.m_values` on a std::map).
+    bool operator==(const unordered_map& o) const { return items_ == o.items_; }
+    bool operator!=(const unordered_map& o) const { return !(*this == o); }
 };
 }

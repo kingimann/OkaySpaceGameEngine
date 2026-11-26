@@ -5,7 +5,7 @@
 namespace okaycc {
 namespace compiler {
 struct ET {
-    std::unique_ptr<Type> type;
+    SharedType type;
     bool lvalue = false;
     bool mod = false;
     bool nullc = false;
@@ -111,7 +111,7 @@ public:
 
 private:
     struct Sym {
-        std::unique_ptr<Type> type;
+        SharedType type;  // shared with the results that name it (lookup)
         bool func = false;
     };
 
@@ -207,11 +207,12 @@ private:
             if (it->second.func) usedFns_.insert(name);
             ET e;
             // An object of a finished class: its name (members through canonOf), not a full copy.
-            e.type = finishedClassCopy(*it->second.type) ? classByName(*it->second.type) : cloneType(*it->second.type);
+            if (finishedClassCopy(*it->second.type)) e.type = classByName(*it->second.type);
+            else e.type = it->second.type;  // shared (SharedType)
             e.line = line;
             e.col = col;
             if (e.type->kind == Type::Kind::Reference && e.type->inner) {
-                e.type = cloneType(*e.type->inner);
+                e.type = finishedClassCopy(*e.type->inner) ? classByName(*e.type->inner) : cloneType(*e.type->inner);
                 e.lvalue = true;
                 e.mod = true;
                 return e;
@@ -238,7 +239,7 @@ private:
     ET decay(ET e) {
         if (!e.type) return e;
         if (e.type->kind == Type::Kind::Array && e.type->inner) {
-            e.type = ptrTo(std::move(e.type->inner));
+            e.type = ptrTo(std::move(e.type.mut()->inner));
             e.lvalue = false;
             e.mod = false;
         } else if (e.type->kind == Type::Kind::Function) {
@@ -357,14 +358,14 @@ private:
         case Expr::Kind::Int:
             if (e.text == "true" || e.text == "false") {
                 r.type = prim(Type::Kind::Bool);  // the boolean literals have type bool ([lex.bool])
-                r.type->unsign = true;            // as the parser spells bool
+                r.type.mut()->unsign = true;            // as the parser spells bool
                 return r;
             }
             if (e.litRank > 0) r.type = prim(Type::Kind::Long);
             else if (!e.litUnsigned && e.ival > 0x7fffffffull) r.type = prim(Type::Kind::Long);
             else r.type = prim(Type::Kind::Int);
-            if (e.litUnsigned || (e.litRank == 0 && e.ival > 0xffffffffull)) r.type->unsign = true;
-            if (e.litUnsigned && e.ival > 0xffffffffull) r.type->kind = Type::Kind::Long;
+            if (e.litUnsigned || (e.litRank == 0 && e.ival > 0xffffffffull)) r.type.mut()->unsign = true;
+            if (e.litUnsigned && e.ival > 0xffffffffull) r.type.mut()->kind = Type::Kind::Long;
             r.nullc = e.ival == 0;
             return r;
         case Expr::Kind::Float:
@@ -381,11 +382,11 @@ private:
         }
         case Expr::Kind::String: {
             r.type = prim(Type::Kind::Array);
-            r.type->inner = prim(Type::Kind::Char);
+            r.type.mut()->inner = prim(Type::Kind::Char);
             auto bound = std::make_unique<Expr>();
             bound->kind = Expr::Kind::Int;
             bound->ival = static_cast<std::uint64_t>(e.text.size()) + 1;
-            r.type->bound = std::move(bound);
+            r.type.mut()->bound = std::move(bound);
             r.lvalue = true;
             return r;
         }
@@ -550,10 +551,10 @@ private:
                 b.col = e.col;
                 Type::Kind k = e.text == "__builtin_sqrtf" ? Type::Kind::Float : Type::Kind::Double;
                 b.type = prim(Type::Kind::Function);
-                b.type->inner = prim(k);
+                b.type.mut()->inner = prim(k);
                 Param a;
                 a.type = prim(k);
-                b.type->params.push_back(std::move(a));
+                b.type.mut()->params.push_back(std::move(a));
                 return b;
             }
             if (e.text == "malloc" || e.text == "free") {
@@ -562,15 +563,15 @@ private:
                 b.col = e.col;
                 b.type = prim(Type::Kind::Function);
                 if (e.text == "malloc") {
-                    b.type->inner = ptrTo(prim(Type::Kind::Void));
+                    b.type.mut()->inner = ptrTo(prim(Type::Kind::Void));
                     Param a;
                     a.type = prim(Type::Kind::Long);
-                    b.type->params.push_back(std::move(a));
+                    b.type.mut()->params.push_back(std::move(a));
                 } else {
-                    b.type->inner = prim(Type::Kind::Void);
+                    b.type.mut()->inner = prim(Type::Kind::Void);
                     Param a;
                     a.type = ptrTo(prim(Type::Kind::Char));
-                    b.type->params.push_back(std::move(a));
+                    b.type.mut()->params.push_back(std::move(a));
                 }
                 return b;
             }
@@ -643,7 +644,7 @@ private:
             }
             // -x, +x and ~x have the promoted type of x (ISO C 6.5.3.3): a long stays long.
             r.type = prim(inner.type->kind == Type::Kind::Long ? Type::Kind::Long : Type::Kind::Int);
-            r.type->unsign = (inner.type->kind == Type::Kind::Long || inner.type->kind == Type::Kind::Int) && inner.type->unsign;
+            r.type.mut()->unsign = (inner.type->kind == Type::Kind::Long || inner.type->kind == Type::Kind::Int) && inner.type->unsign;
             return r;
         }
         case Expr::Kind::Pre:
@@ -718,7 +719,26 @@ private:
                 return r;
             }
             if (a.type && b.type && isIntish(*a.type) && isIntish(*b.type)) {
-                r.type = prim(Type::Kind::Int);
+                // The usual arithmetic conversions ([expr.cond] p7.3, [expr.arith.conv]): a long
+                // branch makes the result long (unsigned when that long is), else int, unsigned when
+                // an int branch is. (It was always int: c ? f() : 0L with a long f() lost its top half.)
+                const Type* at = a.type.get();
+                const Type* bt = b.type.get();
+                const bool al = at->kind == Type::Kind::Long, bl = bt->kind == Type::Kind::Long;
+                auto rt = prim(al || bl ? Type::Kind::Long : Type::Kind::Int);
+                if (al || bl) rt->unsign = (al && at->unsign) || (bl && bt->unsign);
+                else rt->unsign = (at->kind == Type::Kind::Int && at->unsign) || (bt->kind == Type::Kind::Int && bt->unsign);
+                if (rt->kind == Type::Kind::Long)
+                    for (int bi = 1; bi <= 2; ++bi) {
+                        const Type* t = bi == 1 ? at : bt;
+                        if (t->kind == Type::Kind::Long && t->unsign == rt->unsign) continue;
+                        auto cast = mkE(Expr::Kind::Cast, e);
+                        cast->ty = cloneType(*rt);
+                        cast->kids.push_back(std::move(e.kids[static_cast<std::size_t>(bi)]));
+                        cast->checked = cloneType(*rt);
+                        e.kids[static_cast<std::size_t>(bi)] = std::move(cast);
+                    }
+                r.type = std::move(rt);
                 return r;
             }
             if (a.type && b.type && (isIntish(*a.type) || isFp(*a.type)) && (isIntish(*b.type) || isFp(*b.type))) {
@@ -976,7 +996,7 @@ private:
                     ti.tag = e.ty->tag;
                     ti.flag = "__cf" + std::to_string(tempN_++);
                     add(ti.flag, std::make_unique<Type>(), false, e.line, e.col);
-                    scopes_.back()[ti.flag].type->kind = Type::Kind::Int;
+                    scopes_.back()[ti.flag].type.mut()->kind = Type::Kind::Int;
                     lastTempFlag_ = ti.flag;
                     lastTempName_ = ti.name;
                     lastTempTag_ = ti.tag;
@@ -1132,7 +1152,9 @@ private:
     }
     // the type a checked node carries for the lowering
     void markChecked(Expr& e, const ET& r) {
-        if (r.type) e.checked = finishedClassCopy(*r.type) ? classByName(*r.type) : cloneType(*r.type, false);
+        if (!r.type) return;
+        if (finishedClassCopy(*r.type)) e.checked = classByName(*r.type);
+        else e.checked = r.type;  // shared with the result, not copied
     }
 
     // A local object of the function being checked, named (not a parameter, a reference, a static
@@ -1158,7 +1180,7 @@ private:
 
     static ET copyET(const ET& a) {
         ET r;
-        if (a.type) r.type = cloneType(*a.type);
+        r.type = a.type;  // shared (SharedType)
         r.lvalue = a.lvalue;
         r.mod = a.mod;
         r.nullc = a.nullc;
@@ -1207,7 +1229,7 @@ private:
                 lastTempRec_ = ti.rec;
             }
             add(ti.flag, std::make_unique<Type>(), false, at.line, at.col);
-            scopes_.back()[ti.flag].type->kind = Type::Kind::Int;
+            scopes_.back()[ti.flag].type.mut()->kind = Type::Kind::Int;
         }
         if (!ti.rec.empty()) {
             auto arr = std::make_unique<Type>();
@@ -1457,8 +1479,12 @@ private:
         case Expr::Kind::Call:
             // f(args) and obj.f(args) with f an object of a class with operator() (a std::function
             // member, [expr.call] p1, [over.call])
+            // ... and v[i](args), m[k](args) with the element such an object ([expr.sub], [over.call]),
+            // and T{}(args), T()(args), make()(args) on a class temporary (std::hash<T>{}(x)).
             if (e.kids.empty() || !e.kids[0] ||
-                (e.kids[0]->kind != Expr::Kind::Name && e.kids[0]->kind != Expr::Kind::Member))
+                (e.kids[0]->kind != Expr::Kind::Name && e.kids[0]->kind != Expr::Kind::Member &&
+                 e.kids[0]->kind != Expr::Kind::Index && e.kids[0]->kind != Expr::Kind::Comma &&
+                 e.kids[0]->kind != Expr::Kind::Call))
                 return false;
             op = "operator()";
             break;
@@ -1470,8 +1496,10 @@ private:
         // A left operand that is a call or another operator expression (a + b + c): check it once,
         // keep the result for the check that follows, and use it only for a class with the operator.
         // world().fn(args), get()->fn(args): a call of a member object of a call result.
-        const bool callMember = e.kind == Expr::Kind::Call && lhs.kind == Expr::Kind::Member && lhs.kids.size() == 2 &&
-                                lhs.kids[0] && (memberOfCall(lhs) || lhs.kids[0]->kind == Expr::Kind::Call);
+        const bool callMember = (e.kind == Expr::Kind::Call && lhs.kind == Expr::Kind::Member && lhs.kids.size() == 2 &&
+                                 lhs.kids[0] && (memberOfCall(lhs) || lhs.kids[0]->kind == Expr::Kind::Call)) ||
+                                (e.kind == Expr::Kind::Call &&
+                                 (lhs.kind == Expr::Kind::Index || lhs.kind == Expr::Kind::Comma || lhs.kind == Expr::Kind::Call));
         if (!simple && e.kind != Expr::Kind::Bin && e.kind != Expr::Kind::Index && e.kind != Expr::Kind::Unary &&
             !callMember &&
             !((e.kind == Expr::Kind::Assign || e.kind == Expr::Kind::Pre || e.kind == Expr::Kind::Post) &&
@@ -1524,6 +1552,7 @@ private:
         }
         // (typeid(x) became *(const type_info *)... when the probe checked it: a dereference too.)
         const bool refCall = lhs.kind == Expr::Kind::Call || lhs.kind == Expr::Kind::Member || subobjectOfTemp(lhs) ||
+                             (e.kind == Expr::Kind::Call && lhs.kind == Expr::Kind::Index) ||
                              (lhs.kind == Expr::Kind::Unary && lhs.text == "*" && !lhs.kids.empty() && lhs.kids[0] &&
                               (lhs.kids[0]->kind == Expr::Kind::Call || lhs.kids[0]->kind == Expr::Kind::Cast ||
                                lhs.kids[0]->kind == Expr::Kind::Cond));  // *(c ? &x : &y)
@@ -1875,6 +1904,20 @@ private:
         e.checked.reset();
     }
 
+    // The address of an lvalue that may be a conditional: c ? a : (d ? b : x) gives
+    // c ? &a : (d ? &b : &x), so a nested conditional is an lvalue too ([expr.cond] p4).
+    std::unique_ptr<Expr> condAddress(std::unique_ptr<Expr> x) {
+        if (x->kind != Expr::Kind::Cond || x->kids.size() != 3 || !x->kids[1] || !x->kids[2]) {
+            Expr& at = *x;
+            auto u = mkE(Expr::Kind::Unary, at);
+            u->text = "&";
+            u->kids.push_back(std::move(x));
+            return u;
+        }
+        x->kids[1] = condAddress(std::move(x->kids[1]));
+        x->kids[2] = condAddress(std::move(x->kids[2]));
+        return x;
+    }
     ET checkExpr(Expr& e) {
         if (!e.file.empty()) file_ = e.file;
         {
@@ -1890,13 +1933,12 @@ private:
             !e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Cond && e.kids[0]->kids.size() == 3) {
             // (c ? a : b) = v, ++(c ? a : b): with two lvalues of one type the conditional is an
             // lvalue (ISO/IEC 14882 [expr.cond]); it becomes *(c ? &a : &b).
-            Expr& cond = *e.kids[0];
-            auto lv = mkE(Expr::Kind::Cond, cond);
-            lv->kids.push_back(std::move(cond.kids[0]));
-            lv->kids.push_back(eUnary("&", std::move(cond.kids[1]), cond));
-            lv->kids.push_back(eUnary("&", std::move(cond.kids[2]), cond));
-            auto d = eUnary("*", std::move(lv), cond);
-            e.kids[0] = std::move(d);
+            Expr at = Expr();
+            at.line = e.kids[0]->line;
+            at.col = e.kids[0]->col;
+            at.file = e.kids[0]->file;
+            auto addr = condAddress(std::move(e.kids[0]));
+            e.kids[0] = eUnary("*", std::move(addr), at);
         }
         if (e.kind == Expr::Kind::Assign && e.text == "=" && e.kids.size() == 2 && e.kids[0] && e.kids[1] &&
             e.kids[1]->kind == Expr::Kind::Brace)
@@ -2437,7 +2479,7 @@ private:
         ET d = decay(copyET(a));
         // P not a reference: the top-level const of A is ignored ([temp.deduct.call] p2), so
         // make_tuple(v) with a const int v makes a tuple<int>.
-        if (pat.kind != Type::Kind::Reference && d.type && d.type->kind != Type::Kind::Pointer) d.type->cnst = false;
+        if (pat.kind != Type::Kind::Reference && d.type && d.type->kind != Type::Kind::Pointer) d.type.mut()->cnst = false;
         return deduceType(pat, *d.type, sig, bound);
     }
     bool keepArray_ = false;  // deducing through a reference: an array argument stays an array
@@ -2679,16 +2721,32 @@ private:
     // one, then each value goes to the next field, and without one the other fields are zero.
     // x = {a, b} ([expr.ass] p9): for a class, x = T{a, b} (a temporary made from the list, then
     // the class's assignment); for a scalar, x = {} is x = 0 and x = {v} is x = v.
+    // A class whose user-declared operator= all take a number or a pointer (none a class).
+    bool scalarAssignOnly(const Type& t) {
+        const Type* c = canonOf(&t);
+        if (!c) return false;
+        bool any = false;
+        for (const Param& f : c->params) {
+            if (f.name != "operator=" || f.mangled.empty() || !f.type || f.type->params.size() != 1) continue;
+            const Type* pt = f.type->params[0].type.get();
+            if (pt && pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
+            if (!pt || pt->kind == Type::Kind::Struct || pt->kind == Type::Kind::Union) return false;
+            any = true;
+        }
+        return any;
+    }
     void braceAssign(Expr& e) {
         ++quiet_;
         ET lhs = checkExpr(*e.kids[0]);
         --quiet_;
         if (lhs.bad || !lhs.type) return;
         Expr& b = *e.kids[1];
-        if (lhs.type->kind == Type::Kind::Struct) {
+        if (lhs.type->kind == Type::Kind::Struct && !scalarAssignOnly(*lhs.type)) {
             braceToTemp(b, *lhs.type);
             return;
         }
+        // (a class whose only assignment takes a number or a pointer, std::atomic<T *>: x = {}
+        // is x = T() through it, [expr.ass] p9 with [over.ics.list] p10)
         if (b.kids.size() > 1) return;  // the checker reports the list
         if (b.kids.empty()) {
             auto zero = mkE(Expr::Kind::Int, b);
@@ -3127,10 +3185,16 @@ private:
             }
             if (ft && ft->kind == Type::Kind::Reference && ft->inner) ft = ft->inner.get();
             if (ft && ft->kind == Type::Kind::Struct && closureFn_.count(ft->tag)) {
-                std::string fname = closureFn_[ft->tag];
+                const std::string tag = ft->tag;
+                std::string fname = closureFn_[tag];
                 auto obj = std::move(e.kids[0]);
                 e.kids[0] = mkName(fname, e);
                 e.kids.insert(e.kids.begin() + 1, eUnary("&", std::move(obj), e));
+                if (generic_.count(tag)) {
+                    // a generic lambda: the instance for these arguments
+                    std::string inst = genericInstance(tag, e);
+                    if (!inst.empty()) e.kids[0]->text = inst;
+                }
             }
         }
         if (e.kids[0]->kind == Expr::Kind::Name) argumentDependent(e);
@@ -4272,6 +4336,306 @@ private:
         return -1;
     }
 
+    // The closure class's field for a captured name (once): a pointer to the variable (how 1, by
+    // reference), a copy (0), or a pointer to an array's first element (2: indexing it is the same;
+    // a copy of an array is not made, it is taken by reference: see the plan). Returns how.
+    int captureField(const std::string& tag, const std::string& name, const Sym& sym, int how,
+                     std::vector<std::pair<std::string, int>>& used) {
+        const Type* referent = sym.type.get();
+        if (referent->kind == Type::Kind::Reference && referent->inner) referent = referent->inner.get();
+        if (referent->kind == Type::Kind::Array && referent->inner) how = 2;
+        auto cit = canonStructs().find(tag);
+        bool have = false;
+        for (const auto& u : used)
+            if (u.first == name) have = true;
+        if (!have && cit != canonStructs().end() && cit->second) {
+            Param f;
+            f.name = name;
+            if (how == 2) f.type = ptrTo(cloneType(*referent->inner));
+            else f.type = how == 1 ? ptrTo(cloneType(*referent)) : cloneType(*referent);
+            cit->second->params.push_back(std::move(f));
+            used.emplace_back(name, how);
+        }
+        return how;
+    }
+    // How a lambda takes a variable: 1 by reference, 0 by copy, -1 not at all.
+    static int captureHow(const LambdaInfo& li, const std::string& name) {
+        for (const auto& c : li.caps)
+            if (c.first == name) return c.second ? 1 : 0;
+        if (li.mode == 1) return 1;
+        if (li.mode == 2) return 0;
+        return -1;
+    }
+
+    // ---- Generic lambdas (auto parameters, [expr.prim.lambda.closure] p3-p4) ----
+    // The call operator of a generic lambda is a template: each call with new argument types makes
+    // an instance. Here the lambda's function stays unchecked in its LambdaInfo; a call (checkCall,
+    // the closure call) deduces the auto parameters from the arguments ([temp.deduct.call], as for
+    // a template parameter T in place of each auto) and checks a copy of the function with those
+    // types as a function of its own (__lambda_N_gK). The captures are decided when the lambda
+    // expression is checked, from the names its body uses (a name that is a local of the enclosing
+    // function and taken by the capture list or default); the copy reads each one through a local
+    // reference to the closure's field (T &n = *__self->n, by reference; T &n = __self->n, by copy),
+    // so the copy can be checked anywhere, also inside the instance of a template that calls it
+    // (std::sort with a generic comparison). A name of the body that only shadows a local of the
+    // enclosing function is captured too (harmless: by reference, or one copy more).
+    struct GenericLambda {
+        std::size_t idx = 0;  // its LambdaInfo, whose function stays unchecked
+        std::vector<std::pair<std::string, int>> caps;  // name, how (captureField)
+        std::string methodTag;  // the class of the member function it is in, when it takes this
+        std::string inNs;
+        std::map<std::string, std::string> instances;  // mangled parameter types -> function
+    };
+    std::map<std::string, GenericLambda> generic_;  // closure class tag -> its generic lambda
+    int lamCopies_ = 0;
+    static bool hasAuto(const Type* t) {
+        while (t && (t->kind == Type::Kind::Reference || t->kind == Type::Kind::Pointer) && t->inner) t = t->inner.get();
+        return isAuto(t);
+    }
+    static bool isGenericLambda(const Decl& d) {
+        if (!d.type) return false;
+        for (std::size_t i = 1; i < d.type->params.size(); ++i)
+            if (hasAuto(d.type->params[i].type.get())) return true;
+        return false;
+    }
+    // The names an expression or statement uses, also inside the lambdas in it.
+    void namesIn(const Expr& x, std::set<std::string>& out) const {
+        if (x.kind == Expr::Kind::Name) {
+            if (x.text.compare(0, 8, "\x01" "lambda:") == 0) {
+                std::size_t n = static_cast<std::size_t>(std::stoul(x.text.substr(8)));
+                if (tu_ && n < tu_->lambdas.size() && tu_->lambdas[n].fn && tu_->lambdas[n].fn->body)
+                    namesIn(*tu_->lambdas[n].fn->body, out);
+            } else {
+                out.insert(x.text);
+            }
+        }
+        for (const auto& k : x.kids)
+            if (k) namesIn(*k, out);
+    }
+    void namesIn(const Stmt& s, std::set<std::string>& out) const {
+        for (const Expr* x : {s.expr.get(), s.expr2.get(), s.expr3.get()})
+            if (x) namesIn(*x, out);
+        for (const Stmt* t : {s.thenS.get(), s.elseS.get(), s.body.get(), s.init.get()})
+            if (t) namesIn(*t, out);
+        for (const auto& t : s.stmts)
+            if (t) namesIn(*t, out);
+        if (s.decl && s.decl->init) namesIn(*s.decl->init, out);
+    }
+    // The type an auto parameter takes from an argument ([temp.deduct.call] p2-p3 with T for auto):
+    // auto by value decays and drops const; auto & and const auto & keep the argument's type;
+    // auto && is T & for an lvalue and T && otherwise; auto * takes a pointer's type. Null when
+    // the argument does not fit.
+    std::unique_ptr<Type> autoParam(const Type& pat, const ET& a) {
+        auto argType = [&]() {
+            const Type* t = a.type.get();
+            if (t->kind == Type::Kind::Reference && t->inner) t = t->inner.get();
+            return finishedClassCopy(*t) ? classByName(*t) : cloneType(*t);
+        };
+        if (isAuto(&pat) || (pat.kind == Type::Kind::Pointer && pat.inner && isAuto(pat.inner.get()))) {
+            ET d = decay(copyET(a));
+            if (d.bad || !d.type) return nullptr;
+            const Type* t = d.type.get();
+            if (t->kind == Type::Kind::Reference && t->inner) t = t->inner.get();
+            auto r = finishedClassCopy(*t) ? classByName(*t) : cloneType(*t);
+            r->cnst = false;
+            if (isAuto(&pat)) return r;
+            if (r->kind != Type::Kind::Pointer || !r->inner) return nullptr;
+            if (pat.inner->cnst) r->inner->cnst = true;
+            return r;
+        }
+        if (pat.kind == Type::Kind::Reference && pat.inner && isAuto(pat.inner.get())) {
+            auto r = prim(Type::Kind::Reference);
+            r->inner = argType();
+            if (pat.rref && !a.lvalue) r->rref = true;  // auto && from an rvalue: T &&
+            else if (!pat.rref && pat.inner->cnst) r->inner->cnst = true;
+            return r;
+        }
+        if (hasAuto(&pat)) return nullptr;
+        return cloneType(pat);
+    }
+    // A copy of lambda n (unchecked), with the lambdas inside it copied too, under new names.
+    std::size_t copyLambda(std::size_t n) {
+        const LambdaInfo& src = tu_->lambdas[n];
+        LambdaInfo li;
+        const std::string sfx = "_g" + std::to_string(lamCopies_++);
+        li.tag = src.tag + sfx;
+        li.mode = src.mode;
+        li.caps = src.caps;
+        li.fn = cloneDecl(*src.fn);
+        li.fn->name = src.fn->name + sfx;
+        if (li.fn->type && !li.fn->type->params.empty() && li.fn->type->params[0].type &&
+            li.fn->type->params[0].type->inner)
+            li.fn->type->params[0].type->inner->tag = li.tag;  // __self
+        if (li.fn->body) copyLambdasIn(*li.fn->body);
+        tu_->lambdas.push_back(std::move(li));
+        return tu_->lambdas.size() - 1;
+    }
+    void copyLambdasIn(Expr& x) {
+        if (x.kind == Expr::Kind::Name && x.text.compare(0, 8, "\x01" "lambda:") == 0) {
+            std::size_t n = static_cast<std::size_t>(std::stoul(x.text.substr(8)));
+            if (n < tu_->lambdas.size() && tu_->lambdas[n].fn) x.text = "\x01" "lambda:" + std::to_string(copyLambda(n));
+        }
+        for (auto& k : x.kids)
+            if (k) copyLambdasIn(*k);
+    }
+    void copyLambdasIn(Stmt& s) {
+        for (Expr* x : {s.expr.get(), s.expr2.get(), s.expr3.get()})
+            if (x) copyLambdasIn(*x);
+        for (Stmt* t : {s.thenS.get(), s.elseS.get(), s.body.get(), s.init.get()})
+            if (t) copyLambdasIn(*t);
+        for (auto& t : s.stmts)
+            if (t) copyLambdasIn(*t);
+        if (s.decl && s.decl->init) copyLambdasIn(*s.decl->init);
+    }
+    // The lambda expression of a generic lambda: its captures (the closure's fields), not its body.
+    void genericCaptures(LambdaInfo& li, std::size_t idx, std::vector<std::pair<std::string, int>>& used) {
+        GenericLambda g;
+        g.idx = idx;
+        g.inNs = inNs_;
+        std::set<std::string> names;
+        if (li.fn->body) namesIn(*li.fn->body, names);
+        for (const auto& c : li.caps) names.insert(c.first);
+        const std::size_t root = lamStack_.empty() ? fnBase_ : lamStack_.front().fnBase;
+        for (const std::string& n : names) {
+            if (n.empty() || n.find("::") != std::string::npos) continue;
+            int at = scopeOf(n);
+            if (at < 0 || at < static_cast<int>(root)) continue;
+            const Sym& sym = scopes_[static_cast<std::size_t>(at)].at(n);
+            if (sym.func || !sym.type) continue;
+            if (n == "this") continue;
+            int how = captureHow(li, n);
+            if (how < 0) continue;
+            captureField(li.tag, n, sym, how, used);
+        }
+        // this, for the members the body names ([expr.prim.lambda.capture] p7): by copy.
+        if (method_ && (li.mode != 0 || captureHow(li, "this") >= 0)) {
+            int at = scopeOf("this");
+            if (at >= static_cast<int>(root)) {
+                captureField(li.tag, "this", scopes_[static_cast<std::size_t>(at)].at("this"), 0, used);
+                g.methodTag = method_->tag;
+            }
+        }
+        g.caps = used;
+        generic_[li.tag] = std::move(g);
+    }
+    // The call of a generic lambda's closure object, call.kids = {callee, &object, args...}: the
+    // name of the instance for the argument types (made and checked the first time), or empty.
+    std::string genericInstance(const std::string& tag, Expr& call) {
+        auto git = generic_.find(tag);
+        if (git == generic_.end() || !tu_) return {};
+        const std::size_t idx = git->second.idx;
+        if (idx >= tu_->lambdas.size() || !tu_->lambdas[idx].fn || !tu_->lambdas[idx].fn->type) return {};
+        const Decl& proto = *tu_->lambdas[idx].fn;
+        const std::vector<Param>& params = proto.type->params;
+        if (params.empty() || call.kids.size() != params.size() + 1) return {};
+        std::vector<std::unique_ptr<Type>> types;
+        std::string key;
+        for (std::size_t i = 1; i < params.size(); ++i) {
+            if (!call.kids[i + 1] || !params[i].type) return {};
+            ++quiet_;
+            ET a = checkExpr(*call.kids[i + 1]);
+            --quiet_;
+            if (a.bad || !a.type) return {};
+            auto t = autoParam(*params[i].type, a);
+            if (!t) return {};
+            key += mangleType(*t) + ";";
+            types.push_back(std::move(t));
+        }
+        GenericLambda& g = git->second;
+        auto have = g.instances.find(key);
+        if (have != g.instances.end()) return have->second;
+        auto d = cloneDecl(proto);
+        d->name = proto.name + "_g" + std::to_string(lamCopies_++);
+        g.instances[key] = d->name;
+        for (std::size_t i = 1; i < params.size(); ++i) d->type->params[i].type = std::move(types[i - 1]);
+        if (d->body) copyLambdasIn(*d->body);
+        // The captures, as locals: T &n = *__self->n (by reference), T &n = __self->n (by copy),
+        // T *n = __self->n (an array).
+        std::vector<std::unique_ptr<Stmt>> pre;
+        auto cls = canonStructs().find(tag);
+        for (const auto& c : g.caps) {
+            const Type* ft = nullptr;
+            if (cls != canonStructs().end() && cls->second)
+                for (const Param& f : cls->second->params)
+                    if (f.name == c.first) ft = f.type.get();
+            if (!ft) continue;
+            auto field = mkE(Expr::Kind::Member, call);
+            field->text = "->";
+            field->kids.push_back(mkName("__self", call));
+            field->kids.push_back(mkName(c.first, call));
+            auto v = std::make_unique<Decl>();
+            v->name = c.first;
+            v->line = d->line;
+            v->col = d->col;
+            v->file = d->file;
+            if (c.second == 2) {
+                v->type = cloneType(*ft);
+                v->init = std::move(field);
+            } else {
+                v->type = prim(Type::Kind::Reference);
+                v->type->inner = cloneType(c.second == 1 && ft->inner ? *ft->inner : *ft);
+                v->init = c.second == 1 ? eUnary("*", std::move(field), call) : std::move(field);
+            }
+            auto st = std::make_unique<Stmt>();
+            st->kind = Stmt::Kind::Decl;
+            st->line = d->line;
+            st->col = d->col;
+            st->file = d->file;
+            st->decl = std::move(v);
+            pre.push_back(std::move(st));
+        }
+        if (d->body && d->body->kind == Stmt::Kind::Block)
+            d->body->stmts.insert(d->body->stmts.begin(), std::make_move_iterator(pre.begin()),
+                                  std::make_move_iterator(pre.end()));
+        checkGenericInstance(*d, g);
+        std::string name = d->name;
+        lambdaDecls_.push_back(std::move(d));
+        return name;
+    }
+    // Check an instance of a generic lambda as a function of its own: only the file scope is seen
+    // from it (checkFunctionNow), with the member function's class for the members it names.
+    void checkGenericInstance(Decl& d, const GenericLambda& g) {
+        inFileScope([&] {
+            const Type* savedRet = ret_;
+            const Type* savedMethod = method_;
+            const std::string savedNs = inNs_;
+            Decl* savedFn = curFn_;
+            const std::size_t savedBase = fnBase_;
+            openLambdaFn(d);  // (its name first: a call of itself, auto &&self)
+            method_ = nullptr;
+            if (!g.methodTag.empty()) {
+                auto it = canonStructs().find(g.methodTag);
+                if (it != canonStructs().end()) method_ = it->second.get();
+            }
+            inNs_ = g.inNs;
+            if (d.body) checkStmts(*d.body);
+            closeLambdaFn(d);
+            ret_ = savedRet;
+            method_ = savedMethod;
+            inNs_ = savedNs;
+            curFn_ = savedFn;
+            fnBase_ = savedBase;
+        });
+    }
+    // A lambda's function while its body is checked: its name in the file scope (also its type, as
+    // far as it is known), a scope with its parameters, and its return type; closeLambdaFn ends it,
+    // with the return type deduced (void when nothing is returned).
+    void openLambdaFn(Decl& d) {
+        scopes_.front()[d.name].type = cloneType(*d.type);
+        scopes_.front()[d.name].func = true;
+        scopes_.emplace_back();
+        fnBase_ = scopes_.size() - 1;
+        for (const Param& p : d.type->params)
+            if (!p.name.empty() && p.type) add(p.name, cloneType(*p.type), false, d.line, d.col);
+        ret_ = d.type->inner.get();
+        curFn_ = &d;
+    }
+    void closeLambdaFn(Decl& d) {
+        if (isAuto(d.type->inner.get())) d.type->inner = prim(Type::Kind::Void);
+        scopes_.front()[d.name].type = cloneType(*d.type);
+        scopes_.pop_back();
+    }
+
     // A name used inside a lambda that is a local of the enclosing function: a capture. By
     // reference it becomes *__self->name (the closure holds a pointer), by copy __self->name.
     bool captureName(Expr& e) {
@@ -4285,32 +4649,12 @@ private:
         if (at < static_cast<int>(root) || at >= static_cast<int>(lc.lamBase)) return false;
         const Sym& sym = scopes_[static_cast<std::size_t>(at)].at(e.text);
         if (sym.func || !sym.type) return false;
-        int how = -1;
-        for (const auto& c : lc.li->caps)
-            if (c.first == e.text) how = c.second ? 1 : 0;
-        if (how < 0 && lc.li->mode == 1) how = 1;
-        if (how < 0 && lc.li->mode == 2) how = 0;
+        int how = captureHow(*lc.li, e.text);
         if (how < 0) {
             err(e.line, e.col, "'" + e.text + "' is not captured by the lambda");
             return false;
         }
-        const Type* referent = sym.type.get();
-        if (referent->kind == Type::Kind::Reference && referent->inner) referent = referent->inner.get();
-        // An array is held as a pointer to its first element (indexing it is the same); a copy
-        // of an array is not made (it is taken by reference: see the plan).
-        if (referent->kind == Type::Kind::Array && referent->inner) how = 2;
-        auto cit = canonStructs().find(lc.li->tag);
-        bool have = false;
-        for (const auto& u : lc.used)
-            if (u.first == e.text) have = true;
-        if (!have && cit != canonStructs().end() && cit->second) {
-            Param f;
-            f.name = e.text;
-            if (how == 2) f.type = ptrTo(cloneType(*referent->inner));
-            else f.type = how == 1 ? ptrTo(cloneType(*referent)) : cloneType(*referent);
-            cit->second->params.push_back(std::move(f));
-            lc.used.emplace_back(e.text, how);
-        }
+        how = captureField(lc.li->tag, e.text, sym, how, lc.used);
         std::string name = e.text;
         auto mem = mkE(Expr::Kind::Member, e);
         mem->text = "->";
@@ -4595,6 +4939,13 @@ private:
         }
         canonStructs()[li.tag] = cloneType(*cls);
         Decl& d = *li.fn;
+        if (isGenericLambda(d)) {
+            // (its function is made for each call's argument types: genericInstance)
+            std::vector<std::pair<std::string, int>> used;
+            genericCaptures(li, idx, used);
+            closureFn_[li.tag] = d.name;
+            return closureObject(e, li.tag, used);
+        }
         std::vector<TempInfo> savedTemps = std::move(temps_);
         temps_.clear();
         const Type* savedRet = ret_;
@@ -4603,14 +4954,7 @@ private:
         std::size_t savedBase = fnBase_;
         int savedLoops = loops_, savedSwitches = switches_;
         lamStack_.push_back(LamCtx{&li, fnBase_, scopes_.size(), {}});
-        scopes_.front()[d.name].type = cloneType(*d.type);
-        scopes_.front()[d.name].func = true;
-        scopes_.emplace_back();
-        fnBase_ = scopes_.size() - 1;
-        for (const Param& p : d.type->params)
-            if (!p.name.empty() && p.type) add(p.name, cloneType(*p.type), false, d.line, d.col);
-        ret_ = d.type->inner.get();
-        curFn_ = &d;
+        openLambdaFn(d);
         {
             // A lambda in a member function that captures this ([this], [&] or [=], used members
             // implicitly) reads the members through the captured this ([expr.prim.lambda.capture]/7).
@@ -4622,9 +4966,7 @@ private:
         loops_ = 0;
         switches_ = 0;
         if (d.body) checkStmts(*d.body);
-        if (isAuto(d.type->inner.get())) d.type->inner = prim(Type::Kind::Void);
-        scopes_.front()[d.name].type = cloneType(*d.type);
-        scopes_.pop_back();
+        closeLambdaFn(d);
         std::vector<std::pair<std::string, int>> used = std::move(lamStack_.back().used);
         lamStack_.pop_back();
         ret_ = savedRet;
@@ -4637,8 +4979,13 @@ private:
         closureFn_[li.tag] = d.name;
         if (li.mode == 0 && li.caps.empty() && used.empty()) closureToPointer(li.tag, d, e);
         lambdaDecls_.push_back(std::move(li.fn));
-        const bool owning = closureSpecials(li.tag, e);
-        auto full = cloneType(*canonStructs()[li.tag]);
+        return closureObject(e, li.tag, used);
+    }
+    // The closure object of a lambda expression e: a hidden local (or a class temporary, when it
+    // owns a class object) whose fields are set from the captured variables.
+    ET closureObject(Expr& e, const std::string& tag, const std::vector<std::pair<std::string, int>>& used) {
+        const bool owning = closureSpecials(tag, e);
+        auto full = cloneType(*canonStructs()[tag]);
         // A closure that owns a class object (a copy capture of a class with a destructor or a copy
         // constructor) is a class temporary like T(args): destroyed after the full expression
         // unless it initializes an object ([class.temporary] p4), which then takes it over.
@@ -4650,7 +4997,7 @@ private:
             field->kids.push_back(mkName(tmp, e));
             field->kids.push_back(mkName(u.first, e));
             std::unique_ptr<Expr> as;
-            const std::string ftag = owning && u.second == 0 ? copiedClass(li.tag, u.first) : std::string();
+            const std::string ftag = owning && u.second == 0 ? copiedClass(tag, u.first) : std::string();
             if (!ftag.empty()) {
                 // the member is made by its copy constructor ([expr.prim.lambda.capture] p15)
                 as = mkE(Expr::Kind::Call, e);
@@ -4972,6 +5319,12 @@ private:
     }
     // Check function d now, in the middle of another one: only the file scope is seen from it.
     void checkFunctionNow(Decl& d) {
+        inFileScope([&] { checkFunction(d); });
+    }
+    // Run body with only the file scope seen (no locals, temporaries, lambdas or loops of the function
+    // being checked), then give those back.
+    template <class F>
+    void inFileScope(F&& body) {
         std::vector<std::map<std::string, Sym>> outer(std::make_move_iterator(scopes_.begin() + 1),
                                                       std::make_move_iterator(scopes_.end()));
         scopes_.resize(1);
@@ -4981,7 +5334,7 @@ private:
         lamStack_.clear();
         const int savedLoops = loops_, savedSwitches = switches_, savedQuiet = quiet_;
         loops_ = switches_ = quiet_ = 0;
-        checkFunction(d);
+        body();
         loops_ = savedLoops;
         switches_ = savedSwitches;
         quiet_ = savedQuiet;

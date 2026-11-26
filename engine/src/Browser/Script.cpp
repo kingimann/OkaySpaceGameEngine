@@ -15,6 +15,7 @@
 #include "okay/Browser/Forms.hpp"
 #include "okay/Browser/Storage.hpp"
 #include "okay/Browser/Url.hpp"
+#include "okay/Core/Base64.hpp"
 #include "okay/Core/StringUtil.hpp"
 #include "../JavaScript/JsInternal.hpp"
 
@@ -1185,6 +1186,13 @@ Node* ArgNode(js::Runtime& rt, const js::Value& v) {
     if (!n) rt.ThrowType("the argument is not a node of this page");
     return n;
 }
+// An attribute name argument, lower-cased (DOM 4.9 setAttribute / toggleAttribute: an invalid name is InvalidCharacterError).
+std::string AttrNameArg(js::Runtime& rt, const js::Value& v) {
+    const std::string name = LowerAscii(rt.ToUtf8(v));
+    if (name.empty() || name.size() > HtmlLimits().maxNameBytes || name.find_first_of(" \t\n\f\r/>=\"'") != std::string::npos)
+        rt.ThrowError(js::ErrorType::Error, "InvalidCharacterError: '" + name + "' is not an attribute name");
+    return name;
+}
 // A string argument becomes a text node (ParentNode.append / prepend, 4.2.6 "convert nodes into a node").
 Node* NodeOrText(js::Runtime& rt, const js::Value& v) {
     if (Node* n = Of(rt).NodeArg(v)) return n;
@@ -1995,8 +2003,6 @@ Value EventCtor(Runtime& rt, CallArgs& a) {
     return Value::Obj(ev);
 }
 
-// atob / btoa (HTML 8.3 "forgiving-base64").
-const char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 // The page's MutationObserver `this` (a host object of class kObserver; h->id is its index in mos).
 int ThisObserver(Runtime& rt, CallArgs& a) {
@@ -2146,7 +2152,7 @@ const char* const kPrelude4 = R"JS(
     }
     toString() { return this[LIST].map(p => ok.formEncode(p[0]) + '=' + ok.formEncode(p[1])).join('&'); }
     forEach(cb, self) { for (const p of this[LIST].slice()) cb.call(self, p[1], p[0], this); }
-    entries() { return this[LIST].map(p => [p[0], p[1]])[Symbol.iterator](); }
+    entries() { return this[LIST].map(p => [p[0], p[1]])[Symbol.iterator](); }   // dup-allow: Web IDL pair iterators, as Headers' (round-3 prelude, another closure)
     keys() { return this[LIST].map(p => p[0])[Symbol.iterator](); }
     values() { return this[LIST].map(p => p[1])[Symbol.iterator](); }
     [Symbol.iterator]() { return this.entries(); }
@@ -2883,9 +2889,7 @@ void InstallRound4(PageScripts::Impl& I) {
     js::DefNative(r, I.nodeProto, "toggleAttribute", [](Runtime& rt, CallArgs& a) -> Value {
         Node* n = ThisElement(rt, a);
         Impl& P = Of(rt);
-        const std::string name = LowerAscii(rt.ToUtf8(a[0]));
-        if (name.empty() || name.size() > HtmlLimits().maxNameBytes || name.find_first_of(" \t\n\f\r/>=\"'") != std::string::npos)
-            rt.ThrowError(js::ErrorType::Error, "InvalidCharacterError: '" + name + "' is not an attribute name");
+        const std::string name = AttrNameArg(rt, a[0]);
         const bool has = n->Attr(name.c_str()) != nullptr;
         const bool want = a.argc > 1 && !a[1].IsUndef() ? rt.ToBoolean(a[1]) : !has;
         if (want && !has) { P.SetAttrC(rt, *n, name, std::string()); P.Changed(); }
@@ -2967,22 +2971,13 @@ void InstallRound4(PageScripts::Impl& I) {
     js::DefNative(r, g, "btoa", [](Runtime& rt, CallArgs& a) -> Value {
         const std::u16string s = rt.ToU16(a[0]);
         rt.Charge(s.size() / 16);
-        std::string out;
-        out.reserve((s.size() + 2) / 3 * 4);
-        for (std::size_t i = 0; i < s.size(); i += 3) {
-            unsigned v = 0;
-            int n = 0;
-            for (int k = 0; k < 3; ++k) {
-                v <<= 8;
-                if (i + k < s.size()) {
-                    if (s[i + k] > 0xFF) ThrowDom(rt, "InvalidCharacterError", "btoa: the string has characters outside Latin-1");
-                    v |= s[i + k];
-                    ++n;
-                }
-            }
-            for (int k = 0; k < 4; ++k) out += k <= n ? kB64[(v >> (18 - 6 * k)) & 63] : '=';
+        std::vector<std::uint8_t> bytes;   // HTML 8.3: each code unit is one byte; anything past U+00FF is an error
+        bytes.reserve(s.size());
+        for (const char16_t c : s) {
+            if (c > 0xFF) ThrowDom(rt, "InvalidCharacterError", "btoa: the string has characters outside Latin-1");
+            bytes.push_back((std::uint8_t)c);
         }
-        return Str(rt, out);
+        return Str(rt, okay::base64::Encode(bytes.data(), bytes.size()));
     }, 1);
     js::DefNative(r, g, "atob", [](Runtime& rt, CallArgs& a) -> Value {
         std::string in;
@@ -2996,10 +2991,10 @@ void InstallRound4(PageScripts::Impl& I) {
         std::u16string out;
         unsigned v = 0;
         int bits = 0;
-        for (const char c : in) {
-            const char* p = c ? std::strchr(kB64, c) : nullptr;
-            if (!p) ThrowDom(rt, "InvalidCharacterError", "atob: the string is not base64");
-            v = (v << 6) | (unsigned)(p - kB64);
+        for (const char c : in) {   // forgiving-base64: the bits left over at the end are dropped
+            const int val = okay::base64::Value(c);
+            if (val < 0) ThrowDom(rt, "InvalidCharacterError", "atob: the string is not base64");
+            v = (v << 6) | (unsigned)val;
             bits += 6;
             if (bits >= 8) { bits -= 8; out += (char16_t)((v >> bits) & 0xFF); }
         }
@@ -3176,9 +3171,7 @@ void Install(PageScripts::Impl& I) {
     }, 1);
     js::DefNative(r, I.nodeProto, "setAttribute", [](Runtime& rt, CallArgs& a) -> Value {
         Node* n = ThisElement(rt, a);
-        const std::string name = LowerAscii(rt.ToUtf8(a[0]));
-        if (name.empty() || name.size() > HtmlLimits().maxNameBytes || name.find_first_of(" \t\n\f\r/>=\"'") != std::string::npos)
-            rt.ThrowError(js::ErrorType::Error, "InvalidCharacterError: '" + name + "' is not an attribute name");
+        const std::string name = AttrNameArg(rt, a[0]);
         std::string value = rt.ToUtf8(a[1]);
         if (value.size() > HtmlLimits().maxAttrValueBytes) value.resize(HtmlLimits().maxAttrValueBytes);
         Of(rt).SetAttrC(rt, *n, name, value);

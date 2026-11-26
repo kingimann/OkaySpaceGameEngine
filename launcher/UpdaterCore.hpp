@@ -254,4 +254,62 @@ inline std::string MismatchSentence(const std::string& installed, const std::vec
            okay::testbuild::DisplayVersion(installed) + " again; your projects are not touched.";
 }
 
+// ---- whether to install what the check found (owner, 2026-11-26) -------------------------------------------------------------------
+// Two things can hold back a version that is newer by number: the person skipped it ("Skip this version", launcher.cfg skipped_version), or the
+// running program is a test build that already has everything in that release (their places on main, okay::testbuild::ContentAhead). The
+// checksum, signature, stage and swap rules above are not touched: this only decides whether the install starts at all.
+
+struct OfferInputs {
+    std::string local;                       ///< the running version
+    std::string target;                      ///< what the update check found ("" = nothing)
+    std::uint64_t localMainCount = 0;        ///< the running build's place on main (OKAY_MAIN_COUNT; 0 = not known)
+    std::uint64_t targetMainCount = 0;       ///< the target's place on main (versions.json "mainCount"; 0 = not known)
+    std::string skipped;                     ///< launcher.cfg skipped_version ("" = none)
+    std::string confirmed;                   ///< the version the person pressed Install now on for this check ("" = none: automatic or "Check for updates")
+    bool goBack = false;                     ///< the deliberate way back from a test build (Settings): never held back
+};
+struct Offer {
+    enum Kind {
+        Nothing,       ///< not newer: up to date
+        Install,       ///< install it now
+        Ask,           ///< show it with Install now, never install it by itself (a release over a test build whose order is not known)
+        Skipped,       ///< the person skipped it: not shown or installed by itself; "Check for updates" shows it again, marked skipped
+        AlreadyHave,   ///< a release a running test build already has everything of: no offer, `note` says so
+    } kind = Nothing;
+    std::string note;                        ///< one plain sentence for Ask, Skipped and AlreadyHave
+};
+
+inline Offer DecideOffer(const OfferInputs& in) {
+    Offer o;
+    const std::string local = okayver::NormalizeVersion(in.local), target = okayver::NormalizeVersion(in.target);
+    if (target.empty()) return o;
+    if (in.goBack) { o.kind = Offer::Install; return o; }
+    if (!local.empty() && okayver::CompareVersions(local, target) >= 0) return o;
+    const std::string v = okayver::DisplayVersion(target);
+    bool unknownOrder = false;
+    if (okay::testbuild::IsTestVersion(local) && okay::testbuild::IsReleaseShaped(target)) {   // a release offered to a test build: by content
+        switch (okay::testbuild::ContentAhead(in.targetMainCount, in.localMainCount)) {
+            case okay::testbuild::Ahead::No:
+                o.kind = Offer::AlreadyHave;
+                o.note = "You already have everything in " + v + " (your test build is newer).";
+                return o;
+            case okay::testbuild::Ahead::Unknown: unknownOrder = true; break;
+            case okay::testbuild::Ahead::Yes: break;
+        }
+    }
+    const bool confirmed = !in.confirmed.empty() && okayver::NormalizeVersion(in.confirmed) == target;
+    if (!in.skipped.empty() && okayver::NormalizeVersion(in.skipped) == target && !confirmed) {
+        o.kind = Offer::Skipped;
+        o.note = v + " is available (skipped)";
+        return o;
+    }
+    if (unknownOrder && !confirmed) {
+        o.kind = Offer::Ask;
+        o.note = "You're on a test build, and it isn't known whether it already has everything in " + v + ", so it is not installed by itself.";
+        return o;
+    }
+    o.kind = Offer::Install;
+    return o;
+}
+
 }  // namespace okayupdater

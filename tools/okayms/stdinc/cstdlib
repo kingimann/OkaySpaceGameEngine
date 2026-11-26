@@ -36,3 +36,11 @@ inline long long llabs(long long v) { return v < 0 ? -v : v; }
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
 #define RAND_MAX 0x7fff
+// POSIX.1-2017 setenv and unsetenv (Round 30), at global scope for the engine's POSIX paths (the plain survey). Declared
+// only when _WIN32 is not defined: the Microsoft runtime names them _putenv_s, so nothing that calls these links there.
+#if !defined(_WIN32)
+extern "C" {
+int setenv(const char *name, const char *value, int overwrite);
+int unsetenv(const char *name);
+}
+#endif

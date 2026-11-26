@@ -394,6 +394,37 @@ template <typename It, typename Less> void sort_heap(It first, It last, Less les
         sift_down_(first, 0, end, less);
     }
 }
+// [set.union] and [set.difference] (Round 30): both ranges sorted by operator<; the result is sorted.
+template <typename It1, typename It2, typename Out> Out set_union(It1 first1, It1 last1, It2 first2, It2 last2, Out out) {
+    while (first1 != last1 && first2 != last2) {
+        if (*first2 < *first1) {
+            *out = *first2;
+            ++first2;
+        } else {
+            if (!(*first1 < *first2)) ++first2;
+            *out = *first1;
+            ++first1;
+        }
+        ++out;
+    }
+    for (; first1 != last1; ++first1, ++out) *out = *first1;
+    for (; first2 != last2; ++first2, ++out) *out = *first2;
+    return out;
+}
+template <typename It1, typename It2, typename Out> Out set_difference(It1 first1, It1 last1, It2 first2, It2 last2, Out out) {
+    while (first1 != last1 && first2 != last2) {
+        if (*first1 < *first2) {
+            *out = *first1;
+            ++out;
+            ++first1;
+        } else {
+            if (!(*first2 < *first1)) ++first1;
+            ++first2;
+        }
+    }
+    for (; first1 != last1; ++first1, ++out) *out = *first1;
+    return out;
+}
 template <typename It1, typename It2, typename Out> Out set_intersection(It1 first1, It1 last1, It2 first2, It2 last2, Out out) {
     while (first1 != last1 && first2 != last2) {
         if (*first1 < *first2) {

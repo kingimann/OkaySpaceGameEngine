@@ -7,6 +7,7 @@
 #include <cstring>
 #include <functional>
 #include <__string_view>
+#include <__reverse_iterator>
 namespace std {
 class string {
 public:
@@ -128,6 +129,10 @@ public:
     char &back() { return p_[n_ - 1]; }
     char *begin() { return p_; }
     char *end() { return p_ + n_; }
+    reverse_iterator<char *> rbegin() const { return reverse_iterator<char *>(p_ + n_); }
+    reverse_iterator<char *> rend() const { return reverse_iterator<char *>(p_); }
+    reverse_iterator<char *> crbegin() const { return rbegin(); }
+    reverse_iterator<char *> crend() const { return rend(); }
     char &at(unsigned long i) { return p_[i]; }
     void pop_back() { p_[--n_] = 0; }
     void reserve(unsigned long n) { release(grow(n)); }

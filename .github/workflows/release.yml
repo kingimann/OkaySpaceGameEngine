@@ -77,6 +77,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The build's place on main (owner, 2026-11-26: a test build can hold more than a newer-numbered release): git rev-list --count of the
+      # commit built. Built into the launcher (OKAY_MAIN_COUNT, read by build-windows-dist.sh) and written into versions.json by
+      # publish-supabase.sh (mainCount, mainSha). Not found = left empty (the launcher reads it as "not known"); the release goes on.
+      - name: Record this build's place on main
+        run: |
+          pos="$(bash scripts/main_position.sh HEAD || true)"
+          count="${pos%% *}"; sha="${pos#* }"
+          if [[ "$count" =~ ^[1-9][0-9]*$ && "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "OKAY_MAIN_COUNT=$count" >> "$GITHUB_ENV"
+            echo "OKAY_MAIN_SHA=$sha" >> "$GITHUB_ENV"
+            echo "This build is commit $count of main ($sha)."
+          else
+            echo "::warning title=Place on main not known::scripts/main_position.sh found nothing; versions.json gets no mainCount for this release."
+          fi
+
       # FAST RELEASE ONLY (skipped unless fast-release.yml passes stamp_version). The version is put into THIS runner's copy of
       # CMakeLists.txt (never committed), so the programs, VERSION.txt, the zip name, the tag and versions.json all carry it. The
       # assembled changelog replaces dist/CHANGELOG.txt, which this workflow attaches to the release.

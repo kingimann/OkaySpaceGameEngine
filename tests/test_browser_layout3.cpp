@@ -346,5 +346,21 @@ int main() {
         CHECK(xw(n, "b", 75.0f - 50.0f * 67.0f / 78.0f, 200));
         CHECK(xw(n, "c", 75.0f - 50.0f * 67.0f / 78.0f + 200.0f, 75.0f - 50.0f * 11.0f / 78.0f));
     }
+    {
+        // <font size color face> (HTML 15.3.4, the legacy font sizes 1-7 and +n / -n from 3): x-small 10, x-large 24, xxx-large
+        // 48, small 13; <p align> (15.3.3); <body marginwidth / marginheight> (15.3.2).
+        const LayoutResult r = Lay("<body marginwidth=0 marginheight=0><p style='margin:0'><font size=1>aa</font> <font size='+2'>bb</font> "
+                                   "<font size=7>cc</font> <font size=-1>dd</font> <font color=red face='Courier New'>ee</font></p>"
+                                   "<p align=center style='margin:0;width:100px'>ab</p>", 400);
+        const DrawCmd* aa = TextCmd(r, "aa"); const DrawCmd* bb = TextCmd(r, "bb"); const DrawCmd* cc = TextCmd(r, "cc");
+        const DrawCmd* dd = TextCmd(r, "dd"); const DrawCmd* ee = TextCmd(r, "ee");
+        CHECK(aa && Near(aa->font.size, 10) && Near(aa->x, 0));
+        CHECK(bb && Near(bb->font.size, 24));
+        CHECK(cc && Near(cc->font.size, 48));
+        CHECK(dd && Near(dd->font.size, 13));
+        CHECK(ee && ee->color == (Color{255, 0, 0, 255}) && ee->font.family.find("courier new") != std::string::npos);
+        const DrawCmd* ab = TextCmd(r, "ab");
+        CHECK(ab && Near(ab->x, (100 - 16) * 0.5f));
+    }
     TEST_MAIN_RESULT();
 }

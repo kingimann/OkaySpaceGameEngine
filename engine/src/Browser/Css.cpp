@@ -2206,15 +2206,95 @@ bool SafeHintWord(const std::string& v) {
     for (char c : v) if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '#')) return false;
     return true;
 }
-// The CSS that an element's presentational attributes stand for (the HTML standard, 15.3.3 / 15.3.8 / 15.3.10, the parts the
-// pages we meet still use: table border / cellspacing / cellpadding / width / bgcolor / align, cell width / height / nowrap /
-// align / valign, body bgcolor / text).
+// The HTML standard's "rules for parsing a legacy font size" (15.3.4, the <font size> attribute): "3", "+1", "-2" ... -> the font-size
+// keyword it stands for, or "" when the value has no digits.
+std::string LegacyFontSize(const std::string& v) {
+    std::size_t i = 0;
+    while (i < v.size() && IsWs(v[i])) ++i;
+    int mode = 0;   // 0 absolute, 1 relative-plus, -1 relative-minus
+    if (i < v.size() && (v[i] == '+' || v[i] == '-')) { mode = v[i] == '+' ? 1 : -1; ++i; }
+    std::size_t j = i;
+    int value = 0;
+    while (j < v.size() && v[j] >= '0' && v[j] <= '9') { if (value < 100) value = value * 10 + (v[j] - '0'); ++j; }
+    if (j == i) return std::string();
+    if (mode != 0) value = 3 + mode * value;
+    if (value < 1) value = 1;
+    if (value > 7) value = 7;
+    static const char* const kSizes[] = {"x-small", "small", "medium", "large", "x-large", "xx-large", "xxx-large"};
+    return kSizes[value - 1];
+}
+// A <font face> list kept to the characters a family list needs (letters, digits, space, comma, hyphen, underscore), so the
+// attribute cannot add other declarations.
+std::string SafeFaceList(const std::string& v) {
+    if (v.empty() || v.size() > 200) return std::string();
+    for (char c : v)
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ' || c == ',' || c == '-' || c == '_'))
+            return std::string();
+    return v;
+}
+
+// The CSS that an element's presentational attributes stand for (the HTML standard, 15.3.2 - 15.3.10, the parts the pages we
+// meet still use: table border / cellspacing / cellpadding / width / bgcolor / align, cell width / height / nowrap / align /
+// valign, body bgcolor / text / margins, <font> color / face / size, align on blocks, <img> align / hspace / vspace / border,
+// <hr> width / size / color / noshade / align).
 std::string PresentationalHints(const Node& el) {
     const std::string& n = el.name;
     std::string css;
     auto colorAttr = [&](const char* attr, const char* prop) {
         if (const std::string* v = el.Attr(attr)) { Color c; if (SafeHintWord(*v) && ParseColor(*v, c)) css += std::string(prop) + ":" + *v + ";"; }
     };
+    auto lowerAttr = [&](const char* attr) { const std::string* a = el.Attr(attr); return a ? LowerAscii(Trim(*a)) : std::string(); };
+    if (n == "font") {   // 15.3.4
+        colorAttr("color", "color");
+        if (const std::string* f = el.Attr("face")) { const std::string safe = SafeFaceList(*f); if (!safe.empty()) css += "font-family:" + safe + ";"; }
+        if (const std::string* sz = el.Attr("size")) { const std::string k = LegacyFontSize(*sz); if (!k.empty()) css += "font-size:" + k + ";"; }
+    }
+    if (n == "div" || n == "p" || n == "h1" || n == "h2" || n == "h3" || n == "h4" || n == "h5" || n == "h6" || n == "caption") {   // 15.3.3
+        const std::string la = lowerAttr("align");
+        if (la == "left" || la == "right" || la == "center" || la == "middle")
+            css += "text-align:-webkit-" + std::string(la == "middle" ? "center" : la) + ";";
+        else if (la == "justify") css += "text-align:justify;";
+    }
+    if (n == "body") {   // 15.3.2: the body's margins
+        const std::string top = !DimensionAttr(el, "marginheight").empty() ? DimensionAttr(el, "marginheight") : DimensionAttr(el, "topmargin");
+        const std::string bottom = !DimensionAttr(el, "marginheight").empty() ? DimensionAttr(el, "marginheight") : DimensionAttr(el, "bottommargin");
+        const std::string left = !DimensionAttr(el, "marginwidth").empty() ? DimensionAttr(el, "marginwidth") : DimensionAttr(el, "leftmargin");
+        const std::string right = !DimensionAttr(el, "marginwidth").empty() ? DimensionAttr(el, "marginwidth") : DimensionAttr(el, "rightmargin");
+        if (!top.empty()) css += "margin-top:" + top + ";";
+        if (!bottom.empty()) css += "margin-bottom:" + bottom + ";";
+        if (!left.empty()) css += "margin-left:" + left + ";";
+        if (!right.empty()) css += "margin-right:" + right + ";";
+    }
+    if (n == "img" || n == "object" || n == "embed" || n == "iframe") {   // 15.4.3 (align) and 15.4.2 (hspace / vspace), 15.4.4 (border)
+        const std::string la = lowerAttr("align");
+        if (la == "left" || la == "right") css += "float:" + la + ";";
+        else if (la == "top" || la == "middle" || la == "bottom") css += std::string("vertical-align:") + (la == "bottom" ? "baseline" : la) + ";";
+        const std::string hs = DimensionAttr(el, "hspace"), vs = DimensionAttr(el, "vspace");
+        if (!hs.empty()) css += "margin-left:" + hs + ";margin-right:" + hs + ";";
+        if (!vs.empty()) css += "margin-top:" + vs + ";margin-bottom:" + vs + ";";
+        if (n == "img" || n == "object") {
+            const std::string b = DimensionAttr(el, "border");
+            if (!b.empty() && b.back() != '%') css += "border:" + b + " solid;";
+        }
+    }
+    if (n == "hr") {   // 15.3.10
+        const std::string w = DimensionAttr(el, "width");
+        if (!w.empty()) css += "width:" + w + ";";
+        const std::string la = lowerAttr("align");
+        if (la == "left") css += "margin-left:0;margin-right:auto;";
+        else if (la == "right") css += "margin-left:auto;margin-right:0;";
+        const std::string* cv = el.Attr("color");
+        Color c;
+        const bool colored = cv && SafeHintWord(*cv) && ParseColor(*cv, c);
+        if (colored) css += "border-style:solid;border-color:" + *cv + ";background-color:" + *cv + ";";
+        if (el.Attr("noshade")) css += std::string("border-style:solid;") + (colored ? "" : "border-color:gray;background-color:gray;");
+        const std::string sz = DimensionAttr(el, "size");
+        if (!sz.empty() && sz.back() != '%') {
+            const float px = std::strtof(sz.c_str(), nullptr);
+            if (px <= 1.0f) css += "border-bottom-width:0;";
+            else css += "height:" + std::to_string((int)std::min(px - 2.0f, 1000.0f)) + "px;";
+        }
+    }
     if (n == "table" || n == "td" || n == "th" || n == "tr" || n == "body" || n == "thead" || n == "tbody" || n == "tfoot") colorAttr("bgcolor", "background-color");
     if (n == "body") colorAttr("text", "color");
     if (n == "table") {

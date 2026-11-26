@@ -5,7 +5,7 @@
 > one needs, and what already exists that OkayBackend can build on. The design is in [okay_backend.md](okay_backend.md).
 >
 > **Status:** Internal record. Read only: nothing in the programs was changed by this audit. Facts are from origin/main at
-> `ab3b88647` (2026-11-26). Re-run the call-site part with `python3 scripts/provenance_scan.py backend` (add `--summary` for
+> `ab3b88647` and re-checked unchanged at `3a1135e5f` (2026-11-26). Re-run the call-site part with `python3 scripts/provenance_scan.py backend` (add `--summary` for
 > the counts, `--tests` to include the tests).
 >
 > **Last checked:** 2026-11-26 (branch `claude/okay-backend-1`). Nothing was sent to the live Supabase project; the audit reads

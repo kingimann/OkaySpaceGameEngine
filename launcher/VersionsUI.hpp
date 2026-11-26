@@ -29,6 +29,11 @@ struct Host {
     std::function<void(const std::string& path)> openFolder;
     std::function<void()> savePrefs;
     std::function<void()> startUpdate;           ///< the launcher's own update (the sidebar's "Install now")
+    /// "Skip this version" (owner, 2026-11-26): the newer version the person skipped ("" = none), shown as "v2.904.0 is available (skipped)" with
+    /// Install, which runs installSkipped (the launcher's own update of that version, the skip undone).
+    std::string skippedUpdate;
+    std::function<void(const std::string& version)> installSkipped;
+    std::uint64_t runningMainCount = 0;          ///< this build's place on main (OKAY_MAIN_COUNT; 0 = not known): releases behind a running test build say so
     std::function<void()> channelChanged;        ///< the channel was switched: look for updates again
     /// "" when the editor and the player next to this launcher are its version; otherwise the plain sentence saying which one is not and how to
     /// fix it (okayupdater::MismatchSentence, from the programs' own version resource).

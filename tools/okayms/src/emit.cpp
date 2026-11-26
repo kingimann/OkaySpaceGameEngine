@@ -105,10 +105,24 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         return true;
     };
     for (FuncDecl& fn : funcs) {
-        if (!fn.defined || fn.thunk_target.empty()) continue;
+        if (!fn.defined || (fn.thunk_target.empty() && fn.thunk_vslot < 0)) continue;
         // An adjustor thunk (Round 29): sub rcx (or rdx), imm32; jmp target. The register holds the address of a base
         // subobject; the target wants the address of the whole class.
         const uint32_t start = static_cast<uint32_t>(gen.text.size());
+        if (fn.thunk_vslot >= 0) {
+            // A virtual call thunk (Round 31): mov rax, [rcx + vptr] (or rdx); jmp qword [rax + slot * 8].
+            gen.b(0x48);
+            gen.b(0x8B);
+            gen.b(fn.thunk_rdx ? 0x82 : 0x81);
+            gen.u32(static_cast<uint32_t>(fn.thunk_vptr));
+            gen.b(0xFF);
+            gen.b(0xA0);
+            gen.u32(static_cast<uint32_t>(fn.thunk_vslot * 8));
+            placed.push_back({fn.symbol.empty() ? fn.name : fn.symbol, start, static_cast<uint32_t>(gen.text.size()) - start,
+                              false, fn.is_static, {}});
+            if (!add_unwind(UnwindPrologue{})) return false;
+            continue;
+        }
         gen.b(0x48);
         gen.b(0x81);
         gen.b(fn.thunk_rdx ? 0xEA : 0xE9);
@@ -121,7 +135,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         if (!add_unwind(UnwindPrologue{})) return false;
     }
     for (FuncDecl& fn : funcs) {
-        if (!fn.defined || !fn.thunk_target.empty()) continue;
+        if (!fn.defined || !fn.thunk_target.empty() || fn.thunk_vslot >= 0) continue;
         std::map<std::string, int> name_count;
         for (const Local& local : fn.locals) ++name_count[local.name];
         std::set<std::string> shadowed;
@@ -147,7 +161,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         const int outgoing = max_args > 0 ? 32 + 8 * std::max(0, max_args - 4) : 0;
         const int local_end = fn.locals.empty() ? 0 : -fn.locals.back().offset;
         const int copy_bytes = struct_arg_space(fn.body, funcs, gen);
-        int frame = local_end + 128 + copy_bytes + outgoing;
+        int frame = local_end + 8 * Gen::kTempSlots + copy_bytes + outgoing;
         frame = (frame + 15) & ~15;
         if (frame < 0x20) frame = 0x20;
         bool needs_nv = false;
@@ -235,7 +249,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         gen.extra_pops.clear();
         gen.locals = fn.locals;
         gen.temp_base = -(((local_end + 7) & ~7) + 8);
-        gen.struct_copy = -((((local_end + 7) & ~7) + 128 + copy_bytes));
+        gen.struct_copy = -((((local_end + 7) & ~7) + 8 * Gen::kTempSlots + copy_bytes));
         gen.frame = frame;
         const uint32_t start = static_cast<uint32_t>(gen.text.size());
         gen.lines.clear();
@@ -399,8 +413,17 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             const int machine = src == 0 ? 1 : src == 1 ? 2 : src == 2 ? 8 : 9;
             gen.mov_regs(local.reg, machine);
         }
+        gen.stmt_line = 0;
         if (!gen.gen_stmt(fn.body)) {
-            *error = (gen.error.empty() ? std::string("codegen failed") : gen.error) + " (in " + fn.name + ")";
+            // "file:line: " of the statement when it is known (Round 30), as the parser's errors have.
+            std::string place;
+            if (gen.stmt_line > 0 && line_source.origin != nullptr && line_source.files != nullptr &&
+                static_cast<size_t>(gen.stmt_line) <= line_source.origin->size()) {
+                const auto& o = (*line_source.origin)[static_cast<size_t>(gen.stmt_line) - 1];
+                if (o.first >= 0 && static_cast<size_t>(o.first) < line_source.files->size())
+                    place = (*line_source.files)[static_cast<size_t>(o.first)] + ":" + std::to_string(o.second) + ": ";
+            }
+            *error = place + (gen.error.empty() ? std::string("codegen failed") : gen.error) + " (in " + fn.name + ")";
             return false;
         }
         if (gen.debug_lines) gen.lines.push_back({static_cast<uint32_t>(gen.text.size()), fn.end_line});

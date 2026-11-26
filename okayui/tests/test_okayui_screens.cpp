@@ -114,6 +114,21 @@ int main() {
         const S::WhatsNewResult c = r.Click(r.res.updateButton);
         CHECK(c.installNow && !c.checkForUpdates && !c.restartNow);
     }
+    {   // state: a skipped version -> "v2.861.0 is available (skipped)" with Install (the way back from "Skip this version")
+        NewsRig r;
+        r.model.state = S::UpdateState::Available; r.model.availableVersion = "2.861.0"; r.model.availableSkipped = true;
+        r.Frames(3);
+        CHECK(r.res.statusLine == "v2.861.0 is available (skipped)");
+        CHECK(r.Click(r.res.updateButton).installNow);
+        NewsRig r2;   // a test build ahead of the release: the line says so instead of "You're up to date."
+        r2.model.state = S::UpdateState::UpToDate; r2.model.message = "You already have everything in v2.861.0 (your test build is newer).";
+        r2.Frames(3);
+        CHECK(r2.res.statusLine == r2.model.message);
+        NewsRig r3;
+        r3.model.state = S::UpdateState::Available; r3.model.availableVersion = "2.861.0";
+        r3.Frames(3);
+        CHECK(r3.res.statusLine == "v2.861.0 is ready to install.");
+    }
     {   // state: installed, restart needed -> "Restart now"; installed without restart -> "Check for updates"
         NewsRig r;
         r.model.state = S::UpdateState::Installed; r.model.restartNeeded = true;

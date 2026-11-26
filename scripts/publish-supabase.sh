@@ -33,6 +33,8 @@
 #
 # Options (environment):
 #   CHANNEL      latest (default) or lts
+#   OKAY_MAIN_COUNT, OKAY_MAIN_SHA  the build's place on main (scripts/main_position.sh), written into versions.json as mainCount / mainSha
+#                (optional; empty = not known. release.yml sets them for the build and this publish)
 #   DIST_DIR     build output to publish (default build-win-dist)
 #   NOTES_FILE   bullet lines for NOTES.txt (default: this version's block in dist/CHANGELOG.txt, else the last 6 commit subjects)
 #   KEEP         how many non-LTS versions to keep in the bucket (default 3)
@@ -219,6 +221,8 @@ update_index() {
                 --repo "$ARCHIVE_REPO" --bucket-versions "$inbucket" --out "$new")
     [ -n "$latest" ] && args+=(--latest "$latest")
     [ -n "$lts" ] && args+=(--lts "$lts")
+    [ -n "${OKAY_MAIN_COUNT:-}" ] && args+=(--main-count "$OKAY_MAIN_COUNT")
+    [ -n "${OKAY_MAIN_SHA:-}" ] && args+=(--main-sha "$OKAY_MAIN_SHA")
     local fargs=()
     for n in "${NAMES[@]}"; do args+=(--file "$n=${SRC[$n]}"); fargs+=(--file "$n=${SRC[$n]}"); done
     python3 scripts/versions_index.py "${args[@]}" || die "versions.json could not be built with a checksum for every file"

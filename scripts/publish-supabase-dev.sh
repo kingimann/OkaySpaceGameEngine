@@ -33,6 +33,8 @@
 #   DEV_BRANCH   the branch (or tag, or commit) that was built (required; letters, digits and . _ / + - only)
 #   DEV_SHA      the commit that was built (required; 7 to 40 hex digits)
 #   DEV_NOTE     one line from whoever started the build (optional; plain ASCII, 140 characters)
+#   DEV_MAIN_COUNT, DEV_MAIN_SHA  the build's place on main (scripts/main_position.sh: git rev-list --count of the main commit it was built from
+#                or on top of, and that commit), written into dev/versions.json as mainCount / mainSha (optional; empty = not known)
 #   DIST_DIR     build output to publish (default build-win-dist): OkaySpace.exe, Tools/OkayEngine.exe, Tools/OkaySpacePlayer.exe, VERSION.txt
 #   DEV_KEEP     how many test builds to keep in the bucket (default 3, at most 10)
 #   SUPABASE_URL project URL (default: the one baked into CMakeLists.txt)
@@ -81,6 +83,7 @@ PUBLIC="$API/object/public/$BUCKET"
 DEV_NOTE="${DEV_NOTE:-}"
 DEV_BRANCH="${DEV_BRANCH:-}"
 DEV_SHA="${DEV_SHA:-}"
+POSARGS=(--main-count="${DEV_MAIN_COUNT:-}" --main-sha="${DEV_MAIN_SHA:-}")   # (empty = not known; dev_index.py refuses junk)
 
 # ---- The build ----------------------------------------------------------------------------------------------------------------------
 VER="$(head -n1 "$DIST_DIR/VERSION.txt" 2>/dev/null | tr -d '\r ' || true)"   # (|| true: let the check below say why)
@@ -117,7 +120,7 @@ FILEARGS=()
 for n in "${NAMES[@]}"; do FILEARGS+=(--file "$n=${SRC[$n]}"); done
 # The updater refuses files without a checksum, so refuse to publish without them (this also runs for DRY_RUN).
 set +e
-"${IDX[@]}" merge --version "$VER" --branch="$DEV_BRANCH" --sha="$DEV_SHA" --note="$DEV_NOTE" --date "$DATE" "${FILEARGS[@]}" --out "$T/preflight.json"
+"${IDX[@]}" merge --version "$VER" --branch="$DEV_BRANCH" --sha="$DEV_SHA" --note="$DEV_NOTE" --date "$DATE" "${FILEARGS[@]}" "${POSARGS[@]}" --out "$T/preflight.json"
 rc=$?
 set -e
 [ "$rc" = 0 ] || die "cannot compute a size and SHA-256 for every file, or a field was refused; the launcher would refuse this build"
@@ -220,7 +223,7 @@ for v in $(printf '%s' "$LISTING" | sed -n 's#^v\(.*\)$#\1#p'); do
 done
 STAY="$STAY $VER"
 set +e
-"${IDX[@]}" merge --existing "$OLDIDX" --version "$VER" --branch="$DEV_BRANCH" --sha="$DEV_SHA" --note="$DEV_NOTE" --date "$DATE" "${FILEARGS[@]}" \
+"${IDX[@]}" merge --existing "$OLDIDX" --version "$VER" --branch="$DEV_BRANCH" --sha="$DEV_SHA" --note="$DEV_NOTE" --date "$DATE" "${FILEARGS[@]}" "${POSARGS[@]}" \
     --bucket-versions "$STAY" --keep "$KEEP" --out "$T/new.json"
 rc=$?
 set -e

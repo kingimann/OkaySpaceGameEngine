@@ -164,6 +164,15 @@ public:
         pop_back();
         return block_ + head_ + at;
     }
+    // [sequence.reqmts]: the elements in [first, last) are removed (Round 30, WeaponBook.cpp's erase-remove).
+    T* erase(T* first, T* last) {
+        const size_t at = (size_t)(first - (block_ + head_));
+        const size_t n = (size_t)(last - first);
+        if (n == 0) return block_ + head_ + at;
+        for (size_t i = at; i + n < size_; ++i) block_[head_ + i] = std::move(block_[head_ + i + n]);
+        for (size_t k = 0; k < n; ++k) pop_back();
+        return block_ + head_ + at;
+    }
     T* insert(T* pos, const T& value) {
         const size_t at = (size_t)(pos - (block_ + head_));
         T copy(value);
@@ -178,5 +187,14 @@ public:
         size_t s = size_; size_ = other.size_; other.size_ = s;
         size_t c = cap_; cap_ = other.cap_; other.cap_ = c;
     }
+    // [container.reqmts] == and != (Round 31): before, there were none and okay-ms compared the objects' bytes
+    // (SaveFramework.hpp's `m_values == o.m_values` on a std::map).
+    bool operator==(const deque& o) const {
+        if (size() != o.size()) return false;
+        for (size_t i = 0; i < size(); ++i)
+            if (!((*this)[i] == o[i])) return false;
+        return true;
+    }
+    bool operator!=(const deque& o) const { return !(*this == o); }
 };
 }

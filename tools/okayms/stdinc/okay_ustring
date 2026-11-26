@@ -158,6 +158,18 @@ public:
         return r;
     }
 };
+// A character string or a character in front of a string ([string.op.plus]; Round 31: `L"Range: bytes=" +
+// std::to_wstring(n)` in NativeHttp.hpp was added as bytes).
+template <typename C> basic_ustring__<C> operator+(const C* a, const basic_ustring__<C>& b) {
+    basic_ustring__<C> r(a);
+    r.append(b);
+    return r;
+}
+template <typename C> basic_ustring__<C> operator+(const basic_ustring__<C>& a, const C* b) {
+    basic_ustring__<C> r(a);
+    r += b;
+    return r;
+}
 typedef basic_ustring__<char16_t> u16string;
 typedef basic_ustring__<char32_t> u32string;
 typedef basic_ustring__<wchar_t> wstring;

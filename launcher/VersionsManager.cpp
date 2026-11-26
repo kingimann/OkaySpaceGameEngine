@@ -287,6 +287,11 @@ Index ParseIndex(std::string_view text, IndexKind kind) {
             if (const Value* c = ev.get("channel"); c && c->kind == Value::String && (c->str == "latest" || c->str == "lts")) e.channel = c->str;
             if (const Value* d = ev.get("date"); d && d->kind == Value::String && d->str.size() <= 32 && PlainText(d->str, 32)) e.date = d->str;
             if (const Value* b = ev.get("inBucket"); b && b->kind == Value::Bool) e.inBucket = b->b;
+            if (const Value* mc = ev.get("mainCount"); mc && mc->kind == Value::Number) {   // the build's place on main (0 / missing / junk = not known)
+                std::uint64_t n = 0;
+                if (okayofficial::ParseSize(mc, n) && n <= (1ull << 40)) e.mainCount = n;
+            }
+            if (const Value* ms = ev.get("mainSha"); ms && ms->kind == Value::String && ms->str.size() <= 64) e.mainSha = okay::testbuild::CleanSha(ms->str);
             if (kind == IndexKind::TestBuilds) {   // where the build came from: cleaned, display-only (anything unusable is simply left out)
                 auto text = [&](const char* key) -> std::string_view {
                     const Value* t = ev.get(key);
@@ -526,8 +531,9 @@ std::vector<const Entry*> InstallableWindow(const Index& list, bool testBuilds) 
 }
 
 std::vector<AvailableRow> AvailableRows(const Index& releases, const Index& testBuilds, const std::string& running,
-                                        const std::vector<std::string>& installed) {
-    const std::string cur = okayver::NormalizeVersion(running);
+                                        const std::vector<std::string>& installed, std::uint64_t runningMainCount, const std::string& skipped) {
+    const std::string cur = okayver::NormalizeVersion(running), skip = okayver::NormalizeVersion(skipped);
+    const bool onTestBuild = okay::testbuild::IsTestVersion(cur);
     std::set<std::string> have;
     for (const std::string& v : installed) have.insert(okayver::NormalizeVersion(v));
     std::vector<AvailableRow> rows;
@@ -555,6 +561,9 @@ std::vector<AvailableRow> AvailableRows(const Index& releases, const Index& test
             else part("from the OkaySpace download server");
             if (!r.checkable) part("no checksum: can't be installed here");
             if (!test && !idx.lts.empty() && e.version == idx.lts) part("only gets fixes");
+            if (!test && onTestBuild && okay::testbuild::ContentAhead(e.mainCount, runningMainCount) == okay::testbuild::Ahead::No)
+                part("older than your test build");   // its place on main is not after the running test build's (both known)
+            if (!skip.empty() && e.version == skip) part("skipped");
             rows.push_back(std::move(r));
         }
     };
@@ -1062,6 +1071,7 @@ bool ApplySettingLine(Settings& s, const std::string& key, const std::string& va
     if (key == "default_editor") { s.defaultEditor = okayver::NormalizeVersion(value); return true; }
     if (key == "lts_line") { s.ltsLine = okayver::LineOf(value); return true; }
     if (key == "test_builds") { s.testBuilds = value == "1"; return true; }   // only an exact 1 turns it on
+    if (key == "skipped_version") { s.skippedVersion = okayver::NormalizeVersion(value); return true; }   // junk = nothing skipped
     return false;
 }
 void WriteSettings(const Settings& s, std::ostream& out) {
@@ -1070,6 +1080,7 @@ void WriteSettings(const Settings& s, std::ostream& out) {
     if (!s.defaultEditor.empty()) out << "default_editor=" << s.defaultEditor << "\n";
     if (!s.ltsLine.empty()) out << "lts_line=" << s.ltsLine << "\n";
     if (s.testBuilds) out << "test_builds=1\n";   // written only when on: a launcher.cfg that never used test builds stays exactly as it was
+    if (!s.skippedVersion.empty()) out << "skipped_version=" << s.skippedVersion << "\n";   // (only when one is skipped)
 }
 
 // ---- projects and "Open with" ----------------------------------------------------------------------------------------------

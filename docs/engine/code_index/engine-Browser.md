@@ -2,12 +2,12 @@
 
 # Code index: engine-Browser
 
-Back to the [code index](../code_index.md). 9 headers, 123 names.
+Back to the [code index](../code_index.md). 10 headers, 129 names.
 
 ## `engine/include/okay/Browser/Browser.hpp`
 
-- `BrowserTab` class, line 34
-- `PlainTextPage` function, line 198: The page shown for a plain-text address (".txt"): the text in a <pre>, with < and & escaped.
+- `BrowserTab` class, line 40
+- `PlainTextPage` function, line 236: The page shown for a plain-text address (".txt"): the text in a <pre>, with < and & escaped.
 
 ## `engine/include/okay/Browser/Css.hpp`
 
@@ -49,10 +49,11 @@ Back to the [code index](../code_index.md). 9 headers, 123 names.
 - `ParseStyleSheet` function, line 263
 - `ParseDeclarations` function, line 265: The declarations of a style="" attribute (or of the inside of one rule's braces).
 - `ParseSelector` function, line 267: Read one selector ("ul li.note > a"); false when it uses anything outside the supported subset.
-- `StyleContext` struct, line 271: What matching and the cascade need to know beyond the tree: the element under the pointer and the one with the keyboard
-- `Matches` function, line 283: Does 'el' (an element) match 'sel' (for its pseudo-element 'pseudo': 0 the element, 1 ::before, 2 ::after)?
-- `DefaultStyleSheet` function, line 288: The built-in sheet every page starts from (the "user agent" style sheet: block elements, heading sizes, list indents,
-- `InheritedStyle` function, line 292: A style that has 'parent''s inherited properties (colour, font, text, white-space, list style, visibility, custom
+- `ParseSelectorList` function, line 270: Read a comma-separated selector list ("h1, .note a"); false when any part is outside the subset. 'maxSpec': the highest
+- `StyleContext` struct, line 274: What matching and the cascade need to know beyond the tree: the element under the pointer and the one with the keyboard
+- `Matches` function, line 286: Does 'el' (an element) match 'sel' (for its pseudo-element 'pseudo': 0 the element, 1 ::before, 2 ::after)?
+- `DefaultStyleSheet` function, line 291: The built-in sheet every page starts from (the "user agent" style sheet: block elements, heading sizes, list indents,
+- `InheritedStyle` function, line 295: A style that has 'parent''s inherited properties (colour, font, text, white-space, list style, visibility, custom
 
 ## `engine/include/okay/Browser/Forms.hpp`
 
@@ -87,8 +88,10 @@ Back to the [code index](../code_index.md). 9 headers, 123 names.
 - `HtmlDocument` struct, line 51
 - `ParseHtml` function, line 65: Read a page. Never fails: any text gives a tree with <html>, <head> and <body>.
 - `DumpTree` function, line 69: The tree as text, one node per line, two spaces per level (the shape of the html5lib tree-construction test format):
-- `DecodeCharRefs` function, line 73: Decode the character references in 'text' ("&amp;", "&#169;", "&#x1F600;" ...). In an attribute value a named reference
-- `IsVoidElement` function, line 76: Elements that never have content (13.1.2): area base br col embed hr img input link meta source track wbr.
+- `SerializeChildren` function, line 74: The children of 'node' as HTML text (the standard's "HTML fragment serialization algorithm", 13.3: what innerHTML reads):
+- `SerializeNode` function, line 76: 'node' itself and its children as HTML text (what outerHTML reads).
+- `DecodeCharRefs` function, line 80: Decode the character references in 'text' ("&amp;", "&#169;", "&#x1F600;" ...). In an attribute value a named reference
+- `IsVoidElement` function, line 83: Elements that never have content (13.1.2): area base br col embed hr img input link meta source track wbr.
 
 ## `engine/include/okay/Browser/Layout.hpp`
 
@@ -137,6 +140,12 @@ Back to the [code index](../code_index.md). 9 headers, 123 names.
 - `IsInternalPage` function, line 238: True for the addresses of our own pages ("about:newtab", "about:history", "about:bookmarks", "about:downloads",
 - `InternalPage` function, line 240: The HTML of one of our own pages (text escaped; every link is an http(s) address or another of our pages).
 - `HtmlEscape` function, line 242: Text with <, >, & and " escaped for HTML.
+
+## `engine/include/okay/Browser/Script.hpp`
+
+- `ConsoleLine` struct, line 35: One line of a page's console.
+- `PageScripts` class, line 40
+- `IsJavaScriptType` function, line 107: Is 'type' (a <script type="..."> value, "" when there is none) a classic script we run? (HTML 4.12.1.1: the JavaScript
 
 ## `engine/include/okay/Browser/Url.hpp`
 

@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 81 headers, 514 names.
+Back to the [code index](../code_index.md). 81 headers, 515 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -624,10 +624,11 @@ Back to the [code index](../code_index.md). 81 headers, 514 names.
 ## `engine/include/okay/Core/StringUtil.hpp`
 
 - `LowerAscii` function, line 11: ASCII-only lowercase: bytes 'A'..'Z' become 'a'..'z', every other byte (UTF-8 included) is left as it is.
-- `LowerAsciiChar` function, line 18: One byte of LowerAscii (for readers that fold as they scan).
-- `EqualsNoCaseAscii` function, line 21: ASCII-only case-blind compare: "Jump" equals "jUMP" (no copy, no allocation).
-- `Trim` function, line 33: 's' without the spaces, tabs, carriage returns and newlines at its two ends (ASCII whitespace only).
-- `HexDigitValue` function, line 42: The value of one hexadecimal digit (0-9, a-f, A-F), or -1 for any other character.
+- `UpperAscii` function, line 18: ASCII-only uppercase: bytes 'a'..'z' become 'A'..'Z', every other byte is left as it is (the DOM's tagName).
+- `LowerAsciiChar` function, line 25: One byte of LowerAscii (for readers that fold as they scan).
+- `EqualsNoCaseAscii` function, line 28: ASCII-only case-blind compare: "Jump" equals "jUMP" (no copy, no allocation).
+- `Trim` function, line 40: 's' without the spaces, tabs, carriage returns and newlines at its two ends (ASCII whitespace only).
+- `HexDigitValue` function, line 49: The value of one hexadecimal digit (0-9, a-f, A-F), or -1 for any other character.
 
 ## `engine/include/okay/Core/Subtitles.hpp`
 

@@ -42,6 +42,10 @@ public:
     set(initializer_list<K> il) {
         for (const K *p = il.begin(); p != il.end(); ++p) insert(*p);
     }
+    template <typename It>
+    set(It first, It last) {  // ([associative.reqmts], [unord.req]) a range
+        for (; first != last; ++first) insert(*first);
+    }
     set<K, C> &operator=(const set<K, C> &o) {
         if (this != &o) {
             __t.clear();

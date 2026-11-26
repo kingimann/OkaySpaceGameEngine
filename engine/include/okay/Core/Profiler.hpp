@@ -110,12 +110,25 @@ public:
         return r;
     }
 
+    /// The scopes open right now on the profiled thread, outermost first (at most `max`, and at most kLiveDepth levels): safe to
+    /// call from ANY thread, e.g. the editor's hang watchdog (editor/HangWatchdog.cpp) asking where a stuck frame is. The names
+    /// are the pointers OKAY_PROFILE was given (string literals). Empty while the profiler is off.
+    static constexpr int kLiveDepth = 16;
+    int LiveScopes(const char** out, int max) const {
+        int n = m_liveDepth.load(std::memory_order_acquire);
+        if (n > kLiveDepth) n = kLiveDepth;
+        if (n > max) n = max;
+        for (int i = 0; i < n; ++i) out[i] = m_live[i].load(std::memory_order_relaxed);
+        return n;
+    }
+
     // ---- collection --------------------------------------------------------
     void BeginFrame() {
         if (!enabled) return;
         m_owner.store(ThreadTag(), std::memory_order_relaxed);   // from now on only this thread is profiled
         m_build.clear();
         m_stack.clear();
+        m_liveDepth.store(0, std::memory_order_release);
         m_frameStart = Now();
         if (!m_haveEpoch) { m_epoch = m_frameStart; m_haveEpoch = true; }
         // Re-read the job totals on the first frame, and after a gap of more than a second (the
@@ -135,10 +148,13 @@ public:
         if (!name) name = "(null)";
         Open o; o.name = name; o.start = Now(); o.childMs = 0.0; o.depth = (int)m_stack.size();
         m_stack.push_back(o);
+        if (o.depth < kLiveDepth) m_live[o.depth].store(name, std::memory_order_relaxed);
+        m_liveDepth.store((int)m_stack.size(), std::memory_order_release);
     }
     void End() {
         if (!enabled || !OnOwnerThread() || m_stack.empty()) return;
         Open o = m_stack.back(); m_stack.pop_back();
+        m_liveDepth.store((int)m_stack.size(), std::memory_order_release);
         double inclusive = Ms(Now() - o.start);
         double self = inclusive - o.childMs; if (self < 0.0) self = 0.0;
         if (!m_stack.empty()) m_stack.back().childMs += inclusive;
@@ -318,6 +334,8 @@ private:
         return o == nullptr || o == ThreadTag();
     }
     std::atomic<const void*> m_owner{nullptr};
+    std::atomic<const char*> m_live[kLiveDepth] = {};   // the open scopes' names, for LiveScopes on another thread
+    std::atomic<int> m_liveDepth{0};
 
     struct Open { const char* name; std::chrono::steady_clock::time_point start; double childMs; int depth; };
     std::vector<Open>   m_stack;

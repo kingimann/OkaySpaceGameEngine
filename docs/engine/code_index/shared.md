@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 69 headers, 1008 names.
+Back to the [code index](../code_index.md). 69 headers, 1010 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -241,34 +241,36 @@ Back to the [code index](../code_index.md). 69 headers, 1008 names.
 - `Crumb` struct, line 34
 - `ConsoleEntry` struct, line 35
 - `State` struct, line 37
-- `SetText` function, line 64: ---- Writers (the editor calls these; all bounded, none allocate) ---------------------------------------------------------------
-- `SetVersion` function, line 73
-- `SetBuild` function, line 74
-- `SetOs` function, line 75
-- `SetCpu` function, line 76
-- `SetGpu` function, line 77
-- `SetUiBackend` function, line 78
-- `SetOwnCode` function, line 79
-- `SetRamTotalMb` function, line 80
-- `StartClock` function, line 81
-- `NextFrame` function, line 82
-- `Frame` function, line 83
-- `SetMode` function, line 84
-- `SetAutosave` function, line 85
-- `SetSceneStats` function, line 86
-- `SetSceneName` function, line 89: The open scene: the file name only. A full path would carry the user's folders (and name).
-- `Breadcrumb` function, line 98: One step of what the editor is doing ("UI.Inspector", "Render3D:gl"). The same step twice in a row only raises a counter,
-- `LastStep` function, line 116: The newest step ("startup" before the first one); the pointer is into the static block.
-- `ConsoleLine` function, line 124: One Console line: 0 = info, 1 = warning, 2 = error. Kept as it was logged (cut at 231 bytes; a cut is marked with "...").
-- `Reset` function, line 136: Tests only: back to the empty block.
-- `SwitchNameAllowed` function, line 151: ---- Which OKAY_* switches are on ---------------------------------------------------------------------------------------------------
-- `SwitchValueAllowed` function, line 160
-- `FormatSwitches` function, line 169
-- `Out` class, line 191: ---- A bounded text writer (no stdio, no heap) -------------------------------------------------------------------------------------
-- `FormatWhen` function, line 230: ---- Dates without localtime (it can take a lock) ------------------------------------------------------------------------------------
-- `Fault` struct, line 248: ---- The report text -------------------------------------------------------------------------------------------------------------------
-- `ComposeHead` function, line 266: Everything up to and including the "Backtrace:" line. The platform code then writes one line per frame (FrameLine).
-- `ComposeTail` function, line 317: The step trail, the Console lines and the end marker.
+- `WaitingOnPerson` function, line 65
+- `PersonWait` struct, line 66
+- `SetText` function, line 75: ---- Writers (the editor calls these; all bounded, none allocate) ---------------------------------------------------------------
+- `SetVersion` function, line 84
+- `SetBuild` function, line 85
+- `SetOs` function, line 86
+- `SetCpu` function, line 87
+- `SetGpu` function, line 88
+- `SetUiBackend` function, line 89
+- `SetOwnCode` function, line 90
+- `SetRamTotalMb` function, line 91
+- `StartClock` function, line 92
+- `NextFrame` function, line 93
+- `Frame` function, line 94
+- `SetMode` function, line 95
+- `SetAutosave` function, line 96
+- `SetSceneStats` function, line 97
+- `SetSceneName` function, line 100: The open scene: the file name only. A full path would carry the user's folders (and name).
+- `Breadcrumb` function, line 109: One step of what the editor is doing ("UI.Inspector", "Render3D:gl"). The same step twice in a row only raises a counter,
+- `LastStep` function, line 127: The newest step ("startup" before the first one); the pointer is into the static block.
+- `ConsoleLine` function, line 135: One Console line: 0 = info, 1 = warning, 2 = error. Kept as it was logged (cut at 231 bytes; a cut is marked with "...").
+- `Reset` function, line 147: Tests only: back to the empty block.
+- `SwitchNameAllowed` function, line 162: ---- Which OKAY_* switches are on ---------------------------------------------------------------------------------------------------
+- `SwitchValueAllowed` function, line 171
+- `FormatSwitches` function, line 180
+- `Out` class, line 202: ---- A bounded text writer (no stdio, no heap) -------------------------------------------------------------------------------------
+- `FormatWhen` function, line 241: ---- Dates without localtime (it can take a lock) ------------------------------------------------------------------------------------
+- `Fault` struct, line 259: ---- The report text -------------------------------------------------------------------------------------------------------------------
+- `ComposeHead` function, line 277: Everything up to and including the "Backtrace:" line. The platform code then writes one line per frame (FrameLine).
+- `ComposeTail` function, line 328: The step trail, the Console lines and the end marker.
 
 ## `shared/CrashHandler.hpp`
 

@@ -806,6 +806,7 @@ int main(int argc, char** argv) {
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
 #include "ScriptAssist.hpp"     // Scripting Reference, completion, signatures, docs, C# members, palette (ScriptAssist.cpp)
 #include "ScriptEditorWidget.hpp" // the script editor's code widget: our own OkayUI::CodeEdit
+#include "ScriptIdeApp.hpp"       // scriptide::TestRunScript: Run (a sandbox scene), shared with the Script Editor program
 #include "GameFiber.hpp"           // the game tick on its own stack (visual-script debugger)
 #include "okay/VisualScript/VsDebug.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
@@ -11899,22 +11900,12 @@ void DrawScriptEditor(EditorState& ed) {
             else {
                 s_error.clear();
                 ConsoleLog("Compiled OK \xE2\x80\x94 test-running in a sandbox\xE2\x80\xA6");
-                // Execute on a throwaway scene object so the real scene is never
-                // disturbed. Script print()/log() go to the engine log, which the
-                // console mirrors as [script] lines. Inspector field overrides are
-                // applied so the test matches the component's configured values.
-                try {
-                    okay::Scene sandbox; sandbox.physicsEnabled = false;
-                    okay::GameObject* go = sandbox.CreateGameObject("ScriptTest");
-                    auto* tsc = go->AddComponent<okay::ScriptComponent>(sc->Language());
-                    for (const auto& kv : sc->fields) tsc->fields[kv.first] = kv.second;
-                    if (tsc->LoadSource(buf.data())) {
-                        sandbox.Start();
-                        for (int i = 0; i < 3; ++i) sandbox.Update(1.0f / 60.0f);
-                        ConsoleLog("Test run OK: start() + 3 update() frames (sandbox).", 0);
-                    }
-                } catch (const std::exception& e) { ConsoleLog(std::string("Runtime error: ") + e.what(), 2); }
-                catch (...) { ConsoleLog("Runtime error during test run.", 2); }
+                // The Script Editor's shared test run (shared/ScriptIdeApp.hpp): a throwaway scene, so the real one is never
+                // disturbed; the Inspector's field values are applied so the test matches the component's configured values.
+                const scriptide::TestRunResult r = scriptide::TestRunScript(sc->Language(), buf.data(), [sc](okay::ScriptComponent& t) {
+                    for (const auto& kv : sc->fields) t.fields[kv.first] = kv.second;
+                });
+                ConsoleLog(r.message, r.ok ? 0 : 2);
             }
             ed.dirty = true;
         }

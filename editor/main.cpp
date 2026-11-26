@@ -781,6 +781,7 @@ int main(int argc, char** argv) {
 #include "imgui_internal.h" // DockBuilder for the default layout
 #include "EditorTabs.hpp"   // panel tabs: saved layouts, presets, Ctrl+Tab order
 #include "SignInGate.hpp"   // the OkaySpace sign-in the editor needs before a project opens
+#include "ModalGuard.hpp"   // one question at a time; undrawn or hidden modals closed or named; clicks that land nowhere logged
 #include "OkayThreads.hpp"  // okay::thr: the sign-in check runs on a worker (rule 21a)
 #include "okay/Platform/Account/Account.hpp"   // okay::Account: the shared account service (the launcher's saved session)
 #include "EditorLayoutMath.hpp"   // overlay anchoring, label placement, density, toolbar plan, maximize, view prefs (tested)
@@ -2053,6 +2054,23 @@ static void NoteFpsSummary(double frameMs) {
     const okay::Profiler::Frame& f = pr.paused || pr.Count() == 0 ? okay::Profiler::Frame() : pr.FrameAt(pr.Count() - 1);
     const std::string line = s_sum.Add(f, frameMs);
     if (!line.empty()) okay::restart::AppendLog(PerfLogPath(), line);
+}
+// Modals and clicks that go nowhere (editor/ModalGuard.hpp; owner, v2.903.8.118: nothing could be clicked while frames kept coming).
+// Every modal opening and closing is a breadcrumb (okay_hang.txt, okay_crash.txt); a modal closed because it was no longer drawn,
+// one moved back on screen and one drawn yet never shown ("blocking popup") get a line in okay_editor_perf.log; and while clicks
+// arrive and none lands on a window, a line every 5 seconds says what Dear ImGui thinks (hovered, focused, active, the top modal).
+static okayed::modalguard::InputProbe g_inputProbe;
+static void ModalGuardFrame() {
+    static okayed::modalguard::ModalTrail s_trail;
+    auto note = [](const std::string& line) { OkayTrace(line.c_str()); okay::restart::AppendLog(PerfLogPath(), line); ConsoleLog(line, 1); };
+    okayed::modalguard::Sweep([&](const char* n) { note(std::string("blocking popup closed (open but no longer drawn): ") + n); },
+                              [&](const char* n) { note(std::string("blocking popup moved back on screen: ") + n); },
+                              [&](const char* n) { note(std::string("blocking popup: ") + n + " (open, never shown; brought to the front)"); });
+    for (const std::string& l : s_trail.Update()) OkayTrace(l.c_str());
+}
+static void InputProbeEndFrame() {
+    const std::string line = g_inputProbe.EndFrame(ImGui::GetTime());
+    if (!line.empty()) { OkayTrace("Clicks land nowhere"); okay::restart::AppendLog(PerfLogPath(), line); }
 }
 static void WriteSlowFrame(okay::editor::perf::SlowFrameLog& log, double frameMs, bool playing) {
     std::string ctx = playing ? "play" : "edit";
@@ -15868,7 +15886,7 @@ void ShowErrorPopup(const std::string& title, const std::string& text) {
     ConsoleLog(title + ": " + text, 2);
 }
 static void DrawErrorPopup() {
-    if (g_errOpen && !ImGui::IsPopupOpen("Something went wrong")) { ImGui::OpenPopup("Something went wrong"); }
+    if (g_errOpen) okayed::modalguard::OpenModalWhenFree("Something went wrong");   // (waits for a question already on screen)
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Always);
     if (ImGui::BeginPopupModal("Something went wrong", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
@@ -15914,7 +15932,7 @@ struct ImGuiDialogs : DialogService {
 }
 static void DrawSavePrompt(EditorState& ed) {
     g_imguiDialogs.ed = &ed; if (!CurrentDialogs()) SetDialogs(&g_imguiDialogs);
-    if (g_savePromptOpen && !ImGui::IsPopupOpen("Save changes?")) ImGui::OpenPopup("Save changes?");
+    if (g_savePromptOpen) okayed::modalguard::OpenModalWhenFree("Save changes?");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(480, 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("Save changes?", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) return;
@@ -16180,10 +16198,12 @@ static void DrawNewProjectDialog(EditorState& ed) {
 void DrawProjectGate(EditorState& ed) {
     static const bool allow = std::getenv("OKAY_ALLOW_NO_PROJECT") != nullptr;
     if (allow || !ed.projectDir().empty() || !g_openScenePath.empty() || !g_newProjectRoot.empty() ||   // (g_savePromptOpen: the "Save changes?" question is on screen; two modals each re-opening every frame would fight)
-        !g_newProjectTemplate.empty() || ed.isPlaying() || ProjectGateBusy() || okay::filedialog::BuiltinOpen() || g_savePromptOpen || g_openUpdatePopup || ImGui::IsPopupOpen("Engine Update"))
+        !g_newProjectTemplate.empty() || ed.isPlaying() || ProjectGateBusy() || okay::filedialog::BuiltinOpen() || g_savePromptOpen || g_errOpen || g_openUpdatePopup || ImGui::IsPopupOpen("Engine Update")) {
+        okayed::modalguard::CloseIfOpen("Open a project");   // not drawn now: not left open (an open modal blocks every click even undrawn)
         return;   // (a question, or the update window the question's "Update OkaySpace" opened, is on screen: the chooser waits)
+    }
     namespace fs = std::filesystem;
-    ImGui::OpenPopup("Open a project");
+    if (!okayed::modalguard::OpenModalWhenFree("Open a project")) return;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(680, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSizeConstraints(ImVec2(680, 0), ImVec2(680, ImGui::GetMainViewport()->Size.y - 24.0f));
@@ -16334,8 +16354,10 @@ void DrawNewProjectPopup(EditorState& ed) {
 // Offer to restore a newer "<scene>.autosave" recovery copy after a crash or
 // unclean exit. Recover loads it (and overwrites the scene); Discard removes it.
 void DrawRecoveryPopup(EditorState& ed) {
-    if (!g_recoverPath.empty() && !ImGui::IsPopupOpen("Recover Autosave"))
-        ImGui::OpenPopup("Recover Autosave");
+    // One question at a time: this one and "Restore recovered work?" both wait after an unclean exit, and each re-opening itself every
+    // frame closed the other, so neither was ever shown while every click was blocked (v2.903.8.118). The scene's question comes first.
+    if (!g_recoverPath.empty()) okayed::modalguard::OpenModalWhenFree("Recover Autosave");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Recover Autosave", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextWrapped("A newer autosave was found for this scene:");
         ImGui::TextDisabled("%s", g_recoverPath.c_str());
@@ -52413,7 +52435,7 @@ static void ApplyPrefabModeQueue(EditorState& ed) {
 }
 static void DrawPrefabLeavePrompt(EditorState& ed) {
     if (g_prefabLeaveDepth >= 0 && !ed.InPrefabMode()) g_prefabLeaveDepth = -1;
-    if (g_prefabLeaveDepth >= 0 && !ImGui::IsPopupOpen("Save prefab changes?")) ImGui::OpenPopup("Save prefab changes?");
+    if (g_prefabLeaveDepth >= 0) okayed::modalguard::OpenModalWhenFree("Save prefab changes?");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(480, 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("Save prefab changes?", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) return;
@@ -52535,7 +52557,7 @@ static void RequestLoad(EditorState& ed, const std::string& path) {
 }
 static void DrawActionPrompt(EditorState& ed) {
     if (!g_pendingAction) return;
-    if (!ImGui::IsPopupOpen("Save before continuing?")) ImGui::OpenPopup("Save before continuing?");
+    if (!okayed::modalguard::OpenModalWhenFree("Save before continuing?")) return;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (!ImGui::BeginPopupModal("Save before continuing?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     const char* what = g_pendingAction == 1 ? "playing" : g_pendingAction == 2 ? "stopping" : "opening another scene";
@@ -52604,7 +52626,7 @@ static void ApplyRecoveredBundle(EditorState& ed, const std::vector<okay::editor
 }
 static void DrawDocRecoveryPopup(EditorState& ed) {
     if (g_docRecover.empty()) return;
-    if (!ImGui::IsPopupOpen("Restore recovered work?")) ImGui::OpenPopup("Restore recovered work?");
+    if (!okayed::modalguard::OpenModalWhenFree("Restore recovered work?")) return;   // after "Recover Autosave" is answered (DrawRecoveryPopup)
     ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_Appearing);
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (!ImGui::BeginPopupModal("Restore recovered work?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
@@ -52912,7 +52934,7 @@ static void DrawSignInGate() {
         if (j->kind != SignInJob::Reset && g_signin == Phase::Open) ConsoleLog("Signed in as " + okay::Account::Get().CurrentSession().username + ".");
         delete j;
     }
-    if (oked::signin::ProjectsAllowed(g_signin)) return;
+    if (oked::signin::ProjectsAllowed(g_signin)) { okayed::modalguard::CloseIfOpen("Sign in to OkaySpace###SignInGate"); return; }   // not left open undrawn
     {   // A sign-in (or sign-out) in the launcher rewrites session.txt: look once a second, and check the new sign-in.
         static double s_nextPoll = 0.0;
         const double now = ImGui::GetTime();
@@ -52929,7 +52951,7 @@ static void DrawSignInGate() {
     }
     static char email[256] = "", pass[256] = "";
     const char* title = "Sign in to OkaySpace###SignInGate";
-    if (!ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+    if (!okayed::modalguard::OpenModalWhenFree(title)) return;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize)) return;
@@ -54129,6 +54151,7 @@ int main(int argc, char** argv) {
             // A pop-out menu or dialog can be its own OS window. When it closes and the window system does not hand the
             // keyboard back (no window manager, or one that does not), Esc, F2 and the other keys would go nowhere and a
             // dialog could only be closed with the mouse. A click in the editor window takes the keyboard focus back.
+            if (e.type == EvT::MouseButtonDown && !g_playPointerGrabbed) g_inputProbe.NoteClick(e.windowId, e.windowId == winSeam->Id());
             if (e.type == EvT::MouseButtonDown && e.windowId == winSeam->Id() &&
                 !winSeam->HasInputFocus())
                 winSeam->SetInputFocus();
@@ -54813,6 +54836,7 @@ int main(int argc, char** argv) {
             TabPaddingScope tabPad;   // floating panel groups lay their tabs out in NewFrame()
             ImGui::NewFrame();
         }
+        ModalGuardFrame();   // undrawn modals closed, lost ones brought back, every modal opening and closing in the breadcrumbs
 
         // Clear editor globals still pointing at an object deleted last frame (hierarchy
         // delete, Del key, script destroy). Dereferencing a freed GameObject in the
@@ -55588,6 +55612,7 @@ int main(int argc, char** argv) {
             if (okay::platform::Backend* pb = okay::platform::Default()) pb->StartTextInput();
         }
 #endif
+        InputProbeEndFrame();   // clicks arriving and landing nowhere: what Dear ImGui thinks, to okay_editor_perf.log
         { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
         SaveDockLayout(false); SavePanelStateIfChanged();   // the layout and the open panels survive a restart (and a forced close)
         okay::pb::SetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);

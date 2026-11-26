@@ -2020,6 +2020,18 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
     endif()
     target_include_directories(test_okayui_host_layering PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
     add_test(NAME okayui_host_layering COMMAND test_okayui_host_layering)
+    # Editor modals that block every click while nothing is shown (editor/ModalGuard.hpp): the two recovery questions that
+    # replaced each other every frame after an unclean exit, undrawn and off-screen modals, the clicks-land-nowhere log line.
+    add_executable(test_editor_stale_modal test_editor_stale_modal.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_editor_stale_modal PRIVATE okay_imgui)
+    else()
+        target_sources(test_editor_stale_modal PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_editor_stale_modal SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_include_directories(test_editor_stale_modal PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME editor_stale_modal COMMAND test_editor_stale_modal)
     # The Script Editor's OkayUI code inside a Dear ImGui window, in ImGui's draw order (OkayUI::BeginCapture, shared/OkayUIImGuiEmbed.hpp):
     # an ImGui popup over the code is drawn over it. Dear ImGui and OkayUI headless, one software rasteriser.
     add_executable(test_okayui_codeedit_imgui test_okayui_codeedit_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptEditorCodeEdit.cpp)

@@ -4,11 +4,13 @@
 >
 > **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
 >
-> **Last checked:** 2026-11-25 (Round 30 added at the end; the older rounds were not re-checked against the code).
+> **Last checked:** 2026-11-26 (Round 31 added at the end; the older rounds were not re-checked against the code).
 
 Internal note for issue #992. Not a user guide.
 
-**Round 30 (newest, 2026-11-25):** 273 of 475 engine files compile on the Windows survey (205 before the round), 278 on the plain one (207 before); pointers to data members, the COFF relocation overflow form, our own POSIX declaration headers, and five silent wrong-code bugs fixed. Details: Round 30 at the end.
+**Round 31 (newest, 2026-11-26):** 295 of 475 engine files compile on the Windows survey (273 before the round), 299 on the plain one (278 before), none lost; parenthesized names, class ternaries and declaration points by the real rules, Microsoft's member pointer representation, pointers to member functions, and silent wrong-code bugs fixed (bytes compared or copied where an operator or a constructor was due, temporaries of constructor arguments made too late). The intermittent `test_engine_link` failure was two test runs sharing one folder. Details: Round 31 at the end.
+
+**Round 30 (2026-11-25):** 273 of 475 engine files compile on the Windows survey (205 before the round), 278 on the plain one (207 before); pointers to data members, the COFF relocation overflow form, our own POSIX declaration headers, and five silent wrong-code bugs fixed. Details: Round 30 at the end.
 
 **Round 29 (2026-11-25):** 205 of 475 engine files compile on the Windows survey (138 before the round), 207 on the plain one (97 before); multiple inheritance (several bases, adjustor thunks, `dynamic_cast` across bases) and structured bindings are in; no virtual bases yet. Details: Round 29 at the end.
 
@@ -992,3 +994,66 @@ Not done / unverified / differences (Round 30):
 - A local declared with a lambda initializer is declared before the initializer; other declarations still are after it (`int x = x;` reads an outer `x`).
 - The parenthesized-name rule is only for names ending in `min` or `max`.
 
+
+### Round 31: the real rules behind three narrow ones, Microsoft's member pointers, member function pointers, the next blockers, and six silent wrong-code bugs
+
+Tried on Linux with Wine 9.0 and MinGW g++ 13 (thread model win32) on branch `claude/okayms-31`, 2026-11-25. Not run on Windows. Started from Round 30's last commit (7223b9766), which is not merged yet.
+
+**First: the intermittent `test_engine_link` failure.** In the main session's Round 30 full suite, `link_crypto` at /O1 and /O2 printed text that differed from g++, then passed three times in a row. Cause: the test wrote to a fixed folder, `/tmp/okayms-el`, shared by every run on the machine. A second run started at the same time empties that folder and rewrites its output files while the first run reads them. Reproduced with two runs started 5 seconds apart ("output differs from g++" in all three levels). It was not the compiler: the compiled programs printed the same text in 75 runs (also with the stack moved by a padded environment), and the objects were byte-identical in 8 rebuilds under load. Fix: `test_engine_link` now uses its own folder per process (`/tmp/okayms-el-<pid>`, removed when every check passed), and `build.sh` runs the tests under a machine-wide lock (`flock /tmp/okayms-tests.lock`), so two suites in two worktrees take turns. The other tests still use fixed folders (`/tmp/okayms-r30` and so on); the lock covers them when they run through `build.sh`.
+
+**The real rules (Round 30 had narrow ones):**
+
+- A parenthesized name: `(name)(args)` is the call `name(args)` for any name that is not a type ([expr.prim.paren]); a function-like macro of the name is not expanded because '(' does not follow it ([cpp.replace] 10; the preprocessor already did this). The parser rewrites the tokens in place to `(name(args))` once it knows the name is not a type. Namespace names in front are kept for this shape (`(ns::f)(x)`), and a cast `(ns::T)x` passes over them. `int (max)(int, int)` declares `max`. Own difference: argument-dependent lookup is not turned off for a parenthesized name.
+- The conditional operator with a class operand ([expr.cond] 4): each operand is tried as a conversion to the other's type, for any class. A converting constructor makes an object of the class; a conversion function gives the other type; two lvalues where one class derives from the other give an lvalue of the base. When both or neither convert, nothing is done (as before).
+- The point of declaration ([basic.scope.pdecl] 1): every local whose type is known before its initializer is declared before it (`long long k = sizeof(k);` beside an outer `int k` is 8; `void* p = &p;`). Not for `auto`, an array without a length, or a static local.
+
+**Pointers to data members** now use Microsoft's representation: the member's offset, and -1 for null. Null is -1 everywhere a null pointer constant meets one: initialization, assignment, arguments, return, `==`/`!=`, braced lists (also a member left out), constant tables (also members left out), default member initializers and mem-initializers. As a condition (`if (pm)`, `!pm`, `pm && x`, `bool b = pm`) it is `pm != -1`. Converting a base's member pointer to a derived class keeps -1. The decorated name has R instead of Q when the member type is const (`PERS@@H` for `const int S::*`).
+
+**Pointers to member functions** (single inheritance): `R (C::*f)(P...) [const]` as a variable, a parameter (also of a lambda), `&C::f`, `(obj.*f)(args)`, `(p->*f)(args)`, null and comparisons. The value is a code address (8 bytes, 0 for null). For a virtual function it is a thunk that reads the object's table and jumps to the slot (`mov rax, [rcx + vptr]; jmp [rax + slot*8]`, rdx when the result is a class returned through memory), named as Microsoft names its vcall thunks (`??_9C@@$B` offset `AA`). The type's decorated name is `P8` class `@@E` `A`/`B` `A` result parameters `Z`. A member of a base that is not first (multiple inheritance) is refused with an error.
+
+**Survey blockers of Round 30, by files:**
+
+| Files | Blocker | Done |
+|---|---|---|
+| 16 | `AccountService.hpp:1250` | A name that is an enumeration in one namespace and a class in another (ScriptBindings.hpp's `enum class Result`, NativeHttp.hpp's `struct Result`): `okay::http::Result`, or `Result` inside okay::http, is the class; the enumeration table used to win |
+| 11 | `HoldPrompt.hpp:98` | A pack expansion in a braced list: `std::vector<LocArg>{LocArg(std::forward<A>(args))...}` (Localization.hpp). The expansion code of call arguments is now one function used by both |
+| 10 | `JointLimit.hpp:114` | `L::Type::Hinge` beside a class `Type` of another namespace (ScriptInternal.hpp): the scoped enumerator wins over the class |
+| 6 | `SoftwareRenderer.hpp:302` | The comma operator with floating-point operands (`++x, w0 += dw0`) |
+| 6 | `VisualScriptComponent.hpp:106` | A local class in a member function: its bodies are compiled at once, while the function's static locals are in sight (they waited for the end of the outer class) |
+| 5 | `SaveDocument::Writer` | A default argument `std::string()` (a typedef of a class, maybe qualified) is read again at each call, where its temporary can be made |
+| 4 | `FileCopy.hpp:46` | `std::filesystem::filesystem_error` and `std::system_error`, with a minimal `error_category` (`generic_category()`, `system_category()`) |
+| 3 | `Lua.hpp:83` | A member of an anonymous union named in a member function |
+| — | chrono | Durations of different units compared in their common unit (free operator templates; exact while the products fit in 64 bits) |
+| — | `(T::clock::now() - t)` | A type's nested name followed by something that cannot end a cast is not a cast (SceneSerializer.cpp) |
+| — | structured bindings | `auto [a, b, c] = tuple` binds std::tuple's elements |
+| — | `std::stoi` | stoi and its siblings throw `invalid_argument` (and stoi/stol `out_of_range` outside int) in a file that uses exceptions; `__okay_throw_if_eh(e);` in our headers is `throw e;` only in such a file, so `<string>` does not turn on exception frames everywhere. The runtime gets `strtoll` and `strtoull` |
+
+**Silent wrong code fixed (each has its own test in `tests/test_round31.cpp`):**
+
+- A base or member constructor's argument that needs a temporary: `m(w + "!")` gave an empty string, and a class argument passed by value to a base constructor gave a wrong value. The temporary was made after the constructor calls. Now it is made right before its call.
+- `return s;` of a class object that is not the function's own local (a reference parameter, a member, a global, `*p`, `std::move(m)`) copied its bytes: the result shared the source's heap buffer and freed it. It is now made by the copy (or move) constructor. The tests' bump allocator never reuses memory and hid it; the new tests run with okay-ms's real heap (`ProgramRun::eh`, which links `runtime/eh.c`, `mem.c` and `string.c`).
+- Two class objects with no operator for them were compared (or added) by their bytes: now an error. This found more, each now written from the standard: `std::pair` comparisons ([pairs.spec]; `std::sort` of `pair<float, int>` in Mesh.hpp sorted by bytes), `std::array` comparisons (SkinnedMesh.hpp's `!=`, a map keyed by `array<double, 3>`), `==` of `map`, `set`, `unordered_map`, `unordered_set` and `deque` (SaveFramework.hpp), a time point minus a duration of another unit (NativeFetch.hpp's `now() - milliseconds(1000)`), a wide string literal + a wide string (NativeHttp.hpp), durations of different units (2500 ms > 2 s was true, 2000 ms == 2 s false), and a hidden friend `operator!=` calling the `operator==` above it (friends were moved out of the class in reverse order). Operator function templates are now found for class operands.
+- The point of declaration (above): `long long k = sizeof(k);` read an outer `k`.
+- Member pointers: the representation change is checked by the value's bytes.
+
+Measurement: `tools/okayms/survey.sh` (300-second limit per file), run in resumable parts of at most 30 minutes, with the compiler built at commit 8d52a83db (the later dedup commit, a refactor, gave byte-identical objects on 12 engine files) and the final `stdinc`. "Before" is Round 30's own measurement with the same compiler sources as this branch's start (7223b9766) and the same engine files: 83 files surveyed again with that compiler here gave the same results. The machine was loaded (load average 13 to 20 on 4 cores): files that hit the 300-second limit were surveyed again one at a time; every file that compiled in Round 30 then compiled. The `stdinc` changed during the Windows survey (array, map and chrono operators): every Windows file whose first error was a missing operator was surveyed again with the final headers.
+
+| Survey | Before (round 30) | After |
+|---|---|---|
+| Windows (default) | 273 of 475 | **295 of 475** |
+| Plain (`SURVEY_PLAIN=1`) | 278 of 475 | **299 of 475** |
+
+No file that compiled before stops compiling (checked file by file in both surveys). Still failing by the 300-second limit under this load: 14 Windows and 24 plain files, most of them `Scripting/OkayScriptVM_*.cpp` (they failed earlier in Round 30; `OkayScriptVM_Math.cpp` alone took 3 minutes of processor time and then stopped at a missing `std::map` `==`, since added). Next blockers, both surveys: `FbxReader.hpp:165` (5, "too many template arguments"), `<GL/gl.h>` (4), `okayscript/detail/Support.hpp:23` (4, Windows), `EventBus`'s `unordered_map<int, type_index>` (2), `CameraStack.hpp:123` (2), `MatchResults.hpp:222` (2, `_mkgmtime`), `Inflate.hpp:603` (2), `CaptionOverlay.hpp:87` (2), `AntiCheatIntegrity.hpp:82` (2).
+
+Tests: new `tests/test_round31.cpp`, 18 tests (programs built by okay-cl at /O0, /O1, /O2, linked, run under Wine, and built by MinGW g++ and run; three run with okay-ms's real heap and exception runtime; four unit checks of decorated names and errors): `tests 18, checks passed 214, failed 0`. With the Round 30 compiler and headers: `tests 18, checks passed 81, failed 47` (most programs fail to compile; the silent wrong-code programs compile and give wrong results: `decl_point` exit 1, `memptr_repr` exit 1, `return_copy` exit 2, `pair_friend` exit 1, `ctor_init_temps` exit 1). The whole suite (73 test programs, the same build and run as `build.sh`) passes after the last code change: 73 of 73 (`SUITE fails=0`). One run before it had `test_format` fail once with a page fault inside Wine itself (the program's output was right) while another okay-ms test run, outside this suite's lock, was writing the same `/tmp/okayms-*` folders; `test_format` then passed four times alone and in the next full run.
+
+Written from ISO/IEC 14882 ([cpp.replace], [expr.prim.paren], [dcl.meaning], [expr.cond], [basic.scope.pdecl], [dcl.mptr], [conv.mem], [expr.mptr.oper], [expr.unary.op], [class.virtual], [temp.variadic], [dcl.fct.default], [class.local], [class.union.anon], [expr.comma], [dcl.enum], [namespace.qual], [basic.lookup.unqual], [time.duration.comparisons], [dcl.struct.bind], [string.conversions], [syserr], [fs.class.filesystem.error], [pairs.spec], [class.friend], [over.match.oper], [stmt.return], [class.copy.ctor], [class.base.init]) and Microsoft's public x64 name-decoration rules (member pointers, vcall thunks). No code from MSVC, its STL, the Windows SDK, MinGW, GCC, Clang/LLVM, libstdc++, libc++, Wine or any other project. No cryptography was written.
+
+Not done / unverified / differences (Round 31):
+
+- Not run on Windows. The survey objects were not linked or run. No decorated name was compared with MSVC output (member pointers, member function pointers, vcall thunks).
+- Member function pointers: single inheritance only (a base that is not first is refused); no virtual bases; overloads in `&C::f` are not chosen by the target type (the first is taken); no `using` alias or template argument of a member function pointer type; no deduction of one in a function template. A class returned through memory by a function called through one uses okay-ms's own order (result address first), as for every okay-ms member function.
+- A pointer to a data member that is a zero-initialized global or static with no initializer is 0, not -1 (it sits in .bss).
+- `__okay_throw_if_eh`: in a file without try or throw, stoi still returns 0 for bad text; a caller in another file cannot catch it.
+- Chrono: + and - of durations of different units are not written. Tuple-like bindings: only std::tuple (no `tuple_size` protocol for other classes). `error_category` compares by name; no `message()` per category.
+- `test_engine_link` and `build.sh` are fixed against two runs at once; the other test programs still share fixed folders when run by hand at the same time.

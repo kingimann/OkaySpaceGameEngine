@@ -134,31 +134,42 @@ int HeightOf(Node* n, std::size_t& visited) {   // levels below n (0: no childre
 
 } // namespace
 
+bool IsJavaScriptGlobal(const std::string& name) {
+    // ECMAScript's global objects and functions (ECMA-262 section 19) and the two HTML adds that pages treat as language
+    static const std::unordered_set<std::string> kLanguage = {
+        "Intl", "WeakRef", "FinalizationRegistry", "Proxy", "Reflect", "BigInt", "Symbol", "WeakMap", "WeakSet", "Map",
+        "Set", "Promise", "globalThis", "Date", "decodeURIComponent", "encodeURIComponent", "decodeURI", "encodeURI",
+        "escape", "unescape", "parseInt", "parseFloat", "isNaN", "isFinite", "ArrayBuffer", "SharedArrayBuffer",
+        "DataView", "Atomics", "Uint8Array", "Uint8ClampedArray", "Int8Array", "Uint16Array", "Int16Array",
+        "Uint32Array", "Int32Array", "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array",
+        "AggregateError", "Iterator", "Object", "Array", "String", "Number", "Math", "JSON", "RegExp", "Error",
+        "structuredClone", "queueMicrotask"};
+    return kLanguage.count(name) != 0;
+}
+
 std::string MissingWebApi(const std::string& line) {
-    // Names from the HTML, DOM, CSSOM, Fetch, URL, Encoding, Web IDL and ECMAScript standards' global interfaces and functions.
-    static const std::unordered_set<std::string> kGlobals = {
-        "navigator", "screen", "performance", "crypto", "indexedDB", "caches", "visualViewport", "speechSynthesis", "trustedTypes",
-        "devicePixelRatio", "innerWidth", "innerHeight", "outerWidth", "outerHeight", "scrollX", "scrollY", "pageXOffset",
-        "pageYOffset", "scrollTo", "scrollBy", "scroll", "open", "postMessage", "atob", "btoa", "matchMedia", "getSelection",
-        "requestIdleCallback", "cancelIdleCallback", "queueMicrotask", "structuredClone", "customElements", "createImageBitmap",
-        "isSecureContext", "origin", "self", "top", "parent", "frames", "opener", "CSS", "Intl", "WeakRef", "FinalizationRegistry",
-        "Proxy", "Reflect", "BigInt", "IntersectionObserver", "ResizeObserver", "MutationObserver", "PerformanceObserver",
-        "ReportingObserver", "CustomEvent", "Event", "EventTarget", "KeyboardEvent", "MouseEvent", "PointerEvent", "FocusEvent",
-        "InputEvent", "UIEvent", "MessageChannel", "MessagePort", "BroadcastChannel", "Worker", "SharedWorker", "WebSocket",
-        "EventSource", "URL", "URLSearchParams", "TextEncoder", "TextDecoder", "AbortController", "AbortSignal", "Blob", "File",
-        "FileReader", "FormData", "DOMParser", "XMLSerializer", "Image", "Audio", "Option", "Node", "Element", "HTMLElement",
-        "Document", "DocumentFragment", "ShadowRoot", "Range", "Selection", "NodeFilter", "NodeList", "HTMLCollection", "DOMRect",
-        "DOMMatrix", "DOMException", "ImageData", "Path2D", "OffscreenCanvas", "CanvasRenderingContext2D", "WebGLRenderingContext",
-        "CSSStyleSheet", "Request", "Notification", "AudioContext", "MediaSource", "ClipboardItem", "HTMLIFrameElement",
-        "HTMLImageElement", "HTMLScriptElement", "HTMLAnchorElement", "SVGElement", "Symbol", "WeakMap", "WeakSet", "Map", "Set",
-        "Promise", "globalThis", "Date", "decodeURIComponent", "encodeURIComponent", "decodeURI", "encodeURI", "escape",
-        "unescape", "parseInt", "parseFloat", "isNaN", "isFinite", "ArrayBuffer", "SharedArrayBuffer", "DataView", "Atomics",
-        "Uint8Array", "Uint8ClampedArray", "Int8Array", "Uint16Array", "Int16Array", "Uint32Array", "Int32Array",
-        "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array", "AggregateError", "Iterator"};
+    // Names from the HTML, DOM, CSSOM, Fetch, URL, Encoding and Web IDL standards' global interfaces and functions, and the
+    // language's own (IsJavaScriptGlobal).
+    static const std::unordered_set<std::string> kWeb = {
+        "navigator", "screen", "performance", "crypto", "indexedDB", "caches", "visualViewport", "speechSynthesis",
+        "trustedTypes", "devicePixelRatio", "innerWidth", "innerHeight", "outerWidth", "outerHeight", "scrollX",
+        "scrollY", "pageXOffset", "pageYOffset", "scrollTo", "scrollBy", "scroll", "open", "postMessage", "atob",
+        "btoa", "matchMedia", "getSelection", "requestIdleCallback", "cancelIdleCallback", "customElements",
+        "createImageBitmap", "isSecureContext", "origin", "self", "top", "parent", "frames", "opener", "CSS",
+        "IntersectionObserver", "ResizeObserver", "MutationObserver", "PerformanceObserver", "ReportingObserver",
+        "CustomEvent", "Event", "EventTarget", "KeyboardEvent", "MouseEvent", "PointerEvent", "FocusEvent",
+        "InputEvent", "UIEvent", "MessageChannel", "MessagePort", "BroadcastChannel", "Worker", "SharedWorker",
+        "WebSocket", "EventSource", "URL", "URLSearchParams", "TextEncoder", "TextDecoder", "AbortController",
+        "AbortSignal", "Blob", "File", "FileReader", "FormData", "DOMParser", "XMLSerializer", "Image", "Audio",
+        "Option", "Node", "Element", "HTMLElement", "Document", "DocumentFragment", "ShadowRoot", "Range", "Selection",
+        "NodeFilter", "NodeList", "HTMLCollection", "DOMRect", "DOMMatrix", "DOMException", "ImageData", "Path2D",
+        "OffscreenCanvas", "CanvasRenderingContext2D", "WebGLRenderingContext", "CSSStyleSheet", "Request",
+        "Notification", "AudioContext", "MediaSource", "ClipboardItem", "HTMLIFrameElement", "HTMLImageElement",
+        "HTMLScriptElement", "HTMLAnchorElement", "SVGElement"};
+    auto known = [](const std::string& n) { return kWeb.count(n) != 0 || IsJavaScriptGlobal(n); };
     static const std::unordered_set<std::string> kRoots = {
         "window", "self", "globalThis", "document", "navigator", "location", "history", "screen", "performance", "console",
-        "localStorage", "sessionStorage", "Object", "Array", "String", "Number", "Math", "JSON", "Promise", "Reflect", "Symbol",
-        "Date", "RegExp", "Intl", "crypto", "customElements", "CSS"};
+        "localStorage", "sessionStorage", "crypto", "customElements", "CSS"};
     // DOM and CSSOM members that are called on elements, documents and events.
     static const std::unordered_set<std::string> kMembers = {
         "closest", "matches", "getBoundingClientRect", "getClientRects", "insertAdjacentHTML", "insertAdjacentElement",
@@ -180,16 +191,16 @@ std::string MissingWebApi(const std::string& line) {
         return !name.empty() && name.size() < 200;
     };
     std::string name;
-    if (quoted(" is not defined", name)) return kGlobals.count(name) ? name : std::string();
+    if (quoted(" is not defined", name)) return known(name) ? name : std::string();
     if (quoted(" is undefined, not a function", name) || quoted(" is undefined, not a constructor", name)) {
         const std::size_t dot = name.find('.'), last = name.rfind('.');
-        if (dot == std::string::npos) return kGlobals.count(name) ? name : std::string();
+        if (dot == std::string::npos) return known(name) ? name : std::string();
         std::string root = name.substr(0, dot);
         if (root == "window" || root == "self" || root == "globalThis") {   // window.X is the global X
             const std::string rest = name.substr(dot + 1);
-            if (rest.find('.') == std::string::npos) return kGlobals.count(rest) ? rest : std::string();
+            if (rest.find('.') == std::string::npos) return known(rest) ? rest : std::string();
         }
-        if (kRoots.count(root)) return name;
+        if (kRoots.count(root) || IsJavaScriptGlobal(root)) return name;
         if (kMembers.count(name.substr(last + 1))) return "*." + name.substr(last + 1);   // "*": the object's type is not known here
     }
     return std::string();

@@ -1,6 +1,7 @@
 // Site check: causes, per-site JSON and the ranking (see SiteReport.hpp).
 #include "SiteReport.hpp"
 
+#include "okay/Browser/Script.hpp"
 #include "okay/Core/Json.hpp"
 #include "okay/Core/StringUtil.hpp"
 
@@ -43,20 +44,8 @@ std::string Num(double v) {
     return b;
 }
 
-// the JavaScript built-ins: a missing one is a language gap, not a DOM one
-bool IsLanguageName(const std::string& api) {
-    static const char* const kRoots[] = {"Object", "Array", "String", "Number", "Math", "JSON", "Promise", "Reflect", "Symbol",
-                                         "Date", "RegExp", "Intl", "Proxy", "BigInt", "WeakRef", "FinalizationRegistry", "Map",
-                                         "Set", "WeakMap", "WeakSet", "globalThis", "decodeURIComponent", "encodeURIComponent",
-                                         "decodeURI", "encodeURI", "escape", "unescape", "parseInt", "parseFloat", "isNaN",
-                                         "isFinite", "ArrayBuffer", "SharedArrayBuffer", "DataView", "Atomics", "Uint8Array",
-                                         "Uint8ClampedArray", "Int8Array", "Uint16Array", "Int16Array", "Uint32Array",
-                                         "Int32Array", "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array",
-                                         "AggregateError", "Iterator"};
-    const std::string root = api.substr(0, api.find('.'));
-    for (const char* r : kRoots) if (root == r) return true;
-    return false;
-}
+// the JavaScript built-ins (Script.hpp IsJavaScriptGlobal): a missing one is a language gap, not a DOM one
+bool IsLanguageName(const std::string& api) { return okay::browser::IsJavaScriptGlobal(api.substr(0, api.find('.'))); }
 
 void Add(std::vector<Cause>& out, std::set<std::string>& seen, Area a, const std::string& key, const std::string& detail) {
     if (key.empty() || !seen.insert(key).second) return;

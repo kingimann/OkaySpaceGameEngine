@@ -219,5 +219,8 @@ bool IsJavaScriptType(const std::string& type);
 /// itself was meant to define (a script that did not load) is not counted. PageScripts adds "not implemented: X" to the console
 /// (a warning) after such an error line, so the page's console and the site check say what to build.
 std::string MissingWebApi(const std::string& errorLine);
+/// Is `name` one of the JavaScript language's own globals (Object, Date, Map, decodeURIComponent, typed arrays ...; ECMA-262
+/// section 19)? A missing one is a gap in our JavaScript engine rather than in the DOM binding.
+bool IsJavaScriptGlobal(const std::string& name);
 
 } // namespace okay::browser

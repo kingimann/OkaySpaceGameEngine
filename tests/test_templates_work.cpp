@@ -836,8 +836,8 @@ void RunTemplate(const std::string& title, oked::TemplateBuilder build, const Sp
     if (!made.ok) return;
     const fs::path root = made.root, scenePath = made.scene;
     std::error_code ec;
-    Expect(row, kCreate, scenePath == root / "Assets" / (plan.folder + ".okayscene") && fs::is_regular_file(scenePath, ec) && fs::file_size(scenePath, ec) > 100,
-           "the scene file is not at Assets/<name>.okayscene: " + scenePath.string());
+    Expect(row, kCreate, scenePath == root / "Assets" / "Scenes" / (plan.folder + ".okayscene") && fs::is_regular_file(scenePath, ec) && fs::file_size(scenePath, ec) > 100,
+           "the scene file is not at Assets/Scenes/<name>.okayscene: " + scenePath.string());   // docs/engine/project_layout.md
     for (const std::string& f : okayproj::StandardFolders())
         Expect(row, kCreate, fs::is_directory(root / "Assets" / f, ec), "the standard folder Assets/" + f + " is missing");
     Expect(row, kCreate, fs::is_regular_file(okayproj::SettingsPath(root.string()), ec), "project.okayproj was not written");

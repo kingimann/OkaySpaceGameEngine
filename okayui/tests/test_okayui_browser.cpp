@@ -4,7 +4,8 @@
 // loading and error states draw. Step 2: the browser program's toolbar (an address field, Go, no "Open in browser" or
 // "Close"), and an embedded game's box with the host's Play button and state line (golden), a click on Play, and a box the
 // host says cannot play (no button). Round 1 of the browser program: a form's field clicked and typed into through the view, a
-// checkbox ticked, and Enter sending the form (the POST body checked).
+// checkbox ticked, and Enter sending the form (the POST body checked). Round 2 of the look: text selected by dragging (golden),
+// Ctrl+C and Ctrl+A, and a press on a link that follows it and selects nothing.
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "BrowserView.hpp"
@@ -211,6 +212,75 @@ int main() {
             std::string body;
             CHECK(f.size() == 1 && f[0] == "https://forms.test/in" && tab3.PostBody(f[0], body) && body == "user=ann%40test&keep=1");
         }
+    }
+
+    // ---- round 2 of the look: text selection with the mouse in the browser program's view; Ctrl+C copies it, Ctrl+A selects
+    // all of the page's text; a press on a link still follows the link and selects nothing ----
+    {
+        br::BrowserTab tab4;
+        tab4.SetAnyOrigin(true);
+        CHECK(tab4.Open("https://text.test/"));
+        tab4.TakeFetches();
+        tab4.DeliverPage("https://text.test/", true, 200,
+            "<body style='margin:10px'><p style='margin:0'>Hello brave new world</p><p style='margin:0'>Second line here</p>"
+            "<p style='margin:0'><a href='/x'>a link</a></p></body>");
+        S::AddressField field;
+        S::ControlEdit edit;
+        S::PageKeys keys;
+        S::BrowserViewOptions opt;
+        opt.address = &field;
+        opt.hostButtons = false;
+        opt.programButtons = true;
+        opt.edit = &edit;
+        opt.keys = &keys;
+        Sim sim4(480, 320);
+        S::BrowserViewResult r4;
+        int clicked = -1;
+        auto ui4 = [&] { r4 = S::DrawBrowserView(tab4, 0, 0, 480, 320, S::BrowserImageFn(), opt); if (r4.linkClicked >= 0) clicked = r4.linkClicked; };
+        sim4.Frames(3, ui4);
+        const br::LayoutResult& pg = tab4.Layout(r4.page.w, S::OkayUIMeasure());
+        const br::DrawCmd* hello = nullptr;
+        const br::DrawCmd* second = nullptr;
+        for (const br::DrawCmd& c : pg.cmds) {
+            if (c.kind == br::DrawCmd::Text && c.text.rfind("Hello", 0) == 0) hello = &c;
+            if (c.kind == br::DrawCmd::Text && c.text.rfind("Second", 0) == 0) second = &c;
+        }
+        CHECK(hello && second);
+        if (hello && second) {
+            const float hx = hello->x, hy = hello->y + hello->h * 0.5f;
+            const float upTo = S::OkayUIMeasure().Width("Hello brave", hello->font);
+            const float sx = second->x + S::OkayUIMeasure().Width("Second", second->font);
+            const float sy = second->y + second->h * 0.5f;
+            // drag from the start of "Hello" to just after "Second"
+            sim4.Move(r4.page.x + hx + 1.0f, r4.pageTop + hy); sim4.Frame(ui4);
+            sim4.Down(); sim4.Frame(ui4);
+            sim4.Move(r4.page.x + hx + upTo, r4.pageTop + hy); sim4.Frame(ui4);
+            sim4.Move(r4.page.x + sx + 1.0f, r4.pageTop + sy); sim4.Frame(ui4);
+            sim4.Up(); sim4.Frame(ui4);
+            CHECK(keys.HasSelection());
+            CHECK(S::SelectedPageText(pg, keys) == "Hello brave new world\nSecond");
+            UI::SetClipboardText("");
+            sim4.ctrl = true; sim4.Hold(UI::KeyId_C, true); sim4.Frame(ui4); sim4.Hold(UI::KeyId_C, false); sim4.Frame(ui4); sim4.ctrl = false;
+            CHECK(std::string(UI::GetClipboardText()) == "Hello brave new world\nSecond");
+            {
+                std::string why;
+                const bool same = MatchesGolden("browser_select", sim4.Draw(28, 30, 36), &why);
+                if (!same) std::cerr << "  golden browser_select: " << why << "\n";
+                CHECK(same);
+            }
+            // a plain click on the text clears it
+            sim4.Click(r4.page.x + hx + 3.0f, r4.pageTop + hy, ui4);
+            CHECK(!keys.HasSelection());
+            // Ctrl+A: all of it
+            sim4.ctrl = true; sim4.Hold(UI::KeyId_A, true); sim4.Frame(ui4); sim4.Hold(UI::KeyId_A, false); sim4.Frame(ui4); sim4.ctrl = false;
+            CHECK(S::SelectedPageText(pg, keys) == "Hello brave new world\nSecond line here\na link");
+        }
+        // a press on the link follows it and starts no selection
+        for (const br::LinkArea& a : pg.areas) {
+            sim4.Click(r4.page.x + a.x + a.w * 0.5f, r4.pageTop + a.y + a.h * 0.5f, ui4);
+            break;
+        }
+        CHECK(clicked == 0 && !keys.HasSelection());
     }
 
     UI::UseLauncherLook(false);

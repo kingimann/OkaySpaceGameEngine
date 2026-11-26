@@ -9,6 +9,7 @@
 #include "okay/UI/OkayUICompat.hpp"   // AddFontTtf: web fonts as OkayUI TrueType fonts
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -62,6 +63,13 @@ struct TabView {
     std::vector<FindHit> hits;
     std::string hitsKey;                      // what `hits` were found for
     S::ControlEdit edit;                      // the page's form field being typed in
+    S::PageKeys keys;                         // key scrolling and the Tab focus on the page
+    // the address bar's suggestions while the person types (round 2)
+    std::vector<Suggestion> sugg;
+    std::string suggFor;                      // the text they were made for
+    int suggSel = 0;                          // the highlighted row (Enter opens it)
+    bool suggHidden = false;                  // Esc closed them (until the text changes)
+    UI::Rect suggRect;                        // where they were drawn last frame (clicks there are not the page's)
 };
 
 // A small menu drawn over everything (the main menu, the context menu, a bookmark's menu).
@@ -115,6 +123,9 @@ struct BrowserApp::Impl {
     bool quit = false;
     bool autoplay = false, autoplayDone = false;
     int lastActive = -1;
+    int dragTab = -1;          // the tab held down in the tab strip (dragged to reorder once the pointer moves)
+    float dragFromX = 0.0f;
+    bool dragging = false;
 
     explicit Impl(Config c) : cfg(std::move(c)), store(cfg.profilePath), downloads(cfg.userAgent) {
         std::string why;
@@ -379,49 +390,116 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
         lastActive = order.Active();
     }
 
-    // ---- the tab bar ----
-    const float tabBarH = 34.0f;
+    // ---- the tab strip (round 2): rounded tabs joined to the toolbar, site badges, close buttons on hover, a + button, tabs
+    // that shrink as more open, a tooltip with the whole title, dragging a tab to reorder ----
+    const float tabBarH = 40.0f;
     UI::BareNextWindow();
     if (UI::Begin((pre + "_tabbar").c_str(), X, Y, W, tabBarH)) {
+        namespace lk = S::browserlook;
         const auto& dl = UI::GetWindowDrawList();
-        dl->AddRectFilled(UI::Vec2(X, Y), UI::Vec2(X + W, Y + tabBarH), Rgba(28, 31, 38));
+        dl->AddRectFilled(UI::Vec2(X, Y), UI::Vec2(X + W, Y + tabBarH), lk::kStrip);
         const std::vector<int> ids = order.Ids();
-        const float plusW = 34.0f;
-        const float tw = std::max(60.0f, std::min(220.0f, (W - plusW - 12.0f) / (float)std::max<std::size_t>(1, ids.size())));
+        const float plusW = 36.0f, left = X + 8.0f;
+        const float tw = std::max(48.0f, std::min(240.0f, (W - plusW - 24.0f) / (float)std::max<std::size_t>(1, ids.size())));
         const UI::Vec2 m = UI::GetMousePos();
-        float x = X + 6.0f;
-        int toClose = -1;
-        for (int id : ids) {
+        const float y0 = Y + 7.0f, y1 = Y + tabBarH, r = 8.0f;
+        int toClose = -1, hoverId = -1;
+        // dragging: once the held tab moved a few pixels it follows the pointer's slot
+        if (dragTab >= 0) {
+            if (!UI::IsMouseDown(0) || modal) { dragTab = -1; dragging = false; }
+            else {
+                if (std::fabs(m.x - dragFromX) > 6.0f) dragging = true;
+                if (dragging) {
+                    const int slot = std::max(0, std::min((int)ids.size() - 1, (int)std::floor((m.x - left) / tw)));
+                    if (slot != order.IndexOf(dragTab)) order.Move(dragTab, slot);
+                }
+            }
+        }
+        const std::vector<int> shownIds = order.Ids();
+        for (std::size_t i = 0; i < shownIds.size(); ++i) {
+            const float x = left + tw * (float)i;
+            if (!modal && !dragging && m.x >= x && m.x < x + tw && m.y >= y0 && m.y < y1) hoverId = shownIds[i];
+        }
+        for (std::size_t i = 0; i < shownIds.size(); ++i) {
+            const int id = shownIds[i];
+            const float x = left + tw * (float)i;
             BrowserTab& t = tabs[id].host->Tab();
             const bool act = id == order.Active();
+            const bool hover = id == hoverId;
             const bool loadingTab = t.GetState() == BrowserTab::State::Loading;
-            const float y0 = Y + 5.0f, y1 = Y + tabBarH;
-            const bool hover = !modal && m.x >= x && m.x < x + tw - 2 && m.y >= y0 && m.y < y1;
-            dl->AddRectFilled(UI::Vec2(x, y0), UI::Vec2(x + tw - 2, y1), act ? Rgba(236, 239, 245) : hover ? Rgba(62, 67, 80) : Rgba(44, 48, 58), 6.0f);
+            if (act) {   // the active tab: one surface with the toolbar under it
+                dl->AddRectFilled(UI::Vec2(x, y0), UI::Vec2(x + tw, y1), lk::kToolbar, r, UI::DrawFlags_RoundCornersTop);
+            } else if (hover) {
+                dl->AddRectFilled(UI::Vec2(x + 2, y0 + 2), UI::Vec2(x + tw - 2, y1 - 4), lk::kTabHover, r);
+            }
+            // a thin line between two tabs that are neither shown nor under the pointer
+            const int nextId = i + 1 < shownIds.size() ? shownIds[i + 1] : -1;
+            if (!act && !hover && nextId >= 0 && nextId != order.Active() && nextId != hoverId)
+                dl->AddRectFilled(UI::Vec2(x + tw - 0.5f, y0 + 9), UI::Vec2(x + tw + 0.5f, y1 - 11), lk::kDivider);
             std::string label = t.Title();
             if (label.empty()) label = t.Url().empty() || t.Url() == "about:newtab" ? std::string("New tab") : t.Url();
             if (loadingTab && t.Title().empty()) label = "Loading...";
-            float tx = x + 10.0f;
-            if (loadingTab) {   // the loading indicator: a dot that turns around a small circle
-                const float a = (float)frame * 0.25f;
-                dl->AddCircle(UI::Vec2(tx + 6, y0 + 14), 6.0f, act ? Rgba(170, 180, 200) : Rgba(110, 118, 135), 0, 2.0f);
-                dl->AddCircleFilled(UI::Vec2(tx + 6 + std::cos(a) * 6.0f, y0 + 14 + std::sin(a) * 6.0f), 2.5f, Rgba(58, 123, 213));
-                tx += 18.0f;
+            // the site badge: a spinner while loading, a sign for an error, our own pages' sign, else the site's letter
+            const float ix = x + 12.0f, iy = (y0 + y1) * 0.5f, ir = 8.0f;
+            const bool narrow = tw < 72.0f;
+            const float badgeX = narrow ? x + tw * 0.5f - ir : ix;
+            if (loadingTab) {
+                const float a0 = (float)frame * 0.2f;
+                dl->PathClear();
+                dl->PathArcTo(UI::Vec2(badgeX + ir, iy), ir - 1.0f, a0, a0 + 4.2f, 16);
+                dl->PathStroke(lk::kAccent, false, 2.0f);
+            } else if (t.GetState() == BrowserTab::State::Error) {
+                S::DrawBrowserIcon(S::BrowserIcon::Warning, badgeX + ir, iy, 15.0f, lk::Rgb(240, 180, 90));
+            } else if (IsInternalPage(t.Url()) || t.Url().empty()) {
+                S::DrawBrowserIcon(S::BrowserIcon::Globe, badgeX + ir, iy, 15.0f, act ? lk::kText : lk::kTextDim);
+            } else {
+                static const UI::Color32 kBadge[8] = {lk::Rgb(58, 123, 213), lk::Rgb(213, 87, 58), lk::Rgb(47, 158, 110), lk::Rgb(138, 91, 214),
+                                                      lk::Rgb(201, 138, 30), lk::Rgb(30, 155, 176), lk::Rgb(194, 71, 126), lk::Rgb(93, 111, 138)};
+                std::string host = HostOf(t.Url());
+                if (host.rfind("www.", 0) == 0) host = host.substr(4);
+                unsigned hh = 2166136261u;   // the same colour for the same site as on the new-tab page
+                for (unsigned char ch : host) hh = (hh ^ ch) * 16777619u;
+                dl->AddCircleFilled(UI::Vec2(badgeX + ir, iy), ir, kBadge[hh % 8]);
+                const char letter[2] = {host.empty() ? '?' : (char)std::toupper((unsigned char)host[0]), 0};
+                const float ls = 1.5f, lw = UI::CalcTextWidth(letter) * ls / UI::Style().textScale;
+                dl->AddText(UI::Vec2(badgeX + ir - lw * 0.5f, iy - 6.0f), lk::Rgb(255, 255, 255), letter, ls);
             }
-            const float closeX = x + tw - 24.0f;
-            dl->AddText(UI::Vec2(tx, y0 + 7), act ? Rgba(25, 30, 40) : Rgba(220, 225, 235), Fit(label, closeX - tx - 4).c_str());
-            const bool overClose = hover && m.x >= closeX && m.x < closeX + 18;
-            if (overClose) dl->AddRectFilled(UI::Vec2(closeX, y0 + 5), UI::Vec2(closeX + 18, y0 + 23), act ? Rgba(200, 205, 215) : Rgba(80, 86, 100), 4.0f);
-            dl->AddText(UI::Vec2(closeX + 5, y0 + 7), act ? Rgba(60, 66, 80) : Rgba(180, 186, 200), "x");
-            if (hover && UI::IsMouseClicked(0)) { if (overClose) toClose = id; else order.Activate(id); }
-            if (hover && UI::IsMouseClicked(2)) toClose = id;   // a middle click closes a tab
-            x += tw;
+            // the close button: on the shown tab, the tab under the pointer, and every tab that is wide enough
+            const bool showClose = act || hover || tw >= 140.0f;
+            const float cs = 20.0f, closeX = x + tw - 8.0f - cs, closeY = iy - cs * 0.5f;
+            const bool overClose = showClose && hover && m.x >= closeX && m.x < closeX + cs && m.y >= closeY && m.y < closeY + cs;
+            if (!narrow) {
+                const float tx = ix + 2.0f * ir + 8.0f;
+                const float room = (showClose ? closeX : x + tw - 8.0f) - tx - 4.0f;
+                if (room > 8.0f) {
+                    UI::PushClipRect(tx, y0, room, y1 - y0);
+                    dl->AddText(UI::Vec2(tx, iy - UI::GetTextLineHeight() * 0.5f), act ? lk::kText : lk::Rgb(196, 202, 214), Fit(label, room).c_str());
+                    UI::PopClipRect();
+                }
+            }
+            if (showClose && (!narrow || act)) {
+                if (overClose) dl->AddCircleFilled(UI::Vec2(closeX + cs * 0.5f, iy), cs * 0.5f, UI::IsMouseDown(0) ? lk::kPressed : lk::kHover);
+                S::DrawBrowserIcon(S::BrowserIcon::Close, closeX + cs * 0.5f, iy, 11.0f, act || hover ? lk::kText : lk::kTextDim);
+            }
+            if (hover) {
+                if (UI::IsMouseClicked(0)) {
+                    if (overClose) toClose = id;
+                    else { order.Activate(id); dragTab = id; dragFromX = m.x; dragging = false; }
+                }
+                if (UI::IsMouseClicked(2)) toClose = id;   // a middle click closes a tab
+                const std::string host = HostOf(t.Url());
+                S::BrowserDelayedTooltip((unsigned)id * 2654435761u, host.empty() || IsInternalPage(t.Url()) ? label : label + "\n" + host);
+            }
         }
-        const bool plusHover = !modal && m.x >= x && m.x < x + plusW - 4 && m.y >= Y + 5 && m.y < Y + tabBarH - 2;
-        dl->AddRectFilled(UI::Vec2(x, Y + 7), UI::Vec2(x + plusW - 4, Y + tabBarH - 3), plusHover ? Rgba(62, 67, 80) : Rgba(36, 40, 48), 6.0f);
-        dl->AddText(UI::Vec2(x + 11, Y + 12), Rgba(220, 225, 235), "+");
-        if (plusHover && UI::IsMouseClicked(0)) doAction(A_NewTab);
-        if (toClose >= 0) closeTab(toClose);
+        const float px = left + tw * (float)shownIds.size() + 6.0f, pcy = (y0 + y1) * 0.5f - 1.0f;
+        const bool plusHover = !modal && !dragging && (m.x - (px + 14.0f)) * (m.x - (px + 14.0f)) + (m.y - pcy) * (m.y - pcy) < 15.0f * 15.0f;
+        if (plusHover) dl->AddCircleFilled(UI::Vec2(px + 14.0f, pcy), 14.0f, UI::IsMouseDown(0) ? lk::kPressed : lk::kHover);
+        S::DrawBrowserIcon(S::BrowserIcon::Plus, px + 14.0f, pcy, 13.0f, lk::kText);
+        if (plusHover) {
+            if (UI::IsMouseClicked(0)) doAction(A_NewTab);
+            S::BrowserDelayedTooltip(0x9e3779b9u, "New tab (Ctrl+T)");
+        }
+        if (toClose >= 0) { closeTab(toClose); dragTab = -1; dragging = false; }
     }
     UI::End();
     if (tabs.find(order.Active()) == tabs.end()) return;   // the tab bar closed it: draw again next frame
@@ -451,6 +529,29 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
     const int nHits = (int)cur.hits.size();
     if (nHits > 0) findCurrent = ((findCurrent % nHits) + nHits) % nHits;
 
+    // ---- the address bar's suggestions (round 2): made again whenever the typed text changes ----
+    const std::string typedNow = cur.field.text;
+    const bool typingAddress = cur.field.focused && !modal && !off && typedNow != t.Url();
+    if (typingAddress && typedNow != cur.suggFor) {
+        std::vector<OpenTabInfo> others;
+        for (int id : order.Ids())
+            if (id != order.Active()) { const BrowserTab& ot = tabs[id].host->Tab(); others.push_back({id, ot.Url(), ot.Title()}); }
+        cur.sugg = SuggestAddresses(typedNow, profile(), others, 7);
+        cur.suggFor = typedNow;
+        cur.suggSel = 0;
+        cur.suggHidden = false;
+    }
+    const bool suggOpen = typingAddress && !cur.suggHidden && !cur.sugg.empty() && cur.suggFor == typedNow;
+    if (suggOpen) {
+        const int n = (int)cur.sugg.size();
+        if (UI::IsKeyPressed(UI::KeyId_Down)) cur.suggSel = (cur.suggSel + 1) % n;
+        if (UI::IsKeyPressed(UI::KeyId_Up)) cur.suggSel = (cur.suggSel + n - 1) % n;
+        if (UI::IsKeyPressed(UI::KeyId_Escape, false)) cur.suggHidden = true;
+    }
+    const UI::Vec2 mouseNow = UI::GetMousePos();
+    const bool overSugg = suggOpen && mouseNow.x >= cur.suggRect.x && mouseNow.x < cur.suggRect.x + cur.suggRect.w &&
+                          mouseNow.y >= cur.suggRect.y && mouseNow.y < cur.suggRect.y + cur.suggRect.h;
+
     // ---- the toolbar and the page ----
     S::BrowserViewOptions opt;
     opt.address = &cur.field;
@@ -460,9 +561,10 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
     opt.placeholder = AddressPlaceholder(profile().settings.searchUrl);
     opt.focusAddress = cur.focusAddress && !modal;
     cur.focusAddress = false;
-    opt.blockInput = modal;
+    opt.blockInput = modal || overSugg;
     opt.zoom = zoom;
     opt.edit = &cur.edit;
+    opt.keys = &cur.keys;
     if (findOpen && nHits > 0) {
         opt.findHits = &cur.hits;
         opt.findCurrent = findCurrent;
@@ -499,7 +601,7 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
         opt.belowToolbar = [&](float bx, float by, float bw) {
             const auto& dl = UI::GetWindowDrawList();
             const UI::Vec2 m = UI::GetMousePos();
-            float x = bx;
+            float x = bx + 8.0f;
             const auto& items = profile().bookmarks.Items();
             if (items.empty()) {
                 dl->AddText(UI::Vec2(x + 4, by + 5), Rgba(140, 148, 165), "Bookmarks appear here (Ctrl+D bookmarks this page)");
@@ -510,7 +612,7 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
                 const float w = UI::CalcTextWidth(label.c_str()) + 16.0f;
                 if (x + w > bx + bw) break;
                 const bool hover = !modal && m.x >= x && m.x < x + w && m.y >= by && m.y < by + 24.0f;
-                if (hover) dl->AddRectFilled(UI::Vec2(x, by), UI::Vec2(x + w, by + 24.0f), Rgba(70, 76, 90), 5.0f);
+                if (hover) dl->AddRectFilled(UI::Vec2(x, by), UI::Vec2(x + w, by + 24.0f), S::browserlook::kHover, 6.0f);
                 dl->AddText(UI::Vec2(x + 8, by + 5), Rgba(225, 230, 240), label.c_str());
                 if (hover) {
                     UI::SetMouseCursor(UI::MouseCursor_Hand);
@@ -552,7 +654,56 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
             if (cfg.quitItem) { items.push_back({"", "", 0}); items.push_back({"Quit", "Ctrl+Q", A_Quit}); }
             openMenu(UI::Vec2(std::max(X, r.menuButton.x + r.menuButton.w - 260.0f), r.menuButton.y + r.menuButton.h + 4.0f), std::move(items));
         }
-        if (!r.navigate.empty()) {
+        // a suggestion picked with the mouse (it is drawn over the page, under the address bar)
+        int picked = -1;
+        cur.suggRect = UI::Rect{0, 0, 0, 0};
+        if (suggOpen && r.address.w > 0.0f) {
+            namespace lk = S::browserlook;
+            const float rowH = 34.0f, sx = r.address.x, sw = r.address.w, sy = r.address.y + r.address.h + 4.0f;
+            const float sh = rowH * (float)cur.sugg.size() + 12.0f;
+            cur.suggRect = UI::Rect{sx, sy, sw, sh};
+            const auto& fg = UI::GetForegroundDrawList();
+            for (int k = 3; k >= 1; --k)   // a soft shadow
+                fg->AddRectFilled(UI::Vec2(sx - (float)k, sy - (float)k + 3.0f), UI::Vec2(sx + sw + (float)k, sy + sh + (float)k + 3.0f), lk::Rgb(0, 0, 0, 28), 12.0f + (float)k);
+            fg->AddRectFilled(UI::Vec2(sx, sy), UI::Vec2(sx + sw, sy + sh), lk::Rgb(36, 40, 50), 12.0f);
+            fg->AddRect(UI::Vec2(sx, sy), UI::Vec2(sx + sw, sy + sh), lk::kDivider, 12.0f, 1.0f);
+            const float lh = UI::GetTextLineHeight();
+            for (std::size_t i = 0; i < cur.sugg.size(); ++i) {
+                const Suggestion& sg = cur.sugg[i];
+                const float ry = sy + 6.0f + rowH * (float)i;
+                const bool hov = mouseNow.x >= sx && mouseNow.x < sx + sw && mouseNow.y >= ry && mouseNow.y < ry + rowH;
+                if (hov && UI::GetMouseDelta().x * UI::GetMouseDelta().x + UI::GetMouseDelta().y * UI::GetMouseDelta().y > 0.0f) cur.suggSel = (int)i;
+                if ((int)i == cur.suggSel) fg->AddRectFilled(UI::Vec2(sx + 4.0f, ry), UI::Vec2(sx + sw - 4.0f, ry + rowH), lk::Rgb(58, 66, 84), 8.0f);
+                const S::BrowserIcon ic = sg.kind == Suggestion::Search ? S::BrowserIcon::Search : sg.kind == Suggestion::Bookmark ? S::BrowserIcon::StarFilled
+                                        : sg.kind == Suggestion::OpenTab ? S::BrowserIcon::Tab : sg.kind == Suggestion::History ? S::BrowserIcon::Clock : S::BrowserIcon::Globe;
+                const float icx = sx + 24.0f, icy = ry + rowH * 0.5f;
+                S::DrawBrowserIcon(ic, icx, icy, 15.0f, sg.kind == Suggestion::Bookmark ? lk::kAccent : lk::kTextDim, true);
+                std::string mainText, sideText;
+                switch (sg.kind) {
+                case Suggestion::Search: mainText = sg.title; sideText = std::string(" - ") + (AddressPlaceholder(profile().settings.searchUrl).find("Google") != std::string::npos ? "Search Google" : "Search"); break;
+                case Suggestion::Go: mainText = sg.url; break;
+                case Suggestion::OpenTab: mainText = sg.title.empty() ? sg.url : sg.title; sideText = " - Switch to this tab"; break;
+                default: mainText = sg.title.empty() ? sg.url : sg.title; sideText = " - " + sg.url; break;
+                }
+                const float tx = sx + 46.0f, room = sw - 60.0f;
+                const std::string mainFit = Fit(mainText, room * 0.7f);
+                const float mw = UI::CalcTextWidth(mainFit.c_str());
+                fg->AddText(UI::Vec2(tx, icy - lh * 0.5f), lk::kText, mainFit.c_str());
+                if (!sideText.empty() && room - mw > 40.0f)
+                    fg->AddText(UI::Vec2(tx + mw, icy - lh * 0.5f), sg.kind == Suggestion::OpenTab ? lk::kAccent : lk::kTextDim, Fit(sideText, room - mw).c_str());
+                if (hov && UI::IsMouseClicked(0)) picked = (int)i;
+            }
+        }
+        if (!r.navigate.empty() && suggOpen && cur.suggSel >= 0 && cur.suggSel < (int)cur.sugg.size()) picked = cur.suggSel;
+        if (picked >= 0) {
+            const Suggestion sg = cur.sugg[(std::size_t)picked];
+            notice.clear();
+            cur.sugg.clear(); cur.suggFor.clear();
+            cur.field.shownFor.clear();   // the bar shows the tab's address again
+            UI::SetKeyboardFocusId(0);
+            if (sg.kind == Suggestion::OpenTab && tabs.count(sg.tabId)) order.Activate(sg.tabId);
+            else load(cur, sg.url);
+        } else if (!r.navigate.empty()) {
             notice.clear();
             const std::string u = typedAddress(r.navigate);
             if (!u.empty()) load(cur, u);
@@ -577,7 +728,7 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
             const LayoutResult& page = t.Layout(r.page.w / zoom, S::OkayUIMeasure());
             std::vector<MenuItem> items;
             menu.link.clear();
-            menu.text = r.contextText;
+            menu.text = cur.keys.HasSelection() ? S::SelectedPageText(page, cur.keys) : r.contextText;
             if (r.contextLink >= 0 && r.contextLink < (int)page.links.size()) {
                 menu.link = t.ResolveImage(page.links[(std::size_t)r.contextLink]);
                 items.push_back({"Open link in new tab", "", A_OpenLinkNewTab});
@@ -588,7 +739,8 @@ void BrowserApp::Impl::frameIn(float X, float Y, float W, float H) {
             items.push_back({"Forward", "Alt+Right", A_Forward, t.CanGoForward()});
             items.push_back({"Reload", "Ctrl+R", A_Reload});
             items.push_back({"", "", 0});
-            if (!r.contextText.empty()) items.push_back({"Copy text", "", A_CopyText});
+            if (cur.keys.HasSelection()) items.push_back({"Copy", "Ctrl+C", A_CopyText});
+            else if (!r.contextText.empty()) items.push_back({"Copy text", "", A_CopyText});
             items.push_back({"Copy page address", "", A_CopyPage});
             items.push_back({opt.bookmarked ? "Remove bookmark" : "Bookmark this page", "Ctrl+D", A_Bookmark});
             items.push_back({"Find on page", "Ctrl+F", A_Find});

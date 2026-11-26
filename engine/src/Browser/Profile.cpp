@@ -9,6 +9,7 @@
 #include "okay/Core/StringUtil.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <chrono>
@@ -17,6 +18,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <map>
 #include <utility>
 
 namespace okay::browser {
@@ -678,6 +680,90 @@ std::string When(std::int64_t t) {
     return buf;
 }
 
+// The new-tab page's search box: a GET form that sends the words where the search address puts them ("" when the address
+// has no "name=%s" part in its query, or another part this form cannot repeat as it is).
+std::string SearchForm(const std::string& tmpl) {
+    const std::size_t q = tmpl.find('?');
+    if (q == std::string::npos || q == 0 || tmpl.find('#') != std::string::npos) return std::string();
+    const std::string action = tmpl.substr(0, q), query = tmpl.substr(q + 1);
+    if (action.rfind("https://", 0) != 0 && action.rfind("http://", 0) != 0) return std::string();
+    std::string field, hidden;
+    std::size_t i = 0;
+    while (i <= query.size()) {
+        std::size_t e = query.find('&', i);
+        if (e == std::string::npos) e = query.size();
+        const std::string pair = query.substr(i, e - i);
+        i = e + 1;
+        if (pair.empty()) continue;
+        const std::size_t eq = pair.find('=');
+        const std::string name = pair.substr(0, eq), value = eq == std::string::npos ? std::string() : pair.substr(eq + 1);
+        if (name.empty() || name.find_first_of("%+") != std::string::npos) return std::string();
+        if (value == "%s") { if (!field.empty()) return std::string(); field = name; continue; }
+        if (value.find_first_of("%+") != std::string::npos) return std::string();   // would need decoding to repeat it
+        hidden += "<input type=hidden name=\"" + HtmlEscape(name) + "\" value=\"" + HtmlEscape(value) + "\">";
+    }
+    if (field.empty()) return std::string();
+    const bool google = HostOf(tmpl) == "www.google.com" || HostOf(tmpl) == "google.com";
+    return "<form class=search method=get action=\"" + HtmlEscape(action) + "\">" + hidden + "<input class=q type=text name=\"" +
+           HtmlEscape(field) + "\" placeholder=\"" + (google ? "Search Google" : "Search the web") + "\"></form>";
+}
+
+// A shortcut tile: a round badge with the site's first letter (a colour of its own per host) and the page's title.
+std::string Tile(const std::string& url, const std::string& title) {
+    static const char* const kColors[] = {"#3a7bd5", "#d5573a", "#2f9e6e", "#8a5bd6", "#c98a1e", "#1e9bb0", "#c2477e", "#5d6f8a"};
+    std::string host = HostOf(url);
+    if (host.rfind("www.", 0) == 0) host = host.substr(4);
+    unsigned h = 2166136261u;   // FNV-1a over the host: the same site always gets the same colour
+    for (unsigned char c : host) h = (h ^ c) * 16777619u;
+    const char letter = host.empty() ? '?' : (char)std::toupper((unsigned char)host[0]);
+    return "<div class=tile><a href=\"" + HtmlEscape(url) + "\"><div class=icon style=\"background:" + kColors[h % 8] + "\">" +
+           std::string(1, letter) + "</div><div class=name>" + HtmlEscape(title.empty() ? host : title) + "</div></a></div>";
+}
+
+// about:newtab: a search box in the middle, then up to 8 shortcuts (the bookmarks first, then the pages visited most often).
+std::string NewTabPage(const Profile& p) {
+    std::string b = "<div class=ntp><div class=brand>OkaySpace</div>" + SearchForm(p.settings.searchUrl) + "<div class=tiles>";
+    std::vector<std::string> shown;
+    for (const Bookmark& bm : p.bookmarks.Items()) {
+        if (shown.size() >= 8) break;
+        if (std::find(shown.begin(), shown.end(), bm.url) != shown.end()) continue;
+        shown.push_back(bm.url);
+        b += Tile(bm.url, bm.title);
+    }
+    if (shown.size() < 8) {
+        std::map<std::string, std::pair<int, std::size_t>> visits;   // address -> (visits, newest entry)
+        const auto& items = p.history.Items();
+        for (std::size_t i = 0; i < items.size(); ++i) { auto& v = visits[items[i].url]; ++v.first; v.second = i; }
+        std::vector<std::pair<std::string, std::pair<int, std::size_t>>> order(visits.begin(), visits.end());
+        std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& c) {
+            return a.second.first != c.second.first ? a.second.first > c.second.first : a.second.second > c.second.second;
+        });
+        for (const auto& o : order) {
+            if (shown.size() >= 8) break;
+            if (std::find(shown.begin(), shown.end(), o.first) != shown.end()) continue;
+            shown.push_back(o.first);
+            b += Tile(o.first, items[o.second.second].title);
+        }
+    }
+    b += "</div>";
+    if (shown.empty()) b += "<p class=hint>Pages you bookmark or visit often show up here.</p>";
+    b += "<div class=links><a href=\"about:history\">History</a><a href=\"about:bookmarks\">Bookmarks</a>"
+         "<a href=\"about:downloads\">Downloads</a></div></div>";
+    return "<!DOCTYPE html><html><head><title>New tab</title><style>"
+           "body{font-family:sans-serif;margin:0;background:#f6f8fb;color:#1d2330}"
+           ".ntp{max-width:640px;margin:0 auto;padding:72px 24px 24px 24px}"
+           ".brand{font-size:34px;font-weight:bold;color:#3a7bd5;text-align:center;margin-bottom:22px}"
+           ".search{margin:0 0 30px 0}.q{width:100%;height:44px;font-size:16px;padding:0 20px;border:1px solid #d3d9e4;"
+           "border-radius:22px;background:white;box-sizing:border-box}"
+           ".tiles{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}"
+           ".tile{width:112px;padding:12px 4px;border-radius:10px;text-align:center}.tile a{text-decoration:none;color:#1d2330}"
+           ".icon{width:44px;height:44px;line-height:44px;margin:0 auto 8px auto;border-radius:22px;color:white;font-size:20px;"
+           "font-weight:bold;text-align:center}.name{font-size:13px;overflow:hidden;white-space:nowrap}"
+           ".hint{color:#6a7385;text-align:center}.links{text-align:center;margin-top:28px;font-size:13px}"
+           ".links a{color:#4a6fa5;margin:0 10px;text-decoration:none}"
+           "</style></head><body>" + b + "</body></html>";
+}
+
 } // namespace
 
 std::string InternalPage(const std::string& urlIn, const Profile& p, const std::vector<DownloadItem>& downloads) {
@@ -717,29 +803,167 @@ std::string InternalPage(const std::string& urlIn, const Profile& p, const std::
         if (downloads.empty()) b += "<p class=empty>No downloads in this session.</p>";
         return Shell("Downloads", b);
     }
-    // about:newtab: the bookmarks as tiles, then the most recent pages
-    std::string b = "<h1>New tab</h1>";
-    if (!p.bookmarks.Items().empty()) {
-        b += "<div class=tiles>";
-        std::size_t n = 0;
-        for (const Bookmark& bm : p.bookmarks.Items()) {
-            if (n++ >= 12) break;
-            b += "<div class=tile><a href=\"" + HtmlEscape(bm.url) + "\">" + HtmlEscape(bm.title) + "</a><div class=meta>" +
-                 HtmlEscape(HostOf(bm.url)) + "</div></div>";
+    return NewTabPage(p);
+}
+
+// ---- round 2 of the look: suggestions, the site badge, error pages ------------------------------------------------------
+
+namespace {
+
+bool IsAlnum(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || IsDigit(c); }
+
+// How well `words` (lower-cased, at least one) match a page: 0 when one of them is in neither its address nor its title; else
+// 3 when the host (after "www.") starts with the first word, 2 when the first word starts a word of the address or title, 1.
+int MatchScore(const std::vector<std::string>& words, const std::string& url, const std::string& title) {
+    const std::string lurl = LowerAscii(url), ltitle = LowerAscii(title);
+    for (const std::string& w : words)
+        if (lurl.find(w) == std::string::npos && ltitle.find(w) == std::string::npos) return 0;
+    std::string host = HostOf(lurl);
+    if (host.rfind("www.", 0) == 0) host = host.substr(4);
+    if (host.rfind(words[0], 0) == 0) return 3;
+    for (const std::string* text : {&lurl, &ltitle})
+        for (std::size_t at = text->find(words[0]); at != std::string::npos; at = text->find(words[0], at + 1))
+            if (at == 0 || !IsAlnum((*text)[at - 1])) return 2;
+    return 1;
+}
+
+} // namespace
+
+std::vector<Suggestion> SuggestAddresses(const std::string& typedIn, const Profile& p, const std::vector<OpenTabInfo>& tabs,
+                                         std::size_t max) {
+    std::vector<Suggestion> out;
+    const std::string typed = Trim(typedIn);
+    if (typed.empty() || max == 0) return out;
+    const AddressDecision d = DecideAddress(typed, p.settings.searchUrl);
+    if (d.kind == AddressDecision::Address || d.kind == AddressDecision::Search) {
+        Suggestion first;
+        first.kind = d.kind == AddressDecision::Address ? Suggestion::Go : Suggestion::Search;
+        first.url = d.url;
+        first.title = typed;
+        out.push_back(first);
+    }
+    std::vector<std::string> words;
+    {
+        const std::string lower = LowerAscii(typed);
+        std::size_t i = 0;
+        while (i < lower.size()) {
+            const std::size_t e = std::min(lower.find(' ', i), lower.size());
+            if (e > i) words.push_back(lower.substr(i, e - i));
+            i = e + 1;
         }
-        b += "</div>";
     }
-    b += "<h1>Recently visited</h1><div class=list>";
-    std::vector<std::string> seen;
+    struct Cand { Suggestion s; int score = 0, group = 0, visits = 0; std::size_t newest = 0; };
+    std::vector<Cand> cands;
+    std::map<std::string, std::size_t> byUrl;   // address -> index in cands (each address once, the first source wins)
+    if (!out.empty()) byUrl[out[0].url] = (std::size_t)-1;
+    auto add = [&](Suggestion::Kind kind, int group, const std::string& url, const std::string& title, int tabId) -> Cand* {
+        if (url.empty() || byUrl.count(url)) return nullptr;
+        const int score = MatchScore(words, url, title);
+        if (score == 0) return nullptr;
+        Cand c;
+        c.s.kind = kind; c.s.url = url; c.s.title = title; c.s.tabId = tabId;
+        c.score = score; c.group = group;
+        byUrl[url] = cands.size();
+        cands.push_back(c);
+        return &cands.back();
+    };
+    for (const OpenTabInfo& t : tabs) if (!IsInternalPage(t.url)) add(Suggestion::OpenTab, 0, t.url, t.title, t.id);
+    for (const Bookmark& b : p.bookmarks.Items()) add(Suggestion::Bookmark, 1, b.url, b.title, -1);
     const auto& items = p.history.Items();
-    for (std::size_t i = items.size(); i-- > 0 && seen.size() < 10;) {
-        if (std::find(seen.begin(), seen.end(), items[i].url) != seen.end()) continue;
-        seen.push_back(items[i].url);
-        b += LinkRow(items[i].url, items[i].title, items[i].url);
+    for (std::size_t i = items.size(); i-- > 0;) {   // newest first: the newest title is the one shown
+        auto it = byUrl.find(items[i].url);
+        if (it != byUrl.end()) {
+            if (it->second != (std::size_t)-1 && cands[it->second].group == 2) ++cands[it->second].visits;
+            continue;
+        }
+        if (Cand* c = add(Suggestion::History, 2, items[i].url, items[i].title, -1)) { c->visits = 1; c->newest = i; }
     }
-    b += "</div>";
-    if (seen.empty()) b += "<p class=empty>Type an address or a search in the bar above.</p>";
-    return Shell("New tab", b);
+    std::stable_sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) {
+        if (a.score != b.score) return a.score > b.score;
+        if (a.group != b.group) return a.group < b.group;
+        if (a.visits != b.visits) return a.visits > b.visits;
+        return a.newest > b.newest;
+    });
+    for (const Cand& c : cands) {
+        if (out.size() >= max) break;
+        out.push_back(c.s);
+    }
+    return out;
+}
+
+SiteBadge BadgeOf(const std::string& url) {
+    const std::string u = LowerAscii(Trim(url));
+    if (u.empty()) return SiteBadge::None;
+    if (u.rfind("https://", 0) == 0) return SiteBadge::Secure;
+    if (u.rfind("http://", 0) == 0) return SiteBadge::NotSecure;
+    if (u.rfind("about:", 0) == 0) return SiteBadge::Internal;
+    return SiteBadge::None;
+}
+
+AddressShown ShowAddress(const std::string& url) {
+    AddressShown a;
+    const Url u = ParseUrl(url);
+    if (!u.hasAuthority || (u.scheme != "http" && u.scheme != "https")) { a.host = url; return a; }
+    if (u.scheme == "http") a.lead = "http://";
+    const std::size_t at = u.authority.rfind('@');
+    a.host = at == std::string::npos ? u.authority : u.authority.substr(at + 1);
+    a.rest = u.path;
+    if (u.hasQuery) a.rest += "?" + u.query;
+    if (u.hasFragment) a.rest += "#" + u.fragment;
+    if (a.rest == "/") a.rest.clear();
+    return a;
+}
+
+LoadErrorInfo DescribeLoadError(const std::string& url, const std::string& error) {
+    (void)url;
+    LoadErrorInfo e;
+    const std::string l = LowerAscii(error);
+    e.code = error;
+    int status = 0;
+    const std::size_t ans = l.find("answered ");
+    if (ans != std::string::npos) {
+        std::size_t i = ans + 9, n = 0;
+        while (i < l.size() && IsDigit(l[i]) && n < 3) { status = status * 10 + (l[i] - '0'); ++i; ++n; }
+        if (n != 3) status = 0;
+    }
+    if (status > 0) e.code = std::to_string(status);
+    if (status == 404 || status == 410) {
+        e.kind = LoadErrorInfo::NotFound;
+        e.title = "This page was not found";
+        e.advice = "The address may be wrong, or the page was moved or removed. Check the address, or go back.";
+    } else if (status >= 500) {
+        e.kind = LoadErrorInfo::ServerError;
+        e.title = "The site has a problem";
+        e.advice = "The site's server could not answer this time. Try again in a moment.";
+    } else if (status == 401 || status == 403) {
+        e.kind = LoadErrorInfo::Blocked;
+        e.title = "This page is not open to you";
+        e.advice = "The site refused to show it. It may need you to sign in.";
+    } else if (status > 0) {
+        e.title = "This page could not be opened";
+        e.advice = "The site gave an answer the browser cannot show. Try again, or go back.";
+    } else if (l.find("could not reach") != std::string::npos || l.find("connection") != std::string::npos) {
+        e.kind = LoadErrorInfo::NoConnection;
+        e.title = "This site cannot be reached";
+        e.advice = "Check your internet connection. If it works, the site may be down or the address may be wrong.";
+    } else if (l.find("only http and https") != std::string::npos || l.find("not available here") != std::string::npos ||
+               l.find("cannot be opened") != std::string::npos) {
+        e.kind = LoadErrorInfo::Blocked;
+        e.title = "This address cannot be opened here";
+        e.advice = "The browser opens http and https web addresses and its own pages only.";
+    } else if (l.find("too large") != std::string::npos) {
+        e.kind = LoadErrorInfo::TooLarge;
+        e.title = "This page is too large to show";
+        e.advice = "Pages larger than 4 MB are not shown. The site may have a smaller page.";
+    } else if (l.find("stopped") != std::string::npos) {
+        e.kind = LoadErrorInfo::Stopped;
+        e.title = "Loading was stopped";
+        e.advice = "Press Try again to load the page.";
+    } else {
+        e.title = "This page could not be opened";
+        e.advice = "Try again, or check the address.";
+    }
+    return e;
 }
 
 } // namespace okay::browser

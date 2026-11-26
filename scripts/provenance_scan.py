@@ -210,7 +210,7 @@ def _grep(t, rel, rx):
     return ["%s:%d" % (rel, i) for i, l in enumerate(ls, 1) if re.search(rx, l)]
 
 
-def _own_licence(t):
+def _licence_statement(t):
     """A4: every Windows program's version information names our licence (LICENSE), not another one."""
     rel = "cmake/okay_version.rc.in"
     bad = _grep(t, rel, r"LegalCopyright.*(MIT|GPL|BSD|Apache|zlib)")
@@ -239,6 +239,12 @@ def _source_notes(t):
             if re.search(rx, l) and not any(A10_NOTE.search(x) for x in ls[max(0, i - 3):i + 1]):
                 bad.append("%s:%d" % (rel, i + 1))
     return bad
+
+
+def _simplex(t):
+    """A2: simplex noise is our own structure and numbers (no reference-code skew literals, corner cascade or scales)."""
+    rel = "engine/include/okay/Math/Noise.hpp"
+    return _grep(t, rel, r"0\.3660254|0\.2113248|x0 >= y0|70\.0f \* n|32\.0f \* n|0\.6f - x")
 
 
 def _notices(t):
@@ -277,7 +283,8 @@ def _ui_brands(t):
 
 
 GUARDS = [
-    ("A4", "shipped version information states a licence other than ours", _own_licence),
+    ("A4", "shipped version information states a licence other than ours", _licence_statement),
+    ("A2", "simplex noise follows the reference code again", _simplex),
     ("A5-A7", "a package ships without the third-party notices", _notices),
     ("A8", "the browser placeholder copies another browser's wording", _browser_words),
     ("A9", "UI text names another game or uses a trademark as a feature name", _ui_brands),

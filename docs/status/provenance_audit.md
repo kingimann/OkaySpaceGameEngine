@@ -55,6 +55,16 @@ copied code in this scan; see "Clean" and "Limits".
 
 `python3 scripts/provenance_scan.py check` (run by `scripts/precheck.sh`) fails if a fixed finding comes back.
 
+- **A2 fixed (rewritten from the idea).** `Simplex2` / `Simplex3` in `engine/include/okay/Math/Noise.hpp` are one
+  D-dimensional routine of our own: skew to the simplex lattice, rank the fractional parts to find the simplex's
+  corners, sum a radial kernel times a gradient per corner. Our numbers, worked out and tested: kernel (r^2 - d^2)^3
+  with r^2 = 1/2 (the smallest distance^2 to a lattice corner outside the point's own simplex, measured as 0.5000 in
+  2D and 3D, so the noise is continuous: the old 3D radius 0.6 jumped at simplex borders); 16 gradient directions
+  in 2D, the 12 icosahedron directions in 3D; output scales 33 and 41 from a search for the largest possible corner
+  sum (0.030176 and 0.024307). Values changed; nothing in the engine, the goldens or a saved scene reads
+  `NoiseField` (only `tests/test_math_geometry.cpp`). Test: continuity (steepest slope at a 1e-4 step 33.7 before,
+  5.8 after, vs 6.5 / 5.9 at 1e-3), range without the clamp, centring, per-seed determinism, no grid direction.
+  P1 (the patent question) is unchanged. Guard: `check`.
 - **A4 fixed.** `cmake/okay_version.rc.in` now says "Copyright (c) 2026 OkaySpaceGameEngine. All rights reserved. See
   LICENSE." Guard: `check` refuses another licence name in `LegalCopyright`.
 - **A5-A7 fixed (notices; texts partly unverified).** `dist/THIRD_PARTY_NOTICES.txt` lists the GCC runtime (with the

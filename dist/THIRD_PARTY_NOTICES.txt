@@ -3,7 +3,7 @@ OkaySpace: third-party notices
 
 OkaySpace itself is not open source: see LICENSE ("Copyright (c) 2026 OkaySpaceGameEngine. All rights reserved.").
 The programs, the games made with them and the web builds contain the parts below, written by others. Each one is
-listed with what it is, where it is and its licence; the licence texts follow in sections A to J. This file ships
+listed with what it is, where it is and its licence; the licence texts follow in sections A to K. This file ships
 in the Windows package (beside OkaySpace.exe and in Tools\), the installer, every exported desktop game and every
 web build.
 
@@ -59,6 +59,11 @@ Parts and licences
      Font License 1.1. Text: section H, also in Assets/Fonts/JetBrainsMono-OFL.txt.
    - DejaVu Sans (the starter font in Assets/Fonts): Bitstream Vera and DejaVu licences. Text: section I, also in
      Assets/Fonts/DejaVuSans-LICENSE.txt.
+
+9. VP8 tables (the WebP picture decoder). Compiled into every program that reads pictures: probability and quantiser
+   tables from RFC 6386, "VP8 Data Format and Decoding Guide", Copyright (c) 2011 IETF Trust and the persons
+   identified as the document authors; the same tables appear in the RFC's reference decoder, Copyright (c) 2010,
+   2011, Google Inc. Licence: Simplified BSD License (both). Text: section K. The decoder itself is OkaySpace's own.
 
 
 
@@ -1302,3 +1307,56 @@ J. Apache License 2.0 (item 8: Roboto; item 7: LLVM)
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+
+====================================================================================================
+K. Simplified BSD License (item 9: VP8 tables from RFC 6386)
+====================================================================================================
+
+Copyright (c) 2011 IETF Trust and the persons identified as authors of the code. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the
+following conditions are met:
+
+- Redistributions of source code must retain the above copyright notice, this list of conditions and the following
+  disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following
+  disclaimer in the documentation and/or other materials provided with the distribution.
+
+- Neither the name of Internet Society, IETF or IETF Trust, nor the names of specific contributors, may be used to
+  endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+----
+
+RFC 6386 section 20.26 (the licence of the reference decoder printed in the RFC):
+
+Copyright (c) 2010, 2011, Google Inc.  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the
+following conditions are met:
+
+o  Redistributions of source code must retain the above copyright notice, this list of conditions and the following
+   disclaimer.
+
+o  Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following
+   disclaimer in the documentation and/or other materials provided with the distribution.
+
+o  Neither the name of Google nor the names of its contributors may be used to endorse or promote products derived
+   from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

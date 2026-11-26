@@ -481,3 +481,26 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Words:** thumbnail, ThumbnailCache, preview, icon, asset preview, placeholder, BoxDownscale, asset browser
 - **Seen as:** no preview pictures for models or scenes in the Project panel; a thumbnail shows an old version of a texture; a red tile for a broken image
 - **Ask me like:** "Render a thumbnail for each `.okaymesh` in the asset browser"
+
+### 1.21 Asset packages
+- **System:** Asset Packages - Packs an exported game's files into one checked, compressed package, with patch packages for updates.
+  Home: `engine/include/okay/Core/AssetPackage.hpp`, `engine/src/Core/AssetPackage*.cpp`. Entry: `engine/include/okay/Core/AssetPackage.hpp`. Also called: AssetPackage, okaypkg, game.okaypkg, packages.manifest, patch package, package stack, Hash64, asset id.
+- **What:** The engine's own versioned binary package (`.okaypkg`): a table of contents sorted by 64-bit ids made from each file's name, per-entry DEFLATE, a content hash per entry and hashes over the tables and the data, dependency lists, and names kept for the editor. Patch packages replace, add or remove single files on top of the base. Every exported desktop game is packed automatically.
+- **Parts:**
+  - 1.21.1 Hash and ids - `Core/AssetPackage` - `Hash64` (our own 64-bit non-cryptographic hash), `Hasher`, `IdOf` (case-insensitive, one id per file name), collisions refused with both names
+  - 1.21.2 Writer - `Core/AssetPackage` - `PackageWriter` (`Add`, `AddFile`, `AddRemoval`, `Write`, `WriteToMemory`): sorted, byte-identical output, compression on the job system, the compressed copies cached by content hash
+  - 1.21.3 Reader and checks - `Core/AssetPackage` - `Package::OpenFile`/`OpenMemory` check every field, offset and size before use; `Read` checks size and content hash; `VerifyAll`
+  - 1.21.4 Patches and the stack - `Core/AssetPackage` - `PackageStack` (base + patches in order, a patch only on the exact packages it was made for), `MakePatch`, `Closure` (dependencies first), `ReadAsync`
+  - 1.21.5 Manifest and data folder - `Core/AssetPackageFolder` - `packages.manifest` (`WriteManifest`, `ParseManifest`, `ChangedPackages`), `MountFolder`, `Materialize` (the per-user view of the files), `PackFolder` (export, with dependencies from the asset database)
+  - 1.21.6 Engine, editor and player - `Core/AssetManager`, `editor/BuildGame.cpp`, `player/main.cpp` - `AssetManager::MountPackages`, `ReadBytes`, `AssetBytes`, `StreamWithDependencies`; Build Game packs the data folder into `game.okaypkg` (cache in `Library/PackageCache`); the player mounts and checks it before anything loads
+- **Code:** `Core/AssetPackage`, `Core/AssetPackageFolder`
+- **API:** `assetpkg::PackageWriter`, `assetpkg::Package`, `assetpkg::PackageStack`, `assetpkg::IdOf`, `assetpkg::Hash64`, `assetpkg::MountFolder`, `assetpkg::Materialize`, `assetpkg::PackFolder`, `AssetManager::MountPackages`
+- **Editor:** Build Game (automatic; `OKAY_BUILD_LOOSE_FILES=1` keeps loose files); no package browser window yet
+- **Docs:** `docs/engine/asset_packages.md`
+- **Tests:** `asset_package`, `asset_package_bench`
+- **Status:** Partial - round 1 (2026-11-26): format, writer, reader with checks, ids and collisions, compression, patches, manifest, export packing, player mounting and the AssetManager mount; the player still lays the files out once in the per-user cache because most loaders open files by path; built and tested on Linux only, the Windows export is unverified
+- **Open:** loaders that read straight from the package (no cache copy); streaming large entries by chunk; a package and patch window in the editor; making patches from the editor; the update downloader using `packages.manifest` (through content delivery, 17); the web and Android exports still ship loose files
+- **Related:** 1.11, 1.12, 1.14, 18.1
+- **Words:** asset package, okaypkg, pak, archive, bundle, patch, DLC, manifest, Hash64, asset id, collision, compression, deflate, packed build
+- **Seen as:** a game will not start and says its files are damaged; an update downloads the whole game again; two files collide in a build
+- **Ask me like:** "Pack the game's files into one package"; "Ship a patch that only changes the boss textures"

@@ -103,6 +103,33 @@ void UnlockFacade() {
     FacadeMutex().Unlock();
 }
 
+bool MoveOver(const std::filesystem::path& from, const std::filesystem::path& target, std::error_code& ec) {
+    ec.clear();
+    fs::rename(from, target, ec);
+    if (!ec) return true;
+    // Some platforms won't rename over an existing file. Only a plain file is replaced, and
+    // the old one is put aside first so a failure puts it back (never delete, then hope).
+    std::error_code e1;
+    if (fs::is_regular_file(target, e1)) {
+        fs::path aside = target;
+        aside += ".swap";
+        fs::remove(aside, e1);
+        fs::rename(target, aside, e1);
+        if (!e1) {
+            std::error_code e2;
+            fs::rename(from, target, e2);
+            if (e2) {
+                fs::rename(aside, target, e1);
+                ec = e2;
+            } else {
+                fs::remove(aside, e1);
+                ec.clear();
+            }
+        }
+    }
+    return !ec;
+}
+
 bool AtomicWriteChecked(const std::string& path, const std::string& content, std::string* error, const WriteOptions& opt) {
     auto fail = [&](const std::string& msg) { if (error) *error = msg; return false; };
     if (error) error->clear();
@@ -129,33 +156,10 @@ bool AtomicWriteChecked(const std::string& path, const std::string& content, std
         fs::remove(tmp, ec);
         return fail("can't write " + target.string() + ": " + Reason(err));
     }
-    fs::rename(tmp, target, ec);
-    if (ec) {
-        // Some platforms won't rename over an existing file. Only a plain file is replaced, and
-        // the old one is put aside first so a failure puts it back (never delete, then hope).
-        std::error_code e1;
-        if (fs::is_regular_file(target, e1)) {
-            fs::path aside = target;
-            aside += ".swap";
-            fs::remove(aside, e1);
-            fs::rename(target, aside, e1);
-            if (!e1) {
-                std::error_code e2;
-                fs::rename(tmp, target, e2);
-                if (e2) {
-                    fs::rename(aside, target, e1);
-                    ec = e2;
-                } else {
-                    fs::remove(aside, e1);
-                    ec.clear();
-                }
-            }
-        }
-        if (ec) {
-            std::error_code ignore;
-            fs::remove(tmp, ignore);
-            return fail("can't replace " + target.string() + ": " + Reason(ec.value()));
-        }
+    if (!MoveOver(tmp, target, ec)) {
+        std::error_code ignore;
+        fs::remove(tmp, ignore);
+        return fail("can't replace " + target.string() + ": " + Reason(ec.value()));
     }
     if (opt.sync) SyncDirectory(parent);
     return true;

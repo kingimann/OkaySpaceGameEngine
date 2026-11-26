@@ -119,6 +119,8 @@ add_library(okay_engine
     src/Core/Recovery.cpp
     src/Core/Backup.cpp
     src/Core/AssetManager.cpp
+    src/Core/AssetPackage.cpp
+    src/Core/AssetPackageFolder.cpp
     src/Core/ImportSettings.cpp
     src/Core/ImportSidecar.cpp
     src/Core/AssetDatabase.cpp

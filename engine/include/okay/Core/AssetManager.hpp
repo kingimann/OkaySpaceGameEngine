@@ -19,6 +19,12 @@
 
 namespace okay {
 
+namespace assetpkg { class PackageStack; }   // okay/Core/AssetPackage.hpp
+
+/// The bytes of one file as the manager reads them: from the mounted asset packages first, else from the disk. Through
+/// Get<AssetBytes>, LoadAsync<AssetBytes> and Stream<AssetBytes> any file gets the cache, background reads and streaming.
+struct AssetBytes { std::vector<std::uint8_t> data; };
+
 namespace assets_detail {
 enum class State : int { Pending = 0, Loading = 1, Ready = 2, Failed = 3 };
 
@@ -222,6 +228,18 @@ public:
     int PendingCount() const;
     float Progress() const;
 
+    // --- Asset packages (docs/engine/asset_packages.md) ----------------------------
+    /// Serve files from a game's packages: a path under `root` (or a relative path) whose name a package has is read
+    /// from the package, a path it lacks still comes from the disk. Replaces an earlier mount.
+    void MountPackages(std::shared_ptr<const assetpkg::PackageStack> packages, const std::string& root);
+    void UnmountPackages();
+    std::shared_ptr<const assetpkg::PackageStack> MountedPackages() const;
+    /// A file's bytes: from the mounted packages (checked against the package's hash), else from the disk.
+    bool ReadBytes(const std::string& path, std::vector<std::uint8_t>& out, std::string* error = nullptr) const;
+    /// Stream a file's bytes and, when it is in a mounted package, everything it depends on (the package's dependency
+    /// lists), each once. Dependencies come first in the result and get a slightly higher priority, so they are ready first.
+    std::vector<AssetHandle<AssetBytes>> StreamWithDependencies(const std::string& path, float priority);
+
     // --- Hot reload ---------------------------------------------------------------
     /// Off by default. When on, Pump() compares each loaded file's modification time
     /// and size (at most every `intervalSeconds`) and re-decodes changed files on the
@@ -296,6 +314,10 @@ private:
     double m_hotInterval = 0.5;
     std::int64_t m_lastScanNs = 0;
     std::function<void(const std::string&, const std::string&)> m_onReload;
+    // Mounted asset packages (guarded by the mutex).
+    std::shared_ptr<const assetpkg::PackageStack> m_packages;
+    std::string m_packageRoot;          // Normalize(root)
+    bool PackageNameFor(const std::string& path, const std::string& rootKey, std::string& name) const;
     // Streaming (guarded by the mutex).
     std::map<Key, Resident> m_resident;
     StreamSettings m_stream;

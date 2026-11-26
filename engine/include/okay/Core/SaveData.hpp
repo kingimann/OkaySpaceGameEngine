@@ -139,6 +139,11 @@ struct WriteOptions {
 bool AtomicWriteChecked(const std::string& path, const std::string& content, std::string* error = nullptr,
                         const WriteOptions& options = {});
 
+/// Rename `from` over `target`, replacing a plain file already there. Where the platform will not rename over a file,
+/// the old one is put aside first and put back if the rename fails, so `target` is never lost. False (and `ec`) on
+/// failure; `from` is then left where it was. AtomicWriteChecked and the asset package writer use it.
+bool MoveOver(const std::filesystem::path& from, const std::filesystem::path& target, std::error_code& ec);
+
 /// AtomicWriteChecked without the reason or the options.
 inline bool AtomicWrite(const std::string& path, const std::string& content) {
     return AtomicWriteChecked(path, content, nullptr);

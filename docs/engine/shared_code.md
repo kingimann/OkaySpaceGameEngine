@@ -36,6 +36,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Read a claim from a JSON web token (no signature check) | `engine/include/okay/Backend/Auth.hpp` | `okay::backend::TokenClaim` | `TokenClaim(jwt, "sub")` |
 | Base64 | planned `Core/Base64.hpp` (dedup in progress). For now: `Base64Decode` in `Render/Gltf.hpp` | `Base64Decode` | `std::vector<std::uint8_t> bytes; Base64Decode(text, bytes);` |
 | FNV-1a string hash | `Core/StringId.hpp` | `okay::StringId::HashOf`, `StringId::Make` | `constexpr auto h = StringId::HashOf("player");` |
+| 64-bit hash of bytes for ids and damage checks (not cryptographic) | `Core/AssetPackage.hpp` | `okay::assetpkg::Hash64`, `assetpkg::Hasher` (in pieces), `assetpkg::IdOf` (asset ids) | `auto h = assetpkg::Hash64(bytes.data(), bytes.size());` |
 | SHA-256, HMAC, PBKDF2 | `Crypto/Sha256.hpp` | `okay::crypto::Sha256Hash`, `Sha256`, `HmacSha256Mac`, `Pbkdf2HmacSha256` | `std::uint8_t d[32]; crypto::Sha256Hash(d, data, n);` |
 | SHA-512 | `Crypto/Crypto.hpp` | `okay::crypto::Sha512Hash`, `Sha512` | `std::uint8_t d[64]; crypto::Sha512Hash(d, data, n);` |
 | CRC-32, Adler-32 | `Core/ImageWrite.hpp` | `okay::ImageWrite::Crc32`, `ImageWrite::Adler32` | `auto c = ImageWrite::Crc32(p, n);  // pass c back in to continue` |

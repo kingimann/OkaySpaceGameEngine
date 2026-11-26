@@ -1,4 +1,5 @@
 #include "okay/Core/AssetManager.hpp"
+#include "okay/Core/AssetPackage.hpp"
 #include "okay/Core/FileStamp.hpp"
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Core/DataAsset.hpp"
@@ -179,6 +180,12 @@ std::size_t MeshBytes(const Mesh& m) {
 } // namespace
 
 void AssetManager::RegisterDefaultLoaders() {
+    RegisterLoader<AssetBytes>("AssetBytes",
+        [this](const std::string& p, std::string& e) -> std::shared_ptr<AssetBytes> {
+            auto a = std::make_shared<AssetBytes>();
+            return ReadBytes(p, a->data, &e) ? a : nullptr;
+        },
+        [](const AssetBytes& a) { return sizeof(AssetBytes) + a.data.size(); });
     RegisterLoader<Image>("Image",
         [](const std::string& p, std::string& e) -> std::shared_ptr<Image> {
             auto a = std::make_shared<Image>();
@@ -223,6 +230,90 @@ void AssetManager::RegisterDefaultLoaders() {
             e = "cannot read " + p;
             return nullptr;
         });
+}
+
+// --- Asset packages ------------------------------------------------------------------
+
+void AssetManager::MountPackages(std::shared_ptr<const assetpkg::PackageStack> packages, const std::string& root) {
+    corethreads::LockGuard lk(m_sync->mutex);
+    m_packages = std::move(packages);
+    m_packageRoot = root.empty() ? std::string() : Normalize(root);
+}
+
+void AssetManager::UnmountPackages() {
+    corethreads::LockGuard lk(m_sync->mutex);
+    m_packages.reset();
+    m_packageRoot.clear();
+}
+
+std::shared_ptr<const assetpkg::PackageStack> AssetManager::MountedPackages() const {
+    corethreads::LockGuard lk(m_sync->mutex);
+    return m_packages;
+}
+
+// The package name of `path`: the part after the mount root, or the whole of a relative path.
+bool AssetManager::PackageNameFor(const std::string& path, const std::string& rootKey, std::string& name) const {
+    const std::string key = Normalize(path);
+    if (!rootKey.empty() && key.size() > rootKey.size() + 1 && key.compare(0, rootKey.size(), rootKey) == 0 && key[rootKey.size()] == '/') {
+        name = key.substr(rootKey.size() + 1);
+        return true;
+    }
+    const bool absolute = !key.empty() && (key[0] == '/' || (key.size() > 1 && key[1] == ':'));
+    if (absolute) return false;
+    name = key;
+    return !name.empty();
+}
+
+bool AssetManager::ReadBytes(const std::string& path, std::vector<std::uint8_t>& out, std::string* error) const {
+    out.clear();
+    std::shared_ptr<const assetpkg::PackageStack> pk;
+    std::string rootKey;
+    {
+        corethreads::LockGuard lk(m_sync->mutex);
+        pk = m_packages;
+        rootKey = m_packageRoot;
+    }
+    std::string name;
+    if (pk && PackageNameFor(path, rootKey, name)) {
+        assetpkg::PackageStack::Hit hit;
+        if (pk->Find(assetpkg::IdOf(name), hit)) {
+            std::string why;
+            if (hit.package->Read(*hit.entry, out, why)) return true;
+            if (error) *error = why;
+            return false;
+        }
+    }
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) { if (error) *error = "cannot open " + path; return false; }
+    char buf[65536];
+    std::size_t n;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) out.insert(out.end(), buf, buf + n);
+    const bool bad = std::ferror(f) != 0;
+    std::fclose(f);
+    if (bad) { out.clear(); if (error) *error = "cannot read " + path; return false; }
+    return true;
+}
+
+std::vector<AssetHandle<AssetBytes>> AssetManager::StreamWithDependencies(const std::string& path, float priority) {
+    std::vector<AssetHandle<AssetBytes>> out;
+    std::shared_ptr<const assetpkg::PackageStack> pk;
+    std::string rootKey;
+    {
+        corethreads::LockGuard lk(m_sync->mutex);
+        pk = m_packages;
+        rootKey = m_packageRoot;
+    }
+    std::string name;
+    std::vector<assetpkg::AssetId> ids;
+    if (pk && PackageNameFor(path, rootKey, name)) ids = pk->Closure(assetpkg::IdOf(name));
+    if (ids.empty()) { out.push_back(Stream<AssetBytes>(path, priority)); return out; }
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        const std::string n = pk->NameOf(ids[i]);
+        if (n.empty()) continue;   // a package without names: only the asset itself can be named
+        const std::string full = i + 1 == ids.size() ? path : rootKey.empty() ? n : rootKey + "/" + n;
+        out.push_back(Stream<AssetBytes>(full, priority + 0.001f * (float)(ids.size() - i)));
+    }
+    return out;
 }
 
 // --- Loading -------------------------------------------------------------------------

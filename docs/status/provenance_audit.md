@@ -87,6 +87,16 @@ copied code in this scan; see "Clean" and "Limits".
   too; the uninstaller removes both), `editor/BuildGame.cpp` (every exported desktop game) and `scripts/web_package.py`
   (every web build and its zip; `tests/scripts/test_web_package.py`). `assets/fonts/Roboto-LICENSE.txt` (Apache 2.0)
   added. Not opened: a real release archive or exported game. Guard: `check`.
+- **N1 fixed.** `launcher/VoiceChat.hpp` has no ChaCha20 or IMA table of its own. Its frames go through the network
+  layer's crypto seam, `okay::net::netcrypto::StreamXor` (new in `engine/include/okay/Net/NetCrypto.hpp`): libsodium's
+  `crypto_stream_chacha20_ietf_xor_ic` in every release build, `okay::crypto::ChaCha20Xor` only in a build that has
+  no libsodium (as the rest of such a build); `okay::crypto` itself is unchanged and still off by default (rule 18).
+  Same keystream (RFC 8439, block counter 1), so old and new launchers still understand each other: a stand-alone
+  run compared libsodium 1.0.18 through `StreamXor` with `okay::crypto::ChaCha20Xor` (lengths 0 to 1000, counters
+  0 / 1 / 7, and the counter-wrap refusal): identical. The IMA step and index tables are the WAV reader's
+  (`okay::wav::ImaAdpcmSteps` / `ImaAdpcmIndexAdjust`), so A10's IMA row is covered by its existing source note.
+  `tests/test_voice_races.cpp` checks the shared table, an ADPCM round trip and the cipher. Guard: `check`.
+  Not changed: the voice cipher has no authentication tag (ChaCha20 alone); worth a separate look.
 - **A8 fixed (wording).** The empty address bar says "Search the web or type an address" (was "Search Google or
   type an address", close to Chrome's own words). Google stays the default search, as the owner chose; the
   "Use Google" button in the browser settings stays (it names the service it picks). Guard: `check`.

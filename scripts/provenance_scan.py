@@ -268,6 +268,11 @@ def _notices(t):
     return bad
 
 
+def _voice_shared(t):
+    """N1: voice chat has no cipher or IMA table of its own (it uses the crypto seam and the WAV reader's table)."""
+    return _grep(t, "launcher/VoiceChat.hpp", r"0x61707865|29794")
+
+
 def _browser_words(t):
     """A8: the address bar's placeholder uses neutral words, not a look-alike of another browser's."""
     return _grep(t, "engine/src/Browser/Profile.cpp", r'"Search Google or type')
@@ -293,6 +298,7 @@ GUARDS = [
     ("A1", "the published marching-cubes tables or their loop came back", _cube_cases),
     ("A2", "simplex noise follows the reference code again", _simplex),
     ("A5-A7", "a package ships without the third-party notices", _notices),
+    ("N1", "voice chat carries its own cipher or IMA table", _voice_shared),
     ("A8", "the browser placeholder copies another browser's wording", _browser_words),
     ("A9", "UI text names another game or uses a trademark as a feature name", _ui_brands),
     ("A10", "a published shader constant has no source note near it", _source_notes),

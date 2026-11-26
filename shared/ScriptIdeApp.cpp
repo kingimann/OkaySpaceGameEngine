@@ -6,6 +6,8 @@
 // the OkayUI and OkayUI::CodeEdit interfaces; no code, names, icons or look from any other editor (rule 19a).
 #include "ScriptIdeApp.hpp"
 
+#include "okay/Components/ScriptComponent.hpp"   // TestRunScript: the script on a sandbox object
+#include "okay/Scene/Scene.hpp"
 #include "okay/Scripting/ScriptVM.hpp"          // okay::CreateScriptVM: the engine's checker and built-in names per language
 #include "okay/Lua/Lua.hpp"                     // okay::lua::kKeywords
 #include "okay/Lua/LuaScriptVM.hpp"             // LuaScriptVM::Lint
@@ -18,6 +20,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <cctype>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -120,6 +124,29 @@ std::vector<Diagnostic> CheckScript(const std::string& language, const std::stri
     return out;
 }
 
+TestRunResult TestRunScript(const std::string& language, const std::string& text,
+                            const std::function<void(okay::ScriptComponent&)>& prepare) {
+    TestRunResult r;
+    try {
+        okay::Scene sandbox;
+        sandbox.physicsEnabled = false;
+        okay::GameObject* go = sandbox.CreateGameObject("ScriptTest");
+        auto* sc = go->AddComponent<okay::ScriptComponent>(language.empty() ? std::string("okayscript") : language);
+        if (prepare) prepare(*sc);
+        std::string error;
+        if (!sc->LoadSource(text, &error)) { r.message = "Compile error: " + error; return r; }
+        sandbox.Start();
+        for (int i = 0; i < 3; ++i) sandbox.Update(1.0f / 60.0f);
+        r.ok = true;
+        r.message = "Test run OK: start() + 3 update() frames (sandbox).";
+    } catch (const std::exception& e) {
+        r.message = std::string("Runtime error: ") + e.what();
+    } catch (...) {
+        r.message = "Runtime error during test run.";
+    }
+    return r;
+}
+
 const scripteditor::LanguageWords& DefaultWordsFor(const std::string& language) {
     static std::map<std::string, scripteditor::LanguageWords> made;
     const auto it = made.find(language);
@@ -147,6 +174,45 @@ const scripteditor::LanguageWords& DefaultWordsFor(const std::string& language) 
     }
     w.known = BuiltinNamesOf(language);
     return made.emplace(language, std::move(w)).first->second;
+}
+
+std::vector<CompletionItem> DefaultCompletions(const scripteditor::LanguageWords& words, const std::string& text,
+                                               const std::string& prefix, std::size_t maxItems) {
+    struct Scored { int score; CompletionItem item; };
+    std::vector<Scored> out;
+    std::set<std::string> seen{prefix};
+    auto offer = [&](const std::string& name, const std::string& detail) {
+        if (name.empty() || !seen.insert(name).second) return;
+        const int sc = FuzzyScore(prefix, name);
+        if (sc < 0) return;
+        out.push_back({sc, CompletionItem{name, name, detail}});
+    };
+    auto firstLine = [&](const std::string& name) {
+        const auto it = words.docs.find(name);
+        if (it == words.docs.end()) return std::string();
+        return it->second.substr(0, it->second.find('\n'));
+    };
+    for (const std::string& k : words.keywords) offer(k, "keyword");
+    for (const std::string& t : words.types) offer(t, firstLine(t));
+    for (const std::string& k : words.known) offer(k, firstLine(k));
+    // the words of the text (identifiers), one pass
+    for (std::size_t i = 0; i < text.size();) {
+        const unsigned char c = (unsigned char)text[i];
+        if (std::isalpha(c) || c == '_') {
+            std::size_t j = i + 1;
+            while (j < text.size() && (std::isalnum((unsigned char)text[j]) || text[j] == '_')) ++j;
+            if (j - i <= 64) offer(text.substr(i, j - i), "in this file");
+            i = j;
+        } else if (std::isdigit(c)) {
+            while (i < text.size() && (std::isalnum((unsigned char)text[i]) || text[i] == '_')) ++i;
+        } else ++i;
+    }
+    std::stable_sort(out.begin(), out.end(), [](const Scored& a, const Scored& b) {
+        return a.score != b.score ? a.score > b.score : a.item.label < b.item.label;
+    });
+    std::vector<CompletionItem> items;
+    for (std::size_t i = 0; i < out.size() && items.size() < maxItems; ++i) items.push_back(std::move(out[i].item));
+    return items;
 }
 
 // ---- the app ----------------------------------------------------------------------------------------------------------------
@@ -212,7 +278,11 @@ std::string Normal(const std::string& path) {
 
 struct ScriptIdeApp::Impl {
     struct Doc {
-        std::string path, language, label;
+        std::string key, path, language, label;
+        std::function<bool(const std::string&, std::string&)> saveFn;   // the host saves it (DocumentSpec::save)
+        std::map<int, std::string> marks;   // the checks' line marks (1-based)
+        int execLine = 0;                   // the paused script's line (1-based), 0 = none
+        std::vector<int> bpSeen;            // the breakpoints the host was last told about (0-based)
         scripteditor::ScriptEditorCodeEdit code;
         std::string saved;              // the file's text as the widget holds it (newlines as '\n')
         bool crlf = false;              // the file used "\r\n": written back that way
@@ -253,6 +323,11 @@ struct ScriptIdeApp::Impl {
     char goBuf[160] = "";
     int goSel = 0;
     RecentFiles recent{30};
+    // completion
+    bool acOpen = false;
+    std::vector<CompletionItem> acItems;
+    int acSel = 0;
+    std::string acPrefix;
     // Open Folder
     bool folderOpen = false, folderFocus = false;
     char folderBuf[1024] = "";
@@ -320,16 +395,37 @@ struct ScriptIdeApp::Impl {
 
     bool openFile(const std::string& rawPath, int line) {
         const std::string path = Normal(rawPath);
-        for (std::size_t i = 0; i < docs.size(); ++i)
-            if (docs[i]->path == path) { active = (int)i; if (line > 0) docs[i]->gotoLine = line; return true; }
+        if (showKey(path, line)) return true;
         bool ok = false;
         std::string why;
         const std::string text = FileText(path, ok, &why);
         if (!ok) { notice = fs::u8path(path).filename().u8string() + " " + why + "."; return false; }
+        addDoc(path, path, fs::u8path(path).filename().u8string(), EngineLanguageOf(path), text, nullptr, line);
+        recent.Push(path);
+        // Local History starts with the file as it was opened, so the first edits can always be undone from there (and the
+        // first keystroke does not count as five minutes of edits)
+        if (history.Versions(path).empty()) history.Record(path, text, now(), "Opened");
+        else history.MaybeRecord(path, text, now());
+        check(*docs.back());
+        notice.clear();
+        return true;
+    }
+
+    // Show the tab with this key (at a line); false when none is open.
+    bool showKey(const std::string& key, int line) {
+        for (std::size_t i = 0; i < docs.size(); ++i)
+            if (docs[i]->key == key) { active = (int)i; if (line > 0) docs[i]->gotoLine = line; return true; }
+        return false;
+    }
+
+    Doc& addDoc(const std::string& key, const std::string& path, const std::string& label, const std::string& language,
+                const std::string& text, std::function<bool(const std::string&, std::string&)> saveFn, int line) {
         std::unique_ptr<Doc> d(new Doc());
+        d->key = key;
         d->path = path;
-        d->language = EngineLanguageOf(path);
-        d->label = fs::u8path(path).filename().u8string();
+        d->label = label;
+        d->language = language;
+        d->saveFn = std::move(saveFn);
         d->crlf = text.find("\r\n") != std::string::npos;
         d->code.SetLanguage(wordsFor(d->language));
         if (cfg.palette) d->code.SetPalette(*cfg.palette);
@@ -341,14 +437,47 @@ struct ScriptIdeApp::Impl {
         d->gotoLine = line;
         docs.push_back(std::move(d));
         active = (int)docs.size() - 1;
-        recent.Push(path);
-        // Local History starts with the file as it was opened, so the first edits can always be undone from there (and the
-        // first keystroke does not count as five minutes of edits)
-        if (history.Versions(path).empty()) history.Record(path, text, now(), "Opened");
-        else history.MaybeRecord(path, text, now());
-        check(*docs.back());
+        return *docs.back();
+    }
+
+    bool openDocument(const DocumentSpec& spec, int line) {
+        if (spec.key.empty()) return false;
+        if (showKey(spec.key, line)) return true;
+        const std::string path = spec.path.empty() ? std::string() : Normal(spec.path);
+        const std::string label = !spec.label.empty() ? spec.label : (path.empty() ? spec.key : fs::u8path(path).filename().u8string());
+        const std::string language = !spec.language.empty() ? spec.language : EngineLanguageOf(path);
+        Doc& d = addDoc(spec.key, path, label, language, spec.text, spec.save, line);
+        if (!path.empty()) {
+            recent.Push(path);
+            if (history.Versions(path).empty()) history.Record(path, spec.text, now(), "Opened");
+            else history.MaybeRecord(path, spec.text, now());
+        }
+        check(d);
         notice.clear();
         return true;
+    }
+
+    Doc* byKey(const std::string& key) {
+        for (auto& d : docs) if (d->key == key) return d.get();
+        return nullptr;
+    }
+    const Doc* byKey(const std::string& key) const {
+        for (const auto& d : docs) if (d->key == key) return d.get();
+        return nullptr;
+    }
+
+    // The checks' marks, then the paused line on top (a wash and a note in the gutter's tooltip).
+    void applyMarks(Doc& d) {
+        d.code.SetErrorMarkers(d.marks);
+        if (d.execLine <= 0) return;
+        std::vector<UI::CodeMarker> m = d.code.Edit().Markers();
+        UI::CodeMarker x;
+        x.line = d.execLine - 1;
+        x.message = "Paused here (line " + std::to_string(d.execLine) + ")";
+        x.color = Rgb(240, 200, 80);
+        x.lineColor = Rgb(240, 200, 80, 60);
+        m.push_back(x);
+        d.code.Edit().SetMarkers(m);
     }
 
     bool openPath(const std::string& path) {
@@ -376,12 +505,15 @@ struct ScriptIdeApp::Impl {
 
     bool save(Doc& d) {
         const std::string text = diskText(d);
-        if (!WriteText(d.path, text)) { notice = "Could not save " + d.path; return false; }
+        if (d.saveFn) {
+            std::string why;
+            if (!d.saveFn(text, why)) { notice = "Could not save " + d.label + (why.empty() ? std::string() : ": " + why); return false; }
+        } else if (d.path.empty() || !WriteText(d.path, text)) { notice = "Could not save " + (d.path.empty() ? d.label : d.path); return false; }
         d.saved = d.code.Edit().GetText();
-        history.Record(d.path, text, now(), "Saved");
+        if (!d.path.empty()) history.Record(d.path, text, now(), "Saved");
         check(d);
-        notice = "Saved " + relative(d.path);
-        if (cfg.saved) cfg.saved(d.path, text);
+        notice = "Saved " + (d.path.empty() ? d.label : relative(d.path));
+        if (cfg.saved) cfg.saved(d.path.empty() ? d.key : d.path, text);
         if (panel == P_History && activeDoc() == &d) loadVersions();
         return true;
     }
@@ -407,7 +539,7 @@ struct ScriptIdeApp::Impl {
         d.problems = cfg.check ? cfg.check(d.language, d.path, text) : CheckScript(d.language, text);
         if (cfg.moreProblems) d.problems = cfg.moreProblems(d.language, d.path, text, std::move(d.problems));
         d.checkedVersion = d.code.Edit().Version();
-        std::map<int, std::string> marks;
+        std::map<int, std::string> marks;   // one per line, an error over a warning
         for (const Diagnostic& p : d.problems) {
             if (p.line < 1) continue;
             auto it = marks.find(p.line);
@@ -415,7 +547,8 @@ struct ScriptIdeApp::Impl {
             if (it == marks.end()) marks[p.line] = msg;
             else if (p.severity == 0 && it->second.rfind("warning: ", 0) == 0) it->second = msg;   // an error wins over a warning
         }
-        d.code.SetErrorMarkers(marks);
+        d.marks = std::move(marks);
+        applyMarks(d);
     }
 
     std::size_t findInFiles(const std::string& needle, const FindOptions& opt) {
@@ -428,7 +561,7 @@ struct ScriptIdeApp::Impl {
             std::string t = FileText(s, ok);
             if (ok) texts[s] = std::move(t);
         }
-        for (const auto& d : docs) texts[d->path] = d->code.Edit().GetText();   // open files: what the tab holds
+        for (const auto& d : docs) if (!d->path.empty()) texts[d->path] = d->code.Edit().GetText();   // open files: what the tab holds
         findResults = FindInTexts(texts, needle, opt, 2000, &findError);
         notice = findError.empty() ? std::to_string(findResults.size()) + " matches in the project" : "Bad pattern: " + findError;
         return findResults.size();
@@ -436,7 +569,7 @@ struct ScriptIdeApp::Impl {
 
     void loadVersions() {
         versions.clear(); diff.clear(); versionSel = -1;
-        if (const Doc* d = activeDoc()) versions = history.Versions(d->path);
+        if (const Doc* d = activeDoc(); d && !d->path.empty()) versions = history.Versions(d->path);
     }
 
     void showVersion(int i) {
@@ -470,8 +603,90 @@ struct ScriptIdeApp::Impl {
     void run() {
         const Doc* d = activeDoc();
         if (!d) return;
-        if (!cfg.run) { notice = "This program edits and checks scripts; open the project in the editor to run them."; return; }
-        notice = cfg.run(d->path);
+        if (cfg.run) { notice = cfg.run(d->path.empty() ? d->key : d->path); return; }
+        notice = TestRunScript(d->language, d->code.Edit().GetText()).message;
+    }
+
+    // The word before the caret (letters, digits, '_') and where it starts.
+    std::string wordBeforeCaret(const Doc& d, int& startCol) const {
+        const UI::CodePos c = d.code.Edit().Caret();
+        const std::string& line = d.code.Edit().Line(c.line);
+        int a = std::min(c.col, (int)line.size());
+        while (a > 0 && (std::isalnum((unsigned char)line[(std::size_t)a - 1]) || line[(std::size_t)a - 1] == '_')) --a;
+        startCol = a;
+        return line.substr((std::size_t)a, (std::size_t)(std::min(c.col, (int)line.size()) - a));
+    }
+
+    // Open (or refresh) the list for the word before the caret. A typed word needs 2 letters; Ctrl+Space asks with any.
+    void startCompletion(Doc& d, bool asked) {
+        int start = 0;
+        const std::string prefix = wordBeforeCaret(d, start);
+        if (!asked && prefix.size() < 2) { acOpen = false; return; }
+        if (!prefix.empty() && std::isdigit((unsigned char)prefix[0])) { acOpen = false; return; }
+        const UI::CodePos c = d.code.Edit().Caret();
+        const std::string text = d.code.Edit().GetText();
+        acItems = cfg.complete ? cfg.complete(d.language, text, c.line + 1, c.col, prefix)
+                               : DefaultCompletions(wordsFor(d.language), text, prefix);
+        acPrefix = prefix;
+        acSel = 0;
+        acOpen = !acItems.empty();
+    }
+
+    // Replace the word before the caret with the item's text: one undo step.
+    void acceptCompletion(Doc& d, std::size_t i) {
+        if (i >= acItems.size()) return;
+        UI::CodeEdit& e = d.code.Edit();
+        int start = 0;
+        wordBeforeCaret(d, start);
+        const UI::CodePos c = e.Caret();
+        e.BreakUndoGroup();
+        e.SetSelection(UI::CodePos{c.line, start}, c);
+        e.InsertText((acItems[i].insert.empty() ? acItems[i].label : acItems[i].insert).c_str());
+        e.BreakUndoGroup();
+        d.seenVersion = e.Version();
+        d.editedAt = UI::GetTime();
+        acOpen = false;
+    }
+
+    // Up / Down / Enter / Tab / Esc this frame: handled here (true), so the code widget does not see them.
+    bool completionKeys(Doc& d) {
+        auto key = [](UI::KeyId k) { return UI::IsKeyPressed(k, true); };
+        const int n = (int)acItems.size();
+        if (key(UI::KeyId_Escape)) { acOpen = false; return true; }
+        if (key(UI::KeyId_Down)) { acSel = n ? (acSel + 1) % n : 0; return true; }
+        if (key(UI::KeyId_Up)) { acSel = n ? (acSel + n - 1) % n : 0; return true; }
+        if (key(UI::KeyId_Enter) || key(UI::KeyId_Tab)) { acceptCompletion(d, (std::size_t)acSel); return true; }
+        return false;
+    }
+
+    void drawCompletion(Doc& d) {
+        const UI::Vec2 at = d.code.Edit().CaretScreenPosBelow();
+        const float lh = UI::GetTextLineHeight(), rowH = lh + 6.0f;
+        const int shown = std::min((int)acItems.size(), 10);
+        const int first = std::max(0, std::min(acSel - shown + 1, (int)acItems.size() - shown));
+        float w = 220.0f;
+        for (int i = first; i < first + shown; ++i)
+            w = std::max(w, UI::CalcTextWidth(acItems[(std::size_t)i].label.c_str()) + UI::CalcTextWidth(acItems[(std::size_t)i].detail.c_str()) + 40.0f);
+        w = std::min(w, 560.0f);
+        const float h = rowH * (float)shown + 8.0f;
+        const auto& fg = UI::GetForegroundDrawList();
+        fg->AddRectFilled(UI::Vec2(at.x, at.y), UI::Vec2(at.x + w, at.y + h), kPanel, 4.0f);
+        fg->AddRect(UI::Vec2(at.x, at.y), UI::Vec2(at.x + w, at.y + h), kLine, 4.0f, 1.0f);
+        const UI::Vec2 m = UI::GetMousePos();
+        int picked = -1;
+        for (int i = first; i < first + shown; ++i) {
+            const CompletionItem& it = acItems[(std::size_t)i];
+            const float ry = at.y + 4.0f + rowH * (float)(i - first);
+            const bool hover = m.x >= at.x && m.x < at.x + w && m.y >= ry && m.y < ry + rowH;
+            if (i == acSel) fg->AddRectFilled(UI::Vec2(at.x + 3, ry), UI::Vec2(at.x + w - 3, ry + rowH), kHover, 3.0f);
+            fg->AddText(UI::Vec2(at.x + 10, ry + 3), kText, it.label.c_str());
+            if (!it.detail.empty()) {
+                const float lw = UI::CalcTextWidth(it.label.c_str());
+                fg->AddText(UI::Vec2(at.x + 24 + lw, ry + 3), kDim, Fit(it.detail, std::max(20.0f, w - lw - 40)).c_str());
+            }
+            if (hover && UI::IsMouseClicked(0)) picked = i;
+        }
+        if (picked >= 0) acceptCompletion(d, (std::size_t)picked);
     }
 
     void frame(float X, float Y, float W, float H);
@@ -534,9 +749,13 @@ void ScriptIdeApp::Impl::drawMenu(float X, float Y, float W, float h) {
             }
             if (UI::BeginMenu("Run")) {
                 if (UI::MenuItem("Check", "F7", false, d != nullptr)) { if (d) { check(*d); notice = std::to_string(d->problems.size()) + " problems"; } }
-                if (UI::MenuItem(cfg.runLabel.c_str(), "F5", false, d != nullptr && (bool)cfg.run)) run();
+                if (UI::MenuItem(cfg.runLabel.c_str(), "F5", false, d != nullptr)) run();
+                const bool paused = d && d->execLine > 0;
+                if (d && UI::MenuItem("Toggle Breakpoint", "F9")) d->code.Edit().ToggleBreakpoint(d->code.Edit().Caret().line);
+                if (cfg.debug && UI::MenuItem("Continue", "F8", false, paused)) cfg.debug("continue");
+                if (cfg.debug && UI::MenuItem("Step Over", "F10", false, paused)) cfg.debug("step");
                 if (cfg.showInHost && UI::MenuItem(("Show in " + cfg.hostName).c_str(), nullptr, false, d != nullptr))
-                    cfg.showInHost(d->path, d->code.Edit().Caret().line + 1);
+                    cfg.showInHost(d->path.empty() ? d->key : d->path, d->code.Edit().Caret().line + 1);
                 UI::EndMenu();
             }
             UI::EndMenuBar();
@@ -637,15 +856,38 @@ void ScriptIdeApp::Impl::drawCode(float X, float Y, float W, float H, bool modal
         } else {
             UI::CodeEdit& e = d->code.Edit();
             if (d->gotoLine > 0) { e.GoToLine(d->gotoLine - 1); e.Focus(); d->gotoLine = 0; }
+            // the completion list owns Up, Down, Enter, Tab and Esc while it is open (typing still goes to the code)
+            const bool acKeys = acOpen && !modal && completionKeys(*d);
             e.SetReadOnly(modal);
+            e.SetHandleKeyboardInput(!acKeys);
             UI::SetCursorScreenPos(UI::Vec2(X, Y));
             e.Draw((pre + "_edit").c_str(), W, H);
             e.SetReadOnly(false);
-            if (e.Version() != d->seenVersion) {
+            e.SetHandleKeyboardInput(true);
+            const bool typed = e.Version() != d->seenVersion;
+            if (typed) {
                 d->seenVersion = e.Version();
                 d->editedAt = UI::GetTime();
-                history.MaybeRecord(d->path, diskText(*d), now());
+                if (!d->path.empty()) history.MaybeRecord(d->path, diskText(*d), now());
             }
+            if (e.Breakpoints() != d->bpSeen) {   // a click in the gutter
+                d->bpSeen = e.Breakpoints();
+                if (cfg.breakpointsChanged) {
+                    std::vector<int> lines;
+                    for (int l : d->bpSeen) lines.push_back(l + 1);
+                    cfg.breakpointsChanged(d->key, lines);
+                }
+            }
+            if (!modal && e.Focused()) {
+                const UI::Input& in = UI::GetFrameInput();
+                if (in.ctrl && UI::IsKeyPressed(UI::KeyId_Space, false)) startCompletion(*d, true);
+                else if (typed && acOpen) startCompletion(*d, false);
+                else if (typed && in.text && in.text[0] && !in.ctrl) {
+                    const char c = in.text[std::strlen(in.text) - 1];
+                    if (std::isalnum((unsigned char)c) || c == '_') startCompletion(*d, false);
+                }
+            } else if (!e.Focused()) acOpen = false;
+            if (acOpen) drawCompletion(*d);
         }
     }
     UI::End();
@@ -765,7 +1007,7 @@ void ScriptIdeApp::Impl::drawStatus(float X, float Y, float W, float h) {
             if (errors) right(std::to_string(errors) + (errors == 1 ? " error" : " errors"), kError);
             if (!errors && !warnings) right("no problems", kAdd);
         }
-        const std::string left = notice.empty() ? (d ? relative(d->path) : folder) : notice;
+        const std::string left = notice.empty() ? (d ? (d->path.empty() ? d->label : relative(d->path)) : folder) : notice;
         dl->AddText(UI::Vec2(X + 10, ty), notice.empty() ? kDim : kText, Fit(left, std::max(40.0f, rx - X - 20)).c_str());
     }
     UI::End();
@@ -858,8 +1100,14 @@ void ScriptIdeApp::Impl::frame(float X, float Y, float W, float H) {
         else if (ctrl && key(UI::KeyId_Equal)) { settings.codeFontPx = std::min(32.0f, settings.codeFontPx + 1.0f); for (auto& doc : docs) applyView(*doc); saveSettings(); }
         else if (ctrl && key(UI::KeyId_Minus)) { settings.codeFontPx = std::max(10.0f, settings.codeFontPx - 1.0f); for (auto& doc : docs) applyView(*doc); saveSettings(); }
         else if (alt && key(UI::KeyId_1)) { settings.showTree = !settings.showTree; saveSettings(); }
+        else if (key(UI::KeyId_F8) && cfg.debug && d && d->execLine > 0) cfg.debug("continue");
+        else if (key(UI::KeyId_F10) && cfg.debug && d && d->execLine > 0) cfg.debug("step");
         else if (key(UI::KeyId_F7) && d) { check(*d); notice = std::to_string(d->problems.size()) + " problems"; }
         else if (key(UI::KeyId_F5)) run();
+        else if (key(UI::KeyId_F9) && d) {   // a breakpoint on the caret's line
+            UI::CodeEdit& e = d->code.Edit();
+            e.ToggleBreakpoint(e.Caret().line);
+        }
         else if (key(UI::KeyId_Escape) && panel != P_None && !UI::WantsTextInput()) panel = P_None;
     }
 
@@ -891,12 +1139,54 @@ ScriptIdeApp::~ScriptIdeApp() { m->saveSettings(); }
 bool ScriptIdeApp::OpenFolder(const std::string& folder) { return m->openFolder(folder); }
 bool ScriptIdeApp::OpenFile(const std::string& path, int line) { return m->openFile(path, line); }
 bool ScriptIdeApp::OpenPath(const std::string& path) { return m->openPath(path); }
+bool ScriptIdeApp::OpenDocument(const DocumentSpec& spec, int line) { return m->openDocument(spec, line); }
+bool ScriptIdeApp::HasDocument(const std::string& key) const { return m->byKey(key) != nullptr; }
+std::string ScriptIdeApp::DocumentText(const std::string& key) const { const Impl::Doc* d = m->byKey(key); return d ? d->code.Edit().GetText() : std::string(); }
+bool ScriptIdeApp::DocumentDirty(const std::string& key) const { const Impl::Doc* d = m->byKey(key); return d && m->dirty(*d); }
+bool ScriptIdeApp::ReloadDocument(const std::string& key, const std::string& text) {
+    Impl::Doc* d = m->byKey(key);
+    if (!d) return false;
+    d->crlf = text.find("\r\n") != std::string::npos;
+    d->code.SetText(text);
+    d->saved = d->code.Edit().GetText();
+    d->seenVersion = d->code.Edit().Version();
+    m->check(*d);
+    return true;
+}
+bool ScriptIdeApp::SetBreakpoints(const std::string& key, const std::vector<int>& lines) {
+    Impl::Doc* d = m->byKey(key);
+    if (!d) return false;
+    std::vector<int> z;
+    for (int l : lines) if (l >= 1) z.push_back(l - 1);
+    d->code.Edit().SetBreakpoints(z);
+    d->bpSeen = d->code.Edit().Breakpoints();   // the host set them: nothing to report back
+    return true;
+}
+std::vector<int> ScriptIdeApp::Breakpoints(const std::string& key) const {
+    std::vector<int> out;
+    if (const Impl::Doc* d = m->byKey(key)) for (int l : d->code.Edit().Breakpoints()) out.push_back(l + 1);
+    return out;
+}
+bool ScriptIdeApp::SetExecutionLine(const std::string& key, int line) {
+    for (std::size_t i = 0; i < m->docs.size(); ++i) {
+        Impl::Doc& d = *m->docs[i];
+        if (d.key != key) continue;
+        d.execLine = std::max(0, line);
+        m->applyMarks(d);
+        if (line > 0) { m->active = (int)i; d.gotoLine = line; }
+        return true;
+    }
+    return false;
+}
+bool ScriptIdeApp::CompletionOpen() const { return m->acOpen; }
+const std::vector<CompletionItem>& ScriptIdeApp::CompletionList() const { return m->acItems; }
 void ScriptIdeApp::Frame(float x, float y, float w, float h) { m->frame(x, y, w, h); }
 bool ScriptIdeApp::Save() { Impl::Doc* d = m->activeDoc(); return d && m->save(*d); }
 bool ScriptIdeApp::SaveAll() { return m->saveAll(); }
-void ScriptIdeApp::Close(const std::string& path) {
-    const std::string p = Normal(path);
-    for (std::size_t i = 0; i < m->docs.size(); ++i) if (m->docs[i]->path == p) { m->close((int)i); return; }
+void ScriptIdeApp::Close(const std::string& key) {
+    for (std::size_t i = 0; i < m->docs.size(); ++i) if (m->docs[i]->key == key) { m->close((int)i); return; }
+    const std::string p = Normal(key);   // a file's path as the caller wrote it
+    for (std::size_t i = 0; i < m->docs.size(); ++i) if (m->docs[i]->key == p) { m->close((int)i); return; }
 }
 std::size_t ScriptIdeApp::FindInFiles(const std::string& needle, const FindOptions& options) {
     std::snprintf(m->findBuf, sizeof m->findBuf, "%s", needle.c_str());
@@ -912,7 +1202,7 @@ bool ScriptIdeApp::OpenResult(std::size_t index) {
 }
 std::vector<HistoryVersion> ScriptIdeApp::HistoryOfActive() const {
     const Impl::Doc* d = m->activeDoc();
-    return d ? m->history.Versions(d->path) : std::vector<HistoryVersion>();
+    return d && !d->path.empty() ? m->history.Versions(d->path) : std::vector<HistoryVersion>();
 }
 bool ScriptIdeApp::RestoreVersion(const HistoryVersion& v) { return m->restore(v); }
 bool ScriptIdeApp::WantsQuit() const { return m->quit; }
@@ -927,9 +1217,10 @@ const std::string& ScriptIdeApp::Folder() const { return m->folder; }
 const std::vector<std::string>& ScriptIdeApp::ProjectScripts() const { return m->scripts; }
 std::vector<std::string> ScriptIdeApp::OpenFiles() const {
     std::vector<std::string> out;
-    for (const auto& d : m->docs) out.push_back(d->path);
+    for (const auto& d : m->docs) out.push_back(d->path.empty() ? d->key : d->path);
     return out;
 }
+std::string ScriptIdeApp::ActiveKey() const { const Impl::Doc* d = m->activeDoc(); return d ? d->key : std::string(); }
 std::string ScriptIdeApp::ActivePath() const { const Impl::Doc* d = m->activeDoc(); return d ? d->path : std::string(); }
 std::string ScriptIdeApp::ActiveText() const { const Impl::Doc* d = m->activeDoc(); return d ? d->code.Edit().GetText() : std::string(); }
 bool ScriptIdeApp::ActiveDirty() const { const Impl::Doc* d = m->activeDoc(); return d && m->dirty(*d); }

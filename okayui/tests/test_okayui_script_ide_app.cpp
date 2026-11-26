@@ -9,7 +9,8 @@
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "ScriptIdeApp.hpp"
-#include "OkayUI_SoftPainter.hpp"   // the pictures go through a painter, as in the program: the code font is a font of its own
+#include "OkayUI_SoftPainter.hpp"
+#include "okay/Components/ScriptComponent.hpp"   // the pictures go through a painter, as in the program: the code font is a font of its own
 
 #include <cstdlib>
 #include <filesystem>
@@ -280,6 +281,180 @@ int main() {
         if (app.Folder().find("Other") == std::string::npos) std::cerr << "  folder: " << app.Folder() << ", notice: " << app.Notice() << "\n";
         CHECK(app.ProjectScripts().size() == 1);
         CHECK(app.OpenFiles().size() == 1);   // the open file stays open
+    }
+
+    // ---- the editor's Script components with a fake host: a component's script as a document the host saves, completion,
+    // breakpoints and a paused line with Continue / Step ----
+    {
+        Reset();
+        UI::UseLauncherLook(true);
+        UI::Style().caretBlink = false;
+        const float W = 900, H = 560;
+        Sim sim(W, H);
+        si::ScriptIdeApp::Config hc = cfg;
+        hc.settingsPath.clear();
+        hc.idPrefix = "##test_se_scene";
+        std::string hostCopy;                                   // what the fake editor keeps as the component's source
+        std::vector<std::pair<std::string, std::vector<int>>> bpCalls;
+        std::vector<std::string> debugCalls;
+        hc.breakpointsChanged = [&bpCalls](const std::string& key, const std::vector<int>& lines) { bpCalls.push_back({key, lines}); };
+        hc.debug = [&debugCalls](const std::string& c) { debugCalls.push_back(c); };
+        si::ScriptIdeApp app(hc);
+        auto ui = [&] { app.Frame(0, 0, W, H); };
+        si::DocumentSpec spec;
+        spec.key = "scene:ship-guid/0";
+        spec.label = "Enemy.lua (Ship)";
+        spec.language = "lua";
+        spec.text = kEnemy;
+        spec.save = [&hostCopy](const std::string& text, std::string& why) {
+            if (text.find("FORBIDDEN") != std::string::npos) { why = "the host said no"; return false; }
+            hostCopy = text;
+            return true;
+        };
+        CHECK(app.OpenDocument(spec));
+        CHECK(app.ActiveKey() == "scene:ship-guid/0" && app.ActivePath().empty());
+        CHECK(app.HasDocument("scene:ship-guid/0") && !app.DocumentDirty("scene:ship-guid/0"));
+        CHECK(!app.ActiveProblems().empty());   // the Lua checker runs on a host's document too
+        CHECK(app.HistoryOfActive().empty());   // no file: no Local History
+        // a second OpenDocument with the same key shows the same tab and keeps its text
+        si::DocumentSpec again = spec;
+        again.text = "-- other\n";
+        CHECK(app.OpenDocument(again) && app.OpenFiles().size() == 1 && app.DocumentText(spec.key) == kEnemy);
+        sim.Frames(2, ui);
+
+        // completion: on a new line after line 3, type "Scr": the list offers the file's word "Script"; Enter takes it
+        UI::CodeEdit* e = app.ActiveEdit();
+        CHECK(e != nullptr);
+        if (e) {
+            e->Focus();
+            e->SetCaret(UI::CodePos{2, (int)e->Line(2).size()});
+            e->InsertText("\n");
+            sim.Frame(ui);
+            sim.Type("Scr");
+            sim.Frame(ui);
+            CHECK(app.CompletionOpen());
+            bool offered = false;
+            for (const auto& it : app.CompletionList()) if (it.label == "Script") offered = true;
+            CHECK(offered);
+            CHECK(!app.CompletionList().empty() && app.CompletionList()[0].label == "Script");   // the best match first
+            sim.Hold(UI::KeyId_Enter, true); sim.Frame(ui); sim.Hold(UI::KeyId_Enter, false); sim.Frame(ui);
+            CHECK(!app.CompletionOpen());
+            CHECK(e->Line(3) == "Script");
+            CHECK(e->LineCount() == 13);   // Enter took the item and did not also break the line
+            // Esc closes the list and leaves the text
+            sim.Type(".hea"); sim.Frame(ui);
+            CHECK(app.CompletionOpen());
+            sim.Hold(UI::KeyId_Escape, true); sim.Frame(ui); sim.Hold(UI::KeyId_Escape, false); sim.Frame(ui);
+            CHECK(!app.CompletionOpen() && e->Line(3) == "Script.hea");
+            CHECK(app.ReloadDocument(spec.key, kEnemy));   // back to the text as opened (the host's copy changed)
+            CHECK(!app.DocumentDirty(spec.key) && app.DocumentText(spec.key) == kEnemy);
+        }
+        // Ctrl+S: the host saves it (the component gets the text); a refusal leaves it changed with the host's reason
+        if (e) {
+            e->SetCaret(UI::CodePos{0, 0});
+            e->InsertText("-- saved by the host\n");
+            sim.ctrl = true; sim.Hold(UI::KeyId_S, true); sim.Frame(ui); sim.Hold(UI::KeyId_S, false); sim.Frame(ui); sim.ctrl = false;
+            CHECK(hostCopy.rfind("-- saved by the host\n", 0) == 0);
+            CHECK(!app.DocumentDirty(spec.key));
+            e->InsertText("FORBIDDEN ");
+            CHECK(!app.Save());
+            CHECK(app.DocumentDirty(spec.key) && app.Notice().find("the host said no") != std::string::npos);
+            e->Undo();
+        }
+        // breakpoints: set by the host (not reported back), F9 on the caret's line (reported with 1-based lines)
+        CHECK(app.SetBreakpoints(spec.key, {4}));
+        CHECK(app.Breakpoints(spec.key) == std::vector<int>{4});
+        sim.Frame(ui);
+        CHECK(bpCalls.empty());
+        if (e) {
+            e->SetCaret(UI::CodePos{6, 0});
+            sim.Hold(UI::KeyId_F9, true); sim.Frame(ui); sim.Hold(UI::KeyId_F9, false); sim.Frame(ui);
+            CHECK(app.Breakpoints(spec.key) == (std::vector<int>{4, 7}));
+            CHECK(bpCalls.size() == 1 && bpCalls[0].first == spec.key && bpCalls[0].second == (std::vector<int>{4, 7}));
+        }
+        // a paused script: the line is shown and marked; F8 continues and F10 steps through the host's debugger
+        CHECK(!app.SetExecutionLine("scene:nope", 3));
+        CHECK(app.SetExecutionLine(spec.key, 7));
+        sim.Frames(2, ui);
+        if (e) CHECK(e->Caret().line == 6);
+        bool marked = false;
+        if (e) for (const auto& mk : e->Markers()) if (mk.line == 6 && mk.message.find("Paused") != std::string::npos) marked = true;
+        CHECK(marked);
+        sim.Hold(UI::KeyId_F8, true); sim.Frame(ui); sim.Hold(UI::KeyId_F8, false); sim.Frame(ui);
+        sim.Hold(UI::KeyId_F10, true); sim.Frame(ui); sim.Hold(UI::KeyId_F10, false); sim.Frame(ui);
+        CHECK(debugCalls == (std::vector<std::string>{"continue", "step"}));
+        // the picture: the component's tab, two breakpoints, the paused line, the completion list open after "Scr"
+        CHECK(app.ReloadDocument(spec.key, kEnemy));
+        CHECK(app.SetExecutionLine(spec.key, 6));
+        sim.Frames(2, ui);   // the paused line is shown (the caret goes there)
+        if (e) {
+            e->Focus();
+            e->SetCaret(UI::CodePos{2, 3});   // after "Scr" of "Script.health"
+            sim.Frame(ui);
+            sim.ctrl = true; sim.Hold(UI::KeyId_Space, true); sim.Frame(ui); sim.Hold(UI::KeyId_Space, false); sim.Frame(ui); sim.ctrl = false;
+            CHECK(app.CompletionOpen());   // Ctrl+Space asks at once
+        }
+        sim.Move(5, H - 5);
+        sim.Frame(ui);
+        {
+            std::string why;
+            const bool same = MatchesGolden("script_ide_app_scene", Picture(sim, 30, 32, 37), &why);
+            if (!same) std::cerr << "  golden script_ide_app_scene: " << why << "\n";
+            CHECK(same);
+        }
+        app.SetExecutionLine(spec.key, 0);
+        bool still = false;
+        if (e) for (const auto& mk : e->Markers()) if (mk.message.find("Paused") != std::string::npos) still = true;
+        CHECK(!still);
+        app.Close(spec.key);
+        CHECK(!app.HasDocument(spec.key));
+    }
+
+    // ---- a host's completion list replaces the default one ----
+    {
+        si::ScriptIdeApp::Config hc = cfg;
+        hc.settingsPath.clear();
+        hc.complete = [](const std::string& language, const std::string&, int line, int, const std::string& prefix) {
+            return std::vector<si::CompletionItem>{{"GetComponent", "GetComponent(\"\")", language + " line " + std::to_string(line) + " " + prefix}};
+        };
+        Reset();
+        UI::UseLauncherLook(true);
+        Sim sim(700, 400);
+        si::ScriptIdeApp app(hc);
+        auto ui = [&] { app.Frame(0, 0, 700, 400); };
+        si::DocumentSpec spec;
+        spec.key = "k"; spec.label = "a"; spec.language = "okayscript"; spec.text = "\n";
+        spec.save = [](const std::string&, std::string&) { return true; };
+        CHECK(app.OpenDocument(spec));
+        sim.Frame(ui);
+        if (UI::CodeEdit* e = app.ActiveEdit()) {
+            e->Focus();
+            sim.Frame(ui);
+            sim.Type("Ge"); sim.Frame(ui);
+            CHECK(app.CompletionOpen() && app.CompletionList().size() == 1 && app.CompletionList()[0].detail == "okayscript line 1 Ge");
+            sim.Hold(UI::KeyId_Tab, true); sim.Frame(ui); sim.Hold(UI::KeyId_Tab, false); sim.Frame(ui);
+            CHECK(e->Line(0) == "GetComponent(\"\")");
+        }
+        // the default list from the words: keywords, known names and the text's words; fuzzy, best first, the word itself left out
+        scripteditor::LanguageWords w;
+        w.keywords = {"local", "function"}; w.known = {"print", "pairs"}; w.docs["print"] = "print(...)\nwrites a line";
+        const auto items = si::DefaultCompletions(w, "local position = 1 pos", "pos");
+        CHECK(!items.empty() && items[0].label == "position");
+        bool printOffered = false, selfOffered = false;
+        for (const auto& it : si::DefaultCompletions(w, "", "pr")) { if (it.label == "print") printOffered = it.detail == "print(...)"; if (it.label == "pr") selfOffered = true; }
+        CHECK(printOffered && !selfOffered);
+        CHECK(si::DefaultCompletions(w, "", "zzz").empty());
+    }
+
+    // ---- Run without the editor: the script in a sandbox scene (Start and three frames); the compile error when it does not load ----
+    {
+        const si::TestRunResult good = si::TestRunScript("lua", "local S = { speed = 2 }\nfunction S:Update(dt) self.speed = self.speed + dt end\nreturn S\n");
+        CHECK(good.ok && good.message.find("Test run OK") == 0);
+        const si::TestRunResult bad = si::TestRunScript("lua", kEnemy);   // the missing `end`
+        CHECK(!bad.ok && bad.message.find("Compile error") == 0);
+        bool prepared = false;
+        si::TestRunScript("lua", "return {}\n", [&prepared](okay::ScriptComponent&) { prepared = true; });
+        CHECK(prepared);
     }
 
     // ---- the settings text: bad values are skipped or clamped, unknown keys ignored ----

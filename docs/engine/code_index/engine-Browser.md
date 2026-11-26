@@ -222,6 +222,6 @@ Back to the [code index](../code_index.md). 14 headers, 180 names.
 
 ## `engine/include/okay/Browser/WebFont.hpp`
 
-- `FontFileKind` enum, line 14
-- `FontFileKindOf` function, line 16: What the first bytes say the file is: TrueType (0x00010000, "true"), OpenType ("OTTO"), WOFF ("wOFF"), WOFF2 ("wOF2").
-- `WebFontLimits` struct, line 18
+- `FontFileKind` enum, line 15
+- `FontFileKindOf` function, line 17: What the first bytes say the file is: TrueType (0x00010000, "true"), OpenType ("OTTO"), WOFF ("wOFF"), WOFF2 ("wOF2").
+- `WebFontLimits` struct, line 19

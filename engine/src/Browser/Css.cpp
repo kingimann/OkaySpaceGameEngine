@@ -627,7 +627,7 @@ bool ParseAnB(std::string t, int& a, int& b) {
 } // namespace
 
 // A selector list split at its top-level commas (not inside brackets or parentheses).
-static std::vector<std::string> SplitSelectorList(const std::string& text) {
+static std::vector<std::string> SplitSelectorList(const std::string& text) {   // dup-allow: commas inside () and [] do not split (a selector list, not a plain Split)
     std::vector<std::string> parts;
     std::size_t s = 0;
     int depth = 0;

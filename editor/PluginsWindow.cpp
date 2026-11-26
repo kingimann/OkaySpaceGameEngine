@@ -4,6 +4,7 @@
 #include "PluginsWindow.hpp"
 #include "MainShared.hpp"          // g_showPluginManager, OkayExeDir, SectionHeader, OpenScriptFileInEditorAt, extide (main.cpp)
 #include "ConsolePanel.hpp"        // ConsoleLog
+#include "OkayPanels.hpp"          // DrawPluginManagerOkayUI
 #include "okay/Platform/Platform.hpp"   // okay::platform
 #include "PluginScriptApi.hpp"      // the script_* calls: what a plugin adds to the Script Editor (PluginRegistry)
 
@@ -491,52 +492,33 @@ void DrawPluginsMenu(EditorState& ed) {
     }
     ImGui::EndMenu();
 }
+// The Plugin Manager: OkayUI draws the window (DrawPluginManagerOkayUI, no Dear ImGui version); what the person clicked is done here.
 void DrawPluginManager(EditorState& ed) {
     if (!g_showPluginManager) return;
-    ImGui::SetNextWindowSize(ImVec2(560, 360), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Plugin Manager", &g_showPluginManager)) { ImGui::End(); return; }
-    if (ImGui::Button("+ New Plugin")) NewPluginFromTemplate(ed);
-    ImGui::SameLine();
-    if (ImGui::Button("Reload All")) ScanPlugins(ed, true);
-    ImGui::SameLine();
-    if (ImGui::Button("Open Folder")) {
+    okaypanels::PluginManagerModel model;
+    model.rows.reserve(g_plugins.size());
+    for (const auto& up : g_plugins) {
+        const EditorPlugin& p = *up;
+        okaypanels::PluginRow r;
+        r.name = p.name; r.description = p.description; r.error = p.error;
+        r.enabled = p.enabled; r.user = p.user; r.hasWindow = p.window && p.vm; r.windowOpen = p.open;
+        model.rows.push_back(std::move(r));
+    }
+    okaypanels::PluginManagerIntent intent;
+    DrawPluginManagerOkayUI(&g_showPluginManager, model, intent);
+    if (intent.newPlugin) NewPluginFromTemplate(ed);
+    if (intent.reloadAll) ScanPlugins(ed, true);
+    if (intent.openFolder) {
         std::string d = PluginProjectDir(ed); if (d.empty()) d = PluginUserDir();
         std::error_code ec; std::filesystem::create_directories(d, ec);
         extide::RevealInFiles(d);
     }
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped("Plugins are OkayScript files in EditorPlugins/ (this project) or the editor's plugins/ folder "
-                       "(all projects). Saving a plugin reloads it. See docs/editor/editor-plugins.md.");
-    ImGui::PopStyleColor();
-    ImGui::Separator();
-    if (g_plugins.empty()) ImGui::TextDisabled("No plugins found. Click + New Plugin to start one.");
-    if (ImGui::BeginTable("##plugins", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("On", ImGuiTableColumnFlags_WidthFixed, 34.0f);
-        ImGui::TableSetupColumn("Plugin", ImGuiTableColumnFlags_WidthStretch, 3.0f);
-        ImGui::TableSetupColumn("Scope", ImGuiTableColumnFlags_WidthStretch, 0.9f);
-        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch, 1.4f);
-        ImGui::TableHeadersRow();
-        for (auto& up : g_plugins) {
-            EditorPlugin& p = *up;
-            ImGui::PushID(p.path.c_str());
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            bool en = p.enabled;
-            if (ImGui::Checkbox("##en", &en)) SetPluginEnabled(p, en);
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(p.name.c_str());
-            if (!p.error.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.42f, 1.0f), "%s", p.error.c_str());
-            else if (!p.description.empty()) ImGui::TextDisabled("%s", p.description.c_str());
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", p.user ? "All projects" : "This project");
-            ImGui::TableNextColumn();
-            if (ImGui::SmallButton("Edit")) OpenScriptFileInEditorAt(p.path, 1);
-            if (p.window && p.vm) { ImGui::SameLine(); if (ImGui::SmallButton(p.open ? "Close" : "Open")) p.open = !p.open; }
-            ImGui::PopID();
-        }
-        ImGui::EndTable();
-    }
-    ImGui::End();
+    // the rows' buttons, only while the list is the one drawn (New Plugin and Reload All above may have changed it)
+    if (intent.newPlugin || intent.reloadAll || model.rows.size() != g_plugins.size()) return;
+    auto at = [&](int i) -> EditorPlugin* { return i >= 0 && (std::size_t)i < g_plugins.size() ? g_plugins[(std::size_t)i].get() : nullptr; };
+    if (EditorPlugin* p = at(intent.toggle)) SetPluginEnabled(*p, !p->enabled);
+    if (EditorPlugin* p = at(intent.edit)) OpenScriptFileInEditorAt(p->path, 1);
+    if (EditorPlugin* p = at(intent.openClose)) p->open = !p->open;
 }
 
 } // namespace oked

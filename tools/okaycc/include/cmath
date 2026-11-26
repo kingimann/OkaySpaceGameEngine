@@ -297,4 +297,80 @@ inline double copysign(double x, double y) {
 inline float copysign(float x, float y) { return (float)copysign((double)x, (double)y); }
 inline double exp2(double x) { return __okay_pow(2.0, x); }
 inline float exp2(float x) { return __okay_powf(2.0f, x); }
+// expm1 and log1p (C 7.12.6.3, 7.12.6.9) without the cancellation of exp(x) - 1 and log(1 + x) near
+// zero: the rounding error of u = exp(x) or u = 1 + x is divided out again (D. Goldberg, "What every
+// computer scientist should know about floating-point arithmetic", 1991, theorem 4, after W. Kahan).
+inline double expm1(double x) {
+    if (x != x) return x;
+    double u = exp(x);
+    if (u == 1.0) return x;
+    double um1 = u - 1.0;
+    if (um1 == -1.0) return -1.0;
+    if (um1 > 1e300) return um1;  // (an infinite u)
+    return um1 * x / log(u);
+}
+inline float expm1(float x) { return (float)expm1((double)x); }
+inline double log1p(double x) {
+    double u = 1.0 + x;
+    if (u == 1.0) return x;
+    if (u == 0.0 || x != x || u > 1e300) return log(u);
+    return log(u) * x / (u - 1.0);
+}
+inline float log1p(float x) { return (float)log1p((double)x); }
+// The hyperbolic functions and their inverses (C 7.12.5), from their definitions by exp and log:
+// sinh x = (e^x - e^-x) / 2, cosh x = (e^x + e^-x) / 2, tanh x = sinh x / cosh x,
+// asinh x = ln(x + sqrt(x^2 + 1)), acosh x = ln(x + sqrt(x^2 - 1)), atanh x = ln((1 + x) / (1 - x)) / 2;
+// near zero written through expm1 and log1p so small arguments keep their precision.
+inline double sinh(double x) {
+    double a = fabs(x);
+    double r;
+    if (a < 22.0) {
+        double e = expm1(a);
+        r = 0.5 * (e + e / (e + 1.0));
+    } else {
+        r = 0.5 * exp(a);
+    }
+    return x < 0 ? -r : r;
+}
+inline double cosh(double x) {
+    double a = fabs(x);
+    if (a < 22.0) {
+        double e = exp(a);
+        return 0.5 * (e + 1.0 / e);
+    }
+    return 0.5 * exp(a);
+}
+inline double tanh(double x) {
+    double a = fabs(x);
+    double r;
+    if (a > 22.0) {
+        r = 1.0;
+    } else {
+        double e = expm1(2.0 * a);
+        r = e / (e + 2.0);
+    }
+    return x < 0 ? -r : r;
+}
+inline double asinh(double x) {
+    double a = fabs(x);
+    double r = a > 1e8 ? log(a) + 0.6931471805599453 : log1p(a + a * a / (1.0 + sqrt(1.0 + a * a)));
+    return x < 0 ? -r : r;
+}
+inline double acosh(double x) {
+    if (x < 1.0) return (x - x) / (x - x);  // NaN
+    if (x > 1e8) return log(x) + 0.6931471805599453;
+    double t = x - 1.0;
+    return log1p(t + sqrt(2.0 * t + t * t));
+}
+inline double atanh(double x) {
+    double a = fabs(x);
+    double r = 0.5 * log1p(2.0 * a / (1.0 - a));
+    return x < 0 ? -r : r;
+}
+inline float sinh(float x) { return (float)sinh((double)x); }
+inline float cosh(float x) { return (float)cosh((double)x); }
+inline float tanh(float x) { return (float)tanh((double)x); }
+inline float asinh(float x) { return (float)asinh((double)x); }
+inline float acosh(float x) { return (float)acosh((double)x); }
+inline float atanh(float x) { return (float)atanh((double)x); }
 }  // namespace std

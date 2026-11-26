@@ -207,6 +207,27 @@ int main() {
         CHECK(c == 2 && r == 1);   // never smaller than 2 x 1
     }
 
+    {   // ---- the programs of their own: found by file name beside the launcher or in Tools, hidden when missing ----
+        const fs::path top = fs::temp_directory_path() / ("okay_launcher_programs_" +
+                             std::to_string((unsigned long long)std::chrono::steady_clock::now().time_since_epoch().count()));
+        fs::create_directories(top / "Tools");
+        const std::vector<std::string> dirs = {top.string(), (top / "Tools").string()};
+        CHECK(FindPrograms(dirs).empty());                        // nothing installed: no buttons
+        CHECK(ToolPrograms().size() == 3);
+        CHECK(ToolPrograms()[0].label == "Browser" && ToolPrograms()[0].files[0] == "OkaySpaceBrowser.exe");
+        { std::ofstream((top / "Tools" / "OkaySpaceBrowser.exe").string()) << "x"; }
+        std::vector<FoundProgram> f = FindPrograms(dirs);
+        CHECK(f.size() == 1 && f[0].label == "Browser" && fs::path(f[0].path) == top / "Tools" / "OkaySpaceBrowser.exe");
+        { std::ofstream((top / "okay-script-editor").string()) << "x"; }   // the Linux name, beside the launcher
+        f = FindPrograms(dirs);
+        CHECK(f.size() == 2 && f[1].label == "Script Editor");    // in the table's order
+        fs::create_directories(top / "okay-visual-script");        // a folder with the name is not a program
+        CHECK(FindPrograms(dirs).size() == 2);
+        CHECK(FindPrograms({}).empty() && FindPrograms({""}).empty());
+        std::error_code ec;
+        fs::remove_all(top, ec);
+    }
+
 #if !defined(_WIN32)
     // ---- running okay: arguments arrive one by one, output streams, Stop ends it ----
     const fs::path dir = fs::temp_directory_path() / ("okay_launcher_cli_" + std::to_string((long)getpid()));

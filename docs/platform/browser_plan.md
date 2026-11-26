@@ -20,8 +20,8 @@ The owner asked for our own browser (2026-11-25): an installable program for pla
    (`player/main.cpp`), which already reads a game folder. Open questions: where saves go (per site), and what a game from
    another site may do (a permission prompt).
 3. **Standalone program (first version done).** `okay-browser` (`browser/`, `OkaySpaceBrowser.exe` on Windows): a browser
-   window of its own on the same library. Still to do: installing it like the launcher and updating it from our own server
-   (the release packaging is the coordinator's and the owner's decision).
+   window of its own on the same library. The Windows package carries it in `Tools/` (2026-11-26, a launcher button starts
+   it). Still to do: installing it like the launcher and updating it from our own server on its own.
 3a. **A regular browser, round 1 (owner, 2026-11-25: "i want the browser to be like a regular browser"; branch
    `claude/browser-full-1`).** Browser basics in the program, real layout, forms. See "Round 1" below.
 3b. **The browser in the launcher (owner, 2026-11-26: "can you allow user to launch browser in the launcher"; branch

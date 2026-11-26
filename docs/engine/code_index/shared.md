@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 72 headers, 1092 names.
+Back to the [code index](../code_index.md). 73 headers, 1093 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -184,6 +184,10 @@ Back to the [code index](../code_index.md). 72 headers, 1092 names.
 ## `shared/BrowserPluginCommands.hpp`
 
 - `OwnerOf` function, line 15
+
+## `shared/CommandLinePanel.hpp`
+
+- `CommandLinePanel` class, line 22
 
 ## `shared/ConsoleScriptLink.hpp`
 

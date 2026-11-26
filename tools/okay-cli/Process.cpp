@@ -38,6 +38,43 @@ namespace fs = std::filesystem;
 
 std::string SelfPath() { return okay::restart::Utf8(okay::restart::CurrentExecutable()); }
 
+namespace {
+thread_local const AttachedOutput* t_attached = nullptr;   // a plain pointer: thread_local needs no thread header (rule 21a)
+
+void Nap() {
+#if defined(_WIN32)
+    ::Sleep(5);
+#else
+    ::usleep(5000);
+#endif
+}
+
+/// Run(..., false) while an AttachedOutput is set: the program as a Child, its output handed over while it runs.
+RunResult RunAttached(const std::vector<std::string>& argv, const std::string& cwd, const AttachedOutput& a) {
+    RunResult r;
+    Child child;
+    std::string why;
+    if (!child.Start(argv, cwd, why)) return r;   // not started: the caller says so in its own words
+    r.started = true;
+    for (;;) {
+        std::string out, err;
+        const bool more = child.Poll(out, err);
+        if (a.output) {
+            if (!out.empty()) a.output(out, false);
+            if (!err.empty()) a.output(err, true);
+        }
+        if (!more) break;
+        if (a.stop && a.stop() && child.Running()) child.Stop();
+        if (out.empty() && err.empty()) Nap();
+    }
+    r.exitCode = child.Stopped() ? 130 : child.ExitCode();
+    return r;
+}
+} // namespace
+
+void SetAttachedOutput(const AttachedOutput* attached) { t_attached = attached; }
+const AttachedOutput* GetAttachedOutput() { return t_attached; }
+
 bool IsScriptFile(const std::string& program) {
     const std::string ext = okay::str::LowerAscii(fs::path(program).extension().string());
     return ext == ".cmd" || ext == ".bat";
@@ -130,6 +167,7 @@ void ReadAll(HANDLE h, std::string& out) {
 RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool capture) {
     RunResult r;
     if (argv.empty()) return r;
+    if (!capture && t_attached) return RunAttached(argv, cwd, *t_attached);
     const std::string exe = ResolveProgram(argv[0]);   // a full path, never from the current folder, never a .cmd/.bat
     if (exe.empty()) return r;
     const std::wstring app = okay::restart::Utf8ToWide(exe);
@@ -557,6 +595,7 @@ void PipesToStd(int (&outP)[2], int (&errP)[2]) {
 RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool capture) {
     RunResult r;
     if (argv.empty()) return r;
+    if (!capture && t_attached) return RunAttached(argv, cwd, *t_attached);
     const std::string exe = ResolveProgram(argv[0]);   // a full path from PATH's absolute folders only
     if (exe.empty()) return r;
     int outP[2] = {-1, -1}, errP[2] = {-1, -1}, execP[2] = {-1, -1};

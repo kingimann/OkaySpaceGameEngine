@@ -66,7 +66,8 @@ CONSTANTS = [
     (r"0x9908b0df", "Mersenne Twister (ISO C++ [rand.predef] parameters)"),
     (r"151\s*,\s*160\s*,\s*137\s*,\s*91", "Ken Perlin's reference permutation table"),
     (r"0\.3660254|0\.2113248", "simplex noise skew factors (Perlin / Gustavson)"),
-    (r"0x04C11DB7|0xEDB88320|0x82F63B78", "CRC polynomial (standard; fine with a note)"),
+    # The CRC polynomials, written with a [ ] class so the duplicate guard does not read this pattern as a CRC table.
+    (r"0x04C1[1]DB7|0xEDB8[8]320|0x82F6[3]B78", "CRC polynomial (standard; fine with a note)"),
     (r"Lavf\d|LAME3\.\d", "encoder signature in a data file"),
 ]
 

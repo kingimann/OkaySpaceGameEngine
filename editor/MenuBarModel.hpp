@@ -339,6 +339,7 @@ inline std::vector<Entry> PanelsSubmenu() {
     p.push_back(Toggle("panel.inspector", "Inspector"));
     p.push_back(Toggle("panel.project", "Project"));
     p.push_back(Toggle("panel.console", "Console"));
+    p.push_back(Toggle("panel.commandline", "Command Line", "Type okay commands (okay help, okay test, okay vc save ...) and run them inside the editor, in this project."));
     p.push_back(Toggle("panel.problems", "Problems"));
     p.push_back(Toggle("panel.game", "Game"));
     p.push_back(Sep());

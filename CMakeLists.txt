@@ -378,6 +378,14 @@ if(OKAY_BUILD_CLI AND NOT EMSCRIPTEN)
         okay_win_version(okay_cli "OkaySpace command line" "okay.exe")
     endif()
     set_target_properties(okay_cli PROPERTIES OUTPUT_NAME "okay")
+    # The Command Line panel (shared/CommandLinePanel.hpp): okay typed into a window, run inside the program (CommandJob.hpp),
+    # drawn with OkayUI. The editor links it (View > Panels > Command Line); tests/test_command_line_panel.cpp checks it.
+    if(TARGET okay_ui)
+        add_library(okay_cli_panel STATIC shared/CommandLinePanel.cpp)
+        target_include_directories(okay_cli_panel PUBLIC ${CMAKE_SOURCE_DIR}/shared)
+        target_link_libraries(okay_cli_panel PUBLIC okay_cli_lib okay_ui)
+        target_compile_features(okay_cli_panel PUBLIC cxx_std_17)
+    endif()
 endif()
 
 # ---- Ship SDL2.dll beside the binaries ----

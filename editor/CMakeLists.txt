@@ -149,6 +149,10 @@ if(TARGET okay_ui)
         target_link_libraries(okay-editor PRIVATE okay_ui_render)
     endif()
     target_compile_definitions(okay-editor PRIVATE OKAY_HAVE_OKAYUI=1)
+    # View > Panels > Command Line (shared/CommandLinePanel.hpp): okay's commands run inside the editor. okay_cli_panel is made after
+    # this folder (top CMakeLists.txt, with okay_cli_lib), so it is named through generator expressions; without it the panel is absent.
+    target_link_libraries(okay-editor PRIVATE $<TARGET_NAME_IF_EXISTS:okay_cli_panel>)
+    target_compile_definitions(okay-editor PRIVATE $<$<TARGET_EXISTS:okay_cli_panel>:OKAY_HAVE_CLI_PANEL=1>)
 endif()
 if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui" OR OKAY_OWN_STACK)   # OKAY_OWN_STACK: the dogfood build starts on OkayUI
     target_compile_definitions(okay-editor PRIVATE OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
@@ -195,6 +199,8 @@ if(OKAY_EDITOR_ON_OKAYUI AND TARGET okay_ui AND TARGET okay_ui_screens)
     target_include_directories(okay-editor-okayui PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher
         ${CMAKE_SOURCE_DIR}/okayui/include ${CMAKE_SOURCE_DIR}/okayui/screens ${CMAKE_SOURCE_DIR}/okayui/soft)
     target_link_libraries(okay-editor-okayui PRIVATE okay::engine okay_ui okay_ui_screens okay_ui_soft ${OKAY_SDL_LIB})
+    target_link_libraries(okay-editor-okayui PRIVATE $<TARGET_NAME_IF_EXISTS:okay_cli_panel>)   # View > Panels > Command Line
+    target_compile_definitions(okay-editor-okayui PRIVATE $<$<TARGET_EXISTS:okay_cli_panel>:OKAY_HAVE_CLI_PANEL=1>)
     if(OKAY_ENABLE_TEST_HOOKS)
         target_compile_definitions(okay-editor-okayui PRIVATE OKAY_ENABLE_TEST_HOOKS=1)
     endif()

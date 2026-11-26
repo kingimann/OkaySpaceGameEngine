@@ -3560,6 +3560,16 @@ if(TARGET okay_cli_lib)
     add_test(NAME okay_cli_run COMMAND test_okay_cli_run)
     set_tests_properties(okay_cli_run PROPERTIES TIMEOUT 120)
 endif()
+# The Command Line panel (shared/CommandLinePanel.hpp, View > Panels > Command Line in the editor): its model (history, Tab completion,
+# problems apart, Copy, the folder) and, drawn headless with OkayUI, keys and the golden picture (okayui/tests/golden).
+if(TARGET okay_cli_panel AND TARGET okay_ui_soft)
+    add_executable(test_command_line_panel test_command_line_panel.cpp)
+    target_link_libraries(test_command_line_panel PRIVATE okay_cli_panel okay_ui_soft)
+    target_include_directories(test_command_line_panel PRIVATE ${PROJECT_SOURCE_DIR}/okayui/tests ${PROJECT_SOURCE_DIR}/okayui/soft)
+    target_compile_definitions(test_command_line_panel PRIVATE OKAYUI_GOLDEN_DIR="${PROJECT_SOURCE_DIR}/okayui/tests/golden")
+    add_test(NAME command_line_panel COMMAND test_command_line_panel)
+    set_tests_properties(command_line_panel PROPERTIES TIMEOUT 120 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+endif()
 
 # Core console: EventBus extras, Cvars, Console, debug overlay lines
 add_executable(test_core_console test_core_console.cpp)

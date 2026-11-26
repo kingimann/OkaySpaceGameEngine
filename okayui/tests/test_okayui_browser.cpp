@@ -3,7 +3,8 @@
 // a bordered box, the placeholder of an embedded game), a link is hovered and clicked, the toolbar buttons report, and the
 // loading and error states draw. Step 2: the browser program's toolbar (an address field, Go, no "Open in browser" or
 // "Close"), and an embedded game's box with the host's Play button and state line (golden), a click on Play, and a box the
-// host says cannot play (no button).
+// host says cannot play (no button). Round 1 of the browser program: a form's field clicked and typed into through the view, a
+// checkbox ticked, and Enter sending the form (the POST body checked).
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "BrowserView.hpp"

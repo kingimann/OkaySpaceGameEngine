@@ -140,3 +140,9 @@ session do not keep it), tables with real column widths, margin collapsing throu
 (drawn as their first colour), WOFF fonts, synthetic italics, text selection (Copy text copies the run under the pointer),
 dragging tabs, a downloads folder picker, file inputs. Nothing of round 1 was built or run on Windows.
 
+**Checked so far (2026-11-26):** the browser tests above and `okayui_browser` pass on Linux (ctest); the program was run on Linux
+under a virtual display (Xvfb) against a local Python test server: several tabs, the Flexbox / Grid / Floats test pages, find
+with highlights, the bookmarks bar, the menu and the context menu, a download asked for and saved to the Downloads folder, a
+form typed into (text, password, select, radio, checkbox, textarea) and sent with POST (the server echoed the urlencoded body),
+the new-tab and history pages, zoom. Not checked: real web sites, the launcher's page (compiled only), Windows.
+

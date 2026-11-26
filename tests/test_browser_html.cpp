@@ -1,7 +1,10 @@
 // Browser (page engine): the HTML reader (engine/include/okay/Browser/Html.hpp). Each case reads a page and compares the whole tree
 // dump with the expected one, including pages with bad markup (missing end tags, stray end tags, implied <p> and <li> ends,
-// unquoted attributes, entities, comments and raw text).
+// unquoted attributes, entities, comments and raw text), and the page's character encoding (Encoding.hpp: BOM, Content-Type,
+// the <meta> prescan, the decoders) with a tab showing a page that is not UTF-8.
 #include "test_framework.hpp"
+#include "okay/Browser/Browser.hpp"
+#include "okay/Browser/Encoding.hpp"
 #include "okay/Browser/Html.hpp"
 
 #include <string>
@@ -225,6 +228,92 @@ int main() {
                "    <p>\n"
                "      \"1 < 2 & 3 <> \"\n"
                "      <!-- x -->\n"));
+
+    // Character encodings (Encoding.hpp). Expected code points worked out from the code pages' charts, not from the tables.
+    {
+        CHECK(EncodingForLabel(" ISO-8859-1 ") == TextEncoding::Windows1252);
+        CHECK(EncodingForLabel("latin1") == TextEncoding::Windows1252);
+        CHECK(EncodingForLabel("US-ASCII") == TextEncoding::Windows1252);
+        CHECK(EncodingForLabel("utf8") == TextEncoding::Utf8);
+        CHECK(EncodingForLabel("iso-8859-9") == TextEncoding::Windows1254);
+        CHECK(EncodingForLabel("tis-620") == TextEncoding::Windows874);
+        CHECK(EncodingForLabel("shift_jis") == TextEncoding::Unknown);   // not decoded yet
+        CHECK(EncodingForLabel("utf-8x") == TextEncoding::Unknown);
+        CHECK(std::string(EncodingName(TextEncoding::Iso8859_15)) == "ISO-8859-15");
+        CHECK(CharsetFromContentType("text/html; charset=ISO-8859-1") == "ISO-8859-1");
+        CHECK(CharsetFromContentType("text/html;Charset=\"utf-8\"; q=1") == "utf-8");
+        CHECK(CharsetFromContentType("text/html").empty());
+
+        // windows-1252: the 0x80-0x9F row is not C1 controls (euro, quotes, dashes), five bytes pass through.
+        CHECK(DecodeToUtf8("Fran\xE7" "ais", TextEncoding::Windows1252) == "Fran\xC3\xA7" "ais");
+        CHECK(DecodeToUtf8("\x80\x93\x94\x9F\x81", TextEncoding::Windows1252) == "\xE2\x82\xAC\xE2\x80\x9C\xE2\x80\x9D\xC5\xB8\xC2\x81");
+        CHECK(DecodeToUtf8("\xA9\xFF", TextEncoding::Windows1252) == "\xC2\xA9\xC3\xBF");
+        // ISO-8859-15: 0xA4 is the euro sign, 0xBC/0xBD are OE/oe.
+        CHECK(DecodeToUtf8("\xA4\xBC\xBD", TextEncoding::Iso8859_15) == "\xE2\x82\xAC\xC5\x92\xC5\x93");
+        // windows-1251 (Cyrillic): 0xCF 0xF0 0xE8 = "При"; KOI8-R 0xF0 0xD2 0xC9 = the same word.
+        CHECK(DecodeToUtf8("\xCF\xF0\xE8", TextEncoding::Windows1251) == "\xD0\x9F\xD1\x80\xD0\xB8");
+        CHECK(DecodeToUtf8("\xF0\xD2\xC9", TextEncoding::Koi8R) == "\xD0\x9F\xD1\x80\xD0\xB8");
+        // ISO-8859-2: 0xA3 = L with stroke; windows-1250 0x8A = S with caron; ISO-8859-7 0xC1 = Greek capital alpha.
+        CHECK(DecodeToUtf8("\xA3", TextEncoding::Iso8859_2) == "\xC5\x81");
+        CHECK(DecodeToUtf8("\x8A", TextEncoding::Windows1250) == "\xC5\xA0");
+        CHECK(DecodeToUtf8("\xC1", TextEncoding::Iso8859_7) == "\xCE\x91");
+        // A byte with no mapping gives U+FFFD (ISO-8859-3 0xA5; windows-1253 0xAA).
+        CHECK(DecodeToUtf8("a\xA5" "b", TextEncoding::Iso8859_3) == "a\xEF\xBF\xBD" "b");
+        CHECK(DecodeToUtf8("\xAA", TextEncoding::Windows1253) == "\xEF\xBF\xBD");
+        // UTF-8: one U+FFFD per maximal subpart; UTF-16 with a pair, a lone surrogate and an odd last byte.
+        CHECK(DecodeToUtf8("a\xE2\x82" "b\xFF", TextEncoding::Utf8) == "a\xEF\xBF\xBD" "b\xEF\xBF\xBD");
+        CHECK(DecodeToUtf8(std::string("A\0\x3D\xD8\x00\xDE", 6), TextEncoding::Utf16LE) == "A\xF0\x9F\x98\x80");
+        CHECK(DecodeToUtf8(std::string("\0A\xD8\x00\0B\0", 7), TextEncoding::Utf16BE) == "A\xEF\xBF\xBD" "B\xEF\xBF\xBD");
+        CHECK(DecodeToUtf8("abc", TextEncoding::Replacement) == "\xEF\xBF\xBD");
+        // A BOM wins over the label and is dropped.
+        CHECK(DecodeToUtf8("\xEF\xBB\xBF" "\xC3\xA9", TextEncoding::Windows1252) == "\xC3\xA9");
+        CHECK(DecodeToUtf8(std::string("\xFF\xFEh\0i\0", 6), TextEncoding::Windows1252) == "hi");
+        // The table's windows-1252 row is the same one HTML uses for &#128; .. &#159;.
+        CHECK(SingleByteCodePoint(TextEncoding::Windows1252, 0x80) == 0x20AC);
+        CHECK(SingleByteCodePoint(TextEncoding::Utf8, 0x80) == 0xFFFD);
+
+        // The <meta> prescan (HTML 13.2.3.2).
+        CHECK(PrescanMetaCharset("<html><head><meta charset=\"ISO-8859-15\"><title>x</title>") == TextEncoding::Iso8859_15);
+        CHECK(PrescanMetaCharset("<meta http-equiv=\"Content-Type\" content=\"text/html; charset=windows-1251\">") == TextEncoding::Windows1251);
+        CHECK(PrescanMetaCharset("<META CONTENT='text/html;charset=koi8-r' HTTP-EQUIV=content-type>") == TextEncoding::Koi8R);
+        CHECK(PrescanMetaCharset("<meta content=\"text/html; charset=windows-1251\">") == TextEncoding::Unknown);   // no pragma
+        CHECK(PrescanMetaCharset("<!-- <meta charset=latin2> --><meta charset=utf-8>") == TextEncoding::Utf8);
+        CHECK(PrescanMetaCharset("<div title='<meta charset=latin2>'><meta charset=koi8-u>") == TextEncoding::Koi8U);
+        CHECK(PrescanMetaCharset("<meta charset=utf-16le>") == TextEncoding::Utf8);
+        CHECK(PrescanMetaCharset("<meta charset=x-user-defined>") == TextEncoding::Windows1252);
+        CHECK(PrescanMetaCharset(std::string(1100, ' ') + "<meta charset=latin2>") == TextEncoding::Unknown);   // past 1024 bytes
+        CHECK(PrescanMetaCharset("<meta charset=\"") == TextEncoding::Unknown);   // cut short: no crash
+        CHECK(EncodingFromMetaContent("text/html; charset = 'iso-8859-2' ") == TextEncoding::Iso8859_2);
+        CHECK(EncodingFromMetaContent("charsetx; charset=latin1") == TextEncoding::Windows1252);
+
+        // The whole sniffing order: BOM > Content-Type > meta > UTF-8 detection > windows-1252.
+        CHECK(DecodePage("<meta charset=utf-8>Fran\xE7" "ais", "text/html; charset=ISO-8859-1").text ==
+              "<meta charset=utf-8>Fran\xC3\xA7" "ais");
+        CHECK(std::string(DecodePage("x", "text/html; charset=latin1").source) == "content-type");
+        CHECK(DecodePage("<meta charset=windows-1252>\x93q\x94", "").text == "<meta charset=windows-1252>\xE2\x80\x9Cq\xE2\x80\x9D");
+        CHECK(DecodePage("caf\xC3\xA9", "").encoding == TextEncoding::Utf8);
+        CHECK(DecodePage("caf\xE9", "").text == "caf\xC3\xA9");   // not UTF-8, no label: windows-1252
+        CHECK(DecodePage("\xEF\xBB\xBF" "caf\xC3\xA9", "text/html; charset=latin1").text == "caf\xC3\xA9");
+    }
+
+    // A tab showing a page that is not UTF-8: the text reaches the document as UTF-8 (the owner's "Fran?ais").
+    {
+        BrowserTab tab;
+        CHECK(tab.Open("https://enc.test/"));
+        tab.TakeFetches();
+        tab.DeliverPage("https://enc.test/", true, 200,
+                        "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=ISO-8859-1\"></head>"
+                        "<body><p>Fran\xE7" "ais \x93" "ok\x94</p></body></html>");
+        CHECK(tab.Document() && tab.Document()->Body() &&
+              tab.Document()->Body()->TextContent() == "Fran\xC3\xA7" "ais \xE2\x80\x9C" "ok\xE2\x80\x9D");
+        // The server's Content-Type wins over the page's own <meta> (HTML 13.2.3.2: the transport layer comes first).
+        BrowserTab tab2;
+        CHECK(tab2.Open("https://enc.test/"));
+        tab2.TakeFetches();
+        tab2.DeliverPage("https://enc.test/", true, 200, "<meta charset=utf-8><p>Fran\xE7" "ais", std::string(),
+                         "text/html; charset=ISO-8859-1");
+        CHECK(tab2.Document() && tab2.Document()->Body() && tab2.Document()->Body()->TextContent() == "Fran\xC3\xA7" "ais");
+    }
 
     TEST_MAIN_RESULT();
 }

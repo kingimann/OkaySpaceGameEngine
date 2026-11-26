@@ -3,6 +3,7 @@
 #include "okay/Browser/Html.hpp"
 
 #include "okay/Core/StringUtil.hpp"
+#include "okay/Browser/Encoding.hpp"
 #include "okay/Core/Utf8.hpp"
 
 #include <cstdint>
@@ -47,11 +48,8 @@ const NamedRef kNamed[] = {
 
 // The numeric character reference end step (13.2.5.80): code points 0x80-0x9F are read as windows-1252.
 std::uint32_t FixNumeric(std::uint64_t v) {
-    static const std::uint32_t c1[32] = {
-        0x20AC, 0x81, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x8D, 0x017D, 0x8F,
-        0x90, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x9D, 0x017E, 0x0178};
     if (v == 0 || v > 0x10FFFF || (v >= 0xD800 && v <= 0xDFFF)) return 0xFFFD;
-    if (v >= 0x80 && v <= 0x9F) return c1[v - 0x80];
+    if (v >= 0x80 && v <= 0x9F) return SingleByteCodePoint(TextEncoding::Windows1252, (unsigned char)v);   // Encoding.hpp
     return (std::uint32_t)v;
 }
 

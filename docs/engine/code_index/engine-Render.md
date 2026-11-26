@@ -2,7 +2,7 @@
 
 # Code index: engine-Render
 
-Back to the [code index](../code_index.md). 52 headers, 515 names.
+Back to the [code index](../code_index.md). 52 headers, 518 names.
 
 ## `engine/include/okay/Render/AmfReader.hpp`
 
@@ -426,31 +426,34 @@ Back to the [code index](../code_index.md). 52 headers, 515 names.
 - `UniformField` struct, line 102: One field of a shader's uniform block. Offsets follow the 16-byte rule of HLSL
 - `FragmentContext` struct, line 109: What a CPU (Software backend) fragment function sees.
 - `ShaderDesc` struct, line 130
-- `ValidateShaderDesc` function, line 147: Checks a description for mistakes every backend would make (layout overlaps,
-- `VertexFormat` enum, line 150: ---- Pipelines --------------------------------------------------------------------
-- `VertexAttribute` struct, line 151
-- `VertexLayout` struct, line 156
-- `BlendFactor` enum, line 161
-- `BlendState` struct, line 165
-- `CompareOp` enum, line 177
-- `DepthState` struct, line 178
-- `CullMode` enum, line 182
-- `Topology` enum, line 183
-- `PipelineDesc` struct, line 185
-- `ValidatePipelineDesc` function, line 196: Checks a pipeline's vertex layout (locations in range and not repeated, each attribute inside
-- `LoadOp` enum, line 199: ---- Render passes ------------------------------------------------------------------
-- `RenderPassDesc` struct, line 200
-- `ResourceState` enum, line 210: The state a texture is in, for the backends that need barriers between uses
-- `IndexType` enum, line 213: ---- Command lists ------------------------------------------------------------------
-- `CommandList` class, line 215
-- `Caps` struct, line 263: ---- Capabilities -------------------------------------------------------------------
-- `Stats` struct, line 276
-- `Device` class, line 282: ---- Device ------------------------------------------------------------------------
-- `CreateSoftwareDevice` function, line 347: A CPU device: rasterizes the command lists itself. Always available; the reference
-- `GLDeviceOptions` struct, line 349
-- `CreateOpenGLDevice` function, line 356: An OpenGL device on the CURRENT context. Needs GLRenderer::LoadGL() to have
-- `WrapGLTexture` function, line 359: OpenGL only: use an existing GL texture (made by other code) as an RHI texture. The
-- `AbandonGLDevice` function, line 362: OpenGL only: the context is gone (or not current) and the device is being thrown away;
+- `ValidateShaderDesc` function, line 153: Checks a description for mistakes every backend would make (layout overlaps,
+- `ValidateHlslDesc` function, line 157: Checks the HLSL of a description against the Direct3D 11 rules above (entry points, rhiClip,
+- `VertexFormat` enum, line 160: ---- Pipelines --------------------------------------------------------------------
+- `VertexAttribute` struct, line 161
+- `VertexLayout` struct, line 166
+- `BlendFactor` enum, line 171
+- `BlendState` struct, line 175
+- `CompareOp` enum, line 187
+- `DepthState` struct, line 188
+- `CullMode` enum, line 192
+- `Topology` enum, line 193
+- `PipelineDesc` struct, line 195
+- `ValidatePipelineDesc` function, line 206: Checks a pipeline's vertex layout (locations in range and not repeated, each attribute inside
+- `LoadOp` enum, line 209: ---- Render passes ------------------------------------------------------------------
+- `RenderPassDesc` struct, line 210
+- `ResourceState` enum, line 220: The state a texture is in, for the backends that need barriers between uses
+- `IndexType` enum, line 223: ---- Command lists ------------------------------------------------------------------
+- `CommandList` class, line 225
+- `Caps` struct, line 273: ---- Capabilities -------------------------------------------------------------------
+- `Stats` struct, line 286
+- `Device` class, line 292: ---- Device ------------------------------------------------------------------------
+- `CreateSoftwareDevice` function, line 357: A CPU device: rasterizes the command lists itself. Always available; the reference
+- `GLDeviceOptions` struct, line 359
+- `CreateOpenGLDevice` function, line 366: An OpenGL device on the CURRENT context. Needs GLRenderer::LoadGL() to have
+- `WrapGLTexture` function, line 369: OpenGL only: use an existing GL texture (made by other code) as an RHI texture. The
+- `AbandonGLDevice` function, line 372: OpenGL only: the context is gone (or not current) and the device is being thrown away;
+- `CreateD3D11Device` function, line 379: A Direct3D 11 device on an EXISTING ID3D11Device (passed as void* so this header needs no
+- `WrapD3D11Texture` function, line 382: Direct3D 11 only: use an existing ID3D11Texture2D (void*) as an RHI texture. The RHI makes
 
 ## `engine/include/okay/Render/RHI/SurfaceShader.hpp`
 

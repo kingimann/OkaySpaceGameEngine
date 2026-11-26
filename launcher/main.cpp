@@ -15071,7 +15071,7 @@ int main(int argc, char** argv) {
             }
         } else if (tab == kBrowserTab) {                  // ---- Browser: the browser program's browser, drawn by OkayUI ----
             const BrowserPageMode mode = PageMode(BrowserSwitchOn(), okayFrame);
-            if (mode == BrowserPageMode::Browser && !OkayPageCovered(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {
+            if (mode == BrowserPageMode::Browser) {   // OkayPageCovered went with #1316; hosting in ImGui's draw order (HostOkayPage) is next
                 const ImVec2 rp = ImGui::GetCursorScreenPos();
                 ImVec2 ra = ImGui::GetContentRegionAvail();
                 ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - PageFooterH(), 8.0f);

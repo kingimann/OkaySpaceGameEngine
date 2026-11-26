@@ -308,11 +308,13 @@ int main(int argc, char** argv) {
     okayuihost::platform::FrameLoop loop(*be, *painter);
     bool autoplayDone = false;
     std::string shownTitle;
+    int lastActive = -1;
     while (!quit && loop.Frame([&] {
         ++frame;
         const UI::Input& in = UI::GetFrameInput();
         const bool ctrl = in.ctrl, shift = in.shift, alt = UI::IsKeyDown(UI::KeyId_Alt);
-        const bool typing = UI::WantsTextInput();
+        // Ctrl+<key> is a shortcut, never typing (a field would otherwise get the "1" of Ctrl+1)
+        if (ctrl && !alt) UI::GetIO().InputQueueCharacters.resize(0);
         const bool modal = menu.open || offer.open || settingsOpen;
 
         // ---- every tab: fetches, visits for the history, download offers ----
@@ -359,15 +361,19 @@ int main(int argc, char** argv) {
             else if (key(UI::KeyId_F3) && findOpen) findCurrent += shift ? -1 : 1, findScrollTo = 0.0f;
             else if (ctrl && key(UI::KeyId_G) && findOpen) findCurrent += shift ? -1 : 1, findScrollTo = 0.0f;
             else if (ctrl && key(UI::KeyId_Q)) doAction(A_Quit);
-            else if (ctrl && !typing) {
+            else if (ctrl) {
                 for (int n = 1; n <= 9; ++n) if (key((UI::KeyId)(UI::KeyId_1 + n - 1))) order.ActivateNumber(n);
             }
-            if (key(UI::KeyId_Escape) && !typing) {
+            if (key(UI::KeyId_Escape) && !UI::WantsTextInput()) {
                 if (findOpen) findOpen = false;
                 else if (active().host->Tab().GetState() == br::BrowserTab::State::Loading) active().host->Tab().Stop();
             }
         }
         if (tabs.find(order.Active()) == tabs.end()) newTab(std::string(), false, true);
+        if (order.Active() != lastActive) {   // another tab: the keyboard leaves the old tab's fields (its address is shown)
+            if (lastActive >= 0 && !active().focusAddress) UI::SetKeyboardFocusId(0);
+            lastActive = order.Active();
+        }
 
         const float W = (float)loop.GetHost().DisplayWidth(), H = (float)loop.GetHost().DisplayHeight();
         br::BrowserTab& tab = active().host->Tab();
@@ -734,12 +740,17 @@ int main(int argc, char** argv) {
             dialog("##download", 520.0f, 170.0f, [&](float dx, float dy) {
                 const br::BrowserTab::DownloadOffer& o = offer.offer;
                 UI::SetCursorScreenPos(UI::Vec2(dx, dy));
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 UI::Heading("Save this file?");
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 UI::TextUnformatted(Fit(o.fileName, 480).c_str());
                 const std::string meta = (o.contentType.empty() ? std::string("unknown type") : o.contentType) + ", " + br::SizeText(o.size) +
                                          ", from " + br::HostOf(o.url);
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 UI::TextDisabled(Fit(meta, 480).c_str());
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 UI::Spacing(10.0f);
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 if (UI::Button("Save")) { startDownload(o); offer.open = false; }
                 UI::SameLine();
                 if (UI::Button("Cancel") || UI::IsKeyPressed(UI::KeyId_Escape, false)) offer.open = false;
@@ -748,20 +759,32 @@ int main(int argc, char** argv) {
         if (settingsOpen) {
             dialog("##settings", 620.0f, 330.0f, [&](float dx, float dy) {
                 UI::SetCursorScreenPos(UI::Vec2(dx, dy));
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 UI::Heading("Settings");
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 UI::TextUnformatted("Search address (%s is replaced by the words; empty = no search)");
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 UI::SetNextItemWidth(580.0f);
                 UI::InputText("##search", setSearch, (int)sizeof setSearch);
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 if (UI::Button("Use Google")) std::snprintf(setSearch, sizeof setSearch, "%s", br::kDefaultSearchUrl);
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 UI::TextUnformatted("Home page (empty = the new-tab page)");
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 UI::SetNextItemWidth(580.0f);
                 UI::InputText("##home", setHome, (int)sizeof setHome);
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 UI::TextUnformatted("Download folder (empty = your Downloads folder)");
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 UI::SetNextItemWidth(580.0f);
                 UI::InputText("##dir", setDir, (int)sizeof setDir);
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 UI::Checkbox("Ask before saving a download", &setAsk);
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 UI::Checkbox("Show the bookmarks bar", &setBar);
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 UI::Spacing(6.0f);
+                UI::SetCursorScreenPos(UI::Vec2(dx, UI::GetCursorScreenPos().y));
                 if (UI::Button("Save")) {
                     profile.settings.searchUrl = okay::str::Trim(setSearch);
                     profile.settings.homePage = okay::str::Trim(setHome);

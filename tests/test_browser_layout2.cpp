@@ -210,6 +210,13 @@ int main() {
         // a column with no height: as tall as its items; align-items:center centres each one
         const LayoutResult r16 = Lay(B0 + "<div id=col style='display:flex;flex-direction:column;align-items:center;width:100px'><div id=a>abc</div><div id=b>a</div></div>", 400);
         CHECK(BoxIs(r16, "col", 0, 0, 100, 2 * L) && BoxIs(r16, "a", 38, 0, 24, L) && BoxIs(r16, "b", 46, L, 8, L));
+        // a link that is a flex item (blockified) is still a link, over its whole box, padding included
+        const LayoutResult rl = Lay(B0 + "<nav style='display:flex'><a href='/a' style='padding:5px'>aa</a><a href='/b'>b</a></nav><label style='display:block'>L</label>", 400);
+        CHECK(rl.links.size() == 3 && LinkAt(rl, 1, 1) == 0 && LinkAt(rl, 10, 10) == 0 && LinkAt(rl, 27, 3) == 1);
+        CHECK(rl.linkNodes.size() == 3 && rl.linkNodes[2] && rl.linkNodes[2]->name == "label");
+        // an inline box's horizontal margin, border and padding take room: "a" + 10 + "b" + 6 + "c"
+        const LayoutResult rp = Lay(B0 + "a<span style='margin-left:4px;padding:0 3px 0 6px;border-right:3px solid'>b</span>c", 400);
+        CHECK(TextAt(rp, "a", 0, 1.6f) && TextAt(rp, "b", 18, 1.6f) && TextAt(rp, "c", 32, 1.6f));
         // text directly in a flex container is an anonymous item
         const LayoutResult r17 = Lay(B0 + "<div style='display:flex'>hello<b id=b>x</b></div>", 400);
         CHECK(TextAt(r17, "hello", 0, 1.6f) && BoxIs(r17, "b", 40, 0, 8, L));

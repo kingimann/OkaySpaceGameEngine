@@ -233,7 +233,7 @@ std::string Transform(const std::string& s, TextTransform t, bool& wordStart) {
 // ---- inline content ----------------------------------------------------------------------------------------------------
 
 struct Frag {
-    enum Kind { Word, Space, Image, Embed, Break, Anchor, Atomic, Float, Abs } kind = Word;
+    enum Kind { Word, Space, Image, Embed, Break, Anchor, Atomic, Float, Abs, Pad } kind = Word;   // Pad: an inline box's margin + border + padding
     std::string text;              // Word / Space: the characters; Image / Embed: src; Anchor: the id
     const ComputedStyle* st = nullptr;
     const SNode* sn = nullptr;     // Image / Embed / Atomic / Float / Abs: the element
@@ -295,6 +295,7 @@ struct Layouter {
     const Node* htmlNode = nullptr;
     float viewW = 0, viewH = 0;
     long budget = 2000000;   // block layouts a hostile page may cause
+    int curLink = -1;        // the link a block-level <a href> (or <label>) gives everything inside it
 
     Layouter(const TextMeasure& m, const ImageSizeFn& img, LayoutResult& res, const LayoutContext* c, const Node* body, const Node* html)
         : measure(m), imageSize(img), r(res), ctx(c), bodyNode(body), htmlNode(html) {}
@@ -464,6 +465,7 @@ struct Layouter {
             else if (box && f.sn) { const auto ki = Intrinsic(*f.sn); w = (f.kind == Frag::Atomic || f.kind == Frag::Float ? ki.second : ki.first) + MarginsH(f.sn->st, 0); }
             if (f.kind == Frag::Break) { mx = std::max(mx, line); mn = std::max(mn, unit); line = 0; unit = 0; lineStart = true; continue; }
             if (f.kind == Frag::Anchor || f.kind == Frag::Abs) continue;
+            if (f.kind == Frag::Pad) { unit += f.w; line += f.w; continue; }
             if (f.kind == Frag::Space) {
                 if (lineStart) continue;
                 line += w;
@@ -524,7 +526,12 @@ struct Layouter {
             r.links.push_back(std::string());
             r.linkNodes.push_back(&el);
         }
+        // an inline box's horizontal margin, border and padding take room in the line (CSS 2.1 8.3, 10.3.1)
+        const float padL = n.st.margin[3].Resolve(0) + n.st.border[3] + n.st.padding[3].Resolve(0);
+        const float padR = n.st.margin[1].Resolve(0) + n.st.border[1] + n.st.padding[1].Resolve(0);
+        if (padL != 0.0f) { Frag f; f.kind = Frag::Pad; f.w = padL; f.st = &n.st; f.link = link; out.push_back(f); }
         for (const SNode& k : n.kids) Flatten(k, link, out, lastSpace, wordStart, dry);
+        if (padR != 0.0f) { Frag f; f.kind = Frag::Pad; f.w = padR; f.st = &n.st; f.link = link; out.push_back(f); }
     }
 
     void FlattenText(const std::string& sIn, const ComputedStyle& st, int link, std::vector<Frag>& out, bool& lastSpace, bool& wordStart) {
@@ -749,7 +756,7 @@ struct Layouter {
     float InlineContent(const std::vector<const SNode*>& items, const ComputedStyle& container, float cx, float cy, float cw, float& baseline, int depth) {
         std::vector<Frag> frags;
         bool lastSpace = true, wordStart = true;
-        for (const SNode* n : items) Flatten(*n, -1, frags, lastSpace, wordStart, false);
+        for (const SNode* n : items) Flatten(*n, curLink, frags, lastSpace, wordStart, false);
         // measure; atomic inline boxes are laid out now (at 0, 0) and moved into their line later
         for (Frag& f : frags) {
             if (f.kind == Frag::Word || f.kind == Frag::Space) f.w = Measure(f.text, *f.st);
@@ -790,6 +797,7 @@ struct Layouter {
             const Frag& f = frags[i];
             if (f.kind == Frag::Break) { finish(true); ++i; continue; }
             if (f.kind == Frag::Anchor) { line.push_back({&f, x, 0}); ++i; continue; }
+            if (f.kind == Frag::Pad) { line.push_back({&f, x, f.w}); x += f.w; ++i; continue; }
             if (f.kind == Frag::Abs) { DeferAbs(*f.sn, lineL + x, y, depth); ++i; continue; }
             if (f.kind == Frag::Float) {
                 // at the top of this line when it fits beside what is on it, else after the line
@@ -809,7 +817,7 @@ struct Layouter {
             std::size_t j = i + 1;
             float uw = f.w;
             if (f.kind == Frag::Word) {
-                while (j < n && (frags[j].kind == Frag::Word || frags[j].kind == Frag::Anchor) && !frags[j].breakBefore) { uw += frags[j].w; ++j; }
+                while (j < n && (frags[j].kind == Frag::Word || frags[j].kind == Frag::Anchor || frags[j].kind == Frag::Pad) && !frags[j].breakBefore) { uw += frags[j].w; ++j; }
             }
             const bool wraps = f.st->whiteSpace != WhiteSpace::Pre && f.st->whiteSpace != WhiteSpace::NoWrap;
             // the spaces before the unit count (it follows them); spaces left at a line's end are dropped by finish()
@@ -935,6 +943,7 @@ struct Layouter {
             const Frag& f = *p.f;
             const float x = Finite(cx + dx + p.x);
             if (f.kind == Frag::Anchor) { r.anchors.push_back({f.text, top}); run = -1; continue; }
+            if (f.kind == Frag::Pad) { run = -1; if (f.link >= 0) Area(x, top, p.w, 0.0f, f.link); continue; }
             if (f.kind == Frag::Atomic) {
                 run = -1;
                 float a, d;
@@ -1168,6 +1177,13 @@ struct Layouter {
 
         const int bi = AddBox(n, depth, bx, y, bwid);
         if (o.boxIndex) *o.boxIndex = bi;
+        // a block-level link (display: block, a flex or grid item) or label: the whole box and everything in it is the link
+        const int savedLink = curLink;
+        if (n.node && !n.text && ((n.node->name == "a" && n.node->Attr("href")) || n.node->name == "label")) {
+            curLink = (int)r.links.size();
+            r.links.push_back(n.node->name == "a" ? *n.node->Attr("href") : std::string());
+            r.linkNodes.push_back(n.node);
+        }
         if (n.node) {
             if (const std::string* id = n.node->Attr("id")) r.anchors.push_back({*id, y});
             if (n.node->name == "a") if (const std::string* nm = n.node->Attr("name")) r.anchors.push_back({*nm, y});
@@ -1279,6 +1295,8 @@ struct Layouter {
         }
         for (const auto& s : shadows) { r.cmds[(std::size_t)s.first].h = h + 2 * s.second; r.cmds[(std::size_t)s.first].radius = Radius(st, bwid, h); }
         FinishBox(bi, n, h);
+        if (curLink != savedLink && curLink >= 0) Area(bx, y, bwid, h, curLink);
+        curLink = savedLink;
         if (n.node && n.node->name == "button") {   // a <button> takes clicks like a form control
             ControlBox cbx;
             cbx.node = n.node;

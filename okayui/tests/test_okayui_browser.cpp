@@ -167,6 +167,51 @@ int main() {
         CHECK(navigated == "https://other.test/x.html");
     }
 
+    // ---- round 1: a form in the browser program's view: click a field, type, tick a box, Enter sends it (POST) ----
+    {
+        br::BrowserTab tab3;
+        tab3.SetAnyOrigin(true);
+        CHECK(tab3.Open("https://forms.test/login.html"));
+        tab3.TakeFetches();
+        tab3.DeliverPage("https://forms.test/login.html", true, 200,
+            "<body style='margin:10px'><form method=post action=/in><input id=u name=user style='width:200px'>"
+            "<label><input type=checkbox name=keep value=1> keep</label><button>Go</button></form></body>");
+        S::AddressField field;
+        S::ControlEdit edit;
+        S::BrowserViewOptions opt;
+        opt.address = &field;
+        opt.hostButtons = false;
+        opt.programButtons = true;
+        opt.edit = &edit;
+        Sim sim3(480, 320);
+        S::BrowserViewResult r3;
+        bool sent = false;
+        auto ui3 = [&] { r3 = S::DrawBrowserView(tab3, 0, 0, 480, 320, S::BrowserImageFn(), opt); if (r3.formSent) sent = true; };
+        sim3.Frames(3, ui3);
+        const br::LayoutResult& pg = tab3.Layout(r3.page.w, S::OkayUIMeasure());
+        CHECK(pg.controls.size() == 3);   // the field, the checkbox and the button
+        if (pg.controls.size() == 3) {
+            const br::ControlBox u = pg.controls[0];   // copies: the layout is redone as the person types
+            const br::ControlBox k = pg.controls[1];
+            sim3.Click(r3.page.x + u.x + 10, r3.pageTop + u.y + u.h * 0.5f, ui3);
+            sim3.Frames(2, ui3);
+            CHECK(edit.node == u.node);
+            sim3.Type("ann@test");
+            sim3.Frames(2, ui3);
+            CHECK(tab3.Forms().Value(*u.node) == "ann@test");
+            sim3.Click(r3.page.x + k.x + 3, r3.pageTop + k.y + 3, ui3);   // the checkbox
+            CHECK(tab3.Forms().Checked(*k.node));
+            sim3.Click(r3.page.x + u.x + 10, r3.pageTop + u.y + u.h * 0.5f, ui3);
+            sim3.Frames(2, ui3);
+            sim3.Press(Key_Enter);   // implicit submission: the form's button
+            sim3.Frame(ui3);
+            CHECK(sent && tab3.GetState() == br::BrowserTab::State::Loading);
+            const std::vector<std::string> f = tab3.TakeFetches();
+            std::string body;
+            CHECK(f.size() == 1 && f[0] == "https://forms.test/in" && tab3.PostBody(f[0], body) && body == "user=ann%40test&keep=1");
+        }
+    }
+
     UI::UseLauncherLook(false);
     TEST_MAIN_RESULT();
 }

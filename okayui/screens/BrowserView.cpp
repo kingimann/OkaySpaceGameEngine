@@ -387,7 +387,7 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                 af->shownFor = tab.Url();
             }
             const char* star = options.bookmarked ? "Bookmarked" : "Bookmark";
-            const float extra = options.programButtons ? UI::CalcTextWidth(star) + UI::CalcTextWidth("Menu") + 56.0f : 0.0f;
+            const float extra = options.programButtons ? UI::CalcTextWidth(star) + UI::CalcTextWidth("Menu") + 90.0f : 0.0f;
             UI::SetNextItemWidth(std::max(60.0f, UI::GetContentRegionAvail().x - UI::CalcTextWidth("Go") - 28.0f - extra));
             if (options.focusAddress) UI::SetKeyboardFocusHere();
             bool go = options.placeholder.empty()
@@ -512,10 +512,14 @@ BrowserViewResult DrawBrowserView(br::BrowserTab& tab, float x, float y, float w
                     if (std::string(edit->buf.data()) != value && !UI::WantsTextInput()) std::snprintf(edit->buf.data(), edit->buf.size(), "%s", value.c_str());
                     UI::SetCursorScreenPos(UI::Vec2(sx, sy));
                     UI::PushID("##pagefield");
-                    if (edit->focusNow) { UI::SetKeyboardFocusHere(); edit->focusNow = false; }
+                    if (edit->focusNow && kind != br::ControlKind::TextArea) { UI::SetKeyboardFocusHere(); edit->focusNow = false; }
                     bool enter = false;
                     if (kind == br::ControlKind::TextArea) {
+                        // the multi-line field takes no SetKeyboardFocusHere: it is given the keyboard by its id after it is drawn
+                        const bool give = edit->focusNow;
+                        edit->focusNow = false;
                         UI::InputTextMultiline("##field", edit->buf.data(), (int)edit->buf.size(), UI::Vec2(cb.w * zoom, cb.h * zoom));
+                        if (give) UI::SetKeyboardFocusId((int)UI::GetItemID());
                     } else {
                         UI::SetNextItemWidth(cb.w * zoom);
                         enter = UI::InputText("##field", edit->buf.data(), (int)edit->buf.size(),

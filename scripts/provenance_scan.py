@@ -218,8 +218,32 @@ def _own_licence(t):
     return bad
 
 
+# A10: published shader constants keep a one-line source note (on the line or within the 3 lines above).
+A10_PLACES = [
+    ("engine/src/Render/GLRendererShaders.cpp", r"2\.51\*x|A = 0\.15|52\.9829189|\* 0\.227027"),
+    ("engine/include/okay/Render/D3DPostHLSL.hpp", r"A = 0\.15|\* 0\.227027"),
+    ("engine/include/okay/Render/D3D11Hlsl.hpp", r"2\.51\*x|52\.9829189"),
+    ("engine/include/okay/Render/DofMath.hpp", r"\* 0\.227027"),
+    ("engine/include/okay/Render/SsaoMath.hpp", r"OKAY_SSAO_BLUR_W0 0\.227027"),
+    ("engine/include/okay/Render/Atmosphere.hpp", r"2\.51f \* x|A = 0\.15f"),
+]
+A10_NOTE = re.compile(r"[Ss]ource|derived in|Narkowicz|Hable|Jimenez|binomial")
+
+
+def _source_notes(t):
+    bad = []
+    for rel, rx in A10_PLACES:
+        try: ls = open(os.path.join(t, rel), errors="replace").read().splitlines()
+        except OSError: bad.append(rel + ": missing"); continue
+        for i, l in enumerate(ls):
+            if re.search(rx, l) and not any(A10_NOTE.search(x) for x in ls[max(0, i - 3):i + 1]):
+                bad.append("%s:%d" % (rel, i + 1))
+    return bad
+
+
 GUARDS = [
     ("A4", "shipped version information states a licence other than ours", _own_licence),
+    ("A10", "a published shader constant has no source note near it", _source_notes),
 ]
 
 

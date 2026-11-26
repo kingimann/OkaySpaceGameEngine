@@ -88,7 +88,7 @@ const char* kFrag =
     "uniform float uFogMode; uniform float uFogDensity; uniform float uFogHeight; uniform float uFogFalloff;\n"  // linear / exponential / height (Atmosphere.hpp)
     "uniform float uTonemap;\n"                                                                        // filmic ACES tonemap toggle
     "uniform float uHdrOut;\n"                                                                         // 1 = leave the colour linear for the post chain
-    "vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }\n"        // ACES filmic curve
+    "vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }\n"        // source: K. Narkowicz, "ACES Filmic Tone Mapping Curve" (blog, 2016), a fit of the ACES look
     "uniform sampler2D uNormalTex; uniform float uHasNormal; uniform float uNormalStrength;\n"  // bump/normal map
     "uniform sampler2D uSpecTex; uniform float uHasSpecMap;\n"                  // gloss map (per-texel specular)
     "uniform sampler2D uAoTex; uniform float uHasAo; uniform float uAoStrength;\n"  // ambient-occlusion map
@@ -289,6 +289,7 @@ const char* kFrag =
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  vec3 amb = mix(uAmbGround, uAmbSky, clamp(N.y * 0.5 + 0.5, 0.0, 1.0));\n"  // scene Ambient Mode (flat / hemisphere / sky)
     "  vec3 lit = amb; vec3 spec = vec3(0.0);\n"
+    // Interleaved gradient noise; source: J. Jimenez, "Next Generation Post Processing in Call of Duty: Advanced Warfare" (SIGGRAPH 2014).
     "  { float a = 52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))) * 6.2831853;\n"
     "    float ca = cos(a), sa = sin(a); gRot = mat2(ca, sa, -sa, ca); }\n"   // interleaved-gradient noise: rotate the Poisson disk per pixel
     "  vec3 Ns = normalize(vN);\n"                                // geometric normal for shadow bias (not the bumped one)
@@ -563,6 +564,8 @@ const char* kUberFrag =
     "uniform vec3 uLift; uniform vec3 uGamma; uniform vec3 uGain;\n"
     "uniform float uVignette; uniform float uVignetteSmooth; uniform float uAspect;\n"
     "varying vec2 vUV;\n"
+    // Tone curves. Source: aces(): K. Narkowicz, "ACES Filmic Tone Mapping Curve" (blog, 2016); hable() A-F and the white
+    // point 11.2: J. Hable, "Uncharted 2: HDR Lighting" (GDC 2010). Published formulas, used as published.
     "vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }\n"
     "vec3 hable(vec3 v){ float A = 0.15, B = 0.50, C = 0.10, D = 0.20, E = 0.02, F = 0.30;\n"
     "  return ((v*(A*v+C*B)+D*E)/(v*(A*v+B)+D*F))-E/F; }\n"
@@ -652,6 +655,7 @@ const char* kDofBlurFrag =
     "#version 120\n"
     "uniform sampler2D uSrc; uniform vec2 uDir; varying vec2 vUV;\n"
     "void main(){\n"
+    // 9-tap gaussian in 5 linear taps: weights and offsets derived in SsaoMath.hpp (OKAY_SSAO_BLUR_*), checked by tests/test_post_quality_math.cpp.
     "  vec4 s = texture2D(uSrc, vUV) * 0.227027;\n"
     "  s += (texture2D(uSrc, vUV + uDir * 1.384615) + texture2D(uSrc, vUV - uDir * 1.384615)) * 0.316216;\n"
     "  s += (texture2D(uSrc, vUV + uDir * 3.230769) + texture2D(uSrc, vUV - uDir * 3.230769)) * 0.070270;\n"

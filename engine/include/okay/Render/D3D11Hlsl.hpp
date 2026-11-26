@@ -191,6 +191,7 @@ inline const char* D3D11HlslSource() {
     "}\n"
     // ACES filmic curve (matches the GL renderer) for the linear/filmic pipeline.
     "float3 aces(float3 x){\n"
+    // Source: K. Narkowicz, "ACES Filmic Tone Mapping Curve" (blog, 2016), a fit of the ACES look, used as published.
     "  return saturate((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14));\n"
     "}\n"
     "float4 VSDepth(float3 pos:POSITION):SV_POSITION {\n"          // depth-only shadow pass
@@ -297,6 +298,7 @@ inline const char* D3D11HlslSource() {
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  float3 amb = lerp(uAmbGround.xyz, uAmbSky.xyz, saturate(N.y * 0.5 + 0.5));\n"  // scene Ambient Mode
     "  float3 lit = amb; float3 spec = float3(0,0,0);\n"
+    // Interleaved gradient noise; source: J. Jimenez, "Next Generation Post Processing in Call of Duty: Advanced Warfare" (SIGGRAPH 2014).
     "  { float a = 52.9829189 * frac(dot(i.pos.xy, float2(0.06711056, 0.00583715))) * 6.2831853;\n"
     "    float ca = cos(a), sa = sin(a); gRot = float2x2(ca, -sa, sa, ca); }\n"   // interleaved-gradient noise rotation
     "  float3 Ns = normalize(i.nrm);\n"                         // geometric normal for shadow bias

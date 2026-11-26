@@ -57,6 +57,11 @@ copied code in this scan; see "Clean" and "Limits".
 
 - **A4 fixed.** `cmake/okay_version.rc.in` now says "Copyright (c) 2026 OkaySpaceGameEngine. All rights reserved. See
   LICENSE." Guard: `check` refuses another licence name in `LegalCopyright`.
+- **A10 fixed.** One source line at each place: the Narkowicz ACES fit and Hable's curve (GL, D3D, CPU), Jimenez's
+  interleaved gradient noise (GL, D3D), and the 9-tap gaussian in 5 linear taps, now derived in `SsaoMath.hpp` from the
+  binomial row n = 12 and checked against it by `tests/test_post_quality_math.cpp`; the GL / D3D / DoF / bloom blurs
+  point there. Guard: `check` refuses one of those constants with no source note within three lines. (The IMA ADPCM
+  table is handled with N1.)
 
 Counts: **1 clear copy of data (A1)**, **2 probable ports (A2, A3)**, **1 own-licence error (A4)**, **3 third-party
 runtime / notice gaps (A5-A7)**, **2 trademark groups (A8, A9)**, **1 data-note group (A10)**, **1 asset-record group

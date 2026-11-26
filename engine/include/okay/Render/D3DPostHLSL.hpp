@@ -26,11 +26,13 @@
     "}\n" \
     "float4 PSBlur(PSQuad i) : SV_TARGET {\n" \
     "  float2 d = uTexelDir.zw;\n" \
+    /* 9-tap gaussian in 5 linear taps: weights and offsets derived in SsaoMath.hpp (OKAY_SSAO_BLUR_*). */ \
     "  float3 s = uTex.Sample(uSampClamp, i.uv).rgb * 0.227027;\n" \
     "  s += (uTex.Sample(uSampClamp, i.uv + d * 1.384615).rgb + uTex.Sample(uSampClamp, i.uv - d * 1.384615).rgb) * 0.316216;\n" \
     "  s += (uTex.Sample(uSampClamp, i.uv + d * 3.230769).rgb + uTex.Sample(uSampClamp, i.uv - d * 3.230769).rgb) * 0.070270;\n" \
     "  return float4(s, 1.0);\n" \
     "}\n" \
+    /* hable() A-F and the white point 11.2: J. Hable, "Uncharted 2: HDR Lighting" (GDC 2010), used as published. */ \
     "float3 hable(float3 v){ float A = 0.15, B = 0.50, C = 0.10, D = 0.20, E = 0.02, F = 0.30;\n" \
     "  return ((v*(A*v+C*B)+D*E)/(v*(A*v+B)+D*F))-E/F; }\n" \
     "float3 filmic(float3 x){ return saturate(hable(x * 2.0) / hable(float3(11.2, 11.2, 11.2))); }\n" \

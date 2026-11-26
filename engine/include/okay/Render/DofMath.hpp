@@ -89,6 +89,7 @@ inline float Mix(float sharp, float blurred, float coc) { return sharp + (blurre
     "}\n" \
     "float4 PSDofBlur(PSQuad i) : SV_TARGET {\n"            /* PSBlur with alpha (uTexelDir.zw = direction) */ \
     "  float2 d = uTexelDir.zw;\n" \
+    /* 9-tap gaussian in 5 linear taps: weights and offsets derived in SsaoMath.hpp (OKAY_SSAO_BLUR_*). */ \
     "  float4 s = uTex.Sample(uSampClamp, i.uv) * 0.227027;\n" \
     "  s += (uTex.Sample(uSampClamp, i.uv + d * 1.384615) + uTex.Sample(uSampClamp, i.uv - d * 1.384615)) * 0.316216;\n" \
     "  s += (uTex.Sample(uSampClamp, i.uv + d * 3.230769) + uTex.Sample(uSampClamp, i.uv - d * 3.230769)) * 0.070270;\n" \

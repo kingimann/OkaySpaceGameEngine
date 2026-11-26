@@ -1305,7 +1305,22 @@ const StyleSheet& DefaultStyleSheet() {
         " color: black; padding: 1px 6px }\n"
         "input[type=checkbox], input[type=radio] { margin: 3px 3px 3px 4px; border: 0; padding: 0; background-color: transparent }\n"
         "textarea { white-space: pre-wrap; font-family: monospace }\n"
-        "label { cursor: default }\n");
+        "label { cursor: default }\n"
+        // round 3, from the HTML standard's Rendering section (15.3.1-15.3.11, 15.5.17)
+        "table { box-sizing: border-box }\n"
+        "button { text-align: center }\n"
+        "pre, code, kbd, samp, tt, listing, xmp, plaintext { font-size: 0.8125em }\n"   // monospace text at 13 px by default
+        "pre code, pre kbd, pre samp, pre tt, code code { font-size: 1em }\n"
+        "article h1, aside h1, nav h1, section h1 { font-size: 1.5em; margin: 0.83em 0 }\n"
+        "abbr[title], acronym[title] { text-decoration: underline dotted }\n"
+        "q::before { content: open-quote } q::after { content: close-quote }\n"
+        "summary { display: block }\n"
+        "summary::before { content: '\\25B8\\00A0' }\n"
+        "details[open] > summary::before { content: '\\25BE\\00A0' }\n"
+        "details:not([open]) > :not(summary) { display: none }\n"
+        "fieldset { min-width: min-content }\n"
+        "legend { display: block }\n"
+        "address { font-style: italic }\n");
     return sheet;
 }
 

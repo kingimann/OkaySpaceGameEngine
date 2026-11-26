@@ -165,17 +165,18 @@ int main() {
         for (const DrawCmd& c : wide.cmds) if (c.kind == DrawCmd::Image) { CHECK(c.w == 60.0f && c.h == 30.0f); }
     }
 
-    // <br>, <pre> keeps spaces and line ends and does not wrap.
+    // <br>, <pre> keeps spaces and line ends and does not wrap. <pre> is monospace at 13 px (0.8125em, the HTML standard's
+    // Rendering section): lines of 15.6 px, text 1.3 px below the line top.
     CHECK(Dump("<body style='margin:0'><pre style='margin:0'>a  b\nc</pre><div>x<br>y<br><br>z</div>", 20,
-               "block html 0,0 20x115\n"
-               "block body 0,0 20x115\n"
-               "block pre 0,0 20x38\n"
-               "text 0,2 'a  b'\n"
-               "text 0,21 'c'\n"
-               "block div 0,38 20x77\n"
-               "text 0,40 'x'\n"
-               "text 0,59 'y'\n"
-               "text 0,98 'z'\n"));
+               "block html 0,0 20x108\n"
+               "block body 0,0 20x108\n"
+               "block pre 0,0 20x31\n"
+               "text 0,1 'a  b'\n"
+               "text 0,17 'c'\n"
+               "block div 0,31 20x77\n"
+               "text 0,33 'x'\n"
+               "text 0,52 'y'\n"
+               "text 0,90 'z'\n"));
 
     // Links: the run's area, LinkAt, links listed once per <a>.
     {

@@ -134,7 +134,9 @@ struct Builder {
     }
 
     void Prepare() {
-        for (const StyleSheet* s : sheets) {
+        std::vector<const StyleSheet*> all = sheets;
+        all.push_back(&DefaultStyleSheet());   // the default sheet has ::before rules too (q, summary)
+        for (const StyleSheet* s : all) {
             if (!s) continue;
             for (const Rule& r : s->rules) for (const Selector& sel : r.selectors) if (sel.pseudoElement == 1 || sel.pseudoElement == 2 || sel.pseudoElement == 4 || sel.pseudoElement == 5) anyPseudo[sel.pseudoElement] = true;
         }
@@ -700,7 +702,7 @@ struct Layouter {
         if (el.name == "img" || IsEmbedTag(el.name) || IsControlTag(el.name) || n.st.display != Display::Inline) {
             Frag f;
             f.kind = el.name == "img" ? Frag::Image : IsEmbedTag(el.name) ? Frag::Embed : Frag::Atomic;
-            const std::string* src = el.Attr(el.name == "object" ? "data" : "src");
+            const std::string* src = el.name == "img" ? ImgSrc(el) : el.Attr(el.name == "object" ? "data" : "src");
             if (f.kind != Frag::Atomic) f.text = src ? *src : std::string();
             f.st = &n.st; f.sn = &n; f.link = link; f.breakBefore = true;
             out.push_back(f);
@@ -778,6 +780,72 @@ struct Layouter {
         flushWord();
     }
 
+    // The address an <img> shows (the HTML standard, 4.8.4.3 "selecting an image source", simplified): inside a <picture>, the
+    // first <source> before it whose media query matches (and whose type, if any, is an image type we decode); then the srcset
+    // candidate for the view: with width descriptors the narrowest at least as wide as the view's width (sizes is taken as 100vw),
+    // with density descriptors the one closest to 1x; else src. Chosen once per element per layout.
+    std::map<const Node*, std::string> imgSrc;
+    const std::string* ImgSrc(const Node& el) {
+        auto it = imgSrc.find(&el);
+        if (it != imgSrc.end()) return it->second.empty() ? el.Attr("src") : &it->second;
+        std::string chosen;
+        const std::string* set = el.Attr("srcset");
+        if (el.parent && el.parent->IsElement("picture")) {
+            for (const auto& sib : el.parent->children) {
+                if (sib.get() == &el) break;
+                if (!sib->IsElement("source")) continue;
+                const std::string* ss = sib->Attr("srcset");
+                if (!ss) continue;
+                if (const std::string* type = sib->Attr("type")) {
+                    std::string t = *type;
+                    for (char& c : t) if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+                    if (t != "image/png" && t != "image/jpeg" && t != "image/gif" && t != "image/bmp") continue;
+                }
+                if (const std::string* m = sib->Attr("media")) if (!MediaMatches(ParseMediaQuery(*m), ctx ? ctx->style.media : MediaEnv())) continue;
+                set = ss;
+                break;
+            }
+        }
+        if (set) chosen = PickSrcset(*set, ctx ? ctx->style.media.width : viewW);
+        if (imgSrc.size() < 100000) imgSrc[&el] = chosen;
+        auto again = imgSrc.find(&el);
+        if (again != imgSrc.end() && !again->second.empty()) return &again->second;
+        return el.Attr("src");
+    }
+    static std::string PickSrcset(const std::string& set, float viewWidth) {
+        struct Cand { std::string url; float w = 0, x = 0; };
+        std::vector<Cand> cands;
+        std::size_t i = 0;
+        while (i < set.size() && cands.size() < 64) {
+            while (i < set.size() && (IsSpace(set[i]) || set[i] == ',')) ++i;
+            std::size_t j = i;
+            while (j < set.size() && !IsSpace(set[j])) ++j;
+            if (j == i) break;
+            Cand c;
+            c.url = set.substr(i, j - i);
+            if (!c.url.empty() && c.url.back() == ',') { c.url.pop_back(); i = j; cands.push_back(c); continue; }
+            std::size_t k = set.find(',', j);
+            if (k == std::string::npos) k = set.size();
+            std::string desc = set.substr(j, k - j);
+            const std::size_t a = desc.find_first_not_of(" \t\n\r\f"), b = desc.find_last_not_of(" \t\n\r\f");
+            desc = a == std::string::npos ? std::string() : desc.substr(a, b - a + 1);
+            if (!desc.empty()) {
+                const float v = std::strtof(desc.c_str(), nullptr);
+                if (desc.back() == 'w' && v > 0) c.w = v; else if (desc.back() == 'x' && v > 0) c.x = v;
+            }
+            if (c.w == 0 && c.x == 0) c.x = 1;
+            cands.push_back(c);
+            i = k + 1;
+        }
+        const Cand* best = nullptr;
+        for (const Cand& c : cands) {
+            if (c.w > 0) {
+                if (!best || (best->w < viewWidth ? c.w > best->w : (c.w >= viewWidth && c.w < best->w))) best = &c;
+            } else if (!best || (best->w == 0 && std::fabs(c.x - 1.0f) < std::fabs(best->x - 1.0f))) best = &c;
+        }
+        return best ? best->url : std::string();
+    }
+
     // The size of a replaced element (an image, an embedded box, a form control) in a containing block `cbW` wide: content box.
     void SizeReplaced(const SNode& n, float cbW, float& wOut, float& hOut) {
         const Node& el = *n.node;
@@ -790,7 +858,7 @@ struct Layouter {
         else if (el.Attr("height")) h = (float)AttrInt(el, "height", -1);
         if (el.name == "img") {
             int iw = 0, ih = 0;
-            const std::string* src = el.Attr("src");
+            const std::string* src = ImgSrc(el);
             const bool known = imageSize && src && imageSize(*src, iw, ih) && iw > 0 && ih > 0;
             if (w < 0 && h < 0) { if (known) { w = (float)iw; h = (float)ih; } else { w = 0; h = 0; } }
             else if (w < 0) w = known ? h * (float)iw / (float)ih : h;
@@ -1937,7 +2005,7 @@ struct Layouter {
         DrawCmd c;
         c.kind = el.name == "img" ? DrawCmd::Image : DrawCmd::Embed;
         c.x = x; c.y = y; c.w = w; c.h = h;
-        const std::string* src = el.Attr(el.name == "object" ? "data" : "src");
+        const std::string* src = el.name == "img" ? ImgSrc(el) : el.Attr(el.name == "object" ? "data" : "src");
         c.text = src ? *src : std::string();
         c.tag = el.name;
         c.color = n.st.color;
@@ -3184,7 +3252,7 @@ LayoutResult LayoutPage(const HtmlDocument& doc, float widthIn, const TextMeasur
     while (!todo.empty()) {
         const Node* n = todo.back();
         todo.pop_back();
-        if (n->IsElement("img")) if (const std::string* src = n->Attr("src")) {
+        if (n->IsElement("img")) if (const std::string* src = L.ImgSrc(*n)) {
             if (std::find(r.images.begin(), r.images.end(), *src) == r.images.end()) r.images.push_back(*src);
         }
         for (std::size_t k = n->children.size(); k-- > 0;) todo.push_back(n->children[k].get());

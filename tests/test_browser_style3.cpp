@@ -6,6 +6,7 @@
 #include "BrowserLayoutTestKit.hpp"
 
 #include <string>
+#include <vector>
 
 using namespace browsertest;
 
@@ -125,6 +126,31 @@ int main() {
         const LayoutResult r = Lay(B0 + "<div style='height:10px;background:#ff0000;filter:grayscale(1)'></div><div style='height:10px;background:#ff0000;filter:brightness(50%)'></div>", 300);
         CHECK(CountFill(r, Color{54, 54, 54, 255}) == 1);
         CHECK(CountFill(r, Color{128, 0, 0, 255}) == 1);
+    }
+
+
+    // ---- images: srcset and <picture> (the HTML standard, 4.8.4.3) ----
+    {
+        const LayoutResult r = Lay(B0 + "<img id=a src=small.png srcset='a1.png 1x, a2.png 2x' width=10 height=10>"
+                                   "<img src=s.png srcset='w200.png 200w, w800.png 800w, w1600.png 1600w' width=10 height=10>"
+                                   "<picture><source media='(min-width: 2000px)' srcset=huge.png><source type=image/webp srcset=x.webp>"
+                                   "<source srcset=pic.png><img src=fallback.png width=10 height=10></picture>", 600);
+        std::vector<std::string> srcs;
+        for (const DrawCmd& c : r.cmds) if (c.kind == DrawCmd::Image) srcs.push_back(c.text);
+        CHECK(srcs.size() == 3 && srcs[0] == "a1.png" && srcs[1] == "w800.png" && srcs[2] == "pic.png");
+        bool listed = false;
+        for (const std::string& i : r.images) if (i == "w800.png") listed = true;
+        CHECK(listed);   // the host fetches the chosen one
+    }
+
+    // ---- the default sheet (the HTML standard, 15.3) ----
+    {
+        const LayoutResult r = Lay(B0 + "<details><summary>More</summary><p>hidden</p></details><details open><summary>Open</summary><p>shown</p></details><q>x</q><code>c</code>", 300);
+        CHECK(TextCmd(r, "\xE2\x96\xB8\xC2\xA0") != nullptr && TextCmd(r, "\xE2\x96\xBE\xC2\xA0") != nullptr);
+        CHECK(TextCmd(r, "hidden") == nullptr && TextCmd(r, "shown") != nullptr);
+        CHECK(TextCmd(r, "\xE2\x80\x9C") != nullptr && TextCmd(r, "\xE2\x80\x9D") != nullptr);
+        const DrawCmd* c = TextCmd(r, "c");
+        CHECK(c && Near(c->h, 13));   // monospace at 13 px
     }
 
     TEST_MAIN_RESULT();

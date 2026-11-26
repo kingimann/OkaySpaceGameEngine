@@ -470,5 +470,77 @@ int main() {
         p.settings.searchUrl.clear();
         CHECK(InternalPage("about:newtab", p, {}).find("<form") == std::string::npos);
     }
+    // ---- the host's round 3: the profile's cookies and localStorage (SiteData), kept across a restart and shared by two
+    // programs on the same folder (the browser program and the launcher's Browser page) ----
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / "okay_browser_sitedata_test";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        const std::string folder = dir.u8string() + "/";
+        const std::int64_t now = 1767225600;   // 2026-01-01
+        {
+            SiteData a(folder);
+            a.Load(now);
+            CHECK(a.Cookies().Set("https://shop.test/", "sid=abc; Max-Age=3600; Path=/", now));
+            CHECK(a.Cookies().Set("https://shop.test/", "tmp=1; Path=/", now));   // a session cookie: not kept
+            CHECK(a.LocalStorage().Area("https://shop.test").Set("cart", "3 apples", WebStorage::kMaxBytesPerOrigin));
+            a.LocalStorage().MarkChanged();
+            a.Pump(now);
+            CHECK(fs::exists(fs::u8path(a.CookiesPath())) && fs::exists(fs::u8path(a.LocalStoragePath())));
+        }
+        {   // a restart: the persistent cookie and the stored value are back, the session cookie is gone
+            SiteData b(folder);
+            b.Load(now + 10);
+            CHECK(b.Cookies().Header("https://shop.test/", now + 10) == "sid=abc");
+            std::string v;
+            const StorageArea* area = b.LocalStorage().Find("https://shop.test");
+            CHECK(area && area->Get("cart", v) && v == "3 apples");
+        }
+        {   // two programs at once: one saves, the other (with nothing unsaved) takes it in and keeps its session cookies
+            SiteData prog(folder), launcher(folder);
+            prog.Load(now);
+            launcher.Load(now);
+            launcher.Cookies().Set("https://shop.test/", "session=s1; Path=/", now);
+            prog.Cookies().Set("https://news.test/", "lang=fi; Max-Age=600", now);
+            prog.LocalStorage().Area("https://news.test").Set("seen", "42", WebStorage::kMaxBytesPerOrigin);
+            prog.LocalStorage().MarkChanged();
+            prog.Pump(now);
+            launcher.Pump(now);
+            CHECK(launcher.Cookies().Header("https://news.test/", now) == "lang=fi");
+            CHECK(launcher.Cookies().Header("https://shop.test/", now).find("session=s1") != std::string::npos);
+            std::string v;
+            CHECK(launcher.LocalStorage().Find("https://news.test") && launcher.LocalStorage().Find("https://news.test")->Get("seen", v) && v == "42");
+            // both change before either reads the other: nothing is lost (the later writer adds what only the file has)
+            launcher.Cookies().Set("https://shop.test/", "fromLauncher=1; Max-Age=600", now);
+            prog.Cookies().Set("https://shop.test/", "fromProgram=1; Max-Age=600", now);
+            launcher.Pump(now);
+            prog.Pump(now);
+            launcher.Pump(now);
+            for (SiteData* s : {&prog, &launcher}) {
+                const std::string h = s->Cookies().Header("https://shop.test/", now);
+                CHECK(h.find("fromLauncher=1") != std::string::npos && h.find("fromProgram=1") != std::string::npos && h.find("sid=abc") != std::string::npos);
+            }
+        }
+        {   // a damaged file is an empty store (and is written over at the next change), never a crash
+            SiteData d(folder);
+            std::FILE* f = std::fopen(d.CookiesPath().c_str(), "wb");
+            if (f) { std::fputs("{not json", f); std::fclose(f); }
+            d.Load(now);
+            CHECK(d.Cookies().Count() == 0);
+        }
+        fs::remove_all(dir, ec);
+    }
+
+    // the headers of an answer, for the host's fetches: every Set-Cookie, the reason phrase, the last answer after redirects
+    {
+        const std::string head = "HTTP/1.1 302 Found\r\nLocation: /b\r\nSet-Cookie: hop=1\r\n\r\n"
+                                 "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nSet-Cookie: a=1; Path=/\r\nset-cookie: b=2\r\n\r\n";
+        std::string reason;
+        const auto lines = HeaderLines(head, &reason);
+        CHECK(reason == "Not Found" && lines.size() == 3);
+        CHECK(lines.size() == 3 && lines[1].first == "Set-Cookie" && lines[1].second == "a=1; Path=/" && lines[2].second == "b=2");
+        CHECK(HeaderValue(head, "content-type") == "text/html" && HeaderValue(head, "Location").empty());
+    }
     TEST_MAIN_RESULT();
 }

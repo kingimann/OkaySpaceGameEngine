@@ -72,6 +72,9 @@ public:
     const std::string& Notice() const;
     /// The download prompt is open (an answer that is a file, waiting for Save or Cancel).
     bool DownloadPromptOpen() const;
+    /// A dialog a page opened (alert / confirm / prompt) is shown over the page; its text ("" when none).
+    bool PageDialogOpen() const;
+    std::string PageDialogText() const;
     const std::vector<DownloadItem>& Downloads() const;
 
     struct Impl;

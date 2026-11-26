@@ -26,6 +26,8 @@
 
 namespace okay::browser {
 
+struct TabFetch;   // one request of a tab on the wire (BrowserHost.cpp)
+
 class TabHost {
 public:
     /// How the host makes and frees a texture from RGBA pixels (null = it could not).
@@ -81,9 +83,18 @@ public:
     /// End the running game.
     void StopGame();
 
+    /// The profile's cookies and localStorage (okay/Browser/Profile.hpp SiteData, one each per profile; not owned, they must
+    /// outlive this host). Set on the tab now and again whenever the tab is made anew (Open, Reset). Null: none (the default).
+    void SetSiteData(CookieStore* cookies, WebStorage* local);
+
 private:
     struct Impl;
     void RefreshPageInfo();
+    void Send(std::vector<TabFetch> jobs);
+    bool FollowRedirect(TabFetch& job, long status, const std::string& location, const std::vector<std::string>& setCookies,
+                        std::vector<TabFetch>& next);
+    CookieStore* m_cookies = nullptr;
+    WebStorage* m_local = nullptr;
     void DeliverPageAnswerImpl(const std::string& url, bool ok, long status, std::string& body, const std::string& error,
                                const std::string& contentType, const std::string& disposition, const std::string& finalUrl,
                                std::int64_t size, bool tooBig);

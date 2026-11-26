@@ -672,6 +672,9 @@ struct FetchRequest {
     /// that turns out to be stale (closed before ZERO bytes of the answer arrived) is replaced once by a fresh one.
     bool keepAlive = false;
     std::shared_ptr<CookieJar> jar;         ///< null = cookies off (the default)
+    /// false: a 3xx answer is the final answer (its head and body come back as they are); the caller follows it itself (the
+    /// browser does, so each hop gets its own cookies).
+    bool followRedirects = true;
 };
 
 struct FetchHooks {
@@ -857,7 +860,7 @@ inline FetchResult Fetch(Connector& conn, const FetchRequest& req, const Limits&
         if (req.jar) for (const Header& h : head.headers) if (detail::IEq(h.name, "set-cookie")) req.jar->Store(url, h.value);
         const std::string* loc = head.Get("location");
         const int s = head.status;
-        const bool redirect = (s == 301 || s == 302 || s == 303 || s == 307 || s == 308) && loc;
+        const bool redirect = (s == 301 || s == 302 || s == 303 || s == 307 || s == 308) && loc && req.followRedirects;
         if (redirect) {
             if (hop >= lim.maxRedirects) return bad(Err::TooManyRedirects, "too many redirects");
             Url next;

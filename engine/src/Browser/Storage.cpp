@@ -75,6 +75,19 @@ void WebStorage::ClearOrigin(const std::string& origin) {
     if (m_areas.erase(origin)) m_changed = true;
 }
 
+void WebStorage::MergeSaved(const WebStorage& saved, bool replace) {
+    if (replace) { m_areas = saved.m_areas; return; }
+    for (const auto& kv : saved.m_areas) {
+        if (m_areas.find(kv.first) == m_areas.end() && m_areas.size() >= kMaxOrigins) continue;
+        StorageArea& mine = m_areas[kv.first];
+        for (const std::string& k : kv.second.Keys()) {
+            std::string v;
+            if (mine.Get(k, v) || !kv.second.Get(k, v)) continue;
+            mine.Set(k, v, quota);
+        }
+    }
+}
+
 std::string WebStorage::ToJson() const {
     using okay::json::Escape;
     std::string o = "{\"version\": 1, \"origins\": {";

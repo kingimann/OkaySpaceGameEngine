@@ -102,9 +102,7 @@ int main(int argc, char** argv) {
         UI::UseLauncherLook(true);
         return true;
     };
-    hooks.frame = [&](float w, float h) { app->Frame(0, 0, w, h); };
-    hooks.wantsQuit = [&] { return app->WantsQuit(); };
-    hooks.title = [&] { return app->WindowTitle(); };   // the window's title: the page's title
-    hooks.stop = [&] { app.reset(); };   // saves the profile, stops running games and frees the textures while the painter still exists
+    // the window's title is the page's; the end saves the profile, stops running games and frees the textures while the painter exists
+    okayuihost::platform::AppHooks(hooks, app);
     return okayuihost::platform::RunProgram(desc, hooks);
 }

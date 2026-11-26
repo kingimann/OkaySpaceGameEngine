@@ -7,7 +7,7 @@
 //
 // FOLDER opens as the project; each FILE opens in a tab (its folder is the project when none was named). With nothing named, the
 // folder that was open last. --frames N: end after N frames (a start-and-quit check with no person at the window).
-// Settings are kept in the settings folder (okay::platform PrefPath "OkaySpace/ScriptEditor", script_editor.txt).
+// Settings are kept in the settings folder (okay::platform PrefPath "OkaySpace/ScriptEditor", script_editor.json).
 #define SDL_MAIN_HANDLED
 #define OKAYUI_HOST_PLATFORM 1
 #include "OkayUIFrameLoop.hpp"
@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
         OkayUI::UseLauncherLook(true);   // the editor's look: the proportional UI font (the code is in JetBrains Mono)
         scriptide::ScriptIdeApp::Config cfg;
         const std::string data = be.PrefPath("OkaySpace", "ScriptEditor");
-        cfg.settingsPath = data.empty() ? std::string() : data + "script_editor.txt";
+        cfg.settingsPath = data.empty() ? std::string() : data + "script_editor.json";
         cfg.quitItem = true;
         cfg.pickFolder = [](const std::string& start, std::function<void(const std::string&)> chosen) {
             okay::filedialog::FolderOne("Open Folder", start, std::move(chosen));
@@ -67,9 +67,6 @@ int main(int argc, char** argv) {
                      app->Folder().empty() ? "(none)" : app->Folder().c_str());
         return true;
     };
-    hooks.frame = [&](float w, float h) { app->Frame(0, 0, w, h); };
-    hooks.wantsQuit = [&] { return app->WantsQuit(); };
-    hooks.title = [&] { return app->WindowTitle(); };
-    hooks.stop = [&] { app.reset(); };   // writes the settings
+    okayuihost::platform::AppHooks(hooks, app);   // the end writes the settings
     return okayuihost::platform::RunProgram(desc, hooks);
 }

@@ -22,7 +22,7 @@ scriptide::ScriptIdeApp& App() {
         scriptide::ScriptIdeApp::Config cfg;
         if (okay::platform::Backend* be = okay::platform::Default()) {   // the program's settings file: one view for both hosts
             const std::string data = be->PrefPath("OkaySpace", "ScriptEditor");
-            if (!data.empty()) cfg.settingsPath = data + "script_editor.txt";
+            if (!data.empty()) cfg.settingsPath = data + "script_editor.json";
         }
         cfg.idPrefix = "##editor_script_editor_app";
         cfg.wordsFor = [](const std::string& language) { return &LanguageWordsFor(language); };

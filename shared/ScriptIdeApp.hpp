@@ -25,8 +25,8 @@
 
 namespace scriptide {
 
-/// What the Script Editor keeps between runs (one small text file, `key=value` per line). Shared by the program and the editor's
-/// window when both use the same file.
+/// What the Script Editor keeps between runs (one small JSON file, read with the engine's okay::json). Shared by the program and the
+/// editor's window when both use the same file.
 struct AppSettings {
     int tabSize = 4;
     bool wordWrap = false;
@@ -37,7 +37,8 @@ struct AppSettings {
     std::vector<std::string> recentFolders;   ///< most recent first, at most 10
 
     std::string Serialize() const;
-    /// Read what Serialize wrote; unknown keys and bad values are skipped (each field keeps its default), values are clamped.
+    /// Read what Serialize wrote; unknown keys, bad values and a file that is not JSON are skipped (each field keeps its default),
+    /// numbers are clamped.
     static AppSettings Parse(const std::string& text);
     /// Put `folder` first in recentFolders (moving it when it was there) and make it lastFolder.
     void NoteFolder(const std::string& folder);

@@ -97,7 +97,7 @@ int main() {
 
     std::int64_t clock = 1764000000000;   // 2025-11-24: Local History's copies are named by this pinned time
     si::ScriptIdeApp::Config cfg;
-    cfg.settingsPath = (dir / "settings" / "script_editor.txt").u8string();
+    cfg.settingsPath = (dir / "settings" / "script_editor.json").u8string();
     cfg.idPrefix = "##test_se";
     cfg.quitItem = true;
     cfg.nowMs = [&clock] { return clock; };
@@ -217,7 +217,7 @@ int main() {
     // ---- the settings file: a second app (the editor's window, say) reads the folder and the view back ----
     {
         const std::string text = ReadFile(cfg.settingsPath);
-        CHECK(text.find("lastFolder=") != std::string::npos && text.find("Space Run") != std::string::npos);
+        CHECK(text.find("\"lastFolder\": ") != std::string::npos && text.find("Space Run") != std::string::npos);
         si::ScriptIdeApp other(cfg);
         CHECK(other.Settings().wordWrap);
         CHECK(!other.Settings().recentFolders.empty() && other.Settings().recentFolders[0].find("Space Run") != std::string::npos);
@@ -284,7 +284,8 @@ int main() {
 
     // ---- the settings text: bad values are skipped or clamped, unknown keys ignored ----
     {
-        const si::AppSettings s = si::AppSettings::Parse("tabSize=999\nwordWrap=1\ncodeFontPx=abc\nnope=1\nrecentFolder=/a\nrecentFolder=/a\nrecentFolder=/b\n");
+        const si::AppSettings s = si::AppSettings::Parse(
+            "{\"tabSize\": 999, \"wordWrap\": true, \"codeFontPx\": \"abc\", \"nope\": 1, \"recentFolders\": [\"/a\", \"/a\", 7, \"/b\"]}");
         CHECK(s.tabSize == 16);
         CHECK(s.wordWrap);
         CHECK(s.codeFontPx == 15.0f);
@@ -293,6 +294,10 @@ int main() {
         t.NoteFolder("/b");
         CHECK(t.recentFolders[0] == "/b" && t.recentFolders.size() == 2 && t.lastFolder == "/b");
         CHECK(si::AppSettings::Parse(t.Serialize()).Serialize() == t.Serialize());
+        t.lastFolder = "C:\\Games\\Say \"hi\"";   // a Windows path with quotes survives the round trip
+        CHECK(si::AppSettings::Parse(t.Serialize()).lastFolder == t.lastFolder);
+        CHECK(si::AppSettings::Parse("tabSize=8\n").tabSize == 4);   // not JSON: the defaults
+        CHECK(si::AppSettings::Parse("{\"tabSize\": -3, \"codeFontPx\": 2.5}").tabSize == 4);
     }
 
     // ---- OKAY_SHOT_DIR: pictures for a person to look at (software render; never committed) ----

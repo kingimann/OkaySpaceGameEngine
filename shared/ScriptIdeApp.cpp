@@ -11,6 +11,7 @@
 #include "okay/Lua/LuaScriptVM.hpp"             // LuaScriptVM::Lint
 #include "okay/JavaScript/JavaScript.hpp"       // okay::js::kKeywords
 #include "okay/JavaScript/JavaScriptVM.hpp"     // JavaScriptVM::Lint
+#include "okay/Core/Json.hpp"            // okay::json::Parse / Escape: the settings file
 #include "okay/UI/OkayUI.hpp"
 
 #include <algorithm>
@@ -32,43 +33,39 @@ namespace UI = OkayUI;
 // ---- settings ----------------------------------------------------------------------------------------------------------
 
 std::string AppSettings::Serialize() const {
-    std::ostringstream o;
-    o << "tabSize=" << tabSize << "\n"
-      << "wordWrap=" << (wordWrap ? 1 : 0) << "\n"
-      << "showWhitespace=" << (showWhitespace ? 1 : 0) << "\n"
-      << "showTree=" << (showTree ? 1 : 0) << "\n"
-      << "codeFontPx=" << (int)codeFontPx << "\n"
-      << "lastFolder=" << lastFolder << "\n";
-    for (const std::string& f : recentFolders) o << "recentFolder=" << f << "\n";
-    return o.str();
+    std::string o = "{\n  \"tabSize\": " + std::to_string(tabSize) + ",\n  \"wordWrap\": " + (wordWrap ? "true" : "false") +
+                    ",\n  \"showWhitespace\": " + (showWhitespace ? "true" : "false") + ",\n  \"showTree\": " + (showTree ? "true" : "false") +
+                    ",\n  \"codeFontPx\": " + std::to_string((int)codeFontPx) + ",\n  \"lastFolder\": ";
+    okay::json::Escape(lastFolder, o);
+    o += ",\n  \"recentFolders\": [";
+    for (std::size_t i = 0; i < recentFolders.size(); ++i) {
+        o += i ? ", " : "";
+        okay::json::Escape(recentFolders[i], o);
+    }
+    return o + "]\n}\n";
 }
 
 AppSettings AppSettings::Parse(const std::string& text) {
     AppSettings s;
-    std::istringstream in(text);
-    std::string line;
-    auto intOf = [](const std::string& v, int lo, int hi, int fallback) {
-        if (v.empty() || v.size() > 6) return fallback;
-        char* end = nullptr;
-        const long n = std::strtol(v.c_str(), &end, 10);
-        if (!end || *end != '\0') return fallback;
-        return (int)std::min<long>(std::max<long>(n, lo), hi);
+    okay::json::Value v;
+    if (!okay::json::Parse(text, v) || !v.IsObject()) return s;
+    auto whole = [&](const char* key, int lo, int hi, int fallback) {   // a whole number in range, else the default
+        const okay::json::Value* n = v.Get(key);
+        std::uint64_t u = 0;
+        return n && n->AsIndex(u) ? (int)std::min<std::uint64_t>(std::max<std::uint64_t>(u, (std::uint64_t)lo), (std::uint64_t)hi) : fallback;
     };
-    while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        const std::size_t eq = line.find('=');
-        if (eq == std::string::npos) continue;
-        const std::string k = line.substr(0, eq), v = line.substr(eq + 1);
-        if (k == "tabSize") s.tabSize = intOf(v, 1, 16, s.tabSize);
-        else if (k == "wordWrap") s.wordWrap = v == "1";
-        else if (k == "showWhitespace") s.showWhitespace = v == "1";
-        else if (k == "showTree") s.showTree = v != "0";
-        else if (k == "codeFontPx") s.codeFontPx = (float)intOf(v, 10, 32, (int)s.codeFontPx);
-        else if (k == "lastFolder") s.lastFolder = v;
-        else if (k == "recentFolder" && !v.empty() && s.recentFolders.size() < 10 &&
-                 std::find(s.recentFolders.begin(), s.recentFolders.end(), v) == s.recentFolders.end())
-            s.recentFolders.push_back(v);
-    }
+    auto flag = [&](const char* key, bool fallback) { const okay::json::Value* b = v.Get(key); return b && b->IsBool() ? b->boolean : fallback; };
+    s.tabSize = whole("tabSize", 1, 16, s.tabSize);
+    s.codeFontPx = (float)whole("codeFontPx", 10, 32, (int)s.codeFontPx);
+    s.wordWrap = flag("wordWrap", s.wordWrap);
+    s.showWhitespace = flag("showWhitespace", s.showWhitespace);
+    s.showTree = flag("showTree", s.showTree);
+    if (const okay::json::Value* f = v.Get("lastFolder"); f && f->IsString()) s.lastFolder = f->string;
+    if (const okay::json::Value* r = v.Get("recentFolders"); r && r->IsArray())
+        for (const okay::json::Value& f : r->array)
+            if (f.IsString() && !f.string.empty() && s.recentFolders.size() < 10 &&
+                std::find(s.recentFolders.begin(), s.recentFolders.end(), f.string) == s.recentFolders.end())
+                s.recentFolders.push_back(f.string);
     return s;
 }
 

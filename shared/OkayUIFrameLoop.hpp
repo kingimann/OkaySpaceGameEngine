@@ -79,6 +79,15 @@ struct ProgramDesc {
     const char* tag = "program";   ///< the "[tag]" of its error lines
     int maxFrames = 0;             ///< > 0: end after this many frames (a headless start-and-quit check); 0 = until closed
 };
+/// The usual hooks for an app object with Frame(x, y, w, h), WantsQuit() and WindowTitle() (BrowserApp, ScriptIdeApp) that `start`
+/// makes into `app`: drawn over the window, its Quit ends the program, its title is the window's, and it is destroyed at the end.
+template <class App>
+void AppHooks(ProgramHooks& hooks, std::unique_ptr<App>& app) {
+    hooks.frame = [&app](float w, float h) { if (app) app->Frame(0, 0, w, h); };
+    hooks.wantsQuit = [&app] { return app && app->WantsQuit(); };
+    hooks.title = [&app] { return app ? app->WindowTitle() : std::string(); };
+    hooks.stop = [&app] { app.reset(); };
+}
 /// Run the program; the exit code for main (0, or 1 when the backend or the window could not be made or `start` said no).
 inline int RunProgram(const ProgramDesc& desc, const ProgramHooks& hooks) {
     okay::platform::Backend* be = okay::platform::Default();

@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 69 headers, 1017 names.
+Back to the [code index](../code_index.md). 69 headers, 1019 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -1134,14 +1134,16 @@ Back to the [code index](../code_index.md). 69 headers, 1017 names.
 - `IsMainBranch` function, line 138: A build of 'main' (exactly that name): the only test builds the automatic update installs. Builds of other branches are installed by hand.
 - `Title` function, line 140: "Test build of walk-vs-run (abc1234)". Missing parts are left out: no commit gives "Test build of walk-vs-run", neither gives "Test build".
 - `Choice` struct, line 151: What the update check should install. 'version' is normalized; 'note' says in one plain sentence why there is nothing to do.
-- `Marker` struct, line 198
-- `MarkerText` function, line 203
-- `ParseMarker` function, line 212
-- `MarkerPath` function, line 235
-- `WriteMarker` function, line 238: Write the marker (through a temp file and a rename). False when it could not be written; the update that asked for it does not depend on it.
-- `ReadMarker` function, line 255
-- `RemoveMarker` function, line 264
-- `RunningTitle` function, line 274: What About says about the running program: "" for a normal release (nothing to add), otherwise "Test build of walk-vs-run (abc1234)" when the
+- `Ahead` enum, line 170
+- `ContentAhead` function, line 172: Is a build at place 'a' on main ahead of one at place 'b' (it holds commits 'b' does not)? Unknown when either place is not known (0).
+- `Marker` struct, line 217
+- `MarkerText` function, line 222
+- `ParseMarker` function, line 231
+- `MarkerPath` function, line 254
+- `WriteMarker` function, line 257: Write the marker (through a temp file and a rename). False when it could not be written; the update that asked for it does not depend on it.
+- `ReadMarker` function, line 274
+- `RemoveMarker` function, line 283
+- `RunningTitle` function, line 293: What About says about the running program: "" for a normal release (nothing to add), otherwise "Test build of walk-vs-run (abc1234)" when the
 
 ## `shared/TestHooks.hpp`
 

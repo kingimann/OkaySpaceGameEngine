@@ -42,6 +42,7 @@ typedef int INTERNET_SCHEME;
 // Options (WinHttpSetOption) and their values.
 #define WINHTTP_OPTION_CONNECT_TIMEOUT 3
 #define WINHTTP_OPTION_SECURITY_FLAGS 31
+#define WINHTTP_OPTION_URL 34
 #define WINHTTP_OPTION_DISABLE_FEATURE 63
 #define WINHTTP_OPTION_REDIRECT_POLICY 88
 #define WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS 89
@@ -122,5 +123,8 @@ OKAY_WIN32_IMPORT BOOL WinHttpQueryDataAvailable(HINTERNET request, LPDWORD avai
 OKAY_WIN32_IMPORT BOOL WinHttpReadData(HINTERNET request, LPVOID buffer, DWORD to_read, LPDWORD read);
 OKAY_WIN32_IMPORT BOOL WinHttpCloseHandle(HINTERNET handle);
 OKAY_WIN32_IMPORT BOOL WinHttpSetOption(HINTERNET handle, DWORD option, LPVOID buffer, DWORD length);
+// WinHttpQueryOption: the option's value into the buffer; with a null buffer (or one too small) it fails with
+// ERROR_INSUFFICIENT_BUFFER and stores the size needed, in bytes (Round 32, NativeHttp.hpp's WINHTTP_OPTION_URL).
+OKAY_WIN32_IMPORT BOOL WinHttpQueryOption(HINTERNET handle, DWORD option, LPVOID buffer, LPDWORD length);
 OKAY_WIN32_IMPORT BOOL WinHttpSetTimeouts(HINTERNET handle, int resolve_ms, int connect_ms, int send_ms, int receive_ms);
 OKAY_WIN32_IMPORT BOOL WinHttpCrackUrl(LPCWSTR url, DWORD length, DWORD flags, LPURL_COMPONENTS components);

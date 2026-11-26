@@ -1431,6 +1431,40 @@ int main() {
             // A request for an old line: it is not offered, and the banner says so instead of "Install ... below".
             CHECK(Has(DescribeRequest("2.901.0", "2.905.0", {}, true, true, "").text, "newest 3 releases"));
         }
+
+        // The automatic test-build update follows main only (owner, 2026-11-26: "fix that so updates are installed in order or together"). Branch build 127
+        // (claude/okaycc-29) finished after main build 126 and replaced it; it must stay installable by hand, but never be the automatic update.
+        {
+            const std::string m = ",\"branch\":\"main\"", b = ",\"branch\":\"claude/okaycc-29\"";
+            const Index d = ParseIndex(List({ListEntry("2.903.8.127", "2026-11-26", true, Files(e1), b),
+                                             ListEntry("2.903.8.126", "2026-11-26", true, Files(e1), m)}), IndexKind::TestBuilds);
+            CHECK(d.ok && d.versions.size() == 2);
+            CHECK(TestBuildHead(d, "2.903.8.125") == "2.903.8.126");       // on 125: the newest main build, not the newer branch build
+            CHECK(TestBuildHead(d, "2.903.8") == "2.903.8.126");           // on the release: the same
+            CHECK(TestBuildHead(d, "") == "2.903.8.126");
+            CHECK(TestBuildHead(d, "2.903.8.126").empty());                // already on it
+            CHECK(TestBuildHead(d, "2.903.8.127").empty());                // on the branch build: nothing until a newer main build exists (never lower)
+            std::vector<std::string> got;                                  // the branch build stays listed and installable by hand
+            for (const Entry* e : InstallableWindow(d, true)) got.push_back(e->version);
+            CHECK((got == std::vector<std::string>{"2.903.8.127", "2.903.8.126"}));
+            CHECK(PlanInstall(Index{}, d, "2.903.8.127", bucket, fs::path(), false).ok);
+            const Index d2 = ParseIndex(List({ListEntry("2.903.8.128", "2026-11-26", true, Files(e1), m), ListEntry("2.903.8.127", "2026-11-26", true, Files(e1), b),
+                                              ListEntry("2.903.8.126", "2026-11-26", true, Files(e1), m)}), IndexKind::TestBuilds);
+            CHECK(TestBuildHead(d2, "2.903.8.127") == "2.903.8.128" && TestBuildHead(d2, "2.903.8.125") == "2.903.8.128");
+            // Branch builds only: no automatic update at all (never a fall back to a branch build).
+            const Index br = ParseIndex(List({ListEntry("2.903.8.127", "2026-11-26", true, Files(e1), b), ListEntry("2.903.8.120", "2026-11-26", true, Files(e1))}),
+                                        IndexKind::TestBuilds);
+            CHECK(br.ok && br.versions.size() == 2 && TestBuildHead(br, "2.903.8.100").empty());
+            // Only an installable main build counts: pruned (not in the bucket) or missing a checksum is skipped, the next main build is offered.
+            const Index gone = ParseIndex(List({ListEntry("2.903.8.130", "2026-11-26", false, Files(e1), m), ListEntry("2.903.8.129", "2026-11-26", true, Files(e1, false), m),
+                                                ListEntry("2.903.8.128", "2026-11-26", true, Files(e1), m)}), IndexKind::TestBuilds);
+            CHECK(TestBuildHead(gone, "2.903.8.127") == "2.903.8.128" && TestBuildHead(gone, "2.903.8.128").empty());
+            CHECK(TestBuildHead(Index{}, "").empty());
+            // "main" exactly: a branch called main-fix or claude/main is a branch build.
+            const Index lookalike = ParseIndex(List({ListEntry("2.903.8.131", "2026-11-26", true, Files(e1), ",\"branch\":\"main-fix\""),
+                                                     ListEntry("2.903.8.130", "2026-11-26", true, Files(e1), ",\"branch\":\"claude/main\"")}), IndexKind::TestBuilds);
+            CHECK(TestBuildHead(lookalike, "").empty());
+        }
     }
 
     // ---- which version a program really is (owner, 2026-11-25: "the launcher is on 115 but the editor is on 114") ------------------------

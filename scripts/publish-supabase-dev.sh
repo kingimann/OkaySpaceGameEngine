@@ -210,7 +210,7 @@ fi
 # ---- Which old builds go, and the new list ---------------------------------------------------------------------------------------
 LISTING_ONE_LINE="$(printf '%s' "$LISTING" | tr '\n' ' ')"
 set +e
-OLD="$("${IDX[@]}" prune-list --existing "$OLDIDX" --listing "$LISTING_ONE_LINE" --version "$VER" --keep "$KEEP")"
+OLD="$("${IDX[@]}" prune-list --existing "$OLDIDX" --listing "$LISTING_ONE_LINE" --version "$VER" --branch="$DEV_BRANCH" --keep "$KEEP")"
 rc=$?
 set -e
 [ "$rc" = 0 ] || die "the list of old test builds could not be worked out (is dev/versions.json damaged?): nothing was changed"

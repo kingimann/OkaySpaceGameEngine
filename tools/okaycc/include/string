@@ -142,6 +142,7 @@ public:
     char &at(unsigned long i) { return p_[i]; }
     void pop_back() { p_[--n_] = 0; }
     void reserve(unsigned long n) { release(grow(n)); }
+    void shrink_to_fit() {}  // [string.capacity]: a non-binding request; kept as it is
     void resize(unsigned long n, char c = 0) {
         release(grow(n));
         for (unsigned long i = n_; i < n; ++i) p_[i] = c;
@@ -236,6 +237,13 @@ public:
         string part;
         part.append(n, c);
         return insert(pos, part.p_, n);
+    }
+    // [string.insert] insert(p, c): c before the character at p; returns where it is. (Our iterator
+    // is a pointer, so insert(p, n, c) is left out: insert(0, n, c) would be ambiguous.)
+    char *insert(const char *p, char c) {
+        unsigned long pos = (unsigned long)(p - p_);
+        insert(pos, 1ul, c);
+        return p_ + pos;
     }
     // [string.replace]: the n1 characters at pos (fewer at the end) become the given ones (s may
     // point into this string).

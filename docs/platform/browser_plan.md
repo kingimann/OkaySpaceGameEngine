@@ -20,8 +20,8 @@ The owner asked for our own browser (2026-11-25): an installable program for pla
    (`player/main.cpp`), which already reads a game folder. Open questions: where saves go (per site), and what a game from
    another site may do (a permission prompt).
 3. **Standalone program (first version done).** `okay-browser` (`browser/`, `OkaySpaceBrowser.exe` on Windows): a browser
-   window of its own on the same library. Still to do: installing it like the launcher and updating it from our own server
-   (the release packaging is the coordinator's and the owner's decision).
+   window of its own on the same library. The Windows package carries it in `Tools/` (2026-11-26, a launcher button starts
+   it). Still to do: installing it like the launcher and updating it from our own server on its own.
 3a. **A regular browser, round 1 (owner, 2026-11-25: "i want the browser to be like a regular browser"; branch
    `claude/browser-full-1`).** Browser basics in the program, real layout, forms. See "Round 1" below.
 3b. **The browser in the launcher (owner, 2026-11-26: "can you allow user to launch browser in the launcher"; branch
@@ -442,7 +442,7 @@ loaded in these renders. Nothing was run on Windows.
 
 ## Site check: real sites, failures ranked (2026-11-26, branch `claude/site-check-1`)
 
-Owner: "i want all sites to load properly". `okay-sitecheck` (`tools/sitecheck/`, feature map 17.19) loads the 61 public home
+Owner: "i want all sites to load properly". `okay-sitecheck` (`tools/sitecheck/`, feature map 17.20) loads the 61 public home
 pages of `tools/sitecheck/sites.txt` through the browser program's own tab host, page engine and view (with main as of #1342 and
 its User-Agent), one at a time, and ranks the causes by how many sites each hits. Run on Linux on 2026-11-26 (our own HTTP
 client with the system OpenSSL, not WinHTTP as on Windows); 58 of 61 shown. Reports and screenshots stay outside the

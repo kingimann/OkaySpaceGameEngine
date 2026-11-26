@@ -1,8 +1,10 @@
 // okay-ms own Win32 header, part of <windows.h>: waiting on handles, events, critical sections, slim reader/writer
 // locks and condition variables. Written in our own words from Microsoft's public Win32 documentation of the
-// "Synchronization" functions. The structure sizes are the documented x64 ones: a CRITICAL_SECTION is 40 bytes
-// (a debug-information pointer, two LONG counts, the owner thread handle, a semaphore handle and a spin count);
-// an SRWLOCK and a CONDITION_VARIABLE are one pointer that starts as zero.
+// "Synchronization" functions. The documentation says a program never reads or writes the inside of these objects,
+// only passes their address to the functions, so here they are opaque storage of the x64 size and alignment: a
+// CRITICAL_SECTION is 40 bytes aligned to 8 (five pointer-sized slots); an SRWLOCK and a CONDITION_VARIABLE are one
+// pointer-sized slot that starts as zero (SRWLOCK_INIT, CONDITION_VARIABLE_INIT). No member names or layouts are
+// taken from the SDK headers (Round 32 IP check).
 #pragma once
 #include "base.h"
 
@@ -27,13 +29,10 @@ OKAY_WIN32_IMPORT BOOL ResetEvent(HANDLE event);
 OKAY_WIN32_IMPORT HANDLE CreateMutexW(LPSECURITY_ATTRIBUTES attributes, BOOL initial_owner, LPCWSTR name);
 OKAY_WIN32_IMPORT BOOL ReleaseMutex(HANDLE mutex);
 
+// The tag names (_RTL_CRITICAL_SECTION, _RTL_SRWLOCK, _RTL_CONDITION_VARIABLE) are kept: they are part of the
+// decorated names of C++ functions that take these types, so they must agree with code built by other compilers.
 typedef struct _RTL_CRITICAL_SECTION {
-    void* DebugInfo;
-    LONG LockCount;
-    LONG RecursionCount;
-    HANDLE OwningThread;
-    HANDLE LockSemaphore;
-    ULONG_PTR SpinCount;
+    void* okay_opaque[5];
 } CRITICAL_SECTION, *PCRITICAL_SECTION, *LPCRITICAL_SECTION, RTL_CRITICAL_SECTION;
 
 OKAY_WIN32_IMPORT void InitializeCriticalSection(LPCRITICAL_SECTION cs);
@@ -44,7 +43,7 @@ OKAY_WIN32_IMPORT BOOL TryEnterCriticalSection(LPCRITICAL_SECTION cs);
 OKAY_WIN32_IMPORT void LeaveCriticalSection(LPCRITICAL_SECTION cs);
 
 typedef struct _RTL_SRWLOCK {
-    PVOID Ptr;
+    PVOID okay_opaque;
 } SRWLOCK, *PSRWLOCK, RTL_SRWLOCK;
 #define SRWLOCK_INIT {0}
 OKAY_WIN32_IMPORT void InitializeSRWLock(PSRWLOCK lock);
@@ -55,7 +54,7 @@ OKAY_WIN32_IMPORT void AcquireSRWLockShared(PSRWLOCK lock);
 OKAY_WIN32_IMPORT void ReleaseSRWLockShared(PSRWLOCK lock);
 
 typedef struct _RTL_CONDITION_VARIABLE {
-    PVOID Ptr;
+    PVOID okay_opaque;
 } CONDITION_VARIABLE, *PCONDITION_VARIABLE, RTL_CONDITION_VARIABLE;
 #define CONDITION_VARIABLE_INIT {0}
 #define CONDITION_VARIABLE_LOCKMODE_SHARED 0x1

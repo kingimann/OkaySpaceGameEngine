@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <utility>
 #include <iterator>
+#include <cwchar>
 namespace std {
 // The character operations the string classes are described with ([char.traits]): length, compare, copy, move,
 // assign, find, eq, lt, and the int conversions with eof() = -1. Characters compare as unsigned values

@@ -9,6 +9,8 @@
 //   okay engine build  the editor, launcher and player from an engine checkout (scripts/build-local.ps1's recipe)
 //   okay vc     git, with SceneMerge / SceneDiff as git's merge and diff drivers for .okayscene and .okayprefab
 // Programs are started only through Process.hpp; git only through Git.cpp. Messages are short plain sentences.
+#include <atomic>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -16,13 +18,22 @@
 
 namespace okaycli {
 
-/// Where the CLI's words go. Tests collect them; the program prints them.
+/// Where the CLI's words go. Tests collect them; the program prints them; a window that runs okay inside itself (the
+/// editor's Command Line panel, CommandJob.hpp) gets them one message at a time through `sink`.
 struct Io {
     std::string* out = nullptr;   ///< null: stdout
     std::string* err = nullptr;   ///< null: stderr
+    /// Set: every message goes here instead (`problem` true for Warn), with its newline. Called on the thread running the command.
+    std::function<void(const std::string& text, bool problem)> sink;
+    /// Set and true: the person pressed Stop. The next Say or Warn throws Cancelled, which ends the command (RunInProcess
+    /// catches it); programs the command started are stopped by Process.hpp's AttachedOutput.
+    const std::atomic<bool>* cancel = nullptr;
     void Say(const std::string& text) const;    ///< a normal message (a newline is added when missing)
     void Warn(const std::string& text) const;   ///< a problem (stderr)
 };
+
+/// Thrown by Io::Say / Io::Warn once Io::cancel is set: the command stops at its next message.
+struct Cancelled {};
 
 /// Run one command line (without the program name). Returns the exit code: 0 done, 1 it did not work, 2 bad arguments.
 int Main(const std::vector<std::string>& args, const Io& io);

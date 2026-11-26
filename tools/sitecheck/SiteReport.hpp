@@ -1,5 +1,5 @@
 #pragma once
-// Site check (okay-sitecheck, docs/feature_map/17-launcher-platform.md 17.19): what one site's visit recorded, the causes it is
+// Site check (okay-sitecheck, docs/feature_map/17-launcher-platform.md 17.20): what one site's visit recorded, the causes it is
 // filed under, and the summary that ranks those causes by how many sites each one hits (so fixes can be ordered). No network,
 // no drawing: main.cpp loads the sites through the browser's own tab host and fills a SiteResult; this file reads it.
 // Written for this tool from the reports the browser's hooks give (TabHost::FetchReport, the "not implemented: X" console

@@ -64,6 +64,7 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     CommandLineUI.cpp     # the Command line page and the "Open command line" action
     Terminal.cpp          # the Command line page's terminal emulator: screen, scrollback, VT parser, selection, keys (no ImGui; tested by launcher_terminal)
     ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp   # okay's own command list (Tab completion), std only
+    ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandInput.cpp   # okay's typed-line rules: words, Tab completion, history, output lines (shared with the editor's panel)
     ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp        # okay's one place that starts a program (no shell)
     ${CMAKE_SOURCE_DIR}/shared/BrowserHost.cpp                        # the Browser page's fetches and images (shared with browser/)
     ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                         # file picker (chat attachments): system dialogs or the built-in browser

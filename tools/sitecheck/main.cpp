@@ -1,4 +1,4 @@
-// Site check (okay-sitecheck, docs/feature_map/17-launcher-platform.md 17.19; plan: docs/platform/browser_plan.md "Site check"):
+// Site check (okay-sitecheck, docs/feature_map/17-launcher-platform.md 17.20; plan: docs/platform/browser_plan.md "Site check"):
 // loads a list of real sites through our own browser exactly as the browser program does - the same tab host
 // (shared/BrowserHost: our HTTP client, redirects hop by hop with cookies, the page's fetch / XMLHttpRequest, images through our
 // decoders), the same page engine (okay/Browser: HTML, styles, layout, page scripts on our JavaScript engine with the same

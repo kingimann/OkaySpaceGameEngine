@@ -3,19 +3,21 @@
 // iterators are plain pointers to pair<K, V> and an insert or erase in the middle moves the entries after it (linear
 // time, where the standard says logarithmic). Differences from the standard: the element is pair<K, V>, not
 // pair<const K, V> (the key can be written through an iterator, which the standard forbids); iterators and references
-// are invalidated by an insert or erase; ordering is by the comparator C (std::less<K>, operator< on the key, unless another is given); at() of a
-// missing key returns a default value kept in the map (there are no exceptions). No allocator.
+// are invalidated by an insert or erase; ordering is by the comparator C (std::less<K>, operator< on the key, unless another is given). at() of a
+// missing key throws out_of_range ([map.access]) in a file that uses exceptions; in a file that does not, it returns a
+// value-initialized V kept in a static of at() (Round 32: it was a member, so a map of a V with no default constructor,
+// such as std::type_index, could not be made at all). No allocator.
 #pragma once
 #include <cstddef>
 #include <initializer_list>
 #include <utility>
 #include <vector>
 #include <iterator>
+#include <stdexcept>
 namespace std {
 template <typename K, typename V, typename C = less<K> >
 class map {
     vector<pair<K, V> > items_;
-    V missing_;
     C cmp_;
 
     // The index of the first entry whose key is not less than key.
@@ -40,12 +42,12 @@ public:
     typedef pair<K, V>* iterator;
     typedef const pair<K, V>* const_iterator;
 
-    map() : missing_() {}
-    map(initializer_list<pair<K, V> > list) : missing_() {
+    map() {}
+    map(initializer_list<pair<K, V> > list) {
         for (size_t i = 0; i < list.size(); ++i) insert(list.begin()[i]);
     }
     template <typename It>
-    map(It first, It last) : missing_() {
+    map(It first, It last) {
         for (; first != last; ++first) insert(*first);
     }
     size_t size() const { return items_.size(); }
@@ -79,13 +81,19 @@ public:
     }
     V& at(const K& key) {
         const size_t i = lower(key);
-        if (!found_at(i, key)) return missing_;
+        if (!found_at(i, key)) return __okay_missing();
         return items_[i].second;
     }
     const V& at(const K& key) const {
         const size_t i = lower(key);
-        if (!found_at(i, key)) return missing_;
+        if (!found_at(i, key)) return __okay_missing();
         return items_[i].second;
+    }
+    // at() of a missing key: out_of_range where exceptions are used, else a value-initialized V (made on first use).
+    static V& __okay_missing() {
+        __okay_throw_if_eh(out_of_range("map::at"));
+        static V missing = V();
+        return missing;
     }
     // The position of the entry and whether it was new; an existing entry is left as it is.
     pair<pair<K, V>*, bool> insert(const pair<K, V>& entry) {

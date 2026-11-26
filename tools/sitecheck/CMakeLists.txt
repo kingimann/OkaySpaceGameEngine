@@ -1,4 +1,4 @@
-# Site check (okay-sitecheck, docs/feature_map/17-launcher-platform.md 17.19; docs/platform/browser_plan.md "Site check"): loads a
+# Site check (okay-sitecheck, docs/feature_map/17-launcher-platform.md 17.20; docs/platform/browser_plan.md "Site check"): loads a
 # list of real sites through our own browser (the browser program's tab host, page engine and OkayUI view, drawn by the software
 # painter) and ranks what fails on them. A developer tool: built with the browser program (it returns quietly when OkayUI is not
 # built), never packaged or released.

@@ -366,6 +366,7 @@ option(OKAY_BUILD_CLI "Build the okay command-line program" ON)
 if(OKAY_BUILD_CLI AND NOT EMSCRIPTEN)
     add_library(okay_cli_lib STATIC tools/okay-cli/Cli.cpp tools/okay-cli/CommandTable.cpp tools/okay-cli/Vc.cpp tools/okay-cli/Engine.cpp tools/okay-cli/Content.cpp
                 tools/okay-cli/Git.cpp tools/okay-cli/Process.cpp
+                tools/okay-cli/CommandInput.cpp tools/okay-cli/CommandJob.cpp   # typed lines (shared with the launcher's page) and okay run inside a window
                 editor/ProjectBrowser.cpp editor/ProjectUpgrade.cpp)   # the editor's own import and project upgrade, no copy
     target_include_directories(okay_cli_lib PUBLIC ${CMAKE_SOURCE_DIR}/tools/okay-cli
                                PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
@@ -378,6 +379,14 @@ if(OKAY_BUILD_CLI AND NOT EMSCRIPTEN)
         okay_win_version(okay_cli "OkaySpace command line" "okay.exe")
     endif()
     set_target_properties(okay_cli PROPERTIES OUTPUT_NAME "okay")
+    # The Command Line panel (shared/CommandLinePanel.hpp): okay typed into a window, run inside the program (CommandJob.hpp),
+    # drawn with OkayUI. The editor links it (View > Panels > Command Line); tests/test_command_line_panel.cpp checks it.
+    if(TARGET okay_ui)
+        add_library(okay_cli_panel STATIC shared/CommandLinePanel.cpp)
+        target_include_directories(okay_cli_panel PUBLIC ${CMAKE_SOURCE_DIR}/shared)
+        target_link_libraries(okay_cli_panel PUBLIC okay_cli_lib okay_ui)
+        target_compile_features(okay_cli_panel PUBLIC cxx_std_17)
+    endif()
 endif()
 
 # ---- Ship SDL2.dll beside the binaries ----

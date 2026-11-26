@@ -6016,7 +6016,10 @@ private:
              // G g = {..} and G g{..} for a class with constructors of its own ([dcl.init.list] p3):
              // a constructor call (round 24 stored the list as bytes: std::vector<int> g = {1, 2}
              // crashed at its first use).
-             (userCtors_.count(base->tag) &&
+             // An aggregate with default member initializers (W g{7};, W g = {};): built at start
+             // like a local T{..} (braceTemp), so the fields the list leaves out get their
+             // initializers ([dcl.init.aggr] p5). They were zero.
+             ((userCtors_.count(base->tag) || (classOf(base->tag)->needCtor && bodyDepth_ == 0)) &&
               (isP(toks_[gEnd + 1], "{") ||
                (isP(toks_[gEnd + 1], "=") && gEnd + 2 < toks_.size() && isP(toks_[gEnd + 2], "{")))))) {
             Parsed gd;
@@ -6034,6 +6037,8 @@ private:
                 if (list && list->kind == Expr::Kind::Brace && listCtor && !list->kids.empty()) {
                     list->ival = 5;  // the whole list to the initializer-list constructor
                     args.push_back(std::move(list));
+                } else if (list && list->kind == Expr::Kind::Brace && !userCtors_.count(base->tag)) {
+                    copyInit = braceTemp(*base, std::move(list->kids), Pos{gd.line, gd.col, gd.file});
                 } else if (list && list->kind == Expr::Kind::Brace) {
                     args = std::move(list->kids);
                 } else if (list) {

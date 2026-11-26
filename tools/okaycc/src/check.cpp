@@ -483,10 +483,13 @@ private:
                     }
                 }
             }
-            if (e.text.find("::") == std::string::npos && !inNs_.empty() && scopeOf(e.text) == 0) {
+            if (!inNs_.empty() && e.text.compare(0, 2, "::") != 0 &&
+                (e.text.find("::") == std::string::npos ? scopeOf(e.text) == 0 : !e.text.empty())) {
                 // Found only at file scope: a name of an enclosing namespace hides it
                 // ([basic.lookup.unqual] p2: remove inside std::filesystem is filesystem::remove,
-                // not the C library's ::remove).
+                // not the C library's ::remove). The same for the first name of a qualified one
+                // ([basic.lookup.qual] p1: V::One inside namespace eng is eng::V::One when eng
+                // has a V, also beside a global V).
                 for (std::string sc = inNs_; !sc.empty();) {
                     std::string q = sc + "::" + e.text;
                     if (scopes_.front().count(q) || overloads_.count(q)) {
@@ -726,6 +729,27 @@ private:
             if (!c.type || !scalar(*c.type)) {
                 err(e.line, e.col, "condition is not a scalar");
                 return bad(e.line, e.col);
+            }
+            if (a.lvalue && b.lvalue && a.type && b.type && a.type->kind == Type::Kind::Struct &&
+                b.type->kind == Type::Kind::Struct && !sameType(*a.type, *b.type)) {
+                // c ? derived : base with two lvalues: the derived one binds to its base part, so
+                // both are lvalues of the base class ([expr.cond] p4.1; tag.empty() ? name : tag
+                // with a TagString derived from std::string).
+                const bool aToB = derivedFrom(*a.type, *b.type), bToA = !aToB && derivedFrom(*b.type, *a.type);
+                auto asBase = [&](std::unique_ptr<Expr>& k, const Type& from, const Type& to) {
+                    if (!toBaseSubobject(k, &from, &to)) {
+                        // the base at the start of the object: *(Base *)&x
+                        Expr& at = *k;
+                        auto cast = mkE(Expr::Kind::Cast, at);
+                        cast->ty = ptrTo(cloneType(to));
+                        cast->kids.push_back(eUnary("&", std::move(k), at));
+                        k = eUnary("*", std::move(cast), at);
+                    }
+                    return decay(checkExpr(*k));
+                };
+                if (aToB) a = asBase(e.kids[1], *a.type, *b.type);
+                if (bToA) b = asBase(e.kids[2], *b.type, *a.type);
+                if (a.bad || b.bad) return bad(e.line, e.col);
             }
             if (a.lvalue && b.lvalue && a.type && b.type && a.type->kind == Type::Kind::Struct &&
                 sameType(*a.type, *b.type)) {

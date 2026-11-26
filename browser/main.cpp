@@ -32,6 +32,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -204,10 +205,18 @@ int main(int argc, char** argv) {
         tv.host->Tab().SetAnyOrigin(true);
         tv.host->SetGameRunner(runner);
         tv.host->SetInternalPages(internalPages);
-        tv.host->SetFontLoader([](const br::FontFace& face, const std::vector<std::uint8_t>& bytes) {
-            // our own TrueType rasterizer through OkayUI's font store (it keeps a copy of the bytes; a few files at most)
-            if (const UI::Font* f = UI::AddFontTtf(bytes.data(), bytes.size(), 16.0f, face.family.c_str()))
+        tv.host->SetFontLoader([](const br::FontFace& face, const std::vector<std::uint8_t>& in) {
+            // our own TrueType rasterizer through OkayUI's font store (a few files at most). The store tells files apart by the
+            // address of their bytes, so each file's bytes are kept for the program's life.
+            static std::deque<std::vector<std::uint8_t>> kept;
+            if (kept.size() >= 8) return;
+            kept.push_back(in);
+            const std::vector<std::uint8_t>& bytes = kept.back();
+            const std::string name = face.family + " " + std::to_string(face.weight) + (face.italic ? " italic" : "");   // one name per face
+            if (const UI::Font* f = UI::AddFontTtf(bytes.data(), bytes.size(), 16.0f, name.c_str()))
                 S::RegisterWebFont(face.family, face.weight, face.italic, f);
+            else std::fprintf(stderr, "[browser] web font '%s' (weight %d) not loaded: OkayUI's font store is full or the file is not a font\n",
+                              face.family.c_str(), face.weight);
         });
         const std::string u = url.empty() ? homeAddress() : url;
         if (!off) load(tv, u);

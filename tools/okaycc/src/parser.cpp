@@ -1113,7 +1113,7 @@ private:
         int kind = 0;             // 0 object, 1 try frame (popped), 2 handler (ended)
         // A hidden pointer to the object, made where a local of an inner block takes its name
         // (shadowLocals): while that pointer is in scope, the object is destroyed through it.
-        std::string alias;
+        std::string alias{};
     };
     std::vector<std::vector<DVar>> dscopes_;
     std::size_t dbase_ = 0;

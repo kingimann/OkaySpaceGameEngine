@@ -33,7 +33,7 @@ std::unique_ptr<Expr> cloneExpr(const Expr& e) {
     for (const auto& k : e.kids)
         if (k) n->kids.push_back(cloneExpr(*k));
     if (e.ty) n->ty = cloneType(*e.ty);
-    n->checked = e.checked;  // shared (TypeRef)
+    n->checked = e.checked;  // shared (SharedType)
     return n;
 }
 

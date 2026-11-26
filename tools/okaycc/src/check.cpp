@@ -5,7 +5,7 @@
 namespace okaycc {
 namespace compiler {
 struct ET {
-    TypeRef type;
+    SharedType type;
     bool lvalue = false;
     bool mod = false;
     bool nullc = false;
@@ -111,7 +111,7 @@ public:
 
 private:
     struct Sym {
-        TypeRef type;  // shared with the results that name it (lookup)
+        SharedType type;  // shared with the results that name it (lookup)
         bool func = false;
     };
 
@@ -208,7 +208,7 @@ private:
             ET e;
             // An object of a finished class: its name (members through canonOf), not a full copy.
             if (finishedClassCopy(*it->second.type)) e.type = classByName(*it->second.type);
-            else e.type = it->second.type;  // shared (TypeRef)
+            else e.type = it->second.type;  // shared (SharedType)
             e.line = line;
             e.col = col;
             if (e.type->kind == Type::Kind::Reference && e.type->inner) {
@@ -1180,7 +1180,7 @@ private:
 
     static ET copyET(const ET& a) {
         ET r;
-        r.type = a.type;  // shared (TypeRef)
+        r.type = a.type;  // shared (SharedType)
         r.lvalue = a.lvalue;
         r.mod = a.mod;
         r.nullc = a.nullc;
@@ -4595,21 +4595,33 @@ private:
     // Check an instance of a generic lambda as a function of its own: only the file scope is seen
     // from it (checkFunctionNow), with the member function's class for the members it names.
     void checkGenericInstance(Decl& d, const GenericLambda& g) {
-        std::vector<std::map<std::string, Sym>> outer(std::make_move_iterator(scopes_.begin() + 1),
-                                                      std::make_move_iterator(scopes_.end()));
-        scopes_.resize(1);
-        std::vector<TempInfo> savedTemps = std::move(temps_);
-        temps_.clear();
-        std::vector<LamCtx> savedLam = std::move(lamStack_);
-        lamStack_.clear();
-        const int savedLoops = loops_, savedSwitches = switches_, savedQuiet = quiet_;
-        const Type* savedRet = ret_;
-        const Type* savedMethod = method_;
-        const std::string savedNs = inNs_;
-        Decl* savedFn = curFn_;
-        const std::size_t savedBase = fnBase_;
-        loops_ = switches_ = quiet_ = 0;
-        scopes_.front()[d.name].type = cloneType(*d.type);  // (a call of itself, auto && self)
+        inFileScope([&] {
+            const Type* savedRet = ret_;
+            const Type* savedMethod = method_;
+            const std::string savedNs = inNs_;
+            Decl* savedFn = curFn_;
+            const std::size_t savedBase = fnBase_;
+            openLambdaFn(d);  // (its name first: a call of itself, auto &&self)
+            method_ = nullptr;
+            if (!g.methodTag.empty()) {
+                auto it = canonStructs().find(g.methodTag);
+                if (it != canonStructs().end()) method_ = it->second.get();
+            }
+            inNs_ = g.inNs;
+            if (d.body) checkStmts(*d.body);
+            closeLambdaFn(d);
+            ret_ = savedRet;
+            method_ = savedMethod;
+            inNs_ = savedNs;
+            curFn_ = savedFn;
+            fnBase_ = savedBase;
+        });
+    }
+    // A lambda's function while its body is checked: its name in the file scope (also its type, as
+    // far as it is known), a scope with its parameters, and its return type; closeLambdaFn ends it,
+    // with the return type deduced (void when nothing is returned).
+    void openLambdaFn(Decl& d) {
+        scopes_.front()[d.name].type = cloneType(*d.type);
         scopes_.front()[d.name].func = true;
         scopes_.emplace_back();
         fnBase_ = scopes_.size() - 1;
@@ -4617,27 +4629,11 @@ private:
             if (!p.name.empty() && p.type) add(p.name, cloneType(*p.type), false, d.line, d.col);
         ret_ = d.type->inner.get();
         curFn_ = &d;
-        method_ = nullptr;
-        if (!g.methodTag.empty()) {
-            auto it = canonStructs().find(g.methodTag);
-            if (it != canonStructs().end()) method_ = it->second.get();
-        }
-        inNs_ = g.inNs;
-        if (d.body) checkStmts(*d.body);
+    }
+    void closeLambdaFn(Decl& d) {
         if (isAuto(d.type->inner.get())) d.type->inner = prim(Type::Kind::Void);
         scopes_.front()[d.name].type = cloneType(*d.type);
         scopes_.pop_back();
-        ret_ = savedRet;
-        method_ = savedMethod;
-        inNs_ = savedNs;
-        curFn_ = savedFn;
-        fnBase_ = savedBase;
-        loops_ = savedLoops;
-        switches_ = savedSwitches;
-        quiet_ = savedQuiet;
-        lamStack_ = std::move(savedLam);
-        temps_ = std::move(savedTemps);
-        for (auto& sc : outer) scopes_.push_back(std::move(sc));
     }
 
     // A name used inside a lambda that is a local of the enclosing function: a capture. By
@@ -4958,14 +4954,7 @@ private:
         std::size_t savedBase = fnBase_;
         int savedLoops = loops_, savedSwitches = switches_;
         lamStack_.push_back(LamCtx{&li, fnBase_, scopes_.size(), {}});
-        scopes_.front()[d.name].type = cloneType(*d.type);
-        scopes_.front()[d.name].func = true;
-        scopes_.emplace_back();
-        fnBase_ = scopes_.size() - 1;
-        for (const Param& p : d.type->params)
-            if (!p.name.empty() && p.type) add(p.name, cloneType(*p.type), false, d.line, d.col);
-        ret_ = d.type->inner.get();
-        curFn_ = &d;
+        openLambdaFn(d);
         {
             // A lambda in a member function that captures this ([this], [&] or [=], used members
             // implicitly) reads the members through the captured this ([expr.prim.lambda.capture]/7).
@@ -4977,9 +4966,7 @@ private:
         loops_ = 0;
         switches_ = 0;
         if (d.body) checkStmts(*d.body);
-        if (isAuto(d.type->inner.get())) d.type->inner = prim(Type::Kind::Void);
-        scopes_.front()[d.name].type = cloneType(*d.type);
-        scopes_.pop_back();
+        closeLambdaFn(d);
         std::vector<std::pair<std::string, int>> used = std::move(lamStack_.back().used);
         lamStack_.pop_back();
         ret_ = savedRet;
@@ -5332,6 +5319,12 @@ private:
     }
     // Check function d now, in the middle of another one: only the file scope is seen from it.
     void checkFunctionNow(Decl& d) {
+        inFileScope([&] { checkFunction(d); });
+    }
+    // Run body with only the file scope seen (no locals, temporaries, lambdas or loops of the function
+    // being checked), then give those back.
+    template <class F>
+    void inFileScope(F&& body) {
         std::vector<std::map<std::string, Sym>> outer(std::make_move_iterator(scopes_.begin() + 1),
                                                       std::make_move_iterator(scopes_.end()));
         scopes_.resize(1);
@@ -5341,7 +5334,7 @@ private:
         lamStack_.clear();
         const int savedLoops = loops_, savedSwitches = switches_, savedQuiet = quiet_;
         loops_ = switches_ = quiet_ = 0;
-        checkFunction(d);
+        body();
         loops_ = savedLoops;
         switches_ = savedSwitches;
         quiet_ = savedQuiet;

@@ -796,7 +796,11 @@ public:
     int __sync() { return __f ? fflush(__f) : -1; }
 };
 
-// File streams ([file.streams]).
+namespace filesystem {
+class path;
+}
+// File streams ([file.streams]). The constructors and open() that take a filesystem::path
+// ([ifstream.cons] p4) are defined in <filesystem>, where path is complete.
 class ifstream : public istream {
 public:
     ifstream() { __sb = &__buf; }
@@ -813,6 +817,8 @@ public:
         else setstate(failbit);
     }
     void open(const string &path, openmode m = in) { open(path.c_str(), m); }
+    explicit ifstream(const filesystem::path &path, openmode m = in);
+    void open(const filesystem::path &path, openmode m = in);
     bool is_open() const { return __buf.is_open(); }
     void close() {
         if (!__buf.close()) setstate(failbit);
@@ -838,6 +844,8 @@ public:
         else setstate(failbit);
     }
     void open(const string &path, openmode m = out) { open(path.c_str(), m); }
+    explicit ofstream(const filesystem::path &path, openmode m = out);
+    void open(const filesystem::path &path, openmode m = out);
     bool is_open() const { return __buf.is_open(); }
     void close() {
         if (!__buf.close()) setstate(failbit);
@@ -863,6 +871,8 @@ public:
         else setstate(failbit);
     }
     void open(const string &path, openmode m = in | out) { open(path.c_str(), m); }
+    explicit fstream(const filesystem::path &path, openmode m = in | out);
+    void open(const filesystem::path &path, openmode m = in | out);
     bool is_open() const { return __buf.is_open(); }
     void close() {
         if (!__buf.close()) setstate(failbit);

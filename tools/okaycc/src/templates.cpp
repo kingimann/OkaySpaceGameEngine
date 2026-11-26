@@ -60,6 +60,11 @@ bool& instDirty() {
     return d;
 }
 
+std::function<bool(Tu&, const InstReq&)>& instantiateNow() {
+    static std::function<bool(Tu&, const InstReq&)> f;
+    return f;
+}
+
 // Where the Itanium-style mangled type that starts at s[j] ends: a builtin letter, P/R and a type,
 // <length><name> (a class, possibly an instance "Box<...>" counted whole), or Li<n>E. Returns j when
 // there is no type there.

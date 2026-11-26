@@ -1,7 +1,7 @@
 #pragma once
 // ---------------------------------------------------------------------------
 // RHI: the engine's rendering hardware interface. One small set of calls that every
-// drawing backend implements (OpenGL and Software today; Direct3D 11, Direct3D 12,
+// drawing backend implements (OpenGL, Software and Direct3D 11 today; Direct3D 12,
 // Vulkan and WebGPU in later rounds), so a rendering feature is written ONCE on top of
 // it instead of once per renderer. Design, mapping per backend and the migration
 // order: docs/rendering/rhi.md.
@@ -12,8 +12,8 @@
 //   Buffer       vertex, index or uniform bytes.
 //   Texture      a 2D picture: sampled, drawn into (render target) or a depth buffer.
 //   Sampler      how a texture is read (filter, wrap).
-//   Shader       one program for every backend: GLSL text for OpenGL, C++ functions
-//                for Software (HLSL later), one uniform block layout and named
+//   Shader       one program for every backend: GLSL text for OpenGL, HLSL for
+//                Direct3D 11, C++ functions for Software, one uniform block layout and named
 //                texture slots. OkayShader surfaces become RHI shaders through
 //                ShaderFromSurface (RHI/SurfaceShader.hpp).
 //   Pipeline     shader + vertex layout + raster, blend and depth state.
@@ -135,6 +135,12 @@ struct ShaderDesc {
     std::vector<std::string> textures;      ///< texture slot i -> its GLSL sampler name
     // OpenGL: GLSL 1.20 text, compiled like the OpenGL renderer's own (the hosts make a compatibility context).
     std::string glslVertex, glslFragment;
+    // Direct3D 11: HLSL (shader model 4.0) text, entry points VSMain and PSMain. Rules (docs/rendering/rhi.md):
+    // vertex attribute location i is the input semantic TEXCOORDi; the uniform block is a cbuffer at b0
+    // (the same byte layout as `uniforms`); texture slot i is t i with its sampler at s i; the vertex
+    // stage returns rhiClip(clipPos) (defined by the backend: it maps the RHI's OpenGL-style clip
+    // space to Direct3D's) as its SV_Position. Compiled with D3DCompile when the shader is made.
+    std::string hlslVertex, hlslFragment;
     // Software: the same program as C++ functions.
     CpuVertexFn cpuVertex = nullptr;
     CpuFragmentFn cpuFragment = nullptr;
@@ -145,6 +151,10 @@ struct ShaderDesc {
 /// Checks a description for mistakes every backend would make (layout overlaps,
 /// 16-byte crossings, sizes). Empty string when fine.
 std::string ValidateShaderDesc(const ShaderDesc& d);
+/// Checks the HLSL of a description against the Direct3D 11 rules above (entry points, rhiClip,
+/// TEXCOORDn inputs, cbuffer b0, t/s registers, every uniform named). A text check, so it runs on
+/// every platform; the Direct3D 11 backend runs it before D3DCompile. Empty string when fine.
+std::string ValidateHlslDesc(const ShaderDesc& d);
 
 // ---- Pipelines --------------------------------------------------------------------
 enum class VertexFormat : std::uint8_t { Float1, Float2, Float3, Float4, UNorm8x4 };
@@ -360,6 +370,18 @@ TextureHandle WrapGLTexture(Device& dev, unsigned int glTexture, const TextureDe
 /// OpenGL only: the context is gone (or not current) and the device is being thrown away;
 /// its destructor then makes no GL calls.
 void AbandonGLDevice(Device& dev);
+
+/// A Direct3D 11 device on an EXISTING ID3D11Device (passed as void* so this header needs no
+/// Windows headers): the D3D11 renderer's own device and immediate context, no second device.
+/// The RHI keeps a reference to both. Submit leaves the context's state as it found it.
+/// Null on other platforms or when `d3d11Device` is null. Swap chains are off-screen
+/// textures for now (like Software): the host reads or copies BackBuffer().
+std::unique_ptr<Device> CreateD3D11Device(void* d3d11Device);
+/// Direct3D 11 only: use an existing ID3D11Texture2D (void*) as an RHI texture. The RHI makes
+/// its own views and holds a reference while the handle lives. Empty handle on other backends.
+TextureHandle WrapD3D11Texture(Device& dev, void* d3d11Texture2D, const TextureDesc& d);
+/// The text the Direct3D 11 backend puts before every HLSL stage (defines rhiClip).
+extern const char* const kHlslPrelude;
 
 } // namespace rhi
 } // namespace okay

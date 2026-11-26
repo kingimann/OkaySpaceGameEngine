@@ -15,6 +15,7 @@
 #include "okay/UI/OkayUICodeEdit.hpp"
 
 #include <array>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -39,6 +40,10 @@ struct LanguageWords {
 /// `elseif` and `else` close one), its dedent words, and folding by indent too. SetLanguage uses them for any language with
 /// Lua's "--" comments that brings no block words of its own.
 LanguageWords LuaBlockWords();
+
+/// More hover text for a word, asked after the language's own docs (the Script Editor sets it to editor plugins' hover
+/// providers, editor/PluginRegistry.hpp). Empty: none.
+std::function<std::string(const std::string& word)>& ExtraHoverInfo();
 
 /// The script editor's 24 colours, each 0xAABBGGRR like OkayUI, in this order (the order of the palette the vendored editor took;
 /// OkayScriptPalette in ScriptAssist.cpp fills it).

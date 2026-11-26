@@ -66,6 +66,25 @@ std::string ValidateShaderDesc(const ShaderDesc& d) {
     return std::string();
 }
 
+std::string ValidateHlslDesc(const ShaderDesc& d) {
+    if (d.hlslVertex.empty() || d.hlslFragment.empty()) return "no HLSL";
+    auto has = [](const std::string& s, const std::string& what) { return s.find(what) != std::string::npos; };
+    if (!has(d.hlslVertex, "VSMain")) return "the HLSL vertex stage has no VSMain";
+    if (!has(d.hlslFragment, "PSMain")) return "the HLSL pixel stage has no PSMain";
+    if (!has(d.hlslVertex, "rhiClip(")) return "the HLSL vertex stage does not return rhiClip(position)";
+    for (std::size_t i = 0; i < d.attributes.size(); ++i)
+        if (!has(d.hlslVertex, "TEXCOORD" + std::to_string(i))) return "vertex attribute " + std::to_string(i) + " (" + d.attributes[i] + ") is not input TEXCOORD" + std::to_string(i);
+    if (d.uniformBytes && !has(d.hlslVertex + d.hlslFragment, "register(b0)")) return "the uniform block is not a cbuffer at register(b0)";
+    for (const UniformField& f : d.uniforms)
+        if (!has(d.hlslVertex + d.hlslFragment, f.name)) return "uniform '" + f.name + "' is not in the HLSL";
+    for (std::size_t i = 0; i < d.textures.size(); ++i) {
+        const std::string n = std::to_string(i);
+        if (!has(d.hlslFragment, "register(t" + n + ")") || !has(d.hlslFragment, "register(s" + n + ")"))
+            return "texture slot " + n + " (" + d.textures[i] + ") is not at register(t" + n + ") with its sampler at register(s" + n + ")";
+    }
+    return "";
+}
+
 std::string ValidatePipelineDesc(const PipelineDesc& d) {
     unsigned seen = 0;
     for (const VertexAttribute& a : d.layout.attributes) {

@@ -16,6 +16,7 @@
 #include "okay/Core/Log.hpp"
 
 #include "../GLRendererInternal.hpp"
+#include "BackendTables.hpp"
 
 #include <cstring>
 #include <map>
@@ -214,15 +215,8 @@ public:
         g.BindFramebuffer(GL_FRAMEBUFFER, 0);
         return true;
     }
-    bool TextureSize(TextureHandle h, int& w, int& hh) const override {
-        auto it = m_textures.find(h.id);
-        if (it == m_textures.end()) return false;
-        w = it->second.w; hh = it->second.h; return true;
-    }
-    TextureHandle BackBuffer(SwapChainHandle s) override {
-        auto it = m_swap.find(s.id);
-        return it == m_swap.end() ? TextureHandle{} : TextureHandle{it->second};
-    }
+    bool TextureSize(TextureHandle h, int& w, int& hh) const override { return table::TextureSize(m_textures, h.id, w, hh); }
+    TextureHandle BackBuffer(SwapChainHandle s) override { return table::BackBuffer(m_swap, s.id); }
     bool ResizeSwapChain(SwapChainHandle s, int width, int height) override {
         auto it = m_swap.find(s.id);
         if (it == m_swap.end() || width <= 0 || height <= 0) return false;
@@ -235,14 +229,14 @@ public:
         return true;
     }
     std::size_t LiveResources() const override {
-        return m_buffers.size() + m_textures.size() + m_samplers.size() + m_shaders.size() + m_pipes.size() + m_swap.size();
+        return table::Count(m_buffers, m_textures, m_samplers, m_shaders, m_pipes, m_swap);
     }
     bool Submit(const CommandList& list) override;
 
 protected:
     void Release(Kind k, std::uint32_t id) override {
         switch (k) {
-            case Kind::Buffer: { auto it = m_buffers.find(id); if (it != m_buffers.end()) { g.DeleteBuffers(1, &it->second.id); m_buffers.erase(it); } break; }
+            case Kind::Buffer: table::Erase(m_buffers, id, [](GLBuf& b) { g.DeleteBuffers(1, &b.id); }); break;
             case Kind::Texture: {
                 auto it = m_textures.find(id);
                 if (it == m_textures.end() || it->second.swapChain) break;   // a back buffer goes with its swap chain
@@ -403,11 +397,7 @@ bool GLDevice::Submit(const CommandList& list) {
             case CommandList::Op::EndPass: break;
             case CommandList::Op::Viewport: g.Viewport((GLint)c.a, (GLint)c.b, (GLsizei)c.c, (GLsizei)c.d); break;
             case CommandList::Op::Pipeline: {
-                auto it = m_pipes.find(c.a);
-                if (it == m_pipes.end()) { fail("unknown pipeline"); break; }
-                auto sh = m_shaders.find(it->second.desc.shader.id);
-                if (sh == m_shaders.end()) { fail("the pipeline's shader was destroyed"); break; }
-                pipe = &it->second; shader = &sh->second;
+                if (const char* e = table::FindPipeline(m_pipes, m_shaders, c.a, pipe, shader)) { fail(e); break; }
                 const PipelineDesc& d = pipe->desc;
                 g.UseProgram(shader->prog);
                 if (d.blend.enable) {

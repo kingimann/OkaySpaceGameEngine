@@ -62,6 +62,10 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     ScriptAssist.cpp                                                   # Scripting Reference window; the Script Editor's completion, signatures, docs, C# members, palette
     ScriptAssistBindings.cpp                                           # Script assist from the engine's binding table: component members, argument hints, docs
     FindInFiles.cpp                                                    # Find in Files: search every project script, open a hit in the Script Editor
+    ScriptIde.cpp                                                      # the Script Editor's workspace model: Quick Open, symbol index, rename, find/replace, quick fixes, local history
+    ScriptIdeUi.cpp                                                    # the Script Editor's IDE panels: Quick Open, script tree, rename preview, quick fixes, local history, plugin panels
+    PluginRegistry.cpp                                                 # editor plugins: the commands and providers they add to the Script Editor
+    PluginScriptApi.cpp                                                # editor plugins: the script_* builtins (commands, lint, completion, formatter, hover, snippets, panels)
     AssetManagerWindow.cpp                                             # the Asset Manager window: Marketplace downloads listed by type, imported into the project
     PluginsWindow.cpp                                                  # editor plugins (OkayScript): editor_* builtins, Plugins menu, Plugin Manager
     DialogueWindow.cpp                                                 # the Dialogue window (dialogue graphs + quests)

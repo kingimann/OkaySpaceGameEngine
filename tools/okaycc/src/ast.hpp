@@ -343,6 +343,10 @@ std::map<std::string, std::string>& instNamespaces();
 bool& ehActive();
 bool& forceExceptions();
 bool& instDirty();
+// Set by frontEnd while the checker runs: makes the function template instance r at once and puts
+// it at the end of the file being checked (Parser::instantiate). False: it could not be made that
+// way, and the checker asks for a new round (instDirty) as before. Empty when nothing can make one.
+std::function<bool(Tu&, const InstReq&)>& instantiateNow();
 std::size_t mangledEnd(const std::string& s, std::size_t j);
 // A pack place of a primary class template made by packs.cpp (parameter "P__pk<j>") may not take
 // the filler type __okay_pack_end: that place is empty, so the copy for a longer pack must not match.

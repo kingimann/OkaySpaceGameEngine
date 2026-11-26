@@ -6140,6 +6140,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 **#**
 
 - "GPU" line (23.1.4)
+- "Restore recovered work?" question (22.2.4)
 - --build-game (18.6)
 - --build-info (18.6)
 - --cheat-sim (39.13)

@@ -102,7 +102,7 @@ struct Lexer {
     std::size_t lineStart = 0;
     SyntaxError& err;
     std::vector<Token>& out;
-    std::vector<int> braces;   // 0 = a plain {, 1 = a template's ${
+    std::vector<int> braces;   // 0 = an expression's { (object literal), 1 = a template's ${, 2 = a block's {
     bool sawNl = false;
 
     Lexer(const std::string& src, std::vector<Token>& o, SyntaxError& e) : s(src), err(e), out(o) {}
@@ -468,7 +468,9 @@ struct Lexer {
         switch (t.t) {
             case TT::Num: case TT::BigInt: case TT::Str: case TT::PrivateName: case TT::Regex: return false;
             case TT::Template: return t.tpl == 1 || t.tpl == 2;   // after `...${ an expression starts
-            case TT::Punct: return !(t.p == P_RParen || t.p == P_RBrack || t.p == P_RBrace || t.p == P_Inc || t.p == P_Dec);
+            case TT::Punct:
+                if (t.p == P_RBrace) return t.tpl == 1;   // after a block (function f() {} /re/.test(x)), not after an object literal
+                return !(t.p == P_RParen || t.p == P_RBrack || t.p == P_Inc || t.p == P_Dec);
             case TT::Name: {
                 static const char* const before[] = {"return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
                                                      "throw", "case", "do", "else", "yield", "await"};
@@ -483,6 +485,26 @@ struct Lexer {
             }
             default: return true;
         }
+    }
+
+    // Whether the '{' about to be read opens a block (a statement, function or class body) rather than an object
+    // literal, judged from the token before it: blocks follow ';', '{', '}', ')', '=>', a statement keyword or a
+    // class name; object literals follow operators, '(', '[', ',', ':', '?' and keywords such as return.
+    bool BlockBraceAhead() const {
+        if (out.empty()) return true;
+        const Token& t = out.back();
+        if (t.t == TT::Punct) return t.p == P_Semi || t.p == P_LBrace || t.p == P_RBrace || t.p == P_RParen || t.p == P_Arrow;
+        if (t.t != TT::Name) return false;
+        static const char* const exprWords[] = {"return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw",
+                                                "case", "yield", "await", "default"};
+        for (const char* w : exprWords) {
+            std::size_t n = std::char_traits<char>::length(w);
+            if (t.s.size() != n) continue;
+            std::size_t k = 0;
+            while (k < n && t.s[k] == (char16_t)w[k]) ++k;
+            if (k == n && !t.escaped) return false;
+        }
+        return true;   // else, do, try, finally, a class name, extends X ...
     }
 
     bool RegexLit(int ln, int col) {
@@ -596,10 +618,15 @@ struct Lexer {
                 std::size_t n = std::char_traits<char>::length(p.text);
                 if (s.compare(i, n, p.text) != 0) continue;
                 if (p.id == P_QDot && i + 2 < s.size() && s[i + 2] >= '0' && s[i + 2] <= '9') continue;
-                if (p.id == P_LBrace) braces.push_back(0);
-                if (p.id == P_RBrace && !braces.empty()) braces.pop_back();
+                bool closesBlock = false;
+                if (p.id == P_LBrace) braces.push_back(BlockBraceAhead() ? 2 : 0);
+                if (p.id == P_RBrace && !braces.empty()) {
+                    closesBlock = braces.back() == 2;
+                    braces.pop_back();
+                }
                 Token& t = Push(TT::Punct, ln, col);
                 t.p = (std::uint16_t)p.id;
+                t.tpl = closesBlock ? 1 : 0;   // on a '}': it closed a block, so a '/' after it starts a regular expression
                 i += n;
                 matched = true;
                 break;

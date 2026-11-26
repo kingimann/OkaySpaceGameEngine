@@ -457,6 +457,26 @@ void BigInts() {
     CHECK(!rt.CheckSyntax(std::string("x = 1") + std::string(20001, '0') + "n;", "s").empty());
 }
 
+// 22.2.2.4 lookbehind (?<= ) / (?<! ): the body matches right to left, ending where the assertion stands
+// (its captures, backreferences and nested lookarounds included); and 12.9.5: a '/' after a block's '}' starts a
+// regular expression literal, after an object literal's '}' it divides.
+void RegexLookbehind() {
+    Expect("console.log(/(?<=\\$)\\d+/.exec('cost $42')[0], /(?<!\\$)\\b\\d+/.exec('$4 7')[0], JSON.stringify(/(?<=(\\d+)(\\d+))$/.exec('1053')))",
+           "42 7 [\"\",\"1\",\"053\"]");
+    Expect("console.log(/(?<=\\1(a))b/.exec('aab').index, 'x,x,yx'.replace(/(?<=^|,)x/g, 'Z'), 'a1b2'.replace(/(?<=[a-z])\\d/g, '#'))",
+           "2 Z,Z,yx a#b#");
+    Expect("console.log(/(?<=😀)x/u.exec('😀x').index, 'a|b\\\\|c'.replace(/(?<!\\\\)\\|/g, '\\\\|'), /(?<=a(?=b)b)c/.test('abc'), /(?<!ab)c/.test('abc'), /(?<!ab)c/.test('xbc'))",
+           "2 a\\|b\\|c true false true");
+    Expect("console.log(JSON.stringify('abcdef'.match(/(?<=(?<pre>b)c)d/).groups), /(?<=\\d{2,3})x/.exec('12345x').index, /(?<=a+)b/.exec('aaab').index, /(?<=[a-c]+?)d/i.test('ABCD'))",
+           "{\"pre\":\"b\"} 5 3 true");
+    Expect("console.log(JSON.stringify(/(?<=(a+))b/.exec('aaab')), JSON.stringify(/(?<=(a+?))b/.exec('aaab')))", "[\"b\",\"aaa\"] [\"b\",\"a\"]");
+    ExpectError("/(?<=a)+b/", "SyntaxError");
+    ExpectError("/(?<=^(a+)+)b/.test('x' + 'a'.repeat(40) + 'b')", "budget");   // backtracking inside a lookbehind is budgeted too
+    Expect("function f() {} /x/.test('x') && console.log('regex after a block'); const h = 4 / 2 / 1; console.log(h, {} / 1, (function () { return 6; })() / 3)",
+           "regex after a block\n2 NaN 2");
+    Expect("if (true) {}\n/a/g.test('a') && console.log('ok'); const o = {a: 1}\n/2/1; console.log(typeof o)", "ok\nnumber");
+}
+
 struct Hostile {
     const char* src;
     const char* want;   ///< part of the error, "" for any error, "OK" when it must finish without one
@@ -698,6 +718,7 @@ int main() {
     WeakCollections();
     TaggedTemplates();
     BigInts();
+    RegexLookbehind();
     ConformanceScript(false);
     ConformanceScript(true);
     HostileOneLiners();

@@ -241,6 +241,12 @@ def _source_notes(t):
     return bad
 
 
+def _cube_cases(t):
+    """A1: the voxel mesher works out its marching-cubes cases itself; the published 256 / 4096-entry tables are gone."""
+    rel = "engine/src/Components/VoxelTerrain.cpp"
+    return _grep(t, rel, r"0x0\s*,\s*0x109\s*,\s*0x203|kTri\s*\[\s*256\s*\]|cubeindex|Bourke")
+
+
 def _simplex(t):
     """A2: simplex noise is our own structure and numbers (no reference-code skew literals, corner cascade or scales)."""
     rel = "engine/include/okay/Math/Noise.hpp"
@@ -284,6 +290,7 @@ def _ui_brands(t):
 
 GUARDS = [
     ("A4", "shipped version information states a licence other than ours", _licence_statement),
+    ("A1", "the published marching-cubes tables or their loop came back", _cube_cases),
     ("A2", "simplex noise follows the reference code again", _simplex),
     ("A5-A7", "a package ships without the third-party notices", _notices),
     ("A8", "the browser placeholder copies another browser's wording", _browser_words),

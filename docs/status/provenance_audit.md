@@ -55,6 +55,17 @@ copied code in this scan; see "Clean" and "Limits".
 
 `python3 scripts/provenance_scan.py check` (run by `scripts/precheck.sh`) fails if a fixed finding comes back.
 
+- **A1 fixed (tables now worked out by our code).** `engine/src/Components/VoxelTerrain.cpp` no longer holds the
+  published 256-entry edge table and 256 x 16 triangle table, nor the corner order and loop that went with them.
+  `CubeCases()` builds all 256 cases once at start-up from the idea of the method (Lorensen and Cline 1987): our own
+  corner numbering (bit 0 = x, bit 1 = y, bit 2 = z), crossings joined by walking each cube face (air corners on a
+  face diagonal are cut off one by one, so neighbouring cubes always agree), loops split into triangles with no
+  inner edge lying in a cube face. Both mesh loops (`AppendCubes`, `AppendCubesReference`) read it. Checked: every one
+  of the 256 single-cube patterns and six random fields mesh into closed, consistently wound surfaces
+  (`tests/test_voxel.cpp`); a stand-alone run of both tables on the same random fields gave the same triangle count
+  (10,788) and no open edge for either. The first version of our split (a plain fan) failed that test on 4 of the
+  256 patterns (triangles lying in a shared face), which is why `SplitLoop` exists. The source line asked for by the
+  audit is the comment above `CubeCases()`. Guard: `check`.
 - **A2 fixed (rewritten from the idea).** `Simplex2` / `Simplex3` in `engine/include/okay/Math/Noise.hpp` are one
   D-dimensional routine of our own: skew to the simplex lattice, rank the fractional parts to find the simplex's
   corners, sum a radial kernel times a gradient per corner. Our numbers, worked out and tested: kernel (r^2 - d^2)^3

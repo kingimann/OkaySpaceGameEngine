@@ -389,5 +389,17 @@ int main() {
         CHECK(CountFill(r, Color{255, 0, 0, 255}) == 0);
         CHECK(CountFill(r, Color{0, 255, 0, 255}) >= 1);
     }
+    {
+        // Quirks mode (no DOCTYPE, HTML 15.3.8): a table does not inherit the text-align and font-size around it. With
+        // <!DOCTYPE html> the cell's "ab" is centred in the 300 px table at 32 px (32 wide: x = 134); without it, it is at the
+        // left at 16 px.
+        const std::string body = "<body style='margin:0'><div style='text-align:center;font-size:32px'><table style='width:300px' "
+                                 "cellspacing=0 cellpadding=0><tr><td>ab</td></tr></table></div>";
+        const LayoutResult std_ = Lay("<!DOCTYPE html>" + body, 400);
+        const LayoutResult q = Lay(body, 400);
+        const DrawCmd* s1 = TextCmd(std_, "ab"); const DrawCmd* q1 = TextCmd(q, "ab");
+        CHECK(s1 && Near(s1->font.size, 32) && Near(s1->x, 134));
+        CHECK(q1 && Near(q1->font.size, 16) && Near(q1->x, 0));
+    }
     TEST_MAIN_RESULT();
 }

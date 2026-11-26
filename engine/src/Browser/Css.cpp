@@ -1568,7 +1568,9 @@ bool ShadowList(const std::string& v, float em, std::vector<BoxShadow>& out) {
 void ApplyFontSize(ComputedStyle& s, const Declaration& d, const ComputedStyle& parent) {
     if (d.property == "font-size") {
         float px;
-        if (LowerAscii(d.value) == "inherit") s.fontSize = parent.fontSize;
+        const std::string lv = LowerAscii(Trim(d.value));
+        if (lv == "inherit" || lv == "unset" || lv == "revert") s.fontSize = parent.fontSize;   // font-size is inherited
+        else if (lv == "initial") s.fontSize = 16.0f;   // medium
         else if (FontSizeValue(d.value, parent.fontSize, px)) s.fontSize = px;
     } else if (d.property == "font") {
         for (const std::string& wIn : Words(d.value)) {
@@ -2570,6 +2572,16 @@ ComputedStyle ComputeStyle(const Node& el, const ComputedStyle& parent, const st
         }
     };
     collect(DefaultStyleSheet(), 0, 0);
+    if (ctx && ctx->quirks) {
+        // The HTML standard's rendering rules for quirks mode (15.3.3 and 15.3.8): a table starts its fonts, line height,
+        // white-space and alignment afresh instead of inheriting them (an old page's <center> or <font> around a table does not
+        // reach its cells); a form keeps a 1em gap below it.
+        static const StyleSheet quirks = ParseStyleSheet(
+            "table { font-weight: initial; font-style: initial; font-variant: initial; font-size: initial; line-height: initial;"
+            " white-space: initial; text-align: initial }\n"
+            "form { margin-bottom: 1em }\n");
+        collect(quirks, 0, 0);
+    }
     // Rules the default sheet does not say with selectors: the link look a[href] (pseudo-elements excepted).
     static const std::vector<Declaration> linkDecls = ParseDeclarations("color: #0000ee; text-decoration: underline");
     if (pseudo == 0 && el.name == "a" && el.Attr("href")) for (const Declaration& d : linkDecls) list.push_back({0, 11, order++, &d});

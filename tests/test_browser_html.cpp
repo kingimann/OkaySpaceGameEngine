@@ -315,5 +315,16 @@ int main() {
         CHECK(tab2.Document() && tab2.Document()->Body() && tab2.Document()->Body()->TextContent() == "Fran\xC3\xA7" "ais");
     }
 
+    // Quirks mode from the DOCTYPE (HTML 13.2.6.4.1).
+    CHECK(!ParseHtml("<!DOCTYPE html><p>x").quirks);
+    CHECK(!ParseHtml("<!doctype HTML>").quirks);
+    CHECK(ParseHtml("<p>x").quirks);
+    CHECK(ParseHtml("<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\"><p>").quirks);
+    CHECK(!ParseHtml("<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\" \"http://www.w3.org/TR/html4/loose.dtd\"><p>").quirks);
+    CHECK(!ParseHtml("<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">").quirks);
+    CHECK(ParseHtml("<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2 Final//EN\">").quirks);
+    CHECK(ParseHtml("<!DOCTYPE svg>").quirks);
+    CHECK(ParseHtml("<p>x<!DOCTYPE html>").quirks);   // too late: after the first tag
+
     TEST_MAIN_RESULT();
 }

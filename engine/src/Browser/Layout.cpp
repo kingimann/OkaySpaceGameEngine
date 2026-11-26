@@ -3263,6 +3263,7 @@ LayoutResult LayoutPage(const HtmlDocument& doc, float widthIn, const TextMeasur
     LayoutContext localCtx;
     if (context) { localCtx.style = context->style; localCtx.controlText = context->controlText; localCtx.viewportHeight = context->viewportHeight; }
     const float viewH = localCtx.viewportHeight > 0 ? localCtx.viewportHeight : width * 0.75f;
+    localCtx.style.quirks = doc.quirks;
     localCtx.style.media.width = width;
     localCtx.style.media.height = viewH;
     localCtx.style.rootFontSize = ComputeStyle(*html, ComputedStyle(), sheets, &localCtx.style).fontSize;   // rem

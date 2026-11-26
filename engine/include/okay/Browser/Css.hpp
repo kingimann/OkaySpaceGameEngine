@@ -356,6 +356,7 @@ struct StyleContext {
     const void* checkedUser = nullptr;
     MediaEnv media;
     float rootFontSize = 16.0f;
+    bool quirks = false;   ///< the document is in quirks mode (HtmlDocument::quirks): the quirks rules of the default sheet apply
 };
 
 /// Does `el` (an element) match `sel` (for its pseudo-element `pseudo`: 0 the element, 1 ::before, 2 ::after)?

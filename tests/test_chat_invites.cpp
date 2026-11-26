@@ -210,6 +210,9 @@ static void TestJoinLinkFields() {
     JoinLink j;
     CHECK(JoinLink::Parse("okay://join?game=A&addr=1.2.3.4:5&p=-4&max=99999999999&inv=abc", j));
     CHECK(j.players == 0 && j.maxPlayers == 0 && j.inviteId == 0);
+    // The same invite-id range on every platform (Windows' `long` is 32 bits).
+    CHECK(JoinLink::Parse("okay://join?game=A&addr=1.2.3.4:5&inv=2147483647", j) && j.inviteId == 2147483647L);
+    CHECK(JoinLink::Parse("okay://join?game=A&addr=1.2.3.4:5&inv=2147483648", j) && j.inviteId == 0);
     // A target that is not one of ours is dropped.
     CHECK(JoinLink::Parse("okay://join?game=A&addr=1.2.3.4:5&kind=evil", j) && j.target.empty());
 }

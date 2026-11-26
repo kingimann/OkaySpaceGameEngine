@@ -172,7 +172,7 @@ when **Settings > Behavior > Get test builds** is on (off by default). What it i
    four, so neither list can name the other's versions. With the setting off the launcher does not request anything under `dev/`.
 3. **Order.** A test build is newer than the release it was made on and older than every later release (`2.876.0 < 2.876.0.17 < 2.876.1`), so the normal
    "installed < published" rule offers it to a launcher on its release and the next release replaces it.
-4. **Which one.** With the setting on, `okay::testbuild::ChooseTarget` takes the newer of the newest release and the newest installable test build; the
+4. **Which one.** With the setting on, `okay::testbuild::ChooseTarget` takes the newer of the newest release and the newest installable test build of `main` (builds of other branches are installed by hand: release_channels.md "Test builds"); the
    long-term-support channel never gets one. Nothing is installed that is not newer than what runs.
 5. **The way back.** **Go back to the stable version** (Settings, while a test build runs and the setting is off) installs the newest normal release over a
    test build: the one deliberate downgrade. It is the same update with `target.goBack`; `EvaluateStartup` treats a downgrade strictly (only the exact

@@ -1075,7 +1075,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
         out << "  worldstreamer " << ws->cellSize << " " << ws->loadRadius
             << " " << ws->unloadRadius << " " << (ws->onlyOnCellChange ? 1 : 0)
             << " " << Quote(ws->folder) << " " << Quote(ws->prefix)
-            << " " << Quote(ws->ext) << " " << Quote(ws->target) << "\n";
+            << " " << Quote(ws->ext) << " " << Quote(ws->target) << " " << ws->predictSeconds << "\n";
     }
     for (auto* de : go->GetComponents<Destructible>()) {
         out << "  destructible " << Quote(de->blockTag) << " " << de->voxelSize

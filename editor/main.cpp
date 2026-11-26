@@ -28,6 +28,7 @@
 #include "BuildSettingsWindow.hpp"     // the Build Settings window: pages, search, summary, checks, history (own files)
 #include "BuildGame.hpp"               // Build Game: the game, Web / Android / Xbox data and dedicated server exports (builder::)
 #include "Updater.hpp"                 // the self-updater and runtime fetcher (updater::)
+#include "WorkerCall.hpp"              // one call on its own thread: the update check and download (never inside a frame)
 #include "FindInFiles.hpp"             // Find in Files: the project-wide script search window
 #include "AssetManagerWindow.hpp"      // the Asset Manager window: Marketplace downloads into the project
 #include "PluginsWindow.hpp"           // editor plugins: the Plugins menu, the Plugin Manager, the per-frame tick
@@ -173,7 +174,6 @@
 #include <cstdarg>
 #include <map>
 #include <memory>
-#include <future>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -1595,6 +1595,11 @@ static okay::Image RenderFramedImage(okay::Scene& sc, const Vec3& center, float 
     const int W = 128, H = 128;
     Mat4 vp = Mat4::Perspective(40.0f, 1.0f, 0.05f, 4000.0f) *
               Mat4::LookAt(eye, center, Vec3::Up);
+    // A 128 px tile does not need shadow maps (three 2048 x 2048 cascades), ambient occlusion, bloom, FXAA or depth of field: with
+    // them a thumbnail cost about as much as a full Scene view frame (tests/test_thumbnail_render_cost.cpp). The scope also keeps
+    // the Scene view's occlusion depth and counters, which a thumbnail used to overwrite.
+    sc.renderSettings.post.ssao = sc.renderSettings.post.bloom = sc.renderSettings.post.fxaa = sc.renderSettings.post.dof = false;
+    okay::ReducedRenderScope reduced(/*depthOnly=*/false, /*keepOcclusionDepth=*/true);
     Raster work; std::vector<std::uint32_t> out;
     const std::uint32_t* px = RenderMeshesSS(work, out, sc, vp, eye, W, H, 2);
     if (!px) return okay::Image();
@@ -1876,9 +1881,28 @@ static GameObject* CreateShapeSprite(EditorState& ed, int shape) {
 std::string g_updateStatus;
 bool g_openUpdatePopup = false;
 updater::UpdateInfo g_update;     // last update check result
-bool g_installingUpdate = false;  // set while InstallUpdate runs
-std::future<updater::UpdateInfo> g_updateCheck;  // async startup check (non-blocking)
-bool g_autoCheckDone = false;     // consumed the async result yet?
+bool g_installingUpdate = false;  // set while InstallUpdate runs (on g_updateInstall's thread)
+bool g_autoCheckDone = false;     // consumed the startup check's result yet?
+// The update check and the download run on their own threads (editor/WorkerCall.hpp) and are picked up by the main loop
+// (top of each frame, after Prof().BeginFrame): CheckLatest waits up to 20 s to connect and 60 s per read, three tries, and the Engine > Check for Updates
+// item and the version question's "Update OkaySpace" button used to run it inside the frame (owner's log, 2026-11-25).
+oked::WorkerCall g_updateCheck, g_updateInstall;
+std::shared_ptr<updater::UpdateInfo> g_updateCheckOut = std::make_shared<updater::UpdateInfo>();
+std::shared_ptr<std::string> g_updateInstallOut = std::make_shared<std::string>();
+bool g_updateCheckShow = false;   // a person asked: open the Engine Update window with the result
+static void StartUpdateCheck(bool show) {
+    if (show) g_updateCheckShow = true;
+    if (g_updateCheck.Busy()) return;   // one already running (the startup check): its result is shown
+    auto out = g_updateCheckOut;
+    g_updateCheck.Start([out] { *out = updater::CheckLatest(); }, "okay-update-check");
+}
+static void StartUpdateInstall(const std::string& latest, const std::string& ref) {
+    if (g_updateInstall.Busy()) return;
+    g_installingUpdate = true;
+    g_updateStatus = "Downloading v" + latest + "...";
+    auto out = g_updateInstallOut;
+    g_updateInstall.Start([out, latest, ref] { *out = updater::InstallUpdate(latest, ref); }, "okay-update-install");
+}
 bool g_openAbout = false;
 std::string g_newProjectTemplate; // template title requested via --template
 std::string g_newProjectRoot;     // project folder requested via --new-project (launcher)
@@ -2058,8 +2082,14 @@ static void NoteFpsSummary(double frameMs) {
         okay::editor::perf::FpsSummary f; f.periodSeconds = okay::editor::perf::FpsSummary::PeriodFrom(std::getenv("OKAY_FPS_SUMMARY_S")); return f; }();
     const okay::Profiler& pr = okay::Prof();
     const okay::Profiler::Frame& f = pr.paused || pr.Count() == 0 ? okay::Profiler::Frame() : pr.FrameAt(pr.Count() - 1);
-    const std::string line = s_sum.Add(f, frameMs);
-    if (!line.empty()) okay::restart::AppendLog(PerfLogPath(), line);
+    std::string line = s_sum.Add(f, frameMs);
+    if (line.empty()) return;
+    // Which modal (if any) holds the editor right now: a modal that stays open minute after minute is what blocks every click.
+#if !defined(OKAY_ON_OKAYUI)   // (the OkayUI compatibility build has no Dear ImGui window internals)
+    const ImGuiWindow* modal = ImGui::GetCurrentContext() ? ImGui::GetTopMostPopupModal() : nullptr;
+    line += std::string("; modal open: ") + (modal ? (modal->Hidden ? std::string(modal->Name) + " (hidden)" : std::string(modal->Name)) : std::string("none"));
+#endif
+    okay::restart::AppendLog(PerfLogPath(), line);
 }
 // Modals and clicks that go nowhere (editor/ModalGuard.hpp; owner, v2.903.8.118: nothing could be clicked while frames kept coming).
 // Every modal opening and closing is a breadcrumb (okay_hang.txt, okay_crash.txt); a modal closed because it was no longer drawn,
@@ -6868,12 +6898,8 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
     else if (id == "help.scripting") g_showScriptDocs = true;
     else if (id == "help.shortcuts") g_showShortcuts = true;
     else if (id == "help.updates") {
-        g_update = updater::CheckLatest();
-        g_openUpdatePopup = true;
-        ConsoleLog(g_update.error.empty()
-            ? (g_update.available ? "Update available: v" + g_update.latest
-                                  : "Up to date (v" + g_update.current + ").")
-            : "Update check failed: " + g_update.error);
+        ConsoleLog("Checking for updates...");
+        StartUpdateCheck(true);   // on its own thread; the Engine Update window opens with the answer (main loop)
     }
     else if (id == "help.bug") {
         ImGui::SetClipboardText((std::string("OkaySpace v") + OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION)).c_str());   // so the report can say which version (and that it is a test build)
@@ -8525,7 +8551,9 @@ static SDL_Texture* ProjectThumb(const std::string& abs) {
 // old picture is never drawn again, and here it is freed).
 static void ProjectThumbFrame() {
     ++g_thumbFrame;
-    if (g_pb) g_pb->ThumbFrame(10.0);
+    // Whole-scene pictures (scenes, prefabs, models) wait while a mouse button is held: one of them can take longer than a frame,
+    // and a stall is felt most in the middle of a drag. (Not "since the last event": any mouse move is an event.)
+    if (g_pb) g_pb->ThumbFrame(10.0, !ImGui::IsAnyMouseDown());
     if (g_thumbTex.size() < 64 || (g_thumbFrame & 31) != 0) return;
     for (auto it = g_thumbTex.begin(); it != g_thumbTex.end();) {
         if (g_thumbFrame - it->second.lastUse > 120) { if (it->second.tex) okay::pb::DestroyTexture(g_sdlRenderer, it->second.tex); it = g_thumbTex.erase(it); }
@@ -16927,13 +16955,9 @@ void DrawUpdatePopup(EditorState& ed) {
             ImGui::BeginDisabled(g_installingUpdate);
             if (ImGui::Button(g_installingUpdate ? "Installing..." : "Download & Install",
                               ImVec2(180, 0))) {
-                g_installingUpdate = true;
-                g_updateStatus = "Downloading v" + u.latest + "...";
-                // Save first so nothing is lost when the new build relaunches.
+                // Save first so nothing is lost when the new build relaunches. The download runs on its own thread.
                 SaveAllBeforeExit(ed);
-                g_updateStatus = updater::InstallUpdate(u.latest, u.ref);
-                ConsoleLog(g_updateStatus);
-                g_installingUpdate = false;
+                StartUpdateInstall(u.latest, u.ref);
             }
             ImGui::EndDisabled();
             ImGui::SameLine();
@@ -54271,6 +54295,9 @@ int main(int argc, char** argv) {
     // selectable alongside the OpenGL path. Falls back to software if unavailable.
     splashTick("Starting Direct3D 11");
     {
+        // Compiled shaders are kept in the per-user folder: D3DCompile of the whole set runs once per renderer version, not at every
+        // start (the owner's log, 2026-11-25: the first 3D frame took 7-9 s). UNVERIFIED on Windows.
+        if (!EditorConfigDirPath().empty()) okay::D3D11Renderer::SetShaderCacheDir((EditorConfigDirPath() + "/d3d11_shaders").c_str());
         g_d3dRenderer = new okay::D3D11Renderer();
         // Prefer SDL's own device (zero-copy viewports); else an isolated device.
         bool ok = false;
@@ -54311,8 +54338,7 @@ int main(int argc, char** argv) {
     };
     EditorState::onSceneLoaded = [] { g_lastSaveError.clear(); };   // a scene opened from disk starts without a failed-save note
     g_upgradeHooks.openUpdateDialog = [] {   // the version question's "Update OkaySpace": the same window as Engine > Check for Updates
-        g_update = updater::CheckLatest();
-        g_openUpdatePopup = true;
+        StartUpdateCheck(true);   // the window opens when the answer is in (main loop), the frame does not wait
     };
     g_upgradeHooks.reloadProjectFiles = [&ed] {   // after a backup was restored: what is in memory must not be written over the restored files
         LoadProjectSettingsFrom(g_settingsProjectDir);
@@ -54355,7 +54381,7 @@ int main(int argc, char** argv) {
     // Automatically check for a newer build at startup, in the background so it
     // never blocks the editor. The result is picked up in the main loop and, if
     // an update is available, the Update window pops up on its own.
-    g_updateCheck = std::async(std::launch::async, updater::CheckLatest);
+    StartUpdateCheck(false);
 
     // The one shut-down of ImGui's two sides, the views' GL window and renderer, controllers, audio, the main window's renderer and
     // window, and the platform backend, in the safe order. The end of main() runs it, and so does every early exit before std::exit
@@ -54465,9 +54491,21 @@ int main(int argc, char** argv) {
         okay::Prof().enabled = g_showProfiler || g_showPerfOverlay || kPerfDump || (g_gameStatsOverlay && ed.isPlaying()) || s_slowLog.thresholdMs > 0.0;   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
         // Pick up the background update check when it finishes (once).
-        if (!g_autoCheckDone && g_updateCheck.valid() &&
-            g_updateCheck.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-            g_update = g_updateCheck.get();
+        if (g_updateInstall.Collect()) {   // the download finished (a relaunch sets updater::pendingQuit)
+            g_updateStatus = *g_updateInstallOut;
+            ConsoleLog(g_updateStatus);
+            g_installingUpdate = false;
+        }
+        if (g_updateCheck.Collect()) {
+          g_update = *g_updateCheckOut;
+          if (g_updateCheckShow) {   // a person asked: show the answer
+            g_updateCheckShow = false;
+            g_openUpdatePopup = true;
+            ConsoleLog(g_update.error.empty()
+                ? (g_update.available ? "Update available: v" + g_update.latest : "Up to date (v" + g_update.current + ").")
+                : "Update check failed: " + g_update.error);
+          }
+          if (!g_autoCheckDone) {
             g_autoCheckDone = true;
             if (g_update.available) {
                 ConsoleLog("Update available: v" + g_update.latest +
@@ -54477,12 +54515,12 @@ int main(int argc, char** argv) {
                     // and relaunch automatically (no prompt).
                     SaveAllBeforeExit(ed);
                     ConsoleLog("Auto-updating to v" + g_update.latest + "...");
-                    g_updateStatus = updater::InstallUpdate(g_update.latest, g_update.ref);
-                    ConsoleLog(g_updateStatus);
+                    StartUpdateInstall(g_update.latest, g_update.ref);   // on its own thread; collected above
                 } else {
                     g_openUpdatePopup = true;   // surface it for a manual choice
                 }
             }
+          }
         }
         Input::ClearTypedText();   // collect this frame's typed characters
         g_okayUITyped[0] = '\0'; g_okayUIBack = false;   // OkayUI demo's per-frame keys
@@ -56124,7 +56162,7 @@ int main(int argc, char** argv) {
 
         {   // Frame limiter and idle throttle (View > Rendering; both off by default): sleep out the rest of the frame budget.
             const okay::editor::perf::PacingSettings ps{g_fpsCapEditor, g_idleThrottle, g_idleFps, 0.75};
-            const double target = okay::editor::perf::TargetFps(ps, ed.isPlaying(), ImGui::IsAnyMouseDown(), g_secSinceInput);
+            const double target = okay::editor::perf::TargetFps(ps, ed.isPlaying(), ImGui::IsAnyMouseDown(), g_secSinceInput, winSeam->IsMinimized());
             if (target > 0.0) {
                 const double elapsed = (double)(okay::platform::PerfCounter() - g_frameT0) / (double)okay::platform::PerfFrequency();
                 const double wait = okay::editor::perf::SleepSeconds(target, elapsed);

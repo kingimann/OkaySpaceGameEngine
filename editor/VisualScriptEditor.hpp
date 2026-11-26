@@ -60,6 +60,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace okay::editor::vsed {
@@ -970,8 +971,15 @@ inline bool KeyPicker(std::string& arg, float width) {
 }
 
 inline const VsDef* FindDef(const std::string& type) {
-    for (const auto& d : Registry()) if (type == d.type) return &d;
-    return nullptr;
+    // Asked several times per node per frame by the canvas; the registry has hundreds of entries and never changes after it is
+    // built, so an index (the first entry of a type wins, as the scan did) replaces a string compare against every entry.
+    static const std::unordered_map<std::string, const VsDef*> index = [] {
+        std::unordered_map<std::string, const VsDef*> m;
+        for (const auto& d : Registry()) m.emplace(d.type, &d);
+        return m;
+    }();
+    auto it = index.find(type);
+    return it == index.end() ? nullptr : it->second;
 }
 
 // ---- Editable graph model --------------------------------------------------
@@ -1105,6 +1113,12 @@ private:
     mutable std::vector<okay::vs::VarDecl> m_decls;
     mutable std::vector<okay::vs::StructDef> m_structDefs;
     void refreshDecls() const {
+        if (vars.empty() && structs.empty()) {   // asked for every wire's pin types every frame: no text to build for no declarations
+            if (!m_declKey.empty() || !m_decls.empty() || !m_structDefs.empty() || !m_declError.empty()) {
+                m_declKey.clear(); m_decls.clear(); m_structDefs.clear(); m_declError.clear();
+            }
+            return;
+        }
         const std::string key = declText();
         if (key == m_declKey && !key.empty()) return;
         if (key.empty()) { m_declKey.clear(); m_decls.clear(); m_structDefs.clear(); m_declError.clear(); return; }
@@ -1523,8 +1537,27 @@ inline void SeedStarterGraph(VsEditGraph& g) {
 // output is plain OkayScript the engine already runs — people can keep wiring
 // nodes, or drop into text, whichever they prefer.
 inline const VsEditNode* VsFind(const VsEditGraph& g, int id) {
-    for (const auto& n : g.nodes) if (n.id == id) return &n;
-    return nullptr;
+    // Asked several times per wire per frame (pin types, wire checks): a scan of every node each time made a big graph's frame grow
+    // with nodes x wires. An id -> position index, checked on every use and rebuilt when the nodes changed (added, removed, reloaded).
+    static const VsEditGraph* s_graph = nullptr;
+    static std::unordered_map<int, std::size_t> s_index;
+    if (s_graph == &g) {
+        auto it = s_index.find(id);
+        if (it != s_index.end() && it->second < g.nodes.size() && g.nodes[it->second].id == id) return &g.nodes[it->second];
+        if (it == s_index.end() && s_index.size() == g.nodes.size()) {   // probably an id that is gone: a plain scan, no rebuild
+            bool present = false;
+            for (const auto& n : g.nodes) if (n.id == id) { present = true; break; }
+            if (!present) return nullptr;
+        }
+    }
+    s_graph = &g;
+    s_index.clear();
+    const VsEditNode* hit = nullptr;
+    for (std::size_t i = 0; i < g.nodes.size(); ++i) {
+        s_index[g.nodes[i].id] = i;
+        if (g.nodes[i].id == id) hit = &g.nodes[i];
+    }
+    return hit;
 }
 // ---- Functions: the signature a Function / Call / Return node uses ----------
 inline bool IsFunctionNode(const std::string& t) { return t == "FunctionStart" || t == "CallFunction" || t == "Return"; }
@@ -2682,8 +2715,11 @@ inline std::string CompileToOkayScript(const VsEditGraph& g, std::vector<okay::v
 /// What the Problems button lists: the graph checker's findings only. Nodes the OkayScript preview cannot write are
 /// not problems with the graph (it still runs in the game), so they go to `exportOut` for the Script preview and are
 /// never shown as red errors in Problems or on the nodes.
+/// How many times the checker ran (tests/test_vs_check_cost.cpp counts it).
+inline int& VsCheckRuns() { static int n = 0; return n; }
 inline std::vector<okay::vs::VsIssue> VsCheckGraph(const VsEditGraph& g, const std::string& text, const std::string& baseDir,
                                                    std::vector<okay::vs::VsIssue>* exportOut = nullptr) {
+    ++VsCheckRuns();
     std::vector<okay::vs::VsIssue> issues = okay::vs::ValidateGraphText(text, baseDir);
     std::vector<okay::vs::VsIssue> exp;
     CompileToOkayScript(g, &exp);
@@ -2760,8 +2796,8 @@ struct VsEditState {
     std::string offerType, offerWhy;
     bool   frameSel = false;     // fit the selected nodes (F)
     bool   needsEvent = false;   // nodes but no event node: hint on the canvas
-    // The graph checker's findings for the graph on screen (recomputed when it changes).
-    std::string checkedText; std::vector<okay::vs::VsIssue> issues;
+    // The graph checker's findings for the graph on screen (recomputed when it changes; VsRefreshChecks).
+    std::string checkedText; std::vector<okay::vs::VsIssue> issues;   // checkedText: VsCheckKey of the graph last checked
     std::vector<okay::vs::VsIssue> exportIssues;   // nodes the OkayScript preview cannot write (not graph problems)
     bool   showIssues = false;
     std::string refuseMsg; float refuseTime = 0.0f;   // why a wire was refused (shown a few seconds)
@@ -2772,6 +2808,31 @@ struct VsEditState {
     bool missing = false;     // the file in `g.path` could not be read
     int tabId = 0;
 };
+
+/// What the graph checker reads, out of the graph's text: everything but where the nodes and comment frames sit on the canvas.
+/// Dragging a node changes its "pos" line every frame; the checker (ValidateGraphText: a full parse, and a look on disk for every
+/// prefab a node names; then the whole OkayScript export) ran in every frame of a drag, which is where the owner's log saw the
+/// Visual Script panel at 263-352 ms a frame (2026-11-25). Neither the checks nor the export depend on positions.
+inline std::string VsCheckKey(const std::string& text) {
+    std::string key;
+    key.reserve(text.size());
+    std::size_t a = 0;
+    while (a < text.size()) {
+        std::size_t e = text.find('\n', a);
+        if (e == std::string::npos) e = text.size();
+        if (text.compare(a, 4, "pos ") != 0 && text.compare(a, 8, "comment ") != 0) key.append(text, a, e - a + (e < text.size() ? 1 : 0));
+        a = e + 1;
+    }
+    return key;
+}
+/// Run the checker when what it reads changed since the last run (`text` is g.toText()); true when it ran.
+inline bool VsRefreshChecks(VsEditState& st, const VsEditGraph& g, const std::string& text, const std::string& baseDir) {
+    std::string key = VsCheckKey(text);
+    if (key == st.checkedText) return false;
+    st.issues = VsCheckGraph(g, text, baseDir, &st.exportIssues);
+    st.checkedText = std::move(key);
+    return true;
+}
 
 inline void VsRefreshDirty(VsEditState& st) {
     if (!st.baselineSet) {
@@ -3675,6 +3736,31 @@ inline bool VsDrawRefSlot(EditorState& ed, VsEditState& st, std::string& value, 
     return changed;
 }
 
+/// How many times a choice list walked the Assets folder (tests/test_vs_check_cost.cpp counts it).
+inline int& VsChoiceScans() { static int n = 0; return n; }
+/// The stems of the files with extension `ext` (lower case, with the dot) under `assets`, walked at most once every `maxAgeSeconds`
+/// per folder and extension. A Play Clip, Load Scene or Play Music node draws its dropdown every frame, and each one walked the
+/// whole Assets folder every frame (the owner's log, 2026-11-25: the Visual Script panel at 263-352 ms a frame). `now` in seconds.
+inline const std::vector<std::string>& VsAssetStems(const std::filesystem::path& assets, const char* ext, double now, double maxAgeSeconds = 2.0) {
+    struct Entry { double at = -1e30; std::vector<std::string> stems; };
+    static std::map<std::string, Entry> cache;
+    Entry& e = cache[assets.generic_string() + "|" + ext];
+    if (now - e.at < maxAgeSeconds && now >= e.at) return e.stems;
+    e.at = now;
+    e.stems.clear();
+    ++VsChoiceScans();
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::exists(assets, ec)) return e.stems;
+    for (auto it = fs::recursive_directory_iterator(assets, ec); it != fs::recursive_directory_iterator() && !ec; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        std::string x = it->path().extension().string();
+        for (char& c : x) c = (char)std::tolower((unsigned char)c);
+        if (x == ext) e.stems.push_back(it->path().stem().string());
+    }
+    return e.stems;
+}
+
 // Clips, tags, scenes and the rest of the named lists a dropdown shows.
 inline VsChoiceLists VsGatherChoices(EditorState& ed, const VsEditGraph& g, VsChoiceKind kind) {
     VsChoiceLists lists;
@@ -3686,16 +3772,7 @@ inline VsChoiceLists VsGatherChoices(EditorState& ed, const VsEditGraph& g, VsCh
     auto addFall = [&](const std::string& s) { VsPushUnique(lists.fallback, s); };
     namespace fs = std::filesystem;
     fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
-    auto scanExt = [&](const char* ext) {
-        std::error_code ec;
-        if (!fs::exists(assets, ec)) return;
-        for (auto it = fs::recursive_directory_iterator(assets, ec); it != fs::recursive_directory_iterator() && !ec; it.increment(ec)) {
-            if (!it->is_regular_file(ec)) continue;
-            std::string e = it->path().extension().string();
-            for (char& c : e) c = (char)std::tolower((unsigned char)c);
-            if (e == ext) addFall(it->path().stem().string());
-        }
-    };
+    auto scanExt = [&](const char* ext) { for (const std::string& st : VsAssetStems(assets, ext, ImGui::GetTime())) addFall(st); };
     switch (kind) {
         case VsChoiceKind::Clip:
             if (target) {
@@ -3751,8 +3828,22 @@ inline VsChoiceLists VsGatherChoices(EditorState& ed, const VsEditGraph& g, VsCh
 }
 
 inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& value, VsChoiceKind kind, float width) {
-    const VsChoiceLists lists = VsGatherChoices(ed, g, kind);
-    const std::vector<std::string> rows = VsChoiceRows(kind, lists);
+    // Every node with a dropdown draws it every frame: the lists of one kind are gathered once a frame, not once per node (a graph
+    // with hundreds of variable nodes gathered every variable of every node for each of them).
+    struct Gathered { VsChoiceLists lists; std::vector<std::string> rows; };
+    static int s_frame = -1;
+    static const void* s_graph = nullptr;
+    static std::map<int, Gathered> s_byKind;
+    if (s_frame != ImGui::GetFrameCount() || s_graph != &g) { s_frame = ImGui::GetFrameCount(); s_graph = &g; s_byKind.clear(); }
+    auto found = s_byKind.find((int)kind);
+    if (found == s_byKind.end()) {
+        Gathered gd;
+        gd.lists = VsGatherChoices(ed, g, kind);
+        gd.rows = VsChoiceRows(kind, gd.lists);
+        found = s_byKind.emplace((int)kind, std::move(gd)).first;
+    }
+    const VsChoiceLists& lists = found->second.lists;
+    const std::vector<std::string>& rows = found->second.rows;
     const bool missing = VsChoiceMissing(value, rows);
     bool changed = false;
     const std::string preview = value.empty() ? std::string("(choose a ") + VsChoiceKindName(kind) + ")" : value;
@@ -4193,11 +4284,7 @@ inline void Draw(EditorState& ed, bool* open) {
     // The graph checker: re-run whenever the graph changes (wires that can't
     // work, nodes nothing runs, unset variables, bad key names, missing prefabs).
     {
-        std::string now = g.toText();
-        if (now != st.checkedText) {
-            st.issues = VsCheckGraph(g, now, ed.projectDir(), &st.exportIssues);
-            st.checkedText = std::move(now);
-        }
+        VsRefreshChecks(st, g, g.toText(), ed.projectDir());
     }
     // Right side of the one toolbar: problems, fit, zoom, the two panels.
     {

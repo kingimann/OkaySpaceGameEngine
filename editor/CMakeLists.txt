@@ -84,6 +84,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     ScriptEditorCodeEdit.cpp                                           # the script editor's adapter over OkayUI::CodeEdit (no ImGui)
     ProblemsPanel.cpp                                                  # Problems panel + project diagnostics
     ProjectDiagRunner.cpp                                              # when the Problems checks run: the project-wide one on a worker
+    WorkerCall.cpp                                                     # one call on its own thread, collected on a later frame (update check, Problems pass)
     SceneManagerPanel.cpp                                              # Scene Manager window
     NetSimPanel.cpp                                                    # net simulator + traffic panel
     AntiCheatSetupUi.cpp                                               # easy anti-cheat setup: presets, Add Anti-Cheat, checklist

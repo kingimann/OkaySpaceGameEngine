@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 80 headers, 505 names.
+Back to the [code index](../code_index.md). 80 headers, 507 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -46,8 +46,10 @@ Back to the [code index](../code_index.md). 80 headers, 505 names.
 ## `engine/include/okay/Core/AssetManager.hpp`
 
 - `AssetHandle` class, line 49: Typed, cheap-to-copy reference to a cached asset. The asset lives as long as any
-- `AssetReport` struct, line 81: Usage report row/summary.
-- `AssetManager` class, line 90
+- `StreamSettings` struct, line 82: Asset streaming settings (docs/engine/asset_streaming.md). Automatic mode needs no setup: the budgets come
+- `StreamStats` struct, line 90: What the streamer holds right now (the Project Settings > Streaming stats and the tests).
+- `AssetReport` struct, line 102: Usage report row/summary.
+- `AssetManager` class, line 111
 
 ## `engine/include/okay/Core/Backup.hpp`
 

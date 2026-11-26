@@ -1076,9 +1076,11 @@ void Browser::AddThumbGenerator(const std::vector<std::string>& extensions, std:
     if (m_thumbs) m_thumbs->AddGenerator(extensions, std::move(render));
 }
 
-void Browser::ThumbFrame(double budgetMs) {
+void Browser::ThumbFrame(double budgetMs, bool allowHeavy) {
     m_thumbBudgetMs = budgetMs;
     m_thumbSpentMs = 0;
+    m_thumbHeavyAllowed = allowHeavy;
+    m_thumbHeavyCount = 0;
     if (m_prunePending && m_thumbs) { m_prunePending = false; PruneThumbs(); }
 }
 
@@ -1088,11 +1090,29 @@ Browser::ThumbResult Browser::Thumb(const std::string& path) {
     ThumbKey(path, g, h);
     r.key = g.ToString() + ":" + std::to_string(h);
     okay::ThumbnailCache& cache = Thumbs();
-    const bool have = cache.InMemory(g, h) || cache.OnDisk(g, h);
-    if (!have && m_thumbSpentMs > m_thumbBudgetMs) return r;   // out of time this frame: the icon shows, the picture comes later
+    const std::string p = Norm(path);
+    const okay::AssetType kind = okay::AssetTypeFromPath(path);
+    const bool inMemory = cache.InMemory(g, h);
+    auto ke = m_thumbKeys.find(p);   // ThumbKey just filled it; it also remembers whether the picture is on disk
+    if (!inMemory) {
+        if (m_thumbSpentMs > m_thumbBudgetMs) return r;   // out of time this frame: the icon shows, the picture comes later
+        // One look at the disk per key, not one per waiting tile per frame (hundreds of file-system calls a frame on Windows).
+        bool onDisk;
+        if (ke != m_thumbKeys.end() && ke->second.disk >= 0) onDisk = ke->second.disk == 1;
+        else { onDisk = cache.OnDisk(g, h); if (ke != m_thumbKeys.end()) ke->second.disk = onDisk ? 1 : 0; }
+        if (!onDisk) {
+            using T = okay::AssetType;
+            const bool heavy = kind == T::Scene || kind == T::Prefab || kind == T::Model;
+            if (heavy && (!m_thumbHeavyAllowed || m_thumbHeavyCount >= 1)) return r;   // one whole-scene render a frame at most
+            if (heavy) ++m_thumbHeavyCount;
+        }
+    }
     const auto t0 = std::chrono::steady_clock::now();
-    const okay::ThumbnailCache::Thumb t = cache.Get(g, h, Norm(path), okay::AssetTypeFromPath(path));
-    if (!have) m_thumbSpentMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    const okay::ThumbnailCache::Thumb t = cache.Get(g, h, p, kind);
+    if (!inMemory) {
+        m_thumbSpentMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (ke != m_thumbKeys.end()) ke->second.disk = 1;   // made now: the cache wrote its picture (or its failure marker)
+    }
     r.placeholder = t.placeholder;
     r.failed = t.failed;
     r.ready = !t.placeholder && t.image && t.image->Valid();

@@ -250,9 +250,14 @@ public:
         bool failed = false;
         std::string key;                            ///< "<guid>:<hash>": changes with the content
     };
-    /// Start a frame: up to `budgetMs` of thumbnail making is allowed until the next call (the first one of a frame is
-    /// always allowed, so progress never stalls). Pictures already in memory or on disk are free.
-    void ThumbFrame(double budgetMs);
+    /// Start a frame: up to `budgetMs` of thumbnail work is allowed until the next call (the first one of a frame is
+    /// always allowed, so progress never stalls). Pictures already in memory are free; reading one from disk counts.
+    /// A scene, prefab or model is drawn by loading it into a scene of its own, which can take far longer than the budget
+    /// (the owner's log, 2026-11-25): at most one of those is made per frame, and none while `allowHeavy` is false (the
+    /// editor passes false while the person is clicking, dragging or typing, so the work waits for a quiet moment).
+    void ThumbFrame(double budgetMs, bool allowHeavy = true);
+    /// Scene, prefab and model pictures made since the last ThumbFrame (0 or 1).
+    int ThumbHeavyThisFrame() const { return m_thumbHeavyCount; }
     /// The picture for an asset. A missing one is made now when the frame budget allows, else `ready` is false and
     /// the caller shows an icon and asks again next frame.
     ThumbResult Thumb(const std::string& path);
@@ -340,11 +345,13 @@ private:
     std::uint64_t m_missingRev = ~0ull;
     void EnsureMissing();
     Counts m_counts; std::uint64_t m_countsRev = ~0ull; std::int64_t m_countsNow = -1;
-    struct ThumbKeyEntry { std::uint64_t rev = ~0ull; okay::Guid guid; std::uint64_t hash = 0; };
+    struct ThumbKeyEntry { std::uint64_t rev = ~0ull; okay::Guid guid; std::uint64_t hash = 0; signed char disk = -1; };   // disk: on disk? -1 not looked yet
     std::map<std::string, ThumbKeyEntry> m_thumbKeys;               // path -> key at a revision
     std::unique_ptr<okay::ThumbnailCache> m_thumbs;
     std::vector<std::pair<std::vector<std::string>, std::function<okay::Image(const std::string&)>>> m_thumbGens;
     double m_thumbBudgetMs = 0, m_thumbSpentMs = 0;
+    bool m_thumbHeavyAllowed = true;
+    int m_thumbHeavyCount = 0;
     std::string AbsOf(const std::string& projectPath) const { return m_root + "/" + projectPath; }
     okay::Guid ThumbGuidOf(const okay::AssetRecord& rec) const;
     std::function<bool(const char*, const std::string&)> m_fail;

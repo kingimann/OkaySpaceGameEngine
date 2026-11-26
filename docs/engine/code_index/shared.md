@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 69 headers, 1016 names.
+Back to the [code index](../code_index.md). 69 headers, 1017 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -1118,29 +1118,30 @@ Back to the [code index](../code_index.md). 69 headers, 1016 names.
 
 ## `shared/TestBuild.hpp`
 
-- `NumberCount` function, line 49: How many numbers a version has ("2.876.0" -> 3, "2.876.0.17" -> 4); 0 when 'text' is not a version.
-- `IsReleaseShaped` function, line 54: A normal release: one to three numbers (2.876.0). Text that is not a version is not one.
-- `IsTestVersion` function, line 59: A test build: exactly four numbers, the fourth at least 1 (2.876.0.17).
-- `BaseRelease` function, line 64: The release a test build was made on: "2.876.0.17" -> "2.876.0"; "" when 'text' is not a test version.
-- `Serial` function, line 70: The fourth number ("2.876.0.17" -> 17); 0 when 'text' is not a test version.
-- `MakeVersion` function, line 74: "2.876.0" + 17 -> "2.876.0.17". "" unless 'base' is exactly three numbers and 'serial' is at least 1.
-- `Suffix` function, line 80: " (test build)" for a test version, "" for anything else: what follows a version where it is shown ("v2.876.0.17 (test build)").
-- `DisplayVersion` function, line 82: "v2.876.0.17 (test build)", or "v2.876.0" for a release; the text itself when it is not a version.
-- `CleanLine` function, line 90: One line of plain printable ASCII: other characters are dropped, runs of spaces become one, the ends are trimmed, at most 'maxChars' long.
-- `CleanBranch` function, line 104: A git branch (or tag) name as a label: letters, digits and . _ / + - only, at most 80 characters, no "..", no leading '/', '-' or '.', no
-- `CleanSha` function, line 113: A commit id: lowercase hex, 7 to 40 digits (upper case is folded). "" when it is not.
-- `ShortSha` function, line 124: The seven digits people say ("abc1234"); "" when 'sha' is not a commit id.
-- `DisplayBranch` function, line 130: The branch as people say it: the lane folders "claude/", "claude2/", "claude3/" and "grok/" are dropped ("claude/walk-vs-run" -> "walk-vs-run").
-- `Title` function, line 136: "Test build of walk-vs-run (abc1234)". Missing parts are left out: no commit gives "Test build of walk-vs-run", neither gives "Test build".
-- `Choice` struct, line 147: What the update check should install. 'version' is normalized; 'note' says in one plain sentence why there is nothing to do.
-- `Marker` struct, line 193
-- `MarkerText` function, line 198
-- `ParseMarker` function, line 207
-- `MarkerPath` function, line 230
-- `WriteMarker` function, line 233: Write the marker (through a temp file and a rename). False when it could not be written; the update that asked for it does not depend on it.
-- `ReadMarker` function, line 250
-- `RemoveMarker` function, line 259
-- `RunningTitle` function, line 269: What About says about the running program: "" for a normal release (nothing to add), otherwise "Test build of walk-vs-run (abc1234)" when the
+- `NumberCount` function, line 51: How many numbers a version has ("2.876.0" -> 3, "2.876.0.17" -> 4); 0 when 'text' is not a version.
+- `IsReleaseShaped` function, line 56: A normal release: one to three numbers (2.876.0). Text that is not a version is not one.
+- `IsTestVersion` function, line 61: A test build: exactly four numbers, the fourth at least 1 (2.876.0.17).
+- `BaseRelease` function, line 66: The release a test build was made on: "2.876.0.17" -> "2.876.0"; "" when 'text' is not a test version.
+- `Serial` function, line 72: The fourth number ("2.876.0.17" -> 17); 0 when 'text' is not a test version.
+- `MakeVersion` function, line 76: "2.876.0" + 17 -> "2.876.0.17". "" unless 'base' is exactly three numbers and 'serial' is at least 1.
+- `Suffix` function, line 82: " (test build)" for a test version, "" for anything else: what follows a version where it is shown ("v2.876.0.17 (test build)").
+- `DisplayVersion` function, line 84: "v2.876.0.17 (test build)", or "v2.876.0" for a release; the text itself when it is not a version.
+- `CleanLine` function, line 92: One line of plain printable ASCII: other characters are dropped, runs of spaces become one, the ends are trimmed, at most 'maxChars' long.
+- `CleanBranch` function, line 106: A git branch (or tag) name as a label: letters, digits and . _ / + - only, at most 80 characters, no "..", no leading '/', '-' or '.', no
+- `CleanSha` function, line 115: A commit id: lowercase hex, 7 to 40 digits (upper case is folded). "" when it is not.
+- `ShortSha` function, line 126: The seven digits people say ("abc1234"); "" when 'sha' is not a commit id.
+- `DisplayBranch` function, line 132: The branch as people say it: the lane folders "claude/", "claude2/", "claude3/" and "grok/" are dropped ("claude/walk-vs-run" -> "walk-vs-run").
+- `IsMainBranch` function, line 138: A build of 'main' (exactly that name): the only test builds the automatic update installs. Builds of other branches are installed by hand.
+- `Title` function, line 140: "Test build of walk-vs-run (abc1234)". Missing parts are left out: no commit gives "Test build of walk-vs-run", neither gives "Test build".
+- `Choice` struct, line 151: What the update check should install. 'version' is normalized; 'note' says in one plain sentence why there is nothing to do.
+- `Marker` struct, line 198
+- `MarkerText` function, line 203
+- `ParseMarker` function, line 212
+- `MarkerPath` function, line 235
+- `WriteMarker` function, line 238: Write the marker (through a temp file and a rename). False when it could not be written; the update that asked for it does not depend on it.
+- `ReadMarker` function, line 255
+- `RemoveMarker` function, line 264
+- `RunningTitle` function, line 274: What About says about the running program: "" for a normal release (nothing to add), otherwise "Test build of walk-vs-run (abc1234)" when the
 
 ## `shared/TestHooks.hpp`
 

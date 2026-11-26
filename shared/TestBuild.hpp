@@ -16,7 +16,8 @@
 //
 // WHAT THE LAUNCHER DOES (launcher/main.cpp): nothing at all unless the person switched "Get test builds" on (launcher.cfg: test_builds=1, off by
 // default). When it is on, the update check also reads <bucket>/dev/versions.json (signed like the real one) and ChooseTarget picks the newer of
-// "the newest normal release" and "the newest test build". Going back (ChooseTarget with goBack) installs the newest normal release over a test
+// "the newest normal release" and "the newest main test build" (okayversions::TestBuildHead: branch `main` only, and only above the running version;
+// builds of other branches are installed by hand, owner 2026-11-26). Going back (ChooseTarget with goBack) installs the newest normal release over a test
 // build, the one deliberate downgrade; it uses the same checksum, stage, swap, self-check and rollback rules as every other update.
 #include <algorithm>
 #include <cctype>
@@ -40,6 +41,7 @@ inline constexpr const char* kHeadName = "DEV.txt";               ///< dev/DEV.t
 inline constexpr const char* kNotesName = "NOTES-DEV.txt";        ///< dev/NOTES-DEV.txt: the newest test build's notes (the launcher's "what's new")
 inline constexpr const char* kMarkerName = "okay_testbuild.txt";  ///< next to the launcher: which test build is installed
 inline constexpr int kKept = 3;                                   ///< test builds kept in the bucket: DEV_KEEP in scripts/publish-supabase-dev.sh, DEFAULT_KEEP in scripts/dev_index.py; the Versions page offers this many (owner 2026-11-26)
+inline constexpr const char* kMainBranch = "main";                ///< the only branch the automatic test-build update follows (owner 2026-11-26); scripts/dev_index.py MAIN_BRANCH
 inline constexpr std::size_t kMaxBranchChars = 80;
 inline constexpr std::size_t kMaxNoteChars = 140;
 
@@ -132,6 +134,8 @@ inline std::string DisplayBranch(std::string_view branch) {
         if (branch.size() > prefix.size() && branch.compare(0, prefix.size(), prefix) == 0) return std::string(branch.substr(prefix.size()));
     return std::string(branch);
 }
+/// A build of `main` (exactly that name): the only test builds the automatic update installs. Builds of other branches are installed by hand.
+inline bool IsMainBranch(std::string_view branch) { return branch == kMainBranch; }
 /// "Test build of walk-vs-run (abc1234)". Missing parts are left out: no commit gives "Test build of walk-vs-run", neither gives "Test build".
 inline std::string Title(std::string_view branch, std::string_view sha) {
     const std::string b = DisplayBranch(CleanBranch(branch)), s = ShortSha(sha);
@@ -159,7 +163,8 @@ struct Choice {
 /// Which version the update check should work towards.
 ///   local          the installed version
 ///   stableHead     the newest normal release the server announces ("" = not known); a version with four numbers is not one
-///   testHead       the newest installable test build ("" = none or not asked for); a version without four numbers is not one
+///   testHead       the newest installable MAIN test build above `local` (okayversions::TestBuildHead; "" = none or not asked for); a version
+///                  without four numbers is not one
 ///   testBuildsOn   "Get test builds" is on
 ///   onLts          the long-term-support channel is chosen: test builds are not offered there
 ///   goBack         the person asked to leave a test build

@@ -26,6 +26,7 @@ namespace okay {
 
 class Component;
 class SceneLoadJob;
+struct SceneStreamRead;   // a streamed load's read and asset decodes (Scene.cpp)
 class Camera;
 class IRenderer;
 
@@ -197,7 +198,17 @@ public:
         int   objectsPerFrame = 64;    // GameObjects created per Update
         std::function<void(float)> onProgress;   // 0..1, after each step
         std::function<void(bool)>  onDone;       // once: true = loaded, false = failed / cancelled
+        /// Streamed load (docs/engine/asset_streaming.md; what WorldStreamer cells use): the file is read on a job
+        /// thread, the meshes and textures it names are decoded there too through the asset streamer
+        /// (AssetManager::Stream, at `priority`), and only then are the objects made, a few at a time under the
+        /// streamer's per-frame time budget (AssetManager::FrameBudgetMs; `objectsPerFrame` is ignored). Every
+        /// streamed load and spread unload in a frame shares that one budget. BeginAsyncLoad returns a handle at
+        /// once; a file that cannot be read reports through onDone(false) a frame later.
+        bool  stream = false;
+        float priority = 0.0f;          // stream: higher is read, decoded and made first
     };
+    /// Where a load stands (the streamer's per-cell state).
+    enum class LoadPhase { None, Reading, Creating, Loaded, Failed, Unloading };
     /// A replacing load (additive false) is the newest word on what the scene should be: a deferred load or text
     /// load still waiting, and a replacing load still in flight, are cancelled (their callbacks hear false; what a
     /// load in flight made is removed) when this one begins. An additive load is not cancelled by it until the
@@ -219,6 +230,28 @@ public:
     /// half way and remove what it made. False for an unknown handle. For a replacing
     /// (non-additive) load this does not bring the old scene back.
     bool  UnloadAdditive(int handle);
+    /// UnloadAdditive spread over frames: the objects go a few at a time (children before parents) under the
+    /// streaming frame budget, and a load still reading or decoding its assets is cancelled (its queued decodes are
+    /// dropped). The handle reads as Unloading until the last object is gone. False for an unknown handle.
+    bool  UnloadAdditiveSpread(int handle);
+    LoadPhase GetLoadPhase(int handle) const;
+    /// Finish a load now, in this call (a teleport, a loading screen): waits for its read and mesh decodes and makes
+    /// every object at once. True when it is loaded.
+    bool  CompleteLoad(int handle);
+    /// The top-level objects a finished load made (empty while it is loading or after a failure).
+    std::vector<std::uint64_t> LoadedRoots(int handle) const;
+    /// A streamed load's priority changed (the player moved): its reads, decodes and object creation reorder.
+    void  SetLoadPriority(int handle, float priority);
+    /// What streamed loads and spread unloads did in the last frame.
+    struct StreamFrameStats {
+        double ms = 0.0;        ///< main-thread time spent on them
+        int created = 0;        ///< objects made
+        int destroyed = 0;      ///< objects removed
+        int started = 0;        ///< loads that finished (Awake / Start of their components ran)
+    };
+    const StreamFrameStats& LastStreamFrame() const { return m_streamFrame; }
+    /// For tests: the clock (milliseconds) the streaming frame budget is measured with (empty = the real clock).
+    void  SetStreamClock(std::function<double()> nowMs) { m_streamClock = std::move(nowMs); }
 
     // ---- Queries -------------------------------------------------------
     GameObject* Find(const std::string& name) const;
@@ -651,7 +684,19 @@ private:
         AsyncLoadOptions opts;
         std::vector<Component*> held;   // made by the job, not yet adopted
         bool finished = false, ok = false;
+        bool rush = false;               // CompleteLoad: no frame budget, wait for the read
+        std::string path;                // stream: the file, read on a job thread
+        std::shared_ptr<SceneStreamRead> read;   // stream: the read and the asset decodes (Scene.cpp)
     };
+    /// A spread unload: object ids, children before parents, removed from `next` on.
+    struct UnloadRecord { int handle = 0; std::vector<std::uint64_t> ids; std::size_t next = 0; };
+    std::vector<UnloadRecord> m_unloads;
+    StreamFrameStats m_streamFrame;
+    std::function<double()> m_streamClock;
+    double StreamNow() const;
+    bool StreamReady(LoadRecord& r);     // stream: the read and its decodes are done (starts the texture prefetch)
+    void StepUnloads(double start, double budgetMs);
+    std::vector<std::uint64_t> ChildrenFirst(const std::vector<std::uint64_t>& ids) const;
     LoadRecord* FindLoad(int handle);
     const LoadRecord* FindLoad(int handle) const;
     std::vector<LoadRecord> m_loads;

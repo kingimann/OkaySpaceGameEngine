@@ -59,94 +59,94 @@ Back to the [code index](../code_index.md). 32 headers, 630 names.
 - `ConcatNode` struct, line 291
 - `MakeVec3Node` struct, line 297
 - `BreakVec3Node` struct, line 302
-- `KeyNode` struct, line 313: Input query data nodes. The key comes from Input::KeyFromName, matching
-- `KeyDownNode` struct, line 318
-- `MouseXNode` struct, line 323
-- `MouseYNode` struct, line 326
-- `GestureSwipeDirectionNode` struct, line 329
-- `GesturePinchScaleNode` struct, line 332
-- `GestureTwistNode` struct, line 335
-- `GetPositionNode` struct, line 340: Transform getters (read this object's local position).
-- `GetAxisNode` struct, line 345
-- `SetVarNode` struct, line 356: ---- Exec nodes (perform side effects) --------------------------------
-- `PrintNode` struct, line 377: Pin 0 is the message (typed or wired, as it always was); pin 1 is an optional
-- `TranslateNode` struct, line 389
-- `SetPositionNode` struct, line 399
-- `RotateNode` struct, line 410
-- `BranchNode` struct, line 418
-- `AddVarNode` struct, line 427: Add the data input to a variable in place (a counter / accumulator). Equivalent
-- `SetScaleNode` struct, line 448
-- `SetRotationNode` struct, line 459
-- `VsResolveObject` function, line 469: Defined with the object helpers in NodesExtra.hpp (an object reference or a name).
-- `DestroyNode` struct, line 471
-- `SequenceNode` struct, line 491: Fan-out: fire each exec output in order (then stop this chain). Drives the
-- `OnceNode` struct, line 507: Passes control through only the first time it's reached; afterward it stops the
-- `TimerNode` struct, line 523: A self-resetting timer: passes through at most once every 'interval' seconds
-- `FlipFlopNode` struct, line 547: Alternates between its two exec outputs on each execution (out 0, then 1, ...).
-- `RepeatNode` struct, line 561: ---- More instructions (exec nodes) -----------------------------------
-- `ToggleNode` struct, line 597: Flip a boolean variable (false<->true); creates it as true if unset.
-- `LogNode` struct, line 609
-- `SpawnPrefabNode` struct, line 624: Instantiate a prefab at this object's position (replicated object creation
-- `WaitNode` struct, line 658: A one-shot wait: the first time control reaches it, the chain pauses here
-- `VsNet` function, line 691: ---- Multiplayer (NetworkManager) -------------------------------------
-- `VsNetOrSay` function, line 701: The same, for a node that has to do something: with no network session it says so (the flow carries on)
-- `NetConnectedNode` struct, line 707
-- `NetIsServerNode` struct, line 710
-- `NetIsClientNode` struct, line 713
-- `NetPeersNode` struct, line 716
-- `NetIdNode` struct, line 719
-- `NetGetVarNode` struct, line 722
-- `NetHostNode` struct, line 728
-- `NetJoinNode` struct, line 738
-- `NetSendNode` struct, line 748
-- `NetSetVarNode` struct, line 754
-- `NetDisconnectNode` struct, line 760
-- `NetChatNode` struct, line 765: Broadcast a chat line (in0 = text).
-- `NetObjRpcNode` struct, line 770: RPC on this object's NetworkObject (in0 = payload). The name is local to the object.
-- `SyncVarSetNode` struct, line 784: Write this object's SyncVar (in0 = value). Creates nothing: the component must be there,
-- `SyncVarGetNode` struct, line 803
-- `NetRpcNode` struct, line 818: Fire a named RPC on every other peer (in0 = payload string).
-- `NetSpawnOwnedNode` struct, line 825: Spawn a prefab THIS peer owns + auto-syncs, at this object's position.
-- `NetDespawnNode` struct, line 836: Despawn a SpawnOwned object on every peer (in0 = its sync id).
-- `NetReadyNode` struct, line 841: Mark this peer ready / not ready in the lobby (in0 = bool).
-- `NetStartMatchNode` struct, line 846: Host only: start the match for everyone in the room.
-- `NetMatchStartedNode` struct, line 851: True once the match has started for this peer's room.
-- `NetAllReadyNode` struct, line 855: Host only: true when every client in the room is ready.
-- `NetHostOrJoinNode` struct, line 861: ---- The easy layer (NetworkManagerEvents.cpp): players, events, the clock --
-- `NetHostOnlineNode` struct, line 873: Host Online: host over the internet through the relay under a short room code (in0, empty = make one up);
-- `NetJoinCodeNode` struct, line 883: Join By Code: join the online game with room code in0, through the relay.
-- `NetSendEventNode` struct, line 892: Send Network Event <name>: runs "On Network Event <name>" on every player (this one too). in0 = data.
-- `NetEventSenderNode` struct, line 903: Who sent the network event being handled (a player id; 0 = the host).
-- `NetPlayerCountNode` struct, line 910: Players in the game, this one included.
-- `NetPlayerIdAtNode` struct, line 914: The id of player number in0 (0 = the first, in id order); -1 past the end.
-- `NetPlayerNameNode` struct, line 925: The name of the player with id in0.
-- `NetLastErrorNode` struct, line 935
-- `NetTimeNode` struct, line 938
-- `NetPingNode` struct, line 941
-- `VsSyncId` function, line 945: This object's network id: its Network Sync's (blank = the object's name); "" without one.
-- `NetIsMineNode` struct, line 950: Does this player drive this object now? (True offline or without a Network Sync.)
-- `NetIsPredictedNode` struct, line 957: Is this object the local player that this client predicts (authoritative movement)?
-- `NetGiveOwnershipNode` struct, line 961: Host: give this object to player in0. A client: ask the host for it.
-- `NetRequestOwnershipNode` struct, line 974
-- `NetOwnerNode` struct, line 985: Who holds this object after a handoff (-1 = never handed: its Network Sync decides).
-- `NetSimulateNode` struct, line 989: Simulate Bad Network: in0 latency ms, in1 jitter ms, in2 loss % (all 0 = off). For testing on one PC.
-- `NetStatsNode` struct, line 1001: Network Stats: out0 ping (ms), out1 loss (%), out2 bytes in / s, out3 bytes out / s.
-- `NetShowStatsNode` struct, line 1016: Show Network Stats: the in-game overlay (ping, loss, bandwidth, players) on (in0 true) or off.
-- `NetMigratingNode` struct, line 1024: Is Migrating: between the host leaving and the new host taking over (host migration).
-- `SteamNameNode` struct, line 1029: ---- Steam ------------------------------------------------------------
-- `SteamUnlockedNode` struct, line 1032
-- `SteamGetStatNode` struct, line 1037
-- `SteamUnlockNode` struct, line 1042
-- `SteamSetStatNode` struct, line 1048
-- `SteamStoreNode` struct, line 1054
-- `SteamLeaderboardNode` struct, line 1058
-- `PlaySoundNode` struct, line 1067: ---- Audio ------------------------------------------------------------
-- `AddForceNode` struct, line 1078: ---- Physics (sibling Rigidbody2D) ------------------------------------
-- `AddImpulseNode` struct, line 1088
-- `SetVelocityNode` struct, line 1098
-- `VelAxisNode` struct, line 1108
-- `RaycastNode` struct, line 1121: Cast a 2D ray (in0=ox, in1=oy, in2=dx, in3=dy [, in4=maxDist]) -> did it hit?
-- `EaseNode` struct, line 1132: ---- Tween / easing (shape a 0..1 t for smooth motion) ----------------
+- `KeyNode` struct, line 315: Input query data nodes. The key comes from Input::KeyFromName, matching
+- `KeyDownNode` struct, line 321
+- `MouseXNode` struct, line 326
+- `MouseYNode` struct, line 329
+- `GestureSwipeDirectionNode` struct, line 332
+- `GesturePinchScaleNode` struct, line 335
+- `GestureTwistNode` struct, line 338
+- `GetPositionNode` struct, line 343: Transform getters (read this object's local position).
+- `GetAxisNode` struct, line 348
+- `SetVarNode` struct, line 359: ---- Exec nodes (perform side effects) --------------------------------
+- `PrintNode` struct, line 380: Pin 0 is the message (typed or wired, as it always was); pin 1 is an optional
+- `TranslateNode` struct, line 392
+- `SetPositionNode` struct, line 402
+- `RotateNode` struct, line 413
+- `BranchNode` struct, line 421
+- `AddVarNode` struct, line 430: Add the data input to a variable in place (a counter / accumulator). Equivalent
+- `SetScaleNode` struct, line 451
+- `SetRotationNode` struct, line 462
+- `VsResolveObject` function, line 472: Defined with the object helpers in NodesExtra.hpp (an object reference or a name).
+- `DestroyNode` struct, line 474
+- `SequenceNode` struct, line 494: Fan-out: fire each exec output in order (then stop this chain). Drives the
+- `OnceNode` struct, line 510: Passes control through only the first time it's reached; afterward it stops the
+- `TimerNode` struct, line 526: A self-resetting timer: passes through at most once every 'interval' seconds
+- `FlipFlopNode` struct, line 550: Alternates between its two exec outputs on each execution (out 0, then 1, ...).
+- `RepeatNode` struct, line 564: ---- More instructions (exec nodes) -----------------------------------
+- `ToggleNode` struct, line 600: Flip a boolean variable (false<->true); creates it as true if unset.
+- `LogNode` struct, line 612
+- `SpawnPrefabNode` struct, line 627: Instantiate a prefab at this object's position (replicated object creation
+- `WaitNode` struct, line 661: A one-shot wait: the first time control reaches it, the chain pauses here
+- `VsNet` function, line 694: ---- Multiplayer (NetworkManager) -------------------------------------
+- `VsNetOrSay` function, line 704: The same, for a node that has to do something: with no network session it says so (the flow carries on)
+- `NetConnectedNode` struct, line 710
+- `NetIsServerNode` struct, line 713
+- `NetIsClientNode` struct, line 716
+- `NetPeersNode` struct, line 719
+- `NetIdNode` struct, line 722
+- `NetGetVarNode` struct, line 725
+- `NetHostNode` struct, line 731
+- `NetJoinNode` struct, line 741
+- `NetSendNode` struct, line 751
+- `NetSetVarNode` struct, line 757
+- `NetDisconnectNode` struct, line 763
+- `NetChatNode` struct, line 768: Broadcast a chat line (in0 = text).
+- `NetObjRpcNode` struct, line 773: RPC on this object's NetworkObject (in0 = payload). The name is local to the object.
+- `SyncVarSetNode` struct, line 787: Write this object's SyncVar (in0 = value). Creates nothing: the component must be there,
+- `SyncVarGetNode` struct, line 806
+- `NetRpcNode` struct, line 821: Fire a named RPC on every other peer (in0 = payload string).
+- `NetSpawnOwnedNode` struct, line 828: Spawn a prefab THIS peer owns + auto-syncs, at this object's position.
+- `NetDespawnNode` struct, line 839: Despawn a SpawnOwned object on every peer (in0 = its sync id).
+- `NetReadyNode` struct, line 844: Mark this peer ready / not ready in the lobby (in0 = bool).
+- `NetStartMatchNode` struct, line 849: Host only: start the match for everyone in the room.
+- `NetMatchStartedNode` struct, line 854: True once the match has started for this peer's room.
+- `NetAllReadyNode` struct, line 858: Host only: true when every client in the room is ready.
+- `NetHostOrJoinNode` struct, line 864: ---- The easy layer (NetworkManagerEvents.cpp): players, events, the clock --
+- `NetHostOnlineNode` struct, line 876: Host Online: host over the internet through the relay under a short room code (in0, empty = make one up);
+- `NetJoinCodeNode` struct, line 886: Join By Code: join the online game with room code in0, through the relay.
+- `NetSendEventNode` struct, line 895: Send Network Event <name>: runs "On Network Event <name>" on every player (this one too). in0 = data.
+- `NetEventSenderNode` struct, line 906: Who sent the network event being handled (a player id; 0 = the host).
+- `NetPlayerCountNode` struct, line 913: Players in the game, this one included.
+- `NetPlayerIdAtNode` struct, line 917: The id of player number in0 (0 = the first, in id order); -1 past the end.
+- `NetPlayerNameNode` struct, line 928: The name of the player with id in0.
+- `NetLastErrorNode` struct, line 938
+- `NetTimeNode` struct, line 941
+- `NetPingNode` struct, line 944
+- `VsSyncId` function, line 948: This object's network id: its Network Sync's (blank = the object's name); "" without one.
+- `NetIsMineNode` struct, line 953: Does this player drive this object now? (True offline or without a Network Sync.)
+- `NetIsPredictedNode` struct, line 960: Is this object the local player that this client predicts (authoritative movement)?
+- `NetGiveOwnershipNode` struct, line 964: Host: give this object to player in0. A client: ask the host for it.
+- `NetRequestOwnershipNode` struct, line 977
+- `NetOwnerNode` struct, line 988: Who holds this object after a handoff (-1 = never handed: its Network Sync decides).
+- `NetSimulateNode` struct, line 992: Simulate Bad Network: in0 latency ms, in1 jitter ms, in2 loss % (all 0 = off). For testing on one PC.
+- `NetStatsNode` struct, line 1004: Network Stats: out0 ping (ms), out1 loss (%), out2 bytes in / s, out3 bytes out / s.
+- `NetShowStatsNode` struct, line 1019: Show Network Stats: the in-game overlay (ping, loss, bandwidth, players) on (in0 true) or off.
+- `NetMigratingNode` struct, line 1027: Is Migrating: between the host leaving and the new host taking over (host migration).
+- `SteamNameNode` struct, line 1032: ---- Steam ------------------------------------------------------------
+- `SteamUnlockedNode` struct, line 1035
+- `SteamGetStatNode` struct, line 1040
+- `SteamUnlockNode` struct, line 1045
+- `SteamSetStatNode` struct, line 1051
+- `SteamStoreNode` struct, line 1057
+- `SteamLeaderboardNode` struct, line 1061
+- `PlaySoundNode` struct, line 1070: ---- Audio ------------------------------------------------------------
+- `AddForceNode` struct, line 1081: ---- Physics (sibling Rigidbody2D) ------------------------------------
+- `AddImpulseNode` struct, line 1091
+- `SetVelocityNode` struct, line 1101
+- `VelAxisNode` struct, line 1111
+- `RaycastNode` struct, line 1124: Cast a 2D ray (in0=ox, in1=oy, in2=dx, in3=dy [, in4=maxDist]) -> did it hit?
+- `EaseNode` struct, line 1135: ---- Tween / easing (shape a 0..1 t for smooth motion) ----------------
 
 ## `engine/include/okay/VisualScript/NodesActions.hpp`
 

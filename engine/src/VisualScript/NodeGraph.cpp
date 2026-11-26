@@ -592,7 +592,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "VecY") return std::make_unique<BreakVec3Node>(1);
     if (type == "VecZ") return std::make_unique<BreakVec3Node>(2);
     // Input.
-    if (type == "Key")     { if (!need(1)) return nullptr; return std::make_unique<KeyNode>(args[0].empty() ? ' ' : Input::KeyFromName(args[0])); }
+    if (type == "Key")     { if (!need(1)) return nullptr; return std::make_unique<KeyNode>(args[0].empty() ? ' ' : Input::KeyFromName(args[0]), args.size() > 1 && args[1] == "exact"); }
     if (type == "KeyDown") { if (!need(1)) return nullptr; return std::make_unique<KeyDownNode>(args[0].empty() ? ' ' : Input::KeyFromName(args[0])); }
     if (type == "MouseX") return std::make_unique<MouseXNode>();
     if (type == "MouseY") return std::make_unique<MouseYNode>();

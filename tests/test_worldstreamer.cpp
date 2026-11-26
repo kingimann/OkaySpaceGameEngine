@@ -44,7 +44,15 @@ int main() {
     ws->ext          = ".okayprefab";
     ws->target       = "Player";
 
-    // --- Initial sync: the 3x3 block around (2,2) loads; (1,1) hole is skipped.
+    // Cells stream in over frames (read on a job thread, made under the frame budget): run frames until the
+    // streamer has nothing in flight.
+    auto settle = [&] {
+        for (int i = 0; i < 2000 && (ws->LoadingCount() > 0 || scene.AnyLoading()); ++i) scene.Update(0.016f);
+        for (int i = 0; i < 20; ++i) scene.Update(0.016f);   // spread unloads finish
+    };
+
+    // --- Initial sync (a teleport: SyncNow finishes the cells now): the 3x3 block around (2,2) loads; the (1,1)
+    //     hole has no file, so it is not a cell at all.
     {
         ws->SyncNow();
         int cx = -99, cz = -99;
@@ -52,9 +60,9 @@ int main() {
         CHECK(cx == 2 && cz == 2);
         for (int z = 1; z <= 3; ++z)
             for (int x = 1; x <= 3; ++x)
-                CHECK(ws->IsCellLoaded(x, z));     // every cell in the ring is tracked
-        // The actual prefab instantiated for present cells; (1,1) is a recorded
-        // miss (tracked so we don't retry every frame) but spawned nothing.
+                CHECK(ws->IsCellLoaded(x, z) == !(x == 1 && z == 1));
+        CHECK(ws->KnownCellCount() == 35);
+        // The actual prefab instantiated for present cells; (1,1) spawned nothing.
         CHECK(scene.Find("cell_2_2") != nullptr);
         CHECK(scene.Find("cell_1_1") == nullptr);
         // Far cell never touched.
@@ -70,14 +78,14 @@ int main() {
         int cx = 0, cz = 0; ws->CurrentCell(cx, cz);
         CHECK(cx == 4 && cz == 2);
 
-        CHECK(ws->IsCellLoaded(5, 2));     // newly in range
+        CHECK(ws->IsCellWanted(5, 2));     // newly in range: asked for (it arrives over the next frames)
         CHECK(ws->IsCellLoaded(3, 2));     // still in the 3x3 around (4,2)
         // Cells at x=1 are now |4-1|=3 > unloadRadius(2): unloaded.
         CHECK(!ws->IsCellLoaded(1, 2));
         CHECK(!ws->IsCellLoaded(1, 3));
 
-        // Flush the frame so queued Destroy actually removes the objects.
-        scene.Update(0.016f);
+        settle();
+        CHECK(ws->IsCellLoaded(5, 2));
         CHECK(scene.Find("cell_5_2") != nullptr);   // streamed in
         CHECK(scene.Find("cell_1_2") == nullptr);   // unloaded
         CHECK(scene.Find("cell_4_2") != nullptr);   // center present
@@ -124,7 +132,7 @@ int main() {
         player->transform->localPosition = Vec3{kCell * 5 + 5.0f, 0.0f, kCell * 5 + 5.0f};  // cell (5,5): (4,2) is now out of range
         ws->Update(0.016f);                              // unload pass reaches the freed cell
         CHECK(!ws->IsCellLoaded(4, 2));
-        scene.Update(0.016f);
+        settle();
         CHECK(ws->IsCellLoaded(5, 5));
 
         GameObject* alsoGone = scene.Find("cell_5_5");

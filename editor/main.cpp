@@ -2079,8 +2079,14 @@ static void NoteFpsSummary(double frameMs) {
         okay::editor::perf::FpsSummary f; f.periodSeconds = okay::editor::perf::FpsSummary::PeriodFrom(std::getenv("OKAY_FPS_SUMMARY_S")); return f; }();
     const okay::Profiler& pr = okay::Prof();
     const okay::Profiler::Frame& f = pr.paused || pr.Count() == 0 ? okay::Profiler::Frame() : pr.FrameAt(pr.Count() - 1);
-    const std::string line = s_sum.Add(f, frameMs);
-    if (!line.empty()) okay::restart::AppendLog(PerfLogPath(), line);
+    std::string line = s_sum.Add(f, frameMs);
+    if (line.empty()) return;
+    // Which modal (if any) holds the editor right now: a modal that stays open minute after minute is what blocks every click.
+#if !defined(OKAY_ON_OKAYUI)   // (the OkayUI compatibility build has no Dear ImGui window internals)
+    const ImGuiWindow* modal = ImGui::GetCurrentContext() ? ImGui::GetTopMostPopupModal() : nullptr;
+    line += std::string("; modal open: ") + (modal ? (modal->Hidden ? std::string(modal->Name) + " (hidden)" : std::string(modal->Name)) : std::string("none"));
+#endif
+    okay::restart::AppendLog(PerfLogPath(), line);
 }
 // Modals and clicks that go nowhere (editor/ModalGuard.hpp; owner, v2.903.8.118: nothing could be clicked while frames kept coming).
 // Every modal opening and closing is a breadcrumb (okay_hang.txt, okay_crash.txt); a modal closed because it was no longer drawn,

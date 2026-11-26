@@ -310,10 +310,13 @@ struct BreakVec3Node : VsNode {  // in0 = vec -> one component
 
 // Input query data nodes. The key comes from Input::KeyFromName, matching
 // OkayScript ("a", "space", "shift", "enter", "up"...).
+// "Key right exact" reads the key as a binding does (Input::GetKeyGameExact): W A S D held only because their
+// arrow is down do not count, so a block that offers "arrow keys" or "W A S D" can keep them apart.
 struct KeyNode : VsNode {
     char key;
-    explicit KeyNode(char k) : key(k) {}
-    VsValue Eval(int, NodeGraph&, VsContext&) override { return Input::GetKey(key); }
+    bool exact;
+    explicit KeyNode(char k, bool ex = false) : key(k), exact(ex) {}
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return exact ? Input::GetKeyGameExact(key) : Input::GetKey(key); }
 };
 struct KeyDownNode : VsNode {
     char key;

@@ -94,16 +94,21 @@ struct JoinLink {
             else if (k == "kind") out.target = (v == "exported" || v == "project" || v == "dedicated") ? v : std::string();
             else if (k == "p") out.players = (int)Count(v, 100000);
             else if (k == "max") out.maxPlayers = (int)Count(v, 100000);
-            else if (k == "inv") out.inviteId = Count(v, 1000000000000L);
+            else if (k == "inv") out.inviteId = (long)Count(v, kMaxInviteId);
             p = amp + 1;
         }
         return !out.addr.empty() || out.Relayed();
     }
 
+    /// The largest invite id a link carries: the largest `long` on every platform (Windows'
+    /// `long` is 32 bits, so a bigger cap would wrap there and turn every id into 0).
+    static constexpr long kMaxInviteId = 2147483647L;
+
     /// A plain decimal count in 1..cap, else 0 (signs, letters and huge numbers are not trusted).
-    static long Count(const std::string& v, long cap) {
+    /// Worked out in 64 bits so 13 digits never overflow, whatever the size of `long`.
+    static long long Count(const std::string& v, long long cap) {
         if (v.empty() || v.size() > 13) return 0;
-        long n = 0;
+        long long n = 0;
         for (char c : v) { if (c < '0' || c > '9') return 0; n = n * 10 + (c - '0'); }
         return n <= cap ? n : 0;
     }

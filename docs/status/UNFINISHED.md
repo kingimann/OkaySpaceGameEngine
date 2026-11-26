@@ -311,7 +311,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | [27.1](../feature_map/20-35-planned.md#271-lod-generation) | LOD generation | Partial | simplifier ignores colour and material changes in its error; a mesh with `cornerUVs` is split into per-vertex UVs first; skinned... |
 | [27.2](../feature_map/20-35-planned.md#272-occlusion-culling) | Occlusion culling | Partial | CPU rasteriser only (no GPU queries); conservative, so it may draw more than needed; no components yet. |
 | [27.3](../feature_map/20-35-planned.md#273-batching) | Batching | Partial | `isStatic` is only "a hint for tools"; merged meshes need a draw path in each renderer; skinned and transparent objects are never... |
-| [27.4](../feature_map/20-35-planned.md#274-streaming) | Streaming | Partial | a loaded cell is created in one frame (hitch risk); saves do not know about unloaded cells (see 35.3); cells are on the XZ plane... |
+| [27.4](../feature_map/20-35-planned.md#274-streaming) | Streaming | Partial | cells now stream without hitches (asset streaming round 1); mip streaming not in the renderers; no editor Streaming page; saves do not know about unloaded cells (see 35.3); XZ plane only |
 
 ### 28. Version control integration (High)
 

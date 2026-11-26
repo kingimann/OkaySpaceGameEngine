@@ -9,6 +9,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 
 #if defined(_WIN32)
 #  ifndef WIN32_LEAN_AND_MEAN
@@ -196,20 +197,18 @@ const int kSendFlags = 0;
 
 using Clock = std::chrono::steady_clock;
 
+// One browser connection. The answer goes out a piece at a time across Poll() calls, never with a blocking send:
+// a 3 MB game file would otherwise stall the editor's frame until the reader caught up, and be cut off after the
+// send time limit when it did not (the reader may be on this same thread, as in the tests).
 struct Conn {
     Sock s = kNoSock;
     std::string in;
-    Clock::time_point since;
+    Clock::time_point since;                 ///< opened, or the last time bytes went out
+    bool answering = false;
+    std::string out;                         ///< bytes waiting to go out
+    std::size_t sent = 0;                    ///< how many of `out` already went
+    std::unique_ptr<std::ifstream> file;     ///< the rest of a GET's body, read 64 KB at a time
 };
-
-bool SendAll(Sock s, const char* p, std::size_t n) {
-    while (n > 0) {
-        const int got = (int)::send(s, p, (int)std::min<std::size_t>(n, 1 << 20), kSendFlags);
-        if (got <= 0) return false;
-        p += got; n -= (std::size_t)got;
-    }
-    return true;
-}
 } // namespace
 
 struct PreviewServer::Impl {
@@ -220,22 +219,14 @@ struct PreviewServer::Impl {
     int served = 0;
     bool netUp = false;
 
+    // Work out the answer to the request in `c.in`; Pump sends it.
     void Answer(Conn& c) {
+        c.answering = true;
         const Request r = ParseRequest(c.in);
         auto reply = [&](int status, const std::string& body) {
-            const std::string h = ResponseHead(status, "text/plain; charset=utf-8", body.size());
-            SendAll(c.s, h.data(), h.size());
-            if (r.method != "HEAD") SendAll(c.s, body.data(), body.size());
+            c.out = ResponseHead(status, "text/plain; charset=utf-8", body.size());
+            if (r.method != "HEAD") c.out += body;
         };
-        // The answer is sent with the socket blocking, with a time limit, so a slow reader cannot hold the editor long.
-        SetNonBlocking(c.s, false);
-#if defined(_WIN32)
-        DWORD tmo = 3000;
-        setsockopt(c.s, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tmo, sizeof tmo);
-#else
-        timeval tmo{3, 0};
-        setsockopt(c.s, SOL_SOCKET, SO_SNDTIMEO, &tmo, sizeof tmo);
-#endif
         ++served;
         if (!r.ok) return reply(400, "bad request\n");
         if (r.method != "GET" && r.method != "HEAD") return reply(405, "only GET and HEAD\n");
@@ -245,15 +236,30 @@ struct PreviewServer::Impl {
         const fs::path fp = fs::u8path(file);
         if (!fs::is_regular_file(fp, ec)) return reply(404, "not found\n");
         const std::uint64_t size = fs::file_size(fp, ec);
-        std::ifstream f(fp, std::ios::binary);
-        if (ec || !f) return reply(404, "not found\n");
-        const std::string h = ResponseHead(200, ContentType(file), size);
-        if (!SendAll(c.s, h.data(), h.size()) || r.method == "HEAD") return;
-        std::vector<char> buf(1 << 16);
-        while (f) {
-            f.read(buf.data(), (std::streamsize)buf.size());
-            const std::streamsize n = f.gcount();
-            if (n <= 0 || !SendAll(c.s, buf.data(), (std::size_t)n)) break;
+        auto f = std::make_unique<std::ifstream>(fp, std::ios::binary);
+        if (ec || !*f) return reply(404, "not found\n");
+        c.out = ResponseHead(200, ContentType(file), size);
+        if (r.method == "GET") c.file = std::move(f);
+    }
+
+    // Send what the socket takes now without waiting. True when the answer is finished (all sent, or the reader is
+    // gone); false while more waits for the next Poll.
+    static bool Pump(Conn& c) {
+        for (;;) {
+            if (c.sent == c.out.size()) {
+                c.out.clear();
+                c.sent = 0;
+                if (!c.file) return true;
+                c.out.resize(1 << 16);
+                c.file->read(&c.out[0], (std::streamsize)c.out.size());
+                const std::streamsize n = c.file->gcount();
+                c.out.resize(n > 0 ? (std::size_t)n : 0);
+                if (!*c.file) c.file.reset();   // the end of the file: this is the last piece
+                if (c.out.empty()) continue;
+            }
+            const int n = (int)::send(c.s, c.out.data() + c.sent, (int)std::min<std::size_t>(c.out.size() - c.sent, 1 << 20), kSendFlags);
+            if (n > 0) { c.sent += (std::size_t)n; c.since = Clock::now(); continue; }
+            return !(n < 0 && WouldBlock());   // full for now: the next frame; failed or closed: finished
         }
     }
 };
@@ -323,16 +329,24 @@ void PreviewServer::Poll() {
     const auto now = Clock::now();
     for (std::size_t i = 0; i < m->conns.size();) {
         Conn& c = m->conns[i];
-        bool done = false;
+        bool done = false, peerDone = false;
         char buf[4096];
         for (;;) {
             const int n = (int)::recv(c.s, buf, sizeof buf, 0);
-            if (n > 0) { c.in.append(buf, (std::size_t)n); if (c.in.size() > 16384) { done = true; break; } continue; }
-            if (n == 0 || !WouldBlock()) done = true;   // closed or failed
+            if (n > 0) {
+                if (c.answering) continue;   // one answer per connection: anything more is read and dropped
+                c.in.append(buf, (std::size_t)n);
+                if (c.in.size() > 16384) { done = true; break; }
+                continue;
+            }
+            if (n == 0) peerDone = true;           // the reader finished sending (it may still be reading)
+            else if (!WouldBlock()) done = true;   // failed
             break;
         }
-        if (c.in.find("\r\n\r\n") != std::string::npos) { m->Answer(c); done = true; }
-        // A browser may open a connection ahead of time and send nothing: drop it after a while.
+        if (!done && !c.answering && c.in.find("\r\n\r\n") != std::string::npos) m->Answer(c);
+        if (!done && c.answering) done = Impl::Pump(c);
+        else if (peerDone) done = true;
+        // A browser may open a connection ahead of time and send nothing, or stop reading: drop it after a while.
         if (now - c.since > std::chrono::seconds(10)) done = true;
         if (done) { CloseSock(c.s); m->conns.erase(m->conns.begin() + (std::ptrdiff_t)i); }
         else ++i;

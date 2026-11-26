@@ -28,8 +28,18 @@ public:
     /// host's name / lighting stay, roots move by `offset`); otherwise the scene is
     /// cleared by the first Step and takes the file's settings. Null + `error` if the
     /// file cannot be read.
+    /// `referencedFiles` (optional) gets the asset paths the document names (ExtractSceneRefs), so a streamed
+    /// load can decode them before the objects are made. Touches no scene: safe on a job thread.
     static std::unique_ptr<SceneLoadJob> OpenFile(const std::string& path, bool additive,
-                                                  const Vec3& offset = Vec3{0, 0, 0}, std::string* error = nullptr);
+                                                  const Vec3& offset = Vec3{0, 0, 0}, std::string* error = nullptr,
+                                                  std::vector<std::string>* referencedFiles = nullptr);
+    /// The folder the document was read from (where its relative mesh files are looked for too).
+    const std::string& Folder() const { return m_dir; }
+    /// A prefab with nested prefabs or a variant (PrefabTools::UsesPrefabStructure): Step cannot make it; the
+    /// caller instantiates the file in one go and hands the result back with FinishWith.
+    bool UsesPrefabStructure() const { return m_prefabStructure; }
+    /// The objects were made another way (see UsesPrefabStructure): the job is Finished with these top-level objects.
+    void FinishWith(std::vector<std::uint64_t> roots) { m_roots = std::move(roots); m_started = m_finished = true; }
     static std::unique_ptr<SceneLoadJob> OpenText(std::string text, bool additive,
                                                   const Vec3& offset = Vec3{0, 0, 0});
 
@@ -54,7 +64,7 @@ private:
     std::unique_ptr<ParseSession> m_session;
     std::string m_dir;
     Vec3 m_offset;
-    bool m_additive = false, m_started = false, m_finished = false, m_failed = false;
+    bool m_additive = false, m_started = false, m_finished = false, m_failed = false, m_prefabStructure = false;
     int  m_created = 0;
     std::size_t m_size = 1;
     std::vector<std::uint64_t> m_roots;

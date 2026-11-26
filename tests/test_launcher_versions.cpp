@@ -48,6 +48,17 @@ struct TempDir {
     }
 };
 
+// launcher.cfg: `s` written by WriteSettings and read back line by line with ApplySettingLine (every line must be one of ours).
+Settings RoundTrip(const Settings& s) {
+    std::ostringstream out;
+    WriteSettings(s, out);
+    Settings back;
+    std::istringstream in(out.str());
+    std::string line;
+    while (std::getline(in, line)) { const auto eq = line.find('='); CHECK(eq != std::string::npos && ApplySettingLine(back, line.substr(0, eq), line.substr(eq + 1))); }
+    return back;
+}
+
 void Put(const fs::path& p, const std::string& text) {
     std::error_code ec;
     fs::create_directories(p.parent_path(), ec);
@@ -982,12 +993,7 @@ int main() {
         CHECK(ApplySettingLine(s, "lts_line", "2.850.1") && s.ltsLine == "2.850" && ApplySettingLine(s, "lts_line", "x") && s.ltsLine.empty());
         CHECK(!ApplySettingLine(s, "accent", "3") && !ApplySettingLine(s, "update_on_launch", "1") && !ApplySettingLine(s, "", ""));   // other keys are not ours
         s.channel = Channel::Lts; s.keepPrevious = 4; s.defaultEditor = "2.850.1"; s.ltsLine = "2.850";
-        std::ostringstream out;
-        WriteSettings(s, out);
-        Settings back;
-        std::istringstream in(out.str());
-        std::string line;
-        while (std::getline(in, line)) { const auto eq = line.find('='); CHECK(eq != std::string::npos && ApplySettingLine(back, line.substr(0, eq), line.substr(eq + 1))); }
+        const Settings back = RoundTrip(s);
         CHECK(back.channel == Channel::Lts && back.keepPrevious == 4 && back.defaultEditor == "2.850.1" && back.ltsLine == "2.850");
         std::ostringstream dflt;
         WriteSettings(Settings{}, dflt);
@@ -1525,11 +1531,7 @@ int main() {
         std::ostringstream out;
         WriteSettings(s, out);
         CHECK(Has(out.str(), "skipped_version=2.904.0.7\n"));
-        Settings back;
-        std::istringstream in(out.str());
-        std::string line;
-        while (std::getline(in, line)) { const auto eq = line.find('='); CHECK(eq != std::string::npos && ApplySettingLine(back, line.substr(0, eq), line.substr(eq + 1))); }
-        CHECK(back.skippedVersion == "2.904.0.7");
+        CHECK(RoundTrip(s).skippedVersion == "2.904.0.7");
         std::ostringstream dflt;
         WriteSettings(Settings{}, dflt);
         CHECK(!Has(dflt.str(), "skipped_version"));

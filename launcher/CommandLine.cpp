@@ -79,6 +79,38 @@ void Session::Stop() {
     if (child_.Running()) child_.Stop();
 }
 
+// ---- the programs of their own -------------------------------------------------------------------------------------
+
+const std::vector<ToolProgram>& ToolPrograms() {
+    static const std::vector<ToolProgram> k = {
+        {"Browser", "The OkaySpace browser in a window of its own (the same browser as the Browser page).",
+         {"OkaySpaceBrowser.exe", "okay-browser.exe", "okay-browser"}},
+        {"Script Editor", "The Script Editor in a window of its own.",
+         {"OkaySpaceScriptEditor.exe", "okay-script-editor.exe", "okay-script-editor"}},
+        {"Visual Script", "The Visual Script editor in a window of its own.",
+         {"OkaySpaceVisualScript.exe", "okay-visual-script.exe", "okay-visual-script"}},
+    };
+    return k;
+}
+
+std::vector<FoundProgram> FindPrograms(const std::vector<std::string>& dirs) {
+    std::vector<FoundProgram> found;
+    std::error_code ec;
+    for (const ToolProgram& p : ToolPrograms()) {
+        std::string path;
+        for (const std::string& d : dirs) {
+            if (d.empty()) continue;
+            for (const std::string& f : p.files) {
+                const fs::path full = fs::u8path(d) / fs::u8path(f);
+                if (fs::is_regular_file(full, ec)) { path = full.u8string(); break; }
+            }
+            if (!path.empty()) break;
+        }
+        if (!path.empty()) found.push_back({p.label, p.tip, path});
+    }
+    return found;
+}
+
 // ---- shells -------------------------------------------------------------------------------------------------------
 
 std::vector<ShellKind> AvailableShells() {

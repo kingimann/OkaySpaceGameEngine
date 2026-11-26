@@ -136,6 +136,20 @@ std::vector<std::string> TerminalArgv();
 /// False with a plain reason.
 bool OpenTerminal(const std::string& folder, const std::string& toolsDir, std::string& error);
 
+// ---- the programs of their own -------------------------------------------------------------------------------------
+
+/// A program the page offers to start in a window of its own (owner, 2026-11-26: the browser, the command line, the Script
+/// Editor and Visual Script are programs of their own too). Found by its file name; not offered when no file is there.
+struct ToolProgram {
+    std::string label, tip;
+    std::vector<std::string> files;   ///< the file names it may have (the Windows release name first)
+};
+/// Every such program the launcher knows: Browser now; Script Editor and Visual Script once they ship.
+const std::vector<ToolProgram>& ToolPrograms();
+struct FoundProgram { std::string label, tip, path; };
+/// The ToolPrograms() that exist in one of `dirs` (the launcher's folder, then its Tools folder), in the table's order.
+std::vector<FoundProgram> FindPrograms(const std::vector<std::string>& dirs);
+
 // ---- the page's layout --------------------------------------------------------------------------------------------
 
 using okay::launcherlayout::Rect;   // launcher/PageLayout.hpp: the launcher pages' one box type and overlap test

@@ -1188,7 +1188,7 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& savedText, std::s
                 if (other.d.name == name && other.d.scope == d.scope) return fail("variable '" + name + "' is declared twice");
             if (pendingDecls.size() >= 2000) return fail("a graph can declare at most 2000 variables");
             pendingDecls.push_back({lineNo, d, type, lit, tok.size() > 4 && !lit.empty()});   // a blank default = the type's default
-        } else if (kind == "pos" || kind == "comment") {
+        } else if (kind == "pos" || kind == "comment" || kind == "knot") {   // editor layout only
             // Editor layout (node positions, comment frames): nothing to run.
         } else {
             // A directive from a newer editor: skip it rather than refusing the

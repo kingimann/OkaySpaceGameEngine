@@ -199,7 +199,7 @@ std::vector<Cause> CausesOf(const SiteResult& r) {
         Add(out, seen, Area::Network, "page answered HTTP " + std::to_string(page->status), page->finalUrl);
     for (const Fetch& f : r.fetches) {
         const std::string enc = str::LowerAscii(str::Trim(f.contentEncoding));
-        if (!enc.empty() && enc != "identity" && enc != "gzip" && enc != "x-gzip" && enc != "deflate")
+        if (!enc.empty() && enc != "identity" && enc != "gzip" && enc != "x-gzip" && enc != "deflate" && enc != "br")   // br: round 4
             Add(out, seen, Area::Network, "Content-Encoding '" + enc + "' not read", f.url);
         if (f.note == "redirect refused") Add(out, seen, Area::Network, "redirect refused (" + f.kind + ")", f.url);
         if (f.kind == "page") continue;

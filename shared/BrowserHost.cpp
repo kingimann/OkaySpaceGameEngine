@@ -7,6 +7,7 @@
 #include "Process.hpp"
 #include "okay/Browser/GamePack.hpp"
 #include "okay/Browser/WebFont.hpp"
+#include "okay/Core/Brotli.hpp"
 #include "okay/Core/ImageDecode.hpp"
 #include "okay/Core/StringUtil.hpp"
 #include "okay/Platform/NativeFetch.hpp"
@@ -58,6 +59,57 @@ constexpr int kMaxRedirectHops = 10;
 constexpr std::size_t kMaxGameLog = 4096;   // the tail of what a game wrote to stderr, for the message when it fails
 
 std::string Tail(const std::string& s, std::size_t n) { return s.size() <= n ? s : s.substr(s.size() - n); }
+
+// Content-Encoding: br (RFC 7932) through the engine's own decoder, for the HTTP client (okay::ownhttp::BrotliFn).
+bool BrotliBody(const std::string& in, std::size_t maxOut, std::string& out, std::string& why) {
+    okay::brotli::Options op;
+    op.maxOutput = maxOut;
+    std::vector<std::uint8_t> bytes;
+    if (!okay::brotli::Decode((const std::uint8_t*)in.data(), in.size(), bytes, op, why)) return false;   // "... larger than the limit": TooLarge
+    out.assign(bytes.begin(), bytes.end());
+    return true;
+}
+
+// Sec-Fetch-Site (Fetch Metadata Request Headers 2.4) of a request to `url` started from `from` (a page's address, or for a page
+// load the site of the page whose link started it: TabFetch::fromSite). "" = the person (typed, bookmark, Back): none.
+std::string FetchSite(const std::string& url, const std::string& from, bool fromIsSite) {
+    if (from.empty()) return "none";
+    if (!fromIsSite && SameOrigin(url, from)) return "same-origin";
+    const std::string site = fromIsSite ? from : SiteOf(HostOf(from));
+    return site == SiteOf(HostOf(url)) && (fromIsSite || ParseUrl(url).scheme == ParseUrl(from).scheme) ? "same-site" : "cross-site";
+}
+
+// The headers a browser sends with every request of a page, from the standards and nothing else (no client hints, no other
+// browser's names): Fetch 4.1 (the Accept value for the request's destination; Accept-Language), Fetch Metadata Request Headers
+// (Sec-Fetch-Dest, -Mode, -Site and -User), Upgrade Insecure Requests 3.2.1 (navigations) and Referrer Policy 3 (its default,
+// strict-origin-when-cross-origin: the page's address to its own origin, only its origin elsewhere, nothing from https to http).
+// The User-Agent and Accept-Encoding come from the client; cookies from the tab.
+void StandardHeaders(std::vector<std::string>& h, BrowserTab::FetchKind kind, const std::string& url, const std::string& pageUrl,
+                     const std::string& initiatorSite) {
+    const bool page = kind == BrowserTab::FetchKind::Page;
+    const char* accept = "*/*";
+    const char* dest = "empty";
+    const char* mode = "no-cors";
+    switch (kind) {
+    case BrowserTab::FetchKind::Page: accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"; dest = "document"; mode = "navigate"; break;
+    case BrowserTab::FetchKind::Image: accept = "image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5"; dest = "image"; break;
+    case BrowserTab::FetchKind::Style: accept = "text/css,*/*;q=0.1"; dest = "style"; break;
+    case BrowserTab::FetchKind::Script: dest = "script"; break;
+    case BrowserTab::FetchKind::Font: dest = "font"; mode = "cors"; break;   // CSS Fonts 4, 4.8.2: fonts are fetched in cors mode
+    }
+    h.push_back(std::string("Accept: ") + accept);
+    h.push_back("Accept-Language: en-US,en;q=0.9");
+    if (page) h.push_back("Upgrade-Insecure-Requests: 1");
+    h.push_back(std::string("Sec-Fetch-Dest: ") + dest);
+    h.push_back(std::string("Sec-Fetch-Mode: ") + mode);
+    h.push_back("Sec-Fetch-Site: " + (page ? FetchSite(url, initiatorSite, true) : FetchSite(url, pageUrl, false)));
+    if (page && initiatorSite.empty()) h.push_back("Sec-Fetch-User: ?1");   // the person started it
+    if (!page && !pageUrl.empty() && !(ParseUrl(pageUrl).scheme == "https" && ParseUrl(url).scheme == "http")) {
+        const std::string origin = OriginOf(pageUrl);
+        if (SameOrigin(url, pageUrl)) h.push_back("Referer: " + WithoutFragment(pageUrl));
+        else if (!origin.empty()) h.push_back("Referer: " + origin + "/");
+    }
+}
 
 } // namespace
 
@@ -115,13 +167,13 @@ int FetchWorker(void* p) {
         ro.callerCookies = true;
         ro.connectMs = 8000; ro.ioMs = 15000; ro.totalMs = job.kind == TabFetch::Script ? 60000 : 30000;
         ro.acceptGzip = true;
+        ro.brotli = BrotliBody;   // Accept-Encoding: gzip, deflate, br
         ro.cancel = [&s] { return okay::thr::AtomicGet(&s.cancel) != 0; };
         std::vector<std::string> hdrs;
         bool hasAgent = false;
         for (const std::string& h : job.headers) if (okay::str::LowerAscii(h.substr(0, 11)) == "user-agent:") hasAgent = true;
         if (!args->userAgent.empty() && !hasAgent) hdrs.push_back("User-Agent: " + args->userAgent);
-        if (job.kind == TabFetch::Page) hdrs.push_back("Accept: text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8");
-        for (const std::string& h : job.headers) hdrs.push_back(h);
+        for (const std::string& h : job.headers) hdrs.push_back(h);   // the standard set (StandardHeaders) and the cookies
         okay::http::ExResult r;
         if (okay::http::NativeAvailable())
             r = okay::http::RequestEx(job.method, job.url, okay::http::CleanHeaderLines(hdrs), job.body, std::string(), std::string(), ro);
@@ -313,8 +365,10 @@ void TabHost::Pump() {
         }
         TabFetch j;
         j.url = j.firstUrl = u;
-        j.kind = m_tab.KindOfFetch(u) == BrowserTab::FetchKind::Page ? TabFetch::Page : TabFetch::Sub;
+        const BrowserTab::FetchKind fk = m_tab.KindOfFetch(u);
+        j.kind = fk == BrowserTab::FetchKind::Page ? TabFetch::Page : TabFetch::Sub;
         j.generation = m_impl->generation;
+        StandardHeaders(j.headers, fk, u, j.kind == TabFetch::Page ? std::string() : m_tab.Url(), m_tab.Initiator());
         if (j.kind == TabFetch::Page && m_tab.PostBody(u, j.body)) {
             j.method = "POST";
             j.headers.push_back("Content-Type: application/x-www-form-urlencoded");
@@ -328,7 +382,18 @@ void TabHost::Pump() {
         j.kind = TabFetch::Script;
         j.url = j.firstUrl = r.url;
         j.method = r.method;
-        for (const auto& h : r.headers) j.headers.push_back(h.first + ": " + h.second);
+        bool accept = false, language = false;
+        for (const auto& h : r.headers) {
+            j.headers.push_back(h.first + ": " + h.second);
+            accept = accept || okay::str::EqualsNoCaseAscii(h.first, "Accept");
+            language = language || okay::str::EqualsNoCaseAscii(h.first, "Accept-Language");
+        }
+        // Fetch 4.1: */* when the page set no Accept; fetch() and XMLHttpRequest are cors-mode requests with no destination
+        if (!accept) j.headers.push_back("Accept: */*");
+        if (!language) j.headers.push_back("Accept-Language: en-US,en;q=0.9");
+        j.headers.push_back("Sec-Fetch-Dest: empty");
+        j.headers.push_back("Sec-Fetch-Mode: cors");
+        j.headers.push_back("Sec-Fetch-Site: " + FetchSite(r.url, m_tab.Url(), false));
         j.body = std::move(r.body);
         j.scriptId = r.id;
         j.cross = !SameOrigin(r.url, m_tab.Url());
@@ -500,6 +565,18 @@ bool TabHost::FollowRedirect(TabFetch& job, long status, const std::string& loca
     n.headers.erase(std::remove_if(n.headers.begin(), n.headers.end(), [](const std::string& h) {
         return okay::str::LowerAscii(h.substr(0, 7)) == "cookie:";
     }), n.headers.end());
+    // Sec-Fetch-Site of the chain: the least related hop wins (Fetch Metadata 2.4); Referer is not sent to http from https
+    for (std::string& h : n.headers) {
+        if (okay::str::LowerAscii(h.substr(0, 15)) != "sec-fetch-site:") continue;
+        const std::string was = okay::str::Trim(h.substr(15));
+        const std::string hop = SameOrigin(to, job.url) ? std::string("same-origin") : SiteOf(HostOf(to)) == SiteOf(HostOf(job.url)) ? std::string("same-site") : std::string("cross-site");
+        auto rank = [](const std::string& v) { return v == "cross-site" ? 3 : v == "same-site" ? 2 : v == "same-origin" ? 1 : 0; };
+        if (was != "none" && rank(hop) > rank(was)) h = "Sec-Fetch-Site: " + hop;   // a page the person asked for stays "none"
+    }
+    if (ParseUrl(job.url).scheme == "https" && ParseUrl(to).scheme == "http")
+        n.headers.erase(std::remove_if(n.headers.begin(), n.headers.end(), [](const std::string& h) {
+            return okay::str::LowerAscii(h.substr(0, 8)) == "referer:";
+        }), n.headers.end());
     // the next address's own cookies; a page's fetch() only carries cookies to its own site
     const std::string cookie = n.kind == TabFetch::Script && (n.cross || !SameOrigin(to, m_tab.Url())) ? std::string() : m_tab.CookieHeader(to);
     if (!cookie.empty()) n.headers.push_back("Cookie: " + cookie);

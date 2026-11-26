@@ -23,6 +23,13 @@ Every mode is read only and prints file:line leads, never another project's text
       cloned yourself into a scratch folder). It reports runs of consecutive lines that match after whitespace
       and comments are removed. A match of several lines in a row is a lead, not proof; a clean result is not
       proof of originality. It prints file names and line numbers only, never the other code.
+  python3 scripts/provenance_scan.py backend [--summary] [--tests]
+      Every place the code talks to the hosted backend (Supabase today): one row per call site with the program(s)
+      that reach it, the service (Auth, Database, RPC, Storage, Functions, Realtime, Management API), the table /
+      bucket / function name, the key it needs and the HTTP client. Then the configuration and secret NAMES the
+      code reads (never a value) and the schema in docs/sql. --summary prints only the counts per service and per
+      program; --tests also lists the call sites inside tests. It never prints a source line, so a key that sits
+      on the same line cannot leak. This is the re-runnable part of docs/platform/okay_backend_audit.md (OkayBackend).
 
 A text scan cannot prove that nothing was copied: a port that renames and reorders passes every mode here.
 """
@@ -239,8 +246,166 @@ def overlap(refs, min_len, min_run):
         if run >= min_run: print("%s:%d-: %d matching lines, in %s" % (rel, start, run, ", ".join(sorted(hit)[:3])))
 
 
+# ---- backend: the Supabase touchpoints (docs/platform/okay_backend_audit.md) ----------------------------------------------
+# Paths are the documented Supabase HTTP API routes (PostgREST under /rest/v1, GoTrue under /auth/v1, Storage under
+# /storage/v1, Edge Functions under /functions/v1, Realtime under /realtime/v1, the management API at api.supabase.com).
+BACKEND_ROOTS = ROOTS + [".github", "config"]
+BACKEND_EXT = EXT + (".yml", ".yaml", ".json", ".txt")
+BACKEND_SKIP = ("scripts/provenance_scan.py", "docs/")
+BACKEND_PATTERNS = [
+    (re.compile(r"/rest/v1/rpc/([A-Za-z_]\w*)?"), "RPC"),
+    (re.compile(r"/rest/v1/(?!rpc/)([A-Za-z_]\w*)?"), "Database"),
+    (re.compile(r"/auth/v1/(admin/users|[a-z_]+)?"), "Auth"),
+    (re.compile(r"/storage/v1/(?:object/(?:list/|public/|sign/|info/|authenticated/)?|bucket/?)([A-Za-z$][\w${}-]*)?"),
+     "Storage"),
+    (re.compile(r"/functions/v1/([a-z0-9_-]+)?"), "Functions"),
+    (re.compile(r"/realtime/v1|postgres_changes|phx_join"), "Realtime"),
+    (re.compile(r"api\.supabase\.com/v1/projects/[^/\s\"]*/([a-z-]*)"), "Management API"),
+    # Helpers that build a Supabase address with no route text on the calling line: count each call.
+    (re.compile(r"(?<![\w:])okayversions::ReleasesBucketBase\(()"), "Storage"),
+]
+CONFIG_NAME = re.compile(r"\b(SUPABASE_[A-Z_]+|OKAY_(?:ACCOUNT|DEFAULT_ACCOUNT|UPDATE_SERVER|PUBLIC_ACCOUNT|TICKET|RESET)"
+                         r"[A-Z_]*)\b|secrets\.([A-Z][A-Z0-9_]+)")
+PROGRAM_DIRS = {"launcher": "launcher", "editor": "editor", "player": "player", "relay": "relay", "web": "web",
+                "browser": "browser", "sandbox": "sandbox", "platform": "platform", "okayscript": "okayscript",
+                "deploy": "deploy", "steam": "steam", "tools": "tools", "examples": "examples", "cmake": "build",
+                "config": "config", ".github": "CI", "scripts": "script", "tests": "test"}
+LIB_DIRS = ("engine/", "shared/", "okayui/")
+SAMPLE_HOST = re.compile(r"https://(?:example\.(?:com|invalid|org)|demo\.supabase\.co)/")
+
+
+def _is_comment(rel, s):
+    if rel.endswith((".sh", ".py", ".yml", ".yaml", ".cmake", ".txt")):
+        return s.startswith("#")
+    return s.startswith(("//", "*", "/*", "<!--"))
+
+
+def _include_graph(paths):
+    """header suffix -> set of files that #include it (one level; walked transitively by _programs)."""
+    inc = re.compile(r'#\s*include\s*[<"]([^">]+)[">]')
+    by = {}
+    for p, rel in paths:
+        if not rel.endswith((".cpp", ".hpp", ".h", ".inl", ".inc", ".c", ".mm")): continue
+        for l in lines_of(p):
+            m = inc.search(l)
+            if m: by.setdefault(m.group(1), set()).add(rel)
+    return by
+
+
+def _programs(rel, by, memo):
+    """Which programs reach `rel`: its own top folder, or for a library header everyone who includes it (transitively)."""
+    if rel in memo: return memo[rel]
+    if rel.startswith(("tests/", "okayui/tests/")) or rel.endswith("_test.ts"): return {"test"}
+    if rel.startswith("supabase/functions/"): return {"server function"}
+    if rel.startswith("supabase/auth-pages/"): return {"web page"}
+    if rel.startswith("engine/src/"): return {"engine"}
+    if not rel.startswith(LIB_DIRS):
+        top_dir = rel.split("/")[0] if "/" in rel else "build"
+        return {PROGRAM_DIRS.get(top_dir, top_dir)}
+    memo[rel] = set()                      # cycle guard
+    out, seen, todo = set(), {rel}, [rel]
+    while todo:
+        h = todo.pop()
+        keys = [k for k in by if h.endswith("/" + k) or h == k or (k.count("/") and h.endswith(k))]
+        for k in keys:
+            for f in by[k]:
+                if f in seen: continue
+                seen.add(f)
+                if f.startswith(("engine/src/",)): out.add("engine")
+                elif f.startswith(LIB_DIRS): todo.append(f)
+                elif f.startswith(("tests/", "okayui/tests/")): continue
+                else: out |= _programs(f, by, memo)
+    memo[rel] = out or {"library (no program includes it)"}
+    return memo[rel]
+
+
+def _auth(rel, service, resource, programs):
+    if service == "Management API": return "management token (sbp_)"
+    if service == "Storage" and resource == "public": return "none (public URL)"
+    if programs & {"script", "CI"}: return "service role"
+    if rel.startswith("supabase/functions/"):
+        return "anon + user JWT" if service == "Auth" and resource in ("user", "token") else "service role"
+    if rel.startswith("supabase/auth-pages/"): return "anon + recovery JWT"
+    if service == "Storage" and resource == "public": return "none (public URL)"
+    if service == "Auth" and resource in ("signup", "token", "recover", "resend", "verify"): return "anon"
+    return "user JWT"
+
+
+def _client(rel):
+    if rel.endswith(".sh") or rel.endswith((".yml", ".yaml")): return "curl"
+    if rel.endswith(".py"): return "urllib"
+    if rel.endswith((".ts", ".js", ".html", ".mjs")): return "fetch"
+    if rel.endswith((".cpp", ".hpp", ".h", ".inl")): return "okay::http::Send"
+    return "-"
+
+
+def backend(summary, with_tests):
+    t, out = tracked()
+    paths = [(os.path.join(t, f), f) for f in out
+             if f.split("/")[0] in BACKEND_ROOTS and f.endswith(BACKEND_EXT) and not f.startswith(SKIP)
+             and not f.startswith(BACKEND_SKIP)]
+    paths.append((os.path.join(t, "CMakeLists.txt"), "CMakeLists.txt"))
+    by, memo = _include_graph(paths), {}
+    rows, config = [], {}
+    for p, rel in paths:
+        bucket_var = None
+        text = lines_of(p)
+        for l in text:
+            m = re.match(r'\s*BUCKET="\$\{BUCKET:-([\w-]+)\}"', l)
+            if m: bucket_var = m.group(1)
+        is_test = _programs(rel, by, memo) == {"test"}
+        for i, l in enumerate(text, 1):
+            for m in CONFIG_NAME.finditer(l):
+                config.setdefault(m.group(1) or m.group(2), set()).add(rel)
+            s = l.strip()
+            if _is_comment(rel, s) or (is_test and not with_tests): continue
+            if SAMPLE_HOST.search(l): continue          # made-up addresses in UI previews and demo data, not a call
+            for rx, service in BACKEND_PATTERNS:
+                for m in rx.finditer(l):
+                    res = (m.group(1) if m.groups() else "") or ""
+                    if "ReleasesBucketBase" in m.group(0): res = "public:releases"
+                    elif service == "Storage":
+                        if "/object/public/" in m.group(0): res = "public"
+                        if res in ("$BUCKET", "${BUCKET}") and bucket_var: res = bucket_var
+                        if "/object/public/" in m.group(0):
+                            after = l[m.end(0) - len(m.group(1) or ""):]
+                            b = re.match(r"([A-Za-z][\w-]*)", after)
+                            res = "public:" + (b.group(1) if b else (bucket_var or "(dynamic)"))
+                    res = res.rstrip("/-") or "(dynamic)"
+                    progs = _programs(rel, by, memo)
+                    rows.append((rel, i, ", ".join(sorted(progs)), service, res,
+                                 _auth(rel, service, res.split(":")[0], progs), _client(rel)))
+    if not summary:
+        print("# file:line | program(s) | service | table / bucket / function | key | HTTP client")
+        for r in rows: print("%s:%d | %s | %s | %s | %s | %s" % r)
+    per_service, per_program, names = {}, {}, {}
+    for r in rows:
+        per_service[r[3]] = per_service.get(r[3], 0) + 1
+        names.setdefault(r[3], set()).add(r[4])
+        for prog in r[2].split(", "): per_program[prog] = per_program.get(prog, 0) + 1
+    print("\n# Call sites per service (unique names)")
+    for k in sorted(per_service, key=lambda k: -per_service[k]):
+        print("%-16s %4d  %s" % (k, per_service[k], ", ".join(sorted(names[k]))))
+    print("\n# Call sites per program (a site in a shared header counts once for every program that includes it)")
+    for k in sorted(per_program, key=lambda k: -per_program[k]): print("%-34s %4d" % (k, per_program[k]))
+    if summary: return
+    print("\n# Configuration and secret names the code reads (names only, never values): name -> files")
+    for k in sorted(config): print("%-34s %s" % (k, ", ".join(sorted(config[k])[:6]) + (" ..." if len(config[k]) > 6 else "")))
+    print("\n# Schema in docs/sql (tables / row-level security / policies / functions / triggers / buckets)")
+    tot = [0] * 6
+    for f in sorted(x for x in out if x.startswith("docs/sql/") and x.endswith(".sql")):
+        sql = open(os.path.join(t, f), errors="replace").read().lower()
+        c = [len(re.findall(r"create table", sql)), len(re.findall(r"enable row level security", sql)),
+             len(re.findall(r"create policy", sql)), len(re.findall(r"create (?:or replace )?function", sql)),
+             len(re.findall(r"create (?:or replace )?trigger", sql)), len(re.findall(r"storage\.buckets", sql))]
+        tot = [a + b for a, b in zip(tot, c)]
+        print("%-36s %3d %3d %3d %3d %3d %3d" % ((f,) + tuple(c)))
+    print("%-36s %3d %3d %3d %3d %3d %3d" % (("total",) + tuple(tot)))
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
+    if a[:1] == ["backend"]: backend("--summary" in a, "--tests" in a); sys.exit(0)
     if a[:1] == ["markers"]: markers()
     elif a[:1] == ["constants"]: constants()
     elif a[:1] == ["tables"]: tables(int(a[2]) if a[1:2] == ["--min"] else 64)

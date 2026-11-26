@@ -13,6 +13,8 @@
 - [Own build tool (okay-build): internal plan](own_build_plan.md): Internal note, not a guide. Owner, 2026-11-17: start, do not replace CMake tomorrow.
 - [okay-cc](own_compiler_plan.md): Internal note. Not a user guide. It stays off by default: not in the engine CMake, not in CI, and not in releases.
 - [Own HTTP client](own_http.md): Our own HTTP client and how ready it is to replace curl.
+- [OkayBackend: one backend layer, Supabase today, our own backend beside it](okay_backend.md): Design and rounds for the layer every program will use for online services; Supabase stays production. Nothing built yet.
+- [OkayBackend audit: every place we talk to Supabase today](okay_backend_audit.md): The audit done before any change: 330 call sites, the schema, secrets (names only) and security findings.
 - [okay-ms](own_msvc_plan.md): Internal note for issue #992. Not a user guide.
 - [The platform layer (`okay::platform`) and our own backend](platform_layer.md): Stage 1 of replacing SDL2 with our own code (see the roadmap: seam first, own backend side by side and non-default, SDL2 stays).
 - [Getting the editor and launcher off SDL2: the plan](sdl_removal_plan.md): Goal (CLAUDE.md rules 17 and 19): write the replacement ourselves, keep it off by default, and flip a default only with the owner's written approval.

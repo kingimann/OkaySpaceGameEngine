@@ -2,8 +2,8 @@
 
 The OkaySpace launcher (`launcher/`, one 26,450-line `main.cpp` plus `VoiceChat.hpp`) and the online platform it talks to:
 accounts, friends, chat, forums, marketplace, profiles, admin, the official game, Steam and PlayFab. The client code for the
-online services is header-only in `engine/include/okay/Platform`; the server side is Supabase (SQL in `docs/sql`, one Edge
-function in `supabase/functions`). Anything in `shared/` that the launcher, editor and player all use is mapped here too.
+online services is header-only in `engine/include/okay/Platform`; the server side is Supabase (SQL in `docs/sql`, two Edge
+Functions in `supabase/functions`); every Supabase call site is listed in `docs/platform/okay_backend_audit.md` (17.19). Anything in `shared/` that the launcher, editor and player all use is mapped here too.
 Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nobody is touching it now.
 
 ## 17. Launcher & platform
@@ -61,7 +61,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Docs:** `docs/online/accounts.md`, `docs/online/supabase-backend.md`, `docs/online/account_data.md`
 - **Tests:** `account`, `account_script`, `account_data`, `delete_account_function`, `editor_signin_gate`
 - **Status:** Works - local backend, session persistence and the script facade are tested; the remote and Supabase paths need a live server and are not exercised in CI. Export and delete: client logic and the function logic are unit-tested with fakes; the function is not deployed or run against a live project (owner steps in `docs/online/account_data.md`)
-- **Open:** the default Supabase project URL and publishable key are hardcoded in `CMakeLists.txt` (old map: remove them; the release workflow deliberately no longer overrides them); `AccountService` has no HTTP client on macOS (no curl since `claude/no-curl-1`)
+- **Open:** the default Supabase project URL and publishable key are built into every program from `config/public-account.json` (read by `CMakeLists.txt`; the key is a publishable key, safe to ship; the same key is also copied into `tests/test_crash_scrub.cpp`, see 17.19); every online call writes Supabase routes by hand (OkayBackend, 17.19, replaces that); `AccountService` has no HTTP client on macOS (no curl since `claude/no-curl-1`)
 - **Related:** 17.9, 17.11, 42.4, 41.6
 - **Words:** account, sign in, login, register, username, password, session, token, Supabase, cloud save, leaderboard, AccountService, NativeHttp, WinHTTP, curl, JWT, delete account, export my data, download my data, GDPR, privacy
 - **Seen as:** "can't sign in"; signed out after a restart; sign-in works in the launcher but not in a game; the launcher is slow to fill in (curl per request)
@@ -432,3 +432,23 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Words:** browser, web browser, page viewer, web view, HTML, CSS, DOM, JavaScript, script, console, event, setTimeout, innerHTML, querySelector, layout, cascade, selector, link, back, forward, in-app browser, okay-game, canvas, page engine, tabs, bookmarks, history, downloads, search, zoom, find on page, flexbox, grid, float, forms
 - **Seen as:** a chat link opens in the system browser instead of the launcher's Browser page; the Browser page says it needs OkayUI; a page looks different from Chrome; a link does nothing; an image is missing
 - **Ask me like:** "work on 17.18.3, add floats to the browser layout"; "make the browser run the game in an okay-game box"; "work on 17.18.12, add tabs to the browser program"
+
+### 17.19 OkayBackend: one backend layer for every program (Supabase today, our own Local backend beside it)
+- **System:** OkayBackend - One layer that every program uses for online services (sign-in, database, files, functions, realtime), with providers chosen by configuration: Supabase in production, our own Local backend on a developer's machine or inside tests.
+  Home: `engine/include/okay/Backend/` (planned), `engine/include/okay/Backend/Backend.hpp` (planned), `engine/src/Backend/` (planned), `backend/` (planned). Entry: `engine/include/okay/Backend/Backend.hpp` (planned). Doc: `docs/platform/okay_backend.md`. Also called: backend abstraction layer, backend providers, Supabase provider, Local backend, okay-backend, OkayBackend.exe, okay::backend.
+- **What:** Owner request 2026-11-26: programs talk to OkayBackend instead of Supabase routes, Supabase stays production, our own backend is built beside it, providers switch by configuration, migration tools for data and accounts, no extra hosting costs, audit first. Round 1 (audit and design) is done; nothing is built yet.
+- **Parts:**
+  - 17.19.1 Audit of every Supabase touchpoint - `docs/platform/okay_backend_audit.md`, `scripts/provenance_scan.py backend` - 330 call sites in 39 files (Database 236, Storage 40, RPC 30, Auth 17, Management API 4, Functions 3, Realtime 0), the schema counts, secrets and configuration names (names only), security findings and the riskiest integrations; the scan re-runs it
+  - 17.19.2 Design and rounds - `docs/platform/okay_backend.md` - C++ interfaces (Auth, Database with RPC, Storage, Functions, Realtime), providers `supabase` and `local`, configuration (`OKAY_BACKEND`, `OKAY_BACKEND_DATA`, `OKAY_BACKEND_PORT`, `backend.json`), the move order with golden request tests, the Local backend from existing pieces (WebRun's server, libsodium, `okay::json`, the reference server's behaviour), migration tools, costs, contract tests, owner decisions, 17 rounds
+  - 17.19.3 C++ interfaces and the Supabase provider - `-` - planned (rounds 2 to 7); today every call goes through `AccountService` (17.2.1) with routes written by hand
+  - 17.19.4 Local backend and `okay-backend` - `-` - planned (rounds 8 to 14); today's on-device accounts (17.2.1) and `examples/account-server/` (42.4) are what it grows from and replaces
+  - 17.19.5 Migration tools - `-` - planned (round 15): `okay backend export` / `import` / `verify`
+- **Code:** `scripts/provenance_scan.py` (the `backend` scan); planned `engine/include/okay/Backend/`, `engine/src/Backend/`, `backend/`
+- **Docs:** `docs/platform/okay_backend.md`, `docs/platform/okay_backend_audit.md`
+- **Tests:** none yet (round 1 is docs and a read-only scan)
+- **Status:** Planned - audit and design written 2026-11-26 (`claude/okay-backend-1`); no interface, provider or server exists yet.
+- **Open:** owner decisions in `docs/platform/okay_backend.md` section 13 (how Local stores data and applies the rules, realtime push, a Supabase test project, moving sign-ins, route shapes, the security clean-ups, hosting, retiring the reference server); the audit's security findings (a real publishable key copied into `tests/test_crash_scrub.cpp`, `sb_secret_`-shaped test values the owner should confirm are fake, the service role key used for release uploads)
+- **Related:** 17.1, 17.2, 17.3, 17.17, 16.4, 39.11, 42.4
+- **Words:** OkayBackend, backend, backend abstraction, provider, Supabase, PostgREST, GoTrue, Storage, Edge Functions, Realtime, Local backend, self-hosted, migration, export, import, row-level security, RLS, switch backend
+- **Seen as:** "can we run without Supabase"; "where does the launcher talk to Supabase"; "move our data off Supabase"
+- **Ask me like:** "work on 17.19, round 2: move AccountService's auth onto OkayBackend"; "point the launcher at a local backend"

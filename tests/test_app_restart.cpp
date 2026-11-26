@@ -888,6 +888,26 @@ int main(int argc, char** argv) {
         fs::remove_all(root, ec);
     }
 
+    // --- AppendLog keeps a log from growing without end (docs/engine/project_layout.md): past kMaxLogBytes the file becomes
+    //     <name>.old (one older file kept, replaced each time) and a new one starts, so at most about twice the limit is on disk.
+    {
+        std::error_code ec;
+        const fs::path dir = fs::temp_directory_path() / "okay_restart_logrotate";
+        fs::remove_all(dir, ec);
+        const fs::path log = dir / "okay_editor_perf.log";
+        const std::string line(200, 'x');
+        for (int i = 0; i < 20000; ++i) okay::restart::AppendLog(log, line);   // about 4.5 MB written in all
+        CHECK(fs::file_size(log, ec) <= okay::restart::kMaxLogBytes + 512);
+        CHECK(fs::exists(fs::path(log.string() + ".old")) && fs::file_size(log.string() + ".old", ec) <= okay::restart::kMaxLogBytes + 512);
+        std::size_t files = 0;
+        for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) ++files;
+        CHECK(files == 2);
+        okay::restart::AppendLog(log, "last line");
+        std::ifstream f(log, std::ios::binary); std::string all((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        CHECK(all.find("last line") != std::string::npos);
+        fs::remove_all(dir, ec);
+    }
+
 #if defined(_WIN32)
     CHECK(okay::restart::RunAndWait({"cmd", "/c", "exit", "0"}) == 0);
     CHECK(okay::restart::RunAndWait({"C:\\no\\such\\okay-restart-bin.exe"}) == -1);

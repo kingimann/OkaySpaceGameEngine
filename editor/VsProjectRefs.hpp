@@ -6,6 +6,7 @@
 // Files are read with the editor's own reader (VsEditGraph::fromText), so a hit is exactly a block the editor shows.
 // Included from inside VisualScriptEditor.hpp after the graph model. Written for this project.
 #include <algorithm>
+#include "EditorTabs.hpp"   // okay::edtabs::UserFile: the per-user folder
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -218,13 +219,13 @@ inline VsBookmarks& Bookmarks() {
     static bool loaded = false;
     if (!loaded) {
         loaded = true;
-        std::ifstream f("okay_vs_bookmarks.txt", std::ios::binary);
+        std::ifstream f(okay::edtabs::UserFile("okay_vs_bookmarks.txt"), std::ios::binary);   // the per-user folder
         if (f) { std::stringstream ss; ss << f.rdbuf(); b.fromText(ss.str()); }
     }
     return b;
 }
 inline void SaveBookmarks() {
-    std::ofstream f("okay_vs_bookmarks.txt", std::ios::binary);
+    std::ofstream f(okay::edtabs::UserFile("okay_vs_bookmarks.txt"), std::ios::binary);
     if (f) f << Bookmarks().toText();
 }
 

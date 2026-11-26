@@ -1899,7 +1899,10 @@ std::string CreateProject(const std::string& location, const std::string& rawNam
     } else {
         // No editor installed yet: still leave a real, openable project behind so
         // the folder isn't an empty shell — a minimal valid scene file.
-        std::ofstream o((root / "Assets" / (finalName + ".okayscene")).string(), std::ios::binary);
+        const fs::path first = okayproj::layout::FirstScenePath(root, finalName);   // <root>/Assets/Scenes
+        std::error_code mk;
+        fs::create_directories(first.parent_path(), mk);
+        std::ofstream o(first.string(), std::ios::binary);
         o << "name \"" << finalName << "\"\n";
         Toast("Created " + finalName + " (install the editor to open it)", 1);
     }

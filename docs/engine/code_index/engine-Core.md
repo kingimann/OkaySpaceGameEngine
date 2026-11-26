@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 82 headers, 517 names.
+Back to the [code index](../code_index.md). 82 headers, 520 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -26,22 +26,25 @@ Back to the [code index](../code_index.md). 82 headers, 517 names.
 - `AssetRecord` struct, line 45: One indexed asset file.
 - `ReimportEvent` struct, line 63: What a Reimport signal says changed.
 - `FoundRef` struct, line 72: A path found inside a text asset, with where it sits so it can be rewritten.
-- `ExtractSceneRefs` function, line 84: Built-in scanners, usable on their own.
-- `ExtractMaterialRefs` function, line 86: '.okaymat': the 'texture <path>' line ("-" means none).
-- `ExtractTextRefs` function, line 89: Generic text scanner (clips, dialogue, quests, behavior trees, sequences, glTF, ...):
-- `ExtractModelRefs` function, line 94: '.obj', '.mtl', '.dae' and ASCII '.fbx': Wavefront 'mtllib' and 'map_*' lines (options skipped,
-- `ScanOptions` struct, line 96
-- `ScanReport` struct, line 113
-- `MissingRef` struct, line 130
-- `StaleRef` struct, line 132: A reference that still points at an old path of a moved asset.
-- `AssetResolution` struct, line 135: Result of Resolve().
-- `AssetQuery` struct, line 143: Search query for an asset browser. Every filter that is set must match.
-- `AssetPage` struct, line 167
-- `AssetDatabase` class, line 173
-- `SetSceneAssetIndex` function, line 379: The asset database scene save/load uses to turn a path into a GUID and a GUID back into
-- `SceneAssetIndex` function, line 380
-- `SceneAssetGuid` function, line 382: The GUID text of 'path' in the bound index, or empty when there is no index or no such file.
-- `ResolveSceneAssetPath` function, line 384: 'storedPath', or the index's current path for 'guidText' when that file is still known.
+- `RefRewrite` struct, line 78: One rewrite of a found reference: its span and the text to put there.
+- `RewriteRef` function, line 82: The rewrite that makes 'r' name 'newPath' ('/' separators): written with backslashes when the old reference used only
+- `ApplyRefRewrites` function, line 84: 'text' with the rewrites spliced in (from the end, so the spans stay valid; spans must not overlap).
+- `ExtractSceneRefs` function, line 93: Built-in scanners, usable on their own.
+- `ExtractMaterialRefs` function, line 95: '.okaymat': the 'texture <path>' line ("-" means none).
+- `ExtractTextRefs` function, line 98: Generic text scanner (clips, dialogue, quests, behavior trees, sequences, glTF, ...):
+- `ExtractModelRefs` function, line 103: '.obj', '.mtl', '.dae' and ASCII '.fbx': Wavefront 'mtllib' and 'map_*' lines (options skipped,
+- `ScanOptions` struct, line 105
+- `ScanReport` struct, line 122
+- `MissingRef` struct, line 139
+- `StaleRef` struct, line 141: A reference that still points at an old path of a moved asset.
+- `AssetResolution` struct, line 144: Result of Resolve().
+- `AssetQuery` struct, line 152: Search query for an asset browser. Every filter that is set must match.
+- `AssetPage` struct, line 176
+- `AssetDatabase` class, line 182
+- `SetSceneAssetIndex` function, line 388: The asset database scene save/load uses to turn a path into a GUID and a GUID back into
+- `SceneAssetIndex` function, line 389
+- `SceneAssetGuid` function, line 391: The GUID text of 'path' in the bound index, or empty when there is no index or no such file.
+- `ResolveSceneAssetPath` function, line 393: 'storedPath', or the index's current path for 'guidText' when that file is still known.
 
 ## `engine/include/okay/Core/AssetManager.hpp`
 

@@ -167,9 +167,7 @@ public:
     SamplerHandle CreateSampler(const SamplerDesc& d) override { SamplerHandle h{NextId()}; m_samplers[h.id] = d; return h; }
     ShaderHandle CreateShader(const ShaderDesc& d) override;
     PipelineHandle CreatePipeline(const PipelineDesc& d) override {
-        if (!m_shaders.count(d.shader.id)) { SetError("CreatePipeline: unknown shader"); return {}; }
-        const std::string err = ValidatePipelineDesc(d);
-        if (!err.empty()) { SetError("CreatePipeline: " + err); return {}; }
+        if (!CheckPipeline(d, m_shaders.count(d.shader.id) != 0)) return {};
         PipelineHandle h{NextId()}; m_pipes[h.id] = GLPipe{d}; return h;
     }
     SwapChainHandle CreateSwapChain(int width, int height) override {

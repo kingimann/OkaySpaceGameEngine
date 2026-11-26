@@ -329,6 +329,8 @@ protected:
     virtual void Release(Kind k, std::uint32_t id) = 0;
     std::uint32_t NextId() { return ++m_nextId; }
     void SetError(const std::string& e) { m_error = e; }
+    /// CreatePipeline's common checks (shader known to the backend, ValidatePipelineDesc); sets the error.
+    bool CheckPipeline(const PipelineDesc& d, bool shaderKnown);
     void ReleaseAllDeferred();
     Stats m_stats;
 private:

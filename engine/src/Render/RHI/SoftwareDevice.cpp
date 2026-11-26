@@ -171,9 +171,7 @@ public:
         ShaderHandle h{NextId()}; m_shaders[h.id] = SwShader{d}; return h;
     }
     PipelineHandle CreatePipeline(const PipelineDesc& d) override {
-        if (!m_shaders.count(d.shader.id)) { SetError("CreatePipeline: unknown shader"); return {}; }
-        const std::string err = ValidatePipelineDesc(d);
-        if (!err.empty()) { SetError("CreatePipeline: " + err); return {}; }
+        if (!CheckPipeline(d, m_shaders.count(d.shader.id) != 0)) return {};
         PipelineHandle h{NextId()}; m_pipelines[h.id] = SwPipeline{d}; return h;
     }
     SwapChainHandle CreateSwapChain(int width, int height) override {

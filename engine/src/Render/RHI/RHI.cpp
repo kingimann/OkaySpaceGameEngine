@@ -80,6 +80,13 @@ std::string ValidatePipelineDesc(const PipelineDesc& d) {
     return std::string();
 }
 
+bool Device::CheckPipeline(const PipelineDesc& d, bool shaderKnown) {
+    if (!shaderKnown) { SetError("CreatePipeline: unknown shader"); return false; }
+    const std::string err = ValidatePipelineDesc(d);
+    if (!err.empty()) { SetError("CreatePipeline: " + err); return false; }
+    return true;
+}
+
 // ---- CommandList ---------------------------------------------------------------------
 // Encoding of Command fields:
 //   BeginPass a=pass index | Viewport a,b,c,d = x,y,w,h | Pipeline a=id | VertexBuffer a=id b=offset

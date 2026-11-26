@@ -1491,7 +1491,7 @@ static bool EditorRunning() {
 #if defined(_WIN32)
         if (WaitForSingleObject(pp.h, 0) == WAIT_TIMEOUT) return true;
 #else
-        if (kill(pp.pid, 0) == 0) return true;   // (reaped by PumpPlaytime once it exits)
+        if (okay::restart::PidAlive((unsigned long)pp.pid)) return true;   // (an ended, not yet reaped editor is not running; PumpPlaytime reaps it)
 #endif
     }
 #if defined(_WIN32)
@@ -1501,7 +1501,9 @@ static bool EditorRunning() {
         PROCESSENTRY32W pe; pe.dwSize = sizeof(pe);
         bool found = false;
         if (Process32FirstW(snap, &pe))
-            do { if (_wcsicmp(pe.szExeFile, L"OkayEngine.exe") == 0) { found = true; break; } } while (Process32NextW(snap, &pe));
+            // An ended editor can stay in the list while anything still holds a handle to it (the owner ended it in Task Manager
+            // and the launcher still said "open", 2026-11-26): only a process that is still running counts (PidAlive).
+            do { if (_wcsicmp(pe.szExeFile, L"OkayEngine.exe") == 0 && okay::restart::PidAlive(pe.th32ProcessID)) { found = true; break; } } while (Process32NextW(snap, &pe));
         CloseHandle(snap);
         if (found) return true;
     }

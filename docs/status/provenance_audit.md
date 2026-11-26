@@ -87,7 +87,7 @@ stated in `tests/test_ttf_rasterizer.cpp:5`).
 - **Lua** (`engine/src/Lua/`, 8,125 lines): written from the Lua 5.4 manual; no PUC-Rio identifiers (`luaV_`, `luaH_`,
   `TValue`, `lua_State`, `OP_` names); `%.14g` number printing is Lua's documented behaviour.
 - **Browser** (`engine/src/Browser/`, 8,978 lines): WHATWG HTML / DOM / URL and CSS specs cited per file; own user agent
-  "OkaySpace Browser"; `-webkit-` names are CSS property names pages use, not WebKit code.
+  token "OkaySpaceBrowser/1.0" after the common "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" compatibility prefix (no other browser named); `-webkit-` names are CSS property names pages use, not WebKit code.
 - **RHI** (`engine/src/Render/RHI/`), **physics** (`engine/src/Physics/Core/`, Catto's papers cited; Box2D-like default
   iteration counts 8 / 3 are numbers, not code), **okay-build**, **okay-cc** runtime (`tools/okaycc/lib/`, Linux system
   calls and ISO C), **okay-ms** runtime, **Xbox UWP** (own APPX writer from Microsoft's documentation and ECMA-376; no

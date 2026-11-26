@@ -130,7 +130,8 @@ again for every layout.
 
 - **Web fonts.** @font-face TrueType / OpenType files are fetched and given to OkayUI's TrueType store (our own rasterizer);
   text whose font-family names them uses them, with the closest weight and style (a real bold face when the page has one).
-  WOFF / WOFF2 are not read yet (they need their own decoders); OkayUI keeps only a few font files, so a page with many faces
+  WOFF and WOFF2 files are decoded by `Browser/WebFont` (WOFF2 through our Brotli decoder `Core/Brotli`, 2026-11-26, owner:
+  "Yes use WOFF2"), but the host does not call it yet (below); OkayUI keeps only a few font files, so a page with many faces
   gets the first ones. Italic without an italic face is drawn upright (OkayUI cannot slant text yet).
 - **Work caps for hostile pages.** Every block layout counts against a budget; flex and grid measure their items through a
   cache, so nested flex / grid boxes are not exponential; var() expansion is capped in size and depth; selector matching has a
@@ -227,13 +228,12 @@ generic font families mapped to our shipped fonts (the view picks fonts; serif /
 shipped font lacks (the summary triangle, a check mark, Greek letters are not drawn: the font has no such glyphs), outer box
 shadows under a transparent box (the view fills the shadow's whole rectangle).
 
-**Not done in round 3:** WOFF2 (Brotli needs the RFC 7932 static dictionary, about 122 KB of data published in the RFC; its
-licence under the IETF Trust Legal Provisions is not clear for that table, so it was not added); synthetic italics (the slant is
+**Not done in round 3:** synthetic italics (the slant is
 drawn by the view: OkayUI has no sheared text call yet); the host calls below. Nothing of round 3 was built or run on Windows.
 
 **Calls the browser program still has to make** (files of another agent, so not changed here):
 - `shared/BrowserHost.cpp`, font fetches: call `okay::browser::DecodeWebFont(bytes, size, sfnt, why)` and hand `sfnt` to the font
-  loader instead of the TrueType / OpenType check (WOFF fonts then load).
+  loader instead of the TrueType / OpenType check (WOFF and WOFF2 fonts then load).
 - `okayui/screens/BrowserView.cpp` `DrawBrowserPage`: draw a command whose `xform` is not the identity through it (page
   coordinates before scroll and zoom); slant text when `font.italic` and the web font has no italic face.
 - `shared/BrowserApp`: keep one `okay::browser::BrowserPlugins`; load manifests from `<data>/plugins/*.json`; ask the person to grant

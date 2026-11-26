@@ -5705,6 +5705,13 @@ foreach(_bt browser_html browser_css browser_layout browser_layout2 browser_layo
     target_link_libraries(test_${_bt} PRIVATE okay::browser)
     add_test(NAME ${_bt} COMMAND test_${_bt})
 endforeach()
+# Brotli (RFC 7932, engine/include/okay/Core/Brotli.hpp): the decoder's tables against the RFC, the RFC's examples, hand-built
+# streams (tests/brotli_writer.hpp) and hostile input. browser_webfont also builds WOFF2 files from assets/fonts/DejaVuSans.ttf.
+add_executable(test_brotli test_brotli.cpp)
+target_include_directories(test_brotli PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_link_libraries(test_brotli PRIVATE okay::brotli)
+add_test(NAME brotli COMMAND test_brotli)
+target_compile_definitions(test_browser_webfont PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 # Round 3: browser plugins also go through the shared plugin registry (editor/PluginRegistry.hpp; shared/BrowserPluginCommands.hpp).
 target_sources(test_browser_plugins PRIVATE ${CMAKE_SOURCE_DIR}/editor/PluginRegistry.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptIde.cpp)
 target_include_directories(test_browser_plugins PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)

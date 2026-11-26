@@ -613,6 +613,9 @@ struct Parser {
         return n;
     }
     Node* ForInOfRest(const Token& t, bool of, Node* head) {
+        // The head's [~In] ends at `in` / `of`: the right side is Expression[+In] (14.7.5) and the body is a
+        // Statement, so the `in` operator is allowed again (the caller's guard is still in scope).
+        NoInGuard ng(*this, false);
         Node* n = ast.NewNode(of ? NK::ForOf : NK::ForIn, t.line, t.col);
         n->a = head;
         n->b = of ? Assignment() : Expression();
@@ -1317,6 +1320,7 @@ struct Parser {
     }
 
     void FunctionBody(FuncInfo* fi) {
+        NoInGuard ng(*this, false);   // a body is FunctionBody[~In]-free: `for (var f = function () { a in b }; ;)` is fine
         std::vector<Node*> savedCover;
         savedCover.swap(cover);
         int savedLoop = loopDepth, savedSwitch = switchDepth;
@@ -1428,6 +1432,7 @@ struct Parser {
         else if (!isExpr) Unexpected("a class name");
         if (EatWord("extends")) ci->heritage = LeftHandSide();
         n->a = ci->heritage;
+        NoInGuard ng(*this, false);   // ClassBody has no [In] parameter: its keys and fields allow `in`
         Expect(P_LBrace);
         bool derived = ci->heritage != nullptr;
         while (!IsP(P_RBrace)) {

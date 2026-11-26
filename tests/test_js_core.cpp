@@ -237,6 +237,21 @@ void SyntaxErrors() {
     CHECK(rt.CheckSyntax("let r = a\n(b)", "s").empty());              // no ASI before '(' (a call)
 }
 
+// Constructs real web pages' scripts use (the site check's JavaScript causes), each from its ECMA-262 rule.
+// 14.7.5: a for-in / for-of head's `in` exclusion ends at the head: the right side ([+In] Expression) and the
+// loop body may use the `in` operator again.
+void ForInHeads() {
+    Expect("var o = {a: 1}, r = []; for (var k in o) if (k in o) r.push(k); console.log(r.join())", "a");
+    Expect("var o = {a: 1, b: 2}, n = 0, c; for (c in n = 5, o) { if ('a' in o && c in o) n++; } console.log(n)", "7");
+    Expect("const seen = []; for (const n of ['x', 'y']) if (n in {x: 1}) seen.push(n); console.log(seen.join())", "x");
+    Expect("let r = 0; for (const k in {p: 1}) { const f = () => k in {p: 2}; r = f(); } console.log(r)", "true");
+    Expect("for (var f = function (o) { return 'a' in o; }, i = 0; i < 1; i++) console.log(f({a: 1}))", "true");
+    Expect("for (var C = class { static t = 'a' in {a: 1}; }, i = 0; i < 1; i++) console.log(C.t)", "true");
+    Expect("for (var i = 0, j = ('a' in {a: 1}) ? 1 : 0; i < j; i++) console.log('in-paren', i)", "in-paren 0");
+    Runtime rt;
+    CHECK(!rt.CheckSyntax("for (var i = 0 in {}; ;) {}", "s").empty());   // 14.7.4: `in` is still excluded in a plain for head
+}
+
 struct Hostile {
     const char* src;
     const char* want;   ///< part of the error, "" for any error, "OK" when it must finish without one
@@ -471,6 +486,7 @@ int main() {
     Exceptions();
     Generators();
     SyntaxErrors();
+    ForInHeads();
     ConformanceScript(false);
     ConformanceScript(true);
     HostileOneLiners();

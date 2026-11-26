@@ -457,9 +457,9 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     const float vFov = cam->VerticalFovDegrees(aspect) * Mathf::Deg2Rad;
     const float tanV = std::tan(std::max(0.15f, vFov * 0.5f));
     const float tanH = tanV * aspect;
-    const float near = std::max(cam->nearClip, 0.04f);
+    const float nearClipDist = std::max(cam->nearClip, 0.04f);
     // Close enough that the hand reads as yours. Farther than this it floats.
-    const float depth = std::max(0.30f, near + 0.14f);
+    const float depth = std::max(0.30f, nearClipDist + 0.14f);
 
     // The body's hand brick. Local +Z (its long axis) points inward. Local +Y,
     // the broad face, points back at the lens and up so it takes the light.
@@ -659,7 +659,7 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     m_ownerArm->transform->SetRotation(cam->transform->Rotation() * lag * camSpace);
 
     // Nothing may cross the near plane. Push along the look, away from the lens.
-    const float keep = std::max(0.18f, near + 0.12f);
+    const float keep = std::max(0.18f, nearClipDist + 0.12f);
     float minAhead = 1.0e9f;
     auto consider = [&](GameObject* g) {
         if (!g || !g->transform) return;

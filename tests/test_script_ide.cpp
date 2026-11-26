@@ -220,14 +220,21 @@ int main() {
             "    var spare = 2;\n"
             "    transform.position += Vector3.right * speed * Time.deltaTime;\n"
             "    Debug.Log(scor);\n"
+            "    foreach (var e in enemies) { Debug.Log(e); }\n"
+            "    var doubled = xs.Select(x => x * 2);\n"
+            "    Debug.Log(doubled);\n"
             "    return;\n"
-            "}\n";
+            "}\n"
+            "List<Enemy> enemies;\n"
+            "int[] xs = {1, 2};\n";
         ds = BasicLint("okayscript", okay, {"Vector3", "Time", "Debug", "transform"});
         bool scor = false, spare = false;
         for (const auto& d : ds) {
             if (d.message.find("'scor' is never declared") != std::string::npos) scor = HasFix(d, "Declare 'scor'");
             if (d.message.find("'spare' is never used") != std::string::npos) spare = true;
             CHECK(d.message.find("'speed'") == std::string::npos);
+            CHECK(d.message.find("'enemies'") == std::string::npos && d.message.find("'xs'") == std::string::npos);
+            CHECK(d.message.find("'x'") == std::string::npos && d.message.find("'e'") == std::string::npos);
         }
         CHECK(scor && spare);
         // "Did you mean X?" from a checker's message becomes a fix.

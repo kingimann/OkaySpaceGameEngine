@@ -2009,6 +2009,7 @@ int  g_sideTabs = 0;             // vertical side tabs: 0 off, 1 down the left e
 ImGuiID g_dockspaceId = 0;       // the main dockspace (so panels can dock into it)
 ImGuiID g_sceneDockId = 0;        // the Scene dock node (the demo opens the graph here)
 bool g_scriptAutoPair = true;      // Script Editor: auto-close ( [ { " '
+int  g_scriptTabWidth = 4;         // Script Editor: View > Tab Width (the spaces Tab inserts and a tab character's width)
 int  g_scriptDockReq = 0;        // 0 none, 1 float (undock), 2 dock into center as a tab
 bool g_paused = false;           // pause the simulation while staying in Play
 // Visual-script debugger: while a breakpoint is set (or a step is pending) the game
@@ -12248,6 +12249,10 @@ void DrawScriptEditor(EditorState& ed) {
                 ImGui::MenuItem("Minimap", nullptr, &s_minimap);
                 ImGui::MenuItem("Script Tree and Structure", nullptr, &s_showTree);
                 ImGui::MenuItem("Auto-close Brackets", nullptr, &g_scriptAutoPair);
+                if (ImGui::BeginMenu("Tab Width")) {
+                    for (int tw : {2, 4, 8}) if (ImGui::MenuItem(std::to_string(tw).c_str(), nullptr, g_scriptTabWidth == tw)) g_scriptTabWidth = tw;
+                    ImGui::EndMenu();
+                }
                 ImGui::MenuItem("Word Wrap", nullptr, &s_wordWrap);
                 ImGui::MenuItem("Show Whitespace", nullptr, &s_showWs);
                 if (ImGui::MenuItem("Fold All", "Ctrl+Alt+[")) s_foldReq = 1;
@@ -12264,7 +12269,7 @@ void DrawScriptEditor(EditorState& ed) {
                 if (ImGui::MenuItem("Search Everywhere", "Double Shift")) g_seSearchReq = true;
                 if (ImGui::MenuItem("Go to File...", "Ctrl+Shift+N")) oked::ide::OpenQuickOpen();
                 if (ImGui::MenuItem("Go to Line...", "Ctrl+G")) rqGoto = true;
-                if (ImGui::MenuItem("Go to Symbol...")) rqOutline = true;
+                if (ImGui::MenuItem("Go to Symbol...", "Ctrl+Shift+O")) rqOutline = true;
                 if (ImGui::MenuItem("Go to Definition", "F12")) rqDef = true;
                 if (ImGui::MenuItem("Bookmarks...", "F11", false, !bookmarks.empty())) rqMarks = true;
                 ImGui::EndMenu();
@@ -12316,7 +12321,11 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::EndMenuBar();
         }
         // A plugin command's shortcut (editor/PluginRegistry.hpp), while this window has the focus.
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) oked::ide::RunPluginShortcut();
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+            if (ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift && !ImGui::GetIO().KeyAlt && ImGui::IsKeyPressed(ImGuiKey_O, false))
+                rqOutline = true;                                  // Go to Symbol in this file (Ctrl+Shift+O)
+            else oked::ide::RunPluginShortcut();
+        }
         if (rqHistory) oked::ide::OpenLocalHistory(sc->Path(), buf.data());
         // Search Everywhere's actions reuse the menu's own tools.
         if (g_seGotoReq)    { g_seGotoReq = false; rqGoto = true; }
@@ -12389,12 +12398,19 @@ void DrawScriptEditor(EditorState& ed) {
             }
             ImGui::EndPopup();
         }
-        if (ImGui::BeginPopup("##outline")) {
-            auto syms = ScriptOutline(buf.data());
+        if (ImGui::BeginPopup("##outline")) {   // Go to Symbol in this file (OkayScript and Lua: editor/ScriptIde.hpp OutlineOf)
+            static char s_symQ[64] = "";
+            if (ImGui::IsWindowAppearing()) { s_symQ[0] = '\0'; ImGui::SetKeyboardFocusHere(); }
+            ImGui::SetNextItemWidth(320);
+            const bool symEnter = ImGui::InputTextWithHint("##symq", "Symbol name...", s_symQ, sizeof s_symQ, ImGuiInputTextFlags_EnterReturnsTrue);
+            auto syms = scriptide::OutlineOf(sc->Language(), buf.data());
             if (syms.empty()) ImGui::TextDisabled("No functions or classes found.");
-            for (const auto& s : syms) {
-                char lbl[160]; std::snprintf(lbl, sizeof(lbl), "%-28s :%d", s.second.c_str(), s.first);
-                if (ImGui::MenuItem(lbl)) { jumpTo(s.first); }
+            bool first = true;
+            for (const auto& sy : syms) {
+                if (s_symQ[0] && scriptide::FuzzyScore(s_symQ, sy.display) < 0) continue;
+                char lbl[200]; std::snprintf(lbl, sizeof(lbl), "%c  %-28s :%d", sy.kind, sy.display.c_str(), sy.line);
+                if (ImGui::MenuItem(lbl) || (symEnter && first)) { jumpTo(sy.line); ImGui::CloseCurrentPopup(); }
+                first = false;
             }
             ImGui::EndPopup();
         }
@@ -13128,6 +13144,7 @@ void DrawScriptEditor(EditorState& ed) {
         ScriptEditorWidget& te = CodeEditorFor(sc);
         te.SetColorizerEnable(s_highlight);   // toolbar "Syntax" checkbox
         te.SetLineSpacing(sdm.codeLineSpacing);   // Density (the setters just store a number, so every frame is fine)
+        te.SetTabSize(g_scriptTabWidth);
         te.SetLeftMargin(sdm.codeLeftMargin);
 
         // Sync widget <-> CodeBuffer. g_teHash is the text both sides last agreed on:
@@ -13662,7 +13679,7 @@ void DrawScriptEditor(EditorState& ed) {
         te.SetHandleKeyboardInputs(true);
         if (tabSpaces) {
             const int col = te.GetCursorPosition().mColumn;
-            te.InsertTextUndoable(std::string(4 - (col % 4), ' '));
+            te.InsertTextUndoable(std::string((std::size_t)(g_scriptTabWidth - (col % g_scriptTabWidth)), ' '));
         }
         s_codeFocus = te.OkayHasKeyboard();
         ImVec2 teMin = ImGui::GetItemRectMin(), teMax = ImGui::GetItemRectMax();
@@ -14565,8 +14582,8 @@ void DrawScriptEditor(EditorState& ed) {
         const char* langLbl = sc->Language() == "okayscript" ? "C# (OkayScript)" : sc->Language().c_str();
         char selInfo[32] = "";
         if (caret.selLen > 0) std::snprintf(selInfo, sizeof(selInfo), " (%d sel)", caret.selLen);
-        ImGui::TextDisabled("%s    Ln %d, Col %d%s    %d lines    Spaces    %d%%", langLbl,
-                            caret.line, caret.col, selInfo, lines, (int)std::lround(s_zoom * 100.0f));
+        ImGui::TextDisabled("%s    Ln %d, Col %d%s    %d lines    Spaces: %d    %d%%", langLbl,
+                            caret.line, caret.col, selInfo, lines, g_scriptTabWidth, (int)std::lround(s_zoom * 100.0f));
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ctrl+scroll over the code changes the font size. View > Reset Zoom puts it back.");
         // Breadcrumb: the function enclosing the caret (Rider's location bar). Scan back
         // for the nearest `function name(` / `void Name(` at a shallower brace depth.

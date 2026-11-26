@@ -634,6 +634,10 @@ std::vector<Diagnostic> BasicLint(const std::string& language, const std::string
                 typeWord(t[i].text))
                 declared.insert(t[i + 1].text);
             if (isPunct(i + 1, "=") && isPunct(i + 2, ">")) declared.insert(t[i].text);
+            // after a generic or array type: `List<Enemy> enemies;`, `int[] xs = ...`
+            if (i > 0 && (isPunct(i - 1, ">") || isPunct(i - 1, "]")) && t[i - 1].line == t[i].line &&
+                (isPunct(i + 1, ";") || isPunct(i + 1, "=") || isPunct(i + 1, ",") || isPunct(i + 1, ")")))
+                declared.insert(t[i].text);
             // a bare function's parameters: name(a, b) {
             if (isPunct(i + 1, "(")) {
                 std::size_t k = i + 2; int depth = 1;

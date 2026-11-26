@@ -132,6 +132,9 @@ public:
                                                               const std::vector<std::string>&, const std::string&)> t) {
         transport_.SetHook(std::move(t));
     }
+    /// Tests only: `o` sees every whole request just before it is sent (also the body file of an upload and the time limit,
+    /// which SetTransportForTest's function does not get). It changes nothing that is sent. Empty = no observer.
+    void ObserveRequestsForTest(std::function<void(const okay::backend::Request&)> o) { transport_.SetObserver(std::move(o)); }
 
     /// True when configured to talk to a real (non-local) backend.
     bool IsOnline() const { return provider_ != Provider::Local; }

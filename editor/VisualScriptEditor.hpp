@@ -1033,6 +1033,11 @@ struct VsDataLink { int consumer, inPin, producer, outPin; };
 // A comment frame: a titled, tinted box that groups nodes (moves them with it).
 struct VsComment { float x = 0, y = 0, w = 300, h = 200; std::string text = "Comment"; int color = 0; };
 
+// A knot (reroute point): a dot a wire passes through, so long wires can go around blocks. Only where the wire is drawn
+// changes: the runtime ignores `knot` lines. A flow wire is named by from / pin / to, a value wire by consumer / inPin
+// (an input has one wire). A wire's knots are passed in the order they are listed.
+struct VsKnot { bool exec = true; int a = 0, b = 0, c = 0; float x = 0, y = 0; };
+
 // The runtime entry name an event node registers under ("" = not an event):
 // "OnStart", "OnKey:space", "OnTimer:2", "OnEvent:Hit", "OnAnimEvent:step"...
 // Spaces become '_' so the name stays one token (the runtime does the same).
@@ -1090,6 +1095,7 @@ struct VsEditGraph {
     std::vector<VsExecLink> execLinks;
     std::vector<VsDataLink> dataLinks;
     std::vector<VsComment> comments;
+    std::vector<VsKnot> knots;       // reroute points on wires (layout only)
     // Declared variables: `decl name Type scope literal` lines (typed) and old
     // `var name value` lines (typed = false: object scope, type from the value).
     // The defaults are what the Inspector edits. Kept across save.
@@ -1350,6 +1356,8 @@ public:
         for (const auto& l : dataLinks) o << "data " << l.consumer << ' ' << l.inPin << ' ' << l.producer << ' ' << l.outPin << "\n";
         for (const auto& c : comments)
             o << "comment " << VsCoord(c.x) << ' ' << VsCoord(c.y) << ' ' << VsCoord(c.w) << ' ' << VsCoord(c.h) << ' ' << c.color << ' ' << VsQuoted(c.text) << "\n";
+        for (const auto& k : knots)
+            if (knotWireExists(k)) o << "knot " << (k.exec ? 'e' : 'd') << ' ' << k.a << ' ' << k.b << ' ' << k.c << ' ' << VsCoord(k.x) << ' ' << VsCoord(k.y) << "\n";
         return o.str();
     }
     bool save(const std::string& p) {
@@ -1358,7 +1366,17 @@ public:
         f << toText();
         path = p; dirty = false; return true;
     }
-    void clear() { nodes.clear(); execLinks.clear(); dataLinks.clear(); comments.clear(); vars.clear(); structs.clear(); m_declKey.clear(); nextId = 1; path.clear(); dirty = false; }
+    /// True while the wire a knot sits on is still there.
+    bool knotWireExists(const VsKnot& k) const {
+        if (k.exec) { for (const auto& l : execLinks) if (l.from == k.a && l.pin == k.b && l.to == k.c) return true; return false; }
+        for (const auto& l : dataLinks) if (l.consumer == k.a && l.inPin == k.b) return true;
+        return false;
+    }
+    /// Forget knots whose wire is gone.
+    void pruneKnots() {
+        knots.erase(std::remove_if(knots.begin(), knots.end(), [&](const VsKnot& k) { return !knotWireExists(k); }), knots.end());
+    }
+    void clear() { nodes.clear(); execLinks.clear(); dataLinks.clear(); comments.clear(); knots.clear(); vars.clear(); structs.clear(); m_declKey.clear(); nextId = 1; path.clear(); dirty = false; }
     bool load(const std::string& p) {
         std::ifstream f(p, std::ios::binary);
         if (!f) return false;
@@ -1446,6 +1464,11 @@ public:
                 ls >> c.color; ls.clear();
                 c.text = restOf(ls);
                 comments.push_back(c);
+            } else if (kind == "knot") {
+                VsKnot k; std::string what;
+                if (!(ls >> what >> k.a >> k.b >> k.c) || (what != "e" && what != "d") || !VsReadCoord(ls, k.x) || !VsReadCoord(ls, k.y)) continue;
+                k.exec = what == "e";
+                knots.push_back(k);
             }
         }
         // Wires to nodes that weren't loaded (skipped ids, or never there) would
@@ -1455,6 +1478,7 @@ public:
                         [&](const VsExecLink& l) { return !has(l.from) || !has(l.to); }), execLinks.end());
         dataLinks.erase(std::remove_if(dataLinks.begin(), dataLinks.end(),
                         [&](const VsDataLink& l) { return !has(l.consumer) || !has(l.producer); }), dataLinks.end());
+        pruneKnots();
         // Switch Default used to be pin 4. With fewer cases it is the pin after the last case.
         for (const auto& n : nodes) {
             if (!IsSwitchNode(n.type)) continue;
@@ -2820,7 +2844,7 @@ inline std::string VsCheckKey(const std::string& text) {
     while (a < text.size()) {
         std::size_t e = text.find('\n', a);
         if (e == std::string::npos) e = text.size();
-        if (text.compare(a, 4, "pos ") != 0 && text.compare(a, 8, "comment ") != 0) key.append(text, a, e - a + (e < text.size() ? 1 : 0));
+        if (text.compare(a, 4, "pos ") != 0 && text.compare(a, 8, "comment ") != 0 && text.compare(a, 5, "knot ") != 0) key.append(text, a, e - a + (e < text.size() ? 1 : 0));
         a = e + 1;
     }
     return key;
@@ -3459,6 +3483,29 @@ inline bool VsCompatible(const VsDef& d, bool exec, bool fromOutput,
     return false;
 }
 
+/// How well a node of type `d` fits the wire being dragged, for ranking the wire-drop search (lower is better):
+/// 0 a pin of exactly the dragged type (or any flow pin that fits), 1 a pin that takes anything (Any),
+/// 2 only a pin that converts (Number into Bool, anything into Text...), -1 it does not fit at all.
+/// The same rule picks which pin of the new node the wire goes to (VsPickWirePin, VisualScriptEasyOps.hpp).
+inline int VsPinFitRank(okay::vs::PinType have, okay::vs::PinType pinType, bool haveIsOutput) {
+    using okay::vs::PinType;
+    const PinType from = haveIsOutput ? have : pinType, to = haveIsOutput ? pinType : have;
+    if (!okay::vs::PinCompatible(from, to)) return -1;
+    if (have != PinType::Any && pinType == have) return 0;
+    if (pinType == PinType::Any || have == PinType::Any) return 1;
+    return 2;
+}
+inline int VsPinFitRank(const VsDef& d, bool exec, bool fromOutput, okay::vs::PinType pin = okay::vs::PinType::Any) {
+    if (exec) return VsCompatible(d, true, fromOutput) ? 0 : -1;
+    int best = -1;
+    const int n = fromOutput ? (int)d.dataIn.size() : (int)d.dataOut.size();
+    for (int i = 0; i < n; ++i) {
+        const int r = VsPinFitRank(pin, fromOutput ? okay::vs::InputType(d.type, i) : okay::vs::OutputType(d.type, i, ""), fromOutput);
+        if (r >= 0 && (best < 0 || r < best)) best = r;
+    }
+    return best;
+}
+
 // Node text fields that name an object or a file. Variable names, keys and
 // numbers stay plain text.
 inline okay::vs::VsRefKind VsArgKind(const std::string& type) {
@@ -3900,11 +3947,17 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
 #include "VisualScriptPanModel.hpp"
 #include "VisualScriptPalette.hpp"
 #include "VisualScriptEasyOps.hpp"   // graph-in, graph-out rules for the canvas (needs the graph model above)
+#include "VsDebugWatch.hpp"          // the debugger's watch list, wire values and the lit path
+#include "VsCollapse.hpp"            // Collapse to Function
+#include "VsProjectRefs.hpp"         // find references in every graph of the project; bookmarks
+#include "VsGraphDiff.hpp"           // a graph against an earlier save
+#include "VsIdeProviders.hpp"        // what Visual Script gives the script IDE's Search Everywhere / quick fixes / plugins
 #include "VisualScriptPlainWords.hpp" // every "something is wrong" sentence, in plain words
 #include "VisualScriptWhatHappened.hpp" // "Moved 3 steps right": the line under a block that ran
 #include "VisualScriptHints.hpp"      // the one-line next-step bar
 #include "VisualScriptStartDraw.hpp"  // the big recipe cards shown for an empty graph
 #include "VisualScriptGuideDraw.hpp"  // the "What is this?" card, next-step chips, Try this node
+#include "VsIdeCanvas.hpp"           // the IDE tools on the canvas: arrange, collapse, navigator, compare, knots, watches
 namespace okay::editor::vsed {
 
 // ---- The editor window -----------------------------------------------------
@@ -4055,7 +4108,6 @@ inline void Draw(EditorState& ed, bool* open) {
     };
     bool addComment = false;
     bool openTpl = false;
-    int alignReq = 0;   // 1 left, 2 right, 3 top, 4 bottom
     const oked::scriptui::Metrics dm = oked::scriptui::Current();   // Density (Graph > Density): every pane reads this one table
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(dm.framePad.x, dm.framePad.y));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 7.0f);
@@ -4097,13 +4149,7 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ImGui::MenuItem("Select all", "Ctrl+A")) { st.sel.clear(); for (const auto& n : g.nodes) st.sel.insert(n.id); }
         if (ImGui::MenuItem("Comment around selection", "C", false, !st.sel.empty())) addComment = true;
         ImGui::MenuItem("Snap to grid", nullptr, &st.snapGrid);
-        if (ImGui::BeginMenu("Align selection", st.sel.size() >= 2)) {
-            if (ImGui::MenuItem("Left")) alignReq = 1;
-            if (ImGui::MenuItem("Right")) alignReq = 2;
-            if (ImGui::MenuItem("Top")) alignReq = 3;
-            if (ImGui::MenuItem("Bottom")) alignReq = 4;
-            ImGui::EndMenu();
-        }
+        VsIdeArrangeMenu(st);   // align / distribute / straighten / auto-arrange, collapse to function, find in all graphs
         if (ImGui::MenuItem("Templates...")) st.openTemplates = true;
         ImGui::Separator();
         ImGui::MenuItem("Outline", nullptr, &st.showOutline);
@@ -4347,20 +4393,10 @@ inline void Draw(EditorState& ed, bool* open) {
         }
     }
     ImGui::PopStyleVar(3);
-    if (alignReq && st.sel.size() >= 2) {
-        std::vector<float> xs, ys, ws, hs;
-        std::vector<int> ids;
-        for (auto& n : g.nodes) if (st.sel.count(n.id)) {
-            ids.push_back(n.id); xs.push_back(n.x); ys.push_back(n.y);
-            ws.push_back(210.0f); hs.push_back(130.0f);
-        }
-        const VsAlign how = alignReq == 1 ? VsAlign::Left : alignReq == 2 ? VsAlign::Right
-                          : alignReq == 3 ? VsAlign::Top : VsAlign::Bottom;
-        VsAlignNodes(xs, ys, ws, hs, how);
-        for (std::size_t i = 0; i < ids.size(); ++i)
-            if (VsEditNode* n = g.find(ids[i])) { n->x = xs[i]; n->y = ys[i]; }
-        g.dirty = true;
-    }
+    // The IDE tools' command picked last frame (menus, the node menu, shortcuts): arrange, collapse, bookmarks, find...
+    const std::string vsProjectRoot = !ed.projectDir().empty() ? ed.projectDir()
+                                    : g.path.empty() ? std::string(".") : std::filesystem::path(g.path).parent_path().string();
+    VsIdeRunPending(st, vsProjectRoot);
     // ---- Debugger: breakpoints, and the bar while the game is frozen at one --------
     VsDebugView& dv = DebugView();
     auto& dbg = okay::vs::VsDebugger::Get();
@@ -4457,6 +4493,7 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::SetClipboardText(VsSelectionText(g, st.sel).c_str());
         if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) addComment = true;
         if (ImGui::IsKeyPressed(ImGuiKey_F9, false)) for (int id : std::vector<int>(st.sel.begin(), st.sel.end())) toggleBreakpoint(id);
+        VsIdeShortcuts(st);   // Shift+W/A/S/D align, Shift+H/V distribute, Q straighten, Shift+L arrange, Ctrl+B / F2 bookmarks, Shift+F12, Alt+Enter
     }
 
     // ---- Events list: every event chain in the graph; click one to jump to it ----
@@ -4718,7 +4755,7 @@ inline void Draw(EditorState& ed, bool* open) {
             pf.rightDragging = ImGui::IsMouseDragging(ImGuiMouseButton_Right, 1.0f);
             pf.rightMaxDrag = std::sqrt(io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right]);
             pf.dx = io.MouseDelta.x; pf.dy = io.MouseDelta.y;
-            pf.pressedOnBackground = bgActive; pf.nodeDragging = st.dragging; pf.boxing = st.boxing;
+            pf.pressedOnBackground = bgActive; pf.nodeDragging = st.dragging || VsIdeKnotBusy(st); pf.boxing = st.boxing;
             pf.space = spaceHeld; pf.panTool = st.panTool; pf.shift = io.KeyShift; pf.ctrl = io.KeyCtrl;
             const VsPanOut po = VsPanStep(pf);
             if (po.pans) {
@@ -4900,6 +4937,9 @@ inline void Draw(EditorState& ed, bool* open) {
                 }
         }
     }
+    // The Compare window's changes (outlined on the blocks) and the path the run took this frame (lit wires).
+    const VsGraphDiff ideDiff = VsIdeDiffNow(st);
+    const std::set<int> ideDiffAdded = ideDiff.addedIds(), ideDiffChanged = ideDiff.changedIds();
     // ---- Nodes ----------------------------------------------------------------------
     dl->ChannelsSetCurrent(2);
     int pendingDelete = -1, pendingDup = -1;
@@ -4984,6 +5024,7 @@ inline void Draw(EditorState& ed, bool* open) {
                 badges.push_back({bc, col, tips});
             }
         }
+        VsIdeNodeDecor(dl, st, n, p0, p1, z, kLayout, ideDiffAdded, ideDiffChanged);   // its size, a bookmark tag, Compare outlines
         const bool pausedHere = dv.stopped && dv.key == g.path && dv.node == n.id;
         if (pausedHere)
             dl->AddRect(ImVec2(p0.x - 7 * z, p0.y - 7 * z), ImVec2(p1.x + 7 * z, p1.y + 7 * z),
@@ -5128,6 +5169,7 @@ inline void Draw(EditorState& ed, bool* open) {
                 if (!any) ImGui::TextDisabled("This node has no pins.");
                 ImGui::EndMenu();
             }
+            VsIdeNodeMenu(st, n);   // quick fixes, find references, bookmark, watch values, arrange, collapse to function
             ImGui::Separator();
             if (ImGui::MenuItem("Delete", "Del")) pendingDelete = n.id;
             ImGui::EndPopup();
@@ -5227,17 +5269,7 @@ inline void Draw(EditorState& ed, bool* open) {
             pinPos[pk(n.id, 1, 1, i)] = pp;
             // Live value bubble beside the output pin.
             if (st.liveValues && ln && i < (int)ln->lastOut.size()) {
-                std::string v = ln->lastOut[i].AsString();
-                if (ln->lastOut[i].IsVec3()) { Vec3 q3 = ln->lastOut[i].AsVec3(); char b3[64]; std::snprintf(b3, sizeof b3, "(%.2f, %.2f, %.2f)", q3.x, q3.y, q3.z); v = b3; }
-                else if (ln->lastOut[i].IsObject()) {   // an object: its name, or say it's gone
-                    if (!ln->lastOut[i].AsObjectId()) v = "(no object)";
-                    else if (v.empty()) v = "(destroyed)";
-                }
-                else if (!ln->lastOut[i].IsString()) {
-                    char bf[32]; float f = ln->lastOut[i].AsFloat();
-                    if (v == "true" || v == "false") {} else { std::snprintf(bf, sizeof bf, "%.3g", f); v = bf; }
-                }
-                if (v.size() > 22) v = v.substr(0, 21) + "\xE2\x80\xA6";
+                const std::string v = VsLiveValueText(ln->lastOut[i]);   // the watch list and wire tips read the same (VsDebugWatch.hpp)
                 ImVec2 vs2 = ImGui::CalcTextSize(v.c_str());
                 ImVec2 bp(pp.x + PIN_R + 6 * z, pp.y - vs2.y * 0.5f - 2 * z);
                 dl->AddRectFilled(bp, ImVec2(bp.x + vs2.x + 10 * z, bp.y + vs2.y + 4 * z), IM_COL32(20, 60, 34, 230), 4 * z);
@@ -5612,6 +5644,18 @@ inline void Draw(EditorState& ed, bool* open) {
         dl->AddBezierCubic(a, ImVec2(a.x + dx, a.y), ImVec2(b.x - dx, b.y), b, col, w);
     };
     auto hotNode = [&](int id) { return st.sel.count(id) > 0 || st.selected == id; };
+    // A wire through its knots (reroute dots): one curve per stretch.
+    auto knotW2S = [&](float x, float y) { return W2S(x, y); };
+    auto wireThrough = [&](ImVec2 a, ImVec2 b, const std::vector<ImVec2>& knots, ImU32 col, float w) {
+        ImVec2 from = a;
+        for (const ImVec2& k : knots) { bezier(from, k, col, w); from = k; }
+        bezier(from, b, col, w);
+    };
+    // The path the run took this frame: a wire is lit when both its ends ran (VsDebugWatch.hpp).
+    std::set<int> ranNow;
+    if (live) for (const auto& kv : st.flash) if (kv.second > 0.0f) ranNow.insert(kv.first);
+    const VsLitWires litNow = VsLitPath(g, live, ranNow);
+    int hoverValueWire = -1;   // a value wire under the mouse while the game runs: its value shows in a tip
     // Alt held over a wire: it lights up, and a click breaks that wire only (the
     // other wires on the same pin stay). Nearest wire within a few pixels wins.
     auto bezierDist = [&](ImVec2 a, ImVec2 b) {
@@ -5656,9 +5700,9 @@ inline void Draw(EditorState& ed, bool* open) {
         if (a == pinPos.end() || b == pinPos.end()) continue;
         if (execIdx == altExec) { bezier(a->second, b->second, IM_COL32(255, 120, 100, 255), 4.2f * std::max(0.7f, z)); continue; }
         const bool hot = hotNode(l.from) || hotNode(l.to);
-        const bool ran = live && st.flash.count(l.to) && st.flash[l.to] > 0.0f;
+        const bool ran = live && execIdx < (int)litNow.exec.size() && litNow.exec[(std::size_t)execIdx];
         ImU32 col = ran ? IM_COL32(255, 205, 90, 255) : hot ? IM_COL32(255, 255, 255, 255) : IM_COL32(215, 216, 222, 200);
-        bezier(a->second, b->second, col, (hot || ran ? 3.6f : 2.8f) * std::max(0.7f, z));
+        wireThrough(a->second, b->second, VsKnotPoints(g, true, l.from, l.pin, l.to, knotW2S), col, (hot || ran ? 3.6f : 2.8f) * std::max(0.7f, z));
     }
     int dataIdx = -1;
     for (const auto& l : g.dataLinks) {
@@ -5669,15 +5713,25 @@ inline void Draw(EditorState& ed, bool* open) {
         const bool hot = hotNode(l.producer) || hotNode(l.consumer);
         // A wire whose value can't mean what the input needs (from an older graph
         // or hand-written file) is drawn red; the checker lists it too.
+        const std::vector<ImVec2> knots = VsKnotPoints(g, false, l.consumer, l.inPin, 0, knotW2S);
         if (!VsWireOk(g, l.consumer, l.inPin, l.producer, l.outPin)) {
-            bezier(a->second, b->second, IM_COL32(255, 80, 70, 240), (hot ? 3.6f : 3.0f) * std::max(0.7f, z));
+            wireThrough(a->second, b->second, knots, IM_COL32(255, 80, 70, 240), (hot ? 3.6f : 3.0f) * std::max(0.7f, z));
             continue;
         }
+        const bool litData = live && dataIdx < (int)litNow.data.size() && litNow.data[(std::size_t)dataIdx];
         ImU32 wc = VsPinColor(VsOutPinType(g, l.producer, l.outPin));
-        if (!hot) wc = (wc & 0x00FFFFFF) | (200u << 24);
-        bezier(a->second, b->second, wc, (hot ? 3.4f : 2.6f) * std::max(0.7f, z));
+        if (!hot && !litData) wc = (wc & 0x00FFFFFF) | (200u << 24);
+        wireThrough(a->second, b->second, knots, wc, (hot || litData ? 3.4f : 2.6f) * std::max(0.7f, z));
+        if (live && hoverValueWire < 0 && !st.dragging && !io.KeyAlt && knots.empty() && ImGui::IsWindowHovered() &&
+            bezierDist(a->second, b->second) < 7.0f)
+            hoverValueWire = dataIdx;
+    }
+    if (hoverValueWire >= 0) {   // the value that went through the wire last (paused or playing)
+        const std::string v = VsWireValueText(g, live, hoverValueWire);
+        ImGui::SetTooltip("%s", v.empty() ? "No value has gone through this wire yet." : ("Value: " + v).c_str());
     }
     dl->ChannelsSetCurrent(2);
+    VsIdeKnots(dl, st, z, knotW2S, S2W, canvasHovered && !st.dragging);   // knots: drag to move, right-click to remove
     for (const VsBadge& b : badges) {
         const float r = 7.0f * std::max(0.8f, z);
         dl->AddCircleFilled(b.c, r, b.col, 16);
@@ -5870,7 +5924,10 @@ inline void Draw(EditorState& ed, bool* open) {
             if (mouse.x >= kv.second.first.x && mouse.x <= kv.second.second.x && mouse.y >= kv.second.first.y && mouse.y <= kv.second.second.y) onNode = true;
         const std::vector<VsWireEnds> we = wireEnds();
         const int hit = onNode ? -1 : VsNearestWire(we, mouse.x, mouse.y, z, 12.0f);
-        if (hit >= 0) {
+        if (hit >= 0 && io.KeyShift) {   // Shift+double-click: a knot (reroute dot) on the wire, where you clicked
+            const ImVec2 wpt = S2W(mouse);
+            VsAddKnot(g, VsRefOfWire(g, we[(std::size_t)hit].exec, we[(std::size_t)hit].index), wpt.x, wpt.y);
+        } else if (hit >= 0) {
             const VsWireRef ref = VsRefOfWire(g, we[(std::size_t)hit].exec, we[(std::size_t)hit].index);
             st.wireInsOn = ref.on; st.wireInsExec = ref.exec; st.wireInsA = ref.a; st.wireInsB = ref.b; st.wireInsC = ref.c;
             st.linkPending = false;
@@ -5923,19 +5980,8 @@ inline void Draw(EditorState& ed, bool* open) {
         } else if (!st.linkPending) VsConnectAndPlace(g, nid, prevSel, st.lastUsed);
         st.lastUsed = nid;
         if (st.linkPending) {
-            if (st.linkExec) {
-                if (st.linkFromOutput) { if (d.execIn) g.linkExec(st.linkNode, st.linkPin, nid); }
-                else if (!d.execOut.empty()) g.linkExec(nid, 0, st.linkNode);
-            } else {
-                // The first pin on the new node that can take / give this value.
-                if (st.linkFromOutput) {
-                    for (int pi = 0; pi < (int)d.dataIn.size(); ++pi)
-                        if (VsWireOk(g, nid, pi, st.linkNode, st.linkPin)) { g.linkData(nid, pi, st.linkNode, st.linkPin); break; }
-                } else {
-                    for (int po = 0; po < (int)d.dataOut.size(); ++po)
-                        if (VsWireOk(g, st.linkNode, st.linkPin, nid, po)) { g.linkData(st.linkNode, st.linkPin, nid, po); break; }
-                }
-            }
+            // The plug of exactly the dragged type first, then one that takes anything, then one that converts.
+            VsConnectPendingWire(g, nid, st.linkExec, st.linkFromOutput, st.linkNode, st.linkPin);
             // Drop it beside the pin rather than under the cursor tip.
             if (VsEditNode* nn = g.find(nid)) { if (!st.linkFromOutput) nn->x -= 170.0f; }
             st.linkPending = false;
@@ -6167,8 +6213,9 @@ inline void Draw(EditorState& ed, bool* open) {
         section(objTitle.c_str(), dv.vars, true);
         section("Scene variables", dv.sceneVars, false);
         section("Global variables", dv.globalVars, false);
+        if (ImGui::CollapsingHeader("Watches", ImGuiTreeNodeFlags_DefaultOpen)) VsIdeDrawWatches(st, live);
         ImGui::Separator();
-        ImGui::TextDisabled("Wire values show the last value each node gave.");
+        ImGui::TextDisabled("Wire values show the last value each node gave. Point at a wire to see what went through it.");
         ImGui::EndChild();
     } else if (st.showScript) {
         ImGui::SameLine();
@@ -6242,6 +6289,9 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::PopStyleVar();
     }
 
+    // The IDE tools' own windows: Graph Navigator (references, bookmarks, watches) and Compare (an earlier save).
+    VsIdeDrawNavigator(st, live, vsProjectRoot);
+    VsIdeDrawCompare(st);
     // ---- Undo tracking: commit a change once the gesture / edit is finished ----
     {
         std::string now = g.toText();

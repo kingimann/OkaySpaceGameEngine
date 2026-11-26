@@ -2116,6 +2116,15 @@ target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
 target_compile_definitions(test_vs_editor_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
 
+# The Visual Script editor's IDE tools (model level): pin-aware search, watches and the lit path while stepping in a
+# GameFiber, collapse to function (same results before and after), layout, references across graph files, bookmarks,
+# checker fixes, graph diff, and the providers for the script IDE's shared layers.
+add_executable(test_vs_ide test_vs_ide.cpp)
+target_include_directories(test_vs_ide PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_ide PRIVATE okay::engine)
+target_compile_definitions(test_vs_ide PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_ide COMMAND test_vs_ide)
+
 # Our own Dear ImGui platform feed (shared/ImGuiPlatformFeed.hpp): key table, event translation, and a real ImGui context
 # fed through a fake host (no window, no SDL). Links the editor's okay_imgui when it is in the build, else compiles the
 # ImGui core files from the same source tree.

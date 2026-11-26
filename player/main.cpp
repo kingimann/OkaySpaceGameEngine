@@ -1171,6 +1171,9 @@ int main(int argc, char** argv) {
                         "Account (for headless servers):\n"
                         "  --login NAME         sign this machine in (password from OKAY_LOGIN_PASSWORD or typed)\n"
                         "  --logout             sign out\n\n"
+                        "A game from the browser (browser/, docs/platform/browser_plan.md):\n"
+                        "  --game-dir DIR       run the game in DIR instead of the one beside this program\n"
+                        "  --save-dir DIR       write saves and settings in DIR\n\n"
                         "Build:\n"
                         "  --build-info         print which build this is (version, build number, engine, date) and exit\n\n%s", argv[0], argv[0], okay::DedicatedServerUsage());
             return 0;
@@ -1198,7 +1201,7 @@ int main(int argc, char** argv) {
     for (const char* v : {"join", "connect", "password", "room", "match-players", "match-min", "region",
                           "login", "log", "config", "scene", "port", "name", "max-players", "tick",
                           "status", "run-for", "public-addr", "max-speed", "rate-limit", "kick-after",
-                          "anticheat", "host-key"})
+                          "anticheat", "host-key", "game-dir", "save-dir"})
         pcl.Value(v, "VALUE");
     pcl.OptionalValue("find-match", "MODE");
     for (const char* f : {"server", "auth", "no-encryption", "report-kicks", "fixed-tick", "authoritative",
@@ -1312,7 +1315,9 @@ int main(int argc, char** argv) {
 
     // Resolve where the game files live: <Name>_Data/ beside the exe (the Folder layout), Data/ (the compact
     // layout), or the exe's own folder (the flat layout older builds used), so every build the editor ever made still runs.
-    const std::string baseDir = okay::buildpipe::FindDataDir(pb->BasePath(), PlayerExeStem(argv[0]));
+    // `--game-dir DIR` (the browser runs a web game it unpacked there): the same lookup, in DIR instead of beside the exe.
+    const std::string gameDirArg = pcl.Get("game-dir");
+    const std::string baseDir = okay::buildpipe::FindDataDir(gameDirArg.empty() ? pb->BasePath() : gameDirArg, PlayerExeStem(argv[0]));
     okay::Paths::SetStreamingAssetsDir(std::filesystem::is_directory(std::filesystem::u8path(baseDir) / "StreamingAssets") ? baseDir + "StreamingAssets/" : std::string());
 
     // Build settings (written by the editor's Build Settings) live in an optional
@@ -1456,7 +1461,8 @@ int main(int argc, char** argv) {
     // app folder when enabled — so saving works even from a read-only install (e.g.
     // Program Files) and two games never clash. Falls back to beside-the-exe.
     std::string saveDir = baseDir;
-    if (cfg.saveToUserDir) {
+    const std::string saveDirArg = pcl.Get("save-dir");   // the browser's per-site save folder: no per-user folder is made
+    if (cfg.saveToUserDir && saveDirArg.empty()) {
         const char* org = cfg.company.empty() ? "OkaySpace" : cfg.company.c_str();
         const char* app = cfg.title.empty() ? "Game" : cfg.title.c_str();
         const std::string pref = pb->PrefPath(org, app);
@@ -1471,6 +1477,12 @@ int main(int argc, char** argv) {
         else pb->Log("web: no browser save folder; saves last until the page is closed");
     }
 #endif
+    // `--save-dir DIR` (the browser's per-site save folder): it wins over the build's setting.
+    if (!saveDirArg.empty()) {
+        std::error_code sdec;
+        std::filesystem::create_directories(std::filesystem::u8path(saveDirArg), sdec);
+        saveDir = (saveDirArg.back() == '/' || saveDirArg.back() == '\\') ? saveDirArg : saveDirArg + "/";
+    }
     okay::Save::SetBaseDir(saveDir);  // relative SaveData files (save.okaysave, ...) land here
     // Build Settings > Game: how much the game logs, and an optional log file in the save folder.
     if (!cfg.extra.logLevel.empty()) okay::Log::Configure(cfg.extra.logLevel);

@@ -37,10 +37,11 @@ add_library(okay::ui ALIAS okay_ui)
 
 # The real screens the launcher and the editor host as the opt-in OkayUI backend (What's New, Console). Plain functions
 # over OkayUI and the engine's console model; no SDL and no Dear ImGui in them, so the headless tests drive them as is.
-add_library(okay_ui_screens STATIC screens/OkayUIScreens.cpp screens/OkayUIPanels.cpp screens/OkayUIEditorPanels.cpp)
+add_library(okay_ui_screens STATIC screens/OkayUIScreens.cpp screens/OkayUIPanels.cpp screens/OkayUIEditorPanels.cpp screens/BrowserView.cpp)
 target_include_directories(okay_ui_screens PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/screens)
 target_include_directories(okay_ui_screens PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../shared)    # ConsoleScriptLink.hpp, EditorPanelModels.hpp (in the public header)
 target_link_libraries(okay_ui_screens PUBLIC okay_ui)
+target_link_libraries(okay_ui_screens PUBLIC okay_browser)   # BrowserView: the Browser's page engine (engine/include/okay/Browser/)
 add_library(okay::ui_screens ALIAS okay_ui_screens)
 
 # Standalone Direct3D 11 demo — a real DX11 app that renders an OkayUI panel.
@@ -82,7 +83,7 @@ target_link_libraries(okay_ui_render PUBLIC okay_ui_soft)
 if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
 
     # What the tests need: the shared test framework header and the committed golden images.
-    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose okayui_windows okayui_windows_fuzz okayui_color okayui_widgets okayui_tables okayui_render okayui_render_gl okayui_render_sdlhost okayui_render_bench okayui_screens okayui_host okayui_compat okayui_scopes okayui_internals okayui_dockbuilder okayui_panels okayui_itemedit okayui_calls okayui_names okayui_host_platform okayui_docknodes okayui_channels okayui_host_shapes okayui_fonts okayui_frameloop okayui_dockaware okayui_imvector okayui_numfmt okayui_editor_panels okayui_hierarchy okayui_inspector okayui_imcompat okayui_capture okayui_frame_budget)
+    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose okayui_windows okayui_windows_fuzz okayui_color okayui_widgets okayui_tables okayui_render okayui_render_gl okayui_render_sdlhost okayui_render_bench okayui_screens okayui_host okayui_compat okayui_scopes okayui_internals okayui_dockbuilder okayui_panels okayui_itemedit okayui_calls okayui_names okayui_host_platform okayui_docknodes okayui_channels okayui_host_shapes okayui_fonts okayui_frameloop okayui_dockaware okayui_imvector okayui_numfmt okayui_editor_panels okayui_hierarchy okayui_inspector okayui_imcompat okayui_capture okayui_frame_budget okayui_browser)
         add_executable(test_${t} tests/test_${t}.cpp)
         target_link_libraries(test_${t} PRIVATE okay_ui_render)
         target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
@@ -91,6 +92,18 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
         # No window, no GPU: make sure SDL never tries to open a display.
         set_tests_properties(${t} PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     endforeach()
+    # The whole browser (shared/BrowserApp.cpp), shared by the browser program and the launcher's Browser page, with its tab host
+    # (fetches, images, games: the engine's HTTP seam, decoders and threads) and okay's one place that starts a program.
+    if(TARGET okay::engine)
+        add_executable(test_okayui_browser_app tests/test_okayui_browser_app.cpp
+            ${CMAKE_SOURCE_DIR}/shared/BrowserApp.cpp ${CMAKE_SOURCE_DIR}/shared/BrowserHost.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)
+        target_link_libraries(test_okayui_browser_app PRIVATE okay_ui_render okay_browser okay::engine)
+        target_include_directories(test_okayui_browser_app PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests
+            ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/tools/okay-cli)
+        target_compile_definitions(test_okayui_browser_app PRIVATE OKAYUI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
+        add_test(NAME okayui_browser_app COMMAND test_okayui_browser_app)
+        set_tests_properties(okayui_browser_app PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    endif()
     # The OpenGL and performance tests make a GL context with EGL through dlopen (no link-time GL).
     target_link_libraries(test_okayui_render_gl PRIVATE ${CMAKE_DL_LIBS})
     target_link_libraries(test_okayui_render_bench PRIVATE ${CMAKE_DL_LIBS})

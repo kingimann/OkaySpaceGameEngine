@@ -1088,6 +1088,26 @@ std::vector<Declaration> ParseDeclarations(const std::string& textIn, const CssL
 
 namespace {
 
+// A rule's block split into its own declarations and the rules nested in it (prelude, block) (CSS Nesting 1).
+void SplitNested(const std::string& body, std::string& own, std::vector<std::pair<std::string, std::string>>& nested) {
+    std::size_t s = 0;
+    int depth = 0;
+    for (std::size_t i = 0; i < body.size(); ++i) {
+        const char c = body[i];
+        if (c == '"' || c == '\'') { const char q = c; ++i; while (i < body.size() && body[i] != q) { if (body[i] == '\\') ++i; ++i; } continue; }
+        if (c == '(') ++depth;
+        else if (c == ')' && depth > 0) --depth;
+        else if (depth == 0 && c == ';') { own.append(body, s, i + 1 - s); s = i + 1; }
+        else if (depth == 0 && c == '{') {
+            const std::size_t end = BlockEnd(body, i + 1);
+            if (nested.size() < 256) nested.push_back({body.substr(s, i - s), body.substr(i + 1, std::min(end, body.size()) - i - 1)});
+            i = std::min(end, body.size());
+            s = i + 1;
+        }
+    }
+    if (s < body.size()) own.append(body, s, std::string::npos);
+}
+
 void ParseRules(const std::string& css, std::size_t from, std::size_t to, StyleSheet& sheet, const std::vector<int>& media,
                 const CssLimits& limits, int nesting) {
     std::size_t i = from;
@@ -1180,9 +1200,38 @@ void ParseRules(const std::string& css, std::size_t from, std::size_t to, StyleS
         bool tooLong = false;
         for (const Selector& s : rule.selectors) { if (s.parts.size() > limits.maxSelectorParts) tooLong = true; if (s.dynamic) sheet.hasDynamic = true; }
         if (tooLong) continue;
-        rule.declarations = ParseDeclarations(body, limits);
-        if (rule.declarations.empty()) continue;
-        sheet.rules.push_back(std::move(rule));
+        // CSS Nesting 1: rules inside the block apply relative to this one ("&" is this rule's selector; without "&" they are
+        // its descendants); they come after the block's own declarations
+        std::string own;
+        std::vector<std::pair<std::string, std::string>> nested;
+        SplitNested(body, own, nested);
+        rule.declarations = ParseDeclarations(own, limits);
+        if (!rule.declarations.empty()) sheet.rules.push_back(std::move(rule));
+        if (nesting >= limits.maxNesting) continue;
+        const std::string parent = ":is(" + Trim(prelude) + ")";
+        for (const auto& nr : nested) {
+            std::string pre = Trim(nr.first);
+            if (!pre.empty() && pre[0] == '@') {   // @media / @supports inside a rule: its declarations belong to this rule
+                const std::string inner = parent + "{" + nr.second + "}";
+                ParseRules(pre + "{" + inner + "}", 0, pre.size() + inner.size() + 2, sheet, media, limits, nesting + 1);
+                continue;
+            }
+            std::string sel;
+            for (const std::string& part0 : SplitSelectorList(pre)) {
+                std::string part = Trim(part0);
+                if (part.empty()) continue;
+                std::string full;
+                if (part.find('&') != std::string::npos) {
+                    for (char c : part) { if (c == '&') full += parent; else full += c; }
+                } else full = parent + " " + part;
+                if (!sel.empty()) sel += ", ";
+                sel += full;
+                if (sel.size() > 8192) break;
+            }
+            if (sel.empty()) continue;
+            const std::string text = sel + "{" + nr.second + "}";
+            ParseRules(text, 0, text.size(), sheet, media, limits, nesting + 1);
+        }
     }
 }
 
@@ -1267,7 +1316,7 @@ struct Cascaded { int bucket; int specificity; std::size_t order; const Declarat
 // What the cascade knows while it applies declarations, beyond ComputedStyle itself.
 struct Work {
     float borderWidth[4] = {3, 3, 3, 3};   // "medium"
-    bool borderStyle[4] = {false, false, false, false};   // a style other than none / hidden
+    int borderStyle[4] = {0, 0, 0, 0};   // 0: none / hidden; else the line (BorderStyleWord)
     bool borderColorSet[4] = {false, false, false, false};
 };
 
@@ -1279,10 +1328,14 @@ bool BorderWidthWord(const std::string& w, float em, float& out) {
     if (ParseLength(w, em, false, l) && l.unit == Length::Px && l.value >= 0) { out = l.value; return true; }
     return false;
 }
-bool BorderStyleWord(const std::string& w, bool& visible) {
-    static const char* const styles[] = {"solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset", nullptr};
-    if (w == "none" || w == "hidden") { visible = false; return true; }
-    for (const char* const* s = styles; *s; ++s) if (w == *s) { visible = true; return true; }
+// A border style: 0 none / hidden, else the line drawn (ComputedStyle::borderLine: 1 solid (also groove, ridge, inset, outset),
+// 2 dashed, 3 dotted, 4 double).
+bool BorderStyleWord(const std::string& w, int& line) {
+    if (w == "none" || w == "hidden") { line = 0; return true; }
+    if (w == "solid" || w == "groove" || w == "ridge" || w == "inset" || w == "outset") { line = 1; return true; }
+    if (w == "dashed") { line = 2; return true; }
+    if (w == "dotted") { line = 3; return true; }
+    if (w == "double") { line = 4; return true; }
     return false;
 }
 
@@ -1529,7 +1582,41 @@ bool BackgroundPos(const std::vector<std::string>& w, float em, Length& x, Lengt
     return true;
 }
 
+// CSS Logical Properties 1 for horizontal, left-to-right text (the only writing mode the layout has): the inline axis is
+// horizontal (start = left), the block axis vertical (start = top). "" when the property is not a logical one; a pair for the
+// two-sided shorthands.
+std::vector<std::string> PhysicalOf(const std::string& p) {
+    struct M { const char* from; const char* to; };
+    static const M exact[] = {{"inline-size", "width"}, {"block-size", "height"}, {"min-inline-size", "min-width"}, {"min-block-size", "min-height"},
+                              {"max-inline-size", "max-width"}, {"max-block-size", "max-height"}, {"inset-inline-start", "left"},
+                              {"inset-inline-end", "right"}, {"inset-block-start", "top"}, {"inset-block-end", "bottom"}};
+    for (const M& m : exact) if (p == m.from) return {m.to};
+    if (p == "inset-inline") return {"left", "right"};
+    if (p == "inset-block") return {"top", "bottom"};
+    static const M prefixes[] = {{"border-inline-start", "border-left"}, {"border-inline-end", "border-right"},
+                                 {"border-block-start", "border-top"}, {"border-block-end", "border-bottom"}};
+    for (const M& m : prefixes) { const std::size_t n = std::strlen(m.from); if (p.compare(0, n, m.from) == 0) return {m.to + p.substr(n)}; }
+    if (p.compare(0, 13, "border-inline") == 0) return {"border-left" + p.substr(13), "border-right" + p.substr(13)};
+    if (p.compare(0, 12, "border-block") == 0) return {"border-top" + p.substr(12), "border-bottom" + p.substr(12)};
+    return {};
+}
+
 void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle& parent) {
+    {
+        const std::vector<std::string> phys = PhysicalOf(d.property);
+        if (!phys.empty()) {
+            // a two-valued shorthand (inset-inline: 1px 2px) gives its first value to the start side, the second to the end
+            const std::vector<std::string> ws = Words(d.value);
+            for (std::size_t k = 0; k < phys.size(); ++k) {
+                Declaration one = d;
+                one.property = phys[k];
+                if (phys.size() == 2 && ws.size() == 2 && d.property.find("color") == std::string::npos && d.property.find("style") == std::string::npos &&
+                    (d.property.compare(0, 5, "inset") == 0 || d.property.find("width") != std::string::npos)) one.value = ws[k];
+                Apply(s, wk, one, parent);
+            }
+            return;
+        }
+    }
     const std::string& p = d.property;
     const std::string v = LowerAscii(d.value);
     const float em = s.fontSize;
@@ -1590,10 +1677,10 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
         if (!words.empty() && ParseLength(words[0], em, true, l) && l.value >= 0) s.radius[k] = l.unit == Length::Percent ? -l.value : l.value;
     } else if (p == "border" || SideOf(p, "border") >= 0) {
         // shorthand: width, style and colour in any order
-        float width = 3; bool visible = false; Color col; bool hasW = false, hasS = false, hasC = false, current = false, ok = !words.empty();
+        float width = 3; int visible = 0; Color col; bool hasW = false, hasS = false, hasC = false, current = false, ok = !words.empty();
         for (const std::string& w : words) {
             const std::string lw = LowerAscii(w);
-            float bw; bool vis; Color c;
+            float bw; int vis; Color c;
             if (!hasW && BorderWidthWord(lw, em, bw)) { width = bw; hasW = true; }
             else if (!hasS && BorderStyleWord(lw, vis)) { visible = vis; hasS = true; }
             else if (!hasC && ParseColor(w, c)) { col = c; hasC = true; }
@@ -1615,8 +1702,8 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
         if (FourSides(words, w, [&](const std::string& x, float& o) { return BorderWidthWord(LowerAscii(x), em, o); }))
             for (int k = 0; k < 4; ++k) wk.borderWidth[k] = w[k];
     } else if (p == "border-style") {
-        bool st[4];
-        if (FourSides(words, st, [&](const std::string& x, bool& o) { return BorderStyleWord(LowerAscii(x), o); }))
+        int st[4];
+        if (FourSides(words, st, [&](const std::string& x, int& o) { return BorderStyleWord(LowerAscii(x), o); }))
             for (int k = 0; k < 4; ++k) wk.borderStyle[k] = st[k];
     } else if (p == "border-color") {
         Color c[4];
@@ -1628,7 +1715,7 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
         for (int k = 0; k < 4; ++k) {
             const std::string base = std::string("border-") + sides[k];
             if (p == base + "-width") { float w; if (BorderWidthWord(v, em, w)) wk.borderWidth[k] = w; }
-            else if (p == base + "-style") { bool vis; if (BorderStyleWord(v, vis)) wk.borderStyle[k] = vis; }
+            else if (p == base + "-style") { int vis; if (BorderStyleWord(v, vis)) wk.borderStyle[k] = vis; }
             else if (p == base + "-color") { Color c; if (ParseColor(d.value, c)) { s.borderColor[k] = c; wk.borderColorSet[k] = true; } }
         }
     } else if (p == "color") {
@@ -1691,6 +1778,53 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
         else if (v == "repeat") s.bgRepeatX = s.bgRepeatY = true;
     } else if (p == "background-position") {
         BackgroundPos(words, em, s.bgPosX, s.bgPosY);
+    } else if (p == "letter-spacing" || p == "word-spacing") {
+        Length l;
+        float& dst = p == "letter-spacing" ? s.letterSpacing : s.wordSpacing;
+        if (v == "normal") dst = 0;
+        else if (ParseLength(d.value, em, false, l) && l.unit == Length::Px) dst = std::max(-1000.0f, std::min(1000.0f, l.value));
+    } else if (p == "text-shadow") {
+        std::vector<BoxShadow> sh;
+        if (ShadowList(d.value, em, sh)) { for (BoxShadow& b : sh) if (b.color == (Color{0, 0, 0, 80})) b.color = s.color; s.textShadows = sh; }
+    } else if (p == "font-variant" || p == "font-variant-caps") {
+        s.smallCaps = v.find("small-caps") != std::string::npos;
+    } else if (p == "outline" || p == "outline-width" || p == "outline-style" || p == "outline-color") {
+        // CSS UI 4: width, style and colour; drawn outside the border box, taking no room
+        if (p == "outline") { s.outlineWidth = 3; s.outlineLine = 0; s.outlineColor = s.color; }
+        for (const std::string& w : words) {
+            const std::string lw = LowerAscii(w);
+            float bw; int line; Color c;
+            if ((p == "outline" || p == "outline-width") && BorderWidthWord(lw, em, bw)) s.outlineWidth = bw;
+            else if ((p == "outline" || p == "outline-style") && (BorderStyleWord(lw, line) || (lw == "auto" && (line = 1)))) s.outlineLine = (std::uint8_t)line;
+            else if ((p == "outline" || p == "outline-color") && ParseColor(w, c)) s.outlineColor = c;
+            else if (lw == "currentcolor") s.outlineColor = s.color;
+        }
+        if (p == "outline" && s.outlineLine == 0) s.outlineWidth = 0;
+    } else if (p == "outline-offset") {
+        Length l;
+        if (ParseLength(d.value, em, false, l) && l.unit == Length::Px) s.outlineOffset = std::max(-1000.0f, std::min(1000.0f, l.value));
+    } else if (p == "aspect-ratio") {
+        // "auto", "16 / 9", "1.5", "auto 4 / 3" (CSS Box Sizing 4)
+        std::vector<float> nums;
+        for (const std::string& w : words) { float n; std::string u; if (w != "/" && LowerAscii(w) != "auto" && ParseNumber(w, n, u) && u.empty() && n > 0) nums.push_back(n); }
+        if (v == "auto") s.aspectRatio = 0;
+        else if (nums.size() == 1) s.aspectRatio = std::min(nums[0], 10000.0f);
+        else if (nums.size() == 2) s.aspectRatio = std::max(0.0001f, std::min(nums[0] / nums[1], 10000.0f));
+    } else if (p == "filter") {
+        // Filter Effects 1: grayscale(), brightness(), blur() (blur is read; the colours of the box are changed, blur is not drawn)
+        s.filterGray = 0; s.filterBright = 1; s.filterBlur = 0;
+        for (const std::string& w : words) {
+            const std::string lw = LowerAscii(w);
+            const std::size_t open = lw.find('(');
+            if (open == std::string::npos || lw.back() != ')') continue;
+            const std::string fn = lw.substr(0, open), arg = Trim(lw.substr(open + 1, lw.size() - open - 2));
+            float n = 1; std::string u;
+            if (!arg.empty() && !ParseNumber(arg, n, u)) continue;
+            if (u == "%") n /= 100.0f;
+            if (fn == "grayscale") s.filterGray = std::max(0.0f, std::min(1.0f, arg.empty() ? 1.0f : n));
+            else if (fn == "brightness") s.filterBright = std::max(0.0f, std::min(10.0f, arg.empty() ? 1.0f : n));
+            else if (fn == "blur") { Length l; if (ParseLength(arg, em, false, l)) s.filterBlur = std::max(0.0f, l.value); }
+        }
     } else if (p == "box-shadow") {
         std::vector<BoxShadow> sh;
         if (ShadowList(d.value, em, sh)) s.shadows = sh;
@@ -1728,6 +1862,7 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
             if (!seenSize) {
                 if (lw == "bold" || lw == "bolder") { s.bold = true; s.weight = 700; }
                 else if (lw == "italic" || lw == "oblique") s.italic = true;
+                else if (lw == "small-caps") s.smallCaps = true;
                 else { float n; std::string u; if (ParseNumber(lw, n, u) && u.empty()) { s.bold = n >= 600; s.weight = (int)n; } else { float px; if (FontSizeValue(lw, parent.fontSize, px)) seenSize = true; } }
             } else family += lw + " ";
         }
@@ -2105,6 +2240,115 @@ std::string PresentationalHints(const Node& el) {
     return css;
 }
 
+// The CSS-wide keywords (CSS Cascade 4, 7.3): inherit, initial, unset and revert (revert is taken as unset: the default sheet's
+// value is not kept apart). The property's value is copied from the parent (inherit) or from the initial style (initial). True
+// when the declaration was one of them (handled), false otherwise.
+bool InheritedProperty(const std::string& p) {
+    static const char* const inh[] = {"color", "font", "font-size", "font-weight", "font-style", "font-family", "line-height", "text-align",
+                                      "text-indent", "text-transform", "white-space", "list-style", "list-style-type", "visibility",
+                                      "border-spacing", "border-collapse", "caption-side", "letter-spacing", "word-spacing",
+                                      "text-shadow", "font-variant"};
+    for (const char* k : inh) if (p == k) return true;
+    return false;
+}
+void CopyProperty(ComputedStyle& s, Work& wk, const std::string& p, const ComputedStyle& from) {
+    auto sides = [&](const std::string& base) {   // which sides a margin / padding / border property names
+        if (p == base) return 15;
+        const int k = SideOf(p, base);
+        if (k >= 0) return 1 << k;
+        if (p == base + "-inline") return (1 << 1) | (1 << 3);
+        if (p == base + "-block") return (1 << 0) | (1 << 2);
+        return 0;
+    };
+    if (int m = sides("margin")) { for (int k = 0; k < 4; ++k) if (m & (1 << k)) s.margin[k] = from.margin[k]; return; }
+    if (int m = sides("padding")) { for (int k = 0; k < 4; ++k) if (m & (1 << k)) s.padding[k] = from.padding[k]; return; }
+    if (p.compare(0, 6, "border") == 0 && p.find("radius") == std::string::npos && p != "border-spacing" && p != "border-collapse") {
+        int m = sides("border");
+        if (!m) for (int k = 0; k < 4; ++k) {
+            static const char* const nm[] = {"top", "right", "bottom", "left"};
+            if (p.compare(0, 7 + std::strlen(nm[k]), std::string("border-") + nm[k]) == 0) m |= 1 << k;
+        }
+        if (!m && (p == "border-width" || p == "border-style" || p == "border-color")) m = 15;
+        for (int k = 0; k < 4; ++k) if (m & (1 << k)) {
+            if (p.find("color") == std::string::npos) { wk.borderWidth[k] = from.border[k]; wk.borderStyle[k] = from.border[k] > 0 ? std::max(1, (int)from.borderLine[k]) : 0; }
+            if (p.find("width") == std::string::npos && p.find("style") == std::string::npos) { s.borderColor[k] = from.borderColor[k]; wk.borderColorSet[k] = true; }
+        }
+        return;
+    }
+    if (p.find("radius") != std::string::npos) { for (int k = 0; k < 4; ++k) s.radius[k] = from.radius[k]; return; }
+    if (p.compare(0, 10, "background") == 0) {
+        s.background = from.background; s.backgroundImage = from.backgroundImage; s.bgGradient = from.bgGradient;
+        s.bgSize = from.bgSize; s.bgW = from.bgW; s.bgH = from.bgH; s.bgRepeatX = from.bgRepeatX; s.bgRepeatY = from.bgRepeatY;
+        s.bgPosX = from.bgPosX; s.bgPosY = from.bgPosY;
+        return;
+    }
+    if (p == "color") { s.color = from.color; return; }
+    if (p == "font" || p.compare(0, 5, "font-") == 0) {
+        if (p == "font" || p == "font-weight") { s.bold = from.bold; s.weight = from.weight; }
+        if (p == "font" || p == "font-style") s.italic = from.italic;
+        if (p == "font" || p == "font-family") { s.family = from.family; s.mono = from.mono; }
+        if (p == "font" || p == "font-variant") s.smallCaps = from.smallCaps;
+        if (p == "font") { s.lineHeight = from.lineHeight; s.lineHeightFactor = from.lineHeightFactor; }
+        return;
+    }
+    if (p == "line-height") { s.lineHeight = from.lineHeight; s.lineHeightFactor = from.lineHeightFactor; return; }
+    if (p == "display") { s.display = from.display; return; }
+    if (p == "width" || p == "inline-size") { s.width = from.width; return; }
+    if (p == "height" || p == "block-size") { s.height = from.height; return; }
+    if (p == "max-width") { s.maxWidth = from.maxWidth; return; }
+    if (p == "max-height") { s.maxHeight = from.maxHeight; return; }
+    if (p == "min-width") { s.minWidth = from.minWidth; s.minWidthAuto = from.minWidthAuto; return; }
+    if (p == "min-height") { s.minHeight = from.minHeight; s.minHeightAuto = from.minHeightAuto; return; }
+    if (p == "text-align") { s.textAlign = from.textAlign; return; }
+    if (p == "text-indent") { s.textIndent = from.textIndent; return; }
+    if (p == "text-transform") { s.textTransform = from.textTransform; return; }
+    if (p.compare(0, 15, "text-decoration") == 0) { s.underline = from.underline; s.strike = from.strike; s.overline = from.overline; s.decoStyle = from.decoStyle; s.decoColor = from.decoColor; return; }
+    if (p == "white-space") { s.whiteSpace = from.whiteSpace; return; }
+    if (p == "list-style" || p == "list-style-type") { s.listStyle = from.listStyle; return; }
+    if (p == "visibility") { s.visible = from.visible; return; }
+    if (p == "opacity") { s.opacity = from.opacity; return; }
+    if (p == "position") { s.position = from.position; return; }
+    if (p == "float") { s.floating = from.floating; return; }
+    if (p == "clear") { s.clear = from.clear; return; }
+    if (p == "top" || p == "right" || p == "bottom" || p == "left" || p == "inset") {
+        const int k = p == "top" ? 0 : p == "right" ? 1 : p == "bottom" ? 2 : p == "left" ? 3 : -1;
+        for (int j = 0; j < 4; ++j) if (k < 0 || k == j) s.inset[j] = from.inset[j];
+        return;
+    }
+    if (p == "z-index") { s.zAuto = from.zAuto; s.zIndex = from.zIndex; return; }
+    if (p.compare(0, 8, "overflow") == 0) { s.overflowX = from.overflowX; s.overflowY = from.overflowY; return; }
+    if (p == "box-shadow") { s.shadows = from.shadows; return; }
+    if (p == "text-shadow") { s.textShadows = from.textShadows; return; }
+    if (p == "letter-spacing") { s.letterSpacing = from.letterSpacing; return; }
+    if (p == "word-spacing") { s.wordSpacing = from.wordSpacing; return; }
+    if (p == "vertical-align") { s.verticalAlign = from.verticalAlign; return; }
+    if (p == "box-sizing") { s.borderBox = from.borderBox; return; }
+    if (p == "border-spacing") { s.borderSpacingH = from.borderSpacingH; s.borderSpacingV = from.borderSpacingV; return; }
+    if (p == "border-collapse") { s.borderCollapse = from.borderCollapse; return; }
+    if (p == "outline") { s.outlineWidth = from.outlineWidth; s.outlineColor = from.outlineColor; s.outlineOffset = from.outlineOffset; return; }
+    if (p == "transform") { s.transform = from.transform; return; }
+}
+bool ApplyKeyword(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle& parent) {
+    const std::string v = LowerAscii(Trim(d.value));
+    if (v != "inherit" && v != "initial" && v != "unset" && v != "revert" && v != "revert-layer") return false;
+    const bool inherit = v == "inherit" || ((v == "unset" || v == "revert" || v == "revert-layer") && InheritedProperty(d.property));
+    if (inherit) { CopyProperty(s, wk, d.property, parent); return true; }
+    static const ComputedStyle initial = InheritedStyle(ComputedStyle());
+    if (d.property == "color") { s.color = Color{0, 0, 0, 255}; return true; }
+    if (d.property.compare(0, 6, "border") == 0 && d.property.find("radius") == std::string::npos && d.property.find("color") == std::string::npos &&
+        d.property != "border-spacing" && d.property != "border-collapse") {
+        // initial border: medium none (no line)
+        ComputedStyle none = initial;
+        for (int k = 0; k < 4; ++k) none.border[k] = 0;
+        CopyProperty(s, wk, d.property, none);
+        for (int k = 0; k < 4; ++k) if (wk.borderWidth[k] == 0 && wk.borderStyle[k] == 0) wk.borderWidth[k] = 3;
+        return true;
+    }
+    CopyProperty(s, wk, d.property, initial);
+    if (d.property == "display") s.display = Display::Inline;
+    return true;
+}
+
 // var(--name, fallback) replaced by the custom property's value (CSS Custom Properties 1, 3). `budget` caps the text a value may
 // grow to, so a page cannot make one value explode (each var() may refer to others).
 bool SubstituteVars(const std::string& in, const CustomProps* vars, std::string& out, int depth, std::size_t& budget) {
@@ -2163,6 +2407,9 @@ ComputedStyle InheritedStyle(const ComputedStyle& parent) {
     s.visible = parent.visible;
     s.underline = parent.underline; s.strike = parent.strike; s.overline = parent.overline;   // decorations reach the text inside (simplified)
     s.decoStyle = parent.decoStyle; s.decoColor = parent.decoColor;
+    s.smallCaps = parent.smallCaps;
+    s.letterSpacing = parent.letterSpacing; s.wordSpacing = parent.wordSpacing;
+    s.textShadows = parent.textShadows;
     s.borderSpacingH = parent.borderSpacingH; s.borderSpacingV = parent.borderSpacingV;
     s.borderCollapse = parent.borderCollapse;
     s.captionBottom = parent.captionBottom;
@@ -2275,10 +2522,14 @@ ComputedStyle ComputeStyle(const Node& el, const ComputedStyle& parent, const st
     // Pass 1: the font size (em values of everything else depend on it). Pass 2: the rest.
     for (const Cascaded& c : list) if (!c.decl->value.empty()) ApplyFontSize(s, *c.decl, parent);
     Work wk;
-    for (const Cascaded& c : list)
-        if (c.decl->property != "font-size" && !c.decl->value.empty() && c.decl->property.compare(0, 2, "--") != 0) Apply(s, wk, *c.decl, parent);
+    for (const Cascaded& c : list) {
+        if (c.decl->property == "font-size" || c.decl->value.empty() || c.decl->property.compare(0, 2, "--") == 0) continue;
+        if (ApplyKeyword(s, wk, *c.decl, parent)) continue;
+        Apply(s, wk, *c.decl, parent);
+    }
     for (int k = 0; k < 4; ++k) {
         s.border[k] = wk.borderStyle[k] ? std::min(wk.borderWidth[k], 1000.0f) : 0.0f;
+        s.borderLine[k] = (std::uint8_t)wk.borderStyle[k];
         if (!wk.borderColorSet[k]) s.borderColor[k] = s.color;   // currentColor
     }
     // CSS 2.1 9.7: a float or an absolutely positioned box is block-level

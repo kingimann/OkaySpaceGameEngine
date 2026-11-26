@@ -158,6 +158,7 @@ struct ComputedStyle {
     Display display = Display::Inline;
     Length margin[4], padding[4];   ///< top, right, bottom, left
     float border[4] = {0, 0, 0, 0};   ///< used widths (0 when the side's style is none)
+    std::uint8_t borderLine[4] = {0, 0, 0, 0};   ///< the line of each side: 0 none, 1 solid, 2 dashed, 3 dotted, 4 double
     Color borderColor[4];
     float radius[4] = {0, 0, 0, 0};   ///< border-radius: top-left, top-right, bottom-right, bottom-left (px)
     Color color;                      ///< black
@@ -183,6 +184,14 @@ struct ComputedStyle {
     Length width, maxWidth, height, minWidth, minHeight, maxHeight;
     bool minWidthAuto = true, minHeightAuto = true;   ///< min-width / min-height: auto (flex items use their content)
     bool borderBox = false;           ///< box-sizing: border-box
+    bool smallCaps = false;           ///< font-variant: small-caps (inherited)
+    float letterSpacing = 0.0f, wordSpacing = 0.0f;   ///< extra px after every character / every space (inherited)
+    std::vector<BoxShadow> textShadows;               ///< text-shadow (inherited; spread and inset unused)
+    float outlineWidth = 0.0f, outlineOffset = 0.0f;  ///< outline (drawn outside the border box, takes no room)
+    Color outlineColor{0, 0, 0, 0};
+    std::uint8_t outlineLine = 1;     ///< as borderLine
+    float aspectRatio = 0.0f;         ///< aspect-ratio width / height (0: auto)
+    float filterGray = 0.0f, filterBright = 1.0f, filterBlur = 0.0f;   ///< filter: grayscale(), brightness(), blur() (blur is not drawn)
     bool underline = false, strike = false, overline = false;
     DecoStyle decoStyle = DecoStyle::Solid;
     Color decoColor{0, 0, 0, 0};      ///< text-decoration-color (alpha 0: the text colour)

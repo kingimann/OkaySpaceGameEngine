@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html><head><title>Station readings</title>
+<style>
+body { margin: 16px; font-family: Arial, sans-serif; color: #1f2933; font-size: 13px; }
+h1 { font-size: 18px; margin: 0 0 8px; }
+.filters { margin-bottom: 10px; }
+.filters span { display: inline-block; border: 1px solid #cbd2d9; border-radius: 3px; padding: 2px 8px; margin-right: 6px; background: #f5f7fa; }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+caption { caption-side: bottom; text-align: left; color: #7b8794; padding-top: 6px; font-size: 11px; }
+col.station { width: 28%; }
+th { background: #323f4b; color: #fff; text-align: left; padding: 6px 8px; font-weight: normal; text-transform: uppercase; font-size: 11px; letter-spacing: .5px; }
+td { padding: 5px 8px; border-bottom: 1px solid #e4e7eb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+tbody tr:nth-child(odd) { background: #f5f7fa; }
+td.num { text-align: right; font-family: monospace; }
+td.warn { color: #c0392b; font-weight: bold; }
+tfoot td { font-weight: bold; border-top: 2px solid #323f4b; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #3ebd93; margin-right: 6px; }
+.dot.off { background: #e12d39; }
+</style></head>
+<body>
+<h1>Weather station readings</h1>
+<div class="filters"><span>Region: North</span><span>Last 24 h</span><span>Sorted by station</span></div>
+<table>
+<caption>Readings every hour; values are averages.</caption>
+<colgroup><col class="station"><col><col><col><col></colgroup>
+<thead><tr><th>Station</th><th>Temp &deg;C</th><th>Wind km/h</th><th>Rain mm</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>Harbour Point with a long station name</td><td class="num">11.4</td><td class="num">23</td><td class="num">0.0</td><td><span class="dot"></span>online</td></tr>
+<tr><td>Hill Farm</td><td class="num">8.9</td><td class="num warn">61</td><td class="num">2.4</td><td><span class="dot"></span>online</td></tr>
+<tr><td>Old Mill</td><td class="num">9.7</td><td class="num">17</td><td class="num">1.1</td><td><span class="dot off"></span>offline</td></tr>
+<tr><td>Airfield</td><td class="num">10.2</td><td class="num">35</td><td class="num">0.3</td><td><span class="dot"></span>online</td></tr>
+</tbody>
+<tfoot><tr><td>Average</td><td class="num">10.1</td><td class="num">34</td><td class="num">1.0</td><td></td></tr></tfoot>
+</table>
+</body></html>

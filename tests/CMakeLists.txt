@@ -5699,7 +5699,7 @@ set_tests_properties(launcher_friends PROPERTIES TIMEOUT 60)
 # WOFF fonts (browser_webfont) and browser plugins (browser_plugins), step 2's game packs and launch rules (browser_game), and round 2's
 # page JavaScript (browser_script: the DOM binding, events, timers, budget). They link only okay_browser (standard library
 # and okay_js).
-foreach(_bt browser_html browser_css browser_layout browser_layout2 browser_layout3 browser_webfont browser_plugins browser_url browser_hostile browser_game browser_profile browser_forms browser_script)
+foreach(_bt browser_html browser_css browser_layout browser_layout2 browser_layout3 browser_style3 browser_webfont browser_plugins browser_url browser_hostile browser_game browser_profile browser_forms browser_script)
     add_executable(test_${_bt} test_${_bt}.cpp)
     target_include_directories(test_${_bt} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/launcher)   # launcher/BrowserPage.hpp: the link rule
     target_link_libraries(test_${_bt} PRIVATE okay::browser)

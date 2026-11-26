@@ -25,7 +25,8 @@ namespace {
 
 struct CompileFail {};
 
-enum VarKind : std::uint8_t { VK_Var, VK_Let, VK_Const, VK_Hidden, VK_Param, VK_Func, VK_Class, VK_CatchParam };
+enum VarKind : std::uint8_t { VK_Var, VK_Let, VK_Const, VK_Hidden, VK_Param, VK_Func, VK_Class, VK_CatchParam,
+                               VK_Self /* a named function expression's own name: the body's declarations shadow it */ };
 
 struct Var {
     std::u16string name;
@@ -196,6 +197,11 @@ struct Compiler {
             if (bothVar && !(ex->kind == VK_Param && kind == VK_Func)) return ex;
             if (ex->kind == VK_Param && kind == VK_Func) { ex->kind = VK_Func; return ex; }
             if (ex->kind == VK_Hidden) { ex->kind = kind; return ex; }
+            if (ex->kind == VK_Self) {   // 15.2.5: the name lives in an outer scope, so a body declaration may shadow it
+                ex->kind = kind;
+                ex->initKnown = !(kind == VK_Let || kind == VK_Const || kind == VK_Class);
+                return ex;
+            }
             Fail(at, "'" + Utf16To8(name) + "' is already declared in this scope");
         }
         Var v;
@@ -456,7 +462,7 @@ struct Compiler {
                 else Emit(OP_PutLoc, v->slot);
             }
             if (namedExpr && !fi->name.empty() && !FindIn(CurScope(), fi->name)) {
-                Var* v = Declare(fi->name, VK_Var, nullptr);
+                Var* v = Declare(fi->name, VK_Self, nullptr);
                 Emit(OP_LoadFunc);
                 Emit(OP_PutLoc, v->slot);
                 if (v->captured) Emit(OP_NewCell, v->slot, 2);
@@ -495,6 +501,11 @@ struct Compiler {
         for (auto& vn : vars) {
             if (Var* ex = FindIn(CurScope(), vn.first)) {
                 if (ex->kind == VK_Hidden) ex->kind = VK_Var;
+                if (ex->kind == VK_Self) {   // `var f` inside `function f`: a new binding that starts undefined
+                    ex->kind = VK_Var;
+                    Emit(OP_Undef);
+                    Emit(ex->captured ? OP_PutCell : OP_PutLoc, ex->slot);
+                }
                 continue;
             }
             Var* v = Declare(vn.first, VK_Var, vn.second);

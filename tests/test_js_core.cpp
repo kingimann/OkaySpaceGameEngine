@@ -554,6 +554,17 @@ void IntlBasics() {
     ExpectError("new Intl.NumberFormat('en', {maximumFractionDigits: 101})", "RangeError");
 }
 
+// 15.2.5 a named function expression binds its name in a scope of its own, outside the body: the body may declare
+// the same name (a real site: `(function sidebar() { const sidebar = ...; })()`)
+void NamedFunctionExpressions() {
+    Expect("const r = (function sidebar() { const sidebar = 'el'; return sidebar; })(); console.log(r)", "el");
+    Expect("console.log((function f() { var f; return typeof f; })(), (function g() { return typeof g; })(), (function h() { let h = 1; return h; })())",
+           "undefined function 1");
+    Expect("const k = function fact(n) { return n <= 1 ? 1 : n * fact(n - 1); }; console.log(k(5), typeof fact)", "120 undefined");
+    Expect("console.log((function c() { const get = () => c; return get() === c; })(), (function d() { const d = 2; return () => d; })()())", "true 2");
+    ExpectError("(function t() { t; const t = 1; })()", "ReferenceError");   // the body's const shadows the name from the start
+}
+
 struct Hostile {
     const char* src;
     const char* want;   ///< part of the error, "" for any error, "OK" when it must finish without one
@@ -798,6 +809,7 @@ int main() {
     RegexLookbehind();
     NewerSyntaxAndLibrary();
     IntlBasics();
+    NamedFunctionExpressions();
     ConformanceScript(false);
     ConformanceScript(true);
     HostileOneLiners();

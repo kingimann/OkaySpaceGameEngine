@@ -37,7 +37,7 @@ Type Gen::element_type(const Type& type) const { return peel_array(type); }
 
 bool Gen::gen_addr(const Node& node) {
     if (node.kind == Node::Name) {
-        if (Local* local = find_local(node.text)) {
+        if (Local* local = find_local(node)) {
             if (local->type.is_ref) {
                 load_slot(local->offset, true);
                 last_type = local->type;
@@ -91,7 +91,7 @@ bool Gen::gen_addr(const Node& node) {
     if (node.kind == Node::Index) {
         bool from_pointer = false;
         if (node.kids[0].kind == Node::Name) {
-            if (Local* local = find_local(node.kids[0].text))
+            if (Local* local = find_local(node.kids[0]))
                 from_pointer = local->type.pointers > 0 && !local->type.is_array();
             else if (Global* global = find_global(node.kids[0].text))
                 from_pointer = global->type.pointers > 0 && !global->type.is_array();
@@ -185,7 +185,19 @@ bool Gen::gen_addr(const Node& node) {
         if (!gen_expr(node)) return false;
         return gen_addr(node.kids[0]);
     }
-    error = "not an address";
+    // What the operand was, for the message (Round 30): the survey's "not an address" lines then say where to look.
+    std::string what;
+    switch (node.kind) {
+        case Node::Call: what = "a call of " + (node.text.empty() ? std::string("a function pointer") : node.text); break;
+        case Node::Name: what = "the name " + node.text; break;
+        case Node::IntLit: what = "a constant"; break;
+        case Node::StringLit: what = "a string"; break;
+        case Node::Binary: what = "a binary operator"; break;
+        case Node::Unary: what = "a unary operator or cast"; break;
+        case Node::Assign: what = "an assignment"; break;
+        default: what = "an expression"; break;
+    }
+    error = "not an address: " + what;
     return false;
 }
 
@@ -468,6 +480,7 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
 
 bool Gen::gen_stmt(const Node& node) {
     temp_depth = 0;
+    if (node.line > 0 && node.kind != Node::Block) stmt_line = node.line;
     if (debug_lines && node.line > 0 && node.kind != Node::Block)
         lines.push_back({static_cast<uint32_t>(text.size()), node.line});
     if (node.kind == Node::Block) {

@@ -7,7 +7,45 @@ namespace compiler {
 // MSVC decorated names, from the public decoration rules: '?' name '@'
 // namespace '@@YA' return-type argument-types '@Z'. H is int, X is void,
 // A in front of a type is a reference. Written here, not copied.
+std::vector<std::pair<Type, Type>>& memptr_types() {
+    static std::vector<std::pair<Type, Type>> types;
+    return types;
+}
+
+std::vector<MemFnType>& memfn_types() {
+    static std::vector<MemFnType> types;
+    return types;
+}
+
 std::string cxx_type(const Type& type, const std::vector<StructDef>* structs) {
+    if (type.memfn >= 0 && type.memfn < static_cast<int>(memfn_types().size()) && !type.is_ref && type.pointers == 1) {
+        // R (C::*)(P...) (Round 31): P8, the class's name and @@, E (a 64-bit this), A or B (this not const or const),
+        // A (the calling convention), the result (?A before a class), the parameters (X for none, else each and @),
+        // and Z. Written from the public decoration rules; not compared with MSVC output.
+        const MemFnType& mf = memfn_types()[static_cast<size_t>(type.memfn)];
+        std::string cls = cxx_type(mf.cls, structs);
+        if (!cls.empty() && (cls[0] == 'U' || cls[0] == 'V' || cls[0] == 'T')) cls = cls.substr(1);
+        std::string out = "P8" + cls + "E" + (mf.is_const ? "B" : "A") + "A";
+        if (mf.ret.base == 3 && mf.ret.pointers == 0 && !mf.ret.is_ref) out += "?A";
+        out += cxx_type(mf.ret, structs);
+        if (mf.params.empty()) out += "X";
+        else {
+            for (const Type& param : mf.params) out += cxx_type(param, structs);
+            out += "@";
+        }
+        return out + "Z";
+    }
+    if (type.memptr >= 0 && type.memptr < static_cast<int>(memptr_types().size()) && !type.is_ref && type.pointers == 0) {
+        // T C::* (Round 30): P, E for 64-bit, Q and the class's name (as for a class type, without its U/V letter),
+        // then the member's type; R instead of Q for a const member type (`const T C::*`, Round 31), as B instead of A
+        // marks a pointer to const. Written from the public decoration rules; not compared with MSVC output.
+        const auto& mp = memptr_types()[static_cast<size_t>(type.memptr)];
+        std::string cls = cxx_type(mp.first, structs);
+        if (!cls.empty() && (cls[0] == 'U' || cls[0] == 'V' || cls[0] == 'T')) cls = cls.substr(1);
+        // (A parameter's leading const is kept in pconst by the parameter reader.)
+        const bool const_member = (mp.second.is_const && mp.second.pointers == 0) || type.pconst;
+        return std::string(const_member ? "PER" : "PEQ") + cls + cxx_type(mp.second, structs);
+    }
     if (type.is_ref) {
         // On x64 a reference is "AEA" (the E is the 64-bit pointer mark).
         Type inner = type;

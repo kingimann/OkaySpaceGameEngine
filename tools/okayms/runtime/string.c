@@ -146,8 +146,9 @@ static int digit_of(int c) {
     return 99;
 }
 
-unsigned long strtoul(char *s, char **end, int base) {
-    unsigned long value;
+/* The 64-bit conversions (Round 31, for std::stoll and std::stoi); strtoul and strtol are these cut to 32 bits. */
+unsigned long long strtoull(char *s, char **end, int base) {
+    unsigned long long value;
     int neg;
     int d;
     char *p;
@@ -183,16 +184,11 @@ unsigned long strtoul(char *s, char **end, int base) {
     return neg ? 0 - value : value;
 }
 
-long strtol(char *s, char **end, int base) {
-    char *p;
-    int neg;
-    unsigned long v;
-    p = s;
-    while (is_space_char(p[0])) p = p + 1;
-    neg = p[0] == '-';
-    v = strtoul(s, end, base);
-    return neg ? 0 - (long)(0 - v) : (long)v;
-}
+long long strtoll(char *s, char **end, int base) { return (long long)strtoull(s, end, base); }
+
+unsigned long strtoul(char *s, char **end, int base) { return (unsigned long)strtoull(s, end, base); }
+
+long strtol(char *s, char **end, int base) { return (long)strtoull(s, end, base); }
 
 double strtod(char *s, char **end) {
     double value;

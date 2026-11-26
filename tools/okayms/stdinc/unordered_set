@@ -90,6 +90,16 @@ public:
         erase(items_.data() + idx);
         return 1;
     }
+    // [container.reqmts] == and != (Round 31): before, there were none and okay-ms compared the objects' bytes
+    // (SaveFramework.hpp's `m_values == o.m_values` on a std::map).
+    // Equal when they hold the same values, in any order ([unord.req] 12).
+    bool operator==(const unordered_set& o) const {
+        if (size() != o.size()) return false;
+        for (const T* p = begin(); p != end(); ++p)
+            if (o.count(*p) == 0) return false;
+        return true;
+    }
+    bool operator!=(const unordered_set& o) const { return !(*this == o); }
 };
 
 template <typename T>
@@ -116,5 +126,9 @@ public:
     pair<const T*, bool> insert(const T& value) { return items_.insert(value); }
     size_t erase(const T& value) { return items_.erase(value); }
     const T* erase(const T* pos) { return items_.erase(pos); }
+    // [container.reqmts] == and != (Round 31): before, there were none and okay-ms compared the objects' bytes
+    // (SaveFramework.hpp's `m_values == o.m_values` on a std::map).
+    bool operator==(const unordered_set& o) const { return items_ == o.items_; }
+    bool operator!=(const unordered_set& o) const { return !(*this == o); }
 };
 }

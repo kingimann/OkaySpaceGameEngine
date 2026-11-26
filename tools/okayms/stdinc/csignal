@@ -22,3 +22,32 @@ int raise(int sig);
 #define SIG_DFL ((std::__sighandler_t)0)
 #define SIG_IGN ((std::__sighandler_t)1)
 #define SIG_ERR ((std::__sighandler_t)-1)
+// POSIX.1-2017 <signal.h> beyond ISO C (Round 30): kill, signal sets and the signals POSIX adds, for the engine's POSIX
+// paths (the plain survey). Declared at global scope, and only when _WIN32 is not defined: the Microsoft runtime has
+// none of them. SIGKILL is 9 as POSIX's kill utility documents; the other numbers and the sigset_t layout are our own
+// choice (nothing that calls these links on Windows).
+#if !defined(_WIN32)
+#include <sys/types.h>
+#define SIGHUP 1
+#define SIGQUIT 3
+#define SIGKILL 9
+#define SIGUSR1 10
+#define SIGUSR2 12
+#define SIGPIPE 13
+#define SIGALRM 14
+#define SIGCHLD 17
+#define SIG_BLOCK 0
+#define SIG_UNBLOCK 1
+#define SIG_SETMASK 2
+typedef struct {
+    unsigned long long __okay_bits[2];
+} sigset_t;
+extern "C" {
+int kill(pid_t pid, int sig);
+int sigemptyset(sigset_t* set);
+int sigfillset(sigset_t* set);
+int sigaddset(sigset_t* set, int sig);
+int sigdelset(sigset_t* set, int sig);
+int sigprocmask(int how, const sigset_t* set, sigset_t* old);
+}
+#endif

@@ -48,6 +48,17 @@ struct TempDir {
     }
 };
 
+// launcher.cfg: `s` written by WriteSettings and read back line by line with ApplySettingLine (every line must be one of ours).
+Settings RoundTrip(const Settings& s) {
+    std::ostringstream out;
+    WriteSettings(s, out);
+    Settings back;
+    std::istringstream in(out.str());
+    std::string line;
+    while (std::getline(in, line)) { const auto eq = line.find('='); CHECK(eq != std::string::npos && ApplySettingLine(back, line.substr(0, eq), line.substr(eq + 1))); }
+    return back;
+}
+
 void Put(const fs::path& p, const std::string& text) {
     std::error_code ec;
     fs::create_directories(p.parent_path(), ec);
@@ -982,12 +993,7 @@ int main() {
         CHECK(ApplySettingLine(s, "lts_line", "2.850.1") && s.ltsLine == "2.850" && ApplySettingLine(s, "lts_line", "x") && s.ltsLine.empty());
         CHECK(!ApplySettingLine(s, "accent", "3") && !ApplySettingLine(s, "update_on_launch", "1") && !ApplySettingLine(s, "", ""));   // other keys are not ours
         s.channel = Channel::Lts; s.keepPrevious = 4; s.defaultEditor = "2.850.1"; s.ltsLine = "2.850";
-        std::ostringstream out;
-        WriteSettings(s, out);
-        Settings back;
-        std::istringstream in(out.str());
-        std::string line;
-        while (std::getline(in, line)) { const auto eq = line.find('='); CHECK(eq != std::string::npos && ApplySettingLine(back, line.substr(0, eq), line.substr(eq + 1))); }
+        const Settings back = RoundTrip(s);
         CHECK(back.channel == Channel::Lts && back.keepPrevious == 4 && back.defaultEditor == "2.850.1" && back.ltsLine == "2.850");
         std::ostringstream dflt;
         WriteSettings(Settings{}, dflt);
@@ -1511,6 +1517,90 @@ int main() {
         const std::string why = okayupdater::MismatchSentence("2.903.8.115", mm);
         CHECK(Has(why, "v2.903.8.115 (test build)") && Has(why, "the editor is still v2.903.8.114 (test build)") && Has(why, "Repair"));
         CHECK(okayupdater::MismatchSentence("2.903.8.115", {}).empty());
+    }
+
+    // ---- "Skip this version" and "a test build can be ahead of a release" (owner, 2026-11-26) ----------------------------------------------
+    RUN_SUITE("skip a version, and a release behind a test build");
+    {
+        // launcher.cfg: the skipped version goes round, normalized; a default launcher.cfg is unchanged; junk is not a version.
+        Settings s;
+        CHECK(s.skippedVersion.empty());
+        CHECK(ApplySettingLine(s, "skipped_version", "v2.904.0") && s.skippedVersion == "2.904.0");
+        CHECK(ApplySettingLine(s, "skipped_version", "junk") && s.skippedVersion.empty());
+        CHECK(ApplySettingLine(s, "skipped_version", "2.904.0.7") && s.skippedVersion == "2.904.0.7");   // a test build is skipped by its version too
+        std::ostringstream out;
+        WriteSettings(s, out);
+        CHECK(Has(out.str(), "skipped_version=2.904.0.7\n"));
+        CHECK(RoundTrip(s).skippedVersion == "2.904.0.7");
+        std::ostringstream dflt;
+        WriteSettings(Settings{}, dflt);
+        CHECK(!Has(dflt.str(), "skipped_version"));
+
+        // versions.json and dev/versions.json: "mainCount" (the build's place on main, git rev-list --count) and "mainSha"; old lists have neither.
+        using namespace okaytestlists;
+        const std::string e1 = std::string(64, 'a'), sha40 = std::string(40, 'c');
+        const Index rel = ParseIndex(List({ListEntry("2.904.0", "2026-11-26", true, Files(e1), ",\"mainCount\":1490,\"mainSha\":\"" + sha40 + "\""),
+                                           ListEntry("2.903.8", "2026-11-25", true, Files(e1)),
+                                           ListEntry("2.903.7", "2026-11-24", true, Files(e1), ",\"mainCount\":\"12\""),
+                                           ListEntry("2.903.6", "2026-11-23", true, Files(e1), ",\"mainCount\":-5")}, "2.904.0"));
+        CHECK(rel.ok && rel.versions.size() == 4);
+        CHECK(rel.Find("2.904.0") && rel.Find("2.904.0")->mainCount == 1490 && rel.Find("2.904.0")->mainSha == sha40);
+        CHECK(rel.Find("2.903.8") && rel.Find("2.903.8")->mainCount == 0 && rel.Find("2.903.8")->mainSha.empty());   // old entry: not known
+        CHECK(rel.Find("2.903.7") && rel.Find("2.903.7")->mainCount == 0);                                            // not a number: not known
+        CHECK(rel.Find("2.903.6") && rel.Find("2.903.6")->mainCount == 0);
+        const Index dev = ParseIndex(List({ListEntry("2.903.8.140", "2026-11-26", true, Files(e1), ",\"branch\":\"main\",\"mainCount\":1500"),
+                                           ListEntry("2.903.8.139", "2026-11-26", true, Files(e1), ",\"branch\":\"main\"")}), IndexKind::TestBuilds);
+        CHECK(dev.ok && dev.Find("2.903.8.140") && dev.Find("2.903.8.140")->mainCount == 1500 && dev.Find("2.903.8.139")->mainCount == 0);
+
+        // The decision: what the update check does with the version it found.
+        using okayupdater::Offer;
+        using okayupdater::OfferInputs;
+        auto decide = [](const std::string& local, const std::string& target, std::uint64_t lm, std::uint64_t tm, const std::string& skipped = "",
+                         const std::string& confirmed = "", bool goBack = false) {
+            OfferInputs i; i.local = local; i.target = target; i.localMainCount = lm; i.targetMainCount = tm; i.skipped = skipped; i.confirmed = confirmed; i.goBack = goBack;
+            return okayupdater::DecideOffer(i);
+        };
+        CHECK(decide("2.903.8", "2.904.0", 0, 0).kind == Offer::Install);                     // a release over a release: by number, as always
+        CHECK(decide("2.904.0", "2.904.0", 0, 0).kind == Offer::Nothing);
+        CHECK(decide("2.904.1", "2.904.0", 0, 0).kind == Offer::Nothing);
+        CHECK(decide("2.904.0", "", 0, 0).kind == Offer::Nothing);
+        // Skipped: never installed by itself, a NEWER one is offered as usual, and pressing Install on it installs it.
+        CHECK(decide("2.903.8", "2.904.0", 0, 0, "2.904.0").kind == Offer::Skipped);
+        CHECK(Has(decide("2.903.8", "2.904.0", 0, 0, "2.904.0").note, "v2.904.0 is available (skipped)"));
+        CHECK(decide("2.903.8", "2.904.1", 0, 0, "2.904.0").kind == Offer::Install);
+        CHECK(decide("2.903.8", "2.904.0", 0, 0, "2.904.0", "2.904.0").kind == Offer::Install);
+        CHECK(decide("2.904.0.5", "2.904.0.7", 0, 0, "2.904.0.7").kind == Offer::Skipped);     // a test build is skipped the same way
+        CHECK(decide("2.904.0.5", "2.904.0.8", 0, 0, "2.904.0.7").kind == Offer::Install);
+        // A test build that is AHEAD of the release (more of main in it): no offer, and the plain line instead.
+        const Offer behind = decide("2.903.8.140", "2.904.0", 1500, 1490);
+        CHECK(behind.kind == Offer::AlreadyHave);
+        CHECK(behind.note == "You already have everything in v2.904.0 (your test build is newer).");
+        CHECK(decide("2.903.8.140", "2.904.0", 1500, 1500).kind == Offer::AlreadyHave);       // the same commit: nothing new
+        CHECK(decide("2.903.8.140", "2.904.0", 1500, 1490, "", "2.904.0").kind == Offer::AlreadyHave);   // not even on a click (the Versions page installs it side by side)
+        // The release is ahead: offered and installed as usual.
+        CHECK(decide("2.903.8.140", "2.904.0", 1490, 1500).kind == Offer::Install);
+        // Either count unknown: today's rule (the number) but never installed by itself: the person is asked.
+        for (const auto& lt : {std::pair<std::uint64_t, std::uint64_t>{0, 1490}, {1500, 0}, {0, 0}}) {
+            const Offer o = decide("2.903.8.140", "2.904.0", lt.first, lt.second);
+            CHECK(o.kind == Offer::Ask);
+            CHECK(!o.note.empty());
+            CHECK(decide("2.903.8.140", "2.904.0", lt.first, lt.second, "", "2.904.0").kind == Offer::Install);   // they chose Install now
+            CHECK(decide("2.903.8.140", "2.904.0", lt.first, lt.second, "2.904.0").kind == Offer::Skipped);      // skipped wins over asking
+        }
+        CHECK(decide("2.903.8.140", "2.903.8.139", 1500, 1499).kind == Offer::Nothing);
+        // The deliberate way back from a test build is never held back (Settings > Go back to the stable version).
+        CHECK(decide("2.903.8.140", "2.904.0", 1500, 1490, "2.904.0", "", true).kind == Offer::Install);
+        CHECK(decide("2.904.0.3", "2.904.0", 1500, 1490, "", "", true).kind == Offer::Install);
+
+        // The Versions page: a release that is behind the running test build says so; the skipped version says so.
+        const std::vector<AvailableRow> rows = AvailableRows(rel, Index{}, "2.903.8.140", {}, 1500, "2.903.8");
+        auto rowOf = [&](const std::string& v) -> const AvailableRow* { for (const AvailableRow& r : rows) if (r.entry->version == v) return &r; return nullptr; };
+        CHECK(rowOf("2.904.0") && Has(rowOf("2.904.0")->detail, "older than your test build"));
+        CHECK(rowOf("2.903.8") && Has(rowOf("2.903.8")->detail, "skipped") && !Has(rowOf("2.903.8")->detail, "older than your test build"));   // count not known: no claim
+        const std::vector<AvailableRow> ahead = AvailableRows(rel, Index{}, "2.903.8.140", {}, 1480, "");
+        for (const AvailableRow& r : ahead) CHECK(!Has(r.detail, "older than your test build") && !Has(r.detail, "skipped"));
+        const std::vector<AvailableRow> onRelease = AvailableRows(rel, Index{}, "2.903.5", {}, 1500, "");   // a release is running: no test-build words
+        for (const AvailableRow& r : onRelease) CHECK(!Has(r.detail, "older than your test build"));
     }
 
     TEST_MAIN_RESULT();

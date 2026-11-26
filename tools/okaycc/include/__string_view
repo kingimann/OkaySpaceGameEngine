@@ -4,6 +4,32 @@
 #pragma once
 #include <cstddef>
 namespace std {
+// std::char_traits<char> ([char.traits.specializations.char]): the character operations of the
+// strings, on bytes; eof() is -1, as EOF of <cstdio> and istream::peek give.
+template <typename C>
+struct char_traits;
+template <>
+struct char_traits<char> {
+    typedef char char_type;
+    typedef int int_type;
+    static constexpr int eof() { return -1; }
+    static constexpr int not_eof(int i) { return i == -1 ? 0 : i; }
+    static constexpr int to_int_type(char c) { return (int)(unsigned char)c; }
+    static constexpr char to_char_type(int i) { return (char)i; }
+    static constexpr bool eq_int_type(int a, int b) { return a == b; }
+    static constexpr bool eq(char a, char b) { return a == b; }
+    static constexpr bool lt(char a, char b) { return (unsigned char)a < (unsigned char)b; }
+    static unsigned long length(const char *s) {
+        unsigned long n = 0;
+        while (s[n]) ++n;
+        return n;
+    }
+    static int compare(const char *a, const char *b, unsigned long n) {
+        for (unsigned long i = 0; i < n; ++i)
+            if (a[i] != b[i]) return (unsigned char)a[i] < (unsigned char)b[i] ? -1 : 1;
+        return 0;
+    }
+};
 class string;
 class string_view {
 public:

@@ -112,6 +112,11 @@ if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
     # scripts/dev_index.py maintains dev/versions.json, the list of test builds (the dev channel; docs/release/release_channels.md "Test builds").
     add_test(NAME dev_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/dev_index.py --self-test)
+    # scripts/main_position.sh: a build's place on main (mainCount in both lists, OKAY_MAIN_COUNT in the launcher), on a throw-away git repository.
+    find_program(OKAY_GIT_FOR_TESTS git)
+    if(OKAY_GIT_FOR_TESTS AND NOT WIN32)
+        add_test(NAME main_position COMMAND bash ${CMAKE_SOURCE_DIR}/scripts/main_position.sh --self-test)
+    endif()
     # The systems list (docs/SYSTEMS.md) made by scripts/gen_feature_map.py: temp folders only.
     add_test(NAME gen_feature_map_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_gen_feature_map.py)
     # The collaboration scripts (docs/process/collaboration.md): throw-away git repos only, no GitHub, no feature map.

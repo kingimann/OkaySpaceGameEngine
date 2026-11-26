@@ -20,3 +20,21 @@
 #define O_EXCL _O_EXCL
 #define O_TEXT _O_TEXT
 #define O_BINARY _O_BINARY
+// POSIX.1-2017 <fcntl.h> beyond the flags (Round 30): open and fcntl and the descriptor commands, for the engine's POSIX
+// paths (the plain survey). Declared only when _WIN32 is not defined; the Microsoft runtime has no fcntl, and the
+// command values are our own choice (nothing that calls them links on Windows).
+#if !defined(_WIN32)
+#include <sys/types.h>
+#define F_DUPFD 0
+#define F_GETFD 1
+#define F_SETFD 2
+#define F_GETFL 3
+#define F_SETFL 4
+#define FD_CLOEXEC 1
+#define O_NONBLOCK 0x10000
+#define O_CLOEXEC 0x20000
+extern "C" {
+int open(const char* path, int oflag, ...);
+int fcntl(int fd, int cmd, ...);
+}
+#endif

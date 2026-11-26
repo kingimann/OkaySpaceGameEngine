@@ -81,6 +81,17 @@ struct DocumentSpec {
     std::function<bool(const std::string& text, std::string& why)> save;
 };
 
+/// A command of the command list (Ctrl+Shift+P) and Search Everywhere: its title, its keys as text ("" = none), what it does.
+struct AppCommand { std::string title, shortcut; std::function<void()> run; };
+
+/// One script of the host's scene (the editor: a Script component), listed in the tree's "Scene scripts" section.
+struct SceneScript {
+    std::string key;        ///< the document key the host opens it under (DocumentSpec::key)
+    std::string label;      ///< the script ("Player.lua", or "(no file)")
+    std::string object;     ///< the object it is on ("" = not on an object: a script opened from the project)
+    std::string path;       ///< its file ("" = it lives only in the scene)
+};
+
 class ScriptIdeApp {
 public:
     struct Config {
@@ -119,6 +130,23 @@ public:
         /// Run > Continue / Step Over while a document shows an execution line (SetExecutionLine): the host's debugger gets
         /// "continue" or "step". Empty: no such items.
         std::function<void(const std::string& command)> debug;
+        // ---- the host's scene (the editor's Script components) ----
+        /// The scene's scripts for the tree's "Scene scripts" section (asked every frame the tree shows). Empty: no section.
+        std::function<std::vector<SceneScript>()> sceneScripts;
+        /// The document for a key the app was given before (a click in "Scene scripts", Ctrl+Shift+T on a closed tab). False
+        /// when the host has no such script any more.
+        std::function<bool(const std::string& key, DocumentSpec& out)> documentFor;
+        /// The languages the language menu and New Script offer. Empty: okay::AvailableScriptLanguages().
+        std::vector<std::string> languages;
+        /// A document's language was changed in the app (the editor: the component's language).
+        std::function<void(const std::string& key, const std::string& language)> languageChanged;
+        /// New Script's "Also attach it to <name>": the name of the object the host would attach to ("" = none, no box).
+        std::function<std::string()> attachTarget;
+        /// Attach a script file New Script made to that object; true and the key of its document (opened with documentFor), or
+        /// false (the file is then opened as a file).
+        std::function<bool(const std::string& path, const std::string& language, std::string& key)> attachScript;
+        /// More commands for the command list and Search Everywhere (the editor: its plugins' commands).
+        std::function<std::vector<AppCommand>()> commands;
         /// A clock in milliseconds since 1970 for Local History (empty: the system clock). Tests pin it.
         std::function<std::int64_t()> nowMs;
     };
@@ -150,6 +178,72 @@ public:
     /// The completion list (open while typing a word, Ctrl+Space; Up / Down, Enter or Tab to take one, Esc to close).
     bool CompletionOpen() const;
     const std::vector<CompletionItem>& CompletionList() const;
+
+    // ---- the host's scene, New Script, closing and reopening tabs, the language ----
+    /// Open each document and show the first (the editor: the scripts of the object that was just selected).
+    void ShowDocuments(const std::vector<DocumentSpec>& specs);
+    /// Open the New Script box (name, language, template, attach).
+    void OpenNewScript();
+    bool NewScriptOpen() const;
+    /// What New Script's Create does: <folder>/Assets/Scripts/<stem>.<ext> from the template (`templateIndex` into
+    /// TemplatesFor(language); 0 = the starter with the class named after the file), not overwritten when it exists; then
+    /// attached through the host (attachScript) or opened as a file. False with the reason in Notice() (no folder open...).
+    bool CreateScript(const std::string& typedName, const std::string& language, std::size_t templateIndex, bool attach,
+                      std::string* path = nullptr);
+    /// Close a tab as the person does (the x, Ctrl+W, a middle click): a changed one asks first (Save, Don't Save, Cancel).
+    void RequestClose(const std::string& key);
+    /// The "Save changes?" box is open (closing a changed tab, or quitting with changed tabs).
+    bool ClosePromptOpen() const;
+    /// Answer the box: 0 Save, 1 Don't Save, 2 Cancel (what its buttons do).
+    void AnswerClosePrompt(int answer);
+    /// Reopen the tab closed last (Ctrl+Shift+T): a file again, a host's document through documentFor. False when there is none.
+    bool ReopenClosed();
+    /// Change a document's language (Edit > Script Language): its colours, checks and words follow; an empty or starter text
+    /// becomes the new language's starter (one undo step); the host is told (languageChanged).
+    bool SetLanguage(const std::string& key, const std::string& language);
+    std::string ActiveLanguage() const;
+
+    // ---- find and navigation ----
+    /// The find bar over the code (Ctrl+F; with Replace: Ctrl+H): what to find, the replacement, the options.
+    void OpenFindBar(const std::string& needle, bool replace = false, const FindOptions& options = FindOptions(),
+                     const std::string& with = "");
+    bool FindBarOpen() const;
+    /// Select the next / previous match in the shown document (F3 / Shift+F3), wrapping round. False when there is none.
+    bool FindNext(bool forward = true);
+    /// The matches of the bar's text in the shown document, and which one is selected (-1: none).
+    std::size_t FindCount();
+    int FindCurrent();
+    /// Replace the selected match and select the next one / replace every match in the shown document (one undo step).
+    bool ReplaceNext();
+    int ReplaceAllInDocument();
+    /// Find in Files' "Replace in All Files": every project script and open document; open ones change in their tab (not
+    /// saved), the others are written (a Local History copy first). The count replaced.
+    std::size_t ReplaceInFiles(const std::string& needle, const std::string& with, const FindOptions& options = FindOptions());
+    /// Go to a 1-based line (and column) of the shown document; the place before is kept for Back.
+    bool GoToLine(int line, int col = 0);
+    /// Go to where `word` is defined (empty: the word at the caret): this document first, then every project script. False
+    /// when it is defined nowhere.
+    bool GoToDefinition(const std::string& word = "");
+    /// Every use of `word` (empty: the word at the caret) in the project's scripts and the open documents, shown in the
+    /// References panel. The count.
+    std::size_t FindReferences(const std::string& word = "");
+    const std::vector<FileMatch>& References() const;
+    bool OpenReference(std::size_t index);
+    /// Back / Forward (Alt+Left / Alt+Right) through the places jumped from.
+    bool GoBack();
+    bool GoForward();
+    /// The lists to pick from: 1 Go to Line (Ctrl+G), 2 Go to Symbol (Ctrl+Shift+O), 3 switch tabs (Ctrl+E), 4 bookmarks
+    /// (Shift+F11), 5 Search Everywhere (Shift twice), 6 the commands (Ctrl+Shift+P). 0 closes.
+    void OpenPicker(int which, const std::string& query = "");
+    int PickerOpen() const;
+    /// The picker's rows for its query as they are shown: "label" (detail left out).
+    std::vector<std::string> PickerRows();
+    /// Take the row `index` (Enter or a click does the same).
+    bool PickRow(std::size_t index);
+    /// Every command: the app's own and the host's.
+    std::vector<AppCommand> Commands();
+    /// Toggle a bookmark on the caret's line (F11; the gutter marks are the breakpoints' marks).
+    void ToggleBookmark();
 
     /// What the command line names: a folder opens as the project, a file opens in a tab (its folder becomes the project when
     /// none is open). False when it is neither.

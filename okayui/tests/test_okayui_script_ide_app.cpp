@@ -10,7 +10,10 @@
 #include "OkayUITestKit.hpp"
 #include "ScriptIdeApp.hpp"
 #include "OkayUI_SoftPainter.hpp"
-#include "okay/Components/ScriptComponent.hpp"   // the pictures go through a painter, as in the program: the code font is a font of its own
+#include "okay/Components/ScriptComponent.hpp"
+#include "okay/Scripting/StarterScripts.hpp"
+
+#include <map>   // the pictures go through a painter, as in the program: the code font is a font of its own
 
 #include <cstdlib>
 #include <filesystem>
@@ -269,11 +272,11 @@ int main() {
         sim.ctrl = true; sim.Hold(UI::KeyId_Q, true); sim.Frame(ui); sim.Hold(UI::KeyId_Q, false); sim.Frame(ui); sim.ctrl = false;
         CHECK(!app.WantsQuit());
 
-        // ---- Ctrl+Shift+O: the Open Folder box; a typed folder and Enter open it ----
+        // ---- Ctrl+O: the Open Folder box; a typed folder and Enter open it ----
         const fs::path other = dir / "Other";
         WriteFile(other / "a.lua", "local a = 1\nreturn a\n");
-        sim.ctrl = true; sim.shift = true; sim.Hold(UI::KeyId_O, true); sim.Frame(ui); sim.Hold(UI::KeyId_O, false); sim.Frame(ui);
-        sim.ctrl = false; sim.shift = false;
+        sim.ctrl = true; sim.Hold(UI::KeyId_O, true); sim.Frame(ui); sim.Hold(UI::KeyId_O, false); sim.Frame(ui);
+        sim.ctrl = false;
         sim.Press(Key_SelectAll); sim.Frame(ui);
         sim.Type(other.u8string()); sim.Frame(ui);
         sim.Press(Key_Enter); sim.Frames(2, ui);
@@ -445,6 +448,366 @@ int main() {
         CHECK(printOffered && !selfOffered);
         CHECK(si::DefaultCompletions(w, "", "zzz").empty());
     }
+
+    // ---- batch A: the host's scene scripts, a selected object's scripts, the language, "Save changes?", reopening, New Script ----
+    {
+        Reset();
+        UI::UseLauncherLook(true);
+        UI::Style().caretBlink = false;
+        const fs::path bproj = dir / "Batch A";
+        WriteFile(bproj / "Assets/Scripts/Door.lua", "local Door = {}\nreturn Door\n");
+        const float W = 900, H = 560;
+        Sim sim(W, H);
+        si::ScriptIdeApp::Config hc = cfg;
+        hc.settingsPath.clear();
+        hc.quitItem = true;
+        hc.idPrefix = "##test_se_batch_a";
+        // the fake editor: two objects with scripts, one of them only in the scene (no file)
+        std::map<std::string, std::string> source = {{"scene:ship/0", kEnemy}, {"scene:ship/1", okay::StarterScriptSource("okayscript")},
+                                                     {"scene:door/0", "local Door = {}\nreturn Door\n"}};
+        std::map<std::string, std::string> langOf = {{"scene:ship/0", "lua"}, {"scene:ship/1", "okayscript"}, {"scene:door/0", "lua"}};
+        std::vector<std::string> attached, langCalls;
+        auto specFor = [&](const std::string& key) {
+            si::DocumentSpec sp;
+            sp.key = key;
+            sp.language = langOf[key];
+            sp.text = source[key];
+            sp.label = key == "scene:ship/0" ? "Enemy.lua" : key == "scene:ship/1" ? "(no file)" : "Door.lua";
+            if (key == "scene:door/0") sp.path = (bproj / "Assets/Scripts/Door.lua").u8string();
+            sp.save = [&source, key](const std::string& t, std::string&) { source[key] = t; return true; };
+            return sp;
+        };
+        hc.sceneScripts = [] {
+            return std::vector<si::SceneScript>{{"scene:ship/0", "Enemy.lua", "Ship", ""}, {"scene:ship/1", "(no file)", "Ship", ""},
+                                                {"scene:door/0", "Door.lua", "Door", "Assets/Scripts/Door.lua"}};
+        };
+        hc.documentFor = [&](const std::string& key, si::DocumentSpec& out) {
+            if (!source.count(key)) return false;
+            out = specFor(key);
+            return true;
+        };
+        hc.languageChanged = [&langCalls](const std::string& key, const std::string& l) { langCalls.push_back(key + "=" + l); };
+        hc.attachTarget = [] { return std::string("Ship"); };
+        hc.attachScript = [&](const std::string& path, const std::string& language, std::string& key) {
+            attached.push_back(path);
+            key = "scene:ship/2";
+            source[key] = "-- attached\n";
+            langOf[key] = language;
+            return true;
+        };
+        si::ScriptIdeApp app(hc);
+        auto ui = [&] { app.Frame(0, 0, W, H); };
+        CHECK(app.OpenFolder(bproj.u8string()));
+        // selecting the ship: both of its scripts open, the first shown
+        app.ShowDocuments({specFor("scene:ship/0"), specFor("scene:ship/1")});
+        CHECK(app.OpenFiles().size() == 2 && app.ActiveKey() == "scene:ship/0");
+        sim.Frames(2, ui);
+        // the tree's "Scene scripts" section: a click on the door's row opens it (found from the top down)
+        {
+            bool opened = false;
+            for (float y = 40; y < 300 && !opened; y += UI::GetTextLineHeight() * 0.5f) {
+                sim.Click(60, y, ui);
+                opened = app.ActiveKey() == "scene:door/0";
+            }
+            CHECK(opened);
+        }
+        // the language: the scene-only OkayScript starter becomes the JavaScript starter, the host is told; Undo brings it back
+        CHECK(app.SetLanguage("scene:ship/1", "javascript"));
+        CHECK(app.DocumentText("scene:ship/1") == okay::StarterScriptSource("javascript"));
+        CHECK(langCalls == std::vector<std::string>{"scene:ship/1=javascript"});
+        CHECK(!app.SetLanguage("scene:ship/1", "javascript"));   // the same language: nothing to do
+        CHECK(app.SetLanguage("scene:ship/0", "okayscript"));   // written code stays as it is
+        CHECK(app.DocumentText("scene:ship/0") == kEnemy);
+        CHECK(app.SetLanguage("scene:ship/0", "lua"));
+        // "Save changes?": Ctrl+W on a changed tab asks; Cancel keeps it; Save saves through the host and closes it
+        app.RequestClose("scene:door/0");   // not changed: closed at once
+        CHECK(!app.HasDocument("scene:door/0") && !app.ClosePromptOpen());
+        app.ShowDocuments({specFor("scene:ship/0")});
+        if (UI::CodeEdit* e = app.ActiveEdit()) {
+            e->SetCaret(UI::CodePos{0, 0});
+            e->InsertText("-- edited\n");
+        }
+        sim.ctrl = true; sim.Hold(UI::KeyId_W, true); sim.Frame(ui); sim.Hold(UI::KeyId_W, false); sim.Frame(ui); sim.ctrl = false;
+        CHECK(app.ClosePromptOpen() && app.HasDocument("scene:ship/0"));
+        sim.Move(5, H - 5);
+        sim.Frame(ui);
+        {
+            std::string why;
+            const bool same = MatchesGolden("script_ide_app_close_prompt", Picture(sim, 30, 32, 37), &why);
+            if (!same) std::cerr << "  golden script_ide_app_close_prompt: " << why << "\n";
+            CHECK(same);
+        }
+        sim.Hold(UI::KeyId_Escape, true); sim.Frame(ui); sim.Hold(UI::KeyId_Escape, false); sim.Frame(ui);   // Cancel
+        CHECK(!app.ClosePromptOpen() && app.HasDocument("scene:ship/0"));
+        app.RequestClose("scene:ship/0");
+        CHECK(app.ClosePromptOpen());
+        app.AnswerClosePrompt(0);   // Save
+        CHECK(!app.HasDocument("scene:ship/0") && source["scene:ship/0"].rfind("-- edited\n", 0) == 0);
+        // Ctrl+Shift+T reopens it from the host (the saved text), then the door file
+        sim.ctrl = true; sim.shift = true; sim.Hold(UI::KeyId_T, true); sim.Frame(ui); sim.Hold(UI::KeyId_T, false); sim.Frame(ui);
+        sim.ctrl = false; sim.shift = false;
+        CHECK(app.ActiveKey() == "scene:ship/0" && app.DocumentText("scene:ship/0").rfind("-- edited\n", 0) == 0);
+        CHECK(app.ReopenClosed() && app.ActiveKey() == "scene:door/0");
+        CHECK(!app.ReopenClosed());   // nothing more
+        // Don't Save: closed, the host's copy unchanged
+        if (UI::CodeEdit* e = app.ActiveEdit()) e->InsertText("x");
+        app.RequestClose("scene:door/0");
+        app.AnswerClosePrompt(1);
+        CHECK(!app.HasDocument("scene:door/0") && source["scene:door/0"] == "local Door = {}\nreturn Door\n");
+        // Quit with a changed tab asks first; Quit Without Saving quits
+        if (UI::CodeEdit* e = app.ActiveEdit()) e->InsertText("y");
+        sim.ctrl = true; sim.Hold(UI::KeyId_Q, true); sim.Frame(ui); sim.Hold(UI::KeyId_Q, false); sim.Frame(ui); sim.ctrl = false;
+        CHECK(app.ClosePromptOpen() && !app.WantsQuit());
+        app.AnswerClosePrompt(2);
+        CHECK(!app.WantsQuit());
+        app.AnswerClosePrompt(1);   // the box is closed: nothing happens
+        CHECK(!app.WantsQuit());
+
+        // New Script: the box, a typed name, the template list, Enter creates Assets/Scripts/MoverBot.okay and opens it
+        app.OpenNewScript();
+        CHECK(app.NewScriptOpen());
+        sim.Frame(ui);
+        sim.Press(Key_SelectAll); sim.Frame(ui);
+        sim.Type("Mover Bot"); sim.Frame(ui);
+        sim.Move(5, H - 5);
+        sim.Frame(ui);
+        {
+            std::string why;
+            const bool same = MatchesGolden("script_ide_app_new_script", Picture(sim, 30, 32, 37), &why);
+            if (!same) std::cerr << "  golden script_ide_app_new_script: " << why << "\n";
+            CHECK(same);
+        }
+        sim.Press(Key_Enter); sim.Frames(2, ui);
+        CHECK(!app.NewScriptOpen());
+        const fs::path mover = bproj / "Assets/Scripts/MoverBot.okay";
+        CHECK(fs::exists(mover));
+        CHECK(app.ActivePath().find("MoverBot.okay") != std::string::npos);
+        CHECK(ReadFile(mover) == si::StarterScriptNamed("okayscript", "MoverBot"));
+        bool listed = false;
+        for (const auto& p : app.ProjectScripts()) if (p.find("MoverBot.okay") != std::string::npos) listed = true;
+        CHECK(listed);
+        // the same name again opens it, it is not written over
+        WriteFile(mover, "// mine\n");
+        CHECK(app.CreateScript("MoverBot", "okayscript", 0, false));
+        CHECK(ReadFile(mover) == "// mine\n");
+        // attach: the host attaches the new Lua file to the selected object and the component's document opens
+        std::string made;
+        CHECK(app.CreateScript("2 fast", "lua", 0, true, &made));
+        CHECK(made.find("Assets/Scripts/Script2fast.lua") != std::string::npos);
+        CHECK(attached.size() == 1 && attached[0] == made && app.ActiveKey() == "scene:ship/2");
+        // no folder open: New Script says so and makes nothing
+        si::ScriptIdeApp none(hc);
+        CHECK(!none.CreateScript("X", "lua", 0, false) && none.Notice().find("Open a folder") == 0);
+    }
+
+    // ---- batch B: the find bar and Replace, Replace in All Files, Go to Line / Symbol / Definition (F12 and Ctrl+click), the
+    // references, Back / Forward, the tab switcher, bookmarks, Search Everywhere and the command list with a host's command ----
+    {
+        Reset();
+        UI::UseLauncherLook(true);
+        UI::Style().caretBlink = false;
+        const fs::path nproj = dir / "Batch B";
+        static const char* kUtil = "local Util = {}\nfunction Util.Clamp(x, a, b)\n    if x < a then return a end\n    return x\nend\nreturn Util\n";
+        static const char* kPlay = "local Util = require(\"Util\")\nlocal speed = 3\nfunction Update(dt)\n    speed = Util.Clamp(speed + dt, 0, 10)\n    print(speed)\nend\nreturn {}\n";
+        WriteFile(nproj / "Assets/Scripts/Util.lua", kUtil);
+        WriteFile(nproj / "Assets/Scripts/Player.lua", kPlay);
+        WriteFile(nproj / "Assets/Scripts/Hud.lua", "local Util = require(\"Util\")\nreturn Util\n");
+        const float W = 900, H = 560;
+        Sim sim(W, H);
+        si::ScriptIdeApp::Config hc = cfg;
+        hc.settingsPath.clear();
+        hc.idPrefix = "##test_se_batch_b";
+        int hello = 0;
+        hc.commands = [&hello] { return std::vector<si::AppCommand>{{"Plugin: Say Hello", "", [&hello] { ++hello; }}}; };
+        si::ScriptIdeApp app(hc);
+        auto ui = [&] { app.Frame(0, 0, W, H); };
+        auto chord = [&](UI::KeyId k, bool ctrl, bool shift = false, bool alt = false) {
+            sim.ctrl = ctrl; sim.shift = shift; if (alt) sim.Hold(UI::KeyId_Alt, true);
+            sim.Hold(k, true); sim.Frame(ui); sim.Hold(k, false); sim.Frame(ui);
+            sim.ctrl = false; sim.shift = false; if (alt) sim.Hold(UI::KeyId_Alt, false);
+            sim.Frame(ui);
+        };
+        CHECK(app.OpenFolder(nproj.u8string()));
+        const std::string util = (nproj / "Assets/Scripts/Util.lua").u8string(), play = (nproj / "Assets/Scripts/Player.lua").u8string();
+        CHECK(app.OpenFile(util));
+        const std::string utilKey = app.ActiveKey();
+        CHECK(app.OpenFile(play));
+        const std::string playKey = app.ActiveKey();
+        sim.Frames(2, ui);
+        UI::CodeEdit* e = app.ActiveEdit();
+        CHECK(e != nullptr);
+        if (!e) { TEST_MAIN_RESULT(); }
+        e->Focus();
+        e->SetCaret(UI::CodePos{0, 0});
+
+        // the find bar: Ctrl+F, typed text, Enter finds the first, F3 the next, Shift+F3 the one before, round the end
+        chord(UI::KeyId_F, true);
+        CHECK(app.FindBarOpen());
+        sim.Type("speed"); sim.Frame(ui);
+        sim.Press(Key_Enter); sim.Frames(2, ui);
+        CHECK(app.FindCount() == 4 && app.FindCurrent() == 0);
+        if (app.FindCount() != 4 || app.FindCurrent() != 0)
+            std::cerr << "  find bar: count " << app.FindCount() << ", current " << app.FindCurrent() << ", text:\n" << app.ActiveText() << "\n";
+        chord(UI::KeyId_F3, false);
+        CHECK(app.FindCurrent() == 1);
+        chord(UI::KeyId_F3, false, true);
+        CHECK(app.FindCurrent() == 0);
+        CHECK(app.FindNext(false) && app.FindCurrent() == 3);   // before the first: the last
+        sim.Move(5, H - 5);
+        sim.Frame(ui);
+        // Replace: the selected match, then all of them in one undo step; a regex with $1
+        app.OpenFindBar("speed", true, si::FindOptions(), "pace");
+        CHECK(app.FindNext() && app.ReplaceNext());
+        CHECK(app.FindCount() == 3);
+        CHECK(app.ReplaceAllInDocument() == 3 && app.FindCount() == 0 && app.ActiveText().find("speed") == std::string::npos);
+        e->Undo();
+        CHECK(app.FindCount() == 3);
+        e->Undo();
+        CHECK(app.ActiveText() == kPlay);
+        si::FindOptions rx; rx.regex = true;
+        app.OpenFindBar("(\\w+)\\.Clamp", true, rx, "$1.Limit");
+        CHECK(app.ReplaceAllInDocument() == 1 && app.ActiveText().find("Util.Limit(") != std::string::npos);
+        e->Undo();
+        CHECK(app.ActiveText() == kPlay);
+        app.OpenFindBar("speed");
+        e->SetCaret(UI::CodePos{0, 0});
+        CHECK(app.FindNext() && app.FindCurrent() == 0);
+        sim.Frames(2, ui);
+        {
+            std::string why;
+            const bool same = MatchesGolden("script_ide_app_find_bar", Picture(sim, 30, 32, 37), &why);
+            if (!same) std::cerr << "  golden script_ide_app_find_bar: " << why << "\n";
+            CHECK(same);
+        }
+        chord(UI::KeyId_Escape, false);
+        CHECK(!app.FindBarOpen());
+
+        // Go to Line (Ctrl+G, "5", Enter), then Back returns to where the caret was
+        e->SetCaret(UI::CodePos{1, 0});
+        chord(UI::KeyId_G, true);
+        CHECK(app.PickerOpen() == 1);
+        sim.Type("5"); sim.Frame(ui);
+        sim.Press(Key_Enter); sim.Frames(2, ui);
+        CHECK(app.PickerOpen() == 0 && e->Caret().line == 4);
+        chord(UI::KeyId_Left, false, false, true);   // Alt+Left
+        CHECK(app.ActiveKey() == playKey && e->Caret().line == 1);
+        // Go to Symbol (Ctrl+Shift+O): the file's functions and tables
+        chord(UI::KeyId_O, true, true);
+        CHECK(app.PickerOpen() == 2);
+        {
+            const auto rows = app.PickerRows();
+            bool update = false;
+            for (const auto& r : rows) if (r.find("Update") != std::string::npos) update = true;
+            CHECK(update);
+        }
+        app.OpenPicker(2, "upd");
+        CHECK(app.PickRow(0));
+        sim.Frame(ui);
+        CHECK(e->Caret().line == 2);
+
+        // Go to Definition: F12 on "Clamp" in Player.lua goes to Util.lua line 2; Back and Forward
+        e->SetCaret(UI::CodePos{3, 18});
+        chord(UI::KeyId_F12, false);
+        CHECK(app.ActiveKey() == utilKey);
+        if (UI::CodeEdit* ue = app.ActiveEdit()) CHECK(ue->Caret().line == 1);
+        CHECK(app.GoBack());
+        sim.Frame(ui);
+        CHECK(app.ActiveKey() == playKey && e->Caret().line == 3);
+        CHECK(app.GoForward() && app.ActiveKey() == utilKey);
+        CHECK(app.GoBack());
+        sim.Frame(ui);
+        CHECK(!app.GoToDefinition("NoSuchName") && app.Notice().find("No definition") == 0);
+        // Ctrl+click on "Clamp" does the same
+        sim.Frame(ui);
+        {
+            const UI::Vec2 at = e->PosToScreen(UI::CodePos{3, 19});
+            sim.ctrl = true;
+            sim.Click(at.x + 2, at.y + e->LineHeight() * 0.5f, ui);
+            sim.ctrl = false;
+            sim.Frame(ui);
+            CHECK(app.ActiveKey() == utilKey);
+            CHECK(app.GoBack() && app.ActiveKey() == playKey);
+            sim.Frame(ui);
+        }
+
+        // Find All References (Shift+F12 on "Clamp"): the definition and the use; a click on a row goes there
+        e->SetCaret(UI::CodePos{3, 18});
+        chord(UI::KeyId_F12, false, true);
+        CHECK(app.References().size() == 2);
+        sim.Move(5, H - 5);
+        sim.Frames(2, ui);
+        {
+            std::string why;
+            const bool same = MatchesGolden("script_ide_app_references", Picture(sim, 30, 32, 37), &why);
+            if (!same) std::cerr << "  golden script_ide_app_references: " << why << "\n";
+            CHECK(same);
+        }
+        CHECK(app.FindReferences("Util") == 7);   // in code only (not in "Util" strings); Hud.lua is not open: read from disk
+
+        // the switcher (Ctrl+E): the tab shown before is picked first
+        chord(UI::KeyId_E, true);
+        CHECK(app.PickerOpen() == 3);
+        sim.Press(Key_Enter); sim.Frames(2, ui);
+        CHECK(app.PickerOpen() == 0 && app.ActiveKey() == utilKey);
+        CHECK(app.OpenFile(play));
+        sim.Frame(ui);
+        // bookmarks: F11 marks the caret's line, Shift+F11 lists them, a pick goes there
+        e->SetCaret(UI::CodePos{5, 0});
+        chord(UI::KeyId_F11, false);
+        CHECK(app.Breakpoints(playKey) == std::vector<int>{6});
+        e->SetCaret(UI::CodePos{0, 0});
+        chord(UI::KeyId_F11, false, true);
+        CHECK(app.PickerOpen() == 4 && app.PickerRows().size() == 1 && app.PickerRows()[0].find("Player.lua:6") == 0);
+        CHECK(app.PickRow(0));
+        sim.Frame(ui);
+        CHECK(e->Caret().line == 5);
+
+        // Search Everywhere (Shift twice): files, symbols in every script, commands
+        sim.Frames(2, ui);
+        sim.shift = true; sim.Frame(ui); sim.shift = false; sim.Frame(ui);
+        sim.shift = true; sim.Frame(ui); sim.shift = false; sim.Frame(ui);
+        CHECK(app.PickerOpen() == 5);
+        sim.Type("clamp"); sim.Frames(2, ui);
+        {
+            std::string why;
+            const bool same = MatchesGolden("script_ide_app_everywhere", Picture(sim, 30, 32, 37), &why);
+            if (!same) std::cerr << "  golden script_ide_app_everywhere: " << why << "\n";
+            CHECK(same);
+        }
+        {
+            const auto rows = app.PickerRows();
+            CHECK(!rows.empty() && rows[0] == "Util.Clamp");
+        }
+        chord(UI::KeyId_Escape, false);
+        CHECK(app.PickerOpen() == 0);
+        app.OpenPicker(5, "hud");
+        CHECK(!app.PickerRows().empty() && app.PickerRows()[0].find("Hud.lua") != std::string::npos);
+        CHECK(app.PickRow(0) && app.ActivePath().find("Hud.lua") != std::string::npos);
+        // the command list (Ctrl+Shift+P) with the host's command
+        chord(UI::KeyId_P, true, true);
+        CHECK(app.PickerOpen() == 6);
+        sim.Type("hello"); sim.Frame(ui);
+        CHECK(app.PickerRows().size() == 1);
+        sim.Press(Key_Enter); sim.Frames(2, ui);
+        CHECK(hello == 1);
+        bool saveAll = false;
+        for (const auto& c : app.Commands()) if (c.title == "Save All" && c.shortcut == "Ctrl+Shift+S") saveAll = true;
+        CHECK(saveAll);
+
+        // Replace in All Files: the open tabs change (not saved), a closed file is written
+        app.Close(utilKey);
+        const std::size_t n = app.ReplaceInFiles("Util", "Tools");
+        CHECK(n == 9);   // plain text: the "Util" strings too
+        CHECK(ReadFile(nproj / "Assets/Scripts/Util.lua").find("local Tools = {}") == 0);   // closed: written
+        CHECK(app.DocumentDirty(playKey) && ReadFile(nproj / "Assets/Scripts/Player.lua") == kPlay);   // open: changed in its tab only
+    }
+
+    // ---- the new-script helpers of the model ----
+    CHECK(si::ScriptStem("Mover Bot!") == "MoverBot" && si::ScriptStem("Player.okay") == "Player" && si::ScriptStem("9lives") == "Script9lives" && si::ScriptStem("") == "Script");
+    CHECK(si::DefaultScriptPath("/p/Game/", "Door", "lua") == "/p/Game/Assets/Scripts/Door.lua");
+    CHECK(si::DefaultScriptPath("", "Door", "javascript") == "Assets/Scripts/Door.js");
+    CHECK(si::ExtensionFor("csharp") == "cs" && si::ExtensionFor("okayscript") == "okay" && si::ClassIdentifier("2 a") == "_2_a");
+    CHECK(si::RenameScriptClass("class Foo {}", "Bar") == "class Bar {}" && si::RenameScriptClass("var x", "Bar") == "var x");
 
     // ---- Run without the editor: the script in a sandbox scene (Start and three frames); the compile error when it does not load ----
     {

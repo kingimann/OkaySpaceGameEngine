@@ -214,6 +214,22 @@ struct ScriptTemplate { std::string id, title, body; };
 std::vector<ScriptTemplate> TemplatesFor(const std::string& language);
 std::string FillTemplate(const std::string& body, const std::string& name);
 
+// ---- new script files -----------------------------------------------------------------------------------------------------
+/// The file extension of a script language, without the dot: "lua", "js", "cs", else "okay".
+std::string ExtensionFor(const std::string& language);
+/// A file stem as a class name: letters, digits and '_' kept, anything else '_', "_" before a leading digit, "NewScript" for "".
+std::string ClassIdentifier(const std::string& stem);
+/// Rename the first `class <X>` of a script to `newName` (the class follows the file's name); the text as it is when it has none.
+std::string RenameScriptClass(const std::string& src, const std::string& newName);
+/// The language's starter script (okay::StarterScriptSource) with its class named after the file stem.
+std::string StarterScriptNamed(const std::string& language, const std::string& stem);
+/// What New Script makes of a typed name: letters, digits and '_' only, a trailing "okay" left by a typed ".okay" dropped, and
+/// "Script" before a name that is empty or starts with a digit.
+std::string ScriptStem(const std::string& typed);
+/// Where a new script, or a script with no file yet, is saved: <project>/Assets/Scripts/<stem>.<extension> ("Assets/Scripts/..."
+/// relative when there is no project). '/' separators.
+std::string DefaultScriptPath(const std::string& projectDir, const std::string& stem, const std::string& language);
+
 // ---- local history ------------------------------------------------------------------------------------------------------
 struct HistoryVersion { std::string file; std::int64_t time = 0; std::string label; std::size_t bytes = 0; };
 /// Copies of scripts kept in `<project>/.okay/history/` (one folder per script, a file per version named by its time).

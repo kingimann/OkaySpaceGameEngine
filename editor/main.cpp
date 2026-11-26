@@ -4244,7 +4244,7 @@ std::unordered_map<GameObject*, Vec3> g_euler;
 // component, a .okayvs node graph a Visual Script. Every drop target and menu
 // goes through here, so all of them accept both kinds. False when `path` isn't
 // a script (the caller handles other asset types).
-static bool AttachScriptAsset(okay::editor::EditorState& ed, okay::GameObject* go, const std::string& path) {
+bool AttachScriptAsset(okay::editor::EditorState& ed, okay::GameObject* go, const std::string& path) {
     if (!go) return false;
     std::string ext;
     if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
@@ -4331,39 +4331,14 @@ void OpenExternal(const std::string& path) {
     const oked::launch::Result r = oked::launch::OpenInTextEditor(path);
     if (!r.ok) ConsoleLog("Couldn't open " + path + " in an editor: " + r.error, 1);
 }
-std::string ExtFor(const std::string& lang) {
-    return lang == "lua" ? "lua" : lang == "javascript" ? "js" : lang == "csharp" ? "cs" : "okay";
-}
+// New script files: the Script Editor's model (editor/ScriptIde.hpp) has them; these are the names the editor's code uses.
+std::string ExtFor(const std::string& lang) { return scriptide::ExtensionFor(lang); }
 // The script a new script file starts with (Scripting/StarterScripts.hpp): an
 // empty Start and Update in the selected language's syntax.
 const char* StarterScript(const std::string& lang) { return okay::StarterScriptSource(lang); }
-
-// A filename stem -> a valid class identifier (letters/digits/_, no leading digit).
-inline std::string ClassIdent(const std::string& stem) {
-    std::string id;
-    for (char c : stem) id += (std::isalnum((unsigned char)c) || c == '_') ? c : '_';
-    if (id.empty()) return "NewScript";
-    if (std::isdigit((unsigned char)id[0])) id = "_" + id;
-    return id;
-}
-
-// Rewrite the first `class <X>` in OkayScript/C# source to `newName` (:
-// the class follows the file name). Returns the source unchanged if it has no class.
-inline std::string RenameScriptClass(const std::string& src, const std::string& newName) {
-    auto p = src.find("class ");
-    if (p == std::string::npos) return src;
-    std::size_t s = p + 6;
-    while (s < src.size() && std::isspace((unsigned char)src[s])) ++s;
-    std::size_t e = s;
-    while (e < src.size() && (std::isalnum((unsigned char)src[e]) || src[e] == '_')) ++e;
-    if (e == s) return src;
-    return src.substr(0, s) + newName + src.substr(e);
-}
-
-// A starter script whose class name matches the given file stem.
-inline std::string StarterScriptNamed(const std::string& lang, const std::string& stem) {
-    return RenameScriptClass(StarterScript(lang), ClassIdent(stem));
-}
+inline std::string ClassIdent(const std::string& stem) { return scriptide::ClassIdentifier(stem); }
+inline std::string RenameScriptClass(const std::string& src, const std::string& newName) { return scriptide::RenameScriptClass(src, newName); }
+inline std::string StarterScriptNamed(const std::string& lang, const std::string& stem) { return scriptide::StarterScriptNamed(lang, stem); }
 
 } // namespace extide
 

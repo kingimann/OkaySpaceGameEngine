@@ -68,6 +68,8 @@ void AnimDrawDiamond(ImDrawList* dl, ImVec2 c, float r, ImU32 col, bool filled, 
 
 // Script Editor: open a script file in a tab, scrolled to `line` (1-based).
 void OpenScriptFileInEditorAt(const std::string& path, int line);
+// Attach a script file (.okay, .lua, .js) to an object as a new Script component, one undo step (main.cpp).
+bool AttachScriptAsset(okay::editor::EditorState& ed, okay::GameObject* go, const std::string& path);
 
 // "Add animations from file...": pick clip files (FBX, glTF, DAE, BVH) and add
 // every clip to the Model Animator on `modelRoot`.

@@ -11,6 +11,8 @@ endif()
 # and the test link it; the editor compiles these sources itself (it has them already for its own Script Editor window).
 add_library(okay_script_editor_app STATIC
     ${CMAKE_SOURCE_DIR}/shared/ScriptIdeApp.cpp             # the script editor in a rectangle (tree, tabs, find, history, checks)
+    ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppScene.cpp        # the host's scene scripts, New Script, Save changes?, reopen, language
+    ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppNav.cpp          # find / replace, go to line / symbol / definition, references, history
     ${CMAKE_SOURCE_DIR}/editor/ScriptIde.cpp                # the headless model: script list, tree, Go to File, find, lint, Local History
     ${CMAKE_SOURCE_DIR}/editor/ScriptEditorCodeEdit.cpp)    # OkayUI::CodeEdit with a script language's words and the code font
 target_include_directories(okay_script_editor_app PUBLIC ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)

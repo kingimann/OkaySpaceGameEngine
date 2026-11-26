@@ -816,6 +816,48 @@ std::string FillTemplate(const std::string& body, const std::string& name) {
     return out;
 }
 
+// ---- new script files -----------------------------------------------------------------------------------------------------
+std::string ExtensionFor(const std::string& language) {
+    return language == "lua" ? "lua" : language == "javascript" ? "js" : language == "csharp" ? "cs" : "okay";
+}
+
+std::string ClassIdentifier(const std::string& stem) {
+    std::string id;
+    for (char c : stem) id += (std::isalnum((unsigned char)c) || c == '_') ? c : '_';
+    if (id.empty()) return "NewScript";
+    if (std::isdigit((unsigned char)id[0])) id = "_" + id;
+    return id;
+}
+
+std::string RenameScriptClass(const std::string& src, const std::string& newName) {
+    const std::size_t p = src.find("class ");
+    if (p == std::string::npos) return src;
+    std::size_t s = p + 6;
+    while (s < src.size() && std::isspace((unsigned char)src[s])) ++s;
+    std::size_t e = s;
+    while (e < src.size() && (std::isalnum((unsigned char)src[e]) || src[e] == '_')) ++e;
+    if (e == s) return src;
+    return src.substr(0, s) + newName + src.substr(e);
+}
+
+std::string StarterScriptNamed(const std::string& language, const std::string& stem) {
+    return RenameScriptClass(okay::StarterScriptSource(language), ClassIdentifier(stem));
+}
+
+std::string ScriptStem(const std::string& typed) {
+    std::string stem;
+    for (char c : typed) if (std::isalnum((unsigned char)c) || c == '_') stem += c;
+    if (stem.size() > 5 && stem.compare(stem.size() - 4, 4, "okay") == 0) stem.erase(stem.size() - 4);
+    if (stem.empty() || std::isdigit((unsigned char)stem[0])) stem = "Script" + stem;
+    return stem;
+}
+
+std::string DefaultScriptPath(const std::string& projectDir, const std::string& stem, const std::string& language) {
+    std::string dir = projectDir;
+    while (!dir.empty() && (dir.back() == '/' || dir.back() == '\\')) dir.pop_back();
+    return (dir.empty() ? std::string() : dir + "/") + "Assets/Scripts/" + stem + "." + ExtensionFor(language);
+}
+
 // ---- local history --------------------------------------------------------------------------------------------------------
 LocalHistory::LocalHistory(std::string projectDir, std::size_t maxPerFile, std::size_t maxBytes)
     : dir_(std::move(projectDir)), maxPerFile_(maxPerFile), maxBytes_(maxBytes) {}

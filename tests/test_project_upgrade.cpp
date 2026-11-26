@@ -8,6 +8,7 @@
 #include "okay/Scene/SceneMigration.hpp"
 #include "../editor/ProjectUpgrade.hpp"
 #include "../editor/ProjectState.hpp"
+#include "../shared/ProjectList.hpp"   // IsUpgradeBackup: a tidy backup is not listed as a project
 
 #include <algorithm>
 #include <chrono>
@@ -1167,6 +1168,216 @@ int main() {
         // ...and the one with a newer build's records keeps them
         FileCheck nr = CheckSceneFile(ReadFile(fs::path(OKAY_SOURCE_DIR) / "tests" / "data" / "upgrade_corpus" / "v1_newer_records.okayscene"));
         CHECK(nr.ok && nr.changed && nr.unknownBefore >= 2 && nr.unknownKept == nr.unknownBefore && nr.losses.empty());
+    }
+
+    // ---- tidying an old project into the layout (docs/engine/project_layout.md) ------------------------------------------------
+    // The fixture: an old flat project with its scenes and assets next to project.okayproj, references between them in three
+    // styles (relative to the file, relative to the project, a material's bare path), settings in .okay/, a cached thumbnail,
+    // a read-only scene and the file it names, a file whose new place is taken, and files that must stay (notes, item data).
+    {
+        const std::string tex = std::string("\x89PNG\r\n\x1a\n", 8) + std::string(3000, '\0') + "end";
+        auto makeFlat = [&](const fs::path& root) {
+            WriteFile(root / "project.okayproj", "company=Me\nversion=1.0.0\n");
+            WriteFile(root / "Level.okayscene", "okayscene 3\nname \"Level\"\ngameobject 0 \"Sign\"\n  uiimage 0 0 24 24 1 1 1 1 \"tex.png\" 0\n  prefab \"Thing.okayprefab\"\n  btrunner \"Guard.okaybt\"\nend\n");
+            WriteFile(root / "Guard.okaybt", "okaybt 1\n");
+            WriteFile(root / "Level.okayscene.autosave", "autosave of Level\n");
+            WriteFile(root / "Thing.okayprefab", "gameobject 0 \"Thing\"\n  uiimage 0 0 8 8 1 1 1 1 \"tex.png\" 0\nend\n");
+            WriteFile(root / "tex.png", tex);
+            WriteFile(root / "tex.png.okaymeta", "okaymeta 1\nguid 0123456789abcdef0123456789abcdef\n");
+            WriteFile(root / "Wood.okaymat", "texture tex.png\n");
+            WriteFile(root / "Assets" / "Scenes" / "Inside.okayscene", "okayscene 3\nname \"Inside\"\ngameobject 0 \"A\"\n  uiimage 0 0 1 1 1 1 1 1 \"tex.png\" 0\nend\n");
+            WriteFile(root / ".okay" / "scene_build.txt", "1|Level.okayscene\n1|Assets/Scenes/Inside.okayscene\n");
+            WriteFile(root / ".okay" / "build_profiles.cfg", "@profile Main\n");
+            WriteFile(root / ".okay" / "build_report.txt", "last build\n");
+            WriteFile(root / ".okay" / "thumbs" / "ab" / "cd.png", "thumb");
+            WriteFile(root / "Locked.okayscene", "okayscene 3\nname \"Locked\"\ngameobject 0 \"L\"\n  uiimage 0 0 1 1 1 1 1 1 \"locked.png\" 0\nend\n");
+            WriteFile(root / "locked.png", "locked texture");
+            fs::permissions(root / "Locked.okayscene", fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write, fs::perm_options::remove);
+            WriteFile(root / "Taken.png", "the loose one");
+            WriteFile(root / "Assets" / "Textures" / "Taken.png", "already in Assets");
+            WriteFile(root / "notes.txt", "my notes");
+            WriteFile(root / "items.okayitems", "sword 1\n");
+        };
+        const std::string relScene = "Assets/Scenes/Level.okayscene";
+
+        // the plan: what moves, what stays and why; making it writes nothing
+        {
+            TempDir td;
+            const fs::path root = td.path / "Flat";
+            makeFlat(root);
+            const Tree before = Snap(root);
+            const LayoutPlan plan = PlanLayout(root.string());
+            CHECK(Snap(root) == before);
+            std::map<std::string, std::string> mv;
+            for (const LayoutMove& m : plan.moves) mv[m.from] = m.to;
+            CHECK(mv["project.okayproj"] == "ProjectSettings/project.okayproj");
+            CHECK(mv[".okay/scene_build.txt"] == "ProjectSettings/scene_build.txt" && mv[".okay/build_profiles.cfg"] == "ProjectSettings/build_profiles.cfg");
+            CHECK(mv[".okay/build_report.txt"] == "Logs/build_report.txt" && mv[".okay/thumbs/ab/cd.png"] == "Library/Thumbnails/ab/cd.png");
+            CHECK(mv["Level.okayscene"] == relScene && mv["Level.okayscene.autosave"] == relScene + ".autosave");
+            CHECK(mv["Thing.okayprefab"] == "Assets/Prefabs/Thing.okayprefab" && mv["Wood.okaymat"] == "Assets/Materials/Wood.okaymat");
+            CHECK(mv["tex.png"] == "Assets/Textures/tex.png" && mv["tex.png.okaymeta"] == "Assets/Textures/tex.png.okaymeta");
+            CHECK(!mv.count("notes.txt") && !mv.count("items.okayitems"));                               // not assets: they stay
+            CHECK(!mv.count("Locked.okayscene") && !mv.count("locked.png") && !mv.count("Taken.png"));    // read-only, named by it, taken
+            std::string kept;
+            for (const std::string& k : plan.kept) kept += k + "\n";
+            CHECK(Has(kept, "Locked.okayscene: read-only") && Has(kept, "locked.png") && Has(kept, "Taken.png: Assets/Textures/Taken.png is already there"));
+            CHECK(plan.referrers >= 4);   // Level, Thing, Wood, Inside, scene_build.txt
+            CHECK(PlanLayout("").Empty() && PlanLayout((td.path / "nothing").string()).Empty());
+        }
+
+        // the tidy: everything in its place, every reference follows, nothing else touched, and a second run does nothing
+        {
+            TempDir td;
+            const fs::path root = td.path / "Flat";
+            makeFlat(root);
+            const Tree before = Snap(root);
+            const LayoutPlan plan = PlanLayout(root.string());
+            const LayoutResult r = ApplyLayout(plan);
+            CHECK(r.ok && r.error.empty());
+            CHECK(r.moved == (int)plan.moves.size() && r.refsUpdated >= 7);
+            for (const LayoutMove& m : plan.moves) {
+                CHECK(!fs::exists(root / m.from) && fs::is_regular_file(root / m.to));
+            }
+            CHECK(ReadFile(root / "Assets" / "Textures" / "tex.png") == tex);                          // the bytes are the same
+            CHECK(ReadFile(root / "Assets" / "Textures" / "tex.png.okaymeta") == before.at("tex.png.okaymeta"));   // the asset id went with it
+            const std::string level = ReadFile(root / relScene);
+            CHECK(Has(level, "\"../Textures/tex.png\"") && Has(level, "\"../Prefabs/Thing.okayprefab\""));   // relative to the file: still relative
+            CHECK(Has(level, "\"Assets/AI/Guard.okaybt\""));   // a behaviour tree is found from the project folder: a project path
+            CHECK(Has(ReadFile(root / "Assets" / "Prefabs" / "Thing.okayprefab"), "\"../Textures/tex.png\""));
+            CHECK(ReadFile(root / "Assets" / "Materials" / "Wood.okaymat") == "texture ../Textures/tex.png\n");
+            CHECK(Has(ReadFile(root / "Assets" / "Scenes" / "Inside.okayscene"), "\"Assets/Textures/tex.png\""));   // relative to the project: still so
+            CHECK(ReadFile(root / "ProjectSettings" / "scene_build.txt") == "1|Assets/Scenes/Level.okayscene\n1|Assets/Scenes/Inside.okayscene\n");
+            CHECK(ReadFile(root / (relScene + ".autosave")) == "autosave of Level\n");
+            CHECK(fs::path(okayproj::SettingsPath(root.string())) == root / "ProjectSettings" / "project.okayproj");
+            CHECK(fs::path(oked::SceneBuildFile(root.string())) == root / "ProjectSettings" / "scene_build.txt");
+            CHECK(fs::path(oked::BuildProfilesFile(root.string())) == root / "ProjectSettings" / "build_profiles.cfg");
+            CHECK(ReadFile(root / "Library" / "Thumbnails" / "ab" / "cd.png") == "thumb" && !fs::exists(root / ".okay" / "thumbs"));
+            for (const char* same : {"notes.txt", "items.okayitems", "Locked.okayscene", "locked.png", "Taken.png", "Assets/Textures/Taken.png"})
+                CHECK(ReadFile(root / same) == before.at(same));
+            CHECK(MovedPath(r, root.string(), (root / "Level.okayscene").string()) == (root / relScene).string());
+            CHECK(MovedPath(r, root.string(), "Wood.okaymat") == "Assets/Materials/Wood.okaymat");
+            CHECK(MovedPath(r, root.string(), (root / "notes.txt").string()) == (root / "notes.txt").string());
+            // the backup holds every file that moved or changed, as it was, and is listed as restorable
+            CHECK(!r.backupDir.empty() && ReadFile(fs::path(r.backupDir) / "tex.png") == tex);
+            CHECK(ReadFile(fs::path(r.backupDir) / "Assets" / "Scenes" / "Inside.okayscene") == before.at("Assets/Scenes/Inside.okayscene"));
+            const auto list = ListBackups(root.string());
+            CHECK(list.size() == 1 && list[0].restorable && list[0].mode == "tidy");
+            CHECK(okayproj::IsUpgradeBackup(fs::path(r.backupDir)));   // the launcher does not list it as a project
+            // a second run: nothing to do
+            const Tree tidied = Snap(root);
+            const LayoutPlan again = PlanLayout(root.string());
+            std::string why;
+            for (const LayoutMove& m : again.moves) why += m.from + " ";
+            CHECK(again.Empty());
+            if (!again.Empty()) std::cerr << "  second plan still moves: " << why << "\n";
+            const LayoutResult r2 = ApplyLayout(again);
+            CHECK(r2.ok && r2.moved == 0 && r2.backupDir.empty() && Snap(root) == tidied && ListBackups(root.string()).size() == 1);
+            // Restore puts the project back exactly as it was
+            const RestoreResult rr = RestoreBackup(list[0], root.string());
+            CHECK(rr.ok);
+            Tree restored = Snap(root);
+            for (auto it = restored.begin(); it != restored.end();) it = (it->second == "<dir>") ? restored.erase(it) : std::next(it);
+            Tree original = before;
+            for (auto it = original.begin(); it != original.end();) it = (it->second == "<dir>") ? original.erase(it) : std::next(it);
+            for (auto it = restored.begin(); it != restored.end();) it = it->first.rfind(".okay/backups/", 0) == 0 ? restored.erase(it) : std::next(it);
+            CHECK(restored == original);
+        }
+
+        // the disk refuses at each step: before the old files are removed, the project comes out exactly as it went in
+        for (const char* stage : {"tidy-backup", "tidy-copy", "tidy-verify", "tidy-refs"}) {
+            TempDir td;
+            const fs::path root = td.path / "Flat";
+            makeFlat(root);
+            const Tree before = Snap(root);
+            LayoutOptions o;
+            int calls = 0;
+            o.fail = [&](const char* s, const std::string&) { return std::string(s) == stage && ++calls == 2; };   // the second file
+            const LayoutResult r = ApplyLayout(PlanLayout(root.string()), o);
+            CHECK(!r.ok && !r.error.empty() && Has(r.note, "Nothing was changed"));
+            CHECK(Snap(root) == before);
+            if (Snap(root) != before) std::cerr << "  stage " << stage << ": the project changed\n";
+            CHECK(ListBackups(root.string()).empty());   // no half backup left next to it
+        }
+        // the old file can't be removed after its copy was checked: it stays, the copy is used, nothing is lost
+        {
+            TempDir td;
+            const fs::path root = td.path / "Flat";
+            makeFlat(root);
+            LayoutOptions o;
+            o.fail = [](const char* s, const std::string& what) { return std::string(s) == "tidy-remove" && what == "tex.png"; };
+            const LayoutResult r = ApplyLayout(PlanLayout(root.string()), o);
+            CHECK(r.ok && ReadFile(root / "tex.png") == tex && ReadFile(root / "Assets" / "Textures" / "tex.png") == tex);
+            std::string kept;
+            for (const std::string& k : r.kept) kept += k + "\n";
+            CHECK(Has(kept, "tex.png: copied to Assets/Textures/tex.png, but the old file could not be removed"));
+            CHECK(PlanLayout(root.string()).kept.size() >= 1);   // the next plan leaves it (its new place is taken): never overwrites
+        }
+        // a read-only file that must change makes the tidy stop before it touches anything
+        {
+            TempDir td;
+            const fs::path root = td.path / "Flat";
+            makeFlat(root);
+            LayoutPlan plan = PlanLayout(root.string());
+            fs::permissions(root / "Assets" / "Scenes" / "Inside.okayscene", fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write, fs::perm_options::remove);
+            const Tree before = Snap(root);
+            const LayoutResult r = ApplyLayout(plan);
+            CHECK(!r.ok && Has(r.error, "Inside.okayscene") && Has(r.error, "read-only") && Snap(root) == before);
+        }
+
+        // the gate asks before opening (once a session); "Not now" moves nothing; "Move" moves and opens the scene where it went
+        {
+            TempDir td;
+            const fs::path root = td.path / "Flat";
+            makeFlat(root);
+            const Tree before = Snap(root);
+            GateEnv env;
+            env.running = "dev";
+            env.askTidy = true;
+            std::vector<std::pair<std::string, std::string>> movedSeen;
+            env.moved = [&](const std::string& a, const std::string& b) { movedSeen.push_back({a, b}); };
+            const std::string scene = (root / "Level.okayscene").string();
+            {
+                ProjectGate g(env);
+                int go = 0, no = 0;
+                g.Open(scene, [&] { ++go; }, [&] { ++no; });
+                CHECK(go == 0 && g.Busy() && g.prompt().kind == PromptKind::Tidy && !g.prompt().layout.Empty());
+                g.Answer(Choice::Keep);
+                CHECK(go == 1 && !g.Busy() && Snap(root) == before && g.ScenePathNow(scene) == scene);
+            }
+            {
+                ProjectGate g(env);
+                int go = 0;
+                g.Open(scene, [&] { ++go; }, [] {});
+                g.Answer(Choice::Cancel);
+                CHECK(go == 0 && !g.Busy() && Snap(root) == before);
+            }
+            {
+                ProjectGate g(env);
+                int go = 0;
+                g.Open(scene, [&] { ++go; }, [] {});
+                CHECK(g.prompt().kind == PromptKind::Tidy);
+                g.Answer(Choice::Upgrade);
+                CHECK(g.prompt().kind == PromptKind::TidyDone && g.prompt().layoutResult.ok && go == 0);
+                CHECK(fs::path(g.ScenePathNow(scene)) == root / relScene && fs::is_regular_file(root / relScene));
+                CHECK(!movedSeen.empty());
+                bool sawScene = false;
+                for (const auto& m : movedSeen) if (fs::path(m.first) == fs::path(scene) && fs::path(m.second) == root / relScene) sawScene = true;
+                CHECK(sawScene);
+                g.Answer(Choice::Continue);
+                CHECK(go == 1 && !g.Busy());
+                g.Open(g.ScenePathNow(scene), [&] { ++go; });   // open again: cleared, no question
+                CHECK(go == 2 && !g.Busy());
+            }
+            {   // without askTidy (tools, the version tests) nothing is asked
+                GateEnv quiet = env; quiet.askTidy = false;
+                TempDir t2;
+                makeFlat(t2.path / "Flat");
+                ProjectGate g(quiet);
+                int go = 0;
+                g.Open((t2.path / "Flat" / "Level.okayscene").string(), [&] { ++go; });
+                CHECK(go == 1 && !g.Busy());
+            }
+        }
     }
 
     TEST_MAIN_RESULT();

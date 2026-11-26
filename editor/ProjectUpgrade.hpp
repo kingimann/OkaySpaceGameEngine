@@ -167,9 +167,54 @@ struct RestoreResult {
 /// is first copied to <project>/.okay/backups/restore-N, and a failure puts those back, so a restore is all or nothing too.
 RestoreResult RestoreBackup(const BackupInfo& backup, const std::string& projectDir, const FailHook& fail = {});
 
+// ---- tidying the folders (the project layout, docs/engine/project_layout.md) ----------------------------------------------
+// An older project keeps its scenes and assets next to project.okayproj, and its settings in .okay/. Tidying moves them into
+// the layout (Assets/<folder>, ProjectSettings/, Library/, Logs/), after a backup, and updates every reference to them.
+
+/// One file the tidy moves; both paths are project-relative with '/' separators.
+struct LayoutMove { std::string from, to; };
+
+struct LayoutPlan {
+    std::string projectDir;
+    std::vector<LayoutMove> moves;        ///< in order; a sidecar (.okaymeta, .autosave) is its own move, after its file
+    std::vector<std::string> kept;        ///< "<file>: why it stays where it is" (read-only, the new place is taken, ...)
+    int referrers = 0;                    ///< files whose references to moved files will be updated
+    bool Empty() const { return moves.empty(); }
+};
+/// What tidying the project in `projectDir` would do. Reads only; writes nothing.
+LayoutPlan PlanLayout(const std::string& projectDir);
+
+struct LayoutOptions {
+    std::string backupParent;             ///< where the backup folder goes (default: the folder the project is in)
+    FailHook fail;                        ///< tests: stages tidy-backup, tidy-copy, tidy-verify, tidy-refs, tidy-remove
+};
+
+struct LayoutResult {
+    bool ok = false;
+    std::string error;                    ///< the first thing that went wrong, in plain words
+    std::string note;                     ///< what was done about it ("Nothing was changed.")
+    std::string backupDir;                ///< the backup of every file moved or rewritten ("" if none was made)
+    int moved = 0;                        ///< files moved
+    int refsUpdated = 0;                  ///< references rewritten
+    std::vector<LayoutMove> done;         ///< the moves made
+    std::vector<std::string> rewritten;   ///< files whose references were updated (their paths after the tidy)
+    std::vector<std::string> kept;        ///< the plan's kept list, and old files that could not be removed after the copy
+    std::vector<std::string> log;
+};
+/// Tidy the project as `plan` says: (1) work out every reference to rewrite, and refuse if a file that must change is
+/// read-only; (2) copy every file that will be moved or rewritten into "<Name> (backup before tidy)" next to the project,
+/// check each copy and write a manifest (RestoreBackup can put it back); (3) copy each file to its new place and check the
+/// copy; (4) write the updated references; (5) only then remove the old files. A failure before (5) takes back everything
+/// it made, so the project is as it was. A file is never removed unless its copy was checked. Running it on a tidied project
+/// does nothing (the plan is empty).
+LayoutResult ApplyLayout(const LayoutPlan& plan, const LayoutOptions& opt = {});
+/// Where `path` (absolute or project-relative) is after the tidy `r` of the project in `projectDir`; `path` when it did not move.
+std::string MovedPath(const LayoutResult& r, const std::string& projectDir, const std::string& path);
+
 // ---- the question ---------------------------------------------------------------------------------------------------------
 
-enum class PromptKind { None, Older, Unknown, Newer, NotInstalled, Working, Done, Failed };
+enum class PromptKind { None, Older, Unknown, Newer, NotInstalled, Working, Done, Failed, Tidy, TidyDone };
+/// Tidy: Upgrade = "Move the files", Keep = "Not now" (nothing moves), Cancel = do not open. TidyDone: Continue.
 enum class Choice { Upgrade, Keep, Cancel, OpenAnyway, UpdateEditor, Back, Continue, Close };
 
 struct Prompt {
@@ -182,6 +227,8 @@ struct Prompt {
     Progress progress;                ///< Working
     Result result;                    ///< Done / Failed
     std::string message;              ///< NotInstalled: the sentence to show
+    LayoutPlan layout;                ///< Tidy: what would move
+    LayoutResult layoutResult;        ///< TidyDone
 };
 
 /// What the gate needs from the outside; tests fill in their own.
@@ -193,6 +240,11 @@ struct GateEnv {
     std::function<std::vector<std::string>(const std::string& projectDir)> outputDirs;   ///< Build Settings output folders
     FailHook fail;                                                ///< tests only
     std::function<std::uintmax_t(const fs::path&, std::error_code&)> availableSpace;   ///< tests only
+    /// Ask to tidy a project whose files are not in the layout before it opens (the editor sets it; off in tools and in the
+    /// version tests, which open projects in the older layout on purpose).
+    bool askTidy = false;
+    /// After a tidy, once per moved file (absolute paths): the editor updates its recent-scenes list.
+    std::function<void(const std::string& from, const std::string& to)> moved;
 };
 
 /// An editor of another version to start in place of this one (the "Keep" choice).
@@ -239,6 +291,10 @@ public:
     bool TakeUpdateRequest() { const bool r = update_; update_ = false; return r; }
     std::optional<Launch> TakeLaunch() { auto r = std::move(launch_); launch_.reset(); return r; }
 
+    /// Where `scene` is now: a tidy may have moved it (an old project's scene next to project.okayproj goes to Assets/Scenes).
+    /// `scene` when it did not move. The editor opens this path in `proceed`.
+    std::string ScenePathNow(const std::string& scene) const;
+
     /// Changes whenever the cleared or kept projects change (so a label made from them can be cached).
     unsigned revision() const { return revision_; }
 
@@ -250,12 +306,16 @@ private:
     void StartJob(bool migrate);
     void Finish(bool proceed);
     void KeepVersion();
+    /// The project may be opened: ask about tidying it first when it needs it (once a session), else go on.
+    void ProceedOrTidy(const std::string& root, const std::string& scene);
+    void RunTidy();
 
     GateEnv env_;
     Prompt prompt_;
     std::function<void()> proceed_, cancel_;
     std::unique_ptr<UpgradeJob> job_;
-    std::set<std::string> cleared_, kept_;
+    std::set<std::string> cleared_, kept_, tidyAsked_;
+    std::vector<std::pair<std::string, std::string>> movedScenes_;   ///< RootKey-style keys: old scene path -> new
     bool quit_ = false, update_ = false;
     unsigned revision_ = 0;
     std::optional<Launch> launch_;

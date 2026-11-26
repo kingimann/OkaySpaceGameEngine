@@ -1,24 +1,35 @@
 OkaySpace Game Engine — Changelog
 
 v2.904.1
-  A browser, a new graphics layer, JavaScript and better script editors
-  - Restore after a crash works: one question per crashed session,
-    scripts come back as scripts, and if something cannot be restored
-    you are told and the copy is kept.
-  - Launcher: you can skip an update ("Skip this version"), and a
-    release is no longer offered when your test build is newer.
-  - What's New no longer flickers when you hover the profile icon.
-  - Our own web browser, opened from the launcher's Browser page. Menus
-    and tooltips draw over it, and the usual keys work (Ctrl+F, Ctrl+L,
-    Ctrl+T, Ctrl+W, Ctrl+D, F5, Alt+arrows, Ctrl+Tab). It is early:
-    pages show text, links, pictures and forms, but no JavaScript yet.
-  - The engine draws through our own graphics layer, with OpenGL and
-    Direct3D 11 behind it; Bloom is the first effect moved onto it.
-  - Script editor: Go to File, project-wide symbols and rename, regex
-    find, quick fixes, Local History and plugins.
-  - Visual Script editor: debugger watches, collapse to a function,
-    layout tools, find references, quick fixes and graph diff.
-  - Game scripts can be written in JavaScript, run by our own engine.
+  A web browser, JavaScript, a new graphics layer and better editors
+  - Browser: our own web browser, in the launcher (Browser in the menu) and as its own program (OkaySpaceBrowser.exe in the Tools folder).
+  - Browser look: rounded tabs with a coloured site badge, tabs you can drag to reorder, round icon buttons, and a rounded address bar with a lock or "Not secure".
+  - Browser address bar: suggestions while you type (search, open tabs, bookmarks, history); Up/Down to pick, Enter to open.
+  - Browser: hover a link to see its full address at the bottom left.
+  - Browser keys: Ctrl+F, Ctrl+L, Ctrl+T, Ctrl+W, Ctrl+D, F5, Alt+arrows and Ctrl+Tab work on the Browser page; Space, Page Up/Down, arrows and Home/End scroll smoothly; Tab moves between links and fields.
+  - Browser: select text with the mouse, Ctrl+A and Ctrl+C; a friendly "This site cannot be reached" page with Try again; a new-tab page with a search box and shortcut tiles.
+  - Browser: menus and tooltips draw over the page, and page pictures stay when you switch tabs.
+  - Web pages run their own JavaScript on our own engine: page scripts, clicks and typing, timers, and a Console (F12).
+  - Pages are styled much more like other browsers: real table column widths, colour gradients, proper spacing between blocks, the standard default styles, and many more text and border styles.
+  - Accented letters show properly on pages written in older character sets (no more "Fran?ais"), Google's search box is centred with nothing on top of it, and older web pages (font tags, centred blocks) look right.
+  - Web fonts in WOFF and WOFF2 format can be read (they show on pages once the next step is done).
+  - The browser names itself to sites in the standard way, without pretending to be another browser, and the address bar says "Search the web or type an address".
+  - Game scripts can be written in JavaScript, run by our own JavaScript engine.
+  - Script editor: Go to File, project-wide symbol search and rename, regex find, quick fixes, Local History and plugins.
+  - Visual Script editor: debugger watches, collapse a selection into a function, layout tools, find references, quick fixes and a graph compare view.
+  - Graphics: the engine now draws through our own graphics layer, with OpenGL and Direct3D 11 behind it; Bloom is the first effect moved onto it.
+  - Editor: a Command Line panel (View > Panels > Command Line) runs okay commands inside the editor, with history, Tab completion, errors in red, and Stop, Copy and Clear.
+  - Launcher: buttons to open the browser, the Script Editor and Visual Script as programs of their own (each shows only when that program is installed).
+  - Editor: Find in Files (with Match case, Whole word, Regex and Replace in All Files), Timers and Input Actions now use our own UI toolkit.
+  - Editor: restoring after a crash works - one question per crashed session, scripts come back as scripts, and if something cannot be restored you are told and the copy is kept.
+  - Edge smoothing (anti-aliasing), the terrain mesh and the noise generator were rewritten as our own code; tone-map choices are now called "Punchy filmic" and "Soft filmic".
+  - Launcher: you can skip an update with "Skip this version", and a release is no longer offered when your test build is newer.
+  - Launcher: What's New no longer flickers when you hover the profile icon, and clicking Notifications works every time.
+  - Launcher: test builds now list everything that changed in them on the What's New page.
+  - Every program, installer, exported game and web build now carries a notices file naming the third-party parts and fonts it uses, and the programs' file details give our real licence.
+  - Voice chat uses the engine's shared, tested encryption code.
+  - On Linux the editor can run on our own window layer instead of SDL (Windows keeps SDL until it is tried there).
+  - Many fixes so the full test run passes again, and fixes for names that clash with Windows headers.
 
 v2.904.0
   The editor works again, and faster

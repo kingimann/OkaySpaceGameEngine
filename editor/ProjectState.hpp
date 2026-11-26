@@ -2,10 +2,11 @@
 // The project's own state, as the files inside the project folder hold it (no UI, no globals, so the
 // editor and the tests read and write exactly the same text):
 //
-//   <project>/project.okayproj           ProjectSettings + the tag list and layer names (ProjectLists)
-//   <project>/.okay/build_profiles.cfg   the named build profiles (Build Settings > profiles)
-//   <project>/.okay/build_live.cfg       the Build Settings dialog as it was left (profile or not)
-//   <project>/.okay/scene_build.txt      Scenes In Build (the Scene Manager)
+//   <project>/ProjectSettings/project.okayproj     ProjectSettings + the tag list and layer names (ProjectLists)
+//   <project>/ProjectSettings/build_profiles.cfg   the named build profiles (Build Settings > profiles)
+//   <project>/.okay/build_live.cfg                 the Build Settings dialog as it was left (profile or not)
+//   <project>/ProjectSettings/scene_build.txt      Scenes In Build (the Scene Manager)
+// An older project keeps these three in their old places (project root, .okay/) until it is tidied: okayproj::layout.
 //
 // Every value is written so it reads back to the same number (shortest text that round trips); older
 // files, which wrote six digits, still load. Unknown lines are ignored, so a file written by a newer
@@ -553,10 +554,16 @@ inline void ParseProjectSettings(ProjectSettings& s, const std::string& text, st
 
 // ---- where the files are ------------------------------------------------------------------------------------
 
-/// <project>/project.okayproj. With no project open it is the working folder's, as before projects had their own.
+/// <project>/ProjectSettings/project.okayproj (<project>/project.okayproj in an older project). With no project open it is
+/// the working folder's, as before projects had their own.
 inline std::string ProjectSettingsFile(const std::string& projectDir) { return okayproj::SettingsPath(projectDir); }
+/// <project>/ProjectSettings/build_profiles.cfg (<project>/.okay/build_profiles.cfg in an older project).
 inline std::string BuildProfilesFile(const std::string& projectDir) {
-    return projectDir.empty() ? std::string() : (std::filesystem::path(projectDir) / ".okay" / "build_profiles.cfg").string();
+    return projectDir.empty() ? std::string() : okayproj::layout::SettingsFile(projectDir, "build_profiles.cfg", ".okay/build_profiles.cfg").string();
+}
+/// <project>/ProjectSettings/scene_build.txt (<project>/.okay/scene_build.txt in an older project): Scenes In Build.
+inline std::string SceneBuildFile(const std::string& projectDir) {
+    return projectDir.empty() ? std::string() : okayproj::layout::SettingsFile(projectDir, "scene_build.txt", ".okay/scene_build.txt").string();
 }
 inline std::string BuildLiveFile(const std::string& projectDir) {
     return projectDir.empty() ? std::string() : (std::filesystem::path(projectDir) / ".okay" / "build_live.cfg").string();

@@ -182,8 +182,10 @@ void TestIgnoreAndAttributes() {
     const Strs ig = okaycli::vc::IgnoreLines();
     auto in = [](const Strs& v, const std::string& l) { for (const auto& x : v) if (x == l) return true; return false; };
     for (const char* l : {"/build/", "/.okay/backups/", "/.okay/build_live.cfg", "/.okay/clashes/", "*.autosave", "*.okayscene.bak",
-                          "*.okayprefab.bak", ".okaycache/", "/.okay/projectview.txt", "/.okay/favourites.txt"})
+                          "*.okayprefab.bak", ".okaycache/", "/.okay/projectview.txt", "/.okay/favourites.txt",
+                          "/Library/", "/Logs/", "/Temp/", "/Builds/"})   // the project layout's folders that are not project data
         CHECK(in(ig, l));
+    CHECK(okaycli::vc::GroupOf("ProjectSettings/project.okayproj") == okaycli::vc::Group::Settings);
     // Nothing that could match a real folder deeper in the project, or a person's own files.
     for (const char* l : {"build/", "Build/", "export/", "Export/", "Library/", "Temp/", "*.log", "*.bak"}) CHECK(!in(ig, l));
     for (const auto& l : ig) if (l.find('/') != std::string::npos && l != ".okaycache/") CHECK(l[0] == '/');
@@ -282,10 +284,10 @@ void TestProjects(const fs::path& tmp) {
     fs::create_directories(where);
     CHECK(Cli({"new", "My Game", "--in", where.string(), "--no-git", "--version", "0.3.0"}, s) == 0);
     const fs::path root = where / "My Game";
-    CHECK(fs::is_regular_file(root / "project.okayproj"));
-    CHECK(fs::is_regular_file(root / "Assets" / "My Game.okayscene"));
+    CHECK(fs::is_regular_file(root / "ProjectSettings" / "project.okayproj"));
+    CHECK(fs::is_regular_file(root / "Assets" / "Scenes" / "My Game.okayscene"));
     CHECK(fs::is_regular_file(root / "Assets" / "input.okayinput"));
-    const std::string settings = Read(root / "project.okayproj");
+    const std::string settings = Read(root / "ProjectSettings" / "project.okayproj");
     CHECK(Has(settings, "version=0.3.0"));
     CHECK(Has(settings, "engine_version="));
     CHECK(!fs::exists(root / ".git"));
@@ -296,9 +298,9 @@ void TestProjects(const fs::path& tmp) {
     CHECK(fs::path(okaycli::FindProjectRoot((root / "Assets").string())) == root);
     CHECK(fs::path(okaycli::FindProjectRoot((root / ".").string())).filename() == "My Game");   // no trailing slash from "."
     CHECK(fs::path(okaycli::FindProjectRoot((root / "Assets" / "").string())) == root);
-    CHECK(fs::path(okaycli::FindProjectRoot((root / "Assets" / "My Game.okayscene").string())) == root);
+    CHECK(fs::path(okaycli::FindProjectRoot((root / "Assets" / "Scenes" / "My Game.okayscene").string())) == root);
     CHECK(okaycli::FindProjectRoot(tmp.string()).empty());
-    CHECK(fs::path(okaycli::MainScene(root.string())) == root / "Assets" / "My Game.okayscene");
+    CHECK(fs::path(okaycli::MainScene(root.string())) == root / "Assets" / "Scenes" / "My Game.okayscene");
     Write(root / "Assets" / "Levels" / "Two.okayscene", LevelText("1", "2"));
     Write(root / ".okay" / "scene_build.txt", "# list\n0|Assets/My Game.okayscene\n1|Assets/Levels/Two.okayscene\n");
     CHECK(fs::path(okaycli::MainScene(root.string())) == root / "Assets" / "Levels" / "Two.okayscene");
@@ -1105,16 +1107,16 @@ void TestProjectAndVsCommands(const fs::path& tmp) {
     CHECK(okaycli::CreateEmptyProject(proj.string(), "ProjGame", "", err));
     const std::string P = proj.string();
     Said s;
-    CHECK(Cli({"--project", P, "project", "info"}, s) == 0 && Has(s.out, "Project ProjGame") && Has(s.out, "start scene: Assets/ProjGame.okayscene"));
+    CHECK(Cli({"--project", P, "project", "info"}, s) == 0 && Has(s.out, "Project ProjGame") && Has(s.out, "start scene: Assets/Scenes/ProjGame.okayscene"));
     CHECK(Cli({"--project", P, "project", "info", "--json"}, s) == 0 && Has(s.out, "\"name\":\"ProjGame\"") && Has(s.out, "\"scenes\":1"));
     CHECK(Cli({"--project", P, "project", "settings", "get", "width"}, s) == 0 && Trim(s.out) == "1280");
-    const std::string fileBefore = Read(proj / "project.okayproj");
-    Write(proj / "project.okayproj", fileBefore + "some_future_key=keep me\n");
+    const std::string fileBefore = Read(proj / "ProjectSettings" / "project.okayproj");
+    Write(proj / "ProjectSettings" / "project.okayproj", fileBefore + "some_future_key=keep me\n");
     CHECK(Cli({"--project", P, "project", "settings", "set", "width", "1920"}, s) == 0 && Has(s.out, "width is 1920"));
     CHECK(Cli({"--project", P, "project", "settings", "get", "width"}, s) == 0 && Trim(s.out) == "1920");
     CHECK(Cli({"--project", P, "project", "settings", "set", "company", "Okay", "Games"}, s) == 0);
     CHECK(Cli({"--project", P, "project", "settings", "get", "company"}, s) == 0 && Trim(s.out) == "Okay Games");
-    const std::string after = Read(proj / "project.okayproj");
+    const std::string after = Read(proj / "ProjectSettings" / "project.okayproj");
     CHECK(Has(after, "some_future_key=keep me"));   // a line okay does not own is kept
     const okayver::Stamp stamp = okayver::ReadProjectStamp(P);
     CHECK(Cli({"--project", P, "project", "settings", "set", "nosuch", "1"}, s) == 1 && Has(s.err, "no project setting"));
@@ -1124,14 +1126,14 @@ void TestProjectAndVsCommands(const fs::path& tmp) {
     CHECK(Cli({"--project", P, "project", "upgrade"}, s) == 0);
     if (!stamp.version.empty()) {
         CHECK(Has(s.out, "already on this engine"));
-        Write(proj / "project.okayproj", okayver::SetStampInText(Read(proj / "project.okayproj"), "2.0.0"));
+        Write(proj / "ProjectSettings" / "project.okayproj", okayver::SetStampInText(Read(proj / "ProjectSettings" / "project.okayproj"), "2.0.0"));
         CHECK(Cli({"--project", P, "project", "upgrade"}, s) == 0 && Has(s.out, "Upgraded the project"));
         CHECK(okayver::ReadProjectStamp(P).version == stamp.version);
         bool backup = false;
         std::error_code ec;
         for (const auto& e : fs::directory_iterator(tmp, ec)) if (Has(e.path().filename().string(), "ProjGame (backup")) backup = true;
         CHECK(backup);
-        Write(proj / "project.okayproj", okayver::SetStampInText(Read(proj / "project.okayproj"), "999.0.0"));
+        Write(proj / "ProjectSettings" / "project.okayproj", okayver::SetStampInText(Read(proj / "ProjectSettings" / "project.okayproj"), "999.0.0"));
         CHECK(Cli({"--project", P, "project", "upgrade"}, s) == 1 && Has(s.err, "newer engine"));
     }
 

@@ -34,8 +34,117 @@ inline const std::vector<std::string>& StandardFolders() {
     return f;
 }
 
-/// The project settings file, in the project folder.
+/// The project settings file's name (in <project>/ProjectSettings, or at the top of an older project).
 inline const char* SettingsFileName() { return "project.okayproj"; }
+
+// ---- the folders of a project (docs/engine/project_layout.md) ----------------------------------------------
+//   Assets/           everything the person makes or imports (scenes in Assets/Scenes by default)
+//   ProjectSettings/  project.okayproj and the other shared settings files
+//   Library/          caches (thumbnails): safe to delete, never shipped
+//   Logs/             this project's logs and reports
+//   Temp/             scratch files while the editor runs
+//   Builds/           the default build output
+// Older projects have project.okayproj at the top and their settings in .okay/; every reader looks in the new place first
+// and then in the old one, and a project keeps writing to the old place until it is tidied (ProjectUpgrade: PlanLayout).
+namespace layout {
+
+inline const char* kAssets = "Assets";
+inline const char* kSettings = "ProjectSettings";
+inline const char* kLibrary = "Library";
+inline const char* kLogs = "Logs";
+inline const char* kTemp = "Temp";
+inline const char* kBuilds = "Builds";
+inline const char* kScenes = "Scenes";
+
+inline fs::path AssetsDir(const fs::path& root) { return root / kAssets; }
+inline fs::path SettingsDir(const fs::path& root) { return root / kSettings; }
+inline fs::path LibraryDir(const fs::path& root) { return root / kLibrary; }
+inline fs::path LogsDir(const fs::path& root) { return root / kLogs; }
+inline fs::path TempDir(const fs::path& root) { return root / kTemp; }
+inline fs::path BuildsDir(const fs::path& root) { return root / kBuilds; }
+inline fs::path ScenesDir(const fs::path& root) { return root / kAssets / kScenes; }
+
+/// A settings file `name` of the project in `root`. `legacyRel` is where an older project keeps it ("project.okayproj",
+/// ".okay/scene_build.txt"). The new place when the file is there; else the old place when the file is there; else the new
+/// place when the project has a ProjectSettings folder (a new or tidied project); else the old place (an older project
+/// keeps writing where it always did, so it is never half in one layout and half in the other).
+inline fs::path SettingsFile(const fs::path& root, const std::string& name, const std::string& legacyRel) {
+    std::error_code ec;
+    const fs::path now = SettingsDir(root) / name;
+    const fs::path old = root / fs::path(legacyRel);
+    if (fs::is_regular_file(now, ec)) return now;
+    if (fs::is_regular_file(old, ec)) return old;
+    if (fs::is_directory(SettingsDir(root), ec)) return now;
+    return old;
+}
+
+/// Where a new project's first scene goes: <root>/Assets/Scenes/<name>.okayscene.
+inline fs::path FirstScenePath(const fs::path& root, const std::string& sceneName) {
+    return ScenesDir(root) / (sceneName + ".okayscene");
+}
+
+/// Text to compare two paths with: absolute, lexically normal, '/' separators, no trailing '/', lower case on Windows.
+inline std::string CompareKey(const fs::path& p) {
+    std::error_code ec;
+    fs::path a = fs::absolute(p, ec);
+    if (ec) a = p;
+    std::string s = a.lexically_normal().generic_string();
+    while (s.size() > 1 && s.back() == '/') s.pop_back();
+#if defined(_WIN32)
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+#endif
+    return s;
+}
+/// `child` is `parent` or below it (text only; ".." is followed).
+inline bool IsSameOrInside(const fs::path& parent, const fs::path& child) {
+    const std::string a = CompareKey(parent), b = CompareKey(child);
+    if (a == b) return true;
+    return b.size() > a.size() && b.compare(0, a.size(), a) == 0 && (a.back() == '/' || b[a.size()] == '/');
+}
+
+enum class SaveTarget {
+    InAssets,    ///< inside <project>/Assets: where the person's files belong
+    InProject,   ///< in the project folder but not in Assets (the Project panel does not show it, a build may miss it)
+    Outside,     ///< outside the project folder
+    NoProject    ///< no project is open
+};
+/// Where saving `path` would put the file, for the project in `root` ("" = none open).
+inline SaveTarget CheckSaveTarget(const std::string& root, const std::string& path) {
+    if (root.empty()) return SaveTarget::NoProject;
+    if (IsSameOrInside(AssetsDir(fs::path(root)), fs::path(path))) return SaveTarget::InAssets;
+    if (IsSameOrInside(fs::path(root), fs::path(path))) return SaveTarget::InProject;
+    return SaveTarget::Outside;
+}
+/// The place inside the project offered instead of `path`: <root>/Assets/<folder>/<the same file name>, or "<name> 2", "<name> 3"...
+/// when that is taken (an existing file is never offered for overwriting).
+inline fs::path InsideCopyPath(const fs::path& root, const std::string& path, const char* folder = kScenes) {
+    const fs::path name = fs::path(path).filename();
+    const fs::path dir = AssetsDir(root) / folder;
+    fs::path p = dir / name;
+    std::error_code ec;
+    for (int n = 2; fs::exists(p, ec) && n < 1000; ++n) p = dir / (name.stem().string() + " " + std::to_string(n) + name.extension().string());
+    return p;
+}
+
+/// The build folder a new project starts with (relative: inside the project, see ResolveInProject).
+inline std::string DefaultBuildDir(const std::string& productName) { return std::string(kBuilds) + "/" + productName; }
+/// A folder the person typed: a relative one is inside the project in `root` (not the working folder, which is the
+/// editor's own folder on Windows); an absolute one, or any folder with no project open, is returned as it is.
+inline std::string ResolveInProject(const std::string& root, const std::string& path) {
+    if (root.empty() || path.empty()) return path;
+    const fs::path p(path);
+    if (p.is_absolute() || p.has_root_name()) return path;
+    return (fs::path(root) / p).lexically_normal().string();
+}
+
+/// A log or report called `name`: in the project's Logs folder, or in `userLogDir` (the person's log folder,
+/// okay::Paths::LogDir) when no project is open.
+inline fs::path LogFile(const std::string& root, const std::string& userLogDir, const std::string& name) {
+    if (!root.empty()) return LogsDir(fs::path(root)) / name;
+    return fs::path(userLogDir) / name;
+}
+
+}  // namespace layout
 
 constexpr std::size_t kMaxNameChars = 64;
 /// The longest project folder path accepted. Windows stops at 260 characters, and the editor
@@ -310,6 +419,7 @@ inline bool MakeSkeleton(const fs::path& root, Made& made, std::string& error) {
     Made mine;
     bool ok = MakeDirs(root / "Assets", mine, error);
     if (ok) for (const std::string& f : StandardFolders()) { if (!(ok = MakeDirs(root / "Assets" / f, mine, error))) break; }
+    if (ok) ok = MakeDirs(layout::SettingsDir(root), mine, error);
     if (ok) ok = MakeDirs(root / ".okay", mine, error);
     if (!ok) { Undo(mine); return false; }
     made.paths.insert(made.paths.end(), mine.paths.begin(), mine.paths.end());
@@ -388,9 +498,15 @@ inline bool ReadText(const std::string& path, std::string& out) {
     return true;
 }
 
-/// Where the settings of the project in `root` live.
+/// Where the settings of the project in `root` live: <root>/ProjectSettings/project.okayproj, or <root>/project.okayproj
+/// in an older project (layout::SettingsFile). With no project, the working folder's, as before projects had their own.
 inline std::string SettingsPath(const std::string& root) {
-    return root.empty() ? std::string(SettingsFileName()) : (fs::path(root) / SettingsFileName()).string();
+    return root.empty() ? std::string(SettingsFileName()) : layout::SettingsFile(fs::path(root), SettingsFileName(), SettingsFileName()).string();
+}
+/// True when the project in `root` has a project.okayproj (in either place).
+inline bool HasSettingsFile(const fs::path& root) {
+    std::error_code ec;
+    return fs::is_regular_file(layout::SettingsDir(root) / SettingsFileName(), ec) || fs::is_regular_file(root / SettingsFileName(), ec);
 }
 
 // ---- the launcher's Create page -----------------------------------------------------------------------------

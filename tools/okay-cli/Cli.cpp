@@ -293,7 +293,7 @@ std::string FindProjectRoot(const std::string& start) {
     if (!fs::is_directory(p, ec)) p = p.parent_path();
     fs::path withAssets;
     for (fs::path q = p; !q.empty(); q = q.parent_path()) {
-        if (fs::is_regular_file(q / okayproj::SettingsFileName(), ec)) return q.string();
+        if (okayproj::HasSettingsFile(q)) return q.string();   // ProjectSettings/project.okayproj or the older place
         if (withAssets.empty() && fs::is_directory(q / "Assets", ec)) withAssets = q;
         if (q == q.parent_path()) break;
     }
@@ -302,7 +302,7 @@ std::string FindProjectRoot(const std::string& start) {
 
 std::string MainScene(const std::string& root) {
     std::error_code ec;
-    std::ifstream f((fs::path(root) / ".okay" / "scene_build.txt").string());
+    std::ifstream f(okayproj::layout::SettingsFile(fs::path(root), "scene_build.txt", ".okay/scene_build.txt").string());
     for (std::string line; f && std::getline(f, line);) {   // "1|Assets/Level.okayscene": ticked, path (the Scene Manager's list)
         while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
         if (line.size() < 3 || line[0] != '1' || line[1] != '|') continue;
@@ -337,7 +337,7 @@ bool CreateEmptyProject(const std::string& root, const std::string& name, const 
     const std::string stamp = okayver::NormalizeVersion(EngineVersion());
     if (!stamp.empty()) text = okayver::SetStampInText(text, stamp);
     const fs::path settingsFile = okayproj::SettingsPath(root);
-    const fs::path scene = fs::path(root) / "Assets" / (name + ".okayscene");
+    const fs::path scene = okayproj::layout::FirstScenePath(fs::path(root), name);   // <root>/Assets/Scenes
     const fs::path input = fs::path(root) / "Assets" / "input.okayinput";
     okay::Scene empty(name);
     bool ok = okayproj::WriteTextAtomic(settingsFile.string(), text, &error);

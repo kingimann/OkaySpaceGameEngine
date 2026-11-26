@@ -604,13 +604,14 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 25.2.2 Custom tags - `editor/main.cpp` - project-wide tag list kept in `project.okayproj`
   - 25.2.3 Build Settings - `editor/main.cpp` - window options, scenes in build and named build profiles (see 15.7)
   - 25.2.4 Layer and tag data in scenes - `Scene/Layers`, `Scene/Tags` - layer matrix and tags (#570); not in project settings yet
+  - 25.2.5 Project folder layout - `shared/ProjectCreate.hpp` (`okayproj::layout`), `editor/ProjectUpgrade.cpp` (`PlanLayout`, `ApplyLayout`) - Assets, ProjectSettings, Library, Logs, Temp, Builds; an older project is tidied into it on open, after a backup and only if the person agrees (`docs/engine/project_layout.md`)
 - **Code:** `editor/main.cpp`, `Scene/Layers`, `Scene/Tags`
 - **API:** Edit > Project Settings, `project.okayproj` keys `company`, `version`, `width`, `height`, `gravity2d`, `gravity3d`, `ambient`, `skybox`, `tag`
 - **Editor:** Project Settings window, Build Settings dialog
 - **Docs:** `docs/editor/editor.md`
 - **Tests:** `layers_tags_cameras` (layers and tags only)
 - **Status:** Partial - the window exists with a few sections; many project-level choices live elsewhere or nowhere.
-- **Exists today:** The window and file above. Settings apply to new builds and can be pushed into the open scene with a button. The file is read from the editor's working directory (`project.okayproj`).
+- **Exists today:** The window and file above. Settings apply to new builds and can be pushed into the open scene with a button. The file is `<project>/ProjectSettings/project.okayproj` (the top of the project in an older one, read there until the project is tidied).
 - **Work packages:**
   1. S - Add sections for Quality presets, Input (default actions), Layers and Tags (with the layer matrix), Audio defaults. Depends on: nothing.
   2. M - Versioned file: `format=2` plus engine version stamp, unknown keys kept. Depends on: 25.3 package 1.

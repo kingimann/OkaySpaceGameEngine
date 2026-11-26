@@ -36,10 +36,11 @@ static int Count(const LayoutResult& r, DrawCmd::Kind k) {
 int main() {
     RUN_SUITE("page layout");
 
-    // One paragraph: html and body hold the paragraph and its 16 px margins (siblings collapse, parents do not).
+    // One paragraph: the paragraph's 16 px margins collapse through body (no border or padding) and end up outside it; html is
+    // the root (a new formatting context) and holds them (CSS 2.1 8.3.1).
     CHECK(Dump("<body style='margin:0'><p>Hello world</p>", 800,
                "block html 0,0 800x51\n"
-               "block body 0,0 800x51\n"
+               "block body 0,16 800x19\n"
                "block p 0,16 800x19\n"
                "text 0,18 'Hello world'\n"));
 
@@ -196,7 +197,9 @@ int main() {
         CHECK(FindBox(r, "p") == nullptr && FindBox(r, "div") == nullptr && FindText(r, "no") == nullptr);
     }
 
-    // Tables: equal columns, 2 px spacing, rows as tall as the tallest cell.
+    // Tables (CSS 2.1 17.5.2.2, automatic layout): column 1 wants 10 px ("a" + 2 px padding) at most, column 2 at least 10 and
+    // at most 218 (27 characters + padding); 200 - 3 x 2 px spacing = 194 lies between the sums (20 and 228), so each column
+    // gets its minimum plus its share of the rest in proportion to max - min: 10 and 184. Rows are as tall as their tallest cell.
     {
         const LayoutResult r = Lay("<body style='margin:0'><table><tr><td>a<td>b b b b b b b b b b b b b b<tr><td>c</table>", 200);
         const BoxInfo* t = FindBox(r, "table");
@@ -206,7 +209,7 @@ int main() {
         CHECK(t && t->w == 200.0f);
         CHECK(c1 && c2 && c3);
         if (c1 && c2 && c3) {
-            CHECK(c1->x == 2.0f && c1->w == 97.0f && c2->x == 101.0f && c2->w == 97.0f);
+            CHECK(c1->x == 2.0f && c1->w == 10.0f && c2->x == 14.0f && c2->w == 184.0f);
             CHECK(c1->y == 2.0f && c2->y == 2.0f);
             CHECK(c1->h == c2->h && c2->h > 40.0f);
             CHECK_NEAR(c3->y, c1->y + c1->h + 2.0f, 0.01f);

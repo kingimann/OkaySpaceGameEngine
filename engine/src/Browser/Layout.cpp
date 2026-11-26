@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <array>
 #include <deque>
 #include <map>
 #include <tuple>
@@ -63,11 +64,71 @@ void Blockify(ComputedStyle& s) {
     s.floating = Float::None;
 }
 
+// Table parts (CSS 2.1 17.2): a row group, a row, a cell, a caption.
+bool IsRowGroup(Display d) { return IsTableSection(d); }
+
 struct Builder {
     const std::vector<const StyleSheet*>& sheets;
     const StyleContext* ctx;
     std::deque<Node> synth;   // the boxes of ::before / ::after and their text
     bool anyPseudo[3] = {false, false, false};
+    // the counters in scope (CSS 2.1 12.4.1), innermost last: an element's counter-reset adds one that lives until its parent's
+    // children end, so it reaches the element, its descendants and its later siblings
+    std::vector<std::pair<std::string, int>> counters;
+
+    void ApplyCounters(const ComputedStyle& st) {
+        for (const auto& c : st.counterReset) if (counters.size() < 4096) counters.push_back(c);
+        for (const auto& c : st.counterSet) {
+            bool found = false;
+            for (std::size_t k = counters.size(); k-- > 0;) if (counters[k].first == c.first) { counters[k].second = c.second; found = true; break; }
+            if (!found && counters.size() < 4096) counters.push_back(c);
+        }
+        for (const auto& c : st.counterIncrement) {
+            bool found = false;
+            for (std::size_t k = counters.size(); k-- > 0;)
+                if (counters[k].first == c.first) {
+                    const long long v = (long long)counters[k].second + c.second;
+                    counters[k].second = (int)std::max(-2000000000LL, std::min(2000000000LL, v));
+                    found = true;
+                    break;
+                }
+            if (!found && counters.size() < 4096) counters.push_back(c);   // no counter of that name: one starts here (12.4)
+        }
+    }
+    // Fill the counter() / counters() markers of generated content in with the counters' values now.
+    std::string ResolveCounters(const std::string& in) const {
+        if (in.find('\x03') == std::string::npos && in.find('\x05') == std::string::npos) return in;
+        std::string out;
+        for (std::size_t i = 0; i < in.size();) {
+            const char c = in[i];
+            if (c != '\x03' && c != '\x05') { out += in[i++]; continue; }
+            const char endMark = c == '\x03' ? '\x04' : '\x06';
+            const std::size_t e = in.find(endMark, i);
+            if (e == std::string::npos) break;
+            std::vector<std::string> parts;
+            std::size_t st = i + 1;
+            for (std::size_t k = i + 1; k <= e; ++k) if (k == e || in[k] == '\x1f') { parts.push_back(in.substr(st, k - st)); st = k + 1; }
+            ListStyle style = ListStyle::Decimal;
+            if (!parts.empty()) ListStyleFromName(parts.back(), style);
+            if (c == '\x03' && parts.size() == 2) {
+                int v = 0;
+                for (std::size_t k = counters.size(); k-- > 0;) if (counters[k].first == parts[0]) { v = counters[k].second; break; }
+                out += CounterText(v, style);
+            } else if (c == '\x05' && parts.size() == 3) {
+                bool firstOne = true;
+                for (const auto& cv : counters) {
+                    if (cv.first != parts[0]) continue;
+                    if (!firstOne) out += parts[1];
+                    out += CounterText(cv.second, style);
+                    firstOne = false;
+                    if (out.size() > 4096) break;
+                }
+                if (firstOne) out += CounterText(0, style);
+            }
+            i = e + 1;
+        }
+        return out;
+    }
 
     void Prepare() {
         for (const StyleSheet* s : sheets) {
@@ -81,10 +142,12 @@ struct Builder {
         out.node = &el;
         out.st = ComputeStyle(el, parent, sheets, ctx);
         if (out.st.display == Display::None) return false;
+        ApplyCounters(out.st);
         if (el.name == "img" || el.name == "br" || IsEmbedTag(el.name) || IsControlTag(el.name)) {
             if (IsControlTag(el.name) && out.st.display == Display::Inline) out.st.display = Display::InlineBlock;
             return true;
         }
+        const std::size_t counterMark = counters.size();
         if (anyPseudo[1]) AddPseudo(el, out, 1);
         for (const auto& c : el.children) {
             if (c->kind == NodeKind::Text) {
@@ -99,6 +162,8 @@ struct Builder {
             }
         }
         if (anyPseudo[2]) AddPseudo(el, out, 2);
+        if (counters.size() > counterMark) counters.resize(counterMark);   // the counters the children started end here
+        NormalizeTable(out);
         if (IsFlexDisplay(out.st.display) || IsGridDisplay(out.st.display)) {
             // every element child is an item; runs of text become anonymous items; space between them is dropped
             std::vector<SNode> items;
@@ -123,9 +188,52 @@ struct Builder {
         return true;
     }
 
+    // CSS 2.1 17.2.1, anonymous table objects (the parts the pages we meet need): inside a table or a row group, runs of
+    // children that are not rows (cells, text, inline boxes) go into an anonymous row; inside a row, runs of children that are not
+    // cells go into an anonymous cell; white space between table parts is dropped.
+    void NormalizeTable(SNode& out) {
+        const Display d = out.st.display;
+        const bool table = d == Display::Table, group = IsRowGroup(d), row = d == Display::TableRow;
+        if (!table && !group && !row) return;
+        std::vector<SNode> kids;
+        kids.reserve(out.kids.size());
+        auto properChild = [&](const SNode& k) {
+            if (k.text) return false;
+            if (k.st.OutOfFlow() || k.st.floating != Float::None) return true;   // kept as they are (placed by their own rules)
+            if (row) return k.st.display == Display::TableCell;
+            if (table) return k.st.display == Display::TableRow || IsRowGroup(k.st.display) || k.st.display == Display::TableCaption;
+            return k.st.display == Display::TableRow;
+        };
+        for (SNode& k : out.kids) {
+            if (k.text && OnlySpaceText(k.node->data) && k.st.whiteSpace != WhiteSpace::Pre && k.st.whiteSpace != WhiteSpace::PreWrap) {
+                // space between table parts is dropped; inside an anonymous cell it stays
+                if (!kids.empty() && kids.back().node == nullptr && !row) {
+                    SNode& anonRow = kids.back();
+                    if (!anonRow.kids.empty() && anonRow.kids.back().node == nullptr) anonRow.kids.back().kids.push_back(std::move(k));
+                } else if (row && !kids.empty() && kids.back().node == nullptr) kids.back().kids.push_back(std::move(k));
+                continue;
+            }
+            if (properChild(k)) { kids.push_back(std::move(k)); continue; }
+            if (row) {
+                if (kids.empty() || kids.back().node != nullptr) { SNode cell; cell.st = AnonymousStyle(out.st, Display::TableCell); kids.push_back(std::move(cell)); }
+                kids.back().kids.push_back(std::move(k));
+                continue;
+            }
+            // table or row group: into an anonymous row (a cell goes in as it is, anything else into an anonymous cell)
+            if (kids.empty() || kids.back().node != nullptr) { SNode r; r.st = AnonymousStyle(out.st, Display::TableRow); kids.push_back(std::move(r)); }
+            SNode& anonRow = kids.back();
+            if (!k.text && k.st.display == Display::TableCell) { anonRow.kids.push_back(std::move(k)); continue; }
+            if (anonRow.kids.empty() || anonRow.kids.back().node != nullptr) { SNode cell; cell.st = AnonymousStyle(anonRow.st, Display::TableCell); anonRow.kids.push_back(std::move(cell)); }
+            anonRow.kids.back().kids.push_back(std::move(k));
+        }
+        out.kids.swap(kids);
+    }
+
     void AddPseudo(const Node& el, SNode& out, int which) {
         ComputedStyle ps = ComputeStyle(el, out.st, sheets, ctx, which);
         if (!ps.hasContent || ps.display == Display::None) return;
+        ApplyCounters(ps);
+        ps.content = ResolveCounters(ps.content);
         if (synth.size() > 100000) return;
         synth.emplace_back();
         Node& pe = synth.back();
@@ -165,11 +273,6 @@ FontSpec FontOf(const ComputedStyle& s) {
     return f;
 }
 
-float CollapseMargins(float a, float b) {
-    if (a >= 0 && b >= 0) return std::max(a, b);
-    if (a < 0 && b < 0) return std::min(a, b);
-    return a + b;
-}
 
 int AttrInt(const Node& el, const char* name, int fallback) {
     const std::string* v = el.Attr(name);
@@ -182,31 +285,19 @@ int AttrInt(const Node& el, const char* name, int fallback) {
     return (int)std::max(-1000000000L, std::min(1000000000L, n));
 }
 
-std::string Roman(int n, bool upper) {
-    if (n <= 0 || n >= 4000) return std::to_string(n);
-    static const int vals[] = {1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1};
-    static const char* syms[] = {"m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"};
-    std::string out;
-    for (int k = 0; k < 13; ++k) while (n >= vals[k]) { out += syms[k]; n -= vals[k]; }
-    if (upper) for (char& c : out) c = (char)(c - 'a' + 'A');
-    return out;
-}
-std::string Alpha(int n, bool upper) {
-    if (n <= 0) return std::to_string(n);
-    std::string out;
-    while (n > 0) { --n; out.insert(out.begin(), (char)((upper ? 'A' : 'a') + n % 26)); n /= 26; }
-    return out;
-}
+// A list item's marker text (CSS 2.1 12.5 / 12.6.2): the counter in its style and a full stop; "" for the bullet styles.
 std::string MarkerText(ListStyle ls, int n) {
-    switch (ls) {
-    case ListStyle::Decimal: return std::to_string(n) + ".";
-    case ListStyle::LowerAlpha: return Alpha(n, false) + ".";
-    case ListStyle::UpperAlpha: return Alpha(n, true) + ".";
-    case ListStyle::LowerRoman: return Roman(n, false) + ".";
-    case ListStyle::UpperRoman: return Roman(n, true) + ".";
-    default: return std::string();
-    }
+    if (ls == ListStyle::Disc || ls == ListStyle::Circle || ls == ListStyle::Square || ls == ListStyle::None) return std::string();
+    return CounterText(n, ls) + ".";
 }
+
+// A margin collapsing with others (CSS 2.1 8.3.1): the largest positive and the most negative margin of the set.
+struct MarginSet {
+    float pos = 0.0f, neg = 0.0f;
+    void Add(float m) { if (m >= 0) pos = std::max(pos, m); else neg = std::min(neg, m); }
+    void Add(const MarginSet& o) { pos = std::max(pos, o.pos); neg = std::min(neg, o.neg); }
+    float Value() const { return pos + neg; }
+};
 
 // The next UTF-8 code point's length at s[i].
 std::size_t CpLen(const std::string& s, std::size_t i) {
@@ -244,7 +335,7 @@ struct Frag {
     int atomicMark = -1;           // Atomic: index into Layouter::atomicMarks (where its draw commands are)
 };
 
-struct BoxDraw { int bg = -1; int border[4] = {-1, -1, -1, -1}; int ring = -1; };
+struct BoxDraw { int bg = -1; int border[4] = {-1, -1, -1, -1}; int ring = -1; int grad = -1; };
 
 struct FloatBox { float x, y, w, h; bool left; };
 struct FloatCtx {
@@ -260,7 +351,7 @@ struct FloatCtx {
 struct Pending { const SNode* n; int depth; std::size_t staticIdx; };
 
 struct Mark {
-    std::size_t cmds = 0, areas = 0, boxes = 0, anchors = 0, links = 0, embeds = 0, clips = 0, scrollers = 0, controls = 0, statics = 0;
+    std::size_t cmds = 0, areas = 0, boxes = 0, anchors = 0, links = 0, embeds = 0, clips = 0, scrollers = 0, controls = 0, statics = 0, grads = 0;
 };
 
 struct BlockOpt {
@@ -271,6 +362,8 @@ struct BlockOpt {
     float cbH = -1.0f;       // the containing block's height when it is definite (for % heights)
     bool noAvoid = false;    // do not move beside floats (floats, inline-blocks, items: they are placed by their parent)
     bool bfc = false;        // a new block formatting context (flex / grid items)
+    float contentDy = 0.0f;  // table cells: the content moved down by this much (vertical-align)
+    const float* borders = nullptr;   // table cells in the collapsing border model: the border widths drawn (top, right, bottom, left)
 };
 
 struct Layouter {
@@ -280,6 +373,9 @@ struct Layouter {
     const LayoutContext* ctx;
     std::vector<BoxDraw> draws;   // per entry of r.boxes
     std::vector<int> cmdKey;      // per entry of r.cmds: its paint-order key (index into keys)
+    std::vector<int> cmdGrad;     // per entry of r.cmds: a gradient placeholder's index into grads, or -1
+    std::vector<std::shared_ptr<const Gradient>> grads;
+    long gradientCells = 60000;   // the Fill commands every gradient of a page may make together (a hostile page's budget)
     std::vector<std::vector<std::pair<int, int>>> keys{{{0, 0}}};
     int curKey = 0;
     int curClip = -1;
@@ -300,7 +396,7 @@ struct Layouter {
     Layouter(const TextMeasure& m, const ImageSizeFn& img, LayoutResult& res, const LayoutContext* c, const Node* body, const Node* html)
         : measure(m), imageSize(img), r(res), ctx(c), bodyNode(body), htmlNode(html) {}
 
-    struct Out { float h = 0; float baseline = -1; };
+    struct Out { float h = 0; float baseline = -1; MarginSet esc; };   // esc: the bottom margins that collapse through the box's bottom
 
     float Measure(const std::string& s, const ComputedStyle& st) const {
         if (s.empty()) return 0.0f;
@@ -314,6 +410,7 @@ struct Layouter {
         c.fixed = curFixed;
         r.cmds.push_back(std::move(c));
         cmdKey.push_back(curKey);
+        cmdGrad.push_back(-1);
     }
     void Area(float x, float y, float w, float h, int link) {
         LinkArea a;
@@ -325,7 +422,7 @@ struct Layouter {
         Mark m;
         m.cmds = r.cmds.size(); m.areas = r.areas.size(); m.boxes = r.boxes.size(); m.anchors = r.anchors.size();
         m.links = r.links.size(); m.embeds = r.embeds.size(); m.clips = r.clips.size(); m.scrollers = r.scrollers.size();
-        m.controls = r.controls.size(); m.statics = statics.size();
+        m.controls = r.controls.size(); m.statics = statics.size(); m.grads = grads.size();
         return m;
     }
     void ShiftRange(const Mark& a, const Mark& b, float dx, float dy) {
@@ -342,7 +439,7 @@ struct Layouter {
     void Shift(const Mark& a, float dx, float dy) { ShiftRange(a, Here(), dx, dy); }
     // Undo everything laid out since `m` (a measuring layout).
     void Rollback(const Mark& m) {
-        r.cmds.resize(m.cmds); cmdKey.resize(m.cmds);
+        r.cmds.resize(m.cmds); cmdKey.resize(m.cmds); cmdGrad.resize(m.cmds);
         r.areas.resize(m.areas);
         r.boxes.resize(m.boxes); draws.resize(m.boxes);
         r.anchors.resize(m.anchors);
@@ -353,6 +450,7 @@ struct Layouter {
         r.scrollers.resize(m.scrollers);
         r.controls.resize(m.controls);
         statics.resize(m.statics);
+        grads.resize(m.grads);
         for (std::vector<Pending>* p : cbStack)
             p->erase(std::remove_if(p->begin(), p->end(), [&](const Pending& x) { return x.staticIdx >= m.statics; }), p->end());
         fixedPending.erase(std::remove_if(fixedPending.begin(), fixedPending.end(), [&](const Pending& x) { return x.staticIdx >= m.statics; }), fixedPending.end());
@@ -400,6 +498,8 @@ struct Layouter {
                     mn = st.flexWrap == FlexWrap::NoWrap ? mn + ki.first + m : std::max(mn, ki.first + m);
                     ++count;
                 }
+            } else if (st.display == Display::Table) {
+                TableIntrinsic(n, mn, mx);
             } else if (IsGridDisplay(st.display)) {
                 const std::size_t cols = std::max<std::size_t>(1, st.gridColumns.tracks.size());
                 float fixedSum = 0;
@@ -939,6 +1039,7 @@ struct Layouter {
         else if (container.textAlign == TextAlign::Right) dx = cw - lineW;
         dx = std::max(0.0f, dx);
         int run = -1;   // the text command being extended
+        std::vector<std::pair<int, const ComputedStyle*>> runs;   // this line's text commands and their styles
         for (const Placed& p : line) {
             const Frag& f = *p.f;
             const float x = Finite(cx + dx + p.x);
@@ -966,8 +1067,8 @@ struct Layouter {
                 c.link = f.link;
                 c.color = f.st->color;
                 c.color.a = 255;
-                if (c.kind == DrawCmd::Embed) r.embeds.push_back((int)r.cmds.size());
-                Emit(c);
+                if (c.kind == DrawCmd::Embed) { r.embeds.push_back((int)r.cmds.size()); Emit(c); }
+                else EmitImage(c, *f.sn);
                 if (f.link >= 0) Area(c.x, c.y, c.w, c.h, f.link);
                 continue;
             }
@@ -988,15 +1089,242 @@ struct Layouter {
             c.font = FontOf(*f.st);
             c.color = f.st->color;
             c.underline = f.st->underline; c.strike = f.st->strike;
+            if (CustomDecoration(*f.st)) c.underline = c.strike = false;   // drawn by Decorations below
             c.link = f.link;
             Emit(c);
             run = (int)r.cmds.size() - 1;
             runStyle = f.st;
+            runs.push_back({run, f.st});
             if (f.link >= 0) Area(c.x, top, c.w, lineH, f.link);
         }
+        if (container.ellipsis && container.Clips() && lineW > cw + 0.01f && !runs.empty()) Ellipsis(runs, cx + cw);
+        for (const auto& rs : runs) if (CustomDecoration(*rs.second) && rs.second->visible) Decorations(r.cmds[(std::size_t)rs.first], *rs.second);
         return lineH;
     }
     const ComputedStyle* runStyle = nullptr;
+
+    // ---- transforms (CSS Transforms 1: the box and everything in it drawn through the matrix about transform-origin) ----
+
+    static void MapRect(const Transform2D& m, float& x, float& y, float& w, float& h) {
+        const float xs[4] = {x, x + w, x, x + w}, ys[4] = {y, y, y + h, y + h};
+        float x0 = kInf, y0 = kInf, x1 = -kInf, y1 = -kInf;
+        for (int k = 0; k < 4; ++k) {
+            const float px = m.a * xs[k] + m.c * ys[k] + m.e, py = m.b * xs[k] + m.d * ys[k] + m.f;
+            x0 = std::min(x0, px); y0 = std::min(y0, py); x1 = std::max(x1, px); y1 = std::max(y1, py);
+        }
+        x = Finite(x0); y = Finite(y0); w = Finite(x1 - x0); h = Finite(y1 - y0);
+    }
+    void ApplyTransform(const Mark& m, const ComputedStyle& st, float bx, float by, float bw, float bh) {
+        Transform2D t;
+        if (!ParseTransform(st.transform, st.fontSize, bw, bh, t)) return;
+        const float ox = bx + st.originX.Resolve(bw), oy = by + st.originY.Resolve(bh);
+        Transform2D to, back;
+        to.e = -ox; to.f = -oy;
+        back.e = ox; back.f = oy;
+        const Transform2D mt = to.Then(t).Then(back);
+        if (mt.IsIdentity()) return;
+        for (std::size_t i = m.cmds; i < r.cmds.size(); ++i) {
+            DrawCmd& c = r.cmds[i];
+            const Transform2D full = c.xform.Then(mt);
+            if (full.b == 0 && full.c == 0 && full.a > 0 && full.d > 0) {
+                // translate and scale: folded into the command
+                const float sx = full.a, sy = full.d;
+                c.x = Finite(sx * c.x + full.e); c.y = Finite(sy * c.y + full.f); c.w *= sx; c.h *= sy;
+                c.ix = Finite(sx * c.ix + full.e); c.iy = Finite(sy * c.iy + full.f); c.iw *= sx; c.ih *= sy;
+                c.font.size *= sy;
+                const float s = std::min(sx, sy);
+                c.radius *= s; c.thick *= s; c.blur *= s;
+                c.xform = Transform2D();
+            } else c.xform = full;
+        }
+        for (std::size_t i = m.areas; i < r.areas.size(); ++i) MapRect(mt, r.areas[i].x, r.areas[i].y, r.areas[i].w, r.areas[i].h);
+        for (std::size_t i = m.boxes; i < r.boxes.size(); ++i) MapRect(mt, r.boxes[i].x, r.boxes[i].y, r.boxes[i].w, r.boxes[i].h);
+        for (std::size_t i = m.clips; i < r.clips.size(); ++i) MapRect(mt, r.clips[i].x, r.clips[i].y, r.clips[i].w, r.clips[i].h);
+        for (std::size_t i = m.scrollers; i < r.scrollers.size(); ++i) MapRect(mt, r.scrollers[i].x, r.scrollers[i].y, r.scrollers[i].w, r.scrollers[i].h);
+        for (std::size_t i = m.controls; i < r.controls.size(); ++i) MapRect(mt, r.controls[i].x, r.controls[i].y, r.controls[i].w, r.controls[i].h);
+        for (std::size_t i = m.anchors; i < r.anchors.size(); ++i) r.anchors[i].second = Finite(mt.d * r.anchors[i].second + mt.f);
+    }
+
+    // ---- gradients drawn as bands of colour (CSS Images 3) ----
+
+    // The Fill commands that draw gradient `g` over the placeholder `ph`'s box: bands across the gradient line for a gradient
+    // along an axis, else a grid of small cells (runs of one colour joined). The whole page may make `gradientCells` of them; a
+    // gradient past that is one Fill of its middle colour.
+    void GradientCells(const DrawCmd& ph, const Gradient& g, std::vector<DrawCmd>& out, std::size_t& made) {
+        made = 0;
+        const float w = ph.w, h = ph.h;
+        if (!(w > 0.0f) || !(h > 0.0f)) return;
+        const float fade = ph.color.a / 255.0f;
+        auto colorAt = [&](float px, float py) {
+            Color c = GradientColorAt(g, w, h, px, py);
+            c.a = (std::uint8_t)std::lround(c.a * fade);
+            return c;
+        };
+        auto push = [&](float x, float y, float cw, float chh, Color col) {
+            if (col.a == 0) return;
+            DrawCmd c = ph;
+            c.x = ph.x + x; c.y = ph.y + y; c.w = cw; c.h = chh;
+            c.color = col;
+            c.radius = 0.0f;
+            out.push_back(c);
+            ++made;
+        };
+        const bool axis = !g.radial && g.cornerX == 0 && g.cornerY == 0 && std::fmod(std::fabs(g.angle), 90.0f) < 1e-4f;
+        if (axis) {
+            const bool vertical = std::fmod(std::fabs(g.angle), 180.0f) < 1e-4f;   // to top / to bottom: bands one above another
+            const float len = vertical ? h : w;
+            const int n = std::max(1, std::min(256, (int)std::ceil(len / 2.0f)));
+            if (gradientCells < n) { push(0, 0, w, h, colorAt(w * 0.5f, h * 0.5f)); --gradientCells; return; }
+            const float step = len / (float)n;
+            int start = 0;
+            Color cur = vertical ? colorAt(w * 0.5f, step * 0.5f) : colorAt(step * 0.5f, h * 0.5f);
+            for (int k = 1; k <= n; ++k) {
+                const Color next = k < n ? (vertical ? colorAt(w * 0.5f, step * ((float)k + 0.5f)) : colorAt(step * ((float)k + 0.5f), h * 0.5f)) : Color();
+                if (k < n && next == cur) continue;
+                const float a = step * (float)start, b = step * (float)k;
+                if (vertical) push(0, a, w, b - a, cur); else push(a, 0, b - a, h, cur);
+                start = k;
+                cur = next;
+            }
+            gradientCells -= (long)made;
+            return;
+        }
+        const float cell = std::max(2.0f, std::sqrt(w * h / 1024.0f));
+        const int nx = std::max(1, std::min(128, (int)std::ceil(w / cell))), ny = std::max(1, std::min(128, (int)std::ceil(h / cell)));
+        if (gradientCells < (long)nx * ny) { push(0, 0, w, h, colorAt(w * 0.5f, h * 0.5f)); --gradientCells; return; }
+        const float cw = w / (float)nx, chh = h / (float)ny;
+        for (int j = 0; j < ny; ++j) {
+            int start = 0;
+            Color cur = colorAt(cw * 0.5f, chh * ((float)j + 0.5f));
+            for (int i = 1; i <= nx; ++i) {
+                const Color next = i < nx ? colorAt(cw * ((float)i + 0.5f), chh * ((float)j + 0.5f)) : Color();
+                if (i < nx && next == cur) continue;
+                push(cw * (float)start, chh * (float)j, cw * (float)(i - start), chh, cur);
+                start = i;
+                cur = next;
+            }
+        }
+        gradientCells -= (long)made;
+    }
+    // Replace every gradient placeholder with its bands (after the layout, so the boxes have their final size and place).
+    void ExpandGradients() {
+        if (grads.empty()) return;
+        std::vector<DrawCmd> out;
+        std::vector<int> keyOut;
+        out.reserve(r.cmds.size());
+        std::vector<std::size_t> newIndex(r.cmds.size() + 1, 0);
+        for (std::size_t i = 0; i < r.cmds.size(); ++i) {
+            newIndex[i] = out.size();
+            const int gi = i < cmdGrad.size() ? cmdGrad[i] : -1;
+            if (gi < 0 || (std::size_t)gi >= grads.size() || !grads[(std::size_t)gi]) { out.push_back(r.cmds[i]); keyOut.push_back(cmdKey[i]); continue; }
+            std::size_t made = 0;
+            GradientCells(r.cmds[i], *grads[(std::size_t)gi], out, made);
+            for (std::size_t k = 0; k < made; ++k) keyOut.push_back(cmdKey[i]);
+        }
+        newIndex[r.cmds.size()] = out.size();
+        for (BoxInfo& b : r.boxes) b.firstCmd = newIndex[std::min(b.firstCmd, r.cmds.size())];
+        for (int& e : r.embeds) if (e >= 0 && (std::size_t)e < r.cmds.size()) e = (int)newIndex[(std::size_t)e];
+        r.cmds.swap(out);
+        cmdKey.swap(keyOut);
+        cmdGrad.assign(r.cmds.size(), -1);
+        grads.clear();
+    }
+
+    // ---- text decorations other than a plain line in the text's colour (CSS Text Decoration 3): drawn as Fill commands ----
+
+    static bool CustomDecoration(const ComputedStyle& st) {
+        return (st.underline || st.strike || st.overline) && (st.decoStyle != DecoStyle::Solid || st.decoColor.a != 0 || st.overline);
+    }
+    void Decorations(const DrawCmd t, const ComputedStyle& st) {   // a copy: Emit below may move r.cmds
+        const float fs = t.h;
+        const float thick = std::max(1.0f, fs / 16.0f);
+        Color col = st.decoColor.a != 0 ? st.decoColor : t.color;
+        if (t.w <= 0) return;
+        std::vector<float> lines;
+        if (st.underline) lines.push_back(t.y + fs * 0.92f);
+        if (st.strike) lines.push_back(t.y + fs * 0.55f);
+        if (st.overline) lines.push_back(t.y);
+        for (float ly : lines) {
+            auto fill = [&](float x, float y, float w, float h) {
+                DrawCmd c;
+                c.kind = DrawCmd::Fill;
+                c.x = x; c.y = y; c.w = w; c.h = h;
+                c.color = col;
+                c.link = t.link;
+                Emit(c);
+            };
+            DecoStyle ds = st.decoStyle;
+            const float period = ds == DecoStyle::Dotted ? thick * 2.0f : ds == DecoStyle::Dashed ? thick * 5.0f : thick;
+            if ((ds == DecoStyle::Dotted || ds == DecoStyle::Dashed || ds == DecoStyle::Wavy) && t.w / period > 600.0f) ds = DecoStyle::Solid;
+            switch (ds) {
+            case DecoStyle::Solid: fill(t.x, ly, t.w, thick); break;
+            case DecoStyle::Double: fill(t.x, ly, t.w, thick); fill(t.x, ly + thick * 2.0f, t.w, thick); break;
+            case DecoStyle::Dotted:
+                for (float x = t.x; x < t.x + t.w; x += period) fill(x, ly, std::min(thick, t.x + t.w - x), thick);
+                break;
+            case DecoStyle::Dashed:
+                for (float x = t.x; x < t.x + t.w; x += period) fill(x, ly, std::min(thick * 3.0f, t.x + t.w - x), thick);
+                break;
+            case DecoStyle::Wavy: {
+                // a sine wave (amplitude 1.5 x the thickness, wavelength 6 x) traced with small squares
+                const float amp = thick * 1.5f, wave = thick * 6.0f;
+                for (float x = t.x; x < t.x + t.w; x += thick)
+                    fill(x, ly - thick * 0.5f + amp * std::sin((x - t.x) * 6.2831853f / wave), std::min(thick, t.x + t.w - x), thick);
+                break;
+            }
+            }
+        }
+    }
+
+    // text-overflow: ellipsis (CSS Overflow 3, 3.2): the line's text that does not fit in a box that clips is cut and ends in "…".
+    void Ellipsis(const std::vector<std::pair<int, const ComputedStyle*>>& runs, float limit) {
+        static const std::string kDots = "\xE2\x80\xA6";
+        bool cut = false;
+        for (const auto& run : runs) {
+            DrawCmd& c = r.cmds[(std::size_t)run.first];
+            if (cut) { c.text.clear(); c.w = 0; c.underline = c.strike = false; continue; }
+            const float dots = Measure(kDots, *run.second);
+            if (c.x + c.w <= limit + 0.01f) continue;
+            std::size_t keep = 0;
+            float w = 0;
+            while (keep < c.text.size()) {
+                const std::size_t len = CpLen(c.text, keep);
+                const float cw = Measure(c.text.substr(keep, len), *run.second);
+                if (c.x + w + cw + dots > limit + 0.01f) break;
+                w += cw; keep += len;
+            }
+            c.text = c.text.substr(0, keep) + kDots;
+            c.w = w + dots;
+            cut = true;
+        }
+    }
+
+    // An image's drawing command with object-fit and object-position (CSS Images 3, 5.5 / 5.6) inside its content box; one that
+    // overflows the box (cover, none) becomes a background image clipped to the box.
+    void EmitImage(DrawCmd c, const SNode& sn) {
+        const ComputedStyle& st = sn.st;
+        int iw = 0, ih = 0;
+        if (st.objectFit == ObjectFit::Fill || !imageSize || !imageSize(c.text, iw, ih) || iw <= 0 || ih <= 0 || c.w <= 0 || c.h <= 0) { Emit(c); return; }
+        const float sx = c.w / (float)iw, sy = c.h / (float)ih;
+        float sc = 1.0f;
+        switch (st.objectFit) {
+        case ObjectFit::Contain: sc = std::min(sx, sy); break;
+        case ObjectFit::Cover: sc = std::max(sx, sy); break;
+        case ObjectFit::ScaleDown: sc = std::min(1.0f, std::min(sx, sy)); break;
+        default: sc = 1.0f; break;
+        }
+        const float dw = (float)iw * sc, dh = (float)ih * sc;
+        const float dx = c.x + st.objectPosX.Resolve(c.w - dw), dy = c.y + st.objectPosY.Resolve(c.h - dh);
+        if (dx >= c.x - 0.01f && dy >= c.y - 0.01f && dx + dw <= c.x + c.w + 0.01f && dy + dh <= c.y + c.h + 0.01f) {
+            c.x = dx; c.y = dy; c.w = dw; c.h = dh;
+            Emit(c);
+            return;
+        }
+        c.kind = DrawCmd::BgImage;
+        c.ix = dx; c.iy = dy; c.iw = dw; c.ih = dh;
+        c.repeatX = c.repeatY = false;
+        Emit(c);
+    }
 
     // ---- boxes ----
 
@@ -1014,7 +1342,7 @@ struct Layouter {
 
     bool PaintsBackground(const SNode& n) const {
         if (!n.st.visible) return false;
-        if (n.st.background.a == 0 && n.st.backgroundImage.empty()) return false;
+        if (n.st.background.a == 0 && n.st.backgroundImage.empty() && !n.st.bgGradient) return false;
         if (n.node && n.node == htmlNode) return false;                        // the canvas
         if (n.node && n.node == bodyNode && canvasFromBody) return false;      // moved to the canvas (CSS 2.1 14.2)
         return true;
@@ -1028,15 +1356,15 @@ struct Layouter {
     }
 
     // Set a box's final height and draw its borders (called once its content is laid out).
-    void FinishBox(int bi, const SNode& n, float h) {
+    void FinishBox(int bi, const SNode& n, float h, const float* bw) {
         BoxInfo& b = r.boxes[(std::size_t)bi];
         b.h = Finite(std::max(0.0f, h));
         BoxDraw& d = draws[(std::size_t)bi];
         const float x = b.x, y = b.y, w = b.w, hh = b.h;
         const float rad = Radius(n.st, w, hh);
         if (d.bg >= 0) { r.cmds[(std::size_t)d.bg].h = b.h; r.cmds[(std::size_t)d.bg].radius = rad; }
+        if (d.grad >= 0) { r.cmds[(std::size_t)d.grad].h = b.h; r.cmds[(std::size_t)d.grad].radius = rad; }
         if (!n.st.visible) return;
-        const float* bw = n.st.border;
         const bool uniform = bw[0] > 0 && bw[0] == bw[1] && bw[0] == bw[2] && bw[0] == bw[3] && n.st.borderColor[0] == n.st.borderColor[1] &&
                              n.st.borderColor[0] == n.st.borderColor[2] && n.st.borderColor[0] == n.st.borderColor[3];
         if (rad > 0 && uniform) {
@@ -1072,6 +1400,7 @@ struct Layouter {
         b.h = h;
         BoxDraw& d = draws[(std::size_t)bi];
         if (d.bg >= 0) r.cmds[(std::size_t)d.bg].h = h;
+        if (d.grad >= 0) r.cmds[(std::size_t)d.grad].h = h;
         if (d.border[1] >= 0) r.cmds[(std::size_t)d.border[1]].h += grow;
         if (d.border[3] >= 0) r.cmds[(std::size_t)d.border[3]].h += grow;
         if (d.border[2] >= 0) r.cmds[(std::size_t)d.border[2]].y += grow;
@@ -1110,7 +1439,7 @@ struct Layouter {
 
     bool EstablishesBfc(const ComputedStyle& st, bool root) const {
         return root || st.floating != Float::None || st.OutOfFlow() || st.Clips() || st.display == Display::FlowRoot ||
-               st.display == Display::Table || st.display == Display::TableCell || IsFlexDisplay(st.display) || IsGridDisplay(st.display) ||
+               st.display == Display::Table || st.display == Display::TableCell || st.display == Display::TableCaption || IsFlexDisplay(st.display) || IsGridDisplay(st.display) ||
                IsInlineLevel(st.display);
     }
 
@@ -1121,7 +1450,8 @@ struct Layouter {
         const ComputedStyle& st = n.st;
         const bool cell = o.cell;
         const bool forcedW = o.borderW >= 0;
-        const float bl = st.border[3], br = st.border[1], bt = st.border[0], bb = st.border[2];
+        const float* bws = o.borders ? o.borders : st.border;
+        const float bl = bws[3], br = bws[1], bt = bws[0], bb = bws[2];
         const float pl = st.padding[3].Resolve(cbW), pr = st.padding[1].Resolve(cbW);
         const float pt = st.padding[0].Resolve(cbW), pb = st.padding[2].Resolve(cbW);
         const float edgesH = bl + br + pl + pr, edgesV = bt + bb + pt + pb;
@@ -1150,8 +1480,15 @@ struct Layouter {
             if (hasMax) w = std::min(w, st.maxWidth.Resolve(cbW) - (st.borderBox ? edgesH : 0.0f));
             if (hasMin) w = std::max(w, st.minWidth.Resolve(cbW) - (st.borderBox ? edgesH : 0.0f));
         }
+        if (!forcedW && st.display == Display::Table && !(st.tableFixed && hasWidth)) {   // a fixed-layout table keeps its width (17.5.2.1)
+            // CSS 2.1 17.5.2: an auto-width table is as wide as its columns want, at most the space there is; never narrower than
+            // its columns' minimum
+            const auto ti = Intrinsic(n, false);
+            if (!hasWidth) w = std::min(w, ti.second - edgesH);
+            w = std::max(w, ti.first - edgesH);
+        }
         w = std::max(0.0f, Finite(w));
-        if (!forcedW && (hasWidth || hasMax || hasMin)) {
+        if (!forcedW && (hasWidth || hasMax || hasMin || st.display == Display::Table)) {
             const float rest = avail - w - edgesH;
             if (autoL && autoR) ml = mr = std::max(0.0f, rest * 0.5f);
             else if (autoL) ml = std::max(0.0f, rest - mr);
@@ -1209,6 +1546,15 @@ struct Layouter {
             draws[(std::size_t)bi].bg = (int)r.cmds.size();
             Emit(c);
         }
+        if (paintsBg && st.bgGradient) {   // a place for the gradient's colours (made once the page is laid out: Gradients())
+            DrawCmd c;
+            c.kind = DrawCmd::Fill;
+            c.x = bx; c.y = y; c.w = bwid; c.color = Color{255, 255, 255, 255};
+            draws[(std::size_t)bi].grad = (int)r.cmds.size();
+            Emit(c);
+            cmdGrad.back() = (int)grads.size();
+            grads.push_back(st.bgGradient);
+        }
         int bgImageCmd = -1;
         if (paintsBg && !st.backgroundImage.empty()) {   // a place for it now; filled in once the height is known
             DrawCmd c;
@@ -1216,7 +1562,7 @@ struct Layouter {
             bgImageCmd = (int)r.cmds.size();
             Emit(c);
         }
-        const float cx = bx + bl + pl, cy = y + bt + pt;
+        const float cx = bx + bl + pl, cy = y + bt + pt + o.contentDy;
         // the containing block height for children's % heights
         float defH = -1.0f;
         if (o.borderH >= 0) defH = std::max(0.0f, o.borderH - edgesV);
@@ -1245,6 +1591,11 @@ struct Layouter {
         FloatCtx* savedFc = fc;
         const bool bfc = o.bfc || EstablishesBfc(st, n.node != nullptr && n.node == htmlNode);
         if (bfc) fc = &own;
+        // margins that collapse through this box's top and bottom (CSS 2.1 8.3.1): the caller placed the box with its first
+        // child's top margins already (EffTop); the last child's bottom margins go out to the caller (Out::esc)
+        const bool collapseTop = !bfc && !replaced && CollapsesTop(n, cbW, bt, pt);
+        const bool collapseBottom = !bfc && !replaced && bb == 0.0f && pb == 0.0f && o.borderH < 0 && defH < 0 && IsCollapsingContainer(st) &&
+                                    !st.height.IsSet() && st.minHeight.Resolve(cbW) <= 0.0f;
         Out content;
         if (replaced) {
             content.h = repH;
@@ -1252,13 +1603,13 @@ struct Layouter {
         } else if (st.display == Display::Table) content = Table(n, cx, cy, w, depth + 1);
         else if (IsFlexDisplay(st.display)) content = Flex(n, cx, cy, w, defH, depth + 1);
         else if (IsGridDisplay(st.display)) content = Grid(n, cx, cy, w, defH, depth + 1);
-        else content = Contents(n, cx, cy, w, depth + 1, defH);
+        else content = Contents(n, cx, cy, w, depth + 1, defH, collapseTop, collapseBottom);
         float ch = content.h;
         if (bfc && !own.list.empty()) ch = std::max(ch, own.Bottom(Clear::Both) - cy);
         fc = savedFc;
         if (o.borderH >= 0) ch = std::max(0.0f, o.borderH - edgesV);
         else if (!replaced) {
-            if (defH >= 0) ch = defH;
+            if (defH >= 0) ch = cell ? std::max(ch, defH) : defH;   // a cell's height is a minimum (CSS 2.1 17.5.3)
             if (st.maxHeight.unit == Length::Px || (st.maxHeight.IsSet() && o.cbH >= 0)) ch = std::min(ch, st.maxHeight.Resolve(o.cbH) - (st.borderBox ? edgesV : 0.0f));
             if (st.minHeight.unit == Length::Px || (st.minHeight.IsSet() && o.cbH >= 0)) ch = std::max(ch, st.minHeight.Resolve(o.cbH) - (st.borderBox ? edgesV : 0.0f));
         }
@@ -1294,7 +1645,7 @@ struct Layouter {
             } else r.cmds[(std::size_t)bgImageCmd].w = 0;   // no image (yet): draws nothing
         }
         for (const auto& s : shadows) { r.cmds[(std::size_t)s.first].h = h + 2 * s.second; r.cmds[(std::size_t)s.first].radius = Radius(st, bwid, h); }
-        FinishBox(bi, n, h);
+        FinishBox(bi, n, h, bws);
         if (curLink != savedLink && curLink >= 0) Area(bx, y, bwid, h, curLink);
         curLink = savedLink;
         if (n.node && n.node->name == "button") {   // a <button> takes clicks like a form control
@@ -1312,6 +1663,7 @@ struct Layouter {
             for (const Pending& p : myAbs) LayAbs(p, bx + bl, y + bt, bwid - bl - br, h - bt - bb);
         }
         Fade(boxMark, st.opacity);
+        if (!st.transform.empty()) ApplyTransform(boxMark, st, bx, y, bwid, h);
         if (st.position == Position::Relative || st.position == Position::Sticky) {
             float dx = 0, dy = 0;
             if (st.inset[3].IsSet()) dx = st.inset[3].Resolve(cbW); else if (st.inset[1].IsSet()) dx = -st.inset[1].Resolve(cbW);
@@ -1326,6 +1678,7 @@ struct Layouter {
         Out out;
         out.h = h;
         out.baseline = content.baseline;
+        if (collapseBottom) out.esc = content.esc;
         return out;
     }
 
@@ -1343,8 +1696,8 @@ struct Layouter {
         c.tag = el.name;
         c.color = n.st.color;
         c.color.a = 255;
-        if (c.kind == DrawCmd::Embed) r.embeds.push_back((int)r.cmds.size());
-        Emit(c);
+        if (c.kind == DrawCmd::Embed) { r.embeds.push_back((int)r.cmds.size()); Emit(c); }
+        else EmitImage(c, n);
     }
     void EmitControl(const SNode& n, float x, float y, float w, float h) {
         const ComputedStyle& st = n.st;
@@ -1390,8 +1743,79 @@ struct Layouter {
         Emit(c);
     }
 
+    // ---- margin collapsing (CSS 2.1 8.3.1) ----
+
+    static bool IsCollapsingContainer(const ComputedStyle& st) { return st.display == Display::Block || st.display == Display::ListItem; }
+    // A box whose top margin collapses with its first in-flow child's: a block container that is not a new formatting context,
+    // with no top border and no top padding.
+    bool CollapsesTop(const SNode& n, float cbW, float bt, float pt) const {
+        if (!n.node || n.text || n.node == htmlNode) return false;
+        if (!IsCollapsingContainer(n.st) || EstablishesBfc(n.st, false)) return false;
+        (void)cbW;
+        return bt == 0.0f && pt == 0.0f;
+    }
+    // A box whose own top and bottom margins adjoin (an empty block: no border, padding, height or content): margins collapse
+    // through it.
+    // (Both are remembered per box: a hostile page with 100 000 empty siblings deep down asks about them from every level.)
+    mutable std::map<const SNode*, bool> emptyCache;
+    mutable std::map<std::pair<const SNode*, int>, MarginSet> effTopCache;
+    bool EmptyThrough(const SNode& c, float cw, int depth) const {
+        if (c.text || depth > 64 || IsReplaced(c) || !IsCollapsingContainer(c.st) || EstablishesBfc(c.st, false)) return false;
+        const auto hit = emptyCache.find(&c);
+        if (hit != emptyCache.end()) return hit->second;
+        const bool e = EmptyThroughUncached(c, cw, depth);
+        if (emptyCache.size() < 500000) emptyCache[&c] = e;
+        return e;
+    }
+    bool EmptyThroughUncached(const SNode& c, float cw, int depth) const {
+        const ComputedStyle& st = c.st;
+        if (st.display == Display::ListItem && st.listStyle != ListStyle::None) return false;
+        if (st.border[0] != 0 || st.border[2] != 0 || st.padding[0].Resolve(cw) != 0 || st.padding[2].Resolve(cw) != 0) return false;
+        if (st.height.IsSet() && st.height.Resolve(0) > 0) return false;
+        if (st.minHeight.Resolve(cw) > 0) return false;
+        for (const SNode& k : c.kids) {
+            if (k.text) { if (k.st.whiteSpace == WhiteSpace::Pre || k.st.whiteSpace == WhiteSpace::PreWrap || !OnlySpaceText(k.node->data)) return false; continue; }
+            if (k.st.OutOfFlow()) continue;
+            if (!IsBlockLevel(k) || !EmptyThrough(k, cw, depth + 1)) return false;
+        }
+        return true;
+    }
+    // The margins that collapse into a block child's top margin before it is laid out: its own, and, when its top collapses with
+    // its first child's, that child's (and so on down; empty boxes on the way add their bottom margins too).
+    MarginSet EffTop(const SNode& k, float cw, int depth) const {
+        const auto key = std::make_pair(&k, (int)std::lround(Finite(cw) * 4));
+        const auto hit = effTopCache.find(key);
+        if (hit != effTopCache.end()) return hit->second;
+        const MarginSet m = EffTopUncached(k, cw, depth);
+        if (effTopCache.size() < 500000) effTopCache[key] = m;
+        return m;
+    }
+    MarginSet EffTopUncached(const SNode& k, float cw, int depth) const {
+        MarginSet m;
+        m.Add(k.st.margin[0].Resolve(cw));
+        if (depth > 64 || IsReplaced(k) || !CollapsesTop(k, cw, k.st.border[0], k.st.padding[0].Resolve(cw))) return m;
+        float inner = cw - MarginsH(k.st, cw) - EdgesH(k.st, cw);
+        if (k.st.width.IsSet()) inner = k.st.width.Resolve(cw) - (k.st.borderBox ? EdgesH(k.st, cw) : 0.0f);
+        inner = std::max(0.0f, inner);
+        for (const SNode& c : k.kids) {
+            if (c.text) {
+                if (c.st.whiteSpace != WhiteSpace::Pre && c.st.whiteSpace != WhiteSpace::PreWrap && OnlySpaceText(c.node->data)) continue;
+                return m;
+            }
+            if (c.st.OutOfFlow() || c.st.floating != Float::None) continue;
+            if (!IsBlockLevel(c)) return m;   // a line box ends it
+            if (c.st.clear != Clear::None) return m;
+            m.Add(EffTop(c, inner, depth + 1));
+            if (!EmptyThrough(c, inner, depth + 1)) return m;
+            m.Add(c.st.margin[2].Resolve(inner));
+        }
+        return m;
+    }
+
     // The content of a block container: block children (with anonymous blocks around inline runs) or inline content.
-    Out Contents(const SNode& n, float cx, float cy, float cw, int depth, float cbH = -1.0f) {
+    // `collapseTop`: the box's top collapses with its first child's (the caller has placed it below those margins already);
+    // `collapseBottom`: the last child's bottom margins are not added here but handed out in Out::esc.
+    Out Contents(const SNode& n, float cx, float cy, float cw, int depth, float cbH = -1.0f, bool collapseTop = false, bool collapseBottom = false) {
         Out o;
         bool anyBlock = false;
         for (const SNode& k : n.kids) if (IsBlockLevel(k)) { anyBlock = true; break; }
@@ -1404,8 +1828,9 @@ struct Layouter {
             return o;
         }
         float y = cy;
-        float prevMb = 0;
-        bool first = true;
+        MarginSet pending;        // margins collapsing with whatever comes next
+        bool atTop = true;        // nothing in flow has been placed yet
+        auto pendingNow = [&]() { return (atTop && collapseTop) ? 0.0f : pending.Value(); };   // at the top they went out already
         // list numbering (CSS 2.1 12.4 / the HTML standard's ordinal values)
         int counter = 1;
         if (n.node && n.node->name == "ol") counter = AttrInt(*n.node, "start", 1);
@@ -1421,12 +1846,12 @@ struct Layouter {
                 if (onlyOut) {
                     for (const SNode* s : items) {
                         if (s->text) continue;
-                        if (s->st.OutOfFlow()) DeferAbs(*s, cx, y + prevMb, depth);
-                        else LayFloat(*s, cx, y + prevMb, cw, depth);
+                        if (s->st.OutOfFlow()) DeferAbs(*s, cx, y + pendingNow(), depth);
+                        else LayFloat(*s, cx, y + pendingNow(), cw, depth);
                     }
                     continue;
                 }
-                y += prevMb; prevMb = 0; first = false;
+                y += pendingNow(); pending = MarginSet(); atTop = false;
                 SNode anon;
                 anon.st = n.st;   // inherits the text properties; no box of its own to draw
                 const int bi = AddBox(anon, depth, cx, y, cw);
@@ -1438,9 +1863,11 @@ struct Layouter {
                 continue;
             }
             const SNode& k = n.kids[i++];
-            const float mt = k.st.margin[0].Resolve(cw), mb = k.st.margin[2].Resolve(cw);
-            y += first ? mt : CollapseMargins(prevMb, mt);
-            first = false;
+            const float mb = k.st.margin[2].Resolve(cw);
+            MarginSet m = pending;
+            m.Add(EffTop(k, cw, 0));
+            const float before = (atTop && collapseTop) ? 0.0f : m.Value();
+            y += before;
             if (k.st.clear != Clear::None && fc) {
                 const float clearY = fc->Bottom(k.st.clear);
                 if (clearY > y) y = clearY;   // clearance (CSS 2.1 9.5.2, simplified: the border edge goes below the floats)
@@ -1455,10 +1882,22 @@ struct Layouter {
             bo.cbH = cbH;
             const Out ko = Block(k, cx, y, cw, depth, ordinal, bo);
             if (o.baseline < 0) o.baseline = ko.baseline;
+            if (ko.h <= 0.01f && k.st.clear == Clear::None && EmptyThrough(k, cw, 0)) {
+                // its top and bottom margins adjoin: they collapse with the margins around it (8.3.1)
+                y -= before;
+                pending = m;
+                pending.Add(mb);
+                pending.Add(ko.esc);
+                continue;
+            }
+            atTop = false;
             y += ko.h;
-            prevMb = mb;
+            pending = MarginSet();
+            pending.Add(mb);
+            pending.Add(ko.esc);
         }
-        y += prevMb;
+        if (collapseBottom) o.esc = pending;
+        else y += pendingNow();
         o.h = y - cy;
         return o;
     }
@@ -1472,51 +1911,354 @@ struct Layouter {
         return true;
     }
 
-    // A table: rows (directly or in row groups), cells in equal columns, 2 px spacing.
-    Out Table(const SNode& n, float cx, float cy, float cw, int depth) {
-        std::vector<const SNode*> rows;
+    // ---- tables (CSS 2.1 chapter 17) ----
+
+    struct TCell { const SNode* sn = nullptr; int row = 0, col = 0, rows = 1, cols = 1; };
+    struct TModel {
+        std::vector<const SNode*> captions;
+        std::vector<const SNode*> rows;        // in drawing order: header groups first, footer groups last (17.2)
+        std::vector<const SNode*> rowGroup;    // each row's group (null: directly in the table)
+        std::vector<TCell> cells;
+        int cols = 0;
+        std::vector<float> colWidth;           // from <col> / <colgroup> (< 0: none); px
+        std::vector<float> colPct;             // from <col> (< 0: none)
+    };
+    // The table's grid: rows from the row groups in order, cells in slots with colspan / rowspan (the HTML standard's table model,
+    // 4.9.12, the parts layout needs: a cell takes the first free slot of its row; rowspan 0 reaches the end of its group).
+    // (remembered per table: a table is measured and laid out more than once)
+    std::map<const SNode*, std::shared_ptr<const TModel>> tableCache;
+    const TModel& BuildTable(const SNode& n) {
+        auto it = tableCache.find(&n);
+        if (it != tableCache.end()) return *it->second;
+        auto made = std::make_shared<const TModel>(BuildTableUncached(n));
+        tableCache[&n] = made;
+        return *made;
+    }
+    TModel BuildTableUncached(const SNode& n) const {
+        TModel t;
+        std::vector<const SNode*> head, body, foot;
+        std::vector<const SNode*> headG, bodyG, footG;
         for (const SNode& k : n.kids) {
-            if (k.text) continue;
-            if (k.st.display == Display::TableRow) rows.push_back(&k);
-            else if (k.st.display == Display::TableSection)
-                for (const SNode& g : k.kids) if (!g.text && g.st.display == Display::TableRow) rows.push_back(&g);
+            if (k.text || k.st.OutOfFlow() || k.st.floating != Float::None) continue;
+            if (k.st.display == Display::TableCaption) { t.captions.push_back(&k); continue; }
+            if (k.st.display == Display::TableRow) { body.push_back(&k); bodyG.push_back(nullptr); continue; }
+            if (!IsRowGroup(k.st.display)) continue;
+            auto& list = k.st.display == Display::TableHeaderGroup && head.empty() ? head : k.st.display == Display::TableFooterGroup && foot.empty() ? foot : body;
+            auto& groups = &list == &head ? headG : &list == &foot ? footG : bodyG;
+            for (const SNode& g : k.kids) if (!g.text && g.st.display == Display::TableRow) { list.push_back(&g); groups.push_back(&k); }
         }
-        std::size_t cols = 0;
-        for (const SNode* row : rows) {
+        for (std::size_t i = 0; i < head.size(); ++i) { t.rows.push_back(head[i]); t.rowGroup.push_back(headG[i]); }
+        for (std::size_t i = 0; i < body.size(); ++i) { t.rows.push_back(body[i]); t.rowGroup.push_back(bodyG[i]); }
+        for (std::size_t i = 0; i < foot.size(); ++i) { t.rows.push_back(foot[i]); t.rowGroup.push_back(footG[i]); }
+        const std::size_t maxCols = 1000, maxSlots = 1000000;
+        if (t.rows.size() > maxSlots) { t.rows.resize(maxSlots); t.rowGroup.resize(maxSlots); }
+        std::vector<std::vector<unsigned char>> used(t.rows.size());
+        for (std::size_t ri = 0; ri < t.rows.size(); ++ri) {
             std::size_t c = 0;
-            for (const SNode& cell : row->kids) if (!cell.text) ++c;
-            cols = std::max(cols, c);
+            // where this row's group ends (rowspan 0, and no span past it)
+            std::size_t groupEnd = ri + 1;
+            while (groupEnd < t.rows.size() && t.rowGroup[groupEnd] == t.rowGroup[ri]) ++groupEnd;   // rows straight in the table: one group
+            for (const SNode& cell : t.rows[ri]->kids) {
+                if (cell.text || cell.st.display != Display::TableCell) continue;
+                while (c < used[ri].size() && used[ri][c]) ++c;
+                if (c >= maxCols) break;
+                int cs = cell.node ? AttrInt(*cell.node, "colspan", 1) : 1;
+                int rs = cell.node ? AttrInt(*cell.node, "rowspan", 1) : 1;
+                cs = std::max(1, std::min(cs, 1000));
+                if (rs <= 0) rs = (int)(groupEnd - ri);
+                rs = std::max(1, std::min(rs, 65534));
+                rs = (int)std::min<std::size_t>((std::size_t)rs, std::max<std::size_t>(1, groupEnd - ri));
+                if (c + (std::size_t)cs > maxCols) cs = (int)(maxCols - c);
+                if ((std::size_t)(t.cols > (int)(c + cs) ? t.cols : (int)(c + cs)) * t.rows.size() > maxSlots) break;
+                TCell tc;
+                tc.sn = &cell; tc.row = (int)ri; tc.col = (int)c; tc.rows = rs; tc.cols = cs;
+                t.cells.push_back(tc);
+                for (std::size_t rr = ri; rr < ri + (std::size_t)rs; ++rr) {
+                    if (used[rr].size() < c + (std::size_t)cs) used[rr].resize(c + (std::size_t)cs, 0);
+                    for (std::size_t cc = c; cc < c + (std::size_t)cs; ++cc) used[rr][cc] = 1;
+                }
+                t.cols = std::max(t.cols, (int)(c + (std::size_t)cs));
+                c += (std::size_t)cs;
+            }
         }
-        cols = std::min<std::size_t>(cols, 1000);
-        const float spacing = 2.0f;
+        // <col span width> and <colgroup span width> (not in the styled tree: they are display: none here)
+        t.colWidth.assign((std::size_t)t.cols, -1.0f);
+        t.colPct.assign((std::size_t)t.cols, -1.0f);
+        if (n.node) {
+            std::size_t c = 0;
+            auto colEl = [&](const Node& el) {
+                int span = std::max(1, std::min(AttrInt(el, "span", 1), 1000));
+                float px = -1, pct = -1;
+                if (const std::string* w = el.Attr("width")) {
+                    char* e = nullptr;
+                    const float v = std::strtof(w->c_str(), &e);
+                    if (e != w->c_str() && std::isfinite(v) && v >= 0) { if (*e == '%') pct = std::min(v, 100.0f); else px = std::min(v, 100000.0f); }
+                }
+                if (const std::string* stl = el.Attr("style"))
+                    for (const Declaration& d : ParseDeclarations(*stl)) {
+                        if (d.property != "width") continue;
+                        const char* b2 = d.value.c_str();
+                        char* e = nullptr;
+                        const float v = std::strtof(b2, &e);
+                        if (e == b2 || !std::isfinite(v) || v < 0) continue;
+                        if (*e == '%') pct = std::min(v, 100.0f); else if (std::string(e) == "px" || *e == 0) px = std::min(v, 100000.0f);
+                    }
+                for (int k = 0; k < span && c < (std::size_t)t.cols; ++k, ++c) { t.colWidth[c] = px; t.colPct[c] = pct; }
+            };
+            for (const auto& ch : n.node->children) {
+                if (ch->IsElement("col")) colEl(*ch);
+                else if (ch->IsElement("colgroup")) {
+                    bool hasCols = false;
+                    for (const auto& g : ch->children) if (g->IsElement("col")) { hasCols = true; colEl(*g); }
+                    if (!hasCols) colEl(*ch);
+                }
+                if (c >= (std::size_t)t.cols) break;
+            }
+        }
+        return t;
+    }
+
+    // The columns' minimum and maximum widths (CSS 2.1 17.5.2.2, the automatic table layout; cells' border boxes, spacing not
+    // included): from the cells that span one column, then the spanning cells' widths spread over the columns they span.
+    void ColumnWidths(const TModel& t, float spacingH, std::vector<float>& mn, std::vector<float>& mx, std::vector<float>& pct) {
+        const std::size_t nc = (std::size_t)t.cols;
+        mn.assign(nc, 0.0f); mx.assign(nc, 0.0f); pct.assign(nc, -1.0f);
+        for (std::size_t c = 0; c < nc; ++c) {
+            if (t.colWidth[c] >= 0) { mn[c] = mx[c] = t.colWidth[c]; }
+            if (t.colPct[c] >= 0) pct[c] = t.colPct[c];
+        }
+        auto cellWidths = [&](const TCell& tc, float& a, float& b, float& p) {
+            const auto ci = Intrinsic(*tc.sn);
+            a = ci.first; b = ci.second; p = -1;
+            const Length& w = tc.sn->st.width;
+            if (w.unit == Length::Percent) p = w.value;
+            else if (w.unit == Length::Px) b = std::max(a, w.value + (tc.sn->st.borderBox ? 0.0f : EdgesH(tc.sn->st, 0)));
+        };
+        for (const TCell& tc : t.cells) {
+            if (tc.cols != 1) continue;
+            float a, b, p;
+            cellWidths(tc, a, b, p);
+            const std::size_t c = (std::size_t)tc.col;
+            mn[c] = std::max(mn[c], a);
+            mx[c] = std::max(mx[c], b);
+            if (p >= 0) pct[c] = std::max(pct[c], p);
+        }
+        for (const TCell& tc : t.cells) {
+            if (tc.cols == 1) continue;
+            float a, b, p;
+            cellWidths(tc, a, b, p);
+            const std::size_t c0 = (std::size_t)tc.col, c1 = std::min(nc, c0 + (std::size_t)tc.cols);
+            const float gaps = spacingH * (float)(c1 - c0 - 1);
+            float sMin = gaps, sMax = gaps;
+            for (std::size_t c = c0; c < c1; ++c) { sMin += mn[c]; sMax += mx[c]; }
+            // more than the columns have: the rest spread in proportion to their maximum widths (equally when those are 0)
+            auto spread = [&](std::vector<float>& v, float need, float have) {
+                if (need <= have) return;
+                float weight = 0;
+                for (std::size_t c = c0; c < c1; ++c) weight += mx[c];
+                for (std::size_t c = c0; c < c1; ++c) v[c] += (need - have) * (weight > 0 ? mx[c] / weight : 1.0f / (float)(c1 - c0));
+            };
+            spread(mn, a, sMin);
+            spread(mx, b, sMax);
+            for (std::size_t c = c0; c < c1; ++c) mx[c] = std::max(mx[c], mn[c]);
+        }
+    }
+    float Spacing(const ComputedStyle& st, bool horizontal) const {
+        if (st.borderCollapse) return 0.0f;
+        return horizontal ? st.borderSpacingH : st.borderSpacingV;
+    }
+    // A table's min-content and max-content widths (the content box): columns, spacing and captions.
+    void TableIntrinsic(const SNode& n, float& mn, float& mx) {
+        const TModel& t = BuildTable(n);
+        mn = mx = 0;
+        if (t.cols > 0) {
+            std::vector<float> cmin, cmax, cpct;
+            const float hs = Spacing(n.st, true);
+            ColumnWidths(t, hs, cmin, cmax, cpct);
+            const float gaps = hs * (float)(t.cols + 1);
+            mn = gaps; mx = gaps;
+            for (int c = 0; c < t.cols; ++c) { mn += cmin[(std::size_t)c]; mx += cmax[(std::size_t)c]; }
+        }
+        for (const SNode* cap : t.captions) { const auto ci = Intrinsic(*cap); mn = std::max(mn, ci.first + MarginsH(cap->st, 0)); }
+        mx = std::max(mx, mn);
+    }
+
+    // A table laid out in a content box `cw` wide: captions, then the rows with real column widths (the automatic or the fixed
+    // table layout, 17.5.2), row heights from their cells (17.5.3), cell vertical alignment (17.5.4), border-spacing or collapsed
+    // borders (17.6, the collapsing model simplified: a cell's left and top borders give way to its neighbour's).
+    Out Table(const SNode& n, float cx, float cy, float cw, int depth) {
         Out o;
-        if (rows.empty() || cols == 0) return o;
-        const float colW = std::max(0.0f, (cw - spacing * (float)(cols + 1)) / (float)cols);
-        float y = cy + spacing;
-        for (const SNode* row : rows) {
-            const int rowBox = AddBox(*row, depth, cx, y, cw);
-            std::vector<int> cells;
-            float rowH = 0;
-            std::size_t c = 0;
-            for (const SNode& cell : row->kids) {
-                if (cell.text) continue;
-                if (c >= cols) break;
-                const float x = cx + spacing + (float)c * (colW + spacing);
-                int bi = -1;
+        const TModel& t = BuildTable(n);
+        const ComputedStyle& ts = n.st;
+        const float hs = Spacing(ts, true), vs = Spacing(ts, false);
+        float y = cy;
+        auto captions = [&](bool bottom) {
+            for (const SNode* cap : t.captions) {
+                if (cap->st.captionBottom != bottom) continue;
+                const float mt = cap->st.margin[0].Resolve(cw), mb = cap->st.margin[2].Resolve(cw);
                 BlockOpt bo;
-                bo.boxIndex = &bi;
+                bo.noAvoid = true;
+                const Out co = Block(*cap, cx, y + mt, cw, depth, 0, bo);
+                y += mt + co.h + mb;
+            }
+        };
+        captions(false);
+        const std::size_t nc = (std::size_t)t.cols, nr = t.rows.size();
+        if (nc == 0 || nr == 0) { captions(true); o.h = y - cy; return o; }
+        // column widths
+        std::vector<float> colW(nc, 0.0f);
+        const float avail = std::max(0.0f, cw - hs * (float)(nc + 1));
+        if (ts.tableFixed && ts.width.IsSet()) {
+            // 17.5.2.1: <col> widths, then the first row's cells; the other columns share what is left equally
+            std::vector<bool> set(nc, false);
+            for (std::size_t c = 0; c < nc; ++c) {
+                if (t.colWidth[c] >= 0) { colW[c] = t.colWidth[c]; set[c] = true; }
+                else if (t.colPct[c] >= 0) { colW[c] = t.colPct[c] * avail / 100.0f; set[c] = true; }
+            }
+            for (const TCell& tc : t.cells) {
+                if (tc.row != 0) continue;
+                const Length& w = tc.sn->st.width;
+                if (!w.IsSet()) continue;
+                const float bw = w.Resolve(cw) + (tc.sn->st.borderBox ? 0.0f : EdgesH(tc.sn->st, cw)) - hs * (float)(tc.cols - 1);
+                for (int k = 0; k < tc.cols; ++k) {
+                    const std::size_t c = (std::size_t)(tc.col + k);
+                    if (c < nc && !set[c]) { colW[c] = std::max(0.0f, bw / (float)tc.cols); set[c] = true; }
+                }
+            }
+            float used = 0;
+            std::size_t unset = 0;
+            for (std::size_t c = 0; c < nc; ++c) { if (set[c]) used += colW[c]; else ++unset; }
+            if (unset > 0) { const float each = std::max(0.0f, (avail - used) / (float)unset); for (std::size_t c = 0; c < nc; ++c) if (!set[c]) colW[c] = each; }
+            else if (used < avail && used > 0) for (std::size_t c = 0; c < nc; ++c) colW[c] += (avail - used) * colW[c] / used;
+        } else {
+            // 17.5.2.2 (the algorithm is not normative; this is the common one): every column at least its minimum; percentage
+            // columns get their share; the rest goes in proportion to the maximum widths, or between minimum and maximum
+            std::vector<float> mn, mx, pct;
+            ColumnWidths(t, hs, mn, mx, pct);
+            float left = avail;
+            std::vector<bool> done(nc, false);
+            for (std::size_t c = 0; c < nc; ++c)
+                if (pct[c] >= 0) { colW[c] = std::max(mn[c], pct[c] * avail / 100.0f); left -= colW[c]; done[c] = true; }
+            float sMin = 0, sMax = 0;
+            for (std::size_t c = 0; c < nc; ++c) if (!done[c]) { sMin += mn[c]; sMax += mx[c]; }
+            left = std::max(0.0f, left);
+            for (std::size_t c = 0; c < nc; ++c) {
+                if (done[c]) continue;
+                if (left <= sMin) colW[c] = mn[c];
+                else if (left <= sMax) colW[c] = mn[c] + (mx[c] - mn[c]) * (sMax - sMin > 0 ? (left - sMin) / (sMax - sMin) : 0.0f);
+                else {
+                    std::size_t open = 0;
+                    for (std::size_t k = 0; k < nc; ++k) if (!done[k]) ++open;
+                    colW[c] = mx[c] + (left - sMax) * (sMax > 0 ? mx[c] / sMax : 1.0f / (float)std::max<std::size_t>(1, open));
+                }
+            }
+        }
+        for (float& w : colW) w = std::max(0.0f, Finite(w));
+        std::vector<float> colX(nc + 1, 0.0f);
+        colX[0] = cx + hs;
+        for (std::size_t c = 0; c < nc; ++c) colX[c + 1] = colX[c] + colW[c] + hs;
+        auto cellWidth = [&](const TCell& tc) {
+            const std::size_t c1 = std::min(nc, (std::size_t)(tc.col + tc.cols));
+            return colX[c1] - hs - colX[(std::size_t)tc.col];
+        };
+        // the borders a cell draws in the collapsing model: its left and top give way to the cell before it / above it, and to
+        // the table's own border at the table's edge
+        auto cellBorders = [&](const TCell& tc, float* b) {
+            const float* sb = tc.sn->st.border;
+            for (int k = 0; k < 4; ++k) b[k] = sb[k];
+            if (!ts.borderCollapse) return;
+            if (tc.col > 0 || ts.border[3] > 0) b[3] = 0;
+            if (tc.row > 0 || ts.border[0] > 0) b[0] = 0;
+            if ((std::size_t)(tc.col + tc.cols) >= nc && ts.border[1] > 0) b[1] = 0;
+            if ((std::size_t)(tc.row + tc.rows) >= nr && ts.border[2] > 0) b[2] = 0;
+        };
+        // row heights: each cell measured at its width (17.5.3)
+        std::vector<float> rowH(nr, 0.0f), cellH(t.cells.size(), 0.0f), cellBase(t.cells.size(), -1.0f), rowBase(nr, -1.0f);
+        std::vector<std::array<float, 4>> borders(t.cells.size());
+        for (std::size_t ri = 0; ri < nr; ++ri)
+            if (t.rows[ri]->st.height.unit == Length::Px) rowH[ri] = std::max(0.0f, t.rows[ri]->st.height.value);
+        for (std::size_t i = 0; i < t.cells.size(); ++i) {
+            const TCell& tc = t.cells[i];
+            cellBorders(tc, borders[i].data());
+            BlockOpt bo;
+            bo.cell = true;
+            bo.noAvoid = true;
+            bo.borderW = cellWidth(tc);
+            bo.borders = borders[i].data();
+            const auto hb = MeasureBlock(*tc.sn, bo.borderW, bo);
+            cellH[i] = hb.first;
+            cellBase[i] = hb.second;
+            if (tc.sn->st.verticalAlign == VAlign::Baseline && tc.rows == 1 && hb.second >= 0) rowBase[(std::size_t)tc.row] = std::max(rowBase[(std::size_t)tc.row], hb.second);
+        }
+        for (std::size_t i = 0; i < t.cells.size(); ++i) {   // one-row cells set the heights; baseline cells sit on the row's baseline
+            const TCell& tc = t.cells[i];
+            if (tc.rows != 1) continue;
+            float h = cellH[i];
+            if (tc.sn->st.verticalAlign == VAlign::Baseline && cellBase[i] >= 0 && rowBase[(std::size_t)tc.row] >= 0) h += rowBase[(std::size_t)tc.row] - cellBase[i];
+            rowH[(std::size_t)tc.row] = std::max(rowH[(std::size_t)tc.row], h);
+        }
+        for (std::size_t i = 0; i < t.cells.size(); ++i) {   // spanning cells: a taller one makes its last row taller
+            const TCell& tc = t.cells[i];
+            if (tc.rows == 1) continue;
+            const std::size_t r0 = (std::size_t)tc.row, r1 = std::min(nr, r0 + (std::size_t)tc.rows);
+            float have = vs * (float)(r1 - r0 - 1);
+            for (std::size_t ri = r0; ri < r1; ++ri) have += rowH[ri];
+            if (cellH[i] > have) rowH[r1 - 1] += cellH[i] - have;
+        }
+        std::vector<float> rowY(nr + 1, 0.0f);
+        rowY[0] = y + vs;
+        for (std::size_t ri = 0; ri < nr; ++ri) rowY[ri + 1] = rowY[ri] + Finite(rowH[ri]) + vs;
+        // row group and row backgrounds under the cells (17.5.1, layers 3 and 5)
+        const float rowX = colX[0], rowW = std::max(0.0f, colX[nc] - hs - colX[0]);
+        const SNode* lastGroup = nullptr;
+        std::size_t nextCell = 0;
+        for (std::size_t ri = 0; ri < nr; ++ri) {
+            const SNode* g = t.rowGroup[ri];
+            if (g && g != lastGroup && g->st.background.a > 0 && g->st.visible) {
+                std::size_t r1 = ri;
+                while (r1 + 1 < nr && t.rowGroup[r1 + 1] == g) ++r1;
+                DrawCmd c;
+                c.kind = DrawCmd::Fill;
+                c.x = rowX; c.y = rowY[ri]; c.w = rowW; c.h = rowY[r1 + 1] - vs - rowY[ri];
+                c.color = g->st.background;
+                Emit(c);
+            }
+            lastGroup = g;
+            const int rowBox = AddBox(*t.rows[ri], depth, rowX, rowY[ri], rowW);
+            r.boxes[(std::size_t)rowBox].h = rowH[ri];
+            if (t.rows[ri]->st.background.a > 0 && t.rows[ri]->st.visible) {
+                DrawCmd c;
+                c.kind = DrawCmd::Fill;
+                c.x = rowX; c.y = rowY[ri]; c.w = rowW; c.h = rowH[ri];
+                c.color = t.rows[ri]->st.background;
+                Emit(c);
+            }
+            // the cells are in row order (BuildTable): this row's are the next ones
+            for (; nextCell < t.cells.size() && (std::size_t)t.cells[nextCell].row == ri; ++nextCell) {
+                const std::size_t i = nextCell;
+                const TCell& tc = t.cells[i];
+                const std::size_t r1 = std::min(nr, ri + (std::size_t)tc.rows);
+                const float h = rowY[r1] - vs - rowY[ri];
+                float dy = 0;
+                switch (tc.sn->st.verticalAlign) {
+                case VAlign::Middle: dy = (h - cellH[i]) * 0.5f; break;
+                case VAlign::Bottom: case VAlign::TextBottom: dy = h - cellH[i]; break;
+                case VAlign::Baseline: if (cellBase[i] >= 0 && rowBase[ri] >= 0 && tc.rows == 1) dy = rowBase[ri] - cellBase[i]; break;
+                default: break;
+                }
+                BlockOpt bo;
                 bo.cell = true;
                 bo.noAvoid = true;
-                const Out co = Block(cell, x, y, colW, depth + 1, 0, bo);
+                bo.borderW = cellWidth(tc);
+                bo.borderH = h;
+                bo.contentDy = std::max(0.0f, Finite(dy));
+                bo.borders = borders[i].data();
+                const Out co = Block(*tc.sn, colX[(std::size_t)tc.col], rowY[ri], bo.borderW, depth + 1, 0, bo);
                 if (o.baseline < 0) o.baseline = co.baseline;
-                rowH = std::max(rowH, co.h);
-                cells.push_back(bi);
-                ++c;
             }
-            for (int cell : cells) if (cell >= 0) Stretch(cell, rowH);
-            r.boxes[(std::size_t)rowBox].h = rowH;
-            y += rowH + spacing;
         }
+        y = rowY[nr];
+        captions(true);
         o.h = y - cy;
         return o;
     }
@@ -2177,7 +2919,7 @@ LayoutResult LayoutPage(const HtmlDocument& doc, float widthIn, const TextMeasur
     localCtx.style.media.width = width;
     localCtx.style.media.height = viewH;
     localCtx.style.rootFontSize = ComputeStyle(*html, ComputedStyle(), sheets, &localCtx.style).fontSize;   // rem
-    Builder builder{sheets, &localCtx.style, {}, {false, false, false}};
+    Builder builder{sheets, &localCtx.style, {}, {false, false, false}, {}};
     builder.Prepare();
     SNode root;
     if (!builder.Build(*html, ComputedStyle(), root)) return r;
@@ -2214,6 +2956,7 @@ LayoutResult LayoutPage(const HtmlDocument& doc, float widthIn, const TextMeasur
     for (std::size_t i = 0; i < L.fixedPending.size(); ++i) L.LayAbs(L.fixedPending[i], 0, 0, width, viewH);
     // the page grows to hold positioned content (fixed content is on the view, not the page)
     for (const DrawCmd& c : r.cmds) if (!c.fixed && c.clip < 0 && c.kind != DrawCmd::Shadow) r.height = std::max(r.height, Finite(c.y + c.h));
+    L.ExpandGradients();
     // paint order: stable by layer
     const std::vector<int> rank = L.LayerRanks();
     std::vector<std::size_t> perm(r.cmds.size());

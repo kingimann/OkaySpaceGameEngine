@@ -67,6 +67,8 @@ add_library(okay_browser STATIC
     src/Browser/Url.cpp
     src/Browser/Html.cpp
     src/Browser/Css.cpp
+    src/Browser/Plugins.cpp      # round 3: browser plugins (toolbar buttons, page actions, block rules, styles, new-tab sections)
+    src/Browser/WebFont.cpp      # round 3: WOFF 1.0 fonts rebuilt into TrueType / OpenType (through Core/Inflate)
     src/Browser/Layout.cpp
     src/Browser/Browser.cpp
     src/Browser/Forms.cpp        # the browser program: form controls' values, the entry list, GET and POST submission

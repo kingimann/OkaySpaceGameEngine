@@ -142,7 +142,8 @@ submission), reset. multipart/form-data (files) is not done: such a form is sent
 
 **Not done in round 1:** JavaScript (next round, with the engine on `claude/javascript-1`), cookies (so sites that need a login
 session do not keep it), tables with real column widths, margin collapsing through parents, `:has()`, counters, gradients
-(drawn as their first colour), WOFF fonts, synthetic italics, text selection (Copy text copies the run under the pointer),
+(drawn as their first colour), WOFF fonts, synthetic italics (round 3 did tables, margins, `:has()`, counters, gradients and
+WOFF 1.0; see below), text selection (Copy text copies the run under the pointer),
 dragging tabs, a downloads folder picker, file inputs. Nothing of round 1 was built or run on Windows.
 
 ## Round 2: JavaScript in pages
@@ -177,6 +178,50 @@ under a virtual display (Xvfb) against a local Python test server: several tabs,
 with highlights, the bookmarks bar, the menu and the context menu, a download asked for and saved to the Downloads folder, a
 form typed into (text, password, select, radio, checkbox, textarea) and sent with POST (the server echoed the urlencoded body),
 the new-tab and history pages, zoom. Not checked: real web sites, the launcher's page (compiled only), Windows.
+
+## Round 3: rendering from the CSS specs, and browser plugins (2026-11-26, branch `claude/browser-render-3`)
+Written from CSS 2.1 (chapter 17 tables, 8.3.1 margins, 12.4 counters, 12.6.2 list styles), CSS Images 3, CSS Text Decoration 3,
+CSS Overflow 3, CSS Transforms 1, Selectors 4 (`:has()`), the HTML standard (table presentational attributes, 15.3.8), the W3C
+WOFF 1.0 recommendation and the OpenType table directory, RFC 8259 (plugin manifests). No browser or library code.
+
+- **Tables** (`Layout.cpp` `BuildTable` / `ColumnWidths` / `Table`): anonymous rows and cells, thead first and tfoot last,
+  captions (top / bottom, inside the table's border: simplified), colspan (1-1000) and rowspan (0 = to the end of the group),
+  automatic and fixed column widths, `<col>` / `<colgroup>` widths, percentage columns, auto-width tables shrink to their columns,
+  row heights, vertical-align top / middle / bottom / baseline, row and row-group backgrounds, border-spacing, border-collapse
+  (simplified: a cell's left / top border gives way to its neighbour's; no width or style contest), `border` / `cellspacing` /
+  `cellpadding` / `bgcolor` / `width` / `align` / `valign` / `nowrap` attributes. At most 1000 columns and 1 000 000 slots.
+- **Margins** collapse through a parent's top and bottom and through empty boxes (8.3.1); clearance is still simplified.
+- **Gradients**: linear (angles, `to` sides and corners), radial (circle / ellipse, the four size keywords, explicit sizes, `at`),
+  repeating, colour stops with one or two positions; drawn as bands of Fill commands (any host draws them); at most 60 000 such
+  commands per page, a gradient past that is one Fill. Not done: border-radius on gradient bands, colour hints, conic gradients,
+  several background layers.
+- **Counters** (`counter-reset / -increment / -set`, `counter()`, `counters()`) and list styles decimal-leading-zero, lower-greek.
+- **`:has()`** with `>`, `+`, `~` and descendant relative selectors (at most 4096 elements looked at per test).
+- **Text**: text-decoration line / style (solid, double, dotted, dashed, wavy) / colour and overline, drawn as Fill commands when
+  not a plain line; `text-overflow: ellipsis` in boxes that clip; white-space nowrap / pre-wrap checked by tests.
+- **Images**: object-fit (contain, cover, none, scale-down) and object-position; an image that overflows its box becomes a
+  BgImage command clipped to the box.
+- **Transforms**: translate and positive scale are folded into the draw commands; rotate, skew and mirrors stay in
+  `DrawCmd::xform` for the host. Transitions show their final value at once (the property is read and ignored).
+- **WOFF 1.0** (`Browser/WebFont`): rebuilt into the sfnt file through `Core/Inflate`; @font-face takes a WOFF file only when there
+  is no TrueType / OpenType file.
+- **Browser plugins** (`Browser/Plugins`, `shared/BrowserPluginCommands.hpp`): see feature map 17.18.19.
+
+**Not done in round 3:** WOFF2 (Brotli needs the RFC 7932 static dictionary, about 122 KB of data published in the RFC; its
+licence under the IETF Trust Legal Provisions is not clear for that table, so it was not added); synthetic italics (the slant is
+drawn by the view: OkayUI has no sheared text call yet); the host calls below. Nothing of round 3 was built or run on Windows.
+
+**Calls the browser program still has to make** (files of another agent, so not changed here):
+- `shared/BrowserHost.cpp`, font fetches: call `okay::browser::DecodeWebFont(bytes, size, sfnt, why)` and hand `sfnt` to the font
+  loader instead of the TrueType / OpenType check (WOFF fonts then load).
+- `okayui/screens/BrowserView.cpp` `DrawBrowserPage`: draw a command whose `xform` is not the identity through it (page
+  coordinates before scroll and zoom); slant text when `font.italic` and the web font has no italic face.
+- `shared/BrowserApp`: keep one `okay::browser::BrowserPlugins`; load manifests from `<data>/plugins/*.json`; ask the person to grant
+  `PermissionNames(requested)`, keep the answer in the profile and call `Grant`; before each fetch `Blocked(url)` (skip it);
+  `StylesFor(pageUrl)` parsed and appended to the tab's sheets (and lay out again after `Press` returns `StyleOn` / `StyleOff`);
+  draw `ToolbarButtons()` and `PageActionsFor(pageUrl)` and call `Press`, opening `PluginEffect::url` for `OpenUrl`;
+  append `NewTabHtml()` to the new-tab page; `browserplugins::SyncCommands(plugins, registry, ...)` after every load, grant or
+  switch, so the buttons are commands of the browser's `pluginreg::PluginRegistry`.
 
 ## The launcher's Browser page (2026-11-26)
 

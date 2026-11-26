@@ -645,6 +645,32 @@ bool ParseSelectorList(const std::string& text, std::vector<Selector>& out, int&
     return !out.empty();
 }
 
+// :has()'s argument: comma-separated selectors, each with an optional leading combinator (' ' when none).
+static bool ParseRelativeList(const std::string& text, std::vector<Selector>& out, std::vector<char>& combs, int& maxSpec) {
+    maxSpec = 0;
+    std::size_t s = 0;
+    int depth = 0;
+    for (std::size_t i = 0; i <= text.size(); ++i) {
+        const char c = i < text.size() ? text[i] : ',';
+        if (c == '(' || c == '[') ++depth;
+        else if ((c == ')' || c == ']') && depth > 0) --depth;
+        else if (c == ',' && depth == 0) {
+            std::string part = Trim(text.substr(s, i - s));
+            char comb = ' ';
+            if (!part.empty() && (part[0] == '>' || part[0] == '+' || part[0] == '~')) { comb = part[0]; part = Trim(part.substr(1)); }
+            Selector sel;
+            if (!ParseSelector(part, sel) || sel.pseudoElement) return false;
+            for (const Compound& cp : sel.parts) for (const PseudoSel& ps : cp.pseudos) if (ps.kind == PseudoSel::Has) return false;
+            maxSpec = std::max(maxSpec, sel.specificity);
+            out.push_back(std::move(sel));
+            combs.push_back(comb);
+            s = i + 1;
+            if (out.size() > 64) return false;
+        }
+    }
+    return !out.empty();
+}
+
 bool ParseSelector(const std::string& textIn, Selector& out) {
     out = Selector();
     const std::string text = Trim(textIn);
@@ -774,8 +800,17 @@ bool ParseSelector(const std::string& textIn, Selector& out) {
                         c.pseudos.push_back(std::move(p));
                         any = true;
                         continue;
-                    } else if (name == "lang" || name == "dir" || name == "has") {
-                        p.kind = PseudoSel::Never;   // read, never matches (no language data; :has is not done)
+                    } else if (name == "has") {
+                        // Selectors 4, 4.5: a list of relative selectors ("> img", "+ p", ".note"); no :has inside :has
+                        if (!ParseRelativeList(arg, p.list, p.relative, spec)) return false;
+                        ids += spec / 10000; classes += (spec / 100) % 100; types += spec % 100;
+                        p.kind = PseudoSel::Has;
+                        for (const Selector& s2 : p.list) if (s2.dynamic) out.dynamic = true;
+                        c.pseudos.push_back(std::move(p));
+                        any = true;
+                        continue;
+                    } else if (name == "lang" || name == "dir") {
+                        p.kind = PseudoSel::Never;   // read, never matches (no language data)
                         known = true;
                     }
                 }
@@ -943,6 +978,35 @@ bool CompoundMatches(const Compound& c, const Node& el, const StyleContext* ctx,
         case PseudoSel::Is:
             for (const Selector& s : p.list) if (MatchAt(s, s.parts.size() - 1, el, ctx, budget)) { ok = true; break; }
             break;
+        case PseudoSel::Has: {
+            // an element related to el as the combinator says matches the selector (a descendant selector is matched in full,
+            // so its earlier parts may also match outside el: simplified). At most 4096 elements looked at per :has().
+            int seen = 0;
+            for (std::size_t k = 0; k < p.list.size() && !ok; ++k) {
+                const Selector& s = p.list[k];
+                const char comb = k < p.relative.size() ? p.relative[k] : ' ';
+                if (comb == '>' || comb == ' ') {
+                    std::vector<const Node*> todo;
+                    for (const auto& ch : el.children) if (ch->kind == NodeKind::Element) todo.push_back(ch.get());
+                    while (!todo.empty() && !ok && ++seen < 4096 && budget > 0) {
+                        const Node* d = todo.back();
+                        todo.pop_back();
+                        if (MatchAt(s, s.parts.size() - 1, *d, ctx, budget)) ok = true;
+                        if (comb == ' ') for (const auto& ch : d->children) if (ch->kind == NodeKind::Element) todo.push_back(ch.get());
+                    }
+                } else if (el.parent) {
+                    bool after = false;
+                    for (const auto& sib : el.parent->children) {
+                        if (sib.get() == &el) { after = true; continue; }
+                        if (!after || sib->kind != NodeKind::Element) continue;
+                        if (++seen >= 4096 || budget <= 0) break;
+                        if (MatchAt(s, s.parts.size() - 1, *sib, ctx, budget)) { ok = true; break; }
+                        if (comb == '+') break;
+                    }
+                }
+            }
+            break;
+        }
         case PseudoSel::Never: ok = false; break;
         }
         if (!ok) return false;
@@ -1077,6 +1141,7 @@ void ParseRules(const std::string& css, std::size_t from, std::size_t to, StyleS
                         else { float n; std::string u; if (ParseNumber(Words(v).empty() ? v : Words(v)[0], n, u) && u.empty()) ff.weight = (int)n; }
                     } else if (d.property == "font-style") ff.italic = v.compare(0, 6, "italic") == 0 || v.compare(0, 7, "oblique") == 0;
                     else if (d.property == "src" && ff.url.empty()) {
+                        std::string woffUrl;   // a WOFF 1.0 file (WebFont.hpp decodes it) when there is no TrueType / OpenType one
                         for (const std::vector<std::string>& g : CommaGroups(Words(d.value))) {
                             std::string url, fmt;
                             for (const std::string& w : g) {
@@ -1084,11 +1149,14 @@ void ParseRules(const std::string& css, std::size_t from, std::size_t to, StyleS
                                 const std::string lw = LowerAscii(w);
                                 if (lw.compare(0, 7, "format(") == 0) fmt = LowerAscii(Unquote(w.substr(7, w.size() - 8)));
                             }
-                            // TrueType / OpenType only (our rasterizer reads them; woff / woff2 are not read yet)
+                            // TrueType / OpenType first (our rasterizer reads them); WOFF 1.0 next; WOFF2 is not read yet
                             const std::string ext = LowerAscii(url.substr(url.find_last_of('.') == std::string::npos ? url.size() : url.find_last_of('.')));
                             const bool ttf = fmt == "truetype" || fmt == "opentype" || (fmt.empty() && (ext.compare(0, 4, ".ttf") == 0 || ext.compare(0, 4, ".otf") == 0));
                             if (!url.empty() && ttf) { ff.url = url; break; }
+                            const bool woff = fmt == "woff" || (fmt.empty() && ext.compare(0, 5, ".woff") == 0 && ext.compare(0, 6, ".woff2") != 0);
+                            if (!url.empty() && woff && woffUrl.empty()) woffUrl = url;
                         }
+                        if (ff.url.empty()) ff.url = woffUrl;
                     }
                 }
                 if (!ff.family.empty() && !ff.url.empty() && sheet.fontFaces.size() < 64) sheet.fontFaces.push_back(ff);
@@ -1142,9 +1210,14 @@ const StyleSheet& DefaultStyleSheet() {
         "li { display: list-item }\n"
         "table { display: table }\n"
         "tr { display: table-row }\n"
-        "thead, tbody, tfoot { display: table-row-group }\n"
+        "tbody { display: table-row-group }\n"
+        "thead { display: table-header-group }\n"
+        "tfoot { display: table-footer-group }\n"
+        "table { border-spacing: 2px; border-collapse: separate; text-indent: 0 }\n"
         "td, th { display: table-cell; padding: 1px }\n"
-        "caption { display: block; text-align: center }\n"
+        "thead, tbody, tfoot, table > tr { vertical-align: middle }\n"
+        "tr, td, th { vertical-align: inherit }\n"
+        "caption { display: table-caption; text-align: center }\n"
         "th { font-weight: bold; text-align: center }\n"
         "body { margin: 8px }\n"
         "p, dl { margin: 1em 0 }\n"
@@ -1267,10 +1340,11 @@ bool IsMonoFamily(const std::string& family) {
 bool ListStyleWord(const std::string& w, ListStyle& out) {
     struct K { const char* k; ListStyle s; };
     static const K keys[] = {{"disc", ListStyle::Disc}, {"circle", ListStyle::Circle}, {"square", ListStyle::Square},
-                             {"decimal", ListStyle::Decimal}, {"decimal-leading-zero", ListStyle::Decimal},
+                             {"decimal", ListStyle::Decimal}, {"decimal-leading-zero", ListStyle::DecimalLeadingZero},
                              {"lower-alpha", ListStyle::LowerAlpha}, {"lower-latin", ListStyle::LowerAlpha},
                              {"upper-alpha", ListStyle::UpperAlpha}, {"upper-latin", ListStyle::UpperAlpha},
-                             {"lower-roman", ListStyle::LowerRoman}, {"upper-roman", ListStyle::UpperRoman}, {"none", ListStyle::None}};
+                             {"lower-roman", ListStyle::LowerRoman}, {"upper-roman", ListStyle::UpperRoman}, {"none", ListStyle::None},
+                             {"lower-greek", ListStyle::LowerGreek}};
     for (const K& k : keys) if (w == k.k) { out = k.s; return true; }
     return false;
 }
@@ -1474,9 +1548,9 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
                                  {"inline", Display::Inline}, {"inline-block", Display::InlineBlock}, {"inline-flex", Display::InlineFlex},
                                  {"inline-grid", Display::InlineGrid}, {"contents", Display::Inline}, {"list-item", Display::ListItem},
                                  {"none", Display::None}, {"table", Display::Table}, {"inline-table", Display::Table},
-                                 {"table-row", Display::TableRow}, {"table-cell", Display::TableCell}, {"table-caption", Display::Block},
-                                 {"table-row-group", Display::TableSection}, {"table-header-group", Display::TableSection},
-                                 {"table-footer-group", Display::TableSection}, {"block flex", Display::Flex}, {"block grid", Display::Grid},
+                                 {"table-row", Display::TableRow}, {"table-cell", Display::TableCell}, {"table-caption", Display::TableCaption},
+                                 {"table-row-group", Display::TableSection}, {"table-header-group", Display::TableHeaderGroup},
+                                 {"table-footer-group", Display::TableFooterGroup}, {"block flex", Display::Flex}, {"block grid", Display::Grid},
                                  {"inline flex", Display::InlineFlex}, {"inline grid", Display::InlineGrid}, {"block flow-root", Display::FlowRoot},
                                  {"-webkit-box", Display::Flex}, {"-webkit-flex", Display::Flex}, {"-ms-flexbox", Display::Flex}};
         for (const K& k : keys) if (v == k.k) { s.display = k.d; break; }
@@ -1550,7 +1624,7 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
         Color c[4];
         if (FourSides(words, c, [&](const std::string& x, Color& o) { return ParseColor(x, o); }))
             for (int k = 0; k < 4; ++k) { s.borderColor[k] = c[k]; wk.borderColorSet[k] = true; }
-    } else if (p.compare(0, 7, "border-") == 0 && (p.size() > 6)) {
+    } else if (p.compare(0, 7, "border-") == 0 && p != "border-spacing" && p != "border-collapse") {
         // border-top-width / -style / -color
         static const char* const sides[] = {"top", "right", "bottom", "left"};
         for (int k = 0; k < 4; ++k) {
@@ -1572,11 +1646,13 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
         if (p == "background") {
             s.background = Color{0, 0, 0, 0};
             s.backgroundImage.clear();
+            s.bgGradient.reset();
             s.bgRepeatX = s.bgRepeatY = true;
             s.bgSize = ComputedStyle::BgAuto;
             s.bgPosX = s.bgPosY = Length::Px_(0);
         }
-        if (v == "none") { s.backgroundImage.clear(); return; }
+        if (v == "none") { s.backgroundImage.clear(); s.bgGradient.reset(); return; }
+        if (p == "background-image") { s.backgroundImage.clear(); s.bgGradient.reset(); }
         std::vector<std::string> pos;
         bool afterSlash = false;
         for (const std::string& w : words) {
@@ -1586,7 +1662,9 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
             if (w == "/") { afterSlash = true; continue; }
             if (lw.compare(0, 4, "url(") == 0) { s.backgroundImage = UrlOf(w); continue; }
             if (lw.find("gradient(") != std::string::npos) {
-                // a gradient is drawn as its first colour (gradients are not drawn yet)
+                // a gradient is drawn (Layout); one we cannot read is drawn as its first colour
+                Gradient g;
+                if (ParseGradient(w, em, g)) { s.bgGradient = std::make_shared<const Gradient>(std::move(g)); continue; }
                 const std::size_t open = w.find('(');
                 for (const std::string& gw : Words(w.substr(open + 1, w.size() - open - 2))) if (ParseColor(gw, c)) { s.background = c; break; }
                 continue;
@@ -1694,10 +1772,70 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
         else if (ParseLength(d.value, em, true, l) && (l.value >= 0 || l.unit == Length::Calc)) { (w ? s.minWidth : s.minHeight) = l; (w ? s.minWidthAuto : s.minHeightAuto) = false; }
     } else if (p == "box-sizing") {
         s.borderBox = v == "border-box";
-    } else if (p == "text-decoration" || p == "text-decoration-line") {
-        if (v.find("none") != std::string::npos) { s.underline = false; s.strike = false; }
-        if (v.find("underline") != std::string::npos) s.underline = true;
-        if (v.find("line-through") != std::string::npos) s.strike = true;
+    } else if (p == "text-decoration" || p == "text-decoration-line" || p == "text-decoration-style" || p == "text-decoration-color") {
+        // CSS Text Decoration 3: the lines, their style and colour, in any order (the shorthand resets what it leaves out)
+        if (p == "text-decoration") { s.decoStyle = DecoStyle::Solid; s.decoColor = Color{0, 0, 0, 0}; }
+        bool lineSeen = false;
+        for (const std::string& wIn : words) {
+            const std::string w = LowerAscii(wIn);
+            if (p != "text-decoration-style" && p != "text-decoration-color") {
+                if (w == "none") { s.underline = s.strike = s.overline = false; lineSeen = true; continue; }
+                if (w == "underline" || w == "line-through" || w == "overline" || w == "blink") {
+                    if (!lineSeen) { s.underline = s.strike = s.overline = false; lineSeen = true; }
+                    if (w == "underline") s.underline = true; else if (w == "line-through") s.strike = true; else if (w == "overline") s.overline = true;
+                    continue;
+                }
+            }
+            if (p != "text-decoration-line" && p != "text-decoration-color") {
+                if (w == "solid") { s.decoStyle = DecoStyle::Solid; continue; }
+                if (w == "double") { s.decoStyle = DecoStyle::Double; continue; }
+                if (w == "dotted") { s.decoStyle = DecoStyle::Dotted; continue; }
+                if (w == "dashed") { s.decoStyle = DecoStyle::Dashed; continue; }
+                if (w == "wavy") { s.decoStyle = DecoStyle::Wavy; continue; }
+            }
+            if (p != "text-decoration-line" && p != "text-decoration-style") {
+                Color c;
+                if (w == "currentcolor") s.decoColor = Color{0, 0, 0, 0};
+                else if (ParseColor(wIn, c)) s.decoColor = c;
+            }
+        }
+    } else if (p == "text-overflow") {
+        s.ellipsis = !words.empty() && LowerAscii(words.back()) == "ellipsis";
+    } else if (p == "object-fit") {
+        s.objectFit = v == "contain" ? ObjectFit::Contain : v == "cover" ? ObjectFit::Cover : v == "none" ? ObjectFit::None
+                    : v == "scale-down" ? ObjectFit::ScaleDown : ObjectFit::Fill;
+    } else if (p == "object-position") {
+        Length x, y;
+        if (BackgroundPos(words, em, x, y)) { s.objectPosX = x; s.objectPosY = y; }
+    } else if (p == "transform") {
+        s.transform = v == "none" ? std::string() : Trim(d.value).substr(0, 2048);
+    } else if (p == "transform-origin") {
+        Length x, y;
+        if (BackgroundPos(words, em, x, y)) { s.originX = x; s.originY = y; }
+    } else if (p == "border-spacing") {
+        Length a, b;
+        if (!words.empty() && ParseLength(words[0], em, false, a) && a.value >= 0) {
+            b = a;
+            if (words.size() > 1 && !(ParseLength(words[1], em, false, b) && b.value >= 0)) return;
+            s.borderSpacingH = std::min(a.value, 10000.0f); s.borderSpacingV = std::min(b.value, 10000.0f);
+        }
+    } else if (p == "border-collapse") {
+        if (v == "collapse") s.borderCollapse = true; else if (v == "separate") s.borderCollapse = false;
+    } else if (p == "table-layout") {
+        s.tableFixed = v == "fixed";
+    } else if (p == "caption-side") {
+        s.captionBottom = v == "bottom";
+    } else if (p == "counter-reset" || p == "counter-increment" || p == "counter-set") {
+        // CSS 2.1 12.4: name [integer] pairs, or none
+        std::vector<std::pair<std::string, int>> list;
+        if (v != "none") {
+            for (std::size_t k = 0; k < words.size() && list.size() < 32; ++k) {
+                float n; std::string u;
+                if (ParseNumber(words[k], n, u) && u.empty()) { if (!list.empty()) list.back().second = (int)std::max(-1e9f, std::min(1e9f, n)); continue; }
+                list.push_back({words[k], p == "counter-increment" ? 1 : 0});
+            }
+        }
+        (p == "counter-reset" ? s.counterReset : p == "counter-increment" ? s.counterIncrement : s.counterSet) = list;
     } else if (p == "white-space") {
         if (v == "normal") s.whiteSpace = WhiteSpace::Normal;
         else if (v == "pre") s.whiteSpace = WhiteSpace::Pre;
@@ -1710,6 +1848,7 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
     } else if (p == "list-style") {
         for (const std::string& w : words) { ListStyle ls; if (ListStyleWord(LowerAscii(w), ls)) { s.listStyle = ls; break; } }
     } else if (p == "vertical-align") {
+        if (v == "inherit") { s.verticalAlign = parent.verticalAlign; return; }
         s.verticalAlign = v == "middle" ? VAlign::Middle : v == "top" ? VAlign::Top : v == "bottom" ? VAlign::Bottom
                         : v == "text-top" ? VAlign::TextTop : v == "text-bottom" ? VAlign::TextBottom : VAlign::Baseline;
     } else if (p == "float") {
@@ -1879,11 +2018,93 @@ void Apply(ComputedStyle& s, Work& wk, const Declaration& d, const ComputedStyle
             else if (LowerAscii(w) == "close-quote") out += "\xE2\x80\x9D";
             else if (LowerAscii(w).compare(0, 5, "attr(") == 0) out += "\x01" + LowerAscii(Trim(w.substr(5, w.size() - 6))) + "\x02";
             else if (LowerAscii(w).compare(0, 4, "url(") == 0) {}   // an image as content: not drawn
-            else if (LowerAscii(w).compare(0, 8, "counter(") == 0) {}   // counters: not done
+            else if (LowerAscii(w).compare(0, 8, "counter(") == 0 || LowerAscii(w).compare(0, 9, "counters(") == 0) {
+                // kept as markers; the layout fills in the values (CSS 2.1 12.2, 12.4)
+                const bool many = LowerAscii(w).compare(0, 9, "counters(") == 0;
+                const std::size_t open = w.find('(');
+                const std::vector<std::vector<std::string>> args = CommaGroups(Words(w.substr(open + 1, w.size() - open - 2)));
+                if (args.empty() || args[0].size() != 1) continue;
+                std::string sep, style = "decimal";
+                std::size_t k = 1;
+                if (many) { if (args.size() < 2 || args[1].size() != 1) continue; sep = Unquote(args[1][0]); k = 2; }
+                if (args.size() > k && args[k].size() == 1) style = LowerAscii(args[k][0]);
+                if (many) out += "\x05" + args[0][0] + "\x1f" + sep + "\x1f" + style + "\x06";
+                else out += "\x03" + args[0][0] + "\x1f" + style + "\x04";
+            }
         }
         s.hasContent = true;
         s.content = out;
     }
+}
+
+// A dimension attribute ("120", "50%", "120px") as CSS text, or "" (the HTML standard, 2.3.4.4 "rules for parsing dimension values").
+std::string DimensionAttr(const Node& el, const char* name) {
+    const std::string* v = el.Attr(name);
+    if (!v) return std::string();
+    std::size_t i = 0;
+    while (i < v->size() && IsWs((*v)[i])) ++i;
+    std::size_t j = i;
+    while (j < v->size() && (*v)[j] >= '0' && (*v)[j] <= '9' && j - i < 7) ++j;
+    if (j == i) return std::string();
+    std::string num = v->substr(i, j - i);
+    if (j < v->size() && (*v)[j] == '.') { ++j; while (j < v->size() && (*v)[j] >= '0' && (*v)[j] <= '9') ++j; }
+    const bool pct = j < v->size() && (*v)[j] == '%';
+    return num + (pct ? "%" : "px");
+}
+bool SafeHintWord(const std::string& v) {
+    if (v.empty() || v.size() > 40) return false;
+    for (char c : v) if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '#')) return false;
+    return true;
+}
+// The CSS that an element's presentational attributes stand for (the HTML standard, 15.3.3 / 15.3.8 / 15.3.10, the parts the
+// pages we meet still use: table border / cellspacing / cellpadding / width / bgcolor / align, cell width / height / nowrap /
+// align / valign, body bgcolor / text).
+std::string PresentationalHints(const Node& el) {
+    const std::string& n = el.name;
+    std::string css;
+    auto colorAttr = [&](const char* attr, const char* prop) {
+        if (const std::string* v = el.Attr(attr)) { Color c; if (SafeHintWord(*v) && ParseColor(*v, c)) css += std::string(prop) + ":" + *v + ";"; }
+    };
+    if (n == "table" || n == "td" || n == "th" || n == "tr" || n == "body" || n == "thead" || n == "tbody" || n == "tfoot") colorAttr("bgcolor", "background-color");
+    if (n == "body") colorAttr("text", "color");
+    if (n == "table") {
+        const std::string w = DimensionAttr(el, "width");
+        if (!w.empty()) css += "width:" + w + ";";
+        const std::string b = DimensionAttr(el, "border");
+        if (el.Attr("border") && (b.empty() || b != "0px")) css += "border:" + (b.empty() || b.back() == '%' ? std::string("1px") : b) + " outset gray;";
+        const std::string sp = DimensionAttr(el, "cellspacing");
+        if (!sp.empty() && sp.back() != '%') css += "border-spacing:" + sp + ";";
+        if (const std::string* a = el.Attr("align")) {
+            const std::string la = LowerAscii(Trim(*a));
+            if (la == "center") css += "margin-left:auto;margin-right:auto;";
+            else if (la == "left" || la == "right") css += "float:" + la + ";";
+        }
+    }
+    if (n == "td" || n == "th") {
+        const std::string w = DimensionAttr(el, "width"), h = DimensionAttr(el, "height");
+        if (!w.empty() && w != "0px") css += "width:" + w + ";";
+        if (!h.empty() && h != "0px") css += "height:" + h + ";";
+        if (el.Attr("nowrap")) css += "white-space:nowrap;";
+        const Node* table = el.parent;
+        for (int guard = 0; table && guard < 4 && !table->IsElement("table"); ++guard) table = table->parent;
+        if (table && table->IsElement("table")) {
+            const std::string pad = DimensionAttr(*table, "cellpadding");
+            if (!pad.empty() && pad.back() != '%') css += "padding:" + pad + ";";
+            const std::string b = DimensionAttr(*table, "border");
+            if (table->Attr("border") && b != "0px") css += "border:1px inset gray;";
+        }
+    }
+    if (n == "td" || n == "th" || n == "tr") {
+        if (const std::string* a = el.Attr("align")) {
+            const std::string la = LowerAscii(Trim(*a));
+            if (la == "left" || la == "right" || la == "center" || la == "justify") css += "text-align:" + la + ";";
+        }
+        if (const std::string* a = el.Attr("valign")) {
+            const std::string la = LowerAscii(Trim(*a));
+            if (la == "top" || la == "middle" || la == "bottom" || la == "baseline") css += "vertical-align:" + la + ";";
+        }
+    }
+    return css;
 }
 
 // var(--name, fallback) replaced by the custom property's value (CSS Custom Properties 1, 3). `budget` caps the text a value may
@@ -1942,7 +2163,11 @@ ComputedStyle InheritedStyle(const ComputedStyle& parent) {
     s.whiteSpace = parent.whiteSpace;
     s.listStyle = parent.listStyle;
     s.visible = parent.visible;
-    s.underline = parent.underline; s.strike = parent.strike;   // decorations reach the text inside (simplified)
+    s.underline = parent.underline; s.strike = parent.strike; s.overline = parent.overline;   // decorations reach the text inside (simplified)
+    s.decoStyle = parent.decoStyle; s.decoColor = parent.decoColor;
+    s.borderSpacingH = parent.borderSpacingH; s.borderSpacingV = parent.borderSpacingV;
+    s.borderCollapse = parent.borderCollapse;
+    s.captionBottom = parent.captionBottom;
     s.vars = parent.vars;
     // the rest start at their initial values
     for (int k = 0; k < 4; ++k) { s.margin[k] = Length::Px_(0); s.padding[k] = Length::Px_(0); }
@@ -1951,6 +2176,8 @@ ComputedStyle InheritedStyle(const ComputedStyle& parent) {
     s.minWidth = Length::Px_(0); s.minHeight = Length::Px_(0);
     s.bgPosX = s.bgPosY = Length::Px_(0);
     s.rowGap = s.columnGap = Length::Px_(0);
+    s.objectPosX.unit = s.objectPosY.unit = s.originX.unit = s.originY.unit = Length::Percent;
+    s.objectPosX.value = s.objectPosY.value = s.originX.value = s.originY.value = 50.0f;
     return s;
 }
 
@@ -1986,6 +2213,15 @@ ComputedStyle ComputeStyle(const Node& el, const ComputedStyle& parent, const st
     // Rules the default sheet does not say with selectors: the link look a[href] (pseudo-elements excepted).
     static const std::vector<Declaration> linkDecls = ParseDeclarations("color: #0000ee; text-decoration: underline");
     if (pseudo == 0 && el.name == "a" && el.Attr("href")) for (const Declaration& d : linkDecls) list.push_back({0, 11, order++, &d});
+    // HTML presentational hints (the HTML standard, 15.3: tables, cells, bgcolor ...): author level, before every author rule
+    std::vector<Declaration> hintDecls;
+    if (pseudo == 0) {
+        const std::string hints = PresentationalHints(el);
+        if (!hints.empty()) {
+            hintDecls = ParseDeclarations(hints);
+            for (const Declaration& d : hintDecls) list.push_back({1, -1, order++, &d});
+        }
+    }
     for (const StyleSheet* sh : author) if (sh) collect(*sh, 1, 3);
     std::vector<Declaration> inlineDecls;
     if (pseudo == 0) if (const std::string* st = el.Attr("style")) {
@@ -2052,7 +2288,7 @@ ComputedStyle ComputeStyle(const Node& el, const ComputedStyle& parent, const st
         if (s.display == Display::Inline || s.display == Display::InlineBlock) s.display = Display::Block;
         else if (s.display == Display::InlineFlex) s.display = Display::Flex;
         else if (s.display == Display::InlineGrid) s.display = Display::Grid;
-        else if (s.display == Display::TableRow || s.display == Display::TableCell || s.display == Display::TableSection) s.display = Display::Block;
+        else if (s.display == Display::TableRow || s.display == Display::TableCell || IsTableSection(s.display) || s.display == Display::TableCaption) s.display = Display::Block;
     }
     if (s.OutOfFlow()) s.floating = Float::None;
     // generated content: attr() filled in from the element
@@ -2069,6 +2305,369 @@ ComputedStyle ComputeStyle(const Node& el, const ComputedStyle& parent, const st
         s.content = out;
     }
     return s;
+}
+
+// ---- gradients (CSS Images 3, section 3) ---------------------------------------------------------------------------------
+
+namespace {
+
+// An angle in degrees: deg, grad, rad, turn (CSS Values 4, 7.1); a bare 0 is allowed.
+bool ParseAngle(const std::string& w, float& deg) {
+    float n; std::string u;
+    if (!ParseNumber(w, n, u)) return false;
+    if (u == "deg") deg = n;
+    else if (u == "grad") deg = n * 0.9f;
+    else if (u == "rad") deg = n * 57.29577951f;
+    else if (u == "turn") deg = n * 360.0f;
+    else if (u.empty() && n == 0.0f) deg = 0.0f;
+    else return false;
+    return std::isfinite(deg);
+}
+
+// A position ("center", "left top", "30% 70%", "10px bottom") into x and y (CSS Values 4, <position>, the 1- and 2-value forms).
+bool ParsePosition(const std::vector<std::string>& w, float em, Length& x, Length& y) {
+    Length lx, ly;
+    lx.unit = ly.unit = Length::Percent; lx.value = ly.value = 50.0f;
+    if (w.empty() || w.size() > 2) return false;
+    int xs = 0, ys = 0;
+    for (std::size_t k = 0; k < w.size(); ++k) {
+        const std::string lw = LowerAscii(w[k]);
+        Length l;
+        if (lw == "left" || lw == "right") { l.unit = Length::Percent; l.value = lw == "left" ? 0.0f : 100.0f; lx = l; ++xs; }
+        else if (lw == "top" || lw == "bottom") { l.unit = Length::Percent; l.value = lw == "top" ? 0.0f : 100.0f; ly = l; ++ys; }
+        else if (lw == "center") { if (k == 0 && w.size() == 2 && LowerAscii(w[1]) != "left" && LowerAscii(w[1]) != "right") ++xs; else if (k == 1) ++ys; }
+        else if (ParseLength(w[k], em, true, l)) { if (k == 0) { lx = l; ++xs; } else { ly = l; ++ys; } }
+        else return false;
+    }
+    if (xs > 1 || ys > 1) return false;
+    x = lx; y = ly;
+    return true;
+}
+
+} // namespace
+
+bool ParseGradient(const std::string& text, float em, Gradient& out) {
+    const std::string t = Trim(text);
+    const std::string lt = LowerAscii(t);
+    const std::size_t open = t.find('(');
+    if (open == std::string::npos || t.back() != ')' || CloseParen(t, open) != t.size() - 1) return false;
+    std::string fn = lt.substr(0, open);
+    Gradient g;
+    if (fn.compare(0, 10, "repeating-") == 0) { g.repeating = true; fn = fn.substr(10); }
+    if (fn.compare(0, 8, "-webkit-") == 0) return false;   // the old prefixed syntax counts angles the other way: not read
+    if (fn == "radial-gradient") g.radial = true;
+    else if (fn != "linear-gradient") return false;
+    g.posX.unit = g.posY.unit = Length::Percent; g.posX.value = g.posY.value = 50.0f;
+    const std::vector<std::vector<std::string>> groups = CommaGroups(Words(t.substr(open + 1, t.size() - open - 2)));
+    if (groups.empty() || groups.size() > 256) return false;
+    std::size_t first = 0;
+    // the first group: the direction (linear) or shape, size and centre (radial), unless it is already a colour stop
+    const std::vector<std::string>& g0 = groups[0];
+    Color probe;
+    if (!g0.empty() && !ParseColor(g0[0], probe)) {
+        first = 1;
+        if (!g.radial) {
+            if (LowerAscii(g0[0]) == "to") {
+                if (g0.size() < 2 || g0.size() > 3) return false;
+                int cx = 0, cy = 0;
+                for (std::size_t k = 1; k < g0.size(); ++k) {
+                    const std::string lw = LowerAscii(g0[k]);
+                    if (lw == "left" && cx == 0) cx = -1;
+                    else if (lw == "right" && cx == 0) cx = 1;
+                    else if (lw == "top" && cy == 0) cy = -1;
+                    else if (lw == "bottom" && cy == 0) cy = 1;
+                    else return false;
+                }
+                if (cx != 0 && cy != 0) { g.cornerX = cx; g.cornerY = cy; }
+                else g.angle = cx < 0 ? 270.0f : cx > 0 ? 90.0f : cy < 0 ? 0.0f : 180.0f;
+            } else {
+                if (g0.size() != 1 || !ParseAngle(g0[0], g.angle)) return false;
+            }
+        } else {
+            std::size_t k = 0;
+            bool shapeSet = false, sizeSet = false;
+            std::vector<Length> sizes;
+            for (; k < g0.size(); ++k) {
+                const std::string lw = LowerAscii(g0[k]);
+                if (lw == "at") break;
+                if (lw == "circle" || lw == "ellipse") { if (shapeSet) return false; shapeSet = true; g.circle = lw == "circle"; continue; }
+                struct K { const char* k; Gradient::Size s; };
+                static const K keys[] = {{"closest-side", Gradient::ClosestSide}, {"farthest-side", Gradient::FarthestSide},
+                                         {"closest-corner", Gradient::ClosestCorner}, {"farthest-corner", Gradient::FarthestCorner}};
+                bool kw = false;
+                for (const K& key : keys) if (lw == key.k) { if (sizeSet) return false; g.size = key.s; sizeSet = kw = true; }
+                if (kw) continue;
+                Length l;
+                if (ParseLength(g0[k], em, true, l) && l.value >= 0 && sizes.size() < 2) { sizes.push_back(l); continue; }
+                return false;
+            }
+            if (!sizes.empty()) {
+                if (sizeSet) return false;
+                g.size = Gradient::Explicit;
+                if (sizes.size() == 1) {   // one length: a circle (a percentage is not allowed for a circle)
+                    if (sizes[0].unit == Length::Percent || (shapeSet && !g.circle)) return false;
+                    g.circle = true; g.rx = g.ry = sizes[0];
+                } else {
+                    if (shapeSet && g.circle) return false;
+                    g.circle = false; g.rx = sizes[0]; g.ry = sizes[1];
+                }
+            } else if (!shapeSet) g.circle = false;
+            if (k < g0.size()) {
+                const std::vector<std::string> pos(g0.begin() + (std::ptrdiff_t)k + 1, g0.end());
+                if (!ParsePosition(pos, em, g.posX, g.posY)) return false;
+            }
+        }
+    }
+    // the colour stops: <color> [<length-percentage> [<length-percentage>]]; a hint (a lone length) is skipped (simplified)
+    for (std::size_t gi = first; gi < groups.size(); ++gi) {
+        const std::vector<std::string>& w = groups[gi];
+        if (w.empty() || w.size() > 3) return false;
+        GradientStop st;
+        std::size_t k = 0;
+        Length l;
+        if (w.size() == 1 && ParseLength(w[0], em, true, l)) continue;   // a colour hint
+        if (!ParseColor(w[0], st.color)) {
+            if (LowerAscii(w[0]) == "transparent") st.color = Color{0, 0, 0, 0}; else return false;
+        }
+        for (k = 1; k < w.size(); ++k) {
+            if (!ParseLength(w[k], em, true, l)) return false;
+            st.pos = l;
+            g.stops.push_back(st);   // a second position: the same colour again
+        }
+        if (w.size() == 1) g.stops.push_back(st);
+    }
+    if (g.stops.size() < 2 || g.stops.size() > 256) return false;
+    out = std::move(g);
+    return true;
+}
+
+namespace {
+
+// The stop positions on a gradient line `len` px long, as fractions, fixed up as CSS Images 3, 3.5.3 says: the first and last
+// default to 0 and 1, a position before an earlier one moves up to it, the ones in between without a position are spaced evenly.
+std::vector<float> StopFractions(const Gradient& g, float len) {
+    const std::size_t n = g.stops.size();
+    std::vector<float> f(n, 0.0f);
+    std::vector<bool> set(n, false);
+    for (std::size_t i = 0; i < n; ++i) {
+        const Length& p = g.stops[i].pos;
+        if (p.IsSet()) { f[i] = len > 0 ? p.Resolve(len) / len : (p.unit == Length::Percent ? p.value / 100.0f : 0.0f); set[i] = true; }
+    }
+    if (!set[0]) { f[0] = 0.0f; set[0] = true; }
+    if (!set[n - 1]) { f[n - 1] = 1.0f; set[n - 1] = true; }
+    float hi = f[0];
+    for (std::size_t i = 0; i < n; ++i) if (set[i]) { if (f[i] < hi) f[i] = hi; hi = f[i]; }
+    for (std::size_t i = 1; i < n;) {
+        if (set[i]) { ++i; continue; }
+        std::size_t j = i;
+        while (!set[j]) ++j;   // the last is set
+        const float a = f[i - 1], b = f[j];
+        for (std::size_t k = i; k < j; ++k) f[k] = a + (b - a) * (float)(k - i + 1) / (float)(j - i + 1);
+        i = j;
+    }
+    return f;
+}
+
+Color Mix(const Color& a, const Color& b, float t) {
+    // premultiplied: a transparent stop does not darken its neighbour (CSS Images 3, 3.5.3 "premultiplied")
+    const float aa = a.a / 255.0f, ba = b.a / 255.0f;
+    const float oa = aa + (ba - aa) * t;
+    Color c;
+    if (oa <= 0.0f) return Color{0, 0, 0, 0};
+    auto ch = [&](std::uint8_t x, std::uint8_t y) {
+        const float v = ((float)x * aa + ((float)y * ba - (float)x * aa) * t) / oa;
+        return (std::uint8_t)std::lround(std::max(0.0f, std::min(255.0f, v)));
+    };
+    c.r = ch(a.r, b.r); c.g = ch(a.g, b.g); c.b = ch(a.b, b.b);
+    c.a = (std::uint8_t)std::lround(std::max(0.0f, std::min(1.0f, oa)) * 255.0f);
+    return c;
+}
+
+} // namespace
+
+Color GradientColorAt(const Gradient& g, float w, float h, float px, float py) {
+    if (g.stops.empty()) return Color{0, 0, 0, 0};
+    float t = 0.0f, len = 1.0f;   // where (px, py) is on the gradient line, in px, and the line's length
+    if (!g.radial) {
+        float deg = g.angle;
+        if (g.cornerX != 0 || g.cornerY != 0) {
+            // toward a corner: the angle that makes the 50% line pass through the two other corners (3.1.1)
+            // "to top right" in a w x h box: the gradient line is at right angles to the diagonal from the top left to the
+            // bottom right corner, so its direction (sin a, -cos a) is (h, -w) / |(w, h)|
+            const float a = std::atan2(h, w) * 57.29577951f;
+            if (g.cornerY < 0) deg = g.cornerX > 0 ? a : 360.0f - a;
+            else deg = g.cornerX > 0 ? 180.0f - a : 180.0f + a;
+        }
+        const float rad = deg * 0.01745329252f;
+        const float dx = std::sin(rad), dy = -std::cos(rad);
+        len = std::fabs(w * dx) + std::fabs(h * dy);   // the gradient line's length (3.1.1)
+        t = (px - w * 0.5f) * dx + (py - h * 0.5f) * dy + len * 0.5f;
+    } else {
+        const float cx = g.posX.Resolve(w), cy = g.posY.Resolve(h);
+        const float l = cx, rr = w - cx, tp = cy, bt = h - cy;
+        float rx = 0, ry = 0;
+        const float sx = std::min(std::fabs(l), std::fabs(rr)), sy = std::min(std::fabs(tp), std::fabs(bt));
+        const float fx = std::max(std::fabs(l), std::fabs(rr)), fy = std::max(std::fabs(tp), std::fabs(bt));
+        switch (g.size) {
+        case Gradient::ClosestSide: if (g.circle) rx = ry = std::min(sx, sy); else { rx = sx; ry = sy; } break;
+        case Gradient::FarthestSide: if (g.circle) rx = ry = std::max(fx, fy); else { rx = fx; ry = fy; } break;
+        case Gradient::ClosestCorner:
+        case Gradient::FarthestCorner: {
+            const float cxr = g.size == Gradient::ClosestCorner ? sx : fx, cyr = g.size == Gradient::ClosestCorner ? sy : fy;
+            if (g.circle) rx = ry = std::sqrt(cxr * cxr + cyr * cyr);
+            else { rx = cxr * 1.41421356f; ry = cyr * 1.41421356f; }   // same aspect as the sides, through the corner (3.2.2)
+            break;
+        }
+        case Gradient::Explicit: rx = g.rx.Resolve(w); ry = g.circle ? rx : g.ry.Resolve(h); break;
+        }
+        len = std::max(rx, 1e-3f);
+        const float ex = px - cx, ey = (py - cy) * (ry > 1e-3f ? rx / ry : 1.0f);
+        t = std::sqrt(ex * ex + ey * ey);
+    }
+    if (!std::isfinite(t) || !std::isfinite(len)) return g.stops[0].color;
+    const std::vector<float> f = StopFractions(g, len);
+    float u = len > 0 ? t / len : 0.0f;
+    if (g.repeating) {
+        const float a = f.front(), b = f.back();
+        if (b - a > 1e-6f) u = a + std::fmod(std::fmod(u - a, b - a) + (b - a), b - a);
+        else return g.stops.back().color;
+    }
+    if (u <= f.front()) return g.stops.front().color;
+    if (u >= f.back()) return g.stops.back().color;
+    for (std::size_t i = 1; i < f.size(); ++i) {
+        if (u <= f[i]) {
+            const float span = f[i] - f[i - 1];
+            return span <= 1e-6f ? g.stops[i].color : Mix(g.stops[i - 1].color, g.stops[i].color, (u - f[i - 1]) / span);
+        }
+    }
+    return g.stops.back().color;
+}
+
+// ---- transforms (CSS Transforms 1) -----------------------------------------------------------------------------------------
+
+Transform2D Transform2D::Then(const Transform2D& o) const {
+    Transform2D r;
+    r.a = o.a * a + o.c * b;  r.b = o.b * a + o.d * b;
+    r.c = o.a * c + o.c * d;  r.d = o.b * c + o.d * d;
+    r.e = o.a * e + o.c * f + o.e;  r.f = o.b * e + o.d * f + o.f;
+    return r;
+}
+
+bool ParseTransform(const std::string& text, float em, float boxW, float boxH, Transform2D& out) {
+    const std::vector<std::string> fns = Words(text);
+    if (fns.empty() || fns.size() > 32) return false;
+    if (fns.size() == 1 && LowerAscii(fns[0]) == "none") return false;
+    // the functions apply right to left to the box: "translate(10px) rotate(30deg)" rotates, then moves (CSS Transforms 1, 6)
+    Transform2D m;
+    for (std::size_t i = fns.size(); i-- > 0;) {
+        const std::string& f = fns[i];
+        const std::size_t open = f.find('(');
+        if (open == std::string::npos || f.back() != ')') return false;
+        const std::string name = LowerAscii(f.substr(0, open));
+        std::vector<std::string> args;
+        for (const std::vector<std::string>& g : CommaGroups(Words(f.substr(open + 1, f.size() - open - 2)))) for (const std::string& a : g) args.push_back(a);
+        if (args.empty() || args.size() > 6) return false;
+        Transform2D t;
+        auto len = [&](const std::string& a, float base, float& v) {
+            Length l;
+            if (!ParseLength(a, em, true, l)) return false;
+            v = l.Resolve(base);
+            return std::isfinite(v);
+        };
+        auto num = [&](const std::string& a, float& v) {
+            std::string u;
+            if (!ParseNumber(a, v, u)) return false;
+            if (u == "%") v /= 100.0f; else if (!u.empty()) return false;
+            return true;
+        };
+        if (name == "translate" || name == "translatex" || name == "translatey") {
+            float x = 0, y = 0;
+            if (name == "translatey") { if (args.size() != 1 || !len(args[0], boxH, y)) return false; }
+            else {
+                if (args.size() > 2 || !len(args[0], boxW, x)) return false;
+                if (name == "translate" && args.size() == 2 && !len(args[1], boxH, y)) return false;
+                if (name == "translatex" && args.size() != 1) return false;
+            }
+            t.e = x; t.f = y;
+        } else if (name == "scale" || name == "scalex" || name == "scaley") {
+            float x = 1, y = 1;
+            if (args.size() > 2 || !num(args[0], name == "scaley" ? y : x)) return false;
+            if (name == "scale") y = args.size() == 2 ? 0.0f : x;
+            if (name == "scale" && args.size() == 2 && !num(args[1], y)) return false;
+            t.a = x; t.d = y;
+        } else if (name == "rotate" || name == "skew" || name == "skewx" || name == "skewy") {
+            float ax = 0, ay = 0;
+            if (!ParseAngle(args[0], ax)) return false;
+            if (name == "skew" && args.size() == 2 && !ParseAngle(args[1], ay)) return false;
+            if (args.size() > (name == "skew" ? 2u : 1u)) return false;
+            if (name == "rotate") {
+                const float r = ax * 0.01745329252f;
+                t.a = std::cos(r); t.b = std::sin(r); t.c = -std::sin(r); t.d = std::cos(r);
+            } else {
+                if (name == "skewy") { ay = ax; ax = 0; }
+                t.c = std::tan(ax * 0.01745329252f); t.b = std::tan(ay * 0.01745329252f);
+            }
+        } else if (name == "matrix") {
+            if (args.size() != 6) return false;
+            float v[6];
+            for (int k = 0; k < 6; ++k) if (!num(args[(std::size_t)k], v[k])) return false;
+            t.a = v[0]; t.b = v[1]; t.c = v[2]; t.d = v[3]; t.e = v[4]; t.f = v[5];
+        } else return false;
+        m = m.Then(t);
+    }
+    const float vals[6] = {m.a, m.b, m.c, m.d, m.e, m.f};
+    for (float v : vals) if (!std::isfinite(v) || std::fabs(v) > 1e6f) return false;
+    out = m;
+    return true;
+}
+
+bool ListStyleFromName(const std::string& name, ListStyle& out) { return ListStyleWord(LowerAscii(Trim(name)), out); }
+
+// ---- counter styles (CSS 2.1 12.6.2, CSS Counter Styles 3 section 6) ------------------------------------------------------
+
+std::string CounterText(int n, ListStyle ls) {
+    switch (ls) {
+    case ListStyle::None: return std::string();
+    case ListStyle::Disc: return "\xE2\x80\xA2";     // U+2022
+    case ListStyle::Circle: return "\xE2\x97\xA6";   // U+25E6
+    case ListStyle::Square: return "\xE2\x96\xAA";   // U+25AA
+    case ListStyle::Decimal: return std::to_string(n);
+    case ListStyle::DecimalLeadingZero: return n >= 0 && n < 10 ? "0" + std::to_string(n) : n < 0 && n > -10 ? "-0" + std::to_string(-n) : std::to_string(n);
+    case ListStyle::LowerRoman:
+    case ListStyle::UpperRoman: {
+        // additive: 1 to 3999, else decimal
+        if (n <= 0 || n >= 4000) return std::to_string(n);
+        static const int vals[] = {1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1};
+        static const char* syms[] = {"m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"};
+        std::string out;
+        for (int k = 0; k < 13; ++k) while (n >= vals[k]) { out += syms[k]; n -= vals[k]; }
+        if (ls == ListStyle::UpperRoman) for (char& c : out) c = (char)(c - 'a' + 'A');
+        return out;
+    }
+    case ListStyle::LowerAlpha:
+    case ListStyle::UpperAlpha: {
+        // alphabetic: a..z, aa, ab ... (no zero); 0 and below: decimal
+        if (n <= 0) return std::to_string(n);
+        std::string out;
+        while (n > 0) { --n; out.insert(out.begin(), (char)((ls == ListStyle::UpperAlpha ? 'A' : 'a') + n % 26)); n /= 26; }
+        return out;
+    }
+    case ListStyle::LowerGreek: {
+        // alphabetic over the 24 lower-case Greek letters (U+03B1 to U+03C9 without final sigma U+03C2)
+        if (n <= 0) return std::to_string(n);
+        std::vector<unsigned> digits;
+        while (n > 0 && digits.size() < 16) { --n; digits.push_back((unsigned)(n % 24)); n /= 24; }
+        std::string out;
+        for (std::size_t k = digits.size(); k-- > 0;) {
+            unsigned cp = 0x03B1u + digits[k];
+            if (cp >= 0x03C2u) ++cp;   // skip final sigma
+            out += (char)(0xC0 | (cp >> 6));
+            out += (char)(0x80 | (cp & 0x3F));
+        }
+        return out;
+    }
+    }
+    return std::to_string(n);
 }
 
 } // namespace okay::browser

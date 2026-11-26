@@ -780,6 +780,16 @@ int main() {
         fs::create_directories(okayver::VersionsDir(launcher) / "notes");
         CHECK(CleanStale(launcher) == 1 && NoScratch(launcher) && fs::exists(okayver::VersionsDir(launcher) / "notes") && Complete(launcher, "2.850.1"));
         CHECK(CleanStale(t.path / "no such launcher") == 0);
+        // A scratch folder something is still being written into (the update's KeepCurrent on its own thread, an install) is not "stale": the
+        // page's start-up clean-up must leave it (owner, 2026-11-26: the installed list was empty after updates). One untouched for an hour goes.
+        {
+            const fs::path busyDir = okayver::VersionsDir(launcher) / ".partial-2.9.9-2";
+            Put(busyDir / "Tools" / "OkayEngine.exe.part", "being copied");
+            CHECK(CleanStale(launcher, std::chrono::minutes(15)) == 0 && fs::exists(busyDir));
+            const auto old = fs::file_time_type::clock::now() - std::chrono::hours(1);
+            for (const fs::path& p : {busyDir / "Tools" / "OkayEngine.exe.part", busyDir / "Tools", busyDir}) fs::last_write_time(p, old);
+            CHECK(CleanStale(launcher, std::chrono::minutes(15)) == 1 && !fs::exists(busyDir) && Complete(launcher, "2.850.1"));
+        }
         // Paths with spaces and unicode all the way (the launcher folder has both).
         CHECK(launcher.string().find(' ') != std::string::npos && launcher.string().find("\xC3\xA4") != std::string::npos);
     }
@@ -1346,6 +1356,52 @@ int main() {
         pl = PlanInstall(rel, dev, "2.903.7", bucket, fs::path(), false);                  // a release still comes from the releases list
         CHECK(pl.ok && pl.files[0].urls[0] == bucket + "v2.903.7/OkayEngine.exe");
         CHECK(!PlanInstall(dev, dev, "2.903.7", bucket, fs::path(), false).ok);           // the test builds' list can never plan a release
+
+        // The whole store with test builds, on a temp launcher folder (owner, 2026-11-26: "glitched where you manage what you have installed and
+        // uninstall"): install one from dev/, it is listed with its size and "installed"; keeping the running test build on an update; pruning
+        // removes only kept copies; Remove takes exactly that folder, refuses the running one and one in use, and the list follows.
+        {
+            TempDir tt;
+            const fs::path launcher = MakeLauncher(tt.path, "2.903.8.115");
+            Server srv;
+            for (const std::string v : {"2.903.8.114", "2.903.8.113"})
+                for (const char* f : {"OkayEngine.exe", "OkaySpacePlayer.exe"}) srv.files[kBucket + std::string("dev/v") + v + "/" + f] = Body(v, f);
+            const Index devList = ParseIndex(IndexJson({EntryJson("2.903.8.115", "", true), EntryJson("2.903.8.114", "", true), EntryJson("2.903.8.113", "", true)}, "", ""), IndexKind::TestBuilds);
+            const Index noReleases = ParseIndex(IndexJson({EntryJson("2.903.8", "latest", true)}, "2.903.8", ""));
+            CHECK(devList.ok && devList.versions.size() == 3 && noReleases.ok);
+            const InstallPlan tp = PlanInstall(noReleases, devList, "2.903.8.114", kBucket, launcher / "Tools" / "SDL2.dll", true);
+            CHECK(tp.ok && tp.files.size() == 3 && tp.files[0].urls.size() == 1 && tp.files[0].urls[0] == kBucket + std::string("dev/v2.903.8.114/OkayEngine.exe"));
+            Result ir = Install(launcher, tp, {}, MakeIO(srv));
+            CHECK(ir.outcome == Outcome::Installed && Complete(launcher, "2.903.8.114") && NoScratch(launcher) && NoPartFiles(launcher));
+            std::vector<Installed> li = ListInstalled(launcher);
+            CHECK(li.size() == 1 && li[0].version == "2.903.8.114" && li[0].source == "installed" && li[0].bytes > 0 && DiskUsage(launcher) >= li[0].bytes);
+            // A failed test-build install (the player is not on the server) leaves no folder and nothing listed.
+            srv.files.erase(kBucket + std::string("dev/v2.903.8.113/OkaySpacePlayer.exe"));
+            ir = Install(launcher, PlanInstall(noReleases, devList, "2.903.8.113", kBucket, launcher / "Tools" / "SDL2.dll", true), {}, MakeIO(srv));
+            CHECK(ir.outcome == Outcome::Failed && !fs::exists(okayver::VersionsDir(launcher) / "2.903.8.113") && NoScratch(launcher) && ListInstalled(launcher).size() == 1);
+            // The update from 115 keeps 115 (a test build has a version to keep), and pruning with "keep 1" never takes what the person installed.
+            const Result kr = KeepCurrent(launcher, "2.903.8.115", FindCurrentInstall(launcher), 1, true);
+            CHECK(kr.outcome == Outcome::Installed && okayver::IsInstalled(launcher, "2.903.8.115"));
+            li = ListInstalled(launcher);
+            CHECK(li.size() == 2 && li[0].version == "2.903.8.115" && li[0].source == "kept" && li[1].source == "installed");
+            CHECK(PlanPrune(li, 0, "", {}) == std::vector<std::string>{"2.903.8.115"});            // keep 0: only the kept copy is a candidate
+            CHECK(PlanPrune(li, 1, "", {}).empty());
+            // Remove: refused for the running version and one in use; otherwise exactly that folder goes and the list follows.
+            RemoveGuards g;
+            g.running = "2.903.8.115";
+            CHECK(Remove(launcher, "2.903.8.115", g).outcome == Outcome::Refused && okayver::IsInstalled(launcher, "2.903.8.115"));
+            g.inUse = [](const std::string& v) { return v == "2.903.8.114"; };
+            CHECK(Remove(launcher, "2.903.8.114", g).outcome == Outcome::Refused && okayver::IsInstalled(launcher, "2.903.8.114"));
+            g.inUse = nullptr;
+            const auto toolsSnap = Snapshot(launcher / "Tools");
+            const Result rr = Remove(launcher, "2.903.8.114", g);
+            CHECK(rr.outcome == Outcome::Removed && !fs::exists(okayver::VersionsDir(launcher) / "2.903.8.114") && NoScratch(launcher));
+            CHECK(Snapshot(launcher / "Tools") == toolsSnap && okayver::IsInstalled(launcher, "2.903.8.115") && ListInstalled(launcher).size() == 1);
+            // "Open with" that version: the kept editor's path and the arguments.
+            CHECK(okayver::InstalledEditorPath(launcher, "2.903.8.115") == okayver::VersionsDir(launcher) / "2.903.8.115" / "Tools" / okayver::EditorExeName());
+            const auto choices = OpenWithChoices("2.903.8.114", okayver::InstalledVersions(launcher), "2.903.8.116");
+            CHECK(choices.size() == 1 && choices[0].version == "2.903.8.115" && choices[0].sameLine);
+        }
 
         // Only the newest 3 releases and the newest 3 test builds are offered and installed (owner, 2026-11-26); installed ones stay installed.
         {

@@ -18,6 +18,7 @@
 //  * A download is only ever run (moved into place) after its size and SHA-256 match versions.json. Without a checksum
 //    (no index) the size must match the server's and the person must confirm.
 //  * Nothing here touches a project folder, and nothing writes outside <launcher dir>/Versions.
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -286,8 +287,10 @@ std::vector<Installed> ListInstalled(const fs::path& launcherDir);
 std::uint64_t DiskUsage(const fs::path& launcherDir);
 /// The sum of every file under `dir` (0 when it is not there); stops counting after 200000 entries.
 std::uint64_t DirectorySize(const fs::path& dir);
-/// Remove scratch folders (.partial-*, .removing-*) left by a crash or a failed delete. Returns how many were removed.
-int CleanStale(const fs::path& launcherDir);
+/// Remove scratch folders (.partial-*, .removing-*) left by a crash or a failed delete. Returns how many were removed. A .partial- folder in
+/// which something was written less than `busyFor` ago is left alone: it may be an install, or the update's copy of the current editor
+/// (KeepCurrent, on the update thread), still at work (the page's start-up clean-up used to delete those, and the kept copy never appeared).
+int CleanStale(const fs::path& launcherDir, std::chrono::seconds busyFor = std::chrono::seconds(0));
 
 struct RemoveGuards {
     std::string running;                 ///< the version of the editor/launcher in use (the one in Tools/): never removed

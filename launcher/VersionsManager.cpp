@@ -818,12 +818,24 @@ std::vector<Installed> ListInstalled(const fs::path& launcherDir) {
     return out;
 }
 
-int CleanStale(const fs::path& launcherDir) {
+int CleanStale(const fs::path& launcherDir, std::chrono::seconds busyFor) {
     int removed = 0;
     std::error_code ec;
     std::vector<fs::path> stale;
+    const fs::file_time_type now = fs::file_time_type::clock::now();
+    auto busy = [&](const fs::path& dir) {                         // anything in it (the folder itself included) written within `busyFor`
+        if (busyFor.count() <= 0) return false;
+        std::error_code e;
+        auto recent = [&](const fs::path& p) { const auto t = fs::last_write_time(p, e); return !e && now - t < busyFor; };
+        if (recent(dir)) return true;
+        int n = 0;
+        for (fs::recursive_directory_iterator it(dir, e), end; !e && it != end && n < 1000; it.increment(e), ++n)
+            if (recent(it->path())) return true;
+        return false;
+    };
     for (fs::directory_iterator it(VersionsRoot(launcherDir), ec), end; !ec && it != end; it.increment(ec)) {
         const std::string name = it->path().filename().string();
+        if (name.rfind(".partial-", 0) == 0 && busy(it->path())) continue;
         if (name.rfind(".partial-", 0) == 0 || name.rfind(".removing-", 0) == 0) stale.push_back(it->path());
     }
     for (const fs::path& p : stale) {

@@ -321,7 +321,7 @@ void DrawThisVersion(const Host& h) {
 
     ImGui::SetCursorScreenPos(ImVec2(p0.x + W - b2 - gap - b1, p0.y + (rowH - bh) * 0.5f));
     ImGui::BeginDisabled(busy);
-    if (ImGui::Button(checkLbl, ImVec2(b1, bh))) StartIndex(h);
+    if (ImGui::Button(checkLbl, ImVec2(b1, bh))) { StartIndex(h); st.installedDirty = true; }   // the lists, and what is in the Versions folder now
     ImGui::EndDisabled();
     ImGui::SameLine(0, gap);
     if (ImGui::Button("Open install folder", ImVec2(b2, bh))) {
@@ -469,11 +469,13 @@ struct Row {
     float width = 0, height = 58.0f;
     ImDrawList* dl = nullptr;
 };
+/// `height` and every offset inside a row are pixels at UI scale 1: they grow with Settings > Appearance > UI scale (okl::UiPx), as the text does,
+/// so the title, the detail line and the buttons never overlap at a bigger scale.
 Row RowBegin(float height = 58.0f) {
     Row r;
     r.p0 = ImGui::GetCursorScreenPos();
     r.width = ImGui::GetContentRegionAvail().x;
-    r.height = height;
+    r.height = okl::UiPx(height);
     r.dl = ImGui::GetWindowDrawList();
     return r;
 }
@@ -496,12 +498,13 @@ float RowTitle(const Host& h, const Row& r, const std::string& version, bool lat
     State& st = S();
     (void)st;
     const std::string title = V(version);
-    DrawTextAt(r.dl, ImVec2(r.p0.x, r.p0.y + 7), title.c_str(), ImGui::GetColorU32(ImGuiCol_Text), 1.14f);
-    float x = r.p0.x + TextWidth(title.c_str(), 1.14f) + 10.0f;
+    DrawTextAt(r.dl, ImVec2(r.p0.x, r.p0.y + okl::UiPx(7)), title.c_str(), ImGui::GetColorU32(ImGuiCol_Text), 1.14f);
+    float x = r.p0.x + TextWidth(title.c_str(), 1.14f) + okl::UiPx(10.0f);
     const ImU32 fg = ImGui::GetColorU32(ImGuiCol_Text);
-    if (latest) x += DrawPill(r.dl, ImVec2(x, r.p0.y + 9), "Latest", Tint(h.accent, 0.32f), fg) + 6.0f;
-    if (lts) x += DrawPill(r.dl, ImVec2(x, r.p0.y + 9), "LTS", okaytheme::SuccessFillU32(0.353f), fg) + 6.0f;
-    if (isDefault) x += DrawPill(r.dl, ImVec2(x, r.p0.y + 9), "Default editor", okaytheme::Ink(30), fg) + 6.0f;
+    const float py = r.p0.y + okl::UiPx(9);
+    if (latest) x += DrawPill(r.dl, ImVec2(x, py), "Latest", Tint(h.accent, 0.32f), fg) + okl::UiPx(6.0f);
+    if (lts) x += DrawPill(r.dl, ImVec2(x, py), "LTS", okaytheme::SuccessFillU32(0.353f), fg) + okl::UiPx(6.0f);
+    if (isDefault) x += DrawPill(r.dl, ImVec2(x, py), "Default editor", okaytheme::Ink(30), fg) + okl::UiPx(6.0f);
     return x;
 }
 
@@ -527,16 +530,19 @@ void DrawInstalled(const Host& h) {
         std::string sub = in.source == "kept" ? "Kept when the launcher updated" : in.source == "installed" ? "Installed by you" : "Put here by hand";
         if (!in.date.empty()) sub += "  \xC2\xB7  " + in.date;
         if (lts) sub += "  \xC2\xB7  only gets fixes";
-        const float btnW = 120.0f + 8.0f + 96.0f, sizeW = 92.0f;
-        DrawTextAt(r.dl, ImVec2(r.p0.x, r.p0.y + 33), Fit(sub, r.width - btnW - sizeW - 24.0f).c_str(), ImGui::GetColorU32(ImGuiCol_TextDisabled));
+        // The two buttons sized to their labels at the UI scale; the size and the detail line get what is left (they overlapped the buttons at a big scale).
+        const float b1 = okl::FitButtonW("Make default", okl::UiPx(120.0f)), b2 = okl::FitButtonW("Remove", okl::UiPx(96.0f)), gap = okl::UiPx(8.0f);
+        const float btnW = b1 + gap + b2, bh = okl::UiPx(30.0f);
         const std::string size = HumanSize(in.bytes);
-        DrawTextAt(r.dl, ImVec2(r.p0.x + r.width - btnW - 14.0f - TextWidth(size.c_str()), r.p0.y + 19), size.c_str(), ImGui::GetColorU32(ImGuiCol_TextDisabled));
-        ImGui::SetCursorScreenPos(ImVec2(r.p0.x + r.width - btnW, r.p0.y + 14));
+        const float sizeW = TextWidth(size.c_str());
+        DrawTextAt(r.dl, ImVec2(r.p0.x, r.p0.y + okl::UiPx(33)), Fit(sub, r.width - btnW - sizeW - okl::UiPx(28.0f)).c_str(), ImGui::GetColorU32(ImGuiCol_TextDisabled));
+        DrawTextAt(r.dl, ImVec2(r.p0.x + r.width - btnW - okl::UiPx(14.0f) - sizeW, r.p0.y + (r.height - ImGui::GetTextLineHeight()) * 0.5f), size.c_str(), ImGui::GetColorU32(ImGuiCol_TextDisabled));
+        ImGui::SetCursorScreenPos(ImVec2(r.p0.x + r.width - btnW, r.p0.y + (r.height - bh) * 0.5f));
         ImGui::BeginDisabled(isDefault);
-        if (ImGui::Button(isDefault ? "Default" : "Make default", ImVec2(120, 30))) { set.defaultEditor = in.version; if (h.savePrefs) h.savePrefs(); Toast(h, V(in.version) + " is now your default editor.", 1); }
+        if (ImGui::Button(isDefault ? "Default" : "Make default", ImVec2(b1, bh))) { set.defaultEditor = in.version; if (h.savePrefs) h.savePrefs(); Toast(h, V(in.version) + " is now your default editor.", 1); }
         ImGui::EndDisabled();
-        ImGui::SameLine(0, 8);
-        if (DangerButton("Remove", ImVec2(okl::FitButtonW("Remove", okl::UiPx(96.0f)), okl::UiPx(30.0f)))) st.removeAsk = in.version;
+        ImGui::SameLine(0, gap);
+        if (DangerButton("Remove", ImVec2(b2, bh))) st.removeAsk = in.version;
         RowEnd(r, &in != &st.installed.back());
         ImGui::PopID();
     }
@@ -617,7 +623,8 @@ void DrawAvailable(const Host& h) {
             const bool test = rows[i].testBuild;
             const bool lts = !test && e.version == st.index.lts, latest = !test && e.version == st.index.latest;
             RowTitle(h, r, e.version, latest, lts, false);
-            const float rightW = mine ? 330.0f : 130.0f;
+            const float cancelW = okl::FitButtonW("Cancel", okl::UiPx(84.0f)), installW = okl::FitButtonW("Install", okl::UiPx(120.0f));
+            const float rightW = mine ? okl::UiPx(230.0f) + cancelW + okl::UiPx(16.0f) : installW + okl::UiPx(10.0f);
             std::string sub = rows[i].detail;
             if (mine) {
                 std::string file;
@@ -626,30 +633,30 @@ void DrawAvailable(const Host& h) {
                 okay::thr::UnlockMutex(st.job->mu);
                 sub = st.job->cancel ? std::string("Cancelling\xE2\x80\xA6") : "Downloading " + file + " (" + std::to_string(st.job->fileIndex.load()) + " of " + std::to_string(st.job->fileCount.load()) + ")";
             }
-            DrawTextAt(r.dl, ImVec2(r.p0.x, r.p0.y + 33), Fit(sub, r.width - rightW - 16.0f).c_str(), ImGui::GetColorU32(ImGuiCol_TextDisabled));
+            DrawTextAt(r.dl, ImVec2(r.p0.x, r.p0.y + okl::UiPx(33)), Fit(sub, r.width - rightW - okl::UiPx(16.0f)).c_str(), ImGui::GetColorU32(ImGuiCol_TextDisabled));
             if (mine) {
                 const std::uint64_t done = st.job->doneBytes.load(), total = st.job->totalBytes.load();
-                const ImVec2 barPos(r.p0.x + r.width - rightW, r.p0.y + 17);
+                const ImVec2 barPos(r.p0.x + r.width - rightW, r.p0.y + okl::UiPx(17));
                 ImGui::SetCursorScreenPos(barPos);
                 char overlay[64];
                 if (total > 0) std::snprintf(overlay, sizeof(overlay), "%s / %s", HumanSize(std::min(done, total)).c_str(), HumanSize(total).c_str());
                 else std::snprintf(overlay, sizeof(overlay), "%s", HumanSize(done).c_str());
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram, h.accent);
-                ImGui::ProgressBar(total > 0 ? std::min(1.0f, (float)((double)done / (double)total)) : 0.0f, ImVec2(rightW - 100.0f, 24), overlay);
+                ImGui::ProgressBar(total > 0 ? std::min(1.0f, (float)((double)done / (double)total)) : 0.0f, ImVec2(okl::UiPx(230.0f), okl::UiPx(24.0f)), overlay);
                 ImGui::PopStyleColor();
-                ImGui::SetCursorScreenPos(ImVec2(barPos.x + rightW - 92.0f, barPos.y));
+                ImGui::SetCursorScreenPos(ImVec2(r.p0.x + r.width - cancelW, barPos.y));
                 ImGui::BeginDisabled(st.job->cancel.load());
-                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(84.0f)), okl::UiPx(24.0f)))) st.job->cancel = true;
+                if (ImGui::Button("Cancel", ImVec2(cancelW, okl::UiPx(24.0f)))) st.job->cancel = true;
                 ImGui::EndDisabled();
             } else {
-                ImGui::SetCursorScreenPos(ImVec2(r.p0.x + r.width - 120.0f, r.p0.y + 14));
+                ImGui::SetCursorScreenPos(ImVec2(r.p0.x + r.width - installW, r.p0.y + okl::UiPx(14)));
                 ImGui::BeginDisabled(st.job != nullptr || !rows[i].downloadable);   // (a version that is not in the bucket has nowhere to come from: GitHub is never used)
-                if (AccentButton(h, "Install", ImVec2(120, 30))) BeginInstall(h, e.version);
+                if (AccentButton(h, "Install", ImVec2(installW, okl::UiPx(30.0f)))) BeginInstall(h, e.version);
                 ImGui::EndDisabled();
             }
             if (hasNote) {
                 const bool bad = note->second.second == 2;
-                ImGui::SetCursorScreenPos(ImVec2(r.p0.x, r.p0.y + 56));
+                ImGui::SetCursorScreenPos(ImVec2(r.p0.x, r.p0.y + okl::UiPx(56)));
                 ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + r.width);
                 ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(bad ? kRed : kGreen), "%s", note->second.first.c_str());
                 ImGui::PopTextWrapPos();
@@ -730,7 +737,7 @@ void InvalidateInstalled() { S().installedDirty = true; }
 
 void Tick(const Host& h) {
     State& st = S();
-    if (!st.staleCleaned) { st.staleCleaned = true; CleanStale(h.launcherDir); }
+    if (!st.staleCleaned) { st.staleCleaned = true; CleanStale(h.launcherDir, std::chrono::minutes(15)); }   // (not a copy the update thread is still making)
     st.running = h.currentVersion;
     if (st.indexJob && st.indexJob->done) {
         okay::thr::WaitThread(st.indexJob->th, nullptr);

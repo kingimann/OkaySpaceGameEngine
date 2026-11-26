@@ -302,6 +302,7 @@ int main() {
             b.ForgetThumb(p.td.at("Art/rock.png"));
             CHECK(!b.Thumbs().InMemory(g1, 1));                           // (an unrelated key is simply absent)
             CHECK(Exists(p.td.path.generic_u8string() + "/.okay/thumbs"));
+            b.ThumbFrame(1000.0);   // a new frame: one prefab, scene or model picture is made per frame
             CHECK(b.Thumb(p.td.at("Art/hero.png")).ready && b.Thumb(p.td.at("Prefabs/hero.okayprefab")).ready);   // the pictures of the final state are on disk
         }
         {   // a new session (a new Browser): the pictures come from disk, nothing is rendered again
@@ -333,6 +334,74 @@ int main() {
             fs::remove(fs::u8path(p.td.at("Many/p0.png")));
             b.Sync();
             CHECK(b.PruneThumbs() >= 1);
+        }
+    }
+
+    // The owner's okay_editor_perf.log (2026-11-25): scene, prefab and model pictures are made by loading the asset into a scene of
+    // its own and rendering it, which can take far longer than the 10 ms budget, and a picture that could not be made was tried
+    // again every session. Work counts, not times, so the bounds hold on a loaded machine.
+    RUN_SUITE("thumbnails: one whole-scene picture a frame, none during a drag, one disk look per key, failures remembered");
+    {
+        TempDir td;
+        const int n = 8;
+        for (int i = 0; i < n; ++i)
+            WriteFile(td.at("Scenes/s" + std::to_string(i) + ".okayscene"), "scene \"S" + std::to_string(i) + "\"\ngameobject \"A\"\n");
+        for (int i = 0; i < n; ++i) WriteFile(td.at("Prefabs/p" + std::to_string(i) + ".okayprefab"), "gameobject \"P\"\n");
+        auto scene = [&](int i) { return td.at("Scenes/s" + std::to_string(i) + ".okayscene"); };
+        auto prefab = [&](int i) { return td.at("Prefabs/p" + std::to_string(i) + ".okayprefab"); };
+        int rendered = 0, failedRenders = 0;
+        {
+            Browser b(td.assets());
+            b.AddThumbGenerator({"okayscene"}, [&](const std::string&) { ++rendered; okay::Image im(16, 16); im.Fill(okay::Color(0, 1, 0, 1)); return im; });
+            b.AddThumbGenerator({"okayprefab"}, [&](const std::string&) { ++failedRenders; return okay::Image(); });   // "cannot draw this"
+            // A frame that asks for every tile (the panel does), with all the time in the world: still one whole-scene render.
+            b.ThumbFrame(100000.0);
+            int ready = 0;
+            for (int i = 0; i < n; ++i) ready += b.Thumb(scene(i)).ready ? 1 : 0;
+            for (int i = 0; i < n; ++i) b.Thumb(prefab(i));
+            CHECK(rendered == 1 && ready == 1 && failedRenders == 0 && b.ThumbHeavyThisFrame() == 1);
+            const std::size_t looks = b.Thumbs().GetStats().diskChecks;
+            CHECK(looks == (std::size_t)(2 * n));   // the first frame looks once per key
+            // A mouse button held (a drag): no whole-scene render at all, and the waiting tiles cost no file-system call.
+            for (int frame = 0; frame < 5; ++frame) {
+                b.ThumbFrame(100000.0, /*allowHeavy=*/false);
+                for (int i = 0; i < n; ++i) b.Thumb(scene(i));
+                for (int i = 0; i < n; ++i) b.Thumb(prefab(i));
+            }
+            CHECK(rendered == 1 && failedRenders == 0);
+            CHECK(b.Thumbs().GetStats().diskChecks == looks);
+            // Released: one a frame until all are made.
+            for (int frame = 0; frame < 4 * n; ++frame) {
+                b.ThumbFrame(100000.0);
+                for (int i = 0; i < n; ++i) b.Thumb(scene(i));
+                for (int i = 0; i < n; ++i) b.Thumb(prefab(i));
+                CHECK(b.ThumbHeavyThisFrame() <= 1);
+            }
+            ready = 0;
+            for (int i = 0; i < n; ++i) ready += b.Thumb(scene(i)).ready ? 1 : 0;
+            CHECK(ready == n && rendered == n && failedRenders == n);
+            CHECK(b.Thumbs().GetStats().diskChecks == looks);
+        }
+        {   // The next session: the pictures come from disk and the failed renders are not tried again.
+            Browser b(td.assets());
+            int again = 0;
+            b.AddThumbGenerator({"okayscene", "okayprefab"}, [&](const std::string&) { ++again; return okay::Image(); });
+            for (int frame = 0; frame < 4; ++frame) {
+                b.ThumbFrame(100000.0);
+                for (int i = 0; i < n; ++i) b.Thumb(scene(i));
+                for (int i = 0; i < n; ++i) b.Thumb(prefab(i));
+            }
+            int ready = 0, failed = 0;
+            for (int i = 0; i < n; ++i) ready += b.Thumb(scene(i)).ready ? 1 : 0;
+            for (int i = 0; i < n; ++i) failed += b.Thumb(prefab(i)).failed ? 1 : 0;
+            CHECK(again == 0 && ready == n && failed == n);
+            CHECK(b.Thumbs().GetStats().failuresRemembered == (std::size_t)n);
+            // A changed prefab has a new key: it is tried again.
+            WriteFile(prefab(0), "gameobject \"P2\"\n");
+            b.Reimport(prefab(0));
+            b.ThumbFrame(100000.0);
+            b.Thumb(prefab(0));
+            CHECK(again == 1);
         }
     }
 

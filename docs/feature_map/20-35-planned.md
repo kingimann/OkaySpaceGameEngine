@@ -873,7 +873,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **System:** Culling and LOD
 - **What:** Keep only the parts of a big world near the player in memory, loading and unloading as they move.
 - **Parts:**
-  - 27.4.1 World streamer component - `Components/WorldStreamer` - grid of cell prefabs named `<prefix>_<x>_<z>.okayprefab`; loads cells within a ring of the camera or a named target, unloads past a larger ring (hysteresis)
+  - 27.4.1 World streamer component - `Components/WorldStreamer` - grid of cell prefabs named `<prefix>_<x>_<z>.okayprefab` (the folder is listed at start); `StreamingGrid` picks the cells (ring of the camera or a named target, unload past a larger ring, nearest and in-front first); each cell is a streamed scene load (read and decoded on job threads, made under the frame budget, cancelled when left behind, unloaded over frames); `GetCellState`, `SyncNow` finishes them at once
   - 27.4.2 Async scene loading - `Scene/SceneManager`, `Scene/Scene` - multi-frame loads with progress and additive load/unload by handle (merged in #570)
   - 27.4.3 Asset manager async loads and hot reload - `Core/AssetManager` - background decode, `Pump`, progress (merged in #568, unused by the engine)
   - 27.4.4 Streaming grid and mip budget (#574) - `Optimize/StreamingGrid`, `Optimize/MipBudget` - load decisions with budgets, priorities by view direction, cancel and retry
@@ -881,16 +881,16 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `WorldStreamer` (cellSize, loadRadius, unloadRadius, folder, prefix), `SceneManager` async load; `StreamingGrid`, `PlanMips`
 - **Editor:** WorldStreamer Inspector section
 - **Docs:** `docs/engine/scene_management.md`, `docs/engine/asset_manager.md`; `docs/engine/optimization_tools.md`
-- **Tests:** `worldstreamer`, `scene_load_pool`, `assetmanager`; `optimize_streaming`
-- **Status:** Partial - cell streaming of prefabs works (cells are held by instance id, so a cell root destroyed by a script is skipped, not freed twice); `StreamingGrid` and `MipBudget` (budgeted, prioritised loads, #574, test `optimize_streaming`) are on main but `WorldStreamer` does not use them.
-- **Exists today:** `WorldStreamer` instantiates and destroys cell prefabs on the main thread. Cells must be authored by hand as separate prefab files. Missing cell files are skipped.
+- **Tests:** `worldstreamer`, `asset_streaming`, `asset_streaming_stress`, `scene_load_pool`, `assetmanager`; `optimize_streaming`
+- **Status:** Partial - cells stream without hitches (round 1 of asset streaming, `docs/engine/asset_streaming.md`): `WorldStreamer` uses `StreamingGrid`, cell files and their meshes and textures are read and decoded on job threads, objects are made and removed under a per-frame time budget, a cell left behind is cancelled. Mip streaming (`PlanMips`) is still not tied to the renderers.
+- **Exists today:** As above. Cells must be authored by hand as separate prefab files. The Awake / Start of a cell's components runs in the frame the cell finishes; a cell with nested prefabs is made in one go.
 - **Work packages:**
-  1. M - Streamer uses `StreamingGrid` decisions and `AssetManager::LoadAsync` so a cell load never blocks a frame. Depends on: #574 (on main).
-  2. M - Editor "Split scene into cells" command that writes the cell prefabs (see 45 proposal). Depends on: nothing.
-  3. S - Debug overlay: grid cells coloured by state (unloaded, loading, loaded). Depends on: package 1.
-  4. M - Keep navmesh and physics broadphase consistent when cells load and unload. Depends on: package 1.
-  5. M - Mip streaming (`PlanMips`) tied to texture loads. Depends on: package 1.
-- **Open:** a loaded cell is created in one frame (hitch risk); saves do not know about unloaded cells (see 35.3); cells are on the XZ plane only.
+  1. M - Editor "Split scene into cells" command that writes the cell prefabs (see 45 proposal). Depends on: nothing.
+  2. S - Debug overlay in the editor: grid cells coloured by `WorldStreamer::GetCellState` (the stress test draws this picture already). Depends on: nothing.
+  3. M - Keep navmesh and physics broadphase consistent when cells load and unload. Depends on: nothing.
+  4. M - Mip streaming (`PlanMips` / `tex::StreamPlanner`) in the renderers' upload paths. Depends on: nothing.
+  5. M - Streaming page in Project Settings (Automatic / Custom, live stats); predictive loading is in (`WorldStreamer::predictSeconds`). Depends on: nothing.
+- **Open:** saves do not know about unloaded cells (see 35.3); cells are on the XZ plane only.
 - **Related:** 1.4, 2.6, 20.1, 45.1, 35.3
 - **Words:** streaming, world streamer, world partition, open world, cells, chunks, load radius, async load, mip streaming, StreamingGrid
 - **Seen as:** hitch when walking into a new area; huge map uses too much memory; loading screen on every area change

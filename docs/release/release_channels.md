@@ -171,8 +171,11 @@ release whatever branch it was made from (an `lts/` branch included). Shared rul
 Nothing else is written, ever: not `VERSION.txt`, `NOTES.txt`, `LTS.txt`, `versions.json` or a `v<version>/` folder at the root, and not the bucket
 itself. The publisher is its own script, `scripts/publish-supabase-dev.sh` (index: `scripts/dev_index.py`); `scripts/publish-supabase.sh` has no
 test-build code at all and refuses `CHANNEL=dev` and any version with four numbers (so a test build can never be published as a release by mistake).
-The normal publisher's pruning only looks at `v<digits>` folders at the root, so it never sees `dev/`. Only the newest `DEV_KEEP` (3) test builds stay in
-the bucket; older ones are deleted, stay in the list as "not in the bucket", and their numbers are never used again.
+The normal publisher's pruning only looks at `v<digits>` folders at the root, so it never sees `dev/`. Only `DEV_KEEP` (3) test builds stay in the
+bucket, **main builds first** (owner, 2026-11-26): the newest 2 builds of `main` and the newest 1 build of any other branch, and when there are fewer of
+one kind the rest is filled with the newest of the other; the build being published always stays (`kept_versions` in `scripts/dev_index.py`). So a run
+of branch builds can never push every main build out of the bucket. Older ones are deleted, stay in the list as "not in the bucket", and their numbers
+are never used again.
 
 ### What is the same and what is not
 
@@ -185,7 +188,7 @@ the bucket; older ones are deleted, stay in the list as "not in the bucket", and
 | Signed list | when a key exists | when a key exists (same key) |
 | Update flow (stage, verify, swap, self-check, rollback) | yes | the same flow |
 | Windows code signing | when configured | never |
-| Kept in the bucket | the newest 3 and the LTS line | the newest 3 |
+| Kept in the bucket | the newest 3 and the LTS line | 3: the newest 2 main builds and the newest 1 other (filled from the rest when fewer) |
 
 **Two limits to know.** (1) A test build replaces only the three programs (launcher, editor, player), like any in-app update: example scenes, templates
 files or assets that a branch adds to the zip or the installer are **not** in it, so an example that is meant to be tried from `examples\` is not there
@@ -197,9 +200,21 @@ now, but once launchers trust a key the seed has to be available to this workflo
 
 **Settings > Behavior > Startup & updates > Get test builds** (off by default; saved as `test_builds=1` in `launcher.cfg`, and not written at all
 while it is off). While it is off the launcher never reads the `dev/` folder: it behaves exactly as before. When it is on, the update check also reads
-`dev/versions.json` (signature checked like the real list) and offers the **newer** of the newest release and the newest test build. A test build
+`dev/versions.json` (signature checked like the real list) and offers the **newer** of the newest release and the newest **main** test build. A test build
 shows up as "Test build of walk-vs-run (abc1234)" in the update toast, the sidebar card and the update window, and its version carries "(test
 build)" in About, the Versions page and the editor's About and title bar. The long-term-support channel never gets test builds.
+
+**The automatic update follows `main` only** (owner, 2026-11-26: "fix that so updates are installed in order or together"; before this, branch build
+2.903.8.127 of `claude/okaycc-29` finished after main build 2.903.8.126 and replaced it as the update). Test builds are published for every pushed
+branch and numbered in the order they finish, so "the newest test build" could be any branch. The rule (`okayversions::TestBuildHead`):
+
+- The update offers only the newest test build whose branch is exactly `main`, that is in the bucket and has every checksum, and only when its number
+  is higher than the running version. A newer main build always gets a higher number than every build that finished before it, so following main is
+  always forward.
+- No installable main build: the automatic update offers no test build at all. It never falls back to a branch build.
+- Never a lower number by itself: a person running a branch build (127) is offered nothing until a main build with a higher number (128) exists.
+  Going to a lower version is only ever chosen by hand (the Versions page, or "Go back to the stable version").
+- Builds of other branches stay listed on the Versions page with their branch name (the newest 3 that are in the bucket) and are installed by hand.
 
 **Turning it off.** Switch **Get test builds** off: nothing new is offered. A test build stays installed until you go back: Settings > Behavior shows
 "You are running a test build" with **Go back to the stable version**, which installs the newest normal release over it with the same updater (the one
@@ -212,6 +227,8 @@ it replaces a test build by itself.
 |---|---|
 | The normal reader ignores test versions (`ParseIndex`, `ParseVersionTxt`, `LoadIndex` never list or fetch one, never ask for `dev/`) | `dev_channel` |
 | The test reader reads only `dev/`, keeps only well-formed test builds, needs the same signature | `dev_channel` |
+| The automatic update follows main builds only, never a branch build and never a lower number | `launcher_versions`, `dev_channel` |
+| The bucket keeps main builds first (branch builds never push every main build out) | `dev_index.py --self-test` |
 | A test version never equals a release and sorts below every later one | `dev_channel` (thousands of random versions) |
 | The setting is off by default and writes nothing when off | `dev_channel` |
 | Going back is exact: the test build coming up again is not "confirmed" | `self_update` |

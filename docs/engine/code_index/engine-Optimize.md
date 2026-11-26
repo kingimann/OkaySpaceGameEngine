@@ -93,6 +93,6 @@ Back to the [code index](../code_index.md). 8 headers, 69 names.
 - `CellCoord` struct, line 41
 - `CellState` enum, line 52
 - `StreamingConfig` struct, line 54
-- `StreamingHooks` struct, line 70: What the world plugs in. Each one is optional.
-- `StreamingFrame` struct, line 78
-- `StreamingGrid` class, line 89
+- `StreamingHooks` struct, line 74: What the world plugs in. Each one is optional.
+- `StreamingFrame` struct, line 84
+- `StreamingGrid` class, line 95

@@ -449,10 +449,20 @@ Index LoadDevIndex(const Sources& src, const FetchTextFn& fetch) {
     idx.signedByPublisher = sig.kind == okayupdate::Kind::Valid;
     if (!idx.ok) return idx;
     idx.lts.clear();
-    idx.latest.clear();
-    for (const Entry& e : idx.versions)                                  // newest first
-        if (e.inBucket && HasAllChecksums(e)) { idx.latest = e.version; break; }
+    idx.latest = TestBuildHead(idx, "");                                 // the newest installable MAIN build; a branch build never is the head
     return idx;
+}
+
+std::string TestBuildHead(const Index& testBuilds, const std::string& running) {
+    if (!testBuilds.ok) return {};
+    const std::string cur = okayver::NormalizeVersion(running);
+    for (const Entry& e : testBuilds.versions) {                        // newest first (ParseIndex sorts)
+        if (!okay::testbuild::IsTestVersion(e.version) || !okay::testbuild::IsMainBranch(e.branch) || !e.inBucket || !HasAllChecksums(e)) continue;
+        // The newest installable main build, and only when it is newer than what runs: never back down to a lower number by itself (a person on a
+        // branch build that finished later waits for the next main build, which always gets a higher number).
+        return (cur.empty() || okayver::CompareVersions(e.version, cur) > 0) ? e.version : std::string();
+    }
+    return {};
 }
 
 std::string PickHighlight(const Index& index, const std::string& requested) {

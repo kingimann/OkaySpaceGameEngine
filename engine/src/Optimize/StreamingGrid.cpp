@@ -2,6 +2,7 @@
 #include "okay/Optimize/StreamingGrid.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace okay::optimize {
 namespace {
@@ -83,37 +84,53 @@ float StreamingGrid::DistanceToCell(const Vec3& p, const CellCoord& c) const {
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-StreamingFrame StreamingGrid::Update(const Vec3& pos, const Vec3& dirIn) {
-    ++frame_;
-    StreamingFrame out;
+float StreamingGrid::Reach(const Vec3& p, const CellCoord& cIn) const {
+    if (!cfg_.ringDistance) return DistanceToCell(p, cIn);
+    const CellCoord c = Norm(cIn), o = CellOf(p);
+    const int ring = std::max(std::abs(c.x - o.x), std::max(std::abs(c.y - o.y), std::abs(c.z - o.z)));
+    return static_cast<float>(ring) * cfg_.cellSize;
+}
+
+float StreamingGrid::Priority(const Vec3& pos, const Vec3& dirIn, const CellCoord& c) const {
+    const float dist = DistanceToCell(pos, c);
     // Direction in the grid's active axes.
     Vec3 dir = dirIn;
     if (cfg_.plane == GridPlane::XZ) dir.y = 0.0f;
     if (cfg_.plane == GridPlane::XY) dir.z = 0.0f;
     const float dl = dir.Magnitude();
-    const bool haveDir = dl > 1e-6f;
-    if (haveDir) dir = dir * (1.0f / dl);
+    if (dist <= 0.0f || dl <= 1e-6f || cfg_.viewDirectionWeight <= 0.0f) return dist;
+    dir = dir * (1.0f / dl);
+    const float h = cfg_.cellSize * 0.5f;
+    const Vec3 centre{c.x * cfg_.cellSize + h, cfg_.plane == GridPlane::XZ ? pos.y : c.y * cfg_.cellSize + h,
+                      cfg_.plane == GridPlane::XY ? pos.z : c.z * cfg_.cellSize + h};
+    Vec3 to = centre - pos;
+    if (cfg_.plane == GridPlane::XZ) to.y = 0.0f;
+    if (cfg_.plane == GridPlane::XY) to.z = 0.0f;
+    const float tl = to.Magnitude();
+    if (tl < 1e-6f) return dist;
+    const float facing = Vec3::Dot(dir, to * (1.0f / tl));          // -1 behind .. 1 ahead
+    return dist * (1.0f + cfg_.viewDirectionWeight * (1.0f - facing));
+}
 
-    auto centre = [&](const CellCoord& c) {
-        const float h = cfg_.cellSize * 0.5f;
-        return Vec3{c.x * cfg_.cellSize + h, cfg_.plane == GridPlane::XZ ? pos.y : c.y * cfg_.cellSize + h,
-                    cfg_.plane == GridPlane::XY ? pos.z : c.z * cfg_.cellSize + h};
+StreamingFrame StreamingGrid::Update(const Vec3& pos, const Vec3& dir, const Vec3& lookAhead) {
+    ++frame_;
+    StreamingFrame out;
+    const bool ahead = lookAhead.x != 0.0f || lookAhead.y != 0.0f || lookAhead.z != 0.0f;
+    // Near the viewer or near the path to where it is heading (points along it, at most a cell apart); the order
+    // key takes the nearest of them too.
+    const int steps = ahead ? std::max(1, static_cast<int>(std::ceil(lookAhead.Magnitude() / cfg_.cellSize))) : 0;
+    auto along = [&](auto&& fn) {
+        float best = fn(pos);
+        for (int i = 1; i <= steps; ++i) best = std::min(best, fn(pos + lookAhead * (static_cast<float>(i) / steps)));
+        return best;
     };
-    auto priority = [&](const CellCoord& c, float dist) {
-        if (dist <= 0.0f || !haveDir || cfg_.viewDirectionWeight <= 0.0f) return dist;
-        Vec3 to = centre(c) - pos;
-        if (cfg_.plane == GridPlane::XZ) to.y = 0.0f;
-        if (cfg_.plane == GridPlane::XY) to.z = 0.0f;
-        const float tl = to.Magnitude();
-        if (tl < 1e-6f) return dist;
-        const float facing = Vec3::Dot(dir, to * (1.0f / tl));          // -1 behind .. 1 ahead
-        return dist * (1.0f + cfg_.viewDirectionWeight * (1.0f - facing));
-    };
+    auto Reach = [&](const Vec3&, const CellCoord& c) { return along([&](const Vec3& p) { return this->Reach(p, c); }); };
+    auto priority = [&](const CellCoord& c, float) { return along([&](const Vec3& p) { return Priority(p, dir, c); }); };
 
     // 1. Unloads / cancels: active cells beyond the unload radius, farthest first.
     std::vector<std::pair<float, CellCoord>> outside;
     for (const CellCoord& c : active_) {
-        const float d = DistanceToCell(pos, c);
+        const float d = Reach(pos, c);
         if (d > cfg_.unloadRadius) outside.emplace_back(d, c);
     }
     std::sort(outside.begin(), outside.end(), [](const auto& a, const auto& b) {
@@ -130,6 +147,7 @@ StreamingFrame StreamingGrid::Update(const Vec3& pos, const Vec3& dirIn) {
             out.loadCancelled.push_back(f.second);
         } else if (cell.state == CellState::Loaded) {
             if (cfg_.maxUnloadsPerFrame > 0 && unloads >= cfg_.maxUnloadsPerFrame) continue;
+            if (hooks_.keepLoaded && hooks_.keepLoaded(f.second, cell.asset)) continue;
             if (hooks_.requestUnload) hooks_.requestUnload(f.second, cell.asset);
             cell.state = CellState::Unloaded;
             active_.erase(f.second);
@@ -146,13 +164,13 @@ StreamingFrame StreamingGrid::Update(const Vec3& pos, const Vec3& dirIn) {
     double boxCount = 1.0;
     for (int i = 0; i < dims; ++i) boxCount *= (2.0 * r + 1.0);
     auto consider = [&](const CellCoord& c, const Cell& cell) {
-        const float d = DistanceToCell(pos, c);
+        const float d = Reach(pos, c);
         if (d > cfg_.loadRadius) return;
         ++inRadius;
         if (cell.state != CellState::Unloaded || cell.retryAt > frame_) return;
         wants.push_back({priority(c, d), c});
     };
-    if (boxCount < static_cast<double>(cells_.size())) {
+    if (!ahead && boxCount < static_cast<double>(cells_.size())) {
         const CellCoord o = CellOf(pos);
         for (int x = o.x - r; x <= o.x + r; ++x)
             for (int y = (cfg_.plane == GridPlane::XYZ || cfg_.plane == GridPlane::XY) ? o.y - r : 0;
@@ -193,7 +211,8 @@ StreamingFrame StreamingGrid::Update(const Vec3& pos, const Vec3& dirIn) {
             std::vector<Victim> evict;
             for (const CellCoord& a : active_) {
                 if (cells_[a].state != CellState::Loaded) continue;
-                const float d = DistanceToCell(pos, a);
+                if (hooks_.keepLoaded && hooks_.keepLoaded(a, cells_[a].asset)) continue;
+                const float d = Reach(pos, a);
                 const bool outsideRadius = d > cfg_.loadRadius;
                 const float pr = priority(a, d);
                 if (outsideRadius || pr > wants[i].priority) evict.push_back({outsideRadius, pr, a});

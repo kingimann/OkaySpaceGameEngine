@@ -12,7 +12,7 @@
 // tokens are made up.
 #include "test_framework.hpp"
 #include "okay/Platform/Account/AccountService.hpp"
-#include "okay/Core/Base64.hpp"
+#include "okay_backend_golden.hpp"   // the fake server, made-up tokens, RequestsOf
 
 #include <cstdlib>
 #include <filesystem>
@@ -25,44 +25,9 @@
 namespace fs = std::filesystem;
 namespace acc = okay::account;
 
-static const char* kUrl = "https://backend.example.test/";   // trailing slash on purpose: every flow must drop it
-static const char* kKey = "test-publishable-key-0000";
+using golden::kUrl; using golden::kKey; using golden::kFuture; using golden::Jwt; using golden::Tok; using golden::Fake;
+using golden::Http; using golden::NoAnswer; using golden::SaveSession; using golden::RequestsOf;
 
-static std::string B64Url(const std::string& in) {
-    return okay::base64::Encode(reinterpret_cast<const std::uint8_t*>(in.data()), in.size(), okay::base64::Alphabet::Url, false);
-}
-static std::string Jwt(const std::string& sub, long exp) {   // JWT-shaped, unsigned: the client only reads "sub" and "exp"
-    return B64Url("{\"alg\":\"none\"}") + "." + B64Url("{\"sub\":\"" + sub + "\",\"exp\":" + std::to_string(exp) + "}") + ".sig";
-}
-static const long kFuture = 4102444800L;   // 2100-01-01
-static std::string Tok(int n) { return Jwt("u" + std::to_string(n), kFuture); }
-
-/// One request in the text form the golden texts use.
-static std::string Describe(const std::string& method, const std::string& url, const std::vector<std::string>& headers,
-                            const std::string& body) {
-    std::string s = method + " " + url + "\n";
-    for (const std::string& h : headers) s += h + "\n";
-    return s + "\n" + body + "\n---\n";
-}
-
-/// The fake server: answers each request by its route, as the scenario sets it up.
-struct Fake {
-    std::string log;                                   // every request, Describe()d
-    std::vector<okay::http::Result> queue;             // answers in order (the next one is used per request)
-    std::function<void(const std::string& url)> before;   // runs before a request is answered (to change session.txt)
-    okay::http::Result Answer(const std::string& m, const std::string& u, const std::vector<std::string>& h, const std::string& b) {
-        log += Describe(m, u, h, b);
-        if (before) before(u);
-        if (queue.empty()) { okay::http::Result r; r.error = "test: no answer queued"; return r; }
-        okay::http::Result r = queue.front();
-        queue.erase(queue.begin());
-        return r;
-    }
-};
-static okay::http::Result Http(long status, const std::string& body) {
-    okay::http::Result r; r.reached = true; r.status = status; r.body = body; return r;
-}
-static okay::http::Result NoAnswer(const std::string& why) { okay::http::Result r; r.error = why; return r; }
 static std::string TokenAnswer(int n, const std::string& username) {
     return "{\"access_token\":\"" + Tok(n) + "\",\"refresh_token\":\"r" + std::to_string(n) + "\",\"user\":{\"user_metadata\":{\"username\":\"" +
            username + "\"}}}";
@@ -80,11 +45,6 @@ static std::string SessionLine(const acc::AccountService& a) {
 // ---- The scenarios, run on AccountService (its public API, as every program calls it) ------------------------------------
 struct Scenario { const char* name; std::function<std::string(const fs::path& dir)> run; };
 
-static void SaveSession(const fs::path& dir, const std::string& user, const std::string& token, const std::string& refresh) {
-    fs::create_directories(dir);
-    std::ofstream f(dir / "session.txt", std::ios::trunc | std::ios::binary);
-    f << user << "\n" << token << "\n" << refresh << "\n";
-}
 
 static std::vector<Scenario> Scenarios() {
     std::vector<Scenario> v;
@@ -357,23 +317,6 @@ static std::vector<Scenario> Scenarios() {
 
 #if !defined(OKAY_GOLDEN_OLD_HEADER)   // (recording from the old AccountService.hpp: it has no okay::backend to call)
 // ---- The same flows through the Supabase provider directly (okay::backend::supabase::Auth over a RecordingTransport) -----
-/// Only the request blocks of a golden text, in order.
-static std::string RequestsOf(const std::string& golden) {
-    std::string out;
-    std::size_t i = 0;
-    bool in = false;
-    while (i < golden.size()) {
-        std::size_t e = golden.find('\n', i);
-        if (e == std::string::npos) e = golden.size();
-        const std::string line = golden.substr(i, e - i);
-        if (!in && (line.rfind("GET ", 0) == 0 || line.rfind("POST ", 0) == 0 || line.rfind("PUT ", 0) == 0 ||
-                    line.rfind("DELETE ", 0) == 0 || line.rfind("PATCH ", 0) == 0)) in = true;
-        if (in) out += line + "\n";
-        if (in && line == "---") in = false;
-        i = e + 1;
-    }
-    return out;
-}
 static std::string Outcome(const okay::backend::Result<okay::backend::Session>& r) {
     return "=> ok=" + std::to_string(r.ok) + " error=[" + r.error + "] user=[" + r.value.username + "] token=[" +
            r.value.accessToken + "] refresh=[" + r.value.refreshToken + "]\n";

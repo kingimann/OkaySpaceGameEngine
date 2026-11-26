@@ -595,7 +595,30 @@ void InstallCollectionsLib(Runtime& rt) {
     // Map (24.1)
     rt.mapProto = rt.NewObject();
     NativeFunc* mapCtor = DefCtor(rt, "Map", [](Runtime& rt, CallArgs& a) { return MapCtor(rt, a, Cls::Map); }, 0, rt.mapProto);
-    (void)mapCtor;
+    DefNative(rt, mapCtor, "groupBy", [](Runtime& rt, CallArgs& a) {   // 24.1.2.1 Map.groupBy
+        if (!rt.IsCallable(a[1])) rt.ThrowType("Map.groupBy needs a function");
+        MapObj* m = rt.Alloc<MapObj>();
+        m->cls = Cls::Map;
+        m->proto = rt.mapProto;
+        IterRec* r = GetIterator(rt, a[0]);
+        Value e;
+        double k = 0;
+        while (IterStep(rt, r, e)) {
+            Runtime::ScratchScope ss(rt);
+            rt.Keep(e);
+            Value args[2] = {e, Value::Num(k++)};
+            Value key = MapObj::Norm(rt.Call(a[1], Value(), args, 2));
+            rt.Keep(key);
+            auto it = m->index.find(key);
+            ArrayObj* arr;
+            if (it == m->index.end()) {
+                arr = rt.NewArray();
+                MapPut(rt, m, key, Value::Obj(arr));
+            } else arr = static_cast<ArrayObj*>(m->entries[it->second].v.O());
+            rt.DefineIndex(arr, arr->length, e);
+        }
+        return Value::Obj(m);
+    }, 2);
     DefNative(rt, rt.mapProto, "get", [](Runtime& rt, CallArgs& a) {
         MapObj* m = ThisMap(rt, a, Cls::Map);
         auto it = m->index.find(MapObj::Norm(a[0]));
@@ -730,6 +753,16 @@ void InstallCollectionsLib(Runtime& rt) {
         return Value::Obj(p);
     }, 1);
     DefNative(rt, pc, "all", [](Runtime& rt, CallArgs& a) { return Combine(rt, a, Combinator::All); }, 1);
+    DefNative(rt, pc, "withResolvers", [](Runtime& rt, CallArgs&) {   // 27.2.4.9 Promise.withResolvers
+        PromiseObj* p = NewPromise(rt);
+        Value res, rej;
+        MakeResolvers(rt, p, res, rej);
+        Object* o = rt.NewObject();
+        rt.DefineData(o, rt.Intern("promise"), Value::Obj(p));
+        rt.DefineData(o, rt.Intern("resolve"), res);
+        rt.DefineData(o, rt.Intern("reject"), rej);
+        return Value::Obj(o);
+    }, 0);
     DefNative(rt, pc, "allSettled", [](Runtime& rt, CallArgs& a) { return Combine(rt, a, Combinator::AllSettled); }, 1);
     DefNative(rt, pc, "any", [](Runtime& rt, CallArgs& a) { return Combine(rt, a, Combinator::Any); }, 1);
     DefNative(rt, pc, "race", [](Runtime& rt, CallArgs& a) {

@@ -574,7 +574,12 @@ struct Parser {
     Node* ForStmt() {
         const Token& t = Cur();
         Next();
-        if (IsWord("await")) Fail("'for await' is not supported yet");
+        bool isAwait = false;
+        if (IsWord("await")) {   // 14.7.5: for await (... of ...) in async functions
+            if (!InAsync()) Fail("'for await' is only allowed inside an async function");
+            isAwait = true;
+            Next();
+        }
         Expect(P_LParen);
         Node* init = nullptr;
         if (IsP(P_Semi)) {
@@ -584,8 +589,9 @@ struct Parser {
             init = VarDecl(kind, true);
             if (init->list.size() == 1 && !init->list[0]->b && (IsWord("of") || IsWord("in"))) {
                 bool of = IsWord("of");
+                if (isAwait && !of) Fail("'for await' needs 'of'");
                 Next();
-                return ForInOfRest(t, of, init);
+                return ForInOfRest(t, of, init, isAwait);
             }
             for (Node* d : init->list)
                 if (!d->b && (kind == DK_Const || d->a->k != NK::Ident)) Fail("this declaration needs a value");
@@ -594,13 +600,15 @@ struct Parser {
             Node* e = Expression();
             if (IsWord("of") || IsWord("in")) {
                 bool of = IsWord("of");
+                if (isAwait && !of) Fail("'for await' needs 'of'");
                 Next();
-                return ForInOfRest(t, of, ToTarget(e, true));
+                return ForInOfRest(t, of, ToTarget(e, true), isAwait);
             }
             init = N(NK::ExprStmt);
             init->a = e;
         }
         CheckCover();
+        if (isAwait) Fail("'for await' needs 'of'");
         Node* n = ast.NewNode(NK::For, t.line, t.col);
         n->a = init;
         Expect(P_Semi);
@@ -612,11 +620,12 @@ struct Parser {
         n->d = LoopBody();
         return n;
     }
-    Node* ForInOfRest(const Token& t, bool of, Node* head) {
+    Node* ForInOfRest(const Token& t, bool of, Node* head, bool isAwait = false) {
         // The head's [~In] ends at `in` / `of`: the right side is Expression[+In] (14.7.5) and the body is a
         // Statement, so the `in` operator is allowed again (the caller's guard is still in scope).
         NoInGuard ng(*this, false);
         Node* n = ast.NewNode(of ? NK::ForOf : NK::ForIn, t.line, t.col);
+        if (isAwait) n->flags |= NF_Await;
         n->a = head;
         n->b = of ? Assignment() : Expression();
         Expect(P_RParen);
@@ -1454,6 +1463,45 @@ struct Parser {
         return n;
     }
 
+    // The static fields' initializer function (made on first use): static fields and static blocks run in it, in order.
+    FuncInfo* StaticInit(ClassInfo* ci, const Token& at) {
+        FuncInfo*& init = ci->staticFields;
+        if (!init) {
+            init = ast.NewFunc();
+            init->method = true;
+            init->fieldInit = true;
+            init->line = at.line;
+            init->col = at.col;
+            init->name = u"<fields>";
+            init->body = ast.NewNode(NK::Block, at.line, at.col);
+        }
+        return init;
+    }
+    // static { ... }: an arrow function (so `this`, `super` and `new.target` are the static initializer's) called in
+    // place; its `var`s stay inside it as a ClassStaticBlockBody's do.
+    void StaticBlock(ClassInfo* ci, const Token& at) {
+        FuncInfo* init = StaticInit(ci, at);
+        PushFunc(init);
+        FuncInfo* fi = ast.NewFunc();
+        fi->arrow = true;
+        fi->line = at.line;
+        fi->col = at.col;
+        fi->name = u"static";
+        Node* fn = ast.NewNode(NK::Func, at.line, at.col);
+        fn->fn = fi;
+        PushFunc(fi);
+        int savedLoop = loopDepth;
+        FunctionBody(fi);
+        loopDepth = savedLoop;
+        PopFunc();
+        PopFunc();
+        Node* call = ast.NewNode(NK::Call, at.line, at.col);
+        call->a = fn;
+        Node* stmt = ast.NewNode(NK::ExprStmt, at.line, at.col);
+        stmt->a = call;
+        init->body->list.push_back(stmt);
+    }
+
     // class [name] [extends expr] { members } (15.7)
     Node* ClassExpr(bool isExpr) {
         const Token& t = Cur();
@@ -1477,7 +1525,10 @@ struct Parser {
                 !IsPAt(pos + 1, P_RBrace)) {
                 isStatic = true;
                 Next();
-                if (IsP(P_LBrace)) Fail("static { } blocks are not supported yet");
+                if (IsP(P_LBrace)) {   // 15.7.11 ClassStaticBlock: runs once, in order with the static fields, this = the class
+                    StaticBlock(ci, mt);
+                    continue;
+                }
             }
             bool isAsync = false, isGen = false;
             int accessor = 0;
@@ -1528,6 +1579,7 @@ struct Parser {
             if (m->flags & NF_Computed) FailAt(kt, "computed class field names are not supported yet");
             if (isCtorName) FailAt(kt, "a class field can not be named 'constructor'");
             if (isStatic && Eq(m->str, "prototype")) FailAt(kt, "a class can not have a static member named 'prototype'");
+            if (isStatic) StaticInit(ci, kt);
             FuncInfo*& init = isStatic ? ci->staticFields : ci->instFields;
             if (!init) {
                 init = ast.NewFunc();

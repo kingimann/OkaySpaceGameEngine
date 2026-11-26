@@ -94,6 +94,7 @@ enum NodeFlag : std::uint32_t {
     NF_Method = 64,        ///< method shorthand in a literal
     NF_CoverInit = 128,    ///< {a = 1} seen in a literal (only valid as a pattern)
     NF_Paren = 256,        ///< written in parentheses
+    NF_Await = 512,        ///< for await (...)
 };
 
 enum DeclKind : int { DK_Var = 0, DK_Let = 1, DK_Const = 2 };
@@ -171,7 +172,7 @@ enum Op : std::uint16_t {
     OP_Throw, OP_TryBegin, OP_TryEnd, OP_ThrowConst,
     OP_GenStart, OP_AsyncStart, OP_Yield, OP_Await, OP_ResumeCheck, OP_IterSend,
     OP_Arguments, OP_RestArgs, OP_CheckCoercible, OP_Debugger, OP_SetName, OP_NewRegExp,
-    OP_SetProtoLit, OP_TemplateObj,
+    OP_SetProtoLit, OP_TemplateObj, OP_GetAsyncIter, OP_AsyncIterNext, OP_AsyncIterValue, OP_SetHome,
     OP_Count
 };
 
@@ -294,6 +295,7 @@ struct IterRec : Object {
     Value iter, next;
     bool done = false;
     std::uint8_t fast = 0;   ///< 1 array, 2 string
+    std::uint8_t async = 0;  ///< for await: 1 an async iterator, 2 a sync iterator read asynchronously (27.1.6)
     std::uint32_t pos = 0;
     IterRec() : Object(Cls::IterRecord) {}
     void Trace(Runtime& rt) override;

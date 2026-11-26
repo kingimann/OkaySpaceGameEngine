@@ -509,6 +509,11 @@ struct Compiler {
         if (fi->fieldInit) {
             for (Node* field : fi->body->list) {
                 line = field->line;
+                if (field->k == NK::ExprStmt) {   // a static { } block (an arrow called in place)
+                    Expr(field->a);
+                    Emit(OP_Pop);
+                    continue;
+                }
                 Emit(OP_LoadThis);
                 if (field->a) Expr(field->a);
                 else Emit(OP_Undef);
@@ -947,14 +952,28 @@ struct Compiler {
         int it = NewSlot();
         // the iterated value is evaluated with the loop's let names in their not-initialized state (14.7.5.6); we
         // evaluate it before the per-iteration scope
+        const bool isAwait = (n->flags & NF_Await) != 0;
         Expr(n->b);
-        Emit(of ? OP_GetIter : OP_ForInPrep);
+        Emit(isAwait ? OP_GetAsyncIter : of ? OP_GetIter : OP_ForInPrep);
         Emit(OP_PutLoc, it);
         Ctl& loop = PushCtl(CK_Loop);
         if (of) loop.iterSlot = it;
         int top = Here();
         Emit(OP_GetLoc, it);
-        int jdone = Emit(of ? OP_IterNext : OP_ForInNext, -1);
+        int jdone;
+        if (isAwait) {
+            // 14.7.5.7 ForIn/OfBodyEvaluation with iteratorKind async: Await(next()), then the value (a sync
+            // iterator's value is awaited too, as CreateAsyncFromSyncIterator does)
+            Emit(OP_AsyncIterNext);
+            Emit(OP_Await);
+            Patch(Emit(OP_ResumeCheck, -1));
+            Emit(OP_GetLoc, it);
+            jdone = Emit(OP_AsyncIterValue, -1);   // [value fromSync]
+            int jskip = Emit(OP_JumpF, -1);
+            Emit(OP_Await);
+            Patch(Emit(OP_ResumeCheck, -1));
+            Patch(jskip);
+        } else jdone = Emit(of ? OP_IterNext : OP_ForInNext, -1);
         PushScope();
         Node* head = n->a;
         if (head->k == NK::VarDecl) {
@@ -1705,6 +1724,7 @@ struct Compiler {
             fs->p->protos.push_back(f);
             Emit(OP_Closure, (int)fs->p->protos.size() - 1);
             Emit(OP_Swap);
+            Emit(OP_SetHome);   // [fn ctor]: super in static fields and blocks looks up from the class (15.7.14 step 31)
             Emit(OP_Call, 0);
             Emit(OP_Pop);
         }

@@ -1425,6 +1425,58 @@ Value Execute(Runtime& rt, int entry) {
                         SP[-1] = Value::Obj(r);
                         break;
                     }
+                    case OP_SetHome:   // [fn home]: the static initializer's [[HomeObject]] is the class
+                        if (SP[-2].IsObj() && SP[-2].O()->cls == Cls::Closure && SP[-1].IsObj())
+                            static_cast<Closure*>(SP[-2].O())->home = SP[-1].O();
+                        break;
+                    case OP_GetAsyncIter: {   // 7.4.3 GetIterator(obj, async)
+                        Value v = SP[-1];
+                        if (v.IsNullish()) rt.ThrowType(std::string(v.IsNull() ? "null" : "undefined") + " is not iterable");
+                        Value m = rt.Get(v, rt.symAsyncIterator);
+                        IterRec* r;
+                        if (!m.IsNullish()) {
+                            if (!rt.IsCallable(m)) rt.ThrowType("[Symbol.asyncIterator] is not a function");
+                            Value it = rt.Call(m, v, nullptr, 0);
+                            if (!it.IsObj()) rt.ThrowType("[Symbol.asyncIterator]() must return an object");
+                            rt.Keep(it);
+                            r = rt.Alloc<IterRec>();
+                            r->proto = nullptr;
+                            r->iter = it;
+                            r->next = rt.Get(it, rt.atoms->next);
+                            r->async = 1;
+                        } else {
+                            r = GetIterator(rt, v);
+                            r->async = 2;
+                        }
+                        SP[-1] = Value::Obj(r);
+                        break;
+                    }
+                    case OP_AsyncIterNext: {   // [rec] -> [what next() gave: a promise, or a sync step's result object]
+                        IterRec* r = static_cast<IterRec*>(SP[-1].O());
+                        if (r->async == 1) {
+                            if (!rt.IsCallable(r->next)) rt.ThrowType("the async iterator's next is not a function");
+                            SP[-1] = rt.Call(r->next, r->iter, nullptr, 0);
+                        } else {
+                            Value v;
+                            bool more = IterStep(rt, r, v);
+                            SP[-1] = MakeIterResult(rt, more ? v : Value(), !more);
+                        }
+                        break;
+                    }
+                    case OP_AsyncIterValue: {   // [result rec] -> [value fromSync], or jump to a when done
+                        IterRec* r = static_cast<IterRec*>(SP[-1].O());
+                        Value res = SP[-2];
+                        if (!res.IsObj()) rt.ThrowType("an async iterator's next() must give an object");
+                        if (rt.ToBoolean(rt.Get(res, rt.atoms->done))) {
+                            r->done = true;
+                            SP -= 2;
+                            pc = cl->code->code.data() + I.a;
+                            break;
+                        }
+                        SP[-2] = rt.Get(res, rt.atoms->value);
+                        SP[-1] = Value::Bool(r->async == 2);
+                        break;
+                    }
                     case OP_IterNext: {
                         IterRec* r = static_cast<IterRec*>(SP[-1].O());
                         Value v;

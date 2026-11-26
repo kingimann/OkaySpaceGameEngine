@@ -477,6 +477,39 @@ void RegexLookbehind() {
     Expect("if (true) {}\n/a/g.test('a') && console.log('ok'); const o = {a: 1}\n/2/1; console.log(typeof o)", "ok\nnumber");
 }
 
+// 15.7.11 static blocks, 14.7.5 for await, and newer library methods real pages use (23.1.3.35 toSpliced,
+// 23.1.3.39 with, 20.1.2.12 Object.groupBy, 24.1.2.1 Map.groupBy, 27.2.4.9 Promise.withResolvers, 22.1.3.10 /
+// 22.1.3.31 isWellFormed / toWellFormed, B.2.2.15-16 trimLeft / trimRight, 21.1.2.12-13 Number.parseInt / parseFloat)
+void NewerSyntaxAndLibrary() {
+    Expect("class A { static x = 1; static { this.y = this.x + 1; var t = 5; A.z = t; } static w = this.y * 10; } console.log(A.x, A.y, A.z, A.w, typeof t)",
+           "1 2 5 20 undefined");
+    Expect("class A { static x = 1; } class B extends A { static { console.log('B block', super.x, this === B); } static s = super.x + 1; } console.log(B.s)",
+           "B block 1 true\n2");
+    Expect("const log = []; async function main() {"
+           "for await (const v of [1, Promise.resolve(2), 3]) log.push(v);"
+           "const ai = { [Symbol.asyncIterator]() { let i = 0; return { next() { i++; return Promise.resolve({ value: i * 10, done: i > 3 }); } }; } };"
+           "for await (const v of ai) log.push(v);"
+           "for await (const v of [4, 5, 6]) { if (v === 5) break; log.push(v); }"
+           "let w; for await (w of new Set(['a'])) log.push(w);"
+           "try { for await (const v of [Promise.reject(new Error('rej'))]) log.push(v); } catch (e) { log.push(e.message); }"
+           "console.log(log.join()); } main(); console.log('sync first');",
+           "sync first\n1,2,3,10,20,30,4,a,rej");
+    ExpectError("for await (const x of []) {}", "async");
+    ExpectError("async function f() { for await (const k in {}) {} }", "SyntaxError");
+    Expect("async function f() { let x; for await (x of { [Symbol.asyncIterator]: 1 }) {} } f().catch(e => console.log(e.name))", "TypeError");
+    Expect("console.log([1, 2, 3].with(-1, 9).join(), [1, 2, 3, 4].toSpliced(1, 2, 'a', 'b', 'c').join(), [1, 2].toSpliced(1).join(), [1, 2].toSpliced().join())",
+           "1,2,9 1,a,b,c,4 1 1,2");
+    Expect("const g = Object.groupBy([1, 2, 3, 4, 5], x => x % 2 ? 'odd' : 'even'); console.log(JSON.stringify(g), Object.getPrototypeOf(g));"
+           "const mg = Map.groupBy(['a', 'bb', 'cc'], s => s.length); console.log(mg.get(2).join(), mg.size)",
+           "{\"odd\":[1,3,5],\"even\":[2,4]} null\nbb,cc 2");
+    Expect("const { promise, resolve } = Promise.withResolvers(); promise.then(v => console.log('resolved', v)); resolve(7);", "resolved 7");
+    Expect("console.log('a\\uD800b'.isWellFormed(), 'ab'.isWellFormed(), 'a\\uD800'.toWellFormed() === 'a\\uFFFD', '  x '.trimLeft() + '|', ''.trimRight === ''.trimEnd)",
+           "false true true x | true");
+    Expect("console.log(Number.parseInt === parseInt, Number.parseFloat('1.5x'), typeof Symbol.species, String(Symbol.matchAll))",
+           "true 1.5 symbol Symbol(Symbol.matchAll)");
+    ExpectError("[1].with(5, 0)", "RangeError");
+}
+
 struct Hostile {
     const char* src;
     const char* want;   ///< part of the error, "" for any error, "OK" when it must finish without one
@@ -719,6 +752,7 @@ int main() {
     TaggedTemplates();
     BigInts();
     RegexLookbehind();
+    NewerSyntaxAndLibrary();
     ConformanceScript(false);
     ConformanceScript(true);
     HostileOneLiners();

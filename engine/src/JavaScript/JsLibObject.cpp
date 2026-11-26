@@ -382,6 +382,28 @@ void InstallObjectLib(Runtime& rt) {
         }
         return Value::Obj(o);
     }, 1);
+    DefNative(rt, ctor, "groupBy", [](Runtime& rt, CallArgs& a) {   // 20.1.2.12 Object.groupBy (7.3.35 GroupBy)
+        if (!rt.IsCallable(a[1])) rt.ThrowType("Object.groupBy needs a function");
+        Object* o = rt.NewObject(nullptr);
+        IterRec* r = GetIterator(rt, a[0]);
+        Value e;
+        double k = 0;
+        while (IterStep(rt, r, e)) {
+            Runtime::ScratchScope ss(rt);
+            rt.Keep(e);
+            Value args[2] = {e, Value::Num(k++)};
+            GcObj* key = rt.ToPropertyKey(rt.Call(a[1], Value(), args, 2));
+            rt.Keep(key);
+            Value g = rt.Get(Value::Obj(o), key);
+            if (!g.IsObj()) {
+                g = Value::Obj(rt.NewArray());
+                rt.DefineData(o, key, g);
+            }
+            ArrayObj* arr = static_cast<ArrayObj*>(g.O());
+            rt.DefineIndex(arr, arr->length, e);
+        }
+        return Value::Obj(o);
+    }, 2);
 }
 
 void InstallFunctionLib(Runtime& rt) {
@@ -603,7 +625,11 @@ void InstallGlobalLib(Runtime& rt) {
         }
         return Value::Num(std::strtod(t.c_str(), nullptr));
     }, 1);
-    DefNative(rt, g, "parseInt", [](Runtime& rt, CallArgs& a) { return ParseIntImpl(rt, a[0], a[1]); }, 2);
+    NativeFunc* pi = DefNative(rt, g, "parseInt", [](Runtime& rt, CallArgs& a) { return ParseIntImpl(rt, a[0], a[1]); }, 2);
+    if (Prop* num = g->FindRaw(rt.Intern("Number"))) {   // 21.1.2.12 / 21.1.2.13: the same function objects as the globals
+        DefValue(rt, num->v.O(), "parseInt", Value::Obj(pi));
+        DefValue(rt, num->v.O(), "parseFloat", g->FindRaw(rt.Intern("parseFloat"))->v);
+    }
     DefNative(rt, g, "encodeURIComponent", [](Runtime& rt, CallArgs& a) { return UriEncode(rt, a[0], false); }, 1);
     DefNative(rt, g, "encodeURI", [](Runtime& rt, CallArgs& a) { return UriEncode(rt, a[0], true); }, 1);
     DefNative(rt, g, "decodeURIComponent", [](Runtime& rt, CallArgs& a) { return UriDecode(rt, a[0], false); }, 1);
@@ -714,6 +740,11 @@ void InstallGlobalLib(Runtime& rt) {
     DefValue(rt, sc, "toPrimitive", Value::Sym(rt.symToPrimitive), 0);
     DefValue(rt, sc, "toStringTag", Value::Sym(rt.symToStringTag), 0);
     DefValue(rt, sc, "hasInstance", Value::Sym(rt.symHasInstance), 0);
+    // 20.4.2: the other well-known symbols, so code can name them (the library does not consult them yet)
+    for (const char* name : {"species", "match", "matchAll", "replace", "search", "split", "unscopables", "isConcatSpreadable"}) {
+        Symbol* y = rt.NewSymbol(rt.Intern((std::string("Symbol.") + name).c_str()));
+        DefValue(rt, sc, name, Value::Sym(y), 0);
+    }
     DefNative(rt, sc, "for", [](Runtime& rt, CallArgs& a) {
         std::u16string k = rt.ToU16(a[0]);
         auto it = rt.symbolRegistry.find(k);

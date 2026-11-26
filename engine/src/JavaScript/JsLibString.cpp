@@ -306,6 +306,30 @@ void InstallStringLib(Runtime& rt) {
         while (e > 0 && IsJsSpace(s[e - 1])) --e;
         return Str(rt, s.substr(0, e));
     }, 0);
+    // B.2.2.15 / B.2.2.16: trimLeft and trimRight are the same function objects as trimStart and trimEnd
+    DefValue(rt, sp, "trimLeft", sp->FindRaw(rt.Intern("trimStart"))->v);
+    DefValue(rt, sp, "trimRight", sp->FindRaw(rt.Intern("trimEnd"))->v);
+    // 22.1.3.10 isWellFormed / 22.1.3.31 toWellFormed: lone surrogates, and replacing them with U+FFFD
+    DefNative(rt, sp, "isWellFormed", [](Runtime& rt, CallArgs& a) {
+        std::u16string s = ThisStr(rt, a, "isWellFormed");
+        rt.Charge(s.size() / 32 + 1);
+        for (std::size_t k = 0; k < s.size(); ++k) {
+            char16_t c = s[k];
+            if (c >= 0xD800 && c <= 0xDBFF && k + 1 < s.size() && s[k + 1] >= 0xDC00 && s[k + 1] <= 0xDFFF) { ++k; continue; }
+            if (c >= 0xD800 && c <= 0xDFFF) return Value::Bool(false);
+        }
+        return Value::Bool(true);
+    }, 0);
+    DefNative(rt, sp, "toWellFormed", [](Runtime& rt, CallArgs& a) {
+        std::u16string s = ThisStr(rt, a, "toWellFormed");
+        rt.Charge(s.size() / 32 + 1);
+        for (std::size_t k = 0; k < s.size(); ++k) {
+            char16_t c = s[k];
+            if (c >= 0xD800 && c <= 0xDBFF && k + 1 < s.size() && s[k + 1] >= 0xDC00 && s[k + 1] <= 0xDFFF) { ++k; continue; }
+            if (c >= 0xD800 && c <= 0xDFFF) s[k] = 0xFFFD;
+        }
+        return Str(rt, s);
+    }, 0);
     DefNative(rt, sp, "padStart", [](Runtime& rt, CallArgs& a) {
         std::u16string s = ThisStr(rt, a, "padStart");
         double max = rt.ToIntegerOrInfinity(a[0]);

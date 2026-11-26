@@ -495,9 +495,12 @@ struct Layouter {
         cmdKey.push_back(curKey);
         cmdGrad.push_back(-1);
     }
-    void Area(float x, float y, float w, float h, int link) {
+    // A link's clickable area; none for a part with pointer-events: none (CSS UI 4: the mouse goes through to what is under it).
+    void Area(float x, float y, float w, float h, int link, const ComputedStyle* st = nullptr) {
+        if (st && st->pointerNone) return;
         LinkArea a;
         a.x = x; a.y = y; a.w = w; a.h = h; a.link = link;
+        if (st) a.cursor = st->cursor;
         a.clip = curClip; a.fixed = curFixed; a.layer = curKey;
         r.areas.push_back(a);
     }
@@ -1282,14 +1285,14 @@ struct Layouter {
             const Frag& f = *p.f;
             const float x = Finite(cx + dx + p.x + extra[pi]);
             if (f.kind == Frag::Anchor) { r.anchors.push_back({f.text, top}); run = -1; continue; }
-            if (f.kind == Frag::Pad) { run = -1; if (f.link >= 0) Area(x, top, p.w, 0.0f, f.link); continue; }
+            if (f.kind == Frag::Pad) { run = -1; if (f.link >= 0) Area(x, top, p.w, 0.0f, f.link, f.st); continue; }
             if (f.kind == Frag::Atomic) {
                 run = -1;
                 float a, d;
                 boxMetrics(f, a, d);
                 if (f.atomicMark >= 0 && (std::size_t)f.atomicMark < atomicMarks.size())
                     ShiftRange(atomicMarks[(std::size_t)f.atomicMark].first, atomicMarks[(std::size_t)f.atomicMark].second, x, Finite(base - a));
-                if (f.link >= 0) Area(x, Finite(base - a), f.w, f.h, f.link);
+                if (f.link >= 0) Area(x, Finite(base - a), f.w, f.h, f.link, f.st);
                 continue;
             }
             if (f.kind == Frag::Image || f.kind == Frag::Embed) {
@@ -1308,7 +1311,7 @@ struct Layouter {
                 c.color.a = 255;
                 if (c.kind == DrawCmd::Embed) { r.embeds.push_back((int)r.cmds.size()); Emit(c); }
                 else EmitImage(c, *f.sn);
-                if (f.link >= 0) Area(c.x, c.y, c.w, c.h, f.link);
+                if (f.link >= 0) Area(c.x, c.y, c.w, c.h, f.link, f.st);
                 continue;
             }
             if (!f.st->visible) { run = -1; continue; }
@@ -1342,6 +1345,7 @@ struct Layouter {
             c.x = x; c.y = Finite(base - f.st->baselineShift - f.st->fontSize * 0.8f); c.w = p.w; c.h = f.st->fontSize;
             c.text = f.text;
             c.node = f.src;
+            c.noSelect = f.st->noSelect;
             c.font = FontOf(*f.st);
             c.color = f.st->color;
             c.underline = f.st->underline; c.strike = f.st->strike;
@@ -1351,7 +1355,7 @@ struct Layouter {
             run = (int)r.cmds.size() - 1;
             runStyle = f.st;
             runs.push_back({run, f.st});
-            if (f.link >= 0) Area(c.x, top, c.w, lineH, f.link);
+            if (f.link >= 0) Area(c.x, top, c.w, lineH, f.link, f.st);
         }
         if (container.ellipsis && container.Clips() && lineW > cw + 0.01f && !runs.empty()) Ellipsis(runs, cx + cw);
         for (const auto& rs : runs) if (CustomDecoration(*rs.second) && rs.second->visible) Decorations(r.cmds[(std::size_t)rs.first], *rs.second);
@@ -1594,6 +1598,8 @@ struct Layouter {
         b.depth = depth;
         b.x = x; b.y = y; b.w = w;
         b.fixed = curFixed || n.st.position == Position::Fixed;
+        b.noHit = n.st.pointerNone;
+        b.cursor = n.st.cursor;
         for (int i = 0; i < 4; ++i) b.border[i] = n.st.border[i];
         b.firstCmd = r.cmds.size();
         r.boxes.push_back(b);
@@ -1970,7 +1976,7 @@ struct Layouter {
             }
         }
         FinishBox(bi, n, h, bws);
-        if (curLink != savedLink && curLink >= 0) Area(bx, y, bwid, h, curLink);
+        if (curLink != savedLink && curLink >= 0) Area(bx, y, bwid, h, curLink, &st);
         curLink = savedLink;
         if (n.node && n.node->name == "button") {   // a <button> takes clicks like a form control
             ControlBox cbx;
@@ -1979,6 +1985,9 @@ struct Layouter {
             cbx.clip = curClip; cbx.fixed = curFixed;
             cbx.font = FontOf(st);
             cbx.color = st.color;
+            cbx.noHit = st.pointerNone;
+            cbx.appearanceNone = st.appearanceNone;
+            cbx.cursor = st.cursor;
             r.controls.push_back(cbx);
         }
         // the absolutely positioned boxes this one contains, now that its padding box is known
@@ -2047,6 +2056,9 @@ struct Layouter {
         cb.fixed = curFixed;
         cb.font = FontOf(st);
         cb.color = st.color;
+        cb.noHit = st.pointerNone;
+        cb.appearanceNone = st.appearanceNone;
+        cb.cursor = st.cursor;
         DrawCmd c;
         c.kind = DrawCmd::Control;
         c.x = x; c.y = y; c.w = w; c.h = h;
@@ -3442,6 +3454,7 @@ int ControlAt(const LayoutResult& r, float x, float y, const ScrollOffsets* offs
     int best = -1;
     for (std::size_t i = 0; i < r.controls.size(); ++i) {
         const ControlBox& c = r.controls[i];
+        if (c.noHit) continue;   // pointer-events: none
         float px = x, py = c.fixed ? y - pageScrollY : y;
         if (!InsideClip(r, c.clip, offsets, px, py, px, py)) continue;
         if (px >= c.x && px < c.x + c.w && py >= c.y && py < c.y + c.h) best = (int)i;

@@ -286,7 +286,7 @@ int main() {
         CHECK(clicked == 0 && !keys.HasSelection());
     }
 
-    // ---- round 4: text is sized by its em (CSS font-size), not its line
+    // ---- round 4: text is sized by its em (CSS font-size), not its line; the page's cursor property; user-select: none
     {
         std::vector<unsigned char> font;
         S::FontEm em;
@@ -304,6 +304,35 @@ int main() {
         UI::Style().textScale = saved;
         CHECK(lineSized > 0 && std::fabs(now / lineSized - em.linePerEm) < 0.02f);
 
+        br::BrowserTab tab5;
+        CHECK(tab5.Open("https://pages.test/ui.html"));
+        tab5.TakeFetches();
+        tab5.DeliverPage("https://pages.test/ui.html", true, 200,
+            "<body style='margin:0'><div id=na style='cursor:not-allowed;height:60px'>no</div><p style='margin:0'><a href='/w' style='cursor:wait'>busy link</a></p>"
+            "<p style='margin:0;height:40px'>plain text</p><p style='margin:0'>Keep</p><p style='margin:0;user-select:none'>Skip</p><p style='margin:0'>End</p></body>");
+        S::PageKeys keys5;
+        S::BrowserViewOptions opt5;
+        opt5.keys = &keys5;
+        Sim sim5(480, 320);
+        S::BrowserViewResult r5;
+        auto ui5 = [&] { r5 = S::DrawBrowserView(tab5, 0, 0, 480, 320, S::BrowserImageFn(), opt5); };
+        sim5.Frames(3, ui5);
+        const br::LayoutResult& p5 = tab5.Layout(r5.page.w, S::OkayUIMeasure());
+        auto cursorAt = [&](const char* text) {
+            for (const br::DrawCmd& c : p5.cmds)
+                if (c.kind == br::DrawCmd::Text && c.text == text) {
+                    sim5.Move(r5.page.x + c.x + 2.0f, r5.pageTop + c.y + c.h * 0.5f);
+                    sim5.Frame(ui5);
+                    return UI::GetMouseCursor();
+                }
+            return UI::MouseCursor_COUNT;
+        };
+        CHECK(cursorAt("no") == UI::MouseCursor_NotAllowed);
+        CHECK(cursorAt("busy link") == UI::MouseCursor_Wait);
+        CHECK(cursorAt("plain text") == UI::MouseCursor_Arrow);
+        // Ctrl+A leaves the user-select: none text out
+        sim5.ctrl = true; sim5.Hold(UI::KeyId_A, true); sim5.Frame(ui5); sim5.Hold(UI::KeyId_A, false); sim5.Frame(ui5); sim5.ctrl = false;
+        CHECK(S::SelectedPageText(p5, keys5) == "no\nbusy link\nplain text\nKeep\nEnd");
     }
 
     UI::UseLauncherLook(false);

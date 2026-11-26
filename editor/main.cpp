@@ -3339,9 +3339,9 @@ static void MdlMark(const char* label) {   // call right after a button: outline
     }
     if (ImGui::IsItemHovered()) if (const auto* t = oked::modeltools::FindByLabel(g_mdlCurPage, l)) g_mdlHint = std::string(t->name) + ": " + t->hint;
 }
-static bool ToolButton(const char* label, bool ok, const char* why, bool small = false) {
+static bool ToolButton(const char* label, bool ok, const char* why, bool smallButton = false) {
     ImGui::BeginDisabled(!ok);
-    const bool hit = small ? ImGui::SmallButton(label) : ImGui::Button(label);
+    const bool hit = smallButton ? ImGui::SmallButton(label) : ImGui::Button(label);
     ImGui::EndDisabled();
     MdlMark(label);
     if (!ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", why);
@@ -3452,9 +3452,9 @@ static bool ModelOp(EditorState& ed, MeshRenderer* mr, const char* label, const 
     return changed;
 }
 // One of the detail / pivot buttons both panels show (okay/Modeling/ShapeOps.hpp): the same code, the same undo.
-static void ShapeOpButton(EditorState& ed, MeshRenderer* mr, okay::modeling::ShapeOp op, bool small, const char* idSuffix) {
+static void ShapeOpButton(EditorState& ed, MeshRenderer* mr, okay::modeling::ShapeOp op, bool smallButton, const char* idSuffix) {
     const std::string id = std::string(okay::modeling::ShapeOpLabel(op)) + idSuffix;
-    const bool pressed = small ? ImGui::SmallButton(id.c_str()) : ImGui::Button(id.c_str());
+    const bool pressed = smallButton ? ImGui::SmallButton(id.c_str()) : ImGui::Button(id.c_str());
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", okay::modeling::ShapeOpTip(op));
     if (!pressed || !mr) return;
     const std::vector<int> faces = op == okay::modeling::ShapeOp::Subdivide ? g_meshSelFaces : std::vector<int>{};

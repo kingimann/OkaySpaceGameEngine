@@ -35,16 +35,16 @@ std::uint64_t Transform::ChildListWork() { return t_childWork; }
 // (a generated chain, a corrupt file) would overflow the stack otherwise.
 namespace {
 struct ChainBuffer {   // the chain from a transform up to its root; no allocation for a normal depth
-    const Transform* small[48];
+    const Transform* inlineBuf[48];
     std::vector<const Transform*> big;
     std::size_t n = 0;
     void push(const Transform* t) {
-        if (big.empty() && n < 48) { small[n++] = t; return; }
-        if (big.empty()) big.assign(small, small + n);
+        if (big.empty() && n < 48) { inlineBuf[n++] = t; return; }
+        if (big.empty()) big.assign(inlineBuf, inlineBuf + n);
         big.push_back(t);
         n = big.size();
     }
-    const Transform* at(std::size_t i) const { return big.empty() ? small[i] : big[i]; }
+    const Transform* at(std::size_t i) const { return big.empty() ? inlineBuf[i] : big[i]; }
 };
 
 // The inverse of an affine matrix; false when it has none (a collapsed axis, or not finite).

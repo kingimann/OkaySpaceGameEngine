@@ -90,12 +90,12 @@ std::vector<GridCell> Navigation::SmoothGridPath(const std::vector<bool>& walkab
     out.push_back(path.front());
     std::size_t i = 0;
     while (i + 1 < path.size()) {
-        std::size_t far = i + 1;
+        std::size_t farthest = i + 1;
         for (std::size_t j = i + 2; j < path.size(); ++j)
-            if (GridLineClear(walkable, width, height, path[i], path[j])) far = j;
-        out.push_back(path[far]);
-        if (far == i) break;
-        i = far;
+            if (GridLineClear(walkable, width, height, path[i], path[j])) farthest = j;
+        out.push_back(path[farthest]);
+        if (farthest == i) break;
+        i = farthest;
     }
     return out;
 }

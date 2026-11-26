@@ -196,13 +196,13 @@ public:
         if (!win32icon::ValidIcon(rgba, w, h)) return false;
         // A big icon (Alt+Tab, task bar) and a small one (title bar), each at the size this system asks for.
         HICON big = MakeIcon(rgba, w, h, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON));
-        HICON small = MakeIcon(rgba, w, h, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
-        if (!big || !small) { if (big) DestroyIcon(big); if (small) DestroyIcon(small); return false; }
+        HICON smallIcon = MakeIcon(rgba, w, h, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
+        if (!big || !smallIcon) { if (big) DestroyIcon(big); if (smallIcon) DestroyIcon(smallIcon); return false; }
         SendMessageW(m_hwnd, WM_SETICON, ICON_BIG, (LPARAM)big);
-        SendMessageW(m_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small);
+        SendMessageW(m_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)smallIcon);
         if (m_iconBig) DestroyIcon(m_iconBig);
         if (m_iconSmall) DestroyIcon(m_iconSmall);
-        m_iconBig = big; m_iconSmall = small;
+        m_iconBig = big; m_iconSmall = smallIcon;
         return true;
     }
     bool PresentPixels(const uint8_t* rgba, int w, int h) override {

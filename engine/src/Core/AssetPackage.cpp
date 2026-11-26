@@ -8,6 +8,7 @@
 #include "okay/Core/Jobs.hpp"
 #include "okay/Core/PathSafety.hpp"
 #include "okay/Core/SaveData.hpp"   // savefmt::MoveOver
+#include "okay/Core/StringUtil.hpp"   // str::LowerAscii
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -119,8 +120,7 @@ std::string NormalizeName(std::string_view name) {
 }
 
 AssetId IdOf(std::string_view name) {
-    std::string key = NormalizeName(name);
-    for (char& c : key) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    const std::string key = str::LowerAscii(NormalizeName(name));
     const AssetId id = Hash64(std::string_view(key), kIdSeed);
     return id == 0 ? 1 : id;
 }
@@ -219,8 +219,7 @@ bool ReadWholeFile(const std::string& path, std::vector<std::uint8_t>& out, std:
 bool AlreadyCompressed(const std::string& name) {
     const std::size_t dot = name.rfind('.');
     if (dot == std::string::npos) return false;
-    std::string ext = name.substr(dot + 1);
-    for (char& c : ext) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    const std::string ext = str::LowerAscii(name.substr(dot + 1));
     static const char* list[] = {"png", "jpg", "jpeg", "gif", "webp", "ogg", "mp3", "opus", "flac", "zip", "gz",
                                  "br", "7z", "mp4", "webm", "okaypkg", "ktx2"};
     for (const char* e : list) if (ext == e) return true;
@@ -250,9 +249,7 @@ bool PackageWriter::AddItem(Item item, std::string* why) {
         if (why) {
             if (it->name == item.name) *why = "'" + item.name + "' is in the package twice";
             else {
-                std::string a = it->name, b = item.name;
-                for (char& c : a) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
-                for (char& c : b) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+                const std::string a = str::LowerAscii(it->name), b = str::LowerAscii(item.name);
                 *why = "'" + it->name + "' and '" + item.name + "' have the same asset id " + Hex64(item.id) +
                        (a == b ? ": the names differ only in letter case, which is one file on Windows. Rename one of them."
                                : ": a 64-bit id collision. Rename one of them.");
@@ -912,7 +909,7 @@ bool ParseManifest(std::string_view text, std::vector<ManifestItem>& out, std::s
         }
         if (hx.size() != 16) { why = where + "bad hash"; out.clear(); return false; }
         for (char c : hx) {
-            int v = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+            const int v = str::HexDigitValue(c);
             if (v < 0) { why = where + "bad hash"; out.clear(); return false; }
             it.hash = (it.hash << 4) | (std::uint64_t)v;
         }

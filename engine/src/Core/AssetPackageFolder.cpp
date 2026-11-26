@@ -4,6 +4,7 @@
 #include "okay/Core/AssetPackage.hpp"
 #include "okay/Core/AssetDatabase.hpp"
 #include "okay/Core/PathSafety.hpp"
+#include "okay/Core/StringUtil.hpp"   // str::LowerAscii
 #include "okay/Core/SaveData.hpp"   // savefmt::AtomicWriteChecked, MoveOver, ReadFileCapped
 #include <algorithm>
 #include <chrono>
@@ -26,14 +27,6 @@ namespace {
 constexpr const char* kManifestFile = "packages.manifest";
 constexpr const char* kViewState = ".okaypkg-view";
 
-std::string Lower(std::string s) {
-    for (char& c : s) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
-    return s;
-}
-bool EndsWith(const std::string& s, const char* tail) {
-    const std::size_t n = std::char_traits<char>::length(tail);
-    return s.size() >= n && Lower(s.substr(s.size() - n)) == tail;
-}
 std::int64_t Stamp(const fs::path& p) {
     std::error_code ec;
     const auto t = fs::last_write_time(p, ec);
@@ -154,7 +147,7 @@ bool Materialize(const PackageStack& stack, const std::string& dataDir, const st
         fs::path target;
         std::string w;
         if (!pathsafety::StaysInside(view, name, &target, &w)) { why = "'" + name + "' cannot be written: " + w; return false; }
-        packedKeys.insert(Lower(name));
+        packedKeys.insert(str::LowerAscii(name));
         auto o = old.find(h.entry->id);
         if (o != old.end() && o->second.name == name && o->second.hash == h.entry->contentHash && o->second.size == h.entry->size) {
             const std::uintmax_t sz = fs::file_size(target, ec);
@@ -182,7 +175,7 @@ bool Materialize(const PackageStack& stack, const std::string& dataDir, const st
     for (fs::directory_iterator it(data, ec), end; !ec && it != end; it.increment(ec)) {
         if (!it->is_regular_file(ec)) continue;
         const std::string n = it->path().filename().u8string();
-        if (EndsWith(n, ".okaypkg") || EndsWith(n, ".part") || n == kManifestFile || packedKeys.count(Lower(n)) || n == kViewState) continue;
+        if (str::EndsWithNoCaseAscii(n, ".okaypkg") || str::EndsWithNoCaseAscii(n, ".part") || n == kManifestFile || packedKeys.count(str::LowerAscii(n)) || n == kViewState) continue;
         if (!IsValidName(n)) continue;
         const fs::path target = view / it->path().filename();
         if (fs::exists(target, ec) && SameBytes(it->path(), target)) continue;
@@ -208,21 +201,21 @@ bool PackFolder(const std::string& dataDir, const std::string& packageFile, cons
     const fs::path dir = fs::u8path(dataDir);
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) { why = dataDir + " is not a folder"; return false; }
-    if (!IsValidName(packageFile, &why) || packageFile.find('/') != std::string::npos || !EndsWith(packageFile, ".okaypkg")) {
+    if (!IsValidName(packageFile, &why) || packageFile.find('/') != std::string::npos || !str::EndsWithNoCaseAscii(packageFile, ".okaypkg")) {
         why = "'" + packageFile + "' is not a package file name";
         return false;
     }
     std::set<std::string> loose;
-    for (const std::string& k : options.keepLoose) loose.insert(Lower(k));
+    for (const std::string& k : options.keepLoose) loose.insert(str::LowerAscii(k));
     // 1) The files to pack: everything but the loose names, packages, the manifest and half-written files.
     std::vector<std::pair<std::string, fs::path>> files;   // name, path
     for (fs::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
         const fs::path rel = fs::relative(it->path(), dir, ec);
-        const std::string top = Lower(rel.begin() == rel.end() ? std::string() : rel.begin()->u8string());
+        const std::string top = str::LowerAscii(rel.begin() == rel.end() ? std::string() : rel.begin()->u8string());
         if (loose.count(top)) { if (it->is_directory(ec)) it.disable_recursion_pending(); continue; }
         if (!it->is_regular_file(ec)) continue;
         const std::string name = rel.generic_u8string();
-        if (EndsWith(name, ".okaypkg") || EndsWith(name, ".part") || name == kManifestFile) continue;
+        if (str::EndsWithNoCaseAscii(name, ".okaypkg") || str::EndsWithNoCaseAscii(name, ".part") || name == kManifestFile) continue;
         if (!IsValidName(name, &why)) { why = "cannot pack the game: " + why; return false; }
         files.push_back({name, it->path()});
     }
@@ -241,10 +234,10 @@ bool PackFolder(const std::string& dataDir, const std::string& packageFile, cons
         so.ignoreExtensions.push_back("okaypkg");
         db.Scan(dataDir, so);
         for (const AssetRecord* r : db.All()) {
-            kinds[Lower(r->path)] = (std::uint8_t)r->kind;
+            kinds[str::LowerAscii(r->path)] = (std::uint8_t)r->kind;
             for (const Guid& g : db.DependenciesOf(r->guid)) {
                 const std::string p = db.GuidToPath(g);
-                if (!p.empty()) deps[Lower(r->path)].push_back(p);
+                if (!p.empty()) deps[str::LowerAscii(r->path)].push_back(p);
             }
         }
     }
@@ -253,10 +246,10 @@ bool PackFolder(const std::string& dataDir, const std::string& packageFile, cons
         PackageWriter w;
         result.dependencyLinks = 0;
         for (const auto& f : files) {
-            const auto d = deps.find(Lower(f.first));
+            const auto d = deps.find(str::LowerAscii(f.first));
             std::vector<std::string> dl = d == deps.end() ? std::vector<std::string>() : d->second;
             result.dependencyLinks += dl.size();
-            const auto k = kinds.find(Lower(f.first));
+            const auto k = kinds.find(str::LowerAscii(f.first));
             if (!w.AddFile(f.first, f.second.u8string(), std::move(dl), k == kinds.end() ? 0 : k->second, &why)) return false;
         }
         WriteOptions wo = options.write;

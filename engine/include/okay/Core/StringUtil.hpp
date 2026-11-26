@@ -36,6 +36,11 @@ inline bool EqualsNoCaseAscii(const std::string& a, const std::string& b) {
     return true;
 }
 
+// True when `s` ends with `tail`, ignoring ASCII letter case ("Game.OKAYPKG" ends with ".okaypkg").
+inline bool EndsWithNoCaseAscii(const std::string& s, const std::string& tail) {
+    return s.size() >= tail.size() && EqualsNoCaseAscii(s.substr(s.size() - tail.size()), tail);
+}
+
 // `s` without the spaces, tabs, carriage returns and newlines at its two ends (ASCII whitespace only).
 inline std::string Trim(const std::string& s) {
     std::size_t b = 0, e = s.size();

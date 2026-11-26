@@ -2395,6 +2395,20 @@ struct Layouter {
             const float gaps = hs * (float)(t.cols + 1);
             mn = gaps; mx = gaps;
             for (int c = 0; c < t.cols; ++c) { mn += cmin[(std::size_t)c]; mx += cmax[(std::size_t)c]; }
+            // Percentage columns (CSS Tables 3, the table's max-content width): the table is as wide as it must be for every
+            // percentage to hold with the other columns at their maximum widths - the rest of the columns' maximum over the
+            // percentage left for them, and each percentage column's maximum over its own percentage. A page's
+            // "25% | content | 25%" row then spreads out like in other browsers instead of squeezing the middle column.
+            float pctSum = 0, restMax = 0, need = 0;
+            for (int c = 0; c < t.cols; ++c) {
+                const std::size_t k = (std::size_t)c;
+                if (cpct[k] > 0) { pctSum += cpct[k]; need = std::max(need, cmax[k] * 100.0f / cpct[k]); }
+                else restMax += cmax[k];
+            }
+            if (pctSum > 0) {
+                if (pctSum < 100.0f) need = std::max(need, restMax * 100.0f / (100.0f - pctSum));
+                mx = std::max(mx, std::min(need, 1e6f) + gaps);
+            }
         }
         for (const SNode* cap : t.captions) { const auto ci = Intrinsic(*cap); mn = std::max(mn, ci.first + MarginsH(cap->st, 0)); }
         mx = std::max(mx, mn);
@@ -2458,6 +2472,16 @@ struct Layouter {
                 if (pct[c] >= 0) { colW[c] = std::max(mn[c], pct[c] * avail / 100.0f); left -= colW[c]; done[c] = true; }
             float sMin = 0, sMax = 0;
             for (std::size_t c = 0; c < nc; ++c) if (!done[c]) { sMin += mn[c]; sMax += mx[c]; }
+            if (left < sMin) {
+                // The percentage columns would push the others below their minimum widths (their content would overlap the
+                // next column): the percentage columns give back what they have above their own minimum, in proportion.
+                float spare = 0;
+                for (std::size_t c = 0; c < nc; ++c) if (done[c]) spare += colW[c] - mn[c];
+                const float give = std::min(spare, sMin - left);
+                if (spare > 0 && give > 0)
+                    for (std::size_t c = 0; c < nc; ++c) if (done[c]) colW[c] -= give * (colW[c] - mn[c]) / spare;
+                left += give;
+            }
             left = std::max(0.0f, left);
             for (std::size_t c = 0; c < nc; ++c) {
                 if (done[c]) continue;

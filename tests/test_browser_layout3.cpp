@@ -3,7 +3,7 @@
 // captions, row groups, vertical-align in cells, border-spacing and border-collapse), 8.3.1 (margins collapsing through
 // parents and through empty boxes), 12.4 (counters) and 12.6.2 (list styles); CSS Images 3 (gradients, object-fit); Selectors 4
 // (:has()); CSS Overflow 3 (text-overflow); CSS Text Decoration 3; CSS Transforms 1; the HTML standard's presentational hints
-// for tables. The fixed text measure: every character is half the font size wide (8 px at 16 px), a normal line is
+// for tables, <font>, align, body margins; sub / sup; opacity on controls; mask images; quirks-mode tables. The fixed text measure: every character is half the font size wide (8 px at 16 px), a normal line is
 // 1.2 x 16 = 19.2 px and the text's em box starts 1.6 px below the line top.
 // Only the layout API that existed before round 3 is used here, so this file also builds against the old library (and fails).
 #include "BrowserLayoutTestKit.hpp"
@@ -319,6 +319,32 @@ int main() {
         int cells = 0;
         for (const BoxInfo& b : r2.boxes) if (b.tag == "td") ++cells;
         CHECK(cells == 1000);   // at most 1000 columns
+    }
+    // ---- real pages, round 1 (the owner's Google screenshot and the pages checked next to it) ----
+    {
+        // A "25% | content | 25%" row in a table with no width (a search page's form): the table is made wide enough for the
+        // percentages to hold with the middle column at its maximum width (200 / 50% = 400 px), so the right column starts after
+        // the middle one instead of over it. Before: the table was 272 wide and the right column started at 268, inside the
+        // 200 px box of the middle column (100 + 200 = 300 is where it ends now).
+        const std::string page = B0 + "<table cellspacing=0 cellpadding=0><tr><td id=a width='25%'>x</td><td id=b nowrap>"
+                                 "<div style='display:inline-block;width:200px;height:10px'></div></td><td id=c width='25%'>"
+                                 "<a style='display:block'>Advanced</a></td></tr></table>";
+        auto xw = [](const LayoutResult& r, const char* id, float x, float w) {
+            const BoxInfo* b = ById(r, id);
+            if (b && Near(b->x, x) && Near(b->w, w)) return true;
+            std::cerr << "  #" << id << ": got " << (b ? b->x : -1) << " w " << (b ? b->w : -1) << "  want " << x << " w " << w << "\n";
+            return false;
+        };
+        const LayoutResult r = Lay(page, 600);
+        CHECK(xw(r, "a", 0, 100));
+        CHECK(xw(r, "b", 100, 200));
+        CHECK(xw(r, "c", 300, 100));
+        // Too narrow for 25% + 200 + 25% (300 px): the percentage columns give back what they have above their minimum
+        // (75 - 8 and 75 - 64, in that proportion), so the middle column keeps its 200 px and nothing overlaps.
+        const LayoutResult n = Lay(page, 300);
+        CHECK(xw(n, "a", 0, 75.0f - 50.0f * 67.0f / 78.0f));
+        CHECK(xw(n, "b", 75.0f - 50.0f * 67.0f / 78.0f, 200));
+        CHECK(xw(n, "c", 75.0f - 50.0f * 67.0f / 78.0f + 200.0f, 75.0f - 50.0f * 11.0f / 78.0f));
     }
     TEST_MAIN_RESULT();
 }

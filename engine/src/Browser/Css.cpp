@@ -1161,7 +1161,7 @@ void ParseRules(const std::string& css, std::size_t from, std::size_t to, StyleS
                         else { float n; std::string u; if (ParseNumber(Words(v).empty() ? v : Words(v)[0], n, u) && u.empty()) ff.weight = (int)n; }
                     } else if (d.property == "font-style") ff.italic = v.compare(0, 6, "italic") == 0 || v.compare(0, 7, "oblique") == 0;
                     else if (d.property == "src" && ff.url.empty()) {
-                        std::string woffUrl;   // a WOFF 1.0 file (WebFont.hpp decodes it) when there is no TrueType / OpenType one
+                        std::string woffUrl, woff2Url;   // WOFF 1.0 / WOFF2 files (WebFont.hpp decodes them) when there is no TrueType / OpenType one
                         for (const std::vector<std::string>& g : CommaGroups(Words(d.value))) {
                             std::string url, fmt;
                             for (const std::string& w : g) {
@@ -1169,14 +1169,16 @@ void ParseRules(const std::string& css, std::size_t from, std::size_t to, StyleS
                                 const std::string lw = LowerAscii(w);
                                 if (lw.compare(0, 7, "format(") == 0) fmt = LowerAscii(Unquote(w.substr(7, w.size() - 8)));
                             }
-                            // TrueType / OpenType first (our rasterizer reads them); WOFF 1.0 next; WOFF2 is not read yet
+                            // TrueType / OpenType first (our rasterizer reads them as they are); WOFF 1.0 next; WOFF2 last (the newest decoder)
                             const std::string ext = LowerAscii(url.substr(url.find_last_of('.') == std::string::npos ? url.size() : url.find_last_of('.')));
                             const bool ttf = fmt == "truetype" || fmt == "opentype" || (fmt.empty() && (ext.compare(0, 4, ".ttf") == 0 || ext.compare(0, 4, ".otf") == 0));
                             if (!url.empty() && ttf) { ff.url = url; break; }
                             const bool woff = fmt == "woff" || (fmt.empty() && ext.compare(0, 5, ".woff") == 0 && ext.compare(0, 6, ".woff2") != 0);
                             if (!url.empty() && woff && woffUrl.empty()) woffUrl = url;
+                            const bool woff2 = fmt == "woff2" || (fmt.empty() && ext.compare(0, 6, ".woff2") == 0);
+                            if (!url.empty() && woff2 && woff2Url.empty()) woff2Url = url;
                         }
-                        if (ff.url.empty()) ff.url = woffUrl;
+                        if (ff.url.empty()) ff.url = woffUrl.empty() ? woff2Url : woffUrl;
                     }
                 }
                 if (!ff.family.empty() && !ff.url.empty() && sheet.fontFaces.size() < 64) sheet.fontFaces.push_back(ff);

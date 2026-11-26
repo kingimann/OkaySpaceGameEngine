@@ -96,7 +96,8 @@ stated in `tests/test_ttf_rasterizer.cpp:5`).
   **TrueType** rasteriser (no `stbtt` names), the **image decoders** (no `stbi` / libjpeg names or constants), **OkayUI**
   (no Dear ImGui internals such as `IM_NORMALIZE2F`, `FringeScale`, `stb_textedit`).
 - No other project's copyright line in our code (only the JetBrains Mono font header). No .NET runtime or hostfxr
-  code on main yet. No video or AAC codec, no Brotli dictionary, no public suffix list, no SDL controller database.
+  code on main yet. No video or AAC codec, no Brotli dictionary (since added on `claude/woff2-1`, 2026-11-26, owner-approved data from
+  RFC 7932: see `THIRD_PARTY.md`), no public suffix list, no SDL controller database.
 - Brand names used to describe a device or a service (DualShock, DualSense, Joy-Con, Xbox, Steam, PlayFab, Mixamo in
   import hints, Blender in import notes) are text only; no logo or controller button art was found (PlayStation
   buttons are the words "Cross", "Circle", ... in `engine/src/Input/GamepadInfo.cpp:225`).

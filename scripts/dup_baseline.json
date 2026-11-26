@@ -15,7 +15,6 @@
    "engine/src/Components/RangedWeapon.cpp": 1
   },
   "base64": {
-   "engine/include/okay/Platform/Account/AccountService.hpp": 1,
    "okayui/tests/OkayUITestKit.hpp": 1,
    "platform/xbox_uwp/XboxAppx.hpp": 1,
    "tests/test_blend_shapes.cpp": 1,
@@ -113,7 +112,6 @@
   "json-escape": {
    "engine/include/okay/Core/Profiler.hpp": 1,
    "engine/include/okay/Debug/DebugUtil.hpp": 1,
-   "engine/include/okay/Platform/Account/AccountService.hpp": 1,
    "engine/src/Core/BuildPipeline.cpp": 1,
    "engine/src/Core/LocTable.cpp": 1,
    "engine/src/Optimize/SceneOptimizationReport.cpp": 1,
@@ -192,7 +190,7 @@
    "engine/include/okay/Net/MatchResults.hpp": 1,
    "engine/include/okay/Net/Matchmaking.hpp": 1,
    "engine/include/okay/Physics/PhysicsMaterialAsset.hpp": 1,
-   "engine/include/okay/Platform/Account/AccountService.hpp": 2,
+   "engine/include/okay/Platform/Account/AccountService.hpp": 1,
    "engine/include/okay/Platform/Achievements.hpp": 1,
    "engine/include/okay/Platform/Admin.hpp": 1,
    "engine/include/okay/Platform/Forums.hpp": 1,

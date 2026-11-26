@@ -64,7 +64,7 @@ static void Child(Kind kind, const char* step, int lines) {
 static int RunChild(const fs::path& dir, Kind kind, const char* step, int lines = 5) {
     setenv("OKAY_CRASH_DIR", dir.string().c_str(), 1);
     setenv("OKAY_OWN_FBX", "1", 1);
-    setenv("OKAY_ACCOUNT_API_KEY", "sb_secret_must_never_appear_0123456789", 1);
+    setenv("OKAY_ACCOUNT_API_KEY", "sb_secret_TESTONLY00000000000000000000", 1);
     std::fflush(nullptr);
     const pid_t pid = fork();
     if (pid == 0) {
@@ -110,7 +110,7 @@ int main() {
     CHECK(r.Info("Mode") == "play" && r.Info("Scene") == "level1.okayscene" && r.Info("Objects") == "77" && r.Info("Assets loaded") == "12");
     CHECK(r.Info("Recovery copy") == "none" && r.Info("Uptime").find("30 frames") != std::string::npos);
     CHECK(r.Info("Own code").find("OKAY_OWN_FBX=1") != std::string::npos);
-    CHECK(text.find("sb_secret_must_never_appear") == std::string::npos && text.find("OKAY_ACCOUNT_API_KEY") == std::string::npos);   // keys never reach a report
+    CHECK(text.find("sb_secret_TESTONLY000000000") == std::string::npos && text.find("OKAY_ACCOUNT_API_KEY") == std::string::npos);   // keys never reach a report
     CHECK(text.find("/home/bob") == std::string::npos);   // the scene's folder is not in it
     CHECK(r.frames >= 3);
     CHECK(TopFrame(r) == exe + "!CrashHereSegv");         // the fault is the first frame, not the handler or the signal trampoline

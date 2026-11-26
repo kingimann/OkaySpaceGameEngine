@@ -1490,6 +1490,20 @@ target_compile_features(test_account PRIVATE cxx_std_17)
 target_include_directories(test_account PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME account COMMAND test_account)
 
+# OkayBackend round 2 (docs/platform/okay_backend.md): every auth flow AccountService sends (sign-up, sign-in, refresh, session
+# check, password reset, account changes, sign-out) must send byte-identical requests to the golden texts recorded before the
+# move, and the Supabase provider called directly must send the same. Fake server only: no request leaves the process.
+add_executable(test_okay_backend_golden_auth test_okay_backend_golden_auth.cpp)
+target_compile_features(test_okay_backend_golden_auth PRIVATE cxx_std_17)
+target_include_directories(test_okay_backend_golden_auth PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME okay_backend_golden_auth COMMAND test_okay_backend_golden_auth)
+# OkayBackend core: provider choice (OKAY_BACKEND, backend.json) and AccountService following it, the request builder's
+# header order, the transports, reading token claims. Header-only, no network.
+add_executable(test_okay_backend test_okay_backend.cpp)
+target_compile_features(test_okay_backend PRIVATE cxx_std_17)
+target_include_directories(test_okay_backend PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME okay_backend COMMAND test_okay_backend)
+
 # The editor's sign-in gate (editor/SignInGate.hpp): no session blocked, a confirmed session opens, an unconfirmed one is
 # blocked (no offline grace), the test switch, and the player / exported games never gated. Header-only like test_account.
 add_executable(test_editor_signin_gate test_editor_signin_gate.cpp)

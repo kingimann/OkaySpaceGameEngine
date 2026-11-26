@@ -11736,7 +11736,7 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
     if (create) {
         fs::create_directories(dir, ec);
         if (!exists) std::ofstream(p) << (tplIdx == 0 ? extide::StarterScriptNamed(lang, stem)
-                                                      : scriptide::ExpandTemplate(tpls[(std::size_t)tplIdx].body, extide::ClassIdent(stem)));
+                                                      : scriptide::FillTemplate(tpls[(std::size_t)tplIdx].body, extide::ClassIdent(stem)));
         if (attach && sel) AttachScriptAsset(ed, sel, p.string());   // its tab opens with the selection
         else OpenScriptFileInEditor(p.string());
         ConsoleLog((exists ? "Opened " : "Created ") + p.string());

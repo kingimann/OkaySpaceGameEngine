@@ -30,7 +30,7 @@ void NoteEdited(const std::string& path, const std::string& text);
 const std::vector<std::string>& ProjectScripts();
 const std::vector<std::string>& RecentScripts();
 scriptide::SymbolIndex& Index();
-bool IndexBusy();
+bool SymbolIndexBusy();
 
 // ---- Quick Open and recent files ----
 void OpenQuickOpen();

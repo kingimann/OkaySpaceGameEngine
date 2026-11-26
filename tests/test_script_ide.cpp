@@ -245,7 +245,7 @@ int main() {
         CHECK(lt.size() >= 3 && lt[0].body.find("function Script:Start()") != std::string::npos);
         const auto ot = TemplatesFor("okayscript");
         CHECK(ot.size() >= 3 && ot[0].body.find("void Update()") != std::string::npos);
-        CHECK(ExpandTemplate("// {Name} {Name}", "Door") == "// Door Door");
+        CHECK(FillTemplate("// {Name} {Name}", "Door") == "// Door Door");
     }
 
     // ---- local history ----

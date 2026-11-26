@@ -5,6 +5,7 @@
 #include "MainShared.hpp"          // OpenScriptFileInEditorAt (main.cpp)
 #include "ConsolePanel.hpp"        // ConsoleLog
 #include "PluginsWindow.hpp"       // DrawPluginPanelBody: a plugin's panel with the ui_* widgets
+#include "okay/Platform/Platform.hpp"   // okay::platform::TicksMs32
 
 #include <chrono>
 #include <ctime>
@@ -45,29 +46,24 @@ struct State {
     // local history
     bool lhOpen = false;
     std::string lhPath, lhCurrent;
-    std::vector<scriptide::HistoryEntry> lhVersions;
+    std::vector<scriptide::HistoryVersion> lhVersions;
     int lhSel = 0;
     std::string lhText;
     std::vector<scriptide::DiffLine> lhDiff;
 };
 State& S() { static State s; return s; }
 
-std::int64_t NowMs() {
+std::int64_t WallClockMs() {
     return (std::int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
-std::uint32_t TicksMs() { return (std::uint32_t)(NowMs() & 0xffffffffu); }
+std::uint32_t TicksMs() { return okay::platform::TicksMs32(); }
 std::string RecentFile() { return S().project.empty() ? std::string() : (fs::path(S().project) / ".okay" / "recent_scripts.txt").string(); }
-void SaveRecent() {
+void SaveRecentScripts() {
     const std::string f = RecentFile();
     if (f.empty()) return;
     std::error_code ec;
     fs::create_directories(fs::path(f).parent_path(), ec);
     std::ofstream(f, std::ios::binary) << S().recent.Serialize();
-}
-std::string ReadText(const std::string& p) {
-    std::ifstream f(p, std::ios::binary);
-    std::stringstream ss; ss << f.rdbuf();
-    return ss.str();
 }
 std::string RootForLabels() { return S().project.empty() ? std::string() : S().project; }
 } // namespace
@@ -80,15 +76,15 @@ void Tick(const std::string& projectDir) {
         s.index.Clear();
         s.liveHash.clear();
         s.history.SetProject(projectDir);
-        s.recent.Parse(ReadText(RecentFile()));
+        s.recent.Parse(extide::ReadFile(RecentFile()));
         s.nextScan = 0;
         s.indexWanted = true;
     }
-    if (TicksMs() - s.nextScan < 0x80000000u) {   // every 5 seconds: the list of scripts (files added or removed outside)
+    if (s.nextScan == 0 || (std::int32_t)(TicksMs() - s.nextScan) >= 0) {   // every 5 seconds: the list of scripts (added or removed outside)
         const std::string root = projectDir.empty() ? std::string("Assets") : (fs::path(projectDir) / "Assets").generic_string();
         std::vector<std::string> now = scriptide::ListProjectScripts(root);
         if (now != s.scripts) { s.scripts = std::move(now); s.indexWanted = true; }
-        s.nextScan = TicksMs() + 5000;
+        s.nextScan = (TicksMs() + 5000) | 1u;   // (never 0: 0 means "now")
     }
     if (s.indexWanted && !s.builder.Busy()) { s.builder.Start(s.scripts); s.indexWanted = false; }
     scriptide::SymbolIndex built;
@@ -103,11 +99,11 @@ void Tick(const std::string& projectDir) {
 void NoteOpened(const std::string& path) {
     if (path.empty()) return;
     S().recent.Push(fs::path(path).generic_string());
-    SaveRecent();
+    SaveRecentScripts();
 }
 void NoteSaved(const std::string& path, const std::string& text) {
     if (path.empty()) return;
-    S().history.Record(path, text, NowMs(), "Saved");
+    S().history.Record(path, text, WallClockMs(), "Saved");
     S().index.SetFile(fs::path(path).generic_string(), text);
 }
 void NoteEdited(const std::string& path, const std::string& text) {
@@ -118,12 +114,12 @@ void NoteEdited(const std::string& path, const std::string& text) {
     if (it != S().liveHash.end() && it->second == h) return;
     S().liveHash[key] = h;
     S().index.SetFile(key, text);
-    S().history.MaybeRecord(path, text, NowMs());
+    S().history.MaybeRecord(path, text, WallClockMs());
 }
 const std::vector<std::string>& ProjectScripts() { return S().scripts; }
 const std::vector<std::string>& RecentScripts() { return S().recent.Items(); }
 scriptide::SymbolIndex& Index() { return S().index; }
-bool IndexBusy() { return S().builder.Busy(); }
+bool SymbolIndexBusy() { return S().builder.Busy(); }
 
 // ---- Quick Open ---------------------------------------------------------------------------------------------------------
 void OpenQuickOpen() { S().qoOpen = true; }
@@ -175,7 +171,7 @@ void DrawRecentMenu() {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.c_str());
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Clear Recent")) { S().recent = scriptide::RecentFiles(30); SaveRecent(); }
+    if (ImGui::MenuItem("Clear Recent")) { S().recent = scriptide::RecentFiles(30); SaveRecentScripts(); }
 }
 
 // ---- the script tree ----------------------------------------------------------------------------------------------------
@@ -363,7 +359,7 @@ void DrawLocalHistory(const std::function<void(const std::string&)>& restore) {
 
 // ---- plugins ------------------------------------------------------------------------------------------------------------
 namespace {
-ImGuiKey KeyFor(const std::string& k) {
+ImGuiKey ImGuiKeyNamed(const std::string& k) {
     if (k.size() == 1) {
         const char c = k[0];
         switch (c) {
@@ -413,7 +409,7 @@ bool RunPluginShortcut() {
         pluginreg::Shortcut s;
         if (c->shortcut.empty() || !pluginreg::ParseShortcut(c->shortcut, s)) continue;
         if (s.ctrl != io.KeyCtrl || s.shift != io.KeyShift || s.alt != io.KeyAlt) continue;
-        const ImGuiKey key = KeyFor(s.key);
+        const ImGuiKey key = ImGuiKeyNamed(s.key);
         if (key == ImGuiKey_None || !ImGui::IsKeyPressed(key, false)) continue;
         const std::string id = c->id;                 // the command may reload plugins: copy the id first
         pluginreg::ScriptEditorPlugins().Run(id);

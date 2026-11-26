@@ -4,6 +4,7 @@
 #include "ScriptText.hpp"                        // scripttext::Outline, CodeMask, IsValidNewName (OkayScript's view of a script)
 #include "VisualScriptSearchNav.hpp"             // okay::editor::vsed::searchnav::EditDistance
 #include "okay/Scripting/StarterScripts.hpp"     // okay::StarterScriptSource: the first template of each language
+#include "okay/Lua/Lua.hpp"                      // okay::lua::kKeywords: Lua's reserved words
 #include "../shared/OkayThreads.hpp"             // okay::thr: the symbol index builds on a worker (rule 21a: no <thread>)
 
 #include <algorithm>
@@ -111,14 +112,10 @@ std::vector<char> CodeMaskFor(const std::string& language, const std::string& te
 }
 
 bool IsKeyword(const std::string& language, const std::string& w) {
-    static const std::unordered_set<std::string> lua = {"and", "break", "do", "else", "elseif", "end", "false", "for",
-        "function", "goto", "if", "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while", "self"};
-    static const std::unordered_set<std::string> cs = {"var", "if", "else", "while", "for", "foreach", "in", "function", "return",
-        "true", "false", "null", "break", "continue", "class", "struct", "enum", "new", "this", "public", "private", "protected",
-        "static", "void", "do", "switch", "case", "default", "const", "readonly", "override", "virtual", "abstract", "using",
-        "namespace", "try", "catch", "finally", "throw", "yield", "int", "float", "double", "bool", "string", "char", "long",
-        "interface", "record", "is", "as", "out", "ref", "params", "base", "typeof", "not", "and", "or", "let", "object", "get", "set"};
-    return language == "lua" ? lua.count(w) != 0 : cs.count(w) != 0;
+    if (language != "lua") return scripttext::IsKeywordWord(w);
+    if (w == "self") return true;                               // the method receiver: never a symbol of its own
+    for (const char* k : okay::lua::kKeywords) if (w == k) return true;
+    return false;
 }
 
 // ---- recent files ---------------------------------------------------------------------------------------------------------
@@ -730,8 +727,8 @@ std::string ToggleComment(const std::string& text, int first, int last, const st
     return out;
 }
 
-CallInfo CallAtCaret(const std::string& text, std::size_t caret) {
-    CallInfo ci;
+CaretCall CallAtCaret(const std::string& text, std::size_t caret) {
+    CaretCall ci;
     caret = std::min(caret, text.size());
     int depth = 0, commas = 0;
     for (std::size_t i = caret; i > 0; --i) {
@@ -782,7 +779,7 @@ std::vector<ScriptTemplate> TemplatesFor(const std::string& language) {
                    "public float speed = 2;\n\nvoid Update()\n{\n    transform.position += Vector3.right * speed * Time.deltaTime;\n}\n"});
     return out;
 }
-std::string ExpandTemplate(const std::string& body, const std::string& name) {
+std::string FillTemplate(const std::string& body, const std::string& name) {
     std::string out = body;
     for (std::size_t p = out.find("{Name}"); p != std::string::npos; p = out.find("{Name}", p + name.size())) out.replace(p, 6, name);
     return out;
@@ -805,8 +802,8 @@ static std::string ReadAllText(const std::string& p) {
     return ss.str();
 }
 
-std::vector<HistoryEntry> LocalHistory::Versions(const std::string& scriptPath) const {
-    std::vector<HistoryEntry> out;
+std::vector<HistoryVersion> LocalHistory::Versions(const std::string& scriptPath) const {
+    std::vector<HistoryVersion> out;
     const std::string folder = FolderFor(scriptPath);
     std::error_code ec;
     if (folder.empty() || !fs::is_directory(folder, ec)) return out;
@@ -814,17 +811,17 @@ std::vector<HistoryEntry> LocalHistory::Versions(const std::string& scriptPath) 
         const std::string name = de.path().filename().string();   // <time>_<label>.txt
         const std::size_t us = name.find('_');
         if (us == std::string::npos || de.path().extension() != ".txt") continue;
-        HistoryEntry e;
+        HistoryVersion e;
         e.file = de.path().generic_string();
         e.time = std::atoll(name.substr(0, us).c_str());
         e.label = de.path().stem().string().substr(us + 1);
         e.bytes = (std::size_t)de.file_size(ec);
         out.push_back(std::move(e));
     }
-    std::sort(out.begin(), out.end(), [](const HistoryEntry& a, const HistoryEntry& b) { return a.time > b.time; });
+    std::sort(out.begin(), out.end(), [](const HistoryVersion& a, const HistoryVersion& b) { return a.time > b.time; });
     return out;
 }
-std::string LocalHistory::Load(const HistoryEntry& e) const { return ReadAllText(e.file); }
+std::string LocalHistory::Load(const HistoryVersion& e) const { return ReadAllText(e.file); }
 
 bool LocalHistory::Record(const std::string& scriptPath, const std::string& text, std::int64_t timeMs, const std::string& label) {
     const std::string folder = FolderFor(scriptPath);

@@ -202,8 +202,8 @@ QuickFix FixFromSuggestion(const Diagnostic& d, const std::string& text);
 /// line, or remove it when every such line has it.
 std::string ToggleComment(const std::string& text, int first, int last, const std::string& prefix);
 /// The call the caret is inside: the function name and which argument (0-based) the caret is in; empty name when none.
-struct CallInfo { std::string name; int argIndex = 0; };
-CallInfo CallAtCaret(const std::string& text, std::size_t caretOffset);
+struct CaretCall { std::string name; int argIndex = 0; };
+CaretCall CallAtCaret(const std::string& text, std::size_t caretOffset);
 /// Byte offset of a 1-based line and 0-based column.
 std::size_t OffsetOf(const std::string& text, int line, int col);
 
@@ -212,10 +212,10 @@ struct ScriptTemplate { std::string id, title, body; };
 /// The New Script templates of a language ("okayscript", "lua", "csharp"); `{Name}` in a body is the script's name.
 /// The first is the language's starter (okay::StarterScriptSource).
 std::vector<ScriptTemplate> TemplatesFor(const std::string& language);
-std::string ExpandTemplate(const std::string& body, const std::string& name);
+std::string FillTemplate(const std::string& body, const std::string& name);
 
 // ---- local history ------------------------------------------------------------------------------------------------------
-struct HistoryEntry { std::string file; std::int64_t time = 0; std::string label; std::size_t bytes = 0; };
+struct HistoryVersion { std::string file; std::int64_t time = 0; std::string label; std::size_t bytes = 0; };
 /// Copies of scripts kept in `<project>/.okay/history/` (one folder per script, a file per version named by its time).
 /// At most `maxPerFile` versions per script and `maxBytes` in all (the oldest go first). Same text as the newest copy: not
 /// kept again.
@@ -230,8 +230,8 @@ public:
     /// Keep a version while editing: only when `intervalMs` passed since this script's last copy.
     bool MaybeRecord(const std::string& scriptPath, const std::string& text, std::int64_t timeMs, std::int64_t intervalMs = 5 * 60 * 1000);
     /// The kept versions of a script, newest first.
-    std::vector<HistoryEntry> Versions(const std::string& scriptPath) const;
-    std::string Load(const HistoryEntry& e) const;
+    std::vector<HistoryVersion> Versions(const std::string& scriptPath) const;
+    std::string Load(const HistoryVersion& e) const;
     /// The folder a script's versions are kept in.
     std::string FolderFor(const std::string& scriptPath) const;
 private:

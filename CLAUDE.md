@@ -179,6 +179,14 @@ then this file gets updated. Keep this file short and true.
       notice work is only for assets that stay (fonts, images and data).
     - Third-party code that is already here (listed in `docs/status/THIRD_PARTY.md` and `docs/status/provenance_audit.md`) stays only
       until our own replacement is ready; nothing new may be added.
+    - **Flag possible IP conflicts.** (Owner, 2026-11-26: "Implement systems independently using publicly documented
+      standards, mathematical principles and technical specifications. Do not copy proprietary source code or incorporate
+      third-party code without identifying its source and license. Flag potential intellectual property conflicts.")
+      Every agent report and every PR names what each new file was written from, and lists anything that could be a
+      copyright, licence, patent or trademark conflict (data tables taken from a spec, such as RFC 7932's Brotli
+      dictionary; a patented algorithm; another product's names, icons or look). It says "none found" when there are none.
+      A flagged item is not merged until its source and licence are recorded in `docs/status/THIRD_PARTY.md`, or the
+      owner decides.
 
 19b. **GitHub is only for the owner and Claude.** (Owner rule, 2026-11-20: "I don't want any one to depend on GitHub. GitHub
     should be only for me and you.") Nothing public may need GitHub: not the launcher, editor, player or server, not their

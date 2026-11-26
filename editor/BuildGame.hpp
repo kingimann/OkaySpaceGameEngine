@@ -45,6 +45,7 @@ struct Options {
     bool cleanOutput = true;   // wipe stale build files first (no leftovers from old builds)
     bool dataFolder  = true;   // tuck scenes/config/assets into a "Data/" subfolder (clean root)
     bool encryptData = false;  // obfuscate scenes + config so players can't read/edit them
+    bool packageAssets = true; // pack the data folder into game.okaypkg (docs/engine/asset_packages.md); OKAY_BUILD_LOOSE_FILES=1 turns it off
     int  antiCheat = 0;        // 0 off, 1 report, 2 enforce: the player checks Data/manifest.json + runtime checks
     bool fullscreenToggle = true;           // Alt+Enter / F11 in the shipped game
     int  layout = 0;                        // buildpipe::Layout: 0 Folder, 1 Compact, 2 Zip

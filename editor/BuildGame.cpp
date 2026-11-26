@@ -11,7 +11,9 @@
 #include "ConsolePanel.hpp"          // ConsoleLog
 #include "LocalizationWindow.hpp"    // CopyLocalizationFiles: strings.okayloc and its fonts go into the build
 #include "ModulesModel.hpp"          // okaymod::Selection / UsedButOff / UsageInScene: Build warns about modules in use but off
+#include "okay/Core/AssetPackage.hpp"   // game.okaypkg: the data folder packed, hashed and compressed
 #include "okay/Core/BuildPipeline.hpp"
+#include "okay/Core/Jobs.hpp"
 #include "WebRun.hpp"                // the web game folder's sizes (Build Settings > Web)
 #include "okay/Input/InputRuntime.hpp"   // kProjectAssetRef: the project's input asset ships with the game
 #if defined(OKAY_XBOX_UWP_EXPORT)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/platform/xbox_uwp.md
@@ -530,6 +532,42 @@ std::string Build(EditorState& ed, const std::string& outDirAsTyped,
         why[relRoot(dst)] = "StreamingAssets (copied as it is)"; ++streaming;
     }
 
+    // Asset packages (docs/engine/asset_packages.md): the data folder's files go into one hashed, compressed game.okaypkg
+    // listed in packages.manifest; StreamingAssets, build.json and the anti-cheat list stay loose. The compressed copies are
+    // kept in the project's Library/PackageCache, so the next export compresses only what changed. A failure keeps the loose
+    // files (the game still runs) and says so. OKAY_BUILD_LOOSE_FILES=1 leaves the files loose, as builds were before.
+    std::set<std::pair<std::string, std::uintmax_t>> packedFiles;   // (file name, size) of what went into the package
+    std::string packNote;
+    {
+        const char* looseEnv = std::getenv("OKAY_BUILD_LOOSE_FILES");
+        // Only with a data folder: in the flat layout the data sits beside the program and its libraries.
+        if (opt.packageAssets && !opt.dryRun && !plan.dataDir.empty() && !(looseEnv && *looseEnv == '1')) {
+            namespace ap = okay::assetpkg;
+            std::map<std::string, std::uintmax_t> sizes;
+            { std::error_code we;
+              for (auto& e : fs::recursive_directory_iterator(data, we))
+                  if (e.is_regular_file(we)) { std::error_code se; sizes[fs::relative(e.path(), data, se).generic_string()] = fs::file_size(e.path(), se); } }
+            ap::PackFolderOptions po;
+            if (!ed.projectDir().empty()) po.write.cacheDir = (okayproj::layout::LibraryDir(fs::path(ed.projectDir())) / "PackageCache").u8string();
+            po.write.jobs = &okay::EngineJobs();
+            ap::PackFolderResult pr;
+            std::string perr;
+            if (ap::PackFolder(data.u8string(), "game.okaypkg", po, pr, perr)) {
+                for (const std::string& n : pr.packed) {
+                    packedFiles.insert({fs::u8path(n).filename().u8string(), sizes[n]});
+                    why.erase(relRoot(data / fs::u8path(n)));
+                }
+                why[relRoot(data / "game.okaypkg")] = "the game's files, packed (" + std::to_string(pr.packed.size()) + " files, " +
+                                                      bp::HumanBytes(pr.stats.bytesIn) + " before compression)";
+                why[relRoot(data / "packages.manifest")] = "the list of the game's packages (sizes and hashes, for updates)";
+                packNote = "  (" + std::to_string(pr.packed.size()) + " files packed into game.okaypkg, " + bp::HumanBytes(pr.stats.bytesIn) + " -> " +
+                           bp::HumanBytes(pr.stats.bytesOut) + (pr.stats.fromCache ? ", " + std::to_string(pr.stats.fromCache) + " from the cache" : std::string()) + ")";
+            } else {
+                R.r.Warn("Couldn't pack the game's files into game.okaypkg (" + perr + "): they ship as loose files.");
+            }
+        }
+    }
+
     // Data/manifest.json: every shipped file's SHA-256, signed when a key is set up
     // (shared/AntiCheatIntegrity.hpp). Only written (and only needed) when anti-cheat is on.
     okayac::BuildManifestResult integrity;
@@ -578,6 +616,7 @@ std::string Build(EditorState& ed, const std::string& outDirAsTyped,
     if (opt.stripAssets && !ed.projectDir().empty()) {
         std::set<std::pair<std::string, std::uintmax_t>> present;
         for (const bp::ReportFile& f : rp.files) present.insert({fs::path(f.path).filename().string(), f.bytes});
+        present.insert(packedFiles.begin(), packedFiles.end());   // inside game.okaypkg
         for (const bp::ExcludedFile& x : bp::FindUnshipped(ed.projectDir(), shippedSources, sceneSources)) {
             const std::string fn = fs::path(x.path).filename().string();
             if (present.count({fn, x.bytes}) || fn == "strings.okayloc") continue;   // shipped another way (icon, fonts, string table)
@@ -652,6 +691,7 @@ std::string Build(EditorState& ed, const std::string& outDirAsTyped,
         if (sceneCount > 1) msg += "  (" + std::to_string(sceneCount) + " scenes)";
         if (copied) msg += "  (" + std::to_string(copied) + " asset(s), " + human(assetBytes) + ")";
         if (streaming) msg += "  (" + std::to_string(streaming) + " StreamingAssets file(s))";
+        msg += packNote;
         msg += zipNote;
     }
     if (!rp.excluded.empty()) msg += "  " + std::to_string(rp.excluded.size()) + " unused project file(s) left out (" + human(rp.excludedBytes) + ").";

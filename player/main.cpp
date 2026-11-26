@@ -22,6 +22,8 @@
 #include "okay/Core/AssetDatabase.hpp"   // scene files name assets by id; the index resolves them
 #include "okay/Core/BuildConfigExtra.hpp"   // game speed, start volumes, language, logging, environment variables from Build Settings > Game
 #include "okay/Core/Paths.hpp"
+#include "okay/Core/AssetPackage.hpp"   // game.okaypkg + patches: mounted and laid out before anything loads
+#include "okay/Core/AssetManager.hpp"
 #include <filesystem>
 #if defined(__linux__)
 #include <unistd.h>
@@ -1318,8 +1320,37 @@ int main(int argc, char** argv) {
     // layout), or the exe's own folder (the flat layout older builds used), so every build the editor ever made still runs.
     // `--game-dir DIR` (the browser runs a web game it unpacked there): the same lookup, in DIR instead of beside the exe.
     const std::string gameDirArg = pcl.Get("game-dir");
-    const std::string baseDir = okay::buildpipe::FindDataDir(gameDirArg.empty() ? pb->BasePath() : gameDirArg, PlayerExeStem(argv[0]));
+    std::string baseDir = okay::buildpipe::FindDataDir(gameDirArg.empty() ? pb->BasePath() : gameDirArg, PlayerExeStem(argv[0]));
     okay::Paths::SetStreamingAssetsDir(std::filesystem::is_directory(std::filesystem::u8path(baseDir) / "StreamingAssets") ? baseDir + "StreamingAssets/" : std::string());
+    // Asset packages (docs/engine/asset_packages.md): a game exported with game.okaypkg (and patches listed in
+    // packages.manifest) is mounted and checked here, then laid out once in the per-user cache folder so every part of the
+    // engine that opens files by path finds them there (a later start with the same packages writes nothing). The
+    // AssetManager reads straight from the packages. A game exported with loose files runs exactly as before.
+    {
+        auto packages = std::make_shared<okay::assetpkg::PackageStack>();
+        std::string pkgWhy;
+        if (!okay::assetpkg::MountFolder(baseDir, *packages, pkgWhy)) {
+            pb->ShowErrorBox("OkaySpace", "The game's files are damaged or incomplete, so it cannot start.\n\n" + pkgWhy);
+            pb->Shutdown();
+            return 1;
+        }
+        if (packages->Layers() > 0) {
+            std::error_code cec;
+            const std::string installKey = std::filesystem::weakly_canonical(std::filesystem::u8path(baseDir), cec).generic_u8string();
+            const std::string view = okay::Paths::Join(okay::Paths::CacheDir(), "packages/" + PlayerExeStem(argv[0]) + "-" +
+                                                       okay::assetpkg::Hex64(okay::assetpkg::Hash64(installKey)).substr(0, 8));
+            okay::assetpkg::MaterializeStats ms;
+            if (!okay::assetpkg::Materialize(*packages, baseDir, view, &ms, pkgWhy)) {
+                pb->ShowErrorBox("OkaySpace", "The game's files could not be prepared, so it cannot start.\n\n" + pkgWhy);
+                pb->Shutdown();
+                return 1;
+            }
+            pb->Log("packages: " + std::to_string(packages->Layers()) + " mounted; " + std::to_string(ms.written) + " file(s) written, " +
+                    std::to_string(ms.kept) + " kept, " + std::to_string(ms.removed) + " removed in " + view);
+            okay::AssetManager::Instance().MountPackages(packages, view);
+            baseDir = view + "/";
+        }
+    }
 
     // Build settings (written by the editor's Build Settings) live in an optional
     // game.okayconfig beside the exe: window size/title/flags, the scene list (so

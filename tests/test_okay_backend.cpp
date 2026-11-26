@@ -5,6 +5,8 @@
 #include "okay/Backend/Backend.hpp"
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Core/Base64.hpp"
+#include "okay/Core/Json.hpp"
+#include "okay_backend_golden.hpp"   // SaveSession, Tok (made-up session)
 
 #include <cstdlib>
 #include <filesystem>
@@ -247,6 +249,49 @@ int main() {
         // AccountService hands out the same: signed out, its Api sends nothing and answers "not reached".
         acc::AccountService a(root / "db", "https://p.example.test", "key-1");
         CHECK(!a.Db().From("cloud_saves").Select("key").Get().reached);
+    }
+
+    // ---- JSON strings the account service writes (bug found in round 3, fixed in round 4) ----
+    // RFC 8259 section 7: every control character (U+0000 to U+001F) must be escaped inside a JSON string. detail::JsonEscape
+    // escaped only '"', '\', line feed, carriage return and tab, so a cloud save holding any other control character was sent
+    // as invalid JSON and the server refused it.
+    {
+        std::string all;   // every control character, then the ones that were already handled, then plain text and UTF-8
+        for (int c = 0; c < 0x20; ++c) all += (char)c;
+        all += "\"\\/ plain \xC3\xA9 \x7F";
+        const std::string esc = acc::detail::JsonEscape(all);
+        for (char c : esc) CHECK((unsigned char)c >= 0x20);   // no raw control character is left
+        okay::json::Value v;
+        std::string why;
+        CHECK(okay::json::Parse("\"" + esc + "\"", v, &why));   // a valid JSON string ...
+        CHECK(v.IsString() && v.string == all);                  // ... that reads back as the same text
+        CHECK(acc::detail::JsonEscape(std::string("\x01", 1)) == "\\u0001");
+        CHECK(acc::detail::JsonEscape(std::string("\0", 1)) == "\\u0000");
+        CHECK(acc::detail::JsonEscape("\b\f\x1f") == "\\u0008\\u000c\\u001f");
+        CHECK(acc::detail::JsonEscape("a\"b\\c\nd\re\tf") == "a\\\"b\\\\c\\nd\\re\\tf");   // unchanged for what it already did
+        CHECK(acc::detail::JsonEscape("caf\xC3\xA9 / 100%") == "caf\xC3\xA9 / 100%");          // UTF-8 and "/" go as they are
+
+        // The cloud save that showed it: the body sent is valid JSON, and the save reads back unchanged.
+        const fs::path d = root / "cloud";
+        golden::SaveSession(d, "alex", golden::Tok(1), "r1");
+        acc::AccountService a(d, "https://p.example.test", "key-1");
+        std::string sent;
+        a.SetTransportForTest([&sent](const std::string&, const std::string&, const std::vector<std::string>&, const std::string& b) {
+            sent = b; okay::http::Result r; r.reached = true; r.status = 201; return r;
+        });
+        const std::string save = "level 3\x01\x02 bell\x07 end\x1b";
+        CHECK(a.CloudSave("slot1", save));
+        okay::json::Value body;
+        CHECK(okay::json::Parse(sent, body, &why));
+        CHECK(body.IsArray() && body.array.size() == 1 && body.array[0].Get("data") &&
+              body.array[0].Get("data")->string == save);
+        a.SetTransportForTest([&sent](const std::string&, const std::string&, const std::vector<std::string>&, const std::string&) {
+            okay::http::Result r; r.reached = true; r.status = 200;
+            okay::json::Value in;
+            if (okay::json::Parse(sent, in)) r.body = sent;   // the server keeps the row it was sent and answers it back
+            return r;
+        });
+        CHECK(a.CloudLoad("slot1") == save);
     }
 
     std::error_code ec;

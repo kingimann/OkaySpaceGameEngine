@@ -26,6 +26,7 @@
 #    include <bcrypt.h>
 #  endif
 #endif
+#include "okay/Core/Json.hpp"       // okay::json::Escape (detail::JsonEscape)
 #include "okay/Crypto/Sha256.hpp"   // the engine's one SHA-256 / HMAC / PBKDF2
 
 namespace okay::account {
@@ -175,19 +176,15 @@ inline bool SecureEquals(const std::string& a, const std::string& b) {
 }
 
 // Minimal JSON helpers — just enough to send credentials and read a token back.
-inline std::string JsonEscape(const std::string& s) {   // dup-allow: moved unchanged from AccountService.hpp (OkayBackend round 2); the planned Core/Json.hpp replaces it
-    std::string out;
-    for (char c : s) {
-        switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n";  break;
-            case '\r': out += "\\r";  break;
-            case '\t': out += "\\t";  break;
-            default:   out += c;       break;
-        }
-    }
-    return out;
+// The text of `s` as it goes between the quotes of a JSON string: the engine's one JSON escaper (okay::json::Escape, RFC 8259
+// section 7) without its quotes. '"', '\\', line feed, carriage return and tab as before; every other control character
+// (U+0000 to U+001F) as \u00xx, so a cloud save or a name holding one is still valid JSON (before OkayBackend round 4 they went
+// out raw and the server refused the request). UTF-8 and every other byte go as they are.
+inline std::string JsonEscape(const std::string& s) {
+    std::string quoted;
+    quoted.reserve(s.size() + 2);
+    okay::json::Escape(s, quoted);
+    return quoted.substr(1, quoted.size() - 2);
 }
 
 // The JSON string literal whose opening quote is at json[q], with its escapes

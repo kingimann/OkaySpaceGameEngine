@@ -30,6 +30,9 @@ Every mode is read only and prints file:line leads, never another project's text
       code reads (never a value) and the schema in docs/sql. --summary prints only the counts per service and per
       program; --tests also lists the call sites inside tests. It never prints a source line, so a key that sits
       on the same line cannot leak. This is the re-runnable part of docs/platform/okay_backend_audit.md (OkayBackend).
+  python3 scripts/provenance_scan.py check
+      The guard for findings that were fixed (provenance audit 2026-11-26): exits 1 when one comes back, for
+      example a shipped file that states a licence other than ours. Quick; scripts/precheck.sh runs it.
 
 A text scan cannot prove that nothing was copied: a port that renames and reorders passes every mode here.
 """
@@ -205,6 +208,134 @@ def assets():
         if os.path.exists(os.path.join(t, d, "README.md")): by.append(d + "/README.md")
         state = ", ".join(sorted(set(by))[:3]) if by else "UNACCOUNTED"
         print("%-48s %4d files  %s" % (d, len(fs), state))
+
+
+# Fixed findings that must not come back: (id, what went wrong, test(top) -> list of "file:line" problems).
+def _grep(t, rel, rx):
+    try: ls = open(os.path.join(t, rel), errors="replace").read().splitlines()
+    except OSError: return ["%s: missing" % rel]
+    return ["%s:%d" % (rel, i) for i, l in enumerate(ls, 1) if re.search(rx, l)]
+
+
+def _licence_statement(t):
+    """A4: every Windows program's version information names our licence (LICENSE), not another one."""
+    rel = "cmake/okay_version.rc.in"
+    bad = _grep(t, rel, r"LegalCopyright.*(MIT|GPL|BSD|Apache|zlib)")
+    if not _grep(t, rel, r"LegalCopyright.*All rights reserved\. See LICENSE\."): bad.append(rel + ": LegalCopyright does not say 'All rights reserved. See LICENSE.'")
+    return bad
+
+
+# A10: published shader constants keep a one-line source note (on the line or within the 3 lines above).
+A10_PLACES = [
+    ("engine/src/Render/GLRendererShaders.cpp", r"2\.51\*x|A = 0\.15|52\.9829189|\* 0\.227027"),
+    ("engine/include/okay/Render/D3DPostHLSL.hpp", r"A = 0\.15|\* 0\.227027"),
+    ("engine/include/okay/Render/D3D11Hlsl.hpp", r"2\.51\*x|52\.9829189"),
+    ("engine/include/okay/Render/DofMath.hpp", r"\* 0\.227027"),
+    ("engine/include/okay/Render/SsaoMath.hpp", r"OKAY_SSAO_BLUR_W0 0\.227027"),
+    ("engine/include/okay/Render/Atmosphere.hpp", r"2\.51f \* x|A = 0\.15f"),
+]
+A10_NOTE = re.compile(r"[Ss]ource|derived in|Narkowicz|Hable|Jimenez|binomial")
+
+
+def _source_notes(t):
+    bad = []
+    for rel, rx in A10_PLACES:
+        try: ls = open(os.path.join(t, rel), errors="replace").read().splitlines()
+        except OSError: bad.append(rel + ": missing"); continue
+        for i, l in enumerate(ls):
+            if re.search(rx, l) and not any(A10_NOTE.search(x) for x in ls[max(0, i - 3):i + 1]):
+                bad.append("%s:%d" % (rel, i + 1))
+    return bad
+
+
+def _cube_cases(t):
+    """A1: the voxel mesher works out its marching-cubes cases itself; the published 256 / 4096-entry tables are gone."""
+    rel = "engine/src/Components/VoxelTerrain.cpp"
+    return _grep(t, rel, r"0x0\s*,\s*0x109\s*,\s*0x203|kTri\s*\[\s*256\s*\]|cubeindex|Bourke")
+
+
+def _simplex(t):
+    """A2: simplex noise is our own structure and numbers (no reference-code skew literals, corner cascade or scales)."""
+    rel = "engine/include/okay/Math/Noise.hpp"
+    return _grep(t, rel, r"0\.3660254|0\.2113248|x0 >= y0|70\.0f \* n|32\.0f \* n|0\.6f - x")
+
+
+def _edge_smoothing(t):
+    """A3: the GPU edge-smoothing pass is our own (no FXAA 2 / 3.x names or constants), and the UI calls it "edge
+    smoothing" (FXAA is NVIDIA's name). Saved keys stay "fxaa" (frozen). editor/BuildSettingsModel.hpp belongs to
+    Claude 3's lane and still says "FXAA" until that lane agrees to the change."""
+    bad = []
+    for rel in ("engine/src/Render/GLRendererShaders.cpp", "engine/include/okay/Render/D3DPostHLSL.hpp"):
+        bad += _grep(t, rel, r"dirReduce|rcpDirMin|rgbA|rgbB|FXAA_|1\.0 / 128\.0|0\.0312")
+    for p, rel in files(("editor", "okayui", "shared", "player", "launcher")):
+        if not rel.endswith((".cpp", ".hpp", ".h")) or rel == "editor/BuildSettingsModel.hpp" or rel.endswith("FontOwn.h"): continue   # font data is base64
+        for i, l in enumerate(lines_of(p), 1):
+            if l.strip().startswith(("//", "*", "/*")): continue
+            if any("FXAA" in lit for lit in STRLIT.findall(l)): bad.append("%s:%d" % (rel, i))
+    return bad
+
+
+def _notices(t):
+    """A5-A7: one notice file names every runtime, library and font we ship, and every package carries it."""
+    bad = []
+    rel = "dist/THIRD_PARTY_NOTICES.txt"
+    try: txt = open(os.path.join(t, rel), errors="replace").read()
+    except OSError: return [rel + ": missing"]
+    for name in ("GCC Runtime Library Exception", "winpthreads", "libsodium", "SDL2", "Dear ImGui", "steam_api64.dll",
+                 "Emscripten", "musl", "Roboto", "JetBrains Mono", "DejaVu", "Apache License"):
+        if name not in txt: bad.append("%s: does not name %s" % (rel, name))
+    if not os.path.isfile(os.path.join(t, "assets/fonts/Roboto-LICENSE.txt")): bad.append("assets/fonts/Roboto-LICENSE.txt: missing")
+    for shipper in ("scripts/build-windows-dist.sh", "scripts/okayspace-installer.nsi", "editor/BuildGame.cpp", "scripts/web_package.py"):
+        if not _grep(t, shipper, r"THIRD_PARTY_NOTICES\.txt"): bad.append("%s: does not ship THIRD_PARTY_NOTICES.txt" % shipper)
+    return bad
+
+
+def _voice_shared(t):
+    """N1: voice chat has no cipher or IMA table of its own (it uses the crypto seam and the WAV reader's table)."""
+    return _grep(t, "launcher/VoiceChat.hpp", r"0x61707865|29794")
+
+
+def _browser_words(t):
+    """A8: the address bar's placeholder uses neutral words, not a look-alike of another browser's."""
+    return _grep(t, "engine/src/Browser/Profile.cpp", r'"Search Google or type')
+
+
+def _ui_brands(t):
+    """A9: UI text describes features in plain words, not by another game or a trademark ("Minecraft-style",
+    "ACES" as a menu entry). Comments may still name what a feature resembles. The old GameObject > UI menu record
+    (editor/UIMenuModel.hpp LegacyItems, never shown) keeps the old labels as history."""
+    bad = []
+    for p, rel in files(("editor", "engine", "shared", "player", "okayui", "launcher", "browser")):
+        if not rel.endswith((".cpp", ".hpp", ".h", ".inl")) or rel == "editor/UIMenuModel.hpp": continue
+        for i, l in enumerate(lines_of(p), 1):
+            if l.strip().startswith(("//", "*", "/*")): continue
+            for lit in STRLIT.findall(l):
+                if re.search(r"Minecraft", lit): bad.append("%s:%d" % (rel, i)); break
+    bad += _grep(t, "shared/EditorPanelModels.hpp", r'kTonemapNames.*"ACES"')
+    return bad
+
+
+GUARDS = [
+    ("A4", "shipped version information states a licence other than ours", _licence_statement),
+    ("A1", "the published marching-cubes tables or their loop came back", _cube_cases),
+    ("A2", "simplex noise follows the reference code again", _simplex),
+    ("A3", "FXAA shader text or the FXAA name in UI text", _edge_smoothing),
+    ("A5-A7", "a package ships without the third-party notices", _notices),
+    ("N1", "voice chat carries its own cipher or IMA table", _voice_shared),
+    ("A8", "the browser placeholder copies another browser's wording", _browser_words),
+    ("A9", "UI text names another game or uses a trademark as a feature name", _ui_brands),
+    ("A10", "a published shader constant has no source note near it", _source_notes),
+]
+
+
+def check():
+    t = top()
+    n = 0
+    for gid, what, fn in GUARDS:
+        for hit in fn(t):
+            n += 1; print("%s: %s: %s" % (hit, gid, what))
+    print("# provenance check: %d problem(s) in %d guards" % (n, len(GUARDS)), file=sys.stderr)
+    return 1 if n else 0
 
 
 def norm(text):
@@ -411,6 +542,7 @@ if __name__ == "__main__":
     elif a[:1] == ["tables"]: tables(int(a[2]) if a[1:2] == ["--min"] else 64)
     elif a[:1] == ["marks"]: marks()
     elif a[:1] == ["assets"]: assets()
+    elif a[:1] == ["check"]: sys.exit(check())
     elif a[:1] == ["overlap"] and len(a) > 1:
         mn, mr, refs, k = 12, 3, [], 1
         while k < len(a):

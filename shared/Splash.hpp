@@ -14,20 +14,15 @@
 // Text uses the engine's built-in UI font (okay::BuiltinUIFont, our own TTF rasterizer) through
 // ui2d::DrawTtfText, the in-game UI pass's text drawing.
 //
-// Both hosts manage their own entry point (they call SDL_SetMainReady), so make sure pulling in SDL here
-// does NOT activate SDL's `#define main SDL_main` redirection: otherwise, if this header is the first SDL
-// include in a translation unit, that macro mangles later identifiers named `main` (e.g. a `Camera::main` member).
-#ifndef SDL_MAIN_HANDLED
-#  define SDL_MAIN_HANDLED
-#endif
-#include <SDL.h>
-#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+// No SDL header or type: everything goes through the platform painter.
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers
 #include "okay/Platform/Painter.hpp"    // the splash is drawn through the platform painter
 #include "okay/Graphics/TtfFont.hpp"    // okay::BuiltinUIFont: the status text's font
 #include "okay/UI/UIRenderer.hpp"       // ui2d::DrawTtfText / UIMeasureText
 #include "HierarchyPanelModel.hpp"      // okaypanels::HierEllipsize: long names cut with an ellipsis
 #include "PainterBridge.hpp"
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -39,8 +34,8 @@ namespace okay {
 // of the built-in isometric cube), and whether the cube / progress bar show.
 struct SplashStyle {
     float ar = 0.235f, ag = 0.475f, ab = 0.800f;   // accent colour (0..1)
-    SDL_Color bgTop{24, 24, 27, 255};              // backdrop gradient (top)
-    SDL_Color bgBottom{13, 13, 15, 255};           //                  (bottom)
+    ui2d::RGBA bgTop{24, 24, 27, 255};              // backdrop gradient (top)
+    ui2d::RGBA bgBottom{13, 13, 15, 255};           //                  (bottom)
     okay::ui2d::Tex logo = nullptr;                // custom logo (a texture of the painter the splash is drawn on); replaces the cube when set
     float logoScale = 1.0f;                        // relative size of the custom logo
     bool  showCube = true;                         // draw the built-in cube (ignored if logo set)
@@ -117,7 +112,7 @@ inline void DrawSplashStyled(okay::platform::Painter* r, int w, int h, const Spl
     const float op = state ? SplashClamp01(state->opacity) : 1.0f;
     if (op <= 0.0f) { if (!state || state->present) r->Present(); return; }
     r->SetBlendMode(okay::platform::BlendMode::Blend);
-    auto U8 = [](float v) { return (Uint8)(SplashClamp01(v) * 255.0f + 0.5f); };
+    auto U8 = [](float v) { return (std::uint8_t)(SplashClamp01(v) * 255.0f + 0.5f); };
     const float tms = state && state->timeMs >= 0.0 ? (float)state->timeMs : (float)okay::platform::TicksMs32();
     const float ar = style.ar, ag = style.ag, ab = style.ab;
     const SplashLayout L = ComputeSplashLayout(w, h, state);
@@ -127,9 +122,9 @@ inline void DrawSplashStyled(okay::platform::Painter* r, int w, int h, const Spl
 
     // ---- Backdrop: gentle vertical gradient (deep charcoal) --------------
     {
-        SDL_Color tcol = style.bgTop, bcol = style.bgBottom;
+        ui2d::RGBA tcol = style.bgTop, bcol = style.bgBottom;
         tcol.a = U8(op); bcol.a = U8(op);
-        SDL_Vertex bg[4] = {
+        ui2d::Vertex bg[4] = {
             {{0.0f, 0.0f}, tcol, {0, 0}}, {{(float)w, 0.0f}, tcol, {0, 0}},
             {{(float)w, (float)h}, bcol, {0, 0}}, {{0.0f, (float)h}, bcol, {0, 0}} };
         int bi[6] = {0, 1, 2, 0, 2, 3};
@@ -143,7 +138,7 @@ inline void DrawSplashStyled(okay::platform::Painter* r, int w, int h, const Spl
     auto glow = [&](float gx, float gy, float rx, float ry,
                     float cr, float cg, float cb, float a) {
         constexpr int N = 56;
-        SDL_Vertex fan[N + 2];
+        ui2d::Vertex fan[N + 2];
         fan[0].position = {gx, gy};
         fan[0].color = {U8(cr), U8(cg), U8(cb), U8(a * op)};
         fan[0].tex_coord = {0, 0};
@@ -160,8 +155,8 @@ inline void DrawSplashStyled(okay::platform::Painter* r, int w, int h, const Spl
     // Flat (solid) disc — used for the rounded bar caps.
     auto disc = [&](float gx, float gy, float rad, float cr, float cg, float cb, float a) {
         constexpr int N = 24;
-        SDL_Vertex fan[N + 2];
-        SDL_Color col{U8(cr), U8(cg), U8(cb), U8(a * op)};
+        ui2d::Vertex fan[N + 2];
+        ui2d::RGBA col{U8(cr), U8(cg), U8(cb), U8(a * op)};
         fan[0].position = {gx, gy}; fan[0].color = col; fan[0].tex_coord = {0, 0};
         for (int i = 0; i <= N; ++i) {
             float ang = (float)i / (float)N * 6.2831853f;
@@ -189,7 +184,7 @@ inline void DrawSplashStyled(okay::platform::Painter* r, int w, int h, const Spl
             float maxDim = 120.0f * (style.logoScale > 0.05f ? style.logoScale : 1.0f);
             float scale = maxDim / (float)(tw > th ? tw : th);
             float dw = tw * scale, dh = th * scale;
-            SDL_FRect dst{cx - dw * 0.5f, ccy - dh * 0.5f, dw, dh};
+            ui2d::FRect dst{cx - dw * 0.5f, ccy - dh * 0.5f, dw, dh};
             if (op < 1.0f) r->SetTextureAlphaMod(style.logo, U8(op));
             r->CopyF(style.logo, nullptr, (const ui2d::FRect*)&dst);
             if (op < 1.0f) r->SetTextureAlphaMod(style.logo, 255);
@@ -198,12 +193,12 @@ inline void DrawSplashStyled(okay::platform::Painter* r, int w, int h, const Spl
         // ---- Isometric cube logo mark ------------------------------------
         const float S = 100.0f;
         const float hw = S * 0.42f, hh = S * 0.24f, vh = S * 0.34f;
-        SDL_FPoint top{cx, ccy - hh - vh * 0.5f}, left{cx - hw, ccy - vh * 0.5f},
+        ui2d::FPoint top{cx, ccy - hh - vh * 0.5f}, left{cx - hw, ccy - vh * 0.5f},
                    right{cx + hw, ccy - vh * 0.5f}, mid{cx, ccy + hh - vh * 0.5f};
-        SDL_FPoint lb{left.x, left.y + vh}, rb{right.x, right.y + vh}, mb{mid.x, mid.y + vh};
-        auto shade = [&](float m) -> SDL_Color { return {U8(ar*m), U8(ag*m), U8(ab*m), U8(op)}; };
-        auto quad = [&](SDL_FPoint a, SDL_FPoint b, SDL_FPoint c2, SDL_FPoint d, SDL_Color col) {
-            SDL_Vertex v[4] = { {a, col, {0, 0}}, {b, col, {0, 0}}, {c2, col, {0, 0}}, {d, col, {0, 0}} };
+        ui2d::FPoint lb{left.x, left.y + vh}, rb{right.x, right.y + vh}, mb{mid.x, mid.y + vh};
+        auto shade = [&](float m) -> ui2d::RGBA { return {U8(ar*m), U8(ag*m), U8(ab*m), U8(op)}; };
+        auto quad = [&](ui2d::FPoint a, ui2d::FPoint b, ui2d::FPoint c2, ui2d::FPoint d, ui2d::RGBA col) {
+            ui2d::Vertex v[4] = { {a, col, {0, 0}}, {b, col, {0, 0}}, {c2, col, {0, 0}}, {d, col, {0, 0}} };
             int idx[6] = {0, 1, 2, 0, 2, 3};
             r->Geometry(nullptr, (const ui2d::Vertex*)v, 4, idx, 6);
         };
@@ -223,7 +218,7 @@ inline void DrawSplashStyled(okay::platform::Painter* r, int w, int h, const Spl
         auto bar = [&](float x0, float x1, float cr, float cg, float cb, float a) {
             if (x1 - x0 < bh) { if (x1 <= x0) return; const float m = (x0 + x1) * 0.5f; x0 = m - brad; x1 = m + brad; }
             r->SetDrawColor(U8(cr), U8(cg), U8(cb), U8(a * op));
-            SDL_FRect rc{x0 + brad, by, x1 - x0 - bh, bh};
+            ui2d::FRect rc{x0 + brad, by, x1 - x0 - bh, bh};
             if (rc.w > 0.0f) r->FillRectF((const ui2d::FRect*)&rc);
             disc(x0 + brad, by + brad, brad, cr, cg, cb, a);   // rounded caps
             disc(x1 - brad, by + brad, brad, cr, cg, cb, a);
@@ -243,8 +238,8 @@ inline void DrawSplashStyled(okay::platform::Painter* r, int w, int h, const Spl
                         const float c0 = x0 < bx + brad ? bx + brad : x0, c1 = x1 > fx1 - brad ? fx1 - brad : x1;
                         if (c1 <= c0) return;
                         auto at = [&](float x) { return a0 + (a1 - a0) * ((x - x0) / (x1 - x0)); };
-                        const SDL_Color ca{255, 255, 255, U8(at(c0) * op)}, cb{255, 255, 255, U8(at(c1) * op)};
-                        SDL_Vertex v[4] = { {{c0, by}, ca, {0, 0}}, {{c1, by}, cb, {0, 0}},
+                        const ui2d::RGBA ca{255, 255, 255, U8(at(c0) * op)}, cb{255, 255, 255, U8(at(c1) * op)};
+                        ui2d::Vertex v[4] = { {{c0, by}, ca, {0, 0}}, {{c1, by}, cb, {0, 0}},
                                             {{c1, by + bh}, cb, {0, 0}}, {{c0, by + bh}, ca, {0, 0}} };
                         int idx[6] = {0, 1, 2, 0, 2, 3};
                         r->Geometry(nullptr, (const ui2d::Vertex*)v, 4, idx, 6);

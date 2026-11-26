@@ -14,7 +14,7 @@
 # context-menu manners). The game's files are not baked into the build: scripts/web_package.py packs them beside it, so
 # one player build serves every game (docs/feature_map/18-build-export-release.md 18.2).
 if(EMSCRIPTEN)
-    add_executable(okay-player main.cpp ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp)
+    add_executable(okay-player main.cpp ${CMAKE_SOURCE_DIR}/shared/PlatformDisplays.cpp)
     target_link_libraries(okay-player PRIVATE okay::engine)
     target_include_directories(okay-player PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/platform/web)
     target_compile_options(okay-player PRIVATE "-sUSE_SDL=2")
@@ -59,7 +59,7 @@ else()
 endif()
 # Note: we use SDL_MAIN_HANDLED and our own main(), so SDL2main is not linked.
 
-add_executable(okay-player main.cpp ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp)
+add_executable(okay-player main.cpp ${CMAKE_SOURCE_DIR}/shared/PlatformDisplays.cpp)
 target_link_libraries(okay-player PRIVATE okay::engine ${OKAY_PLAYER_SDL_LIB})
 # Bytes of the player per engine module (docs/engine/modular_engine.md): GNU linkers (Linux, MinGW) write a link map
 # into the build folder (not shipped), and scripts/module_sizes.py turns it into module_sizes.txt beside the player,

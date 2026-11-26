@@ -168,6 +168,10 @@ OKAY_VER="$(grep -m1 -oE 'VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.
 : "${OKAY_VER:=0.0.0}"
 printf '%s\n' "$OKAY_VER" > "$OUT_DIR/VERSION.txt"
 printf '%s\n' "$OKAY_VER" > "$OUT_DIR/Tools/VERSION.txt"
+# The licences of the parts written by others (GCC and MinGW-w64 runtimes, libsodium, SDL2, Dear ImGui, fonts):
+# beside the launcher and beside the editor, whose Build exports copy it into every game (editor/BuildGame.cpp).
+cp dist/THIRD_PARTY_NOTICES.txt "$OUT_DIR/"
+cp dist/THIRD_PARTY_NOTICES.txt "$OUT_DIR/Tools/"
 # (docs/online/accounts.md is no longer copied in: docs are internal, and it names the GitHub repository settings.)
 
 # Starter texture pack (grass/dirt/stone/grid). Drop these into a project's Assets/
@@ -281,6 +285,7 @@ OkaySpace
 
 Double-click  OkaySpace.exe  to start (the launcher: sign in, create/play games).
 Keep SDL2.dll next to it.
+THIRD_PARTY_NOTICES.txt lists the parts written by others and their licences.
 
 Everything else lives in  Tools/:
   OkayEngine.exe        the editor (make games)

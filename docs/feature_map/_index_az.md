@@ -3823,6 +3823,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Platform targets and store packaging (56)
 - Platform-event host and editor probe (40.9.9)
 - Platform: Server (18.7)
+- PlatformDisplays (37.1)
 - platformer (4.3)
 - platformer template (1.6)
 - Platformer25DController (4.3, 4.4)

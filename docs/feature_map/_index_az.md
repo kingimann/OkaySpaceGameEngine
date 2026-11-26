@@ -242,6 +242,8 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - asset preview (1.20, 20.5)
 - asset size report (58.4)
 - asset store (17.6)
+- asset streamer (1.11, 34.3)
+- Asset streaming (1.11, 1.11.7, 34.3)
 - asset stripping (18.6)
 - Asset thumbnails (1.20)
 - AssetDatabase (1.12, 1.20, 20.2, 20.3, 20.4, 20.5)
@@ -5258,6 +5260,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Stray prefs files at the repo root (19.6.1)
 - Streamer component (45.1.1)
 - streaming (2.6, 7.2, 7.2.5, 27.4)
+- streaming budgets (1.11, 34.3)
 - streaming cells (45.1)
 - Streaming grid and mip budget (#574) (27.4.4)
 - streaming navmesh (45.3)
@@ -6137,6 +6140,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 **#**
 
 - "GPU" line (23.1.4)
+- "Restore recovered work?" question (22.2.4)
 - --build-game (18.6)
 - --build-info (18.6)
 - --cheat-sim (39.13)

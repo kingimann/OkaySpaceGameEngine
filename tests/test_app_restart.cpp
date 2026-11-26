@@ -442,6 +442,23 @@ int main(int argc, char** argv) {
 #endif
         return 0;
     }
+#if !defined(_WIN32)
+    {   // A process that has ended is not running, even while its record is still there (owner, 2026-11-26: the editor ended in
+        // Task Manager, the launcher still said it was open). On Linux an ended child that was not yet waited for (a zombie)
+        // still answers kill(pid, 0); on Windows an ended process that someone still holds a handle to stays in the process list.
+        // PidAlive must say "not running" for both. (The Windows half is unverified here.)
+        const pid_t child = ::fork();
+        if (child == 0) ::_exit(0);
+        CHECK(child > 0);
+        if (child > 0) {
+            for (int i = 0; i < 100 && okay::restart::PidAlive((unsigned long)child); ++i) ::usleep(10000);   // it ends at once
+            CHECK(!okay::restart::PidAlive((unsigned long)child));   // ended, not yet waited for: not running
+            int st = 0; ::waitpid(child, &st, 0);
+            CHECK(!okay::restart::PidAlive((unsigned long)child));   // waited for: gone
+        }
+        CHECK(okay::restart::PidAlive((unsigned long)::getpid()));     // this test is running
+    }
+#endif
 
     SetEnv(okay::restart::kFailAfterBackupEnv, nullptr);
     RUN_SUITE("app restart");

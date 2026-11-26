@@ -148,10 +148,17 @@ struct PacingSettings {
     double idleAfterSeconds = 0.75; // how long without a click, key or scroll counts as idle
 };
 
+/// The rate the editor holds while its main window is minimized and nothing is playing, whatever the settings: nobody can see a
+/// frame, and a minimized (occluded) window's present returns at once instead of waiting for the display, so without this the
+/// loop ran flat out on a full core.
+constexpr double kMinimizedFps = 10.0;
+
 /// The frame rate to hold this frame, 0 = do not sleep. Idle throttle applies only when nothing is playing and the
-/// last input was `secondsSinceInput` ago; the lower of the cap and the idle rate wins.
-inline double TargetFps(const PacingSettings& p, bool playing, bool busy, double secondsSinceInput) {
+/// last input was `secondsSinceInput` ago; the lower of the cap and the idle rate wins. A minimized window (not playing) holds
+/// kMinimizedFps at most.
+inline double TargetFps(const PacingSettings& p, bool playing, bool busy, double secondsSinceInput, bool minimized = false) {
     double target = p.fpsCap > 0 ? (double)p.fpsCap : 0.0;
+    if (minimized && !playing) target = target > 0.0 ? std::min(target, kMinimizedFps) : kMinimizedFps;
     const bool idle = p.idleThrottle && !playing && !busy && std::isfinite(secondsSinceInput) &&
                       secondsSinceInput >= p.idleAfterSeconds;
     if (idle) {

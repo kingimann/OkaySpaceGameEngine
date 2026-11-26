@@ -74,6 +74,8 @@ public:
     };
     struct Stats {
         std::size_t memoryHits = 0, diskHits = 0, generated = 0, placeholders = 0, failures = 0, evictions = 0, diskWrites = 0;
+        std::size_t diskChecks = 0;           ///< OnDisk calls (one file-system look each)
+        std::size_t failuresRemembered = 0;   ///< a failure read back from its disk marker: the generator was not run again
     };
     enum class Source { Memory, Disk, Generated, Placeholder };
     struct Thumb {
@@ -98,8 +100,13 @@ public:
     Thumb Get(const AssetDatabase& db, const Guid& guid);
 
     bool InMemory(const Guid& guid, std::uint64_t contentHash) const;
+    /// A picture, or the marker of a failed render, is on disk for this key (Get reads it without running a generator).
     bool OnDisk(const Guid& guid, std::uint64_t contentHash) const;
     std::string DiskPathFor(const Guid& guid, std::uint64_t contentHash) const;
+    /// Where a failed render of this key is remembered (an empty file): a generator that could not draw an asset is not run
+    /// again for the same content in a later session (a scene with no 3D meshes, an unreadable model). A changed file has a
+    /// new hash, and a new `tag` drops every marker, so a fixed generator tries again.
+    std::string FailedMarkerFor(const Guid& guid, std::uint64_t contentHash) const;
 
     /// Forget one asset (memory and disk), e.g. after it was deleted.
     void Invalidate(const Guid& guid);
@@ -144,7 +151,7 @@ private:
     std::map<Key, List::iterator> m_index;
     std::size_t m_bytes = 0;
     std::map<std::string, std::shared_ptr<const Image>> m_placeholders;
-    Stats m_stats;
+    mutable Stats m_stats;   // OnDisk (const) counts its look
 };
 
 } // namespace okay

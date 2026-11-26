@@ -267,7 +267,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 
 ### 1.11 Asset manager
 - **System:** Asset Manager - Loads each file from disk once, shares it, loads in the background and reloads it when the file changes.
-  Home: `engine/include/okay/Core/AssetManager.hpp`. Entry: `engine/include/okay/Core/AssetManager.hpp`. Also called: AssetManager, hot reload, asset loading.
+  Home: `engine/include/okay/Core/AssetManager.hpp`. Entry: `engine/include/okay/Core/AssetManager.hpp`. Also called: AssetManager, hot reload, asset loading, asset streaming, asset streamer, streaming budgets.
 - **What:** A central registry for files loaded from disk: typed handles with reference counts, one cache key per file, background loading and hot reload.
 - **Parts:**
   - 1.11.1 Handles and caching - `Core/AssetManager` - `AssetHandle<T>`, `Get<T>(path)`, weak cache freed with the last handle, failed loads never cached
@@ -276,12 +276,13 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.11.4 Async loading - `Core/AssetManager` - `LoadAsync` on one worker thread, callbacks from `Pump()` on the main thread, `Progress()`, duplicate requests share one decode
   - 1.11.5 Hot reload - `Core/AssetManager` - `SetHotReload` compares mtime and size (`Core/FileStamp`, shared with the audio clip cache and the baked nav mesh check, #422 audit item 26) in `Pump()` and re-decodes in place so handles stay valid
   - 1.11.6 Report - `Core/AssetManager` - `Report()` lists every cached asset with type, bytes, refcount and reload count
+  - 1.11.7 Asset streaming - `Core/AssetManager`, `Scene/Scene`, `Modeling/MeshAsset`, `Render/TextureAsset` - `Stream<T>(path, priority)` (priority queue, cache kept under a RAM budget, `CancelStream`, `FindFresh`), budgets from the machine (`StreamSettings`, Automatic by default), streamed scene loads (`AsyncLoadOptions::stream`: read and mesh/texture decodes on job threads, objects made under a per-frame time budget, `UnloadAdditiveSpread`, `CompleteLoad`, `GetLoadPhase`); design note `docs/engine/asset_streaming.md`
 - **Code:** `Core/AssetManager`
-- **API:** `AssetManager::Instance`, `AssetHandle<T>`, `AssetManager::LoadAsync`, `AssetManager::Pump`, `SetHotReload`, `Report`
+- **API:** `AssetManager::Instance`, `AssetHandle<T>`, `AssetManager::LoadAsync`, `AssetManager::Stream`, `AssetManager::GetStreamStats`, `AssetManager::Pump`, `SetHotReload`, `Report`
 - **Editor:** none yet (the editor's "Asset Manager" panel is the marketplace download tool, 17.6)
 - **Docs:** `docs/engine/asset_manager.md`
-- **Tests:** `assetmanager`
-- **Status:** Partial - merged in #568 and tested, but no engine loader, editor or player path calls it (docs and grep agree); GPU textures are not tracked
+- **Tests:** `assetmanager`, `asset_streaming`, `asset_streaming_stress`
+- **Status:** Partial - the texture library, mesh files of streamed scenes and WorldStreamer cells go through it (asset streaming round 1, 2026-11-25); GPU textures are not tracked; no editor Streaming page yet
 - **Open:** move existing loaders (`DataAsset::Cached`, `AudioClip::LoadCached`, the renderers' own loads) onto it; track GPU resources; an asset browser window on top (area 20)
 - **Related:** 1.12, 20, 2.9, 7.2
 - **Words:** AssetManager, asset handle, AssetHandle, hot reload, async load, resource cache, reference count, Pump

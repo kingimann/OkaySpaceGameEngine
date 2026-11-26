@@ -119,7 +119,7 @@ struct Compiler {
             case OP_Gt: case OP_Ge: case OP_JumpF: case OP_JumpT: case OP_ArrPush: case OP_ArrSpread:
             case OP_DefFieldK: case OP_CopyProps: case OP_DelElem: case OP_RunFields: case OP_StoreThis:
             case OP_IterClose: case OP_IterStep: case OP_Throw: case OP_LtJumpF: case OP_Return:
-            case OP_Class: case OP_IterSend: case OP_SetFieldInit: case OP_NewRegExp:
+            case OP_Class: case OP_IterSend: case OP_SetFieldInit: case OP_NewRegExp: case OP_SetProtoLit:
                 return op == OP_LtJumpF ? -2 : op == OP_Class ? 1 : -1;
             case OP_SetElem: case OP_DefField: case OP_DefGetter: case OP_DefSetter: case OP_DefMethod:
             case OP_SuperGet:
@@ -1603,6 +1603,7 @@ struct Compiler {
 
     void ObjectLiteral(Node* n) {
         Emit(OP_NewObject);
+        bool sawProto = false;
         for (Node* p : n->list) {
             line = p->line;
             switch (p->k) {
@@ -1627,7 +1628,12 @@ struct Compiler {
                         if (p->b->k == NK::Func || p->b->k == NK::Class) Emit(OP_SetName);
                         Emit(OP_DefField);
                     } else if (p->str == u"__proto__" && !(p->flags & NF_Shorthand)) {
-                        Fail(p, "'__proto__: value' in an object literal is not supported (use Object.create)");
+                        // B.3.1: `__proto__: value` sets the new object's prototype when the value is an object
+                        // or null (anything else is ignored); naming it twice is an early SyntaxError.
+                        if (sawProto) Fail(p, "'__proto__' can be set only once in an object literal");
+                        sawProto = true;
+                        Expr(p->b);
+                        Emit(OP_SetProtoLit);
                     } else {
                         Expr(p->b);
                         Emit(OP_DefFieldK, AtomConst(p->str));

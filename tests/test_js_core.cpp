@@ -252,6 +252,22 @@ void ForInHeads() {
     CHECK(!rt.CheckSyntax("for (var i = 0 in {}; ;) {}", "s").empty());   // 14.7.4: `in` is still excluded in a plain for head
 }
 
+// B.3.1 `__proto__: value` in object literals and B.2.2.1 Object.prototype.__proto__
+void ProtoLiteral() {
+    Expect("const b = {hi() { return 'hi'; }}; const o = {__proto__: b, x: 1}; console.log(o.hi(), Object.getPrototypeOf(o) === b, Object.keys(o).join())",
+           "hi true x");
+    Expect("const o = {'__proto__': null}; console.log(Object.getPrototypeOf(o), 'toString' in o)", "null false");
+    Expect("const o = {__proto__: 5}; console.log(Object.getPrototypeOf(o) === Object.prototype)", "true");
+    Expect("const __proto__ = 7; const o = {__proto__}; console.log(o.hasOwnProperty('__proto__'), Object.getPrototypeOf(o) === Object.prototype)",
+           "true true");
+    Expect("const o = {['__proto__']: 1}; console.log(Object.getPrototypeOf(o) === Object.prototype, Object.keys(o).join())",
+           "true __proto__");
+    Expect("const p = {a: 1}; const o = {}; o.__proto__ = p; console.log(o.a, o.__proto__ === p, ({}).__proto__ === Object.prototype)",
+           "1 true true");
+    ExpectError("({__proto__: 1, __proto__: 2})", "SyntaxError");
+    ExpectError("const a = {}; const b = {__proto__: a}; a.__proto__ = b;", "TypeError");
+}
+
 struct Hostile {
     const char* src;
     const char* want;   ///< part of the error, "" for any error, "OK" when it must finish without one
@@ -487,6 +503,7 @@ int main() {
     Generators();
     SyntaxErrors();
     ForInHeads();
+    ProtoLiteral();
     ConformanceScript(false);
     ConformanceScript(true);
     HostileOneLiners();

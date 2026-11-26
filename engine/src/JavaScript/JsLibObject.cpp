@@ -229,6 +229,20 @@ void InstallObjectLib(Runtime& rt) {
             if (p == self) return Value::Bool(true);
         return Value::Bool(false);
     }, 1);
+    {   // B.2.2.1 Object.prototype.__proto__: an accessor over [[GetPrototypeOf]] / [[SetPrototypeOf]]
+        NativeFunc* g = rt.NewNative([](Runtime& rt, CallArgs& a) {
+            Object* o = rt.ToObject(a.thisv);
+            return o->proto ? Value::Obj(o->proto) : Value::Null();
+        }, "get __proto__", 0);
+        NativeFunc* s = rt.NewNative([](Runtime& rt, CallArgs& a) {
+            if (a.thisv.IsNullish()) rt.ThrowType("can not set __proto__ of " + std::string(a.thisv.IsNull() ? "null" : "undefined"));
+            if ((!a[0].IsObj() && !a[0].IsNull()) || !a.thisv.IsObj()) return Value();
+            if (!rt.SetPrototype(a.thisv.O(), a[0].IsNull() ? nullptr : a[0].O()))
+                rt.ThrowType("can not set this prototype (not extensible, or a cycle)");
+            return Value();
+        }, "set __proto__", 1);
+        rt.DefineAccessor(op, rt.Intern("__proto__"), g, s, kConfigurable);
+    }
     DefNative(rt, op, "propertyIsEnumerable", [](Runtime& rt, CallArgs& a) {
         GcObj* k = rt.ToPropertyKey(a[0]);
         Prop p;

@@ -170,6 +170,7 @@ enum Op : std::uint16_t {
     OP_Throw, OP_TryBegin, OP_TryEnd, OP_ThrowConst,
     OP_GenStart, OP_AsyncStart, OP_Yield, OP_Await, OP_ResumeCheck, OP_IterSend,
     OP_Arguments, OP_RestArgs, OP_CheckCoercible, OP_Debugger, OP_SetName, OP_NewRegExp,
+    OP_SetProtoLit,
     OP_Count
 };
 

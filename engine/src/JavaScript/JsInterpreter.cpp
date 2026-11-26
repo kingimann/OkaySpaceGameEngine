@@ -1208,6 +1208,13 @@ Value Execute(Runtime& rt, int entry) {
                         SP -= 2;
                         break;
                     }
+                    case OP_SetProtoLit: {
+                        // [obj value]: B.3.1 PropertyDefinitionEvaluation for `__proto__: value`
+                        if (SP[-1].IsObj()) rt.SetPrototype(SP[-2].O(), SP[-1].O());
+                        else if (SP[-1].IsNull()) rt.SetPrototype(SP[-2].O(), nullptr);
+                        --SP;
+                        break;
+                    }
                     case OP_CopyProps: {
                         CopyDataProperties(rt, SP[-2].O(), SP[-1], nullptr);
                         --SP;

@@ -125,6 +125,7 @@ add_library(okay_engine
     src/Scene/ComponentSerializer.cpp
     src/Scene/SceneLocalization.cpp
     src/Components/Camera.cpp
+    src/Components/WorldStreamer.cpp
     src/Components/LookAtIK.cpp
     src/Components/SpriteRenderer.cpp
     src/Net/UdpSocket.cpp

@@ -77,6 +77,27 @@ private:
     std::shared_ptr<assets_detail::Entry> m_e;
 };
 
+/// Asset streaming settings (docs/engine/asset_streaming.md). Automatic mode needs no setup: the budgets come
+/// from the machine. Custom mode uses the numbers given here (0 still means "work it out").
+struct StreamSettings {
+    bool automatic = true;
+    std::size_t ramBudgetBytes = 0;    ///< decoded assets the streamer may keep in memory
+    std::size_t vramBudgetBytes = 0;   ///< texture memory (the texture library's budget)
+    double frameBudgetMs = 4.0;        ///< main-thread streaming work per frame (scene cells made, unloads)
+};
+
+/// What the streamer holds right now (the Project Settings > Streaming stats and the tests).
+struct StreamStats {
+    std::size_t residentBytes = 0;     ///< bytes of assets the streamer keeps (wanted or cached for reuse)
+    std::size_t ramBudget = 0, vramBudget = 0;
+    std::size_t systemMemory = 0;      ///< what was detected (0 = unknown)
+    int resident = 0;                  ///< assets kept
+    int queued = 0;                    ///< decodes waiting for a job thread
+    std::uint64_t evicted = 0;         ///< assets let go of because the RAM budget was full
+    std::uint64_t cancelled = 0;       ///< streamed decodes dropped before they ran (no longer wanted)
+    std::uint64_t frame = 0;           ///< Pump calls
+};
+
 /// Usage report row/summary.
 struct AssetReport {
     struct Item { std::string key, type; std::size_t bytes = 0; long refs = 0; bool loading = false; std::uint64_t version = 0; };
@@ -148,12 +169,50 @@ public:
     template <class T>
     AssetHandle<T> LoadAsync(const std::string& path,
                              std::function<void(AssetHandle<T>, const std::string& error)> done = {}) {
-        std::function<void(const std::shared_ptr<assets_detail::Entry>&, const std::string&)> cb;
-        if (done) cb = [done](const std::shared_ptr<assets_detail::Entry>& e, const std::string& err) {
-            done(err.empty() ? AssetHandle<T>(e) : AssetHandle<T>(), err);
-        };
-        return AssetHandle<T>(AcquireAsync(std::type_index(typeid(T)), path, std::move(cb)));
+        return AssetHandle<T>(AcquireAsync(std::type_index(typeid(T)), path, WrapDone<T>(std::move(done))));
     }
+
+    // --- Streaming ----------------------------------------------------------------
+    // The central asset streamer is this manager: Stream() is LoadAsync with a priority (higher decodes first), and
+    // the decoded asset stays in a cache after its last user lets go, so a cell that comes back does not decode it
+    // again. Pump() lets go of cached assets nobody uses when the RAM budget is full: lowest priority first, then the
+    // one wanted longest ago. Everything a streamed scene references goes through here (Scene::BeginAsyncLoad with
+    // AsyncLoadOptions::stream, WorldStreamer), so there is nothing to set up per asset.
+
+    /// Decode in the background at `priority` and keep the result cached (see above). Asking again for an asset
+    /// already queued raises or lowers its place in the queue.
+    template <class T>
+    AssetHandle<T> Stream(const std::string& path, float priority,
+                          std::function<void(AssetHandle<T>, const std::string& error)> done = {}) {
+        return AssetHandle<T>(AcquireStreamed(std::type_index(typeid(T)), path, priority, WrapDone<T>(std::move(done))));
+    }
+    /// Not wanted any more before it was decoded (the player turned back): a decode that has not started is
+    /// dropped when no handle holds it. A decoded asset just stays cached. True when the asset was still queued.
+    template <class T>
+    bool CancelStream(const std::string& path) { return CancelStreamed(std::type_index(typeid(T)), path); }
+    /// Like Find, but only when the file on disk has not changed since it was decoded (a stale copy is never used).
+    template <class T>
+    AssetHandle<T> FindFresh(const std::string& path) {
+        return AssetHandle<T>(FindFreshEntry(std::type_index(typeid(T)), path));
+    }
+
+    void SetStreamSettings(const StreamSettings& s);
+    StreamSettings GetStreamSettings() const;
+    /// The budgets in use: Custom numbers, else OKAY_STREAM_RAM_MB / OKAY_STREAM_VRAM_MB, else from the hardware
+    /// (RAM: a quarter of system memory, 256 MB to 8 GB; VRAM: 80% of what a renderer reported, else an eighth of
+    /// system memory, 512 MB to 2 GB).
+    std::size_t RamBudget() const;
+    std::size_t VramBudget() const;
+    double FrameBudgetMs() const;
+    /// Physical memory of this machine (0 when it cannot be found).
+    static std::uint64_t SystemMemoryBytes();
+    /// A renderer that knows its video memory says so (0 = unknown).
+    void ReportVideoMemory(std::uint64_t bytes);
+    StreamStats GetStreamStats() const;
+    /// Let go of cached assets nobody uses until the RAM budget holds (Pump does this). Returns how many.
+    int TrimToBudget();
+    /// For tests: drop the streaming cache and counters and go back to the default settings.
+    void ResetStreamingForTests();
 
     /// Main-thread tick: runs the callbacks of finished background loads,
     /// checks watched files for changes (when hot reload is on) and applies finished
@@ -179,6 +238,15 @@ public:
     std::size_t CachedCount() const;
 
 private:
+    /// A typed "done" callback as the untyped one the cache keeps (empty stays empty).
+    template <class T>
+    static std::function<void(const std::shared_ptr<assets_detail::Entry>&, const std::string&)>
+    WrapDone(std::function<void(AssetHandle<T>, const std::string& error)> done) {
+        if (!done) return {};
+        return [done](const std::shared_ptr<assets_detail::Entry>& e, const std::string& err) {
+            done(err.empty() ? AssetHandle<T>(e) : AssetHandle<T>(), err);
+        };
+    }
     struct LoaderRec {
         std::string name;
         std::function<std::shared_ptr<void>(const std::string&, std::string&)> load;
@@ -187,7 +255,8 @@ private:
     };
     using EntryPtr = std::shared_ptr<assets_detail::Entry>;
     using Key = std::pair<std::type_index, std::string>;
-    struct Job { EntryPtr entry; bool reload = false; };
+    struct Job { EntryPtr entry; bool reload = false; bool streamed = false; float priority = 0.0f; };
+    struct Resident { EntryPtr entry; float priority = 0.0f; std::uint64_t lastWanted = 0; };
     struct Done {
         EntryPtr entry; bool reload = false, counted = false;
         std::shared_ptr<void> data; std::string error; std::int64_t stamp = 0, size = -1;
@@ -198,6 +267,13 @@ private:
     EntryPtr AcquireAsync(std::type_index t, const std::string& path,
                           std::function<void(const EntryPtr&, const std::string&)> cb);
     EntryPtr FindEntry(std::type_index t, const std::string& path);
+    EntryPtr AcquireAsyncImpl(std::type_index t, const std::string& path,
+                              std::function<void(const EntryPtr&, const std::string&)> cb, bool streamed, float priority);
+    EntryPtr AcquireStreamed(std::type_index t, const std::string& path, float priority,
+                             std::function<void(const EntryPtr&, const std::string&)> cb);
+    bool CancelStreamed(std::type_index t, const std::string& path);
+    EntryPtr FindFreshEntry(std::type_index t, const std::string& path);
+    int TrimLocked(std::vector<EntryPtr>& freed);
     bool NeedDrainLocked();   // true (and marks a drain as running) when queued work has no drain job yet
     void KickDrain();         // call without the lock: submits the drain job when one is needed
     void FinishFailedLocked(const EntryPtr& e);
@@ -220,6 +296,11 @@ private:
     double m_hotInterval = 0.5;
     std::int64_t m_lastScanNs = 0;
     std::function<void(const std::string&, const std::string&)> m_onReload;
+    // Streaming (guarded by the mutex).
+    std::map<Key, Resident> m_resident;
+    StreamSettings m_stream;
+    std::uint64_t m_videoMemory = 0;
+    std::uint64_t m_streamFrame = 0, m_evicted = 0, m_cancelled = 0;
 };
 
 } // namespace okay

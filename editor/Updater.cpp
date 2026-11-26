@@ -20,7 +20,7 @@ namespace fs = std::filesystem;
 // never needs GitHub at run time (owner decision 2026-11-20). RawUrl() below
 // builds the per-file URL.
 
-bool pendingQuit = false; // set true after a successful self-update relaunch
+std::atomic<bool> pendingQuit{false}; // set true after a successful self-update relaunch
 
 // Absolute path of the running executable.
 std::string SelfPath() {

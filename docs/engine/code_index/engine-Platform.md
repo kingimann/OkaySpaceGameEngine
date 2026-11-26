@@ -231,8 +231,8 @@ Back to the [code index](../code_index.md). 30 headers, 272 names.
 - `ResolveProxy` function, line 321: Decide the proxy for 'u' from the environment. false = the environment names a
 - `TlsApi` struct, line 346: TLS through the system OpenSSL, loaded at run time
 - `TlsStream` class, line 441
-- `SystemConnector` class, line 589
-- `TlsAvailable` function, line 671: True when https can be used (libssl loads); 'why' says why not.
+- `SystemConnector` class, line 591
+- `TlsAvailable` function, line 673: True when https can be used (libssl loads); 'why' says why not.
 
 ## `engine/include/okay/Platform/Painter.hpp`
 

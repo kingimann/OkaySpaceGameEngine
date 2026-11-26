@@ -30,6 +30,9 @@
 #include <d3d11.h>
 #if !defined(OKAY_XBOX_UWP)
 #include <d3dcompiler.h>   // run-time HLSL compile: desktop only. A UWP app loads the .cso bundle instead (ShaderBundle.hpp).
+#include "okay/Render/ShaderBundle.hpp"   // CompileCache: what D3DCompile made is kept between runs (SetShaderCacheDir)
+#include <filesystem>
+#include <fstream>
 #else
 #include "okay/Render/ShaderBundle.hpp"
 #include "okay/Render/D3D11OverlayHlsl.hpp"   // the text the bundle is built from (renderer HLSL + the UI overlay shaders)
@@ -84,6 +87,37 @@ bool EnsureBundle() {
     return g_bundleOk;
 }
 #endif
+#if !defined(OKAY_XBOX_UWP)
+std::string g_cacheDir;                      // set by D3D11Renderer::SetShaderCacheDir (UTF-8); empty = compile every start, keep nothing
+shaderbundle::CompileCache g_compileCache; bool g_compileCacheOpen = false;
+void EnsureCompileCache() {
+    if (g_compileCacheOpen) return;
+    g_compileCacheOpen = true;
+    if (g_cacheDir.empty()) { g_compileCache.Open(nullptr, nullptr, kHLSL); return; }
+    const std::filesystem::path dir = std::filesystem::u8path(g_cacheDir);
+    auto rd = [dir](const std::string& name, std::vector<unsigned char>& out) {
+        std::ifstream in(dir / name, std::ios::binary);
+        if (!in) return false;
+        out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        return true;
+    };
+    auto wr = [dir](const std::string& name, const std::vector<unsigned char>& bytes) {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        const std::filesystem::path tmp = dir / (name + ".tmp");
+        {
+            std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
+            if (!o) return false;
+            o.write(reinterpret_cast<const char*>(bytes.data()), (std::streamsize)bytes.size());
+            if (!o) return false;
+        }
+        std::filesystem::rename(tmp, dir / name, ec);   // whole or not at all: another editor may read the folder at the same time
+        if (ec) { std::filesystem::remove(tmp, ec); return false; }
+        return true;
+    };
+    g_compileCache.Open(rd, wr, kHLSL);
+}
+#endif
 bool CompileShader(const char* entry, const char* profile, ShaderCode& out) {
 #if defined(OKAY_XBOX_UWP)
     (void)profile;
@@ -93,15 +127,27 @@ bool CompileShader(const char* entry, const char* profile, ShaderCode& out) {
     out.data = b->data(); out.size = (SIZE_T)b->size();
     return true;
 #else
-    ID3DBlob* err = nullptr;
-    const SIZE_T n = (SIZE_T)std::strlen(kHLSL);
-    if (FAILED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, entry, profile, 0, 0, &out.blob, &err))) {
-        if (err) { out.error = (const char*)err->GetBufferPointer(); err->Release(); }
-        if (out.blob) { out.blob->Release(); out.blob = nullptr; }
-        return false;
-    }
-    if (err) err->Release();
-    out.data = out.blob->GetBufferPointer(); out.size = out.blob->GetBufferSize();
+    // From the shader cache folder when it holds this HLSL text's bytes; else D3DCompile (seconds for the whole set) and kept there.
+    EnsureCompileCache();
+    std::string error;
+    const std::vector<unsigned char>* bytes = g_compileCache.Get(entry, profile,
+        [&error](const char* e, const char* prof, std::vector<unsigned char>& outBytes) {
+            ID3DBlob* blob = nullptr;
+            ID3DBlob* err = nullptr;
+            const SIZE_T n = (SIZE_T)std::strlen(kHLSL);
+            if (FAILED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, e, prof, 0, 0, &blob, &err))) {
+                if (err) { error = (const char*)err->GetBufferPointer(); err->Release(); }
+                if (blob) blob->Release();
+                return false;
+            }
+            if (err) err->Release();
+            const unsigned char* p = static_cast<const unsigned char*>(blob->GetBufferPointer());
+            outBytes.assign(p, p + blob->GetBufferSize());
+            blob->Release();
+            return true;
+        });
+    if (!bytes) { out.error = error; return false; }
+    out.data = bytes->data(); out.size = (SIZE_T)bytes->size();   // owned by g_compileCache for the life of the process
     return true;
 #endif
 }
@@ -2031,6 +2077,13 @@ bool D3D11Renderer::BundleShader(const char* entry, const void** data, std::size
 void D3D11Renderer::SetShaderBundleDir(const char* dir) {
 #if defined(OKAY_XBOX_UWP)
     g_shaderDir = dir ? dir : ""; g_bundleTried = false; g_bundleOk = false;
+#else
+    (void)dir;
+#endif
+}
+void D3D11Renderer::SetShaderCacheDir(const char* dir) {
+#if !defined(OKAY_XBOX_UWP)
+    if (!g_compileCacheOpen) g_cacheDir = dir ? dir : "";   // only before the first compile: the cache hands out pointers into itself
 #else
     (void)dir;
 #endif

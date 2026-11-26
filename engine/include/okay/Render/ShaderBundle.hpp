@@ -5,7 +5,7 @@
 // Why: a Universal Windows Platform app may not call D3DCompile at run time. The Xbox UWP build therefore compiles every
 // entry point of the Direct3D 11 HLSL (D3D11Hlsl.hpp) to a .cso file at BUILD time (scripts/xbox-compile-shaders.ps1 with fxc.exe)
 // and writes `shaders.manifest` next to them. At run time D3D11Renderer (when OKAY_XBOX_UWP is defined) reads the files through this
-// header. The desktop build does not use it: it still calls D3DCompile exactly as before.
+// header. The desktop build keeps what D3DCompile made in the same layout (CompileCache, at the end of this file).
 //
 // Manifest text format (one record per line, '#' starts a comment line):
 //   okay-shaders 1
@@ -21,6 +21,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace okay { namespace shaderbundle {
 
@@ -174,5 +175,55 @@ inline bool BuildManifest(const Bundle::ReadFn& readFile, const char* sourceText
     }
     return true;
 }
+
+// Desktop run-time cache (D3D11Renderer::SetShaderCacheDir): the desktop build compiles its HLSL with D3DCompile when it starts, one
+// call per entry point over the whole renderer text, and the owner's okay_editor_perf.log (2026-11-25) shows the first 3D frame at 7-9 s.
+// The bytes D3DCompile made are kept in a folder in the same layout as the Xbox bundle (shaders.manifest + okay3d_<entry>.cso, checked
+// by Bundle::Load above: the source text's hash, sizes, hashes, DXBC magic), so the next start compiles nothing until the HLSL changes.
+// No Direct3D here: `compile` is D3DCompile on Windows and a stand-in in tests. UNVERIFIED on Windows (no D3D on the Linux machine).
+class CompileCache {
+public:
+    using WriteFn = std::function<bool(const std::string& name, const std::vector<unsigned char>& bytes)>;
+    using CompileFn = std::function<bool(const char* entry, const char* profile, std::vector<unsigned char>& bytes)>;
+    /// `read` / `write` reach one file of the cache folder (either may fail: the cache then only saves nothing). A folder made from a
+    /// different HLSL text, a damaged file or no folder at all simply means everything is compiled again (and stored).
+    void Open(Bundle::ReadFn read, WriteFn write, const char* sourceText) {
+        read_ = std::move(read); write_ = std::move(write); source_ = sourceText ? sourceText : "";
+        std::string err;
+        if (read_) bundle_.Load(read_, source_.c_str(), &err);   // failing is normal: the first start, or a changed HLSL text
+    }
+    /// The bytecode of `entry`: from the cache, else compiled now and stored. Null when it does not compile. Valid for this cache's life.
+    const std::vector<unsigned char>* Get(const char* entry, const char* profile, const CompileFn& compile) {
+        if (const std::vector<unsigned char>* b = bundle_.Find(entry)) { ++hits_; return b; }
+        auto it = made_.find(entry);
+        if (it != made_.end()) return &it->second;
+        std::vector<unsigned char> bytes;
+        if (!compile || !compile(entry, profile, bytes) || bytes.empty()) return nullptr;
+        ++compiled_;
+        const std::vector<unsigned char>& kept = made_[entry] = std::move(bytes);
+        Store(entry, profile, kept);
+        return &kept;
+    }
+    int Compiled() const { return compiled_; }   ///< entries compiled by this process
+    int Hits() const { return hits_; }           ///< entries taken from the folder
+
+private:
+    void Store(const char* entry, const char* profile, const std::vector<unsigned char>& bytes) {
+        bool listed = false;   // only the entries the bundle lists have a place in the manifest
+        for (const EntryReq& q : Entries()) if (std::strcmp(q.entry, entry) == 0 && std::strcmp(q.profile, profile) == 0) listed = true;
+        if (!listed || !write_ || !read_ || bytes.size() < 4 || std::memcmp(bytes.data(), "DXBC", 4) != 0) return;
+        if (!write_(FileNameFor(entry), bytes)) return;
+        Manifest m; std::vector<std::string> warnings; std::string err;
+        if (!BuildManifest(read_, source_.c_str(), m, warnings, &err)) return;   // the required entries are not all there yet
+        const std::string text = WriteManifest(m);
+        write_("shaders.manifest", std::vector<unsigned char>(text.begin(), text.end()));
+    }
+    Bundle::ReadFn read_;
+    WriteFn write_;
+    std::string source_;
+    Bundle bundle_;
+    std::map<std::string, std::vector<unsigned char>> made_;
+    int compiled_ = 0, hits_ = 0;
+};
 
 }} // namespace okay::shaderbundle

@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
     { std::ofstream(src / names[0], std::ios::binary | std::ios::app) << "changed"; }
     WriteStats st5;
     const double t5 = pack(&jobs, cache, st5, pkgPath);
-    std::printf("  pack, 1 file changed:  %.2f s (%zu of %zu from the cache)\n", t5, st5.fromCache, st5.compressed);
+    std::printf("  pack, 1 file changed:  %.2f s (%zu of %zu entries from the cache)\n", t5, st5.fromCache, st5.entries);
 
     // Open and read everything, against reading the loose files.
     double t = Now();

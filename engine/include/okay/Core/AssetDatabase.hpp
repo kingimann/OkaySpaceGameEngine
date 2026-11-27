@@ -114,6 +114,7 @@ struct ScanOptions {
     bool buildDependencies = true;     ///< (re)read text assets that changed and rebuild the graph
     bool deleteOrphanMetas = false;    ///< remove metas whose asset is gone and was not matched to a new file
     bool logWarnings = true;           ///< also send warnings to the engine log
+    bool writeNothing = false;         ///< never change a file: an unreadable meta is ignored instead of being set aside as .corrupt (a scan of an exported game's folder, assetpkg::PackFolder)
     std::vector<std::string> ignoreDirs;   ///< folder names to skip anywhere (folders starting with '.' are always skipped)
     std::vector<std::string> ignoreExtensions = {"okaymeta", "okayasset", "part", "tmp", "bak", "swp", "corrupt"};
     std::size_t fullHashLimit = 512u << 20;   ///< files above this are hashed from their head, tail and size

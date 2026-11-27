@@ -676,6 +676,7 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
         auto hit = byKey.find(KeyOf(assetRel));
         if (hit != byKey.end()) {
             Cand& c = cands[hit->second];
+            if (!pm.ok && opt.writeNothing) { warn("unreadable meta " + mf.rel + " (" + pm.error + "): ignored"); continue; }
             if (!pm.ok) {
                 warn("unreadable meta " + mf.rel + " (" + pm.error + "): kept as " + mf.rel + ".corrupt, a new meta is created");
                 std::error_code e2;

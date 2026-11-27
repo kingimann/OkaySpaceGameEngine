@@ -39,7 +39,7 @@ The hash is new and ours (see "Hash64").
 | Incremental updates without rebuilding | None | Done in the core: patch packages (`MakePatch`, replace/add/remove by id, chained to the exact base), `packages.manifest` + `ChangedPackages`, and a compression cache so a re-export compresses only changed files. Making a patch from the editor and the downloader are round 2 |
 | Integrated in engine, editor, build, runtime | n/a | Engine (AssetManager), editor export (BuildGame), player (mount before anything loads); CMake lists the files |
 | No extra configuration or services | n/a | Nothing to set up; on by default; `OKAY_BUILD_LOOSE_FILES=1` only to go back |
-| Tests, benchmarks, corrupted-package validation | n/a | `asset_package` (237 checks), fuzzing under ASan/UBSan, `asset_package_bench` |
+| Tests, benchmarks, corrupted-package validation | n/a | `asset_package` (297 checks; 237 in the standalone fuzz build), fuzzing under ASan/UBSan, `asset_package_bench` |
 
 ## 3. Design
 
@@ -130,10 +130,31 @@ and the first start writes it.
 
 ## 4. Benchmarks
 
-`test_asset_package_bench [files] [MB]` on the Linux build container (Release, GCC; numbers depend on the machine and
+`test_asset_package_bench [files] [MB]` on the Linux build container (Release, GCC 13; numbers depend on the machine and
 are not checked by the test). Input: 2000 files, 64 MB, two thirds text-like, one third random bytes.
 
-BENCH_RESULTS
+Run on 2026-11-27, 4 cores shared with other builds (load average 7 to 8, so the worker numbers show no gain here; they
+were not measured on an idle machine):
+
+| What | Result |
+|---|---|
+| Hash64 | 3126 MB/s |
+| Pack, 1 thread | 2.27 s (28 MB/s in); 64.0 MB -> 25.8 MB (40%), 1334 of 2000 entries compressed |
+| Pack, 3 workers | 2.30 s (no gain on the loaded machine) |
+| Pack with the cache, nothing changed | 0.14 s (2000 of 2000 entries from the cache), against 2.98 s the first time |
+| Pack, 1 file changed | 0.10 s (1999 of 2000 from the cache) |
+| Open | 0.94 ms; tables in memory 125 KB for 2000 entries |
+| Read every entry (unpack + hash check) | 0.134 s, 476 MB/s |
+| Read every loose file (no checks, warm OS cache) | 0.207 s, 309 MB/s |
+| Read every entry async on 3 workers | 0.078 s |
+| Lookup by id | 250 ns |
+| Verify every byte | 0.083 s |
+| Player view: first start / next start | 0.22 s (2000 files written) / 0.026 s (2000 kept) |
+| Peak memory of the bench program | 70 MB |
+
+Reading: compression is the slow part (`ImageWrite::Deflate`, about 28 MB/s); the cache makes a second export of an
+unchanged game about 20 times faster. Reading from the package is faster than opening 2000 loose files, even with the
+hash check. Not measured: a cold disk, Windows, a game of gigabytes.
 
 ## 5. Tests
 
@@ -148,7 +169,12 @@ folder (dependencies recorded, loose files removed, kept ones kept, view identic
 byte-identical, a damaged cache caught); the AssetManager mount. The fuzz part also builds alone with
 `-fsanitize=address,undefined` (`-DOKAY_ASSETPKG_STANDALONE`; see the top of the test file).
 
-FUZZ_RESULTS
+Fuzz results (2026-11-26/27): the standalone build with `-fsanitize=address,undefined -fno-sanitize-recover=undefined`
+ran 1 500 000 mutated packages (`OKAY_FUZZ_ROUNDS=1500000`, three seed packages): 291 946 opened, 4 925 read fully
+(mutations that leave a valid package, such as a changed `kind` byte with the trailer resealed), no ASan or UBSan report,
+no crash, every refusal with a reason. After the last reader changes (2026-11-27) a second run of 500 000 rounds: 97 530 opened,
+1 657 read fully, no report. The three-seed sweep runs 30 000 rounds in every ctest run. Tests break when a check
+is removed on purpose (checked: without the alignment and metadata-hash checks, 2 checks fail).
 
 ## 6. Left for later rounds
 

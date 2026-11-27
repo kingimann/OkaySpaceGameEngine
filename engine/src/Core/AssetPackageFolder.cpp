@@ -234,7 +234,7 @@ bool PackFolder(const std::string& dataDir, const std::string& packageFile, cons
         AssetDatabase db;
         ScanOptions so;
         so.createMetas = false; so.indexUnmetaed = true; so.detectMoves = false; so.matchByName = false;
-        so.verifyHashes = false; so.storeHashInMeta = false; so.upgradeMetas = false; so.logWarnings = false;
+        so.verifyHashes = false; so.storeHashInMeta = false; so.upgradeMetas = false; so.logWarnings = false; so.writeNothing = true;
         for (const std::string& k : options.keepLoose) so.ignoreDirs.push_back(k);
         so.ignoreExtensions.push_back("okaypkg");
         db.Scan(dataDir, so);

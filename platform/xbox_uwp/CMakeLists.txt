@@ -27,7 +27,7 @@ set_target_properties(okay-appx PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINA
 # It compiles the same four engine image files the script gives cl.exe (no engine library), so this build and the script's build are the same thing.
 add_executable(okay-xbox-export tool/okay_xbox_export.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Graphics/Image.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
-    ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageWrite.cpp)
+    ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecodeWebp.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecodeSvg.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageWrite.cpp)
 target_include_directories(okay-xbox-export PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
 target_include_directories(okay-xbox-export PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/engine/include)
 set_target_properties(okay-xbox-export PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)

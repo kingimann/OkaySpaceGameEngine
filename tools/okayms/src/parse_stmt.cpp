@@ -801,16 +801,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             } else {
                 Node init;
                 if (!parse_init(&init)) return false;
-                Node assign;
-                assign.kind = Node::Assign;
-                assign.op = TAssign;
-                assign.number = 1;
-                assign.kids.push_back(node_name(hidden.name));
-                assign.kids.push_back(std::move(init));
-                Node stmt;
-                stmt.kind = Node::ExprStmt;
-                stmt.kids.push_back(std::move(assign));
-                stmt_pre.push_back(std::move(stmt));
+                stmt_pre.push_back(make_in_place_stmt(hidden.name, std::move(init)));
             }
             value = node_name(hidden.name);
             braced_ret = true;

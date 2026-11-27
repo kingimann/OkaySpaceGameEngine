@@ -1460,6 +1460,20 @@ struct Parser {
         return field.type.base == 3 && field.type.pointers == 0 && !field.type.is_ref && field.type.struct_id >= 0 &&
                !obj_needs_ctor(field.type);
     }
+    // `name = value;` as a statement, the value made in place (Assign with number 1: a class returned by a call writes
+    // the object itself). Shared by the hidden locals of `return {...}` and of init-captures.
+    Node make_in_place_stmt(const std::string& name, Node value) const {
+        Node assign;
+        assign.kind = Node::Assign;
+        assign.op = TAssign;
+        assign.number = 1;
+        assign.kids.push_back(node_name(name));
+        assign.kids.push_back(std::move(value));
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.kids.push_back(std::move(assign));
+        return stmt;
+    }
     Node node_this_field(const std::string& field) const {
         Node f;
         f.kind = Node::Field;

@@ -403,16 +403,7 @@ bool Parser::parse_lambda(Node* out) {
                     stmt_pre.push_back(std::move(call));
                 } else {
                     if (t.base != 3 && !convert_class(&init, t)) return false;
-                    Node assign;
-                    assign.kind = Node::Assign;
-                    assign.op = TAssign;
-                    assign.number = 1;  // made in place (a class returned by a call writes the local itself)
-                    assign.kids.push_back(node_name(hidden.name));
-                    assign.kids.push_back(std::move(init));
-                    Node stmt;
-                    stmt.kind = Node::ExprStmt;
-                    stmt.kids.push_back(std::move(assign));
-                    stmt_pre.push_back(std::move(stmt));
+                    stmt_pre.push_back(make_in_place_stmt(hidden.name, std::move(init)));
                 }
                 if (obj_needs_dtor(t)) stmt_temps.push_back(Temp{hidden.name, t.struct_id});
                 c.src = hidden.name;

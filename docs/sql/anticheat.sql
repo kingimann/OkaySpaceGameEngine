@@ -62,29 +62,10 @@
 -- Edge Function).
 
 -- ---------------------------------------------------------------------------
--- Rate limiting (used by the functions below; nobody calls it directly)
+-- Rate limiting: public.ac_rate_hit(key, limit, window) and its table
+-- ac_rate_events live in admin.sql (run before this file); the admin dashboard
+-- uses the same limiter.
 -- ---------------------------------------------------------------------------
-create table if not exists public.ac_rate_events (
-  key text not null,
-  at  timestamptz not null default now()
-);
-create index if not exists ac_rate_events_key on public.ac_rate_events (key, at desc);
-alter table public.ac_rate_events enable row level security;   -- no policy: only the definer functions below touch it
-revoke all on public.ac_rate_events from public, anon, authenticated;
-
--- Count one use of `p_key`; refuse when it was already used `p_limit` times in the last `p_window`
--- (at most a day is remembered). The advisory lock makes two simultaneous calls count one after the other.
-create or replace function public.ac_rate_hit(p_key text, p_limit int, p_window interval) returns void
-language plpgsql security definer set search_path = public as $$
-begin
-  perform pg_advisory_xact_lock(hashtext('ac_rate:' || p_key));
-  delete from public.ac_rate_events where key = p_key and at < now() - interval '1 day';
-  if (select count(*) from public.ac_rate_events where key = p_key and at > now() - p_window) >= p_limit then
-    raise exception 'Too many requests; try again later' using errcode = 'check_violation';
-  end if;
-  insert into public.ac_rate_events (key) values (p_key);
-end $$;
-revoke execute on function public.ac_rate_hit(text, int, interval) from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Reports
@@ -591,21 +572,15 @@ drop policy if exists "admins read audit" on public.ac_audit;
 create policy "admins read audit" on public.ac_audit for select using (public.is_admin(auth.uid()));
 revoke insert, update, delete, truncate on public.ac_audit from public, anon, authenticated;
 
-create or replace function public.ac_audit_immutable() returns trigger
-language plpgsql set search_path = public as $$
-begin
-  if coalesce(current_setting('okay.ac_audit_purge', true), '') = 'on' then
-    if tg_op = 'DELETE' then return old; end if;
-    return null;
-  end if;
-  raise exception 'The anti-cheat audit log is append-only' using errcode = 'insufficient_privilege';
-end $$;
+-- Append-only: the shared trigger function public.audit_append_only (admin.sql) also guards admin_log.
+-- Only ac_purge_audit (which sets okay.ac_audit_purge for its own transaction) removes rows.
 drop trigger if exists ac_audit_immutable on public.ac_audit;
 create trigger ac_audit_immutable before update or delete on public.ac_audit
-  for each row execute function public.ac_audit_immutable();
+  for each row execute function public.audit_append_only('The anti-cheat audit log', 'okay.ac_audit_purge');
 drop trigger if exists ac_audit_no_truncate on public.ac_audit;
 create trigger ac_audit_no_truncate before truncate on public.ac_audit
-  for each statement execute function public.ac_audit_immutable();
+  for each statement execute function public.audit_append_only('The anti-cheat audit log', 'okay.ac_audit_purge');
+drop function if exists public.ac_audit_immutable();   -- the old copy, replaced by the shared function
 
 create or replace function public.ac_audit_role() returns text
 language plpgsql stable as $$

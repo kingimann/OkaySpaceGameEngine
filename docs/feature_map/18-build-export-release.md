@@ -11,10 +11,10 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 ### 18.1 Windows build and installer
 - **System:** Windows Build and Installer - Builds the Windows programs (launcher, editor, player, relay) and the installer and zip.
   Home: `scripts/build-windows-dist.sh`, `scripts/okayspace-installer.nsi`. Entry: `scripts/build-windows-dist.sh`. Also called: installer, NSIS, Windows zip, build-windows-dist.
-- **What:** Cross-compiles the whole Windows distribution (launcher, editor, player, relay and `SDL2.dll`) from Linux with MinGW-w64 and wraps it in a one-click installer that installs or updates in place.
+- **What:** Cross-compiles the whole Windows distribution (launcher, editor, player, relay; no third-party DLL since 2026-11-27) from Linux with MinGW-w64 and wraps it in a one-click installer that installs or updates in place.
 - **Parts:**
-  - 18.1.1 Distribution build script - `scripts/build-windows-dist.sh` - configures with the MinGW toolchain, builds launcher, editor, player (our own model readers only; Assimp was deleted 2026-11-24), copies the layout into `build-win-dist/`; env `SDL2_MINGW_PREFIX` (required), `OKAY_SODIUM_MINGW_PREFIX`, `OKAY_AC_TRUSTED_KEYS`, `OKAY_STEAM_APP_ID` (default 1172560), `STEAMWORKS_SDK_PATH`, `OKAY_IMGUI_SRC`, `JOBS`
-  - 18.1.2 Distribution layout - `scripts/build-windows-dist.sh` - `OkaySpace.exe` and `SDL2.dll` at the top; `Tools/` holds `OkayEngine.exe`, `OkaySpacePlayer.exe`, `okayspace-relay.exe`, a second `SDL2.dll`, `VERSION.txt`, `accounts.md`; starter `Assets/Textures` and `Assets/Fonts`; `README.txt`; `VERSION.txt` is read from `CMakeLists.txt`
+  - 18.1.1 Distribution build script - `scripts/build-windows-dist.sh` - configures with the MinGW toolchain, builds launcher, editor, player (our own model readers only; Assimp was deleted 2026-11-24), copies the layout into `build-win-dist/`; env `OKAY_SODIUM_MINGW_PREFIX`, `OKAY_AC_TRUSTED_KEYS`, `OKAY_STEAM_APP_ID` (default 1172560), `STEAMWORKS_SDK_PATH`, `OKAY_IMGUI_SRC`, `JOBS`
+  - 18.1.2 Distribution layout - `scripts/build-windows-dist.sh` - `OkaySpace.exe` at the top; `Tools/` holds `OkayEngine.exe`, `OkaySpacePlayer.exe`, `okayspace-relay.exe`, `VERSION.txt`, `accounts.md`; starter `Assets/Textures` and `Assets/Fonts`; `README.txt`; `VERSION.txt` is read from `CMakeLists.txt`
   - 18.1.3 Split debug info - `scripts/build-windows-dist.sh` - the editor's DWARF moves to `build-win-symbols/OkayEngine.debug` so the exe fits Supabase's 50 MB limit; a debuglink stays in the exe
   - 18.1.4 NSIS installer - `scripts/okayspace-installer.nsi` - per-user (`$LOCALAPPDATA\OkaySpace`, no admin), finds a prior install (registry, Apps entry, the folder it runs from) and updates it in place, waits for running exes to close, makes Start Menu and desktop shortcuts, an uninstaller and an Apps & features entry; user data is never touched
   - 18.1.5 Quick sandbox exe - `scripts/build-windows-exe.sh` - an older helper that builds only the sandbox demo and copies it to `dist/OkaySpace.exe`
@@ -27,8 +27,8 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Status:** Works - built by CI on every PR and by the release workflow on every release
 - **Open:** "Stop committing dist binaries" (old map): `dist/` still holds June 2026 exes and a `VERSION.txt` of 2.412.0; `build-windows-exe.sh` copies the sandbox demo as `dist/OkaySpace.exe`, which is not the launcher (possible stale script); the Windows build is never executed in CI beyond six test exes (18.3.4)
 - **Related:** 18.4, 18.5, 41.2, 41.3, 19.6
-- **Words:** Windows build, MinGW, cross-compile, build-win-dist, distribution, dist, installer, NSIS, OkaySpace-Setup.exe, SDL2.dll, Tools folder, symbols, OkayEngine.debug
-- **Seen as:** the installer asks to close OkaySpace; an exe is missing SDL2.dll; the editor exe is huge; "no MinGW" or "SDL2_MINGW_PREFIX not set" errors
+- **Words:** Windows build, MinGW, cross-compile, build-win-dist, distribution, dist, installer, NSIS, OkaySpace-Setup.exe, Tools folder, symbols, OkayEngine.debug
+- **Seen as:** the installer asks to close OkaySpace; the editor exe is huge; "no MinGW" errors
 - **Ask me like:** "build the Windows folder locally", "why does the installer skip the folder question?"
 
 ### 18.2 Web and mobile export
@@ -64,7 +64,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Parts:**
   - 18.3.1 Build & test (Ubuntu) - `.github/workflows/ci.yml`, `cmake/OkayTestShard.cmake`, `tests/scripts/check_test_shards.py` - three shards side by side (`-DOKAY_TEST_SHARD=K/3`, each builds and runs a third of the tests) and a gate job of that name that needs all three; installs cmake, g++, ninja, libsdl2-dev; Release build and the whole `ctest`; also builds the player, builds the editor and launcher and runs `OkayEngine --selftest` headless, then exports a game and runs `tests/export/verify.sh`
   - 18.3.2 Scripting and robustness tests (ASan + UBSan) - `.github/workflows/ci.yml` - Debug `-g1` with `address,undefined,float-cast-overflow`, libsodium off, 45 min limit; builds and runs 38 chosen test binaries directly, not through ctest (19.2.5)
-  - 18.3.3 Cross-compile Windows build (MinGW) - `.github/workflows/ci.yml` - apt packages cached, SDL2 2.30.9 and libsodium 1.0.20 fetched, ccache; runs `scripts/build-windows-dist.sh`, builds six test exes, uploads artifact `windows-ci-build` (3 days)
+  - 18.3.3 Cross-compile Windows build (MinGW) - `.github/workflows/ci.yml` - apt packages cached, libsodium 1.0.20 fetched, ccache; runs `scripts/build-windows-dist.sh`, builds six test exes, uploads artifact `windows-ci-build` (3 days)
   - 18.3.4 Windows export check - `.github/workflows/ci.yml` - on `windows-latest`: runs `test_vs_acceptance`, `test_vs_debug`, `test_game_fiber`, `test_polymesh`, `test_mesh_asset`, `test_poly_ops`, then `tests/export/verify.ps1` with the cross-built editor
   - 18.3.5 WebGL build (Emscripten) - `.github/workflows/ci.yml` - emsdk 3.1.51, `bash scripts/build-web.sh`, checks the `.html`, `.js` and `.wasm` exist, packs `tests/web/webtest_game` and plays it in headless Chromium (`tests/scripts/test_web_player.js`, Playwright as a test tool), uploads `okayspace-webgl`
   - 18.3.6 PR template - `.github/PULL_REQUEST_TEMPLATE.md` - summary, changes, and two ticks: warning-clean build and passing ctest
@@ -86,7 +86,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **What:** `.github/workflows/release.yml` turns a version into a GitHub Release (and, when a secret exists, an update on Supabase) plus the Linux game server. A release PR bumps the version first.
 - **Parts:**
   - 18.4.1 Trigger and version - `.github/workflows/release.yml` - runs on a `v*` tag or "Run workflow"; the version is read from `build-win-dist/VERSION.txt`, which comes from `CMakeLists.txt`; a release PR ("Release 2.849.0", #573; "Release 2.851.0", #583; "Release 2.852.0", #588 in draft) bumps `project(VERSION)`, adds a `ROADMAP.md` row and a `dist/CHANGELOG.txt` entry
-  - 18.4.2 Windows job - `windows-exe` - 45 min limit; warns if the repository variable `OKAY_AC_TRUSTED_KEYS` is empty; installs MinGW, NSIS, ccache with apt retries and cache; fetches SDL2 2.30.9 and libsodium 1.0.20; runs `scripts/build-windows-dist.sh`
+  - 18.4.2 Windows job - `windows-exe` - 45 min limit; warns if the repository variable `OKAY_AC_TRUSTED_KEYS` is empty; installs MinGW, NSIS, ccache with apt retries and cache; fetches libsodium 1.0.20; runs `scripts/build-windows-dist.sh`
   - 18.4.3 Packaging - `windows-exe` - zip `OkaySpace-windows-v<ver>.zip`, installer `OkaySpace-Setup.exe` via `makensis`, workflow artifact
   - 18.4.4 GitHub Release - `windows-exe` - `softprops/action-gh-release` uploads the zip, installer and the individual files the in-app updater downloads by name (`OkaySpace.exe`, `OkayEngine.exe`, `OkaySpacePlayer.exe`, `SDL2.dll`, `VERSION.txt`, symbols, `dist/CHANGELOG.txt`); tags the commit the run built
   - 18.4.5 Supabase publish step - `windows-exe` - runs `scripts/publish-supabase.sh` only when the secret `SUPABASE_SERVICE_KEY` exists (18.5)
@@ -127,7 +127,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 ### 18.6 Desktop game export (Build Game) and the export check
 - **System:** Game Export - Turns a project into a game folder you can ship (`<Game>.exe`), checks it, and lets shipped games download signed content updates.
   Home: `editor/BuildGame.cpp`, `engine/include/okay/Core/BuildPipeline.hpp`. Entry: `editor/BuildGame.hpp`. Also called: Build Game, BuildPipeline, export game, content updates.
-- **What:** Turning the open project into a shippable game folder (`<Game>.exe`, `SDL2.dll`, a `<Game>_Data/` folder with the scenes, config, `build.json`, only the assets the scenes use and the project's StreamingAssets; or the older compact `Data/` layout; or one zip), with a report of what went in and what was left out, a dry run, and the CI checks that export a small game and run it.
+- **What:** Turning the open project into a shippable game folder (`<Game>.exe`, a `<Game>_Data/` folder with the scenes, config, `build.json`, only the assets the scenes use and the project's StreamingAssets; or the older compact `Data/` layout; or one zip), with a report of what went in and what was left out, a dry run, and the CI checks that export a small game and run it.
 - **Parts:**
   - 18.6.1 Build - `editor/BuildGame.cpp` (`builder::Build`; types and declarations in `editor/BuildGame.hpp`) - refuses dangerous folders (a drive root, home, the project), cleans only files it writes, scenes in build order, `game.okayconfig`, player copied as `<Game>.exe`, SDL2, the dependency walk's assets, StreamingAssets, icon, splash, localization, `build.json`, the report, the archive; `Data/manifest.json` only with anti-cheat
   - 18.6.2 Player lookup and download - `editor/BuildGame.cpp` (`builder::FindPlayer`, `builder::EnsurePlayer`) - looks beside the editor and in a few sibling folders, downloads the runtime from the latest release if missing

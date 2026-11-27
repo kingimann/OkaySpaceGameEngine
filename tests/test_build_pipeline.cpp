@@ -158,6 +158,15 @@ void TestWalk(const fs::path& tmp) {
     for (const auto& a : w.assets) if (a.dest == "Audio/boom.wav") prefabReason = a.reason.find("enemy.okayprefab") != std::string::npos;
     CHECK(prefabReason);
 
+    // A dialogue, a quest file and a clip are read for the files they name, like the other text assets.
+    Write(proj / "Assets" / "Dialog" / "intro.okaydialog", "okaydialog 1\nnode 1 say \"Hi\" voice \"Audio/line1.wav\"\n");
+    Write(proj / "Assets" / "Audio" / "line1.wav", Blob(300));
+    Write(proj / "Assets" / "Quests" / "main.okayquest", "okayquest 1\nquest id=\"q\" icon=\"Textures/quest.png\"\n");
+    Write(proj / "Assets" / "Textures" / "quest.png", Blob(130));
+    const bp::WalkResult dq = bp::WalkAssets({{"Dialog/intro.okaydialog", "level"}, {"Quests/main.okayquest", "level"}}, s);
+    CHECK(Has(dq, "Dialog/intro.okaydialog") && Has(dq, "Audio/line1.wav"));
+    CHECK(Has(dq, "Quests/main.okayquest") && Has(dq, "Textures/quest.png"));
+
     // References cannot climb out of the project: "../" never reaches a file by search.
     bp::WalkSettings s2; s2.projectDir = (proj / "Assets").generic_string();
     const bp::WalkResult up = bp::WalkAssets({{"../elsewhere/outside.png", "level"}}, s2);
@@ -213,6 +222,11 @@ void TestKinds() {
     CHECK(bp::KindOf("Game_Data/f.ttf") == bp::FileKind::Font);
     CHECK(bp::KindOf("Game_Data/StreamingAssets/pack.dll") == bp::FileKind::Streaming);
     CHECK(bp::KindOf("Game_Data/build.json") == bp::FileKind::Data);
+    // The real extensions of clips, dialogue and quests (#888 F42 follow-up: the tables had "okayclips", "okaydialogue"
+    // and "okayquests", which no file has).
+    CHECK(bp::KindOf("Game_Data/Anim/wave.okayclip") == bp::FileKind::Data);
+    CHECK(bp::KindOf("Game_Data/Dialog/intro.okaydialog") == bp::FileKind::Data);
+    CHECK(bp::KindOf("Game_Data/Quests/main.okayquest") == bp::FileKind::Data);
     CHECK(bp::IsEditorOnlyFile("a/b.psd") && bp::IsEditorOnlyFile("x.bak") && bp::IsEditorOnlyFile("a/Thumbs.db") && bp::IsEditorOnlyFile("n~"));
     CHECK(!bp::IsEditorOnlyFile("a/b.png"));
 }

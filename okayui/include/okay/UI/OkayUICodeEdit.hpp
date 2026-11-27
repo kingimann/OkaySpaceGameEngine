@@ -100,6 +100,9 @@ struct CodePalette {
 };
 /// The Darcula-flavoured palette the script editor uses.
 CodePalette DefaultCodePalette();
+/// The code palette of the design in force (Style()): its surfaces, text, selection and accent; on a light scheme a light syntax
+/// palette of our own (every token colour 4.5:1 or better on the field colour), on a dark one the default syntax colours.
+CodePalette DesignCodePalette();
 
 /// An error (or warning) the caller wants shown: a mark in the gutter, a wash over the line and a wavy underline under the
 /// columns [colStart, colEnd) (colEnd < 0: from colStart or the first non-blank to the last non-blank). `message` shows as a tooltip.
@@ -272,6 +275,7 @@ public:
     void SetShowLineNumbers(bool b) { showLineNumbers_ = b; }
     void SetShowBreakpointGutter(bool b) { showBreakpoints_ = b; }
     void SetLineSpacing(float s) { lineSpacing_ = s < 1.0f ? 1.0f : (s > 3.0f ? 3.0f : s); }
+    float LineSpacing() const { return lineSpacing_; }
     /// Empty space between the gutter and the first column of text, in pixels (4 by default, 0 to 200). A click in it is column 0.
     void SetTextMargin(float px) { textMargin_ = px > 0.0f ? (px < 200.0f ? px : 200.0f) : 0.0f; }
     float TextMargin() const { return textMargin_; }

@@ -1,3 +1,4 @@
+#include "OkayUI_ContextState.hpp"
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
@@ -32,6 +33,13 @@ void flushTooltip() {
     g_theme.textScale = was;
 }
 void dropTooltip() { g_pendingTip.on = false; }
+// A tooltip: a small card in the design's tooltip colours on a light shadow, an outline when the design draws strong outlines.
+void tooltipCard(float bx, float by, float bw, float bh) {
+    const float rd = std::min(g_theme.radiusSmall + 2.0f, bh * 0.5f);
+    elevation(bx, by, bw, bh, rd, g_theme.shadowDepth > 1 ? 1 : g_theme.shadowDepth);
+    rrect(bx, by, bw, bh, rd, g_theme.tooltipBg);
+    if (g_theme.borderPx >= 2.0f) ringRect(bx, by, bw, bh, rd, 1.0f, g_theme.border);
+}
 void paintTooltipBox(const char* text) {
     if (!text || !*text) return;
     const float s = g_theme.textScale, th = textH(), lineGap = 2.0f;
@@ -52,18 +60,11 @@ void paintTooltipBox(const char* text) {
     if (g_in.displayW > 0.0f && bx + bw > g_in.displayW - 2.0f) bx = std::max(2.0f, g_in.mouseX - 10.0f - bw);   // flip to the left of the cursor
     if (g_in.displayH > 0.0f && by + bh > g_in.displayH - 2.0f) by = std::max(2.0f, g_in.mouseY - 10.0f - bh);   // and above it
     g_toOverlay = true;
-    if (g_look) {
-        const unsigned char tip[4] = {38, 42, 51, 250};
-        rrect(bx, by, bw, bh, 7.0f, g_theme.border);
-        rrect(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, 6.0f, tip);
-    } else {
-        quad(bx, by, bw, bh, g_theme.border);
-        quad(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, g_theme.panel);
-    }
+    tooltipCard(bx, by, bw, bh);
     char line[256]; int n = 0; float ly = by + pad;
     for (const char* c = text;; ++c) {
         if (*c == '\n' || *c == 0) {
-            line[n] = 0; drawText(bx + pad, ly, line, s, g_theme.text);
+            line[n] = 0; drawText(bx + pad, ly, line, s, g_theme.tooltipText);
             ly += th + lineGap; n = 0;
             if (*c == 0) break;
         } else if (n < 255) line[n++] = *c;
@@ -100,6 +101,7 @@ struct TipScope {
     int grpTop = 0, lastId = 0; bool blocked = false, posOverride = false, toOverlay = false, discard = false;
     float nextItemW = -1.0f;
     int startV = 0, startI = 0, spanBase = 0;
+    unsigned char text[4] = {0, 0, 0, 0};   // the theme's text colour: inside the card the text is the tooltip text colour
 };
 TipScope g_tip;
 } // namespace
@@ -116,10 +118,12 @@ bool BeginTooltip() {
     bindTexture(g_defTex);               // the box (drawn last, placed first) is flat: a flat span at the start of the tooltip
     t.startV = g_onv; t.startI = g_oni;
     g_in.blocked = true; g_posOverride = false; g_nextItemW = -1.0f;
+    for (int k = 0; k < 4; ++k) { t.text[k] = g_theme.text[k]; g_theme.text[k] = g_theme.tooltipText[k]; }
     const float pad = g_look ? 8.0f : 6.0f;
     const float maxW = g_in.displayW > 0.0f ? std::max(120.0f, std::min(480.0f, g_in.displayW - 40.0f)) : 480.0f;
     g_lay.winClip = false;
     g_lay.ox = g_in.mouseX + 14.0f + pad; g_lay.oy = g_in.mouseY + 14.0f + pad;
+    g_lay.winX = g_lay.baseX = g_in.mouseX + 14.0f; g_lay.winY = g_lay.baseY = g_in.mouseY + 14.0f; g_lay.winW = maxW + 2.0f * pad; g_lay.winH = 0.0f;
     g_lay.cx = g_lay.ox; g_lay.cy = g_lay.oy; g_lay.contentW = maxW; g_lay.indent = 0.0f;
     g_lay.bottom = 1e7f; g_lay.maxRight = 0.0f; g_lay.pendingSameLine = false;
     g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
@@ -147,14 +151,7 @@ void EndTooltip() {
         for (int i = t.startV; i < g_onv; ++i) { g_ovVerts[i].position.x += dx; g_ovVerts[i].position.y += dy; }
         const int contentEndI = g_oni, spansBefore = g_novSpans;
         g_toOverlay = true;
-        if (g_look) {
-            const unsigned char tip[4] = {38, 42, 51, 250};
-            rrect(bx, by, bw, bh, 7.0f, g_theme.border);
-            rrect(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, 6.0f, tip);
-        } else {
-            quad(bx, by, bw, bh, g_theme.border);
-            quad(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, g_theme.panel);
-        }
+        tooltipCard(bx, by, bw, bh);   // the same card as SetTooltip (its text was drawn in the tooltip text colour)
         const int boxN = g_oni - contentEndI;
         g_novSpans = spansBefore;        // the box takes the flat span at the start of the tooltip
         if (boxN > 0 && contentEndI > t.startI) {
@@ -169,10 +166,18 @@ void EndTooltip() {
             }
         }
     }
+    for (int k = 0; k < 4; ++k) g_theme.text[k] = t.text[k];
     g_lay = t.lay; g_grpTop = t.grpTop; g_lastId = t.lastId; g_in.blocked = t.blocked; g_posOverride = t.posOverride;
     g_nextItemW = t.nextItemW; g_toOverlay = t.toOverlay;
     { const bool keep = g_toOverlay; g_toOverlay = true; bindTexture(g_defTex); g_toOverlay = keep; }   // whatever the overlay draws next starts flat again
     t.open = false;
 }
 
+} // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(ui_core::g_pendingTip),
+    OKAYUI_CTX_VAR(g_tip))
 } // namespace OkayUI

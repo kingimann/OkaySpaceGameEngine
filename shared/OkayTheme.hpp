@@ -8,7 +8,9 @@
 // they read as one product.
 #pragma once
 #include "imgui.h"
+#include "okay/UI/OkayUIDesign.hpp"   // the designs: the one source of every colour and shape below
 #include <cmath>
+#include <cstdio>
 
 namespace okaytheme {
 
@@ -27,38 +29,26 @@ struct Palette {
     ImVec4 onColor;                                      // text on a filled accent or status colour
     ImVec4 ink;                                          // the tint colour for hovers, hairlines and soft fills (alpha given by the caller)
 };
-inline Palette SlatePalette() {
-    Palette p; p.name = "Slate"; p.light = false;
-    p.deep = ImVec4(0.082f, 0.090f, 0.114f, 1); p.sunken = ImVec4(0.094f, 0.102f, 0.129f, 1); p.base = ImVec4(0.118f, 0.129f, 0.161f, 1);
-    p.raised = ImVec4(0.150f, 0.163f, 0.200f, 1); p.field = ImVec4(0.160f, 0.180f, 0.230f, 1); p.control = ImVec4(0.200f, 0.220f, 0.280f, 1);
-    p.text = ImVec4(0.900f, 0.920f, 0.960f, 1); p.textDim = ImVec4(0.600f, 0.640f, 0.720f, 1);
-    p.success = ImVec4(0.420f, 0.820f, 0.560f, 1); p.danger = ImVec4(0.980f, 0.520f, 0.520f, 1);
-    p.warning = ImVec4(0.960f, 0.780f, 0.340f, 1); p.info = ImVec4(0.500f, 0.720f, 1.000f, 1);
-    p.onColor = ImVec4(1, 1, 1, 1); p.ink = ImVec4(1, 1, 1, 1);
+/// The palette of a resolved design (okay/UI/OkayUIDesign.hpp, the ONE theme source): what Dear ImGui and the page code use.
+inline ImVec4 V4(const OkayUI::design::Rgba& c) { return ImVec4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, c.a / 255.0f); }
+inline Palette PaletteFrom(const OkayUI::design::Tokens& t) {
+    const OkayUI::design::Palette& d = t.c;
+    Palette p; p.name = t.designName; p.light = d.light;
+    p.deep = V4(d.deep); p.sunken = V4(d.sunken); p.base = V4(d.base); p.raised = V4(d.raised); p.field = V4(d.field); p.control = V4(d.control);
+    p.text = V4(d.text); p.textDim = V4(d.textDim);
+    p.success = V4(d.success); p.danger = V4(d.danger); p.warning = V4(d.warning); p.info = V4(d.info);
+    p.onColor = V4(d.onAccent); p.ink = V4(OkayUI::design::WithAlpha(d.ink, 255));
     return p;
 }
-/// Midnight: near-black with an indigo tint, brighter text and stronger hairlines (an OLED-style high-contrast dark theme).
-inline Palette MidnightPalette() {
-    Palette p; p.name = "Midnight"; p.light = false;
-    p.deep = ImVec4(0.000f, 0.000f, 0.008f, 1); p.sunken = ImVec4(0.018f, 0.016f, 0.035f, 1); p.base = ImVec4(0.035f, 0.031f, 0.059f, 1);
-    p.raised = ImVec4(0.078f, 0.071f, 0.122f, 1); p.field = ImVec4(0.102f, 0.094f, 0.161f, 1); p.control = ImVec4(0.149f, 0.137f, 0.231f, 1);
-    p.text = ImVec4(0.960f, 0.955f, 1.000f, 1); p.textDim = ImVec4(0.660f, 0.650f, 0.790f, 1);
-    p.success = ImVec4(0.400f, 0.880f, 0.600f, 1); p.danger = ImVec4(1.000f, 0.520f, 0.580f, 1);
-    p.warning = ImVec4(1.000f, 0.800f, 0.360f, 1); p.info = ImVec4(0.620f, 0.680f, 1.000f, 1);
-    p.onColor = ImVec4(1, 1, 1, 1); p.ink = ImVec4(0.86f, 0.84f, 1.0f, 1);
-    return p;
+/// A built-in design's palette for one scheme (Auto: the design's own first choice).
+inline Palette DesignPalette(const char* design, OkayUI::design::Scheme scheme = OkayUI::design::Scheme::Auto) {
+    OkayUI::design::Options o; std::snprintf(o.design, sizeof o.design, "%s", design); o.scheme = scheme;
+    return PaletteFrom(OkayUI::design::Resolve(o));
 }
-/// Light: white cards on a pale grey page, near-black text, darker status colours (so they read as text on white).
-inline Palette LightPalette() {
-    Palette p; p.name = "Light"; p.light = true;
-    p.deep = ImVec4(0.860f, 0.875f, 0.905f, 1); p.sunken = ImVec4(0.915f, 0.925f, 0.945f, 1); p.base = ImVec4(0.955f, 0.961f, 0.973f, 1);
-    p.raised = ImVec4(1.000f, 1.000f, 1.000f, 1); p.field = ImVec4(0.930f, 0.938f, 0.955f, 1); p.control = ImVec4(0.880f, 0.893f, 0.918f, 1);
-    p.text = ImVec4(0.086f, 0.106f, 0.145f, 1); p.textDim = ImVec4(0.330f, 0.365f, 0.430f, 1);
-    p.success = ImVec4(0.070f, 0.420f, 0.210f, 1); p.danger = ImVec4(0.720f, 0.130f, 0.160f, 1);
-    p.warning = ImVec4(0.520f, 0.340f, 0.000f, 1); p.info = ImVec4(0.100f, 0.340f, 0.720f, 1);
-    p.onColor = ImVec4(1, 1, 1, 1); p.ink = ImVec4(0.05f, 0.08f, 0.14f, 1);
-    return p;
-}
+/// The three palettes the launcher offered before designs (frozen names): Slate, Midnight, and Slate's light scheme.
+inline Palette SlatePalette()    { return DesignPalette("Slate", OkayUI::design::Scheme::Dark); }
+inline Palette MidnightPalette() { return DesignPalette("Midnight"); }
+inline Palette LightPalette()    { Palette p = DesignPalette("Slate", OkayUI::design::Scheme::Light); p.name = "Light"; return p; }
 inline Palette& Current() { static Palette p = SlatePalette(); return p; }
 
 // The surfaces and text as variables (the current theme's; Slate until a theme is set).
@@ -142,14 +132,26 @@ inline ImVec4 AccentText(const ImVec4& accent) {
 }
 
 
-// Rounding + borders (spacing/padding stay per-app). Call before ScaleAllSizes.
-inline void ApplySlateMetrics(ImGuiStyle& s) {
-    s.WindowRounding = 8.0f;  s.ChildRounding = 8.0f;  s.PopupRounding = 8.0f;
-    s.FrameRounding  = 6.0f;  s.GrabRounding  = 6.0f;  s.TabRounding   = 6.0f;
+// Rounding + borders from the design (spacing/padding stay per-app; ApplyDensity scales them). Call before ScaleAllSizes.
+inline void ApplyDesignMetrics(ImGuiStyle& s, const OkayUI::design::Tokens& t) {
+    const OkayUI::design::Shape& k = t.shape;
+    s.WindowRounding = k.radiusLarge * 0.75f; s.ChildRounding = k.radiusLarge * 0.75f; s.PopupRounding = k.radiusLarge * 0.75f;
+    s.FrameRounding  = k.radius;  s.GrabRounding = k.radius;
+    s.TabRounding    = k.tabs == OkayUI::design::TabShape::Pill ? 12.0f : k.tabs == OkayUI::design::TabShape::Segmented ? k.radiusSmall : k.radiusSmall * 0.5f;
     s.ScrollbarRounding = 8.0f;
-    s.WindowBorderSize = 1.0f; s.ChildBorderSize = 1.0f; s.PopupBorderSize = 1.0f;
-    s.FrameBorderSize  = 0.0f; s.TabBorderSize   = 0.0f;
+    s.WindowBorderSize = k.borderPx; s.ChildBorderSize = k.borderPx; s.PopupBorderSize = k.borderPx;
+    s.FrameBorderSize  = k.controlBorders ? k.borderPx : 0.0f; s.TabBorderSize = 0.0f;
 }
+/// The person's density (Compact / Comfortable / Spacious): paddings and gaps times the design's spacing. Call before ScaleAllSizes.
+inline void ApplyDensity(ImGuiStyle& s, const OkayUI::design::Tokens& t) {
+    const float k = t.spacing;
+    if (k == 1.0f) return;
+    s.WindowPadding = ImVec2(s.WindowPadding.x * k, s.WindowPadding.y * k); s.FramePadding = ImVec2(s.FramePadding.x * k, s.FramePadding.y * k);
+    s.ItemSpacing = ImVec2(s.ItemSpacing.x * k, s.ItemSpacing.y * k); s.ItemInnerSpacing = ImVec2(s.ItemInnerSpacing.x * k, s.ItemInnerSpacing.y * k);
+    s.CellPadding = ImVec2(s.CellPadding.x * k, s.CellPadding.y * k); s.IndentSpacing *= k;
+}
+/// The design's accent as an ImVec4.
+inline ImVec4 DesignAccent(const OkayUI::design::Tokens& t) { return V4(OkayUI::design::WithAlpha(t.c.accent, 255)); }
 
 // ImGui's colours from a palette and an accent (every theme; the editor passes Slate).
 inline void ApplyColors(ImGuiStyle& s, const Palette& P, const ImVec4& accentIn) {
@@ -217,7 +219,16 @@ inline void ApplyColors(ImGuiStyle& s, const Palette& P, const ImVec4& accentIn)
     c[ImGuiCol_ModalWindowDimBg]      = ImVec4(0, 0, 0, P.light ? 0.30f : 0.55f);
 }
 
-/// The Slate colours (the editor and the launcher's default theme).
-inline void ApplySlateColors(ImGuiStyle& s, const ImVec4& accent) { ApplyColors(s, SlatePalette(), accent); }
+/// Everything a Dear ImGui host takes from the design in force: the live palette (SetPalette), rounding and borders, the
+/// colours with the design's (or the person's) accent, and the hairline the design draws round its controls. The host
+/// sets its own paddings first (and ApplyDensity), then calls this, then ScaleAllSizes.
+inline Palette ApplyDesign(ImGuiStyle& s, const OkayUI::design::Tokens& t) {
+    const Palette P = PaletteFrom(t);
+    SetPalette(P);
+    ApplyDesignMetrics(s, t);
+    ApplyColors(s, P, DesignAccent(t));
+    s.Colors[ImGuiCol_Border] = V4(t.c.hairline);
+    return P;
+}
 
 }  // namespace okaytheme

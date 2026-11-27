@@ -22,17 +22,7 @@ std::vector<std::string> ScriptIdeApp::Impl::languages() const {
 }
 
 bool ScriptIdeApp::Impl::beginDialog(const std::string& id, float X, float Y, float W, float H, float bw, float bh, float& bx, float& by) {
-    UI::BareNextWindow();
-    if (!UI::Begin(id.c_str(), X, Y, W, H)) return false;
-    const auto& dl = UI::GetWindowDrawList();
-    dl->AddRectFilled(UI::Vec2(X, Y), UI::Vec2(X + W, Y + H), Rgb(0, 0, 0, 90));
-    bw = std::min(bw, W - 20.0f);
-    const float x0 = X + (W - bw) * 0.5f, y0 = Y + std::max(20.0f, std::min(60.0f, (H - bh) * 0.3f));
-    dl->AddRectFilled(UI::Vec2(x0, y0), UI::Vec2(x0 + bw, y0 + bh), kPanel, 6.0f);
-    dl->AddRect(UI::Vec2(x0, y0), UI::Vec2(x0 + bw, y0 + bh), kLine, 6.0f, 1.0f);
-    bx = x0 + 14.0f;
-    by = y0 + 12.0f;
-    return true;
+    return okayuiapp::BeginDialog(id, X, Y, W, H, bw, bh, bx, by);
 }
 
 // ---- closing, quitting, reopening ---------------------------------------------------------------------------------------------

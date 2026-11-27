@@ -683,9 +683,9 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **System:** Shaders
 - **What:** Build a surface look by connecting nodes (textures, colours, maths, time) instead of writing shader code.
 - **Parts:**
-  - 26.1.1 Node graph editor (for gameplay logic, reusable canvas) - `editor/VisualScriptEditor.hpp`, `VisualScript/NodeGraph` - not a shader editor today
+  - 26.1.1 Node graph editor (for gameplay logic, reusable canvas) - `shared/VisualScriptAppCanvas.cpp`, `VisualScript/NodeGraph` - not a shader editor today
   - 26.1.2 Shader graph - `-` - not built; the target it will compile to exists: the `.okayshader` surface language (26.3), whose surface block is a list of definitions and output assignments, the shape a graph produces
-- **Code:** `editor/VisualScriptEditor.hpp`, `VisualScript/NodeGraph`
+- **Code:** `shared/VisualScriptAppCanvas.cpp`, `VisualScript/NodeGraph`
 - **API:** none yet
 - **Editor:** none yet
 - **Docs:** `docs/scripting/visual_scripting.md` (logic graphs)

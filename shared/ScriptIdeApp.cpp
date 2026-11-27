@@ -4,6 +4,7 @@
 //
 // Written from general editor behaviour (a file tree beside tabs, a search panel, a status line, a history of saved copies) and
 // the OkayUI and OkayUI::CodeEdit interfaces; no code, names, icons or look from any other editor (rule 19a).
+#include "okay/UI/OkayUIDesign.hpp"
 #include "ScriptIdeAppImpl.hpp"
 
 #include "okay/Components/ScriptComponent.hpp"   // TestRunScript: the script on a sandbox object
@@ -386,10 +387,22 @@ void ScriptIdeApp::Impl::drawTree(float X, float Y, float W, float H, bool modal
                     hiddenBelow = -1;
                     const bool shut = r.folder && treeFilter[0] == 0 && collapsed.count(r.path) != 0;
                     UI::Indent((float)r.depth * 12.0f);
-                    const std::string label = (r.folder ? (shut ? "+ " : "- ") : "  ") + r.name + "##" + r.path;
+                    // Room for a chevron before the name; folders get the design's chevron (down when open) and every row
+                    // faint indent guides under its parents' chevrons.
+                    const std::string label = "      " + r.name + "##" + r.path;
                     if (UI::Selectable(label.c_str(), !r.folder && r.path == activePath) && !modal) {
                         if (r.folder) { if (shut) collapsed.erase(r.path); else collapsed.insert(r.path); }
                         else openFile(r.path, 0);
+                    }
+                    {
+                        const UI::Rect ir = UI::GetItemRect();
+                        const auto& tdl = UI::GetWindowDrawList();
+                        const float cy = ir.y + ir.h * 0.5f;
+                        if (r.folder) UI::DrawChevron(tdl, UI::Vec2(ir.x + 15.0f, cy), 8.0f, shut ? 0 : 1, kDim);
+                        for (int d = 0; d < r.depth; ++d) {
+                            const float gx = ir.x + 15.0f - 12.0f * (float)(r.depth - d);
+                            tdl->AddLine(UI::Vec2(gx, ir.y), UI::Vec2(gx, ir.y + ir.h), (kLine & 0x00ffffffu) | 0xc0000000u, 1.0f);
+                        }
                     }
                     UI::Unindent((float)r.depth * 12.0f);
                     if (shut) hiddenBelow = r.depth;
@@ -406,29 +419,11 @@ void ScriptIdeApp::Impl::drawTabs(float X, float Y, float W, float h, bool modal
     const std::string pre = cfg.idPrefix;
     UI::BareNextWindow();
     if (UI::Begin((pre + "_tabs").c_str(), X, Y, W, h)) {
-        const auto& dl = UI::GetWindowDrawList();
-        dl->AddRectFilled(UI::Vec2(X, Y), UI::Vec2(X + W, Y + h), kStrip);
-        const UI::Vec2 m = UI::GetMousePos();
-        float x = X + 4;
-        int toClose = -1;
-        const float lh = UI::GetTextLineHeight();
-        for (std::size_t i = 0; i < docs.size() && x < X + W - 40; ++i) {
-            const Doc& d = *docs[i];
-            const std::string label = (dirty(d) ? "* " : "") + d.label;
-            const float tw = std::min(220.0f, UI::CalcTextWidth(label.c_str()) + 40.0f);
-            const bool on = (int)i == active;
-            const bool hover = m.x >= x && m.x < x + tw && m.y >= Y && m.y < Y + h;
-            dl->AddRectFilled(UI::Vec2(x, Y + 3), UI::Vec2(x + tw, Y + h), on ? kTabOn : (hover ? kHover : kStrip), 4.0f);
-            if (on) dl->AddRectFilled(UI::Vec2(x, Y + h - 2), UI::Vec2(x + tw, Y + h), kAccent);
-            dl->AddText(UI::Vec2(x + 10, Y + (h - lh) * 0.5f + 1), on ? kText : kDim, Fit(label, tw - 34).c_str());
-            const float cx = x + tw - 18;
-            const bool overClose = m.x >= cx && m.x < cx + 14 && m.y >= Y + 6 && m.y < Y + h - 4;
-            dl->AddText(UI::Vec2(cx + 3, Y + (h - lh) * 0.5f + 1), overClose ? kText : kDim, "x");
-            if (hover && !modal && UI::IsMouseClicked(0)) { if (overClose) toClose = (int)i; else active = (int)i; }
-            if (hover && !modal && UI::IsMouseClicked(2)) toClose = (int)i;
-            x += tw + 2;
-        }
-        if (toClose >= 0) requestClose(toClose);
+        std::vector<std::string> labels;
+        for (const auto& d : docs) labels.push_back((dirty(*d) ? "* " : "") + d->label);
+        const okayuiapp::TabStripResult r = okayuiapp::DrawTabStrip(X, Y, W, h, labels, active, modal, Fit);
+        if (r.clicked >= 0) active = r.clicked;
+        if (r.close >= 0) requestClose(r.close);
     }
     UI::End();
 }
@@ -533,11 +528,8 @@ void ScriptIdeApp::Impl::drawCode(float X, float Y, float W, float H, bool modal
 
 void ScriptIdeApp::Impl::drawPanel(float X, float Y, float W, float H, bool modal) {
     const std::string pre = cfg.idPrefix;
-    UI::BareNextWindow();
-    if (UI::Begin((pre + "_panel").c_str(), X, Y, W, H)) {
+    if (okayuiapp::BeginFilled(pre + "_panel", X, Y, W, H, kPanel, true)) {
         const auto& dl = UI::GetWindowDrawList();
-        dl->AddRectFilled(UI::Vec2(X, Y), UI::Vec2(X + W, Y + H), kPanel);
-        dl->AddLine(UI::Vec2(X, Y), UI::Vec2(X + W, Y), kLine);
         UI::SetCursorScreenPos(UI::Vec2(X + 8, Y + 6));
         if (panel == P_Find) {
             UI::TextUnformatted("Find in Files");
@@ -747,6 +739,13 @@ void ScriptIdeApp::Impl::drawOpenFolder(float X, float Y, float W, float H) {
 }
 
 void ScriptIdeApp::Impl::frame(float X, float Y, float W, float H) {
+    {   // the design changed (Settings, Edit > Appearance or another program): the code widgets follow
+        static unsigned s_rev = 0;
+        if (!cfg.palette && s_rev != OkayUI::design::Revision()) {
+            s_rev = OkayUI::design::Revision();
+            for (auto& d : docs) d->code.Edit().SetPalette(UI::DesignCodePalette());
+        }
+    }
     const UI::Input& in = UI::GetFrameInput();
     const bool ctrl = in.ctrl, shift = in.shift, alt = UI::IsKeyDown(UI::KeyId_Alt);
     if (ctrl && !alt) UI::GetIO().InputQueueCharacters.resize(0);   // Ctrl+<key> is a shortcut, never typing
@@ -883,7 +882,7 @@ bool ScriptIdeApp::SetExecutionLine(const std::string& key, int line) {
 }
 bool ScriptIdeApp::CompletionOpen() const { return m->acOpen; }
 const std::vector<CompletionItem>& ScriptIdeApp::CompletionList() const { return m->acItems; }
-void ScriptIdeApp::Frame(float x, float y, float w, float h) { m->frame(x, y, w, h); }
+void ScriptIdeApp::Frame(float x, float y, float w, float h) { appdetail::FollowDesignColours(); m->frame(x, y, w, h); }
 bool ScriptIdeApp::Save() { Impl::Doc* d = m->activeDoc(); return d && m->save(*d); }
 bool ScriptIdeApp::SaveAll() { return m->saveAll(); }
 void ScriptIdeApp::Close(const std::string& key) {
@@ -936,5 +935,6 @@ const std::vector<Diagnostic>& ScriptIdeApp::ActiveProblems() const {
 void ScriptIdeApp::CheckActiveNow() { if (Impl::Doc* d = m->activeDoc()) m->check(*d); }
 const std::string& ScriptIdeApp::Notice() const { return m->notice; }
 AppSettings& ScriptIdeApp::Settings() { return m->settings; }
+void ScriptIdeApp::ApplySettings() { for (auto& doc : m->docs) m->applyView(*doc); }
 
 } // namespace scriptide

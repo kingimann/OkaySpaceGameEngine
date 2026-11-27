@@ -6,7 +6,9 @@
 //
 // Written from general editor behaviour and the OkayUI / OkayUI::CodeEdit interfaces; no code, names, icons or look from any other
 // editor (rule 19a).
+#include "okay/UI/OkayUIDesign.hpp"
 #include "ScriptIdeApp.hpp"
+#include "OkayUIAppKit.hpp"   // the colours, the dialog box, the tab strip
 #include "okay/UI/OkayUI.hpp"
 
 #include <algorithm>
@@ -30,11 +32,12 @@ namespace UI = OkayUI;
 std::string EngineLanguageOf(const std::string& path);   // ScriptIdeApp.cpp
 
 namespace appdetail {
-inline UI::Color32 Rgb(int r, int g, int b, int a = 255) { return UI::RGBA((unsigned)r, (unsigned)g, (unsigned)b, (unsigned)a); }
-// The Script Editor's own colours: a plain dark scheme.
-inline const UI::Color32 kBack = Rgb(30, 32, 37), kPanel = Rgb(37, 40, 46), kStrip = Rgb(26, 28, 32), kLine = Rgb(56, 60, 69),
-                  kText = Rgb(214, 218, 226), kDim = Rgb(140, 146, 158), kAccent = Rgb(86, 156, 214), kTabOn = Rgb(44, 48, 56),
-                  kHover = Rgb(52, 57, 66), kError = Rgb(232, 102, 92), kWarn = Rgb(226, 182, 76), kAdd = Rgb(98, 180, 110);
+// The colours, the dialog box and the tab strip are the OkayUI apps' shared ones (OkayUIAppKit.hpp); the colours follow the design in
+// force (okayuiapp::FollowDesignColours, each frame).
+using okayuiapp::Rgb;
+using okayuiapp::kBack; using okayuiapp::kPanel; using okayuiapp::kStrip; using okayuiapp::kLine; using okayuiapp::kText; using okayuiapp::kDim;
+using okayuiapp::kAccent; using okayuiapp::kTabOn; using okayuiapp::kHover; using okayuiapp::kError; using okayuiapp::kWarn; using okayuiapp::kAdd;
+using okayuiapp::FollowDesignColours;
 
 inline std::string FileText(const std::string& path, bool& ok, std::string* why = nullptr) {
     ok = false;
@@ -380,6 +383,7 @@ struct ScriptIdeApp::Impl {
         d->crlf = text.find("\r\n") != std::string::npos;
         d->code.SetLanguage(wordsFor(d->language));
         if (cfg.palette) d->code.SetPalette(*cfg.palette);
+        else d->code.Edit().SetPalette(UI::DesignCodePalette());   // the design in force (frame() follows a change)
         d->code.Edit().SetFolding(true);
         applyView(*d);
         d->code.SetText(text);

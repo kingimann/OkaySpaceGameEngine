@@ -1,7 +1,7 @@
 // Easier canvas use: auto-connect a new block, place it beside, split a wire, delete and rejoin, add a recipe.
 // All on plain graphs (no window). Graph in, graph out.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include <set>
 #include <string>
 

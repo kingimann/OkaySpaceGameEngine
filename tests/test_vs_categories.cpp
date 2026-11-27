@@ -6,7 +6,7 @@
 //   test_vs_categories              run the checks
 //   test_vs_categories --dump FILE  write every palette row and where it sits (scripts/vs_category_report.py reads it)
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 
 #include <algorithm>
@@ -560,11 +560,14 @@ int main(int argc, char** argv) {
         CHECK(words("gameplay", "GlGetHealth").find("survival") != std::string::npos);
         CHECK(words("builtin", "Fn.net_host").find("online") != std::string::npos);
         CHECK(words("node", "Print").empty());                                               // Print kept its topic (Debug)
-        // The palette really adds those words, for nodes and for steps (a source check: the palette needs ImGui to run).
-        const std::string pal = ReadFile(std::string(OKAY_SOURCE_DIR) + "/editor/VisualScriptPalette.hpp");
-        std::size_t n = 0, at = 0;
-        while ((at = pal.find("VsMovedFromWords(was, place)", at)) != std::string::npos) { ++n; at += 10; }
-        CHECK(n >= 2);
+        // The Add Block list really searches those words, for blocks and for steps (VsPaletteKeywords / VsPaletteStepKeywords, which
+        // the Visual Script app's list uses).
+        {
+            const VsDef* weather = FindDef("SetWeather");
+            CHECK(weather && Lower(VsPaletteKeywords(*weather)).find("atmosphere") != std::string::npos);
+            const std::string pal = ReadFile(std::string(OKAY_SOURCE_DIR) + "/shared/VisualScriptAppCanvas.cpp");
+            CHECK(pal.find("VsPaletteKeywords(d)") != std::string::npos && pal.find("VsPaletteStepKeywords(si, cond)") != std::string::npos);
+        }
     }
 
     // ======================================================================================================
@@ -592,7 +595,7 @@ int main(int argc, char** argv) {
             if (byKey.count(k)) ++resolved;
         }
         CHECK(total == 6 && resolved == 6);
-        const std::string pal = ReadFile(std::string(OKAY_SOURCE_DIR) + "/editor/VisualScriptPalette.hpp");
+        const std::string pal = ReadFile(std::string(OKAY_SOURCE_DIR) + "/shared/VisualScriptAppCanvas.cpp");   // the Add Block list
         CHECK(pal.find("VsPaletteNodeKey(d.type)") != std::string::npos);
         CHECK(pal.find("VsPaletteStepKey(cond, si.op.c_str())") != std::string::npos);
         CHECK(pal.find("std::string(\"n:\")") == std::string::npos);   // no second way of making a key

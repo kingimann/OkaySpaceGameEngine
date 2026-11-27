@@ -1,3 +1,4 @@
+#include "OkayUI_ContextState.hpp"
 #include <algorithm>
 #include <cmath>
 #include "OkayUIInternal.hpp"
@@ -131,6 +132,19 @@ Color32 ColorMulAlpha(Color32 c, float alphaMul) {
 }
 
 // ---- DrawList ---------------------------------------------------------------------------------
+void DrawChevron(const DrawList& dl, Vec2 c, float size, int dir, Color32 col, float thickness) {
+    const float h = size * 0.5f, t = thickness > 0.0f ? thickness : (size < 12.0f ? 1.6f : 2.0f);
+    Vec2 a, m, b;
+    switch (dir & 3) {
+        case 1: a = Vec2{c.x - h, c.y - h * 0.5f}; m = Vec2{c.x, c.y + h * 0.5f}; b = Vec2{c.x + h, c.y - h * 0.5f}; break;
+        case 3: a = Vec2{c.x - h, c.y + h * 0.5f}; m = Vec2{c.x, c.y - h * 0.5f}; b = Vec2{c.x + h, c.y + h * 0.5f}; break;
+        case 2: a = Vec2{c.x + h * 0.5f, c.y - h}; m = Vec2{c.x - h * 0.5f, c.y}; b = Vec2{c.x + h * 0.5f, c.y + h}; break;
+        default: a = Vec2{c.x - h * 0.5f, c.y - h}; m = Vec2{c.x + h * 0.5f, c.y}; b = Vec2{c.x - h * 0.5f, c.y + h}; break;
+    }
+    dl.AddLine(a, m, col, t);
+    dl.AddLine(m, b, col, t);
+}
+
 void DrawList::AddLine(Vec2 a, Vec2 b, Color32 col, float th) const {
     if (!finite2(a) || !finite2(b) || !finite1(th) || th <= 0.0f) return;
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
@@ -318,11 +332,17 @@ Vec2 Font::CalcTextSizeA(float size, float, float, const char* text, const char*
     return Vec2{best * cw, (float)lines * size};
 }
 
-void DrawList::AddText(const Font* font, float fontSize, Vec2 pos, Color32 col, const char* text, const char* textEnd, float, const ImVec4*) const {
+void DrawList::AddText(const Font* font, float fontSize, Vec2 pos, Color32 col, const char* text, const char* textEnd, float wrapWidth, const ImVec4* clip) const {
     if (!text || !finite1(fontSize) || fontSize <= 0.0f) return;
     char buf[1024]; std::size_t n = textEnd && textEnd >= text ? (std::size_t)(textEnd - text) : std::strlen(text);
     if (n > sizeof buf - 1) n = sizeof buf - 1;
     std::memcpy(buf, text, n); buf[n] = 0;
+    if ((finite1(wrapWidth) && wrapWidth > 0.0f) || std::strchr(buf, '\n')) {   // Dear ImGui's wrapped text: one line under the other, fontSize apart
+        float y = pos.y;
+        const float wrapAt = finite1(wrapWidth) && wrapWidth > 0.0f ? wrapWidth : 1.0e9f;
+        imguiWrap(buf, wrapAt, fontSize / 8.0f, [&](const char* l) { if (l[0]) AddText(font, fontSize, Vec2{pos.x, y}, col, l, nullptr, 0.0f, clip); y += fontSize; return wrapAt; });
+        return;
+    }
     const Font* f = font ? font : GetFont();
     if (f && f->ttf) {   // a user font: draw with it for this call at `fontSize` pixels
         const Font* prev = GetFont(); SetFont(f); const float saved = g_theme.textScale; g_theme.textScale = fontSize / 8.0f;
@@ -544,4 +564,13 @@ void DrawList::PopTexture() const {
     bindTexture(g_texTop > 0 ? g_texStack[g_texTop - 1] : g_defTex);
 }
 
+} // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(ui_core::g_path),
+    OKAYUI_CTX_VAR(ui_core::g_pathN),
+    OKAYUI_CTX_VAR(g_texStack),
+    OKAYUI_CTX_VAR(g_texTop))
 } // namespace OkayUI

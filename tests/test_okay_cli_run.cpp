@@ -101,7 +101,7 @@ void TestRunInProcess(const fs::path& tmp) {
     {
         const okaycli::InProcessResult r = okaycli::RunInProcess({"scene", "list"}, proj.string());
         CHECK(r.exitCode == 0);
-        CHECK(Has(Joined(r.lines, OutLine::Out), "Assets/RunGame.okayscene"));
+        CHECK(Has(Joined(r.lines, OutLine::Out), "Assets/Scenes/RunGame.okayscene"));
     }
     {   // the words may name the project themselves; then the folder is not added
         CHECK(okaycli::ArgsInFolder({"--project", "X", "info"}, "F") == std::vector<std::string>({"--project", "X", "info"}));

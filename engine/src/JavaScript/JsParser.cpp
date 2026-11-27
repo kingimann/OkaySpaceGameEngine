@@ -143,7 +143,6 @@ struct Parser {
         return "?";
     }
     [[noreturn]] void Unexpected(const char* wanted = nullptr) {
-        if (Cur().t == TT::PrivateName) Fail("#private class members are not supported");
         std::string m = "unexpected " + Describe(Cur());
         if (wanted) m += std::string(", expected ") + wanted;
         Fail(m);
@@ -179,6 +178,61 @@ struct Parser {
     bool InGenerator() const { return !fstack.empty() && fstack.back()->generator; }
     bool InAsync() const { return !fstack.empty() && fstack.back()->async; }
     void Ref(const std::u16string& name) { refs.back().insert(name); }
+
+    // ---- private names (15.7: each class body is a private environment; a #name must be declared by an enclosing class)
+    struct PrivScope {
+        std::unordered_map<std::u16string, int> declared;   ///< "#x" -> PK_* bits
+        std::vector<std::pair<std::u16string, std::pair<int, int>>> refs;   ///< names used here, with line and column
+    };
+    std::vector<PrivScope> privScopes;
+    enum { PK_Field = 1, PK_Method = 2, PK_Get = 4, PK_Set = 8, PK_Static = 16 };
+    void PrivRef(const std::u16string& name, const Token& at) {
+        if (privScopes.empty()) FailAt(at, "'" + Utf16To8(name) + "' is not declared in an enclosing class");
+        privScopes.back().refs.push_back({name, {at.line, at.col}});
+        Ref(name);
+    }
+    Node* PrivateMember(Node* obj, const Token& dot, bool optional) {
+        const Token& pt = Cur();
+        Node* m = ast.NewNode(NK::Member, dot.line, dot.col);
+        m->a = obj;
+        m->str = u"#" + pt.s;
+        m->flags |= NF_Private;
+        if (optional) m->flags |= NF_Optional;
+        PrivRef(m->str, pt);
+        Next();
+        return m;
+    }
+    // 15.7.1 static semantics: a #name is declared once, except a getter and a setter pair of the same placement
+    void DeclarePrivate(ClassInfo* ci, const std::u16string& name, int kind, const Token& at) {
+        if (name == u"#constructor") FailAt(at, "a class member can not be named #constructor");
+        auto& d = privScopes.back().declared;
+        auto it = d.find(name);
+        if (it == d.end()) {
+            d[name] = kind;
+            ci->privNames.push_back(name);
+            return;
+        }
+        const int had = it->second;
+        const bool pair = ((had & ~PK_Static) == PK_Get && (kind & ~PK_Static) == PK_Set) ||
+                          ((had & ~PK_Static) == PK_Set && (kind & ~PK_Static) == PK_Get);
+        if (!pair || (had & PK_Static) != (kind & PK_Static)) FailAt(at, "'" + Utf16To8(name) + "' is already declared in this class");
+        it->second = had | kind;
+    }
+    void EndPrivScope() {
+        PrivScope done = std::move(privScopes.back());
+        privScopes.pop_back();
+        for (auto& r : done.refs) {
+            if (done.declared.count(r.first)) continue;
+            if (!privScopes.empty()) {
+                privScopes.back().refs.push_back(r);
+                continue;
+            }
+            err.line = r.second.first;
+            err.column = r.second.second;
+            err.message = "'" + Utf16To8(r.first) + "' is not declared in an enclosing class";
+            throw ParseFail{};
+        }
+    }
 
     void PushFunc(FuncInfo* fi) {
         fstack.push_back(fi);
@@ -230,6 +284,253 @@ struct Parser {
     }
 
     // ================================================================ scripts and statements
+    bool isModule = false;
+
+    // 16.2.1 Module: the top level is an async function (top-level await), strict, with import and export declarations
+    void ParseModule() {
+        isModule = true;
+        ast.module = std::make_unique<ModuleInfo>();
+        FuncInfo* fi = ast.NewFunc();
+        fi->name = u"module";
+        fi->line = 1;
+        fi->async = true;
+        fi->module = true;
+        ast.script = fi;
+        PushFunc(fi);
+        Node* body = N(NK::Block);
+        while (Cur().t != TT::End) body->list.push_back(ModuleItem());
+        fi->body = body;
+        PopFunc();
+        // 16.2.1.6.1 step 10: an export of an imported binding is an indirect export of what it imports
+        ModuleInfo& mi = *ast.module;
+        for (ModuleInfo::Export& e : mi.exports) {
+            if (e.localName.empty()) continue;
+            for (const ModuleInfo::Import& im : mi.imports)
+                if (im.localName == e.localName && im.importName != u"*") {
+                    e.req = im.req;
+                    e.importName = im.importName;
+                    e.localName.clear();
+                    break;
+                }
+        }
+        // early errors: each export name once (16.2.1.1)
+        std::unordered_set<std::u16string> names;
+        for (const ModuleInfo::Export& e : mi.exports) {
+            if (e.exportName.empty()) continue;
+            if (!names.insert(e.exportName).second) {
+                err.line = e.line;
+                err.column = e.col;
+                err.message = "'" + Utf16To8(e.exportName) + "' is exported twice";
+                throw ParseFail{};
+            }
+        }
+    }
+
+    int Request(const std::u16string& spec) {
+        auto& r = ast.module->requests;
+        for (std::size_t i = 0; i < r.size(); ++i)
+            if (r[i] == spec) return (int)i;
+        r.push_back(spec);
+        return (int)r.size() - 1;
+    }
+    // FromClause (16.2.2): from 'specifier' [with { ... }]
+    int FromClause() {
+        if (!EatWord("from")) Unexpected("'from'");
+        if (Cur().t != TT::Str) Unexpected("a module specifier string");
+        int r = Request(Cur().s);
+        Next();
+        SkipAttributes();
+        return r;
+    }
+    void SkipAttributes() {   // 16.2.2 WithClause: import attributes are read and not used
+        if ((IsWord("with") || (IsWord("assert") && !Cur().nl)) && IsPAt(pos + 1, P_LBrace)) {
+            Next();
+            const Token& open = Cur();
+            if (open.match < 0) Unexpected();
+            pos = (std::size_t)open.match;
+            Next();
+        }
+    }
+    // ModuleExportName: an IdentifierName (reserved words too) or a string
+    std::u16string ExportName(bool* isString = nullptr) {
+        const Token& t = Cur();
+        if (t.t != TT::Name && t.t != TT::Str) Unexpected("a name");
+        if (isString) *isString = t.t == TT::Str;
+        std::u16string s = t.s;
+        Next();
+        return s;
+    }
+    void AddExport(const std::u16string& exportName, const std::u16string& localName, const Token& at) {
+        ModuleInfo::Export e;
+        e.exportName = exportName;
+        e.localName = localName;
+        e.line = at.line;
+        e.col = at.col;
+        ast.module->exports.push_back(e);
+    }
+    static void BoundNames(Node* p, std::vector<std::u16string>& out) {
+        if (!p) return;
+        switch (p->k) {
+            case NK::Ident: out.push_back(p->str); break;
+            case NK::AssignPat: case NK::RestElem: BoundNames(p->a, out); break;
+            case NK::ArrayPat: for (Node* e : p->list) BoundNames(e, out); break;
+            case NK::ObjectPat: for (Node* e : p->list) BoundNames(e->k == NK::PatProp ? e->b : e, out); break;
+            default: break;
+        }
+    }
+
+    Node* ModuleItem() {
+        if (IsWord("import") && !IsPAt(pos + 1, P_LParen) && !IsPAt(pos + 1, P_Dot)) return ImportDecl();
+        if (IsWord("export")) return ExportDecl();
+        return StatementListItem();
+    }
+
+    // 16.2.2 ImportDeclaration
+    Node* ImportDecl() {
+        const Token& t = Cur();
+        Next();
+        Node* n = N(NK::Empty, t);
+        if (Cur().t == TT::Str) {   // import 'specifier';
+            Request(Cur().s);
+            Next();
+            SkipAttributes();
+            Semicolon();
+            return n;
+        }
+        std::vector<ModuleInfo::Import> list;
+        auto add = [&](const std::u16string& importName, const Token& at) {
+            const std::u16string local = BindingName();
+            list.push_back(ModuleInfo::Import{-1, importName, local, at.line, at.col});
+        };
+        bool more = true;
+        if (Cur().t == TT::Name && !IsP(P_LBrace)) {   // the default binding
+            add(u"default", Cur());
+            more = Eat(P_Comma);
+        }
+        if (more) {
+            if (Eat(P_Star)) {
+                if (!EatWord("as")) Unexpected("'as'");
+                add(u"*", Cur());
+            } else if (Eat(P_LBrace)) {
+                while (!IsP(P_RBrace)) {
+                    const Token& nt = Cur();
+                    bool str = false;
+                    if (nt.t == TT::Name && !IsWordAt(pos + 1, "as")) {   // import { x }: the name is the binding
+                        add(nt.s, nt);
+                    } else {
+                        std::u16string name = ExportName(&str);
+                        if (!EatWord("as")) Unexpected("'as'");
+                        add(name, nt);
+                    }
+                    if (!Eat(P_Comma)) break;
+                }
+                Expect(P_RBrace);
+            } else Unexpected("'{' or '*'");
+        }
+        const int req = FromClause();
+        for (ModuleInfo::Import& im : list) {
+            im.req = req;
+            ast.module->imports.push_back(im);
+        }
+        Semicolon();
+        return n;
+    }
+
+    // 16.2.3 ExportDeclaration
+    Node* ExportDecl() {
+        const Token& t = Cur();
+        Next();
+        ModuleInfo& mi = *ast.module;
+        if (Eat(P_Star)) {   // export * from 'm' / export * as name from 'm'
+            std::u16string as;
+            const bool named = EatWord("as");
+            if (named) as = ExportName();
+            const int req = FromClause();
+            ModuleInfo::Export e;
+            e.req = req;
+            e.line = t.line;
+            e.col = t.col;
+            if (named) {
+                e.exportName = as;
+                e.importName = u"*";
+            }
+            mi.exports.push_back(e);
+            Semicolon();
+            return N(NK::Empty, t);
+        }
+        if (Eat(P_LBrace)) {   // export { a, b as c } [from 'm']
+            struct Spec { std::u16string local, exported; bool str; int line, col; };
+            std::vector<Spec> specs;
+            while (!IsP(P_RBrace)) {
+                const Token& nt = Cur();
+                bool str = false;
+                std::u16string local = ExportName(&str);
+                std::u16string exported = local;
+                if (EatWord("as")) exported = ExportName();
+                specs.push_back({local, exported, str || (nt.t == TT::Name && IsReserved(nt.s)), nt.line, nt.col});
+                if (!Eat(P_Comma)) break;
+            }
+            Expect(P_RBrace);
+            if (IsWord("from")) {
+                const int req = FromClause();
+                for (const Spec& sp : specs) {
+                    ModuleInfo::Export e;
+                    e.exportName = sp.exported;
+                    e.importName = sp.local;
+                    e.req = req;
+                    e.line = sp.line;
+                    e.col = sp.col;
+                    mi.exports.push_back(e);
+                }
+            } else {
+                for (const Spec& sp : specs) {
+                    if (sp.str) {
+                        err.line = sp.line;
+                        err.column = sp.col;
+                        err.message = "'" + Utf16To8(sp.local) + "' is not a local name that can be exported (use export { ... } from)";
+                        throw ParseFail{};
+                    }
+                    ModuleInfo::Export e;
+                    e.exportName = sp.exported;
+                    e.localName = sp.local;
+                    e.line = sp.line;
+                    e.col = sp.col;
+                    mi.exports.push_back(e);
+                    Ref(sp.local);
+                }
+            }
+            Semicolon();
+            return N(NK::Empty, t);
+        }
+        if (EatWord("default")) {
+            Node* n = ExportDefault(t);
+            // 16.2.3.7: a named function or class is its own binding; anything else is the hidden "*default*" one,
+            // and an anonymous function or class is named "default" (NamedEvaluation)
+            const std::u16string local = n->b ? (n->b->k == NK::FuncDecl ? n->a->fn->name : n->a->str) : u"*default*";
+            if (!n->b) {
+                if (n->a->k == NK::Func) NameAnon(n->a, u"default");
+                else if (n->a->k == NK::Class) NameAnonClass(n->a, u"default");
+            }
+            AddExport(u"default", local, t);
+            return n;
+        }
+        if (IsWord("var") || IsWord("let") || IsWord("const") || IsWord("function") || IsWord("class") ||
+            (IsWord("async") && IsWordAt(pos + 1, "function"))) {
+            Node* d = StatementListItem();
+            std::vector<std::u16string> names;
+            if (d->k == NK::VarDecl)
+                for (Node* dc : d->list) BoundNames(dc->a, names);
+            else if (d->k == NK::FuncDecl) names.push_back(d->a->fn->name);
+            else if (d->k == NK::ClassDecl) names.push_back(d->a->str);
+            for (const auto& nm : names) AddExport(nm, nm, t);
+            return d;
+        }
+        Unexpected("a declaration, '{', '*' or 'default' after 'export'");
+    }
+    static void NameAnonClass(Node* c, const std::u16string& name) {
+        if (c->k == NK::Class && c->str.empty() && c->fn && c->fn->name.empty()) c->fn->name = name;
+    }
+
     void ParseScript() {
         FuncInfo* fi = ast.NewFunc();
         fi->name = u"script";
@@ -242,34 +543,38 @@ struct Parser {
         PopFunc();
     }
 
+    // `export default` (after the word default): a function or class declaration (named ones are also declared:
+    // n->b) or an expression. Scripts and modules share it.
+    Node* ExportDefault(const Token& t) {
+        Node* n = N(NK::ExportDefault, t);
+        if (IsWord("function") || (IsWord("async") && IsWordAt(pos + 1, "function") && !Peek().nl)) {
+            bool isAsync = EatWord("async");
+            n->a = FunctionExpr(isAsync, true);
+            if (!n->a->fn->name.empty()) {   // export default function name() {}: also a declaration
+                Node* d = N(NK::FuncDecl, t);
+                d->a = n->a;
+                n->b = d;
+            }
+            return n;
+        }
+        if (IsWord("class")) {
+            n->a = ClassExpr(true);
+            if (!n->a->str.empty()) n->b = n->a;   // a named class is also declared
+            return n;
+        }
+        n->a = Assignment();
+        Semicolon();
+        CheckCover();
+        return n;
+    }
+
     Node* TopLevelItem() {
         if (IsWord("import") && !IsPAt(pos + 1, P_LParen) && !IsPAt(pos + 1, P_Dot))
             Fail("import declarations are not supported (game scripts are one file)");
         if (IsWord("export")) {
             const Token& t = Cur();
             Next();
-            if (EatWord("default")) {
-                Node* n = N(NK::ExportDefault, t);
-                if (IsWord("function") || (IsWord("async") && IsWordAt(pos + 1, "function") && !Peek().nl)) {
-                    bool isAsync = EatWord("async");
-                    n->a = FunctionExpr(isAsync, true);
-                    if (!n->a->fn->name.empty()) {   // export default function name() {}: also a declaration
-                        Node* d = N(NK::FuncDecl, t);
-                        d->a = n->a;
-                        n->b = d;
-                    }
-                    return n;
-                }
-                if (IsWord("class")) {
-                    n->a = ClassExpr(true);
-                    if (!n->a->str.empty()) n->b = n->a;   // a named class is also declared
-                    return n;
-                }
-                n->a = Assignment();
-                Semicolon();
-                CheckCover();
-                return n;
-            }
+            if (EatWord("default")) return ExportDefault(t);
             if (IsWord("var") || IsWord("let") || IsWord("const") || IsWord("function") || IsWord("class") ||
                 (IsWord("async") && IsWordAt(pos + 1, "function")))
                 return StatementListItem();
@@ -396,7 +701,6 @@ struct Parser {
             Expect(P_RBrack);
             return;
         }
-        if (t.t == TT::PrivateName) Fail("#private class members are not supported");
         Unexpected("a property name");
     }
     Node* ObjectBindingPattern() {
@@ -859,7 +1163,15 @@ struct Parser {
     }
 
     Node* Binary(int minPrec) {
-        Node* left = Unary();
+        Node* left;
+        if (Cur().t == TT::PrivateName && !noIn && At(pos + 1).t == TT::Name && Eq(At(pos + 1).s, "in") && !At(pos + 1).escaped) {
+            // 13.10 RelationalExpression: PrivateIdentifier in ShiftExpression (an ergonomic brand check)
+            const Token& pt = Cur();
+            left = N(NK::PrivName, pt);
+            left->str = u"#" + pt.s;
+            PrivRef(left->str, pt);
+            Next();
+        } else left = Unary();
         while (true) {
             const Token& t = Cur();
             int prec = BinaryPrec(t, noIn);
@@ -922,6 +1234,10 @@ struct Parser {
                 Next();
                 n->a = Unary();
                 if (n->op == 2002 && n->a->k == NK::Ident) FailAt(t, "deleting a plain variable is not allowed in strict code");
+                if (n->op == 2002) {   // 13.5.1.1: delete of a private reference is an early error
+                    Node* x = n->a->k == NK::OptChain ? n->a->a : n->a;
+                    if (x && x->k == NK::Member && (x->flags & NF_Private)) FailAt(t, "a #private member can not be deleted");
+                }
                 return n;
             }
             if (Eq(t.s, "await") && InAsync()) {
@@ -980,7 +1296,11 @@ struct Parser {
             const Token& t = Cur();
             if (t.t == TT::Punct && t.p == P_Dot) {
                 Next();
-                if (Cur().t == TT::PrivateName) Fail("#private class members are not supported");
+                if (Cur().t == TT::PrivateName) {   // 13.3.1 MemberExpression . PrivateIdentifier
+                    if (e->k == NK::Super) Fail("super.#name is not allowed");
+                    e = PrivateMember(e, t, false);
+                    continue;
+                }
                 if (Cur().t != TT::Name) Unexpected("a property name after '.'");
                 Node* m = ast.NewNode(NK::Member, t.line, t.col);
                 m->a = e;
@@ -1008,6 +1328,8 @@ struct Parser {
                     m->b = Expression();
                     Expect(P_RBrack);
                     e = m;
+                } else if (Cur().t == TT::PrivateName) {
+                    e = PrivateMember(e, t, true);
                 } else {
                     if (Cur().t != TT::Name) Unexpected("a property name after '?.'");
                     Node* m = ast.NewNode(NK::Member, t.line, t.col);
@@ -1072,6 +1394,10 @@ struct Parser {
             const Token& m = Cur();
             if (m.t == TT::Punct && m.p == P_Dot) {
                 Next();
+                if (Cur().t == TT::PrivateName) {
+                    callee = PrivateMember(callee, m, false);
+                    continue;
+                }
                 if (Cur().t != TT::Name) Unexpected("a property name after '.'");
                 Node* x = ast.NewNode(NK::Member, m.line, m.col);
                 x->a = callee;
@@ -1122,7 +1448,7 @@ struct Parser {
                 return n;
             }
             case TT::End: Unexpected();
-            case TT::PrivateName: Fail("#private class members are not supported");
+            case TT::PrivateName: Fail("'#" + Utf16To8(t.s) + "' can only be used as obj.#" + Utf16To8(t.s) + " or before 'in'");
             case TT::Punct:
                 if (t.p == P_LParen) {
                     Next();
@@ -1165,6 +1491,18 @@ struct Parser {
                 return N(NK::Super, t);
             }
             if (Eq(s, "new")) return NewExpr();
+            if (Eq(s, "import") && IsPAt(pos + 1, P_Dot)) {   // 13.3.12 import.meta, only in module code
+                if (!isModule) Fail("import.meta is only allowed in a module");
+                Next();
+                Next();
+                if (!IsWord("meta")) Unexpected("'meta' after 'import.'");
+                Node* n = N(NK::Ident, t);
+                n->str = u"*meta*";
+                Next();
+                ast.module->usesMeta = true;
+                Ref(n->str);
+                return n;
+            }
             if (Eq(s, "import")) {   // 13.3.10 import(specifier [, options]): a promise for a module (see OP_ImportCall)
                 if (!IsPAt(pos + 1, P_LParen)) Fail("import is not supported");
                 Node* n = N(NK::ImportCall, t);
@@ -1477,8 +1815,9 @@ struct Parser {
     }
 
     // The static fields' initializer function (made on first use): static fields and static blocks run in it, in order.
-    FuncInfo* StaticInit(ClassInfo* ci, const Token& at) {
-        FuncInfo*& init = ci->staticFields;
+    FuncInfo* StaticInit(ClassInfo* ci, const Token& at) { return FieldInit(ci->staticFields, at); }
+    // A class's instance or static field initializer function, made on first use.
+    FuncInfo* FieldInit(FuncInfo*& init, const Token& at) {
         if (!init) {
             init = ast.NewFunc();
             init->method = true;
@@ -1515,6 +1854,27 @@ struct Parser {
         init->body->list.push_back(stmt);
     }
 
+    // A #method / get #x / set #x: declared, kept in a hidden binding of the class scope ("#x:m", "#x:g", "#x:s"), and,
+    // for an instance one, added to each new object by the field initializer before the fields (7.3.34 InitializeInstanceElements).
+    void PrivateMethod(ClassInfo* ci, Node* m, bool isStatic, int accessor, const Token& kt) {
+        DeclarePrivate(ci, m->str, (accessor == 1 ? PK_Get : accessor == 2 ? PK_Set : PK_Method) | (isStatic ? PK_Static : 0), kt);
+        const std::u16string hidden = m->str + (accessor == 1 ? u":g" : accessor == 2 ? u":s" : u":m");
+        ci->privHidden.push_back(hidden);
+        if (isStatic) return;
+        FuncInfo* init = FieldInit(ci->instFields, kt);
+        Node* f = ast.NewNode(NK::ClassField, kt.line, kt.col);
+        f->str = m->str;
+        f->flags |= NF_Private | NF_Method;
+        f->op = accessor;
+        f->c = ast.NewNode(NK::Ident, kt.line, kt.col);
+        f->c->str = hidden;
+        init->body->list.insert(init->body->list.begin() + ci->privInstMethods++, f);
+        PushFunc(init);
+        Ref(m->str);
+        Ref(hidden);
+        PopFunc();
+    }
+
     // class [name] [extends expr] { members } (15.7)
     Node* ClassExpr(bool isExpr) {
         const Token& t = Cur();
@@ -1529,6 +1889,7 @@ struct Parser {
         n->a = ci->heritage;
         NoInGuard ng(*this, false);   // ClassBody has no [In] parameter: its keys and fields allow `in`
         Expect(P_LBrace);
+        privScopes.emplace_back();
         bool derived = ci->heritage != nullptr;
         while (!IsP(P_RBrace)) {
             if (Eat(P_Semi)) continue;
@@ -1561,7 +1922,11 @@ struct Parser {
             Node* m = ast.NewNode(NK::ClassMethod, mt.line, mt.col);
             if (isStatic) m->flags |= NF_Static;
             const Token& kt = Cur();
-            PropertyName(m);
+            if (kt.t == TT::PrivateName) {
+                m->str = u"#" + kt.s;
+                m->flags |= NF_Private;
+                Next();
+            } else PropertyName(m);
             bool isCtorName = !(m->flags & NF_Computed) && kt.t != TT::Num && Eq(m->str, "constructor");
             if (IsP(P_LParen)) {
                 if (isCtorName && !isStatic) {
@@ -1585,6 +1950,7 @@ struct Parser {
                 m->op = accessor;   // 0 method, 1 get, 2 set
                 m->b = MethodFunction(m, isAsync, isGen, accessor, true, ci);
                 n->list.push_back(m);
+                if (m->flags & NF_Private) PrivateMethod(ci, m, isStatic, accessor, kt);
                 continue;
             }
             // a field
@@ -1593,18 +1959,16 @@ struct Parser {
             if (isCtorName) FailAt(kt, "a class field can not be named 'constructor'");
             if (isStatic && Eq(m->str, "prototype")) FailAt(kt, "a class can not have a static member named 'prototype'");
             if (isStatic) StaticInit(ci, kt);
-            FuncInfo*& init = isStatic ? ci->staticFields : ci->instFields;
-            if (!init) {
-                init = ast.NewFunc();
-                init->method = true;
-                init->fieldInit = true;
-                init->line = kt.line;
-                init->col = kt.col;
-                init->name = u"<fields>";
-                init->body = ast.NewNode(NK::Block, kt.line, kt.col);
-            }
+            FuncInfo* init = FieldInit(isStatic ? ci->staticFields : ci->instFields, kt);
             Node* f = ast.NewNode(NK::ClassField, kt.line, kt.col);
             f->str = m->str;
+            if (m->flags & NF_Private) {
+                f->flags |= NF_Private;
+                DeclarePrivate(ci, f->str, PK_Field | (isStatic ? PK_Static : 0), kt);
+                PushFunc(init);
+                Ref(f->str);
+                PopFunc();
+            }
             if (Eat(P_Assign)) {
                 PushFunc(init);
                 std::vector<Node*> savedCover;
@@ -1618,6 +1982,7 @@ struct Parser {
             init->body->list.push_back(f);
             Semicolon();
         }
+        EndPrivScope();
         Next();
         if (!ci->ctor) {
             FuncInfo* fi = ast.NewFunc();
@@ -1640,10 +2005,11 @@ struct Parser {
 
 } // namespace
 
-bool Parse(const std::vector<Token>& toks, Ast& ast, SyntaxError& err) {
+bool Parse(const std::vector<Token>& toks, Ast& ast, SyntaxError& err, bool module) {
     Parser p(toks, ast, err);
     try {
-        p.ParseScript();
+        if (module) p.ParseModule();
+        else p.ParseScript();
     } catch (const ParseFail&) {
         return false;
     }

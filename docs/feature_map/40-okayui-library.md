@@ -9,7 +9,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 
 ### 40.1 Core widgets and auto-layout
 - **System:** OkayUI - Our own UI toolkit for the launcher, editor panels and script-drawn windows (replacing Dear ImGui) - duplicate of Game UI (kept on purpose: both have buttons, tabs, tooltips and a theme, but OkayUI is for tools and Game UI for designed game menus; see 40.5)
-  Home: `okayui/`, `shared/OkayUIHost.hpp`, `editor/OkayUIHostMode.cpp`. Entry: `okayui/include/okay/UI/OkayUI.hpp`. Also called: own UI, okayui host, OkayUIHost, UI toolkit, Dear ImGui replacement, ImGui, OKAY_UI_OWN_RENDER, OKAY_UI_DEFAULT_BACKEND, OKAY_CLASSIC_UI. Fix: Host code moves from shared/OkayUIHost* and editor/OkayUIHost* into okayui/ (modularization plan); the ImGui shims go with Dear ImGui.
+  Home: `okayui/`, `shared/OkayUIHost.hpp`, `editor/OkayUIHostMode.cpp`. Entry: `okayui/include/okay/UI/OkayUI.hpp`. Also called: own UI, okayui host, OkayUIHost, UI toolkit, Dear ImGui replacement, ImGui, OKAY_UI_OWN_RENDER, OKAY_UI_DEFAULT_BACKEND, OKAY_CLASSIC_UI, OkayUI designs, design tokens, appearance, appearance.json, okaytheme, OKAY_APPEARANCE_FILE. Fix: Host code moves from shared/OkayUIHost* and editor/OkayUIHost* into okayui/ (modularization plan); the ImGui shims go with Dear ImGui.
 - **What:** The widget set: explicit-coordinate widgets (button, checkbox, switch, slider, progress, radio, tab, text field) and an ImGui-style auto-layout API (windows, scrolling children, same-line, tables, menus, popups, trees, plots, drag and drop, colour pickers).
 - **Parts:**
   - 40.1.1 Explicit-coordinate widgets - `okayui/include/okay/UI/OkayUI.hpp`, `okayui/src/OkayUI.cpp` - `Button(id, x, y, w, h, label)`, `Checkbox`, `ToggleSwitch`, `Slider`, `ProgressBar`, `RadioButton`, `Tab`, `TextField`, `Label`, `Panel`
@@ -30,23 +30,26 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Seen as:** a button does not click in the player; a window cannot be dragged; text typed into a field goes to the game; a table column is the wrong width; a Combo list draws under other widgets
 - **Ask me like:** "work on 40.1.4, add keyboard navigation to OkayUI"; "OkayUI InputText loses focus on click"
 
-### 40.2 Launcher look, theme and fonts
+### 40.2 Designs, theme and fonts
 - **System:** OkayUI
-- **What:** The theme struct and the "launcher look": Roboto TrueType text baked at several sizes, the Slate colours, rounded controls, pill tabs and shadows, plus a classic 8x8 pixel look and launcher-style building blocks (heading, caption, card, badge, avatar, list item, key-value, spinner, toast).
+- **What:** OkayUI's own design language and the ONE theme source of every program: eleven built-in designs (Graphite, the default; Slate, the launcher's old look; Midnight; High Contrast; Paper; Ember; Glacier; Dusk; Blossom; Void; Aurora), each a data set of colours (dark and/or light) and shape choices (radii, outlines or none, shadow depth, tab shape, focus ring, density, motion), with the person's options on top (light or dark, accent, density, roundness, UI scale, text size, shadows, reduce motion) saved in one per-user `appearance.json` and followed live by the launcher, the editor, the Script Editor and the browser. The widgets draw from the tokens: buttons, fields with a focus ring and placeholder, vector check / radio / switch glyphs, sliders with a thumb, combo boxes and popover lists, underline / pill / segmented tabs, a clean window header, section headers with a chevron, trees with indent guides, rounded elevated menus with right-aligned shortcuts, tooltip cards, thin overlay scroll bars, toasts; short hover / press transitions when the host has a clock. Roboto TrueType text everywhere; the 8x8 bitmap font only as the last fallback (and in the headless tests).
 - **Parts:**
-  - 40.2.1 Theme and Slate palette - `okayui/src/OkayUI.cpp` - `Theme`, `Style()`, `SlateTheme()`, `UseLauncherLook(bool)`, `PushStyleColor/PopStyleColor`, `PushTextScale`
-  - 40.2.2 Font atlas - `okayui/src/OkayUI_FontAtlas.cpp`, `okayui/src/OkayUI_FontAtlas.hpp` - Roboto baked at 13, 16, 20, 26, 34 and 46 px into one RGBA atlas with a white patch; fallback to engine TTF fonts for Cyrillic, Greek, CJK
-  - 40.2.3 Bitmap fonts - `okayui/include/okay/UI/OkayUI.hpp` - the engine's 8x8 font, a synthesized bold variant, `SetFont`
-  - 40.2.4 Launcher building blocks - `okayui/src/OkayUI.cpp` - `Heading`, `Caption`, `TextWrapped`, `PrimaryButton`, `Badge`, `Avatar`, `BeginCard/EndCard`, `ListItem`, `KeyValue`, `Spinner`, `Toast`
-- **Code:** `okayui/src/OkayUI.cpp`, `okayui/src/OkayUI_FontAtlas.cpp`, `okayui/src/OkayUI_FontAtlas.hpp`, `okayui/include/okay/UI/OkayUI.hpp`, `shared/OkayTheme.hpp` (the ImGui twin of the palette, editor and launcher)
-- **API:** `OkayUI::UseLauncherLook`, `SlateTheme`, `Style`, script `ui_style("launcher" | "classic")`, `ui_heading`, `ui_card_begin`, `ui_list_item`, `ui_toast`
-- **Editor:** View > Panels > Lighting > UI Font (scene UI font, not OkayUI's); the editor Game view shows the launcher look
-- **Docs:** `docs/ui/in_game_ui.md` (top section, Building blocks, Theming)
-- **Tests:** `okayui`, `script_ui`
-- **Status:** Works - implemented; fonts need the SDL_Renderer path (the launcher look is not available on the D3D11 path)
-- **Open:** possible duplication: the Slate palette lives in three places (`OkayUI::SlateTheme`, `UITemplates::slate` for scene UI, `shared/OkayTheme.hpp` for ImGui) and must be kept in step by hand
-- **Related:** 40.1, 12.7, 2.9
-- **Words:** launcher look, Slate, theme, Roboto, font atlas, classic look, OKAY_CLASSIC_UI, ui_style, text scale, rounding, window shadow, toast, card, badge, avatar
+  - 40.2.1 Designs and options - `okayui/include/okay/UI/OkayUIDesign.hpp`, `okayui/src/OkayUI_Design.cpp` - `design::DesignAt`, `Resolve`, `ThemeFor`, `Set`, `Current`, `Revision`, `FollowUserFile`, `Poll`, `SaveUserFile`, `ParseJson` / `WriteJson`
+  - 40.2.2 Theme - `okayui/src/OkayUI_Style.cpp`, `okayui/include/okay/UI/OkayUI.hpp` - `Theme` (tokens: surfaces, text, status colours, focus ring, radii, tab shape, shadow depth, motion, density), `Style()`, `SlateTheme()`, `UseLauncherLook(bool)` (TrueType text on or off, frozen name), `PushStyleColor/PopStyleColor`, `PushTextScale`
+  - 40.2.3 Shapes and motion - `okayui/src/OkayUI.cpp` - `elevation`, `ringRect`, `focusRing`, `controlBox`, `popoverBox`, `comboBox`, `anim` / `stateColor` (time-based, off without a host clock or with reduce motion)
+  - 40.2.4 Dear ImGui adapter and the appearance controls - `shared/OkayTheme.hpp` (`PaletteFrom`, `ApplyDesign`, `ApplyDensity`), `shared/AppearanceUI.hpp` (`okayappearance::DesignPicker`, `Customization`) - the launcher's Settings > Appearance and the editor's Edit > Appearance
+  - 40.2.5 Font atlas - `okayui/src/OkayUI_FontAtlas.cpp`, `okayui/src/OkayUI_FontAtlas.hpp` - Roboto baked at 13, 16, 20, 26, 34 and 46 px into one RGBA atlas with a white patch; fallback to engine TTF fonts for Cyrillic, Greek, CJK
+  - 40.2.6 Bitmap fonts - `okayui/include/okay/UI/OkayUI.hpp` - the engine's 8x8 font (the last fallback), a synthesized bold variant, `SetFont`
+  - 40.2.7 Building blocks - `okayui/src/OkayUI_Toolkit.cpp` - `Heading`, `Caption`, `TextWrapped`, `PrimaryButton`, `Badge`, `Avatar`, `BeginCard/EndCard`, `ListItem`, `KeyValue`, `Spinner`, `Toast`
+- **Code:** `okayui/src/OkayUI_Design.cpp`, `okayui/src/OkayUI.cpp`, `okayui/src/OkayUI_Basic.cpp`, `okayui/src/OkayUI_Style.cpp`, `okayui/src/OkayUI_FontAtlas.cpp`, `okayui/include/okay/UI/OkayUIDesign.hpp`, `okayui/include/okay/UI/OkayUI.hpp`, `shared/OkayTheme.hpp`, `shared/AppearanceUI.hpp`
+- **API:** `OkayUI::design::Set`, `design::FollowUserFile`, `UseLauncherLook`, `SlateTheme`, `Style`, script `ui_style("launcher" | "classic")` (classic: the bitmap font), `ui_heading`, `ui_card_begin`, `ui_list_item`, `ui_toast`
+- **Editor:** Edit > Appearance (designs with live previews, options), Edit > Dark Mode / Light Mode (the design's scheme); launcher: Settings > Appearance
+- **Docs:** `docs/ui/okayui_design.md` (tokens, widget anatomy, decisions), `docs/ui/in_game_ui.md` (top section, Building blocks, Theming)
+- **Tests:** `okayui_design` (designs complete and readable, options, appearance.json, following the file, motion, focus ring, a gallery golden per design), `okayui_golden` and the other okayui picture tests, `launcher_theme`, `menu_bar_model`
+- **Status:** Partial - round 1: tokens, eleven designs, options, the launcher and editor wiring and the core widgets are done and tested headless; tables (row hover, sticky headers), docking tabs and splitters and CodeEdit chrome still use the older shapes (round 2); OkayUI has no keyboard navigation between buttons, so the focus ring shows on text fields and drag boxes only. Unverified on Windows and on the Direct3D 11 renderer.
+- **Open:** round 2: tables, docking, CodeEdit chrome, Tab-key focus navigation with the ring on every control; the editor's View > UI Scale multiplies the shared UI scale; scene UI's `UITemplates::slate` is still its own copy of the Slate colours
+- **Related:** 40.1, 12.7, 2.9, 15.15.6, 17.1.7
+- **Words:** design, designs, design tokens, appearance, appearance.json, Graphite, Slate, Midnight, High Contrast, Paper, Ember, Glacier, Dusk, Blossom, Void, Aurora, accent, density, roundness, reduce motion, focus ring, launcher look, theme, Roboto, font atlas, classic look, OKAY_CLASSIC_UI, ui_style, text scale, rounding, window shadow, toast, card, badge, avatar
 - **Seen as:** text looks pixelated (classic look) when it should be smooth; accent colours differ from the launcher; accented characters or CJK show as boxes; a toast is the wrong colour
 - **Ask me like:** "work on 40.2.2, bake extra font sizes"; "the in-game windows should use the dark Slate theme only"
 
@@ -229,3 +232,40 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Words:** Inspector, OkayUI Inspector, field rows, component body, replace Dear ImGui, preview, Experimental, OKAY_UI_INSPECTOR
 - **Seen as:** the Inspector looks the same with OkayUI on; a component body is still Dear ImGui with OkayUI on; typing in an OkayUI field triggers an editor shortcut
 - **Ask me like:** "work on 40.10, bring the Light body's OkayUI rows up to date"
+
+
+### 40.12 The whole editor on OkayUI (`OkayEngineOkayUI`)
+- **System:** OkayUI
+- **What:** the editor's own sources compiled a second time against OkayUI's Dear ImGui layer, so the program has no Dear ImGui in it: the step before OkayUI becomes the editor's only UI. First built, linked and run on 2026-11-27.
+- **Parts:**
+  - 40.12.1 The program - `editor/CMakeLists.txt` (target `okay-editor-okayui`, CMake option `OKAY_EDITOR_ON_OKAYUI`, ctest `editor_okayui`), `shared/OkayUIImGuiBackendShim.cpp`, `okayui/probe/`
+  - 40.12.2 Gaps closed for it - `okayui/src/OkayUI_Windows.cpp` (menu bar row, docking by `ConfigFlags_DockingEnable`, auto-fit axes, regions inside windows, focus of docked tabs), `okayui/src/OkayUI_Menus.cpp` (modals outside windows, menu items as last item, popup queries), `okayui/src/OkayUI.cpp` (`###` ids, clipped children in popups, `ColorEdit_HDR`), `okayui/src/OkayUIDock.cpp` (`DockAdoptTitle`), `editor/ModalGuard.hpp` (its OkayUI part)
+- **Code:** `editor/CMakeLists.txt`, `okayui/src/OkayUI_Windows.cpp`, `okayui/src/OkayUI_Menus.cpp`, `editor/ModalGuard.hpp`
+- **API:** `OkayUI::ClosePopup`, `OkayUI::ListOpenPopups`, `OkayUI::CurrentPopupDepth`, `OkayUI::DockAdoptTitle`, `OkayUI::DockLayout::Rename`, `OkayUI::ColorEdit_HDR`
+- **Editor:** a separate program, `bin/OkayEngineOkayUI`, built only with `-DOKAY_EDITOR_ON_OKAYUI=ON`; the normal editor is unchanged
+- **Docs:** `docs/ui/own_ui_toolkit.md` (sections 6.26 and 32, with the gap table)
+- **Tests:** `editor_okayui`, `okayui_port_modalguard`, `okayui_windows`, `okayui_dockaware`, `okayui_color`
+- **Status:** Partial - builds, self-test passes, runs headless on Linux (gate, docked panels, 3D Scene view, Hierarchy, Inspector, menus, Play, Build Settings, Project Settings); never run on Windows or in a real window
+- **Open:** `ImGui::GetStyle()` writes are lost (theme metrics, tab padding, play tint); taller rows; the Inspector's Color cells; multi-window panels; drag and drop and several windows not tried; Dear ImGui not removed yet
+- **Related:** 40.9, 40.10
+- **Words:** OkayEngineOkayUI, editor on OkayUI, OKAY_EDITOR_ON_OKAYUI, replace Dear ImGui, move off ImGui, no Dear ImGui
+- **Seen as:** the editor on OkayUI shows panels floating instead of docked; a modal does not show; the menu bar is missing; a section draws outside its window
+- **Ask me like:** "work on 40.12, finish the editor on OkayUI"
+### 40.11 The launcher on OkayUI only (no Dear ImGui)
+- **System:** OkayUI
+- **What:** the launcher (`OkaySpace.exe`) is drawn by OkayUI alone since 2026-11-27: its pages, written in Dear ImGui's names, compile against OkayUI's compatibility layer, and Dear ImGui is no longer built into it. The chat pop-out is OkayUI's second context in its own window; What's New, Tips and the Browser page are OkayUI screens drawn in place.
+- **Parts:**
+  - 40.11.1 Several contexts - `okayui/src/OkayUI_Context.cpp`, `okayui/src/OkayUI_ContextState.hpp` - CreateContext / SetCurrentContext / DestroyContext; each file lists its per-context variables (`OKAYUI_CONTEXT_STATE`), switching exchanges them
+  - 40.11.2 Dear ImGui's rules for a whole program - `okayui/src/OkayUI.cpp`, `okayui/src/OkayUI_Windows.cpp` - `UseImGuiCoordinates` (cursor from the window corner, window size of the innermost child), text rows (`StyleVar_TextRowHeight` < 0), child fill and `ChildRounding`, `GetStyle()` writes and `FontGlobalScale` taken in, wrapped `CalcTextSize` / `AddText`, `TextLink`, `ScrollTextBoxToEnd`
+  - 40.11.3 The launcher's host - `launcher/main.cpp` (frame start: framed widgets and text rows pushed; `ChatHostFrame`), `launcher/CMakeLists.txt` (`okayui/probe` first on the include path), `okayui/probe/ImGuiPainterRenderer.hpp`, `shared/ImGuiPlatformFeed.hpp`
+- **Code:** `okayui/src/OkayUI_Context.cpp`, `okayui/src/OkayUI_ContextState.hpp`, `okayui/src/OkayUIText.cpp`, `launcher/main.cpp`, `launcher/CMakeLists.txt`
+- **API:** `OkayUI::CreateContext`, `OkayUI::SetCurrentContext`, `OkayUI::UseImGuiCoordinates`, `OkayUI::TextLink`, `OkayUI::ScrollTextBoxToEnd`
+- **Docs:** `docs/ui/own_ui_toolkit.md` (section 31)
+- **Tests:** `okayui_contexts`, `okayui_calls`, `launcher_page_layout`, `launcher_theme`
+- **Status:** Works - built and run headless on Linux under Xvfb (every page, the chat window, scripted clicks and typing, the design picker); not built or run on Windows.
+- **Open:** run on Windows; keyboard navigation of buttons (Dear ImGui's NavEnableKeyboard was off in the launcher, so nothing is lost); small drawing differences (slider, combo arrow); the editor is the editor agent's.
+- **Related:** 40.9, 17.1
+- **Words:** launcher, OkayUI, no Dear ImGui, contexts, chat window, compatibility layer, replace Dear ImGui
+- **Seen as:** a launcher page looks different from before; the chat window does not take clicks; text in a settings row runs under its control
+- **Ask me like:** "work on 40.11, the launcher's combo arrow looks different"
+

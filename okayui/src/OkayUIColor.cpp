@@ -1,6 +1,7 @@
 // OkayUI colour picker: ColorPicker4 / ColorPicker3 (saturation / value square, hue bar, alpha bar, current and original preview,
 // hex field, R G B A cells) and the hex text conversions. Built only on the public OkayUI calls (draw list, InvisibleButton, TextField,
 // DragInt4), so it sits beside OkayUI.cpp without touching its internals. See okay/UI/OkayUI.hpp and docs/ui/own_ui_toolkit.md section 4.33.
+#include "OkayUI_ContextState.hpp"
 #include "okay/UI/OkayUI.hpp"
 
 #include <algorithm>
@@ -240,4 +241,11 @@ bool ColorPicker3(const char* label, float rgb[3], int flags) {
     return changed;
 }
 
+} // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(g_ps),
+    OKAYUI_CTX_VAR(g_psNext))
 } // namespace OkayUI

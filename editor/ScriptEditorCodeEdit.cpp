@@ -1,7 +1,6 @@
 #include "ScriptEditorCodeEdit.hpp"
 #include "okay/UI/OkayUICompat.hpp"   // AddFontTtf
-#include "OkfDecode.hpp"
-#include "JetBrainsMonoFontOwn.h"
+#include "EmbeddedFonts.hpp"   // JetBrains Mono, decoded once (shared/)
 
 #include <algorithm>
 #include <cstdint>
@@ -186,15 +185,14 @@ void ScriptEditorCodeEdit::SetPaletteColors(const unsigned* c, int count) {
 }
 
 const OkayUI::Font* ScriptEditorCodeEdit::CodeFont() {
-    // Decoded once: the bytes must outlive the font (AddFontTtf keys its glyph cache on them). 16 px is the size the Dear ImGui
+    // The bytes live as long as the program (AddFontTtf keys its glyph cache on them). 16 px is the size the Dear ImGui
     // script editor shows at 100%; UseCodeFont scales it to the size asked for.
-    static std::vector<std::uint8_t> bytes;
     static const OkayUI::Font* font = nullptr;
     static bool tried = false;
     if (!tried) {
         tried = true;
-        if (okf::DecodeLines(okf_data::kJetBrainsMonoOkf, okf_data::kJetBrainsMonoOkfLines, bytes) && bytes.size() == okf_data::kJetBrainsMonoOkfRawBytes)
-            font = OkayUI::AddFontTtf(bytes.data(), bytes.size(), 16.0f, "JetBrains Mono");
+        const std::vector<std::uint8_t>& bytes = okf::JetBrainsMonoTtf();
+        if (!bytes.empty()) font = OkayUI::AddFontTtf(bytes.data(), bytes.size(), 16.0f, "JetBrains Mono");
     }
     return font;
 }

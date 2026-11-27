@@ -46,7 +46,7 @@ def read_inc(path):
     return re.sub(r'#include "((?:generated|okay/VisualScript)/[\w.]+\.inc)"', sub, text)
 
 def load_nodes():
-    text = read_inc(ROOT / "editor/VisualScriptEditor.hpp")
+    text = read_inc(ROOT / "editor/VisualScriptModel.hpp")
     a = text.find("VsWithTargetPins({")
     b = text.find("}));", a)
     body = mask_quoted_braces(text[a:b])

@@ -13,8 +13,10 @@
 // hides them (or falls back to local data for the signed-in player).
 //
 // Like Friends/Workshop this drives an okay::account::AccountService (reusing
-// the session + anon key + bearer token). Calls block on HTTP, so the launcher
-// runs them on a worker thread.
+// the session + anon key + bearer token). Every request goes through OkayBackend's
+// Database (acct_.Db(), okay/Backend/Database.hpp; round 5), byte for byte what
+// it always sent (tests/test_okay_backend_golden_community1.cpp). Calls block on
+// HTTP, so the launcher runs them on a worker thread.
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Privacy.hpp"
 #include "okay/Platform/Achievements.hpp"
@@ -82,11 +84,15 @@ public:
     // Load a whole profile page. `target` is a user uuid, or a username when
     // byUsername is set (forum authors only carry the name).
     ProfileBundle Load(const std::string& target, bool byUsername) {
+        using okay::backend::Query;
+        // The values inside or=(...) are percent-encoded but never quoted, as they always were (docs/platform/okay_backend.md
+        // section 18); they are user ids.
+        const auto unquoted = okay::backend::ValueText::EncodedUnquoted;
         ProfileBundle b;
         if (!acct_.IsLoggedIn() || target.empty()) return b;
         std::string uid = target;
         if (byUsername) {
-            auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + Url(target), "GET");
+            auto r = acct_.Db().From("profiles").Select("id").Eq("username", target).Get();
             b.reached = r.reached;
             if (!r.ok) { b.failed = r.reached; return b; }
             auto o = SplitObjects(r.body);
@@ -96,15 +102,16 @@ public:
         static const char* kBase =
             "id,username,display_name,avatar_url,bio,accent,status,favorite_game,location,"
             "playing,session_code,last_seen,created_at";
-        auto r = privacy::ProfilesGet(acct_, std::string("select=") + kBase +
-                           ",showcase_achievements,showcase_games,banner_accent,social_links,verified&id=eq." + Url(uid));
+        auto row = [&uid](const std::string& columns) {   // my profile row with `columns`, through profiles_visible
+            return [&uid, columns](okay::backend::Query& q) { q.Select(columns).Eq("id", uid); };
+        };
+        auto r = privacy::ProfilesGet(acct_, row(std::string(kBase) + ",showcase_achievements,showcase_games,banner_accent,social_links,verified"));
         b.reached = b.reached || r.reached;
         if (r.ok) { b.showcaseSupported = true; b.extrasSupported = true; }
         else {
-            r = privacy::ProfilesGet(acct_, std::string("select=") + kBase +
-                          ",showcase_achievements,showcase_games,banner_accent&id=eq." + Url(uid));
+            r = privacy::ProfilesGet(acct_, row(std::string(kBase) + ",showcase_achievements,showcase_games,banner_accent"));
             if (r.ok) b.showcaseSupported = true;
-            else      r = privacy::ProfilesGet(acct_, std::string("select=") + kBase + "&id=eq." + Url(uid));
+            else      r = privacy::ProfilesGet(acct_, row(kBase));
         }
         if (!r.ok) { b.failed = r.reached; return b; }
         auto objs = SplitObjects(r.body);
@@ -140,10 +147,8 @@ public:
         b.isMe = (p.id == acct_.UserId()) || (p.username == acct_.CurrentSession().username);
 
         // Public achievements mirror (optional table).
-        auto ra = acct_.Api("/rest/v1/user_achievements?select=ach_id,label,unlocked_at,points"
-                            "&owner=eq." + Url(uid) + "&order=unlocked_at.desc", "GET");
-        if (!ra.ok) ra = acct_.Api("/rest/v1/user_achievements?select=ach_id,label,unlocked_at"
-                                   "&owner=eq." + Url(uid) + "&order=unlocked_at.desc", "GET");
+        auto ra = acct_.Db().From("user_achievements").Select("ach_id,label,unlocked_at,points").Eq("owner", uid).Order("unlocked_at", true).Get();
+        if (!ra.ok) ra = acct_.Db().From("user_achievements").Select("ach_id,label,unlocked_at").Eq("owner", uid).Order("unlocked_at", true).Get();
         if (ra.ok) {
             b.achSupported = true;
             for (const auto& x : SplitObjects(ra.body)) {
@@ -156,8 +161,8 @@ public:
             }
         }
         // Published Workshop games.
-        auto rg = acct_.Api("/rest/v1/workshop_items?select=id,author_name,title,description,kind,storage_path,downloads"
-                            "&author=eq." + Url(uid) + "&order=downloads.desc", "GET");
+        auto rg = acct_.Db().From("workshop_items").Select("id,author_name,title,description,kind,storage_path,downloads")
+                      .Eq("author", uid).Order("downloads", true).Get();
         if (rg.ok) {
             for (const auto& x : SplitObjects(rg.body)) {
                 WorkshopItem w;
@@ -169,10 +174,10 @@ public:
             }
         }
         if (b.extrasSupported) {   // staff badges + time played
-            auto rb = acct_.Api("/rest/v1/profile_badges?select=badge&owner=eq." + Url(uid) + "&order=awarded_at.asc", "GET");
+            auto rb = acct_.Db().From("profile_badges").Select("badge").Eq("owner", uid).Order("awarded_at").Get();
             if (rb.ok) for (const auto& x : SplitObjects(rb.body)) { std::string bd = Field(x, "badge"); if (!bd.empty()) b.badges.push_back(bd); }
-            auto rp = acct_.Api("/rest/v1/user_playtime?select=game_key,title,seconds,last_played&owner=eq." + Url(uid) +
-                                "&order=seconds.desc&limit=30", "GET");
+            auto rp = acct_.Db().From("user_playtime").Select("game_key,title,seconds,last_played").Eq("owner", uid)
+                          .Order("seconds", true).Limit(30).Get();
             if (rp.ok) for (const auto& x : SplitObjects(rp.body)) {
                 PlaytimeEntry e; e.key = Field(x, "game_key"); e.title = Field(x, "title");
                 e.seconds = std::atol(Field(x, "seconds").c_str()); e.lastPlayed = ParseIso(Field(x, "last_played"));
@@ -180,13 +185,13 @@ public:
             }
         }
         // Friend count (SECURITY DEFINER rpc; my own count works without it).
-        auto rc = acct_.Api("/rest/v1/rpc/profile_friend_count", "POST", "{\"p_uid\":" + JStr(uid) + "}");
+        auto rc = acct_.Db().Rpc("profile_friend_count", "{\"p_uid\":" + JStr(uid) + "}");
         if (rc.ok) {
             std::string t = Trim(rc.body);
             if (!t.empty() && std::isdigit((unsigned char)t[0])) b.friends = (int)std::atol(t.c_str());
         }
         // Follows: counts, and whether we follow each other.
-        auto rfc = acct_.Api("/rest/v1/rpc/follow_counts", "POST", "{\"p_uid\":" + JStr(uid) + "}");
+        auto rfc = acct_.Db().Rpc("follow_counts", "{\"p_uid\":" + JStr(uid) + "}");
         if (rfc.ok) {
             b.followSupported = true;
             auto fo = SplitObjects(rfc.body);
@@ -196,16 +201,17 @@ public:
             }
             const std::string me = MyId();
             if (!b.isMe && !me.empty()) {
-                auto rr = acct_.Api("/rest/v1/follows?select=follower,followee&or=(and(follower.eq." + Url(me) + ",followee.eq." + Url(uid) +
-                                    "),and(follower.eq." + Url(uid) + ",followee.eq." + Url(me) + "))", "GET");
+                auto rr = acct_.Db().From("follows").Select("follower,followee")
+                              .Or({Query::And({Query::Cond("follower", "eq", me, unquoted), Query::Cond("followee", "eq", uid, unquoted)}),
+                                   Query::And({Query::Cond("follower", "eq", uid, unquoted), Query::Cond("followee", "eq", me, unquoted)})}).Get();
                 if (rr.ok) for (const auto& x : SplitObjects(rr.body)) {
                     if (Field(x, "follower") == me) b.iFollow = true; else b.followsMe = true;
                 }
             }
         }
         // Relationship (RLS only returns friendships that involve me).
-        auto rf = acct_.Api("/rest/v1/friendships?select=id,status,requester,addressee"
-                            "&or=(requester.eq." + Url(uid) + ",addressee.eq." + Url(uid) + ")", "GET");
+        auto rf = acct_.Db().From("friendships").Select("id,status,requester,addressee")
+                      .Or({Query::Cond("requester", "eq", uid, unquoted), Query::Cond("addressee", "eq", uid, unquoted)}).Get();
         if (rf.ok) {
             int accepted = 0;
             for (const auto& x : SplitObjects(rf.body)) {
@@ -218,8 +224,8 @@ public:
             if (b.isMe && b.friends < 0) b.friends = accepted;
         }
         // Recent activity (readable when they're me or a friend).
-        auto rv = acct_.Api("/rest/v1/activity?select=actor_name,kind,detail,created_at"
-                            "&actor=eq." + Url(uid) + "&order=created_at.desc&limit=8", "GET");
+        auto rv = acct_.Db().From("activity").Select("actor_name,kind,detail,created_at").Eq("actor", uid)
+                      .Order("created_at", true).Limit(8).Get();
         if (rv.ok) {
             for (const auto& x : SplitObjects(rv.body)) {
                 FriendEvent e; e.actor = okay::account::PublicName(Field(x, "actor_name")); e.kind = Field(x, "kind");
@@ -243,7 +249,7 @@ public:
         a += "]"; g += "]";
         std::string body = "{\"showcase_achievements\":" + a + ",\"showcase_games\":" + g +
                            ",\"banner_accent\":" + (bannerAccent < 0 ? std::string("null") : std::to_string(bannerAccent)) + "}";
-        return acct_.Api("/rest/v1/profiles?id=eq." + Url(id), "PATCH", body).ok;
+        return acct_.Db().From("profiles").Eq("id", id).Update(body).ok;
     }
 
     // Mirror my local achievements into user_achievements (upsert; owner
@@ -259,8 +265,7 @@ public:
             body += "}";
         }
         body += "]";
-        if (acct_.Api("/rest/v1/user_achievements?on_conflict=owner,ach_id", "POST", body,
-                      "Prefer: resolution=merge-duplicates").ok) return true;
+        if (acct_.Db().From("user_achievements").OnConflict("owner,ach_id").Upsert(body).ok) return true;
         // Before profile_extras.sql there's no points column: send without it.
         std::string plain; std::size_t at = 0;
         const std::string key = ",\"points\":";
@@ -269,8 +274,7 @@ public:
             at = body.find('}', k);
         }
         plain += body.substr(at);
-        return acct_.Api("/rest/v1/user_achievements?on_conflict=owner,ach_id", "POST", plain,
-                         "Prefer: resolution=merge-duplicates").ok;
+        return acct_.Db().From("user_achievements").OnConflict("owner,ach_id").Upsert(plain).ok;
     }
 
     // MY social links; *supported = false before profile_extras.sql ran.
@@ -278,7 +282,7 @@ public:
         if (supported) *supported = false;
         if (!acct_.IsLoggedIn()) return {};
         std::string id = MyId(); if (id.empty()) return {};
-        auto r = acct_.Api("/rest/v1/profiles?select=social_links&id=eq." + Url(id), "GET");
+        auto r = acct_.Db().From("profiles").Select("social_links").Eq("id", id).Get();
         if (!r.ok) return {};
         if (supported) *supported = true;
         auto o = SplitObjects(r.body);
@@ -296,7 +300,7 @@ public:
             o += JStr(kv.first) + ":" + JStr(kv.second.substr(0, 200)); first = false;
         }
         o += "}";
-        return acct_.Api("/rest/v1/profiles?id=eq." + Url(id), "PATCH", "{\"social_links\":" + o + "}").ok;
+        return acct_.Db().From("profiles").Eq("id", id).Update("{\"social_links\":" + o + "}").ok;
     }
     // Upsert my playtime totals (needs profile_extras.sql).
     bool SyncPlaytime(const std::vector<PlaytimeEntry>& all) {
@@ -310,22 +314,21 @@ public:
             body += "}";
         }
         body += "]";
-        return acct_.Api("/rest/v1/user_playtime?on_conflict=owner,game_key", "POST", body,
-                         "Prefer: resolution=merge-duplicates").ok;
+        return acct_.Db().From("user_playtime").OnConflict("owner,game_key").Upsert(body).ok;
     }
 
     // Relationship actions (RLS scopes them to rows involving me).
     // ---- follows -----------------------------------------------------------
     bool Follow(const std::string& uid) {
-        return acct_.Api("/rest/v1/follows", "POST", "{\"followee\":" + JStr(uid) + "}").ok;
+        return acct_.Db().From("follows").Insert("{\"followee\":" + JStr(uid) + "}").ok;
     }
     bool Unfollow(const std::string& uid) {
         const std::string me = MyId(); if (me.empty()) return false;
-        return acct_.Api("/rest/v1/follows?follower=eq." + Url(me) + "&followee=eq." + Url(uid), "DELETE").ok;
+        return acct_.Db().From("follows").Eq("follower", me).Eq("followee", uid).Delete().ok;
     }
     bool RemoveFollower(const std::string& uid) {
         const std::string me = MyId(); if (me.empty()) return false;
-        return acct_.Api("/rest/v1/follows?follower=eq." + Url(uid) + "&followee=eq." + Url(me), "DELETE").ok;
+        return acct_.Db().From("follows").Eq("follower", uid).Eq("followee", me).Delete().ok;
     }
     /// The people following `uid` (followers=true) or that `uid` follows.
     /// Empty `uid` = me. `supported` reports whether follows.sql has run.
@@ -334,8 +337,8 @@ public:
         if (supported) *supported = false;
         if (uid.empty()) uid = MyId();
         if (uid.empty()) return out;
-        auto r = acct_.Api(std::string("/rest/v1/follows?select=follower,followee&") + (followers ? "followee" : "follower") +
-                           "=eq." + Url(uid) + "&order=created_at.desc&limit=200", "GET");
+        auto r = acct_.Db().From("follows").Select("follower,followee").Eq(followers ? "followee" : "follower", uid)
+                     .Order("created_at", true).Limit(200).Get();
         if (!r.ok) return out;
         if (supported) *supported = true;
         std::vector<std::string> ids;
@@ -344,9 +347,9 @@ public:
             if (!id.empty()) ids.push_back(id);
         }
         if (ids.empty()) return out;
-        std::string in;
-        for (const auto& id : ids) { if (!in.empty()) in += ","; in += Url(id); }
-        auto rp = privacy::ProfilesGet(acct_, "select=id,username,display_name,avatar_url,last_seen&id=in.(" + in + ")");
+        auto rp = privacy::ProfilesGet(acct_, [&ids](okay::backend::Query& q) {
+            q.Select("id,username,display_name,avatar_url,last_seen").In("id", ids, okay::backend::ValueText::EncodedUnquoted);
+        });
         if (!rp.ok) return out;
         const auto objs = SplitObjects(rp.body);
         for (const auto& id : ids)   // keep newest-first order
@@ -362,7 +365,7 @@ public:
     }
     /// Follow by username (the Friends page's "Add" box).
     bool FollowByName(const std::string& username, std::string* err = nullptr) {
-        auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + Url(username), "GET");
+        auto r = acct_.Db().From("profiles").Select("id").Eq("username", username).Get();
         auto o = r.ok ? SplitObjects(r.body) : std::vector<std::string>{};
         if (o.empty()) { if (err) *err = "No player with that username."; return false; }
         const std::string id = Field(o[0], "id");
@@ -373,20 +376,18 @@ public:
     /// Whether my followers see my activity feed (profiles.followers_see_activity).
     bool SetFollowersSeeActivity(bool on) {
         const std::string me = MyId(); if (me.empty()) return false;
-        return acct_.Api("/rest/v1/profiles?id=eq." + Url(me), "PATCH",
-                         std::string("{\"followers_see_activity\":") + (on ? "true" : "false") + "}").ok;
+        return acct_.Db().From("profiles").Eq("id", me).Update(std::string("{\"followers_see_activity\":") + (on ? "true" : "false") + "}").ok;
     }
 
     bool AddFriend(const std::string& uid) {
         if (!acct_.IsLoggedIn() || uid.empty()) return false;
-        return acct_.Api("/rest/v1/friendships", "POST", "{\"addressee\":" + JStr(uid) + "}").ok;
+        return acct_.Db().From("friendships").Insert("{\"addressee\":" + JStr(uid) + "}").ok;
     }
     bool Accept(long row) {
-        return row > 0 && acct_.Api("/rest/v1/friendships?id=eq." + std::to_string(row), "PATCH",
-                                    "{\"status\":\"accepted\"}").ok;
+        return row > 0 && acct_.Db().From("friendships").Eq("id", std::to_string(row)).Update("{\"status\":\"accepted\"}").ok;
     }
     bool Remove(long row) {
-        return row > 0 && acct_.Api("/rest/v1/friendships?id=eq." + std::to_string(row), "DELETE").ok;
+        return row > 0 && acct_.Db().From("friendships").Eq("id", std::to_string(row)).Delete().ok;
     }
 
 private:
@@ -395,7 +396,7 @@ private:
 
     std::string MyId() {
         if (myId_.empty()) {
-            auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + Url(acct_.CurrentSession().username), "GET");
+            auto r = acct_.Db().From("profiles").Select("id").Eq("username", acct_.CurrentSession().username).Get();
             if (r.ok) { auto o = SplitObjects(r.body); if (!o.empty()) myId_ = Field(o[0], "id"); }
         }
         return myId_;
@@ -517,14 +518,6 @@ private:
             else if (c != '\r') o += c;
         }
         return o + "\"";
-    }
-    static std::string Url(const std::string& s) {
-        std::string o; char b[4];
-        for (unsigned char c : s) {
-            if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') o += (char)c;
-            else { std::snprintf(b, sizeof(b), "%%%02X", c); o += b; }
-        }
-        return o;
     }
 };
 

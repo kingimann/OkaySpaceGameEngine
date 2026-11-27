@@ -3,9 +3,11 @@
 // docs/sql/social.sql). Drives everything through an okay::account::
 // AccountService instance (the same one the launcher and engine already own),
 // so it reuses the signed-in session, the anon key and the bearer token, and
-// needs no HTTP library of its own. Account::Api() auto-adds the apikey +
-// Authorization headers; the tables DEFAULT the "me" columns to auth.uid(), so
-// the client never sends its own uuid.
+// needs no HTTP library of its own. Every request goes through OkayBackend's
+// Database (acct_.Db(), okay/Backend/Database.hpp; round 5), which adds the
+// apikey + Authorization headers, byte for byte what it always sent
+// (tests/test_okay_backend_golden_community1.cpp); the tables DEFAULT the "me"
+// columns to auth.uid(), so the client never sends its own uuid.
 //
 // Features: add by username OR by a short shareable friend code; accept/decline
 // requests; online/offline + "what are they playing" presence via a heartbeat;
@@ -13,7 +15,7 @@
 // feed (came online / started a game / unlocked an achievement / published).
 //
 // Everything gracefully no-ops when signed out, on a local (offline) backend,
-// or when the tables don't exist yet — Api() returns a non-ok response and the
+// or when the tables don't exist yet — a request returns a non-ok response and the
 // calls below fall through — so nothing here breaks a build that hasn't run
 // social.sql.
 #include "okay/Platform/Account/AccountService.hpp"
@@ -92,12 +94,10 @@ public:
     void EnsureProfile() {
         if (!acct_.IsLoggedIn()) return;
         std::string body = "{\"username\":" + JStr(Me()) + "}";
-        acct_.Api("/rest/v1/profiles?on_conflict=id", "POST", body,
-                  "Prefer: resolution=merge-duplicates");
+        acct_.Db().From("profiles").OnConflict("id").Upsert(body);
         if (MyCode().empty()) {
             std::string code = MakeCode();
-            acct_.Api("/rest/v1/profiles?id=eq." + Url(MyId()), "PATCH",
-                      "{\"friend_code\":" + JStr(code) + "}");
+            PatchMyRow("{\"friend_code\":" + JStr(code) + "}");
         }
     }
 
@@ -109,23 +109,17 @@ public:
     // Friendly display name (what others see); empty until set.
     std::string MyDisplayName() { return ProfileOf(MyId()).displayName; }
     bool SetDisplayName(const std::string& name) {
-        if (!acct_.IsLoggedIn()) return false;
-        return acct_.Api("/rest/v1/profiles?id=eq." + Url(MyId()), "PATCH",
-                         "{\"display_name\":" + JStr(name) + "}").ok;
+        return PatchMe("{\"display_name\":" + JStr(name) + "}");
     }
     // Avatar image URL (public). Empty until set.
     std::string MyAvatar() { return ProfileOf(MyId()).avatar; }
     bool SetAvatar(const std::string& url) {
-        if (!acct_.IsLoggedIn()) return false;
-        return acct_.Api("/rest/v1/profiles?id=eq." + Url(MyId()), "PATCH",
-                         "{\"avatar_url\":" + JStr(url) + "}").ok;
+        return PatchMe("{\"avatar_url\":" + JStr(url) + "}");
     }
     // Short "about me" bio shown on the profile card.
     std::string MyBio() { return ProfileOf(MyId()).bio; }
     bool SetBio(const std::string& bio) {
-        if (!acct_.IsLoggedIn()) return false;
-        return acct_.Api("/rest/v1/profiles?id=eq." + Url(MyId()), "PATCH",
-                         "{\"bio\":" + JStr(bio) + "}").ok;
+        return PatchMe("{\"bio\":" + JStr(bio) + "}");
     }
 
     // ---- Steam-style profile customization --------------------------------
@@ -155,19 +149,17 @@ public:
     }
 
     bool Accept(long rowId) {
-        return acct_.Api("/rest/v1/friendships?id=eq." + std::to_string(rowId),
-                         "PATCH", "{\"status\":\"accepted\"}").ok;
+        return acct_.Db().From("friendships").Eq("id", std::to_string(rowId)).Update("{\"status\":\"accepted\"}").ok;
     }
     bool Remove(long rowId) {   // decline a request or unfriend
-        return acct_.Api("/rest/v1/friendships?id=eq." + std::to_string(rowId),
-                         "DELETE").ok;
+        return acct_.Db().From("friendships").Eq("id", std::to_string(rowId)).Delete().ok;
     }
 
     // ---- the friend list --------------------------------------------------
     std::vector<Friend> List() {
         std::vector<Friend> out;
         if (!acct_.IsLoggedIn()) return out;
-        auto r = acct_.Api("/rest/v1/friendships?select=id,requester,addressee,status", "GET");
+        auto r = acct_.Db().From("friendships").Select("id,requester,addressee,status").Get();
         if (!r.ok) return out;
         std::string me = Me();
         for (const auto& obj : SplitObjects(r.body)) {
@@ -190,7 +182,7 @@ public:
         if (!acct_.IsLoggedIn()) return 0;
         std::string mine = MyId();
         if (mine.empty()) return 0;
-        auto r = acct_.Api("/rest/v1/friendships?select=addressee,status&status=eq.pending", "GET");
+        auto r = acct_.Db().From("friendships").Select("addressee,status").Eq("status", "pending").Get();
         if (!r.ok) return 0;
         int n = 0;
         for (const auto& obj : SplitObjects(r.body))
@@ -208,7 +200,7 @@ public:
         std::string body = "{\"last_seen\":" + JStr(now) +
                            ",\"playing\":" + JStr(playing) +
                            ",\"session_code\":" + JStr(sessionCode) + "}";
-        acct_.Api("/rest/v1/profiles?id=eq." + Url(MyId()), "PATCH", body);
+        PatchMyRow(body);
     }
     void Heartbeat() { SetPresence(lastPresence_.empty() ? "In OkaySpace" : lastPresence_,
                                    lastSession_); }
@@ -216,8 +208,7 @@ public:
     // online window and clear presence. Used by the "Invisible" status.
     void GoOffline() {
         if (!acct_.IsLoggedIn()) return;
-        acct_.Api("/rest/v1/profiles?id=eq." + Url(MyId()), "PATCH",
-                  "{\"last_seen\":\"2000-01-01T00:00:00Z\",\"playing\":null,\"session_code\":null}");
+        PatchMyRow("{\"last_seen\":\"2000-01-01T00:00:00Z\",\"playing\":null,\"session_code\":null}");
     }
     // Remember the last presence so a plain Heartbeat() keeps it.
     void MarkPresence(const std::string& playing, const std::string& sessionCode = "") {
@@ -227,17 +218,17 @@ public:
     // ---- activity feed ----------------------------------------------------
     void Post(const std::string& kind, const std::string& detail) {
         if (!acct_.IsLoggedIn()) return;
-        acct_.Api("/rest/v1/activity", "POST",
-                  "{\"kind\":" + JStr(kind) + ",\"detail\":" + JStr(detail) +
-                  ",\"actor_name\":" + JStr(Me()) + "}");
+        acct_.Db().From("activity").Insert("{\"kind\":" + JStr(kind) + ",\"detail\":" + JStr(detail) +
+                                           ",\"actor_name\":" + JStr(Me()) + "}");
     }
     std::vector<FriendEvent> Feed(int limit = 20) {
         std::vector<FriendEvent> out;
         if (!acct_.IsLoggedIn()) return out;
         const std::string me = acct_.UserId();   // friends' activity only: the server lets you read your own rows too
-        auto r = acct_.Api("/rest/v1/activity?select=actor,actor_name,kind,detail,created_at" +
-                           (me.empty() ? std::string() : "&actor=neq." + Url(me)) +
-                           "&order=created_at.desc&limit=" + std::to_string(limit), "GET");
+        auto db = acct_.Db();
+        okay::backend::Query q = db.From("activity").Select("actor,actor_name,kind,detail,created_at");
+        if (!me.empty()) q.Neq("actor", me);
+        auto r = q.Order("created_at", true).Limit(limit).Get();
         if (!r.ok) return out;
         std::vector<std::string> ids;
         for (const auto& obj : SplitObjects(r.body)) {
@@ -258,9 +249,8 @@ public:
     /// clients wrote the sign-in email). Show the account's current username.
     void ResolveActorNames(std::vector<FriendEvent>& evs, const std::vector<std::string>& ids) {
         if (!ids.empty()) {
-            std::string in;
-            for (const auto& id : ids) { if (!in.empty()) in += ","; in += Url(id); }
-            auto r = acct_.Api("/rest/v1/profiles?select=id,username&id=in.(" + in + ")", "GET");
+            // (each id percent-encoded but never quoted, as it always was: docs/platform/okay_backend.md section 18)
+            auto r = acct_.Db().From("profiles").Select("id,username").In("id", ids, okay::backend::ValueText::EncodedUnquoted).Get();
             if (r.ok)
                 for (const auto& o : SplitObjects(r.body)) {
                     const std::string id = Field(o, "id"), un = Field(o, "username");
@@ -280,7 +270,10 @@ private:
     // PATCH my own profile row with a JSON object body.
     bool PatchMe(const std::string& body) {
         if (!acct_.IsLoggedIn()) return false;
-        return acct_.Api("/rest/v1/profiles?id=eq." + Url(MyId()), "PATCH", body).ok;
+        return PatchMyRow(body).ok;
+    }
+    okay::account::ApiResponse PatchMyRow(const std::string& body) {
+        return acct_.Db().From("profiles").Eq("id", MyId()).Update(body);
     }
 
     std::string Me()   const { return acct_.CurrentSession().username; }
@@ -288,7 +281,7 @@ private:
     // the server-side RLS select). Falls back to empty when offline.
     std::string MyId() {
         if (myId_.empty()) {
-            auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + Url(Me()), "GET");
+            auto r = acct_.Db().From("profiles").Select("id").Eq("username", Me()).Get();
             if (r.ok) { auto o = SplitObjects(r.body); if (!o.empty()) myId_ = Field(o[0], "id"); }
         }
         return myId_;
@@ -298,7 +291,7 @@ private:
     bool RequestUid(const std::string& uid, const std::string& notFound, std::string* err) {
         if (!acct_.IsLoggedIn()) { if (err) *err = "Sign in first."; return false; }
         if (uid.empty())         { if (err) *err = notFound;         return false; }
-        auto r = acct_.Api("/rest/v1/friendships", "POST", "{\"addressee\":" + JStr(uid) + "}");
+        auto r = acct_.Db().From("friendships").Insert("{\"addressee\":" + JStr(uid) + "}");
         if (!r.ok && err) {
             const privacy::Rule rule = privacy::ParseRule(r.body);   // a server rule said no (docs/sql/blocks.sql)
             *err = rule != privacy::Rule::None ? std::string(privacy::RuleText(rule)) : r.body.empty() ? "Request failed." : r.body;
@@ -324,8 +317,9 @@ private:
     Profile ProfileOf(const std::string& uid) {
         Profile p;
         if (uid.empty()) return p;
-        auto r = privacy::ProfilesGet(acct_, "select=username,friend_code,playing,session_code,display_name,avatar_url,bio,accent,status,favorite_game,location,last_seen"
-                           "&id=eq." + Url(uid));
+        auto r = privacy::ProfilesGet(acct_, [&uid](okay::backend::Query& q) {
+            q.Select("username,friend_code,playing,session_code,display_name,avatar_url,bio,accent,status,favorite_game,location,last_seen").Eq("id", uid);
+        });
         if (!r.ok) return p;
         auto objs = SplitObjects(r.body);
         if (objs.empty()) return p;
@@ -344,14 +338,14 @@ private:
         return p;
     }
     std::string IdForUsername(const std::string& name) {
-        auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + Url(name), "GET");
+        auto r = acct_.Db().From("profiles").Select("id").Eq("username", name).Get();
         if (!r.ok) return "";
         auto objs = SplitObjects(r.body);
         return objs.empty() ? "" : Field(objs[0], "id");
     }
     std::string IdForCode(const std::string& code) {
         std::string c = Upper(Trim(code));
-        auto r = acct_.Api("/rest/v1/profiles?select=id&friend_code=eq." + Url(c), "GET");
+        auto r = acct_.Db().From("profiles").Select("id").Eq("friend_code", c).Get();
         if (!r.ok) return "";
         auto objs = SplitObjects(r.body);
         return objs.empty() ? "" : Field(objs[0], "id");
@@ -432,14 +426,6 @@ public:
             else o += (char)c;
         }
         o += "\""; return o;
-    }
-    static std::string Url(const std::string& s) {     // minimal URL-encode for query values
-        std::string o; char b[4];
-        for (unsigned char c : s) {
-            if (std::isalnum(c) || c=='-'||c=='_'||c=='.'||c=='~') o += (char)c;
-            else { std::snprintf(b, sizeof(b), "%%%02X", c); o += b; }
-        }
-        return o;
     }
 };
 

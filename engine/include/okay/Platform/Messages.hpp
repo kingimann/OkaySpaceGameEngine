@@ -1,6 +1,10 @@
 #pragma once
 // Direct messages over Supabase (messages table; see docs/sql/social.sql).
 // Drives an okay::account::AccountService (same pattern as Friends/Workshop).
+// Every table request and database function call goes through OkayBackend's
+// Database (acct_.Db(); round 6), byte for byte what it sent before
+// (tests/test_okay_backend_golden_community2.cpp; docs/platform/okay_backend.md
+// section 19 lists the values that are sent unencoded, as they always were).
 // RLS limits every row to the two parties, so a conversation with one friend is
 // just "messages where that friend is sender or recipient" — and whichever side
 // isn't the friend is me, so we never need our own uuid.
@@ -16,6 +20,7 @@
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <algorithm>
 
 namespace okay {
@@ -33,6 +38,7 @@ struct DirectMessage {
 
 class Messages {
 public:
+    using Query = okay::backend::Query;
     explicit Messages(okay::account::AccountService& acct) : acct_(acct) {}
 
     bool Available() const { return acct_.IsLoggedIn(); }
@@ -58,9 +64,12 @@ public:
     const okay::account::ApiResponse& LastSendResponse() const { return lastSend_; }
 
     // ---- delivery helpers (pure; tests/test_chat_invites.cpp) ----
+    /// The address a send to `table` goes to (the same Query PostWithClientId sends).
     static std::string SendPath(const std::string& table, const std::string& clientId) {
-        return "/rest/v1/" + table + (chat::IsClientId(clientId) ? "?on_conflict=sender,client_id" : "");
+        return PathOf(table, [&](Query& q) { if (chat::IsClientId(clientId)) WithClientId(q); });
     }
+    /// A send that carries a client id: the server keeps (sender, client_id) once and ignores a resend.
+    static void WithClientId(Query& q) { q.OnConflict("sender,client_id").Prefer("resolution=ignore-duplicates"); }
     static std::string ClientIdField(const std::string& clientId) {
         return chat::IsClientId(clientId) ? ",\"client_id\":\"" + clientId + "\"" : std::string();
     }
@@ -70,20 +79,22 @@ public:
         return body.find("client_id") != std::string::npos &&
                (body.find("PGRST204") != std::string::npos || body.find("42703") != std::string::npos);
     }
-    /// The query for one page of the conversation with `friendUid`: the newest `limit` messages below
-    /// `beforeId` (0 = the newest), newest first, plus one extra row that says whether there is more.
-    static std::string PageQuery(const std::string& friendUid, long beforeId, int limit) {
+    /// One page of the conversation with `friendUid` on a Query of "messages": the newest `limit` messages
+    /// below `beforeId` (0 = the newest), newest first, plus one extra row that says whether there is more.
+    /// The id is percent-encoded with "~" encoded too (%7E), as this request always sent it.
+    static void ShapePage(Query& q, const std::string& friendUid, long beforeId, int limit) {
         if (limit < 1) limit = 1;
         if (limit > 200) limit = 200;
         std::string u;
-        for (unsigned char c : friendUid) {
-            if (std::isalnum(c) || c == '-' || c == '_' || c == '.') u += (char)c;
-            else { char b[4]; std::snprintf(b, sizeof(b), "%%%02X", c); u += b; }
-        }
-        return "/rest/v1/messages?select=id,sender,body,created_at,edited,reply_to"
-               "&or=(sender.eq." + u + ",recipient.eq." + u + ")" +
-               (beforeId > 0 ? "&id=lt." + std::to_string(beforeId) : std::string()) +
-               "&order=id.desc&limit=" + std::to_string(limit + 1);
+        for (char c : okay::account::detail::PercentEncode(friendUid)) u += c == '~' ? std::string("%7E") : std::string(1, c);
+        q.Select("id,sender,body,created_at,edited,reply_to")
+            .Or({Query::Cond("sender", "eq", u, kAsIs), Query::Cond("recipient", "eq", u, kAsIs)});
+        if (beforeId > 0) q.Lt("id", std::to_string(beforeId));
+        q.Order("id", true).Limit(limit + 1);
+    }
+    /// The address of that page (pure; tests/test_chat_invites.cpp).
+    static std::string PageQuery(const std::string& friendUid, long beforeId, int limit) {
+        return PathOf("messages", [&](Query& q) { ShapePage(q, friendUid, beforeId, limit); });
     }
 
     /// One page of history (oldest first) for "load older messages": up to `limit` messages older than
@@ -93,7 +104,10 @@ public:
         std::vector<DirectMessage> out;
         if (hasMore) *hasMore = false;
         if (!acct_.IsLoggedIn() || friendUid.empty()) return out;
-        auto r = acct_.Api(PageQuery(friendUid, beforeId, limit), "GET");
+        auto db = acct_.Db();
+        Query page = db.From("messages");
+        ShapePage(page, friendUid, beforeId, limit);
+        auto r = page.Get();
         if (!r.ok) return out;
         for (const auto& obj : SplitObjects(r.body)) out.push_back(DmFromRow(obj, friendUid));
         const int cap = limit < 1 ? 1 : limit > 200 ? 200 : limit;
@@ -106,7 +120,7 @@ public:
     std::vector<chat::UnreadRow> UnreadRows(int limit = 300) {
         std::vector<chat::UnreadRow> out;
         if (!acct_.IsLoggedIn()) return out;
-        auto r = acct_.Api("/rest/v1/messages?select=id,sender,recipient&order=id.desc&limit=" + std::to_string(limit), "GET");
+        auto r = acct_.Db().From("messages").Select("id,sender,recipient").Order("id", true).Limit(limit).Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body))
             out.push_back({std::atol(Field(o, "id").c_str()), Field(o, "sender"), Field(o, "recipient")});
@@ -118,7 +132,7 @@ public:
     // Delete one of my own sent messages (RLS blocks deleting others').
     bool Delete(long messageId) {
         if (!acct_.IsLoggedIn() || messageId <= 0) return false;
-        return acct_.Api("/rest/v1/messages?id=eq." + std::to_string(messageId), "DELETE").ok;
+        return acct_.Db().From("messages").Eq("id", std::to_string(messageId)).Delete().ok;
     }
 
     // Count incoming messages (addressed to me) newer than sinceId, and report
@@ -132,9 +146,9 @@ public:
         std::vector<CallSignal> out;
         if (!acct_.IsLoggedIn()) return out;
         std::string mine = MyId(); if (mine.empty()) return out;
-        auto r = acct_.Api("/rest/v1/messages?select=id,sender,body,created_at&recipient=eq." + mine +
-                           "&body=like.%5BCall*&created_at=gte." + IsoAt(std::time(nullptr) - maxAgeSecs) +
-                           "&order=id.desc&limit=10", "GET");
+        auto r = acct_.Db().From("messages").Select("id,sender,body,created_at").Eq("recipient", mine, kAsIs)
+                     .Like("body", "%5BCall*", kAsIs).Gte("created_at", IsoAt(std::time(nullptr) - maxAgeSecs), kAsIs)
+                     .Order("id", true).Limit(10).Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) {
             CallSignal c; c.id = std::atol(Field(o, "id").c_str()); c.from = Field(o, "sender");
@@ -151,10 +165,10 @@ public:
         std::vector<CallSignal> out;
         if (!acct_.IsLoggedIn()) return out;
         std::string mine = MyId(); if (mine.empty()) return out;
-        auto r = acct_.Api("/rest/v1/messages?select=id,sender,body,created_at&recipient=eq." + mine +
-                           "&or=(body.like.%5BInvite%5D*,body.like.%5BParty%5D*)&id=gt." + std::to_string(sinceId) +
-                           "&created_at=gte." + IsoAt(std::time(nullptr) - maxAgeSecs) +
-                           "&order=id.desc&limit=10", "GET");
+        auto r = acct_.Db().From("messages").Select("id,sender,body,created_at").Eq("recipient", mine, kAsIs)
+                     .Or({Query::Cond("body", "like", "%5BInvite%5D*", kAsIs), Query::Cond("body", "like", "%5BParty%5D*", kAsIs)})
+                     .Gt("id", std::to_string(sinceId)).Gte("created_at", IsoAt(std::time(nullptr) - maxAgeSecs), kAsIs)
+                     .Order("id", true).Limit(10).Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) {
             CallSignal c; c.id = std::atol(Field(o, "id").c_str()); c.from = Field(o, "sender");
@@ -174,8 +188,7 @@ public:
         if (!acct_.IsLoggedIn()) return 0;
         std::string mine = MyId();
         if (mine.empty()) return 0;
-        auto r = acct_.Api(incoming ? "/rest/v1/messages?select=id,recipient,sender,body&order=id.desc&limit=60"
-                                    : "/rest/v1/messages?select=id,recipient&order=id.desc&limit=60", "GET");
+        auto r = acct_.Db().From("messages").Select(incoming ? "id,recipient,sender,body" : "id,recipient").Order("id", true).Limit(60).Get();
         if (!r.ok) return 0;
         int n = 0;
         for (const auto& obj : SplitObjects(r.body)) {
@@ -206,8 +219,7 @@ public:
         if (!acct_.IsLoggedIn()) return out;
         std::string mine = MyId();
         if (mine.empty()) return out;
-        auto r = acct_.Api("/rest/v1/messages?select=id,sender,recipient,body,created_at"
-                           "&order=id.desc&limit=300", "GET");
+        auto r = acct_.Db().From("messages").Select("id,sender,recipient,body,created_at").Order("id", true).Limit(300).Get();
         if (!r.ok) return out;
         std::set<std::string> seen;
         for (const auto& o : SplitObjects(r.body)) {
@@ -230,9 +242,9 @@ public:
     std::vector<DirectMessage> With(const std::string& friendUid) {
         std::vector<DirectMessage> out;
         if (!acct_.IsLoggedIn() || friendUid.empty()) return out;
-        auto r = acct_.Api("/rest/v1/messages?select=id,sender,body,created_at,edited,reply_to"
-                           "&or=(sender.eq." + friendUid + ",recipient.eq." + friendUid + ")"
-                           "&order=created_at.asc", "GET");
+        auto r = acct_.Db().From("messages").Select("id,sender,body,created_at,edited,reply_to")
+                     .Or({Query::Cond("sender", "eq", friendUid, kAsIs), Query::Cond("recipient", "eq", friendUid, kAsIs)})
+                     .Order("created_at").Get();
         if (!r.ok) return out;
         for (const auto& obj : SplitObjects(r.body)) out.push_back(DmFromRow(obj, friendUid));
         return out;
@@ -252,25 +264,19 @@ public:
     // Edit one of my own sent messages (RLS blocks editing others').
     bool Edit(long messageId, const std::string& body) {
         if (!acct_.IsLoggedIn() || messageId <= 0 || body.empty()) return false;
-        return acct_.Api("/rest/v1/messages?id=eq." + std::to_string(messageId), "PATCH",
-                         "{\"body\":" + JStr(body) + ",\"edited\":true}").ok;
+        return acct_.Db().From("messages").Eq("id", std::to_string(messageId)).Update("{\"body\":" + JStr(body) + ",\"edited\":true}").ok;
     }
 
     // ---- Reactions ("likes") ----------------------------------------------
     // Toggle my ❤ on a message. Insert when `on`, delete when off.
     bool Like(long messageId, bool on) {
         if (!acct_.IsLoggedIn() || messageId <= 0) return false;
-        if (on)
-            return acct_.Api("/rest/v1/message_reactions", "POST",
-                             "{\"scope\":\"dm\",\"target_id\":" + std::to_string(messageId) +
-                             ",\"emoji\":\"heart\"}", "Prefer: resolution=ignore-duplicates").ok;
-        return acct_.Api("/rest/v1/message_reactions?scope=eq.dm&target_id=eq." +
-                         std::to_string(messageId) + "&emoji=eq.heart", "DELETE").ok;
+        return React(messageId, "heart", on);
     }
     // Like count per message id across this conversation.
     std::map<long,long> Likes() {
         std::map<long,long> out;
-        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id&scope=eq.dm&emoji=eq.heart", "GET");
+        auto r = acct_.Db().From("message_reactions").Select("target_id").Eq("scope", "dm").Eq("emoji", "heart").Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) out[std::atol(Field(o,"target_id").c_str())] += 1;
         return out;
@@ -280,7 +286,7 @@ public:
         std::map<long,bool> out;
         std::string mine = MyId();
         if (mine.empty()) return out;
-        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id&scope=eq.dm&emoji=eq.heart&reactor=eq." + mine, "GET");
+        auto r = acct_.Db().From("message_reactions").Select("target_id").Eq("scope", "dm").Eq("emoji", "heart").Eq("reactor", mine, kAsIs).Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) out[std::atol(Field(o,"target_id").c_str())] = true;
         return out;
@@ -292,17 +298,12 @@ public:
     // may leave several different reactions on the same message.
     bool React(long messageId, const std::string& emoji, bool on) {
         if (!acct_.IsLoggedIn() || messageId <= 0 || emoji.empty()) return false;
-        if (on)
-            return acct_.Api("/rest/v1/message_reactions", "POST",
-                             "{\"scope\":\"dm\",\"target_id\":" + std::to_string(messageId) +
-                             ",\"emoji\":" + JStr(emoji) + "}", "Prefer: resolution=ignore-duplicates").ok;
-        return acct_.Api("/rest/v1/message_reactions?scope=eq.dm&target_id=eq." +
-                         std::to_string(messageId) + "&emoji=eq." + emoji, "DELETE").ok;
+        return ReactIn("dm", messageId, emoji, on);
     }
     // Reaction counts per message: id -> (emoji -> count).
     std::map<long, std::map<std::string,long>> Reactions() {
         std::map<long, std::map<std::string,long>> out;
-        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id,emoji&scope=eq.dm", "GET");
+        auto r = acct_.Db().From("message_reactions").Select("target_id,emoji").Eq("scope", "dm").Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body))
             out[std::atol(Field(o,"target_id").c_str())][Field(o,"emoji")] += 1;
@@ -312,7 +313,7 @@ public:
     std::map<long, std::set<std::string>> MyReactions() {
         std::map<long, std::set<std::string>> out;
         std::string mine = MyId(); if (mine.empty()) return out;
-        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id,emoji&scope=eq.dm&reactor=eq." + mine, "GET");
+        auto r = acct_.Db().From("message_reactions").Select("target_id,emoji").Eq("scope", "dm").Eq("reactor", mine, kAsIs).Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body))
             out[std::atol(Field(o,"target_id").c_str())].insert(Field(o,"emoji"));
@@ -349,9 +350,7 @@ public:
     // this throttled while the composer has text.
     bool SetTyping(const std::string& peerUid) {
         if (!acct_.IsLoggedIn() || peerUid.empty()) return false;
-        auto r = acct_.Api("/rest/v1/typing_state?on_conflict=sender", "POST",
-                           "{\"peer\":" + JStr(peerUid) + ",\"at\":" + JStr(IsoNow()) + "}",
-                           "Prefer: resolution=merge-duplicates");
+        auto r = acct_.Db().From("typing_state").OnConflict("sender").Upsert("{\"peer\":" + JStr(peerUid) + ",\"at\":" + JStr(IsoNow()) + "}");
         NoteTable(typingState_, r);
         return r.ok;
     }
@@ -359,8 +358,7 @@ public:
     bool PeerTyping(const std::string& peerUid) {
         if (!acct_.IsLoggedIn() || peerUid.empty()) return false;
         std::string mine = MyId(); if (mine.empty()) return false;
-        auto r = acct_.Api("/rest/v1/typing_state?select=at&sender=eq." + peerUid +
-                           "&peer=eq." + mine, "GET");
+        auto r = acct_.Db().From("typing_state").Select("at").Eq("sender", peerUid, kAsIs).Eq("peer", mine, kAsIs).Get();
         NoteTable(typingState_, r);
         if (!r.ok) return false;
         auto o = SplitObjects(r.body);
@@ -377,10 +375,8 @@ public:
     // is open and focused, that doubles as "I'm in the chat" presence.
     bool MarkRead(const std::string& peerUid, long lastId) {
         if (!acct_.IsLoggedIn() || peerUid.empty() || lastId <= 0) return false;
-        auto r = acct_.Api("/rest/v1/message_reads?on_conflict=reader,peer", "POST",
-                           "{\"peer\":" + JStr(peerUid) + ",\"last_read_id\":" + std::to_string(lastId) +
-                           ",\"updated_at\":" + JStr(IsoNow()) + "}",
-                           "Prefer: resolution=merge-duplicates");
+        auto r = acct_.Db().From("message_reads").OnConflict("reader,peer")
+                     .Upsert("{\"peer\":" + JStr(peerUid) + ",\"last_read_id\":" + std::to_string(lastId) + ",\"updated_at\":" + JStr(IsoNow()) + "}");
         NoteTable(messageReads_, r);
         return r.ok;
     }
@@ -393,8 +389,7 @@ public:
         PeerState st;
         if (!acct_.IsLoggedIn() || peerUid.empty()) return st;
         std::string mine = MyId(); if (mine.empty()) return st;
-        auto r = acct_.Api("/rest/v1/message_reads?select=last_read_id,updated_at&reader=eq." + peerUid +
-                           "&peer=eq." + mine, "GET");
+        auto r = acct_.Db().From("message_reads").Select("last_read_id,updated_at").Eq("reader", peerUid, kAsIs).Eq("peer", mine, kAsIs).Get();
         NoteTable(messageReads_, r);
         if (!r.ok) return st;
         st.ok = true;
@@ -404,7 +399,7 @@ public:
             st.viewingAt = ParseIso(Field(o[0], "updated_at"));
         }
         if (withLastSeen) {
-            auto p = privacy::ProfilesGet(acct_, "select=last_seen&id=eq." + peerUid);
+            auto p = privacy::ProfilesGet(acct_, [&peerUid](Query& q) { q.Select("last_seen").Eq("id", peerUid, kAsIs); });
             if (p.ok) { auto po = SplitObjects(p.body); if (!po.empty()) st.lastSeen = ParseIso(Field(po[0], "last_seen")); }
         }
         return st;
@@ -413,8 +408,7 @@ public:
     long PeerReadId(const std::string& peerUid) {
         if (!acct_.IsLoggedIn() || peerUid.empty()) return 0;
         std::string mine = MyId(); if (mine.empty()) return 0;
-        auto r = acct_.Api("/rest/v1/message_reads?select=last_read_id&reader=eq." + peerUid +
-                           "&peer=eq." + mine, "GET");
+        auto r = acct_.Db().From("message_reads").Select("last_read_id").Eq("reader", peerUid, kAsIs).Eq("peer", mine, kAsIs).Get();
         if (!r.ok) return 0;
         auto o = SplitObjects(r.body);
         return o.empty() ? 0 : std::atol(Field(o[0], "last_read_id").c_str());
@@ -453,8 +447,7 @@ public:
         std::string arr = "[";
         for (std::size_t i = 0; i < memberUids.size(); ++i) { if (i) arr += ","; arr += JStr(memberUids[i]); }
         arr += "]";
-        auto r = acct_.Api("/rest/v1/rpc/create_group", "POST",
-                           "{\"p_title\":" + JStr(title) + ",\"p_members\":" + arr + "}");
+        auto r = acct_.Db().Rpc("create_group", "{\"p_title\":" + JStr(title) + ",\"p_members\":" + arr + "}");
         if (!r.ok) return 0;
         auto o = SplitObjects(r.body);
         return o.empty() ? 0 : std::atol(Field(o[0], "id").c_str());
@@ -465,7 +458,7 @@ public:
     std::vector<GroupConvo> MyGroups() {
         std::vector<GroupConvo> out;
         if (!acct_.IsLoggedIn()) return out;
-        auto r = acct_.Api("/rest/v1/rpc/my_groups", "POST", "{}");
+        auto r = acct_.Db().Rpc("my_groups", "{}");
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) {
             GroupConvo g;
@@ -487,8 +480,7 @@ public:
     std::vector<std::string> GroupMemberIds(long convoId) {
         std::vector<std::string> out;
         if (!acct_.IsLoggedIn() || convoId <= 0) return out;
-        auto r = acct_.Api("/rest/v1/group_members?convo_id=eq." + std::to_string(convoId) +
-                           "&select=member", "GET");
+        auto r = acct_.Db().From("group_members").Eq("convo_id", std::to_string(convoId)).Select("member").Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) { std::string u = Field(o, "member"); if (!u.empty()) out.push_back(u); }
         return out;
@@ -502,22 +494,24 @@ public:
         std::vector<GroupMemberInfo> out;
         if (!acct_.IsLoggedIn() || convoId <= 0) return out;
         // `role` exists only after docs/sql/member_moderation.sql; fall back without it.
-        auto r = acct_.Api("/rest/v1/group_members?convo_id=eq." + std::to_string(convoId) +
-                           "&select=member,last_read,role", "GET");
-        if (!r.ok) r = acct_.Api("/rest/v1/group_members?convo_id=eq." + std::to_string(convoId) +
-                                 "&select=member,last_read", "GET");
+        auto members = [&](const char* columns) {
+            return acct_.Db().From("group_members").Eq("convo_id", std::to_string(convoId)).Select(columns).Get();
+        };
+        auto r = members("member,last_read,role");
+        if (!r.ok) r = members("member,last_read");
         if (!r.ok) return out;
-        std::string ids;
+        std::vector<std::string> ids;
         for (const auto& o : SplitObjects(r.body)) {
             GroupMemberInfo m; m.uid = Field(o, "member"); m.lastRead = std::atol(Field(o, "last_read").c_str());
             m.role = Field(o, "role");
             if (m.uid.empty()) continue;
-            if (!ids.empty()) ids += ",";
-            ids += m.uid;
+            ids.push_back(m.uid);
             out.push_back(m);
         }
         if (ids.empty()) return out;
-        auto p = privacy::ProfilesGet(acct_, "select=id,username,display_name,avatar_url,last_seen&id=in.(" + ids + ")");
+        auto p = privacy::ProfilesGet(acct_, [&ids](Query& q) {   // the ids as they are, as always (section 19)
+            q.Select("id,username,display_name,avatar_url,last_seen").In("id", ids, kAsIs);
+        });
         if (p.ok)
             for (const auto& o : SplitObjects(p.body)) {
                 const std::string id = Field(o, "id");
@@ -536,9 +530,8 @@ public:
         std::vector<GroupMessage> out;
         if (!acct_.IsLoggedIn() || convoId <= 0) return out;
         std::string mine = MyId();
-        auto r = acct_.Api("/rest/v1/group_messages?convo_id=eq." + std::to_string(convoId) +
-                           "&select=id,sender,sender_name,body,created_at,edited,reply_to"
-                           "&order=created_at.asc", "GET");
+        auto r = acct_.Db().From("group_messages").Eq("convo_id", std::to_string(convoId))
+                     .Select("id,sender,sender_name,body,created_at,edited,reply_to").Order("created_at").Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) {
             GroupMessage m;
@@ -569,55 +562,45 @@ public:
     }
     bool EditGroup(long messageId, const std::string& body) {
         if (!acct_.IsLoggedIn() || messageId <= 0 || body.empty()) return false;
-        return acct_.Api("/rest/v1/group_messages?id=eq." + std::to_string(messageId), "PATCH",
-                         "{\"body\":" + JStr(body) + ",\"edited\":true}").ok;
+        return acct_.Db().From("group_messages").Eq("id", std::to_string(messageId)).Update("{\"body\":" + JStr(body) + ",\"edited\":true}").ok;
     }
     bool DeleteGroup(long messageId) {
         if (!acct_.IsLoggedIn() || messageId <= 0) return false;
-        return acct_.Api("/rest/v1/group_messages?id=eq." + std::to_string(messageId), "DELETE").ok;
+        return acct_.Db().From("group_messages").Eq("id", std::to_string(messageId)).Delete().ok;
     }
 
     // Membership management: add (owner only, via RPC), leave (self), rename (owner).
     bool AddGroupMember(long convoId, const std::string& uid) {
         if (!acct_.IsLoggedIn() || convoId <= 0 || uid.empty()) return false;
-        return acct_.Api("/rest/v1/rpc/add_group_member", "POST",
-                         "{\"p_convo\":" + std::to_string(convoId) + ",\"p_member\":" + JStr(uid) + "}").ok;
+        return acct_.Db().Rpc("add_group_member", "{\"p_convo\":" + std::to_string(convoId) + ",\"p_member\":" + JStr(uid) + "}").ok;
     }
     bool LeaveGroup(long convoId) {
         if (!acct_.IsLoggedIn() || convoId <= 0) return false;
         std::string mine = MyId(); if (mine.empty()) return false;
-        return acct_.Api("/rest/v1/group_members?convo_id=eq." + std::to_string(convoId) +
-                         "&member=eq." + mine, "DELETE").ok;
+        return acct_.Db().From("group_members").Eq("convo_id", std::to_string(convoId)).Eq("member", mine, kAsIs).Delete().ok;
     }
     bool RenameGroup(long convoId, const std::string& title) {
         if (!acct_.IsLoggedIn() || convoId <= 0) return false;
-        return acct_.Api("/rest/v1/group_convos?id=eq." + std::to_string(convoId), "PATCH",
-                         "{\"title\":" + JStr(title) + "}").ok;
+        return acct_.Db().From("group_convos").Eq("id", std::to_string(convoId)).Update("{\"title\":" + JStr(title) + "}").ok;
     }
 
     // Mark the group read up to lastId (updates my last_read row).
     bool MarkGroupRead(long convoId, long lastId) {
         if (!acct_.IsLoggedIn() || convoId <= 0 || lastId <= 0) return false;
         std::string mine = MyId(); if (mine.empty()) return false;
-        return acct_.Api("/rest/v1/group_members?convo_id=eq." + std::to_string(convoId) +
-                         "&member=eq." + mine, "PATCH",
-                         "{\"last_read\":" + std::to_string(lastId) + "}").ok;
+        return acct_.Db().From("group_members").Eq("convo_id", std::to_string(convoId)).Eq("member", mine, kAsIs)
+            .Update("{\"last_read\":" + std::to_string(lastId) + "}").ok;
     }
 
     // Group reactions (scope 'group'; shares the message_reactions table). Mirror
     // the DM React/Reactions/MyReactions API.
     bool GroupReact(long messageId, const std::string& emoji, bool on) {
         if (!acct_.IsLoggedIn() || messageId <= 0 || emoji.empty()) return false;
-        if (on)
-            return acct_.Api("/rest/v1/message_reactions", "POST",
-                             "{\"scope\":\"group\",\"target_id\":" + std::to_string(messageId) +
-                             ",\"emoji\":" + JStr(emoji) + "}", "Prefer: resolution=ignore-duplicates").ok;
-        return acct_.Api("/rest/v1/message_reactions?scope=eq.group&target_id=eq." +
-                         std::to_string(messageId) + "&emoji=eq." + emoji, "DELETE").ok;
+        return ReactIn("group", messageId, emoji, on);
     }
     std::map<long, std::map<std::string,long>> GroupReactions() {
         std::map<long, std::map<std::string,long>> out;
-        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id,emoji&scope=eq.group", "GET");
+        auto r = acct_.Db().From("message_reactions").Select("target_id,emoji").Eq("scope", "group").Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body))
             out[std::atol(Field(o,"target_id").c_str())][Field(o,"emoji")] += 1;
@@ -626,7 +609,7 @@ public:
     std::map<long, std::set<std::string>> GroupMyReactions() {
         std::map<long, std::set<std::string>> out;
         std::string mine = MyId(); if (mine.empty()) return out;
-        auto r = acct_.Api("/rest/v1/message_reactions?select=target_id,emoji&scope=eq.group&reactor=eq." + mine, "GET");
+        auto r = acct_.Db().From("message_reactions").Select("target_id,emoji").Eq("scope", "group").Eq("reactor", mine, kAsIs).Get();
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body))
             out[std::atol(Field(o,"target_id").c_str())].insert(Field(o,"emoji"));
@@ -650,17 +633,14 @@ public:
     std::vector<SearchHit> Search(const std::string& query, int limit = 40) {
         std::vector<SearchHit> out;
         if (!acct_.IsLoggedIn()) return out;
-        std::string q;   // ilike pattern: *text*, percent-encoded (PostgREST's * is the wildcard)
-        for (unsigned char c : query) {
-            if (c == '*' || c == '%') continue;
-            if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') q += (char)c;
-            else { char b[4]; std::snprintf(b, sizeof(b), "%%%02X", c); q += b; }
-        }
-        if (q.empty()) return out;
+        std::string plain;   // the text without PostgREST's wildcard "*" and without "%"
+        for (char c : query) if (c != '*' && c != '%') plain += c;
+        if (plain.empty()) return out;
+        // ilike pattern: *text*, the text percent-encoded and the two "*" kept as the wildcard (as it was always sent)
+        const std::string pattern = "*" + okay::account::detail::PercentEncode(plain) + "*";
         std::string mine = MyId();
-        const std::string lim = std::to_string(limit);
-        auto r = acct_.Api("/rest/v1/messages?select=id,sender,recipient,body,created_at&body=ilike.*" + q +
-                           "*&order=id.desc&limit=" + lim, "GET");
+        auto r = acct_.Db().From("messages").Select("id,sender,recipient,body,created_at").Ilike("body", pattern, kAsIs)
+                     .Order("id", true).Limit(limit).Get();
         if (r.ok)
             for (const auto& o : SplitObjects(r.body)) {
                 SearchHit h; h.scope = "dm"; h.id = std::atol(Field(o, "id").c_str());
@@ -669,8 +649,8 @@ public:
                 h.body = Field(o, "body"); h.when = ParseIso(Field(o, "created_at"));
                 out.push_back(h);
             }
-        auto g = acct_.Api("/rest/v1/group_messages?select=id,convo_id,sender,sender_name,body,created_at&body=ilike.*" + q +
-                           "*&order=id.desc&limit=" + lim, "GET");
+        auto g = acct_.Db().From("group_messages").Select("id,convo_id,sender,sender_name,body,created_at").Ilike("body", pattern, kAsIs)
+                     .Order("id", true).Limit(limit).Get();
         if (g.ok)
             for (const auto& o : SplitObjects(g.body)) {
                 SearchHit h; h.scope = "group"; h.id = std::atol(Field(o, "id").c_str());
@@ -690,9 +670,8 @@ public:
     // the chat can see earlier versions. scope: "dm" or "group".
     bool RecordEdit(const std::string& scope, long messageId, const std::string& oldBody) {
         if (!acct_.IsLoggedIn() || messageId <= 0) return false;
-        return acct_.Api("/rest/v1/message_edits", "POST",
-                         "{\"scope\":" + JStr(scope) + ",\"target_id\":" + std::to_string(messageId) +
-                         ",\"old_body\":" + JStr(oldBody) + "}").ok;
+        return acct_.Db().From("message_edits")
+            .Insert("{\"scope\":" + JStr(scope) + ",\"target_id\":" + std::to_string(messageId) + ",\"old_body\":" + JStr(oldBody) + "}").ok;
     }
     struct EditVersion { std::string body; long when = 0; };
     // Earlier versions of a message, oldest first. `supported` is false when the
@@ -701,8 +680,8 @@ public:
         std::vector<EditVersion> out;
         if (supported) *supported = true;
         if (!acct_.IsLoggedIn() || messageId <= 0) return out;
-        auto r = acct_.Api("/rest/v1/message_edits?select=old_body,edited_at&scope=eq." + scope +
-                           "&target_id=eq." + std::to_string(messageId) + "&order=id.asc", "GET");
+        auto r = acct_.Db().From("message_edits").Select("old_body,edited_at").Eq("scope", scope, kAsIs)
+                     .Eq("target_id", std::to_string(messageId)).Order("id").Get();
         if (!r.ok) { if (supported) *supported = r.status != 404 && r.status != 400; return out; }
         for (const auto& o : SplitObjects(r.body)) out.push_back({Field(o, "old_body"), ParseIso(Field(o, "edited_at"))});
         return out;
@@ -715,24 +694,23 @@ public:
     bool Pin(const std::string& scope, long messageId, bool on) {
         if (!acct_.IsLoggedIn() || messageId <= 0) return false;
         if (on)
-            return acct_.Api("/rest/v1/message_pins", "POST",
-                             "{\"scope\":" + JStr(scope) + ",\"target_id\":" + std::to_string(messageId) + "}",
-                             "Prefer: resolution=ignore-duplicates").ok;
-        return acct_.Api("/rest/v1/message_pins?scope=eq." + scope + "&target_id=eq." + std::to_string(messageId), "DELETE").ok;
+            return acct_.Db().From("message_pins").Prefer("resolution=ignore-duplicates")
+                .Insert("{\"scope\":" + JStr(scope) + ",\"target_id\":" + std::to_string(messageId) + "}").ok;
+        return acct_.Db().From("message_pins").Eq("scope", scope, kAsIs).Eq("target_id", std::to_string(messageId)).Delete().ok;
     }
     std::vector<PinInfo> Pins(const std::string& scope, bool* supported = nullptr) {
         std::vector<PinInfo> out;
         if (supported) *supported = true;
         if (!acct_.IsLoggedIn()) return out;
-        auto r = acct_.Api("/rest/v1/message_pins?select=target_id,pinned_by,created_at&scope=eq." + scope +
-                           "&order=created_at.desc&limit=500", "GET");
+        auto r = acct_.Db().From("message_pins").Select("target_id,pinned_by,created_at").Eq("scope", scope, kAsIs)
+                     .Order("created_at", true).Limit(500).Get();
         if (!r.ok) { if (supported) *supported = r.status != 404 && r.status != 400; return out; }
         for (const auto& o : SplitObjects(r.body))
             out.push_back({std::atol(Field(o, "target_id").c_str()), ParseIso(Field(o, "created_at")), Field(o, "pinned_by")});
         return out;
     }
 
-    // ---- Attachments (Supabase Storage bucket "chat"; docs/sql/chat_media.sql) --
+    // ---- Attachments (OkayBackend Storage, bucket "chat"; docs/sql/chat_media.sql) --
     // Upload a local file to chat/<my uuid>/<random>-<name> and return its
     // public URL ("" on failure; `err` gets the reason). Images are then sent as
     // the bare URL (rendered inline); other files via FileMessageBody().
@@ -746,16 +724,14 @@ public:
         if (safe.empty()) safe = "file";
         char rnd[24]; std::snprintf(rnd, sizeof(rnd), "%08x%08x", (unsigned)std::rand(), (unsigned)std::time(nullptr));
         std::string obj = mine + "/" + rnd + "-" + safe;
-        auto r = acct_.ApiUpload("/storage/v1/object/chat/" + obj, localPath, MimeFor(safe), "x-upsert: true");
+        auto r = acct_.Storage().Upload("chat", obj, localPath, MimeFor(safe), Replace());
         if (!r.ok) {
             if (err) *err = r.status == 404 || r.body.find("Bucket not found") != std::string::npos
                 ? "Attachments aren't set up on the server yet (run docs/sql/chat_media.sql)."
                 : (r.body.empty() ? std::string("Upload failed.") : r.body);
             return "";
         }
-        std::string base = acct_.ServerUrl();
-        if (!base.empty() && base.back() == '/') base.pop_back();
-        return base + "/storage/v1/object/public/chat/" + obj;
+        return PublicChatUrl(obj);
     }
 
     // ---- Personal media library (custom emoji + stickers) --------------------
@@ -781,7 +757,7 @@ public:
             return "";
         }
         std::string obj = mine + "/" + folder + "/" + safe + ext;
-        auto r = acct_.ApiUpload("/storage/v1/object/chat/" + obj, localPath, MimeFor(obj), "x-upsert: true");
+        auto r = acct_.Storage().Upload("chat", obj, localPath, MimeFor(obj), Replace());
         if (!r.ok) {
             if (err) *err = r.status == 404 || r.body.find("Bucket not found") != std::string::npos
                 ? "Media isn't set up on the server yet (run docs/sql/chat_media.sql)."
@@ -796,9 +772,10 @@ public:
         std::vector<LibraryItem> out;
         std::string mine = MyId();
         if (mine.empty()) return out;
-        std::string body = "{\"prefix\":" + JStr(mine + "/" + folder + "/") +
-                           ",\"limit\":500,\"offset\":0,\"sortBy\":{\"column\":\"name\",\"order\":\"asc\"}}";
-        auto r = acct_.Api("/storage/v1/object/list/chat", "POST", body);
+        okay::backend::ListOptions page;
+        page.prefix = mine + "/" + folder + "/";
+        page.limit = 500;
+        auto r = acct_.Storage().List("chat", page);
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) {
             std::string file = Field(o, "name");
@@ -815,14 +792,12 @@ public:
     bool DeleteFromLibrary(const std::string& folder, const std::string& file) {
         std::string mine = MyId();
         if (mine.empty() || file.empty()) return false;
-        return acct_.Api("/storage/v1/object/chat/" + mine + "/" + folder + "/" + file, "DELETE").ok;
+        return acct_.Storage().RemoveObject("chat", mine + "/" + folder + "/" + file).ok;
     }
 
-    std::string PublicChatUrl(const std::string& obj) const {
-        std::string base = acct_.ServerUrl();
-        if (!base.empty() && base.back() == '/') base.pop_back();
-        return base + "/storage/v1/object/public/chat/" + obj;
-    }
+    std::string PublicChatUrl(const std::string& obj) const { return acct_.Storage().PublicUrl("chat", obj); }
+    /// An upload that replaces an object of the same name (a retry, or a library item uploaded again).
+    static okay::backend::UploadOptions Replace() { okay::backend::UploadOptions o; o.upsert = true; return o; }
 
     // A file message: "[File] <name> (<size>) <url>". Reads as plain text + a
     // link on older clients; newer ones render it as a file card.
@@ -864,13 +839,34 @@ private:
     // column; a resend of the same id is ignored by the server, not stored twice.
     okay::account::ApiResponse PostWithClientId(const std::string& table, const std::string& jsonOpen, const std::string& clientId) {
         const bool withId = !clientIdMissing_ && chat::IsClientId(clientId);
+        auto db = acct_.Db();
         if (withId) {
-            auto r = acct_.Api(SendPath(table, clientId), "POST", jsonOpen + ClientIdField(clientId) + "}",
-                               "Prefer: resolution=ignore-duplicates");
+            Query q = db.From(table);
+            WithClientId(q);
+            auto r = q.Insert(jsonOpen + ClientIdField(clientId) + "}");
             if (!(r.reached && ClientIdColumnMissing(r.status, r.body))) return r;
             clientIdMissing_ = true;
         }
-        return acct_.Api("/rest/v1/" + table, "POST", jsonOpen + "}");
+        return db.From(table).Insert(jsonOpen + "}");
+    }
+    /// Values sent unchanged in the address (ids from the server, my own id, the scope and emoji words), as these
+    /// requests always sent them (docs/platform/okay_backend.md section 19).
+    static constexpr okay::backend::ValueText kAsIs = okay::backend::ValueText::AsIs;
+    /// Add or take back my `emoji` reaction on a message in `scope` ("dm", "group"): the emoji is sent as it is.
+    bool ReactIn(const char* scope, long messageId, const std::string& emoji, bool on) {
+        if (on)
+            return acct_.Db().From("message_reactions").Prefer("resolution=ignore-duplicates")
+                .Insert(std::string("{\"scope\":\"") + scope + "\",\"target_id\":" + std::to_string(messageId) + ",\"emoji\":" + JStr(emoji) + "}").ok;
+        return acct_.Db().From("message_reactions").Eq("scope", scope).Eq("target_id", std::to_string(messageId))
+            .Eq("emoji", emoji, kAsIs).Delete().ok;
+    }
+    /// The address the Supabase provider sends a Query on `table` to, shaped by `shape` (pure: nothing is sent).
+    static std::string PathOf(const std::string& table, const std::function<void(Query&)>& shape) {
+        okay::backend::supabase::Database none(
+            [](const std::string&, const std::string&, const std::string&, const std::string&) { return okay::backend::Response{}; });
+        Query q = none.From(table);
+        shape(q);
+        return okay::backend::supabase::Database::TablePath(q.Build("GET"));
     }
     Support typingState_ = Support::Unknown, messageReads_ = Support::Unknown;
     static void NoteTable(Support& s, const okay::account::ApiResponse& r) {
@@ -882,10 +878,7 @@ private:
     // My own profile/user uuid (looked up by username, cached).
     std::string MyId() {
         if (myId_.empty()) {
-            std::string enc; for (char c : acct_.CurrentSession().username) {
-                if (std::isalnum((unsigned char)c)||c=='-'||c=='_'||c=='.'||c=='~') enc += c;
-                else { char b[4]; std::snprintf(b,sizeof(b),"%%%02X",(unsigned char)c); enc += b; } }
-            auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + enc, "GET");
+            auto r = acct_.Db().From("profiles").Select("id").Eq("username", acct_.CurrentSession().username).Get();   // the name percent-encoded
             if (r.ok) { auto o = SplitObjects(r.body); if (!o.empty()) myId_ = Field(o[0], "id"); }
         }
         return myId_;

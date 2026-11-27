@@ -115,6 +115,7 @@ struct String : GcObj {
 struct Symbol : GcObj {
     String* desc = nullptr;     ///< nullptr = no description
     bool registered = false;    ///< made by Symbol.for
+    bool priv = false;          ///< a Private Name (6.2.12): the key of #private class elements, never an own key
     Symbol() : GcObj(Kind::Symbol) {}
     void Trace(Runtime& rt) override;
 };
@@ -152,19 +153,26 @@ enum class Cls : std::uint8_t {
     WeakMap, WeakSet, WeakRef, FinalizationRegistry,
     BigIntBox,   ///< Object(1n): a BoxObj around a BigInt
     Intl,        ///< an Intl.NumberFormat / DateTimeFormat / ... object (JsLibNumber.cpp)   ///< WeakObj (26.1, 26.2, 24.3, 24.4)
+    ArrayBuffer, ///< an ArrayBuffer or SharedArrayBuffer (25.1, 25.2): a BufferObj
+    TypedArray,  ///< an integer-indexed exotic object (10.4.5, 23.2): a TypedArrayObj
+    DataView,    ///< a DataView (25.3): a DataViewObj
+    Proxy,       ///< a proxy exotic object (10.5): a ProxyObj
+    Opaque,      ///< an internal object with no script-visible behaviour (TextEncoder / TextDecoder state, module jobs)
+    ModuleNs,    ///< a module namespace exotic object (10.4.6): a ModuleNsObj
 };
 
 struct Object : GcObj {
     Cls cls;
     bool extensible = true;
     bool lazy = false;   ///< a function whose name / length / prototype are made on first look
+    std::uint8_t proxyFn = 0;   ///< a proxy: 1 its target is callable, 2 also a constructor (10.5.15 ProxyCreate)
     Object* proto = nullptr;
     std::vector<Prop> props;
     std::unique_ptr<std::unordered_map<GcObj*, std::uint32_t>> index;   ///< key -> props position, for big objects
     explicit Object(Cls c = Cls::Ordinary) : GcObj(Kind::Object), cls(c) {}
     void Trace(Runtime& rt) override;
     std::size_t Bytes() const override;
-    bool IsCallable() const { return cls == Cls::Closure || cls == Cls::Native || cls == Cls::Bound; }
+    bool IsCallable() const { return cls == Cls::Closure || cls == Cls::Native || cls == Cls::Bound || proxyFn != 0; }
     /// Own property by key (no lazy step, no exotic part), or nullptr.
     Prop* FindRaw(GcObj* key);
     const Prop* FindRaw(GcObj* key) const { return const_cast<Object*>(this)->FindRaw(key); }
@@ -319,6 +327,22 @@ public:
     /// rejected with a TypeError, so `try { await import(x) } catch {}` code still runs.
     std::function<Value(Runtime&, const std::string& specifier)> importHook;
 
+    // ---- modules (16.2)
+    /// How the host finds modules. resolve: the key (a URL or a path) of `specifier` imported by `referrer` (a module's
+    /// key, or a script's chunk name). fetch: the source text for a key. Both return false with a reason to refuse.
+    /// initMeta (optional): fill a module's import.meta object (by default it gets `url` = the key). With resolve and
+    /// fetch set, import() loads modules through them (importHook is then not used). Loading is synchronous.
+    struct ModuleLoader {
+        std::function<bool(const std::string& specifier, const std::string& referrer, std::string& key, std::string& why)> resolve;
+        std::function<bool(const std::string& key, std::string& source, std::string& why)> fetch;
+        std::function<void(Runtime& rt, const std::string& key, Object* meta)> initMeta;
+    };
+    ModuleLoader modules;
+    /// Load, link and run a module (and every module it imports), then the promise jobs. On failure `err` is the
+    /// message (a syntax or link error, the host's refusal, or the module's exception). `ns` gets the module namespace.
+    /// A module still waiting on a top-level await when the jobs run out stays pending (true is returned).
+    bool RunModule(const std::string& source, const std::string& key, std::string* err, Value* ns = nullptr);
+
     // ---- values
     String* NewString(std::u16string s);
     String* NewStringUtf8(std::string_view s);
@@ -352,7 +376,8 @@ public:
     std::uint64_t LengthOf(const Value& obj);      ///< LengthOfArrayLike
     bool IsCallable(const Value& v) const { return v.IsObj() && v.O()->IsCallable(); }
     bool IsConstructor(const Value& v) const;
-    bool IsArray(const Value& v) const { return v.IsObj() && v.O()->cls == Cls::Array; }
+    /// 7.2.2 IsArray: sees through proxies (a revoked one is a TypeError).
+    bool IsArray(const Value& v);
     bool LooseEquals(const Value& a, const Value& b);
     const char* TypeOf(const Value& v) const;
     bool InstanceOf(const Value& v, const Value& target);
@@ -390,10 +415,17 @@ public:
         bool writable = false, enumerable = false, configurable = false;
     };
     bool DefineOwnProperty(Object* o, GcObj* key, const Descriptor& d);
+    /// DefinePropertyOrThrow with every field given (value and the three flags).
+    void DefineFullData(Object* o, GcObj* key, const Value& v, std::uint8_t flags);
     /// [[OwnPropertyKeys]] in spec order: indices ascending, then strings, then symbols.
     std::vector<GcObj*> OwnKeys(Object* o, bool strings = true, bool symbols = false);
     bool SetPrototype(Object* o, Object* proto);
     bool PreventExtensions(Object* o);
+    /// [[GetPrototypeOf]] and [[IsExtensible]] (proxies run their traps).
+    Object* GetPrototypeOf(Object* o);
+    bool IsExtensible(Object* o);
+    /// [[Set]] with a receiver (10.1.9.2 OrdinarySetWithOwnDescriptor); false when it was refused (no throw for that).
+    bool SetWithReceiver(Object* o, GcObj* key, const Value& v, const Value& receiver);
     void MakeLazyProps(Object* o);   ///< a function's name, length and prototype
     GcObj* IndexKey(std::uint32_t i);   ///< the atom for an index
 
@@ -457,7 +489,7 @@ public:
            *dateProto = nullptr, *bigintProto = nullptr;
     Object* errorProtos[8] = {};
     Symbol *symIterator = nullptr, *symAsyncIterator = nullptr, *symToPrimitive = nullptr, *symToStringTag = nullptr,
-           *symHasInstance = nullptr;
+           *symHasInstance = nullptr, *symSpecies = nullptr;
     struct Atoms;
     std::unique_ptr<Atoms> atoms;   ///< common keys ("length", "prototype", ...)
     std::unordered_map<std::u16string, Symbol*> symbolRegistry;

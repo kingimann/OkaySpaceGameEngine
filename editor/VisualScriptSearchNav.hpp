@@ -1,7 +1,7 @@
 #pragma once
 // The node search popup's pure logic: how big the popup is and how it is kept on screen, how the selection moves for
 // Up / Down / Home / End / PageUp / PageDown, how far a list scrolls to show the selected row, and how Left / Right step
-// through the categories. No ImGui here, so tests/test_vs_search_nav.cpp covers it; VisualScriptPalette.hpp draws it.
+// through the categories. No ImGui here, so tests/test_vs_search_nav.cpp covers it; the Visual Script app (shared/VisualScriptAppCanvas.cpp) draws the Add Block list.
 //
 // Written from scratch for this engine from plain list-box behaviour (move, clamp, reveal); the pixel numbers are our own
 // choices and the row height reads the shared Density table (ScriptingDensity.hpp).

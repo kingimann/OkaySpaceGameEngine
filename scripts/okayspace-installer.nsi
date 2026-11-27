@@ -111,6 +111,16 @@ Section "OkaySpace" SecMain
 
   CreateShortcut "$SMPROGRAMS\OkaySpace.lnk" "$INSTDIR\OkaySpace.exe" "" "$INSTDIR\OkaySpace.exe" 0
   CreateShortcut "$DESKTOP\OkaySpace.lnk"    "$INSTDIR\OkaySpace.exe" "" "$INSTDIR\OkaySpace.exe" 0
+  ; The programs of their own get Start menu entries, so they open without the launcher (only the ones this build has).
+  ${If} ${FileExists} "$INSTDIR\Tools\OkaySpaceScriptEditor.exe"
+    CreateShortcut "$SMPROGRAMS\OkaySpace Script Editor.lnk" "$INSTDIR\Tools\OkaySpaceScriptEditor.exe" "" "$INSTDIR\Tools\OkaySpaceScriptEditor.exe" 0
+  ${EndIf}
+  ${If} ${FileExists} "$INSTDIR\Tools\OkaySpaceVisualScript.exe"
+    CreateShortcut "$SMPROGRAMS\OkaySpace Visual Script.lnk" "$INSTDIR\Tools\OkaySpaceVisualScript.exe" "" "$INSTDIR\Tools\OkaySpaceVisualScript.exe" 0
+  ${EndIf}
+  ${If} ${FileExists} "$INSTDIR\Tools\OkaySpaceBrowser.exe"
+    CreateShortcut "$SMPROGRAMS\OkaySpace Browser.lnk" "$INSTDIR\Tools\OkaySpaceBrowser.exe" "" "$INSTDIR\Tools\OkaySpaceBrowser.exe" 0
+  ${EndIf}
 
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
@@ -129,6 +139,9 @@ SectionEnd
 Section "Uninstall"
   Delete "$SMPROGRAMS\OkaySpace.lnk"
   Delete "$DESKTOP\OkaySpace.lnk"
+  Delete "$SMPROGRAMS\OkaySpace Script Editor.lnk"
+  Delete "$SMPROGRAMS\OkaySpace Visual Script.lnk"
+  Delete "$SMPROGRAMS\OkaySpace Browser.lnk"
   ; Remove what setup installed (and the launcher's own settings and official
   ; game), never the whole folder: the launcher and the editor create projects
   ; in Projects\ and Tools\Projects\ by default, and community\ / downloads\

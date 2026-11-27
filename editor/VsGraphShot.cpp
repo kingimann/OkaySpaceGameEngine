@@ -1,24 +1,22 @@
-// Headless-enough capture of the Visual Script window: load the example graphs,
-// play them, and save a screenshot of each with the live run highlight.
+// Pictures of the Visual Script window with no window on screen: load the example graphs, play them, and save a picture of each with
+// the live run lit, drawn by the same Visual Script app the editor's window shows (shared/VisualScriptApp.hpp) through OkayUI's
+// software painter.
 //   OkayEngine --vs-shot <outdir> [graph-directory]
-#include "VisualScriptEditor.hpp"
-#include "backends/imgui_impl_sdl2.h"
-#include "backends/imgui_impl_sdlrenderer2.h"
-
-#include <SDL.h>
-#include "okay/Platform/Platform.hpp"
+#include "VisualScriptApp.hpp"
+#include "VisualScriptModel.hpp"
 #include "okay/Platform/BmpWriter.hpp"
-#include "PainterBridge.hpp"
-#include <cstdio>
+#include "okay/UI/OkayUI.hpp"
+#if __has_include("OkayUI_SoftPainter.hpp")   // the software painter is there when the editor links okay_ui_soft
+#include "OkayUI_SoftPainter.hpp"
+#define OKAY_VS_SHOT_PAINTER 1
+#endif
 
+#include <cstdio>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
-
-static bool WriteBmp(const std::string& path, const std::vector<std::uint8_t>& rgba, int w, int h) {
-    return okay::platform::WriteBmp32(path.c_str(), rgba.data(), w, h);
-}
 
 namespace fs = std::filesystem;
 
@@ -33,7 +31,10 @@ int RunVsGraphShot(int argc, char** argv) {
         if (i + 1 < argc && std::string(argv[i + 1]).rfind("--", 0) != 0) graphDir = argv[++i];
     }
     if (!saw) return 2;
-
+#ifndef OKAY_VS_SHOT_PAINTER
+    std::cerr << "--vs-shot needs OkayUI's software painter (okay_ui_soft), which this build does not have\n";
+    return 1;
+#else
     const char* names[] = {"door.okayvs", "patrol.okayvs", "inventory.okayvs", "foreach_break.okayvs"};
     okay::editor::EditorState ed;
     ed.setProjectDir(fs::absolute(graphDir).parent_path().string());
@@ -48,64 +49,45 @@ int RunVsGraphShot(int argc, char** argv) {
         if (!vc->LoadFromFile(p.string(), &err)) { std::cerr << err << "\n"; return 1; }
         items.push_back({p.string(), p.stem().string(), go});
     }
+    okay::vs::NodeGraph::Tracing() = true;
     ed.Play();
     for (int i = 0; i < 45; ++i) ed.Tick(1.0f / 60.0f);
 
-    okay::platform::Backend* pbe = okay::platform::Get(okay::platform::BackendKind::Sdl2);   // SDL's ImGui backends below need an SDL window
-    if (!pbe) { std::cerr << "SDL2 platform backend is not available\n"; return 1; }
-    { okay::platform::InitFlags f; f.audio = false; f.gamepad = false;
-      if (!pbe->Init(f)) { std::cerr << "platform init: " << pbe->LastError() << "\n"; return 1; } }
-    pbe->ReportUnmappedEvents(true);   // imgui_impl_sdl2 wants every event
-    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
-    okay::platform::WindowDesc wd; wd.title = "OkayVS"; wd.width = 1680; wd.height = 1000;
-    std::unique_ptr<okay::platform::Window> winSeam = pbe->MakeWindow(wd);
-    SDL_Window* window = winSeam ? (SDL_Window*)winSeam->NativeHandle() : nullptr;
-    SDL_Renderer* renderer = winSeam ? okay::pb::CreateRenderer(*winSeam) : nullptr;   // software (the hint); its painter owns it
-    if (!window || !renderer) { std::cerr << "window: " << pbe->LastError() << "\n"; return 1; }
-
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.IniFilename = nullptr;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    ImGui::StyleColorsDark();
-    ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
-    ImGui_ImplSDLRenderer2_Init(renderer);
-
+    vsapp::VisualScriptApp::Config cfg;   // no settings file: the pictures do not depend on what a person chose
+    cfg.idPrefix = "##vsshot";
+    cfg.editor = [&ed]() { return &ed; };
+    const okay::vs::NodeGraph* liveNow = nullptr;
+    cfg.liveGraph = [&liveNow](const std::string&) { return liveNow; };
+    vsapp::VisualScriptApp app(cfg);
+    app.OpenFolder(ed.projectDir());
+    const int W = 1680, H = 1000;
     fs::create_directories(outDir);
     for (const Item& it : items) {
-        okay::editor::vsed::OpenFile(it.path);
-        okay::editor::vsed::State().frameAll = true;
+        app.OpenFile(it.path);
         ed.Select(it.go);
-
-        {   // drain the window's events through the platform layer (Dear ImGui's SDL backend takes the SDL record it keeps)
-            okay::platform::Event pe;
-            while (pbe->PollEvent(pe)) if (pe.native) ImGui_ImplSDL2_ProcessEvent((const SDL_Event*)pe.native);
+        auto* vc = it.go->GetComponent<okay::VisualScriptComponent>();
+        liveNow = vc ? vc->Graph() : nullptr;
+        app.FrameAll();
+        for (int f = 0; f < 4; ++f) {   // the canvas fits the graph once its blocks have been drawn
+            OkayUI::Input in;
+            in.mouseX = 2; in.mouseY = (float)H - 2; in.displayW = (float)W; in.displayH = (float)H;
+            OkayUI::BeginFrame(in);
+            app.Frame(0, 0, (float)W, (float)H);
+            OkayUI::EndFrameData();
         }
-        ImGui_ImplSDLRenderer2_NewFrame();
-        ImGui_ImplSDL2_NewFrame();
-        ImGui::NewFrame();
-        bool open = true;
-        okay::editor::vsed::Draw(ed, &open);
-        ImGui::Render();
-        okay::pb::SetDrawColor(renderer, 24, 26, 32, 255);
-        okay::pb::Clear(renderer);
-        ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
-        okay::pb::Present(renderer);
-
-        std::vector<std::uint8_t> px; int w = 0, h = 0;
-        if (okay::pb::ReadPixels(renderer, px, w, h) && w > 0 && h > 0) {
-            const std::string bmp = (fs::path(outDir) / (it.stem + ".bmp")).string();
-            if (WriteBmp(bmp, px, w, h)) std::cout << "wrote " << bmp << "\n";
-            else std::cerr << "save " << bmp << ": cannot write the file\n";
-        }
+        std::unique_ptr<okay::platform::Painter> p = OkayUI::soft::CreateBitmapPainter(W, H);
+        if (!p) { std::cerr << "no software painter\n"; return 1; }
+        p->SetClipRect(nullptr);
+        p->SetBlendMode(okay::platform::BlendMode::None);
+        p->SetDrawColor(24, 26, 32, 255);
+        p->Clear();
+        { OkayUI::soft::FrameDrawer fd(*p); fd.Draw(OkayUI::GetDrawData()); }
+        std::vector<std::uint8_t> px;
+        int w = 0, h = 0;
+        const std::string bmp = (fs::path(outDir) / (it.stem + ".bmp")).string();
+        if (p->ReadPixels(px, w, h) && w > 0 && h > 0 && okay::platform::WriteBmp32(bmp.c_str(), px.data(), w, h)) std::cout << "wrote " << bmp << "\n";
+        else std::cerr << "save " << bmp << ": cannot write the file\n";
     }
-
-    ImGui_ImplSDLRenderer2_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
-    ImGui::DestroyContext();
-    okay::pb::DestroyRenderer(renderer);   // its painter owns it
-    winSeam.reset();
-    pbe->Shutdown();
     return 0;
+#endif
 }

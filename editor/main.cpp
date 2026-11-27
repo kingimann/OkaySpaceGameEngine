@@ -36,6 +36,7 @@
 #include "WorkerCall.hpp"              // one call on its own thread: the update check and download (never inside a frame)
 #include "FindInFiles.hpp"             // Find in Files: the project-wide script search window
 #include "ScriptEditorAppHost.hpp"     // the Script Editor app (shared/ScriptIdeApp) in a window: the same one as the Script Editor program
+#include "VisualScriptAppHost.hpp"     // the Visual Script app (shared/VisualScriptApp) in a window: the same one as the Visual Script program
 #include "AssetManagerWindow.hpp"      // the Asset Manager window: Marketplace downloads into the project
 #include "PluginsWindow.hpp"           // editor plugins: the Plugins menu, the Plugin Manager, the per-frame tick
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
@@ -199,8 +200,8 @@
 #include "ScriptText.hpp"   // the Script Editor's token view of a script: outline / go-to-definition
 #include "PluginScriptApi.hpp"   // what editor plugins add to the Script Editor (commands, lint, completion, panels...)
 #include "VsCanvasTools.hpp"   // visual-script snap, align, variable list (no GUI)
-#include "VisualScriptEditor.hpp"   // graph text the editor saves (round-trip in --selftest)
-#include "ScriptingDensityUi.hpp"    // Density (Compact / Comfortable / Spacious) for the Script and Visual Script windows
+#include "VisualScriptModel.hpp"   // graph text the editor saves (round-trip in --selftest)
+#include "ScriptingDensity.hpp"      // Density (Compact / Comfortable / Spacious): the Visual Script app saves the choice through it
 
 // ----------------------------------------------------------------------------
 // OkayScript semantic lint — Rider-style "yellow" inspections, no execution.
@@ -789,7 +790,8 @@ int main(int argc, char** argv) {
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "okay/Platform/WindowLogic.hpp" // first-run UI scale, focus hand-back decision
 #include "AppIcon.hpp"
-#include "OkayTheme.hpp"   // shared Slate palette (launcher + editor)
+#include "OkayTheme.hpp"   // the design's palette for Dear ImGui (launcher + editor)
+#include "AppearanceUI.hpp"   // Edit > Appearance: the design picker and options (shared with the launcher)
 #include "imgui.h"
 #include "AnimatorPreview.hpp"          // inspector / graph live preview (not the Animation window's)
 #include "imgui_internal.h" // DockBuilder for the default layout
@@ -809,14 +811,13 @@ int main(int argc, char** argv) {
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
-#include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
-#include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
+#include "EmbeddedFonts.hpp" // embedded Roboto Medium (Apache 2.0, the UI font) and JetBrains Mono (OFL, the code font)
 #include "ScriptAssist.hpp"     // Scripting Reference, completion, signatures, docs, C# members, palette (ScriptAssist.cpp)
 #include "ScriptIdeApp.hpp"       // scriptide::TestRunScript: Run (a sandbox scene), shared with the Script Editor program
 #include "GameFiber.hpp"           // the game tick on its own stack (visual-script debugger)
 #include "okay/VisualScript/VsDebug.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
-#include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
+#include "VsVariablePanel.hpp"     // a graph variable's value edited in the Inspector (the graphs themselves: VisualScriptModel.hpp)
 #include "AnimComponentNames.hpp"  // "Animator" (the state graph) vs "Clip Player" (the simple keyframe Animator class)
 
 // Holding D in EditorState::Play, through AppendHeldMainKeys (the Play key mapping), walks a Move
@@ -4300,13 +4301,18 @@ builder::BuildReport g_buildReport;   // per-file size breakdown of the last bui
 
 // Console log + panel: ConsolePanel.cpp / .hpp.
 
-// ---- Editor theme (default: the shared Slate palette) ----------------------
+// ---- Editor theme: the design in force (okay/UI/OkayUIDesign.hpp, shared with the launcher and every OkayUI program) ----
+// Edit > Appearance picks the design and the person's options; they are saved in the per-user appearance.json and every
+// program follows them (design::Poll), so the launcher, the editor, the Script Editor, the browser and Visual Script match.
+static unsigned s_themeRevision = 0;   // the design revision ApplyTheme last applied (another program or Edit > Appearance moved it on)
 void ApplyTheme() {
+    const OkayUI::design::Tokens tok = OkayUI::design::CurrentTokens();
+    g_darkMode = !tok.c.light;
     if (g_darkMode) ImGui::StyleColorsDark();
     else            ImGui::StyleColorsLight();
     ImGuiStyle& s = ImGui::GetStyle();
     // One spacing system for every panel: readable type, room between controls,
-    // and hit targets you can land on. View > UI Scale still scales all of this.
+    // and hit targets you can land on. The design's density and the UI scale scale all of this.
     s.WindowPadding   = ImVec2(16, 12); s.FramePadding = ImVec2(12, 8);
     s.ItemSpacing     = ImVec2(12, 8);  s.ItemInnerSpacing = ImVec2(8, 6);
     s.CellPadding     = ImVec2(10, 6);  s.IndentSpacing = 22.0f;
@@ -4319,10 +4325,10 @@ void ApplyTheme() {
     s.WindowMenuButtonPosition = ImGuiDir_None;
     s.ButtonTextAlign = ImVec2(0.5f, 0.5f);
     s.DockingSeparatorSize = 1.5f;
-    {   // rounded controls + hairline borders (shared with the launcher), in both modes
-        okaytheme::ApplySlateMetrics(s);
-        s.WindowBorderSize = 0.0f;   // docked panels: no outline (floating ones get the popup border)
-    }
+    okaytheme::ApplyDensity(s, tok);
+    // The design's colours, rounding and borders (shared with the launcher), in both schemes.
+    okaytheme::ApplyDesign(s, tok);
+    s.WindowBorderSize = 0.0f;   // docked panels: no outline (floating ones get the popup border)
     // Panel tabs: a tab's close button shows only while it's hovered,
     // there's no extra "close the whole group" X at the end of each tab strip, the
     // active tab gets a thicker accent overline, and short names ("Game") still
@@ -4330,21 +4336,15 @@ void ApplyTheme() {
     s.TabCloseButtonMinWidthSelected   = 0.0f;
     s.TabCloseButtonMinWidthUnselected = 0.0f;
     s.DockingNodeHasCloseButton = false;
-    s.TabBarOverlineSize = 3.0f;
+    s.TabBarOverlineSize = tok.shape.tabs == OkayUI::design::TabShape::Underline ? 2.0f : 3.0f;
     s.TabBarBorderSize   = 1.0f;
     s.TabMinWidthBase    = 92.0f;
     s.TabMinWidthShrink  = 120.0f;   // squeezed dock tabs still show the icon + a few letters
-    s.TabRounding = 6.0f;
     // Apply the global UI scale LAST so every metric above is scaled together.
-    if (g_uiScale != 1.0f) s.ScaleAllSizes(g_uiScale);
-    ImGui::GetIO().FontGlobalScale = g_uiScale;
+    const float scale = g_uiScale * tok.uiScale;
+    if (scale != 1.0f) s.ScaleAllSizes(scale);
+    ImGui::GetIO().FontGlobalScale = scale * tok.textSize;
 
-    // Light mode keeps ImGui's own light palette (only the metrics above apply).
-    if (!g_darkMode) return;
-
-    // The shared OkaySpace "Slate" palette (same as the launcher and its chat), with the default accent colour.
-    const AccentPreset& ap = kAccents[0];
-    okaytheme::ApplySlateColors(s, ImVec4(ap.r, ap.g, ap.b, 1.0f));
     // The selected tab of every group matches the panel under it (so it reads as
     // "connected"), focused or not; only the overline says which group has focus.
     ImVec4* c = s.Colors;
@@ -4354,8 +4354,7 @@ void ApplyTheme() {
     c[ImGuiCol_TabDimmed]           = okaytheme::kSunken;
     c[ImGuiCol_TabDimmedSelected]   = okaytheme::kBase;
     c[ImGuiCol_TabDimmedSelectedOverline] = okaytheme::WithAlpha(okaytheme::kTextDim, 0.35f);
-    // Disabled text was easy to miss on the slate background.
-    c[ImGuiCol_TextDisabled] = ImVec4(0.70f, 0.74f, 0.82f, 1.0f);
+    s_themeRevision = OkayUI::design::Revision();
 }
 
 // ---- Panel tabs, layouts and the panel switcher ------------------------------
@@ -6035,7 +6034,7 @@ static bool* MenuFlag(const std::string& id) {
         {"panel.savemanager", &g_showSaveManager}, {"panel.history", &g_showHistory},
         {"panel.stats", &g_showStats}, {"panel.lighting", &g_showSceneSettings}, {"panel.profiler", &g_showProfiler},
         {"panel.assetmanager", &g_showAssetManager}, {"panel.crashlog", &g_showCrashLog}, {"panel.audiomixer", &g_showAudioMixer}, {"panel.input", &g_showInputDebug}, {"panel.commandline", &g_showCommandLine},
-        {"tool.visualscript", &g_showVisualScript}, {"tool.scripteditor", &g_showScriptEditor},
+        {"tool.visualscript", &g_showVisualScript}, {"tool.visualscriptapp", &g_showVisualScript} /* the round-1 "Visual Script (App)" window: the same window now */, {"tool.scripteditor", &g_showScriptEditor},
         {"tool.animation", &g_showAnimation}, {"tool.animator", &g_showAnimatorGraph}, {"tool.timeline", &g_showTimeline},
         {"tool.navigation", &g_showNavigation}, {"tool.dialogue", &g_showDialogue}, {"tool.behaviortree", &g_showBehaviorTree},
         {"tool.modeling", &g_showModeling}, {"tool.uveditor", &g_showUVEditor}, {"tool.spriteeditor", &g_showSpriteEditor},
@@ -6746,6 +6745,13 @@ static void DrawMenuSlot(EditorState& ed, const std::string& id) {
     else if (id == "view.bookmarks") DrawCameraBookmarkMenuItems(ed);
     else if (id == "view.rendering") DrawRenderingMenuItems(ed);
     else if (id == "view.layout") DrawLayoutMenuItems();
+    else if (id == "edit.appearance") {   // the design picker and the person's options (shared/AppearanceUI.hpp, as the launcher's Settings)
+        ImGui::TextDisabled("Design");
+        bool changed = okayappearance::DesignPicker(560.0f);
+        ImGui::Separator();
+        changed = okayappearance::Customization(560.0f, true) || changed;
+        if (changed) ApplyTheme();
+    }
     else if (id.rfind("create.", 0) == 0) DrawCreateSlot(ed, id, nullptr);
 }
 
@@ -6804,7 +6810,11 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
         HierSelectMany(ed, all);
     }
     else if (id == "edit.deselect") ed.Select(nullptr);
-    else if (id == "edit.darkmode" || id == "edit.lightmode") { g_darkMode = (id == "edit.darkmode"); ApplyTheme(); SaveSettings(); }
+    else if (id == "edit.darkmode" || id == "edit.lightmode") {   // the design's dark or light scheme (Edit > Appearance has the rest)
+        OkayUI::design::Options o = OkayUI::design::Current();
+        o.scheme = id == "edit.darkmode" ? OkayUI::design::Scheme::Dark : OkayUI::design::Scheme::Light;
+        okayappearance::Commit(o); ApplyTheme(); SaveSettings();
+    }
     else if (id == "edit.projectsettings") g_showProjectSettings = true;
     // GameObject
     else if (id == "go.empty") { ed.Select(ed.CreateEmpty()); ConsoleLog("Created empty GameObject"); ed.Achievement("FIRST_OBJECT"); }
@@ -15585,293 +15595,6 @@ static std::vector<ActionList::Handler> VsCodeToHandlers(const std::string& src,
     return hs;
 }
 
-// ---- Ready-made script recipes -------------------------------------------------
-// One-click starter behaviours so a beginner never builds a common script from a
-// blank page. Each recipe fills a handler's trigger + conditions + instructions
-// with sensible defaults the user can then tweak. This is the biggest single
-// "make scripting easier" lever: pick "Jump on Space", get a working handler.
-struct ScriptRecipe {
-    const char* group;
-    const char* name;
-    const char* desc;
-    ActionList::Trigger trigger;
-    const char* key;   // OnKey/OnKeyUp key, OnMessage name, or OnInterval seconds ("" if unused)
-    std::vector<ActionList::Item> conditions;
-    std::vector<ActionList::Item> instructions;
-};
-static const std::vector<ScriptRecipe>& ScriptRecipes() {
-    using T = ActionList::Trigger;
-    static const std::vector<ScriptRecipe> r = {
-        // ---- Movement ----
-        {"Movement", "Spin forever", "Rotates a little every frame.",
-            T::OnUpdate, "", {}, {{"rotate", {"0", "0", "3"}}}},
-        {"Movement", "Drift right", "Slides to the right every frame.",
-            T::OnUpdate, "", {}, {{"move", {"0.03", "0", "0"}}}},
-        {"Movement", "Follow the player", "Moves toward an object named Player.",
-            T::OnUpdate, "", {}, {{"move_toward", {"Player", "3"}}}},
-        {"Movement", "Chase, stop in range", "Chases Player, but only while farther than 1 unit.",
-            T::OnUpdate, "", {{"dist_gt", {"Player", "1"}}}, {{"move_toward", {"Player", "3"}}}},
-        {"Movement", "Patrol (ping-pong)", "Moves right for 1s, then left, forever.",
-            T::OnUpdate, "", {}, {{"move", {"0.03", "0", "0"}}, {"wait", {"1"}}, {"move", {"-0.03", "0", "0"}}, {"wait", {"1"}}}},
-        {"Movement", "Move up while W held", "Slides up each frame the W key is held.",
-            T::OnUpdate, "", {{"key", {"w"}}}, {{"move", {"0", "0.05", "0"}}}},
-        {"Movement", "Move down while S held", "Slides down each frame the S key is held.",
-            T::OnUpdate, "", {{"key", {"s"}}}, {{"move", {"0", "-0.05", "0"}}}},
-        {"Movement", "Move left while A held", "Slides left each frame the A key is held.",
-            T::OnUpdate, "", {{"key", {"a"}}}, {{"move", {"-0.05", "0", "0"}}}},
-        {"Movement", "Move right while D held", "Slides right each frame the D key is held.",
-            T::OnUpdate, "", {{"key", {"d"}}}, {{"move", {"0.05", "0", "0"}}}},
-        {"Movement", "Face the player", "Turns to look at an object named Player each frame.",
-            T::OnUpdate, "", {}, {{"look_at", {"Player"}}}},
-        {"Movement", "Teleport home on R", "Snaps back to the origin when R is pressed.",
-            T::OnKey, "r", {}, {{"set_pos", {"0", "0", "0"}}}},
-        // ---- Physics ----
-        {"Physics", "Jump on Space", "Pushes up when Space is pressed (auto-adds a Rigidbody 2D).",
-            T::OnKey, "space", {}, {{"impulse", {"0", "7"}}}},
-        {"Physics", "Dash right on Space", "A sudden rightward push on Space.",
-            T::OnKey, "space", {}, {{"impulse", {"8", "0"}}}},
-        {"Physics", "Bounce up every second", "Gives an upward push on a timer.",
-            T::OnInterval, "1", {}, {{"impulse", {"0", "6"}}}},
-        // ---- Spawning ----
-        {"Spawning", "Spawn every 2 seconds", "Creates the example marker cube on a repeating timer.",
-            T::OnInterval, "2", {}, {{"spawn", {"examples/node_playground/marker.okayprefab", "0", "0"}}}},
-        {"Spawning", "Spawn from above every 3s", "Drops the example marker cube in from y = 5 on a timer.",
-            T::OnInterval, "3", {}, {{"spawn", {"examples/node_playground/marker.okayprefab", "0", "5"}}}},
-        {"Spawning", "Spawn on click", "Creates the example marker cube where this object is when clicked.",
-            T::OnClick, "", {}, {{"spawn", {"examples/node_playground/marker.okayprefab", "0", "0"}}}},
-        {"Spawning", "Random chance spawn", "Every second, a 50% chance to drop a marker cube from above.",
-            T::OnInterval, "1", {{"chance", {"0.5"}}}, {{"spawn", {"examples/node_playground/marker.okayprefab", "0", "5"}}}},
-        {"Spawning", "Self-destruct after 3s", "Waits 3 seconds, then removes this object.",
-            T::OnStart, "", {}, {{"wait", {"3"}}, {"destroy", {}}}},
-        // ---- Combat / health ----
-        {"Combat", "Take 10 damage when hit", "Loses health on collision (auto-adds Health).",
-            T::OnCollision, "", {}, {{"hurt", {"10"}}}},
-        {"Combat", "Destroy on collision", "Removes this object when it hits something.",
-            T::OnCollision, "", {}, {{"destroy", {}}}},
-        {"Combat", "Die when health hits 0", "Destroys this object once the 'health' variable reaches 0.",
-            T::OnUpdate, "", {{"var_le", {"health", "0"}}}, {{"destroy", {}}}},
-        {"Combat", "Explode at 0 health", "Bursts particles and disappears when health runs out.",
-            T::OnUpdate, "", {{"var_le", {"health", "0"}}}, {{"emit", {"30"}}, {"destroy", {}}}},
-        {"Combat", "Hurt while standing in it (fire)", "Damages whatever stays in contact, every frame.",
-            T::OnCollisionStay, "", {}, {{"hurt", {"1"}}}},
-        {"Combat", "Flash red when hit", "Turns this object red on collision.",
-            T::OnCollision, "", {}, {{"set_color", {"1", "0", "0"}}}},
-        {"Combat", "Regenerate health", "Heals 2 health every second.",
-            T::OnInterval, "1", {}, {{"heal", {"2"}}}},
-        {"Combat", "Cap health at 100", "Clamps a 'health' variable so it never exceeds 100.",
-            T::OnUpdate, "", {{"var_gt", {"health", "100"}}}, {{"set_var", {"health", "100"}}}},
-        {"Combat", "Heal on H", "Restores 25 health when H is pressed.",
-            T::OnKey, "h", {}, {{"heal", {"25"}}}},
-        // ---- Pickups / score ----
-        {"Pickups", "Collect coin (+1 score)", "Adds 1 to 'score' and disappears when touched.",
-            T::OnTriggerEnter, "", {}, {{"add_var", {"score", "1"}}, {"destroy", {}}}},
-        {"Pickups", "Power-up (+10 score)", "Adds 10 to 'score' and disappears when touched.",
-            T::OnTriggerEnter, "", {}, {{"add_var", {"score", "10"}}, {"destroy", {}}}},
-        {"Pickups", "Health pickup", "Heals 25 and disappears when touched.",
-            T::OnTriggerEnter, "", {}, {{"heal", {"25"}}, {"destroy", {}}}},
-        {"Pickups", "Key pickup (set flag)", "Sets 'hasKey' to 1 and disappears when touched.",
-            T::OnTriggerEnter, "", {}, {{"set_var", {"hasKey", "1"}}, {"destroy", {}}}},
-        // ---- Interaction ----
-        {"Interaction", "Open on click (slide up)", "Moves up when this object is clicked.",
-            T::OnClick, "", {}, {{"move", {"0", "3", "0"}}}},
-        {"Interaction", "Rotate door on click", "Swings 90 degrees when clicked.",
-            T::OnClick, "", {}, {{"rotate", {"0", "90", "0"}}}},
-        {"Interaction", "Change color on click", "Turns red when clicked.",
-            T::OnClick, "", {}, {{"set_color", {"1", "0", "0"}}}},
-        {"Interaction", "Explode on click", "Bursts particles and disappears when clicked.",
-            T::OnClick, "", {}, {{"emit", {"30"}}, {"destroy", {}}}},
-        {"Interaction", "Grow on click", "Doubles this object's size when clicked.",
-            T::OnClick, "", {}, {{"set_scale", {"2"}}}},
-        {"Interaction", "Toggle a flag on E", "Flips a true/false variable named 'on' when E is pressed.",
-            T::OnKey, "e", {}, {{"toggle_var", {"on"}}}},
-        {"Interaction", "Play a sound on click", "Plays this object's sound when clicked (auto-adds an Audio Source).",
-            T::OnClick, "", {}, {{"play_sound", {}}}},
-        // ---- Timers ----
-        {"Timers", "Countdown timer", "Ticks a 'timer' variable down each second and shows it on this Text.",
-            T::OnInterval, "1", {}, {{"add_var", {"timer", "-1"}}, {"set_text", {"Time:", "{timer}"}}}},
-        {"Timers", "Log a tick every 5 seconds", "Writes tick to the console every 5 seconds.",
-            T::OnInterval, "5", {}, {{"log", {"tick"}}}},
-        // ---- HUD / Text ----
-        {"HUD", "Say hello on start", "Prints a message to the console when the game starts.",
-            T::OnStart, "", {}, {{"log", {"Hello!"}}}},
-        {"HUD", "Show the score", "Keeps this Text showing 'Score: <score>' (needs a Text).",
-            T::OnUpdate, "", {}, {{"set_text", {"Score:", "{score}"}}}},
-        {"HUD", "Drive a health bar", "Fills a Progress Bar named HealthBar from the 'health' variable.",
-            T::OnUpdate, "", {}, {{"set_bar", {"HealthBar", "health"}}}},
-        {"HUD", "Flash 'Go!' then clear", "Shows 'Go!' for 2 seconds, then blanks this Text.",
-            T::OnStart, "", {}, {{"set_text", {"Go!"}}, {"wait", {"2"}}, {"set_text", {""}}}},
-        // ---- Audio ----
-        {"Audio", "Play a sound on start", "Plays this object's sound when the game begins (auto-adds an Audio Source).",
-            T::OnStart, "", {}, {{"play_sound", {}}}},
-        {"Audio", "Sound while moving", "Plays this object's sound whenever it is moving.",
-            T::OnUpdate, "", {{"is_moving", {}}}, {{"play_sound", {}}}},
-        // ---- Camera / Scene ----
-        {"Scene", "Mark a win on collision", "Sets won to 1 and logs You win when this object hits something.",
-            T::OnCollision, "", {}, {{"set_var", {"won", "1"}}, {"log", {"You win"}}}},
-        {"Scene", "Next level on collision", "Loads the next scene in build order on collision.",
-            T::OnCollision, "", {}, {{"load_next_scene", {}}}},
-        {"Scene", "Pause on P", "Freezes the game when P is pressed.",
-            T::OnKey, "p", {}, {{"pause", {}}}},
-        {"Scene", "Slow-mo on click", "Drops the game to half speed when clicked.",
-            T::OnClick, "", {}, {{"set_timescale", {"0.5"}}}},
-        {"Scene", "Set sky color on start", "Paints the background blue when the game starts.",
-            T::OnStart, "", {}, {{"set_bg", {"0.2", "0.4", "0.8"}}}},
-        {"Scene", "Mark a win at 10 points", "Sets won to 1 and logs You win once score reaches 10.",
-            T::OnUpdate, "", {{"var_ge", {"score", "10"}}}, {{"set_var", {"won", "1"}}, {"log", {"You win"}}}},
-        {"Scene", "Mark a win when the tagged enemies are gone", "Sets won to 1 when no objects are tagged enemy.",
-            T::OnUpdate, "", {{"tag_count_lt", {"enemy", "1"}}}, {{"set_var", {"won", "1"}}, {"log", {"You win"}}}},
-        // ---- Juice ----
-        {"Juice", "Pickup pop", "Punches the scale, plays a sound, then vanishes when clicked.",
-            T::OnClick, "", {}, {{"punch_scale", {"0.4", "0.3"}}, {"play_sound", {}},
-                                 {"wait", {"0.3"}}, {"destroy", {}}}},
-        {"Juice", "Hit shake", "Shakes this object whenever a 'hit' message arrives.",
-            T::OnMessage, "hit", {}, {{"shake", {"0.4", "0.35"}}}},
-        {"Juice", "Bouncy entrance", "Grows from tiny to full size with a bounce when the game starts.",
-            T::OnStart, "", {}, {{"set_scale", {"0.05"}}, {"tween_scale", {"1", "0.6", "out_bounce"}}}},
-        {"Juice", "Glide to a point", "Eases to (0, 3) over a second when clicked — edit the target.",
-            T::OnClick, "", {}, {{"tween_move", {"0", "3", "1", "out"}}}},
-        // ---- Messaging ----
-        {"Messaging", "Broadcast 'hit' on collision", "Sends a 'hit' message to every script on collision.",
-            T::OnCollision, "", {}, {{"send", {"hit"}}}},
-        {"Messaging", "React to 'hit' message", "Loses 10 health whenever a 'hit' message is received.",
-            T::OnMessage, "hit", {}, {{"hurt", {"10"}}}},
-        {"Messaging", "Tell the player on touch", "Sends a 'hit' message to the object named Player on collision.",
-            T::OnCollision, "", {}, {{"send_to", {"Player", "hit"}}}},
-        {"Messaging", "Count kills on 'kill'", "Adds 1 to a 'kills' variable whenever a 'kill' message arrives.",
-            T::OnMessage, "kill", {}, {{"add_var", {"kills", "1"}}}},
-        // ---- More juice (color effects) ----
-        {"Juice", "Hurt flash", "Blinks white and back whenever a 'hit' message arrives.",
-            T::OnMessage, "hit", {}, {{"flash", {"0.25"}}}},
-        {"Juice", "Fade out and die", "Fades to invisible over half a second, then removes the object, on a 'die' message.",
-            T::OnMessage, "die", {}, {{"fade", {"0", "0.5"}}, {"wait", {"0.5"}}, {"destroy", {}}}},
-        {"Juice", "Danger tint at low health", "Tints red while the 'health' variable is under 25.",
-            T::OnUpdate, "", {{"var_lt", {"health", "25"}}}, {{"tween_color", {"1", "0.2", "0.2", "0.3"}}}},
-        // ---- Movement patterns ----
-        {"Move", "Orbit the Player", "Circles the object named Player at radius 3 (moons, shields).",
-            T::OnUpdate, "", {}, {{"orbit", {"Player", "3", "90"}}}},
-        {"Move", "Cruise forward", "Moves in the facing direction at 2 units/second — pair with Look At or Aim.",
-            T::OnUpdate, "", {}, {{"move_dir", {"forward", "2"}}}},
-        // ---- Timing ----
-        {"Timing", "Shot on Space, then wait", "Spawns the example shot when Space is held, at most every 0.3 seconds.",
-            T::OnKey, " ", {{"cooldown", {"0.3"}}}, {{"spawn", {"examples/node_playground/shot.okayprefab", "0", "0"}}}},
-        // ---- Cloud (PlayFab) ----
-        {"Cloud", "PlayFab sign-in on start", "Signs in to PlayFab when the game starts (put your Title ID in). Sets playfab_ok and playfab_id.",
-            T::OnStart, "", {}, {{"playfab_login", {"TITLEID", "player-1"}},
-                                 {"comment", {"replace TITLEID with your PlayFab Title ID"}}}},
-        {"Cloud", "Submit score on 'game_over'", "Publishes the 'score' variable to a PlayFab leaderboard when a 'game_over' message arrives.",
-            T::OnMessage, "game_over", {}, {{"playfab_set_stat", {"highscore", "$score"}}}},
-        {"Cloud", "Fetch Top 10 on start", "Loads a PlayFab leaderboard into pf_1_name/pf_1_score... — show them with UI Text Bind.",
-            T::OnStart, "", {}, {{"playfab_leaderboard", {"highscore", "10"}},
-                                 {"comment", {"bind {pf_1_name} {pf_1_score} in a Text"}}}},
-    };
-    return r;
-}
-// The single obvious component an instruction op needs to actually do anything, so the
-// editor can both warn ("needs X") and auto-add it. Returns nullptr for ops with no
-// special / no single-obvious requirement.
-static const char* OpComponentName(const std::string& op) {
-    if (op == "impulse" || op == "velocity") return "Rigidbody 2D";
-    if (op == "impulse3" || op == "velocity3" || op == "force3") return "Rigidbody 3D";
-    if (op == "play_sound") return "Audio Source";
-    if (op == "emit") return "Particle System";
-    if (op == "hurt" || op == "heal" || op == "eat" || op == "drink" || op == "survival") return "Health";
-    if (op == "set_text") return "Text";
-    return nullptr;
-}
-// True if `go` already carries the component that op needs (or the op needs nothing).
-static bool ObjHasOpComponent(GameObject* go, const std::string& op) {
-    if (!go) return true;
-    if (op == "impulse" || op == "velocity") return go->GetComponent<Rigidbody2D>() != nullptr;
-    if (op == "impulse3" || op == "velocity3" || op == "force3") return go->GetComponent<Rigidbody3D>() != nullptr;
-    if (op == "play_sound") return go->GetComponent<AudioSource>() != nullptr;
-    if (op == "emit") return go->GetComponent<ParticleSystem>() != nullptr;
-    if (op == "hurt" || op == "heal" || op == "eat" || op == "drink" || op == "survival") return go->GetComponent<SurvivalStats>() != nullptr;
-    if (op == "set_text") return go->GetComponent<TextRenderer>() != nullptr;
-    return true;
-}
-// Auto-add the unambiguous component an op needs (never Text — that may belong on a
-// child, so it stays a warning only).
-static void EnsureOpComponent(GameObject* go, const std::string& op) {
-    if (!go || ObjHasOpComponent(go, op)) return;
-    if (op == "impulse" || op == "velocity") go->AddComponent<Rigidbody2D>();
-    else if (op == "impulse3" || op == "velocity3" || op == "force3") go->AddComponent<Rigidbody3D>();
-    else if (op == "play_sound") go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.2f);
-    else if (op == "emit") go->AddComponent<ParticleSystem>();
-    else if (op == "hurt" || op == "heal" || op == "eat" || op == "drink" || op == "survival") go->AddComponent<SurvivalStats>();
-}
-
-// Apply a recipe: fill the primary handler if the script is still untouched, else add
-// it as a NEW extra handler so nothing the user made is overwritten.
-static void ApplyScriptRecipe(ActionList* al, const ScriptRecipe& rc, bool& dirty) {
-    bool primaryEmpty = al->conditions.empty() && al->instructions.empty()
-                     && al->extraHandlers.empty() && al->trigger == ActionList::Trigger::OnStart;
-    if (primaryEmpty) {
-        al->trigger = rc.trigger; al->triggerKey = rc.key ? rc.key : "";
-        al->conditions = rc.conditions; al->instructions = rc.instructions;
-    } else {
-        ActionList::Handler h;
-        h.trigger = rc.trigger; h.triggerKey = rc.key ? rc.key : "";
-        h.conditions = rc.conditions; h.instructions = rc.instructions;
-        al->extraHandlers.push_back(std::move(h));
-    }
-    // Convenience: auto-add the components the recipe's actions need (Rigidbody, Audio
-    // Source, Particle System, Health) so the behaviour works right away — no separate
-    // "why isn't this doing anything?" step for a beginner.
-    if (GameObject* go = al->gameObject)
-        for (const auto& in : rc.instructions) EnsureOpComponent(go, in.op);
-    dirty = true;
-}
-// A searchable popup of the recipes above. Returns true if one was applied to `al`.
-static bool ScriptRecipePicker(const char* popupId, ActionList* al, bool& dirty) {
-    bool applied = false;
-    ImGui::SetNextWindowSizeConstraints(ImVec2(380, 0), ImVec2(480, 560));
-    if (ImGui::BeginPopup(popupId)) {
-        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "Starter Scripts");
-        ImGui::TextDisabled("Pick a ready-made behaviour — it's added as a trigger you can tweak.");
-        static char filter[64] = "";
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextWithHint("##recipefilter", "search behaviours...", filter, sizeof(filter));
-        ImGui::Separator();
-        std::string needle = filter; for (auto& c : needle) c = (char)std::tolower((unsigned char)c);
-        ImGui::BeginChild("##recipelist", ImVec2(0, 400));
-        const char* curGroup = nullptr;
-        for (const auto& rc : ScriptRecipes()) {
-            std::string hay = std::string(rc.name) + " " + rc.desc + " " + rc.group;
-            for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
-            if (!needle.empty() && hay.find(needle) == std::string::npos) continue;
-            if (!curGroup || std::strcmp(curGroup, rc.group) != 0) {
-                curGroup = rc.group;
-                ImGui::Spacing();
-                ImGui::TextColored(ImVec4(0.86f, 0.78f, 0.42f, 1.0f), "%s", rc.group);
-            }
-            ImGui::PushID(&rc);
-            if (ImGui::Selectable(rc.name)) { ApplyScriptRecipe(al, rc, dirty); applied = true; ImGui::CloseCurrentPopup(); }
-            if (ImGui::IsItemHovered()) {
-                // A structured preview of exactly what the recipe sets up.
-                ImGui::BeginTooltip();
-                ImGui::TextColored(ImVec4(0.86f, 0.88f, 0.94f, 1.0f), "%s", rc.name);
-                ImGui::TextDisabled("%s", rc.desc);
-                ImGui::Separator();
-                ImGui::TextColored(ImVec4(0.86f, 0.62f, 0.36f, 1.0f), "When: %s",
-                                   TriggerPhrase(rc.trigger, rc.key ? rc.key : "").c_str());
-                if (!rc.conditions.empty()) {
-                    ImGui::TextColored(ImVec4(0.42f, 0.78f, 0.62f, 1.0f), "Only if:");
-                    for (const auto& c : rc.conditions)
-                        ImGui::BulletText("%s  %s", ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), c.op), ActionOpSummary(c).c_str());
-                }
-                ImGui::TextColored(ImVec4(0.5f, 0.64f, 0.86f, 1.0f), "Do:");
-                if (rc.instructions.empty()) ImGui::BulletText("(nothing yet)");
-                for (const auto& in : rc.instructions)
-                    ImGui::BulletText("%s  %s", ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), in.op), ActionOpSummary(in).c_str());
-                ImGui::EndTooltip();
-            }
-            ImGui::PopID();
-        }
-        ImGui::EndChild();
-        ImGui::EndPopup();
-    }
-    return applied;
-}
 
 // What must exist for an action to actually do something — shown next to each op so
 // a beginner knows what to add first (e.g. a Rigidbody, an Audio Source, a prefab).
@@ -50213,21 +49936,12 @@ static const std::vector<okay::editor::vsed::VsStepInfo>* VsStepCatalog(bool con
         if (!v.empty()) return;
         for (int i = 0; i < n; ++i) {
             v.push_back({ops[i].op, ops[i].label, ops[i].group ? ops[i].group : "", ops[i].desc ? ops[i].desc : "",
-                         skipFlow && kListOnly.count(ops[i].op) > 0});
+                         skipFlow && kListOnly.count(ops[i].op) > 0, ops[i].hint ? ops[i].hint : ""});
         }
     };
     if (cond) { fill(cnd, kCondOps, IM_ARRAYSIZE(kCondOps), false); return &cnd; }
     fill(ins, kInstrOps, IM_ARRAYSIZE(kInstrOps), true);
     return &ins;
-}
-static int VsStepEditor(ActionList::Item& it, bool cond, int id, bool& changed) {
-    if (g_previewEd) g_pickerProjectDir = g_previewEd->projectDir();   // prefab / object pickers
-    Scene* sc = g_previewEd ? &g_previewEd->scene() : nullptr;
-    bool d = false;
-    int a = cond ? DrawActionItem(it, kCondOps, IM_ARRAYSIZE(kCondOps), 90000 + id, d, sc)
-                 : DrawActionItem(it, kInstrOps, IM_ARRAYSIZE(kInstrOps), 91000 + id, d, sc);
-    if (d) changed = true;
-    return a;
 }
 
 // Headless export, the same Build the Build window runs, for CI and scripts:
@@ -50612,13 +50326,11 @@ int main(int argc, char** argv) {
         // (Dear ImGui 1.92 loads glyphs on demand from the TTF, so punctuation like
         // "—", "•", "…" renders without an explicit range. Geometric shapes ●▶★ are
         // simply absent from Roboto, so those are drawn or swapped in the code.)
-        if (!io.Fonts->AddFontFromMemoryCompressedBase85TTF(
-                RobotoMedium_compressed_data_base85, 18.0f, &fc))
+        if (!okf::AddToAtlas(io.Fonts, okf::RobotoMediumTtf(), 18.0f, fc))
             io.Fonts->AddFontDefault();
         MergeLocalizationFonts(16.0f);   // Japanese, Chinese, Korean text in the string table
         // A slightly larger heading face for section titles (visual hierarchy).
-        g_headingFont = io.Fonts->AddFontFromMemoryCompressedBase85TTF(
-                RobotoMedium_compressed_data_base85, 22.0f, &fc);
+        g_headingFont = okf::AddToAtlas(io.Fonts, okf::RobotoMediumTtf(), 22.0f, fc);
         // A monospace face for the Script Editor. Code needs fixed-width glyphs so the
         // syntax overlay, caret and columns line up. JetBrains Mono (the JetBrains IDE
         // font) is a scalable TTF, so it can't fall out of alignment like a proportional
@@ -50626,8 +50338,7 @@ int main(int argc, char** argv) {
         // ~15px code size. Downscaling a high-res glyph stays sharp at every zoom level,
         // where a small bitmap font (the old ProggyClean) blurred as soon as you zoomed.
         ImFontConfig mc; mc.OversampleH = 2; mc.OversampleV = 2; mc.PixelSnapH = true;
-        g_codeFont = io.Fonts->AddFontFromMemoryCompressedBase85TTF(
-                JetBrainsMono_compressed_data_base85, kCodeFontBakePx, &mc);
+        g_codeFont = okf::AddToAtlas(io.Fonts, okf::JetBrainsMonoTtf(), kCodeFontBakePx, mc);
         if (!g_codeFont) { ImFontConfig fb; fb.SizePixels = 13.0f; g_codeFont = io.Fonts->AddFontDefault(&fb); }
     }
     // Re-present the (animated) splash between heavy init steps so the loading
@@ -50644,34 +50355,16 @@ int main(int argc, char** argv) {
     okay::editor::vsed::SaveTextFile = [](const std::string& path, const std::string& content) {
         return SaveEditorDocument(path, content);
     };
-    okay::editor::vsed::VsBackupMenu = [](const std::string& path) {
-        const auto list = EditorBackups().List(path);
-        if (list.empty()) { ImGui::TextDisabled("No earlier saves of this file."); return; }
-        int shown = 0;
-        for (const auto& b : list) {
-            if (shown++ >= 5) break;
-            const std::string label = okay::BackupManager::FormatStamp(b.timestamp);
-            if (ImGui::MenuItem(label.c_str())) {
-                std::string text;
-                if (!EditorBackups().Read(b, text)) { ConsoleLog("Couldn't read that backup", 2); continue; }
-                auto& st = okay::editor::vsed::State();
-                st.undo.push_back(st.g.toText());
-                st.g.fromText(text);
-                okay::editor::vsed::VsRefreshDirty(st);
-                ConsoleLog("Restored a previous version. Save if you want to keep it.");
-            }
+    // File > Restore Previous Version in the Visual Script window: the graph's last five saves (the window restores one or
+    // compares it with the graph on screen).
+    okay::editor::vsed::VsBackups = [](const std::string& path) {
+        std::vector<std::pair<std::string, std::string>> out;
+        for (const auto& b : EditorBackups().List(path)) {
+            if (out.size() >= 5) break;
+            std::string text;
+            if (EditorBackups().Read(b, text)) out.push_back({okay::BackupManager::FormatStamp(b.timestamp), std::move(text)});
         }
-        // Compare one of them with the graph on screen, block by block (VsGraphDiff.hpp).
-        if (ImGui::BeginMenu("Compare with")) {
-            int cmp = 0;
-            for (const auto& b : list) {
-                if (cmp++ >= 5) break;
-                const std::string label = okay::BackupManager::FormatStamp(b.timestamp);
-                std::string text;
-                if (ImGui::MenuItem(label.c_str()) && EditorBackups().Read(b, text)) okay::editor::vsed::VsShowDiff(path, label, text);
-            }
-            ImGui::EndMenu();
-        }
+        return out;
     };
     okay::editor::vsed::VsHasComponent = [](GameObject* go, const char* id) -> bool {
         if (!go || !id) return false;
@@ -50774,9 +50467,7 @@ int main(int argc, char** argv) {
     EditorState::onMeshTrianglesReordered = [](GameObject* go) { if (go == g_meshEditObj) g_meshSelFaces.clear(); };
     okay::editor::vsed::OpenPlayground = [](EditorState& ed, const char* id) { OpenVsPlayground(ed, id); };
     okay::editor::vsed::StepCatalog = VsStepCatalog;
-    okay::editor::vsed::StepEditor = VsStepEditor;
     okay::editor::vsed::StepSummary = [](const ActionList::Item& it) { return ActionOpSummary(it); };
-    okay::editor::vsed::TemplatePicker = [](const char* id, ActionList& out) { bool d = false; return ScriptRecipePicker(id, &out, d); };
     ApplyTheme();
     // Which Dear ImGui input path runs: imgui_impl_sdl2 (default) or our own okay::platform feed (OKAY_PLATFORM_EVENTS=own).
     // Own feed: no pop-out panels (no multi-viewport), no gamepad navigation; keys, text, mouse, wheel, focus, clipboard, cursor shape work.
@@ -50945,7 +50636,13 @@ int main(int argc, char** argv) {
         g_uiScale = okay::platform::UiScaleFromDpi(winSeam->Dpi());   // snapped to 1.0 / 1.25 / 1.5 ... (1.0 when unknown)
     }
     LoadCustomActions();   // reusable custom instruction/condition library
-    ApplyTheme();   // re-apply now that the saved theme/accent/UI-scale are loaded
+    // The design and the person's options (appearance.json, shared with the launcher and every OkayUI program). The first start
+    // with designs keeps the editor's light mode when it was chosen.
+    if (!OkayUI::design::FollowUserFile() && !g_darkMode) {
+        OkayUI::design::Options o = OkayUI::design::Current(); o.scheme = OkayUI::design::Scheme::Light;
+        OkayUI::design::Set(o); OkayUI::design::SaveUserFile();
+    }
+    ApplyTheme();   // re-apply now that the saved design and UI scale are loaded
     StartSplashLateStep();   // the sign-in check or the project open is next (or nothing: ready)
     splashTick(nullptr);     // keep the loading frame moving right up to the first real frame (DrawStartSplashOverlay takes over)
 
@@ -51822,6 +51519,7 @@ int main(int argc, char** argv) {
         oked::webrun::Shared().Poll();   // Build Settings > Web > Run in browser: answer the browser (never waits)
         {
             TabPaddingScope tabPad;   // floating panel groups lay their tabs out in NewFrame()
+            if (OkayUI::design::Poll(ImGui::GetTime()) || s_themeRevision != OkayUI::design::Revision()) ApplyTheme();   // another program changed the design
             ImGui::NewFrame();
         }
         ModalGuardFrame();   // undrawn modals closed, lost ones brought back, every modal opening and closing in the breadcrumbs
@@ -52550,7 +52248,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.Problems"); if (g_showProblems || std::getenv("OKAY_UI_DIAG")) DrawProblems(ed); }
         if (std::getenv("OKAY_UI_DIAG") && g_showVisualScript && g_sceneDockId)
             ImGui::SetNextWindowDockID(g_sceneDockId, ImGuiCond_Always);
-        { OKAY_PROFILE("UI.VisualScript"); if (g_showVisualScript) okay::editor::vsed::Draw(ed, &g_showVisualScript); }
+        { OKAY_PROFILE("UI.VisualScript"); DrawVisualScriptApp(ed); }   // VisualScriptAppHost.cpp: the shared Visual Script app
         { OKAY_PROFILE("UI.Modeling"); if (g_showModeling)  DrawModeling(ed); }
         { OKAY_PROFILE("UI.UVEditor"); if (g_showUVEditor)  DrawUVEditor(ed); }
         { OKAY_PROFILE("UI.FindInFiles"); DrawFindInFiles(ed); }

@@ -10,7 +10,7 @@
 // one block, flow leaving to more than one place, or leaving from a block that also continues inside (a Sequence's
 // first output, a loop's Body). Arguments are read when the function is called, the way a call always reads them.
 //
-// No ImGui: tests run it. Included from inside VisualScriptEditor.hpp after the graph model. Written for this project
+// No ImGui: tests run it. Included from inside VisualScriptModel.hpp after the graph model. Written for this project
 // from its own function rules (Function / Call Function / Return, VsTypes.hpp FunctionSig).
 #include <algorithm>
 #include <cctype>

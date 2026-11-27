@@ -150,8 +150,8 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 
 ## `engine/include/okay/Platform/Messages.hpp`
 
-- `DirectMessage` struct, line 23
-- `Messages` class, line 34
+- `DirectMessage` struct, line 28
+- `Messages` class, line 39
 
 ## `engine/include/okay/Platform/NativeFetch.hpp`
 
@@ -326,7 +326,7 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 - `LocalListAction` enum, line 169: How the one-time migration of the old PC-only list works. 'marker' is the
 - `ClassifyLocalList` function, line 170
 - `ProfilesViewState` function, line 177: ---- Reading profiles ---------------------------------------------------------
-- `ProfilesGet` function, line 203: The same with the query written by hand ("select=...&id=eq...."). Only Messages,
+- `ProfilesGet` function, line 203: The same with the query written by hand ("select=...&id=eq...."). Only Admin
 
 ## `engine/include/okay/Platform/Profiles.hpp`
 
@@ -338,11 +338,11 @@ Back to the [code index](../code_index.md). 31 headers, 273 names.
 
 ## `engine/include/okay/Platform/Servers.hpp`
 
-- `Server` struct, line 21
-- `Channel` struct, line 22
-- `ChannelMessage` struct, line 23
-- `ServerMember` struct, line 24
-- `Servers` class, line 26
+- `Server` struct, line 22
+- `Channel` struct, line 23
+- `ChannelMessage` struct, line 24
+- `ServerMember` struct, line 25
+- `Servers` class, line 27
 
 ## `engine/include/okay/Platform/Steam/Steam.hpp`
 

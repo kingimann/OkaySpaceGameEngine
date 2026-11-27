@@ -14,6 +14,7 @@
 #include <iterator>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace okay::js;
@@ -141,7 +142,7 @@ void Prototypes() {
            "hi d true false");
     Expect("const o = {}; Object.defineProperty(o, 'x', { get() { return 7; }, enumerable: false }); console.log(o.x, Object.keys(o).length, JSON.stringify(Object.getOwnPropertyDescriptor(o, 'x')))",
            "7 0 {\"enumerable\":false,\"configurable\":false}");
-    Expect("class C { #p = 1; }", "ERROR: t.js:1: SyntaxError: #private class members are not supported");
+    Expect("class C { #p = 1; p() { return this.#p; } } console.log(new C().p())", "1");   // #private members (15.7) work since round 2
     Expect("class Q { a = 1; b = this.a + 1; static c = 3; } const q = new Q(); console.log(q.a, q.b, Q.c)", "1 2 3");
     Expect("class V { get len() { return 3; } set len(v) { this._l = v; } } const v = new V(); v.len = 9; console.log(v.len, v._l)", "3 9");
 }
@@ -494,6 +495,10 @@ void RegexLookbehind() {
            "after a head 1\n2");
     // 13.5.1.2: delete on an optional chain, also when it stops early
     Expect("const v = {a: {b: 1}}; console.log(delete v?.a?.b, JSON.stringify(v), delete v?.z?.q, delete v?.a, JSON.stringify(v))", "true {\"a\":{}} true true {}");
+    // \p{...} and the v flag need Unicode data this engine does not carry: a clear SyntaxError, and without u, \p is a plain p
+    ExpectError("new RegExp('\\\\p{L}', 'u')", "Unicode property escapes");
+    ExpectError("new RegExp('a', 'v')", "v flag");
+    Expect("console.log(/\\p{L}/.test('p{L}'))", "true");
 }
 
 // 15.7.11 static blocks, 14.7.5 for await, and newer library methods real pages use (23.1.3.35 toSpliced,
@@ -599,6 +604,365 @@ void DynamicImport() {
     };
     CHECK(rt.Run("import('mod-' + 1).then(m => console.log(m.name));", "i.js", &err));
     CHECK(out == "mod-1\n");
+}
+
+// 25.1 ArrayBuffer, 25.2 SharedArrayBuffer, 23.2 TypedArray objects with 10.4.5 the integer-indexed exotic
+// object rules, 25.3 DataView, 25.4 Atomics (no waiting), and the WHATWG Encoding standard's TextEncoder / TextDecoder.
+void TypedArrays() {
+    Expect("const b = new ArrayBuffer(8); const u = new Uint8Array(b); u[0] = 257; u[1] = -1; u[9] = 5;"
+           "console.log(b.byteLength, u.length, u[0], u[1], u[9], u['9'], 9 in u, '1' in u, Object.keys(u).length)",
+           "8 8 1 255 undefined undefined false true 8");
+    Expect("const i = new Int8Array([127, 128, -129, 1.9, -1.9, NaN]); console.log(i.join())", "127,-128,127,1,-1,0");
+    Expect("const c = new Uint8ClampedArray([300, -5, 1.5, 2.5, 0.5, NaN, 254.5]); console.log(c.join())", "255,0,2,2,0,0,254");
+    Expect("const f = new Float32Array([1.1, 1e40, -1e40]); console.log(f[0] === Math.fround(1.1), f[1], f[2])",
+           "true Infinity -Infinity");
+    Expect("const a = new Int16Array(4); a.set([1, 2], 1); console.log(a.join(), a.byteLength, Int16Array.BYTES_PER_ELEMENT, a.BYTES_PER_ELEMENT)",
+           "0,1,2,0 8 2 2");
+    Expect("const u = new Uint32Array([1, 2, 3, 4]); const s = u.subarray(1, 3); s[0] = 9; console.log(u.join(), s.length, s.byteOffset, s.buffer === u.buffer)",
+           "1,9,3,4 2 4 true");
+    Expect("const u = Uint8Array.from([3, 1, 2]); console.log(u.slice(1).join(), u.map(x => x * 2).join(), u.filter(x => x > 1).join(),"
+           "[...u.sort()].join(), u.reverse().join(), u.indexOf(2), u.includes(3), u.at(-1), u.fill(7, 1).join(), Uint8Array.of(1, 2).join())",
+           "1,2 6,2,4 3,2 1,2,3 3,2,1 1 true 1 3,7,7 1,2");
+    Expect("const u = new Uint8Array([5, 1, 4]); console.log(u.toSorted().join(), u.join(), u.with(0, 9).join(), u.toReversed().join(),"
+           "u.reduce((a, b) => a + b), u.findLast(x => x < 5), Object.prototype.toString.call(u), u[Symbol.toStringTag], String(u))",
+           "1,4,5 5,1,4 9,1,4 4,1,5 10 4 [object Uint8Array] Uint8Array 5,1,4");
+    Expect("const b = new BigInt64Array(2); b[0] = -1n; b[1] = 2n ** 64n + 5n; const u = new BigUint64Array(b.buffer); console.log(b[0], b[1], u[0], typeof u[1])",
+           "-1n 5n 18446744073709551615n bigint");
+    ExpectError("new BigInt64Array(1)[0] = 1", "TypeError");
+    ExpectError("new Uint8Array(1)[0] = 1n", "TypeError");
+    Expect("const d = new DataView(new ArrayBuffer(24), 2); d.setUint16(0, 0x1234); d.setUint16(2, 0x1234, true); d.setFloat64(4, Math.PI);"
+           "d.setBigInt64(12, -2n, true); const u = new Uint8Array(d.buffer);"
+           "console.log(u[2], u[3], u[4], u[5], d.getUint16(0, true).toString(16), d.getFloat64(4) === Math.PI, d.getBigInt64(12, true), d.getInt8(0), d.byteOffset, d.byteLength)",
+           "18 52 52 18 3412 true -2n 18 2 22");
+    ExpectError("new DataView(new ArrayBuffer(4)).getUint32(1)", "RangeError");
+    ExpectError("new DataView(new ArrayBuffer(4), 5)", "RangeError");
+    ExpectError("new Uint32Array(new ArrayBuffer(6))", "RangeError");    // not a multiple of the element size
+    ExpectError("new Uint32Array(new ArrayBuffer(8), 2)", "RangeError"); // offset not aligned
+    ExpectError("new Uint8Array(-1)", "RangeError");
+    ExpectError("new ArrayBuffer(1e12)", "RangeError");                  // over our allocation limit, checked before allocating
+    ExpectError("Uint8Array(2)", "TypeError");
+    // detach: transfer moves the bytes; the old buffer and its views have length 0 and reads give undefined, writes do nothing
+    Expect("const b = new ArrayBuffer(4); const u = new Uint8Array(b); u[0] = 7; const c = b.transfer(); console.log(b.detached, b.byteLength, u.length, u[0],"
+           "new Uint8Array(c)[0], c.byteLength); u[0] = 1; console.log(u[0], 0 in u, u.byteOffset, Object.keys(u).length)",
+           "true 0 0 undefined 7 4\nundefined false 0 0");
+    ExpectError("const b = new ArrayBuffer(4); b.transfer(); new Uint8Array(b)", "TypeError");
+    ExpectError("const b = new ArrayBuffer(4); const u = new Uint8Array(b); b.transfer(); u.fill(1)", "TypeError");
+    ExpectError("const b = new ArrayBuffer(4); const d = new DataView(b); b.transfer(); d.getInt8(0)", "TypeError");
+    ExpectError("const b = new ArrayBuffer(4); b.transfer(); b.slice(0)", "TypeError");
+    // a comparator or a valueOf that detaches the buffer in the middle of a method must not touch freed memory
+    Expect("const b = new ArrayBuffer(8); const u = new Uint8Array(b); u.set([5, 4, 3, 2, 1]); u.sort((x, y) => { if (!b.detached) b.transfer(); return x - y; });"
+           "console.log(u.length)", "0");
+    ExpectError("const b = new ArrayBuffer(8); const u = new Uint8Array(b); u.fill({valueOf() { b.transfer(); return 3; }})", "TypeError");
+    Expect("const b = new ArrayBuffer(8); const u = new Uint8Array(b); u.set([1, 2, 3]); const r = u.map((x, i) => { if (i === 1) b.transfer(); return x; });"
+           "console.log(r.join())", "1,2,0,0,0,0,0,0");
+    Expect("const b = new ArrayBuffer(4), u = new Uint8Array(b); u[0] = 9; console.log(b.slice(0, 2).byteLength, new Uint8Array(b.slice(0, 1))[0], ArrayBuffer.isView(u), ArrayBuffer.isView(b))",
+           "2 9 true false");
+    Expect("const s = new SharedArrayBuffer(4); const i = new Int32Array(s); i[0] = 5; console.log(Atomics.add(i, 0, 2), Atomics.load(i, 0), Atomics.compareExchange(i, 0, 7, 1), i[0],"
+           "Object.prototype.toString.call(s), s.growable, Atomics.notify(i, 0))",
+           "5 7 7 1 [object SharedArrayBuffer] false 0");
+    Expect("const e = new TextEncoder().encode('h\\u00e9\\u20ac\\u{1F600}'); console.log(e.length, e.join(), new TextDecoder().decode(e) === 'h\\u00e9\\u20ac\\u{1F600}', new TextEncoder().encoding)",
+           "10 104,195,169,226,130,172,240,159,152,128 true utf-8");
+    Expect("console.log(new TextDecoder().decode(new Uint8Array([0xEF, 0xBB, 0xBF, 0x41, 0xC3, 0x28, 0xF0, 0x9F])) === 'A\\uFFFD(\\uFFFD', new TextDecoder().decode())",
+           "true ");
+    ExpectError("new TextDecoder('utf-8', {fatal: true}).decode(new Uint8Array([0xFF]))", "TypeError");
+    Expect("const d = new TextDecoder(); const a = d.decode(new Uint8Array([0xE2, 0x82]), {stream: true}); console.log(a.length, a + d.decode(new Uint8Array([0xAC])) === '\\u20ac', d.decode(new Uint8Array([0xE2])) === '\\uFFFD')",
+           "0 true true");
+    Expect("const r = new TextEncoder().encodeInto('ab\\u20ac', new Uint8Array(4)); console.log(r.read, r.written)", "2 2");
+    Expect("const u = new Uint8Array([1, 2, 3]); let s = 0; for (const x of u) s += x; const [a, ...rest] = u; console.log(s, a, rest.join(), Array.from(u.entries()).join('|'), JSON.stringify(u))",
+           "6 1 2,3 0,1|1,2|2,3 {\"0\":1,\"1\":2,\"2\":3}");
+    Expect("class MyU8 extends Uint8Array { sum() { return this.reduce((a, b) => a + b, 0); } } const m = new MyU8([1, 2]); console.log(m.sum(), m instanceof Uint8Array, m.map(x => x).constructor === MyU8)",
+           "3 true true");
+    Expect("const u = new Uint8Array(4); console.log(Object.getOwnPropertyDescriptor(u, '0').writable, Reflect.defineProperty(u, '0', {value: 3}), u[0],"
+           "Reflect.defineProperty(u, '0', {value: 1, writable: false}), Reflect.defineProperty(u, '9', {value: 1}), Reflect.deleteProperty(u, 0), Reflect.deleteProperty(u, 9), u['-0'], u['1.5'])",
+           "true true 3 false false false true undefined undefined");
+    Expect("const u = new Uint8Array(2); u.foo = 1; console.log(Reflect.ownKeys(u).join(), Object.getPrototypeOf(Uint8Array) === Object.getPrototypeOf(Int8Array))",
+           "0,1,foo true");
+    // hostile sizes: huge lengths are refused before any allocation; the budget stops long loops
+    ExpectError("new Float64Array(2 ** 31)", "RangeError");
+    ExpectError("new Uint8Array({length: 2 ** 40})", "RangeError");
+    CHECK(Run("const u = new Uint8Array(1 << 20); for (;;) u.fill(1);", false, 2'000'000).find("budget") != std::string::npos);
+    CHECK(Run("const b = new ArrayBuffer(1 << 20); for (let i = 0; i < 100; i++) b.slice(0); console.log('ok')", false, 50'000'000, 16u << 20)
+              .find("ERROR") == std::string::npos);
+    // collected and rooted
+    CHECK(Run("let t = 0; for (let i = 0; i < 300; i++) { const u = new Uint16Array([i, i + 1]); const d = new DataView(u.buffer); t += d.getUint16(0, true) + u.subarray(1)[0]; } console.log(t)", true) ==
+          "90000\n");
+}
+
+// 10.5 proxy exotic objects (every trap and its invariant checks), 28.2 Proxy, 28.1 Reflect
+void Proxies() {
+    Expect("const log = []; const t = {a: 1}; const p = new Proxy(t, { get(o, k, r) { log.push('get ' + String(k)); return k === 'b' ? 42 : Reflect.get(o, k, r); },"
+           "set(o, k, v, r) { log.push('set ' + k); o[k] = v * 2; return true; }, has(o, k) { return k === 'z' || k in o; },"
+           "deleteProperty(o, k) { log.push('del ' + k); return delete o[k]; } });"
+           "p.c = 5; console.log(p.a, p.b, t.c, 'z' in p, 'q' in p, delete p.a, t.a, log.join())",
+           "1 42 10 true false true undefined set c,get a,get b,del a");
+    Expect("const p = new Proxy({x: 1, y: 2}, { ownKeys() { return ['y', 'x', 'w']; }, getOwnPropertyDescriptor(t, k) { return k === 'w' ? undefined : Reflect.getOwnPropertyDescriptor(t, k); } });"
+           "const keys = []; for (const k in p) keys.push(k); console.log(Object.keys(p).join(), keys.join(), JSON.stringify(p), JSON.stringify({...p}), Reflect.ownKeys(p).join())",
+           "y,x y,x {\"y\":2,\"x\":1} {\"y\":2,\"x\":1} y,x,w");
+    Expect("const f = new Proxy(function (a, b) { return a + b; }, { apply(t, th, args) { return t(...args) * 10; }, construct(t, args, nt) { return {made: args[0], nt: nt === P}; } });"
+           "const P = f; console.log(typeof f, f(1, 2), new f(7).made, new f(7).nt, typeof new Proxy({}, {}), f.call(null, 2, 3), Reflect.apply(f, null, [1, 1]))",
+           "function 30 7 true object 50 20");
+    Expect("class A {} const p = new Proxy({}, { getPrototypeOf() { return A.prototype; } }); console.log(p instanceof A, Object.getPrototypeOf(p) === A.prototype, A.prototype.isPrototypeOf(p))",
+           "true true true");
+    Expect("const t = {}; const log = []; const p = new Proxy(t, { defineProperty(o, k, d) { log.push(k + ':' + d.value); return Reflect.defineProperty(o, k, d); } });"
+           "p.a = 1; Object.defineProperty(p, 'b', {value: 2, configurable: true}); console.log(log.join(), t.a, t.b)", "a:1,b:2 1 2");
+    Expect("const p = new Proxy({}, {}); p.x = 1; Object.preventExtensions(p); console.log(Object.isExtensible(p), Reflect.set(p, 'y', 2), p.x, Reflect.setPrototypeOf(p, null), Array.isArray(new Proxy([], {})), Array.isArray(p))",
+           "false false 1 false true false");
+    Expect("const proto = new Proxy({}, { get(t, k, r) { return k === 'who' ? r.name : undefined; } }); const o = Object.create(proto); o.name = 'kid'; console.log(o.who, o.nope)",
+           "kid undefined");
+    Expect("const o = {}; const r = {}; Reflect.set(o, 'x', 1, r); const g = {get v() { return this.n; }}; console.log(o.x, r.x, Reflect.get(g, 'v', {n: 9}), Reflect.has({a: 1}, 'a'),"
+           "Reflect.ownKeys({b: 1, 1: 2, [Symbol.iterator]: 3}).length, Reflect.construct(function () { this.nt = new.target; }, [], Array).nt === Array,"
+           "Reflect.getOwnPropertyDescriptor({q: 1}, 'q').writable, Reflect.set(Object.freeze({z: 1}), 'z', 2))",
+           "undefined 1 9 true 3 true true false");
+    Expect("const {proxy, revoke} = Proxy.revocable(function () {}, {}); revoke(); revoke(); console.log(typeof proxy); try { proxy.x; } catch (e) { console.log(e.name); }"
+           "try { proxy(); } catch (e) { console.log(e.name); } try { Array.isArray(proxy); } catch (e) { console.log(e.name); }",
+           "function\nTypeError\nTypeError\nTypeError");
+    // the invariants of 10.5 (a trap that lies about the target is a TypeError)
+    const char* frozen = "const t = {}; Object.defineProperty(t, 'k', {value: 1}); ";
+    ExpectError(std::string(frozen) + "new Proxy(t, { get() { return 2; } }).k", "TypeError");
+    ExpectError(std::string(frozen) + "new Proxy(t, { has() { return false; } }); 'k' in new Proxy(t, { has() { return false; } })", "TypeError");
+    ExpectError(std::string(frozen) + "Object.keys(new Proxy(t, { ownKeys() { return []; } }))", "TypeError");
+    ExpectError("Reflect.ownKeys(new Proxy({}, { ownKeys() { return ['a', 'a']; } }))", "TypeError");
+    ExpectError("Reflect.ownKeys(new Proxy({}, { ownKeys() { return [1]; } }))", "TypeError");
+    ExpectError(std::string(frozen) + "new Proxy(t, { deleteProperty() { return true; } }); delete new Proxy(t, { deleteProperty() { return true; } }).k", "TypeError");
+    ExpectError(std::string(frozen) + "new Proxy(t, { set() { return true; } }).k = 5", "TypeError");
+    ExpectError(std::string(frozen) + "Object.getOwnPropertyDescriptor(new Proxy(t, { getOwnPropertyDescriptor() { return undefined; } }), 'k')", "TypeError");
+    ExpectError("Object.isExtensible(new Proxy({}, { isExtensible() { return false; } }))", "TypeError");
+    ExpectError("Object.preventExtensions(new Proxy({}, { preventExtensions() { return true; } }))", "TypeError");
+    ExpectError("Object.getPrototypeOf(new Proxy(Object.preventExtensions({}), { getPrototypeOf() { return Array.prototype; } }))", "TypeError");
+    ExpectError("Object.defineProperty(new Proxy(Object.preventExtensions({}), { defineProperty() { return true; } }), 'n', {value: 1})", "TypeError");
+    ExpectError("new (new Proxy(function () {}, { construct() { return 1; } }))()", "TypeError");
+    ExpectError("new Proxy({}, { get: 5 }).x", "TypeError");
+    ExpectError("Proxy({}, {})", "TypeError");
+    ExpectError("new Proxy(1, {})", "TypeError");
+    ExpectError("new (new Proxy({}, {}))()", "TypeError");
+    ExpectError("(new Proxy({}, {}))()", "TypeError");
+    // hostile: long proxy chains, a trap that recurses into its own proxy, a trap loop, all stop with an error
+    ExpectError("let p = {}; for (let i = 0; i < 100000; i++) p = new Proxy(p, {}); p.x", "RangeError");
+    ExpectError("let p = Object.create(null); for (let i = 0; i < 100000; i++) p = Object.create(new Proxy(p, {})); 'x' in p", "RangeError");
+    ExpectError("const p = new Proxy({}, { get(t, k, r) { return r[k]; } }); p.x", "RangeError");
+    ExpectError("const p = new Proxy({}, { ownKeys() { return Reflect.ownKeys(p); } }); Object.keys(p)", "RangeError");
+    ExpectError("let f = function () {}; for (let i = 0; i < 100000; i++) f = new Proxy(f, {}); f()", "RangeError");
+    CHECK(Run("const p = new Proxy({}, { get() { return 1; } }); let s = 0; for (;;) s += p.x;", false, 2'000'000).find("budget") != std::string::npos);
+    CHECK(Run("const h = {}; const p = new Proxy({}, h); let n = 0; for (let i = 0; i < 300; i++) { h.get = (t, k) => ({k}); n += p['a' + i].k.length; } console.log(n)", true) == "1090\n");
+}
+
+// 15.7 class definitions with #private fields, methods and accessors, static privates, `#x in obj` (13.10.1), and
+// the early errors of 15.7.1 (an undeclared #name, a duplicate, delete of a private reference)
+void PrivateMembers() {
+    Expect("class C { #n = 1; #m() { return this.#n * 10; } get #v() { return this.#n; } set #v(x) { this.#n = x; }"
+           "bump() { this.#v = this.#v + 1; this.#n += 5; this.#n++; return this.#m(); } static has(o) { return #n in o; } }"
+           "const c = new C(); console.log(c.bump(), C.has(c), C.has({}), Object.keys(c).length, JSON.stringify(c), Reflect.ownKeys(c).length)",
+           "80 true false 0 {} 0");
+    Expect("class S { static #count = 0; static #inc() { return ++S.#count; } static next() { return S.#inc(); } } S.next(); console.log(S.next(), Object.getOwnPropertyNames(S).includes('#count'))",
+           "2 false");
+    Expect("class A { #x = 'a'; static read(o) { return o.#x; } } class B { #x = 'b'; static read(o) { return o.#x; } }"
+           "const a = new A(); console.log(A.read(a)); try { B.read(a); } catch (e) { console.log(e.name); } try { A.read(new Proxy(a, {})); } catch (e) { console.log(e.name); }",
+           "a\nTypeError\nTypeError");
+    Expect("class P { #v; constructor(v) { this.#v = v; } equals(o) { return #v in o && this.#v === o.#v; } } console.log(new P(1).equals(new P(1)), new P(1).equals(new P(2)), new P(1).equals({}))",
+           "true false false");
+    Expect("class M { #f() { return 1; } same(o) { return this.#f === o.#f; } } console.log(new M().same(new M()))", "true");
+    Expect("class Base { #b = 1; get b() { return this.#b; } } class D extends Base { #d = 2; sum() { return this.b + this.#d; } } console.log(new D().sum())", "3");
+    Expect("class F { #x = 1; m() { const g = () => this.#x; return g() + (() => this?.#x)(); } } console.log(new F().m())", "2");
+    Expect("class O { #x = 5; static get(o) { return o?.#x; } } console.log(O.get(null), O.get(new O()))", "undefined 5");
+    Expect("class Fr { #x = 1; set(v) { this.#x = v; return this.#x; } } const f = Object.freeze(new Fr()); console.log(f.set(7), Object.isFrozen(f))", "7 true");
+    Expect("class D { #a; #b; swap(o) { [this.#a, this.#b] = [1, 2]; ({ q: this.#a } = { q: 3 }); return this.#a + this.#b; } } console.log(new D().swap())", "5");
+    Expect("class N { static #s = 'st'; static { N.got = N.#s; } #m = () => this; check() { return this.#m() === this; } } console.log(N.got, new N().check())", "st true");
+    Expect("class Outer { #o = 1; inner() { const self = this; return new (class { #i = 2; sum() { return self.#o + this.#i; } })().sum(); } } console.log(new Outer().inner())",
+           "3");
+    ExpectError("class C { #m() {} x() { this.#m = 1; } } new C().x()", "TypeError");
+    ExpectError("class C { get #g() { return 1; } x() { this.#g = 1; } } new C().x()", "TypeError");
+    ExpectError("class C { set #s(v) {} x() { return this.#s; } } new C().x()", "TypeError");
+    ExpectError("class C { #x; static m(o) { return #x in o; } } C.m(1)", "TypeError");
+    ExpectError("class C { m() { return this.#nope; } }", "SyntaxError");
+    ExpectError("this.#x", "SyntaxError");
+    ExpectError("class C { #a; #a; }", "SyntaxError");
+    ExpectError("class C { #a; m() { delete this.#a; } }", "SyntaxError");
+    ExpectError("class C { #constructor() {} }", "SyntaxError");
+    ExpectError("class C { get #a() {} static set #a(v) {} }", "SyntaxError");
+    Expect("class C { get #a() { return 1; } set #a(v) {} m() { return this.#a; } } console.log(new C().m())", "1");
+    // a class whose constructor returns another object installs its fields there; doing it twice is a TypeError
+    ExpectError("class Base { constructor(o) { return o; } } class Stamp extends Base { #s = 1; static has(o) { return #s in o; } } const o = {}; new Stamp(o); console.log(Stamp.has(o)); new Stamp(o);",
+                "TypeError");
+    Expect("class Base { constructor(o) { return o; } } class Stamp extends Base { #s = 1; static has(o) { return #s in o; } } const o = Object.preventExtensions({}); new Stamp(o); console.log(Stamp.has(o))",
+           "true");
+    CHECK(Run("class K { #v; constructor(i) { this.#v = {i}; } get v() { return this.#v.i; } } let s = 0; for (let i = 0; i < 300; i++) s += new K(i).v; console.log(s)", true) == "44850\n");
+}
+
+// 16.2 modules: import / export (named, default, namespace, re-exports, export * and export * as), live bindings,
+// cycles, the namespace exotic object (10.4.6), import.meta, top-level await, dynamic import() through the
+// host loader (Runtime::modules), and the early and link errors. The host here is a map of file names to sources.
+std::string RunModules(const std::vector<std::pair<std::string, std::string>>& files, const std::string& mainKey, std::uint64_t budget = 50'000'000,
+                       bool stress = false) {
+    Runtime rt;
+    rt.SetBudget(budget);
+    rt.gcStress = stress;
+    std::string printed;
+    rt.printSink = [&printed](const std::string& line) { printed += line + "\n"; };
+    std::unordered_map<std::string, std::string> srcs(files.begin(), files.end());
+    rt.modules.resolve = [](const std::string& spec, const std::string&, std::string& key, std::string& why) {
+        if (spec.rfind("./", 0) == 0) { key = spec.substr(2); return true; }
+        why = "only ./ specifiers here";
+        return false;
+    };
+    rt.modules.fetch = [&srcs](const std::string& key, std::string& source, std::string& why) {
+        auto it = srcs.find(key);
+        if (it == srcs.end()) { why = "no file " + key; return false; }
+        source = it->second;
+        return true;
+    };
+    std::string why;
+    if (!rt.RunModule(srcs[mainKey], mainKey, &why)) printed += "ERROR: " + why + "\n";
+    return printed;
+}
+void ExpectModules(const std::vector<std::pair<std::string, std::string>>& files, const std::string& want) {
+    const std::string got = RunModules(files, "main.js");
+    const bool same = got == want + "\n";
+    if (!same) std::cerr << "  modules: " << files.back().second << "\n  printed: " << got << "  expected: " << want << "\n";
+    CHECK(same);
+}
+void ExpectModuleError(const std::vector<std::pair<std::string, std::string>>& files, const std::string& part) {
+    const std::string got = RunModules(files, "main.js");
+    const bool ok = got.find("ERROR: ") != std::string::npos && got.find(part) != std::string::npos;
+    if (!ok) std::cerr << "  modules: " << files.back().second << "\n  printed: " << got << "  expected an error saying: " << part << "\n";
+    CHECK(ok);
+}
+
+void Modules() {
+    const std::pair<std::string, std::string> a = {"a.js", "export let count = 0; export function inc() { count++; } export default 'def'; export const PI = 3;"};
+    ExpectModules({a, {"main.js", "import def, {count, inc, PI as pi} from './a.js'; import * as A from './a.js'; inc(); inc();"
+                                  "console.log(def, count, pi, A.count, Object.keys(A).join(), A[Symbol.toStringTag], Object.isExtensible(A), Object.getPrototypeOf(A))"}},
+                  "def 2 3 2 PI,count,default,inc Module false null");
+    ExpectModules({a, {"b.js", "export * from './a.js'; export { PI as tau } from './a.js'; export * as ns from './a.js'; export const own = 1;"},
+                   {"main.js", "import {count, tau, ns, own} from './b.js'; import * as B from './b.js'; console.log(count, tau, ns.PI, own, 'default' in B, Object.keys(B).join())"}},
+                  "0 3 3 1 false PI,count,inc,ns,own,tau");
+    ExpectModules({{"c1.js", "import {two} from './c2.js'; export function one() { return 1; } export const fromTwo = () => two();"},
+                   {"c2.js", "import {one} from './c1.js'; export function two() { return one() + 1; }"},
+                   {"main.js", "import {fromTwo} from './c1.js'; console.log(fromTwo())"}},
+                  "2");
+    ExpectModules({{"d1.js", "import './d2.js'; export let x = 1;"},
+                   {"d2.js", "import {x} from './d1.js'; try { x; } catch (e) { console.log(e.name); }"},
+                   {"main.js", "import {x} from './d1.js'; console.log(x)"}},
+                  "ReferenceError\n1");
+    ExpectModules({{"w.js", "export let v = 'before'; console.log('w start'); await null; v = 'after'; console.log('w end');"},
+                   {"main.js", "import {v} from './w.js'; console.log(v); const x = await Promise.resolve(5); console.log(x);"}},
+                  "w start\nw end\nafter\n5");
+    ExpectModules({{"main.js", "console.log(import.meta.url, typeof import.meta, import.meta === import.meta, (() => import.meta.url)())"}},
+                  "main.js object true main.js");
+    ExpectModules({a, {"main.js", "import * as A from './a.js'; const d = Object.getOwnPropertyDescriptor(A, 'count');"
+                                  "console.log(d.value, d.writable, d.enumerable, d.configurable, Reflect.set(A, 'count', 1), Reflect.deleteProperty(A, 'count'), Reflect.deleteProperty(A, 'zz'), Reflect.ownKeys(A).length)"}},
+                  "0 true true false false false true 5");
+    ExpectModules({a, {"p.js", "console.log('p ran'); export const q = 1;"},
+                   {"main.js", "import('./p.js').then(m => console.log('got', m.q)); console.log('sync'); const m = await import('./a.js'); console.log(m.PI, m.default);"
+                               "try { await import('./nope.js'); } catch (e) { console.log(e.name); }"}},
+                  "sync\np ran\ngot 1\n3 def\nTypeError");
+    ExpectModules({{"e.js", "throw new Error('boom');"},
+                   {"main.js", "try { await import('./e.js'); } catch (e) { console.log('1', e.message); } try { await import('./e.js'); } catch (e) { console.log('2', e.message); }"}},
+                  "1 boom\n2 boom");
+    ExpectModules({{"g.js", "export default function () { return 'anon'; } export class K { static k() { return 'k'; } }"},
+                   {"h.js", "export default class { static who() { return 'h'; } }"},
+                   {"main.js", "import f, {K} from './g.js'; import H from './h.js'; console.log(f(), f.name, K.k(), H.who(), H.name)"}},
+                  "anon default k h default");
+    ExpectModules({{"s.js", "const a = 1, b = 2; export { a as 'with space', b as default };"},
+                   {"main.js", "import { 'with space' as x, default as y } from './s.js'; export { x }; console.log(x, y)"}},
+                  "1 2");
+    // errors: link errors are SyntaxErrors; a missing file is the host's message; a module that throws fails the run
+    ExpectModuleError({a, {"main.js", "import {nope} from './a.js';"}}, "SyntaxError");
+    ExpectModuleError({{"main.js", "import x from './missing.js';"}}, "no file missing.js");
+    ExpectModuleError({{"x.js", "export const v = 1;"}, {"y.js", "export const v = 2;"}, {"z.js", "export * from './x.js'; export * from './y.js';"},
+                       {"main.js", "import {v} from './z.js';"}}, "SyntaxError");
+    ExpectModuleError({a, {"main.js", "import {count} from './a.js'; count = 5;"}}, "TypeError");
+    ExpectModuleError({{"main.js", "export const a = 1; export {a};"}}, "SyntaxError");
+    ExpectModuleError({{"main.js", "export {notDeclared};"}}, "SyntaxError");
+    ExpectModuleError({{"main.js", "return 1;"}}, "SyntaxError");
+    ExpectModuleError({{"main.js", "import {a} from './a.js'; import {a} from './a.js';"}, a}, "SyntaxError");
+    ExpectModuleError({{"e.js", "throw new Error('boom');"}, {"main.js", "import './e.js'; console.log('not reached');"}}, "boom");
+    ExpectModuleError({a, {"main.js", "import * as A from './a.js'; A.count = 1;"}}, "TypeError");
+    ExpectError("export {a} from 'x';", "SyntaxError");   // a classic script has no import or export lists
+    // hostile: long import chains and re-export chains, star cycles, a huge graph: errors or results, never a crash or a hang
+    {
+        std::vector<std::pair<std::string, std::string>> chain;
+        for (int i = 0; i < 3000; ++i) chain.push_back({"m" + std::to_string(i) + ".js", "import {v} from './m" + std::to_string(i + 1) + ".js'; export const w" + std::to_string(i) + " = v;"});
+        chain.push_back({"m3000.js", "export const v = 7; export const w3000 = 0;"});
+        for (int i = 0; i < 3000; ++i) chain[(std::size_t)i].second = "export * from './m" + std::to_string(i + 1) + ".js';";
+        chain.push_back({"main.js", "import {v} from './m0.js'; console.log(v)"});
+        CHECK(RunModules(chain, "main.js").find("ERROR: ") != std::string::npos);   // 3000 star re-exports deep: too deep, an error
+        std::vector<std::pair<std::string, std::string>> flat;
+        for (int i = 0; i < 2000; ++i) flat.push_back({"n" + std::to_string(i) + ".js", "import './n" + std::to_string(i + 1) + ".js'; export const n = " + std::to_string(i) + ";"});
+        flat.push_back({"n2000.js", "globalThis.deepest = 1;"});
+        flat.push_back({"main.js", "import {n} from './n0.js'; console.log(n, globalThis.deepest)"});
+        CHECK(RunModules(flat, "main.js") == "0 1\n");   // a 2000-long import chain loads, links and runs (no deep recursion)
+    }
+    ExpectModuleError({{"s1.js", "export * from './s2.js';"}, {"s2.js", "export * from './s1.js';"}, {"main.js", "import {nope} from './s1.js';"}}, "SyntaxError");
+    ExpectModules({{"s1.js", "export * from './s2.js'; export const one = 1;"}, {"s2.js", "export * from './s1.js'; export const two = 2;"},
+                   {"main.js", "import * as S from './s1.js'; console.log(Object.keys(S).join())"}},
+                  "one,two");
+    ExpectModules({{"main.js", "import * as self from './main.js'; export let x = 1; console.log(self.x, self.x === x);"}}, "1 true");   // a module may import itself
+    CHECK(RunModules({{"p.js", "export const q = 1;"}, {"main.js", "for (;;) await import('./p.js');"}}, "main.js", 2'000'000)
+              .find("budget") != std::string::npos);
+    // a collection at every safe point: the module records, their cells, namespaces and waiting evaluations stay alive
+    CHECK(RunModules({a, {"w.js", "export const list = []; for (let i = 0; i < 200; i++) list.push({i}); await null; list.push({i: 200});"},
+                      {"main.js", "import {list} from './w.js'; import * as A from './a.js'; const m = await import('./a.js'); let s = 0; for (const o of list) s += o.i;"
+                                  "console.log(s, m === A, A.PI)"}},
+                     "main.js", 50'000'000, true) == "20100 true 3\n");
+    // mutated module graphs: syntax errors, link errors or results, never a crash (ASan / UBSan run this too)
+    std::mt19937 rng(777);
+    const char* mods[] = {"export let v = 1; export function f() { return v++; } export default class { #p = 1; }",
+                          "export * from './a.js'; export { v as w } from './a.js'; import * as ns from './a.js'; export { ns };",
+                          "import d, {f, v} from './a.js'; import {w, ns} from './b.js'; await null; f(); console.log(v, w, typeof d, ns.v, import.meta.url);"};
+    int ran = 0;
+    for (int i = 0; i < 300; ++i) {
+        std::string srcs[3] = {mods[0], mods[1], mods[2]};
+        std::string& t = srcs[rng() % 3];
+        for (int k = 0, n = 1 + (int)(rng() % 3); k < n && !t.empty(); ++k) {
+            const std::size_t at = rng() % t.size();
+            if (rng() % 2) t.erase(at, 1 + rng() % 4);
+            else t.insert(at, std::string(1, "{}();,*'.#\n"[rng() % 11]));
+        }
+        RunModules({{"a.js", srcs[0]}, {"b.js", srcs[1]}, {"main.js", srcs[2]}}, "main.js", 2'000'000);
+        ++ran;
+    }
+    CHECK(ran == 300);
+}
+
+// structuredClone (HTML Standard 2.7.3 StructuredSerializeInternal / 2.7.6 StructuredDeserialize, 2.7.4 with transfer)
+// over the engine's own types; shared references and cycles are kept; what can not be cloned is a DataCloneError.
+void StructuredClone() {
+    Expect("const o = {a: 1, b: [1, 2, {c: 'x'}], d: new Date(5), r: /x/gi, m: new Map([[1, {z: 1}]]), s: new Set([1, 'a']), n: null, u: undefined, big: 10n}; o.self = o;"
+           "const c = structuredClone(o); console.log(c !== o, c.self === c, c.b[2].c, c.d.getTime(), c.r.source, c.r.flags, c.m.get(1).z, c.s.has('a'), c.n, c.u, c.big, 'u' in c, c.d instanceof Date)",
+           "true true x 5 x gi 1 true null undefined 10n true true");
+    Expect("const x = {}; const c = structuredClone({p: x, q: x}); console.log(c.p === c.q, c.p !== x)", "true true");
+    // object keys and values in a Map push new frames while the Map's frame is read (ASan found a dangling reference here)
+    Expect("const m = new Map(); for (let i = 0; i < 50; i++) m.set({i}, [i]); const c = structuredClone(m); let s = 0; for (const [k, v] of c) s += k.i + v[0]; console.log(s, c.size)",
+           "2450 50");
+    Expect("const b = new ArrayBuffer(4); const u = new Uint8Array(b); u[0] = 9; const v = new Uint16Array(b, 2, 1); const c = structuredClone({u, v});"
+           "console.log(c.u[0], c.u.buffer === c.v.buffer, c.v.byteOffset, c.u.buffer !== b, c.u instanceof Uint8Array, new DataView(c.u.buffer).getUint8(0))",
+           "9 true 2 true true 9");
+    Expect("const b = new ArrayBuffer(8); new Uint8Array(b)[1] = 3; const c = structuredClone(b, {transfer: [b]}); console.log(b.detached, b.byteLength, c.byteLength, new Uint8Array(c)[1])",
+           "true 0 8 3");
+    Expect("const e = new RangeError('bad'); e.extra = 1; const c = structuredClone(e); console.log(c instanceof RangeError, c.message, c.name, c.extra, c !== e)",
+           "true bad RangeError undefined true");
+    Expect("console.log(structuredClone(1), structuredClone('s'), structuredClone(new String('w')) instanceof String, typeof structuredClone(Object(1n)), 1 / structuredClone(-0), structuredClone())",
+           "1 s true object -Infinity undefined");
+    Expect("class P { constructor() { this.x = 1; } get y() { return 2; } } const c = structuredClone(new P()); console.log(c instanceof P, c.x, c.y, Object.getPrototypeOf(c) === Object.prototype)",
+           "false 1 undefined true");
+    Expect("const a = [1, , 3]; a.k = 'v'; const c = structuredClone(a); console.log(c.length, 1 in c, c[2], c.k, Array.isArray(c))", "3 false 3 v true");
+    Expect("const log = []; const o = { get a() { log.push('a'); return {get b() { log.push('b'); return 1; }}; }, get c() { log.push('c'); return 2; } }; structuredClone(o); console.log(log.join())",
+           "a,b,c");   // depth first, as serialization reads them
+    ExpectError("structuredClone(() => 1)", "DataCloneError");
+    ExpectError("structuredClone({a: Symbol('s')})", "DataCloneError");
+    ExpectError("structuredClone(new Proxy({}, {}))", "DataCloneError");
+    ExpectError("structuredClone(new WeakMap())", "DataCloneError");
+    ExpectError("structuredClone(Promise.resolve(1))", "DataCloneError");
+    ExpectError("const b = new ArrayBuffer(2); b.transfer(); structuredClone(b)", "DataCloneError");
+    ExpectError("const b = new ArrayBuffer(2); structuredClone(1, {transfer: [b, b]})", "DataCloneError");
+    ExpectError("structuredClone(1, {transfer: [{}]})", "DataCloneError");
+    ExpectError("structuredClone(new SharedArrayBuffer(2))", "DataCloneError");
+    ExpectError("structuredClone({get a() { throw new TypeError('from a getter'); }})", "from a getter");
+    // hostile: very deep nesting is cloned without native recursion; an endless cloning loop stops at the budget
+    Expect("let a = []; for (let i = 0; i < 100000; i++) a = [a]; const c = structuredClone(a); let d = 0; for (let x = c; x.length; x = x[0]) d++; console.log(d)", "100000");
+    CHECK(Run("const o = {a: [1, 2, 3], m: new Map([[1, 2]])}; for (;;) structuredClone(o);", false, 2'000'000).find("budget") != std::string::npos);
+    CHECK(Run("let s = 0; for (let i = 0; i < 200; i++) { const c = structuredClone({i, l: [i, {i}], m: new Map([[i, new Set([i])]]), t: new Int32Array([i])}); s += c.l[1].i + c.t[0]; } console.log(s)", true) ==
+          "39800\n");
 }
 
 // Classic page scripts are sloppy code where assigning an undeclared name makes a global (ECMA-262 6.2.5.6 PutValue
@@ -863,6 +1227,9 @@ void Fuzz() {
         "let s = 'abc'.split('').reverse().join('').padStart(5).toUpperCase(); s.at(-1) ?? s?.x?.y;",
         "const m = 'a1b22'.replace(/(\\d+)/g, '<$1>').match(/<(?<n>\\d)+>/g); /^(?:a|b(?=c))*?[^x-z]{1,3}$/iu.test('abc');",
         "new RegExp('(\\\\w+)\\\\s*=\\\\s*(\\\\d+)', 'g').exec('x = 12; y=3').slice(1).join().split(/,|;/);",
+        "class P { #x = 1; static #s = 2; #m() { return this.#x; } get #g() { return P.#s; } t(o) { return #x in o && o.#m() + this.#g; } } new P().t(new P());",
+        "const b = new ArrayBuffer(8), u = new Uint16Array(b, 2, 2), d = new DataView(b); u[1] = 7; d.setInt8(0, -1); b.transfer(); u.fill(1, 0); u[0];",
+        "const p = new Proxy({a: 1}, { get(t, k, r) { return Reflect.get(t, k, r); }, ownKeys: t => Reflect.ownKeys(t) }); Object.keys(p); p.a; 'a' in p;",
     };
     const char* frag[] = {"(", ")", "{", "}", "[", "]", "=>", "yield", "await", "...", "`${", "'", "\"", "/", "*", ",",
                           ";", "\n", "class", "function", "new", "super", "this", "?.", "??", "#", "\\u", "0x", "1e"};
@@ -927,6 +1294,11 @@ int main() {
     Dates();
     UriFunctions();
     WeakCollections();
+    TypedArrays();
+    Proxies();
+    PrivateMembers();
+    Modules();
+    StructuredClone();
     TaggedTemplates();
     BigInts();
     RegexLookbehind();

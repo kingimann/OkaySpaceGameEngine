@@ -376,6 +376,8 @@ public:
     /// The line at the bottom ("" when none): what happened last.
     const std::string& Notice() const;
     AppSettings& Settings();
+    /// Apply Settings() to every open tab now, after a host changed them (the editor's shared Density sets `density`).
+    void ApplySettings();
 
     struct Impl;
 

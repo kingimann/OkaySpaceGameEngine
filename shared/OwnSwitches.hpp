@@ -55,26 +55,6 @@ inline const std::vector<Item>& Items() {
     return t;
 }
 
-/// A second program built from the same sources against our own UI (CMake options OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): the
-/// Settings > Experimental page shows a row that restarts into it ("launch alternative exe" action; nothing is switched in a file, the other program is just started).
-/// In the normal program the row offers the OkayUI one; in the OkayUI program (macro OKAY_ON_OKAYUI) it offers the way back.
-struct AlternativeExe {
-    const char* label; const char* desc;
-    std::vector<std::string> launcherNames, editorNames;   // file names to look for next to the running program
-};
-inline const AlternativeExe& Alternative() {
-#ifdef OKAY_ON_OKAYUI
-    static const AlternativeExe a = {"Back to the normal UI (restart into OkaySpace.exe)",
-        "You are running the launcher on our own UI (no Dear ImGui). This starts the normal launcher.",
-        {"OkaySpace.exe", "OkaySpace", "okayspace-launcher"}, {"OkayEngine.exe", "OkayEngine", "okay-editor"}};
-#else
-    static const AlternativeExe a = {"Run on our own UI (restart into OkaySpaceOkayUI.exe)",
-        "Starts the launcher built on our own UI toolkit (OkayUI) instead of Dear ImGui, and closes this one. Only there when OkaySpaceOkayUI sits next to the launcher. The editor follows: OkayEngineOkayUI is started from the launcher's Create page when it is next to it.",
-        {"OkaySpaceOkayUI.exe", "OkaySpaceOkayUI", "okayspace-launcher-okayui"}, {"OkayEngineOkayUI.exe", "OkayEngineOkayUI", "okay-editor-okayui"}};
-#endif
-    return a;
-}
-
 /// What is true on this machine: used to hide items that cannot work here.
 struct Context {
     bool windows = false;

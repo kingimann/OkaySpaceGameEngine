@@ -51,6 +51,12 @@ char Backend::CharForKey(Key k) {   // the reverse of KeyForChar for the letters
     for (const char* c = kChars; *c; ++c) if (KeyForChar(*c) == k) return *c;
     return 0;
 }
+std::vector<DisplayMode> Backend::DisplayModes(int index) {   // the desktop default: the one current mode (added with #1341)
+    std::vector<DisplayMode> out;
+    DisplayInfo d;
+    if (DisplayAt(index, d) && d.w > 0 && d.h > 0) out.push_back({d.w, d.h, d.refreshHz});
+    return out;
+}
 bool Backend::ShowErrorBox(const std::string& title, const std::string& text, Window*) { std::fprintf(stderr, "ERROR: %s: %s\n", title.c_str(), text.c_str()); return false; }
 std::string Backend::BasePath() { return std::string(); }
 std::string Backend::PrefPath(const std::string&, const std::string&) { return std::string(); }

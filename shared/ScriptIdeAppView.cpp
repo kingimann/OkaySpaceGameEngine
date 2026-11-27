@@ -154,7 +154,7 @@ void ScriptIdeApp::Impl::drawOverlays(Doc& d) {
         const Symbol* s = enclosing(d, first);
         if (s && s->line - 1 < first) {
             const std::string text = e.Line(s->line - 1);
-            dl->AddRectFilled(UI::Vec2(e.ItemRect().x, v.y), UI::Vec2(v.x + v.w, v.y + lh), Rgb(40, 44, 52, 245));
+            dl->AddRectFilled(UI::Vec2(e.ItemRect().x, v.y), UI::Vec2(v.x + v.w, v.y + lh), (kPanel & 0x00ffffffu) | 0xf5000000u);
             dl->AddLine(UI::Vec2(e.ItemRect().x, v.y + lh), UI::Vec2(v.x + v.w, v.y + lh), kLine);
             const std::string num = std::to_string(s->line);
             dl->AddText(UI::Vec2(e.ItemRect().x + 6, v.y + (lh - UI::GetTextLineHeight()) * 0.5f), kDim, num.c_str());
@@ -166,7 +166,7 @@ void ScriptIdeApp::Impl::drawOverlays(Doc& d) {
 void ScriptIdeApp::Impl::drawMinimap(Doc& d, float X, float Y, float W, float H, bool modal) {
     UI::CodeEdit& e = d.code.Edit();
     const auto& dl = UI::GetWindowDrawList();
-    dl->AddRectFilled(UI::Vec2(X, Y), UI::Vec2(X + W, Y + H), Rgb(26, 28, 32));
+    dl->AddRectFilled(UI::Vec2(X, Y), UI::Vec2(X + W, Y + H), kStrip);
     dl->AddLine(UI::Vec2(X, Y), UI::Vec2(X, Y + H), kLine);
     const int n = std::max(1, e.LineCount());
     const float step = std::min(3.0f, (H - 8.0f) / (float)n);   // one line: at most 3 px

@@ -140,13 +140,14 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
    "$BUILD_DIR/bin/OkaySpacePlayer.exe" \
    "$SDL2_MINGW_PREFIX/bin/SDL2.dll" \
    "$OUT_DIR/Tools/"
-# The same launcher and editor built on our own UI (CMake OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): copied only when they were built.
-# The launcher sits at the top beside OkaySpace.exe (Settings > Experimental > "Run on our own UI" restarts into it), the editor beside OkayEngine.exe.
-[ -f "$BUILD_DIR/bin/OkaySpaceOkayUI.exe" ] && cp "$BUILD_DIR/bin/OkaySpaceOkayUI.exe" "$OUT_DIR/"
+# The editor built on our own UI (CMake OKAY_EDITOR_ON_OKAYUI, off by default): copied beside OkayEngine.exe only when it was built.
+# (The launcher, OkaySpace.exe, is drawn by our own UI itself since 2026-11-27.)
 [ -f "$BUILD_DIR/bin/OkayEngineOkayUI.exe" ] && cp "$BUILD_DIR/bin/OkayEngineOkayUI.exe" "$OUT_DIR/Tools/"
 [ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
 # The Script Editor program (scripteditor/, the editor shows the same one in View > Editors & Tools > Script Editor (Files)).
 [ -f "$BUILD_DIR/bin/OkaySpaceScriptEditor.exe" ] && cp "$BUILD_DIR/bin/OkaySpaceScriptEditor.exe" "$OUT_DIR/Tools/"
+# The Visual Script program (visualscript/, the editor shows the same one in View > Editors & Tools > Visual Script).
+[ -f "$BUILD_DIR/bin/OkaySpaceVisualScript.exe" ] && cp "$BUILD_DIR/bin/OkaySpaceVisualScript.exe" "$OUT_DIR/Tools/"
 # Bytes of the player per engine module (made after the player links; the editor's Build report shows them).
 [ -f "$BUILD_DIR/bin/module_sizes.txt" ] && cp "$BUILD_DIR/bin/module_sizes.txt" "$OUT_DIR/Tools/"
 # okay-content: builds, signs, checks and fetches downloadable game content (docs/release/content_delivery.md); a small command-line tool.
@@ -295,6 +296,7 @@ Everything else lives in  Tools/:
   OkayEngine.exe        the editor (make games)
   OkaySpacePlayer.exe   the standalone runtime that plays an exported game
   OkaySpaceScriptEditor.exe  the Script Editor on its own: OkaySpaceScriptEditor.exe <project folder>
+  OkaySpaceVisualScript.exe  the Visual Script editor on its own: OkaySpaceVisualScript.exe <project folder | graph.okayvs>
   okay.exe              the command line: okay new, okay open, okay play, okay vc save ...
   okayspace-relay.exe   optional multiplayer relay for NAT traversal
                         (run on a reachable host; see docs/online/relay.md)

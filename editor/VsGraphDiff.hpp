@@ -3,7 +3,7 @@
 // rather than line by line: blocks added, removed, changed (type, text field, typed values) or only moved; wires added
 // and removed; variables added, removed or changed. Blocks are matched by id: the editor never reuses an id in a file.
 // No ImGui: tests run it; the editor's Compare panel lists it and outlines the blocks on the canvas.
-// Included from inside VisualScriptEditor.hpp after the graph model. Written for this project.
+// Included from inside VisualScriptModel.hpp after the graph model. Written for this project.
 #include <map>
 #include <set>
 #include <string>

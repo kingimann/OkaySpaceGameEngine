@@ -125,40 +125,62 @@ struct Input {
     const char* commit           = nullptr;   // text the input method committed this frame
 };
 
-/// Visual style (colors are RGBA, 0..255). Mutable via Style().
+/// Visual style (colors are RGBA, 0..255). Mutable via Style(). Every value comes from the design in force
+/// (okay/UI/OkayUIDesign.hpp: design::Set, design::ThemeFor); the initial values below are the default design (Graphite, dark).
 struct Theme {
-    unsigned char bg[4]      = { 54,  58,  66, 255};
-    unsigned char bgHover[4] = { 72,  78,  90, 255};
-    unsigned char bgDown[4]  = { 36,  40,  48, 255};
-    unsigned char border[4]  = { 18,  20,  24, 255};
-    unsigned char text[4]    = {236, 239, 245, 255};
-    unsigned char panel[4]   = { 40,  43,  50, 235};   // Panel() background
-    unsigned char track[4]   = { 26,  28,  34, 255};   // Slider/ProgressBar groove
-    unsigned char accent[4]  = { 84, 150, 240, 255};   // fill / handle / checkmark
+    unsigned char bg[4]      = { 44,  44,  50, 255};   // controls (buttons, boxes)
+    unsigned char bgHover[4] = { 61,  61,  66, 255};
+    unsigned char bgDown[4]  = { 30,  30,  34, 255};
+    unsigned char border[4]  = {255, 255, 255,  20};   // hairline
+    unsigned char text[4]    = {237, 237, 241, 255};
+    unsigned char panel[4]   = { 23,  23,  26, 255};   // Panel() background / window body
+    unsigned char track[4]   = { 18,  18,  21, 255};   // Slider/ProgressBar groove
+    unsigned char accent[4]  = {110,  96, 240, 255};   // fill / handle / checkmark
     float borderPx  = 1.0f;
     float textScale = 2.0f;    // 8x8 font cell * scale (2 -> 16px-tall glyphs)
-    float rounding  = 4.0f;    // corner radius (px) for panels/buttons/inputs; 0 = square
-    unsigned char textDim[4] = {150, 155, 166, 255};   // TextDisabled / secondary text
-    unsigned char titleBg[4] = { 36,  40,  48, 255};   // window title bars
-    unsigned char field[4]   = { 26,  28,  34, 255};   // text-field fill
-    float windowRounding = 4.0f;   // window corners
+    float rounding  = 7.0f;    // corner radius (px) for panels/buttons/inputs; 0 = square
+    unsigned char textDim[4] = {163, 164, 173, 255};   // TextDisabled / secondary text
+    unsigned char titleBg[4] = { 18,  18,  21, 255};   // window headers
+    unsigned char field[4]   = { 32,  32,  37, 255};   // text-field fill
+    float windowRounding = 12.0f;  // window corners
     float windowPadding  = 10.0f;  // inside a window, around its content
-    bool  windowShadow   = false;  // soft drop shadow under windows
+    bool  windowShadow   = true;   // soft drop shadow under windows
     bool  caretBlink     = true;   // text caret blinks (off: always visible, for tests and screenshots)
     // Colours beyond the eight fields above (the Col_* ids from Col_TextDisabled up), kept by PushStyleColor / SetStyleColor:
     // colors[id] holds the value and bit `id` of colorSet says it is in force. A bit that is clear means "follow the base fields".
     unsigned char      colors[64][4] = {};
     unsigned long long colorSet = 0;
+    // ---- The rest of the design's tokens (docs/ui/okayui_design.md) ----
+    unsigned char raised[4]      = { 30,  30,  34, 255};   // cards, section headers
+    unsigned char overlay[4]     = { 36,  36,  41, 255};   // popovers, menus, combo lists, dialogs
+    unsigned char textFaint[4]   = {118, 119, 128, 255};   // placeholders, shortcuts, indent guides
+    unsigned char onAccent[4]    = {255, 255, 255, 255};   // text and glyphs on a filled accent
+    unsigned char accentHover[4] = {127, 114, 242, 255};
+    unsigned char focusRing[4]   = {146, 135, 244, 220};   // the ring around the control that has the keyboard
+    unsigned char selection[4]   = {110,  96, 240, 102};   // selected rows, selected text
+    unsigned char ink[4]         = {255, 255, 255, 255};   // the tint for soft hovers (light on dark, dark on light)
+    unsigned char tooltipBg[4]   = {  8,   8,  10, 245};
+    unsigned char tooltipText[4] = {237, 237, 241, 255};
+    unsigned char success[4]     = { 74, 201, 132, 255};
+    unsigned char warning[4]     = {240, 184,  72, 255};
+    unsigned char danger[4]      = {244, 104, 104, 255};
+    float radiusSmall  = 5.0f;    // check boxes, tags
+    float focusRingPx  = 2.0f;
+    int   tabShape     = 0;       // design::TabShape: 0 underline, 1 pill, 2 segmented
+    int   shadowDepth  = 2;       // 0 none .. 3 deep (windows, popovers, toasts)
+    bool  controlBorders = false; // buttons and fields carry an outline
+    float motionMs     = 120.0f;  // hover / press / open transitions (0 or a host with no clock: none)
+    float spacing      = 1.0f;    // density: 0.75 compact, 1 comfortable, 1.3 spacious
+    bool  lightScheme  = false;
+    bool  accentHeaders = false;  // section headers carry an accent bar
 };
 
-/// The OkaySpace launcher's look for game UI: its font (Roboto, smooth TrueType
-/// text instead of the 8x8 bitmap), its "Slate" colours (blue-tinted dark panels,
-/// hairline borders, accent for interactive states), rounder controls, pill tabs,
-/// shadows. The player turns it on; `false` restores the classic look. Needs the
-/// SDL_Renderer path (EndFrame(SDL_Renderer*)).
+/// TrueType text (Roboto, the default in every program) and the design in force (okay/UI/OkayUIDesign.hpp). `false` goes
+/// back to the 8x8 bitmap font (the last fallback; the headless tests use it), with the same design. The name is frozen
+/// (it was the launcher's look first). Needs the SDL_Renderer path (EndFrame(SDL_Renderer*)) or a backend that reads the atlas.
 void UseLauncherLook(bool on = true);
 bool LauncherLook();
-/// The Slate theme on its own (what UseLauncherLook applies), e.g. to tweak and reapply.
+/// The Slate design (the launcher's look) as a Theme with TrueType metrics, e.g. to tweak and reapply. Frozen name.
 Theme SlateTheme();
 
 /// Latch this frame's input and reset the geometry batch.
@@ -223,6 +245,8 @@ enum InputTextFlags {
     // Real, with the callback overloads of InputText / InputTextWithHint (OkayUICompat.hpp): Up / Down call it while the field
     // has the keyboard (EventKey = KeyId_Up / KeyId_Down), Tab calls it for completion (EventKey = KeyId_Tab).
     InputText_CallbackHistory = 1024, InputText_CallbackCompletion = 2048,
+    // InputTextMultiline: WordWrap breaks long lines at the box's width (no sideways scrolling); NoUndoRedo is accepted (a read-only box has none).
+    InputText_NoUndoRedo = 4096, InputText_WordWrap = 8192,
 };
 bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, unsigned flags = 0);
 
@@ -512,9 +536,16 @@ bool InputText(const char* label, char* buf, int cap, unsigned flags = 0);
 /// highlighting or auto-indent (okayui/src/OkayUIText.cpp). `size.x` <= 0 fills the width left (less the label), `size.y` <= 0 is five rows.
 /// Enter breaks the line, Tab inserts a tab, the mouse and keys select, copy, cut, paste, undo (Ctrl+Z) and scroll. Returns true on any
 /// frame the text changed. An edit that would not fit in `cap` is cut at a whole character and the editor's undo history restarts.
-/// Flags: InputText_ReadOnly. Text with CRLF, control characters or bad UTF-8 is cleaned the way CodeEdit cleans it (the buffer is
+/// Flags: InputText_ReadOnly, InputText_WordWrap, InputText_EnterReturnsTrue (true on Enter, or on Ctrl+Enter unless
+/// InputText_CtrlEnterForNewLine; that key does not break the line). Text with CRLF, control characters or bad UTF-8 is cleaned the way CodeEdit cleans it (the buffer is
 /// rewritten only when the user edits). The state of up to 16 boxes is kept (by label); the least recently drawn is forgotten.
 bool InputTextMultiline(const char* label, char* buf, int cap, Vec2 size = Vec2{}, unsigned flags = 0);
+/// Scroll the multi-line box of this label (drawn this frame or the last, in the same ID scope as its InputTextMultiline call) to its
+/// last line, as a log view that follows new output does. False when no such box is kept.
+bool ScrollTextBoxToEnd(const char* label);
+/// Dear ImGui's TextLink: the text in the link colour (Col_TextLink), underlined while the pointer is over it, with the hand cursor;
+/// true on the frame it is clicked. One item, laid out like Text.
+bool TextLink(const char* label);
 /// InputText that shows `hint` in a dim colour while the field is empty (a placeholder such as "Search...").
 bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, unsigned flags = 0);
 /// The next text field drawn takes the keyboard focus (and puts the caret at the end of its text).
@@ -612,6 +643,7 @@ enum ColorEditFlags : int {
     ColorEdit_NoSidePreview = 16, ColorEdit_NoAlphaBar = 32, ColorEdit_Hex = 64, ColorEdit_AlphaPreviewHalf = 128,
     ColorEdit_AlphaBar = 0,       // the alpha bar is on unless ColorEdit_NoAlphaBar: accepted for ported code
     ColorEdit_NoTooltip = 256,    // accepted and ignored: swatches have no tooltip
+    ColorEdit_HDR = 512,          // the channel cells are not held to 0..1: they share the range 0 .. the brightest channel (at least 1, rounded up)
 };
 /// A square swatch showing rgba[0..3] (each 0..1, a checkerboard shows through the alpha) that can be clicked; `size` <= 0 uses the row height.
 bool ColorButton(const char* id, const float rgba[4], float size = 0.0f);
@@ -895,6 +927,10 @@ void BeginCard(const char* id);
 void EndCard();
 /// The fill colour BeginCard uses in the launcher look, from the current theme (RGBA). One rule for the drawing and its tests.
 void CardFillColor(unsigned char out[4]);
+/// The design's chevron (the arrow of trees, headers, combo boxes and menus): two strokes meeting at a point, `size` across, centred
+/// on `c`, pointing right (0), down (1), left (2) or up (3). `thickness` 0: the design's stroke for that size.
+struct DrawList;
+void DrawChevron(const DrawList& dl, Vec2 c, float size, int dir, Color32 col, float thickness = 0.0f);
 /// A list row: avatar, title, dim subtitle, optional right-aligned text. True when clicked.
 bool ListItem(const char* title, const char* subtitle = nullptr, const char* right = nullptr, bool selected = false);
 /// A dim label on the left and its value on the right (stats, settings summaries).
@@ -1371,7 +1407,8 @@ bool IsKeyReleased(KeyId key);
 /// nothing, so ported code compiles: SelectableTextAlign, Alpha.
 /// TextRowHeight is OkayUI's own: the height a line of plain text (Text, TextColored, TextDisabled, TextUnformatted, wrapped lines)
 /// takes in the layout. 0 (the default) is a frame's height, so text lines up with buttons and fields on its row; a value above 0 is
-/// that many pixels (Dear ImGui's text rows: pass GetFontSize() for one text line). A shorter text line that follows a taller item
+/// that many pixels (Dear ImGui's text rows: pass GetFontSize() for one text line), and a value below 0 is the text's own height at
+/// the moment (Dear ImGui's text rows that follow SetWindowFontScale and the text scale). A shorter text line that follows a taller item
 /// on the same line is centred on it.
 /// PopupPadding and PopupWidth are OkayUI's own too, read when a popup or context menu begins: the padding inside it (x, y; default
 /// 6 and 6) and its width (default 160). With a pushed padding the popup is exactly as tall as its content (no item spacing after the
@@ -1435,7 +1472,7 @@ struct IO {
     // Host-side fields of Dear ImGui's IO, see docs/ui/own_ui_toolkit.md 6.22.
     int MouseClickedCount[3] = {0, 0, 0};        // clicks in a row at this frame's press (1, 2 = double click), 0 when the button did not go down this frame (left button only)
     bool KeySuper = false;                       // the Windows / Command key: OkayUI has no such key; always false unless the host sets it
-    float FontGlobalScale = 1.0f;                // accepted; the text scale is Style().textScale
+    float FontGlobalScale = 1.0f;                // text drawn this much larger: Style().textScale follows it at the next frame start (0.25 to 4)
     bool ConfigViewportsNoTaskBarIcon = false, ConfigDebugHighlightIdConflicts = true;   // accepted, unused
     struct FontAtlasRef* Fonts = nullptr;        // GetIO() points it at the one atlas (below): font requests are recorded, nothing is loaded
     /// The characters typed this frame (UTF-16 code units, characters above U+FFFF are left out), filled by GetIO() from Input::text. Removing any of
@@ -1451,6 +1488,7 @@ struct IO {
     const char* BackendPlatformName = nullptr, *BackendRendererName = nullptr;
     bool MouseDrawCursor = false;                    // accepted; the host draws the system cursor
     bool WantSetMousePos = false;                    // accepted; OkayUI never asks the host to move the pointer
+    bool NavVisible = false;                         // a keyboard focus ring should show: OkayUI has no keyboard navigation of buttons, so always false
     /// Mouse events as a Dear ImGui host feeds them: applied by the next NewFrame() (the last position and the button state win; a press and release
     /// inside one frame still makes one click).
     void AddMousePosEvent(float x, float y);

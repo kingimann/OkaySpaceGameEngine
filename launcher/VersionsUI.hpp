@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-#include "imgui.h"
+#include "okay/UI/OkayUIImGuiNames.hpp"   // OkayUI, in Dear ImGui's names
 #include "VersionsManager.hpp"
 
 namespace okayversionsui {

@@ -834,19 +834,19 @@ int main() {
         sim.Frames(2, ui);
         const float sz = box.h;
         sim.Move(250, 100); sim.Frame(ui);
-        CHECK(PixelAt(sim.Draw(30, 33, 41), (int)(box.x + 3), (int)(box.y + 3)) == Rgba(41, 46, 59));   // unticked: the field colour, no tick
+        CHECK(PixelAt(sim.Draw(30, 33, 41), (int)(box.x + sz * 0.5f), (int)(box.y + sz * 0.5f)) == Rgba(41, 46, 59));   // unticked: the field colour, no tick
         sim.Click(box.x + 8.0f, CY(box), ui);
         CHECK(on && ch);
         sim.Move(250, 100); sim.Frame(ui);
         const Bitmap& b = sim.Draw(30, 33, 41);
-        CHECK(PixelAt(b, (int)(box.x + 3), (int)(box.y + 3)) != Rgba(41, 46, 59));    // ticked: the tinted frame
+        CHECK(PixelAt(b, (int)(box.x + sz * 0.5f), (int)(box.y + sz * 0.5f)) != Rgba(41, 46, 59));    // ticked: the box fills
         int tick = 0;
         for (int y = (int)box.y; y < (int)(box.y + sz); ++y)
             for (int x = (int)box.x; x < (int)(box.x + sz); ++x) if (PixelAt(b, x, y) == Rgba(115, 159, 218)) ++tick;
         CHECK(tick > (int)(sz * 2.0f));                                                 // a tick in the check-mark colour
         UI::UseLauncherLook(false);
     }
-    {   // a framed combo: a field, a square arrow button in Col_Button with a triangle in the text colour; the list still opens and picks
+    {   // a framed combo: one field (no arrow block) with the design's chevron at its right end; the list still opens and picks
         Reset(); UI::UseLauncherLook(true);
         Sim sim(400, 300);
         const char* items[3] = {"One", "Two", "Three"};
@@ -868,10 +868,12 @@ int main() {
         sim.Move(390, 290); sim.Frame(ui);
         const float boxW = 200.0f - (UI::CalcTextWidth("Pick") + 8.0f);
         const Bitmap& b = sim.Draw(0, 0, 0);
-        CHECK(PixelAt(b, (int)(r.x + boxW - r.h + 3.0f), (int)(r.y + r.h - 4.0f)) == Rgba(51, 56, 71));   // the arrow button
+        CHECK(PixelAt(b, (int)(r.x + boxW - r.h + 3.0f), (int)(r.y + r.h - 4.0f)) == Rgba(41, 46, 59));   // the field runs under the arrow
         CHECK(PixelAt(b, (int)(r.x + 4.0f), (int)(r.y + r.h - 4.0f)) == Rgba(41, 46, 59));               // the field
-        const unsigned arrow = PixelAt(b, (int)(r.x + boxW - r.h * 0.5f), (int)(r.y + r.h * 0.5f - 3.0f));
-        CHECK(arrow != Rgba(51, 56, 71) && ((arrow >> 24) & 255) > 150);                                 // the light triangle
+        int light = 0;   // the chevron: light strokes in the arrow's square
+        for (int y = (int)r.y; y < (int)(r.y + r.h); ++y)
+            for (int x = (int)(r.x + boxW - r.h); x < (int)(r.x + boxW); ++x) { const unsigned p = PixelAt(b, x, y); if ((p & 255u) > 120u) ++light; }
+        CHECK(light > 6);
         sim.Click(r.x + 20.0f, CY(r), ui);
         sim.Click(r.x + 20.0f, r.y + r.h * 3.5f, ui);   // the third row of the list under the box
         CHECK(cur == 2);

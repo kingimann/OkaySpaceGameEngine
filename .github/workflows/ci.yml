@@ -220,10 +220,12 @@ jobs:
         run: |
           cmake -S . -B build-editor -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DOKAY_BUILD_EDITOR=ON -DOKAY_BUILD_TESTS=OFF \
-            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=ON \
+            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=ON -DOKAY_EDITOR_ON_OKAYUI=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build-editor -j "$(bash scripts/ci_jobs.sh 4)"
           ./build-editor/bin/OkayEngine --selftest
+          # the same editor built on OkayUI (no Dear ImGui; docs/ui/own_ui_toolkit.md section 32): it must keep building and pass the same self-test
+          ./build-editor/bin/OkayEngineOkayUI --selftest
 
       - name: Upload editor
         uses: actions/upload-artifact@v6
@@ -894,6 +896,7 @@ jobs:
 
       - name: Install Playwright and Chromium (test tools only; nothing of them ships)
         run: |
+          bash scripts/ci-apt-mirror.sh   # a broken outside apt source (e.g. Microsoft's, 403 on 2026-11-27) must not fail --with-deps
           mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw" && npm init -y >/dev/null && npm install --no-audit --no-fund playwright@1.63.0
           npx --prefix "$RUNNER_TEMP/pw" playwright install --with-deps chromium
 

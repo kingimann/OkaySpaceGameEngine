@@ -104,7 +104,7 @@ grep -q "Dry run" "$work/dry.txt" || fail "dry run: summary"
 grep -q "Assets/Unused.okaymesh" "$work/dry_report.txt" || fail "dry run: report does not list the unused asset"
 grep -q "not used by any scene in the build" "$work/dry_report.txt" || fail "dry run: reason"
 grep -q "Tower.okaymesh" "$work/dry_report.txt" || fail "dry run: shipped asset missing from the report"
-need "$proj/.okay/build_report.txt"
+need "$proj/Logs/build_report.txt"   # the project's Logs folder since the project layout change (#1350)
 echo "dry run: ok"
 
 echo "build layout check passed"

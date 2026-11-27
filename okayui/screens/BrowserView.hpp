@@ -12,6 +12,7 @@
 // with a ring, and text selection (PageKeys).
 #include "okay/Browser/Browser.hpp"
 #include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUIDesign.hpp"
 
 #include <functional>
 #include <string>
@@ -144,19 +145,28 @@ namespace browserlook {
 inline constexpr OkayUI::Color32 Rgb(int r, int g, int b, int a = 255) {
     return (OkayUI::Color32)r | ((OkayUI::Color32)g << 8) | ((OkayUI::Color32)b << 16) | ((OkayUI::Color32)a << 24);
 }
-inline constexpr OkayUI::Color32 kStrip = Rgb(24, 27, 34);        ///< behind the tabs
-inline constexpr OkayUI::Color32 kToolbar = Rgb(44, 48, 58);      ///< the active tab, the toolbar and the bookmarks bar
-inline constexpr OkayUI::Color32 kTabHover = Rgb(35, 39, 48);     ///< an inactive tab under the pointer
-inline constexpr OkayUI::Color32 kField = Rgb(29, 32, 40);        ///< the address bar
-inline constexpr OkayUI::Color32 kFieldHover = Rgb(35, 38, 47);
-inline constexpr OkayUI::Color32 kHover = Rgb(62, 67, 80);        ///< a toolbar button under the pointer
-inline constexpr OkayUI::Color32 kPressed = Rgb(74, 80, 96);      ///< ... held down
-inline constexpr OkayUI::Color32 kText = Rgb(232, 236, 243);
-inline constexpr OkayUI::Color32 kTextDim = Rgb(150, 158, 175);
-inline constexpr OkayUI::Color32 kIconOff = Rgb(96, 102, 116);    ///< a button that cannot be used now
-inline constexpr OkayUI::Color32 kAccent = Rgb(66, 150, 250);     ///< focus rings, the bookmarked star, the loading bar
-inline constexpr OkayUI::Color32 kWarn = Rgb(240, 120, 100);      ///< "Not secure"
-inline constexpr OkayUI::Color32 kDivider = Rgb(62, 67, 80);
+inline OkayUI::Color32 kStrip = Rgb(24, 27, 34);        ///< behind the tabs
+inline OkayUI::Color32 kToolbar = Rgb(44, 48, 58);      ///< the active tab, the toolbar and the bookmarks bar
+inline OkayUI::Color32 kTabHover = Rgb(35, 39, 48);     ///< an inactive tab under the pointer
+inline OkayUI::Color32 kField = Rgb(29, 32, 40);        ///< the address bar
+inline OkayUI::Color32 kFieldHover = Rgb(35, 38, 47);
+inline OkayUI::Color32 kHover = Rgb(62, 67, 80);        ///< a toolbar button under the pointer
+inline OkayUI::Color32 kPressed = Rgb(74, 80, 96);      ///< ... held down
+inline OkayUI::Color32 kText = Rgb(232, 236, 243);
+inline OkayUI::Color32 kTextDim = Rgb(150, 158, 175);
+inline OkayUI::Color32 kIconOff = Rgb(96, 102, 116);    ///< a button that cannot be used now
+inline OkayUI::Color32 kAccent = Rgb(66, 150, 250);     ///< focus rings, the bookmarked star, the loading bar
+inline OkayUI::Color32 kWarn = Rgb(240, 120, 100);      ///< "Not secure"
+inline OkayUI::Color32 kDivider = Rgb(62, 67, 80);
+/// The chrome follows the design in force (okay/UI/OkayUIDesign.hpp): called at the start of each browser frame.
+inline void FollowDesign() {
+    const OkayUI::Theme& t = OkayUI::Style();
+    auto c = [](const unsigned char* v) { return OkayUI::design::Packed(v); };
+    auto mix = [](const unsigned char* a, const unsigned char* b, float k) { return OkayUI::design::PackedMix(a, b, k); };
+    kStrip = c(t.track); kToolbar = c(t.raised); kTabHover = mix(t.track, t.raised, 0.5f); kField = c(t.field); kFieldHover = c(t.bgHover);
+    kHover = c(t.bgHover); kPressed = c(t.bgDown); kText = c(t.text); kTextDim = c(t.textDim); kIconOff = c(t.textFaint);
+    kAccent = c(t.accent); kWarn = c(t.danger); kDivider = mix(t.raised, t.text, 0.16f);
+}
 }
 
 /// Toolbar icons, drawn with lines (no picture files): centred on (cx, cy), about `size` px across, into the current window

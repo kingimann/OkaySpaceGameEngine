@@ -325,7 +325,8 @@ struct PatternParser {
                 if (c == u'-' && inClass) return u'-';
                 if (prog.unicode && !(c == u'^' || c == u'$' || c == u'\\' || c == u'.' || c == u'*' || c == u'+' || c == u'?' ||
                                       c == u'(' || c == u')' || c == u'[' || c == u']' || c == u'{' || c == u'}' || c == u'|' || c == u'/'))
-                    Fail("unknown escape with the u flag");
+                    Fail(c == u'p' || c == u'P' ? "Unicode property escapes (\\p{...}) are not supported (no Unicode data in this engine)"
+                                                : "unknown escape with the u flag");
                 --i;
                 return ReadCodePoint();   // an identity escape
         }
@@ -720,6 +721,7 @@ std::shared_ptr<RegexProg> CompilePattern(const std::u16string& pattern, const s
         bool* slot = f == u'i' ? &prog->icase : f == u'm' ? &prog->multiline : f == u's' ? &prog->dotAll : f == u'u' ? &prog->unicode
                    : f == u'g' ? &prog->global : f == u'y' ? &prog->sticky : nullptr;
         if (f == u'd') continue;
+        if (f == u'v') { err = "the v flag (unicode sets) is not supported"; return nullptr; }
         if (!slot) { err = "unknown regular expression flag '" + Utf16To8(std::u16string(1, f)) + "'"; return nullptr; }
         if (*slot) { err = "the flag '" + Utf16To8(std::u16string(1, f)) + "' is given twice"; return nullptr; }
         *slot = true;

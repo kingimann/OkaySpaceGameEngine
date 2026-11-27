@@ -1,3 +1,4 @@
+#include "OkayUI_ContextState.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -20,6 +21,7 @@ void TabBar(const char* const* labels, int count, int* current) {
     const float h = rowH();
     // Reserve the full row; lay tabs left-to-right within it.
     float x, y; place(fullW(), h, x, y);
+    tabBarBackground(x, y, fullW(), h);
     float tx = x;
     for (int i = 0; i < count; ++i) {
         const char* lbl = labels[i] ? labels[i] : "";
@@ -28,10 +30,15 @@ void TabBar(const char* const* labels, int count, int* current) {
         Tab((int)uid, tx, y, tw, h, lbl, current, i);
         tx += tw + (g_look ? 6.0f : 2.0f);
     }
-    // A baseline under the whole tab row (classic look).
-    if (!g_look) quad(x, y + h - 2.0f, fullW(), 2.0f, g_theme.border);
 }
 
+
+// What a tab row draws under its tabs, by the design's tab shape: a hairline under the row (underline), nothing (pill), or a
+// sunken rounded track the chosen segment sits in (segmented).
+void ui_core::tabBarBackground(float x, float y, float w, float h) {
+    if (g_theme.tabShape == 2) controlBox(x, y, w, h, g_theme.rounding, g_theme.track);
+    else if (g_theme.tabShape == 0) quad(x, y + h - 1.0f, w, 1.0f, g_theme.border);
+}
 
 // ---- Tab bar with per-tab bodies (BeginTabBar / BeginTabItem) ---------------------------------------
 namespace {
@@ -62,7 +69,7 @@ bool BeginTabBar(const char* id, int tabBarFlags) {
         slot->lastFrame = g_frameCount;
         g_tabBar.ord = slot;
     }
-    if (!g_look) quad(x, y + h - 2.0f, fullW(), 2.0f, g_theme.border);   // a baseline under the whole row (classic look)
+    tabBarBackground(x, y, fullW(), h);
     return true;
 }
 bool BeginTabBar(const char* id) { return BeginTabBar(id, 0); }
@@ -110,7 +117,7 @@ bool BeginTabItem(const char* label, bool* open, int flags) {
     g_lay.prevX = x; g_lay.prevY = tb.y; g_lay.prevW = w; g_lay.prevH = tb.h;   // the item rect / hover queries that follow are about this tab's header
     if (flags & TabItem_UnsavedDocument) {            // a small dot after the label
         const float dx = x + w - closeW - 9.0f, dy = tb.y + tb.h * 0.5f - 2.0f;
-        quad(dx, dy, 4.0f, 4.0f, g_theme.accent);
+        fillCircle(dx + 2.0f, dy + 2.0f, 3.0f, g_theme.accent, 16);
     }
     if (tb.ord && ordIdx >= 0 && !(flags & (Tab_Trailing | TabItem_NoReorder)) && g_active == id && IsMouseDragging(0, 4.0f) && g_in.mouseDown) {
         TabOrder& o = *tb.ord;   // dragging: the tab goes where the pointer is
@@ -130,7 +137,10 @@ bool BeginTabItem(const char* label, bool* open, int flags) {
         if (inside) g_hot = cid;
         if (g_active == cid) { if (g_released) { if (inside) { *open = false; } g_active = 0; } }
         else if (inside && g_pressed) g_active = cid;
-        drawText(cx + 3.0f, cy, "x", g_theme.textScale, inside ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
+        (void)cy;   // a vector cross, on a soft round chip under the pointer
+        const float ccx = cx + (closeW - 2.0f) * 0.5f, ccy = tb.y + tb.h * 0.5f;
+        if (inside) { unsigned char chip[4]; fillCircle(ccx, ccy, 7.0f, withAlpha(g_theme.ink, 0.12f, chip), 20); }
+        xMark(ccx, ccy, 7.0f, inside ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
         // a middle click anywhere on the tab closes it too
         if (g_mPressed && !(flags & TabItem_NoCloseWithMiddleMouseButton) && !(tb.flags & TabBar_NoCloseWithMiddleMouseButton) && hit(x, tb.y, w, tb.h)) *open = false;
         if (!*open) visible = false;
@@ -184,4 +194,10 @@ void EndTabBar() {
     g_tabBar.active = false;
 }
 
+} // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(g_amend))
 } // namespace OkayUI

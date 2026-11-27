@@ -72,9 +72,11 @@ public:
     Query& Gte(const std::string& column, const std::string& value, ValueText t = ValueText::Encoded) { return Filter(column, "gte", value, t); }
     Query& Lt(const std::string& column, const std::string& value, ValueText t = ValueText::Encoded) { return Filter(column, "lt", value, t); }
     Query& Lte(const std::string& column, const std::string& value, ValueText t = ValueText::Encoded) { return Filter(column, "lte", value, t); }
-    /// Pattern match ("*" is the wildcard in an address, as PostgREST documents; the value is encoded like any other).
-    Query& Like(const std::string& column, const std::string& pattern) { return Filter(column, "like", pattern, ValueText::Encoded); }
-    Query& Ilike(const std::string& column, const std::string& pattern) { return Filter(column, "ilike", pattern, ValueText::Encoded); }
+    /// Pattern match ("*" is the wildcard in an address, as PostgREST documents). Encoded by default, so a "*" in the pattern
+    /// is sent as "%2A" (PostgREST decodes the address first, so it is still the wildcard); with ValueText::AsIs the pattern
+    /// is written unchanged: only for a pattern the program encoded itself (Messages' search and call signals, round 6).
+    Query& Like(const std::string& column, const std::string& pattern, ValueText t = ValueText::Encoded) { return Filter(column, "like", pattern, t); }
+    Query& Ilike(const std::string& column, const std::string& pattern, ValueText t = ValueText::Encoded) { return Filter(column, "ilike", pattern, t); }
     /// The column is one of `values`: "in.(a,b,c)". With ValueText::Encoded a value holding a comma, a bracket, a quote, a
     /// backslash or an outer space is written in double quotes with \" and \\ escaped (PostgREST's reserved-character rule),
     /// then encoded; see ValueText for the other two.

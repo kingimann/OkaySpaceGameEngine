@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 79 headers, 1151 names.
+Back to the [code index](../code_index.md). 74 headers, 1115 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -665,29 +665,18 @@ Back to the [code index](../code_index.md). 79 headers, 1151 names.
 
 - `BeginChevronCombo` function, line 15: Same arguments as ImGui::BeginCombo (the width comes from SetNextItemWidth / the item width), plus the smallest corner
 
-## `shared/ImGuiPainterRenderer.hpp`
-
-- `OwnRequested` function, line 31: Whether our own renderer runs, from OKAY_IMGUI_RENDER: "own" = yes, "sdl2" = no (imgui_impl_sdlrenderer2), unset or
-- `ActiveLine` function, line 37: The line the apps log at start-up so you can tell which renderer runs.
-- `Init` function, line 44: Mark the ImGui context as served by this renderer (call once after CreateContext). Textures are requested through ImTextureData and
-- `UpdateTexture` function, line 65: Answer one texture request. Safe to call for any status.
-- `Render` function, line 117: Draw one frame's draw data. 'p' is the painter of the window the data is for.
-- `Shutdown` function, line 167: Free every texture this renderer made (call before the painter or the ImGui context goes away).
-
 ## `shared/ImGuiPlatformFeed.hpp`
 
-- `OwnRequested` function, line 32
-- `ActiveLine` function, line 41: The line the apps log at start-up so you can tell which one runs.
-- `KeyToImGui` function, line 48: A seam key to an ImGuiKey (ImGuiKey_None for a key Dear ImGui has no name for). The seam numbers keys with USB HID
-- `ModBitOfKey` function, line 114: Dear ImGui wants the modifier state as its own key events (ImGuiMod_Ctrl ...) besides the left / right key events.
-- `ModKeyOfPair` function, line 124: The ImGuiMod_ key for a pair of bits (bit / 2).
-- `MouseButtonToImGui` function, line 135: A seam mouse button (MouseLeft = 1 ...) to Dear ImGui's button number (0 left, 1 right, 2 middle, 3 and 4 the side
-- `CursorToSeam` function, line 147: A seam cursor shape for an ImGuiMouseCursor (ImGuiMouseCursor_None has none: the caller hides the pointer).
-- `Action` struct, line 166: One thing to tell Dear ImGui's IO.
-- `Translate` function, line 178: Pure: what one platform event means for Dear ImGui. 'windowId' filters: an event for another window gives nothing
-- `Apply` function, line 213: Apply Actions to an ImGuiIO.
-- `FeedHost` struct, line 227: What the feed needs from a window and the backend. Empty members are skipped (a missing one is "not supported").
-- `Feed` class, line 260: One Dear ImGui context's feed (the launcher has two: the main window and the chat window). Use it with that context
+- `KeyToImGui` function, line 29: A seam key to an ImGuiKey (ImGuiKey_None for a key Dear ImGui has no name for). The seam numbers keys with USB HID
+- `ModBitOfKey` function, line 95: Dear ImGui wants the modifier state as its own key events (ImGuiMod_Ctrl ...) besides the left / right key events.
+- `ModKeyOfPair` function, line 105: The ImGuiMod_ key for a pair of bits (bit / 2).
+- `MouseButtonToImGui` function, line 112: A seam mouse button (MouseLeft = 1 ...) to Dear ImGui's button number (0 left, 1 right, 2 middle, 3 and 4 the side
+- `CursorToSeam` function, line 124: A seam cursor shape for an ImGuiMouseCursor (ImGuiMouseCursor_None has none: the caller hides the pointer).
+- `Action` struct, line 143: One thing to tell Dear ImGui's IO.
+- `Translate` function, line 155: Pure: what one platform event means for Dear ImGui. 'windowId' filters: an event for another window gives nothing
+- `Apply` function, line 190: Apply Actions to an ImGuiIO.
+- `FeedHost` struct, line 204: What the feed needs from a window and the backend. Empty members are skipped (a missing one is "not supported").
+- `Feed` class, line 237: One Dear ImGui context's feed (the launcher has two: the main window and the chat window). Use it with that context
 
 ## `shared/InspectorFieldsModel.hpp`
 
@@ -915,46 +904,6 @@ Back to the [code index](../code_index.md). 79 headers, 1151 names.
 - `KeyIdOf` function, line 413: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
 - `EventCollector` class, line 440: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
 - `Host` class, line 520: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
-
-## `shared/OkayUIHostImGui.hpp`
-
-- `PopupCoversRect` function, line 17: True when an open ImGui popup covers any part of the screen rectangle (x, y, w, h), or is a modal (which dims the whole view).
-- `WindowInFrontCovers` function, line 37: True when another ImGui window that Dear ImGui draws in front of 'win' overlaps the rectangle (x, y, w, h) (ImGui coordinates).
-- `CoveredInImGui` function, line 61: Popups and windows in front together: while this is true a host draws the Dear ImGui version, which ImGui layers correctly.
-- `ToMainWindowPixels` function, line 68: ImGui positions are desktop coordinates while multi-viewports are on (the editor turns them on): the main window's inside
-- `MouseInOtherViewport` function, line 76: Where OkayUI's mouse is while it is over another OS window of Dear ImGui's (a panel dragged out of the editor, or docked into a
-- `OutsideMainWindow` function, line 86: True when the ImGui window was dragged out into another OS window (a hosted panel then draws there and maps the mouse with
-- `HiddenInImGui` function, line 94: True when Dear ImGui shows nothing of the window this frame: a docked panel whose tab is not the selected one (the Inspector while
-
-## `shared/OkayUIHostMode.hpp`
-
-- `HostModeRequested` function, line 16: The three switches, as main() reads them (the three getenv values, any may be null). The saved settings file does not take part: window mode is
-- `HostModeState` struct, line 33
-- `ToPersisted` function, line 48: The state to save: the panel flags, the live dock layout text and the window's place. 'window' comes from the platform window.
-- `ApplyPersisted` function, line 50: Take a loaded state in: the panel flags and the layout (loaded by the first frame). The window part is the caller's (it makes the window).
-- `HostStatePath` function, line 53: Where window mode keeps its state file: the environment variable OKAY_UI_HOST_STATE if set, else okay_uihost.txt in 'prefDir' (a per-user folder with
-- `DrawHostModeUi` function, line 57: One frame of the window-mode UI: a dock space over the whole display with the "Window mode" status panel and the Audio Mixer (the engine's real mixer,
-- `RunOkayUIHostMode` function, line 61: Create the backend, window and painter, and run frames until the window is closed. Returns the process exit code (0 on a normal close, 1 when no
-
-## `shared/OkayUIHostState.hpp`
-
-- `WindowState` struct, line 26
-- `PersistedState` struct, line 32
-- `EscapeName` function, line 43
-- `UnescapeName` function, line 49
-- `Serialize` function, line 59
-- `Parse` function, line 72: Read a state. False (and 'out' untouched) when the text is not a state at all (no header, too big); otherwise every field that reads cleanly is
-- `Sanitize` function, line 106: Fit a remembered window onto the display: at least 320 x 200, not bigger than the display, and with a good part on it (a window left on a monitor that is
-- `LoadFile` function, line 118
-- `SaveFileAtomic` function, line 129: Write through a temporary file and rename it over the old one, so a crash leaves either the old state or the new one. False on any failure (the old
-- `StateSaver` class, line 150: Saves a state at most every 'intervalMs' while it keeps changing, and once more when asked to flush (the window is closing). The clock is passed in, so a
-
-## `shared/OkayUIImGuiEmbed.hpp`
-
-- `ImGuiEmbed` class, line 33
-- `SharedImGuiEmbed` function, line 154: The one embed the editor's hosted OkayUI widgets share (one set of textures).
-- `HostPanelArea` function, line 257: A rectangle of the current Dear ImGui window drawn by OkayUI, 'size' big at the cursor: HostPanelWindow's way for a page that
-- `HostPanelSection` function, line 288: A part of a Dear ImGui window drawn by OkayUI only, with no Dear ImGui copy (the editor's Project Settings sections Player,
 
 ## `shared/OkayUIImGuiMap.hpp`
 

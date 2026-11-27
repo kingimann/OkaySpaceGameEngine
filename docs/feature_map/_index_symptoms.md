@@ -183,7 +183,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a message with braces vanishes | [17.4](17-launcher-platform.md#174-chat-dms-groups-voice-notes-calls-polls-gifs-emoji) Chat: DMs, groups, voice notes, calls, polls, GIFs, emoji |
 | a minimap camera draws over the main view or replaces it | [2.10](02-rendering-world.md#210-cameras-and-the-camera-stack) Cameras and the camera stack |
 | a missing-tools message | [18.10](18-build-export-release.md#1810-xbox-one-export-experimental-developer-mode-uwp) Xbox One export (experimental, Developer Mode, UWP) |
-| a modal does not show | [40.12](40-okayui-library.md#4012-the-whole-editor-on-okayui-okayengineokayui) The whole editor on OkayUI (`OkayEngineOkayUI`) |
+| a modal does not show | [40.12](40-okayui-library.md#4012-the-editor-on-okayui-only-no-dear-imgui) The editor on OkayUI only (no Dear ImGui) |
 | a model faces backwards | [36.2](36-math-geometry.md#362-quaternions-and-matrices) Quaternions and matrices |
 | a model made here still edits like any mesh | [3.11](03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) Guided creation (templates, parts, safe regeneration) |
 | a moderation action is refused | [17.9](17-launcher-platform.md#179-admin) Admin |
@@ -283,7 +283,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a script's file call returns false or does nothing for an absolute path | [39.9](39-security-anticheat.md#399-script-and-file-path-safety) Script and file path safety |
 | a scroll list shows items outside its box | [12.1](12-ingame-ui.md#121-canvas-anchors-flex-layout-safe-area) Canvas, anchors, flex layout, safe area |
 | a second controller is ignored | [8.2](08-input.md#82-gamepad-sdl) Gamepad (SDL) |
-| a section draws outside its window | [40.12](40-okayui-library.md#4012-the-whole-editor-on-okayui-okayengineokayui) The whole editor on OkayUI (`OkayEngineOkayUI`) |
+| a section draws outside its window | [40.12](40-okayui-library.md#4012-the-editor-on-okayui-only-no-dear-imgui) The editor on OkayUI only (no Dear ImGui) |
 | a setting is missing in the Inspector (only fields of the exported class count) | [13.9](13-scripting.md#139-javascript-scripts-our-own-engine) JavaScript scripts (our own engine) |
 | a shader mode looks different between OpenGL and Direct3D | [38.8](38-render-backends.md#388-shader-pipeline) Shader pipeline |
 | a shared ball is owned by nobody | [16.3](16-networking.md#163-snapshots-and-sync-interest) Snapshots and sync, interest |
@@ -396,6 +396,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an explosion preset is too slow | [2.7](02-rendering-world.md#27-particles-and-lines) Particles and lines |
 | an image is missing | [17.18](17-launcher-platform.md#1718-browser-our-own-web-browser-page-engine-the-browser-program-native-okayspace-web-games) Browser: our own web browser (page engine, the browser program, native OkaySpace web games) |
 | an image shows a red box or "can't load | [12.2](12-ingame-ui.md#122-widgets-button-image-raw-image-text-panel-progress-rating) Widgets: button, image, raw image, text, panel, progress, rating |
+| an input method's candidate list is in the wrong place | [40.12](40-okayui-library.md#4012-the-editor-on-okayui-only-no-dear-imgui) The editor on OkayUI only (no Dear ImGui) |
 | an instance lost its colour change after re-apply | [1.6](01-core-scene.md#16-prefabs-and-templates) Prefabs and templates |
 | an intro animation snaps | [12.13](12-ingame-ui.md#1213-data-binding-ui-animation-and-script-control) Data binding, UI animation and script control |
 | an item cannot be dragged | [11.11](11-gameplay-systems.md#1111-world-drag-and-drop) World drag and drop |
@@ -1056,10 +1057,10 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the editor closed by itself | [17.16](17-launcher-platform.md#1716-crash-reports-launcher-side) Crash reports (launcher side) |
 | the editor crashes or shows a black screen | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
 | the editor exe is huge | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
-| the editor on OkayUI shows panels floating instead of docked | [40.12](40-okayui-library.md#4012-the-whole-editor-on-okayui-okayengineokayui) The whole editor on OkayUI (`OkayEngineOkayUI`) |
 | the editor opens to an empty scene with no direction | [51.3](43-proposals.md#513-welcome-screen-and-tips) Welcome screen and tips |
 | the editor opens twice or the second launch does nothing | [15.15](15-editor.md#1515-editor-shell-startup-and-lifecycle) Editor shell, startup and lifecycle |
 | the editor says "GPU renderer failing | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |
+| the editor shows panels floating instead of docked | [40.12](40-okayui-library.md#4012-the-editor-on-okayui-only-no-dear-imgui) The editor on OkayUI only (no Dear ImGui) |
 | the editor stutters on a big scene | [38.2](38-render-backends.md#382-opengl-backend) OpenGL backend |
 | the editor view freezes while the GPU recovers | [38.10](38-render-backends.md#3810-frame-and-present-path) Frame and present path |
 | the exe asks for admin | [41.2](41-build-tools-infra.md#412-cmake-modules-windows-resources-and-toolchain) CMake modules, Windows resources and toolchain |
@@ -1118,7 +1119,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the loading bar jumps from 0 to 100 | [1.4](01-core-scene.md#14-scene-lifecycle) Scene lifecycle |
 | the loading screen never ends or flashes | [12.8](12-ingame-ui.md#128-loading-pause-and-settings-screens) Loading, pause and settings screens |
 | the match won't start | [16.12](16-networking.md#1612-rooms-lobby-and-match-flow) Rooms, lobby and match flow |
-| the menu bar is missing | [40.12](40-okayui-library.md#4012-the-whole-editor-on-okayui-okayengineokayui) The whole editor on OkayUI (`OkayEngineOkayUI`) |
+| the menu bar is missing | [40.12](40-okayui-library.md#4012-the-editor-on-okayui-only-no-dear-imgui) The editor on OkayUI only (no Dear ImGui) |
 | the mesh is missing near a doorway | [9.1](09-ai-navigation.md#91-nav-mesh-bake-and-queries) Nav mesh bake and queries |
 | the mesh stretches | [5.5](05-animation-ik.md#55-root-motion-and-skinning) Root motion and skinning |
 | the mixer window does not match the game | [15.13](15-editor.md#1513-content-editors-and-tool-windows) Content editors and tool windows |

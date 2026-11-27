@@ -282,6 +282,18 @@ int main() {
         for (auto& e : small.Versions(g)) total += e.bytes;
         for (auto& e : small.Versions(f)) total += e.bytes;
         CHECK(total <= 10);
+        // Two copies in the same millisecond with different labels (the file as opened, then saved at once) get different
+        // times, so the newest-first order never depends on how the folder lists its files (it differed on CI's own-stack job).
+        LocalHistory same(root.generic_string(), 50, 1u << 20);
+        const std::string k = (root / "Assets/Scripts/Same.okay").generic_string();
+        CHECK(same.Record(k, "as opened", 500000, "Opened"));
+        CHECK(same.Record(k, "as saved", 500000, "Saved"));
+        const auto sv = same.Versions(k);
+        CHECK(sv.size() == 2);
+        if (sv.size() == 2) {
+            CHECK(sv[0].time > sv[1].time);
+            CHECK(sv[0].label == "Saved" && sv[1].label == "Opened");
+        }
         const auto diff = LineDiff("a\nb\nc\n", "a\nB\nc\nd\n");
         std::string ops;
         for (const auto& l : diff) ops += l.op;

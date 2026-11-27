@@ -129,17 +129,17 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 
 ### 16.6 Anti-cheat (server side)
 - **System:** OkayAntiCheat - The server checks what players send, spots cheaters, and handles reports, evidence, bans and appeals; the game's own checks add evidence.
-  Home: `engine/include/okay/Net/AntiCheat.hpp`, `shared/AntiCheatBackend.hpp`, `engine/include/okay/AntiCheat/` (planned). Entry: `engine/include/okay/Net/AntiCheat.hpp`. Also called: Server Anti-Cheat, anti-cheat, AntiCheat, okayac, bans, cheat detection. Fix: round 2 of `docs/online/okay_anticheat.md` moves `Net/AntiCheat*`, `Net/CheatDetect*` and `shared/AntiCheat*` into `engine/include/okay/AntiCheat/`.
+  Home: `engine/include/okay/AntiCheat/`, `engine/src/AntiCheat/` (one library, okay_anticheat, made in engine/CMakeLists.txt). Entry: `engine/include/okay/AntiCheat/AntiCheat.hpp`. Doc: `docs/online/okay_anticheat.md`. Also called: Server Anti-Cheat, anti-cheat, AntiCheat, okayac, bans, cheat detection, client integrity, signed manifest, okay_anticheat.
 - **What:** The opt-in checks the server makes on everything a client sends: who may move or spawn what, SyncVar and RPC limits, hit claims, the clock heartbeat and join tickets. The full cross-cutting picture (client integrity, bans, keys) is area 39.
 - **Parts:**
-  - 16.6.1 Rules, violations and kicks - `Net/AntiCheat` - `AntiCheatSettings` (parsed from `.okayac`), refusal counts, kick after N in a minute, rejoin cooldown that doubles up to an hour, budgets that survive a reconnect for 5 minutes
+  - 16.6.1 Rules, violations and kicks - `AntiCheat/AntiCheat` - `AntiCheatSettings` (parsed from `.okayac`), refusal counts, kick after N in a minute, rejoin cooldown that doubles up to an hour, budgets that survive a reconnect for 5 minutes
   - 16.6.2 Anti-Cheat Config component - `Components/AntiCheatConfig` - scene component with inline rules or a `.okayac` file; raises On Cheat Detected; starts safe (encryption required, `maxSyncSpeed 20`, `maxRpcsPerSecond 30`)
   - 16.6.3 Net Validator - `Components/NetValidator` - per-RPC rule: size, calls per second, cooldown, a token-bucket budget (ammo), host-only; `TopUp`, `net_budget`, Server Budget node
   - 16.6.4 Hit claims - `Net/NetworkManager` - `ClaimHit` is checked for shooter alive, fire rate and ammo, origin, range, line of sight and the game's own Validate Hit rule; damage is applied on the server only
-  - 16.6.5 Spawn and SyncVar limits - `Net/AntiCheat` - prefab allowlist, spawns per second, live spawns per peer, spawn radius, `serverVar` and `clientVar` key prefixes
-  - 16.6.6 Clock heartbeat verifier - `Net/ClockCheck` - the server's side of the HMAC challenge: three off windows in a row, all one way, is drift
+  - 16.6.5 Spawn and SyncVar limits - `AntiCheat/AntiCheat` - prefab allowlist, spawns per second, live spawns per peer, spawn radius, `serverVar` and `clientVar` key prefixes
+  - 16.6.6 Clock heartbeat verifier - `AntiCheat/ClockCheck` - the server's side of the HMAC challenge: three off windows in a row, all one way, is drift
   - 16.6.7 Session ticket check - `Net/SessionTicket` - verifies a signed ticket with the public key (details in 39.3)
-- **Code:** `Net/AntiCheat`, `Net/ClockCheck`, `Net/SessionTicket`, `Components/AntiCheatConfig`, `Components/NetValidator`
+- **Code:** `AntiCheat/AntiCheat`, `AntiCheat/ClockCheck`, `Net/SessionTicket`, `Components/AntiCheatConfig`, `Components/NetValidator`
 - **API:** `AntiCheat`, `AntiCheatSettings`, `NetworkManager::anticheat`, `SetCheatHandler`, `SetAntiCheatKickHandler`, `ClaimHit`, `ValidateHit`, `NetValidator::TopUp`, scripts `net_anticheat`, `net_anticheat_load`, `net_violations`, `net_hit`, `net_budget`, `on_cheat_detected`, `on_validate_rpc`, nodes On Cheat Detected, On Validate Rpc, Reject Rpc, Server Budget
 - **Editor:** Inspector: Anti-Cheat Config and Net Validator (Add Component menu); File > Build Settings > Server page for the basics
 - **Docs:** `docs/online/anticheat.md`, `docs/online/multiplayer.md` (Server authority, Anti-cheat), `docs/online/okay_anticheat.md` (OkayAntiCheat audit and plan)

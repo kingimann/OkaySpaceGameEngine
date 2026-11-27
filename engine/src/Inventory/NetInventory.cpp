@@ -9,7 +9,7 @@
 #include "okay/Components/NetworkObject.hpp"
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Inventory/InventoryPersistence.hpp"
-#include "okay/Net/AntiCheat.hpp"
+#include "okay/AntiCheat/AntiCheat.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"

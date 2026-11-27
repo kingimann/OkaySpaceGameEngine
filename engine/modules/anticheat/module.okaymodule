@@ -11,5 +11,5 @@ components=AntiCheatConfig,NetValidator
 serializers=netvalidator
 vs_group=
 editor=
-sources=include/okay/Net/AntiCheat* include/okay/Net/CheatDetect.hpp include/okay/Net/CheatSim.hpp include/okay/Net/ClockCheck.hpp include/okay/Net/DetectInspector.hpp src/Net/AntiCheat* src/Net/CheatDetect.cpp src/Net/CheatSim.cpp src/Net/ClockCheck.cpp include/okay/Components/AntiCheatConfig.hpp include/okay/Components/NetValidator.hpp src/Components/AntiCheatConfig.cpp
+sources=include/okay/AntiCheat/* src/AntiCheat/* include/okay/Components/AntiCheatConfig.hpp include/okay/Components/NetValidator.hpp src/Components/AntiCheatConfig.cpp
 tests=anticheat_* cheat_detect net_anticheat*

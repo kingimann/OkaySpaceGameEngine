@@ -26,12 +26,12 @@
 #include "CrashUpload.hpp"    // scrub + send crash reports (docs/online/crash_reports.md)
 #include "OfficialGame.hpp"   // the official game: manifest, diff and the safe update swap (Play page)
 #include "OfficialAdmin.hpp"  // the Official game admin tab's requests (releases bucket, official/)
-#include "AntiCheatIntegrity.hpp"   // opt-in anti-cheat: check a game against its Data/manifest.json before it starts
-#include "AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals (Admin > Anti-cheat, the ban banner)
-#include "AntiCheatAdminTools.hpp"  // linked accounts, ban with devices, report evidence (Admin > Anti-cheat)
+#include "okay/AntiCheat/AntiCheatIntegrity.hpp"   // opt-in anti-cheat: check a game against its Data/manifest.json before it starts
+#include "okay/AntiCheat/AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals (Admin > Anti-cheat, the ban banner)
+#include "okay/AntiCheat/AntiCheatAdminTools.hpp"  // linked accounts, ban with devices, report evidence (Admin > Anti-cheat)
 #include "UserReports.hpp"          // "Report" for players, messages, posts, listings, servers (Admin > Reports)
-#include "AntiCheatHardware.hpp"    // the salted hardware hash sent with appeals
-#include "TicketClient.hpp"         // session tickets: the ban / ticket check before a game is started to join a server
+#include "okay/AntiCheat/AntiCheatHardware.hpp"    // the salted hardware hash sent with appeals
+#include "okay/AntiCheat/TicketClient.hpp"         // session tickets: the ban / ticket check before a game is started to join a server
 #include "ProjectDelete.hpp"  // Create page: which folders "Delete project" may remove
 #include "ProjectList.hpp"    // Create page: the project list, "Remove from list", prefs lines
 #include "LibraryScan.hpp"    // Play / Community: the library scan, each scene once

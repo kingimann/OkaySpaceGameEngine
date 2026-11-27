@@ -1,6 +1,6 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
-#include "okay/Net/CheatDetect.hpp"
+#include "okay/AntiCheat/CheatDetect.hpp"
 #include "okay/Net/Packet.hpp"
 #include "okay/Net/NetSim.hpp"
 #include "okay/Net/UdpSocket.hpp"

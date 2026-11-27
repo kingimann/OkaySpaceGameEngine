@@ -6,7 +6,7 @@
 #include "MainShared.hpp"            // g_project, g_xboxExport* (main.cpp)
 #include "Updater.hpp"               // updater::SelfPath / Download / RawUrl / FetchVerified
 #include "AnimatorPreview.hpp"       // apreview::Stop: a build ships the edited scene, not the running one
-#include "AntiCheatIntegrity.hpp"    // Data/manifest.json (opt-in anti-cheat)
+#include "okay/AntiCheat/AntiCheatIntegrity.hpp"    // Data/manifest.json (opt-in anti-cheat)
 #include "BuildSettingsModel.hpp"    // bsm::ExtraFrom, the pre / post build commands, the exclude list
 #include "ConsolePanel.hpp"          // ConsoleLog
 #include "LocalizationWindow.hpp"    // CopyLocalizationFiles: strings.okayloc and its fonts go into the build
@@ -531,7 +531,7 @@ std::string Build(EditorState& ed, const std::string& outDirAsTyped,
     }
 
     // Data/manifest.json: every shipped file's SHA-256, signed when a key is set up
-    // (shared/AntiCheatIntegrity.hpp). Only written (and only needed) when anti-cheat is on.
+    // (engine/include/okay/AntiCheat/AntiCheatIntegrity.hpp). Only written (and only needed) when anti-cheat is on.
     okayac::BuildManifestResult integrity;
     if (opt.antiCheat) {
         integrity = okayac::WriteBuildManifest(root, gameName, opt.version, okayac::LoadSigningKey(), (okayac::Mode)opt.antiCheat);   // the mode is signed too

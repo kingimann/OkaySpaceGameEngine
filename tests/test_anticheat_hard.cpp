@@ -3,10 +3,10 @@
 // server. See docs/online/anticheat.md for the item list. Headless; loopback only.
 #include "test_framework.hpp"
 #include <Okay.hpp>
-#include "okay/Net/AntiCheat.hpp"
-#include "okay/Net/AntiCheatLog.hpp"
-#include "okay/Net/CheatDetect.hpp"
-#include "okay/Net/CheatSim.hpp"
+#include "okay/AntiCheat/AntiCheat.hpp"
+#include "okay/AntiCheat/AntiCheatLog.hpp"
+#include "okay/AntiCheat/CheatDetect.hpp"
+#include "okay/AntiCheat/CheatSim.hpp"
 #include "okay/Net/DedicatedServer.hpp"
 #include "okay/Net/Packet.hpp"
 #include "okay/Net/UdpSocket.hpp"

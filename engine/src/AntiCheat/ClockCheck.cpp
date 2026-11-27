@@ -1,4 +1,4 @@
-#include "okay/Net/ClockCheck.hpp"
+#include "okay/AntiCheat/ClockCheck.hpp"
 #if defined(_WIN32)
 #  ifndef WIN32_LEAN_AND_MEAN
 #    define WIN32_LEAN_AND_MEAN
@@ -7,7 +7,7 @@
 #    define NOMINMAX
 #  endif
 #endif
-#include "AntiCheatChecks.hpp"   // shared/: okayac::ClockHeartbeat (#269)
+#include "okay/AntiCheat/AntiCheatChecks.hpp"   // okayac::ClockHeartbeat (#269)
 #include <random>
 
 namespace okay::net {

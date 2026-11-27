@@ -431,6 +431,19 @@ class Lint(unittest.TestCase):
         f = self.lint({"engine/src/Core/X.cpp": "#if !defined(_WIN32)\n#include <thread>\n#endif\n#include <mutex>  // lint-allow: win32-thread\n"}, BL.check_includes)
         self.assertEqual([x["sev"] for x in f], ["warning"])
 
+    def test_moved_file_is_not_new_code(self):
+        """A git mv adds no lines: an old finding inside a moved file is not blamed on the move (OkayAntiCheat round 2 moved
+        shared/TicketClient.hpp with its old #include <thread>), but a line added to the moved file still is."""
+        old = "#include <thread>\n" + "".join(f"int v{i};\n" for i in range(20))
+        self.r.write("shared/Old.hpp", old); self.r.commit("old"); sh(self.r.d, "update-ref", "refs/remotes/origin/main", "HEAD")
+        sh(self.r.d, "checkout", "-q", "-b", "tmp-mv", "origin/main")
+        os.makedirs(os.path.join(self.r.d, "engine/include/okay/New"), exist_ok=True)
+        sh(self.r.d, "mv", "shared/Old.hpp", "engine/include/okay/New/Old.hpp")
+        self.r.write("engine/include/okay/New/Old.hpp", old + "#include <mutex>\n"); self.r.commit("move")
+        sh(self.r.d, "update-ref", "refs/remotes/origin/claude2/mv", "HEAD"); sh(self.r.d, "checkout", "-q", "main")
+        f = BL.check_includes(self.r.d, "origin/main", "origin/claude2/mv")
+        self.assertEqual([(x["file"], x["line"]) for x in f], [("engine/include/okay/New/Old.hpp", 22)])
+
     def test_binaries(self):
         big = "\0" + "x" * (210 * 1024)
         # a built program or library is refused at any size, an archive too

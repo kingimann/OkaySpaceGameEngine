@@ -3,7 +3,7 @@
 #include "okay/Net/Packet.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Net/SecureChannel.hpp"
-#include "AntiCheatChecks.hpp"   // shared/: okayac::detail::HmacSha256
+#include "okay/AntiCheat/AntiCheatChecks.hpp"   // okayac::detail::HmacSha256
 #include <algorithm>
 #include <cmath>
 #include <cstring>

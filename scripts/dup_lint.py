@@ -341,6 +341,16 @@ def git(root, *args):
     return p.stdout.decode("utf-8", errors="replace")
 
 
+def renamed_paths(root, base, head):
+    """{new path: old path} for the files git sees as moved between base and head (git mv, content mostly the same)."""
+    out = {}
+    for line in git(root, "diff", "-M", "--name-status", "--diff-filter=R", f"{base}...{head}").split("\n"):
+        f = line.split("\t")
+        if len(f) == 3 and f[0].startswith("R"):
+            out[f[2]] = f[1]
+    return out
+
+
 def code_paths(root, rev):
     """Every code file at `rev` that is not excluded."""
     return [p for p in git(root, "ls-tree", "-r", "-z", "--name-only", rev).split("\0") if p and lang_of(p) and not excluded(p)]
@@ -1150,9 +1160,12 @@ def run_check(a, root):
         old_txt = read_blob(root, a.base, BASELINE)
         if old_txt:
             old = baseline_counts(json.loads(old_txt))
+            moved = renamed_paths(root, a.base, a.head)
             for rid, by in base.items():
                 for path, c in by.items():
                     o = old.get(rid, {}).get(path, 0)
+                    if c > o and path in moved:   # a moved file (git mv) keeps its old count under its new name
+                        o += old.get(rid, {}).get(moved[path], 0)
                     if c > o:
                         out.emit("error", BASELINE, 1, "baseline grew",
                                  f"raises {rid} for {path} ({o} -> {c}). The baseline may only shrink: use the shared code, "

@@ -114,7 +114,7 @@ int main() {
             CHECK(Hex(m2, c4.cmp) == c4.mac);
             ++idx;
         }
-        // The anticheat wrapper (shared/AntiCheatChecks.hpp) calls okay::crypto::HmacSha256Mac with the same bytes; the
+        // The anticheat wrapper (engine/include/okay/AntiCheat/AntiCheatChecks.hpp) calls okay::crypto::HmacSha256Mac with the same bytes; the
         // old and new HMAC agree on random keys up to 150 bytes (covers the >64-byte key path) and random messages.
         int bad = 0;
         for (int i = 0; i < 300; ++i) {

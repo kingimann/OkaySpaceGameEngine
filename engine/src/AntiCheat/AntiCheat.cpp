@@ -1,4 +1,4 @@
-#include "okay/Net/AntiCheat.hpp"
+#include "okay/AntiCheat/AntiCheat.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Net/SessionTicket.hpp"
 #include <algorithm>

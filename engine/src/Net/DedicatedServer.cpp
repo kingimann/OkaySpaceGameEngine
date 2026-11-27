@@ -1,8 +1,8 @@
 #include "okay/Net/DedicatedServer.hpp"
-#include "okay/Net/CheatSim.hpp"
+#include "okay/AntiCheat/CheatSim.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/SessionTicket.hpp"
-#include "AntiCheatBackend.hpp"   // shared/: the ac_reports request (#270)
+#include "okay/AntiCheat/AntiCheatBackend.hpp"   // the ac_reports request (#270)
 #include <thread>
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Net/MatchResults.hpp"

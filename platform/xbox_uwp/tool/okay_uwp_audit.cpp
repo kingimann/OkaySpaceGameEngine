@@ -21,6 +21,7 @@ int main(int argc, char** argv) {
     const fs::path root = argv[1]; const bool all = argc > 2 && std::string(argv[2]) == "--all";
     std::string cm; if (!Read(root / "engine/CMakeLists.txt", cm)) { std::fputs("cannot read engine/CMakeLists.txt\n", stderr); return 2; }
     std::vector<std::string> srcs = ParseEngineSourceList(cm);
+    for (const std::string& s : ParseEngineSourceList(cm, "okay_anticheat")) srcs.push_back(s);   // OkayAntiCheat, linked into okay_engine
     std::set<std::string> excluded; std::map<std::string, std::string> why;
     std::string ex; if (Read(root / "platform/xbox_uwp/engine/uwp_exclude.txt", ex)) {
         std::istringstream in(ex); std::string line;

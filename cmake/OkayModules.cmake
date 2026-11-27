@@ -12,7 +12,7 @@
 #
 #   okay_add_module(<name> [REQUIRES <module>...] [SOURCES <pattern>...] [TESTS <pattern>...])  declare one module
 #   okay_modules_read()             declare every module from engine/modules/*/module.okaymodule (checks names and requires)
-#   okay_modules_group(<target>)    (call in the folder that made <target>, after its last target_sources) put each source of <target> in the first module whose sources= matches it, else core;
+#   okay_modules_group(<target> [<target>...])  (call in the folder that made the targets, after their last target_sources) put each source of the targets in the first module whose sources= matches it, else core;
 #                                   writes <build>/okay_modules.tsv ("module<TAB>file") and the source property OKAY_MODULE
 #   okay_modules_label_tests()      in a tests folder (deferred to its end): label every test module:<name> (module:core when none claims it)
 #
@@ -115,7 +115,11 @@ function(okay_modules_read)
 endfunction()
 
 function(okay_modules_group target)
-    get_target_property(_srcs ${target} SOURCES)
+    set(_srcs "")
+    foreach(_t IN ITEMS ${target} ${ARGN})   # more targets made in the same folder (okay_anticheat, linked into okay_engine)
+        get_target_property(_ts ${_t} SOURCES)
+        list(APPEND _srcs ${_ts})
+    endforeach()
     get_target_property(_dir ${target} SOURCE_DIR)
     get_property(_names GLOBAL PROPERTY OKAY_MODULE_NAMES)
     set(_tsv "")
@@ -168,7 +172,7 @@ function(okay_modules_group target)
         file(WRITE "${_out}" "${_tsv}")
     endif()
     list(LENGTH _names _count)
-    message(STATUS "OkaySpace: ${_count} engine modules; ${_inmod} files of ${target} in modules, ${_incore} in core (okay_modules.tsv)")
+    message(STATUS "OkaySpace: ${_count} engine modules; ${_inmod} files of ${target} ${ARGN} in modules, ${_incore} in core (okay_modules.tsv)")
 endfunction()
 
 function(okay_modules_label_tests)

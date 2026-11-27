@@ -5,7 +5,7 @@
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/NetSim.hpp"
 #include "okay/Net/SessionTicket.hpp"
-#include "AntiCheatCrypto.hpp"   // shared/: ed25519 for the host identity (#269)
+#include "okay/AntiCheat/AntiCheatCrypto.hpp"   // ed25519 for the host identity (#269)
 #include "OfficialGame.hpp"      // shared/: SafeRelPath / ResolveInside for network prefab paths
 #include "okay/Components/NetworkPlayerSpawner.hpp"
 #include <cstdio>

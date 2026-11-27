@@ -183,7 +183,7 @@
         "engine/src/Core/ImageWrite.cpp",
         "engine/include/okay/Core/Inflate.hpp",
         "engine/include/okay/Crypto/Sha256.hpp",
-        "shared/*Crypto*",
+        "engine/include/okay/AntiCheat/AntiCheatCrypto.hpp",
         "shared/*Wav*",
         "shared/Okf*",
         "shared/*Own*",
@@ -287,7 +287,9 @@
         "assets/**",
         "shared/**",
         "engine/include/okay/Net/**",
-        "engine/src/Net/**"
+        "engine/src/Net/**",
+        "engine/include/okay/AntiCheat/**",
+        "engine/src/AntiCheat/**"
       ]
     },
     {

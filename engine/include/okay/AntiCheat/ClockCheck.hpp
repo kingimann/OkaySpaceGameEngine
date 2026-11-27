@@ -6,7 +6,7 @@
 namespace okay::net {
 
 /// The server's side of the anti-cheat clock heartbeat, over the network: the
-/// player's okayac::ClockHeartbeat (#269, shared/AntiCheatChecks.hpp) with the
+/// player's okayac::ClockHeartbeat (#269, engine/include/okay/AntiCheat/AntiCheatChecks.hpp) with the
 /// server as the verifier. The server issues a challenge about once a second;
 /// the client answers with its game clock and an HMAC over the challenge; each
 /// 2-second window gives one rate, and three off windows in a row, all the same

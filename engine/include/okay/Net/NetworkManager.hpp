@@ -4,9 +4,9 @@
 #include "okay/Net/NetSim.hpp"        // NatType (simulateNat)
 #include "okay/Net/RelayProtocol.hpp"  // kRelaySlotPort
 #include "okay/Net/SecureChannel.hpp"
-#include "okay/Net/AntiCheat.hpp"
-#include "okay/Net/AntiCheatLog.hpp"
-#include "okay/Net/ClockCheck.hpp"
+#include "okay/AntiCheat/AntiCheat.hpp"
+#include "okay/AntiCheat/AntiCheatLog.hpp"
+#include "okay/AntiCheat/ClockCheck.hpp"
 #include "okay/Net/PlayerInput.hpp"
 #include "okay/Net/NetDelta.hpp"
 #include "okay/Net/NetChannels.hpp"
@@ -162,7 +162,7 @@ public:
     /// What a client must do before it joins: called at the start of StartClient / JoinViaRelay (so also for a launcher join, a
     /// reconnect and a script's net_join), before any socket is opened or key made. The gate may fetch a session ticket
     /// (TicketBinding(), then SetAuthToken(ticket)); returning false refuses the join: nothing is sent and the call returns false
-    /// with the reason in LastJoinRefusal(). No gate (the default) = every join goes ahead as before. See shared/TicketJoin.hpp.
+    /// with the reason in LastJoinRefusal(). No gate (the default) = every join goes ahead as before. See engine/include/okay/AntiCheat/TicketJoin.hpp.
     using JoinGate = std::function<bool(NetworkManager& nm, const std::string& host, std::uint16_t port,
                                         bool relayed, const std::string& relayCode, std::string& why)>;
     static void SetJoinGate(JoinGate gate);
@@ -196,7 +196,7 @@ public:
     /// Client: how many times the server corrected our position.
     std::uint32_t Corrections() const { return m_corrections; }
 
-    // ---- Anti-cheat (opt-in; see okay/Net/AntiCheat.hpp) ------------------
+    // ---- Anti-cheat (opt-in; see okay/AntiCheat/AntiCheat.hpp) ------------------
     /// Server: what clients may send. Off by default (set
     /// anticheat.settings.enabled, e.g. from a parsed .okayac); with it off
     /// nothing is checked and nothing is sent differently.

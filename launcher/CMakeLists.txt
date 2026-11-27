@@ -83,13 +83,13 @@ target_link_libraries(okayspace-launcher PRIVATE ${OKAY_LAUNCHER_SDL} okay::plat
 if(TARGET okay_engine)
     target_link_libraries(okayspace-launcher PRIVATE okay_engine)
 endif()
-# shared/AntiCheatCrypto.hpp is a thin wrapper over okay::crypto (our own Ed25519 and SHA-512; libsodium is used for
+# engine/include/okay/AntiCheat/AntiCheatCrypto.hpp is a thin wrapper over okay::crypto (our own Ed25519 and SHA-512; libsodium is used for
 # Ed25519 instead where the build has it). Link the crypto library by itself so the launcher does not depend on the
 # engine for it. (okay_crypto is always defined: engine/ is always added.)
 if(TARGET okay_crypto)
     target_link_libraries(okayspace-launcher PRIVATE okay_crypto)
 else()
-    message(FATAL_ERROR "okayspace-launcher needs okay_crypto (engine/CMakeLists.txt) for shared/AntiCheatCrypto.hpp")
+    message(FATAL_ERROR "okayspace-launcher needs okay_crypto (engine/CMakeLists.txt) for engine/include/okay/AntiCheat/AntiCheatCrypto.hpp")
 endif()
 # The Windows system-tray icon (Shell_NotifyIcon) lives in shell32.
 if(WIN32)

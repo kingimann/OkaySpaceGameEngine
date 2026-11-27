@@ -1,5 +1,5 @@
 #pragma once
-// Hooks the session-ticket flow (shared/TicketClient.hpp) into a game or the launcher: the account's HTTP call as the Transport and a
+// Hooks the session-ticket flow (engine/include/okay/AntiCheat/TicketClient.hpp) into a game or the launcher: the account's HTTP call as the Transport and a
 // NetworkManager join gate. Include this where okay::NetworkManager and okay::Account are linked (the player, the launcher, tests).
 #include "TicketClient.hpp"
 #include "okay/Net/NetworkManager.hpp"

@@ -4,10 +4,10 @@
 #include "LauncherShared.hpp"
 #include "NavIcons.hpp"   // SlateCombo, the launcher's dropdown
 #include "AntiCheatPages.hpp"
-#include "AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals
-#include "AntiCheatAdminTools.hpp"  // linked accounts, ban with devices, report evidence
-#include "AntiCheatHardware.hpp"    // the salted hardware hash sent with appeals
-#include "TicketClient.hpp"         // session tickets: the ban / ticket check before a join
+#include "okay/AntiCheat/AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals
+#include "okay/AntiCheat/AntiCheatAdminTools.hpp"  // linked accounts, ban with devices, report evidence
+#include "okay/AntiCheat/AntiCheatHardware.hpp"    // the salted hardware hash sent with appeals
+#include "okay/AntiCheat/TicketClient.hpp"         // session tickets: the ban / ticket check before a join
 #include "OfficialGame.hpp"
 #include "OkayTheme.hpp"
 #include "okay/Platform/Platform.hpp"
@@ -21,7 +21,7 @@ namespace okl {
 // Admin > Anti-cheat (admins): review reports, ban / unban accounts and
 // machines, decide appeals. Players: a banner for their own anti-cheat ban with
 // an "Appeal" flow, and "Report cheating" in a chat's menu. Requests are built
-// and parsed by shared/AntiCheatBackend.hpp; the server's RLS decides who may
+// and parsed by engine/include/okay/AntiCheat/AntiCheatBackend.hpp; the server's RLS decides who may
 // do what. OKAY_UI_DEMO_USER fills everything with sample data (no network).
 
 struct AcAdminData {
@@ -522,7 +522,7 @@ void PumpAcMyBans(bool signedIn) {
 
 
 // ---- Session tickets before a join: the ban check + "no ticket, no join" --------------------------------------------------------
-// okay_tickets.cfg (next to the launcher, or next to the game's scene) turns this on (shared/TicketClient.hpp). The launcher asks the ticket
+// okay_tickets.cfg (next to the launcher, or next to the game's scene) turns this on (engine/include/okay/AntiCheat/TicketClient.hpp). The launcher asks the ticket
 // service on a worker thread before it starts a game to join a server: a banned answer refreshes my bans (the banner shows why) and the game
 // is not started; with `mode required` any failure stops the start too (the game would refuse to join anyway, this just says why now).
 // The game does the real, connection-bound request itself (player/main.cpp); this one is only the early answer, and its ticket is dropped.

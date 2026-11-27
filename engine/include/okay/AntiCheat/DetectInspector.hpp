@@ -11,7 +11,7 @@
 //     the .okayac file and the inspector's text box all share).
 // Header-only; no UI, no engine state.
 // ---------------------------------------------------------------------------
-#include "okay/Net/CheatDetect.hpp"
+#include "okay/AntiCheat/CheatDetect.hpp"
 
 #include <cstddef>
 #include <sstream>

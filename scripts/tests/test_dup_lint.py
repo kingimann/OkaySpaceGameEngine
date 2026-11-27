@@ -130,6 +130,29 @@ class DupLintTest(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("baseline grew", out)
 
+    def _moved(self, count):
+        old = "unsigned H(const char* s) {\n unsigned h = 0;\n" + FNV_LINE + " return h;\n}\n"
+        r = Repo({"engine/src/Net/Old.cpp": old}, {"fnv1a": {"engine/src/Net/Old.cpp": 1}})
+        try:
+            git(r.d, "mv", "engine/src/Net/Old.cpp", "engine/src/Net/Moved.cpp")
+            r.write("scripts/dup_baseline.json", json.dumps({"rules": {"fnv1a": {"engine/src/Net/Moved.cpp": count}}}))
+            r.commit("move")
+            return r.check()
+        finally:
+            r.close()
+
+    def test_moved_file_keeps_its_baseline_count(self):
+        """git mv of a file with a known duplicate: its baseline entry follows it to the new name and is not growth
+        (OkayAntiCheat round 2 moved engine/src/Net/AntiCheat.cpp to engine/src/AntiCheat/)."""
+        code, out = self._moved(1)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("baseline grew", out)
+
+    def test_moved_file_may_not_raise_its_count(self):
+        code, out = self._moved(2)
+        self.assertEqual(code, 1, out)
+        self.assertIn("baseline grew", out)
+
     # ---- copy-paste detector
     def test_pasted_block_fails_even_with_whitespace_and_comment_changes(self):
         pasted = "// my new steering\n" + "\n".join(("        " + l.strip() + "   // tweaked") if i % 3 == 0 else l

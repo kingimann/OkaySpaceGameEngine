@@ -173,10 +173,11 @@ inline std::vector<AuditFinding> ScanSource(const std::string& source, std::vect
     return out;
 }
 
-/// The .cpp / .c files the engine's add_library(okay_engine ...) lists (paths as written, e.g. "src/Core/Paths.cpp"). Pure text parse.
-inline std::vector<std::string> ParseEngineSourceList(const std::string& cmake) {
+/// The .cpp / .c files the engine's add_library(okay_engine ...) lists (paths as written, e.g. "src/Core/Paths.cpp"), or another
+/// library's in the same file (`library`: "okay_anticheat", which okay_engine links). Pure text parse.
+inline std::vector<std::string> ParseEngineSourceList(const std::string& cmake, const std::string& library = "okay_engine") {
     std::vector<std::string> out;
-    const std::size_t at = cmake.find("add_library(okay_engine");
+    const std::size_t at = cmake.find("add_library(" + library);
     if (at == std::string::npos) return out;
     std::size_t pos = cmake.find('\n', at); if (pos == std::string::npos) return out;
     ++pos;

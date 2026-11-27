@@ -245,7 +245,7 @@ answer like, and our own SQL in `docs/sql/` (which is the specification of the r
 | Request routing and JSON | `okay::json` (`Core/Json.hpp`), `AccountService::detail::JsonEscape` | A small router: route table, path parameters |
 | Password hashing | libsodium `crypto_pwhash_str` (Argon2id) through `NetCrypto.hpp` | Add the wrapper; existing PBKDF2 records from on-device accounts are checked once and re-hashed with Argon2id on that sign-in |
 | Access tokens | libsodium `crypto_sign` (Ed25519), already wrapped in `NetCrypto.hpp` | JSON web tokens with `alg` EdDSA and the claims the programs read (`sub`, `exp`) plus `role`; refresh tokens from `randombytes_buf`, stored only as a `crypto_generichash` hash, rotated on every use, a reused one ends the session |
-| Session ticket | the ticket format in `shared/TicketClient.hpp` and `supabase/functions/session-ticket/ticket.ts` (ours) | A C++ handler that signs with libsodium Ed25519 |
+| Session ticket | the ticket format in `engine/include/okay/AntiCheat/TicketClient.hpp` and `supabase/functions/session-ticket/ticket.ts` (ours) | A C++ handler that signs with libsodium Ed25519 |
 | Rate limits, lock-out, body caps, token expiry | `examples/account-server/server.py` (ours) | Same behaviour in C++, then the Python server is deleted |
 | Random ids | `AccountService::detail::OsRandom` | UUID v4 from it |
 | Path safety for files | `webrun::MapTarget` | Reused for Storage paths |

@@ -341,8 +341,8 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   - 47.1.1 Data-driven content - `Inventory/ItemDatabase`, `Core/DataAsset` - items, recipes and loot tables are text files the game loads; `.okaydata` assets
   - 47.1.2 Asset base folder - `Core/Paths` - one asset base directory with change listeners (#571); no list of search folders
   - 47.1.3 Packed data - `Core/DataPack` - optional obfuscation of shipped data (not security)
-  - 47.1.4 Build integrity manifest - `shared/AntiCheatIntegrity.hpp` - Data/manifest.json lists every shipped file's SHA-256 when anti-cheat is on, which a mod would change
-- **Code:** `Inventory/ItemDatabase`, `Core/DataAsset`, `Core/Paths`, `Core/DataPack`, `shared/AntiCheatIntegrity.hpp`
+  - 47.1.4 Build integrity manifest - `engine/include/okay/AntiCheat/AntiCheatIntegrity.hpp` - Data/manifest.json lists every shipped file's SHA-256 when anti-cheat is on, which a mod would change
+- **Code:** `Inventory/ItemDatabase`, `Core/DataAsset`, `Core/Paths`, `Core/DataPack`, `engine/include/okay/AntiCheat/AntiCheatIntegrity.hpp`
 - **API:** `ItemDatabase::Load`, `DataAsset::Load`, `Paths::SetAssetBaseDir`
 - **Editor:** none
 - **Docs:** `docs/release/packaging.md`, `docs/online/anticheat.md`
@@ -981,9 +981,9 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Commands such as god mode, give item, teleport, set time, available in development builds.
 - **Parts:**
   - 54.4.1 Cvar convention - `Core/Cvar` - the docs use `cheat.god` as an example name; no cheat is implemented
-  - 54.4.2 Anti-cheat (different thing) - `Net/AntiCheat` - the "cheat" code in the engine is about detecting cheating players in multiplayer
+  - 54.4.2 Anti-cheat (different thing) - `AntiCheat/AntiCheat` - the "cheat" code in the engine is about detecting cheating players in multiplayer
   - 54.4.3 Command set - `-` - not built
-- **Code:** `Core/Cvar`, `Net/AntiCheat`
+- **Code:** `Core/Cvar`, `AntiCheat/AntiCheat`
 - **API:** `Console::Register`
 - **Editor:** none
 - **Docs:** `docs/engine/core_tools.md`, `docs/online/anticheat.md`

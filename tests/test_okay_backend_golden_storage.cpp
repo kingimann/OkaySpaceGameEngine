@@ -28,7 +28,7 @@
 #include "okay/Platform/Messages.hpp"
 #include "okay/Platform/Workshop.hpp"
 #include "OfficialAdmin.hpp"          // launcher/: the Official game admin tab's requests
-#include "TicketJoin.hpp"             // shared/: the session ticket through the shared account
+#include "okay/AntiCheat/TicketJoin.hpp"   // the session ticket through the shared account
 #include "VersionsManager.hpp"        // launcher/: ReleasesBucketBase
 
 #include <cstdlib>

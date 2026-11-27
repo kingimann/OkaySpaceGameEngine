@@ -11,11 +11,11 @@
 //   signed message:  "okayspace-versions-json-v1\n" + <versions.json bytes>   (a domain prefix, so a signature made for this can
 //                    never be a valid signature for another use of the same key, such as the anti-cheat manifest)
 //
-// Header only; the verify side needs no libsodium (shared/AntiCheatCrypto.hpp falls back to its portable ed25519).
+// Header only; the verify side needs no libsodium (engine/include/okay/AntiCheat/AntiCheatCrypto.hpp falls back to its portable ed25519).
 #include <string>
 #include <vector>
 
-#include "AntiCheatCrypto.hpp"
+#include "okay/AntiCheat/AntiCheatCrypto.hpp"
 
 #ifndef OKAY_UPDATE_TRUSTED_KEYS
 #define OKAY_UPDATE_TRUSTED_KEYS ""

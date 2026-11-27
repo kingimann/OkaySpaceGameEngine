@@ -417,7 +417,7 @@ These always hold, whether or not the anti-cheat is on:
 Add an **Anti-Cheat Config** component next to the Network Manager, set its
 rules in the inspector or in a `.okayac` file, or start a dedicated server
 with `--anticheat rules.okayac`. The full rule list is in
-`engine/include/okay/Net/AntiCheat.hpp`.
+`engine/include/okay/AntiCheat/AntiCheat.hpp`.
 
 - **RPC rate:** the component's default is at most **30 calls per second to
   any one RPC per player** (`maxRpcsPerSecond`; 0 = off). `maxRpcBytes` caps

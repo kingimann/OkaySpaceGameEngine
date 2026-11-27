@@ -21,7 +21,7 @@
 #include <string>
 #include <vector>
 
-#include "AntiCheatCrypto.hpp"   // okayac::ed25519::UseSodium(): what Ed25519 really uses at run time
+#include "okay/AntiCheat/AntiCheatCrypto.hpp"   // okayac::ed25519::UseSodium(): what Ed25519 really uses at run time
 #include "OkayUIBackend.hpp"
 #include "OwnSwitches.hpp"   // the Settings screen's switches: their ids are added to the line
 #include "okay/Platform/Platform.hpp"

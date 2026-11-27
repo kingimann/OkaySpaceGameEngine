@@ -10,11 +10,14 @@
 > positives. Avoid kernel-level drivers for now. Ensure OkayAntiCheat can eventually support applications and games
 > developed outside our engine through a documented SDK and API."
 >
-> **Status:** round 1 (audit and design, docs only). Nothing below marked "will" or "planned" exists yet. Owner decisions
-> are in section 9, each with the default this plan uses until the owner says otherwise. The reference for what exists
+> **Status:** round 1 (audit and design) and round 2 (one home: the code moved into `engine/include/okay/AntiCheat/` and
+> `engine/src/AntiCheat/`, the `okay_anticheat` library, the `anticheat_deps` layering test; section 8) are done. Nothing
+> below marked "will" or "planned" exists yet. Owner decisions are in section 9; D10 and the patent question were decided
+> on 2026-11-27, the rest use the default this plan names until the owner says otherwise. The reference for what exists
 > today stays [anticheat.md](anticheat.md); this page is the plan.
 >
-> **Last checked:** 2026-11-26 against main 378f24f1e (branch `claude/okay-anticheat-1`).
+> **Last checked:** 2026-11-27 (round 2, branch `claude/okay-anticheat-2`). Section 3 is the round 1 audit and keeps its
+> old paths (`Net/`, `shared/`); section 2 says where each file lives now.
 
 ## Contents
 
@@ -38,7 +41,7 @@
   option. About 20 test programs cover it (section 3). It is spread over three registry systems ("Server Anti-Cheat", "Network
   Security", "Game File Safety"), two code homes (`engine/.../Net/` and `shared/`) and two editor places.
 - **OkayAntiCheat is that code, gathered and finished** (rules 19d and 19e). No second copy. The registry system "Server
-  Anti-Cheat" is renamed **OkayAntiCheat** in this round; the code moves into one home in round 2.
+  Anti-Cheat" is renamed **OkayAntiCheat** in round 1; round 2 moved the code into one home.
 - **The runtime is a library with no launcher or editor code in it.** Games, the player and the dedicated server link it.
   It talks to the backend only through OkayBackend (`okay::backend`), never with hand-written Supabase routes.
 - **The server decides; the client only adds evidence.** Every ban-worthy decision rests on what the server saw. Client
@@ -61,11 +64,11 @@ already uses it (architecture.md, Naming); this code already does (`okayac` name
 
 | Thing | Name | Home |
 |---|---|---|
-| The system | **OkayAntiCheat** | `engine/include/okay/AntiCheat/`, `engine/src/AntiCheat/` (planned, round 2). Today: `engine/include/okay/Net/AntiCheat*`, `Net/CheatDetect*`, `Net/CheatSim*`, `Net/ClockCheck*`, `Net/DetectInspector.hpp`, `shared/AntiCheat*.hpp`, `shared/TicketClient.hpp` |
-| Entry header | `okay/AntiCheat/AntiCheat.hpp` (planned; today `okay/Net/AntiCheat.hpp`) | |
-| C++ namespace | `okay::anticheat`; `okayac` stays as a frozen alias | |
-| Library target | `okay_anticheat` (planned), linked by the engine, the player and the dedicated server | `engine/CMakeLists.txt` |
-| Engine module | `engine/modules/anticheat/module.okaymodule` (exists; its `sources=` follow the move) | |
+| The system | **OkayAntiCheat** | `engine/include/okay/AntiCheat/`, `engine/src/AntiCheat/` (round 2). Moved there from `engine/include/okay/Net/` and `engine/src/Net/` (`AntiCheat`, `AntiCheatLog`, `CheatDetect`, `CheatSim`, `ClockCheck`, `DetectInspector`) and from `shared/` (`AntiCheatAdminTools`, `AntiCheatBackend`, `AntiCheatChecks`, `AntiCheatCrypto`, `AntiCheatHardware`, `AntiCheatIntegrity`, `TicketClient`, `TicketJoin`) |
+| Entry header | `okay/AntiCheat/AntiCheat.hpp` | |
+| C++ namespace | `okay::anticheat` (planned); `okayac` and today's `okay::` names stay as frozen aliases | |
+| Library target | `okay_anticheat`: an object library compiled like the engine and linked into `okay_engine`, so the engine, the player and the dedicated server carry it | `engine/CMakeLists.txt` |
+| Engine module | `engine/modules/anticheat/module.okaymodule` (its `sources=` name the new home) | |
 | C SDK | `okay_anticheat.h` + `okay_anticheat.dll` (planned, round 11) | `sdk/anticheat/` (planned) |
 | HTTP API | `anticheat` v1 routes behind OkayBackend Functions (planned, round 11) | `supabase/functions/anticheat/` (planned) |
 | Editor parts | Anti-Cheat Config inspector, presets, checklist, Build Settings section | `editor/AntiCheatSetup*` (stay in `editor/`: an editor window is not a second home) |
@@ -198,6 +201,13 @@ Nothing here has been measured on a real game; no test sets a budget.
   probes never ran in CI; nothing ran on a real network.
 - **P11. Not usable outside the engine.** The detection engine is plain C++ with no engine dependency beyond `Vec3`, but
   there is no C interface, no versioning and no HTTP API for a non-engine server.
+- **P12. Network Security uses two anti-cheat headers** (found in round 2). The network layer signs its key exchange with
+  `AntiCheatCrypto.hpp` (ed25519) and the relay makes its cookies with `AntiCheatChecks.hpp` (`detail::HmacSha256`).
+  Round 2 moved both into OkayAntiCheat's home unchanged, so `scripts/check_modules.py` (report only) now shows 6 includes
+  from the `networking` module into `anticheat` that existed before but were invisible while the headers sat in
+  `shared/`, plus `TicketJoin.hpp` reaching the account header. Not hidden in the baseline. The fix is to give Network
+  Security its own small signing and HMAC wrapper over `okay::crypto` / libsodium (rule 18: a move of existing calls, no
+  new cryptography), planned with round 4.
 
 ## 5. Design
 
@@ -220,16 +230,19 @@ Nothing here has been measured on a real game; no test sets a budget.
 ```
 
 - **core** has no dependency on the network layer, the scene, the launcher or the editor. It takes plain numbers and
-  strings and returns decisions. `CheatDetect` already is this; `AntiCheat` (rules) becomes it in round 2 by passing
-  positions and ids instead of engine objects.
+  strings and returns decisions. `CheatDetect` already is this; `AntiCheat` (rules) becomes it by passing positions and
+  ids instead of engine objects (moved from round 2 to round 4, with `ServerHooks`: round 2 only moved files).
 - **server** is the thin adapter that today is spread through `NetworkManager*.cpp`. It moves next to the core; the
   network layer calls it through one interface (`ServerHooks`).
-- **client** is today's `shared/AntiCheatIntegrity.hpp`, `AntiCheatChecks.hpp`, `AntiCheatHardware.hpp`,
-  `TicketClient.hpp`. Integrity keeps sharing the file hash and path checks with the updater (`shared/OfficialGame.hpp`);
-  round 2 moves those helpers to the shared helper list (`docs/engine/shared_code.md`) rather than copying them.
+- **client** is `AntiCheatIntegrity.hpp`, `AntiCheatChecks.hpp`, `AntiCheatHardware.hpp`, `AntiCheatCrypto.hpp`,
+  `TicketClient.hpp` and `TicketJoin.hpp` (moved from `shared/` in round 2; header-only). Integrity keeps sharing the file
+  hash and path checks with the updater (`shared/OfficialGame.hpp`, which stays in `shared/`); round 2 listed those helpers
+  in the shared helper list (`docs/engine/shared_code.md`) rather than copying them.
 - **online** is today's `AntiCheatBackend.hpp` and `AntiCheatAdminTools.hpp`, moved onto `okay::backend` (round 3).
-- **A check list in CI** (round 2): a script check that nothing under the new home includes `launcher/` or `editor/`
-  headers, run by `branch-lint`.
+- **A check in the tests** (round 2, done): `anticheat_deps` (`tests/check_anticheat_deps.cmake`) fails if a file in the
+  home includes a `launcher/` or `editor/` header (by path, by `../`, or by a bare name found only there) or if
+  `okay_anticheat` is compiled with a launcher or editor include folder; `anticheat_deps_selftest` proves it refuses such
+  includes. Both run as ctest tests and as a fatal step of `branch-lint` (no build needed).
 - Threads: no `<mutex>` or `<thread>` (rule 21a); work runs on the caller's tick, the online part uses the existing
   worker wrappers.
 
@@ -411,7 +424,7 @@ fail reliably, bug class 7). A separate benchmark prints times for information.
 
 ### 5.13 Cryptography
 
-No new cryptography (rule 18). Signatures stay ed25519 through libsodium (`shared/AntiCheatCrypto.hpp`), encryption stays
+No new cryptography (rule 18). Signatures stay ed25519 through libsodium (`okay/AntiCheat/AntiCheatCrypto.hpp`), encryption stays
 `SecureChannel` on libsodium, hashes and HMAC stay the engine's one SHA-256 (`okay/Crypto/Sha256.hpp`). `okay::crypto`
 stays off by default and is used only in builds without libsodium, as today.
 
@@ -504,7 +517,7 @@ Each round is one PR (rule 9). Each starts from `python3 scripts/find_existing.p
 | # | Round | Exists | Gap | Files | Tests |
 |---|---|---|---|---|---|
 | 1 | Audit and design (this page) | everything in section 3 | one plan, one name | this page, the feature map System line, pointers in `anticheat.md` and the indexes | `gen_feature_map.py --validate`, precheck |
-| 2 | One home | code in `Net/` and `shared/` | P1 | move `Net/AntiCheat*`, `CheatDetect*`, `CheatSim*`, `ClockCheck*`, `DetectInspector.hpp`, `shared/AntiCheat*.hpp`, `TicketClient.hpp` into `okay/AntiCheat/`; `okay_anticheat` target; `ServerHooks` adapter out of `NetworkManager*.cpp`; module file; registry (Game File Safety 39.4 and 39.7 move in) | every existing anti-cheat test unchanged and passing; new `anticheat_deps` check (no launcher or editor include) |
+| 2 | One home (**done 2026-11-27**: files moved with `git mv`, every includer updated, no compatibility headers; `okay_anticheat` object library; `anticheat_deps` test. Not done: the `ServerHooks` adapter, which needs code taken out of `NetworkManager*.cpp`, moves to round 4; the `okay::anticheat` namespace) | code in `Net/` and `shared/` | P1 | move `Net/AntiCheat*`, `CheatDetect*`, `CheatSim*`, `ClockCheck*`, `DetectInspector.hpp`, `shared/AntiCheat*.hpp`, `TicketClient.hpp` into `okay/AntiCheat/`; `okay_anticheat` target; `ServerHooks` adapter out of `NetworkManager*.cpp`; module file; registry (Game File Safety 39.4 and 39.7 move in) | every existing anti-cheat test unchanged and passing; new `anticheat_deps` check (no launcher or editor include) |
 | 3 | On OkayBackend | request builders with hand-written routes | P4 | `online/` part on `okay::backend` (`Database`, `Rpc`, `Functions`); done as OkayBackend round 4's anti-cheat rows | golden request tests (same bytes to Supabase as before) for `anticheat_backend`, `anticheat_wiring`, `ticket_client` |
 | 4 | Server first, client as evidence | detectors, client checks that can end a game | P2; input replay; report format v2 | `client_signal` kind with a weight cap; runtime findings never close the game; replay check on movement evidence; `EvidenceBundle` v2 | a test that client signals alone never pass `flag`; v1 and v2 parse; replay clears an honest path and confirms a speed path; fuzz of v2 |
 | 5 | Enforcement and records | ladder, admin bans, appeals | P3, P8 (compare); warn, temp-ban cap, shadow queue, game scope, second reviewer, player record | `anticheat.sql` (game id, `ac_game_admins`, `ac_player_record`, `ac_admin_summary`, second review), server ban cap | `anticheat_sql` extended (each role's allowed and refused actions), `anticheat_hard` (24 h cap) |
@@ -534,7 +547,7 @@ Each has the safe default this plan uses until the owner decides.
 | D7 | Merge the two player-report tables (`ac_reports`, `reports`) into one with a kind | keep both; one shared "report a player" call |
 | D8 | Launch check: full hash every launch, or executables every launch and data files on change | executables every launch, data on change, full check before a ticket-required join |
 | D9 | Public documentation for outside developers using the SDK and API | none until the owner says so (rule 5); internal reference only |
-| D10 | Automatic temporary ban length cap | 24 hours, always filed for review |
+| D10 | Automatic temporary ban length cap | **Owner, 2026-11-27 (PR #1360):** automatic temporary bans are capped at 24 hours and always queued for review; permanent bans only by people. Built in round 5 |
 | D11 | Who may be a game admin (studio accounts) and who grants it | only admins grant it |
 
 ## 10. Where the code comes from, licences and IP
@@ -556,6 +569,8 @@ Each has the safe default this plan uses until the owner decides.
    delayed "ban waves", matchmaking flagged players together) is an area where companies have filed patents. We cannot
    tell from here whether any active patent covers a specific method in this plan. Before shipping round 4 (input replay)
    and round 5 (shadow queue) widely, the owner may want a patent search. Until then these are flagged, not cleared.
+   **Owner, 2026-11-27 (PR #1360): build first, check later.** The rounds go ahead; the patent check comes before a wide
+   release of rounds 4 and 5.
 2. **Trademarks in the allowlist.** The allowlist file (round 9) names other products (screen readers, overlays such as
    Steam, Discord, OBS). Naming them to identify them is normally fine (nominative use); the file uses names and module
    file names only, no logos.

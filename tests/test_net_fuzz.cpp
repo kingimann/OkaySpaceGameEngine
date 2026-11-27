@@ -8,7 +8,7 @@
 #include "okay/Net/UdpSocket.hpp"
 #include "okay/Net/JoinLink.hpp"
 #include "okay/Net/ServerQuery.hpp"
-#include "okay/Net/AntiCheat.hpp"
+#include "okay/AntiCheat/AntiCheat.hpp"
 #include <chrono>
 #include <cmath>
 #include <cstring>

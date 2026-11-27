@@ -3,7 +3,7 @@
 // and the session-ticket check before a join. Moved out of launcher/main.cpp unchanged (docs/engine/modularization_plan.md,
 // Part C section 19, batch L2).
 #include "LauncherShared.hpp"
-#include "AntiCheatBackend.hpp"   // okayac::backend (acb)
+#include "okay/AntiCheat/AntiCheatBackend.hpp"   // okayac::backend (acb)
 #include "okay/Net/JoinLink.hpp"
 
 namespace okl {

@@ -2627,7 +2627,7 @@ add_executable(test_launcher_versions test_launcher_versions.cpp
     ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsNet.cpp)
 target_compile_features(test_launcher_versions PRIVATE cxx_std_17)
 target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
-target_link_libraries(test_launcher_versions PRIVATE Threads::Threads okay::crypto)   # okay::crypto: shared/AntiCheatCrypto.hpp (signed versions.json)
+target_link_libraries(test_launcher_versions PRIVATE Threads::Threads okay::crypto)   # okay::crypto: okay/AntiCheat/AntiCheatCrypto.hpp (signed versions.json)
 if(WIN32)
     target_link_libraries(test_launcher_versions PRIVATE winhttp)   # VersionsNet.cpp downloads through the HTTP seam (WinHTTP)
 endif()
@@ -2651,7 +2651,7 @@ if(OKAY_OWN_HTTP AND UNIX AND NOT APPLE)
     target_compile_features(test_launcher_download_own PRIVATE cxx_std_17)
     target_compile_definitions(test_launcher_download_own PRIVATE OKAY_OWN_HTTP=1)
     target_include_directories(test_launcher_download_own PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
-    target_link_libraries(test_launcher_download_own PRIVATE Threads::Threads ${CMAKE_DL_LIBS} okay::crypto)   # okay::crypto: shared/AntiCheatCrypto.hpp (VersionsManager.cpp verifies signed versions.json)
+    target_link_libraries(test_launcher_download_own PRIVATE Threads::Threads ${CMAKE_DL_LIBS} okay::crypto)   # okay::crypto: okay/AntiCheat/AntiCheatCrypto.hpp (VersionsManager.cpp verifies signed versions.json)
     add_test(NAME launcher_download_own COMMAND test_launcher_download_own)
     set_tests_properties(launcher_download_own PROPERTIES TIMEOUT 60)
     # The call-site helpers (downloads, HEAD probes, link-preview prefix, retries) through our own client, loopback servers only.
@@ -2687,7 +2687,7 @@ add_test(NAME self_update COMMAND test_self_update)
 # the transition without a key, and the publish tool scripts/sign_index.py against the C++ verifier. Throwaway keys, fake server, no network.
 add_executable(test_update_signature test_update_signature.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
 target_compile_features(test_update_signature PRIVATE cxx_std_17)
-target_link_libraries(test_update_signature PRIVATE okay::crypto)   # shared/AntiCheatCrypto.hpp is a thin wrapper over okay::crypto
+target_link_libraries(test_update_signature PRIVATE okay::crypto)   # okay/AntiCheat/AntiCheatCrypto.hpp is a thin wrapper over okay::crypto
 target_include_directories(test_update_signature PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_update_signature PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME update_signature COMMAND test_update_signature)
@@ -2721,7 +2721,7 @@ add_test(NAME update_security COMMAND test_update_security)
 add_executable(test_dev_channel test_dev_channel.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
 target_compile_features(test_dev_channel PRIVATE cxx_std_17)
 target_include_directories(test_dev_channel PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
-target_link_libraries(test_dev_channel PRIVATE okay::crypto)   # okay::crypto: shared/AntiCheatCrypto.hpp (signed lists)
+target_link_libraries(test_dev_channel PRIVATE okay::crypto)   # okay::crypto: okay/AntiCheat/AntiCheatCrypto.hpp (signed lists)
 target_compile_definitions(test_dev_channel PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME dev_channel COMMAND test_dev_channel)
 find_program(OKAY_BASH bash)
@@ -2834,7 +2834,7 @@ add_executable(test_anticheat_integrity test_anticheat_integrity.cpp)
 target_link_libraries(test_anticheat_integrity PRIVATE okay::engine)
 target_include_directories(test_anticheat_integrity PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_integrity COMMAND test_anticheat_integrity)
-# The same test compiled two more ways WITHOUT the engine, so shared/AntiCheatCrypto.hpp is proven to work where the
+# The same test compiled two more ways WITHOUT the engine, so okay/AntiCheat/AntiCheatCrypto.hpp is proven to work where the
 # engine is not linked: (a) with -DOKAY_OWN_CRYPTO against okay::crypto alone, (b) with neither the define nor libsodium
 # (the fallback a no-libsodium launcher or player build uses: also okay::crypto, which is now the only non-libsodium path;
 # the TweetNaCl-derived port that used to be here is deleted).
@@ -2886,6 +2886,13 @@ add_test(NAME anticheat_wiring COMMAND test_anticheat_wiring)
 add_executable(test_anticheat_setup test_anticheat_setup.cpp)
 target_link_libraries(test_anticheat_setup PRIVATE okay::engine)
 add_test(NAME anticheat_setup COMMAND test_anticheat_setup)
+# OkayAntiCheat has no launcher or editor code in it (docs/online/okay_anticheat.md, round 2): nothing in its home
+# (engine/include/okay/AntiCheat, engine/src/AntiCheat) includes a launcher/ or editor/ header, and okay_anticheat is not
+# compiled with a launcher/ or editor/ include folder. The selftest shows the check refuses such an include.
+add_test(NAME anticheat_deps COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_SOURCE_DIR}
+         -DINCLUDES=${CMAKE_BINARY_DIR}/okay_anticheat_includes.txt -P ${CMAKE_CURRENT_SOURCE_DIR}/check_anticheat_deps.cmake)
+add_test(NAME anticheat_deps_selftest COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_SOURCE_DIR}
+         -DSELFTEST=${CMAKE_CURRENT_BINARY_DIR}/anticheat_deps_selftest -P ${CMAKE_CURRENT_SOURCE_DIR}/check_anticheat_deps.cmake)
 # User reports (docs/sql/reports.sql): requests, honest outcomes, the moderator list...
 add_executable(test_user_reports test_user_reports.cpp)
 target_link_libraries(test_user_reports PRIVATE okay::engine)

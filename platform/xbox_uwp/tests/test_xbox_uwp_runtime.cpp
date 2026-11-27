@@ -701,6 +701,8 @@ static void AuditTests() {
     { auto l = ParseEngineSourceList("project(x)\nadd_library(okay_engine\n    src/A.cpp\n    src/B/C.cpp  # (note) src/Z.cpp\n    third_party/u.c\n    src/D.cpp)\nadd_library(other src/E.cpp)\n");
       CHECK((l == std::vector<std::string>{"src/A.cpp", "src/B/C.cpp", "third_party/u.c", "src/D.cpp"})); }
     CHECK(ParseEngineSourceList("nothing").empty());
+    CHECK((ParseEngineSourceList("add_library(okay_engine\n    src/A.cpp)\nadd_library(okay_anticheat OBJECT\n    src/AntiCheat/X.cpp\n    src/AntiCheat/Y.cpp)\n", "okay_anticheat") ==
+           std::vector<std::string>{"src/AntiCheat/X.cpp", "src/AntiCheat/Y.cpp"}));   // OkayAntiCheat's own object library
 }
 
 // ---- game config ----

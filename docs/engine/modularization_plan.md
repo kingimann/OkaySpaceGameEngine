@@ -157,7 +157,7 @@ Include lines from one top folder into another (tests left out of the "bad" colu
 | launcher | shared 48, engine 26, okayui 6 | yes; never includes `editor/` |
 | player | engine 33, shared 13, okayui 1 | yes |
 | shared | engine 38, okayui 20 | yes; never includes a program folder |
-| **engine** | **shared 7** | no: `Net/NetworkManager.cpp`, `Net/DedicatedServer.cpp`, `Net/ClockCheck.cpp`, `Net/RelayServer.cpp` include `shared/AntiCheat*.hpp` and `shared/OfficialGame.hpp`; `Graphics/EmbeddedFont.cpp` includes `shared/EmbeddedFonts.hpp` (with `OkfDecode.hpp` and `RobotoFont.h`). The engine includes no `editor/`, `launcher/` or `player/` file. |
+| **engine** | **shared 7** | no: `Net/NetworkManager.cpp`, `Net/DedicatedServer.cpp`, `AntiCheat/ClockCheck.cpp`, `Net/RelayServer.cpp` include `okay/AntiCheat/` headers that need `shared/OfficialGame.hpp`; `Graphics/EmbeddedFont.cpp` includes `shared/EmbeddedFonts.hpp` (with `OkfDecode.hpp` and `RobotoFont.h`). The engine includes no `editor/`, `launcher/` or `player/` file. |
 | **okayui** (library part) | engine 23, shared 22 (tests), editor 24 (tests), launcher 1 (test) | partly: `okayui/src`, `render`, `soft` include `Platform/Painter.hpp`, `Platform/Platform.hpp`, `Graphics/TtfFont.hpp`, `Graphics/Font.hpp` (base layers, fine) and `UI/UIPainterSDL.hpp` (the engine's in-game UI: one layer too high); `okayui/screens` includes `Debug/ConsoleModel.hpp` and `shared/` (it is program-level code living in the library folder) |
 | tools | engine 20, editor 3, shared 1 | tools may include anything |
 
@@ -236,7 +236,7 @@ most are fine, such as `Is`, `At`, `Id`, `Of`; these are not):
 | `engine/src/Core/FrameRecord.cpp:128` | `F(fmt, v)` | formats one number with a printf format into a string |
 | `engine/src/Input/InputAsset.cpp:35` | `F(float)` | writes a float as `%g` text |
 | `engine/src/Script/EngineApiInternal.hpp:73` | `F(const Value&)` | reads a script value as a float |
-| `shared/AntiCheatBackend.hpp:405` | `B(o, k)` | reads the yes/no field `k` of a JSON object |
+| `engine/include/okay/AntiCheat/AntiCheatBackend.hpp:405` | `B(o, k)` | reads the yes/no field `k` of a JSON object |
 | `engine/include/okay/Components/SurvivalSystems.hpp:165-166` | `P(k, v)`, `G(k, def)` | save and load one float setting in Prefs |
 | `engine/include/okay/Components/VehicleControlScheme.hpp:30-34` | `K`, `M`, `B`, `A`, `T` | make a key, mouse, pad button, pad axis and trigger binding |
 | `editor/ProjectBrowser.cpp:21-22` | `P(s)`, `U(p)` | text to a file path, and a file path to UTF-8 text |

@@ -478,6 +478,76 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Templates behind PropertyBuilder.hpp, EngineApi_*.cpp and <limits> (Round 34). A specialization's own type matches only
+// that type ([temp.class.spec.match] 2): numeric_limits<unsigned>::max() was numeric_limits<int>'s (2147483647, silent
+// wrong value with the Round 33 compiler) and N<unsigned char> was N<char>; numeric_limits for char, unsigned char,
+// short, unsigned short and bool (std::uint8_t fields); a member template returning the class template's injected name
+// (`B& Add(...)`, [temp.local] 1; before "expected a type"); a static member template called with explicit arguments
+// from a lambda (`As<Owner>(c)`, [class.static] 2; before "unknown name As"); a braced list for a parameter that is not
+// deduced ([temp.deduct.call] 1; before "cannot deduce template arguments"); a class with `operator bool` making the
+// bool alternative of a variant and counting as convertible ([class.conv.fct], [meta.rel]; before "typename names no
+// member type").
+static void r34_templates(Tally& tally) {
+    std::printf("r34_templates\n");
+    okayms_test::run_both(kRun, tally, "templates", std::string(kAlloc) + R"OKMS(
+#include <cstdint>
+#include <functional>
+#include <limits>
+#include <string>
+#include <type_traits>
+#include <variant>
+#include <vector>
+template <class T> struct N;
+template <> struct N<char> { static int m() { return 1; } };
+template <> struct N<unsigned char> { static int m() { return 3; } };
+template <> struct N<short> { static int m() { return 4; } };
+template <> struct N<unsigned short> { static int m() { return 5; } };
+template <> struct N<int> { static int m() { return 7; } };
+template <> struct N<unsigned> { static int m() { return 8; } };
+template <> struct N<long long> { static int m() { return 9; } };
+struct Component { int kind = 0; };
+struct GameObject : Component { int id = 1; float speed = 2.5f; std::string name = "go"; };
+template <class C> class Builder {
+public:
+  int n = 0;
+  template <class Owner> Builder& AddFloat(const char* label, float Owner::*m) {
+    (void)label;
+    return Prop([m](const Component& c) { return (int)(As<Owner>(c).*m * 2); });
+  }
+  template <class Owner> Builder& AddEnum(const char* label, int Owner::*m, std::vector<std::string> options) {
+    (void)label;
+    n += (int)options.size() * 1000;
+    return Prop([m](const Component& c) { return As<Owner>(c).*m; });
+  }
+  Builder& Tooltip(const char*) { n += 100; return *this; }
+private:
+  template <class T> static const T& As(const Component& c) { return static_cast<const T&>(c); }
+  Builder& Prop(std::function<int(const Component&)> get) { GameObject g; n += get(g); return *this; }
+};
+class Flag { public: explicit Flag(bool on = true) : m_on(on) {} operator bool() const { return m_on; } private: bool m_on; };
+using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string>;
+int entry(void) {
+  CK(1, N<char>::m() == 1 && N<unsigned char>::m() == 3 && N<short>::m() == 4 && N<unsigned short>::m() == 5);
+  CK(2, N<int>::m() == 7 && N<unsigned>::m() == 8 && N<long long>::m() == 9);
+  CK(3, std::numeric_limits<unsigned>::max() == 4294967295u && std::numeric_limits<std::uint8_t>::max() == 255);
+  CK(4, std::numeric_limits<std::uint16_t>::max() == 65535 && std::numeric_limits<short>::lowest() == -32768);
+  CK(5, std::numeric_limits<char>::max() == 127 && std::numeric_limits<bool>::max());
+  Builder<GameObject> b;
+  b.AddFloat("speed", &GameObject::speed).Tooltip("x");
+  CK(6, b.n == 105);
+  b.AddEnum("id", &GameObject::id, {"A", "B", "C"});
+  CK(7, b.n == 105 + 3000 + 1);
+  CK(8, (std::is_convertible<Flag, bool>::value) && std::is_class<Flag>::value);
+  Flag on(true);
+  Value v{on};
+  CK(9, v.index() == 1 && std::get<bool>(v));
+  Value k{7};
+  CK(10, k.index() == 2);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -493,5 +563,6 @@ int main(int argc, char** argv) {
     r34_gl_header(tally);
     r34_list(tally);
     r34_winsock(tally);
-    return tally.finish(11);
+    r34_templates(tally);
+    return tally.finish(12);
 }

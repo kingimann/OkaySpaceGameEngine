@@ -3493,7 +3493,8 @@ bool Parser::parse_type_trait(Node* out) {
         const Type& b = types[1];
         if (is_cls(b)) v = (is_cls(a) && (a.struct_id == b.struct_id || derives_from(a.struct_id, b.struct_id))) ||
                            (!is_cls(a) && converts_by_ctor(b.struct_id, Node{}, a));
-        else v = !is_cls(a) && a.pointers == b.pointers && (a.pointers == 0 || a.base == b.base || b.base == 0);
+        else if (is_cls(a)) v = conv_for(a.struct_id, b) != nullptr;  // a conversion function ([class.conv.fct]; Round 34)
+        else v = a.pointers == b.pointers && (a.pointers == 0 || a.base == b.base || b.base == 0);
     } else if (which == "__is_invocable") {
         // INVOKE(f, args...) is well formed ([func.require], [meta.rel] is_invocable), for a callable that is a class
         // with operator() (a lambda's closure), a function or a pointer to one. Own simplification: a call operator fits

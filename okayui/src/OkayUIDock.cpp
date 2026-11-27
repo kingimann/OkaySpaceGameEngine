@@ -28,7 +28,7 @@ std::string Display(const std::string& name) {
     return p == std::string::npos ? name : name.substr(0, p);
 }
 
-struct TabRect { std::string name; int node = 0; int index = 0; Rect r, close; float ideal = 0.0f; };
+struct TabRect { std::string name; int node = 0; int index = 0; Rect r, close; float ideal = 0.0f; float shownX = 0.0f; };   // shownX: where it is drawn (DockTabInfo::shown)
 
 struct Ctx {
     DockLayout layout;
@@ -61,6 +61,9 @@ struct Ctx {
     // Dear ImGui's rule: a docked window that is not submitted (its Begin not called) has no tab that frame. The frame each window last
     // called DockBegin; a window seen this frame or the one before is "submitted".
     std::map<std::string, long long> seen;
+    // Where each tab was drawn last frame (its leaf and x): a tab whose slot moved slides there over a few frames instead of jumping.
+    struct Slide { int node = 0; float x = 0.0f; long long frame = 0; };
+    std::map<std::string, Slide> slide;
     bool Submitted(const std::string& name) const {
         const auto it = seen.find(name);
         return it != seen.end() && it->second >= (long long)GetFrameCount() - 1;
@@ -97,6 +100,7 @@ void BuildTabs(Ctx& c) {
             const float cw = std::min(closeW, tw * 0.4f);
             t.close = Rect{x + tw - cw, t.r.y, cw, t.r.h};
             t.ideal = w[i];
+            t.shownX = x;
             c.tabs.push_back(t);
             x += tw;
         }
@@ -429,7 +433,35 @@ void DockSpace(Rect area) {
             dl.AddText(V(r.x + (r.w - ts.x) * 0.5f, r.y + (r.h - ts.y) * 0.5f), dim, hint);
         }
     }
-    for (const TabRect& t : c.tabs) {
+    {   // where each tab is drawn: a tab held and moved along its strip follows the pointer (where it was grabbed, kept inside the strip);
+        // the others ease from where they were drawn last frame to their slots (about 90% of the way in 0.13 s), so a tab that makes room
+        // slides aside instead of jumping. A tab that is new, changed leaf or was not drawn last frame starts at its slot.
+        const float dt = std::isfinite(ui_core::g_io.deltaTime) ? std::clamp(ui_core::g_io.deltaTime, 0.0f, 0.1f) : 0.0f;
+        const float k = 1.0f - std::exp(-dt * 18.0f);
+        const bool held = c.kind == Ctx::TabPress && c.moving;
+        std::map<std::string, Ctx::Slide> next;
+        for (TabRect& t : c.tabs) {
+            float x = t.r.x;
+            const DockLayout::Node* n = c.layout.Find(t.node);
+            if (held && t.name == c.dragWin && n) {
+                x = std::max(n->rect.x, std::min(m.x - c.grab.x, n->rect.x + n->rect.w - t.r.w));
+            } else {
+                const auto it = c.slide.find(t.name);
+                if (it != c.slide.end() && it->second.node == t.node && it->second.frame >= frame - 1 && std::isfinite(it->second.x)) {
+                    x = it->second.x + (t.r.x - it->second.x) * k;
+                    if (std::fabs(x - t.r.x) < 0.5f) x = t.r.x;
+                }
+            }
+            t.shownX = x;
+            next[t.name] = Ctx::Slide{t.node, x, frame};
+        }
+        c.slide.swap(next);
+    }
+    const std::string heldTab = c.kind == Ctx::TabPress && c.moving ? c.dragWin : std::string();
+    for (int pass = 0; pass < 2; ++pass) for (const TabRect& tl : c.tabs) {
+        if ((tl.name == heldTab) != (pass == 1)) continue;   // the held tab is drawn last, over the ones sliding under it
+        TabRect t = tl;
+        { const float dx = t.shownX - t.r.x; t.r.x += dx; t.close.x += dx; }
         const DockLayout::Node* n = c.layout.Find(t.node);
         int cur = n ? n->active : 0;
         const bool occluded = underFloat && In(t.r, m);
@@ -535,7 +567,7 @@ std::vector<DockTabInfo> GetDockTabs() {
     std::vector<DockTabInfo> out;
     for (const TabRect& t : c.tabs) {
         const DockLayout::Node* n = c.layout.Find(t.node);
-        DockTabInfo i; i.window = t.name; i.node = t.node; i.index = t.index; i.rect = t.r; i.idealWidth = t.ideal;
+        DockTabInfo i; i.window = t.name; i.node = t.node; i.index = t.index; i.rect = t.r; i.idealWidth = t.ideal; i.shown = t.r; i.shown.x = t.shownX;
         i.selected = n && n->active == t.index;
         out.push_back(i);
     }

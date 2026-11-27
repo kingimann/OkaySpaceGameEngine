@@ -19,9 +19,9 @@
 #include <filesystem>
 #include <memory>
 
-extern bool g_showVisualScript;   // main.cpp: View > Editors & Tools > Visual Script
-
 namespace oked {
+
+extern bool g_showVisualScript;   // main.cpp (namespace oked): View > Editors & Tools > Visual Script
 
 namespace {
 okay::editor::EditorState* g_ed = nullptr;   // the editor whose scene the hooks read (set every frame the window draws)

@@ -384,7 +384,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **API:** `okay::platform::Backend`, `Window`, `Window::PresentPixels`, `Painter`, `CreateSdl2Painter`, `OkayUI::soft::CreateWindowPainter`, `AudioDevice`, `Gamepad`, `Get`, `Default`, `TicksMs32`
 - **Editor:** none
 - **Docs:** `docs/platform/platform_layer.md` (the SDL audit, what is and is not behind the seam, what was tested)
-- **Tests:** `platform`, `platform_window_sdl2`, `platform_window_own` (these two need Xvfb and xdotool and skip without them), `platform_default_env_sdl2`, `platform_default_env_own`, `okayui_painter`, `platform_painter_window` (needs Xvfb)
+- **Tests:** `platform`, `platform_window_own` (needs Xvfb and xdotool and skips without them), `platform_default_env_own`, `platform_default_env_sdl2_ignored`, `okayui_painter`, `platform_painter_window` (needs Xvfb)
 - **Status:** Works on Linux for the pieces behind the seam (tested under Xvfb on both backends); Windows backend compiles only; the player's window is moved (checked against the unchanged player under Xvfb), the editor's and launcher's are not. The player runs on the own backend with the software painter (Xvfb, screenshots compared with the sdl2 run; differences listed in `docs/platform/platform_layer.md`); that path is off by default and not ready
 - **Open:** the Win32 backend and every program have not run on real Windows (MinGW-compiled only); the web build still uses SDL2 (no own web backend); the software painter has no GPU, no XShm, no HiDPI, and the Win32 present was only syntax-checked; no Wayland, XDND file drop, touch or DPI queries in the own Linux backend; no Windows audio; no macOS
 - **Related:** 7.1, 8.2, 17.1

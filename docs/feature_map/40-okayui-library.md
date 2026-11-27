@@ -67,7 +67,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **API:** `OkayUI::Input`, `BeginFrame`, `EndFrame`, `DrawFinishedFrame`, `GetDrawData`, `DrawCmd`, `EndFrameData`, `OkayUI::D3D11Backend`, `OkayUI::soft::Render` (40.6), `OkayUI::render::SdlHost`, `HostBackendFor`, `Renderer::SetNativeImage`, `Backend::WrapNativeTexture`, env `OKAY_UI_OWN_RENDER`
 - **Editor:** none (the editor links `okay_ui` with `OKAY_HAVE_OKAYUI=1`)
 - **Docs:** -
-- **Tests:** `okayui` (SDL software renderer), `okayui_soft` (the draw list through the CPU backend), `okayui_render_sdlhost` (the host path with the own OpenGL renderer on SDL's OpenGL and OpenGL ES renderers, offscreen EGL on Mesa llvmpipe, against the software reference)
+- **Tests:** `okayui` (the software painter), `okayui_soft` (the draw list through the CPU backend)
 - **Status:** Partial - SDL path and the software backend are tested; the own OpenGL renderer in the host path is tested headless on llvmpipe only (never on a real GPU, on Windows, or in a running editor or launcher); the D3D11 backend and demo compile only on Windows, so nothing here could verify them (not run in this survey)
 - **Open:** no test of the D3D11 path found, and it still draws only vertices and indices (no clip rectangles, no atlas texture: it should use `DrawCmd` like the SDL path); skipped in the web build (per `CMakeLists.txt` and `scripts/build-web.sh` comments)
 - **Related:** 40.1, 18.1, 18.2, 2.1

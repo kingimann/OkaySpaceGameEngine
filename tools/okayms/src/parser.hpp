@@ -169,9 +169,16 @@ struct Parser {
         const auto it = ns_types_.find(name);
         if (it == ns_types_.end() || it->second.size() < 2 || qual.empty()) return -1;
         int best = -1;
-        for (size_t i = 0; i < it->second.size(); ++i)
-            if (ns_names(it->second[i].ns, qual) && (best < 0 || (it->second[static_cast<size_t>(best)].is_class && !it->second[i].is_class)))
+        int best_rank = -1;
+        for (size_t i = 0; i < it->second.size(); ++i) {
+            const int r = ns_qual_rank(it->second[i].ns, qual);
+            if (r < 0) continue;
+            if (best < 0 || r > best_rank ||
+                (r == best_rank && it->second[static_cast<size_t>(best)].is_class && !it->second[i].is_class)) {
                 best = static_cast<int>(i);
+                best_rank = r;
+            }
+        }
         return best;
     }
     // Spellings that only restate what the compiler already does are rewritten before parsing, each from
@@ -914,6 +921,18 @@ struct Parser {
             out.push_back(tokens[i]);
         }
         tokens = std::move(out);
+        // The using-directives and using-declarations were read before the aliases (lower_cxx_spellings): one that
+        // starts with an alias names the alias's namespace (Round 34, AntiCheatIntegrity.hpp's `namespace og =
+        // okayofficial;` and `using og::json::Escape;`; before, "unknown function Escape").
+        for (std::string& u : using_namespaces) {
+            const size_t colons = u.find("::");
+            const auto al = aliases.find(u.substr(0, colons));
+            if (al == aliases.end()) continue;
+            std::string full;
+            for (const Token& t : al->second)
+                if (t.kind == TIdent) full += (full.empty() ? "" : "::") + t.text;
+            u = full + (colons == std::string::npos ? std::string() : u.substr(colons));
+        }
     }
     void strip_namespace_qualifiers() {
         for (size_t i = 0; i + 1 < tokens.size(); ++i) {
@@ -1928,6 +1947,30 @@ struct Parser {
         return outer.empty() || outer == inner ||
                (inner.size() > outer.size() && inner.compare(0, outer.size(), outer) == 0 && inner.compare(outer.size(), 2, "::") == 0);
     }
+    // How well namespace ns fits the qualifier q written in the namespace being read ([namespace.qual] 1, [basic.lookup]:
+    // q is looked up from the innermost enclosing namespace outward): -1 when ns_names fails; 1 + the length of E when
+    // ns is E::q for a namespace E around current_ns (so the innermost wins); 0 for a suffix match only. Round 34:
+    // okayofficial's `json::Value` was taken for another namespace's json::Value (OfficialGame.hpp:331, 8 files).
+    int ns_qual_rank(const std::string& ns, const std::string& q) const {
+        if (!ns_names(ns, q)) return -1;
+        if (ns == q) return 1;
+        const std::string outer = ns.substr(0, ns.size() - q.size() - 2);
+        return ns_encloses(outer, current_ns) ? 1 + static_cast<int>(outer.size()) + 1 : 0;
+    }
+    // The class `name` at namespace scope in the namespace q names (the best by ns_qual_rank), or -1.
+    int struct_in_qual(const std::string& name, const std::string& q, bool complete_only) const {
+        int best = -1;
+        int best_rank = -1;
+        for (size_t i = 0; i < structs.size(); ++i) {
+            if (structs[i].name != name || structs[i].parent >= 0 || (complete_only && structs[i].incomplete)) continue;
+            const int r = ns_qual_rank(structs[i].ns, q);
+            if (r > best_rank) {
+                best = static_cast<int>(i);
+                best_rank = r;
+            }
+        }
+        return best;
+    }
     // Whether namespace ns is the one q names: q itself or a suffix of it after "::" (crypto names okay::crypto).
     static bool ns_names(const std::string& ns, const std::string& q) {
         return ns == q || (ns.size() > q.size() && ns.compare(ns.size() - q.size(), q.size(), q) == 0 &&
@@ -1949,9 +1992,7 @@ struct Parser {
         const std::string& qual = cur().qual;
         if (cur().nsq && !qual.empty()) {
             if (ns_names(en->second, qual)) return -1;
-            for (size_t i = 0; i < structs.size(); ++i)
-                if (structs[i].name == name && structs[i].parent < 0 && ns_names(structs[i].ns, qual)) return static_cast<int>(i);
-            return -1;
+            return struct_in_qual(name, qual, false);
         }
         // Unqualified: the declaration in the nearest enclosing namespace.
         const int best = find_struct(name);
@@ -1997,9 +2038,10 @@ struct Parser {
         // (okay::crypto::Sha256, also as a suffix: crypto::Sha256), else the namespace being read or the nearest one
         // around it.
         const std::string qual = at < tokens.size() && tokens[at].text == name ? tokens[at].qual : std::string();
-        if (!qual.empty())
-            for (size_t i = 0; i < structs.size(); ++i)
-                if (structs[i].name == name && structs[i].parent < 0 && ns_names(structs[i].ns, qual)) return static_cast<int>(i);
+        if (!qual.empty()) {
+            const int q = struct_in_qual(name, qual, false);
+            if (q >= 0) return q;
+        }
         int best = -1;
         size_t best_len = 0;
         for (size_t i = 0; i < structs.size(); ++i) {
@@ -4581,6 +4623,8 @@ struct Parser {
     };
     std::vector<Temp> stmt_temps{};
     std::vector<Node> stmt_pre{};
+    bool keep_cond_value(Node* cond, const std::vector<Temp>& temps, std::vector<Local>* locals, std::vector<Node>* stmts,
+                         std::string* hidden_name);
     int tmp_count = 0;
 
     // A hidden local of type t given `value` before the statement (stmt_pre), destroyed after it when its class has a

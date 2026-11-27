@@ -599,6 +599,10 @@ bool Gen::gen_expr(const Node& node) {
                 if (local->reg != 0 && !is_bool_type(local->type)) {
                     if (!gen_expr(node.kids[1])) return false;
                     convert(last_type, local->type);
+                    // `unsigned char c = p[i];` kept in a register: the value is cut to the local's width, as a store to
+                    // its slot does (Round 34; before, 0xFF read as -1 stayed -1 at /O1 and /O2: silent wrong sums).
+                    const int width = slot_width(*local);
+                    if (width < 4) extend_reg(0, width, local->type.is_unsigned);
                     mov_reg_eax(local->reg);
                     return true;
                 }

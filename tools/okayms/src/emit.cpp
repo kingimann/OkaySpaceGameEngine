@@ -196,7 +196,37 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
                 }
                 for (const Node& kid : node.kids) walk(kid);
             };
-            walk(fn.body);
+            // A loop runs its condition and body again ([stmt.iter]): a variable named anywhere in a loop is live for
+            // the whole loop, from before its first statement to after its last, or the next pass reads a register
+            // that a later variable was given (Round 34: `for (int i = 0; i < n; i++) { short h = p[i]; ... }` gave h
+            // the register of n, whose last use in the walk order is the condition; silent wrong results at /O1). A
+            // label makes a loop through goto: then every variable is live for the whole function.
+            std::vector<std::pair<int, int>> loops;
+            bool has_label = false;
+            const std::function<void(const Node&)> find_loops = [&](const Node& node) {
+                const int before = stamp;
+                if (node.kind == Node::Name) ++stamp;
+                if (node.kind == Node::Label || node.kind == Node::Goto) has_label = true;
+                for (const Node& kid : node.kids) find_loops(kid);
+                if (node.kind == Node::While || node.kind == Node::For || node.kind == Node::Do)
+                    loops.push_back({before, stamp - 1});
+            };
+            stamp = 0;
+            find_loops(fn.body);
+            if (has_label) loops.push_back({0, stamp});
+            for (bool changed = true; changed;) {
+                changed = false;
+                for (auto& entry : range)
+                    for (const auto& loop : loops) {
+                        std::pair<int, int>& r = entry.second;
+                        if (r.second < loop.first || r.first > loop.second) continue;  // not named in the loop
+                        if (r.first > loop.first || r.second < loop.second) {
+                            r.first = std::min(r.first, loop.first);
+                            r.second = std::max(r.second, loop.second);
+                            changed = true;
+                        }
+                    }
+            }
             struct Span {
                 int index;
                 int start;
@@ -411,11 +441,14 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             if (local.reg == 0) continue;
             const int src = p + (fn.sret ? 1 : 0);
             if (src >= 4) {
-                gen.load_reg_local(local.reg, local.offset);  // a parameter kept in a register: from its stack copy
+                gen.load_local_reg(local);  // a parameter kept in a register: from its stack copy
                 continue;
             }
             const int machine = src == 0 ? 1 : src == 1 ? 2 : src == 2 ? 8 : 9;
             gen.mov_regs(local.reg, machine);
+            // The upper bits of a char or short argument are not defined by the x64 calling convention.
+            const int width = gen.slot_width(local);
+            if (width < 4) gen.extend_reg(local.reg, width, local.type.is_unsigned);
         }
         gen.stmt_line = 0;
         if (!gen.gen_stmt(fn.body)) {

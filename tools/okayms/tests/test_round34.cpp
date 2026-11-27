@@ -180,6 +180,119 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// A qualified name looked up from the namespace being read ([namespace.qual] 1, [basic.lookup.qual]): okayofficial's
+// `json::Value` inside namespace okayofficial is okayofficial::json::Value, not another namespace's json::Value
+// (OfficialGame.hpp:331, 8 files; before, "a range for needs an array of known length" as the other class had no str).
+// A using-declaration through a namespace alias (`namespace og = okayofficial; using og::json::Escape;`,
+// AntiCheatIntegrity.hpp; before "unknown function Escape"). An if with an init statement whose condition makes a
+// temporary ([stmt.if] 3; AntiCheatIntegrity.hpp:333; before "unknown name __bt..."), destroyed once.
+static void r34_lookup(Tally& tally) {
+    std::printf("r34_lookup\n");
+    okayms_test::run_both(kRun, tally, "lookup", std::string(kAlloc) + R"OKMS(
+#include <string>
+namespace okay { namespace net { namespace json { struct Value { int other; }; } } }
+namespace okay { namespace js { using Value = int; } }
+namespace okayofficial {
+namespace json {
+struct Value { std::string str; int n = 3; };
+inline std::string Escape(const std::string& s) { return "<" + s + ">"; }
+}
+inline int Digits(const json::Value* v) {
+  int n = 0;
+  for (char c : v->str) n = n * 10 + (c - '0');
+  return n;
+}
+}
+namespace okayac {
+namespace og = okayofficial;
+inline std::string Wrap(const std::string& s) {
+  using og::json::Escape;
+  return Escape(s);
+}
+}
+static int g_dtors = 0;
+struct Tmp { std::string s; Tmp(const char* p) : s(p) {} ~Tmp() { ++g_dtors; } bool empty() const { return s.empty(); } };
+inline Tmp Trim(const char* p) { return Tmp(p); }
+int pick(const char* (*env)(const char*)) {
+  if (const char* e = env("K"); e && !Trim(e).empty()) return 1;
+  return 2;
+}
+const char* give(const char* k) { return k; }
+const char* none(const char*) { return ""; }
+int entry(void) {
+  okayofficial::json::Value v;
+  v.str = "42";
+  CK(1, okayofficial::Digits(&v) == 42 && v.n == 3);
+  CK(2, okayac::Wrap("a") == "<a>");
+  CK(3, pick(give) == 1 && g_dtors == 1);
+  CK(4, pick(none) == 2 && g_dtors == 2);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// Silent wrong code (Round 33 and before, /O1 and /O2): a `char` or `short` local kept in a register was spilled around a
+// call with a 32-bit store, three (or two) bytes past its slot, over the next local. A range for over a reference
+// (`for (char c : *s) total = total + 1;`, OfficialGame.hpp's `for (char c : v->str)`) lost the end pointer it keeps
+// beside the element and ran off the string: an access violation (exit 5). Each spill now stores and loads the slot's own
+// width (Intel SDM vol. 2, MOV 88 /r, MOVSX, MOVZX). Also silent before: `unsigned char c = p[i];` kept in a register was
+// not cut to 8 bits (0xFF stayed -1, check 5), nor `short h = 65535;` to 16 (check 6).
+static void r34_narrow_spill(Tally& tally) {
+    std::printf("r34_narrow_spill\n");
+    okayms_test::run_both(kRun, tally, "narrow_spill", R"OKMS(
+struct S { const char* p; int n; const char* begin() const { return p; } const char* end() const { return p + n; } };
+struct W { const short* p; int n; const short* begin() const { return p; } const short* end() const { return p + n; } };
+int Count(const S* s) { int total = 0; for (char c : *s) total = total + 1; return total; }
+int Sum(const S& s) { int total = 0; for (char c : s) total = total + (c - 48); return total; }
+int Shorts(const W* w) { int total = 0; for (short v : *w) total = total + v; return total; }
+int UnsignedChars(const S* s) { int total = 0; for (unsigned char c : *s) total = total + c; return total; }
+int Bytes(const char* p, int n) { int total = 0; for (int i = 0; i < n; i++) { unsigned char c = p[i]; total = total + c; } return total; }
+int Halves(const int* p, int n) { int total = 0; for (int i = 0; i < n; i++) { short h = p[i]; total = total + h; } return total; }
+int entry(void) {
+  S s;
+  s.p = "4271"; s.n = 4;
+  CK(1, Count(&s) == 4);
+  CK(2, Sum(s) == 14);
+  short xs[3] = {-5, 300, 7};
+  W w;
+  w.p = xs; w.n = 3;
+  CK(3, Shorts(&w) == 302);
+  S h;
+  h.p = "\xff\x01"; h.n = 2;
+  CK(4, UnsignedChars(&h) == 256);
+  CK(5, Bytes("\xff\x01", 2) == 256);
+  int wide[2] = {65535, 65538};
+  CK(6, Halves(wide, 2) == 1);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// Silent wrong code (every round before 34, /O1 and /O2): the register allocator took a variable's live range from its
+// first to its last name in the tree, so a variable read only in a loop's condition (`i < n`) was free once the walk
+// passed the condition, and a variable made in the body was given its register: the next pass compared with the body's
+// value. `Twice({1, 2, 3}, 3)` returned 2 instead of 12 with the Round 33 compiler. A variable named in a loop is now live
+// for the whole loop ([stmt.iter]); a label (goto) makes every variable live for the whole function.
+static void r34_loop_registers(Tally& tally) {
+    std::printf("r34_loop_registers\n");
+    okayms_test::run_both(kRun, tally, "loop_registers", R"OKMS(
+int Twice(const int* p, int n) { int total = 0; for (int i = 0; i < n; i++) { int h = p[i] * 2; total = total + h; } return total; }
+int Count(int n) { int k = 0; int i = 0; while (i < n) { int sq = i * i; k = k + sq; i = i + 1; } return k; }
+int Down(int n) { int k = 0; do { int t = n * 3; k = k + t; n = n - 1; } while (n > 0); return k; }
+int Nested(int a, int b) { int s = 0; for (int i = 0; i < a; i++) { for (int j = 0; j < b; j++) { int x = i * 10 + j; s = s + x; } int y = i; s = s + y; } return s; }
+int Jumps(int n) { int k = 0; int i = 0; again: { int z = i + 100; k = k + z; } i = i + 1; if (i < n) goto again; return k; }
+int entry(void) {
+  int v[3] = {1, 2, 3};
+  CK(1, Twice(v, 3) == 12);
+  CK(2, Count(4) == 14);
+  CK(3, Down(3) == 18);
+  CK(4, Nested(3, 2) == 0 + 1 + 10 + 11 + 20 + 21 + 0 + 1 + 2);
+  CK(5, Jumps(3) == 303);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -188,5 +301,8 @@ int main(int argc, char** argv) {
     r34_runtime_members(tally);
     r34_aggregate_arrays(tally);
     r34_function_target(tally);
-    return tally.finish(4);
+    r34_lookup(tally);
+    r34_narrow_spill(tally);
+    r34_loop_registers(tally);
+    return tally.finish(7);
 }

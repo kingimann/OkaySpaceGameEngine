@@ -3,6 +3,8 @@
 #include "compile_internal.hpp"
 #include "parser.hpp"
 
+#include <iterator>
+
 namespace okayms {
 namespace compiler {
 bool Parser::parse_init(Node* out) {
@@ -279,6 +281,41 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
     return true;
 }
 
+// A condition that made temporaries: its value goes to a hidden local, the temporaries are destroyed (latest first),
+// and *cond becomes the hidden local's name ([class.temporary] 4: they die at the end of the full-expression). The
+// assignment and the destructor calls are appended to stmts.
+bool Parser::keep_cond_value(Node* cond, const std::vector<Temp>& temps, std::vector<Local>* locals, std::vector<Node>* stmts,
+                             std::string* hidden_name) {
+    Local hidden;
+    hidden.name = "__cv" + std::to_string(rv_count++);
+    Type ct;
+    ct.base = 1;
+    if (!static_type(*cond, &ct) || ct.base == 3 || ct.is_array()) {
+        ct = Type{};
+        ct.base = 1;
+    }
+    ct.is_ref = false;
+    hidden.type = ct;
+    place_local(locals, hidden);
+    Node assign;
+    assign.kind = Node::Assign;
+    assign.op = TAssign;
+    assign.kids.push_back(node_name(hidden.name));
+    assign.kids.push_back(std::move(*cond));
+    Node assign_stmt;
+    assign_stmt.kind = Node::ExprStmt;
+    assign_stmt.kids.push_back(std::move(assign));
+    stmts->push_back(std::move(assign_stmt));
+    for (size_t i = temps.size(); i-- > 0;) {
+        Node call;
+        if (!special_call(temps[i].sid, "<dtor>", node_addr(node_name(temps[i].name)), {}, &call)) return false;
+        stmts->push_back(std::move(call));
+    }
+    *cond = node_name(hidden.name);
+    *hidden_name = hidden.name;
+    return true;
+}
+
 bool Parser::parse_stmt_core(Node* out, std::vector<Local>* locals) {
     const int stmt_line = cur().line;
     std::vector<Temp> outer = std::move(stmt_temps);
@@ -292,36 +329,12 @@ bool Parser::parse_stmt_core(Node* out, std::vector<Local>* locals) {
         // The copies made in a condition die once the condition is evaluated: the value is kept
         // in a hidden local, the copies are destroyed, then the branch (or, for a loop, the body
         // or the exit) is chosen. A loop becomes while (1) { c = cond; dtors; if (!c) break; body }.
-        Local hidden;
-        hidden.name = "__cv" + std::to_string(rv_count++);
-        Type ct;
-        ct.base = 1;
-        if (!static_type(out->kids[0], &ct) || ct.base == 3 || ct.is_array()) {
-            ct = Type{};
-            ct.base = 1;
-        }
-        ct.is_ref = false;
-        hidden.type = ct;
-        place_local(locals, hidden);
-        Node assign;
-        assign.kind = Node::Assign;
-        assign.op = TAssign;
-        assign.kids.push_back(node_name(hidden.name));
-        assign.kids.push_back(std::move(out->kids[0]));
-        Node assign_stmt;
-        assign_stmt.kind = Node::ExprStmt;
-        assign_stmt.kids.push_back(std::move(assign));
         Node block;
         block.kind = Node::Block;
         block.line = stmt_line;
-        block.kids.push_back(std::move(assign_stmt));
-        for (size_t i = mine.size(); i-- > 0;) {
-            Node call;
-            if (!special_call(mine[i].sid, "<dtor>", node_addr(node_name(mine[i].name)), {}, &call)) return false;
-            block.kids.push_back(std::move(call));
-        }
+        std::string hidden_name;
+        if (!keep_cond_value(&out->kids[0], mine, locals, &block.kids, &hidden_name)) return false;
         if (out->kind == Node::If) {
-            out->kids[0] = node_name(hidden.name);
             block.kids.push_back(std::move(*out));
         } else {
             Node inner;
@@ -332,7 +345,7 @@ bool Parser::parse_stmt_core(Node* out, std::vector<Local>* locals) {
             Node not_c;
             not_c.kind = Node::Unary;
             not_c.op = TNot;
-            not_c.kids.push_back(node_name(hidden.name));
+            not_c.kids.push_back(node_name(hidden_name));
             Node stop;
             stop.kind = Node::If;
             stop.kids.push_back(std::move(not_c));
@@ -499,7 +512,22 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             Node cond;
             Node cond_decl;
             bool cond_scoped = false;
+            // What the condition makes before it (a temporary: `e && !Trim(e).empty()`) goes after the init statement,
+            // inside the scope, and is destroyed once the condition's value is kept, as for a plain if (Round 34,
+            // AntiCheatIntegrity.hpp:333; before, it went before the whole scope: "unknown name __bt...").
+            const size_t cond_pre_from = stmt_pre.size();
+            const size_t cond_temps_from = stmt_temps.size();
             if (!parse_condition(&cond, &cond_decl, &cond_scoped, locals)) return false;
+            std::vector<Node> cond_pre(std::make_move_iterator(stmt_pre.begin() + static_cast<std::ptrdiff_t>(cond_pre_from)),
+                                       std::make_move_iterator(stmt_pre.end()));
+            stmt_pre.resize(cond_pre_from);
+            const std::vector<Temp> cond_temps(stmt_temps.begin() + static_cast<std::ptrdiff_t>(cond_temps_from),
+                                               stmt_temps.end());
+            stmt_temps.resize(cond_temps_from);
+            if (!cond_temps.empty()) {
+                std::string hidden_name;
+                if (!keep_cond_value(&cond, cond_temps, locals, &cond_pre, &hidden_name)) return false;
+            }
             Node then_s;
             if (!parse_stmt(&then_s, locals)) return false;
             if_s.kind = Node::If;
@@ -515,6 +543,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             out->kind = Node::Block;
             out->text = "scope";
             out->kids.push_back(std::move(init_s));
+            for (Node& n : cond_pre) out->kids.push_back(std::move(n));
             out->kids.push_back(std::move(if_s));
             std::vector<Node> dt;
             if (!dtor_nodes(dscopes.size() - 1, &dt)) return false;

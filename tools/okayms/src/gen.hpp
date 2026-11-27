@@ -263,6 +263,15 @@ struct Gen {
         b(0x89);
         b(static_cast<uint8_t>(0xC0 | (low << 3)));
     }
+    // reg = the low `width` bytes of reg, sign- or zero-extended to 32 bits (MOVSX 0F BE/BF, MOVZX 0F B6/B7 with a
+    // register operand). A `char` or `short` kept in a register holds its value extended, as its slot would give it.
+    void extend_reg(int reg, int width, bool is_unsigned) {
+        if (reg >= 8) b(0x45);
+        else if (width == 1 && reg >= 4) b(0x40);  // sil, dil
+        b(0x0F);
+        b(static_cast<uint8_t>((is_unsigned ? 0xB6 : 0xBE) + (width == 2 ? 1 : 0)));
+        b(static_cast<uint8_t>(0xC0 | ((reg & 7) << 3) | (reg & 7)));
+    }
     void mov_reg_eax(int reg) {
         const int low = reg & 7;
         if (reg >= 8) b(0x41);
@@ -278,33 +287,52 @@ struct Gen {
         b(static_cast<uint8_t>(0xC0 | ((src & 7) << 3) | (dest & 7)));
     }
     static bool caller_saved(int reg) { return reg == 1 || reg == 2 || (reg >= 8 && reg <= 11); }
-    void store_reg_local(int reg, int offset) {
+    // A register local's stack slot is as wide as its type (Intel SDM vol. 2: MOV 88 /r and 66 89 /r store 8 and 16
+    // bits; MOVSX 0F BE/BF and MOVZX 0F B6/B7 load them extended to 32). Round 34: the spill was always 32 bits, so
+    // spilling a `char c` kept in esi wrote three bytes past its slot, over the next local: a range for over a
+    // reference (`for (char c : *s) total = total + 1;`) lost its end pointer and ran off at /O1 (silent crash).
+    int slot_width(const Local& local) const {
+        const int n = size_of(local.type);
+        return n == 1 || n == 2 ? n : 4;
+    }
+    void store_reg_local(int reg, int offset, int width = 4) {
+        if (width == 2) b(0x66);
         if (reg >= 8) b(0x44);
-        b(0x89);
+        else if (width == 1 && reg >= 4) b(0x40);  // sil, dil (not dh, bh)
+        b(width == 1 ? 0x88 : 0x89);
         b(static_cast<uint8_t>(0x85 | ((reg & 7) << 3)));
         disp(offset);
     }
-    void load_reg_local(int reg, int offset) {
+    void load_reg_local(int reg, int offset, int width = 4, bool is_unsigned = false) {
         if (reg >= 8) b(0x44);
-        b(0x8B);
+        if (width == 1 || width == 2) {
+            b(0x0F);
+            b(static_cast<uint8_t>((is_unsigned ? 0xB6 : 0xBE) + (width == 2 ? 1 : 0)));
+        } else {
+            b(0x8B);
+        }
         b(static_cast<uint8_t>(0x85 | ((reg & 7) << 3)));
         disp(offset);
+    }
+    void store_local_reg(const Local& local) { store_reg_local(local.reg, local.offset, slot_width(local)); }
+    void load_local_reg(const Local& local) {
+        load_reg_local(local.reg, local.offset, slot_width(local), local.type.is_unsigned);
     }
     void spill_caller() {
         for (const Local& local : locals)
-            if (caller_saved(local.reg)) store_reg_local(local.reg, local.offset);
+            if (caller_saved(local.reg)) store_local_reg(local);
     }
     void reload_caller() {
         for (const Local& local : locals)
-            if (caller_saved(local.reg)) load_reg_local(local.reg, local.offset);
+            if (caller_saved(local.reg)) load_local_reg(local);
     }
     void spill_reg(int reg) {
         for (const Local& local : locals)
-            if (local.reg == reg) store_reg_local(reg, local.offset);
+            if (local.reg == reg) store_local_reg(local);
     }
     void reload_reg(int reg) {
         for (const Local& local : locals)
-            if (local.reg == reg) load_reg_local(reg, local.offset);
+            if (local.reg == reg) load_local_reg(local);
     }
     void epilogue() {
         b(0x48);

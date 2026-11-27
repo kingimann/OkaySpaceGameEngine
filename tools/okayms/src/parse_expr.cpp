@@ -1671,10 +1671,10 @@ bool Parser::parse_unary(Node* out) {
         auto struct_named = [&](const std::string& n) {
             const std::string q = !written_ns.empty() ? written_ns
                                   : (tokens[name_tok].nsq && tokens[name_tok].text == n ? tokens[name_tok].qual : std::string());
-            if (!q.empty())
-                for (size_t k = 0; k < structs.size(); ++k)
-                    if (structs[k].name == n && structs[k].parent < 0 && !structs[k].incomplete && ns_names(structs[k].ns, q))
-                        return static_cast<int>(k);
+            if (!q.empty()) {
+                const int k = struct_in_qual(n, q, true);
+                if (k >= 0) return k;
+            }
             return find_struct(n);
         };
         // A member function of the class being read hides a namespace function of the same name in a call
@@ -1899,10 +1899,7 @@ bool Parser::parse_unary(Node* out) {
             // class of the namespace written in front ([namespace.qual]).
             const std::string cls = name.substr(0, colons);
             if (tokens[name_tok].nsq && !tokens[name_tok].qual.empty() && tokens[name_tok].text == cls)
-                for (size_t k = 0; k < structs.size() && scope_sid < 0; ++k)
-                    if (structs[k].name == cls && structs[k].parent < 0 && !structs[k].incomplete &&
-                        ns_names(structs[k].ns, tokens[name_tok].qual))
-                        scope_sid = static_cast<int>(k);
+                scope_sid = struct_in_qual(cls, tokens[name_tok].qual, true);
             if (scope_sid < 0) scope_sid = scope_class(cls);
         }
         if (scope_sid >= 0 && colons != std::string::npos && (is(TLParen) || is(TLBrace))) {

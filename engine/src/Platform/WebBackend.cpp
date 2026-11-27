@@ -210,11 +210,11 @@ public:
         // At most two seconds may wait (a page in the background stops pulling, the game keeps queueing).
         const uint32_t frame = (uint32_t)(BytesPerSample(m_spec.format) * m_spec.channels);
         const uint32_t cap = (uint32_t)m_spec.freq * 2u * frame;
-        if (m_q.Size() + n > cap) return false;   // dup-allow: pump::ByteRing::Size (AudioPump.hpp), not the retired Size of an okaycc test program
+        if (m_q.Size() + n > cap) return false;
         m_q.Push(d, n);
         return true;
     }
-    uint32_t QueuedBytes() const override { return m_q.Size(); }   // dup-allow: pump::ByteRing::Size (AudioPump.hpp), as OwnWin32Audio.cpp
+    uint32_t QueuedBytes() const override { return m_q.Size(); }
     void ClearQueued() override { m_q.Clear(); }
     uint32_t Dequeue(void*, uint32_t) override { return 0; }   // playback only
 

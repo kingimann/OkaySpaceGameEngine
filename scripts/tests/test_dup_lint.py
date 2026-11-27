@@ -212,6 +212,15 @@ class DupLintTest(unittest.TestCase):
                                          "#pragma once\nOKAY_DEPRECATED(\"use StringId::HashOf\")\nunsigned OldHash(const char* s);\n"})
         self.assertEqual(code, 0, out)
 
+    def test_compiler_test_program_does_not_retire_a_name(self):
+        # tools/okaycc/tests/ holds C++ programs that test our compiler's [[deprecated]] support: not our API, so a name
+        # marked there (Size) must not become "retired" for the whole repository.
+        base = {"tools/okaycc/tests/progs_cpp_std/attr29.cpp": "struct V {\n    [[deprecated(\"use Count\")]] int Size() const { return 0; }\n};\n",
+                "engine/src/A.cpp": "int a;\n"}
+        code, out = self.run_case(base, {"engine/src/A.cpp": "int a;\nint b = q.Size();\n"})
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("Size was retired", out)
+
     # ---- other languages and the shared-code list
     def test_pasted_shell_block_fails(self):
         sh = "".join(f"if [ -f \"$dir/file{i}.txt\" ]; then\n  cp \"$dir/file{i}.txt\" \"$out/\" || exit {i}\nfi\n" for i in range(8))

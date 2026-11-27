@@ -3484,6 +3484,9 @@ struct Parser {
             for (; i < tokens.size() && tokens[i].kind != TEnd; ++i) {
                 if (tokens[i].kind == TLt) ++depth;
                 else if (tokens[i].kind == TGt && --depth == 0) break;
+                // A ';', '{' or '}' cannot be inside template arguments: this '<' is a less-than (Round 33: `a < b`
+                // made this scan run to the end of the file, at every such name).
+                else if (tokens[i].kind == TSemi || tokens[i].kind == TLBrace || tokens[i].kind == TRBrace) return false;
             }
             ++i;
         }

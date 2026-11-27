@@ -77,9 +77,22 @@ struct Gen {
     }
     void disp(int32_t offset) { u32(static_cast<uint32_t>(offset)); }
 
+    // The first function of this name (Round 33: through an index, built again when the list changed size, or once when
+    // the entry it names no longer has the name; it was a scan of every function at each call, a third of a heavy file's
+    // compile time).
+    std::unordered_map<std::string, size_t> func_index_{};
+    size_t func_index_size_ = static_cast<size_t>(-1);
     FuncDecl* find_func(const std::string& name) {
-        for (FuncDecl& fn : funcs)
-            if (fn.name == name) return &fn;
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            if (func_index_size_ != funcs.size() || attempt == 1) {
+                func_index_.clear();
+                for (size_t i = 0; i < funcs.size(); ++i) func_index_.emplace(funcs[i].name, i);
+                func_index_size_ = funcs.size();
+            }
+            const auto it = func_index_.find(name);
+            if (it == func_index_.end()) return nullptr;
+            if (it->second < funcs.size() && funcs[it->second].name == name) return &funcs[it->second];
+        }
         return nullptr;
     }
     // How many blocks out from the current one a local's block is, or -1 when it is not visible here.

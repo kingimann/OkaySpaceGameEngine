@@ -6,6 +6,7 @@
 // Run with "--png <path>" to additionally dump a visual preview (normal / hover /
 // pressed states) as a PNG.
 #include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUIDesign.hpp"
 #include "okay/Graphics/Image.hpp"
 #include "okay/Render/Color.hpp"
 #include <SDL.h>
@@ -828,6 +829,7 @@ int main(int argc, char** argv) {
         SDL_Renderer* lr = ls ? SDL_CreateSoftwareRenderer(ls) : nullptr;
         CHECK(lr != nullptr);
         const float classicScale = OkayUI::Style().textScale;
+        { OkayUI::design::Options o; std::snprintf(o.design, sizeof o.design, "Slate"); OkayUI::design::Set(o); }   // the launcher's own design
         OkayUI::UseLauncherLook(true);
         CHECK(OkayUI::LauncherLook());
         CHECK(OkayUI::Style().panel[0] == 30 && OkayUI::Style().accent[2] == 250);   // Slate palette
@@ -858,7 +860,7 @@ int main(int argc, char** argv) {
         frame(none, nullptr, nullptr);   // the card sizes itself from the previous frame
         int aa = 0, accent = 0, raised = 0;
         unsigned char card[4]; OkayUI::CardFillColor(card);   // the card colour of the current (Slate) theme
-        CHECK(card[0] == 38 && card[1] == 41 && card[2] == 49);
+        CHECK(card[0] == 38 && card[1] == 42 && card[2] == 51);   // Slate's raised surface
         SDL_LockSurface(ls);
         for (int y = 0; y < LH; ++y)
             for (int x = 0; x < LW; ++x) {
@@ -906,7 +908,8 @@ int main(int argc, char** argv) {
 
         if (argc >= 4 && std::strcmp(argv[1], "--png") == 0) savePng(ls, argv[3]);
         OkayUI::UseLauncherLook(false);
-        CHECK(!OkayUI::LauncherLook() && OkayUI::Style().textScale == classicScale && OkayUI::Style().panel[0] == 40);
+        OkayUI::design::Set(OkayUI::design::Options());   // back to the default design (bitmap text)
+        CHECK(!OkayUI::LauncherLook() && OkayUI::Style().textScale == classicScale && OkayUI::Style().panel[0] == OkayUI::design::DefaultTheme().panel[0]);
         SDL_DestroyRenderer(lr); SDL_FreeSurface(ls);
     }
 

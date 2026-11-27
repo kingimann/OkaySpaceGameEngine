@@ -3,6 +3,7 @@
 #include "LauncherShared.hpp"
 #include "ChatText.hpp"
 #include "NetGuard.hpp"                 // okay::netguard: size and host checks for link previews
+#include "okay/Backend/SupabaseRoutes.hpp"   // the stored-file route (a link to one is not a page)
 #include "okay/Core/ImageDecode.hpp"   // LoadRgbaFile
 #include "okay/Platform/NativeFetch.hpp"   // the HTTP seam for link previews: WinHTTP / our own client
 #include "OkayTheme.hpp"   // the theme palette's colours
@@ -458,7 +459,7 @@ static std::string FirstPageLink(const std::string& body) {
         bool media = false;
         for (const char* ext : {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".wav", ".mp3", ".ogg", ".zip", ".pdf", ".exe"})
             if (low.size() > std::strlen(ext) && low.compare(low.size() - std::strlen(ext), std::strlen(ext), ext) == 0) media = true;
-        if (!media && low.find("/storage/v1/object/") == std::string::npos && u.size() > 10) return u;
+        if (!media && low.find(okay::backend::supabase::routes::StorageObjectRoot()) == std::string::npos && u.size() > 10) return u;
         i = j;
     }
     return std::string();

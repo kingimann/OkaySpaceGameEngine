@@ -1,6 +1,10 @@
 #pragma once
 // Server side of blocks + privacy settings (docs/sql/blocks.sql). Network calls:
-// run them on a worker thread. The pure logic lives in Privacy.hpp.
+// run them on a worker thread. The pure logic lives in Privacy.hpp. Every request
+// goes through OkayBackend's Database (acct_.Db(); round 5), byte for byte what it
+// always sent (tests/test_okay_backend_golden_community1.cpp). Two values are sent
+// unencoded, as they always were (docs/platform/okay_backend.md section 18): my
+// user id in Fetch and the user id in Unblock.
 #include "okay/Platform/Messages.hpp"
 #include "okay/Platform/Privacy.hpp"
 
@@ -33,7 +37,7 @@ public:
         if (!acct_.IsLoggedIn()) return {false, false, false, "Sign in to keep your block list on your account."};
         const std::string me = MyId();
         if (me.empty()) { Outcome o; o.offline = true; o.message = "Could not look up your account."; return o; }
-        auto r = acct_.Api("/rest/v1/blocks?select=blocked,blocked_name&blocker=eq." + me, "GET");
+        auto r = acct_.Db().From("blocks").Select("blocked,blocked_name").Eq("blocker", me, okay::backend::ValueText::AsIs).Get();
         Outcome o = Classify(r);
         Note(o);
         if (!o.ok) return o;
@@ -49,14 +53,13 @@ public:
     }
     Outcome Block(const std::string& uid, const std::string& name) {
         if (!acct_.IsLoggedIn()) return {false, false, false, "Sign in to keep your block list on your account."};
-        auto r = acct_.Api("/rest/v1/blocks?on_conflict=blocker,blocked", "POST",
-                           "{\"blocked\":" + Messages::JStr(uid) + ",\"blocked_name\":" + Messages::JStr(name) + "}",
-                           "Prefer: resolution=ignore-duplicates");
+        auto r = acct_.Db().From("blocks").OnConflict("blocker,blocked").Prefer("resolution=ignore-duplicates")
+                     .Insert("{\"blocked\":" + Messages::JStr(uid) + ",\"blocked_name\":" + Messages::JStr(name) + "}");
         Outcome o = Classify(r); Note(o); return o;
     }
     Outcome Unblock(const std::string& uid) {
         if (!acct_.IsLoggedIn()) return {false, false, false, "Sign in to keep your block list on your account."};
-        auto r = acct_.Api("/rest/v1/blocks?blocked=eq." + uid, "DELETE");
+        auto r = acct_.Db().From("blocks").Eq("blocked", uid, okay::backend::ValueText::AsIs).Delete();
         Outcome o = Classify(r); Note(o); return o;
     }
 
@@ -64,7 +67,7 @@ public:
     Outcome FetchSettings(privacy::Settings& out, bool& found) {
         found = false;
         if (!acct_.IsLoggedIn()) return {false, false, false, "Sign in to keep privacy settings on your account."};
-        auto r = acct_.Api("/rest/v1/privacy_settings?select=dm_from,profile_visibility,online_visibility,friend_requests,calls_from", "GET");
+        auto r = acct_.Db().From("privacy_settings").Select("dm_from,profile_visibility,online_visibility,friend_requests,calls_from").Get();
         Outcome o = Classify(r); NoteSettings(o);
         if (o.ok) found = privacy::SettingsFromBody(r.body, out);
         return o;
@@ -72,7 +75,7 @@ public:
     Outcome SaveSettings(const privacy::Settings& s) {
         if (!acct_.IsLoggedIn()) return {false, false, false, "Sign in to keep privacy settings on your account."};
         const std::string j = privacy::SettingsJson(s);
-        auto r = acct_.Api("/rest/v1/privacy_settings?on_conflict=user_id", "POST", j, "Prefer: resolution=merge-duplicates");
+        auto r = acct_.Db().From("privacy_settings").OnConflict("user_id").Upsert(j);
         Outcome o = Classify(r); NoteSettings(o); return o;
     }
 
@@ -87,12 +90,7 @@ private:
     void NoteSettings(const Outcome& o) { if (o.ok) settings_ = privacy::Support::Yes; else if (o.missing) settings_ = privacy::Support::Missing; }
     std::string MyId() {
         if (myId_.empty()) {
-            std::string enc;
-            for (char c : acct_.CurrentSession().username) {
-                if (std::isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~') enc += c;
-                else { char b[4]; std::snprintf(b, sizeof(b), "%%%02X", (unsigned char)c); enc += b; }
-            }
-            auto r = acct_.Api("/rest/v1/profiles?select=id&username=eq." + enc, "GET");
+            auto r = acct_.Db().From("profiles").Select("id").Eq("username", acct_.CurrentSession().username).Get();
             if (r.ok) { auto o = Messages::SplitObjects(r.body); if (!o.empty()) myId_ = Messages::Field(o[0], "id"); }
         }
         return myId_;

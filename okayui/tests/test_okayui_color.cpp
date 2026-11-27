@@ -72,7 +72,7 @@ void TestStyleColors() {
     UI::PopStyleColor(2);
     CHECK(Near4(UI::GetStyleColorVec4(UI::Col_Header), 1 / 255.0f, 2 / 255.0f, 3 / 255.0f, 4 / 255.0f));
     UI::PopStyleColor();
-    CHECK(Near4(UI::GetStyleColorVec4(UI::Col_Header), t.track[0] / 255.0f, t.track[1] / 255.0f, t.track[2] / 255.0f, t.track[3] / 255.0f));
+    CHECK(Near4(UI::GetStyleColorVec4(UI::Col_Header), t.raised[0] / 255.0f, t.raised[1] / 255.0f, t.raised[2] / 255.0f, t.raised[3] / 255.0f));
     UI::PopStyleColor(5);                                                  // popping an empty stack is harmless
     // packed and float overloads
     UI::PushStyleColor(UI::Col_Separator, UI::RGBA(10, 20, 30, 40));
@@ -103,7 +103,7 @@ void TestStyleColors() {
     Sim sim(100, 100);
     UI::PushStyleColor(UI::Col_Header, 1, 2, 3, 4);
     sim.Frame([] {});
-    CHECK(Near4(UI::GetStyleColorVec4(UI::Col_Header), t.track[0] / 255.0f, t.track[1] / 255.0f, t.track[2] / 255.0f, t.track[3] / 255.0f));
+    CHECK(Near4(UI::GetStyleColorVec4(UI::Col_Header), t.raised[0] / 255.0f, t.raised[1] / 255.0f, t.raised[2] / 255.0f, t.raised[3] / 255.0f));
     // the launcher look swaps the base theme and clears what was set
     UI::SetStyleColor(UI::Col_Tab, 1, 2, 3, 4);
     UI::UseLauncherLook(true);
@@ -455,6 +455,29 @@ void TestColorEdit() {
         r.sim.Click(560, 520, ui); r.sim.Move(580, 540); r.sim.Frames(2, ui);
         const Bitmap shut = r.sim.Draw(12, 14, 20);
         CHECK(CountNot(shut, (int)rc.x, (int)(rc.y + rc.h + 4), (int)(rc.x + 240), (int)(rc.y + rc.h + 200), ref) < CountNot(open, (int)rc.x, (int)(rc.y + rc.h + 4), (int)(rc.x + 240), (int)(rc.y + rc.h + 200), ref) - 3000);
+    }
+    {   // HDR (Dear ImGui's ImGuiColorEditFlags_HDR: no 0..1 limit): a channel above 1 keeps its value, and its cell's range reaches it
+        Rig r; float c[4] = {3.0f, 0.4f, 0.6f, 1.0f}, d[4] = {3.0f, 0.4f, 0.6f, 1.0f}; UI::Rect rh, rp;
+        auto ui = [&] {
+            if (UI::Begin("W", 10, 10, 500, 300)) {
+                UI::PushID(1); UI::SetNextItemWidth(400); UI::ColorEdit3("", c, UI::ColorEdit_HDR | UI::ColorEdit_NoPicker); rh = UI::GetItemRect(); UI::PopID();
+                UI::PushID(2); UI::SetNextItemWidth(400); UI::ColorEdit3("", d, UI::ColorEdit_NoPicker); rp = UI::GetItemRect(); UI::PopID();
+            }
+            UI::End();
+        };
+        r.sim.Frames(2, ui);
+        CHECK(c[0] == 3.0f);                                                           // drawing does not clamp it
+        const float cw = rh.h, sw = rh.w - cw - 6.0f, each = (sw - 8.0f) / 3.0f;
+        const float x1 = rh.x + cw + 6.0f + 1.0f * (each + 4.0f) + each * 0.5f;      // the second cell (green, 0.4)
+        r.sim.Click(x1, CenterY(rh), ui);
+        CHECK(c[0] == 3.0f);                                                           // editing another channel leaves the bright one alone
+        CHECK_NEAR(c[1], 1.5, 0.12);                                                   // the cells of an HDR colour share the range 0 .. 3 (its brightest channel)
+        const float x0 = rh.x + cw + 6.0f + each * 0.25f;                              // a quarter into the red cell: about 0.75
+        r.sim.Click(x0, CenterY(rh), ui);
+        CHECK_NEAR(c[0], 0.75, 0.12);
+        const float p1 = rp.x + rp.h + 6.0f + 1.0f * (each + 4.0f) + each * 0.5f;     // without HDR the cell is 0 .. 1
+        r.sim.Click(p1, CenterY(rp), ui);
+        CHECK_NEAR(d[1], 0.5, 0.05);
     }
     {   // NoPicker: the swatch click opens nothing
         Rig r(600, 560); float c[4] = {1, 0, 0, 1}; UI::Rect rc;

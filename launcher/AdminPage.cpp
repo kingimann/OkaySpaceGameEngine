@@ -800,7 +800,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
             if (!w.reviewNote.empty()) ImGui::TextColored(okaytheme::Current().warning, "Note: %s", w.reviewNote.c_str());
             ImGui::Dummy(ImVec2(0, 4));
             const bool safe = ShellSafeUrl(w.url);
-            const bool hosted = w.url.find("/storage/v1/object/public/workshop/") != std::string::npos;
+            const bool hosted = w.url.find(okay::backend::supabase::routes::StoragePublic("workshop", "")) != std::string::npos;
             if (!hosted) ImGui::TextColored(okaytheme::Current().danger, "Outside link \xE2\x80\x94 not hosted by OkaySpace, can't be approved.");
             ImGui::BeginDisabled(!safe);
             if (ImGui::Button("Download to check", ImVec2(0, 30))) OpenExternal(w.url);

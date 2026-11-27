@@ -1,7 +1,7 @@
 // Every visual-script node has a level and a one-line help sentence.
 // The level filter and the search order are checked here too.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include <cstring>
 #include <string>

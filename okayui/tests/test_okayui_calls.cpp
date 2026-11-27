@@ -209,7 +209,10 @@ int main() {
     {   // context shims
         Reset();
         UI::Context* c = UI::CreateContext();
-        CHECK(c != nullptr && UI::GetCurrentContext() == c && UI::CreateContext() == c);
+        CHECK(c != nullptr && UI::GetCurrentContext() == c);
+        UI::Context* c2 = UI::CreateContext();                    // a second context (test_okayui_contexts tests them); c stays current
+        CHECK(c2 != nullptr && c2 != c && UI::GetCurrentContext() == c);
+        UI::DestroyContext(c2); CHECK(UI::GetCurrentContext() == c);
         UI::SetCurrentContext(nullptr); CHECK(UI::GetCurrentContext() == nullptr);
         UI::SetCurrentContext(reinterpret_cast<UI::Context*>(0x1234)); CHECK(UI::GetCurrentContext() == nullptr);   // a foreign handle is ignored
         UI::SetCurrentContext(c); CHECK(UI::GetCurrentContext() == c);
@@ -553,6 +556,140 @@ int main() {
         CHECK(std::fabs(r5.x - (startX + 150.0f)) < 1.0f && r5.y == r4.y);
         s.Click(CenterX(r1), CenterY(r1), ui); CHECK(clicks == 1);
         s.rdown = true; s.Move(CenterX(r4), CenterY(r4)); s.Frame(ui); s.rdown = false; s.Frames(2, ui);   // right click on an item opens its own popup
+    }
+    {   // Dear ImGui code styles through GetStyle(): the writes are taken in (colours, rounding, padding, border, font scale), the rest stays
+        Reset(); Sim s(300, 200);
+        s.Frame([] {});
+        const UI::ImVec4 dim0 = UI::GetStyleColorVec4(UI::Col_TextDisabled);
+        const float pad0 = UI::Style().windowPadding;
+        UI::StyleInfo& st = UI::GetStyle();
+        st.Colors[UI::Col_Text] = UI::ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+        st.Colors[UI::Col_FrameBg] = UI::ImVec4(0.0f, 0.5f, 0.0f, 1.0f);
+        st.FrameRounding = 7.0f; st.WindowRounding = 0.0f; st.FrameBorderSize = 0.0f;
+        s.Frame([] {});                                                   // taken in at the frame start
+        UI::ImVec4 t = UI::GetStyleColorVec4(UI::Col_Text), fb = UI::GetStyleColorVec4(UI::Col_FrameBg);
+        CHECK(t.x == 1.0f && t.y == 0.0f && t.z == 0.0f && fb.y > 0.49f && fb.y < 0.51f && fb.x == 0.0f);
+        CHECK(UI::Style().rounding == 7.0f && UI::Style().windowRounding == 0.0f && UI::Style().borderPx == 0.0f);
+        const UI::ImVec4 dim1 = UI::GetStyleColorVec4(UI::Col_TextDisabled);
+        CHECK(dim1.x == dim0.x && dim1.w == dim0.w && UI::Style().windowPadding == pad0);   // fields nobody wrote are left alone
+        UI::GetStyle().WindowPadding = UI::Vec2{14, 12};                    // taken in by the next GetStyle() call too
+        CHECK(UI::GetStyle().WindowPadding.x == 14.0f && UI::Style().windowPadding == 14.0f);
+        const UI::StyleInfo copy = UI::GetStyle();                        // the chat window's way: copy the style, assign it back
+        UI::StyleColorsLight();
+        UI::GetStyle() = copy; s.Frame([] {});
+        t = UI::GetStyleColorVec4(UI::Col_Text); CHECK(t.x == 1.0f && t.y == 0.0f);
+        UI::GetStyle().FrameRounding = std::nanf(""); s.Frame([] {}); CHECK(UI::Style().rounding == 7.0f);   // nonsense is ignored
+        // IO::FontGlobalScale: the text grows with it, and back
+        const float w1 = UI::CalcTextSize("Scaled text").x;
+        UI::GetIO().FontGlobalScale = 1.5f; s.Frame([] {});
+        const float w15 = UI::CalcTextSize("Scaled text").x;
+        CHECK(w15 > w1 * 1.45f && w15 < w1 * 1.55f);
+        UI::GetIO().FontGlobalScale = 1.5f; s.Frame([] {}); CHECK(UI::CalcTextSize("Scaled text").x == w15);   // not applied twice
+        UI::GetIO().FontGlobalScale = 1.0f; s.Frame([] {}); CHECK(UI::CalcTextSize("Scaled text").x == w1);
+        UI::GetIO().FontGlobalScale = -3.0f; s.Frame([] {}); CHECK(UI::CalcTextSize("Scaled text").x == w1);   // out of range: ignored
+        UI::GetIO().FontGlobalScale = 1.0f;
+    }
+    {   // UseImGuiCoordinates: cursor positions from the window's / child's corner (padding included), window size of the innermost child
+        Reset(); Sim s(400, 300);
+        UI::Vec2 p0{}, p1{}, wsz{}, cpos{}, csz{}, after{}, own0{};
+        float winH = 0.0f;
+        auto ui = [&] {
+            UI::SetNextWindowPos({0, 0}); UI::SetNextWindowSize({400, 300});
+            UI::Begin("root", nullptr, UI::Window_NoTitleBar);
+            UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f);   // (Dear ImGui's child padding rules, as the launcher uses)
+            p0 = UI::GetCursorPos(); wsz = UI::GetWindowSize();
+            UI::PushStyleVar(UI::StyleVar_WindowPadding, UI::Vec2{28, 20});
+            UI::BeginChild("content", UI::Vec2{0, 0}, UI::Child_AlwaysUseWindowPadding);
+            UI::PopStyleVar();
+            p1 = UI::GetCursorPos(); cpos = UI::GetWindowPos(); csz = UI::GetWindowSize(); winH = UI::GetWindowHeight();
+            UI::SetCursorPosY(winH - 40.0f); after = UI::GetCursorScreenPos();   // a footer pinned 40 px above the child's bottom
+            UI::EndChild();
+            UI::PopStyleVar();
+            UI::End();
+        };
+        UI::UseImGuiCoordinates(false); s.Frames(2, ui); own0 = p0;
+        CHECK(own0.x == 0.0f && own0.y == 0.0f);                          // OkayUI's own rule: from the content corner
+        UI::UseImGuiCoordinates(true); s.Frames(2, ui);
+        CHECK(p0.x > 0.0f && p0.x == p0.y);                              // Dear ImGui's: the window padding
+        CHECK(wsz.x == 400.0f && wsz.y == 300.0f);
+        CHECK(p1.x == 28.0f && p1.y == 20.0f);                            // inside the child: its own padding
+        CHECK(csz.y == winH && csz.y < 300.0f && csz.x < 400.0f && cpos.x > 0.0f);   // the child's rectangle, not the window's
+        CHECK(after.y == cpos.y + winH - 40.0f);
+        UI::UseImGuiCoordinates(false);
+    }
+    {   // CalcTextSize with a wrap width (Dear ImGui's measure): words wrap, a word wider than the line breaks inside it, '\n' breaks
+        Reset(); Sim s(400, 300);
+        s.Frame([] {});
+        const float lh = UI::GetTextLineHeight();
+        const UI::Vec2 one = UI::CalcTextSize("short", nullptr, false, 300.0f);
+        CHECK(one.y == lh && one.x > 0.0f && one.x <= 300.0f);
+        std::string words; while (words.size() < 200) words += "wrapped words ";
+        const UI::Vec2 w = UI::CalcTextSize(words.c_str(), nullptr, false, 150.0f);
+        CHECK(w.y >= 3.0f * lh && w.x <= 150.0f);
+        const std::string xs(200, 'x');
+        const UI::Vec2 x = UI::CalcTextSize(xs.c_str(), nullptr, false, 150.0f);   // one long word: broken inside, never wider than the line
+        CHECK(x.y >= 3.0f * lh && x.x <= 150.0f && x.x > 100.0f);
+        CHECK(UI::CalcTextSize("a\nb\nc").y == 3.0f * lh);
+        CHECK(UI::CalcTextSize(xs.c_str()).y == lh);                        // no wrap width: one line
+    }
+    {   // InputTextMultiline with EnterReturnsTrue + CtrlEnterForNewLine (the launcher's chat composer): typing is no "send", Enter is and
+        // breaks no line, Ctrl+Enter breaks the line
+        Reset(); Sim s(400, 200);
+        char buf[128] = "";
+        int sends = 0;
+        UI::Rect box{};
+        auto ui = [&] {
+            UI::SetNextWindowPos({0, 0}); UI::SetNextWindowSize({400, 200}); UI::Begin("c", nullptr, UI::Window_NoTitleBar);
+            if (UI::InputTextMultiline("##msg", buf, 128, UI::Vec2{300, 60}, UI::InputText_EnterReturnsTrue | UI::InputText_CtrlEnterForNewLine)) ++sends;
+            box = UI::GetItemRect();
+            UI::End();
+        };
+        s.Frames(2, ui);
+        s.Click(box.x + 20, box.y + 20, ui);                                // the box takes the keyboard
+        s.Frames(2, ui);
+        s.text = "hello"; s.Frame(ui); s.Frame(ui);
+        CHECK(std::strcmp(buf, "hello") == 0 && sends == 0);
+        s.ctrl = true; s.edge[Key_Enter] = true; s.Frame(ui); s.ctrl = false; s.Frame(ui);
+        CHECK(std::strchr(buf, '\n') != nullptr && sends == 0);          // Ctrl+Enter: a new line
+        s.edge[Key_Enter] = true; s.Frame(ui); s.Frame(ui);
+        CHECK(sends == 1 && std::strcmp(buf, "hello\n") == 0);           // Enter: sent, no extra line
+        bool focusNext = true;                                              // SetKeyboardFocusHere before the box gives it the keyboard
+        auto ui2 = [&] {
+            UI::SetNextWindowPos({0, 0}); UI::SetNextWindowSize({400, 200}); UI::Begin("c", nullptr, UI::Window_NoTitleBar);
+            UI::InputText("##other", buf, 8);
+            if (focusNext) { UI::SetKeyboardFocusHere(); focusNext = false; }
+            UI::InputTextMultiline("##msg2", buf, 128, UI::Vec2{300, 60});
+            UI::End();
+        };
+        buf[0] = 0; s.Frames(3, ui2);
+        s.text = "x"; s.Frame(ui2); s.Frame(ui2);
+        CHECK(std::strcmp(buf, "x") == 0);
+    }
+    {   // a framed text field starts its text (and its hint) at a pushed FramePadding.x, as Dear ImGui's does (the launcher's search pill
+        // draws its magnifier in that room)
+        Reset(); Sim s(400, 120);
+        char buf[32] = "";
+        auto hintX = [&](float padX) {
+            s.Frame([&] {
+                UI::SetNextWindowPos({0, 0}); UI::SetNextWindowSize({400, 120}); UI::Begin("f", nullptr, UI::Window_NoTitleBar);
+                UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f);
+                if (padX >= 0.0f) UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{padX, 6.0f});
+                UI::SetNextItemWidth(300.0f);
+                UI::InputTextWithHint("##s", "Search", buf, 32);
+                if (padX >= 0.0f) UI::PopStyleVar();
+                UI::PopStyleVar();
+                UI::End();
+            });
+            const Bitmap b = s.Draw(0, 0, 0);
+            int first = -1;   // the leftmost column with hint-coloured text pixels in the field's row band
+            for (int x = 0; x < 400 && first < 0; ++x)
+                for (int y = 10; y < 60 && first < 0; ++y) { const unsigned p = PixelAt(b, x, y); if (((p >> 24) & 255) > 90 && ((p >> 16) & 255) > 90) first = x; }
+            return first;
+        };
+        UI::UseImGuiCoordinates(true);   // (Dear ImGui's rules: the launcher's mode)
+        const int plain = hintX(-1.0f), padded = hintX(30.0f);
+        UI::UseImGuiCoordinates(false);
+        CHECK(plain > 0 && padded > plain + 10);
     }
     TEST_MAIN_RESULT();
 }

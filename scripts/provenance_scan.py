@@ -398,6 +398,17 @@ BACKEND_PATTERNS = [
     # is on the calling line, the route is the provider's. Counted so a moved site stays in the inventory.
     (re.compile(r'(?:\.|->)From\(\s*"([A-Za-z_]\w*)"'), "Database", "okay::backend"),
     (re.compile(r'(?:\.|->)Rpc\(\s*"([A-Za-z_]\w*)"'), "RPC", "okay::backend"),
+    # A function name passed in a variable (Invites' and Parties' own Rpc helpers, round 5): counted as "(dynamic)".
+    (re.compile(r'Db\(\)\s*\.\s*Rpc\(\s*(?=[A-Za-z_])()'), "RPC", "okay::backend"),
+    # A table name passed in a variable (Messages' sends to "messages" / "group_messages", round 6): "(dynamic)" too.
+    (re.compile(r'(?:\bdb|Db\(\))\s*\.\s*From\(\s*(?=[A-Za-z_])()'), "Database", "okay::backend"),
+    # Calls through OkayBackend's Storage and Functions (round 4): the bucket or function name is on the calling line. The
+    # Supabase provider's public route used directly (the updater's address, links the launcher recognises) counts too.
+    (re.compile(r'Storage\(\)\s*\.\s*(?:Upload|ReadPublic|List|Remove|RemoveObject|PublicUrl)\(\s*"([a-z][\w-]*)"'), "Storage",
+     "okay::backend"),
+    (re.compile(r'routes::Storage(?:Public|Object|List|Bucket)\(\s*"([a-z][\w-]*)"'), "Storage", "okay::backend"),
+    (re.compile(r'(?:(?:\.|->)function\s*=|FunctionCall\{|Functions\(\)\s*\.\s*Invoke\()\s*"([a-z0-9_-]+)"'), "Functions",
+     "okay::backend"),
 ]
 CONFIG_NAME = re.compile(r"\b(SUPABASE_[A-Z_]+|OKAY_(?:ACCOUNT|DEFAULT_ACCOUNT|UPDATE_SERVER|PUBLIC_ACCOUNT|TICKET|RESET)"
                          r"[A-Z_]*)\b|secrets\.([A-Z][A-Z0-9_]+)")
@@ -500,6 +511,7 @@ def backend(summary, with_tests):
                 for m in rx.finditer(l):
                     res = (m.group(1) if m.groups() else "") or ""
                     if "ReleasesBucketBase" in m.group(0): res = "public:releases"
+                    elif service == "Storage" and re.search(r"ReadPublic|PublicUrl|StoragePublic", m.group(0)): res = "public:" + res
                     elif service == "Storage":
                         if "/object/public/" in m.group(0): res = "public"
                         if res in ("$BUCKET", "${BUCKET}") and bucket_var: res = bucket_var

@@ -21,11 +21,16 @@ struct Request {
     std::string path;     // after the server URL: "/rest/v1/..."
     std::string body;     // JSON ("" = none)
     std::string header;   // one extra header line ("" = none)
+    std::string function;   // a server function to call with `body` instead (OkayBackend Functions); "" = the table request in `path`
 };
 
-inline okay::account::ApiResponse Send(okay::account::AccountService& acct, const Request& r) {
-    return acct.Api(r.path, r.method, r.body, r.header);
+/// Send through the signed-in account: a server function through its Functions, a table request through its Api. `timeoutSec`
+/// > 0 limits the call (the session ticket at join time).
+inline okay::account::ApiResponse SendTimed(const okay::account::AccountService& acct, const Request& r, int timeoutSec) {
+    if (!r.function.empty()) return acct.Functions().Invoke(r.function, r.body, timeoutSec);
+    return acct.ApiTimed(r.path, r.method, r.body, r.header, timeoutSec);
 }
+inline okay::account::ApiResponse Send(okay::account::AccountService& acct, const Request& r) { return SendTimed(acct, r, 0); }
 
 // ---- Values ------------------------------------------------------------------
 inline bool IsUuid(const std::string& s) {
@@ -330,8 +335,7 @@ inline Request Usernames(const std::vector<std::string>& ids) {
 // machine hash is optional; with it the service also refuses a banned machine.
 inline Request SessionTicket(const std::string& serverId, const std::string& hwHash) {
     Request r;
-    r.method = "POST";
-    r.path = "/functions/v1/session-ticket";
+    r.function = "session-ticket";
     r.body = "{\"aud\":" + JStr(serverId) + (IsHwHash(hwHash) ? ",\"hw_hash\":" + JStr(hwHash) : std::string()) + "}";
     return r;
 }
@@ -354,8 +358,7 @@ inline bool SessionTicket(const std::string& serverId, const std::string& hwHash
     if (!cnf.empty() && !IsKeyBinding(cnf)) return detail::Fail(err, "Bad key binding.");
     if (!hwHash.empty() && !IsHwHash(hwHash)) return detail::Fail(err, "Bad hardware hash.");
     out = Request{};
-    out.method = "POST";
-    out.path = "/functions/v1/session-ticket";
+    out.function = "session-ticket";
     out.body = "{\"aud\":" + JStr(serverId) + (cnf.empty() ? std::string() : ",\"cnf\":" + JStr(cnf)) +
                (hwHash.empty() ? std::string() : ",\"hw_hash\":" + JStr(hwHash)) + "}";
     return true;

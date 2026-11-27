@@ -6,7 +6,7 @@
 //   - a block dropped on a wire splits that wire in two (VsInsertOnExecWire, VsInsertOnDataWire),
 //   - Delete on a block in a chain reconnects its neighbours; Shift+Delete cuts instead (VsDeleteBlock),
 //   - a recipe lands beside what is already there (VsInsertRecipe).
-// This header is included from inside VisualScriptEditor.hpp, after the graph model (VsEditGraph, FindDef,
+// This header is included from inside VisualScriptModel.hpp, after the graph model (VsEditGraph, FindDef,
 // VsWireOk, VsPasteText), because it uses them. Written for this project from its own graph rules.
 // Layout numbers are in the same stored units as VsEditNode::x / y (the canvas multiplies them by 1.4).
 #include "VisualScriptAutoConnect.hpp"

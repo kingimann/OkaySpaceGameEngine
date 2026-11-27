@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "imgui.h"
+#include "okay/UI/OkayUIImGuiNames.hpp"   // OkayUI, in Dear ImGui's names
 #include "CommandLine.hpp"   // FoundProgram
 
 namespace okaylcli {

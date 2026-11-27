@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 75 headers, 1133 names.
+Back to the [code index](../code_index.md). 79 headers, 1151 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -17,45 +17,46 @@ Back to the [code index](../code_index.md). 75 headers, 1133 names.
 ## `shared/AntiCheatBackend.hpp`
 
 - `Request` struct, line 19
-- `Send` function, line 26
-- `IsUuid` function, line 31: ---- Values ------------------------------------------------------------------
-- `IsHwHash` function, line 40
-- `Text` function, line 45: Free text for the server: trimmed, control characters dropped, capped.
-- `JStr` function, line 48
-- `JStrOrNull` function, line 49
-- `DaysFromCivil` function, line 53: Days since 1970-01-01 for a civil date, and back (Howard Hinnant's algorithms):
-- `IsoTime` function, line 61
-- `ParseTime` function, line 80: "2026-10-25T12:00:00.123456+00:00" (PostgREST), "...Z", "... 12:00:00": seconds
-- `ExpiryFor` function, line 96: The ban lengths the Admin page offers: 0 permanent, 1 a day, 2 a week, 3 30 days, 4 a year.
-- `ValidStatus` function, line 102
-- `ValidEvidence` function, line 124: True when 'json' can ride in a report's evidence column: a JSON object within the cap.
-- `RedactPaths` function, line 170: What leaves the machine in a client_check report: every absolute path cut
-- `MyBans` function, line 218: My anti-cheat bans (by account, or by this machine's hash), with each one's latest appeal.
-- `FileAppeal` function, line 226
-- `ListReports` function, line 239: ---- Admin calls ---------------------------------------------------------------
-- `SetReportStatus` function, line 248
-- `Unban` function, line 279: Lift a ban (it stays on record; the server stamps who and when).
-- `ListBans` function, line 289
-- `ListAppeals` function, line 297
-- `DecideAppeal` function, line 306: Accepting an appeal lifts its ban (a trigger on the server).
-- `UserByName` function, line 317: A player by exact username (Admin > Anti-cheat > "Ban a player").
-- `Usernames` function, line 323
-- `SessionTicket` function, line 331: A session ticket for one game server (supabase/functions/session-ticket). The
-- `IsTicketAudience` function, line 340: What the ticket service accepts as a server id ("aud") and as a key binding ("cnf"): supabase/functions/session-ticket/index.ts, ticket.ts.
-- `IsKeyBinding` function, line 345
-- `Report` struct, line 365: ---- Rows ----------------------------------------------------------------------
-- `Ban` struct, line 371
-- `Appeal` struct, line 378
-- `MyBan` struct, line 384: One of my bans (rpc ac_my_bans): what I'm told, and where my appeal stands.
-- `ParseReports` function, line 415
-- `ParseBans` function, line 433
-- `ParseAppeals` function, line 451
-- `ParseMyBans` function, line 468
-- `ParseUsernames` function, line 485
-- `TicketReply` struct, line 498: The ticket service's answer: a ticket, or banned (403 {"error":"banned"}: the
-- `IsBannedReply` function, line 499
-- `ParseTicket` function, line 504
-- `ErrorText` function, line 517: A failed call, in words for a toast.
+- `SendTimed` function, line 29: Send through the signed-in account: a server function through its Functions, a table request through its Api. 'timeoutSec'
+- `Send` function, line 33
+- `IsUuid` function, line 36: ---- Values ------------------------------------------------------------------
+- `IsHwHash` function, line 45
+- `Text` function, line 50: Free text for the server: trimmed, control characters dropped, capped.
+- `JStr` function, line 53
+- `JStrOrNull` function, line 54
+- `DaysFromCivil` function, line 58: Days since 1970-01-01 for a civil date, and back (Howard Hinnant's algorithms):
+- `IsoTime` function, line 66
+- `ParseTime` function, line 85: "2026-10-25T12:00:00.123456+00:00" (PostgREST), "...Z", "... 12:00:00": seconds
+- `ExpiryFor` function, line 101: The ban lengths the Admin page offers: 0 permanent, 1 a day, 2 a week, 3 30 days, 4 a year.
+- `ValidStatus` function, line 107
+- `ValidEvidence` function, line 129: True when 'json' can ride in a report's evidence column: a JSON object within the cap.
+- `RedactPaths` function, line 175: What leaves the machine in a client_check report: every absolute path cut
+- `MyBans` function, line 223: My anti-cheat bans (by account, or by this machine's hash), with each one's latest appeal.
+- `FileAppeal` function, line 231
+- `ListReports` function, line 244: ---- Admin calls ---------------------------------------------------------------
+- `SetReportStatus` function, line 253
+- `Unban` function, line 284: Lift a ban (it stays on record; the server stamps who and when).
+- `ListBans` function, line 294
+- `ListAppeals` function, line 302
+- `DecideAppeal` function, line 311: Accepting an appeal lifts its ban (a trigger on the server).
+- `UserByName` function, line 322: A player by exact username (Admin > Anti-cheat > "Ban a player").
+- `Usernames` function, line 328
+- `SessionTicket` function, line 336: A session ticket for one game server (supabase/functions/session-ticket). The
+- `IsTicketAudience` function, line 344: What the ticket service accepts as a server id ("aud") and as a key binding ("cnf"): supabase/functions/session-ticket/index.ts, ticket.ts.
+- `IsKeyBinding` function, line 349
+- `Report` struct, line 368: ---- Rows ----------------------------------------------------------------------
+- `Ban` struct, line 374
+- `Appeal` struct, line 381
+- `MyBan` struct, line 387: One of my bans (rpc ac_my_bans): what I'm told, and where my appeal stands.
+- `ParseReports` function, line 418
+- `ParseBans` function, line 436
+- `ParseAppeals` function, line 454
+- `ParseMyBans` function, line 471
+- `ParseUsernames` function, line 488
+- `TicketReply` struct, line 501: The ticket service's answer: a ticket, or banned (403 {"error":"banned"}: the
+- `IsBannedReply` function, line 502
+- `ParseTicket` function, line 507
+- `ErrorText` function, line 520: A failed call, in words for a toast.
 
 ## `shared/AntiCheatChecks.hpp`
 
@@ -171,6 +172,15 @@ Back to the [code index](../code_index.md). 75 headers, 1133 names.
 - `SpawnHelperProcess` function, line 692
 - `StartHelper` function, line 768: Starts the helper and returns. The caller must exit so the wait can finish.
 - `DispatchHelper` function, line 787: Run as the first thing in main. Returns -1 when this is a normal launch.
+
+## `shared/AppearanceUI.hpp`
+
+- `Commit` function, line 22: Make 'o' the live choice and save it (when the program follows the per-user file).
+- `DrawPreview` function, line 26: A small picture of a design at 'p' (w x h): its page, header rail, side list, a card with text lines, an accent button,
+- `DesignPicker` function, line 74: The design cards. Returns true when the person picked another design (already applied and saved).
+- `AccentChoice` struct, line 106: The accents offered besides the design's own (our own picks; one row of swatches).
+- `AccentChoices` function, line 107
+- `Customization` function, line 118: The person's options. 'showScale': the UI scale slider (the launcher; the editor sizes itself to the screen and multiplies).
 
 ## `shared/BrowserApp.hpp`
 
@@ -798,39 +808,43 @@ Back to the [code index](../code_index.md). 75 headers, 1133 names.
 
 ## `shared/OkayTheme.hpp`
 
-- `Palette` struct, line 20: ---- The palette: every colour the launcher draws comes from these named colours ------------------------------------------
-- `SlatePalette` function, line 30
-- `MidnightPalette` function, line 41: Midnight: near-black with an indigo tint, brighter text and stronger hairlines (an OLED-style high-contrast dark theme).
-- `LightPalette` function, line 52: Light: white cards on a pale grey page, near-black text, darker status colours (so they read as text on white).
-- `Current` function, line 62
-- `SetPalette` function, line 73
-- `Ink` function, line 86: A see-through tint over a surface (hover fills, hairlines, soft backgrounds): 'alpha' 0..255 as it was written for the dark
-- `InkV` function, line 91
-- `Shade` function, line 93: A shadow or a dim layer (black in every theme, lighter on Light).
-- `TextU32` function, line 94
-- `TextDimU32` function, line 95
-- `SuccessU32` function, line 96
-- `DangerU32` function, line 97
-- `WarningU32` function, line 98
-- `InfoU32` function, line 99
-- `OnColorU32` function, line 100
-- `SurfaceU32` function, line 101
-- `SuccessFill` function, line 103: Filled status colours (a badge, a dot, a button) keep their full colour in every theme: one per status.
-- `DangerFill` function, line 104
-- `WarningFill` function, line 105
-- `SuccessFillU32` function, line 106
-- `DangerFillU32` function, line 107
-- `WarningFillU32` function, line 108
-- `Luminance` function, line 111: WCAG contrast ratio of two opaque colours (1..21).
-- `Contrast` function, line 115
-- `Mix` function, line 120
-- `WithAlpha` function, line 123
-- `ReadableOn` function, line 125: Any colour (a section's, a category's) as text on the page: lightened on the dark themes, darkened on Light.
-- `OnFillSoft` function, line 132: The softer text on a filled colour (the time, "edited" and the receipt ticks on my chat bubble): the theme's onColor, made as
-- `AccentText` function, line 139: The accent as text or a selected label: lighter on the dark themes, darker on Light (so it reads on the page).
-- `ApplySlateMetrics` function, line 146: Rounding + borders (spacing/padding stay per-app). Call before ScaleAllSizes.
-- `ApplyColors` function, line 155: ImGui's colours from a palette and an accent (every theme; the editor passes Slate).
-- `ApplySlateColors` function, line 221: The Slate colours (the editor and the launcher's default theme).
+- `Palette` struct, line 22: ---- The palette: every colour the launcher draws comes from these named colours ------------------------------------------
+- `PaletteFrom` function, line 34
+- `DesignPalette` function, line 44: A built-in design's palette for one scheme (Auto: the design's own first choice).
+- `SlatePalette` function, line 49: The three palettes the launcher offered before designs (frozen names): Slate, Midnight, and Slate's light scheme.
+- `MidnightPalette` function, line 50
+- `LightPalette` function, line 51
+- `Current` function, line 52
+- `SetPalette` function, line 63
+- `Ink` function, line 76: A see-through tint over a surface (hover fills, hairlines, soft backgrounds): 'alpha' 0..255 as it was written for the dark
+- `InkV` function, line 81
+- `Shade` function, line 83: A shadow or a dim layer (black in every theme, lighter on Light).
+- `TextU32` function, line 84
+- `TextDimU32` function, line 85
+- `SuccessU32` function, line 86
+- `DangerU32` function, line 87
+- `WarningU32` function, line 88
+- `InfoU32` function, line 89
+- `OnColorU32` function, line 90
+- `SurfaceU32` function, line 91
+- `SuccessFill` function, line 93: Filled status colours (a badge, a dot, a button) keep their full colour in every theme: one per status.
+- `DangerFill` function, line 94
+- `WarningFill` function, line 95
+- `SuccessFillU32` function, line 96
+- `DangerFillU32` function, line 97
+- `WarningFillU32` function, line 98
+- `Luminance` function, line 101: WCAG contrast ratio of two opaque colours (1..21).
+- `Contrast` function, line 105
+- `Mix` function, line 110
+- `WithAlpha` function, line 113
+- `ReadableOn` function, line 115: Any colour (a section's, a category's) as text on the page: lightened on the dark themes, darkened on Light.
+- `OnFillSoft` function, line 122: The softer text on a filled colour (the time, "edited" and the receipt ticks on my chat bubble): the theme's onColor, made as
+- `AccentText` function, line 129: The accent as text or a selected label: lighter on the dark themes, darker on Light (so it reads on the page).
+- `ApplyDesignMetrics` function, line 136: Rounding + borders from the design (spacing/padding stay per-app; ApplyDensity scales them). Call before ScaleAllSizes.
+- `ApplyDensity` function, line 146: The person's density (Compact / Comfortable / Spacious): paddings and gaps times the design's spacing. Call before ScaleAllSizes.
+- `DesignAccent` function, line 154: The design's accent as an ImVec4.
+- `ApplyColors` function, line 157: ImGui's colours from a palette and an accent (every theme; the editor passes Slate).
+- `ApplyDesign` function, line 225: Everything a Dear ImGui host takes from the design in force: the live palette (SetPalette), rounding and borders, the
 
 ## `shared/OkayThreads.hpp`
 
@@ -848,6 +862,15 @@ Back to the [code index](../code_index.md). 75 headers, 1133 names.
 - `CreateThread` function, line 122: Start 'fn(data)' on a new thread. 'name' is only for humans (kept for the call shape; not used). Null when the system refuses.
 - `WaitThread` function, line 136: Wait for the thread to end, store its return value in '*status' (when given) and free the record.
 - `DetachThread` function, line 148: Let the thread run on its own; its record is freed when it ends. Do not use the pointer afterwards.
+
+## `shared/OkayUIAppKit.hpp`
+
+- `Rgb` function, line 19
+- `FollowDesignColours` function, line 26
+- `BeginFilled` function, line 37: A bare OkayUI window over (X, Y, W, H) filled with 'fill', with a line along its top edge when 'topLine'. Call UI::End() after,
+- `BeginDialog` function, line 48: A dialog box of about bw x bh over the app's rectangle (X, Y, W, H), which is dimmed; (bx, by) is where its content starts.
+- `TabStripResult` struct, line 62: What a click on a tab strip did: the tab clicked (-1 none), the tab to close (its x or a middle click; -1 none), the tab
+- `ParseProgramArgs` function, line 97: A window program's command line: words that do not start with '-' are paths, "--frames N" ends the program after N frames
 
 ## `shared/OkayUIBackend.hpp`
 
@@ -876,22 +899,22 @@ Back to the [code index](../code_index.md). 75 headers, 1133 names.
 ## `shared/OkayUIFrameLoop.hpp`
 
 - `FrameLoop` class, line 37
-- `ProgramHooks` struct, line 70: A program that is one OkayUI app drawn over its whole window (the browser program, the Script Editor program): the backend,
-- `ProgramDesc` struct, line 77
-- `AppHooks` function, line 85: The usual hooks for an app object with Frame(x, y, w, h), WantsQuit() and WindowTitle() (BrowserApp, ScriptIdeApp) that 'start'
-- `RunProgram` function, line 92: Run the program; the exit code for main (0, or 1 when the backend or the window could not be made or 'start' said no).
+- `ProgramHooks` struct, line 71: A program that is one OkayUI app drawn over its whole window (the browser program, the Script Editor program): the backend,
+- `ProgramDesc` struct, line 78
+- `AppHooks` function, line 86: The usual hooks for an app object with Frame(x, y, w, h), WantsQuit() and WindowTitle() (BrowserApp, ScriptIdeApp) that 'start'
+- `RunProgram` function, line 93: Run the program; the exit code for main (0, or 1 when the backend or the window could not be made or 'start' said no).
 
 ## `shared/OkayUIHost.hpp`
 
-- `HostKeys` enum, line 31: Which keys the host hands OkayUI this frame (HostedKeys, below Region, says which).
-- `InputCollector` class, line 34: Collects what OkayUI needs from SDL events between two frames.
-- `Region` class, line 315: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
-- `HostedInputWanted` function, line 370: Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
-- `HostedKeys` function, line 381: Which keys a host that draws Dear ImGui and hosted OkayUI pages hands OkayUI this frame (InputCollector::Build).
-- `WantsKeyboard` function, line 388: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
-- `KeyIdOf` function, line 412: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
-- `EventCollector` class, line 439: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
-- `Host` class, line 519: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
+- `HostKeys` enum, line 32: Which keys the host hands OkayUI this frame (HostedKeys, below Region, says which).
+- `InputCollector` class, line 35: Collects what OkayUI needs from SDL events between two frames.
+- `Region` class, line 316: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
+- `HostedInputWanted` function, line 371: Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
+- `HostedKeys` function, line 382: Which keys a host that draws Dear ImGui and hosted OkayUI pages hands OkayUI this frame (InputCollector::Build).
+- `WantsKeyboard` function, line 389: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
+- `KeyIdOf` function, line 413: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
+- `EventCollector` class, line 440: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
+- `Host` class, line 520: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
 
 ## `shared/OkayUIHostImGui.hpp`
 
@@ -976,36 +999,34 @@ Back to the [code index](../code_index.md). 75 headers, 1133 names.
 - `Needs` enum, line 33: What an item needs from the build or the system. A screen passes what is true here; an unavailable item is hidden.
 - `Item` struct, line 35
 - `Items` function, line 47: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
-- `AlternativeExe` struct, line 61: A second program built from the same sources against our own UI (CMake options OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): the
-- `Alternative` function, line 65
-- `Context` struct, line 79: What is true on this machine: used to hide items that cannot work here.
-- `Available` function, line 94
-- `SplitIds` function, line 102
-- `JoinIds` function, line 111
-- `Has` function, line 116
-- `Find` function, line 120
-- `Select` function, line 126: The ids of 'items' for which 'pick(id)' is true, in table order.
-- `Parse` function, line 135: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
-- `Serialize` function, line 145: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
-- `AllOn` function, line 152: The default: everything on.
-- `AllOff` function, line 154: "Back to the third-party parts": everything off.
-- `Set` function, line 155
-- `AppliedVar` function, line 164
-- `PutEnv` function, line 166
-- `DropEnv` function, line 173
-- `AppliedNow` function, line 180
-- `SetByUser` function, line 186: True when the person set the item's variable themselves (it is set and we did not set it).
-- `Apply` function, line 192: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
-- `Status` enum, line 207
-- `StatusOf` function, line 210: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
-- `StatusText` function, line 217
-- `DefaultPath` function, line 228: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
-- `LoadFile` function, line 242
-- `SaveFile` function, line 249
-- `State` struct, line 260: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
-- `Global` function, line 265
-- `Startup` function, line 268: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
-- `SaveChosen` function, line 275: Save the screen's choice to the file Startup() read.
+- `Context` struct, line 59: What is true on this machine: used to hide items that cannot work here.
+- `Available` function, line 74
+- `SplitIds` function, line 82
+- `JoinIds` function, line 91
+- `Has` function, line 96
+- `Find` function, line 100
+- `Select` function, line 106: The ids of 'items' for which 'pick(id)' is true, in table order.
+- `Parse` function, line 115: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
+- `Serialize` function, line 125: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
+- `AllOn` function, line 132: The default: everything on.
+- `AllOff` function, line 134: "Back to the third-party parts": everything off.
+- `Set` function, line 135
+- `AppliedVar` function, line 144
+- `PutEnv` function, line 146
+- `DropEnv` function, line 153
+- `AppliedNow` function, line 160
+- `SetByUser` function, line 166: True when the person set the item's variable themselves (it is set and we did not set it).
+- `Apply` function, line 172: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
+- `Status` enum, line 187
+- `StatusOf` function, line 190: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
+- `StatusText` function, line 197
+- `DefaultPath` function, line 208: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
+- `LoadFile` function, line 222
+- `SaveFile` function, line 229
+- `State` struct, line 240: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
+- `Global` function, line 245
+- `Startup` function, line 248: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
+- `SaveChosen` function, line 255: Save the screen's choice to the file Startup() read.
 
 ## `shared/PainterBridge.hpp`
 
@@ -1187,14 +1208,13 @@ Back to the [code index](../code_index.md). 75 headers, 1133 names.
 
 ## `shared/ScriptIdeAppImpl.hpp`
 
-- `EngineLanguageOf` function, line 30
-- `Rgb` function, line 33
-- `FileText` function, line 39
-- `WriteText` function, line 54
-- `Fit` function, line 68
-- `TimeText` function, line 75
-- `Normal` function, line 82
-- `ScriptIdeApp` struct, line 93
+- `EngineLanguageOf` function, line 32
+- `FileText` function, line 42
+- `WriteText` function, line 57
+- `Fit` function, line 71
+- `TimeText` function, line 78
+- `Normal` function, line 85
+- `ScriptIdeApp` struct, line 96
 
 ## `shared/SelfUpdate.hpp`
 
@@ -1353,6 +1373,16 @@ Back to the [code index](../code_index.md). 75 headers, 1133 names.
 - `SetStatus` function, line 158
 - `ParseRows` function, line 171
 - `ReasonLabel` function, line 191: The reason key as words ("harassment" -> "Harassment or bullying").
+
+## `shared/VisualScriptApp.hpp`
+
+- `AppSettings` struct, line 39: What the Visual Script app keeps between runs (one small JSON file, read with the engine's okay::json).
+- `AppCommand` struct, line 60: A command for the host's menus: its title, its keys as text ("" = none), what it does.
+- `VisualScriptApp` class, line 62
+
+## `shared/VisualScriptAppImpl.hpp`
+
+- `VisualScriptApp` struct, line 54
 
 ## `shared/WindowHandles.hpp`
 

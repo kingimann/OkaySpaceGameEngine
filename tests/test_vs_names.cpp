@@ -2,7 +2,7 @@
 // follow docs/visual_scripting_naming.md, the old title is still a search
 // keyword, and the file token still builds a node. Groups land one at a time.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include "okay/VisualScript/NodeAliases.hpp"
 #include "okay/VisualScript/NodeGraph.hpp"
 #include <Okay.hpp>

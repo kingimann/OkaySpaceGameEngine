@@ -5,6 +5,8 @@
 #include "okay/Backend/Backend.hpp"
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Core/Base64.hpp"
+#include "okay/Core/Json.hpp"
+#include "okay_backend_golden.hpp"   // SaveSession, Tok (made-up session)
 
 #include <cstdlib>
 #include <filesystem>
@@ -173,10 +175,34 @@ int main() {
         CHECK(path(db.From("t").Select("a,b").Eq("c", "1").Neq("d", "2").Gt("e", "3").Gte("f", "4").Lt("g", "5").Lte("h", "6")) ==
               "t?select=a,b&c=eq.1&d=neq.2&e=gt.3&f=gte.4&g=lt.5&h=lte.6");
         CHECK(path(db.From("t").Like("n", "al*").Ilike("m", "*X*")) == "t?n=like.al%2A&m=ilike.%2AX%2A");
+        // (round 6) A pattern the program encoded itself is written unchanged; Encoded stays the default.
+        CHECK(path(db.From("t").Like("n", "%5BCall*", ob::ValueText::AsIs).Ilike("m", "*a%20b*", ob::ValueText::AsIs)) ==
+              "t?n=like.%5BCall*&m=ilike.*a%20b*");
+        CHECK(path(db.From("t").Like("n", "a&b", ob::ValueText::Encoded)) == path(db.From("t").Like("n", "a&b")));
+        CHECK(path(db.From("t").Ilike("n", "x y&z=1")) == "t?n=ilike.x%20y%26z%3D1");
         CHECK(path(db.From("t").Is("a", ob::IsValue::Null).Is("b", ob::IsValue::True).Is("c", ob::IsValue::False).Is("d", ob::IsValue::Unknown)) ==
               "t?a=is.null&b=is.true&c=is.false&d=is.unknown");
         CHECK(path(db.From("t").In("id", {"a", "b c", "x,y", "q\"t", ""})) == "t?id=in.(a,b%20c,%22x%2Cy%22,%22q%5C%22t%22,%22%22)");
         CHECK(path(db.From("t").In("id", {})) == "t?id=in.()");
+        // (round 5) In's three ways of writing items: quoted when needed (default), encoded only, unchanged.
+        CHECK(path(db.From("t").In("id", {"a", "x,y", "(z)", " s"}, ob::ValueText::EncodedUnquoted)) == "t?id=in.(a,x%2Cy,%28z%29,%20s)");
+        CHECK(path(db.From("t").In("id", {"a", "x,y", "(z)", "b c&d"}, ob::ValueText::AsIs)) == "t?id=in.(a,x,y,(z),b c&d)");
+        CHECK(path(db.From("t").In("id", {"u-1", "u-2"}, ob::ValueText::EncodedUnquoted)) == path(db.From("t").In("id", {"u-1", "u-2"})));
+        // (round 5) Or, And and Cond: PostgREST's logical operators, in call order with the other parts.
+        using Q = ob::Query;
+        CHECK(path(db.From("t").Select("a").Or({Q::Cond("x", "eq", "1"), Q::Cond("y", "neq", "2")}).Limit(3)) == "t?select=a&or=(x.eq.1,y.neq.2)&limit=3");
+        CHECK(path(db.From("t").Or({Q::And({Q::Cond("a", "eq", "1"), Q::Cond("b", "eq", "2")}), Q::And({Q::Cond("a", "eq", "2"), Q::Cond("b", "eq", "1")})})) ==
+              "t?or=(and(a.eq.1,b.eq.2),and(a.eq.2,b.eq.1))");
+        CHECK(path(db.From("t").Or({})) == "t?or=()");
+        CHECK(Q::And({}) == "and()");
+        CHECK(Q::Cond("a", "gt", "2026-01-02T03:04:05Z", ob::ValueText::AsIs) == "a.gt.2026-01-02T03:04:05Z");
+        // Hostile values inside or=(...): by default quoted when they hold a reserved character, then encoded, so a value can
+        // neither end the condition nor add a part to the query; encoded only, or unchanged, when asked.
+        CHECK(Q::Cond("n", "eq", "a,b)&or=(x") == "n.eq.%22a%2Cb%29%26or%3D%28x%22");
+        CHECK(Q::Cond("n", "eq", "a,b)&or=(x", ob::ValueText::EncodedUnquoted) == "n.eq.a%2Cb%29%26or%3D%28x");
+        CHECK(Q::Cond("n", "eq", "a b", ob::ValueText::AsIs) == "n.eq.a b");
+        CHECK(Q::Cond("n&x", "eq&y", "v") == "n%26x.eq%26y.v");   // names are written like column names
+        CHECK(Q::Cond("n", "eq", "") == "n.eq.%22%22");             // an empty value is quoted (else "n.eq." is no value)
         // Order: one part, tie-breakers added to it; limit, offset, range.
         CHECK(path(db.From("t").Order("a", true).Eq("x", "1").Order("b")) == "t?order=a.desc,b.asc&x=eq.1");
         CHECK(path(db.From("t").Limit(5).Offset(10)) == "t?limit=5&offset=10");
@@ -247,6 +273,49 @@ int main() {
         // AccountService hands out the same: signed out, its Api sends nothing and answers "not reached".
         acc::AccountService a(root / "db", "https://p.example.test", "key-1");
         CHECK(!a.Db().From("cloud_saves").Select("key").Get().reached);
+    }
+
+    // ---- JSON strings the account service writes (bug found in round 3, fixed in round 4) ----
+    // RFC 8259 section 7: every control character (U+0000 to U+001F) must be escaped inside a JSON string. detail::JsonEscape
+    // escaped only '"', '\', line feed, carriage return and tab, so a cloud save holding any other control character was sent
+    // as invalid JSON and the server refused it.
+    {
+        std::string all;   // every control character, then the ones that were already handled, then plain text and UTF-8
+        for (int c = 0; c < 0x20; ++c) all += (char)c;
+        all += "\"\\/ plain \xC3\xA9 \x7F";
+        const std::string esc = acc::detail::JsonEscape(all);
+        for (char c : esc) CHECK((unsigned char)c >= 0x20);   // no raw control character is left
+        okay::json::Value v;
+        std::string why;
+        CHECK(okay::json::Parse("\"" + esc + "\"", v, &why));   // a valid JSON string ...
+        CHECK(v.IsString() && v.string == all);                  // ... that reads back as the same text
+        CHECK(acc::detail::JsonEscape(std::string("\x01", 1)) == "\\u0001");
+        CHECK(acc::detail::JsonEscape(std::string("\0", 1)) == "\\u0000");
+        CHECK(acc::detail::JsonEscape("\b\f\x1f") == "\\u0008\\u000c\\u001f");
+        CHECK(acc::detail::JsonEscape("a\"b\\c\nd\re\tf") == "a\\\"b\\\\c\\nd\\re\\tf");   // unchanged for what it already did
+        CHECK(acc::detail::JsonEscape("caf\xC3\xA9 / 100%") == "caf\xC3\xA9 / 100%");          // UTF-8 and "/" go as they are
+
+        // The cloud save that showed it: the body sent is valid JSON, and the save reads back unchanged.
+        const fs::path d = root / "cloud";
+        golden::SaveSession(d, "alex", golden::Tok(1), "r1");
+        acc::AccountService a(d, "https://p.example.test", "key-1");
+        std::string sent;
+        a.SetTransportForTest([&sent](const std::string&, const std::string&, const std::vector<std::string>&, const std::string& b) {
+            sent = b; okay::http::Result r; r.reached = true; r.status = 201; return r;
+        });
+        const std::string save = "level 3\x01\x02 bell\x07 end\x1b";
+        CHECK(a.CloudSave("slot1", save));
+        okay::json::Value body;
+        CHECK(okay::json::Parse(sent, body, &why));
+        CHECK(body.IsArray() && body.array.size() == 1 && body.array[0].Get("data") &&
+              body.array[0].Get("data")->string == save);
+        a.SetTransportForTest([&sent](const std::string&, const std::string&, const std::vector<std::string>&, const std::string&) {
+            okay::http::Result r; r.reached = true; r.status = 200;
+            okay::json::Value in;
+            if (okay::json::Parse(sent, in)) r.body = sent;   // the server keeps the row it was sent and answers it back
+            return r;
+        });
+        CHECK(a.CloudLoad("slot1") == save);
     }
 
     std::error_code ec;

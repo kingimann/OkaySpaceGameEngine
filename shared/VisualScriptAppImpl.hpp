@@ -46,6 +46,8 @@ struct VisualScriptApp::Impl {
     // ---- dialogs ----
     bool openBox = false, openFocus = false;      // File > Open: a typed path and the folder's graphs
     char openBuf[1024] = "";
+    std::vector<std::string> openFiles;            // the folder's graphs, listed once when the box opens (not every frame)
+    std::string codeFor, codeText;                // the OkayScript panel's text and the graph text it was made from
     bool saveAsBox = false, saveAsFocus = false;  // File > Save As
     char saveAsBuf[1024] = "";
     int saveAsTab = -1;

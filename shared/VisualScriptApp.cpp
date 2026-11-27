@@ -144,6 +144,7 @@ bool VisualScriptApp::Impl::saveTabAs(int index, const std::string& path) {
     s.g.path = p;
     s.missing = false;
     if (!saveTab(index)) { s.g.path = was; return false; }
+    saveAsBox = false;
     return true;
 }
 
@@ -220,7 +221,7 @@ void VisualScriptApp::Impl::drawMenu(float X, float Y, float W, float h) {
             if (UI::BeginMenu("File")) {
                 if (UI::MenuItem("New Graph", "Ctrl+N")) vsed::NewGraph(true);
                 if (UI::MenuItem("New Empty Graph")) vsed::NewGraph(false);
-                if (UI::MenuItem("Open...", "Ctrl+O")) { openBox = true; openFocus = true; openBuf[0] = 0; }
+                if (UI::MenuItem("Open...", "Ctrl+O")) { openBox = true; openFocus = true; openBuf[0] = 0; openFiles = folder.empty() ? std::vector<std::string>() : vsed::VsProjectGraphFiles(folder, 2000); }
                 if (UI::BeginMenu("Open Recent")) {
                     if (settings.recentFiles.empty()) UI::MenuItem("(none yet)", nullptr, false, false);
                     for (const std::string& f : std::vector<std::string>(settings.recentFiles))
@@ -550,7 +551,9 @@ void VisualScriptApp::Impl::drawPanel(float X, float Y, float W, float H, bool m
                         UI::TextUnformatted((r.label + " = " + (r.known ? r.value : std::string("(not run yet)"))).c_str());
                 }
             } else if (settings.panel == 3) {
-                const std::string code = vsed::CompileToOkayScript(g);
+                std::string now = g.toText();
+                if (now != codeFor) { codeText = vsed::CompileToOkayScript(g); codeFor = std::move(now); }   // made again only after an edit
+                const std::string& code = codeText;
                 if (UI::SmallButton("Copy##vsapp_copycode") && !modal) { UI::SetClipboardText(code.c_str()); note("The OkayScript is on the clipboard"); }
                 std::size_t a = 0;
                 int lines = 0;
@@ -647,7 +650,7 @@ void VisualScriptApp::Impl::drawOpenBox(float X, float Y, float W, float H) {
             }
         }
         // the folder's graphs, filtered by what is typed
-        std::vector<std::string> files = folder.empty() ? std::vector<std::string>() : vsed::VsProjectGraphFiles(folder, 2000);
+        const std::vector<std::string>& files = openFiles;
         std::string want = openBuf;
         for (char& c : want) c = (char)std::tolower((unsigned char)c);
         std::vector<std::string> shown;
@@ -759,7 +762,7 @@ void VisualScriptApp::Impl::shortcuts(bool modal) {
     if (ctrl && shift && key(UI::KeyId_S)) { for (int i = 0; i < (int)ses.tabs.size(); ++i) if (ses.tabs[(std::size_t)i]->g.dirty) saveTab(i); return; }
     if (ctrl && key(UI::KeyId_S)) { saveTab(ses.active); return; }
     if (ctrl && key(UI::KeyId_N)) { vsed::NewGraph(true); return; }
-    if (ctrl && key(UI::KeyId_O)) { openBox = true; openFocus = true; openBuf[0] = 0; return; }
+    if (ctrl && key(UI::KeyId_O)) { openBox = true; openFocus = true; openBuf[0] = 0; openFiles = folder.empty() ? std::vector<std::string>() : vsed::VsProjectGraphFiles(folder, 2000); return; }
     if (ctrl && shift && key(UI::KeyId_T)) { vsed::VsReopenClosedGraph(); return; }
     if (ctrl && (key(UI::KeyId_W) || key(UI::KeyId_F4))) { requestClose(ses.active); return; }
     if (ctrl && key(UI::KeyId_Tab) && ses.tabs.size() > 1) { ses.active = (ses.active + (shift ? (int)ses.tabs.size() - 1 : 1)) % (int)ses.tabs.size(); return; }

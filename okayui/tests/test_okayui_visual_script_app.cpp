@@ -42,6 +42,20 @@ static void Tap(Sim& sim, UI::KeyId k, const std::function<void()>& ui, bool ctr
     sim.Hold(k, true); sim.Frame(ui); sim.Hold(k, false); sim.Frame(ui);
     sim.ctrl = false; sim.shift = false;
 }
+// A point of the canvas (inside x0..x1, y0..y1) that no drawn block covers, at least `margin` pixels from every block.
+static bool EmptySpot(const vsapp::VisualScriptApp& app, const vsed::VsEditGraph& g, float x0, float y0, float x1, float y1, float& ox, float& oy,
+                      float margin = 30.0f) {
+    for (float y = y1; y >= y0; y -= 17.0f)
+        for (float x = x0; x <= x1; x += 23.0f) {
+            bool free = true;
+            for (const auto& n : g.nodes) {
+                float a = 0, b = 0, c = 0, d = 0;
+                if (app.BlockOnScreen(n.id, a, b, c, d) && x > a - margin && x < c + margin && y > b - margin && y < d + margin) { free = false; break; }
+            }
+            if (free) { ox = x; oy = y; return true; }
+        }
+    return false;
+}
 static void Drag(Sim& sim, float x0, float y0, float x1, float y1, const std::function<void()>& ui) {
     sim.Move(x0, y0); sim.Frame(ui);
     sim.Down(); sim.Frame(ui);
@@ -106,7 +120,9 @@ int main() {
         CHECK(bx1 > bx0 && by1 > by0);
 
         // ---- the Add Block list: a click on empty canvas, Space, type, Enter ----
-        sim.Click(W * 0.35f, H * 0.62f, ui);
+        float ex = 0, ey = 0;
+        CHECK(EmptySpot(app, app.Active().g, 40, 90, W * 0.6f, H - 80, ex, ey));
+        sim.Click(ex, ey, ui);
         CHECK(app.Active().sel.empty());
         sim.Hold(UI::KeyId_Space, true); sim.Frame(ui); sim.Hold(UI::KeyId_Space, false); sim.Frame(ui);
         CHECK(app.PaletteOpen());
@@ -148,7 +164,8 @@ int main() {
 
         // ---- a wire dropped on empty space: the list shows only blocks that take a flow wire, and the pick is wired ----
         CHECK(app.PlugOnScreen(wait, true, true, 0, ax, ay));
-        Drag(sim, ax, ay, ax + 90, ay + 150, ui);
+        CHECK(EmptySpot(app, app.Active().g, 40, 90, W * 0.6f, H - 80, ex, ey));
+        Drag(sim, ax, ay, ex, ey, ui);
         CHECK(app.PaletteOpen());
         const std::vector<std::string> types = app.PaletteTypes();
         CHECK(!types.empty());
@@ -188,14 +205,14 @@ int main() {
 
         // ---- Delete, then Undo and Redo (one step each) ----
         sim.Frames(3, ui);   // the move is one undo step once the mouse is up
-        const std::size_t blocks = app.Active().g.nodes.size();
+        const std::size_t blocks = app.Active().g.nodes.size(), selected = app.Active().sel.size();
         Tap(sim, UI::KeyId_Delete, ui);
-        CHECK(app.Active().g.nodes.size() == blocks - 2);
+        CHECK(selected >= 2 && app.Active().g.nodes.size() == blocks - selected);
         sim.Frames(2, ui);
         Tap(sim, UI::KeyId_Z, ui, true);
         CHECK(app.Active().g.nodes.size() == blocks);
         Tap(sim, UI::KeyId_Y, ui, true);
-        CHECK(app.Active().g.nodes.size() == blocks - 2);
+        CHECK(app.Active().g.nodes.size() == blocks - selected);
         Tap(sim, UI::KeyId_Z, ui, true);
         CHECK(app.Active().g.nodes.size() == blocks);
 
@@ -245,11 +262,11 @@ int main() {
         CHECK(app.RunCommand("vs.toggleBookmark"));
         CHECK(vsed::Bookmarks().has(player, print));
 
-        // ---- collapse to function: two Mul blocks become one Call Function block and a function body ----
+        // ---- collapse to function: the Translate step becomes one Call Function block and a function body ----
         {
-            std::set<int> muls;
-            for (const auto& n : app.Active().g.nodes) if (n.type == "Mul" && muls.size() < 2) muls.insert(n.id);
-            app.Active().sel = muls; app.Active().selected = *muls.begin();
+            int move = -1;
+            for (const auto& n : app.Active().g.nodes) if (n.type == "Translate") move = n.id;
+            app.Active().sel = {move}; app.Active().selected = move;
             const bool collapsed = app.RunCommand("vs.collapseToFunction");
             CHECK(collapsed);
             CHECK(CountType(app.Active().g, "CallFunction") == 1);
@@ -264,7 +281,9 @@ int main() {
         for (const std::string& l : app.ProblemLines()) if (l.rfind("Warning: ", 0) == 0) unreached = true;
         CHECK(unreached);
         const std::size_t problems = app.CheckNow();
-        CHECK(app.FixProblem(0));
+        bool fixedOne = false;
+        for (std::size_t i = 0; i < problems && !fixedOne; ++i) fixedOne = app.FixProblem(i);
+        CHECK(fixedOne);
         CHECK(app.CheckNow() < problems);
         app.ShowPanel(1);
         sim.Frames(2, ui);

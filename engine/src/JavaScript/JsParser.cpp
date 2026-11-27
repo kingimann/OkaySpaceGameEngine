@@ -284,6 +284,276 @@ struct Parser {
     }
 
     // ================================================================ scripts and statements
+    bool isModule = false;
+
+    // 16.2.1 Module: the top level is an async function (top-level await), strict, with import and export declarations
+    void ParseModule() {
+        isModule = true;
+        ast.module = std::make_unique<ModuleInfo>();
+        FuncInfo* fi = ast.NewFunc();
+        fi->name = u"module";
+        fi->line = 1;
+        fi->async = true;
+        fi->module = true;
+        ast.script = fi;
+        PushFunc(fi);
+        Node* body = N(NK::Block);
+        while (Cur().t != TT::End) body->list.push_back(ModuleItem());
+        fi->body = body;
+        PopFunc();
+        // 16.2.1.6.1 step 10: an export of an imported binding is an indirect export of what it imports
+        ModuleInfo& mi = *ast.module;
+        for (ModuleInfo::Export& e : mi.exports) {
+            if (e.localName.empty()) continue;
+            for (const ModuleInfo::Import& im : mi.imports)
+                if (im.localName == e.localName && im.importName != u"*") {
+                    e.req = im.req;
+                    e.importName = im.importName;
+                    e.localName.clear();
+                    break;
+                }
+        }
+        // early errors: each export name once (16.2.1.1)
+        std::unordered_set<std::u16string> names;
+        for (const ModuleInfo::Export& e : mi.exports) {
+            if (e.exportName.empty()) continue;
+            if (!names.insert(e.exportName).second) {
+                err.line = e.line;
+                err.column = e.col;
+                err.message = "'" + Utf16To8(e.exportName) + "' is exported twice";
+                throw ParseFail{};
+            }
+        }
+    }
+
+    int Request(const std::u16string& spec) {
+        auto& r = ast.module->requests;
+        for (std::size_t i = 0; i < r.size(); ++i)
+            if (r[i] == spec) return (int)i;
+        r.push_back(spec);
+        return (int)r.size() - 1;
+    }
+    // FromClause (16.2.2): from 'specifier' [with { ... }]
+    int FromClause() {
+        if (!EatWord("from")) Unexpected("'from'");
+        if (Cur().t != TT::Str) Unexpected("a module specifier string");
+        int r = Request(Cur().s);
+        Next();
+        SkipAttributes();
+        return r;
+    }
+    void SkipAttributes() {   // 16.2.2 WithClause: import attributes are read and not used
+        if ((IsWord("with") || (IsWord("assert") && !Cur().nl)) && IsPAt(pos + 1, P_LBrace)) {
+            Next();
+            const Token& open = Cur();
+            if (open.match < 0) Unexpected();
+            pos = (std::size_t)open.match;
+            Next();
+        }
+    }
+    // ModuleExportName: an IdentifierName (reserved words too) or a string
+    std::u16string ExportName(bool* isString = nullptr) {
+        const Token& t = Cur();
+        if (t.t != TT::Name && t.t != TT::Str) Unexpected("a name");
+        if (isString) *isString = t.t == TT::Str;
+        std::u16string s = t.s;
+        Next();
+        return s;
+    }
+    void AddExport(const std::u16string& exportName, const std::u16string& localName, const Token& at) {
+        ModuleInfo::Export e;
+        e.exportName = exportName;
+        e.localName = localName;
+        e.line = at.line;
+        e.col = at.col;
+        ast.module->exports.push_back(e);
+    }
+    static void BoundNames(Node* p, std::vector<std::u16string>& out) {
+        if (!p) return;
+        switch (p->k) {
+            case NK::Ident: out.push_back(p->str); break;
+            case NK::AssignPat: case NK::RestElem: BoundNames(p->a, out); break;
+            case NK::ArrayPat: for (Node* e : p->list) BoundNames(e, out); break;
+            case NK::ObjectPat: for (Node* e : p->list) BoundNames(e->k == NK::PatProp ? e->b : e, out); break;
+            default: break;
+        }
+    }
+
+    Node* ModuleItem() {
+        if (IsWord("import") && !IsPAt(pos + 1, P_LParen) && !IsPAt(pos + 1, P_Dot)) return ImportDecl();
+        if (IsWord("export")) return ExportDecl();
+        return StatementListItem();
+    }
+
+    // 16.2.2 ImportDeclaration
+    Node* ImportDecl() {
+        const Token& t = Cur();
+        Next();
+        Node* n = N(NK::Empty, t);
+        if (Cur().t == TT::Str) {   // import 'specifier';
+            Request(Cur().s);
+            Next();
+            SkipAttributes();
+            Semicolon();
+            return n;
+        }
+        std::vector<ModuleInfo::Import> list;
+        auto add = [&](const std::u16string& importName, const Token& at) {
+            const std::u16string local = BindingName();
+            list.push_back(ModuleInfo::Import{-1, importName, local, at.line, at.col});
+        };
+        bool more = true;
+        if (Cur().t == TT::Name && !IsP(P_LBrace)) {   // the default binding
+            add(u"default", Cur());
+            more = Eat(P_Comma);
+        }
+        if (more) {
+            if (Eat(P_Star)) {
+                if (!EatWord("as")) Unexpected("'as'");
+                add(u"*", Cur());
+            } else if (Eat(P_LBrace)) {
+                while (!IsP(P_RBrace)) {
+                    const Token& nt = Cur();
+                    bool str = false;
+                    if (nt.t == TT::Name && !IsWordAt(pos + 1, "as")) {   // import { x }: the name is the binding
+                        add(nt.s, nt);
+                    } else {
+                        std::u16string name = ExportName(&str);
+                        if (!EatWord("as")) Unexpected("'as'");
+                        add(name, nt);
+                    }
+                    if (!Eat(P_Comma)) break;
+                }
+                Expect(P_RBrace);
+            } else Unexpected("'{' or '*'");
+        }
+        const int req = FromClause();
+        for (ModuleInfo::Import& im : list) {
+            im.req = req;
+            ast.module->imports.push_back(im);
+        }
+        Semicolon();
+        return n;
+    }
+
+    // 16.2.3 ExportDeclaration
+    Node* ExportDecl() {
+        const Token& t = Cur();
+        Next();
+        ModuleInfo& mi = *ast.module;
+        if (Eat(P_Star)) {   // export * from 'm' / export * as name from 'm'
+            std::u16string as;
+            const bool named = EatWord("as");
+            if (named) as = ExportName();
+            const int req = FromClause();
+            ModuleInfo::Export e;
+            e.req = req;
+            e.line = t.line;
+            e.col = t.col;
+            if (named) {
+                e.exportName = as;
+                e.importName = u"*";
+            }
+            mi.exports.push_back(e);
+            Semicolon();
+            return N(NK::Empty, t);
+        }
+        if (Eat(P_LBrace)) {   // export { a, b as c } [from 'm']
+            struct Spec { std::u16string local, exported; bool str; int line, col; };
+            std::vector<Spec> specs;
+            while (!IsP(P_RBrace)) {
+                const Token& nt = Cur();
+                bool str = false;
+                std::u16string local = ExportName(&str);
+                std::u16string exported = local;
+                if (EatWord("as")) exported = ExportName();
+                specs.push_back({local, exported, str || (nt.t == TT::Name && IsReserved(nt.s)), nt.line, nt.col});
+                if (!Eat(P_Comma)) break;
+            }
+            Expect(P_RBrace);
+            if (IsWord("from")) {
+                const int req = FromClause();
+                for (const Spec& sp : specs) {
+                    ModuleInfo::Export e;
+                    e.exportName = sp.exported;
+                    e.importName = sp.local;
+                    e.req = req;
+                    e.line = sp.line;
+                    e.col = sp.col;
+                    mi.exports.push_back(e);
+                }
+            } else {
+                for (const Spec& sp : specs) {
+                    if (sp.str) {
+                        err.line = sp.line;
+                        err.column = sp.col;
+                        err.message = "'" + Utf16To8(sp.local) + "' is not a local name that can be exported (use export { ... } from)";
+                        throw ParseFail{};
+                    }
+                    ModuleInfo::Export e;
+                    e.exportName = sp.exported;
+                    e.localName = sp.local;
+                    e.line = sp.line;
+                    e.col = sp.col;
+                    mi.exports.push_back(e);
+                    Ref(sp.local);
+                }
+            }
+            Semicolon();
+            return N(NK::Empty, t);
+        }
+        if (EatWord("default")) {
+            Node* n = N(NK::ExportDefault, t);
+            if (IsWord("function") || (IsWord("async") && IsWordAt(pos + 1, "function") && !Peek().nl)) {
+                bool isAsync = EatWord("async");
+                n->a = FunctionExpr(isAsync, true);
+                if (!n->a->fn->name.empty()) {
+                    Node* d = N(NK::FuncDecl, t);
+                    d->a = n->a;
+                    n->b = d;
+                    AddExport(u"default", n->a->fn->name, t);
+                } else {
+                    NameAnon(n->a, u"default");
+                    AddExport(u"default", u"*default*", t);
+                }
+                return n;
+            }
+            if (IsWord("class")) {
+                n->a = ClassExpr(true);
+                if (!n->a->str.empty()) {
+                    n->b = n->a;
+                    AddExport(u"default", n->a->str, t);
+                } else {
+                    NameAnonClass(n->a, u"default");
+                    AddExport(u"default", u"*default*", t);
+                }
+                return n;
+            }
+            n->a = Assignment();
+            if (n->a->k == NK::Func) NameAnon(n->a, u"default");
+            else if (n->a->k == NK::Class) NameAnonClass(n->a, u"default");
+            Semicolon();
+            CheckCover();
+            AddExport(u"default", u"*default*", t);
+            return n;
+        }
+        if (IsWord("var") || IsWord("let") || IsWord("const") || IsWord("function") || IsWord("class") ||
+            (IsWord("async") && IsWordAt(pos + 1, "function"))) {
+            Node* d = StatementListItem();
+            std::vector<std::u16string> names;
+            if (d->k == NK::VarDecl)
+                for (Node* dc : d->list) BoundNames(dc->a, names);
+            else if (d->k == NK::FuncDecl) names.push_back(d->a->fn->name);
+            else if (d->k == NK::ClassDecl) names.push_back(d->a->str);
+            for (const auto& nm : names) AddExport(nm, nm, t);
+            return d;
+        }
+        Unexpected("a declaration, '{', '*' or 'default' after 'export'");
+    }
+    static void NameAnonClass(Node* c, const std::u16string& name) {
+        if (c->k == NK::Class && c->str.empty() && c->fn && c->fn->name.empty()) c->fn->name = name;
+    }
+
     void ParseScript() {
         FuncInfo* fi = ast.NewFunc();
         fi->name = u"script";
@@ -1240,6 +1510,18 @@ struct Parser {
                 return N(NK::Super, t);
             }
             if (Eq(s, "new")) return NewExpr();
+            if (Eq(s, "import") && IsPAt(pos + 1, P_Dot)) {   // 13.3.12 import.meta, only in module code
+                if (!isModule) Fail("import.meta is only allowed in a module");
+                Next();
+                Next();
+                if (!IsWord("meta")) Unexpected("'meta' after 'import.'");
+                Node* n = N(NK::Ident, t);
+                n->str = u"*meta*";
+                Next();
+                ast.module->usesMeta = true;
+                Ref(n->str);
+                return n;
+            }
             if (Eq(s, "import")) {   // 13.3.10 import(specifier [, options]): a promise for a module (see OP_ImportCall)
                 if (!IsPAt(pos + 1, P_LParen)) Fail("import is not supported");
                 Node* n = N(NK::ImportCall, t);
@@ -1759,10 +2041,11 @@ struct Parser {
 
 } // namespace
 
-bool Parse(const std::vector<Token>& toks, Ast& ast, SyntaxError& err) {
+bool Parse(const std::vector<Token>& toks, Ast& ast, SyntaxError& err, bool module) {
     Parser p(toks, ast, err);
     try {
-        p.ParseScript();
+        if (module) p.ParseModule();
+        else p.ParseScript();
     } catch (const ParseFail&) {
         return false;
     }

@@ -97,6 +97,62 @@ struct Compiler {
 
     Compiler(Runtime& r, SyntaxError& e, const std::string& c) : rt(r), err(e), chunk(c) {}
 
+    // ---- modules (16.2.1.6.4 InitializeEnvironment): the module's exported bindings, its imports and import.meta
+    // live in cells its loader makes (so other modules share them); the prologue puts them in the binding slots.
+    FuncInfo* moduleFi = nullptr;
+    ModuleInfo* mod = nullptr;
+    std::unordered_set<std::u16string> moduleCells;
+    std::vector<ModuleExtern> externs;
+
+    void ModulePrologue() {
+        for (const ModuleInfo::Import& im : mod->imports) {   // import bindings: immutable, read through the exporter's cell
+            line = im.line;
+            Declare(im.localName, VK_Const, nullptr);
+        }
+        bool needDefault = false;
+        for (const ModuleInfo::Export& e : mod->exports)
+            if (e.localName == u"*default*") needDefault = true;
+        if (needDefault) Declare(u"*default*", VK_Const, nullptr);
+        if (mod->usesMeta) Declare(u"*meta*", VK_Const, nullptr)->initKnown = true;
+        std::unordered_set<std::u16string> done;
+        for (const ModuleInfo::Export& e : mod->exports) {
+            if (e.localName.empty() || !done.insert(e.localName).second) continue;
+            Var* v = FindIn(CurScope(), e.localName);
+            if (!v) {
+                err.line = e.line;
+                err.column = e.col;
+                err.message = "'" + Utf16To8(e.localName) + "' is exported but not declared in this module";
+                throw CompileFail{};
+            }
+            bool imported = false;
+            for (const ModuleInfo::Import& im : mod->imports) imported |= im.localName == e.localName;
+            if (imported) continue;   // export of a namespace import: the import's cell below
+            const bool lexical = v->kind == VK_Let || v->kind == VK_Const || v->kind == VK_Class;
+            externs.push_back(ModuleExtern{e.localName, (std::uint8_t)(lexical ? 1 : 0)});
+        }
+        for (const ModuleInfo::Import& im : mod->imports) externs.push_back(ModuleExtern{im.localName, 2});
+        if (mod->usesMeta) externs.push_back(ModuleExtern{u"*meta*", 3});
+        if (externs.size() > 60000) Fail(nullptr, "the module has too many imports and exports");
+        for (std::size_t i = 0; i < externs.size(); ++i) {
+            Var* v = FindIn(CurScope(), externs[i].name);
+            v->captured = true;
+            Emit(OP_UpToLocal, v->slot, (int)i);
+        }
+    }
+
+    Proto* Module(Ast& ast) {
+        moduleFi = ast.script;
+        mod = ast.module.get();
+        for (const ModuleInfo::Import& im : mod->imports) moduleCells.insert(im.localName);
+        for (const ModuleInfo::Export& e : mod->exports)
+            if (!e.localName.empty()) moduleCells.insert(e.localName);
+        moduleCells.insert(u"*default*");
+        moduleCells.insert(u"*meta*");
+        Proto* p = CompileFunction(moduleFi, false);
+        p->name = rt.Intern("module");
+        return p;
+    }
+
     [[noreturn]] void Fail(Node* at, const std::string& m) {
         err.line = at ? at->line : line;
         err.column = at ? at->col : 0;
@@ -212,7 +268,7 @@ struct Compiler {
         Var v;
         v.name = name;
         v.slot = NewSlot();
-        v.captured = IsCaptured(name);
+        v.captured = IsCaptured(name) || (moduleFi && fs->fi == moduleFi && moduleCells.count(name) > 0);
         v.kind = kind;
         v.initKnown = !(kind == VK_Let || kind == VK_Const || kind == VK_Class);
         s->vars.push_back(v);
@@ -394,7 +450,7 @@ struct Compiler {
         FS f;
         f.parent = fs;
         f.fi = fi;
-        f.strict = !rt.sloppyScripts || (fs && fs->strict) || classDepth > 0 || HasUseStrict(fi->exprBody ? nullptr : fi->body);
+        f.strict = !rt.sloppyScripts || fi->module || (fs && fs->strict) || classDepth > 0 || HasUseStrict(fi->exprBody ? nullptr : fi->body);
         Proto* p = new Proto();
         protos.push_back(p);   // linked into the heap by CompileScript's caller
         f.p = p;
@@ -502,8 +558,10 @@ struct Compiler {
         std::vector<std::pair<std::u16string, Node*>> vars;
         if (!fi->exprBody && fi->body) CollectVarNames(fi->body, vars);
         if (!fi->exprBody && fi->body)
-            for (Node* s : fi->body->list)
+            for (Node* s : fi->body->list) {
                 if (s->k == NK::FuncDecl) vars.push_back({s->a->fn->name, s});
+                else if (s->k == NK::ExportDefault && s->b && s->b->k == NK::FuncDecl) vars.push_back({s->b->a->fn->name, s->b});
+            }
         for (auto& vn : vars) {
             if (Var* ex = FindIn(CurScope(), vn.first)) {
                 if (ex->kind == VK_Hidden) ex->kind = VK_Var;
@@ -563,6 +621,7 @@ struct Compiler {
         } else {
             DeclareLexicals(fi->body->list, false);
             InitLexicalSlots();
+            if (fi->module) ModulePrologue();
             HoistFunctions(fi->body->list);
             for (Node* s : fi->body->list) Stmt(s);
             Emit(OP_ReturnUndef);
@@ -703,6 +762,14 @@ struct Compiler {
                 return;
             }
             case NK::ExportDefault: {
+                if (fs->fi->module) {   // 16.2.3.7: the value goes to the default binding (a named declaration is its own)
+                    if (n->b && n->b->k == NK::FuncDecl) return;   // hoisted
+                    Expr(n->a);
+                    const std::u16string target = (n->b && n->b->k == NK::Class) ? n->a->str : u"*default*";
+                    EmitStore(target, false, n, true);
+                    MarkInit(target);
+                    return;
+                }
                 if (n->b && n->b->k == NK::FuncDecl) {   // export default function name() {} : already declared
                     EmitLoad(n->b->a->fn->name, n);
                 } else if (n->b && n->b->k == NK::Class) {
@@ -1983,6 +2050,23 @@ struct Compiler {
 };
 
 } // namespace
+
+Proto* CompileModule(Runtime& rt, Ast& ast, const std::string& chunk, SyntaxError& err, std::vector<ModuleExtern>& externs) {
+    Compiler c(rt, err, chunk);
+    Proto* p = nullptr;
+    try {
+        p = c.Module(ast);
+    } catch (const CompileFail&) {
+        for (Proto* x : c.protos) delete x;
+        return nullptr;
+    } catch (...) {
+        for (Proto* x : c.protos) delete x;
+        throw;
+    }
+    for (Proto* x : c.protos) rt.Adopt(x);
+    externs = std::move(c.externs);
+    return p;
+}
 
 Proto* CompileScript(Runtime& rt, Ast& ast, const std::string& chunk, SyntaxError& err) {
     Compiler c(rt, err, chunk);

@@ -115,6 +115,7 @@ struct FuncInfo {
     bool arrow = false, generator = false, async = false, method = false, getter = false, setter = false;
     bool classCtor = false, derived = false, fieldInit = false;
     bool hasFields = false;      ///< class constructor: the class has instance fields
+    bool module = false;         ///< a module's top level (16.2): strict, async (top-level await), its own scope
     bool simpleParams = true;
     std::u16string name;
     int line = 0, col = 0;
@@ -136,12 +137,39 @@ struct ClassInfo {
     FuncInfo* staticFields = nullptr;
 };
 
+/// What a module imports and exports (16.2.1.6.1 ParseModule's lists), in source order.
+struct ModuleInfo {
+    std::vector<std::u16string> requests;   ///< the module specifiers, each once
+    struct Import {
+        int req;
+        std::u16string importName;   ///< "*": a namespace import
+        std::u16string localName;
+        int line, col;
+    };
+    /// localName set: a local export; req >= 0 with importName: an indirect export ("*" = export * as exportName);
+    /// req >= 0 with an empty exportName: export * from.
+    struct Export {
+        std::u16string exportName, localName, importName;
+        int req = -1;
+        int line = 0, col = 0;
+    };
+    std::vector<Import> imports;
+    std::vector<Export> exports;
+    bool usesMeta = false;
+};
+/// A binding the module function gets from its loader, in OP_UpToLocal order (16.2.1.6.4 InitializeEnvironment).
+struct ModuleExtern {
+    std::u16string name;
+    std::uint8_t kind;   ///< 0 own var / function (starts undefined), 1 own let / const / class (not initialized), 2 import, 3 import.meta
+};
+
 /// Owns the nodes of one parse.
 struct Ast {
     std::vector<std::unique_ptr<Node>> nodes;
     std::vector<std::unique_ptr<FuncInfo>> funcs;
     std::vector<std::unique_ptr<ClassInfo>> classes;
     FuncInfo* script = nullptr;   ///< the top level, as a function
+    std::unique_ptr<ModuleInfo> module;   ///< set when parsed as a module
     Node* NewNode(NK k, int line, int col) {
         nodes.push_back(std::make_unique<Node>());
         Node* n = nodes.back().get();
@@ -156,7 +184,7 @@ struct Ast {
     }
 };
 
-bool Parse(const std::vector<Token>& toks, Ast& ast, SyntaxError& err);
+bool Parse(const std::vector<Token>& toks, Ast& ast, SyntaxError& err, bool module = false);
 
 // ============================================================ bytecode
 enum Op : std::uint16_t {
@@ -185,7 +213,7 @@ enum Op : std::uint16_t {
     OP_GenStart, OP_AsyncStart, OP_Yield, OP_Await, OP_ResumeCheck, OP_IterSend,
     OP_Arguments, OP_RestArgs, OP_CheckCoercible, OP_Debugger, OP_SetName, OP_NewRegExp,
     OP_SetProtoLit, OP_TemplateObj, OP_GetAsyncIter, OP_AsyncIterNext, OP_AsyncIterValue, OP_SetHome, OP_ImportCall,
-    OP_NewPrivate, OP_GetPrivate, OP_SetPrivate, OP_DefPrivate, OP_HasPrivate,
+    OP_NewPrivate, OP_GetPrivate, OP_SetPrivate, OP_DefPrivate, OP_HasPrivate, OP_UpToLocal,
     OP_Count
 };
 
@@ -226,6 +254,8 @@ struct Proto : GcObj {
 
 /// Compile a parsed script to its top-level function proto.
 Proto* CompileScript(Runtime& rt, Ast& ast, const std::string& chunk, SyntaxError& err);
+/// Compile a parsed module: its function (async, so a top-level await works) and the bindings its loader supplies.
+Proto* CompileModule(Runtime& rt, Ast& ast, const std::string& chunk, SyntaxError& err, std::vector<ModuleExtern>& externs);
 
 // ============================================================ internal objects
 struct Handler {
@@ -456,6 +486,40 @@ Value ProxyCall(Runtime& rt, ProxyObj* p, const Value& thisv, const Value* args,
 Value ProxyConstruct(Runtime& rt, ProxyObj* p, const Value* args, int argc, Object* newTarget);
 void InstallProxyLib(Runtime& rt);
 
+// ---- modules (16.2; the loader is in JsRuntime.cpp)
+struct ModuleRec;
+/// 10.4.6 a module namespace: its export names in code-unit order, each read live from a binding's cell (or, for an
+/// `export * as x`, the other module's namespace).
+struct ModuleNsObj : Object {
+    struct Entry {
+        String* name;
+        Cell* cell;          ///< nullptr: the namespace of `module`
+        ModuleRec* module;
+    };
+    std::vector<Entry> entries;
+    ModuleNsObj() : Object(Cls::ModuleNs) {}
+    void Trace(Runtime& rt) override;
+    const Entry* Find(GcObj* key) const;
+};
+/// A loaded module (16.2.1.6 Source Text Module Record), kept for the runtime's life (like compiled scripts).
+struct ModuleRec {
+    std::string key;
+    ModuleInfo info;
+    std::vector<ModuleExtern> externs;
+    std::vector<ModuleRec*> deps;                       ///< per request
+    Proto* proto = nullptr;
+    Closure* fn = nullptr;                              ///< made when linked
+    std::unordered_map<std::u16string, Cell*> cells;    ///< its own exported bindings
+    ModuleNsObj* ns = nullptr;
+    enum State : std::uint8_t { Loaded, Linked, Evaluating, Evaluated, Errored } state = Loaded;
+    Value error;
+    PromiseObj* done = nullptr;                         ///< settles when its evaluation ends
+    std::uint32_t index = 0;                            ///< in Impl::moduleList
+};
+Value ModuleNamespaceGet(Runtime& rt, const ModuleNsObj::Entry& e);
+/// import(): load, link and evaluate through Runtime::modules in a later job; the promise gets the namespace.
+void DynamicImport(Runtime& rt, PromiseObj* p, const std::string& specifier, const std::string& referrer);
+
 struct ForInObj : Object {
     Value obj;
     std::vector<GcObj*> keys;
@@ -515,6 +579,8 @@ struct Runtime::Impl {
     /// Intrinsics the newer libraries keep (the collector marks them): see the k* slots below.
     std::vector<Object*> moreIntrinsics;
     int proxyDepth = 0;   ///< proxy internal methods running inside each other (bounded: see kMaxProxyDepth)
+    std::vector<std::unique_ptr<ModuleRec>> moduleList;
+    std::unordered_map<std::string, ModuleRec*> moduleMap;   ///< by key
     static constexpr int kMaxProxyDepth = 200;
     std::vector<Proto*> scripts;   ///< compiled scripts (kept while the runtime lives)
     std::vector<Object*> joinStack;   ///< arrays being joined (a cycle joins as "")

@@ -1452,7 +1452,10 @@ Value Execute(Runtime& rt, int entry) {
                         SP[-1] = Value::Obj(p);
                         try {
                             std::string s = rt.ToUtf8(spec);
-                            if (rt.importHook) {
+                            if (rt.modules.resolve && rt.modules.fetch) {
+                                f->pc = pc;
+                                DynamicImport(rt, p, s, cl->code->chunk);
+                            } else if (rt.importHook) {
                                 Value r = rt.importHook(rt, s);
                                 ResolvePromise(rt, p, r);
                             } else
@@ -1532,6 +1535,9 @@ Value Execute(Runtime& rt, int entry) {
                         --SP;
                         break;
                     }
+                    case OP_UpToLocal:   // a module's prologue: the binding in slot a is the loader's cell b
+                        base[I.a] = Value::Internal(cl->ups[(std::size_t)I.b]);
+                        break;
                     case OP_SetHome:   // [fn home]: the static initializer's [[HomeObject]] is the class
                         if (SP[-2].IsObj() && SP[-2].O()->cls == Cls::Closure && SP[-1].IsObj())
                             static_cast<Closure*>(SP[-2].O())->home = SP[-1].O();

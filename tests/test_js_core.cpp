@@ -14,6 +14,7 @@
 #include <iterator>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace okay::js;
@@ -781,6 +782,142 @@ void PrivateMembers() {
     CHECK(Run("class K { #v; constructor(i) { this.#v = {i}; } get v() { return this.#v.i; } } let s = 0; for (let i = 0; i < 300; i++) s += new K(i).v; console.log(s)", true) == "44850\n");
 }
 
+// 16.2 modules: import / export (named, default, namespace, re-exports, export * and export * as), live bindings,
+// cycles, the namespace exotic object (10.4.6), import.meta, top-level await, dynamic import() through the
+// host loader (Runtime::modules), and the early and link errors. The host here is a map of file names to sources.
+std::string RunModules(const std::vector<std::pair<std::string, std::string>>& files, const std::string& mainKey, std::uint64_t budget = 50'000'000,
+                       bool stress = false) {
+    Runtime rt;
+    rt.SetBudget(budget);
+    rt.gcStress = stress;
+    std::string printed;
+    rt.printSink = [&printed](const std::string& line) { printed += line + "\n"; };
+    std::unordered_map<std::string, std::string> srcs(files.begin(), files.end());
+    rt.modules.resolve = [](const std::string& spec, const std::string&, std::string& key, std::string& why) {
+        if (spec.rfind("./", 0) == 0) { key = spec.substr(2); return true; }
+        why = "only ./ specifiers here";
+        return false;
+    };
+    rt.modules.fetch = [&srcs](const std::string& key, std::string& source, std::string& why) {
+        auto it = srcs.find(key);
+        if (it == srcs.end()) { why = "no file " + key; return false; }
+        source = it->second;
+        return true;
+    };
+    std::string why;
+    if (!rt.RunModule(srcs[mainKey], mainKey, &why)) printed += "ERROR: " + why + "\n";
+    return printed;
+}
+void ExpectModules(const std::vector<std::pair<std::string, std::string>>& files, const std::string& want) {
+    const std::string got = RunModules(files, "main.js");
+    const bool same = got == want + "\n";
+    if (!same) std::cerr << "  modules: " << files.back().second << "\n  printed: " << got << "  expected: " << want << "\n";
+    CHECK(same);
+}
+void ExpectModuleError(const std::vector<std::pair<std::string, std::string>>& files, const std::string& part) {
+    const std::string got = RunModules(files, "main.js");
+    const bool ok = got.find("ERROR: ") != std::string::npos && got.find(part) != std::string::npos;
+    if (!ok) std::cerr << "  modules: " << files.back().second << "\n  printed: " << got << "  expected an error saying: " << part << "\n";
+    CHECK(ok);
+}
+
+void Modules() {
+    const std::pair<std::string, std::string> a = {"a.js", "export let count = 0; export function inc() { count++; } export default 'def'; export const PI = 3;"};
+    ExpectModules({a, {"main.js", "import def, {count, inc, PI as pi} from './a.js'; import * as A from './a.js'; inc(); inc();"
+                                  "console.log(def, count, pi, A.count, Object.keys(A).join(), A[Symbol.toStringTag], Object.isExtensible(A), Object.getPrototypeOf(A))"}},
+                  "def 2 3 2 PI,count,default,inc Module false null");
+    ExpectModules({a, {"b.js", "export * from './a.js'; export { PI as tau } from './a.js'; export * as ns from './a.js'; export const own = 1;"},
+                   {"main.js", "import {count, tau, ns, own} from './b.js'; import * as B from './b.js'; console.log(count, tau, ns.PI, own, 'default' in B, Object.keys(B).join())"}},
+                  "0 3 3 1 false PI,count,inc,ns,own,tau");
+    ExpectModules({{"c1.js", "import {two} from './c2.js'; export function one() { return 1; } export const fromTwo = () => two();"},
+                   {"c2.js", "import {one} from './c1.js'; export function two() { return one() + 1; }"},
+                   {"main.js", "import {fromTwo} from './c1.js'; console.log(fromTwo())"}},
+                  "2");
+    ExpectModules({{"d1.js", "import './d2.js'; export let x = 1;"},
+                   {"d2.js", "import {x} from './d1.js'; try { x; } catch (e) { console.log(e.name); }"},
+                   {"main.js", "import {x} from './d1.js'; console.log(x)"}},
+                  "ReferenceError\n1");
+    ExpectModules({{"w.js", "export let v = 'before'; console.log('w start'); await null; v = 'after'; console.log('w end');"},
+                   {"main.js", "import {v} from './w.js'; console.log(v); const x = await Promise.resolve(5); console.log(x);"}},
+                  "w start\nw end\nafter\n5");
+    ExpectModules({{"main.js", "console.log(import.meta.url, typeof import.meta, import.meta === import.meta, (() => import.meta.url)())"}},
+                  "main.js object true main.js");
+    ExpectModules({a, {"main.js", "import * as A from './a.js'; const d = Object.getOwnPropertyDescriptor(A, 'count');"
+                                  "console.log(d.value, d.writable, d.enumerable, d.configurable, Reflect.set(A, 'count', 1), Reflect.deleteProperty(A, 'count'), Reflect.deleteProperty(A, 'zz'), Reflect.ownKeys(A).length)"}},
+                  "0 true true false false false true 5");
+    ExpectModules({a, {"p.js", "console.log('p ran'); export const q = 1;"},
+                   {"main.js", "import('./p.js').then(m => console.log('got', m.q)); console.log('sync'); const m = await import('./a.js'); console.log(m.PI, m.default);"
+                               "try { await import('./nope.js'); } catch (e) { console.log(e.name); }"}},
+                  "sync\np ran\ngot 1\n3 def\nTypeError");
+    ExpectModules({{"e.js", "throw new Error('boom');"},
+                   {"main.js", "try { await import('./e.js'); } catch (e) { console.log('1', e.message); } try { await import('./e.js'); } catch (e) { console.log('2', e.message); }"}},
+                  "1 boom\n2 boom");
+    ExpectModules({{"g.js", "export default function () { return 'anon'; } export class K { static k() { return 'k'; } }"},
+                   {"h.js", "export default class { static who() { return 'h'; } }"},
+                   {"main.js", "import f, {K} from './g.js'; import H from './h.js'; console.log(f(), f.name, K.k(), H.who(), H.name)"}},
+                  "anon default k h default");
+    ExpectModules({{"s.js", "const a = 1, b = 2; export { a as 'with space', b as default };"},
+                   {"main.js", "import { 'with space' as x, default as y } from './s.js'; export { x }; console.log(x, y)"}},
+                  "1 2");
+    // errors: link errors are SyntaxErrors; a missing file is the host's message; a module that throws fails the run
+    ExpectModuleError({a, {"main.js", "import {nope} from './a.js';"}}, "SyntaxError");
+    ExpectModuleError({{"main.js", "import x from './missing.js';"}}, "no file missing.js");
+    ExpectModuleError({{"x.js", "export const v = 1;"}, {"y.js", "export const v = 2;"}, {"z.js", "export * from './x.js'; export * from './y.js';"},
+                       {"main.js", "import {v} from './z.js';"}}, "SyntaxError");
+    ExpectModuleError({a, {"main.js", "import {count} from './a.js'; count = 5;"}}, "TypeError");
+    ExpectModuleError({{"main.js", "export const a = 1; export {a};"}}, "SyntaxError");
+    ExpectModuleError({{"main.js", "export {notDeclared};"}}, "SyntaxError");
+    ExpectModuleError({{"main.js", "return 1;"}}, "SyntaxError");
+    ExpectModuleError({{"main.js", "import {a} from './a.js'; import {a} from './a.js';"}, a}, "SyntaxError");
+    ExpectModuleError({{"e.js", "throw new Error('boom');"}, {"main.js", "import './e.js'; console.log('not reached');"}}, "boom");
+    ExpectModuleError({a, {"main.js", "import * as A from './a.js'; A.count = 1;"}}, "TypeError");
+    ExpectError("export {a} from 'x';", "SyntaxError");   // a classic script has no import or export lists
+    // hostile: long import chains and re-export chains, star cycles, a huge graph: errors or results, never a crash or a hang
+    {
+        std::vector<std::pair<std::string, std::string>> chain;
+        for (int i = 0; i < 3000; ++i) chain.push_back({"m" + std::to_string(i) + ".js", "import {v} from './m" + std::to_string(i + 1) + ".js'; export const w" + std::to_string(i) + " = v;"});
+        chain.push_back({"m3000.js", "export const v = 7; export const w3000 = 0;"});
+        for (int i = 0; i < 3000; ++i) chain[(std::size_t)i].second = "export * from './m" + std::to_string(i + 1) + ".js';";
+        chain.push_back({"main.js", "import {v} from './m0.js'; console.log(v)"});
+        CHECK(RunModules(chain, "main.js").find("ERROR: ") != std::string::npos);   // 3000 star re-exports deep: too deep, an error
+        std::vector<std::pair<std::string, std::string>> flat;
+        for (int i = 0; i < 2000; ++i) flat.push_back({"n" + std::to_string(i) + ".js", "import './n" + std::to_string(i + 1) + ".js'; export const n = " + std::to_string(i) + ";"});
+        flat.push_back({"n2000.js", "globalThis.deepest = 1;"});
+        flat.push_back({"main.js", "import {n} from './n0.js'; console.log(n, globalThis.deepest)"});
+        CHECK(RunModules(flat, "main.js") == "0 1\n");   // a 2000-long import chain loads, links and runs (no deep recursion)
+    }
+    ExpectModuleError({{"s1.js", "export * from './s2.js';"}, {"s2.js", "export * from './s1.js';"}, {"main.js", "import {nope} from './s1.js';"}}, "SyntaxError");
+    ExpectModules({{"s1.js", "export * from './s2.js'; export const one = 1;"}, {"s2.js", "export * from './s1.js'; export const two = 2;"},
+                   {"main.js", "import * as S from './s1.js'; console.log(Object.keys(S).join())"}},
+                  "one,two");
+    ExpectModules({{"main.js", "import * as self from './main.js'; export let x = 1; console.log(self.x, self.x === x);"}}, "1 true");   // a module may import itself
+    CHECK(RunModules({{"p.js", "export const q = 1;"}, {"main.js", "for (;;) await import('./p.js');"}}, "main.js", 2'000'000)
+              .find("budget") != std::string::npos);
+    // a collection at every safe point: the module records, their cells, namespaces and waiting evaluations stay alive
+    CHECK(RunModules({a, {"w.js", "export const list = []; for (let i = 0; i < 200; i++) list.push({i}); await null; list.push({i: 200});"},
+                      {"main.js", "import {list} from './w.js'; import * as A from './a.js'; const m = await import('./a.js'); let s = 0; for (const o of list) s += o.i;"
+                                  "console.log(s, m === A, A.PI)"}},
+                     "main.js", 50'000'000, true) == "20100 true 3\n");
+    // mutated module graphs: syntax errors, link errors or results, never a crash (ASan / UBSan run this too)
+    std::mt19937 rng(777);
+    const char* mods[] = {"export let v = 1; export function f() { return v++; } export default class { #p = 1; }",
+                          "export * from './a.js'; export { v as w } from './a.js'; import * as ns from './a.js'; export { ns };",
+                          "import d, {f, v} from './a.js'; import {w, ns} from './b.js'; await null; f(); console.log(v, w, typeof d, ns.v, import.meta.url);"};
+    int ran = 0;
+    for (int i = 0; i < 300; ++i) {
+        std::string srcs[3] = {mods[0], mods[1], mods[2]};
+        std::string& t = srcs[rng() % 3];
+        for (int k = 0, n = 1 + (int)(rng() % 3); k < n && !t.empty(); ++k) {
+            const std::size_t at = rng() % t.size();
+            if (rng() % 2) t.erase(at, 1 + rng() % 4);
+            else t.insert(at, std::string(1, "{}();,*'.#\n"[rng() % 11]));
+        }
+        RunModules({{"a.js", srcs[0]}, {"b.js", srcs[1]}, {"main.js", srcs[2]}}, "main.js", 2'000'000);
+        ++ran;
+    }
+    CHECK(ran == 300);
+}
+
 // Classic page scripts are sloppy code where assigning an undeclared name makes a global (ECMA-262 6.2.5.6 PutValue
 // step 5.b; React's streaming markup does `$RB=[]`). Runtime::sloppyScripts turns that on (the browser); game scripts
 // keep the default (everything strict). "use strict" and class bodies stay strict either way.
@@ -1113,6 +1250,7 @@ int main() {
     TypedArrays();
     Proxies();
     PrivateMembers();
+    Modules();
     TaggedTemplates();
     BigInts();
     RegexLookbehind();

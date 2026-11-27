@@ -157,7 +157,8 @@ enum class Cls : std::uint8_t {
     TypedArray,  ///< an integer-indexed exotic object (10.4.5, 23.2): a TypedArrayObj
     DataView,    ///< a DataView (25.3): a DataViewObj
     Proxy,       ///< a proxy exotic object (10.5): a ProxyObj
-    Opaque,      ///< an internal object with no script-visible behaviour (TextEncoder / TextDecoder state, module records)
+    Opaque,      ///< an internal object with no script-visible behaviour (TextEncoder / TextDecoder state, module jobs)
+    ModuleNs,    ///< a module namespace exotic object (10.4.6): a ModuleNsObj
 };
 
 struct Object : GcObj {
@@ -325,6 +326,22 @@ public:
     /// import(specifier): return a promise for the module namespace. Unset (game scripts): the promise is
     /// rejected with a TypeError, so `try { await import(x) } catch {}` code still runs.
     std::function<Value(Runtime&, const std::string& specifier)> importHook;
+
+    // ---- modules (16.2)
+    /// How the host finds modules. resolve: the key (a URL or a path) of `specifier` imported by `referrer` (a module's
+    /// key, or a script's chunk name). fetch: the source text for a key. Both return false with a reason to refuse.
+    /// initMeta (optional): fill a module's import.meta object (by default it gets `url` = the key). With resolve and
+    /// fetch set, import() loads modules through them (importHook is then not used). Loading is synchronous.
+    struct ModuleLoader {
+        std::function<bool(const std::string& specifier, const std::string& referrer, std::string& key, std::string& why)> resolve;
+        std::function<bool(const std::string& key, std::string& source, std::string& why)> fetch;
+        std::function<void(Runtime& rt, const std::string& key, Object* meta)> initMeta;
+    };
+    ModuleLoader modules;
+    /// Load, link and run a module (and every module it imports), then the promise jobs. On failure `err` is the
+    /// message (a syntax or link error, the host's refusal, or the module's exception). `ns` gets the module namespace.
+    /// A module still waiting on a top-level await when the jobs run out stays pending (true is returned).
+    bool RunModule(const std::string& source, const std::string& key, std::string* err, Value* ns = nullptr);
 
     // ---- values
     String* NewString(std::u16string s);

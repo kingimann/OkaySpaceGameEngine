@@ -1266,6 +1266,36 @@ bool Parser::parse_new(Node* out) {
         *out = std::move(cast);
         return true;
     }
+    if (!args.empty() && aggregate_with_defaults(ty.struct_id, args) && find_ctor(ty.struct_id, args) == nullptr &&
+        cur_locals != nullptr) {
+        // new Agg{a, b, ...} for an aggregate whose members need constructors (Matchmaker.cpp's `new RunArgs{m, g, be,
+        // req, poll, wait}` with shared_ptr and string members; [expr.new] 22, [dcl.init.aggr] 4; Round 34, before "no
+        // matching constructor in RunArgs"): the storage, then the aggregate's construction there, as for a local.
+        Local hidden;
+        hidden.name = "__pn" + std::to_string(tmp_count++);
+        hidden.type = cast.type;
+        place_local(cur_locals, hidden);
+        Node set_ptr;
+        set_ptr.kind = Node::Assign;
+        set_ptr.op = TAssign;
+        set_ptr.kids.push_back(node_name(hidden.name));
+        set_ptr.kids.push_back(std::move(cast));
+        Node set_stmt;
+        set_stmt.kind = Node::ExprStmt;
+        set_stmt.kids.push_back(std::move(set_ptr));
+        stmt_pre.push_back(std::move(set_stmt));
+        Node make;
+        if (!special_call(ty.struct_id, "<ctor>", node_name(hidden.name), std::move(args), &make)) return false;
+        if (make.kind != Node::ExprStmt && make.kind != Node::Block) {
+            Node st;
+            st.kind = Node::ExprStmt;
+            st.kids.push_back(std::move(make));
+            make = std::move(st);
+        }
+        stmt_pre.push_back(std::move(make));
+        *out = node_name(hidden.name);
+        return true;
+    }
     std::string tctor;
     if (!ensure_ctor_template(ty.struct_id, args, &tctor)) return false;
     const Method* found_m = find_ctor(ty.struct_id, args);
@@ -1931,6 +1961,14 @@ bool Parser::parse_unary(Node* out) {
                 }
                 if (walk >= 0) {
                     if (!braced_temp(walk, out)) return false;
+                    return parse_postfix(out);
+                }
+                // Clock::time_point{} (Matchmaker.cpp:171; Round 34): a member typedef of class type of the named class
+                // ([class.qual], [expr.type.conv] 1).
+                const auto td = structs[static_cast<size_t>(scope_sid)].tdefs.find(member);
+                if (td != structs[static_cast<size_t>(scope_sid)].tdefs.end() && td->second.base == 3 &&
+                    td->second.pointers == 0 && !td->second.is_array() && !td->second.is_ref && td->second.struct_id >= 0) {
+                    if (!braced_temp(td->second.struct_id, out)) return false;
                     return parse_postfix(out);
                 }
             }
@@ -3493,7 +3531,7 @@ bool Parser::parse_type_trait(Node* out) {
         const Type& b = types[1];
         if (is_cls(b)) v = (is_cls(a) && (a.struct_id == b.struct_id || derives_from(a.struct_id, b.struct_id))) ||
                            (!is_cls(a) && converts_by_ctor(b.struct_id, Node{}, a));
-        else if (is_cls(a)) v = conv_for(a.struct_id, b) != nullptr;  // a conversion function ([class.conv.fct]; Round 34)
+        else if (is_cls(a)) v = conv_for(a.struct_id, b, true) != nullptr;  // a conversion function ([class.conv.fct]; Round 34)
         else v = a.pointers == b.pointers && (a.pointers == 0 || a.base == b.base || b.base == 0);
     } else if (which == "__is_invocable") {
         // INVOKE(f, args...) is well formed ([func.require], [meta.rel] is_invocable), for a callable that is a class

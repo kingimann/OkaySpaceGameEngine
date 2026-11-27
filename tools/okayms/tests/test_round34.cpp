@@ -612,6 +612,99 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Conversions (Round 34): a class with `operator int` given for an int parameter (silent wrong value before: the object's
+// bytes were passed; [over.ics.user]); an `explicit operator bool` is not used for an implicit conversion
+// ([class.conv.fct] 2: shared_ptr's made `be = std::make_shared<Q>()` pick operator=(int), "large struct return has no
+// destination", Matchmaker.cpp:254) but is for a condition and a cast.
+static void r34_conversions(Tally& tally) {
+    std::printf("r34_conversions\n");
+    okayms_test::run_both(kRun, tally, "conversions", std::string(kAlloc) + R"OKMS(
+#include <memory>
+struct H { int v; explicit operator bool() const { return v != 0; } operator int() const { return v * 2; } };
+struct G { int v; operator int() const { return v * 2; } };
+int take(int k) { return k + 1; }
+static int conv_a(void) {
+  G g{3};
+  CK(1, take(g) == 7);
+  H h{3};
+  int k = h;
+  CK(2, k == 6);
+  CK(3, take(h) == 7);
+  return 0;
+}
+struct H2 { int v; explicit operator bool() const { return v != 0; } operator int() const { return v * 2; } };
+int take2(int k) { return k + 1; }
+static int conv_b(void) {
+  H2 h{3};
+  CK(1, take2(h) == 7);
+  CK(2, (bool)h && static_cast<bool>(h));
+  H2 z{0};
+  if (z) return 3;
+  CK(4, !z);
+  return 0;
+}
+struct Backend { virtual ~Backend() {} virtual int Id() const { return 1; } };
+struct Queue : Backend { int Id() const override { return 7; } };
+static int conv_c(void) {
+  std::shared_ptr<Backend> be;
+  if (!be) be = std::make_shared<Queue>();
+  CK(1, be && be->Id() == 7);
+  std::shared_ptr<Backend> b2 = std::make_shared<Queue>();
+  CK(2, b2->Id() == 7 && be.use_count() == 1);
+  return 0;
+}
+int entry(void) {
+  int r = conv_a();
+  if (r) return r;
+  r = conv_b();
+  if (r) return 10 + r;
+  r = conv_c();
+  if (r) return 20 + r;
+  return 0;
+}
+)OKMS", 0);
+}
+
+// `new Agg{...}` for an aggregate with class members (Matchmaker.cpp's `new RunArgs{...}`; [expr.new] 22; before "no
+// matching constructor in RunArgs"), and `Clock::time_point{}`, a member typedef of the named class made from braces
+// (Matchmaker.cpp:171; before "expected '('").
+static void r34_new_aggregate(Tally& tally) {
+    std::printf("r34_new_aggregate\n");
+    const okayms_test::ProgramRun run{"r34", {"QueryPerformanceCounter", "QueryPerformanceFrequency"}};
+    okayms_test::run_both(run, tally, "new_aggregate", std::string(kAlloc) + R"OKMS(
+#include <chrono>
+#include <memory>
+#include <string>
+struct Req { std::string game; int n = 1; };
+struct RunArgs { std::shared_ptr<int> impl; unsigned gen; Req req; float poll, wait; };
+static int agg_part(void) {
+  auto sp = std::make_shared<int>(5);
+  Req r; r.game = "g"; r.n = 3;
+  RunArgs local{sp, 7u, r, 0.5f, 2.0f};
+  CK(1, *local.impl == 5 && local.gen == 7 && local.req.game == "g" && local.wait == 2.0f);
+  RunArgs* a = new RunArgs{sp, 8u, r, 0.25f, 3.0f};
+  CK(2, *a->impl == 5 && a->gen == 8 && a->req.n == 3 && a->poll == 0.25f && a->wait == 3.0f);
+  CK(3, sp.use_count() == 3);
+  delete a;
+  CK(4, sp.use_count() == 2);
+  return 0;
+}
+using Clock = std::chrono::steady_clock;
+static int tp_part(void) {
+  Clock::time_point matchedAt{};
+  int n = 0;
+  if (matchedAt == Clock::time_point{}) { matchedAt = Clock::now(); n = 1; }
+  if (matchedAt != Clock::time_point{}) n += 10;
+  return n == 11 ? 0 : 1;
+}
+int entry(void) {
+  int r = agg_part();
+  if (r) return r;
+  return tp_part() ? 10 : 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -630,5 +723,7 @@ int main(int argc, char** argv) {
     r34_templates(tally);
     r34_hiding(tally);
     r34_enum_alias(tally);
-    return tally.finish(14);
+    r34_conversions(tally);
+    r34_new_aggregate(tally);
+    return tally.finish(16);
 }

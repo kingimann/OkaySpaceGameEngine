@@ -576,6 +576,15 @@ struct Parser {
                                       t.text == "consteval" || t.text == "constinit" ||
                                       t.text == "volatile")) {
                 if (t.text == "inline" && i + 1 < tokens.size()) tokens[i + 1].inl = true;
+                if (t.text == "explicit")
+                    // `explicit operator bool()`: the conversion function is marked, so an implicit conversion (an
+                    // overload's argument, is_convertible) does not use it ([class.conv.fct] 2; Round 34: shared_ptr's
+                    // explicit operator bool made `be = make_shared<Q>()` pick operator=(int)).
+                    for (size_t k = i + 1; k < tokens.size() && k < i + 8 && tokens[k].kind != TLParen; ++k)
+                        if (tokens[k].kind == TIdent && tokens[k].text.compare(0, 14, "operator conv:") == 0) {
+                            tokens[k].text = "operator conv:explicit:" + tokens[k].text.substr(14);
+                            break;
+                        }
                 continue;
             }
             // new (std::nothrow) T ([new.delete.single]): here `new` calls malloc and never throws, so the tag is dropped
@@ -4379,11 +4388,13 @@ struct Parser {
         return t.pointers == 0 && !t.is_array() && t.base != 3 && t.base != 0 && t.func_id < 0;
     }
     // The conversion function of class sid that yields an arithmetic type like p (or a pointer, for bool), or null.
-    const Method* conv_for(int sid, const Type& p) const {
+    // implicit_only leaves out an `explicit` one (named "operator conv:explicit:...").
+    const Method* conv_for(int sid, const Type& p, bool implicit_only = false) const {
         if (sid < 0 || sid >= static_cast<int>(structs.size())) return nullptr;
         const Method* any = nullptr;
         for (const Method& m : structs[static_cast<size_t>(sid)].methods) {
             if (m.name.compare(0, 13, "operator conv") != 0) continue;
+            if (implicit_only && m.name.compare(0, 23, "operator conv:explicit:") == 0) continue;
             Type r = m.ret;
             r.is_ref = false;
             if (arith_type(p) ? arith_type(r) : (p.pointers == r.pointers && p.base == r.base)) {
@@ -4560,7 +4571,7 @@ struct Parser {
         // A conversion function (operator bool, operator int) is a user-defined conversion too ([over.ics.user]): it
         // ranks with a converting constructor, so a constructor template that takes the class itself is preferred to
         // `S(int)` reached through `operator bool`.
-        if (a.base == 3) return conv_for(a.struct_id, p) != nullptr ? 4 : -1;
+        if (a.base == 3) return conv_for(a.struct_id, p, true) != nullptr ? 4 : -1;
         if (a.base == 0 || p.base == 0) return -1;
         // A reference to a non-const scalar binds only to an lvalue of that same type ([dcl.init.ref] 5): int& does not
         // take a double, so from_chars(first, last, int_value) does not pick the double overload.
@@ -4841,6 +4852,19 @@ struct Parser {
                 at = saved;
                 if (!ok) return false;
                 arg = std::move(made);
+            }
+            {
+                // A class object for a number parameter: its conversion function makes the value ([over.ics.user],
+                // [class.conv.fct]; Round 34: `take(g)` with `operator int` passed the object's bytes as the int, a
+                // silent wrong value).
+                Type from;
+                Type want = pt;
+                want.is_ref = false;
+                want.rref = false;
+                if (!from_braces && arith_type(want) && (!pt.is_ref || pt.is_const || pt.pconst) &&
+                    class_object_type(arg, &from) && conv_for(from.struct_id, want, true) != nullptr) {
+                    if (!convert_class(&arg, want)) return false;
+                }
             }
             if (pt.pointers > 0 && !pt.is_ref && !pt.is_array() && !(arg.kind == Node::IntLit && arg.number == 0) &&
                 arg.kind != Node::Ternary && !from_braces) {
@@ -10111,7 +10135,12 @@ struct Parser {
                     error = "expected a member function name";
                     return false;
                 }
-                const std::string mname = cur().text;
+                std::string mname = cur().text;
+                if (mname.compare(0, 14, "operator conv:") == 0)
+                    // The definition of an `explicit` conversion function outside its class: the class's declaration
+                    // carries the mark (lower_cxx_spellings), the definition does not repeat `explicit`.
+                    for (const Method& em : structs[static_cast<size_t>(sid)].methods)
+                        if (em.name == "operator conv:explicit:" + mname.substr(14)) mname = em.name;
                 next();
                 if (!is(TLParen)) {
                     // int P::n = 7; the definition of a static data member.

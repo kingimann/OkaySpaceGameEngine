@@ -1,3 +1,4 @@
+#include "OkayUI_ContextState.hpp"
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
@@ -122,6 +123,7 @@ bool BeginTooltip() {
     const float maxW = g_in.displayW > 0.0f ? std::max(120.0f, std::min(480.0f, g_in.displayW - 40.0f)) : 480.0f;
     g_lay.winClip = false;
     g_lay.ox = g_in.mouseX + 14.0f + pad; g_lay.oy = g_in.mouseY + 14.0f + pad;
+    g_lay.winX = g_lay.baseX = g_in.mouseX + 14.0f; g_lay.winY = g_lay.baseY = g_in.mouseY + 14.0f; g_lay.winW = maxW + 2.0f * pad; g_lay.winH = 0.0f;
     g_lay.cx = g_lay.ox; g_lay.cy = g_lay.oy; g_lay.contentW = maxW; g_lay.indent = 0.0f;
     g_lay.bottom = 1e7f; g_lay.maxRight = 0.0f; g_lay.pendingSameLine = false;
     g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
@@ -171,4 +173,11 @@ void EndTooltip() {
     t.open = false;
 }
 
+} // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(ui_core::g_pendingTip),
+    OKAYUI_CTX_VAR(g_tip))
 } // namespace OkayUI

@@ -1,3 +1,4 @@
+#include "OkayUI_ContextState.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -160,4 +161,10 @@ bool IsHostTexture(const void* texture) {
     return true;
 }
 
+} // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(g_cap))
 } // namespace OkayUI

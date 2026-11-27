@@ -598,7 +598,7 @@ void InstallTextCodingLib(Runtime& rt) {
                 c->streaming = false;
                 rt.ThrowType("TextDecoder: the data is not valid UTF-8");
             }
-            out += u'�';
+            out += u'\uFFFD';
         };
         auto emit = [&](std::uint32_t cp) {
             if (!c->bomSeen) {

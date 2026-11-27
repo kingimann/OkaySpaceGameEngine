@@ -152,6 +152,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a language preview shows keys | [15.6](15-editor.md#156-navigation-behavior-tree-dialogue-localization-modeling-windows) Navigation, Behavior Tree, Dialogue, Localization, Modeling windows |
 | a language shows empty cells | [1.16](01-core-scene.md#116-localization-tools) Localization tools |
 | a launcher feature is hidden until a SQL file is run | [41.6](41-build-tools-infra.md#416-supabase-functions-and-sql-schema) Supabase functions and SQL schema |
+| a launcher page looks different from before | [40.11](40-okayui-library.md#4011-the-launcher-on-okayui-only-no-dear-imgui) The launcher on OkayUI only (no Dear ImGui) |
 | a launcher warning in report mode | [39.4](39-security-anticheat.md#394-client-integrity-signed-manifest-and-launch-check) Client integrity: signed manifest and launch check |
 | a level gets slower with each change and nobody notices | [58.1](43-proposals.md#581-performance-budgets) Performance budgets |
 | a light theme call has no effect | [40.9](40-okayui-library.md#409-ported-code-calls-window-frame-context-style-presets-and-child-flags) Ported-code calls: window, frame, context, style presets and child flags |
@@ -181,6 +182,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a message with braces vanishes | [17.4](17-launcher-platform.md#174-chat-dms-groups-voice-notes-calls-polls-gifs-emoji) Chat: DMs, groups, voice notes, calls, polls, GIFs, emoji |
 | a minimap camera draws over the main view or replaces it | [2.10](02-rendering-world.md#210-cameras-and-the-camera-stack) Cameras and the camera stack |
 | a missing-tools message | [18.10](18-build-export-release.md#1810-xbox-one-export-experimental-developer-mode-uwp) Xbox One export (experimental, Developer Mode, UWP) |
+| a modal does not show | [40.12](40-okayui-library.md#4012-the-whole-editor-on-okayui-okayengineokayui) The whole editor on OkayUI (`OkayEngineOkayUI`) |
 | a model faces backwards | [36.2](36-math-geometry.md#362-quaternions-and-matrices) Quaternions and matrices |
 | a model made here still edits like any mesh | [3.11](03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) Guided creation (templates, parts, safe regeneration) |
 | a moderation action is refused | [17.9](17-launcher-platform.md#179-admin) Admin |
@@ -280,6 +282,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a script's file call returns false or does nothing for an absolute path | [39.9](39-security-anticheat.md#399-script-and-file-path-safety) Script and file path safety |
 | a scroll list shows items outside its box | [12.1](12-ingame-ui.md#121-canvas-anchors-flex-layout-safe-area) Canvas, anchors, flex layout, safe area |
 | a second controller is ignored | [8.2](08-input.md#82-gamepad-sdl) Gamepad (SDL) |
+| a section draws outside its window | [40.12](40-okayui-library.md#4012-the-whole-editor-on-okayui-okayengineokayui) The whole editor on OkayUI (`OkayEngineOkayUI`) |
 | a setting is missing in the Inspector (only fields of the exported class count) | [13.9](13-scripting.md#139-javascript-scripts-our-own-engine) JavaScript scripts (our own engine) |
 | a shader mode looks different between OpenGL and Direct3D | [38.8](38-render-backends.md#388-shader-pipeline) Shader pipeline |
 | a shared ball is owned by nobody | [16.3](16-networking.md#163-snapshots-and-sync-interest) Snapshots and sync, interest |
@@ -966,6 +969,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | testing a late level means playing from the start | [54.4](43-proposals.md#544-cheats-and-debug-commands) Cheats and debug commands |
 | text appears all at once | [10.2](10-story-cinematics.md#102-dialogue-graphs-and-dialogue-runner) Dialogue graphs and Dialogue Runner |
 | text does not update when the language changes | [12.2](12-ingame-ui.md#122-widgets-button-image-raw-image-text-panel-progress-rating) Widgets: button, image, raw image, text, panel, progress, rating |
+| text in a settings row runs under its control | [40.11](40-okayui-library.md#4011-the-launcher-on-okayui-only-no-dear-imgui) The launcher on OkayUI only (no Dear ImGui) |
 | text is blurry at some sizes | [2.9](02-rendering-world.md#29-fonts-and-images) Fonts and images |
 | text is blurry or too small | [12.2](12-ingame-ui.md#122-widgets-button-image-raw-image-text-panel-progress-rating) Widgets: button, image, raw image, text, panel, progress, rating |
 | text is not drawn | [12.11](12-ingame-ui.md#1211-ui-renderer-painters-and-batching) UI renderer, painters and batching |
@@ -1021,6 +1025,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the character slides inside its capsule or walks without the capsule | [5.5](05-animation-ik.md#55-root-motion-and-skinning) Root motion and skinning |
 | the character snaps instead of blending | [5.1](05-animation-ik.md#51-animator-and-state-machines) Animator and state machines |
 | the character walking looks like running | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
+| the chat window does not take clicks | [40.11](40-okayui-library.md#4011-the-launcher-on-okayui-only-no-dear-imgui) The launcher on OkayUI only (no Dear ImGui) |
 | the chest dips when reaching just past the hand | [5.7](05-animation-ik.md#57-look-at-aim-and-full-body-ik) Look-at, aim and full-body IK |
 | the chest shows items to players who are not near | [11.8](11-gameplay-systems.md#118-server-authoritative-inventory) Server-authoritative inventory |
 | the clip plays too fast or does not loop | [5.2](05-animation-ik.md#52-clips-and-curves) Clips and curves |
@@ -1048,6 +1053,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the editor closed by itself | [17.16](17-launcher-platform.md#1716-crash-reports-launcher-side) Crash reports (launcher side) |
 | the editor crashes or shows a black screen | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
 | the editor exe is huge | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
+| the editor on OkayUI shows panels floating instead of docked | [40.12](40-okayui-library.md#4012-the-whole-editor-on-okayui-okayengineokayui) The whole editor on OkayUI (`OkayEngineOkayUI`) |
 | the editor opens to an empty scene with no direction | [51.3](43-proposals.md#513-welcome-screen-and-tips) Welcome screen and tips |
 | the editor opens twice or the second launch does nothing | [15.15](15-editor.md#1515-editor-shell-startup-and-lifecycle) Editor shell, startup and lifecycle |
 | the editor says "GPU renderer failing | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |
@@ -1109,6 +1115,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the loading bar jumps from 0 to 100 | [1.4](01-core-scene.md#14-scene-lifecycle) Scene lifecycle |
 | the loading screen never ends or flashes | [12.8](12-ingame-ui.md#128-loading-pause-and-settings-screens) Loading, pause and settings screens |
 | the match won't start | [16.12](16-networking.md#1612-rooms-lobby-and-match-flow) Rooms, lobby and match flow |
+| the menu bar is missing | [40.12](40-okayui-library.md#4012-the-whole-editor-on-okayui-okayengineokayui) The whole editor on OkayUI (`OkayEngineOkayUI`) |
 | the mesh is missing near a doorway | [9.1](09-ai-navigation.md#91-nav-mesh-bake-and-queries) Nav mesh bake and queries |
 | the mesh stretches | [5.5](05-animation-ik.md#55-root-motion-and-skinning) Root motion and skinning |
 | the mixer window does not match the game | [15.13](15-editor.md#1513-content-editors-and-tool-windows) Content editors and tool windows |

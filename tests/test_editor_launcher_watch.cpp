@@ -76,14 +76,13 @@ int main() {
         CHECK(ed.find("ShowLauncherClosedNote(g_launcherWatch)") != std::string::npos);
         CHECK(ed.find("WaitForSingleObject(g_launcherHandle, 0)") != std::string::npos);   // a zero wait: never blocks
     }
-    {   // The launcher: a "Close the editor first" that starts waiting while hidden in the tray brings the window back,
-        // and switching to the alternative launcher exe is refused while the editor is open (it would close the editor).
+    {   // The launcher: a "Close the editor first" that starts waiting while hidden in the tray brings the window back.
+        // (The "alternative launcher exe" row is gone: the launcher is OkayUI only since 2026-11-27.)
         const std::string ln = ReadText(fs::path(OKAY_SOURCE_DIR) / "launcher" / "main.cpp");
         CHECK(ln.find("okaytray::ShowForPendingDialog(pendingNow, s_pendingBefore,") != std::string::npos);
         const size_t show = ln.find("okaytray::ShowForPendingDialog(");
         const size_t skip = ln.find("okaytray::IdleDelayMs(g_tray->Hidden()");
         CHECK(show != std::string::npos && skip != std::string::npos && show < skip);   // before the hidden loop skips drawing
-        CHECK(ln.find("if (EditorRunning()) Toast(\"Close the editor first: it closes with this launcher.\", 2);") != std::string::npos);
     }
 
     TEST_MAIN_RESULT();

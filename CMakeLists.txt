@@ -54,8 +54,8 @@ option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its 
 # that reader is a seam that refuses every file (.ndo is not supported: docs/content/model_readers.md, section Nendo). An existing build folder keeps the old OFF values in its CMakeCache.txt: configure a fresh one.
 # Since 2026-11-23 (owner: "i want our stuff to be on by default, all of them") the last four readers (glTF 1.0, OpenGEX, MDL,
 # Q3BSP), our own WAV decoder (since then the only WAV reader, no switch) and our own HTTP client (Linux; Windows uses WinHTTP) are ON by default too. Still OFF: NDO (a seam
-# that refuses every file), OKAY_OWN_CRYPTO (owner rule 18), OKAY_OWN_STACK (a dogfood switch releases refuse) and the two extra
-# OkayUI programs (OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI: not built by CI yet; docs/status/own_code_roadmap.md).
+# that refuses every file), OKAY_OWN_CRYPTO (owner rule 18), OKAY_OWN_STACK (a dogfood switch releases refuse) and the extra
+# OkayUI editor program (OKAY_EDITOR_ON_OKAYUI: built and self-tested by the full CI run; docs/ui/own_ui_toolkit.md section 32). The launcher is OkayUI only (2026-11-27).
 option(OKAY_OWN_COLLADA   "Read .dae with our own Collada reader by default (switched off, .dae is not read; run-time env OKAY_OWN_COLLADA=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_3DS       "Read .3ds with our own 3DS reader by default (switched off, .3ds is not read; run-time env OKAY_OWN_3DS=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_BVH       "Read .bvh motion capture with our own BVH reader by default (run-time env OKAY_OWN_BVH=0/1 and SetImportBackend override)" ON)
@@ -116,7 +116,6 @@ option(OKAY_BUILD_XBOX_UWP "EXPERIMENTAL, UNVERIFIED Xbox One Developer Mode (UW
 # (scripts/check_release_own_stack.sh, called by scripts/build-windows-dist.sh and release.yml).
 option(OKAY_OWN_STACK "Developer/CI dogfood build: own readers, own platform backend and OkayUI by default (never crypto; see docs/status/own_stack_rollout.md). NEVER for releases" OFF)
 option(OKAY_OWN_STACK_CRYPTO_TEST "With OKAY_OWN_STACK: ALSO use our own UNREVIEWED crypto (OKAY_OWN_CRYPTO). Test builds and CI only; releases refuse it" OFF)
-option(OKAY_LAUNCHER_ON_OKAYUI "Also build OkaySpaceOkayUI(.exe): the SAME launcher sources compiled against OkayUI's Dear ImGui compatibility layer (no Dear ImGui). Off by default; docs/ui/own_ui_toolkit.md" OFF)
 option(OKAY_EDITOR_ON_OKAYUI   "Also build OkayEngineOkayUI(.exe): the SAME editor sources compiled against OkayUI's Dear ImGui compatibility layer (no Dear ImGui). Off by default; docs/ui/own_ui_toolkit.md" OFF)
 if(NOT OKAY_OWN_STACK_CRYPTO_TEST AND "$ENV{OKAY_OWN_STACK_CRYPTO_TEST}" STREQUAL "1")
     set(OKAY_OWN_STACK_CRYPTO_TEST ON)

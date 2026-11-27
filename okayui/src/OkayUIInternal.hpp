@@ -3,6 +3,7 @@
 // variables; the families that were split out of OkayUI.cpp (tooltips, tables, draw list; O1 in docs/engine/modularization_plan.md) reach it through these
 // declarations. Not part of the public API (that is okay/UI/OkayUI.hpp). Definitions stay in OkayUI.cpp.
 #include <SDL.h>
+#include <functional>
 #include "okay/UI/OkayUI.hpp"
 #include "okay/Graphics/Font.hpp"
 #include "OkayUI_FontAtlas.hpp"
@@ -40,8 +41,13 @@ extern SDL_Texture* g_defTex;
 extern float g_whiteU, g_whiteV;
 // Texture changes inside the overlay batch (fallback-font text in toasts and
 // popups): the overlay index each starts at. mergeOverlay turns them into spans.
-struct OverlaySpan { int startIdx; SDL_Texture* tex; };
-extern OverlaySpan g_ovSpans[32];
+// An overlay span carries its texture and, since popups may hold clipped child regions (a scrolling list in a modal), its clip rectangle.
+struct OverlaySpan { int startIdx; SDL_Texture* tex; bool clipOn = false; int clipX = 0, clipY = 0, clipW = 0, clipH = 0; };
+constexpr int kMaxOvSpans = 128;
+extern OverlaySpan g_ovSpans[kMaxOvSpans];
+extern int g_clipBase;
+void overlayClipOff();       // OkayUI.cpp: the overlay batch is not clipped from here on
+void overlayClipToStack();   // OkayUI.cpp: the overlay batch is clipped to the innermost clip above g_clipBase (none: not clipped)   // clip rectangles below this stack depth belong to what a popup was opened over: they do not clip the popup
 extern int g_novSpans;
 // Draw spans: the main batch is split into contiguous index ranges, each carrying a
 // clip state and a texture, so scrolling child regions can clip and Image() can bind a
@@ -75,6 +81,8 @@ extern bool g_rPressed;
 // measured height (so the background can be drawn before the content next frame).
 struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0, y = 0; float w = 0; bool modal = false; bool fixedW = false;   // w <= 0: the default width; modal: a click outside does not close it
                    unsigned long long touched = 0;   // the last frame it was asked for (a closed slot not asked for longest is reused)
+                   unsigned long long opened = 0, drawn = 0;   // the frame it was last opened, and the last frame its body was begun (ListOpenPopups)
+                   char name[48] = {0};              // the name it was opened or begun with (empty when opened by id only)
                    bool combo = false; float boxTop = 0, boxRight = 0; };   // a combo's list: placed around its box as Dear ImGui places one
 // Every combo box and menu keeps a slot. When all are taken (an editor with many hosted panels has more combos than slots), the closed
 // slot that was asked for longest ago is given to the new id: a closed popup has nothing worth keeping but its last place.
@@ -126,8 +134,12 @@ struct LayoutState {
     float bottom = 0.0f;            // bottom of the visible content area (GetContentRegionAvail)
     float maxRight = 0.0f;          // right edge of the furthest item placed (window auto-resize measures it)
     int   seed = 0;                 // window id, mixed into label->id hashing
+    // The innermost window, child or popup being laid out, for Dear ImGui's coordinate rules (UseImGuiCoordinates): its rectangle and the
+    // point GetCursorPos counts from (its top-left corner, moved up by its scroll).
+    float winX = 0, winY = 0, winW = 0, winH = 0, baseX = 0, baseY = 0;
 };
 extern LayoutState g_lay;
+extern bool g_imguiCoords;   // UseImGuiCoordinates (OkayUICompat.hpp)
 // BeginGroup / EndGroup: the bounding box of the items placed since BeginGroup (nested up to 8 deep).
 struct GroupBox { float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f; bool any = false; };
 extern GroupBox g_grp[8];
@@ -220,6 +232,7 @@ extern float g_nextItemW;
 // Remaining width from the next item's left edge to the content's right edge.
 float availW();
 void place(float w, float h, float& x, float& y);
+extern bool g_prevInOverlay;   // the last item is a row of an open menu list: IsItemHovered asks the overlay rule (place() clears it)
 inline SDL_Color toColor(const unsigned char c[4]) {
     SDL_Color sc; sc.r = c[0]; sc.g = c[1]; sc.b = c[2]; sc.a = c[3];
     if (g_disCount > 0 && !g_rawDraw) {   // inside BeginDisabled: halfway to the panel colour, alpha kept
@@ -291,6 +304,8 @@ extern int g_editId;
 extern bool g_inMenuBar;
 extern int g_popupSubOpen;
 extern float g_barX, g_barY, g_barH;
+void menuBarReset();
+void regionReset();   // OkayUI_Windows.cpp: regions left open are forgotten (BeginFrame, ResetState)   // a BeginMenuBar left without EndMenuBar is forgotten (BeginFrame, ResetState)
 extern int g_menuDepth;
 extern bool g_framedWidgets;
 extern bool g_escapeUsed;
@@ -384,7 +399,8 @@ struct ChildSave {
 extern ChildSave g_childStack[8];
 constexpr float kScrollbarW = 10.0f;
 struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; float* wSlot; float padX, padY; bool exact;
-                  float subX0 = 0, subY0 = 0, subX1 = 0, subY1 = 0; };   // the sub-menu lists opened from its rows this frame (a press there is inside)
+                  float subX0 = 0, subY0 = 0, subX1 = 0, subY1 = 0;
+                  int clipBase = 0; };   // (clipBase: g_clipBase before the popup began) the sub-menu lists opened from its rows this frame (a press there is inside)
 extern PopupCtx g_popupStack[4];
 extern int g_popupTop;
 struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; float w = 0, h = 0; bool sized = false;
@@ -392,6 +408,7 @@ struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; float w = 0,
                  unsigned long long z = 0;          // stacking order: higher is in front, 0 is the bottom (docked content, NoBringToFront)
                  float scroll = 0, maxScroll = 0;   // content scroll and the most it could scroll last frame
                  float autoW = 0, autoH = 0; bool measured = false;   // AlwaysAutoResize: the content's size from last frame
+                 int fitAxes = 0; float fitW = 0, fitH = 0;  // SetNextWindowSize with a 0 axis: 1 = fit the width, 2 = the height, to the content once (the other axis is fitW / fitH)
                };
 extern WinSlot g_wins[64];
 struct NextCollapse { bool set = false; bool value = false; int cond = 0; };
@@ -422,6 +439,13 @@ inline float cursorX() {
 inline bool widthOverridden() { return g_nextItemW > 0.0f || g_itemWTop > 0; }
 inline float realAvailW() { return g_lay.ox + g_lay.contentW - cursorX(); }
 inline float rnd() { return g_theme.rounding; }
+extern float g_childRounding;
+extern bool g_focusNextField, g_focusSelectAll;   // SetKeyboardFocusHere: the next text widget takes the keyboard (OkayUI.cpp)
+/// Dear ImGui's text wrapping (OkayUI.cpp): each line of `text` broken at `maxW` pixels at text scale `scale`; `line` answers the next width.
+void imguiWrap(const char* text, float maxW, float scale, const std::function<float(const char*)>& line);
+/// The size of `text` at `scale` wrapped at `wrapW` (<= 0: only at line breaks): the widest line by the number of lines.
+Vec2 wrappedTextSize(const char* text, float wrapW, float scale);
+inline float childRnd() { return g_childRounding >= 0.0f ? g_childRounding : rnd(); }   // a child's corners (StyleVar_ChildRounding)
 struct OvRect { float x, y, w, h; bool modal; };
 extern OvRect g_ovCur[16];  extern int g_ovCurN;
 extern OvRect g_ovPrev[16]; extern int g_ovPrevN;
@@ -465,7 +489,8 @@ inline bool hitOverlay(float x, float y, float w, float h) {
     return !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
 }
 inline bool inClip() {
-    if (g_toOverlay || g_clipTop <= 0) return true;
+    if (g_clipTop <= g_clipBase) return true;   // no clip of its own (none at all, or a popup body with no clipped child in it)
+    if (g_toOverlay && g_popupTop == 0) return true;   // an overlay drawn outside any popup body (a tooltip, a menu list): never clipped
     const SDL_Rect& c = g_clipStack[g_clipTop - 1];
     return pointIn(g_in.mouseX, g_in.mouseY, (float)c.x, (float)c.y, (float)c.w, (float)c.h);
 }
@@ -479,7 +504,9 @@ inline int clampPx(float v, int nan) {
 struct CurWin { bool valid = false; int id = 0; float x = 0, y = 0, w = 0, h = 0; bool appearing = false; unsigned long long z = 0; char title[96] = {0}; };
 extern CurWin g_curWin;
 struct WinEnd { bool open = false, laid = false, scrolls = false, showBar = false, autoSize = false, hidden = false;
-                int slot = -1, id = 0; float x = 0, y = 0, w = 0, h = 0, titleH = 0, pad = 0, ox = 0, oy = 0; };
+                int slot = -1, id = 0; float x = 0, y = 0, w = 0, h = 0, titleH = 0, pad = 0, ox = 0, oy = 0;
+                float menuBarH = 0;
+                int region = 0; };   // region: a bare window begun inside an open window (a region of it, see BeginRegion in OkayUI_Windows.cpp); menuBarH, Window_MenuBar: the row kept under the title bar, where BeginMenuBar draws wherever the window calls it
 extern WinEnd g_we;
 constexpr int kWinFlagStyle = 1 << 30;   // set by Begin(title, p_open, flags): the window is an ImGui-style one
 struct NextWin { bool set = false; float x = 0, y = 0; int cond = 0; float pivX = 0, pivY = 0; };

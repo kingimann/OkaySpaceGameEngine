@@ -1,3 +1,4 @@
+#include "OkayUI_ContextState.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -223,4 +224,13 @@ void Spinner(float size) {
 }
 
 
+} // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(ui_core::g_cards),
+    OKAYUI_CTX_VAR(ui_core::g_ncards),
+    OKAYUI_CTX_VAR(ui_core::g_textScaleStack),
+    OKAYUI_CTX_VAR(ui_core::g_textScaleTop))
 } // namespace OkayUI

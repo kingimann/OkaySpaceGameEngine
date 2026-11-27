@@ -147,8 +147,10 @@ All rows *(docs, not re-checked)*.
    `ac_audit` already shows the append-only pattern.
 4. **Roles are a rank, not permissions.** Three badges map to ranks 1 to 3. There is no "owner" above admin and no read-only
    "support" role.
-5. **The staff policy on `profiles` is wide.** `forum_sections.sql:43` "staff verify players" lets staff update any column of
-   any profile, not only `verified`. Unconfirmed as a problem (no test run); passed to the bug lane, not changed here.
+5. **The staff policy on `profiles` was wide.** `forum_sections.sql` "staff verify players" let staff update any column of
+   any profile, not only `verified`. Confirmed in round A2 by a failing check in `admin_sql` (staff renamed a player and
+   changed their bio) and fixed there: `profiles_keep_verified` now refuses any client change to someone else's profile
+   other than `verified`.
 6. **The Admin client has no test** and writes its own copies of helpers that OkayBackend now has (`Url`, JSON field reads).
 7. **Demo data ships in the launcher's Admin page** (section 2.1). The dashboard has no demo mode at all: an empty answer is
    shown as empty, an error as an error.

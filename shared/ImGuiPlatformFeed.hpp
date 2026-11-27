@@ -1,7 +1,7 @@
 #pragma once
-// Our own Dear ImGui platform feed: turns okay::platform events into Dear ImGui input, and does the per-frame work
-// (display size, delta time, mouse cursor, clipboard, IME position) that imgui_impl_sdl2 does today. It replaces
-// that backend when OKAY_PLATFORM_EVENTS=own (docs/platform/platform_layer.md, "ImGui platform feed").
+// The platform feed: turns okay::platform events into the UI's input (OkayUI's IO, which takes Dear ImGui's io.Add*Event
+// calls), and does the per-frame work (display size, delta time, mouse cursor, clipboard, the input method's caret).
+// The editor and the launcher use it; it is their only input path (docs/platform/platform_layer.md, "ImGui platform feed").
 //
 // Written from Dear ImGui's public header (the io.Add*Event functions, ImGuiKey, ImGuiPlatformIO) and from the
 // okay::platform seam, in our own words. It does not use or follow imgui_impl_sdl2 or any SDL code.
@@ -11,8 +11,7 @@
 //   * Feed: applies Actions to an ImGuiIO and runs NewFrame() against a small FeedHost, which hides the window and
 //     the backend (FeedHost::FromPlatform() adapts a real okay::platform window; tests pass a fake).
 //
-// What it does not do (on purpose): gamepads (ImGuiBackendFlags_HasGamepad stays off, nothing reads pads here),
-// multi-viewport windows (PlatformHasViewports stays off, so the editor's pop-out panels are off in this mode),
+// What it does not do (on purpose): gamepads (nothing reads pads here), more than one OS window (OkayUI draws into one),
 // touch (the seam fires it for sdl2 only). Header rules: no <mutex>/<thread> (MinGW win32 threads).
 #include "imgui.h"
 #include "okay/Platform/Platform.hpp"
@@ -24,24 +23,6 @@
 #include <vector>
 
 namespace okay::imguifeed {
-
-/// Whether our own feed runs, from OKAY_PLATFORM_EVENTS: "own" = yes, "sdl2" = no (imgui_impl_sdl2), unset or anything
-/// else = `defaultOwn`. The launcher passes true (rule 17: our own code on by default); the editor false (its multi-window
-/// panels still need imgui_impl_sdl2's platform windows).
-#ifdef OKAY_ON_OKAYUI
-inline bool OwnRequested(const char*, bool = false) { return true; }   // the OkayUI build has no imgui_impl_sdl2: this feed is the only input path
-#else
-inline bool OwnRequested(const char* envValue, bool defaultOwn = false) {
-    if (envValue && std::string(envValue) == "own") return true;
-    if (envValue && std::string(envValue) == "sdl2") return false;
-    return defaultOwn;
-}
-#endif
-/// The line the apps log at start-up so you can tell which one runs.
-inline const char* ActiveLine(bool own) {
-    return own ? "ImGui input: own okay::platform feed (OKAY_PLATFORM_EVENTS=sdl2 for imgui_impl_sdl2 where it is linked)"
-               : "ImGui input: imgui_impl_sdl2 (OKAY_PLATFORM_EVENTS=own for the own feed)";
-}
 
 /// A seam key to an ImGuiKey (ImGuiKey_None for a key Dear ImGui has no name for). The seam numbers keys with USB HID
 /// usage ids; the numbers not in the seam's enum (F13..F24 = 104..115, keypad = = 103) are matched by value.
@@ -122,11 +103,7 @@ inline int ModBitOfKey(ImGuiKey k) {
 }
 /// The ImGuiMod_ key for a pair of bits (bit / 2).
 inline ImGuiKey ModKeyOfPair(int pair) {
-#ifdef OKAY_ON_OKAYUI   // OkayUI's own key ids for the modifier flags (its ImGuiMod_* are chord flags, not keys)
     static const ImGuiKey k[4] = { OkayUI::KeyId_ModCtrl, OkayUI::KeyId_ModShift, OkayUI::KeyId_ModAlt, OkayUI::KeyId_ModSuper };
-#else
-    static const ImGuiKey k[4] = { ImGuiMod_Ctrl, ImGuiMod_Shift, ImGuiMod_Alt, ImGuiMod_Super };
-#endif
     return k[pair & 3];
 }
 
@@ -355,6 +332,20 @@ public:
                 m_lastCursor = c;
             }
         }
+        // The input method's window (IME candidates) goes where OkayUI's focused text field drew its caret last frame. OkayUI does not
+        // call Platform_SetImeDataFn: it keeps the caret in GetImeRect(), which holds last frame's value until OkayUI's next NewFrame.
+        // Sent when it changes, as Dear ImGui's documented backends do with io.PlatformImeData (its InputPos and InputLineHeight).
+        const OkayUI::ImeRect ime = OkayUI::GetImeRect();
+        if (ime.valid && m_host.setTextInputRect) {
+            const int r[4] = {(int)ime.caret.x, (int)ime.caret.y, ime.caret.w < 1.0f ? 1 : (int)ime.caret.w, ime.caret.h < 1.0f ? 1 : (int)ime.caret.h};
+            if (!m_imeSent || r[0] != m_ime[0] || r[1] != m_ime[1] || r[2] != m_ime[2] || r[3] != m_ime[3]) {
+                m_host.setTextInputRect(r[0], r[1], r[2], r[3]);
+                for (int i = 0; i < 4; ++i) m_ime[i] = r[i];
+                m_imeSent = true;
+            }
+        } else {
+            m_imeSent = false;   // the next field to take the keyboard sends its caret again
+        }
     }
 
     float Dpi() const { return m_dpi; }   // last WindowDpiChanged for this window; 96 until one comes (not applied to ImGui's scale)
@@ -370,6 +361,7 @@ private:
     unsigned m_mods = 0;   // held physical modifier keys, one bit each (ModBitOfKey)
     ImGuiMouseCursor m_lastCursor = -2;   // not a real cursor, so the first frame always applies one
     float m_dpi = 96.0f;
+    int m_ime[4] = {0, 0, 0, 0}; bool m_imeSent = false;   // the IME caret rectangle last sent to the window (OkayUI build)
 };
 
 } // namespace okay::imguifeed

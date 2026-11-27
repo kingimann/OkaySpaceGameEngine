@@ -380,7 +380,10 @@ bool Begin(const char* title, bool* p_open, int flags) {
     // Dear ImGui's documented docking rule: with ConfigFlags_DockingEnable set on the IO, a window that sits in the dock layout is drawn docked
     // by its ordinary Begin (the same routing SetDockAwareBegin(true) asks for).
     const bool dockAware = g_dockAware || (IoRaw().ConfigFlags & ConfigFlags_DockingEnable) != 0;
-    if (dockAware && title && *title && !g_dockRouted && !DockInsideBegin() && (DockAdoptTitle(title) || DockClosedPending(title))) { g_dockRouted = true; return DockBegin(title, p_open, flags); }
+    if (dockAware && title && *title && !g_dockRouted && !DockInsideBegin() && (DockAdoptTitle(title) || DockClosedPending(title))) {
+        if (g_nextWinFocus) { g_nextWinFocus = false; SetWindowFocus(title); }   // SetNextWindowFocus on a docked window: its tab is chosen first
+        g_dockRouted = true; return DockBegin(title, p_open, flags);
+    }
     if (!title) { g_nextWinPos.set = g_nextWinSize.set = false; g_nextWinFocus = false; g_nextCollapse = NextCollapse(); g_nextBgAlpha = -1.0f; return false; }
     const int id = windowId(title);
     WinSlot* slot = nullptr; bool created = false;
@@ -454,8 +457,15 @@ Vec2 GetWindowSize() { if (innerWin()) return Vec2{g_lay.winW, g_lay.winH}; retu
 float GetWindowWidth() { return GetWindowSize().x; }
 float GetWindowHeight() { return GetWindowSize().y; }
 bool IsWindowHovered() {
-    return g_curWin.valid && !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, g_curWin.x, g_curWin.y, g_curWin.w, g_curWin.h)
-           && !coveredByHigher(g_in.mouseX, g_in.mouseY, g_curWin.z, g_curWin.id);
+    if (!g_curWin.valid || g_in.blocked || !pointIn(g_in.mouseX, g_in.mouseY, g_curWin.x, g_curWin.y, g_curWin.w, g_curWin.h)
+        || coveredByHigher(g_in.mouseX, g_in.mouseY, g_curWin.z, g_curWin.id)) return false;
+    // An open menu list, combo list or popup over the pointer (last frame's) is what is hovered, not the window under it, as in Dear ImGui:
+    // the editor's Scene view took the click that picked a View > Panels row and selected the object under it.
+    if (g_popupTop == 0) {
+        for (int i = 0; i < g_ovPrevN; ++i) if (g_ovPrev[i].modal || pointIn(g_in.mouseX, g_in.mouseY, g_ovPrev[i].x, g_ovPrev[i].y, g_ovPrev[i].w, g_ovPrev[i].h)) return false;
+        for (int i = 0; i < g_popPrevN; ++i) if (pointIn(g_in.mouseX, g_in.mouseY, g_popPrev[i].x, g_popPrev[i].y, g_popPrev[i].w, g_popPrev[i].h)) return false;
+    }
+    return true;
 }
 bool IsWindowFocused() { return g_curWin.valid && g_focusWin == g_curWin.id; }
 bool IsWindowAppearing() { return g_curWin.valid && g_curWin.appearing; }

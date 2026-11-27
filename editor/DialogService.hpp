@@ -1,7 +1,7 @@
 #pragma once
 // The three "ask or tell the person" calls the editor's panels make, behind one interface (docs/ui/own_ui_toolkit.md 6.24 step 7): show an error they must read, ask
-// "Save changes before ...?" before anything replaces the open scene, and open a script file at a line. The Dear ImGui editor implements it with its popups in
-// main.cpp; window mode implements it with OkayUI popups (editor/OkayUIHostDialogs.cpp). Plain C++, no UI types, so panel code written once can call either.
+// "Save changes before ...?" before anything replaces the open scene, and open a script file at a line. The editor implements it with its popups in
+// main.cpp. Plain C++, no UI types, so panel code and tests can call it without the editor.
 // A host sets the service it runs with; one process runs one editor, so there is one current service.
 #include <functional>
 #include <string>

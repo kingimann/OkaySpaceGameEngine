@@ -1,8 +1,7 @@
 #pragma once
 // The Audio Mixer screen's model (okayui/screens/OkayUIPanels.hpp) over the engine's okay::AudioMixer: pointers into the mixer's own
-// values, which the screen edits in place, and the output meters read now. One fill for both hosts of the screen: the editor's
-// Audio Mixer window (editor/OkayPanels.cpp) and window mode (editor/OkayUIHostMode.cpp). Header only, so the window-mode tests that
-// link OkayUIHostMode.cpp without the rest of the editor get it too.
+// values, which the screen edits in place, and the output meters read now. Filled by the editor's Audio Mixer window
+// (editor/OkayPanels.cpp). Header only.
 #include "OkayUIPanels.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 

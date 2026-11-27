@@ -47,10 +47,19 @@ int* tabSelSlot(int bar) {
     for (auto& s : g_tabSel) if (s.bar == 0) { s.bar = bar; s.sel = 0; return &s.sel; }
     g_tabSel[0].bar = bar; g_tabSel[0].sel = 0; return &g_tabSel[0].sel;
 }
+// A tab bar begun inside a tab item of another one (the Dialogue window's side panel inside its Dialogue tab): the outer bar waits here
+// until the inner one ends, as Dear ImGui's tab bars nest.
+TabBarCtx g_tabBarOuter[4];
+int g_tabBarOuterTop = 0;
 } // namespace
+void ui_core::tabBarsReset() { g_tabBar.active = false; g_tabBarOuterTop = 0; }
 
 bool BeginTabBar(const char* id, int tabBarFlags) {
-    if (!g_lay.active || !id || g_tabBar.active) return false;
+    if (!g_lay.active || !id) return false;
+    if (g_tabBar.active) {
+        if (g_tabBarOuterTop >= 4) return false;
+        g_tabBarOuter[g_tabBarOuterTop++] = g_tabBar;
+    }
     const float h = rowH();
     float x, y; place(fullW(), h, x, y);
     g_tabBar = TabBarCtx();
@@ -192,6 +201,7 @@ void EndTabBar() {
         o.n = k;
     }
     g_tabBar.active = false;
+    if (g_tabBarOuterTop > 0) g_tabBar = g_tabBarOuter[--g_tabBarOuterTop];   // back to the bar this one was begun in
 }
 
 } // namespace OkayUI
@@ -199,5 +209,7 @@ void EndTabBar() {
 // ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
 namespace OkayUI {
 OKAYUI_CONTEXT_STATE(
-    OKAYUI_CTX_VAR(g_amend))
+    OKAYUI_CTX_VAR(g_amend),
+    OKAYUI_CTX_VAR(g_tabBarOuter),
+    OKAYUI_CTX_VAR(g_tabBarOuterTop))
 } // namespace OkayUI

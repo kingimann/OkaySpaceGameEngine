@@ -2,28 +2,28 @@
  "about": "SDL calls and SDL words per file (scripts/sdl_inventory.py; tests, tools and the sdl2 backend not counted). --ratchet fails when a file rises above its numbers; the baseline may only go down (--update-ratchet).",
  "totals": {
   "launcher": {
-   "calls": 14,
-   "words": 141
+   "calls": 1,
+   "words": 125
   },
   "editor": {
-   "calls": 23,
-   "words": 181
+   "calls": 5,
+   "words": 142
   },
   "player": {
    "calls": 0,
    "words": 2
   },
   "shared": {
-   "calls": 10,
-   "words": 135
+   "calls": 0,
+   "words": 116
   },
   "engine": {
    "calls": 0,
    "words": 0
   },
   "okayui": {
-   "calls": 122,
-   "words": 340
+   "calls": 112,
+   "words": 322
   }
  },
  "files": {
@@ -64,13 +64,6 @@
    "words": 2,
    "by_word": {
     "SDL_Texture": 2
-   }
-  },
-  "editor/OkayUIHostViews.cpp": {
-   "calls": 0,
-   "words": 1,
-   "by_word": {
-    "SDL_Texture": 1
    }
   },
   "editor/PluginsWindow.cpp": {
@@ -118,45 +111,11 @@
     "SDL_Texture": 2
    }
   },
-  "editor/VsGraphShot.cpp": {
-   "calls": 9,
-   "words": 17,
-   "by_word": {
-    "#include<SDL.h>": 1,
-    "#include<backends/imgui_impl_sdl2.h>": 1,
-    "#include<backends/imgui_impl_sdlrenderer2.h>": 1,
-    "ImGui_ImplSDL2_InitForSDLRenderer": 1,
-    "ImGui_ImplSDL2_NewFrame": 1,
-    "ImGui_ImplSDL2_ProcessEvent": 1,
-    "ImGui_ImplSDL2_Shutdown": 1,
-    "ImGui_ImplSDLRenderer2_Init": 1,
-    "ImGui_ImplSDLRenderer2_NewFrame": 1,
-    "ImGui_ImplSDLRenderer2_RenderDrawData": 1,
-    "ImGui_ImplSDLRenderer2_Shutdown": 1,
-    "SDL_Event": 1,
-    "SDL_HINT_RENDER_DRIVER": 1,
-    "SDL_Renderer": 1,
-    "SDL_SetHint": 1,
-    "SDL_Window": 2
-   }
-  },
   "editor/main.cpp": {
-   "calls": 14,
-   "words": 130,
+   "calls": 5,
+   "words": 109,
    "by_word": {
     "#include<SDL.h>": 1,
-    "#include<backends/imgui_impl_sdl2.h>": 1,
-    "#include<backends/imgui_impl_sdlrenderer2.h>": 1,
-    "ImGui_ImplSDL2_InitForSDLRenderer": 1,
-    "ImGui_ImplSDL2_NewFrame": 1,
-    "ImGui_ImplSDL2_ProcessEvent": 1,
-    "ImGui_ImplSDL2_Shutdown": 1,
-    "ImGui_ImplSDLRenderer2_Init": 1,
-    "ImGui_ImplSDLRenderer2_NewFrame": 1,
-    "ImGui_ImplSDLRenderer2_RenderDrawData": 1,
-    "ImGui_ImplSDLRenderer2_Shutdown": 1,
-    "ImGui_ImplSDLRenderer2_UpdateTexture": 1,
-    "SDL_Event": 1,
     "SDL_HINT_RENDER_DRIVER": 3,
     "SDL_MAIN_HANDLED": 4,
     "SDL_MAJOR_VERSION": 2,
@@ -164,10 +123,10 @@
     "SDL_PATCHLEVEL": 2,
     "SDL_QueryTexture": 1,
     "SDL_RenderGetD3D11Device": 1,
-    "SDL_Renderer": 4,
+    "SDL_Renderer": 2,
     "SDL_SetHint": 3,
-    "SDL_Texture": 65,
-    "SDL_Window": 6,
+    "SDL_Texture": 60,
+    "SDL_Window": 4,
     "Uint32": 9,
     "Uint64": 13,
     "Uint8": 2
@@ -274,24 +233,14 @@
    }
   },
   "launcher/main.cpp": {
-   "calls": 14,
-   "words": 65,
+   "calls": 1,
+   "words": 49,
    "by_word": {
     "#include<SDL.h>": 1,
-    "#include<imgui_impl_sdl2.h>": 1,
-    "#include<imgui_impl_sdlrenderer2.h>": 1,
-    "ImGui_ImplSDL2_InitForSDLRenderer": 2,
-    "ImGui_ImplSDL2_NewFrame": 2,
-    "ImGui_ImplSDL2_ProcessEvent": 1,
-    "ImGui_ImplSDL2_Shutdown": 1,
-    "ImGui_ImplSDLRenderer2_Init": 2,
-    "ImGui_ImplSDLRenderer2_NewFrame": 2,
-    "ImGui_ImplSDLRenderer2_RenderDrawData": 2,
-    "ImGui_ImplSDLRenderer2_Shutdown": 1,
     "KMOD_CAPS": 1,
     "SDL_DROPBEGIN": 1,
     "SDL_DROPCOMPLETE": 1,
-    "SDL_Event": 3,
+    "SDL_Event": 2,
     "SDL_GetModState": 1,
     "SDL_MAIN_HANDLED": 1,
     "SDL_Rect": 3,
@@ -323,34 +272,6 @@
    "words": 4,
    "by_word": {
     "SDL_Renderer": 4
-   }
-  },
-  "okayui/probe/backends/imgui_impl_sdl2.h": {
-   "calls": 5,
-   "words": 10,
-   "by_word": {
-    "#include<SDL.h>": 1,
-    "ImGui_ImplSDL2_InitForOpenGL": 1,
-    "ImGui_ImplSDL2_InitForSDLRenderer": 1,
-    "ImGui_ImplSDL2_NewFrame": 1,
-    "ImGui_ImplSDL2_ProcessEvent": 1,
-    "ImGui_ImplSDL2_Shutdown": 1,
-    "SDL_Event": 1,
-    "SDL_Renderer": 1,
-    "SDL_Window": 2
-   }
-  },
-  "okayui/probe/backends/imgui_impl_sdlrenderer2.h": {
-   "calls": 5,
-   "words": 8,
-   "by_word": {
-    "#include<SDL.h>": 1,
-    "ImGui_ImplSDLRenderer2_Init": 1,
-    "ImGui_ImplSDLRenderer2_NewFrame": 1,
-    "ImGui_ImplSDLRenderer2_RenderDrawData": 1,
-    "ImGui_ImplSDLRenderer2_Shutdown": 1,
-    "ImGui_ImplSDLRenderer2_UpdateTexture": 1,
-    "SDL_Renderer": 2
    }
   },
   "okayui/render/OkayUIRender_SDL.cpp": {
@@ -666,28 +587,6 @@
     "SDL_MOUSEWHEEL_FLIPPED": 1,
     "SDL_TEXTEDITING": 1,
     "SDL_TEXTINPUT": 1
-   }
-  },
-  "shared/OkayUIImGuiBackendShim.cpp": {
-   "calls": 10,
-   "words": 19,
-   "by_word": {
-    "#include<SDL.h>": 1,
-    "#include<backends/imgui_impl_sdl2.h>": 1,
-    "#include<backends/imgui_impl_sdlrenderer2.h>": 1,
-    "ImGui_ImplSDL2_InitForOpenGL": 1,
-    "ImGui_ImplSDL2_InitForSDLRenderer": 1,
-    "ImGui_ImplSDL2_NewFrame": 1,
-    "ImGui_ImplSDL2_ProcessEvent": 1,
-    "ImGui_ImplSDL2_Shutdown": 1,
-    "ImGui_ImplSDLRenderer2_Init": 1,
-    "ImGui_ImplSDLRenderer2_NewFrame": 1,
-    "ImGui_ImplSDLRenderer2_RenderDrawData": 1,
-    "ImGui_ImplSDLRenderer2_Shutdown": 1,
-    "ImGui_ImplSDLRenderer2_UpdateTexture": 1,
-    "SDL_Event": 1,
-    "SDL_Renderer": 3,
-    "SDL_Window": 2
    }
   },
   "shared/PainterBridge.hpp": {

@@ -9,9 +9,6 @@
 #include <vector>
 
 namespace okay { class GameObject; namespace editor { class EditorState; } }
-#ifdef OKAY_HAVE_OKAYUI
-namespace okayuihost { class Region; }
-#endif
 struct SDL_Texture;
 
 namespace oked {
@@ -34,9 +31,6 @@ bool UseOkayUIInspector();
 bool UseOkayUICodeEdit();
 // OkayUI gets the mouse over its rectangles and the keys while one of its fields has the keyboard: the OkayUI backend, or the code editor above.
 bool OkayUIInputOn();
-#ifdef OKAY_HAVE_OKAYUI
-okayuihost::Region& OkayUIRegion();   // where the hosted panel is, for the mouse (main.cpp)
-#endif
 
 // The timeline widgets the Animation window's editors share (main.cpp): the
 // Timeline window draws its transport, ruler, playhead and keys with the same

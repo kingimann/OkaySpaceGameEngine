@@ -40,13 +40,7 @@ if(OKAY_ENABLE_TEST_HOOKS AND OKAY_REQUIRE_SODIUM)
     message(FATAL_ERROR "OKAY_ENABLE_TEST_HOOKS (scripted input) must never be on in a release build (OKAY_REQUIRE_SODIUM marks one)")
 endif()
 option(OKAY_OWN_CRYPTO    "Network encryption via our OWN okay::crypto instead of libsodium (UNREVIEWED; keep OFF in shipped builds)" OFF)
-# The UI toolkit the launcher and editor use for the screens that have an OkayUI port. Dear ImGui stays the default until
-# OkayUI is proven; a person can still choose OkayUI in Settings, or with the OKAY_UI_BACKEND environment variable.
-set(OKAY_UI_DEFAULT_BACKEND "imgui" CACHE STRING "Which UI toolkit the launcher and editor start with: imgui (default) or okayui (preview)")
-set_property(CACHE OKAY_UI_DEFAULT_BACKEND PROPERTY STRINGS imgui okayui)
-if(NOT OKAY_UI_DEFAULT_BACKEND STREQUAL "imgui" AND NOT OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui")
-    message(FATAL_ERROR "OKAY_UI_DEFAULT_BACKEND must be imgui or okayui (got '${OKAY_UI_DEFAULT_BACKEND}')")
-endif()
+# The launcher and the editor are drawn by OkayUI only (our own UI toolkit; Dear ImGui left the repository on 2026-11-27).
 option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its tests (behaviour, golden images, fuzz) and demo (small; needs OKAY_BUILD_TESTS and SDL2)" ON)
 # Our own model readers are the DEFAULT since 2026-11-17 (owner: "start switching them so i can test them out") and the ONLY
 # model readers since 2026-11-24: Assimp was removed (branch claude/no-assimp-1; ufbx on 2026-11-23). A file our reader refuses
@@ -54,8 +48,8 @@ option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its 
 # that reader is a seam that refuses every file (.ndo is not supported: docs/content/model_readers.md, section Nendo). An existing build folder keeps the old OFF values in its CMakeCache.txt: configure a fresh one.
 # Since 2026-11-23 (owner: "i want our stuff to be on by default, all of them") the last four readers (glTF 1.0, OpenGEX, MDL,
 # Q3BSP), our own WAV decoder (since then the only WAV reader, no switch) and our own HTTP client (Linux; Windows uses WinHTTP) are ON by default too. Still OFF: NDO (a seam
-# that refuses every file), OKAY_OWN_CRYPTO (owner rule 18), OKAY_OWN_STACK (a dogfood switch releases refuse) and the extra
-# OkayUI editor program (OKAY_EDITOR_ON_OKAYUI: built and self-tested by the full CI run; docs/ui/own_ui_toolkit.md section 32). The launcher is OkayUI only (2026-11-27).
+# that refuses every file), OKAY_OWN_CRYPTO (owner rule 18) and OKAY_OWN_STACK (a dogfood switch releases refuse). The launcher and
+# the editor are OkayUI only (2026-11-27; docs/ui/own_ui_toolkit.md sections 31 and 33).
 option(OKAY_OWN_COLLADA   "Read .dae with our own Collada reader by default (switched off, .dae is not read; run-time env OKAY_OWN_COLLADA=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_3DS       "Read .3ds with our own 3DS reader by default (switched off, .3ds is not read; run-time env OKAY_OWN_3DS=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_BVH       "Read .bvh motion capture with our own BVH reader by default (run-time env OKAY_OWN_BVH=0/1 and SetImportBackend override)" ON)
@@ -116,7 +110,6 @@ option(OKAY_BUILD_XBOX_UWP "EXPERIMENTAL, UNVERIFIED Xbox One Developer Mode (UW
 # (scripts/check_release_own_stack.sh, called by scripts/build-windows-dist.sh and release.yml).
 option(OKAY_OWN_STACK "Developer/CI dogfood build: own readers, own platform backend and OkayUI by default (never crypto; see docs/status/own_stack_rollout.md). NEVER for releases" OFF)
 option(OKAY_OWN_STACK_CRYPTO_TEST "With OKAY_OWN_STACK: ALSO use our own UNREVIEWED crypto (OKAY_OWN_CRYPTO). Test builds and CI only; releases refuse it" OFF)
-option(OKAY_EDITOR_ON_OKAYUI   "Also build OkayEngineOkayUI(.exe): the SAME editor sources compiled against OkayUI's Dear ImGui compatibility layer (no Dear ImGui). Off by default; docs/ui/own_ui_toolkit.md" OFF)
 if(NOT OKAY_OWN_STACK_CRYPTO_TEST AND "$ENV{OKAY_OWN_STACK_CRYPTO_TEST}" STREQUAL "1")
     set(OKAY_OWN_STACK_CRYPTO_TEST ON)
 endif()
@@ -262,11 +255,6 @@ if(OKAY_AC_HW_SALT)
     endif()
     add_compile_definitions(OKAY_AC_HW_SALT="${OKAY_AC_HW_SALT}")
 endif()
-
-# The Dear ImGui *docking-branch* commit the editor (and the editor-model test)
-# builds against; see editor/CMakeLists.txt. Override with -DOKAY_IMGUI_TAG=<ref>.
-set(OKAY_IMGUI_TAG "036bf939b6f8d74ad76bcf926b757c56e68c54ff"
-    CACHE STRING "Dear ImGui git commit/branch to fetch (must be the docking branch)")
 
 # ---- The engine library ----------------------------------------------
 # Engine modules (docs/design/modular_gameplay_contracts.md): read engine/modules/*/module.okaymodule. Stage 0 only groups

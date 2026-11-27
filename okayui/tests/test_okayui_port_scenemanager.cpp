@@ -18,7 +18,7 @@
 namespace fs = std::filesystem;
 namespace oked {   // what main.cpp provides to the panel
 bool g_showScenes = true;
-bool g_showConsole = true, g_paused = false, g_consoleCollapse = false;
+bool g_showConsole = true, g_paused = false, g_consoleCollapse = false, g_clearConsoleOnPlay = false;   // (the Console options menu toggles a real bool now)
 void SaveSettings() {}
 void ActivateBoundConsoleSource(const okay::ConsoleSource&) {}
 void OpenScriptFileInEditorAt(const std::string&, int) {}

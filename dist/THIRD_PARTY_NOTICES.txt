@@ -9,8 +9,7 @@ web build.
 
 Where the texts come from: the licence statements of the build tools and libraries on the machine that prepared this
 file (Debian's copies of the upstream notices, /usr/share/doc/<package>/copyright: mingw-w64-common,
-gcc-mingw-w64-base, libsodium23, libsdl2-2.0-0), Dear ImGui's LICENSE.txt at the pinned commit
-036bf939b6f8d74ad76bcf926b757c56e68c54ff, the font licence files in Assets/Fonts and the Apache License 2.0 text
+gcc-mingw-w64-base, libsodium23, libsdl2-2.0-0), the font licence files in Assets/Fonts and the Apache License 2.0 text
 kept in the repository. Items marked UNVERIFIED were written from memory and must be checked against the versions
 a release really ships (prepared 2026-11-26).
 
@@ -36,8 +35,8 @@ Parts and licences
    builds. Copyright (C) 1997-2024 Sam Lantinga and the authors named in section D. Licence: zlib; its HIDAPI part
    is used under the BSD 3-clause option. Text: section D.
 
-5. Dear ImGui (the editor's and launcher's user interface). Compiled into OkayEngine.exe and OkaySpace.exe.
-   Copyright (c) 2014-2026 Omar Cornut. Licence: MIT. Text: section E.
+5. (No longer used.) Dear ImGui was the editor's and the launcher's user interface until 2026-11-27. Builds from then on
+   contain none of it: both are drawn by our own UI toolkit, OkayUI. Section E is kept empty so the letters below stay.
 
 6. Steamworks API (steam_api64.dll). Only in packages built with the Steamworks SDK (STEAMWORKS_SDK_PATH).
    Copyright Valve Corporation. Redistributed under Valve's Steamworks SDK Access Agreement, which asks for no
@@ -844,30 +843,8 @@ License: zlib/libpng
 
 
 ====================================================================================================
-E. Dear ImGui (item 5)
+E. (Empty: item 5, Dear ImGui, is no longer in any program.)
 ====================================================================================================
-
-The MIT License (MIT)
-
-Copyright (c) 2014-2026 Omar Cornut
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 
 
 ====================================================================================================

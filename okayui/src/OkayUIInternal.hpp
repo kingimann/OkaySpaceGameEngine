@@ -54,7 +54,7 @@ extern int g_novSpans;
 // texture. A span records the index where a state begins; EndFrame draws each range
 // with the matching clip rect + texture. The overlay batch is never clipped.
 struct DrawSpan { int startIdx; bool on; SDL_Rect rect; SDL_Texture* tex; };
-constexpr int kMaxSpans = 256;   // 128 before window z-order: reordering adds a span per window segment
+constexpr int kMaxSpans = 1024;   // 128 before window z-order, then 256: reordering adds a span per window segment (the editor's frame went past 256 and was left unordered)
 extern DrawSpan g_spans[kMaxSpans];
 extern int g_nspans;
 extern SDL_Rect g_clipStack[16];
@@ -83,7 +83,8 @@ struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0
                    unsigned long long touched = 0;   // the last frame it was asked for (a closed slot not asked for longest is reused)
                    unsigned long long opened = 0, drawn = 0;   // the frame it was last opened, and the last frame its body was begun (ListOpenPopups)
                    char name[48] = {0};              // the name it was opened or begun with (empty when opened by id only)
-                   bool combo = false; float boxTop = 0, boxRight = 0; };   // a combo's list: placed around its box as Dear ImGui places one
+                   bool combo = false; float boxTop = 0, boxRight = 0;
+                   float fixedH = 0.0f; };   // a modal given a height (SetNextWindowSize): its box is that tall and GetContentRegionAvail ends at it   // a combo's list: placed around its box as Dear ImGui places one
 // Every combo box and menu keeps a slot. When all are taken (an editor with many hosted panels has more combos than slots), the closed
 // slot that was asked for longest ago is given to the new id: a closed popup has nothing worth keeping but its last place.
 PopupSlot* popupSlot(int id, bool create);
@@ -130,6 +131,7 @@ struct LayoutState {
     bool hasLineTop = false; float lineTopY = 0;
     bool  pendingSameLine = false;
     float sameLineSpacing = -1.0f;
+    bool  sameLineAbs = false; float sameLineX = 0;   // SameLine(offsetFromStartX): the next item starts exactly at sameLineX (left of the last item too)
     float indent = 0.0f;            // TreeNode indentation of the content's left edge
     float bottom = 0.0f;            // bottom of the visible content area (GetContentRegionAvail)
     float maxRight = 0.0f;          // right edge of the furthest item placed (window auto-resize measures it)
@@ -141,7 +143,12 @@ struct LayoutState {
 extern LayoutState g_lay;
 extern bool g_imguiCoords;   // UseImGuiCoordinates (OkayUICompat.hpp)
 // BeginGroup / EndGroup: the bounding box of the items placed since BeginGroup (nested up to 8 deep).
-struct GroupBox { float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f; bool any = false; };
+struct GroupBox {
+    float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f; bool any = false;
+    // Dear ImGui's documented group rule: a group locks the horizontal start. Lines inside it start at the group's left edge (its first item's
+    // x), not the window's; EndGroup gives the indent and the line below back. Saved here by BeginGroup.
+    bool locked = false; float savedIndent = 0.0f, savedCy = 0.0f;
+};
 extern GroupBox g_grp[8];
 extern int g_grpTop;
 extern bool g_posOverride;
@@ -219,6 +226,10 @@ float fMeasure(const char* s);
 // StyleVar_FramePadding (y): -1 = OkayUI's frames (a text line + 15, or + 12 without the launcher look); 0 or more: a text line plus
 // twice that (Dear ImGui's frame height). Checkbox and RadioButton boxes follow it too (boxSize).
 extern float g_framePadY;
+extern float g_framePadX;   // a pushed StyleVar_FramePadding (x), < 0: none
+float framePadXNow();         // FramePadding.x as GetStyle() reports it: the pushed one, else 8
+float styleIndentSpacing();   // IndentSpacing as GetStyle() reports it (a write to it is kept): the tree nodes' indent in Dear ImGui's look
+extern float g_styleIndent;
 // StyleVar_ScrollbarSize (< 0 = none pushed: OkayUI's own 10-pixel bars): the width of the scroll bars of children and scrolling tables.
 // A pushed size also gives Dear ImGui's proportions: the bar inside a framed child's outline and its grab 2 pixels in on every side.
 extern float g_sbSize;
@@ -294,6 +305,7 @@ inline bool finite1(float v) { return v == v && v > -1.0e7f && v < 1.0e7f; }
 inline bool finite2(Vec2 p) { return finite1(p.x) && finite1(p.y); }
 extern const DrawListHandle g_windowList;
 extern const DrawListHandle g_foregroundList;
+extern const DrawListHandle g_dockHostList;   // the dock host's list: drawn under the floating windows (DrawList::bottomHost)
 
 extern const fontatlas::Atlas* g_ttf;
 extern int g_itemWTop;
@@ -376,6 +388,11 @@ struct CurMenu {
     float* heightSlot = nullptr;                 // the list's full height last frame
     float* scrollSlot = nullptr;                 // its scroll offset in pixels
     bool boxed = false;                          // the list's popover box was drawn (from last frame's height): rows draw only their highlight
+    // The list is a popup window of any widgets, as Dear ImGui's menus are: while it is open the layout is the list's (a PopupCtx with
+    // `menu` set), so Text, sliders, a child ... drawn between BeginMenu and EndMenu go into the list under the rows before them.
+    bool body = false;
+    float* widthSlot = nullptr;                  // the width the list needed last frame (its widest row or widget): it grows to fit
+    float wantW = 0.0f;                          // this frame's widest row (label, shortcut, arrow)
 };
 extern CurMenu g_curMenu;
 extern CurMenu g_menuStack[4];
@@ -400,8 +417,11 @@ extern ChildSave g_childStack[8];
 constexpr float kScrollbarW = 10.0f;
 struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; float* wSlot; float padX, padY; bool exact;
                   float subX0 = 0, subY0 = 0, subX1 = 0, subY1 = 0;
-                  int clipBase = 0; };   // (clipBase: g_clipBase before the popup began) the sub-menu lists opened from its rows this frame (a press there is inside)
-extern PopupCtx g_popupStack[4];
+                  int clipBase = 0;      // (clipBase: g_clipBase before the popup began) the sub-menu lists opened from its rows this frame (a press there is inside)
+                  bool menu = false, wasOverlay = false;
+                  int childTop = 0; };   // g_childTop when it began: a child region begun inside it is deeper   // menu: the body of an open menu's list (CurMenu::body); wasOverlay: g_toOverlay before it
+constexpr int kPopupStackMax = 8;   // popups and open menu lists, nested
+extern PopupCtx g_popupStack[kPopupStackMax];
 extern int g_popupTop;
 struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; float w = 0, h = 0; bool sized = false;
                  bool posInit = false, sizeInit = false, collInit = false; unsigned long long lastFrame = 0; char title[64] = {0};   // title: for WindowRef::Name
@@ -431,6 +451,7 @@ inline float fullW()    { return g_lay.contentW - g_lay.indent; }
 // Where the next item's left edge will land (honors a pending SameLine).
 inline float cursorX() {
     if (g_lay.pendingSameLine) {
+        if (g_lay.sameLineAbs) return g_lay.sameLineX;
         float sp = g_lay.sameLineSpacing >= 0.0f ? g_lay.sameLineSpacing : g_lay.spacingX;
         return g_lay.prevX + g_lay.prevW + sp;
     }
@@ -476,11 +497,13 @@ inline void registerWindowRect(int id, unsigned long long z, float x, float y, f
 }
 // Geometry of each window of the frame: its index range, and what is needed to drop it again (a hidden measuring frame).
 struct WinRec { int id; unsigned long long z; int i0, i1, v0, ns0; bool clipOn; SDL_Rect clip; SDL_Texture* tex; };
-extern WinRec g_wrec[64]; extern int g_nwrec; extern int g_wrecOpen;
+constexpr int kMaxWinRecs = 256;   // windows' geometry runs of a frame (a window drawn in pieces, the dock host's late drawing, has several)
+constexpr int kDockHostRecId = 0x0d0c4057;   // the record id of geometry drawn on the dock host's list
+extern WinRec g_wrec[kMaxWinRecs]; extern int g_nwrec; extern int g_wrecOpen;
 inline void wrecEnd() { if (g_wrecOpen >= 0) { g_wrec[g_wrecOpen].i1 = g_ni; g_wrecOpen = -1; } }
 inline void wrecBegin(int id, unsigned long long z) {
     wrecEnd();
-    if (g_nwrec >= 64) return;
+    if (g_nwrec >= kMaxWinRecs) return;
     g_wrecOpen = g_nwrec++;
     g_wrec[g_wrecOpen] = WinRec{id, z, g_ni, g_ni, g_nv, g_nspans, g_curClipOn, g_curClipRect, g_curTex};
 }
@@ -535,6 +558,7 @@ struct TypedDrag {
 inline float clamp01(float v) { return v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f; }   // NaN -> 0
 extern TabSel g_tabSel[16];
 extern TabOrder g_tabOrders[16];
+void tabBarsReset();   // OkayUI_Tabs.cpp: no tab bar open (frame start)
 extern TabBarCtx g_tabBar;
 extern DragDrop g_dd;
 extern TypedDrag g_tdd;

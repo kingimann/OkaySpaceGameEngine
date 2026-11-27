@@ -13471,7 +13471,7 @@ int main(int argc, char** argv) {
         if (!ownBackend) { g_imguiMainWrap = okay::platform::WrapSdl2Window(window); feedWin = g_imguiMainWrap.get(); }
         g_imguiFeed.Init(ImGui::GetIO(), feedWin->Id(), okay::imguifeed::FeedHost::FromPlatform(okay::platform::Default(), feedWin));
     }
-    std::fprintf(stderr, "%s\n", okay::imguirender::ActiveLine(true));
+    std::fprintf(stderr, "%s\n", okay::imguirender::ActiveLine());
     okay::imguirender::Init(ImGui::GetIO());
     OkayUI::Style().textScale = 17.0f / 8.0f;   // the launcher's text: Roboto Medium 17 px
     OkayUI::UseImGuiCoordinates(true);           // the launcher's code places things by Dear ImGui's coordinate rules

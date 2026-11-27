@@ -247,7 +247,7 @@ def main(argv=None):
     if shots:
         cmd += ["--shots", shots]
     # the run happens in the output folder, with a private HOME, so nothing it saves lands in the repository or your settings
-    env = dict(os.environ, HOME=os.path.join(out, "home"), SDL_AUDIODRIVER="dummy", OKAY_UPDATE_ON_LAUNCH="0")
+    env = dict(os.environ, HOME=os.path.join(out, "home"), OKAY_ALSA_DEVICE="null", OKAY_UPDATE_ON_LAUNCH="0")
     os.makedirs(env["HOME"], exist_ok=True)
     try:
         code = subprocess.run(cmd, cwd=out, env=env, timeout=float(os.environ.get("OKAY_RUN_TIMEOUT", "600"))).returncode

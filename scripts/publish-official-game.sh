@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Publish the official OkaySpace game to Supabase Storage, so every launcher can
 # install it from the Play page and keep it up to date. Run it on the folder the
-# editor's File > Build Game made (<Game>.exe + SDL2.dll + Data/...).
+# editor's File > Build Game made (<Game>.exe + Data/...).
 #
 # The easier way: the launcher's Admin > Official game tab does the same with an
 # admin's own sign-in, no key needed (after docs/sql/official_game_admin.sql has

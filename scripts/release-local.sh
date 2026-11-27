@@ -15,7 +15,7 @@
 #
 # Needs: git, cmake, ninja, x86_64-w64-mingw32-g++ (g++-mingw-w64-x86-64), zip,
 #        python3, curl, tar, and gh (GitHub CLI) logged in or GITHUB_TOKEN set
-#        (contents:write). Optional: makensis (installer), ccache, g++ + libsdl2-dev
+#        (contents:write). Optional: makensis (installer), ccache, g++
 #        + libsodium-dev (Linux server).
 # Supabase: SUPABASE_SERVICE_KEY or SUPABASE_ACCESS_TOKEN in the environment
 #        (never in a file). Without it the Supabase step is skipped and said so.
@@ -62,15 +62,6 @@ fi
 
 # ---- dependencies (cached under .release-cache, downloaded once) -------------
 CACHE="$PWD/.release-cache"; mkdir -p "$CACHE"
-SDL2_VERSION="${SDL2_VERSION:-2.30.9}"
-if [ ! -f "$CACHE/sdl2/x86_64-w64-mingw32/bin/SDL2.dll" ]; then
-  say "Fetching SDL2 $SDL2_VERSION (MinGW)"
-  ( cd "$CACHE" && bash "$OLDPWD/scripts/fetch-tarball.sh" sdl2-mingw.tar.gz \
-      "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz" \
-      "https://www.libsdl.org/release/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz" )
-  mkdir -p "$CACHE/sdl2"; tar xzf "$CACHE/sdl2-mingw.tar.gz" -C "$CACHE/sdl2" --strip-components=1
-fi
-export SDL2_MINGW_PREFIX="$CACHE/sdl2/x86_64-w64-mingw32"
 say "Fetching libsodium (MinGW prebuilt, SHA-256 pinned; a release never builds without it)"
 OKAY_SODIUM_MINGW_PREFIX="$(bash scripts/fetch-libsodium-mingw.sh "$CACHE")" || die "libsodium: download, SHA-256 pin or layout check failed (see above)"
 export OKAY_SODIUM_MINGW_PREFIX
@@ -82,7 +73,7 @@ scripts/build-windows-dist.sh
 VER=$(cat build-win-dist/VERSION.txt)
 [ -n "$VER" ] || die "no version in build-win-dist/VERSION.txt"
 say "Built version $VER"
-for f in OkaySpace.exe Tools/OkayEngine.exe Tools/OkaySpacePlayer.exe SDL2.dll VERSION.txt; do
+for f in OkaySpace.exe Tools/OkayEngine.exe Tools/OkaySpacePlayer.exe VERSION.txt; do
   [ -s "build-win-dist/$f" ] || die "build output missing: $f"
 done
 for f in OkaySpace.exe Tools/OkayEngine.exe Tools/OkaySpacePlayer.exe; do
@@ -99,7 +90,7 @@ NAME="OkaySpace-windows-v${VER}"
 rm -rf "$OUT/$NAME"; mkdir -p "$OUT/$NAME"; cp -r build-win-dist/* "$OUT/$NAME/"
 ( cd "$OUT" && zip -qr "$NAME.zip" "$NAME" && rm -rf "$NAME" )
 ASSETS=("$OUT/$NAME.zip" build-win-dist/OkaySpace.exe build-win-dist/Tools/OkayEngine.exe \
-        build-win-dist/Tools/OkaySpacePlayer.exe build-win-dist/SDL2.dll build-win-dist/VERSION.txt dist/CHANGELOG.txt)
+        build-win-dist/Tools/OkaySpacePlayer.exe build-win-dist/VERSION.txt dist/CHANGELOG.txt)
 [ -f build-win-symbols/OkayEngine.debug ] && ASSETS+=(build-win-symbols/OkayEngine.debug)
 
 if [ $HAVE_NSIS = 1 ]; then
@@ -111,7 +102,7 @@ fi
 
 SERVER_BIN=""
 if [ $SERVER = 1 ]; then
-  if command -v g++ >/dev/null 2>&1 && pkg-config --exists sdl2 libsodium 2>/dev/null; then
+  if command -v g++ >/dev/null 2>&1 && pkg-config --exists libsodium 2>/dev/null; then
     say "Building the Linux game server"
     cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release -DOKAY_BUILD_PLAYER=ON \
           -DOKAY_BUILD_EDITOR=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_BUILD_TESTS=OFF \
@@ -123,7 +114,7 @@ if [ $SERVER = 1 ]; then
     "$OUT/okay-server-linux-x64" --help | head -n 1 >/dev/null
     SERVER_BIN="$OUT/okay-server-linux-x64"; ASSETS+=("$SERVER_BIN")
   else
-    echo "note: skipping the Linux server (needs g++, libsdl2-dev, libsodium-dev, pkg-config)"
+    echo "note: skipping the Linux server (needs g++, libsodium-dev, pkg-config)"
   fi
 fi
 

@@ -23,7 +23,7 @@ run-name: Test build of ${{ inputs.ref || github.ref_name }}
 # sorts just above the release it is made on and below every later one, so the next release always replaces it. If a release comes out while the
 # build runs, the publish refuses (the number would be too old to be offered): start a new test build.
 #
-# The build steps below are a COPY of the first job of release.yml (same toolchain, same SDL2 and libsodium downloads with the same pins, same
+# The build steps below are a COPY of the first job of release.yml (same toolchain, same libsodium download with the same pin, same
 # own-crypto refusal, same build script, same trusted keys), because sharing them would mean editing release.yml. tests/scripts/test_dev_workflow.py
 # fails when the copied steps drift apart, so a change to one is a reminder to change the other. Two deliberate differences: the compiler cache is
 # only RESTORED (a test build never writes the release job's cache), and there is no signing, zip, installer or GitHub step.
@@ -62,7 +62,6 @@ jobs:
       main_count: ${{ steps.who.outputs.main_count }}
       main_sha: ${{ steps.who.outputs.main_sha }}
     env:
-      SDL2_VERSION: 2.30.9
       # Compiler cache kept between builds (restored here, saved by release.yml only).
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_BASEDIR: ${{ github.workspace }}
@@ -196,15 +195,6 @@ jobs:
         with:
           path: ~/apt-cache
           key: apt-mingw-win32-release-${{ env.UBUNTU_CODENAME }}-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Fetch SDL2 (MinGW dev)
-        run: |
-          bash scripts/fetch-tarball.sh sdl2-mingw.tar.gz \
-            "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz" \
-            "https://www.libsdl.org/release/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz"
-          mkdir -p sdl2-mingw
-          tar xzf sdl2-mingw.tar.gz -C sdl2-mingw --strip-components=1
-          echo "SDL2_MINGW_PREFIX=$PWD/sdl2-mingw/x86_64-w64-mingw32" >> "$GITHUB_ENV"
 
       - name: Fetch libsodium (MinGW prebuilt)
         # Statically linked into the exes for authenticated packet encryption. A release MUST have it: the download is pinned

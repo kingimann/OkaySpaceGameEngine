@@ -31,9 +31,10 @@ Parts and licences
    public-domain parts. Text: section C. (Debian's statement for 1.0.18; the authors and licences of 1.0.20 are
    UNVERIFIED against its own LICENSE file.)
 
-4. SDL2 2.30.9 (window, input, audio). SDL2.dll beside the programs on Windows; Emscripten's SDL2 port inside web
-   builds. Copyright (C) 1997-2024 Sam Lantinga and the authors named in section D. Licence: zlib; its HIDAPI part
-   is used under the BSD 3-clause option. Text: section D.
+4. SDL2 (window, input, audio), in web builds only: Emscripten's SDL2 port inside okay-player.wasm. The Windows and
+   Linux programs and games contain none of it since 2026-11-27 (our own okay::platform; no SDL2.dll is shipped).
+   Copyright (C) 1997-2024 Sam Lantinga and the authors named in section D. Licence: zlib; its HIDAPI part is used
+   under the BSD 3-clause option. Text: section D.
 
 5. (No longer used.) Dear ImGui was the editor's and the launcher's user interface until 2026-11-27. Builds from then on
    contain none of it: both are drawn by our own UI toolkit, OkayUI. Section E is kept empty so the letters below stay.

@@ -168,7 +168,7 @@ check(idx("Restore compiler cache") < idx("Build Windows distribution"), "the co
 # ---- the copy of release.yml's first job ---------------------------------------------------------------------------------------------
 relsteps = steps_by_name(rel["jobs"]["windows-exe"])
 copied = ["Check the launcher's trusted anti-cheat keys", "Note the Ubuntu release", "Restore downloaded apt packages", "Install toolchain",
-          "Check for newly downloaded apt packages", "Save downloaded apt packages", "Fetch SDL2 (MinGW dev)", "Fetch libsodium (MinGW prebuilt)",
+          "Check for newly downloaded apt packages", "Save downloaded apt packages", "Fetch libsodium (MinGW prebuilt)",
           "Refuse own crypto and the own-stack switch", "Build Windows distribution"]
 for name in copied:
     check(name in relsteps and name in bsteps, "copied step %r is missing on one side" % name)
@@ -180,7 +180,7 @@ check(rc.get("uses") == "actions/cache@v5" and dc.get("uses") == "actions/cache/
 check(not any(s.get("uses", "").startswith("actions/cache@") or s.get("uses", "").startswith("actions/cache/save@") and s.get("name") != "Save downloaded apt packages" for s in build["steps"]),
       "no step saves the compiler cache")
 renv, denv = rel["jobs"]["windows-exe"]["env"], build["env"]
-for k in ("SDL2_VERSION", "CCACHE_DIR", "CCACHE_BASEDIR", "CCACHE_COMPRESS", "CCACHE_MAXSIZE", "OKAY_AC_TRUSTED_KEYS", "OKAY_UPDATE_TRUSTED_KEYS"):
+for k in ("CCACHE_DIR", "CCACHE_BASEDIR", "CCACHE_COMPRESS", "CCACHE_MAXSIZE", "OKAY_AC_TRUSTED_KEYS", "OKAY_UPDATE_TRUSTED_KEYS"):
     check(renv.get(k) == denv.get(k), "job env %s differs from release.yml" % k)
 check(set(denv) <= set(renv) - {"SUPABASE_PUBLISH"}, "the build job's env has something release.yml's does not: %r" % (set(denv) - set(renv)))
 

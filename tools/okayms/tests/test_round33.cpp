@@ -615,6 +615,12 @@ static void r33_eh_block(Tally& tally) {
     okayms_test::run_both(kRunEh, tally, "eh_block", R"OKMS(
 #include <functional>
 struct N { N* c; int tag; };
+int first(N* r, int op) {
+  int b = 0;
+  if (op == 1) { try { b += 1; } catch (...) { b = 0; } }
+  else { std::function<N*(N*)> g = [](N* k) -> N* { return k; }; return g(r) ? g(r)->tag : -1; }
+  return b;
+}
 int find_tag(N* r, int op, int want) {
   int b = 0;
   if (op == 1) {
@@ -631,6 +637,7 @@ int entry(void) {
   N b{&c, 5};
   N a{&b, 3};
   CK(1, find_tag(&a, 0, 7) == 7 && find_tag(&a, 0, 9) == -1 && find_tag(&a, 1, 0) == 1);
+  CK(2, first(&a, 0) == 3 && first(&a, 1) == 1);
   return 0;
 }
 )OKMS", 0);

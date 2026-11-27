@@ -15,7 +15,7 @@
 
 namespace okay::platform::web {
 
-// ---- Keys: KeyboardEvent.code -> USB HID usage (keyboard page) ------------------------------------------------
+// ---- Physical buttons: KeyboardEvent.code -> USB HID usage (keyboard page)
 struct DomCodeEntry { const char* code; uint16_t usage; };
 
 /// The physical key of a KeyboardEvent.code value; Key::Unknown for an empty or unknown name.

@@ -215,7 +215,7 @@ void Rebuild(Table& t) {
                     item.Offset = ti.rect.x - strip.x; item.Width = ti.rect.w; item.ContentWidth = ti.idealWidth;
                     bar.Tabs.push_back(item);
                     ideal += ti.idealWidth;
-                    if (item.Window) { FillRect(item.Window->DC.DockTabItemRect, Vec2{ti.rect.x, ti.rect.y}, Vec2{ti.rect.w, ti.rect.h}); }
+                    if (item.Window) { FillRect(item.Window->DC.DockTabItemRect, Vec2{ti.shown.x, ti.shown.y}, Vec2{ti.shown.w, ti.shown.h}); }   // where the tab is drawn (it slides while one is dragged): a host's icon goes with it
                     if (ti.selected) bar.VisibleTabId = bar.SelectedTabId = item.ID;
                 }
                 bar.WidthAllTabsIdeal = ideal;

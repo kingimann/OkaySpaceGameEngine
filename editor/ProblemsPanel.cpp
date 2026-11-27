@@ -4,7 +4,7 @@
 #include "EditorWidgets.hpp"
 #include "ConsolePanel.hpp"
 #include "MainShared.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"   // the open graphs (okay::editor::vsed)
 #include "okay/Testing/ObjectPath.hpp"
 #include "ProjectDiagRunner.hpp"   // the project-wide check on a worker
 

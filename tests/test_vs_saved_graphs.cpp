@@ -2,7 +2,7 @@
 // (directly or through the alias table), and each one loads and runs a few frames. Display names changed in the
 // plain-words pass; the saved identifiers did not, and this test is what proves it.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/VisualScript/NodeAliases.hpp"

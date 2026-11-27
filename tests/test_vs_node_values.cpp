@@ -5,7 +5,7 @@
 // and plain maths; no outside code.
 #include "test_framework.hpp"
 #include "test_sandbox.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/FirstPersonController.hpp"

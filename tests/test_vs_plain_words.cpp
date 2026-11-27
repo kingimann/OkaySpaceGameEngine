@@ -1,6 +1,6 @@
 // The sentences the Visual Script window says when something is wrong: plain words only, and the one-click fixes.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include "VisualScriptPlainWords.hpp"
 #include "VisualScriptGlossary.hpp"
 #include "okay/VisualScript/VsTypes.hpp"

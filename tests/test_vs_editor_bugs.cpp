@@ -2,7 +2,7 @@
 // (ValidateGraphText plus the script-export pass the editor runs) finds nothing
 // that is an error in a graph we ship, and load -> save -> load gives the same text.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include <Okay.hpp>
 #include <filesystem>
 #include <fstream>

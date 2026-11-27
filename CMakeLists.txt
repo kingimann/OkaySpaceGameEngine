@@ -334,6 +334,13 @@ if(NOT EMSCRIPTEN)
     add_subdirectory(scripteditor)
 endif()
 
+# ---- Visual Script program --------------------------------------------
+# The Visual Script editor in a window of its own (system "Visual Script", shared/VisualScriptApp: the editor shows the same one).
+# On whenever OkayUI is built (it returns quietly otherwise).
+if(NOT EMSCRIPTEN)
+    add_subdirectory(visualscript)
+endif()
+
 # ---- Standalone game player ------------------------------------------
 # The editor's "Build Game" ships this runtime, so build it alongside the editor.
 if(OKAY_BUILD_PLAYER OR OKAY_BUILD_EDITOR)

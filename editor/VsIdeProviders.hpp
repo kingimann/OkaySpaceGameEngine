@@ -8,8 +8,8 @@
 //   - Quick fixes (Alt+Enter): for the graph on screen, VsQuickFixesFor(g, st.issues, node) lists the fixes at a block,
 //     VsApplyQuickFix(g, fix) applies one (both use the canvas's own "Fix it for me" rules, VsFixIssue).
 //   - Plugins: VsCommands() is the table of Visual Script commands (id, title, shortcut); VsRunCommand(st, id) in
-//     VsIdeCanvas.hpp runs one on a graph tab, so the plugin layer can list them and a plugin can call them by id.
-// Included from inside VisualScriptEditor.hpp after the graph model. Written for this project.
+//     VsIdeModel.hpp runs one on a graph tab, so the plugin layer can list them and a plugin can call them by id.
+// Included from inside VisualScriptModel.hpp after the graph model. Written for this project.
 #include "VisualScriptSearch.hpp"
 #include <algorithm>
 #include <fstream>

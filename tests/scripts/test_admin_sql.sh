@@ -2,7 +2,7 @@
 # docs/sql/admin.sql against a LOCAL, throwaway Postgres: never Supabase or any
 # live database. tests/sql/supabase_stub.sql stands in for what Supabase
 # provides, then the prerequisites (social.sql ... group_chats.sql), admin.sql
-# and anticheat.sql twice each (they must be idempotent), and tests/sql/test_admin.sql.
+# anticheat.sql and app_config.sql twice each (they must be idempotent), and tests/sql/test_admin.sql.
 #
 #   OKAY_SQL_TEST_PGHOST=/var/run/postgresql OKAY_SQL_TEST_PGPORT=5432 bash tests/scripts/test_admin_sql.sh
 #
@@ -15,7 +15,7 @@ sqltest_begin admin_sql okay_admin_sqltest
 for f in tests/sql/supabase_stub.sql docs/sql/social.sql docs/sql/profile_showcase.sql \
          docs/sql/profile_extras.sql docs/sql/forum_sections.sql docs/sql/follows.sql \
          docs/sql/group_chats.sql docs/sql/admin.sql docs/sql/admin.sql \
-         docs/sql/anticheat.sql docs/sql/anticheat.sql; do
+         docs/sql/anticheat.sql docs/sql/anticheat.sql docs/sql/app_config.sql docs/sql/app_config.sql; do
     sqltest_load -f "$REPO/$f"
 done
-sqltest_checks 6 -f "$REPO/tests/sql/test_admin.sql"
+sqltest_checks 150 -f "$REPO/tests/sql/test_admin.sql"

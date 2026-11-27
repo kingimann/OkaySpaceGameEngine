@@ -2126,10 +2126,13 @@ void textBlock(const char* s, const unsigned char* col) {
 void BeginGroup() {
     if (!g_lay.active || g_grpTop >= 8) return;
     GroupBox g;
-    if (!g_posOverride) {   // (a group started at SetCursorScreenPos keeps the old rule: its start is only known when its first item is placed)
-        // Where the group's first item goes (the same rule as place()): beside the item before it after SameLine, else at the left edge.
+    {
+        // Where the group's first item goes (the same rule as place()): at a position SetCursorScreenPos gave (the launcher's update
+        // dialog: a logo drawn at the left, the cursor moved past it; its second line started under the logo), beside the item before it
+        // after SameLine, else at the left edge.
         float x = leftEdge(), y = g_lay.cy;
-        if (g_lay.pendingSameLine) {
+        if (g_posOverride) { x = g_posX; y = g_posY; }
+        else if (g_lay.pendingSameLine) {
             const float sp = g_lay.sameLineSpacing >= 0.0f ? g_lay.sameLineSpacing : g_lay.spacingX;
             x = g_lay.sameLineAbs ? g_lay.sameLineX : g_lay.prevX + g_lay.prevW + sp;
             y = g_lay.hasLineTop ? g_lay.lineTopY : g_lay.prevY;

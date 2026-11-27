@@ -805,6 +805,31 @@ void TestGroupLocksStartX() {
     r.Frames(2);
     CHECK(std::fabs(l1.y - pic.y) < 0.5f);
     CHECK(l2.y >= l1.y + l1.h - 0.5f && std::fabs(l2.x - l1.x) < 0.5f);
+    // The launcher's "You're up to date" dialog: a logo drawn at the left, the cursor moved past it, a group with the title and a wrapped
+    // line under it, in Dear ImGui's coordinates and look. The wrapped line started at the window's left edge, under the logo (owner,
+    // 2026-11-27: "the planet logo overlaps the text").
+    for (int wrapped = 0; wrapped < 2; ++wrapped) {
+        UI::Rect title{}, sub{}; UI::Vec2 start{};
+        r.body = [&] {
+            UI::UseImGuiCoordinates(true);
+            UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f); UI::PushStyleVar(UI::StyleVar_TextRowHeight, -1.0f);
+            const UI::Vec2 hp = UI::GetCursorScreenPos();
+            start = UI::Vec2{hp.x + 58.0f, hp.y};
+            UI::SetCursorScreenPos(start);
+            UI::BeginGroup();
+            UI::Text("You're up to date"); title = UI::GetItemRect();
+            if (wrapped) { UI::PushTextWrapPos(UI::GetCursorPosX() + 300.0f); UI::TextDisabled("OkaySpace v2.904.0.284 is the newest version, and this line is long enough to wrap twice over."); UI::PopTextWrapPos(); }
+            else UI::TextDisabled("OkaySpace v2.904.0.284 is the newest version.");
+            sub = UI::GetItemRect();
+            UI::EndGroup();
+            UI::PopStyleVar(2);
+            UI::UseImGuiCoordinates(false);
+        };
+        r.Frames(2);
+        CHECK(std::fabs(title.x - start.x) < 0.5f);
+        CHECK(sub.x >= start.x - 0.5f);                     // the line under the title starts with it, right of the logo
+        CHECK(sub.y >= title.y + title.h - 0.5f);
+    }
 }
 
 int main() {

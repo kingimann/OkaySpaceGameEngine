@@ -149,7 +149,7 @@ static void own_switches_file_round_trip() {
     std::remove(p.c_str());
 }
 
-static void own_switches_default_turns_everything_on() {
+static void default_table_turns_everything_on() {
     // The real table, never chosen, on a Windows machine with OkayUI: every offered item is on and sets its variable.
     const char* names[] = {"OKAY_UI_BACKEND", "OKAY_UI_INSPECTOR", "OKAY_UI_OWN_RENDER", "OKAY_OWN_WAV", "OKAY_OWN_HTTP", "OKAY_PLATFORM_BACKEND", "OKAY_BROWSER", "OKAY_DEV"};
     std::vector<std::string> saved(sizeof(names) / sizeof(names[0])); std::vector<bool> had(saved.size());
@@ -183,7 +183,7 @@ int main() {
     own_switches_unavailable_items_stay_off();
     own_switches_status_text();
     own_switches_file_round_trip();
-    own_switches_default_turns_everything_on();
+    default_table_turns_everything_on();
     DefaultPathNamesTheFile();
     TEST_MAIN_RESULT();
 }

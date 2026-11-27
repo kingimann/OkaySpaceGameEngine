@@ -8,7 +8,7 @@
 //   7. a graph diff against an older version.
 #include "test_framework.hpp"
 #include "test_sandbox.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include "VsDebugWatch.hpp"
 #include "VsCollapse.hpp"
 #include "VsProjectRefs.hpp"

@@ -14,7 +14,7 @@
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "AppIcon.hpp"
 #include "OwnSwitches.hpp"   // Settings > Experimental: the table of own replacements that can be switched on
-#include "ImGuiPlatformFeed.hpp"   // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
+#include "ImGuiPlatformFeed.hpp"   // the input feed: okay::platform events into OkayUI's IO
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "OkayTheme.hpp"  // the design's palette for Dear ImGui (launcher + editor)
 #include "AppearanceUI.hpp"  // Settings > Appearance: the design picker and the person's options (shared with the editor)
@@ -58,10 +58,8 @@
 #include "okay/Net/ServerQuery.hpp"
 #include "okay/Platform/Parties.hpp"
 #include "okay/Net/MatchResults.hpp"
-#include "imgui.h"
-#include "imgui_internal.h"   // ClearActiveID: Esc leaves the name field
-#include "imgui_impl_sdl2.h"
-#include "imgui_impl_sdlrenderer2.h"
+#include "okay/UI/OkayUIImGuiNames.hpp"   // the launcher is drawn by OkayUI, written in Dear ImGui's names (okayui/include/okay/UI/OkayUICompat.hpp)
+#include "okay/UI/OkayUIInternals.hpp"   // ClearActiveID: Esc leaves the name field
 #include "EmbeddedFonts.hpp" // embedded Roboto Medium (Apache 2.0, shared with the editor) and JetBrains Mono (OFL, `code` in chat)
 #include "FileDialog.hpp"       // native file picker (chat attachments), or the built-in browser
 
@@ -69,17 +67,11 @@
 // launcher: it doesn't link the engine) for cover art, avatars, chat images and emoji.
 #include "okay/Core/ImageDecode.hpp"
 
-// The opt-in OkayUI backend (docs/ui/own_ui_toolkit.md, section 5): the setting and, when OkayUI is compiled in, the host.
-#include "OkayUIBackend.hpp"
+// The launcher is drawn by OkayUI (docs/ui/own_ui_toolkit.md section 31); What's New and Tips are OkayUI screens.
 #include "LauncherTips.hpp"
-#ifdef OKAY_HAVE_OKAYUI
-#include "OkayUIFrame.hpp"   // OkayUI end-of-frame on an SDL renderer or an own-backend painter
-#include "OkayUIHost.hpp"
-#include "OkayUIImGuiEmbed.hpp"  // HostPanelArea: the OkayUI pages drawn in Dear ImGui's draw order (popups and tooltips over them)
 #include "okay/UI/OkayUI.hpp"
-#include "OkayUIScreens.hpp"
+#include "OkayUIScreens.hpp"   // What's New and Tips, drawn by OkayUI
 #include "OkayUIPanels.hpp"
-#endif
 
 #include <algorithm>
 #include <atomic>
@@ -129,7 +121,7 @@
 #ifdef OKAY_ENABLE_TEST_HOOKS
 #include "TestHooks.hpp"   // scripted input and screenshots for headless test runs (OKAY_TEST_SCRIPT); not in normal builds
 #endif
-#include "ImGuiPainterRenderer.hpp"   // our own Dear ImGui renderer over okay::platform::Painter (OKAY_IMGUI_RENDER=own; default stays imgui_impl_sdlrenderer2)
+#include "ImGuiPainterRenderer.hpp"   // OkayUI's frame drawn through okay::platform::Painter (okayui/probe/ImGuiPainterRenderer.hpp)
 #include "OwnPainter.hpp"     // which painter draws an own-backend window (OpenGL, else software)
 #include "PainterBridge.hpp"   // the 2D renderer calls (textures, clear, present, size) through okay::platform::Painter
 #include "OkayThreads.hpp"   // our own threads, recursive mutexes, atomics (replaces SDL's)
@@ -219,11 +211,7 @@ static void ChatToggleOnTop();
 // Resolve an engine/player exe by name, searching next to the launcher and in the
 // Tools/ subfolder (defined fully below; forward-declared for the updater).
 std::string FindExe(std::initializer_list<const char*> names);
-#ifdef OKAY_ON_OKAYUI   // the launcher on our own UI starts the editor built on our own UI when it is next to it, else the normal one
-#define EDITOR_EXE_NAMES {"OkayEngineOkayUI.exe", "OkayEngineOkayUI", "okay-editor-okayui", "OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"}
-#else
-#define EDITOR_EXE_NAMES {"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"}
-#endif
+#define EDITOR_EXE_NAMES {"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"}   // (the editor decides its own UI toolkit)
 
 // Where published builds live: only the public Supabase "releases" bucket (SupabaseReleasesBase below). The launcher never
 // needs GitHub at run time (owner decision 2026-11-20).
@@ -2145,9 +2133,6 @@ bool  g_splashShowBar = true;                     // show the progress bar
 SDL_Texture* g_splashLogoTex = nullptr;           // loaded at startup from g_splashLogo
 int g_themeIndex = 0;             // 0 Dark, 1 Midnight, 2 Light (persisted)
 float g_uiScale = 1.0f;           // font/UI scale for high-DPI (persisted)
-std::string g_uiBackendSetting;   // "" = never chosen, else "imgui" / "okayui" (persisted as ui_backend; OKAY_UI_BACKEND overrides it)
-okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;   // what the setting + environment resolve to (ResolveUiBackend)
-static void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail (persisted)
 bool g_svChannelsFolded = false;  // Servers: the channel list folded away (persisted; PanelToggle / Ctrl+B)
 bool g_foSectionsFolded = false;  // Forums: the sections rail folded away (persisted)
@@ -3483,39 +3468,6 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
     return sendNow;
 }
 
-#ifdef OKAY_HAVE_OKAYUI
-// ---- The OkayUI backend host (docs/ui/own_ui_toolkit.md, section 5) ----
-// With Settings > Appearance > UI backend on "OkayUI (preview)" (or OKAY_UI_BACKEND=okayui), the pages that have an OkayUI
-// port (What's New) are drawn by OkayUI into a rectangle the ImGui page reserves; everything else stays Dear ImGui. OkayUI
-// shares ImGui's SDL_Renderer and is flushed after ImGui's draw data, so it needs no window or renderer of its own.
-okayuihost::InputCollector g_okayInput;   // typed text, key edges and wheel from the SDL events
-okayuihost::Region         g_okayRegion;  // where the hosted page was last frame: who owns the mouse there
-
-static void OkayUIFrameBegin() {
-    static bool looked = false;
-    if (!looked) { looked = true; OkayUI::SetFont(OkayUI::FontDefault()); OkayUI::UseLauncherLook(true); }
-    OkayUI::Theme& t = OkayUI::Style();   // the design is OkayUI's own (design::Set restyles it); the page follows the launcher's UI scale
-    t.textScale = 2.0f * OkayUI::design::CurrentTokens().textSize * g_uiScale;
-    ImGuiIO& io = ImGui::GetIO();
-    g_okayRegion.NextFrame();
-    int mx = 0, my = 0;
-    const std::uint32_t mb = okay::platform::Default() ? okay::platform::Default()->MouseState(&mx, &my) : 0;   // MouseMask bits (button 1 = bit 0, as SDL_BUTTON)
-    const bool blocked = io.WantCaptureMouse && !g_okayRegion.Owns((float)mx, (float)my);
-    // An OkayUI field types: all the keys (an ImGui field being pressed or typed in keeps them). No field types but a hosted page is
-    // shown and focused (the Browser page): its shortcuts' keys, Ctrl+F, Ctrl+L, Ctrl+T ... (okayuihost::HostedKeys).
-    const okayuihost::HostKeys keys = okayuihost::HostedKeys(OkayUI::WantsTextInput(), ImGui::GetActiveID() != 0, io.WantTextInput,
-                                                             g_okayRegion.Active());
-    OkayUI::BeginFrame(g_okayInput.Build((float)mx, (float)my, (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0,
-                                         (mb & okay::platform::MouseMask(okay::platform::MouseRight)) != 0, blocked, keys));
-}
-// ImGui must not treat typing in a hosted OkayUI field as shortcuts or text for something else.
-static void OkayUIClaimKeyboard() {
-    if (!OkayUI::WantsTextInput()) return;
-    GImGui->PlatformImeData.WantTextInput = true;
-    ImGui::SetNextFrameWantCaptureKeyboard(true);
-    if (okay::platform::Default()) okay::platform::Default()->StartTextInput();
-}
-#endif
 
 // Desktop notification settings in launcher.cfg (Settings > Chat & Notifications). All on by default except Do not disturb.
 static void LoadNotifyPref(const std::string& k, const std::string& v) {
@@ -3550,7 +3502,7 @@ void LoadPrefs() {
         if (k == "accent") { try { g_accentIndex = std::stoi(v); } catch (...) {} }
         else if (k == "theme") { try { g_themeIndex = std::stoi(v); } catch (...) {} }
         else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
-        else if (k == "ui_backend") g_uiBackendSetting = okayuibackend::Normalize(v);   // "" for anything unreadable
+        else if (k == "ui_backend") {}   // (the old Dear ImGui / OkayUI choice: the launcher is OkayUI only now)
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
         // "minimize_to_tray" (2026-11-25, default ON) is ignored on purpose: every launcher saved it as 1, and minimizing to the
         // tray trapped the window for the owner ("when i minimize it i cant open it back up"). The option is OFF unless the
@@ -3681,7 +3633,6 @@ void SavePrefs() {
     f << "accent=" << g_accentIndex << "\n";
     f << "theme=" << g_themeIndex << "\n";
     f << "ui_scale=" << g_uiScale << "\n";
-    if (!g_uiBackendSetting.empty()) f << "ui_backend=" << g_uiBackendSetting << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
     f << "tray_minimize=" << (g_minimizeToTray ? 1 : 0) << "\nclose_to_tray=" << (g_closeToTray ? 1 : 0)
       << "\ntray_hint_shown=" << (g_trayHintShown ? 1 : 0) << "\n";
@@ -10784,18 +10735,14 @@ struct ChatWindowHost {
     ImFont* mono = nullptr; std::uint32_t id = 0; bool shown = false;
 };
 static ChatWindowHost g_chatHost;
-// Dear ImGui input: imgui_impl_sdl2 by default, or our own okay::platform feed with OKAY_PLATFORM_EVENTS=own
+// The UI's input: our own okay::platform feed.
 // (shared/ImGuiPlatformFeed.hpp). One feed per ImGui context: the launcher window and the chat pop-out window.
-static bool g_imguiOwnFeed = false;
-static bool g_imguiOwnRender = false;   // OKAY_IMGUI_RENDER=own: our Painter-based renderer instead of imgui_impl_sdlrenderer2
 static okay::imguifeed::Feed g_imguiFeed, g_imguiChatFeed;
 static std::unique_ptr<okay::platform::Window> g_imguiMainWrap;   // non-owning wrapper over the launcher's SDL window for the feed
 static std::unique_ptr<okay::platform::Window> g_imguiChatWrap;
-// One platform event for Dear ImGui: our own feed takes it directly; imgui_impl_sdl2 (the default) takes the SDL record the sdl2
-// backend keeps in Event::native (valid only inside the poll loop pass that returned the event).
+// One platform event for the UI: our own feed takes it.
 static void FeedImGuiEvent(okay::imguifeed::Feed& feed, const okay::platform::Event& e) {
-    if (g_imguiOwnFeed) { feed.ProcessEvent(e, ImGui::GetIO()); return; }
-    if (e.native) ImGui_ImplSDL2_ProcessEvent((const SDL_Event*)e.native);
+    feed.ProcessEvent(e, ImGui::GetIO());
 }
 static okay::platform::Window* g_chatHostOwner = nullptr;   // owns g_chatHost.win
 // Keep a window reachable: when too little of it (or its title bar) is on any
@@ -10869,12 +10816,14 @@ static bool ChatHostCreate() {
         MergeEmojiFallback(17.0f);
         g_chatHost.mono = okf::AddToAtlas(ImGui::GetIO().Fonts, okf::JetBrainsMonoTtf(), 16.0f, fc);
     }
-    if (g_imguiOwnFeed) {
+    {
         okay::platform::Window* feedWin = g_chatHostOwner;
         if (g_chatHostOwner->Kind() == okay::platform::BackendKind::Sdl2) { g_imguiChatWrap = okay::platform::WrapSdl2Window(g_chatHost.win); feedWin = g_imguiChatWrap.get(); }
         g_imguiChatFeed.Init(ImGui::GetIO(), feedWin->Id(), okay::imguifeed::FeedHost::FromPlatform(okay::platform::Default(), feedWin));
-    } else ImGui_ImplSDL2_InitForSDLRenderer(g_chatHost.win, g_chatHost.ren);
-    if (g_imguiOwnRender) okay::imguirender::Init(ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Init(g_chatHost.ren);
+    }
+    okay::imguirender::Init(ImGui::GetIO());
+    OkayUI::Style().textScale = 17.0f / 8.0f;   // the launcher's text: Roboto Medium 17 px
+    OkayUI::UseImGuiCoordinates(true);           // the launcher's code places things by Dear ImGui's coordinate rules
     ImGui::SetCurrentContext(mainCtx);
     return true;
 }
@@ -11158,19 +11107,20 @@ static void ChatHostFrame(okay::account::AccountService& account) {
     ImGui::SetCurrentContext(g_chatHost.ctx);
     ImGui::GetStyle() = style; ImGui::GetIO().FontGlobalScale = fontScale;
     g_renderer = g_chatHost.ren; g_rslot = 1; g_fontMono = g_chatHost.mono; g_chatInOwnWindow = true;
-    if (!g_imguiOwnRender) ImGui_ImplSDLRenderer2_NewFrame();
-    if (g_imguiOwnFeed) g_imguiChatFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame();
+    g_imguiChatFeed.NewFrame(ImGui::GetIO());
     ImGui::NewFrame();
+    OkayUI::PushStyleVar(OkayUI::StyleVar_FramedWidgets, 1.0f);
+    OkayUI::PushStyleVar(OkayUI::StyleVar_TextRowHeight, -1.0f);
     DrawChatWindow(account);
     DrawChatLinkConfirm();   // a link clicked in this window asks here
     DrawIncomingCall();
     okay::filedialog::DrawBuiltin();   // a file picked from the chat (attach, emoji) opens here, in the chat's own window
     DrawToastOverlay();
+    OkayUI::PopStyleVar(2);
     ImGui::Render();
     okay::pb::SetDrawColor(g_chatHost.ren, 21, 23, 29, 255);
     okay::pb::Clear(g_chatHost.ren);
-    if (g_imguiOwnRender) okay::imguirender::Render(*okay::pb::For(g_chatHost.ren), ImGui::GetDrawData());
-    else ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), g_chatHost.ren);
+    okay::imguirender::Render(*okay::pb::For(g_chatHost.ren), ImGui::GetDrawData());
     okay::pb::Present(g_chatHost.ren);
     g_renderer = prevRen; g_rslot = 0; g_fontMono = prevMono; g_chatInOwnWindow = false;
     ImGui::SetCurrentContext(mainCtx);
@@ -12736,22 +12686,22 @@ static void DrawCommunityShowcase(okay::account::AccountService& account, int vi
     }
 }
 
-#ifdef OKAY_HAVE_OKAYUI
-// An OkayUI page (What's New, Tips) in the rectangle `ra` at the cursor of the page area, hosted in Dear ImGui's draw order
-// (okayuihost::HostPanelArea): its shapes go into the page's draw list, so ImGui's popups, tooltips and windows in front (the chat
-// window, an incoming call, a toast) are drawn over it, and the page never swaps to its Dear ImGui copy while they show. It used to:
-// hovering the sidebar's profile row showed a tooltip over a corner of the page, and the whole What's New switched to the other
-// version until the mouse moved away (owner's recording, 2026-11-26). Which surface draws a page: launcher/PageLayout.hpp OkayUIDrawsPage.
-// The Browser page is hosted the same way; its page images are textures the launcher made (TextureFromRgba), which both of its
-// ImGui renderers take as an ImTextureID, as its own ImGui::Image calls do (okayuihost::ImGuiEmbed::SetHostTextures).
+// On OkayUI the whole launcher is one OkayUI frame: an OkayUI page is drawn in place, in the rectangle `ra` at the cursor.
 template <class Draw>
 static void HostOkayPage(const char* itemId, ImVec2 ra, Draw draw) {
-    static OkayUI::CapturedGeometry s_cap;
-    okayuihost::ImGuiEmbed& embed = okayuihost::SharedImGuiEmbed();
-    embed.SetHostTextures([](const void* t) { return (ImTextureID)(intptr_t)t; });
-    okayuihost::HostPanelArea(itemId, ra, g_okayRegion, embed, s_cap, draw);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::PushID(itemId);
+    // these pages are OkayUI's own code: its own layout rules while they draw (the rest of the launcher uses Dear ImGui's, see the frame start)
+    OkayUI::PushStyleVar(OkayUI::StyleVar_FramedWidgets, 0.0f);
+    OkayUI::PushStyleVar(OkayUI::StyleVar_TextRowHeight, 0.0f);
+    OkayUI::UseImGuiCoordinates(false);
+    draw(p, ra);
+    OkayUI::UseImGuiCoordinates(true);
+    OkayUI::PopStyleVar(2);
+    ImGui::PopID();
+    ImGui::SetCursorScreenPos(p);
+    ImGui::Dummy(ra);
 }
-#endif
 
 // ---- The Notifications page (sidebar > Notifications; it replaced the flyout over the current page, owner 2026-11-25) ----------
 // Header actions (Mark all read, Clear), filter chips, pending friend requests with Accept / Decline, then the feed grouped
@@ -13441,7 +13391,6 @@ int main(int argc, char** argv) {
 
     LoadPrefs();                 // preferences (incl. last window size) from launcher.cfg
     LoadAppearance();            // the design and the person's options (appearance.json, shared with the editor)
-    ResolveUiBackend();          // Dear ImGui unless the setting or OKAY_UI_BACKEND says OkayUI
     LoadNotifs();                // the notifications feed + what was read / cleared
     LoadNewsHistory();           // release notes seen before (What's New page)
     LoadScheduled();             // chat messages waiting to be sent later
@@ -13521,22 +13470,20 @@ int main(int argc, char** argv) {
         g_fontMono = okf::AddToAtlas(ImGui::GetIO().Fonts, okf::JetBrainsMonoTtf(), 16.0f, fc);
     }
     ApplyAccent(g_accentIndex);  // applies the saved accent/theme (calls DarkTheme)
-    // Which Dear ImGui input path runs: our own okay::platform feed (the default on every backend, rule 17) or imgui_impl_sdl2
-    // (OKAY_PLATFORM_EVENTS=sdl2, the way back while SDL2 is linked; only on the sdl2 backend). The own feed has no gamepad
-    // navigation; keys, text, mouse, wheel, focus, clipboard and the cursor shape work.
+    // The UI's input is our own okay::platform feed on every backend (no gamepad navigation; keys, text, mouse, wheel, focus,
+    // clipboard and the cursor shape work); the UI is OkayUI, drawn through the window's okay::platform::Painter.
     const bool ownBackend = sdlSeam->Kind() == okay::platform::BackendKind::Own;
-    g_imguiOwnFeed = ownBackend || okay::imguifeed::OwnRequested(std::getenv("OKAY_PLATFORM_EVENTS"), true);
     std::fprintf(stderr, "platform backend: %s\n", sdlSeam->Name());
-    std::fprintf(stderr, "%s\n", okay::imguifeed::ActiveLine(g_imguiOwnFeed));
-    sdlSeam->ReportUnmappedEvents(!g_imguiOwnFeed);   // imgui_impl_sdl2 wants every SDL event (pointer enter / leave, display changes ...)
-    if (g_imguiOwnFeed) {
+    sdlSeam->ReportUnmappedEvents(false);
+    {
         okay::platform::Window* feedWin = mainWinOwner.get();   // an own-backend window is used as it is; an SDL window through a non-owning wrapper
         if (!ownBackend) { g_imguiMainWrap = okay::platform::WrapSdl2Window(window); feedWin = g_imguiMainWrap.get(); }
         g_imguiFeed.Init(ImGui::GetIO(), feedWin->Id(), okay::imguifeed::FeedHost::FromPlatform(okay::platform::Default(), feedWin));
-    } else ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
-    g_imguiOwnRender = ownBackend || okay::imguirender::OwnRequested(std::getenv("OKAY_IMGUI_RENDER"), true);   // own by default; =sdl2 goes back
-    std::fprintf(stderr, "%s\n", okay::imguirender::ActiveLine(g_imguiOwnRender));
-    if (g_imguiOwnRender) okay::imguirender::Init(ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Init(renderer);
+    }
+    std::fprintf(stderr, "%s\n", okay::imguirender::ActiveLine(true));
+    okay::imguirender::Init(ImGui::GetIO());
+    OkayUI::Style().textScale = 17.0f / 8.0f;   // the launcher's text: Roboto Medium 17 px
+    OkayUI::UseImGuiCoordinates(true);           // the launcher's code places things by Dear ImGui's coordinate rules
 
     std::string editor = FindExe(EDITOR_EXE_NAMES);
     std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
@@ -13706,7 +13653,6 @@ int main(int argc, char** argv) {
     };
     while (running) {
         okay::thr::AtomicSet(&g_programsRunning, AnyProgramRunning() ? 1 : 0);   // every frame, minimized or not (the update worker reads it before swapping files)
-        bool okayFrame = false;   // this frame has an OkayUI frame open (the OkayUI backend is on): closed after ImGui's draw data
         std::uint64_t frameStart = okay::platform::PerfCounter();   // for the frame-rate cap below
         // Current account service for this frame. Held by reference so existing
         // code reads naturally; the Settings tab may rebuild accountPtr (which
@@ -13732,9 +13678,6 @@ int main(int argc, char** argv) {
             using EvT = okay::platform::EventType;
             if (ChatHostEvent(e)) continue;   // belonged to the chat's own window
             FeedImGuiEvent(g_imguiFeed, e);
-#ifdef OKAY_HAVE_OKAYUI
-            g_okayInput.Feed(e, sdlSeam->CharForKey(e.key));   // typed text, key edges and the wheel for hosted OkayUI screens (a no-op for the Dear ImGui backend)
-#endif
             // Clicking the window's [X] (or Alt+F4) asks whether to exit or just
             // minimize, rather than quitting outright. (With the chat window
             // around, SDL reports the launcher's [X] as a window close, not a quit.)
@@ -14078,15 +14021,12 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        if (!g_imguiOwnRender) ImGui_ImplSDLRenderer2_NewFrame();
-        if (g_imguiOwnFeed) g_imguiFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame();
+        g_imguiFeed.NewFrame(ImGui::GetIO());
         if (OkayUI::design::Poll(ImGui::GetTime()) || s_designRevision != OkayUI::design::Revision()) DarkTheme();   // another program, or Settings, changed the design
         ImGui::NewFrame();
-        okayFrame = false;
-#ifdef OKAY_HAVE_OKAYUI
-        if (g_uiBackend == okayuibackend::Backend::OkayUI) { OkayUIFrameBegin(); okayFrame = true; }
-#endif
-        SetBrowserHostAvailable(okayFrame);   // the Browser page draws with OkayUI: without a frame, links open in the system browser
+        OkayUI::PushStyleVar(OkayUI::StyleVar_FramedWidgets, 1.0f);   // Dear ImGui's layout rules for children, fields and combos (popped before Render)
+        OkayUI::PushStyleVar(OkayUI::StyleVar_TextRowHeight, -1.0f);  // and its text rows: a line of text is the text's own height
+        SetBrowserHostAvailable(true);   // the whole launcher is an OkayUI frame: the Browser page draws straight into it
         PumpBrowser();                        // its pages, downloads and games move along whichever page is shown
         if (TakeShowRequest()) { tab = kBrowserTab; ClosePublicProfile(); }   // a chat link opened in a new tab of the Browser page
 
@@ -14687,6 +14627,13 @@ int main(int argc, char** argv) {
         if (navRow("##navbrowser", "Browser", kIcoGlobe, tab == kBrowserTab && !g_pfOpen, 0, 0)) { tab = kBrowserTab; ClosePublicProfile(); }
         if (navRow("##navver", "Versions", kIcoRefresh, tab == 15 && !g_pfOpen, okayversionsui::InstallRunning() ? 1 : 0, navAccent)) { tab = 15; ClosePublicProfile(); }
         if (navRow("##navcli", "Command line", kIcoTerminal, tab == 17 && !g_pfOpen, 0, 0)) { tab = 17; ClosePublicProfile(); }
+        // The Script Editor and Visual Script are programs of their own: these rows start them (shown only when installed).
+        for (const okaylcli::FoundProgram& p : CommandLineHost().programs) {
+            const int ico = p.label == "Script Editor" ? kIcoCode : p.label == "Visual Script" ? kIcoNodes : -1;
+            if (ico < 0) continue;   // the Browser has its own page above
+            if (navRow(("##navprog" + p.label).c_str(), p.label.c_str(), ico, false, 0, 0)) okaylcli::OpenProgram(CommandLineHost(), p);
+            if (!g_navCollapsed && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.tip.c_str());
+        }
         navSection("SOCIAL");
         tabRow(6, g_friendRequests, navRed);              // pending friend requests
         if (navSignedIn && navRow("##navchat", "Chat", kIcoChat, g_chatWinOpen, ChatUnreadTotal(), navRed)) {
@@ -14965,15 +14912,11 @@ int main(int argc, char** argv) {
                 if (!po.marketSearch.empty()) std::snprintf(marketFilter, sizeof(marketFilter), "%s", po.marketSearch.c_str());
             }
         } else if (tab == kBrowserTab) {                  // ---- Browser: the browser program's browser, drawn by OkayUI ----
-            const BrowserPageMode mode = PageMode(BrowserSwitchOn(), okayFrame);
+            const BrowserPageMode mode = PageMode(BrowserSwitchOn(), true);
             if (mode == BrowserPageMode::Browser) {   // hosted in Dear ImGui's draw order, like What's New: ImGui's tooltips and popups lie over it
                 ImVec2 ra = ImGui::GetContentRegionAvail();
                 ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - PageFooterH(), 8.0f);
-#ifdef OKAY_HAVE_OKAYUI
                 HostOkayPage("##okayui_browser", ra, [&](ImVec2 p, ImVec2 a) { DrawBrowserPage(p.x, p.y, a.x, a.y); });
-#else
-                ImGui::Dummy(ra);
-#endif
             } else if (mode == BrowserPageMode::SwitchedOff) {
                 sectionHeader("Browser", nullptr);
                 EmptyState(kIcoGlobe, "The browser is switched off", "Turn on Settings > Experimental > Browser and restart the launcher to browse the web here. Links open in your system browser meanwhile.", UiPx(40.0f));
@@ -15772,8 +15715,7 @@ int main(int argc, char** argv) {
 
         } else if (tab == 14) {                           // ---- Multiplayer ----
             DrawMultiplayerPage(account.IsLoggedIn() || kUiDemoUser);
-        } else if (tab == 12 && okay::launcherlayout::OkayUIDrawsPage(tab, okayFrame)) {   // ---- What's New, drawn by OkayUI ----
-#ifdef OKAY_HAVE_OKAYUI
+        } else if (tab == 12) {                           // ---- What's New (an OkayUI screen) ----
             // Same data and same actions as the Dear ImGui page below: your version, the update status with its button,
             // the newest notes, the earlier releases, the link to all releases. Differences are listed in
             // docs/ui/own_ui_toolkit.md section 5.
@@ -15833,207 +15775,7 @@ int main(int argc, char** argv) {
             if (wr.installNow) InstallOffered(wn.availableVersion);
             if (wr.restartNow) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
             if (wr.checkForUpdates) StartUpdateCheck();
-#endif
-        } else if (tab == 12) {                           // ---- What's New ----
-            sectionHeader("What's New", "Release notes for OkaySpace, newest first.");
-            if (!g_newsHistory.empty() && g_newsSeen != g_newsHistory[0].ver) { g_newsSeen = g_newsHistory[0].ver; SavePrefs(); }
-            const ImVec4 cardBg = okaytheme::kRaised;
-            // ---- Your version + update status ----
-            {
-                const UpState us = GetState();
-                const bool busy = us == Up_Checking || us == Up_Downloading;
-                const bool avail = !g_upAvailable.empty() && !busy && us != Up_Updated;
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 12));
-                ImGui::BeginChild("##wnver", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
-                const ImVec2 top = ImGui::GetCursorPos();
-                const float bw = 160.0f;
-                ImGui::SetWindowFontScale(1.12f);
-                ImGui::Text("You're on v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());
-                ImGui::SetWindowFontScale(1.0f);
-                const std::string skippedV = busy || us == Up_Updated ? std::string() : SkippedOfferVersion();   // the way back from "Skip this version"
-                if (avail && g_upAvailableSkipped) ImGui::TextColored(okaytheme::Current().success, "%s", okay::updateview::SkippedLine(g_upAvailable).c_str());
-                else if (avail) ImGui::TextColored(okaytheme::Current().success, "%s is ready to install.",
-                                              (g_upAvailableTitle.empty() ? "v" + g_upAvailable : g_upAvailableTitle + " (v" + g_upAvailable + ")").c_str());
-                else if (!skippedV.empty()) ImGui::TextDisabled("%s", okay::updateview::SkippedLine(skippedV).c_str());
-                else if (busy) ImGui::TextDisabled("%s", GetUpMsg().empty() ? "Checking for updates\xE2\x80\xA6" : GetUpMsg().c_str());
-                else if (us == Up_Updated) ImGui::TextColored(okaytheme::Current().success, "Update installed.");
-                else if (us == Up_Failed) ImGui::TextColored(okaytheme::Current().danger, "%s", GetUpMsg().c_str());
-                else if (!g_upAheadNote.empty()) ImGui::TextDisabled("%s", g_upAheadNote.c_str());   // a test build ahead of the release
-                else if (!g_upLatest.empty() && CompareVersions(OKAY_ENGINE_VERSION, g_upLatest) >= 0) ImGui::TextDisabled("You're up to date.");
-                else ImGui::TextDisabled("Updates are checked automatically while the launcher is open.");
-                if (avail && !g_upAvailableNote.empty()) { ImGui::PushTextWrapPos(ImGui::GetContentRegionMax().x - bw - 12.0f); ImGui::TextDisabled("%s", g_upAvailableNote.c_str()); ImGui::PopTextWrapPos(); }
-                const float below = ImGui::GetCursorPosY();
-                ImGui::SetCursorPos(ImVec2(top.x + ImGui::GetContentRegionMax().x - top.x - bw, top.y + (below - top.y - 32.0f) * 0.5f));
-                if (avail) { if (PrimaryButton("Install now", ImVec2(bw, 32))) InstallOffered(g_upAvailable); }
-                else if (!skippedV.empty()) { if (ImGui::Button("Install", ImVec2(bw, 32))) InstallOffered(skippedV); }
-                else if (us == Up_Updated && g_upRelaunchNeeded) {
-                    if (PrimaryButton("Restart now", ImVec2(bw, 32))) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
-                }
-                else { ImGui::BeginDisabled(busy); if (ImGui::Button(busy ? "Checking\xE2\x80\xA6" : "Check for updates", ImVec2(bw, 32))) StartUpdateCheck(); ImGui::EndDisabled(); }
-                if (ImGui::GetCursorPosY() < below) { ImGui::SetCursorPosY(below); ImGui::Dummy(ImVec2(0, 0)); }
-                ImGui::EndChild();
-                ImGui::PopStyleVar();
-                ImGui::PopStyleColor();
-            }
-            ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
-            namespace PL = okay::launcherlayout;
-            // Two sections: the releases' notes, and the test builds (dev/versions.json and the newest one's dev/NOTES-DEV.txt).
-            std::vector<DevBuildRow> devRows; std::string devNotes; int devState = 0; std::map<std::string, std::string> relDates; bool testsOn = false;
-            WhatsNewData(devRows, devNotes, devState, relDates, testsOn);
-            int& wnSection = g_wnSection;   // 0 Releases, 1 Test builds (shared with the OkayUI version of the page)
-            {
-                std::vector<Chip> chips(2);
-                chips[0].label = "Releases";
-                chips[1].label = "Test builds";
-                if (testsOn && !devRows.empty()) chips[1].count = (int)devRows.size();
-                const int hit = ChipRow("##wnsect", chips, wnSection, ImGui::GetContentRegionAvail().x);
-                if (hit >= 0) wnSection = hit;
-                ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
-            }
-            static std::set<std::string> s_wnExpanded;   // releases / builds whose notes show in full
-            // Notes as wrapped bullets: a long list shows its first lines and "Show all N notes".
-            auto notesList = [&](const std::string& key, const std::vector<std::string>& lines) {
-                const bool expanded = s_wnExpanded.count(key) != 0;
-                const PL::NotesView nv = PL::NotesShown((int)lines.size(), expanded);
-                ImGui::PushTextWrapPos(0.0f);
-                for (int i = 0; i < nv.shown; ++i) {   // (ImGui::BulletText never wraps: a long note ran off the card, cut at its edge)
-                    ImGui::Bullet();
-                    ImGui::SameLine();
-                    ImGui::BeginGroup();   // the wrapped lines line up under the first one, not under the bullet
-                    ImGui::TextWrapped("%s", lines[(std::size_t)i].c_str());
-                    ImGui::EndGroup();
-                }
-                ImGui::PopTextWrapPos();
-                if (nv.toggle) {
-                    ImGui::Dummy(ImVec2(0, UiPx(2.0f)));
-                    char tl[64];
-                    if (expanded) std::snprintf(tl, sizeof(tl), "Show less##%s", key.c_str());
-                    else std::snprintf(tl, sizeof(tl), "Show all %d notes##%s", (int)lines.size(), key.c_str());
-                    if (FitButton(tl, 0.0f)) { if (expanded) s_wnExpanded.erase(key); else s_wnExpanded.insert(key); }
-                }
-            };
-            auto splitLines = [](const std::string& text) {
-                std::vector<std::string> v;
-                for (std::size_t a = 0; a < text.size();) {
-                    std::size_t e = text.find('\n', a); if (e == std::string::npos) e = text.size();
-                    if (e > a) v.push_back(text.substr(a, e - a));
-                    a = e + 1;
-                }
-                return v;
-            };
-            auto pill = [&](const char* text, ImVec4 col) {
-                ImGui::SameLine(0, UiPx(10.0f));
-                ImVec2 pp = ImGui::GetCursorScreenPos();
-                const ImVec2 ts = ImGui::CalcTextSize(text);
-                pp.y += UiPx(2.0f);
-                ImGui::GetWindowDrawList()->AddRectFilled(pp, ImVec2(pp.x + ts.x + UiPx(14.0f), pp.y + ts.y + UiPx(4.0f)), ImGui::GetColorU32(ImVec4(col.x, col.y, col.z, 0.30f)), (ts.y + UiPx(4.0f)) * 0.5f);
-                ImGui::GetWindowDrawList()->AddText(ImVec2(pp.x + UiPx(7.0f), pp.y + UiPx(2.0f)), ImGui::GetColorU32(ImGuiCol_Text), text);
-                ImGui::Dummy(ImVec2(ts.x + UiPx(14.0f), ts.y));
-            };
-            ImGui::BeginChild("##wnbody", ImVec2(0, std::max(UiPx(120.0f), ImGui::GetContentRegionAvail().y - PageFooterH())), false);
-            if (wnSection == 0) {   // ---- Releases ----
-                if (!g_newsHistory.empty()) {
-                    const NewsRelease& r = g_newsHistory[0];
-                    ImGui::PushID(r.ver.c_str());
-                    ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
-                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(16.0f), UiPx(12.0f)));
-                    ImGui::BeginChild("##rel", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
-                    ImGui::SetWindowFontScale(1.12f);
-                    ImGui::TextUnformatted(r.ver.c_str());
-                    ImGui::SetWindowFontScale(1.0f);
-                    pill("Latest", kAccent);
-                    const auto dIt = relDates.find(r.ver);
-                    if (dIt != relDates.end()) { ImGui::SameLine(0, UiPx(10.0f)); ImGui::TextDisabled("%s", dIt->second.c_str()); }
-                    ImGui::Dummy(ImVec2(0, UiPx(2.0f)));
-                    notesList(r.ver, r.lines);
-                    ImGui::EndChild();
-                    ImGui::PopStyleVar();
-                    ImGui::PopStyleColor();
-                    ImGui::PopID();
-                    if (g_newsHistory.size() > 1) {
-                        ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
-                        SectionLabel("EARLIER RELEASES", (int)g_newsHistory.size() - 1);
-                        for (std::size_t i = 1; i < g_newsHistory.size(); ++i) {
-                            const NewsRelease& er = g_newsHistory[i];
-                            ImGui::PushID((int)i);
-                            const auto ed = relDates.find(er.ver);
-                            const std::string head = er.ver + (ed != relDates.end() ? "   " + ed->second : std::string()) + "###rel";
-                            if (ImGui::CollapsingHeader(head.c_str(), 0)) {
-                                ImGui::Indent(UiPx(8.0f));
-                                notesList(er.ver, er.lines);
-                                ImGui::Unindent(UiPx(8.0f));
-                            }
-                            ImGui::PopID();
-                        }
-                    }
-                } else {
-                    EmptyState(kIcoSpark, "No release notes yet", "They appear here once the launcher has checked for updates. You may be offline.", UiPx(30.0f));
-                }
-            } else {   // ---- Test builds ----
-                const PL::TestBuildsView tv = PL::TestBuildsViewOf(testsOn, devState, devRows.size());
-                auto openUpdateSettings = [&]() {
-                    const float bw = FitButtonW("Open update settings", UiPx(160.0f));
-                    ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - bw) * 0.5f));
-                    if (ImGui::Button("Open update settings", ImVec2(bw, ImGui::GetFrameHeight() + UiPx(8.0f)))) { tab = 4; g_setCatJump = 3; }
-                };
-                if (tv == PL::TestBuildsView::Off) {
-                    EmptyState(kIcoRefresh, "Test builds are off", "Turn on Settings > Behavior > Get test builds to see and get builds made for testing, before they are released.", UiPx(30.0f));
-                    openUpdateSettings();
-                } else if (tv == PL::TestBuildsView::Loading) {
-                    EmptyState(kIcoRefresh, "Looking for test builds\xE2\x80\xA6", "They show here after the next update check.", UiPx(30.0f));
-                } else if (tv == PL::TestBuildsView::Failed) {
-                    EmptyState(kIcoAlert, "Couldn't read the test builds", "The list could not be downloaded or was not signed. Check your connection; the next update check tries again.", UiPx(30.0f));
-                    const float bw = FitButtonW("Check again", UiPx(140.0f));
-                    ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - bw) * 0.5f));
-                    if (ImGui::Button("Check again", ImVec2(bw, ImGui::GetFrameHeight() + UiPx(8.0f)))) StartUpdateCheck();
-                } else if (tv == PL::TestBuildsView::Empty) {
-                    EmptyState(kIcoRefresh, "No test builds right now", "When a build is made for testing it shows here, newest first.", UiPx(30.0f));
-                } else {
-                    SectionLabel("RECENT TEST BUILDS", (int)devRows.size());
-                    ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
-                    const float W = ImGui::GetContentRegionAvail().x, pad = UiPx(14.0f), lh = ImGui::GetTextLineHeight();
-                    for (std::size_t i = 0; i < devRows.size(); ++i) {
-                        const DevBuildRow& b = devRows[i];
-                        const bool installed = b.version == OKAY_ENGINE_VERSION;
-                        const std::string ver = okayver::WithV(b.version);
-                        const std::string note = b.note.empty() ? std::string("No note was given for this build.") : b.note;
-                        const float noteW = W - 2 * pad;
-                        const float noteH = ImGui::CalcTextSize(note.c_str(), nullptr, false, noteW).y;
-                        const float pillW = installed ? ImGui::CalcTextSize("Installed").x + UiPx(14.0f) : 0.0f;
-                        const PL::BuildRow L = PL::LayoutBuildRow(W, pad, lh, ImGui::CalcTextSize(ver.c_str()).x + 1.0f, pillW, ImGui::CalcTextSize(b.date.c_str()).x, noteH);
-                        ImDrawList* dl = ImGui::GetWindowDrawList();
-                        const ImVec2 o = ImGui::GetCursorScreenPos();
-                        dl->AddRectFilled(o, ImVec2(o.x + W, o.y + L.row.h), ImGui::GetColorU32(cardBg), UiPx(12.0f));
-                        if (installed) dl->AddRect(o, ImVec2(o.x + W, o.y + L.row.h), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.6f)), UiPx(12.0f), 0, 1.2f);
-                        dl->AddText(ImVec2(o.x + L.version.x, o.y + L.version.y), ImGui::GetColorU32(ImGuiCol_Text), FitText(ver, L.version.w).c_str());
-                        if (installed) {
-                            dl->AddRectFilled(ImVec2(o.x + L.pill.x, o.y + L.pill.y), ImVec2(o.x + L.pill.R(), o.y + L.pill.B()), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.30f)), lh * 0.5f);
-                            dl->AddText(ImVec2(o.x + L.pill.x + UiPx(7.0f), o.y + L.pill.y), ImGui::GetColorU32(ImGuiCol_Text), "Installed");
-                        }
-                        dl->AddText(ImVec2(o.x + L.date.x, o.y + L.date.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), b.date.c_str());
-                        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(o.x + L.note.x, o.y + L.note.y),
-                                    b.note.empty() ? ImGui::GetColorU32(ImGuiCol_TextDisabled) : ImGui::GetColorU32(ImGuiCol_Text, 0.85f), note.c_str(), nullptr, noteW);
-                        const std::string br = "Branch: " + (b.branch.empty() ? std::string("not given") : okay::testbuild::DisplayBranch(b.branch));
-                        dl->AddText(ImVec2(o.x + L.branch.x, o.y + L.branch.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), FitText(br, L.branch.w).c_str());
-                        ImGui::Dummy(ImVec2(W, L.row.h));
-                        if (i == 0 && !devNotes.empty()) {   // the newest build's own notes (dev/NOTES-DEV.txt)
-                            ImGui::Indent(pad);
-                            ImGui::Dummy(ImVec2(0, UiPx(2.0f)));
-                            ImGui::TextDisabled("What changed in this build");
-                            notesList("dev:" + b.version, splitLines(devNotes));
-                            ImGui::Unindent(pad);
-                        }
-                        ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
-                    }
-                    ImGui::TextDisabled("Test builds can be broken. Settings > Behavior > Get test builds turns them off.");
-                }
-            }
-            ImGui::EndChild();   // ##wnbody
-        } else if (tab == 13 && okay::launcherlayout::OkayUIDrawsPage(tab, okayFrame)) {   // ---- Tips, drawn by OkayUI ----
-#ifdef OKAY_HAVE_OKAYUI
+        } else if (tab == 13) {                           // ---- Tips (an OkayUI screen) ----
             // Same tips (shared/LauncherTips.hpp), tip of the day, category pills and search as the Dear ImGui page below; the
             // differences are listed in docs/ui/own_ui_toolkit.md section 6.
             static okayuiscreens::TipsModel tm;
@@ -16047,86 +15789,6 @@ int main(int argc, char** argv) {
             ImVec2 ra = ImGui::GetContentRegionAvail();
             ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer stays below, pinned by ImGui
             HostOkayPage("##okayui_tips", ra, [&](ImVec2 p, ImVec2 a) { okayuiscreens::DrawTips(tm, ts, p.x, p.y, a.x, a.y); });
-#endif
-        } else if (tab == 13) {                           // ---- Tips ----
-            sectionHeader("Tips", "Shortcuts and tricks for the editor, scripting, building and the launcher.");
-            using launchertips::Tip;   // the words live in shared/LauncherTips.hpp, so the OkayUI page shows the same ones
-            const char* const* kCats = launchertips::kCats;
-            const Tip* kTips = launchertips::kTips;
-            const int nTips = launchertips::kTipCount;
-            static int s_cat = 0;
-            static char s_q[96] = "";
-            static int s_daily = -1;
-            if (s_daily < 0) { std::time_t now = std::time(nullptr); s_daily = (int)((now / 86400) % nTips); }
-            const ImVec4 cardBg = okaytheme::kRaised;
-            // ---- Tip of the day ----
-            {
-                const Tip& t = kTips[s_daily];
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 12));
-                ImGui::BeginChild("##tipday", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
-                const ImVec2 bp = ImGui::GetCursorScreenPos();
-                DrawNavIcon(ImGui::GetWindowDrawList(), kIcoBulb, ImVec2(bp.x + 9, bp.y + 10), ImGui::GetColorU32(kAccent));
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 26);
-                ImGui::TextColored(okaytheme::AccentText(kAccent), "Tip of the day  \xC2\xB7  %s", kCats[t.cat]);
-                ImGui::SetWindowFontScale(1.12f);
-                ImGui::TextUnformatted(t.title);
-                ImGui::SetWindowFontScale(1.0f);
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextDisabled("%s", t.body);
-                ImGui::PopTextWrapPos();
-                if (ImGui::SmallButton("Next tip")) s_daily = (s_daily + 1) % nTips;
-                ImGui::EndChild();
-                ImGui::PopStyleVar();
-                ImGui::PopStyleColor();
-            }
-            ImGui::Dummy(ImVec2(0, 10));
-            // ---- Filter: category pills + search ----
-            for (int c = 0; c < 5; ++c) {
-                if (c) ImGui::SameLine(0, 6);
-                const bool on = s_cat == c;
-                if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.55f));
-                if (ImGui::Button(kCats[c])) s_cat = c;
-                if (on) ImGui::PopStyleColor();
-            }
-            ImGui::SameLine(0, 16);
-            ImGui::SetNextItemWidth(std::min(260.0f, ImGui::GetContentRegionAvail().x));
-            if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
-            ImGui::InputTextWithHint("##tipq", "Search tips", s_q, sizeof(s_q));
-            ImGui::Dummy(ImVec2(0, 6));
-            std::string q = s_q; for (auto& ch : q) ch = (char)std::tolower((unsigned char)ch);
-            auto lc = [](std::string v) { for (auto& ch : v) ch = (char)std::tolower((unsigned char)ch); return v; };
-            std::vector<int> shown;
-            for (int i = 0; i < nTips; ++i) {
-                if (s_cat && kTips[i].cat != s_cat) continue;
-                if (!q.empty() && lc(kTips[i].title).find(q) == std::string::npos && lc(kTips[i].body).find(q) == std::string::npos) continue;
-                shown.push_back(i);
-            }
-            if (shown.empty()) ImGui::TextDisabled("No tips match \"%s\".", s_q);
-            // Two columns of cards when there's room.
-            const int cols = ImGui::GetContentRegionAvail().x > 760.0f ? 2 : 1;
-            if (ImGui::BeginTable("##tips", cols, ImGuiTableFlags_SizingStretchSame)) {
-                for (int idx : shown) {
-                    const Tip& t = kTips[idx];
-                    ImGui::TableNextColumn();
-                    ImGui::PushID(idx);
-                    ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
-                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
-                    ImGui::BeginChild("##tip", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
-                    ImGui::TextDisabled("%s", kCats[t.cat]);
-                    ImGui::TextUnformatted(t.title);
-                    ImGui::PushTextWrapPos(0.0f);
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_Text, 0.82f));
-                    ImGui::TextUnformatted(t.body);
-                    ImGui::PopStyleColor();
-                    ImGui::PopTextWrapPos();
-                    ImGui::EndChild();
-                    ImGui::PopStyleVar();
-                    ImGui::PopStyleColor();
-                    ImGui::PopID();
-                }
-                ImGui::EndTable();
-            }
         } else if (tab == 1) {                            // ---- Play ----
             sectionHeader("Play a game", nullptr);
             DrawOfficialCard();   // the official game, front and centre (hidden until one is published)
@@ -17794,34 +17456,6 @@ int main(int argc, char** argv) {
 
                     cardBegin("##sc_ui", "CUSTOMIZE");
                     if (okayappearance::Customization(ImGui::GetContentRegionAvail().x, true)) DarkTheme();
-                    if (okayuibackend::SettingRowVisible(okayuibackend::DevMode(std::getenv("OKAY_DEV")))) {   // developer-only: not offered to users until the OkayUI ports are declared ready
-                    rowDivider();
-                    {   // Which toolkit draws the pages that have an OkayUI port (today: What's New). Dear ImGui stays the default.
-                        const char* envBackend = std::getenv("OKAY_UI_BACKEND");
-                        const int src = okayuibackend::Source(envBackend, g_uiBackendSetting, true);
-                        const bool can = okayuibackend::CompiledIn();
-                        char bdesc[300];
-                        std::snprintf(bdesc, sizeof(bdesc), "%s%s", can
-                            ? "OkayUI is the toolkit being built to replace Dear ImGui. Preview: only the What's New page is ported; every other page stays as it is. Applies at once."
-                            : "This build has no OkayUI, so every page uses Dear ImGui.",
-                            src == 2 ? " The OKAY_UI_BACKEND environment variable is set and decides this." : "");
-                        settingRow("UI backend", bdesc, 220.0f, ImGui::GetFrameHeight(), [&](float w) {
-                            ImGui::SetNextItemWidth(std::min(w, 240.0f));
-                            ImGui::BeginDisabled(!can || src == 2);
-                            if (BeginSlateCombo("##uibackend", okayuibackend::Label(g_uiBackend))) {
-                                for (okayuibackend::Backend opt : {okayuibackend::Backend::ImGui, okayuibackend::Backend::OkayUI}) {
-                                    if (ImGui::Selectable(okayuibackend::Label(opt), g_uiBackend == opt) && g_uiBackend != opt) {
-                                        g_uiBackendSetting = okayuibackend::Name(opt);
-                                        ResolveUiBackend();
-                                        SavePrefs();
-                                    }
-                                }
-                                ImGui::EndCombo();
-                            }
-                            ImGui::EndDisabled();
-                        });
-                    }
-                    }   // developer-only row
                     cardEnd();
                 } else if (setCat == 1) {   // ---- Chat & Notifications ----
                     cardBegin("##sc_chat", "CHAT");
@@ -18376,21 +18010,6 @@ int main(int argc, char** argv) {
                             ImGui::SameLine();
                             ImGui::TextDisabled("%s", osw::StatusText(stt));
                         });
-                    }
-                    {   // the "launch alternative exe" row: the same launcher built on our own UI (OKAY_LAUNCHER_ON_OKAYUI), or the way back from it
-                        const osw::AlternativeExe& alt = osw::Alternative();
-                        std::string altExe;
-                        for (const std::string& n : alt.launcherNames) if (altExe.empty()) altExe = FindExe({n.c_str()});
-                        if (!altExe.empty()) {
-                            rowDivider();
-                            settingRow(alt.label, alt.desc, 150.0f, 30.0f, [&](float) {
-                                if (ImGui::Button("Restart", ImVec2(okl::FitButtonW("Restart", okl::UiPx(130.0f)), okl::UiPx(30.0f))) && !UpdateBlocksLaunch()) {
-                                    // The editor closes when the launcher that started it goes (editor/LauncherWatch.hpp), so it is closed first.
-                                    if (EditorRunning()) Toast("Close the editor first: it closes with this launcher.", 2);
-                                    else if (SpawnTracked(altExe, std::string(), "alt-launcher", "")) running = false;
-                                }
-                            });
-                        }
                     }
                     cardEnd();
                 } else if (setCat == 9) {   // ---- Crash reports ----
@@ -22766,17 +22385,11 @@ int main(int argc, char** argv) {
         StartupUpdateFrame();   // the start-up "Checking for updates" panel (over everything, under the toasts)
         DrawToastOverlay();
 
-#ifdef OKAY_HAVE_OKAYUI
-        if (okayFrame) OkayUIClaimKeyboard();   // before Render: ImGui learns that a hosted OkayUI field has the keyboard
-#endif
+        OkayUI::PopStyleVar(2);
         ImGui::Render();
         okay::pb::SetDrawColor(renderer, 30, 30, 32, 255);
         okay::pb::Clear(renderer);
-        if (g_imguiOwnRender) okay::imguirender::Render(*okay::pb::For(renderer), ImGui::GetDrawData());
-        else ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
-#ifdef OKAY_HAVE_OKAYUI
-        if (okayFrame) okay::pb::OkayUIEndFrame(renderer);   // on top of everything ImGui drew, through the same renderer
-#endif
+        okay::imguirender::Render(*okay::pb::For(renderer), ImGui::GetDrawData());
 #ifdef OKAY_ENABLE_TEST_HOOKS
         for (const std::string& shot : testHooks.TakeShots())
             if (!okay::testhooks::SavePicture(*okay::pb::For(renderer), shot)) std::fprintf(stderr, "[test-hook] could not save %s\n", shot.c_str());
@@ -22830,8 +22443,8 @@ int main(int argc, char** argv) {
         okay::thr::DestroyMutex(g_dlMutex); g_dlMutex = nullptr;
     }
     if (g_tray) g_tray->Shutdown();   // no stray tray icon after exit
-    if (g_imguiOwnRender) okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Shutdown();
-    if (g_imguiOwnFeed) { g_imguiFeed.Shutdown(ImGui::GetIO()); g_imguiMainWrap.reset(); } else ImGui_ImplSDL2_Shutdown();
+    okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO());
+    g_imguiFeed.Shutdown(ImGui::GetIO()); g_imguiMainWrap.reset();
     ImGui::DestroyContext();
     okay::pb::DestroyRenderer(renderer);   // its painter owns it
     mainWinOwner.reset();   // destroys the main window (after its renderer)

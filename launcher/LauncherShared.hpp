@@ -3,7 +3,7 @@
 // editor/MainShared.hpp; docs/engine/modularization_plan.md, Part C). This list shrinks as main.cpp is split further;
 // each entry moves to the header of the file that ends up owning it. Everything is in namespace okl (the launcher's
 // names; main.cpp's anonymous namespace became okl so the split-out files can reach them).
-#include "imgui.h"
+#include "okay/UI/OkayUIImGuiNames.hpp"   // OkayUI, in Dear ImGui's names
 #include <SDL.h>
 #include "OkayThreads.hpp"   // okay::thr (the launcher's mutexes and threads)
 #include "okay/Net/JoinLink.hpp"            // ChatInviteInfo holds a link

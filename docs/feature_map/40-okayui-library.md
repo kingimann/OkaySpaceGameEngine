@@ -232,3 +232,40 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Words:** Inspector, OkayUI Inspector, field rows, component body, replace Dear ImGui, preview, Experimental, OKAY_UI_INSPECTOR
 - **Seen as:** the Inspector looks the same with OkayUI on; a component body is still Dear ImGui with OkayUI on; typing in an OkayUI field triggers an editor shortcut
 - **Ask me like:** "work on 40.10, bring the Light body's OkayUI rows up to date"
+
+
+### 40.12 The whole editor on OkayUI (`OkayEngineOkayUI`)
+- **System:** OkayUI
+- **What:** the editor's own sources compiled a second time against OkayUI's Dear ImGui layer, so the program has no Dear ImGui in it: the step before OkayUI becomes the editor's only UI. First built, linked and run on 2026-11-27.
+- **Parts:**
+  - 40.12.1 The program - `editor/CMakeLists.txt` (target `okay-editor-okayui`, CMake option `OKAY_EDITOR_ON_OKAYUI`, ctest `editor_okayui`), `shared/OkayUIImGuiBackendShim.cpp`, `okayui/probe/`
+  - 40.12.2 Gaps closed for it - `okayui/src/OkayUI_Windows.cpp` (menu bar row, docking by `ConfigFlags_DockingEnable`, auto-fit axes, regions inside windows, focus of docked tabs), `okayui/src/OkayUI_Menus.cpp` (modals outside windows, menu items as last item, popup queries), `okayui/src/OkayUI.cpp` (`###` ids, clipped children in popups, `ColorEdit_HDR`), `okayui/src/OkayUIDock.cpp` (`DockAdoptTitle`), `editor/ModalGuard.hpp` (its OkayUI part)
+- **Code:** `editor/CMakeLists.txt`, `okayui/src/OkayUI_Windows.cpp`, `okayui/src/OkayUI_Menus.cpp`, `editor/ModalGuard.hpp`
+- **API:** `OkayUI::ClosePopup`, `OkayUI::ListOpenPopups`, `OkayUI::CurrentPopupDepth`, `OkayUI::DockAdoptTitle`, `OkayUI::DockLayout::Rename`, `OkayUI::ColorEdit_HDR`
+- **Editor:** a separate program, `bin/OkayEngineOkayUI`, built only with `-DOKAY_EDITOR_ON_OKAYUI=ON`; the normal editor is unchanged
+- **Docs:** `docs/ui/own_ui_toolkit.md` (sections 6.26 and 32, with the gap table)
+- **Tests:** `editor_okayui`, `okayui_port_modalguard`, `okayui_windows`, `okayui_dockaware`, `okayui_color`
+- **Status:** Partial - builds, self-test passes, runs headless on Linux (gate, docked panels, 3D Scene view, Hierarchy, Inspector, menus, Play, Build Settings, Project Settings); never run on Windows or in a real window
+- **Open:** `ImGui::GetStyle()` writes are lost (theme metrics, tab padding, play tint); taller rows; the Inspector's Color cells; multi-window panels; drag and drop and several windows not tried; Dear ImGui not removed yet
+- **Related:** 40.9, 40.10
+- **Words:** OkayEngineOkayUI, editor on OkayUI, OKAY_EDITOR_ON_OKAYUI, replace Dear ImGui, move off ImGui, no Dear ImGui
+- **Seen as:** the editor on OkayUI shows panels floating instead of docked; a modal does not show; the menu bar is missing; a section draws outside its window
+- **Ask me like:** "work on 40.12, finish the editor on OkayUI"
+### 40.11 The launcher on OkayUI only (no Dear ImGui)
+- **System:** OkayUI
+- **What:** the launcher (`OkaySpace.exe`) is drawn by OkayUI alone since 2026-11-27: its pages, written in Dear ImGui's names, compile against OkayUI's compatibility layer, and Dear ImGui is no longer built into it. The chat pop-out is OkayUI's second context in its own window; What's New, Tips and the Browser page are OkayUI screens drawn in place.
+- **Parts:**
+  - 40.11.1 Several contexts - `okayui/src/OkayUI_Context.cpp`, `okayui/src/OkayUI_ContextState.hpp` - CreateContext / SetCurrentContext / DestroyContext; each file lists its per-context variables (`OKAYUI_CONTEXT_STATE`), switching exchanges them
+  - 40.11.2 Dear ImGui's rules for a whole program - `okayui/src/OkayUI.cpp`, `okayui/src/OkayUI_Windows.cpp` - `UseImGuiCoordinates` (cursor from the window corner, window size of the innermost child), text rows (`StyleVar_TextRowHeight` < 0), child fill and `ChildRounding`, `GetStyle()` writes and `FontGlobalScale` taken in, wrapped `CalcTextSize` / `AddText`, `TextLink`, `ScrollTextBoxToEnd`
+  - 40.11.3 The launcher's host - `launcher/main.cpp` (frame start: framed widgets and text rows pushed; `ChatHostFrame`), `launcher/CMakeLists.txt` (`okayui/probe` first on the include path), `okayui/probe/ImGuiPainterRenderer.hpp`, `shared/ImGuiPlatformFeed.hpp`
+- **Code:** `okayui/src/OkayUI_Context.cpp`, `okayui/src/OkayUI_ContextState.hpp`, `okayui/src/OkayUIText.cpp`, `launcher/main.cpp`, `launcher/CMakeLists.txt`
+- **API:** `OkayUI::CreateContext`, `OkayUI::SetCurrentContext`, `OkayUI::UseImGuiCoordinates`, `OkayUI::TextLink`, `OkayUI::ScrollTextBoxToEnd`
+- **Docs:** `docs/ui/own_ui_toolkit.md` (section 31)
+- **Tests:** `okayui_contexts`, `okayui_calls`, `launcher_page_layout`, `launcher_theme`
+- **Status:** Works - built and run headless on Linux under Xvfb (every page, the chat window, scripted clicks and typing, the design picker); not built or run on Windows.
+- **Open:** run on Windows; keyboard navigation of buttons (Dear ImGui's NavEnableKeyboard was off in the launcher, so nothing is lost); small drawing differences (slider, combo arrow); the editor is the editor agent's.
+- **Related:** 40.9, 17.1
+- **Words:** launcher, OkayUI, no Dear ImGui, contexts, chat window, compatibility layer, replace Dear ImGui
+- **Seen as:** a launcher page looks different from before; the chat window does not take clicks; text in a settings row runs under its control
+- **Ask me like:** "work on 40.11, the launcher's combo arrow looks different"
+

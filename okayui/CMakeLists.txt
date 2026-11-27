@@ -17,7 +17,7 @@ endif()
 
 # The Direct3D 11 backend (src/OkayUI_D3D11.cpp) is guarded by #if defined(_WIN32),
 # so it compiles to nothing off Windows and never affects the Linux/SDL build.
-add_library(okay_ui STATIC src/OkayUI.cpp src/OkayUI_FontAtlas.cpp src/OkayUI_Tooltips.cpp src/OkayUI_DrawList.cpp src/OkayUI_Tables.cpp src/OkayUI_Menus.cpp src/OkayUI_Windows.cpp src/OkayUI_Basic.cpp src/OkayUI_Style.cpp src/OkayUI_Design.cpp src/OkayUI_Capture.cpp src/OkayUI_Toolkit.cpp src/OkayUI_DragDrop.cpp src/OkayUI_Trees.cpp src/OkayUI_Tabs.cpp src/OkayUI_D3D11.cpp src/OkayUICodeEdit.cpp src/OkayUIDock.cpp src/OkayUIDockLayout.cpp src/OkayUIDockBuilder.cpp src/OkayUIDockNodes.cpp src/OkayUIColor.cpp src/OkayUIPlots.cpp src/OkayUIText.cpp src/OkayUICompat.cpp)
+add_library(okay_ui STATIC src/OkayUI.cpp src/OkayUI_Context.cpp src/OkayUI_FontAtlas.cpp src/OkayUI_Tooltips.cpp src/OkayUI_DrawList.cpp src/OkayUI_Tables.cpp src/OkayUI_Menus.cpp src/OkayUI_Windows.cpp src/OkayUI_Basic.cpp src/OkayUI_Style.cpp src/OkayUI_Design.cpp src/OkayUI_Capture.cpp src/OkayUI_Toolkit.cpp src/OkayUI_DragDrop.cpp src/OkayUI_Trees.cpp src/OkayUI_Tabs.cpp src/OkayUI_D3D11.cpp src/OkayUICodeEdit.cpp src/OkayUIDock.cpp src/OkayUIDockLayout.cpp src/OkayUIDockBuilder.cpp src/OkayUIDockNodes.cpp src/OkayUIColor.cpp src/OkayUIPlots.cpp src/OkayUIText.cpp src/OkayUICompat.cpp)
 target_include_directories(okay_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # The launcher look's font: Roboto (shared/RobotoFont.h) baked with the engine's own
 # TrueType rasterizer (Graphics/TtfRaster).
@@ -92,6 +92,17 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
         # No window, no GPU: make sure SDL never tries to open a display.
         set_tests_properties(${t} PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     endforeach()
+    # Several contexts (okayui/src/OkayUI_Context.cpp): behaviour, and with nm that every data symbol of okay_ui is listed for a
+    # context or shared on purpose (the launcher's chat window is a second context).
+    add_executable(test_okayui_contexts tests/test_okayui_contexts.cpp)
+    target_link_libraries(test_okayui_contexts PRIVATE okay_ui_render)
+    target_include_directories(test_okayui_contexts PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
+    target_compile_definitions(test_okayui_contexts PRIVATE OKAYUI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
+    if(CMAKE_NM AND NOT WIN32)
+        target_compile_definitions(test_okayui_contexts PRIVATE OKAYUI_NM="${CMAKE_NM}" OKAYUI_LIB_PATH="$<TARGET_FILE:okay_ui>")
+    endif()
+    add_test(NAME okayui_contexts COMMAND test_okayui_contexts)
+    set_tests_properties(okayui_contexts PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     # Browser round 3: the page corpus (tests/data/browser_pages) drawn through the browser view and compared with goldens.
     add_executable(test_okayui_browser_pages tests/test_okayui_browser_pages.cpp)
     target_link_libraries(test_okayui_browser_pages PRIVATE okay_ui_render)
@@ -127,6 +138,9 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
         set_tests_properties(${name} PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     endfunction()
     okayui_port_test(okayui_port_console ../editor/ConsolePanel.cpp ../editor/EditorWidgets.cpp)
+    # editor/ModalGuard.hpp's OkayUI part (the editor built on OkayUI): one question at a time, undrawn modals closed, the trail.
+    okayui_port_test(okayui_port_modalguard)
+    target_compile_definitions(test_okayui_port_modalguard PRIVATE OKAY_ON_OKAYUI=1)
     okayui_port_test(okayui_port_versions ../launcher/VersionsUI.cpp ../launcher/VersionsManager.cpp ../launcher/VersionsNet.cpp)
     okayui_port_test(okayui_port_project ../editor/ProjectPanelUI.cpp ../editor/ProjectMenuDraw.cpp ../editor/ProjectBrowser.cpp)
     okayui_port_test(okayui_port_project2 ../editor/ProjectPanelUI.cpp ../editor/ProjectMenuDraw.cpp ../editor/ProjectBrowser.cpp)

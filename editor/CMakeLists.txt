@@ -65,6 +65,9 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     ScriptEditorAppHost.cpp ${CMAKE_SOURCE_DIR}/shared/ScriptIdeApp.cpp   # the Script Editor window: the Script Editor program's app
     ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppScene.cpp ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppNav.cpp ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppEdit.cpp
     ${CMAKE_SOURCE_DIR}/shared/ScriptIdeAppView.cpp   # its scene scripts, New Script, find, navigation, edits, the view and the disk
+    VisualScriptAppHost.cpp ${CMAKE_SOURCE_DIR}/shared/VisualScriptApp.cpp   # the Visual Script window: the Visual Script program's app
+    ${CMAKE_SOURCE_DIR}/shared/VisualScriptAppCanvas.cpp   # its canvas and Add Block list
+    ${CMAKE_SOURCE_DIR}/shared/VisualScriptAppAids.cpp ${CMAKE_SOURCE_DIR}/shared/VisualScriptAppFields.cpp   # its aids, panels and fields
     ScriptIde.cpp                                                      # the Script Editor's workspace model: Quick Open, symbol index, rename, find/replace, quick fixes, local history
     PluginRegistry.cpp                                                 # editor plugins: the commands and providers they add to the Script Editor
     PluginScriptApi.cpp                                                # editor plugins: the script_* builtins (commands, lint, completion, formatter, hover, snippets, panels)
@@ -189,7 +192,7 @@ endif()
 # The SAME sources as okay-editor, compiled against OkayUI's Dear ImGui compatibility header (okayui/probe first on the include path: <imgui.h> is OkayUI's),
 # so no Dear ImGui is in the program. Input is shared/ImGuiPlatformFeed.hpp (OKAY_ON_OKAYUI makes it the only path), the painter-renderer is
 # okayui/probe/ImGuiPainterRenderer.hpp, the backend entry points shared/OkayUIImGuiBackendShim.cpp. Output: bin/OkayEngineOkayUI(.exe) next to OkayEngine(.exe).
-# Not built in the session that added it (the editor needs the whole engine library): checked by the CI job and by the compat probe. docs/ui/own_ui_toolkit.md
+# First built and run headless on 2026-11-27 (docs/ui/own_ui_toolkit.md section 32); the full CI run builds it in the editor job and runs its self-test.
 if(OKAY_EDITOR_ON_OKAYUI AND TARGET okay_ui AND TARGET okay_ui_screens)
     get_target_property(_ed_srcs okay-editor SOURCES)
     list(FILTER _ed_srcs EXCLUDE REGEX "TARGET_OBJECTS")   # the window-mode panel copies are Dear ImGui-API sources compiled for the other editor
@@ -198,7 +201,7 @@ if(OKAY_EDITOR_ON_OKAYUI AND TARGET okay_ui AND TARGET okay_ui_screens)
     target_compile_definitions(okay-editor-okayui PRIVATE ${OKAY_VERSION_DEFINE} OKAY_ON_OKAYUI=1 OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
     target_compile_features(okay-editor-okayui PRIVATE cxx_std_17)
     target_include_directories(okay-editor-okayui BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe ${CMAKE_SOURCE_DIR}/okayui/probe/backends)
-    target_include_directories(okay-editor-okayui PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher
+    target_include_directories(okay-editor-okayui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher
         ${CMAKE_SOURCE_DIR}/okayui/include ${CMAKE_SOURCE_DIR}/okayui/screens ${CMAKE_SOURCE_DIR}/okayui/soft)
     target_link_libraries(okay-editor-okayui PRIVATE okay::engine okay_ui okay_ui_screens okay_ui_soft ${OKAY_SDL_LIB})
     target_link_libraries(okay-editor-okayui PRIVATE $<TARGET_NAME_IF_EXISTS:okay_cli_panel>)   # View > Panels > Command Line
@@ -213,4 +216,7 @@ if(OKAY_EDITOR_ON_OKAYUI AND TARGET okay_ui AND TARGET okay_ui_screens)
         target_link_libraries(okay-editor-okayui PRIVATE comdlg32 ole32 shell32 user32 dbghelp)
     endif()
     set_target_properties(okay-editor-okayui PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin OUTPUT_NAME "OkayEngineOkayUI")
+    if(OKAY_BUILD_TESTS)
+        add_test(NAME editor_okayui COMMAND okay-editor-okayui --selftest)   # the editor's self-test on the OkayUI build
+    endif()
 endif()

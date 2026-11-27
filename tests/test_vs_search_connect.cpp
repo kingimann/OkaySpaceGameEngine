@@ -1,6 +1,6 @@
 // Plain-word search (Starter blocks first) and the pure auto-connect / insert-on-wire rules.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include "VisualScriptAutoConnect.hpp"
 #include "VisualScriptSearch.hpp"
 #include "VisualScriptGlossary.hpp"

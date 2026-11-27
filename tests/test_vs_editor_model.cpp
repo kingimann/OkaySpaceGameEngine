@@ -3,7 +3,7 @@
 // never invents wires; and layout coordinates / ids can't hit undefined casts.
 #include "test_framework.hpp"
 #include "test_sandbox.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include "ActionExport.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/ActionList.hpp"

@@ -1,7 +1,7 @@
 // Every visual-script node and every Actions step has a real topic.
 // A missing topic, or a catch-all such as "Do something", fails the test.
 #include "test_framework.hpp"
-#include "VisualScriptEditor.hpp"
+#include "VisualScriptModel.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include <fstream>
 #include <set>

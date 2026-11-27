@@ -116,13 +116,14 @@ int main() {
     }
 
 #ifdef OKAY_SOURCE_DIR
-    {   // Wiring: both windows read the shared numbers (nobody keeps a private copy), and the pickers exist.
-        const std::string vs = Slurp("editor/VisualScriptEditor.hpp"), pal = Slurp("editor/VisualScriptPalette.hpp"), mn = Slurp("editor/main.cpp");
-        CHECK(vs.find("ScriptingDensity.hpp") != std::string::npos && pal.find("ScriptingDensity.hpp") != std::string::npos);
-        CHECK(vs.find("scriptui::Current()") != std::string::npos && pal.find("scriptui::Current()") != std::string::npos);
-        CHECK(vs.find("292.0f * z") == std::string::npos);          // the old fixed node size is gone
+    {   // Wiring: the Visual Script app reads the shared numbers (nobody keeps a private copy), its View menu has the picker, and the
+        // editor saves a changed choice. (The editor's Dear ImGui Visual Script window and its palette read them before the app
+        // replaced them.)
+        const std::string canvas = Slurp("shared/VisualScriptAppCanvas.cpp"), app = Slurp("shared/VisualScriptApp.cpp"), mn = Slurp("editor/main.cpp");
+        CHECK(canvas.find("scriptui::Current()") != std::string::npos);
+        CHECK(canvas.find("292.0f * z") == std::string::npos);      // no fixed node size
+        CHECK(app.find("scriptui::SetDensity(") != std::string::npos && app.find("scriptui::DensityName(") != std::string::npos);
         CHECK(mn.find("TakeDensityChanged") != std::string::npos);   // the editor saves a change from either window
-        CHECK(vs.find("DrawDensityMenu") != std::string::npos);
         // The Script editor window is the shared ScriptIdeApp since #1357 (its old Dear ImGui window in main.cpp is gone): the
         // editor's host keeps the app's Line Spacing and this one Density the same, both ways, through SetDensity.
         const std::string host = Slurp("editor/ScriptEditorAppHost.cpp");

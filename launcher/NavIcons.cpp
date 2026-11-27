@@ -153,6 +153,19 @@ void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col) {
         }
         d->PathStroke(col, 0, t);
         break;
+    case kIcoCode:      // Script Editor: "< >" brackets with a slash between
+        d->PathLineTo(ImVec2(c.x - r * 0.35f, c.y - r * 0.6f)); d->PathLineTo(ImVec2(c.x - r, c.y));
+        d->PathLineTo(ImVec2(c.x - r * 0.35f, c.y + r * 0.6f)); d->PathStroke(col, 0, t);
+        d->PathLineTo(ImVec2(c.x + r * 0.35f, c.y - r * 0.6f)); d->PathLineTo(ImVec2(c.x + r, c.y));
+        d->PathLineTo(ImVec2(c.x + r * 0.35f, c.y + r * 0.6f)); d->PathStroke(col, 0, t);
+        d->AddLine(ImVec2(c.x + r * 0.15f, c.y - r * 0.75f), ImVec2(c.x - r * 0.15f, c.y + r * 0.75f), col, t);
+        break;
+    case kIcoNodes:     // Visual Script: two node boxes joined by a wire
+        d->AddRect(ImVec2(c.x - r, c.y - r * 0.85f), ImVec2(c.x - r * 0.2f, c.y - r * 0.15f), col, 1.5f, 0, t);
+        d->AddRect(ImVec2(c.x + r * 0.2f, c.y + r * 0.15f), ImVec2(c.x + r, c.y + r * 0.85f), col, 1.5f, 0, t);
+        d->AddBezierCubic(ImVec2(c.x - r * 0.2f, c.y - r * 0.5f), ImVec2(c.x + r * 0.2f, c.y - r * 0.5f),
+                          ImVec2(c.x - r * 0.2f, c.y + r * 0.5f), ImVec2(c.x + r * 0.2f, c.y + r * 0.5f), col, t);
+        break;
     case kIcoSearch:    // Search: a magnifier
         d->AddCircle(ImVec2(c.x - 1.4f, c.y - 1.4f), 5.0f, col, 20, t);
         d->AddLine(ImVec2(c.x + 2.4f, c.y + 2.4f), ImVec2(c.x + 6.2f, c.y + 6.2f), col, t + 0.4f);

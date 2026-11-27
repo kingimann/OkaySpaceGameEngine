@@ -4524,25 +4524,25 @@ add_executable(test_launcher_nav_layout test_launcher_nav_layout.cpp)
 target_include_directories(test_launcher_nav_layout PRIVATE ${CMAKE_SOURCE_DIR}/launcher)
 add_test(NAME launcher_nav_layout COMMAND test_launcher_nav_layout)
 # The launcher's page layouts (launcher/PageLayout.hpp): Marketplace, Community and Notifications at three window sizes and
-# UI scale 1.0 / 1.5, with the launcher's own font when its Dear ImGui is in the build (launcher_imgui), else a stand-in width.
+# UI scale 1.0 / 1.5, with the launcher's own font as OkayUI draws it (the launcher is OkayUI only), else a stand-in width.
 add_executable(test_launcher_page_layout test_launcher_page_layout.cpp)
 target_include_directories(test_launcher_page_layout PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)   # engine/include: shared/EmbeddedFonts.hpp reads okay/Core/Base64.hpp
 target_compile_features(test_launcher_page_layout PRIVATE cxx_std_17)
-if(TARGET launcher_imgui)
-    target_link_libraries(test_launcher_page_layout PRIVATE launcher_imgui)
-    target_compile_definitions(test_launcher_page_layout PRIVATE OKAY_LAYOUT_REAL_FONT=1)
+if(TARGET okay_ui)
+    target_include_directories(test_launcher_page_layout BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe)   # "imgui.h" is OkayUI's, as in the launcher
+    target_link_libraries(test_launcher_page_layout PRIVATE okay_ui)
+    target_compile_definitions(test_launcher_page_layout PRIVATE OKAY_LAYOUT_REAL_FONT=1 OKAY_ON_OKAYUI=1)
 endif()
 add_test(NAME launcher_page_layout COMMAND test_launcher_page_layout)
+set_tests_properties(launcher_page_layout PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 # The launcher's themes (shared/OkayTheme.hpp): text contrast in every theme, the themes differ, and no hard-coded colour in
-# launcher/ (it reads the sources). Needs only imgui.h (launcher_imgui brings it when the launcher is built).
-if(TARGET launcher_imgui)
+# launcher/ (it reads the sources). Needs only imgui.h: OkayUI's, as in the launcher.
+if(TARGET okay_ui)
     add_executable(test_launcher_theme test_launcher_theme.cpp)
+    target_include_directories(test_launcher_theme BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe)
     target_include_directories(test_launcher_theme PRIVATE ${CMAKE_SOURCE_DIR}/shared)
-    target_link_libraries(test_launcher_theme PRIVATE launcher_imgui)
-    if(TARGET okay_ui)   # the palettes come from OkayUI's designs (okay/UI/OkayUIDesign.hpp)
-        target_link_libraries(test_launcher_theme PRIVATE okay_ui)
-    endif()
-    target_compile_definitions(test_launcher_theme PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    target_link_libraries(test_launcher_theme PRIVATE okay_ui)   # (the palettes come from OkayUI's designs, okay/UI/OkayUIDesign.hpp)
+    target_compile_definitions(test_launcher_theme PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}" OKAY_ON_OKAYUI=1)
     target_compile_features(test_launcher_theme PRIVATE cxx_std_17)
     add_test(NAME launcher_theme COMMAND test_launcher_theme)
 endif()

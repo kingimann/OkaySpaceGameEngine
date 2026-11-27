@@ -245,6 +245,8 @@ enum InputTextFlags {
     // Real, with the callback overloads of InputText / InputTextWithHint (OkayUICompat.hpp): Up / Down call it while the field
     // has the keyboard (EventKey = KeyId_Up / KeyId_Down), Tab calls it for completion (EventKey = KeyId_Tab).
     InputText_CallbackHistory = 1024, InputText_CallbackCompletion = 2048,
+    // InputTextMultiline: WordWrap breaks long lines at the box's width (no sideways scrolling); NoUndoRedo is accepted (a read-only box has none).
+    InputText_NoUndoRedo = 4096, InputText_WordWrap = 8192,
 };
 bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, unsigned flags = 0);
 
@@ -534,9 +536,16 @@ bool InputText(const char* label, char* buf, int cap, unsigned flags = 0);
 /// highlighting or auto-indent (okayui/src/OkayUIText.cpp). `size.x` <= 0 fills the width left (less the label), `size.y` <= 0 is five rows.
 /// Enter breaks the line, Tab inserts a tab, the mouse and keys select, copy, cut, paste, undo (Ctrl+Z) and scroll. Returns true on any
 /// frame the text changed. An edit that would not fit in `cap` is cut at a whole character and the editor's undo history restarts.
-/// Flags: InputText_ReadOnly. Text with CRLF, control characters or bad UTF-8 is cleaned the way CodeEdit cleans it (the buffer is
+/// Flags: InputText_ReadOnly, InputText_WordWrap, InputText_EnterReturnsTrue (true on Enter, or on Ctrl+Enter unless
+/// InputText_CtrlEnterForNewLine; that key does not break the line). Text with CRLF, control characters or bad UTF-8 is cleaned the way CodeEdit cleans it (the buffer is
 /// rewritten only when the user edits). The state of up to 16 boxes is kept (by label); the least recently drawn is forgotten.
 bool InputTextMultiline(const char* label, char* buf, int cap, Vec2 size = Vec2{}, unsigned flags = 0);
+/// Scroll the multi-line box of this label (drawn this frame or the last, in the same ID scope as its InputTextMultiline call) to its
+/// last line, as a log view that follows new output does. False when no such box is kept.
+bool ScrollTextBoxToEnd(const char* label);
+/// Dear ImGui's TextLink: the text in the link colour (Col_TextLink), underlined while the pointer is over it, with the hand cursor;
+/// true on the frame it is clicked. One item, laid out like Text.
+bool TextLink(const char* label);
 /// InputText that shows `hint` in a dim colour while the field is empty (a placeholder such as "Search...").
 bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, unsigned flags = 0);
 /// The next text field drawn takes the keyboard focus (and puts the caret at the end of its text).
@@ -634,6 +643,7 @@ enum ColorEditFlags : int {
     ColorEdit_NoSidePreview = 16, ColorEdit_NoAlphaBar = 32, ColorEdit_Hex = 64, ColorEdit_AlphaPreviewHalf = 128,
     ColorEdit_AlphaBar = 0,       // the alpha bar is on unless ColorEdit_NoAlphaBar: accepted for ported code
     ColorEdit_NoTooltip = 256,    // accepted and ignored: swatches have no tooltip
+    ColorEdit_HDR = 512,          // the channel cells are not held to 0..1: they share the range 0 .. the brightest channel (at least 1, rounded up)
 };
 /// A square swatch showing rgba[0..3] (each 0..1, a checkerboard shows through the alpha) that can be clicked; `size` <= 0 uses the row height.
 bool ColorButton(const char* id, const float rgba[4], float size = 0.0f);
@@ -1397,7 +1407,8 @@ bool IsKeyReleased(KeyId key);
 /// nothing, so ported code compiles: SelectableTextAlign, Alpha.
 /// TextRowHeight is OkayUI's own: the height a line of plain text (Text, TextColored, TextDisabled, TextUnformatted, wrapped lines)
 /// takes in the layout. 0 (the default) is a frame's height, so text lines up with buttons and fields on its row; a value above 0 is
-/// that many pixels (Dear ImGui's text rows: pass GetFontSize() for one text line). A shorter text line that follows a taller item
+/// that many pixels (Dear ImGui's text rows: pass GetFontSize() for one text line), and a value below 0 is the text's own height at
+/// the moment (Dear ImGui's text rows that follow SetWindowFontScale and the text scale). A shorter text line that follows a taller item
 /// on the same line is centred on it.
 /// PopupPadding and PopupWidth are OkayUI's own too, read when a popup or context menu begins: the padding inside it (x, y; default
 /// 6 and 6) and its width (default 160). With a pushed padding the popup is exactly as tall as its content (no item spacing after the
@@ -1461,7 +1472,7 @@ struct IO {
     // Host-side fields of Dear ImGui's IO, see docs/ui/own_ui_toolkit.md 6.22.
     int MouseClickedCount[3] = {0, 0, 0};        // clicks in a row at this frame's press (1, 2 = double click), 0 when the button did not go down this frame (left button only)
     bool KeySuper = false;                       // the Windows / Command key: OkayUI has no such key; always false unless the host sets it
-    float FontGlobalScale = 1.0f;                // accepted; the text scale is Style().textScale
+    float FontGlobalScale = 1.0f;                // text drawn this much larger: Style().textScale follows it at the next frame start (0.25 to 4)
     bool ConfigViewportsNoTaskBarIcon = false, ConfigDebugHighlightIdConflicts = true;   // accepted, unused
     struct FontAtlasRef* Fonts = nullptr;        // GetIO() points it at the one atlas (below): font requests are recorded, nothing is loaded
     /// The characters typed this frame (UTF-16 code units, characters above U+FFFF are left out), filled by GetIO() from Input::text. Removing any of
@@ -1477,6 +1488,7 @@ struct IO {
     const char* BackendPlatformName = nullptr, *BackendRendererName = nullptr;
     bool MouseDrawCursor = false;                    // accepted; the host draws the system cursor
     bool WantSetMousePos = false;                    // accepted; OkayUI never asks the host to move the pointer
+    bool NavVisible = false;                         // a keyboard focus ring should show: OkayUI has no keyboard navigation of buttons, so always false
     /// Mouse events as a Dear ImGui host feeds them: applied by the next NewFrame() (the last position and the button state win; a press and release
     /// inside one frame still makes one click).
     void AddMousePosEvent(float x, float y);

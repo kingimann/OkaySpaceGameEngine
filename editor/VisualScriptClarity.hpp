@@ -4,7 +4,7 @@
 // Everything here is computed from the node table and PinCompatible, so a new node
 // or a changed wire rule shows up in the text without a second copy to edit.
 // docs/scripting/visual_script_clarity.md is the audit this comes from.
-// Included by VisualScriptEditor.hpp, after the node table (Registry, VsDef) it reads.
+// Included by VisualScriptModel.hpp, after the node table (Registry, VsDef) it reads.
 #include "okay/VisualScript/VsTypes.hpp"
 
 #include <cctype>

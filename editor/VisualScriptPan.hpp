@@ -3,7 +3,7 @@
 // how far the arrow keys move the view, and how far the view may be pushed away from the graph.
 // Everything here is plain numbers (no ImGui), so tests/test_vs_pan.cpp can check it.
 // Written from the behaviour the owner asked for (docs/status/UNFINISHED.md, "Visual Script pan"), no outside code.
-// Included by VisualScriptEditor.hpp.
+// Included by VisualScriptModel.hpp.
 #include <algorithm>
 #include <cmath>
 

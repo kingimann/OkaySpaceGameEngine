@@ -6,8 +6,7 @@
 // built and registered. A node that is none of these and not on the known list fails.
 #include "test_framework.hpp"
 #include "test_sandbox.hpp"
-#include "VisualScriptEditor.hpp"
-#include "VisualScriptPalette.hpp"
+#include "VisualScriptModel.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/BehaviorTreeRunner.hpp"

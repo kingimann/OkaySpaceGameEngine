@@ -5,6 +5,7 @@
 //    (nodes: for the same slot of the layout's node list) and a rebuild refreshes the fields in place.
 //  * A rebuild happens when the frame number, the dock layout version or the dock geometry serial changed since the last one.
 //  * Writes made to the snapshots are noticed at the start of the next rebuild (and by DockSpace) by comparing with what the rebuild handed out.
+#include "OkayUI_ContextState.hpp"
 #include "okay/UI/OkayUIInternals.hpp"
 
 #include <algorithm>
@@ -383,3 +384,11 @@ void FillContextFromWindowTable(Context& c, unsigned hoveredId, unsigned activeI
 }
 
 }   // namespace OkayUI
+
+// ---- What belongs to one context (OkayUI_ContextState.hpp: each context keeps its own copy of these) ----
+namespace OkayUI {
+OKAYUI_CONTEXT_STATE(
+    OKAYUI_CTX_VAR(g_dockSerial),
+    OKAYUI_CTX_VAR(g_winCount),
+    OKAYUI_CTX_VAR(T()))
+} // namespace OkayUI

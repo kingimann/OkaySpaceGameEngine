@@ -8,6 +8,7 @@
 // editor (rule 19a).
 #include "okay/UI/OkayUIDesign.hpp"
 #include "ScriptIdeApp.hpp"
+#include "OkayUIAppKit.hpp"   // the colours, the dialog box, the tab strip
 #include "okay/UI/OkayUI.hpp"
 
 #include <algorithm>
@@ -31,20 +32,12 @@ namespace UI = OkayUI;
 std::string EngineLanguageOf(const std::string& path);   // ScriptIdeApp.cpp
 
 namespace appdetail {
-inline UI::Color32 Rgb(int r, int g, int b, int a = 255) { return UI::RGBA((unsigned)r, (unsigned)g, (unsigned)b, (unsigned)a); }
-// The Script Editor's chrome colours: the design in force (okay/UI/OkayUIDesign.hpp), taken from OkayUI's theme at the start of
-// every frame (FollowDesignColours), so the app matches the launcher and the editor in every design and scheme.
-inline UI::Color32 kBack = Rgb(30, 32, 37), kPanel = Rgb(37, 40, 46), kStrip = Rgb(26, 28, 32), kLine = Rgb(56, 60, 69),
-                   kText = Rgb(214, 218, 226), kDim = Rgb(140, 146, 158), kAccent = Rgb(86, 156, 214), kTabOn = Rgb(44, 48, 56),
-                   kHover = Rgb(52, 57, 66), kError = Rgb(232, 102, 92), kWarn = Rgb(226, 182, 76), kAdd = Rgb(98, 180, 110);
-inline void FollowDesignColours() {
-    const UI::Theme& t = UI::Style();
-    auto c = [](const unsigned char* v) { return OkayUI::design::Packed(v); };
-    auto mix = [](const unsigned char* a, const unsigned char* b, float k) { return OkayUI::design::PackedMix(a, b, k); };
-    kBack = c(t.panel); kPanel = c(t.raised); kStrip = c(t.track); kLine = mix(t.panel, t.text, 0.14f);
-    kText = c(t.text); kDim = c(t.textDim); kAccent = c(t.accent); kTabOn = c(t.bg); kHover = c(t.bgHover);
-    kError = c(t.danger); kWarn = c(t.warning); kAdd = c(t.success);
-}
+// The colours, the dialog box and the tab strip are the OkayUI apps' shared ones (OkayUIAppKit.hpp); the colours follow the design in
+// force (okayuiapp::FollowDesignColours, each frame).
+using okayuiapp::Rgb;
+using okayuiapp::kBack; using okayuiapp::kPanel; using okayuiapp::kStrip; using okayuiapp::kLine; using okayuiapp::kText; using okayuiapp::kDim;
+using okayuiapp::kAccent; using okayuiapp::kTabOn; using okayuiapp::kHover; using okayuiapp::kError; using okayuiapp::kWarn; using okayuiapp::kAdd;
+using okayuiapp::FollowDesignColours;
 
 inline std::string FileText(const std::string& path, bool& ok, std::string* why = nullptr) {
     ok = false;

@@ -6,9 +6,7 @@
 #include "BrowserPage.hpp"
 #include "PainterBridge.hpp"
 #include "okay/Platform/Platform.hpp"
-#ifdef OKAY_HAVE_OKAYUI
 #include "BrowserApp.hpp"
-#endif
 
 #include <cstdlib>
 #include <memory>
@@ -21,7 +19,6 @@ namespace {
 bool g_hostAvailable = false;
 bool g_showRequest = false;
 
-#ifdef OKAY_HAVE_OKAYUI
 namespace br = okay::browser;
 
 std::unique_ptr<br::BrowserApp> g_app;
@@ -50,18 +47,15 @@ br::BrowserApp& App() {
     }
     return *g_app;
 }
-#endif
 
 } // namespace
 
 bool BrowserSwitchOn() { return BrowserSwitchValueOn(std::getenv("OKAY_BROWSER")); }
 
 bool OpenPageLink(const std::string& url) {
-#ifdef OKAY_HAVE_OKAYUI
     if (RouteLink(url, BrowserSwitchOn(), g_hostAvailable) == LinkTarget::BrowserPage) {
         if (App().OpenUrl(url, true) >= 0) { g_showRequest = true; return true; }
     }
-#endif
     OpenExternal(url);   // OpenExternal checks the address is shell-safe
     return false;
 }
@@ -75,26 +69,18 @@ bool TakeShowRequest() {
 void SetBrowserHostAvailable(bool okayFrame) { g_hostAvailable = okayFrame; }
 
 void PumpBrowser() {
-#ifdef OKAY_HAVE_OKAYUI
     if (g_app) g_app->Pump();
-#endif
 }
 
 void DrawBrowserPage(float x, float y, float w, float h) {
-#ifdef OKAY_HAVE_OKAYUI
     if (!g_hostAvailable || !BrowserSwitchOn()) return;
     br::BrowserApp& app = App();
     if (app.TabCount() == 0) app.OpenTyped(std::string());   // the home page (the new-tab page unless the settings name one)
     app.Frame(x, y, w, h);
-#else
-    (void)x; (void)y; (void)w; (void)h;
-#endif
 }
 
 void ShutdownBrowser() {
-#ifdef OKAY_HAVE_OKAYUI
     g_app.reset();   // saves the profile, stops running games and frees the textures while the renderer still exists
-#endif
 }
 
 } // namespace okl

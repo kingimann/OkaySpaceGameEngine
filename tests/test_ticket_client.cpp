@@ -176,7 +176,7 @@ int main() {
     {
         okayac::backend::Request r; std::string err;
         CHECK(okayac::backend::SessionTicket("arena-1", "", kBind, r, &err));
-        CHECK(r.method == "POST" && r.path == "/functions/v1/session-ticket");
+        CHECK(r.function == "session-ticket" && r.path.empty());   // OkayBackend Functions (POST /functions/v1/session-ticket on Supabase)
         CHECK(r.body == "{\"aud\":\"arena-1\",\"cnf\":\"" + kBind + "\"}");
         const std::string hw(64, 'a');
         CHECK(okayac::backend::SessionTicket("203.0.113.7:45000", hw, "", r, &err) && r.body.find("\"hw_hash\":\"" + hw + "\"") != std::string::npos && r.body.find("cnf") == std::string::npos);
@@ -382,7 +382,7 @@ int main() {
 
         auto transport = [&](int timeoutSec) -> tk::Transport {
             return [&acct, timeoutSec](const okayac::backend::Request& r) {
-                const auto a = acct.ApiTimed(r.path, r.method, r.body, r.header, timeoutSec);
+                const auto a = okayac::backend::SendTimed(acct, r, timeoutSec);
                 tk::Reply out; out.reached = a.reached; out.status = a.status; out.body = a.body; return out;
             };
         };

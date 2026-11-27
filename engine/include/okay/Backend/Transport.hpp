@@ -80,13 +80,18 @@ public:
                                                   const std::string&)>;
     void SetHook(Hook h) { hook_ = std::move(h); }
     bool HasHook() const { return static_cast<bool>(hook_); }
+    /// Tests: `o` sees each whole request (with its body file and time limit, which the hook does not get) just before it
+    /// is sent. It changes nothing about the request or where it goes.
+    void SetObserver(std::function<void(const Request&)> o) { observer_ = std::move(o); }
     Response Send(const Request& r) override {
+        if (observer_) observer_(r);
         if (!hook_) return http_.Send(r);
         return FromHttp(hook_(r.method, r.url, r.headers, r.bodyFile.empty() ? r.body : std::string()));
     }
 
 private:
     Hook hook_;
+    std::function<void(const Request&)> observer_;
     HttpTransport http_;
 };
 

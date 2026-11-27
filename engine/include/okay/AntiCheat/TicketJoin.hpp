@@ -1,5 +1,5 @@
 #pragma once
-// Hooks the session-ticket flow (shared/TicketClient.hpp) into a game or the launcher: the account's HTTP call as the Transport and a
+// Hooks the session-ticket flow (engine/include/okay/AntiCheat/TicketClient.hpp) into a game or the launcher: the account's HTTP call as the Transport and a
 // NetworkManager join gate. Include this where okay::NetworkManager and okay::Account are linked (the player, the launcher, tests).
 #include "TicketClient.hpp"
 #include "okay/Net/NetworkManager.hpp"
@@ -14,7 +14,7 @@ namespace ticket {
 /// account's bans). `timeoutSec` bounds each request so a stalled service can't hang a join.
 inline Transport AccountTransport(int timeoutSec = 8) {
     return [timeoutSec](const backend::Request& r) {
-        const okay::account::ApiResponse a = okay::Account::ApiTimed(r.path, r.method, r.body, r.header, timeoutSec);
+        const okay::account::ApiResponse a = backend::SendTimed(okay::Account::Get(), r, timeoutSec);   // OkayBackend Functions
         Reply out;
         out.reached = a.reached;
         out.status = a.status;

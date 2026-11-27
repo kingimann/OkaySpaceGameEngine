@@ -5,12 +5,12 @@
 > applications should communicate through OkayBackend rather than directly with Supabase-specific APIs", keep Supabase as
 > production, no extra hosting costs, audit first. The audit is [okay_backend_audit.md](okay_backend_audit.md).
 >
-> **Status:** Rounds 1 (audit and design), 2 (core types and Auth) and 3 (Database) are done; sections 15 and 16 say what
-> rounds 2 and 3 built. Every
+> **Status:** Rounds 1 (audit and design), 2 (core types and Auth), 3 (Database) and 4 (Storage and Functions) are done;
+> sections 15, 16 and 17 say what rounds 2 to 4 built. Every
 > "will" below for later rounds is still a plan. Owner decisions that change the plan are in section 13, each with the
 > default this plan uses until the owner says otherwise.
 >
-> **Last checked:** 2026-11-26 (branch `claude/okay-backend-3`).
+> **Last checked:** 2026-11-26 (branch `claude/okay-backend-4`).
 >
 > **Admin dashboard:** the audit and design of the OkayBackend administration dashboard (owner request 2026-11-26: our own
 > Admin API, roles and permissions, audit log, what is native and what is still Supabase) is
@@ -34,6 +34,7 @@
 - [14. Implementation rounds](#14-implementation-rounds)
 - [15. Round 2: what was built](#15-round-2-what-was-built)
 - [16. Round 3: what was built](#16-round-3-what-was-built)
+- [17. Round 4: what was built](#17-round-4-what-was-built)
 
 ## 1. The short version
 
@@ -103,8 +104,9 @@ can run in the program (that is what on-device accounts become) or as `okay-back
 ## 4. The C++ interfaces
 
 Sketch (C++17, header-only; no `<mutex>` or `<thread>` in anything the launcher, editor or player can include, rule 21a).
-Round 2 settled the transport and Auth parts and round 3 the Database part; what was built differs from this sketch in small
-ways, listed in sections 15 and 16. The rest of the sketch (Storage, Functions, Realtime, Backend, Get) is still the plan.
+Round 2 settled the transport and Auth parts, round 3 the Database part and round 4 the Storage and Functions parts; what was
+built differs from this sketch in small ways, listed in sections 15 to 17. The rest of the sketch (Realtime, Backend, Get) is
+still the plan.
 
 ```cpp
 namespace okay::backend {
@@ -241,7 +243,7 @@ answer like, and our own SQL in `docs/sql/` (which is the specification of the r
 | Request routing and JSON | `okay::json` (`Core/Json.hpp`), `AccountService::detail::JsonEscape` | A small router: route table, path parameters |
 | Password hashing | libsodium `crypto_pwhash_str` (Argon2id) through `NetCrypto.hpp` | Add the wrapper; existing PBKDF2 records from on-device accounts are checked once and re-hashed with Argon2id on that sign-in |
 | Access tokens | libsodium `crypto_sign` (Ed25519), already wrapped in `NetCrypto.hpp` | JSON web tokens with `alg` EdDSA and the claims the programs read (`sub`, `exp`) plus `role`; refresh tokens from `randombytes_buf`, stored only as a `crypto_generichash` hash, rotated on every use, a reused one ends the session |
-| Session ticket | the ticket format in `shared/TicketClient.hpp` and `supabase/functions/session-ticket/ticket.ts` (ours) | A C++ handler that signs with libsodium Ed25519 |
+| Session ticket | the ticket format in `engine/include/okay/AntiCheat/TicketClient.hpp` and `supabase/functions/session-ticket/ticket.ts` (ours) | A C++ handler that signs with libsodium Ed25519 |
 | Rate limits, lock-out, body caps, token expiry | `examples/account-server/server.py` (ours) | Same behaviour in C++, then the Python server is deleted |
 | Random ids | `AccountService::detail::OsRandom` | UUID v4 from it |
 | Path safety for files | `webrun::MapTarget` | Reused for Storage paths |
@@ -593,7 +595,8 @@ and `Heartbeat` / `Unregister` send the row id unencoded, as they always did: a 
 server as written. These three use `ValueText::AsIs` so the bytes stay the same; encoding them is a behaviour change for the
 owner to allow (it changes nothing for a normal room name or a row id). `LeaderboardTop` with a negative count still sends
 `limit=-1`. Found on the way, not changed: `detail::JsonEscape` escapes only `"`, `\`, line feed, carriage return and tab, so
-a save whose text holds another control character (below 0x20) is sent as invalid JSON and the server refuses it. A fix belongs in the JSON helpers' dedup (`Core/Json.hpp`), as a bug with its own test.
+a save whose text holds another control character (below 0x20) is sent as invalid JSON and the server refuses it. Fixed in
+round 4 (section 17).
 
 **Schema in one place.** `cloud_saves` and `leaderboards` were only written down in `docs/online/supabase-backend.md`. They
 are now `docs/sql/cloud_saves.sql` and `docs/sql/leaderboards.sql`, copied unchanged (the test of that was a `diff` of the
@@ -624,3 +627,86 @@ wire form, and `AccountService::Db()` sending nothing when signed out.
 **Not built in round 3:** the other Database sites (rounds 4 to 7), the Local provider's query parser (round 10), `Or` and
 `Not` filters (no program uses them yet). Unverified: nothing ran on Windows (MinGW `-fsyntax-only` only) or against a real
 Supabase project.
+
+## 17. Round 4: what was built
+
+Branch `claude/okay-backend-4` (on top of round 3). Nothing was sent to the live Supabase project; every test uses a fake
+server with made-up addresses, keys and tokens.
+
+**First, a bug fix (found in round 3).** `detail::JsonEscape` (`AccountDetail.hpp`) escaped only `"`, `\`, line feed, carriage
+return and tab, so a cloud save (or any account request text) holding another control character was sent as invalid JSON
+and refused. It now uses the engine's one JSON escaper, `okay::json::Escape` (`Core/Json.hpp`, RFC 8259 section 7), without its
+quotes: every control character goes as `\u00xx` (rule 19c: no second escaper). Text without control characters is sent
+exactly as before. Test first, in `tests/test_okay_backend.cpp`: with the old helper 37 checks failed (raw control bytes left,
+the body did not parse, the save did not read back); with the fix all pass. It is its own commit.
+
+| File | What it holds |
+|---|---|
+| `Storage.hpp` (new) | `Storage`: `Upload` (with `UploadOptions`: replace, cache time), `ReadPublic` (a public object, with an optional query such as a cache-buster), `List` (`ListOptions`: prefix, limit, offset, sort), `Remove` (several objects in one request), `RemoveObject` (one), `PublicUrl` (pure). Object paths are sent as given: the caller encodes them, as the programs always did. |
+| `Functions.hpp` (new) | `Functions::Invoke(name, json, timeoutSec)` and `FunctionCall` (a name and a body, what the request-building code returns). |
+| `SupabaseRoutes.hpp` (new) | The Supabase provider's Storage and Functions route texts as pure functions with no dependencies, so the updater can use them without the account service. |
+| `Supabase.hpp` | `supabase::Storage` (requests through a sender, uploads through an uploader: `AccountService::Storage()` passes `Api` and `ApiUpload`) and `supabase::Functions` (through `ApiTimed`, keeping the time limit: `AccountService::Functions()`); both can also be given the address, key, token and a `Transport` directly. |
+| `Transport.hpp` | `HookTransport::SetObserver` (tests: sees each whole request, with its body file and time limit, which the hook does not get); `AccountService::ObserveRequestsForTest` sets it. Changes nothing that is sent. |
+
+**What moved (every request byte-identical, checked by the golden test).**
+- `Messages.hpp` (bucket `chat`): `UploadChatFile`, `UploadToLibrary`, `ListLibrary`, `DeleteFromLibrary`, `PublicChatUrl`.
+- `Workshop.hpp` (bucket `workshop`): `UploadFile` and its public link.
+- The launcher's Official game admin tab (bucket `releases`, folder `official/`): its request functions were moved unchanged from
+  `launcher/main.cpp` into `launcher/OfficialAdmin.hpp` (so a test can run them), the golden texts were recorded, and then they
+  moved onto `Storage`: the cache-busted public reads, the uploads (replace, cache time), the paged listing, the removal in
+  batches of 200, the top listing for a refresh.
+- `AccountData.hpp`: "Delete my account" is a `FunctionCall` (`delete-account`) sent by `SendDelete` through `Functions`; the
+  launcher calls it.
+- `AntiCheatBackend.hpp`: the session ticket request names the function (`Request::function` = `session-ticket`) instead of a
+  route; `SendTimed` / `Send` send a function through `Functions` and a table request through `Api` as before. `TicketJoin.hpp`
+  (the join gate of games) and the launcher's pre-flight (`AntiCheatPages.cpp`) send through `SendTimed`, with the same 8 second
+  limit.
+- Links the launcher recognises (`ChatText.cpp`, `AdminPage.cpp`, the workshop editor in `main.cpp`) use the route functions,
+  so the text they look for is the provider's, unchanged.
+
+**The updater's address never follows a provider switch.** Every installed launcher and editor has the Supabase project address
+built in and downloads its updates from the public `releases` bucket. If that address followed `OKAY_BACKEND` or `backend.json`,
+a person who switched to `local` (or a typo) would stop getting updates, and nothing could reach them to fix it. So
+`ReleasesBucketBase` (`launcher/VersionsManager.cpp`, the one builder of that address) uses the Supabase provider's public route
+directly (`SupabaseRoutes.hpp`), never the configured provider; only `OKAY_UPDATE_SERVER` (testing) and the built-in address
+decide it, as before. Its two callers (`editor/Updater.cpp`, `launcher/main.cpp` `SupabaseReleasesBase`) and the download code
+did not change. The golden test checks its exact output for 18 inputs against texts recorded from the old code, and that
+setting `OKAY_BACKEND=local` changes nothing.
+
+**Stayed as it was (and why).**
+- The publish scripts, `crash_to_issue.py` and the CI checks of the releases bucket: round 17 (scripts and CI), not moved.
+- The two server functions themselves (`supabase/functions/`): server code, round 11.
+- The request-struct files that hold table requests (`CrashUpload`, `UserReports`, `MemberModeration`, `AntiCheatAdminTools`
+  and the anti-cheat tables in `AntiCheatBackend`): Database work, not Storage or Functions; moved in a later round.
+- Paths are not encoded by the provider: `DeleteFromLibrary` still sends a file name from the listing as it is, as before.
+
+**The scan.** `scripts/provenance_scan.py backend` now also counts calls through OkayBackend's Storage (`.Storage().Upload("chat"`,
+...), the provider's route functions used directly (`routes::StoragePublic("releases"`) and Functions (`.function =
+"session-ticket"`, `FunctionCall{"delete-account"`), so a moved site stays in the inventory. Before round 4 the C++ programs
+wrote 19 Storage and 3 Functions routes by hand. After: 16 Storage and 3 Functions sites go through OkayBackend, the
+provider's route file adds one line for each, and the updater's two callers of `ReleasesBucketBase` (`editor/Updater.cpp`,
+`launcher/main.cpp`) are counted as before and were not changed. The launcher's chat link check (`ChatText.cpp`) no longer
+counts: it uses the route root, which names no bucket. The scripts, CI and server functions (21 Storage sites) are unchanged.
+Totals: Storage 40 to 39, Functions 3 to 4 (the provider's route line), others unchanged.
+
+**Proof that nothing changed for Supabase.** `tests/test_okay_backend_golden_storage.cpp` runs 15 scenarios through the
+programs' code (chat attachments: uploaded, refused three ways, signed out; the media library: uploads, listings, removals,
+public address; workshop uploads, refused and unresolved; the official tab's reads, uploads, paged listing and removal in
+batches; "Delete my account" four answers and signed out; the session ticket through the join gate and the launcher's
+pre-flight; the updater's address for 18 inputs). The requests (method, URL, header lines in order, body) plus the bytes of
+every uploaded file and the 8 second ticket limit, and what the program made of each answer, must equal texts recorded from
+the code before the move (`tests/test_okay_backend_golden_storage.inc`, recorded twice with the same result, committed before
+any call site changed). Then the same requests sent through `supabase::Storage` and `supabase::Functions` directly over a
+`RecordingTransport` must be the same bytes. Run failing first: with the call sites moved and the provider's six calls as a
+skeleton that sends nothing, 11 scenarios and 9 direct flows did not match (23 of 65 checks failed); with the real provider
+all 65 pass. `test_account_data` and `test_ticket_client` check the new request shape (a function name instead of a route).
+
+**Not built in round 4:** a Local provider for Storage and Functions (round 11), signed URLs (no program uses them),
+`Download` to a file (no program reads a private object), encoding object paths in the provider. Unverified: nothing ran on
+Windows (MinGW `-fsyntax-only` of the changed headers only; the launcher's `.cpp` files could not be checked with MinGW here
+because their build flags include the host's SDL2 headers) or against a real Supabase project.
+
+**Where the code comes from (IP).** `Storage.hpp`, `Functions.hpp` and `SupabaseRoutes.hpp` were written from Supabase's
+publicly documented Storage object routes and Edge Functions route (behaviour only) and from what the programs already sent;
+`launcher/OfficialAdmin.hpp` is our own launcher code moved out of `launcher/main.cpp`; the JSON escaping is the engine's own
+`okay::json::Escape` (RFC 8259). No Supabase client library or Supabase source was read or used.

@@ -549,7 +549,7 @@ static int TicketPreflightWorker(void* p) {
         okayac::ticket::Options opt;
         opt.refreshSignIn = [&a] { return a.ReloadSessionToken(); };
         okayac::ticket::Client client([&a](const okayac::backend::Request& r) {
-            const okay::account::ApiResponse x = a.ApiTimed(r.path, r.method, r.body, r.header, 8);
+            const okay::account::ApiResponse x = acb::SendTimed(a, r, 8);   // OkayBackend Functions (session-ticket)
             okayac::ticket::Reply out; out.reached = x.reached; out.status = x.status; out.body = x.body; return out;
         }, opt);
         okayac::ticket::Hooks hk;

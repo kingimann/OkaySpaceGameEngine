@@ -386,6 +386,7 @@ private:
         if (preview_) return preview_;
         GameObject* g = s.CreateGameObject("StructurePreview");
         if (!g) return nullptr;
+        g->transient = true;   // the ghost is runtime-only: never saved, so a load does not leave one behind (#888 F54)
         g->tag = "StructurePreview";
         auto* mr = g->AddComponent<MeshRenderer>();
         mr->mesh = Mesh::Cube();

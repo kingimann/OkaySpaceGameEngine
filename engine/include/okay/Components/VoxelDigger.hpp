@@ -534,6 +534,7 @@ private:
         if (brush_) return brush_;
         GameObject* b = s.CreateGameObject("VoxelBrush");
         if (!b) return nullptr;
+        b->transient = true;   // the ghost is runtime-only: never saved, so a load does not leave one behind (#888 F54)
         b->tag = "VoxelBrush";
         auto* mr = b->AddComponent<MeshRenderer>();
         mr->mesh = Mesh::Sphere(0.5f, 8, 12);
@@ -551,6 +552,7 @@ private:
         if (!debris_) {
             debris_ = s->CreateGameObject("VoxelDebris");
             if (!debris_) return;
+            debris_->transient = true;   // runtime-only, like the brush (#888 F54)
             debris_->tag = "VoxelDebris";
             auto* ps = debris_->AddComponent<ParticleSystem>();
             ps->playing = false;

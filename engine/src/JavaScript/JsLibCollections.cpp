@@ -845,6 +845,8 @@ void FillWeak(Runtime& rt, WeakObj* w, const Value& src, bool isMap) {
 
 } // namespace
 
+void MapAdd(Runtime& rt, MapObj* m, const Value& k, const Value& v) { MapPut(rt, m, k, v); }
+
 void InstallWeakLib(Runtime& rt) {
     Object* wmp = rt.NewObject();
     NativeFunc* wm = DefCtor(rt, "WeakMap", [](Runtime& rt, CallArgs& a) {

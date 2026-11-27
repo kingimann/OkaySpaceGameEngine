@@ -461,7 +461,14 @@ void TypedArraySet(Runtime& rt, TypedArrayObj* t, double n, const Value& v);
 void InstallBinaryLib(Runtime& rt);
 /// A new Uint8Array holding a copy of n bytes (the size is checked against the limits first).
 TypedArrayObj* NewUint8Array(Runtime& rt, const std::uint8_t* bytes, std::size_t n);
+/// A new ArrayBuffer holding a copy of n bytes, and a typed array over a buffer (structuredClone builds with these).
+BufferObj* NewBufferCopy(Runtime& rt, const std::uint8_t* bytes, std::size_t n);
+TypedArrayObj* NewTypedArrayOn(Runtime& rt, TAType type, BufferObj* buf, std::uint64_t offset, std::uint64_t length);
+DataViewObj* NewDataViewOn(Runtime& rt, BufferObj* buf, std::uint64_t offset, std::uint64_t length);
+/// Map.prototype.set / Set.prototype.add without the script-visible lookups (JsLibCollections.cpp).
+void MapAdd(Runtime& rt, MapObj* m, const Value& k, const Value& v);
 void InstallTextCodingLib(Runtime& rt);
+void InstallStructuredClone(Runtime& rt);
 std::string TypedArrayDisplay(Runtime& rt, Object* o, int depth);
 
 // ---- proxies (10.5, 28.2; JsLibObject.cpp). handler == nullptr: revoked.

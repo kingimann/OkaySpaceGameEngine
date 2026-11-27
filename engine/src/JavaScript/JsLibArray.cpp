@@ -1207,6 +1207,22 @@ TypedArrayObj* NewUint8Array(Runtime& rt, const std::uint8_t* bytes, std::size_t
     if (n) std::memcpy(t->buf->data.data(), bytes, n);
     return t;
 }
+BufferObj* NewBufferCopy(Runtime& rt, const std::uint8_t* bytes, std::size_t n) {
+    BufferObj* b = NewBuffer(rt, n, nullptr, false);
+    if (n) std::memcpy(b->data.data(), bytes, n);
+    return b;
+}
+TypedArrayObj* NewTypedArrayOn(Runtime& rt, TAType type, BufferObj* buf, std::uint64_t offset, std::uint64_t length) {
+    return NewTA(rt, type, buf, offset, length, nullptr);
+}
+DataViewObj* NewDataViewOn(Runtime& rt, BufferObj* buf, std::uint64_t offset, std::uint64_t length) {
+    DataViewObj* d = rt.Alloc<DataViewObj>();
+    d->buf = buf;
+    d->offset = offset;
+    d->length = length;
+    d->proto = Intrinsic(rt, kDataViewProto);
+    return d;
+}
 
 std::string TypedArrayDisplay(Runtime& rt, Object* o, int depth) {
     TypedArrayObj* t = static_cast<TypedArrayObj*>(o);

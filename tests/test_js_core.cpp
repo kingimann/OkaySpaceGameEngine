@@ -918,6 +918,47 @@ void Modules() {
     CHECK(ran == 300);
 }
 
+// structuredClone (HTML Standard 2.7.3 StructuredSerializeInternal / 2.7.6 StructuredDeserialize, 2.7.4 with transfer)
+// over the engine's own types; shared references and cycles are kept; what can not be cloned is a DataCloneError.
+void StructuredClone() {
+    Expect("const o = {a: 1, b: [1, 2, {c: 'x'}], d: new Date(5), r: /x/gi, m: new Map([[1, {z: 1}]]), s: new Set([1, 'a']), n: null, u: undefined, big: 10n}; o.self = o;"
+           "const c = structuredClone(o); console.log(c !== o, c.self === c, c.b[2].c, c.d.getTime(), c.r.source, c.r.flags, c.m.get(1).z, c.s.has('a'), c.n, c.u, c.big, 'u' in c, c.d instanceof Date)",
+           "true true x 5 x gi 1 true null undefined 10n true true");
+    Expect("const x = {}; const c = structuredClone({p: x, q: x}); console.log(c.p === c.q, c.p !== x)", "true true");
+    // object keys and values in a Map push new frames while the Map's frame is read (ASan found a dangling reference here)
+    Expect("const m = new Map(); for (let i = 0; i < 50; i++) m.set({i}, [i]); const c = structuredClone(m); let s = 0; for (const [k, v] of c) s += k.i + v[0]; console.log(s, c.size)",
+           "2450 50");
+    Expect("const b = new ArrayBuffer(4); const u = new Uint8Array(b); u[0] = 9; const v = new Uint16Array(b, 2, 1); const c = structuredClone({u, v});"
+           "console.log(c.u[0], c.u.buffer === c.v.buffer, c.v.byteOffset, c.u.buffer !== b, c.u instanceof Uint8Array, new DataView(c.u.buffer).getUint8(0))",
+           "9 true 2 true true 9");
+    Expect("const b = new ArrayBuffer(8); new Uint8Array(b)[1] = 3; const c = structuredClone(b, {transfer: [b]}); console.log(b.detached, b.byteLength, c.byteLength, new Uint8Array(c)[1])",
+           "true 0 8 3");
+    Expect("const e = new RangeError('bad'); e.extra = 1; const c = structuredClone(e); console.log(c instanceof RangeError, c.message, c.name, c.extra, c !== e)",
+           "true bad RangeError undefined true");
+    Expect("console.log(structuredClone(1), structuredClone('s'), structuredClone(new String('w')) instanceof String, typeof structuredClone(Object(1n)), 1 / structuredClone(-0), structuredClone())",
+           "1 s true object -Infinity undefined");
+    Expect("class P { constructor() { this.x = 1; } get y() { return 2; } } const c = structuredClone(new P()); console.log(c instanceof P, c.x, c.y, Object.getPrototypeOf(c) === Object.prototype)",
+           "false 1 undefined true");
+    Expect("const a = [1, , 3]; a.k = 'v'; const c = structuredClone(a); console.log(c.length, 1 in c, c[2], c.k, Array.isArray(c))", "3 false 3 v true");
+    Expect("const log = []; const o = { get a() { log.push('a'); return {get b() { log.push('b'); return 1; }}; }, get c() { log.push('c'); return 2; } }; structuredClone(o); console.log(log.join())",
+           "a,b,c");   // depth first, as serialization reads them
+    ExpectError("structuredClone(() => 1)", "DataCloneError");
+    ExpectError("structuredClone({a: Symbol('s')})", "DataCloneError");
+    ExpectError("structuredClone(new Proxy({}, {}))", "DataCloneError");
+    ExpectError("structuredClone(new WeakMap())", "DataCloneError");
+    ExpectError("structuredClone(Promise.resolve(1))", "DataCloneError");
+    ExpectError("const b = new ArrayBuffer(2); b.transfer(); structuredClone(b)", "DataCloneError");
+    ExpectError("const b = new ArrayBuffer(2); structuredClone(1, {transfer: [b, b]})", "DataCloneError");
+    ExpectError("structuredClone(1, {transfer: [{}]})", "DataCloneError");
+    ExpectError("structuredClone(new SharedArrayBuffer(2))", "DataCloneError");
+    ExpectError("structuredClone({get a() { throw new TypeError('from a getter'); }})", "from a getter");
+    // hostile: very deep nesting is cloned without native recursion; an endless cloning loop stops at the budget
+    Expect("let a = []; for (let i = 0; i < 100000; i++) a = [a]; const c = structuredClone(a); let d = 0; for (let x = c; x.length; x = x[0]) d++; console.log(d)", "100000");
+    CHECK(Run("const o = {a: [1, 2, 3], m: new Map([[1, 2]])}; for (;;) structuredClone(o);", false, 2'000'000).find("budget") != std::string::npos);
+    CHECK(Run("let s = 0; for (let i = 0; i < 200; i++) { const c = structuredClone({i, l: [i, {i}], m: new Map([[i, new Set([i])]]), t: new Int32Array([i])}); s += c.l[1].i + c.t[0]; } console.log(s)", true) ==
+          "39800\n");
+}
+
 // Classic page scripts are sloppy code where assigning an undeclared name makes a global (ECMA-262 6.2.5.6 PutValue
 // step 5.b; React's streaming markup does `$RB=[]`). Runtime::sloppyScripts turns that on (the browser); game scripts
 // keep the default (everything strict). "use strict" and class bodies stay strict either way.
@@ -1251,6 +1292,7 @@ int main() {
     Proxies();
     PrivateMembers();
     Modules();
+    StructuredClone();
     TaggedTemplates();
     BigInts();
     RegexLookbehind();

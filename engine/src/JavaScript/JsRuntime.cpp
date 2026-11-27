@@ -2020,6 +2020,7 @@ void Runtime::InitIntrinsics() {
     InstallBinaryLib(*this);
     InstallProxyLib(*this);
     InstallTextCodingLib(*this);
+    InstallStructuredClone(*this);
     InstallRegExpLib(*this);
     InstallGlobalLib(*this);
     InstallIntlLib(*this);

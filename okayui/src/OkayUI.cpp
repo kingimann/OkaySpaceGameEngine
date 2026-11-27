@@ -3701,7 +3701,15 @@ bool IsItemDeactivatedAfterEdit() {
     if (g_lastId == 0 || g_edStickyId != g_lastId) return false;
     return IsItemDeactivated() || (g_focusAtFrameStart == g_lastId && g_focus != g_lastId) || g_focusLostPrev == g_lastId;
 }
-float CalcItemWidth() { return g_lay.active ? availW() : 0.0f; }
+// Dear ImGui's CalcItemWidth: a width pushed or set as a negative number means "up to that far before the right edge" (the editor's
+// Inspector pushes -labelColumn so the label column stays free; rows that size their own cells from CalcItemWidth, such as the
+// Transform's three axis cells, ran over the label column and cut "Position" to "Pos"). -1 is "the whole row" (OkayUI's unset mark).
+float CalcItemWidth() {
+    if (!g_lay.active) return 0.0f;
+    const float over = g_nextItemW != -1.0f && g_nextItemW < 0.0f ? g_nextItemW : (g_nextItemW > 0.0f ? 0.0f : (g_itemWTop > 0 ? g_itemWStack[g_itemWTop - 1] : 0.0f));
+    if (over < 0.0f && over != -1.0f && std::isfinite(over)) return std::max(1.0f, realAvailW() + over);
+    return availW();
+}
 bool BeginPopupContextWindow(const char* id) {
     const int pid = hashLabel(id);
     // A right click on the window's own background (over the window, not over any item or a window above) opens it at the pointer.

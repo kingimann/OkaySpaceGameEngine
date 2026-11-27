@@ -195,6 +195,32 @@ int main() {
         CHECK(std::fabs(w[0] + w[1] + w[2] + 2 * gap - total) <= 1.0f);
         CHECK(w[2] >= w[0] && w[2] - w[0] < 3.0f);
     }
+    {   // A negative pushed width is "that far before the right edge" (Dear ImGui's rule): the editor's Inspector pushes -labelColumn and
+        // sizes the Transform's three cells from CalcItemWidth; the cells ran over the labels ("Position" showed as "Pos")
+        Reset(); Sim s(500, 100);
+        float full = 0, pushed = 0, next = 0, minusOne = 0, cells = 0, labelX = 0, rowRight = 0;
+        s.Frame([&] {
+            UI::BareNextWindow();
+            if (UI::Begin("w", 0, 0, 500, 100)) {
+                full = UI::CalcItemWidth();
+                UI::PushItemWidth(-150.0f);
+                pushed = UI::CalcItemWidth();
+                UI::SetNextItemWidth(-60.0f); next = UI::CalcItemWidth(); UI::SetNextItemWidth(-1.0f);
+                UI::PushMultiItemsWidths(3, UI::CalcItemWidth());
+                for (int i = 0; i < 3; ++i) { if (i) UI::SameLine(0, 4); float v = 0; UI::DragFloat("##c", &v); cells = UI::GetItemRectMax().x; UI::PopItemWidth(); }
+                UI::SameLine(0, 4); UI::TextUnformatted("Position"); labelX = UI::GetItemRectMax().x;
+                rowRight = UI::GetWindowPos().x + UI::GetWindowContentRegionMax().x;
+                UI::PopItemWidth();
+                UI::PushItemWidth(-1.0f); minusOne = UI::CalcItemWidth(); UI::PopItemWidth();
+            }
+            UI::End();
+        });
+        CHECK(std::fabs(pushed - (full - 150.0f)) <= 1.0f);
+        CHECK(std::fabs(next - (full - 60.0f)) <= 1.0f);
+        CHECK(std::fabs(minusOne - full) <= 1.0f);                   // -1: the whole row, as before
+        CHECK(cells <= rowRight - 140.0f);                           // the cells leave the label column free
+        CHECK(labelX <= rowRight + 0.5f);                            // and the label fits in it
+    }
     {   // FindRenderedTextEnd
         const char* a = "Name##id"; CHECK(UI::FindRenderedTextEnd(a) == a + 4);
         const char* b = "Plain"; CHECK(UI::FindRenderedTextEnd(b) == b + 5);

@@ -514,7 +514,7 @@ void InstallTextCodingLib(Runtime& rt) {
     DefNative(rt, tep, "encodeInto", [](Runtime& rt, CallArgs& a) {   // 8.2.3 encodeInto(source, destination)
         ThisCodec(rt, a.thisv, false, "TextEncoder.prototype.encodeInto");
         std::u16string s = rt.ToU16(a[0]);
-        if (!a[1].IsObj() || a[1].O()->cls != Cls::TypedArray || static_cast<TypedArrayObj*>(a[1].O())->type != TAType::Uint8)
+        if (!a[1].IsObj() || a[1].O()->cls != Cls::TypedArray || static_cast<TypedArrayObj*>(a[1].O())->type != TAType::U8)
             rt.ThrowType("TextEncoder.prototype.encodeInto needs a Uint8Array");
         TypedArrayObj* t = static_cast<TypedArrayObj*>(a[1].O());
         const std::size_t room = t->OutOfBounds() ? 0 : (std::size_t)t->Length();

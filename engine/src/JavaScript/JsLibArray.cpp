@@ -803,26 +803,26 @@ Value RawToValue(Runtime& rt, TAType ty, const std::uint8_t* p, bool little) {
     std::uint64_t u = 0;
     for (int i = n - 1; i >= 0; --i) u = (u << 8) | b[i];
     switch (ty) {
-        case TAType::Int8: return Value::Num((double)(std::int8_t)(std::uint8_t)u);
-        case TAType::Uint8: case TAType::Uint8C: return Value::Num((double)(std::uint8_t)u);
-        case TAType::Int16: return Value::Num((double)(std::int16_t)(std::uint16_t)u);
-        case TAType::Uint16: return Value::Num((double)(std::uint16_t)u);
-        case TAType::Int32: return Value::Num((double)(std::int32_t)(std::uint32_t)u);
-        case TAType::Uint32: return Value::Num((double)(std::uint32_t)u);
-        case TAType::Float32: { std::uint32_t w = (std::uint32_t)u; float f; std::memcpy(&f, &w, 4); return Value::Num((double)f); }
-        case TAType::Float64: { double d; std::memcpy(&d, &u, 8); return Value::Num(d); }
-        case TAType::BigInt64: return BigFrom64(rt, u, true);
-        case TAType::BigUint64: return BigFrom64(rt, u, false);
+        case TAType::I8: return Value::Num((double)(std::int8_t)(std::uint8_t)u);
+        case TAType::U8: case TAType::U8C: return Value::Num((double)(std::uint8_t)u);
+        case TAType::I16: return Value::Num((double)(std::int16_t)(std::uint16_t)u);
+        case TAType::U16: return Value::Num((double)(std::uint16_t)u);
+        case TAType::I32: return Value::Num((double)(std::int32_t)(std::uint32_t)u);
+        case TAType::U32: return Value::Num((double)(std::uint32_t)u);
+        case TAType::F32: { std::uint32_t w = (std::uint32_t)u; float f; std::memcpy(&f, &w, 4); return Value::Num((double)f); }
+        case TAType::F64: { double d; std::memcpy(&d, &u, 8); return Value::Num(d); }
+        case TAType::I64: return BigFrom64(rt, u, true);
+        case TAType::U64: return BigFrom64(rt, u, false);
         default: return Value();
     }
 }
 void ValueToRaw(TAType ty, const Value& v, std::uint8_t* p, bool little) {
     std::uint64_t u = 0;
     switch (ty) {
-        case TAType::Uint8C: u = Clamp8(v.n); break;
-        case TAType::Float32: { float f = ToF32(v.n); std::uint32_t w; std::memcpy(&w, &f, 4); u = w; break; }
-        case TAType::Float64: std::memcpy(&u, &v.n, 8); break;
-        case TAType::BigInt64: case TAType::BigUint64: u = BigLow64(v); break;
+        case TAType::U8C: u = Clamp8(v.n); break;
+        case TAType::F32: { float f = ToF32(v.n); std::uint32_t w; std::memcpy(&w, &f, 4); u = w; break; }
+        case TAType::F64: std::memcpy(&u, &v.n, 8); break;
+        case TAType::I64: case TAType::U64: u = BigLow64(v); break;
         default: u = ModU32(v.n); break;   // the narrower types keep the low bits
     }
     const int n = kElemSize[(int)ty];
@@ -833,7 +833,7 @@ void ValueToRaw(TAType ty, const Value& v, std::uint8_t* p, bool little) {
 }
 // ToNumber or ToBigInt as the element type needs (the conversion that may run script code comes first)
 Value ToElemValue(Runtime& rt, TAType ty, const Value& v) {
-    if (ty == TAType::BigInt64 || ty == TAType::BigUint64) return ToBigIntValue(rt, v);
+    if (ty == TAType::I64 || ty == TAType::U64) return ToBigIntValue(rt, v);
     return Value::Num(rt.ToNumber(v));
 }
 
@@ -999,7 +999,7 @@ Value MakeTA(Runtime& rt, CallArgs& a, TAType ty) {
     if (!a.newTarget) rt.ThrowType(std::string(kTAName[(int)ty]) + " must be called with 'new'");
     Object* proto = ProtoFrom(rt, a.newTarget, Intrinsic(rt, kTypedProtos + (int)ty));
     const std::uint64_t esize = kElemSize[(int)ty];
-    const bool big = ty == TAType::BigInt64 || ty == TAType::BigUint64;
+    const bool big = ty == TAType::I64 || ty == TAType::U64;
     Value first = a[0];
     if (!first.IsObj()) return Value::Obj(AllocTA(rt, ty, ToIndexV(rt, first, "a typed array's length"), proto));
     Object* o = first.O();
@@ -1096,13 +1096,16 @@ Value ViewSet(Runtime& rt, CallArgs& a, TAType ty, const char* what) {
     ValueToRaw(ty, num, d->buf->data.data() + pos, little);
     return Value();
 }
-#define OKJS_VIEW(T, NAME)                                                                                   \
-    Value ViewGet##NAME(Runtime& rt, CallArgs& a) { return ViewGet(rt, a, TAType::T, "get" #NAME); }    \
-    Value ViewSet##NAME(Runtime& rt, CallArgs& a) { return ViewSet(rt, a, TAType::T, "set" #NAME); }
-OKJS_VIEW(Int8, Int8) OKJS_VIEW(Uint8, Uint8) OKJS_VIEW(Int16, Int16) OKJS_VIEW(Uint16, Uint16) OKJS_VIEW(Int32, Int32)
-OKJS_VIEW(Uint32, Uint32) OKJS_VIEW(Float32, Float32) OKJS_VIEW(Float64, Float64) OKJS_VIEW(BigInt64, BigInt64)
-OKJS_VIEW(BigUint64, BigUint64)
-#undef OKJS_VIEW
+const char* const kViewGet[kTATypes] = {"getInt8", "getUint8", "", "getInt16", "getUint16", "getInt32", "getUint32",
+                                         "getFloat32", "getFloat64", "getBigInt64", "getBigUint64"};
+const char* const kViewSet[kTATypes] = {"setInt8", "setUint8", "", "setInt16", "setUint16", "setInt32", "setUint32",
+                                         "setFloat32", "setFloat64", "setBigInt64", "setBigUint64"};
+template <int T> Value ViewGetT(Runtime& rt, CallArgs& a) { return ViewGet(rt, a, (TAType)T, kViewGet[T]); }
+template <int T> Value ViewSetT(Runtime& rt, CallArgs& a) { return ViewSet(rt, a, (TAType)T, kViewSet[T]); }
+const NativeFn kViewGetFns[kTATypes] = {ViewGetT<0>, ViewGetT<1>, nullptr, ViewGetT<3>, ViewGetT<4>, ViewGetT<5>,
+                                        ViewGetT<6>, ViewGetT<7>, ViewGetT<8>, ViewGetT<9>, ViewGetT<10>};
+const NativeFn kViewSetFns[kTATypes] = {ViewSetT<0>, ViewSetT<1>, nullptr, ViewSetT<3>, ViewSetT<4>, ViewSetT<5>,
+                                        ViewSetT<6>, ViewSetT<7>, ViewSetT<8>, ViewSetT<9>, ViewSetT<10>};
 
 // 25.4.3.1 ValidateIntegerTypedArray and 25.4.3.2 ValidateAtomicAccess
 TypedArrayObj* AtomicTA(Runtime& rt, const Value& v, bool waitable) {
@@ -1110,8 +1113,8 @@ TypedArrayObj* AtomicTA(Runtime& rt, const Value& v, bool waitable) {
     if (!t) rt.ThrowType("Atomics needs an integer typed array");
     if (t->OutOfBounds()) rt.ThrowType("Atomics: the typed array's buffer is detached");
     const TAType ty = t->type;
-    const bool ok = waitable ? (ty == TAType::Int32 || ty == TAType::BigInt64)
-                             : (ty != TAType::Float32 && ty != TAType::Float64 && ty != TAType::Uint8C);
+    const bool ok = waitable ? (ty == TAType::I32 || ty == TAType::I64)
+                             : (ty != TAType::F32 && ty != TAType::F64 && ty != TAType::U8C);
     if (!ok) rt.ThrowType("Atomics does not work on a " + std::string(kTAName[(int)ty]));
     return t;
 }
@@ -1203,7 +1206,7 @@ void TypedArraySet(Runtime& rt, TypedArrayObj* t, double n, const Value& v) {
 }
 
 TypedArrayObj* NewUint8Array(Runtime& rt, const std::uint8_t* bytes, std::size_t n) {
-    TypedArrayObj* t = AllocTA(rt, TAType::Uint8, n, nullptr);
+    TypedArrayObj* t = AllocTA(rt, TAType::U8, n, nullptr);
     if (n) std::memcpy(t->buf->data.data(), bytes, n);
     return t;
 }
@@ -1825,15 +1828,10 @@ void InstallBinaryLib(Runtime& rt) {
         if (d->buf->detached) rt.ThrowType("DataView.prototype.byteOffset: the buffer is detached");
         return Value::Num((double)d->offset);
     });
-    struct VM { const char* n; NativeFn f; int len; };
-    const VM views[] = {{"getInt8", ViewGetInt8, 1}, {"getUint8", ViewGetUint8, 1}, {"getInt16", ViewGetInt16, 1},
-                        {"getUint16", ViewGetUint16, 1}, {"getInt32", ViewGetInt32, 1}, {"getUint32", ViewGetUint32, 1},
-                        {"getFloat32", ViewGetFloat32, 1}, {"getFloat64", ViewGetFloat64, 1}, {"getBigInt64", ViewGetBigInt64, 1},
-                        {"getBigUint64", ViewGetBigUint64, 1}, {"setInt8", ViewSetInt8, 2}, {"setUint8", ViewSetUint8, 2},
-                        {"setInt16", ViewSetInt16, 2}, {"setUint16", ViewSetUint16, 2}, {"setInt32", ViewSetInt32, 2},
-                        {"setUint32", ViewSetUint32, 2}, {"setFloat32", ViewSetFloat32, 2}, {"setFloat64", ViewSetFloat64, 2},
-                        {"setBigInt64", ViewSetBigInt64, 2}, {"setBigUint64", ViewSetBigUint64, 2}};
-    for (const VM& v : views) DefNative(rt, dvp, v.n, v.f, v.len);
+    for (int t = 0; t < kTATypes; ++t)   // 25.3.4: every element type but Uint8Clamped, the getters then the setters
+        if (kViewGetFns[t]) DefNative(rt, dvp, kViewGet[t], kViewGetFns[t], 1);
+    for (int t = 0; t < kTATypes; ++t)
+        if (kViewSetFns[t]) DefNative(rt, dvp, kViewSet[t], kViewSetFns[t], 2);
     dvp->AddRaw(rt.symToStringTag, Value::Str(rt.Intern("DataView")), kConfigurable);
 
     // ---- 25.4 Atomics (one thread: every operation is atomic; wait can not block the only thread)

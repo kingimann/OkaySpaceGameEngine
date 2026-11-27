@@ -428,13 +428,13 @@ struct BufferObj : Object {
     std::size_t Bytes() const override { return Object::Bytes() + data.capacity(); }
 };
 /// The element types of 23.2 Table 71, in that order.
-enum class TAType : std::uint8_t { Int8, Uint8, Uint8C, Int16, Uint16, Int32, Uint32, Float32, Float64, BigInt64, BigUint64, Count };
+enum class TAType : std::uint8_t { I8, U8, U8C, I16, U16, I32, U32, F32, F64, I64, U64, Count };   ///< Int8Array .. BigUint64Array
 constexpr int kTATypes = (int)TAType::Count;
 /// A typed array: a view of `length` elements from byte `offset` of `buf`. Every element access checks the
 /// index against the buffer's bytes as they are now (so a detached buffer is never read).
 struct TypedArrayObj : Object {
     BufferObj* buf = nullptr;
-    TAType type = TAType::Uint8;
+    TAType type = TAType::U8;
     std::uint64_t offset = 0;   ///< in bytes
     std::uint64_t length = 0;   ///< in elements, when made
     TypedArrayObj() : Object(Cls::TypedArray) {}
@@ -442,7 +442,7 @@ struct TypedArrayObj : Object {
     std::uint32_t ElemSize() const;
     bool OutOfBounds() const;          ///< 10.4.5.12 IsTypedArrayOutOfBounds (a detached buffer is)
     std::uint64_t Length() const { return OutOfBounds() ? 0 : length; }   ///< TypedArrayLength, 0 when out of bounds
-    bool IsBigInt() const { return type == TAType::BigInt64 || type == TAType::BigUint64; }
+    bool IsBigInt() const { return type == TAType::I64 || type == TAType::U64; }
 };
 struct DataViewObj : Object {
     BufferObj* buf = nullptr;

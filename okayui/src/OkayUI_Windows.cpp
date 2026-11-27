@@ -162,53 +162,47 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     g_we.autoSize = autoSize; g_we.x = wx; g_we.y = wy; g_we.w = w; g_we.h = h; g_we.titleH = titleH;
     if (bare) {
         // A bare window draws no frame at all: the host's own window behind it is the background.
-    } else if (g_look) {   // launcher window: shadow, rounded body with a hairline, slim title bar
+    } else {
+        // The design's window: a shadow as deep as the design asks, a rounded body inside a hairline, and a clean header in the
+        // sunken colour: the title (dimmer when the window does not have focus), a close cross on a round chip that turns the
+        // danger colour under the pointer, and the fold chevron only while the pointer is over its corner (or the window is folded).
         const float wr = g_theme.windowRounding;
         if (!noBg) {
-            if (g_theme.windowShadow) softShadow(wx, wy, w, bodyH, wr);
+            if (g_theme.windowShadow) elevation(wx, wy, w, bodyH, wr, g_theme.shadowDepth);
             rrect(wx, wy, w, bodyH, wr, g_theme.border);
             rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, bodyH - 2.0f, wr > 1.0f ? wr - 1.0f : 0.0f, pick(Col_WindowBg, g_theme.panel));
         }
         scaleBodyAlpha(bodyV0, bgAlpha);
-        if (!noTitle) rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, titleH - 1.0f, wr > 1.0f ? wr - 1.0f : 0.0f, titleCol);
-        if (!noTitle && !*collapsed && titleH > wr) quad(wx + 1.0f, wy + wr, w - 2.0f, titleH - wr, titleCol);
-        if (!noTitle && !*collapsed) quad(wx + 1.0f, wy + titleH - 1.0f, w - 2.0f, 1.0f, g_theme.border);
-        const float s0 = g_theme.textScale;
         if (!noTitle) {
-        if (!noCollapse) chevron(wx + btn * 0.5f, wy + titleH * 0.5f, 9.0f, !*collapsed, overCaret ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
-        if (title && *title) drawText(noCollapse ? wx + 10.0f : wx + btn, wy + (titleH - textH()) * 0.5f, VisLabel(title).b, s0, g_theme.text);
+            rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, titleH - 1.0f, wr > 1.0f ? wr - 1.0f : 0.0f, titleCol);
+            if (!*collapsed && titleH > wr) quad(wx + 1.0f, wy + wr, w - 2.0f, titleH - wr, titleCol);
+            if (!*collapsed) quad(wx + 1.0f, wy + titleH - 1.0f, w - 2.0f, 1.0f, g_theme.border);
+            const float s0 = g_theme.textScale;
+            const bool focusedWin = g_focusWin == id;
+            // The title starts at the header's padding (no gap for a fold arrow). The fold chevron shows on the right, before the
+            // close cross, while the pointer is over the header or the window is folded; the fold still answers a click on the
+            // header's left corner as before (behaviour unchanged).
+            const bool overHeader = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, titleH);
+            if (!noCollapse && (overHeader || *collapsed))
+                chevron(wx + w - (p_open ? btn : 0.0f) - btn * 0.5f, wy + titleH * 0.5f, 8.0f, !*collapsed, overHeader ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
+            if (title && *title)
+                drawText(wx + 12.0f, wy + (titleH - textH()) * 0.5f, VisLabel(title).b, s0, focusedWin ? g_theme.text : g_theme.textDim);
+            if (p_open) {
+                unsigned char tmp[4];
+                const float cr = std::min(btn, titleH) * 0.5f - 5.0f, ccx = closeX + btn * 0.5f, ccy = wy + titleH * 0.5f;
+                const float over = anim(id ^ 0xc105, 0, overClose);
+                if (over > 0.0f && cr > 2.0f) fillCircle(ccx, ccy, cr, withAlpha(g_theme.danger, 0.85f * over, tmp), 24);
+                unsigned char xc[4];
+                xMark(ccx, ccy, 8.0f, mixColor(pick(Col_TextDisabled, g_theme.textDim), g_theme.onAccent, over, xc));
+            }
         }
-        if (p_open && !noTitle) {
-            unsigned char tmp[4];
-            const unsigned char white[4] = {255, 255, 255, 255};
-            if (overClose) rrect(closeX + 5.0f, wy + 5.0f, btn - 10.0f, titleH - 10.0f, 6.0f, withAlpha(white, 0.10f, tmp));
-            xMark(closeX + btn * 0.5f, wy + titleH * 0.5f, 9.0f, overClose ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
-        }
-    } else if (!noBg) {
-    Panel(wx, wy, w, bodyH);
-    scaleBodyAlpha(bodyV0, bgAlpha);
-    }
-    if (!g_look && !bare && !noTitle) {
-    // Title bar: round the TOP corners to match the panel, square at the bottom edge
-    // (drawn as a rounded rect, then a square strip fills its lower half flush to body).
-    const float rd = rnd();
-    rrect(wx, wy, w, titleH, rd, titleCol);
-    if (titleH > rd) quad(wx, wy + rd, w, titleH - rd, titleCol);
-    quad(wx, wy + titleH - 2.0f, w, 2.0f, g_theme.accent);
-    const float s = g_theme.textScale;
-    if (!noCollapse) drawText(wx + 8.0f, wy + (titleH - textH()) * 0.5f, *collapsed ? "+" : "-", s, g_theme.text);  // caret
-    if (title && *title) drawText(wx + 8.0f + (noCollapse ? 0.0f : fCharW() * s * 2.0f), wy + (titleH - textH()) * 0.5f, VisLabel(title).b, s, g_theme.text);
-    if (p_open) {
-        const unsigned char* xcol = overClose ? g_theme.accent : g_theme.text;
-        drawText(closeX + (btn - fCharW() * s) * 0.5f, wy + (titleH - textH()) * 0.5f, "x", s, xcol);
-    }
     }
 
     if (*collapsed) { g_lay.active = false; return false; }   // folded: skip content
 
     if (resizable) {   // grip marks: two diagonal strokes in the corner
         const bool gripAct = g_active == (id ^ 0x6f1d), gripHot = g_hot == (id ^ 0x6f1d);
-        const unsigned char* gc = gripAct ? pick(Col_ResizeGripActive, g_theme.accent) : (gripHot ? pick(Col_ResizeGripHovered, g_theme.accent) : pick(Col_ResizeGrip, g_theme.textDim));
+        const unsigned char* gc = gripAct ? pick(Col_ResizeGripActive, g_theme.accent) : (gripHot ? pick(Col_ResizeGripHovered, g_theme.accent) : pick(Col_ResizeGrip, g_theme.textFaint));
         line(wx + w - 4.0f, wy + h - 12.0f, wx + w - 12.0f, wy + h - 4.0f, 1.5f, gc);
         line(wx + w - 4.0f, wy + h - 7.0f, wx + w - 7.0f, wy + h - 4.0f, 1.5f, gc);
     }
@@ -237,7 +231,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     g_we.laid = true; g_we.scrolls = flagStyle; g_we.showBar = showBar; g_we.pad = pad; g_we.ox = g_lay.ox; g_we.oy = g_lay.oy;
     g_lay.contentW = w - 2.0f * pad - (showBar ? kScrollbarW : 0.0f);
     g_lay.bottom = wy + h - pad;
-    g_lay.spacingX = g_look ? 9.0f : 8.0f; g_lay.spacingY = g_look ? 8.0f : 6.0f;
+    g_lay.spacingX = (g_look ? 9.0f : 8.0f) * g_theme.spacing; g_lay.spacingY = (g_look ? 8.0f : 6.0f) * g_theme.spacing;   // density
     g_lay.indent = 0.0f;
     g_lay.pendingSameLine = false;
     g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
@@ -248,17 +242,15 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
 // With a pushed StyleVar_ScrollbarSize the bar is that wide and the grab sits 2 pixels inside it on every side, fully rounded.
 void ui_core::scrollbarThumb(float sbx, float top, float trackH, float thumbY, float thumbH, bool active, bool over, bool track) {
     const float bw = g_sbSize > 0.0f ? g_sbSize : kScrollbarW;
-    if (track && (!g_look || colorIsSet(Col_ScrollbarBg))) quad(sbx, top, bw, trackH, pick(Col_ScrollbarBg, g_theme.track));
-    if (g_look || g_sbSize > 0.0f) {   // thin rounded thumb, faint until hovered
-        unsigned char tmp[4];
-        const unsigned char white[4] = {255, 255, 255, 255};
-        const unsigned char* tc2 = active ? pick(Col_ScrollbarGrabActive, g_theme.accent) : (over ? pick(Col_ScrollbarGrabHovered, withAlpha(white, 0.26f, tmp)) : pick(Col_ScrollbarGrab, withAlpha(white, 0.14f, tmp)));
-        if (g_sbSize > 0.0f) { const float gw = std::max(1.0f, bw - 4.0f); rrect(sbx + 2.0f, thumbY + 2.0f, gw, thumbH - 4.0f, gw * 0.5f, tc2); }
-        else rrect(sbx + 3.0f, thumbY + 2.0f, kScrollbarW - 5.0f, thumbH - 4.0f, (kScrollbarW - 5.0f) * 0.5f, tc2);
-    } else {
-        const unsigned char* tc = active ? pick(Col_ScrollbarGrabActive, g_theme.text) : (over ? pick(Col_ScrollbarGrabHovered, g_theme.text) : pick(Col_ScrollbarGrab, g_theme.accent));
-        quad(sbx + 1.0f, thumbY, kScrollbarW - 2.0f, thumbH, tc);
-    }
+    if (track && colorIsSet(Col_ScrollbarBg)) quad(sbx, top, bw, trackH, pick(Col_ScrollbarBg, g_theme.track));
+    // A thin overlay thumb: a faint ink pill that is slim at rest and grows (and brightens) under the pointer; the accent while
+    // dragged. It sits at the right of the bar's room, so the layout never moves when it grows.
+    unsigned char tmp[4];
+    const unsigned char* tc2 = active ? pick(Col_ScrollbarGrabActive, g_theme.accent)
+                                      : (over ? pick(Col_ScrollbarGrabHovered, withAlpha(g_theme.ink, 0.34f, tmp)) : pick(Col_ScrollbarGrab, withAlpha(g_theme.ink, 0.18f, tmp)));
+    if (g_sbSize > 0.0f) { const float gw = std::max(1.0f, bw - 4.0f); rrect(sbx + 2.0f, thumbY + 2.0f, gw, thumbH - 4.0f, gw * 0.5f, tc2); return; }
+    const float gw = (over || active) ? kScrollbarW - 3.0f : 4.0f;
+    rrect(sbx + kScrollbarW - 2.0f - gw, thumbY + 2.0f, gw, thumbH - 4.0f, gw * 0.5f, tc2);
 }
 
 bool ui_core::g_dockAware = false, ui_core::g_dockRouted = false;   // SetDockAwareBegin: Begin runs a window of the dock layout as DockBegin; the End that closes it as DockEnd
@@ -655,7 +647,7 @@ void EndChild() {
     if (maxScroll > 0.0f) {
         const float in = c.sbInside ? 1.0f : 0.0f;   // inside the outline: the bar stops one pixel short of each edge
         const float sbx = c.rx + c.rw - c.sbW - in, trackY = c.ry + in, trackH = c.rh - 2.0f * in;
-        if (!g_look || colorIsSet(Col_ScrollbarBg)) quad(sbx, trackY, c.sbW, trackH, pick(Col_ScrollbarBg, g_theme.track));
+        if (colorIsSet(Col_ScrollbarBg)) quad(sbx, trackY, c.sbW, trackH, pick(Col_ScrollbarBg, g_theme.track));
         float frac = viewH / contentH; if (frac > 1.0f) frac = 1.0f;
         float thumbH = frac * trackH; if (thumbH < 16.0f) thumbH = 16.0f;
         float t = maxScroll > 0.0f ? (*c.scroll / maxScroll) : 0.0f;

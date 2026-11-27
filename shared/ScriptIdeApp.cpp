@@ -4,6 +4,7 @@
 //
 // Written from general editor behaviour (a file tree beside tabs, a search panel, a status line, a history of saved copies) and
 // the OkayUI and OkayUI::CodeEdit interfaces; no code, names, icons or look from any other editor (rule 19a).
+#include "okay/UI/OkayUIDesign.hpp"
 #include "ScriptIdeAppImpl.hpp"
 
 #include "okay/Components/ScriptComponent.hpp"   // TestRunScript: the script on a sandbox object
@@ -386,10 +387,22 @@ void ScriptIdeApp::Impl::drawTree(float X, float Y, float W, float H, bool modal
                     hiddenBelow = -1;
                     const bool shut = r.folder && treeFilter[0] == 0 && collapsed.count(r.path) != 0;
                     UI::Indent((float)r.depth * 12.0f);
-                    const std::string label = (r.folder ? (shut ? "+ " : "- ") : "  ") + r.name + "##" + r.path;
+                    // Room for a chevron before the name; folders get the design's chevron (down when open) and every row
+                    // faint indent guides under its parents' chevrons.
+                    const std::string label = "      " + r.name + "##" + r.path;
                     if (UI::Selectable(label.c_str(), !r.folder && r.path == activePath) && !modal) {
                         if (r.folder) { if (shut) collapsed.erase(r.path); else collapsed.insert(r.path); }
                         else openFile(r.path, 0);
+                    }
+                    {
+                        const UI::Rect ir = UI::GetItemRect();
+                        const auto& tdl = UI::GetWindowDrawList();
+                        const float cy = ir.y + ir.h * 0.5f;
+                        if (r.folder) UI::DrawChevron(tdl, UI::Vec2(ir.x + 15.0f, cy), 8.0f, shut ? 0 : 1, kDim);
+                        for (int d = 0; d < r.depth; ++d) {
+                            const float gx = ir.x + 15.0f - 12.0f * (float)(r.depth - d);
+                            tdl->AddLine(UI::Vec2(gx, ir.y), UI::Vec2(gx, ir.y + ir.h), (kLine & 0x00ffffffu) | 0xc0000000u, 1.0f);
+                        }
                     }
                     UI::Unindent((float)r.depth * 12.0f);
                     if (shut) hiddenBelow = r.depth;
@@ -747,6 +760,13 @@ void ScriptIdeApp::Impl::drawOpenFolder(float X, float Y, float W, float H) {
 }
 
 void ScriptIdeApp::Impl::frame(float X, float Y, float W, float H) {
+    {   // the design changed (Settings, Edit > Appearance or another program): the code widgets follow
+        static unsigned s_rev = 0;
+        if (!cfg.palette && s_rev != OkayUI::design::Revision()) {
+            s_rev = OkayUI::design::Revision();
+            for (auto& d : docs) d->code.Edit().SetPalette(UI::DesignCodePalette());
+        }
+    }
     const UI::Input& in = UI::GetFrameInput();
     const bool ctrl = in.ctrl, shift = in.shift, alt = UI::IsKeyDown(UI::KeyId_Alt);
     if (ctrl && !alt) UI::GetIO().InputQueueCharacters.resize(0);   // Ctrl+<key> is a shortcut, never typing
@@ -883,7 +903,7 @@ bool ScriptIdeApp::SetExecutionLine(const std::string& key, int line) {
 }
 bool ScriptIdeApp::CompletionOpen() const { return m->acOpen; }
 const std::vector<CompletionItem>& ScriptIdeApp::CompletionList() const { return m->acItems; }
-void ScriptIdeApp::Frame(float x, float y, float w, float h) { m->frame(x, y, w, h); }
+void ScriptIdeApp::Frame(float x, float y, float w, float h) { appdetail::FollowDesignColours(); m->frame(x, y, w, h); }
 bool ScriptIdeApp::Save() { Impl::Doc* d = m->activeDoc(); return d && m->save(*d); }
 bool ScriptIdeApp::SaveAll() { return m->saveAll(); }
 void ScriptIdeApp::Close(const std::string& key) {

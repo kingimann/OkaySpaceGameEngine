@@ -7,6 +7,7 @@
 // plus a steady caret) and the Sim makes frames deterministic: the same calls give the same pixels.
 #include "okay/UI/OkayUI.hpp"
 #include "OkayUI_Soft.hpp"
+#include "okay/UI/OkayUIDesign.hpp"
 #include "okay/Core/ImageWrite.hpp"
 
 #include <algorithm>
@@ -38,8 +39,16 @@ inline const int kPinnedFonts = [] {
 using OkayUI::soft::Bitmap;
 
 /// Forget all OkayUI state and make the caret steady (no blink), so frames are reproducible.
+/// OKAYUI_TEST_DESIGN (pictures for people, not for the checks): a design name, or appearance.json text, that every test draws in
+/// instead of the default; with it set the goldens differ, and OKAYUI_ACTUAL_DIR collects the pictures in that design.
 inline void Reset() {
     OkayUI::ResetState();
+    if (const char* d = std::getenv("OKAYUI_TEST_DESIGN"); d && *d) {
+        OkayUI::design::Options o;
+        if (d[0] == '{') OkayUI::design::ParseJson(d, &o);
+        else std::snprintf(o.design, sizeof o.design, "%s", d);
+        OkayUI::design::Set(o);
+    }
     OkayUI::Style().caretBlink = false;
 }
 

@@ -502,7 +502,10 @@ int main() {
             CHECK(d == 0.0);                                             // the same rasteriser: identical
             const double ds = DiffShare(viaSdl, viaSoft, 2);
             std::cout << "  classic: sdl2 painter vs software painter, differing pixels (> 2 levels) " << ds * 100 << " %\n";
-            CHECK(ds < 0.002);
+            // The design's rounded corners, circles, chevrons and shadows give far more edge pixels than the old square look, and the
+            // two rasterisers' fill rules put such an edge one pixel apart (2.7% of the picture, all on edges: checked by eye on the
+            // difference picture). Interiors still agree exactly.
+            CHECK(ds < 0.035);
         }
     }
     {   // launcher look: glyph atlas texture, sampled linearly by the painter like a GPU does

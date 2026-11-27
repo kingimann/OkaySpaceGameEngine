@@ -152,7 +152,7 @@ int main() {
         sim.Frames(2, ui);
         const Bitmap& bm = sim.Draw();
         const unsigned panelBelow = Px(bm, (int)box.x + 20, (int)(box.y + box.h + 6));
-        CHECK(Px(bm, (int)box.x + 20, (int)(box.y + 8)) == ThemeRgba(UI::Style().accent));   // the first row, above its text
+        CHECK(Px(bm, (int)box.x + 20, (int)(box.y + 8)) != panelBelow);   // the first row (selected: the selection tint), above its text
         CHECK(Px(bm, (int)box.x + 20, (int)(box.y + box.h + 2)) == panelBelow);   // below the box: plain window panel
         const UI::DrawData d = UI::GetDrawData();
         bool clipped = false; for (int i = 0; i < d.cmdCount; ++i) clipped |= d.cmds[i].clipOn;

@@ -246,7 +246,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Docs:** `docs/ui/own_ui_toolkit.md` (sections 6.26 and 32, with the gap table)
 - **Tests:** `editor_okayui`, `okayui_port_modalguard`, `okayui_windows`, `okayui_dockaware`, `okayui_color`
 - **Status:** Partial - builds, self-test passes, runs headless on Linux (gate, docked panels, 3D Scene view, Hierarchy, Inspector, menus, Play, Build Settings, Project Settings); never run on Windows or in a real window
-- **Open:** `ImGui::GetStyle()` writes are lost (theme metrics, tab padding, play tint); taller rows; the Inspector's Color cells; multi-window panels; drag and drop and several windows not tried; Dear ImGui not removed yet
+- **Open:** Edit > Appearance (a menu holding free widgets); the Hierarchy's row layout; the Inspector's Color cells; multi-window panels; drag and drop and several windows not tried; Dear ImGui not removed yet
 - **Related:** 40.9, 40.10
 - **Words:** OkayEngineOkayUI, editor on OkayUI, OKAY_EDITOR_ON_OKAYUI, replace Dear ImGui, move off ImGui, no Dear ImGui
 - **Seen as:** the editor on OkayUI shows panels floating instead of docked; a modal does not show; the menu bar is missing; a section draws outside its window

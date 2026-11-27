@@ -4594,9 +4594,14 @@ static float TabIconPx()    { return g_tabIconPx > 0.0f ? g_tabIconPx : std::rou
 static float TabIconInset() { return std::round(7.0f * g_uiScale); }
 static float TabPadX()      { return TabIconInset() + TabIconPx() + std::round(6.0f * g_uiScale); }
 struct TabPaddingScope {
+#ifdef OKAY_ON_OKAYUI   // OkayUI applies a GetStyle() write at the next frame, after the dock has laid its tabs out: the same padding as a pushed style var
+    TabPaddingScope() { ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(TabPadX(), ImGui::GetStyle().FramePadding.y)); }
+    ~TabPaddingScope() { ImGui::PopStyleVar(); }
+#else
     float saved;
     TabPaddingScope() : saved(ImGui::GetStyle().FramePadding.x) { ImGui::GetStyle().FramePadding.x = TabPadX(); }
     ~TabPaddingScope() { ImGui::GetStyle().FramePadding.x = saved; }
+#endif
     TabPaddingScope(const TabPaddingScope&) = delete;
     TabPaddingScope& operator=(const TabPaddingScope&) = delete;
 };

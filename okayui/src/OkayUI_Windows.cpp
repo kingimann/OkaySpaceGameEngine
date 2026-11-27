@@ -380,7 +380,10 @@ bool Begin(const char* title, bool* p_open, int flags) {
     // Dear ImGui's documented docking rule: with ConfigFlags_DockingEnable set on the IO, a window that sits in the dock layout is drawn docked
     // by its ordinary Begin (the same routing SetDockAwareBegin(true) asks for).
     const bool dockAware = g_dockAware || (IoRaw().ConfigFlags & ConfigFlags_DockingEnable) != 0;
-    if (dockAware && title && *title && !g_dockRouted && !DockInsideBegin() && (DockAdoptTitle(title) || DockClosedPending(title))) { g_dockRouted = true; return DockBegin(title, p_open, flags); }
+    if (dockAware && title && *title && !g_dockRouted && !DockInsideBegin() && (DockAdoptTitle(title) || DockClosedPending(title))) {
+        if (g_nextWinFocus) { g_nextWinFocus = false; SetWindowFocus(title); }   // SetNextWindowFocus on a docked window: its tab is chosen first
+        g_dockRouted = true; return DockBegin(title, p_open, flags);
+    }
     if (!title) { g_nextWinPos.set = g_nextWinSize.set = false; g_nextWinFocus = false; g_nextCollapse = NextCollapse(); g_nextBgAlpha = -1.0f; return false; }
     const int id = windowId(title);
     WinSlot* slot = nullptr; bool created = false;

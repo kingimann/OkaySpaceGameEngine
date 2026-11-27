@@ -3471,12 +3471,15 @@ Dear ImGui editor's run of the same script; none are in the repository.
 | 8 | the Console floated: its title carries counts (`Console  [x 1]###Console`) and the dock knew `Console###Console` | run | "###" ids: `hashLabel` keys "Text###id" by "###id"; the dock renames a window with the same "###id" (`DockAdoptTitle`, `DockLayout::Rename`) | `okayui_dockaware` | closed |
 | 9 | a stray tooltip under the File menu: `IsItemHovered` after `MenuItem` asked about the menu button | run | a menu row is the last item (overlay hit rule); `EndMenu` gives the menu's own row back | `okayui_windows` | closed |
 | 10 | a scrolling list inside a modal (the template list) drew past its bottom: the popup layer had no clip | run | overlay spans carry a clip; a popup body starts its own clip stack (`g_clipBase`) | `okayui_windows` | closed |
-| 11 | Play did not bring the Game tab forward | run | `SetWindowFocus` on a docked window chooses its tab | `okayui_dockaware` | closed |
+| 11 | Play did not bring the Game tab forward | run | `SetWindowFocus`, and `SetNextWindowFocus` before a docked window's `Begin`, choose its tab | `okayui_dockaware` | closed |
 | 12 | Project Settings was a bare title bar: `SetNextWindowSize(460, 0)` made it 0 pixels tall | run | an axis of 0 is fitted to the content once (never bigger than the display) | `okayui_windows` | closed |
 | 13 | the OkayUI-only section bodies (Project Settings' Player, Physics, ...) closed the window they were in and drew outside it | run | a bare window begun inside an open window is a region of it (kept open, clipped, 8 deep) | `okayui_windows` | closed |
 | 13b | the dock showed tabs for windows the editor does not draw (Asset Manager, Animation, Services while switched off), with empty bodies | run | a docked window that is not submitted has no tab; its leaf shows a submitted one (Dear ImGui's rule) | `okayui_dockaware` | closed |
-| 14 | `ImGui::GetStyle()` writes are lost (the editor's theme metrics and colours, tab padding for the panel icons, the play tint) | run, look | not done: it overlaps the OkayUI redesign (`claude/okayui-look-1`) | | open |
-| 15 | rows and buttons are taller than in Dear ImGui (the Create button is 26 pixels lower); icons overlap the text on tabs and Hierarchy rows | look | follows from 14 | | open |
+| 14 | `ImGui::GetStyle()` writes were lost (the editor's theme metrics and colours, the play tint) | run, look | the launcher branch's `ApplyStyleWrites` (merged in; one implementation) | `okayui_calls` | closed (launcher branch) |
+| 14b | the panel icons covered the tab names: the editor widens the tabs' text inset for the length of `DockSpace` only | look | the editor on OkayUI pushes `FramePadding` there (`TabPaddingScope`); OkayUI's dock tabs take a pushed `FramePadding.x` as their text inset | `okayui_dockaware` | closed |
+| 15 | rows and buttons were taller than in Dear ImGui (the Create button 26 pixels lower) | look | the editor on OkayUI turns on `UseImGuiCoordinates` and pushes `StyleVar_FramedWidgets` and `StyleVar_TextRowHeight -1` each frame, as the launcher does (now 11 pixels off) | the pictures | mostly closed |
+| 15b | the Hierarchy's rows are still taller than Dear ImGui's and the type icons overlap the names (the row leaves room with leading spaces and draws the icon at the arrow's width) | look | | | open |
+| 15c | Edit > Appearance: the design picker is a sub-menu of free widgets; OkayUI's bar menus hold only menu rows, so its widgets draw at the window's edge | run | | | open (a menu that is a popup window of any widgets) |
 | 16 | the Inspector's Color field shows sliders where Dear ImGui shows 0..255 cells | run, look | | | open |
 | 17 | multi-window panels (a tab dragged out into its own OS window) | run | off in this program: OkayUI has one window | | open |
 | 18 | not tried: drag and drop (Hierarchy, Project to Scene), the Script Editor, Animator, Timeline, Dialogue and Behavior Tree windows, the file dialogs, text input with an input method, the Visual Script window (moved by another branch), Windows | run | | | not tried |
@@ -3489,8 +3492,13 @@ pass. Each bug of rows 5 to 13b was first seen in the editor's own pictures; the
 tests was run against the old OkayUI code (that they fail there is by reading, not run). Unverified: Windows (the changed OkayUI files were syntax-checked with
 MinGW only), a real window or GPU.
 
+**After merging the launcher branch (same day).** The two branches were merged both ways; no call has two implementations. With the
+launcher's Dear ImGui coordinates and text rows switched on in the editor's frame, the gate dialog, the main window, selecting objects,
+Play (the Game tab comes forward), the Edit menu and Project Settings look and act like the Dear ImGui editor's run of the same
+script, apart from rows 15b and 15c. All 76 `okayui_*` and `editor_okayui` ctest tests pass.
+
 **What is left before Dear ImGui can go from the editor** (rule 17 and 19d: then OkayUI is the editor's only UI and the Dear ImGui
-build is deleted): rows 14 to 18; the launcher (another branch, `claude/launcher-okayui-1`); then the normal editor target becomes
+build is deleted): rows 15b to 18; then the normal editor target becomes
 the OkayUI one, and the `okay_imgui` library, the Dear ImGui FetchContent and `OKAY_IMGUI_TAG` go.
 ## 31. The launcher on OkayUI only (no Dear ImGui in OkaySpace.exe, 2026-11-27)
 

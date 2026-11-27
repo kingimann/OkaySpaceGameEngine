@@ -219,6 +219,7 @@ float fMeasure(const char* s);
 // StyleVar_FramePadding (y): -1 = OkayUI's frames (a text line + 15, or + 12 without the launcher look); 0 or more: a text line plus
 // twice that (Dear ImGui's frame height). Checkbox and RadioButton boxes follow it too (boxSize).
 extern float g_framePadY;
+extern float g_framePadX;   // a pushed StyleVar_FramePadding (x), < 0: none
 // StyleVar_ScrollbarSize (< 0 = none pushed: OkayUI's own 10-pixel bars): the width of the scroll bars of children and scrolling tables.
 // A pushed size also gives Dear ImGui's proportions: the bar inside a framed child's outline and its grab 2 pixels in on every side.
 extern float g_sbSize;

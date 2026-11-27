@@ -112,6 +112,9 @@ if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
     # scripts/dev_index.py maintains dev/versions.json, the list of test builds (the dev channel; docs/release/release_channels.md "Test builds").
     add_test(NAME dev_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/dev_index.py --self-test)
+    # scripts/run_windows_tests.py runs the cross-compiled tests on the Windows runner; its self-test includes printing a
+    # test's non-ASCII output to a cp1252 console without stopping the run.
+    add_test(NAME run_windows_tests_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/run_windows_tests.py --self-test)
     # SDL use may only go down: fails and lists the words when a file uses more SDL than tests/data/sdl_ratchet.json
     # (docs/platform/platform_layer.md). Reads the working tree, so it sees an uncommitted new SDL call too.
     add_test(NAME sdl_ratchet COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/sdl_inventory.py --ratchet)
